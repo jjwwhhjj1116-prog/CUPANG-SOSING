@@ -65,3 +65,24 @@ test('client query matches KST120-day default, rejects invalid fields, and ties 
  for(const options of [{capability:false},{contexts:[h.context,{...h.context,ownerId:'other'}]},{result:r=>({...r,mutated:true})},{result:r=>({...r,total:2})},{result:r=>({...r,company:companies[1]})},{result:r=>({...r,rows:[{...row(1),skuId:'abc...'}]})},{result:r=>({...r,query:{...query,startDate:'2026-06-13'}})}])await assert.rejects(client(options).api.loadCompanyRegistrationStatus(query,new AbortController().signal));
  const summary=h.api.registrationStageSummary(row(1));assert.equal(summary.stage,'가격/정책');assert.match(summary.reason,/검수중/);assert.doesNotMatch(summary.reason,/진행전/);
 });
+
+test('completed review is never presented as a blocked or historical stage and does not rewrite the Hub observation',()=>{
+ const h=client();
+ for(const stage of [
+  '가격/정책 해당 검수가 완료되었습니다. 상품 정보 해당 검수가 완료되었습니다. 발주서 발행 해당 검수 진행전입니다.',
+  '가격/정책 과거 반려 사유 상품 정보 해당 검수가 완료되었습니다.',
+  '',
+ ]){
+  const completed={...row(1),status:'상품 검수 완료',stage},before=plain(completed);
+  assert.deepEqual(plain(h.api.registrationStageSummary(completed)),{stage:'검수 완료',reason:'—'});
+  assert.deepEqual(completed,before);
+ }
+});
+
+test('current rejection takes priority over another stage still reviewing and pending stages remain visible',()=>{
+ const h=client(),rejected={...row(1),status:'상품 검수 반려',stage:'가격/정책 검수중입니다. 상품 정보 상품 이미지 사유로 반려되었습니다. 발주서 발행 해당 검수 진행전입니다.'};
+ assert.deepEqual(plain(h.api.registrationStageSummary(rejected)),{stage:'상품 정보',reason:'상품 이미지 사유로 반려되었습니다.'});
+ const pending={...row(1),stage:'가격/정책 해당 검수가 완료되었습니다. 상품 정보 검수중입니다. 발주서 발행 해당 검수 진행전입니다.'};
+ assert.deepEqual(plain(h.api.registrationStageSummary(pending)),{stage:'상품 정보',reason:'검수중입니다.'});
+ assert.deepEqual(plain(h.api.registrationStageSummary({...row(1),status:'기타',stage:'별도 안내'})),{stage:'별도 안내',reason:'—'});
+});

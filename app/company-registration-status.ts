@@ -44,7 +44,10 @@ export async function loadCompanyRegistrationStatus(query:CompanyRegistrationQue
  if(signal.aborted)throw Error('조회가 취소되었습니다.');return validateCompanyRegistrationStatus(reply.observation,request,after);
 }
 export function registrationStageSummary(row:CompanyRegistrationRow):{stage:string;reason:string}{
+ // A completed review can retain earlier stage descriptions. Those details do
+ // not turn the authoritative current review status into a blocked stage.
+ if(row.status==='상품 검수 완료')return {stage:'검수 완료',reason:'—'};
  const labels=['가격/정책','상품 정보','발주서 발행'],parts=labels.map((label,index)=>{const start=row.stage.indexOf(label);if(start<0)return null;const end=index<labels.length-1?row.stage.indexOf(labels[index+1],start+label.length):-1;return {stage:label,reason:row.stage.slice(start+label.length,end<0?undefined:end).trim()};}).filter((value):value is {stage:string;reason:string}=>Boolean(value));
- const active=parts.find(part=>/반려|거절|실패|검수중|진행중/.test(part.reason)&&!/진행전/.test(part.reason))??parts.find(part=>part.reason&&!/진행전/.test(part.reason));
+ const active=parts.find(part=>/반려|거절|실패/.test(part.reason)&&!/진행전/.test(part.reason))??parts.find(part=>/검수중|진행중/.test(part.reason)&&!/진행전/.test(part.reason))??parts.find(part=>part.reason&&!/진행전/.test(part.reason));
  return active??{stage:row.stage||'—',reason:'—'};
 }
