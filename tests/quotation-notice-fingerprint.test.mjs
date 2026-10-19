@@ -31,16 +31,23 @@ async function setup(company, actualNotices = false) {
   Object.assign(h.context.settings, { manufactureDatePreviousMonth: true, washingMethod: '손세탁', handlingPrecautions: '화기 주의' });
   h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(h.context), 'job');
   await h.intake(); const product = h.sqlite.prepare('SELECT * FROM products').get(), base = '/api/products/' + product.id;
+  // This regression concerns a historical draft, before separate initial legal
+  // notice snapshots. New intake defaults have their own tests; do not make the
+  // old identity probe expect stage-six values in a new independent snapshot.
+  const storedContent=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content WHERE product_id=?').get(product.id).payload);
+  assert.equal(Boolean(storedContent.initialLegalNotices),actualNotices);delete storedContent.initialLegalNotices;
+  h.sqlite.prepare('UPDATE product_content SET payload=? WHERE product_id=?').run(JSON.stringify(storedContent),product.id);
   const source = await h.load('app/exports/quotation-source.ts').readMappedQuotationSource('owner', product.id, 'cat');
   return { ...h, base, product, source, profile };
 }
 
 // The persisted source payload without the notice predicate correction.
 // Keep the captured template input added by the source-context contract; the
-// only omitted identity is the notice correction under test.
+// only omitted identity is the notice correction under test. Registration
+// numbers are display metadata in both versions, never quotation identity.
 async function legacyExportFingerprint(h, source = h.source) {
   return h.load('app/automation/model.ts').fingerprint({ format: 'sourceflow-quotation-fields-v1',
-    saved: { ...source, settings: h.load('app/settings-fingerprint.ts').savedProductFingerprintSettings(source.settings) }, dataStartRow: 2,
+    saved: { ...source, product: h.load('app/automation/model.ts').productFingerprintSource(source.product), settings: h.load('app/settings-fingerprint.ts').savedProductFingerprintSettings(source.settings) }, dataStartRow: 2,
     schema: h.load('app/quotation-schema.ts').getQuotationSchema(source.categoryContext.categoryId, source.categoryContext.categoryPath, source.hubSchema),
     ...h.load('app/product-options.ts').optionPriceCalculationRevision(source.product, source.options.rows, source.settings, source.state.overrides),
   });
@@ -48,7 +55,7 @@ async function legacyExportFingerprint(h, source = h.source) {
 async function legacyEditorFingerprint(h, view, source = h.source) {
   const inputs = { categoryId: source.categoryContext.categoryId, categoryPath: source.categoryContext.categoryPath,
     product: source.product, content: source.content, options: source.options, settings: source.settings, hubSchema: source.hubSchema, template: source.profile.template };
-  return h.load('app/automation/model.ts').fingerprint({ inputs: { ...inputs,
+  return h.load('app/automation/model.ts').fingerprint({ inputs: { ...inputs, product: h.load('app/automation/model.ts').productFingerprintSource(inputs.product),
     settings: h.load('app/settings-fingerprint.ts').savedProductFingerprintSettings(inputs.settings) }, schema: view.automatic.schema,
     categoryContext: view.categoryContext, profileRevision: source.profile.revision, settingsPayload: source.source.settingsPayload, collection: source.source.collection,
     ...h.load('app/product-options.ts').optionPriceCalculationRevision(source.product, source.options.rows, source.settings),

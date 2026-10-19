@@ -35,7 +35,12 @@ for(const company of schemaCompanies)test('owner product captured live fields ca
   const response=await api.put({rules:f.rules,expectedRevision:0,productId:f.product.id,profileId:f.profile.id});assert.equal(response.status,200,await response.clone().text());
   assert.equal((await response.json()).revision,1);assert.equal((await(await api.get(query)).json()).revision,1);
   const next=plain(snap),raw=JSON.parse(next.schemaString);raw.properties.productPage.properties.commonAttributes.properties.exposedAttributes.allOf.at(-1).contains.properties.value.maxLength=2;next.schemaString=JSON.stringify(raw);
-  assert.equal((await f.api.PUT(new Request('https://app.test/api/category-profiles',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({id:f.profile.id,expectedRevision:f.profile.revision,profile:{...f.input,hubSchema:next}})}))).status,200);
+  const retainedProfile=local.sqlite.prepare('SELECT * FROM category_profiles WHERE id=?').get(f.profile.id);
+  assert.equal((await f.api.PUT(new Request('https://app.test/api/category-profiles',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({id:f.profile.id,expectedRevision:f.profile.revision,profile:{...f.input,hubSchema:next}})}))).status,409,'Changed form definitions must fork, never replace a working product form');
+  const fork=await f.api.POST(new Request('https://app.test/api/category-profiles',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...f.input,hubSchema:next})}));
+  assert.equal(fork.status,201,await fork.clone().text());const forked=(await fork.json()).profile;
+  assert.notEqual(forked.id,f.profile.id);assert.equal(JSON.parse(forked.hubSchema.schemaString).properties.productPage.properties.commonAttributes.properties.exposedAttributes.allOf.at(-1).contains.properties.value.maxLength,2);
+  assert.deepEqual(local.sqlite.prepare('SELECT * FROM category_profiles WHERE id=?').get(f.profile.id),retainedProfile);
   const saved=await api.put({rules:f.rules,expectedRevision:1,productId:f.product.id,profileId:f.profile.id});assert.equal(saved.status,200,await saved.clone().text());
   assert.equal((await(saved.json())).revision,2);assert.equal(JSON.stringify(local.sqlite.prepare('SELECT * FROM products').all()),before);assert.equal(JSON.stringify(local.sqlite.prepare('SELECT * FROM product_quotation_fields').all()),quoteBefore);
   const view=await(await local.route(f.path)).json();assert.equal(view.resolved.rows[0].fields[f.field.id].value,'');assert.equal(view.resolved.rows[0].fields[f.field.id].source,'manual-common');assert.equal(view.resolved.schema.fields.find(item=>item.id===f.field.id).maxLength,1000);
@@ -52,10 +57,11 @@ for(const company of schemaCompanies)test('next URL intake reuses saved live-fie
   const record=await saved.json();await setup(next,snap,{collect:false});assert.ok(await next.load('db/quotation-attribute-rules.ts').saveAttributeRules('owner',record.rules,0));
   assert.match(await next.intake(),/상품 초안 저장됨/);const product=next.sqlite.prepare('SELECT * FROM products').get(),path='/api/products/'+product.id+'/quotation-fields',view=await(await next.route(path)).json(),included=view.resolved.rows.filter(row=>row.optionId!==null&&row.included);
   assert.equal(included.length,6);assert.equal(next.sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');
-  for(const row of view.resolved.rows){assert.equal(row.fields[f.field.id].value,f.source.value);assert.equal(row.fields[f.field.id].source,'content');}
+  assert.equal(f.source.value,'否','Retain the supplier fact independently of its translated draft');
+  for(const row of view.resolved.rows){assert.equal(row.fields[f.field.id].value,'아니요');assert.equal(row.fields[f.field.id].source,'content');}
   const put=await next.route(path,{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[{fieldKey:f.field.id,optionId:included[0].optionId,value:''},{fieldKey:'title',optionId:null,value:'최종 검토 상품명'}]}});assert.equal(put.status,200,await put.clone().text());
   const source=await next.load('app/exports/quotation-source.ts').readQuotationExportSource('owner',product.id,null),resolved=next.load('app/exports/quotation-source.ts').resolveQuotationExport(source),rows=next.load('app/exports/quotation-fields.ts').resolvedQuotationRows(source,resolved,[]);
-  assert.equal(rows.length,6);assert.equal(rows[0][f.field.id],'');assert.equal(rows[1][f.field.id],f.source.value);assert.ok(rows.every(row=>row.title==='최종 검토 상품명'));
+  assert.equal(rows.length,6);assert.equal(rows[0][f.field.id],'');assert.equal(rows[1][f.field.id],'아니요');assert.ok(rows.every(row=>row.title==='최종 검토 상품명'));
   assert.ok(!first.network.includes('supplier.coupang.com')&&!next.network.includes('supplier.coupang.com'));
  }finally{first.close();next.close();}
 });
