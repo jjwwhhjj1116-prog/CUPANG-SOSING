@@ -80,7 +80,8 @@ function navigationUI(f){
     document:{activeElement:null,getElementById(){return null;},createElement(){return{click(){},set href(value){},set download(value){}};}},fetch:request,
     require(name){if(name==='react')return hooks;if(name==='react/jsx-runtime')return{jsx:(type,props,key)=>({type,props,key}),jsxs:(type,props,key)=>({type,props,key})};if(name.endsWith('.css'))return{};
      if(name==='@/app/components/use-intake-draft')return{useIntakeDraft:()=>({rows:[],setRows(){},goal:'work',setGoal(){},ready:true,loading:false})};
-     if(name==='@/app/components/registration-board')return{...load('app/components/registration-board.tsx'),RegistrationBoard:props=>{board=props;return null;}};
+     if(name==='@/app/components/use-source-registrations')return{useSourceRegistrations:()=>({items:[],error:'',reload(){}})};
+    if(name==='@/app/components/registration-board')return{...load('app/components/registration-board.tsx'),RegistrationBoard:props=>{board=props;return null;}};
      if(name==='@/app/components/product-option-board')return{ProductOptionBoard:props=>{optionBoard=props;return null;}};
      if(name.startsWith('@/app/components/')&&!implemented.has(name.split('/').at(-1)))return new Proxy({},{get:()=>()=>null});
      return name.startsWith('@/')?load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts')):native(name);

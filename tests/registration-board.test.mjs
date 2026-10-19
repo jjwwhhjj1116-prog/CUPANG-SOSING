@@ -355,3 +355,20 @@ test('the open filter trigger toggles closed and popup sorting preserves existin
  const trigger=elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='등록번호 열 필터')[0];trigger.props.onClick({currentTarget:{getBoundingClientRect:()=>({left:100,bottom:220})}});assert.equal(elements(h.render(),node=>node.type?.name==='RegistrationFilterPopover').length,0);
  popup=openColumnFilter(h,'등록번호');popup.props.onApply({mode:'values',values:['YP-10','YP-2']});openColumnFilter(h,'등록번호').props.onSort('ascending');assert.deepEqual(boardRowIds(h),['2','10']);openColumnFilter(h,'등록번호').props.onSort('descending');assert.deepEqual(boardRowIds(h),['10','2']);assert.equal(h.options.length,0);assert.equal(h.confirmations.length,0);
 });
+
+const sourceItem={id:'capture',ownerId:'owner',snapshot:{offerId:'700000000001',sourceUrl:'https://detail.1688.com/offer/700000000001.html',title:'새 수집 상품',options:[{key:'a'}],images:[{url:'https://cbu01.alicdn.com/test.jpg',role:'main'}]},reviewed:null,receivedAt:'2026-10-19T00:00:00Z',archivedAt:null,issues:['공급자 SKU']};
+test('collected product appears in the same fourteen-column board and routes category/review without existing-product handlers',()=>{
+ const prepared=[],reviewed=[];const h=boardHarness({sources:[sourceItem],onPrepareSource:item=>prepared.push(item),onReviewSource:item=>reviewed.push(item)});const before=JSON.stringify(h.product);
+ const tree=h.render(),sourceRow=elements(tree,node=>node.type==='tr'&&elements(node,child=>child.type==='td'&&child.props['data-column']==='product'&&nodeText(child).includes('새 수집 상품')).length)[0];
+ assert.ok(sourceRow);assert.equal(elements(sourceRow,node=>node.type==='td'&&node.props['data-column']).length,14);
+ assert.match(nodeText(sourceRow),/카테고리 대기/);assert.doesNotMatch(nodeText(sourceRow),/공급 0원|전송완료|등록완료/);
+ const checkbox=elements(sourceRow,node=>node.type==='input'&&node.props.type==='checkbox')[0];assert.equal(checkbox.props.disabled,true);
+ elements(sourceRow,node=>node.type==='button'&&node.props['aria-label']==='새 수집 상품 SEO설정 열기')[0].props.onClick();
+ elements(sourceRow,node=>node.type==='button'&&node.props.className==='registration-options')[0].props.onClick();
+ assert.equal(prepared[0],sourceItem);assert.equal(reviewed[0],sourceItem);assert.equal(h.calls.length,0);assert.equal(h.options.length,0);
+ elements(tree,node=>node.type==='input'&&node.props['aria-label']==='현재 페이지 전체 선택')[0].props.onChange({target:{checked:true}});assert.deepEqual([...h.selections[0]],[h.product.id]);assert.equal(JSON.stringify(h.product),before);
+});
+test('only the captured entry is archived through its own handler',async()=>{
+ const archived=[],deleted=[];const h=boardHarness({sources:[sourceItem],onArchiveSource:async item=>archived.push(item),onDelete:async product=>deleted.push(product)});
+ const button=elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='새 수집 상품 삭제')[0];await button.props.onClick();assert.equal(archived[0],sourceItem);assert.equal(deleted.length,0);
+});

@@ -5,15 +5,17 @@ import {createHash} from 'node:crypto';
 import {readPackageZip} from '../extensions/supplier-hub/package.mjs';
 const root=new URL('../',import.meta.url),folder=new URL('extensions/supplier-hub/',root);
 const decoder=new TextDecoder('utf-8',{fatal:true});
-const files=fs.readdirSync(folder,{withFileTypes:true}).sort((a,b)=>a.name<b.name?-1:a.name>b.name?1:0).map(entry=>{
- if(!entry.isFile()||!/^[A-Za-z0-9._-]+\.(mjs|mts|js|json|html|css|txt|md|svg|png)$/.test(entry.name))throw Error('확장 패키지에 예상하지 않은 파일이 있습니다.');
- const raw=new Uint8Array(fs.readFileSync(new URL(entry.name,folder)));
- // Git may check out text as CRLF on Windows. Package canonical UTF-8/LF so
- // the same checked-in sources have the same ZIP on either operating system.
- return {name:entry.name,data:entry.name.endsWith('.png')?raw:new TextEncoder().encode(decoder.decode(raw).replace(/\r\n/g,'\n'))};
-});
+function packageFiles(directory,prefix=''){
+ return fs.readdirSync(directory,{withFileTypes:true}).sort((a,b)=>a.name<b.name?-1:a.name>b.name?1:0).flatMap(entry=>{
+  if(entry.isDirectory()&&prefix===''&&entry.name==='icons')return packageFiles(new URL('icons/',directory),'icons/');
+  if(!entry.isFile()||!/^[A-Za-z0-9._-]+\.(mjs|mts|js|json|html|css|txt|md|svg|png)$/.test(entry.name))throw Error('확장 패키지에 예상하지 않은 파일이 있습니다.');
+  const raw=new Uint8Array(fs.readFileSync(new URL(entry.name,directory)));
+  return [{name:prefix+entry.name,data:entry.name.endsWith('.png')?raw:new TextEncoder().encode(decoder.decode(raw).replace(/\r\n/g,'\n'))}];
+ });
+}
+const files=packageFiles(folder);
 const manifest=JSON.parse(new TextDecoder().decode(files.find(file=>file.name==='manifest.json')?.data));
-if(manifest.manifest_version!==3||manifest.background.service_worker!=='handoff-worker.mjs'||!/^0\.2\.\d+$/.test(manifest.version))throw Error('Chrome 확장 배포 정보를 확인해주세요.');
+if(manifest.manifest_version!==3||manifest.background.service_worker!=='handoff-worker.mjs'||!/^\d+\.\d+\.\d+$/.test(manifest.version))throw Error('Chrome 확장 배포 정보를 확인해주세요.');
 // Whole-product preview is a separate contract. Never ship an extension that
 // advertises it while omitting a runtime dependency or its source verifier.
 const productDocumentFiles=['product-document.mjs','product-document.d.mts','product-document-receiver.mjs','product-document-dispatch.mjs','product-document-adapter.mjs','rejection-details.mjs','rejection-details.d.mts'];

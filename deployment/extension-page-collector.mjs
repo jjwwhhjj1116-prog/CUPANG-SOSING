@@ -22,7 +22,7 @@ if(window===window.top&&!document.getElementById('yoofam-page-collector')){
    if(pageSourceUrl(location.href).sourceUrl!==before)throw Error('상품 페이지가 변경되었습니다. 다시 수집해주세요.');
    const result=await chrome.runtime.sendMessage({type:'YOOFAM_SAVE_PAGE_SOURCE',snapshot});
    if(result?.ok!==true)throw Error(result?.error||'수집 결과를 확인하지 못했습니다. 다시 누르면 저장 결과를 확인합니다.');
-   status.textContent=result.delivered?(result.duplicate?'이미 수집함에 담긴 상품입니다. 처음 저장한 원문과 검토 내용을 유지했습니다.':'YOOFAM 수집함에 저장했습니다. 앱에서 카테고리를 선택하고 초안을 작성하세요.'):'확장에 보관했습니다. 같은 창의 YOOFAM 수집함에서 불러오기를 누르세요.';
+   status.textContent=result.delivered?(result.duplicate?'이미 수집함에 담긴 상품입니다. 처음 저장한 원문과 검토 내용을 유지했습니다.':'YOOFAM PLUS AI상품등록 목록에 담았습니다. 앱에서 카테고리를 선택하고 초안을 작성하세요.'):'확장에 보관했습니다. 같은 창의 YOOFAM 수집함에서 불러오기를 누르세요.';
    button.textContent='수집 완료';
   }catch(error){status.textContent=error?.message||'상품 수집 실패';button.textContent='YOOFAM 상품 수집';}
   finally{pending=false;button.disabled=false;}

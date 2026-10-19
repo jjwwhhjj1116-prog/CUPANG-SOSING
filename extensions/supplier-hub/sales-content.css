@@ -1,0 +1,36 @@
+/* Host-only rules. Internal controls and cards are isolated in Shadow DOM. */
+yf-sales-card-v2 {
+  display: none !important;
+  position: absolute !important;
+  right: 5px !important;
+  top: 5px !important;
+  width: min(138px, calc(100% - 10px)) !important;
+  min-width: 0 !important;
+  margin: 0 !important;
+  z-index: 12 !important;
+  box-sizing: border-box !important;
+  contain: layout style;
+}
+yf-sales-card-v2[data-visible] { display: block !important; }
+yf-sales-card-v2[data-detail] {
+  position: relative !important;
+  right: auto !important;
+  top: auto !important;
+  width: 180px !important;
+  max-width: 100% !important;
+  margin: 8px 0 !important;
+}
+yf-sales-dock-v2 {
+  display: block !important;
+  position: fixed !important;
+  right: 20px !important;
+  bottom: 18px !important;
+  z-index: 2147483000 !important;
+  width: auto !important;
+  max-width: calc(100vw - 24px) !important;
+  color-scheme: light !important;
+  pointer-events: none;
+}
+@media (max-width: 640px) {
+  yf-sales-dock-v2 { right: 12px !important; bottom: 12px !important; }
+}

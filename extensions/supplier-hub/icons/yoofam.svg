@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <defs>
+    <linearGradient id="yf-blue" x1="16" y1="8" x2="110" y2="126" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6576FF"/>
+      <stop offset=".48" stop-color="#3A56EC"/>
+      <stop offset="1" stop-color="#2539B7"/>
+    </linearGradient>
+    <linearGradient id="yf-mint" x1="73" y1="36" x2="96" y2="54" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#C7FFE8"/>
+      <stop offset="1" stop-color="#70E9CA"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="120" height="120" rx="32" fill="url(#yf-blue)"/>
+  <rect x="5" y="5" width="118" height="118" rx="31" stroke="white" stroke-opacity=".16" stroke-width="2"/>
+  <path d="M37 43C37 38 43 35 47 39L68 61C71 64 73 68 73 73V91C73 96 69 99 64 99C59 99 55 96 55 91V76C55 73 54 71 52 69L40 54C38 51 37 48 37 43Z" fill="white"/>
+  <path d="M70 56C69 46 75 36 86 34L96 32L94 42C92 53 83 59 73 59C71 59 70 58 70 56Z" fill="url(#yf-mint)"/>
+</svg>

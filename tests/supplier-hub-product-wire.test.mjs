@@ -79,15 +79,15 @@ test('worker preserves group failure identity without falling back or inferring 
   cases.push({ name: 'group failure relay', retries: 0, falseReceipts: 0 });
 });
 
-test('release85 keeps permissions and app origins unchanged, and all app downloads target the prepared release', () => {
-  const manifest = JSON.parse(read('extensions/supplier-hub/manifest.json')); assert.equal(manifest.version, '0.2.89');
-  assert.deepEqual(manifest.permissions, ['activeTab', 'scripting', 'tabs', 'webRequest', 'declarativeNetRequestWithHostAccess']);
-  assert.deepEqual(manifest.host_permissions, ['https://detail.1688.com/*', 'https://m.1688.com/*', 'https://h5api.m.1688.com/*', 'https://itemcdn.tmall.com/1688offer/*', 'https://supplier.coupang.com/*']);
-  assert.deepEqual(manifest.content_scripts, [{matches:['https://detail.1688.com/offer/*.html*'],js:['page-collector.js'],run_at:'document_idle',all_frames:false},{ matches: ['https://sourceflow.jjwwhhjj1116.workers.dev/*', 'http://localhost:3000/*', 'http://127.0.0.1:3000/*'], js: ['handoff-content.js', 'single-confirmation.js', 'single-content.js'] }]);
+test('unified release unions sales permissions while retaining quotation app origins, and all app downloads target the prepared release', () => {
+  const manifest = JSON.parse(read('extensions/supplier-hub/manifest.json')); assert.equal(manifest.version, '2.1.0');
+  assert.deepEqual(manifest.permissions, ['activeTab', 'scripting', 'tabs', 'webRequest', 'declarativeNetRequestWithHostAccess','cookies','storage']);
+  assert.deepEqual(manifest.host_permissions, ['https://detail.1688.com/*', 'https://m.1688.com/*', 'https://h5api.m.1688.com/*', 'https://itemcdn.tmall.com/1688offer/*', 'https://supplier.coupang.com/*','https://www.coupang.com/*','https://wing.coupang.com/*']);
+  assert.deepEqual(manifest.content_scripts.slice(0,2), [{matches:['https://detail.1688.com/offer/*.html*'],js:['page-collector.js'],run_at:'document_idle',all_frames:false},{ matches: ['https://sourceflow.jjwwhhjj1116.workers.dev/*', 'http://localhost:3000/*', 'http://127.0.0.1:3000/*'], js: ['handoff-content.js', 'single-confirmation.js', 'single-content.js'] }]);
   const download = '/downloads/yoofam-plus-supplier-hub-extension-' + manifest.version + '.zip';
   for (const file of ['app/components/intake-queue-panel.tsx', 'app/components/submission-package.tsx', 'app/components/supplier-hub-category-browser.tsx', 'app/components/supplier-hub-extension-check.tsx']) {
     const code = read(file); assert.ok(code.includes(download), file); assert.equal(code.includes('0.2.78'), false, file);
   }
   assert.ok(read('app/components/supplier-hub-extension-check.tsx').includes("info.version.localeCompare('" + manifest.version + "'"));
-  cases.push({ name: 'release and scope', version: manifest.version, newPermissions: 0, newHosts: 0, downloadComponents: 4 });
+  cases.push({ name: 'release and scope', version: manifest.version, newPermissions: 2, newHosts: 2, downloadComponents: 4 });
 });

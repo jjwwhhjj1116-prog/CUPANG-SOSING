@@ -71,6 +71,7 @@ function harness({submission=false,batch,integration,packaging=false,captureLabe
     if(name==='react/jsx-runtime')return{jsx:(type,props,key)=>({type,props,key}),jsxs:(type,props,key)=>({type,props,key})};
     if(name.endsWith('.css'))return{};
     if(name==='@/app/components/use-intake-draft')return{useIntakeDraft:()=>({rows:[],setRows(){},goal:'work',setGoal(){},ready:true,loading:false})};
+    if(name==='@/app/components/use-source-registrations')return{useSourceRegistrations:()=>({items:[],error:'',reload(){}})};
     if(name==='@/app/components/intake-queue-panel')return{IntakeQueuePanel:props=>{intakeSettings=props.settings;return null;}};
     if(name==='@/app/components/product-option-board')return{ProductOptionBoard:props=>{optionBoard=props;return null;}};
     if(captureLabelBatch&&name==='@/app/components/batch-label-panel')return{BatchLabelPanel:props=>{labelBatch=props;return null;}};
@@ -142,7 +143,7 @@ test('packaging review retains unsaved source and quotation fields before openin
   h.quotationEditor.onDirtyChange(true);await h.settle();h.packagingEditor.onReviewPackaging('sku-2');await h.settle();assert.deepEqual(JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget)),initialTarget);assert.match(text(h.workspace()),/견적서에 저장하지 않은 입력/);
   h.quotationEditor.onDirtyChange(false);h.setQuotationBusy(true);await h.settle();h.packagingEditor.onReviewPackaging('sku-2');await h.settle();assert.deepEqual(JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget)),initialTarget);assert.match(text(h.workspace()),/작업이 진행 중/);
   h.setQuotationBusy(false);await h.settle();h.packagingEditor.onReviewPackaging('sku-2');await h.settle();
-  assert.deepEqual(JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget)),{optionId:'sku-2',fieldId:'packagedWeightG'});assert.equal(h.quotationEditor.profileId,'profile-b');assert.equal(h.button('7견적서 작업').props['aria-current'],'step');
+  assert.deepEqual(JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget)),{optionId:'sku-2',fieldId:'packagedWeightG'});assert.equal(h.quotationEditor.profileId,undefined,'the captured profile is resolved by immutable product context, without an override');assert.equal(h.button('7견적서 작업').props['aria-current'],'step');
   const before=h.quotationEditor.mount;h.packagingEditor.onReviewPackaging('sku-2');await h.settle();assert.notEqual(h.quotationEditor.mount,before);
   assert.ok(h.requests.every(request=>request.method==='GET'),'navigation does not overwrite saved values or transmit a package');
  }finally{h.close();}
@@ -161,7 +162,7 @@ test('retained packaging callback cannot replace a newly opened workspace target
 test('packaging review from a category-bound submission target keeps the quotation panel and manual start row',async()=>{
  const h=harness({submission:true,packaging:true});try{
   await h.settle();await h.openBoardStage('상품 b');await h.click('7견적서 작업');await h.click('저장한 견적 전송 준비');await h.click('견적서 수정하기');
-  assert.equal(h.quotationEditor.navigationTarget.categoryId,'80719');assert.equal(h.quotationEditor.profileId,'profile-b');
+  assert.equal(h.quotationEditor.navigationTarget.categoryId,'80719');assert.equal(h.quotationEditor.profileId,undefined,'the captured profile is resolved by immutable product context, without an override');
   const automaticRow=()=>nodes(h.workspace()).find(node=>node.type==='label'&&text(node)==='카테고리에 저장한 입력 시작 행 자동 사용');
   const rowInput=()=>nodes(nodes(h.workspace()).find(node=>node.type==='label'&&text(node).startsWith('상품 데이터 입력 시작 행'))).find(node=>node.type==='input');
   nodes(automaticRow()).find(node=>node.type==='input').props.onChange({target:{checked:false}});await h.settle();
@@ -171,7 +172,7 @@ test('packaging review from a category-bound submission target keeps the quotati
   assert.equal(rowInput().props.value,9,'packaging navigation must not remount the panel and reset its output row');
   assert.equal(nodes(automaticRow()).find(node=>node.type==='input').props.checked,false);
   assert.deepEqual(JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget)),{optionId:'sku-2',fieldId:'packagedWeightG',categoryId:'80719'});
-  assert.equal(h.quotationEditor.profileId,'profile-b');assert.notEqual(h.quotationEditor.mount,originalEditor,'only the field editor is remounted to consume the explicit target');
+  assert.equal(h.quotationEditor.profileId,undefined,'the captured profile is resolved by immutable product context, without an override');assert.notEqual(h.quotationEditor.mount,originalEditor,'only the field editor is remounted to consume the explicit target');
   assert.equal(h.button('7견적서 작업').props['aria-current'],'step');assert.equal(h.requests.length,reads,'the current panel profile and row settings are retained without reloading them');
   assert.ok(h.requests.every(request=>request.method==='GET'),'inspection never changes saved values or transmits files');
  }finally{h.close();}
@@ -197,8 +198,8 @@ test('reviewed archive product enters transmission preparation with its own prof
   const step=nodes(h.render()).find(node=>node.type==='button'&&text(node)==='7견적서 작업');assert.ok(step);step.props.onClick();await h.settle();
   await h.click('저장한 견적 전송 준비');
   assert.equal(h.workspace(),undefined);assert.match(text(h.render()),/선택한 상품 1건/);
-  let reads=h.requests.filter(request=>request.url.includes('/submission-review'));assert.equal(reads.length,1);assert.equal(reads[0].url,'/api/products/a/submission-review?profileId=profile-a');
-  await h.click('견적서 수정하기');assert.match(text(h.workspace()),/상품 a/);assert.equal(h.quotationEditor.profileId,'profile-a');
+  let reads=h.requests.filter(request=>request.url.includes('/submission-review'));assert.equal(reads.length,1);assert.equal(reads[0].url,'/api/products/a/submission-review');
+  await h.click('견적서 수정하기');assert.match(text(h.workspace()),/상품 a/);assert.equal(h.quotationEditor.profileId,undefined,'the captured profile is resolved by immutable product context, without an override');
   await h.click('저장한 견적 전송 준비');reads=h.requests.filter(request=>request.url.includes('/submission-review'));assert.equal(reads.length,2);assert.equal(reads[1].url,reads[0].url);
   await h.click('×');await h.click('✦AI 상품등록');
   assert.equal(nodes(h.render()).find(node=>node.props?.['aria-label']==='상품 b 선택').props.checked,true);

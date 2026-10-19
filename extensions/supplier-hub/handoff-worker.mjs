@@ -1,3 +1,4 @@
+import './sales-worker.mjs';
 import {dispatchSupplierHubValidation} from './validation-dispatch.mjs';
 import {observeSupplierHubResult} from './observe.mjs';
 import {validateHandoff,pendingPackage,resultKey,transferRecord} from './handoff-store.mjs';

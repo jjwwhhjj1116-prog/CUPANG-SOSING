@@ -25,3 +25,12 @@ test('inbox stays lazy, and adding a reviewed source delegates category selectio
 test('closing the view aborts the pending load and cannot publish a late member response',async()=>{
  let release;const h=fixture(()=>new Promise(resolve=>{release=resolve;}));h.render();h.open();assert.equal(h.calls.length,1);h.close();assert.equal(h.calls[0].init.signal.aborted,true);release(Response.json({ownerId:'owner',items:[item]}));await turn();assert.equal(h.button('카테고리 선택·초안 작성'),undefined);assert.equal(h.added.length,0);
 });
+
+test('a partial capture may choose a category before reviewing missing source facts',async()=>{
+ const partial={...item,issues:['공급자 SKU','위안 원가']};
+ const h=fixture(async()=>Response.json({ownerId:'owner',items:[partial]}));try{
+  h.render();h.open();await turn();const button=h.button('카테고리 선택·초안 작성');
+  assert.equal(button.props.disabled,false);button.props.onClick();assert.equal(h.added[0].id,partial.id);
+  assert.equal(h.calls.length,1);assert.ok(h.calls.every(call=>!call.init.method));
+ }finally{h.close();}
+});

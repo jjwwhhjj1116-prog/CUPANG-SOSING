@@ -28,6 +28,9 @@ import { QuotationPanel } from '@/app/components/quotation-panel';
 import { SubmissionReviewPanel } from '@/app/components/submission-review-panel';
 import { CollectionResultPanel } from '@/app/components/collection-result-panel';
 import {SourceInboxPanel} from '@/app/components/source-inbox-panel';
+import {useSourceRegistrations} from '@/app/components/use-source-registrations';
+import type {SourceInboxItem} from '@/app/source-inbox';
+import {sameSourceUrl} from '@/app/source-registration';
 import { CollectionBatchPanel } from '@/app/components/collection-batch-panel';
 import { ProductOptionBoard } from '@/app/components/product-option-board';
 import { RegistrationBoard, registrationTitle } from '@/app/components/registration-board';
@@ -127,6 +130,9 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
 
 
   const [addOpen, setAddOpen] = useState(false);
+  const sourceRegistrations=useSourceRegistrations(workspaceOwnerId);
+  const [sourceReview,setSourceReview]=useState<{item:SourceInboxItem;returnToIntake:boolean}|null>(null);
+  const [sourceNotice,setSourceNotice]=useState('');
   const [intakeSourceSeed,setIntakeSourceSeed]=useState<IntakeSourceSeed|undefined>();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsBusy, setSettingsBusy] = useState(false);
@@ -555,6 +561,26 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   }
 
 
+  function prepareSource(item:SourceInboxItem){
+    try{
+      if(item.ownerId!==workspaceOwnerId||loading||loadError||busy||addOpen||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving||settingsBusyRef.current)throw Error('현재 상품 목록과 대기열을 확인한 뒤 다시 추가해주세요.');
+      if(products.some(product=>sameSourceUrl(product.source_url,item.snapshot.sourceUrl)))throw Error('이미 작업 중인 상품입니다. 기존 작업 상품은 변경하지 않았습니다.');
+      setSourceNotice('');
+      if(intakeRows.some(row=>sameSourceUrl(row.url,item.snapshot.sourceUrl))){setView('work');setAddOpen(true);return;}
+      if(intakeRows.length>=50)throw Error('상품 대기열은 최대 50행입니다. 기존 입력은 유지했습니다.');
+      setIntakeSourceSeed({id:crypto.randomUUID(),sourceUrl:item.snapshot.sourceUrl});setView('work');setAddOpen(true);
+    }catch(error){setSourceNotice(error instanceof Error?error.message:'상품 추가 실패');}
+  }
+  async function archiveSource(item:SourceInboxItem){
+    if(item.ownerId!==workspaceOwnerId||busy||addOpen)throw Error('진행 중인 작업을 마친 뒤 다시 시도해주세요.');
+    const response=await fetch('/api/source-inbox',{method:'DELETE',headers:{'content-type':'application/json'},body:JSON.stringify({expectedOwnerId:workspaceOwnerId,id:item.id,expectedRevision:item.revision})});
+    const body=await response.json() as {ownerId?:string;id?:string;archived?:boolean;error?:string};if(!response.ok||body.ownerId!==workspaceOwnerId||body.id!==item.id||body.archived!==true)throw Error(body.error||'수집 상품 제외 결과를 확인하지 못했습니다.');
+    sourceRegistrations.reload();
+  }
+  function reviewSource(item:SourceInboxItem,returnToIntake=false){
+    if(item.ownerId!==workspaceOwnerId||busy)return;setSourceReview({item,returnToIntake});if(returnToIntake)setAddOpen(false);
+  }
+  function closeSourceReview(){const reopen=sourceReview?.returnToIntake;setSourceReview(null);sourceRegistrations.reload();if(reopen)setAddOpen(true);}
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -578,13 +604,8 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
 
 
         {view==='archive'?<><ProductManagementWorkspace/><details className="collection-panel"><summary>YOOFAM PLUS 작업 상품 보관함</summary><ProductArchive onOpenProduct={openArchivedProduct} refreshToken={`${collectionJobs[0]?.updated_at}:${products[0]?.updated_at}`}/></details></>:<>
-        <SourceInboxPanel key={workspaceOwnerId??'anonymous'} ownerId={workspaceOwnerId} disabled={busy||addOpen||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving} onAdd={item=>{
-          if(item.ownerId!==workspaceOwnerId||item.issues.length||loading||loadError||busy||addOpen||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving||settingsBusyRef.current)throw Error('현재 상품 목록과 대기열을 확인한 뒤 다시 추가해주세요.');
-          if(products.some(product=>{try{return new URL(product.source_url).pathname===new URL(item.snapshot.sourceUrl).pathname;}catch{return false;}}))throw Error('이미 작업 상품으로 등록한 URL입니다. 기존 작업 상품은 변경하지 않았습니다.');
-          if(intakeRows.some(row=>{try{return new URL(row.url).pathname===new URL(item.snapshot.sourceUrl).pathname;}catch{return false;}}))throw Error('이미 상품 대기열에 담긴 URL입니다. 기존 행을 그대로 유지했습니다.');
-          if(intakeRows.length>=50)throw Error('상품 대기열은 최대 50행입니다. 기존 입력은 유지했습니다.');
-          setIntakeSourceSeed({id:crypto.randomUUID(),sourceUrl:item.snapshot.sourceUrl});setView('work');setAddOpen(true);
-        }}/>
+        {(sourceNotice||sourceRegistrations.error)&&<p role="status" className="panel-note">{sourceNotice||sourceRegistrations.error}</p>}
+        <SourceInboxPanel key={workspaceOwnerId??'anonymous'} ownerId={workspaceOwnerId} disabled={busy||addOpen||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving} onChanged={sourceRegistrations.reload} onAdd={prepareSource}/>
         <details className="collection-panel" aria-label="수집 대기열"><summary>상품 대기열 · {collectionJobs.filter(job=>job.status!=='cancelled').length}건</summary>
           <CollectionBatchPanel jobs={collectionJobs} onSaved={()=>void loadWorkspace()} onOpenProduct={openCollectedProduct}/>
           <div className="collection-heading"><div><h2>수집 대기열 <span>{collectionJobs.filter(job => job.status !== 'cancelled').length}</span></h2><p>{collectionBlock}</p></div><button className="btn ghost" disabled={loading || busy} onClick={()=>{setLoading(true);void loadWorkspace();}}>새로고침</button></div>
@@ -593,7 +614,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
           <ul className="collection-list">{collectionJobs.filter(job=>showCancelled || job.status !== 'cancelled').map(job=><li key={job.id}><div><strong>1688 · {job.offer_id}</strong><a href={job.source_url} target="_blank" rel="noreferrer" style={{overflowWrap:"anywhere"}}>{job.source_url}</a><small>{job.context?.category.categoryPath.join(' > ') ?? '카테고리 미지정 · 기존 요청'}</small><small>목표: {goalOptions.find(goal=>goal.id===job.goal)?.title} · 요청 {new Date(job.created_at).toLocaleString('ko-KR')}</small>{job.received_at&&<small>원문 수신 {new Date(job.received_at).toLocaleString('ko-KR')}</small>}</div><span className={`collection-status ${collectionJobProgress(job).kind}`}>{collectionJobProgress(job).label}</span><CollectionResultPanel jobId={job.id} offerId={job.offer_id} productId={job.product_id} onSaved={()=>void loadWorkspace()} onOpenProduct={openCollectedProduct}/>{!job.product_id && job.status !== 'cancelled' && <button className="btn ghost" disabled={busy} aria-label={`${job.offer_id} 수집 취소`} onClick={()=>void cancelCollectionJob(job.id)}>취소</button>}</li>)}</ul>
         </details>
 
-        <RegistrationBoard products={products} selected={selected} onSelected={setSelected} onOpen={openProduct} onOptions={openOptionBoard} onDelete={removeWorkspaceProduct} loading={loading} error={loadError} onArchive={()=>changeView('archive')}/>
+        <RegistrationBoard products={products} sources={sourceRegistrations.items} onPrepareSource={prepareSource} onReviewSource={item=>reviewSource(item)} onArchiveSource={archiveSource} selected={selected} onSelected={setSelected} onOpen={openProduct} onOptions={openOptionBoard} onDelete={removeWorkspaceProduct} loading={loading} error={loadError} onArchive={()=>changeView('archive')}/>
         <button type="button" className="btn ghost" onClick={()=>setRemovedOpen(true)}>삭제된 상품</button>
         <HistoricalAiRegistrationsPanel onReuseUrl={(target,signal)=>{
           if(signal.aborted)return;
@@ -605,9 +626,10 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
 
       {removedOpen&&<Modal title="삭제된 상품" subtitle="저장한 이미지와 편집 내용을 복원합니다." onClose={()=>{if(!removalBusy.current)setRemovedOpen(false);}}><ProductRemovalDialog workspaceOwnerId={workspaceOwnerId} onRestored={loadWorkspace} onBusyChange={changeRemovalBusy}/></Modal>}
 
+      {sourceReview&&sourceReview.item.ownerId===workspaceOwnerId&&<Modal wide title="수집 상품정보 확인·수정" subtitle="현재 수집한 상품만 검토합니다." onClose={closeSourceReview}><SourceInboxPanel key={sourceReview.item.id} ownerId={workspaceOwnerId} disabled={false} initialItem={sourceReview.item} onChanged={sourceRegistrations.reload} onAdd={item=>{if(sourceReview.returnToIntake){closeSourceReview();return;}setSourceReview(null);prepareSource(item);}}/></Modal>}
       {addOpen&&<Modal wide title="상품 대기열" subtitle="상품마다 카테고리·URL·특징·키워드를 지정합니다." onClose={()=>{if(!busy&&!intakeDraft.loading){setIntakeSourceSeed(undefined);setAddOpen(false);}}}>
         <div className="intake-draft-actions"><p role="status">{intakeDraft.message}{intakeDraft.dirty?' · 저장하지 않은 변경 있음':''}</p><button type="button" className="btn ghost" disabled={busy||intakeDraft.saving||!intakeDraft.ready} onClick={()=>void intakeDraft.save()}>{intakeDraft.autoPaused?'저장 다시 시도':intakeDraft.saving?'저장 중…':'지금 저장'}</button><button type="button" className="btn ghost" disabled={busy||intakeDraft.saving} onClick={()=>{if(!intakeDraft.dirty||window.confirm('현재 미저장 입력을 서버 초안으로 교체할까요?'))void intakeDraft.load();}}>{intakeDraft.ready?'서버 초안으로 교체':'초안 다시 불러오기'}</button></div>
-        {intakeDraft.ready&&!intakeDraft.loading&&<IntakeQueuePanel workspaceOwnerId={workspaceOwnerId} sourceSeed={intakeSourceSeed} onSourceConsumed={id=>setIntakeSourceSeed(current=>current?.id===id?undefined:current)} jobs={collectionJobs} onOpenProduct={async(id,signal)=>{await openCollectedProduct(id,'SEO',signal);if(!signal.aborted)setAddOpen(false);}} settings={settings} onSettingsReloadStarted={startSettingsReload} onSettingsReloaded={applyReloadedSettings} goal={intakeGoal} onGoal={setIntakeGoal} rows={intakeRows} onRows={setIntakeRows} profiles={categoryProfiles} onBusy={setBusy}
+        {intakeDraft.ready&&!intakeDraft.loading&&<IntakeQueuePanel workspaceOwnerId={workspaceOwnerId} sourceSeed={intakeSourceSeed} sourceItems={sourceRegistrations.items} onReviewSource={item=>reviewSource(item,true)} onSourceConsumed={id=>setIntakeSourceSeed(current=>current?.id===id?undefined:current)} jobs={collectionJobs} onOpenProduct={async(id,signal)=>{await openCollectedProduct(id,'SEO',signal);if(!signal.aborted)setAddOpen(false);}} settings={settings} onSettingsReloadStarted={startSettingsReload} onSettingsReloaded={applyReloadedSettings} goal={intakeGoal} onGoal={setIntakeGoal} rows={intakeRows} onRows={setIntakeRows} profiles={categoryProfiles} onBusy={setBusy}
           onProfile={profile=>setCategoryProfiles(current=>[profile,...current.filter(item=>item.id!==profile.id)])}
           onJobs={jobs=>{setCollectionJobs(current=>[...jobs,...current.filter(job=>!jobs.some(saved=>saved.id===job.id))]);if(jobs.some(job=>job.product_id))void loadWorkspace();}}
           onAdvanced={seed=>{setEditingCategory(seed?.profileId?categoryProfiles.find(profile=>profile.id===seed.profileId)??null:null);setCategorySeed(seed?{name:seed.categoryPath.at(-1)??'',categoryId:seed.categoryId,categoryPath:seed.categoryPath,template:null,mappings:[]}:undefined);setAddOpen(false);setCategoryOpen(true);}}/>}

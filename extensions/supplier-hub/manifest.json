@@ -1,22 +1,26 @@
 {
   "manifest_version": 3,
-  "name": "YOOFAM PLUS 견적서 첨부",
-  "version": "0.2.89",
+  "name": "YOOFAM PLUS · 판매량 조회·상품 수집",
+  "version": "2.1.0",
   "minimum_chrome_version": "120",
-  "description": "현재 Chrome에서 1688 상품정보를 확인하고, 검토한 견적서 첨부를 Supplier Hub 등록 탭에 전달합니다.",
+  "description": "쿠팡 판매량 조회, 현재 1688 상품 수집, YOOFAM PLUS AI상품등록과 Supplier Hub 견적서 전달을 하나로 연결합니다.",
   "permissions": [
     "activeTab",
     "scripting",
     "tabs",
     "webRequest",
-    "declarativeNetRequestWithHostAccess"
+    "declarativeNetRequestWithHostAccess",
+    "cookies",
+    "storage"
   ],
   "host_permissions": [
     "https://detail.1688.com/*",
     "https://m.1688.com/*",
     "https://h5api.m.1688.com/*",
     "https://itemcdn.tmall.com/1688offer/*",
-    "https://supplier.coupang.com/*"
+    "https://supplier.coupang.com/*",
+    "https://www.coupang.com/*",
+    "https://wing.coupang.com/*"
   ],
   "background": {
     "service_worker": "handoff-worker.mjs",
@@ -24,8 +28,12 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://detail.1688.com/offer/*.html*"],
-      "js": ["page-collector.js"],
+      "matches": [
+        "https://detail.1688.com/offer/*.html*"
+      ],
+      "js": [
+        "page-collector.js"
+      ],
       "run_at": "document_idle",
       "all_frames": false
     },
@@ -40,10 +48,33 @@
         "single-confirmation.js",
         "single-content.js"
       ]
+    },
+    {
+      "matches": [
+        "https://www.coupang.com/np/search*",
+        "https://www.coupang.com/np/categories/*",
+        "https://www.coupang.com/vp/products/*"
+      ],
+      "js": [
+        "sales-content.js"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "YOOFAM PLUS 견적서 첨부"
+    "default_title": "YOOFAM PLUS · 판매량 조회·상품 수집",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
   }
 }

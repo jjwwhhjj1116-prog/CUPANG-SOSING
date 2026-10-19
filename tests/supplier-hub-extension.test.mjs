@@ -110,9 +110,9 @@ test('decode all files before upload and report a partial attempt without automa
 });
 test('extension limits access to the explicit product and Supplier Hub hosts and app origins',()=>{
   const manifest=JSON.parse(fs.readFileSync(new URL('../extensions/supplier-hub/manifest.json',import.meta.url),'utf8'));
-  assert.deepEqual(manifest.permissions,['activeTab','scripting','tabs','webRequest','declarativeNetRequestWithHostAccess']);assert.deepEqual(manifest.host_permissions,['https://detail.1688.com/*','https://m.1688.com/*','https://h5api.m.1688.com/*','https://itemcdn.tmall.com/1688offer/*','https://supplier.coupang.com/*']);
+  assert.deepEqual(manifest.permissions,['activeTab','scripting','tabs','webRequest','declarativeNetRequestWithHostAccess','cookies','storage']);assert.deepEqual(manifest.host_permissions,['https://detail.1688.com/*','https://m.1688.com/*','https://h5api.m.1688.com/*','https://itemcdn.tmall.com/1688offer/*','https://supplier.coupang.com/*','https://www.coupang.com/*','https://wing.coupang.com/*']);
   assert.equal(manifest.background.service_worker,'handoff-worker.mjs');
-  assert.deepEqual(manifest.content_scripts[0].matches,HANDOFF_ORIGINS.map(origin=>origin+'/*'));
+  assert.deepEqual(manifest.content_scripts.find(script=>script.js.includes('handoff-content.js')).matches,HANDOFF_ORIGINS.map(origin=>origin+'/*'));
 });
 test('web handoff accepts only top-frame app senders and bounded product-specific packages',()=>{
   const request={type:'YOOFAM_PREPARE_PACKAGE',productId:'product-1',categoryId:'80719',fingerprint:'a'.repeat(64),base64:'UEs='};
