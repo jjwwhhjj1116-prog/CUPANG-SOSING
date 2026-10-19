@@ -8,6 +8,7 @@ const profileFile=new URL('../outputs/step604-unand-profile-read.json',import.me
 const originalFile=new URL('../outputs/step603-official-unand-2624.xlsx',import.meta.url);
 const available=fs.existsSync(profileFile)&&fs.existsSync(originalFile);
 const read=name=>fs.readFileSync(new URL('./fixtures/'+name,import.meta.url),'utf8');
+const recordedGallery=new Set(Object.values(JSON.parse(read('1688-mobile-813724060928.json')).data).find(value=>value?.data?.offerImgList).data.offerImgList);
 const json=async(response,status=200)=>{assert.equal(response.status,status,await response.clone().text());return response.json();};
 
 /** Recorded supplier responses are remapped to a synthetic offer. Every route,
@@ -66,7 +67,8 @@ for(const company of companies)test(`fresh full server receipt with image-only d
   assert.ok(f.progress.every(value=>!value.includes('현재 Chrome')));assert.doesNotMatch(message,/상세 원문 보완 미완료/);assert.match(message,/상세 설명.*수집 원문에 없어/);
   assert.equal(f.h.sqlite.prepare('SELECT count(*) n FROM collection_source_supplements').get().n,0);assert.equal(f.requests.filter(value=>value.path.endsWith('/source-supplement')).length,0);
   const keys=new Map(f.h.sqlite.prepare('SELECT image_index,object_key FROM collection_images WHERE job_id=? ORDER BY image_index').all(f.job.id).map(row=>[row.image_index,row.object_key]));
-  for(const role of ['main','additional','detail'])assert.deepEqual(content.assets[role].value,source.images.flatMap((image,index)=>image.role===role?[keys.get(index)]:[]));
+  assert.deepEqual(source.sourceGallery,{format:'1688-public-mobile-gallery-v1',imageIndices:[...recordedGallery].map((_,index)=>index)});
+  for(const role of ['main','additional','detail'])assert.deepEqual(content.assets[role].value,source.images.flatMap((image,index)=>image.role===role&&(role!=='additional'||recordedGallery.has(image.url))?[keys.get(index)]:[]));
   for(let index=0;index<options.rows.length;index++){const row=options.rows[index],raw=source.options[index];assert.equal(row.supplierSku,raw.sku);assert.equal(row.unitCostCny,raw.unitPriceCny);assert.equal(row.minimumOrderQuantity,raw.minimumOrder);assert.equal(row.stock,raw.stock);assert.equal(row.imageKey,keys.get(raw.imageIndex));}
   assert.equal(content.seo.title.value,'검토 브랜드 우드 패턴 다리 선글라스');assert.ok(options.rows.every(row=>row.provenance.translatedName==='translated'));assert.equal(f.h.aiSources.length,1);assert.equal(f.h.stats.downloads,19);assert.equal(f.h.stats.maxDownloads,3);assert.equal(f.product().supplier_hub_status,'미전송');assert.equal(f.product().image_status,'대기');
   const quote=await f.verifyWorkbook();assert.equal(quote.report.company.code,company.code);assert.equal(quote.report.categoryId,'69900');f.verifyScope();
@@ -80,7 +82,7 @@ for(const company of companies)test(`fresh full server receipt with image-only d
 
 for(const company of companies)test(`a partial mobile detail failure retains gaps and proceeds without another Chrome capture (${company.code})`,{skip:!available},async()=>{
  const f=await fullMobileReuseFixture(company,{partial:true});try{
-  const message=await f.run(),source=JSON.parse(f.receipt().payload);assert.equal(source.provider,'1688-public-mobile-partial-v1');assert.equal(source.images.length,8);assert.equal(source.attributes.length,24);assert.equal(f.captures,0);assert.match(message,/상세 설명·상세 이미지.*수집 원문에 없어/);assert.deepEqual(f.content().assets.detail.value,[]);assert.equal(f.content().assets.main.value.length,1);assert.equal(f.content().assets.additional.value.length,7);assert.equal(f.options().rows.length,6);assert.equal(f.h.aiSources.length,1);
+  const message=await f.run(),source=JSON.parse(f.receipt().payload);assert.equal(source.provider,'1688-public-mobile-partial-v1');assert.equal(source.images.length,8);assert.equal(source.attributes.length,24);assert.equal(f.captures,0);assert.match(message,/상세 설명·상세 이미지.*수집 원문에 없어/);assert.deepEqual(f.content().assets.detail.value,[]);assert.equal(f.content().assets.main.value.length,1);assert.equal(f.content().assets.additional.value.length,recordedGallery.size-1);assert.equal(f.options().rows.length,6);assert.equal(f.h.aiSources.length,1);
   const before=f.retained(),count=f.sourceRequests.length;await f.run(await f.h.load('db/collection-jobs.ts').findCollectionJob('owner',f.job.id));assert.equal(f.retained(),before);assert.equal(f.sourceRequests.length,count);assert.equal(f.captures,0);assert.equal(f.h.aiSources.length,1);f.verifyScope();
  }finally{f.close();}
 });

@@ -53,6 +53,8 @@ test('generated Chrome collector preserves synthetic page and SKU bytes on trans
  const api=mobileIntakeHarness();try{for(const status of [502,503,504]){
   const h=fixture({mobileBody:body,skuPayload:payload,sourceUrlOverride:url,detailResponse:()=>new Response('temporary optional detail outage',{status})}),result=await h.run();assert.equal(result.ok,true,result.error);assert.equal(result.format,'1688-public-mobile-partial-capture-v1');assert.equal(result.sourceUrl,url);assert.equal(result.mobileHtml,body);assert.deepEqual(result.skuPayload,payload);assert.deepEqual(result.detailUnavailable,{status});assert.equal(result.detailSource,'');assert.equal(h.rules.size,0);assert.equal(h.listeners.size,0);assert.equal(h.calls.filter(value=>value==='tab-query').length,1);
   const parsed=api.load('app/browser-product-capture.ts').parseBrowserProductCapture(result,url);assert.equal(parsed.provider,'chrome-public-mobile-partial-v1');assert.equal(parsed.options.length,6);assert.equal(parsed.images.length,8);assert.equal(parsed.attributes.length,24);assert.ok(!parsed.images.some(image=>image.role==='detail'));
+  assert.deepEqual(JSON.parse(JSON.stringify(parsed.sourceGallery)),{format:'1688-public-mobile-gallery-v1',imageIndices:[0,1,2,3,4]});
+  const {offerId,...receipt}=parsed;assert.deepEqual(JSON.parse(JSON.stringify(api.load('app/collection-result.ts').validateCollectionResult(receipt,offerId).sourceGallery)),JSON.parse(JSON.stringify(parsed.sourceGallery)));
  }}finally{api.close();}
 });
 
@@ -76,6 +78,7 @@ test('Chrome anonymous public transport collects six recorded SKUs after finding
   const parsed=server.load('app/browser-product-capture.ts').parseBrowserProductCapture(capture,sourceUrl);
   assert.equal(parsed.provider,'chrome-public-mobile-v1');assert.deepEqual(Array.from(parsed.options,row=>row.unitPriceCny),[3.6,5.5,3.6,5.5,3.6,5.5]);
   assert.equal(parsed.images.length,19);assert.equal(parsed.attributes.length,24);
+  assert.deepEqual(JSON.parse(JSON.stringify(parsed.sourceGallery)),{format:'1688-public-mobile-gallery-v1',imageIndices:[0,1,2,3,4]});
  }finally{server.close();}
 });
 

@@ -31,7 +31,8 @@ for(const company of schemaCompanies)for(const mode of ['server-mobile','browser
    const row=optionView.options.rows[i];assert.equal(row.supplierSku,receipt.options[i].sku);assert.equal(row.provenance.supplierSku,'collected');assert.equal(row.imageKey,originals.get(receipt.options[i].imageIndex));assert.equal(row.provenance.imageKey,'collected');
    assert.equal(optionView.sourceImageKeys[row.id],row.imageKey);assert.equal(row.provenance.translatedName,'translated');
   }
-  assert.deepEqual(savedContent.assets.main.value,[originals.get(0)]);assert.deepEqual(savedContent.assets.additional.value,[originals.get(1),originals.get(2),originals.get(3)]);assert.deepEqual(savedContent.assets.detail.value,[originals.get(4)]);
+  assert.deepEqual(receipt.sourceGallery,{format:'1688-public-mobile-gallery-v1',imageIndices:[0,1]});
+  assert.deepEqual(savedContent.assets.main.value,[originals.get(0)]);assert.deepEqual(savedContent.assets.additional.value,[originals.get(1)]);assert.deepEqual(savedContent.assets.detail.value,[originals.get(4)]);
   assert.ok(h.objects.has(originals.get(3)),'valid unselected second-axis media is retained rather than discarded');
   assert.equal(h.stats.downloads,5);assert.equal(h.objects.size,5);assert.equal(h.aiSources.length,1);assert.equal(saved.supplier_hub_status,'미전송');
   assert.ok(!h.network.includes('outside.example'));

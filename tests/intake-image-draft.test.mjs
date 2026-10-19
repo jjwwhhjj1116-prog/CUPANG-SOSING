@@ -3,6 +3,11 @@ import assert from 'node:assert/strict';
 import { mobileIntakeHarness } from './helpers/mobile-intake.mjs';
 import { quotationWorkbook } from './helpers/quotation-workbook.mjs';
 import { webcrypto } from 'node:crypto';
+import fs from 'node:fs';
+
+const recordedPage = JSON.parse(fs.readFileSync(new URL('./fixtures/1688-mobile-813724060928.json', import.meta.url), 'utf8'));
+const recordedGallery = new Set(Object.values(recordedPage.data).find(value => value?.data?.offerImgList).data.offerImgList);
+const expectedRole = (source, keys, role) => source.images.flatMap((image, index) => image.role === role && (role !== 'additional' || recordedGallery.has(image.url)) ? [keys.get(index)] : []);
 
 const content = h => JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload);
 const options = h => JSON.parse(h.sqlite.prepare('SELECT payload FROM product_options').get().payload);
@@ -31,8 +36,10 @@ for (const company of [{ companyCode: 'A01464742', companyName: '와이홉' }, {
       h.sqlite.prepare('UPDATE collection_jobs SET goal=?').run(initial.goal);
       await h.intake();
       const source = receipt(h), keys = originals(h), saved = content(h), rows = options(h).rows;
+      assert.deepEqual(source.sourceGallery, { format: '1688-public-mobile-gallery-v1', imageIndices: [...recordedGallery].map((_, index) => index) });
+      assert.deepEqual(source.sourceGallery.imageIndices.map(index => source.images[index].url), [...recordedGallery]);
       for (const role of ['main', 'additional', 'detail']) {
-        const expected = source.images.flatMap((image, index) => image.role === role ? [keys.get(index)] : []);
+        const expected = expectedRole(source, keys, role);
         assert.ok(expected.length, role + ' has recorded supplier images');
         assert.deepEqual(saved.assets[role].value, expected, role + ' uses exact receipt order');
         assert.equal(saved.assets[role].provenance, 'collected');
@@ -138,7 +145,7 @@ test('partial work image import and lost draft acknowledgement resume in receipt
     assert.equal(h.stats.downloads - downloads, 1);
     assert.deepEqual(content(h).assets.main.value, []);
     const source = receipt(h), keys = originals(h);
-    for (const role of ['additional', 'detail']) assert.deepEqual(content(h).assets[role].value, source.images.flatMap((image, index) => image.role === role ? [keys.get(index)] : []));
+    for (const role of ['additional', 'detail']) assert.deepEqual(content(h).assets[role].value, expectedRole(source, keys, role));
     const before = JSON.stringify({ product: product(h), content: content(h), options: options(h) });
     await h.intake();
     assert.equal(JSON.stringify({ product: product(h), content: content(h), options: options(h) }), before);
@@ -207,6 +214,8 @@ test('larger source image drafts keep one representative and the first thirty ad
     const source = receipt(h), existing = originals(h), imageKeys = JSON.parse(product(h).image_keys);
     // Synthetic extra source entries test the editor's per-role limit. The
     // recorded supplier receipt itself has only nineteen images.
+    // This legacy unmarked fixture has no observed full gallery for its extras.
+    delete source.sourceGallery;
     const needed = 31 - source.images.filter(image => image.role === 'additional').length;
     for (let index = 0; index < needed; index++) {
       const imageIndex = source.images.length, key = `owner/extra-${index}.png`;

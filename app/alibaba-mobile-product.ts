@@ -135,7 +135,7 @@ export function parseAlibabaMobileDescription(body: string): string {
 /** This contract was observed on the user-selected offer and Alibaba's own
  * rox-sku-core normalizer. No headline/retail price becomes a SKU cost. */
 export function parseAlibabaMobileProduct(page: ReturnType<typeof parseAlibabaMobilePage>, payload: unknown, description = '', now = Date.now()) {
-  return parseAlibabaSkuProduct(page, payload, description, now, '1688-public-mobile-v1');
+  return parseAlibabaSkuProduct(page, payload, description, now, '1688-public-mobile-v1',true);
 }
 
 /** Product-only public SKU response observed for the requested offer. It does
@@ -148,7 +148,7 @@ export function parseAlibabaPublicSkuProduct(payload: unknown, sourceUrl: string
   return parseAlibabaSkuProduct({...source, title: text(base.title), gallery: [text(base.picUrl)]}, payload, '', now, '1688-public-sku-v1');
 }
 
-function parseAlibabaSkuProduct(source: {sourceUrl: string; offerId: string; title: string; gallery: unknown[]; attributes?: {name: string; value: string}[]}, payload: unknown, description: string, now: number, provider: string) {
+function parseAlibabaSkuProduct(source: {sourceUrl: string; offerId: string; title: string; gallery: unknown[]; attributes?: {name: string; value: string}[]}, payload: unknown, description: string, now: number, provider: string,observedGallery=false) {
   const envelope = row(payload);
   if (!alibabaMobileResponseSucceeded(envelope.ret)) throw Error('1688 공개 옵션 조회가 성공하지 않았습니다.');
   const data = row(row(row(row(payload).data).result).data), base = row(data.offerBaseInfo);
@@ -191,7 +191,7 @@ function parseAlibabaSkuProduct(source: {sourceUrl: string; offerId: string; tit
     if (index < 0) { index = images.length; images.push({url: url.href, role}); }
     return index;
   };
-  source.gallery.forEach((value, index) => image(value, index === 0 ? 'main' : 'additional'));
+  const galleryImageIndices=[...new Set(source.gallery.map((value,index)=>image(value,index===0?'main':'additional')))];
   const combinations = new Set<string>();
   const options = entries.map(([key, value]) => {
     const item = row(value), parts = props.length ? entities(text(item.specAttrs)).split('>') : [];
@@ -215,7 +215,9 @@ function parseAlibabaSkuProduct(source: {sourceUrl: string; offerId: string; tit
   const details = parseAlibabaDescription(description);
   details.images.forEach(url => image(url, 'detail'));
   const result = validateCollectionResult({schemaVersion: 1, sourceUrl: source.sourceUrl, provider, collectedAt: new Date(now).toISOString(),
-    title: source.title, description: details.text, ...(source.attributes !== undefined ? {attributes: source.attributes} : {}), options: options.map(value => value.option), images}, source.offerId, now);
+    title: source.title, description: details.text, ...(source.attributes !== undefined ? {attributes: source.attributes} : {}), options: options.map(value => value.option), images,
+    // SKU-only base.picUrl is a cover, not evidence for a full page gallery.
+    ...(observedGallery?{sourceGallery:{format:'1688-public-mobile-gallery-v1',imageIndices:galleryImageIndices}}:{})}, source.offerId, now);
   if (new TextEncoder().encode(JSON.stringify(result)).byteLength > COLLECTION_RESULT_LIMIT) throw Error('수집 결과 크기가 한도를 초과했습니다.');
   return result;
 }
