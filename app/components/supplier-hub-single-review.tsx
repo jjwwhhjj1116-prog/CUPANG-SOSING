@@ -5,6 +5,7 @@ import {singlePackageCurrent,singlePackagePacket,previewSingleDocument,runSingle
   readSingleReceiptHistory,saveSingleReceiptObservation,singleReceiptSaveAttempt,
   type SinglePackageView,type SingleDocumentSession,type SingleDocumentState,type SingleDocumentAction,type SingleReceiptSaveAttempt} from '@/app/supplier-hub-single-client';
 import type {SingleReceiptRecord} from '@/app/supplier-hub-single-receipt';
+import {reviewCurrentSupplierHubProductDocument,type SupplierHubProductDocumentReview} from '@/app/supplier-hub-product-document';
 
 type Props={productId:string;profileId?:string;view:QuotationFieldsView;disabled:boolean;onReceiptSaved?:()=>void};
 const sourceKey=({productId,profileId,view}:Omit<Props,'disabled'>)=>JSON.stringify([productId,profileId,view.productVersion,view.contentRevision,view.optionRevision,view.revision,view.inputFingerprint]);
@@ -16,6 +17,8 @@ function SingleReviewContent({productId,profileId,view,disabled,onReceiptSaved}:
   const [approved,setApproved]=useState<Record<string,boolean>>({}),[uncertain,setUncertain]=useState(false),[expired,setExpired]=useState(false);
   const [history,setHistory]=useState<SingleReceiptRecord[]>([]),[historyLoading,setHistoryLoading]=useState(true),[historyError,setHistoryError]=useState('');
   const [saveError,setSaveError]=useState(''),[saveAttempt,setSaveAttempt]=useState<SingleReceiptSaveAttempt|null>(null);
+  const [productReview,setProductReview]=useState<SupplierHubProductDocumentReview|null>(null),productReviewRef=useRef<SupplierHubProductDocumentReview|null>(null);
+  function setFullReview(value:SupplierHubProductDocumentReview|null){productReviewRef.current=value;setProductReview(value);}
   const key=sourceKey({productId,profileId,view}),current=useRef({key,view,disabled,mounted:true,onReceiptSaved}),pending=useRef<AbortController|null>(null),generation=useRef(0);
   const historyPending=useRef<AbortController|null>(null),receiptAttempt=useRef<SingleReceiptSaveAttempt|null>(null);
   const latest=useRef({data,optionId,session,state,approved,uncertain,expired});
@@ -23,7 +26,7 @@ function SingleReviewContent({productId,profileId,view,disabled,onReceiptSaved}:
   function invalidate(message=''){
     generation.current++;pending.current?.abort();pending.current=null;historyPending.current?.abort();historyPending.current=null;receiptAttempt.current=null;
     latest.current={data:null,optionId:'',session:null,state:null,approved:{},uncertain:false,expired:false};
-    setData(null);setOptionId('');setSession(null);setState(null);setApproved({});setUncertain(false);setExpired(false);setBusy(false);if(message)setError(message);
+    setData(null);setFullReview(null);setOptionId('');setSession(null);setState(null);setApproved({});setUncertain(false);setExpired(false);setBusy(false);if(message)setError(message);
     setHistory([]);setHistoryLoading(false);setHistoryError(message);setSaveAttempt(null);setSaveError('');
   }
   useLayoutEffect(()=>{current.current={key,view,disabled,mounted:true,onReceiptSaved};},[key,view,disabled,onReceiptSaved]);
@@ -67,7 +70,7 @@ function SingleReviewContent({productId,profileId,view,disabled,onReceiptSaved}:
   async function read(prepare=false){
     if(!canEnter())return;const saved=latest.current.data;
     if(prepare&&(!saved||!saved.review.canPrepare||saved.prepared||!singlePackageCurrent(saved,current.current.view,productId)))return;
-    const task=begin();
+    const task=begin();setFullReview(null);
     try{
       const url=`/api/products/${encodeURIComponent(productId)}/supplier-hub-single-package${profileId?`?profileId=${encodeURIComponent(profileId)}`:''}`;
       const response=await fetch(url,{cache:'no-store',signal:task.controller.signal,...(prepare?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'prepare',expectedFingerprint:saved!.fingerprint})}:{})});
@@ -80,6 +83,23 @@ function SingleReviewContent({productId,profileId,view,disabled,onReceiptSaved}:
     }catch(cause){if(task.active()){setData(null);setSession(null);setState(null);setError(cause instanceof Error?cause.message:'개별 견적 자료 확인 실패');latest.current={...latest.current,data:null,session:null,state:null};}}
     finally{task.finish();}
   }
+  async function reviewProduct(){
+    if(!canEnter())return;const saved=latest.current.data;
+    if(!saved?.prepared||!saved.review.canPrepare||!singlePackageCurrent(saved,current.current.view,productId)||latest.current.session||latest.current.uncertain||receiptAttempt.current)return;
+    const task=begin();setFullReview(null);
+    try{
+      const result=await reviewCurrentSupplierHubProductDocument({productId,profileId,packageView:saved,quotationView:current.current.view,signal:task.controller.signal,fetcher:fetch});
+      if(!task.active()||latest.current.data!==saved||!singlePackageCurrent(saved,current.current.view,productId))return;
+      if(result.identity.productId!==productId||result.identity.fingerprint!==saved.fingerprint||result.identity.inputFingerprint!==saved.inputFingerprint
+        ||result.identity.company.code!==saved.company.code||result.identity.company.name!==saved.company.name)throw Error('전체 옵션 문서와 현재 저장 자료가 다릅니다. 다시 확인해주세요.');
+      setFullReview(result);
+    }catch(cause){if(task.active())setError(cause instanceof Error?cause.message:'포함 옵션 전체 문서를 확인하지 못했습니다.');}
+    finally{task.finish();}
+  }
+  function closeProductReview(expected:SupplierHubProductDocumentReview){
+    if(!canEnter()||productReviewRef.current!==expected||latest.current.session||latest.current.uncertain||receiptAttempt.current)return;
+    setFullReview(null);
+  }
   async function account(task:ReturnType<typeof begin>,selected:SinglePackageView,connected?:SingleDocumentSession){
     const value=await readSingleCatalogContext(task.controller.signal,fetch);if(!task.active())throw Error('현재 작업이 변경되었습니다.');
     if(value.company.code!==selected.company.code||value.company.name!==selected.company.name||connected&&(value.ownerId!==connected.packet.ownerId||value.company.code!==connected.packet.company.code||value.company.name!==connected.packet.company.name)){
@@ -90,7 +110,7 @@ function SingleReviewContent({productId,profileId,view,disabled,onReceiptSaved}:
   async function connect(){
     if(!canEnter())return;const saved=latest.current.data,selected=latest.current.optionId;
     if(!saved?.prepared||!saved.review.canPrepare||!singlePackageCurrent(saved,current.current.view,productId)||saved.options.filter(row=>row.optionId===selected).length!==1||latest.current.session)return;
-    const task=begin();
+    const task=begin();setFullReview(null);
     try{
       const member=await account(task,saved),packet=await singlePackagePacket(saved,member.ownerId,selected);if(!task.active())return;
       const result=await previewSingleDocument(packet,task.controller.signal);if(!task.active())return;
@@ -163,6 +183,19 @@ function SingleReviewContent({productId,profileId,view,disabled,onReceiptSaved}:
       <p>{data.prepared?'저장한 값과 이미지 파일의 전송 자료가 준비됐습니다.':'저장한 값과 이미지 파일을 확인한 뒤 자료를 준비하세요.'} {state?.state==='registered'?'해당 문서의 접수·SKU 증거를 확인했습니다.':'이 자료 준비만으로 Supplier Hub 접수가 완료되는 것은 아닙니다.'}</p>
       {data.review.issues.length>0&&<ul>{data.review.issues.map((issue,index)=><li key={index}>{issue.message}</li>)}</ul>}
       <div className="quotation-fields-bulk-table"><table><thead><tr><th>옵션</th><th>대표·추가·상세·사이즈표·표시사항 이미지</th></tr></thead><tbody>{data.options.map(option=><tr key={option.optionId??'common'}><td>{option.optionLabel}</td><td>{data.manifest.filter(item=>item.optionId===option.optionId).map(item=>`${({main:'대표',additional:'추가',detail:'상세',label:'표시사항',size:'사이즈표'})[item.role as 'main']??item.role} ${item.files.length}개`).join(' · ')}</td></tr>)}</tbody></table></div>
+      {data.prepared&&<div className="quote-actions"><button type="button" className="btn ghost" disabled={disabled||busy||!data.review.canPrepare||Boolean(session)||uncertain||Boolean(saveAttempt)} onClick={()=>void reviewProduct()}>포함 옵션 전체 문서 확인</button></div>}
+      {productReview&&productReview.identity.fingerprint===data.fingerprint&&singlePackageCurrent(data,view,productId)&&<section aria-label="포함 옵션 전체 견적 문서">
+        <h4>포함 옵션 {productReview.members.length}개 · 견적 문서 1개</h4>
+        <p>저장한 모든 포함 옵션을 같은 순서로 문서 하나에 구성했습니다. 상품명·모델명·금액을 확인해주세요. 이 확인은 등록 요청을 전송하지 않습니다.</p>
+        <div className="quotation-fields-bulk-table"><table><thead><tr><th>옵션</th><th>상품명</th><th>모델명</th><th>공급가</th><th>판매가</th><th>권장소비자가</th></tr></thead><tbody>{productReview.members.map(member=>{
+          const document=productReview.body.jsonDocument[member.documentIndex];
+          const page=(value:unknown):Record<string,unknown>=>value&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:{};
+          const start=page(document.startPage),product=page(document.productPage),prices=page(product.commonAttributes);
+          const text=(value:unknown)=>typeof value==='string'||typeof value==='number'?String(value):'';
+          return <tr key={member.optionId}><td>{member.optionLabel}</td><td>{text(start.productName)}</td><td>{text(product.modelNumber)}</td><td>{text(prices.purchasePrice)}</td><td>{text(prices.coupangSalePrice)}</td><td>{text(prices.msrp)}</td></tr>;
+        })}</tbody></table></div>
+        <button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>closeProductReview(productReview)}>전체 문서 확인 닫기</button>
+      </section>}
       {data.prepared&&<div className="quote-actions"><label className="field"><span>개별 전송 옵션</span><select aria-label="개별 전송 옵션" value={optionId} disabled={disabled||busy||Boolean(session)} onChange={event=>{if(!canEnter()||latest.current.session)return;latest.current.optionId=event.target.value;setOptionId(event.target.value);}}><option value="">옵션 1개를 선택하세요</option>{data.options.filter(option=>typeof option.optionId==='string').map(option=><option key={option.optionId!} value={option.optionId!}>{option.optionLabel}</option>)}</select></label>
         <button type="button" className="btn ghost" disabled={disabled||busy||!optionId||Boolean(session)} onClick={()=>void connect()}>개별 전송 자료 확인</button></div>}
     </>}
