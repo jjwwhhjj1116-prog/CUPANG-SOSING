@@ -1,6 +1,29 @@
 import {exchange} from '@/app/supplier-hub-handoff';
 
-export type BrowserProductCapture={sourceUrl:string;scripts:string[]}|{sourceUrl:string;format:'1688-public-mobile-capture-v1';mobileHtml:string;skuPayload:object;detailSource:string}|{sourceUrl:string;format:'1688-public-mobile-partial-capture-v1';mobileHtml:string;skuPayload:object;detailSource:string;detailUnavailable:{status:502|503|504}}|{sourceUrl:string;format:'1688-public-sku-capture-v1';skuPayload:object};
+export type BrowserProductCapture={sourceUrl:string;scripts:string[]}|{sourceUrl:string;format:'1688-public-mobile-capture-v1';mobileHtml:string;skuPayload:object;detailSource:string}|{sourceUrl:string;format:'1688-public-mobile-partial-capture-v1';mobileHtml:string;skuPayload:object;detailSource:string;detailUnavailable:{status:502|503|504}}|{sourceUrl:string;format:'1688-public-sku-capture-v1';skuPayload:object}|{sourceUrl:string;format:'yoofam-saved-page-capture-v1';captureId:string;fingerprint:string;revision:number};
+
+/** Prefer an explicitly collected, durable inbox source. This reads our own
+ * server only, and never opens the 1688 URL. Account checks run again on import. */
+async function savedPageCapture(sourceUrl:string,signal:AbortSignal):Promise<BrowserProductCapture|null>{
+ const controller=new AbortController();let interrupt:(error:Error)=>void=()=>{};
+ const stopped=new Promise<never>((_resolve,reject)=>{interrupt=reject;});
+ const abort=()=>{controller.abort();interrupt(Error(signal.aborted?'작업을 취소했습니다.':'수집함 확인 시간이 초과됐습니다. 저장 상태를 확인한 뒤 다시 시도해주세요.'));};
+ const timer=setTimeout(abort,3000);signal.addEventListener('abort',abort,{once:true});
+ try{
+  if(signal.aborted){abort();return await stopped;}
+  const read=async()=>{
+   const response=await fetch('/api/source-inbox/ready?'+new URLSearchParams({sourceUrl}),{cache:'no-store',signal:controller.signal,credentials:'same-origin',redirect:'error'});
+   const body=await response.json() as {code?:string;error?:string;capture?:Extract<BrowserProductCapture,{format:'yoofam-saved-page-capture-v1'}>|null};
+   if(body?.code==='PAGE_SOURCE_REVIEW_REQUIRED')throw Object.assign(Error(body.error),{code:'PAGE_SOURCE_REVIEW_REQUIRED'});
+   if(!response.ok)throw Error(body?.error||'수집함 원문을 확인하지 못했습니다.');
+   const value=body.capture;if(value===null)return null;
+   if(value?.format!=='yoofam-saved-page-capture-v1'||value.sourceUrl!==sourceUrl||typeof value.captureId!=='string'||!/^[a-f0-9-]{36}$/.test(value.captureId)||!/^[a-f0-9]{64}$/.test(value.fingerprint)||!Number.isSafeInteger(value.revision)||value.revision<1)throw Error('수집함 원문 응답이 올바르지 않습니다.');
+   return value;
+  };
+  return await Promise.race([read(),stopped]);
+ }catch(error){if((error as {code?:unknown})?.code==='PAGE_SOURCE_REVIEW_REQUIRED')throw error;throw Object.assign(error instanceof Error?error:Error('수집함 원문을 확인하지 못했습니다.'),{code:'PAGE_SOURCE_LOOKUP_UNCERTAIN'});}
+ finally{clearTimeout(timer);signal.removeEventListener('abort',abort);controller.abort();}
+}
 
 /** Opportunistic existing-tab read only. Old/missing extensions, incomplete
  * metadata and uncertain read replies all fall back without a receipt write. */
@@ -8,6 +31,7 @@ export async function probe1688FromChrome(sourceUrl:string,signal:AbortSignal):P
  if(signal.aborted)throw Error('작업을 취소했습니다.');
  if(typeof window==='undefined'||typeof location==='undefined')return null;
  if(!/^https:\/\/detail\.1688\.com\/offer\/[1-9]\d{0,29}\.html$/.test(sourceUrl))return null;
+ const saved=await savedPageCapture(sourceUrl,signal);if(saved)return saved;
  const presence=new AbortController(),abortPresence=()=>presence.abort();
  signal.addEventListener('abort',abortPresence,{once:true});
  const presenceTimer=setTimeout(abortPresence,750);
@@ -44,6 +68,7 @@ export async function probe1688FromChrome(sourceUrl:string,signal:AbortSignal):P
  * in that same Chrome window; it never reads cookies or another profile. */
 export async function capture1688FromChrome(sourceUrl:string,signal:AbortSignal):Promise<BrowserProductCapture>{
  if(signal.aborted)throw Error('작업을 취소했습니다.');
+ const saved=await savedPageCapture(sourceUrl,signal);if(saved)return saved;
  let capability:Record<string,unknown>;
  try{capability=await exchange('PING',null,signal);}
  catch(cause){if(signal.aborted)throw cause;throw Error('현재 Chrome의 상품 수집 확장 응답을 확인하지 못했습니다. 확장과 앱 페이지를 새로고침한 뒤 다시 시도해주세요.');}

@@ -127,6 +127,9 @@ async function readCurrentCatalogContext(){
   }finally{clearTimeout(timer);}
 }
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
+  if(message?.type==='YOOFAM_SAVE_SOURCE_CAPTURE'&&sender?.id===chrome.runtime.id){
+    void savePageSourceInApp(message.record).then(respond,error=>respond({ok:false,error:error?.message||'웹 수집함 저장 확인 실패'}));return true;
+  }
   if(!['YOOFAM_VERIFY_QUOTATION_SOURCE','YOOFAM_READ_QUOTATION_RECEIPT','YOOFAM_READ_TRANSMISSION_RECEIPT','YOOFAM_READ_CATALOG_CONTEXT','YOOFAM_READ_HISTORICAL_TRANSMISSION_RECEIPT','YOOFAM_READ_PRODUCT_TRANSMISSION_HISTORY'].includes(message?.type)||sender?.id!==chrome.runtime.id)return;
   if(message.type==='YOOFAM_READ_CATALOG_CONTEXT'){void readCurrentCatalogContext().then(respond,error=>respond({ok:false,error:error?.message||'회원 회사정보 확인 실패'}));return true;}
   if(message.type==='YOOFAM_READ_PRODUCT_TRANSMISSION_HISTORY'){void readCurrentProductTransmissionHistory(message.expected).then(respond,error=>respond({ok:false,error:error?.message||'전체 전송 이력 확인 실패'}));return true;}
@@ -136,10 +139,30 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
   void read(message.expected).then(respond,error=>respond({ok:false,error:error?.message||'견적서 저장본 확인 실패'}));
   return true;
 });
+async function savePageSourceInApp(record){
+  if(record?.origin!==location.origin||!/^[a-f0-9-]{36}$/.test(record?.id||'')||!/^[a-f0-9]{64}$/.test(record?.fingerprint||''))throw Error('수집 원문 전달 요청을 확인해주세요.');
+  const before=await readCurrentCatalogContext();
+  if(before.ownerId!==record.ownerId||before.company?.code!==record.company?.code||before.company?.name!==record.company?.name)throw Error('수집 당시 로그인 회원·회사가 다릅니다.');
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
+  try{
+    const path='/api/source-inbox',response=await fetch(path,{method:'POST',credentials:'same-origin',redirect:'error',cache:'no-store',signal:controller.signal,headers:{'content-type':'application/json'},body:JSON.stringify({expectedOwnerId:record.ownerId,expectedCompany:record.company,id:record.id,fingerprint:record.fingerprint,snapshot:record.snapshot})});
+    if(response.redirected||response.url!==location.origin+path)throw Error('수집함 저장 화면이 변경되었습니다.');
+    const raw=await response.text();if(raw.length>600000)throw Error('수집함 저장 응답이 너무 큽니다.');const result=JSON.parse(raw);
+    if(!response.ok||result.ok!==true)throw Error(result.error||'웹 수집함 저장을 확인하지 못했습니다.');
+    if(result.id!==record.id||result.fingerprint!==record.fingerprint||result.ownerId!==record.ownerId||result.company?.code!==record.company.code||result.company?.name!==record.company.name)throw Error('수집함 저장 결과가 요청과 다릅니다.');
+    window.postMessage({channel:'YOOFAM_SOURCE_INBOX_UPDATED'},location.origin);
+    return {ok:true,id:result.id,fingerprint:result.fingerprint,ownerId:result.ownerId,company:result.company,duplicate:result.duplicate===true};
+  }finally{clearTimeout(timer);}
+}
 window.addEventListener('message',async event=>{
   if(event.source!==window||event.origin!==location.origin||event.data?.channel!=='YOOFAM_1688_CAPTURE'||!['CAPTURE','PROBE','CANCEL'].includes(event.data?.type)||!/^[a-f0-9-]{36}$/.test(event.data.requestId||''))return;
   let result;
   try{result=await chrome.runtime.sendMessage({type:event.data.type==='CANCEL'?'YOOFAM_CANCEL_1688':event.data.type==='PROBE'?'YOOFAM_PROBE_1688':'YOOFAM_CAPTURE_1688',requestId:event.data.requestId,sourceUrl:event.data.sourceUrl});}
   catch{result={ok:false,error:'상품 수집 확장을 다시 로드하고 앱 페이지를 새로고침해주세요.'};}
   if(event.data.type!=='CANCEL')window.postMessage({channel:'YOOFAM_1688_CAPTURE_RESULT',requestId:event.data.requestId,result},location.origin);
+});
+window.addEventListener('message',async event=>{
+  if(event.source!==window||event.origin!==location.origin||event.data?.channel!=='YOOFAM_SOURCE_INBOX'||event.data.type!=='FLUSH'||!/^[a-f0-9-]{36}$/.test(event.data.requestId||''))return;
+  let result;try{result=await chrome.runtime.sendMessage({type:'YOOFAM_FLUSH_PAGE_SOURCES'});}catch{result={ok:false,error:'현재 Chrome의 YOOFAM 확장을 확인해주세요.'};}
+  window.postMessage({channel:'YOOFAM_SOURCE_INBOX_RESULT',requestId:event.data.requestId,result},location.origin);
 });

@@ -31,7 +31,7 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
    // A bounded read of an already-open exact tab can avoid waiting for the
    // public server timeout. This probe cannot open tabs or make source requests.
    try{existing=await options.probeExistingFromBrowser(job.source_url,options.signal);}
-   catch{if(options.signal.aborted)return;}
+   catch(cause){if(options.signal.aborted)return;if(['PAGE_SOURCE_REVIEW_REQUIRED','PAGE_SOURCE_LOOKUP_UNCERTAIN'].includes(String((cause as {code?:unknown})?.code)))throw cause;}
    if(options.signal.aborted)return;
   }
   // The server selects the configured provider before considering this optional
@@ -74,7 +74,7 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
  // JSON-LD provenance survives receipt recovery and linked-product/image retries.
  // Its supported source was already read, even when this invocation has no DOM
  // candidate. Optional gaps stay reviewable through explicit source repair.
- const reuseCapturedJsonLdSource=source?.provider==='chrome-product-jsonld-v1';
+ const reuseCapturedJsonLdSource=source?.provider==='chrome-product-jsonld-v1'||source?.provider==='chrome-current-page-v1'||source?.provider==='chrome-reviewed-page-v1';
  if(source&&!storedSourceFork&&!reuseCapturedMobileSource&&!reuseCapturedJsonLdSource&&canSupplementCollection(source)&&options.captureFromBrowser){
   reportProgress('현재 Chrome에서 상세 이미지·상품 속성 보완 중');
   try{

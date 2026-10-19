@@ -27,6 +27,7 @@ import { ProductOptionsEditor } from '@/app/components/product-options-editor';
 import { QuotationPanel } from '@/app/components/quotation-panel';
 import { SubmissionReviewPanel } from '@/app/components/submission-review-panel';
 import { CollectionResultPanel } from '@/app/components/collection-result-panel';
+import {SourceInboxPanel} from '@/app/components/source-inbox-panel';
 import { CollectionBatchPanel } from '@/app/components/collection-batch-panel';
 import { ProductOptionBoard } from '@/app/components/product-option-board';
 import { RegistrationBoard, registrationTitle } from '@/app/components/registration-board';
@@ -577,6 +578,13 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
 
 
         {view==='archive'?<><ProductManagementWorkspace/><details className="collection-panel"><summary>YOOFAM PLUS 작업 상품 보관함</summary><ProductArchive onOpenProduct={openArchivedProduct} refreshToken={`${collectionJobs[0]?.updated_at}:${products[0]?.updated_at}`}/></details></>:<>
+        <SourceInboxPanel key={workspaceOwnerId??'anonymous'} ownerId={workspaceOwnerId} disabled={busy||addOpen||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving} onAdd={item=>{
+          if(item.ownerId!==workspaceOwnerId||item.issues.length||loading||loadError||busy||addOpen||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving||settingsBusyRef.current)throw Error('현재 상품 목록과 대기열을 확인한 뒤 다시 추가해주세요.');
+          if(products.some(product=>{try{return new URL(product.source_url).pathname===new URL(item.snapshot.sourceUrl).pathname;}catch{return false;}}))throw Error('이미 작업 상품으로 등록한 URL입니다. 기존 작업 상품은 변경하지 않았습니다.');
+          if(intakeRows.some(row=>{try{return new URL(row.url).pathname===new URL(item.snapshot.sourceUrl).pathname;}catch{return false;}}))throw Error('이미 상품 대기열에 담긴 URL입니다. 기존 행을 그대로 유지했습니다.');
+          if(intakeRows.length>=50)throw Error('상품 대기열은 최대 50행입니다. 기존 입력은 유지했습니다.');
+          setIntakeSourceSeed({id:crypto.randomUUID(),sourceUrl:item.snapshot.sourceUrl});setView('work');setAddOpen(true);
+        }}/>
         <details className="collection-panel" aria-label="수집 대기열"><summary>상품 대기열 · {collectionJobs.filter(job=>job.status!=='cancelled').length}건</summary>
           <CollectionBatchPanel jobs={collectionJobs} onSaved={()=>void loadWorkspace()} onOpenProduct={openCollectedProduct}/>
           <div className="collection-heading"><div><h2>수집 대기열 <span>{collectionJobs.filter(job => job.status !== 'cancelled').length}</span></h2><p>{collectionBlock}</p></div><button className="btn ghost" disabled={loading || busy} onClick={()=>{setLoading(true);void loadWorkspace();}}>새로고침</button></div>

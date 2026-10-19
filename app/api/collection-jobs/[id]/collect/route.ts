@@ -16,9 +16,6 @@ export async function POST(request:Request,context:{params:Promise<{id:string}>}
   if(job.status==='cancelled')return reply({error:'취소된 수집 요청입니다.'},409);
   const existing=await readCollectionResult(owner,id);
   if(existing)return reply({jobId:id,offerId:job.offer_id,receipt:existing});
-  let provider;
-  try{provider=collectionProvider(env as unknown as Record<string,unknown>);}
-  catch{return reply({error:'1688 상품조회 API의 서버 설정을 확인해야 합니다.',code:'SOURCE_CONFIGURATION_REQUIRED'},503);}
   let browserCapture:unknown;
   if(request.body){
    try{
@@ -30,7 +27,15 @@ export async function POST(request:Request,context:{params:Promise<{id:string}>}
   }
   if(request.signal.aborted)return reply({error:'취소된 수집 작업입니다.'},409);
   let captured;
-  if(provider.kind==='public-page'&&browserCapture!==undefined){
+  const savedPage=(browserCapture as {format?:unknown})?.format==='yoofam-saved-page-capture-v1';
+  if(savedPage){
+   try{captured=await (await import('@/app/owned-page-capture')).parseOwnedPageCapture(owner,browserCapture,job.source_url);}
+   catch(error){return reply({error:error instanceof Error?error.message:'수집함 원문을 확인해주세요.',code:'SOURCE_CANDIDATE_INVALID'},422);}
+  }
+  let provider;
+  try{provider=savedPage?{kind:'public-page' as const}:collectionProvider(env as unknown as Record<string,unknown>);}
+  catch{return reply({error:'1688 상품조회 API의 서버 설정을 확인해야 합니다.',code:'SOURCE_CONFIGURATION_REQUIRED'},503);}
+  if(provider.kind==='public-page'&&browserCapture!==undefined&&!savedPage){
    try{captured=parseBrowserProductCapture(browserCapture,job.source_url);}
    catch(error){return reply({error:error instanceof Error?error.message:'상품 원문을 확인하지 못했습니다.',code:'SOURCE_CANDIDATE_INVALID'},422);}
   }

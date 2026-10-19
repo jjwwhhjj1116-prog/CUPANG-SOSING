@@ -12,7 +12,12 @@ import {readOwnedProductTransferHistory} from './product-history.mjs';
 import {readAppCompanyRegistrations} from './company-registration.mjs';
 import {dispatchSingleDocument} from './single-dispatch.mjs';
 import {dispatchProductDocument} from './product-document-dispatch.mjs';
+import {savePageSource,flushPageSources} from './source-inbox.mjs';
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
+  if(['YOOFAM_SAVE_PAGE_SOURCE','YOOFAM_FLUSH_PAGE_SOURCES'].includes(message?.type)){
+    const run=message.type==='YOOFAM_SAVE_PAGE_SOURCE'?savePageSource:flushPageSources;
+    run(message,sender).then(respond,error=>respond({ok:false,error:error.message}));return true;
+  }
   if(message?.type==='YOOFAM_PRODUCT_DOCUMENT_REQUEST'){
     dispatchProductDocument(message,sender).then(result=>respond({ok:true,result}),error=>respond({ok:false,error:error.message,code:error.code}));return true;
   }
