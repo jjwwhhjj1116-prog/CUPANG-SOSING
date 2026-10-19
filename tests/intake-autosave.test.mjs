@@ -237,8 +237,8 @@ test('an absent workspace owner cannot infer an account from the current cookie 
 for(const responseOwner of ['A01526306',undefined])test(`an initial response with ${responseOwner?'another':'no'} owner cannot restore its pending URL into the old account view`,async()=>{
  const f=fixture('A01464742');try{
   const row={id:'other-input',profile:{id:'00000000-0000-0000-0000-000000000001',revision:3},url:'https://detail.1688.com/offer/2.html',features:'다른 회사 입력',keywords:'직접 입력',status:'draft',message:''};
-  f.render();await f.settle();f.respondBody(0,{ownerId:responseOwner,draft:{revision:1,goal:'collect',rows:[row],updatedAt:null}});await f.settle();
-  assert.equal(f.value.ready,false);assert.equal(f.value.goal,'price');assert.equal(f.value.rows.length,0);assert.equal(f.value.autoPaused,true);assert.match(f.value.message,/계정/);
+  f.render();await f.settle();const goalBefore=f.value.goal;f.respondBody(0,{ownerId:responseOwner,draft:{revision:1,goal:'collect',rows:[row],updatedAt:null}});await f.settle();
+  assert.equal(f.value.ready,false);assert.equal(f.value.goal,goalBefore);assert.equal(f.value.rows.length,0);assert.equal(f.value.autoPaused,true);assert.match(f.value.message,/계정/);
   await f.value.save();await f.tick();assert.equal(f.requests.length,1);
  }finally{f.stop();}
 });

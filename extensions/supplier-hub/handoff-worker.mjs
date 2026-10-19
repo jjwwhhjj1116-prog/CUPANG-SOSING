@@ -2,7 +2,7 @@ import {dispatchSupplierHubValidation} from './validation-dispatch.mjs';
 import {observeSupplierHubResult} from './observe.mjs';
 import {validateHandoff,pendingPackage,resultKey,transferRecord} from './handoff-store.mjs';
 import {dispatchPendingPackage} from './dispatch.mjs';
-import {capture1688Product,cancel1688Capture} from './capture-1688.mjs';
+import {capture1688Product,probe1688Product,cancel1688Capture} from './capture-1688.mjs';
 import {transmitSupplierHubPackage} from './transmit.mjs';
 import {resumeSupplierHubValidation} from './validation-resume.mjs';
 import {validateAppHubRequest} from './app-request.mjs';
@@ -19,7 +19,7 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
   if(message?.type==='YOOFAM_SINGLE_DOCUMENT_REQUEST'){
     dispatchSingleDocument(message,sender).then(result=>respond({ok:true,result}),error=>respond({ok:false,error:error.message,code:error.code}));return true;
   }
-  if(!['YOOFAM_PREPARE_PACKAGE','YOOFAM_GET_RESULT','YOOFAM_GET_PRODUCT_TRANSMISSIONS','YOOFAM_QUERY_COMPANY_REGISTRATIONS','YOOFAM_DISPATCH_PACKAGE','YOOFAM_OBSERVE_RESULT','YOOFAM_VALIDATE_PACKAGE','YOOFAM_CAPTURE_1688','YOOFAM_CANCEL_1688','YOOFAM_TRANSMIT_PACKAGE','YOOFAM_RESUME_VALIDATION','YOOFAM_REFRESH_RESULT','YOOFAM_REFRESH_REGISTRATION','YOOFAM_READ_CATEGORY_BRANCH','YOOFAM_READ_CATEGORY_SCHEMA','YOOFAM_READ_CATEGORY_TEMPLATE'].includes(message?.type))return;
+  if(!['YOOFAM_PREPARE_PACKAGE','YOOFAM_GET_RESULT','YOOFAM_GET_PRODUCT_TRANSMISSIONS','YOOFAM_QUERY_COMPANY_REGISTRATIONS','YOOFAM_DISPATCH_PACKAGE','YOOFAM_OBSERVE_RESULT','YOOFAM_VALIDATE_PACKAGE','YOOFAM_PROBE_1688','YOOFAM_CAPTURE_1688','YOOFAM_CANCEL_1688','YOOFAM_TRANSMIT_PACKAGE','YOOFAM_RESUME_VALIDATION','YOOFAM_REFRESH_RESULT','YOOFAM_REFRESH_REGISTRATION','YOOFAM_READ_CATEGORY_BRANCH','YOOFAM_READ_CATEGORY_SCHEMA','YOOFAM_READ_CATEGORY_TEMPLATE'].includes(message?.type))return;
   (async()=>{try{
     if(message.type==='YOOFAM_QUERY_COMPANY_REGISTRATIONS'){const observation=await readAppCompanyRegistrations(message,sender);respond({ok:true,observation});return;}
     if(message.type==='YOOFAM_GET_PRODUCT_TRANSMISSIONS'){
@@ -62,6 +62,9 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
     }
     if(message.type==='YOOFAM_CAPTURE_1688'){
       respond(await capture1688Product(message,sender));return;
+    }
+    if(message.type==='YOOFAM_PROBE_1688'){
+      respond(await probe1688Product(message,sender));return;
     }
     if(message.type==='YOOFAM_VALIDATE_PACKAGE'){
       const result=await dispatchSupplierHubValidation(message,sender);respond({ok:true,result});return;

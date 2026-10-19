@@ -2,6 +2,44 @@ import {exchange} from '@/app/supplier-hub-handoff';
 
 export type BrowserProductCapture={sourceUrl:string;scripts:string[]}|{sourceUrl:string;format:'1688-public-mobile-capture-v1';mobileHtml:string;skuPayload:object;detailSource:string}|{sourceUrl:string;format:'1688-public-mobile-partial-capture-v1';mobileHtml:string;skuPayload:object;detailSource:string;detailUnavailable:{status:502|503|504}}|{sourceUrl:string;format:'1688-public-sku-capture-v1';skuPayload:object};
 
+/** Opportunistic existing-tab read only. Old/missing extensions, incomplete
+ * metadata and uncertain read replies all fall back without a receipt write. */
+export async function probe1688FromChrome(sourceUrl:string,signal:AbortSignal):Promise<BrowserProductCapture|null>{
+ if(signal.aborted)throw Error('작업을 취소했습니다.');
+ if(typeof window==='undefined'||typeof location==='undefined')return null;
+ if(!/^https:\/\/detail\.1688\.com\/offer\/[1-9]\d{0,29}\.html$/.test(sourceUrl))return null;
+ const presence=new AbortController(),abortPresence=()=>presence.abort();
+ signal.addEventListener('abort',abortPresence,{once:true});
+ const presenceTimer=setTimeout(abortPresence,750);
+ try{
+  const capability=await exchange('PING',null,presence.signal);
+  if(signal.aborted)throw Error('작업을 취소했습니다.');
+  if(capability.existingProductProbe!==true)return null;
+ }catch(cause){if(signal.aborted)throw cause;return null;}
+ finally{clearTimeout(presenceTimer);signal.removeEventListener('abort',abortPresence);presence.abort();}
+ if(signal.aborted)throw Error('작업을 취소했습니다.');
+ return new Promise((resolve,reject)=>{
+  if(signal.aborted){reject(Error('작업을 취소했습니다.'));return;}
+  const requestId=crypto.randomUUID();
+  const cleanup=()=>{clearTimeout(timer);window.removeEventListener('message',receive);signal.removeEventListener('abort',abort);};
+  const cancel=()=>window.postMessage({channel:'YOOFAM_1688_CAPTURE',requestId,type:'CANCEL',sourceUrl},location.origin);
+  const abort=()=>{cancel();cleanup();reject(Error('작업을 취소했습니다.'));};
+  const receive=(event:MessageEvent)=>{
+   if(event.source!==window||event.origin!==location.origin||event.data?.channel!=='YOOFAM_1688_CAPTURE_RESULT'||event.data.requestId!==requestId)return;
+   cleanup();const result=event.data.result;
+   if(!result||typeof result!=='object'||Array.isArray(result)||result.ok!==true||result.sourceUrl!==sourceUrl){resolve(null);return;}
+   if(result.available===false){resolve(null);return;}
+   if(Object.keys(result).some(key=>!['ok','sourceUrl','scripts'].includes(key))||!Array.isArray(result.scripts)||!result.scripts.length||result.scripts.length>30
+    ||result.scripts.some((value:unknown)=>typeof value!=='string'||!value.trim())
+    ||result.scripts.reduce((sum:number,value:string)=>sum+new TextEncoder().encode(value).byteLength,0)>1500000){resolve(null);return;}
+   resolve({sourceUrl,scripts:result.scripts});
+  };
+  const timer=setTimeout(()=>{cancel();cleanup();resolve(null);},1500);
+  window.addEventListener('message',receive);signal.addEventListener('abort',abort,{once:true});
+  window.postMessage({channel:'YOOFAM_1688_CAPTURE',requestId,type:'PROBE',sourceUrl},location.origin);
+ });
+}
+
 /** Runs only after a user starts a URL import. The extension opens the URL
  * in that same Chrome window; it never reads cookies or another profile. */
 export async function capture1688FromChrome(sourceUrl:string,signal:AbortSignal):Promise<BrowserProductCapture>{

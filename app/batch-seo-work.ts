@@ -1,10 +1,12 @@
 import { readSeoWorkspace } from '@/app/seo-workspace-client';
 import type { SeoWorkspaceView } from '@/app/seo-workspace';
 import { supplierHubCompany, type SupplierHubCompany } from '@/app/supplier-hub-company';
+import { optionTranslationBatch } from '@/app/option-translation';
+import type { TranslationJob } from '@/app/automation/translation';
 
 export type BatchSeoProduct = { id: string; title: string; updated_at?: string };
 export type BatchSeoTask = { productId: string; productTitle: string; productVersion: string; contentRevision: number; optionRevision: number;
-  brand: string; sourceIdentity: string; missingFields: string[] };
+  brand: string; sourceIdentity: string; missingFields: string[]; seoMissingFields?:string[]; pendingOptionAttributes?:number };
 export type BatchSeoPlan = { ownerId: string; company: SupplierHubCompany; tasks: BatchSeoTask[]; products: BatchSeoProduct[]; messages: { productId: string; message: string }[] };
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const id = (value: unknown): value is string => typeof value === 'string' && /^[\w-]{1,100}$/.test(value);
@@ -23,13 +25,15 @@ async function account(signal: AbortSignal, fetcher: typeof fetch) {
 async function assertAccount(plan: Pick<BatchSeoPlan, 'ownerId' | 'company'>, signal: AbortSignal, fetcher: typeof fetch) { if (!same(await account(signal, fetcher), { ownerId: plan.ownerId, company: plan.company })) throw changed(); }
 async function snapshot(productId: string, signal: AbortSignal, fetcher: typeof fetch) {
   const base = `/api/products/${encodeURIComponent(productId)}`, view = await readSeoWorkspace(productId, fetcher, signal);
-  const source = await read(base + '/translation-source', signal, fetcher), registration = await read(base + '/registration-settings', signal, fetcher);
+  const source = await read(base + '/translation-source', signal, fetcher), registration = await read(base + '/registration-settings', signal, fetcher), history=await read(base+'/translation',signal,fetcher);
   if (!object(source) || source.productId !== productId || source.productVersion !== view.productVersion || typeof source.title !== 'string' || typeof source.description !== 'string'
     || !Array.isArray(source.attributes) || !object(source.requestContext) || !id(source.requestContext.categoryId) || !Array.isArray(source.requestContext.categoryPath)
-    || !object(registration) || registration.productId !== productId || !object(registration.settings) || typeof registration.settings.brand !== 'string') throw changed();
+    || !object(registration) || registration.productId !== productId || !object(registration.settings) || typeof registration.settings.brand !== 'string'
+    || !object(history)||!Array.isArray(history.jobs)||history.jobs.length>20||history.jobs.some(job=>!object(job)||job.productId!==productId||!object(job.review))) throw changed();
   const fresh = await readSeoWorkspace(productId, fetcher, signal); if (!same(view, fresh)) throw changed();
   const sourceIdentity = canonical({ title: source.title, description: source.description, attributes: source.attributes, jobId: source.jobId, sourceUrl: source.sourceUrl, requestContext: source.requestContext, brand: registration.settings.brand });
-  return { view, brand: registration.settings.brand, sourceIdentity, source };
+  const pendingOptionAttributes=optionTranslationBatch(view.options,0,history.jobs as TranslationJob[]).total;
+  return { view, brand: registration.settings.brand, sourceIdentity, source,pendingOptionAttributes };
 }
 function missing(view: SeoWorkspaceView, source: { title?: unknown; description?: unknown }) {
   const result: string[] = [];
@@ -43,6 +47,12 @@ function missing(view: SeoWorkspaceView, source: { title?: unknown; description?
   }
   return result;
 }
+function taskFor(product:BatchSeoProduct,value:Awaited<ReturnType<typeof snapshot>>):BatchSeoTask|null{
+  const seoMissingFields=missing(value.view,value.source),pendingOptionAttributes=value.pendingOptionAttributes;
+  const missingFields=[...seoMissingFields,...(pendingOptionAttributes?[`옵션명·색상·사이즈 ${pendingOptionAttributes}개`]:[])];
+  return missingFields.length?{productId:product.id,productTitle:product.title,productVersion:value.view.productVersion,contentRevision:value.view.content.revision,
+    optionRevision:value.view.options.revision,brand:value.brand,sourceIdentity:value.sourceIdentity,missingFields,seoMissingFields,pendingOptionAttributes}:null;
+}
 /** GET-only inventory. It never starts a provider, adopts a draft or repairs a
  * protected manual blank. Completion here means saved SEO review, not listing. */
 export async function planBatchSeoWork(products: BatchSeoProduct[], signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<BatchSeoPlan> {
@@ -50,20 +60,28 @@ export async function planBatchSeoWork(products: BatchSeoProduct[], signal: Abor
   const plan: BatchSeoPlan = { ...await account(signal, fetcher), products: [], tasks: [], messages: [] };
   for (const product of [...new Map(products.map(value => [value.id, value])).values()]) {
     const value = await snapshot(product.id, signal, fetcher); await assertAccount(plan, signal, fetcher);
-    const missingFields = missing(value.view, value.source); plan.products.push({ ...product, updated_at: value.view.productVersion });
-    if (!missingFields.length) plan.messages.push({ productId: product.id, message: '저장된 SEO·수동값과 공란을 보존했습니다. 새 생성 요청은 하지 않습니다.' });
-    else plan.tasks.push({ productId: product.id, productTitle: product.title, productVersion: value.view.productVersion, contentRevision: value.view.content.revision,
-      optionRevision: value.view.options.revision, brand: value.brand, sourceIdentity: value.sourceIdentity, missingFields });
+    const task=taskFor(product,value);plan.products.push({ ...product, updated_at: value.view.productVersion });
+    if (!task) plan.messages.push({ productId: product.id, message: '저장된 SEO·옵션 번역·수동값과 공란을 보존했습니다. 새 생성 요청은 하지 않습니다.' });
+    else plan.tasks.push(task);
   }
   await assertAccount(plan, signal, fetcher); return plan;
 }
-export async function refreshBatchSeoWorkTask(task: BatchSeoTask, plan: BatchSeoPlan, signal: AbortSignal, fetcher: typeof fetch = fetch, saved = false) {
+async function checkedTaskSnapshot(task: BatchSeoTask, plan: BatchSeoPlan, signal: AbortSignal, fetcher: typeof fetch, saved:boolean) {
   if (!plan.tasks.some(value => same(value, task))) throw changed(); await assertAccount(plan, signal, fetcher);
   const value = await snapshot(task.productId, signal, fetcher); await assertAccount(plan, signal, fetcher);
   if (value.sourceIdentity !== task.sourceIdentity || (saved
     ? Date.parse(value.view.productVersion) <= Date.parse(task.productVersion) || value.view.content.revision !== task.contentRevision + 1 || value.view.options.revision !== task.optionRevision + 1
     : value.view.productVersion !== task.productVersion || value.view.content.revision !== task.contentRevision || value.view.options.revision !== task.optionRevision)) throw changed();
-  return value.view;
+  return value;
+}
+export async function refreshBatchSeoWorkTask(task: BatchSeoTask, plan: BatchSeoPlan, signal: AbortSignal, fetcher: typeof fetch = fetch, saved = false) {
+  return (await checkedTaskSnapshot(task,plan,signal,fetcher,saved)).view;
+}
+/** A confirmed batch is not proof that every option fit its 50-item limit.
+ * Recompute the remaining work against the exact saved clocks and source. */
+export async function refreshBatchSeoWorkProgress(task:BatchSeoTask,plan:BatchSeoPlan,signal:AbortSignal,fetcher:typeof fetch=fetch,saved=false){
+  const value=await checkedTaskSnapshot(task,plan,signal,fetcher,saved);
+  return {view:value.view,task:taskFor({id:task.productId,title:task.productTitle},value)};
 }
 /** An explicit uncertain-result review may observe changed clocks. It is not a
  * save receipt; the caller must show the saved values before a manual skip. */

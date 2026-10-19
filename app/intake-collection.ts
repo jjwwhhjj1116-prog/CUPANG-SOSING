@@ -9,7 +9,7 @@ import { captureCollectionSupplement } from '@/app/collection-supplement-client'
 import { requestIntakeCollectionReceipt } from '@/app/intake-collection-recovery';
 
 /** A user-initiated fetch produces an editable draft only, never a Hub submission. */
-export async function collectIntakeProduct(job:CollectionJob,options:{signal:AbortSignal;fetcher:typeof fetch;onJob:(job:CollectionJob)=>void;onProgress:(message:string)=>void;captureFromBrowser?:(sourceUrl:string,signal:AbortSignal)=>Promise<BrowserProductCapture>}) {
+export async function collectIntakeProduct(job:CollectionJob,options:{signal:AbortSignal;fetcher:typeof fetch;onJob:(job:CollectionJob)=>void;onProgress:(message:string)=>void;captureFromBrowser?:(sourceUrl:string,signal:AbortSignal)=>Promise<BrowserProductCapture>;probeExistingFromBrowser?:(sourceUrl:string,signal:AbortSignal)=>Promise<BrowserProductCapture|null>}) {
  if(options.signal.aborted)return;
  const fetcher=options.fetcher;
  // A durable server write can finish after its view closes. It remains
@@ -24,9 +24,23 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
  let supplementNotice='';
  let source:ReturnType<typeof validateCollectionReceiptResponse>=null;
  let repairedExistingSource=false;
+ let usedExistingPage=false;
  if(!job.received_at){
   reportProgress('상품 페이지에서 정보 가져오는 중');
-  let acknowledgement=await requestIntakeCollectionReceipt(job,'collect',{fetcher,signal:options.signal});
+  let existing:BrowserProductCapture|null=null;
+  if(options.probeExistingFromBrowser){
+   // A bounded read of an already-open exact tab can avoid waiting for the
+   // public server timeout. This probe cannot open tabs or make source requests.
+   try{existing=await options.probeExistingFromBrowser(job.source_url,options.signal);}
+   catch{if(options.signal.aborted)return;}
+   if(options.signal.aborted)return;
+  }
+  // Never race receipt writes. A capture ACK failure follows the same one-GET
+  // recovery path and cannot silently start another server collection request.
+  let acknowledgement=existing
+   ?await requestIntakeCollectionReceipt(job,'browser-capture',{fetcher,signal:options.signal,capture:existing})
+   :await requestIntakeCollectionReceipt(job,'collect',{fetcher,signal:options.signal});
+  usedExistingPage=existing!==null;
   if(acknowledgement?.kind==='source-unavailable'&&options.captureFromBrowser&&!options.signal.aborted){
    reportProgress('현재 Chrome에서 1688 상품 원문 확인 중');
    const captured=await options.captureFromBrowser(job.source_url,options.signal);
@@ -61,7 +75,10 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
  // gap for review, but repeating that capture cannot make it a new intake.
  const reuseCapturedMobileSource=partialMobileSource||fullMobileSource;
  const storedSourceFork=job.context?.forkedFrom?.kind==='stored-source-new-draft-v1'&&job.context.forkedFrom.requestId===job.id&&job.context.forkedFrom.sourceJobId!==job.id;
- if(source&&!storedSourceFork&&!reuseCapturedMobileSource&&canSupplementCollection(source)&&options.captureFromBrowser){
+ // The existing-page shortcut has already read its complete supported source.
+ // Optional description/image/attribute gaps stay reviewable; do not immediately
+ // repeat capture through mobile/new tabs. Explicit source repair remains available.
+ if(source&&!storedSourceFork&&!reuseCapturedMobileSource&&!usedExistingPage&&canSupplementCollection(source)&&options.captureFromBrowser){
   reportProgress('현재 Chrome에서 상세 이미지·상품 속성 보완 중');
   try{
    let expectedProductVersion:string|undefined;
