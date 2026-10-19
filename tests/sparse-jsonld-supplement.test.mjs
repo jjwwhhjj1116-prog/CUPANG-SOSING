@@ -88,19 +88,23 @@ for(const company of companies)test(`explicit sparse JSON-LD repair preserves im
   const options=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_options').get().payload);
   options.rows[0].included=false;options.rows[0].unitsPerPack=2;options.rows[0].provenance.unitsPerPack='manual';
   h.sqlite.prepare('UPDATE product_options SET payload=?').run(JSON.stringify(options));
+  const initial=await json(await h.route(base+'/quotation-fields'));
+  assert.equal(initial.resolved.rows[0].fields.noticeMaterial.value,'해당사항없음');assert.equal(initial.resolved.rows[0].fields.noticeMaterial.source,'couplus-default','the Stage 6 manual label does not overwrite the initial legal notice');
+  await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:initial.revision,expectedInputFingerprint:initial.inputFingerprint,changes:[{fieldKey:'noticeMaterial',optionId:null,value:'직접 확인한 PP'}]}}));
   const before={product:h.sqlite.prepare('SELECT * FROM products').get(),content:h.sqlite.prepare('SELECT * FROM product_content').get(),
-   options:h.sqlite.prepare('SELECT * FROM product_options').get(),receipt:h.sqlite.prepare('SELECT * FROM collection_results').get(),context:h.sqlite.prepare('SELECT * FROM collection_context').get()};
+   options:h.sqlite.prepare('SELECT * FROM product_options').get(),quotation:h.sqlite.prepare('SELECT * FROM product_quotation_fields').get(),receipt:h.sqlite.prepare('SELECT * FROM collection_results').get(),context:h.sqlite.prepare('SELECT * FROM collection_context').get()};
   const body=await json(await h.route('/api/collection-jobs/job/source-supplement',{method:'POST',body:{capture:capture(),expectedProductVersion:before.product.updated_at}}));
   assert.equal(body.receipt.result.provider,'chrome-public-mobile-supplement-v1');assert.equal(body.receipt.result.description,'Collected source detail');
   assert.deepEqual(body.receipt.result.attributes,[{name:'material',value:'PP'}]);assert.deepEqual(body.receipt.result.options,plain(source.options));
   assert.deepEqual(body.receipt.result.images.slice(0,source.images.length),plain(source.images));assert.equal(body.receipt.result.images.at(-1).role,'detail');
   assert.deepEqual(h.sqlite.prepare('SELECT * FROM collection_results').get(),before.receipt);assert.deepEqual(h.sqlite.prepare('SELECT * FROM collection_context').get(),before.context);
   assert.deepEqual(h.sqlite.prepare('SELECT * FROM product_content').get(),before.content);assert.deepEqual(h.sqlite.prepare('SELECT * FROM product_options').get(),before.options);
+  assert.deepEqual(h.sqlite.prepare('SELECT * FROM product_quotation_fields').get(),before.quotation,'source repair preserves the exact reviewed Stage 7 overrides');
   const after=h.sqlite.prepare('SELECT * FROM products').get();
   for(const field of ['title','source_price_cny','source_url','supply_price','sale_price','msrp','exchange_rate','supply_margin','coupang_margin'])assert.equal(after[field],before.product[field]);
   const context=await json(await h.route(base+'/translation-source'));assert.equal(context.description,'Collected source detail');assert.deepEqual(context.sourceGaps,[]);assert.equal(context.requestContext.categoryId,'80719');
   const view=await json(await h.route(base+'/quotation-fields')),fields=view.resolved.rows[0].fields;
-  assert.equal(fields.title.value,'검토한 수납 바스켓');assert.equal(fields.noticeMaterial.value,'직접 확인한 PP');assert.match(fields.detailHtml.value,/직접 작성한 설명/);
+  assert.equal(fields.title.value,'검토한 수납 바스켓');assert.equal(fields.noticeMaterial.value,'직접 확인한 PP');assert.equal(fields.noticeMaterial.source,'manual-common');assert.match(fields.detailHtml.value,/직접 작성한 설명/);
   assert.equal(fields.mainImage.value,'');assert.equal(fields.detailImages.value,'');
   const replay=await json(await h.route('/api/collection-jobs/job/source-supplement',{method:'POST',body:{capture:capture(),expectedProductVersion:before.product.updated_at}}));
   assert.deepEqual(replay.receipt,body.receipt);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM collection_source_supplements').get().n,1);
@@ -128,7 +132,7 @@ for(const company of companies)test(`URL intake complements sparse desktop metad
   assert.equal(content.seo.title.value,'검토 브랜드 단일 수납 바스켓');assert.equal(content.seo.description.value,'수집한 원문에 따른 검토용 상세 설명');assert.deepEqual(content.seo.keywords.value,['수납']);assert.equal(content.label.material.value,'PP');assert.equal(content.label.importer.value,company.companyName);
   assert.equal(content.assets.main.value.length,1);assert.equal(content.assets.detail.value.length,1);
   const source=await json(await h.route(base+'/translation-source'));assert.deepEqual(source.sourceGaps,[]);assert.equal(source.provider,'chrome-public-mobile-supplement-v1');
-  const view=await json(await h.route(base+'/quotation-fields')),fields=view.resolved.rows[0].fields;assert.equal(view.categoryContext.categoryId,'80719');assert.equal(fields.title.value,content.seo.title.value);assert.equal(fields.noticeMaterial.value,'PP');assert.match(fields.detailHtml.value,/수집한 원문에 따른 검토용 상세 설명/);
+  const view=await json(await h.route(base+'/quotation-fields')),fields=view.resolved.rows[0].fields;assert.equal(view.categoryContext.categoryId,'80719');assert.equal(fields.title.value,content.seo.title.value);assert.equal(fields.noticeMaterial.value,'해당사항없음');assert.equal(fields.noticeMaterial.source,'couplus-default');assert.match(fields.detailHtml.value,/수집한 원문에 따른 검토용 상세 설명/);
   assert.deepEqual(['supplyPrice','salePrice','msrp'].map(key=>fields[key].value),['8750','14580','18950']);assert.ok(fields.mainImage.value);assert.ok(fields.detailImages.value);
   assert.equal(h.sqlite.prepare('SELECT count(*) n FROM products').get().n,1);assert.equal(h.objects.size,2);assert.equal(h.aiSources.length,1);
   assert.ok(h.network.every(host=>['detail.1688.com','cbu01.alicdn.com'].includes(host)),'all source/media fetches are intercepted local fixtures');

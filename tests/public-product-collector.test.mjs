@@ -287,7 +287,7 @@ test('direct offer price stays authoritative and a measured MOQ is not treated a
 });
 
 
-test('direct common material and model reach editable labels and quotation fields',()=>{
+test('direct common facts reach editable labels while fresh legal notices retain defaults and legacy notices retain fallback',()=>{
  const p={...product(),material:'尼龙',model:'MODEL-123'};
  const result=parsePublicProduct(html(p),url);
  const settings=load('app/workspace-settings.ts').defaultSettings;
@@ -296,8 +296,14 @@ test('direct common material and model reach editable labels and quotation field
  const draft=load('app/collection-product.ts').prepareCollectionProduct('owner',job,result,'draft',now);
  assert.equal(draft.content.label.material.value,'尼龙');assert.equal(draft.content.label.model.value,'MODEL-123');
  assert.equal(draft.content.label.material.provenance,'collected');
- const view=load('app/quotation-schema.ts').resolveQuotationFields({categoryId:'80719',product:draft.product,content:draft.content,options:draft.options,settings});
- assert.equal(view.rows[0].fields.noticeMaterial.value,'尼龙');assert.equal(view.rows[0].fields.model.value,'MODEL-123');
+ const resolve=load('app/quotation-schema.ts').resolveQuotationFields;
+ const view=resolve({categoryId:'80719',product:draft.product,content:draft.content,options:draft.options,settings});
+ assert.equal(view.rows[0].fields.noticeMaterial.value,'해당사항없음');assert.equal(view.rows[0].fields.noticeMaterial.source,'couplus-default');assert.equal(view.rows[0].fields.model.value,'MODEL-123');
+ assert.ok(draft.content.initialLegalNotices,'new promotions carry the server-owned initial legal notice snapshot');
+ const legacyContent=structuredClone(draft.content);delete legacyContent.initialLegalNotices;
+ const legacy=resolve({categoryId:'80719',product:draft.product,content:legacyContent,options:draft.options,settings});
+ assert.equal(legacy.rows[0].fields.noticeMaterial.value,'尼龙');assert.equal(legacy.rows[0].fields.noticeMaterial.source,'content');assert.equal(legacy.rows[0].fields.model.value,'MODEL-123');
+ assert.ok(draft.content.initialLegalNotices,'the snapshotless legacy case cannot change the fresh draft');
  assert.equal(draft.product.supplier_hub_status,'미전송');
 });
 

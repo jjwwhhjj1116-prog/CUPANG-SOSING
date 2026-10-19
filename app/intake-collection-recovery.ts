@@ -45,7 +45,8 @@ export async function requestIntakeCollectionReceipt(job: CollectionJob, action:
  if (options.signal.aborted) return;
  const fetcher = options.fetcher;
  const init: RequestInit = {method: 'POST', signal: options.signal,
-  ...(action === 'browser-capture' ? {headers: {'content-type': 'application/json'}, body: JSON.stringify(options.capture)} : {})};
+  ...(action === 'browser-capture' || options.capture !== undefined ? {headers: {'content-type': 'application/json'},
+   body: JSON.stringify(action === 'collect' ? {browserCapture: options.capture} : options.capture)} : {})};
  let response: Response;
  try {
   response = await fetcher(`/api/collection-jobs/${encodeURIComponent(job.id)}/${action}`, init);

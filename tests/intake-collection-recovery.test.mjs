@@ -77,6 +77,13 @@ test('known configuration 503 remains terminal and preserves its safe error',asy
  await assert.rejects(f.run,/서버 설정을 확인해야 합니다/);assert.equal(calls,1);assert.equal(f.imports.length,0);assert.equal(f.jobs.length,0);
 });
 
+test('provider and candidate failures remain terminal without opening Chrome, receipt recovery or import',async()=>{
+ for(const code of ['SOURCE_PROVIDER_FAILED','SOURCE_CANDIDATE_INVALID']){
+  let requests=0,captures=0;const f=unit(async()=>{requests++;return Response.json({code,error:'원문 확인 실패'},{status:422});},{captureFromBrowser:async()=>{captures++;assert.fail('terminal source rejection never captures');}});
+  await assert.rejects(f.run(),/원문 확인 실패/);assert.equal(requests,1);assert.equal(captures,0);assert.equal(f.imports.length,0);assert.equal(f.jobs.length,0);
+ }
+});
+
 for(const variant of ['wrong-job','wrong-offer','wrong-source','changed-source-url','null','invalid-time','invalid-content','json-string'])test(`valid JSON success with ${variant} is never healed by a receipt GET`,async()=>{
  let calls=0;const body=receipt();
  if(variant==='wrong-job')body.jobId='other';
@@ -146,6 +153,19 @@ async function localFixture(){
  const run=(fetcher,captureFromBrowser)=>h.load('app/intake-collection.ts').collectIntakeProduct(job,{signal:new AbortController().signal,fetcher,captureFromBrowser,onJob:value=>jobs.push(value),onProgress:value=>progress.push(value)});
  return{h,job,requests,jobs,progress,run,close:()=>h.close()};
 }
+
+test('actual collect candidate is parsed locally, owner-scoped and immutable on a later retry',async()=>{
+ const f=await localFixture(),{h}=f;
+ try{
+  const candidate={sourceUrl,scripts:[JSON.stringify({'@type':'ProductGroup',url:sourceUrl,name:'로컬 후보 원문',hasVariant:[{'@type':'Product',name:'검정',sku:'local-candidate-sku',offers:{'@type':'Offer',price:'2.99',priceCurrency:'CNY',eligibleQuantity:{minValue:1}}}]})]};
+  const response=await h.route('/api/collection-jobs/job/collect',{method:'POST',body:{browserCapture:candidate}}),body=await json(response);
+  assert.equal(body.receipt.result.provider,'chrome-product-jsonld-v1');assert.equal(body.receipt.result.options[0].sku,'local-candidate-sku');assert.equal(body.receipt.result.options[0].unitPriceCny,2.99);
+  assert.equal(h.network.length,0);const before=tables(h),files=objects(h);
+  const again=await json(await h.route('/api/collection-jobs/job/collect',{method:'POST',body:{browserCapture:{invalid:true}}}));
+  assert.deepEqual(again,body);assert.equal(tables(h),before);assert.equal(objects(h),files);assert.equal(h.network.length,0);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM collection_results').get().n,1);
+  assert.equal(h.sqlite.prepare('SELECT count(*) n FROM products').get().n,0);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM supplier_hub_receipts').get().n,0);
+ }finally{f.close();}
+});
 
 for(const variant of ['network','html'])test(`actual collect receipt survives ${variant} ACK loss and imports once`,async()=>{
  const f=await localFixture(),{h}=f;

@@ -35,12 +35,9 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
    catch{if(options.signal.aborted)return;}
    if(options.signal.aborted)return;
   }
-  // Never race receipt writes. A capture ACK failure follows the same one-GET
-  // recovery path and cannot silently start another server collection request.
-  let acknowledgement=existing
-   ?await requestIntakeCollectionReceipt(job,'browser-capture',{fetcher,signal:options.signal,capture:existing})
-   :await requestIntakeCollectionReceipt(job,'collect',{fetcher,signal:options.signal});
-  usedExistingPage=existing!==null;
+  // The server selects the configured provider before considering this optional
+  // inert capture. One POST/receipt also preserves the one-GET ACK recovery path.
+  let acknowledgement=await requestIntakeCollectionReceipt(job,'collect',{fetcher,signal:options.signal,...(existing?{capture:existing}:{})});
   if(acknowledgement?.kind==='source-unavailable'&&options.captureFromBrowser&&!options.signal.aborted){
    reportProgress('현재 Chrome에서 1688 상품 원문 확인 중');
    const captured=await options.captureFromBrowser(job.source_url,options.signal);
@@ -50,6 +47,7 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
   if(options.signal.aborted)return;
   if(!acknowledgement||acknowledgement.kind!=='received')throw Error(acknowledgement?.error||'상품 정보를 가져오지 못했습니다.');
   source=acknowledgement.source;
+  usedExistingPage=existing!==null&&source.provider==='chrome-product-jsonld-v1';
   received={...job,received_at:acknowledgement.receivedAt};
  } else if(!Number.isFinite(Date.parse(job.received_at)))throw Error('원문 저장 시각을 확인하지 못했습니다.');
  else if(options.captureFromBrowser){

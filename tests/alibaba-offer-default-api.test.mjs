@@ -40,7 +40,7 @@ for(const company of schemaCompanies)test(`offer default survives actual receipt
   assert.equal(fields.mainImage.value,content.assets.main.value[0],'anonymous default inherits common selected main image');
   assert.equal(fields.additionalImages.value,content.assets.additional.value[0]);assert.equal(fields.detailImages.value,content.assets.detail.value[0]);
   assert.match(fields.detailHtml.value,/수집 원문에 따른 단일 상품 설명/);
-  assert.equal(fields.noticeMaterial.value,'PP');assert.equal(fields.noticeServiceContact.value,'쿠팡 고객센터 1577-7011');assert.equal(fields.kcMarkType.value,'해당사항없음');assert.equal(fields.shelfLifeDays.value,'0');
+  assert.equal(fields.noticeMaterial.value,'해당사항없음');assert.equal(fields.noticeMaterial.source,'couplus-default','fresh legal notices stay independent of collected Stage 6 labels');assert.equal(fields.noticeServiceContact.value,'쿠팡 고객센터 1577-7011');assert.equal(fields.kcMarkType.value,'해당사항없음');assert.equal(fields.shelfLifeDays.value,'0');
   const source=h.load('app/exports/quotation-source.ts'),saved=await source.readQuotationExportSource('owner',product.id,null),resolved=source.resolveQuotationExport(saved);
   const assets=[...h.objects.keys()].map((key,index)=>({key,name:`assets/synthetic-${index}.png`,bytes:h.objects.get(key)}));
   const exported=h.load('app/exports/quotation-fields.ts').resolvedQuotationRows(saved,resolved,assets)[0];
@@ -52,7 +52,8 @@ for(const company of schemaCompanies)test(`offer default survives actual receipt
   inputs[0].translatedName='직접 확인한 기본 옵션';
   await json(await h.route(base+'/options',{method:'PATCH',body:{expectedRevision:currentOptions.options.revision,expectedProductVersion:currentOptions.productVersion,rows:inputs}}));
   const reviewed=await json(await h.route(base+'/quotation-fields'));
-  await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:reviewed.revision,expectedInputFingerprint:reviewed.inputFingerprint,changes:[{fieldKey:'salePrice',optionId:option.id,value:'9000'},{fieldKey:'detailHtml',optionId:null,value:'<p>직접 검토한 상세 설명</p>'}]}}));
+  assert.equal(reviewed.resolved.rows.find(value=>value.optionId===option.id).fields.noticeMaterial.value,'해당사항없음','editing the Stage 6 material alone does not overwrite initial legal notices');
+  await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:reviewed.revision,expectedInputFingerprint:reviewed.inputFingerprint,changes:[{fieldKey:'salePrice',optionId:option.id,value:'9000'},{fieldKey:'detailHtml',optionId:null,value:'<p>직접 검토한 상세 설명</p>'},{fieldKey:'noticeMaterial',optionId:null,value:'직접 확인한 PP'}]}}));
   const before=snapshot(h),downloads=h.stats.downloads,requests=h.network.length,generations=h.aiSources.length,files=[...h.objects].map(([key,value])=>[key,Buffer.from(value).toString('hex')]);
   await json(await h.route('/api/collection-jobs/job/result',{method:'POST',body}));
   await h.intake();
@@ -61,7 +62,7 @@ for(const company of schemaCompanies)test(`offer default survives actual receipt
   assert.deepEqual([...h.objects].map(([key,value])=>[key,Buffer.from(value).toString('hex')]),files);
   assert.deepEqual(h.sqlite.prepare('SELECT * FROM collection_results').get(),immutableReceipt);
   const finalView=await json(await h.route(base+'/quotation-fields')),final=finalView.resolved.rows.find(value=>value.optionId===option.id).fields;
-  assert.equal(final.title.value,'직접 검토한 기본 보호대, 직접 확인한 기본 옵션','a later independent title writer retains the existing option-name fallback');assert.equal(final.salePrice.value,'9000');assert.equal(final.detailHtml.value,'<p>직접 검토한 상세 설명</p>');assert.equal(final.noticeMaterial.value,'직접 확인한 PP');assert.equal(final.additionalImages.value,'');
+  assert.equal(final.title.value,'직접 검토한 기본 보호대, 직접 확인한 기본 옵션','a later independent title writer retains the existing option-name fallback');assert.equal(final.salePrice.value,'9000');assert.equal(final.detailHtml.value,'<p>직접 검토한 상세 설명</p>');assert.equal(final.noticeMaterial.value,'직접 확인한 PP');assert.equal(final.noticeMaterial.source,'manual-common');assert.equal(final.additionalImages.value,'');
   const finalReceipt=(await json(await h.route('/api/collection-jobs/job/result'))).receipt.result;
   assert.deepEqual(finalReceipt.offerDefault,plain(parsed.offerDefault));assert.equal(finalReceipt.options[0].sku,'');
   assert.ok(h.calls.every(path=>!path.includes('supplier-hub')&&!path.includes('submission')&&!path.includes('/attach')),'synthetic draft flow never submits to Supplier Hub');
