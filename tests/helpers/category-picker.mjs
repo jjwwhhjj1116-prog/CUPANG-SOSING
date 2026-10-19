@@ -7,8 +7,8 @@ const native=createRequire(import.meta.url);
 const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
 
 /** Actual picker, observed catalog and paginated reader. No real browser or Hub is used. */
-export function categoryPickerUI(request,{catalog,profiles=[],selectedId='',workspaceOwnerId,connectExcel=false}={}){
- const slots=[],modules=new Map(),selected=[],calls=[],effects=[];let cursor=0,changed=true,props={profiles,selectedId,workspaceOwnerId};
+export function categoryPickerUI(request,{catalog,profiles=[],selectedId='',workspaceOwnerId,connectExcel=false,sourceTitle,recommendationResolver}={}){
+ const slots=[],modules=new Map(),selected=[],calls=[],effects=[];let cursor=0,changed=true,props={profiles,selectedId,workspaceOwnerId,sourceTitle};
  const fetcher=async(path,init)=>{calls.push({path,method:init?.method??'GET'});return request(path,init);};
  const hooks={useMemo:fn=>fn(),useState(initial){const index=cursor++;if(!(index in slots))slots[index]=initial;return [slots[index],value=>{const next=typeof value==='function'?value(slots[index]):value;if(!Object.is(next,slots[index])){slots[index]=next;changed=true;}}];},
   useRef(initial){const index=cursor++;return slots[index]??(slots[index]={current:initial});},useEffect(effect,deps){const index=cursor++,previous=slots[index];if(!previous||!deps||deps.some((value,i)=>!Object.is(value,previous.deps?.[i]))){slots[index]={deps,effect,cleanup:previous?.cleanup};effects.push(()=>{previous?.cleanup?.();slots[index].cleanup=effect();});}}};
@@ -17,6 +17,8 @@ export function categoryPickerUI(request,{catalog,profiles=[],selectedId='',work
   if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText,
    {exports,Error,crypto,AbortController,TextEncoder,TextDecoder,structuredClone,fetch:fetcher,require(name){
+    if(name==='@/app/components/category-recommendations-panel')return{CategoryRecommendationsPanel:function CategoryRecommendationsPanel(){return null;}};
+    if(name==='@/app/supplier-hub-category-recommendations')return{resolveRecommendedHubCategoryChoice:recommendationResolver??(()=>{throw Error('No fixture recommendation chosen');})};
     if(name==='react')return hooks;if(name.endsWith('.css'))return {};
     if(name==='@/app/supplier-hub-catalog'&&catalog)return catalog;
     if(name.startsWith('../docs/')&&name.endsWith('.json'))return JSON.parse(fs.readFileSync(new URL('../../docs/'+name.slice(8),import.meta.url),'utf8'));
@@ -32,7 +34,9 @@ export function categoryPickerUI(request,{catalog,profiles=[],selectedId='',work
  }};
  const chooseConnection=enabled=>{const control=nodes(render()).find(node=>node.type==='input'&&node.props['aria-label']==='상품 추가 전에 공식 Excel 양식도 연결');if(!control)throw Error('Category Excel choice unavailable');control.props.onChange({target:{checked:enabled}});render();};
  if(connectExcel)chooseConnection(true);
- return {render,selected,calls,close,chooseConnection,replayEffects(){for(const slot of slots)if(slot?.effect){slot.cleanup?.();slot.cleanup=slot.effect();}return render();},reopen(){close();slots.length=0;if(connectExcel)chooseConnection(true);},setProps(patch){props={...props,...patch};render();},alerts:()=>nodes(render()).filter(node=>node.props?.role==='alert').map(node=>node.props.children),async confirm(){nodes(render()).find(node=>node.type==='button'&&node.props.children==='선택 완료 · URL 입력').props.onClick();await settle();},async chooseLive(choice){
+ return {render,selected,calls,close,chooseConnection,replayEffects(){for(const slot of slots)if(slot?.effect){slot.cleanup?.();slot.cleanup=slot.effect();}return render();},reopen(){close();slots.length=0;if(connectExcel)chooseConnection(true);},setProps(patch){props={...props,...patch};render();},alerts:()=>nodes(render()).filter(node=>node.props?.role==='alert').map(node=>node.props.children),async confirm(){nodes(render()).find(node=>node.type==='button'&&node.props.children==='선택 완료 · URL 입력').props.onClick();await settle();},async chooseRecommendation(item,result){
+  await nodes(render()).find(node=>node.type?.name==='CategoryRecommendationsPanel').props.onChoose(item,result);await settle();
+ },async chooseLive(choice){
   nodes(render()).find(node=>node.type?.name==='SupplierHubCategoryBrowser').props.onChoice(choice);
   await settle();
  },async chooseCode(code){

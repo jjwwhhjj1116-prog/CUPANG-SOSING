@@ -306,14 +306,14 @@
     const root = host.attachShadow({ mode: 'open' });
     addStyles(root, dockStyles);
     const panel = element('aside', 'dock collapsed');
-    panel.setAttribute('aria-label', 'YOOFAM PLUS 판매량 조회');
+    panel.setAttribute('aria-label', 'YOOFAM 스튜디오 판매량 조회');
     const menu = element('div', 'menu');
     menu.id = 'yoo-sales-menu';
     const context = element('div', 'context');
     const countLabel = element('span', 'count');
     const count = element('strong', '', '0');
     countLabel.append(count, document.createTextNode('개 상품'));
-    context.append(element('b', '', `YOOFAM PLUS ${EXTENSION_VERSION}`), countLabel);
+    context.append(element('b', '', `YOOFAM 스튜디오 ${EXTENSION_VERSION}`), countLabel);
     const statusBox = element('div', 'status-box');
     statusBox.hidden = true;
     const status = element('p', 'status', '현재 페이지의 상품을 확인하고 있습니다.');
@@ -375,7 +375,7 @@
     mark.innerHTML = BRAND_SYMBOL; // Bundled, fixed SVG; no page or remote content.
     launcher.append(mark);
     launcher.type = 'button';
-    launcher.title = `YOOFAM PLUS ${EXTENSION_VERSION} · 판매량 조회`;
+    launcher.title = `YOOFAM 스튜디오 ${EXTENSION_VERSION} · 판매량 조회`;
     launcher.setAttribute('aria-label', 'YOO 판매량 메뉴 열기');
     launcher.setAttribute('aria-expanded', 'false');
     launcher.setAttribute('aria-controls', menu.id);

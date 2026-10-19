@@ -82,8 +82,8 @@ test('dock header and launcher show the loaded extension version with a safe fal
   for (const [version, expected] of [['2.0.2', '2.0.2'], [undefined, 'v2'], ['not-a-version', 'v2']]) {
     const api = fixture(version);
     api.createDock();
-    assert.ok(api.nodes.some(node => node.tagName === 'b' && node.textContent === `YOOFAM PLUS ${expected}`));
-    assert.ok(api.nodes.some(node => node.tagName === 'button' && node.title === `YOOFAM PLUS ${expected} · 판매량 조회`));
+    assert.ok(api.nodes.some(node => node.tagName === 'b' && node.textContent === `YOOFAM 스튜디오 ${expected}`));
+    assert.ok(api.nodes.some(node => node.tagName === 'button' && node.title === `YOOFAM 스튜디오 ${expected} · 판매량 조회`));
   }
 });
 

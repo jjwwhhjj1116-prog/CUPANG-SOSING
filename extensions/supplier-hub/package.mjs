@@ -11,7 +11,7 @@ function crc(bytes) { let n=0xffffffff; for(const b of bytes)n=(n>>>8)^crcTable[
 export function readPackageZip(bytes) {
   if(!(bytes instanceof Uint8Array)||bytes.length<22||bytes.length>MAX)throw Error('ZIP 파일은 30MB 이하여야 합니다.');
   const view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength), end=bytes.length-22;
-  if(view.getUint32(end,true)!==0x06054b50||view.getUint16(end+20,true)!==0||view.getUint32(end+4,true)!==0)throw Error('YOOFAM PLUS 원본 ZIP을 선택해주세요.');
+  if(view.getUint32(end,true)!==0x06054b50||view.getUint16(end+20,true)!==0||view.getUint32(end+4,true)!==0)throw Error('YOOFAM 스튜디오 원본 ZIP을 선택해주세요.');
   const count=view.getUint16(end+10,true), size=view.getUint32(end+12,true), start=view.getUint32(end+16,true);
   if(!count||count>200||count!==view.getUint16(end+8,true)||start+size!==end)throw Error('ZIP 목록이 올바르지 않습니다.');
   const files=new Map();let central=start,local=0;

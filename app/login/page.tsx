@@ -29,7 +29,7 @@ export default function LoginPage(){
   finally{busyRef.current=false;setBusy(false);}
  }
  return <main className={styles.page}>
-  <header className={styles.brand}><span className={styles.mark} aria-hidden="true">Y<span>+</span></span><span>YOOFAM <strong>PLUS</strong></span></header>
+  <header className={styles.brand}><span className={styles.mark} aria-hidden="true">Y<span>+</span></span><span>YOOFAM <strong>스튜디오</strong></span></header>
   <section className={styles.card} aria-labelledby="login-title">
    <div className={styles.heading}><p className={styles.eyebrow}>로켓배송 AI 상품등록</p><h1 id="login-title">로그인</h1><p>상품 소싱부터 견적서 작성까지, 이어서 시작하세요.</p></div>
    <form ref={formRef} onSubmit={submit} className={styles.form} aria-busy={busy}>
@@ -44,6 +44,6 @@ export default function LoginPage(){
    </form>
    <p className={styles.hint}>유앤채·와이홉에 지정된 계정으로 로그인해주세요.</p>
   </section>
-  <footer className={styles.footer}>YOOFAM PLUS <span aria-hidden="true">·</span> 상품등록 워크스페이스</footer>
+  <footer className={styles.footer}>YOOFAM 스튜디오 <span aria-hidden="true">·</span> 상품등록 워크스페이스</footer>
  </main>;
 }

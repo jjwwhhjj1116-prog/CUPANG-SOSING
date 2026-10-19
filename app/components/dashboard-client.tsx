@@ -568,7 +568,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
       setSourceNotice('');
       if(intakeRows.some(row=>sameSourceUrl(row.url,item.snapshot.sourceUrl))){setView('work');setAddOpen(true);return;}
       if(intakeRows.length>=50)throw Error('상품 대기열은 최대 50행입니다. 기존 입력은 유지했습니다.');
-      setIntakeSourceSeed({id:crypto.randomUUID(),sourceUrl:item.snapshot.sourceUrl});setView('work');setAddOpen(true);
+      setIntakeSourceSeed({id:crypto.randomUUID(),sourceUrl:item.snapshot.sourceUrl,title:item.reviewed?.title??item.snapshot.title});setView('work');setAddOpen(true);
     }catch(error){setSourceNotice(error instanceof Error?error.message:'상품 추가 실패');}
   }
   async function archiveSource(item:SourceInboxItem){
@@ -584,13 +584,13 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   return (
     <main className="app-shell">
       <aside className="sidebar">
-        <div className="brand"><span className="brand-mark">Y</span><span>YOOFAM PLUS</span></div>
+        <div className="brand"><span className="brand-mark">Y</span><span>YOOFAM 스튜디오</span></div>
         <nav aria-label="주 메뉴"><p className="nav-caption">로켓배송</p>
           <button className={`nav-item ${view==='work'?'active':''}`} onClick={()=>changeView('work')}><span>✦</span>AI 상품등록</button>
           <button className={`nav-item ${view==='archive'?'active':''}`} onClick={()=>changeView('archive')}><span>▦</span>상품관리(신규)</button>
           <p className="nav-caption nav-gap">설정</p><button className="nav-item" onClick={()=>void checkConnections()}><span>⌁</span>연동 설정</button><button className="nav-item" onClick={()=>{setHistoryProductId(detail?.id??products[0]?.id??'');setHistoryOpen(true);}}><span>↻</span>작업 이력</button>
         </nav>
-        <div className="sidebar-status"><div><strong>YOOFAM PLUS</strong><small>로켓배송 상품 등록 · 관리</small></div></div>
+        <div className="sidebar-status"><div><strong>YOOFAM 스튜디오</strong><small>로켓배송 상품 등록 · 관리</small></div></div>
       </aside>
 
       <section className="content">
@@ -603,7 +603,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
         {pendingUpload&&<div className="panel-note" role="status"><div><strong>업로드 파일 연결 대기</strong><p>파일은 보관돼 있습니다. 상품에 연결하기를 다시 시도할 수 있습니다.</p></div><button className="btn ghost" disabled={busy} onClick={()=>void retryUploadedImage()}>보관된 이미지 연결 재시도</button></div>}
 
 
-        {view==='archive'?<><ProductManagementWorkspace/><details className="collection-panel"><summary>YOOFAM PLUS 작업 상품 보관함</summary><ProductArchive onOpenProduct={openArchivedProduct} refreshToken={`${collectionJobs[0]?.updated_at}:${products[0]?.updated_at}`}/></details></>:<>
+        {view==='archive'?<><ProductManagementWorkspace/><details className="collection-panel"><summary>YOOFAM 스튜디오 작업 상품 보관함</summary><ProductArchive onOpenProduct={openArchivedProduct} refreshToken={`${collectionJobs[0]?.updated_at}:${products[0]?.updated_at}`}/></details></>:<>
         {(sourceNotice||sourceRegistrations.error)&&<p role="status" className="panel-note">{sourceNotice||sourceRegistrations.error}</p>}
         <SourceInboxPanel key={workspaceOwnerId??'anonymous'} ownerId={workspaceOwnerId} disabled={busy||addOpen||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving} onChanged={sourceRegistrations.reload} onAdd={prepareSource}/>
         <details className="collection-panel" aria-label="수집 대기열"><summary>상품 대기열 · {collectionJobs.filter(job=>job.status!=='cancelled').length}건</summary>
@@ -804,7 +804,7 @@ function DetailPanel({ workspaceOwnerId, onReceiptSaved, onBeforeSeoGenerate, on
   </>;
 }
 function LegacyQuotePanel({ product, settings }: {product:Product;settings:Settings}) {
-  return <div className="panel-stack"><article className="quote-sheet"><header><div><span>SUPPLY QUOTATION</span><h3>대표 상품 가격 참고</h3></div><strong>{registrationNumber(product)}</strong></header><dl><div><dt>상품명</dt><dd>{product.title}</dd></div><div><dt>옵션 수</dt><dd>{product.options_count}개</dd></div><div><dt>공급가</dt><dd>{won(product.supply_price)}</dd></div><div><dt>권장 판매가</dt><dd>{won(product.sale_price)}</dd></div><div><dt>시장가격(MSRP)</dt><dd>{won(product.msrp)}</dd></div><div><dt>수입·판매원</dt><dd>{settings.importer}</dd></div></dl><footer><span>내부 검토용 · Supplier Hub 호환 미검증</span><strong>YOOFAM PLUS</strong></footer></article><p>SEO·표시사항·이미지 탭에서 저장한 자료는 검토 ZIP에 포함됩니다. 연결된 원본 양식을 채우려면 위에서 카테고리와 입력 행을 선택하세요.</p><div className="quote-actions"><button className="btn ghost" onClick={()=>window.print()}>견적서 인쇄 / PDF</button><button className="btn primary" onClick={()=>downloadQuote(product,settings)}>견적 CSV 다운로드</button></div></div>;
+  return <div className="panel-stack"><article className="quote-sheet"><header><div><span>SUPPLY QUOTATION</span><h3>대표 상품 가격 참고</h3></div><strong>{registrationNumber(product)}</strong></header><dl><div><dt>상품명</dt><dd>{product.title}</dd></div><div><dt>옵션 수</dt><dd>{product.options_count}개</dd></div><div><dt>공급가</dt><dd>{won(product.supply_price)}</dd></div><div><dt>권장 판매가</dt><dd>{won(product.sale_price)}</dd></div><div><dt>시장가격(MSRP)</dt><dd>{won(product.msrp)}</dd></div><div><dt>수입·판매원</dt><dd>{settings.importer}</dd></div></dl><footer><span>내부 검토용 · Supplier Hub 호환 미검증</span><strong>YOOFAM 스튜디오</strong></footer></article><p>SEO·표시사항·이미지 탭에서 저장한 자료는 검토 ZIP에 포함됩니다. 연결된 원본 양식을 채우려면 위에서 카테고리와 입력 행을 선택하세요.</p><div className="quote-actions"><button className="btn ghost" onClick={()=>window.print()}>견적서 인쇄 / PDF</button><button className="btn primary" onClick={()=>downloadQuote(product,settings)}>견적 CSV 다운로드</button></div></div>;
 }
 
 function downloadQuote(product: Product, settings: Settings) {

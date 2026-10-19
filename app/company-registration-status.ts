@@ -38,7 +38,7 @@ export function validateCompanyRegistrationStatus(value:unknown,query:CompanyReg
 /** Independent company-level observation. Never creates a YOOFAM receipt or changes a draft. */
 export async function loadCompanyRegistrationStatus(query:CompanyRegistrationQuery,signal:AbortSignal):Promise<CompanyRegistrationStatus>{
  const request=validateCompanyRegistrationQuery(query),before=await readCompanyRegistrationContext(signal),capability=await exchange('PING',null,signal);
- if(capability.companyRegistrationStatus!==true)throw Error('등록 상태 조회를 지원하는 YOOFAM PLUS 확장 0.2.61을 적용해주세요.');
+ if(capability.companyRegistrationStatus!==true)throw Error('등록 상태 조회를 지원하는 YOOFAM 스튜디오 확장 0.2.61을 적용해주세요.');
  const reply=await exchange('COMPANY_REGISTRATIONS',{query:request},signal),after=await readCompanyRegistrationContext(signal);
  if(before.ownerId!==after.ownerId||before.company.code!==after.company.code||before.company.name!==after.company.name)throw Error('조회 중 로그인 계정 또는 회사정보가 변경되었습니다. 다시 조회해주세요.');
  if(signal.aborted)throw Error('조회가 취소되었습니다.');return validateCompanyRegistrationStatus(reply.observation,request,after);

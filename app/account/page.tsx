@@ -20,7 +20,7 @@ export default function AccountPage(){
   try{const response=await fetch('/api/membership',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action,memberId})});if(response.status===401){window.location.replace('/login');return;}const data=await response.json() as {error?:string;reauthenticate?:boolean};if(!response.ok)throw Error(data.error||'요청을 처리하지 못했습니다.');if(action==='logout'||data.reauthenticate){window.location.assign('/login');return;}await refresh();setMessage('처리했습니다.');}catch(error){setMessage(error instanceof Error?error.message:'처리 실패');}finally{setBusy(false);}
  }
  return <main className="membership-page">
-  <header className="membership-header"><div><Link href="/">← 상품등록</Link><h1>YOOFAM PLUS 계정 관리</h1></div>{self&&<button className="btn ghost" disabled={busy} onClick={()=>void act('logout')}>로그아웃</button>}</header>
+  <header className="membership-header"><div><Link href="/">← 상품등록</Link><h1>YOOFAM 스튜디오 계정 관리</h1></div>{self&&<button className="btn ghost" disabled={busy} onClick={()=>void act('logout')}>로그아웃</button>}</header>
   <p role="status" aria-live="polite">{loading?'계정을 불러오는 중…':message}</p>
   {self&&<section className="membership-card"><h2>{self.role==='admin'?'관리자':'회원'} 계정</h2><p>{self.email}</p><p>{self.companyName} · {self.companyCode}</p><p>로그인 계정에 지정된 Supplier Hub 회사로 상품과 견적서를 관리합니다.</p></section>}
   {self&&<LoginPreferencesPanel email={self.email}/>}

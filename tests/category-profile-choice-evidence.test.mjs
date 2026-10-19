@@ -53,6 +53,7 @@ function ui(profiles,{choicePatch,readProfiles,preventLiveConfirm=false}={}){
  const component=load('app/components/category-picker.tsx',{
   '@/app/load-category-profiles':load('app/load-category-profiles.ts',{fetch:fetcher}),
   '@/app/components/supplier-hub-category-browser':{SupplierHubCategoryBrowser:()=>null},
+  '@/app/components/category-recommendations-panel':{CategoryRecommendationsPanel:()=>null},
   '@/app/supplier-hub-catalog':{loadLiveHubCategorySchema(){assert.fail('saved preview must not read a live Hub schema');}},
   ...(choicePatch||preventLiveConfirm?{'@/app/category-catalog':{...catalog,
    categoryChoices:values=>catalog.categoryChoices(values).map(choice=>choice.profileId&&choicePatch?{...choice,...choicePatch}:choice),

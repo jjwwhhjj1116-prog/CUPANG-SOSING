@@ -21,6 +21,8 @@ function harness(request,existing=false,{initialProfiles,connectExcel=true,readP
  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,crypto,AbortController,fetch:fetcher,require(name){
   if(name==='@/app/load-category-profiles'){const loaded={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/load-category-profiles.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:loaded,Error,fetch:fetcher});return loaded;}
   if(name==='react')return hooks;
+  if(name==='@/app/components/category-recommendations-panel')return{CategoryRecommendationsPanel:()=>null};
+  if(name==='@/app/supplier-hub-category-recommendations')return{resolveRecommendedHubCategoryChoice:()=>assert.fail('manual category fixtures must not request recommendations')};
   if(name.endsWith('.css'))return{};
   if(name==='@/app/category-profiles')return{usableCategoryCode:()=>true};
   if(name==='@/app/quotation-schema')return{getQuotationSchema:()=>({fields:[],status:'observed'})};

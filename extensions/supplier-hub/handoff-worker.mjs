@@ -1,4 +1,5 @@
 import './sales-worker.mjs';
+import {readAppSupplierHubCategoryRecommendations} from './category-predict.mjs';
 import {dispatchSupplierHubValidation} from './validation-dispatch.mjs';
 import {observeSupplierHubResult} from './observe.mjs';
 import {validateHandoff,pendingPackage,resultKey,transferRecord} from './handoff-store.mjs';
@@ -15,6 +16,9 @@ import {dispatchSingleDocument} from './single-dispatch.mjs';
 import {dispatchProductDocument} from './product-document-dispatch.mjs';
 import {savePageSource,flushPageSources} from './source-inbox.mjs';
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
+  if(message?.type==='YOOFAM_RECOMMEND_CATEGORIES'){
+    readAppSupplierHubCategoryRecommendations(message,sender).then(recommendations=>respond({ok:true,recommendations}),error=>respond({ok:false,error:error.message}));return true;
+  }
   if(['YOOFAM_SAVE_PAGE_SOURCE','YOOFAM_FLUSH_PAGE_SOURCES'].includes(message?.type)){
     const run=message.type==='YOOFAM_SAVE_PAGE_SOURCE'?savePageSource:flushPageSources;
     run(message,sender).then(respond,error=>respond({ok:false,error:error.message}));return true;
