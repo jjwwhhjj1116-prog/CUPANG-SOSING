@@ -8,6 +8,7 @@ import type { SubmissionReview } from '@/app/submission-review';
 import { QuotationReviewIssues } from '@/app/components/quotation-review-issues';
 import { validateSubmissionReviewResponse } from '@/app/submission-review-response';
 import { SubmissionPackage } from '@/app/components/submission-package';
+import { SupplierHubProductSubmission } from '@/app/components/supplier-hub-product-submission';
 
 type Target = {id:string;title:string;source_url:string;updated_at:string};
 type Result = {id:string;report?:SubmissionReview;error?:string};
@@ -15,6 +16,7 @@ export function SubmissionReviewPanel({products,profiles,onEdit,onReceiptSaved,i
   const [profileId,setProfileId]=useState(initialProfileId??'');
   const [run,setRun]=useState(0);
   const [snapshot,setSnapshot]=useState<{key:string;results:Result[];finished:boolean}>({key:'',results:[],finished:false});
+  const [legacyOpen,setLegacyOpen]=useState<{key:string;ids:string[]}>({key:'',ids:[]});
   const targetKey=JSON.stringify(products.map(product=>product.id));
   // A saved profile revision includes changes to the workbook and its column mappings.
   // Automatic category selection can resolve a different profile for each product.
@@ -52,8 +54,7 @@ export function SubmissionReviewPanel({products,profiles,onEdit,onReceiptSaved,i
   }
   const safeUrl=(value:string)=>{try{const url=new URL(value);return ['http:','https:'].includes(url.protocol)?url.href:undefined;}catch{return undefined;}};
   return <section className="panel-stack" aria-busy={busy}>
-    <p>선택한 상품 {products.length}건의 저장된 견적 자료를 검사합니다. 수정·확인 후 각 상품의 등록 전송을 실행하세요.</p>
-    <details><summary>Supplier Hub 실제 등록 순서</summary><ol><li>최신 공식 견적 Excel을 준비합니다.</li><li>견적서에 적힌 파일명과 일치하는 상품 이미지, 제품 필수 표시사항 라벨을 각각 첨부합니다.</li><li>상품에 필요한 법적 서류와 동의 내용을 확인한 뒤 파일 검증을 진행합니다.</li><li>검증 결과를 확인하고 등록 상태를 추적합니다.</li></ol><p>2026-09-23 로그인된 대량 등록 화면 기준입니다. 앱에 저장한 이미지 참조가 Supplier Hub에 업로드되었다는 뜻은 아닙니다.</p><a href="https://supplier.coupang.com/qvt/registration" target="_blank" rel="noreferrer">Supplier Hub 대량 등록 화면 열기</a></details>
+    <p>선택한 상품 {products.length}건의 포함 옵션을 견적 문서 하나씩 구성합니다. 저장한 카테고리·상품명·가격·이미지를 확인한 뒤 등록 전송을 진행하세요.</p>
     {!products.length&&<p role="status">작업 보드에서 검사할 상품을 선택한 뒤 등록 전송을 눌러주세요.</p>}
     <label className="field"><span>검사에 적용할 카테고리</span><select value={profileId} onChange={event=>{currentContext.current=null;setProfileId(event.target.value);setRun(value=>value+1);}}><option value="">상품 수집 시 선택한 카테고리</option>{profiles.map(profile=><option key={profile.id} value={profile.id}>{profile.name} · {profile.categoryId||'코드 미입력'}</option>)}</select></label>
     <small>검사에 선택한 카테고리를 견적 수정 화면에도 이어서 적용합니다.</small>
@@ -63,15 +64,25 @@ export function SubmissionReviewPanel({products,profiles,onEdit,onReceiptSaved,i
       const result=results.find(item=>item.id===product.id); const report=result?.report;
       return <article key={product.id} className="panel-stack">
         <h3>{report ? report.title.trim() ? report.title : '상품명 미입력' : product.title}</h3><a href={safeUrl(product.source_url)} target="_blank" rel="noreferrer" style={{overflowWrap:'anywhere'}}>{product.source_url}</a>
-        {result?.error&&<p role="alert">{result.error}</p>}
+        <SupplierHubProductSubmission key={JSON.stringify([requestKey,product.id])} productId={product.id} profileId={profileId||undefined}
+          expectedCategoryId={profileId?profiles.find(profile=>profile.id===profileId)?.categoryId||undefined:undefined}
+          onReceiptSaved={()=>{if(currentContext.current===context)onReceiptSaved?.();}}/>
+        <details aria-label="Excel 파일 전송 · 별도 방식" open={legacyOpen.key===requestKey&&legacyOpen.ids.includes(product.id)} onToggle={event=>{
+          if(currentContext.current!==context)return;
+          const open=event.currentTarget.open;
+          setLegacyOpen(current=>({key:requestKey,ids:open?[...new Set([...(current.key===requestKey?current.ids:[]),product.id])]:(current.key===requestKey?current.ids:[]).filter(id=>id!==product.id)}));
+        }}><summary>Excel 파일 전송 · 별도 방식</summary>
+        <p>공식 Excel 파일과 첨부 이미지를 대량 등록 화면으로 전달하는 별도 방식입니다. 전체 상품 문서 확인에 실패해도 자동으로 실행하지 않습니다.</p>
+        {result?.error&&<p role="alert">Excel 자료 검사: {result.error}</p>}
         {report&&<>
           <p>{report.categoryPath.join(' › ')||'카테고리 미선택'} · 포함 옵션 {report.includedOptions}개</p>
           <strong>입력 오류 {report.errorCount}개 · 증빙 확인 {report.reviewCount}개</strong>
           <small>검사 시각: {new Date(report.checkedAt).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'})} (한국시간)</small>
           <details><summary>수정·확인할 항목 보기</summary><QuotationReviewIssues key={requestKey} issues={report.issues} omittedIssueCount={report.omittedIssueCount} disabled={false} onInspect={target=>editCurrent(product.id,profileId||undefined,{...target,categoryId:report.categoryId})}/></details>
           <details><summary>검사 범위</summary><ul>{report.limits.map(limit=><li key={limit}>{limit}</li>)}</ul></details>
-          <SubmissionPackage key={JSON.stringify([requestKey,report.fingerprint])} productId={product.id} profileId={profileId} categoryId={report.categoryId} onReceiptSaved={onReceiptSaved} onInspect={(resolvedProfileId,target)=>editCurrent(product.id,resolvedProfileId,target)}/>
+          {legacyOpen.key===requestKey&&legacyOpen.ids.includes(product.id)&&<SubmissionPackage key={JSON.stringify([requestKey,report.fingerprint])} productId={product.id} profileId={profileId} categoryId={report.categoryId} onReceiptSaved={()=>{if(currentContext.current===context)onReceiptSaved?.();}} onInspect={(resolvedProfileId,target)=>editCurrent(product.id,resolvedProfileId,target)}/>}
         </>}
+        </details>
         <button type="button" className="btn primary" onClick={()=>editCurrent(product.id,profileId||undefined,report?{optionId:null,fieldId:'category',categoryId:report.categoryId}:undefined)}>견적서 수정하기</button>
       </article>;
     })}

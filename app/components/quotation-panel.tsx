@@ -18,11 +18,11 @@ type Preview = {
   submissionReview?: QuotationPreviewReviewData;
   report:{dataStartRow:number;mappingCoverage?:QuotationMappingFinding[];rowCount:number;missingRequired:{row:number;column:number;header:string}[];warnings:string[];contentRevision:number;optionRevision:number;profileRevision:number};
 };
-type QuotationPanelProps = {onPrepareSubmission?:(profileId:string)=>void;onProfilePrepared?:(profile:CategoryProfile,source:CategoryProfile)=>void;onProfileChange?:(profileId:string|undefined)=>void;onSaved?:()=>void;onReceiptSaved?:()=>void;navigationTarget?:QuotationNavigationTarget;navigationSequence?:number;productId:string;onManageCategories:()=>void;refreshToken?:string;preferredProfileId?:string};
+type QuotationPanelProps = {submissionActive?:boolean;onPrepareSubmission?:(profileId?:string)=>void;onProfilePrepared?:(profile:CategoryProfile,source:CategoryProfile)=>void;onProfileChange?:(profileId:string|undefined)=>void;onSaved?:()=>void;onReceiptSaved?:()=>void;navigationTarget?:QuotationNavigationTarget;navigationSequence?:number;productId:string;onManageCategories:()=>void;refreshToken?:string;preferredProfileId?:string};
 export function QuotationPanel(props: QuotationPanelProps) {
   return <QuotationPanelContent key={JSON.stringify([props.productId,props.preferredProfileId ?? '',props.navigationTarget?.categoryId])} {...props}/>;
 }
-function QuotationPanelContent({onPrepareSubmission,onProfilePrepared,onProfileChange,onSaved,onReceiptSaved,productId,onManageCategories,refreshToken,preferredProfileId,navigationTarget,navigationSequence=0}: QuotationPanelProps) {
+function QuotationPanelContent({submissionActive=true,onPrepareSubmission,onProfilePrepared,onProfileChange,onSaved,onReceiptSaved,productId,onManageCategories,refreshToken,preferredProfileId,navigationTarget,navigationSequence=0}: QuotationPanelProps) {
   const [profiles,setProfiles]=useState<CategoryProfile[]>([]);
   const [profileId,setProfileId]=useState('');const [startRow,setStartRow]=useState(2);
   const [useSavedRow,setUseSavedRow]=useState(true);
@@ -70,11 +70,11 @@ function QuotationPanelContent({onPrepareSubmission,onProfilePrepared,onProfileC
       const selectedProfile=savedProfiles.find(profile=>profile.id===savedId);
       // Queryless readers already use this product's immutable collection
       // context. Resolving that default is not a new selection in other stages.
-      const capturedDefault=!preferredProfileId&&data.categoryContext.source==='collection'&&savedId===data.categoryContext.profileId
+      const capturedDefault=preferredProfileId!==savedId&&data.categoryContext.source==='collection'&&savedId===data.categoryContext.profileId
         &&selectedProfile!==undefined&&selectedProfile.categoryId===data.categoryContext.categoryId
         &&JSON.stringify(selectedProfile.categoryPath)===JSON.stringify(data.categoryContext.categoryPath);
       setConnectionWarning(selection.warning);
-      setProfiles(savedProfiles);setProfileId(savedId);setOverrideProfileId(savedId||undefined);profileChangeRef.current?.(capturedDefault?undefined:savedId||undefined);
+      setProfiles(savedProfiles);setProfileId(savedId);setOverrideProfileId(capturedDefault?undefined:savedId||undefined);profileChangeRef.current?.(capturedDefault?undefined:savedId||undefined);
       setCapturedCategoryId(data?.categoryContext.categoryId ?? null);
       setCapturedProfileId(data.categoryContext.source==='collection'?data.categoryContext.profileId:null);
       setCapturedCategoryPath(data.categoryContext.source==='collection'?data.categoryContext.categoryPath:[]);
@@ -144,7 +144,7 @@ function QuotationPanelContent({onPrepareSubmission,onProfilePrepared,onProfileC
   if(contextError)return <section className="panel-stack"><p role="alert">{contextError}</p><button type="button" className="btn primary" onClick={()=>{setContextError('');setContextLoaded(false);setLoadAttempt(value=>value+1);}}>카테고리 연결 다시 확인</button><button type="button" className="btn ghost" onClick={onManageCategories}>카테고리·양식 설정 확인</button></section>;
   return <section className="panel-stack" aria-busy={busy}>
     {connectionWarning && <p role="status" className="panel-note">{connectionWarning}</p>}
-    <div ref={editorRef}>{contextLoaded?<QuotationFieldsEditor key={`${navigationSequence}:${currentReviewTarget?.sequence??0}`} navigationTarget={currentReviewTarget?.target??navigationTarget} productId={productId} profileId={overrideProfileId} refreshToken={JSON.stringify([refreshToken,profileVersion])} onDirtyChange={value=>{
+    <div ref={editorRef}>{contextLoaded?<QuotationFieldsEditor key={`${navigationSequence}:${currentReviewTarget?.sequence??0}`} submissionActive={submissionActive} navigationTarget={currentReviewTarget?.target??navigationTarget} productId={productId} profileId={overrideProfileId} refreshToken={JSON.stringify([refreshToken,profileVersion])} onDirtyChange={value=>{
       dirtyRef.current=value;
       if(value){profileRequest.current?.abort();activeRequest.current?.abort();setPreview(null);setMessage('');}
       setDirty(value);
@@ -155,7 +155,7 @@ function QuotationPanelContent({onPrepareSubmission,onProfilePrepared,onProfileC
     {templateError&&<p role="alert">{templateError} 상품 초안과 직접 수정한 값은 유지됩니다.</p>}{templateMessage&&<p role="status">{templateMessage}</p>}
     {onPrepareSubmission&&<div className="panel-stack"><button type="button" className="btn rose" disabled={dirty||busy||refreshingProfiles||!contextLoaded||!selected} onClick={()=>{
       if(dirtyRef.current||activeRequest.current||profileRequest.current||!contextLoaded||!selected)return;
-      onPrepareSubmission(selected.id);
+      onPrepareSubmission(overrideProfileId);
     }}>저장한 견적 전송 준비</button><small>현재 상품과 선택한 양식의 저장 자료를 검사합니다. 첨부 파일과 필수 동의를 확인한 뒤 등록 전송을 실행하세요.</small></div>}
     <a className={`btn primary${dirty||!contextLoaded?' disabled':''}`} aria-disabled={dirty||!contextLoaded} tabIndex={dirty||!contextLoaded?-1:undefined} onClick={event=>{if(dirtyRef.current||!contextLoaded||versionRef.current!==refreshToken)event.preventDefault();}} href={dirty||!contextLoaded?undefined:`/api/products/${encodeURIComponent(productId)}/bundle${overrideProfileId?`?profileId=${encodeURIComponent(overrideProfileId)}`:''}`}>견적 입력 내용 + 첨부 자료 다운로드</a>
     <p className="panel-note">ZIP 압축을 푼 뒤 supplier-hub-upload.html을 열면 상품 이미지와 라벨을 구분해서 확인할 수 있습니다. 옵션별 연결과 누락 라벨을 확인한 뒤, 공식 견적서 및 서류를 별도로 검토해주세요.</p>

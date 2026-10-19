@@ -1,0 +1,89 @@
+'use client';
+
+import {useEffect,useLayoutEffect,useRef,useState} from 'react';
+import type {QuotationFieldsView} from '@/app/quotation-schema';
+import {readSingleCatalogContext} from '@/app/supplier-hub-single-client';
+import {validOptionRegistrationNumbers} from '@/app/product-registration';
+import {SupplierHubSingleReview} from '@/app/components/supplier-hub-single-review';
+
+type Props={productId:string;profileId?:string;expectedCategoryId?:string;onReceiptSaved?:()=>void;disabled?:boolean};
+const identifier=/^[A-Za-z0-9_-]{1,100}$/,hash=/^[a-f0-9]{64}$/;
+const object=(value:unknown):value is Record<string,unknown>=>Boolean(value)&&typeof value==='object'&&!Array.isArray(value);
+function active(signal:AbortSignal){if(signal.aborted)throw Error('현재 상품 견적 확인을 취소했습니다.');}
+async function readJson(path:string,signal:AbortSignal,request:typeof fetch):Promise<unknown>{
+  active(signal);
+  const response=await request(path,{method:'GET',cache:'no-store',credentials:'same-origin',redirect:'error',signal});active(signal);
+  if(!response.ok||response.redirected||!response.headers.get('content-type')?.includes('application/json')
+    ||response.url&&response.url!==window.location.origin+path)throw Error('현재 상품의 저장 자료를 확인하지 못했습니다.');
+  const reader=response.body?.getReader();if(!reader)throw Error('현재 상품의 저장 자료가 비어 있습니다.');
+  const chunks:Uint8Array[]=[];let length=0;const abort=()=>{void reader.cancel().catch(()=>{});};signal.addEventListener('abort',abort,{once:true});
+  try{
+    for(;;){active(signal);const part=await reader.read();active(signal);if(part.done)break;length+=part.value.byteLength;if(length>6*1024*1024)throw Error('현재 견적 자료가 처리 한도를 초과했습니다.');chunks.push(part.value);}
+    const bytes=new Uint8Array(length);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}
+    return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
+  }finally{signal.removeEventListener('abort',abort);await reader.cancel().catch(()=>{});reader.releaseLock();}
+}
+function productVersion(value:unknown,productId:string,ownerId:string):string{
+  const product=object(value)&&object(value.product)?value.product:null;
+  if(!product||product.id!==productId||product.owner_id!==ownerId||typeof product.updated_at!=='string'||!product.updated_at.trim())throw Error('현재 로그인한 회원의 상품 자료를 확인해주세요.');
+  return product.updated_at;
+}
+function fields(value:unknown,props:Pick<Props,'profileId'|'expectedCategoryId'>,version:string):QuotationFieldsView{
+  const view=value as QuotationFieldsView;
+  const context=view?.categoryContext,rows=view?.resolved?.rows,schema=view?.resolved?.schema;
+  if(!object(value)||!Number.isSafeInteger(view.revision)||view.revision<0||!hash.test(view.inputFingerprint)||view.productVersion!==version
+    ||!Number.isSafeInteger(view.contentRevision)||view.contentRevision<0||!Number.isSafeInteger(view.optionRevision)||view.optionRevision<0||view.submissionReady!==false
+    ||!context||!['profile','collection','unknown'].includes(context.source)||context.profileId!==null&&!identifier.test(context.profileId)
+    ||typeof context.categoryId!=='string'||!context.categoryId||!Array.isArray(context.categoryPath)||!context.categoryPath.every(part=>typeof part==='string')
+    ||props.profileId!==undefined&&context.profileId!==props.profileId||props.expectedCategoryId!==undefined&&context.categoryId!==props.expectedCategoryId
+    ||!schema||schema.categoryId!==context.categoryId||JSON.stringify(schema.categoryPath)!==JSON.stringify(context.categoryPath)||schema.submissionReady!==false
+    ||!view.automatic||view.automatic.schema?.categoryId!==context.categoryId||!object(view.overrides)||!object(view.overrides.common)||!object(view.overrides.options)
+    ||!Array.isArray(view.imageKeys)||!view.imageKeys.every(key=>typeof key==='string')||!Array.isArray(rows)||!rows.length
+    ||rows.some(row=>!object(row)||row.optionId!==null&&(typeof row.optionId!=='string'||!identifier.test(row.optionId))||typeof row.optionLabel!=='string'||typeof row.included!=='boolean'||!object(row.fields)
+      ||Object.values(row.fields).some(field=>!object(field)||typeof field.value!=='string'))
+    ||new Set(rows.map(row=>row.optionId)).size!==rows.length
+    ||!validOptionRegistrationNumbers(view.optionRegistrationNumbers,rows.flatMap(row=>row.optionId===null?[]:[{id:row.optionId}])))throw Error('현재 상품의 카테고리·옵션·견적 연결을 다시 확인해주세요.');
+  return view;
+}
+/** Read-only entry for the primary whole-product review. A captured category
+ * stays queryless; a live saved profile is never silently substituted. */
+export async function readSupplierHubProductSubmissionView(props:Pick<Props,'productId'|'profileId'|'expectedCategoryId'>,signal:AbortSignal,request:typeof fetch=fetch):Promise<QuotationFieldsView>{
+  if(!identifier.test(props.productId)||props.profileId!==undefined&&!identifier.test(props.profileId)||props.expectedCategoryId!==undefined&&!props.expectedCategoryId)throw Error('확인할 상품과 카테고리를 다시 선택해주세요.');
+  const productPath=`/api/products/${encodeURIComponent(props.productId)}`,path=productPath+'/quotation-fields'+(props.profileId?`?profileId=${encodeURIComponent(props.profileId)}`:'');
+  active(signal);const before=await readSingleCatalogContext(signal,request);active(signal);
+  const version=productVersion(await readJson(productPath,signal,request),props.productId,before.ownerId);
+  const first=fields(await readJson(path,signal,request),props,version),snapshot=JSON.stringify(first);
+  const next=fields(await readJson(path,signal,request),props,version);
+  if(JSON.stringify(next)!==snapshot||productVersion(await readJson(productPath,signal,request),props.productId,before.ownerId)!==version)throw Error('확인 중 상품·옵션 또는 견적 저장값이 변경됐습니다. 최신 자료를 다시 확인해주세요.');
+  const after=await readSingleCatalogContext(signal,request);active(signal);
+  if(JSON.stringify(before)!==JSON.stringify(after))throw Error('확인 중 로그인한 회원 회사가 변경됐습니다. 최신 자료를 다시 확인해주세요.');
+  return next;
+}
+
+export function SupplierHubProductSubmission(props:Props){
+  return <ProductSubmissionContent key={JSON.stringify([props.productId,props.profileId??null,props.expectedCategoryId??null,props.disabled===true])} {...props}/>;
+}
+function ProductSubmissionContent(props:Props){
+  const {productId,profileId,expectedCategoryId,disabled}=props;
+  const [view,setView]=useState<QuotationFieldsView|null>(null),[error,setError]=useState(''),[attempt,setAttempt]=useState(0);
+  const current=useRef({mounted:true,props,view}),pending=useRef<AbortController|null>(null);
+  useLayoutEffect(()=>{current.current={mounted:true,props,view};});
+  useLayoutEffect(()=>()=>{current.current.mounted=false;pending.current?.abort();pending.current=null;},[]);
+  useEffect(()=>{
+    if(disabled)return;
+    const controller=new AbortController();pending.current=controller;
+    const alive=()=>current.current.mounted&&!current.current.props.disabled&&pending.current===controller&&!controller.signal.aborted;
+    const timeout=setTimeout(()=>{if(!alive())return;setError('저장 자료의 응답이 늦습니다. 전체 상품 견적 다시 확인을 눌러 조회해주세요. 상품 전송은 실행하지 않았습니다.');controller.abort();},30000);
+    void readSupplierHubProductSubmissionView({productId,profileId,expectedCategoryId},controller.signal,fetch).then(result=>{if(alive())setView(result);}).catch(cause=>{if(alive())setError(cause instanceof Error?cause.message:'전체 상품 견적을 읽지 못했습니다.');}).finally(()=>clearTimeout(timeout));
+    return()=>{clearTimeout(timeout);controller.abort();if(pending.current===controller)pending.current=null;};
+  },[productId,profileId,expectedCategoryId,disabled,attempt]);
+  const ready=Boolean(view&&!props.disabled);
+  return <section className="panel-stack" aria-label="전체 상품 견적 등록 준비" aria-busy={!props.disabled&&!view&&!error}>
+    <h4>전체 상품 견적 등록</h4>
+    <p>저장한 포함 옵션을 견적 문서 하나로 확인합니다. 회사·카테고리와 전체 옵션을 검토한 뒤 전송을 진행하세요.</p>
+    {props.disabled&&<p role="status">현재 작업을 마친 뒤 전체 상품 견적을 확인해주세요.</p>}
+    {!props.disabled&&!view&&!error&&<p role="status">현재 회원 회사와 저장된 견적을 확인하고 있습니다.</p>}
+    {error&&<><p role="alert">{error}</p><button type="button" className="btn ghost" disabled={props.disabled} onClick={()=>{if(!current.current.mounted||current.current.props.disabled)return;pending.current?.abort();setView(null);setError('');setAttempt(value=>value+1);}}>전체 상품 견적 다시 확인</button></>}
+    {ready&&view&&<SupplierHubSingleReview primaryProduct productId={props.productId} profileId={props.profileId} view={view} disabled={false} onReceiptSaved={()=>{if(current.current.mounted&&!current.current.props.disabled&&current.current.view===view)current.current.props.onReceiptSaved?.();}}/>}
+  </section>;
+}

@@ -87,6 +87,55 @@ export function productSnapshotReady(scripts,sourceUrl){
   return product;
 }
 
+async function readStableProductSnapshot(api,tabId,identity,signal,wait,{maxReads=40,maxDurationMs=10000}={}){
+  let previous,lastError,stable=0;const deadline=Date.now()+maxDurationMs;
+  // A load event can precede hydration. Require three identical, complete
+  // SKU/price reads separated by the same 250 ms quiet checks on both paths.
+  for(let i=0;i<maxReads;i++){
+    await checkApp(api,identity,signal);
+    const before=await api.tabs.get(tabId);stopped(signal);checkTab(before,identity);
+    if(before.status!=='complete'){
+      previous=undefined;stable=0;lastError=Error('상품 페이지가 다시 로딩 중입니다.');
+    }else{
+      const values=await api.scripting.executeScript({target:{tabId},func:readProductJsonLd});
+      stopped(signal);
+      const after=await api.tabs.get(tabId);stopped(signal);checkTab(after,identity);
+      await checkApp(api,identity,signal);
+      if(after.status!=='complete'){
+        previous=undefined;stable=0;lastError=Error('상품 페이지가 다시 로딩 중입니다.');
+      }else{
+        const page=values?.[0]?.result;
+        if(values?.length!==1||values[0].frameId!==0||!page||!sameProductUrl(page.pageUrl,identity.sourceUrl))throw Error('1688 상품 페이지 대신 로그인·확인 페이지 또는 다른 상품이 열렸습니다.');
+        if(!Array.isArray(page.scripts)||page.scripts.length>30||page.scripts.some(value=>typeof value!=='string')||page.scripts.reduce((sum,value)=>sum+new TextEncoder().encode(value).byteLength,0)>1500000)throw Error('상품 구조화 데이터의 크기 또는 형식을 확인하지 못했습니다.');
+        try{
+          productSnapshotReady(page.scripts,identity.sourceUrl);
+          const snapshot=JSON.stringify(page.scripts);
+          stable=previous===snapshot?stable+1:1;previous=snapshot;
+          if(stable>=3)return {page};
+        }catch(error){lastError=error;previous=undefined;stable=0;}
+      }
+    }
+    if(i+1>=maxReads||Date.now()>=deadline)break;
+    await wait(250,signal);
+  }
+  return {lastError};
+}
+
+async function probeExistingProduct(api,tabId,identity,signal,wait){
+  const probe=new AbortController();let timer,abort;
+  // Chrome calls are not cancellable. Stop waiting after one second and abort
+  // this read-only probe so a late response cannot schedule more DOM reads.
+  const interrupted=new Promise((resolve,reject)=>{
+    abort=()=>{probe.abort();reject(Error('상품 수집을 취소했습니다.'));};
+    timer=setTimeout(()=>{probe.abort();resolve({});},1000);
+    signal.addEventListener('abort',abort,{once:true});
+    if(signal.aborted)abort();
+  });
+  try{
+    return await Promise.race([readStableProductSnapshot(api,tabId,identity,probe.signal,wait,{maxReads:3,maxDurationMs:1000}),interrupted]);
+  }finally{clearTimeout(timer);signal.removeEventListener('abort',abort);probe.abort();}
+}
+
 export function cancel1688Capture(message,sender){
   const identity=validateCaptureRequest(message,sender);
   if(message.type!=='YOOFAM_CANCEL_1688')throw Error('수집 취소 요청을 확인해주세요.');
@@ -105,57 +154,38 @@ export async function capture1688Product(message,sender,api=chrome,options={}){
   let existing,tab,captured=false;
   try{
     await checkApp(api,identity,signal);
+    existing=(await api.tabs.query({windowId:identity.windowId})).find(tab=>validId(tab.id)&&tab.windowId===identity.windowId&&sameProductUrl(tab.url,identity.sourceUrl));
+    await checkApp(api,identity,signal);
+    if(existing){
+      const current=await api.tabs.get(existing.id);stopped(signal);checkTab(current,identity);
+      if(current.status==='complete'){
+        const {page}=await probeExistingProduct(api,existing.id,identity,signal,wait);
+        if(page){stopped(signal);return {ok:true,sourceUrl:identity.sourceUrl,scripts:page.scripts};}
+      }
+    }
+    const checkScope=async()=>{
+      await checkApp(api,identity,signal);
+      if(existing){const current=await api.tabs.get(existing.id);stopped(signal);checkTab(current,identity);}
+    };
     if(supportsMobileTransport(api)){
       const mobileController=new AbortController(),abort=()=>mobileController.abort();
       signal.addEventListener('abort',abort,{once:true});
       const timeout=setTimeout(abort,12000);
-      const fetcher=createMobileTransport(api,identity.sourceUrl,()=>checkApp(api,identity,signal),options.fetcher??fetch);
+      const fetcher=createMobileTransport(api,identity.sourceUrl,checkScope,options.fetcher??fetch);
       try{
         const source=await collectAlibabaMobileCapture(identity.sourceUrl,{fetcher,signal:mobileController.signal});
-        await checkApp(api,identity,signal);stopped(signal);
+        await checkScope();stopped(signal);
         return {ok:true,...source};
       }catch{
-        stopped(signal);await checkApp(api,identity,signal);
+        stopped(signal);await checkScope();
       }finally{clearTimeout(timeout);signal.removeEventListener('abort',abort);mobileController.abort();await fetcher.dispose();}
     }
-    existing=(await api.tabs.query({windowId:identity.windowId})).find(tab=>validId(tab.id)&&tab.windowId===identity.windowId&&sameProductUrl(tab.url,identity.sourceUrl)&&(!tab.pendingUrl||sameProductUrl(tab.pendingUrl,identity.sourceUrl)));
-    await checkApp(api,identity,signal);
+    await checkScope();
     tab=existing??await api.tabs.create({windowId:identity.windowId,url:identity.sourceUrl,active:false});
     checkTab(tab,identity,{loading:true});
     await waitForComplete(api,tab.id,identity,signal,wait);
-    let previous,lastError;const deadline=Date.now()+10000;
-    // The load event may precede hydration. Wait up to ten seconds for complete
-    // SKU/price evidence, then require three identical reads (500 ms quiet).
-    let stable=0;
-    for(let i=0;i<40;i++){
-      await checkApp(api,identity,signal);
-      const before=await api.tabs.get(tab.id);checkTab(before,identity);
-      if(before.status!=='complete'){
-        previous=undefined;stable=0;lastError=Error('상품 페이지가 다시 로딩 중입니다.');
-        if(Date.now()>=deadline)break;
-        await wait(250,signal);continue;
-      }
-      const values=await api.scripting.executeScript({target:{tabId:tab.id},func:readProductJsonLd});
-      stopped(signal);
-      const after=await api.tabs.get(tab.id);checkTab(after,identity);
-      await checkApp(api,identity,signal);
-      if(after.status!=='complete'){
-        previous=undefined;stable=0;lastError=Error('상품 페이지가 다시 로딩 중입니다.');
-        if(Date.now()>=deadline)break;
-        await wait(250,signal);continue;
-      }
-      const page=values?.[0]?.result;
-      if(values?.length!==1||values[0].frameId!==0||!page||!sameProductUrl(page.pageUrl,identity.sourceUrl))throw Error('1688 상품 페이지 대신 로그인·확인 페이지 또는 다른 상품이 열렸습니다.');
-      if(!Array.isArray(page.scripts)||page.scripts.length>30||page.scripts.some(value=>typeof value!=='string')||page.scripts.reduce((sum,value)=>sum+new TextEncoder().encode(value).byteLength,0)>1500000)throw Error('상품 구조화 데이터의 크기 또는 형식을 확인하지 못했습니다.');
-      try{
-        productSnapshotReady(page.scripts,identity.sourceUrl);
-        const snapshot=JSON.stringify(page.scripts);
-        stable=previous===snapshot?stable+1:1;previous=snapshot;
-        if(stable>=3){captured=true;return {ok:true,sourceUrl:identity.sourceUrl,scripts:page.scripts};}
-      }catch(error){lastError=error;previous=undefined;stable=0;}
-      if(Date.now()>=deadline)break;
-      await wait(250,signal);
-    }
+    const {page,lastError}=await readStableProductSnapshot(api,tab.id,identity,signal,wait);
+    if(page){captured=true;return {ok:true,sourceUrl:identity.sourceUrl,scripts:page.scripts};}
     throw Error(`1688 상품 데이터가 완성되지 않았습니다. ${lastError?.message??'상품 옵션·가격 정보가 계속 변경됩니다.'}`);
   }finally{
     // Existing tabs, failed/login pages and tabs moved by the user stay intact.

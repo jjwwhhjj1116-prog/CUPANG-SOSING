@@ -20,7 +20,7 @@ const raw=()=>({format:'1688-public-mobile-capture-v1',sourceUrl,mobileHtml:html
 function fixture({onFetch=()=>{},headerChange=value=>value,failSigned=false,mobileBody=html,skuPayload=skus,detailResponse,sourceUrlOverride=sourceUrl}={}){
  const listeners=new Set(),rules=new Map(),calls=[],app={id:7,windowId:17,url:sender.url},id='a'.repeat(32);
  let skuRequests=0;
- const api={runtime:{id},tabs:{get:async()=>({...app}),query:async()=>{calls.push('tab-query');throw Error('unexpected product tab');}},
+ const api={runtime:{id},tabs:{get:async()=>({...app}),query:async()=>{calls.push('tab-query');return [];}},
   webRequest:{onHeadersReceived:{addListener(fn,filter,extra){assert.deepEqual(extra,['responseHeaders','extraHeaders']);listeners.add(fn);},removeListener:fn=>listeners.delete(fn)}},
   declarativeNetRequest:{async getSessionRules(){return [...rules.values()];},async updateSessionRules({addRules,removeRuleIds}){for(const id of removeRuleIds)rules.delete(id);for(const rule of addRules)rules.set(rule.id,rule);calls.push({add:addRules.length,remove:removeRuleIds.length});}}};
  const fetcher=async(target,init)=>{
@@ -51,7 +51,7 @@ function fixture({onFetch=()=>{},headerChange=value=>value,failSigned=false,mobi
 test('generated Chrome collector preserves synthetic page and SKU bytes on transient optional-detail failures and cleans its transport',async()=>{
  const url='https://detail.1688.com/offer/628000000001.html',page=JSON.parse(JSON.stringify(mobile).replaceAll('813724060928','628000000001')),payload=JSON.parse(JSON.stringify(skus).replaceAll('813724060928','628000000001')),body='<script>window.__INIT_DATA='+JSON.stringify(page)+';</script>';
  const api=mobileIntakeHarness();try{for(const status of [502,503,504]){
-  const h=fixture({mobileBody:body,skuPayload:payload,sourceUrlOverride:url,detailResponse:()=>new Response('temporary optional detail outage',{status})}),result=await h.run();assert.equal(result.ok,true,result.error);assert.equal(result.format,'1688-public-mobile-partial-capture-v1');assert.equal(result.sourceUrl,url);assert.equal(result.mobileHtml,body);assert.deepEqual(result.skuPayload,payload);assert.deepEqual(result.detailUnavailable,{status});assert.equal(result.detailSource,'');assert.equal(h.rules.size,0);assert.equal(h.listeners.size,0);assert.ok(!h.calls.includes('tab-query'));
+  const h=fixture({mobileBody:body,skuPayload:payload,sourceUrlOverride:url,detailResponse:()=>new Response('temporary optional detail outage',{status})}),result=await h.run();assert.equal(result.ok,true,result.error);assert.equal(result.format,'1688-public-mobile-partial-capture-v1');assert.equal(result.sourceUrl,url);assert.equal(result.mobileHtml,body);assert.deepEqual(result.skuPayload,payload);assert.deepEqual(result.detailUnavailable,{status});assert.equal(result.detailSource,'');assert.equal(h.rules.size,0);assert.equal(h.listeners.size,0);assert.equal(h.calls.filter(value=>value==='tab-query').length,1);
   const parsed=api.load('app/browser-product-capture.ts').parseBrowserProductCapture(result,url);assert.equal(parsed.provider,'chrome-public-mobile-partial-v1');assert.equal(parsed.options.length,6);assert.equal(parsed.images.length,8);assert.equal(parsed.attributes.length,24);assert.ok(!parsed.images.some(image=>image.role==='detail'));
  }}finally{api.close();}
 });
@@ -67,10 +67,10 @@ test('public mtop checksum matches RFC vectors and UTF-8 Node crypto across padd
  for(const text of ['', 'a','abc','message digest','abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789','1234567890'.repeat(8),'한국어 中文 😀','x'.repeat(55),'x'.repeat(56),'x'.repeat(63),'x'.repeat(64),'가'.repeat(1000)])assert.equal(exports.publicMtopMd5(text),createHash('md5').update(text).digest('hex'));
 });
 
-test('Chrome anonymous public transport collects six real SKUs without creating or querying product tabs',async()=>{
+test('Chrome anonymous public transport collects six recorded SKUs after finding no existing product tab',async()=>{
  const h=fixture(),capture=await h.run();
  assert.equal(capture.format,'1688-public-mobile-capture-v1');assert.equal(capture.sourceUrl,sourceUrl);
- assert.deepEqual(h.calls.filter(value=>typeof value==='string'),['m.1688.com','h5api.m.1688.com','h5api.m.1688.com','itemcdn.tmall.com']);
+ assert.deepEqual(h.calls.filter(value=>typeof value==='string'),['tab-query','m.1688.com','h5api.m.1688.com','h5api.m.1688.com','itemcdn.tmall.com']);
  assert.equal(h.rules.size,0);assert.equal(h.listeners.size,0);assert.equal(JSON.stringify(capture).includes('anonymousOnly'),false);
  const server=mobileIntakeHarness();try{
   const parsed=server.load('app/browser-product-capture.ts').parseBrowserProductCapture(capture,sourceUrl);
@@ -85,7 +85,7 @@ for(const mode of ['full-mobile','sku-only'])test(`generated Chrome collection r
  data.skuModel.skuProps=[];data.skuModel.skuInfoMap={'':{skuId:'622000000010',specAttrs:'',price:'12.5',canBookCount:0}};data.orderParamModel.orderParam.beginNum=3;data.orderParamModel.orderParam.skuParam.skuPriceType='skuPrice';
  const chrome=fixture({skuPayload,mobileBody:mode==='full-mobile'?html:'<html>No initial data</html>'}),capture=await chrome.run();
  assert.equal(capture.format,mode==='full-mobile'?'1688-public-mobile-capture-v1':'1688-public-sku-capture-v1');assert.equal(capture.sourceUrl,sourceUrl);assert.deepEqual(capture.skuPayload,skuPayload);assert.equal(capture.receipt,undefined);
- assert.deepEqual(chrome.calls.filter(value=>typeof value==='string'),['m.1688.com','h5api.m.1688.com','h5api.m.1688.com',...(mode==='full-mobile'?['itemcdn.tmall.com']:[])]);assert.equal(chrome.rules.size,0);assert.equal(chrome.listeners.size,0);assert.ok(!JSON.stringify(capture).includes('anonymousOnly'));
+ assert.deepEqual(chrome.calls.filter(value=>typeof value==='string'),['tab-query','m.1688.com','h5api.m.1688.com','h5api.m.1688.com',...(mode==='full-mobile'?['itemcdn.tmall.com']:[])]);assert.equal(chrome.rules.size,0);assert.equal(chrome.listeners.size,0);assert.ok(!JSON.stringify(capture).includes('anonymousOnly'));
  const h=mobileIntakeHarness({sourceFetcher:async()=>{throw Error('accepted browser source cannot recollect');}});try{
   const parsed=h.load('app/browser-product-capture.ts').parseBrowserProductCapture(capture,sourceUrl);assert.equal(parsed.provider,mode==='full-mobile'?'chrome-public-mobile-v1':'chrome-public-sku-v1');assert.equal(parsed.options.length,1);
   assert.deepEqual(JSON.parse(JSON.stringify(parsed.options[0])),{sku:'622000000010',name:data.offerBaseInfo.title,unitPriceCny:12.5,minimumOrder:3,stock:0,imageIndex:0});assert.equal(parsed.images.length,mode==='full-mobile'?16:1,'gallery and detail remain, while removed variant axes cannot supply three extra SKU images');
@@ -99,7 +99,7 @@ test('bundled Chrome collector sends raw SKU-only evidence through server valida
  const skuPayload=JSON.parse(read('1688-public-sku-813724060928.json'));
  const chrome=fixture({mobileBody:'<html>No initial product data</html>',skuPayload}),capture=await chrome.run();
  assert.equal(capture.format,'1688-public-sku-capture-v1');assert.deepEqual(Object.keys(capture).sort(),['ok','sourceUrl','format','skuPayload'].sort());
- assert.deepEqual(chrome.calls.filter(value=>typeof value==='string'),['m.1688.com','h5api.m.1688.com','h5api.m.1688.com']);
+ assert.deepEqual(chrome.calls.filter(value=>typeof value==='string'),['tab-query','m.1688.com','h5api.m.1688.com','h5api.m.1688.com']);
  assert.equal(chrome.rules.size,0);assert.equal(chrome.listeners.size,0);assert.ok(!JSON.stringify(capture).includes('anonymousOnly'));
  const h=mobileIntakeHarness({sourceFetcher:async()=>{throw Error('stored receipt must not recollect');}});
  try{
@@ -142,7 +142,7 @@ test('a restarted worker removes only its own interrupted anonymous transport ru
 test('transient rule cleanup failure never returns source evidence or falls back to product-tab capture',async()=>{
  const h=fixture(),update=h.api.declarativeNetRequest.updateSessionRules;
  h.api.declarativeNetRequest.updateSessionRules=async value=>{if(value.removeRuleIds.length)throw Error('transient cleanup failed');return update(value);};
- await assert.rejects(h.run(),/cleanup/);assert.equal(h.calls.includes('tab-query'),false);assert.equal(h.listeners.size,0);
+ await assert.rejects(h.run(),/cleanup/);assert.equal(h.calls.filter(value=>value==='tab-query').length,1);assert.equal(h.listeners.size,0);
 });
 
 test('public mobile capture cancellation and app movement cannot trigger the DOM fallback',async()=>{
@@ -151,7 +151,7 @@ test('public mobile capture cancellation and app movement cannot trigger the DOM
    if(mode==='cancel')assert.equal(cancel1688Capture({...request,type:'YOOFAM_CANCEL_1688'},sender).cancelled,true);
    if(mode==='move')app.windowId=18;if(mode==='navigate')app.url='https://other.test/';
   }});
-  await assert.rejects(h.run(),/취소|Chrome|앱 탭/);assert.equal(h.calls.includes('tab-query'),false);assert.equal(h.rules.size,0);assert.equal(h.listeners.size,0);
+  await assert.rejects(h.run(),/취소|Chrome|앱 탭/);assert.equal(h.calls.filter(value=>value==='tab-query').length,1);assert.equal(h.rules.size,0);assert.equal(h.listeners.size,0);
  }
  assert.equal((await fixture().run()).ok,true);
 });

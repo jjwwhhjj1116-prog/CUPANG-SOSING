@@ -80,7 +80,7 @@ test('worker preserves group failure identity without falling back or inferring 
 });
 
 test('release79 keeps permissions and app origins unchanged, and all app downloads target the installed release', () => {
-  const manifest = JSON.parse(read('extensions/supplier-hub/manifest.json')); assert.equal(manifest.version, '0.2.79');
+  const manifest = JSON.parse(read('extensions/supplier-hub/manifest.json')); assert.equal(manifest.version, '0.2.80');
   assert.deepEqual(manifest.permissions, ['activeTab', 'scripting', 'tabs', 'webRequest', 'declarativeNetRequestWithHostAccess']);
   assert.deepEqual(manifest.host_permissions, ['https://detail.1688.com/*', 'https://m.1688.com/*', 'https://h5api.m.1688.com/*', 'https://itemcdn.tmall.com/1688offer/*', 'https://supplier.coupang.com/*']);
   assert.deepEqual(manifest.content_scripts, [{ matches: ['https://sourceflow.jjwwhhjj1116.workers.dev/*', 'http://localhost:3000/*', 'http://127.0.0.1:3000/*'], js: ['handoff-content.js', 'single-confirmation.js', 'single-content.js'] }]);

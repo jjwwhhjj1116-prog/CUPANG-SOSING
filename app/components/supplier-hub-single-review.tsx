@@ -8,18 +8,19 @@ import type {SingleReceiptRecord} from '@/app/supplier-hub-single-receipt';
 import {reviewCurrentSupplierHubProductDocument,type SupplierHubProductDocumentReview} from '@/app/supplier-hub-product-document';
 import {SupplierHubProductTransport} from '@/app/components/supplier-hub-product-transport';
 
-type Props={productId:string;profileId?:string;view:QuotationFieldsView;disabled:boolean;onReceiptSaved?:()=>void};
+type Props={productId:string;profileId?:string;view:QuotationFieldsView;disabled:boolean;onReceiptSaved?:()=>void;primaryProduct?:boolean};
 const sourceKey=({productId,profileId,view}:Omit<Props,'disabled'>)=>JSON.stringify([productId,profileId,view.productVersion,view.contentRevision,view.optionRevision,view.revision,view.inputFingerprint]);
 const stages={productPage:'상품 정보',imagePage:'이미지',logisticsPage:'최종 제출'};
-export function SupplierHubSingleReview(props:Props){return <SingleReviewContent key={JSON.stringify([sourceKey(props),props.disabled])} {...props}/>;}
-function SingleReviewContent({productId,profileId,view,disabled,onReceiptSaved}:Props){
+export function SupplierHubSingleReview(props:Props){return <SingleReviewContent key={JSON.stringify([sourceKey(props),props.disabled,props.primaryProduct===true])} {...props}/>;}
+function SingleReviewContent({productId,profileId,view,disabled,onReceiptSaved,primaryProduct=false}:Props){
   const [data,setData]=useState<SinglePackageView|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const [optionId,setOptionId]=useState(''),[session,setSession]=useState<SingleDocumentSession|null>(null),[state,setState]=useState<SingleDocumentState|null>(null);
   const [approved,setApproved]=useState<Record<string,boolean>>({}),[uncertain,setUncertain]=useState(false),[expired,setExpired]=useState(false);
-  const [history,setHistory]=useState<SingleReceiptRecord[]>([]),[historyLoading,setHistoryLoading]=useState(true),[historyError,setHistoryError]=useState('');
+  const [history,setHistory]=useState<SingleReceiptRecord[]>([]),[historyLoading,setHistoryLoading]=useState(!primaryProduct),[historyError,setHistoryError]=useState('');
   const [saveError,setSaveError]=useState(''),[saveAttempt,setSaveAttempt]=useState<SingleReceiptSaveAttempt|null>(null);
   const [productReview,setProductReview]=useState<SupplierHubProductDocumentReview|null>(null),productReviewRef=useRef<SupplierHubProductDocumentReview|null>(null);
   const [productLocked,setProductLocked]=useState(false),productLockRef=useRef(false);
+  const primaryAccount=useRef<Awaited<ReturnType<typeof readSingleCatalogContext>>|null>(null);
   const lockProduct=useCallback((value:boolean)=>{productLockRef.current=value;setProductLocked(value);},[]);
   function setFullReview(value:SupplierHubProductDocumentReview|null){productReviewRef.current=value;setProductReview(value);}
   const key=sourceKey({productId,profileId,view}),current=useRef({key,view,disabled,mounted:true,onReceiptSaved}),pending=useRef<AbortController|null>(null),generation=useRef(0);
@@ -35,11 +36,12 @@ function SingleReviewContent({productId,profileId,view,disabled,onReceiptSaved}:
   useLayoutEffect(()=>{current.current={key,view,disabled,mounted:true,onReceiptSaved};},[key,view,disabled,onReceiptSaved]);
   useLayoutEffect(()=>()=>{current.current.mounted=false;current.current.disabled=true;generation.current++;pending.current?.abort();pending.current=null;historyPending.current?.abort();historyPending.current=null;receiptAttempt.current=null;},[]);
   useEffect(()=>{
+    if(primaryProduct)return;
     const controller=new AbortController();historyPending.current=controller;
     const active=()=>current.current.mounted&&current.current.key===key&&!controller.signal.aborted&&historyPending.current===controller;
     void readSingleReceiptHistory({productId,profileId},controller.signal,fetch).then(records=>{if(active()){setHistory(records);setHistoryError('');}}).catch(cause=>{if(active()){setHistory([]);setHistoryError(cause instanceof Error?cause.message:'보관된 확인 결과를 조회하지 못했습니다.');}}).finally(()=>{if(active()){historyPending.current=null;setHistoryLoading(false);}});
     return()=>{controller.abort();if(historyPending.current===controller)historyPending.current=null;};
-  },[key,productId,profileId]);
+  },[key,productId,profileId,primaryProduct]);
   useEffect(()=>{
     const challenge=state?.challenge;if(!challenge)return;
     const timer=setTimeout(()=>{
@@ -75,17 +77,33 @@ function SingleReviewContent({productId,profileId,view,disabled,onReceiptSaved}:
     if(prepare&&(!saved||!saved.review.canPrepare||saved.prepared||!singlePackageCurrent(saved,current.current.view,productId)))return;
     const task=begin();setFullReview(null);
     try{
+      const before=primaryProduct?await readSingleCatalogContext(task.controller.signal,fetch):null;
+      if(!task.active())return;
+      if(before&&primaryAccount.current&&JSON.stringify(before)!==JSON.stringify(primaryAccount.current)){
+        invalidate('현재 회원 회사가 변경되었습니다. 상품의 저장 자료를 다시 확인해주세요.');return;
+      }
+      if(before){primaryAccount.current=before;if(prepare&&saved&&(saved.company.code!==before.company.code||saved.company.name!==before.company.name))throw Error('현재 회사와 준비할 견적서 회사가 다릅니다.');}
       const url=`/api/products/${encodeURIComponent(productId)}/supplier-hub-single-package${profileId?`?profileId=${encodeURIComponent(profileId)}`:''}`;
       const response=await fetch(url,{cache:'no-store',signal:task.controller.signal,...(prepare?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'prepare',expectedFingerprint:saved!.fingerprint})}:{})});
       const result=await response.json() as SinglePackageView&{error?:string};if(!task.active())return;
       if(!response.ok)throw Error(result.error||'개별 견적 자료를 확인하지 못했습니다.');
       if(!singlePackageCurrent(result,current.current.view,productId))throw Error('저장한 상품·카테고리가 바뀌었습니다. 최신 견적 입력을 확인해주세요.');
+      if(primaryProduct&&(!Object.hasOwn(result,'requestedProfileId')||(result as SinglePackageView&{requestedProfileId?:unknown}).requestedProfileId!==(profileId??null)))throw Error('조회한 카테고리와 상품 수집 시 선택한 카테고리 연결이 다릅니다. 다시 확인해주세요.');
+      if(before){
+        const after=await readSingleCatalogContext(task.controller.signal,fetch);if(!task.active())return;
+        if(JSON.stringify(before)!==JSON.stringify(after)||result.company.code!==before.company.code||result.company.name!==before.company.name){
+          invalidate('현재 회원·회사와 견적서의 회사 연결이 다릅니다. 저장 자료를 다시 확인해주세요.');return;
+        }
+      }
       latest.current={...latest.current,data:result,session:null,state:null,approved:{},uncertain:false,expired:false};
       setData(result);setSession(null);setState(null);setApproved({});setUncertain(false);setExpired(false);
       if(!result.options.some(row=>row.optionId===latest.current.optionId)){latest.current.optionId='';setOptionId('');}
     }catch(cause){if(task.active()){setData(null);setSession(null);setState(null);setError(cause instanceof Error?cause.message:'개별 견적 자료 확인 실패');latest.current={...latest.current,data:null,session:null,state:null};}}
     finally{task.finish();}
   }
+  const primaryRead=useRef<(()=>Promise<void>)|null>(null);
+  useLayoutEffect(()=>{primaryRead.current=()=>read();});
+  useEffect(()=>{if(primaryProduct&&!disabled)void primaryRead.current?.();},[primaryProduct,disabled,key]);
   async function reviewProduct(){
     if(!canEnter())return;const saved=latest.current.data;
     if(!saved?.prepared||!saved.review.canPrepare||!singlePackageCurrent(saved,current.current.view,productId)||latest.current.session||latest.current.uncertain||receiptAttempt.current)return;
@@ -160,11 +178,11 @@ function SingleReviewContent({productId,profileId,view,disabled,onReceiptSaved}:
   const challenge=state?.challenge,required=challenge?.items.filter(item=>item.required)??[],canConfirm=Boolean(session?.preview.liveVerified&&challenge&&!expired&&!uncertain&&required.every(item=>approved[item.key]));
   const errors=data?.review.issues.filter(issue=>issue.level==='error')??[];
   const notices=[...new Set(data?.review.issues.filter(issue=>issue.level!=='error').map(issue=>issue.message)??[])];
-  return <section className="quotation-fields-notice" aria-label="개별 견적서 전송 자료" aria-busy={busy||historyLoading}>
-    <div className="quote-actions"><button type="button" className="btn ghost" disabled={disabled||busy||productLocked||Boolean(session)} onClick={()=>void read()}>개별 견적 자료 검토</button>
+  return <section className="quotation-fields-notice" aria-label={primaryProduct?'상품 견적서 전송 자료':'개별 견적서 전송 자료'} aria-busy={busy||historyLoading}>
+    <div className="quote-actions"><button type="button" className="btn ghost" disabled={disabled||busy||productLocked||Boolean(session)} onClick={()=>void read()}>{primaryProduct?'저장한 견적 자료 다시 확인':'개별 견적 자료 검토'}</button>
       <button type="button" className="btn primary" disabled={disabled||busy||productLocked||!data?.review.canPrepare||data.prepared||Boolean(session)} onClick={()=>void read(true)}>이미지 전송 자료 준비</button></div>
     {error&&<p role="alert">{error}</p>}
-    <section aria-label="보관된 개별 등록 파일 확인 이력"><h4>보관된 등록 파일 확인 이력</h4>
+    {!primaryProduct&&<section aria-label="보관된 개별 등록 파일 확인 이력"><h4>보관된 등록 파일 확인 이력</h4>
       {historyLoading&&<p role="status">확인 이력을 불러오는 중입니다.</p>}
       {historyError&&<p role="alert">{historyError}</p>}
       {!historyLoading&&!historyError&&!history.length&&<p>보관된 확인 결과가 없습니다.</p>}
@@ -181,7 +199,7 @@ function SingleReviewContent({productId,profileId,view,disabled,onReceiptSaved}:
         </article>;
       })}
       {history.length>0&&<p>보관된 결과는 확인 이력입니다. 새 동의나 등록 요청을 실행하지 않습니다.</p>}
-    </section>
+    </section>}
     {saveError&&<section aria-label="확인 결과 저장 안내"><p role="alert">{saveError} 확인한 등록 파일 결과는 화면에 유지했습니다.</p>
       <button type="button" className="btn ghost" disabled={disabled||busy||!saveAttempt} onClick={()=>void retrySave()}>확인 결과 저장 다시 시도</button></section>}
     {data&&<><p>{data.company.name} · {data.payload.categoryPath} · 포함 옵션 {data.options.length}개</p>
@@ -207,7 +225,7 @@ function SingleReviewContent({productId,profileId,view,disabled,onReceiptSaved}:
           }}/>
         <button type="button" className="btn ghost" disabled={disabled||busy||productLocked} onClick={()=>closeProductReview(productReview)}>전체 문서 확인 닫기</button>
       </section>}
-      {data.prepared&&<div className="quote-actions"><label className="field"><span>개별 전송 옵션</span><select aria-label="개별 전송 옵션" value={optionId} disabled={disabled||busy||productLocked||Boolean(session)} onChange={event=>{if(!canEnter()||latest.current.session)return;latest.current.optionId=event.target.value;setOptionId(event.target.value);}}><option value="">옵션 1개를 선택하세요</option>{data.options.filter(option=>typeof option.optionId==='string').map(option=><option key={option.optionId!} value={option.optionId!}>{option.optionLabel}</option>)}</select></label>
+      {data.prepared&&!primaryProduct&&<div className="quote-actions"><label className="field"><span>개별 전송 옵션</span><select aria-label="개별 전송 옵션" value={optionId} disabled={disabled||busy||productLocked||Boolean(session)} onChange={event=>{if(!canEnter()||latest.current.session)return;latest.current.optionId=event.target.value;setOptionId(event.target.value);}}><option value="">옵션 1개를 선택하세요</option>{data.options.filter(option=>typeof option.optionId==='string').map(option=><option key={option.optionId!} value={option.optionId!}>{option.optionLabel}</option>)}</select></label>
         <button type="button" className="btn ghost" disabled={disabled||busy||productLocked||!optionId||Boolean(session)} onClick={()=>void connect()}>개별 전송 자료 확인</button></div>}
     </>}
     {session&&session.preview.liveVerified!==true&&<p role="status">개별 문서의 실제 등록 연결을 검수 중입니다. 현재 상품은 전송하지 않았습니다.</p>}

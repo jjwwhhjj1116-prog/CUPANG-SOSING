@@ -59,6 +59,16 @@ async function requestHarness(options={}){
 const previewBody={fingerprint:'f',filename:'quote.csv',headers:['상품명'],rows:[['이전 상품']],report:{dataStartRow:2,rowCount:1,missingRequired:[],warnings:[],contentRevision:1,optionRevision:1,profileRevision:1}};
 const button=(tree,label)=>nodes(tree).find(n=>n.type==='button'&&n.props.children===label);
 
+test('hidden quotation stage forwards inactive submission without replacing the editor or its saved scope',async()=>{
+ const h=await requestHarness(),editor=tree=>nodes(tree).find(node=>node.type===h.Editor);
+ const visible=editor(h.render());assert.equal(visible.props.submissionActive,true);
+ const hidden=editor(h.render({submissionActive:false}));assert.equal(hidden.props.submissionActive,false);
+ assert.equal(hidden.key,visible.key);assert.equal(hidden.props.profileId,visible.props.profileId);assert.equal(hidden.props.refreshToken,visible.props.refreshToken);
+ const returned=editor(h.render({submissionActive:true}));assert.equal(returned.props.submissionActive,true);
+ assert.equal(returned.key,visible.key);assert.equal(returned.props.profileId,visible.props.profileId);assert.equal(returned.props.refreshToken,visible.props.refreshToken);
+ assert.equal(h.calls.length,0,'switching stages cannot export, prepare or submit a document');h.unmount();
+});
+
 for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}])test(`official preparation notifies the parent before submission becomes available (${company.code})`,async()=>{
  const source={id:'saved',name:'공식 준비',revision:1,categoryId:'80719',categoryPath:['바스켓'],template:null,mappings:[],hubSchema:{company,metadata:{scopeType:'Retail_Categorized_Single'}}};
  const saved={...source,revision:2,template:{name:'original.xlsx',headerRow:5,dataStartRow:9}},calls=[],prepared=[];
@@ -127,11 +137,24 @@ test('linked product keeps its captured category profile in the quotation editor
   {id:'saved',name:'수집 양식',categoryId:'80719',categoryPath:['바스켓'],template:{name:'원본'}},
   {id:'other',name:'같은 코드의 다른 양식',categoryId:'80719',categoryPath:['바스켓'],template:{name:'다른 원본'}},
  ]});
- const tree=h.render({preferredProfileId:'other'});
- assert.equal(nodes(tree).find(n=>n.type===h.Editor).props.profileId,'saved');
+ h.render({preferredProfileId:'other'});await h.settle();const tree=h.render();
+ assert.equal(nodes(tree).find(n=>n.type===h.Editor).props.profileId,undefined,'an ignored different profile must not turn the captured category into a live profile request');
  const select=nodes(tree).find(n=>n.type==='select');
  assert.equal(select.props.disabled,true);
  assert.deepEqual(nodes(select).filter(n=>n.type==='option').map(n=>n.props.value),['','saved']);
+});
+test('captured default submission stays queryless while an explicit matching profile remains explicit',async()=>{
+ const options={categoryContext:{source:'collection',profileId:'saved',categoryId:'80719',categoryPath:['바스켓']},profiles:[
+  {id:'saved',name:'수집 양식',categoryId:'80719',categoryPath:['바스켓'],template:{name:'원본'}},
+ ]};
+ const automatic=await requestHarness(options),prepared=[];
+ let tree=automatic.render({onPrepareSubmission:id=>prepared.push(id)});
+ assert.equal(nodes(tree).find(node=>node.type===automatic.Editor).props.profileId,undefined);
+ button(tree,'저장한 견적 전송 준비').props.onClick();assert.deepEqual(prepared,[undefined]);assert.equal(automatic.calls.length,0);automatic.unmount();
+ const explicit=await requestHarness(options),selected=[];
+ explicit.render({preferredProfileId:'saved',onPrepareSubmission:id=>selected.push(id)});await explicit.settle();tree=explicit.render();
+ assert.equal(nodes(tree).find(node=>node.type===explicit.Editor).props.profileId,'saved');
+ button(tree,'저장한 견적 전송 준비').props.onClick();assert.deepEqual(selected,['saved']);assert.equal(explicit.calls.length,0);explicit.unmount();
 });
 test('opening a reviewed profile with a changed category blocks automatic template selection',async()=>{
  const h=await requestHarness();
