@@ -57,7 +57,7 @@ export async function POST(request: Request) {
     }
     const enabled=Object.hasOwn(body,'minimumMarginEnabled')?body.minimumMarginEnabled:settings.minimumMarginEnabled;
     if(typeof enabled!=='boolean')throw Error('최소 마진 적용 여부를 확인해주세요.');
-    policy=pricePolicy(input);
+    policy=pricePolicy({...input,...(input.roundingMode==='nearest'?{arithmeticMode:'couplus-number-v1'}:{})});
     if(!enabled)policy.minimumMargin=0;
     policy.recalculationMinimumEnabled=enabled;
     calculation=calculatePrice(sourcePriceCny,policy);

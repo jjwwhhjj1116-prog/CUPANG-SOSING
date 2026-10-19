@@ -7,8 +7,9 @@ import ts from 'typescript';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
 import {quotationWorkbook} from './helpers/quotation-workbook.mjs';
 
-const native=createRequire(import.meta.url),cache=new Map();
+const cache=new Map();
 function load(file,replacements={}){
+ const native=createRequire(new URL('../'+file,import.meta.url));
  const cached=!Object.keys(replacements).length;if(cached&&cache.has(file))return cache.get(file);const exports={};if(cached)cache.set(file,exports);
  const output=ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
  vm.runInNewContext(output,{exports,Error,TextEncoder,URLSearchParams,structuredClone,AbortController,fetch,document:replacements.document,require(name){

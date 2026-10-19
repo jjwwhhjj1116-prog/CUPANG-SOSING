@@ -34,6 +34,22 @@ test('disabled minimum margin and explicit overrides use shared price engine',as
  for(const invalid of [{roundingUnit:7},{roundingMode:'down'},{msrpMultiple:0.5},{minimumMarginEnabled:'false'},{exchangeRate:null},{optionsCount:201}])assert.equal((await r.post(invalid)).status,400);
  assert.equal(r.sql.prepare('SELECT count(*) n FROM products').get().n,1);r.sql.close();
 });
+test('fresh company policy uses Number parity while saved legacy products remain rational and unchanged',async()=>{
+ const r=runtime();try{
+  await r.store.saveSettings('owner',JSON.stringify(observed));
+  const fresh=await (await r.post({sourcePriceCny:8.95})).json(),policy=JSON.parse(fresh.product.pricing_policy);
+  assert.equal(policy.arithmeticMode,'couplus-number-v1');assert.equal(fresh.product.supply_price,6260);
+  const legacy={...policy};delete legacy.arithmeticMode;const prices=r.load('app/pricing.ts').calculatePrice(8.95,legacy);
+  const old={...fresh.product,id:'historical-local',supply_price:prices.supplyPrice,sale_price:prices.salePrice,msrp:prices.msrp};delete old.pricing_policy;
+  await r.store.insertProduct(old,legacy);const original=JSON.stringify(await r.store.findProduct('owner',old.id));
+  await r.store.saveSettings('owner',JSON.stringify({...observed,exchangeRate:500}));
+  assert.equal(JSON.stringify(await r.store.findProduct('owner',old.id)),original);assert.equal(JSON.parse((await r.store.findProduct('owner',old.id)).pricing_policy).arithmeticMode,undefined);
+  assert.equal((await r.store.findProduct('owner',old.id)).supply_price,6270);
+  await r.store.saveSettings('owner',JSON.stringify({...observed,minimumMarginEnabled:false}));
+  const low=await (await r.post({sourcePriceCny:0.35})).json();assert.equal(low.product.supply_price,240);assert.equal(JSON.parse(low.product.pricing_policy).arithmeticMode,'couplus-number-v1');
+  const up=await (await r.post({sourcePriceCny:8.95,roundingMode:'up',minimumMarginEnabled:true})).json();assert.equal(up.product.supply_price,6270);assert.equal(JSON.parse(up.product.pricing_policy).arithmeticMode,undefined);
+ }finally{r.sql.close();}
+});
 test('initial price and policy are transactional and failed authentication creates no product',async()=>{
  const r=runtime();await r.store.saveSettings('owner',JSON.stringify(observed));
  r.sql.exec("CREATE TRIGGER fail_policy BEFORE INSERT ON product_price_policy BEGIN SELECT RAISE(ABORT,'fixture'); END");

@@ -84,7 +84,7 @@ const priceField = (field: QuotationField) => ['supplyPrice', 'salePrice', 'msrp
  * Never materialize guessed automatic values or retain a source's label. */
 export function bundleQuotationChanges(view: QuotationFieldsView, additions: readonly BundleAddition[], nextRows: readonly OptionInput[], policy: PricePolicy): QuotationChange[] {
   const fields = view.resolved.schema.fields, targets = quotationPriceTargets(fields), changes: QuotationChange[] = [];
-  const prices = calculateOptionPrices(nextRows, { ...policy, recalculationMode: 'couplus-stage-two-v1' });
+  const prices = calculateOptionPrices(nextRows, { ...policy, roundingMode: 'nearest', arithmeticMode: 'couplus-number-v1', recalculationMode: 'couplus-stage-two-v1' });
   for (const addition of additions) {
     const source = view.overrides.options[addition.sourceOptionId] ?? {}, row = nextRows.find(value => value.id === addition.optionId);
     if (!row || !view.resolved.rows.some(value => value.optionId === addition.sourceOptionId)) throw Error('번들 원본 견적서를 확인하지 못했습니다.');

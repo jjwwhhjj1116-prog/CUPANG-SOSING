@@ -12,6 +12,7 @@ function samePolicy(a: PricePolicy, b: PricePolicy) {
     && Boolean(a.useIntegratedRate) === Boolean(b.useIntegratedRate)
     && (!a.useIntegratedRate || Object.is(a.integratedRate, b.integratedRate))
     && a.recalculationMode === b.recalculationMode
+    && a.arithmeticMode === b.arithmeticMode
     && a.recalculationMinimumEnabled === b.recalculationMinimumEnabled;
 }
 
@@ -55,7 +56,7 @@ export function PriceEditor({ sourcePrice, initial, onSave, productId, version, 
     {recalculate&&<p role="status">일괄 재계산을 저장하면 현재 견적서의 직접 입력한 공급가·판매가·권장소비자가도 새 계산값으로 바뀝니다. 저장 전까지 기존 가격은 유지됩니다.</p>}
     {productId&&version&&<><div hidden={!dirty}><OptionPricePreview productId={productId} version={version} policy={policy} replaceReviewedPrices={recalculate}/></div>{showQuotationPrices&&<div hidden={dirty}><OptionQuotationPrices refreshToken={refreshToken} profileId={profileId} productId={productId} version={version} onSaved={onQuotationSaved}/></div>}</>}
     {error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}
-    <button type="button" className="btn ghost" disabled={busy||!!error} onClick={()=>{if(saving.current||busy||error||disabled||!current()||beforeSave?.()===false)return;pendingRecalculation.current=scope;setRecalculationScope(scope);setPolicy(current=>({...current,roundingMode:'nearest',recalculationMode:'couplus-stage-two-v1',recalculationMinimumEnabled:priceMinimumMarginEnabled(current)}));setMessage('옵션 가격을 다시 계산했습니다. 저장하면 견적서에 반영됩니다.');}}>일괄 재계산</button>
+    <button type="button" className="btn ghost" disabled={busy||!!error} onClick={()=>{if(saving.current||busy||error||disabled||!current()||beforeSave?.()===false)return;pendingRecalculation.current=scope;setRecalculationScope(scope);setPolicy(current=>({...current,roundingMode:'nearest',arithmeticMode:'couplus-number-v1',recalculationMode:'couplus-stage-two-v1',recalculationMinimumEnabled:priceMinimumMarginEnabled(current)}));setMessage('옵션 가격을 다시 계산했습니다. 저장하면 견적서에 반영됩니다.');}}>일괄 재계산</button>
     <button className="btn primary" disabled={busy||disabled||!!error}>{busy?'저장 중…':'이 가격 저장'}</button></fieldset>
   </form>;
 }

@@ -12,13 +12,19 @@ const summaries = h => nodes(h.render()).find(node => node.props?.['aria-label']
 test('displayed row percentages and averages round the row margin rates like the recorded table while prices stay exact', async () => {
   const h = await optionPriceTableUI(priceTableCompanies[0], { count: 2 }); try {
     const first = dataRows(h)[0], second = dataRows(h)[1];
-    assert.equal(text(nodes(first).find(node => node.props?.['data-price-column'] === 'supplyMargin')), '3,004원(74%)');
-    assert.equal(text(nodes(second).find(node => node.props?.['data-price-column'] === 'supplyMargin')), '3,004원(68%)');
+    // Recorded formatNumber preserves fractional row margins; only the summary
+    // average is rounded to whole KRW (docs/step697-sale-driven-msrp-2026-10-18.md).
+    assert.equal(text(nodes(first).find(node => node.props?.['data-price-column'] === 'supplyMargin')), '3,003.5원(74%)');
+    assert.equal(text(nodes(second).find(node => node.props?.['data-price-column'] === 'supplyMargin')), '3,003.5원(68%)');
     const summary = text(summaries(h));
     assert.match(summary, /평균 공급가4,225원/); assert.match(summary, /평균 판매가7,040원/);
     assert.match(summary, /평균 공급 마진: 3,004원/); assert.match(summary, /평균 쿠팡 마진: 2,815원/);
     assert.match(summary, /공급: 71%/); assert.match(summary, /쿠팡: 40%/);
+    const response = await h.request('/api/products/' + h.product.id + '/options'), body = await response.json();
+    assert.equal(response.status, 200);
+    assert.deepEqual(body.pricing.rows.map(row => row.calculation.marginKrw), [3003.5, 3003.5]);
     assert.equal((await h.rows()).rows[0].unitCostCny, 2.99); assert.equal(h.writes.length, 0);
+    assert.equal(h.protectedSnapshot(), h.before); assert.ok(h.apiCalls.every(call => call.method === 'GET'));
   } finally { h.close(); }
 });
 

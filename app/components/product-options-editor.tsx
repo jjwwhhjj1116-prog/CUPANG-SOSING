@@ -281,7 +281,7 @@ function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = fals
       const action:BulkOptionAction=target.kind==='bundle'?{type:'applyBundle',value:parseCouplusBundleQuantity(target.value)}:{type:'remove'};
       const next=applyOptionBulk(rowsRef.current,previewOptionBulk(rowsRef.current,target.ids,action,base.pricing.policy,images),base.pricing.policy,images);
       if(target.kind==='bundle'){
-        const prices=calculateOptionPrices(next,{...base.pricing.policy,recalculationMode:'couplus-stage-two-v1'}).filter(result=>selectedIds.has(result.optionId)&&result.included);
+        const prices=calculateOptionPrices(next,{...base.pricing.policy,roundingMode:'nearest',arithmeticMode:'couplus-number-v1',recalculationMode:'couplus-stage-two-v1'}).filter(result=>selectedIds.has(result.optionId)&&result.included);
         for(const result of prices){
           if(!result.calculation)throw Error(result.error||'선택한 옵션의 원가와 번들 수량을 확인해주세요.');
           if(!snapshot.view.resolved.rows.some(row=>row.optionId===result.optionId&&row.included))throw Error('새로 추가하거나 포함한 옵션을 먼저 저장한 뒤 번들을 적용해주세요. 입력은 유지했습니다.');

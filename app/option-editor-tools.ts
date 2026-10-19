@@ -14,7 +14,8 @@ export function optionBulkPriceBase(policy: PricePolicy): string {
   return JSON.stringify([policy.exchangeRate, policy.supplyMargin, policy.coupangMargin, policy.minimumMargin,
     policy.msrpMultiple, policy.roundingUnit, policy.roundingMode ?? 'up', policy.useIntegratedRate === true,
     policy.useIntegratedRate === true ? policy.integratedRate ?? null : null, policy.recalculationMode ?? null,
-    ...(policy.recalculationMinimumEnabled === undefined ? [] : [policy.recalculationMinimumEnabled])]);
+    ...(policy.recalculationMinimumEnabled === undefined ? [] : [policy.recalculationMinimumEnabled]),
+    ...(policy.arithmeticMode === undefined ? [] : [policy.arithmeticMode])]);
 }
 export function parseCouplusBundleQuantity(input: string, minimum = 1): number {
   // The recorded prompt uses parseInt, including its decimal-prefix behavior.
@@ -70,7 +71,7 @@ export function previewOptionBulk(rows: readonly OptionInput[], selectedIds: rea
   });
   const beforePrices = calculateOptionPrices(rows, policy);
   const afterPrices = calculateOptionPrices(next, action.type === 'applyBundle'
-    ? { ...policy, recalculationMode: 'couplus-stage-two-v1' } : policy);
+    ? { ...policy, roundingMode: 'nearest', arithmeticMode: 'couplus-number-v1', recalculationMode: 'couplus-stage-two-v1' } : policy);
   return { priceBase: optionBulkPriceBase(policy), base: JSON.stringify(rows), action, selectedIds: [...selected], rows: next, changes: rows.filter(row => selected.has(row.id)).map(row => {
     const targetId = action.type === 'addBundle' ? action.newIds[row.id] : row.id;
     const after = next.find(value => value.id === targetId) ?? null; const price = afterPrices.find(value => value.optionId === targetId);

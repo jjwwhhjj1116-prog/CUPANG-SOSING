@@ -28,7 +28,7 @@ export function prepareCollectionProduct(owner:string,job:CollectionJob,receipt:
   const {offerId,...raw}=receipt;const result=validateCollectionResult(raw,job.offer_id);
   if(offerId!==job.offer_id)throw new Error('원문의 상품번호가 다릅니다.');
   const settings=validateSettings(job.context.settings);
-  const policy=pricePolicy({...settings,minimumMargin:settings.minimumMarginEnabled?settings.minimumMargin:0,recalculationMinimumEnabled:settings.minimumMarginEnabled});
+  const policy=pricePolicy({...settings,...(settings.roundingMode==='nearest'?{arithmeticMode:'couplus-number-v1'}:{}),minimumMargin:settings.minimumMarginEnabled?settings.minimumMargin:0,recalculationMinimumEnabled:settings.minimumMarginEnabled});
   // Use observed SKU prices, or the separately proved product-level default.
   const cost=Math.min(...result.options.map(row=>row.unitPriceCny));const price=calculatePrice(cost,policy);
   const rows=result.options.map((row,index)=>({...emptyOptionInput(`collected-${index+1}`),originalName:row.name,supplierSku:row.sku,stock:row.stock,color:row.color??'',size:row.size??'',unitCostCny:row.unitPriceCny,unitsPerPack:initialBundleQuantity(row.unitPriceCny,policy,settings),minimumOrderQuantity:row.minimumOrder,included:true}));

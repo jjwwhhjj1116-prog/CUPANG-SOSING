@@ -1,4 +1,4 @@
-export type PricePolicy = { exchangeRate: number; supplyMargin: number; coupangMargin: number; minimumMargin: number; msrpMultiple: number; roundingUnit: number; roundingMode?: 'up' | 'nearest'; useIntegratedRate?: boolean; integratedRate?: number | null; recalculationMode?: 'couplus-stage-two-v1'; recalculationMinimumEnabled?: boolean };
+export type PricePolicy = { exchangeRate: number; supplyMargin: number; coupangMargin: number; minimumMargin: number; msrpMultiple: number; roundingUnit: number; roundingMode?: 'up' | 'nearest'; arithmeticMode?: 'couplus-number-v1'; useIntegratedRate?: boolean; integratedRate?: number | null; recalculationMode?: 'couplus-stage-two-v1'; recalculationMinimumEnabled?: boolean };
 export function pricePolicy(input: unknown): PricePolicy {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('가격 설정을 확인해주세요.');
   const record = input as Record<string, unknown>;
@@ -7,6 +7,7 @@ export function pricePolicy(input: unknown): PricePolicy {
   const p = record as PricePolicy;
   if (p.exchangeRate <= 0 || p.supplyMargin < 0 || p.supplyMargin >= 100 || p.coupangMargin < 0 || p.coupangMargin >= 100 || p.minimumMargin < 0 || p.msrpMultiple < 1 || ![1,10,100,1000].includes(p.roundingUnit)) throw new Error('환율·마진·최소 마진·시장가격 배수·올림 단위를 확인해주세요.');
   if (record.roundingMode !== undefined && record.roundingMode !== 'up' && record.roundingMode !== 'nearest') throw new Error('가격 처리 방식을 확인해주세요.');
+  if (record.arithmeticMode !== undefined && record.arithmeticMode !== 'couplus-number-v1') throw new Error('가격 계산 방식을 확인해주세요.');
   if (record.recalculationMode !== undefined && record.recalculationMode !== 'couplus-stage-two-v1') throw new Error('일괄 재계산 방식을 확인해주세요.');
   if (record.recalculationMinimumEnabled !== undefined && typeof record.recalculationMinimumEnabled !== 'boolean') throw new Error('최소 공급 마진 보장의 선택 상태를 확인해주세요.');
   if (record.recalculationMinimumEnabled === false && p.minimumMargin !== 0) throw new Error('최소 공급 마진 보장을 끄면 적용 금액은 0원이어야 합니다.');
@@ -17,6 +18,7 @@ export function pricePolicy(input: unknown): PricePolicy {
   // Off/missing integration is the original policy, byte-for-byte. A rate held
   // in the settings editor is not a charge until the owner enables it.
   return { ...Object.fromEntries(keys.map(key => [key, p[key]])), ...(record.roundingMode === 'nearest' ? { roundingMode: 'nearest' as const } : {}),
+    ...(record.arithmeticMode === 'couplus-number-v1' ? { arithmeticMode: 'couplus-number-v1' as const } : {}),
     ...(record.useIntegratedRate === true ? { useIntegratedRate: true, integratedRate: record.integratedRate } : {}),
     ...(record.recalculationMode === 'couplus-stage-two-v1' ? { recalculationMode: 'couplus-stage-two-v1' as const } : {}),
     ...(typeof record.recalculationMinimumEnabled === 'boolean' ? { recalculationMinimumEnabled: record.recalculationMinimumEnabled } : {}) } as PricePolicy;
@@ -32,12 +34,14 @@ export function priceMinimumMarginEnabled(policy: Pick<PricePolicy, 'minimumMarg
 export function calculateStageTwoMsrp(salePrice: number, input: PricePolicy): number {
   const policy = pricePolicy(input);
   if (!Number.isSafeInteger(salePrice) || salePrice <= 0) throw Error('판매가는 양수 정수 원 단위로 입력해주세요.');
+  if (usesCouplusNumbers(policy)) return roundNumberCurrency(salePrice * policy.msrpMultiple, policy.roundingUnit);
   return Number(roundCurrency(multiply(decimal(salePrice), decimal(policy.msrpMultiple)), policy.roundingUnit, 'nearest'));
 }
 export function calculatePrice(sourcePriceCny: number, input: PricePolicy, unitsPerPack = 1) {
   const p = pricePolicy(input);
   if (!Number.isFinite(sourcePriceCny) || sourcePriceCny <= 0) throw new Error('저장된 상품 원가가 올바르지 않습니다.');
   if (!Number.isSafeInteger(unitsPerPack) || unitsPerPack < 1) throw new Error('판매 단위당 구성 수량은 1 이상 안전한 정수로 입력해주세요.');
+  if (usesCouplusNumbers(p)) return calculateCouplusNumberPrice(sourcePriceCny, p, unitsPerPack);
   // Use the finite input number's decimal spelling, rather than intermediate
   // IEEE-754 arithmetic. Every comparison and currency ceiling stays exact.
   const hundred = decimal(100);
@@ -67,6 +71,44 @@ export function calculatePrice(sourcePriceCny: number, input: PricePolicy, units
   const margin = subtract(rational(supply), cost);
   return { costKrw: toNumber(cost), supplyPrice: Number(supply), salePrice: Number(sale), msrp: Number(market),
     marginKrw: toNumber(margin), actualMargin: toNumber(divide(multiply(margin, hundred), rational(supply))) };
+}
+
+function usesCouplusNumbers(policy: PricePolicy): boolean {
+  // Existing saved policies and the explicit ceiling option retain their exact
+  // decimal arithmetic. Only a newly selected Couplus nearest policy opts in.
+  return policy.arithmeticMode === 'couplus-number-v1' && policy.roundingMode === 'nearest';
+}
+function roundNumberCurrency(value: number, unit: number): number {
+  const amount = Math.round(value / unit) * unit;
+  if (!Number.isFinite(value) || value < 0 || !Number.isSafeInteger(amount) || amount < 0) throw new Error('계산 가능한 가격 범위를 초과했습니다.');
+  return amount;
+}
+function calculateCouplusNumberPrice(sourcePriceCny: number, policy: PricePolicy, unitsPerPack: number) {
+  // Recorded purchaseCost receives the total pack first. Preserve the original
+  // Number operation order, including +200 then +100 and its one-KRW VAT round.
+  const packCny = sourcePriceCny * unitsPerPack;
+  if (!Number.isFinite(packCny)) throw new Error('계산 가능한 가격 범위를 초과했습니다.');
+  const costKrw = policy.useIntegratedRate === true
+    ? roundNumberCurrency((packCny * policy.integratedRate! + 200 + 100) * 1.1, 1)
+    : packCny * policy.exchangeRate;
+  if (!Number.isFinite(costKrw) || costKrw < 0 || costKrw > Number.MAX_SAFE_INTEGER) throw new Error('계산 가능한 가격 범위를 초과했습니다.');
+  const minimumEnabled = priceMinimumMarginEnabled(policy);
+  let supplyPrice: number;
+  if (policy.recalculationMode === 'couplus-stage-two-v1' && minimumEnabled) {
+    supplyPrice = roundNumberCurrency(costKrw + policy.minimumMargin, policy.roundingUnit);
+  } else {
+    supplyPrice = roundNumberCurrency(costKrw / (1 - policy.supplyMargin / 100), policy.roundingUnit);
+    // The initial worker checks the already-rounded supply margin, whereas the
+    // explicit stage-two operation above directly uses the enabled minimum.
+    if (minimumEnabled && supplyPrice - costKrw < policy.minimumMargin) {
+      supplyPrice = roundNumberCurrency(costKrw + policy.minimumMargin, policy.roundingUnit);
+    }
+  }
+  if (supplyPrice === 0) throw new Error('반올림한 공급가가 0원입니다. 가격 처리 단위를 줄이거나 최소 공급 마진을 설정해주세요.');
+  const salePrice = roundNumberCurrency(supplyPrice / (1 - policy.coupangMargin / 100), policy.roundingUnit);
+  const msrp = roundNumberCurrency(salePrice * policy.msrpMultiple, policy.roundingUnit);
+  const marginKrw = supplyPrice - costKrw;
+  return { costKrw, supplyPrice, salePrice, msrp, marginKrw, actualMargin: marginKrw / supplyPrice * 100 };
 }
 
 type Rational = { numerator: bigint; denominator: bigint };
