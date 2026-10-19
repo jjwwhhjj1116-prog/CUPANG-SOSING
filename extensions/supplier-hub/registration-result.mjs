@@ -3,6 +3,36 @@ export function readSupplierHubRegistration(quotationId, pageRequest) {
   if(location.origin!=='https://supplier.coupang.com'||location.pathname!=='/qvt/wims')throw Error('Supplier Hub의 상품 등록 상태 확인 화면에서 실행해주세요.');
   if(typeof quotationId!=='string'||!quotationId.trim()||quotationId!==quotationId.trim()||quotationId.length>200)throw Error('파일 검증 결과의 견적서 ID가 필요합니다.');
   const normalize=value=>(value||'').replace(/\s+/g,' ').trim();
+  // QVT renders its quotation UUID and an optional parenthesized estimation ID.
+  // The estimation ID is not the quotation UUID and must never match it.
+  function quotationIdentity(cell) {
+    const text = normalize(cell.innerText);
+    const copies = Array.from(cell.querySelectorAll('button[data-clipboard-text]')).filter(node => node.getClientRects().length > 0);
+    const valid = value => typeof value === 'string' && value.length > 0 && value.length <= 200 && value === value.trim();
+    if (!copies.length) return /\.\.\.|…/.test(text) ? null : text;
+    if (copies.length === 1) {
+      const id = copies[0].getAttribute('data-clipboard-text');
+      return valid(id) && (text === id || text === id.slice(0, 8) + '...') ? id : null;
+    }
+    if (copies.length !== 2) return null;
+    const [primary, legacy] = copies;
+    const id = primary.getAttribute('data-clipboard-text'), estimation = legacy.getAttribute('data-clipboard-text');
+    if (!valid(id) || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id)
+      || !valid(estimation) || !/^[1-9]\d{0,19}$/.test(estimation)) return null;
+    const has = (node, token) => normalize(node?.getAttribute('class')).split(' ').includes(token);
+    const only = (parent, child) => parent && Array.from(parent.children).length === 1 && parent.children[0] === child;
+    const mainClip = primary.parentElement, legacyClip = legacy.parentElement;
+    const color = legacyClip?.parentElement, suffix = color?.parentElement, root = mainClip?.parentElement;
+    if (mainClip?.tagName !== 'DIV' || !has(mainClip, 'wims-list__clip') || !only(mainClip, primary)
+      || legacyClip?.tagName !== 'SPAN' || !has(legacyClip, 'wims-list__clip') || !only(legacyClip, legacy)
+      || color?.tagName !== 'SPAN' || !has(color, 'text-success') || !only(color, legacyClip)
+      || suffix?.tagName !== 'DIV' || !only(suffix, color) || root?.tagName !== 'DIV'
+      || !only(cell, root) || root.children.length !== 2 || root.children[0] !== mainClip || root.children[1] !== suffix
+      || normalize(primary.innerText) !== id.slice(0, 8) + '...' || normalize(legacy.innerText) !== estimation
+      || normalize(suffix.innerText).replace(/\s/g, '') !== '(' + estimation + ')'
+      || text.replace(/\s/g, '') !== id.slice(0, 8) + '...(' + estimation + ')') return null;
+    return id;
+  }
   const headings=['상품명','상품 등록일','카테고리','바코드','원본 견적서','견적서 ID','SKU ID','상태','등록 진행 단계'];
   const tables=Array.from(document.querySelectorAll('table')).filter(table=>table.getClientRects().length&&Array.from(table.querySelectorAll('thead th')).map(cell=>normalize(cell.innerText.replace(/\?/g,''))).join('|')===headings.join('|'));
   if(tables.length!==1)throw Error('상품 등록 결과 표를 확인하지 못했습니다.');
@@ -11,11 +41,8 @@ export function readSupplierHubRegistration(quotationId, pageRequest) {
     if(cells.length!==9)return [];
     // Hub abbreviates visible IDs (xxxxxxxx...) but exposes the full ID on its copy button.
     // Read only this cell's rendered controls; never match a prefix or read the clipboard.
-    const copyButtons=Array.from(cells[5].querySelectorAll('button[data-clipboard-text]')).filter(button=>button.getClientRects().length);
-    const visibleId=normalize(cells[5].innerText);
-    const fullId=copyButtons.length===1?copyButtons[0].getAttribute('data-clipboard-text'):visibleId;
-    if(copyButtons.length>1||typeof fullId!=='string'||fullId!==quotationId)return [];
-    if(copyButtons.length===1&&visibleId!==fullId&&visibleId!==`${fullId.slice(0,8)}...`)return [];
+    const fullId = quotationIdentity(cells[5]);
+    if (fullId === null || fullId !== quotationId) return [];
     const values=cells.map(cell=>normalize(cell.innerText));
     const skuCopies=Array.from(cells[6].querySelectorAll('button[data-clipboard-text]')).filter(button=>button.getClientRects().length);
     if(skuCopies.length>1)throw Error('SKU ID 복사 버튼이 중복되어 결과를 확인하지 못했습니다.');
@@ -48,13 +75,62 @@ export function readSupplierHubRegistration(quotationId, pageRequest) {
     const controls=Array.from(document.querySelectorAll(selector)).filter(visible);
     if(controls.length!==1||(controls[0].type==='checkbox'?controls[0].checked:controls[0].value!==''))throw Error('견적서 외 검색 조건이 변경되었습니다.');
   }
+
+  // QVT's shipped CSS-module pager has no aria-current/.active (Step742).
+  // Recognize its complete rendered controls; never infer a page from row count.
+  function nativePager(pager) {
+    const classes = node => normalize(node?.getAttribute('class')).split(' ');
+    if (!classes(pager).includes('_2rJmZwpWK6AkvdeVOL1bZs')) return null;
+    const has = (node, token) => classes(node).includes(token);
+    const disabled = node => node.disabled || node.getAttribute('aria-disabled') === 'true'
+      || Boolean(node.closest('.disabled,[aria-disabled="true"],._1H2KZYPdwpNDFms8Cnn5Jq'));
+    const controls = Array.from(pager.querySelectorAll('a[data-page]')).filter(visible);
+    const number = node => {
+      const value = node?.getAttribute('data-page');
+      if (typeof value !== 'string' || !/^[1-9]\d{0,2}$/.test(value)) throw Error('공식 조회 페이지 번호를 확인하지 못했습니다.');
+      return Number(value);
+    };
+    const numbered = controls.filter(node => has(node.parentElement, '_3oMgfdzXLjxSxO_d0iK9z5'));
+    const selected = numbered.filter(node => has(node.parentElement, '_2pdnZ_VjGkLzJF5y1X3O-4'));
+    if (!numbered.length || numbered.length > 10 || selected.length !== 1
+      || numbered.some((node, index) => normalize(node.innerText) !== String(number(node))
+        || index > 0 && number(node) !== number(numbered[index - 1]) + 1 || disabled(node)))
+      throw Error('공식 조회 페이지의 선택·순서를 확인하지 못했습니다.');
+    const current = number(selected[0]);
+    const standard = Array.from(pager.querySelectorAll('[aria-current="page"],.active')).filter(visible);
+    if (standard.some(node => normalize(node.innerText) !== String(current))) throw Error('현재 조회 페이지 표시가 일치하지 않습니다.');
+    const one = (token, label) => {
+      const found = controls.filter(node => has(node.parentElement, token) && normalize(node.innerText) === label);
+      if (found.length !== 1) throw Error('공식 조회 페이지 이동 버튼이 변경되었습니다.');
+      return found[0];
+    };
+    const first = one('_1GYxV0xthnO8RlMLUrpvLd', '<<'), last = one('V0kzo79OFKevPhLFGB8kc', '>>');
+    const end = number(last);
+    if (number(first) !== 1 || current > end || number(numbered.at(-1)) > end
+      || Boolean(disabled(first)) !== (current === 1) || Boolean(disabled(last)) !== (current === number(numbered.at(-1))))
+      throw Error('공식 조회 페이지 범위가 일치하지 않습니다.');
+    const forward = one('tOfUlMHROQa_ehrySEQmm', '>');
+    let next = numbered.find(node => number(node) === current + 1) ?? null;
+    if (current === end) {
+      if (next || !disabled(forward) || forward.getAttribute('data-page') !== '0') throw Error('마지막 조회 페이지 표시가 일치하지 않습니다.');
+    } else if (!next) {
+      const candidates = [forward, last].filter(node => !disabled(node) && node.getAttribute('data-page') === String(current + 1));
+      if (number(numbered.at(-1)) !== current || candidates.length !== 1)
+        throw Error('연속된 다음 조회 페이지를 확인하지 못했습니다.');
+      next = candidates[0];
+    }
+    return { current, next, hasNext: current < end };
+  }
   const pagers=Array.from(document.querySelectorAll('.pagination,nav[aria-label],[role="navigation"][aria-label]')).filter(element=>visible(element)
     &&(element.matches('.pagination')||/pagination|페이지/i.test(element.getAttribute('aria-label')||'')));
   const roots=pagers.filter(element=>!pagers.some(other=>other!==element&&element.contains(other)));
   let current=null,hasNext=null,next;
   if(roots.length===1){
     const pager=roots[0];
-    const selected=Array.from(pager.querySelectorAll('[aria-current="page"],.active')).filter(visible).map(element=>normalize(element.innerText));
+    const native=nativePager(pager);
+    if(native){current=native.current;hasNext=native.hasNext;next=native.next;}
+    else {
+      const selected=Array.from(pager.querySelectorAll('[aria-current="page"],.active')).filter(visible).map(element=>normalize(element.innerText));
     if(selected.length&&selected.every(value=>/^[1-9]\d{0,2}$/.test(value))&&new Set(selected).size===1){
       current=Number(selected[0]);
       const controls=Array.from(pager.querySelectorAll('button,a,[role="button"]')).filter(visible);
@@ -65,6 +141,7 @@ export function readSupplierHubRegistration(quotationId, pageRequest) {
       if(successors.length&&named.length&&disabled(named[0]))throw Error('다음 페이지와 마지막 페이지 표시가 일치하지 않습니다.');
       next=successors[0]||named[0];
       if(next){hasNext=!disabled(next);}
+    }
     }
   }
   const page={current,hasNext,signature:JSON.stringify(result.rows)};

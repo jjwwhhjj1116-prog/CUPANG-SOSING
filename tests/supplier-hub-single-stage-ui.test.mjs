@@ -10,8 +10,8 @@ import {dispatchSingleDocument} from '../extensions/supplier-hub/single-dispatch
 const native=createRequire(import.meta.url),origin='https://sourceflow.jjwwhhjj1116.workers.dev';
 const companies=[{code:'A01526306',name:'유앤채'},{code:'A01464742',name:'와이홉'}];
 const plain=value=>JSON.parse(JSON.stringify(value));
-const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
-const flatten=tree=>typeof tree==='string'?tree:Array.isArray(tree)?tree.map(flatten).join(' '):tree&&typeof tree==='object'?flatten(tree.props?.children):'';
+const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?typeof tree.type==='function'?nodes(tree.type(tree.props)):[tree,...nodes(tree.props?.children)]:[];
+const flatten=tree=>typeof tree==='string'?tree:Array.isArray(tree)?tree.map(flatten).join(' '):tree&&typeof tree==='object'?flatten(typeof tree.type==='function'?tree.type(tree.props):tree.props?.children):'';
 function fixture(company=companies[0],options={}){
  const clock={now:Date.now()},timers=new Map(),listeners=new Set(),calls=[],sent=[],modules=new Map(),slots=[],effects=[];
  let cursor=0,mountedKey=null,props,sequence=0;
@@ -42,7 +42,7 @@ function fixture(company=companies[0],options={}){
   }throw Error('Unexpected/forbidden URL '+url);};
  const load=file=>{if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
   {exports,Error,Date:LocalDate,URL,TextEncoder,TextDecoder,Uint8Array,AbortController,structuredClone,crypto:webcrypto,window:win,setTimeout:setTimer,clearTimeout:clearTimer,
-   fetch:async(url,init)=>{calls.push({url,method:init?.method??'GET',body:init?.body?JSON.parse(init.body):undefined,signal:init?.signal});return f.fetch(url,init);},require:name=>name==='react'?react:name==='@/app/components/supplier-hub-product-transport'?{SupplierHubProductTransport:()=>null}:name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name)});return exports;};
+   fetch:async(url,init)=>{calls.push({url,method:init?.method??'GET',body:init?.body?JSON.parse(init.body):undefined,signal:init?.signal});return f.fetch(url,init);},require:name=>name==='react'?react:name==='@/app/components/supplier-hub-product-transport'?{SupplierHubProductTransport:()=>null}:name.startsWith('@/')?load(name.slice(2)+(fs.existsSync(new URL('../'+name.slice(2)+'.tsx',import.meta.url))?'.tsx':'.ts')):name.startsWith('.')?createRequire(new URL('../'+file,import.meta.url))(name):native(name)});return exports;};
  f.client=load('app/supplier-hub-single-client.ts');
  f.load=load;
  props={productId:saved.productId,profileId:'profile-656',view,disabled:false,onReceiptSaved:options.onReceiptSaved};
