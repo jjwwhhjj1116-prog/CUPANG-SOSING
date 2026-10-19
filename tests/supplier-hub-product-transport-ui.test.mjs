@@ -11,7 +11,9 @@ import { createProductDocumentPacket } from '../extensions/supplier-hub/product-
 import { productDocumentIdentity } from '../extensions/supplier-hub/product-document-receiver.mjs';
 import { singleDocumentIdentity } from '../extensions/supplier-hub/single-document.mjs';
 import { singlePacket, singleDocumentFixture, SINGLE_COMPANIES, SINGLE_SENDER } from './helpers/supplier-hub-single-document.mjs';
+import {SupplierHubRejectionDetails} from './helpers/rejection-details-ui.mjs';
 import {productValidationRejectionFixture} from './helpers/product-validation-rejection.mjs';
+import {normalizeRejectionDetails} from '../extensions/supplier-hub/rejection-details.mjs';
 
 const fixtureURL = new URL('./supplier-hub-product-client.test.mjs', import.meta.url), source = fs.readFileSync(fixtureURL, 'utf8');
 const ast = ts.createSourceFile(fixtureURL.pathname, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS), parts = [];
@@ -22,11 +24,20 @@ const declarations = parts.join('\n').replaceAll('import.meta.url', JSON.stringi
 const factory = vm.runInNewContext(declarations + '\n({fixture,groupRecord,legacyRecord})', { assert, fs, path, vm, ts, createRequire, fileURLToPath, createHash, webcrypto, createProductDocumentPacket, productDocumentIdentity, singleDocumentIdentity, singlePacket, SINGLE_COMPANIES, SINGLE_SENDER,
   URL, Response, Request, TextEncoder, TextDecoder, Uint8Array, AbortController, Date, JSON, Array, Object, Error, Intl, structuredClone, setImmediate });
 const native = createRequire(import.meta.url), plain = value => JSON.parse(JSON.stringify(value)), cases = [];
-const nodes = tree => Array.isArray(tree) ? tree.flatMap(nodes) : tree && typeof tree === 'object' ? [tree, ...nodes(tree.props?.children)] : [];
-const text = tree => Array.isArray(tree) ? tree.map(text).join(' ') : tree && typeof tree === 'object' ? text(tree.props?.children) : tree == null ? '' : String(tree);
+const nodes = tree => Array.isArray(tree) ? tree.flatMap(nodes) : tree && typeof tree === 'object' ? tree.type === SupplierHubRejectionDetails ? nodes(tree.type(tree.props)) : [tree, ...nodes(tree.props?.children)] : [];
+const text = tree => Array.isArray(tree) ? tree.map(text).join(' ') : tree && typeof tree === 'object' ? tree.type === SupplierHubRejectionDetails ? text(tree.type(tree.props)) : text(tree.props?.children) : tree == null ? '' : String(tree);
 const turn = () => new Promise(resolve => setImmediate(resolve)), deferred = () => { let resolve; const promise = new Promise(done => resolve = done); return { promise, resolve }; };
 const open = '전체 옵션 전송 자료 확인', start = '전체 상품 견적 등록 시작', close = '전송 자료 확인 닫기', recover = '같은 문서 저장 결과 확인';
 const release='검증 반려 확인 · 수정 허용';
+
+for(const company of SINGLE_COMPANIES)test(company.name+' actual transport renders exact rejected receipt reasons in current result and stored history',async()=>{
+ const h=await fixture(company,{verified:true});try{
+  await h.idle();await h.click(open);h.f.bridge=async payload=>({...h.f.observation('REJECTED'),requestId:payload.packet.requestId,
+   receipt:{...h.f.observation('REJECTED').receipt,rejectionDetails:normalizeRejectionDetails(JSON.stringify({errors:[{columnName:'단품 포장 크기',message:'가로 세로 높이를 확인해주세요.'}]}))}});
+  await h.click(start);assert.match(h.text(),/단품 포장 크기/);assert.match(h.text(),/가로 세로 높이를 확인해주세요/);assert.equal(nodes(h.render()).filter(node=>node.type==='caption'&&node.props.children==='Supplier Hub 반려 상세').length,2);
+  assert.equal(h.f.history.length,1);assert.equal(h.f.history[0].registered,false);assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','start']);
+ }finally{h.close();}
+});
 const validationRejected=(f,requestId)=>f.state('validation-rejected',{requestId,validationRejection:{evidence:'document-validation-rejection',operationId:requestId+':validate:2',step:2,validatedSteps:[],checkpointSequence:8,rejectedAt:f.clock.now,submitted:false,consented:false}});
 after(() => fs.writeFileSync(new URL('../outputs/step728-product-transport-ui-proof.json', import.meta.url), JSON.stringify({ cases,
   boundary: 'Actual product transport component and actual app client/packet/receipt functions. React hook scheduling, window bridge, clock and local API are isolated; live:true is synthetic test ACK only. No Chrome/Hub/source collection/actual acceptance.',
@@ -47,7 +58,7 @@ async function fixture(company = SINGLE_COMPANIES[0], options = {}) {
   const exports = {}, component = 'app/components/supplier-hub-product-transport.tsx';
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../' + component, import.meta.url), 'utf8'), { fileName: component, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
     { exports, Error, Date: LocalDate, window:f.window, AbortController, fetch: f.fetch, setTimeout: (fn, delay) => { const id = ++sequence; f.timers.set(id, { fn, due: f.clock.now + delay }); return id; }, clearTimeout: id => f.timers.delete(id),
-      require: name => name === 'react' ? react : name === '@/app/supplier-hub-product-client' ? f.client : name.startsWith('@/') ? f.load(name.slice(2) + '.ts') : name.endsWith('product-document.mjs') ? {
+      require: name => name === '@/app/components/supplier-hub-rejection-details' ? {SupplierHubRejectionDetails} : name === 'react' ? react : name === '@/app/supplier-hub-product-client' ? f.client : name.startsWith('@/') ? f.load(name.slice(2) + '.ts') : name.endsWith('product-document.mjs') ? {
         // Each fresh preview gets a different real UUID. Recovery must supply
         // its original UUID explicitly; a constant test seed cannot mask loss.
         createProductDocumentPacket: (review,value={}) => createProductDocumentPacket(review, { ...value,createdAt:value.createdAt??f.clock.now,now:f.clock.now }),

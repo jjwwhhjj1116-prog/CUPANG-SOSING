@@ -7,6 +7,7 @@ import {webcrypto} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {singlePacket,SINGLE_COMPANIES,SINGLE_SENDER} from './helpers/supplier-hub-single-document.mjs';
 import {singleDocumentIdentity} from '../extensions/supplier-hub/single-document.mjs';
+import * as rejectionDetails from '../extensions/supplier-hub/rejection-details.mjs';
 
 const plain=value=>JSON.parse(JSON.stringify(value));
 export async function singleReceiptStorageFixture(company=SINGLE_COMPANIES[0]){
@@ -27,7 +28,7 @@ export async function singleReceiptStorageFixture(company=SINGLE_COMPANIES[0]){
     const source=file==='actual-source-guard'?guardNode.getText(qAst):fs.readFileSync(file,'utf8');
     vm.runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
       {exports,Error,URL,Date,TextEncoder,Uint8Array,structuredClone,crypto:webcrypto,JSON,Object,Array,Reflect,Number,Set,
-        require(name){if(name==='cloudflare:workers')return {env};if(name==='@/db/quotation-fields')return load('actual-source-guard');if(name.startsWith('@/'))return load(name.slice(2)+'.ts');throw Error('Unexpected dependency '+name);}});return exports;
+        require(name){if(name==='../extensions/supplier-hub/rejection-details.mjs')return rejectionDetails;if(name==='cloudflare:workers')return {env};if(name==='@/db/quotation-fields')return load('actual-source-guard');if(name.startsWith('@/'))return load(name.slice(2)+'.ts');throw Error('Unexpected dependency '+name);}});return exports;
   }
   const model=load('app/supplier-hub-single-receipt.ts'),storage=load('db/supplier-hub-single-receipts.ts'),packet=singlePacket(company);
   packet.accountContext=Buffer.from(await webcrypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(['sourceflow-managed-product-account-v1',packet.ownerId,company.code,company.name])))).toString('hex');
@@ -46,6 +47,20 @@ export async function singleReceiptStorageFixture(company=SINGLE_COMPANIES[0]){
   return {sqlite,calls,controls,env,load,model,storage,packet,context,owner,id,member,source,observation,record,save,retained,close:()=>sqlite.close()};
 }
 const changeReceipt=(record,status,time=record.receipt.observedAt+10)=>({...plain(record),receipt:{...plain(record.receipt),state:{SUBMITTED:'pending',FINISHED:'accepted',REJECTED:'rejected'}[status],sourceStatus:status,observedAt:time}});
+
+for(const company of SINGLE_COMPANIES)test(company.name+' rejection diagnostics persist, refresh and ACK retry idempotently without mutating product input',async()=>{
+  const f=await singleReceiptStorageFixture(company);try{
+    const before=f.retained(),first=changeReceipt(f.record,'REJECTED');first.receipt.rejectionDetails=rejectionDetails.normalizeRejectionDetails(JSON.stringify({errors:[{columnName:'무게',message:'양수를 입력해주세요.'}]}));
+    const saved=await f.save(first);assert.deepEqual(plain(saved.receipt.rejectionDetails),plain(first.receipt.rejectionDetails));
+    const later=plain(first);later.receipt.observedAt++;later.receipt.rejectionDetails=rejectionDetails.normalizeRejectionDetails(JSON.stringify({errors:[{columnName:'크기',message:'밀리미터로 입력해주세요.'}]}));
+    const updated=await f.save(later);assert.deepEqual(plain(updated.receipt.rejectionDetails),plain(later.receipt.rejectionDetails));
+    const lostAck=await f.save(first);assert.deepEqual(plain(lostAck),plain(updated));
+    const sameClock=plain(later);delete sameClock.receipt.rejectionDetails;assert.deepEqual(plain(await f.save(sameClock)),plain(updated));
+    assert.deepEqual(plain((await f.storage.readSingleReceiptHistory(f.owner,f.id))[0]),plain(updated));
+    for(const patch of [r=>r.receipt.qvtRequestId='different',r=>r.receipt.rejectionDetails.errors[0].foreign=true,r=>r.receipt.state='accepted']){const bad=plain(later);patch(bad);await assert.rejects(f.save(bad));}
+    assert.equal(f.retained(),before);assert.equal(f.sqlite.prepare('SELECT count(*) AS n FROM supplier_hub_single_receipts').get().n,1);
+  }finally{f.close();}
+});
 
 for(const company of SINGLE_COMPANIES)test(company.name+' validates current packet proof and atomically stores native receipt without product changes',async()=>{
   const f=await singleReceiptStorageFixture(company);try{const before=f.retained(),saved=await f.save();assert.ok(saved);assert.equal(saved.format,'yoofam-single-receipt-v1');assert.equal(saved.registered,false);assert.equal(saved.receipt.qvtRequestId,9001);

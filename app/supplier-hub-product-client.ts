@@ -155,10 +155,10 @@ export async function saveProductReceiptObservation(attempt:ProductReceiptSaveAt
     const body=productReceiptCanonical({profileId:packet.review.identity.requestedProfileId,observation});if(new TextEncoder().encode(body).byteLength>256*1024)throw Error('문서 접수 저장 요청의 크기를 확인해주세요.');
     const value=await json(await request(path,{method:'POST',headers:{'content-type':'application/json'},body,cache:'no-store',credentials:'same-origin',redirect:'error',signal:active}),path,active);
     if(!exact(value,['receipt']))throw Error('전체 상품 문서 접수 저장 응답을 확인해주세요.');const record=parseStoredProductReceipt(value.receipt);await actorMatches(record,scope,before);
-    const expected=observation.receipt!,immutable=(value:unknown)=>Object.fromEntries(Object.entries(value as Record<string,unknown>).filter(([key])=>!['observedAt','state','sourceStatus'].includes(key)));
+    const expected=observation.receipt!,immutable=(value:unknown)=>Object.fromEntries(Object.entries(value as Record<string,unknown>).filter(([key])=>!['observedAt','state','sourceStatus','rejectionDetails'].includes(key)));
     if(record.requestId!==packet.requestId||record.docId!==observation.docId||!same(record.identity,observation.identity)||record.identityDigest!==observation.identityDigest||record.packetDigest!==observation.packetDigest
       ||record.preparedBodySha256!==observation.preparedBodySha256||record.originalBodySha256!==observation.originalBodySha256||!same(record.members,packet.review.members)||record.receipt.observedAt<expected.observedAt
-      ||!same(immutable(record.receipt),immutable(expected))||record.receipt.observedAt===expected.observedAt&&!same(record.receipt,expected)
+      ||!same(immutable(record.receipt),immutable(expected))||record.receipt.observedAt===expected.observedAt&&(record.receipt.state!==expected.state||record.receipt.sourceStatus!==expected.sourceStatus)
       ||expected.state==='accepted'&&record.receipt.state==='pending'||expected.state==='rejected'&&record.receipt.state!=='rejected')throw Error('보관한 접수 결과와 원래 전체 상품 문서가 다릅니다.');
     sameActor(before,await readSingleCatalogContext(active,request));if(active.aborted)throw Error('문서 접수 저장 확인이 취소됐습니다.');return freeze(copy(record));
   });

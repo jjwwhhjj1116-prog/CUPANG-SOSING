@@ -1,4 +1,5 @@
 import {SingleDocumentError} from './single-document.mjs';
+import {normalizeRejectionDetails,receiptRejectionDetailsValid} from './rejection-details.mjs';
 
 // REA retained Hub source: ev_7bccb57e05307a52efc7ae3b1f8a61f5f96ef3cd32e29faeaf569b4b78483157.
 // getRequests [2868035,2868195), K4 [4153982,4159515), source SHA256
@@ -48,7 +49,8 @@ function provenanceValid(value,expected){
     &&['identityDigest','preparedBodySha256','tabId','windowId','documentId','operationId'].every(key=>value[key]===expected[key]);
 }
 function previousValid(value,expected,observedAt){
-  return exact(value,['state','docId','company','identityDigest','preparedBodySha256','observedAt','receiptId','evidence'],['registered','sourceStatus','qvtRequestId'])
+  return exact(value,['state','docId','company','identityDigest','preparedBodySha256','observedAt','receiptId','evidence'],['registered','sourceStatus','qvtRequestId','rejectionDetails'])
+    &&receiptRejectionDetailsValid(value)
     &&['pending','rejected','accepted'].includes(value.state)&&value.docId===expected.docId&&sameCompany(value.company,expected.company)
     &&value.identityDigest===expected.identityDigest&&value.preparedBodySha256===expected.preparedBodySha256&&clock(value.observedAt)&&value.observedAt>=expected.submitRequestedAt&&value.observedAt<=observedAt
     &&identifier(value.receiptId)&&value.evidence==='document-receipt'&&(value.registered===undefined||value.registered===false)
@@ -84,5 +86,6 @@ export function normalizeSingleReceipt(input){
       fail('RECEIPT_CHANGED','원래 확인한 등록 파일 ID·완료 상태를 다른 조회로 바꿀 수 없습니다.');
   }
   return Object.freeze({state:STATES[row.status],docId:expected.docId,company:Object.freeze({code:expected.company.code,name:expected.company.name}),
-    identityDigest:expected.identityDigest,preparedBodySha256:expected.preparedBodySha256,observedAt,receiptId:row.qvtRequestId,qvtRequestId:row.qvtRequestId,sourceStatus:row.status,evidence:'document-receipt',registered:false});
+    identityDigest:expected.identityDigest,preparedBodySha256:expected.preparedBodySha256,observedAt,receiptId:row.qvtRequestId,qvtRequestId:row.qvtRequestId,sourceStatus:row.status,evidence:'document-receipt',registered:false,
+    ...(row.status==='REJECTED'?{rejectionDetails:normalizeRejectionDetails(row.remark)}:{})});
 }

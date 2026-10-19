@@ -1,4 +1,5 @@
 import type {SupplierHubProductDocumentReview} from '@/app/supplier-hub-product-document';
+import {receiptRejectionDetailsValid} from '../extensions/supplier-hub/rejection-details.mjs';
 import {parseStoredSingleReceipt,singleReceiptCanonical,singleReceiptSummary,isSingleReceiptSummary,SingleReceiptError,
   type NativeSingleReceipt,type SingleReceiptRecord,type SingleReceiptSummary} from '@/app/supplier-hub-single-receipt';
 
@@ -22,7 +23,7 @@ const LABELS={pending:'전체 상품 문서 등록 요청 진행중',accepted:'�
 const STATES:Record<string,NativeSingleReceipt['state']>={SUBMITTED:'pending',FINISHED:'accepted',REJECTED:'rejected'};
 function fail(message='전체 상품 문서 접수 결과의 원래 연결값을 확인해주세요.'):never{throw new SingleReceiptError(message,409,'PRODUCT_DOCUMENT_RECEIPT');}
 const object=(value:unknown):value is Record<string,unknown>=>Boolean(value&&typeof value==='object'&&!Array.isArray(value));
-const exact=(value:unknown,keys:string[]):value is Record<string,unknown>=>object(value)&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
+const exact=(value:unknown,keys:string[],optional:string[]=[]):value is Record<string,unknown>=>object(value)&&keys.every(key=>Object.hasOwn(value,key))&&Object.keys(value).every(key=>keys.includes(key)||optional.includes(key));
 const id=(value:unknown):value is string=>typeof value==='string'&&ID.test(value);
 const hash=(value:unknown):value is string=>typeof value==='string'&&HASH.test(value);
 const identifier=(value:unknown):value is string|number=>typeof value==='string'&&value===value.trim()&&value.length>0&&value.length<=200&&!/[\u0000-\u001f]|\.\.\.|…/.test(value)||Number.isSafeInteger(value)&&Number(value)>0;
@@ -74,7 +75,8 @@ function recordValid(value:unknown,stored:boolean,now:number):value is ProductRe
   const identity=value.identity;
   if(LOGICAL.filter(key=>!['ownerId','accountContext'].includes(key)).some(key=>!same(value[key],identity[key as keyof ProductReceiptIdentity])))return false;
   const receipt=value.receipt;
-  return exact(receipt,['state','docId','company','identityDigest','preparedBodySha256','observedAt','receiptId','qvtRequestId','sourceStatus','evidence','registered'])
+  return exact(receipt,['state','docId','company','identityDigest','preparedBodySha256','observedAt','receiptId','qvtRequestId','sourceStatus','evidence','registered'],['rejectionDetails'])
+    &&receiptRejectionDetailsValid(receipt)
     &&typeof receipt.sourceStatus==='string'&&Object.hasOwn(STATES,receipt.sourceStatus)&&receipt.state===STATES[receipt.sourceStatus]&&receipt.docId===value.docId
     &&same(receipt.company,value.company)&&receipt.identityDigest===value.identityDigest&&receipt.preparedBodySha256===value.preparedBodySha256
     &&Number.isSafeInteger(receipt.observedAt)&&Number(receipt.observedAt)>0&&Number(receipt.observedAt)<=now+5000&&identifier(receipt.receiptId)&&receipt.receiptId===receipt.qvtRequestId

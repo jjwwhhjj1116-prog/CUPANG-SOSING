@@ -14,6 +14,17 @@ function fixture(company=COMPANIES[0],status='SUBMITTED'){
 }
 const rejects=(input,code='RECEIPT_UNCONFIRMED')=>assert.throws(()=>normalizeSingleReceipt(input),error=>error.code===code);
 
+for(const company of COMPANIES)test(company.name+' rejection remark belongs only to the exact owned row and can refresh without changing IDs',()=>{
+  const input=fixture(company,'REJECTED'),before=structuredClone(input),error={columnName:'포장 크기',message:'숫자 세 개를 입력해주세요.'};
+  input.response.json[0].remark=JSON.stringify({errors:[{columnName:'다른 상품',message:'읽으면 안 됨'}]});
+  input.response.json[1].remark=JSON.stringify({errors:[error]});
+  const result=normalizeSingleReceipt(input);assert.deepEqual(result.rejectionDetails.errors,[error]);assert.equal(result.state,'rejected');assert.equal(result.registered,false);
+  input.previousReceipt=result;input.observedAt++;input.response.json[1].remark='malformed';
+  const refreshed=normalizeSingleReceipt(input);assert.equal(refreshed.rejectionDetails.status,'unavailable');assert.equal(refreshed.receiptId,result.receiptId);
+  for(const status of ['SUBMITTED','FINISHED']){const other=fixture(company,status);other.response.json[1].remark=JSON.stringify({errors:[error]});assert.equal(Object.hasOwn(normalizeSingleReceipt(other),'rejectionDetails'),false);}
+  input.expected.docId=before.expected.docId+1;rejects(input);
+});
+
 for(const company of COMPANIES)test(company.name+' fresh native rows normalize pending/rejected/accepted without SKU completion',()=>{
   for(const [status,state]of [['SUBMITTED','pending'],['REJECTED','rejected'],['FINISHED','accepted']]){
     const input=fixture(company,status),before=structuredClone(input),receipt=normalizeSingleReceipt(input);

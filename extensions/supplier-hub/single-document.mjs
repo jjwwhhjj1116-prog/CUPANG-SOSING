@@ -1,4 +1,5 @@
 import {HANDOFF_ORIGINS} from './handoff-store.mjs';
+import {receiptRejectionDetailsValid} from './rejection-details.mjs';
 
 // Clean-room reconstruction of the recorded Single protocol. The retained
 // artifact establishes these paths, not live response schemas or acceptance.
@@ -185,7 +186,7 @@ function receiptValid(receipt,state,context,time){
     if(!Object.hasOwn(nativeStates,receipt.sourceStatus)||nativeStates[receipt.sourceStatus]!==receipt.state||receipt.evidence!=='document-receipt'||receipt.registered!==false
       ||!identifier(receipt.qvtRequestId)||!same(receipt.receiptId,receipt.qvtRequestId)||Object.hasOwn(receipt,'skuId')||receipt.observedAt<(state.submitRequestedAt??state.humanConfirmedAt))return false;
   }
-  return object(receipt)&&['pending','accepted','rejected','registered'].includes(receipt.state)&&same(receipt.docId,state.docId)&&same(receipt.company,context.packet.company)
+  return object(receipt)&&receiptRejectionDetailsValid(receipt)&&['pending','accepted','rejected','registered'].includes(receipt.state)&&same(receipt.docId,state.docId)&&same(receipt.company,context.packet.company)
     &&receipt.identityDigest===context.identityDigest&&receipt.preparedBodySha256===context.bodySha256&&Number.isSafeInteger(receipt.observedAt)
     &&receipt.observedAt>=state.humanConfirmedAt&&receipt.observedAt<=time+5000&&['document-receipt','document-and-sku'].includes(receipt.evidence)
     &&(receipt.receiptId===undefined||identifier(receipt.receiptId))&&(receipt.skuId===undefined||identifier(receipt.skuId))

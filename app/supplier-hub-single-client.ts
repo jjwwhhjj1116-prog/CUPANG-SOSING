@@ -1,6 +1,7 @@
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import type { SupplierHubCompany } from '@/app/supplier-hub-company';
 import {parseStoredSingleReceipt,type SingleReceiptRecord} from '@/app/supplier-hub-single-receipt';
+import {receiptRejectionDetailsValid} from '../extensions/supplier-hub/rejection-details.mjs';
 
 export type SinglePackageView = {
   format: 'yoofam-supplier-hub-single-package-v1'; prepared: boolean; registered: false; remoteWrites: false; submissionReady: false;
@@ -48,7 +49,7 @@ export type SingleConsentChallenge = {id:string;docId:string|number;packetDigest
 export type SingleConfirmation = {action:'confirm-and-continue'|'confirm-and-submit';stage?:SingleConsentStage;userInitiated:true;challengeId:string;confirmedAt:number;approvedKeys:string[]};
 export type SingleDocumentPreview = {format:string;fingerprint:string;productId:string;optionId:string;identityDigest:string;preparedBodySha256:string;originalBodySha256:string;liveVerified:boolean;registered:false;remoteWrites:false};
 export type SingleDocumentReceipt = {state:'pending'|'accepted'|'rejected'|'registered';docId:string|number;company:SupplierHubCompany;identityDigest:string;preparedBodySha256:string;observedAt:number;
-  evidence:'document-receipt'|'document-and-sku';receiptId?:string|number;skuId?:string|number;sourceStatus?:'SUBMITTED'|'REJECTED'|'FINISHED';qvtRequestId?:string|number;registered?:false};
+  evidence:'document-receipt'|'document-and-sku';receiptId?:string|number;skuId?:string|number;sourceStatus?:'SUBMITTED'|'REJECTED'|'FINISHED';qvtRequestId?:string|number;registered?:false;rejectionDetails?:import('../extensions/supplier-hub/rejection-details.mjs').RejectionDetails};
 export type SingleDocumentState = {format:string;requestId:string;identity:Record<string,unknown>;identityDigest:string;packetDigest:string;preparedBodySha256:string;originalBodySha256:string;
   state:string;docId:string|number|null;registered:boolean;success:boolean;needsRecovery:boolean;challenge?:SingleConsentChallenge;error?:{code:string;message:string};receipt?:SingleDocumentReceipt};
 export type SingleDocumentSession = {packet:SingleDocumentPacket;preview:SingleDocumentPreview;packetDigest:string;origin:string};
@@ -156,7 +157,7 @@ export async function runSingleDocument(session:SingleDocumentSession,action:Sin
   if(['pending','accepted','rejected','registered'].includes(result.state)){
     const receipt=result.receipt;
     if(!receipt)return fail();
-    if(!singleObject(receipt)||receipt.state!==result.state||receipt.docId!==result.docId||singleCanonical(receipt.company)!==singleCanonical(session.packet.company)
+    if(!singleObject(receipt)||!receiptRejectionDetailsValid(receipt)||receipt.state!==result.state||receipt.docId!==result.docId||singleCanonical(receipt.company)!==singleCanonical(session.packet.company)
       ||receipt.identityDigest!==session.preview.identityDigest||receipt.preparedBodySha256!==proof.preparedBodySha256||!Number.isSafeInteger(receipt.observedAt)||Number(receipt.observedAt)<=0||Number(receipt.observedAt)>Date.now()+5000
       ||!['document-receipt','document-and-sku'].includes(String(receipt.evidence))||['accepted','registered'].includes(result.state)&&!singleIdentifier(receipt.receiptId)
       ||result.state==='registered'&&(receipt.evidence!=='document-and-sku'||!singleIdentifier(receipt.skuId)))fail();
@@ -252,9 +253,9 @@ export async function saveSingleReceiptObservation(attempt:SingleReceiptSaveAtte
     const value=await receiptJson(await request(path,{method:'POST',headers:{'content-type':'application/json'},body,cache:'no-store',credentials:'same-origin',redirect:'error',signal:active}),path,active);
     if(!singleExact(value,['receipt']))throw Error('전송 확인 결과의 저장 응답을 확인해주세요.');
     const record=parseStoredSingleReceipt(value.receipt);await receiptActor(record,scope,before);
-    const expected=observation.receipt!,immutableReceipt=(value:SingleDocumentReceipt)=>Object.fromEntries(Object.entries(value).filter(([key])=>!['observedAt','state','sourceStatus'].includes(key)));
+    const expected=observation.receipt!,immutableReceipt=(value:SingleDocumentReceipt)=>Object.fromEntries(Object.entries(value).filter(([key])=>!['observedAt','state','sourceStatus','rejectionDetails'].includes(key)));
     const receiptMatches=record.receipt.observedAt>=expected.observedAt&&singleCanonical(immutableReceipt(record.receipt))===singleCanonical(immutableReceipt(expected))
-      &&(record.receipt.observedAt!==expected.observedAt||singleCanonical(record.receipt)===singleCanonical(expected))
+      &&(record.receipt.observedAt!==expected.observedAt||record.receipt.state===expected.state&&record.receipt.sourceStatus===expected.sourceStatus)
       &&(expected.state!=='accepted'||record.receipt.state!=='pending')&&(expected.state!=='rejected'||record.receipt.state==='rejected');
     if(record.optionId!==optionId||record.requestId!==packet.requestId||record.docId!==observation.docId||record.identityDigest!==observation.identityDigest
       ||record.packetDigest!==observation.packetDigest||record.preparedBodySha256!==observation.preparedBodySha256||record.originalBodySha256!==observation.originalBodySha256

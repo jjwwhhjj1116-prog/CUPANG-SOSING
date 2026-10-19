@@ -27,7 +27,7 @@ function memberGuard(owner:string,member:SingleReceiptMember|undefined,record:Na
 }
 // The remaining canonical JSON includes exact native number/string ID types,
 // request/option/source/body/identity digests and immutable company binding.
-const immutable=(column:string)=>`json_remove(${column},'$.recordedAt','$.receipt.observedAt','$.receipt.state','$.receipt.sourceStatus')`;
+const immutable=(column:string)=>`json_remove(${column},'$.recordedAt','$.receipt.observedAt','$.receipt.state','$.receipt.sourceStatus','$.receipt.rejectionDetails')`;
 /** Atomically retain a Chrome receipt without mutating any product/input.
  * A current approved member, exact source and quotation revision are required
  * inside BOTH the write and the idempotent fallback read. */

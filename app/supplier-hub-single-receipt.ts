@@ -1,9 +1,10 @@
 import type {SingleDocumentPacket} from '@/app/supplier-hub-single-client';
+import {receiptRejectionDetailsValid,type RejectionDetails} from '../extensions/supplier-hub/rejection-details.mjs';
 
 type Company={code:string;name:string};
 type Source=SingleDocumentPacket['source'];
 export type NativeSingleReceipt={state:'pending'|'accepted'|'rejected';docId:string|number;company:Company;identityDigest:string;preparedBodySha256:string;
-  observedAt:number;receiptId:string|number;qvtRequestId:string|number;sourceStatus:'SUBMITTED'|'FINISHED'|'REJECTED';evidence:'document-receipt';registered:false};
+  observedAt:number;receiptId:string|number;qvtRequestId:string|number;sourceStatus:'SUBMITTED'|'FINISHED'|'REJECTED';evidence:'document-receipt';registered:false;rejectionDetails?:RejectionDetails};
 export type SingleReceiptIdentity={origin:string;appTabId:number;windowId:number;ownerId:string;accountContext:string;company:Company;productId:string;
   profileId:string;optionId:string;categoryId:string;fingerprint:string;schemaSha256:string;source:Source};
 export type SingleReceiptRecord={format:'yoofam-single-receipt-v1';evidence:'chrome-observation';productId:string;profileId:string;optionId:string;categoryId:string;
@@ -62,7 +63,8 @@ function identityValid(value:unknown):value is SingleReceiptIdentity{
     &&typeof value.categoryId==='string'&&/^\d{1,20}$/.test(value.categoryId)&&value.categoryId!=='0'&&['accountContext','fingerprint','schemaSha256'].every(key=>hash(value[key]))&&company(value.company)&&sourceValid(value.source);
 }
 function receiptValid(value:unknown,record:Omit<SingleReceiptObservation,'receipt'>,now:number):value is NativeSingleReceipt{
-  return exact(value,['state','docId','company','identityDigest','preparedBodySha256','observedAt','receiptId','qvtRequestId','sourceStatus','evidence','registered'])
+  return exact(value,['state','docId','company','identityDigest','preparedBodySha256','observedAt','receiptId','qvtRequestId','sourceStatus','evidence','registered'],['rejectionDetails'])
+    &&receiptRejectionDetailsValid(value)
     &&typeof value.sourceStatus==='string'&&Object.hasOwn(STATES,value.sourceStatus)&&value.state===STATES[value.sourceStatus]&&value.docId===record.docId
     &&same(value.company,record.company)&&value.identityDigest===record.identityDigest&&value.preparedBodySha256===record.preparedBodySha256
     &&Number.isSafeInteger(value.observedAt)&&Number(value.observedAt)>0&&Number(value.observedAt)<=now+5000&&identifier(value.receiptId)&&value.receiptId===value.qvtRequestId

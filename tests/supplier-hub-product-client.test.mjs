@@ -11,6 +11,7 @@ import {createProductDocumentPacket} from '../extensions/supplier-hub/product-do
 import {productDocumentIdentity} from '../extensions/supplier-hub/product-document-receiver.mjs';
 import {singleDocumentIdentity} from '../extensions/supplier-hub/single-document.mjs';
 import {singlePacket,SINGLE_COMPANIES,SINGLE_SENDER} from './helpers/supplier-hub-single-document.mjs';
+import {normalizeRejectionDetails} from '../extensions/supplier-hub/rejection-details.mjs';
 
 const native=createRequire(import.meta.url),origin=new URL(SINGLE_SENDER.url).origin,plain=value=>JSON.parse(JSON.stringify(value));
 const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canonical).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}';
@@ -98,6 +99,18 @@ test('expired initial preview/start are blocked, exact observed request can stil
 });
 
 async function groupRecord(f,status='SUBMITTED'){return {...plain(await f.load('app/supplier-hub-product-receipt.ts').validateProductReceiptObservation(f.observation(status),f.review,origin,f.clock.now)),recordedAt:new Date(f.clock.now).toISOString()};}
+
+for(const company of SINGLE_COMPANIES)test(company.name+' Single client saves refreshed rejected diagnostics with same timestamp and exact document identity',async()=>{
+ const f=await fixture(company),record=await legacyRecord(f),packet=singlePacket(company);packet.accountContext=record.identity.accountContext;
+ record.receipt.state='rejected';record.receipt.sourceStatus='REJECTED';record.receipt.rejectionDetails=normalizeRejectionDetails(JSON.stringify({errors:[{columnName:'무게',message:'처음 사유'}]}));
+ const observation={format:packet.format,requestId:record.requestId,identity:record.identity,identityDigest:record.identityDigest,packetDigest:record.packetDigest,preparedBodySha256:record.preparedBodySha256,originalBodySha256:record.originalBodySha256,
+  state:'rejected',docId:record.docId,registered:false,success:false,needsRecovery:false,receipt:plain(record.receipt)};
+ const attempt={packet,profileId:packet.profileId,optionId:packet.optionId,observation},saved=plain(record);saved.receipt.rejectionDetails=normalizeRejectionDetails(JSON.stringify({errors:[{columnName:'크기',message:'갱신 사유'}]}));
+ const calls=[],request=async(url,init)=>{calls.push({url,method:init?.method});return Response.json(String(url).includes('catalog-context')?f.actor:{receipt:saved});};
+ const client=f.load('app/supplier-hub-single-client.ts'),value=await client.saveSingleReceiptObservation(attempt,new AbortController().signal,request);
+ assert.equal(value.receipt.rejectionDetails.errors[0].columnName,'크기');assert.equal(value.docId,observation.docId);assert.equal(value.registered,false);assert.equal(calls.filter(row=>row.method==='POST').length,1);assert.equal(f.sent.length,0);
+ saved.receipt.qvtRequestId='foreign';await assert.rejects(client.saveSingleReceiptObservation(attempt,new AbortController().signal,request));
+});
 async function legacyRecord(f){const packet=singlePacket(f.actor.company);packet.accountContext=digest(['sourceflow-managed-product-account-v1',packet.ownerId,packet.company.code,packet.company.name]);const context=await singleDocumentIdentity(packet,SINGLE_SENDER),state={format:packet.format,requestId:packet.requestId,identity:context.identity,identityDigest:context.identityDigest,packetDigest:context.packetDigest,originalBodySha256:context.originalBodySha256,preparedBodySha256:context.bodySha256,state:'pending',docId:'legacy-doc-728',registered:false,success:false,needsRecovery:false,
   receipt:{state:'pending',sourceStatus:'SUBMITTED',docId:'legacy-doc-728',company:f.actor.company,identityDigest:context.identityDigest,preparedBodySha256:context.bodySha256,observedAt:f.clock.now,receiptId:'legacy-qvt-728',qvtRequestId:'legacy-qvt-728',evidence:'document-receipt',registered:false}};
   return {...plain(await f.load('app/supplier-hub-single-receipt.ts').validateSingleReceiptObservation(state,packet,origin,f.clock.now)),recordedAt:new Date(f.clock.now).toISOString()};}
@@ -116,6 +129,16 @@ test('history rejects company change, foreign member, bad profile and malformed 
     const f=await fixture(SINGLE_COMPANIES[0],options);f.history=[await groupRecord(f)];if(kind==='foreign-record')f.history[0].identity.ownerId='other-owner';
     await assert.rejects(f.client.readNativeReceiptHistory({productId:f.packet.review.identity.productId,...(kind==='profile'?{profileId:'other-profile'}:{})},new AbortController().signal,f.fetch));assert.equal(f.sent.length,0);assert.ok(f.calls.every(call=>call.method==='GET'));
   }
+});
+
+for(const company of SINGLE_COMPANIES)test(company.name+' product client permits newer rejection diagnostics for exact IDs, but rejects false success or malformed details',async()=>{
+ const f=await fixture(company,{beforeSaveReply:async(record)=>{record.receipt.rejectionDetails=normalizeRejectionDetails(JSON.stringify({errors:[{columnName:'크기',message:'새로 확인한 사유'}]}));}});
+ const observation=f.observation('REJECTED');observation.receipt.rejectionDetails=normalizeRejectionDetails(JSON.stringify({errors:[{columnName:'무게',message:'이전 사유'}]}));
+ const attempt={packet:f.packet,observation},before=canonical(attempt),saved=await f.client.saveProductReceiptObservation(attempt,new AbortController().signal,f.fetch);
+ assert.equal(saved.receipt.rejectionDetails.errors[0].columnName,'크기');assert.equal(saved.docId,observation.docId);assert.equal(saved.registered,false);assert.equal(canonical(attempt),before);assert.equal(f.sent.length,0);
+ for(const mutate of [o=>o.receipt.rejectionDetails.errors[0].secret=true,o=>{o.state=o.receipt.state='accepted';o.receipt.sourceStatus='FINISHED';}]){
+  const bad=plain(attempt);mutate(bad.observation);const posts=f.calls.filter(row=>row.method==='POST').length;await assert.rejects(f.client.saveProductReceiptObservation(bad,new AbortController().signal,f.fetch));assert.equal(f.calls.filter(row=>row.method==='POST').length,posts);
+ }
 });
 
 for(const company of SINGLE_COMPANIES)test(company.name+' one immutable full-group observation saves once, explicit local retry preserves null query and never emits Hub action',async()=>{

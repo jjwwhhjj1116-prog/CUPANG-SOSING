@@ -7,6 +7,7 @@ import {singlePackageCurrent,singlePackagePacket,previewSingleDocument,runSingle
 import type {SingleReceiptRecord} from '@/app/supplier-hub-single-receipt';
 import {reviewCurrentSupplierHubProductDocument,type SupplierHubProductDocumentReview} from '@/app/supplier-hub-product-document';
 import {SupplierHubProductTransport} from '@/app/components/supplier-hub-product-transport';
+import {SupplierHubRejectionDetails} from '@/app/components/supplier-hub-rejection-details';
 
 type Props={productId:string;profileId?:string;view:QuotationFieldsView;disabled:boolean;onReceiptSaved?:()=>void;primaryProduct?:boolean};
 const sourceKey=({productId,profileId,view}:Omit<Props,'disabled'>)=>JSON.stringify([productId,profileId,view.productVersion,view.contentRevision,view.optionRevision,view.revision,view.inputFingerprint]);
@@ -195,7 +196,7 @@ function SingleReviewContent({productId,profileId,view,disabled,onReceiptSaved,p
         return <article key={`${row.requestId}:${String(row.docId)}:${index}`}><p>{row.company.name} · {optionLabel} · {sameVersion?'현재 상품 저장 버전':'이전 상품 저장 버전'}</p>
           <p>{({SUBMITTED:'접수 처리 중',FINISHED:'등록 파일 처리 완료 · SKU 확인 전',REJECTED:'반려'})[row.receipt.sourceStatus]}</p>
           <dl><dt>문서 ID</dt><dd>{String(row.docId)}</dd><dt>등록 파일 ID</dt><dd>{String(row.receipt.qvtRequestId)}</dd><dt>확인 시각</dt><dd><time dateTime={observedIso}>{new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',dateStyle:'short',timeStyle:'short'}).format(row.receipt.observedAt)}</time></dd></dl>
-          {row.receipt.sourceStatus==='REJECTED'&&<p>반려 상세는 Supplier Hub에서 확인해주세요.</p>}
+          {row.receipt.sourceStatus==='REJECTED'&&<SupplierHubRejectionDetails details={row.receipt.rejectionDetails}/>}
         </article>;
       })}
       {history.length>0&&<p>보관된 결과는 확인 이력입니다. 새 동의나 등록 요청을 실행하지 않습니다.</p>}
@@ -238,7 +239,7 @@ function SingleReviewContent({productId,profileId,view,disabled,onReceiptSaved,p
       {state&&!uncertain&&['pending','accepted','rejected','registered'].includes(state.state)&&<section aria-label="개별 등록 파일 처리 결과">
         <p role="status">{({pending:'접수 처리 중',accepted:'등록 파일 처리 완료 · SKU 확인 전',rejected:'반려',registered:'견적서 접수·SKU 확인'})[state.state as 'pending']}</p>
         <dl><dt>문서 ID</dt><dd>{String(state.docId)}</dd>{state.receipt?.qvtRequestId!==undefined&&<><dt>등록 파일 ID</dt><dd>{String(state.receipt.qvtRequestId)}</dd></>}</dl>
-        {state.state==='rejected'&&<p>반려 상세는 Supplier Hub에서 확인해주세요.</p>}
+        {state.state==='rejected'&&<SupplierHubRejectionDetails details={state.receipt?.rejectionDetails}/>}
       </section>}
       {state&&!uncertain&&!['target-requested','pending','accepted','rejected','registered','scope-blocked'].includes(state.state)&&(!challenge||expired)&&<button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void operate(expired?'recover':'resume',session)}>{expired?'동의 내용 다시 확인':state.state==='target-created'?'전용 Supplier Hub 탭 확인 계속':'개별 견적 단계 계속 확인'}</button>}
       {state&&!uncertain&&['pending','accepted','registered'].includes(state.state)&&<button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void operate('observe',session)}>개별 접수 결과 조회</button>}

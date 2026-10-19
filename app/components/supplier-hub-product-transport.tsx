@@ -6,6 +6,7 @@ import {previewProductDocument,runProductDocument,readNativeReceiptHistory,saveP
   type ProductDocumentSession,type ProductDocumentState,ProductDocumentBridgeError} from '@/app/supplier-hub-product-client';
 import {singleConsentConfirmation,verifySingleDocumentObservation,type SingleDocumentAction} from '@/app/supplier-hub-single-client';
 import type {NativeReceiptRecord} from '@/app/supplier-hub-product-receipt';
+import {SupplierHubRejectionDetails} from '@/app/components/supplier-hub-rejection-details';
 import {readProductDocumentPending,productDocumentPendingKey,productDocumentPendingCurrent,assertProductDocumentPending,claimProductDocumentPending,
   readProductDocumentRejections,productDocumentRejectionKey,assertProductDocumentNotRejected,
   pendingProductRejection,clearRejectedProductDocumentPending,clearValidationRejectedProductDocumentPending,type ProductDocumentPending} from '@/app/supplier-hub-product-pending';
@@ -174,10 +175,12 @@ export function SupplierHubProductTransport(props:Props){
     </>}
     {unsaved&&<button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void retrySave()}>확인 결과 저장 다시 시도</button>}
     {state?.receipt&&<p role="status">문서 {String(state.docId)} · 등록 파일 {String(state.receipt.qvtRequestId)} · {({pending:'접수 처리 중',accepted:'파일 처리 완료 · SKU 확인 전',rejected:'반려'})[state.state as 'pending']}</p>}
+    {state?.receipt?.sourceStatus==='REJECTED'&&<SupplierHubRejectionDetails details={state.receipt.rejectionDetails}/>}
     {historyError&&<p role="alert">{historyError}</p>}
     {history.length>0&&<section aria-label="전체 상품 등록 파일 확인 이력"><h5>보관된 문서 확인 이력</h5>{history.map((row,index)=><article key={`${row.requestId}:${index}`}>
       <p>{row.company.name} · {'members' in row?`포함 옵션 ${row.members.length}개 · 문서 1개`:'개별 옵션 문서'} · {({SUBMITTED:'접수 처리 중',FINISHED:'파일 처리 완료 · SKU 확인 전',REJECTED:'반려'})[row.receipt.sourceStatus]}</p>
       <p>문서 {String(row.docId)} · 등록 파일 {String(row.receipt.qvtRequestId)}</p>
+      {row.receipt.sourceStatus==='REJECTED'&&<SupplierHubRejectionDetails details={row.receipt.rejectionDetails}/>}
     </article>)}</section>}
   </section>;
 }

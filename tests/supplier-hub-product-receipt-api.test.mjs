@@ -6,6 +6,7 @@ import {assetApiFixture,companies,plain} from './helpers/supplier-hub-single-ass
 import {createProductDocumentPacket} from '../extensions/supplier-hub/product-document.mjs';
 import {productDocumentIdentity} from '../extensions/supplier-hub/product-document-receiver.mjs';
 import {SINGLE_SENDER} from './helpers/supplier-hub-single-document.mjs';
+import {normalizeRejectionDetails} from '../extensions/supplier-hub/rejection-details.mjs';
 
 const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canonical).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}';
 const digest=value=>createHash('sha256').update(canonical(value)).digest('hex');
@@ -57,6 +58,19 @@ async function legacy(f,{requestId='legacy-728',docId=728002,qvtRequestId=728102
 }
 const count=f=>f.h.sqlite.prepare('SELECT count(*) AS n FROM supplier_hub_single_receipts').get().n;
 function beforeInsert(f,callback){const original=f.h.db.prepare;f.h.db.prepare=sql=>{const query=original(sql),first=query.first;if(/^INSERT INTO supplier_hub_single_receipts/u.test(sql.trim()))query.first=async()=>{f.h.db.prepare=original;callback();return first.call(query);};return query;};}
+
+for(const company of companies)test(company.name+' product API rejection details survive save, history, newer observation and old ACK retry',async()=>{
+ const f=await fixture(company);try{
+  const before=f.state(),objects=f.objectState(),value=plain(f.observation);value.state=value.receipt.state='rejected';value.receipt.sourceStatus='REJECTED';
+  value.receipt.rejectionDetails=normalizeRejectionDetails(JSON.stringify({errors:[{columnName:'포장 무게',message:'양수 필요'}]}));
+  const first=await json(await f.post(value));assert.deepEqual(first.receipt.receipt.rejectionDetails,value.receipt.rejectionDetails);
+  const later=plain(value);later.receipt.observedAt++;later.receipt.rejectionDetails=normalizeRejectionDetails(JSON.stringify({errors:[{columnName:'포장 크기',message:'세 변 입력'}]}));
+  const fresh=await json(await f.post(later)),retry=await json(await f.post(value));assert.deepEqual(retry.receipt,fresh.receipt);
+  assert.deepEqual((await f.history()).receipts[0].receipt.rejectionDetails,later.receipt.rejectionDetails);
+  const malformed=plain(later);malformed.receipt.rejectionDetails.errors[0].extra='not allowed';await json(await f.post(malformed),409);
+  assert.equal(count(f),1);assert.equal(f.state(),before);assert.equal(f.objectState(),objects);assert.equal(f.h.network.length,0);
+ }finally{f.close();}
+});
 
 for(const company of companies)test('full included product receipt persists one document and no SKU claim ('+company.code+')',async()=>{
  const f=await fixture(company);try{
