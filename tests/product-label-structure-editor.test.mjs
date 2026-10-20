@@ -65,6 +65,10 @@ function setup(intercept) {
   return { f, h, before, writes, reply };
 }
 const heading = (h, index) => nodes(h.render()).find(node => node.type === 'input' && node.props['aria-label'] === `선택 옵션 표시사항 항목 ${index} 이름`);
+const caption = (h, index) => nodes(h.render()).find(node => node.type === 'button' && node.props['aria-label'] === `선택 옵션 표시사항 항목 ${index} 이름 편집`);
+const labelName = (h, index) => text(nodes(caption(h, index)).find(node => node.type === 'span'));
+function openHeading(h, index) { caption(h, index).props.onClick(); return heading(h, index); }
+function rename(h, index, value) { openHeading(h, index).props.onChange({ target: { value } }); heading(h, index).props.onKeyDown({ key: 'Enter', preventDefault() {} }); h.render(); }
 const action = (h, index, name) => nodes(h.render()).find(node => node.type === 'button' && node.props['aria-label'] === `선택 옵션 표시사항 항목 ${index} ${name}`);
 
 test('primary label structure renames, reorders, removes and adds rows, then saves the selected values independently', async () => {
@@ -74,10 +78,10 @@ test('primary label structure renames, reorders, removes and adds rows, then sav
     assert.equal(action(h, 1, '삭제').props.disabled, true);
     action(h, 1, '삭제').props.onClick(); await h.idle();
     assert.equal(nodes(h.render()).filter(node => node.type === 'textarea').length, 9);
-    heading(h, 2).props.onChange({ target: { value: '  검토 제조원  ' } });
+    rename(h, 2, '  검토 제조원  ');
     action(h, 2, '위로').props.onClick(); await h.idle();
     action(h, 9, '삭제').props.onClick(); await h.click('＋ 표시사항 항목 추가');
-    heading(h, 9).props.onChange({ target: { value: '추가 안내' } });
+    rename(h, 9, '추가 안내');
     h.edit('선택 옵션 추가 안내', '옵션에서 확인한 내용');
     assert.equal(h.render().props['data-workspace-dirty'], true);
     assert.equal(h.button('저장한 표시사항 PNG 미리보기').props.disabled, true);
@@ -96,7 +100,7 @@ test('primary label structure renames, reorders, removes and adds rows, then sav
     assert.deepEqual(h.plans[0].rows.slice(0, 2).map(row => row[0]), ['검토 제조원', '제품명']);
     assert.deepEqual(h.plans[0].rows.at(-1), ['추가 안내', '옵션에서 확인한 내용']);
     await h.click('저장 표시사항 다시 조회');
-    assert.equal(heading(h, 1).props.value, '검토 제조원');
+    assert.equal(labelName(h, 1), '검토 제조원');
     assert.equal(h.input('선택 옵션 추가 안내').props.value, '옵션에서 확인한 내용');
     cases.push({ name: 'structure and selected values', rows: 9, reordered: true, renamed: true, deleted: true, added: true, otherOptionPreserved: true, planAndReopenVerified: true });
   } finally { h.close(); }
@@ -106,12 +110,12 @@ test('metadata-only lost acknowledgement is recovered inline by GET before mocke
   let lose = true;
   const { h, writes } = setup((url, init, reply) => { const result = reply(url, init); if (init?.method === 'PUT' && lose) { lose = false; throw Error('합성 응답 유실'); } return result; });
   try {
-    await h.idle(); heading(h, 2).props.onChange({ target: { value: '직접 바꾼 이름' } });
+    await h.idle(); rename(h, 2, '직접 바꾼 이름');
     await h.click('정보 저장하기');
     assert.equal(h.saved, 1); assert.equal(writes.length, 1); assert.deepEqual(writes[0].changes, []);
     const recovery = h.calls.slice(h.calls.findIndex(call => call.init?.method === 'PUT') + 1);
     assert.ok(recovery.length > 0); assert.ok(recovery.every(call => (call.init?.method ?? 'GET') === 'GET'), 'lost ACK recovery only reads before the mocked completion boundary');
-    assert.equal(heading(h, 2).props.value, '직접 바꾼 이름');
+    assert.equal(labelName(h, 2), '직접 바꾼 이름');
     assert.equal(h.saved, 1, text(h.render())); assert.equal(writes.length, 1);
     assert.equal(h.render().props['data-workspace-dirty'], false);
     cases.push({ name: 'metadata lost ACK', writes: 1, inlineReadOnlyRecovery: true, completionBoundary: 'mocked', exactStructureRecovered: true });
@@ -122,9 +126,10 @@ test('invalid names and failed saves retain structure drafts and block PNG gener
   let fail = true;
   const { h, writes } = setup((url, init, reply) => init?.method === 'PUT' && fail ? (fail = false, Response.json({ error: '합성 저장 실패' }, { status: 503 })) : reply(url, init));
   try {
-    await h.idle(); heading(h, 2).props.onChange({ target: { value: '' } });
+    await h.idle(); openHeading(h, 2).props.onChange({ target: { value: '' } });
     assert.equal(heading(h, 2).props.value, ''); assert.equal(h.button('정보 저장하기').props.disabled, true);
     heading(h, 2).props.onChange({ target: { value: '보관할 항목명' } });
+    heading(h, 2).props.onKeyDown({ key: 'Enter', preventDefault() {} });
     h.edit('선택 옵션 보관할 항목명', '보관할 내용'); await h.click('정보 저장하기');
     assert.equal(h.saved, 0); assert.equal(h.render().props['data-workspace-dirty'], true);
     assert.equal(h.input('선택 옵션 보관할 항목명').props.value, '보관할 내용');
@@ -138,7 +143,7 @@ test('default restoration preserves archived custom and other-option values and 
   const { f, h, writes } = setup();
   try {
     await h.idle(); await h.click('＋ 표시사항 항목 추가');
-    heading(h, 10).props.onChange({ target: { value: '추가 안내' } }); h.edit('선택 옵션 추가 안내', '보관할 추가값');
+    rename(h, 10, '추가 안내'); h.edit('선택 옵션 추가 안내', '보관할 추가값');
     await h.click('정보 저장하기'); const custom = f.view.structure.at(-1).id;
     await h.click('기본 9항목 구조로 복원'); assert.equal(writes.length, 1);
     await h.click('정보 저장하기'); assert.equal(h.saved, 2, text(h.render()));
@@ -151,7 +156,7 @@ test('default restoration preserves archived custom and other-option values and 
 test('stale structure controls cannot alter a different option or an unmounted editor', async () => {
   const { h, writes } = setup();
   try {
-    await h.idle(); const oldHeading = heading(h, 2).props.onChange, oldMove = action(h, 2, '위로').props.onClick;
+    await h.idle(); const oldHeading = openHeading(h, 2).props.onChange, oldMove = action(h, 2, '위로').props.onClick;
     h.select('blue'); await h.idle();
     oldHeading({ target: { value: '이전 옵션의 늦은 항목명' } }); oldMove(); await h.idle();
     assert.equal(h.render().props['data-workspace-dirty'], false); assert.equal(writes.length, 0);
@@ -162,17 +167,17 @@ test('stale structure controls cannot alter a different option or an unmounted e
 test('a conflicting structure preserves local edits until explicit cancellation loads the newest structure', async () => {
   const { f, h, reply } = setup();
   try {
-    await h.idle(); const oldHeading = heading(h, 2).props.onChange;
-    oldHeading({ target: { value: '보관할 내 항목명' } });
+    await h.idle(); const oldHeading = openHeading(h, 2).props.onChange;
+    oldHeading({ target: { value: '보관할 내 항목명' } }); heading(h, 2).props.onKeyDown({ key: 'Enter', preventDefault() {} });
     const structure = definitions.map(([id, label]) => ({ id, label: id === 'manufacturer' ? '다른 창의 항목명' : label, required: id === 'productName' }));
     await reply('/product-labels', { method: 'PUT', body: JSON.stringify({ expectedRevision: f.view.revision, expectedInputFingerprint: f.view.inputFingerprint, changes: [], structure }) });
     await h.click('입력 유지·최신 표시사항 조회');
-    assert.match(text(h.render()), /항목 구성/u); assert.equal(heading(h, 2).props.value, '보관할 내 항목명');
+    assert.match(text(h.render()), /항목 구성/u); assert.equal(labelName(h, 2), '보관할 내 항목명');
     await h.click('입력 취소·저장 표시사항 다시 조회');
-    assert.equal(heading(h, 2).props.value, '다른 창의 항목명', text(h.render()));
+    assert.equal(labelName(h, 2), '다른 창의 항목명', text(h.render()));
     assert.equal(h.render().props['data-workspace-dirty'], false);
     oldHeading({ target: { value: '취소 후 옛 입력' } });
-    assert.equal(heading(h, 2).props.value, '다른 창의 항목명');
+    assert.equal(labelName(h, 2), '다른 창의 항목명');
     cases.push({ name: 'structure conflict cancellation', draftRetainedBeforeCancel: true, explicitCancelReadsNewStructure: true, staleInputIgnored: true });
   } finally { h.close(); }
 });

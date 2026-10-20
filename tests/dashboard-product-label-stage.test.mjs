@@ -18,7 +18,7 @@ function harness() {
   const instances = new Map(), modules = new Map(), components = new Map(), records = [], effects = [];
   let active, tree, nextIdentity = 0, saved = 0, calls = 0;
   let props = { tab: '표시사항', product: product('p'), settings: { minimumMarginEnabled: false, msrpMultiple: 1.3, roundingUnit: 10 }, focusedOptionId: 'red', preferredProfileId: 'profile-a',
-    onSaved() { saved++; }, onUpload() {}, onSavePrice: async () => {}, onManageCategories() {}, onBeforeFreeImageApply: () => true, onPrepareSubmission() {}, onReviewPackaging() {} };
+    onSaved() { saved++; }, onUpload() {}, onSavePrice: async () => {}, onManageCategories() {}, onBeforeFreeImageApply: () => true, onPrepareSubmission() {}, onProfileSelected() {}, onReviewPackaging() {} };
   const hooks = {
     useState(initial) { const instance = active, slot = instance.index++; if (!(slot in instance.slots)) instance.slots[slot] = typeof initial === 'function' ? initial() : initial; return [instance.slots[slot], value => { if (instance.mounted) instance.slots[slot] = typeof value === 'function' ? value(instance.slots[slot]) : value; }]; },
     useRef(value) { const slot = active.index++; return active.slots[slot] ?? (active.slots[slot] = { current: value }); },

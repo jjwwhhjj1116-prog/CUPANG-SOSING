@@ -42,7 +42,7 @@ for(const company of companies)test(`new draft is explicitly reviewed and create
  }finally{f.close();}
 });
 test('a settings or goal conflict offers an explicit new draft while the matching previous product remains reviewable',async()=>{
- const f=fixture(companies[0],{matchingOldContext:true});try{await f.click('시작 (');assert.ok(f.button('1~7단계 확인·수정'));assert.ok(f.button('저장 원문으로 새 초안'));await f.click('저장 원문으로 새 초안');await f.click('새 초안 생성');assert.deepEqual(f.opened,['new-product']);assert.ok(!f.collections.some(job=>job.id==='old-job'));}finally{f.close();}
+ const f=fixture(companies[0],{matchingOldContext:true});try{await f.click('시작 (');assert.ok(f.button('초안 확인·수정'));assert.ok(f.button('저장 원문으로 새 초안'));await f.click('저장 원문으로 새 초안');await f.click('새 초안 생성');assert.deepEqual(f.opened,['new-product']);assert.ok(!f.collections.some(job=>job.id==='old-job'));}finally{f.close();}
 });
 for(const company of companies)test(`uncertain creation is recovered read-only by the same request ID; partial draft resumes without creation (${company.code})`,async()=>{
  const f=fixture(company,{lost:true,failCollect:true});try{await f.click('시작 (');await f.click('저장 원문으로 새 초안');await f.click('새 초안 생성');assert.equal(f.collections.length,0);assert.ok(f.button('새 초안 저장 결과 확인'));

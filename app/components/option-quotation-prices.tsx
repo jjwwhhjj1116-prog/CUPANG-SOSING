@@ -119,7 +119,7 @@ export function OptionQuotationPrices({productId,version,profileId,onSaved,refre
       const response=await fetch(endpoint,{method:'PUT',signal:controller.signal,headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:base.view.revision,expectedInputFingerprint:base.view.inputFingerprint,changes,...(derivedOptionIds.length?{stageTwoMsrp:derivedOptionIds}:{})})}),body=await response.json() as QuotationFieldsView & {error?:string};
       if(controller.signal.aborted||!current())return null;
       if(!response.ok){rejected=response.status<500;throw Error(body.error||'가격을 저장하지 못했습니다. 입력은 유지됩니다.');}verifyOptionPriceView(body,profileId);verifyOptionPriceSave(base.view,body,changes);
-      store(body);clearDraft();setMessage('옵션 가격 저장 완료 · 7단계 견적서에 반영됩니다.');if(operation.notify!==false)onSaved?.();return body;
+      store(body);clearDraft();setMessage('옵션 가격 저장 완료 · 견적서에 반영됩니다.');if(operation.notify!==false)onSaved?.();return body;
     }catch(cause){if(rejected)lastPriceWrite.current=null;if(!controller.signal.aborted&&current()){setError(cause instanceof Error?cause.message:'가격 저장 실패');if(renderGrid&&!rejected){uncertainRef.current=true;setUncertain(true);}}return null;}
     finally{finish(controller);}
   }
@@ -132,7 +132,7 @@ export function OptionQuotationPrices({productId,version,profileId,onSaved,refre
   return <section aria-label="옵션별 견적 가격 편집" data-quotation-source-step="가격" data-workspace-dirty={edits.length>0} data-workspace-saving={busy}>
     <h4>옵션별 가격</h4>
     {view&&<p>{view.categoryContext.categoryPath.join(' > ')} · {view.categoryContext.categoryId||'카테고리 미지정'}</p>}
-    <p>7단계 견적서의 Supplier Hub 가격입니다. 직접 입력하면 연결된 가격 항목에 함께 반영됩니다. 복원하면 각 항목의 공통 수정값 또는 자동 계산을 사용합니다. 공식 판매처 가격은 별도 항목으로 유지됩니다.</p>
+    <p>견적서의 Supplier Hub 가격입니다. 직접 입력하면 연결된 가격 항목에 함께 반영됩니다. 복원하면 각 항목의 공통 수정값 또는 자동 계산을 사용합니다. 공식 판매처 가격은 별도 항목으로 유지됩니다.</p>
     {renderGrid&&stageTwoPricingPolicy&&<p>판매가 저장 시 자동 권장소비자가도 다시 계산합니다. 직접 수정한 권장소비자가와 공란은 유지합니다.</p>}
     {busy&&<p role="status">가격 처리 중…</p>}{error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}
     {!!edits.length&&view&&!fresh&&<p role="status">상품 정보가 변경됐습니다. 입력을 유지한 채 최신 가격을 조회한 뒤 저장해주세요.</p>}

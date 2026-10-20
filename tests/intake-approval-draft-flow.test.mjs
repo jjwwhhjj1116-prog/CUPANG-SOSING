@@ -136,7 +136,7 @@ test('malformed, mismatched and unacknowledged preparation never becomes a saved
         if (mode === 'running') body.job.status = 'running';
         if (mode === 'malformed-review') body.job.review.fingerprint = 'not-a-fingerprint';
         return Response.json(body, { status: response.status }); };
-      f.retry(); await f.start(); assert.equal(f.rows[0].status, 'error', mode); assert.equal(f.opened.length, 1, mode); assert.equal(f.ui.button('1~7단계 확인·수정').props.disabled, false, mode);
+      f.retry(); await f.start(); assert.equal(f.rows[0].status, 'error', mode); assert.equal(f.opened.length, 1, mode); assert.equal(f.ui.button('초안 확인·수정').props.disabled, false, mode);
       assert.equal(state(h), saved, mode); assert.equal(sourceState(h), immutable, mode); assert.equal(objectState(h), files, mode);
     }
     f.intercept = null; f.retry(); await f.start(); assert.equal(f.rows[0].status, 'saved'); assert.equal(f.opened.length, 2); assert.equal(state(h), saved);
@@ -150,7 +150,7 @@ test('real image import failure retains its product and recovery action before a
   try {
     h.stats.failImageIndex = 4; await f.start(); assert.equal(f.rows[0].status, 'error'); assert.equal(f.opened.length, 0); assert.ok(f.product()); assert.equal(h.objects.size, 18);
     assert.equal(h.sqlite.prepare('SELECT status FROM translation_jobs').get().status, 'prepared'); const id = f.product().id, immutable = sourceState(h);
-    assert.equal(f.ui.button('1~7단계 확인·수정').props.disabled, false); await f.ui.click('1~7단계 확인·수정'); assert.equal(f.opened.length, 1); assert.equal(f.opened[0].product.id, id);
+    assert.equal(f.ui.button('초안 확인·수정').props.disabled, false); await f.ui.click('초안 확인·수정'); assert.equal(f.opened.length, 1); assert.equal(f.opened[0].product.id, id);
     h.stats.failImageIndex = null; f.retry(); await f.start(); assert.equal(f.rows[0].status, 'saved'); assert.equal(f.opened.length, 2); assert.equal(f.product().id, id); assert.equal(h.objects.size, 19);
     assert.equal(payload(h, 'product_content').assets.main.value.length, 1); assert.equal(sourceState(h), immutable); assert.equal(f.product().supplier_hub_status, '미전송');
     const before = state(h), files = objectState(h), downloads = h.stats.downloads; f.retry(); await f.start(); assert.equal(f.rows[0].status, 'saved'); assert.equal(state(h), before); assert.equal(objectState(h), files); assert.equal(h.stats.downloads, downloads);

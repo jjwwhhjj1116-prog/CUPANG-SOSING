@@ -6,7 +6,7 @@ import { SizeChartExtractionPanel } from '@/app/components/size-chart-extraction
 import { MANUAL_SIZE_CHART_COLUMNS, MANUAL_SIZE_CHART_ROWS, manualSizeUnits, validateManualSizeChart, type ManualSizeChart } from '@/app/manual-size-chart';
 import type { ProductContent } from '@/app/product-content';
 
-type Props = { productId: string; version: string; onSaved?: () => void };
+type Props = { productId: string; version: string; sourceStep?: '옵션' | '사이즈표'; onSaved?: () => void };
 type Draft = { chart: ManualSizeChart; sizesInput: string } | null;
 type Saved = { content: ProductContent; version: string };
 const seed = (): ManualSizeChart => ({ sizeType: '일반 사이즈', sizeUnits: 'cm', sizes: ['사이즈'], measurements: [{ name: '', values: [''] }] });
@@ -35,7 +35,7 @@ function acknowledges(content: ProductContent, before: ProductContent, chart: Ma
 }
 
 export function SizeChartWorkspace(props: Props) { return <Editor key={props.productId} {...props} />; }
-function Editor({ productId, version, onSaved }: Props) {
+function Editor({ productId, version, sourceStep = '옵션', onSaved }: Props) {
   const [saved, setSaved] = useState<Saved | null>(null);
   const [draft, setDraft] = useState<Draft | undefined>(undefined);
   const [busy, setBusy] = useState(false), [imageBusy, setImageBusy] = useState(false);
@@ -123,7 +123,7 @@ function Editor({ productId, version, onSaved }: Props) {
     finally { operation.current = false; if (alive.current) setBusy(false); }
   }
   const working = draft && draft !== null ? draft : chart ? draftOf(chart) : null;
-  return <section className="panel-stack" aria-label="사이즈표 편집" data-quotation-source-step="옵션" data-workspace-dirty={dirty} data-workspace-saving={locked} aria-busy={busy}>
+  return <section className="panel-stack" aria-label="사이즈표 편집" data-quotation-source-step={sourceStep} data-workspace-dirty={dirty} data-workspace-saving={locked} aria-busy={busy}>
     <h3>사이즈표 직접 편집</h3>
     <p>사이즈별 측정 항목과 값을 입력합니다. 표를 변경해 저장하면 이전 사이즈표의 견적 연결을 해제하며 원본 파일은 보관합니다.</p>
     <button type="button" className="btn blue" aria-expanded={extractionOpen} disabled={!saved || locked || !fresh || !extractionOpen && dirty} onClick={() => { if (!locked) setExtractionOpen(open => !open); }}>{extractionOpen ? '이미지 추출 영역 닫기' : '이미지에서 사이즈표 초안 만들기'}</button>

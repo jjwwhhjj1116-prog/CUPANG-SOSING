@@ -13,7 +13,7 @@ import './product-option-board.css';
 type Props={productId:string;productRegistrationNumber?:string;sourceUrl:string;imageKeys:string;refreshToken?:string;returnFocus?:string;onReturnFocusHandled?:()=>void;onQuotation:(optionId:string)=>void;onEdit:(optionId?:string)=>void;onImage?:(optionId:string)=>void;onContent?:(step:CommonContentStep)=>void;onStage?:(optionId:string,step:CollectionEditorTab)=>void;onManage?:(optionId:string)=>void};
 type CommonContentStep='추가 이미지'|'상세 이미지'|'표시사항';
 type CommonRole='additional'|'detail'|'size'|'label';
-const commonStages=[['additional','추가이미지','추가 이미지'],['detail','상세이미지','상세 이미지'],['size','사이즈표','옵션'],['label','한글표시사항','표시사항']] as const;
+const commonStages=[['additional','추가이미지','추가 이미지'],['detail','상세이미지','상세 이미지'],['size','사이즈표','사이즈표'],['label','한글표시사항','표시사항']] as const;
 const columns=[
   {id:'id',label:'옵션번호',width:170},{id:'name',label:'옵션명',width:230},
   {id:'seo',label:'SEO설정',width:100},{id:'price',label:'가격설정',width:100},

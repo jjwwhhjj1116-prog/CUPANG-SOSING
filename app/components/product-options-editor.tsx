@@ -41,7 +41,7 @@ function verifyOptionsRegistrationDisplay(body: ProductOptionsResponse, productI
 export function ProductOptionsEditor(props: Props) {
   const [mainOpened,setMainOpened]=useState(props.imageView===true);
   useEffect(()=>{if(!props.imageView)return;let active=true;void Promise.resolve().then(()=>{if(active)setMainOpened(true);});return()=>{active=false;};},[props.imageView]);
-  return <><div hidden={props.imageView}><OptionsEditor key={props.product.id} {...props} imageView={false}/></div><div hidden={!props.imageView}>{(mainOpened||props.imageView)&&<OptionMainImageEditor key={`${props.product.id}:${props.profileId??''}`} productId={props.product.id} version={props.product.updated_at} profileId={props.profileId} refreshToken={props.refreshToken} focusedOptionId={props.focusedOptionId} onSaved={props.onSaved} disabled={props.imageProcessingBusy} translationEnabled={props.imageView===true} onTranslate={props.onTranslate} onEdit={props.onEdit}/>}</div></>;
+  return <><div hidden={props.imageView}><OptionsEditor key={props.product.id} {...props} imageView={false}/></div><div hidden={!props.imageView}>{(mainOpened||props.imageView)&&<OptionMainImageEditor key={`${props.product.id}:${props.profileId??''}`} productId={props.product.id} version={props.product.updated_at} profileId={props.profileId} refreshToken={props.refreshToken} focusedOptionId={props.focusedOptionId} onSaved={props.onSaved} disabled={props.imageProcessingBusy} translationEnabled={props.imageView===true} saveOnSelect={props.imageView===true} onTranslate={props.onTranslate} onEdit={props.onEdit}/>}</div></>;
 }
 function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = false, imageView = false, seoView = false, focusedOptionId, initialBulkAction,
   profileId,refreshToken,editableQuotationPrices=false,pricePolicyLocked=false,imageProcessingBusy=false,beforePriceCommit,onPriceBusyChange }: Props) {
@@ -182,7 +182,7 @@ function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = fals
         if(acknowledged){const fresh=await controller.refresh(true,true,{notify:false,coordinated:true,expectedProductVersion:acknowledged.productVersion,expectedOptionRevision:acknowledged.options.revision});if(!current())return false;if(!fresh)throw Error('옵션은 저장됐지만 최신 견적 가격을 확인하지 못했습니다. 직접 입력한 가격은 유지했습니다.');}
         const receipt=await controller.save({notify:false,coordinated:true});if(!current())return false;if(!receipt)throw Error(acknowledged?'옵션은 저장됐지만 직접 입력한 가격의 저장을 확인하지 못했습니다. 가격 입력은 유지했습니다.':'직접 가격의 저장을 확인하지 못했습니다. 입력을 유지하고 저장 결과를 확인해주세요.');
       }
-      setMessage('옵션·가격 저장 완료 · 7단계 견적서에 반영됩니다.');notified=true;onSaved?.();return true;
+      setMessage('옵션·가격 저장 완료 · 견적서에 반영됩니다.');notified=true;onSaved?.();return true;
     }catch(cause){if(current()){setError(cause instanceof Error?cause.message:'가격 저장 실패');if(sourceAttempt.current&&!knownRejection)setSourceUncertain(true);else sourceAttempt.current=null;}return false;}
     finally{if(current()&&acknowledged&&!notified)onSaved?.();if(activeRequest.current===requestController)activeRequest.current=null;if(combined.current===requestController)combined.current=null;if(!requestController.signal.aborted&&gridEpoch.current===generation){setBusy(false);onPriceBusyChange?.(!!sourceAttempt.current||quotationLocked.current,generation);}}
   }
@@ -219,7 +219,7 @@ function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = fals
     const refreshed=await controller.refresh(hasBase,hasBase,{notify:false,coordinated:true,expectedProductVersion:verified.options.productVersion,expectedOptionRevision:verified.options.options.revision});
     if(!current())return false;
     if(!refreshed||!sameBundleSnapshot(refreshed,verified.quotation))throw Error('번들은 저장됐지만 동일한 견적서 저장 결과를 확인하지 못했습니다. 새 옵션 식별자를 유지하고 저장 결과를 조회해주세요.');
-    bundleAttempt.current=null;setBundleUncertain(false);setBundleRetry(false);setSelected(new Set());storeSelectionDialog(null);setSelectionError('');setMessage('번들 추가 완료 · 7단계 견적서에 반영됩니다.');onSaved?.();return true;
+    bundleAttempt.current=null;setBundleUncertain(false);setBundleRetry(false);setSelected(new Set());storeSelectionDialog(null);setSelectionError('');setMessage('번들 추가 완료 · 견적서에 반영됩니다.');onSaved?.();return true;
   }
   async function confirmBundleAdd(target:SelectionDialog,controller:OptionPriceController){
     if(target.kind!=='addBundle'||dialogRef.current!==target||target.generation!==generation||!bundleOperationAllowed(controller)||conflict||changedElsewhere)return;
@@ -355,7 +355,7 @@ function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = fals
   return <div ref={editorRoot} className="panel-stack" aria-busy={busy || loading} data-workspace-dirty={dirty} data-workspace-saving={busy}>
     {sourceMarkers}
     <details className="pricing-input-guide" open={pricingView ? undefined : true}><summary hidden={!pricingView}>가격·포장 입력 안내</summary>
-      <div className="panel-note"><div><strong>옵션·SKU별 견적 구성</strong><p>옵션 원가와 판매 단위당 구성 수량으로 각각 계산합니다. 상품의 대표 원가는 별도로 유지됩니다. 원문·한국어 이름을 수정해 저장할 수 있으며 자동 수집·번역이 실행되는 화면은 아닙니다. 공급자 재고는 수집 시점 또는 직접 입력한 값이며 실시간 재고가 아닙니다. 구성 수량·최소 주문 수량·견적 수량과는 별개입니다. 포장 무게(g)와 포장 치수(mm)는 실제 배송할 포장 상태를 입력하고 저장하세요. 7단계에서 직접 수정한 포장값은 유지됩니다. 전송 전에 견적서에 적용된 값을 확인해주세요.</p></div></div>
+      <div className="panel-note"><div><strong>옵션·SKU별 견적 구성</strong><p>옵션 원가와 판매 단위당 구성 수량으로 각각 계산합니다. 상품의 대표 원가는 별도로 유지됩니다. 원문·한국어 이름을 수정해 저장할 수 있으며 자동 수집·번역이 실행되는 화면은 아닙니다. 공급자 재고는 수집 시점 또는 직접 입력한 값이며 실시간 재고가 아닙니다. 구성 수량·최소 주문 수량·견적 수량과는 별개입니다. 포장 무게(g)와 포장 치수(mm)는 실제 배송할 포장 상태를 입력하고 저장하세요. 견적서에서 직접 수정한 포장값은 유지됩니다. 전송 전에 견적서에 적용된 값을 확인해주세요.</p></div></div>
     </details>
     {loading && <p role="status">저장한 옵션과 가격 설정을 불러오는 중입니다.</p>}
     {error && <div role="alert" className="panel-note"><div><strong>{error}</strong>{conflict && <p>입력 내용을 보관한 후 최신 상품·가격·옵션을 확인해주세요.</p>}<button type="button" className="btn ghost" disabled={busy || loading} onClick={() => void reload()}>{saved ? '입력 버리고 저장본 불러오기' : '다시 불러오기'}</button></div></div>}

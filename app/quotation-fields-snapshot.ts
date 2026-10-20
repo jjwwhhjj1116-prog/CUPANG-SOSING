@@ -26,6 +26,7 @@ import { scopedQuotationPackagingBasis, quotationPackQuantities } from '@/app/qu
 import { detailEditorInputs } from '@/app/detail-editor-inputs';
 import { currentStageTwoMsrp, scopedStageTwoMsrp } from '@/app/stage-two-msrp';
 import { retainedQuotationWorkbook } from '@/app/quotation-workbook-retained';
+import { sizeChartRequiredFromSchemaString, type RegistrationLayout } from '@/app/registration-layout';
 
 
 export class QuotationFieldsSnapshotError extends Error { constructor(message: string, public status: number, public code?: string) { super(message); } }
@@ -119,7 +120,9 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
   if(stageTwoMsrp)view.stageTwoMsrp=stageTwoMsrp;
   const editorInputs = detailEditorInputs(view, state, id);
   if (editorInputs) view.detailEditorInputs = editorInputs;
-  return { view, source, options };
+  const registrationLayout: RegistrationLayout = { format: 'yoofam-registration-layout-v1', productId: id, productVersion: view.productVersion,
+    categoryContext: { ...view.categoryContext, categoryPath: [...view.categoryContext.categoryPath] }, sizeChartRequired: sizeChartRequiredFromSchemaString(hubSchema?.schemaString) };
+  return { view, source, options, registrationLayout };
 }
 export async function stableQuotationFieldsView(owner: string, id: string, profileId: string | null) {
   const saved = await snapshot(owner, id, profileId);

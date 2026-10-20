@@ -6211,3 +6211,14 @@ ExistingfreeWorker ba37200e-0c9a-4a59-9362-86d27a6fa9bc deployed. Latestactualpr
 - 실제Dashboard+localAPI/SQLite 합성분리run검수: SEO PATCH200/원가7→8 supply5800 sale9670 PATCH200/추가이미지선택·삭제PUT200/3이미지단계정확편집popup/라벨textPUT200→PNG201→attachment200→견적refPUT200/정상cat757→81452견적모델수정PUT200. QA stream/range/profile 준비오류이전proof보존후보완. 기존합성연결행+파일SHA모두불변. source/native/Hub0, 실제OCR·이미지번역·접수검증주장금지.
 - 기존Worker eb7e7d13-3852-449e-b606-78417e38d782 배포0. Chrome2 own운영탭은Access→Cloudflare로그인으로내부운영화면미검수; 사용자로그인/확장새로고침재질문0. 확장2.1.7ZIP SHA0c69b2abf1f7609a88e1619ca095e359c49c8e236d4904e2fa321b56d054a801불변/새권한·migration·요금0.
 - 전체category/state UI완전동일·조건부size step·실제1688provider동등성·native multipart/packet/최종동의/terminal docId-qvt-SKU접수는미완료. SINGLE_DOCUMENT_LIVE_VERIFIED=false, PRODUCT_DOCUMENT_LIVE_VERIFIED=false 그대로. 기존실상품보호·거절1688직간접재우회금지·반복수동export/승인질문금지·임의완료율/접수성공주장금지.
+
+
+## Step758 — 2026-10-20: 대표 즉시 저장·조건부 사이즈표·표시사항 이름 입력
+- 기준49e4c84. docs/step758-stage-input-parity.md와 outputs/step758-final-validation.json 참조. 보관된 동일 Couplus/SR SHA의 REA 근거 재사용; 기존 실상품/쿠플러스 작업상품 open·write0, 1688 재접근/우회0.
+- Wizard imageView 후보·비우기·복원만 즉시 private CAS 저장. 독립 편집기는 명시 저장 유지, 실패 draft/uncertain 명시 복구. 새 readonly registration-layout API는 exact raw images.required sizeChartImage로만 필요 단계 삽입(7/8), product/version/profile/owner 토큰과 최종 source fence. 단일 SizeChart mount·dirty redirect/보존; 번호 고정 보조 문구 정리.
+- 표시사항 항목명 click/focus→Enter·blur 확정/Escape 취소, 후보 dirty·busy/화면/원문/옵션 보호. multiline과 CAS→PNG→견적 참조 유지. 삭제/복원 확인창·전체 state UI동일 아직미완료.
+- 새 native-asset-multipart.mjs는 image additionalImageFiles/PDF uploadFiles 요청기술자+파일명 wire만 생성, 독립 expected identity/planSHA/newdoc/bytesSHA 보호. 실제adapter/transport연결0, FormData는 mutable이라 미래send직전 bytes/identity 재검증필수. actualUploadVerified/transportReady/registered/remoteWrites/submissionReady=false; 두 LIVE_VERIFIED gate=false 유지.
+- 38고유파일377case 최종pass(최초31파일314/315의 새onProfileSelected 테스트도우미누락1건수정, 기존 mount/draft단언유지; 최종root9재검사+copy7파일62포함·중복합산0). type/lint/build/generatedZIP/diff0. 독립nav/multipart읽기리뷰 재현결함0.
+- 실제Dashboard/localAPI/SQLite 합성최종새상품1개에서 대표PUT, 사이즈PATCH→PNG201→attach200, labelPUT→PNG201→attach200→quotePUT, model QA-758 PUT 총9쓰기성공. 표왕복입력보존/dirty견적복귀/이름Esc·Enter·multiline/라벨결과/견적3이미지참조 확인. 기존합성행·파일SHA불변. fixture inputBindings누락초기proof보존후수정; 완전native identity없는 fixture는 GET package409 SINGLE_IDENTITY로거절(접수아님). source/Hub/native0.
+- 기존Worker 최종56823356-748c-449e-bc8b-d42ef205be24 배포. 확장runtime2.1.7불변, unused pure module포함ZIP86파일1008312bytes SHA cc2302f6f10bc7d48b7c1477ff857f4b683b5940568b92d92b2f35ca7a2b50ff. 사용자reload/로그인재질문0, 새권한·migration·리소스·요금0.
+- 실제1688provider/전체category-state편집동일/native multipart·packet·최종동의·terminal접수 미완료. 합성검수를 실제접수로 주장금지. 자동검토거절1688 직간접재우회금지, 반복수동export/승인질문금지, 임의완료율금지.

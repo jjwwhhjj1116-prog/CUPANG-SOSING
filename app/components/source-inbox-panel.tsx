@@ -55,7 +55,7 @@ export function SourceInboxPanel({ownerId,disabled,onAdd,initialItem,onChanged}:
  useEffect(()=>{const receive=(event:MessageEvent)=>{if(event.source===window&&event.origin===location.origin&&event.data?.channel==='YOOFAM_SOURCE_INBOX_UPDATED')reload.current();};window.addEventListener('message',receive);return()=>window.removeEventListener('message',receive);},[]);
  return <details open={initialItem?true:undefined} className="collection-panel source-inbox" onToggle={event=>{expanded.current=event.currentTarget.open;if(event.currentTarget.open&&!loaded&&!busy)void load();}}>
   <summary>1688 수집함{loaded?` · ${items.length}건`:''}</summary>
-  <div className="collection-heading"><div><h2>1688에서 담은 상품</h2><p>상품 본문의 ‘YOOFAM 스튜디오 상품 수집’을 누르면 이 회원의 수집함에 보관됩니다. 사용할 수집본을 확인하고 카테고리를 선택한 뒤 1~7단계에서 수정하세요.</p><small>최근 수집본 최대 40개를 표시합니다. 다시 수집한 자료는 별도로 보관하며 기존 작업 상품과 이전 검토값을 바꾸지 않습니다.</small></div><button type="button" className="btn ghost" disabled={busy||!ownerId} onClick={()=>void load(true)}>{busy?'불러오는 중…':'수집함 불러오기'}</button></div>
+  <div className="collection-heading"><div><h2>1688에서 담은 상품</h2><p>상품 본문의 ‘YOOFAM 스튜디오 상품 수집’을 누르면 이 회원의 수집함에 보관됩니다. 사용할 수집본을 확인하고 카테고리를 선택한 뒤 각 단계에서 수정하세요.</p><small>최근 수집본 최대 40개를 표시합니다. 다시 수집한 자료는 별도로 보관하며 기존 작업 상품과 이전 검토값을 바꾸지 않습니다.</small></div><button type="button" className="btn ghost" disabled={busy||!ownerId} onClick={()=>void load(true)}>{busy?'불러오는 중…':'수집함 불러오기'}</button></div>
   <p className="collection-notice"><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.7.zip" download>판매량·상품 수집 통합 확장 2.1.7 다운로드</a> · YOOFAM 스튜디오와 1688 상품을 같은 Chrome 창에서 열어주세요.</p>
   {message&&<p role="status">{message}</p>}
   {loaded&&!items.length&&<p>아직 담은 상품이 없습니다.</p>}
