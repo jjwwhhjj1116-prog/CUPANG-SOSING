@@ -12,13 +12,14 @@ import { buildNativeLegalContext } from '@/app/native-legal-binding';
 import { buildNativeLegalAttachmentPlan } from '@/app/native-legal-attachment-plan';
 import { fingerprint } from '@/app/automation/model';
 import { stableQuotationFieldsView, QuotationFieldsSnapshotError } from '@/app/quotation-fields-snapshot';
+import { buildNativeAssetSourcePlan, nativeAssetSourceImageKeys } from '@/app/native-asset-source-plan';
 
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 
 function changed(): never { throw new SingleAssetError('준비 중 상품·견적값·이미지·회사 또는 카테고리가 변경되었습니다. 다시 검토해주세요.', 'SINGLE_SOURCE_CHANGED'); }
 
 /** Shared current-source proof. A read never publishes assets or contacts Hub. */
-export async function loadSinglePackage(owner:string,id:string,profileId:string|null,company:SupplierHubCompany,active:()=>Promise<void>,prepare=false,expectedFingerprint?:string){
+export async function loadSinglePackage(owner:string,id:string,profileId:string|null,company:SupplierHubCompany,active:()=>Promise<void>,prepare=false,expectedFingerprint?:string,includeNativeAssets=false){
     const saved = await readQuotationExportSource(owner, id, profileId);
     // The visible editor also binds settings, profile interpretation and source
     // context. Pair its exact fingerprint with this export's full source guard;
@@ -37,20 +38,25 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
     const ownedKeys = productImageKeys(saved.product.image_keys), selection = singleAssetSelection(projection, owner, ownedKeys);
     // Invalid/unknown refs stay blocking in the plan; they never cause a read of
     // an unowned key. Selected bytes are strictly bounded by loadAttachments.
-    const assets = await loadAttachments(owner, saved.product.image_keys, selection.keys);
-    const metadata = new Map(await Promise.all(selection.keys.map(async key => [key, await env.FILES.head(key)] as const)));
+    const readKeys = includeNativeAssets ? [...new Set([...selection.keys, ...nativeAssetSourceImageKeys({projection,owner,ownedKeys})])] : selection.keys;
+    const assets = await loadAttachments(owner, saved.product.image_keys, readKeys);
+    const metadata = new Map(await Promise.all(readKeys.map(async key => [key, await env.FILES.head(key)] as const)));
     const documents = readLegalDocuments(saved.content.legalDocuments, owner, id);
     const nativeLegal = await buildNativeLegalContext({snapshot:saved.hubSchema,company,categoryId:saved.categoryContext.categoryId,
       categoryPath:saved.categoryContext.categoryPath,resolved:resolveQuotationExport(saved),documents});
     const source = { productVersion: saved.product.updated_at, contentRevision: saved.content.revision, optionRevision: saved.options.revision,
       quotationRevision: saved.state.revision, profileId: saved.categoryContext.profileId, profileRevision: saved.profile?.revision ?? null };
     const options = resolveQuotationExport(saved).rows.filter(row => row.included).map(row => ({ optionId: row.optionId, optionLabel: row.optionLabel }));
-    const nativeLegalAttachmentPlan = await buildNativeLegalAttachmentPlan({context:nativeLegal,applicability:documents.applicability,
-      identity:{ownerId:owner,productId:id,company,categoryId:saved.categoryContext.categoryId,categoryPath:[...saved.categoryContext.categoryPath],
+    const nativeIdentity = {ownerId:owner,productId:id,company,categoryId:saved.categoryContext.categoryId,categoryPath:[...saved.categoryContext.categoryPath],
         schemaSha256:projection.schemaSha256,sourceFingerprint,inputFingerprint:reviewed.view.inputFingerprint,source,
-        members:options.map((option,documentIndex)=>({...option,documentIndex}))}});
+        members:options.map((option,documentIndex)=>({...option,documentIndex}))};
+    const nativeLegalAttachmentPlan = await buildNativeLegalAttachmentPlan({context:nativeLegal,applicability:documents.applicability,identity:nativeIdentity});
     const sourceIssues = [...collectionSourceReview(saved.sourceGaps), ...(saved.generatedProductLabelIssues ?? []),
       ...await inspectLegalDocumentStorage(documents, id, key => env.FILES.head(key))];
+    // Native filename preparation has its own reviewed body. It must never
+    // silently replace the legacy public-URL payload or its operation digest.
+    const nativeAssetSourcePlan = includeNativeAssets ? await buildNativeAssetSourcePlan({identity:nativeIdentity,projection,ownedKeys,assets,metadata,
+      nativeLegalAttachmentPlan,sourceIssues:[...sourceIssues]}) : null;
     if (documents.applicability === 'required') sourceIssues.push(...nativeLegal.issues.map(issue=>({kind:'error' as const,code:issue.code,optionId:null,
       optionLabel:'법적 필수서류',fieldId:issue.fieldId??null,message:issue.message})));
     if (documents.applicability === 'required') sourceIssues.push(...nativeLegalAttachmentPlan.issues.map(issue=>({kind:'error' as const,code:issue.code,optionId:null,
@@ -64,7 +70,7 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
       sourceAssetFingerprint: plan.sourceAssetFingerprint, payload: plan.payload, manifest: plan.manifest, issues: plan.issues,
       nativeLegalAttachmentPlanSha256:nativeLegalAttachmentPlan.planSha256 });
     if (expectedFingerprint !== undefined && expectedFingerprint !== packageFingerprint) changed();
-    const guard = async (file?: (typeof plan.files)[number]) => {
+    const guard = async (file?: {key:string;byteLength:number;sha256:string}) => {
       await active();
       if (!await quotationSourcesCurrent(owner, id, saved.source) || (await readQuotationFields(owner, id)).revision !== saved.state.revision) changed();
       const latest = await readQuotationExportSource(owner, id, profileId);
@@ -88,13 +94,20 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
     }
     const published = plan.canPrepare && await verifySingleAssets(plan, env.FILES, guard);
     await guard();
+    const nativeAssetSourceGuard = async () => {
+      await guard();
+      if (nativeAssetSourcePlan) for (const image of nativeAssetSourcePlan.images) await guard(image);
+      await guard();
+    };
+    if (includeNativeAssets) await nativeAssetSourceGuard();
     const view = { ...singleAssetPackageView(plan, published), productId: id, requestedProfileId: profileId, fingerprint: packageFingerprint,
       // A reviewed metadata mapping is not an uploaded native file or receipt.
       nativeLegal,nativeLegalAttachmentPlan,
+      ...(nativeAssetSourcePlan ? {nativeAssetSourcePlan} : {}),
       // Response metadata only: operation fingerprints, packets and receipts
       // retain their existing contract and exact prepared body identity.
       inputFingerprint: reviewed.view.inputFingerprint,
       source,options,
       excludedOptions: saved.options.rows.filter(row => !row.included).map(row => ({ optionId: row.id, translatedName: row.translatedName })) };
-    return { view, saved, guard };
+    return { view, saved, guard, nativeAssetSourceAssets:includeNativeAssets?assets:[], nativeAssetSourceGuard };
 }

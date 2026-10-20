@@ -22,7 +22,7 @@ function harness(initial = {}) {
   const calls = { saved: 0, reads: 0, uploads: 0, submission: 0 };
   let props = { tab: '추가 이미지', product: product('product-a'), settings: { minimumMarginEnabled: false, msrpMultiple: 1.3, roundingUnit: 10, roundingMode: 'ceil' },
     focusedOptionId: 'red', preferredProfileId: 'profile-a', onSaved() { calls.saved++; }, onUpload() { calls.uploads++; },
-    onSavePrice: async () => {}, onManageCategories() {}, onBeforeFreeImageApply: () => true,
+    onSavePrice: async () => {}, onManageCategories() {}, onProfileSelected() {}, onBeforeFreeImageApply: () => true,
     onPrepareSubmission() { calls.submission++; }, onReviewPackaging() {}, ...initial };
   const hooks = {
     useState(initialValue) {

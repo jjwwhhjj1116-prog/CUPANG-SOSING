@@ -27,21 +27,23 @@ const documentUi=vm.runInNewContext('('+documentDeclaration.getText(documentAst)
 
 function workspace(f,intercept){
  const state=[],effects=[];let cursor=0,version=f.h.sqlite.prepare('SELECT updated_at FROM products WHERE id=?').get(f.id).updated_at,saves=0,closed=false;
- const hooks={useState(initial){const at=cursor++;if(!(at in state))state[at]=typeof initial==='function'?initial():initial;return[state[at],value=>state[at]=typeof value==='function'?value(state[at]):value];},useRef(initial){const at=cursor++;return state[at]??(state[at]={current:initial});},useCallback(fn){cursor++;return fn;},useEffect(fn,deps){const at=cursor++,old=state[at];if(!old||!deps||!old.deps||deps.some((value,index)=>value!==old.deps[index])){state[at]={deps};effects.push(()=>{old?.cleanup?.();state[at].cleanup=fn();});}}};
+ let confirmation=true;const confirmations=[],calls=[];
+ const hooks={useState(initial){const at=cursor++;if(!(at in state))state[at]=typeof initial==='function'?initial():initial;return[state[at],value=>state[at]=typeof value==='function'?value(state[at]):value];},useRef(initial){const at=cursor++;return state[at]??(state[at]={current:initial});},useCallback(fn){cursor++;return fn;},useLayoutEffect(fn,deps){hooks.useEffect(fn,deps);},useEffect(fn,deps){const at=cursor++,old=state[at];if(!old||!deps||!old.deps||deps.some((value,index)=>value!==old.deps[index])){state[at]={deps};effects.push(()=>{old?.cleanup?.();state[at].cleanup=fn();});}}};
  const DocumentImagePanel=()=>{},jsx=(type,props)=>({type,props}),exports={};
- const request=async(path,init={})=>{const send=()=>f.route(path,{method:init.method??'GET',...(init.body?{body:init.body}:{})});return intercept?intercept(path,init,send):send();};
- vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/size-chart-workspace.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,structuredClone,fetch:request,require(name){if(name==='react')return hooks;if(name==='react/jsx-runtime')return{jsx,jsxs:jsx};if(name==='@/app/components/document-image-panel')return{DocumentImagePanel};if(name==='@/app/components/size-chart-extraction-panel')return{SizeChartExtractionPanel:()=>{}};return f.h.load(name.slice(2)+'.ts');}});
+ const request=async(path,init={})=>{calls.push({path,method:init.method??'GET'});const send=()=>path===f.base?f.h.load('app/api/products/[id]/route.ts').GET(new Request('https://app.test'+path),{params:Promise.resolve({id:f.id})}):f.route(path,{method:init.method??'GET',...(init.body?{body:init.body}:{})});return intercept?intercept(path,init,send):send();};
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/size-chart-workspace.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,structuredClone,fetch:request,window:{confirm(message){confirmations.push(message);return confirmation;}},require(name){if(name==='react')return hooks;if(name==='react/jsx-runtime')return{jsx,jsxs:jsx};if(name==='@/app/components/document-image-panel')return{DocumentImagePanel};if(name==='@/app/components/size-chart-extraction-panel')return{SizeChartExtractionPanel:()=>{}};return f.h.load(name.slice(2)+'.ts');}});
  const render=()=>{cursor=0;const wrapper=exports.SizeChartWorkspace({productId:f.id,version,onSaved(){saves++;version=f.h.sqlite.prepare('SELECT updated_at FROM products WHERE id=?').get(f.id).updated_at;}});const tree=wrapper.type(wrapper.props);effects.splice(0).forEach(effect=>effect());return tree;};
- const idle=async()=>{for(let i=0;i<100;i++){if(closed)return;render();await sleep();if(!render().props['aria-busy']&&state[0]&&(state[1]!==undefined||state[0].version===version))return;}throw Error('size workspace did not settle');};
+ const idle=async()=>{for(let i=0;i<100;i++){if(closed)return;render();await sleep();const tree=render();if(!tree.props['aria-busy']&&(nodes(tree).some(node=>node.props?.role==='alert')||state[0]&&(state[1]!==undefined||state[0].version===version)))return;}throw Error('size workspace did not settle');};
  const button=label=>nodes(render()).find(node=>node.type==='button'&&text(node.props.children)===label);
  const input=label=>nodes(render()).find(node=>node.props?.['aria-label']===label&&['input','select'].includes(node.type));
- return{render,idle,button,input,get saves(){return saves;},get png(){return nodes(render()).find(node=>node.type===DocumentImagePanel);},alerts:()=>nodes(render()).filter(node=>node.props?.role==='alert').map(node=>text(node)),
+ return{render,idle,button,input,calls,confirmations,confirm(value){confirmation=value;},get saves(){return saves;},get png(){return nodes(render()).find(node=>node.type===DocumentImagePanel);},alerts:()=>nodes(render()).filter(node=>node.props?.role==='alert').map(node=>text(node)),
   edit(label,value){const node=input(label);assert.ok(node&&!node.props.disabled,label);node.props.onChange({target:{value}});render();},
   async click(label){const node=button(label);assert.ok(node&&!node.props.disabled,label);node.props.onClick();await idle();},
   setVersion(value){version=value;render();},close(){closed=true;state.forEach(value=>value?.cleanup?.());},
  };
 }
 async function inputGrid(ui){
+ if(ui.button('재작성'))await ui.click('재작성');
  await ui.click('사이즈표 직접 작성');ui.edit('사이즈 유형','직접 확인한 의류 규격');ui.edit('사이즈표 단위','mm');ui.edit('사이즈 목록',' S, M, XL ');
  ui.edit('측정 항목 1 이름','총장');ui.edit('측정 항목 1 사이즈 1 값','610');ui.edit('측정 항목 1 사이즈 2 값','650');ui.edit('측정 항목 1 사이즈 3 값','710');
  await ui.click('＋ 측정 항목 추가');ui.edit('측정 항목 2 이름','가슴둘레');ui.edit('측정 항목 2 사이즈 2 값','  ');
@@ -50,7 +52,7 @@ for(const company of companies)test(`manual size editor saves/reloads row-column
  const f=await sizeChartApiFixture(company),{h}=f;let ui;
  try{
   const optionBefore=h.sqlite.prepare('SELECT payload FROM product_options WHERE product_id=?').get(f.id).payload,objects=new Map([...h.objects].map(([key,value])=>[key,value.slice()]));
-  ui=workspace(f);await ui.idle();assert.equal(ui.png.props.disabled,false);await inputGrid(ui);assert.equal(ui.render().props['data-workspace-dirty'],true);assert.equal(ui.png.props.disabled,true);
+  ui=workspace(f);await ui.idle();assert.equal(ui.png,undefined);assert.ok(nodes(ui.render()).some(node=>node.props?.['data-saved-size-chart']));await inputGrid(ui);assert.equal(ui.render().props['data-workspace-dirty'],true);assert.equal(ui.png.props.disabled,true);
   await ui.click('사이즈표 정보 저장');assert.deepEqual(ui.alerts(),[]);assert.equal(ui.saves,1);assert.equal(ui.render().props['data-workspace-dirty'],false);assert.equal(ui.png.props.disabled,false);
   const saved=(await json(await f.route(f.base+'/content'))).content;
   assert.deepEqual(saved.manualSizeChart,{sizeType:'직접 확인한 의류 규격',sizeUnits:'mm',sizes:['S','M','XL'],measurements:[{name:'총장',values:['610','650','710']},{name:'가슴둘레',values:['','  ','']}]});assert.deepEqual(saved.assets.size.value,[]);
@@ -75,7 +77,7 @@ test('an unsaved table disables the actual PNG callbacks before rendering or upl
 });
 test('an extracted candidate opens a manual draft and cannot save or generate PNG while extraction is busy',async()=>{
  const f=await sizeChartApiFixture();let ui;try{
-  ui=workspace(f);await ui.idle();const before=(await json(await f.route(f.base+'/content'))).content;
+  ui=workspace(f);await ui.idle();await ui.click('재작성');const before=(await json(await f.route(f.base+'/content'))).content;
   const extraction=()=>nodes(ui.render()).find(node=>typeof node.type==='function'&&typeof node.props?.onDraft==='function');
   assert.equal(extraction(),undefined);await ui.click('이미지에서 사이즈표 초안 만들기');
   extraction().props.onBusyChange(true);assert.equal(ui.png.props.disabled,true);assert.equal(ui.button('사이즈표 직접 작성').props.disabled,true);extraction().props.onBusyChange(false);
@@ -104,7 +106,7 @@ test('dirty grid survives an external save and must explicitly rebase before PNG
 test('validation, failed writes and unmounted responses retain input and cannot acknowledge a stale grid',async()=>{
  const f=await sizeChartApiFixture();let ui,resolvePatch,patches=0,blocked=true;
  try{
-  ui=workspace(f,async(_path,init,send)=>{if(init.method==='PATCH'){patches++;if(blocked)return Response.json({error:'동시 수정'}, {status:409});await new Promise(resolve=>{resolvePatch=resolve;});}return send();});await ui.idle();await ui.click('사이즈표 직접 작성');await ui.click('사이즈표 정보 저장');assert.equal(patches,0);assert.ok(ui.alerts().length);
+  ui=workspace(f,async(_path,init,send)=>{if(init.method==='PATCH'){patches++;if(blocked)return Response.json({error:'동시 수정'}, {status:409});await new Promise(resolve=>{resolvePatch=resolve;});}return send();});await ui.idle();await ui.click('재작성');await ui.click('사이즈표 직접 작성');await ui.click('사이즈표 정보 저장');assert.equal(patches,0);assert.ok(ui.alerts().length);
   ui.edit('측정 항목 1 이름','폭');ui.edit('측정 항목 1 사이즈 1 값','10');await ui.click('사이즈표 정보 저장');assert.equal(patches,1);assert.equal(ui.render().props['data-workspace-dirty'],true);assert.equal(ui.input('측정 항목 1 사이즈 1 값').props.value,'10');assert.equal(ui.saves,0);
   blocked=false;ui.button('사이즈표 정보 저장').props.onClick();while(!resolvePatch)await sleep();ui.close();resolvePatch();await sleep();await sleep();assert.equal(ui.saves,0);trace.push({kind:'validation-conflict-unmount',invalidProviderCalls:0,acknowledgedAfterUnmount:false});
  }finally{ui?.close();f.h.close();}

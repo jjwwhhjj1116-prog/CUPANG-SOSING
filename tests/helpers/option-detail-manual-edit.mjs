@@ -112,7 +112,9 @@ export async function manualEditFixture(company,{stage='detail'}={}){
   const deadline=Date.now()+10000;do{await panel.settle();if(!panel.render().props['data-workspace-saving'])return;assert.ok(Date.now()<deadline,'actual image API work timed out');await new Promise(resolve=>setTimeout(resolve,1));}while(true);
  }
  async function openCard(index=1){
-  await options.idle();await options.click(stage==='main'?'최종 대표이미지 편집하기':(stage==='additional'?'추가 이미지 ':'상세 이미지 ')+index+' 편집하기');
+  await options.idle();
+  if(stage==='additional'&&optionProps.saveOnChange)await options.click('추가 이미지 '+index+' 크게 보기');
+  await options.click(stage==='main'?'최종 대표이미지 편집하기':(stage==='additional'?'추가 이미지 ':'상세 이미지 ')+index+' 편집하기');
   const props=stageUI.record('free-image-translation-panel').props;assert.equal(props.translationTarget.intent,'manual');
   const {onProductChanged,onBusyChange,beforeApply,...binding}=props;assert.equal(typeof onProductChanged,'function');assert.equal(typeof onBusyChange,'function');assert.equal(typeof beforeApply,'function');panel.setProps(binding);await settlePanel();
   return props.translationTarget;

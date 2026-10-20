@@ -46,3 +46,12 @@
 .registration-workspace .product-label-name-caption:focus-visible{outline:2px solid #37b7d7;outline-offset:3px;border-radius:3px}
 .registration-workspace .product-label-name-caption:disabled{cursor:default;opacity:.65}
 .registration-workspace .product-label-name-cancel{border:0;background:transparent;padding:4px;color:#65718b;font-size:11px;cursor:pointer}
+/* Stage4: view-only candidate previews, explicit add, and a compact saved strip. */
+.registration-workspace .option-additional-instant .option-additional-add{width:100%;padding:4px 7px;font-size:11px}
+.registration-workspace .option-additional-instant .option-additional-preview-actions{display:flex;justify-content:flex-end;align-items:center;flex-wrap:wrap;gap:6px;margin:10px 0 14px;min-height:30px}
+.registration-workspace .option-additional-instant .option-additional-preview-actions small{font-size:11px;color:#758099}
+.registration-workspace .option-additional-instant .image-selected-item{flex:0 0 94px;width:94px;padding:6px;border:1px solid #e4e8ee;border-radius:4px;background:#fff}
+.registration-workspace .option-additional-instant .image-selected-item>button{display:flex;flex-direction:column;align-items:center;gap:3px;width:100%;padding:0;border:0;background:transparent}
+.registration-workspace .option-additional-instant .image-selected-item>figcaption{display:none}
+.registration-workspace .option-additional-instant .image-selected-actions{display:flex;flex-wrap:nowrap;justify-content:center;gap:3px;margin-top:6px}
+.registration-workspace .option-additional-instant .image-selected-actions .btn{min-width:0;padding:3px 5px;font-size:10px}

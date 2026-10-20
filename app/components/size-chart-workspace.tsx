@@ -1,14 +1,16 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { DocumentImagePanel } from '@/app/components/document-image-panel';
 import { SizeChartExtractionPanel } from '@/app/components/size-chart-extraction-panel';
 import { MANUAL_SIZE_CHART_COLUMNS, MANUAL_SIZE_CHART_ROWS, manualSizeUnits, validateManualSizeChart, type ManualSizeChart } from '@/app/manual-size-chart';
 import type { ProductContent } from '@/app/product-content';
+import { isOwnedImageKey } from '@/app/image-files';
 
 type Props = { productId: string; version: string; sourceStep?: '옵션' | '사이즈표'; onSaved?: () => void };
 type Draft = { chart: ManualSizeChart; sizesInput: string } | null;
-type Saved = { content: ProductContent; version: string };
+type Saved = { content: ProductContent; version: string; resultKey: string | null; resultIssue: string | null };
+type ProductSource = { id: string; owner: string; version: string; keys: string[] };
 const seed = (): ManualSizeChart => ({ sizeType: '일반 사이즈', sizeUnits: 'cm', sizes: ['사이즈'], measurements: [{ name: '', values: [''] }] });
 const draftOf = (chart: ManualSizeChart): NonNullable<Draft> => ({ chart: structuredClone(chart), sizesInput: chart.sizes.join(', ') });
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -19,6 +21,14 @@ function readContent(value: unknown, productId: string): ProductContent {
     || !Array.isArray(content.assets?.size?.value)) throw Error('저장한 사이즈표 응답을 확인하지 못했습니다.');
   if (content.manualSizeChart !== undefined) validateManualSizeChart(content.manualSizeChart);
   return content;
+}
+function readProductSource(value: unknown, productId: string): ProductSource {
+  const product = (value as { product?: { id?: unknown; owner_id?: unknown; updated_at?: unknown; image_keys?: unknown } })?.product;
+  if (!product || product.id !== productId || typeof product.owner_id !== 'string' || !product.owner_id || typeof product.updated_at !== 'string'
+    || !Number.isFinite(Date.parse(product.updated_at)) || typeof product.image_keys !== 'string') throw Error('사이즈표를 확인할 상품 저장 상태를 읽지 못했습니다.');
+  let keys: unknown; try { keys = JSON.parse(product.image_keys); } catch { throw Error('상품의 저장 이미지 목록을 확인하지 못했습니다.'); }
+  if (!Array.isArray(keys) || keys.some(key => typeof key !== 'string') || new Set(keys).size !== keys.length) throw Error('상품의 저장 이미지 목록을 확인하지 못했습니다.');
+  return { id: productId, owner: product.owner_id, version: product.updated_at, keys };
 }
 /** A lost acknowledgement is recovered only from the exact next content state.
  * Other saved content and role assignments cannot be silently acknowledged. */
@@ -41,16 +51,26 @@ function Editor({ productId, version, sourceStep = '옵션', onSaved }: Props) {
   const [busy, setBusy] = useState(false), [imageBusy, setImageBusy] = useState(false);
   const [extractionBusy, setExtractionBusy] = useState(false);
   const [extractionOpen, setExtractionOpen] = useState(false);
+  const [editingResult, setEditingResult] = useState(false), [readClock, setReadClock] = useState(0), [reading, setReading] = useState(false);
+  const [sourceAvailable, setSourceAvailable] = useState(false);
   const [error, setError] = useState(''), [notice, setNotice] = useState('');
   const alive = useRef(true), operation = useRef(false), sequence = useRef(0);
   const currentVersion = useRef(version), pending = useRef<Draft | undefined>(undefined);
-  useEffect(() => { currentVersion.current = version; }, [version]);
-  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
-  const imageBusyChanged = useCallback((value: boolean) => setImageBusy(value), []);
-  const extractionBusyChanged = useCallback((value: boolean) => setExtractionBusy(value), []);
-  const dirty = draft !== undefined, fresh = saved?.version === version;
+  const latestSaved = useRef<Saved | null>(null), liveImageBusy = useRef(false), liveExtractionBusy = useRef(false), liveReading = useRef(false);
+  const liveSourceAvailable = useRef(false), liveExtractionOpen = useRef(false);
+  useLayoutEffect(() => { currentVersion.current = version; }, [version]);
+  useLayoutEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  const imageBusyChanged = useCallback((value: boolean) => { if (!alive.current || currentVersion.current !== version) return; liveImageBusy.current = value; setImageBusy(value); }, [version]);
+  const extractionBusyChanged = useCallback((value: boolean) => { if (!alive.current || currentVersion.current !== version) return; liveExtractionBusy.current = value; setExtractionBusy(value); }, [version]);
+  const dirty = draft !== undefined, fresh = sourceAvailable && saved?.version === version;
   const chart = draft === null ? null : draft?.chart ?? saved?.content.manualSizeChart ?? null;
-  const locked = busy || imageBusy || extractionBusy;
+  const locked = busy || imageBusy || extractionBusy || reading;
+  const result = saved && fresh && !dirty && !editingResult && !locked && !error ? saved.resultKey : null;
+  const resultUrl = result ? `/api/files/${result.split('/').map(encodeURIComponent).join('/')}` : null;
+  function store(value: Saved) { latestSaved.current = value; setSaved(value); liveSourceAvailable.current = true; setSourceAvailable(true); }
+  function canEdit(requireFresh = false) { return alive.current && currentVersion.current === version && latestSaved.current === saved && !!saved
+    && !operation.current && !liveImageBusy.current && !liveExtractionBusy.current && !liveReading.current && (!requireFresh || liveSourceAvailable.current && saved.version === version); }
+  function closeExtraction() { liveExtractionOpen.current = false; setExtractionOpen(false); }
   function edit(value: Draft | undefined) { pending.current = value; setDraft(value); setNotice(''); }
   async function getContent() {
     const response = await fetch(`/api/products/${encodeURIComponent(productId)}/content`, { cache: 'no-store' });
@@ -58,32 +78,61 @@ function Editor({ productId, version, sourceStep = '옵션', onSaved }: Props) {
     if (!response.ok) throw Error(body?.error || '사이즈표를 불러오지 못했습니다.');
     return readContent(body, productId);
   }
+  async function snapshot(requestedVersion: string): Promise<Saved> {
+    const getProduct = async () => {
+      const response = await fetch(`/api/products/${encodeURIComponent(productId)}`, { cache: 'no-store' }), body: unknown = await response.json();
+      if (!response.ok) throw Error('사이즈표를 확인할 상품을 읽지 못했습니다.');
+      return readProductSource(body, productId);
+    };
+    const before = await getProduct(), content = await getContent(), after = await getProduct();
+    if (!same(before, after) || after.version !== requestedVersion) throw Error('상품 저장 상태가 변경되었습니다. 최신 상품에서 사이즈표를 다시 확인해주세요.');
+    const keys = content.assets.size.value;
+    const resultKey = keys.length === 1 && isOwnedImageKey(after.owner, keys[0]) && after.keys.includes(keys[0]) ? keys[0] : null;
+    return { content, version: requestedVersion, resultKey, resultIssue: keys.length && !resultKey ? '저장된 사이즈표 한 장을 현재 상품의 이미지 목록에서 확인하지 못했습니다. 저장 자료를 확인한 뒤 다시 연결해주세요.' : null };
+  }
   // A refresh must never overwrite edits made while its response is in flight.
   useEffect(() => {
     const ticket = ++sequence.current, requestedVersion = version;
-    getContent().then(content => {
-      if (alive.current && ticket === sequence.current && currentVersion.current === requestedVersion && pending.current === undefined) setSaved({ content, version: requestedVersion });
-    }).catch(cause => { if (alive.current && ticket === sequence.current) setError(cause instanceof Error ? cause.message : '사이즈표 조회 실패'); });
+    liveReading.current = true;
+    void Promise.resolve().then(() => {
+      if (!alive.current || ticket !== sequence.current || currentVersion.current !== requestedVersion) return null;
+      setReading(true); return snapshot(requestedVersion);
+    }).then(value => {
+      if (!value) return;
+      if (alive.current && ticket === sequence.current && currentVersion.current === requestedVersion && pending.current === undefined) { store(value); setError(''); }
+    }).catch(cause => { if (alive.current && ticket === sequence.current && currentVersion.current === requestedVersion) { liveSourceAvailable.current = false; setSourceAvailable(false); setError(cause instanceof Error ? cause.message : '사이즈표 조회 실패'); } })
+      .finally(() => { if (alive.current && ticket === sequence.current && currentVersion.current === requestedVersion) { liveReading.current = false; setReading(false); } });
     // Only product identity/version starts an automatic read. Explicit refresh
     // below controls whether unsaved input is kept or discarded.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [productId, version]);
+  }, [productId, version, readClock]);
   async function reload(keep: boolean) {
-    if (operation.current || imageBusy || extractionBusy) return;
+    if (!alive.current || currentVersion.current !== version || operation.current || liveImageBusy.current || liveExtractionBusy.current || liveReading.current) return;
     operation.current = true; setBusy(true); setError('');
     const ticket = ++sequence.current, requestedVersion = currentVersion.current;
     try {
-      const content = await getContent();
+      const value = await snapshot(requestedVersion);
       if (!alive.current || ticket !== sequence.current || currentVersion.current !== requestedVersion) return;
-      setSaved({ content, version: requestedVersion });
-      if (!keep) edit(undefined);
+      store(value);
+      if (!keep) { edit(undefined); setEditingResult(false); closeExtraction(); }
       setNotice(keep ? '입력은 유지하고 최신 저장본을 확인했습니다.' : '저장한 사이즈표를 다시 불러왔습니다.');
-    } catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : '사이즈표 조회 실패'); }
+    } catch (cause) { if (alive.current && ticket === sequence.current) { liveSourceAvailable.current = false; setSourceAvailable(false); setError(cause instanceof Error ? cause.message : '사이즈표 조회 실패'); } }
     finally { operation.current = false; if (alive.current) setBusy(false); }
   }
   function change(transform: (value: NonNullable<Draft>) => NonNullable<Draft>) {
-    if (locked || !saved) return;
-    edit(transform(draft && draft !== null ? draft : draftOf(saved.content.manualSizeChart ?? seed())));
+    if (!canEdit()) return;
+    const current = pending.current;
+    edit(transform(current && current !== null ? current : draftOf(saved!.content.manualSizeChart ?? seed())));
+  }
+  function rewrite() {
+    if (!canEdit(true) || pending.current !== undefined || !saved?.resultKey) return;
+    if (!window.confirm('사이즈표를 재작성하시겠습니까? 입력한 표와 기존 이미지는 보관하며, 새 PNG를 첨부하면 견적에 사용할 이미지가 교체됩니다.')) return;
+    if (!canEdit(true) || pending.current !== undefined) return;
+    setEditingResult(true); setNotice('저장된 표를 수정하거나 이미지에서 새 초안을 가져오세요. 기존 사이즈표는 새 PNG를 첨부하기 전까지 보관합니다.');
+  }
+  function imageSaved() {
+    if (!alive.current || currentVersion.current !== version || pending.current !== undefined) return;
+    liveReading.current = true; setReading(true); setEditingResult(false); closeExtraction(); setReadClock(value => value + 1); onSaved?.();
   }
   function sizesChanged(input: string) {
     change(value => {
@@ -94,9 +143,10 @@ function Editor({ productId, version, sourceStep = '옵션', onSaved }: Props) {
     });
   }
   async function save() {
-    if (operation.current || imageBusy || extractionBusy || !saved || draft === undefined || !fresh) return;
+    if (!canEdit(true) || !saved || pending.current === undefined) return;
+    const candidate = pending.current;
     let normalized: ManualSizeChart | null;
-    try { normalized = draft === null ? null : validateManualSizeChart(draft.chart); }
+    try { normalized = candidate === null ? null : validateManualSizeChart(candidate.chart); }
     catch (cause) { setError(cause instanceof Error ? cause.message : '사이즈표 입력을 확인해주세요.'); return; }
     const before = saved.content, requestedVersion = version, ticket = ++sequence.current;
     operation.current = true; setBusy(true); setError(''); setNotice('');
@@ -117,24 +167,34 @@ function Editor({ productId, version, sourceStep = '옵션', onSaved }: Props) {
         acknowledged = recovered;
       }
       if (!current()) return;
-      setSaved({ content: acknowledged, version: requestedVersion }); edit(undefined);
+      store({ content: acknowledged, version: requestedVersion, resultKey: null, resultIssue: null }); edit(undefined);
       setNotice('사이즈표를 저장했습니다. 변경된 표는 PNG를 새로 만들어 견적서에 연결하세요.'); onSaved?.();
     } catch (cause) { if (current()) setError(cause instanceof Error ? cause.message : '사이즈표 저장 실패'); }
     finally { operation.current = false; if (alive.current) setBusy(false); }
   }
   const working = draft && draft !== null ? draft : chart ? draftOf(chart) : null;
-  return <section className="panel-stack" aria-label="사이즈표 편집" data-quotation-source-step={sourceStep} data-workspace-dirty={dirty} data-workspace-saving={locked} aria-busy={busy}>
-    <h3>사이즈표 직접 편집</h3>
+  return <section className="panel-stack" aria-label="사이즈표 편집" data-quotation-source-step={sourceStep} data-workspace-dirty={dirty} data-workspace-saving={locked} aria-busy={busy||reading}>
+    <h3>사이즈표 작업</h3>
+    {error && <p role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
+    {reading && <p role="status">현재 상품의 저장된 사이즈표를 확인하는 중…</p>}
+    {result && resultUrl ? <section className="panel-stack" aria-label="저장된 사이즈표 결과">
+      <h4>저장된 사이즈표</h4><div className="quote-actions"><a className="btn ghost" aria-label="저장된 사이즈표 이미지 다운로드" href={resultUrl} download="size_chart.png">이미지 다운로드</a>
+        <button type="button" className="btn ghost" aria-label="저장된 사이즈표 재작성" disabled={locked||!fresh} onClick={rewrite}>재작성</button></div>
+      <div style={{maxHeight:600,overflow:'auto'}}>
+        {/* eslint-disable-next-line @next/next/no-img-element -- Show the verified saved private image, not newly rendered measurements. */}
+        <img src={resultUrl} alt="저장된 사이즈표" data-saved-size-chart style={{display:'block',width:'100%',height:'auto'}}/>
+      </div><small>수정하려면 재작성을 눌러주세요. 기존 파일은 새 사이즈표로 교체한 뒤에도 보관합니다.</small>
+    </section> : <>
     <p>사이즈별 측정 항목과 값을 입력합니다. 표를 변경해 저장하면 이전 사이즈표의 견적 연결을 해제하며 원본 파일은 보관합니다.</p>
-    <button type="button" className="btn blue" aria-expanded={extractionOpen} disabled={!saved || locked || !fresh || !extractionOpen && dirty} onClick={() => { if (!locked) setExtractionOpen(open => !open); }}>{extractionOpen ? '이미지 추출 영역 닫기' : '이미지에서 사이즈표 초안 만들기'}</button>
+    {saved?.resultIssue && <p role="status">{saved.resultIssue}</p>}
+    <button type="button" className="btn blue" aria-expanded={extractionOpen} disabled={!saved || locked || !fresh || !extractionOpen && dirty} onClick={() => { if (!canEdit(true)) return; liveExtractionOpen.current=!liveExtractionOpen.current;setExtractionOpen(liveExtractionOpen.current); }}>{extractionOpen ? '이미지 추출 영역 닫기' : '이미지에서 사이즈표 초안 만들기'}</button>
     {saved && extractionOpen && <SizeChartExtractionPanel productId={productId} version={version} contentRevision={saved.content.revision} disabled={dirty || busy || imageBusy || !fresh} onBusyChange={extractionBusyChanged} onDraft={value => {
-      if (operation.current || imageBusy || pending.current !== undefined || currentVersion.current !== saved.version) return;
+      if (!alive.current || !liveExtractionOpen.current || latestSaved.current !== saved || operation.current || liveImageBusy.current || liveReading.current || pending.current !== undefined || currentVersion.current !== version || currentVersion.current !== saved.version || !liveSourceAvailable.current) return;
       edit(draftOf(validateManualSizeChart(value))); setNotice('이미지에서 추출한 표를 가져왔습니다. 원본과 비교해 수정한 뒤 정보를 저장해주세요.');
     }}/>}
     {!saved && !error && <p role="status">저장한 사이즈표를 불러오는 중…</p>}
-    {error && <p role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     {dirty && !fresh && <p role="status">상품 저장 상태가 변경되었습니다. 입력은 유지했습니다. 최신 저장본을 조회한 뒤 저장해주세요.</p>}
-    {!working ? <button type="button" className="btn blue" disabled={!saved || locked} onClick={() => edit(draftOf(seed()))}>사이즈표 직접 작성</button> : <>
+    {!working ? <button type="button" className="btn blue" disabled={!saved || locked} onClick={() => { if(canEdit()&&!pending.current)edit(draftOf(seed())); }}>사이즈표 직접 작성</button> : <>
       <div className="modal-form"><label>사이즈 유형<input aria-label="사이즈 유형" maxLength={80} value={working.chart.sizeType} disabled={locked} onChange={event => change(value => ({ ...value, chart: { ...value.chart, sizeType: event.target.value } }))}/></label>
         <label>단위<select aria-label="사이즈표 단위" value={working.chart.sizeUnits} disabled={locked} onChange={event => change(value => ({ ...value, chart: { ...value.chart, sizeUnits: event.target.value as ManualSizeChart['sizeUnits'] } }))}>{manualSizeUnits.map(unit => <option key={unit} value={unit}>{unit}</option>)}</select></label>
         <label>사이즈 목록<input aria-label="사이즈 목록" maxLength={MANUAL_SIZE_CHART_COLUMNS * 82} placeholder="예: S, M, L, XL" value={working.sizesInput} disabled={locked} onChange={event => sizesChanged(event.target.value)}/><small>쉼표로 구분 · 최대 {MANUAL_SIZE_CHART_COLUMNS}열</small></label></div>
@@ -147,11 +207,13 @@ function Editor({ productId, version, sourceStep = '옵션', onSaved }: Props) {
       <p>공란은 이미지에서 ‘-’로 표시합니다. 치수·무게·법적 고시나 옵션 값에는 자동으로 반영하지 않습니다.</p>
     </>}
     {saved && <div className="quote-actions"><button type="button" className="btn primary" disabled={!dirty || locked || !fresh} onClick={() => void save()}>사이즈표 정보 저장</button>
-      {saved.content.manualSizeChart && <button type="button" className="btn ghost" disabled={locked} onClick={() => edit(null)}>옵션 치수 표로 전환</button>}
+      {saved.content.manualSizeChart && <button type="button" className="btn ghost" disabled={locked} onClick={() => { if(canEdit())edit(null); }}>옵션 치수 표로 전환</button>}
+      {saved.resultKey&&!dirty&&fresh&&<button type="button" className="btn ghost" disabled={locked} onClick={()=>{if(canEdit(true)&&pending.current===undefined){setEditingResult(false);closeExtraction();}}}>저장된 사이즈표 보기</button>}
       {dirty && <button type="button" className="btn ghost" disabled={locked} onClick={() => void reload(true)}>입력 유지·최신 사이즈표 조회</button>}
       <button type="button" className="btn ghost" disabled={locked} onClick={() => void reload(false)}>{dirty ? '입력 취소·저장 사이즈표 조회' : '저장 사이즈표 다시 조회'}</button></div>}
     {draft === null && <p role="status">정보를 저장하면 직접 작성한 표 대신 저장된 옵션 치수·무게로 표를 만듭니다.</p>}
     {dirty && <p role="status">사이즈표 정보를 먼저 저장하거나 입력을 취소한 뒤 PNG를 만들어주세요.</p>}
-    <DocumentImagePanel key={`${productId}:${saved?.content.revision ?? 'loading'}`} productId={productId} version={version} section="size" disabled={!saved || dirty || busy || extractionBusy || !fresh} onBusyChange={imageBusyChanged} onSaved={onSaved}/>
+    <DocumentImagePanel key={`${productId}:${saved?.content.revision ?? 'loading'}`} productId={productId} version={version} section="size" disabled={!saved || dirty || busy || reading || extractionBusy || !fresh} onBusyChange={imageBusyChanged} onSaved={imageSaved}/>
+    </>}
   </section>;
 }
