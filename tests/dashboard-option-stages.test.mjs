@@ -156,9 +156,8 @@ test('common content keeps its draft across scoped image collapses and advanced 
     for (const [tab, section, role, label] of [['추가 이미지', '이미지', 'additional', '추가 이미지'], ['상세 이미지', '이미지', 'detail', '상세 이미지'], ['표시사항', '표시사항', undefined, '추가 표시사항·이전 자료'], ['SEO', 'SEO', undefined, 'SEO·설명']]) {
       h.render({ tab }); const current = h.record('product-content-editor'), collapse = current.ancestors.findLast(element => element.type === 'details');
       assert.equal(current.instance, common.instance); assert.equal(current.draft, 'shared content draft'); assert.equal(current.props.product.id, 'product-a');
-      const scoped = tab !== 'SEO';
-      assert.equal(current.props.section, section); assert.equal(current.props.focusedAssetRole, role); assert.equal(collapse.props.open, scoped ? undefined : true);
-      assert.ok(nodes(collapse).some(node => node.type === 'summary' && node.props.hidden === !scoped && text(node) === '상품 공통 ' + label + ' 편집'));
+      assert.equal(current.props.section, section); assert.equal(current.props.focusedAssetRole, role); assert.equal(collapse.props.open, undefined);
+      assert.ok(nodes(collapse).some(node => node.type === 'summary' && node.props.hidden === false && text(node) === (tab === 'SEO' ? '옵션별 추가 SEO 편집' : '상품 공통 ' + label + ' 편집')));
     }
     h.render({ tab: '견적서' }); h.record('quotation-panel').props.onProfileChange('profile-b'); assert.equal(h.record('product-content-editor').instance, common.instance); assert.equal(h.record('product-content-editor').draft, 'shared content draft');
     h.render({ focusedOptionId: undefined, tab: '추가 이미지' }); const unscoped = h.record('product-content-editor');

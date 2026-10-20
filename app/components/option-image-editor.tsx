@@ -348,7 +348,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
       <small>합치기 직전의 검증된 사진 순서를 불러옵니다. 저장하기 전까지 현재 통합 상세 이미지는 바뀌지 않습니다.</small>
       <small>사진·HTML 재편집은 HTML을 함께 보관한 저장 건에서 사용할 수 있습니다. 당시 HTML을 그대로 새 수동 초안에 넣으며 예전 공통·자동 상속 상태로 되돌리지는 않습니다.</small>
     </div>}
-    {stage === 'detail' && view && <DetailWorkspacePanel key={`workspace:${scope}`} productId={productId} optionId={optionId} profileId={profileId} view={view} stageActive={active}
+    {stage === 'detail' && view && <details className="option-detail-advanced"><summary>상세 이미지 합치기·작업 구성</summary><DetailWorkspacePanel key={`workspace:${scope}`} productId={productId} optionId={optionId} profileId={profileId} view={view} stageActive={active}
       disabled={disabled || busy || merging || uncertain || dirty || !!bindingError || saved?.sourceKey !== sourceKey}
       onRefreshRequested={() => {
         if (!keyboardGeneration || keyboardEpoch.current !== keyboardGeneration || !active || !liveActive.current || !current() || currentStage.current !== 'detail'
@@ -403,12 +403,12 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
           || knownProtection.some(key => selected.filter(value => value === key).length !== keys.filter(value => value === key).length)) return;
         clearDrag(); latestDraft.current = { scope, values: { detailImages: keys.join('\n') } }; setPending(latestDraft.current);
         setMessage('보관한 작업 사진을 선택 옵션의 수동 초안으로 불러왔습니다. 기존 견적 HTML은 유지했습니다. 확인 후 선택 옵션 이미지를 저장해주세요.');
-      }} />}
+      }} />
     {stage === 'detail' && view && <DetailImageCompositePanel key={`composite:${scope}`} productId={productId} optionId={optionId} profileId={profileId} view={view} stageActive={active}
       disabled={disabled || busy || workspaceWorking || uncertain || dirty || !!bindingError || saved?.sourceKey !== sourceKey}
       beforeApply={() => !!keyboardGeneration && keyboardEpoch.current === keyboardGeneration && active && liveActive.current && current() && currentStage.current === 'detail' && !liveDisabled.current && !request.current && !pendingSave.current && !Object.keys(latestDraft.current.values).length}
       onBusyChange={value => { compositeBusy.current = value; setMerging(value); }}
-      onSaved={body => { if (!current()) return; latestSaved.current = { scope, sourceKey, view: body }; setSaved(latestSaved.current); onSaved?.(); }} />}
+      onSaved={body => { if (!current()) return; latestSaved.current = { scope, sourceKey, view: body }; setSaved(latestSaved.current); onSaved?.(); }} />}</details>}
     {busy && <p role="status">옵션 이미지 처리 중…</p>}{error && <p role="alert">{error}</p>}{bindingError && <p role="alert">{bindingError}</p>}{message && <p role="status">{message}</p>}
     {dirty && saved?.sourceKey !== sourceKey && <p role="status">상품 저장 상태가 변경됐습니다. 입력은 유지했습니다. 최신 자료를 조회한 뒤 저장해주세요.</p>}
     {view && <>{stage === 'additional' ? <div className="image-edit-workspace">
@@ -435,10 +435,10 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
       <div><button type="button" className="btn ghost" disabled={locked || stage === 'detail' && knownProtection === null} onClick={() => updateImages(keys => stage === 'detail' ? keys.filter(key => knownProtection?.includes(key)) : [])}>{stage === 'detail' && selected.some(key => knownProtection?.includes(key)) ? '본문 이미지 선택 비우기' : `${label} 선택 비우기`}</button><button type="button" className="btn ghost" disabled={locked} onClick={() => edit(input, null)}>{label} 공통·자동값 복원</button></div>
       {!!unavailable.length && <p role="alert">현재 상품에 없는 이미지 참조가 {unavailable.length}개 있습니다. <button type="button" className="btn ghost" disabled={locked} onClick={() => updateImages(keys => keys.filter(key => view.imageKeys.includes(key)))}>누락 이미지 참조 제거</button></p>}
       <small>이미지 업로드·파일 편집은 상품 공통 이미지 편집에서 진행합니다. 저장한 파일은 최신 이미지 조회 후 이 옵션의 후보 목록에서도 선택할 수 있습니다.</small>
-      {stage === 'detail' && <label className="field"><span>선택 옵션 상세 HTML</span><textarea aria-label="선택 옵션 상세 HTML" value={html} disabled={locked} onChange={event => edit('detailHtml', event.target.value)} />
+      {stage === 'detail' && <details className="option-detail-html"><summary>상세 HTML 직접 편집</summary><label className="field"><span>선택 옵션 상세 HTML</span><textarea aria-label="선택 옵션 상세 HTML" value={html} disabled={locked} onChange={event => edit('detailHtml', event.target.value)} />
         <small>이미지 순서 변경은 자동 상세 HTML에 반영됩니다. 기존 직접 작성한 HTML과 공란은 유지합니다. HTML은 텍스트로 편집하며 이 화면에서 실행하지 않습니다.</small>
         <button type="button" className="btn ghost" disabled={locked} onClick={() => edit('detailHtml', '')}>상세 HTML 비우기</button><button type="button" className="btn ghost" disabled={locked} onClick={() => edit('detailHtml', null)}>상세 HTML 공통·자동값 복원</button>
-      </label>}
+      </label></details>}
     </>}
     {!!issues.length && <p role="alert">{[...new Set(issues)].join(' ')}</p>}
     <button type="button" className="btn primary" disabled={!view || busy || merging || workspaceWorking || disabled || !!bindingError || !dirty || !!issues.length} onClick={() => void save()}>{uncertain ? '이미지 저장 결과 확인' : '선택 옵션 이미지 저장'}</button>

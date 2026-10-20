@@ -1,0 +1,234 @@
+{
+  "step": 757,
+  "sourceFiles": [
+    {
+      "file": "app/api/products/[id]/options/route.ts",
+      "sha256": "5c563615a0577837e2bd1ad59f5ed23230236856c4243a7fffda91bec2bec5ca"
+    },
+    {
+      "file": "app/components/dashboard-client.tsx",
+      "sha256": "c39a0c7f1d71c2835a26b3573372145efb07ba99734aa2db4330c2da9a938961"
+    },
+    {
+      "file": "app/components/registration-workspace.css",
+      "sha256": "1d520bc222ea07706af90383e8a9b9e1912756905a034f33a89b64e7dba9f50a"
+    },
+    {
+      "file": "app/components/option-image-editor.tsx",
+      "sha256": "c6d3aa34ff09f2a1ccceb83c7b0f8cb8c365c6be975b49d27826d4004a598574"
+    },
+    {
+      "file": "app/components/option-main-image-editor.tsx",
+      "sha256": "87cf60c886368a92ad917c657a0e1e8302a44369df5ac218cbd7ae533f6a8a37"
+    },
+    {
+      "file": "app/components/product-options-editor.tsx",
+      "sha256": "0169e6e39c064681f18b343b61f88bc620c11b6d9d84bfb5be08acd0ecf6f4b2"
+    },
+    {
+      "file": "app/components/quotation-fields-editor.tsx",
+      "sha256": "73026435186efa7384830deb397c7a874799837ddbe4df33027d0e1b0ec24ccc"
+    },
+    {
+      "file": "app/components/quotation-panel.tsx",
+      "sha256": "eb82c91c9e48d79eec3b53cf725aa3d4082bb7e645afa96fd82be8544224c3ab"
+    },
+    {
+      "file": "app/components/seo-workspace-editor.tsx",
+      "sha256": "b7090d1b9f3e410c8c32118b6871d99f84e0e282c97cf3af272ebe28c4ae026b"
+    },
+    {
+      "file": "app/components/seo-workspace-generator.tsx",
+      "sha256": "b832efff61946e7ba156119fdd860a7855e6fd7925d6f86e0dd97ad8a111665e"
+    },
+    {
+      "file": "app/components/seo-workspace.css",
+      "sha256": "3306a360ff3793c7231a889ccec56ff425b3e3075904342e9d4e596c35dba014"
+    },
+    {
+      "file": "app/main-image-library.ts",
+      "sha256": "68471a70fbd0c40c5627c56999e4ee7b5c3425a93dbea54e52c660bcb4cab348"
+    },
+    {
+      "file": "db/main-image-library.ts",
+      "sha256": "7cfa893a34ca1b028db9859c3a5a8c7047b104adf5702d4150fa197390c6293e"
+    }
+  ],
+  "validation": {
+    "relatedFiles": 22,
+    "uniqueCases": 386,
+    "passed": 386,
+    "failed": 0,
+    "initialRun": {
+      "passed": 385,
+      "failed": 1,
+      "reason": "Legacy SEO disclosure expected open=true; intended closed presentation assertion updated, all retained-draft assertions preserved."
+    },
+    "typecheck": 0,
+    "changedFileLint": 0,
+    "build": 0,
+    "finalRootRegression": {
+      "files": 5,
+      "passed": 25
+    },
+    "review": "Independent four-file UI guard review: no reproducible new defect."
+  },
+  "deployment": {
+    "url": "https://sourceflow.jjwwhhjj1116.workers.dev/",
+    "workerVersion": "eb7e7d13-3852-449e-b606-78417e38d782",
+    "existingResourcesOnly": true
+  },
+  "browser": {
+    "kind": "actual React / local API / SQLite / synthetic source and image data",
+    "phases": [
+      {
+        "scope": "stage1to5",
+        "file": "step757-browser-pre-range-fix-proof.json",
+        "productId": "f02dae32-5677-413c-9686-7d04057503a3",
+        "oldUnchanged": true,
+        "writes": [
+          {
+            "method": "PATCH",
+            "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/seo-workspace",
+            "query": "",
+            "status": 200
+          },
+          {
+            "method": "PATCH",
+            "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+            "query": "",
+            "status": 200
+          },
+          {
+            "method": "PUT",
+            "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+            "query": "",
+            "status": 200
+          },
+          {
+            "method": "PUT",
+            "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+            "query": "",
+            "status": 200
+          },
+          {
+            "method": "PUT",
+            "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+            "query": "",
+            "status": 200
+          },
+          {
+            "method": "POST",
+            "path": "/api/files",
+            "query": "",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/attachments",
+            "query": "",
+            "status": 400
+          }
+        ],
+        "events": [
+          {
+            "type": "FLUSH",
+            "channel": "YOOFAM_SOURCE_INBOX"
+          },
+          {
+            "type": "browser-error",
+            "message": "Uncaught Error: 격리 검수: 실제 확장 요청은 금지됩니다."
+          }
+        ],
+        "hubRequests": 0,
+        "realSourceRequests": 0,
+        "nativeRequests": 0
+      },
+      {
+        "scope": "stage6label",
+        "file": "step757-browser-label-and-missing-profile-proof.json",
+        "productId": "b336b1aa-335b-4751-98bb-eca896f761a2",
+        "oldUnchanged": true,
+        "writes": [
+          {
+            "method": "PUT",
+            "path": "/api/products/b336b1aa-335b-4751-98bb-eca896f761a2/product-labels",
+            "query": "",
+            "status": 200
+          },
+          {
+            "method": "POST",
+            "path": "/api/files",
+            "query": "",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "path": "/api/products/b336b1aa-335b-4751-98bb-eca896f761a2/attachments",
+            "query": "",
+            "status": 200
+          },
+          {
+            "method": "PUT",
+            "path": "/api/products/b336b1aa-335b-4751-98bb-eca896f761a2/quotation-fields",
+            "query": "",
+            "status": 200
+          }
+        ],
+        "events": [
+          {
+            "type": "FLUSH",
+            "channel": "YOOFAM_SOURCE_INBOX"
+          }
+        ],
+        "hubRequests": 0,
+        "realSourceRequests": 0,
+        "nativeRequests": 0
+      },
+      {
+        "scope": "stage7profile",
+        "file": "step757-browser-qa/proof.json",
+        "productId": "c6565fac-2a83-4f6a-b416-4cf55d9b2571",
+        "oldUnchanged": true,
+        "writes": [
+          {
+            "method": "PUT",
+            "path": "/api/products/c6565fac-2a83-4f6a-b416-4cf55d9b2571/quotation-fields",
+            "query": "",
+            "status": 200
+          }
+        ],
+        "events": [
+          {
+            "type": "FLUSH",
+            "channel": "YOOFAM_SOURCE_INBOX"
+          }
+        ],
+        "hubRequests": 0,
+        "realSourceRequests": 0,
+        "nativeRequests": 0
+      }
+    ],
+    "limitations": [
+      "Separate synthetic runs; not one live 1688-to-Hub transaction.",
+      "Range/image-stream and missing category-profile fixtures repaired; earlier negative runs retained.",
+      "No actual text OCR, real image translation, agreements, remote upload or receipt acceptance tested."
+    ]
+  },
+  "gates": [
+    {
+      "file": "extensions/supplier-hub/single-dispatch.mjs",
+      "liveVerified": false
+    },
+    {
+      "file": "extensions/supplier-hub/product-document-dispatch.mjs",
+      "liveVerified": false
+    }
+  ],
+  "extension": {
+    "version": "2.1.7",
+    "unchanged": true,
+    "sha256": "0c69b2abf1f7609a88e1619ca095e359c49c8e236d4904e2fa321b56d054a801"
+  },
+  "actualReceiptVerified": false
+}

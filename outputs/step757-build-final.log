@@ -1,0 +1,140 @@
+Chrome 공개 상품 수집 모듈 검사 완료
+Chrome 상품 수집 버튼 검사 완료
+{"version":"2.1.7","files":85,"bytes":984560,"sha256":"0c69b2abf1f7609a88e1619ca095e359c49c8e236d4904e2fa321b56d054a801","checked":true}
+{"checked":true,"version":"7.0.0","coreVersion":"7.0.0","files":17,"bytes":49515369,"runtimeExternalDownloads":false}
+
+  vinext build  (Vite 8.0.13)
+
+[1/5] analyze client references...
+[2K
+transforming...✓ 585 modules transformed.
+rendering chunks...
+[PLUGIN_TIMINGS] Your build spent significant time in plugins. Here is a breakdown:
+  - rsc:virtual-client-package (33%)
+  - alias (24%)
+  - vinext:middleware-server-only (22%)
+  - vinext:css-data-url (9%)
+  - vinext:og-inline-fetch-assets (7%)
+See https://rolldown.rs/options/checks#plugintimings for more details.
+
+✓ built in 4.48s
+[2/5] analyze server references...
+[2K
+transforming...✓ 506 modules transformed.
+rendering chunks...
+✓ built in 1.03s
+[3/5] build rsc environment...
+[2K
+transforming...✓ 636 modules transformed.
+rendering chunks...
+✓ built in 1.81s
+[4/5] build client environment...
+[2K
+transforming...✓ 564 modules transformed.
+rendering chunks...
+[plugin builtin:vite-reporter]
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 1.35s
+[5/5] build ssr environment...
+[2K
+transforming...✓ 561 modules transformed.
+rendering chunks...
+✓ built in 913ms
+[0m
+  Route (app)
+  ┌ ƒ /
+  ├ ? /account
+  ├ λ /api/category-profiles
+  ├ λ /api/category-profiles/:id/refresh-definition
+  ├ λ /api/category-profiles/official-template
+  ├ λ /api/category-profiles/template
+  ├ λ /api/category-recommendation-title
+  ├ λ /api/collection-jobs
+  ├ λ /api/collection-jobs/:id
+  ├ λ /api/collection-jobs/:id/browser-capture
+  ├ λ /api/collection-jobs/:id/capacity
+  ├ λ /api/collection-jobs/:id/collect
+  ├ λ /api/collection-jobs/:id/image-draft
+  ├ λ /api/collection-jobs/:id/images
+  ├ λ /api/collection-jobs/:id/images-batch
+  ├ λ /api/collection-jobs/:id/new-draft
+  ├ λ /api/collection-jobs/:id/product
+  ├ λ /api/collection-jobs/:id/result
+  ├ λ /api/collection-jobs/:id/source-supplement
+  ├ λ /api/files
+  ├ λ /api/files/:key+
+  ├ λ /api/historical-ai-registrations
+  ├ λ /api/intake-draft
+  ├ λ /api/integrations
+  ├ λ /api/managed-products
+  ├ λ /api/managed-products/:skuId/barcode
+  ├ λ /api/managed-products/:skuId/purchase-info
+  ├ λ /api/managed-products/allowed-stores
+  ├ λ /api/managed-products/export
+  ├ λ /api/managed-products/import
+  ├ λ /api/managed-products/import-prices
+  ├ λ /api/managed-products/import-prices/export
+  ├ λ /api/managed-products/import-prices/template
+  ├ λ /api/membership
+  ├ λ /api/product-archive
+  ├ λ /api/products
+  ├ λ /api/products/:id
+  ├ λ /api/products/:id/attachments
+  ├ λ /api/products/:id/automation
+  ├ λ /api/products/:id/bundle
+  ├ λ /api/products/:id/content
+  ├ λ /api/products/:id/detail-family
+  ├ λ /api/products/:id/detail-save
+  ├ λ /api/products/:id/detail-workspace
+  ├ λ /api/products/:id/detail-workspace/attach
+  ├ λ /api/products/:id/detail-workspace/banner-rebase
+  ├ λ /api/products/:id/image-generation
+  ├ λ /api/products/:id/image-text
+  ├ λ /api/products/:id/legal-documents
+  ├ λ /api/products/:id/option-bundles
+  ├ λ /api/products/:id/option-names
+  ├ λ /api/products/:id/option-splits
+  ├ λ /api/products/:id/options
+  ├ λ /api/products/:id/pricing
+  ├ λ /api/products/:id/product-label-draft
+  ├ λ /api/products/:id/product-labels
+  ├ λ /api/products/:id/quotation
+  ├ λ /api/products/:id/quotation-ai
+  ├ λ /api/products/:id/quotation-fields
+  ├ λ /api/products/:id/registration-settings
+  ├ λ /api/products/:id/seo-workspace
+  ├ λ /api/products/:id/size-chart-draft
+  ├ λ /api/products/:id/submission-review
+  ├ λ /api/products/:id/supplier-hub-document
+  ├ λ /api/products/:id/supplier-hub-product-receipt
+  ├ λ /api/products/:id/supplier-hub-receipt
+  ├ λ /api/products/:id/supplier-hub-single-package
+  ├ λ /api/products/:id/supplier-hub-single-receipt
+  ├ λ /api/products/:id/translation
+  ├ λ /api/products/:id/translation-apply
+  ├ λ /api/products/:id/translation-labels
+  ├ λ /api/products/:id/translation-source
+  ├ λ /api/products/:id/work-draft
+  ├ λ /api/products/:id/workspace-image-text
+  ├ λ /api/products/removed
+  ├ λ /api/quotation-attribute-rules
+  ├ λ /api/settings
+  ├ λ /api/source-inbox
+  ├ λ /api/source-inbox/ready
+  ├ λ /api/supplier-hub
+  ├ λ /api/supplier-hub/catalog-context
+  ├ ? /login
+  └ λ /media/quotation/:token
+
+  λ API  ƒ Dynamic  ? Unknown
+
+  ? Some routes could not be classified. vinext currently uses static analysis
+    and cannot detect dynamic API usage (headers(), cookies(), etc.) at build time.
+    Automatic classification will be improved in a future release.
+
+  Build complete. Run `vinext start` to start the production server.
+
+운영 빌드 검사 통과: sourceflow. 배포는 실행하지 않았습니다. 검토 대상: dist/server/wrangler.json

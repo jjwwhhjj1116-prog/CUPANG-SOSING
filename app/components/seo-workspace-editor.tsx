@@ -124,26 +124,25 @@ export function SeoWorkspaceEditor({ productId, version, focusedOptionId, active
   const nextDocumentKeywords=draft.clearDocumentKeywords?'':savedKeywords?.length?seoKeywordDocumentText(savedKeywords):savedDocumentKeywords;
   const tagsLength = keywordText.length;
   const locked = disabled || busy || uncertain;
-  return <section className="panel-stack" aria-label="SEO 설정 통합 편집" data-quotation-source-step="SEO" data-workspace-dirty={dirty} data-workspace-saving={busy}>
+  return <section className="panel-stack seo-workspace-editor" aria-label="SEO 설정 통합 편집" data-quotation-source-step="SEO" data-workspace-dirty={dirty} data-workspace-saving={busy}>
     {busy && <p role="status">{busyAction === 'save' ? 'SEO 설정을 저장하고 있습니다…' : 'SEO·옵션 저장본을 확인하고 있습니다…'}</p>}{!busy && error && <p role="alert">{error}</p>}{!busy && message && <p role="status">{message}</p>}
     {dirty && !fresh && <p role="status">상품 저장 상태가 변경되었습니다. 입력은 유지했습니다. 최신 저장본을 확인해주세요.</p>}
     {!busy && uncertain && <p role="status">저장 결과를 아직 확인하지 못했습니다. 결과 확인은 저장본 조회만 수행합니다.</p>}
     {view && <div className="seo-content-columns" style={{ width: '100%' }}>
       <section className="seo-common-editor"><h3>상품명 / 검색태그</h3><fieldset disabled={locked} style={{ border: 0, margin: 0 }}>
-        <label className="field"><span>상품명 · {provenance[view.content.seo.title.provenance]}</span><input aria-label="SEO 상품명" value={seoValue('title')} maxLength={100} onChange={event => edit(previous => ({ ...previous, seo: { ...previous.seo, title: event.target.value } }))}/></label>
+        <label className="field"><span>상품명</span><input aria-label="SEO 상품명" value={seoValue('title')} maxLength={100} onChange={event => edit(previous => ({ ...previous, seo: { ...previous.seo, title: event.target.value } }))}/></label>
         <small className={seoValue('title').length > 100 ? 'seo-input-count exceeded' : 'seo-input-count'}>{seoValue('title').length}/100자{seoValue('title').length > 100 && ' · 기존 저장값은 유지합니다.'}</small>
-        <label className="field"><span>검색태그 (쉼표로 구분) · {provenance[view.content.seo.keywords.provenance]}</span><textarea aria-label="SEO 검색태그" value={seoValue('keywords')} rows={5} maxLength={5050} onChange={event => editKeywords(event.target.value)}/></label>
-        <small className={tagsLength > 150 ? 'seo-input-count exceeded' : 'seo-input-count'}>{tagsLength}/150자{tagsLength > 150 && !keywordEdited && ' · 기존 저장값은 유지합니다.'}</small>
+        <label className="field"><span>검색태그 (쉼표로 구분)</span><textarea aria-label="SEO 검색태그" value={seoValue('keywords')} rows={4} maxLength={5050} onChange={event => editKeywords(event.target.value)}/></label>
+        <div className="seo-keyword-caption"><small>검색에 노출되길 원하는 키워드를 쉼표로 구분하여 입력하세요 (최대 150자)</small><small className={tagsLength > 150 ? 'seo-input-count exceeded' : 'seo-input-count'}>{tagsLength}/150자{tagsLength > 150 && !keywordEdited && ' · 기존 저장값은 유지합니다.'}</small></div>
         {keywordPlan?.shortened && <section className="panel-note" aria-label="검색태그 저장안"><div><p>길이 조정 후 검색태그: {keywordPlan.text || '(공란)'}</p><p>입력 원문이 150자를 초과하여 뒤 태그 {keywordPlan.removedTags}개를 제외합니다. 저장 전까지 입력 원문은 유지합니다.</p></div></section>}
         {savedKeywords && <section className="panel-note" aria-label="검색태그 최종 저장안"><div><p>최종 저장 검색태그: {savedKeywords.join(', ') || '(공란)'}</p><p>한국어 자모가 포함된 태그, 20자를 넘는 태그와 중복 태그를 제외하고 특수문자는 공백으로 정리합니다.</p></div></section>}
-        <section className="panel-note" aria-label="견적서 검색태그 반영안"><div>
+        <details className="seo-keyword-review" open={keywordEdited||undefined}><summary>견적서 검색태그 반영 · 함께 비우기</summary><section className="panel-note" aria-label="견적서 검색태그 반영안"><div>
           <p>{keywordEdited?'저장 후 견적서 자동 검색태그':'현재 견적서 자동 검색태그'}: {nextDocumentKeywords||'(공란)'}</p>
           {draft.clearDocumentKeywords?<p>저장하면 검색태그와 견적서 자동 검색태그를 모두 비웁니다.</p>
             :keywordEdited&&savedKeywords&&!savedKeywords.length&&savedDocumentKeywords&&<p>이 입력으로 저장하면 견적서에는 이전 검색태그가 유지됩니다. 함께 비우려면 아래 버튼을 눌러주세요.</p>}
           <p>견적서에서 직접 수정한 공통·옵션 검색태그는 유지됩니다.</p>
           <button type="button" className="btn ghost" disabled={locked} onClick={clearKeywords}>검색태그·견적서 태그 함께 비우기</button>
-        </div></section>
-        <details><summary>상품 설명</summary><label className="field"><span>상품 설명 · {provenance[view.content.seo.description.provenance]}</span><textarea aria-label="SEO 상품 설명" value={seoValue('description')} rows={7} maxLength={20000} onChange={event => edit(previous => ({ ...previous, seo: { ...previous.seo, description: event.target.value } }))}/></label></details>
+        </div></section></details>
       </fieldset></section>
       <section className="seo-option-names"><h3>옵션명</h3><div className="seo-option-names-body">{view.options.rows.map((row, index) => {
         const key = row.imageKey ?? view.sourceImageKeys?.[row.id], thumbnail = key && view.imageKeys.includes(key) ? key : null;
@@ -159,9 +158,12 @@ export function SeoWorkspaceEditor({ productId, version, focusedOptionId, active
       {(Object.keys(draft.seo) as (keyof SeoWorkspaceDraft['seo'])[]).map(key => <tr key={key}><th>{({ title: '상품명', keywords: '검색태그', description: '상품 설명' })[key]}</th><td>{key === 'keywords' ? shownComparison.latest.content.seo.keywords.value.join(', ') : shownComparison.latest.content.seo[key].value || '(공란)'}</td><td>{draft.seo[key] || '(공란)'}</td></tr>)}
       {Object.keys(draft.optionNames).map(id => <tr key={id}><th>{shownComparison.latest.options.rows.find(row => row.id === id)?.originalName || id}</th><td>{shownComparison.latest.options.rows.find(row => row.id === id)?.translatedName || '(공란)'}</td><td>{draft.optionNames[id] || '(공란)'}</td></tr>)}
     </tbody></table><button type="button" className="btn ghost" disabled={locked} onClick={reviewLatest}>입력 유지·비교한 최신 기준 사용</button></section>}
-    <div className="quote-actions"><button type="button" className="btn primary" disabled={!view || disabled || busy || !dirty || !uncertain && (!fresh || conflict || !!issues.length)} onClick={() => void save()}>{busy ? busyAction === 'save' ? 'SEO 설정 저장 중…' : 'SEO 저장본 조회 중…' : uncertain ? 'SEO 저장 결과 확인' : 'SEO 설정 저장'}</button>
+    <div className="seo-workspace-save"><button type="button" className="btn primary" disabled={!view || disabled || busy || !dirty || !uncertain && (!fresh || conflict || !!issues.length)} onClick={() => void save()}>{busy ? busyAction === 'save' ? 'SEO 설정 저장 중…' : 'SEO 저장본 조회 중…' : uncertain ? 'SEO 저장 결과 확인' : 'SEO 설정 저장'}</button></div>
+    <details className="seo-workspace-tools" open={uncertain||conflict||dirty&&!fresh||undefined}><summary>저장본 조회 · 상품 설명 · 입력 출처</summary><div className="panel-stack"><div className="quote-actions">
       {dirty && <button type="button" className="btn ghost" disabled={disabled||busy} onClick={() => reload(true)}>입력 유지·최신 SEO 조회</button>}
       <button type="button" className="btn ghost" disabled={disabled||busy} onClick={() => reload(false)}>{dirty ? '입력 취소·저장본 다시 조회' : 'SEO 저장본 다시 조회'}</button></div>
-    <small>수정한 상품명·검색태그·한국어 옵션명을 함께 저장합니다. 공란도 직접 수정값으로 저장합니다.</small>
+      {view&&<><label className="field"><span>상품 설명 · {provenance[view.content.seo.description.provenance]}</span><textarea aria-label="SEO 상품 설명" value={seoValue('description')} rows={7} maxLength={20000} disabled={locked} onChange={event => edit(previous => ({ ...previous, seo: { ...previous.seo, description: event.target.value } }))}/></label><small>상품명: {provenance[view.content.seo.title.provenance]} · 검색태그: {provenance[view.content.seo.keywords.provenance]}</small></>}
+      <small>수정한 상품명·검색태그·한국어 옵션명을 함께 저장합니다. 공란도 직접 수정값으로 저장합니다.</small>
+    </div></details>
   </section>;
 }

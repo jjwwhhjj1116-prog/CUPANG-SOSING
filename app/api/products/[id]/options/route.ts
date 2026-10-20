@@ -5,6 +5,8 @@ import { findProduct, getSettings, type ProductRecord } from '@/db/queries';
 import { productImageKeys } from '@/app/product-content';
 import { readProductOptions, saveProductOptions, readOptionRegistrationNumbers } from '@/db/product-options';
 import { readOptionSourceImages } from '@/db/collection-images';
+import { readMainImageLibraryEvidence } from '@/db/main-image-library';
+import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
 import { OPTIONS_BODY_LIMIT, applyOptionRows, calculateOptionPrices, resolveOptionPricePolicy, validateOptionsInput, type ProductOptions } from '@/app/product-options';
 
 type Context = { params: Promise<{ id: string }> };
@@ -16,15 +18,19 @@ async function pricing(owner: string, product: ProductRecord, options: ProductOp
   return { ...resolved, rows: calculateOptionPrices(options.rows, resolved.policy) };
 }
 export async function GET(_: Request, context: Context) {
-  if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return closed();
+  const user=await getChatGPTUser();
+  if (process.env.NODE_ENV === 'production' && !user?.verifiedAccess) return closed();
   const owner = await getWorkspaceOwnerId(); const { id } = await context.params;
   try {
     const product = await findProduct(owner, id);
     if (!product) return response({ error: '상품을 찾을 수 없습니다.' }, 404);
     const options = await readProductOptions(owner, id);
-    const [prices,sourceImageKeys,optionRegistrationNumbers]=await Promise.all([pricing(owner,product,options),readOptionSourceImages(owner,product,options).catch(()=>({})),
-      product.registration_number?readOptionRegistrationNumbers(owner,product,options):undefined]);
-    return response({ options, pricing: prices, sourceImageKeys, productVersion: product.updated_at,
+    const [prices,sourceImageKeys,optionRegistrationNumbers,imageLibrary]=await Promise.all([pricing(owner,product,options),readOptionSourceImages(owner,product,options).catch(()=>({})),
+      product.registration_number?readOptionRegistrationNumbers(owner,product,options):undefined,
+      readMainImageLibraryEvidence(owner,product,options,approvedSupplierHubCompany(user?.membership)).catch(()=>null)]);
+    const latestCompany=approvedSupplierHubCompany((await getChatGPTUser())?.membership);
+    const companyCurrent=imageLibrary&&latestCompany?.code===imageLibrary.company.code&&latestCompany?.name===imageLibrary.company.name;
+    return response({ options, pricing: prices, sourceImageKeys, imageLibrary:companyCurrent?imageLibrary:null, productVersion: product.updated_at,
       ...(optionRegistrationNumbers===undefined?{}:{optionRegistrationNumbers}) });
   } catch { return response({ error: '옵션과 가격 설정을 불러오지 못했습니다.' }, 503); }
 }

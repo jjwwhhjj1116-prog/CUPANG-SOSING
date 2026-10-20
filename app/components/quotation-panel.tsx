@@ -149,18 +149,16 @@ function QuotationPanelContent({submissionActive=true,onPrepareSubmission,onProf
       if(value){profileRequest.current?.abort();activeRequest.current?.abort();setPreview(null);setMessage('');}
       setDirty(value);
     }} onReceiptSaved={onReceiptSaved} onSaved={()=>{setPreview(null);onSaved?.();}}/>:<p role="status">선택한 카테고리와 견적서 설정을 불러오고 있습니다.</p>}</div>
+    <details className="quotation-workbook-tools"><summary>Excel 견적서·첨부 자료</summary>
+    <p>견적 입력을 저장한 뒤 견적 자료를 검토하고 전송을 준비하세요.</p>
     {selected&&!selected.template&&<div className="panel-note"><strong>전송할 공식 견적 양식 준비</strong><p>1~7단계 초안은 저장되어 있습니다. 전송 전에 현재 회사와 저장한 전체 카테고리 경로를 확인하고 공식 Excel을 연결합니다.</p><button type="button" className="btn primary" disabled={busy||dirty||refreshingProfiles||!contextLoaded||!selected.hubSchema} onClick={()=>void prepareOfficialTemplate()}>공식 견적 양식 준비</button>{!selected.hubSchema&&<small>카테고리·양식 관리에서 Supplier Hub 상세 양식을 먼저 확인해주세요.</small>}</div>}
     {selected&&!selected.template&&(selected.hubSchema?.metadata.scopeType??selected.hubSchema?.metadata.scope)==='Retail_Categorized_Single'&&<div className="panel-note"><p>별도 Excel 상세 양식을 읽을 수 없다면 공식 파일의 열·선택값으로 연결할 수 있습니다. 현재 회사와 카테고리를 다시 확인하며, Excel JSON 미확인 상태와 기존 전송 검사는 유지됩니다.</p><button type="button" className="btn ghost" disabled={busy||dirty||refreshingProfiles||!contextLoaded} onClick={()=>void prepareOfficialTemplate('workbook')}>공식 파일 기준으로 연결</button></div>}
     {selected?.template?.workbookEvidence&&<p role="status" className="panel-note">공식 XLSX 파일 기준 연결 · 별도 Excel JSON 양식 미확인. 필수값·미연결 항목·첨부 검사는 그대로 적용됩니다.</p>}
     {templateError&&<p role="alert">{templateError} 상품 초안과 직접 수정한 값은 유지됩니다.</p>}{templateMessage&&<p role="status">{templateMessage}</p>}
-    {onPrepareSubmission&&<div className="panel-stack"><button type="button" className="btn rose" disabled={dirty||busy||refreshingProfiles||!contextLoaded||!selected} onClick={()=>{
-      if(dirtyRef.current||activeRequest.current||profileRequest.current||!contextLoaded||!selected)return;
-      onPrepareSubmission(overrideProfileId);
-    }}>저장한 견적 전송 준비</button><small>현재 상품과 선택한 양식의 저장 자료를 검사합니다. 첨부 파일과 필수 동의를 확인한 뒤 등록 전송을 실행하세요.</small></div>}
     <a className={`btn primary${dirty||!contextLoaded?' disabled':''}`} aria-disabled={dirty||!contextLoaded} tabIndex={dirty||!contextLoaded?-1:undefined} onClick={event=>{if(dirtyRef.current||!contextLoaded||versionRef.current!==refreshToken)event.preventDefault();}} href={dirty||!contextLoaded?undefined:`/api/products/${encodeURIComponent(productId)}/bundle${overrideProfileId?`?profileId=${encodeURIComponent(overrideProfileId)}`:''}`}>견적 입력 내용 + 첨부 자료 다운로드</a>
     <p className="panel-note">ZIP 압축을 푼 뒤 supplier-hub-upload.html을 열면 상품 이미지와 라벨을 구분해서 확인할 수 있습니다. 옵션별 연결과 누락 라벨을 확인한 뒤, 공식 견적서 및 서류를 별도로 검토해주세요.</p>
     {dirty&&<small>편집 내용을 저장하면 다운로드에 반영됩니다.</small>}
-    <details><summary>Excel 원본 양식에 출력하기</summary>
+    <div className="quotation-workbook-settings"><h4>Excel 원본 양식에 출력하기</h4>
     <div className="panel-note"><div><strong>공식 Excel 양식 준비</strong><ol>
       <li><a href="https://supplier.coupang.com/qvt/registration" target="_blank" rel="noreferrer">Supplier Hub 대량 상품 등록</a>에서 ‘최신 견적서 파일 다운로드’를 누르세요.</li>
       <li>다운로드 창에서 실제 상품의 마지막 카테고리를 선택하세요. 한 번에 최대 6개를 선택할 수 있습니다.</li>
@@ -190,6 +188,11 @@ function QuotationPanelContent({submissionActive=true,onPrepareSubmission,onProf
       <small>콘텐츠 v{preview.report.contentRevision} · 옵션 v{preview.report.optionRevision} · 카테고리 연결 v{preview.report.profileRevision}</small>
       <button className="btn primary" type="button" disabled={busy||dirty} onClick={()=>void request('download')}>채운 견적서 파일 다운로드</button>
       <button className="btn primary" type="button" disabled={busy||dirty} onClick={()=>void request('export')}>채운 견적서 + 첨부 자료 ZIP 다운로드</button>
-    </>}</details>
+    </>}</div>
+    {onPrepareSubmission&&<div className="panel-stack"><button type="button" className="btn rose" disabled={dirty||busy||refreshingProfiles||!contextLoaded||!selected} onClick={()=>{
+      if(dirtyRef.current||activeRequest.current||profileRequest.current||!contextLoaded||!selected)return;
+      onPrepareSubmission(overrideProfileId);
+    }}>저장한 견적 전송 준비</button><small>현재 상품과 선택한 양식의 저장 자료를 검사합니다. 첨부 파일과 필수 동의를 확인한 뒤 등록 전송을 실행하세요.</small></div>}
+    </details>
   </section>;
 }

@@ -1,0 +1,41 @@
+/* Step625 screenshots and current Couplus template structure: one editing
+ * surface, a compact numbered header, and previous/next controls below it.
+ * Scope all presentation to the product wizard; other app dialogs keep theirs. */
+.registration-workspace .registration-source-context,.registration-workspace .registration-tools-menu{flex-shrink:0;margin:0;padding:0 24px;border-bottom:1px solid #f1f2f5;font-size:11px;color:#7b8398}
+.registration-workspace .registration-source-context>summary,.registration-workspace .registration-tools-menu>summary{padding:5px 0;cursor:pointer;width:max-content}
+.registration-workspace .registration-tools-menu .registration-tools{padding:6px 0 10px;border:0;background:#fff;flex-wrap:wrap}
+.registration-workspace .registration-navigation{gap:12px;min-height:56px;padding:9px 20px;box-shadow:none}
+.registration-workspace .registration-navigation .btn{border:1px solid #49b9d3;color:#30a9c9;background:#fff;border-radius:5px;font-size:12px;min-width:74px;font-weight:500}
+.registration-workspace .registration-navigation .btn:first-child{border-color:#f5ad8b;color:#e89b74}
+.registration-workspace .registration-navigation>span{font-size:11px;color:#737a8c;min-width:40px}
+.registration-workspace .registration-steps{padding-bottom:12px;border-bottom:1px solid #eceef2}
+.registration-workspace .detail-body{scrollbar-gutter:stable;overscroll-behavior:contain}
+.registration-workspace .detail-body[data-registration-stage="대표 이미지"]{display:flex;flex-direction:column;gap:16px}
+.registration-workspace .registration-main-surface{order:-1}
+.registration-workspace .registration-upload-actions{order:-2;margin:0 0 12px}
+.registration-workspace .main-image-library-tabs{display:grid;grid-template-columns:1fr 1fr;gap:3px;margin-bottom:8px}
+.registration-workspace .main-image-preview-actions,.registration-workspace .main-image-save-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;margin-top:12px}
+.registration-workspace .main-image-all-saved{margin-top:10px;font-size:11px}
+.registration-workspace .registration-option-notices{max-width:940px;margin:0 auto 14px;font-size:12px;color:#758099}
+.registration-workspace .registration-option-notices>summary{cursor:pointer;padding:8px 0}
+.registration-workspace .image-stage-editor-entry{display:flex;justify-content:flex-end;margin:0 0 12px}
+.registration-workspace .image-edit-workspace{grid-template-columns:210px minmax(0,1fr);gap:0;border:1px solid #eceef2;background:#f6f6f6}
+.registration-workspace .image-edit-library{background:#fff;border-right:1px solid #eceef2;padding:10px;max-height:70dvh;overflow:auto}
+.registration-workspace .image-edit-library .image-asset-grid{display:grid;grid-template-columns:1fr;gap:8px}
+.registration-workspace .image-edit-library .image-asset-card{box-shadow:none;border-radius:4px;padding:6px;border-color:#e7e9ed}
+.registration-workspace .image-edit-library .image-asset-preview img{height:150px;object-fit:contain}
+.registration-workspace .image-edit-canvas{min-width:0;min-height:520px;padding:15px;background:#f5f5f5}
+.registration-workspace .image-large-preview{margin:0 auto;text-align:center}
+.registration-workspace .image-large-preview img{display:block;width:auto;max-width:100%;height:auto;max-height:70dvh;object-fit:contain;margin:0 auto;background:#fff}
+.registration-workspace .image-selected-strip{justify-content:center;gap:9px;border-top:1px solid #e9ebef;padding:14px;background:#fff}
+.registration-workspace .pricing-extra-options,.registration-workspace .quotation-supplemental-tools,.registration-workspace .quotation-source-evidence,.registration-workspace .quotation-workbook-tools{border:1px solid #e6e9ef;border-radius:5px;padding:10px 14px;margin:14px 0;background:#fff}
+.registration-workspace .pricing-extra-options>summary,.registration-workspace .quotation-supplemental-tools>summary,.registration-workspace .quotation-source-evidence>summary,.registration-workspace .quotation-workbook-tools>summary{font-size:12px;font-weight:500;color:#758099;cursor:pointer}
+.registration-workspace .detail-body[data-registration-stage="견적서"] .quotation-fields{max-width:940px;margin-left:auto;margin-right:auto}
+.registration-workspace .main-image-library-grid>button{display:flex;flex-direction:column;align-items:center;gap:6px;border:1px solid #e3e7ee;background:#fff;border-radius:4px;padding:7px;font-size:11px;color:#7a8292}
+.registration-workspace .main-image-library-grid>button[aria-pressed="true"]{outline:2px solid #2bbcdf;outline-offset:-2px}
+.registration-workspace .main-image-library-grid>button img{width:100%;height:150px;object-fit:contain}
+.registration-workspace .option-detail-advanced,.registration-workspace .option-detail-html{font-size:12px;color:#758099;border:1px solid #e6e9ef;border-radius:5px;padding:10px 14px;margin:8px 0;background:#fff}
+.registration-workspace .option-detail-advanced>summary,.registration-workspace .option-detail-html>summary{cursor:pointer}
+.registration-workspace .option-detail-advanced[open]>summary,.registration-workspace .option-detail-html[open]>summary{margin-bottom:14px}
+.registration-workspace .detail-body[data-registration-stage="표시사항"]>h2{font-size:18px}
+@media(max-width:760px){.registration-workspace .registration-source-context,.registration-workspace .registration-tools-menu{padding-left:14px;padding-right:14px}.registration-workspace .image-edit-workspace{grid-template-columns:1fr}.registration-workspace .image-edit-library{padding:5px;grid-column:1;grid-row:2;max-height:300px}.registration-workspace .image-edit-library .image-asset-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.registration-workspace .image-edit-library .image-asset-preview img,.registration-workspace .main-image-library-grid>button img{height:100px}.registration-workspace .image-edit-canvas{grid-column:1;grid-row:1;min-height:350px;padding:8px}.registration-workspace .registration-navigation{gap:8px}}

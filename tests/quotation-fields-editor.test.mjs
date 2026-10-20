@@ -21,6 +21,7 @@ function load(file, overrides = {}) {
   vm.runInNewContext(compiled, { exports, Error, TextEncoder, URLSearchParams, structuredClone, AbortController, fetch: overrides.fetch ?? fetch, require(name) {
     if (name in overrides) return overrides[name];
     if (name.endsWith('.css')) return {};
+    if (name.startsWith('.') && name.endsWith('.mjs')) return createRequire(new URL(`../${file}`, import.meta.url))(name);
     if (name.startsWith('@/app/')) {
       const modulePath = name.slice(2);
       return load(`${modulePath}.${fs.existsSync(new URL(`../${modulePath}.ts`, import.meta.url)) ? 'ts' : 'tsx'}`);
@@ -308,10 +309,11 @@ test('malformed display maps in refreshed or saved quotation responses preserve 
  for(const operation of ['refresh','save'])for(const numbers of [{foreign:'261015123001'},{red:'261015123001',blue:'261015123001'},{red:'261015123000'}]){
   const view=fixture(),edits=[change('brand','유지할 검토 브랜드','red'),change('manufacturer','')];
   view.optionRegistrationNumbers={red:'261015123009',blue:'261015123002'};
-  const states=[view,edits,[],false,false,'','','start','red',[],true,null,false];let slot=0,notices=0,calls=0;
-  const hooks={useState(initial){const i=slot++;if(!(i in states))states[i]=typeof initial==='function'?initial():initial;return[states[i],value=>states[i]=typeof value==='function'?value(states[i]):value];},useEffect(){},useCallback:fn=>fn,useRef:value=>({current:value}),useId:()=> 'invalid-display'};
+  const states=[view,edits,[],false,false,'','','start','red',[],true,null,false],effects=[];let slot=0,notices=0,calls=0;
+  const hooks={useState(initial){const i=slot++;if(!(i in states))states[i]=typeof initial==='function'?initial():initial;return[states[i],value=>states[i]=typeof value==='function'?value(states[i]):value];},useEffect(fn){if(String(fn).includes('explicitRefreshAction.current = explicitRefreshBlocked'))effects.push(fn);},useCallback:fn=>fn,useRef:value=>({current:value}),useId:()=> 'invalid-display'};
   const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async(_url,init)=>{calls++;const reply=init?.method==='PUT'?acknowledgedView(view,JSON.parse(init.body).changes):clone(view);reply.optionRegistrationNumbers=numbers;return Response.json(reply);}});
   const wrapper=loaded.QuotationFieldsEditor({productId:'p1',onSaved(){notices++;}}),tree=wrapper.type(wrapper.props);
+  effects.splice(0).forEach(effect=>effect());
   const walk=value=>Array.isArray(value)?value.flatMap(walk):value&&typeof value==='object'?[value,...walk(value.props?.children)]:[];
   const button=walk(tree).find(node=>node.type==='button'&&(operation==='refresh'?node.props.children==='기본값 다시 반영':String(node.props.children).startsWith('견적 입력 저장')));
   assert.ok(button);assert.equal(button.props.disabled,false);button.props.onClick();await new Promise(resolve=>setTimeout(resolve,20));
@@ -1120,12 +1122,12 @@ test('turning the primary all-options switch back off rejects its captured broad
 });
 
 test('deleting the active option on refresh keeps its identity and draft instead of switching to common edits',async()=>{
- const view=fixture(),edits=[change('brand','미저장 값','red')],states=[view,edits,[],false,false,'','','start','red',[],true,null,false];let slot=0;
+ const view=fixture(),edits=[change('brand','미저장 값','red')],states=[view,edits,[],false,false,'','','start','red',[],true,null,false],effects=[];let slot=0;
  const next=clone(view);next.resolved.rows=next.resolved.rows.filter(row=>row.optionId!=='red');next.automatic.rows=next.automatic.rows.filter(row=>row.optionId!=='red');
- const hooks={useState(initial){const i=slot++;if(!(i in states))states[i]=initial;return[states[i],v=>states[i]=typeof v==='function'?v(states[i]):v];},useEffect(){},useCallback:f=>f,useRef:v=>({current:v}),useId:()=> 'deleted-option'};
+ const hooks={useState(initial){const i=slot++;if(!(i in states))states[i]=initial;return[states[i],v=>states[i]=typeof v==='function'?v(states[i]):v];},useEffect(fn){if(String(fn).includes('explicitRefreshAction.current = explicitRefreshBlocked'))effects.push(fn);},useCallback:f=>f,useRef:v=>({current:v}),useId:()=> 'deleted-option'};
  let reads=0,writes=0;const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async(url,init)=>{if(init?.method==='PUT')writes++;else reads++;return Response.json(next);}});
  const nodes=v=>Array.isArray(v)?v.flatMap(nodes):v&&typeof v==='object'?[v,...nodes(v.props?.children)]:[];
- const render=()=>{slot=0;const wrapper=loaded.QuotationFieldsEditor({productId:'p1'});return nodes(wrapper.type(wrapper.props));};
+ const render=()=>{slot=0;const wrapper=loaded.QuotationFieldsEditor({productId:'p1'}),tree=wrapper.type(wrapper.props);effects.splice(0).forEach(effect=>effect());return nodes(tree);};
  render().find(n=>n.type==='button'&&n.props.children==='기본값 다시 반영').props.onClick();await new Promise(r=>setTimeout(r,20));
  assert.equal(reads,1);assert.equal(states[8],'red');assert.equal(states[1][0].value,'미저장 값');
  let tree=render();assert.ok(tree.some(n=>n.props?.role==='alert'&&String(n.props.children).includes('공통값으로 자동 전환하지')));

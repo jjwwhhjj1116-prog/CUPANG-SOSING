@@ -1,0 +1,21 @@
+import fs from 'node:fs';
+import crypto from 'node:crypto';
+import assert from 'node:assert/strict';
+const read=name=>fs.readFileSync('outputs/'+name,'utf8');
+const sourceFiles=['app/api/products/[id]/options/route.ts','app/components/dashboard-client.tsx','app/components/registration-workspace.css','app/components/option-image-editor.tsx','app/components/option-main-image-editor.tsx','app/components/product-options-editor.tsx','app/components/quotation-fields-editor.tsx','app/components/quotation-panel.tsx','app/components/seo-workspace-editor.tsx','app/components/seo-workspace-generator.tsx','app/components/seo-workspace.css','app/main-image-library.ts','db/main-image-library.ts'];
+const sha=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
+const cases=new Map();
+for(const file of ['step757-final-tests.log','step757-root-final-regression.log'])for(const match of read(file).matchAll(/^([✔✖]) (.+) \([\d.]+ms\)$/gmu))cases.set(match[2],{name:match[2],passed:match[1]==='✔',lastVerifiedIn:file});
+assert.equal(cases.size,386);assert.ok([...cases.values()].every(item=>item.passed));
+const phases=[['stage1to5','step757-browser-pre-range-fix-proof.json'],['stage6label','step757-browser-label-and-missing-profile-proof.json'],['stage7profile','step757-browser-qa/proof.json']].map(([scope,file])=>({scope,file,...JSON.parse(read(file))}));
+for(const phase of phases){assert.equal(phase.oldProductAndReceiptUnchanged,true);assert.equal(phase.realSourceRequests,0);assert.equal(phase.hubRequests,0);assert.equal(phase.nativeRequests,0);}
+const successes=(phase,method,ending,status)=>phase.requests.some(item=>item.method===method&&item.path.endsWith(ending)&&item.status===status);
+assert.ok(successes(phases[0],'PATCH','/seo-workspace',200));
+assert.ok(successes(phases[0],'PATCH','/options',200));
+assert.ok(phases[0].requests.filter(item=>item.method==='PUT'&&item.path.endsWith('/quotation-fields')&&item.status===200).length>=2);
+for(const [method,ending,status]of [['PUT','/product-labels',200],['POST','/api/files',201],['POST','/attachments',200],['PUT','/quotation-fields',200]])assert.ok(successes(phases[1],method,ending,status));
+assert.equal(phases[2].profileId,'cat757');assert.ok(successes(phases[2],'PUT','/quotation-fields',200));
+const gates=['extensions/supplier-hub/single-dispatch.mjs','extensions/supplier-hub/product-document-dispatch.mjs'].map(file=>({file,liveVerified:/LIVE_VERIFIED\s*=\s*true/.test(fs.readFileSync(file,'utf8'))}));assert.ok(gates.every(item=>item.liveVerified===false));
+const result={step:757,sourceFiles:sourceFiles.map(file=>({file,sha256:sha(fs.readFileSync(file))})),validation:{relatedFiles:22,uniqueCases:cases.size,passed:cases.size,failed:0,initialRun:{passed:385,failed:1,reason:'Legacy SEO disclosure expected open=true; intended closed presentation assertion updated, all retained-draft assertions preserved.'},typecheck:0,changedFileLint:0,build:0,finalRootRegression:{files:5,passed:25},review:'Independent four-file UI guard review: no reproducible new defect.'},deployment:{url:'https://sourceflow.jjwwhhjj1116.workers.dev/',workerVersion:'eb7e7d13-3852-449e-b606-78417e38d782',existingResourcesOnly:true},browser:{kind:'actual React / local API / SQLite / synthetic source and image data',phases:phases.map(phase=>({scope:phase.scope,file:phase.file,productId:phase.newProductId,oldUnchanged:phase.oldProductAndReceiptUnchanged,writes:phase.requests.filter(item=>item.method!=='GET'),events:phase.events,hubRequests:phase.hubRequests,realSourceRequests:phase.realSourceRequests,nativeRequests:phase.nativeRequests})),limitations:['Separate synthetic runs; not one live 1688-to-Hub transaction.','Range/image-stream and missing category-profile fixtures repaired; earlier negative runs retained.','No actual text OCR, real image translation, agreements, remote upload or receipt acceptance tested.']},gates,extension:{version:'2.1.7',unchanged:true,sha256:'0c69b2abf1f7609a88e1619ca095e359c49c8e236d4904e2fa321b56d054a801'},actualReceiptVerified:false};
+fs.writeFileSync('outputs/step757-final-validation.json',JSON.stringify(result,null,2));
+console.log(JSON.stringify({uniqueCases:cases.size,allPassed:true,oldUnchanged:true,hubRequests:0,nativeRequests:0,actualReceiptVerified:false}));

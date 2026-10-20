@@ -50,12 +50,12 @@ test('dashboard close callbacks cannot discard same-tick edits, active I/O, pend
   } finally { h.close(); }
 });
 
-test('Stage3/4 presentation stays inline and changing product version retains the mounted editor and original edit target', () => {
+test('all three image stages retain a closed modal and changing product version retains the original active edit target', () => {
   const h = dashboard();
   try {
     const type = h.editor().type;
-    h.render({ tab: '대표 이미지' }); assert.equal(h.dialog().props.modal, false); assert.equal(h.editor().props.active, true); assert.equal(h.editor().type, type);
-    h.render({ tab: '추가 이미지' }); assert.equal(h.dialog().props.modal, false); assert.equal(h.editor().type, type);
+    h.render({ tab: '대표 이미지' }); assert.equal(h.dialog().props.modal, true); assert.equal(h.editor().props.active, false); assert.equal(h.editor().type, type);
+    h.render({ tab: '추가 이미지' }); assert.equal(h.dialog().props.modal, true); assert.equal(h.editor().props.active, false); assert.equal(h.editor().type, type);
     h.render({ tab: '상세 이미지' }); h.card().props.onEdit('owner/a.png', 'detail', target); h.render(); const identity = h.dialog().props.identity;
     h.render({ product: { id: 'p', updated_at: '2026-10-18T00:00:01.000Z', image_keys: '["owner/a.png"]' } });
     assert.notEqual(h.dialog().props.identity, identity); assert.equal(h.dialog().props.open, true); assert.equal(h.editor().type, type); assert.deepEqual(plain(h.editor().props.translationTarget.quotationTarget), target); assert.equal(h.requests, 0);
@@ -72,11 +72,20 @@ for (const role of ['detailTop', 'detail', 'detailBottom']) test(`the actual com
   } finally { h.close(); }
 });
 
-for (const tab of ['대표 이미지', '추가 이미지']) test(`common image callbacks in ${tab} keep the same inline presentation`, () => {
+for (const tab of ['대표 이미지', '추가 이미지']) test(`common image callbacks in ${tab} open the retained modal, pin the target and enforce same-tick close guards without writing`, () => {
   const h = dashboard();
   try {
-    h.render({ tab }); const type = h.editor().type; h.child('ProductContentEditor').props.onTranslateImage('owner/a.png', 'zh', 'detail'); h.render();
-    assert.equal(h.dialog().props.modal, false); assert.equal(h.dialog().props.open, false); assert.equal(h.editor().props.type, undefined); assert.equal(h.editor().type, type); assert.equal(h.editor().props.active, true); assert.equal(h.requests, 0);
+    h.render({ tab }); const type = h.editor().type;
+    assert.equal(h.editor().props.active, false, 'a hidden editor cannot begin translation');
+    const role = tab === '대표 이미지' ? 'main' : 'additional';
+    h.child('ProductContentEditor').props.onTranslateImage('owner/a.png', 'zh', role); h.render();
+    assert.equal(h.dialog().props.modal, true); assert.equal(h.dialog().props.open, true); assert.equal(h.editor().type, type); assert.equal(h.editor().props.active, true);
+    assert.equal(h.editor().props.translationTarget.role, role); assert.equal(h.editor().props.translationTarget.sourceLanguage, 'zh');
+    const close = h.dialog().props.onClose;
+    close(); h.render(); assert.equal(h.dialog().props.open, true, 'unregistered guard cannot discard the edit');
+    h.editor().props.onCloseGuard(() => true); h.editor().props.onEditingChange(true); close(); h.render(); assert.equal(h.dialog().props.open, true);
+    h.editor().props.onEditingChange(false); h.editor().props.onBusyChange(true); close(); h.render(); assert.equal(h.dialog().props.open, true);
+    h.editor().props.onBusyChange(false); close(); h.render(); assert.equal(h.dialog().props.open, false); assert.equal(h.editor().type, type); assert.equal(h.editor().props.active, false); assert.equal(h.requests, 0);
   } finally { h.close(); }
 });
 

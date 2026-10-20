@@ -14,15 +14,18 @@ function seed(api,{retained=false,overrides=false}={}){
 async function stage7(api){return responseJson(await api.load('app/api/products/[id]/quotation-fields/route.ts').GET(
   new Request('https://app.test/api/products/'+api.id+'/quotation-fields'),{params:Promise.resolve({id:api.id})}));}
 const section=h=>nodes(h.render()).find(node=>node.props?.['aria-label']==='견적서 검색태그 반영안');
+const detailsFor=(h,node)=>nodes(h.render()).find(parent=>parent.type==='details'&&nodes(parent).some(child=>child.props?.['aria-label']===node));
 
 for(const companyCode of ['A01464742','A01526306'])for(const retained of [false,true])test(`${companyCode}: explicit whole clear reaches Stage7 from ${retained?'retained empty metadata':'prior nonempty tags'} and preserves manual overrides and other dirty edits`,async()=>{
   const api=seoWorkspaceHarness({companyCode});seed(api,{retained,overrides:true});const before=api.stored(),h=seoWorkspaceEditor(api);
   try{
     await h.idle();assert.ok(visibleText(section(h)).includes('이전 견적 태그'));assert.equal(patches(h).length,0);
+    assert.equal(detailsFor(h,'견적서 검색태그 반영안').props.open,undefined,'untouched document-tag tools start collapsed without a write');
     h.edit('SEO 상품명','함께 검토한 상품명');h.edit('1번째 한국어 옵션명','함께 검토한 옵션');await h.click(clear);
     assert.equal(patches(h).length,0);assert.equal(h.input('SEO 검색태그').props.value,'');assert.equal(h.input('SEO 상품명').props.value,'함께 검토한 상품명');
     assert.ok(visibleText(section(h)).includes('저장 후 견적서 자동 검색태그: (공란)'));
     assert.ok(visibleText(section(h)).includes('저장하면 검색태그와 견적서 자동 검색태그를 모두 비웁니다'));
+    assert.equal(detailsFor(h,'견적서 검색태그 반영안').props.open,true,'explicit clear reveals its document effect before saving');
     await h.click('SEO 설정 저장');assert.equal(patches(h).length,1);
     assert.deepEqual(patches(h)[0].body.seo,{title:'함께 검토한 상품명',keywords:[]});
     assert.equal(Object.hasOwn(patches(h)[0].body.seo,'keywordText'),false,'explicit action uses the existing array-only clear contract');
@@ -42,7 +45,8 @@ for(const companyCode of ['A01464742','A01526306'])test(`${companyCode}: ordinar
   const api=seoWorkspaceHarness({companyCode});seed(api);const h=seoWorkspaceEditor(api);
   try{
     await h.idle();h.edit('SEO 검색태그','');assert.ok(visibleText(section(h)).includes('저장 후 견적서 자동 검색태그: 이전 견적 태그'));
-    assert.ok(visibleText(section(h)).includes('이전 검색태그가 유지됩니다'));await h.click('SEO 설정 저장');
+    assert.ok(visibleText(section(h)).includes('이전 검색태그가 유지됩니다'));
+    assert.equal(detailsFor(h,'견적서 검색태그 반영안').props.open,true,'ordinary blank edits cannot conceal retained quotation tags');await h.click('SEO 설정 저장');
     assert.deepEqual(patches(h)[0].body.seo,{keywordText:'',keywords:[]});assert.ok((await stage7(api)).automatic.rows.every(row=>row.fields.searchTags.value==='이전 견적 태그'));
     await h.click(clear);await h.click('SEO 설정 저장');assert.deepEqual(patches(h)[1].body.seo,{keywords:[]});
     assert.ok((await stage7(api)).automatic.rows.every(row=>row.fields.searchTags.value===''));assert.equal(h.saved,2);
@@ -93,6 +97,7 @@ test('lost clear-save ACK recovers by GET only and keeps manual quotation fields
   const h=seoWorkspaceEditor(api,{fetcher:async(url,init,route)=>{const response=await route(url,init);if(init?.method==='PATCH')throw Error('synthetic ACK lost');return response;}});
   try{
     await h.idle();await h.click(clear);await h.click('SEO 설정 저장');assert.equal(h.saved,0);assert.ok(h.button('SEO 저장 결과 확인'));
+    assert.equal(detailsFor(h,'SEO 상품 설명').props.open,true,'an uncertain save exposes the saved-state recovery tools automatically');
     assert.equal(h.button(clear).props.disabled,true);await h.click('SEO 저장 결과 확인');assert.equal(patches(h).length,1);assert.equal(h.saved,1);
     assert.ok((await stage7(api)).automatic.rows.every(row=>row.fields.searchTags.value===''));assert.deepEqual(api.stored().quotation,before);
   }finally{h.close();api.close();}

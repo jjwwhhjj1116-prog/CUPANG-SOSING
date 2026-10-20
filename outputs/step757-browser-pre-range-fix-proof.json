@@ -1,0 +1,2465 @@
+{
+  "workspaceOwnerId": "owner",
+  "company": {
+    "code": "A01464742",
+    "name": "와이홉"
+  },
+  "oldProductId": "9040e7af-c72f-422c-abf2-b847c52ccc4f",
+  "newProductId": "f02dae32-5677-413c-9686-7d04057503a3",
+  "sourceUrl": "https://detail.1688.com/offer/700000000757.html",
+  "captureId": "00000000-0000-4000-8000-000000000757",
+  "profileId": "ecbbf5ab-5a83-438e-b3f9-3d42b98f83f7",
+  "categoryId": "81452",
+  "categoryPath": [
+    "스포츠/레져",
+    "헬스/요가",
+    "헬스기구/용품",
+    "헬스보호대"
+  ],
+  "entry": "새 합성 757 · 1~7단계 검수 상품",
+  "instructions": "목록의 새 합성 757 상품 → 옵션 보드의 SEO 설정 → 상단 1~7단계. 기존 합성 상품의 쓰기는 서버에서 차단합니다.",
+  "beforeOldSha256": "526e2b1f697901868d3dd0536b5e68c44b1634515bc72a0a013854f660212011",
+  "currentOldSha256": "526e2b1f697901868d3dd0536b5e68c44b1634515bc72a0a013854f660212011",
+  "oldProductAndReceiptUnchanged": true,
+  "buildCount": 1,
+  "lastBuildAt": "2026-10-20T05:25:38.192Z",
+  "products": [
+    {
+      "id": "9040e7af-c72f-422c-abf2-b847c52ccc4f",
+      "title": "太阳眼镜木纹腿男女复古墨镜高级感潮遮阳防紫外线太阳镜复古墨镜",
+      "source_price_cny": 3.6,
+      "options_count": 6,
+      "updated_at": "2026-10-20T05:25:37.966Z"
+    },
+    {
+      "id": "f02dae32-5677-413c-9686-7d04057503a3",
+      "title": "새 합성 757 단계 검수 상품",
+      "source_price_cny": 7,
+      "options_count": 2,
+      "updated_at": "2026-10-20T05:31:02.747Z"
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/products",
+      "status": 200,
+      "startup": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings",
+      "status": 200,
+      "startup": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/collection-jobs",
+      "status": 200,
+      "startup": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/category-profiles",
+      "status": 200,
+      "startup": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/seo-workspace",
+      "status": 200,
+      "startup": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "status": 200,
+      "startup": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/files/owner/collected-main-445cae7d1de2d45b33865f6868705b1f4d7dfe690f039d8b1added9c682140b0.png",
+      "status": 200,
+      "startup": true,
+      "sha256": "445cae7d1de2d45b33865f6868705b1f4d7dfe690f039d8b1added9c682140b0",
+      "byteLength": 8867,
+      "width": 1000,
+      "height": 1000
+    },
+    {
+      "method": "GET",
+      "path": "/api/files/owner/collected-additional-a5ec314b4043f75d5054a97feec9d2223fa7d856d53205c71fedce00cff2f3ef.png",
+      "status": 200,
+      "startup": true,
+      "sha256": "a5ec314b4043f75d5054a97feec9d2223fa7d856d53205c71fedce00cff2f3ef",
+      "byteLength": 8867,
+      "width": 1000,
+      "height": 1000
+    },
+    {
+      "method": "GET",
+      "path": "/api/files/owner/collected-detail-f9497b7fa90ec2cb55a11fd7aa550b60f32aae6f2ca5be251c6d9d8d8ce76ec3.png",
+      "status": 200,
+      "startup": true,
+      "sha256": "f9497b7fa90ec2cb55a11fd7aa550b60f32aae6f2ca5be251c6d9d8d8ce76ec3",
+      "byteLength": 8867,
+      "width": 1000,
+      "height": 1000
+    },
+    {
+      "method": "GET",
+      "path": "/api/source-inbox",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/source-inbox",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/source-inbox",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/source-inbox",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/category-profiles",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/collection-jobs",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/historical-ai-registrations",
+      "query": "?page=1&search=",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/intake-draft",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/files/owner/collected-main-445cae7d1de2d45b33865f6868705b1f4d7dfe690f039d8b1added9c682140b0.png",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/translation-source",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/translation",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/image-generation",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/category-profiles",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/translation",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/translation-source",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/registration-settings",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/seo-workspace",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/translation-source",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/files/owner%2Fcollected-main-445cae7d1de2d45b33865f6868705b1f4d7dfe690f039d8b1added9c682140b0.png",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/files/owner/collected-additional-a5ec314b4043f75d5054a97feec9d2223fa7d856d53205c71fedce00cff2f3ef.png",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-ai",
+      "query": "",
+      "status": 409
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/source-inbox",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/seo-workspace",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/collection-jobs",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/category-profiles",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/translation-source",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/translation",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/image-generation",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/translation",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/translation-source",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/registration-settings",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/seo-workspace",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/translation-source",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-ai",
+      "query": "",
+      "status": 409
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/collection-jobs",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/category-profiles",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/translation-source",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/translation",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/image-generation",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/translation-source",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-ai",
+      "query": "",
+      "status": 409
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/source-inbox",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/image-text",
+      "query": "?sourceKey=owner%2Fcollected-main-445cae7d1de2d45b33865f6868705b1f4d7dfe690f039d8b1added9c682140b0.png&role=main&target=quotation&optionId=collected-1&fieldKey=mainImage&slotIndex=0",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/files/owner/collected-main-445cae7d1de2d45b33865f6868705b1f4d7dfe690f039d8b1added9c682140b0.png",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/source-inbox",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/files/owner/collected-detail-f9497b7fa90ec2cb55a11fd7aa550b60f32aae6f2ca5be251c6d9d8d8ce76ec3.png",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "PUT",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/category-profiles",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/collection-jobs",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/translation-source",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/translation",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/image-generation",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/translation-source",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-ai",
+      "query": "",
+      "status": 409
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/files/owner/collected-main-445cae7d1de2d45b33865f6868705b1f4d7dfe690f039d8b1added9c682140b0.png",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/source-inbox",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "PUT",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/collection-jobs",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/category-profiles",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/translation-source",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/translation",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/image-generation",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/translation-source",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-ai",
+      "query": "",
+      "status": 409
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/image-text",
+      "query": "?sourceKey=owner%2Fcollected-additional-a5ec314b4043f75d5054a97feec9d2223fa7d856d53205c71fedce00cff2f3ef.png&role=additional&target=quotation&optionId=collected-1&fieldKey=additionalImages&slotIndex=0",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/files/owner/collected-additional-a5ec314b4043f75d5054a97feec9d2223fa7d856d53205c71fedce00cff2f3ef.png",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/source-inbox",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/detail-family",
+      "query": "",
+      "status": 403
+    },
+    {
+      "method": "GET",
+      "path": "/api/source-inbox",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/source-inbox",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/image-text",
+      "query": "?sourceKey=owner%2Fcollected-detail-f9497b7fa90ec2cb55a11fd7aa550b60f32aae6f2ca5be251c6d9d8d8ce76ec3.png&role=detail&target=quotation&optionId=collected-1&fieldKey=detailImages&slotIndex=0",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/files/owner/collected-detail-f9497b7fa90ec2cb55a11fd7aa550b60f32aae6f2ca5be251c6d9d8d8ce76ec3.png",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/registration-settings",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/source-inbox",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "PUT",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/files",
+      "query": "?labelUploadId=f8953b386b9795a087c9b80c11b99bf1166d3b8989101e0fa24af808a7693233",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/files",
+      "query": "",
+      "status": 201
+    },
+    {
+      "method": "GET",
+      "path": "/api/files",
+      "query": "?labelUploadId=f8953b386b9795a087c9b80c11b99bf1166d3b8989101e0fa24af808a7693233",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/files",
+      "query": "?labelUploadId=f8953b386b9795a087c9b80c11b99bf1166d3b8989101e0fa24af808a7693233",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/attachments",
+      "query": "",
+      "status": 400
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/collection-jobs",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/category-profiles",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/translation-source",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/translation",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/image-generation",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/translation-source",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-ai",
+      "query": "",
+      "status": 409
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/quotation-fields",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/product-labels",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/content",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/f02dae32-5677-413c-9686-7d04057503a3/options",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/source-inbox",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/source-inbox",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/source-inbox",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/source-inbox",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/source-inbox",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/source-inbox",
+      "query": "",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/source-inbox",
+      "query": "",
+      "status": 200
+    }
+  ],
+  "events": [
+    {
+      "type": "FLUSH",
+      "channel": "YOOFAM_SOURCE_INBOX"
+    },
+    {
+      "type": "browser-error",
+      "message": "Uncaught Error: 격리 검수: 실제 확장 요청은 금지됩니다."
+    }
+  ],
+  "fixtureRequests": [
+    "detail.1688.com",
+    "m.1688.com",
+    "h5api.m.1688.com",
+    "h5api.m.1688.com",
+    "itemcdn.tmall.com"
+  ],
+  "fixtureImageRequests": [
+    {
+      "source": "https://cbu01.alicdn.com/img/ibank/O1CN01koPXJ91zwNVJZ3ypz_!!2207622276778-0-cib.jpg",
+      "sha256": "445cae7d1de2d45b33865f6868705b1f4d7dfe690f039d8b1added9c682140b0",
+      "byteLength": 8867,
+      "width": 1000,
+      "height": 1000
+    },
+    {
+      "source": "https://cbu01.alicdn.com/img/ibank/O1CN01YIW9mL1zwNVH29BPt_!!2207622276778-0-cib.jpg",
+      "sha256": "a5ec314b4043f75d5054a97feec9d2223fa7d856d53205c71fedce00cff2f3ef",
+      "byteLength": 8867,
+      "width": 1000,
+      "height": 1000
+    },
+    {
+      "source": "https://cbu01.alicdn.com/img/ibank/O1CN01lrA1gv1zwNVJCmTkZ_!!2207622276778-0-cib.jpg",
+      "sha256": "bceaa5ba4ab34fdbc1e4afdac65a3d345d82ab8a163cc411a84364703afd6962",
+      "byteLength": 8868,
+      "width": 1000,
+      "height": 1000
+    },
+    {
+      "source": "https://cbu01.alicdn.com/img/ibank/O1CN01iqDtWM1zwNVImjMa2_!!2207622276778-0-cib.jpg",
+      "sha256": "b77c1932714210b1232d3471ed18bc509e7de7f95a839ca29af97004b4110a1a",
+      "byteLength": 8866,
+      "width": 1000,
+      "height": 1000
+    },
+    {
+      "source": "https://cbu01.alicdn.com/img/ibank/O1CN01yOJFXn1zwNVBekdXL_!!2207622276778-0-cib.jpg",
+      "sha256": "87651c63cf28e620b5295dfed5d18e81b72e082b63384ca48e0c9807e3c18264",
+      "byteLength": 8868,
+      "width": 1000,
+      "height": 1000
+    },
+    {
+      "source": "https://cbu01.alicdn.com/img/ibank/O1CN01rH4Cux1zwNVImYxTR_!!2207622276778-0-cib.jpg",
+      "sha256": "3b24c8d145c5b91931ee00874da4ad2b2364611da690c7fe73b7b6f965184a54",
+      "byteLength": 8868,
+      "width": 1000,
+      "height": 1000
+    },
+    {
+      "source": "https://cbu01.alicdn.com/img/ibank/O1CN016DMZ9b1zwNVJYua4q_!!2207622276778-0-cib.jpg",
+      "sha256": "3d9bd067c1733e829a91f414606f772e06997ba227d8ef9ce8b8aee477ba54f0",
+      "byteLength": 8868,
+      "width": 1000,
+      "height": 1000
+    },
+    {
+      "source": "https://cbu01.alicdn.com/img/ibank/O1CN01TtNmQm1zwNVImXkd9_!!2207622276778-0-cib.jpg",
+      "sha256": "16e04e66dca2f4ec117ae83e5207b472c86717a2ee4f2d77d3ca4fa2ce481d38",
+      "byteLength": 8868,
+      "width": 1000,
+      "height": 1000
+    },
+    {
+      "source": "https://cbu01.alicdn.com/img/ibank/O1CN01Cc2Daz1zwNUtbmnhf_!!2207622276778-0-cib.jpg",
+      "sha256": "f9497b7fa90ec2cb55a11fd7aa550b60f32aae6f2ca5be251c6d9d8d8ce76ec3",
+      "byteLength": 8867,
+      "width": 1000,
+      "height": 1000
+    },
+    {
+      "source": "https://cbu01.alicdn.com/img/ibank/O1CN01ocdyvw1zwNVImgk9Z_!!2207622276778-0-cib.jpg",
+      "sha256": "6ba4e62c5a0fd11002e2c8fd28a500d73dd9100782676b8073d986758319911b",
+      "byteLength": 8867,
+      "width": 1000,
+      "height": 1000
+    },
+    {
+      "source": "https://cbu01.alicdn.com/img/ibank/O1CN01kiI74M1zwNVH23oXo_!!2207622276778-0-cib.jpg",
+      "sha256": "1e25141cc512dd542e9ad53359053b8c3f22b26188f14d2a5ca10c0b166329c8",
+      "byteLength": 8868,
+      "width": 1000,
+      "height": 1000
+    },
+    {
+      "source": "https://cbu01.alicdn.com/img/ibank/O1CN01upPZxO1zwNVHLosnq_!!2207622276778-0-cib.jpg",
+      "sha256": "a5ca93642c4ad40bbd2308c54232822f3db7febebe70483603da86755e83cf0c",
+      "byteLength": 8868,
+      "width": 1000,
+      "height": 1000
+    },
+    {
+      "source": "https://cbu01.alicdn.com/img/ibank/O1CN01s18G7K1zwNVJCiaMY_!!2207622276778-0-cib.jpg",
+      "sha256": "38a614f78e7e48d135c0038288a6d8b9b7eb93899fd7aa4b4b918e8c9ce3b4de",
+      "byteLength": 8868,
+      "width": 1000,
+      "height": 1000
+    },
+    {
+      "source": "https://cbu01.alicdn.com/img/ibank/O1CN01lbjK421zwNVKH1VfA_!!2207622276778-0-cib.jpg",
+      "sha256": "5dffe6cc8255976f193d03341491791c055b4ddced8c5c5e309c2080659a08e7",
+      "byteLength": 8867,
+      "width": 1000,
+      "height": 1000
+    },
+    {
+      "source": "https://cbu01.alicdn.com/img/ibank/O1CN01OzIF2g1zwNVN2qHhQ_!!2207622276778-0-cib.jpg",
+      "sha256": "c46a0850ebb6320d77f32db22ffade240b87d3584b43cb95ef19e32f7fc624d1",
+      "byteLength": 8868,
+      "width": 1000,
+      "height": 1000
+    },
+    {
+      "source": "https://cbu01.alicdn.com/img/ibank/O1CN01fHkMmF1zwNVJZ0xWp_!!2207622276778-0-cib.jpg",
+      "sha256": "f9497b7fa90ec2cb55a11fd7aa550b60f32aae6f2ca5be251c6d9d8d8ce76ec3",
+      "byteLength": 8867,
+      "width": 1000,
+      "height": 1000
+    },
+    {
+      "source": "https://cbu01.alicdn.com/img/ibank/O1CN01Dk9Ipy1zwNUqVFh35_!!2207622276778-0-cib.jpg",
+      "sha256": "2f06651f45e134923a1f678c09019ee9238f35be3fd060ac9d0a7fbcd4461654",
+      "byteLength": 8868,
+      "width": 1000,
+      "height": 1000
+    },
+    {
+      "source": "https://cbu01.alicdn.com/img/ibank/O1CN016dpquw1zwNUtwZvvw_!!2207622276778-0-cib.jpg",
+      "sha256": "355dc4e2f2673d03184cb9251f8622c7620bf57d276383da7661abd44e269d27",
+      "byteLength": 8868,
+      "width": 1000,
+      "height": 1000
+    },
+    {
+      "source": "https://cbu01.alicdn.com/img/ibank/O1CN016Q3Qun1zwNUtblBut_!!2207622276778-0-cib.jpg",
+      "sha256": "b77c1932714210b1232d3471ed18bc509e7de7f95a839ca29af97004b4110a1a",
+      "byteLength": 8866,
+      "width": 1000,
+      "height": 1000
+    },
+    {
+      "source": "https://cbu01.alicdn.com/img/ibank/O1CN01koPXJ91zwNVJZ3ypz_!!2207622276778-0-cib.jpg",
+      "sha256": "445cae7d1de2d45b33865f6868705b1f4d7dfe690f039d8b1added9c682140b0",
+      "byteLength": 8867,
+      "width": 1000,
+      "height": 1000
+    },
+    {
+      "source": "https://cbu01.alicdn.com/img/ibank/O1CN01YIW9mL1zwNVH29BPt_!!2207622276778-0-cib.jpg",
+      "sha256": "a5ec314b4043f75d5054a97feec9d2223fa7d856d53205c71fedce00cff2f3ef",
+      "byteLength": 8867,
+      "width": 1000,
+      "height": 1000
+    },
+    {
+      "source": "https://cbu01.alicdn.com/img/ibank/O1CN01Cc2Daz1zwNUtbmnhf_!!2207622276778-0-cib.jpg",
+      "sha256": "f9497b7fa90ec2cb55a11fd7aa550b60f32aae6f2ca5be251c6d9d8d8ce76ec3",
+      "byteLength": 8867,
+      "width": 1000,
+      "height": 1000
+    }
+  ],
+  "images": [
+    {
+      "key": "owner/collected-main-445cae7d1de2d45b33865f6868705b1f4d7dfe690f039d8b1added9c682140b0.png",
+      "sha256": "445cae7d1de2d45b33865f6868705b1f4d7dfe690f039d8b1added9c682140b0",
+      "byteLength": 8867,
+      "metadata": {
+        "httpMetadata": {
+          "contentType": "image/png"
+        },
+        "customMetadata": {
+          "imageValidation": "header-v1",
+          "provenance": "collected",
+          "dimensionValidation": "header-v1",
+          "imageWidth": "1000",
+          "imageHeight": "1000",
+          "sha256": "445cae7d1de2d45b33865f6868705b1f4d7dfe690f039d8b1added9c682140b0"
+        }
+      }
+    },
+    {
+      "key": "owner/collected-additional-a5ec314b4043f75d5054a97feec9d2223fa7d856d53205c71fedce00cff2f3ef.png",
+      "sha256": "a5ec314b4043f75d5054a97feec9d2223fa7d856d53205c71fedce00cff2f3ef",
+      "byteLength": 8867,
+      "metadata": {
+        "httpMetadata": {
+          "contentType": "image/png"
+        },
+        "customMetadata": {
+          "imageValidation": "header-v1",
+          "provenance": "collected",
+          "dimensionValidation": "header-v1",
+          "imageWidth": "1000",
+          "imageHeight": "1000",
+          "sha256": "a5ec314b4043f75d5054a97feec9d2223fa7d856d53205c71fedce00cff2f3ef"
+        }
+      }
+    },
+    {
+      "key": "owner/collected-additional-bceaa5ba4ab34fdbc1e4afdac65a3d345d82ab8a163cc411a84364703afd6962.png",
+      "sha256": "bceaa5ba4ab34fdbc1e4afdac65a3d345d82ab8a163cc411a84364703afd6962",
+      "byteLength": 8868,
+      "metadata": {
+        "httpMetadata": {
+          "contentType": "image/png"
+        },
+        "customMetadata": {
+          "imageValidation": "header-v1",
+          "provenance": "collected",
+          "dimensionValidation": "header-v1",
+          "imageWidth": "1000",
+          "imageHeight": "1000",
+          "sha256": "bceaa5ba4ab34fdbc1e4afdac65a3d345d82ab8a163cc411a84364703afd6962"
+        }
+      }
+    },
+    {
+      "key": "owner/collected-additional-b77c1932714210b1232d3471ed18bc509e7de7f95a839ca29af97004b4110a1a.png",
+      "sha256": "b77c1932714210b1232d3471ed18bc509e7de7f95a839ca29af97004b4110a1a",
+      "byteLength": 8866,
+      "metadata": {
+        "httpMetadata": {
+          "contentType": "image/png"
+        },
+        "customMetadata": {
+          "imageValidation": "header-v1",
+          "provenance": "collected",
+          "dimensionValidation": "header-v1",
+          "imageWidth": "1000",
+          "imageHeight": "1000",
+          "sha256": "b77c1932714210b1232d3471ed18bc509e7de7f95a839ca29af97004b4110a1a"
+        }
+      }
+    },
+    {
+      "key": "owner/collected-additional-87651c63cf28e620b5295dfed5d18e81b72e082b63384ca48e0c9807e3c18264.png",
+      "sha256": "87651c63cf28e620b5295dfed5d18e81b72e082b63384ca48e0c9807e3c18264",
+      "byteLength": 8868,
+      "metadata": {
+        "httpMetadata": {
+          "contentType": "image/png"
+        },
+        "customMetadata": {
+          "imageValidation": "header-v1",
+          "provenance": "collected",
+          "dimensionValidation": "header-v1",
+          "imageWidth": "1000",
+          "imageHeight": "1000",
+          "sha256": "87651c63cf28e620b5295dfed5d18e81b72e082b63384ca48e0c9807e3c18264"
+        }
+      }
+    },
+    {
+      "key": "owner/collected-additional-3b24c8d145c5b91931ee00874da4ad2b2364611da690c7fe73b7b6f965184a54.png",
+      "sha256": "3b24c8d145c5b91931ee00874da4ad2b2364611da690c7fe73b7b6f965184a54",
+      "byteLength": 8868,
+      "metadata": {
+        "httpMetadata": {
+          "contentType": "image/png"
+        },
+        "customMetadata": {
+          "imageValidation": "header-v1",
+          "provenance": "collected",
+          "dimensionValidation": "header-v1",
+          "imageWidth": "1000",
+          "imageHeight": "1000",
+          "sha256": "3b24c8d145c5b91931ee00874da4ad2b2364611da690c7fe73b7b6f965184a54"
+        }
+      }
+    },
+    {
+      "key": "owner/collected-additional-3d9bd067c1733e829a91f414606f772e06997ba227d8ef9ce8b8aee477ba54f0.png",
+      "sha256": "3d9bd067c1733e829a91f414606f772e06997ba227d8ef9ce8b8aee477ba54f0",
+      "byteLength": 8868,
+      "metadata": {
+        "httpMetadata": {
+          "contentType": "image/png"
+        },
+        "customMetadata": {
+          "imageValidation": "header-v1",
+          "provenance": "collected",
+          "dimensionValidation": "header-v1",
+          "imageWidth": "1000",
+          "imageHeight": "1000",
+          "sha256": "3d9bd067c1733e829a91f414606f772e06997ba227d8ef9ce8b8aee477ba54f0"
+        }
+      }
+    },
+    {
+      "key": "owner/collected-additional-16e04e66dca2f4ec117ae83e5207b472c86717a2ee4f2d77d3ca4fa2ce481d38.png",
+      "sha256": "16e04e66dca2f4ec117ae83e5207b472c86717a2ee4f2d77d3ca4fa2ce481d38",
+      "byteLength": 8868,
+      "metadata": {
+        "httpMetadata": {
+          "contentType": "image/png"
+        },
+        "customMetadata": {
+          "imageValidation": "header-v1",
+          "provenance": "collected",
+          "dimensionValidation": "header-v1",
+          "imageWidth": "1000",
+          "imageHeight": "1000",
+          "sha256": "16e04e66dca2f4ec117ae83e5207b472c86717a2ee4f2d77d3ca4fa2ce481d38"
+        }
+      }
+    },
+    {
+      "key": "owner/collected-detail-f9497b7fa90ec2cb55a11fd7aa550b60f32aae6f2ca5be251c6d9d8d8ce76ec3.png",
+      "sha256": "f9497b7fa90ec2cb55a11fd7aa550b60f32aae6f2ca5be251c6d9d8d8ce76ec3",
+      "byteLength": 8867,
+      "metadata": {
+        "httpMetadata": {
+          "contentType": "image/png"
+        },
+        "customMetadata": {
+          "imageValidation": "header-v1",
+          "provenance": "collected",
+          "dimensionValidation": "header-v1",
+          "imageWidth": "1000",
+          "imageHeight": "1000",
+          "sha256": "f9497b7fa90ec2cb55a11fd7aa550b60f32aae6f2ca5be251c6d9d8d8ce76ec3"
+        }
+      }
+    },
+    {
+      "key": "owner/collected-detail-6ba4e62c5a0fd11002e2c8fd28a500d73dd9100782676b8073d986758319911b.png",
+      "sha256": "6ba4e62c5a0fd11002e2c8fd28a500d73dd9100782676b8073d986758319911b",
+      "byteLength": 8867,
+      "metadata": {
+        "httpMetadata": {
+          "contentType": "image/png"
+        },
+        "customMetadata": {
+          "imageValidation": "header-v1",
+          "provenance": "collected",
+          "dimensionValidation": "header-v1",
+          "imageWidth": "1000",
+          "imageHeight": "1000",
+          "sha256": "6ba4e62c5a0fd11002e2c8fd28a500d73dd9100782676b8073d986758319911b"
+        }
+      }
+    },
+    {
+      "key": "owner/collected-detail-1e25141cc512dd542e9ad53359053b8c3f22b26188f14d2a5ca10c0b166329c8.png",
+      "sha256": "1e25141cc512dd542e9ad53359053b8c3f22b26188f14d2a5ca10c0b166329c8",
+      "byteLength": 8868,
+      "metadata": {
+        "httpMetadata": {
+          "contentType": "image/png"
+        },
+        "customMetadata": {
+          "imageValidation": "header-v1",
+          "provenance": "collected",
+          "dimensionValidation": "header-v1",
+          "imageWidth": "1000",
+          "imageHeight": "1000",
+          "sha256": "1e25141cc512dd542e9ad53359053b8c3f22b26188f14d2a5ca10c0b166329c8"
+        }
+      }
+    },
+    {
+      "key": "owner/collected-detail-a5ca93642c4ad40bbd2308c54232822f3db7febebe70483603da86755e83cf0c.png",
+      "sha256": "a5ca93642c4ad40bbd2308c54232822f3db7febebe70483603da86755e83cf0c",
+      "byteLength": 8868,
+      "metadata": {
+        "httpMetadata": {
+          "contentType": "image/png"
+        },
+        "customMetadata": {
+          "imageValidation": "header-v1",
+          "provenance": "collected",
+          "dimensionValidation": "header-v1",
+          "imageWidth": "1000",
+          "imageHeight": "1000",
+          "sha256": "a5ca93642c4ad40bbd2308c54232822f3db7febebe70483603da86755e83cf0c"
+        }
+      }
+    },
+    {
+      "key": "owner/collected-detail-38a614f78e7e48d135c0038288a6d8b9b7eb93899fd7aa4b4b918e8c9ce3b4de.png",
+      "sha256": "38a614f78e7e48d135c0038288a6d8b9b7eb93899fd7aa4b4b918e8c9ce3b4de",
+      "byteLength": 8868,
+      "metadata": {
+        "httpMetadata": {
+          "contentType": "image/png"
+        },
+        "customMetadata": {
+          "imageValidation": "header-v1",
+          "provenance": "collected",
+          "dimensionValidation": "header-v1",
+          "imageWidth": "1000",
+          "imageHeight": "1000",
+          "sha256": "38a614f78e7e48d135c0038288a6d8b9b7eb93899fd7aa4b4b918e8c9ce3b4de"
+        }
+      }
+    },
+    {
+      "key": "owner/collected-detail-5dffe6cc8255976f193d03341491791c055b4ddced8c5c5e309c2080659a08e7.png",
+      "sha256": "5dffe6cc8255976f193d03341491791c055b4ddced8c5c5e309c2080659a08e7",
+      "byteLength": 8867,
+      "metadata": {
+        "httpMetadata": {
+          "contentType": "image/png"
+        },
+        "customMetadata": {
+          "imageValidation": "header-v1",
+          "provenance": "collected",
+          "dimensionValidation": "header-v1",
+          "imageWidth": "1000",
+          "imageHeight": "1000",
+          "sha256": "5dffe6cc8255976f193d03341491791c055b4ddced8c5c5e309c2080659a08e7"
+        }
+      }
+    },
+    {
+      "key": "owner/collected-detail-c46a0850ebb6320d77f32db22ffade240b87d3584b43cb95ef19e32f7fc624d1.png",
+      "sha256": "c46a0850ebb6320d77f32db22ffade240b87d3584b43cb95ef19e32f7fc624d1",
+      "byteLength": 8868,
+      "metadata": {
+        "httpMetadata": {
+          "contentType": "image/png"
+        },
+        "customMetadata": {
+          "imageValidation": "header-v1",
+          "provenance": "collected",
+          "dimensionValidation": "header-v1",
+          "imageWidth": "1000",
+          "imageHeight": "1000",
+          "sha256": "c46a0850ebb6320d77f32db22ffade240b87d3584b43cb95ef19e32f7fc624d1"
+        }
+      }
+    },
+    {
+      "key": "owner/collected-detail-2f06651f45e134923a1f678c09019ee9238f35be3fd060ac9d0a7fbcd4461654.png",
+      "sha256": "2f06651f45e134923a1f678c09019ee9238f35be3fd060ac9d0a7fbcd4461654",
+      "byteLength": 8868,
+      "metadata": {
+        "httpMetadata": {
+          "contentType": "image/png"
+        },
+        "customMetadata": {
+          "imageValidation": "header-v1",
+          "provenance": "collected",
+          "dimensionValidation": "header-v1",
+          "imageWidth": "1000",
+          "imageHeight": "1000",
+          "sha256": "2f06651f45e134923a1f678c09019ee9238f35be3fd060ac9d0a7fbcd4461654"
+        }
+      }
+    },
+    {
+      "key": "owner/collected-detail-355dc4e2f2673d03184cb9251f8622c7620bf57d276383da7661abd44e269d27.png",
+      "sha256": "355dc4e2f2673d03184cb9251f8622c7620bf57d276383da7661abd44e269d27",
+      "byteLength": 8868,
+      "metadata": {
+        "httpMetadata": {
+          "contentType": "image/png"
+        },
+        "customMetadata": {
+          "imageValidation": "header-v1",
+          "provenance": "collected",
+          "dimensionValidation": "header-v1",
+          "imageWidth": "1000",
+          "imageHeight": "1000",
+          "sha256": "355dc4e2f2673d03184cb9251f8622c7620bf57d276383da7661abd44e269d27"
+        }
+      }
+    },
+    {
+      "key": "owner/collected-detail-b77c1932714210b1232d3471ed18bc509e7de7f95a839ca29af97004b4110a1a.png",
+      "sha256": "b77c1932714210b1232d3471ed18bc509e7de7f95a839ca29af97004b4110a1a",
+      "byteLength": 8866,
+      "metadata": {
+        "httpMetadata": {
+          "contentType": "image/png"
+        },
+        "customMetadata": {
+          "imageValidation": "header-v1",
+          "provenance": "collected",
+          "dimensionValidation": "header-v1",
+          "imageWidth": "1000",
+          "imageHeight": "1000",
+          "sha256": "b77c1932714210b1232d3471ed18bc509e7de7f95a839ca29af97004b4110a1a"
+        }
+      }
+    },
+    {
+      "key": "owner/quotation-label-f8953b386b9795a087c9b80c11b99bf1166d3b8989101e0fa24af808a7693233.png",
+      "sha256": "f1395983e436fe38f330c056555e0ad42d606767cce3670bac3fa15f4ff0972c",
+      "byteLength": 59371,
+      "metadata": {
+        "httpMetadata": {
+          "contentType": "image/png"
+        },
+        "customMetadata": {
+          "imageValidation": "header-v1",
+          "dimensionValidation": "header-v1",
+          "imageWidth": "800",
+          "imageHeight": "612",
+          "labelUploadId": "f8953b386b9795a087c9b80c11b99bf1166d3b8989101e0fa24af808a7693233",
+          "labelBlobSha256": "f1395983e436fe38f330c056555e0ad42d606767cce3670bac3fa15f4ff0972c",
+          "productLabelRecipe": "product-label-png-v1",
+          "productLabelProductId": "f02dae32-5677-413c-9686-7d04057503a3",
+          "productLabelOptionId": "collected-1",
+          "productLabelProfileId": "cat",
+          "productLabelPlanSha256": "3fbce50235d8fc94765975cef32a04a29162715031bf437bef53b0418ca3b2a8",
+          "productLabelCategorySha256": "cbd1cecba49915612f3475c7730bb10f7091aff86e73b42888aeaa08c53e1b9d",
+          "productLabelProductVersion": "2026-10-20T05:31:02.747Z",
+          "productLabelSourceFingerprint": "a8d656a6e0d055cbae4edd0f642f93d67dbcd87a6a2740f3a8cbcddd38832461",
+          "productLabelRevision": "1",
+          "sha256": "f1395983e436fe38f330c056555e0ad42d606767cce3670bac3fa15f4ff0972c"
+        }
+      }
+    }
+  ],
+  "realSourceRequests": 0,
+  "hubRequests": 0,
+  "nativeRequests": 0,
+  "note": "Actual full DashboardClient and actual app handlers/SQLite. Synthetic saved source, category context, valid generated 1000x1000 PNGs and Workers AI. Provider PNG chunks/CRC/zlib contents verified before collection; actual image handlers compute source keys and metadata. No real source/Hub/native/credential/production DB access. Not a receipt verification."
+}

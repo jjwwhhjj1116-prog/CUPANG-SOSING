@@ -1,0 +1,33 @@
+✔ separate selected image stages retain independent drafts while hidden across steps 4, 5 and 7 (420.742ms)
+✔ selected image scope follows product, option, effective profile and the saved clock without leaking a previous draft (216.9695ms)
+✔ common content keeps its draft across scoped image collapses and advanced step 6 source tools (186.594ms)
+✔ step 6 keeps common label tools separate from the selected Supplier Hub notices shown only in step 7 (187.4873ms)
+✔ scoped stage editors retain their supported final-slot translation action while image processing excludes other edits (170.9008ms)
+✔ existing additional/detail translation callbacks bind the exact saved option slot and reject a different source or scope (347.6317ms)
+✔ the exact product-label editor belongs to step 6, retains its hidden draft and stays separate from step 7 legal notices (412.492ms)
+✔ step 6 opens saved option label editing with its exact source/slot and holds the same panel across stages (229.7085ms)
+✔ product/option/profile scope resets the nine-row editor, while source clocks and successful saves retain its instance (166.3118ms)
+✔ legacy common label/source tools stay mounted in advanced collapses and never replace the nine-row primary editor (188.1454ms)
+✔ the actual Stage5 card callback opens the retained editor dialog with the exact quotation target and does not write (371.6812ms)
+✔ dashboard close callbacks cannot discard same-tick edits, active I/O, pending recovery or an unregistered guard (252.3998ms)
+✔ all three image stages retain a closed modal and changing product version retains the original active edit target (206.9697ms)
+✔ the actual common detailTop translation callback opens Stage5 without inventing an option target (180.0289ms)
+✔ the actual common detail translation callback opens Stage5 without inventing an option target (171.147ms)
+✔ the actual common detailBottom translation callback opens Stage5 without inventing an option target (168.0135ms)
+✔ common image callbacks in 대표 이미지 open the retained modal, pin the target and enforce same-tick close guards without writing (188.1751ms)
+✔ common image callbacks in 추가 이미지 open the retained modal, pin the target and enforce same-tick close guards without writing (177.1616ms)
+✔ workspace photo editing uses the same modal and preserves the existing live close and save boundaries (1164.8254ms)
+✔ stage-four and stage-five batch views target distinct roles and only the current stage is active (411.5001ms)
+✔ an inactive batch releasing its lock cannot unlock an active additional or detail operation (218.2732ms)
+✔ paid/free processing and unsaved quotation edits block both batch roles before any application (167.6586ms)
+✔ family detail approval retains its own dialog while locking other image and price work, and independent locks survive release (190.3721ms)
+✔ stage one shows one common SEO/name editor and keeps selected quotation SEO independent (353.941ms)
+✔ hidden common content and unified SEO buffers retain their instances and close guards across stages (271.2466ms)
+ℹ tests 25
+ℹ suites 0
+ℹ pass 25
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4535.407

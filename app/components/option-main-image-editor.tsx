@@ -16,7 +16,7 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
  const [pending,setPending]=useState<{scope:string;optionId:string;value:string|null|undefined}>({scope,optionId:'',value:undefined}),liveDraft=useRef(pending);
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState(''),[uncertain,setUncertain]=useState(false);
  const [library,setLibrary]=useState<{scope:string;sourceKey:string;value:MainImageLibrary|null;error:string}|null>(null);
- const [libraryTab,setLibraryTab]=useState<{scope:string;tab:MainImageLibraryTab}>({scope,tab:'work'});
+ const [libraryTab,setLibraryTab]=useState<{scope:string;tab:MainImageLibraryTab|null}>({scope,tab:null});
  const libraryRequest=useRef<AbortController|null>(null);
  const current=()=>mounted.current&&liveScope.current===scope&&liveSource.current===sourceKey;
  useLayoutEffect(()=>{mounted.current=true;liveScope.current=scope;liveSource.current=sourceKey;if(liveDraft.current.scope!==scope)liveDraft.current={scope,optionId:'',value:undefined};return()=>{mounted.current=false;request.current?.abort();request.current=null;libraryRequest.current?.abort();libraryRequest.current=null;};},[scope,sourceKey]);
@@ -35,7 +35,7 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
   libraryRequest.current?.abort();const c=new AbortController();libraryRequest.current=c;
   const valid=()=>current()&&libraryRequest.current===c&&!c.signal.aborted&&liveSaved.current?.view===view;
   try{const value=await readMainImageLibrary(productId,view,scoped(c));if(valid())setLibrary({scope,sourceKey,value,error:''});}
-  catch{if(valid())setLibrary({scope,sourceKey,value:null,error:'이미지 종류를 확인하지 못했습니다. 전체 작업 이미지에서 선택할 수 있습니다.'});}
+  catch{if(valid())setLibrary({scope,sourceKey,value:null,error:'이미지 종류를 확인하지 못했습니다. 전체 저장 이미지에서 선택할 수 있습니다.'});}
   finally{if(libraryRequest.current===c)libraryRequest.current=null;}
  }
  async function load(keep=false){const c=begin();if(!c)return;try{const view=await readMainImageView(endpoint,scoped(c));if(!current()||c.signal.aborted)return;const previous=liveSaved.current?.scope===scope?liveSaved.current.view:null,draft=liveDraft.current;let recovered=false;
@@ -72,9 +72,10 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
  function closePreview(target:Preview){if(previewEpoch.current!==previewGeneration||livePreview.current!==target)return;livePreview.current=null;setPreview(null);}
  const libraryState=library?.scope===scope&&library.sourceKey===sourceKey?library:null;
  const groups=base&&libraryState?.value&&mainImageLibraryCurrent(libraryState.value,productId,base.view)?libraryState.value:null;
- const tab=libraryTab.scope===scope&&groups?libraryTab.tab:'work';
+ const defaultTab=groups?(['work','options','main','detail'] as const).find(name=>groups[name].length>0)??'work':'work';
+ const tab=libraryTab.scope===scope&&libraryTab.tab&&groups?libraryTab.tab:defaultTab;
  const visiblePool=base?mainImageLibraryKeys(tab,base.view,groups):[];
- const libraryTabs=[['work','작업 이미지 (전체)'],['main','대표 이미지 (저장된 선택)'],['options','옵션 이미지'],['detail','상세 이미지 (저장된 배치)']] as const;
+ const libraryTabs=[['work','작업 이미지'],['main','메인 이미지'],['options','옵션 이미지'],['detail','상세 이미지']] as const;
  function translateSelected(key:string,sourceLanguage:'zh'|'en',manual=false){
   const before=liveSaved.current,draft=liveDraft.current;
   if(!(manual?onEdit:onTranslate)||!translationEnabled||!liveTranslationEnabled.current||liveDisabled.current||!current()||liveOption.current!==id||focusedOptionId&&focusedOptionId!==id
@@ -87,21 +88,34 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
    if(manual)onEdit?.(key,'main',quotationTarget);else onTranslate?.(key,'main',sourceLanguage,quotationTarget);
   }catch(cause){setError(cause instanceof Error?cause.message:'번역할 최종 대표이미지 연결을 확인해주세요.');}
  }
- return <section className="panel-stack" aria-label="옵션 최종 견적 대표이미지 편집" data-quotation-source-step="대표 이미지" data-workspace-dirty={dirty} data-workspace-saving={busy}>
+ function candidate(key:string){const index=pool.indexOf(key);return <button type="button" key={key} aria-label={`최종 대표이미지 ${index+1} 선택`} aria-pressed={selected.length===1&&selected[0]===key} disabled={disabled||!valid||busy||uncertain} onClick={()=>edit(key)}><img src={url(key)} alt={`저장 이미지 ${index+1}`} width={100} height={100} loading="lazy"/><span>이미지 {index+1}</span></button>;}
+ return <section className="panel-stack option-main-image-editor" aria-label="옵션 최종 견적 대표이미지 편집" data-quotation-source-step="대표 이미지" data-workspace-dirty={dirty} data-workspace-saving={busy}>
   <h3>최종 견적 대표이미지</h3><p>이 옵션의 견적서와 상품 표에 표시할 대표이미지를 선택합니다.</p>{error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}{dirty&&!fresh&&<p role="status">다른 저장값이 변경되었습니다. 이미지 선택은 유지했습니다.</p>}
   <label className="field"><span>편집할 옵션</span><select aria-label="최종 대표이미지 옵션" value={id} disabled={disabled||busy||dirty||focusedOptionId!==undefined} onChange={event=>{if(focusedOptionId===undefined&&currentOption()&&!liveDisabled.current&&!request.current&&!(liveDraft.current.scope===scope&&liveDraft.current.value!==undefined))setSelection({scope,id:event.target.value});}}><option value="">옵션 선택</option>{rows.filter(row=>focusedOptionId===undefined||row.optionId===focusedOptionId).map(row=><option key={row.optionId} value={row.optionId!}>{row.optionLabel}{row.included?'':' · 견적 제외'}</option>)}</select></label>
   {!valid&&<p role="alert">선택한 옵션이 현재 견적서에 없습니다.</p>}
-  <div className="image-selected-strip">{selected.map(key=><figure key={key}>{pool.includes(key)?<button type="button" aria-label="최종 대표이미지 크게 보기" aria-haspopup="dialog" disabled={!valid||!fresh||disabled} onClick={()=>openPreview(key)} style={{display:'block',maxWidth:'100%',padding:0,border:0,background:'transparent',cursor:'zoom-in'}}><img src={url(key)} alt="최종 견적 대표이미지" style={{maxWidth:'100%',maxHeight:320}}/></button>:<p>현재 상품에 없는 대표이미지 참조</p>}<figcaption>{key.split('/').at(-1)}</figcaption>
-   {onEdit&&<button type="button" className="btn ghost" aria-label="최종 대표이미지 편집하기" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh||!pool.includes(key)} onClick={()=>translateSelected(key,'zh',true)}>편집하기</button>}
-   {onTranslate&&<div role="group" aria-label="최종 견적 대표이미지 번역"><button type="button" className="btn ghost" aria-label="최종 대표이미지 중국어 한국어 번역" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh||!pool.includes(key)} onClick={()=>translateSelected(key,'zh')}>중국어 → 한국어</button><button type="button" className="btn ghost" aria-label="최종 대표이미지 영어 한국어 번역" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh||!pool.includes(key)} onClick={()=>translateSelected(key,'en')}>영어 → 한국어</button></div>}
-  </figure>)}</div>{valid&&!selected.length&&<p>최종 대표이미지는 공란입니다.</p>}
-  <nav aria-label="대표이미지 후보 종류" className="quote-actions">{libraryTabs.map(([name,label])=><button type="button" className={`btn ${tab===name?'primary':'ghost'}`} key={name} aria-label={`${label} 보기`} aria-pressed={tab===name} disabled={disabled||busy||name!=='work'&&!groups} onClick={()=>{if(currentOption()&&!liveDisabled.current&&!request.current)setLibraryTab({scope,tab:name});}}>{label} {name==='work'?pool.length:groups?.[name].length??'미확인'}</button>)}</nav>
-  <small>업로드·편집한 이미지는 작업 이미지에서 확인하세요. 탭을 바꿔도 현재 선택은 유지됩니다.</small>
-  {libraryState?.error&&<p role="status">{libraryState.error}</p>}
-  <div className="image-asset-grid">{visiblePool.map(key=>{const index=pool.indexOf(key);return <button type="button" key={key} aria-label={`최종 대표이미지 ${index+1} 선택`} aria-pressed={selected.length===1&&selected[0]===key} disabled={disabled||!valid||busy||uncertain} onClick={()=>edit(key)}><img src={url(key)} alt={`저장 이미지 ${index+1}`} width={100} height={100}/><span>이미지 {index+1}</span></button>;})}</div>
-  {base&&!visiblePool.length&&<p>이 종류에 연결된 저장 이미지가 없습니다. 작업 이미지에서 전체 목록을 확인하세요.</p>}
-  <div className="quote-actions"><button type="button" className="btn ghost" disabled={disabled||!valid||busy||uncertain} onClick={()=>edit('')}>최종 대표이미지 비우기</button><button type="button" className="btn ghost" disabled={disabled||!valid||busy||uncertain} onClick={()=>edit(null)}>공통·원본 대표이미지 복원</button><button type="button" className="btn primary" disabled={disabled||!valid||busy||!dirty} onClick={()=>void save()}>{uncertain?'대표이미지 저장 결과 확인·재시도':'최종 견적 대표이미지 저장'}</button></div>
-  {dirty&&<button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void load(true)}>선택 유지·최신 대표이미지 조회</button>}<button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>{if(currentOption()&&!liveDisabled.current&&!request.current){clear();void load();}}}>{dirty?'선택 취소·저장 대표이미지 조회':'최종 대표이미지 저장본 조회'}</button>
+  <div className="image-edit-workspace main-image-editor-workspace">
+   <aside className="image-edit-library main-image-library" aria-label="대표이미지 후보">
+    <h4>이미지 선택</h4>
+    <nav aria-label="대표이미지 후보 종류" className="main-image-library-tabs">{libraryTabs.map(([name,label])=><button type="button" className={`btn ${tab===name?'primary':'ghost'}`} key={name} aria-label={`${label} 보기`} aria-pressed={tab===name} disabled={disabled||busy||name!=='work'&&!groups} onClick={()=>{if(currentOption()&&!liveDisabled.current&&!request.current)setLibraryTab({scope,tab:name});}}>{label} <small>{groups?.[name].length??'미확인'}</small></button>)}</nav>
+    {libraryState?.error&&<p role="status">{libraryState.error}</p>}
+    <div className="image-asset-grid main-image-library-grid" aria-label={`${libraryTabs.find(([name])=>name===tab)?.[1]} 후보`}>{visiblePool.map(candidate)}</div>
+    {base&&!visiblePool.length&&<p>이 종류에 연결된 이미지가 없습니다.</p>}
+    <small>탭을 바꿔도 현재 선택은 유지됩니다. 직접 올린 사진은 아래 전체 저장 이미지에서 선택하세요.</small>
+    <details className="main-image-all-saved"><summary>전체 저장 이미지 · {pool.length}개</summary><p>직접 업로드한 사진을 포함한 저장 목록입니다.</p><div className="image-asset-grid main-image-library-grid">{pool.map(candidate)}</div></details>
+   </aside>
+   <section className="image-edit-canvas main-image-current" aria-label="현재 대표이미지 미리보기">
+    <h4>현재 대표 이미지</h4>
+    {selected.map(key=><figure className="image-large-preview" key={key}>{pool.includes(key)?<button type="button" aria-label="최종 대표이미지 크게 보기" aria-haspopup="dialog" disabled={!valid||!fresh||disabled} onClick={()=>openPreview(key)} style={{display:'block',width:'100%',padding:0,border:0,background:'transparent',cursor:'zoom-in'}}><img src={url(key)} alt="최종 견적 대표이미지" style={{maxWidth:'100%',height:'auto'}}/></button>:<p>현재 상품에 없는 대표이미지 참조</p>}<figcaption>선택한 대표 이미지</figcaption>
+     <div className="quote-actions main-image-preview-actions">
+      {onEdit&&<button type="button" className="btn ghost" aria-label="최종 대표이미지 편집하기" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh||!pool.includes(key)} onClick={()=>translateSelected(key,'zh',true)}>편집하기</button>}
+      {onTranslate&&<div role="group" aria-label="최종 견적 대표이미지 번역"><button type="button" className="btn ghost" aria-label="최종 대표이미지 중국어 한국어 번역" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh||!pool.includes(key)} onClick={()=>translateSelected(key,'zh')}>중국어 → 한국어</button><button type="button" className="btn ghost" aria-label="최종 대표이미지 영어 한국어 번역" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh||!pool.includes(key)} onClick={()=>translateSelected(key,'en')}>영어 → 한국어</button></div>}
+     </div>
+    </figure>)}
+    {valid&&!selected.length&&<div className="empty"><p>최종 대표이미지는 공란입니다.</p></div>}
+    <div className="quote-actions main-image-save-actions"><button type="button" className="btn ghost" disabled={disabled||!valid||busy||uncertain} onClick={()=>edit('')}>최종 대표이미지 비우기</button><button type="button" className="btn ghost" disabled={disabled||!valid||busy||uncertain} onClick={()=>edit(null)}>공통·원본 대표이미지 복원</button><button type="button" className="btn primary" disabled={disabled||!valid||busy||!dirty} onClick={()=>void save()}>{uncertain?'대표이미지 저장 결과 확인·재시도':'최종 견적 대표이미지 저장'}</button></div>
+    {dirty&&<button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void load(true)}>선택 유지·최신 대표이미지 조회</button>}<button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>{if(currentOption()&&!liveDisabled.current&&!request.current){clear();void load();}}}>{dirty?'선택 취소·저장 대표이미지 조회':'최종 대표이미지 저장본 조회'}</button>
+   </section>
+  </div>
   {preview?.generation===previewGeneration&&selected.includes(preview.key)&&pool.includes(preview.key)&&<ImageFullscreenPreview src={url(preview.key)} alt="최종 견적 대표이미지 전체 화면" onClose={()=>closePreview(preview)}/>}
  </section>;
 }
