@@ -4,6 +4,7 @@ import { findCollectionJob } from '@/db/collection-jobs';
 import { readCollectionResult, storeCollectionResult } from '@/db/collection-results';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import { parseBrowserProductCapture } from '@/app/browser-product-capture';
+import { selectedPageReceiptMatches } from '@/app/selected-page-receipt';
 
 const reply=(body:unknown,status=200)=>NextResponse.json(body,{status,headers:{'cache-control':'no-store'}});
 export async function POST(request:Request,context:{params:Promise<{id:string}>}){
@@ -14,14 +15,18 @@ export async function POST(request:Request,context:{params:Promise<{id:string}>}
   if(!job)return reply({error:'수집 요청을 찾을 수 없습니다.'},404);
   if(job.status==='cancelled')return reply({error:'취소된 수집 요청입니다.'},409);
   const existing=await readCollectionResult(owner,id);
-  if(existing)return reply({jobId:id,offerId:job.offer_id,receipt:existing});
   let input:unknown;
   try{input=await readBoundedJson(request,8*1024*1024);}catch(error){return reply({error:error instanceof RequestBodyError?error.message:'수집 원문을 읽지 못했습니다.'},error instanceof RequestBodyError?error.status:400);}
   let result;
   try{result=(input as {format?:unknown})?.format==='yoofam-saved-page-capture-v1'?await (await import('@/app/owned-page-capture')).parseOwnedPageCapture(owner,input,job.source_url):parseBrowserProductCapture(input,job.source_url);}catch(error){return reply({error:error instanceof Error?error.message:'상품 원문을 확인하지 못했습니다.',code:'SOURCE_NOT_COLLECTED'},422);}
+  if(existing){
+   if((input as {format?:unknown})?.format==='yoofam-saved-page-capture-v1'&&!selectedPageReceiptMatches(existing.result,result,job.offer_id))return reply({error:'이 요청에는 다른 수집본이 이미 보관되어 있습니다. 기존 작업은 유지했습니다. 선택한 수집본과 기존 요청을 다시 확인해주세요.',code:'SOURCE_SELECTION_CONFLICT'},409);
+   return reply({jobId:id,offerId:job.offer_id,receipt:existing});
+  }
   if(result.offerId!==job.offer_id)return reply({error:'요청 상품번호가 일치하지 않습니다.'},409);
   const saved=await storeCollectionResult(owner,id,result);
   if(saved.status!=='stored')return reply({error:'원문이 변경되었거나 요청이 취소되었습니다. 기존 내용은 유지됩니다.'},409);
+  if((input as {format?:unknown})?.format==='yoofam-saved-page-capture-v1'&&!selectedPageReceiptMatches(saved.result,result,job.offer_id))return reply({error:'저장 확인 중 수집 원문의 보완본이 변경되었습니다. 기존 작업을 유지했으니 선택한 수집본과 저장 결과를 다시 확인해주세요.',code:'SOURCE_SELECTION_CONFLICT'},409);
   return reply({jobId:id,offerId:job.offer_id,receipt:{result:saved.result,receivedAt:saved.receivedAt}});
  }catch{return reply({error:'수집 결과 저장 여부를 확인하지 못했습니다. 다시 시도해주세요.'},503);}
 }

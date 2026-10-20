@@ -62,20 +62,23 @@ async function addToInbox(h,snapshot=capture()){
  const fingerprint=await h.load('app/source-inbox.ts').pageSourceFingerprint(snapshot),api=h.load('app/api/source-inbox/route.ts');
  const input={expectedOwnerId:'owner',expectedCompany:company,id,fingerprint,snapshot};const response=await api.POST(request('POST',input));assert.equal(response.status,200,await response.clone().text());return {input,ack:await response.json(),api};
 }
-test('real inbox routes + SQLite deduplicate, keep original/review separate and enforce owner/company/revision',async()=>{
+test('real inbox routes + SQLite retain recapture versions, deduplicate exact retries and enforce owner/company/revision',async()=>{
  const h=mobileIntakeHarness();try{
   const {input,api}=await addToInbox(h,capture({complete:false}));
   const original=h.sqlite.prepare('SELECT payload FROM source_inbox').get().payload;
   const same=await api.POST(request('POST',input));assert.equal(same.status,200);
   const other=structuredClone(input);other.id='00000000-0000-4000-8000-000000000748';other.snapshot.title='later capture';other.fingerprint=await h.load('app/source-inbox.ts').pageSourceFingerprint(other.snapshot);
-  const duplicate=await api.POST(request('POST',other));assert.equal(duplicate.status,200);assert.equal((await duplicate.json()).duplicate,true);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM source_inbox').get().n,1);assert.equal(h.sqlite.prepare('SELECT payload FROM source_inbox').get().payload,original);
+  // Changed source is a new immutable version; the old discard-on-offer-ID
+  // expectation lost fresh prices/images and is intentionally replaced here.
+  const duplicate=await api.POST(request('POST',other));assert.equal(duplicate.status,200);const recaptured=await duplicate.json();assert.equal(recaptured.duplicate,false);assert.equal(recaptured.storedId,other.id);assert.equal(recaptured.storedFingerprint,other.fingerprint);assert.equal(recaptured.captureOriginId,id);assert.equal(recaptured.captureVersion,2);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM source_inbox').get().n,1);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM source_inbox_captures').get().n,1);assert.equal(h.sqlite.prepare('SELECT payload FROM source_inbox').get().payload,original);
   const ready=h.load('app/api/source-inbox/ready/route.ts');assert.equal((await ready.GET(new Request('https://app.test/api/source-inbox/ready?sourceUrl='+encodeURIComponent(url)))).status,409);
   const complete=capture();const review={expectedOwnerId:'owner',id,expectedRevision:1,review:{title:complete.title,options:complete.options.map(({key,name,supplierSku,unitPriceCny,currency,minimumOrder})=>({key,name,supplierSku,unitPriceCny,currency,minimumOrder}))}};
   assert.equal((await api.PUT(request('PUT',review))).status,200);assert.equal((await api.PUT(request('PUT',review))).status,409);
-  assert.equal(h.sqlite.prepare('SELECT payload FROM source_inbox').get().payload,original);const response=await ready.GET(new Request('https://app.test/api/source-inbox/ready?sourceUrl='+encodeURIComponent(url)));assert.equal(response.status,200);assert.equal((await response.json()).capture.revision,2);
+  assert.equal(h.sqlite.prepare('SELECT payload FROM source_inbox').get().payload,original);const response=await ready.GET(new Request('https://app.test/api/source-inbox/ready?'+new URLSearchParams({sourceUrl:url,captureId:id,fingerprint:input.fingerprint,revision:'2'})));assert.equal(response.status,200);assert.equal((await response.json()).capture.revision,2);
+  assert.equal((await ready.GET(new Request('https://app.test/api/source-inbox/ready?sourceUrl='+encodeURIComponent(url)))).status,409,'the newer unreviewed source must not inherit an older version review');
   assert.equal((await api.DELETE(request('DELETE',{expectedOwnerId:'owner',id,expectedRevision:1}))).status,409);
-  assert.equal((await api.DELETE(request('DELETE',{expectedOwnerId:'owner',id,expectedRevision:2}))).status,200);assert.equal((await (await api.GET()).json()).items.length,0);
-  assert.equal(h.sqlite.prepare('SELECT payload FROM source_inbox').get().payload,original);assert.equal((await api.POST(request('POST',other))).status,200);assert.equal((await (await api.GET()).json()).items.length,1);
+  assert.equal((await api.DELETE(request('DELETE',{expectedOwnerId:'owner',id,expectedRevision:2}))).status,200);assert.deepEqual((await (await api.GET()).json()).items.map(item=>item.id),[other.id]);
+  assert.equal(h.sqlite.prepare('SELECT payload FROM source_inbox').get().payload,original);assert.equal((await api.POST(request('POST',input))).status,200);assert.equal((await (await api.GET()).json()).items.length,2);assert.equal(h.sqlite.prepare('SELECT review_payload FROM source_inbox_captures').get().review_payload,null);
   assert.equal((await api.POST(request('POST',{...input,expectedOwnerId:'foreign'}))).status,409);
   h.setCompany({code:'A01526306',name:'유앤채'});assert.equal((await ready.GET(new Request('https://app.test/api/source-inbox/ready?sourceUrl='+encodeURIComponent(url)))).status,409);
   assert.equal(h.network.length,0);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM products').get().n,0);

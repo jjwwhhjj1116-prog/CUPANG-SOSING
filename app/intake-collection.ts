@@ -7,16 +7,23 @@ import type { BrowserProductCapture } from '@/app/browser-product-bridge';
 import { canSupplementCollection } from '@/app/collection-source-supplement';
 import { captureCollectionSupplement } from '@/app/collection-supplement-client';
 import { requestIntakeCollectionReceipt } from '@/app/intake-collection-recovery';
+import {validateSourceCaptureSelection,type SourceCaptureSelection} from '@/app/source-capture-selection';
+import {validateCollectionCapacity,recommendCollectionImages} from '@/app/collection-capacity';
+import {fetchCollectionCapacity} from '@/app/collection-capacity-client';
+import {selectedPageReceiptMatches} from '@/app/selected-page-receipt';
 
 /** A user-initiated fetch produces an editable draft only, never a Hub submission. */
-export async function collectIntakeProduct(job:CollectionJob,options:{signal:AbortSignal;fetcher:typeof fetch;onJob:(job:CollectionJob)=>void;onProgress:(message:string)=>void;captureFromBrowser?:(sourceUrl:string,signal:AbortSignal)=>Promise<BrowserProductCapture>;probeExistingFromBrowser?:(sourceUrl:string,signal:AbortSignal)=>Promise<BrowserProductCapture|null>}) {
+export async function collectIntakeProduct(job:CollectionJob,options:{signal:AbortSignal;fetcher:typeof fetch;onJob:(job:CollectionJob)=>void;onProgress:(message:string)=>void;selectedCapture?:Readonly<SourceCaptureSelection>;captureFromBrowser?:(sourceUrl:string,signal:AbortSignal)=>Promise<BrowserProductCapture>;probeExistingFromBrowser?:(sourceUrl:string,signal:AbortSignal)=>Promise<BrowserProductCapture|null>}) {
  if(options.signal.aborted)return;
  const fetcher=options.fetcher;
+ const selectedCapture=options.selectedCapture===undefined?undefined:validateSourceCaptureSelection(options.selectedCapture,job.source_url);
  // A durable server write can finish after its view closes. It remains
  // recoverable, but must not publish into a reopened or newly edited queue.
  const reportJob=(value:CollectionJob)=>{if(!options.signal.aborted)options.onJob(value);};
  const reportProgress=(message:string)=>{if(!options.signal.aborted)options.onProgress(message);};
  if(job.status==='cancelled')throw Error('취소된 수집 요청입니다.');
+ if(selectedCapture&&job.product_id&&!job.received_at)throw Error('기존 작업에 연결된 수집 원문을 확인하지 못했습니다. 기존 작업을 열거나 새 초안을 검토해주세요. 선택한 수집본으로 기존 작업을 변경하지 않았습니다.');
+ if(job.received_at&&!Number.isFinite(Date.parse(job.received_at)))throw Error('원문 저장 시각을 확인하지 못했습니다.');
  // A product can already exist even though image import failed. Resume from
  // the immutable receipt; never treat a product ID alone as completed import.
  if(job.product_id&&!job.received_at){reportJob(job);return '기존 상품 열기 · 저장된 수정값 유지';}
@@ -24,10 +31,10 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
  let supplementNotice='';
  let source:ReturnType<typeof validateCollectionReceiptResponse>=null;
  let repairedExistingSource=false;
- if(!job.received_at){
+ if(!job.received_at||selectedCapture){
   reportProgress('상품 페이지에서 정보 가져오는 중');
   let existing:BrowserProductCapture|null=null;
-  if(options.probeExistingFromBrowser){
+  if(!selectedCapture&&options.probeExistingFromBrowser){
    // A bounded read of an already-open exact tab can avoid waiting for the
    // public server timeout. This probe cannot open tabs or make source requests.
    try{existing=await options.probeExistingFromBrowser(job.source_url,options.signal);}
@@ -36,8 +43,8 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
   }
   // The server selects the configured provider before considering this optional
   // inert capture. One POST/receipt also preserves the one-GET ACK recovery path.
-  let acknowledgement=await requestIntakeCollectionReceipt(job,'collect',{fetcher,signal:options.signal,...(existing?{capture:existing}:{})});
-  if(acknowledgement?.kind==='source-unavailable'&&options.captureFromBrowser&&!options.signal.aborted){
+  let acknowledgement=await requestIntakeCollectionReceipt(job,'collect',{fetcher,signal:options.signal,...(selectedCapture?{capture:selectedCapture}:existing?{capture:existing}:{})});
+  if(!selectedCapture&&acknowledgement?.kind==='source-unavailable'&&options.captureFromBrowser&&!options.signal.aborted){
    reportProgress('현재 Chrome에서 1688 상품 원문 확인 중');
    const captured=await options.captureFromBrowser(job.source_url,options.signal);
    if(options.signal.aborted)return;
@@ -45,6 +52,7 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
   }
   if(options.signal.aborted)return;
   if(!acknowledgement||acknowledgement.kind!=='received')throw Error(acknowledgement?.error||'상품 정보를 가져오지 못했습니다.');
+  if(selectedCapture&&job.received_at&&acknowledgement.receivedAt!==job.received_at)throw Error('보관된 수집 원문이 변경되었습니다. 기존 작업과 선택한 수집본을 다시 확인해주세요.');
   source=acknowledgement.source;
   received={...job,received_at:acknowledgement.receivedAt};
  } else if(!Number.isFinite(Date.parse(job.received_at)))throw Error('원문 저장 시각을 확인하지 못했습니다.');
@@ -57,6 +65,26 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
   if(!response.ok)throw Error(body.error||'저장된 수집 원문을 확인하지 못했습니다.');
   source=validateCollectionReceiptResponse(body,job.id,job.offer_id);
   if(!source||body.receipt?.receivedAt!==job.received_at)throw Error('저장된 수집 원문이 현재 요청과 일치하지 않습니다.');
+ }
+ let resumeExistingImages=Boolean(selectedCapture&&job.product_id);
+ let resumeProductId=resumeExistingImages?job.product_id:null;
+ let recheckReusedImages=false;
+ let reusedWorkIsComplete=false;
+ const hasPendingImages=async()=>{
+  if(!source)throw Error('선택한 수집본의 저장 원문을 확인하지 못했습니다.');
+  reportProgress('저장된 원본 이미지 반영 상태 확인 중');
+  if(!source.images.length)return false;
+  const response=await fetchCollectionCapacity(`/api/collection-jobs/${encodeURIComponent(job.id)}/capacity`,{fetcher,signal:options.signal,shouldStop:()=>options.signal.aborted,attempts:1});
+  const body=await response.json() as {capacity?:unknown;error?:string};
+  if(options.signal.aborted)return false;
+  if(!response.ok)throw Error(body.error||'저장된 이미지 반영 상태를 확인하지 못했습니다. 기존 작업은 유지됩니다.');
+  const capacity=validateCollectionCapacity(body.capacity,source.images.length);
+  const indices=recommendCollectionImages(source,capacity,'all',1);
+  return indices.some(index=>!capacity.reusableIndices.includes(index));
+ };
+ if(resumeExistingImages&&!await hasPendingImages()){
+  if(options.signal.aborted)return;
+  reportJob(received);return '기존 상품 열기 · 저장된 수정값 유지';
  }
  // A full mobile capture may legitimately contain images but no description
  // text. Do not capture it twice in one intake or on a saved image retry. Its
@@ -75,7 +103,7 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
  // Its supported source was already read, even when this invocation has no DOM
  // candidate. Optional gaps stay reviewable through explicit source repair.
  const reuseCapturedJsonLdSource=source?.provider==='chrome-product-jsonld-v1'||source?.provider==='chrome-current-page-v1'||source?.provider==='chrome-reviewed-page-v1';
- if(source&&!storedSourceFork&&!reuseCapturedMobileSource&&!reuseCapturedJsonLdSource&&canSupplementCollection(source)&&options.captureFromBrowser){
+ if(source&&!selectedCapture&&!storedSourceFork&&!reuseCapturedMobileSource&&!reuseCapturedJsonLdSource&&canSupplementCollection(source)&&options.captureFromBrowser){
   reportProgress('현재 Chrome에서 상세 이미지·상품 속성 보완 중');
   try{
    let expectedProductVersion:string|undefined;
@@ -99,7 +127,21 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
  let seo:Awaited<ReturnType<typeof prepareIntakeSeoOutcome>>|undefined;
  const prepareDraft=async(productId:string)=>{
   if(options.signal.aborted)return;
+  if(resumeExistingImages&&productId!==resumeProductId)throw Error('이미지 재개 상품이 기존 작업과 다릅니다. 기존 수정값을 확인해주세요.');
+  if(recheckReusedImages){
+   recheckReusedImages=false;
+   const pending=await hasPendingImages();
+   if(options.signal.aborted)return;
+   if(!pending){
+    reusedWorkIsComplete=true;
+    reportJob({...received,product_id:productId});
+    // The import callback precedes every image write. Stop that loop when
+    // another view has already completed this same immutable receipt.
+    throw Error('기존 상품의 저장된 이미지와 수정값을 확인했습니다.');
+   }
+  }
   reportJob({...received,product_id:productId});
+  if(resumeExistingImages)return;
   if(job.goal==='collect'||seo)return;
   if(repairedExistingSource){
    // The old canonical translation has no evidence for the new attributes.
@@ -110,12 +152,37 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
   reportProgress('저장 원문으로 SEO·옵션 초안 작성 중');
   seo=await prepareIntakeSeoOutcome(productId,fetcher,options.signal);
  };
- await importReceivedJobs([received],{assignToStage:false,reservedImageSlots:1,signal:options.signal,onProductSaved:(_id,productId)=>prepareDraft(productId),fetcher:(url,init)=>fetcher(url,{...init,signal:init?.signal?AbortSignal.any([init.signal,options.signal]):options.signal}),shouldStop:()=>options.signal.aborted,
-  onProgress:(_id,message)=>reportProgress(message),onResult:(_id,outcome)=>{outcomes.push(outcome);if(outcome.productId)reportJob({...received,product_id:outcome.productId});}});
+ const importFetcher:typeof fetch=async(url,init)=>{
+  const response=await fetcher(url,{...init,signal:init?.signal?AbortSignal.any([init.signal,options.signal]):options.signal});
+  if(selectedCapture&&String(url)===`/api/collection-jobs/${encodeURIComponent(job.id)}/result`&&(init?.method??'GET')==='GET'&&response.ok){
+   const body=await response.clone().json() as {receipt?:{receivedAt?:unknown}};
+   const current=validateCollectionReceiptResponse(body,job.id,job.offer_id);
+   if(!current||body.receipt?.receivedAt!==received.received_at||!selectedPageReceiptMatches(current,source??undefined,job.offer_id))
+    throw Error('이미지 반영 전에 보관된 수집 원문이 변경되었습니다. 선택한 수집본을 다시 확인해주세요.');
+  }
+  if(selectedCapture&&String(url)===`/api/collection-jobs/${encodeURIComponent(job.id)}/product`&&init?.method==='POST'&&response.ok){
+   const body=await response.clone().json() as {productId?:unknown;reused?:unknown};
+   if(typeof body.productId!=='string'||!body.productId||typeof body.reused!=='boolean')throw Error('선택한 수집본의 상품 연결 상태를 확인하지 못했습니다. 기존 작업을 확인해주세요.');
+   if(resumeProductId&&body.productId!==resumeProductId)throw Error('이미지 재개 상품이 기존 작업과 다릅니다. 기존 수정값을 확인해주세요.');
+   if(body.reused){
+    recheckReusedImages=!resumeExistingImages;
+    resumeExistingImages=true;
+    resumeProductId=body.productId;
+   }
+  }
+  return response;
+ };
+ await importReceivedJobs([received],{assignToStage:false,reservedImageSlots:1,signal:options.signal,onProductSaved:(_id,productId)=>prepareDraft(productId),fetcher:importFetcher,shouldStop:()=>options.signal.aborted,
+  onProgress:(_id,message)=>reportProgress(message),onResult:(_id,outcome)=>{outcomes.push(outcome);if(outcome.productId&&(!resumeExistingImages||outcome.productId===resumeProductId))reportJob({...received,product_id:outcome.productId});}});
  if(options.signal.aborted)return;
+ if(reusedWorkIsComplete)return '기존 상품 열기 · 저장된 수정값 유지';
  const outcome=outcomes[0];
  if(!outcome||!outcome.productId)throw Error(outcome?.error||'상품 반영을 완료하지 못했습니다. 원문은 보존됩니다.');
  if(outcome.status==='stopped')return;
+ if(resumeExistingImages){
+  if(outcome.productId!==resumeProductId||outcome.status!=='completed')throw Error(outcome.error||'누락 이미지 반영을 완료하지 못했습니다. 기존 상품·편집값은 유지됩니다.');
+  return ['누락된 원본 이미지를 반영했습니다. 기존 상품·SEO·이미지 편집값은 유지됩니다.',...(outcome.warnings??[])].filter(Boolean).join(' ');
+ }
  // The add-only choice ends at source import, including on resume. It must
  // not depend on AI configuration or prepare a generation request.
  if(job.goal==='collect'){

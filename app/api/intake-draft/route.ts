@@ -29,7 +29,7 @@ export async function PUT(request: Request) {
       if (!profile) return json({ error: '카테고리 설정을 찾을 수 없습니다. 해당 행의 카테고리를 다시 선택해주세요.' }, 400);
       const snapshot = intakeDraftProfileSnapshot(row, profile, previous.rows.find(saved => saved.id === row.id));
       if (!snapshot) return json({ error: '선택한 카테고리 설정이 변경되었습니다. URL·특징·키워드는 유지하고 해당 행의 카테고리를 다시 선택해주세요.', code: 'CATEGORY_PROFILE_CHANGED' }, 409);
-      rows.push({ id: row.id, ...snapshot, url: row.url, features: row.features, keywords: row.keywords, status: 'draft' });
+      rows.push({ id: row.id, ...snapshot, url: row.url, features: row.features, keywords: row.keywords,...(row.sourceCapture?{sourceCapture:row.sourceCapture}:{}), status: 'draft' });
     }
     const draft = await saveIntakeDraft(owner, input.expectedRevision, { rows, goal: input.goal });
     return draft ? json({ ownerId:owner,draft }) : json({ error: '다른 창에서 임시저장이 변경되었습니다. 현재 입력은 유지됩니다. 서버 초안을 확인한 뒤 다시 저장해주세요.' }, 409);

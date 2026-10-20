@@ -3,7 +3,7 @@ import { assetRoles, labelFields } from '@/app/product-content';
 import { optionFieldNames, OPTION_LIMIT } from '@/app/product-options';
 import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 
-export type SeoWorkspaceDraft = { seo: Partial<Record<'title' | 'keywords' | 'description', string>>; optionNames: Record<string, string> };
+export type SeoWorkspaceDraft = { seo: Partial<Record<'title' | 'keywords' | 'description', string>>; optionNames: Record<string, string>;clearDocumentKeywords?:true };
 export const emptySeoWorkspaceDraft = (): SeoWorkspaceDraft => ({ seo: {}, optionNames: {} });
 export const hasSeoWorkspaceDraft = (draft: SeoWorkspaceDraft) => Object.keys(draft.seo).length > 0 || Object.keys(draft.optionNames).length > 0;
 const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
@@ -45,7 +45,13 @@ export function seoWorkspaceInput(view: SeoWorkspaceView, draft: SeoWorkspaceDra
   const seo: SeoWorkspaceInput['seo'] = {};
   if (Object.hasOwn(draft.seo, 'title')) seo.title = draft.seo.title;
   if (Object.hasOwn(draft.seo, 'description')) seo.description = draft.seo.description;
-  if (Object.hasOwn(draft.seo, 'keywords')) seo.keywordText = draft.seo.keywords;
+  if (Object.hasOwn(draft,'clearDocumentKeywords')) {
+    if(draft.clearDocumentKeywords!==true||!Object.hasOwn(draft.seo,'keywords')||draft.seo.keywords!=='')
+      throw Error('함께 비울 검색태그 입력을 다시 확인해주세요.');
+    // The observed text-save service retains its prior document on empty
+    // input. Only this explicit action selects the existing array-only clear.
+    seo.keywords=[];
+  }else if (Object.hasOwn(draft.seo, 'keywords')) seo.keywordText = draft.seo.keywords;
   const names = Object.keys(draft.optionNames);
   if (names.some(id => view.options.rows.filter(row => row.id === id).length !== 1)) throw Error('수정한 옵션이 현재 저장본에 없습니다. 입력을 유지했습니다.');
   return validateSeoWorkspaceInput({ expectedProductVersion: view.productVersion, expectedContentRevision: view.content.revision, expectedOptionRevision: view.options.revision,

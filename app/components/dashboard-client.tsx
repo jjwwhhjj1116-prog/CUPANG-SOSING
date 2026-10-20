@@ -31,6 +31,7 @@ import {SourceInboxPanel} from '@/app/components/source-inbox-panel';
 import {useSourceRegistrations} from '@/app/components/use-source-registrations';
 import type {SourceInboxItem} from '@/app/source-inbox';
 import {sameSourceUrl} from '@/app/source-registration';
+import {sourceCaptureSelection,sameSourceCaptureSelection} from '@/app/source-capture-selection';
 import { CollectionBatchPanel } from '@/app/components/collection-batch-panel';
 import { ProductOptionBoard } from '@/app/components/product-option-board';
 import { RegistrationBoard, registrationTitle } from '@/app/components/registration-board';
@@ -565,10 +566,12 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     try{
       if(item.ownerId!==workspaceOwnerId||loading||loadError||busy||addOpen||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving||settingsBusyRef.current)throw Error('현재 상품 목록과 대기열을 확인한 뒤 다시 추가해주세요.');
       if(products.some(product=>sameSourceUrl(product.source_url,item.snapshot.sourceUrl)))throw Error('이미 작업 중인 상품입니다. 기존 작업 상품은 변경하지 않았습니다.');
+      const sourceCapture=sourceCaptureSelection(item);
       setSourceNotice('');
-      if(intakeRows.some(row=>sameSourceUrl(row.url,item.snapshot.sourceUrl))){setView('work');setAddOpen(true);return;}
+      const queued=intakeRows.find(row=>sameSourceUrl(row.url,item.snapshot.sourceUrl));
+      if(queued){if(!sameSourceCaptureSelection(queued.sourceCapture,sourceCapture))throw Error('대기열에 같은 상품의 다른 수집본이나 URL 입력이 있습니다. 기존 행을 확인한 뒤 사용할 수집본을 다시 추가해주세요.');setView('work');setAddOpen(true);return;}
       if(intakeRows.length>=50)throw Error('상품 대기열은 최대 50행입니다. 기존 입력은 유지했습니다.');
-      setIntakeSourceSeed({id:crypto.randomUUID(),sourceUrl:item.snapshot.sourceUrl,title:item.reviewed?.title??item.snapshot.title});setView('work');setAddOpen(true);
+      setIntakeSourceSeed({id:crypto.randomUUID(),sourceUrl:item.snapshot.sourceUrl,title:item.reviewed?.title??item.snapshot.title,sourceCapture});setView('work');setAddOpen(true);
     }catch(error){setSourceNotice(error instanceof Error?error.message:'상품 추가 실패');}
   }
   async function archiveSource(item:SourceInboxItem){

@@ -13,8 +13,9 @@ import { IntakeQuotationPreview } from '@/app/components/intake-quotation-previe
 import {createIntakeNewDraft,recoverIntakeNewDraft,previewIntakeNewDraft,intakeNewDraftInputKey,IntakeNewDraftSettingsChanged,IntakeNewDraftSourceUrlsAvailable,type IntakeNewDraftPreview,type IntakeNewDraftCreated} from '@/app/intake-new-draft';
 import {sameSourceUrl} from '@/app/source-registration';
 import {previewPendingIntakeSource,preparePendingIntakeSource,type PendingIntakeSourcePreview} from '@/app/intake-pending-source';
+import {validateSourceCaptureSelection,sourceCaptureAfterUrlEdit,selectedSourceInboxItem,sameSourceCaptureSelection,type SourceCaptureSelection} from '@/app/source-capture-selection';
 
-export type IntakeSourceSeed={id:string;sourceUrl:string;title?:string};
+export type IntakeSourceSeed={id:string;sourceUrl:string;title?:string;sourceCapture?:Readonly<SourceCaptureSelection>};
 type IntakeCategorySelection={target:string;ownerId:string|undefined;epoch:number;completed:boolean;seed?:IntakeSourceSeed};
 export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced, onJobs, onBusy, goal, onGoal, settings, workspaceOwnerId, onSettingsReloadStarted, onSettingsReloaded, jobs = [], onOpenProduct,sourceSeed,onSourceConsumed,sourceItems=[],onReviewSource }: {
   sourceItems?:import('@/app/source-inbox').SourceInboxItem[];onReviewSource?:(item:import('@/app/source-inbox').SourceInboxItem)=>void;
@@ -101,6 +102,11 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   const selected = pendingRows.filter(row => !excluded.includes(row.id));
   const pending = selected.length;
   const visiblePending = intakeRowsForCollection(visible),unfilledRows=rows.filter(row=>row.status!=='saved'&&!pendingRowIds.has(row.id));
+  function sourceItemForRow(row:IntakeRow|undefined){
+    if(!row)return undefined;
+    if(row.sourceCapture){try{return selectedSourceInboxItem(sourceItems,row.sourceCapture);}catch{return undefined;}}
+    return sourceItems.find(item=>sameSourceUrl(item.snapshot.sourceUrl,row.url));
+  }
   function toggle(ids: string[], checked: boolean) {
     if (!ownerCurrent()||running.current) return;
     setExcluded(previous => checked ? previous.filter(id => !ids.includes(id)) : [...new Set([...previous, ...ids])]);
@@ -110,7 +116,12 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     if(forkPreview?.rowId===id)setForkPreview(null);
     if(pendingPreview?.rowId===id)setPendingPreview(null);
     if(sourceUrlsCandidate?.rowId===id)setSourceUrlsCandidate(null);
-    const update=(previous:IntakeRow[])=>sameOwner()?previous.map(row => row.id === id ? { ...row, ...patch, status: 'draft' as const, message: '', productId: undefined,forkJobId:undefined,pendingJobId:undefined,pendingSourceMode:undefined,pendingSourceHash:undefined } : row):previous;
+    const update=(previous:IntakeRow[])=>sameOwner()?previous.map(row => {
+      if(row.id!==id)return row;
+      const next={ ...row, ...patch, status: 'draft' as const, message: '', productId: undefined,forkJobId:undefined,pendingJobId:undefined,pendingSourceMode:undefined,pendingSourceHash:undefined };
+      if(Object.hasOwn(patch,'url')){const selected=sourceCaptureAfterUrlEdit(row.sourceCapture,next.url);if(selected)next.sourceCapture=selected;else delete next.sourceCapture;}
+      return next;
+    }):previous;
     navigation.current.rows=update(navigation.current.rows);
     onRows(update);
   }
@@ -159,10 +170,15 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     const active=()=>ownerCurrent()&&running.current===controller&&!controller.signal.aborted;
     const publishJobs=(values:CollectionJob[])=>{if(active())onJobs(values);};
     try {
-      const incomplete=selected.map(row=>sourceItems.find(item=>sameSourceUrl(item.snapshot.sourceUrl,row.url))).find(item=>item?.issues.length);
+      const incomplete=selected.map(row=>{
+        if(!row.sourceCapture)return sourceItems.find(item=>sameSourceUrl(item.snapshot.sourceUrl,row.url));
+        const item=selectedSourceInboxItem(sourceItems,row.sourceCapture);
+        if(!item||workspaceOwnerId&&item.ownerId!==workspaceOwnerId)throw Error('선택한 수집본을 다시 확인해주세요. 같은 URL의 다른 수집본으로 바꾸지 않았습니다.');
+        return item;
+      }).find(item=>item?.issues.length);
       if(incomplete)throw Error('수집정보 확인·수정에서 '+incomplete.issues.join(' · ')+'을 확인한 뒤 초안을 작성해주세요.');
       await submitIntakeQueue(rows, goal, { signal: controller.signal, fetcher: fetch, expectedSettings:settings, onSettingsChanged:()=>{if(active()){setSettingsChanged(true);setSettingsMessage('');}}, selectedIds: new Set(selected.map(row => row.id)),
-        collect: (job,onProgress,onProduct) => collectIntakeProduct(job,{signal:controller.signal,fetcher:fetch,captureFromBrowser:capture1688FromChrome,probeExistingFromBrowser:probe1688FromChrome,onJob:updated=>{if(!active())return;publishJobs([updated]);if(updated.product_id)onProduct(updated.product_id);},onProgress}),
+        collect: (job,onProgress,onProduct,selectedCapture) => collectIntakeProduct(job,{signal:controller.signal,fetcher:fetch,...(selectedCapture?{selectedCapture}:{}),captureFromBrowser:capture1688FromChrome,probeExistingFromBrowser:probe1688FromChrome,onJob:updated=>{if(!active())return;publishJobs([updated]);if(updated.product_id)onProduct(updated.product_id);},onProgress}),
         onRow: (id, patch) => {if(!active())return;if(patch.productId)productIds.set(id,patch.productId);if(patch.status==='saved')completed.add(id);onRows(previous => sameOwner()?previous.map(row => row.id === id ? { ...row, ...patch } : row):previous);}, onJobs:publishJobs });
       // Open a confirmed single source draft after import and draft processing.
       // A saved Google failure may require manual translation; failed imports
@@ -293,12 +309,14 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   function selectCategory(selection:IntakeCategorySelection,profile:CategoryProfile){
     if(!categoryCurrent(selection)||running.current)return;
     if(selection.seed&&(pendingSeed.current!==selection.seed.id||categorySource.current?.id!==selection.seed.id||categorySource.current.sourceUrl!==selection.seed.sourceUrl))return;
+    if(selection.seed&&(selection.seed.sourceCapture!==undefined||categorySource.current?.sourceCapture!==undefined)
+      &&!sameSourceCaptureSelection(selection.seed.sourceCapture,categorySource.current?.sourceCapture))return;
     const target=selection.target,currentRows=navigation.current.rows;
     if(target==='new'&&currentRows.length>=50){setError('상품 대기열은 최대 50행입니다. 기존 입력을 정리한 뒤 상품을 추가해주세요.');return;}
     if(target!=='new'&&!currentRows.some(row=>row.id===target&&row.status!=='saved'))return;
-    let sourceUrl='';
+    let sourceUrl='';let sourceCapture:Readonly<SourceCaptureSelection>|undefined;
     if(selection.seed){
-      try{[sourceUrl]=parseCollectionRequest({urls:[selection.seed.sourceUrl],goal:'collect'}).map(value=>value.sourceUrl);}
+      try{[sourceUrl]=parseCollectionRequest({urls:[selection.seed.sourceUrl],goal:'collect'}).map(value=>value.sourceUrl);if(selection.seed.sourceCapture!==undefined)sourceCapture=validateSourceCaptureSelection(selection.seed.sourceCapture,sourceUrl);}
       catch{setError('보관된 1688 URL을 확인해주세요. 기존 입력은 유지했습니다.');return;}
     }
     const id=target==='new'?crypto.randomUUID():target;
@@ -307,7 +325,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     // belongs to this completed selection until another session or owner wins.
     const update=(previous:IntakeRow[])=>{
       if(!categoryCurrent(selection,true))return previous;
-      if(target==='new')return previous.length<50&&!previous.some(row=>row.id===id)?[...previous,{...intakeRow(profile,id),url:sourceUrl}]:previous;
+      if(target==='new')return previous.length<50&&!previous.some(row=>row.id===id)?[...previous,{...intakeRow(profile,id),url:sourceUrl,...(sourceCapture?{sourceCapture}:{})}]:previous;
       return previous.map(row=>row.id===target&&row.status!=='saved'?{...row,profile,status:'draft' as const,message:'',productId:undefined,forkJobId:undefined,pendingJobId:undefined,pendingSourceMode:undefined,pendingSourceHash:undefined}:row);
     };
     if(forkPreviewRef.current?.rowId===target)setForkPreview(null);
@@ -321,11 +339,11 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     if(!categoryCurrent(selection,true))return;
     setQuery('');setCategorySelection(null);
   }
-  if (categorySelection) return <div className="intake-category-dialog" role="dialog" aria-label="카테고리 선택"><header><h3>카테고리 선택</h3><button type="button" className="icon-close" aria-label="카테고리 선택 취소" onClick={()=>cancelCategory(categorySelection)}>×</button></header>{error&&<p role="alert">{error}</p>}<CategoryPicker key={categorySelection.seed?.id} sourceTitle={categorySelection.seed?.title??sourceItems.find(item=>sameSourceUrl(item.snapshot.sourceUrl,rows.find(row=>row.id===categorySelection.target)?.url??''))?.reviewed?.title??sourceItems.find(item=>sameSourceUrl(item.snapshot.sourceUrl,rows.find(row=>row.id===categorySelection.target)?.url??''))?.snapshot.title} workspaceOwnerId={workspaceOwnerId} profiles={profiles} selectedId={rows.find(row => row.id === categorySelection.target)?.profile.id ?? ''} onAdvanced={seed=>{if(!categoryCurrent(categorySelection))return;categoryEpoch.current++;categorySelectionRef.current=null;setCategorySelection(null);onAdvanced(seed);}} onSelected={profile=>selectCategory(categorySelection,profile)}/><footer><button type="button" className="btn ghost" onClick={()=>cancelCategory(categorySelection)}>취소 · 상품 대기열로 돌아가기</button></footer></div>;
+  if (categorySelection) return <div className="intake-category-dialog" role="dialog" aria-label="카테고리 선택"><header><h3>카테고리 선택</h3><button type="button" className="icon-close" aria-label="카테고리 선택 취소" onClick={()=>cancelCategory(categorySelection)}>×</button></header>{error&&<p role="alert">{error}</p>}<CategoryPicker key={categorySelection.seed?.id} sourceTitle={categorySelection.seed?.title??sourceItemForRow(rows.find(row=>row.id===categorySelection.target))?.reviewed?.title??sourceItemForRow(rows.find(row=>row.id===categorySelection.target))?.snapshot.title} workspaceOwnerId={workspaceOwnerId} profiles={profiles} selectedId={rows.find(row => row.id === categorySelection.target)?.profile.id ?? ''} onAdvanced={seed=>{if(!categoryCurrent(categorySelection))return;categoryEpoch.current++;categorySelectionRef.current=null;setCategorySelection(null);onAdvanced(seed);}} onSelected={profile=>selectCategory(categorySelection,profile)}/><footer><button type="button" className="btn ghost" onClick={()=>cancelCategory(categorySelection)}>취소 · 상품 대기열로 돌아가기</button></footer></div>;
   return <div className="modal-form intake-queue">
     <div className="intake-queue-tools"><label>검색<input type="search" aria-label="상품 대기열 검색" placeholder="카테고리 · 1688 URL · 특징 · 키워드" value={query} disabled={busy} onChange={event => setQuery(event.target.value)}/></label><label className="intake-pin-control"><select aria-label="상품 대기열 고정할 열 선택" value={pinnedColumn} onChange={event => setPinnedColumn(event.target.value)}><option value="none">고정할 열 선택</option><option value="category">카테고리</option><option value="url">1688 링크</option><option value="features">특징</option><option value="keywords">키워드</option><option value="status">상태</option></select></label><span>전체 {rows.length}건 · 선택 {pending}건</span>{query && <button type="button" className="btn ghost" disabled={busy} onClick={() => setQuery('')}>검색 해제</button>}</div>
     <div className="intake-queue-table" data-pinned={pinnedColumn} role="region" aria-label="상품 대기열 표" tabIndex={0}><table><thead><tr><th><input type="checkbox" aria-label="검색 결과 전체 선택" disabled={busy || !visiblePending.length} checked={visiblePending.length > 0 && visiblePending.every(row => !excluded.includes(row.id))} onChange={event => toggle(visiblePending.map(row => row.id), event.target.checked)}/></th><th>카테고리</th><th>1688 링크</th><th>특징</th><th>키워드</th><th>상태</th><th>관리</th></tr></thead><tbody>
-      {visible.map(row => { const index = rows.findIndex(item => item.id === row.id); const productId=intakeProductId(row,jobs);const captured=sourceItems.find(item=>sameSourceUrl(item.snapshot.sourceUrl,row.url)); return <tr key={row.id}>
+      {visible.map(row => { const index = rows.findIndex(item => item.id === row.id); const productId=intakeProductId(row,jobs);const captured=sourceItemForRow(row); return <tr key={row.id}>
         <td><input type="checkbox" aria-label={`${index + 1}번째 상품 선택`} disabled={busy || !pendingRowIds.has(row.id)} checked={pendingRowIds.has(row.id) && !excluded.includes(row.id)} onChange={event => toggle([row.id], event.target.checked)}/></td>
         <td><button type="button" className="intake-category-button" disabled={busy || row.status === 'saved'} onClick={() => openCategory(row.id)}>{row.profile.categoryPath.join(' > ')}</button><small className="intake-profile-summary">코드 {row.profile.categoryId || '미입력'} · v{row.profile.revision}<br/>{row.profile.template ? `양식: ${row.profile.template.name}` : (row.profile.hubSchema?.metadata.scopeType??row.profile.hubSchema?.metadata.scope)==='Retail_Categorized_Single' ? '개별 견적 양식 연결' : 'Excel 양식 미연결'}</small><button type="button" className="btn ghost" aria-expanded={previewId === row.id} onClick={() => setPreviewId(previewId === row.id ? null : row.id)}>견적 항목·양식 확인</button></td>
         <td><input ref={element => { if (element) urlInputs.current.set(row.id, element); else urlInputs.current.delete(row.id); }} aria-label={`${index + 1}번째 1688 링크`} value={row.url} maxLength={2048} disabled={busy || row.status === 'saved'} placeholder="https://detail.1688.com/offer/…" onChange={event => edit(row.id, { url: event.target.value })} />{row.url.trim() && <small className="intake-source-url">{row.url.trim()}</small>}{captured&&onReviewSource&&<><button type="button" className="btn ghost" disabled={busy||row.status==='saved'} onClick={()=>onReviewSource(captured)}>수집정보 확인·수정</button><small>{captured.issues.length?`확인 필요: ${captured.issues.join(' · ')}`:'수집정보 준비됨'}</small></>}</td>

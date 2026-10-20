@@ -1,5 +1,6 @@
 import type { IntakeRow } from '@/app/intake-queue';
 import type { CategoryProfile } from '@/app/category-profiles';
+import {validateSourceCaptureSelection} from '@/app/source-capture-selection';
 export type IntakeDraft = { revision: number; rows: IntakeRow[]; goal: string; updatedAt: string | null };
 /** New URL intake prepares editable SEO, pricing and source image roles.
  * Persisted draft goals remain authoritative; this never triggers transmission. */
@@ -23,12 +24,13 @@ export function validateIntakeDraft(input: unknown) {
     if (!/^[a-zA-Z0-9_-]{1,100}$/.test(id) || ids.has(id)) throw Error('상품 행 ID가 잘못되었거나 중복되었습니다.');
     ids.add(id);
     if (!/^[a-f0-9-]{36}$/.test(profileId) || !Number.isSafeInteger(row.profileRevision) || Number(row.profileRevision) < 1) throw Error('카테고리 선택을 확인해주세요.');
-    return { id, profileId, profileRevision: Number(row.profileRevision), url: text('url', 2048), features: text('features', 2000), keywords: text('keywords', 2000) };
+    const url=text('url',2048),sourceCapture=row.sourceCapture===undefined?undefined:validateSourceCaptureSelection(row.sourceCapture,url);
+    return { id, profileId, profileRevision: Number(row.profileRevision), url, features: text('features', 2000), keywords: text('keywords', 2000),...(sourceCapture?{sourceCapture}:{}) };
   });
   return { expectedRevision: Number(body.expectedRevision), goal: String(body.goal), rows,...(expectedOwnerId!==undefined?{expectedOwnerId}:{}) };
 }
 export function intakeDraftBody(rows: readonly IntakeRow[], goal: string, expectedRevision: number, expectedOwnerId?:string) {
-  return validateIntakeDraft({ expectedRevision, goal,...(expectedOwnerId!==undefined?{expectedOwnerId}:{}), rows: rows.filter(row => row.status !== 'saved').map(row => ({ id: row.id, profileId: row.profile.id, profileRevision: row.profile.revision, url: row.url, features: row.features, keywords: row.keywords })) });
+  return validateIntakeDraft({ expectedRevision, goal,...(expectedOwnerId!==undefined?{expectedOwnerId}:{}), rows: rows.filter(row => row.status !== 'saved').map(row => ({ id: row.id, profileId: row.profile.id, profileRevision: row.profile.revision, url: row.url, features: row.features, keywords: row.keywords,...(row.sourceCapture!==undefined?{sourceCapture:row.sourceCapture}:{}) })) });
 }
 
 /** Only server-owned current or previously verified snapshots can acknowledge a
@@ -56,7 +58,7 @@ export function readIntakeDraftResponse(input: unknown,expectedOwnerId?:string):
     throw Error('임시저장 응답의 입력 내용과 버전을 확인하지 못했습니다.');
   }
   intakeDraftBody(draft.rows, draft.goal, draft.revision);
-  return draft;
+  return {...draft,rows:draft.rows.map(row=>row.sourceCapture===undefined?row:{...row,sourceCapture:validateSourceCaptureSelection(row.sourceCapture,row.url)})};
 }
 
 export function confirmIntakeDraftSave(input: unknown, requested: ReturnType<typeof intakeDraftBody>): IntakeDraft {

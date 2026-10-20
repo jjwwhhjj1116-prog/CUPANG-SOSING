@@ -34,3 +34,15 @@ test('a partial capture may choose a category before reviewing missing source fa
   assert.equal(h.calls.length,1);assert.ok(h.calls.every(call=>!call.init.method));
  }finally{h.close();}
 });
+
+test('same-offer recaptures remain separate choices with their own source, revision and version label',async()=>{
+ const previous={...structuredClone(item),id:'original',captureVersion:1,revision:3,receivedAt:'2026-10-20T00:00:00.000Z',fingerprint:'a'.repeat(64),reviewed:{...structuredClone(item.snapshot),title:'직접 검토한 이전 원문'}};
+ const latest={...structuredClone(item),id:'recapture',captureVersion:2,revision:1,receivedAt:'2026-10-20T00:01:00.000Z',fingerprint:'b'.repeat(64),snapshot:{...structuredClone(item.snapshot),title:'새로 수집한 상품'}};
+ const h=fixture(async()=>Response.json({ownerId:'owner',items:[latest,previous]}));try{
+  h.render();h.open();await turn();const entries=nodes(h.render()).filter(node=>node.type==='li');assert.equal(entries.length,2);
+  assert.match(text(entries[0]),/새로 수집한 상품.*수집본 2/);assert.match(text(entries[1]),/직접 검토한 이전 원문.*수집본 1/);
+  for(const entry of [entries[1],entries[0]])nodes(entry).find(node=>node.type==='button'&&text(node)==='카테고리 선택·초안 작성').props.onClick();
+  assert.deepEqual(h.added.map(value=>[value.id,value.revision,value.fingerprint]),[['original',3,'a'.repeat(64)],['recapture',1,'b'.repeat(64)]]);
+  assert.equal(h.calls.length,1);assert.ok(h.calls.every(call=>!call.init?.method),'choosing a source does not write or replace either version');
+ }finally{h.close();}
+});

@@ -1,7 +1,7 @@
 import {validatePageSource,pageSourceIssues,type PageSource} from '@/extensions/supplier-hub/page-source.mjs';
 import {validateCollectionResult,type CollectionResult} from '@/app/collection-result';
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
-export type SourceInboxItem={id:string;ownerId:string;company:SupplierHubCompany;fingerprint:string;snapshot:PageSource;revision:number;receivedAt:string;reviewed:PageSource|null;issues:string[];archivedAt:string|null};
+export type SourceInboxItem={id:string;ownerId:string;company:SupplierHubCompany;fingerprint:string;snapshot:PageSource;revision:number;receivedAt:string;reviewed:PageSource|null;issues:string[];archivedAt:string|null;captureOriginId?:string;captureVersion?:number};
 export function sourceInboxStatus(snapshot:PageSource,reviewed:PageSource|null){return pageSourceIssues(reviewed??snapshot);}
 export function pageSourceCollectionResult(snapshot:PageSource,reviewed=false):CollectionResult{
  const source=validatePageSource(snapshot),issues=pageSourceIssues(source);if(issues.length)throw Error(`수집함에서 ${issues.join('·')}을 확인해주세요.`);

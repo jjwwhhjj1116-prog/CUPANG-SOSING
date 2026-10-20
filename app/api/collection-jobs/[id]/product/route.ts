@@ -23,7 +23,7 @@ export async function POST(_:Request,context:{params:Promise<{id:string}>}){
  const receipt=await readCollectionResult(owner,id);if(!receipt)return reply({error:'수집 결과가 아직 없습니다.'},409);
  try{prepareCollectionProduct(owner,job,receipt.result,'validation',new Date().toISOString());}catch(cause){return reply({error:cause instanceof Error?cause.message:'원문을 확인해주세요.'},400);}
  const product=await promoteCollection(owner,job,receipt.result);
- return reply({productId:product.product_id,executionStarted:false,message:'상품·옵션·가격 원문 반영 완료. 번역·이미지 다운로드·등록 전송은 실행되지 않았습니다.'});
+ return reply({productId:product.product_id,reused:product.reused,executionStarted:false,message:'상품·옵션·가격 원문 반영 완료. 번역·이미지 다운로드·등록 전송은 실행되지 않았습니다.'});
  }catch(error){
   if(error instanceof CollectionCompanyError)return reply({error:error.message,code:error.code},409);
   return reply({error:'상품 반영 결과를 확인하지 못했습니다. 다시 시도해도 같은 요청의 상품은 중복 생성되지 않습니다.'},503);

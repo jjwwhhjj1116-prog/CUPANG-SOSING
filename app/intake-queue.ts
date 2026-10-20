@@ -1,6 +1,7 @@
 import { parseCollectionRequest, collectionKeywords, collectionJobProgress, type CollectionJob, type PreservedCollectionRequest } from '@/app/sourcing';
 import type { WorkspaceSettings } from '@/app/workspace-settings';
 import type { CategoryProfile } from '@/app/category-profiles';
+import {validateSourceCaptureSelection,type SourceCaptureSelection} from '@/app/source-capture-selection';
 
 export type IntakeRow = {
   id: string; profile: CategoryProfile; url: string; features: string; keywords: string;
@@ -10,6 +11,7 @@ export type IntakeRow = {
   pendingJobId?: string;
   pendingSourceMode?: 'pending-source-urls-v1';
   pendingSourceHash?: string;
+  sourceCapture?: SourceCaptureSelection;
 };
 export function intakeRow(profile: CategoryProfile, id: string): IntakeRow {
   return { id, profile, url: '', features: '', keywords: '', status: 'draft', message: '' };
@@ -40,9 +42,11 @@ export function validateIntakeQueue(rows: readonly IntakeRow[], goal: string, di
     if (!/^[a-f0-9-]{36}$/.test(row.profile.id) || !Number.isSafeInteger(row.profile.revision) || row.profile.revision < 1) add(row.id, '카테고리를 다시 선택해주세요.');
     if (row.features.length > 2000 || row.keywords.length > 2000) add(row.id, '특징·키워드는 각각 2,000자까지 입력해주세요.');
     try { collectionKeywords(row.keywords); } catch (cause) { add(row.id, cause instanceof Error ? cause.message : '키워드를 확인해주세요.'); }
+    let sourceCapture:Readonly<SourceCaptureSelection>|undefined;
+    if(row.sourceCapture!==undefined)try{sourceCapture=validateSourceCaptureSelection(row.sourceCapture,row.url);}catch(cause){add(row.id,cause instanceof Error?cause.message:'선택한 수집본을 확인해주세요.');}
     if (!entry) return [];
     seen.set(entry.offerId, [...(seen.get(entry.offerId) ?? []), row.id]);
-    return [{ id: row.id, body: { urls: [entry.sourceUrl], goal, profileId: row.profile.id, expectedProfileRevision: row.profile.revision, features: row.features, keywords: row.keywords } }];
+    return [{ id: row.id, body: { urls: [entry.sourceUrl], goal, profileId: row.profile.id, expectedProfileRevision: row.profile.revision, features: row.features, keywords: row.keywords },...(sourceCapture?{sourceCapture}:{}) }];
   });
   for (const [offerId, ids] of seen) if (ids.length > 1) {
     const numbers = ids.map(id => displayedRows.findIndex(row => row.id === id) + 1).join(', ');
@@ -64,7 +68,7 @@ export async function submitIntakeQueue(rows: readonly IntakeRow[], goal: string
   selectedIds?: ReadonlySet<string>;
   expectedSettings?: WorkspaceSettings;
   onSettingsChanged?:()=>void;
-  collect?: (job:CollectionJob,onProgress:(message:string)=>void,onProduct:(id:string)=>void)=>Promise<string|undefined>;
+  collect?: (job:CollectionJob,onProgress:(message:string)=>void,onProduct:(id:string)=>void,selectedCapture?:Readonly<SourceCaptureSelection>)=>Promise<string|undefined>;
 }) {
   if (options.signal.aborted) return;
   const fetcher = options.fetcher;
@@ -91,9 +95,13 @@ export async function submitIntakeQueue(rows: readonly IntakeRow[], goal: string
       if(!response.ok&&response.status===409&&result.code==='CATEGORY_PROFILE_CHANGED'){options.onRow(request.id,{status:'error',message:result.error||'카테고리·견적서 설정이 변경되었습니다. 입력을 유지하고 카테고리를 다시 선택한 뒤 시작해주세요.'});break;}
       if (!response.ok || !Array.isArray(result.jobs) || result.jobs.length !== 1 || result.jobs[0].source_url !== request.body.urls[0] || !Array.isArray(result.preservedRequests)) throw Error(result.error || '해당 상품의 저장 결과를 확인하지 못했습니다. 입력은 유지됩니다.');
       options.onJobs(result.jobs);
+      if(request.sourceCapture&&result.jobs[0].product_id&&!result.jobs[0].received_at){
+        options.onRow(request.id,{status:'error',message:'선택한 수집본으로 기존 작업을 변경하지 않았습니다. 기존 작업을 열거나 저장 원문으로 새 초안을 검토해주세요.',
+          ...(result.jobs[0].product_id?{productId:result.jobs[0].product_id,forkJobId:result.jobs[0].id}:{pendingJobId:result.jobs[0].id})});continue;
+      }
       const differences = result.preservedRequests?.flatMap(item => item.differences) ?? [];
       if(!differences.length&&options.collect) {
-        const message=await options.collect(result.jobs[0],message=>{if(!options.signal.aborted)options.onRow(request.id,{status:'draft',message});},id=>{if(!options.signal.aborted&&id){savedProductId=id;options.onRow(request.id,{status:'draft',message:'상품 초안 저장됨 · 이미지 반영 중',productId:id});}});
+        const message=await options.collect(result.jobs[0],message=>{if(!options.signal.aborted)options.onRow(request.id,{status:'draft',message});},id=>{if(!options.signal.aborted&&id){savedProductId=id;options.onRow(request.id,{status:'draft',message:'상품 초안 저장됨 · 이미지 반영 중',productId:id});}},request.sourceCapture);
         if(options.signal.aborted)break;
         if(!message)throw Error('상품 반영 결과를 확인하지 못했습니다.');
         options.onRow(request.id,{status:'saved',message});continue;
@@ -112,6 +120,7 @@ export async function submitIntakeQueue(rows: readonly IntakeRow[], goal: string
 /** Recover an existing editor only from a confirmed link or matching saved context. */
 export function intakeProductId(row: IntakeRow, jobs: readonly CollectionJob[]): string | null {
   if (row.productId) return row.productId;
+  if(row.sourceCapture)return null;
   let sourceUrl: string;
   try { sourceUrl = parseCollectionRequest({urls:[row.url]})[0].sourceUrl; } catch { return null; }
   const ids = [...new Set(jobs.filter(job => {

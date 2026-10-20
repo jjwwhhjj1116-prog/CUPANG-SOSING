@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { SeoWorkspaceInput, SeoWorkspaceView } from '@/app/seo-workspace';
-import { cleanSeoKeywordCandidates, prepareSeoKeywordText } from '@/app/seo-keyword-text';
+import { cleanSeoKeywordCandidates, prepareSeoKeywordText, quotationSeoKeywordText,seoKeywordDocumentText } from '@/app/seo-keyword-text';
 import { emptySeoWorkspaceDraft, hasSeoWorkspaceDraft, readSeoWorkspace, saveSeoWorkspace, seoWorkspaceInput, seoWorkspaceRefreshConflicts, seoWorkspaceSaveState,
   SeoWorkspaceSaveError, type SeoWorkspaceDraft } from '@/app/seo-workspace-client';
 import './seo-workspace.css';
@@ -82,6 +82,10 @@ export function SeoWorkspaceEditor({ productId, version, focusedOptionId, active
     if (!current() || live.current.disabled || request.current || attempt.current || !savedRef.current || savedRef.current.scope !== scope) return;
     draftRef.current = { scope, values: update(latestDraft()) }; setPending(draftRef.current); setMessage('');
   }
+  function editKeywords(value:string){edit(previous=>{
+    const next={...previous,seo:{...previous.seo,keywords:value}};delete next.clearDocumentKeywords;return next;
+  });}
+  function clearKeywords(){edit(previous=>({...previous,seo:{...previous.seo,keywords:''},clearDocumentKeywords:true}));}
   async function save() {
     const previous = savedRef.current, editing = latestDraft();
     if (!previous || previous.scope !== scope || !current() || live.current.disabled || request.current || !hasSeoWorkspaceDraft(editing)) return;
@@ -116,6 +120,8 @@ export function SeoWorkspaceEditor({ productId, version, focusedOptionId, active
   let keywordPlan: ReturnType<typeof prepareSeoKeywordText> | undefined;
   if (keywordEdited) try { keywordPlan = prepareSeoKeywordText(keywordText); } catch { /* Input validation below retains the exact draft. */ }
   const savedKeywords = keywordPlan ? cleanSeoKeywordCandidates(keywordPlan.keywords) : null;
+  const savedDocumentKeywords=view?quotationSeoKeywordText(view.content):'';
+  const nextDocumentKeywords=draft.clearDocumentKeywords?'':savedKeywords?.length?seoKeywordDocumentText(savedKeywords):savedDocumentKeywords;
   const tagsLength = keywordText.length;
   const locked = disabled || busy || uncertain;
   return <section className="panel-stack" aria-label="SEO 설정 통합 편집" data-quotation-source-step="SEO" data-workspace-dirty={dirty} data-workspace-saving={busy}>
@@ -126,10 +132,17 @@ export function SeoWorkspaceEditor({ productId, version, focusedOptionId, active
       <section className="seo-common-editor"><h3>상품명 / 검색태그</h3><fieldset disabled={locked} style={{ border: 0, margin: 0 }}>
         <label className="field"><span>상품명 · {provenance[view.content.seo.title.provenance]}</span><input aria-label="SEO 상품명" value={seoValue('title')} maxLength={100} onChange={event => edit(previous => ({ ...previous, seo: { ...previous.seo, title: event.target.value } }))}/></label>
         <small className={seoValue('title').length > 100 ? 'seo-input-count exceeded' : 'seo-input-count'}>{seoValue('title').length}/100자{seoValue('title').length > 100 && ' · 기존 저장값은 유지합니다.'}</small>
-        <label className="field"><span>검색태그 (쉼표로 구분) · {provenance[view.content.seo.keywords.provenance]}</span><textarea aria-label="SEO 검색태그" value={seoValue('keywords')} rows={5} maxLength={5050} onChange={event => edit(previous => ({ ...previous, seo: { ...previous.seo, keywords: event.target.value } }))}/></label>
+        <label className="field"><span>검색태그 (쉼표로 구분) · {provenance[view.content.seo.keywords.provenance]}</span><textarea aria-label="SEO 검색태그" value={seoValue('keywords')} rows={5} maxLength={5050} onChange={event => editKeywords(event.target.value)}/></label>
         <small className={tagsLength > 150 ? 'seo-input-count exceeded' : 'seo-input-count'}>{tagsLength}/150자{tagsLength > 150 && !keywordEdited && ' · 기존 저장값은 유지합니다.'}</small>
         {keywordPlan?.shortened && <section className="panel-note" aria-label="검색태그 저장안"><div><p>길이 조정 후 검색태그: {keywordPlan.text || '(공란)'}</p><p>입력 원문이 150자를 초과하여 뒤 태그 {keywordPlan.removedTags}개를 제외합니다. 저장 전까지 입력 원문은 유지합니다.</p></div></section>}
         {savedKeywords && <section className="panel-note" aria-label="검색태그 최종 저장안"><div><p>최종 저장 검색태그: {savedKeywords.join(', ') || '(공란)'}</p><p>한국어 자모가 포함된 태그, 20자를 넘는 태그와 중복 태그를 제외하고 특수문자는 공백으로 정리합니다.</p></div></section>}
+        <section className="panel-note" aria-label="견적서 검색태그 반영안"><div>
+          <p>{keywordEdited?'저장 후 견적서 자동 검색태그':'현재 견적서 자동 검색태그'}: {nextDocumentKeywords||'(공란)'}</p>
+          {draft.clearDocumentKeywords?<p>저장하면 검색태그와 견적서 자동 검색태그를 모두 비웁니다.</p>
+            :keywordEdited&&savedKeywords&&!savedKeywords.length&&savedDocumentKeywords&&<p>이 입력으로 저장하면 견적서에는 이전 검색태그가 유지됩니다. 함께 비우려면 아래 버튼을 눌러주세요.</p>}
+          <p>견적서에서 직접 수정한 공통·옵션 검색태그는 유지됩니다.</p>
+          <button type="button" className="btn ghost" disabled={locked} onClick={clearKeywords}>검색태그·견적서 태그 함께 비우기</button>
+        </div></section>
         <details><summary>상품 설명</summary><label className="field"><span>상품 설명 · {provenance[view.content.seo.description.provenance]}</span><textarea aria-label="SEO 상품 설명" value={seoValue('description')} rows={7} maxLength={20000} onChange={event => edit(previous => ({ ...previous, seo: { ...previous.seo, description: event.target.value } }))}/></label></details>
       </fieldset></section>
       <section className="seo-option-names"><h3>옵션명</h3><div className="seo-option-names-body">{view.options.rows.map((row, index) => {
