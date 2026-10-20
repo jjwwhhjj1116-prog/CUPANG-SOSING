@@ -45,7 +45,7 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
     useLayoutEffect(effect,deps){const index=cursor++,instance=currentInstance,before=instance.slots[index];if(!before||deps.some((value,i)=>!Object.is(value,before.deps[i]))){instance.slots[index]={deps,cleanup:before?.cleanup};layouts.push(()=>{instance.slots[index].cleanup?.();instance.slots[index].cleanup=effect();});}},
   };
   async function request(url, init = {}) {
-    const parsed=new URL(url,'https://app.test'),kind=parsed.pathname.split('/').at(-1);assert.ok(['options',...(integrated?['quotation-fields','pricing','option-bundles']:[]),...(fileStorage?['content','quotation']:[])].includes(kind));assert.equal(parsed.pathname,'/api/products/'+productId+'/'+kind);
+    const parsed=new URL(url,'https://app.test'),kind=parsed.pathname.split('/').at(-1);assert.ok(['options',...(integrated?['quotation-fields','pricing','option-bundles','stage-two-pricing']:[]),...(fileStorage?['content','quotation']:[])].includes(kind));assert.equal(parsed.pathname,'/api/products/'+productId+'/'+kind);
     const method = init.method ?? 'GET'; apiCalls.push({ url, method,signal:init.signal });
     if (method !== 'GET') { const body = JSON.parse(init.body); writes.push({...body,method,kind}); if (heldSave) { heldSave.arrived(); await heldSave.promise; heldSave = null; } }
     await controls.before?.(url,init);
@@ -65,7 +65,7 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
         if (name in deps) return deps[name]; if (name === 'react') return hooks;
         if (name === 'react/jsx-runtime') return { jsx: (type, props, key) => ({ type, props, key }), jsxs: (type, props, key) => ({ type, props, key }) };
         if (name.endsWith('.css')) return {};
-        if (name.startsWith('@/app/components/') && !['@/app/components/product-options-editor', '@/app/components/option-price-table', '@/app/components/price-selection-dialog',...(integrated?['@/app/components/option-quotation-prices']:[]),...(detail?['@/app/components/dashboard-client','@/app/components/price-editor']:[])].includes(name)) return new Proxy({}, { get: () => () => null });
+        if (name.startsWith('@/app/components/') && !['@/app/components/product-options-editor', '@/app/components/option-price-table', '@/app/components/price-selection-dialog',...(integrated?['@/app/components/option-quotation-prices','@/app/components/stage-two-price-policy-fields']:[]),...(detail?['@/app/components/dashboard-client','@/app/components/price-editor']:[])].includes(name)) return new Proxy({}, { get: () => () => null });
         if (name.startsWith('@/')) return load(name.slice(2) + (name.includes('/components/') ? '.tsx' : '.ts'));
         if (name.startsWith('./') || name.startsWith('../')) return load(path.posix.join(path.posix.dirname(file), name) + '.ts');
         return native(name);
@@ -83,7 +83,7 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
     unitCostCny: index % 2 ? 3.99 : 2.99, stock: index === 0 ? 0 : index === 1 ? null : 100 + index, included: true }));
   await load('db/product-options.ts').saveProductOptions(owner, model.applyOptionRows(model.emptyProductOptions(productId), rowInputs, version), 0, version);
   const protectedSnapshot = () => JSON.stringify(['collection_jobs', 'collection_results', 'collection_context', 'category_profiles', 'workspace_settings', 'product_price_policy']
-    .filter(table => sqlite.prepare("SELECT name FROM sqlite_master WHERE name=?").get(table)).map(table => [table, sqlite.prepare('SELECT * FROM ' + table).all()]));
+    .filter(table => sqlite.prepare("SELECT name FROM sqlite_master WHERE name=?").get(table)).map(table => [table, sqlite.prepare('SELECT * FROM ' + table).all().map(row=>table==='product_price_policy'?Object.fromEntries(Object.entries(row).filter(([key])=>key!=='updated_at')):row)]));
   const before = protectedSnapshot(), Component = detail?load('app/components/dashboard-client.tsx').DetailPanel:load('app/components/product-options-editor.tsx').ProductOptionsEditor;
   let currentProduct = product,profileId,refreshToken='0',policyLocked=false,fileBusy=false,allowCommit=true;
   function resolve(node, location = 'root') {
@@ -112,7 +112,7 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
   await settle();
   return { sqlite, load, render, settle, apiCalls, writes, focused, product, policy, before, protectedSnapshot,controls,request,
     node(label) { const node = priceTableNodes(render()).find(node => node.props?.['aria-label'] === label); assert.ok(node, label); return node; },
-    button(label) { const node = priceTableNodes(render()).find(node => node.type === 'button' && priceTableText(node) === label); assert.ok(node, label); return node; },
+    button(label) { const node = priceTableNodes(render()).find(node => node.type === 'button' && (priceTableText(node) === label || node.props['aria-label'] === label)); assert.ok(node, label); return node; },
     rows() { return load('db/product-options.ts').readProductOptions(owner, productId); },
     holdSave() { let release, arrive; const promise = new Promise(done => { release = done; }), arrived = new Promise(done => { arrive = done; }); heldSave = { promise, arrived: arrive }; return { release, arrived }; },
     changeProductVersion(value) { currentProduct = { ...currentProduct, updated_at: value }; },

@@ -1,4 +1,5 @@
-export type PricePolicy = { exchangeRate: number; supplyMargin: number; coupangMargin: number; minimumMargin: number; msrpMultiple: number; roundingUnit: number; roundingMode?: 'up' | 'nearest'; arithmeticMode?: 'couplus-number-v1'; useIntegratedRate?: boolean; integratedRate?: number | null; recalculationMode?: 'couplus-stage-two-v1'; recalculationMinimumEnabled?: boolean };
+export type PricePolicy = { exchangeRate: number; supplyMargin: number; coupangMargin: number; minimumMargin: number; msrpMultiple: number; roundingUnit: number; roundingMode?: 'up' | 'nearest'; arithmeticMode?: 'couplus-number-v1'; useIntegratedRate?: boolean; integratedRate?: number | null; recalculationMode?: 'couplus-stage-two-v1'; recalculationMinimumEnabled?: boolean;
+  bundleEnabled?: boolean; bundleCriterion?: 'supplyMargin' | 'coupangMargin'; bundleMinimumSupplyMargin?: number; bundleMinimumCoupangMargin?: number };
 export function pricePolicy(input: unknown): PricePolicy {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('가격 설정을 확인해주세요.');
   const record = input as Record<string, unknown>;
@@ -15,12 +16,25 @@ export function pricePolicy(input: unknown): PricePolicy {
   if (record.integratedRate !== undefined && record.integratedRate !== null
     && (typeof record.integratedRate !== 'number' || !Number.isFinite(record.integratedRate) || record.integratedRate <= 0)) throw new Error('확인한 통합통관 환율을 양수로 입력해주세요.');
   if (record.useIntegratedRate === true && (typeof record.integratedRate !== 'number' || !Number.isFinite(record.integratedRate) || record.integratedRate <= 0)) throw new Error('통합통관 환율을 사용하려면 확인한 양수 환율이 필요합니다.');
+  const bundleKeys = ['bundleEnabled', 'bundleCriterion', 'bundleMinimumSupplyMargin', 'bundleMinimumCoupangMargin'];
+  // Workspace settings used by old products carry three explicit nulls for an
+  // unconfigured, inert bundle switch. Do not activate or serialize a new rule
+  // merely by resolving those legacy settings.
+  const legacyBundle = typeof record.bundleEnabled === 'boolean'
+    && bundleKeys.slice(1).every(key => Object.hasOwn(record, key) && record[key] === null);
+  const hasBundle = !legacyBundle && bundleKeys.some(key => Object.hasOwn(record, key));
+  if (hasBundle && (bundleKeys.some(key => !Object.hasOwn(record, key)) || typeof record.bundleEnabled !== 'boolean'
+    || !['supplyMargin', 'coupangMargin'].includes(record.bundleCriterion as string)
+    || ['bundleMinimumSupplyMargin', 'bundleMinimumCoupangMargin'].some(key => !Number.isSafeInteger(record[key]) || (record[key] as number) < 1000)))
+    throw new Error('번들 활성화·기준과 두 최소 마진액을 함께 확인해주세요. 기준 금액은 1,000원 이상 정수입니다.');
   // Off/missing integration is the original policy, byte-for-byte. A rate held
   // in the settings editor is not a charge until the owner enables it.
   return { ...Object.fromEntries(keys.map(key => [key, p[key]])), ...(record.roundingMode === 'nearest' ? { roundingMode: 'nearest' as const } : {}),
     ...(record.arithmeticMode === 'couplus-number-v1' ? { arithmeticMode: 'couplus-number-v1' as const } : {}),
     ...(record.useIntegratedRate === true ? { useIntegratedRate: true, integratedRate: record.integratedRate } : {}),
     ...(record.recalculationMode === 'couplus-stage-two-v1' ? { recalculationMode: 'couplus-stage-two-v1' as const } : {}),
+    ...(hasBundle ? { bundleEnabled: record.bundleEnabled, bundleCriterion: record.bundleCriterion,
+      bundleMinimumSupplyMargin: record.bundleMinimumSupplyMargin, bundleMinimumCoupangMargin: record.bundleMinimumCoupangMargin } : {}),
     ...(typeof record.recalculationMinimumEnabled === 'boolean' ? { recalculationMinimumEnabled: record.recalculationMinimumEnabled } : {}) } as PricePolicy;
 }
 /** Couplus stage-two pricingInfo keeps the switch separate from its amount,

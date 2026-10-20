@@ -49,16 +49,16 @@ test('a malformed map cannot replace a price draft or acknowledge its save',asyn
   }finally{h.close();}
 });
 
-test('a committed grid save with malformed number metadata recovers by reading instead of repeating its PATCH',async()=>{
+test('a committed atomic grid save with malformed number metadata recovers by reading instead of repeating its POST',async()=>{
   const h=await optionPriceTableUI(priceTableCompanies[0],{count:2,integrated:true});try{
     const before=await read(h);change(h,'가격 옵션 2 개당 원가','6.99');await h.settle();
-    h.controls.response=async(url,init,response)=>{const body=await response.json();if(url.endsWith('/options')&&init.method==='PATCH')body.optionRegistrationNumbers={foreign:'261015999001'};return Response.json(body,{status:response.status});};
-    h.button('옵션 저장·가격 계산').props.onClick();await h.settle();
+    h.controls.response=async(url,init,response)=>{const body=await response.json();if(url.endsWith('/stage-two-pricing')&&init.method==='POST')body.options.optionRegistrationNumbers={foreign:'261015999001'};return Response.json(body,{status:response.status});};
+    h.button('옵션 가격 저장하기').props.onClick();await h.settle();
     assert.equal(h.node('가격 옵션 2 개당 원가').props.value,6.99);
-    assert.match(text(h.render()),/옵션 등록번호 응답/);assert.equal(h.writes.filter(write=>write.kind==='options').length,1);
+    assert.match(text(h.render()),/옵션 등록번호 응답|한 번 저장 결과/);assert.equal(h.writes.filter(write=>write.kind==='stage-two-pricing').length,1);
     delete h.controls.response;h.button('입력 유지 · 저장 결과 확인').props.onClick();await h.settle();
     const saved=await read(h);assert.equal(saved.options.rows[1].unitCostCny,6.99);
-    assert.equal(h.writes.filter(write=>write.kind==='options').length,1);
+    assert.equal(h.writes.filter(write=>write.kind==='stage-two-pricing').length,1);
     assert.equal(saved.optionRegistrationNumbers[before.options.rows[1].id],before.optionRegistrationNumbers[before.options.rows[1].id]);
     assert.equal(h.node('가격 옵션 2 개당 원가').props.value,6.99);
   }finally{h.close();}

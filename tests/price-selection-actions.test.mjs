@@ -51,14 +51,14 @@ for(const company of priceTableCompanies){
   const h=await optionPriceTableUI(company,{count:73,integrated:true});try{
    const before=await h.rows(),numbers=(await metadata(h)).optionRegistrationNumbers;change(h,'가격 옵션 검색','fixture-sku-62');select(h,62);h.button('번들 적용').props.onClick();change(h,'적용할 번들 수량','3.9');
    const send=submit(h);send({preventDefault(){}});send({preventDefault(){}});await h.settle();assert.equal(alerts(h),'');assert.equal(dialog(h),undefined);assert.equal(h.saved,1);
-   assert.deepEqual(h.writes.map(value=>value.kind),['options','quotation-fields']);assert.equal(h.writes[0].rows.length,73);assert.equal(h.writes[0].rows[61].id,'price-062');
+   assert.deepEqual(h.writes.map(value=>value.kind),['stage-two-pricing']);assert.equal(h.writes[0].rows.length,73);assert.equal(h.writes[0].rows[61].id,'price-062');
    const after=await h.rows();assert.equal(after.rows[61].unitsPerPack,3);assert.equal(after.rows[61].translatedName,'합성 옵션 62 (3개묶음)');
    for(let i=0;i<73;i++)if(i!==61)assert.deepEqual(after.rows[i],before.rows[i]);
    for(const key of ['id','supplierSku','originalName','unitCostCny','stock','minimumOrderQuantity','imageKey','widthCm','lengthCm','heightCm','weightKg','packagedWeightG','packagedWidthMm','packagedLengthMm','packagedHeightMm'])assert.equal(after.rows[61][key],before.rows[61][key],key);
    const expected=h.load('app/product-options.ts').calculateOptionPrices(h.load('app/product-options.ts').optionInputs(after),{...h.policy,recalculationMode:'couplus-stage-two-v1'})[61].calculation;
    const result=await quote(h);for(const key of ['supplyPrice','salePrice','msrp'])assert.equal(result.overrides.options['price-062'][key],String(expected[key]));
    assert.equal(result.optionRevision,after.revision);assert.deepEqual(plain((await metadata(h)).optionRegistrationNumbers),plain(numbers));assert.equal(h.protectedSnapshot(),h.before);
-   const methods=h.apiCalls.map(call=>call.method+' '+new URL(call.url,'https://app.test').pathname.split('/').at(-1));assert.ok(methods.slice(methods.indexOf('PATCH options')+1,methods.indexOf('PUT quotation-fields')).includes('GET quotation-fields'));
+   assert.equal(h.apiCalls.filter(call=>call.method==='POST'&&call.url.endsWith('/stage-two-pricing')).length,1);assert.equal(h.apiCalls.filter(call=>call.method==='PATCH'||call.method==='PUT').length,0);
   }finally{h.close();}
  });
  test(`selected bundle recalculates its old manual prices and preserves unselected synchronous prices plus explicit MSRP blank (${company.code})`,async()=>{
@@ -66,7 +66,7 @@ for(const company of priceTableCompanies){
    change(h,'가격 옵션 1 공급가','9100');change(h,'가격 옵션 1 판매가','15900');change(h,'가격 옵션 1 권장소비자가','');
    change(h,'가격 옵션 2 공급가','9300');change(h,'가격 옵션 2 판매가','16100');change(h,'가격 옵션 2 권장소비자가','');
    select(h,1);h.button('번들 적용').props.onClick();change(h,'적용할 번들 수량','2');confirm(h);await h.settle();assert.equal(alerts(h),'');
-   assert.deepEqual(h.writes.map(value=>value.kind),['options','quotation-fields']);const after=await h.rows(),result=await quote(h);
+   assert.deepEqual(h.writes.map(value=>value.kind),['stage-two-pricing']);const after=await h.rows(),result=await quote(h);
    const expected=h.load('app/product-options.ts').calculateOptionPrices(h.load('app/product-options.ts').optionInputs(after),{...h.policy,recalculationMode:'couplus-stage-two-v1'})[0].calculation;
    for(const key of ['supplyPrice','salePrice','msrp'])assert.equal(result.overrides.options['price-001'][key],String(expected[key]));
    assert.deepEqual(plain(result.overrides.options['price-002']),{supplyPrice:'9300',salePrice:'16100',msrp:''});assert.equal(after.rows[1].unitsPerPack,1);assert.equal(h.protectedSnapshot(),h.before);
@@ -77,7 +77,7 @@ for(const company of priceTableCompanies){
    const before=await h.rows(),numbers=(await metadata(h)).optionRegistrationNumbers;
    change(h,'가격 옵션 1 공급가','9000');change(h,'가격 옵션 1 판매가','15000');change(h,'가격 옵션 1 권장소비자가','');select(h,2);h.button('선택 삭제 (1)').props.onClick();
    const send=submit(h);send({preventDefault(){}});send({preventDefault(){}});await h.settle();assert.equal(alerts(h),'');assert.equal(dialog(h),undefined);
-   assert.deepEqual(h.writes.map(value=>value.kind),['options','quotation-fields']);const after=await h.rows();assert.deepEqual(after.rows,before.rows.filter(row=>row.id!=='price-002'));
+   assert.deepEqual(h.writes.map(value=>value.kind),['stage-two-pricing']);const after=await h.rows();assert.deepEqual(after.rows,before.rows.filter(row=>row.id!=='price-002'));
    const kept=(await metadata(h)).optionRegistrationNumbers;assert.equal(kept['price-001'],numbers['price-001']);assert.equal(kept['price-003'],numbers['price-003']);assert.equal(kept['price-002'],undefined);
    const result=await quote(h);assert.deepEqual(plain(result.overrides.options['price-001']),{supplyPrice:'9000',salePrice:'15000',msrp:''});assert.equal(result.resolved.rows.some(row=>row.optionId==='price-002'),false);assert.equal(h.protectedSnapshot(),h.before);
   }finally{h.close();}
@@ -86,7 +86,7 @@ for(const company of priceTableCompanies){
   const h=await optionPriceTableUI(company,{count:3,integrated:true});try{
    const before=JSON.stringify(await h.rows());change(h,'가격 옵션 2 공급가','9000');change(h,'가격 옵션 2 판매가','15000');change(h,'가격 옵션 2 권장소비자가','');select(h,2);h.button('선택 삭제 (1)').props.onClick();confirm(h);await h.settle();
    assert.match(text(dialog(h)),/저장하지 않은 직접 가격/);assert.equal(h.writes.length,0);assert.equal(h.node('가격 옵션 2 공급가').props.value,'9000');assert.equal(h.node('가격 옵션 2 권장소비자가').props.value,'');assert.equal(JSON.stringify(await h.rows()),before);
-   cancel(h);h.button('옵션 저장·가격 계산').props.onClick();await h.settle();assert.equal(h.writes.length,1);assert.equal(h.writes[0].kind,'quotation-fields');assert.equal(h.protectedSnapshot(),h.before);
+   cancel(h);h.button('옵션 가격 저장하기').props.onClick();await h.settle();assert.equal(h.writes.length,1);assert.equal(h.writes[0].kind,'stage-two-pricing');assert.equal(h.protectedSnapshot(),h.before);
   }finally{h.close();}
  });
  test(`invalid bundle bounds retain dialog text and make no writes; stale source edits cannot apply an old confirmation (${company.code})`,async()=>{
@@ -95,20 +95,13 @@ for(const company of priceTableCompanies){
    change(h,'적용할 번들 수량','5');const retained=submit(h);change(h,'가격 옵션 1 개당 원가','5.99');retained({preventDefault(){}});await h.settle();assert.equal(h.writes.length,0);assert.match(text(dialog(h)),/옵션 또는 가격 기준이 변경/);assert.equal(h.node('가격 옵션 1 개당 원가').props.value,5.99);assert.equal(JSON.stringify(await h.rows()),before);
   }finally{h.close();}
  });
- test(`unknown committed source ACK retains bundle quantity, blocks duplicates and recovers without a second source PATCH (${company.code})`,async()=>{
+ for(const withPriorManual of [false,true])test(`unknown atomic bundle ACK retains full quantity/manual intent and coherent GET recovers once, prior manual=${withPriorManual} (${company.code})`,async()=>{
   const h=await optionPriceTableUI(company,{count:3,integrated:true});try{
-   let lost=true;h.controls.response=(url,init,response)=>{if(lost&&init.method==='PATCH'){lost=false;return Response.json({error:'bundle source ACK lost'},{status:503});}return response;};
+   let lost=true;h.controls.response=(url,init,response)=>{if(lost&&init.method==='POST'&&url.includes('/stage-two-pricing')){lost=false;return Response.json({error:'atomic bundle ACK lost'},{status:503});}return response;};
+   if(withPriorManual){change(h,'가격 옵션 2 공급가','9300');change(h,'가격 옵션 2 판매가','16100');change(h,'가격 옵션 2 권장소비자가','');}
    select(h,1);h.button('번들 적용').props.onClick();change(h,'적용할 번들 수량','3');const send=submit(h);send({preventDefault(){}});await h.settle();send({preventDefault(){}});await h.settle();
-   assert.equal(h.node('적용할 번들 수량').props.value,'3');assert.equal(h.writes.filter(value=>value.kind==='options').length,1);assert.equal(h.writes.filter(value=>value.kind==='quotation-fields').length,0);assert.equal((await h.rows()).rows[0].unitsPerPack,3);
-   cancel(h);h.button('입력 유지 · 저장 결과 확인').props.onClick();await h.settle();h.button('입력 유지·최신 가격 조회').props.onClick();await h.settle();h.button('옵션 저장·가격 계산').props.onClick();await h.settle();
-   assert.equal(h.writes.filter(value=>value.kind==='options').length,1);assert.equal(h.writes.filter(value=>value.kind==='quotation-fields').length,1);assert.equal((await quote(h)).overrides.options['price-001'].salePrice,h.node('가격 옵션 1 판매가').props.value);assert.equal(h.protectedSnapshot(),h.before);
-  }finally{h.close();}
- });
- test(`unknown committed bundle price ACK recovers exact recorded quotation once without a second PUT (${company.code})`,async()=>{
-  const h=await optionPriceTableUI(company,{count:3,integrated:true});try{
-   let lost=true;h.controls.response=(url,init,response)=>{if(lost&&init.method==='PUT'){lost=false;return Response.json({error:'bundle quote ACK lost'},{status:503});}return response;};
-   select(h,1);h.button('번들 적용').props.onClick();change(h,'적용할 번들 수량','3');const send=submit(h);send({preventDefault(){}});await h.settle();send({preventDefault(){}});await h.settle();assert.equal(h.node('적용할 번들 수량').props.value,'3');assert.deepEqual(h.writes.map(value=>value.kind),['options','quotation-fields']);
-   cancel(h);h.button('입력 유지·최신 가격 조회').props.onClick();await h.settle();h.button('옵션 저장·가격 계산').props.onClick();await h.settle();assert.deepEqual(h.writes.map(value=>value.kind),['options','quotation-fields']);assert.equal(h.button('옵션 저장·가격 계산').props.disabled,true);assert.equal(h.protectedSnapshot(),h.before);
+   assert.equal(h.node('적용할 번들 수량').props.value,'3');assert.deepEqual(h.writes.map(value=>value.kind),['stage-two-pricing']);assert.equal((await h.rows()).rows[0].unitsPerPack,3);assert.equal(h.node('가격 옵션 1 구성 수량').props.disabled,true);
+   cancel(h);h.button('입력 유지 · 저장 결과 확인').props.onClick();await h.settle();assert.equal(alerts(h),'');assert.equal(h.saved,1);assert.deepEqual(h.writes.map(value=>value.kind),['stage-two-pricing']);assert.equal(h.button('옵션 가격 저장하기').props.disabled,true);assert.equal((await quote(h)).overrides.options['price-001'].salePrice,h.node('가격 옵션 1 판매가').props.value);if(withPriorManual)assert.equal((await quote(h)).overrides.options['price-002'].msrp,'');assert.equal(h.protectedSnapshot(),h.before);
   }finally{h.close();}
  });
  test(`retained confirmation respects policy/file/source locks and profile ABA resets its identity (${company.code})`,async()=>{
@@ -121,7 +114,7 @@ for(const company of priceTableCompanies){
  test(`bundle save acquires a synchronous duplicate lock before network and no retained delete applies in flight (${company.code})`,async()=>{
   const h=await optionPriceTableUI(company,{count:3,integrated:true});try{
    select(h,1);const remove=h.button('선택 삭제 (1)').props.onClick;h.button('번들 적용').props.onClick();const send=submit(h),hold=h.holdSave();send({preventDefault(){}});send({preventDefault(){}});remove();
-   await Promise.race([hold.arrived,new Promise((_,reject)=>setTimeout(()=>reject(Error('bundle source PATCH did not start')),5000))]);assert.equal(h.writes.length,1);assert.equal(h.writes[0].rows.length,3);hold.release();await h.settle();assert.deepEqual(h.writes.map(value=>value.kind),['options','quotation-fields']);assert.equal((await h.rows()).rows.length,3);assert.equal(h.protectedSnapshot(),h.before);
+   await Promise.race([hold.arrived,new Promise((_,reject)=>setTimeout(()=>reject(Error('bundle source PATCH did not start')),5000))]);assert.equal(h.writes.length,1);assert.equal(h.writes[0].rows.length,3);hold.release();await h.settle();assert.deepEqual(h.writes.map(value=>value.kind),['stage-two-pricing']);assert.equal((await h.rows()).rows.length,3);assert.equal(h.protectedSnapshot(),h.before);
   }finally{h.close();}
  });
  test(`same-tick quotation refresh rejects a retained delete confirmation before React's busy render (${company.code})`,async()=>{
@@ -140,4 +133,15 @@ for(const company of priceTableCompanies){
    h.locks({files:false});h.button('최근 일괄 변경 되돌리기').props.onClick();await h.settle();assert.equal(h.node('가격 옵션 1 구성 수량').props.value,1);assert.equal(h.writes.length,0);assert.equal(h.protectedSnapshot(),h.before);
   }finally{h.close();}
  });
+ test(`source-only selected deletion commits immediately from live draft without a preceding price edit (${company.code})`,async()=>{
+  const h=await optionPriceTableUI(company,{count:3,integrated:true});try{
+   select(h,2);h.button('선택 삭제 (1)').props.onClick();confirm(h);await h.settle();assert.equal(alerts(h),'');assert.equal(dialog(h),undefined);assert.equal(h.saved,1);assert.deepEqual(h.writes.map(value=>value.kind),['stage-two-pricing']);assert.deepEqual(plain((await h.rows()).rows.map(row=>row.id)),['price-001','price-003']);assert.equal((await quote(h)).resolved.rows.some(row=>row.optionId==='price-002'),false);
+  }finally{h.close();}
+ });
+ test(`manual bundle apply uses the current unsaved policy; a later policy edit invalidates old confirmation (${company.code})`,async()=>{
+  const h=await optionPriceTableUI(company,{count:3,integrated:true,detail:true});try{
+   change(h,'적용 환율 (CNY → KRW)','400');await h.settle();select(h,1);h.button('번들 적용').props.onClick();const old=submit(h);change(h,'공급 마진율 (%)','45');old({preventDefault(){}});await h.settle();assert.equal(h.writes.length,0);assert.match(text(dialog(h)),/옵션 또는 가격 기준이 변경/);cancel(h);h.button('번들 적용').props.onClick();change(h,'적용할 번들 수량','2');confirm(h);await h.settle();assert.equal(alerts(h),'');assert.equal(h.writes.length,1);assert.equal(h.writes[0].policy.exchangeRate,400);assert.equal(h.writes[0].policy.supplyMargin,45);const after=await h.rows(),expected=h.load('app/product-options.ts').calculateOptionPrices(after.rows,h.writes[0].policy)[0].calculation;assert.equal((await quote(h)).overrides.options['price-001'].salePrice,String(expected.salePrice));
+  }finally{h.close();}
+ });
+
 }

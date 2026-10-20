@@ -59,7 +59,7 @@ for(const company of priceTableCompanies){
   const h=await optionPriceTableUI(company,{count:3,integrated:true});try{
    select(h,1);change(h,'가격 옵션 1 개당 원가','5.99');h.button('번들 추가').props.onClick();assert.equal(dialog(h),undefined);assert.match(alerts(h),/먼저 옵션·가격을 저장/);assert.equal(h.writes.length,0);assert.equal(h.node('가격 옵션 1 개당 원가').props.value,5.99);
    change(h,'가격 옵션 1 개당 원가','2.99');change(h,'가격 옵션 2 공급가','9000');change(h,'가격 옵션 2 판매가','15000');change(h,'가격 옵션 2 권장소비자가','');h.button('번들 추가').props.onClick();assert.equal(dialog(h),undefined);assert.equal(h.node('가격 옵션 2 권장소비자가').props.value,'');assert.equal(h.writes.length,0);
-   h.button('옵션 저장·가격 계산').props.onClick();await h.settle();select(h,1);h.button('번들 추가').props.onClick();send(h);await h.settle();assert.equal(alerts(h),'');assert.deepEqual(h.writes.map(value=>value.kind),['quotation-fields','option-bundles']);const quote=await getQuote(h);assert.deepEqual(plain(quote.overrides.options['price-002']),{supplyPrice:'9000',salePrice:'15000',msrp:''});assert.equal(h.protectedSnapshot(),h.before);
+   h.button('옵션 가격 저장하기').props.onClick();await h.settle();select(h,1);h.button('번들 추가').props.onClick();send(h);await h.settle();assert.equal(alerts(h),'');assert.deepEqual(h.writes.map(value=>value.kind),['stage-two-pricing','option-bundles']);const quote=await getQuote(h);assert.deepEqual(plain(quote.overrides.options['price-002']),{supplyPrice:'9000',salePrice:'15000',msrp:''});assert.equal(h.protectedSnapshot(),h.before);
   }finally{h.close();}
  });
  test(`invalid quantities, selection source changes and stale policy/file handlers create no bundle intent (${company.code})`,async()=>{
@@ -72,7 +72,7 @@ for(const company of priceTableCompanies){
  test(`committed atomic ACK loss blocks all writes and GET recovery confirms without another POST (${company.code})`,async()=>{
   const h=await optionPriceTableUI(company,{count:3,integrated:true});try{
    let lost=true;h.controls.response=(url,init,response)=>{if(lost&&init.method==='POST'&&url.endsWith('/option-bundles')){lost=false;return Response.json({error:'committed bundle ACK lost'},{status:503});}return response;};
-   select(h,1);const oldSave=h.button('옵션 저장·가격 계산').props.onClick,oldApply=h.button('번들 적용').props.onClick,oldDelete=h.button('선택 삭제 (1)').props.onClick,oldPrice=h.node('가격 옵션 1 공급가').props.onChange;
+   select(h,1);const oldSave=h.button('옵션 가격 저장하기').props.onClick,oldApply=h.button('번들 적용').props.onClick,oldDelete=h.button('선택 삭제 (1)').props.onClick,oldPrice=h.node('가격 옵션 1 공급가').props.onChange;
    h.button('번들 추가').props.onClick();change(h,'추가할 번들 수량','3');const confirm=submit(h);confirm({preventDefault(){}});await h.settle();confirm({preventDefault(){}});oldSave();oldApply();oldDelete();oldPrice({target:{value:'99999'}});await h.settle();assert.equal(h.writes.length,1);assert.equal(h.node('추가할 번들 수량').props.value,'3');assert.equal(h.node('추가할 번들 수량').props.disabled,true);assert.equal(h.node('가격 옵션 1 선택').props.checked,true);assert.equal(h.saved,0);
    h.button('입력 유지 · 번들 저장 결과 확인').props.onClick();await h.settle();assert.equal(alerts(h),'');assert.equal(dialog(h),undefined);assert.equal(h.writes.length,1);assert.equal(h.saved,1);assert.equal((await h.rows()).rows.length,4);assert.equal(h.node('가격 옵션 1 선택').props.checked,false);assert.equal(h.protectedSnapshot(),h.before);
   }finally{h.close();}
@@ -119,7 +119,7 @@ for(const company of priceTableCompanies){
 
 test('an empty-scope price controller accepts only coordinated exact receipt clocks, while ordinary or partial-clock reads reject newer parent data',async()=>{
  const h=await optionPriceTableUI(priceTableCompanies[0],{count:2,integrated:true});try{
-  change(h,'가격 옵션 1 공급가','9500');change(h,'가격 옵션 1 판매가','15000');h.button('옵션 저장·가격 계산').props.onClick();await h.settle();const latest=await getQuote(h);assert.notEqual(latest.productVersion,h.product.updated_at);
+  change(h,'가격 옵션 1 공급가','9500');change(h,'가격 옵션 1 판매가','15000');h.button('옵션 가격 저장하기').props.onClick();await h.settle();const latest=await getQuote(h);assert.notEqual(latest.productVersion,h.product.updated_at);
   const slots=[],effects=[],layouts=[],cache=new Map(),calls=[],native=createRequire(import.meta.url);let cursor=0,controller;
   const schedule=(queue,fn,deps)=>{const index=cursor++,before=slots[index];if(!before||deps.some((value,i)=>!Object.is(value,before.deps[i]))){slots[index]={deps,cleanup:before?.cleanup};queue.push(()=>{slots[index].cleanup?.();slots[index].cleanup=fn();});}};
   const hooks={useState(initial){const index=cursor++;if(!(index in slots))slots[index]=typeof initial==='function'?initial():initial;return[slots[index],value=>{slots[index]=typeof value==='function'?value(slots[index]):value;}];},useRef(initial){const index=cursor++;return slots[index]??(slots[index]={current:initial});},useMemo(fn,deps){const index=cursor++,before=slots[index];if(!before||deps.some((value,i)=>!Object.is(value,before.deps[i])))slots[index]={deps,value:fn()};return slots[index].value;},useEffect(fn,deps){schedule(effects,fn,deps);},useLayoutEffect(fn,deps){schedule(layouts,fn,deps);}};

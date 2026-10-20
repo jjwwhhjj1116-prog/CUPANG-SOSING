@@ -16,9 +16,11 @@ export type OptionPriceController = {
   change:(optionId:string|null,input:QuotationPriceInput,value:string|null)=>void;
   refresh:(keepEdits?:boolean,explicitLatest?:boolean,operation?:Operation)=>Promise<QuotationFieldsView|null>;
   save:(operation?:Operation)=>Promise<QuotationFieldsView|null>;
+  replaceEdits:(edits:readonly QuotationChange[],coordinated?:boolean)=>boolean;
+  acceptAtomicSaved:(view:QuotationFieldsView,expectedBase:QuotationFieldsView|null)=>boolean;
 };
-export function OptionQuotationPrices({productId,version,profileId,onSaved,refreshToken,disabled=false,beforeEdit,beforeSave,renderGrid,onLockChange,stageTwoPricingPolicy}:{productId:string;version:string;profileId?:string;onSaved?:()=>void;refreshToken?:string;stageTwoPricingPolicy?:PricePolicy;
-  disabled?:boolean;beforeEdit?:()=>boolean;beforeSave?:()=>boolean;onLockChange?:(locked:boolean)=>void;renderGrid?:(controller:OptionPriceController)=>ReactNode}) {
+export function OptionQuotationPrices({productId,version,profileId,onSaved,refreshToken,disabled=false,beforeEdit,beforeSave,renderGrid,onLockChange,stageTwoPricingPolicy,onDraftStateChange}:{productId:string;version:string;profileId?:string;onSaved?:()=>void;refreshToken?:string;stageTwoPricingPolicy?:PricePolicy;
+  onDraftStateChange?:(dirty:boolean)=>void;disabled?:boolean;beforeEdit?:()=>boolean;beforeSave?:()=>boolean;onLockChange?:(locked:boolean)=>void;renderGrid?:(controller:OptionPriceController)=>ReactNode}) {
   const endpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId?`?profileId=${encodeURIComponent(profileId)}`:''}`;
   const sourceKey = JSON.stringify([endpoint,version,refreshToken]);
   const currentEndpoint = useRef(endpoint), currentSource = useRef(sourceKey), mounted = useRef(true), request = useRef<AbortController|null>(null);
@@ -39,6 +41,7 @@ export function OptionQuotationPrices({productId,version,profileId,onSaved,refre
     return()=>{mounted.current=false;request.current?.abort();request.current=null;};
   },[endpoint,sourceKey,generation,endpointScope]);
   const view = saved?.scope===endpointScope?saved.view:null, edits = pending.scope===endpointScope?pending.edits:[];
+  useLayoutEffect(()=>{onDraftStateChange?.(edits.length>0);},[edits.length,onDraftStateChange]);
   const fresh = saved?.scope===endpointScope&&saved?.sourceKey===sourceKey;
   function store(body:QuotationFieldsView){latestSaved.current={endpoint,scope:endpointScope,sourceKey,view:body};setSaved(latestSaved.current);}
   function clearDraft(){latestDraft.current={endpoint,scope:endpointScope,edits:[]};lastPriceWrite.current=null;setPending(latestDraft.current);uncertainRef.current=false;setUncertain(false);}
@@ -123,17 +126,28 @@ export function OptionQuotationPrices({productId,version,profileId,onSaved,refre
     }catch(cause){if(rejected)lastPriceWrite.current=null;if(!controller.signal.aborted&&current()){setError(cause instanceof Error?cause.message:'가격 저장 실패');if(renderGrid&&!rejected){uncertainRef.current=true;setUncertain(true);}}return null;}
     finally{finish(controller);}
   }
+  function replaceEdits(values:readonly QuotationChange[],coordinated=false){
+    if(!current()||request.current||uncertainRef.current||!coordinated&&(blocked.current||beforeEdit?.()===false))return false;
+    latestDraft.current={endpoint,scope:endpointScope,edits:values.map(value=>({...value}))};lastPriceWrite.current=null;setPending(latestDraft.current);setMessage('');return true;
+  }
+  function acceptAtomicSaved(body:QuotationFieldsView,expectedBase:QuotationFieldsView|null){
+    const before=latestSaved.current?.scope===endpointScope?latestSaved.current.view:null;
+    if(!current()||request.current||before!==expectedBase)return false;
+    verifyOptionPriceView(body,profileId);store(body);clearDraft();setError('');setMessage('');return true;
+  }
   const controller:OptionPriceController={view,edits,targets,busy,dirty:edits.length>0,fresh,uncertain,issues:[...issues,...(targetError?[targetError]:[])],current,
-    snapshot:()=>({view:latestSaved.current?.scope===endpointScope?latestSaved.current.view:null,edits:latestDraft.current.scope===endpointScope?[...latestDraft.current.edits]:[],fresh:latestSaved.current?.scope===endpointScope&&latestSaved.current?.sourceKey===sourceKey,uncertain:uncertainRef.current,busy:request.current!==null}),change,refresh:load,save};
+    snapshot:()=>({view:latestSaved.current?.scope===endpointScope?latestSaved.current.view:null,edits:latestDraft.current.scope===endpointScope?[...latestDraft.current.edits]:[],fresh:latestSaved.current?.scope===endpointScope&&latestSaved.current?.sourceKey===sourceKey,uncertain:uncertainRef.current,busy:request.current!==null}),change,refresh:load,save,replaceEdits,acceptAtomicSaved};
   // The renderer consumes state. Its live-ref functions are passed to event
   // handlers, never evaluated while building the grid.
   // eslint-disable-next-line react-hooks/refs
   const grid=renderGrid?.(controller);
   return <section aria-label="옵션별 견적 가격 편집" data-quotation-source-step="가격" data-workspace-dirty={edits.length>0} data-workspace-saving={busy}>
-    <h4>옵션별 가격</h4>
-    {view&&<p>{view.categoryContext.categoryPath.join(' > ')} · {view.categoryContext.categoryId||'카테고리 미지정'}</p>}
-    <p>견적서의 Supplier Hub 가격입니다. 직접 입력하면 연결된 가격 항목에 함께 반영됩니다. 복원하면 각 항목의 공통 수정값 또는 자동 계산을 사용합니다. 공식 판매처 가격은 별도 항목으로 유지됩니다.</p>
-    {renderGrid&&stageTwoPricingPolicy&&<p>판매가 저장 시 자동 권장소비자가도 다시 계산합니다. 직접 수정한 권장소비자가와 공란은 유지합니다.</p>}
+    {!renderGrid&&<h4>옵션별 가격</h4>}
+    {view&&<p className={renderGrid?'stage-two-price-category':undefined}>{view.categoryContext.categoryPath.join(' > ')} · {view.categoryContext.categoryId||'카테고리 미지정'}</p>}
+    <details open={renderGrid?undefined:true} className={renderGrid?'stage-two-price-guide':undefined}><summary hidden={!renderGrid}>가격 입력·권장소비자가 안내</summary>
+      <p>견적서의 Supplier Hub 가격입니다. 직접 입력하면 연결된 가격 항목에 함께 반영됩니다. 복원하면 각 항목의 공통 수정값 또는 자동 계산을 사용합니다. 공식 판매처 가격은 별도 항목으로 유지됩니다.</p>
+      {renderGrid&&stageTwoPricingPolicy&&<p>판매가 저장 시 자동 권장소비자가도 다시 계산합니다. 직접 수정한 권장소비자가와 공란은 유지합니다.</p>}
+    </details>
     {busy&&<p role="status">가격 처리 중…</p>}{error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}
     {!!edits.length&&view&&!fresh&&<p role="status">상품 정보가 변경됐습니다. 입력을 유지한 채 최신 가격을 조회한 뒤 저장해주세요.</p>}
     {targetError&&<p role="alert">{targetError}</p>}{!!differences.length&&<p role="status">{differences.join(' ')}</p>}

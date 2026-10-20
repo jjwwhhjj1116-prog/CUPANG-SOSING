@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { calculatePrice } from '@/app/pricing';
+import { calculatePrice, pricePolicy } from '@/app/pricing';
 import { initialBundleQuantity } from '@/app/bundle-policy';
 import type { WorkspaceSettings } from '@/app/workspace-settings';
 
@@ -29,7 +29,7 @@ export function SettingsPricePreview({ settings, disabled }: { settings: Workspa
   let error = '';
   try {
     if (!cost.trim()) throw new Error('미리보기 원가를 입력해주세요.');
-    const policy = { ...settings, ...(settings.roundingMode === 'nearest' ? { arithmeticMode: 'couplus-number-v1' as const } : {}), minimumMargin: settings.minimumMarginEnabled ? settings.minimumMargin : 0 };
+    const policy = pricePolicy({ ...settings, ...(settings.roundingMode === 'nearest' ? { arithmeticMode: 'couplus-number-v1' as const } : {}), minimumMargin: settings.minimumMarginEnabled ? settings.minimumMargin : 0 });
     quantity = initialBundleQuantity(Number(cost), policy, settings);
     preview = calculatePrice(Number(cost), policy, quantity);
   } catch (cause) { error = cause instanceof Error ? cause.message : '가격 입력값을 확인해주세요.'; }

@@ -65,13 +65,13 @@ function navigationUI(f){
   if(url==='/api/collection-jobs')return Response.json({jobs:[]});
   if(url==='/api/category-profiles')return Response.json({profiles:await f.api.load('db/category-profiles.ts').listCategoryProfiles('owner'),nextCursor:null});
   if(/^\/api\/products\/[^/]+$/.test(parsed.pathname))return f.api.load('app/api/products/[id]/route.ts').GET(new Request(parsed.href),{params:Promise.resolve({id:parsed.pathname.split('/')[3]})});
-  assert.ok(/^\/api\/products\/[^/]+\/(options|quotation-fields|quotation|pricing)$/.test(parsed.pathname),'Unexpected request '+url);
-  if(hold&&method==='PUT'){const current=hold;hold=null;pausedWrites++;current.arrived.resolve();await current.release.promise;pausedWrites--;}
+  assert.ok(/^\/api\/products\/[^/]+\/(options|quotation-fields|quotation|pricing|stage-two-pricing|registration-layout)$/.test(parsed.pathname),'Unexpected request '+url);
+  if(hold&&method==='POST'&&parsed.pathname.endsWith('/stage-two-pricing')){const current=hold;hold=null;pausedWrites++;current.arrived.resolve();await current.release.promise;pausedWrites--;}
   const response=await f.api.route(url,{method,...(init.body?{body:JSON.parse(init.body)}:{})});
   if(parsed.pathname.endsWith('/quotation')){assert.equal(response.status,200,await response.clone().text());const action=JSON.parse(init.body).action;if(action==='preview')previews.push(await response.clone().json());else downloads.push(new Uint8Array(await response.clone().arrayBuffer()));}
   return response;
  }
- const implemented=new Set(['dashboard-client','price-editor','product-options-editor','option-price-table','option-quotation-prices','price-selection-dialog','quotation-panel']);
+ const implemented=new Set(['dashboard-client','price-editor','product-options-editor','option-price-table','option-quotation-prices','price-selection-dialog','quotation-panel','stage-two-price-policy-fields','use-registration-layout']);
  function load(file){
   if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
@@ -84,7 +84,7 @@ function navigationUI(f){
     if(name==='@/app/components/registration-board')return{...load('app/components/registration-board.tsx'),RegistrationBoard:props=>{board=props;return null;}};
      if(name==='@/app/components/product-option-board')return{ProductOptionBoard:props=>{optionBoard=props;return null;}};
      if(name.startsWith('@/app/components/')&&!implemented.has(name.split('/').at(-1)))return new Proxy({},{get:()=>()=>null});
-     return name.startsWith('@/')?load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts')):native(name);
+     return name.startsWith('@/')?load(name.slice(2)+(name.includes('/components/')&&fs.existsSync(new URL('../'+name.slice(2)+'.tsx',import.meta.url))?'.tsx':'.ts')):native(name);
     }});return exports;
  }
  const match=(node,selector)=>{const parts=/^\[([^=\]]+)(?:="([^"]*)")?\]$/.exec(selector);return parts&&node.props&&Object.hasOwn(node.props,parts[1])&&(parts[2]===undefined||String(node.props[parts[1]])===parts[2]);};
@@ -100,7 +100,7 @@ function navigationUI(f){
   const commits=layouts.splice(0);commits.forEach(item=>item.cleanup?.());commits.reverse().forEach(item=>item.commit());effects.splice(0).forEach(item=>{item.cleanup?.();item.commit();});return tree;}
  const settle=async()=>{for(let i=0;i<14;i++){render();await new Promise(resolve=>setImmediate(resolve));if(!pausedWrites)await Promise.allSettled([...requests]);}return render();};
  const node=label=>{const found=nodes(render()).find(item=>item.props?.['aria-label']===label);assert.ok(found,'Missing '+label);return found;};
- const button=label=>{const found=nodes(render()).find(item=>item.type==='button'&&text(item)===label);assert.ok(found,'Missing button '+label);return found;};
+ const button=label=>{const found=nodes(render()).find(item=>item.type==='button'&&(text(item)===label||item.props['aria-label']===label));assert.ok(found,'Missing button '+label);return found;};
  return{render,settle,node,button,calls,previews,downloads,load,
   async open(id=f.product.id,optionId='red'){await settle();const product=board.products.find(item=>item.id===id);assert.ok(product);board.onOptions(product);await settle();optionBoard.onStage(optionId,'가격');await settle();},
   async click(label){const target=button(label);assert.equal(Boolean(target.props.disabled),false,'Disabled '+label);target.props.onClick();await settle();},
@@ -123,13 +123,13 @@ for(const company of companies)test(`direct price drafts block quotation navigat
   await ui.click('3대표 이미지');await ui.click('7견적서 작업');
   if(ui.step==='7견적서 작업'){
    await ui.click('견적 자료 검토');const preview=ui.previews.at(-1),column=f.profile.mappings.find(item=>item.field==='salePrice').column;assert.ok(preview,text(ui.render()));
-   console.log(JSON.stringify({reproduction:'step719-missing-price-source-step',company:company.companyCode,draft:ui.node('가격 옵션 1 판매가').props.value,step:ui.step,sourceSteps:Array.from(ui.pending().steps),puts:ui.calls.filter(call=>call.method==='PUT').length,previewSalePrice:preview.rows[0][column]}));
+   console.log(JSON.stringify({reproduction:'step719-missing-price-source-step',company:company.companyCode,draft:ui.node('가격 옵션 1 판매가').props.value,step:ui.step,sourceSteps:Array.from(ui.pending().steps),puts:ui.calls.filter(call=>call.method==='POST'&&call.url.includes('/stage-two-pricing')).length,previewSalePrice:preview.rows[0][column]}));
   }
   assert.equal(ui.step,'2가격 설정','direct quotation-price edits must return to their saving stage');
-  assert.deepEqual(Array.from(ui.pending().steps),['가격']);assert.equal(ui.calls.filter(call=>call.method==='PUT').length,0);
+  assert.deepEqual(Array.from(ui.pending().steps),['가격']);assert.equal(ui.calls.filter(call=>call.method==='POST'&&call.url.includes('/stage-two-pricing')).length,0);
   assert.equal(ui.previews.length,0);assert.equal(ui.node('가격 옵션 1 판매가').props.value,'22222');
-  await ui.click('옵션 저장·가격 계산');assert.equal(ui.state().dirty,false);assert.equal(ui.state().busy,false);
-  const writes=ui.calls.filter(call=>call.method==='PUT');assert.equal(writes.length,1);assert.equal(writes[0].url,f.base+'/quotation-fields');assert.equal(writes[0].body.expectedInputFingerprint,f.initial.inputFingerprint);
+  await ui.click('옵션 가격 저장하기');assert.equal(ui.state().dirty,false);assert.equal(ui.state().busy,false);
+  const writes=ui.calls.filter(call=>call.method==='POST'&&call.url.includes('/stage-two-pricing'));assert.equal(writes.length,1);assert.equal(writes[0].url,f.base+'/stage-two-pricing');assert.equal(writes[0].body.expectedInputFingerprint,f.initial.inputFingerprint);
   const saved=await json(await f.api.route(f.base+'/quotation-fields'));assert.equal(saved.overrides.options.red.salePrice,'22222');assert.equal(saved.resolved.rows.find(row=>row.optionId==='red').fields.salePrice.source,'manual-option');
   await ui.click('7견적서 작업');assert.equal(ui.step,'7견적서 작업');await ui.click('견적 자료 검토');await ui.click('채운 견적서 파일 다운로드');
   const preview=ui.previews.at(-1),column=f.profile.mappings.find(item=>item.field==='salePrice').column;assert.equal(Number(preview.rows[0][column]),22222);assert.equal(preview.rows.length,2);assert.equal(preview.report.submissionReady,false);
@@ -141,16 +141,16 @@ for(const company of companies)test(`direct price drafts block quotation navigat
 test('manual blank, cancellation and close rejection keep direct-price scope and do not write',async()=>{
  const f=await fixture(companies[0]),ui=navigationUI(f);try{
   await ui.open(undefined,'blue');ui.node('가격 옵션 2 판매가').props.onChange({target:{value:''}});await ui.settle();
-  await ui.click('7견적서 작업');assert.equal(ui.step,'2가격 설정');assert.equal(ui.node('가격 옵션 2 판매가').props.value,'');assert.equal(ui.calls.filter(call=>call.method==='PUT').length,0);
+  await ui.click('7견적서 작업');assert.equal(ui.step,'2가격 설정');assert.equal(ui.node('가격 옵션 2 판매가').props.value,'');assert.equal(ui.calls.filter(call=>call.method==='POST'&&call.url.includes('/stage-two-pricing')).length,0);
   ui.closeWorkspace();await ui.settle();assert.equal(ui.confirmations,1);assert.ok(ui.node('상품 등록 작업 공간'));assert.equal(ui.node('가격 옵션 2 판매가').props.value,'');
-  await ui.click('입력 취소·저장 가격 다시 조회');assert.equal(ui.state().dirty,false);assert.equal(ui.calls.filter(call=>call.method==='PUT').length,0);
+  await ui.click('입력 취소·저장 가격 다시 조회');assert.equal(ui.state().dirty,false);assert.equal(ui.calls.filter(call=>call.method==='POST'&&call.url.includes('/stage-two-pricing')).length,0);
   await ui.click('7견적서 작업');assert.equal(ui.step,'7견적서 작업');assert.equal(ui.node('가격 옵션 2 판매가').props.value,f.initial.resolved.rows.find(row=>row.optionId==='blue').fields.salePrice.value);
  }finally{ui.unmount();f.close();}
 });
 
 test('pending direct-price save blocks quotation entry and close until acknowledged',async()=>{
  const f=await fixture(companies[0]),ui=navigationUI(f);try{
-  await ui.open();ui.node('가격 옵션 1 판매가').props.onChange({target:{value:'23333'}});await ui.settle();const gate=ui.holdWrite();ui.button('옵션 저장·가격 계산').props.onClick();await gate.arrived;await ui.settle();
+  await ui.open();ui.node('가격 옵션 1 판매가').props.onChange({target:{value:'23333'}});await ui.settle();const gate=ui.holdWrite();ui.button('옵션 가격 저장하기').props.onClick();await gate.arrived;await ui.settle();
   assert.equal(ui.state().busy,true);await ui.click('7견적서 작업');assert.equal(ui.step,'2가격 설정');ui.closeWorkspace();await ui.settle();assert.equal(ui.confirmations,0);assert.ok(ui.node('상품 등록 작업 공간'));assert.equal(ui.previews.length,0);
   gate.release();await ui.settle();assert.equal(ui.state().busy,false);assert.equal(ui.state().dirty,false);await ui.click('7견적서 작업');assert.equal(ui.step,'7견적서 작업');
  }finally{ui.unmount();f.close();}
@@ -163,7 +163,7 @@ test('changing the selected row and visiting other stages retain the original op
   assert.equal(ui.node('가격 옵션 2 선택').props.checked,true);assert.equal(ui.node('가격 옵션 1 판매가').props.value,'24444');
   assert.equal(ui.node('가격 옵션 2 판매가').props.value,f.initial.resolved.rows.find(row=>row.optionId==='blue').fields.salePrice.value);
   await ui.click('1SEO 설정');await ui.click('6한글 표시사항');await ui.click('7견적서 작업');assert.equal(ui.step,'2가격 설정');
-  assert.equal(ui.node('가격 옵션 1 판매가').props.value,'24444');assert.equal(ui.calls.filter(call=>call.method==='PUT').length,0);
+  assert.equal(ui.node('가격 옵션 1 판매가').props.value,'24444');assert.equal(ui.calls.filter(call=>call.method==='POST'&&call.url.includes('/stage-two-pricing')).length,0);
   await ui.click('입력 취소·저장 가격 다시 조회');assert.equal(ui.state().dirty,false);await ui.click('7견적서 작업');assert.equal(ui.step,'7견적서 작업');
  }finally{ui.unmount();f.close();}
 });
@@ -171,13 +171,13 @@ test('changing the selected row and visiting other stages retain the original op
 test('discarded product drafts and stale handlers cannot write into a new product or an unmounted workspace',async()=>{
  const f=await fixture(companies[0]),ui=navigationUI(f);try{
   await ui.open();ui.node('가격 옵션 1 판매가').props.onChange({target:{value:'25555'}});await ui.settle();
-  const oldChange=ui.node('가격 옵션 1 판매가').props.onChange,oldSave=ui.button('옵션 저장·가격 계산').props.onClick;
+  const oldChange=ui.node('가격 옵션 1 판매가').props.onChange,oldSave=ui.button('옵션 가격 저장하기').props.onClick;
   ui.discard(true);await ui.open(f.second.id,'blue');assert.equal(ui.confirmations,1);
   assert.equal(ui.state().dirty,false);assert.notEqual(ui.node('가격 옵션 1 판매가').props.value,'25555');
-  oldChange({target:{value:'26666'}});oldSave();await ui.settle();assert.equal(ui.state().dirty,false);assert.equal(ui.calls.filter(call=>call.method==='PUT').length,0);
-  const currentChange=ui.node('가격 옵션 2 판매가').props.onChange,currentSave=ui.button('옵션 저장·가격 계산').props.onClick,lateBefore=ui.late;
+  oldChange({target:{value:'26666'}});oldSave();await ui.settle();assert.equal(ui.state().dirty,false);assert.equal(ui.calls.filter(call=>call.method==='POST'&&call.url.includes('/stage-two-pricing')).length,0);
+  const currentChange=ui.node('가격 옵션 2 판매가').props.onChange,currentSave=ui.button('옵션 가격 저장하기').props.onClick,lateBefore=ui.late;
   ui.unmount();currentChange({target:{value:'27777'}});currentSave();await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(ui.calls.filter(call=>call.method==='PUT').length,0);assert.equal(ui.late,lateBefore);
+  assert.equal(ui.calls.filter(call=>call.method==='POST'&&call.url.includes('/stage-two-pricing')).length,0);assert.equal(ui.late,lateBefore);
   for(const id of[f.product.id,f.second.id]){const view=await json(await f.api.route('/api/products/'+id+'/quotation-fields'));assert.equal(Object.keys(view.overrides.options).length,0);}
   assert.equal(f.api.network.length,0);assert.equal(f.api.aiSources.length,0);
  }finally{ui.unmount();f.close();}

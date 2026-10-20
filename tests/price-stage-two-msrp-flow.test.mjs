@@ -15,13 +15,14 @@ const originalFile = new URL('../outputs/step603-official-unand-2624.xlsx', impo
 const profileFile = new URL('../outputs/step604-unand-profile-read.json', import.meta.url);
 const officialAvailable = fs.existsSync(originalFile) && fs.existsSync(profileFile);
 const sourceFiles = ['app/stage-two-msrp.ts', 'app/pricing.ts', 'app/components/product-options-editor.tsx', 'app/components/option-quotation-prices.tsx', 'app/components/option-price-table.tsx',
-  'app/api/products/[id]/quotation-fields/route.ts', 'app/quotation-fields-snapshot.ts', 'app/quotation-schema.ts', 'db/quotation-fields.ts'];
+  'app/api/products/[id]/quotation-fields/route.ts', 'app/api/products/[id]/stage-two-pricing/route.ts', 'app/stage-two-pricing.ts', 'db/stage-two-pricing.ts',
+  'app/quotation-fields-snapshot.ts', 'app/quotation-schema.ts', 'db/quotation-fields.ts'];
 const sourceHashes = () => Object.fromEntries(sourceFiles.filter(file => fs.existsSync(new URL('../' + file, import.meta.url)))
   .map(file => [file, sha(fs.readFileSync(new URL('../' + file, import.meta.url)))]));
 const frozen = sourceHashes(), proof = [];
 after(() => {
   assert.deepEqual(sourceHashes(), frozen);
-  if (proof.length) fs.writeFileSync(new URL('../outputs/step697-msrp-api-proof.json', import.meta.url), JSON.stringify({
+  if (proof.length) fs.writeFileSync(new URL('../outputs/step761-msrp-api-proof.json', import.meta.url), JSON.stringify({
     format: 'local-stage-two-msrp-api-proof-v1', sourceHashes: frozen, officialWorkbookAvailable: officialAvailable, cases: proof,
     externalNetworkRequests: 0, browserActions: 0, supplierHubWrites: 0,
     boundaries: 'Actual ProductOptionsEditor callbacks for the official flows; actual DetailPanel for the common-price and ACK-loss flows. Authenticated API handlers use fixture identities, isolated SQLite and local R2. The previously recorded original Unand workbook is reused for Waihop locally; no new live template, scraping, Chrome action, or Supplier Hub submission is claimed.',
@@ -59,8 +60,8 @@ async function fixture(company, { official = false, count = 6 } = {}) {
       return json(await h.request(url, { method: 'PUT', body: JSON.stringify({ expectedRevision: view.revision, expectedInputFingerprint: view.inputFingerprint, changes, ...extra }) }), status);
     };
     const paired = (view, input, optionId, value) => h.load('app/quotation-price-targets.ts').quotationPriceTargets(view.resolved.schema.fields)[input].linked.map(fieldKey => ({ fieldKey, optionId, value }));
-    const save = async () => { h.button('옵션 저장·가격 계산').props.onClick(); await h.settle(); assert.equal(alerts(h), ''); };
-    const stable = () => JSON.stringify(['collection_jobs', 'collection_results', 'collection_context', 'category_profiles', 'workspace_settings', 'product_price_policy', 'product_content', 'product_options',
+    const save = async () => { h.node('옵션 가격 저장하기').props.onClick(); await h.settle(); assert.equal(alerts(h), ''); };
+    const stable = () => JSON.stringify(['collection_jobs', 'collection_results', 'collection_context', 'category_profiles', 'workspace_settings', 'product_content',
       'product_registration_numbers', 'product_registration_options'].map(table => [table, h.sqlite.prepare('SELECT * FROM ' + table + ' ORDER BY rowid').all()]));
     const objectSnapshot = () => JSON.stringify([...objects].map(([key, bytes]) => [key, sha(bytes)]));
     const workbook = async () => {
@@ -87,7 +88,7 @@ for (const company of priceTableCompanies) test(`Stage2 sale saves automatic MSR
     const seed = [...f.paired(view, 'msrp', 'price-002', '27000'), ...f.paired(view, 'msrp', 'price-003', ''), ...f.paired(view, 'msrp', 'price-005', '30000'),
       { fieldKey: 'title', optionId: 'price-002', value: '직접 보존할 옵션 제목' }, ...(independent ? [{ fieldKey: independent.id, optionId: 'price-001', value: '76500' }] : [])];
     await f.write(seed); await f.refresh();
-    const stable = f.stable(), objects = f.objectSnapshot(), otherBefore = database(other), sourceRows = plain((await f.options()).options.rows), writesBefore = h.writes.length;
+    const stable = f.stable(), objects = f.objectSnapshot(), otherBefore = database(other), sourceRows = plain((await f.options()).options.rows), policyBefore=plain((await f.options()).pricing.policy), writesBefore = h.writes.length;
     assert.equal(h.node('가격 옵션 1 판매가').props.value, '6750'); assert.equal(h.node('가격 옵션 1 권장소비자가').props.value, '8780');
     change(h, '가격 옵션 1 판매가', '9000'); change(h, '가격 옵션 2 판매가', '15000'); change(h, '가격 옵션 3 판매가', '15000');
     change(h, '가격 옵션 4 판매가', '9000'); change(h, '가격 옵션 4 권장소비자가', '17000'); change(h, '가격 옵션 5 판매가', '9000');
@@ -98,7 +99,8 @@ for (const company of priceTableCompanies) test(`Stage2 sale saves automatic MSR
     assert.equal(values('price-001').msrp.value, '11700', JSON.stringify({ writes: h.writes.slice(writesBefore), status: nodes(h.render()).filter(node => node.props?.role === 'status').map(text) }));
     assert.equal(values('price-002').msrp.value, '27000'); assert.equal(values('price-003').msrp.value, ''); assert.equal(values('price-004').msrp.value, '17000'); assert.equal(values('price-005').msrp.value, '8780');
     assert.deepEqual(Object.keys(view.stageTwoMsrp ?? {}), ['price-001']);
-    assert.deepEqual(h.writes.slice(writesBefore).map(write => write.kind), ['quotation-fields']); assert.deepEqual(h.writes.at(-1).stageTwoMsrp, ['price-001']);
+    assert.deepEqual(h.writes.slice(writesBefore).map(write => [write.method,write.kind]), [['POST','stage-two-pricing']]);
+    assert.equal(Object.hasOwn(h.writes.at(-1),'stageTwoMsrp'),false,'MSRP authority is derived on the server, never supplied by the pricing form');
     const firstBook = await f.workbook();
     if (firstBook) { assert.deepEqual(firstBook.preview.report.company, company); assert.equal(firstBook.cells.length, 5); assert.deepEqual(plain(firstBook.cells[0].slice(29, 32)), ['4050', '9000', '11700']); assert.equal(firstBook.cells[1][2], '직접 보존할 옵션 제목'); assert.equal(firstBook.cells[2][31], ''); }
     h.button('저장 가격 다시 조회').props.onClick(); await h.settle(); assert.equal(h.node('가격 옵션 1 권장소비자가').props.value, '11700');
@@ -111,7 +113,7 @@ for (const company of priceTableCompanies) test(`Stage2 sale saves automatic MSR
     await f.write([...f.paired(view, 'salePrice', 'price-006', '9000'), ...f.paired(view, 'msrp', 'price-006', '11700')], { stageTwoMsrp: ['price-006'] }, 400, view);
     assert.equal(database(h), beforeExcluded, 'an excluded row cannot acquire automatic MSRP authority');
     assert.equal(values('price-002').title.value, '직접 보존할 옵션 제목'); if (independent) assert.equal(values('price-001')[independent.id].value, '76500');
-    assert.deepEqual(plain((await f.options()).options.rows), sourceRows); assert.equal(f.stable(), stable); assert.equal(f.objectSnapshot(), objects); assert.equal(database(other), otherBefore);
+    assert.deepEqual(plain((await f.options()).options.rows), sourceRows);assert.deepEqual(plain((await f.options()).pricing.policy),policyBefore); assert.equal(f.stable(), stable); assert.equal(f.objectSnapshot(), objects); assert.equal(database(other), otherBefore);
     assert.equal(h.sqlite.prepare('SELECT COUNT(*) AS n FROM supplier_hub_receipts').get().n, 0); assert.equal(h.sqlite.prepare('SELECT supplier_hub_status FROM products WHERE id=?').get(h.product.id).supplier_hub_status, '미전송');
     proof.push({ company, result: 'passed', policy: plain((await f.options()).pricing.policy), saleMsrp: [[6750, 8780], [9000, 11700], [15000, 19500], [18000, 19500]],
       manualAmount: 27000, manualBlank: '', pendingAmount: 17000, pendingRestore: 8780, excludedOption: 'price-006', independentOsrp: independent ? '76500' : null,
@@ -149,16 +151,16 @@ test('common manual MSRP amount/blank and explicit pending blank stay independen
   } finally { h.close(); }
 });
 
-test('committed derived MSRP ACK loss recovers by read without a duplicate PUT and continues automatic edits', async () => {
+test('committed derived MSRP ACK loss recovers by read without a duplicate atomic POST and continues automatic edits', async () => {
   const f = await fixture(priceTableCompanies[1], { count: 2 }), { h } = f;
   try {
     const source = f.stable(); let lost = true;
-    h.controls.response = (url, init, response) => { if (lost && init.method === 'PUT') { lost = false; return Response.json({ error: 'local committed ACK lost' }, { status: 503 }); } return response; };
-    change(h, '가격 옵션 1 판매가', '9000'); const save = h.button('옵션 저장·가격 계산').props.onClick; save(); await h.settle(); save(); await h.settle();
-    assert.equal(h.writes.filter(write => write.kind === 'quotation-fields').length, 1); assert.equal(h.saved, 0); assert.equal(h.node('가격 옵션 1 판매가').props.value, '9000'); assert.equal(h.node('가격 옵션 1 판매가').props.disabled, true);
+    h.controls.response = (url, init, response) => { if (lost && init.method === 'POST' && url.includes('/stage-two-pricing')) { lost = false; return Response.json({ error: 'local committed ACK lost' }, { status: 503 }); } return response; };
+    change(h, '가격 옵션 1 판매가', '9000'); const save = h.node('옵션 가격 저장하기').props.onClick; save(); await h.settle(); save(); await h.settle();
+    assert.equal(h.writes.filter(write => write.kind === 'stage-two-pricing').length, 1); assert.equal(h.saved, 0); assert.equal(h.node('가격 옵션 1 판매가').props.value, '9000'); assert.equal(h.node('가격 옵션 1 판매가').props.disabled, true);
     const committed = await f.read(); assert.equal(committed.resolved.rows.find(row => row.optionId === 'price-001').fields.msrp.value, '11700');
-    h.button('입력 유지·최신 가격 조회').props.onClick(); await h.settle(); assert.equal(h.saved, 1); assert.equal(h.writes.filter(write => write.kind === 'quotation-fields').length, 1); assert.equal(h.node('가격 옵션 1 권장소비자가').props.value, '11700');
+    h.button('입력 유지 · 저장 결과 확인').props.onClick(); await h.settle(); assert.equal(h.saved, 1); assert.equal(h.writes.filter(write => write.kind === 'stage-two-pricing').length, 1); assert.equal(h.node('가격 옵션 1 권장소비자가').props.value, '11700');
     change(h, '가격 옵션 1 판매가', '15000'); await f.save(); const next = await f.read(); assert.equal(next.resolved.rows.find(row => row.optionId === 'price-001').fields.msrp.value, '19500');
-    assert.equal(h.writes.filter(write => write.kind === 'quotation-fields').length, 2); assert.equal(f.stable(), source);
+    assert.equal(h.writes.filter(write => write.kind === 'stage-two-pricing').length, 2); assert.equal(f.stable(), source);
   } finally { h.close(); }
 });

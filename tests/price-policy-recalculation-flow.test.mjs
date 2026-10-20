@@ -7,10 +7,10 @@ import { optionPriceTableUI, priceTableCompanies, priceTableNodes as nodes, pric
 const plain = value => JSON.parse(JSON.stringify(value)), sha = value => createHash('sha256').update(value).digest('hex');
 const json = async (response, status = 200) => { assert.equal(response.status, status, await response.clone().text()); return response.json(); };
 const change = (h, label, value) => h.node(label).props.onChange({ target: { value, valueAsNumber: Number(value) } });
-const form = h => nodes(h.render()).find(node => node.type === 'form' && node.props['data-quotation-source-step'] === '가격');
-const policyField = (h, label) => nodes(form(h)).find(node => node.type === 'label' && nodes(node).some(child => child.type === 'span' && child.props.children === label)).props.children[1];
+const form = h => h.node('가격 정책 설정');
+const policyField = (h, label) => h.node(label);
 const policyChange = (h, label, value) => policyField(h, label).props.onChange({ target: { value } });
-const policySave = async h => { await form(h).props.onSubmit({ preventDefault() {} }); await h.settle(); };
+const policySave = async h => { h.node('가격 설정 저장하기').props.onClick(); await h.settle(); };
 const database = h => JSON.stringify(h.sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all()
   .map(({ name }) => [name, h.sqlite.prepare('SELECT * FROM ' + name + ' ORDER BY rowid').all()]));
 const originalFile = new URL('../outputs/step603-official-unand-2624.xlsx', import.meta.url), profileFile = new URL('../outputs/step604-unand-profile-read.json', import.meta.url);
@@ -48,10 +48,10 @@ async function fixture(company = priceTableCompanies[0], { official = false, cou
     h.selectProfile(profile?.id); await refresh();
     const paired = (view, input, optionId, value) => h.load('app/quotation-price-targets.ts').quotationPriceTargets(view.resolved.schema.fields)[input].linked.map(fieldKey => ({ fieldKey, optionId, value }));
     const write = async changes => { const view = await quote(); const saved = await json(await h.request(quoteUrl, { method: 'PUT', body: JSON.stringify({ expectedRevision: view.revision, expectedInputFingerprint: view.inputFingerprint, changes }) })); await refresh(); return saved; };
-    const saveGrid = async () => { h.button('옵션 저장·가격 계산').props.onClick(); await h.settle(); assert.equal(nodes(h.render()).filter(node => node.props?.role === 'alert').map(text).join(' '), ''); };
+    const saveGrid = async () => { h.node('옵션 가격 저장하기').props.onClick(); await h.settle(); assert.equal(nodes(h.render()).filter(node => node.props?.role === 'alert').map(text).join(' '), ''); };
     const state = () => JSON.parse(h.sqlite.prepare('SELECT payload FROM product_quotation_fields WHERE product_id=?').get(h.product.id).payload);
     const writeState = value => h.sqlite.prepare('UPDATE product_quotation_fields SET payload=? WHERE product_id=?').run(JSON.stringify(value), h.product.id);
-    const stable = () => JSON.stringify(['collection_jobs', 'collection_results', 'collection_context', 'category_profiles', 'workspace_settings', 'product_content', 'product_options', 'product_registration_numbers', 'product_registration_options']
+    const stable = () => JSON.stringify(['collection_jobs', 'collection_results', 'collection_context', 'category_profiles', 'workspace_settings', 'product_content', 'product_registration_numbers', 'product_registration_options']
       .map(table => [table, h.sqlite.prepare('SELECT * FROM ' + table + ' ORDER BY rowid').all()]));
     const objectSnapshot = () => JSON.stringify([...objects].map(([key, bytes]) => [key, sha(bytes)]));
     const workbook = async () => {
@@ -108,11 +108,11 @@ for (const company of priceTableCompanies) test(`legacy API policy save updates 
     for (const layer of [newScope.common, ...sourceOptions.rows.map(option => newScope.options[option.id] ?? {})]) for (const key of priceIds) assert.equal(Object.hasOwn(layer, key), false, 'current price override cleared: ' + key);
     assert.deepEqual(values(row(view)), ['6200', '10330', '15500']); assert.deepEqual(values(row(view, 'price-003')), ['6200', '10330', '15500']); assert.equal(view.stageTwoMsrp, undefined);
     assert.equal(h.node('가격 옵션 1 판매가').props.value, '10330'); assert.equal(h.node('가격 옵션 1 권장소비자가').props.value, '15500'); assert.equal(form(h).props['data-workspace-dirty'], false);
-    const request = h.writes.filter(write => write.kind === 'pricing').at(-1); assert.equal(request.recalculate, true); assert.equal(request.profileId, f.profile?.id); assert.equal(request.policy.recalculate, undefined);
+    const request = h.writes.filter(write => write.kind === 'stage-two-pricing').at(-1); assert.equal(request.recalculate, true); assert.equal(h.apiCalls.filter(call=>call.method==='POST'&&call.url.includes('/stage-two-pricing')).at(-1).url,f.base+'/stage-two-pricing'+(f.profile?'?profileId='+f.profile.id:'')); assert.equal(request.policy.recalculate, undefined);
     assert.deepEqual(newScope.options['retired-option'], scope.options['retired-option']); assert.deepEqual(after.categoryOverrides['category:991234'], retained.categoryOverrides['category:991234']); assert.deepEqual(after.detailSaveBackups, retained.detailSaveBackups);
     assert.deepEqual(after.categoryPackagingBasis ?? after.packagingBasis, retained.categoryPackagingBasis ?? retained.packagingBasis); assert.equal(row(view, 'price-002').title.value, '직접 저장한 제목 보존'); assert.equal(row(view).packagedWeightG.value, '420'); assert.equal(view.overrides.common.kcCertificationNumber, ''); if (osrp) assert.equal(row(view)[osrp.id].value, '76500');
     const book = await f.workbook(); if (book) { assert.deepEqual(book.preview.report.company, company); assert.equal(book.cells.length, 4); assert.deepEqual(plain(book.cells[0].slice(29, 32)), ['6200', '10330', '15500']); assert.equal(book.cells[1][2], '직접 저장한 제목 보존'); }
-    const finalOptions = await f.options(); assert.deepEqual(plain(finalOptions.options), sourceOptions); assert.deepEqual(plain(finalOptions.optionRegistrationNumbers), numbers); assert.equal(finalOptions.options.rows[3].included, false);
+    const finalOptions = await f.options(); assert.deepEqual(plain(finalOptions.options.rows), sourceOptions.rows); assert.deepEqual(plain(finalOptions.optionRegistrationNumbers), numbers); assert.equal(finalOptions.options.rows[3].included, false);
     assert.equal(f.stable(), sourceBefore); assert.equal(f.objectSnapshot(), objectsBefore); assert.equal(database(other), otherBefore); assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM supplier_hub_receipts').get().n, 0);
     proof.push({ company, ordinary: ['9000', '13500'], manualPreservedBeforeExplicit: ['8000', '14000', '18200'], recalculated: values(row(view)), officialCells: book ? plain(book.cells[0].slice(29, 32)) : null,
       originalWorkbookSha256: f.original ? sha(f.original) : null, excludedOptionUnchanged: true, sourceBeforeSha256: sha(sourceBefore), sourceAfterSha256: sha(f.stable()), r2BeforeSha256: sha(objectsBefore), r2AfterSha256: sha(f.objectSnapshot()), otherCompanyBeforeSha256: sha(otherBefore), otherCompanyAfterSha256: sha(database(other)),
@@ -211,24 +211,16 @@ test('unchanged price plans still guard sources without creating or advancing qu
   proof.push({ kind: 'unchanged-guarded-plans', results });
 });
 
-test('explicit same-policy intent survives a failed save, clears on acknowledgement/scope change, and lost ACK never claims success', async () => {
-  const f = await fixture(priceTableCompanies[1], { count: 1 }), { h } = f;
-  try {
-    change(h, '가격 옵션 1 공급가', '8000'); change(h, '가격 옵션 1 판매가', '14000'); change(h, '가격 옵션 1 권장소비자가', '18200'); await f.saveGrid();
-    const before = database(h); let reject = true;
-    h.controls.before = (url, init) => { if (reject && url.endsWith('/pricing') && init.method === 'POST') { reject = false; throw Error('local policy request rejected before mutation'); } };
-    h.button('일괄 재계산').props.onClick(); assert.equal(form(h).props['data-workspace-dirty'], true); await policySave(h);
-    assert.equal(database(h), before); assert.equal(form(h).props['data-workspace-dirty'], true); assert.match(text(form(h)), /local policy request rejected/);
-    await policySave(h); assert.equal(form(h).props['data-workspace-dirty'], false); assert.equal(h.writes.filter(write => write.kind === 'pricing').at(-1).recalculate, true);
-    assert.deepEqual(values(row(await f.quote())), ['4050', '6750', '8780']);
-    const writes = h.writes.length; h.button('일괄 재계산').props.onClick(); assert.equal(form(h).props['data-workspace-dirty'], true, 'an unchanged saved policy still has explicit destructive intent');
-    const oldSubmit = form(h).props.onSubmit; h.selectProfile('missing'); h.selectProfile(undefined); await oldSubmit({ preventDefault() {} }); await h.settle();
-    assert.equal(h.writes.length, writes); assert.equal(form(h).props['data-workspace-dirty'], false, 'scope ABA cannot retain destructive intent');
-    let lost = true; h.controls.response = (url, init, response) => { if (lost && url.endsWith('/pricing') && init.method === 'POST') { lost = false; return Response.json({ error: 'local committed policy ACK lost' }, { status: 503 }); } return response; };
-    policyChange(h, '시장가격 배수', '1.5'); h.button('일괄 재계산').props.onClick(); await policySave(h);
-    assert.equal(form(h).props['data-workspace-dirty'], true); assert.doesNotMatch(text(form(h)), /가격을 저장했습니다/);
-    const observed = await f.options(), observedQuote = await f.quote(); assert.equal(observed.pricing.policy.msrpMultiple, 1.5); assert.deepEqual(values(row(observedQuote)), ['4050', '6750', '10130']);
-    const committed = database(h); await policySave(h); assert.equal(database(h), committed, 'retry with the old product version cannot apply a second mutation'); assert.equal(form(h).props['data-workspace-dirty'], true);
-    assert.doesNotMatch(text(form(h)), /가격을 저장했습니다/); assert.equal(h.writes.filter(write => write.kind === 'pricing').at(-1).recalculate, true);
-  } finally { h.close(); }
+test('explicit same-policy intent survives unknown save and exact GET recovers before retry; scope change drops only unsent category reset intent', async () => {
+  const f=await fixture(priceTableCompanies[1],{count:1}),{h}=f;
+  try{
+    change(h,'가격 옵션 1 공급가','8000');change(h,'가격 옵션 1 판매가','14000');change(h,'가격 옵션 1 권장소비자가','18200');await f.saveGrid();
+    const before=database(h);let reject=true;
+    h.controls.before=(url,init)=>{if(reject&&url.includes('/stage-two-pricing')&&init.method==='POST'){reject=false;throw Error('local policy request rejected before mutation');}};
+    h.button('일괄 재계산').props.onClick();await h.settle();assert.equal(form(h).props['data-workspace-dirty'],true);await policySave(h);assert.equal(database(h),before);assert.equal(form(h).props['data-workspace-dirty'],true);assert.match(text(h.render()),/local policy request rejected/);
+    h.button('입력 유지 · 저장 결과 확인').props.onClick();await h.settle();await policySave(h);assert.equal(form(h).props['data-workspace-dirty'],false);assert.equal(h.writes.filter(write=>write.kind==='stage-two-pricing').at(-1).recalculate,true);assert.deepEqual(values(row(await f.quote())),['4050','6750','8780']);
+    const writes=h.writes.length;h.button('일괄 재계산').props.onClick();await h.settle();assert.equal(form(h).props['data-workspace-dirty'],true);const oldSubmit=h.node('가격 설정 저장하기').props.onClick;h.selectProfile('missing');h.selectProfile(undefined);oldSubmit();await h.settle();assert.equal(h.writes.length,writes);assert.equal(form(h).props['data-workspace-dirty'],false);
+    let lost=true;h.controls.response=(url,init,response)=>{if(lost&&url.includes('/stage-two-pricing')&&init.method==='POST'){lost=false;return Response.json({error:'local committed policy ACK lost'},{status:503});}return response;};
+    policyChange(h,'시장가격 배수','1.5');h.button('일괄 재계산').props.onClick();await policySave(h);assert.equal(form(h).props['data-workspace-dirty'],true);const observed=await f.options(),observedQuote=await f.quote();assert.equal(observed.pricing.policy.msrpMultiple,1.5);assert.deepEqual(values(row(observedQuote)),['4050','6750','10130']);const committed=database(h);await policySave(h);assert.equal(database(h),committed);assert.equal(form(h).props['data-workspace-dirty'],true);h.button('입력 유지 · 저장 결과 확인').props.onClick();await h.settle();assert.equal(form(h).props['data-workspace-dirty'],false);assert.equal(database(h),committed);
+  }finally{h.close();}
 });

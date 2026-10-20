@@ -60,8 +60,8 @@ import { requestErrorMessage } from '@/app/request-error';
 import { productRemovalDecision, type ProductRemovalDecision } from '@/app/product-removal-policy';
 import type { SupplierHubReceiptSummary } from '@/app/supplier-hub-receipt';
 import type { NativeReceiptSummary } from '@/app/supplier-hub-product-receipt';
-import { PriceEditor, type PriceSaveOptions } from '@/app/components/price-editor';
-import { quotationCsv, pricePolicy, type PricePolicy } from '@/app/pricing';
+import { type PriceSaveOptions } from '@/app/components/price-editor';
+import { quotationCsv, type PricePolicy } from '@/app/pricing';
 import { collectionBlock, collectionJobProgress, type CollectionJob } from '@/app/sourcing';
 
 type Product = {
@@ -702,7 +702,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
 function Modal({ title, subtitle, onClose, children, wide=false }: { title:string; subtitle:string; onClose:()=>void; children:React.ReactNode; wide?:boolean }) {
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className={`modal ${wide?'wide':''}`} role="dialog" aria-modal="true" aria-label={title} onMouseDown={e=>e.stopPropagation()}><header><div><h2>{title}</h2><p>{subtitle}</p></div><button className="icon-close" onClick={onClose}>×</button></header>{children}</section></div>;
 }
-function DetailPanel({ workspaceOwnerId, onReceiptSaved, onBeforeSeoGenerate, onBeforeFreeImageApply, onPrepareSubmission, onProfilePrepared, onProfileSelected, onReviewPackaging, tab, product, settings, onUpload, onSavePrice, onSaved, onManageCategories, preferredProfileId, quotationTarget, quotationNavigationSequence, focusedOptionId, initialOptionAction }: { workspaceOwnerId?:string;onReceiptSaved:()=>void; onBeforeSeoGenerate:()=>boolean; onBeforeFreeImageApply:()=>boolean; onPrepareSubmission:(profileId?:string)=>void; onProfilePrepared:(profile:CategoryProfile,source:CategoryProfile)=>void; onProfileSelected:(id?:string)=>void; onReviewPackaging:(optionId:string|null)=>void; focusedOptionId?:string; initialOptionAction?:'remove'; quotationTarget?:QuotationNavigationTarget; quotationNavigationSequence?:number; preferredProfileId?:string; onSavePrice:(policy:PricePolicy, options?:PriceSaveOptions)=>Promise<void>; tab:string; product:Product; settings:Settings; onSaved:()=>void; onManageCategories:()=>void; onUpload:(e:ChangeEvent<HTMLInputElement>)=>void }) {
+function DetailPanel({ workspaceOwnerId, onReceiptSaved, onBeforeSeoGenerate, onBeforeFreeImageApply, onPrepareSubmission, onProfilePrepared, onProfileSelected, onReviewPackaging, tab, product, settings, onUpload, onSaved, onManageCategories, preferredProfileId, quotationTarget, quotationNavigationSequence, focusedOptionId, initialOptionAction }: { workspaceOwnerId?:string;onReceiptSaved:()=>void; onBeforeSeoGenerate:()=>boolean; onBeforeFreeImageApply:()=>boolean; onPrepareSubmission:(profileId?:string)=>void; onProfilePrepared:(profile:CategoryProfile,source:CategoryProfile)=>void; onProfileSelected:(id?:string)=>void; onReviewPackaging:(optionId:string|null)=>void; focusedOptionId?:string; initialOptionAction?:'remove'; quotationTarget?:QuotationNavigationTarget; quotationNavigationSequence?:number; preferredProfileId?:string; onSavePrice:(policy:PricePolicy, options?:PriceSaveOptions)=>Promise<void>; tab:string; product:Product; settings:Settings; onSaved:()=>void; onManageCategories:()=>void; onUpload:(e:ChangeEvent<HTMLInputElement>)=>void }) {
   const [quotationRefresh, setQuotationRefresh] = useState(0);
   const seoProcessingScope=JSON.stringify([workspaceOwnerId,product.id,product.updated_at]);
   const [seoProcessingClock,setSeoProcessingClock]=useState({scope:seoProcessingScope,token:{}});
@@ -741,13 +741,8 @@ function DetailPanel({ workspaceOwnerId, onReceiptSaved, onBeforeSeoGenerate, on
   const [labelTranslationOpen,setLabelTranslationOpen]=useState(false);
   const [quotationScope,setQuotationScope] = useState<{requested?:string;selected?:string}>({requested:preferredProfileId,selected:preferredProfileId});
   const pricingProfileId=quotationScope.requested===preferredProfileId?quotationScope.selected:preferredProfileId;
-  const pricePolicyRef=useRef({dirty:false,busy:false}),optionPriceBusyRef=useRef<{busy:boolean;operation:object|null}>({busy:false,operation:null});
-  const [pricePolicyState,setPricePolicyState]=useState({dirty:false,busy:false}),[optionPriceBusy,setOptionPriceBusy]=useState(false);
-  const pricePolicyChanged=useCallback((state:{dirty:boolean;busy:boolean})=>{pricePolicyRef.current=state;setPricePolicyState(state);},[]);
-  const optionPriceBusyChanged=useCallback((busy:boolean,operation:object)=>{if(!busy&&optionPriceBusyRef.current.operation!==operation)return;optionPriceBusyRef.current={busy,operation:busy?operation:null};setOptionPriceBusy(busy);},[]);
   const priceFilesFree=()=>!imageProcessingRefs.current.paid&&!imageProcessingRefs.current.free&&!imageProcessingRefs.current.additionalBatch&&!imageProcessingRefs.current.detailBatch&&!imageProcessingRefs.current.detailFamily;
   function sourceSaved() { setQuotationRefresh(value => value + 1); onSaved(); }
-  async function saveSourcePrice(policy: PricePolicy, options?:PriceSaveOptions) { await onSavePrice(policy,options); setQuotationRefresh(value => value + 1); }
   const isImageStep=imageSteps.includes(tab);
   const contentSection = isImageStep ? '이미지' : tab==='표시사항' ? '표시사항' : 'SEO';
   const focusedAssetRole=tab==='대표 이미지'?'main':tab==='추가 이미지'?'additional':tab==='상세 이미지'?'detail':undefined;
@@ -804,9 +799,8 @@ function DetailPanel({ workspaceOwnerId, onReceiptSaved, onBeforeSeoGenerate, on
       {tab==='표시사항'&&labelTranslationOpen&&<p className="panel-note">수집 상품 속성의 원문과 완료된 번역 결과를 확인한 뒤, 아래 ‘번역한 상품 속성을 한글 표시사항에 연결’에서 항목을 선택해 공통 표시사항에 저장하세요. 카테고리별 상품고시는 견적서에서 별도로 확인하세요.</p>}
       <details open={tab==='SEO'?undefined:true}><summary hidden={tab!=='SEO'}>SEO 생성 이력 · 원문 확인 · 미번역 옵션</summary><TranslationPanel productId={product.id} version={product.updated_at} title={product.title} profileId={pricingProfileId} onContentSaved={sourceSaved}/></details>
     </div>
-    <div hidden={!['옵션','가격','대표 이미지'].includes(tab)} className={tab==='가격'?'pricing-workspace':tab==='대표 이미지'?'registration-main-surface panel-stack':'panel-stack'}>
-      <section hidden={tab!=='가격'} className="pricing-policy-panel"><h3>가격 정책 설정</h3><PriceEditor refreshToken={String(quotationRefresh)} profileId={pricingProfileId} productId={product.id} version={product.updated_at} sourcePrice={product.source_price_cny} initial={savedPricePolicy(product,settings)} onSave={saveSourcePrice} onQuotationSaved={sourceSaved} showQuotationPrices={false} onDraftStateChange={pricePolicyChanged} disabled={imageProcessingBusy||optionPriceBusy} beforeSave={()=>!optionPriceBusyRef.current.busy&&priceFilesFree()}/></section>
-      <section className="pricing-options-panel">{pricePolicyState.dirty&&tab==='가격'&&<p role="status">가격 정책을 먼저 저장하거나 수정을 취소해주세요. 옵션·직접 가격 입력은 유지됩니다.</p>}<ProductOptionsEditor focusedOptionId={focusedOptionId} initialBulkAction={initialOptionAction} product={product} onSaved={sourceSaved} onReviewPackaging={onReviewPackaging} pricingView={tab==='가격'} imageView={tab==='대표 이미지'} imageProcessingBusy={imageProcessingBusy} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} editableQuotationPrices pricePolicyLocked={pricePolicyState.dirty||pricePolicyState.busy} beforePriceCommit={()=>!pricePolicyRef.current.dirty&&!pricePolicyRef.current.busy&&priceFilesFree()} onPriceBusyChange={optionPriceBusyChanged} onTranslate={focusedOptionId?translateFinalImage:undefined} onEdit={focusedOptionId?editFinalImage:undefined}/></section>
+    <div hidden={!['옵션','가격','대표 이미지'].includes(tab)} className={tab==='가격'?'panel-stack':tab==='대표 이미지'?'registration-main-surface panel-stack':'panel-stack'}>
+      <section className="pricing-options-panel"><ProductOptionsEditor focusedOptionId={focusedOptionId} initialBulkAction={initialOptionAction} product={product} onSaved={sourceSaved} onReviewPackaging={onReviewPackaging} pricingView={tab==='가격'} imageView={tab==='대표 이미지'} imageProcessingBusy={imageProcessingBusy} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} editableQuotationPrices beforePriceCommit={priceFilesFree} onTranslate={focusedOptionId?translateFinalImage:undefined} onEdit={focusedOptionId?editFinalImage:undefined}/></section>
     </div>
     <div hidden={tab!=='옵션'&&tab!=='사이즈표'}><SizeChartWorkspace productId={product.id} version={product.updated_at} sourceStep="사이즈표" onSaved={sourceSaved}/></div>
     <div hidden={tab!=='견적서'||!focusedOptionId}><details className="registration-option-notices"><summary>상품고시 별도 편집·PNG</summary>{focusedOptionId&&<OptionLabelEditor key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} onSaved={sourceSaved}/>}</details></div>
@@ -827,9 +821,4 @@ function downloadQuote(product: Product, settings: Settings) {
   const url = URL.createObjectURL(new Blob([quotationCsv(rows)],{type:'text/csv;charset=utf-8'}));
   const anchor=document.createElement('a');anchor.href=url;anchor.download='YOOFAM-PLUS-quote-'+product.id+'.csv';anchor.click();
   window.setTimeout(()=>URL.revokeObjectURL(url),1000);
-}
-
-function savedPricePolicy(product: Product, settings: Settings): PricePolicy {
-  if (product.pricing_policy) { try { return pricePolicy(JSON.parse(product.pricing_policy)); } catch { /* Older records use current defaults. */ } }
-  return {exchangeRate:product.exchange_rate,supplyMargin:product.supply_margin,coupangMargin:product.coupang_margin,minimumMargin:settings.minimumMarginEnabled?settings.minimumMargin:0,msrpMultiple:settings.msrpMultiple,roundingUnit:settings.roundingUnit,roundingMode:settings.roundingMode,useIntegratedRate:false,integratedRate:null};
 }
