@@ -67,7 +67,7 @@ function setup(intercept) {
 const heading = (h, index) => nodes(h.render()).find(node => node.type === 'input' && node.props['aria-label'] === `선택 옵션 표시사항 항목 ${index} 이름`);
 const caption = (h, index) => nodes(h.render()).find(node => node.type === 'button' && node.props['aria-label'] === `선택 옵션 표시사항 항목 ${index} 이름 편집`);
 const labelName = (h, index) => text(nodes(caption(h, index)).find(node => node.type === 'span'));
-function openHeading(h, index) { caption(h, index).props.onClick(); return heading(h, index); }
+function openHeading(h, index) { if (!heading(h, index)) caption(h, index).props.onClick(); return heading(h, index); }
 function rename(h, index, value) { openHeading(h, index).props.onChange({ target: { value } }); heading(h, index).props.onKeyDown({ key: 'Enter', preventDefault() {} }); h.render(); }
 const action = (h, index, name) => nodes(h.render()).find(node => node.type === 'button' && node.props['aria-label'] === `선택 옵션 표시사항 항목 ${index} ${name}`);
 

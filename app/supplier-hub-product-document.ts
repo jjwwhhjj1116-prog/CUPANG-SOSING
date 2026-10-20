@@ -64,6 +64,8 @@ function canonical(value: unknown): string {
   const text = visit(value, 0); if (new TextEncoder().encode(text).byteLength > LIMIT) return fail('전체 상품 견적 자료가 6MB를 초과했습니다.'); return text;
 }
 const copy = <T,>(value: T): T => JSON.parse(canonical(value)) as T;
+/** Shared inert review encoder; exporting it does not change legacy review rules. */
+export const productDocumentReviewCanonical = canonical;
 const digest = async (value: unknown) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical(value)))), byte => byte.toString(16).padStart(2, '0')).join('');
 function freeze<T>(value: T): T { if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value; }
 const exact = (value: JsonObject, keys: string[]) => Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));

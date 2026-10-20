@@ -5,6 +5,7 @@ import {findProduct} from '@/db/queries';
 import {loadSinglePackage} from '@/app/exports/single-package';
 import {stableQuotationFieldsView} from '@/app/quotation-fields-snapshot';
 import {compileSupplierHubProductDocument} from '@/app/supplier-hub-product-document';
+import {compileNativeSupplierHubProductDocument} from '@/app/supplier-hub-native-product-document';
 import {validateProductReceiptObservation} from '@/app/supplier-hub-product-receipt';
 import type {SinglePackageView} from '@/app/supplier-hub-single-client';
 import {SingleReceiptError} from '@/app/supplier-hub-single-receipt';
@@ -69,12 +70,20 @@ export async function POST(request:Request,context:Context){
     await active();
     // Explicit null is the original queryless scope. Never replace it with the
     // captured profile ID supplied by an untrusted observation or saved source.
-    const {view,saved,guard}=await loadSinglePackage(owner,id,body.profileId,company,active);
-    if(!view.prepared||!view.review.canPrepare)return json({error:'준비된 전체 상품의 이미지·견적 자료가 변경됐습니다. 기존 결과를 다시 전송하지 말고 확인해주세요.'},409);
+    let loaded=await loadSinglePackage(owner,id,body.profileId,company,active);
+    const candidate=body.observation&&typeof body.observation==='object'&&!Array.isArray(body.observation)?body.observation as Record<string,unknown>:null;
+    const observedIdentity=candidate?.identity&&typeof candidate.identity==='object'&&!Array.isArray(candidate.identity)?candidate.identity as Record<string,unknown>:null;
+    const native=typeof observedIdentity?.fingerprint==='string'&&/^[a-f0-9]{64}$/.test(observedIdentity.fingerprint)&&observedIdentity.fingerprint!==loaded.view.fingerprint;
+    // The observation only selects an additional strict verifier. It cannot
+    // supply a plan, body, actor, source hash or broader permission.
+    if(native)loaded=await loadSinglePackage(owner,id,body.profileId,company,active,false,undefined,true);
+    const {view,saved,guard,nativeAssetSourceGuard}=loaded,plan='nativeAssetSourcePlan' in view?view.nativeAssetSourcePlan:null;
+    if(native?(!plan?.metadataValid||plan.sourcePlanSha256!==observedIdentity?.fingerprint):(!view.prepared||!view.review.canPrepare))return json({error:'준비된 전체 상품의 이미지·견적 자료가 변경됐습니다. 기존 결과를 다시 전송하지 말고 확인해주세요.'},409);
     const current=await stableQuotationFieldsView(owner,id,body.profileId);
-    const review=await compileSupplierHubProductDocument({packageView:view as unknown as SinglePackageView,quotationView:current.view,ownerId:owner});
+    const review=native&&plan?await compileNativeSupplierHubProductDocument({productId:id,profileId:body.profileId??undefined,sourcePlan:plan,quotationView:current.view,ownerId:owner})
+      :await compileSupplierHubProductDocument({packageView:view as unknown as SinglePackageView,quotationView:current.view,ownerId:owner});
     const receipt=await validateProductReceiptObservation(body.observation,review,url.origin);
-    await guard();
+    if(native)await nativeAssetSourceGuard();else await guard();
     const stored=await saveProductReceipt(owner,id,receipt,saved.source,saved.state.revision,member);
     if(!stored)return json({error:'저장한 전체 옵션·전송 기록·회사 정보가 변경됐습니다. 다시 전송하지 말고 보관된 결과를 확인해주세요.'},409);
     return json({receipt:stored});

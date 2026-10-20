@@ -37,3 +37,4 @@
 .option-price-grid-summary strong{display:block;margin-top:12px;font-size:20px;color:#182d55}
 .option-price-grid-summary p,.option-price-grid>p{font-size:12px;color:#68728a}
 @media(max-width:640px){.option-price-grid-summary>div{grid-template-columns:1fr}.option-price-grid-tools>label{width:100%}.option-price-grid-tools input:not([type=checkbox]):not([type=radio]),.option-price-grid-tools select{flex:1;min-width:0}.option-price-grid-tools fieldset{margin-left:auto}}
+.option-price-grid-table .option-price-source-cost{text-align:right;font-size:11px;line-height:1.5}

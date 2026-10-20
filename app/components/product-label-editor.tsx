@@ -154,7 +154,7 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
   function endDrag(){if(dragToken&&labelDrag.current?.token===dragToken&&dragEpoch.current===dragToken){labelDrag.current=null;setDragging(null);}}
   function beginName(id: ProductLabelKey) {
     if (!view || !nameToken || liveNameToken.current !== nameToken || latestSaved.current?.view !== view || latestSaved.current.sourceKey !== sourceKey || !current() || !liveActive.current || liveDisabled.current || request.current || referenceBusy.current || referenceDirty.current || rewriteWaiting() || nameWaiting()) return;
-    const field = definitions.find(field => field.key === id); if (!field) return;
+    const field = productLabelDefinitions({ structure: latestDraft.current.scope === scope ? latestDraft.current.structure ?? view.structure : view.structure }).find(field => field.key === id); if (!field) return;
     invalidateDrag(); const next = { scope, sourceKey, id, value: field.label, token: {}, view, draft: latestDraft.current };
     liveNameEdit.current = next; setNameEdit(next);
   }
@@ -221,15 +221,52 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
     latestDraft.current = { ...before, values: { ...before.values, [key]: value } };
     setPending(latestDraft.current); clearPreview(); setGeneratedReview(null); setMessage('');
   }
+  function confirmLocalChange(message: string) {
+    const base = latestSaved.current, editing = latestDraft.current;
+    const valid = () => !!base && base.scope === scope && base.sourceKey === sourceKey && base.view === view && latestSaved.current === base
+      && latestDraft.current === editing && !!nameToken && liveNameToken.current === nameToken && current() && liveActive.current && !liveDisabled.current
+      && !request.current && !referenceBusy.current && !referenceDirty.current && !rewriteWaiting() && !nameWaiting();
+    if (!valid() || typeof window === 'undefined' || !window.confirm(message) || !valid()) return null;
+    return { base: base!, editing };
+  }
+  function removeField(id: ProductLabelKey) {
+    if (!view) return;
+    const fields = productLabelStructure({ structure: latestDraft.current.scope === scope ? latestDraft.current.structure ?? view.structure : view.structure });
+    const field = fields.find(field => field.id === id);
+    if (!field || field.required || !confirmLocalChange(`"${field.label}" 항목을 삭제하시겠습니까?`)) return;
+    changeStructure(rows => rows.filter(row => row.id !== id || row.required));
+  }
+  function restoreSavedDefaults() {
+    if (!confirmLocalChange('모든 항목을 기본값으로 복원하시겠습니까?')) return;
+    invalidateDrag(); clearDraft(); clearPreview();
+    setMessage('이 화면의 입력을 저장된 항목명·순서·내용으로 복원했습니다. 저장된 직접 수정값·공란과 다른 옵션은 유지합니다.');
+  }
+  function restoreStructure() {
+    if (!confirmLocalChange('항목명과 순서를 기본 9항목 구조로 복원하시겠습니까? 현재 내용은 해당 항목에 유지됩니다.')) return;
+    changeStructure(() => productLabelStructure());
+  }
+  function editValueWithConfirmation(key: ProductLabelKey, value: '' | null) {
+    const field = productLabelDefinitions({ structure: latestDraft.current.scope === scope ? latestDraft.current.structure ?? view?.structure : view?.structure }).find(field => field.key === key);
+    if (!field || !confirmLocalChange(value === '' ? `"${field.label}" 내용을 비우시겠습니까?` : `"${field.label}" 내용을 ${optionId === null ? '자동값' : '공통·자동값'}으로 복원하시겠습니까?`)) return;
+    edit(key, value);
+  }
+  function addField() {
+    if (!view || latestSaved.current?.view !== view || latestSaved.current.sourceKey !== sourceKey || !nameToken || liveNameToken.current !== nameToken || !current() || !liveActive.current || liveDisabled.current || request.current || referenceBusy.current || referenceDirty.current || rewriteWaiting() || nameWaiting()) return;
+    const fields = productLabelStructure({ structure: latestDraft.current.scope === scope ? latestDraft.current.structure ?? view.structure : view.structure });
+    if (fields.length >= 39) return;
+    const id = `custom_${crypto.randomUUID().replaceAll('-', '')}` as ProductLabelKey;
+    changeStructure(rows => [...rows, { id, label: '새 항목', required: false }]);
+    beginName(id);
+  }
   function restoreAll() {
-    if (!view || liveDisabled.current || request.current || referenceBusy.current || referenceDirty.current || rewriteWaiting() || nameWaiting() || !current()) return;
+    if (!view || !confirmLocalChange(`모든 표시사항 내용을 ${optionId === null ? '자동값' : '공통·자동값'}으로 복원하시겠습니까? 직접 입력한 공란도 복원하며 항목명과 순서는 유지합니다.`)) return;
     invalidateDrag();
     const before = latestDraft.current.scope === scope ? latestDraft.current : { scope, values: {} };
     latestDraft.current = { ...before, values: Object.fromEntries(productLabelDefinitions({ structure: before.structure ?? latestSaved.current?.view.structure }).map(field => [field.key, null])) as ProductLabelDraft };
     setPending(latestDraft.current); clearPreview(); setGeneratedReview(null); setMessage('복원할 값을 확인한 뒤 정보 저장하기를 눌러주세요.');
   }
   function clearAll() {
-    if (!view || latestSaved.current?.view !== view || liveDisabled.current || request.current || referenceBusy.current || referenceDirty.current || rewriteWaiting() || nameWaiting() || !current()) return;
+    if (!view || !confirmLocalChange('모든 항목을 삭제하시겠습니까? (필수 항목 제외)')) return;
     invalidateDrag();
     const before = latestDraft.current.scope === scope ? latestDraft.current : { scope, values: {} };
     const required = productLabelStructure({ structure: before.structure ?? latestSaved.current?.view.structure }).filter(field => field.required);
@@ -251,6 +288,7 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
     changeStructure(rows => { const index = rows.findIndex(row => row.id === id), target = index + offset; if (index < 0 || target < 0 || target >= rows.length) return rows; [rows[index], rows[target]] = [rows[target], rows[index]]; return rows; });
   }
   const issues = view ? productLabelDraftIssues(view, optionId, draft, structure) : [];
+  const destructiveLocked = !active || !fresh || disabled || busy || referencesBusy || referencesDirty || rewriteUncertain || namePending;
   async function save() {
     const base = latestSaved.current, editing = latestDraft.current.scope === scope ? latestDraft.current.values : {}, editingStructure = latestDraft.current.scope === scope ? latestDraft.current.structure : undefined;
     const hasChanges=Object.keys(editing).length>0||editingStructure!==undefined;
@@ -421,13 +459,13 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
         <button type="button" className="product-label-name-cancel" aria-label={`${caption} 표시사항 항목 ${index + 1} 이름 편집 취소`} onMouseDown={event=>event.preventDefault()} onClick={()=>cancelName(editingName.token,nameToken)}>취소</button></>
         : <button type="button" className="product-label-name-caption" aria-label={`${caption} 표시사항 항목 ${index + 1} 이름 편집`} disabled={!active||disabled||busy||referencesBusy||referencesDirty||rewriteUncertain||namePending||!fresh} onClick={()=>beginName(field.key)}><span>{field.label}{field.required ? ' · 필수' : ''}</span><small>(클릭하여 편집)</small></button>}
     </div><label><span>{field.label}</span><textarea aria-label={`${caption} ${field.label}`} value={productLabelValue(view, optionId, field.key, draft) ?? ''} disabled={disabled||busy||referencesBusy||referencesDirty||rewriteUncertain||namePending} onChange={event => edit(field.key, event.target.value)} /></label>
-      <div className="quote-actions"><button type="button" className="btn ghost" aria-label={`${caption} 표시사항 항목 ${index + 1} 위로`} disabled={disabled||busy||referencesBusy||referencesDirty||rewriteUncertain||namePending||index === 0} onClick={() => moveField(field.key, -1)}>↑</button><button type="button" className="btn ghost" aria-label={`${caption} 표시사항 항목 ${index + 1} 아래로`} disabled={disabled||busy||referencesBusy||referencesDirty||rewriteUncertain||namePending||index === definitions.length - 1} onClick={() => moveField(field.key, 1)}>↓</button><button type="button" className="btn ghost" aria-label={`${caption} 표시사항 항목 ${index + 1} 삭제`} disabled={disabled||busy||referencesBusy||referencesDirty||rewriteUncertain||namePending||field.required} onClick={() => changeStructure(rows => rows.filter(row => row.id !== field.key || row.required))}>삭제</button>
-      <button type="button" className="btn ghost" disabled={disabled||busy||referencesBusy||referencesDirty||rewriteUncertain||namePending} onClick={() => edit(field.key, '')}>{field.label} 비우기</button><button type="button" className="btn ghost" disabled={disabled||busy||referencesBusy||referencesDirty||rewriteUncertain||namePending} onClick={() => edit(field.key, null)}>{field.label} {optionId === null ? '자동값' : '공통·자동값'} 복원</button></div>
-    </div>)}</div><div className="quote-actions"><button type="button" className="btn ghost" disabled={disabled||busy||referencesBusy||referencesDirty||rewriteUncertain||namePending||definitions.length >= 39} onClick={() => changeStructure(rows => rows.length >= 39 ? rows : [...rows, { id: `custom_${crypto.randomUUID().replaceAll('-', '')}`, label: '새 항목', required: false }])}>＋ 표시사항 항목 추가</button><button type="button" className="btn ghost" disabled={disabled||busy||referencesBusy||referencesDirty||rewriteUncertain||namePending} onClick={() => changeStructure(() => productLabelStructure())}>기본 9항목 구조로 복원</button><button type="button" className="btn ghost" disabled={disabled||busy||referencesBusy||referencesDirty||rewriteUncertain||namePending} onClick={clearAll}>전체 삭제</button></div></>}
+      <div className="quote-actions"><button type="button" className="btn ghost" aria-label={`${caption} 표시사항 항목 ${index + 1} 위로`} disabled={disabled||busy||referencesBusy||referencesDirty||rewriteUncertain||namePending||index === 0} onClick={() => moveField(field.key, -1)}>↑</button><button type="button" className="btn ghost" aria-label={`${caption} 표시사항 항목 ${index + 1} 아래로`} disabled={disabled||busy||referencesBusy||referencesDirty||rewriteUncertain||namePending||index === definitions.length - 1} onClick={() => moveField(field.key, 1)}>↓</button><button type="button" className="btn ghost" aria-label={`${caption} 표시사항 항목 ${index + 1} 삭제`} disabled={destructiveLocked||field.required} onClick={() => removeField(field.key)}>삭제</button>
+      <button type="button" className="btn ghost" disabled={destructiveLocked} onClick={() => editValueWithConfirmation(field.key, '')}>{field.label} 비우기</button><button type="button" className="btn ghost" disabled={destructiveLocked} onClick={() => editValueWithConfirmation(field.key, null)}>{field.label} {optionId === null ? '자동값' : '공통·자동값'} 복원</button></div>
+    </div>)}</div><div className="quote-actions"><button type="button" className="btn ghost" disabled={!active||!fresh||disabled||busy||referencesBusy||referencesDirty||rewriteUncertain||namePending} onClick={restoreSavedDefaults}>기본값 복원</button><button type="button" className="btn ghost" disabled={destructiveLocked||definitions.length >= 39} onClick={addField}>＋ 표시사항 항목 추가</button><button type="button" className="btn ghost" disabled={destructiveLocked} onClick={restoreStructure}>기본 9항목 구조로 복원</button><button type="button" className="btn ghost" disabled={destructiveLocked} onClick={clearAll}>전체 삭제</button></div></>}
     <small>공란도 직접 수정값으로 저장합니다. 내용량·재질·상품 유형·사용 기준은 확인한 값만 입력하세요.</small>
     <small>정보 저장하기를 누르면 검토한 항목과 내용을 저장하고, 같은 저장값으로 만든 PNG를 견적서에 연결합니다.</small>
     {!!issues.length && <p role="alert">{[...new Set(issues)].join(' ')}</p>}
-    <div className="quote-actions"><button type="button" className="btn primary" disabled={!view || !fresh || disabled || busy || referencesBusy || referencesDirty || rewriteUncertain || namePending || optionId!==null&&row?.included!==true || !!issues.length} onClick={() => void save()}>정보 저장하기</button><button type="button" className="btn ghost" disabled={!view || disabled || busy || referencesBusy || referencesDirty || rewriteUncertain || namePending} onClick={restoreAll}>전체 {optionId === null ? '자동값' : '공통·자동값'} 복원</button>
+    <div className="quote-actions"><button type="button" className="btn primary" disabled={!view || !fresh || disabled || busy || referencesBusy || referencesDirty || rewriteUncertain || namePending || optionId!==null&&row?.included!==true || !!issues.length} onClick={() => void save()}>정보 저장하기</button><button type="button" className="btn ghost" disabled={destructiveLocked} onClick={restoreAll}>전체 {optionId === null ? '자동값' : '공통·자동값'} 복원</button>
       <button type="button" className="btn blue" disabled={!view || disabled || busy || referencesBusy || referencesDirty || rewriteUncertain || namePending || dirty || !fresh || optionId !== null && row?.included !== true} onClick={() => void generateDraft()}>한글 표시사항 생성 시작</button>
       <button type="button" className="btn ghost" disabled={!view || disabled || busy || referencesBusy || referencesDirty || rewriteUncertain || namePending || dirty || !fresh || optionId !== null && row?.included !== true} onClick={() => void generate()}>저장한 표시사항 PNG 미리보기</button>
       <button type="button" className="btn ghost" disabled={!view||!active||disabled||busy||referencesBusy||referencesDirty||rewriteUncertain||namePending||dirty||!fresh} onClick={()=>void rewrite()}>표시사항 재작성</button></div>

@@ -83,7 +83,7 @@ test('dragging renamed and added rows retains unsaved edits and stable IDs', asy
   try {
     await h.idle(); await h.click('＋ 표시사항 항목 추가');
     const custom = order(h).at(-1);
-    nodes(row(h, custom)).find(node => node.props?.className === 'product-label-name-caption').props.onClick();
+    if (!nodes(row(h, custom)).some(node => node.type === 'input')) nodes(row(h, custom)).find(node => node.props?.className === 'product-label-name-caption').props.onClick();
     nodes(row(h, custom)).find(node => node.type === 'input').props.onChange({ target: { value: '검토 안내' } });
     nodes(row(h, custom)).find(node => node.type === 'input').props.onKeyDown({ key: 'Enter', preventDefault() {} }); await h.idle();
     h.edit('선택 옵션 검토 안내', '선택 옵션 확인 내용'); h.edit('선택 옵션 제조원', ''); await h.idle();

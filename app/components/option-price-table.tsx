@@ -16,6 +16,7 @@ const columns = [
 type ColumnId = typeof columns[number]['id'];
 type Props = { rows: readonly OptionInput[]; calculations: readonly OptionCalculation[]; selected: ReadonlySet<string>;
   focusedOptionId?: string; optionRegistrationNumbers?: Readonly<Record<string,string>>; onSelect: (ids: string[]) => void;
+  exchangeRate?:number;
   priceController?:OptionPriceController;priceBlocked?:boolean;
   onChange: <K extends OptionField>(id: string, key: K, value: OptionInput[K]) => void };
 const won = (value: number) => `${Math.round(value).toLocaleString('ko-KR')}원`;
@@ -26,7 +27,7 @@ const defaultPageSize = 20;
 const marginRate = (cost: number, sale: number) => !cost || !sale || cost >= sale ? 0 : Math.round((sale - cost) / sale * 100);
 
 /** Presentation state never replaces the editor's complete option draft. */
-export function OptionPriceTable({ rows, calculations, selected, focusedOptionId, optionRegistrationNumbers, onSelect, onChange,priceController,priceBlocked=false }: Props) {
+export function OptionPriceTable({ rows, calculations, selected, focusedOptionId, optionRegistrationNumbers, onSelect, onChange,exchangeRate,priceController,priceBlocked=false }: Props) {
   const [query, setQuery] = useState(''), [pageSize, setPageSize] = useState(defaultPageSize);
   const [page, setPage] = useState(() => Math.max(0, Math.floor(rows.findIndex(row => row.id === focusedOptionId) / defaultPageSize)));
   const [visibleColumns, setVisibleColumns] = useState<ColumnId[]>(() => columns.map(column => column.id));
@@ -80,7 +81,20 @@ export function OptionPriceTable({ rows, calculations, selected, focusedOptionId
       case 'id': return savedOptionRegistrationNumber(row.id,optionRegistrationNumbers);
       case 'quantity': return <input aria-label={`가격 옵션 ${index + 1} 구성 수량`} type="number" min="1" step="1" disabled={priceBlocked} value={Number.isFinite(row.unitsPerPack) ? row.unitsPerPack : ''} onChange={event => onChange(row.id, 'unitsPerPack', event.target.valueAsNumber)} />;
       case 'stock': return row.stock == null ? '미확인' : row.stock.toLocaleString('ko-KR');
-      case 'cost': return <input aria-label={`가격 옵션 ${index + 1} 개당 원가`} type="number" min="0" step="any" disabled={priceBlocked} value={row.unitCostCny === null || !Number.isFinite(row.unitCostCny) ? '' : row.unitCostCny} onChange={event => onChange(row.id, 'unitCostCny', event.target.value === '' ? null : event.target.valueAsNumber)} />;
+      case 'cost': {
+        // This is the recorded table's general-rate comparison, not the
+        // integrated-clearance purchase cost used by the pricing calculation.
+        const totalCny = typeof row.unitCostCny === 'number' && Number.isFinite(row.unitCostCny) && row.unitCostCny > 0
+          && Number.isSafeInteger(row.unitsPerPack) && row.unitsPerPack > 0 ? row.unitCostCny * row.unitsPerPack : null;
+        const validTotal = totalCny !== null && Number.isFinite(totalCny) && totalCny > 0;
+        const generalKrw = validTotal && typeof exchangeRate === 'number' && Number.isFinite(exchangeRate) && exchangeRate > 0
+          ? totalCny * exchangeRate : null;
+        return <>
+          <input aria-label={`가격 옵션 ${index + 1} 개당 원가`} type="number" min="0" step="any" disabled={priceBlocked} value={row.unitCostCny === null || !Number.isFinite(row.unitCostCny) ? '' : row.unitCostCny} onChange={event => onChange(row.id, 'unitCostCny', event.target.value === '' ? null : event.target.valueAsNumber)} />
+          {generalKrw !== null && Number.isFinite(generalKrw) && generalKrw > 0 && <small className="option-price-source-cost" aria-label={`가격 옵션 ${index + 1} 일반 환율 환산 원가`} title="개당 위안 원가 × 현재 구성 수량 × 일반 적용환율. 통합통관 매입가는 별도로 계산합니다.">{generalKrw.toLocaleString('ko-KR')}원 · 일반 환율 환산</small>}
+          {validTotal && row.unitsPerPack > 1 && <small className="option-price-source-cost" aria-label={`가격 옵션 ${index + 1} 구성 합계 위안 원가`}>(¥{totalCny.toLocaleString('ko-KR')} · {row.unitsPerPack.toLocaleString('ko-KR')}개 합계)</small>}
+        </>;
+      }
       default:
         if (!row.included) return <span>견적 제외</span>;
         if(priceController&&(id==='supply'||id==='sale'))return priceInput(row,index,id==='supply'?'supplyPrice':'salePrice',id==='supply'?'공급가':'판매가');
