@@ -1,10 +1,13 @@
 import {validatePageSource,pageSourceIssues,type PageSource} from '@/extensions/supplier-hub/page-source.mjs';
 import {validateCollectionResult,type CollectionResult} from '@/app/collection-result';
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
-export type SourceInboxItem={id:string;ownerId:string;company:SupplierHubCompany;fingerprint:string;snapshot:PageSource;revision:number;receivedAt:string;reviewed:PageSource|null;issues:string[];archivedAt:string|null;captureOriginId?:string;captureVersion?:number};
-export function sourceInboxStatus(snapshot:PageSource,reviewed:PageSource|null){return pageSourceIssues(reviewed??snapshot);}
+export type SourceInboxItem={id:string;ownerId:string;company:SupplierHubCompany;fingerprint:string;snapshot:PageSource;revision:number;receivedAt:string;reviewed:PageSource|null;issues:string[];warnings?:string[];archivedAt:string|null;captureOriginId?:string;captureVersion?:number};
+/** Supplier MOQ is not needed to create an editable SEO/price draft. Its
+ * unknown value stays null; SKU, price and currency still need source proof. */
+export function sourceInboxStatus(snapshot:PageSource,reviewed:PageSource|null){return pageSourceIssues(reviewed??snapshot).filter(issue=>issue!=='최소 주문 수량');}
+export function sourceInboxWarnings(snapshot:PageSource,reviewed:PageSource|null){return (reviewed??snapshot).options.some(row=>row.minimumOrder===null)?['공급자 최소 주문 수량 미확인 · 초안 작성 후 가격 설정에서 확인하세요.']:[];}
 export function pageSourceCollectionResult(snapshot:PageSource,reviewed=false):CollectionResult{
- const source=validatePageSource(snapshot),issues=pageSourceIssues(source);if(issues.length)throw Error(`수집함에서 ${issues.join('·')}을 확인해주세요.`);
+ const source=validatePageSource(snapshot),issues=sourceInboxStatus(source,null);if(issues.length)throw Error(`수집함에서 ${issues.join('·')}을 확인해주세요.`);
  const result=validateCollectionResult({schemaVersion:1,sourceUrl:source.sourceUrl,provider:reviewed?'chrome-reviewed-page-v1':'chrome-current-page-v1',collectedAt:source.collectedAt,title:source.title,description:source.description,attributes:source.attributes,images:source.images,
   options:source.options.map(row=>({sku:row.supplierSku,name:row.name,unitPriceCny:row.unitPriceCny,minimumOrder:row.minimumOrder,stock:row.stock,...(row.imageUrl&&source.images.some(item=>item.url===row.imageUrl)?{imageIndex:source.images.findIndex(item=>item.url===row.imageUrl)}:{})}))},source.offerId);
  return result;

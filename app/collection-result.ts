@@ -6,9 +6,10 @@ import {validateCollectionSourceGallery,type CollectionSourceGallery} from '@/ap
 
 export const COLLECTION_RESULT_LIMIT = 512 * 1024;
 /** Derived from the server-validated source contract; persists with receipts. */
-export function collectionSourceWarnings(result: Pick<CollectionResult, 'description' | 'images' | 'attributes'>): string[] {
+export function collectionSourceWarnings(result: Pick<CollectionResult, 'description' | 'images' | 'attributes'> & Partial<Pick<CollectionResult,'options'>>): string[] {
   const gaps = collectionSourceGaps(result);
-  return gaps.length ? [`상품 원문을 가져왔습니다. ${gaps.map(gap => gap.label).join('·')}은 수집 원문에 없어 직접 확인·입력해야 합니다.`] : [];
+  return [...(gaps.length ? [`상품 원문을 가져왔습니다. ${gaps.map(gap => gap.label).join('·')}은 수집 원문에 없어 직접 확인·입력해야 합니다.`] : []),
+    ...(result.options?.some(option=>option.minimumOrder===null)?['공급자 최소 주문 수량은 미확인으로 보관했습니다. 가격 설정에서 원문을 확인해 입력하세요. 판매 단위·납품 수량으로 대체하지 않습니다.']:[])];
 }
 export type CollectionResult = {
   schemaVersion: 1; sourceUrl: string; offerId: string; provider: string; collectedAt: string;
@@ -17,7 +18,7 @@ export type CollectionResult = {
   priceBasis?: AlibabaSourcePriceBasis;
   offerDefault?: AlibabaOfferDefault;
   sourceGallery?: CollectionSourceGallery;
-  options: { sku: string; name: string; unitPriceCny: number; minimumOrder: number; stock: number | null; imageIndex?: number; color?: string; size?: string }[];
+  options: { sku: string; name: string; unitPriceCny: number; minimumOrder: number | null; stock: number | null; imageIndex?: number; color?: string; size?: string }[];
   images: { url: string; role: 'main' | 'additional' | 'detail' }[];
 };
 function record(value: unknown, keys: string[]) {
@@ -45,10 +46,10 @@ export function validateCollectionResult(input: unknown, expectedOfferId: string
     if(hasOfferDefault&&row.sku!=='')throw new Error('기본 옵션을 실제 공급자 SKU로 바꿀 수 없습니다.');
     const sku=text(row.sku,200,!hasOfferDefault);if(skus.has(sku))throw new Error('중복 SKU가 있습니다.');skus.add(sku);
     if(typeof row.unitPriceCny!=='number'||!Number.isFinite(row.unitPriceCny)||row.unitPriceCny<=0||row.unitPriceCny>100000000)throw new Error('옵션 원가는 양수 CNY 숫자여야 합니다.');
-    if(!Number.isSafeInteger(row.minimumOrder)||(row.minimumOrder as number)<1)throw new Error('최소 주문 수량을 확인해주세요.');
+    if(row.minimumOrder!==null&&(!Number.isSafeInteger(row.minimumOrder)||(row.minimumOrder as number)<1))throw new Error('최소 주문 수량은 미확인 null 또는 양수 정수여야 합니다.');
     if(row.stock!==null&&(!Number.isSafeInteger(row.stock)||(row.stock as number)<0))throw new Error('재고 미확인은 null, 확인된 재고는 0 이상 정수여야 합니다.');
     if(row.imageIndex!==undefined&&(!Number.isInteger(row.imageIndex)||!Array.isArray(body.images)||(row.imageIndex as number)<0||(row.imageIndex as number)>=body.images.length))throw new Error('옵션 이미지 번호는 수집 이미지 목록의 0부터 시작하는 번호여야 합니다.');
-    return {sku,name:text(row.name,500),unitPriceCny:row.unitPriceCny,minimumOrder:row.minimumOrder as number,stock:row.stock as number|null,...(row.imageIndex!==undefined?{imageIndex:row.imageIndex as number}:{}),
+    return {sku,name:text(row.name,500),unitPriceCny:row.unitPriceCny,minimumOrder:row.minimumOrder as number|null,stock:row.stock as number|null,...(row.imageIndex!==undefined?{imageIndex:row.imageIndex as number}:{}),
       ...(row.color!==undefined?{color:text(row.color,200,false)}:{}), ...(row.size!==undefined?{size:text(row.size,200,false)}:{})};
   });
   if(!Array.isArray(body.images)||body.images.length>200)throw new Error('이미지 주소는 200개 이하여야 합니다.');

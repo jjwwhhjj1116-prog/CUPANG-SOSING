@@ -1,6 +1,6 @@
 import {env} from 'cloudflare:workers';
 import {validatePageSource,type PageSource} from '@/extensions/supplier-hub/page-source.mjs';
-import {sourceInboxStatus,type SourceInboxItem} from '@/app/source-inbox';
+import {sourceInboxStatus,sourceInboxWarnings,type SourceInboxItem} from '@/app/source-inbox';
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 export const sourceInboxSchema=`CREATE TABLE IF NOT EXISTS source_inbox (
  owner_id TEXT NOT NULL,id TEXT NOT NULL,company_code TEXT NOT NULL,company_name TEXT NOT NULL,
@@ -26,7 +26,7 @@ type Row={owner_id:string;id:string;company_code:string;company_name:string;offe
 const columns='owner_id,id,company_code,company_name,offer_id,fingerprint,payload,review_payload,revision,received_at,archived_at';
 const allRows=`SELECT ${columns},id AS origin_id,1 AS capture_version FROM source_inbox UNION ALL SELECT ${columns},origin_id,capture_version FROM source_inbox_captures`;
 const count=(owner:string,active=false)=>`(SELECT count(*) FROM source_inbox WHERE owner_id=${owner}${active?' AND archived_at IS NULL':''})+(SELECT count(*) FROM source_inbox_captures WHERE owner_id=${owner}${active?' AND archived_at IS NULL':''})`;
-function decode(row:Row):SourceInboxItem{const snapshot=validatePageSource(JSON.parse(row.payload)),reviewed=row.review_payload?validatePageSource(JSON.parse(row.review_payload)):null;return {id:row.id,ownerId:row.owner_id,company:{code:row.company_code,name:row.company_name},fingerprint:row.fingerprint,snapshot,reviewed,revision:row.revision,receivedAt:row.received_at,archivedAt:row.archived_at,captureOriginId:row.origin_id??row.id,captureVersion:row.capture_version??1,issues:sourceInboxStatus(snapshot,reviewed)};}
+function decode(row:Row):SourceInboxItem{const snapshot=validatePageSource(JSON.parse(row.payload)),reviewed=row.review_payload?validatePageSource(JSON.parse(row.review_payload)):null;return {id:row.id,ownerId:row.owner_id,company:{code:row.company_code,name:row.company_name},fingerprint:row.fingerprint,snapshot,reviewed,revision:row.revision,receivedAt:row.received_at,archivedAt:row.archived_at,captureOriginId:row.origin_id??row.id,captureVersion:row.capture_version??1,issues:sourceInboxStatus(snapshot,reviewed),warnings:sourceInboxWarnings(snapshot,reviewed)};}
 export async function listSourceInbox(owner:string,company:SupplierHubCompany){const db=await database();const result=await db.prepare(`SELECT * FROM (${allRows}) WHERE owner_id=? AND company_code=? AND company_name=? AND archived_at IS NULL ORDER BY received_at DESC,capture_version DESC,id DESC LIMIT 40`).bind(owner,company.code,company.name).all<Row>();return result.results.map(decode);}
 export async function readSourceInbox(owner:string,id:string){const db=await database(),rows=await db.prepare(`SELECT * FROM (${allRows}) WHERE owner_id=? AND id=? LIMIT 2`).bind(owner,id).all<Row>();if(rows.results.length>1)throw new SourceInboxConflict('수집 요청 ID가 중복되었습니다. 원문을 변경하지 않았습니다.');return rows.results[0]?decode(rows.results[0]):null;}
 /** URL-only intake chooses the latest explicit capture version. It never

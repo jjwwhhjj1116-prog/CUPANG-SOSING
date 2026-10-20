@@ -47,7 +47,7 @@ export function createAlibabaOfferDefault(offerId: string, minimumOrder: number,
 /** Keep the no-SKU contract closed when receipts are normalized or replayed.
  * It cannot be attached to an ordinary SKU receipt or another source provider. */
 export function validateAlibabaOfferDefault(input: unknown, provider: string, offerId: string, title: string,
-  options: readonly { sku: string; name: string; unitPriceCny: number; minimumOrder: number; stock: number | null; imageIndex?: number; color?: string; size?: string }[],
+  options: readonly { sku: string; name: string; unitPriceCny: number; minimumOrder: number|null; stock: number | null; imageIndex?: number; color?: string; size?: string }[],
   images: readonly { role: string }[], hasSkuPriceBasis: boolean): AlibabaOfferDefault {
   const value = record(input), keys = ['format', 'offerId', 'sourceSkuCount', 'priceSource', 'unitPriceCny', 'minimumOrder', 'stock'];
   if (Object.keys(value).length !== keys.length || keys.some(key => !Object.hasOwn(value, key))

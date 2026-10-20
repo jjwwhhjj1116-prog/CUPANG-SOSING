@@ -46,3 +46,32 @@ test('same-offer recaptures remain separate choices with their own source, revis
   assert.equal(h.calls.length,1);assert.ok(h.calls.every(call=>!call.init?.method),'choosing a source does not write or replace either version');
  }finally{h.close();}
 });
+
+test('unknown supplier MOQ warns alongside draft readiness and continues to category selection with only a GET',async()=>{
+ const warning='공급자 최소 주문 수량 미확인 · 초안 작성 후 가격 설정에서 확인하세요.';
+ const unknown={...structuredClone(item),warnings:[warning],snapshot:{...structuredClone(item.snapshot),options:[{key:'black',name:'黑色',supplierSku:'supplier-black',unitPriceCny:2.99,currency:'CNY',minimumOrder:null,stock:null,imageUrl:null}]}};
+ const h=fixture(async()=>Response.json({ownerId:'owner',items:[unknown]}));
+ try{
+  h.render();h.open();await turn();const view=text(h.render());assert.match(view,/상품정보 준비됨 · 견적서 전송 전 검토 필요/);assert.ok(view.includes(warning));assert.doesNotMatch(view,/전송 완료|접수 완료|등록 완료/);
+  const button=h.button('카테고리 선택·초안 작성');assert.equal(button.props.disabled,false);button.props.onClick();
+  assert.equal(h.added.length,1);assert.deepEqual(h.added[0],unknown);assert.equal(h.added[0].snapshot.options[0].minimumOrder,null);
+  assert.equal(h.calls.length,1);assert.equal(h.calls[0].path,'/api/source-inbox');assert.equal(h.calls[0].init.method,undefined);
+ }finally{h.close();}
+});
+
+test('review keeps MOQ blank as null without inventing required SKU, price or currency values',async()=>{
+ const warning='공급자 최소 주문 수량 미확인 · 초안 작성 후 가격 설정에서 확인하세요.';
+ const unknown={...structuredClone(item),warnings:[warning],snapshot:{...structuredClone(item.snapshot),options:[{key:'black',name:'黑色',supplierSku:'supplier-black',unitPriceCny:2.99,currency:'CNY',minimumOrder:null,stock:null,imageUrl:null}]}};
+ let payload;
+ const h=fixture(async(_path,init)=>{if(init.method==='PUT'){payload=JSON.parse(init.body);return Response.json({ownerId:'owner',item:{...unknown,revision:2,reviewed:{...unknown.snapshot,options:payload.review.options}}});}
+  return Response.json({ownerId:'owner',items:[unknown]});});
+ try{
+  h.render();h.open();await turn();h.button('상품정보 확인').props.onClick();
+  const control=()=>nodes(h.render()).find(node=>node.props?.['aria-label']==='1번째 최소 주문 수량');assert.equal(control().props.value,'');assert.match(control().props.placeholder,/미확인.*공란/);
+  assert.match(text(h.render()),/최소 주문 수량은 미확인이면 공란으로 두고 초안을 작성할 수 있습니다/);
+  control().props.onChange({target:{value:'3'}});assert.equal(control().props.value,3);control().props.onChange({target:{value:''}});assert.equal(control().props.value,'');
+  const save=h.button('검토한 상품정보 저장');assert.equal(save.props.disabled,false);save.props.onClick();await turn();
+  assert.equal(payload.review.options[0].minimumOrder,null);assert.equal(payload.review.options[0].supplierSku,'supplier-black');assert.equal(payload.review.options[0].unitPriceCny,2.99);assert.equal(payload.review.options[0].currency,'CNY');
+  assert.deepEqual(h.calls.map(call=>call.init.method??'GET'),['GET','PUT']);assert.equal(h.added.length,0);
+ }finally{h.close();}
+});

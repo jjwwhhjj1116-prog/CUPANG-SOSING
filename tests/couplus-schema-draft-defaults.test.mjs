@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
+import {quotationWorkbook} from './helpers/quotation-workbook.mjs';
 
 const companies=[{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}];
 
@@ -50,16 +52,30 @@ for(const company of companies)test(`selected 81452 category + recorded 1688 URL
   const option=view.resolved.rows.find(row=>row.optionId!==null),hidden=schema.fields.find(field=>field.visibility==='hidden'&&field.type==='select');
   assert.equal(option.fields[hidden.id].source,'couplus-default');assert.equal(option.fields[hidden.id].value,'');
   assert.equal(option.fields.noticeReleaseDate.value,'해당사항없음');
-  assert.ok(option.fields.noticeManufacturerImporter.value.includes(company.companyName));
-  const changes=[{fieldKey:'title',optionId:null,value:'검토 후 수정 상품명'},{fieldKey:hidden.id,optionId:option.optionId,value:hidden.choices.find(choice=>choice.value!=='').value},{fieldKey:'noticeReleaseDate',optionId:option.optionId,value:'2026.09'},{fieldKey:'noticeComponents',optionId:option.optionId,value:''}];
+  // Initial legal notices are independent of the captured stage-six company
+  // inputs (Step700). Only an explicit stage-seven notice edit takes priority.
+  assert.equal(option.fields.noticeManufacturerImporter.value,'해당사항없음');assert.equal(option.fields.noticeManufacturerImporter.source,'couplus-default');
+  const content=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content WHERE product_id=?').get(product.id).payload);
+  assert.equal(content.label.importer.value,company.companyName);assert.equal(content.label.importer.provenance,'manual');
+  assert.equal(content.label.manufacturer.value,'검토 제조사');assert.equal(content.label.manufacturer.provenance,'manual');
+  const manualCompanyNotice=`제조자: 검토 제조사 / 수입자: ${company.companyName}`;
+  const changes=[{fieldKey:'title',optionId:null,value:'검토 후 수정 상품명'},{fieldKey:hidden.id,optionId:option.optionId,value:hidden.choices.find(choice=>choice.value!=='').value},{fieldKey:'noticeReleaseDate',optionId:option.optionId,value:'2026.09'},{fieldKey:'noticeComponents',optionId:option.optionId,value:''},{fieldKey:'noticeManufacturerImporter',optionId:option.optionId,value:manualCompanyNotice}];
   const saved=await h.route(path,{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes}});
   assert.equal(saved.status,200,await saved.clone().text());
   const source=await h.load('app/exports/quotation-source.ts').readQuotationExportSource('owner',product.id);
   const resolved=h.load('app/quotation-schema.ts').resolveQuotationFields({...source,categoryId:'81452',overrides:source.state.overrides});
   const assets=JSON.parse(source.product.image_keys).map((key,index)=>({key,name:`assets/image-${index}.png`}));
   const exported=h.load('app/exports/quotation-fields.ts').resolvedQuotationRows(source,resolved,assets),row=exported.find(row=>row.skuId===source.options.rows.find(row=>row.id===option.optionId).supplierSku);
-  assert.equal(row.title,'검토 후 수정 상품명');assert.equal(row[hidden.id],changes[1].value);assert.equal(row.noticeReleaseDate,'2026.09');assert.equal(row.noticeComponents,'');
-  const untouched=exported.find(item=>item!==row);assert.equal(untouched[hidden.id],'');assert.equal(untouched.noticeReleaseDate,'해당사항없음');
+  assert.equal(row.title,'검토 후 수정 상품명');assert.equal(row[hidden.id],changes[1].value);assert.equal(row.noticeReleaseDate,'2026.09');assert.equal(row.noticeComponents,'');assert.equal(row.noticeManufacturerImporter,manualCompanyNotice);
+  assert.equal(resolved.rows.find(item=>item.optionId===option.optionId).fields.noticeManufacturerImporter.source,'manual-option');
+  const untouched=exported.find(item=>item!==row);assert.equal(untouched[hidden.id],'');assert.equal(untouched.noticeReleaseDate,'해당사항없음');assert.equal(untouched.noticeManufacturerImporter,'해당사항없음');
+  const headers=['제조자(수입자)','출시년월','제품 구성'],fields=['noticeManufacturerImporter','noticeReleaseDate','noticeComponents'],original=quotationWorkbook(headers);
+  const workbook=await h.load('app/exports/mapped-quotation.ts').createMappedQuotation({originalBytes:original.buffer,profile:{name:'합성 고시 내보내기',categoryId:'81452',categoryPath:Array.from(schema.categoryPath),
+   template:{name:'synthetic-notices.xlsx',format:'xlsx',sheetName:'견적서',headerRow:1,headers,sha256:createHash('sha256').update(original).digest('hex')},mappings:fields.map((field,column)=>({field,column,required:false}))},rows:exported,dataStartRow:2});
+  const reader=h.load('app/xlsx-template.ts'),book=reader.inspectXlsxArchive(await reader.readXlsxArchive(workbook.bytes.buffer));
+  const cells=exported.map((_,index)=>Array.from(reader.xlsxHeaders(book,'견적서',index+2)).slice(0,3));
+  assert.deepEqual(cells[exported.indexOf(row)],[manualCompanyNotice,'2026.09','']);
+  assert.deepEqual(cells[exported.indexOf(untouched)],['해당사항없음','해당사항없음','해당사항없음']);
   assert.equal(h.calls.some(path=>path.includes('/supplier-hub-receipt')),false);
  }finally{h.close();}
 });

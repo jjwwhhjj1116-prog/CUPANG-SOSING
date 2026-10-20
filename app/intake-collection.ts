@@ -153,7 +153,11 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
   seo=await prepareIntakeSeoOutcome(productId,fetcher,options.signal);
  };
  const importFetcher:typeof fetch=async(url,init)=>{
-  const response=await fetcher(url,{...init,signal:init?.signal?AbortSignal.any([init.signal,options.signal]):options.signal});
+  const selectedProductRequest=selectedCapture&&String(url)===`/api/collection-jobs/${encodeURIComponent(job.id)}/product`&&init?.method==='POST';
+  if(selectedProductRequest&&!received.received_at)throw Error('선택한 수집본의 저장 시각을 확인하지 못했습니다. 기존 작업을 확인해주세요.');
+  const headers=selectedProductRequest?new Headers(init?.headers):undefined;
+  headers?.set('content-type','application/json');
+  const response=await fetcher(url,{...init,...(selectedProductRequest?{headers,body:JSON.stringify({expectedSource:{capture:selectedCapture,receivedAt:received.received_at}})}:{}),signal:init?.signal?AbortSignal.any([init.signal,options.signal]):options.signal});
   if(selectedCapture&&String(url)===`/api/collection-jobs/${encodeURIComponent(job.id)}/result`&&(init?.method??'GET')==='GET'&&response.ok){
    const body=await response.clone().json() as {receipt?:{receivedAt?:unknown}};
    const current=validateCollectionReceiptResponse(body,job.id,job.offer_id);

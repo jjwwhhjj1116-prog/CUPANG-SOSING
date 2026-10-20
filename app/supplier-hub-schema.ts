@@ -239,6 +239,9 @@ export function compileHubQuotationSchema(snapshot:HubSchemaSnapshot,base:readon
         // the name; two singleton enums without explicit keys are ambiguous.
         const explicit=[['name','value'],
           ...(section==='product'&&['exposedAttributes','unexposedAttributes'].includes(group)?[['attributeName','attributeValue']]:[]),
+          // Retained Couplus legal editor uses this exact pair (step725 route,
+          // UTF-16 218956..223632); a singleton value enum is still the value.
+          ...(section==='legal'&&path.length===2&&path[0]==='legalPage'&&group==='certificates'?[['certificateName','certificateValue']]:[]),
           ...(section==='legal'&&group==='notices'?[['noticeItemName','noticeItemValue']]:[])]
           .find(([nameKey,valueKey])=>Object.hasOwn(properties,nameKey)&&Object.hasOwn(properties,valueKey));
         const names=explicit?pairs.filter(([key])=>key===explicit[0]):pairs.filter(([,value])=>isName(value));
