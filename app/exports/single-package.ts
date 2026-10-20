@@ -9,6 +9,7 @@ import { buildSingleAssetPlan, singleAssetSelection, singleAssetPackageView, pub
 import { collectionSourceReview } from '@/app/collection-source-review';
 import { readLegalDocuments, inspectLegalDocumentStorage } from '@/app/legal-documents';
 import { buildNativeLegalContext } from '@/app/native-legal-binding';
+import { buildNativeLegalAttachmentPlan } from '@/app/native-legal-attachment-plan';
 import { fingerprint } from '@/app/automation/model';
 import { stableQuotationFieldsView, QuotationFieldsSnapshotError } from '@/app/quotation-fields-snapshot';
 
@@ -41,9 +42,18 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
     const documents = readLegalDocuments(saved.content.legalDocuments, owner, id);
     const nativeLegal = await buildNativeLegalContext({snapshot:saved.hubSchema,company,categoryId:saved.categoryContext.categoryId,
       categoryPath:saved.categoryContext.categoryPath,resolved:resolveQuotationExport(saved),documents});
+    const source = { productVersion: saved.product.updated_at, contentRevision: saved.content.revision, optionRevision: saved.options.revision,
+      quotationRevision: saved.state.revision, profileId: saved.categoryContext.profileId, profileRevision: saved.profile?.revision ?? null };
+    const options = resolveQuotationExport(saved).rows.filter(row => row.included).map(row => ({ optionId: row.optionId, optionLabel: row.optionLabel }));
+    const nativeLegalAttachmentPlan = await buildNativeLegalAttachmentPlan({context:nativeLegal,applicability:documents.applicability,
+      identity:{ownerId:owner,productId:id,company,categoryId:saved.categoryContext.categoryId,categoryPath:[...saved.categoryContext.categoryPath],
+        schemaSha256:projection.schemaSha256,sourceFingerprint,inputFingerprint:reviewed.view.inputFingerprint,source,
+        members:options.map((option,documentIndex)=>({...option,documentIndex}))}});
     const sourceIssues = [...collectionSourceReview(saved.sourceGaps), ...(saved.generatedProductLabelIssues ?? []),
       ...await inspectLegalDocumentStorage(documents, id, key => env.FILES.head(key))];
     if (documents.applicability === 'required') sourceIssues.push(...nativeLegal.issues.map(issue=>({kind:'error' as const,code:issue.code,optionId:null,
+      optionLabel:'법적 필수서류',fieldId:issue.fieldId??null,message:issue.message})));
+    if (documents.applicability === 'required') sourceIssues.push(...nativeLegalAttachmentPlan.issues.map(issue=>({kind:'error' as const,code:issue.code,optionId:null,
       optionLabel:'법적 필수서류',fieldId:issue.fieldId??null,message:issue.message})));
     if (documents.applicability === 'required') sourceIssues.push({ kind: 'error', code: 'SINGLE_LEGAL_DOCUMENT_TRANSPORT_UNVERIFIED', optionId: null,
       optionLabel: '법적 필수서류', fieldId: null, message: '필수 원본 서류의 Single 파일 연결 형식은 별도 확인이 필요합니다. 저장한 서류는 변경하지 않습니다.' });
@@ -51,7 +61,8 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
       optionLabel: '법적 필수서류', fieldId: null, message: '실제 상품의 법적 서류 해당 여부를 확인해주세요. 미확인을 해당없음으로 바꾸지 않았습니다.' });
     const plan = await buildSingleAssetPlan({ projection, owner, productId: id, ownedKeys, assets, metadata, config, sourceIssues });
     const packageFingerprint = await fingerprint({ format: 'yoofam-supplier-hub-single-package-v1', sourceFingerprint, configVersion,
-      sourceAssetFingerprint: plan.sourceAssetFingerprint, payload: plan.payload, manifest: plan.manifest, issues: plan.issues });
+      sourceAssetFingerprint: plan.sourceAssetFingerprint, payload: plan.payload, manifest: plan.manifest, issues: plan.issues,
+      nativeLegalAttachmentPlanSha256:nativeLegalAttachmentPlan.planSha256 });
     if (expectedFingerprint !== undefined && expectedFingerprint !== packageFingerprint) changed();
     const guard = async (file?: (typeof plan.files)[number]) => {
       await active();
@@ -79,13 +90,11 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
     await guard();
     const view = { ...singleAssetPackageView(plan, published), productId: id, requestedProfileId: profileId, fingerprint: packageFingerprint,
       // A reviewed metadata mapping is not an uploaded native file or receipt.
-      nativeLegal,
+      nativeLegal,nativeLegalAttachmentPlan,
       // Response metadata only: operation fingerprints, packets and receipts
       // retain their existing contract and exact prepared body identity.
       inputFingerprint: reviewed.view.inputFingerprint,
-      source: { productVersion: saved.product.updated_at, contentRevision: saved.content.revision, optionRevision: saved.options.revision,
-        quotationRevision: saved.state.revision, profileId: saved.categoryContext.profileId, profileRevision: saved.profile?.revision ?? null },
-      options: resolveQuotationExport(saved).rows.filter(row => row.included).map(row => ({ optionId: row.optionId, optionLabel: row.optionLabel })),
+      source,options,
       excludedOptions: saved.options.rows.filter(row => !row.included).map(row => ({ optionId: row.id, translatedName: row.translatedName })) };
     return { view, saved, guard };
 }

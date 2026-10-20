@@ -87,7 +87,7 @@ test('sales works with differing extension IDs and browser tab IDs on separate i
 
 test('one extension carries sales and source collection with only the union of owned scopes',()=>{
  assert.deepEqual([...manifest.permissions].sort(),['activeTab','cookies','declarativeNetRequestWithHostAccess','scripting','storage','tabs','webRequest']);
- assert.equal(manifest.version,'2.1.6');assert.equal(manifest.background.service_worker,'handoff-worker.mjs');
+ assert.equal(manifest.version,'2.1.7');assert.equal(manifest.background.service_worker,'handoff-worker.mjs');
  assert.equal(manifest.externally_connectable,undefined);
  assert.ok(manifest.content_scripts.some(script=>script.js.includes('page-collector.js')&&script.matches.includes('https://detail.1688.com/offer/*.html*')));
  assert.ok(manifest.content_scripts.some(script=>script.js.includes('handoff-content.js')));
