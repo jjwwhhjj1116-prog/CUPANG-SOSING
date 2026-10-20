@@ -77,13 +77,13 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
   const [readyRetry, setReadyRetry, liveReadyRetry] = useLiveDraft(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [manualPreparation, setManualPreparation] = useState<FreeImageTranslationTarget | null>(null);
+  const [cardPreparation, setCardPreparation] = useState<FreeImageTranslationTarget | null>(null);
   const mounted = useRef(true), epoch = useRef(0), active = useRef<RequestWork | null>(null);
   const pendingSave = useRef<FreeImageRendered | null>(null), lastVersion = useRef(version), handledTarget = useRef<number | null>(null);
   const recoveredScope = useRef<string | null>(null);
   const pendingTarget = useRef<{ epoch: number } | null>(null);
   const manualId = useRef(0), panel = useRef<HTMLElement | null>(null), sourceControl = useRef<HTMLSelectElement | null>(null);
-  const handledManualTarget = useRef<number | null>(null);
+  const handledPreparation = useRef<number | null>(null);
   const [renderedRegionGeneration, setRegionGeneration, regionGenerationRef] = useLiveDraft(0);
   const brushSerialRef = useRef(0), pendingBrushRef = useRef<{ id: string; editorKey: string; scopeKey: string; generation: number; size: number; color: string } | null>(null);
   const cropSerialRef = useRef(0), pendingCropRef = useRef<{ id: string; editorKey: string; scopeKey: string; generation: number } | null>(null);
@@ -196,14 +196,15 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
         setError('선택한 원본이 현재 상품 이미지 목록에 없습니다. 저장본을 확인해주세요.'); return;
       }
       const selected = selectSource(target.sourceKey, target.role ?? 'detail', target.sourceLanguage ?? 'zh', target.quotationTarget ?? null, true);
-      if (selected && target.intent === 'manual') setManualPreparation(target);
+      if (selected) setCardPreparation(target);
       panel.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); sourceControl.current?.focus({ preventScroll: true });
     });
     return () => {
       alive = false;
       if (pendingTarget.current?.epoch === scope) { pendingTarget.current = null; if (handledTarget.current === target.sequence) handledTarget.current = null; }
     };
-    // A toolbar target selects/scrolls only; OCR and Google need explicit buttons.
+    // Only a fresh card action authorizes preparation. Re-renders, source
+    // refreshes and reopening the same sequence do not restart processing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [translationTarget, imageKeys, selectionKey]);
   useEffect(() => {
@@ -359,17 +360,61 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     finally { finish(work); }
   }
   useEffect(() => {
-    const target = manualPreparation;
-    if (!target || target.sequence !== translationTarget?.sequence || handledManualTarget.current === target.sequence
+    const target = cardPreparation;
+    if (!target || target.sequence !== translationTarget?.sequence || handledPreparation.current === target.sequence
       || target.sourceKey !== sourceKey || (target.role ?? 'detail') !== role || !sameFreeImageQuotationRequest(target.quotationTarget, quotationTarget) || !sameFreeImageWorkspaceRequest(target.workspaceTarget, workspaceTarget)
       || !focusedTarget() || !editorCurrent()) return;
-    handledManualTarget.current = target.sequence;
-    // Card editing prepares authenticated bytes only. OCR, translation,
-    // preview and writes still require their own explicit actions.
-    void prepareManualSource();
-    // The committed exact editor identity controls this one read-only load.
+    handledPreparation.current = target.sequence;
+    const scope = epoch.current;
+    void Promise.resolve().then(() => {
+      if (!mounted.current || epoch.current !== scope || handledTarget.current !== target.sequence || !focusedTarget() || !editorCurrent()) return;
+      if (target.intent === 'manual') void prepareManualSource();
+      else void prepareCardTranslation();
+    });
+    // A committed explicit target prepares bytes or a local preview; saving
+    // always remains a separate reviewed action.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [manualPreparation, translationTarget, editorKey, selectionKey]);
+  }, [cardPreparation, translationTarget, editorKey, selectionKey]);
+  async function prepareCardTranslation() {
+    if (!sourceKey || !imageKeys.includes(sourceKey) || liveUncertain.current || liveReadyRetry.current || !focusedTarget() || !editorCurrent()) return;
+    if (liveRegions.current.length || liveCrop.current || liveRenderedRef.current || liveOptionImageIds.current.length || pendingSave.current) {
+      setNotice('작성한 문구와 잘라내기·옵션 선택을 유지했습니다. 새 번역을 시작하려면 먼저 이미지 번역 편집 초안을 지워주세요.'); return;
+    }
+    const work = begin('ocr'); if (!work) return;
+    discardDraft();
+    try {
+      const image = workspaceContext ? await readDetailWorkspaceImage(workspaceContext, work.controller.signal)
+        : await readFreeImageSource(productId, version, sourceKey, role, work.controller.signal, undefined, liveQuotationTarget.current ?? undefined);
+      if (!current(work)) return;
+      setLoaded(image);
+      const selectedOptions = focusedOptionId && image.source.optionImages?.optionIds.includes(focusedOptionId) ? [focusedOptionId] : [];
+      setOptionImageIds(selectedOptions);
+      const rows = await recognizeFreeImage(image, language, work.controller.signal, message => { if (current(work)) setNotice(message); });
+      if (!current(work)) return;
+      resetRegions(rows);
+      const requested = rows.filter(row => row.selected && row.erase !== true && row.translationProvenance !== 'manual' && row.text.trim()).map(({ id, text }) => ({ id, text }));
+      if (!requested.length) { setNotice('자동 번역할 문구를 찾지 못했습니다. 원본과 인식 영역을 확인하거나 문구 영역을 직접 추가해주세요.'); return; }
+      setNotice('인식한 문구를 한국어로 번역하고 있습니다.');
+      const result = workspaceContext ? await translateDetailWorkspaceImage(image.source, language, requested, work.controller.signal)
+        : await translateFreeImageRegions(image.source, language, requested, work.controller.signal);
+      if (!current(work)) return;
+      const returned = new Map(result.regions.map(row => [row.id, row]));
+      const next = rows.map(row => {
+        const translated = returned.get(row.id);
+        return translated && row.selected && row.erase !== true && row.text === translated.original && row.translationProvenance !== 'manual'
+          ? { ...row, translated: translated.translated ?? row.translated, issue: translated.issue, translationProvenance: translated.translated === null ? row.translationProvenance : 'generated' as const } : row;
+      });
+      recordRegions(next);
+      const complete = requested.every(row => { const translated = returned.get(row.id); return translated?.original === row.text && typeof translated.translated === 'string' && !!translated.translated.trim() && !translated.issue; });
+      if (!complete) { setError('일부 문구를 번역하지 못했습니다. 인식된 원문은 유지했습니다. 실패한 문구를 수정하거나 선택 해제한 뒤 미리보기를 만들어주세요.'); setNotice(result.warnings.join(' ')); return; }
+      if (image.source.optionImages?.commonAssigned === false && !selectedOptions.length) { setNotice('번역 문구를 준비했습니다. 적용할 개별 옵션을 선택한 뒤 미리보기를 만들어주세요.'); return; }
+      setNotice('한국어 이미지 미리보기를 만들고 있습니다.');
+      const output = await renderFreeImageTranslation(image, next, work.controller.signal, selectedOptions, undefined, language);
+      if (!current(work)) return;
+      setRendered(output); setNotice(['한국어 이미지 초안을 준비했습니다. 원본과 번역 문구·영역을 확인하고 수정한 뒤 적용해주세요.', ...result.warnings].join(' '));
+    } catch (cause) { if (current(work)) setError(cause instanceof Error ? cause.message : '이미지 번역 초안을 만들지 못했습니다. 원문과 이전 저장 이미지는 유지됩니다.'); }
+    finally { finish(work); }
+  }
   async function recognize() {
     if (!sourceKey || !imageKeys.includes(sourceKey) || liveUncertain.current || liveReadyRetry.current || !focusedTarget() || !editorCurrent()) return;
     if (liveRegions.current.length || liveCrop.current || liveRenderedRef.current || liveOptionImageIds.current.length || pendingSave.current) { setNotice('작성한 문구와 잘라내기·옵션 선택을 유지했습니다. 원본 문구를 다시 읽으려면 먼저 이미지 번역 편집 초안을 지워주세요.'); return; }

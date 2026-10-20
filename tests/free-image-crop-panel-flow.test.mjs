@@ -11,7 +11,7 @@ const cropCanvas=h=>nodes(h.render()).find(node=>node.type==='FreeImageCropCanva
 const download=h=>h.field('편집 결과 PNG 다운로드');
 const clickDownload=node=>{const event={prevented:false,preventDefault(){this.prevented=true;}};node.props.onClick(event);return event;};
 const native=createRequire(import.meta.url);
-async function prepare(h){await h.click('원본 불러오기 · 수동 편집');await h.change('이미지 잘라내기','',true);}
+async function prepare(h){await h.settle();if(!h.field('이미지 잘라내기'))await h.click('원본 불러오기 · 수동 편집');await h.change('이미지 잘라내기','',true);}
 async function crop(h,rect={x:2,y:1,width:15,height:10}){for(const[field,value]of Object.entries(rect))await h.change('잘라내기 '+field,String(value));}
 function pointerFixture(){
  const slots=[],effects=[],layouts=[],starts=[],completed=[],canceled=[],held=new Set();let cursor=0,closed=false,late=0,serial=0,rect={left:10,top:20,width:100,height:50};
@@ -88,7 +88,7 @@ test('busy cropped saves freeze crop controls and download until the original re
 test('unknown final-slot crop saves recover the identical source/rectangle/PNG through version changes and ready-retry locks',async()=>{
  class UnknownCropSave extends Error{constructor(message){super(message);this.uncertain=true;}}
  const target={kind:'quotation',profileId:null,optionId:'red',input:'detailImages',fieldKey:'detailImages',slotIndex:0,revision:1,inputFingerprint:'c'.repeat(64),optionRevision:1,value:'owner/original.png'};
- const h=fixture({quotationContext:{profileId:null,optionId:'red',input:'detailImages'},translationTarget:{sourceKey:'owner/original.png',sequence:1,role:'detail',quotationTarget:target}},{FreeImageApplyError:UnknownCropSave});
+ const h=fixture({quotationContext:{profileId:null,optionId:'red',input:'detailImages'},translationTarget:{sourceKey:'owner/original.png',sequence:1,role:'detail',intent:'manual',quotationTarget:target}},{FreeImageApplyError:UnknownCropSave});
  try{
   await prepare(h);await crop(h);await h.click('번역 이미지 미리보기');const cropChange=h.field('잘라내기 x').props.onChange,link=download(h);
   h.setApply(async()=>{throw new UnknownCropSave('synthetic crop ACK lost');});await h.click('검토한 번역 이미지 적용');assert.equal(h.saved,0);assert.ok(h.button('같은 결과의 저장 상태 다시 확인'));const sent=h.calls.find(call=>call.action==='apply').image;

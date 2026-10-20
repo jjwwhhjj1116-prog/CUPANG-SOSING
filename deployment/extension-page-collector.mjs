@@ -13,8 +13,9 @@ if(window===window.top&&!document.getElementById('yoofam-page-collector')){
    const before=pageSourceUrl(location.href).sourceUrl;
    const text=selector=>document.querySelector(selector)?.textContent?.trim()??'';
    const urls=selector=>[...document.querySelectorAll(selector)].slice(0,200).map(node=>node.getAttribute('data-src')||node.currentSrc||node.getAttribute('src')||'');
-   const scripts=[];let size=0;for(const script of document.scripts){const raw=script.textContent??'';if(!/"(?:skuModel|subject|offerTitle|offerImgList|mainImageList)"\s*:/.test(raw))continue;size+=raw.length;if(size>4*1024*1024)throw Error('상품 데이터가 수집 크기를 초과했습니다.');scripts.push(raw);}
-   const snapshot=extractPageSource({sourceUrl:before,scripts,title:document.querySelector('meta[property="og:title"]')?.content||text('h1')||document.title,
+   const scripts=[];let size=0;for(const script of document.scripts){const raw=script.textContent??'';if(!/"(?:skuModel|subject|offerTitle|offerSubject|productTitle|productName|offerBaseInfo|tempModel|offerImgList|mainImageList)"\s*:/.test(raw))continue;size+=raw.length;if(size>4*1024*1024)throw Error('상품 데이터가 수집 크기를 초과했습니다.');scripts.push(raw);}
+   const productTitle=text('h1.d-title,.detail-title h1,.offer-title,[data-module-name="title"] h1,[data-plg-name="title"] h1');
+   const snapshot=extractPageSource({sourceUrl:before,scripts,title:productTitle||document.querySelector('meta[property="og:title"]')?.content||document.title,
     description:text('#desc-lazyload-container')||text('.offer-description'),
     gallery:urls('.detail-gallery img,.gallery img,[class*="gallery"] img'),detailImages:urls('#desc-lazyload-container img,.offer-description img'),
     priceText:text('.price-container')||text('[class*="price-module"]')||text('[class*="price-component"]'),

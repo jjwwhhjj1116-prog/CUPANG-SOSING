@@ -65,6 +65,25 @@ async function fixture(company, { stage = 'detail', poolSize } = {}) {
 }
 
 for (const company of schemaCompanies) {
+ test(`English image batch keeps its language when its editable result is saved and reopened (${company.code})`,async()=>{
+  const f=await fixture(company);try{
+   const now=new Date().toISOString(),email=company.code==='A01526306'?'jwhj1116@kakao.com':'unari8484@gmail.com';
+   f.h.sqlite.prepare('INSERT INTO members VALUES(?,?,?,?,?,?,?,?,?,?)').run('owner',email,'fixture-not-a-password',company.code==='A01526306'?'admin':'member','approved',company.code,company.name,now,now,null);
+   f.input.language='en';const before=f.sourceRows();let renderCalls=0;
+   let batch=await f.prepare({render:async(image,regions,signal,optionIds,crop,language)=>{
+    renderCalls++;assert.equal(language,'en');assert.deepEqual(plain(optionIds),[]);assert.equal(crop,undefined);signal.throwIfAborted();
+    const rendered=await f.deps.render(image,regions);
+    return {...rendered,editDocument:f.h.load('app/free-image-edit-document.ts').validateFreeImageEditDocument({format:'free-image-edit-v1',width:image.width,height:image.height,sourceLanguage:language,regions},image.source)};
+   }});
+   assert.equal(renderCalls,3);assert.ok(batch.items.every(item=>item.status==='ready'&&item.rendered.editDocument.sourceLanguage==='en'));
+   batch=await f.model.applyDetailBatchResult(batch,0,new AbortController().signal,()=>{},f.deps);
+   const key=batch.items[0].appliedKey,target=batch.items[0].rendered.source.quotationTarget;
+   const query=new URLSearchParams({sourceKey:key,role:'detail',target:'quotation',profileId:f.profile.id,optionId:f.selected,fieldKey:target.fieldKey,slotIndex:'0',editor:'saved'});
+   const opened=await json(await f.h.load('app/api/products/[id]/image-text/route.ts').GET(new Request('https://app.test'+f.base+'/image-text?'+query),{params:Promise.resolve({id:f.id})}));
+   assert.equal(opened.editDocument.sourceLanguage,'en');assert.equal(opened.editDocument.regions[0].text,'English');assert.equal(opened.editDocument.regions[0].translated,'번역 문구');
+   assert.equal(opened.source.editorSource.resultKey,key);assert.equal(f.sourceRows(),before);assert.equal(f.product().supplier_hub_status,'미전송');
+  }finally{f.close();}
+ });
  test(`stage-four batch crosses the old 50-file boundary while preserving source/main/detail/manual values and exact XLSX/ZIP (${company.code})`,async()=>{
   const f=await fixture(company,{stage:'additional',poolSize:49});try{
    const before=f.sourceRows(),original=plain(f.product()),sourceBytes=new Map(f.keys.map(key=>[key,Buffer.from(f.h.objects.get(key))]));

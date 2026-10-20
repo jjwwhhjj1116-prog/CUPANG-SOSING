@@ -34,7 +34,7 @@ class ApplyError extends Error { constructor(message, uncertain) { super(message
 function fixture(initialProps = {}, clientOverrides = {}) {
   const calls = [], busy = [], states = [], effects = [], urls = [], revoked = []; let cursor = 0, closed = false, late = 0, saved = 0, allowApply = true;
   let props = { productId: 'product', version, imageKeys: ['owner/original.png', 'owner/second.png'],
-    translationTarget: { sourceKey: 'owner/original.png', sequence: 1, sourceLanguage: 'zh', role: 'detail' },
+    translationTarget: undefined,
     onProductChanged: () => saved++, onBusyChange: value => busy.push(value), beforeApply: () => allowApply, ...initialProps };
   let sourceIntercept = null, ocrIntercept = null, translateIntercept = null, renderIntercept = null, applyIntercept = null, recoverIntercept = null;
   class ObjectURL extends URL { static createObjectURL(blob) { const url = 'blob:fixture-' + urls.length; urls.push({ url, blob }); return url; } static revokeObjectURL(url) { revoked.push(url); } }
@@ -100,6 +100,9 @@ function fixture(initialProps = {}, clientOverrides = {}) {
   const field = label => nodes(render()).find(node => node.props['aria-label'] === label);
   const brush = () => nodes(render()).find(node => node.type === 'FreeImageBrushCanvas');
   render(); render();
+  // Independent editor-control tests start with a manual dropdown selection,
+  // rather than impersonating an explicit image-card translation click.
+  if (!props.translationTarget && props.imageKeys.length) { field('번역할 원본 이미지').props.onChange({ target: { value: props.imageKeys[0] } }); render(); render(); }
   return { render, settle, calls, busy, urls, revoked, button, field, brush, get saved() { return saved; }, get late() { return late; },
     setSource(fn) { sourceIntercept = fn; }, setOcr(fn) { ocrIntercept = fn; }, setTranslate(fn) { translateIntercept = fn; }, setRender(fn) { renderIntercept = fn; }, setApply(fn) { applyIntercept = fn; }, setRecover(fn) { recoverIntercept = fn; },
     setProps(update) { props = { ...props, ...update }; render(); render(); }, allowApply(value) { allowApply = value; },
@@ -180,7 +183,7 @@ test('workspace close guard reads immediate live edits and pending writes before
     await h.settle(); await h.click('이미지 번역 편집 초안 지우기'); assert.equal(guard(), true);
   } finally { h.close(); assert.equal(guard, null); }
 });
-async function translated(h) { await h.click('원본 문구 읽기'); await h.click('선택 문구 한국어 번역'); }
+async function translated(h) { await h.settle(); if (!h.field('문구 1 원문')) await h.click('원본 문구 읽기'); if (!h.field('문구 1 한국어')?.props.value) await h.click('선택 문구 한국어 번역'); }
 async function styleRegion(h, index = 1, values = manualStyle) {
   await h.change(`문구 ${index} 글꼴`, values.fontFamily);
   await h.change(`문구 ${index} 굵게`, '', values.bold);
@@ -193,15 +196,15 @@ async function snapshotRegions(h) {
   return plain(h.calls.filter(call => call.action === 'preview').at(-1).rows);
 }
 
-test('toolbar source/language/role selection does not automatically run OCR, Google or save and marks only its own source stage', async () => {
+test('dropdown selection stays manual while an explicit toolbar translation prepares a preview in its own source stage', async () => {
   const h = fixture(); try {
     await h.settle();
     assert.equal(h.calls.length, 0); assert.equal(h.field('번역할 원본 이미지').props.value, 'owner/original.png');
     assert.equal(h.render().props['data-quotation-source-step'], '상세 이미지'); assert.equal(h.render().props['data-workspace-dirty'], undefined);
     h.setProps({ translationTarget: { sourceKey: 'owner/second.png', sequence: 2, role: 'main', sourceLanguage: 'en' } }); await h.settle();
-    assert.equal(h.calls.length, 0); assert.equal(h.field('이미지 원문 언어').props.value, 'en'); assert.equal(h.field('번역할 이미지 역할').props.value, 'main');
+    assert.deepEqual(h.calls.map(call => call.action), ['source', 'ocr', 'translate', 'preview']); assert.equal(h.field('이미지 원문 언어').props.value, 'en'); assert.equal(h.field('번역할 이미지 역할').props.value, 'main');
     assert.equal(h.render().props['data-quotation-source-step'], '대표 이미지');
-    await h.change('번역할 이미지 역할', 'additional'); assert.equal(h.calls.length, 0); assert.equal(h.render().props['data-quotation-source-step'], '추가 이미지');
+    await h.change('번역할 이미지 역할', 'additional'); assert.equal(h.calls.length, 4); assert.equal(h.render().props['data-quotation-source-step'], '대표 이미지', 'a dirty preview keeps its source role'); assert.equal(h.saved, 0);
   } finally { h.close(); }
 });
 
@@ -434,7 +437,7 @@ test('cancel, new target and unmount abort active work and ignore late OCR/trans
     translating.resolve({ regions: [{ id: 'r1', original: '中文 r1', translated: 'late', issue: null }], warnings: [] }); await h.settle(); assert.equal(h.field('문구 1 한국어').props.value, '');
     await h.click('이미지 번역 편집 초안 지우기');
     h.setProps({ translationTarget: { sourceKey: 'owner/second.png', sequence: 3, role: 'detail', sourceLanguage: 'en' } }); await h.settle();
-    assert.equal(h.field('번역할 원본 이미지').props.value, 'owner/second.png'); assert.equal(h.field('문구 1 원문'), undefined);
+    assert.equal(h.field('번역할 원본 이미지').props.value, 'owner/second.png'); assert.equal(h.field('문구 1 원문').props.value, '中文 r1');
     h.setTranslate(null); await translated(h); await h.click('번역 이미지 미리보기');
     const saving = deferred(); h.setApply(() => saving.promise); h.button('검토한 번역 이미지 적용').props.onClick(); await h.settle();
     h.close(); assert.equal(h.busy.at(-1), false); assert.equal(h.calls.filter(call => call.action === 'apply').at(-1).signal.aborted, true);
@@ -461,13 +464,14 @@ test('repeated same-image targets retain manual drafts; different image/role and
     await h.click('이미지 번역 편집 초안 지우기'); assert.equal(h.field('문구 1 원문'), undefined);
     assert.equal(nodes(h.render()).some(node => node.type === 'img'), false, 'no URL for the discarded blob remains visible'); assert.ok(h.revoked.includes(originalUrl));
     h.setProps({ translationTarget: { sourceKey: 'owner/second.png', sequence: 4, role: 'main', sourceLanguage: 'en' } }); await h.settle();
-    assert.equal(h.field('번역할 원본 이미지').props.value, 'owner/second.png'); assert.equal(h.field('번역할 이미지 역할').props.value, 'main'); assert.equal(h.calls.length, count);
-    assert.equal(h.button('원본 문구 읽기').props.disabled, false); assert.equal(h.calls.filter(call => call.action === 'apply').length, 0);
+    assert.equal(h.field('번역할 원본 이미지').props.value, 'owner/second.png'); assert.equal(h.field('번역할 이미지 역할').props.value, 'main'); assert.equal(h.calls.length, count + 4);
+    assert.equal(h.button('원본 문구 읽기').props.disabled, true); assert.equal(h.calls.filter(call => call.action === 'apply').length, 0);
   } finally { h.close(); }
 });
 
 function mainImageOptions(h, focusedOptionId, ids = ['sku-a', 'sku-b'], optionOnly = false) {
-  h.setProps({ focusedOptionId, translationTarget: { sourceKey: 'owner/original.png', sequence: 2, role: 'main', sourceLanguage: 'zh' } });
+  h.setProps({ focusedOptionId });
+  h.field('번역할 이미지 역할').props.onChange({ target: { value: 'main' } });
   h.setSource(image => ({ ...image, source: { ...image.source, optionImages: { revision: 7, optionIds: [...ids], ...(optionOnly ? { commonAssigned: false } : {}) } } }));
 }
 const optionLabel = id => `옵션 ${id} 번역 대표 이미지 적용`;
@@ -480,17 +484,17 @@ function finalImageSelection(h, input = 'detailImages', sourceLanguage = 'zh') {
   return { quotationTarget, quotationContext };
 }
 
-test('final quotation toolbar binds both languages to the saved slot and leaves all processing explicit', async () => {
+test('final quotation translation click binds both languages to the saved slot and leaves apply explicit', async () => {
   for (const [input, language] of [['mainImage', 'zh'], ['mainImage', 'en'], ['additionalImages', 'zh'], ['detailImages', 'en']]) {
     const h = fixture(); try {
       const { quotationTarget } = finalImageSelection(h, input, language); await h.settle();
-      assert.equal(h.calls.length, 0); assert.equal(h.field('이미지 원문 언어').props.value, language);
+      assert.deepEqual(h.calls.map(call => call.action), ['source', 'ocr', 'translate', 'preview']); assert.equal(h.field('이미지 원문 언어').props.value, language);
       assert.equal(h.field('번역할 원본 이미지').props.disabled, true); assert.equal(h.field('번역할 이미지 역할').props.disabled, true);
       assert.equal(h.field('번역 대표 이미지의 옵션 적용 범위'), undefined, 'final main image never exposes common/source option scope');
       await translated(h); assert.deepEqual(plain(h.calls.find(call => call.action === 'source').quotationTarget), quotationTarget);
       assert.equal(h.calls.find(call => call.action === 'ocr').language, language);
       await h.change('문구 1 한국어', '직접 쓴 한국어'); await h.change('문구 2 한국어', ''); await h.change('문구 2 선택', '', false);
-      await h.click('번역 이미지 미리보기'); const preview = h.calls.find(call => call.action === 'preview');
+      await h.click('번역 이미지 미리보기'); const preview = h.calls.filter(call => call.action === 'preview').at(-1);
       assert.equal(preview.image.source.quotationTarget.slotIndex, input === 'mainImage' ? 0 : 1); assert.deepEqual(preview.optionImageIds, []);
       assert.equal(preview.rows[0].translated, '직접 쓴 한국어'); assert.equal(preview.rows[1].translated, '');
       await h.click('검토한 번역 이미지 적용'); const applied = h.calls.find(call => call.action === 'apply');
@@ -546,7 +550,7 @@ test('a lost final-slot ACK recovers the same PNG before allowing a separate exp
         await h.click('같은 미리보기 다시 적용'); const applies = h.calls.filter(call => call.action === 'apply');
         assert.equal(applies.length, 2); assert.equal(applies[1].image, original); assert.equal(applies[1].image.output, original.output);
       }
-      assert.equal(h.saved, 1); assert.equal(h.calls.filter(call => call.action === 'source' || call.action === 'ocr' || call.action === 'translate' || call.action === 'preview').length, 4);
+      assert.equal(h.saved, 1); assert.equal(h.calls.filter(call => call.action === 'source' || call.action === 'ocr' || call.action === 'translate' || call.action === 'preview').length, 5);
     } finally { h.close(); }
   }
 });
@@ -606,8 +610,8 @@ test('main-image options default to no selection without a matching focused row;
     assert.equal(h.calls.length, count); assert.equal(h.render().props['data-workspace-dirty'], 'true');
     await h.click('이미지 번역 편집 초안 지우기');
     h.setProps({ translationTarget: { sourceKey: 'owner/second.png', sequence: 4, role: 'main' } }); await h.settle();
-    assert.equal(h.field('번역할 원본 이미지').props.value, 'owner/second.png'); assert.equal(h.calls.length, count);
-    assert.equal(h.field(optionLabel('sku-b')), undefined);
+    assert.equal(h.field('번역할 원본 이미지').props.value, 'owner/second.png'); assert.equal(h.calls.length, count + 2);
+    assert.equal(h.field(optionLabel('sku-b')).props.checked, true); assert.equal(h.button('검토한 번역 이미지 적용'), undefined);
   } finally { h.close(); }
 });
 
@@ -686,7 +690,7 @@ test('individual-only source keeps common/fallback images outside its reviewed s
   for (const focusedOptionId of [undefined, 'foreign-option', 'sku-b']) {
     const h = fixture(); try {
       mainImageOptions(h, focusedOptionId, ['sku-a', 'sku-b'], true);
-      h.setProps({ translationTarget: { sourceKey: 'owner/second.png', sequence: 3, role: 'main', sourceLanguage: 'zh' } });
+      await h.change('번역할 원본 이미지', 'owner/second.png');
       await h.settle(); assert.equal(h.calls.length, 0); await h.click('원본 문구 읽기');
       assert.equal(h.field('번역할 원본 이미지').props.value, 'owner/second.png');
       assert.equal(h.field(optionLabel('sku-a')).props.checked, false);
@@ -975,7 +979,8 @@ test('busy, unknown save and ready-retry states block retained undo/reorder hand
 
 test('accepted translation is one reversible edit and stale slot or closed callbacks cannot move its history', async () => {
   const h = fixture(); try {
-    const { quotationContext } = finalImageSelection(h); await h.click('원본 문구 읽기');
+    const { quotationContext } = finalImageSelection(h); await h.settle();
+    await h.click('되돌리기');
     await h.change('문구 1 배경색', '#ddeeff'); const before = await snapshotRegions(h);
     await h.click('선택 문구 한국어 번역'); const after = await snapshotRegions(h);
     assert.notDeepEqual(after, before); await h.click('되돌리기'); assert.deepEqual(await snapshotRegions(h), before);
@@ -1115,7 +1120,7 @@ test('a reviewed brush PNG retains exact quotation and option proof through lost
     h.setRecover(async image => ({ source: image.source, applied: false })); await h.click('같은 결과의 저장 상태 다시 확인');
     assert.equal(begin(), null); h.setApply(async image => ({ source: image.source, applied: true })); await h.click('같은 미리보기 다시 적용');
     assert.equal(h.calls.filter(call => call.action === 'apply').at(-1).image, first); assert.equal(h.saved, 1);
-    assert.equal(h.calls.filter(call => call.action === 'source').length, 1); assert.equal(h.calls.filter(call => call.action === 'preview').length, 1);
+    assert.equal(h.calls.filter(call => call.action === 'source').length, 1); assert.equal(h.calls.filter(call => call.action === 'preview').length, 2);
   } finally { h.close(); }
 });
 
@@ -1266,8 +1271,8 @@ test('manual quotation card preparation explicitly opts into current-target poli
   try {
     common.setProps({ translationTarget: { sourceKey: 'owner/original.png', sequence: 2, role: 'detail', intent: 'manual' } }); await common.settle();
     assert.deepEqual(plain(common.calls[0].options), { restoreEditor: true });
-    finalImageSelection(ocr); await ocr.click('원본 문구 읽기');
-    assert.equal(ocr.calls[0].options, undefined); assert.deepEqual(ocr.calls.map(call => call.action), ['source', 'ocr']);
+    finalImageSelection(ocr); await ocr.settle();
+    assert.equal(ocr.calls[0].options, undefined); assert.deepEqual(ocr.calls.map(call => call.action), ['source', 'ocr', 'translate', 'preview']);
   } finally { common.close(); ocr.close(); }
 });
 

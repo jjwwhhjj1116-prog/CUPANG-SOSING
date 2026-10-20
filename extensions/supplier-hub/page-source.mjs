@@ -15,31 +15,82 @@ function image(value){
  try{const url=new URL(String(value).startsWith('//')?'https:'+value:value);return url.protocol==='https:'&&!url.username&&!url.password&&!url.port&&!url.hash&&(url.hostname==='alicdn.com'||url.hostname.endsWith('.alicdn.com'))&&url.href.length<=2048?url.href:null;}catch{return null;}
 }
 /** Read a JSON value after an exact quoted property; never evaluate scripts. */
-export function pageJsonProperty(text,key){
+function pageJsonProperties(text,key,firstOnly=false){
+ const values=[];
  const pattern=new RegExp('"'+key+'"\\s*:', 'g');
- while(pattern.exec(text)!==null){
+ for(let match;(match=pattern.exec(text))!==null;){
+  const position=match.index;
   let start=pattern.lastIndex;while(/\s/.test(text[start]??'')&&start<text.length)start++;
   if(!['{','[','"'].includes(text[start]))continue;
   let quoted=false,escaped=false,depth=0;
   for(let end=start;end<text.length&&end-start<=2*1024*1024;end++){
    const char=text[end];
-   if(quoted){if(escaped)escaped=false;else if(char==='\\')escaped=true;else if(char==='"'){quoted=false;if(end>start&&depth===0){try{return JSON.parse(text.slice(start,end+1));}catch{break;}}}}
+   if(quoted){if(escaped)escaped=false;else if(char==='\\')escaped=true;else if(char==='"'){quoted=false;if(end>start&&depth===0){try{values.push({value:JSON.parse(text.slice(start,end+1)),position});if(firstOnly)return values;}catch{}break;}}}
    else if(char==='"')quoted=true;
    else if(char==='{'||char==='[')depth++;
-   else if(char==='}'||char===']'){if(--depth===0){try{return JSON.parse(text.slice(start,end+1));}catch{break;}}}
+   else if(char==='}'||char===']'){if(--depth===0){try{values.push({value:JSON.parse(text.slice(start,end+1)),position});if(firstOnly)return values;}catch{}break;}}
   }
+  if(values.length>100)throw Error('상품 원문이 수집 크기를 초과했습니다.');
  }
- return undefined;
+ return values;
+}
+export function pageJsonProperty(text,key){return pageJsonProperties(text,key,true)[0]?.value;}
+// Locate literal JSON containers without running script text. Unrelated shop
+// and recommendation containers cannot supply a current-product title.
+function enclosingJsonObject(text,position,key,value){
+ const stack=[];let quoted='',escaped=false,line=false,block=false;
+ for(let i=0;i<position;i++){
+  const char=text[i],next=text[i+1];
+  if(line){if(char==='\n'||char==='\r')line=false;continue;}
+  if(block){if(char==='*'&&next==='/'){block=false;i++;}continue;}
+  if(quoted){if(escaped)escaped=false;else if(char==='\\')escaped=true;else if(char===quoted)quoted='';continue;}
+  if(char==='/'&&next==='/'){line=true;i++;continue;}
+  if(char==='/'&&next==='*'){block=true;i++;continue;}
+  if(['"',"'","\x60"].includes(char)){quoted=char;continue;}
+  if(char==='{'||char==='[')stack.push({char,start:i});
+  else if(char==='}'||char===']')stack.pop();
+ }
+ if(quoted||line||block)return null;
+ for(const container of stack.reverse()){
+  if(container.char!=='{')continue;
+  const parsed=pageJsonProperty('"root":'+text.slice(container.start),'root');
+  if(object(parsed)&&Object.hasOwn(parsed,key)&&JSON.stringify(parsed[key])===JSON.stringify(value))return parsed;
+ }
+ return null;
+}
+const titleKeys=['subject','offerTitle','offerSubject','productTitle','productName','title'];
+function assertProductIdentity(value,offerId){
+ for(const key of ['offerId','productId'])if(value[key]!==undefined&&String(value[key])!==offerId)throw Error('상품 원문의 상품 번호가 현재 URL과 다릅니다.');
+}
+function sourceTitle(scripts,models,offerId){
+ const candidates=[];
+ const add=value=>{const title=titleKeys.map(key=>plain(value[key],500)).find(Boolean);if(title)candidates.push(title);};
+ for(const {text,entry} of models){
+  const scope=enclosingJsonObject(text,entry.position,'skuModel',entry.value);
+  if(!scope)continue;
+  assertProductIdentity(scope,offerId);add(scope);
+  for(const key of ['offerBaseInfo','tempModel'])if(object(scope[key])){assertProductIdentity(scope[key],offerId);add(scope[key]);}
+ }
+ // A separate title container is usable only when its own identity matches.
+ if(!candidates.length)for(const text of scripts)for(const key of titleKeys)for(const entry of pageJsonProperties(text,key)){
+  const scope=enclosingJsonObject(text,entry.position,key,entry.value);
+  if(!scope||scope.offerId===undefined&&scope.productId===undefined)continue;
+  if(['offerId','productId'].some(key=>scope[key]!==undefined&&String(scope[key])!==offerId))continue;
+  add(scope);
+ }
+ if(new Set(candidates).size>1)throw Error('현재 상품의 원문 상품명이 여러 개입니다. 상품 본문을 다시 확인해주세요.');
+ return candidates[0]??'';
 }
 export function extractPageSource(input,now=Date.now()){
  const identity=pageSourceUrl(input.sourceUrl),scripts=Array.isArray(input.scripts)?input.scripts:[];
  if(scripts.length>100||scripts.some(value=>typeof value!=='string')||scripts.reduce((sum,value)=>sum+value.length,0)>4*1024*1024)throw Error('상품 본문이 수집 크기를 초과했습니다.');
  const property=key=>scripts.map(text=>pageJsonProperty(text,key)).find(value=>value!==undefined);
- const models=scripts.map(text=>pageJsonProperty(text,'skuModel')).filter(object);
- if(new Set(models.map(value=>JSON.stringify(value))).size>1)throw Error('상품 옵션 원문이 여러 개입니다. 현재 상품 본문을 다시 확인해주세요.');
- const sm=models[0];
- if(sm&&(sm.offerId!==undefined||sm.productId!==undefined)&&String(sm.offerId??sm.productId)!==identity.offerId)throw Error('옵션 원문의 상품 번호가 현재 URL과 다릅니다.');
- const title=plain(input.title||['subject','subjectTrans','offerTitle','offerSubject','productTitle','productName'].map(property).find(value=>typeof value==='string'&&value.trim()),500);
+ const models=scripts.flatMap(text=>pageJsonProperties(text,'skuModel').filter(entry=>object(entry.value)).map(entry=>({text,entry})));
+ if(models.length>100)throw Error('상품 옵션 원문이 수집 크기를 초과했습니다.');
+ if(new Set(models.map(({entry})=>JSON.stringify(entry.value))).size>1)throw Error('상품 옵션 원문이 여러 개입니다. 현재 상품 본문을 다시 확인해주세요.');
+ const sm=models[0]?.entry.value;
+ for(const {entry} of models)assertProductIdentity(entry.value,identity.offerId);
+ const title=sourceTitle(scripts,models,identity.offerId)||plain(input.title,500);
  if(!title)throw Error('상품명이 보이는 상품 본문에서 다시 수집해주세요.');
  const images=[],addImage=(value,role)=>{const url=image(value);if(url&&!images.some(item=>item.url===url&&item.role===role)&&images.length<200)images.push({url,role});};
  for(const key of ['offerImgList','mainImageList']){

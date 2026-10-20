@@ -119,7 +119,7 @@ export async function prepareDetailImageBatch(input: Omit<DetailImageBatch, 'ite
         throw Error(['일부 문구를 번역하지 못했습니다. 원본을 유지합니다.', ...translated.warnings, ...translated.regions.flatMap(row => row.issue ? [row.issue] : [])].join(' '));
       const prepared: FreeImageRegion[] = regions.map(region => results.has(region.id)
         ? { ...region, translated: results.get(region.id)!.translated!, issue: null, translationProvenance: 'generated' } : { ...region, selected: false });
-      const rendered = await (deps.render ?? renderFreeImageTranslation)(image, prepared, signal);
+      const rendered = await (deps.render ?? renderFreeImageTranslation)(image, prepared, signal, [], undefined, batch.language);
       signal.throwIfAborted();
       if (bytes + rendered.output.size > DETAIL_BATCH_BYTES) throw Error('일괄 미리보기 30MB 한도입니다. 이미 준비한 결과를 먼저 검토하고 나머지는 개별 번역해주세요.');
       bytes += rendered.output.size;
