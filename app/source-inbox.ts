@@ -3,13 +3,17 @@ import {validateCollectionResult,type CollectionResult} from '@/app/collection-r
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 export type SourceInboxItem={id:string;ownerId:string;company:SupplierHubCompany;fingerprint:string;snapshot:PageSource;revision:number;receivedAt:string;reviewed:PageSource|null;issues:string[];warnings?:string[];archivedAt:string|null;captureOriginId?:string;captureVersion?:number};
 /** Supplier MOQ is not needed to create an editable SEO/price draft. Its
- * unknown value stays null; SKU, price and currency still need source proof. */
-export function sourceInboxStatus(snapshot:PageSource,reviewed:PageSource|null){return pageSourceIssues(reviewed??snapshot).filter(issue=>issue!=='최소 주문 수량');}
-export function sourceInboxWarnings(snapshot:PageSource,reviewed:PageSource|null){return (reviewed??snapshot).options.some(row=>row.minimumOrder===null)?['공급자 최소 주문 수량 미확인 · 초안 작성 후 가격 설정에서 확인하세요.']:[];}
+ * unknown value stays null. A captured row key can identify an editable option
+ * without inventing a supplier SKU. Price and currency still need proof. */
+export function sourceInboxStatus(snapshot:PageSource,reviewed:PageSource|null){return pageSourceIssues(validatePageSource(reviewed??snapshot)).filter(issue=>!['최소 주문 수량','공급자 SKU'].includes(issue));}
+export function sourceInboxWarnings(snapshot:PageSource,reviewed:PageSource|null){const source=reviewed??snapshot;return [
+ ...(source.options.some(row=>row.minimumOrder===null)?['공급자 최소 주문 수량 미확인 · 초안 작성 후 가격 설정에서 확인하세요.']:[]),
+ ...(source.options.some(row=>row.supplierSku===null)?['공급자 SKU 미확인 · 옵션 원문 키로 구분하며 공급자 코드는 공란으로 보관합니다.']:[])];}
 export function pageSourceCollectionResult(snapshot:PageSource,reviewed=false):CollectionResult{
  const source=validatePageSource(snapshot),issues=sourceInboxStatus(source,null);if(issues.length)throw Error(`수집함에서 ${issues.join('·')}을 확인해주세요.`);
  const result=validateCollectionResult({schemaVersion:1,sourceUrl:source.sourceUrl,provider:reviewed?'chrome-reviewed-page-v1':'chrome-current-page-v1',collectedAt:source.collectedAt,title:source.title,description:source.description,attributes:source.attributes,images:source.images,
-  options:source.options.map(row=>({sku:row.supplierSku,name:row.name,unitPriceCny:row.unitPriceCny,minimumOrder:row.minimumOrder,stock:row.stock,...(row.imageUrl&&source.images.some(item=>item.url===row.imageUrl)?{imageIndex:source.images.findIndex(item=>item.url===row.imageUrl)}:{})}))},source.offerId);
+  options:source.options.map(row=>({sku:row.supplierSku??'',name:row.name,unitPriceCny:row.unitPriceCny,minimumOrder:row.minimumOrder,stock:row.stock,...(row.imageUrl&&source.images.some(item=>item.url===row.imageUrl)?{imageIndex:source.images.findIndex(item=>item.url===row.imageUrl)}:{})})),
+  ...(source.options.some(row=>row.supplierSku===null)?{pageOptionIdentity:{format:'yoofam-page-option-identity-v1',offerId:source.offerId,sourceKeys:source.options.map(row=>row.key)}}:{})},source.offerId);
  return result;
 }
 export async function pageSourceFingerprint(snapshot:PageSource){return [...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(snapshot))))].map(value=>value.toString(16).padStart(2,'0')).join('');}

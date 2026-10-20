@@ -7,12 +7,13 @@ import {createRequire} from 'node:module';
 const nativeRequire=createRequire(import.meta.url);
 const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
 const text=tree=>Array.isArray(tree)?tree.map(text).join(''):tree&&typeof tree==='object'?text(tree.props?.children):tree==null?'':String(tree);
-function fixture(){
+function fixture(anonymous=false){
  const states=[],refs=[],cleanups=[],calls=[];let stateIndex=0,refIndex=0,first=true;
  const react={useState(initial){const index=stateIndex++;if(!(index in states))states[index]=initial;return[states[index],value=>{states[index]=typeof value==='function'?value(states[index]):value;}];},
   useRef(initial){const index=refIndex++;return refs[index]??(refs[index]={current:initial});},useEffect(effect){if(first)cleanups.push(effect());}};
  const result={schemaVersion:1,offerId:'754123',title:'합성 MOQ 원문',provider:'synthetic',collectedAt:'2026-01-01T00:00:00Z',sourceUrl:'https://detail.1688.com/offer/754123.html',description:'판매자 설명',
   options:[{sku:'unknown',name:'미확인 옵션',unitPriceCny:2,minimumOrder:null,stock:null},{sku:'known',name:'확인 옵션',unitPriceCny:3,minimumOrder:12,stock:4}],images:[]};
+ if(anonymous){result.provider='chrome-current-page-v1';result.options.forEach(row=>row.sku='');result.pageOptionIdentity={format:'yoofam-page-option-identity-v1',offerId:result.offerId,sourceKeys:['black:small','white:large']};}
  const fetcher=async(path,init)=>{calls.push({path,init});return Response.json(path.endsWith('/result')?{jobId:'job',offerId:'754123',receipt:{result},message:'수신됨'}:{capacity:{usedSlots:0,totalImages:0,reusableIndices:[]}});};
  function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
   {exports,Error,URL,AbortController,setTimeout,clearTimeout,fetch:fetcher,require(name){if(name==='react')return react;if(name==='react/jsx-runtime')return nativeRequire(name);
@@ -29,6 +30,18 @@ test('receipt renders unknown MOQ as 미확인 and preserves a known quantity wi
   const tbody=nodes(h.render()).find(node=>node.type==='tbody');assert.ok(tbody);
   const rows=nodes(tbody).filter(node=>node.type==='tr').map(row=>nodes(row).filter(node=>node.type==='td').map(text));
   assert.equal(rows.length,2);assert.equal(rows[0][5],'미확인');assert.equal(rows[1][5],'12');assert.equal(rows[0][4],'2');assert.equal(rows[1][4],'3');
+  assert.deepEqual(h.calls.map(call=>[call.path,call.init?.method??'GET']),[['/api/collection-jobs/job/result','GET'],['/api/collection-jobs/job/capacity','GET']]);
+ }finally{h.close();}
+});
+
+test('anonymous page options keep separate React row keys, show unknown SKU and never offer a remote-SKU supplement',async()=>{
+ const h=fixture(true);try{
+  nodes(h.render()).find(node=>node.type==='button'&&text(node)==='수신 결과 조회').props.onClick();
+  for(let i=0;i<20;i++)await new Promise(resolve=>setImmediate(resolve));
+  const tree=h.render(),tbody=nodes(tree).find(node=>node.type==='tbody'),rows=nodes(tbody).filter(node=>node.type==='tr');
+  assert.deepEqual(rows.map(row=>row.key),['page:black:small','page:white:large']);
+  assert.deepEqual(rows.map(row=>nodes(row).filter(node=>node.type==='td').map(text).slice(0,2)),[['미확인','미확인 옵션'],['미확인','확인 옵션']]);
+  assert.equal(nodes(tree).some(node=>node.type==='button'&&text(node).includes('Chrome으로 상세 원문 보완')),false);
   assert.deepEqual(h.calls.map(call=>[call.path,call.init?.method??'GET']),[['/api/collection-jobs/job/result','GET'],['/api/collection-jobs/job/capacity','GET']]);
  }finally{h.close();}
 });

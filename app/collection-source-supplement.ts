@@ -1,12 +1,14 @@
 import { COLLECTION_RESULT_LIMIT, validateCollectionResult, type CollectionResult } from '@/app/collection-result';
 import { collectionSourceGaps } from '@/app/collection-source-gaps';
 
-export function canSupplementCollection(result: Pick<CollectionResult, 'provider' | 'description' | 'images' | 'attributes' | 'offerDefault'>) {
+export function canSupplementCollection(result: Pick<CollectionResult, 'provider' | 'description' | 'images' | 'attributes' | 'offerDefault' | 'pageOptionIdentity'>) {
   // Supplements are append-only. Remaining optional gaps still show in review,
   // but retrying their image import must reuse the stored capture, not recapture.
   // The current mobile contract requires observed remote SKUs. It cannot
   // repair a product-level default without changing its source identity.
-  return !result.offerDefault && result.provider !== 'chrome-public-mobile-supplement-v1' && collectionSourceGaps(result).length > 0;
+  // A page-row key is not proof of a matching remote mobile SKU. A fresh page
+  // capture stays a separate saved version instead of joining anonymous rows.
+  return !result.offerDefault && !result.pageOptionIdentity && result.provider !== 'chrome-public-mobile-supplement-v1' && collectionSourceGaps(result).length > 0;
 }
 
 /** Keep the first receipt's SKU facts and image indices. Only a separately

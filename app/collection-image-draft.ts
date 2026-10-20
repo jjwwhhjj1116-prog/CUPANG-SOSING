@@ -32,6 +32,8 @@ export function collectedImageDraft(owner: string, receipt: CollectionResult, li
   for (const row of receipt.options) sourceCounts.set(row.sku, (sourceCounts.get(row.sku) ?? 0) + 1);
   for (const row of options.rows) optionCounts.set(row.supplierSku, (optionCounts.get(row.supplierSku) ?? 0) + 1);
   for (const row of nextOptions.rows) {
+    // Page-row identities are not supplier SKUs. Anonymous source variants
+    // stay in the original image pool for deliberate per-option selection.
     if (!row.included || row.provenance.supplierSku !== 'collected' || row.provenance.imageKey !== 'unverified' || row.imageKey || sourceCounts.get(row.supplierSku) !== 1 || optionCounts.get(row.supplierSku) !== 1) continue;
     const source = receipt.options.find(value => value.sku === row.supplierSku);
     const key = source?.imageIndex === undefined ? undefined : available.get(source.imageIndex);

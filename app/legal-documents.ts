@@ -1,9 +1,32 @@
 import type {SubmissionIssue} from '@/app/submission-review';
+import type {NativeLegalBinding} from '@/app/native-legal-binding';
 
 export const LEGAL_DOCUMENT_LIMIT=5*1024*1024;
 export const LEGAL_DOCUMENT_TOTAL_LIMIT=8*1024*1024;
-export type LegalDocument={key:string;name:string;byteLength:number;sha256:string;type:'pdf'|'png'|'jpg'};
+export type LegalDocument={key:string;name:string;byteLength:number;sha256:string;type:'pdf'|'png'|'jpg';nativeBinding?:NativeLegalBinding};
 export type LegalDocuments={applicability:'unconfirmed'|'required'|'not-applicable';files:LegalDocument[]};
+function storedObject(value:unknown,required:readonly string[],optional:readonly string[]=[]):value is Record<string,unknown>{
+ if(!value||typeof value!=='object'||Array.isArray(value))return false;
+ const descriptors=Object.getOwnPropertyDescriptors(value),keys=Reflect.ownKeys(descriptors);
+ return keys.every(key=>typeof key==='string'&&[...required,...optional].includes(key)&&Object.hasOwn(descriptors[key],'value'))&&required.every(key=>Object.hasOwn(descriptors,key));
+}
+/** Shape validation only. A stored binding is not evidence that its old schema,
+ * certificate value, original bytes or remote attachment are still current. */
+export function readNativeLegalBinding(value:unknown):NativeLegalBinding{
+ const invalid=()=>Error('저장된 Supplier Hub 서류 연결 정보를 확인해주세요.');
+ if(!storedObject(value,['format','schemaSha256','categoryId','nativeType'],['certificate'])||value.format!=='supplier-hub-native-legal-binding-v1'
+  ||typeof value.schemaSha256!=='string'||!/^[a-f0-9]{64}$/.test(value.schemaSha256)||typeof value.categoryId!=='string'||!/^[1-9]\d{0,19}$/.test(value.categoryId)
+  ||!['certificate','msds','additional','import_type','categoryCert','adCert'].includes(value.nativeType as string))throw invalid();
+ if(value.nativeType==='certificate'){
+  const row=value.certificate;
+  if(!storedObject(row,['schemaIndex','fieldId','path','nameKey','valueKey','name','value'])||!Number.isSafeInteger(row.schemaIndex)||Number(row.schemaIndex)<0||Number(row.schemaIndex)>=400
+   ||typeof row.fieldId!=='string'||!/^[A-Za-z0-9_-]{1,200}$/.test(row.fieldId)||!Array.isArray(row.path)||row.path.length!==2||Object.keys(row.path).length!==2||row.path[0]!=='legalPage'||row.path[1]!=='certificates'
+   ||typeof row.nameKey!=='string'||!/^[A-Za-z_][A-Za-z0-9_]{0,79}$/.test(row.nameKey)||typeof row.valueKey!=='string'||!/^[A-Za-z_][A-Za-z0-9_]{0,79}$/.test(row.valueKey)||row.nameKey===row.valueKey
+   ||typeof row.name!=='string'||!row.name.trim()||row.name!==row.name.trim()||row.name.length>500||/[\u0000-\u001f]/.test(row.name)
+   ||!(row.value===null||typeof row.value==='string'&&row.value.length<=2000&&!/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(row.value)||typeof row.value==='number'&&Number.isFinite(row.value)||typeof row.value==='boolean'))throw invalid();
+ }else if(Object.hasOwn(value,'certificate'))throw invalid();
+ return structuredClone(value) as NativeLegalBinding;
+}
 /** A saved required choice needs at least one original; presence is not content verification. */
 export function legalDocumentSubmissionIssues(applicability:LegalDocuments['applicability'],fileCount:number):SubmissionIssue[]{
  return applicability==='required'&&fileCount===0?[{kind:'error',code:'LEGAL_DOCUMENT_MISSING',optionId:null,optionLabel:'법적 필수서류',fieldId:null,message:'서류 해당함을 선택했습니다. 원본 서류를 첨부해주세요.'}]:[];
@@ -45,10 +68,11 @@ export function legalDocumentType(bytes:Uint8Array):LegalDocument['type']{
 }
 export function readLegalDocuments(value:LegalDocuments|undefined,owner:string,productId:string):LegalDocuments{
  if(value===undefined)return {applicability:'unconfirmed',files:[]};
- if(!value||!['unconfirmed','required','not-applicable'].includes(value.applicability)||!Array.isArray(value.files)||value.files.length>10)throw Error('저장된 법적 서류 목록을 확인해주세요.');
+ if(!storedObject(value,['applicability','files'])||!['unconfirmed','required','not-applicable'].includes(value.applicability)||!Array.isArray(value.files)||value.files.length>10||Object.keys(value.files).length!==value.files.length)throw Error('저장된 법적 서류 목록을 확인해주세요.');
  const seen=new Set<string>(),prefix=`${owner}/legal/${productId}/`;let total=0;
  for(const file of value.files){
-  if(!file||typeof file.key!=='string'||!file.key.startsWith(prefix)||!/^legal-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.(pdf|png|jpg)$/.test(file.key.slice(prefix.length))||seen.has(file.key)||typeof file.name!=='string'||!file.name.trim()||file.name.length>180||/[\u0000-\u001f\\/]/.test(file.name)||!['pdf','png','jpg'].includes(file.type)||!file.key.endsWith('.'+file.type)||!Number.isSafeInteger(file.byteLength)||file.byteLength<1||file.byteLength>LEGAL_DOCUMENT_LIMIT||!/^[a-f0-9]{64}$/.test(file.sha256))throw Error('법적 서류의 소유자와 파일 정보를 확인해주세요.');
+  if(!storedObject(file,['key','name','byteLength','sha256','type'],['nativeBinding'])||typeof file.key!=='string'||!file.key.startsWith(prefix)||!/^legal-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.(pdf|png|jpg)$/.test(file.key.slice(prefix.length))||seen.has(file.key)||typeof file.name!=='string'||!file.name.trim()||file.name.length>180||/[\u0000-\u001f\\/]/.test(file.name)||!['pdf','png','jpg'].includes(file.type)||!file.key.endsWith('.'+file.type)||!Number.isSafeInteger(file.byteLength)||file.byteLength<1||file.byteLength>LEGAL_DOCUMENT_LIMIT||!/^[a-f0-9]{64}$/.test(file.sha256))throw Error('법적 서류의 소유자와 파일 정보를 확인해주세요.');
+  if(Object.hasOwn(file,'nativeBinding')){if(file.type!=='pdf')throw Error('Supplier Hub 원본 서류 연결은 PDF만 지원합니다.');readNativeLegalBinding(file.nativeBinding);}
   seen.add(file.key);total+=file.byteLength;
  }
  if(total>LEGAL_DOCUMENT_TOTAL_LIMIT)throw Error('법적 서류 합계는 8MB 이하이어야 합니다.');

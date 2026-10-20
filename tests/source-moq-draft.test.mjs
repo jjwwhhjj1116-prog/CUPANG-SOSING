@@ -98,7 +98,7 @@ test('MOQ null is explicit unknown; malformed or omitted MOQ still fails both so
  }finally{h.close();}
 });
 
-for(const [field,label] of [['supplierSku','공급자 SKU'],['unitPriceCny','옵션 원가'],['currency','위안(CNY) 통화']])test(`${label} unknown remains blocking even when MOQ null alone is draft-ready`,async()=>{
+for(const [field,label] of [['unitPriceCny','옵션 원가'],['currency','위안(CNY) 통화']])test(`${label} unknown remains blocking even when MOQ null alone is draft-ready`,async()=>{
  const company=companies[1],h=mobileIntakeHarness(company);try{
   const source=snapshot(h);source.options[0][field]=null;const f=await store(h,company,source);
   const listing=await json(await f.api.GET()),item=listing.items.find(value=>value.id===captureId);assert.ok(item.issues.includes(label));assert.ok(!item.issues.includes('최소 주문 수량'));

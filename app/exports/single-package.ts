@@ -8,6 +8,7 @@ import { projectSupplierHubSingleDocument } from '@/app/supplier-hub-single-proj
 import { buildSingleAssetPlan, singleAssetSelection, singleAssetPackageView, publishSingleAssets, verifySingleAssets, SingleAssetError } from '@/app/supplier-hub-single-assets';
 import { collectionSourceReview } from '@/app/collection-source-review';
 import { readLegalDocuments, inspectLegalDocumentStorage } from '@/app/legal-documents';
+import { buildNativeLegalContext } from '@/app/native-legal-binding';
 import { fingerprint } from '@/app/automation/model';
 import { stableQuotationFieldsView, QuotationFieldsSnapshotError } from '@/app/quotation-fields-snapshot';
 
@@ -38,8 +39,12 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
     const assets = await loadAttachments(owner, saved.product.image_keys, selection.keys);
     const metadata = new Map(await Promise.all(selection.keys.map(async key => [key, await env.FILES.head(key)] as const)));
     const documents = readLegalDocuments(saved.content.legalDocuments, owner, id);
+    const nativeLegal = await buildNativeLegalContext({snapshot:saved.hubSchema,company,categoryId:saved.categoryContext.categoryId,
+      categoryPath:saved.categoryContext.categoryPath,resolved:resolveQuotationExport(saved),documents});
     const sourceIssues = [...collectionSourceReview(saved.sourceGaps), ...(saved.generatedProductLabelIssues ?? []),
       ...await inspectLegalDocumentStorage(documents, id, key => env.FILES.head(key))];
+    if (documents.applicability === 'required') sourceIssues.push(...nativeLegal.issues.map(issue=>({kind:'error' as const,code:issue.code,optionId:null,
+      optionLabel:'법적 필수서류',fieldId:issue.fieldId??null,message:issue.message})));
     if (documents.applicability === 'required') sourceIssues.push({ kind: 'error', code: 'SINGLE_LEGAL_DOCUMENT_TRANSPORT_UNVERIFIED', optionId: null,
       optionLabel: '법적 필수서류', fieldId: null, message: '필수 원본 서류의 Single 파일 연결 형식은 별도 확인이 필요합니다. 저장한 서류는 변경하지 않습니다.' });
     if (documents.applicability === 'unconfirmed') sourceIssues.push({ kind: 'review', code: 'SINGLE_LEGAL_APPLICABILITY_UNCONFIRMED', optionId: null,
@@ -73,6 +78,8 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
     const published = plan.canPrepare && await verifySingleAssets(plan, env.FILES, guard);
     await guard();
     const view = { ...singleAssetPackageView(plan, published), productId: id, requestedProfileId: profileId, fingerprint: packageFingerprint,
+      // A reviewed metadata mapping is not an uploaded native file or receipt.
+      nativeLegal,
       // Response metadata only: operation fingerprints, packets and receipts
       // retain their existing contract and exact prepared body identity.
       inputFingerprint: reviewed.view.inputFingerprint,

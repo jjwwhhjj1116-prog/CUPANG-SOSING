@@ -39,19 +39,32 @@ export async function readProductContent(ownerId: string, productId: string): Pr
   return withCurrentLabelFields(content);
 }
 
-export async function saveProductContent(ownerId: string, content: ProductContent, expectedRevision: number, expectedImageKeys?: string): Promise<ProductContent | null> {
+/** The authenticated saved-source reader constructs this predicate; it is
+ * never accepted from request JSON. Keep the general content store independent
+ * of the quotation compiler and its runtime dependency graph. */
+export type ProductContentSourceCommit = { sourcePredicate: {sql:string;args:(string|number|null)[]}; quotationRevision: number; quotationPayload: string;
+  member: { email: string; role: string; companyCode: string; companyName: string } };
+export async function saveProductContent(ownerId: string, content: ProductContent, expectedRevision: number, expectedImageKeys?: string, sealed?: ProductContentSourceCommit): Promise<ProductContent | null> {
   const db = await database();
   if (content.revision !== expectedRevision + 1 || !content.updatedAt) throw new Error('Invalid content revision');
+  const guard = sealed?.sourcePredicate ?? null;
+  const sourceSql = guard ? ` AND (${guard.sql}) AND ((?=0 AND NOT EXISTS(SELECT 1 FROM product_quotation_fields q WHERE q.product_id=p.id))
+    OR EXISTS(SELECT 1 FROM product_quotation_fields q WHERE q.product_id=p.id AND q.owner_id=p.owner_id AND q.revision=? AND q.payload=?))` : '';
+  const sourceArgs = guard && sealed ? [...guard.args,sealed.quotationRevision,sealed.quotationRevision,sealed.quotationPayload] : [];
+  const membership = sealed && (env as {YOOFAM_AUTH_ENABLED?:string}).YOOFAM_AUTH_ENABLED === 'true'
+    ? {sql:` AND EXISTS(SELECT 1 FROM members m WHERE m.id=p.owner_id AND m.status='approved' AND lower(trim(m.email))=? AND m.role=? AND m.company_code=? AND m.company_name=?)`,
+      args:[sealed.member.email.trim().toLowerCase(),sealed.member.role,sealed.member.companyCode,sealed.member.companyName]}
+    : {sql:'',args:[]};
   // Both the insert and update compare the revision inside SQLite. The second
   // statement invalidates the quotation only if this writer changed one row.
   const result = await db.batch<ContentRow>([
     db.prepare(`INSERT INTO product_content(product_id, owner_id, revision, payload, updated_at)
-      SELECT id, owner_id, ?, ?, ? FROM products WHERE id=? AND owner_id=? AND (? IS NULL OR image_keys=?)
+      SELECT p.id, p.owner_id, ?, ?, ? FROM products p WHERE p.id=? AND p.owner_id=? AND (? IS NULL OR p.image_keys=?)${sourceSql}${membership.sql}
         AND (?=0 OR EXISTS(SELECT 1 FROM product_content WHERE product_id=? AND owner_id=? AND revision=?))
       ON CONFLICT(product_id) DO UPDATE SET revision=excluded.revision, payload=excluded.payload, updated_at=excluded.updated_at
         WHERE product_content.owner_id=excluded.owner_id AND product_content.revision=?
       RETURNING payload, revision`).bind(content.revision, JSON.stringify(content), content.updatedAt, content.productId, ownerId, expectedImageKeys ?? null, expectedImageKeys ?? null,
-      expectedRevision, content.productId, ownerId, expectedRevision, expectedRevision),
+      ...sourceArgs,...membership.args,expectedRevision, content.productId, ownerId, expectedRevision, expectedRevision),
     db.prepare(`UPDATE products SET quote_status='대기', updated_at=CASE WHEN updated_at < ? THEN ? ELSE updated_at END
       WHERE id=? AND owner_id=? AND changes()=1
       AND EXISTS(SELECT 1 FROM product_content WHERE product_id=? AND owner_id=? AND revision=?)`)
