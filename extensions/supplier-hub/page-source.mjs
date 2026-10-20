@@ -25,10 +25,10 @@ function pageJsonProperties(text,key,firstOnly=false){
   let quoted=false,escaped=false,depth=0;
   for(let end=start;end<text.length&&end-start<=2*1024*1024;end++){
    const char=text[end];
-   if(quoted){if(escaped)escaped=false;else if(char==='\\')escaped=true;else if(char==='"'){quoted=false;if(end>start&&depth===0){try{values.push({value:JSON.parse(text.slice(start,end+1)),position});if(firstOnly)return values;}catch{}break;}}}
+   if(quoted){if(escaped)escaped=false;else if(char==='\\')escaped=true;else if(char==='"'){quoted=false;if(end>start&&depth===0){try{values.push({value:JSON.parse(text.slice(start,end+1)),position,start,end:end+1});if(firstOnly)return values;}catch{}break;}}}
    else if(char==='"')quoted=true;
    else if(char==='{'||char==='[')depth++;
-   else if(char==='}'||char===']'){if(--depth===0){try{values.push({value:JSON.parse(text.slice(start,end+1)),position});if(firstOnly)return values;}catch{}break;}}
+   else if(char==='}'||char===']'){if(--depth===0){try{values.push({value:JSON.parse(text.slice(start,end+1)),position,start,end:end+1});if(firstOnly)return values;}catch{}break;}}
   }
   if(values.length>100)throw Error('상품 원문이 수집 크기를 초과했습니다.');
  }
@@ -37,7 +37,7 @@ function pageJsonProperties(text,key,firstOnly=false){
 export function pageJsonProperty(text,key){return pageJsonProperties(text,key,true)[0]?.value;}
 // Locate literal JSON containers without running script text. Unrelated shop
 // and recommendation containers cannot supply a current-product title.
-function enclosingJsonObject(text,position,key,value){
+function enclosingJsonScope(text,position,key,value,strictLiteral=false){
  const stack=[];let quoted='',escaped=false,line=false,block=false;
  for(let i=0;i<position;i++){
   const char=text[i],next=text[i+1];
@@ -46,6 +46,7 @@ function enclosingJsonObject(text,position,key,value){
   if(quoted){if(escaped)escaped=false;else if(char==='\\')escaped=true;else if(char===quoted)quoted='';continue;}
   if(char==='/'&&next==='/'){line=true;i++;continue;}
   if(char==='/'&&next==='*'){block=true;i++;continue;}
+  if(strictLiteral&&char==='/')return null;
   if(['"',"'","\x60"].includes(char)){quoted=char;continue;}
   if(char==='{'||char==='[')stack.push({char,start:i});
   else if(char==='}'||char===']')stack.pop();
@@ -53,11 +54,12 @@ function enclosingJsonObject(text,position,key,value){
  if(quoted||line||block)return null;
  for(const container of stack.reverse()){
   if(container.char!=='{')continue;
-  const parsed=pageJsonProperty('"root":'+text.slice(container.start),'root');
-  if(object(parsed)&&Object.hasOwn(parsed,key)&&JSON.stringify(parsed[key])===JSON.stringify(value))return parsed;
+  const wrapped='"root":'+text.slice(container.start),entry=pageJsonProperties(wrapped,'root',true)[0],parsed=entry?.value;
+  if(object(parsed)&&Object.hasOwn(parsed,key)&&(value===undefined||JSON.stringify(parsed[key])===JSON.stringify(value)))return {value:parsed,literal:wrapped.slice(entry.start,entry.end)};
  }
  return null;
 }
+function enclosingJsonObject(text,position,key,value){return enclosingJsonScope(text,position,key,value)?.value??null;}
 const titleKeys=['subject','offerTitle','offerSubject','productTitle','productName','title'];
 function assertProductIdentity(value,offerId){
  for(const key of ['offerId','productId'])if(value[key]!==undefined&&String(value[key])!==offerId)throw Error('상품 원문의 상품 번호가 현재 URL과 다릅니다.');
@@ -80,6 +82,131 @@ function sourceTitle(scripts,models,offerId){
  }
  if(new Set(candidates).size>1)throw Error('현재 상품의 원문 상품명이 여러 개입니다. 상품 본문을 다시 확인해주세요.');
  return candidates[0]??'';
+}
+function attributeSourceError(){throw Error('현재 상품의 속성 원문이 올바르지 않거나 서로 다릅니다. 상품 본문을 다시 확인해주세요.');}
+/** The enclosing object has already parsed as JSON. Retain its literal field
+ * spans as well: JSON.parse alone discards duplicate keys, including escaped
+ * spellings such as offer\u0049d. Inspect only the exact fields being trusted. */
+function literalValueEnd(text,start){
+ let quoted=false,escaped=false,depth=0;
+ if(!['{','[','"'].includes(text[start])){let end=start;while(end<text.length&&!/[,}\]]/.test(text[end]))end++;return end;}
+ for(let end=start;end<text.length&&end-start<=2*1024*1024;end++){
+  const character=text[end];
+  if(quoted){if(escaped)escaped=false;else if(character==='\\')escaped=true;else if(character==='"'){quoted=false;if(depth===0)return end+1;}}
+  else if(character==='"')quoted=true;
+  else if(character==='{'||character==='[')depth++;
+  else if(character==='}'||character===']'){if(--depth===0)return end+1;}
+ }
+ return attributeSourceError();
+}
+function ownLiteralFields(node){
+ if(!object(node?.value))return attributeSourceError();
+ const text=node.literal,fields=new Map();let cursor=1;
+ while(cursor<text.length){
+  while(/[\s,]/.test(text[cursor]??'')&&cursor<text.length)cursor++;
+  if(text[cursor]==='}')return fields;
+  if(text[cursor]!=='"')return attributeSourceError();
+  const end=literalValueEnd(text,cursor),key=JSON.parse(text.slice(cursor,end));cursor=end;
+  while(/\s/.test(text[cursor]??'')&&cursor<text.length)cursor++;
+  if(text[cursor++]!==':')return attributeSourceError();
+  while(/\s/.test(text[cursor]??'')&&cursor<text.length)cursor++;
+  const valueEnd=literalValueEnd(text,cursor),literal=text.slice(cursor,valueEnd).trim();
+  fields.set(key,[...(fields.get(key)??[]),{value:JSON.parse(literal),literal}]);cursor=valueEnd;
+ }
+ return attributeSourceError();
+}
+function literalChild(node,key,required=false){
+ const entries=ownLiteralFields(node).get(key)??[];
+ if(entries.length>1||required&&!entries.length)return attributeSourceError();
+ return entries[0]??null;
+}
+function literalArrayItems(node){
+ if(!Array.isArray(node?.value)||node.value.length>50)return attributeSourceError();
+ const items=[],text=node.literal;let cursor=1;
+ while(cursor<text.length){
+  while(/[\s,]/.test(text[cursor]??'')&&cursor<text.length)cursor++;
+  if(text[cursor]===']')return items;
+  const end=literalValueEnd(text,cursor),literal=text.slice(cursor,end).trim();items.push({value:JSON.parse(literal),literal});cursor=end;
+ }
+ return attributeSourceError();
+}
+/** Recorded product pages use a literal top-level window.__INIT_DATA assignment.
+ * Strings, comments, nested executable assignments and computed data are ignored. */
+function initialDataLiterals(code){
+ const values=[];let quote='',escaped=false,line=false,block=false,depth=0,significant='';
+ for(let index=0;index<code.length;index++){
+  const character=code[index],next=code[index+1];
+  if(line){if(character==='\n'||character==='\r')line=false;continue;}
+  if(block){if(character==='*'&&next==='/'){block=false;index++;}continue;}
+  if(quote){if(escaped)escaped=false;else if(character==='\\')escaped=true;else if(character===quote)quote='';continue;}
+  if(character==='/'&&next==='/'){line=true;index++;continue;}
+  if(character==='/'&&next==='*'){block=true;index++;continue;}
+  // A standalone literal assignment needs no slash operator outside strings.
+  // Reject such mixed scripts conservatively instead of treating regex text
+  // (which can itself contain semicolons) as an executable assignment.
+  if(character==='/')return [];
+  if(['"',"'",'`'].includes(character)){quote=character;significant='value';continue;}
+  if(depth===0&&(!significant||significant===';')&&code.startsWith('window.__INIT_DATA',index)){
+   const match=/^window\.__INIT_DATA\s*=\s*/.exec(code.slice(index));
+   if(match&&code[index+match[0].length]==='{'){
+    const start=index+match[0].length,end=literalValueEnd(code,start),literal=code.slice(start,end);let value;
+    try{value=JSON.parse(literal);}catch{continue;}
+    if(!/^\s*(?:;|$)/.test(code.slice(end)))return attributeSourceError();
+    values.push({value,literal});if(values.length>100)return attributeSourceError();index=end-1;significant='value';continue;
+   }
+  }
+  if(character==='{'||character==='['||character==='(')depth++;
+  else if(character==='}'||character===']'||character===')')depth--;
+  if(!/\s/.test(character))significant=character;
+ }
+ return values;
+}
+/** Accept direct current-offer propsList containers, and the exact recorded
+ * product-attributes component of a fully bound __INIT_DATA envelope. Arbitrary
+ * ancestors never authorize nested shop/recommendation attributes. */
+function sourceAttributes(scripts,offerId){
+ const attributes=[],known=new Map(),fail=attributeSourceError;
+ const sameId=value=>typeof value==='string'&&value===offerId||typeof value==='number'&&Number.isSafeInteger(value)&&String(value)===offerId;
+ const hasCurrentIdentity=node=>object(node?.value)&&['offerId','productId'].some(key=>(ownLiteralFields(node).get(key)??[]).some(entry=>sameId(entry.value)));
+ const verifyIdentity=(node,required=false)=>{
+  if(!object(node?.value))return fail();
+  for(const key of ['offerId','productId']){const field=literalChild(node,key,required&&key==='offerId');if(field&&!sameId(field.value))fail();}
+ };
+ const append=scope=>{
+  const list=literalChild(scope,'propsList',true);
+  for(const pair of literalArrayItems(list)){
+   const field=(key,max)=>{const value=literalChild(pair,key,true).value;if(typeof value!=='string'||value.length>max||/[\u0000-\u001f]/u.test(value)||!value.trim())return fail();return value.trim();};
+   const name=field('name',190),value=field('value',1000),key=name.toLowerCase();
+   if(known.has(key)){if(known.get(key)!==value)fail();continue;}
+   if(attributes.length>=50)fail();known.set(key,value);attributes.push({name,value});
+  }
+ };
+ for(const text of scripts){
+  const pattern=/"propsList"\s*:/g;let containers=0;
+  for(let match;(match=pattern.exec(text))!==null;){
+   if(++containers>100)fail();
+   const scope=enclosingJsonScope(text,match.index,'propsList',undefined,true);if(!scope)continue;
+   const fields=ownLiteralFields(scope),identities=['offerId','productId'].filter(key=>fields.has(key));
+   if(identities.length){if(!hasCurrentIdentity(scope))continue;verifyIdentity(scope);}
+   else{
+    if(!(fields.get('skuModel')??[]).some(hasCurrentIdentity))continue;
+    verifyIdentity(literalChild(scope,'skuModel',true));
+   }
+   const model=literalChild(scope,'skuModel');if(model&&object(model.value))verifyIdentity(model);
+   append(scope);
+  }
+  for(const envelope of initialDataLiterals(text)){
+   // This is the recorded product-attributes slot, not a generic recursive
+   // propsList search. Other components may contain shops/recommendations.
+   if(!object(envelope.value.data?.['590893002003']?.data)||!Object.hasOwn(envelope.value.data['590893002003'].data,'propsList'))continue;
+   const global=literalChild(envelope,'globalData',true),data=literalChild(envelope,'data',true);
+   verifyIdentity(literalChild(global,'offerBaseInfo',true),true);verifyIdentity(literalChild(global,'tempModel',true),true);
+   const signs=literalChild(global,'offerSigns');
+   if(literalChild(global,'isPicPrivate')?.value===true||literalChild(global,'isPricePrivate')?.value===true||signs&&literalChild(signs,'isDetailForbidden')?.value===true)fail();
+   const component=literalChild(data,'590893002003',true),body=literalChild(component,'data',true);verifyIdentity(body);append(body);
+  }
+ }
+ return attributes;
 }
 export function extractPageSource(input,now=Date.now()){
  const identity=pageSourceUrl(input.sourceUrl),scripts=Array.isArray(input.scripts)?input.scripts:[];
@@ -116,7 +243,7 @@ export function extractPageSource(input,now=Date.now()){
   if(imageUrl)addImage(imageUrl,'additional');
   options.push({key:plain(key,200),name,supplierSku,unitPriceCny,currency,minimumOrder,stock:Number.isSafeInteger(row.stock)&&row.stock>=0?row.stock:null,imageUrl});
  }
- return validatePageSource({format:'yoofam-page-source-v1',...identity,collectedAt:new Date(now).toISOString(),title,description:plain(input.description,20000),options,images,attributes:[]},now);
+ return validatePageSource({format:'yoofam-page-source-v1',...identity,collectedAt:new Date(now).toISOString(),title,description:plain(input.description,20000),options,images,attributes:sourceAttributes(scripts,identity.offerId)},now);
 }
 export function validatePageSource(input,now=Date.now()){
  const keys=['format','sourceUrl','offerId','collectedAt','title','description','options','images','attributes'];

@@ -1,19 +1,21 @@
 'use client';
-import {useEffect,useRef,useState} from 'react';
+import {useEffect,useLayoutEffect,useRef,useState} from 'react';
 import type {LegalDocuments} from '@/app/legal-documents';
-export function LegalDocumentsEditor({productId,disabled,onSaved}:{productId:string;disabled:boolean;onSaved:()=>void}){
+export function LegalDocumentsEditor({productId,disabled,onSaved,onBusyChange,guardWrite,onMutationSettled}:{productId:string;disabled:boolean;onSaved:()=>void;onBusyChange?:(busy:boolean)=>void;guardWrite?:(run:()=>Promise<Response>,signal:AbortSignal)=>Promise<Response>;onMutationSettled?:(error?:string)=>void}){
  const [saved,setSaved]=useState<{revision:number;documents:LegalDocuments}|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
  const active=useRef<AbortController|null>(null);
+ const latest=useRef({disabled,onSaved,onBusyChange,guardWrite,onMutationSettled});useLayoutEffect(()=>{latest.current={disabled,onSaved,onBusyChange,guardWrite,onMutationSettled};});
  useEffect(()=>()=>active.current?.abort(),[]);
  async function request(method:'GET'|'POST'|'PATCH',body?:FormData|Record<string,unknown>){
-  if(active.current)return;const controller=new AbortController();active.current=controller;setBusy(true);setError('');
+  if(active.current||latest.current.disabled)return;const controller=new AbortController();active.current=controller;setBusy(true);setError('');latest.current.onBusyChange?.(true);let failure:string|undefined;
   try{
-   const response=await fetch(`/api/products/${encodeURIComponent(productId)}/legal-documents`,{method,cache:'no-store',signal:controller.signal,...(body?{body:body instanceof FormData?body:JSON.stringify(body),...(body instanceof FormData?{}:{headers:{'content-type':'application/json'}})}:{})});
+   const run=()=>{if(controller.signal.aborted||latest.current.disabled)throw Error('현재 서류 편집을 중단했습니다.');return fetch(`/api/products/${encodeURIComponent(productId)}/legal-documents`,{method,cache:'no-store',signal:controller.signal,...(body?{body:body instanceof FormData?body:JSON.stringify(body),...(body instanceof FormData?{}:{headers:{'content-type':'application/json'}})}:{})});};
+   const response=method!=='GET'&&latest.current.guardWrite?await latest.current.guardWrite(run,controller.signal):await run();
    const data=await response.json() as {error?:string;revision?:number;documents?:LegalDocuments};if(!response.ok)throw Error(data.error||'서류를 저장하지 못했습니다.');
    if(!Number.isSafeInteger(data.revision)||!data.documents||!['unconfirmed','required','not-applicable'].includes(data.documents.applicability)||!Array.isArray(data.documents.files))throw Error('서류 목록을 확인하지 못했습니다.');
-   if(!controller.signal.aborted){setSaved({revision:data.revision!,documents:data.documents});if(method!=='GET')onSaved();}
-  }catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:'서류를 확인하지 못했습니다.');}
-  finally{if(active.current===controller){active.current=null;setBusy(false);}}
+   if(!controller.signal.aborted){setSaved({revision:data.revision!,documents:data.documents});if(method!=='GET')latest.current.onSaved();}
+  }catch(cause){failure=cause instanceof Error?cause.message:'서류를 확인하지 못했습니다.';if(!controller.signal.aborted)setError(failure);}
+  finally{if(active.current===controller){active.current=null;setBusy(false);latest.current.onBusyChange?.(false);if(method!=='GET'&&!controller.signal.aborted)latest.current.onMutationSettled?.(failure);}}
  }
  return <details className="panel-stack"><summary>법적 필수서류 · 인증서/증빙 원본</summary>
   {!saved&&<button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void request('GET')}>서류 목록 불러오기</button>}

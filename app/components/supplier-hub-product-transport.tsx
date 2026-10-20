@@ -126,7 +126,7 @@ export function SupplierHubProductTransport(props:Props){
     const task=begin();let dispatched=false;
     try{await fresh(task);if(!task.active()||current.current.session!==expected)return;
       if(action==='start'){
-        const saved=await claimProductDocumentPending(review,expected,task.controller.signal);
+        const saved=await claimProductDocumentPending(review,expected,task.controller.signal,async()=>{await fresh(task);if(!task.active()||current.current.session!==expected)throw Error('현재 전체 상품 전송 자료가 변경되었습니다.');});
         if(task.alive()){current.current.intent=saved;current.current.uncertain=true;setIntent(saved);setUncertain(true);}if(!task.active())return;
         // Waiting for another tab's short storage lock cannot authorize the
         // account/source that was current before that wait.

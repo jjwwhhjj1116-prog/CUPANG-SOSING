@@ -5,13 +5,14 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import {createRequire} from 'node:module';
 import {assetApiFixture,companies,module,plain} from './helpers/supplier-hub-single-assets.mjs';
-const native=createRequire(import.meta.url),origin='https://app.test';
+const native=createRequire(import.meta.url),origin='https://sourceflow.jjwwhhjj1116.workers.dev';
 const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
 const settle=async()=>{for(let i=0;i<12;i++)await new Promise(resolve=>setImmediate(resolve));};
-function load({hooks={},fetcher=()=>assert.fail('Unexpected request'),timers={setTimeout,clearTimeout}}={}){
+function load({hooks={},fetcher=()=>assert.fail('Unexpected request'),timers={setTimeout,clearTimeout},window:browser={location:{origin}},history=async()=>({records:[],blocked:false})}={}){
  const exports={};
+ const pending={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/supplier-hub-product-pending.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:pending,window:browser,Error,Date});
  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/supplier-hub-product-submission.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
-  {exports,Error,AbortController,Uint8Array,TextDecoder,...timers,window:{location:{origin}},fetch:fetcher,require(name){if(name==='react')return hooks;if(name==='@/app/components/supplier-hub-single-review')return{SupplierHubSingleReview:'native-review'};return name.startsWith('@/')?module(name.slice(2)+'.ts'):native(name);}});
+  {exports,Error,AbortController,Uint8Array,TextDecoder,...timers,window:browser,fetch:fetcher,require(name){if(name==='react')return hooks;if(name==='@/app/components/supplier-hub-single-review')return{SupplierHubSingleReview:'native-review'};if(name==='@/app/components/legal-documents-editor')return{LegalDocumentsEditor:'legal-editor'};if(name==='@/app/supplier-hub-handoff')return{getSupplierHubProductHistory:history};if(name==='@/app/supplier-hub-product-pending')return pending;return name.startsWith('@/')?module(name.slice(2)+'.ts'):native(name);}});
  return exports;
 }
 const reader=load().readSupplierHubProductSubmissionView;
@@ -85,11 +86,11 @@ test('aborted, redirected, HTML, malformed and oversized reads never post or sil
  const middle=new AbortController(),fake=responder(value,{change:({kind})=>{if(kind==='fields')middle.abort();}});await assert.rejects(reader(value,middle.signal,fake.request));assert.equal(fake.calls.length,3);
 });
 
-function ui(initial,fetcher,timers){
+function ui(initial,fetcher,timers,options={}){
  const slots=[],effects=[];let cursor=0,props=initial,mountedKey=null;
  const hook=(fn,deps,layout)=>{const index=cursor++,old=slots[index];if(!old||!deps||deps.some((value,i)=>!Object.is(value,old.deps?.[i]))){old?.cleanup?.();slots[index]={deps};const run=()=>{slots[index].cleanup=fn();};if(layout)run();else effects.push(run);}};
- const hooks={useState(initial){const index=cursor++;if(!(index in slots))slots[index]=initial;return[slots[index],value=>slots[index]=typeof value==='function'?value(slots[index]):value];},useRef(initial){const index=cursor++;return slots[index]??(slots[index]={current:initial});},useLayoutEffect:(fn,deps)=>hook(fn,deps,true),useEffect:(fn,deps)=>hook(fn,deps,false)};
- const Component=load({hooks,fetcher,timers}).SupplierHubProductSubmission;
+ const hooks={useState(initial){const index=cursor++;if(!(index in slots))slots[index]=initial;return[slots[index],value=>slots[index]=typeof value==='function'?value(slots[index]):value];},useRef(initial){const index=cursor++;return slots[index]??(slots[index]={current:initial});},useCallback(fn,deps){const index=cursor++,old=slots[index];if(!old||deps.some((value,i)=>!Object.is(value,old.deps?.[i])))slots[index]={deps,value:fn};return slots[index].value;},useLayoutEffect:(fn,deps)=>hook(fn,deps,true),useEffect:(fn,deps)=>hook(fn,deps,false)};
+ const Component=load({hooks,fetcher,timers,...options}).SupplierHubProductSubmission;
  function render(next={}){props={...props,...next};cursor=0;const outer=Component(props);if(mountedKey!==null&&outer.key!==mountedKey){slots.forEach(slot=>slot?.cleanup?.());slots.length=0;effects.length=0;}mountedKey=outer.key;cursor=0;const tree=outer.type(outer.props);effects.splice(0).forEach(run=>run());return tree;}
  return{render,unmount(){slots.forEach(slot=>slot?.cleanup?.());}};
 }
@@ -117,4 +118,60 @@ test('a timed-out current read settles with an explicit retry and cannot revive 
  let tree=h.render();assert.equal(tree.props['aria-busy'],false);assert.ok(nodes(tree).find(node=>node.type==='button'&&node.props.children==='전체 상품 견적 다시 확인'));
  release(Response.json(value.view));await settle();assert.equal(nodes(h.render()).filter(node=>node.type==='native-review').length,0);
  nodes(tree).find(node=>node.type==='button').props.onClick();h.render();await settle();tree=h.render();assert.equal(nodes(tree).filter(node=>node.type==='native-review').length,1);assert.ok(fake.calls.every(call=>(call.init.method??'GET')==='GET'));h.unmount();
+});
+
+function legalBrowser(){
+ const data=new Map(),locks=[];
+ const browser={location:{origin},localStorage:{getItem:key=>data.get(key)??null,setItem:(key,value)=>data.set(key,value),removeItem:key=>data.delete(key)},navigator:{locks:{request:async(key,options,run)=>{locks.push(key);assert.equal(options.mode,'exclusive');if(options.signal.aborted)throw Error('aborted');return run();}}}};
+ return {browser,data,locks,key(value){return 'yoofam-product-document-pending:'+JSON.stringify([origin,value.actor.ownerId,value.actor.company.code,value.actor.company.name,value.productId]);}};
+}
+function clearLegalHistory(value){value.product.removal_policy={blocked:false,code:null,reason:'',receipt:null};return value;}
+for(const company of companies)test(`primary legal editor checks exact company and all-history scope without writes (${company.code})`,async()=>{
+ const value=clearLegalHistory(await sample(company)),h=legalBrowser(),fake=responder(value),calls=[];
+ const history=async(identity,signal)=>{assert.equal(signal.aborted,false);calls.push(identity);return{records:[],blocked:false};};
+ const scope=await load({window:h.browser,history}).readSupplierHubLegalEditScope({productId:value.productId},value.view,new AbortController().signal,fake.request);
+ assert.deepEqual(plain(scope),{identity:{ownerId:value.actor.ownerId,company,productId:value.productId}});
+ assert.deepEqual(plain(calls),[{productId:value.productId,categoryId:value.view.categoryContext.categoryId,fingerprint:value.view.inputFingerprint}]);
+ assert.ok(fake.calls.every(call=>(call.init.method??'GET')==='GET'));assert.equal(h.data.size,0);assert.equal(h.locks.length,0);
+});
+test('primary legal edit never treats missing, corrupt, pending or unknown transmission history as editable',async()=>{
+ const value=clearLegalHistory(await sample());
+ for(const mode of ['server-pending','server-unknown','server-missing','local-pending','local-corrupt','rejection-corrupt','extension-pending','extension-error','account-changed','source-changed']){
+  const current=plain(value),h=legalBrowser();let actorReads=0;
+  if(mode==='server-pending')current.product.removal_policy={blocked:true,code:'PRODUCT_HUB_EVIDENCE_UNCONFIRMED',reason:'전송 기록을 확인하지 못해 삭제할 수 없습니다. 등록 상태를 다시 확인해주세요.',receipt:null};
+  if(mode==='server-unknown')current.product.removal_policy={blocked:false,code:'unknown',reason:'',receipt:null};
+  if(mode==='server-missing')delete current.product.removal_policy;
+  if(mode==='local-corrupt')h.data.set(h.key(current),'{bad');
+  if(mode==='rejection-corrupt')h.data.set(h.key(current).replace('-pending:','-rejections:'),'[]');
+  if(mode==='local-pending')h.data.set(h.key(current),JSON.stringify({format:'yoofam-product-document-pending-v1',origin,ownerId:current.actor.ownerId,companyCode:current.actor.company.code,companyName:current.actor.company.name,productId:current.productId,requestId:'00000000-0000-4000-8000-000000000751',createdAt:Date.now(),reviewDigest:'a'.repeat(64),originalBodySha256:'b'.repeat(64),preparedBodySha256:'c'.repeat(64),identityDigest:'d'.repeat(64),appTabId:7,windowId:9}));
+  const fake=responder(current,{change:({kind,body})=>{if(kind==='actor'&&++actorReads>2&&mode==='account-changed')body.ownerId='changed-owner';if(kind==='fields'&&mode==='source-changed')body.inputFingerprint='d'.repeat(64);}});
+  const history=async()=>{if(mode==='extension-error')throw Error('Chrome unavailable');return{records:[],blocked:mode==='extension-pending'};};
+  await assert.rejects(load({window:h.browser,history}).readSupplierHubLegalEditScope({productId:current.productId},current.view,new AbortController().signal,fake.request),undefined,mode);
+  assert.ok(fake.calls.every(call=>(call.init.method??'GET')==='GET'),mode);
+ }
+});
+test('primary legal editor is reachable, locks native preparation during use, and rereads saved source after mutation',async()=>{
+ const value=clearLegalHistory(await sample()),h=legalBrowser(),fake=responder(value);let writes=0;
+ const mounted=ui({productId:value.productId},fake.request,undefined,{window:h.browser});
+ mounted.render();await settle();mounted.render();await settle();let tree=mounted.render();
+ let editor=nodes(tree).find(node=>node.type==='legal-editor'),review=nodes(tree).find(node=>node.type==='native-review');
+ assert.ok(editor);assert.equal(editor.props.disabled,false);assert.equal(review.props.disabled,false);
+ editor.props.onBusyChange(true);tree=mounted.render();assert.equal(nodes(tree).find(node=>node.type==='native-review').props.disabled,true);
+ const response=await editor.props.guardWrite(async()=>{writes++;value.view.contentRevision++;value.view.inputFingerprint='e'.repeat(64);return Response.json({saved:true});},new AbortController().signal);
+ assert.equal(response.status,200);assert.equal(writes,1);assert.equal(h.locks.length,1);assert.equal(h.locks[0],h.key(value));
+ editor.props.onBusyChange(false);editor.props.onMutationSettled();tree=mounted.render();assert.equal(nodes(tree).filter(node=>node.type==='native-review').length,0);
+ await settle();mounted.render();await settle();tree=mounted.render();review=nodes(tree).find(node=>node.type==='native-review');
+ assert.equal(review.props.view.inputFingerprint,'e'.repeat(64));assert.equal(nodes(tree).find(node=>node.type==='legal-editor').props.disabled,false);
+ editor=nodes(tree).find(node=>node.type==='legal-editor');review.props.onLockChange(true);tree=mounted.render();assert.equal(nodes(tree).find(node=>node.type==='legal-editor').props.disabled,true);
+ await assert.rejects(editor.props.guardWrite(async()=>{writes++;return Response.json({});},new AbortController().signal));assert.equal(writes,1);
+ mounted.unmount();await assert.rejects(editor.props.guardWrite(async()=>{writes++;return Response.json({});},new AbortController().signal));assert.equal(writes,1);
+});
+test('legal mutation guard repeats pending check inside the native Web Lock and retains failed save uncertainty',async()=>{
+ const value=clearLegalHistory(await sample()),h=legalBrowser(),fake=responder(value);let writes=0;
+ h.browser.navigator.locks.request=async(_key,_options,run)=>{h.data.set(h.key(value),'{new pending}');return run();};
+ const mounted=ui({productId:value.productId},fake.request,undefined,{window:h.browser});mounted.render();await settle();mounted.render();await settle();let tree=mounted.render();
+ const editor=nodes(tree).find(node=>node.type==='legal-editor');assert.equal(editor.props.disabled,false);
+ await assert.rejects(editor.props.guardWrite(async()=>{writes++;return Response.json({});},new AbortController().signal));assert.equal(writes,0);assert.equal(h.data.get(h.key(value)),'{new pending}');
+ editor.props.onMutationSettled('저장 응답을 확인하지 못했습니다.');tree=mounted.render();assert.equal(nodes(tree).filter(node=>node.type==='native-review').length,0);
+ await settle();mounted.render();await settle();tree=mounted.render();assert.equal(nodes(tree).find(node=>node.type==='legal-editor').props.disabled,true);mounted.unmount();
 });

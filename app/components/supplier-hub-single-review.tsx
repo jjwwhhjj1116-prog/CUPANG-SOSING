@@ -9,11 +9,11 @@ import {reviewCurrentSupplierHubProductDocument,type SupplierHubProductDocumentR
 import {SupplierHubProductTransport} from '@/app/components/supplier-hub-product-transport';
 import {SupplierHubRejectionDetails} from '@/app/components/supplier-hub-rejection-details';
 
-type Props={productId:string;profileId?:string;view:QuotationFieldsView;disabled:boolean;onReceiptSaved?:()=>void;primaryProduct?:boolean};
+type Props={productId:string;profileId?:string;view:QuotationFieldsView;disabled:boolean;onReceiptSaved?:()=>void;primaryProduct?:boolean;onLockChange?:(locked:boolean)=>void};
 const sourceKey=({productId,profileId,view}:Omit<Props,'disabled'>)=>JSON.stringify([productId,profileId,view.productVersion,view.contentRevision,view.optionRevision,view.revision,view.inputFingerprint]);
 const stages={productPage:'상품 정보',imagePage:'이미지',logisticsPage:'최종 제출'};
 export function SupplierHubSingleReview(props:Props){return <SingleReviewContent key={JSON.stringify([sourceKey(props),props.disabled,props.primaryProduct===true])} {...props}/>;}
-function SingleReviewContent({productId,profileId,view,disabled,onReceiptSaved,primaryProduct=false}:Props){
+function SingleReviewContent({productId,profileId,view,disabled,onReceiptSaved,primaryProduct=false,onLockChange}:Props){
   const [data,setData]=useState<SinglePackageView|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const [optionId,setOptionId]=useState(''),[session,setSession]=useState<SingleDocumentSession|null>(null),[state,setState]=useState<SingleDocumentState|null>(null);
   const [approved,setApproved]=useState<Record<string,boolean>>({}),[uncertain,setUncertain]=useState(false),[expired,setExpired]=useState(false);
@@ -27,6 +27,9 @@ function SingleReviewContent({productId,profileId,view,disabled,onReceiptSaved,p
   const key=sourceKey({productId,profileId,view}),current=useRef({key,view,disabled,mounted:true,onReceiptSaved}),pending=useRef<AbortController|null>(null),generation=useRef(0);
   const historyPending=useRef<AbortController|null>(null),receiptAttempt=useRef<SingleReceiptSaveAttempt|null>(null);
   const latest=useRef({data,optionId,session,state,approved,uncertain,expired});
+  useLayoutEffect(()=>{onLockChange?.(busy||productLocked||Boolean(session)||uncertain||Boolean(saveAttempt));},[busy,productLocked,session,uncertain,saveAttempt,onLockChange]);
+  const lockCallback=useRef(onLockChange);useLayoutEffect(()=>{lockCallback.current=onLockChange;},[onLockChange]);
+  useLayoutEffect(()=>()=>lockCallback.current?.(false),[]);
   useLayoutEffect(()=>{latest.current={data,optionId,session,state,approved,uncertain,expired};});
   function invalidate(message=''){
     generation.current++;pending.current?.abort();pending.current=null;historyPending.current?.abort();historyPending.current=null;receiptAttempt.current=null;

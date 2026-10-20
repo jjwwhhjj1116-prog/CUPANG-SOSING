@@ -7,19 +7,20 @@ const ORIGINS=['https://sourceflow.jjwwhhjj1116.workers.dev','http://localhost:3
 export type ProductDocumentPending={format:typeof FORMAT;origin:string;ownerId:string;companyCode:string;companyName:string;productId:string;
  requestId:string;createdAt:number;reviewDigest:string;originalBodySha256:string;preparedBodySha256:string;identityDigest:string;appTabId:number;windowId:number};
 type ProductReceiptRejection={evidence:'document-receipt';sourceStatus:'REJECTED';state:'rejected';qvtRequestId:string|number;observedAt:number};
+export type ProductDocumentPendingScope={identity:Pick<SupplierHubProductDocumentReview['identity'],'ownerId'|'productId'|'company'>};
 export type ProductDocumentRejection={pending:ProductDocumentPending;docId:string|number}&({validationRejection:ProductValidationRejection}|{receiptRejection:ProductReceiptRejection});
 const keys=['format','origin','ownerId','companyCode','companyName','productId','requestId','createdAt','reviewDigest','originalBodySha256','preparedBodySha256','identityDigest','appTabId','windowId'];
 const fail=():never=>{throw Error('이 상품의 이전 전송 기록을 확인하지 못했습니다. 다시 등록하지 말고 원래 문서의 저장 결과를 확인해주세요.');};
 const same=(left:ProductDocumentPending|null,right:ProductDocumentPending|null)=>JSON.stringify(left)===JSON.stringify(right);
 function storage(){try{const value=window.localStorage;if(!value||typeof value.getItem!=='function'||typeof value.setItem!=='function'||typeof value.removeItem!=='function')return fail();return value;}catch{return fail();}}
-export function productDocumentPendingKey(review:SupplierHubProductDocumentReview){
+export function productDocumentPendingKey(review:ProductDocumentPendingScope){
  const {ownerId,productId,company}=review.identity,origin=window.location.origin;
  if(!ORIGINS.includes(origin)||!ID.test(ownerId)||!ID.test(productId)||!((company.code==='A01464742'&&company.name==='와이홉')||(company.code==='A01526306'&&company.name==='유앤채')))return fail();
  return 'yoofam-product-document-pending:'+JSON.stringify([origin,ownerId,company.code,company.name,productId]);
 }
 /** A small operation descriptor only. No quotation body, image URL, credential
  * or agreement approval is persisted. Unknown/corrupt entries never disappear. */
-function parsePending(value:unknown,review:SupplierHubProductDocumentReview):ProductDocumentPending{
+function parsePending(value:unknown,review:ProductDocumentPendingScope):ProductDocumentPending{
  if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).length!==keys.length||!keys.every(key=>Object.hasOwn(value,key)))return fail();
  const item=value as ProductDocumentPending,{ownerId,company,productId}=review.identity;
  if(item.format!==FORMAT||item.origin!==window.location.origin||item.ownerId!==ownerId||item.productId!==productId||item.companyCode!==company.code||item.companyName!==company.name
@@ -28,11 +29,11 @@ function parsePending(value:unknown,review:SupplierHubProductDocumentReview):Pro
   ||![item.appTabId,item.windowId].every(value=>Number.isSafeInteger(value)&&value>=0))return fail();
  return Object.freeze(Object.fromEntries(keys.map(key=>[key,item[key as keyof ProductDocumentPending]]))) as ProductDocumentPending;
 }
-export function readProductDocumentPending(review:SupplierHubProductDocumentReview):ProductDocumentPending|null{
+export function readProductDocumentPending(review:ProductDocumentPendingScope):ProductDocumentPending|null{
  const raw=storage().getItem(productDocumentPendingKey(review));if(raw===null)return null;
  if(raw.length>4096)return fail();let value:unknown;try{value=JSON.parse(raw);}catch{return fail();}return parsePending(value,review);
 }
-export function productDocumentRejectionKey(review:SupplierHubProductDocumentReview){return productDocumentPendingKey(review).replace('yoofam-product-document-pending:','yoofam-product-document-rejections:');}
+export function productDocumentRejectionKey(review:ProductDocumentPendingScope){return productDocumentPendingKey(review).replace('yoofam-product-document-pending:','yoofam-product-document-rejections:');}
 const proofKeys=['evidence','operationId','step','validatedSteps','checkpointSequence','rejectedAt','submitted','consented'];
 function rejectionProof(value:unknown,pending:ProductDocumentPending):value is ProductValidationRejection{
  if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).length!==proofKeys.length||!proofKeys.every(key=>Object.hasOwn(value,key)))return false;
@@ -49,7 +50,7 @@ function receiptRejectionProof(value:unknown,pending:ProductDocumentPending):val
 }
 /** Every immutable native rejection stays covered, including A→B→A edits.
  * Never evict an old identity; a full or corrupt ledger fails closed. */
-export function readProductDocumentRejections(review:SupplierHubProductDocumentReview):ProductDocumentRejection[]{
+export function readProductDocumentRejections(review:ProductDocumentPendingScope):ProductDocumentRejection[]{
  const raw=storage().getItem(productDocumentRejectionKey(review));if(raw===null)return [];
  if(raw.length>65536)return fail();let value:unknown;try{value=JSON.parse(raw);}catch{return fail();}
  if(!Array.isArray(value)||value.length===0||value.length>32)return fail();const seen=new Set<string>();
@@ -87,11 +88,11 @@ async function locked<T>(review:SupplierHubProductDocumentReview,signal:AbortSig
 }
 /** Web Locks serializes same-origin tabs before the first mutating dispatch.
  * A failed write/readback or conflicting operation cannot authorize a start. */
-export async function claimProductDocumentPending(review:SupplierHubProductDocumentReview,session:ProductDocumentSession,signal:AbortSignal):Promise<ProductDocumentPending>{
+export async function claimProductDocumentPending(review:SupplierHubProductDocumentReview,session:ProductDocumentSession,signal:AbortSignal,assertCurrent:()=>Promise<void>=async()=>{}):Promise<ProductDocumentPending>{
  const identity=session.preview.identity,value:ProductDocumentPending={format:FORMAT,origin:window.location.origin,ownerId:review.identity.ownerId,companyCode:review.identity.company.code,
   companyName:review.identity.company.name,productId:review.identity.productId,requestId:session.packet.requestId,createdAt:session.packet.createdAt,reviewDigest:review.reviewDigest,
   originalBodySha256:review.originalBodySha256,preparedBodySha256:review.preparedBodySha256,identityDigest:session.preview.identityDigest,appTabId:identity.appTabId,windowId:identity.windowId};
- return locked(review,signal,()=>{assertProductDocumentNotRejected(review);const previous=readProductDocumentPending(review);if(previous&&!same(previous,value))return fail();
+ return locked(review,signal,async()=>{await assertCurrent();if(signal.aborted)return fail();assertProductDocumentNotRejected(review);const previous=readProductDocumentPending(review);if(previous&&!same(previous,value))return fail();
   if(!previous)storage().setItem(productDocumentPendingKey(review),JSON.stringify(value));assertProductDocumentPending(review,value,session);return value;});
 }
 export function pendingProductRejection(value:ProductDocumentPending,record:NativeReceiptRecord){

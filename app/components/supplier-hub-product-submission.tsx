@@ -1,10 +1,14 @@
 'use client';
 
-import {useEffect,useLayoutEffect,useRef,useState} from 'react';
+import {useCallback,useEffect,useLayoutEffect,useRef,useState} from 'react';
 import type {QuotationFieldsView} from '@/app/quotation-schema';
 import {readSingleCatalogContext} from '@/app/supplier-hub-single-client';
 import {validOptionRegistrationNumbers} from '@/app/product-registration';
 import {SupplierHubSingleReview} from '@/app/components/supplier-hub-single-review';
+import {LegalDocumentsEditor} from '@/app/components/legal-documents-editor';
+import {productRemovalDecision} from '@/app/product-removal-policy';
+import {getSupplierHubProductHistory} from '@/app/supplier-hub-handoff';
+import {productDocumentPendingKey,readProductDocumentPending,readProductDocumentRejections} from '@/app/supplier-hub-product-pending';
 
 type Props={productId:string;profileId?:string;expectedCategoryId?:string;onReceiptSaved?:()=>void;disabled?:boolean};
 const identifier=/^[A-Za-z0-9_-]{1,100}$/,hash=/^[a-f0-9]{64}$/;
@@ -60,14 +64,36 @@ export async function readSupplierHubProductSubmissionView(props:Pick<Props,'pro
   return next;
 }
 
+/** Legal edits share the native product lock. Unknown/active history is never
+ * permission to change the source of an already requested document. */
+export async function readSupplierHubLegalEditScope(props:Pick<Props,'productId'|'profileId'|'expectedCategoryId'>,view:QuotationFieldsView,signal:AbortSignal,request:typeof fetch=fetch,history=getSupplierHubProductHistory){
+  const actor=await readSingleCatalogContext(signal,request);active(signal);
+  const value=await readJson(`/api/products/${encodeURIComponent(props.productId)}`,signal,request);
+  productVersion(value,props.productId,actor.ownerId);
+  if(!object(value)||!object(value.product)||productRemovalDecision(value.product).blocked)throw Error('전송 이력이 없거나 반려된 상품인지 확인한 뒤 서류를 수정해주세요. 처리 중·완료·미확인 전송의 원본은 유지합니다.');
+  const scope={identity:{ownerId:actor.ownerId,company:actor.company,productId:props.productId}};
+  const pending=()=>{readProductDocumentRejections(scope);if(readProductDocumentPending(scope))throw Error('이 상품의 원래 문서 전송 요청이 있습니다. 저장 결과를 확인하기 전에는 서류를 수정하지 않습니다.');};
+  pending();
+  const local=await history({productId:props.productId,categoryId:view.categoryContext.categoryId!,fingerprint:view.inputFingerprint},signal);active(signal);
+  if(local.blocked)throw Error('Chrome에 이 상품의 전송 또는 미확정 시도가 있습니다. 원래 전송 결과를 먼저 확인해주세요.');
+  const latest=await readSupplierHubProductSubmissionView(props,signal,request);
+  const after=await readSingleCatalogContext(signal,request);active(signal);pending();
+  if(JSON.stringify(actor)!==JSON.stringify(after)||JSON.stringify(latest)!==JSON.stringify(view))throw Error('회원 회사 또는 상품 견적이 변경되었습니다. 전체 상품 견적을 다시 확인해주세요.');
+  return scope;
+}
+
 export function SupplierHubProductSubmission(props:Props){
   return <ProductSubmissionContent key={JSON.stringify([props.productId,props.profileId??null,props.expectedCategoryId??null,props.disabled===true])} {...props}/>;
 }
 function ProductSubmissionContent(props:Props){
   const {productId,profileId,expectedCategoryId,disabled}=props;
   const [view,setView]=useState<QuotationFieldsView|null>(null),[error,setError]=useState(''),[attempt,setAttempt]=useState(0);
-  const current=useRef({mounted:true,props,view}),pending=useRef<AbortController|null>(null);
-  useLayoutEffect(()=>{current.current={mounted:true,props,view};});
+  const [legalBusy,setLegalBusy]=useState(false),[nativeLocked,setNativeLocked]=useState(false),[legalNotice,setLegalNotice]=useState('');
+  const [legalPolicy,setLegalPolicy]=useState<{view:QuotationFieldsView;blocked:boolean;message:string}|null>(null);
+  const current=useRef({mounted:true,props,view,legalBusy,nativeLocked}),pending=useRef<AbortController|null>(null);
+  useLayoutEffect(()=>{current.current={mounted:true,props,view,legalBusy,nativeLocked};});
+  const nativeLock=useCallback((locked:boolean)=>{current.current.nativeLocked=locked;setNativeLocked(locked);},[]);
+  const legalLock=useCallback((busy:boolean)=>{current.current.legalBusy=busy;setLegalBusy(busy);},[]);
   useLayoutEffect(()=>()=>{current.current.mounted=false;pending.current?.abort();pending.current=null;},[]);
   useEffect(()=>{
     if(disabled)return;
@@ -77,13 +103,43 @@ function ProductSubmissionContent(props:Props){
     void readSupplierHubProductSubmissionView({productId,profileId,expectedCategoryId},controller.signal,fetch).then(result=>{if(alive())setView(result);}).catch(cause=>{if(alive())setError(cause instanceof Error?cause.message:'전체 상품 견적을 읽지 못했습니다.');}).finally(()=>clearTimeout(timeout));
     return()=>{clearTimeout(timeout);controller.abort();if(pending.current===controller)pending.current=null;};
   },[productId,profileId,expectedCategoryId,disabled,attempt]);
+  useEffect(()=>{
+    if(!view||disabled)return;
+    const controller=new AbortController(),timeout=setTimeout(()=>{if(!controller.signal.aborted){setLegalPolicy({view,blocked:true,message:'서류 편집 전 전송 이력 응답이 늦습니다. 전체 상품 견적 다시 확인으로 재조회해주세요.'});controller.abort();}},30000);
+    void readSupplierHubLegalEditScope({productId,profileId,expectedCategoryId},view,controller.signal).then(()=>{if(!controller.signal.aborted)setLegalPolicy({view,blocked:false,message:''});}).catch(cause=>{if(!controller.signal.aborted)setLegalPolicy({view,blocked:true,message:cause instanceof Error?cause.message:'서류 편집 전 전송 이력을 확인하지 못했습니다.'});}).finally(()=>clearTimeout(timeout));
+    return()=>{controller.abort();clearTimeout(timeout);};
+  },[view,disabled,productId,profileId,expectedCategoryId]);
+  async function guardLegalWrite(run:()=>Promise<Response>,signal:AbortSignal){
+    const saved=current.current.view;
+    const allowed=()=>current.current.mounted&&!current.current.props.disabled&&!current.current.nativeLocked&&current.current.view===saved&&saved!==null;
+    if(!saved||!allowed())throw Error('현재 견적 전송 작업을 마친 뒤 서류를 수정해주세요.');
+    const scope=await readSupplierHubLegalEditScope({productId,profileId,expectedCategoryId},saved,signal);
+    const locks=window.navigator?.locks;if(!locks||typeof locks.request!=='function')throw Error('원본 서류 편집 잠금을 확인하지 못했습니다.');
+    return locks.request(productDocumentPendingKey(scope),{mode:'exclusive',signal},async()=>{
+      if(!allowed())throw Error('현재 상품의 서류 편집이 변경되었습니다.');
+      await readSupplierHubLegalEditScope({productId,profileId,expectedCategoryId},saved,signal);
+      active(signal);if(!allowed())throw Error('현재 상품의 서류 편집이 변경되었습니다.');
+      return run();
+    });
+  }
+  function legalSettled(message?:string){
+    if(!current.current.mounted||current.current.props.disabled)return;
+    current.current.view=null;setView(null);setLegalPolicy(null);setLegalNotice(message||'서류를 저장했습니다. 최신 서류와 견적 자료를 다시 확인합니다.');setAttempt(value=>value+1);
+  }
   const ready=Boolean(view&&!props.disabled);
   return <section className="panel-stack" aria-label="전체 상품 견적 등록 준비" aria-busy={!props.disabled&&!view&&!error}>
     <h4>전체 상품 견적 등록</h4>
     <p>저장한 포함 옵션을 견적 문서 하나로 확인합니다. 회사·카테고리와 전체 옵션을 검토한 뒤 전송을 진행하세요.</p>
     {props.disabled&&<p role="status">현재 작업을 마친 뒤 전체 상품 견적을 확인해주세요.</p>}
     {!props.disabled&&!view&&!error&&<p role="status">현재 회원 회사와 저장된 견적을 확인하고 있습니다.</p>}
-    {error&&<><p role="alert">{error}</p><button type="button" className="btn ghost" disabled={props.disabled} onClick={()=>{if(!current.current.mounted||current.current.props.disabled)return;pending.current?.abort();setView(null);setError('');setAttempt(value=>value+1);}}>전체 상품 견적 다시 확인</button></>}
-    {ready&&view&&<SupplierHubSingleReview primaryProduct productId={props.productId} profileId={props.profileId} view={view} disabled={false} onReceiptSaved={()=>{if(current.current.mounted&&!current.current.props.disabled&&current.current.view===view)current.current.props.onReceiptSaved?.();}}/>}
+    {error&&<p role="alert">{error}</p>}
+    {legalNotice&&<p role="status">{legalNotice}</p>}
+    {(error||legalPolicy?.blocked)&&<button type="button" className="btn ghost" disabled={props.disabled||legalBusy||nativeLocked} onClick={()=>{if(!current.current.mounted||current.current.props.disabled||current.current.legalBusy||current.current.nativeLocked)return;pending.current?.abort();current.current.view=null;setView(null);setError('');setAttempt(value=>value+1);}}>전체 상품 견적 다시 확인</button>}
+    {ready&&view&&<>
+      <LegalDocumentsEditor productId={productId} disabled={Boolean(props.disabled||nativeLocked||legalPolicy?.view!==view||legalPolicy.blocked)} onSaved={()=>{}} onBusyChange={legalLock} guardWrite={guardLegalWrite} onMutationSettled={legalSettled}/>
+      {legalPolicy?.view===view&&legalPolicy.message&&<p role="status">{legalPolicy.message}</p>}
+      <small>필수 원본 서류는 여기서 확인·수정할 수 있습니다. 필수 서류가 있는 상품의 개별 문서 전송은 아직 검수 중이며, 서류 저장만으로 전송되지 않습니다.</small>
+      <SupplierHubSingleReview primaryProduct productId={props.productId} profileId={props.profileId} view={view} disabled={legalBusy} onLockChange={nativeLock} onReceiptSaved={()=>{if(current.current.mounted&&!current.current.props.disabled&&current.current.view===view)current.current.props.onReceiptSaved?.();}}/>
+    </>}
   </section>;
 }

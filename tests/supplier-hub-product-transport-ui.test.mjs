@@ -187,7 +187,8 @@ test('owner changes while the descriptor lock is pending cannot dispatch a stale
   await h.idle();await h.click(open);let locked;
   h.f.window.navigator.locks.request=async(_name,_options,run)=>{locked=run;await held.promise;return run();};
   h.button(start).props.onClick();h.flush();await h.wait(()=>Boolean(locked));h.f.actor.ownerId='different-member';held.resolve();await h.idle();
-  assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview']);assert.equal(h.stored.size,1,'unconfirmed intent is retained rather than discarded');assert.equal(h.button(start),undefined);assert.match(h.text(),/회원 회사/);
+  assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview']);assert.equal(h.stored.size,0,'changed source is rejected before any intent or Hub request exists');assert.match(h.text(),/회원 회사/);
+  await h.click(start);assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview']);assert.equal(h.stored.size,0);
  }finally{h.close();}
 });
 

@@ -30,6 +30,14 @@ test('small pending descriptor preserves exact operation without storing body, i
  assert.equal(h.api.productDocumentPendingCurrent(saved,r),true);
  assert.doesNotThrow(()=>h.api.assertProductDocumentPending(r,saved,{...s,packet:{...s.packet,createdAt:now+200000}}));
 });
+test('native intent rechecks source after a concurrent legal editor releases the same Web Lock',async()=>{
+ const h=fixture(),r=review(),s=session();let release,sourceCurrent=true,checked=0;
+ const legalWrite=h.window.navigator.locks.request(h.api.productDocumentPendingKey(r),{mode:'exclusive',signal:h.signal},async()=>{await new Promise(resolve=>{release=resolve;});sourceCurrent=false;});
+ await new Promise(resolve=>setImmediate(resolve));assert.ok(release);
+ const start=h.api.claimProductDocumentPending(r,s,h.signal,async()=>{checked++;if(!sourceCurrent)throw Error('Source changed during legal save');});
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(checked,0);assert.equal(h.data.size,0);release();await legalWrite;
+ await assert.rejects(start,/Source changed during legal save/);assert.equal(checked,1);assert.equal(h.data.size,0);assert.equal(h.writes.length,0);assert.equal(h.lockCalls[0],h.lockCalls[1]);
+});
 test('exclusive claim prevents deterministic cross-tab read/set interleaving and never overwrites the first UUID',async()=>{
  const h=fixture(),r=review(),first=session(),other=session('00000000-0000-4000-8000-000000000733');let next;
  h.onRead=()=>{if(!next){next=true;next=h.api.claimProductDocumentPending(r,other,h.signal);void next.catch(()=>{});}};

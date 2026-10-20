@@ -340,7 +340,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
         {hubResult.registration.scope==='visible-page'?<small>현재 페이지의 결과입니다. 다른 페이지의 옵션은 아직 대조되지 않았습니다.</small>:
           <small>{hubResult.registration.hasMore===true?'다음 페이지가 남아 있습니다. 결과를 계속 확인해주세요.':hubResult.registration.hasMore===null?'추가 페이지 유무를 확인하지 못했습니다. Supplier Hub 결과 표를 확인해주세요.':'마지막 페이지까지 조회했습니다.'} 상품 검수 완료 여부는 각 행의 상태를 확인하세요.</small>}
       </div>}
-      <a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.2.zip" download>Chrome 상품 수집·전송 확장 다운로드 (2.1.2)</a>
+      <a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.3.zip" download>Chrome 상품 수집·전송 확장 다운로드 (2.1.3)</a>
     </>}
   </section>;
 }
