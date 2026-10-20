@@ -3,7 +3,7 @@ import type {SupplierHubReceipt} from '@/app/supplier-hub-receipt';
 type PackageIdentity={productId:string;categoryId:string;fingerprint:string};
 /** Only a missing reply to a read-only result request is safe to retry. */
 export class SupplierHubLookupUnavailable extends Error {}
-export function exchange(type:'PING'|'PREPARE'|'RESULT'|'TRANSMIT'|'VALIDATE'|'REFRESH'|'REGISTRATION'|'COMPANY_REGISTRATIONS'|'HISTORY'|'CATEGORIES'|'SCHEMA'|'TEMPLATE'|'RECOMMEND_CATEGORIES',payload:unknown,signal:AbortSignal):Promise<Record<string,unknown>>{
+export function exchange(type:'PING'|'PREPARE'|'RESULT'|'TRANSMIT'|'VALIDATE'|'REFRESH'|'REGISTRATION'|'COMPANY_REGISTRATIONS'|'HISTORY'|'CATEGORIES'|'SCHEMA'|'TEMPLATE'|'RECOMMEND_CATEGORIES'|'NATIVE_REGISTRATIONS',payload:unknown,signal:AbortSignal):Promise<Record<string,unknown>>{
   return new Promise((resolve,reject)=>{
     if(signal.aborted){reject(new Error('작업을 취소했습니다.'));return;}
     const requestId=crypto.randomUUID();
@@ -18,8 +18,8 @@ export function exchange(type:'PING'|'PREPARE'|'RESULT'|'TRANSMIT'|'VALIDATE'|'R
     const timer=setTimeout(()=>{
       cleanup();
       const message=type==='PING'?'YOOFAM 스튜디오 첨부 확장 0.2 이상을 설치하고 이 페이지를 새로고침해주세요.':(type==='TRANSMIT'||type==='VALIDATE')?'전송 응답을 확인하지 못했습니다. 다시 전송하지 말고 Supplier Hub 첨부 목록과 검증 결과를 확인해주세요.':type==='RECOMMEND_CATEGORIES'?'카테고리 추천 응답을 확인하지 못했습니다. 같은 Chrome에 로그인된 Supplier Hub 회사를 확인해주세요.':type==='REGISTRATION'?'상품별 등록 상태 응답이 없습니다. 잠시 후 다시 조회해주세요.':(type==='CATEGORIES'||type==='SCHEMA'||type==='TEMPLATE')?'카테고리 조회 응답을 확인하지 못했습니다. 다시 목록을 불러와주세요.':type==='RESULT'||type==='REFRESH'?'검증 결과 응답이 없습니다. Supplier Hub에서 검증 상태를 확인한 뒤 다시 불러와주세요.':'확장 준비 응답을 확인하지 못했습니다. Supplier Hub 확장에서 준비된 파일을 확인해주세요.';
-      reject(['RESULT','REFRESH','REGISTRATION'].includes(type)?new SupplierHubLookupUnavailable(message):new Error(message));
-    },type==='PING'?2000:(type==='TRANSMIT'||type==='VALIDATE')?55000:type==='REGISTRATION'||type==='COMPANY_REGISTRATIONS'?120000:type==='CATEGORIES'||type==='RECOMMEND_CATEGORIES'?45000:type==='SCHEMA'?60000:type==='TEMPLATE'?90000:20000);
+      reject(['RESULT','REFRESH','REGISTRATION'].includes(type)?new SupplierHubLookupUnavailable(message):new Error(type==='NATIVE_REGISTRATIONS'?'원래 등록 문서의 상품별 접수 상태 조회 응답이 없습니다. 잠시 후 다시 조회해주세요.':message));
+    },type==='PING'?2000:(type==='TRANSMIT'||type==='VALIDATE')?55000:type==='REGISTRATION'||type==='COMPANY_REGISTRATIONS'||type==='NATIVE_REGISTRATIONS'?120000:type==='CATEGORIES'||type==='RECOMMEND_CATEGORIES'?45000:type==='SCHEMA'?60000:type==='TEMPLATE'?90000:20000);
     window.addEventListener('message',receive);signal.addEventListener('abort',abort,{once:true});
     window.postMessage({channel:'YOOFAM_HUB_HANDOFF',requestId,type,payload},window.location.origin);
   });

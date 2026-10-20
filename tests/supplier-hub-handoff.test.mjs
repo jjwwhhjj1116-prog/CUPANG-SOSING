@@ -19,7 +19,7 @@ const extensionManifest=JSON.parse(fs.readFileSync(new URL('../extensions/suppli
 test('actual content PING reports the runtime manifest version while retaining its capabilities',async()=>{
  const source=fs.readFileSync(new URL('../extensions/supplier-hub/handoff-content.js',import.meta.url),'utf8');
  let capabilities;
- for(const manifest of [extensionManifest,{...extensionManifest,version:'9.8.7'}]){
+ for(const manifest of [extensionManifest,{...extensionManifest,version:'2.1.3'},{...extensionManifest,version:'9.8.7'}]){
   const listeners=[],replies=[],origin='https://sourceflow.jjwwhhjj1116.workers.dev';let manifestReads=0,commands=0;
   const window={addEventListener:(_type,listener)=>listeners.push(listener),postMessage:(message,targetOrigin)=>replies.push({message,targetOrigin})};
   vm.runInNewContext(source,{window,location:{origin},chrome:{runtime:{getManifest(){manifestReads++;return manifest;},onMessage:{addListener(){}},sendMessage(){commands++;throw Error('PING must not send a worker command');}}}});
@@ -27,7 +27,8 @@ test('actual content PING reports the runtime manifest version while retaining i
   assert.equal(replies.length,1);assert.equal(replies[0].targetOrigin,origin);
   const {message}=replies[0];assert.equal(message.channel,'YOOFAM_HUB_HANDOFF_RESULT');assert.equal(message.requestId,'a'.repeat(36));
   assert.equal(message.result.version,manifest.version);assert.equal(manifestReads,1);assert.equal(commands,0);
-  const {version:reportedVersion,...current}=JSON.parse(JSON.stringify(message.result));assert.equal(reportedVersion,manifest.version);
+  const {version:reportedVersion,nativeRegistrationStatus,...current}=JSON.parse(JSON.stringify(message.result));assert.equal(reportedVersion,manifest.version);
+  const [major,minor,patch]=manifest.version.split('.').map(Number);assert.equal(nativeRegistrationStatus,major>2||major===2&&(minor>1||minor===1&&patch>=4));
   assert.equal(current.ok,true);assert.equal(current.popupWindowBinding,true);assert.equal(current.serverReceiptReplayProtection,true);
   assert.equal(current.pendingReceiptRefreshRecovery,true);assert.equal(current.registrationObservationCas,true);
   assert.equal(current.originalFileObservationCas,true);

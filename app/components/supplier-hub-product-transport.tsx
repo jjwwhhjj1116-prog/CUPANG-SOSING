@@ -7,6 +7,7 @@ import {previewProductDocument,runProductDocument,readNativeReceiptHistory,saveP
 import {singleConsentConfirmation,verifySingleDocumentObservation,type SingleDocumentAction} from '@/app/supplier-hub-single-client';
 import type {NativeReceiptRecord} from '@/app/supplier-hub-product-receipt';
 import {SupplierHubRejectionDetails} from '@/app/components/supplier-hub-rejection-details';
+import {SupplierHubNativeRegistration} from '@/app/components/supplier-hub-native-registration';
 import {readProductDocumentPending,productDocumentPendingKey,productDocumentPendingCurrent,assertProductDocumentPending,claimProductDocumentPending,
   readProductDocumentRejections,productDocumentRejectionKey,assertProductDocumentNotRejected,
   pendingProductRejection,clearRejectedProductDocumentPending,clearValidationRejectedProductDocumentPending,type ProductDocumentPending} from '@/app/supplier-hub-product-pending';
@@ -181,6 +182,7 @@ export function SupplierHubProductTransport(props:Props){
       <p>{row.company.name} · {'members' in row?`포함 옵션 ${row.members.length}개 · 문서 1개`:'개별 옵션 문서'} · {({SUBMITTED:'접수 처리 중',FINISHED:'파일 처리 완료 · SKU 확인 전',REJECTED:'반려'})[row.receipt.sourceStatus]}</p>
       <p>문서 {String(row.docId)} · 등록 파일 {String(row.receipt.qvtRequestId)}</p>
       {row.receipt.sourceStatus==='REJECTED'&&<SupplierHubRejectionDetails details={row.receipt.rejectionDetails}/>}
+      {'recordType' in row&&row.recordType==='product-document'&&<SupplierHubNativeRegistration receipt={row} disabled={disabled||busy}/>}
     </article>)}</section>}
   </section>;
 }

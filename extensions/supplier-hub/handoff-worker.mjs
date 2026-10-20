@@ -12,10 +12,14 @@ import {refreshSupplierHubRegistration} from './app-registration.mjs';
 import {readAppSupplierHubCatalog} from './catalog.mjs';
 import {readOwnedProductTransferHistory} from './product-history.mjs';
 import {readAppCompanyRegistrations} from './company-registration.mjs';
+import {readAppNativeRegistrations} from './native-registration.mjs';
 import {dispatchSingleDocument} from './single-dispatch.mjs';
 import {dispatchProductDocument} from './product-document-dispatch.mjs';
 import {savePageSource,flushPageSources} from './source-inbox.mjs';
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
+  if(message?.type==='YOOFAM_QUERY_NATIVE_REGISTRATIONS'){
+    readAppNativeRegistrations(message,sender).then(observation=>respond({ok:true,observation}),error=>respond({ok:false,error:error.message}));return true;
+  }
   if(message?.type==='YOOFAM_RECOMMEND_CATEGORIES'){
     readAppSupplierHubCategoryRecommendations(message,sender).then(recommendations=>respond({ok:true,recommendations}),error=>respond({ok:false,error:error.message}));return true;
   }

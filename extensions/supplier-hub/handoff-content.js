@@ -2,10 +2,10 @@
 window.addEventListener('message',async event=>{
   if(event.source!==window||event.origin!==location.origin||event.data?.channel!=='YOOFAM_HUB_HANDOFF'||!/^[a-f0-9-]{36}$/.test(event.data.requestId||''))return;
   const {requestId,type}=event.data;
-  if(!['PING','PREPARE','RESULT','TRANSMIT','VALIDATE','REFRESH','REGISTRATION','COMPANY_REGISTRATIONS','HISTORY','RECOMMEND_CATEGORIES','CATEGORIES','SCHEMA','TEMPLATE','SINGLE_DOCUMENT','PRODUCT_DOCUMENT'].includes(type))return;
+  if(!['PING','PREPARE','RESULT','TRANSMIT','VALIDATE','REFRESH','REGISTRATION','COMPANY_REGISTRATIONS','NATIVE_REGISTRATIONS','HISTORY','RECOMMEND_CATEGORIES','CATEGORIES','SCHEMA','TEMPLATE','SINGLE_DOCUMENT','PRODUCT_DOCUMENT'].includes(type))return;
   let result;
   try{
-    const commands={PREPARE:'YOOFAM_PREPARE_PACKAGE',RESULT:'YOOFAM_GET_RESULT',TRANSMIT:'YOOFAM_TRANSMIT_PACKAGE',VALIDATE:'YOOFAM_RESUME_VALIDATION',REFRESH:'YOOFAM_REFRESH_RESULT',REGISTRATION:'YOOFAM_REFRESH_REGISTRATION',COMPANY_REGISTRATIONS:'YOOFAM_QUERY_COMPANY_REGISTRATIONS',HISTORY:'YOOFAM_GET_PRODUCT_TRANSMISSIONS',RECOMMEND_CATEGORIES:'YOOFAM_RECOMMEND_CATEGORIES',CATEGORIES:'YOOFAM_READ_CATEGORY_BRANCH',SCHEMA:'YOOFAM_READ_CATEGORY_SCHEMA',TEMPLATE:'YOOFAM_READ_CATEGORY_TEMPLATE',SINGLE_DOCUMENT:'YOOFAM_SINGLE_DOCUMENT_REQUEST',PRODUCT_DOCUMENT:'YOOFAM_PRODUCT_DOCUMENT_REQUEST'};
+    const commands={PREPARE:'YOOFAM_PREPARE_PACKAGE',RESULT:'YOOFAM_GET_RESULT',TRANSMIT:'YOOFAM_TRANSMIT_PACKAGE',VALIDATE:'YOOFAM_RESUME_VALIDATION',REFRESH:'YOOFAM_REFRESH_RESULT',REGISTRATION:'YOOFAM_REFRESH_REGISTRATION',COMPANY_REGISTRATIONS:'YOOFAM_QUERY_COMPANY_REGISTRATIONS',NATIVE_REGISTRATIONS:'YOOFAM_QUERY_NATIVE_REGISTRATIONS',HISTORY:'YOOFAM_GET_PRODUCT_TRANSMISSIONS',RECOMMEND_CATEGORIES:'YOOFAM_RECOMMEND_CATEGORIES',CATEGORIES:'YOOFAM_READ_CATEGORY_BRANCH',SCHEMA:'YOOFAM_READ_CATEGORY_SCHEMA',TEMPLATE:'YOOFAM_READ_CATEGORY_TEMPLATE',SINGLE_DOCUMENT:'YOOFAM_SINGLE_DOCUMENT_REQUEST',PRODUCT_DOCUMENT:'YOOFAM_PRODUCT_DOCUMENT_REQUEST'};
     const version=type==='PING'?chrome.runtime.getManifest().version:'';
     const [major,minor,patch]=version.split('.').map(Number);
     // An app reload may inject updated disk content while the old unpacked
@@ -15,7 +15,8 @@ window.addEventListener('message',async event=>{
     const productDocumentPreview=major>0||major===0&&(minor>2||minor===2&&patch>=79);
     const existingProductProbe=major>0||major===0&&(minor>2||minor===2&&patch>=81);
     const categoryRecommendations=major>2||major===2&&(minor>1||minor===1&&patch>=1);
-    result=type==='PING'?{ok:true,version,categoryCatalog:true,categoryRecommendations,categorySchema:true,categoryTemplate:true,categoryExcelSchema:true,legalDocumentAttachments:true,validationResume:true,companyMenuRecovery:true,attachmentLifecycleRecovery:true,exactAgreementLabels:true,acceptedReceiptRefreshRecovery:true,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,originalFileObservationCas,productDocumentPreview,existingProductProbe,productTransmissionHistory:true,historicalReceiptLookup:true,resultTableRefreshObservation:true,popupWindowBinding:true,publicMobileCapture:true,publicSingleSkuCapture:true,companyRegistrationStatus:true,companyBinding:true,directTransmission:true,latestSourceBinding:true,savedSubmission:true,durableAttachmentRecovery:true,imageIntegrityBinding:true,registrationLookup:true,registrationPages:true,serverReceiptRecovery:true,serverReceiptReplayProtection:true}:await chrome.runtime.sendMessage({...event.data.payload,type:commands[type]});
+    const nativeRegistrationStatus=major>2||major===2&&(minor>1||minor===1&&patch>=4);
+    result=type==='PING'?{ok:true,version,categoryCatalog:true,categoryRecommendations,categorySchema:true,categoryTemplate:true,categoryExcelSchema:true,legalDocumentAttachments:true,validationResume:true,companyMenuRecovery:true,attachmentLifecycleRecovery:true,exactAgreementLabels:true,acceptedReceiptRefreshRecovery:true,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,originalFileObservationCas,productDocumentPreview,existingProductProbe,nativeRegistrationStatus,productTransmissionHistory:true,historicalReceiptLookup:true,resultTableRefreshObservation:true,popupWindowBinding:true,publicMobileCapture:true,publicSingleSkuCapture:true,companyRegistrationStatus:true,companyBinding:true,directTransmission:true,latestSourceBinding:true,savedSubmission:true,durableAttachmentRecovery:true,imageIntegrityBinding:true,registrationLookup:true,registrationPages:true,serverReceiptRecovery:true,serverReceiptReplayProtection:true}:await chrome.runtime.sendMessage({...event.data.payload,type:commands[type]});
   }catch{result={ok:false,error:'확장 연결을 새로고침한 뒤 다시 준비해주세요.'};}
   window.postMessage({channel:'YOOFAM_HUB_HANDOFF_RESULT',requestId,result},location.origin);
 });
@@ -127,7 +128,35 @@ async function readCurrentCatalogContext(){
     return {ok:true,ownerId:result.ownerId,company:result.company};
   }finally{clearTimeout(timer);}
 }
+/** Resolves an exact stored native document through authenticated app GETs.
+ * Caller-supplied request IDs or bodies alone never authorize Hub queries. */
+async function readCurrentNativeReceiptScope(expected){
+ const identifier=value=>typeof value==='string'&&value===value.trim()&&value.length>0&&value.length<=200&&!/[\u0000-\u001f]|\.\.\.|…/.test(value)||Number.isSafeInteger(value)&&value>0;
+ if(expected?.origin!==location.origin||!/^(?:https:\/\/sourceflow\.jjwwhhjj1116\.workers\.dev|http:\/\/(?:localhost|127\.0\.0\.1):3000)$/.test(location.origin)||!/^\w[\w-]{0,99}$/.test(expected.productId||'')
+  ||!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(expected.requestId||'')||!/^[a-f0-9]{64}$/.test(expected.identityDigest||'')||!/^[a-f0-9]{64}$/.test(expected.preparedBodySha256||''))throw Error('원래 문서 접수 기록 선택값을 확인해주세요.');
+ const before=await readCurrentCatalogContext(),path='/api/products/'+encodeURIComponent(expected.productId)+'/supplier-hub-product-receipt',controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
+ try{
+  const response=await fetch(path,{method:'GET',cache:'no-store',credentials:'same-origin',redirect:'error',signal:controller.signal,headers:{accept:'application/json'}});
+  if(!response.ok||response.redirected||response.url!==location.origin+path||!/^application\/json(?:\s*;[^\r\n]*)?$/i.test(response.headers.get('content-type')||''))throw Error('보관된 원래 문서 접수 JSON을 읽지 못했습니다.');
+  const text=await response.text();if(new TextEncoder().encode(text).length>6*1024*1024)throw Error('문서 접수 이력이 너무 큽니다.');const history=JSON.parse(text);
+  if(history?.format!=='yoofam-native-receipt-history-v1'||history.productId!==expected.productId||!Array.isArray(history.receipts)||history.receipts.length>200)throw Error('보관된 문서 접수 이력 형식이 다릅니다.');
+  const matches=history.receipts.filter(row=>row?.requestId===expected.requestId);if(matches.length!==1)throw Error('선택한 원래 문서 접수 기록이 없거나 중복되었습니다.');
+  const row=matches[0],identity=row.identity,receipt=row.receipt,company=before.company,members=row.members;
+  if(row.format!=='yoofam-product-document-receipt-v1'||row.recordType!=='product-document'||row.evidence!=='chrome-observation'||row.registered!==false||row.productId!==expected.productId||row.identityDigest!==expected.identityDigest||row.preparedBodySha256!==expected.preparedBodySha256
+   ||identity?.ownerId!==before.ownerId||identity.origin!==location.origin||identity.productId!==row.productId||identity.categoryId!==row.categoryId||!/^\d{1,20}$/.test(row.categoryId||'')||row.categoryId==='0'
+   ||!/^\w[\w-]{0,99}$/.test(before.ownerId||'')||({A01526306:'유앤채',A01464742:'와이홉'})[company?.code]!==company?.name||row.company?.code!==company.code||row.company?.name!==company.name||identity.company?.code!==company.code||identity.company?.name!==company.name
+   ||!Array.isArray(members)||members.length<1||members.length>200||JSON.stringify(members)!==JSON.stringify(identity.members)||new Set(members.map(member=>member?.optionId)).size!==members.length||members.some((member,index)=>!/^\w[\w-]{0,99}$/.test(member?.optionId||'')||typeof member.optionLabel!=='string'||member.documentIndex!==index)
+   ||!identifier(row.docId)||receipt?.docId!==row.docId||!identifier(receipt.qvtRequestId)||receipt.receiptId!==receipt.qvtRequestId||receipt.evidence!=='document-receipt'||receipt.registered!==false||!['SUBMITTED','FINISHED','REJECTED'].includes(receipt.sourceStatus)
+   ||receipt.state!==({SUBMITTED:'pending',FINISHED:'accepted',REJECTED:'rejected'})[receipt.sourceStatus]||receipt.company?.code!==company.code||receipt.company?.name!==company.name||receipt.identityDigest!==row.identityDigest||receipt.preparedBodySha256!==row.preparedBodySha256
+   ||!Number.isSafeInteger(receipt.observedAt)||receipt.observedAt<1||receipt.observedAt>Date.now()+5000||typeof row.recordedAt!=='string'||!Number.isFinite(Date.parse(row.recordedAt))||Date.parse(row.recordedAt)>Date.now()+5000
+   ||typeof row.source?.productVersion!=='string'||!Number.isFinite(Date.parse(row.source.productVersion))||Date.parse(row.source.productVersion)>receipt.observedAt||JSON.stringify(row.source)!==JSON.stringify(identity.source))throw Error('원래 문서 접수의 회원·회사·본문·포함 옵션 연결이 다릅니다.');
+  const after=await readCurrentCatalogContext();if(controller.signal.aborted||JSON.stringify(after)!==JSON.stringify(before))throw Error('문서 접수 조회 중 로그인 회원·회사가 변경되었습니다.');
+  return {ok:true,scope:{productId:row.productId,requestId:row.requestId,docId:row.docId,qvtRequestId:receipt.qvtRequestId,sourceStatus:receipt.sourceStatus,company:{code:company.code,name:company.name},ownerId:before.ownerId,categoryId:row.categoryId,membersCount:members.length,
+   recordedAt:row.recordedAt,receiptObservedAt:receipt.observedAt,sourceProductVersion:row.source.productVersion,identityDigest:row.identityDigest,preparedBodySha256:row.preparedBodySha256}};
+ }finally{clearTimeout(timer);}
+}
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
+  if(message?.type==='YOOFAM_READ_NATIVE_RECEIPT_SCOPE'&&sender?.id===chrome.runtime.id){void readCurrentNativeReceiptScope(message.expected).then(respond,error=>respond({ok:false,error:error?.message||'원래 문서 접수 확인 실패'}));return true;}
   if(message?.type==='YOOFAM_SAVE_SOURCE_CAPTURE'&&sender?.id===chrome.runtime.id){
     void savePageSourceInApp(message.record).then(respond,error=>respond({ok:false,error:error?.message||'웹 수집함 저장 확인 실패'}));return true;
   }
