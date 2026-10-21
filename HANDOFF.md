@@ -6465,3 +6465,14 @@ ExistingfreeWorker ba37200e-0c9a-4a59-9362-86d27a6fa9bc deployed. Latestactualpr
 - Chrome4 localhost 새합성상품 actualDashboard/API/SQLite: providerfalse+기존running유지→추가사진직접편집/완료문구→PNG→image-text POST200정확1→parentrefresh뒤정확성공notice유지. 실제32pxdecode·selectedslot/alias저장·다른quote필드/원문/content/options/원본파일/보호합성상품/이전job불변. PNG1+editJSON1보관, 외부번역·provider·source/Hub/native0. screenshot step784-browser-save-complete.png 및 final-proof.json. QA탭/서버정리.
 - REA Stage6보관원본 항목명/복원/저장/전체옵션/번역적용에새확정gap없음. 기존Evidence/SHA재사용·새producer/실패lookup반복0. 원본reset은저장구조/값재초기화라항상9항목강제와혼동금지. Hub보관69900/81452/64455 정수g/mm *치수와현wire일치·합성2옵션pureprojection값보존(실측/접수아님). SEO부분/실패이력은수동입력잠금하지않음. 해당감사생산수정/반복suite0.
 - 기존실제업무상품열기·수정·삭제·전송0. 거절1688직간접재시도0, 일반두livegate=false. 실제수집→전체UI동일→실접수미검증·생성형provider미설정유지. 확장prepared2.1.19/runtime마지막2.1.18/ZIP·권한·host불변·추가refresh질문0. 새resource/migration/Access정책변경0.
+
+## 785. 수집 앱 자동 열기와 제외 옵션 재선택 (2026-10-22)
+
+- 같은 Chrome 창에 앱이 없으면 고정 운영 앱을 한 번 열고 최대 12초 동안 승인 계정·회사를 확인한 뒤 원문을 전달한다. 로그인 미확인 상태에서는 소유자 추정·저장 완료 표시를 하지 않는다.
+- 같은 소스 탭에서 다른 상품/원문이 진행 중인 수집의 성공 응답을 공유하지 않게 했다. 불확실한 ACK 보관, 회사·출처·창 재확인과 기존 상품 보호는 유지한다.
+- 원문 검토를 다시 열 때 최초 옵션 전체를 복원하고 저장한 검토값은 key로 보존한다. 제외한 옵션을 다시 포함할 수 있다.
+- 관련 12개 테스트 파일 113/113, 타입·변경 파일 lint·확장 생성물 검사·운영 빌드 통과. Chrome의 격리 Panel/API/SQLite 검수도 제외 저장→재열기→재포함 저장을 HTTP200/revision2·3으로 확인했다. 실제 소스·AI·Hub 호출은 0이며 실접수 증거가 아니다.
+- 확장 2.1.20 ZIP 90개 파일, SHA256 939847347ecd9a74331a3f957ea4886ec111a2ee732868953f77a1cf12fa06aa. Chrome이 사용하던 2026-10-05의 YOOFAM-FLUS-v2 폴더도 95개 파일 백업 후 갱신했다. 삭제0·권한 추가0. 마지막 실제 실행 응답은 2.1.18이며 새로고침은 비동기 요청했다. 폴더/다운로드 버전을 실제 설치 실행 증거로 혼동하지 않는다.
+- Worker 배포 c659ebd8-7fc5-4e5a-81aa-d4c36e718b56. 일반 single/product live-verified=false 유지. 앱 저장 성공→목록 갱신 이벤트·초기/focus 재조회도 읽기 감사에서 연결을 확인했다.
+- REA 보관 근거로 사이즈표 표시·행/열·저장/재작성 대조: 새 결함 없음. 쿠플러스 사용자 작업 중인 5단계 창은 조작하지 않았다. 이전 브라우저의 1688 site-safety 거절을 우회하지 않았고 새 실상품 수집→실제 Hub 접수는 여전히 미검증이다.
+- 상세: docs/step785-source-app-handoff-and-option-recovery.md, outputs/step785-final-validation.json, outputs/step785-browser-final-proof.json, outputs/step785-loaded-extension-preparation.json. 임시 localhost QA 탭/서버는 종료했다.

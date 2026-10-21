@@ -4,6 +4,15 @@ import type {SourceInboxItem} from '@/app/source-inbox';
 import type {PageSource} from '@/extensions/supplier-hub/page-source.mjs';
 import {validateReviewedSourceTransition} from '@/app/source-review-intake';
 
+function sourceReviewState(item:SourceInboxItem){
+ const source=structuredClone(item.reviewed??item.snapshot);
+ const reviewed=new Map(item.reviewed?.options.map(option=>[option.key,option]));
+ // Excluding an option only changes its selection. Keep every observed option
+ // available, and restore saved edits by its immutable key rather than index.
+ source.options=item.snapshot.options.map(option=>structuredClone(reviewed.get(option.key)??option));
+ return {item,source,selected:(item.reviewed??item.snapshot).options.map(option=>option.key)};
+}
+
 function flushExtension(signal:AbortSignal):Promise<{ok:boolean;pending?:number;error?:string;errors?:string[]}>{
  return new Promise((resolve,reject)=>{
   const requestId=crypto.randomUUID();
@@ -16,7 +25,7 @@ function flushExtension(signal:AbortSignal):Promise<{ok:boolean;pending?:number;
  });
 }
 export function SourceInboxPanel({ownerId,disabled,onAdd,initialItem,onChanged,onReviewed}:{ownerId?:string;disabled:boolean;onAdd:(item:SourceInboxItem)=>void;initialItem?:SourceInboxItem;onChanged?:()=>void;onReviewed?:(saved:SourceInboxItem,before:SourceInboxItem)=>void}){
- const [items,setItems]=useState<SourceInboxItem[]>(initialItem?[initialItem]:[]),[loaded,setLoaded]=useState(!!initialItem),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[review,setReview]=useState<{item:SourceInboxItem;source:PageSource;selected:string[]}|null>(initialItem?{item:initialItem,source:structuredClone(initialItem.reviewed??initialItem.snapshot),selected:(initialItem.reviewed??initialItem.snapshot).options.map(row=>row.key)}:null);
+ const [items,setItems]=useState<SourceInboxItem[]>(initialItem?[initialItem]:[]),[loaded,setLoaded]=useState(!!initialItem),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[review,setReview]=useState<{item:SourceInboxItem;source:PageSource;selected:string[]}|null>(initialItem?sourceReviewState(initialItem):null);
  const alive=useRef(true),running=useRef<AbortController|null>(null);
  const scope=useMemo(()=>({ownerId}),[ownerId]),current=useRef({ownerId,review,scope});
  useLayoutEffect(()=>{current.current={ownerId,review,scope};},[ownerId,review,scope]);
@@ -59,10 +68,10 @@ export function SourceInboxPanel({ownerId,disabled,onAdd,initialItem,onChanged,o
  return <details open={initialItem?true:undefined} className="collection-panel source-inbox" onToggle={event=>{expanded.current=event.currentTarget.open;if(event.currentTarget.open&&!loaded&&!busy)void load();}}>
   <summary>1688 수집함{loaded?` · ${items.length}건`:''}</summary>
   <div className="collection-heading"><div><h2>1688에서 담은 상품</h2><p>상품 본문의 ‘YOOFAM 스튜디오 상품 수집’을 누르면 이 회원의 수집함에 보관됩니다. 사용할 수집본을 확인하고 카테고리를 선택한 뒤 각 단계에서 수정하세요.</p><small>최근 수집본 최대 40개를 표시합니다. 다시 수집한 자료는 별도로 보관하며 기존 작업 상품과 이전 검토값을 바꾸지 않습니다.</small></div><button type="button" className="btn ghost" disabled={busy||!ownerId} onClick={()=>void load(true)}>{busy?'불러오는 중…':'수집함 불러오기'}</button></div>
-  <p className="collection-notice"><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.19.zip" download>판매량·상품 수집 통합 확장 2.1.19 다운로드</a> · YOOFAM 스튜디오와 1688 상품을 같은 Chrome 창에서 열어주세요.</p>
+  <p className="collection-notice"><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.20.zip" download>판매량·상품 수집 통합 확장 2.1.20 다운로드</a> · YOOFAM 스튜디오와 1688 상품을 같은 Chrome 창에서 열어주세요.</p>
   {message&&<p role="status">{message}</p>}
   {loaded&&!items.length&&<p>아직 담은 상품이 없습니다.</p>}
-  <ul className="collection-list">{items.map(item=><li key={item.id}><div><strong>{item.reviewed?.title??item.snapshot.title}</strong><small>{item.company.name} · 상품 {item.snapshot.offerId} · 옵션 {item.snapshot.options.length}개 · 이미지 {item.snapshot.images.length}개</small><small>수집본 {item.captureVersion??1}{typeof item.receivedAt==='string'&&Number.isFinite(Date.parse(item.receivedAt))&&<> · <time dateTime={item.receivedAt}>{new Date(item.receivedAt).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'})}</time></>}</small><small>{item.issues.length?`확인 필요: ${item.issues.join(' · ')}`:'상품정보 준비됨 · 견적서 전송 전 검토 필요'}</small>{item.warnings?.map((warning,index)=><small key={index} className="collection-notice">{warning}</small>)}</div><button type="button" className="btn ghost" disabled={busy||disabled} onClick={()=>{setReview({item,source:structuredClone(item.reviewed??item.snapshot),selected:(item.reviewed??item.snapshot).options.map(row=>row.key)});setMessage('');}}>상품정보 확인</button><button type="button" className="btn primary" disabled={busy||disabled} onClick={()=>{try{onAdd(item);}catch(error){setMessage(error instanceof Error?error.message:'상품 추가 실패');}}}>카테고리 선택·초안 작성</button><button type="button" className="btn ghost" disabled={busy||disabled} onClick={()=>void archive(item)}>수집함에서 제외</button></li>)}</ul>
+  <ul className="collection-list">{items.map(item=><li key={item.id}><div><strong>{item.reviewed?.title??item.snapshot.title}</strong><small>{item.company.name} · 상품 {item.snapshot.offerId} · 옵션 {item.snapshot.options.length}개 · 이미지 {item.snapshot.images.length}개</small><small>수집본 {item.captureVersion??1}{typeof item.receivedAt==='string'&&Number.isFinite(Date.parse(item.receivedAt))&&<> · <time dateTime={item.receivedAt}>{new Date(item.receivedAt).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'})}</time></>}</small><small>{item.issues.length?`확인 필요: ${item.issues.join(' · ')}`:'상품정보 준비됨 · 견적서 전송 전 검토 필요'}</small>{item.warnings?.map((warning,index)=><small key={index} className="collection-notice">{warning}</small>)}</div><button type="button" className="btn ghost" disabled={busy||disabled} onClick={()=>{setReview(sourceReviewState(item));setMessage('');}}>상품정보 확인</button><button type="button" className="btn primary" disabled={busy||disabled} onClick={()=>{try{onAdd(item);}catch(error){setMessage(error instanceof Error?error.message:'상품 추가 실패');}}}>카테고리 선택·초안 작성</button><button type="button" className="btn ghost" disabled={busy||disabled} onClick={()=>void archive(item)}>수집함에서 제외</button></li>)}</ul>
   {review&&<section className="source-inbox-review" aria-label="수집 상품정보 검토"><h3>수집 상품정보 확인</h3><p>공급자 SKU·위안 원가·통화는 원문에서 확인한 값을 입력하세요. 확인되지 않은 값은 임의로 채우지 않습니다. 최소 주문 수량은 미확인이면 공란으로 두고 초안을 작성할 수 있습니다. 공급자 SKU도 미확인이면 공란으로 보관하고 수집한 옵션별로 구분합니다. 초안 작성 후 가격 설정에서 확인하세요. 원본과 검토본은 따로 보관합니다.</p>
    <label>상품명<input value={review.source.title} maxLength={500} disabled={busy} onChange={event=>setReview(previous=>previous?{...previous,source:{...previous.source,title:event.target.value}}:null)}/></label>
    <div className="source-inbox-table"><table><thead><tr><th>사용</th><th>옵션명</th><th>공급자 SKU</th><th>원가</th><th>통화</th><th>최소 주문 수량</th></tr></thead><tbody>{review.source.options.map((row,index)=><tr key={row.key}>

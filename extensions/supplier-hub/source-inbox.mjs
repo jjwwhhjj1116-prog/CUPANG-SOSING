@@ -4,6 +4,60 @@ const companies={A01526306:'유앤채',A01464742:'와이홉'};
 const identifier=value=>typeof value==='string'&&/^\w[\w-]{0,99}$/.test(value);
 const pending=new Map();
 const flushing=new Map();
+const opening=new Map();
+const appUrl=origins[0]+'/';
+const readinessError=()=>Error('YOOFAM 로그인 확인 시간이 초과되었습니다. 같은 Chrome 창의 앱에 승인된 회사 계정으로 로그인한 뒤 상품 수집을 다시 눌러주세요. 아직 수집함에 저장하지 않았습니다.');
+function limitedApi(api,deadline,error=readinessError){
+ const timeout=()=>{const failure=error();failure.code='YOOFAM_TAB_TIMEOUT';return failure;};
+ const call=async(method,args)=>{
+  const remaining=deadline-Date.now();if(remaining<=0)throw timeout();let timer;
+  try{return await Promise.race([Promise.resolve().then(()=>api.tabs[method](...args)),new Promise((_,reject)=>{timer=setTimeout(()=>reject(timeout()),remaining);})]);}
+  finally{clearTimeout(timer);}
+ };
+ return {tabs:Object.fromEntries(['query','get','create','sendMessage','update'].map(method=>[method,(...args)=>call(method,args)]))};
+}
+const appOrigin=url=>{try{const origin=new URL(url).origin;return origins.includes(origin)?origin:null;}catch{return null;}};
+function appCandidates(tabs,windowId){return tabs.filter(tab=>tab.windowId===windowId&&(appOrigin(tab.url)||appOrigin(tab.pendingUrl)));}
+function candidateTab(tab){return {...tab,url:appOrigin(tab.url)?tab.url:tab.pendingUrl};}
+async function candidateContexts(api,windowId,expected=new Map()){
+ const candidates=appCandidates(await api.tabs.query({windowId}),windowId),contexts=[];
+ for(const candidate of candidates){
+  const tab=expected.get(candidate.id)??candidateTab(candidate);expected.set(tab.id,tab);
+  try{contexts.push({tab:{...tab,active:candidate.active},scope:await context(api,tab)});}catch(error){if(error?.code==='YOOFAM_TAB_TIMEOUT')throw error;}
+ }
+ if(contexts.some(item=>!same(item.scope,contexts[0].scope)))throw Error('이 창의 YOOFAM 회원이 서로 다릅니다. 수집할 회사의 앱 탭 하나만 열어주세요.');
+ return {contexts};
+}
+async function appReceiver(api,windowId,timeoutMs,pollMs){
+ const existing=opening.get(windowId);if(existing)return existing;
+ const run=(async()=>{
+  const deadline=Date.now()+timeoutMs,bounded=limitedApi(api,deadline),expected=new Map();let createdId;
+  const initial=appCandidates(await bounded.tabs.query({windowId}),windowId);
+  for(const tab of initial)expected.set(tab.id,candidateTab(tab));
+  if(!initial.length){
+   const tab=await bounded.tabs.create({windowId,url:appUrl,active:true});
+   if(!Number.isSafeInteger(tab?.id)||tab.windowId!==windowId)throw Error('같은 Chrome 창에 YOOFAM 앱을 열지 못했습니다. 상품 수집을 다시 눌러주세요.');
+   createdId=tab.id;expected.set(tab.id,{id:tab.id,windowId,url:appUrl});
+  }
+  for(;;){
+   const {contexts}=await candidateContexts(bounded,windowId,expected);
+   const receiver=createdId===undefined?(contexts.find(item=>item.tab.active)??contexts[0]):contexts.find(item=>item.tab.id===createdId);
+   if(receiver)return receiver;
+   const remaining=deadline-Date.now();if(remaining<=0)throw readinessError();
+   await new Promise(resolve=>setTimeout(resolve,Math.min(pollMs,remaining)));
+  }
+ })();
+ opening.set(windowId,run);try{return await run;}finally{if(opening.get(windowId)===run)opening.delete(windowId);}
+}
+async function recheckReceiver(receiver,api){
+ const {contexts}=await candidateContexts(api,receiver.tab.windowId,new Map([[receiver.tab.id,receiver.tab]]));
+ const current=contexts.find(item=>item.tab.id===receiver.tab.id);
+ if(!current||!same(current.scope,receiver.scope))throw Error('수집할 앱 창 또는 로그인 회사가 변경되었습니다. 같은 회사의 앱에서 상품 수집을 다시 눌러주세요.');
+}
+async function activateReceiver(receiver,api){
+ // A focus/tab-close failure cannot undo the durable matching storage ACK.
+ try{await recheckReceiver(receiver,api);await api.tabs.update(receiver.tab.id,{active:true});}catch{}
+}
 export function sourceInboxStore(action,value){
  return new Promise((resolve,reject)=>{
   const open=indexedDB.open('yoofam-page-source-inbox',1);
@@ -24,6 +78,7 @@ async function context(api,tab){
  const current=await api.tabs.get(tab.id);
  if(current.windowId!==tab.windowId||current.pendingUrl||new URL(current.url).origin!==new URL(tab.url).origin)throw Error('앱 창이 변경되었습니다.');
  const result=await api.tabs.sendMessage(tab.id,{type:'YOOFAM_READ_CATALOG_CONTEXT'},{frameId:0});
+ const after=await api.tabs.get(tab.id);if(after.windowId!==tab.windowId||after.pendingUrl||new URL(after.url).origin!==new URL(tab.url).origin)throw Error('앱 창이 변경되었습니다.');
  if(result?.ok!==true||!identifier(result.ownerId)||companies[result.company?.code]!==result.company?.name)throw Error('같은 창의 YOOFAM에 승인된 회사 계정으로 로그인해주세요.');
  return {ownerId:result.ownerId,company:{code:result.company.code,name:result.company.name},origin:new URL(current.url).origin};
 }
@@ -37,26 +92,28 @@ async function deliver(record,tab,api,store){
  await store('delete',record.id);return result;
 }
 /** Called by the isolated top-frame button only. No source page read/fetch here. */
-export async function savePageSource(message,sender,api=chrome,store=sourceInboxStore){
+export async function savePageSource(message,sender,api=chrome,store=sourceInboxStore,options={}){
  if(sender?.frameId!==0||!Number.isSafeInteger(sender.tab?.id)||!Number.isSafeInteger(sender.tab?.windowId))throw Error('상품 본문에서 수집해주세요.');
  const page=pageSourceUrl(sender.url),snapshot=validatePageSourceForDelivery(message.snapshot);
  if(page.sourceUrl!==snapshot.sourceUrl)throw Error('클릭한 상품과 수집 원문이 다릅니다.');
- if(pending.has(sender.tab.id))return pending.get(sender.tab.id);
+ const fingerprint=await sourceFingerprint(snapshot),active=pending.get(sender.tab.id);
+ if(active){
+  if(active.windowId===sender.tab.windowId&&active.sourceUrl===snapshot.sourceUrl&&active.offerId===snapshot.offerId&&active.fingerprint===fingerprint)return active.promise;
+  throw Error('이 상품 탭에서 이전 상품 수집이 진행 중입니다. 완료 후 현재 상품의 수집 버튼을 다시 눌러주세요. 현재 상품은 아직 수집하지 않았습니다.');
+ }
  const run=(async()=>{
-  const candidates=(await api.tabs.query({windowId:sender.tab.windowId})).filter(tab=>{try{return origins.includes(new URL(tab.url).origin)&&!tab.pendingUrl;}catch{return false;}});
-  if(!candidates.length)throw Error('같은 Chrome 창에서 YOOFAM에 먼저 로그인해주세요.');
-  const contexts=[];for(const tab of candidates){try{contexts.push({tab,scope:await context(api,tab)});}catch{}}
-  if(!contexts.length)throw Error('같은 Chrome 창의 YOOFAM 로그인 상태를 확인해주세요.');
-  if(contexts.some(item=>!same(item.scope,contexts[0].scope)))throw Error('이 창의 YOOFAM 회원이 서로 다릅니다. 수집할 회사의 앱 탭 하나만 열어주세요.');
-  const {tab,scope}=contexts.find(item=>item.tab.active)??contexts[0];
+  const timeoutMs=Number.isFinite(options.timeoutMs)?Math.max(1,Math.min(12000,options.timeoutMs)):12000;
+  const pollMs=Number.isFinite(options.pollMs)?Math.max(1,Math.min(250,options.pollMs)):250;
+  const receiver=await appReceiver(api,sender.tab.windowId,timeoutMs,pollMs),{tab,scope}=receiver;
+  const bounded=limitedApi(api,Date.now()+timeoutMs,()=>Error('YOOFAM 앱의 응답 시간이 초과되었습니다. 수집 결과를 확인하고 다시 시도해주세요.'));await recheckReceiver(receiver,bounded);
   const records=await store('list'),previous=records.find(row=>row.windowId===sender.tab.windowId&&same(row,scope)&&row.snapshot.offerId===snapshot.offerId);
   // A repeated click retries the first immutable snapshot. It cannot overwrite
   // an uncertain server save or an operating product with newly read values.
-  const record=previous??{id:crypto.randomUUID(),...scope,windowId:sender.tab.windowId,snapshot,fingerprint:await sourceFingerprint(snapshot)};
-  if(!previous){if(records.length>=40)throw Error('확장 수집함이 가득 찼습니다. 앱에서 보관된 상품을 불러와주세요.');await store('put',record);}
-  try{const result=await deliver(record,tab,api,store);return {ok:true,delivered:true,duplicate:result.duplicate===true,id:record.id};}
+  const record=previous??{id:crypto.randomUUID(),...scope,windowId:sender.tab.windowId,snapshot,fingerprint};
+  if(!previous){if(records.length>=40)throw Error('확장 수집함이 가득 찼습니다. 앱에서 보관된 상품을 불러와주세요.');await recheckReceiver(receiver,bounded);await store('put',record);}
+  try{await recheckReceiver(receiver,bounded);const result=await deliver(record,tab,bounded,store);await activateReceiver(receiver,bounded);return {ok:true,delivered:true,duplicate:result.duplicate===true,id:record.id};}
   catch(error){return {ok:true,delivered:false,id:record.id,message:error.message};}
- })();pending.set(sender.tab.id,run);try{return await run;}finally{pending.delete(sender.tab.id);}
+ })();pending.set(sender.tab.id,{promise:run,windowId:sender.tab.windowId,sourceUrl:snapshot.sourceUrl,offerId:snapshot.offerId,fingerprint});try{return await run;}finally{if(pending.get(sender.tab.id)?.promise===run)pending.delete(sender.tab.id);}
 }
 export async function flushPageSources(_message,sender,api=chrome,store=sourceInboxStore){
  const origin=appSender(sender),tab={id:sender.tab.id,windowId:sender.tab.windowId,url:sender.url},scope=await context(api,tab);
