@@ -11,12 +11,13 @@ import { DetailWorkspacePanel } from '@/app/components/detail-workspace-panel';
 import { canEditSavedDetailInputs, prepareSavedDetailInputs, prepareSavedDetailComposition } from '@/app/detail-editor-inputs-client';
 
 type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; stage: OptionImageStage; active?: boolean; saveOnChange?: boolean; primaryDetailTools?: boolean;
-  disabled?: boolean; onSaved?: () => void; onTranslate?: (sourceKey: string, role: OptionImageStage, sourceLanguage: 'zh' | 'en', quotationTarget: FreeImageQuotationRequest) => void;
-  onEdit?: (sourceKey: string, role: OptionImageStage, quotationTarget: FreeImageQuotationRequest) => void };
+  disabled?: boolean; processingConfigured?: boolean | null; onSaved?: () => void; onTranslate?: (sourceKey: string, role: OptionImageStage, sourceLanguage: 'zh' | 'en', quotationTarget: FreeImageQuotationRequest) => void;
+  onEdit?: (sourceKey: string, role: OptionImageStage, quotationTarget: FreeImageQuotationRequest) => void;
+  onProcess?: (sourceKey: string, role: 'additional', quotationTarget: FreeImageQuotationRequest, quotationView: QuotationFieldsView) => void };
 const imageUrl = (key: string) => `/api/files/${key.split('/').map(encodeURIComponent).join('/')}`;
 const dragMime = 'application/x-yoofam-option-image-order';
 type ImageDrag = { scope: string; sourceKey: string; stage: OptionImageStage; view: QuotationFieldsView; keys: string[]; key: string; token: string; element: HTMLElement };
-export function OptionImageEditor({ productId, optionId, version, profileId, refreshToken, stage, active = true, saveOnChange = false, primaryDetailTools = false, disabled = false, onSaved, onTranslate, onEdit }: Props) {
+export function OptionImageEditor({ productId, optionId, version, profileId, refreshToken, stage, active = true, saveOnChange = false, primaryDetailTools = false, disabled = false, processingConfigured = null, onSaved, onTranslate, onEdit, onProcess }: Props) {
   const instant = stage === 'additional' && saveOnChange;
   const endpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId ? `?profileId=${encodeURIComponent(profileId)}` : ''}`;
   const scope = JSON.stringify([endpoint, optionId]), sourceKey = JSON.stringify([scope, version, refreshToken]);
@@ -25,7 +26,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
   const [saved, setSaved] = useState<{ scope: string; sourceKey: string; view: QuotationFieldsView } | null>(null);
   const [pending, setPending] = useState<{ scope: string; values: OptionImageDraft }>({ scope, values: {} });
   const [preview, setPreview] = useState<{ scope: string; key: string } | null>(null);
-  const activeDrag = useRef<ImageDrag | null>(null), liveDisabled = useRef(disabled), liveActive = useRef(active), liveSaveOnChange = useRef(saveOnChange);
+  const activeDrag = useRef<ImageDrag | null>(null), liveDisabled = useRef(disabled), liveActive = useRef(active), liveSaveOnChange = useRef(saveOnChange), liveProcessingConfigured = useRef(processingConfigured);
   const [dragging, setDragging] = useState<{ token: string; key: string; target: string | null } | null>(null);
   const latestSaved = useRef<typeof saved>(null), latestDraft = useRef({ scope, values: {} as OptionImageDraft });
   function clearDrag() { activeDrag.current = null; setDragging(null); }
@@ -39,6 +40,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
   useLayoutEffect(() => { liveDisabled.current = disabled; if (disabled) activeDrag.current = null; }, [disabled]);
   useLayoutEffect(() => { liveActive.current = active; }, [active]);
   useLayoutEffect(() => { liveSaveOnChange.current = saveOnChange; }, [saveOnChange]);
+  useLayoutEffect(() => { liveProcessingConfigured.current = processingConfigured; }, [processingConfigured]);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState(''), [uncertain, setUncertain] = useState(false);
   const compositeBusy = useRef(false), [merging, setMerging] = useState(false);
   const workspaceBusy = useRef({ key: sourceKey, busy: false }), [workspaceWork, setWorkspaceWork] = useState({ key: sourceKey, busy: false });
@@ -214,6 +216,11 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     : dirty ? '저장되지 않은 선택이 있습니다. 아래 안내에 따라 최신 저장본을 확인한 뒤 다시 저장해주세요.' : '';
   const unavailable = selected.filter(key => !view?.imageKeys.includes(key));
   const activePreview = preview?.scope === scope && view?.imageKeys.includes(preview.key) ? preview.key : selected.find(key => view?.imageKeys.includes(key)) ?? view?.imageKeys[0] ?? null;
+  const processingScope = JSON.stringify([sourceKey, stage, active, saveOnChange, disabled, processingConfigured, saved?.sourceKey, view?.revision, view?.inputFingerprint, activePreview, selected, locked, dirty]);
+  const [processingClock, setProcessingClock] = useState({ scope: processingScope, token: {} });
+  if (processingClock.scope !== processingScope) setProcessingClock({ scope: processingScope, token: {} });
+  const processingGeneration = processingClock.scope === processingScope ? processingClock.token : null, processingEpoch = useRef(processingGeneration);
+  useLayoutEffect(() => { processingEpoch.current = processingGeneration; }, [processingGeneration]);
   // The shortcut needs explicit role evidence; a flattened first/last image
   // cannot tell a settings banner from a normal content image.
   const protectedKeys = view?.protectedDetailImageKeys;
@@ -338,6 +345,22 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
         revision: base.view.revision, inputFingerprint: base.view.inputFingerprint, optionRevision: base.view.optionRevision, value };
       if (manual) onEdit?.(key, stage, quotationTarget); else onTranslate?.(key, stage, sourceLanguage, quotationTarget);
     } catch (cause) { setError(cause instanceof Error ? cause.message : '번역할 이미지 연결을 확인해주세요.'); }
+  }
+  function processSelectedAdditional(key: string, slotIndex: number) {
+    const base = latestSaved.current;
+    if (!onProcess || stage !== 'additional' || !instant || !processingGeneration || processingEpoch.current !== processingGeneration
+      || processingConfigured !== true || liveProcessingConfigured.current !== true || locked || dirty || !cardCurrent() || request.current
+      || pendingSave.current?.scope === scope || Object.keys(latestDraft.current.values).length || !base || base.view !== view || base.scope !== scope
+      || base.sourceKey !== sourceKey || base.view.productVersion !== version || activePreview !== key || !base.view.imageKeys.includes(key)) return;
+    try {
+      const target = optionImageTargets(base.view.resolved.schema.fields).additionalImages, value = optionImageValue(base.view, optionId, 'additionalImages');
+      const keys = quotationImageKeys(value);
+      if (!Number.isSafeInteger(slotIndex) || slotIndex < 0 || keys[slotIndex] !== key || keys.filter(item => item === key).length !== 1
+        || target.linked.some(id => optionImageValue(base.view, optionId, 'additionalImages', {}, id) !== value)) return;
+      const quotationTarget: FreeImageQuotationRequest = { kind: 'quotation', profileId: profileId ?? null, optionId, input: 'additionalImages', fieldKey: target.primary, slotIndex,
+        revision: base.view.revision, inputFingerprint: base.view.inputFingerprint, optionRevision: base.view.optionRevision, value };
+      onProcess(key, 'additional', quotationTarget, JSON.parse(JSON.stringify(base.view)) as QuotationFieldsView);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'AI 처리할 추가 이미지 연결을 확인해주세요.'); }
   }
   async function downloadSelection() {
     const base = latestSaved.current, editing = latestDraft.current.scope === scope ? latestDraft.current.values : {};
@@ -466,6 +489,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
         {activePreview ? <figure className="image-large-preview"><figcaption>이미지 {view.imageKeys.indexOf(activePreview) + 1} 미리보기</figcaption><img src={imageUrl(activePreview)} alt={`선택 옵션 ${label} 큰 미리보기`} /></figure> : <p>이미지 목록에서 미리볼 자료를 선택하세요.</p>}
         {instant && activePreview && <div className="option-additional-preview-actions" role="group" aria-label="현재 추가 이미지 편집">{selected.includes(activePreview) ? <>
           {onEdit && <button type="button" className="btn ghost" aria-label={`추가 이미지 ${selected.indexOf(activePreview) + 1} 편집하기`} disabled={locked || dirty || saved?.sourceKey !== sourceKey || !view.imageKeys.includes(activePreview)} onClick={() => translateSelected(activePreview, selected.indexOf(activePreview), 'zh', true)}>편집하기</button>}
+          {onProcess && <button type="button" className="btn primary" aria-label={`추가 이미지 ${selected.indexOf(activePreview) + 1} AI 처리`} disabled={processingConfigured !== true || !active || locked || dirty || saved?.sourceKey !== sourceKey || !view.imageKeys.includes(activePreview)} onClick={() => processSelectedAdditional(activePreview, selected.indexOf(activePreview))}>{processingConfigured === true ? 'AI 처리' : processingConfigured === false ? 'AI 서버 설정 필요' : 'AI 설정 확인 중'}</button>}
           {onTranslate && <><button type="button" className="btn ghost" aria-label={`추가 이미지 ${selected.indexOf(activePreview) + 1} 중국어 한국어 번역`} disabled={locked || dirty || saved?.sourceKey !== sourceKey || !view.imageKeys.includes(activePreview)} onClick={() => translateSelected(activePreview, selected.indexOf(activePreview), 'zh')}>중국어 → 한국어</button>
             <button type="button" className="btn ghost" aria-label={`추가 이미지 ${selected.indexOf(activePreview) + 1} 영어 한국어 번역`} disabled={locked || dirty || saved?.sourceKey !== sourceKey || !view.imageKeys.includes(activePreview)} onClick={() => translateSelected(activePreview, selected.indexOf(activePreview), 'en')}>영어 → 한국어</button></>}
         </> : <small>왼쪽의 ＋ 추가를 누르면 현재 추가 이미지에 저장됩니다.</small>}</div>}
