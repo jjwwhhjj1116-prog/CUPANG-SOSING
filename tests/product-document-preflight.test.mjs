@@ -29,7 +29,7 @@ for(const company of SINGLE_COMPANIES)test(`${company.code}: production preview 
     const out=await preview(f);assert.equal(out.liveVerified,false);assert.equal(out.remoteWrites,false);assert.equal(out.registered,false);
     assert.equal(out.identityDigest,f.context.identityDigest);assert.deepEqual(out.identity,f.context.identity);assert.equal(out.requestId,f.packet.requestId);
     assert.equal(out.preparedBodySha256,f.context.bodySha256);assert.equal(out.originalBodySha256,f.context.originalBodySha256);
-    assert.deepEqual(Object.keys(out).sort(),['format','requestId','identity','fingerprint','productId','members','identityDigest','packetDigest','reviewDigest','preparedBodySha256','originalBodySha256','liveVerified','remoteWrites','registered'].sort());
+    assert.equal(out.draftPreparationAvailable,true);assert.deepEqual(Object.keys(out).sort(),['format','requestId','identity','fingerprint','productId','members','identityDigest','packetDigest','reviewDigest','preparedBodySha256','originalBodySha256','liveVerified','draftPreparationAvailable','remoteWrites','registered'].sort());
     assert.equal(inputs.length,2);for(const value of inputs){assert.equal(value.type,'YOOFAM_VERIFY_NATIVE_PRODUCT_DOCUMENT_SOURCE');assert.deepEqual(value.expected,{identity:f.context.identity,bodySha256:f.context.originalBodySha256,preparedBodySha256:f.context.bodySha256,packetDigest:f.context.packetDigest,requestId:f.context.packet.requestId,docId:null});}
     assert.ok(f.state.appReads.length>=10);sourceOnly(f,before);assert.equal(PRODUCT_DOCUMENT_LIVE_VERIFIED,false);
   }finally{f.close();}

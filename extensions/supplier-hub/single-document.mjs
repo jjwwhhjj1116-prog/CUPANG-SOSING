@@ -10,6 +10,7 @@ export const SINGLE_DOCUMENT_PATHS=Object.freeze({create:'/sr/draft/api/create',
 const COMPANIES=Object.freeze({A01526306:'유앤채',A01464742:'와이홉'});
 const PAGES=['startPage','productPage','imagePage','legalPage','logisticsPage','sourcingPage'];
 const STATES=new Set(['prepared','target-requested','target-created','create-requested','created','update-requested','updated','validation-requested','validated','validation-rejected','navigation-requested','awaiting-stage-consent','stage-consent-requested','awaiting-consent','consent-requested','submit-requested','pending','accepted','rejected','registered']);
+const DRAFT_STATES=new Set(['prepared','target-requested','target-created','create-requested','created','update-requested','updated','validation-requested','validated','validation-rejected']);
 const STAGE_FLAGS={productPage:{key:'msrpAgree',id:'agreeMSRPTerm'},imagePage:{key:'labelContactAgreed',id:'agreeLabelContact'}};
 const STAGES=Object.keys(STAGE_FLAGS);
 const HEX=/^[a-f0-9]{64}$/;
@@ -135,6 +136,8 @@ function checkpointValid(state,context){
     ||!Array.isArray(state.validatedSteps)||!same(state.validatedSteps,[2,3,4,5].slice(0,state.validatedSteps.length))
     ||state.validatedSteps.length>4||!(state.docId===null||identifier(state.docId))||state.docId!==null&&state.baselineDocIds.some(id=>same(id,state.docId))
     ||state.tab!==null&&!tabValid(state.tab,context.packet)||state.sessionId!==null&&(typeof state.sessionId!=='string'||!ID.test(state.sessionId)))fail('CHECKPOINT','저장한 개별 전송 기록의 연결을 확인해주세요.');
+  if(state.draftOnly!==undefined&&(state.draftOnly!==true||!DRAFT_STATES.has(state.state)||state.stageConsents?.length||state.challenge!==null||state.receipt!==null
+    ||state.humanConfirmedAt!==undefined||state.submitRequestedAt!==undefined)||state.draftOnly===true&&state.state==='validated'&&state.validatedSteps.length!==4)fail('CHECKPOINT','제출하지 않은 새 초안의 원래 준비 기록을 확인해주세요.');
   const beforeTarget=['prepared','target-requested'].includes(state.state),beforeDocument=['prepared','target-requested','target-created'].includes(state.state);
   if(beforeTarget?state.ownedTarget!=null:!targetValid(state.ownedTarget,context,state.requestId))fail('CHECKPOINT','이 전송에서 만든 새 Supplier Hub 탭 기록이 없습니다. 기존 탭은 사용하지 않았습니다.');
   if(beforeDocument?state.tab!==null:!state.tab||state.tab.tabId!==state.ownedTarget.tabId||state.tab.requestId!==state.requestId||state.tab.packetDigest!==context.packetDigest)fail('CHECKPOINT','새 전송 탭과 현재 문서의 연결을 확인해주세요.');
@@ -198,7 +201,8 @@ function result(state,extra={}){
     docId:state.docId,registered:state.state==='registered',success:state.state==='registered',needsRecovery:['target-requested','create-requested','update-requested','validation-requested','stage-consent-requested','consent-requested','submit-requested'].includes(state.state),
     ...(state.challenge&&['awaiting-stage-consent','awaiting-consent'].includes(state.state)?{challenge:clone(state.challenge)}:{}),...(state.receipt?{receipt:clone(state.receipt)}:{}),
     ...(Array.isArray(state.identity.members)&&state.state==='validation-rejected'?{validationRejection:{evidence:'document-validation-rejection',operationId:state.operationId,step:state.requestedStep,
-      validatedSteps:clone(state.validatedSteps),checkpointSequence:state.sequence,rejectedAt:state.updatedAt,submitted:false,consented:false}}:{}),...extra};
+      validatedSteps:clone(state.validatedSteps),checkpointSequence:state.sequence,rejectedAt:state.updatedAt,submitted:false,consented:false}}:{}),
+    ...(state.draftOnly===true?{draftOnly:true,draftProof:{evidence:'document-draft-preparation',validatedSteps:clone(state.validatedSteps),checkpointSequence:state.sequence,observedAt:state.updatedAt,submitted:false,consented:false}}:{}),...extra};
 }
 
 /** Explicit adapters only; importing this module performs no browser/network
@@ -219,12 +223,15 @@ export function createSingleDocumentReceiver(options){
  * packet data. Legacy single-option validation remains its original wrapper.
  * Both wrappers share durable write/recovery/consent handling below. */
 export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},contract){
-  if(!object(contract)||Object.keys(contract).length!==2||typeof contract.format!=='string'||!contract.format||typeof contract.identity!=='function')throw new TypeError('A trusted document transport contract is required.');
+  if(!object(contract)||Object.keys(contract).some(key=>!['format','identity','draftOnly'].includes(key))||typeof contract.format!=='string'||!contract.format||typeof contract.identity!=='function'
+    ||Object.hasOwn(contract,'draftOnly')&&contract.draftOnly!==true)throw new TypeError('A trusted document transport contract is required.');
+  const draftOnly=contract.draftOnly===true;
   const required=['readSource','createTarget','readTab','hubRequest','readDocument','recoverWrite','readValidation','navigate','readAgreements','verifyHumanConfirmation','confirmAgreements','submit','observeReceipt'];
   if(!adapter||required.some(key=>typeof adapter[key]!=='function')||!store||['get','claim','compareAndSet'].some(key=>typeof store[key]!=='function')||typeof now!=='function')throw new TypeError('Single document adapter/store contract is required.');
   const active=new Set();
   const clock=()=>{const value=now();if(!Number.isSafeInteger(value)||value<=0)fail('CLOCK','전송 시각을 확인하지 못했습니다.');return value;};
-  async function get(context){const value=await store.get(context.key);return value===undefined||value===null?null:clone(checkpointValid(value,context));}
+  async function get(context){const value=await store.get(context.key);if(value===undefined||value===null)return null;const state=clone(checkpointValid(value,context));
+    if((state.draftOnly===true)!==draftOnly||draftOnly&&state.requestId!==context.packet.requestId)fail('CHECKPOINT_MODE','원래 새 초안 준비 요청과 같은 기록에서만 계속 확인해주세요.');return state;}
   async function save(context,previous,changes){
     const next={...clone(previous),...clone(changes),sequence:previous.sequence+1,updatedAt:clock()};checkpointValid(next,context);
     if(await store.compareAndSet(context.key,safeValue(previous),safeValue(next))!==true)fail('CHECKPOINT_CONFLICT','더 최신 전송 기록이 있습니다. 추가 요청하지 않고 조회해주세요.');return next;
@@ -332,16 +339,24 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
         await guard(context,state);state=await save(context,state,{state:'validation-requested',operationId:state.requestId+':validate:'+step,requestedStep:step});
         const validated=validateSingleStepResponse(await request(context,state,'POST','/sr/qvt/api/validate-step/'+step,{docId:state.docId,version:context.packet.body.version}));
         if(!validated.valid)return save(context,state,{state:'validation-rejected',validationErrors:validated.errors});
-        state=await save(context,state,{state:step===5?'validated':'updated',validatedSteps:[...state.validatedSteps,step]});
+        state=await save(context,state,{state:step===5&&!draftOnly?'validated':'updated',validatedSteps:[...state.validatedSteps,step]});
       }
+      if(draftOnly&&state.validatedSteps.length===4)return verifyDraft(context,state);
     }
     if(state.state==='validated'){
+      if(draftOnly){await verifyDraft(context,state);return state;}
       const ids=drafts(await request(context,state,'GET',SINGLE_DOCUMENT_PATHS.drafts));
       if(ids.filter(id=>same(id,state.docId)).length!==1)fail('DRAFT_NOT_FOUND','방금 생성한 문서가 중간 저장 목록에 정확히 표시되지 않습니다.');
       await readDocument(context,state);state=await save(context,state,{state:'navigation-requested'});
     }
     if(state.state==='navigation-requested')state=await navigation(context,state);
     return state;
+  }
+  async function verifyDraft(context,state){
+    const ids=drafts(await request(context,state,'GET',SINGLE_DOCUMENT_PATHS.drafts));
+    if(ids.filter(id=>same(id,state.docId)).length!==1)fail('DRAFT_NOT_FOUND','방금 생성한 문서가 중간 저장 목록에 정확히 표시되지 않습니다.');
+    await readDocument(context,state);
+    return state.state==='validated'?state:save(context,state,{state:'validated'});
   }
   async function operate(packet,sender,action,details){
     const context=await contract.identity(packet,sender,action);
@@ -350,15 +365,32 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
     active.add(context.key);let state;
     try{
       state=await get(context);
-      if(action==='start'){
-        if(state){await guard(context,state);return result(state,{duplicate:true});}
+      if(action==='start'||draftOnly&&action==='prepareDraft'){
+        if(state){await guard(context,state);
+          if(draftOnly&&['prepared','target-created','created','updated','validated'].includes(state.state))state=await continuation(context,state);
+          return result(state,{duplicate:true});}
         state={format:context.packet.format,key:context.key,laneKey:context.laneKey,identity:context.identity,identityDigest:context.identityDigest,bodySha256:context.bodySha256,originalBodySha256:context.originalBodySha256,packetDigest:context.packetDigest,
-          requestId:context.packet.requestId,state:'prepared',sequence:0,updatedAt:clock(),docId:null,tab:null,ownedTarget:null,sessionId:null,baselineDocIds:[],validatedSteps:[],stageConsents:[],challenge:null,receipt:null};
+          requestId:context.packet.requestId,state:'prepared',sequence:0,updatedAt:clock(),docId:null,tab:null,ownedTarget:null,sessionId:null,baselineDocIds:[],validatedSteps:[],stageConsents:[],challenge:null,receipt:null,...(draftOnly?{draftOnly:true}:{})};
         if(await store.claim(context.key,safeValue(state))!==true){state=await get(context);if(!state)fail('CHECKPOINT_CONFLICT','같은 옵션의 다른 개별 전송 기록을 먼저 확인해주세요.');await guard(context,state);return result(state,{duplicate:true});}
         state=await continuation(context,state);return result(state);
       }
       if(!state)fail('CHECKPOINT','먼저 새 개별 전송 요청을 준비해주세요.');
       await guard(context,state);
+      if(draftOnly){
+        if(action!=='recoverDraft')fail('ACTION','새 초안 준비의 읽기 확인 동작을 확인해주세요.');
+        if(state.state==='target-requested')fail('TARGET_UNCONFIRMED','새 탭 생성 응답을 확인하지 못했습니다. 새 탭을 다시 만들지 않았습니다.');
+        if(['create-requested','update-requested'].includes(state.state)){
+          const proof=await readDocument(context,state,true);state=await save(context,state,{state:state.state==='create-requested'?'created':'updated',docId:proof.docId});
+        }else if(state.state==='validation-requested'){
+          const proof=await call('readValidation',{tab:state.tab,identity:context.identity,docId:state.docId,version:context.packet.body.version,step:state.requestedStep,operationId:state.operationId});
+          if(!object(proof)||proof.readOnly!==true||proof.operationId!==state.operationId||!same(proof.docId,state.docId)||!same(proof.company,context.packet.company)||proof.step!==state.requestedStep)fail('READBACK_UNCONFIRMED','원래 초안 단계의 검증 결과를 확인하지 못했습니다.');
+          const validated=validateSingleStepResponse(proof.response);
+          state=await save(context,state,validated.valid?{state:'updated',validatedSteps:[...state.validatedSteps,state.requestedStep]}:{state:'validation-rejected',validationErrors:validated.errors});
+        }
+        if(['updated','validated'].includes(state.state)&&state.validatedSteps.length===4)state=await verifyDraft(context,state);
+        else if(state.docId!==null)await readDocument(context,state);
+        return result(state,{recovered:true});
+      }
       if(action==='resume'){
         if(!['prepared','target-created','created','updated','validated','navigation-requested'].includes(state.state))return result(state);
         state=await continuation(context,state);return result(state);
@@ -466,6 +498,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
     if(state.receipt&&receipt.observedAt<state.receipt.observedAt)fail('RECEIPT_CHANGED','더 오래된 등록 결과를 반영하지 않습니다.');
     await guard(context,state);state=await save(context,state,{state:receipt.state,receipt});return result(state);
   }
+  if(draftOnly)return Object.freeze({prepareDraft:(packet,sender)=>operate(packet,sender,'prepareDraft'),recoverDraft:(packet,sender)=>operate(packet,sender,'recoverDraft')});
   return Object.freeze({start:(packet,sender)=>operate(packet,sender,'start'),resume:(packet,sender)=>operate(packet,sender,'resume'),
     recover:(packet,sender)=>operate(packet,sender,'recover'),confirm:(packet,sender,confirmation)=>operate(packet,sender,'confirm',confirmation),observe:(packet,sender)=>operate(packet,sender,'observe')});
 }

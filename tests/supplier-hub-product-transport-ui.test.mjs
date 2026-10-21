@@ -7,7 +7,7 @@ import ts from 'typescript';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { createHash, webcrypto } from 'node:crypto';
-import { createProductDocumentPacket } from '../extensions/supplier-hub/product-document.mjs';
+import { createProductDocumentPacket,PRODUCT_DOCUMENT_REQUEST_TTL } from '../extensions/supplier-hub/product-document.mjs';
 import { productDocumentIdentity } from '../extensions/supplier-hub/product-document-receiver.mjs';
 import { singleDocumentIdentity } from '../extensions/supplier-hub/single-document.mjs';
 import { singlePacket, singleDocumentFixture, SINGLE_COMPANIES, SINGLE_SENDER } from './helpers/supplier-hub-single-document.mjs';
@@ -29,6 +29,69 @@ const text = tree => Array.isArray(tree) ? tree.map(text).join(' ') : tree && ty
 const turn = () => new Promise(resolve => setImmediate(resolve)), deferred = () => { let resolve; const promise = new Promise(done => resolve = done); return { promise, resolve }; };
 const open = '전체 옵션 전송 자료 확인', start = '전체 상품 견적 등록 시작', close = '전송 자료 확인 닫기', recover = '같은 문서 저장 결과 확인';
 const release='검증 반려 확인 · 수정 허용';
+const prepareDraft='새 견적 초안 만들기 · 제출 안 함',recoverDraft='같은 초안 저장 결과 확인 · 읽기 전용',continueDraft='같은 초안 준비 계속 · 제출 안 함';
+const draftResult=(f,requestId,state='validated',extra={})=>f.state(state,{requestId,draftOnly:true,
+ draftProof:{evidence:'document-draft-preparation',validatedSteps:state==='validated'?[2,3,4,5]:[],checkpointSequence:12,observedAt:f.clock.now,submitted:false,consented:false},...extra});
+function allowDraft(h,run){h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true}:run(payload);}
+
+test('older preview exposes only the direct integrated-extension download and no new draft action',async()=>{
+ const h=await fixture();try{await h.idle();await h.click(open);assert.equal(h.button(prepareDraft),undefined);assert.equal(h.button(start),undefined);
+  const link=nodes(h.render()).find(node=>node.type==='a'&&node.props.download!==undefined);assert.equal(link.props.href,'/downloads/yoofam-plus-supplier-hub-extension-2.1.15.zip');assert.ok(h.f.calls.every(call=>call.method==='GET'));assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview']);
+ }finally{h.close();}
+});
+for(const company of SINGLE_COMPANIES)test(`${company.code}: explicit new draft owns one reservation, reports actual document validation and unlocks only outer close`,async()=>{
+ const h=await fixture(company);try{allowDraft(h,payload=>draftResult(h.f,payload.packet.requestId,'validated',payload.action==='recoverDraft'?{recovered:true}:{}));
+  await h.idle();await h.click(open);assert.equal(h.button(start),undefined);const click=h.button(prepareDraft).props.onClick;click();click();await h.idle();
+  assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft']);assert.equal(h.stored.size,1);assert.deepEqual(h.lockPairs.at(-1),[true,false]);assert.match(h.text(),/초안 문서 new-document-728/);assert.match(h.text(),/검증\s*4\s*\/4/);assert.match(h.text(),/미제출/);assert.equal(h.button(prepareDraft),undefined);assert.equal(h.button(start),undefined);assert.equal(h.button(continueDraft),undefined);assert.ok(h.button(recoverDraft));assert.equal(h.f.history.length,0);assert.ok(h.f.calls.every(call=>call.method==='GET'));
+  click();h.flush();assert.equal(h.f.sent.length,2);await h.click(recoverDraft);assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','recoverDraft']);assert.deepEqual(h.lockPairs.at(-1),[true,false]);assert.equal(h.stored.size,1);assert.equal(h.f.calls.some(call=>call.method==='POST'),false);
+ }finally{h.close();}
+});
+
+test('lost draft ACK and remount preserve one operation; only exact read recovery can unlock closing',async()=>{
+ const h=await fixture();let remount;try{allowDraft(h,async()=>undefined);await h.idle();await h.click(open);const old=h.button(prepareDraft).props.onClick;old();h.flush();await h.wait(()=>h.f.sent.length===2);h.f.advance(120001);await h.idle();assert.ok(h.button(recoverDraft));assert.equal(h.button(prepareDraft),undefined);assert.deepEqual(h.lockPairs.at(-1),[true,true]);old();h.flush();assert.equal(h.f.sent.length,2);
+  const original=h.f.sent[1].payload.packet.requestId;h.close();remount=await fixture(SINGLE_COMPANIES[0],{stored:h.stored});allowDraft(remount,payload=>{assert.equal(payload.action,'recoverDraft');assert.equal(payload.packet.requestId,original);return draftResult(remount.f,original,'validated',{recovered:true});});
+  await remount.idle();await remount.click('이전 문서 전송 자료 확인');assert.equal(remount.button(prepareDraft),undefined);assert.ok(remount.button(recoverDraft));await remount.click(recoverDraft);assert.deepEqual(plain(remount.f.sent.map(row=>row.payload.action)),['preview','recoverDraft']);assert.deepEqual(remount.lockPairs.at(-1),[true,false]);assert.equal(remount.stored.size,1);assert.equal(remount.f.calls.some(call=>call.method==='POST'),false);
+ }finally{h.close();remount?.close();}
+});
+
+test('malformed draft proof and stale review callbacks retain the pending reservation and cannot expose consent or submit',async()=>{
+ for(const mode of ['receipt','proof','stale']){const h=await fixture();try{allowDraft(h,payload=>draftResult(h.f,payload.packet.requestId,'validated',mode==='receipt'?{receipt:{}}:mode==='proof'?{draftProof:{evidence:'document-draft-preparation',validatedSteps:[2,3,4],checkpointSequence:12,observedAt:h.f.clock.now,submitted:false,consented:false}}:{}));
+   await h.idle();await h.click(open);const old=h.button(prepareDraft).props.onClick;
+   if(mode==='stale'){const original=h.props().review,changed={...original,reviewDigest:'e'.repeat(64)};h.render({...h.props(),review:changed});h.render({...h.props(),review:original});old();h.flush();assert.equal(h.f.sent.length,1);assert.equal(h.stored.size,0);continue;}
+   await h.click(prepareDraft);assert.equal(h.button(prepareDraft),undefined);assert.ok(h.button(recoverDraft));assert.deepEqual(h.lockPairs.at(-1),[true,true]);assert.equal(h.stored.size,1);assert.equal(h.button('현재 문서 동의 확인 · 계속'),undefined);assert.equal(h.button(start),undefined);assert.equal(h.f.calls.some(call=>call.method==='POST'),false);
+  }finally{h.close();}
+ }
+});
+
+test('verified incomplete draft recovery offers only explicit same-operation continuation; expired preview refreshes TTL without a new UUID',async()=>{
+ const h=await fixture();try{let preparations=0;allowDraft(h,payload=>{
+   if(payload.action==='recoverDraft')return draftResult(h.f,payload.packet.requestId,'created',{recovered:true});
+   preparations++;return draftResult(h.f,payload.packet.requestId,preparations===1?'create-requested':'validated',preparations===1?{docId:null,needsRecovery:true}:{});
+  });await h.idle();await h.click(open);await h.click(prepareDraft);assert.equal(h.button(continueDraft),undefined);await h.click(recoverDraft);assert.ok(h.button(continueDraft));const requestId=h.f.sent[1].payload.packet.requestId;h.f.advance(120001);await h.click(continueDraft);
+  assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','recoverDraft','preview','prepareDraft']);assert.ok(h.f.sent.every(row=>row.payload.packet.requestId===requestId));assert.equal(preparations,2);assert.equal(h.stored.size,1);assert.deepEqual(h.lockPairs.at(-1),[true,false]);assert.equal(h.f.calls.some(call=>call.method==='POST'),false);
+ }finally{h.close();}
+});
+test('a failed latest draft readback relocks closing and removes the completed label until exact read recovery succeeds',async()=>{
+ const h=await fixture();try{allowDraft(h,payload=>draftResult(h.f,payload.packet.requestId,'validated',payload.action==='recoverDraft'?{recovered:true}:{}));await h.idle();await h.click(open);await h.click(prepareDraft);assert.deepEqual(h.lockPairs.at(-1),[true,false]);
+  h.f.bridge=async()=>{throw Error('원래 초안 본문을 확인하지 못했습니다.');};await h.click(recoverDraft);assert.deepEqual(h.lockPairs.at(-1),[true,true]);assert.match(h.text(),/원래 초안 본문/);assert.doesNotMatch(h.text(),/초안 저장·검증 완료/);assert.equal(h.stored.size,1);assert.equal(h.button(prepareDraft),undefined);
+  h.f.bridge=async payload=>draftResult(h.f,payload.packet.requestId,'validated',{recovered:true});await h.click(recoverDraft);assert.deepEqual(h.lockPairs.at(-1),[true,false]);assert.match(h.text(),/초안 저장·검증 완료/);assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','recoverDraft','recoverDraft']);assert.equal(h.f.calls.some(call=>call.method==='POST'),false);
+  h.render({...h.props(),review:{...h.props().review,reviewDigest:'e'.repeat(64)}});assert.deepEqual(h.lockPairs.at(-1),[true,true],'a different review cannot inherit the previous draft close permission even before passive effects');assert.doesNotMatch(h.text(),/초안 저장·검증 완료/);
+ }finally{h.close();}
+});
+test('only exact recovered draft validation rejection releases its reservation into the immutable rejection ledger',async()=>{
+ const h=await fixture();try{allowDraft(h,payload=>draftResult(h.f,payload.packet.requestId,'validation-rejected',{...(payload.action==='recoverDraft'?{recovered:true}:{}),
+   draftProof:{evidence:'document-draft-preparation',validatedSteps:[2],checkpointSequence:12,observedAt:h.f.clock.now,submitted:false,consented:false},
+   validationRejection:{evidence:'document-validation-rejection',operationId:payload.packet.requestId+':validate:3',step:3,validatedSteps:[2],checkpointSequence:12,rejectedAt:h.f.clock.now,submitted:false,consented:false}}));
+  await h.idle();await h.click(open);await h.click(prepareDraft);assert.ok(h.button(release));assert.deepEqual(h.lockPairs.at(-1),[true,true]);const original=h.f.sent[1].payload.packet.requestId;
+  await h.click(release);assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','recoverDraft']);assert.deepEqual(h.lockPairs.at(-1),[false,false]);assert.equal([...h.stored.keys()].some(key=>key.startsWith('yoofam-product-document-pending:')),false);assert.equal(h.stored.size,1);
+  const ledger=JSON.parse([...h.stored.values()][0]);assert.equal(ledger[0].pending.requestId,original);assert.equal(ledger[0].validationRejection.step,3);await h.click(open);assert.equal(h.f.sent.length,3,'same rejected body cannot create another draft');assert.match(h.text(),/이미 반려/);assert.equal(h.f.calls.some(call=>call.method==='POST'),false);
+ }finally{h.close();}
+});
+test('owner change while awaiting the draft claim lock prevents both reservation and remote creation',async()=>{
+ const held=deferred(),h=await fixture();try{allowDraft(h,payload=>draftResult(h.f,payload.packet.requestId));await h.idle();await h.click(open);
+  h.f.window.navigator.locks.request=async(_key,_options,run)=>{await held.promise;return run();};h.button(prepareDraft).props.onClick();h.flush();await h.wait(()=>h.refreshCalls.length>=3);h.f.actor.ownerId='other';held.resolve();await h.idle();assert.equal(h.stored.size,0);assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview']);assert.equal(h.f.calls.some(call=>call.method==='POST'),false);
+ }finally{held.resolve();h.close();}
+});
 
 for(const company of SINGLE_COMPANIES)test(company.name+' actual transport renders exact rejected receipt reasons in current result and stored history',async()=>{
  const h=await fixture(company,{verified:true});try{
@@ -54,6 +117,7 @@ async function fixture(company = SINGLE_COMPANIES[0], options = {}) {
   f.bridge=async payload=>{const result=await originalBridge(payload);return result&&{...result,requestId:payload.packet.requestId};};
   const hook = (effect, deps, layout) => { const index = cursor++, old = slots[index]; if (!old || !deps || deps.some((dep, i) => !Object.is(dep, old.deps[i]))) { old?.cleanup?.(); slots[index] = { deps, cleanup: null }; const run = () => slots[index].cleanup = effect(); if (layout) run(); else effects.push(run); } };
   const react = { useState(initial) { const index = cursor++; if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial; return [slots[index], value => slots[index] = typeof value === 'function' ? value(slots[index]) : value]; }, useRef(value) { const index = cursor++; if (!(index in slots)) slots[index] = { current: value }; return slots[index]; }, useEffect: (fn, deps) => hook(fn, deps, false), useLayoutEffect: (fn, deps) => hook(fn, deps, true) };
+  react.useMemo=(fn,deps)=>{const index=cursor++,old=slots[index];if(!old||deps.some((value,i)=>!Object.is(value,old.deps[i])))slots[index]={deps,value:fn()};return slots[index].value;};
   class LocalDate extends Date { static now() { return f.clock.now; } }
   const exports = {}, component = 'app/components/supplier-hub-product-transport.tsx';
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../' + component, import.meta.url), 'utf8'), { fileName: component, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
@@ -62,13 +126,14 @@ async function fixture(company = SINGLE_COMPANIES[0], options = {}) {
         // Each fresh preview gets a different real UUID. Recovery must supply
         // its original UUID explicitly; a constant test seed cannot mask loss.
         createProductDocumentPacket: (review,value={}) => createProductDocumentPacket(review, { ...value,createdAt:value.createdAt??f.clock.now,now:f.clock.now }),
+        PRODUCT_DOCUMENT_REQUEST_TTL,
       } : native(name) });
   props = { review: f.review, disabled: false, refresh: async signal => { refreshCalls.push(signal); return f.refresh(signal); }, onLockChange: (value,close=value) => {locks.push(value);lockPairs.push([value,close]);} };
   f.refresh = async () => { if (f.actor.ownerId !== f.review.identity.ownerId || JSON.stringify(f.actor.company) !== JSON.stringify(f.review.identity.company)) throw Error('현재 회원 회사가 변경되었습니다.'); return plain(f.review); };
   const render = (next = props) => { props = next; cursor = 0; return exports.SupplierHubProductTransport(props); };
   const flush = () => { render(); effects.splice(0).forEach(fn => fn()); };
   const h = { f, stored,refreshCalls, locks, lockPairs, render, flush, props: () => props, text: () => text(render()), button: label => nodes(render()).find(node => node.type === 'button' && node.props.children === label),storageChanged(key){for(const fn of storageListeners)fn({key});flush();},
-    async wait(predicate) { for (let count = 0; count < 400; count++) { flush(); if (predicate()) return; await turn(); } assert.fail('Product UI boundary timeout'); },
+    async wait(predicate) { const deadline=Date.now()+10000;while(Date.now()<deadline){flush();if(predicate())return;await turn();}assert.fail('Product UI boundary timeout'); },
     async idle() { await h.wait(() => !render().props['aria-busy']); }, async click(label) { const node = h.button(label); assert.ok(node, label); assert.equal(Boolean(node.props.disabled), false, label); node.props.onClick(); await h.idle(); },
     close() { for (const slot of slots) slot?.cleanup?.(); } };
   return h;

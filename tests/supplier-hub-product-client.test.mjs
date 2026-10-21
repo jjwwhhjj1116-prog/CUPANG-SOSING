@@ -58,6 +58,47 @@ async function fixture(company=SINGLE_COMPANIES[0],options={}){
   f.wait=async predicate=>{for(let i=0;i<300;i++){if(predicate())return;await new Promise(resolve=>setImmediate(resolve));}assert.fail('Client fixture did not reach requested boundary.');};
   f.session=()=>f.client.previewProductDocument(packet,new AbortController().signal);return f;
 }
+function draftState(f,state='validated',extra={}){
+ const steps=state==='validated'?[2,3,4,5]:state==='validation-rejected'?[2]:[];
+ return f.state(state,{draftOnly:true,draftProof:{evidence:'document-draft-preparation',validatedSteps:steps,checkpointSequence:10,observedAt:f.clock.now,submitted:false,consented:false},...extra});
+}
+
+for(const company of SINGLE_COMPANIES)test(`${company.code}: trusted draft capability prepares/recover only a new draft while the full live gate stays false`,async()=>{
+ const f=await fixture(company);f.bridge=async payload=>payload.action==='preview'?{...f.preview(),draftPreparationAvailable:true}:draftState(f,'validated',{recovered:payload.action==='recoverDraft'});
+ const session=await f.session();assert.equal(session.preview.liveVerified,false);assert.equal(session.preview.draftPreparationAvailable,true);
+ const prepared=await f.client.runProductDocumentDraft(session,'prepareDraft',new AbortController().signal);assert.equal(prepared.draftOnly,true);assert.equal(prepared.state,'validated');assert.equal(prepared.registered,false);assert.equal(prepared.success,false);assert.equal(prepared.receipt,undefined);assert.equal(prepared.challenge,undefined);assert.ok(Object.isFrozen(prepared.draftProof.validatedSteps));
+ const recovered=await f.client.runProductDocumentDraft(session,'recoverDraft',new AbortController().signal);assert.equal(recovered.recovered,true);
+ for(const action of ['start','resume','confirm','observe'])await assert.rejects(f.client.runProductDocument(session,action,new AbortController().signal),error=>error.code==='PRODUCT_DOCUMENT_LIVE_CONTRACT_UNVERIFIED');
+ assert.deepEqual(f.sent.map(message=>message.payload.action),['preview','prepareDraft','recoverDraft']);assert.equal(f.calls.length,0);
+});
+
+test('older or false draft capability cannot send a mutation; malformed capability cannot expose a session',async()=>{
+ for(const capability of [undefined,false]){const f=await fixture();f.bridge=async()=>({...f.preview(),...(capability===undefined?{}:{draftPreparationAvailable:capability})});const session=await f.session();
+  await assert.rejects(f.client.runProductDocumentDraft(session,'prepareDraft',new AbortController().signal),error=>error.code==='PRODUCT_DOCUMENT_DRAFT_UNAVAILABLE'&&!error.uncertain);assert.equal(f.sent.length,1);
+ }
+ for(const capability of ['true',1,null]){const f=await fixture();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:capability});await assert.rejects(f.session(),error=>error.code==='PRODUCT_DOCUMENT_REPLY_IDENTITY');assert.equal(f.sent.length,1);}
+});
+
+test('draft-only replies reject receipt/consent/advanced state, altered proof and stale scope without relaxing live checks',async()=>{
+ const changes=[v=>v.receipt={},v=>v.challenge={},v=>v.state='accepted',v=>v.draftOnly=false,v=>v.draftProof.submitted=true,v=>v.draftProof.consented=true,
+  v=>v.draftProof.validatedSteps=[2,4,5],v=>v.draftProof.validatedSteps=[2,3,4],v=>v.draftProof.checkpointSequence=0,v=>v.draftProof.observedAt=Date.now()+60000,
+  v=>v.identity.company=SINGLE_COMPANIES[1],v=>v.packetDigest='f'.repeat(64),v=>v.preparedBodySha256='f'.repeat(64),v=>v.docId=null,v=>v.needsRecovery=true,v=>v.registered=true,
+  v=>v.draftProof.extra='not allowed',v=>v.recovered=false];
+ for(const change of changes){const f=await fixture();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true});const session=await f.session();f.bridge=async()=>{const value=draftState(f,'validated',{recovered:true});change(value);return value;};
+  await assert.rejects(f.client.runProductDocumentDraft(session,'recoverDraft',new AbortController().signal),error=>error.code==='PRODUCT_DOCUMENT_DRAFT_REPLY_IDENTITY'&&error.uncertain===false);assert.deepEqual(f.sent.map(message=>message.payload.action),['preview','recoverDraft']);assert.equal(f.calls.length,0);
+ }
+});
+
+test('draft busy and missing ACK never retry a create; recovery timeout remains read-only',async()=>{
+ for(const action of ['prepareDraft','recoverDraft']){
+  const f=await fixture();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true});const session=await f.session();
+  f.bridge=async()=>({format:f.review.format,requestId:f.packet.requestId,state:'busy',registered:false,success:false});
+  await assert.rejects(f.client.runProductDocumentDraft(session,action,new AbortController().signal),error=>error.code==='PRODUCT_DOCUMENT_DRAFT_BUSY'&&error.uncertain===(action==='prepareDraft'));
+  f.bridge=async()=>undefined;const pending=f.client.runProductDocumentDraft(session,action,new AbortController().signal);await f.wait(()=>f.sent.length===3);f.advance(action==='prepareDraft'?120001:60001);
+  await assert.rejects(pending,error=>error.code==='PRODUCT_DOCUMENT_ACK_MISSING'&&error.uncertain===(action==='prepareDraft'));
+  assert.deepEqual(f.sent.map(message=>message.payload.action),['preview',action,action]);assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);
+ }
+});
 
 for(const company of SINGLE_COMPANIES)test(company.name+' full preview binds all rows; production false gate emits no start and never scalar fallback',async()=>{
   const f=await fixture(company),session=await f.session();assert.equal(session.preview.members.length,2);assert.equal(session.packet.review.body.jsonDocument[1].productPage.modelNumber,'');assert.equal(Object.hasOwn(session.preview.identity,'optionId'),false);assert.equal(session.preview.packetDigest,f.context.packetDigest);

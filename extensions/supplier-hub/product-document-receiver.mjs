@@ -52,4 +52,11 @@ export function createProductDocumentReceiver(options){
     identity:(packet,sender,action)=>productDocumentIdentity(packet,sender,{now:options.now?.()??Date.now(),allowExpired:action!=='start'})});
 }
 
+/** A separately trusted preparation-only constructor. Its durable checkpoint
+ * cannot be resumed by the ordinary submission receiver or vice versa. */
+export function createProductDocumentDraftReceiver(options){
+  return createSupplierHubDocumentReceiver(options,{format:PRODUCT_DOCUMENT_RECEIVER_FORMAT,draftOnly:true,
+    identity:(packet,sender,action)=>productDocumentIdentity(packet,sender,{now:options.now?.()??Date.now(),allowExpired:action==='recoverDraft'})});
+}
+
 export const createProductDocumentStore=createSingleDocumentStore;
