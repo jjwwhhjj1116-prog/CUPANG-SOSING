@@ -6358,3 +6358,13 @@ ExistingfreeWorker ba37200e-0c9a-4a59-9362-86d27a6fa9bc deployed. Latestactualpr
 - 같은 Chrome 별도 localhost 새 합성 상품: 모델명 선택옵션만 PUT200 정확1회→같은 저장버전 검토 초점/열림/단일controller. 공통/다른옵션/원문/content/options/파일/보호합성상품 불변. step772-browser-proof.json, step772-ui/quotation-review-open.png. 검수 탭·서버 정리, source/Hub/native실요청0. 원격접수/AI품질/전카테고리·전UI동등성 미검증, 두 livegate=false.
 - 확장2.1.13: 생성수집번들/5다운로드링크/90파일 ZIP 1081792bytes SHA58f96ad427ca7d4add2200bc7dd6de849dbdaae778308f32993a5d7abd93d444. 2.1.12 archive/권한/호스트 불변. 설치 Chrome의 새버전 적용은 검증하지 않았고 refresh질문 반복0.
 - 최종 고유 검사 범위/건수·기존5실패의 HEAD 비교와 검수fixture 보완·동결SHA·types/변경파일lint/build·기존Worker 배포 version081ea34d-f683-42db-9fe5-ef5a94897af3·commit/push 결과는 outputs/step772-final-validation.json 참조. 집중·반복 실행 중복합산0. 신규resource/migration/Access정책변경0. 실제 업무상품 조회·수정·삭제·전송0.
+
+## Step773 — 2026-10-21: 옵션 사진·원가 재계산·SEO 적용 후 편집
+
+- 상세 docs/step773-option-images-price-and-seo-review.md. 기준 a071b36345062a1e693eef23383ff7403926a0a9. 보관 Couplus route SHA5b92873c…80ad1d9와 기존 REA 증거 재사용, 새 producer/거절 사이트 재접근/기존 업무상품 조회·수정·삭제·전송0.
+- 신규 anonymous DOM 옵션은 첫 import의 owner/product/job/receipt SHA/sourceKey→최초 option ID를 검증해 SEO 썸네일·견적 대표사진 연결. 이름/현재 순서 추정·기존상품 retrofit0. 삭제/원문·SKU재작성/다른상품 clone·split 시 이전연결 재사용 차단, 수동사진/공란·기존SKU 경로 유지. source-supplement는 page identity 계약에서409로 거절되어 raw/effective receipt 모호성 없음. cf: owner namespace 호환 유지.
+- Stage2 원가 change는 해당행 공급/판매가만 기존공식/현재정책으로 즉시재계산하고 기존원자POST1회저장. 같은숫자no-op·원래숫자로복귀는재계산. MSRP/공란/OSRP/타행·전역policy/recalculate 보존, live snapshot 사전검사 사용. 서버가격정책 변경0.
+- 검증된 통합SEO ACK→동일job/상품 최신 GET의 새버전+2revision 일치→상품명 1회 focus. 미저장/숨김/불확실/owner·product·clock·stage ABA·옛callback 차단. 시작시 busy callback으로 자기 operation만 해제. 독립리뷰 P2 두건 수정·실제generator/child 합성검증 완료, 원본과 전체배치·인터랙션 동등성 주장0.
+- 최종28파일347/347고유검사, types·변경파일lint0/0·운영build 통과. 마지막 lint주석만 추가했고 executable TS출력 동일. 초기VM/fixture loader 실패와 보완 기록 보존. outputs/step773-final-validation.json/step773-comment-only-proof.json. 집중검사중복합산0.
+- 같은Chrome localhost 실제Dashboard/API/SQLite 합성검수: 서로다른옵션사진decode, 수동SEO보존, AI적용후새상품명focus→수정저장→원가5.99/공급5100/판매8500/정상가11050 단일POST200→7단계동일값. 보호합성상품·파일불변. 양성SEO fixture provenance만 generated로 준비한 것 명시. step773-ui/seo-applied-editor.png 및 quotation-linked-values.png, step773-browser-final-checkpoint.json. source/Hub/native실요청0.
+- 확장2.1.13/90파일/1081792bytes/SHA58f96ad4…93d444 불변검사통과·새로고침질문0. 두livegate=false. 실제1688·원격upload/readback·최종동의/docId-QVT/SKU접수·전카테고리/전UI동등성 미검증. 새resource/migration/Access정책변경0. Worker version·commit/push는 최종validation 참조.

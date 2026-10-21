@@ -11,7 +11,7 @@ const version='2026-10-10T00:00:00.000Z';
 const compositionModules=new Map();
 function compositionModule(file){if(compositionModules.has(file))return compositionModules.get(file);const exports={};compositionModules.set(file,exports);
  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,structuredClone,TextEncoder,crypto:globalThis.crypto,require:name=>compositionModule(name.slice(2)+'.ts')});return exports;}
-function ui({allowed=true,storageValue=null,pending=null,registrationError=false,preparedAi=false,productId='p',productVersion=version,fetcher=null,draftHelper=null,sourceHelpers=null,savedSeo=null,workspaceOwnerId,brand='와이홉',registrationBrand=brand}={}){
+function ui({allowed=true,storageValue=null,pending=null,registrationError=false,preparedAi=false,productId='p',productVersion=version,fetcher=null,draftHelper=null,sourceHelpers=null,savedSeo=null,workspaceOwnerId,brand='와이홉',onApplied,registrationBrand=brand}={}){
  const slots=[],effects=[],layouts=[],calls=[],runs=[],creates=[],storage=new Map(storageValue?[[`yoofam-seo-workspace:${productId}`,storageValue]]:[]);let cursor=0,closed=false,lateWrites=0,lastKey,active=true;
  const schedule=(queue,fn,deps)=>{const i=cursor++;if(!slots[i]||!deps||!slots[i].deps||slots[i].deps.length!==deps.length||!deps.every((value,index)=>Object.is(value,slots[i].deps[index]))){const before=slots[i];slots[i]={deps,cleanup:before?.cleanup};queue.push(()=>{before?.cleanup?.();slots[i].cleanup=fn();});}};
  const react={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],value=>{if(closed){lateWrites++;return;}slots[i]=typeof value==='function'?value(slots[i]):value;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useMemo(fn,deps){const i=cursor++;if(!slots[i]||!(slots[i].deps?.length===deps?.length&&deps.every((value,index)=>Object.is(value,slots[i].deps[index]))))slots[i]={deps,value:fn()};return slots[i].value;},useEffect(fn,deps){schedule(effects,fn,deps);},useLayoutEffect(fn,deps){schedule(layouts,fn,deps);}};
@@ -24,14 +24,30 @@ function ui({allowed=true,storageValue=null,pending=null,registrationError=false
   if(url.endsWith('/options'))return Response.json({productVersion,options:{productId,rows:[]}});throw Error(url);};
  const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/seo-workspace-generator.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
   {exports,fetch:api,AbortController,structuredClone,sessionStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)},require(name){if(name==='react')return react;if(name==='react/jsx-runtime')return{jsx:(type,props,key)=>({type,props,key}),jsxs:(type,props,key)=>({type,props,key})};
-   if(name.endsWith('.css'))return{};if(name==='@/app/seo-workspace-draft')return helper;if(name==='@/app/seo-guidance-session')return compositionModule('app/seo-guidance-session.ts');if(name==='@/app/seo-guidance-composition')return compositionModule('app/seo-guidance-composition.ts');if(name==='@/app/components/translation-integrated-preview')return{TranslationIntegratedPreview:()=>null};
+   if(name.endsWith('.css'))return{};if(name==='@/app/seo-workspace-draft')return helper;if(name==='@/app/seo-guidance-session')return compositionModule('app/seo-guidance-session.ts');if(name==='@/app/seo-guidance-composition')return compositionModule('app/seo-guidance-composition.ts');if(name==='@/app/seo-apply-focus')return compositionModule('app/seo-apply-focus.ts');if(name==='@/app/components/translation-integrated-preview')return{TranslationIntegratedPreview:()=>null};
    if(sourceHelpers?.[name])return sourceHelpers[name];if(name==='@/app/collected-translation-attributes')return{collectedTranslationAttributes:value=>value.map(item=>({name:'상품속성: '+item.name,value:item.value}))};
    if(name==='@/app/option-translation')return{optionTranslationBatch:()=>({attributes:[],remaining:0})};if(name==='@/app/sourcing')return{collectionSourceReference:(id,url)=>id+' '+url};throw Error(name);}});
- const render=(passive=true)=>{cursor=0;const root=exports.SeoWorkspaceGenerator({productId,workspaceOwnerId,version:productVersion,brand,active,beforeGenerate:()=>allowed,onSaved(){throw Error('Unexpected product save');}});if(lastKey!==undefined&&lastKey!==root.key){slots.forEach(slot=>slot?.cleanup?.());slots.splice(0);effects.splice(0);layouts.splice(0);}lastKey=root.key;const tree=root.type(root.props);layouts.splice(0).forEach(fn=>fn());if(passive)effects.splice(0).forEach(fn=>fn());return tree;};
+ const render=(passive=true)=>{cursor=0;const root=exports.SeoWorkspaceGenerator({productId,workspaceOwnerId,version:productVersion,brand,active,beforeGenerate:()=>allowed,onApplied,onSaved(){throw Error('Unexpected product save');}});if(lastKey!==undefined&&lastKey!==root.key){slots.forEach(slot=>slot?.cleanup?.());slots.splice(0);effects.splice(0);layouts.splice(0);}lastKey=root.key;const tree=root.type(root.props);layouts.splice(0).forEach(fn=>fn());if(passive)effects.splice(0).forEach(fn=>fn());return tree;};
  const idle=async()=>{for(let i=0;i<10;i++){render();await new Promise(resolve=>setImmediate(resolve));}};
  const until=async(predicate)=>{const deadline=Date.now()+5000;while(!predicate()){assert.ok(Date.now()<deadline,'component did not reach the expected bounded state');render();await new Promise(resolve=>setImmediate(resolve));}};
  render();return{render,idle,until,calls,runs,creates,storage,input:label=>nodes(render()).find(node=>node.type==='input'&&node.props['aria-label']===label),integrated:()=>nodes(render()).find(node=>node.props?.jobId),button:label=>nodes(render()).find(node=>node.type==='button'&&text(node)===label),consent:()=>nodes(render()).find(node=>node.type==='input'&&node.props.type==='checkbox'),close(){closed=true;slots.forEach(slot=>slot?.cleanup?.());},get lateWrites(){return lateWrites;},setAllowed(value){allowed=value;},setRegistrationError(value){registrationError=value;},setVersion(value){productVersion=value;source.productVersion=value;},setSource(value){Object.assign(source,value);},setProduct(id,value){productId=id;productVersion=value;source.productId=id;source.productVersion=value;},setActive(value){active=value;},setOwner(value){workspaceOwnerId=value;},setRegistrationBrand(value){registrationBrand=value;}};
 }
+
+test('verified SEO editor handoff stays bound to the current composition job and context',async()=>{
+ for(const mode of ['valid','other-job','options-only','clock-aba','owner-aba','hidden','stage-aba']){
+  const events=[],h=ui({workspaceOwnerId:'owner-a',onApplied:value=>events.push(plain(value))});
+  try{
+   await h.idle();h.button('한국어 초안 자동 작성').props.onClick();await h.idle();
+   const apply=h.integrated().props.onApplied,receipt={scope:'all',productId:'p',jobId:'job',previousVersion:version,productVersion:'2026-10-10T00:00:01.000Z',contentRevision:3,optionRevision:2};
+   if(mode==='other-job')receipt.jobId='other';if(mode==='options-only')receipt.scope='options';
+   if(mode==='clock-aba'){h.setVersion(receipt.productVersion);await h.idle();h.setVersion(version);await h.idle();}
+   if(mode==='owner-aba'){h.setOwner('owner-b');await h.idle();h.setOwner('owner-a');await h.idle();}
+   if(mode==='hidden'||mode==='stage-aba'){h.setActive(false);await h.idle();if(mode==='stage-aba'){h.setActive(true);await h.idle();}}
+   apply(receipt);assert.equal(events.length,mode==='valid'?1:0,mode);if(mode==='valid')assert.deepEqual(events[0],receipt);
+   assert.equal(h.calls.some(call=>call.init?.method==='POST'),false,'navigation alone cannot dispatch a save');
+  }finally{h.close();}
+ }
+});
 
 test('unsubmitted SEO brand, features and keyword edits survive a same-source clock refresh and stage navigation',async()=>{
  const h=ui();try{await h.idle();h.input('SEO 브랜드').props.onChange({target:{value:'직접 브랜드'}});h.input('SEO 상품 특징').props.onChange({target:{value:'직접 특징'}});h.input('SEO 타겟 키워드').props.onChange({target:{value:''}});await h.idle();

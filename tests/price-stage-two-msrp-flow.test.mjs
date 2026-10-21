@@ -131,11 +131,14 @@ test('common manual MSRP amount/blank and explicit pending blank stay independen
     assert.match(text(nodes(row).find(node => node.props?.['data-price-column'] === 'supplyMargin')), /2,999\.5원/);
     assert.match(text(h.node('전체 옵션 가격 요약')), /평균 공급 마진: 3,000원/);
     await f.save();
-    let view = await f.read(); await f.write(f.paired(view, 'msrp', null, '27000')); await f.refresh(); change(h, '가격 옵션 1 판매가', '9000'); await f.save();
+    let view = await f.read();const costDerivedMsrp=view.resolved.rows.find(row=>row.optionId==='price-001').fields.msrp.value;assert.equal(view.stageTwoMsrp['price-001'].value,costDerivedMsrp,'cost change now performs the original per-row price/MSRP recalculation');
+    await f.write(f.paired(view, 'msrp', null, '27000'));await f.refresh();view=await f.read();assert.equal(view.resolved.rows.find(row=>row.optionId==='price-001').fields.msrp.value,costDerivedMsrp,'a common edit retires automatic authority but never silently removes its saved per-row override');assert.equal(view.stageTwoMsrp?.['price-001'],undefined);
+    await f.write(f.paired(view,'msrp','price-001',null));await f.refresh();change(h, '가격 옵션 1 판매가', '9000'); await f.save();
     view = await f.read(); assert.equal(view.resolved.rows.find(row => row.optionId === 'price-001').fields.msrp.value, '27000'); assert.equal(view.stageTwoMsrp?.['price-001'], undefined);
     await f.write(f.paired(view, 'msrp', null, '')); await f.refresh(); change(h, '가격 옵션 1 판매가', '15000'); await f.save(); view = await f.read(); assert.equal(view.resolved.rows.find(row => row.optionId === 'price-001').fields.msrp.value, '');
     await f.write(f.paired(view, 'msrp', null, null)); await f.refresh(); change(h, '가격 옵션 2 판매가', '15000'); change(h, '가격 옵션 2 권장소비자가', ''); await f.save();
     view = await f.read(); assert.equal(view.resolved.rows.find(row => row.optionId === 'price-002').fields.msrp.value, ''); assert.equal(view.stageTwoMsrp?.['price-002'], undefined);
+    assert.equal(view.resolved.rows.find(row=>row.optionId==='price-003').fields.msrp.value,costDerivedMsrp,'the other cost-derived row also keeps its exact saved value after common authority is retired');await f.write(f.paired(view,'msrp','price-003',null));await f.refresh();view=await f.read();
     const attempt = [...f.paired(view, 'salePrice', 'price-003', '9000'), ...f.paired(view, 'msrp', 'price-003', '11700')], before = database(h);
     for (const stageTwoMsrp of [true, 'price-003', ['missing'], ['price-003', 'price-003']]) await f.write(attempt, { stageTwoMsrp }, 400, view);
     await f.write([...f.paired(view, 'salePrice', 'price-003', '9000'), ...f.paired(view, 'msrp', 'price-003', '99999')], { stageTwoMsrp: ['price-003'] }, 400, view);

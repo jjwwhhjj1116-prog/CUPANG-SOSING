@@ -22,6 +22,7 @@ import { PriceSelectionDialog } from '@/app/components/price-selection-dialog';
 import { createBundleAddDraft, verifyBundleAddReceipt, type BundleAddition, type BundleAddReceipt } from '@/app/option-bundles';
 import { verifyOptionPriceView } from '@/app/option-price-save';
 import { applyOptionNameChanges } from '@/app/option-seo-names';
+import {recalculateStageTwoOptionCost} from '@/app/stage-two-option-recalculation';
 
 type Props = { product: { id: string; title: string; image_keys: string; updated_at?: string; registration_number?: string }; profileId?:string;refreshToken?:string;onSaved?: () => void; onReviewPackaging?: (optionId: string | null) => void; imageView?: boolean; imageProcessingBusy?: boolean; pricingView?: boolean; seoView?: boolean; focusedOptionId?: string; initialBulkAction?: 'remove';
   editableQuotationPrices?:boolean;pricePolicyLocked?:boolean;beforePriceCommit?:()=>boolean;onPriceBusyChange?:(busy:boolean,operation:object)=>void;
@@ -183,9 +184,9 @@ function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = fals
   function recalculateStageTwo(controller:OptionPriceController){
     const policy=policyDraftRef.current;if(policy)changeStageTwoPolicy(controller,policy);
   }
-  function stageTwoDisplayController(controller:OptionPriceController):OptionPriceController{
-    if(!controller.view||!currentPolicy)return controller;
-    try{const preview=stageTwoQuotationDraft(controller.view,currentPolicy,recalculate,controller.edits);
+  function stageTwoDisplayController(controller:OptionPriceController,policy=currentPolicy,recalculatePrices=recalculate):OptionPriceController{
+    if(!controller.view||!policy)return controller;
+    try{const preview=stageTwoQuotationDraft(controller.view,policy,recalculatePrices,controller.edits);
       return {...controller,view:{...controller.view,overrides:preview.overrides,...(preview.stageTwoMsrp?{stageTwoMsrp:preview.stageTwoMsrp}:{})},edits:preview.changes};
     }catch{return controller;}
   }
@@ -203,7 +204,7 @@ function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = fals
     if(snapshot.edits.some(edit=>!draft.some(row=>row.id===edit.optionId&&row.included))){setError('직접 가격을 수정한 옵션은 포함 상태를 유지해주세요. 가격 입력을 복원하거나 저장한 뒤 삭제·제외하세요.');return false;}
     let request:StageTwoPricingRequest;
     try{
-      const checked=pricePolicy(policy),display=stageTwoDisplayController(controller),prices=effectiveGridPrices(draft,calculateOptionPrices(draft,checked),display.view,display.edits);
+      const checked=pricePolicy(policy),display=stageTwoDisplayController({...controller,view:snapshot.view,edits:snapshot.edits},checked,recalculateRef.current),prices=effectiveGridPrices(draft,calculateOptionPrices(draft,checked),display.view,display.edits);
       if(draft.some(row=>row.included&&!prices.get(row.id)?.calculation))throw Error('포함한 옵션의 원가·공급가·판매가를 확인해주세요. 입력은 유지했습니다.');
       for(const edit of snapshot.edits)if(edit.value!==null){const field=snapshot.view.resolved.schema.fields.find(value=>value.id===edit.fieldKey);if(!field)throw Error('수정한 가격 항목을 다시 확인해주세요.');const issues=quotationValueIssues(field,edit.value,snapshot.view.imageKeys);if(issues.length)throw Error(`${field.label}: ${issues.join(' ')}`);}
       request={expectedProductVersion:base.productVersion,expectedOptionRevision:base.options.revision,expectedQuotationRevision:snapshot.view.revision,expectedInputFingerprint:snapshot.view.inputFingerprint,policy:checked,rows:draft,changes:structuredClone(snapshot.edits),recalculate:recalculateRef.current};
@@ -337,6 +338,17 @@ function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = fals
     finally{if(selectionRequest.current===operation){selectionRequest.current=null;if(gridEpoch.current===generation)setSelectionBusy(false);}}
   }
   function update<K extends OptionField>(id: string, key: K, value: OptionInput[K]) { if(bundleAttempt.current||atomicAttempt.current||editableQuotationPrices&&(combined.current||pricePolicyLocked||imageProcessingBusy||beforePriceCommit?.()===false))return;if(seoView&&key==='translatedName')setEditedNames(previous=>new Set([...previous,id]));setRows(previous => previous.map(row => row.id === id ? { ...row, [key]: value, ...(key === 'unitsPerPack' && value !== row.unitsPerPack ? {packagingConfirmed:false} : {}) } : row)); }
+  function updateStageTwoRow<K extends OptionField>(controller:OptionPriceController,id:string,key:K,value:OptionInput[K]){
+    if(key!=='unitCostCny'){update(id,key,value);return;}
+    if(!gridAllowed(controller)||loading||conflict||changedElsewhere)return;
+    const row=rowsRef.current.find(value=>value.id===id),snapshot=controller.snapshot(),policy=policyDraftRef.current,cost=value as OptionInput['unitCostCny'];
+    if(!row||Object.is(row.unitCostCny,cost)||!snapshot.fresh||snapshot.uncertain||!snapshot.view||!policy)return;
+    try{
+      const plan=recalculateStageTwoOptionCost(row,cost,policy,snapshot.view,snapshot.edits);
+      if(plan&&!controller.replaceEdits(plan.changes))return;
+      setRows(previous=>previous.map(value=>value.id===id?plan?.row??{...value,unitCostCny:cost}:value));setError('');setMessage('');
+    }catch(cause){setRows(previous=>previous.map(value=>value.id===id?{...value,unitCostCny:cost}:value));setError(cause instanceof Error?cause.message:'현재 옵션의 원가와 가격을 확인해주세요.');}
+  }
   function origin(row: OptionInput, key: OptionField) {
     const previous = saved?.options.rows.find(item => item.id === row.id);
     return previous && previous[key] === row[key] ? originNames[previous.provenance[key] ?? 'unverified'] : '미저장 수정';
@@ -413,7 +425,7 @@ function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = fals
           renderGrid={controller=><div className="stage-two-pricing-workspace"><StageTwoPricePolicyFields policy={currentPolicy!} dirty={dirty||controller.dirty} sourceDirty={otherDirty||policyDirty||recalculate||manualPriceDirty||controller.dirty} busy={busy||controller.busy} disabled={loading||conflict||changedElsewhere||pricePolicyLocked||imageProcessingBusy||atomicUncertain||bundleUncertain||bundleRetry||!controller.fresh} error={policyError} onChange={next=>changeStageTwoPolicy(controller,next)} onRecalculate={()=>recalculateStageTwo(controller)} onSave={()=>void saveGrid(controller)}/><section className="pricing-options-panel"><div style={{display:'flex',gap:8,marginBottom:12}}>{(['remove','addBundle','bundle'] as const).map(kind=><button type="button" key={kind} className="btn ghost" disabled={!selected.size||busy||loading||conflict||changedElsewhere||pricePolicyLocked||imageProcessingBusy||atomicUncertain||bundleUncertain||bundleRetry||selectionBusy||controller.busy||controller.uncertain||!controller.fresh} onClick={()=>openSelection(kind,controller)}>{kind==='remove'?`선택 삭제 (${selected.size})`:kind==='addBundle'?'번들 추가':'번들 적용'}</button>)}</div>
             {selectionDialog&&selectionDialog.generation===generation&&<PriceSelectionDialog kind={selectionDialog.kind} count={selectionDialog.ids.length} value={selectionDialog.value} busy={selectionBusy||busy||controller.busy} error={selectionError} quantityLocked={selectionDialog.kind==='addBundle'&&(bundleUncertain||bundleRetry)} confirmationBlocked={selectionDialog.kind==='addBundle'&&bundleUncertain} onRecover={selectionDialog.kind==='addBundle'&&bundleUncertain?()=>void recoverBundleAdd(controller):undefined} onChange={value=>{if(dialogRef.current!==selectionDialog||selectionRequest.current||gridEpoch.current!==generation||selectionDialog.kind==='addBundle'&&bundleAttempt.current)return;storeSelectionDialog({...selectionDialog,value});setSelectionError('');}} onConfirm={()=>void confirmSelection(selectionDialog,controller)} onCancel={()=>{if(selectionRequest.current||dialogRef.current!==selectionDialog||gridEpoch.current!==generation)return;if(selectionDialog.kind==='addBundle'&&bundleAttempt.current?.state==='retry'){bundleAttempt.current=null;setBundleRetry(false);setBundleUncertain(false);onPriceBusyChange?.(quotationLocked.current,generation);}storeSelectionDialog(null);setSelectionError('');}}/>}
             {bundleUncertain&&selectionDialog?.kind!=='addBundle'&&<button type="button" className="btn ghost" disabled={busy||loading||pricePolicyLocked||imageProcessingBusy||controller.busy} onClick={()=>void recoverBundleAdd(controller)}>입력 유지 · 번들 저장 결과 확인</button>}
-            <OptionPriceTable rows={rows} calculations={calculations} exchangeRate={currentPolicy!.exchangeRate} selected={selected} focusedOptionId={focusedOptionId} optionRegistrationNumbers={saved?.optionRegistrationNumbers} onSelect={ids=>setSelected(new Set(ids))} onChange={update} priceController={stageTwoDisplayController(controller)} priceBlocked={busy||loading||pricePolicyLocked||imageProcessingBusy||atomicUncertain||bundleUncertain||bundleRetry} showSummary={false}/>
+            <OptionPriceTable rows={rows} calculations={calculations} exchangeRate={currentPolicy!.exchangeRate} selected={selected} focusedOptionId={focusedOptionId} optionRegistrationNumbers={saved?.optionRegistrationNumbers} onSelect={ids=>setSelected(new Set(ids))} onChange={(id,key,value)=>updateStageTwoRow(controller,id,key,value)} priceController={stageTwoDisplayController(controller)} priceBlocked={busy||loading||pricePolicyLocked||imageProcessingBusy||atomicUncertain||bundleUncertain||bundleRetry} showSummary={false}/>
           </section><div className="stage-two-price-breakdown"><PricePolicyRatio policy={currentPolicy!}/><OptionPriceSummary rows={rows} calculations={calculations} priceController={stageTwoDisplayController(controller)}/></div><div className="stage-two-pricing-save">
             <button type="button" className="btn primary" aria-label="옵션 가격 저장하기" disabled={busy||loading||conflict||changedElsewhere||pricePolicyLocked||imageProcessingBusy||atomicUncertain||bundleUncertain||bundleRetry||controller.busy||controller.uncertain||!controller.fresh||(!dirty&&!controller.dirty)} onClick={()=>void saveGrid(controller)}>저장하기</button>
             {atomicUncertain&&<button type="button" className="btn ghost" disabled={busy||loading||pricePolicyLocked||imageProcessingBusy} onClick={()=>void recoverGridSource(controller)}>입력 유지 · 저장 결과 확인</button>}

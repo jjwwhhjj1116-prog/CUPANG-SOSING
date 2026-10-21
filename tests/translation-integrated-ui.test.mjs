@@ -11,7 +11,7 @@ const version='2026-09-25T01:00:00.000Z';
 const plan={productId:'p',productVersion:version,contentRevision:0,optionRevision:1,fingerprint:'a'.repeat(64),preview:[{name:'상품명',before:'',after:'한국어'}],skipped:[]};
 function harness(handler) {
  let slots=[],cleanups=[]; const calls=[]; let index=0,first=true,saved=0,closed=false,late=0,key; let props={productId:'p',version,jobId:'j',disabled:false,onSaved:()=>saved++};
- const hooks={useState(v){const i=index++;if(!(i in slots))slots[i]=v;return[slots[i],x=>{if(closed)late++;slots[i]=x;}];},useRef(v){const i=index++;return slots[i]??(slots[i]={current:v});},useEffect(fn){if(first)cleanups.push(fn());},useLayoutEffect(fn,deps){const i=index++,previous=slots[i];if(!previous||JSON.stringify(previous.deps)!==JSON.stringify(deps)){previous?.cleanup?.();slots[i]={deps,cleanup:fn()};if(!previous)cleanups.push(()=>slots[i]?.cleanup?.());}}};
+ const hooks={useState(v){const i=index++;if(!(i in slots))slots[i]=v;return[slots[i],x=>{if(closed)late++;slots[i]=x;}];},useRef(v){const i=index++;return slots[i]??(slots[i]={current:v});},useEffect(fn){if(first)cleanups.push(fn());},useLayoutEffect(fn,deps){const i=index++,previous=slots[i];if(!previous||previous.deps.length!==deps.length||!deps.every((value,index)=>Object.is(value,previous.deps[index]))){previous?.cleanup?.();slots[i]={deps,cleanup:fn()};if(!previous)cleanups.push(()=>slots[i]?.cleanup?.());}}};
  const exports={};
  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/translation-integrated-preview.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,fetch:async(url,init)=>{calls.push({url,init});return handler(init);},require:n=>n==='react'?hooks:native(n)});
  const render=(updates={})=>{props={...props,...updates};const root=exports.TranslationIntegratedPreview(props);if(key!==root.key){cleanups.forEach(fn=>fn?.());slots=[];cleanups=[];first=true;key=root.key;}index=0;const tree=root.type(root.props);first=false;return tree;};
@@ -25,10 +25,32 @@ test('integrated UI submits only reviewed fingerprint and verifies save receipt'
   assert.equal(h.saved,valid?1:0);assert.match(JSON.stringify(h.render()),valid ? /함께 저장했습니다/ : /응답이 일치하지/);
  }
 });
+
+test('only a verified save publishes the exact editor handoff, and navigation failure cannot unset that save',async()=>{
+ for(const mode of ['valid','invalid','callback-error']){
+  const receipts=[],h=harness(async init=>JSON.parse(init.body).action==='preview'?Response.json(plan):Response.json({productId:mode==='invalid'?'other':'p',productVersion:'2026-09-25T01:00:01.000Z',contentRevision:1,optionRevision:2,applied:1}));
+  h.render({onApplied:receipt=>{receipts.push(JSON.parse(JSON.stringify(receipt)));if(mode==='callback-error')throw Error('navigation failed');}});
+  h.click(0);await settle();h.click(1);await settle();
+  assert.equal(h.saved,mode==='invalid'?0:1);assert.equal(receipts.length,mode==='invalid'?0:1);
+  if(mode!=='invalid')assert.deepEqual(receipts[0],{scope:'all',productId:'p',jobId:'j',previousVersion:version,productVersion:'2026-09-25T01:00:01.000Z',contentRevision:1,optionRevision:2});
+  if(mode!=='invalid'){h.click(0);await settle();assert.equal(h.calls.length,2,'confirmed apply cannot be repeated');}h.close();
+ }
+});
 test('integrated UI locks duplicate requests and ignores responses after close',async()=>{
  let resolve;const pending=new Promise(r=>resolve=r),h=harness(()=>pending);
  h.click(0);h.click(0);assert.equal(h.calls.length,1);h.close();assert.equal(h.calls[0].init.signal.aborted,true);
  resolve(Response.json(plan));await settle();assert.equal(h.saved,0);assert.equal(h.late,0);
+});
+
+test('pending preview and apply release the callback that acquired their lease after callback replacement',async()=>{
+ for(const phase of ['preview','apply'])for(const close of [false,true]){
+  let resolve;const pending=new Promise(done=>resolve=done),events=[];
+  const h=harness(init=>JSON.parse(init.body).action===phase?pending:Response.json(plan));
+  h.render({onBusyChange:busy=>events.push(['old',busy])});h.click(0);if(phase==='apply'){await settle();h.click(1);}
+  const before=events.length;h.render({onBusyChange:busy=>events.push(['new',busy])});if(close)h.close();
+  resolve(Response.json(phase==='preview'?plan:{productId:'p',productVersion:'2026-09-25T01:00:01.000Z',contentRevision:1,optionRevision:2,applied:1}));await settle();
+  assert.deepEqual(events.slice(before),[['old',false]],`${phase}/${close?'close':'complete'} releases exactly its own operation`);assert.equal(h.late,0);h.close();
+ }
 });
 test('malformed preview never exposes an apply action',async()=>{
  const h=harness(async()=>Response.json({...plan,productId:'other'}));h.click(0);await settle();

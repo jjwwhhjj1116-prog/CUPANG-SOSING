@@ -8,6 +8,7 @@ import { readProductOptions } from '@/db/product-options';
 import { collectionImagesSchema } from '@/db/collection-images';
 import { collectedImageDraft, type CollectedImageLink } from '@/app/collection-image-draft';
 import { productImageKeys } from '@/app/product-content';
+import { collectedPageOptionImageIndices } from '@/app/collected-page-option-binding';
 
 export async function prepareCollectedImageDraft(owner: string, jobId: string, productId: string, explicit?: { expectedVersion: string }) {
   if (!env.DB) throw Error('이미지 초안 저장소 연결이 필요합니다.');
@@ -24,7 +25,8 @@ export async function prepareCollectedImageDraft(owner: string, jobId: string, p
   const images = await db.prepare('SELECT image_index AS imageIndex,object_key AS key FROM collection_images WHERE owner_id=? AND job_id=? AND product_id=? ORDER BY image_index').bind(owner, jobId, productId).all<CollectedImageLink>();
   const now = new Date(Math.max(Date.now(), Date.parse(product.updated_at) + 1)).toISOString();
   const keys = productImageKeys(product.image_keys);
-  const draft = collectedImageDraft(owner, receipt.result, images.results, keys, content, options, now);
+  const pageOptionIndices = await collectedPageOptionImageIndices(owner,job,receipt.result,options);
+  const draft = collectedImageDraft(owner, receipt.result, images.results, keys, content, options, now, pageOptionIndices);
   const availableImages = images.results.filter(image => keys.includes(image.key)).length;
   const guard = `id=? AND owner_id=? AND source_url=? AND updated_at=? AND image_keys=?
     AND EXISTS(SELECT 1 FROM product_content WHERE product_id=products.id AND owner_id=products.owner_id AND revision=?)

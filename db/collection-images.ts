@@ -7,6 +7,8 @@ import {collectionProductSchema} from '@/db/collection-jobs';
 import {isOwnedImageKey} from '@/app/image-files';
 import {collectionResultSchema} from '@/db/collection-results';
 import type {ProductOptions} from '@/app/product-options';
+import {collectedPageOptionImageIndices} from '@/app/collected-page-option-binding';
+import type {CollectionResult} from '@/app/collection-result';
 export class CollectionImageCancelledError extends Error {
  constructor(){super('취소된 수집 요청입니다. 이미지를 상품에 반영하지 않았습니다.');}
 }
@@ -95,6 +97,25 @@ export async function readOptionSourceImages(owner:string,product:Pick<ProductRe
  const images:Record<string,string>={};
  const counts=new Map<string,number>();for(const option of options.rows)counts.set(option.supplierSku,(counts.get(option.supplierSku)??0)+1);
  for(const option of options.rows){const key=sources.get(option.supplierSku);if(key&&counts.get(option.supplierSku)===1)images[option.id]=key;}
+ // New anonymous imports carry a server-issued immutable source binding. Old
+ // products without it keep their existing behavior; never reconstruct one.
+ if(typeof options.collectedPageOptionBindings?.jobId==='string'&&/^[A-Za-z0-9_-]{1,100}$/u.test(options.collectedPageOptionBindings.jobId)){
+  const saved=await db.prepare(`SELECT cp.job_id AS id,j.owner_id,j.source_url,j.offer_id,cr.payload
+   FROM collection_products cp JOIN products p ON p.id=cp.product_id AND p.owner_id=cp.owner_id
+   JOIN collection_jobs j ON j.id=cp.job_id AND j.owner_id=cp.owner_id
+   JOIN collection_results cr ON cr.job_id=j.id AND cr.owner_id=j.owner_id
+   WHERE cp.owner_id=? AND cp.product_id=? AND cp.job_id=? AND p.source_url=j.source_url LIMIT 2`)
+   .bind(owner,product.id,options.collectedPageOptionBindings.jobId).all<{id:string;owner_id:string;source_url:string;offer_id:string;payload:string}>();
+  if(saved.results.length===1){
+   const source=saved.results[0];let receipt:CollectionResult|null=null;try{receipt=JSON.parse(source.payload) as CollectionResult;}catch{/* Damaged receipts cannot supply anonymous thumbnails. */}
+   if(receipt){
+    const bound=await collectedPageOptionImageIndices(owner,source,receipt,options);
+    const originals=await db.prepare('SELECT image_index,object_key FROM collection_images WHERE owner_id=? AND product_id=? AND job_id=?').bind(owner,product.id,source.id).all<{image_index:number;object_key:string}>();
+    const byIndex=new Map<number,string|null>();for(const row of originals.results)byIndex.set(row.image_index,byIndex.has(row.image_index)?null:row.object_key);
+    for(const [optionId,index]of bound){const key=byIndex.get(index);if(key&&owned.has(key)&&!Object.hasOwn(images,optionId))images[optionId]=key;}
+   }
+  }
+ }
  return images;
 }
 export async function saveCollectionImage(owner:string,jobId:string,index:number,key:string,role:'main'|'additional'|'detail',product:ProductRecord,current:ProductContent,skus:readonly string[]=[],assignToStage = true,commonStageAllowed=true){

@@ -19,6 +19,7 @@ import { OptionSeoEditor } from '@/app/components/option-seo-editor';
 import { SeoWorkspaceGenerator } from '@/app/components/seo-workspace-generator';
 import { setSeoGuidanceSessionOwner } from '@/app/seo-guidance-session';
 import { SeoWorkspaceEditor } from '@/app/components/seo-workspace-editor';
+import { sameSeoAppliedSource, type SeoAppliedReceipt } from '@/app/seo-apply-focus';
 import { OptionImageEditor } from '@/app/components/option-image-editor';
 import { DetailImageBatchPanel } from '@/app/components/detail-image-batch-panel';
 import { DetailFamilyApplyPanel } from '@/app/components/detail-family-apply-panel';
@@ -769,6 +770,14 @@ function Modal({ title, subtitle, onClose, children, wide=false,closeDisabled=fa
 }
 function DetailPanel({ workspaceOwnerId, onEditSeo, onReceiptSaved, onBeforeSeoGenerate, onBeforeFreeImageApply, onBeforeSourceWrite, onPrepareSubmission, onProfilePrepared, onProfileSelected, onReviewPackaging, tab, product, settings, onUpload, onSaved, onManageCategories, preferredProfileId, quotationTarget, quotationNavigationSequence, focusedOptionId, initialOptionAction }: { workspaceOwnerId?:string;onEditSeo?:()=>void;onReceiptSaved:()=>void; onBeforeSeoGenerate:()=>boolean; onBeforeFreeImageApply:()=>boolean; onBeforeSourceWrite?:(source:WorkspaceSourceWrite)=>boolean; onPrepareSubmission:(profileId?:string)=>void; onProfilePrepared:(profile:CategoryProfile,source:CategoryProfile)=>void; onProfileSelected:(id?:string)=>void; onReviewPackaging:(optionId:string|null)=>void; focusedOptionId?:string; initialOptionAction?:'remove'; quotationTarget?:QuotationNavigationTarget; quotationNavigationSequence?:number; preferredProfileId?:string; onSavePrice:(policy:PricePolicy, options?:PriceSaveOptions)=>Promise<void>; tab:string; product:Product; settings:Settings; onSaved:()=>void; onManageCategories:()=>void; onUpload:(e:ChangeEvent<HTMLInputElement>)=>void }) {
   const [quotationRefresh, setQuotationRefresh] = useState(0);
+  const seoReviewScope=JSON.stringify([workspaceOwnerId??product.owner_id??null,product.id,tab==='SEO']);
+  const [seoReviewClock,setSeoReviewClock]=useState({scope:seoReviewScope,token:{}});
+  if(seoReviewClock.scope!==seoReviewScope)setSeoReviewClock({scope:seoReviewScope,token:{}});
+  const seoReviewToken=seoReviewClock.scope===seoReviewScope?seoReviewClock.token:null;
+  const liveSeoReview=useRef<{token:object|null;version:string;active:boolean}>({token:seoReviewToken,version:product.updated_at,active:tab==='SEO'});
+  const [seoApplied,setSeoApplied]=useState<{token:object;receipt:SeoAppliedReceipt}|null>(null);
+  useLayoutEffect(()=>{liveSeoReview.current={token:seoReviewToken,version:product.updated_at,active:tab==='SEO'};return()=>{liveSeoReview.current={token:null,version:'',active:false};};},[seoReviewToken,product.updated_at,tab]);
+  const seoFocusAfterApply=seoApplied?.token===seoReviewToken?seoApplied.receipt:undefined;
   const seoProcessingScope=JSON.stringify([workspaceOwnerId,product.id,product.updated_at]);
   const [seoProcessingClock,setSeoProcessingClock]=useState({scope:seoProcessingScope,token:{}});
   if(seoProcessingClock.scope!==seoProcessingScope)setSeoProcessingClock({scope:seoProcessingScope,token:{}});
@@ -784,6 +793,12 @@ function DetailPanel({ workspaceOwnerId, onEditSeo, onReceiptSaved, onBeforeSeoG
     seoProcessingRef.current={token:seoProcessingToken,busy,operation:busy?operation:null};setSeoProcessingState(seoProcessingRef.current);
   },[seoProcessingToken]);
   const seoProcessingBusy=seoProcessingState.token===seoProcessingToken&&seoProcessingState.busy;
+  const reviewAppliedSeo=useCallback((receipt:SeoAppliedReceipt)=>{
+    const live=liveSeoReview.current;
+    if(!seoReviewToken||live.token!==seoReviewToken||!live.active||live.version!==product.updated_at
+      ||!seoProcessingToken||liveSeoProcessingToken.current!==seoProcessingToken||!sameSeoAppliedSource(receipt,product.id,product.updated_at))return;
+    setSeoApplied({token:seoReviewToken,receipt});
+  },[seoReviewToken,seoProcessingToken,product.id,product.updated_at]);
   const [paidImageBusy,setPaidImageBusy]=useState(false);
   const [freeImageBusy,setFreeImageBusy]=useState(false);
   const [additionalBatchBusy,setAdditionalBatchBusy]=useState(false);
@@ -845,7 +860,7 @@ function DetailPanel({ workspaceOwnerId, onEditSeo, onReceiptSaved, onBeforeSeoG
     setImageTranslation(previous=>({productId:product.id,sourceKey,sequence:(previous?.sequence??0)+1,sourceLanguage,...(role?{role}:{})}));
   }}/>;
   return <>
-    <div hidden={tab!=='SEO'} className="registration-seo-heading"><h2>SEO 설정</h2><SeoWorkspaceGenerator workspaceOwnerId={workspaceOwnerId} productId={product.id} version={product.updated_at} brand={settings.brand} active={tab==='SEO'} beforeGenerate={onBeforeSeoGenerate} onProcessingChange={changeSeoProcessing} onSaved={sourceSaved}/></div>
+    <div hidden={tab!=='SEO'} className="registration-seo-heading"><h2>SEO 설정</h2><SeoWorkspaceGenerator workspaceOwnerId={workspaceOwnerId} productId={product.id} version={product.updated_at} brand={settings.brand} active={tab==='SEO'} beforeGenerate={onBeforeSeoGenerate} onProcessingChange={changeSeoProcessing} onApplied={reviewAppliedSeo} onSaved={sourceSaved}/></div>
     <div hidden={tab!=='대표 이미지'} className="registration-upload-actions">{focusedOptionId?<ProductImageUploadQueue key={`${workspaceOwnerId??product.owner_id}:${product.id}:${focusedOptionId}:main:${pricingProfileId??''}`} productId={product.id} ownerId={workspaceOwnerId??product.owner_id??''} version={product.updated_at} storedCount={imageKeys.length} stage="main" target={{optionId:focusedOptionId,profileId:pricingProfileId}} immediate active={tab==='대표 이미지'} disabled={paidImageBusy||freeImageBusy||batchImageBusy||detailFamilyBusy||additionalUploadBusy||detailUploadBusy||sizeChartBusy} beforeUpload={()=>imageUploadFilesFree('main')} onBusyChange={changeMainUploadBusy} onSaved={sourceSaved}/>:<label className="btn primary upload-btn">＋ 이미지 업로드<input type="file" accept="image/*" disabled={imageProcessingBusy} onChange={onUpload}/></label>}</div>
     <div hidden={tab!=='추가 이미지'}><ProductImageUploadQueue key={`${workspaceOwnerId??product.owner_id}:${product.id}:additional`} productId={product.id} ownerId={workspaceOwnerId??product.owner_id??''} version={product.updated_at} storedCount={imageKeys.length} stage="additional" target={{optionId:null,profileId:pricingProfileId}} active={tab==='추가 이미지'} disabled={paidImageBusy||freeImageBusy||batchImageBusy||detailFamilyBusy||mainUploadBusy||detailUploadBusy||sizeChartBusy} beforeUpload={()=>imageUploadFilesFree('additional')} onBusyChange={changeAdditionalUploadBusy} onSaved={sourceSaved}/></div>
     <div hidden={tab!=='상세 이미지'}><ProductImageUploadQueue key={`${workspaceOwnerId??product.owner_id}:${product.id}:detail`} productId={product.id} ownerId={workspaceOwnerId??product.owner_id??''} version={product.updated_at} storedCount={imageKeys.length} stage="detail" target={{optionId:null,profileId:pricingProfileId}} immediate active={tab==='상세 이미지'} disabled={paidImageBusy||freeImageBusy||batchImageBusy||detailFamilyBusy||mainUploadBusy||additionalUploadBusy||sizeChartBusy} beforeUpload={()=>imageUploadFilesFree('detail')} onBusyChange={changeDetailUploadBusy} onSaved={sourceSaved}/></div>
@@ -860,7 +875,7 @@ function DetailPanel({ workspaceOwnerId, onEditSeo, onReceiptSaved, onBeforeSeoG
       <details><summary>분할 상품에 상세 이미지 적용</summary><div ref={detailFamilyScope} hidden={tab!=='상세 이미지'}><DetailFamilyApplyPanel productId={product.id} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} active={tab==='상세 이미지'} disabled={paidImageBusy||freeImageBusy||additionalBatchBusy||detailBatchBusy||mainUploadBusy||additionalUploadBusy||detailUploadBusy||sizeChartBusy} onBusyChange={changeDetailFamilyBusy} onSaved={sourceSaved} beforeOpen={()=>{const state=workspaceEditState(detailFamilyScope.current?.closest('.detail-body')??null);return !state.busy&&!state.dirty&&priceFilesFree()&&onBeforeFreeImageApply();}} /></div></details>
       </div>
       <div hidden={tab!=='표시사항'}><ProductLabelEditor key={`${product.id}:${focusedOptionId??'common'}:${pricingProfileId??''}`} productId={product.id} optionId={focusedOptionId??null} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} disabled={imageProcessingBusy} active={tab==='표시사항'} onSaved={sourceSaved} onTranslate={focusedOptionId?translateFinalImage:undefined}/></div>
-      <div hidden={tab!=='SEO'} style={{gridColumn:'1 / -1'}}><SeoWorkspaceEditor productId={product.id} version={product.updated_at} focusedOptionId={focusedOptionId} active={tab==='SEO'} disabled={seoProcessingBusy} onSaved={sourceSaved}/></div>
+      <div hidden={tab!=='SEO'} style={{gridColumn:'1 / -1'}}><SeoWorkspaceEditor productId={product.id} version={product.updated_at} focusedOptionId={focusedOptionId} active={tab==='SEO'} disabled={seoProcessingBusy} focusAfterApply={seoFocusAfterApply} onSaved={sourceSaved}/></div>
       <details className={commonImageWorkflow?'registration-common-image-editor':undefined} open={commonImageWorkflow&&!primaryImageWorkflow||!scopedContent?true:undefined} hidden={tab==='SEO'&&!focusedOptionId}><summary hidden={!scopedContent}>{tab==='SEO'?'옵션별 추가 SEO 편집':`상품 공통 ${commonContentLabel} 편집`}</summary><p hidden={!scopedContent||tab==='SEO'} className="panel-note">아래 수정값은 상품의 공통 자료에 저장됩니다. 옵션별로 직접 저장한 값은 해당 옵션의 값을 유지합니다.</p><div hidden={tab!=='SEO'||!focusedOptionId}>{focusedOptionId&&<OptionSeoEditor key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} disabled={seoProcessingBusy} onSaved={sourceSaved}/>}</div><div hidden={tab==='SEO'}>{contentEditor}</div></details>
     </div>
     <div hidden={!isImageStep&&!showLabelImageEditing} inert={batchImageBusy||detailFamilyBusy||mainUploadBusy||additionalUploadBusy||detailUploadBusy||sizeChartBusy} className="panel-stack">

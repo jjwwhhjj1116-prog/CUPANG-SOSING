@@ -12,6 +12,7 @@ import { effectiveCollectionPayload, readCollectionResult } from '@/db/collectio
 import type { SourceCaptureSelection } from '@/app/source-capture-selection';
 import type { SupplierHubCompany } from '@/app/supplier-hub-company';
 import { prepareNewProductLabels } from '@/db/product-label-initialization';
+import { issueCollectedPageOptionBindings } from '@/app/collected-page-option-binding';
 /** The HTTP handler resolves the owned selection; clients cannot supply the
  * approved company or replacement receipt through this internal proof. */
 export type ExpectedCollectionSource={capture:Readonly<SourceCaptureSelection>;receivedAt:string;company:SupplierHubCompany};
@@ -47,6 +48,7 @@ export async function promoteCollection(owner:string,job:CollectionJob,receipt:C
  }
  await readCollectionResult(owner,job.id);
  const id=crypto.randomUUID();const now=new Date().toISOString();const prepared=prepareCollectionProduct(owner,job,receipt,id,now);
+ await issueCollectedPageOptionBindings(owner,job,receipt,prepared.options);
  await verifyWorkspaceBannerFiles(owner, job.context!.settings, true);
  await readProductOptions(owner,id);await readProductContent(owner,id);
  const db=env.DB;const entries=Object.entries(prepared.product);

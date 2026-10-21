@@ -2,23 +2,25 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { SeoWorkspaceInput, SeoWorkspaceView } from '@/app/seo-workspace';
+import { sameSeoAppliedSource, seoAppliedReceiptKey, seoAppliedViewReady, type SeoAppliedReceipt } from '@/app/seo-apply-focus';
 import { cleanSeoKeywordCandidates, prepareSeoKeywordText, quotationSeoKeywordText,seoKeywordDocumentText } from '@/app/seo-keyword-text';
 import { emptySeoWorkspaceDraft, hasSeoWorkspaceDraft, readSeoWorkspace, saveSeoWorkspace, seoWorkspaceInput, seoWorkspaceRefreshConflicts, seoWorkspaceSaveState,
   SeoWorkspaceSaveError, type SeoWorkspaceDraft } from '@/app/seo-workspace-client';
 import './seo-workspace.css';
 
-type Props = { productId: string; version: string; focusedOptionId?: string; active?: boolean; disabled?: boolean; onSaved?: () => void };
+type Props = { productId: string; version: string; focusedOptionId?: string; active?: boolean; disabled?: boolean; onSaved?: () => void; focusAfterApply?: SeoAppliedReceipt };
 type Saved = { scope: string; sourceKey: string; view: SeoWorkspaceView };
 type Attempt = { scope: string; before: SeoWorkspaceView; input: SeoWorkspaceInput };
 type Comparison = { scope: string; sourceKey: string; before: SeoWorkspaceView; latest: SeoWorkspaceView; fields: string[] };
 const provenance = { unverified: '미작성', collected: '수집 원문', translated: '번역 결과', generated: '자동 생성 결과', manual: '직접 수정' };
 
-export function SeoWorkspaceEditor({ productId, version, focusedOptionId, active = true, disabled = false, onSaved }: Props) {
+export function SeoWorkspaceEditor({ productId, version, focusedOptionId, active = true, disabled = false, onSaved, focusAfterApply }: Props) {
   const scope = productId, sourceKey = JSON.stringify([scope, version]);
   const live = useRef({ scope, sourceKey, active, disabled, mounted: true, onSaved }), request = useRef<AbortController | null>(null);
   const [saved, setSaved] = useState<Saved | null>(null), savedRef = useRef<Saved | null>(null);
   const [pending, setPending] = useState({ scope, values: emptySeoWorkspaceDraft() }), draftRef = useRef(pending);
   const attempt = useRef<Attempt | null>(null);
+  const titleInput=useRef<HTMLInputElement|null>(null),consumedFocus=useRef<string|null>(null);
   const [busy, setBusy] = useState(false), [uncertain, setUncertain] = useState(false), [conflict, setConflict] = useState(false);
   const [busyAction, setBusyAction] = useState<'read' | 'save' | null>(null);
   const [error, setError] = useState(''), [message, setMessage] = useState(''), [comparison, setComparison] = useState<Comparison | null>(null);
@@ -33,6 +35,18 @@ export function SeoWorkspaceEditor({ productId, version, focusedOptionId, active
   const base = saved?.scope === scope ? saved : null, view = base?.view ?? null;
   const draft = pending.scope === scope ? pending.values : emptySeoWorkspaceDraft(), dirty = hasSeoWorkspaceDraft(draft), fresh = base?.sourceKey === sourceKey;
   const latestDraft = () => draftRef.current.scope === scope ? draftRef.current.values : emptySeoWorkspaceDraft();
+  useEffect(()=>{
+    if(!focusAfterApply)return;
+    const key=seoAppliedReceiptKey(focusAfterApply);
+    if(consumedFocus.current===key)return;
+    if(!active||!sameSeoAppliedSource(focusAfterApply,productId,focusAfterApply.previousVersion)||hasSeoWorkspaceDraft(latestDraft())){consumedFocus.current=key;return;}
+    if(Date.parse(version)>Date.parse(focusAfterApply.productVersion)){consumedFocus.current=key;return;}
+    if(!current()||disabled||busy||uncertain||conflict||request.current||attempt.current||!fresh||!view||version!==focusAfterApply.productVersion||!seoAppliedViewReady(focusAfterApply,view))return;
+    const input=titleInput.current;if(!input)return;
+    consumedFocus.current=key;input.scrollIntoView({block:'center'});input.focus({preventScroll:true});
+    // The latest draft/request refs are checked at the actual focus boundary.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[focusAfterApply,active,productId,version,disabled,busy,uncertain,conflict,fresh,view,dirty]);
   const store = (value: SeoWorkspaceView) => { savedRef.current = { scope, sourceKey, view: value }; setSaved(savedRef.current); };
   const clearDraft = () => { draftRef.current = { scope, values: emptySeoWorkspaceDraft() }; setPending(draftRef.current); };
   function finish(controller: AbortController) {
@@ -131,7 +145,7 @@ export function SeoWorkspaceEditor({ productId, version, focusedOptionId, active
     {!busy && uncertain && <p role="status">저장 결과를 아직 확인하지 못했습니다. 결과 확인은 저장본 조회만 수행합니다.</p>}
     {view && <div className="seo-content-columns" style={{ width: '100%' }}>
       <section className="seo-common-editor"><h3>상품명 / 검색태그</h3><fieldset disabled={locked} style={{ border: 0, margin: 0 }}>
-        <label className="field"><span>상품명</span><input aria-label="SEO 상품명" placeholder="검색 최적화된 상품명을 입력하세요" value={seoValue('title')} maxLength={100} onChange={event => edit(previous => ({ ...previous, seo: { ...previous.seo, title: event.target.value } }))}/></label>
+        <label className="field"><span>상품명</span><input ref={titleInput} aria-label="SEO 상품명" placeholder="검색 최적화된 상품명을 입력하세요" value={seoValue('title')} maxLength={100} onChange={event => edit(previous => ({ ...previous, seo: { ...previous.seo, title: event.target.value } }))}/></label>
         <small className={seoValue('title').length > 100 ? 'seo-input-count exceeded' : 'seo-input-count'}>{seoValue('title').length}/100자{seoValue('title').length > 100 && ' · 기존 저장값은 유지합니다.'}</small>
         <label className="field"><span>검색태그 (쉼표로 구분)</span><textarea aria-label="SEO 검색태그" placeholder="키워드1, 키워드2, 키워드3 형태로 입력하세요" value={seoValue('keywords')} rows={3} maxLength={5050} onChange={event => editKeywords(event.target.value)}/></label>
         <div className="seo-keyword-caption"><small>검색에 노출되길 원하는 키워드를 쉼표로 구분하여 입력하세요 (최대 150자)</small><small className={tagsLength > 150 ? 'seo-input-count exceeded' : 'seo-input-count'} data-seo-keyword-length={keywordLengthState}>{tagsLength}/150자{tagsLength > 150 && !keywordEdited && ' · 기존 저장값은 유지합니다.'}</small></div>

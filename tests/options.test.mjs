@@ -13,8 +13,14 @@ function load(file, overrides = {}, mode = 'development') {
     if (name === 'next/server') return { NextResponse: Response };
     if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ userId: 'owner' }), getWorkspaceOwnerId: async () => 'owner' };
     if (name === '@/db/collection-images') return {readOptionSourceImages:async()=>({})};
+    // This fixture has no approved membership/company, for which the optional
+    // library reader returns null before accessing storage in production too.
+    if (name === '@/db/main-image-library') return {readMainImageLibraryEvidence:async()=>null};
     const modules = { '@/app/product-options': 'app/product-options.ts', '@/app/product-content': 'app/product-content.ts', '@/app/pricing': 'app/pricing.ts', '@/app/workspace-settings': 'app/workspace-settings.ts', '@/app/image-pool-limit':'app/image-pool-limit.ts', '@/db/product-registration':'db/product-registration.ts' };
     if (modules[name]) return load(modules[name], overrides, mode);
+    // New immutable option-source metadata uses the real pure helper and its
+    // collection validators; keep all existing API/database stubs unchanged.
+    if (name.startsWith('@/app/')) return load(name.slice(2) + '.ts', overrides, mode);
     throw Error(name);
   } });
   return exports;

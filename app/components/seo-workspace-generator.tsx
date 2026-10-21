@@ -10,6 +10,7 @@ import { collectionSourceReference } from '@/app/sourcing';
 import { createSeoWorkspaceDraftState, parseSeoWorkspaceDraftState, refreshSeoWorkspaceDraft, runSeoWorkspaceDraft,
   type SeoWorkspaceDraftMemo, type SeoWorkspaceDraftState } from '@/app/seo-workspace-draft';
 import { TranslationIntegratedPreview } from '@/app/components/translation-integrated-preview';
+import { sameSeoAppliedSource, type SeoAppliedReceipt } from '@/app/seo-apply-focus';
 import { seoGuidanceTitle, seoGuidanceTags, validateSeoGuidanceComposition, type SeoGuidanceComposition } from '@/app/seo-guidance-composition';
 import { commitSeoGuidanceSession, initialSeoGuidanceMemo, openSeoGuidanceSession, readSeoGuidanceSession, releaseSeoGuidanceSession,
   seoGuidanceSessionSourceKey, type SeoGuidanceSession } from '@/app/seo-guidance-session';
@@ -17,7 +18,7 @@ import './seo-workspace.css';
 
 type Props = { productId: string; workspaceOwnerId?: string; version: string; brand: string; active: boolean; beforeGenerate: () => boolean; onSaved: () => void;
   onBusyChange?: (busy: boolean) => void; onPendingChange?: (pending: boolean) => void; onApplyUncertainChange?: (uncertain: boolean) => void;
-  onProcessingChange?: (busy: boolean, operation: object) => void };
+  onProcessingChange?: (busy: boolean, operation: object) => void; onApplied?: (receipt: SeoAppliedReceipt) => void };
 type ProcessingLease = { operation: object; callback: Props['onProcessingChange'] };
 type Source = { productId: string; productVersion: string; jobId: string; sourceUrl: string; title: string; description: string;
   attributes: {name:string;value:string}[]; requestContext: {categoryId:string;categoryPath:string[];features:string;keywords:string}|null };
@@ -29,7 +30,7 @@ const supplierSourceIdentity=(source:TranslationSource)=>JSON.stringify([source.
 export function SeoWorkspaceGenerator(props: Props) {
   return <SeoWorkspaceGeneratorContent key={JSON.stringify([props.workspaceOwnerId??null,props.productId])} {...props}/>;
 }
-function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, brand, active, beforeGenerate, onSaved, onProcessingChange, onBusyChange, onPendingChange, onApplyUncertainChange }: Props) {
+function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, brand, active, beforeGenerate, onSaved, onProcessingChange, onBusyChange, onPendingChange, onApplyUncertainChange, onApplied }: Props) {
   const [basis,setBasis]=useState<Basis|null>(null),[memo,setMemo]=useState<SeoWorkspaceDraftMemo>({brand,features:'',keywords:''});
   const [busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('');
   const [job,setJob]=useState<TranslationJob|null>(null),[hasRequest,setHasRequest]=useState(false),[closed,setClosed]=useState(false);
@@ -40,9 +41,9 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
   const [replaceTitle,setReplaceTitle]=useState(false),[replaceKeywords,setReplaceKeywords]=useState(false);
   const [compositionBusy,setCompositionBusy]=useState(false),compositionBusyRef=useRef(false);
   const [applyUncertain,setApplyUncertain]=useState(false),applyUncertainRef=useRef(false);
-  const statusCallbacks=useRef({onBusyChange,onPendingChange,onApplyUncertainChange,onSaved});
+  const statusCallbacks=useRef({onBusyChange,onPendingChange,onApplyUncertainChange,onSaved,onApplied});
   const statusLease=useRef<{busy?:boolean;pending?:boolean;uncertain?:boolean;callbacks:typeof statusCallbacks.current}|null>(null);
-  useLayoutEffect(()=>{statusCallbacks.current={onBusyChange,onPendingChange,onApplyUncertainChange,onSaved};});
+  useLayoutEffect(()=>{statusCallbacks.current={onBusyChange,onPendingChange,onApplyUncertainChange,onSaved,onApplied};});
   useLayoutEffect(()=>{const lease={callbacks:statusCallbacks.current};statusLease.current=lease;return()=>{if(statusLease.current!==lease)return;statusLease.current=null;lease.callbacks.onBusyChange?.(false);lease.callbacks.onPendingChange?.(false);};},[productId,workspaceOwnerId]);
   const [processing,setProcessing]=useState(false),processingLease=useRef<ProcessingLease|null>(null),processingCallback=useRef(onProcessingChange);
   const operationContext=useRef<object>({});
@@ -202,7 +203,9 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
       }
     };
     return callback;
-  },[compositionKey,version,workspaceOwnerId]);
+    // Stage A/B/A must retire callbacks even when the composition is unchanged.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[compositionKey,version,workspaceOwnerId,active]);
   useLayoutEffect(()=>{compositionCallback.current=compositionPublisher;},[compositionPublisher]);
   const currentComposition=()=>mounted.current&&current.current.active&&current.current.version===version&&current.current.workspaceOwnerId===workspaceOwnerId&&compositionCallback.current===compositionPublisher;
   const renderGuidanceSession=guidanceSession.current;
@@ -243,6 +246,7 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
         </fieldset>}
         {!!job.result!.draft.warnings.length&&<ul>{job.result!.draft.warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul>}
         <TranslationIntegratedPreview productId={productId} version={version} jobId={job.id} disabled={busy||!active||applyUncertain||(compositionEnabled&&!!compositionError)} seoComposition={compositionEnabled?composition:undefined} onBusyChange={compositionPublisher} beforeApply={()=>currentComposition()&&!applyUncertainRef.current&&beforeGenerate()}
+          onApplied={receipt=>{if(currentComposition()&&sameSeoAppliedSource(receipt,productId,version)&&receipt.jobId===job.id)statusCallbacks.current.onApplied?.(receipt);}}
           onUncertainChange={value=>{if(currentComposition()){applyUncertainRef.current=value;setApplyUncertain(value);}}} onSaved={()=>{if(currentComposition()){applyUncertainRef.current=false;setApplyUncertain(false);statusCallbacks.current.onSaved();}}}/>
       </div>}
     </div>

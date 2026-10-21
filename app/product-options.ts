@@ -1,5 +1,6 @@
 import { calculatePrice, pricePolicy, type PricePolicy } from '@/app/pricing';
 import { defaultSettings, newWorkspaceSettings } from '@/app/workspace-settings';
+import { retainedCollectedPageOptionBindings, type CollectedPageOptionBindings } from '@/app/collected-page-option-binding';
 
 export const OPTION_LIMIT = 200;
 export const OPTIONS_BODY_LIMIT = 512 * 1024;
@@ -26,7 +27,7 @@ export type ProductOption = OptionInput & {
   updatedAt: string;
 };
 export type BundleSource = { sourceOptionId: string; quantity: number };
-export type ProductOptions = { schemaVersion: 1; productId: string; revision: number; updatedAt: string | null; rows: ProductOption[]; bundleSources?: Record<string, BundleSource> };
+export type ProductOptions = { schemaVersion: 1; productId: string; revision: number; updatedAt: string | null; rows: ProductOption[]; bundleSources?: Record<string, BundleSource>; collectedPageOptionBindings?: CollectedPageOptionBindings };
 export type OptionCalculation = { optionId: string; included: boolean; sourceCostCny: number | null; calculation: ReturnType<typeof calculatePrice> | null; error: string | null };
 export type OptionPricing = { policy: PricePolicy; policySource: 'saved-product' | 'product-and-workspace'; rows: OptionCalculation[] };
 export type ProductOptionsResponse = { options: ProductOptions; pricing: OptionPricing; productVersion: string; sourceImageKeys?:Record<string,string>; optionRegistrationNumbers?:Record<string,string> };
@@ -103,8 +104,10 @@ export function validateOptionsInput(input: unknown, ownerId: string, imageKeys:
 }
 export function applyOptionRows(current: ProductOptions, rows: OptionInput[], now: string): ProductOptions {
   const previous = new Map(current.rows.map(row => [row.id, row]));
+  const collectedPageOptionBindings=retainedCollectedPageOptionBindings(current,rows);
   return { schemaVersion: 1, productId: current.productId, revision: current.revision + 1, updatedAt: now,
     ...(current.bundleSources ? { bundleSources: structuredClone(current.bundleSources) } : {}),
+    ...(collectedPageOptionBindings ? {collectedPageOptionBindings} : {}),
     rows: rows.map(row => {
       const before = previous.get(row.id); let changed = !before;
       // Older clients omit the new attributes. Omission must not erase saved facts.

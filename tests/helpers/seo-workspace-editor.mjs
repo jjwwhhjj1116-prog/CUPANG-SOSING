@@ -12,7 +12,7 @@ export async function responseJson(response) { assert.equal(response.status, 200
 
 /** Actual editor/client modules with controllable React lifecycle boundaries.
  * The supplied harness remains the sole SQLite/API implementation. */
-export function seoWorkspaceEditor(api, { props = {}, fetcher } = {}) {
+export function seoWorkspaceEditor(api, { props = {}, fetcher, dom = {} } = {}) {
   let currentProps = { productId: api.id, version: api.version, ...props };
   const slots = [], effects = [], layouts = [], calls = [];
   let cursor = 0, closed = false, saved = 0, lateWrites = 0;
@@ -48,6 +48,7 @@ export function seoWorkspaceEditor(api, { props = {}, fetcher } = {}) {
   function render(passive = true) {
     cursor = 0;
     const tree = exports.SeoWorkspaceEditor({ ...currentProps, onSaved() { saved++; currentProps.onSaved?.(); } });
+    for(const node of nodes(tree))if(node.props.ref&&typeof node.props.ref==='object')node.props.ref.current=dom[node.props['aria-label']]??null;
     layouts.splice(0).forEach(effect => effect());
     if (passive) effects.splice(0).forEach(effect => effect());
     return tree;
