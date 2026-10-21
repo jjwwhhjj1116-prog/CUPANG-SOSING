@@ -193,6 +193,10 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     limit = Math.min(...targets[input].fields.map(field => field.maxItems ?? 30)); issues = optionImageDraftIssues(view, optionId, draft);
   } catch (cause) { bindingError = cause instanceof Error ? cause.message : '이미지 연결 확인 필요'; }
   const row = view?.resolved.rows.find(row => row.optionId === optionId), locked = busy || merging || workspaceWorking || disabled || uncertain || !!bindingError || instant && dirty;
+  const selectionSaveHint = !instant ? '선택을 변경한 뒤 선택 옵션 이미지 저장을 눌러주세요.'
+    : busy ? '이미지 저장 상태를 확인하고 있습니다.'
+    : uncertain ? '이미지 저장 결과 확인을 눌러 반영 여부를 확인해주세요. 현재 선택은 유지됩니다.'
+    : dirty ? '저장되지 않은 선택이 있습니다. 아래 안내에 따라 최신 저장본을 확인한 뒤 다시 저장해주세요.' : '';
   const unavailable = selected.filter(key => !view?.imageKeys.includes(key));
   const activePreview = preview?.scope === scope && view?.imageKeys.includes(preview.key) ? preview.key : selected.find(key => view?.imageKeys.includes(key)) ?? view?.imageKeys[0] ?? null;
   // The shortcut needs explicit role evidence; a flattened first/last image
@@ -364,7 +368,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     <h3>{stage === 'detail' ? '상세 페이지 이미지' : '선택 옵션 추가 이미지'}</h3><p>{row?.optionLabel || optionId} · {row?.included === false ? '견적 제외 옵션' : '선택한 옵션'}</p>
     <p>{instant ? '＋ 추가로 이미지를 넣고 드래그 또는 ↑↓로 순서를 조정하세요. 추가·삭제·순서 변경은 바로 저장됩니다.' : '드래그 또는 ↑↓로 순서를 조정한 뒤 저장하세요.'} 선택한 이미지와 순서는 이 옵션의 견적서에만 저장합니다. 상품 공통 이미지와 다른 옵션은 유지됩니다.</p>
     <button type="button" className="btn ghost" disabled={!view || locked || !selected.length || !!unavailable.length} onClick={() => void downloadSelection()}>{label} ZIP 다운로드</button>
-    <small>현재 선택한 순서의 원본·편집 결과 파일을 내려받습니다. 미저장 선택을 견적서에 반영하려면 이미지 저장을 눌러주세요.</small>
+    <small>현재 선택한 순서의 원본·편집 결과 파일을 내려받습니다. {selectionSaveHint}</small>
     {stage === 'detail' && view && canEditSavedDetailInputs({ productId, optionId, profileId, view }) && <div className="button-row">
       <button type="button" className="btn ghost" disabled={locked || dirty || !active || saved?.sourceKey !== sourceKey} onClick={() => void reopenDetailInputs()}>저장 전 개별 사진으로 편집</button>
       <button type="button" className="btn ghost" disabled={locked || dirty || !active || saved?.sourceKey !== sourceKey} onClick={() => void reopenDetailInputs(true)}>저장 전 사진·HTML로 편집</button>

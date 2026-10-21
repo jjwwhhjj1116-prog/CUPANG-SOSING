@@ -106,18 +106,26 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
    <aside className="image-edit-library main-image-library" aria-label="대표이미지 후보">
     <h4>이미지 선택</h4>
     <nav aria-label="대표이미지 후보 종류" className="main-image-library-tabs">{libraryTabs.map(([name,label])=><button type="button" className={`btn ${tab===name?'primary':'ghost'}`} key={name} aria-label={`${label} 보기`} aria-pressed={tab===name} disabled={disabled||busy||name!=='work'&&!groups} onClick={()=>{if(tabGeneration&&liveTabGeneration.current===tabGeneration&&currentOption()&&!liveDisabled.current&&!request.current&&(name==='work'||groups))setLibraryTab(previous=>previous.scope===tabScope&&previous.token===tabGeneration?{...previous,tab:name}:previous);}}>{label} <small>{groups?.[name].length??'미확인'}</small></button>)}</nav>
+    <div className="main-image-library-candidates">
     {libraryState?.error&&<p role="status">{libraryState.error}</p>}
     <div className="image-asset-grid main-image-library-grid" aria-label={`${libraryTabs.find(([name])=>name===tab)?.[1]} 후보`}>{visiblePool.map(candidate)}</div>
     {base&&!visiblePool.length&&<p>이 종류에 연결된 이미지가 없습니다.</p>}
     <small>탭을 바꿔도 현재 선택은 유지됩니다. 직접 올린 사진은 아래 전체 저장 이미지에서 선택하세요.</small>
     <details className="main-image-all-saved"><summary>전체 저장 이미지 · {pool.length}개</summary><p>직접 업로드한 사진을 포함한 저장 목록입니다.</p><div className="image-asset-grid main-image-library-grid">{pool.map(candidate)}</div></details>
+    </div>
+    <section className="main-image-current-summary" aria-label="현재 메인 이미지">
+     <h4>현재 메인 이미지</h4>
+     {selected.length===1&&pool.includes(selected[0])?<>
+      <button type="button" className="main-image-current-thumbnail" aria-label="현재 메인 이미지 크게 보기" aria-haspopup="dialog" disabled={!valid||!fresh||disabled} onClick={()=>openPreview(selected[0])}><img src={url(selected[0])} alt="현재 메인 이미지 작은 미리보기" width={160} height={160}/></button>
+      {onTranslate&&<div role="group" className="main-image-current-translation" aria-label="최종 견적 대표이미지 번역"><button type="button" className="btn ghost" aria-label="최종 대표이미지 중국어 한국어 번역" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh} onClick={()=>translateSelected(selected[0],'zh')}>중국어 → 한국어</button><button type="button" className="btn ghost" aria-label="최종 대표이미지 영어 한국어 번역" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh} onClick={()=>translateSelected(selected[0],'en')}>영어 → 한국어</button></div>}
+     </>:<small>{selected.length?'대표 이미지 연결을 확인해주세요.':'대표 이미지를 선택해주세요.'}</small>}
+    </section>
    </aside>
    <section className="image-edit-canvas main-image-current" aria-label="현재 대표이미지 미리보기">
     <h4>현재 대표 이미지</h4>
     {selected.map(key=><figure className="image-large-preview" key={key}>{pool.includes(key)?<button type="button" aria-label="최종 대표이미지 크게 보기" aria-haspopup="dialog" disabled={!valid||!fresh||disabled} onClick={()=>openPreview(key)} style={{display:'block',width:'100%',padding:0,border:0,background:'transparent',cursor:'zoom-in'}}><img src={url(key)} alt="최종 견적 대표이미지" style={{maxWidth:'100%',height:'auto'}}/></button>:<p>현재 상품에 없는 대표이미지 참조</p>}<figcaption>선택한 대표 이미지</figcaption>
      <div className="quote-actions main-image-preview-actions">
       {onEdit&&<button type="button" className="btn ghost" aria-label="최종 대표이미지 편집하기" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh||!pool.includes(key)} onClick={()=>translateSelected(key,'zh',true)}>편집하기</button>}
-      {onTranslate&&<div role="group" aria-label="최종 견적 대표이미지 번역"><button type="button" className="btn ghost" aria-label="최종 대표이미지 중국어 한국어 번역" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh||!pool.includes(key)} onClick={()=>translateSelected(key,'zh')}>중국어 → 한국어</button><button type="button" className="btn ghost" aria-label="최종 대표이미지 영어 한국어 번역" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh||!pool.includes(key)} onClick={()=>translateSelected(key,'en')}>영어 → 한국어</button></div>}
      </div>
     </figure>)}
     {valid&&!selected.length&&<div className="empty"><p>최종 대표이미지는 공란입니다.</p></div>}

@@ -89,8 +89,9 @@ export function CategoryRecommendationsPanel({initialTitle,workspaceOwnerId,disa
  const queryProductName=activeResult&&'queryProductName' in activeResult?activeResult.queryProductName:undefined;
  return <section className="category-recommendations-card" aria-labelledby={`${id}-heading`}>
   <h3 id={`${id}-heading`}>기본정보</h3>
-  <label className="category-recommendations-title" htmlFor={`${id}-title`}>상품명</label>
-  <input id={`${id}-title`} className="category-recommendations-input" value={name} maxLength={500} placeholder="수집한 상품명을 확인하거나 수정하세요" disabled={disabled||applying} onChange={event=>{reset();context.current={...context.current,name:event.target.value};setName(event.target.value);}}/>
+  <label className="category-recommendations-title" htmlFor={`${id}-title`}>추천 검색용 상품명</label>
+  <input id={`${id}-title`} className="category-recommendations-input" value={name} maxLength={500} placeholder="추천 카테고리를 검색할 상품명을 입력하세요" aria-describedby={`${id}-title-help`} disabled={disabled||applying} onChange={event=>{reset();context.current={...context.current,name:event.target.value};setName(event.target.value);}}/>
+  <p id={`${id}-title-help`} className="category-recommendations-help">카테고리 추천에만 사용합니다. 판매 상품명은 초안 작성 후 SEO 설정에서 수정하세요.</p>
   <div className="category-recommendations-heading"><label htmlFor={`${id}-choices`}>카테고리</label><button type="button" className="category-recommendations-refresh" disabled={blocked||!name.trim()} onClick={()=>void request(true)}>{pending?'추천 불러오는 중…':'↻ 추천 새로고침'}</button></div>
   <p id={`${id}-help`} className="category-recommendations-help">상품명을 기준으로 추천 카테고리 최대 3개를 표시합니다. 경로를 확인하고 하나를 선택하세요.</p>
   {pending&&<p className="category-recommendations-status" role="status">카테고리 추천을 불러오는 중입니다. 잠시 기다려주세요.</p>}

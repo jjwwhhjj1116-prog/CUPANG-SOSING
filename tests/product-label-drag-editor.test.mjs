@@ -81,7 +81,7 @@ test('required row drag stays local until explicit save, then preserves captions
 test('dragging renamed and added rows retains unsaved edits and stable IDs', async () => {
   const { f, h, before, writes } = setup();
   try {
-    await h.idle(); await h.click('＋ 표시사항 항목 추가');
+    await h.idle(); await h.click('＋ 새 항목 추가');
     const custom = order(h).at(-1);
     if (!nodes(row(h, custom)).some(node => node.type === 'input')) nodes(row(h, custom)).find(node => node.props?.className === 'product-label-name-caption').props.onClick();
     nodes(row(h, custom)).find(node => node.type === 'input').props.onChange({ target: { value: '검토 안내' } });

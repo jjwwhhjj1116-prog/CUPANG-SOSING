@@ -61,6 +61,16 @@ test('typing debounces to the latest name, aborts an old lookup and ignores its 
  }finally{h.close();}
 });
 
+test('editable recommendation name is labelled as a query and does not promise to replace the SEO title',async()=>{
+ const h=fixture();try{
+  assert.match(text(h.render()),/추천 검색용 상품명/);assert.match(text(h.render()),/카테고리 추천에만 사용합니다/);assert.match(text(h.render()),/판매 상품명은 초안 작성 후 SEO 설정에서 수정/);
+  const described=h.input().props['aria-describedby'];assert.ok(described);assert.ok(nodes(h.render()).some(node=>node.props?.id===described&&text(node).includes('카테고리 추천에만 사용')));
+  h.type('모자 카테고리 검색어');await h.advance(600);h.select('hat');await h.settle();
+  assert.equal(h.requests.at(-1).name,'모자 카테고리 검색어');assert.equal(h.choices.length,1);assert.equal(h.choices[0].result.productName,'모자 카테고리 검색어');
+  assert.deepEqual(Object.keys(h.choices[0]).sort(),['candidate','result']);
+ }finally{h.close();}
+});
+
 test('manual refresh runs once immediately, cancels debounce, clears a selection and forces a fresh recommendation',async()=>{
  const h=fixture();try{
   h.click('↻ 추천 새로고침');assert.equal(h.requests.length,1);assert.equal(h.requests[0].options.force,true);await h.settle();await h.advance(600);assert.equal(h.requests.length,1);

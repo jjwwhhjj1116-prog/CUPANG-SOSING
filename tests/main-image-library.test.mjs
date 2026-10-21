@@ -70,7 +70,12 @@ for(const focused of [false,true])test(`${focused?'focused':'global'} option cha
  const f=await fixture(),h=editor(f);try{
   await h.idle();if(!focused){h.props.focusedOptionId=undefined;await h.idle();}
   const view=await f.read(),other=view.resolved.rows.find(row=>row.optionId&&row.optionId!==f.id).optionId,frozen=snapshot(f);
-  const select=async id=>{if(focused)h.props.focusedOptionId=id;else h.input('최종 대표이미지 옵션').props.onChange({target:{value:id}});await h.idle();};
+  const select=async id=>{if(focused)h.props.focusedOptionId=id;else h.input('최종 대표이미지 옵션').props.onChange({target:{value:id}});await h.idle();
+   // Metadata is deliberately optional and completes after the saved image.
+   // Wait for its actual ready control before asserting the reset tab; a
+   // temporary work-only fallback is not the final gallery selection.
+   for(let pass=0;pass<20&&h.button('메인 이미지 보기').props.disabled;pass++)await h.idle();
+   assert.equal(h.button('메인 이미지 보기').props.disabled,false,'current source gallery metadata has completed');};
   await h.click('옵션 이미지 보기');const oldWork=h.button('작업 이미지 보기').props.onClick;
   await select(other);assert.equal(h.button('메인 이미지 보기').props['aria-pressed'],true);oldWork();await h.idle();assert.equal(h.button('메인 이미지 보기').props['aria-pressed'],true);
   await h.click('상세 이미지 보기');await select(f.id);assert.equal(h.button('메인 이미지 보기').props['aria-pressed'],true,'returning to an earlier option starts a new main-tab session');

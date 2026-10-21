@@ -69,8 +69,8 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   const previewRow = rows.find(row => row.id === previewId);
   const running = useRef<AbortController | null>(null);
   const forkRunning=useRef<AbortController|null>(null),forkOwner=useRef(workspaceOwnerId);
-  const navigation = useRef({rows,jobs,onOpenProduct,workspaceOwnerId,goal,settings});
-  useLayoutEffect(()=>{navigation.current={rows,jobs,onOpenProduct,workspaceOwnerId,goal,settings};},[rows,jobs,onOpenProduct,workspaceOwnerId,goal,settings]);
+  const navigation = useRef({rows,jobs,onOpenProduct,workspaceOwnerId,goal,settings,sourceItems});
+  useLayoutEffect(()=>{navigation.current={rows,jobs,onOpenProduct,workspaceOwnerId,goal,settings,sourceItems};},[rows,jobs,onOpenProduct,workspaceOwnerId,goal,settings,sourceItems]);
   useLayoutEffect(()=>{if(forkOwner.current===workspaceOwnerId)return;forkOwner.current=workspaceOwnerId;ownerEpoch.current++;setOwnerGeneration(ownerEpoch.current);forkPreviewRef.current=null;pendingPreviewRef.current=null;sourceUrlsCandidateRef.current=null;setForkPreviewState(null);setPendingPreviewState(null);setSourceUrlsCandidateState(null);const controller=running.current;forkRunning.current=null;if(!controller)return;running.current=null;controller.abort();setBusy(false);onBusy(false);},[workspaceOwnerId,onBusy]);
   const sameOwner=()=>forkOwner.current===workspaceOwnerId&&navigation.current.workspaceOwnerId===workspaceOwnerId&&ownerEpoch.current===ownerGeneration;
   const ownerCurrent=()=>sourceMounted.current&&sameOwner();
@@ -176,31 +176,37 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     }catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:'기본설정 조회 실패');}
     finally { finish(controller); }
   }
-  async function submit() {
+  async function submit(target?:IntakeRow) {
     const current=navigation.current;
-    if (!ownerCurrent()||current.rows!==rows||current.settings!==settings||current.goal!==goal||running.current || !pending || settingsChanged) return;
+    if (!ownerCurrent()||current.rows!==rows||current.settings!==settings||current.goal!==goal||running.current || settingsChanged) return;
+    // A collected item's explicit start does not inherit the batch selection.
+    // Retained callbacks must still refer to the current, unlinked input row.
+    if(target&&(!target.sourceCapture||current.rows.find(row=>row.id===target.id)!==target||!pendingRowIds.has(target.id)||intakeProductId(target,current.jobs)||target.forkJobId||target.pendingJobId))return;
+    const processing=target?[target]:selected;
+    if(!processing.length)return;
     const controller = new AbortController(); running.current = controller; setBusy(true); onBusy(true); setError('');
     const productIds = new Map<string,string>();
     const completed = new Set<string>();
+    const reusedProductIds = new Set<string>();
     const active=()=>ownerCurrent()&&running.current===controller&&!controller.signal.aborted;
     const publishJobs=(values:CollectionJob[])=>{if(active())onJobs(values);};
     try {
-      const incomplete=selected.map(row=>{
+      const incomplete=processing.map(row=>{
         if(!row.sourceCapture)return sourceItems.find(item=>sameSourceUrl(item.snapshot.sourceUrl,row.url));
-        const item=selectedSourceInboxItem(sourceItems,row.sourceCapture);
-        if(!item||workspaceOwnerId&&item.ownerId!==workspaceOwnerId)throw Error('선택한 수집본을 다시 확인해주세요. 같은 URL의 다른 수집본으로 바꾸지 않았습니다.');
+        const item=selectedSourceInboxItem(target?current.sourceItems:sourceItems,row.sourceCapture);
+        if(!item||target&&item.archivedAt||workspaceOwnerId&&item.ownerId!==workspaceOwnerId)throw Error('선택한 수집본을 다시 확인해주세요. 같은 URL의 다른 수집본으로 바꾸지 않았습니다.');
         return item;
       }).find(item=>item?.issues.length);
       if(incomplete)throw Error('수집정보 확인·수정에서 '+incomplete.issues.join(' · ')+'을 확인한 뒤 초안을 작성해주세요.');
-      await submitIntakeQueue(rows, goal, { signal: controller.signal, fetcher: fetch, expectedSettings:settings, onSettingsChanged:()=>{if(active()){setSettingsChanged(true);setSettingsMessage('');}}, selectedIds: new Set(selected.map(row => row.id)),
-        collect: (job,onProgress,onProduct,selectedCapture) => collectIntakeProduct(job,{signal:controller.signal,fetcher:fetch,...(selectedCapture?{selectedCapture}:{}),captureFromBrowser:capture1688FromChrome,probeExistingFromBrowser:probe1688FromChrome,onJob:updated=>{if(!active())return;publishJobs([updated]);if(updated.product_id)onProduct(updated.product_id);},onProgress}),
+      await submitIntakeQueue(rows, goal, { signal: controller.signal, fetcher: fetch, expectedSettings:settings, onSettingsChanged:()=>{if(active()){setSettingsChanged(true);setSettingsMessage('');}}, selectedIds: new Set(processing.map(row => row.id)),
+        collect: (job,onProgress,onProduct,selectedCapture) => {if(job.product_id)reusedProductIds.add(job.product_id);return collectIntakeProduct(job,{signal:controller.signal,fetcher:fetch,...(selectedCapture?{selectedCapture}:{}),captureFromBrowser:capture1688FromChrome,probeExistingFromBrowser:probe1688FromChrome,onProductReused:id=>{if(active())reusedProductIds.add(id);},onJob:updated=>{if(!active())return;publishJobs([updated]);if(updated.product_id)onProduct(updated.product_id);},onProgress});},
         onRow: (id, patch) => {if(!active())return;if(patch.productId)productIds.set(id,patch.productId);if(patch.status==='saved')completed.add(id);onRows(previous => sameOwner()?previous.map(row => row.id === id ? { ...row, ...patch } : row):previous);}, onJobs:publishJobs });
       // Open a confirmed single source draft after import and draft processing.
       // A saved Google failure may require manual translation; failed imports
       // and uncertain saves remain in the editable queue.
-      const single=selected.length===1?selected[0]:undefined;
+      const single=processing.length===1?processing[0]:undefined;
       const productId=single&&completed.has(single.id)?productIds.get(single.id):undefined;
-      if(productId&&onOpenProduct&&active())await onOpenProduct(productId,controller.signal);
+      if(productId&&onOpenProduct&&active()&&(!target||!reusedProductIds.has(productId)))await onOpenProduct(productId,controller.signal);
     } catch (cause) { if (active()) setError(cause instanceof Error ? cause.message : '입력 내용을 확인해주세요.'); }
     finally { finish(controller); }
   }
@@ -364,7 +370,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
         <td><input ref={element => { if (element) urlInputs.current.set(row.id, element); else urlInputs.current.delete(row.id); }} aria-label={`${index + 1}번째 1688 링크`} value={row.url} maxLength={2048} disabled={busy || row.status === 'saved'} placeholder="https://detail.1688.com/offer/…" onChange={event => edit(row.id, { url: event.target.value })} />{row.url.trim() && <small className="intake-source-url">{row.url.trim()}</small>}{captured&&onReviewSource&&<><button type="button" className="btn ghost" disabled={busy||row.status==='saved'||!!row.productId||!!row.forkJobId||!!row.pendingJobId} onClick={()=>reviewSource(row,captured)}>수집정보 확인·수정</button><small>{captured.issues.length?`확인 필요: ${captured.issues.join(' · ')}`:'수집정보 준비됨'}</small>{row.sourceCapture&&captured.revision!==row.sourceCapture.revision&&<small>검토 버전이 변경되었습니다. 수집정보 확인·수정에서 저장한 뒤 시작하세요.</small>}</>}</td>
         <td><textarea aria-label={`${index + 1}번째 특징`} value={row.features} maxLength={2000} disabled={busy || row.status === 'saved'} placeholder="상품 특징" onChange={event => edit(row.id, { features: event.target.value })} /></td>
         <td><textarea aria-label={`${index + 1}번째 키워드`} value={row.keywords} maxLength={2000} disabled={busy || row.status === 'saved'} placeholder="타겟 키워드" onChange={event => edit(row.id, { keywords: event.target.value })} /></td>
-        <td role="status" className={row.status === 'error' ? 'collection-error' : ''}>{row.message || '입력 대기'}{productId && onOpenProduct && <button type="button" className="btn ghost" disabled={busy} onClick={()=>void openSavedProduct(row.id,productId)}>초안 확인·수정</button>}{row.status==='error'&&row.pendingJobId&&(row.profile.template||(row.profile.hubSchema?.metadata.scopeType??row.profile.hubSchema?.metadata.scope)==='Retail_Categorized_Single')&&<button type="button" className="btn ghost" disabled={busy||settingsChanged} onClick={()=>void inspectPendingSource(row.id)}>기존 대기 요청 확인</button>}{row.status==='error'&&row.forkJobId&&(row.profile.template||(row.profile.hubSchema?.metadata.scopeType??row.profile.hubSchema?.metadata.scope)==='Retail_Categorized_Single')&&<button type="button" className="btn ghost" disabled={busy||settingsChanged} onClick={()=>void inspectNewDraft(row.id)}>저장 원문으로 새 초안</button>}</td>
+        <td role="status" className={row.status === 'error' ? 'collection-error' : ''}>{row.message || '입력 대기'}{row.sourceCapture&&pendingRowIds.has(row.id)&&!productId&&!row.forkJobId&&!row.pendingJobId&&<button type="button" className="btn primary" disabled={busy||settingsChanged} onClick={()=>void submit(row)}>이 상품 초안 작성</button>}{productId && onOpenProduct && <button type="button" className="btn ghost" disabled={busy} onClick={()=>void openSavedProduct(row.id,productId)}>초안 확인·수정</button>}{row.status==='error'&&row.pendingJobId&&(row.profile.template||(row.profile.hubSchema?.metadata.scopeType??row.profile.hubSchema?.metadata.scope)==='Retail_Categorized_Single')&&<button type="button" className="btn ghost" disabled={busy||settingsChanged} onClick={()=>void inspectPendingSource(row.id)}>기존 대기 요청 확인</button>}{row.status==='error'&&row.forkJobId&&(row.profile.template||(row.profile.hubSchema?.metadata.scopeType??row.profile.hubSchema?.metadata.scope)==='Retail_Categorized_Single')&&<button type="button" className="btn ghost" disabled={busy||settingsChanged} onClick={()=>void inspectNewDraft(row.id)}>저장 원문으로 새 초안</button>}</td>
         <td><button type="button" className="btn ghost" disabled={busy || rows.length >= 50} onClick={() => { const id = crypto.randomUUID(); focusRow.current = id; setQuery(''); onRows(previous => previous.length < 50 ? [...previous, { ...intakeRow(row.profile, id), features: row.features, keywords: row.keywords }] : previous); }}>복제</button><button type="button" className="btn ghost" disabled={busy} onClick={() => removeRow(row.id)}>행 삭제</button></td>
       </tr>; })}
     </tbody></table>{rows.length > 0 && !visible.length && <p className="collection-empty">검색 결과가 없습니다. 검색을 해제하면 입력한 상품을 다시 볼 수 있습니다.</p>}{!rows.length && <p className="collection-empty">대기열이 비어있습니다. [+ 상품 추가] 버튼으로 카테고리를 선택해주세요.</p>}</div>

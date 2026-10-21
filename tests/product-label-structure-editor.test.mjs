@@ -80,7 +80,7 @@ test('primary label structure renames, reorders, removes and adds rows, then sav
     assert.equal(nodes(h.render()).filter(node => ['input', 'textarea'].includes(node.type) && node.props.className === 'product-label-value-input').length, 9);
     rename(h, 2, '  검토 제조원  ');
     action(h, 2, '위로').props.onClick(); await h.idle();
-    action(h, 9, '삭제').props.onClick(); await h.click('＋ 표시사항 항목 추가');
+    action(h, 9, '삭제').props.onClick(); await h.click('＋ 새 항목 추가');
     rename(h, 9, '추가 안내');
     h.edit('선택 옵션 추가 안내', '옵션에서 확인한 내용');
     assert.equal(h.render().props['data-workspace-dirty'], true);
@@ -142,7 +142,7 @@ test('invalid names and failed saves retain structure drafts and block PNG gener
 test('default restoration preserves archived custom and other-option values and makes no automatic write', async () => {
   const { f, h, writes } = setup();
   try {
-    await h.idle(); await h.click('＋ 표시사항 항목 추가');
+    await h.idle(); await h.click('＋ 새 항목 추가');
     rename(h, 10, '추가 안내'); h.edit('선택 옵션 추가 안내', '보관할 추가값');
     await h.click('정보 저장하기'); const custom = f.view.structure.at(-1).id;
     await h.click('기본 9항목 구조로 복원'); assert.equal(writes.length, 1);

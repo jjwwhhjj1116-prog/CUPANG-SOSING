@@ -13,7 +13,7 @@ import {fetchCollectionCapacity} from '@/app/collection-capacity-client';
 import {selectedPageReceiptMatches} from '@/app/selected-page-receipt';
 
 /** A user-initiated fetch produces an editable draft only, never a Hub submission. */
-export async function collectIntakeProduct(job:CollectionJob,options:{signal:AbortSignal;fetcher:typeof fetch;onJob:(job:CollectionJob)=>void;onProgress:(message:string)=>void;selectedCapture?:Readonly<SourceCaptureSelection>;captureFromBrowser?:(sourceUrl:string,signal:AbortSignal)=>Promise<BrowserProductCapture>;probeExistingFromBrowser?:(sourceUrl:string,signal:AbortSignal)=>Promise<BrowserProductCapture|null>}) {
+export async function collectIntakeProduct(job:CollectionJob,options:{signal:AbortSignal;fetcher:typeof fetch;onJob:(job:CollectionJob)=>void;onProgress:(message:string)=>void;onProductReused?:(productId:string)=>void;selectedCapture?:Readonly<SourceCaptureSelection>;captureFromBrowser?:(sourceUrl:string,signal:AbortSignal)=>Promise<BrowserProductCapture>;probeExistingFromBrowser?:(sourceUrl:string,signal:AbortSignal)=>Promise<BrowserProductCapture|null>}) {
  if(options.signal.aborted)return;
  const fetcher=options.fetcher;
  const selectedCapture=options.selectedCapture===undefined?undefined:validateSourceCaptureSelection(options.selectedCapture,job.source_url);
@@ -172,6 +172,7 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
     recheckReusedImages=!resumeExistingImages;
     resumeExistingImages=true;
     resumeProductId=body.productId;
+    if(!options.signal.aborted)options.onProductReused?.(body.productId);
    }
   }
   return response;

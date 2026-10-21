@@ -30,8 +30,9 @@ for(const company of companies){
  test(`selected final-image fullscreen uses the same owned URL and every close path changes no draft/quotation (${company.code})`,async()=>{
   const f=await fixture(company),h=editor(f);try{
    await h.idle();const frozen=snapshot(f),before=await f.read(),network=f.backend.network.length,calls=f.calls.length;assert.notEqual(f.key,f.source,'saved final image differs from source-option image');
-   for(const close of ['image','background','button','Escape']){
-    await h.click('최종 대표이미지 크게 보기');assert.ok(modal(h));assert.equal(fullImage(h).props.src,savedImage(h).props.src);assert.equal(fullImage(h).props.src,url(f.key));assert.equal(modal(h).props['aria-modal'],'true');assert.equal(h.render().props['data-workspace-dirty'],false);
+   assert.equal(visible(h.render()).find(node=>node.type==='img'&&node.props.alt==='현재 메인 이미지 작은 미리보기').props.src,savedImage(h).props.src);
+   for(const trigger of ['최종 대표이미지 크게 보기','현재 메인 이미지 크게 보기'])for(const close of ['image','background','button','Escape']){
+    await h.click(trigger);assert.ok(modal(h));assert.equal(fullImage(h).props.src,savedImage(h).props.src);assert.equal(fullImage(h).props.src,url(f.key));assert.equal(modal(h).props['aria-modal'],'true');assert.equal(h.render().props['data-workspace-dirty'],false);
     if(close==='image')bubbleClick(h,fullImage(h));else if(close==='background')modal(h).props.onClick({target:modal(h)});else if(close==='button'){let stopped=false;h.button('최종 대표이미지 전체 화면 닫기').props.onClick({stopPropagation(){stopped=true;}});assert.equal(stopped,true);}else{let prevented=false,stopped=false;modal(h).props.onKeyDown({key:'Escape',preventDefault(){prevented=true;},stopPropagation(){stopped=true;}});assert.equal(prevented,true);assert.equal(stopped,true,'Escape must not reach the registration drawer');}
     await h.idle();assert.equal(modal(h),undefined);assert.equal(savedImage(h).props.src,url(f.key));assert.equal(h.render().props['data-workspace-dirty'],false);
    }

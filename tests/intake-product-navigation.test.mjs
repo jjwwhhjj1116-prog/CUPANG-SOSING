@@ -52,28 +52,28 @@ test('closing intake blocks late collection updates and editor navigation after 
 test('saved row opens its existing editor only on click; double click is coalesced and other inputs survive',async()=>{
  let finish;const waiting=new Promise(resolve=>finish=resolve),calls=[];
  const h=harness((id,signal)=>{calls.push({id,signal});return waiting;});const before=JSON.stringify(h.rows);
- assert.equal(calls.length,0);const click=h.button('1~7단계 확인').props.onClick;click();click();await settle();
- assert.equal(calls.length,1);assert.equal(calls[0].id,'p1');assert.equal(h.button('1~7단계 확인').props.disabled,true);
- finish();await settle();assert.equal(JSON.stringify(h.rows),before);assert.equal(h.calls.length,0);assert.equal(h.button('1~7단계 확인').props.disabled,false);
+ assert.equal(calls.length,0);const click=h.button('초안 확인·수정').props.onClick;click();click();await settle();
+ assert.equal(calls.length,1);assert.equal(calls[0].id,'p1');assert.equal(h.button('초안 확인·수정').props.disabled,true);
+ finish();await settle();assert.equal(JSON.stringify(h.rows),before);assert.equal(h.calls.length,0);assert.equal(h.button('초안 확인·수정').props.disabled,false);
 });
 test('editor read failure keeps the queue and allows retry; unmount aborts the request',async()=>{
  let attempts=0,signal;
  const h=harness(async(id,s)=>{signal=s;if(++attempts===1)throw Error('상품 조회 실패');await new Promise(()=>{});});
- h.button('1~7단계 확인').props.onClick();await settle();assert.match(JSON.stringify(h.render()),/상품 조회 실패/);assert.equal(h.rows.length,2);
- h.button('1~7단계 확인').props.onClick();await settle();assert.equal(attempts,2);h.close();assert.equal(signal.aborted,true);
+ h.button('초안 확인·수정').props.onClick();await settle();assert.match(JSON.stringify(h.render()),/상품 조회 실패/);assert.equal(h.rows.length,2);
+ h.button('초안 확인·수정').props.onClick();await settle();assert.equal(attempts,2);h.close();assert.equal(signal.aborted,true);
 });
 
 test('partially saved row opens for editing and editing its URL clears the confirmed product link',async()=>{
  const opened=[];const h=harness(async id=>opened.push(id));
  h.rows[0].status='error';h.rows[0].message='이미지 실패';h.rows[0].productId='partial-product';
- h.button('1~7단계 확인').props.onClick();await settle();assert.deepEqual(opened,['partial-product']);assert.equal(h.rows[0].status,'error');
+ h.button('초안 확인·수정').props.onClick();await settle();assert.deepEqual(opened,['partial-product']);assert.equal(h.rows[0].status,'error');
  nodes(h.render()).find(n=>n.props?.['aria-label']==='1번째 1688 링크').props.onChange({target:{value:'https://detail.1688.com/offer/999.html'}});
- assert.equal(h.rows[0].productId,undefined);assert.equal(h.button('1~7단계 확인'),undefined);assert.equal(h.rows[0].status,'draft');
+ assert.equal(h.rows[0].productId,undefined);assert.equal(h.button('초안 확인·수정'),undefined);assert.equal(h.rows[0].status,'draft');
 });
 
 test('a retained draft-open callback cannot open its old product after the row source is edited, deleted or the queue closes',async()=>{
  for(const change of ['url','features','category','deleted','unmounted']){
-  const opened=[],h=harness(async id=>opened.push(id));h.rows[0].status='error';h.rows[0].message='이미지 반영 실패';const oldClick=h.button('1~7단계 확인').props.onClick;
+  const opened=[],h=harness(async id=>opened.push(id));h.rows[0].status='error';h.rows[0].message='이미지 반영 실패';const oldClick=h.button('초안 확인·수정').props.onClick;
   if(change==='url')nodes(h.render()).find(n=>n.props?.['aria-label']==='1번째 1688 링크').props.onChange({target:{value:'https://detail.1688.com/offer/999.html'}});
   if(change==='features')nodes(h.render()).find(n=>n.props?.['aria-label']==='1번째 특징').props.onChange({target:{value:'새 상품 특징'}});
   if(change==='category'){h.rows[0].profile={...h.rows[0].profile,categoryId:'81221',categoryPath:['스포츠/레져','스포츠 잡화','스포츠 장갑']};h.rows[0].productId=undefined;}
@@ -88,17 +88,17 @@ test('restored pending row opens matching server product without collecting or s
  h.rows[0].status='draft';
  // The harness supplies the server receipt context, just as collection-jobs does.
  h.setJobContext({category:h.rows[0].profile,features:h.rows[0].features,keywords:h.rows[0].keywords});
- h.button('1~7단계 확인').props.onClick();await settle();
+ h.button('초안 확인·수정').props.onClick();await settle();
  assert.deepEqual(opened,['p1']);assert.equal(h.calls.length,0);assert.equal(h.rows[0].status,'draft');
  nodes(h.render()).find(n=>n.props?.['aria-label']==='1번째 특징').props.onChange({target:{value:'다른 특징'}});
- assert.equal(h.button('1~7단계 확인'),undefined);
+ assert.equal(h.button('초안 확인·수정'),undefined);
 });
 
 test('opening a saved draft locks its parent and releases exactly once on success, error or unmount',async()=>{
  for(const outcome of ['success','error','unmount']){
   let resolve,reject;const waiting=new Promise((a,b)=>{resolve=a;reject=b;});
   const h=harness(()=>waiting);
-  const click=h.button('1~7단계 확인').props.onClick;click();click();await settle();
+  const click=h.button('초안 확인·수정').props.onClick;click();click();await settle();
   assert.deepEqual(h.busy,[true]);
   if(outcome==='unmount'){h.close();assert.deepEqual(h.busy,[true,false]);}
   if(outcome==='error')reject(Error('read failed'));else resolve();

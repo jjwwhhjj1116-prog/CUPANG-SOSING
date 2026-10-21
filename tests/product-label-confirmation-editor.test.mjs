@@ -83,7 +83,7 @@ test('confirmed row removal and required-only clearing remain local until the ex
 
 test('saved-default restoration restores saved custom names, order, manual blanks and values rather than deleting overrides', async () => {
   const { h, f, writes } = setup(); try {
-    await h.idle(); await h.click('＋ 표시사항 항목 추가'); assert.ok(heading(h, 10), 'new row immediately enters name editing');
+    await h.idle(); await h.click('＋ 새 항목 추가'); assert.ok(heading(h, 10), 'new row immediately enters name editing');
     rename(h, 10, '저장된 사용자 항목'); h.edit('선택 옵션 저장된 사용자 항목', '저장한 첫 줄\n두 번째 줄'); await h.click('정보 저장하기');
     const before = plain(f.view), count = h.calls.length;
     rename(h, 2, '취소할 제조원 이름'); h.edit('선택 옵션 제품명', ''); action(h, 9, '삭제').props.onClick();
@@ -100,7 +100,7 @@ test('saved-default restoration restores saved custom names, order, manual blank
 
 test('new-row name editing keeps its local row on Escape and preserves the existing Enter/blur save flow', async () => {
   const { h, writes } = setup(); try {
-    await h.idle(); await h.click('＋ 표시사항 항목 추가'); const input = heading(h, 10); assert.ok(input); assert.equal(input.props.value, '새 항목');
+    await h.idle(); await h.click('＋ 새 항목 추가'); const input = heading(h, 10); assert.ok(input); assert.equal(input.props.value, '새 항목');
     input.props.onChange({ target: { value: '취소할 이름' } }); heading(h, 10).props.onKeyDown({ key: 'Escape', preventDefault() {} }); input.props.onBlur();
     assert.equal(heading(h, 10), undefined); assert.equal(h.input('선택 옵션 새 항목').props.value, ''); assert.equal(h.render().props['data-workspace-dirty'], true); assert.equal(writes.length, 0);
     rename(h, 10, '확정한 이름'); h.edit('선택 옵션 확정한 이름', '확인한 내용\n공란 유지'); await h.click('정보 저장하기');

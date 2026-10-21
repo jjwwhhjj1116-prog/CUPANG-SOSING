@@ -50,6 +50,25 @@ const sections = [
 ] as const;
 const sourceLabels: Record<string, string> = { 'couplus-default': '쿠플러스 양식 기본값', 'manual-option': '옵션 직접 수정', 'manual-common': '공통 직접 수정', content: '저장 콘텐츠', settings: '기본 설정', option: '저장 옵션', pricing: '가격 계산', product: '저장 상품', schema: '선택 카테고리', empty: '미입력' };
 const has = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);
+/** These limits describe the two observed controls, not every same-label or
+ * workbook field. Keep stored values intact; schema/server validation remains
+ * authoritative and the counter itself never adds a save restriction. */
+function quotationInputLength(field: QuotationField, value: string) {
+  if (field.section !== 'product' || field.visibility !== 'common' || field.workbookWire || field.choices
+    || field.numericText || field.numericValue || !['text', 'textarea'].includes(field.type)) return null;
+  const role = field.hubWire
+    ? field.hubWire.name === undefined && field.hubWire.nameKey === undefined && field.hubWire.valueKey === undefined
+      ? JSON.stringify(field.hubWire.path) === JSON.stringify(['productPage', 'modelNumber']) ? 'model'
+        : JSON.stringify(field.hubWire.path) === JSON.stringify(['productPage', 'searchTags']) ? 'searchTags' : null
+      : null
+    : field.id === 'model' || field.id === 'searchTags' ? field.id : null;
+  if (!role || field.hubInput && field.hubInput !== role || role === 'model' && field.type !== 'text') return null;
+  const limit = role === 'model' ? 50 : 150;
+  const maxLength = Number.isSafeInteger(field.maxLength) && field.maxLength! >= 0 ? Math.min(limit, field.maxLength!) : limit;
+  const length = value.length, warning = role === 'model' ? 40 : 120, danger = role === 'model' ? 45 : 140;
+  const state = length > Math.min(danger, maxLength) ? 'danger' : length > Math.min(warning, maxLength) ? 'warning' : 'normal';
+  return { role, maxLength, length, state };
+}
 export const quotationEditorKey = (optionId: string | null, fieldKey: string) => JSON.stringify([optionId, fieldKey]);
 export function resolveQuotationEditorNavigation(resolved: QuotationFieldsView['resolved'], target: QuotationNavigationTarget) {
   const destination = resolveQuotationNavigation(resolved, target);
@@ -663,7 +682,8 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
           (key, optionId = selectedOption) => resolveQuotationEditorCell(view, changes, optionId, key),
           { optionId: selectedOption, optionIds: view.resolved.rows.filter(item => item.included).map(item => item.optionId) });
         const manualModelLink = manualModelState.link;
-        const inputProps = { id, value: cell.value, readOnly: !editable, 'aria-invalid': validationIssues.length > 0, 'aria-describedby': `${id}-notes`, onChange: (event: { target: { value: string } }) => edit(field.id, event.target.value) };
+        const lengthInput = quotationInputLength(field, cell.value);
+        const inputProps = { id, value: cell.value, readOnly: !editable, 'aria-invalid': validationIssues.length > 0, 'aria-describedby': `${id}-notes${lengthInput ? ` ${id}-length` : ''}`, ...(lengthInput ? { maxLength: lengthInput.maxLength } : {}), onChange: (event: { target: { value: string } }) => edit(field.id, event.target.value) };
         const group = quotationFieldGroup(field, schema?.fields);
         const heading = group && (fieldIndex === 0 || quotationFieldGroup(sectionFields[fieldIndex - 1], schema?.fields) !== group) ? <h5 key={`group-${field.id}`} className="quotation-field-group">{group}</h5> : null;
         const priceMismatch = priceAliases.map(alias => ({ alias, cell: resolveQuotationEditorCell(view, changes, selectedOption, alias.id) })).filter(item => item.cell.value !== cell.value);
@@ -676,11 +696,12 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
               || current.busy || current.loading || activeWrite.current) return;
             edit(field.id, value);
           }}/>
-          : field.type === 'textarea' || field.type === 'images' ? <textarea {...inputProps} rows={field.type === 'images' ? 2 : 3} placeholder={field.type === 'images' ? '아래에서 이 상품의 이미지 파일을 선택하세요.' : '확인한 내용을 입력하세요.'} />
+          : field.type === 'textarea' || field.type === 'images' || lengthInput?.role === 'searchTags' ? <textarea {...inputProps} rows={field.type === 'images' ? 2 : 3} placeholder={field.type === 'images' ? '아래에서 이 상품의 이미지 파일을 선택하세요.' : lengthInput?.role === 'searchTags' ? '검색 태그를 쉼표(,)로 구분하여 입력하세요' : '확인한 내용을 입력하세요.'} />
             : <input {...inputProps} type="text" inputMode={field.type === 'number' ? 'decimal' : 'text'} placeholder={!editable ? '' : hasCouplusEmptyAttributeDefault(field, cell) ? '해당사항없음' : '확인한 내용을 입력하세요.'} />;
-        return [heading, <div className={`quotation-field ${field.type === 'textarea' || field.type === 'images' ? 'wide' : ''}`} key={field.id}>
+        return [heading, <div className={`quotation-field ${field.type === 'textarea' || field.type === 'images' || lengthInput?.role === 'searchTags' ? 'wide' : ''}`} key={field.id}>
           <div className="quotation-field-heading"><label htmlFor={id} className={namedPair ? 'quotation-value-label' : undefined}>{field.label}{field.unit ? ` (${field.unit})` : ''}{field.required && <b>*</b>}</label>{!namedPair && example}{field.workbookWire?.requirement==='conditional'&&<span className="quotation-field-badge">조건부 필수</span>}</div>
           {namedPair ? <div className="quotation-named-pair"><div className="quotation-named-pair-name"><input type="text" readOnly aria-label={`${field.label} 항목명`} value={field.hubWire!.name} tabIndex={-1}/>{field.required && <b aria-hidden="true">*</b>}{example}</div>{control}</div> : control}
+          {lengthInput && <div className="quotation-field-input-guidance"><small>{lengthInput.role === 'model' ? `모델번호는 최대 ${lengthInput.maxLength}자까지 입력 가능합니다.` : `쉼표(,)로 구분하여 입력하세요. 최대 ${lengthInput.maxLength}자`}</small><small id={`${id}-length`} className="quotation-field-length" data-quotation-length-role={lengthInput.role} data-quotation-length-state={lengthInput.state}>{lengthInput.length}/{lengthInput.maxLength}자</small></div>}
           {seoTitle && onEditSeo && <button type="button" className="quotation-field-text-button" disabled={dirty || busy || loading || conflicts.length > 0} onClick={editSeo}>SEO 설정에서 상품명 수정</button>}
           {modelSuggestion && <details className="quotation-field-diagnostics"><summary>모델명 제안 확인</summary><div className="quotation-field-auto">
             <small>출처: 현재 {selectedOption === null ? '공통' : '옵션'} 견적 상품명 · {sourceLabels[modelSuggestion.source] ?? modelSuggestion.source}</small>
@@ -727,7 +748,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
           <div className="quotation-field-badges"><span className={`quotation-field-badge ${cell.source.startsWith('manual-') ? 'manual' : ''}`}>{sourceLabels[cell.source] ?? cell.source}</span>{field.visibility === 'exposed' && <span className="quotation-field-badge">노출 속성</span>}{field.visibility === 'hidden' && <span className="quotation-field-badge">비노출 속성</span>}{cell.needsReview && <span className="quotation-field-badge review">검토 필요</span>}</div>
           {issueNotes.diagnostic.map(issue => <p key={issue} className="quotation-field-help">{issue}</p>)}
           {ownManual && <div className="quotation-field-auto">{restoredWeight ? `수정 해제 후 ${sourceLabels[restoredWeight.source]}: ${quotationFieldDisplay(field, restoredWeight, '(미입력)')}` : selectedOption !== null && draftManual(view, changes, null, field.id) !== null ? `수정 해제 후 공통값: ${quotationFieldDisplay(field, {value:draftManual(view, changes, null, field.id)!,source:'manual-common'})}` : `자동값 (${sourceLabels[automatic?.source ?? 'empty'] ?? '저장 자료'}): ${quotationFieldDisplay(field, automatic ?? {value:'',source:'empty'}, '(미입력)')}`}</div>}
-          <div className="quotation-field-footer"><div>{seoTitle && !field.readOnly && ownManual && <button type="button" className="quotation-field-text-button" disabled={busy || loading || conflicts.length > 0} onClick={() => restoreSeoTitle(field.id)}>{selectedOption !== null && draftManual(view, changes, null, field.id) !== null ? '상품명 수정 해제 · 공통값 사용' : '상품명 수정 해제 · SEO 자동값 사용'}</button>}{editable && ownManual && <button type="button" className="quotation-field-text-button" onClick={() => edit(field.id, null)}>{restoredWeight ? restoredWeight.source.startsWith('manual-') ? '수정 해제 · 연결값 사용' : '수정 해제 · 자동값 복원' : selectedOption !== null && draftManual(view, changes, null, field.id) !== null ? '수정 해제 · 공통값 사용' : '수정 해제 · 자동값 복원'}</button>}{linkedWeight ? <small>연결된 포장 무게의 {weightManual.source === 'manual-option' ? '옵션' : '공통'} 입력값을 따릅니다.</small> : inheritedManual && <small>{seoTitle ? '저장된 공통 상품명 수정값을 따릅니다.' : '공통값을 따릅니다. 여기서 입력하면 이 옵션만 바뀝니다.'}</small>}{field.minLength !== undefined && field.minLength > 0 && <small> 최소 {field.minLength}자</small>}{field.maxLength !== undefined && <small> {quotationValueLength(field, cell.value)}/{field.maxLength}자</small>}</div>{editable && optionCount > 0 && <label className="quotation-field-select-copy"><input type="checkbox" checked={selectedFields.includes(field.id)} onChange={event => { setSelectedFields(previous => event.target.checked ? [...previous, field.id] : previous.filter(key => key !== field.id)); setBulk(null); }} />다른 옵션에 적용</label>}</div>
+          <div className="quotation-field-footer"><div>{seoTitle && !field.readOnly && ownManual && <button type="button" className="quotation-field-text-button" disabled={busy || loading || conflicts.length > 0} onClick={() => restoreSeoTitle(field.id)}>{selectedOption !== null && draftManual(view, changes, null, field.id) !== null ? '상품명 수정 해제 · 공통값 사용' : '상품명 수정 해제 · SEO 자동값 사용'}</button>}{editable && ownManual && <button type="button" className="quotation-field-text-button" onClick={() => edit(field.id, null)}>{restoredWeight ? restoredWeight.source.startsWith('manual-') ? '수정 해제 · 연결값 사용' : '수정 해제 · 자동값 복원' : selectedOption !== null && draftManual(view, changes, null, field.id) !== null ? '수정 해제 · 공통값 사용' : '수정 해제 · 자동값 복원'}</button>}{linkedWeight ? <small>연결된 포장 무게의 {weightManual.source === 'manual-option' ? '옵션' : '공통'} 입력값을 따릅니다.</small> : inheritedManual && <small>{seoTitle ? '저장된 공통 상품명 수정값을 따릅니다.' : '공통값을 따릅니다. 여기서 입력하면 이 옵션만 바뀝니다.'}</small>}{field.minLength !== undefined && field.minLength > 0 && <small> 최소 {field.minLength}자</small>}{!lengthInput && field.maxLength !== undefined && <small> {quotationValueLength(field, cell.value)}/{field.maxLength}자</small>}</div>{editable && optionCount > 0 && <label className="quotation-field-select-copy"><input type="checkbox" checked={selectedFields.includes(field.id)} onChange={event => { setSelectedFields(previous => event.target.checked ? [...previous, field.id] : previous.filter(key => key !== field.id)); setBulk(null); }} />다른 옵션에 적용</label>}</div>
           </details>
         </div>];
       })}</div></fieldset>)}

@@ -30,6 +30,7 @@ async function apiFixture(company){
 for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}])test(`additional wizard previews read only; explicit add, move, drop and confirmed removal save one exact selected-SKU change (${company.companyCode})`,async()=>{
  const f=await apiFixture(company),prompts=[],targets=[];let accepted=false;const h=imageUI(f.fetch,{productId:f.product.id,optionId:f.optionId,version:f.view.productVersion,saveOnChange:true,confirmImage:message=>{prompts.push(message);return accepted;},onEdit:(...args)=>targets.push(args)});try{
   await h.idle();const before=await f.read(),protectedSource=f.protectedSource(),network=[...f.api.network],other=plain(before.overrides),index=f.keys.indexOf(f.keys[3])+1;
+  assert.doesNotMatch(text(h.render()),/선택을 변경한 뒤 선택 옵션 이미지 저장/,'immediate mode must not instruct a second save before any change');
   assert.equal(writes(h).length,0);assert.equal(h.control(`선택 옵션 추가 이미지 후보 ${index}`),undefined);await h.click(`상품 저장 이미지 ${index} 크게 보기`);assert.equal(writes(h).length,0);assert.equal(currentImage(h),'/api/files/'+f.keys[3]);assert.equal(h.button('추가 이미지 4 편집하기'),undefined);
   await h.click(`추가 이미지 후보 ${index} 추가`);assert.equal(writes(h).length,1);assert.deepEqual(plain(JSON.parse(writes(h)[0].init.body)),{expectedRevision:before.revision,expectedInputFingerprint:before.inputFingerprint,changes:plain(f.model.optionImageChanges(before,f.optionId,{additionalImages:f.keys.slice(0,4).join('\n')}))});assert.deepEqual(h.ordered(),f.keys.slice(0,4));assert.equal(h.render().props['data-workspace-dirty'],false);assert.equal(h.saved,1);
   await h.click('추가 이미지 4 편집하기');assert.equal(targets.length,1);assert.equal(targets[0][2].optionId,f.optionId);assert.equal(targets[0][2].input,'additionalImages');assert.equal(targets[0][2].slotIndex,3);assert.equal(targets[0][0],f.keys[3]);assert.equal(writes(h).length,1,'editing entry alone adds no mutation');
@@ -42,13 +43,14 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
 
 test('standalone additional and detailed-page editing keep explicit save even when detail receives saveOnChange',async()=>{
  for(const stage of ['additional','detail']){const f=fixture(),h=imageUI((url,init)=>f.reply(url,init),{stage,saveOnChange:stage==='detail'});try{
-  await h.idle();h.choose(`선택 옵션 ${stage==='detail'?'상세 이미지':'추가 이미지'} 후보 4`);await h.idle();assert.equal(writes(h).length,0);assert.equal(h.render().props['data-workspace-dirty'],true);await h.click('선택 옵션 이미지 저장');assert.equal(writes(h).length,1);assert.equal(h.saved,1);
+  await h.idle();h.choose(`선택 옵션 ${stage==='detail'?'상세 이미지':'추가 이미지'} 후보 4`);await h.idle();assert.equal(writes(h).length,0);assert.equal(h.render().props['data-workspace-dirty'],true);assert.match(text(h.render()),/선택을 변경한 뒤 선택 옵션 이미지 저장/);await h.click('선택 옵션 이미지 저장');assert.equal(writes(h).length,1);assert.equal(h.saved,1);
  }finally{h.close();}}
 });
 
 test('same-tick repeated add, reorder and removal callbacks cannot send a second in-flight PUT or replace the first draft',async()=>{
  const f=seed(fixture()),pending=deferred();let held;const h=imageUI((url,init)=>{if(init?.method==='PUT'){held={url,init};return pending.promise;}return f.reply(url,init);},{version:f.view.productVersion,saveOnChange:true});try{
   await h.idle();const add=h.button('추가 이미지 후보 4 추가').props.onClick,move=h.button('추가 이미지 1 아래로 이동').props.onClick,remove=h.button('추가 이미지 1 선택 제거').props.onClick;add();add();move();remove();h.render();assert.equal(writes(h).length,1);assert.deepEqual(h.ordered(),f.keys);assert.equal(h.render().props['data-workspace-saving'],true);add();move();remove();assert.equal(writes(h).length,1);
+  assert.match(text(h.render()),/이미지 저장 상태를 확인하고 있습니다/);assert.doesNotMatch(text(h.render()),/이미지 저장 결과 확인을 눌러/,'a pending save must not ask for a disabled recovery action');
   pending.resolve(f.reply(held.url,held.init));await h.idle();assert.equal(writes(h).length,1);assert.equal(h.saved,1);assert.deepEqual(h.ordered(),f.keys);assert.equal(h.button('추가 이미지 후보 4 추가').props.disabled,true);
  }finally{pending.resolve(Response.json(f.view));h.close();}
 });
@@ -62,6 +64,7 @@ test('delete confirmation is revalidated after cancel or option, profile, clock,
 test('rejected and unknown immediate saves preserve one choice and require explicit read-first recovery',async()=>{
  for(const committed of [false,true]){const f=seed(fixture());let fail=true;const h=imageUI((url,init)=>{if(init?.method==='PUT'&&fail){fail=false;if(committed){f.reply(url,init);throw Error('synthetic committed ACK lost');}return Response.json({error:'synthetic rejected save'},{status:503});}return f.reply(url,init);},{version:f.view.productVersion,saveOnChange:true});try{
   await h.idle();const add=h.button('추가 이미지 후보 4 추가').props.onClick,move=h.button('추가 이미지 1 아래로 이동').props.onClick;add();await h.idle();assert.equal(writes(h).length,1);assert.equal(h.saved,0);assert.equal(h.render().props['data-workspace-dirty'],true);assert.deepEqual(h.ordered(),f.keys);add();move();await h.idle();assert.equal(writes(h).length,1);assert.deepEqual(h.ordered(),f.keys);
+  assert.match(text(h.render()),/이미지 저장 결과 확인을 눌러 반영 여부를 확인/);
   await h.click('이미지 저장 결과 확인');assert.equal(writes(h).length,1);if(committed){assert.equal(h.saved,1);assert.equal(h.render().props['data-workspace-dirty'],false);}else{assert.equal(h.saved,0);assert.equal(h.render().props['data-workspace-dirty'],true);assert.equal(h.button('추가 이미지 후보 4 추가').props.disabled,true);await h.click('선택 옵션 이미지 저장');assert.equal(writes(h).length,2);assert.equal(h.saved,1);}
  }finally{h.close();}}
 });

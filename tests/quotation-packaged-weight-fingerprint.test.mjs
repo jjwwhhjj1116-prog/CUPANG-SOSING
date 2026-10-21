@@ -138,8 +138,11 @@ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name
   const exporter=h.load('app/exports/quotation-source.ts'),model=h.load('app/automation/model.ts'),normalize=h.load('app/settings-fingerprint.ts').savedProductFingerprintSettings,price=h.load('app/product-options.ts').optionPriceCalculationRevision;
   const oldIdentities=async()=>{
    const saved=await exporter.readMappedQuotationSource('owner',p.id,'cat');
-   const legacyExport=await model.fingerprint({format:'sourceflow-quotation-fields-v1',saved:{...saved,settings:normalize(saved.settings)},dataStartRow:2,schema:f.q.getQuotationSchema('69900',path,saved.hubSchema,saved.template),...price(saved.product,saved.options.rows,saved.settings,saved.state.overrides)});
-   const inputs={categoryId:'69900',categoryPath:path,product:saved.product,content:saved.content,options:saved.options,settings:normalize(saved.settings),hubSchema:saved.hubSchema,...(saved.template?{template:saved.template}:{})};
+   // Display numbering is excluded from both current identities. Isolate only
+   // the former weight-alias behavior without reintroducing that unrelated key.
+   const fingerprintProduct=model.productFingerprintSource(saved.product);
+   const legacyExport=await model.fingerprint({format:'sourceflow-quotation-fields-v1',saved:{...saved,product:fingerprintProduct,settings:normalize(saved.settings)},dataStartRow:2,schema:f.q.getQuotationSchema('69900',path,saved.hubSchema,saved.template),...price(saved.product,saved.options.rows,saved.settings,saved.state.overrides)});
+   const inputs={categoryId:'69900',categoryPath:path,product:fingerprintProduct,content:saved.content,options:saved.options,settings:normalize(saved.settings),hubSchema:saved.hubSchema,...(saved.template?{template:saved.template}:{})};
    // Later same-value PUTs are real explicit confirmations, so retain their
    // actual proof while comparing only the former weight-alias identity.
    const legacyInput=await model.fingerprint({inputs,schema:view.automatic.schema,categoryContext:view.categoryContext,profileRevision:null,settingsPayload:saved.source.settingsPayload,collection:saved.source.collection,...(view.packagingBasis?{packagingBasis:view.packagingBasis}:{}),...price(saved.product,saved.options.rows,saved.settings)});

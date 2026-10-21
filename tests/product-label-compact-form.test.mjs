@@ -37,6 +37,17 @@ test('single-line rows expose one caption/value and visible delete while optiona
     await h.idle(); const tree = h.render(), rows = nodes(tree).filter(node => node.props?.['data-label-sort-id']);
     assert.equal(rows.length, 9); assert.equal(disclosures(h).length, 10);
     assert.ok(disclosures(h).every(node => node.props.open !== true));
+    const form = nodes(tree), rowStart = form.indexOf(rows[0]), rowEnd = form.indexOf(rows.at(-1));
+    const button = caption => form.find(node => node.type === 'button' && text(node) === caption);
+    const restore = button('기본값 복원'), clear = button('전체 삭제'), add = button('＋ 새 항목 추가');
+    for (const control of [restore, clear]) {
+      assert.ok(control); assert.equal(ancestors(tree, control).some(node => node.type === 'details'), false);
+      assert.ok(form.indexOf(control) < rowStart, 'restore and confirmed clear are available before the editable rows');
+    }
+    assert.ok(add); assert.ok(form.indexOf(add) > rowEnd, 'add is available after the existing rows');
+    assert.equal(add.props.className, 'btn ghost product-label-add-field');
+    assert.equal(add.props['aria-label'], '＋ 표시사항 항목 추가');
+    assert.equal(ancestors(tree, add).some(node => node.type === 'details'), false);
     for (const row of rows) {
       const value = nodes(row).find(node => node.props?.className === 'product-label-value-input');
       assert.equal(value.type, 'input'); assert.equal(value.props.type, 'text');
