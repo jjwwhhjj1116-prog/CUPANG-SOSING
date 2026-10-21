@@ -28,7 +28,7 @@ export function quotationLabelFormUI({productId,load,request,renderDocument}){
     if(name==='@/app/quotation-label-attachment')return{...load('app/quotation-label-attachment.ts'),attachQuotationLabel:input=>load('app/quotation-label-attachment.ts').attachQuotationLabel(input,request)};
     if(name==='@/app/quotation-label-batch')return{...load('app/quotation-label-batch.ts'),attachQuotationLabels:input=>load('app/quotation-label-batch.ts').attachQuotationLabels(input,request)};
     if(name==='@/app/components/quotation-label-panel')return component('app/components/quotation-label-panel.tsx');
-    if(name.startsWith('@/app/components/'))return{[{'quotation-translated-attributes':'QuotationTranslatedAttributes','quotation-choice-input':'QuotationChoiceInput'}[name.split('/').at(-1)]]:name};
+    if(name.startsWith('@/app/components/'))return{[{'quotation-translated-attributes':'QuotationTranslatedAttributes','quotation-choice-input':'QuotationChoiceInput','quotation-brand-input':'QuotationBrandInput'}[name.split('/').at(-1)]]:name};
     return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);
    }});return exports;
  }

@@ -1,10 +1,12 @@
 import {createSupplierHubDocumentBrowserAdapter} from './single-document-adapter.mjs';
 import {nativeProductDocumentAppSourcePage} from './native-product-assets.mjs';
+import {withNativeProductAssetRecovery} from './native-product-recovery.mjs';
 
 /** Same owned-tab adapter and native operations, with a trusted full-product
  * source verifier. Packet fields cannot select a looser adapter contract. */
 export function createProductDocumentBrowserAdapter(options={}){
-  return createSupplierHubDocumentBrowserAdapter(options,{wholeProduct:true});
+  const adapter=createSupplierHubDocumentBrowserAdapter(options,{wholeProduct:true});
+  return options.nativeAssets?withNativeProductAssetRecovery(adapter,{api:options.api??globalThis.chrome,nativeSha:options.nativeAssets.sourcePlanSha256,now:options.now??Date.now}):adapter;
 }
 
 /** Select native construction only after the current authenticated app source

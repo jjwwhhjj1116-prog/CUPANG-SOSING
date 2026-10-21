@@ -15,6 +15,8 @@ import { QuotationLabelPanel } from '@/app/components/quotation-label-panel';
 import type { QuotationLabelUploadCache } from '@/app/quotation-label-attachment';
 import type { LabelBatchCache } from '@/app/quotation-label-batch';
 import { QuotationChoiceInput } from '@/app/components/quotation-choice-input';
+import { QuotationBrandInput } from '@/app/components/quotation-brand-input';
+import { usesRegistrationBrandChoices } from '@/app/quotation-brand-choices';
 import { quotationFieldGroup } from '@/app/quotation-field-groups';
 import { quotationFieldDisplay } from '@/app/quotation-field-display';
 import { quotationValueLength } from '@/app/quotation-scalar-constraints';
@@ -440,6 +442,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   }
   useEffect(() => { aiDraftApplied.current = changes.length > 0; }, [changes]);
   const modelActionState = useRef({ view, selectedOption, busy, loading, conflicts, changes, applyAll });
+  const brandInputEpoch = useRef(0), brandInputTicket = brandInputEpoch.current;
   useEffect(() => {
     modelActionState.current = { view, selectedOption, busy, loading, conflicts, changes, applyAll };
     return () => { modelActionState.current = { view: null, selectedOption, busy: true, loading: true, conflicts, changes, applyAll }; };
@@ -583,7 +586,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
     {schema && <div className="quotation-fields-category"><strong>{schema.categoryPath.join(' › ') || '카테고리 미연결'}{schema.categoryId ? ` · ${schema.categoryId}` : ''}</strong>{schema.status !== 'observed' && <small>이 카테고리의 세부 규격은 미확인입니다.</small>}</div>}
     {view && <>
       {optionLimitIssue && <p className="quotation-fields-notice" role="alert">{optionLimitIssue}</p>}
-      <div className="quotation-fields-toolbar"><label className="field"><span>편집할 옵션</span><select value={selectedOption ?? ''} disabled={loading || busy} onChange={event => { explicitRefreshAction.current = null; const next = event.target.value || null; modelActionState.current = { ...modelActionState.current, selectedOption: next }; setSelectedOption(next); setApplyAll(false); setBulk(null); }}>{!row && <option value={selectedOption ?? ''} disabled>선택한 옵션 없음 · 다시 선택해주세요</option>}{view.resolved.rows.map(item => <option key={item.optionId ?? 'common'} value={item.optionId ?? ''}>{item.optionId === null ? '상품 공통값' : `${optionRegistrationLabel(item.optionId,item.optionLabel,view.optionRegistrationNumbers)}${item.included ? '' : ' · 견적 제외'}`}</option>)}</select></label><small>{selectedOption === null ? '공통 수정은 별도로 수정하지 않은 옵션에도 적용됩니다. 옵션별 입력은 개별 값을 우선 사용합니다.' : '선택한 옵션만 수정합니다. 다른 옵션에도 같은 값을 넣으려면 항목을 선택한 뒤 적용 범위를 확인하세요.'}</small></div>
+      <div className="quotation-fields-toolbar"><label className="field"><span>편집할 옵션</span><select value={selectedOption ?? ''} disabled={loading || busy} onChange={event => { explicitRefreshAction.current = null; const next = event.target.value || null; brandInputEpoch.current++; modelActionState.current = { ...modelActionState.current, selectedOption: next }; setSelectedOption(next); setApplyAll(false); setBulk(null); }}>{!row && <option value={selectedOption ?? ''} disabled>선택한 옵션 없음 · 다시 선택해주세요</option>}{view.resolved.rows.map(item => <option key={item.optionId ?? 'common'} value={item.optionId ?? ''}>{item.optionId === null ? '상품 공통값' : `${optionRegistrationLabel(item.optionId,item.optionLabel,view.optionRegistrationNumbers)}${item.included ? '' : ' · 견적 제외'}`}</option>)}</select></label><small>{selectedOption === null ? '공통 수정은 별도로 수정하지 않은 옵션에도 적용됩니다. 옵션별 입력은 개별 값을 우선 사용합니다.' : '선택한 옵션만 수정합니다. 다른 옵션에도 같은 값을 넣으려면 항목을 선택한 뒤 적용 범위를 확인하세요.'}</small></div>
       <div className="quotation-fields-summary"><span>현재 옵션 필수 미입력 <b>{missingRequired}개</b></span><span>입력 확인 <b>{allIssues.length}건</b></span><span>미저장 수정 <b>{changes.length}개</b></span></div>
       <QuotationExposedDuplicates resolved={view.resolved} numbers={view.optionRegistrationNumbers} disabled={busy || loading || conflicts.length > 0}
         readValue={(optionId, fieldId) => resolveQuotationEditorCell(view, changes, optionId, fieldId).value}
@@ -625,6 +628,12 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
         return [heading, <div className={`quotation-field ${field.type === 'textarea' || field.type === 'images' ? 'wide' : ''}`} key={field.id}>
           <div className="quotation-field-heading"><label htmlFor={id}>{field.label}{field.unit ? ` (${field.unit})` : ''}{field.required && <b>*</b>}</label><div className="quotation-field-badges"><span className={`quotation-field-badge ${cell.source.startsWith('manual-') ? 'manual' : ''}`}>{sourceLabels[cell.source] ?? cell.source}</span>{field.workbookWire?.requirement==='conditional'&&<span className="quotation-field-badge">조건부 필수</span>}{field.visibility === 'exposed' && <span className="quotation-field-badge">노출 속성</span>}{field.visibility === 'hidden' && <span className="quotation-field-badge">비노출 속성</span>}{cell.needsReview && <span className="quotation-field-badge review">검토 필요</span>}</div></div>
           {field.type === 'select' && editable ? <QuotationChoiceInput field={field} cell={cell} id={id} disabled={busy || loading} invalid={inputProps['aria-invalid']} onChange={value => edit(field.id, value)}/>
+            : usesRegistrationBrandChoices(field, schema?.unsupportedFields) ? <QuotationBrandInput cell={cell} brands={view.registrationBrandChoices ?? []} id={id} disabled={busy || loading} invalid={inputProps['aria-invalid']} onChange={value => {
+              const current = modelActionState.current;
+              if (brandInputEpoch.current !== brandInputTicket || current.view !== view || current.selectedOption !== selectedOption
+                || current.busy || current.loading || activeWrite.current) return;
+              edit(field.id, value);
+            }}/>
             : field.type === 'textarea' || field.type === 'images' ? <textarea {...inputProps} rows={field.type === 'images' ? 2 : 3} placeholder={field.type === 'images' ? '아래에서 이 상품의 이미지 파일을 선택하세요.' : '확인한 내용을 입력하세요.'} />
               : <input {...inputProps} type="text" inputMode={field.type === 'number' ? 'decimal' : 'text'} placeholder={field.readOnly ? '' : hasCouplusEmptyAttributeDefault(field, cell) ? '해당사항없음' : '확인한 내용을 입력하세요.'} />}
           {modelSuggestion && <div className="quotation-field-auto">

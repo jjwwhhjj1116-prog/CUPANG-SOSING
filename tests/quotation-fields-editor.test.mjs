@@ -981,7 +981,7 @@ test('quotation renders all five pages together with unique fields and preserved
  for(const field of view.resolved.schema.fields){
   assert.equal(html.split(`id="editor-test-${field.id}"`).length-1,1,`${field.id} must be present exactly once`);
  }
- assert.match(html,/value="직접 브랜드"/);assert.match(html,/value="250"/);
+ assert.match(html,/<option value="retained" selected="">직접 브랜드 · 기존 입력<\/option>/);assert.match(html,/value="250"/);
  assert.ok(html.indexOf('data-section="product"')<html.indexOf('data-section="logistics"'));
 });
 

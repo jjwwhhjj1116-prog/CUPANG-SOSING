@@ -4,12 +4,12 @@ import {priceMinimumMarginEnabled,type PricePolicy} from '@/app/pricing';
 
 export type StageTwoPricePolicyFieldsProps={
   policy:PricePolicy;onChange:(policy:PricePolicy)=>void;onRecalculate:()=>void;onSave:()=>void;
-  dirty:boolean;busy:boolean;disabled?:boolean;error?:string;
+  dirty:boolean;sourceDirty?:boolean;busy:boolean;disabled?:boolean;error?:string;
 };
 const numeric=(value:unknown)=>typeof value==='number'&&Number.isFinite(value)?value:'';
 /** Controlled policy inputs share the option grid's draft and explicit save.
  * Rendering this panel never changes a product or workspace defaults. */
-export function StageTwoPricePolicyFields({policy,onChange,onRecalculate,onSave,dirty,busy,disabled=false,error}:StageTwoPricePolicyFieldsProps){
+export function StageTwoPricePolicyFields({policy,onChange,onRecalculate,onSave,dirty,sourceDirty=dirty,busy,disabled=false,error}:StageTwoPricePolicyFieldsProps){
   const minimum=priceMinimumMarginEnabled(policy),lastMinimum=useRef(minimum?policy.minimumMargin:3000);
   const blocked=disabled||busy;
   const change=(next:PricePolicy)=>{if(!blocked)onChange(next);};
@@ -17,7 +17,7 @@ export function StageTwoPricePolicyFields({policy,onChange,onRecalculate,onSave,
     change({...policy,[key]:value===''?NaN:Number(value)});
   const bundle={bundleEnabled:policy.bundleEnabled??false,bundleCriterion:policy.bundleCriterion??'supplyMargin' as const,
     bundleMinimumSupplyMargin:policy.bundleMinimumSupplyMargin??3000,bundleMinimumCoupangMargin:policy.bundleMinimumCoupangMargin??3000};
-  return <section className="pricing-policy-panel" aria-label="가격 정책 설정" data-quotation-source-step="가격" data-workspace-dirty={dirty} data-workspace-saving={busy}>
+  return <section className="pricing-policy-panel" aria-label="가격 정책 설정" data-quotation-source-step="가격" data-workspace-dirty={sourceDirty} data-workspace-saving={busy}>
     <h3>가격 정책 설정</h3>
     <fieldset disabled={blocked} className="panel-stack" style={{border:0,padding:0,margin:0,minWidth:0}}>
       <label className="field"><span>적용 환율 (CNY → KRW)</span><input aria-label="적용 환율 (CNY → KRW)" type="number" min="150" max="400" step="any" value={numeric(policy.exchangeRate)} onChange={event=>number('exchangeRate',event.target.value)}/></label>

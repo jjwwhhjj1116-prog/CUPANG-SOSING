@@ -85,6 +85,9 @@ export type QuotationFieldsView = {
   retainedWorkbook?: import('@/app/quotation-workbook-retained').RetainedQuotationWorkbook;
   /** Response-only top/bottom banner roles; absent means keyboard deletion has no role proof. */
   protectedDetailImageKeys?: string[];
+  /** Response-only brands from this product's active registration settings.
+   * These suggestions never replace schema enums or retained manual values. */
+  registrationBrandChoices?: string[];
   /** Response-only raw sources for the reviewed Couplus detail-save text rule.
    * Quotation title overrides and display-name fallbacks are not these sources. */
   detailSaveTextBasis?: { policy: 'couplus-detail-alt-v1'; productName: string; metaDescription: string; optionNames: Record<string, string> };

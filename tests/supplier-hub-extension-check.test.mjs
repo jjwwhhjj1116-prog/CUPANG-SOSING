@@ -64,11 +64,11 @@ test('old installations with other result features still need the atomic file ob
 });
 
 test('an older installation with compatible feature flags still offers recovery fixes, while current and newer releases do not',async()=>{
- for(const version of ['0.2.72',releaseVersion,'0.2.100','0.3.0']){
+ for(const version of ['0.2.72','0.2.100','0.3.0',releaseVersion,'2.1.100','2.2.0']){
   const ui=fixture();ui.render();ui.calls[0].resolve({version,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,originalFileObservationCas:true,productTransmissionHistory:true,historicalReceiptLookup:true,exactAgreementLabels:true,publicSingleSkuCapture:true,companyRegistrationStatus:true});await settle();
   assert.ok(ui.text().includes('설치된 버전 '+version));
   const download=nodes(ui.render()).find(node=>node.type==='a');
-  if(version==='0.2.72')assert.equal(download.props.href,releaseDownload);else assert.equal(download,undefined);
+  if(version.startsWith('0.'))assert.equal(download.props.href,releaseDownload);else assert.equal(download,undefined);
   ui.unmount();
  }
 });

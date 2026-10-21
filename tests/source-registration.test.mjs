@@ -28,8 +28,8 @@ function hookFixture(fetcher){
  const {useSourceRegistrations}=module('app/components/use-source-registrations.ts',{require:()=>hooks,window,document,location:{origin:'https://app.test'},crypto:{randomUUID:()=> '00000000-0000-4000-8000-000000000001'},AbortController,Error,
   setTimeout:fn=>{const id=++nextTimer;timers.set(id,fn);return id;},clearTimeout:id=>timers.delete(id),setInterval:()=>999,clearInterval(){},
   fetch:(path,init)=>{calls.push({path,init});return fetcher(path,init);}});
- const render=()=>{cursor=0;const result=useSourceRegistrations(owner);effects.splice(0).forEach(fn=>{cleanup=fn();});first=false;return result;};
- return{render,calls,posted,window,close:()=>cleanup?.(),owner:value=>{cleanup?.();owner=value;first=true;},event:()=>events.get('message')?.({source:window,origin:'https://app.test',data:{channel:'YOOFAM_SOURCE_INBOX_UPDATED'}}),flush:()=>{for(const fn of [...timers.values()])fn();}};
+ const useFixtureRender=()=>{cursor=0;const result=useSourceRegistrations(owner);effects.splice(0).forEach(fn=>{cleanup=fn();});first=false;return result;};
+ return{render:useFixtureRender,calls,posted,window,close:()=>cleanup?.(),owner:value=>{cleanup?.();owner=value;first=true;},event:()=>events.get('message')?.({source:window,origin:'https://app.test',data:{channel:'YOOFAM_SOURCE_INBOX_UPDATED'}}),flush:()=>{for(const fn of [...timers.values()])fn();}};
 }
 test('app automatically reads captures and refreshes the registration list after extension acknowledgement',async()=>{
  let items=[];const h=hookFixture(async()=>Response.json({ownerId:'owner',items}));

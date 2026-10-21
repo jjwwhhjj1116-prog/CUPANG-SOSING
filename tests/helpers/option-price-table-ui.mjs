@@ -32,7 +32,7 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
   const deps = { 'cloudflare:workers': { env: bindings }, 'next/server': { NextResponse: Response },
     '@/app/chatgpt-auth': { getWorkspaceOwnerId: async () => owner, getChatGPTUser: async () => ({ verifiedAccess: true, userId: owner,
       membership: { status: 'approved', companyCode: company.code, companyName: company.name } }) },
-    '@/db/collection-images': { readOptionSourceImages: async () => ({}) } };
+    '@/db/collection-images': { readOptionSourceImages: async () => ({}),readRegistrationSourceImages:async()=>({}) } };
   const hooks = {
     useState(initial) { const index = cursor++, instance = currentInstance; if (!(index in instance.slots)) instance.slots[index] = { value: typeof initial === 'function' ? initial() : initial };
       return [instance.slots[index].value, value => { if (closed) return; instance.slots[index].value = typeof value === 'function' ? value(instance.slots[index].value) : value; }]; },

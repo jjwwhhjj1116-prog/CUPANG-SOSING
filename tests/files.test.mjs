@@ -4,12 +4,14 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { webcrypto } from 'node:crypto';
+import * as rejectionDetails from '../extensions/supplier-hub/rejection-details.mjs';
 
 function load(file, overrides = {}, mode = 'development') {
   const source = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {};
   vm.runInNewContext(source, { exports, URL, Headers, Request, Response, File, FormData, ReadableStream, TextEncoder, TextDecoder, Uint8Array, DataView, crypto: webcrypto, process: { env: { NODE_ENV: mode } }, require(name) {
     if (name in overrides) return overrides[name];
+    if (name === '../extensions/supplier-hub/rejection-details.mjs') return rejectionDetails;
     if (name === 'next/server') return { NextResponse: Response };
     if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ userId: 'owner' }), getWorkspaceOwnerId: async () => 'owner' };
     if (name.startsWith('@/')) return load(`${name.slice(2)}.ts`, overrides, mode);

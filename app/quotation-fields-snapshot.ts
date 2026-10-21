@@ -1,4 +1,5 @@
 import { collectionRegistrationSettings } from '@/app/collection-registration-settings';
+import { registrationBrandChoices } from '@/app/quotation-brand-choices';
 import { scopedQuotationOverrides, hasLegacyQuotationOverrides } from '@/app/quotation-scopes';
 import { getChatGPTUser } from '@/app/chatgpt-auth';
 import { findProduct, getSettings } from '@/db/queries';
@@ -110,6 +111,7 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
   const view: QuotationFieldsView = { revision: state.revision, inputFingerprint, overrides, legacyOverrides: categoryContext.categoryId ? state.overrides : undefined, resolved, automatic, categoryContext,
     ...(optionRegistrationNumbers === undefined ? {} : { optionRegistrationNumbers }),
     protectedDetailImageKeys: [...new Set([...content.assets.detailTop.value, ...content.assets.detailBottom.value])].filter(key => imageKeys.includes(key)),
+    registrationBrandChoices: registrationBrandChoices(settings.brand),
     detailSaveTextBasis: { policy: 'couplus-detail-alt-v1', productName: product.title, metaDescription: content.seo.description.value,
       optionNames: Object.fromEntries(options.rows.map(option => [option.id, option.translatedName])) },
     productVersion: product.updated_at, contentRevision: content.revision, optionRevision: options.revision, imageKeys, updatedAt: state.updatedAt, submissionReady: false };
