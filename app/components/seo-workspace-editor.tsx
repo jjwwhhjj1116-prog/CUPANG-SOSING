@@ -123,6 +123,7 @@ export function SeoWorkspaceEditor({ productId, version, focusedOptionId, active
   const savedDocumentKeywords=view?quotationSeoKeywordText(view.content):'';
   const nextDocumentKeywords=draft.clearDocumentKeywords?'':savedKeywords?.length?seoKeywordDocumentText(savedKeywords):savedDocumentKeywords;
   const tagsLength = keywordText.length;
+  const keywordLengthState = tagsLength > 140 ? 'danger' : tagsLength > 120 ? 'warning' : 'normal';
   const locked = disabled || busy || uncertain;
   return <section className="panel-stack seo-workspace-editor" aria-label="SEO 설정 통합 편집" data-quotation-source-step="SEO" data-workspace-dirty={dirty} data-workspace-saving={busy}>
     {busy && <p role="status">{busyAction === 'save' ? 'SEO 설정을 저장하고 있습니다…' : 'SEO·옵션 저장본을 확인하고 있습니다…'}</p>}{!busy && error && <p role="alert">{error}</p>}{!busy && message && <p role="status">{message}</p>}
@@ -130,10 +131,10 @@ export function SeoWorkspaceEditor({ productId, version, focusedOptionId, active
     {!busy && uncertain && <p role="status">저장 결과를 아직 확인하지 못했습니다. 결과 확인은 저장본 조회만 수행합니다.</p>}
     {view && <div className="seo-content-columns" style={{ width: '100%' }}>
       <section className="seo-common-editor"><h3>상품명 / 검색태그</h3><fieldset disabled={locked} style={{ border: 0, margin: 0 }}>
-        <label className="field"><span>상품명</span><input aria-label="SEO 상품명" value={seoValue('title')} maxLength={100} onChange={event => edit(previous => ({ ...previous, seo: { ...previous.seo, title: event.target.value } }))}/></label>
+        <label className="field"><span>상품명</span><input aria-label="SEO 상품명" placeholder="검색 최적화된 상품명을 입력하세요" value={seoValue('title')} maxLength={100} onChange={event => edit(previous => ({ ...previous, seo: { ...previous.seo, title: event.target.value } }))}/></label>
         <small className={seoValue('title').length > 100 ? 'seo-input-count exceeded' : 'seo-input-count'}>{seoValue('title').length}/100자{seoValue('title').length > 100 && ' · 기존 저장값은 유지합니다.'}</small>
-        <label className="field"><span>검색태그 (쉼표로 구분)</span><textarea aria-label="SEO 검색태그" value={seoValue('keywords')} rows={4} maxLength={5050} onChange={event => editKeywords(event.target.value)}/></label>
-        <div className="seo-keyword-caption"><small>검색에 노출되길 원하는 키워드를 쉼표로 구분하여 입력하세요 (최대 150자)</small><small className={tagsLength > 150 ? 'seo-input-count exceeded' : 'seo-input-count'}>{tagsLength}/150자{tagsLength > 150 && !keywordEdited && ' · 기존 저장값은 유지합니다.'}</small></div>
+        <label className="field"><span>검색태그 (쉼표로 구분)</span><textarea aria-label="SEO 검색태그" placeholder="키워드1, 키워드2, 키워드3 형태로 입력하세요" value={seoValue('keywords')} rows={3} maxLength={5050} onChange={event => editKeywords(event.target.value)}/></label>
+        <div className="seo-keyword-caption"><small>검색에 노출되길 원하는 키워드를 쉼표로 구분하여 입력하세요 (최대 150자)</small><small className={tagsLength > 150 ? 'seo-input-count exceeded' : 'seo-input-count'} data-seo-keyword-length={keywordLengthState}>{tagsLength}/150자{tagsLength > 150 && !keywordEdited && ' · 기존 저장값은 유지합니다.'}</small></div>
         {keywordPlan?.shortened && <section className="panel-note" aria-label="검색태그 저장안"><div><p>길이 조정 후 검색태그: {keywordPlan.text || '(공란)'}</p><p>입력 원문이 150자를 초과하여 뒤 태그 {keywordPlan.removedTags}개를 제외합니다. 저장 전까지 입력 원문은 유지합니다.</p></div></section>}
         {savedKeywords && <section className="panel-note" aria-label="검색태그 최종 저장안"><div><p>최종 저장 검색태그: {savedKeywords.join(', ') || '(공란)'}</p><p>한국어 자모가 포함된 태그, 20자를 넘는 태그와 중복 태그를 제외하고 특수문자는 공백으로 정리합니다.</p></div></section>}
         <details className="seo-keyword-review" open={keywordEdited||undefined}><summary>견적서 검색태그 반영 · 함께 비우기</summary><section className="panel-note" aria-label="견적서 검색태그 반영안"><div>
@@ -149,7 +150,7 @@ export function SeoWorkspaceEditor({ productId, version, focusedOptionId, active
         return <article key={row.id} className="seo-option-name" data-option-target={row.id === focusedOptionId}>
           {/* eslint-disable-next-line @next/next/no-img-element -- Only an exact owned saved option image is shown. */}
           {thumbnail && <img src={'/api/files/' + thumbnail.split('/').map(encodeURIComponent).join('/')} alt="" width={64} height={64} loading="lazy"/>}
-          <label><span>원본: {row.originalName || row.supplierSku || `옵션 ${index + 1}`}</span><input aria-label={`${index + 1}번째 한국어 옵션명`} value={Object.hasOwn(draft.optionNames, row.id) ? draft.optionNames[row.id] : row.translatedName} maxLength={500} disabled={locked} onChange={event => edit(previous => ({ ...previous, optionNames: { ...previous.optionNames, [row.id]: event.target.value } }))}/><small>{row.included ? '견적 포함' : '견적 제외'} · {row.provenance.translatedName === 'manual' ? '직접 수정' : row.provenance.translatedName === 'translated' ? '번역 결과' : '미작성'}</small></label>
+          <label><span>원본: {row.originalName || row.supplierSku || `옵션 ${index + 1}`}</span><input aria-label={`${index + 1}번째 한국어 옵션명`} placeholder="한글 옵션명 입력" value={Object.hasOwn(draft.optionNames, row.id) ? draft.optionNames[row.id] : row.translatedName} maxLength={500} disabled={locked} onChange={event => edit(previous => ({ ...previous, optionNames: { ...previous.optionNames, [row.id]: event.target.value } }))}/><small>{row.included ? '견적 포함' : '견적 제외'} · {row.provenance.translatedName === 'manual' ? '직접 수정' : row.provenance.translatedName === 'translated' ? '번역 결과' : '미작성'}</small></label>
         </article>;
       })}{!view.options.rows.length && <p>저장된 옵션이 없습니다.</p>}</div></section>
     </div>}

@@ -11,6 +11,9 @@ const identity=(patch={})=>JSON.stringify({globalData:{offerBaseInfo:{offerId,su
 const script=identity();
 const tile=(name,price='¥5.30',extra='')=>`<li class="sku-item">${name} <img src="https://cbu01.alicdn.com/synthetic-${name}.jpg"><span>${price}</span> 库存8 ${extra}</li>`;
 const html=(tiles,extra='')=>`<section class="offer-sku"><span>颜色</span><ul>${tiles}</ul>${extra}</section>`;
+const group=(label,tiles)=>`<span>${label}</span><ul>${tiles}</ul>`;
+const groupsHtml=(groups,rows='')=>`<section class="offer-sku">${groups}${rows}</section>`;
+const combination=(name,price='¥5.30')=>`<div class="sku-row">${name} <span>${price}</span> 库存8</div>`;
 
 // Parse actual fixture HTML into a deliberately small DOM adapter. It supports
 // only the retained RS tag/attribute selectors used by the production reader.
@@ -107,6 +110,74 @@ test('review/recommendation roots are excluded, competing roots and foreign offe
 test('multiple attribute groups and excessive variants never become guessed or truncated SKU combinations',()=>{
  assert.throws(()=>capture(html(tile('黑色'),'<span>尺码</span><ul><li>均码 ¥5.30 库存1</li></ul>')),/옵션 영역/);
  assert.throws(()=>capture(html(Array.from({length:201},(_,i)=>tile('颜色'+i)).join(''))),/옵션 영역/);
+});
+
+test('one varying colour axis plus actual singleton attributes yields exactly the observed hats, using only each colour tile price',()=>{
+ const colors=Array.from({length:13},(_,index)=>({name:'黑色款'+index,price:index===0?'¥5.30':`¥${(5+index/10).toFixed(2)}`}));
+ const source=capture(groupsHtml(group('颜色',colors.map(({name,price})=>tile(name,price)).join(''))+group('尺码','<li>均码 ¥999.00 库存9</li>')+group('材质','<li>加绒</li>')));
+ assert.equal(source.options.length,13);
+ assert.deepEqual(source.options.map(row=>row.name),colors.map(({name})=>`${name} / 均码 / 加绒`));
+ assert.deepEqual(source.options.map(row=>row.unitPriceCny),colors.map(({price})=>Number(price.slice(1))));
+ assert.ok(source.options.every(row=>row.supplierSku===null&&row.minimumOrder===null&&row.stock===null));assert.ok(!source.options.some(row=>row.unitPriceCny===999));
+});
+
+test('a singleton first axis preserves DOM name order and cannot lend its price to unpriced varying options',()=>{
+ const source=capture(groupsHtml(group('尺码','<li>均码 ¥99.00 库存1</li>')+group('颜色',tile('黑色','¥5.30')+tile('灰色',''))));
+ assert.deepEqual(source.options.map(row=>[row.name,row.unitPriceCny,row.currency]),[['均码 / 黑色',5.3,'CNY'],['均码 / 灰色',null,null]]);
+ assert.ok(pageSourceIssues(source).includes('옵션 원가'));assert.equal(source.options.length,2);
+});
+
+test('a missing attribute value container cannot turn the next attribute header into a fixed singleton',()=>{
+ const value='<section class="offer-sku"><div><span>颜色</span></div><div><span>尺码</span></div><ul><li>S ¥5.30 库存8</li><li>M ¥5.30 库存8</li></ul></section>';
+ assert.throws(()=>capture(value),/옵션 영역/);
+ assert.throws(()=>capture(groupsHtml(group('颜色','<li>尺码</li>')+group('尺码',tile('S')+tile('M')))),/옵션 영역/);
+});
+
+test('nested unpriced choices cannot concatenate into a false fixed singleton, while one atomic named value remains valid',()=>{
+ const colors=group('颜色',tile('黑色')+tile('灰色','¥6.10'));
+ for(const sizes of ['<li><ul><li>S</li><li>M</li></ul></li>','<li><span>S</span><span>M</span></li>']){
+  assert.throws(()=>capture(groupsHtml(colors+group('尺码',sizes))),/옵션 영역/);
+ }
+ const source=capture(groupsHtml(colors+group('尺码','<li><span>均码</span><span>¥99.00</span> 库存8</li>')));
+ assert.deepEqual(source.options.map(row=>[row.name,row.unitPriceCny]),[['黑色 / 均码',5.3],['灰色 / 均码',6.1]]);
+});
+
+test('explicit full rows override attribute-tile amounts even with only one varying axis, retaining unpriced rows and rejecting partial coverage',()=>{
+ const axes=group('颜色',tile('黑色','¥5.30')+tile('灰色','¥6.10'))+group('尺码','<li>均码</li>');
+ const source=capture(groupsHtml(axes,combination('黑色 / 均码','')+combination('灰色 / 均码','¥7.30')));
+ assert.deepEqual(source.options.map(row=>[row.name,row.unitPriceCny]),[['黑色 / 均码',null],['灰色 / 均码',7.3]]);assert.ok(pageSourceIssues(source).includes('옵션 원가'));
+ assert.throws(()=>capture(groupsHtml(axes,combination('灰色 / 均码','¥7.30'))),/옵션 영역/);
+});
+
+test('multiple varying axes use each explicit complete inventory tuple and its own price, preserving an unpriced combination',()=>{
+ const axes=group('颜色',tile('黑色','¥999.00')+tile('灰色','¥999.00'))+group('尺码','<li>S ¥999.00 库存1</li><li>M ¥999.00 库存1</li>');
+ const rows=combination('灰色 / M','¥7.30')+combination('黑色 / S','¥5.30')+combination('灰色 / S','')+combination('黑色 / M','¥6.30');
+ const source=capture(groupsHtml(axes,rows));
+ assert.deepEqual(source.options.map(row=>[row.name,row.unitPriceCny]),[['灰色 / M',7.3],['黑色 / S',5.3],['灰色 / S',null],['黑色 / M',6.3]]);
+ assert.ok(pageSourceIssues(source).includes('옵션 원가'));assert.ok(source.options.every(row=>row.supplierSku===null));
+});
+
+test('partial, duplicate, ambiguous or unbound combination rows never produce a guessed full matrix',()=>{
+ const axes=group('颜色',tile('黑色')+tile('灰色'))+group('尺码','<li>S</li><li>M</li>');
+ const valid=['黑色 / S','黑色 / M','灰色 / S','灰色 / M'];
+ for(const names of [valid.slice(0,3),[...valid.slice(0,3),'黑色 / S'],[...valid.slice(0,3),'灰色'],[...valid.slice(0,3),'蓝色 / M'],[...valid.slice(0,3),'M / 灰色'],[...valid.slice(0,3),'灰色/S']]){
+  assert.throws(()=>capture(groupsHtml(axes,names.map(name=>combination(name)).join(''))),/옵션 영역/);
+ }
+ assert.throws(()=>capture(groupsHtml(axes)),/옵션 영역/,'no rows means no Cartesian variants');
+});
+
+test('all-singleton groups need one observed full row and do not combine competing attribute prices',()=>{
+ const axes=group('颜色',tile('黑色','¥3.00'))+group('尺码','<li>均码 ¥9.00 库存1</li>');
+ assert.throws(()=>capture(groupsHtml(axes)),/옵션 영역/);
+ const source=capture(groupsHtml(axes,combination('黑色 / 均码','¥5.30')));assert.equal(source.options.length,1);assert.equal(source.options[0].unitPriceCny,5.3);
+});
+
+test('duplicate group labels, overlapping roots and multi-axis limits remain fail-closed before any combination result',()=>{
+ assert.throws(()=>capture(groupsHtml(group('颜色',tile('黑色')+tile('灰色'))+group('颜色','<li>均码</li>'))),/옵션 영역/);
+ assert.throws(()=>capture(groupsHtml(group('颜色',Array.from({length:15},(_,i)=>tile('颜色'+i)).join(''))+group('尺码',Array.from({length:15},(_,i)=>`<li>尺码${i}</li>`).join('')))),/옵션 영역/);
+ const value=groupsHtml(group('颜色',tile('黑色')+tile('灰色'))+group('尺码','<li>均码</li>'));
+ for(const scripts of [[identity({isPricePrivate:true})],[identity({tempModel:{offerId:'700000000002'}})]])assert.throws(()=>capture(value,{scripts}),/옵션 영역|속성 원문/);
+ assert.throws(()=>capture(value+html(tile('无关选项'))),/옵션 영역/);
 });
 
 test('trusted current-page button captures DOM fallback in memory with no source requests, iframe access or script execution',async()=>{

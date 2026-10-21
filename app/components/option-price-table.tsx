@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import type { OptionCalculation, OptionField, OptionInput } from '@/app/product-options';
+import type { PricePolicy } from '@/app/pricing';
 import { effectiveGridPrices } from '@/app/option-price-grid';
 import { savedOptionRegistrationNumber, optionRegistrationLabel } from '@/app/product-registration';
 import type { OptionPriceController } from '@/app/components/option-quotation-prices';
@@ -18,6 +19,7 @@ type Props = { rows: readonly OptionInput[]; calculations: readonly OptionCalcul
   focusedOptionId?: string; optionRegistrationNumbers?: Readonly<Record<string,string>>; onSelect: (ids: string[]) => void;
   exchangeRate?:number;
   priceController?:OptionPriceController;priceBlocked?:boolean;
+  showSummary?:boolean;
   onChange: <K extends OptionField>(id: string, key: K, value: OptionInput[K]) => void };
 const won = (value: number) => `${Math.round(value).toLocaleString('ko-KR')}원`;
 const rowWon = (value: number) => `${value.toLocaleString('ko-KR')}원`;
@@ -26,8 +28,37 @@ const defaultPageSize = 20;
 // Recorded table display contract; monetary calculations stay in calculateOptionPrices.
 const marginRate = (cost: number, sale: number) => !cost || !sale || cost >= sale ? 0 : Math.round((sale - cost) / sale * 100);
 
+function displayedPrices(calculations:readonly OptionCalculation[],effective?:ReturnType<typeof effectiveGridPrices>){
+  return effective?calculations.map(row=>({...row,calculation:effective.get(row.optionId)?.calculation??null,error:effective.get(row.optionId)?.error??row.error})):calculations;
+}
+/** Policy proportions from the recorded PricingEdit display; this does not
+ * replace the exact monetary calculations used by rows or quotation fields. */
+export function PricePolicyRatio({policy}:{policy:Pick<PricePolicy,'supplyMargin'|'coupangMargin'>}){
+  const valid=[policy.supplyMargin,policy.coupangMargin].every(value=>Number.isFinite(value)&&value>=0&&value<=90);
+  const parts=[{id:'cost',label:'상품 원가',value:Math.max(1,100-policy.supplyMargin-policy.coupangMargin)},
+    {id:'supply',label:'공급 마진',value:policy.supplyMargin},{id:'coupang',label:'쿠팡 마진',value:policy.coupangMargin}];
+  return <section className="price-policy-ratio" aria-label="가격 설정 비율" data-price-ratio-valid={valid}>
+    <div className="price-policy-ratio-labels">{parts.map(part=><span key={part.id}>{part.label}</span>)}</div>
+    {valid?<div className="price-policy-ratio-bar">{parts.map(part=><span key={part.id} data-price-ratio={part.id} style={{width:`${part.value}%`}} aria-label={`${part.label} ${part.value.toFixed(0)}%`}>{part.value.toFixed(0)}%</span>)}</div>
+      :<p role="status">공급·쿠팡 마진율을 확인하면 비율이 표시됩니다.</p>}
+  </section>;
+}
+
+export function OptionPriceSummary({rows,calculations,priceController}:{rows:readonly OptionInput[];calculations:readonly OptionCalculation[];priceController?:OptionPriceController}){
+  let effective:ReturnType<typeof effectiveGridPrices>|undefined;
+  if(priceController)try{effective=effectiveGridPrices(rows,calculations,priceController.view,priceController.edits);}catch{/* The owning grid reports its binding error and retains the previous calculation display. */}
+  const valid=displayedPrices(calculations,effective).filter(row=>row.included&&row.calculation!==null&&row.error===null);
+  const average=(value:(row:Pick<NonNullable<OptionCalculation['calculation']>,'costKrw'|'supplyPrice'|'salePrice'|'marginKrw'>)=>number)=>valid.length?valid.reduce((sum,row)=>sum+value(row.calculation!),0)/valid.length:null;
+  const averages={supply:average(row=>row.supplyPrice),supplyMargin:average(row=>row.marginKrw),sale:average(row=>row.salePrice),coupangMargin:average(row=>row.salePrice-row.supplyPrice),supplyRate:average(row=>marginRate(row.costKrw,row.supplyPrice)),coupangRate:average(row=>marginRate(row.supplyPrice,row.salePrice))};
+  return <section className="option-price-grid-summary" aria-label="전체 옵션 가격 요약"><header><h4>가격 요약</h4><small>전체 견적 포함 {rows.filter(row=>row.included).length}개 · 계산 가능 {valid.length}개</small></header><div>
+    <article><h5>평균 공급가</h5><strong>{averages.supply===null?'—':won(averages.supply)}</strong><p>평균 공급 마진: {averages.supplyMargin===null?'—':won(averages.supplyMargin)}</p></article>
+    <article><h5>평균 판매가</h5><strong>{averages.sale===null?'—':won(averages.sale)}</strong><p>평균 쿠팡 마진: {averages.coupangMargin===null?'—':won(averages.coupangMargin)}</p></article>
+    <article><h5>평균 마진율</h5><strong>공급: {averages.supplyRate===null?'—':percent(averages.supplyRate)}</strong><p>쿠팡: {averages.coupangRate===null?'—':percent(averages.coupangRate)}</p></article>
+  </div></section>;
+}
+
 /** Presentation state never replaces the editor's complete option draft. */
-export function OptionPriceTable({ rows, calculations, selected, focusedOptionId, optionRegistrationNumbers, onSelect, onChange,exchangeRate,priceController,priceBlocked=false }: Props) {
+export function OptionPriceTable({ rows, calculations, selected, focusedOptionId, optionRegistrationNumbers, onSelect, onChange,exchangeRate,priceController,priceBlocked=false,showSummary=true }: Props) {
   const [query, setQuery] = useState(''), [pageSize, setPageSize] = useState(defaultPageSize);
   const [page, setPage] = useState(() => Math.max(0, Math.floor(rows.findIndex(row => row.id === focusedOptionId) / defaultPageSize)));
   const [visibleColumns, setVisibleColumns] = useState<ColumnId[]>(() => columns.map(column => column.id));
@@ -35,7 +66,7 @@ export function OptionPriceTable({ rows, calculations, selected, focusedOptionId
   const root = useRef<HTMLDivElement>(null), focused = useRef<string | undefined>(undefined);
   let priceError='';let effective:ReturnType<typeof effectiveGridPrices>|undefined;
   if(priceController)try{effective=effectiveGridPrices(rows,calculations,priceController.view,priceController.edits);}catch(cause){priceError=cause instanceof Error?cause.message:'가격 연결 확인 실패';}
-  const displayed=effective?calculations.map(row=>({...row,calculation:effective!.get(row.optionId)?.calculation??null,error:effective!.get(row.optionId)?.error??row.error})):calculations;
+  const displayed=displayedPrices(calculations,effective);
   const byId = new Map(displayed.map(row => [row.optionId, row]));
   const entries = rows.map((row, index) => ({ row, index, result: byId.get(row.id) }));
   const filtered = (() => {
@@ -49,12 +80,6 @@ export function OptionPriceTable({ rows, calculations, selected, focusedOptionId
   const shownColumns = columns.filter(column => visibleColumns.includes(column.id));
   const allFilteredSelected = filtered.length > 0 && filtered.every(({ row }) => selected.has(row.id));
   const partiallyFilteredSelected = !allFilteredSelected && filtered.some(({ row }) => selected.has(row.id));
-  const valid = displayed.filter(row => row.included && row.calculation !== null && row.error === null);
-  const average = (value: (row: Pick<NonNullable<OptionCalculation['calculation']>,'costKrw'|'supplyPrice'|'salePrice'|'marginKrw'>) => number) => valid.length
-    ? valid.reduce((sum, row) => sum + value(row.calculation!), 0) / valid.length : null;
-  const averages = { supply: average(row => row.supplyPrice), supplyMargin: average(row => row.marginKrw),
-    sale: average(row => row.salePrice), coupangMargin: average(row => row.salePrice - row.supplyPrice),
-    supplyRate: average(row => marginRate(row.costKrw, row.supplyPrice)), coupangRate: average(row => marginRate(row.supplyPrice, row.salePrice)) };
   useEffect(() => {
     if (!focusedOptionId || focused.current === focusedOptionId) return;
     const target = root.current?.querySelector<HTMLElement>(`[data-price-option-id="${focusedOptionId}"]`);
@@ -127,12 +152,8 @@ export function OptionPriceTable({ rows, calculations, selected, focusedOptionId
       {!pageRows.length && <p className="option-price-grid-empty">검색 결과가 없습니다.</p>}
     </div>
     <div className="option-price-grid-pagination"><span>{filtered.length ? `${currentPage * pageSize + 1}–${Math.min((currentPage + 1) * pageSize, filtered.length)}` : '0'} / {filtered.length}개</span><button type="button" className="btn ghost" aria-label="가격표 이전 페이지" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>이전</button><span aria-label="가격표 현재 페이지">{currentPage + 1} / {pageCount}</span><button type="button" className="btn ghost" aria-label="가격표 다음 페이지" disabled={currentPage + 1 >= pageCount} onClick={() => setPage(currentPage + 1)}>다음</button></div>
-    <section className="option-price-grid-summary" aria-label="전체 옵션 가격 요약"><header><h4>가격 요약</h4><small>전체 견적 포함 {rows.filter(row => row.included).length}개 · 계산 가능 {valid.length}개</small></header><div>
-      <article><h5>평균 공급가</h5><strong>{averages.supply === null ? '—' : won(averages.supply)}</strong><p>평균 공급 마진: {averages.supplyMargin === null ? '—' : won(averages.supplyMargin)}</p></article>
-      <article><h5>평균 판매가</h5><strong>{averages.sale === null ? '—' : won(averages.sale)}</strong><p>평균 쿠팡 마진: {averages.coupangMargin === null ? '—' : won(averages.coupangMargin)}</p></article>
-      <article><h5>평균 마진율</h5><strong>공급: {averages.supplyRate === null ? '—' : percent(averages.supplyRate)}</strong><p>쿠팡: {averages.coupangRate === null ? '—' : percent(averages.coupangRate)}</p></article>
-    </div></section>
+    {showSummary&&<OptionPriceSummary rows={rows} calculations={calculations} priceController={priceController}/>}
     {priceController&&<details><summary>권장소비자가·가격 복원</summary>{rows.filter(row=>row.included).map(row=>{const index=rows.findIndex(value=>value.id===row.id);return <label className="field" key={row.id}><span>{optionRegistrationLabel(row.id,row.translatedName||row.originalName||row.id,optionRegistrationNumbers)} · 권장소비자가</span><div>{priceInput(row,index,'msrp','권장소비자가')}</div></label>;})}</details>}
-    <p>옵션명·이미지·치수·복제는 상단 옵션·사이즈표에서 수정합니다. 왼쪽 가격 정책은 저장한 뒤 이 표에 반영됩니다.</p>
+    <p>{showSummary?'옵션명·이미지·치수·복제는 상단 옵션·사이즈표에서 수정합니다. 왼쪽 가격 정책은 저장한 뒤 이 표에 반영됩니다.':'가격 설정과 표의 수정값은 저장하기를 누를 때 함께 반영됩니다.'}</p>
   </div>;
 }

@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import { webcrypto } from 'node:crypto';
 import { memoryDatabase, runtimeDDL } from '../../scripts/check-db-schema.mjs';
 import * as rejectionDetails from '../../extensions/supplier-hub/rejection-details.mjs';
+import * as pageSource from '../../extensions/supplier-hub/page-source.mjs';
 
 const native = createRequire(import.meta.url);
 export const priceTableCompanies = [{ code: 'A01464742', name: '와이홉' }, { code: 'A01526306', name: '유앤채' }];
@@ -30,6 +31,7 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
       catch (error) { sqlite.exec('ROLLBACK'); throw error; } } };
   const objects = new Map(), bindings = { DB: db, FILES: fileStorage ?? { head: async key => objects.has(key) ? { size: objects.get(key).length, httpMetadata: { contentType: 'image/png' } } : null } };
   const deps = { 'cloudflare:workers': { env: bindings }, 'next/server': { NextResponse: Response },
+    '@/extensions/supplier-hub/page-source.mjs':pageSource,'../extensions/supplier-hub/page-source.mjs':pageSource,
     '@/app/chatgpt-auth': { getWorkspaceOwnerId: async () => owner, getChatGPTUser: async () => ({ verifiedAccess: true, userId: owner,
       membership: { status: 'approved', companyCode: company.code, companyName: company.name } }) },
     '@/db/collection-images': { readOptionSourceImages: async () => ({}),readRegistrationSourceImages:async()=>({}) } };

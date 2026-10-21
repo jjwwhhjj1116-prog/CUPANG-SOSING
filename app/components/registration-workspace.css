@@ -80,4 +80,15 @@
 .registration-workspace .registration-detail-primary-tools .option-detail-composite>section{display:flex;flex-flow:row wrap;align-items:center;gap:8px}
 .registration-workspace .registration-detail-primary-tools .option-detail-composite>section>.btn{width:auto;flex:none}
 .registration-workspace .registration-detail-primary-tools .option-detail-composite>section>:not(.btn){flex-basis:100%}
+.registration-workspace [data-seo-keyword-length="warning"]{color:#bc8c29}
+.registration-workspace [data-seo-keyword-length="danger"]{color:#e25b61}
+.registration-workspace .stage-two-price-breakdown,.registration-workspace .stage-two-pricing-save{grid-column:1/-1;min-width:0}
+.registration-workspace .stage-two-price-breakdown{display:grid;gap:18px}
+.registration-workspace .price-policy-ratio-labels{display:grid;grid-template-columns:repeat(3,1fr);text-align:center;font-size:11px;color:#65718b;margin-bottom:7px}
+.registration-workspace .price-policy-ratio-bar{display:flex;height:30px;overflow:hidden;border-radius:5px}
+.registration-workspace .price-policy-ratio-bar>span{display:flex;align-items:center;justify-content:center;min-width:0;overflow:hidden;color:white;font-size:11px}
+.registration-workspace [data-price-ratio="cost"]{background:#ff9d72}
+.registration-workspace [data-price-ratio="supply"]{background:#75c69a}
+.registration-workspace [data-price-ratio="coupang"]{background:#2eb9da}
+.registration-workspace .stage-two-pricing-save{display:flex;justify-content:center;flex-wrap:wrap;gap:8px}
 @media(max-width:760px){.registration-workspace .product-label-editor .product-label-compact-row.product-label-sortable{grid-template-columns:24px minmax(0,1fr) 48px}.registration-workspace .product-label-compact-row>.product-label-name{grid-column:2;grid-row:1}.registration-workspace .product-label-compact-row>.product-label-value{grid-column:2/-1;grid-row:2}.registration-workspace .product-label-compact-row>.product-label-delete{grid-column:3;grid-row:1}.registration-workspace .product-label-compact-row>.product-label-reorder-handle{grid-column:1;grid-row:1/3;align-self:start;margin-top:5px}.registration-workspace .product-label-row-tools{grid-column:2/-1}}

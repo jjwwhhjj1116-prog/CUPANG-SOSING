@@ -233,8 +233,9 @@ function domSourceIdentity(scripts,offerId){
  if(!bound)throw domOptionsError();
 }
 /** RS 1.0.88's retained leaf-label/sibling tiles and inventory-row selectors,
- * restricted to one current-offer SKU root and one attribute group. No
- * cartesian variants, headline price, inferred supplier IDs or source fetches.
+ * restricted to one current-offer SKU root. Singletons can qualify one varying
+ * axis; multiple varying axes require every explicit full-combination row.
+ * No invented variants, headline price, supplier IDs or source fetches.
  * A script SKU declaration always wins, including empty/invalid declarations. */
 export function readPageSourceDomOptions(document,sourceUrl,scripts){
  const identity=pageSourceUrl(sourceUrl);
@@ -252,47 +253,90 @@ export function readPageSourceDomOptions(document,sourceUrl,scripts){
  if(!candidates.length)return null;
  if(candidates.length!==1)throw domOptionsError();
  const {root,labels}=candidates[0];
- // A second attribute requires real combination rows; never invent a product
- // by taking a cartesian product of independent colour/size tiles.
- if(labels.length!==1)throw domOptionsError();
+ if(labels.length>10||new Set(labels.map(label=>domLabel(label.textContent))).size!==labels.length)throw domOptionsError();
  for(const link of root.querySelectorAll('a[href]')){
   const href=link.getAttribute('href');if(!href)continue;
   let url;try{url=new URL(href,identity.sourceUrl);}catch{throw domOptionsError();}
   if(/\/offer\/[1-9]\d*\.html$/u.test(url.pathname)&&pageSourceUrl(url.href).offerId!==identity.offerId)throw domOptionsError();
  }
- const label=labels[0],labelText=domLabel(label.textContent);
- let container=label.nextElementSibling||label.parentElement?.nextElementSibling||label.parentElement;
- if(!container||!root.contains(container)||excluded(container))throw domOptionsError();
- let tiles=Array.from(container.children).filter(child=>child!==label&&domLabel(child.textContent)!==labelText&&(domLabel(child.textContent)!==''||child.querySelector('img')||child.tagName?.toLowerCase()==='li'));
- for(let depth=0;tiles.length===1&&tiles[0].children.length>1&&depth<4;depth++){
-  // A single option may itself contain an image and a price span. Only unwrap
-  // a wrapper holding multiple observed option prices/inventory rows.
-  const text=domText(tiles[0].textContent);
-  if((text.match(/[¥￥]/gu)||[]).length<=1&&(text.match(/库存/gu)||[]).length<=1)break;
-  tiles=Array.from(tiles[0].children);
- }
- // Exact inventory rows are a second retained RS path, used only when no
- // swatch tiles exist. Keep missing prices as unknown rather than dropping a
- // variant and presenting the remaining priced rows as a complete capture.
- if(!tiles.length){
+ const inventoryRows=()=>{
   const rows=Array.from(root.querySelectorAll('div,li,tr,label')).filter(element=>!excluded(element)&&domText(element.textContent).length<=80&&(domText(element.textContent).match(/库存/gu)||[]).length===1);
-  tiles=rows.filter(element=>!rows.some(other=>other!==element&&element.contains(other)));
- }
- if(!tiles.length)return null;if(tiles.length>200)throw domOptionsError();
- const seen=new Set(),options=[];
- for(const element of tiles){
-  if(excluded(element))throw domOptionsError();
+  return rows.filter(element=>!rows.some(other=>other!==element&&element.contains(other)));
+ };
+ const optionName=element=>{
   const raw=domText(element.textContent),imageElement=element.querySelector('img');
   let name=raw.split(/[¥￥]/u)[0].replace(/库存.*$/u,'').replace(/^颜色[:：]?\s*/u,'').replace(/[-−+]+\s*\d*\s*$/u,'').trim();
   if(!name&&imageElement)name=domText(imageElement.getAttribute('alt'));
-  if(!name||name.length>40||domLabel(name)===labelText||seen.has(name))throw domOptionsError();seen.add(name);
+  return name;
+ };
+ const observe=(element,labelText='',maxName=40)=>{
+  if(excluded(element))throw domOptionsError();
+  const raw=domText(element.textContent),imageElement=element.querySelector('img'),name=optionName(element);
+  if(!name||name.length>maxName||domLabel(name)===labelText)throw domOptionsError();
   const prices=[...raw.matchAll(/[¥￥]\s*(\d+(?:\.\d+)?)(?![\d.])/gu)];
   const match=prices.length===1?prices[0]:null;
   const ambiguous=match&&/^\s*(?:[-~～－–—]|起|至)/u.test(raw.slice(match.index+match[0].length));
   const unitPriceCny=match&&!ambiguous?price(match[1]):null;
   const imageUrl=imageElement?image(imageElement.currentSrc||imageElement.getAttribute('src')||imageElement.getAttribute('data-lazyload-src')||imageElement.getAttribute('data-src')||imageElement.getAttribute('data-ks-lazyload')):null;
-  options.push({key:`dom-row:${options.length+1}`,name,supplierSku:null,unitPriceCny,currency:unitPriceCny===null?null:'CNY',minimumOrder:null,stock:null,imageUrl});
+  return {name,unitPriceCny,imageUrl};
+ };
+ const groups=labels.map(label=>{
+  const labelText=domLabel(label.textContent),container=label.nextElementSibling||label.parentElement?.nextElementSibling||label.parentElement;
+  if(!container||!root.contains(container)||excluded(container))throw domOptionsError();
+  let tiles=Array.from(container.children).filter(child=>child!==label&&domLabel(child.textContent)!==labelText&&(domLabel(child.textContent)!==''||child.querySelector('img')||child.tagName?.toLowerCase()==='li'));
+  for(let depth=0;tiles.length===1&&tiles[0].children.length>1&&depth<4;depth++){
+   // A singleton may contain image/price spans. Unwrap only a wrapper with
+   // multiple observed prices/inventory rows, never the singleton itself.
+   const text=domText(tiles[0].textContent);
+   if((text.match(/[¥￥]/gu)||[]).length<=1&&(text.match(/库存/gu)||[]).length<=1)break;
+   tiles=Array.from(tiles[0].children);
+  }
+  if(!tiles.length&&labels.length===1)tiles=inventoryRows();
+  if(tiles.length>200)throw domOptionsError();
+  const items=tiles.map(element=>observe(element,labelText));
+  if(labels.length>1&&items.some(item=>DOM_OPTION_LABELS.includes(domLabel(item.name))))throw domOptionsError();
+  if(labels.length>1)for(let index=0;index<tiles.length;index++){
+   // A nested list can concatenate unpriced S/M values into a false fixed
+   // singleton. Require each multi-axis tile to have one atomic observed name;
+   // price/inventory/stepper-only leaves normalize to empty and do not count.
+   const pending=Array.from(tiles[index].children);let visited=0;
+   while(pending.length){
+    const leaf=pending.pop();if(++visited>4000||excluded(leaf))throw domOptionsError();
+    if(leaf.children.length)pending.push(...leaf.children);
+    else{const name=optionName(leaf);if(name&&name!==items[index].name)throw domOptionsError();}
+   }
+  }
+  if(new Set(items.map(item=>item.name)).size!==items.length)throw domOptionsError();
+  return {container,items};
+ });
+ if(groups.length===1&&!groups[0].items.length)return null;
+ if(groups.some(group=>!group.items.length))throw domOptionsError();
+ if(groups.some((group,index)=>labels.some((label,other)=>index!==other&&group.container.contains(label))
+  ||groups.some((other,otherIndex)=>index!==otherIndex&&(group.container.contains(other.container)||other.container.contains(group.container)))))throw domOptionsError();
+ let count=1;for(const group of groups){count*=group.items.length;if(count>200)throw domOptionsError();}
+ const varying=groups.filter(group=>group.items.length>1);
+ const combinationRows=groups.length>1?inventoryRows().filter(element=>!groups.some(group=>group.container.contains(element))):[];
+ let observations;
+ if(groups.length===1)observations=groups[0].items;
+ else if(varying.length===1&&!combinationRows.length){
+  const axis=varying[0];
+  observations=axis.items.map(item=>({name:groups.map(group=>group===axis?item.name:group.items[0].name).join(' / '),unitPriceCny:item.unitPriceCny,imageUrl:item.imageUrl??groups.find(group=>group!==axis&&group.items[0].imageUrl)?.items[0].imageUrl??null}));
+ }else{
+  // Retained RS inventory rows carry their own combination label and amount.
+  // Require all observed axes in DOM order and an exact, complete tuple set.
+  // Counting possible tuples validates coverage; it never creates variants.
+  const rows=combinationRows;
+  if(rows.length!==count)throw domOptionsError();
+  const tuples=new Set();observations=rows.map(element=>{
+   const item=observe(element,'',500),parts=item.name.split(' / ');
+   if(parts.length!==groups.length||parts.some((part,index)=>!groups[index].items.some(value=>value.name===part)))throw domOptionsError();
+   const tuple=JSON.stringify(parts);if(tuples.has(tuple))throw domOptionsError();tuples.add(tuple);return item;
+  });
  }
+ const names=new Set(),options=observations.map(item=>{
+  if(item.name.length>500||names.has(item.name))throw domOptionsError();names.add(item.name);
+  return {key:`dom-row:${names.size}`,name:item.name,supplierSku:null,unitPriceCny:item.unitPriceCny,currency:item.unitPriceCny===null?null:'CNY',minimumOrder:null,stock:null,imageUrl:item.imageUrl};
+ });
  return {format:'yoofam-page-dom-options-v1',...identity,options};
 }
 export function extractPageSource(input,now=Date.now()){

@@ -30,10 +30,11 @@ export function StageTwoPricePolicyFields({policy,onChange,onRecalculate,onSave,
         if(blocked)return;if(!event.target.checked&&Number.isFinite(policy.minimumMargin)&&policy.minimumMargin>=0)lastMinimum.current=policy.minimumMargin;
         change({...policy,minimumMargin:event.target.checked?lastMinimum.current:0,recalculationMinimumEnabled:event.target.checked});
       }}/><i/></label>
+      <small>쿠팡 마진율은 고정하고 원가율을 조정하여 최소 공급 마진액을 보장합니다.</small>
       {minimum&&<label className="field"><span>최소 공급 마진액 (원)</span><input aria-label="최소 공급 마진액 (원)" type="number" min="0" step="100" value={numeric(policy.minimumMargin)} onChange={event=>{
         if(blocked)return;const value=event.target.value===''?NaN:Number(event.target.value);if(Number.isFinite(value)&&value>=0)lastMinimum.current=value;
         change({...policy,minimumMargin:value,recalculationMinimumEnabled:true});
-      }}/><small>공급가 = 원가 + 최소 공급 마진액</small></label>}
+      }}/><small>공급가 = 원가 + 이 금액, 판매가 = 공급가 ÷ (1 - 쿠팡마진율)로 계산됩니다.</small></label>}
       <label className="switch-row"><span>번들링 활성화</span><input aria-label="번들링 활성화" type="checkbox" checked={bundle.bundleEnabled} onChange={event=>change({...policy,...bundle,bundleEnabled:event.target.checked})}/><i/></label>
       <small>낮은 마진 상품을 자동으로 묶어서 판매합니다.</small>
       {bundle.bundleEnabled&&<div className="panel-stack" role="group" aria-label="번들링 기준">

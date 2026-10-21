@@ -37,7 +37,8 @@ const translatedName=pair=>pair.name.startsWith('상품속성: ')?genericTransla
 
 /** Real handlers and SQLite, recorded public supplier facts; auth, AI and image
  * bytes are fixtures. Never contacts Supplier Hub or alters a real product. */
-export function mobileIntakeHarness({companyCode='A01464742',companyName='와이홉',capturedCompany=true,sourceFetcher,translationFetcher,desktopStatus=200}={}){
+export function mobileIntakeHarness({companyCode='A01464742',companyName='와이홉',capturedCompany=true,sourceFetcher,translationFetcher,desktopStatus=200,fixtureImageUrls}={}){
+ if(fixtureImageUrls!==undefined){assert.ok(Array.isArray(fixtureImageUrls));assert.ok(fixtureImageUrls.every(value=>{const url=new URL(value);return url.protocol==='https:'&&url.hostname==='cbu01.alicdn.com'&&url.href===value;}));}
  const sqlite=memoryDatabase();for(const statement of runtimeDDL())sqlite.exec(statement.sql);
  const db={prepare(sql){let args=[];const q={bind(...values){args=values;return q;},execute(){return sqlite.prepare(sql).all(...args);},async all(){return {results:q.execute()};},async first(){return q.execute()[0]??null;},async run(){return sqlite.prepare(sql).run(...args);}};return q;},async batch(statements){sqlite.exec('BEGIN');try{const results=statements.map(statement=>({results:statement.execute()}));sqlite.exec('COMMIT');return results;}catch(error){sqlite.exec('ROLLBACK');throw error;}}};
  const objects=new Map(),objectMetadata=new Map(),calls=[],network=[],cache=new Map(),aiSources=[];
@@ -59,8 +60,8 @@ export function mobileIntakeHarness({companyCode='A01464742',companyName='와이
    return Response.json(skus);
   }
   assert.equal(url.hostname,'cbu01.alicdn.com');
-  const urls=load('app/alibaba-mobile-product.ts').parseAlibabaMobileProduct(load('app/alibaba-mobile-product.ts').parseAlibabaMobilePage('<script>window.__INIT_DATA='+JSON.stringify(mobile)+';</script>',sourceUrl),skus,load('app/alibaba-mobile-product.ts').parseAlibabaMobileDescription(detail)).images;
-  const index=urls.findIndex(image=>image.url===url.href);assert.ok(index>=0);
+  const urls=fixtureImageUrls??load('app/alibaba-mobile-product.ts').parseAlibabaMobileProduct(load('app/alibaba-mobile-product.ts').parseAlibabaMobilePage('<script>window.__INIT_DATA='+JSON.stringify(mobile)+';</script>',sourceUrl),skus,load('app/alibaba-mobile-product.ts').parseAlibabaMobileDescription(detail)).images.map(image=>image.url);
+  const index=urls.indexOf(url.href);assert.ok(index>=0);
   stats.activeDownloads++;stats.downloads++;stats.maxDownloads=Math.max(stats.maxDownloads,stats.activeDownloads);
   try{
    await new Promise(resolve=>setTimeout(resolve,3));

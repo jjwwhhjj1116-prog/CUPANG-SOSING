@@ -21,6 +21,10 @@ for (const companyCode of ['A01464742', 'A01526306']) test(`entry and draft edit
     const before = api.stored(); await h.idle();
     assert.equal(h.calls.length, 1); assert.equal(h.calls[0].method, 'GET'); assert.equal(h.calls[0].init.cache, 'no-store');
     assert.deepEqual(api.stored(), before); assert.equal(api.mutations.length, 0);
+    assert.equal(h.input('SEO 상품명').props.placeholder, '검색 최적화된 상품명을 입력하세요');
+    assert.equal(h.input('SEO 검색태그').props.placeholder, '키워드1, 키워드2, 키워드3 형태로 입력하세요');
+    assert.equal(h.input('SEO 검색태그').props.rows, 3);
+    assert.equal(h.input(nameLabel).props.placeholder, '한글 옵션명 입력');
     h.edit('SEO 상품명', '검토한 상품명'); h.edit('SEO 검색태그', '검색 하나, 검색 둘\n검색 하나'); h.edit(nameLabel, '검토한 옵션명');
     assert.equal(patches(h).length, 0); assert.equal(h.render().props['data-workspace-dirty'], true);
     await h.click('SEO 설정 저장');
@@ -34,6 +38,29 @@ for (const companyCode of ['A01464742', 'A01526306']) test(`entry and draft edit
     assert.deepEqual(saved.options.rows[1], api.options.rows[1]); assert.deepEqual(storage.quotation, before.quotation);
     for (const key of Object.keys(before.product).filter(key => !['updated_at', 'quote_status'].includes(key))) assert.deepEqual(storage.product[key], before.product[key], key);
     assert.ok(h.calls.every(call => call.method === 'GET' || call.method === 'PATCH'));
+  } finally { h.close(); api.close(); }
+});
+
+test('keyword length guidance changes at the observed 120/140 boundaries without trimming or saving the draft', async () => {
+  const api = seoWorkspaceHarness(), h = seoWorkspaceEditor(api);
+  try {
+    await h.idle(); const before = api.stored();
+    for (const [length, expected] of [[120, 'normal'], [121, 'warning'], [140, 'warning'], [141, 'danger'], [150, 'danger'], [151, 'danger']]) {
+      const raw = '정상, ' + '긴'.repeat(length - 4); h.edit('SEO 검색태그', raw);
+      const counter = nodes(h.render()).find(node => node.props['data-seo-keyword-length']);
+      assert.equal(counter.props['data-seo-keyword-length'], expected);
+      assert.equal(counter.props.children.filter(value => typeof value !== 'boolean').map(visibleText).join(''), `${length}/150자`);
+      assert.equal(h.input('SEO 검색태그').props.value, raw, 'length cues must not replace the exact reviewed input');
+      assert.equal(patches(h).length, 0); assert.equal(api.mutations.length, 0); assert.deepEqual(api.stored(), before);
+      assert.equal(h.button('SEO 설정 저장').props.disabled, false, 'an early warning is guidance, not a new save prohibition');
+    }
+    assert.ok(nodes(h.render()).some(node => node.props['aria-label'] === '검색태그 저장안'), 'over-limit draft retains its explicit whole-tag review');
+    await h.click('SEO 설정 저장');
+    assert.equal(patches(h).length, 1); assert.deepEqual(patches(h)[0].body.seo, { keywordText: '정상, ' + '긴'.repeat(147), keywords: ['정상'] });
+    assert.equal(h.input('SEO 검색태그').props.value, '정상');
+    assert.equal(nodes(h.render()).find(node => node.props['data-seo-keyword-length']).props['data-seo-keyword-length'], 'normal');
+    assert.deepEqual(api.stored().options, before.options); assert.deepEqual(api.stored().quotation, before.quotation);
+    const saved = await responseJson(await api.request()); assert.deepEqual(saved.content.label, api.content.label); assert.deepEqual(saved.content.assets, api.content.assets);
   } finally { h.close(); api.close(); }
 });
 
