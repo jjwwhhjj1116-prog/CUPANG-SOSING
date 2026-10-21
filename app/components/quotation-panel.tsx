@@ -5,7 +5,7 @@ import { QuotationMappingReview, type QuotationMappingFinding } from '@/app/comp
 
 import type { QuotationNavigationTarget } from '@/app/quotation-navigation';
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { quotationStartRow, type CategoryProfile } from '@/app/category-profiles';
 import { QuotationFieldsEditor } from '@/app/components/quotation-fields-editor';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
@@ -55,6 +55,35 @@ function QuotationPanelContent({submissionActive=true,onPrepareSubmission,onProf
   const [profileVersion,setProfileVersion]=useState(0);
   const [templateMessage,setTemplateMessage]=useState('');
   const [templateError,setTemplateError]=useState('');
+  const lockKey=JSON.stringify([productId,profileId,overrideProfileId,refreshToken,profileVersion,navigationSequence,currentReviewTarget?.sequence]);
+  const submissionScope=useMemo(()=>({key:lockKey}),[lockKey]);
+  const lockScope=useRef(submissionScope),retiredScopes=useRef(new WeakSet<typeof submissionScope>());
+  const lockReports=useRef(new WeakMap<typeof submissionScope,{source:boolean;close:boolean}>());
+  const submissionCurrent=useRef({mounted:true,scope:submissionScope,source:false,close:false});
+  const [reportedLock,setReportedLock]=useState<{scope:typeof submissionScope;source:boolean;close:boolean}|null>(null);
+  useLayoutEffect(()=>{
+    if(lockScope.current!==submissionScope)retiredScopes.current.add(lockScope.current);
+    lockScope.current=submissionScope;
+    const value=lockReports.current.get(submissionScope)??{source:false,close:false};
+    submissionCurrent.current={mounted:true,scope:submissionScope,...value};
+    if(value.source){activeRequest.current?.abort();profileRequest.current?.abort();}
+    // Preserve a child-first layout report, including Strict layout replay,
+    // without treating a source lock as a dirty edit or remounting the child.
+    void Promise.resolve().then(()=>{if(submissionCurrent.current.mounted&&lockScope.current===submissionScope){const latest=lockReports.current.get(submissionScope)??{source:false,close:false};setReportedLock(previous=>previous?.scope===submissionScope&&previous.source===latest.source&&previous.close===latest.close?previous:{scope:submissionScope,...latest});}});
+    return()=>{submissionCurrent.current.mounted=false;};
+  },[submissionScope]);
+  const reportSubmissionLock=useCallback((source:boolean,close=source)=>{
+    if(retiredScopes.current.has(submissionScope))return;
+    lockReports.current.set(submissionScope,{source,close});
+    if(!submissionCurrent.current.mounted||lockScope.current!==submissionScope)return;
+    submissionCurrent.current={mounted:true,scope:submissionScope,source,close};
+    if(source){activeRequest.current?.abort();profileRequest.current?.abort();}
+    setReportedLock(previous=>previous?.scope===submissionScope&&previous.source===source&&previous.close===close?previous:{scope:submissionScope,source,close});
+  },[submissionScope]);
+  const sourceLocked=reportedLock?.scope===submissionScope&&reportedLock.source;
+  const closeLocked=reportedLock?.scope===submissionScope&&reportedLock.close;
+  const sourceActionCurrent=()=>submissionCurrent.current.mounted&&submissionCurrent.current.scope===submissionScope&&!submissionCurrent.current.source&&versionRef.current===refreshToken;
+  const manageCategories=()=>{if(sourceActionCurrent()&&!dirtyRef.current)onManageCategories();};
   useEffect(()=>()=>{profileRequest.current?.abort();},[]);
   useEffect(()=>()=>{activeRequest.current?.abort();},[refreshToken]);
   useEffect(()=>{
@@ -84,7 +113,7 @@ function QuotationPanelContent({submissionActive=true,onPrepareSubmission,onProf
     return()=>controller.abort();
   },[productId,preferredProfileId,loadAttempt,navigationTarget?.categoryId]);
   async function request(action:'preview'|'export'|'download') {
-    if(activeRequest.current||profileRequest.current||dirtyRef.current||versionRef.current!==refreshToken||!contextLoaded||!selected?.template||(action!=='preview'&&(!preview||previewRef.current!==preview)))return;
+    if(!sourceActionCurrent()||activeRequest.current||profileRequest.current||dirtyRef.current||!contextLoaded||!selected?.template||(action!=='preview'&&(!preview||previewRef.current!==preview)))return;
     const controller=new AbortController();activeRequest.current=controller;
     setBusy(true);setError('');setMessage('');
     try {
@@ -102,7 +131,7 @@ function QuotationPanelContent({submissionActive=true,onPrepareSubmission,onProf
   }
   const selected=profiles.find(profile=>profile.id===profileId);
   async function prepareOfficialTemplate(mode:'schema'|'workbook'='schema') {
-    if(activeRequest.current||profileRequest.current||dirtyRef.current||!contextLoaded||!selected||selected.template)return;
+    if(!sourceActionCurrent()||activeRequest.current||profileRequest.current||dirtyRef.current||!contextLoaded||!selected||selected.template)return;
     const controller=new AbortController();activeRequest.current=controller;
     setBusy(true);setTemplateMessage('');setTemplateError('');setPreview(null);
     try {
@@ -119,7 +148,7 @@ function QuotationPanelContent({submissionActive=true,onPrepareSubmission,onProf
     }
   }
   async function refreshProfiles() {
-    if(profileRequest.current||activeRequest.current||dirtyRef.current||!contextLoaded)return;
+    if(!sourceActionCurrent()||profileRequest.current||activeRequest.current||dirtyRef.current||!contextLoaded)return;
     const controller=new AbortController();profileRequest.current=controller;
     setRefreshingProfiles(true);setProfileRefreshError('');setPreview(null);
     try {
@@ -137,25 +166,26 @@ function QuotationPanelContent({submissionActive=true,onPrepareSubmission,onProf
     finally{if(profileRequest.current===controller){profileRequest.current=null;setRefreshingProfiles(false);}}
   }
   function inspectPreviewTarget(target:QuotationNavigationTarget) {
-    if(dirtyRef.current||activeRequest.current||profileRequest.current||versionRef.current!==refreshToken||!preview||previewRef.current!==preview)return;
+    if(!sourceActionCurrent()||dirtyRef.current||activeRequest.current||profileRequest.current||!preview||previewRef.current!==preview)return;
     setReviewTarget(previous=>({target,sequence:(previous?.sequence??0)+1,navigationSequence}));
     editorRef.current?.scrollIntoView({behavior:'smooth',block:'start'});
   }
-  if(contextError)return <section className="panel-stack"><p role="alert">{contextError}</p><button type="button" className="btn primary" onClick={()=>{setContextError('');setContextLoaded(false);setLoadAttempt(value=>value+1);}}>카테고리 연결 다시 확인</button><button type="button" className="btn ghost" onClick={onManageCategories}>카테고리·양식 설정 확인</button></section>;
-  return <section className="panel-stack" aria-busy={busy}>
+  if(contextError)return <section className="panel-stack"><p role="alert">{contextError}</p><button type="button" className="btn primary" disabled={sourceLocked} onClick={()=>{if(!sourceActionCurrent())return;setContextError('');setContextLoaded(false);setLoadAttempt(value=>value+1);}}>카테고리 연결 다시 확인</button><button type="button" className="btn ghost" disabled={sourceLocked} onClick={manageCategories}>카테고리·양식 설정 확인</button></section>;
+  return <section className="panel-stack" aria-busy={busy||closeLocked} data-workspace-saving={busy||closeLocked}>
     {connectionWarning && <p role="status" className="panel-note">{connectionWarning}</p>}
-    <div ref={editorRef}>{contextLoaded?<QuotationFieldsEditor key={`${navigationSequence}:${currentReviewTarget?.sequence??0}`} submissionActive={submissionActive} navigationTarget={currentReviewTarget?.target??navigationTarget} productId={productId} profileId={overrideProfileId} refreshToken={JSON.stringify([refreshToken,profileVersion])} onEditSeo={onEditSeo} onDirtyChange={value=>{
+    <div ref={editorRef}>{contextLoaded?<QuotationFieldsEditor key={`${navigationSequence}:${currentReviewTarget?.sequence??0}`} submissionActive={submissionActive} navigationTarget={currentReviewTarget?.target??navigationTarget} productId={productId} profileId={overrideProfileId} refreshToken={JSON.stringify([refreshToken,profileVersion])} onSubmissionLockChange={reportSubmissionLock} onEditSeo={onEditSeo?()=>{if(sourceActionCurrent())onEditSeo();}:undefined} onDirtyChange={value=>{
+      if(!submissionCurrent.current.mounted||lockScope.current!==submissionScope)return;
       dirtyRef.current=value;
       if(value){profileRequest.current?.abort();activeRequest.current?.abort();setPreview(null);setMessage('');}
       setDirty(value);
-    }} onReceiptSaved={onReceiptSaved} onSaved={()=>{setPreview(null);onSaved?.();}}/>:<p role="status">선택한 카테고리와 견적서 설정을 불러오고 있습니다.</p>}</div>
+    }} onReceiptSaved={onReceiptSaved} onSaved={()=>{if(!sourceActionCurrent())return;setPreview(null);onSaved?.();}}/>:<p role="status">선택한 카테고리와 견적서 설정을 불러오고 있습니다.</p>}</div>
     <details className="quotation-workbook-tools"><summary>Excel 견적서·첨부 자료</summary>
     <p>견적 입력을 저장한 뒤 견적 자료를 검토하고 전송을 준비하세요.</p>
-    {selected&&!selected.template&&<div className="panel-note"><strong>전송할 공식 견적 양식 준비</strong><p>1~7단계 초안은 저장되어 있습니다. 전송 전에 현재 회사와 저장한 전체 카테고리 경로를 확인하고 공식 Excel을 연결합니다.</p><button type="button" className="btn primary" disabled={busy||dirty||refreshingProfiles||!contextLoaded||!selected.hubSchema} onClick={()=>void prepareOfficialTemplate()}>공식 견적 양식 준비</button>{!selected.hubSchema&&<small>카테고리·양식 관리에서 Supplier Hub 상세 양식을 먼저 확인해주세요.</small>}</div>}
-    {selected&&!selected.template&&(selected.hubSchema?.metadata.scopeType??selected.hubSchema?.metadata.scope)==='Retail_Categorized_Single'&&<div className="panel-note"><p>별도 Excel 상세 양식을 읽을 수 없다면 공식 파일의 열·선택값으로 연결할 수 있습니다. 현재 회사와 카테고리를 다시 확인하며, Excel JSON 미확인 상태와 기존 전송 검사는 유지됩니다.</p><button type="button" className="btn ghost" disabled={busy||dirty||refreshingProfiles||!contextLoaded} onClick={()=>void prepareOfficialTemplate('workbook')}>공식 파일 기준으로 연결</button></div>}
+    {selected&&!selected.template&&<div className="panel-note"><strong>전송할 공식 견적 양식 준비</strong><p>1~7단계 초안은 저장되어 있습니다. 전송 전에 현재 회사와 저장한 전체 카테고리 경로를 확인하고 공식 Excel을 연결합니다.</p><button type="button" className="btn primary" disabled={sourceLocked||busy||dirty||refreshingProfiles||!contextLoaded||!selected.hubSchema} onClick={()=>void prepareOfficialTemplate()}>공식 견적 양식 준비</button>{!selected.hubSchema&&<small>카테고리·양식 관리에서 Supplier Hub 상세 양식을 먼저 확인해주세요.</small>}</div>}
+    {selected&&!selected.template&&(selected.hubSchema?.metadata.scopeType??selected.hubSchema?.metadata.scope)==='Retail_Categorized_Single'&&<div className="panel-note"><p>별도 Excel 상세 양식을 읽을 수 없다면 공식 파일의 열·선택값으로 연결할 수 있습니다. 현재 회사와 카테고리를 다시 확인하며, Excel JSON 미확인 상태와 기존 전송 검사는 유지됩니다.</p><button type="button" className="btn ghost" disabled={sourceLocked||busy||dirty||refreshingProfiles||!contextLoaded} onClick={()=>void prepareOfficialTemplate('workbook')}>공식 파일 기준으로 연결</button></div>}
     {selected?.template?.workbookEvidence&&<p role="status" className="panel-note">공식 XLSX 파일 기준 연결 · 별도 Excel JSON 양식 미확인. 필수값·미연결 항목·첨부 검사는 그대로 적용됩니다.</p>}
     {templateError&&<p role="alert">{templateError} 상품 초안과 직접 수정한 값은 유지됩니다.</p>}{templateMessage&&<p role="status">{templateMessage}</p>}
-    <a className={`btn primary${dirty||!contextLoaded?' disabled':''}`} aria-disabled={dirty||!contextLoaded} tabIndex={dirty||!contextLoaded?-1:undefined} onClick={event=>{if(dirtyRef.current||!contextLoaded||versionRef.current!==refreshToken)event.preventDefault();}} href={dirty||!contextLoaded?undefined:`/api/products/${encodeURIComponent(productId)}/bundle${overrideProfileId?`?profileId=${encodeURIComponent(overrideProfileId)}`:''}`}>견적 입력 내용 + 첨부 자료 다운로드</a>
+    <a className={`btn primary${sourceLocked||dirty||!contextLoaded?' disabled':''}`} aria-disabled={sourceLocked||dirty||!contextLoaded} tabIndex={sourceLocked||dirty||!contextLoaded?-1:undefined} onClick={event=>{if(!sourceActionCurrent()||dirtyRef.current||!contextLoaded)event.preventDefault();}} href={sourceLocked||dirty||!contextLoaded?undefined:`/api/products/${encodeURIComponent(productId)}/bundle${overrideProfileId?`?profileId=${encodeURIComponent(overrideProfileId)}`:''}`}>견적 입력 내용 + 첨부 자료 다운로드</a>
     <p className="panel-note">ZIP 압축을 푼 뒤 supplier-hub-upload.html을 열면 상품 이미지와 라벨을 구분해서 확인할 수 있습니다. 옵션별 연결과 누락 라벨을 확인한 뒤, 공식 견적서 및 서류를 별도로 검토해주세요.</p>
     {dirty&&<small>편집 내용을 저장하면 다운로드에 반영됩니다.</small>}
     <div className="quotation-workbook-settings"><h4>Excel 원본 양식에 출력하기</h4>
@@ -167,30 +197,30 @@ function QuotationPanelContent({submissionActive=true,onPrepareSubmission,onProf
     {(selected?.categoryId ?? capturedCategoryId)==='80719' && <p>바스켓 이름으로 확인한 공식 탐색 경로: 주방용품 → 주방수납/잡화 → 건조대/진열대/정리대 → 주방수납바구니/바스켓</p>}
     <small>2026-09-28 공식 Excel 원본에서 칸 카테고리 6269와 상품 등록 카테고리 80719의 대응을 확인했습니다. 다른 카테고리는 각각 원본을 확인해야 합니다. 경로 안내만으로 Excel 원본 연결이나 실제 제출이 완료되지는 않습니다.</small></div></div>
     <div className="panel-note"><div><strong>저장한 양식으로 견적서 만들기</strong><p>상품·옵션·이미지 자료를 연결된 Excel 열에 채웁니다. 원본은 보존하고 채운 사본과 첨부 이미지를 ZIP으로 내려받습니다.</p></div></div>
-    <label className="field"><span>카테고리·견적서 연결</span><select value={profileId} disabled={busy||dirty||refreshingProfiles||!!capturedProfileId} onChange={event=>{setProfileId(event.target.value);setOverrideProfileId(event.target.value||undefined);setConnectionWarning('');onProfileChange?.(event.target.value||undefined);setUseSavedRow(true);setPreview(null);setStartRow(quotationStartRow(profiles.find(profile=>profile.id===event.target.value)?.template));}}><option value="">수집할 때 선택한 카테고리 사용</option>{profiles.filter(profile=>!capturedProfileId||profile.id===capturedProfileId).map(profile=><option key={profile.id} value={profile.id}>{profile.name}{profile.template?'':' · 양식 미연결'}</option>)}</select></label>
+    <label className="field"><span>카테고리·견적서 연결</span><select value={profileId} disabled={sourceLocked||busy||dirty||refreshingProfiles||!!capturedProfileId} onChange={event=>{if(!sourceActionCurrent())return;setProfileId(event.target.value);setOverrideProfileId(event.target.value||undefined);setConnectionWarning('');onProfileChange?.(event.target.value||undefined);setUseSavedRow(true);setPreview(null);setStartRow(quotationStartRow(profiles.find(profile=>profile.id===event.target.value)?.template));}}><option value="">수집할 때 선택한 카테고리 사용</option>{profiles.filter(profile=>!capturedProfileId||profile.id===capturedProfileId).map(profile=><option key={profile.id} value={profile.id}>{profile.name}{profile.template?'':' · 양식 미연결'}</option>)}</select></label>
     {capturedProfileId&&<small>상품 추가 시 선택한 카테고리와 견적서 양식을 사용합니다. 양식 변경은 카테고리·양식 관리에서 확인해주세요.</small>}
-    <button type="button" className="btn ghost" disabled={busy||dirty||refreshingProfiles||!contextLoaded} onClick={()=>void refreshProfiles()}>{refreshingProfiles?'양식 확인 중…':'저장한 양식 새로고침'}</button>
+    <button type="button" className="btn ghost" disabled={sourceLocked||busy||dirty||refreshingProfiles||!contextLoaded} onClick={()=>void refreshProfiles()}>{refreshingProfiles?'양식 확인 중…':'저장한 양식 새로고침'}</button>
     {profileRefreshError&&<p role="alert">{profileRefreshError} 기존 선택을 유지했습니다. 다시 시도해주세요.</p>}
     {selected&&<p>{selected.categoryPath.join(' > ')}<br/>{selected.template?.name??'원본 양식을 먼저 연결해주세요.'}</p>}
-    <label><input type="checkbox" checked={useSavedRow} disabled={busy} onChange={event=>{setUseSavedRow(event.target.checked);setPreview(null);}}/>카테고리에 저장한 입력 시작 행 자동 사용</label>
-    <label className="field"><span>상품 데이터 입력 시작 행{useSavedRow?' · 저장 설정 사용':' · 이번 출력만 변경'}</span><input type="number" min={2} max={10000} value={useSavedRow?quotationStartRow(selected?.template):startRow} disabled={busy||useSavedRow} onChange={event=>{setStartRow(Number(event.target.value));setPreview(null);}}/></label>
+    <label><input type="checkbox" checked={useSavedRow} disabled={sourceLocked||busy} onChange={event=>{if(!sourceActionCurrent())return;setUseSavedRow(event.target.checked);setPreview(null);}}/>카테고리에 저장한 입력 시작 행 자동 사용</label>
+    <label className="field"><span>상품 데이터 입력 시작 행{useSavedRow?' · 저장 설정 사용':' · 이번 출력만 변경'}</span><input type="number" min={2} max={10000} value={useSavedRow?quotationStartRow(selected?.template):startRow} disabled={sourceLocked||busy||useSavedRow} onChange={event=>{if(!sourceActionCurrent())return;setStartRow(Number(event.target.value));setPreview(null);}}/></label>
     <small>머리글 다음의 실제 입력 행을 지정하세요. 기존 수식이나 병합 셀을 덮어쓰는 요청은 중단합니다.</small>
-    <div className="quote-actions"><button className="btn ghost" type="button" disabled={dirty} onClick={onManageCategories}>카테고리·양식 관리</button><button className="btn primary" type="button" disabled={busy||dirty||refreshingProfiles||!selected?.template} onClick={()=>void request('preview')}>{busy?'자료 확인 중…':'견적 자료 검토'}</button></div>
+    <div className="quote-actions"><button className="btn ghost" type="button" disabled={sourceLocked||dirty} onClick={manageCategories}>카테고리·양식 관리</button><button className="btn primary" type="button" disabled={sourceLocked||busy||dirty||refreshingProfiles||!selected?.template} onClick={()=>void request('preview')}>{busy?'자료 확인 중…':'견적 자료 검토'}</button></div>
     {error&&<p role="alert" className="collection-error">{error}</p>}{message&&<p role="status">{message}</p>}
     {preview&&<>
       <h3>출력 미리보기 · {preview.report.rowCount}행</h3><p>실제 상품 입력 시작: {preview.report.dataStartRow}행 · {useSavedRow?'카테고리 저장 설정':'이번 출력 지정값'}</p>
       <p style={{overflowWrap:'anywhere'}}>견적서 파일명: {preview.filename}</p>
-      {preview.submissionReview && <QuotationPreviewReview review={preview.submissionReview} disabled={busy||dirty} onInspect={inspectPreviewTarget} />}
+      {preview.submissionReview && <QuotationPreviewReview review={preview.submissionReview} disabled={sourceLocked||busy||dirty} onInspect={inspectPreviewTarget} />}
       <div className="table-wrap quote-preview"><table><thead><tr>{preview.headers.map((header,index)=><th key={index}>{header||`${index+1}열`}</th>)}</tr></thead><tbody>{preview.rows.map((row,index)=><tr key={index}>{row.map((value,column)=><td key={column}>{String(value)||'—'}</td>)}</tr>)}</tbody></table></div>
       {preview.report.missingRequired.length>0&&<div className="panel-note"><div><strong>필수 연결 값 {preview.report.missingRequired.length}개 미입력</strong><ul>{preview.report.missingRequired.map((field,index)=><li key={index}>{field.row}행 · {field.header||`${field.column}열`}</li>)}</ul></div></div>}
-      <QuotationMappingReview findings={preview.report.mappingCoverage ?? []} disabled={busy||dirty} onManage={onManageCategories} onInspect={inspectPreviewTarget} />
+      <QuotationMappingReview findings={preview.report.mappingCoverage ?? []} disabled={sourceLocked||busy||dirty} onManage={manageCategories} onInspect={inspectPreviewTarget} />
       <ul className="quote-warnings">{preview.report.warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul>
       <small>콘텐츠 v{preview.report.contentRevision} · 옵션 v{preview.report.optionRevision} · 카테고리 연결 v{preview.report.profileRevision}</small>
-      <button className="btn primary" type="button" disabled={busy||dirty} onClick={()=>void request('download')}>채운 견적서 파일 다운로드</button>
-      <button className="btn primary" type="button" disabled={busy||dirty} onClick={()=>void request('export')}>채운 견적서 + 첨부 자료 ZIP 다운로드</button>
+      <button className="btn primary" type="button" disabled={sourceLocked||busy||dirty} onClick={()=>void request('download')}>채운 견적서 파일 다운로드</button>
+      <button className="btn primary" type="button" disabled={sourceLocked||busy||dirty} onClick={()=>void request('export')}>채운 견적서 + 첨부 자료 ZIP 다운로드</button>
     </>}</div>
-    {onPrepareSubmission&&<div className="panel-stack"><button type="button" className="btn rose" disabled={dirty||busy||refreshingProfiles||!contextLoaded||!selected} onClick={()=>{
-      if(dirtyRef.current||activeRequest.current||profileRequest.current||!contextLoaded||!selected)return;
+    {onPrepareSubmission&&<div className="panel-stack"><button type="button" className="btn rose" disabled={sourceLocked||dirty||busy||refreshingProfiles||!contextLoaded||!selected} onClick={()=>{
+      if(!sourceActionCurrent()||dirtyRef.current||activeRequest.current||profileRequest.current||!contextLoaded||!selected)return;
       onPrepareSubmission(overrideProfileId);
     }}>저장한 견적 전송 준비</button><small>현재 상품과 선택한 양식의 저장 자료를 검사합니다. 첨부 파일과 필수 동의를 확인한 뒤 등록 전송을 실행하세요.</small></div>}
     </details>

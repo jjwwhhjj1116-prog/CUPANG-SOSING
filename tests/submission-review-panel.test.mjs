@@ -10,17 +10,17 @@ const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='o
 const settle=async()=>{for(let i=0;i<8;i++)await new Promise(resolve=>setImmediate(resolve));};
 const product={id:'p1',title:'상품',source_url:'https://example.com/product',updated_at:'v1'};
 const profile=(id='a',revision=1,categoryId='80719')=>({id,revision,categoryId,name:id,categoryPath:['주방'],template:null,mappings:[]});
-function harness(){
+function harness({beforeLayout}={}){
  const slots=[],effects=[],calls=[];let cursor=0,pending=[];
  let props={products:[product],profiles:[profile(),profile('b')],onEdit(){}};
  const effect=(fn,deps)=>{const i=cursor++;if(!effects[i]||deps.some((value,n)=>!Object.is(value,effects[i].deps[n])))pending.push(()=>{effects[i]?.cleanup?.();effects[i]={deps,cleanup:fn()};});};
  const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return[slots[i],value=>slots[i]=typeof value==='function'?value(slots[i]):value];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useMemo(fn,deps){const i=cursor++,old=slots[i];if(!old||deps.some((value,n)=>!Object.is(value,old.deps[n])))slots[i]={deps,value:fn()};return slots[i].value;},useEffect:effect,useLayoutEffect:effect};
  function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,URL,AbortController,fetch:(url,init)=>new Promise(resolve=>calls.push({url,signal:init.signal,resolve})),require(name){if(name==='react')return hooks;if(name==='@/app/components/submission-package')return{SubmissionPackage:'package'};if(name==='@/app/components/supplier-hub-product-submission')return{SupplierHubProductSubmission:'native'};if(name==='@/app/components/quotation-review-issues')return{QuotationReviewIssues:'issues'};return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;}
  const Component=load('app/components/submission-review-panel.tsx').SubmissionReviewPanel;
- function render(changes={}){props={...props,...changes};cursor=0;pending=[];const tree=Component(props);pending.forEach(fn=>fn());return tree;}
+ function render(changes={}){props={...props,...changes};cursor=0;pending=[];const tree=Component(props);beforeLayout?.(tree);pending.forEach(fn=>fn());return tree;}
  function respond(index,categoryId='80719',title='상품'){const call=calls[index],url=new URL(call.url,'https://example.com');call.resolve(Response.json({productId:'p1',requestedProfileId:url.searchParams.get('profileId'),title,sourceUrl:product.source_url,categoryId,categoryPath:['주방'],checkedAt:'2026-09-28T00:00:00Z',fingerprint:'a'.repeat(64),submissionReady:false,transport:'not-connected',includedOptions:1,errorCount:0,reviewCount:0,omittedIssueCount:0,issues:[],limits:[]}));}
  function legacy(changes={}){const tree=render(changes);nodes(tree).filter(node=>node.type==='details'&&node.props['aria-label']==='Excel 파일 전송 · 별도 방식').forEach(node=>node.props.onToggle({currentTarget:{open:true}}));return render();}
- return{render,legacy,respond,calls,select(id){nodes(render()).find(node=>node.type==='select').props.onChange({target:{value:id}});return render();}};
+ return{render,legacy,respond,calls,unmount(){effects.forEach(effect=>effect?.cleanup?.());},select(id){nodes(render()).find(node=>node.type==='select').props.onChange({target:{value:id}});return render();}};
 }
 const packages=tree=>nodes(tree).filter(node=>node.type==='package');
 const heading=tree=>nodes(tree).find(node=>node.type==='h3').props.children;
@@ -154,4 +154,31 @@ for(const company of ['A01464742','A01526306'])test(`a rapid A to B to A selecti
  assert.equal(edits.length,0);assert.equal(new URL(h.calls.at(-1).url,'https://example.com').searchParams.get('profileId'),'a');
  h.respond(h.calls.length-1);await settle();nodes(h.render()).find(node=>node.type==='button'&&node.props.children==='견적서 수정하기').props.onClick();
  assert.equal(JSON.stringify(edits),JSON.stringify([['p1','a',{optionId:null,fieldId:'category',categoryId:'80719'}]]));
+});
+
+for(const company of ['A01464742','A01526306'])test(`${company}: native source and close locks reach category, retained edit/recheck callbacks and the modal owner without disabling their own child`,async()=>{
+ const h=harness(),edits=[],locks=[];h.render({onEdit:(...args)=>edits.push(args),onLockChange:(...args)=>locks.push(args)});h.respond(0);await settle();
+ const tree=h.legacy(),child=nodes(tree).find(node=>node.type==='native'),select=nodes(tree).find(node=>node.type==='select'),edit=nodes(tree).find(node=>node.type==='button'&&node.props.children==='견적서 수정하기'),recheck=nodes(tree).find(node=>node.type==='button'&&node.props.children==='저장된 자료 다시 검사'),inspect=nodes(tree).find(node=>node.type==='issues').props.onInspect;
+ const reads=h.calls.length;child.props.onLockChange(true,true);
+ // Captured callbacks must see the same-tick ref, before a React rerender.
+ select.props.onChange({target:{value:'b'}});edit.props.onClick();recheck.props.onClick();inspect({optionId:null,fieldId:'model'});
+ let current=h.render();assert.equal(h.calls.length,reads);assert.equal(edits.length,0);assert.equal(nodes(current).find(node=>node.type==='select').props.value,'');assert.equal(nodes(current).find(node=>node.type==='select').props.disabled,true);assert.deepEqual(locks.at(-1),[true,true]);assert.equal(nodes(current).find(node=>node.type==='native').props.disabled,undefined,'parent lock must not remount/disable its own native controller');
+ child.props.onLockChange(true,false);current=h.render();assert.deepEqual(locks.at(-1),[true,false]);assert.equal(nodes(current).find(node=>node.type==='button'&&node.props.children==='견적서 수정하기').props.disabled,true,'positively stored accepted reservation may close but must retain source protection');
+ child.props.onLockChange(false,false);h.render();edit.props.onClick();assert.equal(edits.length,1,'released preview or positively released rejection can edit its current scope');h.unmount();
+});
+
+test('multiple native product locks aggregate independently and old scope/unmounted releases cannot unlock the current context',async()=>{
+ const h=harness(),locks=[];h.render({products:[product,{...product,id:'p2'}],onLockChange:(...args)=>locks.push(args)});const children=nodes(h.render()).filter(node=>node.type==='native');
+ children[0].props.onLockChange(true,true);children[1].props.onLockChange(true,true);children[0].props.onLockChange(false,false);assert.deepEqual(locks.at(-1),[true,true]);
+ children[1].props.onLockChange(false,false);assert.deepEqual(locks.at(-1),[false,false]);h.select('b');const next=nodes(h.render()).find(node=>node.type==='native');next.props.onLockChange(true,true);const count=locks.length;
+ children[1].props.onLockChange(false,false);children[0].props.onLockChange(true,true);assert.equal(locks.length,count);assert.equal(nodes(h.render()).find(node=>node.type==='select').props.disabled,true);
+ next.props.onLockChange(false,false);h.select('');const back=nodes(h.render()).find(node=>node.type==='native');back.props.onLockChange(true,true);const abaCount=locks.length;children[0].props.onLockChange(false,false);assert.equal(locks.length,abaCount,'A/B/A never reuses the prior lock capability');h.unmount();const closedCount=locks.length;back.props.onLockChange(false,false);assert.equal(locks.length,closedCount);
+});
+
+test('new native child layout locks survive the parent context layout, and retired category callbacks cannot reopen a completed scope',async()=>{
+ const locks=[],h=harness({beforeLayout(tree){const child=nodes(tree).find(node=>node.type==='native');if(child?.props.profileId==='b')child.props.onLockChange(true,true);}});
+ h.render({onLockChange:(...args)=>locks.push(args)});h.respond(0);await settle();const old=nodes(h.render()).find(node=>node.type==='select').props.onChange;old({target:{value:'b'}});
+ h.render();await settle();const tree=h.render();assert.deepEqual(locks.at(-1),[true,true]);assert.equal(nodes(tree).find(node=>node.type==='select').props.disabled,true);
+ const reads=h.calls.length;old({target:{value:''}});h.render();assert.equal(h.calls.length,reads);assert.equal(nodes(h.render()).find(node=>node.type==='select').props.value,'b');
+ const current=nodes(tree).find(node=>node.type==='select').props.onChange;h.unmount();const count=locks.length;current({target:{value:''}});old({target:{value:'a'}});assert.equal(locks.length,count);assert.equal(h.calls.length,reads);
 });

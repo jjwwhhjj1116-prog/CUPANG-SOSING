@@ -9,6 +9,7 @@ import {hubSchemaSnapshot,schemaCompanies,schemaPath} from './helpers/hub-schema
 import {workbookArchive} from './helpers/quotation-workbook.mjs';
 
 const native=createRequire(import.meta.url),plain=value=>JSON.parse(JSON.stringify(value));
+const expectedOptions=[['collected-1','5627721589405','유광 검정 / 선글라스'],['collected-2','5627721589406','유광 검정 / 선글라스 + 005 케이스'],['collected-3','5627721589409','무광 검정 / 선글라스'],['collected-4','5627721589410','무광 검정 / 선글라스 + 005 케이스'],['collected-5','5627721589407','무광 회색 / 선글라스'],['collected-6','5627721589408','무광 회색 / 선글라스 + 005 케이스']];
 const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
 const json=async(response,status=200)=>{assert.equal(response.status,status,await response.clone().text());return response.json();};
 const column=index=>{let result='';for(let value=index+1;value;value=Math.floor((value-1)/26))result=String.fromCharCode(65+(value-1)%26)+result;return result;};
@@ -59,6 +60,8 @@ function harness(api){
  const Editor=()=>null;
  const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],value=>{slots[i]=typeof value==='function'?value(slots[i]):value;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useEffect(fn,deps){const i=cursor++,old=slots[i];if(!old||deps.some((value,j)=>!Object.is(value,old.deps[j]))){slots[i]={deps,cleanup:old?.cleanup};effects.push(()=>{slots[i].cleanup?.();slots[i].cleanup=fn();});}}};
  hooks.useLayoutEffect=hooks.useEffect;
+ hooks.useMemo=(factory,deps)=>{const i=cursor++,old=slots[i];if(!old||deps.some((value,j)=>!Object.is(value,old.deps[j])))slots[i]={deps,value:factory()};return slots[i].value;};
+ hooks.useCallback=(fn,deps)=>hooks.useMemo(()=>fn,deps);
  function load(file){
   if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
@@ -102,11 +105,20 @@ test('an existing schema-only category retains its draft and explicit stage 7 pr
   assert.equal(ui.button('공식 견적 양식 준비'),undefined,JSON.stringify(nodes(ui.render()).filter(node=>node.props?.role==='alert')));assert.equal(ui.button('견적 자료 검토').props.disabled,false);
   const source=await api.load('app/exports/quotation-source.ts').readMappedQuotationSource('owner',product.id,selected.id),resolved=api.load('app/exports/quotation-source.ts').resolveQuotationExport(source);
   const rows=api.load('app/exports/quotation-fields.ts').resolvedQuotationRows(source,resolved,[]);
+  // Generic content PATCH preserves the common SEO base; it does not stamp a
+  // saved SEO document. Its stage-seven fallback appends the exact saved korName
+  // (quotationSeoDocumentTitle / quotationOptionTitle), as the dedicated title
+  // and official-workbook-evidence tests already verify with literal outputs.
+  const expectedTitles=['직접 검토한 상품명, 유광 검정 / 선글라스','직접 검토한 상품명, 유광 검정 / 선글라스 + 005 케이스','직접 검토한 상품명, 무광 검정 / 선글라스','직접 검토한 상품명, 무광 검정 / 선글라스 + 005 케이스','직접 검토한 상품명, 무광 회색 / 선글라스','직접 검토한 상품명, 무광 회색 / 선글라스 + 005 케이스'];
+  assert.equal(source.content.seo.title.value,'직접 검토한 상품명');assert.deepEqual(plain(source.options.rows).map(option=>[option.id,option.supplierSku,option.translatedName]),expectedOptions);
+  assert.deepEqual(plain(resolved.rows).filter(row=>row.optionId!==null).map(row=>[row.optionId,row.fields.title.value]),expectedTitles.map((title,index)=>[expectedOptions[index][0],title]));
+  assert.deepEqual(plain(rows).map(row=>[row.skuId,row.title]),expectedTitles.map((title,index)=>[expectedOptions[index][1],title]));
   const output=await api.load('app/exports/mapped-quotation.ts').createMappedQuotation({originalBytes:ui.workbook.bytes.buffer,profile:source.profile,rows,dataStartRow:9});
   assert.equal(output.values.length,6);assert.equal(output.report.validationIssues.length,0);
-  for(const [index,row]of output.values.entries()){assert.equal(row[0],'직접 검토한 상품명');assert.equal(row[1],schemaPath.join('>')+' (991234)');assert.equal(row[4],'UV');assert.equal(row[5],index===1?'':'해당사항없음');}
+  for(const [index,row]of output.values.entries()){assert.equal(row[0],expectedTitles[index]);assert.equal(row[1],schemaPath.join('>')+' (991234)');assert.equal(row[4],'UV');assert.equal(row[5],index===1?'':'해당사항없음');}
   const reader=api.load('app/xlsx-template.ts'),inspection=reader.inspectXlsxArchive(await reader.readXlsxArchive(output.bytes.buffer));
   assert.equal(reader.xlsxHeaders(inspection,ui.workbook.sheetName,10)[5],'');assert.deepEqual(api.objects.get(saved.template.storageKey),ui.workbook.bytes);
+  assert.equal((await json(await api.route(base+'/content'))).content.seo.title.value,'직접 검토한 상품명');assert.equal(retained(),before,'exported option titles never rewrite the stored common SEO or option identities');
   assert.equal(product.supplier_hub_status,'미전송');assert.ok(!api.network.includes('supplier.coupang.com'));assert.equal(api.aiSources.length,1);
  }finally{ui.close();api.close();}
 });
@@ -150,7 +162,10 @@ test('explicit workbook mode uses existing TEMPLATE after Excel failure and down
   ui.button('견적 자료 검토').props.onClick();await ui.settle();assert.ok(ui.button('채운 견적서 파일 다운로드'),JSON.stringify(ui.render()));
   ui.button('채운 견적서 파일 다운로드').props.onClick();await ui.settle();assert.equal(ui.downloads.length,1,JSON.stringify(ui.render()));assert.match(ui.downloads[0].name,/\.xlsx$/);
   const reader=api.load('app/xlsx-template.ts'),inspection=reader.inspectXlsxArchive(await reader.readXlsxArchive(await ui.downloads[0].blob.arrayBuffer()));
-  for(let row=9;row<15;row++)assert.equal(reader.xlsxHeaders(inspection,ui.workbook.sheetName,row)[0],'파일 연결 전에 저장한 제목');
+  const expectedTitles=['파일 연결 전에 저장한 제목, 유광 검정 / 선글라스','파일 연결 전에 저장한 제목, 유광 검정 / 선글라스 + 005 케이스','파일 연결 전에 저장한 제목, 무광 검정 / 선글라스','파일 연결 전에 저장한 제목, 무광 검정 / 선글라스 + 005 케이스','파일 연결 전에 저장한 제목, 무광 회색 / 선글라스','파일 연결 전에 저장한 제목, 무광 회색 / 선글라스 + 005 케이스'];
+  for(const [index,title]of expectedTitles.entries())assert.equal(reader.xlsxHeaders(inspection,ui.workbook.sheetName,9+index)[0],title);
+  assert.deepEqual(plain((await api.load('db/product-options.ts').readProductOptions('owner',product.id)).rows).map(option=>[option.id,option.supplierSku,option.translatedName]),expectedOptions);
+  assert.equal((await json(await api.route(base+'/content'))).content.seo.title.value,'파일 연결 전에 저장한 제목','the literal per-option XLSX names never replace the common SEO base');
   assert.deepEqual(api.objects.get(saved.template.storageKey),ui.workbook.bytes);assert.equal(retained(),before);assert.equal(api.aiSources.length,1);
   assert.equal(ui.calls.some(call=>['PREPARE','TRANSMIT','REGISTRATION'].includes(call.type)),false);assert.equal(product.supplier_hub_status,'미전송');
  }finally{ui.close();api.close();}

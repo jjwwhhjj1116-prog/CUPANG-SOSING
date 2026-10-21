@@ -21,6 +21,21 @@ const product=id=>({id,owner_id:'test-owner',title:'상품 '+id,source_url:'http
 const singleSummary=()=>({format:'yoofam-single-receipt-summary-v1',evidence:'chrome-observation',registered:false,label:'개별 문서 등록 파일 완료 확인',company:{code:'A01526306',name:'유앤채'},fingerprint:'a'.repeat(64),categoryId:'81452',observedAt:Date.now(),createdAt:new Date().toISOString(),optionCount:1,optionId:'reviewed-option',docId:901,qvtRequestId:7901,state:'accepted',sourceStatus:'FINISHED'});
 const assertProductNavigation=(requests,id)=>{assert.equal(requests.length,2);assert.deepEqual(requests.map(request=>request.url),['/api/products/'+id,'/api/products/'+id+'/registration-layout']);for(const request of requests){assert.equal(request.method,'GET');assert.equal(request.init.cache,'no-store');assert.ok(request.init.signal instanceof AbortSignal);}};
 
+for(const company of schemaCompanies)test(`${company.code}: native source/close guards protect the registration modal, and old session releases never unlock its replacement`,async()=>{
+ const h=harness({settingsBody:{settings:{brand:'합성 검수 브랜드',exchangeRate:350},scope:scope('test-owner',company.code)}});try{
+  await h.settle();h.component('registration-board').onSelected(new Set([h.products[0].id]));await h.click('등록 전송');const first=h.component('submission-review-panel'),mount=h.componentMount('submission-review-panel');
+  const backdrop=()=>nodes(h.render()).find(node=>node.props?.className==='modal-backdrop'),oldClose=backdrop().props.onMouseDown;
+  first.onLockChange(true,true);oldClose();first.onEdit(h.products[0].id);await h.click('등록 전송');assert.equal(h.componentMount('submission-review-panel'),mount);
+  assert.equal(nodes(backdrop()).find(node=>node.type==='button'&&node.props.className==='icon-close').props.disabled,true);
+  first.onLockChange(true,false);first.onEdit(h.products[0].id);await h.settle();assert.equal(h.componentMount('submission-review-panel'),mount);assert.equal(nodes(backdrop()).find(node=>node.type==='button'&&node.props.className==='icon-close').props.disabled,false);
+  oldClose();await h.settle();assert.equal(h.component('submission-review-panel'),undefined,'a positively saved terminal receipt may close while its source reservation stays intact');
+  await h.click('등록 전송');const current=h.component('submission-review-panel'),replacement=h.componentMount('submission-review-panel');assert.notEqual(replacement,mount);current.onLockChange(true,true);
+  first.onLockChange(false,false);oldClose();first.onEdit(h.products[0].id);await h.settle();assert.equal(h.componentMount('submission-review-panel'),replacement);assert.equal(nodes(backdrop()).find(node=>node.type==='button'&&node.props.className==='icon-close').props.disabled,true);
+  current.onLockChange(false,false);current.onEdit(h.products[0].id);await h.settle();assert.equal(h.component('submission-review-panel'),undefined);assert.equal(h.component('product-content-editor').product.id,h.products[0].id);
+  h.close();current.onLockChange(true,true);current.onLockChange(false,false);assert.equal(h.lateWrites,0);assert.ok(h.requests.every(request=>request.method==='GET'));
+ }finally{h.close();}
+});
+
 /** Actual DashboardClient, its private DetailPanel and settings dialog. Child
  * renderers record their received props; every tested callback is the real
  * parent callback, and requests run through its real fetch/readJson code. */

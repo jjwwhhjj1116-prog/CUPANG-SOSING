@@ -6349,3 +6349,12 @@ ExistingfreeWorker ba37200e-0c9a-4a59-9362-86d27a6fa9bc deployed. Latestactualpr
 - 같은기존Chrome별도localhost 새합성원문/유효PNG6/실제Dashboard/API/SQLite: 상단버튼·접힌3안내·사진2그룹·batch/composite각1확인. 사진순서수정쓰기0→선택옵션 quotation-fields PUT200정확1회→reload순서/7단계detailImages반영. 공통/타옵션/수동HTML/원문/content/options/파일/label값/보호합성상품불변. source/Hub/native실요청0·submissionReady=false. step771-browser-proof.json·step771-ui/detail-reloaded.png; 검수탭/서버정리. 번역/합치기/다운로드/동의브라우저실행0(별도컴포넌트/API회귀와구분).
 - native gap정적근거 step771-native-gap.json: 원본Hub SHA6fc9c0fa…abe11 displayURL recipe UTF16[2879017,2879183), 원격binary GET계약/CORS/신뢰CDN/PDFdownload미확정. 임의metadatahost fetch·권한확대·미연결pure모듈추가0. 두livegate/remoteBytesVerified/actualUploadVerified=false. 실제1688·전체AI품질·모든UI동일·실제Hub접수미검증, 기존거절우회/사실임의생성/합성접수보고금지.
 - 관련최종고유테스트범위·건수/초기실패및fixture보완·동결SHA·types/변경파일lint/build·기존Worker배포·commit/push는 outputs/step771-final-validation.json·step771-final-coverage.json 참조. 집중/반복중복합산0. 확장2.1.12/ZIP/권한불변·refresh질문0, 신규resource/migration/Access정책변경0.
+
+## Step772 — 2026-10-21: 옵션 축 전달·견적 검토 진입·전송 원본 보호
+
+- 상세 docs/step772-option-axes-and-quotation-review.md. 기준 fda37edcb12988a0c8e79ed418ddfa560ef3518a. 보관 Couplus/기존 REA Evidence 재사용, 같은 producer/실사이트/거절1688 접근 반복0. Stage7 검토 CTA 위치는 자체 접근성 보완이며 원본과 같은 위치라고 주장하지 않음.
+- 명시 DOM axisValues optional 보존→정확한 단일 색상/사이즈 축만 기존 번역/견적 노출 속성 연결. 이름 추측/상품facts 생성0. 검토 ACK 축 추가·변경·제거 거절, 기존 v1/원문·기존 합성 작업/파일 불변. 양사 실제 로컬 API/SQLite 검증 step772-option-axis-preservation-proof.json.
+- 7단계 저장 옆 견적 검토·전송은 같은 mounted 검토만 open/scroll/focus. 미저장/비활성/진행/충돌/옛view 차단. header/inline 모두 source/close 잠금 분리, pending/unknown/unsaved source·category·refresh·split·닫기 보호. 자체 잠금으로 자식 disabled/key를 바꾸지 않음. child-first 초기 보고/ABA/stale callback 보호. accepted 정확히 저장된 접수 결과만 close 허용·duplicate intent 보존, rejected 저장+예약정리 후 source 해제.
+- 같은 Chrome 별도 localhost 새 합성 상품: 모델명 선택옵션만 PUT200 정확1회→같은 저장버전 검토 초점/열림/단일controller. 공통/다른옵션/원문/content/options/파일/보호합성상품 불변. step772-browser-proof.json, step772-ui/quotation-review-open.png. 검수 탭·서버 정리, source/Hub/native실요청0. 원격접수/AI품질/전카테고리·전UI동등성 미검증, 두 livegate=false.
+- 확장2.1.13: 생성수집번들/5다운로드링크/90파일 ZIP 1081792bytes SHA58f96ad427ca7d4add2200bc7dd6de849dbdaae778308f32993a5d7abd93d444. 2.1.12 archive/권한/호스트 불변. 설치 Chrome의 새버전 적용은 검증하지 않았고 refresh질문 반복0.
+- 최종 고유 검사 범위/건수·기존5실패의 HEAD 비교와 검수fixture 보완·동결SHA·types/변경파일lint/build·기존Worker 배포 version081ea34d-f683-42db-9fe5-ef5a94897af3·commit/push 결과는 outputs/step772-final-validation.json 참조. 집중·반복 실행 중복합산0. 신규resource/migration/Access정책변경0. 실제 업무상품 조회·수정·삭제·전송0.

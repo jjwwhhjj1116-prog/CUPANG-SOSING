@@ -39,7 +39,7 @@ for(const company of companies)for(const outcome of ['created','late-reused'])te
  const h=mobileIntakeHarness({companyCode:company.code,companyName:company.name,fixtureImageUrls:images,sourceFetcher:()=>{sourceRequests++;assert.fail('No supplier URL fetch is authorized by this synthetic test');}});let ui;
  try{
   const settings={...h.settings,brand:company.name};await h.load('db/queries.ts').saveSettings('owner',JSON.stringify(settings));
-  const translations=new Map([['黑色 / 均码','검정 / 프리'],['灰色 / 均码','회색 / 프리']]);
+  const translations=new Map([['黑色 / 均码','검정 / 프리'],['灰色 / 均码','회색 / 프리'],['黑色','검정'],['灰色','회색'],['均码','프리']]);
   h.bindings.AI.run=async(_model,input)=>{aiCalls++;const source=JSON.parse(input.messages[1].content);return{response:{title:'합성 단일 초안',description:'합성 검수 설명',keywords:['검수 상품'],warnings:[],attributes:source.attributes.map((pair,sourceIndex)=>({sourceIndex,name:pair.name,value:translations.get(pair.value)??pair.value}))}};};
   const oldId='synthetic-protected-single-start-770',oldKey='owner/protected-single-start-770.png',policy=h.load('app/pricing.ts').pricePolicy(settings),birth=new Date().toISOString();
   h.objects.set(oldKey,Uint8Array.of(1,7,7,0));

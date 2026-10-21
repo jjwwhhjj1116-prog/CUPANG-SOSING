@@ -29,7 +29,7 @@ export function validateReviewedSourceTransition(before:SourceInboxItem,saved:So
       ||!sameData({...snapshot,title:reviewed.title,options:reviewed.options},reviewed))return false;
     for(const option of reviewed.options){
       const original=snapshot.options.find(row=>row.key===option.key);
-      if(!original||original.stock!==option.stock||original.imageUrl!==option.imageUrl)return false;
+      if(!original||original.stock!==option.stock||original.imageUrl!==option.imageUrl||!sameData(original.axisValues,option.axisValues))return false;
     }
     const issues=pageSourceIssues(reviewed).filter(issue=>!['최소 주문 수량','공급자 SKU'].includes(issue));
     return !issues.length&&sameData(saved.issues,issues);

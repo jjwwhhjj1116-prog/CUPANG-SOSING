@@ -1,6 +1,6 @@
 'use client';
 
-import {useCallback,useEffect,useLayoutEffect,useRef,useState} from 'react';
+import {useCallback,useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
 import type {QuotationFieldsView} from '@/app/quotation-schema';
 import {readSingleCatalogContext} from '@/app/supplier-hub-single-client';
 import {validOptionRegistrationNumbers} from '@/app/product-registration';
@@ -10,7 +10,7 @@ import {productRemovalDecision} from '@/app/product-removal-policy';
 import {getSupplierHubProductHistory} from '@/app/supplier-hub-handoff';
 import {productDocumentPendingKey,readProductDocumentPending,readProductDocumentRejections} from '@/app/supplier-hub-product-pending';
 
-type Props={productId:string;profileId?:string;expectedCategoryId?:string;onReceiptSaved?:()=>void;disabled?:boolean};
+type Props={productId:string;profileId?:string;expectedCategoryId?:string;onReceiptSaved?:()=>void;onLockChange?:(locked:boolean,closeLocked?:boolean)=>void;disabled?:boolean};
 const identifier=/^[A-Za-z0-9_-]{1,100}$/,hash=/^[a-f0-9]{64}$/;
 const object=(value:unknown):value is Record<string,unknown>=>Boolean(value)&&typeof value==='object'&&!Array.isArray(value);
 function active(signal:AbortSignal){if(signal.aborted)throw Error('현재 상품 견적 확인을 취소했습니다.');}
@@ -90,11 +90,20 @@ function ProductSubmissionContent(props:Props){
   const [view,setView]=useState<QuotationFieldsView|null>(null),[error,setError]=useState(''),[attempt,setAttempt]=useState(0);
   const [legalBusy,setLegalBusy]=useState(false),[nativeLocked,setNativeLocked]=useState(false),[legalNotice,setLegalNotice]=useState('');
   const [legalPolicy,setLegalPolicy]=useState<{view:QuotationFieldsView;blocked:boolean;message:string}|null>(null);
-  const current=useRef({mounted:true,props,view,legalBusy,nativeLocked}),pending=useRef<AbortController|null>(null);
-  useLayoutEffect(()=>{current.current={mounted:true,props,view,legalBusy,nativeLocked};});
-  const nativeLock=useCallback((locked:boolean)=>{current.current.nativeLocked=locked;setNativeLocked(locked);},[]);
-  const legalLock=useCallback((busy:boolean)=>{current.current.legalBusy=busy;setLegalBusy(busy);},[]);
-  useLayoutEffect(()=>()=>{current.current.mounted=false;pending.current?.abort();pending.current=null;},[]);
+  const nativeToken=useMemo(()=>({view,disabled:props.disabled,legalBusy}),[view,props.disabled,legalBusy]),liveNativeToken=useRef(nativeToken);
+  const nativeReports=useRef(new WeakMap<typeof nativeToken,{source:boolean;close:boolean}>()),retiredNativeTokens=useRef(new WeakSet<typeof nativeToken>());
+  const current=useRef({mounted:true,props,view,legalBusy,nativeLocked}),pending=useRef<AbortController|null>(null),nativeCloseLocked=useRef(false);
+  useLayoutEffect(()=>{const report=nativeReports.current.get(nativeToken);current.current={mounted:true,props,view,legalBusy,nativeLocked:report?.source??nativeLocked};if(report)nativeCloseLocked.current=report.close;});
+  useLayoutEffect(()=>{if(liveNativeToken.current!==nativeToken)retiredNativeTokens.current.add(liveNativeToken.current);liveNativeToken.current=nativeToken;retiredNativeTokens.current.delete(nativeToken);
+    const value=nativeReports.current.get(nativeToken)??{source:false,close:false};current.current.nativeLocked=value.source;nativeCloseLocked.current=value.close;
+    current.current.props.onLockChange?.(current.current.legalBusy||value.source,current.current.legalBusy||value.close);
+    void Promise.resolve().then(()=>{if(current.current.mounted&&liveNativeToken.current===nativeToken)setNativeLocked(nativeReports.current.get(nativeToken)?.source??false);});
+  },[nativeToken]);
+  const reportLock=useCallback(()=>{const value=current.current;if(value.mounted)value.props.onLockChange?.(value.legalBusy||value.nativeLocked,value.legalBusy||nativeCloseLocked.current);},[]);
+  const nativeLock=useCallback((locked:boolean,closeLocked=locked)=>{if(!current.current.mounted||retiredNativeTokens.current.has(nativeToken))return;nativeReports.current.set(nativeToken,{source:locked,close:closeLocked});if(liveNativeToken.current!==nativeToken)return;current.current.nativeLocked=locked;nativeCloseLocked.current=closeLocked;setNativeLocked(locked);reportLock();},[reportLock,nativeToken]);
+  const legalLock=useCallback((busy:boolean)=>{if(!current.current.mounted)return;current.current.legalBusy=busy;setLegalBusy(busy);reportLock();},[reportLock]);
+  useLayoutEffect(()=>{reportLock();},[props.onLockChange,legalBusy,nativeLocked,reportLock]);
+  useLayoutEffect(()=>()=>{current.current.mounted=false;pending.current?.abort();pending.current=null;current.current.props.onLockChange?.(false,false);},[]);
   useEffect(()=>{
     if(disabled)return;
     const controller=new AbortController();pending.current=controller;

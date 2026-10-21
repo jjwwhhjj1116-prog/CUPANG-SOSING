@@ -117,7 +117,7 @@ test('quotation panel forwards the optional SEO navigation callback without fetc
  const view=fixture(),profile={id:'saved',name:'저장 양식',categoryId:'80719',categoryPath:[],template:null};let opened=0,calls=0,index=0;
  const callback=()=>{opened++;},Editor=()=>null;
  const states=[[profile],'saved',2,true,null,false,null,'','',false,'saved',true,'','',0,'80719',null,[],false,'',0,'',''];
- const hooks={useState(initial){const i=index++;return[i<states.length?states[i]:initial,()=>{}];},useRef:initial=>({current:initial}),useEffect(){},useLayoutEffect(){}};
+ const hooks={useState(initial){const i=index++;return[i<states.length?states[i]:initial,()=>{}];},useRef:initial=>({current:initial}),useMemo:factory=>factory(),useCallback:fn=>fn,useEffect(){},useLayoutEffect(){}};
  const panel=quotationTitleLoader({react:hooks,fetch(){calls++;throw Error('Unexpected request');},
   '@/app/components/quotation-fields-editor':{QuotationFieldsEditor:Editor},
   '@/app/components/quotation-preview-review':{QuotationPreviewReview:()=>null},
@@ -126,5 +126,5 @@ test('quotation panel forwards the optional SEO navigation callback without fetc
   '@/app/supplier-hub-catalog':{prepareOfficialHubProfileTemplate(){throw Error('Unexpected preparation');}},
  })('app/components/quotation-panel.tsx');
  const before=JSON.stringify(view),outer=panel.QuotationPanel({productId:'p1',onManageCategories(){},onEditSeo:callback});
- const editor=titleNodes(outer.type(outer.props)).find(node=>node.type===Editor);assert.ok(editor);assert.equal(editor.props.onEditSeo,callback);editor.props.onEditSeo();assert.equal(opened,1);assert.equal(calls,0);assert.equal(JSON.stringify(view),before);
+ const editor=titleNodes(outer.type(outer.props)).find(node=>node.type===Editor);assert.ok(editor);assert.equal(typeof editor.props.onEditSeo,'function');editor.props.onEditSeo();assert.equal(opened,1);assert.equal(calls,0);assert.equal(JSON.stringify(view),before);
 });

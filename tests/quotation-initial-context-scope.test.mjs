@@ -10,6 +10,7 @@ import {quotationWorkbook} from './helpers/quotation-workbook.mjs';
 
 const native=createRequire(import.meta.url);
 const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value==='object'?[value,...nodes(value.props?.children)]:[];
+const quotationProfileSelect=tree=>{const labels=nodes(tree).filter(node=>node.type==='label'&&nodes(node).some(child=>child.type==='span'&&child.props.children==='카테고리·견적서 연결'));assert.equal(labels.length,1,'the actual quotation workbook selection label must be present exactly once');const select=nodes(labels[0]).find(node=>node.type==='select');assert.ok(select);return select;};
 const companies=[{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}];
 const json=async(response,status=200)=>{assert.equal(response.status,status,await response.clone().text());return response.json();};
 
@@ -50,7 +51,7 @@ function scopeUI({product,fetcher,preferredProfileId,panelOnly=false,contextProp
  function render(updates={}){
   rootProps={...rootProps,...updates};const visited=new Set(),props=panelOnly?{productId:rootProps.product.id,preferredProfileId:rootProps.preferredProfileId,onManageCategories(){},onProfileChange:id=>notifications.push(id),...contextProps}: {
    workspaceOwnerId:'owner',tab:'가격',product:rootProps.product,settings:{},preferredProfileId:rootProps.preferredProfileId,focusedOptionId:'fixture-option',
-   onReceiptSaved(){},onSaved(){},onSavePrice:async()=>{},onBeforeSeoGenerate:()=>false,onBeforeFreeImageApply:()=>false,onPrepareSubmission(){},onProfilePrepared(){},onReviewPackaging(){},onManageCategories(){},onUpload(){}};
+   onReceiptSaved(){},onSaved(){},onSavePrice:async()=>{},onBeforeSeoGenerate:()=>false,onBeforeFreeImageApply:()=>false,onPrepareSubmission(){},onProfilePrepared(){},onProfileSelected:id=>notifications.push(id),onReviewPackaging(){},onManageCategories(){},onUpload(){}};
   tree=resolve({type:panelOnly?load('app/components/quotation-panel.tsx').QuotationPanel:load('app/components/dashboard-client.tsx').DetailPanel,key:rootProps.product.id,props},'root',visited);
   for(const [key,instance]of instances)if(!visited.has(key)){instance.slots.forEach(slot=>slot?.cleanup?.());instances.delete(key);}
   layouts.splice(0).forEach(fn=>fn());effects.splice(0).forEach(fn=>fn());return tree;
@@ -100,7 +101,7 @@ for(const company of companies)test(`late initial captured-context resolution re
   const reads=ui.calls.filter(call=>call.url.includes('quotation-fields')).length;f.release();await ui.settle();
   assert.equal(ui.field(label).props.value,'22222');assert.ok(nodes(ui.render()).some(node=>node.props?.['data-workspace-dirty']===true));
   assert.equal(ui.calls.filter(call=>call.url.includes('quotation-fields')).length,reads,'initial discovery must not rebase the existing price endpoint');
-  const selected=nodes(ui.render()).find(node=>node.type==='select'&&node.props.value==='cat');assert.ok(selected,'the quotation panel still selects its captured workbook locally');
+  const selected=quotationProfileSelect(ui.render());assert.equal(selected.props.value,'cat','the quotation panel still selects its captured workbook locally');assert.equal(selected.props.disabled,true);assert.equal(ui.notifications.at(-1),undefined,'captured default discovery does not change the price endpoint to an explicit profile');
   assert.equal(f.retained(),before);assert.equal(ui.calls.some(call=>call.init.method==='PUT'),false);
   ui.button('옵션 가격 저장').props.onClick();await ui.settle();
   const writes=ui.calls.filter(call=>call.init.method==='PUT');assert.equal(writes.length,1);assert.equal(writes[0].url,f.base+'/quotation-fields');
@@ -130,11 +131,13 @@ test('an explicit preferred captured profile already owns its endpoint and initi
 test('explicit selection of a genuinely different manual profile still discards the old endpoint draft and cannot cross-save',async()=>{
  const f=await draftFixture(companies[0],{manual:true});let ui;try{
   await f.api.load('db/category-profiles.ts').createCategoryProfile('owner',{...f.profile,name:'다른 수동 양식'},'other');f.release();
-  ui=scopeUI({product:f.product,fetcher:f.fetcher});await ui.settle();let select=nodes(ui.render()).find(node=>node.type==='select'&&node.props.value==='');select.props.onChange({target:{value:'cat'}});await ui.settle();
+  ui=scopeUI({product:f.product,fetcher:f.fetcher});await ui.settle();let select=quotationProfileSelect(ui.render());assert.equal(select.props.value,'');assert.equal(select.props.disabled,false);select.props.onChange({target:{value:'cat'}});await ui.settle();
   const row=f.initial.resolved.rows.find(row=>row.optionId),label=row.optionLabel+' 판매가';ui.field(label).props.onChange({target:{value:'24444'}});assert.equal(ui.field(label).props.value,'24444');
-  select=nodes(ui.render()).find(node=>node.type==='select'&&node.props.value==='cat');select.props.onChange({target:{value:'other'}});await ui.settle();
+  const staleSave=ui.button('옵션 가격 저장').props.onClick,previous=await json(await f.api.route(f.base+'/quotation-fields?profileId=cat'));
+  select=quotationProfileSelect(ui.render());assert.equal(select.props.value,'cat');select.props.onChange({target:{value:'other'}});await ui.settle();
   assert.notEqual(ui.field(label).props.value,'24444');assert.equal(ui.button('옵션 가격 저장').props.disabled,true);assert.ok(ui.calls.some(call=>call.url.endsWith('?profileId=other')));
-  assert.equal(ui.calls.some(call=>call.init.method==='PUT'),false);assert.deepEqual((await json(await f.api.route(f.base+'/quotation-fields?profileId=other'))).overrides.options,{});
+  const current=await json(await f.api.route(f.base+'/quotation-fields?profileId=other'));assert.notEqual(current.inputFingerprint,previous.inputFingerprint);assert.equal(ui.notifications.at(-1),'other');staleSave();await ui.settle();
+  assert.equal(ui.calls.some(call=>call.init.method==='PUT'),false);assert.deepEqual(current.overrides.options,{});assert.deepEqual((await json(await f.api.route(f.base+'/quotation-fields?profileId=cat'))).overrides.options,{});
  }finally{ui?.close();f.close();}
 });
 
@@ -142,7 +145,7 @@ for(const mode of ['unknown-default','captured-category-mismatch'])test(`initial
  const profile={id:'cat',name:'검토 양식',categoryId:'80719',categoryPath:['주방'],template:{name:'synthetic.xlsx',headerRow:1}},context={source:mode==='unknown-default'?'unknown':'collection',profileId:'cat',categoryId:mode==='unknown-default'?'80719':'77442',categoryPath:['주방']};
  const ui=scopeUI({panelOnly:true,product:{id:'synthetic'},fetcher:async url=>Response.json(url==='/api/category-profiles'?{profiles:[profile]}:{categoryContext:context})});try{
   await ui.settle();assert.equal(ui.notifications.at(-1),mode==='unknown-default'?'cat':undefined);
-  assert.equal(nodes(ui.render()).find(node=>node.type==='select').props.value,mode==='unknown-default'?'cat':'');
+  assert.equal(quotationProfileSelect(ui.render()).props.value,mode==='unknown-default'?'cat':'');
   if(mode==='captured-category-mismatch')assert.match(JSON.stringify(ui.render()),/원래 분류를 유지/);assert.equal(ui.calls.some(call=>call.init.method==='PUT'),false);
  }finally{ui.close();}
 });

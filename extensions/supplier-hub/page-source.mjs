@@ -319,7 +319,7 @@ export function readPageSourceDomOptions(document,sourceUrl,scripts){
    }
   }
   if(new Set(items.map(item=>item.name)).size!==items.length)throw domOptionsError();
-  return {container,items};
+  return {container,items,label:labelText};
  });
  if(groups.length===1&&!groups[0].items.length)return null;
  if(groups.some(group=>!group.items.length))throw domOptionsError();
@@ -329,10 +329,10 @@ export function readPageSourceDomOptions(document,sourceUrl,scripts){
  const varying=groups.filter(group=>group.items.length>1);
  const combinationRows=groups.length>1?inventoryRows().filter(element=>!groups.some(group=>group.container.contains(element))):[];
  let observations;
- if(groups.length===1)observations=groups[0].items;
+ if(groups.length===1)observations=groups[0].items.map(item=>({...item,axisValues:[{label:groups[0].label,value:item.name}]}));
  else if(varying.length===1&&!combinationRows.length){
   const axis=varying[0];
-  observations=axis.items.map(item=>({name:groups.map(group=>group===axis?item.name:group.items[0].name).join(' / '),unitPriceCny:item.unitPriceCny,imageUrl:item.imageUrl??groups.find(group=>group!==axis&&group.items[0].imageUrl)?.items[0].imageUrl??null}));
+  observations=axis.items.map(item=>({name:groups.map(group=>group===axis?item.name:group.items[0].name).join(' / '),axisValues:groups.map(group=>({label:group.label,value:group===axis?item.name:group.items[0].name})),unitPriceCny:item.unitPriceCny,imageUrl:item.imageUrl??groups.find(group=>group!==axis&&group.items[0].imageUrl)?.items[0].imageUrl??null}));
  }else{
   // Retained RS inventory rows carry their own combination label and amount.
   // Require all observed axes in DOM order and an exact, complete tuple set.
@@ -342,12 +342,12 @@ export function readPageSourceDomOptions(document,sourceUrl,scripts){
   const tuples=new Set();observations=rows.map(element=>{
    const item=observe(element,'',500),parts=item.name.split(' / ');
    if(parts.length!==groups.length||parts.some((part,index)=>!groups[index].items.some(value=>value.name===part)))throw domOptionsError();
-   const tuple=JSON.stringify(parts);if(tuples.has(tuple))throw domOptionsError();tuples.add(tuple);return item;
+   const tuple=JSON.stringify(parts);if(tuples.has(tuple))throw domOptionsError();tuples.add(tuple);return {...item,axisValues:groups.map((group,index)=>({label:group.label,value:parts[index]}))};
   });
  }
  const names=new Set(),options=observations.map(item=>{
   if(item.name.length>500||names.has(item.name))throw domOptionsError();names.add(item.name);
-  return {key:`dom-row:${names.size}`,name:item.name,supplierSku:null,unitPriceCny:item.unitPriceCny,currency:item.unitPriceCny===null?null:'CNY',minimumOrder:null,stock:null,imageUrl:item.imageUrl};
+  return {key:`dom-row:${names.size}`,name:item.name,supplierSku:null,unitPriceCny:item.unitPriceCny,currency:item.unitPriceCny===null?null:'CNY',minimumOrder:null,stock:null,imageUrl:item.imageUrl,axisValues:item.axisValues};
  });
  return {format:'yoofam-page-dom-options-v1',...identity,options};
 }
@@ -392,6 +392,7 @@ export function extractPageSource(input,now=Date.now()){
   if(!object(dom)||Object.keys(dom).some(key=>!['format','sourceUrl','offerId','options'].includes(key))||dom.format!=='yoofam-page-dom-options-v1'||dom.sourceUrl!==identity.sourceUrl||dom.offerId!==identity.offerId||!Array.isArray(dom.options)||!dom.options.length||dom.options.length>200)throw domOptionsError();
   for(const row of dom.options){
    if(row.supplierSku!==null||row.minimumOrder!==null||row.stock!==null||row.key!==`dom-row:${options.length+1}`)throw domOptionsError();
+   if(row.axisValues!==undefined&&(!Array.isArray(row.axisValues)||row.axisValues.map(axis=>axis?.value).join(' / ')!==row.name))throw domOptionsError();
    options.push({...row});if(row.imageUrl)addImage(row.imageUrl,'additional');
   }
  }
@@ -405,8 +406,17 @@ export function validatePageSource(input,now=Date.now()){
  if(!Array.isArray(input.options)||input.options.length>200||!Array.isArray(input.images)||!input.images.length||input.images.length>200||!Array.isArray(input.attributes)||input.attributes.length>50)throw Error('현재 상품의 옵션·이미지를 확인해주세요.');
  const seen=new Set();
  for(const row of input.options){
-  if(!object(row)||Object.keys(row).some(key=>!['key','name','supplierSku','unitPriceCny','currency','minimumOrder','stock','imageUrl'].includes(key))||!plain(row.key,200)||row.key!==plain(row.key,200)||seen.has(row.key)||!plain(row.name,500)||row.name!==plain(row.name,500)
+  if(!object(row)||Object.keys(row).some(key=>!['key','name','supplierSku','unitPriceCny','currency','minimumOrder','stock','imageUrl','axisValues'].includes(key))||!plain(row.key,200)||row.key!==plain(row.key,200)||seen.has(row.key)||!plain(row.name,500)||row.name!==plain(row.name,500)
    ||row.supplierSku!==null&&(!plain(row.supplierSku,200)||row.supplierSku!==plain(row.supplierSku,200))||row.unitPriceCny!==null&&price(row.unitPriceCny)!==row.unitPriceCny||row.currency!==null&&row.currency!=='CNY'||row.minimumOrder!==null&&integer(row.minimumOrder)!==row.minimumOrder||row.stock!==null&&(!Number.isSafeInteger(row.stock)||row.stock<0)||row.imageUrl!==null&&image(row.imageUrl)!==row.imageUrl)throw Error('수집한 옵션 값이 올바르지 않습니다.');
+  if(row.axisValues!==undefined){
+   const labels=new Set();
+   if(!Array.isArray(row.axisValues)||!row.axisValues.length||row.axisValues.length>10)throw Error('수집한 옵션 축을 확인해주세요.');
+   for(const axis of row.axisValues){
+    if(!object(axis)||Object.keys(axis).length!==2||Object.keys(axis).some(key=>!['label','value'].includes(key))||!DOM_OPTION_LABELS.includes(axis.label)||labels.has(axis.label)
+      ||!plain(axis.value,200)||axis.value!==plain(axis.value,200))throw Error('수집한 옵션 축을 확인해주세요.');
+    labels.add(axis.label);
+   }
+  }
   seen.add(row.key);
  }
  const placements=new Set();let mains=0;

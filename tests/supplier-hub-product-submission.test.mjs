@@ -87,11 +87,11 @@ test('aborted, redirected, HTML, malformed and oversized reads never post or sil
 });
 
 function ui(initial,fetcher,timers,options={}){
- const slots=[],effects=[];let cursor=0,props=initial,mountedKey=null;
- const hook=(fn,deps,layout)=>{const index=cursor++,old=slots[index];if(!old||!deps||deps.some((value,i)=>!Object.is(value,old.deps?.[i]))){old?.cleanup?.();slots[index]={deps};const run=()=>{slots[index].cleanup=fn();};if(layout)run();else effects.push(run);}};
- const hooks={useState(initial){const index=cursor++;if(!(index in slots))slots[index]=initial;return[slots[index],value=>slots[index]=typeof value==='function'?value(slots[index]):value];},useRef(initial){const index=cursor++;return slots[index]??(slots[index]={current:initial});},useCallback(fn,deps){const index=cursor++,old=slots[index];if(!old||deps.some((value,i)=>!Object.is(value,old.deps?.[i])))slots[index]={deps,value:fn};return slots[index].value;},useLayoutEffect:(fn,deps)=>hook(fn,deps,true),useEffect:(fn,deps)=>hook(fn,deps,false)};
+ const slots=[],effects=[],layouts=[];let cursor=0,props=initial,mountedKey=null;
+ const hook=(fn,deps,layout)=>{const index=cursor++,old=slots[index];if(!old||!deps||deps.some((value,i)=>!Object.is(value,old.deps?.[i]))){old?.cleanup?.();slots[index]={deps};const run=()=>{slots[index].cleanup=fn();};if(layout){if(options.childLayoutFirst)layouts.push(run);else run();}else effects.push(run);}};
+ const hooks={useState(initial){const index=cursor++;if(!(index in slots))slots[index]=initial;return[slots[index],value=>slots[index]=typeof value==='function'?value(slots[index]):value];},useRef(initial){const index=cursor++;return slots[index]??(slots[index]={current:initial});},useMemo(fn,deps){const index=cursor++,old=slots[index];if(!old||deps.some((value,i)=>!Object.is(value,old.deps?.[i])))slots[index]={deps,value:fn()};return slots[index].value;},useCallback(fn,deps){const index=cursor++,old=slots[index];if(!old||deps.some((value,i)=>!Object.is(value,old.deps?.[i])))slots[index]={deps,value:fn};return slots[index].value;},useLayoutEffect:(fn,deps)=>hook(fn,deps,true),useEffect:(fn,deps)=>hook(fn,deps,false)};
  const Component=load({hooks,fetcher,timers,...options}).SupplierHubProductSubmission;
- function render(next={}){props={...props,...next};cursor=0;const outer=Component(props);if(mountedKey!==null&&outer.key!==mountedKey){slots.forEach(slot=>slot?.cleanup?.());slots.length=0;effects.length=0;}mountedKey=outer.key;cursor=0;const tree=outer.type(outer.props);effects.splice(0).forEach(run=>run());return tree;}
+ function render(next={}){props={...props,...next};cursor=0;const outer=Component(props);if(mountedKey!==null&&outer.key!==mountedKey){slots.forEach(slot=>slot?.cleanup?.());slots.length=0;effects.length=0;layouts.length=0;}mountedKey=outer.key;cursor=0;const tree=outer.type(outer.props);options.beforeLayout?.(tree);layouts.splice(0).forEach(run=>run());effects.splice(0).forEach(run=>run());return tree;}
  return{render,unmount(){slots.forEach(slot=>slot?.cleanup?.());}};
 }
 test('primary native UI receives the real view, queryless scope and current callback only after stable reads',async()=>{
@@ -165,6 +165,18 @@ test('primary legal editor is reachable, locks native preparation during use, an
  editor=nodes(tree).find(node=>node.type==='legal-editor');review.props.onLockChange(true);tree=mounted.render();assert.equal(nodes(tree).find(node=>node.type==='legal-editor').props.disabled,true);
  await assert.rejects(editor.props.guardWrite(async()=>{writes++;return Response.json({});},new AbortController().signal));assert.equal(writes,1);
  mounted.unmount();await assert.rejects(editor.props.guardWrite(async()=>{writes++;return Response.json({});},new AbortController().signal));assert.equal(writes,1);
+});
+
+for(const company of companies)test(`${company.code}: native locks propagate source/close separately and child-first reports survive view/token changes while old releases stay isolated`,async()=>{
+ const value=clearLegalHistory(await sample(company)),browser=legalBrowser(),fake=responder(value),locks=[],children=[];
+ const mounted=ui({productId:value.productId,onLockChange:(...args)=>locks.push(args)},fake.request,undefined,{window:browser.browser,childLayoutFirst:true,beforeLayout(tree){const child=nodes(tree).find(node=>node.type==='native-review');if(child&&!child.props.disabled){children.push(child);child.props.onLockChange(true,true);}}});
+ mounted.render();await settle();let tree=mounted.render();await settle();tree=mounted.render();assert.deepEqual(locks.at(-1),[true,true]);assert.equal(nodes(tree).find(node=>node.type==='legal-editor').props.disabled,true,'child layout report must not be overwritten by parent layout');
+ const old=children.at(-1),editor=nodes(tree).find(node=>node.type==='legal-editor');old.props.onLockChange(true,false);assert.deepEqual(locks.at(-1),[true,false]);
+ // A legal busy/unbusy cycle remounts the native child and creates a new
+ // capability even when the same saved view returns (A/B/A).
+ old.props.onLockChange(false,false);editor.props.onBusyChange(true);mounted.render();editor.props.onBusyChange(false);tree=mounted.render();await settle();tree=mounted.render();assert.deepEqual(locks.at(-1),[true,true]);
+ const current=children.at(-1),count=locks.length;assert.notEqual(current.props.onLockChange,old.props.onLockChange);old.props.onLockChange(false,false);assert.equal(locks.length,count,'old child cleanup cannot release the new token');assert.equal(nodes(tree).find(node=>node.type==='legal-editor').props.disabled,true);
+ mounted.unmount();assert.deepEqual(locks.at(-1),[false,false]);const closed=locks.length;current.props.onLockChange(true,true);current.props.onLockChange(false,false);assert.equal(locks.length,closed);
 });
 test('legal mutation guard repeats pending check inside the native Web Lock and retains failed save uncertainty',async()=>{
  const value=clearLegalHistory(await sample()),h=legalBrowser(),fake=responder(value);let writes=0;

@@ -44,7 +44,7 @@ after(() => fs.writeFileSync(new URL('../outputs/step728-product-transport-ui-pr
   externalRequests: 0, realProductWrites: 0, hubWrites: 0, actualReceiptVerified: false }, null, 2) + '\n'));
 
 async function fixture(company = SINGLE_COMPANIES[0], options = {}) {
-  const f = await factory.fixture(company, options), slots = [], effects = [], refreshCalls = [], locks = []; let cursor = 0, sequence = 100000, props;
+  const f = await factory.fixture(company, options), slots = [], effects = [], refreshCalls = [], locks = [], lockPairs=[]; let cursor = 0, sequence = 100000, props;
   const stored=options.stored??new Map(),storageListeners=new Set(),events=f.window.addEventListener,removeEvents=f.window.removeEventListener;
   f.window.localStorage={getItem:key=>{if(options.storageReadError)throw Error('storage unavailable');return stored.get(key)??null;},setItem:(key,value)=>{if(options.storageWriteError)throw Error('storage unavailable');stored.set(key,value);},removeItem:key=>stored.delete(key)};
   f.window.navigator={locks:{request:async(_name,_options,run)=>run()}};
@@ -63,16 +63,41 @@ async function fixture(company = SINGLE_COMPANIES[0], options = {}) {
         // its original UUID explicitly; a constant test seed cannot mask loss.
         createProductDocumentPacket: (review,value={}) => createProductDocumentPacket(review, { ...value,createdAt:value.createdAt??f.clock.now,now:f.clock.now }),
       } : native(name) });
-  props = { review: f.review, disabled: false, refresh: async signal => { refreshCalls.push(signal); return f.refresh(signal); }, onLockChange: value => locks.push(value) };
+  props = { review: f.review, disabled: false, refresh: async signal => { refreshCalls.push(signal); return f.refresh(signal); }, onLockChange: (value,close=value) => {locks.push(value);lockPairs.push([value,close]);} };
   f.refresh = async () => { if (f.actor.ownerId !== f.review.identity.ownerId || JSON.stringify(f.actor.company) !== JSON.stringify(f.review.identity.company)) throw Error('현재 회원 회사가 변경되었습니다.'); return plain(f.review); };
   const render = (next = props) => { props = next; cursor = 0; return exports.SupplierHubProductTransport(props); };
   const flush = () => { render(); effects.splice(0).forEach(fn => fn()); };
-  const h = { f, stored,refreshCalls, locks, render, flush, props: () => props, text: () => text(render()), button: label => nodes(render()).find(node => node.type === 'button' && node.props.children === label),storageChanged(key){for(const fn of storageListeners)fn({key});flush();},
+  const h = { f, stored,refreshCalls, locks, lockPairs, render, flush, props: () => props, text: () => text(render()), button: label => nodes(render()).find(node => node.type === 'button' && node.props.children === label),storageChanged(key){for(const fn of storageListeners)fn({key});flush();},
     async wait(predicate) { for (let count = 0; count < 400; count++) { flush(); if (predicate()) return; await turn(); } assert.fail('Product UI boundary timeout'); },
     async idle() { await h.wait(() => !render().props['aria-busy']); }, async click(label) { const node = h.button(label); assert.ok(node, label); assert.equal(Boolean(node.props.disabled), false, label); node.props.onClick(); await h.idle(); },
     close() { for (const slot of slots) slot?.cleanup?.(); } };
   return h;
 }
+
+for(const company of SINGLE_COMPANIES)for(const status of ['SUBMITTED','FINISHED','REJECTED'])test(`${company.code}: ${status} releases enclosing close/source guards only after its exact local receipt is positively saved`,async()=>{
+ const gate=deferred(),h=await fixture(company,{verified:true,beforeSaveReply:()=>gate.promise});try{
+  h.render();assert.deepEqual(h.lockPairs.at(-1),[true,true],'unchecked local pending storage is not yet permission to leave or change the source');
+  await h.idle();assert.deepEqual(h.lockPairs.at(-1),[false,false]);await h.click(open);assert.deepEqual(h.lockPairs.at(-1),[true,true]);
+  h.f.bridge=async payload=>({...h.f.observation(status),requestId:payload.packet.requestId});h.button(start).props.onClick();h.flush();
+  await h.wait(()=>h.f.calls.some(row=>row.method==='POST'));
+  assert.deepEqual(h.lockPairs.at(-1),[true,true],'a native terminal response before the local save ACK is still owned by this view');
+  gate.resolve();await h.idle();
+  const expected=status==='FINISHED'?[true,false]:status==='REJECTED'?[false,false]:[true,true];assert.deepEqual(h.lockPairs.at(-1),expected);
+  assert.equal(h.stored.size,1,'accepted/pending retain the original operation; rejected retains its immutable ledger');
+  assert.equal([...h.stored.keys()].some(key=>key.startsWith('yoofam-product-document-pending:')),status!=='REJECTED');
+  assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','start']);assert.equal(h.f.history[0].registered,false);
+ }finally{gate.resolve();h.close();}
+});
+
+test('an accepted observation whose local save fails keeps both guards until retry saves the same packet, without a second Hub action',async()=>{
+ let fail=true;const h=await fixture(SINGLE_COMPANIES[0],{verified:true,beforeSaveReply(){if(fail)throw Error('synthetic lost receipt ACK');}});try{
+  await h.idle();await h.click(open);h.f.bridge=async payload=>({...h.f.observation('FINISHED'),requestId:payload.packet.requestId});await h.click(start);
+  assert.deepEqual(h.lockPairs.at(-1),[true,true]);assert.ok(h.button('확인 결과 저장 다시 시도'));assert.equal(h.stored.size,1);
+  const packet=JSON.stringify(h.f.sent[1].payload.packet);fail=false;await h.click('확인 결과 저장 다시 시도');
+  assert.deepEqual(h.lockPairs.at(-1),[true,false]);assert.equal(h.button('확인 결과 저장 다시 시도'),undefined);assert.equal(JSON.stringify(h.f.sent[1].payload.packet),packet);
+  assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','start']);assert.equal(h.f.calls.filter(row=>row.method==='POST').length,2);
+ }finally{h.close();}
+});
 
 for (const company of SINGLE_COMPANIES) test(company.name + ': explicit preview rechecks before/after and retains all included options without live actions', async () => {
   const h = await fixture(company); try {

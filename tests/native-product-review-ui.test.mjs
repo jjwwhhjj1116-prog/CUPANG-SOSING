@@ -30,3 +30,19 @@ test('disabled review makes no read; a source edit rejects a retained transport 
   ui.unmount();await assert.rejects(transport.props.refresh(new AbortController().signal));assert.ok(ui.calls.every(call=>call.method==='GET'));assert.deepEqual(f.h.network,[]);
  }finally{ui?.unmount();f.close();}
 });
+
+for(const company of companies)test(`${company.code}: source/read and native locks reach the parent synchronously while stale transport releases cannot affect a new review`,async()=>{
+ const f=await nativeReviewFixture(company),locks=[];let ui;try{
+  ui=quotationAiUI({productId:f.id,profileId:f.profile.id,view:f.quotationView,disabled:false,onLockChange:(...args)=>locks.push(args)},f.request,file,name);await ui.idle();
+  assert.ok(locks.some(value=>value[0]&&value[1]),'initial source read owns the parent until it finishes');assert.deepEqual(locks.at(-1),[false,false]);
+  await ui.click('견적서·첨부 파일 확인');const transport=nodes(ui.render()).find(node=>node.props?.review),load=ui.button('저장한 견적 자료 다시 확인').props.onClick,close=ui.button('전체 문서 확인 닫기').props.onClick,reads=ui.calls.length;
+  transport.props.onLockChange(true,true);assert.deepEqual(locks.at(-1),[true,true]);load();close();ui.flush();assert.equal(ui.calls.length,reads);assert.ok(nodes(ui.render()).some(node=>node.props?.review));
+  transport.props.onLockChange(true,false);assert.deepEqual(locks.at(-1),[true,false]);assert.equal(ui.button('전체 문서 확인 닫기').props.disabled,true,'outer close may release while source-changing controls stay protected');
+  transport.props.onLockChange(false,false);assert.deepEqual(locks.at(-1),[false,false]);close();ui.flush();assert.equal(nodes(ui.render()).some(node=>node.props?.review),false);
+  const before=locks.length;transport.props.onLockChange(true,true);transport.props.onLockChange(false,false);assert.equal(locks.length,before,'a removed review no longer owns its source lock');
+  await ui.click('견적서·첨부 파일 확인');const latest=nodes(ui.render()).find(node=>node.props?.review);latest.props.onLockChange(true,true);const current=locks.length;
+  transport.props.onLockChange(false,false);assert.equal(locks.length,current);assert.equal(ui.button('저장한 견적 자료 다시 확인').props.disabled,true);
+  ui.unmount();assert.deepEqual(locks.at(-1),[false,false]);const ended=locks.length;latest.props.onLockChange(true,true);latest.props.onLockChange(false,false);assert.equal(locks.length,ended);
+  assert.ok(ui.calls.every(call=>call.method==='GET'));assert.deepEqual(f.h.network,[]);
+ }finally{ui?.unmount();f.close();}
+});

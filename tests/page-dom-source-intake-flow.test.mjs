@@ -49,7 +49,7 @@ for(const company of companies)test(`${company.code}: two-colour DOM capture bec
  try{
   // Provider output is deliberately synthetic, not a claim about live AI or
   // Google translation quality. Real routes validate and save this output.
-  const translations=new Map([['黑色 / 均码','검정 / 프리'],['灰色 / 均码','회색 / 프리']]);
+  const translations=new Map([['黑色 / 均码','검정 / 프리'],['灰色 / 均码','회색 / 프리'],['黑色','검정'],['灰色','회색'],['均码','프리']]);
   h.bindings.AI.run=async(model,input)=>{assert.equal(model,h.bindings.SOURCEFLOW_TEXT_MODEL);const source=JSON.parse(input.messages[1].content);aiSources.push(source);
    return {response:{title:'합성 테스트 상품',description:'합성 검수 설명',keywords:['검수 상품'],warnings:[],
     attributes:source.attributes.map((pair,sourceIndex)=>({sourceIndex,name:pair.name,value:translations.get(pair.value)??pair.value}))}};};

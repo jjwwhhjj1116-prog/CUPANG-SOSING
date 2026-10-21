@@ -1077,7 +1077,7 @@ test('price validation also checks an excluded option receiving an all-option ed
 
 /** Actual form callbacks with retained hook refs and the current action-state
  * effect. Passive initial loading is replaced by the supplied saved fixture. */
-function allOptionForm(view,edits,sourceOptionId){
+function allOptionForm(view,edits,sourceOptionId,formProps={}){
  const states=[view,edits,[],false,false,'','','start',sourceOptionId,[],true,null,false],refs=[],effects=[],calls=[];
  let stateIndex=0,refIndex=0,saved=0,server=clone(view);
  const hooks={useState(initial){const index=stateIndex++;if(!(index in states))states[index]=typeof initial==='function'?initial():initial;return[states[index],value=>{states[index]=typeof value==='function'?value(states[index]):value;}];},useRef(value){const index=refIndex++;return refs[index]??(refs[index]={current:value});},useEffect(fn){if(String(fn).includes('modelActionState.current ='))effects.push(fn);},useCallback:fn=>fn,useId:()=> 'all-options-form'};
@@ -1088,12 +1088,69 @@ function allOptionForm(view,edits,sourceOptionId){
  }});
  const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value==='object'?[value,...nodes(value.props?.children)]:[];
  const text=value=>Array.isArray(value)?value.map(text).join(''):value&&typeof value==='object'?text(value.props?.children):value==null?'':String(value);
- const render=()=>{stateIndex=0;refIndex=0;const wrapper=loaded.QuotationFieldsEditor({productId:'p1',onSaved(){saved++;}}),tree=wrapper.type(wrapper.props);effects.splice(0).forEach(effect=>effect());return tree;};
+ const render=(updates={})=>{formProps={...formProps,...updates};stateIndex=0;refIndex=0;const wrapper=loaded.QuotationFieldsEditor({productId:'p1',onSaved(){saved++;},...formProps}),tree=wrapper.type(wrapper.props);effects.splice(0).forEach(effect=>effect());return tree;};
  const primarySwitch=()=>nodes(render()).find(node=>node.type==='input'&&node.props.role==='switch');
  const saveButton=()=>nodes(render()).find(node=>node.type==='button'&&typeof node.props.children==='string'&&node.props.children.startsWith('견적 입력 저장'));
  const settle=async()=>{const deadline=Date.now()+5000;while(states[4]){assert.ok(Date.now()<deadline,'all-option form save did not settle');await new Promise(resolve=>setImmediate(resolve));}render();};
  render();return{calls,states,render,nodes,text,primarySwitch,saveButton,settle,get saved(){return saved;},get server(){return server;}};
 }
+
+function submissionEntry(h){
+ const tree=h.render(),all=h.nodes(tree),details=all.find(node=>node.type==='details'&&node.props.className==='quotation-submission-tools');
+ const summary=h.nodes(details).find(node=>node.type==='summary'),button=all.find(node=>node.type==='button'&&node.props.children==='견적 검토·전송');
+ const observed={open:false,scrolls:[],focus:[]};
+ details.props.ref.current=observed;summary.props.ref.current={scrollIntoView:value=>observed.scrolls.push(value),focus:value=>observed.focus.push(value)};
+ return {button,details,observed,tree};
+}
+
+test('saved quotation entry reveals and focuses the same mounted current-product review without preparing or dispatching',()=>{
+ const view=fixture(),before=JSON.stringify(view),h=allOptionForm(view,[],'red'),entry=submissionEntry(h);
+ assert.equal(view.submissionReady,false,'review must remain reachable to inspect incomplete required inputs');
+ assert.equal(entry.button.props.disabled,false);assert.equal(entry.button.props['aria-controls'],entry.details.props.id);
+ const reviews=h.nodes(entry.details).filter(node=>node.props?.primaryProduct===true);assert.equal(reviews.length,1);
+ assert.equal(reviews[0].props.view,view);assert.equal(reviews[0].props.productId,'p1');
+ entry.button.props.onClick();assert.equal(entry.observed.open,true);assert.deepEqual(clone(entry.observed.scrolls),[{block:'start'}]);assert.deepEqual(clone(entry.observed.focus),[{preventScroll:true}]);
+ assert.equal(h.calls.length,0);assert.equal(h.saved,0);assert.equal(JSON.stringify(view),before);
+});
+
+test('quotation review entry rejects unsaved, busy, loading, conflicted, inactive and stale product-option views',()=>{
+ for(const [name,configure]of [
+  ['dirty',h=>h.states[1]=[change('brand','미저장','red')]],['busy',h=>h.states[4]=true],['loading',h=>h.states[3]=true],
+  ['conflict',h=>h.states[2]=[{key:'red:brand',change:change('brand','수정','red'),before:null,saved:'저장',unavailable:false}]],
+  ['inactive',h=>h.render({submissionActive:false})],['new-view',h=>h.states[0]=fixture()],['new-option',h=>h.states[8]='blue']]){
+  const h=allOptionForm(fixture(),[],'red'),entry=submissionEntry(h),retained=entry.button.props.onClick;
+  configure(h);h.render();retained();assert.equal(entry.observed.open,false,name);assert.equal(h.calls.length,0,name);assert.equal(h.saved,0,name);
+  if(['dirty','busy','loading','conflict','inactive'].includes(name))assert.equal(submissionEntry(h).button.props.disabled,true,name);
+ }
+});
+
+test('quotation review stays closed during an edit and one explicit save then opens the acknowledged saved revision',async()=>{
+ const view=fixture(),h=allOptionForm(view,[change('brand','저장 후 검토','red')],'red'),before=submissionEntry(h);
+ assert.equal(before.button.props.disabled,true);before.button.props.onClick();assert.equal(before.observed.open,false);
+ h.saveButton().props.onClick();before.button.props.onClick();assert.equal(before.observed.open,false);
+ await h.settle();assert.equal(h.calls.length,1);assert.equal(h.calls[0].method,'PUT');assert.equal(h.saved,1);
+ const after=submissionEntry(h);assert.equal(after.button.props.disabled,false);after.button.props.onClick();assert.equal(after.observed.open,true);
+ const review=h.nodes(after.details).find(node=>node.props?.primaryProduct===true);assert.equal(review.props.view.revision,view.revision+1);
+ assert.equal(review.props.view.overrides.options.red.brand,'저장 후 검토');assert.equal(h.calls.length,1,'opening does not prepare, send, consent, or reload');
+ before.button.props.onClick();assert.equal(before.observed.open,false,'the old unsaved view cannot reopen a newer review');
+});
+
+test('inline quotation transport locks source edits immediately without disabling or remounting its own recovery review',()=>{
+ const reports=[],h=allOptionForm(fixture(),[],'red',{onSubmissionLockChange:(...args)=>reports.push(args)}),entry=submissionEntry(h);
+ const review=h.nodes(entry.details).find(node=>node.props?.primaryProduct===true),modelInput=h.nodes(entry.tree).find(node=>node.type==='input'&&node.props.id?.endsWith('-model'));
+ assert.equal(review.props.disabled,false);assert.ok(modelInput);
+ const retainedEdit=modelInput.props.onChange;review.props.onLockChange(true,true);retainedEdit({target:{value:'전송 중 변경 금지'}});
+ assert.equal(h.states[1].length,0,'the captured edit cannot write before React commits the lock');
+ let tree=h.render(),all=h.nodes(tree);assert(all.filter(node=>node.type==='fieldset').every(node=>node.props.disabled));
+ assert.equal(all.find(node=>node.type==='button'&&node.props.children==='기본값 다시 반영').props.disabled,true);
+ assert.equal(all.find(node=>node.props?.onCommitted&&node.props?.onDraftChange).props.disabled,true,'splitting the source is an external action and stays locked');
+ assert.equal(tree.props['data-workspace-saving'],true);assert.equal(all.find(node=>node.props?.primaryProduct===true).props.disabled,false,'recovery controller stays enabled under its own lock');
+ assert.equal(all.filter(node=>node.props?.primaryProduct===true).length,1);assert.equal(h.calls.length,0);
+ review.props.onLockChange(true,false);tree=h.render();assert.equal(tree.props['data-workspace-saving'],false,'positively stored terminal observation may permit closing while original source stays protected');
+ assert(h.nodes(tree).filter(node=>node.type==='fieldset').every(node=>node.props.disabled));
+ review.props.onLockChange(false,false);tree=h.render();assert(h.nodes(tree).filter(node=>node.type==='fieldset').every(node=>!node.props.disabled));
+ assert.deepEqual(reports,[[true,true],[true,false],[false,false]]);assert.equal(h.calls.length,0);
+});
 
 for(const sourceOptionId of ['red','excluded'])test(`the primary all-options switch previews excluded targets and issues one save only after explicit confirmation (${sourceOptionId})`,async()=>{
  const view=fixture({common:{manufacturer:'유지할 공통 제조사'},options:{blue:{brand:'파랑 저장 브랜드'},excluded:{brand:'제외 저장 브랜드'}}}),before=JSON.stringify(view);

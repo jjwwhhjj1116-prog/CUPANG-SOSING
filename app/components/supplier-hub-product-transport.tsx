@@ -13,7 +13,7 @@ import {readProductDocumentPending,productDocumentPendingKey,productDocumentPend
   pendingProductRejection,clearRejectedProductDocumentPending,clearValidationRejectedProductDocumentPending,type ProductDocumentPending} from '@/app/supplier-hub-product-pending';
 
 type Props={review:SupplierHubProductDocumentReview;disabled:boolean;refresh:(signal:AbortSignal)=>Promise<SupplierHubProductDocumentReview>;
-  onLockChange:(locked:boolean)=>void;onReceiptSaved?:()=>void};
+  onLockChange:(locked:boolean,closeLocked?:boolean)=>void;onReceiptSaved?:()=>void};
 const stageLabels={productPage:'상품 정보',imagePage:'이미지',logisticsPage:'최종 제출'};
 /** The explicit whole-product handoff owns its request until a positive result
  * is read. Missing ACKs retain that request; they never create another one. */
@@ -27,8 +27,19 @@ export function SupplierHubProductTransport(props:Props){
   const [intent,setIntent]=useState<ProductDocumentPending|null>(null),[intentReady,setIntentReady]=useState(false),[intentError,setIntentError]=useState('');
   const current=useRef({props,mounted:true,session,state,uncertain,expired,approved,unsaved,intent,intentReady,intentError}),pending=useRef<AbortController|null>(null),historyPending=useRef<AbortController|null>(null);
   useLayoutEffect(()=>{current.current={props,mounted:true,session,state,uncertain,expired,approved,unsaved,intent,intentReady,intentError};});
-  useLayoutEffect(()=>{onLockChange(busy||Boolean(session)||Boolean(unsaved)||Boolean(intent)||Boolean(intentError));},[busy,session,unsaved,intent,intentError,onLockChange]);
-  useLayoutEffect(()=>()=>{current.current.mounted=false;pending.current?.abort();historyPending.current?.abort();current.current.props.onLockChange(false);},[]);
+  // A terminal label alone cannot release the enclosing source/close guard.
+  // Keep the accepted reservation for duplicate prevention, but allow closing
+  // only after this exact observation is positively stored by the app API.
+  const storedTerminal=Boolean(session&&state?.receipt&&!uncertain&&!unsaved&&['accepted','rejected'].includes(state.state)&&history.some(row=>
+    'recordType' in row&&row.recordType==='product-document'&&row.requestId===session.packet.requestId&&row.docId===state.docId
+    &&row.identityDigest===session.preview.identityDigest&&row.packetDigest===session.packetDigest
+    &&row.originalBodySha256===review.originalBodySha256&&row.preparedBodySha256===review.preparedBodySha256
+    &&row.receipt.state===state.state&&row.receipt.sourceStatus===state.receipt!.sourceStatus
+    &&row.receipt.qvtRequestId===state.receipt!.qvtRequestId&&row.receipt.observedAt>=state.receipt!.observedAt));
+  const sourceLocked=!intentReady||busy||uncertain||Boolean(unsaved)||Boolean(intent)||Boolean(intentError)||Boolean(session&&!(storedTerminal&&state?.state==='rejected'));
+  const closeLocked=!intentReady||busy||uncertain||Boolean(unsaved)||Boolean(intentError)||Boolean((session||intent)&&!storedTerminal);
+  useLayoutEffect(()=>{onLockChange(sourceLocked,closeLocked);},[sourceLocked,closeLocked,onLockChange]);
+  useLayoutEffect(()=>()=>{current.current.mounted=false;pending.current?.abort();historyPending.current?.abort();current.current.props.onLockChange(false,false);},[]);
   useEffect(()=>{
     const load=(changed=false)=>{if(!current.current.mounted||current.current.props.review!==review)return;
       try{const value=readProductDocumentPending(review);readProductDocumentRejections(review);
@@ -65,7 +76,7 @@ export function SupplierHubProductTransport(props:Props){
     },Math.max(0,challenge.expiresAt-Date.now()));return()=>clearTimeout(timer);
   },[state?.challenge]);
   const canEnter=()=>current.current.mounted&&!current.current.props.disabled&&!pending.current&&current.current.props.review===review&&current.current.intentReady&&!current.current.intentError;
-  function begin(){const controller=new AbortController();pending.current=controller;setBusy(true);setError('');current.current.props.onLockChange(true);
+  function begin(){const controller=new AbortController();pending.current=controller;setBusy(true);setError('');current.current.props.onLockChange(true,true);
     return {controller,alive:()=>current.current.mounted&&current.current.props.review===review&&!controller.signal.aborted&&pending.current===controller,
       active:()=>current.current.mounted&&current.current.props.review===review&&!current.current.props.disabled&&!controller.signal.aborted&&pending.current===controller,
       finish:()=>{if(pending.current===controller){pending.current=null;if(current.current.mounted)setBusy(false);}}};}

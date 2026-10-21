@@ -6,7 +6,7 @@ import type {SupplierHubProductDocumentReview} from '@/app/supplier-hub-product-
 import {readCurrentNativeAssetSource,reviewCurrentNativeSupplierHubProductDocument} from '@/app/supplier-hub-native-product-document';
 import {SupplierHubProductTransport} from '@/app/components/supplier-hub-product-transport';
 
-type Props={productId:string;profileId?:string;view:QuotationFieldsView;disabled:boolean;onReceiptSaved?:()=>void;onLockChange?:(locked:boolean)=>void};
+type Props={productId:string;profileId?:string;view:QuotationFieldsView;disabled:boolean;onReceiptSaved?:()=>void;onLockChange?:(locked:boolean,closeLocked?:boolean)=>void};
 const roles={MAIN:'대표',ADDITIONAL:'추가',SIZECHART:'사이즈표',LABEL:'표시사항',DETAIL:'상세'};
 const text=(value:unknown)=>typeof value==='string'||typeof value==='number'?String(value):'';
 const node=(value:unknown):Record<string,unknown>=>value&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:{};
@@ -20,16 +20,17 @@ function NativeSourceScope(props:Props){
  const {productId,profileId,disabled,onReceiptSaved,onLockChange}=props;
  const [plan,setPlan]=useState<NativeAssetSourcePlan|null>(null),planRef=useRef<NativeAssetSourcePlan|null>(null);
  const [review,setReview]=useState<SupplierHubProductDocumentReview|null>(null),reviewRef=useRef<SupplierHubProductDocumentReview|null>(null);
- const [busy,setBusy]=useState(false),[locked,setLocked]=useState(false),lockRef=useRef(false),[error,setError]=useState('');
+ const [busy,setBusy]=useState(false),[locked,setLocked]=useState(false),lockRef=useRef(false),closeLockRef=useRef(false),[error,setError]=useState('');
  const current=useRef({props,mounted:true}),pending=useRef<AbortController|null>(null);
  useLayoutEffect(()=>{current.current={props,mounted:true};});
  const lockCallback=useRef(onLockChange);useLayoutEffect(()=>{lockCallback.current=onLockChange;},[onLockChange]);
- useLayoutEffect(()=>{onLockChange?.(busy||locked);},[busy,locked,onLockChange]);
- useLayoutEffect(()=>()=>{current.current.mounted=false;pending.current?.abort();pending.current=null;lockCallback.current?.(false);},[]);
- const transportLock=useCallback((value:boolean)=>{lockRef.current=value;setLocked(value);},[]);
+ const reportLock=useCallback(()=>{if(current.current.mounted)lockCallback.current?.(Boolean(pending.current)||lockRef.current,Boolean(pending.current)||closeLockRef.current);},[]);
+ useLayoutEffect(()=>{reportLock();},[busy,locked,onLockChange,reportLock]);
+ useLayoutEffect(()=>()=>{current.current.mounted=false;pending.current?.abort();pending.current=null;lockCallback.current?.(false,false);},[]);
+ const transportLock=useCallback((value:boolean,closeValue=value)=>{if(!current.current.mounted||reviewRef.current!==review)return;lockRef.current=value;closeLockRef.current=closeValue;setLocked(value);reportLock();},[reportLock,review]);
  const allowed=()=>current.current.mounted&&!current.current.props.disabled&&!pending.current&&!lockRef.current;
- function begin(){const controller=new AbortController();pending.current=controller;setBusy(true);setError('');return{controller,active:()=>current.current.mounted&&!current.current.props.disabled&&pending.current===controller&&!controller.signal.aborted,
-  finish:()=>{if(pending.current===controller){pending.current=null;if(current.current.mounted)setBusy(false);}}};}
+ function begin(){const controller=new AbortController();pending.current=controller;setBusy(true);setError('');reportLock();return{controller,active:()=>current.current.mounted&&!current.current.props.disabled&&pending.current===controller&&!controller.signal.aborted,
+  finish:()=>{if(pending.current===controller){pending.current=null;if(current.current.mounted){setBusy(false);reportLock();}}}};}
  async function load(){
   if(!allowed())return;const task=begin();reviewRef.current=null;setReview(null);
   try{const value=await readCurrentNativeAssetSource({productId,profileId,quotationView:current.current.props.view,signal:task.controller.signal,fetcher:fetch});if(task.active()){planRef.current=value;setPlan(value);}}

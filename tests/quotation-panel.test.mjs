@@ -14,7 +14,7 @@ test('deleted inspection profile keeps quotation editor and explicit replacement
  const profiles=[{id:'saved',name:'수집 설정',categoryId:'80719',categoryPath:['바스켓'],template:{name:'원본',headerRow:1}},{id:'replacement',name:'대체 설정',categoryId:'80719',categoryPath:['바스켓'],template:{name:'새 원본',headerRow:2}}];
  const selector=load('app/quotation-profile-selection.ts',{});
  const panel=load('app/components/quotation-panel.tsx',{
-  react:{useState(initial){const slot=index++;if(slot>=states.length)states.push(initial);return[states[slot],next=>{states[slot]=typeof next==='function'?next(states[slot]):next;}];},useRef(){return{current:null};},useEffect(fn){if(first)effects.push(fn);},useLayoutEffect(fn){if(first)effects.push(fn);}},
+  react:{useState(initial){const slot=index++;if(slot>=states.length)states.push(initial);return[states[slot],next=>{states[slot]=typeof next==='function'?next(states[slot]):next;}];},useRef(initial){return{current:initial};},useMemo:factory=>factory(),useCallback:fn=>fn,useEffect(fn){if(first)effects.push(fn);},useLayoutEffect(fn){if(first)effects.push(fn);}},
   '@/app/category-profiles':{quotationStartRow:template=>(template?.headerRow??1)+1},
   '@/app/quotation-profile-selection':selector,
   '@/app/components/quotation-fields-editor':{QuotationFieldsEditor:Editor},
@@ -40,8 +40,9 @@ async function requestHarness(options={}){
  const slots=[],effects=[],pending=[],calls=[];let index=0;let props={productId:'p',refreshToken:'v1',onManageCategories(){}};let downloads=0;
  const Editor=()=>null;
  let profileReads=0;let refreshResponse;
+ const memo=(factory,deps)=>{const slot=index++,old=slots[slot];if(!old||deps.some((dep,i)=>!Object.is(dep,old.deps[i])))slots[slot]={deps,value:factory()};return slots[slot].value;};
  const panel=load('app/components/quotation-panel.tsx',{
-  react:{useState(initial){const slot=index++;if(!(slot in slots))slots[slot]=initial;return[slots[slot],next=>{slots[slot]=typeof next==='function'?next(slots[slot]):next;}];},useRef(initial){const slot=index++;return slots[slot]??(slots[slot]={current:initial});},useEffect(fn,deps){const slot=index++;const old=slots[slot];if(!old||deps.some((dep,i)=>!Object.is(dep,old.deps[i])))effects.push(()=>{old?.cleanup?.();slots[slot]={deps,cleanup:fn()};});},useLayoutEffect(fn,deps){const slot=index++;const old=slots[slot];if(!old||deps.some((dep,i)=>!Object.is(dep,old.deps[i])))effects.push(()=>{old?.cleanup?.();slots[slot]={deps,cleanup:fn()};});}},
+  react:{useState(initial){const slot=index++;if(!(slot in slots))slots[slot]=initial;return[slots[slot],next=>{slots[slot]=typeof next==='function'?next(slots[slot]):next;}];},useRef(initial){const slot=index++;return slots[slot]??(slots[slot]={current:initial});},useMemo:memo,useCallback:(fn,deps)=>memo(()=>fn,deps),useEffect(fn,deps){const slot=index++;const old=slots[slot];if(!old||deps.some((dep,i)=>!Object.is(dep,old.deps[i])))effects.push(()=>{old?.cleanup?.();slots[slot]={deps,cleanup:fn()};});},useLayoutEffect(fn,deps){const slot=index++;const old=slots[slot];if(!old||deps.some((dep,i)=>!Object.is(dep,old.deps[i])))effects.push(()=>{old?.cleanup?.();slots[slot]={deps,cleanup:fn()};});}},
   '@/app/category-profiles':{quotationStartRow:template=>template?.dataStartRow??2},
   '@/app/quotation-profile-selection':load('app/quotation-profile-selection.ts',{}),
   '@/app/components/quotation-fields-editor':{QuotationFieldsEditor:Editor},
