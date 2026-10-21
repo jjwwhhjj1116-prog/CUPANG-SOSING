@@ -3,6 +3,10 @@
 export const PRODUCT_DOCUMENT_REQUEST_TYPE = 'YOOFAM_PRODUCT_DOCUMENT_REQUEST';
 export const PRODUCT_DOCUMENT_REQUEST_VERSION = 1;
 export const PRODUCT_DOCUMENT_REQUEST_TTL = 120000;
+// The independent source preflight includes several guarded app reads. Keep
+// one bounded extension budget and leave time for its error ACK to reach UI.
+export const PRODUCT_DOCUMENT_PREFLIGHT_TIMEOUT = 90000;
+export const PRODUCT_DOCUMENT_PREVIEW_ACK_TIMEOUT = 95000;
 const FORMAT = 'yoofam-supplier-hub-product-document-v1', REVIEW = 'YOOFAM_PRODUCT_DOCUMENT_REVIEW';
 const HASH = /^[a-f0-9]{64}$/, ID = /^\w[\w-]{0,99}$/, UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const COMPANIES = Object.freeze({ A01526306: '유앤채', A01464742: '와이홉' });

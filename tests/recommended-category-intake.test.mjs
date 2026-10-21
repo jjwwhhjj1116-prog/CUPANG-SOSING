@@ -94,7 +94,7 @@ test('double-clicking a recommendation while it resolves creates only one verifi
 test('a failed recommendation resolver never reads a form, saves a profile or opens intake',async()=>{
  const f=setup(schemaCompanies[1],{resolve:()=>{throw Error('추천 전체 경로·회사 불일치');}});
  try{
-  const before=f.retained();await f.picker.chooseRecommendation(f.recommendation,f.result);
+  const before=f.retained();await assert.rejects(f.picker.chooseRecommendation(f.recommendation,f.result),/추천 전체 경로·회사 불일치/);
   assert.equal(f.resolutions.length,1);assert.equal(f.schemaReads,0);assert.equal(f.excelReads,0);assert.equal(f.profileCount(),0);
   assert.equal(f.picker.selected.length,0);assert.equal(f.picker.calls.length,0);assert.match(f.picker.alerts().join(' '),/전체 경로·회사 불일치/);
   assert.equal(f.retained(),before);

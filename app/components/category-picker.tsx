@@ -73,7 +73,17 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
   const selectionEpoch = useRef(0);
   const workbookSelectionRef = useRef<WorkbookSelection | null>(null);
   const [workbookSelection, setWorkbookSelection] = useState<WorkbookSelection | null>(null);
+  const selectionInputs=useMemo(()=>JSON.stringify([sourceTitle??null,selectedId,suppliedProfiles]),[sourceTitle,selectedId,suppliedProfiles]);
+  const previousSelectionInputs=useRef(selectionInputs);
   function clearWorkbookSelection() { workbookSelectionRef.current = null; setWorkbookSelection(null); }
+  useAccountEffect(()=>{
+    if(previousSelectionInputs.current===selectionInputs)return;
+    previousSelectionInputs.current=selectionInputs;
+    // An old lookup error is not a retry for a different source/profile, even
+    // when those props later return to the same values (A -> B -> A).
+    selectionEpoch.current++;clearWorkbookSelection();
+    activeRequest.current?.abort();activeRequest.current=null;setBusy(false);setError('');
+  },[selectionInputs]);
   useAccountEffect(() => {
     if(account.current.ownerId!==workspaceOwnerId){
       account.current.ownerId=workspaceOwnerId;account.current.epoch++;
@@ -115,7 +125,13 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
     const epoch=selectionEpoch.current;let resolved:CategoryChoice|undefined;
     const cancelled=()=>controller.signal.aborted||!current()||selectionEpoch.current!==epoch;
     try{resolved=await resolveRecommendedHubCategoryChoice(item,result,workspaceOwnerId,controller.signal);if(cancelled())return;setLiveChoice(resolved);setPath(resolved.path);setSelectedKey(resolved.key);}
-    catch(error){if(!cancelled())setError(error instanceof Error?error.message:'추천 카테고리를 확인하지 못했습니다.');}
+    catch(error){if(!cancelled()){
+      const failure=error instanceof Error?error:Error('추천 카테고리를 확인하지 못했습니다.');
+      setError(failure.message);
+      // The radio panel owns the explicit same-candidate retry. Do not turn a
+      // failed lookup into a successful application acknowledgement.
+      throw failure;
+    }}
     finally{if(activeRequest.current===controller)activeRequest.current=null;if(!cancelled())setBusy(false);}
     if(resolved&&!cancelled())await confirm(resolved);
   }
@@ -277,7 +293,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
     finally { if (activeRequest.current === controller) activeRequest.current = null; if (!cancelled()) setBusy(false); }
   }
   return <div className="category-picker" aria-busy={busy}>
-    <CategoryRecommendationsPanel initialTitle={sourceTitle??''} workspaceOwnerId={workspaceOwnerId} disabled={busy} onChoose={chooseRecommendation}/>
+    <CategoryRecommendationsPanel initialTitle={sourceTitle??''} workspaceOwnerId={workspaceOwnerId} selectionScope={selectionInputs} disabled={busy} onChoose={chooseRecommendation}/>
     <p className="category-instructions">등록할 상품의 카테고리를 선택해주세요. 단계별로 선택하면 하위 카테고리가 표시됩니다.</p>
     <div className="workspace-actions" role="group" aria-label="카테고리 목록 선택"><button type="button" className={`btn ${catalogMode==='recommend'?'primary':'ghost'}`} disabled={busy} onClick={()=>setCatalogMode('recommend')}>상품명 추천</button><button type="button" className={`btn ${catalogMode==='live'?'primary':'ghost'}`} disabled={busy} onClick={()=>setCatalogMode('live')}>Supplier Hub 카테고리</button><button type="button" className={`btn ${catalogMode==='saved'?'primary':'ghost'}`} disabled={busy} onClick={()=>setCatalogMode('saved')}>저장된 목록</button></div>
     {catalogMode==='live'&&<SupplierHubCategoryBrowser disabled={busy} onNavigating={()=>{if(!current()||activeRequest.current)return;selectionEpoch.current++;clearWorkbookSelection();completed.current=false;setLiveChoice(null);setSelectedKey('');setPath([]);setError('');}} onChoice={choice=>{if(!current()||activeRequest.current||completed.current)return;selectionEpoch.current++;clearWorkbookSelection();setLiveChoice(choice);setPath(choice.path);setSelectedKey(choice.key);setError('');if(canConfirmCategory(choice))void confirm(choice);}}/>}

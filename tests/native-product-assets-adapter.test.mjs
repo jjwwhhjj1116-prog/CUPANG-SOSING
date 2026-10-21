@@ -9,6 +9,7 @@ import {createProductDocumentPacket} from '../extensions/supplier-hub/product-do
 import {productDocumentIdentity} from '../extensions/supplier-hub/product-document-receiver.mjs';
 import {createVerifiedProductDocumentBrowserAdapter} from '../extensions/supplier-hub/product-document-adapter.mjs';
 import {PRODUCT_DOCUMENT_LIVE_VERIFIED,dispatchProductDocument} from '../extensions/supplier-hub/product-document-dispatch.mjs';
+import {withProductDocumentChrome} from './helpers/product-document-preview.mjs';
 const canon=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canon).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canon(value[key])).join(',')+'}',copy=value=>JSON.parse(JSON.stringify(value)),sha=value=>createHash('sha256').update(value).digest('hex'),digest=value=>sha(canon(value));
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2RkcAAAAASUVORK5CYII=','base64');
 const pdf=Buffer.from('%PDF-1.7\nSynthetic private immutable certificate\n%%EOF\n');
@@ -66,7 +67,7 @@ for(const company of SINGLE_COMPANIES)test(`${company.code}: actual whole-produc
  const f=await fixture(company);try{assert.equal(f.selected.nativeAssets,true);const before=JSON.stringify(f.documents.get(f.prior.docId)),common=await f.start();assert.equal(f.state.uploads.length,0);const result=await f.update(common);assert.equal(result.ok,true);assert.deepEqual(f.state.uploads,['MAIN','ADDITIONAL','LABEL','DETAIL']);assert.ok(f.state.lists>=8);
   const record=JSON.parse(f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords)[f.context.packetDigest];assert.equal(record.nativeAssets.state,'complete');assert.equal(record.nativeAssets.actualUploadVerified,false);assert.equal(record.nativeAssets.remoteBytesVerified,false);assert.equal(record.state,'updated');assert.equal(JSON.stringify(f.documents.get(f.prior.docId)),before);
   assert.deepEqual(f.documents.get(f.createdDocId).jsonDocument,f.context.packet.body.jsonDocument);assert.equal(f.submitted,0);assert.equal(PRODUCT_DOCUMENT_LIVE_VERIFIED,false);
-  const preview=await dispatchProductDocument({type:'YOOFAM_PRODUCT_DOCUMENT_REQUEST',action:'preview',packet:f.packet},f.sender);assert.equal(preview.liveVerified,false);assert.equal(preview.registered,false);
+  const preview=await withProductDocumentChrome(f.api,()=>dispatchProductDocument({type:'YOOFAM_PRODUCT_DOCUMENT_REQUEST',action:'preview',packet:f.packet},f.sender));assert.equal(preview.liveVerified,false);assert.equal(preview.registered,false);
   await assert.rejects(dispatchProductDocument({type:'YOOFAM_PRODUCT_DOCUMENT_REQUEST',action:'start',packet:f.packet},f.sender),error=>error.code==='PRODUCT_LIVE_CONTRACT_UNVERIFIED');
  }finally{f.close();}});
 test('actual native adapter attaches an immutable private PDF using certificate schema row 1, preserving every legal value',async()=>{

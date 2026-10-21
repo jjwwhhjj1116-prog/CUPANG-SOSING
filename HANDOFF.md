@@ -6368,3 +6368,14 @@ ExistingfreeWorker ba37200e-0c9a-4a59-9362-86d27a6fa9bc deployed. Latestactualpr
 - 최종28파일347/347고유검사, types·변경파일lint0/0·운영build 통과. 마지막 lint주석만 추가했고 executable TS출력 동일. 초기VM/fixture loader 실패와 보완 기록 보존. outputs/step773-final-validation.json/step773-comment-only-proof.json. 집중검사중복합산0.
 - 같은Chrome localhost 실제Dashboard/API/SQLite 합성검수: 서로다른옵션사진decode, 수동SEO보존, AI적용후새상품명focus→수정저장→원가5.99/공급5100/판매8500/정상가11050 단일POST200→7단계동일값. 보호합성상품·파일불변. 양성SEO fixture provenance만 generated로 준비한 것 명시. step773-ui/seo-applied-editor.png 및 quotation-linked-values.png, step773-browser-final-checkpoint.json. source/Hub/native실요청0.
 - 확장2.1.13/90파일/1081792bytes/SHA58f96ad4…93d444 불변검사통과·새로고침질문0. 두livegate=false. 실제1688·원격upload/readback·최종동의/docId-QVT/SKU접수·전카테고리/전UI동등성 미검증. 새resource/migration/Access정책변경0. Worker version·commit/push는 최종validation 참조.
+
+## Step774 — 추천 실패 복구·현재 원본 preview·업로드 계약 정정
+- 기준 caea04f9f0f7c5e6b97649c4f8a2e573ca49512e. 상세 docs/step774-category-retry-and-current-source-preflight.md. 기존 업무 상품 행 열기·수정·삭제·전송0.
+- 추천 상세 조회 실패는 parent가 child에 오류를 전달하므로 같은 후보 재적용 버튼이 동작한다. 명시 재시도만 허용하고 prediction 재호출0. source/profile/category/owner/query 변화와 ABA는 child generation/selectionScope까지 폐기. 완료 뒤 profiles 갱신이 중복 저장을 허용하지 않음. 독립 재현 P2 수정 후 확인 완료.
+- 전체 상품 preview는 실제 native/legacy adapter로 현재 앱 회원·회사·견적 원본·세션·이력을 다시 검증한다. Hub 로그인/업로드/접수 확인으로 과장하지 말 것. preview Hub요청/탭/문서/파일/동의/전송/접수 생성0. whole preflight90초/clientACK95초 공유. 실제 deadline도 재검사, timeout/late positive/late adapter 정리1회. 시작된 읽기 script 자체는 API로 취소불가지만 성공/후속 작업0. 두 livegate=false 그대로.
+- REA 보관 Hub548 artifact SHA6fc9c0fa…5abe11 + 역사 Evidence 재사용. 업로드 원격 바이너리 SHA 재다운로드는 원본 필수 업무 단계로 확인되지 않았음. 이전 인계의 그 부재 자체가 직접 차단이라는 설명 정정. 실제 자체 adapter는 정확한 ACK+같은 문서 목록 일치 뒤 update 허용, remoteBytesVerified=false 별도. 실제 차단은 미검증 live release gate이며 bytes GET만으로 해결되지 않음.
+- 기존 Chrome4 Supplier Hub 유앤채/A01526306 로그인과 빈 개별상품등록 접근 확인. 기존 행0·빈 새form 입력/저장/create/upload/동의/submit0. hub-live-entry.json/hub-new-document-account.png. main script URL만 관찰, 새 다운로드/producer0. 실제1688 이전 거절 이후 재시도0.
+- 최종18파일210/210 고유 검사(최초18파일209 이후 절대clock guard 추가, 현재17파일208+변경없는 slow receipt-chain2). 중복 합산0. 두 독립 P2 수정 확인. types/변경lint0/0/build통과. 최종 source SHA·명단·검사·배포·commit/push: outputs/step774-final-validation.json.
+- 같은 Chrome 로컬 실제 React parent/child/API/SQLite 합성검수: prediction1→resolver503→같은 후보 재시도200→schema1→profilePOST201 1→선택1. 보호 합성 상품/파일 불변. 실제 상품 분류/원격접수 아님. outputs/step774-browser-final-checkpoint.json 및 step774-ui/category-selected.png. 소유 QA/newHub탭·검수 서버 정리, 사용자의 원래Hub탭 유지.
+- 확장2.1.14/90파일1084645bytes/SHA89c84f60122901ef10d1c36ef18acdcb7477a11d895128390314c3785bc115db. 다섯 다운로드 링크 일치, 2.1.13 ZIP/권한/호스트 보존. 설치 Chrome 업데이트를 확인했다고 주장하지 말고 새로고침 질문 반복 금지. 신규resource/migration/Access정책변경0.
+- 다음 최우선은 허용되는 실상품 수집 원본 확보→새 검수 문서만 native upload/ACK/list/body/validation/staged동의/최종docId-QVT접수 자격검증. 기존 상품 재사용 금지, 이전 거절 경로 우회/재접근 금지. 합성 검사 수나 로그인 화면 접근을 전체 완성률/실접수 성공으로 바꾸지 말 것. 전체 카테고리·1~7단계 모든 팝업/입력 동등성도 아직 미검증.

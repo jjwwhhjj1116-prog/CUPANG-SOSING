@@ -7,7 +7,7 @@ import ts from 'typescript';
 import {createRequire} from 'node:module';
 import {fileURLToPath} from 'node:url';
 import {createHash,webcrypto} from 'node:crypto';
-import {createProductDocumentPacket} from '../extensions/supplier-hub/product-document.mjs';
+import {createProductDocumentPacket,PRODUCT_DOCUMENT_PREFLIGHT_TIMEOUT,PRODUCT_DOCUMENT_PREVIEW_ACK_TIMEOUT} from '../extensions/supplier-hub/product-document.mjs';
 import {productDocumentIdentity} from '../extensions/supplier-hub/product-document-receiver.mjs';
 import {singleDocumentIdentity} from '../extensions/supplier-hub/single-document.mjs';
 import {singlePacket,SINGLE_COMPANIES,SINGLE_SENDER} from './helpers/supplier-hub-single-document.mjs';
@@ -69,6 +69,37 @@ test('preview rejects changed membership, body, saved company and browser identi
   const changes=[value=>value.members.reverse(),value=>value.identity.members[1].optionId='other',value=>value.identity.company=SINGLE_COMPANIES[1],value=>value.identity.windowId=-1,value=>value.identityDigest='f'.repeat(64),value=>value.preparedBodySha256='f'.repeat(64),value=>value.reviewDigest='f'.repeat(64),value=>value.registered=true,value=>value.optionId='first'];
   for(const change of changes){const f=await fixture();f.bridge=async()=>{const value=f.preview();change(value);return value;};await assert.rejects(f.session(),error=>error.code==='PRODUCT_DOCUMENT_REPLY_IDENTITY');assert.equal(f.sent.length,1);}
   cases.push({name:'preview scope rejection',mutations:changes.length});
+});
+
+test('preview waits beyond the old 20-second timer for the bounded independent preflight, then exposes only its verified read-only session',async()=>{
+  const f=await fixture();f.bridge=async()=>undefined;
+  const pending=f.session();await f.wait(()=>f.sent.length===1);
+  assert.equal([...f.timers.values()][0].due-f.clock.now,PRODUCT_DOCUMENT_PREVIEW_ACK_TIMEOUT);
+  f.advance(25000);assert.equal(f.listeners.size,1);assert.equal(f.timers.size,1);f.emit(f.sent[0],f.preview());
+  const session=await pending;assert.equal(session.preview.registered,false);assert.equal(session.preview.liveVerified,false);
+  assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);assert.equal(f.sent.length,1);
+  await assert.rejects(f.client.runProductDocument(session,'start',new AbortController().signal),error=>error.code==='PRODUCT_DOCUMENT_LIVE_CONTRACT_UNVERIFIED');
+  assert.equal(f.sent.length,1);assert.equal(f.calls.length,0);
+});
+
+test('the bounded extension preflight timeout reaches the app before its ACK timer and never exposes a session',async()=>{
+  const f=await fixture();f.bridge=async()=>undefined;
+  const pending=f.session();await f.wait(()=>f.sent.length===1);f.advance(PRODUCT_DOCUMENT_PREFLIGHT_TIMEOUT);
+  assert.ok(PRODUCT_DOCUMENT_PREVIEW_ACK_TIMEOUT>PRODUCT_DOCUMENT_PREFLIGHT_TIMEOUT);assert.equal(f.listeners.size,1);
+  f.emit(f.sent[0],null,{ok:false,error:'원본 확인 시간이 초과됐습니다.',code:'PRODUCT_SOURCE_PREFLIGHT_TIMEOUT'});
+  await assert.rejects(pending,error=>error.code==='PRODUCT_SOURCE_PREFLIGHT_TIMEOUT'&&error.uncertain===false);
+  assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);assert.equal(f.sent.length,1);assert.equal(f.calls.length,0);
+});
+
+test('preview timeout or explicit cancellation removes listeners and ignores late positive ACKs without retry or mutation',async()=>{
+  for(const mode of ['timeout','abort']){
+    const f=await fixture(),controller=new AbortController();f.bridge=async()=>undefined;let succeeded=0;
+    const pending=f.client.previewProductDocument(f.packet,controller.signal);pending.then(()=>{succeeded++;},()=>{});await f.wait(()=>f.sent.length===1);
+    if(mode==='timeout')f.advance(PRODUCT_DOCUMENT_PREVIEW_ACK_TIMEOUT);else controller.abort();
+    await assert.rejects(pending,error=>error.uncertain===false&&(mode==='abort'||error.code==='PRODUCT_DOCUMENT_ACK_MISSING'));
+    assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);f.emit(f.sent[0],f.preview());
+    await new Promise(resolve=>setImmediate(resolve));assert.equal(succeeded,0);assert.equal(f.sent.length,1);assert.equal(f.calls.length,0);
+  }
 });
 
 test('synthetic enabled response validates complete staged terms and native statuses while never declaring SKU registration',async()=>{

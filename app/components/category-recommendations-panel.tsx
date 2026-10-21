@@ -6,22 +6,24 @@ import './category-recommendations-panel.css';
 type Props={
  initialTitle:string;
  workspaceOwnerId?:string;
+ selectionScope?:string;
  disabled:boolean;
  onChoose:(candidate:HubCategoryRecommendation,result:HubCategoryRecommendations)=>Promise<void>|void;
 };
-type Context={initialTitle:string;ownerId?:string;name:string;disabled:boolean};
-const sameContext=(left:Context,right:Context)=>left.initialTitle===right.initialTitle&&left.ownerId===right.ownerId&&left.name===right.name;
+type Context={initialTitle:string;ownerId?:string;selectionScope?:string;name:string;disabled:boolean};
+const sameContext=(left:Context,right:Context)=>left.initialTitle===right.initialTitle&&left.ownerId===right.ownerId&&left.selectionScope===right.selectionScope&&left.name===right.name;
 
 /** Only the member's radio selection resolves a recommendation into a category. */
-export function CategoryRecommendationsPanel({initialTitle,workspaceOwnerId,disabled,onChoose}:Props){
+export function CategoryRecommendationsPanel({initialTitle,workspaceOwnerId,selectionScope,disabled,onChoose}:Props){
  const id=useId(),[name,setName]=useState(initialTitle.trim()),[result,setResult]=useState<HubCategoryRecommendations|null>(null);
  const [chosen,setChosen]=useState<string|null>(null),[pending,setPending]=useState(false),[applying,setApplying]=useState(false),[error,setError]=useState('');
  const mounted=useRef(false),generation=useRef(0),applyGeneration=useRef(0),applyingRef=useRef(false);
  const controller=useRef<AbortController|null>(null),timer=useRef<ReturnType<typeof setTimeout>|null>(null);
- const [resultContext,setResultContext]=useState<Context|null>(null);
+ const [resultContext,setResultContext]=useState<(Context&{generation:number})|null>(null);
  const selfBusyCycle=useRef(false);
- const context=useRef<Context>({initialTitle,ownerId:workspaceOwnerId,name,disabled}),choose=useRef(onChoose);
- useLayoutEffect(()=>{context.current={initialTitle,ownerId:workspaceOwnerId,name,disabled};choose.current=onChoose;});
+ const previousSelectionScope=useRef(selectionScope),scopeInvalidated=useRef(false);
+ const context=useRef<Context>({initialTitle,ownerId:workspaceOwnerId,selectionScope,name,disabled}),choose=useRef(onChoose);
+ useLayoutEffect(()=>{context.current={initialTitle,ownerId:workspaceOwnerId,selectionScope,name,disabled};choose.current=onChoose;});
 
  function cancel(){
   generation.current++;controller.current?.abort();controller.current=null;
@@ -32,6 +34,7 @@ export function CategoryRecommendationsPanel({initialTitle,workspaceOwnerId,disa
  async function request(force:boolean){
   const requestContext={...context.current},productName=requestContext.name.trim();
   if(!mounted.current||requestContext.disabled||!requestContext.ownerId||!productName||applyingRef.current)return;
+  scopeInvalidated.current=false;
   reset();const ticket=generation.current,abort=new AbortController();controller.current=abort;setPending(true);
   const current=()=>mounted.current&&!abort.signal.aborted&&!context.current.disabled&&ticket===generation.current&&sameContext(requestContext,context.current);
   try{
@@ -40,11 +43,19 @@ export function CategoryRecommendationsPanel({initialTitle,workspaceOwnerId,disa
    if(response.source!=='supplier-hub-category-predict-api'||response.ownerId!==requestContext.ownerId||response.productName!==productName||!Array.isArray(response.items))throw Error('현재 회원과 상품명의 카테고리 추천 결과를 확인하지 못했습니다. 다시 추천해주세요.');
    const visible=response.items.slice(0,3);
    if(new Set(visible.map(item=>item.id)).size!==visible.length||visible.some(item=>!item.id||!item.code||!item.label||!Array.isArray(item.path)||!item.path.length||item.path.some(part=>typeof part!=='string'||!part.trim())))throw Error('카테고리 추천 경로를 확인하지 못했습니다. 다시 추천해주세요.');
-   setResultContext(requestContext);setResult(response);
+   setResultContext({...requestContext,generation:ticket});setResult(response);
   }catch(reason){if(current())setError(reason instanceof Error?reason.message:'카테고리 추천을 불러오지 못했습니다. 다시 시도해주세요.');}
   finally{if(current()){setPending(false);controller.current=null;}}
  }
  const requestRef=useRef(request);useLayoutEffect(()=>{requestRef.current=request;});
+ useLayoutEffect(()=>{
+  if(previousSelectionScope.current===selectionScope)return;
+  previousSelectionScope.current=selectionScope;scopeInvalidated.current=true;reset();
+  setError('카테고리 설정이 변경되었습니다. 추천 새로고침으로 현재 설정을 확인해주세요.');
+  // Only an external selection change invalidates this result, not the state
+  // changes made by reset itself or the current application busy cycle.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+ },[selectionScope]);
 
  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;cancel();};},[]);
  // Switching the source/member must discard its editable name, without writing any product.
@@ -53,7 +64,7 @@ export function CategoryRecommendationsPanel({initialTitle,workspaceOwnerId,disa
  useEffect(()=>{
   // Member/source changes invalidate recommendations before a debounced read.
   // eslint-disable-next-line react-hooks/set-state-in-effect
-  reset();
+  scopeInvalidated.current=false;reset();
   if(!context.current.disabled&&workspaceOwnerId&&name.trim())timer.current=setTimeout(()=>{timer.current=null;void requestRef.current(false);},600);
   return cancel;
   // Reset is intentionally scoped to the source and query, not its own parent selection busy state.
@@ -67,18 +78,19 @@ export function CategoryRecommendationsPanel({initialTitle,workspaceOwnerId,disa
    // eslint-disable-next-line react-hooks/set-state-in-effect
    reset();return;
   }
-  if(!context.current.ownerId||!context.current.name.trim())return;
+  if(scopeInvalidated.current||!context.current.ownerId||!context.current.name.trim())return;
   if(timer.current===null&&!controller.current&&!resultContext)timer.current=setTimeout(()=>{timer.current=null;void requestRef.current(false);},600);
   // Only the disabled transition is observed here; query changes have their own cancellation effect.
   // eslint-disable-next-line react-hooks/exhaustive-deps
  },[disabled]);
 
- const activeResult=result&&resultContext&&sameContext(resultContext,{initialTitle,ownerId:workspaceOwnerId,name,disabled})&&!disabled?result:null;
+ const activeResult=result&&resultContext&&sameContext(resultContext,{initialTitle,ownerId:workspaceOwnerId,selectionScope,name,disabled})&&!disabled?result:null;
  const visible=activeResult?.items.slice(0,3)??[];
  const candidate=visible.find(item=>item.id===chosen),blocked=disabled||pending||applying||!workspaceOwnerId;
  async function apply(selection:HubCategoryRecommendation){
   const confirmed=visible.find(item=>item.id===selection.id);
-  if(blocked||applyingRef.current||!confirmed||!result)return;
+  if(blocked||applyingRef.current||!confirmed||!result||!mounted.current||context.current.disabled
+   ||!resultContext||resultContext.generation!==generation.current||!sameContext(resultContext,context.current))return;
   const before={...context.current},ticket=++applyGeneration.current,selectedResult=result;
   applyingRef.current=true;setChosen(confirmed.id);setApplying(true);setError('');
   const current=()=>mounted.current&&ticket===applyGeneration.current&&sameContext(before,context.current);

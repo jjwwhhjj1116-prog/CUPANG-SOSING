@@ -4,6 +4,7 @@ import {nativeRecoveryFixture} from './helpers/native-product-recovery.mjs';
 import {SINGLE_COMPANIES} from './helpers/supplier-hub-single-document.mjs';
 import {createProductDocumentReceiver} from '../extensions/supplier-hub/product-document-receiver.mjs';
 import {PRODUCT_DOCUMENT_LIVE_VERIFIED,dispatchProductDocument} from '../extensions/supplier-hub/product-document-dispatch.mjs';
+import {withProductDocumentChrome} from './helpers/product-document-preview.mjs';
 const copy=value=>JSON.parse(JSON.stringify(value));
 const observationInput=(f,common)=>({...common,identityDigest:f.context.identityDigest,operation:'update',operationId:f.packet.requestId+':update',docId:f.createdDocId,
  baselineDocIds:[f.prior.docId],expectedBody:{...copy(f.context.packet.body),docId:f.createdDocId}});
@@ -58,5 +59,5 @@ test('changed actor/source/body/frame/document/ledger and unfamiliar list entrie
  }finally{f.close();}}
 });
 test('dispatch live gate remains false and no new start is enabled by the read-only recovery helper',async()=>{
- const f=await nativeRecoveryFixture(SINGLE_COMPANIES[0]);try{assert.equal(PRODUCT_DOCUMENT_LIVE_VERIFIED,false);const preview=await dispatchProductDocument({type:'YOOFAM_PRODUCT_DOCUMENT_REQUEST',action:'preview',packet:f.packet},f.sender);assert.equal(preview.liveVerified,false);await assert.rejects(dispatchProductDocument({type:'YOOFAM_PRODUCT_DOCUMENT_REQUEST',action:'start',packet:f.packet},f.sender),error=>error.code==='PRODUCT_LIVE_CONTRACT_UNVERIFIED');assert.equal(f.state.uploads.length,0);assert.equal(f.submitted,0);}finally{f.close();}
+ const f=await nativeRecoveryFixture(SINGLE_COMPANIES[0]);try{assert.equal(PRODUCT_DOCUMENT_LIVE_VERIFIED,false);const preview=await withProductDocumentChrome(f.api,()=>dispatchProductDocument({type:'YOOFAM_PRODUCT_DOCUMENT_REQUEST',action:'preview',packet:f.packet},f.sender));assert.equal(preview.liveVerified,false);await assert.rejects(dispatchProductDocument({type:'YOOFAM_PRODUCT_DOCUMENT_REQUEST',action:'start',packet:f.packet},f.sender),error=>error.code==='PRODUCT_LIVE_CONTRACT_UNVERIFIED');assert.equal(f.state.uploads.length,0);assert.equal(f.submitted,0);}finally{f.close();}
 });

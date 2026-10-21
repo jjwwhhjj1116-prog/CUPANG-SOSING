@@ -9,6 +9,7 @@ import { productDocumentIdentity } from '../extensions/supplier-hub/product-docu
 import { dispatchProductDocument, PRODUCT_DOCUMENT_LIVE_VERIFIED } from '../extensions/supplier-hub/product-document-dispatch.mjs';
 import { singleDocumentAppSourcePage } from '../extensions/supplier-hub/single-document-adapter.mjs';
 import { SINGLE_SENDER } from './helpers/supplier-hub-single-document.mjs';
+import { withProductDocumentChrome } from './helpers/product-document-preview.mjs';
 
 const compiler = module('app/supplier-hub-product-document.ts'), origin = new URL(SINGLE_SENDER.url).origin;
 const sourceCode = fs.readFileSync(new URL('../extensions/supplier-hub/single-content.js', import.meta.url), 'utf8');
@@ -58,6 +59,18 @@ function sourceRuntime(f, { mutate, responsePatch } = {}) {
     async bridge(input = expected(f), type = 'YOOFAM_VERIFY_PRODUCT_DOCUMENT_SOURCE', sender = { id: 'synthetic-extension' }) {
       return new Promise(resolve => { const result = handler({ type, expected: input }, sender, reply => resolve(plain(reply))); if (result !== true) resolve(undefined); });
     } };
+}
+function previewChrome(runtime){
+  const calls=[],appTab={id:SINGLE_SENDER.tab.id,windowId:SINGLE_SENDER.tab.windowId,url:SINGLE_SENDER.url,status:'complete'};
+  const unexpected=name=>{calls.push({name});assert.fail('Preview cannot call '+name);};
+  return{calls,api:{tabs:{
+    get:async id=>{calls.push({name:'get',id});assert.equal(id,appTab.id);return plain(appTab);},
+    create:()=>unexpected('create'),update:()=>unexpected('update'),query:()=>unexpected('query'),
+    sendMessage:async(id,message,frame)=>{calls.push({name:'message',type:message.type});assert.equal(id,appTab.id);assert.equal(frame.frameId,0);return runtime.bridge(message.expected,message.type);},
+  },scripting:{executeScript:async request=>{
+    calls.push({name:'execute',func:request.func.name});assert.equal(request.target.tabId,appTab.id);assert.deepEqual(request.target.frameIds,[0]);
+    const result=await vm.runInNewContext('('+request.func.toString()+')(...args)',{...runtime.scope,TextDecoder,args:request.args});return[{frameId:0,result:plain(result)}];
+  }}}};
 }
 
 for (const company of companies) test(`${company.code}: both source verifiers retain every included document with no Hub or file mutation`, async () => {
@@ -134,20 +147,38 @@ test('native receipt history rejects malformed or other operations and permits o
   cases.push({ name: 'native receipt scope', malformedAndOtherOperationsRejected: mutations.length, sameRequestDigestDocumentRecovery: true, writes: 0 });
 });
 
-test('group preview returns whole identity but all live operations remain unavailable without touching Chrome', async () => {
-  const f = await sample(); const saved = globalThis.chrome; let apiAccesses = 0;
+for(const company of companies)test(`${company.code}: group preview independently verifies the current legacy app source without touching Hub or creating a receiver`,async()=>{
+  const f=await sample(company),before=JSON.stringify(f),runtime=sourceRuntime(f),chrome=previewChrome(runtime);
+  const preview=await withProductDocumentChrome(chrome.api,()=>dispatchProductDocument({type:'YOOFAM_PRODUCT_DOCUMENT_REQUEST',action:'preview',packet:f.packet},SINGLE_SENDER));
+  assert.equal(preview.productId,f.id);assert.deepEqual(preview.members,f.packet.review.members);assert.equal(preview.preparedBodySha256,f.context.bodySha256);
+  assert.deepEqual(Object.keys(preview).sort(),['format','requestId','identity','fingerprint','productId','members','identityDigest','packetDigest','reviewDigest','preparedBodySha256','originalBodySha256','liveVerified','remoteWrites','registered'].sort());
+  assert.equal(preview.liveVerified,false);assert.equal(preview.remoteWrites,false);assert.equal(preview.registered,false);
+  assert.equal(chrome.calls.filter(call=>call.name==='message').length,2);assert.ok(chrome.calls.some(call=>call.func==='singleDocumentAppSourcePage'));
+  assert.ok(chrome.calls.every(call=>['get','message','execute'].includes(call.name)));assert.ok(runtime.calls.length>8);
+  assert.ok(runtime.calls.every(call=>(call.init.method??'GET')==='GET'&&call.init.body===undefined));assert.equal(JSON.stringify(f),before);
+  cases.push({name:'current legacy preview '+company.code,readRequests:runtime.calls.length,hubRequests:0,remoteWrites:0,receiversCreated:0});
+});
+
+test('changed legacy source or prior receipt rejects preview instead of returning a packet-only success',async()=>{
+  const f=await sample();
+  for(const change of [state=>{state.actor.ownerId='other-owner';},state=>{state.actor.company=companies[1];},state=>{state.blocked=true;},state=>{state.prepared.source.quotationRevision++;},state=>{state.prepared.payload.jsonDocument[1].productPage.modelNumber='new-unsaved';}]){
+    const runtime=sourceRuntime(f,{mutate:(state,count)=>{if(count===1)change(state);}}),chrome=previewChrome(runtime);
+    await assert.rejects(withProductDocumentChrome(chrome.api,()=>dispatchProductDocument({type:'YOOFAM_PRODUCT_DOCUMENT_REQUEST',action:'preview',packet:f.packet},SINGLE_SENDER)),{code:'SOURCE_CHANGED'});
+    assert.ok(chrome.calls.every(call=>['get','message','execute'].includes(call.name)));assert.ok(runtime.calls.every(call=>(call.init.method??'GET')==='GET'));
+  }
+});
+
+test('all live group operations remain unavailable without touching Chrome', async () => {
+  const f = await sample(); const saved = Object.getOwnPropertyDescriptor(globalThis,'chrome'); let apiAccesses = 0;
   Object.defineProperty(globalThis, 'chrome', { configurable: true, get() { apiAccesses++; throw Error('unexpected Chrome operation'); } });
   try {
-    const preview = await dispatchProductDocument({ type: 'YOOFAM_PRODUCT_DOCUMENT_REQUEST', action: 'preview', packet: f.packet }, SINGLE_SENDER);
-    assert.equal(preview.productId, f.id); assert.deepEqual(preview.members, f.packet.review.members); assert.equal(preview.preparedBodySha256, f.context.bodySha256);
-    assert.equal(preview.liveVerified, false); assert.equal(preview.remoteWrites, false); assert.equal(preview.registered, false);
     for (const action of ['start', 'resume', 'recover', 'observe', 'confirm']) await assert.rejects(dispatchProductDocument({ type: 'YOOFAM_PRODUCT_DOCUMENT_REQUEST', action, packet: f.packet,
       ...(action === 'confirm' ? { confirmation: {} } : {}) }, SINGLE_SENDER), { code: 'PRODUCT_LIVE_CONTRACT_UNVERIFIED' });
     await assert.rejects(dispatchProductDocument({ type: 'YOOFAM_PRODUCT_DOCUMENT_REQUEST', action: 'start', packet: f.packet, liveVerified: true }, SINGLE_SENDER), { code: 'PRODUCT_ACTION' });
     await assert.rejects(dispatchProductDocument({ type: 'YOOFAM_PRODUCT_DOCUMENT_REQUEST', action: 'preview', packet: f.packet }, { ...SINGLE_SENDER, frameId: 1 }), { code: 'SENDER' });
     assert.equal(apiAccesses, 0); assert.equal(PRODUCT_DOCUMENT_LIVE_VERIFIED, false);
-  } finally { delete globalThis.chrome; if (saved !== undefined) globalThis.chrome = saved; }
-  cases.push({ name: 'release gate and preview', members: 2, liveActionsRejected: 5, chromeReads: apiAccesses, falseReceipt: false });
+  } finally { if(saved)Object.defineProperty(globalThis,'chrome',saved);else delete globalThis.chrome; }
+  cases.push({ name: 'release gate unchanged', members: 2, liveActionsRejected: 5, chromeReads: apiAccesses, falseReceipt: false });
 });
 
 class Bus {

@@ -1,4 +1,4 @@
-import {validateProductDocumentPacket,type ProductDocumentPacket} from '../extensions/supplier-hub/product-document.mjs';
+import {validateProductDocumentPacket,PRODUCT_DOCUMENT_PREVIEW_ACK_TIMEOUT,type ProductDocumentPacket} from '../extensions/supplier-hub/product-document.mjs';
 import {productReceiptCanonical,parseStoredNativeReceipt,parseStoredProductReceipt,validateProductReceiptObservation,
   type NativeReceiptRecord,type ProductReceiptRecord,type ProductReceiptIdentity} from '@/app/supplier-hub-product-receipt';
 import {readSingleCatalogContext,validateSingleConsentChallenge,type SingleDocumentState,type SingleDocumentAction,type SingleConfirmation} from '@/app/supplier-hub-single-client';
@@ -53,7 +53,7 @@ export function productDocumentExchange(action:'preview'|SingleDocumentAction,pa
       if(!object(envelope)||envelope.ok!==true||!Object.hasOwn(envelope,'result'))reject(new ProductDocumentBridgeError(typeof envelope?.error==='string'?envelope.error:'전체 상품 견적 응답을 확인하지 못했습니다.',mutating,typeof envelope?.code==='string'?envelope.code:'PRODUCT_DOCUMENT_BRIDGE'));
       else{try{resolve(copy(envelope.result));}catch{reject(new ProductDocumentBridgeError('전체 상품 견적 응답의 JSON 형식·크기를 확인해주세요.',mutating));}}
     };
-    const timer=setTimeout(()=>{cleanup();reject(new ProductDocumentBridgeError('전체 상품 문서 응답이 없습니다. 같은 요청을 다시 전송하지 말고 저장 결과를 조회해주세요.',mutating,'PRODUCT_DOCUMENT_ACK_MISSING'));},action==='confirm'?120000:action==='preview'?20000:60000);
+    const timer=setTimeout(()=>{cleanup();reject(new ProductDocumentBridgeError('전체 상품 문서 응답이 없습니다. 같은 요청을 다시 전송하지 말고 저장 결과를 조회해주세요.',mutating,'PRODUCT_DOCUMENT_ACK_MISSING'));},action==='confirm'?120000:action==='preview'?PRODUCT_DOCUMENT_PREVIEW_ACK_TIMEOUT:60000);
     window.addEventListener('message',receive);signal.addEventListener('abort',abort,{once:true});
     try{window.postMessage({channel:'YOOFAM_HUB_HANDOFF',requestId,type:'PRODUCT_DOCUMENT',payload:{action,packet,...(confirmation?{confirmation}:{})}},window.location.origin);}
     catch{cleanup();reject(new ProductDocumentBridgeError('확장 전달 응답을 확인하지 못했습니다. 원래 저장 결과를 조회해주세요.',mutating));}
