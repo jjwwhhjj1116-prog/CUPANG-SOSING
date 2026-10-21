@@ -33,6 +33,10 @@ async function fixture(company = companies[0]) {
     const profile = await api.load('db/category-profiles.ts').createCategoryProfile('owner', profileInput, 'cat');
     api.context.category = profile; api.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(api.context), 'job'); await api.intake();
     const product = api.sqlite.prepare('SELECT * FROM products').get(), base = '/api/products/' + product.id;
+    // This retained pipeline covers the legacy generation: no initial sidecar,
+    // revision zero and the historical default PNG order. Fresh-creation
+    // structure is exercised separately by new-product-label-initialization.
+    api.sqlite.prepare('DELETE FROM product_labels WHERE product_id=?').run(product.id);
     const endpoint = base + '/product-labels?profileId=' + profile.id, quotationEndpoint = base + '/quotation-fields?profileId=' + profile.id;
     const quotation = await json(await api.route(quotationEndpoint)), selected = quotation.resolved.rows.find(row => row.optionId), other = quotation.resolved.rows.filter(row => row.optionId)[1];
     const requests = [];

@@ -10,13 +10,13 @@ import { DetailImageCompositePanel } from '@/app/components/detail-image-composi
 import { DetailWorkspacePanel } from '@/app/components/detail-workspace-panel';
 import { canEditSavedDetailInputs, prepareSavedDetailInputs, prepareSavedDetailComposition } from '@/app/detail-editor-inputs-client';
 
-type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; stage: OptionImageStage; active?: boolean; saveOnChange?: boolean;
+type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; stage: OptionImageStage; active?: boolean; saveOnChange?: boolean; primaryDetailTools?: boolean;
   disabled?: boolean; onSaved?: () => void; onTranslate?: (sourceKey: string, role: OptionImageStage, sourceLanguage: 'zh' | 'en', quotationTarget: FreeImageQuotationRequest) => void;
   onEdit?: (sourceKey: string, role: OptionImageStage, quotationTarget: FreeImageQuotationRequest) => void };
 const imageUrl = (key: string) => `/api/files/${key.split('/').map(encodeURIComponent).join('/')}`;
 const dragMime = 'application/x-yoofam-option-image-order';
 type ImageDrag = { scope: string; sourceKey: string; stage: OptionImageStage; view: QuotationFieldsView; keys: string[]; key: string; token: string; element: HTMLElement };
-export function OptionImageEditor({ productId, optionId, version, profileId, refreshToken, stage, active = true, saveOnChange = false, disabled = false, onSaved, onTranslate, onEdit }: Props) {
+export function OptionImageEditor({ productId, optionId, version, profileId, refreshToken, stage, active = true, saveOnChange = false, primaryDetailTools = false, disabled = false, onSaved, onTranslate, onEdit }: Props) {
   const instant = stage === 'additional' && saveOnChange;
   const endpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId ? `?profileId=${encodeURIComponent(profileId)}` : ''}`;
   const scope = JSON.stringify([endpoint, optionId]), sourceKey = JSON.stringify([scope, version, refreshToken]);
@@ -426,12 +426,12 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
           || knownProtection.some(key => selected.filter(value => value === key).length !== keys.filter(value => value === key).length)) return;
         clearDrag(); latestDraft.current = { scope, values: { detailImages: keys.join('\n') } }; setPending(latestDraft.current);
         setMessage('보관한 작업 사진을 선택 옵션의 수동 초안으로 불러왔습니다. 기존 견적 HTML은 유지했습니다. 확인 후 선택 옵션 이미지를 저장해주세요.');
-      }} />
-    {stage === 'detail' && view && <DetailImageCompositePanel key={`composite:${scope}`} productId={productId} optionId={optionId} profileId={profileId} view={view} stageActive={active}
+      }} /></details>}
+    {stage === 'detail' && view && <details className="option-detail-composite" open={primaryDetailTools ? true : undefined}><summary>통합 상세 이미지 미리보기·다운로드·저장</summary><DetailImageCompositePanel key={`composite:${scope}`} productId={productId} optionId={optionId} profileId={profileId} view={view} stageActive={active}
       disabled={disabled || busy || workspaceWorking || uncertain || dirty || !!bindingError || saved?.sourceKey !== sourceKey}
       beforeApply={() => !!keyboardGeneration && keyboardEpoch.current === keyboardGeneration && active && liveActive.current && current() && currentStage.current === 'detail' && !liveDisabled.current && !request.current && !pendingSave.current && !Object.keys(latestDraft.current.values).length}
       onBusyChange={value => { compositeBusy.current = value; setMerging(value); }}
-      onSaved={body => { if (!current()) return; latestSaved.current = { scope, sourceKey, view: body }; setSaved(latestSaved.current); onSaved?.(); }} />}</details>}
+      onSaved={body => { if (!current()) return; latestSaved.current = { scope, sourceKey, view: body }; setSaved(latestSaved.current); onSaved?.(); }} /></details>}
     {busy && <p role="status">옵션 이미지 처리 중…</p>}{error && <p role="alert">{error}</p>}{bindingError && <p role="alert">{bindingError}</p>}{message && <p role="status">{message}</p>}
     {dirty && saved?.sourceKey !== sourceKey && <p role="status">상품 저장 상태가 변경됐습니다. 입력은 유지했습니다. 최신 자료를 조회한 뒤 저장해주세요.</p>}
     {view && <>{stage === 'additional' ? <div className="image-edit-workspace">

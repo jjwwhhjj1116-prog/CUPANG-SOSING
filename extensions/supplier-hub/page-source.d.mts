@@ -2,6 +2,8 @@ export type PageSource={format:'yoofam-page-source-v1';sourceUrl:string;offerId:
 export const PAGE_SOURCE_LIMIT:number;
 export function pageSourceUrl(value:string):{sourceUrl:string;offerId:string};
 export function pageJsonProperty(text:string,key:string):unknown;
-export function extractPageSource(input:{sourceUrl:string;scripts:string[];title?:string;description?:string;gallery?:string[];detailImages?:string[];priceText?:string;minimumOrderText?:string},now?:number):PageSource;
+export type PageSourceDomOptions={format:'yoofam-page-dom-options-v1';sourceUrl:string;offerId:string;options:PageSource['options']};
+export function readPageSourceDomOptions(document:Pick<Document,'querySelectorAll'>,sourceUrl:string,scripts:string[]):PageSourceDomOptions|null;
+export function extractPageSource(input:{sourceUrl:string;scripts:string[];domOptions?:PageSourceDomOptions|null;title?:string;description?:string;gallery?:string[];detailImages?:string[];priceText?:string;minimumOrderText?:string},now?:number):PageSource;
 export function validatePageSource(input:unknown,now?:number):PageSource;
 export function pageSourceIssues(source:PageSource):string[];

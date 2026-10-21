@@ -130,11 +130,11 @@ test('main upload locks retained image, price and source callbacks in the same t
  h.permission(false);assert.equal(main.props.beforeUpload(),false,'the outer workspace draft guard still applies to the main upload');
 });
 
-test('common image editing is the default upload view and per-option tools remain available behind an explicit summary',()=>{
+test('additional tools retain their disclosure while selected-detail tools are primary and common detail remains optional',()=>{
  const h=harness();
  for(const tab of ['추가 이미지','상세 이미지']){
   const tree=h.render(tab),common=nodes(tree).find(node=>node.props?.className==='registration-common-image-editor'),options=nodes(tree).find(node=>node.props?.className==='registration-option-image-tools');
-  assert.equal(common.type,'details');assert.equal(common.props.open,true);assert.equal(options.type,'details');assert.notEqual(options.props.open,true);assert.equal(options.props.hidden,false);
+  assert.equal(common.type,'details');assert.equal(common.props.open,tab==='추가 이미지'?true:undefined);assert.equal(options.type,'details');assert.notEqual(options.props.open,true);assert.equal(options.props.hidden,tab!=='추가 이미지');
   assert.ok(h.component('OptionImageEditor',tab,tab==='추가 이미지'?'additional':'detail'));
  }
  assert.equal(nodes(h.render('표시사항')).find(node=>node.props?.className==='registration-option-image-tools').props.hidden,true);

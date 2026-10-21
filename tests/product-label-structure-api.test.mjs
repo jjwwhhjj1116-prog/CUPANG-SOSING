@@ -43,6 +43,9 @@ for(const company of companies)test(`shared label structure reaches selected PNG
  const f=await sizeChartApiFixture(company);
  try{
   const {h}=f,endpoint=f.base+'/product-labels'+f.query,quotationEndpoint=f.base+'/quotation-fields'+f.query;
+  // Keep this old-format fixture explicit; new-product initialization is
+  // covered separately and must not change legacy plans or upload identities.
+  h.sqlite.prepare('DELETE FROM product_labels WHERE product_id=? AND owner_id=?').run(f.id,'owner');
   const model=h.load('app/product-label.ts'),upload=h.load('app/product-label-upload.ts'),attachment=h.load('app/product-label-attachment.ts');
   const read=()=>f.route(endpoint).then(json),save=(view,changes,nextStructure)=>f.route(endpoint,{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes,...(nextStructure===undefined?{}:{structure:nextStructure})}});
   const requests=[];

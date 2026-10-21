@@ -18,6 +18,9 @@ export async function optionSplitFixture(company = companies[0]) {
     f.api.sqlite.prepare('UPDATE product_quotation_fields SET payload=?').run(JSON.stringify(state));
     const labels = { schemaVersion: 1, productId: f.product.id, revision: 1, updatedAt: f.view.productVersion,
       overrides: { common: { productName: '', material: '공통 재질' }, options: { [ids[0]]: { productName: '' }, [ids[3]]: { material: '옵션 재질' } } } };
+    // Explicitly model the saved legacy state below, independently of the new
+    // product initializer. Never overwrite a competing production record.
+    f.api.sqlite.prepare('DELETE FROM product_labels WHERE product_id=?').run(f.product.id);
     f.api.sqlite.prepare('INSERT INTO product_labels VALUES(?,?,?,?,?)').run(f.product.id, 'owner', 1, JSON.stringify(labels), labels.updatedAt);
     await f.refresh();
     const endpoint = f.base + '/option-splits?profileId=' + f.view.categoryContext.profileId;

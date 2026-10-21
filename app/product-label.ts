@@ -52,6 +52,12 @@ export function validateProductLabelRenderEpoch(value: unknown): number | undefi
 export function productLabelStructure(source?: { structure?: ProductLabelStructure }): ProductLabelStructure {
   return source?.structure?.map(field => ({ ...field })) ?? productLabelFields.map(field => ({ id: field.key, label: field.label, required: field.key === 'productName' }));
 }
+/** Freeze the observed Couplus order only for a genuinely new product or an
+ * explicit reviewed restore. An absent stored structure remains legacy. */
+export function couplusProductLabelStructure(): ProductLabelStructure {
+  const order: ProductLabelFixedKey[] = ['productName','importer','manufacturer','countryOfOrigin','netContents','material','productType','precautions','usageStandard'];
+  return order.map(key => { const field = productLabelFields.find(field => field.key === key)!; return { id: key, label: field.label, required: key === 'productName' }; });
+}
 export function productLabelDefinitions(source?: { structure?: ProductLabelStructure }) {
   return productLabelStructure(source).map(field => ({ key: field.id, label: field.label, required: field.required }));
 }

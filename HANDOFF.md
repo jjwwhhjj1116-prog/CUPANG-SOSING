@@ -6301,3 +6301,13 @@ ExistingfreeWorker ba37200e-0c9a-4a59-9362-86d27a6fa9bc deployed. Latestactualpr
 - Chrome5 합성격리: main 파일201+link200 총2쓰기. 독립label fixture 텍스트200/PNG201/첨부200/quote200 총4쓰기·reload수정값보존·7단계진입·hidden dirty0. 보호합성상품/원본옵션rawSHA보존, 실제source/Hub/native0. 두fixture를한실상품흐름으로합산주장0. 초기PNG400은mockrange무시수정; JSONexport .900Z→.9Z변환은rawbyte수출로수정·strictSHA유지. outputs/step766-browser-proof.json과step766-ui/label-final-reopened.png.
 - 최종35고유파일310pass,0fail/cancel/skip; types/build/lint0error46기존warning/두생성모듈/ZIP검사통과. 초기279묶음1잠금실패→수정후279→legacy추가후최종310 전체pass, 반복중복가산0. 배포 Worker fa379b28-7713-44a7-8040-63534b4aacc6. 확장2.1.9 ZIP90파일1061081bytes SHAd51506dc889316963e3d793b57cdaa94a6a46f147d0045e5c40ee9488441b235 불변,새refresh/권한/resource/migration0.
 - 실제1688수집/AI전체초안/모든category-state1~7UI완전동일/Hub원본upload-readback/최종동의/docId-qvt-SKU접수미검증. 두LIVE_VERIFIED=false. 기존업무상품보호·거절대상직접간접우회금지·합성을실접수/임의완성률로보고금지.
+
+## Step767 — 2026-10-21: 화면 옵션 수집 보완·상세 편집 기본 노출·신규 표시사항 순서
+
+- 상세 docs/step767-dom-options-and-stage-editing.md. 동일 보관 RS/Couplus SHA 및 REA 부모 재사용; 원본23/자체7 정적 범위 outputs/step767-rea-stage-ui.json. 기존 업무상품/원본상품 open/edit/delete/send0, 실제1688 직접·간접 재접근0.
+- skuModel 없을 때 literal현재offer+단일SKU영역/단일속성 DOM 행·타일 보완. 각행 단일¥만 원가, 가격없는옵션/이미지alt옵션 보존·SKU/MOQ/재고 null. 추천/후기/타offer/중복/private/다차원조합 거절. RS의 Cartesian/maxprice 대입 복제0, 새네트워크/외부detailURL조회0. DOM10회귀+기존capture경로검사. 확장2.1.10 90파일1073848bytes SHA72c707cc008cdacd1ede4c0a34512431902ea6221caf99b47a582db809830273. 권한/host/2.1.9·2.1.8 ZIP불변, 현재Chrome실행버전확인/갱신요청0.
+- 신규manual/promotion/retainednewdraft에만 명시 Couplus 표시사항 순서(revision1,빈override)를 같은D1batch초기화. companion INSERT IGNORE/ABORT·owner/birthclock변경은 전체rollback. 재사용ACK쓰기0·초기productclock불변. 기존 무구조/사용자구조/PNGrecipe/proof/renderEpoch는유지, split은원본복제. 신규17회귀; legacyfixture만명시해기존strict단언보존.
+- 선택옵션Stage5의 기존batch→개별사진편집·삭제·순서·저장을기본노출. 통합이미지preview/download/save별도펼침, 공통편집/작업설정접힘; 언어/AI/apply·통합버튼간결가로배치. 정확한기존인스턴스/키/handler/잠금/ACK유지·auto실행0. 추가이미지와옵션없는공통작업불변.
+- 최종59고유파일538case 모두한실행통과, types/build통과·lint오류0/경고48(생성bundle변경+2). 실제임시SQLite/company2/source·다른옵션·수동HTML/배너·충돌/rollback/PNG증빙포함. 반복검사합산0. outputs/step767-final-validation.json 소스/로그SHA·배포·커밋참조.
+- 기존Chrome5새격리탭 합성상품: 표시정보PUT200→파일POST201→첨부POST200→견적PUT200, 재조회새기본순서/수정값유지. 본문사진삭제선택은서버쓰기0→명시PUT1회200, 원본options/파일/타SKU/보호합성상품불변·7단계진입. browserproof/screenshot step767-ui/label-reopened.png·detail-primary-final.png. 실제capture없는fixture의 translation-source/detail-family GET409보존, OCR/번역/family성공주장0. 새초기화guard최종강화는별도17회귀(브라우저fixture초기생성은강화전).
+- 기존Worker배포 ae19d935-6c56-46b7-a5a7-ec956dcab718. 신규리소스/마이그레이션/보안완화0. 실제1688/전체AI초안/모든category·state1~7UI동일/Hub원본upload/readback·최종동의·docId/qvt/SKU접수미완료. 두 LIVE_VERIFIED=false. 기존거절우회금지·합성성공을실제접수/임의완료율로보고금지.

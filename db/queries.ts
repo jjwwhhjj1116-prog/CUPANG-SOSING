@@ -3,6 +3,7 @@ import type { PricePolicy } from '@/app/pricing';
 import type { QuotationFieldsState, QuotationSourceGuard } from '@/db/quotation-fields';
 import { productRegistrationCounterSchema, productRegistrationSchema, productRegistrationOptionsSchema, prepareProductRegistration, withRegistrationNumber } from '@/db/product-registration';
 import type { RemovedProductsQuery } from '@/app/product-removal-pagination';
+import { productLabelsSchema, prepareNewProductLabels } from '@/db/product-label-initialization';
 
 export type ProductRecord = {
   id: string; owner_id: string; source_url: string; title: string;
@@ -55,6 +56,7 @@ export async function ensureDatabase() {
     db.prepare(productRegistrationCounterSchema),
     db.prepare(productRegistrationSchema),
     db.prepare(productRegistrationOptionsSchema),
+    db.prepare(productLabelsSchema),
   ]);
   schemaReadyBindings.add(db);
 }
@@ -111,6 +113,7 @@ export async function insertProduct(product: ProductRecord, policy?: PricePolicy
   // and rounding. A later workspace change must not recalculate this draft.
   const db = database(), payload = policy ? JSON.stringify(policy) : undefined;
   const result = await db.batch<{registration_number:string}>([insert,
+    ...prepareNewProductLabels(db, product.owner_id, product.id, product.created_at),
     ...(payload === undefined ? [] : [db.prepare('INSERT INTO product_price_policy(product_id,payload) VALUES(?,?)').bind(product.id,payload)]),
     ...prepareProductRegistration(db, product.owner_id, product.id, product.created_at),
   ]);

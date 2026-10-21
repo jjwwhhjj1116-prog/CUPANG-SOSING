@@ -1,11 +1,9 @@
 import { env } from 'cloudflare:workers';
 import { emptyProductLabelOverrides, PRODUCT_LABEL_STORAGE_LIMIT, validateProductLabelOverrides, validateProductLabelRenderEpoch, validateProductLabelStructure, type ProductLabelOverrides, type ProductLabelsState, type ProductLabelStructure } from '@/app/product-label';
 import { sourceGuard, type QuotationSourceGuard } from '@/db/quotation-fields';
+import { productLabelsSchema } from '@/db/product-label-initialization';
 
-export const productLabelsSchema = `CREATE TABLE IF NOT EXISTS product_labels (
-  product_id TEXT PRIMARY KEY REFERENCES products(id) ON DELETE CASCADE, owner_id TEXT NOT NULL,
-  revision INTEGER NOT NULL CHECK(revision > 0), payload TEXT NOT NULL, updated_at TEXT NOT NULL
-)`;
+export { productLabelsSchema } from '@/db/product-label-initialization';
 export type ProductLabelSourceGuard = QuotationSourceGuard & { quotationRevision: number };
 type Row = { revision: number; payload: string; updated_at: string };
 async function database() {

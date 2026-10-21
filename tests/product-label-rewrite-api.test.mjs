@@ -34,6 +34,9 @@ for(const company of companies)test(`explicit label rewrite advances only the ep
  const read=()=>call().then(json),body=view=>({expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint});
  const save=(view,changes,nextStructure)=>call('PUT',{...body(view),changes,...(nextStructure===undefined?{}:{structure:nextStructure})});
  try{
+  // Explicit legacy fixture: new intakes now seed a structure, while this case
+  // verifies old products without a stored label row and their original PNG.
+  h.sqlite.prepare('DELETE FROM product_labels WHERE product_id=? AND owner_id=?').run(f.id,'owner');
   let view=await read();assert.equal(view.revision,0);assert.equal(Object.hasOwn(view,'renderEpoch'),false);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM product_labels WHERE product_id=?').get(f.id).n,0);
   const foreign={...h.sqlite.prepare('SELECT * FROM products WHERE id=?').get(f.id),id:'foreign-rewrite-product',owner_id:'foreign-owner'},columns=Object.keys(foreign);
   h.sqlite.prepare(`INSERT INTO products(${columns.join(',')}) VALUES(${columns.map(()=>'?').join(',')})`).run(...columns.map(key=>foreign[key]));

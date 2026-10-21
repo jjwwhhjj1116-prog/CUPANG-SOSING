@@ -3,6 +3,7 @@ import {CollectionForkError,CollectionPendingSourceAvailable,type CollectionNewD
 import {ensureCollectionDatabase,findCollectionJob} from '@/db/collection-jobs';
 import {ensureDatabase,getSettings,findProduct} from '@/db/queries';
 import {prepareProductRegistration,prepareProductRegistrationOptions} from '@/db/product-registration';
+import {prepareNewProductLabels} from '@/db/product-label-initialization';
 import {readCollectionResult,effectiveCollectionPayload} from '@/db/collection-results';
 import {getCategoryProfile} from '@/db/category-profiles';
 import {validateStoredTemplate} from '@/db/category-templates';
@@ -142,6 +143,7 @@ export async function createCollectionNewDraft(owner:string,company:SupplierHubC
  db.prepare(`UPDATE collection_offer_claims SET job_id=? WHERE owner_id=? AND offer_id=? AND job_id=? AND EXISTS(SELECT 1 ${guard}) AND EXISTS(SELECT 1 FROM collection_context WHERE job_id=? AND payload=?)`).bind(requestId,owner,source.offer_id,jobId,...guardArgs,requestId,contextPayload),
  db.prepare(`INSERT INTO collection_results(job_id,owner_id,payload,received_at) SELECT ?,?,?,? WHERE ${created} ON CONFLICT(job_id) DO NOTHING`).bind(requestId,owner,source.receipt_payload,now,...createdArgs),
  db.prepare(`INSERT INTO products(${entries.map(([key])=>key).join(',')}) SELECT ${entries.map(()=>'?').join(',')} WHERE ${created} AND EXISTS(SELECT 1 FROM collection_results WHERE job_id=? AND owner_id=? AND payload=?)`).bind(...entries.map(([,value])=>value),...createdArgs,requestId,owner,source.receipt_payload),
+ ...prepareNewProductLabels(db,owner,productId,now),
  ...prepareProductRegistration(db,owner,productId,now),
  prepareProductRegistrationOptions(db,owner,productId,draft.options.rows.map(row=>row.id),now),
  db.prepare('INSERT INTO product_price_policy(product_id,payload) SELECT id,? FROM products WHERE id=? AND owner_id=?').bind(JSON.stringify(draft.policy),productId,owner),

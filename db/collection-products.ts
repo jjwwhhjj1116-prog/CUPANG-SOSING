@@ -11,6 +11,7 @@ import { collectionProductSchema } from '@/db/collection-jobs';
 import { effectiveCollectionPayload, readCollectionResult } from '@/db/collection-results';
 import type { SourceCaptureSelection } from '@/app/source-capture-selection';
 import type { SupplierHubCompany } from '@/app/supplier-hub-company';
+import { prepareNewProductLabels } from '@/db/product-label-initialization';
 /** The HTTP handler resolves the owned selection; clients cannot supply the
  * approved company or replacement receipt through this internal proof. */
 export type ExpectedCollectionSource={capture:Readonly<SourceCaptureSelection>;receivedAt:string;company:SupplierHubCompany};
@@ -56,6 +57,7 @@ export async function promoteCollection(owner:string,job:CollectionJob,receipt:C
    WHERE j.id=? AND j.owner_id=? AND r.owner_id=? AND j.status='awaiting_connector' AND ${effectiveCollectionPayload}=? AND c.payload=?
    AND NOT EXISTS(SELECT 1 FROM collection_products WHERE job_id=j.id)${expectedSource?selectedSourceCondition:''}`)
    .bind(...entries.map(([,value])=>value),job.id,owner,owner,JSON.stringify(receipt),JSON.stringify(job.context),...(expectedSource?selectedSourceArguments(job,expectedSource):[])),
+  ...prepareNewProductLabels(db,owner,id,now),
   ...prepareProductRegistration(db,owner,id,now),
   prepareProductRegistrationOptions(db,owner,id,prepared.options.rows.map(row=>row.id),now),
   db.prepare('INSERT INTO product_price_policy(product_id,payload) SELECT id,? FROM products WHERE id=? AND owner_id=?').bind(JSON.stringify(prepared.policy),id,owner),

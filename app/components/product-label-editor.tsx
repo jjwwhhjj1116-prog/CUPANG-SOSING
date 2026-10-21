@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useLayoutEffect, useRef, useState, type DragEvent } from 'react';
-import { productLabelChanges, productLabelDraftIssues, productLabelDefinitions, productLabelStructure, productLabelPlan, productLabelValue, verifyProductLabelsView, verifyProductLabelRefresh, verifyProductLabelSave, type ProductLabelDraft, type ProductLabelKey, type ProductLabelsView, type ProductLabelStructure } from '@/app/product-label';
+import { productLabelChanges, productLabelDraftIssues, productLabelDefinitions, productLabelStructure, couplusProductLabelStructure, productLabelPlan, productLabelValue, verifyProductLabelsView, verifyProductLabelRefresh, verifyProductLabelSave, type ProductLabelDraft, type ProductLabelKey, type ProductLabelsView, type ProductLabelStructure } from '@/app/product-label';
 import { renderDocument } from '@/app/document-image-render';
 import { attachProductLabel } from '@/app/product-label-attachment';
 import { productLabelPreviewSignature, type ProductLabelUploadCache } from '@/app/product-label-upload';
@@ -252,7 +252,7 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
   }
   function restoreStructure() {
     if (!confirmLocalChange('항목명과 순서를 기본 9항목 구조로 복원하시겠습니까? 현재 내용은 해당 항목에 유지됩니다.')) return;
-    changeStructure(() => productLabelStructure());
+    changeStructure(() => couplusProductLabelStructure());
   }
   function editValueWithConfirmation(key: ProductLabelKey, value: '' | null) {
     const field = productLabelDefinitions({ structure: latestDraft.current.scope === scope ? latestDraft.current.structure ?? view?.structure : view?.structure }).find(field => field.key === key);

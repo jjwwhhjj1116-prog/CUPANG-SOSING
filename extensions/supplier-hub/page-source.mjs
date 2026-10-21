@@ -208,6 +208,93 @@ function sourceAttributes(scripts,offerId){
  }
  return attributes;
 }
+const DOM_OPTION_LABELS=['规格','颜色','尺寸','颜色分类','类型','款式','型号','套餐','配置','版本','容量','尺码','花色','口味','颜色规格','材质','风格','图案'];
+const DOM_OPTION_ROOT='[class*="sku" i],[class*="prop" i],[class*="spec" i]';
+const DOM_OPTION_EXCLUDED='[class*="review" i],[class*="comment" i],[class*="rate" i],[class*="rating" i],[class*="feedback" i],[class*="evaluate" i],[class*="评价"],[class*="评论"],[id*="review" i],[id*="comment" i],[id*="evaluate" i],[id*="rate" i],[class*="recommend" i],[id*="recommend" i]';
+const domText=value=>typeof value==='string'?value.replace(/\s+/gu,' ').trim():'';
+const domLabel=value=>domText(value).replace(/[:：\s]/gu,'');
+function domOptionsError(){return Error('현재 상품의 옵션 영역과 개별 위안 가격을 확인하지 못했습니다. 원문은 임의로 조합하지 않았습니다.');}
+function domSourceIdentity(scripts,offerId){
+ let bound=false;
+ const matches=value=>typeof value==='string'&&value===offerId||typeof value==='number'&&Number.isSafeInteger(value)&&String(value)===offerId;
+ for(const text of scripts)for(const entry of pageJsonProperties(text,'globalData')){
+  if(!object(entry.value))throw domOptionsError();
+  const global={value:entry.value,literal:text.slice(entry.start,entry.end)},base=literalChild(global,'offerBaseInfo',true);
+  if(!object(base?.value)||!matches(literalChild(base,'offerId',true)?.value))throw domOptionsError();
+  for(const record of [base,literalChild(global,'tempModel')])if(record){
+   if(!object(record.value))throw domOptionsError();
+   for(const key of ['offerId','productId']){const field=literalChild(record,key);if(field&&!matches(field.value))throw domOptionsError();}
+  }
+  for(const key of ['isPicPrivate','isPricePrivate']){const field=literalChild(global,key);if(field&&field.value!==false)throw domOptionsError();}
+  const signs=literalChild(global,'offerSigns');
+  if(signs){if(!object(signs.value))throw domOptionsError();const field=literalChild(signs,'isDetailForbidden');if(field&&field.value!==false)throw domOptionsError();}
+  bound=true;
+ }
+ if(!bound)throw domOptionsError();
+}
+/** RS 1.0.88's retained leaf-label/sibling tiles and inventory-row selectors,
+ * restricted to one current-offer SKU root and one attribute group. No
+ * cartesian variants, headline price, inferred supplier IDs or source fetches.
+ * A script SKU declaration always wins, including empty/invalid declarations. */
+export function readPageSourceDomOptions(document,sourceUrl,scripts){
+ const identity=pageSourceUrl(sourceUrl);
+ if(!Array.isArray(scripts)||scripts.length>100||scripts.some(value=>typeof value!=='string')||scripts.reduce((sum,value)=>sum+value.length,0)>4*1024*1024)throw domOptionsError();
+ if(scripts.some(text=>/"skuModel"\s*:/.test(text)))return null;
+ domSourceIdentity(scripts,identity.offerId);
+ const excluded=element=>!!element.closest(DOM_OPTION_EXCLUDED);
+ const roots=Array.from(document.querySelectorAll(DOM_OPTION_ROOT));if(roots.length>400)throw domOptionsError();
+ const candidates=[];
+ for(const root of roots){
+  if(excluded(root)||roots.some(other=>other!==root&&other.contains(root)&&!excluded(other)))continue;
+  const labels=Array.from(root.querySelectorAll('div,span,dt,th,label,p,b,strong')).filter(element=>!element.children.length&&DOM_OPTION_LABELS.includes(domLabel(element.textContent))&&!excluded(element));
+  if(labels.length)candidates.push({root,labels});
+ }
+ if(!candidates.length)return null;
+ if(candidates.length!==1)throw domOptionsError();
+ const {root,labels}=candidates[0];
+ // A second attribute requires real combination rows; never invent a product
+ // by taking a cartesian product of independent colour/size tiles.
+ if(labels.length!==1)throw domOptionsError();
+ for(const link of root.querySelectorAll('a[href]')){
+  const href=link.getAttribute('href');if(!href)continue;
+  let url;try{url=new URL(href,identity.sourceUrl);}catch{throw domOptionsError();}
+  if(/\/offer\/[1-9]\d*\.html$/u.test(url.pathname)&&pageSourceUrl(url.href).offerId!==identity.offerId)throw domOptionsError();
+ }
+ const label=labels[0],labelText=domLabel(label.textContent);
+ let container=label.nextElementSibling||label.parentElement?.nextElementSibling||label.parentElement;
+ if(!container||!root.contains(container)||excluded(container))throw domOptionsError();
+ let tiles=Array.from(container.children).filter(child=>child!==label&&domLabel(child.textContent)!==labelText&&(domLabel(child.textContent)!==''||child.querySelector('img')||child.tagName?.toLowerCase()==='li'));
+ for(let depth=0;tiles.length===1&&tiles[0].children.length>1&&depth<4;depth++){
+  // A single option may itself contain an image and a price span. Only unwrap
+  // a wrapper holding multiple observed option prices/inventory rows.
+  const text=domText(tiles[0].textContent);
+  if((text.match(/[¥￥]/gu)||[]).length<=1&&(text.match(/库存/gu)||[]).length<=1)break;
+  tiles=Array.from(tiles[0].children);
+ }
+ // Exact inventory rows are a second retained RS path, used only when no
+ // swatch tiles exist. Keep missing prices as unknown rather than dropping a
+ // variant and presenting the remaining priced rows as a complete capture.
+ if(!tiles.length){
+  const rows=Array.from(root.querySelectorAll('div,li,tr,label')).filter(element=>!excluded(element)&&domText(element.textContent).length<=80&&(domText(element.textContent).match(/库存/gu)||[]).length===1);
+  tiles=rows.filter(element=>!rows.some(other=>other!==element&&element.contains(other)));
+ }
+ if(!tiles.length)return null;if(tiles.length>200)throw domOptionsError();
+ const seen=new Set(),options=[];
+ for(const element of tiles){
+  if(excluded(element))throw domOptionsError();
+  const raw=domText(element.textContent),imageElement=element.querySelector('img');
+  let name=raw.split(/[¥￥]/u)[0].replace(/库存.*$/u,'').replace(/^颜色[:：]?\s*/u,'').replace(/[-−+]+\s*\d*\s*$/u,'').trim();
+  if(!name&&imageElement)name=domText(imageElement.getAttribute('alt'));
+  if(!name||name.length>40||domLabel(name)===labelText||seen.has(name))throw domOptionsError();seen.add(name);
+  const prices=[...raw.matchAll(/[¥￥]\s*(\d+(?:\.\d+)?)(?![\d.])/gu)];
+  const match=prices.length===1?prices[0]:null;
+  const ambiguous=match&&/^\s*(?:[-~～－–—]|起|至)/u.test(raw.slice(match.index+match[0].length));
+  const unitPriceCny=match&&!ambiguous?price(match[1]):null;
+  const imageUrl=imageElement?image(imageElement.currentSrc||imageElement.getAttribute('src')||imageElement.getAttribute('data-lazyload-src')||imageElement.getAttribute('data-src')||imageElement.getAttribute('data-ks-lazyload')):null;
+  options.push({key:`dom-row:${options.length+1}`,name,supplierSku:null,unitPriceCny,currency:unitPriceCny===null?null:'CNY',minimumOrder:null,stock:null,imageUrl});
+ }
+ return {format:'yoofam-page-dom-options-v1',...identity,options};
+}
 export function extractPageSource(input,now=Date.now()){
  const identity=pageSourceUrl(input.sourceUrl),scripts=Array.isArray(input.scripts)?input.scripts:[];
  if(scripts.length>100||scripts.some(value=>typeof value!=='string')||scripts.reduce((sum,value)=>sum+value.length,0)>4*1024*1024)throw Error('상품 본문이 수집 크기를 초과했습니다.');
@@ -242,6 +329,15 @@ export function extractPageSource(input,now=Date.now()){
   const imageUrl=image(row.imageUrl??row.image)??valueImages.get(name)??[...valueImages].find(([label])=>name.split(/[;，,>|]/).some(part=>part.trim()===label))?.[1]??null;
   if(imageUrl)addImage(imageUrl,'additional');
   options.push({key:plain(key,200),name,supplierSku,unitPriceCny,currency,minimumOrder,stock:Number.isSafeInteger(row.stock)&&row.stock>=0?row.stock:null,imageUrl});
+ }
+ if(!models.length&&!scripts.some(text=>/"skuModel"\s*:/.test(text))&&input.domOptions!=null){
+  domSourceIdentity(scripts,identity.offerId);
+  const dom=input.domOptions;
+  if(!object(dom)||Object.keys(dom).some(key=>!['format','sourceUrl','offerId','options'].includes(key))||dom.format!=='yoofam-page-dom-options-v1'||dom.sourceUrl!==identity.sourceUrl||dom.offerId!==identity.offerId||!Array.isArray(dom.options)||!dom.options.length||dom.options.length>200)throw domOptionsError();
+  for(const row of dom.options){
+   if(row.supplierSku!==null||row.minimumOrder!==null||row.stock!==null||row.key!==`dom-row:${options.length+1}`)throw domOptionsError();
+   options.push({...row});if(row.imageUrl)addImage(row.imageUrl,'additional');
+  }
  }
  return validatePageSource({format:'yoofam-page-source-v1',...identity,collectedAt:new Date(now).toISOString(),title,description:plain(input.description,20000),options,images,attributes:sourceAttributes(scripts,identity.offerId)},now);
 }
