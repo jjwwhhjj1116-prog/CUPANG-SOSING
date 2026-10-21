@@ -6476,3 +6476,13 @@ ExistingfreeWorker ba37200e-0c9a-4a59-9362-86d27a6fa9bc deployed. Latestactualpr
 - Worker 배포 c659ebd8-7fc5-4e5a-81aa-d4c36e718b56. 일반 single/product live-verified=false 유지. 앱 저장 성공→목록 갱신 이벤트·초기/focus 재조회도 읽기 감사에서 연결을 확인했다.
 - REA 보관 근거로 사이즈표 표시·행/열·저장/재작성 대조: 새 결함 없음. 쿠플러스 사용자 작업 중인 5단계 창은 조작하지 않았다. 이전 브라우저의 1688 site-safety 거절을 우회하지 않았고 새 실상품 수집→실제 Hub 접수는 여전히 미검증이다.
 - 상세: docs/step785-source-app-handoff-and-option-recovery.md, outputs/step785-final-validation.json, outputs/step785-browser-final-proof.json, outputs/step785-loaded-extension-preparation.json. 임시 localhost QA 탭/서버는 종료했다.
+
+## 786. 접수 후 읽기 복구와 목록 가격 혼동 제거 (2026-10-22)
+
+- preparedFlow가 SUBMITTED 기록을 가진 뒤 observe 응답 후 fresh 읽기 실패로 uncertain이 되면 복구·조회 버튼이 모두 숨던 P2 수정. receipt가 있어도 uncertain일 때 같은 UUID의 recoverPreparedDraft 읽기 버튼만 노출한다. 원래 회사/상품/body/문서/단계 검증, 잠금·재전송 차단·일반 live=false 유지.
+- 실제 합성 Chrome 가격 저장에서 옵션11000/18330·5440/9070과 목록 원본대표값5120/8530의 차이를 확인. 목록의 비권위 공급/판매 요약만 제거해 요청된 Couplus 목록 패턴을 따른다. 가격 설정 진입과 실제 계산·DB/API/CAS·견적 전송값은 변경0.
+- 새 복구6·목록32 포함 최종 관련5파일97/97 한 실행 pass/fail0. 최초96/97은 낡은2.1.19 다운로드 고정 기대값으로 현재 manifest와 실제 ZIP 존재 확인으로 교체했다. 타입/변경lint/build pass. 두 추가 native 통합 파일은 CPU사용·출력0으로 중단: 원인미확정이며 완료·성공 숫자에 미포함. host 재실행에서도 같아 driver-only 추정철회. 로그분리보존.
+- Chrome4 localhost 새 합성 상품 e73dc23d-c697-4954-a553-1b9e43c73448: 실제 Dashboard/API/SQLite로 SEO수정PATCH200, 가격POST200, 대표이미지/추가순서 quotePUT200각1 검수. 보호합성상품·원문파일 유지; 실제source/Hub/native0. stage1~4 PNG, outputs/step786-browser-qa/proof.json·-checkpoint.json·-quote.json.
+- 5단계 합성사진 선택제거의 기본confirm창에서 CUA가 focus timeout. getJsDialog/확인/탭닫기 모두실패, 사용자에게 로컬127.0.0.1:41786 확인창OK요청. 이번5~7브라우저검수미완료. 탭727936184/qa786는handoff, 합성서버 session48251(41786) 유지. 사용자OK뒤 같은handlestate확인부터이어갈것, 클릭중복금지. 운영live779는deliverable. 사이트/Auto-review차단과다른UI도구제한이다.
+- REA 보관가격controls/rounding/최소ON/OFF 정적대조는새gap없음. category추천→exactcapture→초안도읽기상연결. 원본Evidence/SHA재사용; 실제원본실행·기존상품접촉0.
+- 기존Worker 배포5726703b-863b-4de4-b544-0b9e9a424077. 확장이번불변prepared2.1.20/실제응답2.1.18. 앞선새로고침질문대기·추가권한없음. 지정1688이전site-safety읽기거절미해결·우회0, 실상품수집→실제Hub접수는미검증. 상세 docs/step786-prepared-receipt-recovery-and-price-display.md 및 outputs/step786-final-validation.json.

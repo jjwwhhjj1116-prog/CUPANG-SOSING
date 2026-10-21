@@ -283,7 +283,7 @@ export function SupplierHubProductTransport(props:Props){
       <p>현재 문서 {String(state!.docId)}의 원본 파일·저장값을 다시 확인했습니다.</p>
       {(uncertain||expired||Boolean(error))&&<p role="status">같은 문서의 저장 결과와 현재 단계를 먼저 확인해주세요. 새 문서를 만들거나 제출을 재시도하지 않습니다.</p>}
       {state?.state==='navigation-ready'&&!uncertain&&!error&&<button type="button" className="btn primary" disabled={disabled||busy} onClick={()=>void operatePrepared('reviewPreparedDraft',session)}>같은 문서 다음 단계 계속</button>}
-      {!state?.receipt&&<button type="button" className="btn ghost" disabled={disabled||busy||Boolean(unsaved)} onClick={()=>void operatePrepared('recoverPreparedDraft',session)}>준비한 문서 단계 확인 · 읽기 전용</button>}
+      {(!state?.receipt||uncertain)&&<button type="button" className="btn ghost" disabled={disabled||busy||Boolean(unsaved)} onClick={()=>void operatePrepared('recoverPreparedDraft',session)}>준비한 문서 단계 확인 · 읽기 전용</button>}
       {state&&['pending','accepted','rejected'].includes(state.state)&&!uncertain&&<button type="button" className="btn ghost" disabled={disabled||busy||Boolean(unsaved)} onClick={()=>void operatePrepared('observePreparedDraft',session)}>접수 결과 조회</button>}
     </section>}
     {session?.preview.liveVerified&&!draftMode&&!state?.draftOnly&&<>

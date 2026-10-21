@@ -83,6 +83,22 @@ test('board separates all requested columns, shows saved title/image and opens t
  const [image]=elements(tree,node=>node.type==='img');assert.equal(image.props.src,'/api/files/owner/main');
 });
 
+test('product title cell omits representative record prices while saved option-price editing remains connected',()=>{
+ for(const useOptionSelector of [false,true]){
+  const h=useOptionSelector?boardHarness():boardHarness({onOptions:undefined});
+  Object.assign(h.product,{source_price_cny:5.3,supply_price:5120,sale_price:8530});
+  const before=JSON.stringify(h.product),tree=h.render();
+  const [cell]=elements(tree,node=>node.type==='td'&&node.props['data-column']==='product');
+  assert.equal(nodeText(cell),'수정한 상품명옵션 3개');
+  assert.doesNotMatch(nodeText(tree),/공급 5,120원|판매 8,530원/);
+  const [price]=elements(tree,node=>node.type==='button'&&node.props['aria-label']==='수정한 상품명 가격설정 열기');
+  assert.ok(price);assert.notEqual(price.props.disabled,true);price.props.onClick();
+  if(useOptionSelector){assert.equal(h.options.at(-1),h.product);assert.equal(h.calls.length,0);}
+  else{assert.equal(h.calls.at(-1)[0],h.product);assert.equal(h.calls.at(-1)[1],'가격');}
+  assert.equal(JSON.stringify(h.product),before);
+ }
+});
+
 test('every stage and product option badge keeps its real connected handler',()=>{
  const h=boardHarness({onOptions:undefined}),tree=h.render();
  const steps=[['SEO','SEO설정'],['가격','가격설정'],['대표 이미지','대표이미지'],['추가 이미지','추가이미지'],['상세 이미지','상세이미지'],['옵션','사이즈표'],['표시사항','한글표시사항'],['견적서','견적서']];
