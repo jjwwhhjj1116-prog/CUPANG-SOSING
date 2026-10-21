@@ -27,6 +27,8 @@ function harness(handler,{status='completed',attached=true,initialPending=null,i
   result:status==='completed'?{attached,storageKey:'owner/edited'}:null,error:null};
  const view={configuration:{configured:true,issues:[]},settings:{translateImages:true,removeBackground:false,addCopyright:false,translationPrompt:''},settingsFingerprint:'settings',jobs:[job]};
  const hooks={useState(initial){const i=index++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],value=>{if(closed)late++;slots[i]=typeof value==='function'?value(slots[i]):value;}];},useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useEffect(fn,deps){const i=index++,old=slots[i];if(!old||!deps||deps.some((value,j)=>!Object.is(value,old.deps[j]))){const next={deps,cleanup:null};slots[i]=next;effects.push(()=>{old?.cleanup?.();next.cleanup=fn();});}}};
+ hooks.useLayoutEffect=hooks.useEffect;
+ hooks.useMemo=(fn,deps)=>{const i=index++,before=slots[i];if(!before||deps.some((value,j)=>!Object.is(value,before.deps[j])))slots[i]={deps,value:fn()};return slots[i].value;};
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
    {exports,Error,AbortController,DOMException,crypto,structuredClone,fetch:request,require(name){if(name==='react')return hooks;if(name.startsWith('@/'))return load(name.slice(2)+'.ts');return native(name);}});return exports;
@@ -133,6 +135,9 @@ test('history cannot restore removed images or use another product snapshot to r
 for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}])for(const sourceRole of ['main','detailTop','detailBottom'])test(`stored image completion after a lost reply reaches reviewed ${sourceRole}, options and exact XLSX/ZIP bytes (${company.code})`,async()=>{
  const h=mobileIntakeHarness({companyCode:company.code,companyName:company.name}),json=async(response,status=200)=>{assert.equal(response.status,status,await response.clone().text());return response.json();};let ui;
  try{
+  // Execution is a local store fixture; the UI still requires an available
+  // provider configuration before exposing a paid action.
+  h.bindings.OPENAI_API_KEY='TEST-ONLY-NOT-A-REAL-KEY';h.bindings.SOURCEFLOW_IMAGE_MODEL='gpt-image-1.5';
   const readObject=h.bindings.FILES.get;h.bindings.FILES.get=async key=>{const object=await readObject(key);return object?{...object,body:new Response(await object.arrayBuffer()).body}:null;};
   const headers=['categoryId','mainImage','additionalImages','detailImages'],workbook=quotationWorkbook(headers),sha256=Buffer.from(await crypto.subtle.digest('SHA-256',workbook)).toString('hex'),storageKey=h.load('db/category-templates.ts').templateKey('owner',sha256,'xlsx');h.objects.set(storageKey,workbook);
   const profile=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'SYNTHETIC image linkage test',categoryId:'80719',categoryPath:h.context.category.categoryPath,

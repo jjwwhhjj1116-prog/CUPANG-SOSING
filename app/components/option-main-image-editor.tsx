@@ -8,8 +8,9 @@ import {readMainImageLibrary,mainImageLibraryCurrent,mainImageLibraryKeys,type M
 import {ImageFullscreenPreview} from '@/app/components/image-fullscreen-preview';
 type Props={productId:string;version?:string;profileId?:string;refreshToken?:string;focusedOptionId?:string;onSaved?:()=>void;translationEnabled?:boolean;disabled?:boolean;saveOnSelect?:boolean;
  onTranslate?:(sourceKey:string,role:'main',sourceLanguage:'zh'|'en',quotationTarget:FreeImageQuotationRequest)=>void;
- onEdit?:(sourceKey:string,role:'main',quotationTarget:FreeImageQuotationRequest)=>void};
-export function OptionMainImageEditor({productId,version,profileId,refreshToken,focusedOptionId,onSaved,translationEnabled=true,disabled=false,saveOnSelect=false,onTranslate,onEdit}:Props){
+ onEdit?:(sourceKey:string,role:'main',quotationTarget:FreeImageQuotationRequest)=>void;
+ onProcess?:(sourceKey:string,role:'main',quotationTarget:FreeImageQuotationRequest)=>void};
+export function OptionMainImageEditor({productId,version,profileId,refreshToken,focusedOptionId,onSaved,translationEnabled=true,disabled=false,saveOnSelect=false,onTranslate,onEdit,onProcess}:Props){
  const endpoint=`/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId?`?profileId=${encodeURIComponent(profileId)}`:''}`,scope=JSON.stringify([endpoint,focusedOptionId??'']),sourceKey=JSON.stringify([scope,version,refreshToken]);
  const liveScope=useRef(scope),liveSource=useRef(sourceKey),mounted=useRef(true),request=useRef<AbortController|null>(null);
  const [saved,setSaved]=useState<{scope:string;sourceKey:string;view:QuotationFieldsView}|null>(null),liveSaved=useRef<typeof saved>(null),[selection,setSelection]=useState<{scope:string;id:string}>({scope,id:focusedOptionId??''});
@@ -85,16 +86,16 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
  const tab=groups?(libraryTab.scope===tabScope?libraryTab.tab:'main'):'work';
  const visiblePool=base?mainImageLibraryKeys(tab,base.view,groups):[];
  const libraryTabs=[['work','작업 이미지'],['main','메인 이미지'],['options','옵션 이미지'],['detail','상세 이미지']] as const;
- function translateSelected(key:string,sourceLanguage:'zh'|'en',manual=false){
+ function translateSelected(key:string,sourceLanguage:'zh'|'en',manual=false,process=false){
   const before=liveSaved.current,draft=liveDraft.current;
-  if(!(manual?onEdit:onTranslate)||!translationEnabled||!liveTranslationEnabled.current||liveDisabled.current||!current()||liveOption.current!==id||focusedOptionId&&focusedOptionId!==id
+  if(!(process?onProcess:manual?onEdit:onTranslate)||process&&(!previewGeneration||previewEpoch.current!==previewGeneration)||!translationEnabled||!liveTranslationEnabled.current||liveDisabled.current||!current()||liveOption.current!==id||focusedOptionId&&focusedOptionId!==id
    ||request.current||busy||liveUncertain.current||!before||before.view!==base?.view||before.scope!==scope||before.sourceKey!==sourceKey
    ||version&&before.view.productVersion!==version||draft.scope===scope&&draft.value!==undefined||!before.view.imageKeys.includes(key))return;
   try{const target=verifyMainImageView(before.view),row=before.view.resolved.rows.find(row=>row.optionId===id),value=mainImageValue(before.view,id);
    if(value.split('\n').map(item=>item.trim()).filter(Boolean).length!==1||value.trim()!==key||target.linked.some(field=>row?.fields[field]?.value!==value))return;
    const quotationTarget:FreeImageQuotationRequest={kind:'quotation',profileId:profileId??null,optionId:id,input:'mainImage',fieldKey:target.primary,slotIndex:0,
     revision:before.view.revision,inputFingerprint:before.view.inputFingerprint,optionRevision:before.view.optionRevision,value};
-   if(manual)onEdit?.(key,'main',quotationTarget);else onTranslate?.(key,'main',sourceLanguage,quotationTarget);
+   if(process)onProcess?.(key,'main',quotationTarget);else if(manual)onEdit?.(key,'main',quotationTarget);else onTranslate?.(key,'main',sourceLanguage,quotationTarget);
   }catch(cause){setError(cause instanceof Error?cause.message:'번역할 최종 대표이미지 연결을 확인해주세요.');}
  }
  function candidate(key:string){const index=pool.indexOf(key);return <button type="button" key={key} aria-label={`최종 대표이미지 ${index+1} 선택`} aria-pressed={selected.length===1&&selected[0]===key} disabled={disabled||!valid||busy||uncertain||saveOnSelect&&dirty} onClick={()=>edit(key)}><img src={url(key)} alt={`저장 이미지 ${index+1}`} width={100} height={100} loading="lazy"/><span>이미지 {index+1}</span></button>;}
@@ -117,6 +118,7 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
      <h4>현재 메인 이미지</h4>
      {selected.length===1&&pool.includes(selected[0])?<>
       <button type="button" className="main-image-current-thumbnail" aria-label="현재 메인 이미지 크게 보기" aria-haspopup="dialog" disabled={!valid||!fresh||disabled} onClick={()=>openPreview(selected[0])}><img src={url(selected[0])} alt="현재 메인 이미지 작은 미리보기" width={160} height={160}/></button>
+      {onProcess&&<button type="button" className="btn primary" aria-label="최종 대표이미지 AI 처리" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh} onClick={()=>translateSelected(selected[0],'zh',false,true)}>AI 처리</button>}
       {onTranslate&&<div role="group" className="main-image-current-translation" aria-label="최종 견적 대표이미지 번역"><button type="button" className="btn ghost" aria-label="최종 대표이미지 중국어 한국어 번역" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh} onClick={()=>translateSelected(selected[0],'zh')}>중국어 → 한국어</button><button type="button" className="btn ghost" aria-label="최종 대표이미지 영어 한국어 번역" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh} onClick={()=>translateSelected(selected[0],'en')}>영어 → 한국어</button></div>}
      </>:<small>{selected.length?'대표 이미지 연결을 확인해주세요.':'대표 이미지를 선택해주세요.'}</small>}
     </section>

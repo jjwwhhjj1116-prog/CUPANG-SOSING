@@ -3,20 +3,23 @@ import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 
 /* Authenticated R2 previews use the existing file route without a public image optimizer. */
 /* eslint-disable @next/next/no-img-element */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { adoptGeneratedOptionImage } from '@/app/option-image-adoption';
 import { generatedImagesRolePatch } from '@/app/image-role-adoption';
 import type { ProductContent } from '@/app/product-content';
 import type { ImageEditJob, ImageEditView, ImagePurpose, ImageQuality, ImageSize } from '@/app/automation/image-edit';
 import { imageRecipeVersion } from '@/app/automation/image-edit';
+import type { FreeImageQuotationRequest } from '@/app/free-image-translation-client';
 
-type Props = { productId: string; version: string; imageKeys: string[]; onProductChanged?: () => void; translationTarget?: { sourceKey: string; sequence: number; sourceLanguage?: 'zh' | 'en' }; onBusyChange?: (busy: boolean) => void };
+export type SelectedMainImageProcessingTarget = { sourceKey: string; sequence: number; productVersion: string; quotationTarget: FreeImageQuotationRequest };
+type Props = { productId: string; version: string; imageKeys: string[]; onProductChanged?: () => void; translationTarget?: { sourceKey: string; sequence: number; sourceLanguage?: 'zh' | 'en' }; onBusyChange?: (busy: boolean) => void;
+  processingTarget?: SelectedMainImageProcessingTarget; processingTargetActive?: boolean; onCloseProcessingTarget?: () => void };
 const statuses: Record<ImageEditJob['status'], string> = { prepared: '원본·요청 검토 대기', approved: '승인됨 · 실행 대기', running: '실행 중 · 중복 호출 차단', completed: '이미지 생성 완료 · 검토 필요', failed: '실패 · 자동 재호출 없음', uncertain: '결과 확인 필요 · 자동 재호출 없음' };
 const imageUrl = (key: string) => `/api/files/${encodeURIComponent(key)}`;
 const translationTargetLimitError = '추가 요청 문구가 길어서 선택한 언어 지침을 넣을 수 없습니다. 문구를 줄인 뒤 번역 버튼을 다시 눌러주세요.';
 
 export default function ImageGenerationPanel(props: Props) { return <ImageGenerationContent key={props.productId} {...props} />; }
-function ImageGenerationContent({ productId, version, imageKeys, onProductChanged, translationTarget, onBusyChange }: Props) {
+function ImageGenerationContent({ productId, version, imageKeys, onProductChanged, translationTarget, onBusyChange, processingTarget, processingTargetActive = true, onCloseProcessingTarget }: Props) {
   const [view, setView] = useState<ImageEditView | null>(null);
   const [sourceKey, setSourceKey] = useState('');
   const [purpose, setPurpose] = useState<ImagePurpose>('translate');
@@ -34,18 +37,43 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
   const imageWorkBusy = busy || Boolean(view?.jobs.some(item => item.status === 'running'));
   const mounted=useRef(true);
   const activeRequest=useRef<AbortController|null>(null);
+  const historyRequest=useRef<AbortController|null>(null);
   const notifiedAttachment=useRef('');
   const attachmentContext=useRef({productId,imageKeys,onProductChanged});
   const panelRef=useRef<HTMLElement|null>(null);
   const sourceRef=useRef<HTMLSelectElement|null>(null);
   const handledTranslation=useRef<number|null>(null);
+  const handledProcessing=useRef<number|null>(null);
   const languageDirective=useRef('');
+  const processingScope=JSON.stringify([productId,version,processingTarget??null,processingTargetActive]);
+  const processingToken=useMemo(()=>({scope:processingScope}),[processingScope]),liveProcessingToken=useRef<object|null>(processingToken),liveView=useRef(view);
+  const pinned=!!processingTarget,targetCurrent=!processingTarget||processingTargetActive&&processingTarget.productVersion===version&&imageKeys.includes(processingTarget.sourceKey)
+    &&processingTarget.quotationTarget.kind==='quotation'&&processingTarget.quotationTarget.input==='mainImage'&&processingTarget.quotationTarget.slotIndex===0
+    &&processingTarget.quotationTarget.value===processingTarget.sourceKey&&!!processingTarget.quotationTarget.optionId;
+  useLayoutEffect(()=>{liveView.current=view;},[view]);
+  useLayoutEffect(()=>{liveProcessingToken.current=processingToken;return()=>{liveProcessingToken.current=null;
+    // History is a product-scoped read and may finish across a handoff. Abort
+    // pending actions, whose selected target is no longer current.
+    if(activeRequest.current!==historyRequest.current){activeRequest.current?.abort();activeRequest.current=null;}
+  };},[processingToken]);
+  useEffect(()=>{if(processingToken&&loadedVersion===version&&!activeRequest.current)setBusy(false);},[processingToken,loadedVersion,version]);
+  const currentProcessing=()=>!!processingToken&&liveProcessingToken.current===processingToken&&targetCurrent;
   useEffect(()=>{attachmentContext.current={productId,imageKeys,onProductChanged};},[productId,imageKeys,onProductChanged]);
   useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;activeRequest.current?.abort();activeRequest.current=null;};},[productId,version]);
   useEffect(()=>{onBusyChange?.(imageWorkBusy);},[imageWorkBusy,onBusyChange]);
   useEffect(()=>()=>onBusyChange?.(false),[onBusyChange]);
   useEffect(()=>{
-    if (!translationTarget || handledTranslation.current === translationTarget.sequence) return;
+    if(!processingTarget||handledProcessing.current===processingTarget.sequence||!currentProcessing()||imageWorkBusy||activeRequest.current)return;
+    handledProcessing.current=processingTarget.sequence;
+    setSourceKey(processingTarget.sourceKey);setPurpose('cleanup');setConfirmed(false);
+    panelRef.current?.scrollIntoView({behavior:'smooth',block:'start'});
+    sourceRef.current?.focus({preventScroll:true});
+    // This handoff selects an existing source only. Provider preparation and
+    // execution remain explicit, and manually entered request text is retained.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[processingTarget,processingToken,imageWorkBusy]);
+  useEffect(()=>{
+    if (pinned || !translationTarget || handledTranslation.current === translationTarget.sequence) return;
     handledTranslation.current = translationTarget.sequence;
     if (!mounted.current || imageWorkBusy || activeRequest.current || !imageKeys.includes(translationTarget.sourceKey)) return;
     if (translationTarget.sourceLanguage) {
@@ -66,17 +94,18 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
     setSourceKey(translationTarget.sourceKey); setPurpose('translate'); setConfirmed(false);
     panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     sourceRef.current?.focus({ preventScroll: true });
-  },[translationTarget,imageWorkBusy,imageKeys,prompt]);
-  function beginRequest(allowMissing=false) {
-    if(!mounted.current||activeRequest.current||(!allowMissing&&!view))return null;
+  },[translationTarget,imageWorkBusy,imageKeys,prompt,pinned]);
+  function beginRequest(allowMissing=false,readOnly=false) {
+    if(!mounted.current||liveProcessingToken.current!==processingToken||!readOnly&&!targetCurrent||activeRequest.current||(!allowMissing&&!view))return null;
     const controller=new AbortController();activeRequest.current=controller;return controller;
   }
   function finishRequest(controller:AbortController) {
     if(activeRequest.current===controller){activeRequest.current=null;if(mounted.current)setBusy(false);}
   }
-  const source = imageKeys.includes(sourceKey) ? sourceKey : imageKeys[0] ?? '';
+  const source = processingTarget ? imageKeys.includes(processingTarget.sourceKey)?processingTarget.sourceKey:'' : imageKeys.includes(sourceKey) ? sourceKey : imageKeys[0] ?? '';
   const job = view?.jobs.find(item => item.id === selectedId) ?? view?.jobs[0] ?? null;
   const stale = Boolean(job && (job.productVersion !== version || job.review.settingsFingerprint !== view?.settingsFingerprint || job.review.recipeVersion !== imageRecipeVersion));
+  const jobMatchesTarget=!processingTarget||!!job&&job.review.sourceKey===processingTarget.sourceKey&&job.productVersion===processingTarget.productVersion&&job.review.purpose==='cleanup';
 
   function attachmentSnapshot(next:ImageEditView) {
     const {productId,imageKeys}=attachmentContext.current;
@@ -94,17 +123,20 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
   }
 
   useEffect(() => {
-    const controller=new AbortController();activeRequest.current=controller;
+    const controller=new AbortController();activeRequest.current=controller;historyRequest.current=controller;
     fetch(`/api/products/${encodeURIComponent(productId)}/image-generation`,{cache:'no-store',signal:controller.signal}).then(async response => {
       const value = await response.json() as ImageEditView & { error?: string };
       if (!response.ok) throw Error(value.error ?? '이미지 작업을 불러오지 못했습니다.');
       if (!controller.signal.aborted) {const snapshot=attachmentSnapshot(value);setView(value);setConfirmed(false);notifyAttachment(snapshot);}
     }).catch(reason => { if (!controller.signal.aborted) setError(reason.message); }).finally(()=>{
-      if(activeRequest.current===controller){activeRequest.current=null;if(mounted.current){setLoadedVersion(version);setBusy(false);}}
+      if(activeRequest.current===controller){activeRequest.current=null;if(mounted.current){setLoadedVersion(version);setBusy(false);}}if(historyRequest.current===controller)historyRequest.current=null;
     });
     return () => { controller.abort(); };
   }, [productId, version]);
   async function action(body: Record<string, unknown>) {
+    if(['prepare','approve','execute'].includes(String(body.action))&&!liveView.current?.configuration.configured)return;
+    if(pinned&&(!targetCurrent||body.action==='prepare'&&(body.sourceKey!==processingTarget!.sourceKey||body.purpose!=='cleanup'||body.expectedVersion!==processingTarget!.productVersion)
+      ||body.action!=='prepare'&&(!jobMatchesTarget||body.jobId!==job?.id)))return;
     const controller=beginRequest();if(!controller)return;
     setBusy(true); setError('');
     try {
@@ -120,6 +152,7 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
     finally { finishRequest(controller); }
   }
   async function adoptRoles(batch = false) {
+    if(pinned)return;
     const selected=batch?(view?.jobs??[]).filter(item=>reviewedIds.includes(item.id)):job?[job]:[];
     if(batch&&selected.length!==reviewedIds.length){setError('선택한 작업 목록이 변경됐습니다. 실행 이력을 새로고침하고 다시 선택해주세요.');return;}
     if(!selected.length)return;
@@ -139,7 +172,7 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
     finally{finishRequest(controller);}
   }
   async function adoptOptionImages() {
-    if (!job) return;
+    if (pinned || !job) return;
     const controller=beginRequest();if(!controller)return;
     setBusy(true); setError(''); setNotice('');
     try {
@@ -155,13 +188,14 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
     finally { finishRequest(controller); }
   }
   async function refresh() {
-    const controller=beginRequest(true);if(!controller)return;
+    const controller=beginRequest(true,true);if(!controller)return;
     setBusy(true); setError('');
     try { const response = await fetch(`/api/products/${encodeURIComponent(productId)}/image-generation`,{cache:'no-store',signal:controller.signal}); const next = await response.json() as ImageEditView & { error?: string };if(controller.signal.aborted)return; if (!response.ok) throw Error(next.error ?? '조회 실패'); const snapshot=attachmentSnapshot(next);setView(next);setLoadedVersion(version);notifyAttachment(snapshot); }
     catch (reason) { if(!controller.signal.aborted)setError(reason instanceof Error ? reason.message : '조회 실패'); } finally { finishRequest(controller); }
   }
   return <section ref={panelRef} className="translation-panel image-generation-panel" aria-label="원본 이미지 AI 가공">
     <h4>원본 이미지 AI 가공</h4>
+    {processingTarget&&<div className="connection-note" aria-label="선택 옵션 대표이미지 AI 처리 대상"><strong>선택 옵션 대표이미지 AI 처리</strong><p>옵션 {processingTarget.quotationTarget.optionId} · 현재 견적 대표이미지 한 장의 상품 바깥 설명 문구를 정리합니다.</p><p>원본과 결과를 검토한 뒤, 위 대표이미지 후보에서 결과를 선택해 이 옵션에 저장하세요. 번역·직접 편집과는 별도의 AI 이미지 가공입니다.</p>{!targetCurrent&&<p role="status">편집 대상이나 저장 버전이 변경되었습니다. 현재 대표이미지의 AI 처리를 다시 선택해주세요. 입력한 요청은 유지했습니다.</p>}{onCloseProcessingTarget&&<button type="button" className="btn ghost" disabled={imageWorkBusy} onClick={()=>{if(mounted.current&&liveProcessingToken.current===processingToken&&!imageWorkBusy&&!activeRequest.current)onCloseProcessingTarget();}}>선택 옵션 AI 처리 종료 · 공통 작업으로 돌아가기</button>}</div>}
     <button type="button" className="btn" disabled={busy} onClick={() => void refresh()}>저장된 설정·실행 이력 새로고침 · 무료</button>
     <p>상품에 업로드한 PNG·JPEG·WebP 한 장을 가공합니다. 결과는 새 파일로 보관하며, 원본과 기존 이미지 역할을 보존합니다.</p>
     {error && <p className="form-error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
@@ -175,15 +209,15 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
         {view.settings.translationPrompt && <details><summary>저장된 번역 지침</summary><pre>{view.settings.translationPrompt}</pre></details>}
       </div>
       {!imageKeys.length && <p>먼저 이 상품에 원본 이미지를 업로드해주세요. 원본 없이 임의의 상품 이미지를 생성하지 않습니다.</p>}
-      <label>가공할 원본<select ref={sourceRef} value={source} onChange={event => setSourceKey(event.target.value)} disabled={busy || !imageKeys.length}>{!imageKeys.length && <option value="">원본 이미지 없음</option>}{imageKeys.map((key, index) => <option key={key} value={key}>이미지 {index + 1} · {key.split('/').at(-1)}</option>)}</select></label>
+      <label>가공할 원본<select ref={sourceRef} value={source} onChange={event => {if(!pinned&&currentProcessing())setSourceKey(event.target.value);}} disabled={busy || pinned || !imageKeys.length}>{!source && <option value="">원본 이미지 없음</option>}{imageKeys.filter(key=>!processingTarget||key===processingTarget.sourceKey).map((key) => <option key={key} value={key}>이미지 {imageKeys.indexOf(key) + 1} · {key.split('/').at(-1)}</option>)}</select></label>
       {source && <img src={imageUrl(source)} alt="선택한 원본 이미지" style={{ maxWidth: 240, maxHeight: 240, objectFit: 'contain' }} />}
-      <label>작업 목적<select value={purpose} onChange={event => setPurpose(event.target.value as ImagePurpose)} disabled={busy}><option value="translate">이미지 속 문구 번역</option><option value="thumbnail">대표 이미지 초안</option><option value="detail">상세 이미지 초안</option><option value="cleanup">대표·추가 이미지 문구 정리</option></select></label>
+      <label>작업 목적<select value={pinned?'cleanup':purpose} onChange={event => {if(!pinned&&currentProcessing())setPurpose(event.target.value as ImagePurpose);}} disabled={busy||pinned}><option value="translate">이미지 속 문구 번역</option><option value="thumbnail">대표 이미지 초안</option><option value="detail">상세 이미지 초안</option><option value="cleanup">대표·추가 이미지 문구 정리</option></select></label>
       {purpose==='cleanup'&&<p>상품 바깥 설명 문구를 정리합니다. 상품 표면의 인쇄는 유지합니다.</p>}
       <label>추가 가공 요청 · 선택<textarea rows={4} maxLength={4000} value={prompt} onChange={event => setPrompt(event.target.value)} disabled={busy} placeholder="비워두면 작업 목적과 저장된 설정으로 준비합니다. 추가로 보존할 부분·배치 요청을 적을 수 있습니다. 원문 사실과 기본 처리 규칙은 유지합니다." /></label>
       <div className="form-row"><label>결과 크기<select value={size} onChange={event => setSize(event.target.value as ImageSize)} disabled={busy}><option>1024x1024</option><option>1024x1536</option><option>1536x1024</option></select></label><label>품질<select value={quality} onChange={event => setQuality(event.target.value as ImageQuality)} disabled={busy}><option value="low">낮음</option><option value="medium">중간</option><option value="high">높음</option></select></label></div>
-      <button className="btn" type="button" disabled={busy || !source || !view.configuration.configured} onClick={() => void action({ action: 'prepare', expectedVersion: version, sourceKey: source, prompt, purpose, size, quality, idempotencyKey: crypto.randomUUID() })}>이미지 요청 검토하기 · 무료</button>
+      <button className="btn" type="button" disabled={busy || !targetCurrent || !source || !view.configuration.configured} onClick={() => void action({ action: 'prepare', expectedVersion: version, sourceKey: source, prompt, purpose:pinned?'cleanup':purpose, size, quality, idempotencyKey: crypto.randomUUID() })}>이미지 요청 검토하기 · 무료</button>
       {view.jobs.length > 1 && <label>이전 이미지 작업<select value={job?.id ?? ''} onChange={event => { setSelectedId(event.target.value); setConfirmed(false); }} disabled={busy}>{view.jobs.map(item => <option key={item.id} value={item.id}>{new Date(item.createdAt).toLocaleString()} · {statuses[item.status]}</option>)}</select></label>}
-      <details className="translation-review"><summary>완료한 이미지 결과 여러 장 검토·적용</summary>
+      {!pinned&&<details className="translation-review"><summary>완료한 이미지 결과 여러 장 검토·적용</summary>
         <p>원본과 결과를 비교한 항목만 선택하세요. 같은 콘텐츠 버전에서 만든 결과를 한 번에 저장하여 이미지 순서를 유지합니다.</p>
         {(view.jobs.filter(item=>item.status==='completed'&&item.result?.attached)).map(item=><label key={item.id} style={{display:'block'}}>
           <input type="checkbox" checked={reviewedIds.includes(item.id)} disabled={busy} onChange={event=>setReviewedIds(ids=>event.target.checked?[...ids,item.id]:ids.filter(id=>id!==item.id))}/>
@@ -193,7 +227,7 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
         </label>)}
         <button className="btn" type="button" disabled={busy||!reviewedIds.length} onClick={()=>void adoptRoles(true)}>검토한 결과 {reviewedIds.length}개를 원본 위치에 함께 적용 · 무료</button>
         <small>기존 역할이나 콘텐츠가 변경된 항목이 있으면 전체 적용을 중단합니다. 라벨·사이즈표와 원본 파일은 보존합니다.</small>
-      </details>
+      </details>}
       {job && <div className="translation-review">
         <h4>{statuses[job.status]}</h4>
         <p>모델 <strong>{job.review.model}</strong> · 결과 PNG 1장 · {job.review.size} · 품질 {job.review.quality}</p>
@@ -202,15 +236,15 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
         {job.review.recipe && <div><strong>이 요청에 적용하는 처리 설정</strong><ul>{job.review.recipe.map(step => <li key={step.key}><strong>{step.status === 'applied' ? '적용' : '미적용'}</strong> · {step.description}</li>)}</ul></div>}
         <details><summary>검토 당시 저장 설정과 직접 입력한 추가 요청</summary><pre>{JSON.stringify(job.review.settingsSnapshot ?? {}, null, 2)}</pre><p>{job.review.prompt || '추가 요청 없음 · 저장 설정과 목적을 적용'}</p></details>
         <details><summary>원본 SHA-256과 실제 전송 요청 확인</summary><p>{job.review.source.sha256}</p><pre>{job.review.effectivePrompt}</pre></details>
-        <button className="btn" type="button" disabled={busy || !imageKeys.includes(job.review.sourceKey)} onClick={() => { setSourceKey(job.review.sourceKey); setPurpose(job.review.purpose); setSize(job.review.size); setQuality(job.review.quality); setPrompt(job.review.prompt); setConfirmed(false); }}>이 요청을 위 입력란으로 복사해 수정 · 새 검토 필요</button>
+        {!pinned&&<button className="btn" type="button" disabled={busy || !imageKeys.includes(job.review.sourceKey)} onClick={() => { if(!currentProcessing())return;setSourceKey(job.review.sourceKey); setPurpose(job.review.purpose); setSize(job.review.size); setQuality(job.review.quality); setPrompt(job.review.prompt); setConfirmed(false); }}>이 요청을 위 입력란으로 복사해 수정 · 새 검토 필요</button>}
         <p>{job.review.paidNotice} <a href={job.review.pricingUrl} target="_blank" rel="noreferrer">공식 요금표</a></p>
         <p>승인 유효 기한: {new Date(job.review.expiresAt).toLocaleString()}</p>
         {stale && ['prepared', 'approved'].includes(job.status) && <p className="form-error">상품 또는 이미지 처리 설정이 변경되었습니다. 새 요청으로 원본과 설정을 다시 검토해주세요.</p>}
-        {job.status === 'prepared' && <><label><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} disabled={busy || stale} />위 원본·설정·모델·요청·크기·품질의 유료 가공 1회를 승인합니다.</label><button type="button" className="btn" disabled={busy || stale || !confirmed} onClick={() => void action({ action: 'approve', jobId: job.id, reviewFingerprint: job.review.fingerprint, confirmPaid: true })}>유료 요청 승인 · 아직 호출하지 않음</button></>}
-        {job.status === 'approved' && <button className="btn blue" type="button" disabled={busy || stale} onClick={() => void action({ action: 'execute', jobId: job.id })}>승인한 이미지 1장 가공 · 비용 발생</button>}
+        {job.status === 'prepared' && <><label><input type="checkbox" checked={confirmed} onChange={event => {if(currentProcessing())setConfirmed(event.target.checked);}} disabled={busy || stale || !targetCurrent || !jobMatchesTarget || !view.configuration.configured} />위 원본·설정·모델·요청·크기·품질의 유료 가공 1회를 승인합니다.</label><button type="button" className="btn" disabled={busy || stale || !targetCurrent || !jobMatchesTarget || !view.configuration.configured || !confirmed} onClick={() => void action({ action: 'approve', jobId: job.id, reviewFingerprint: job.review.fingerprint, confirmPaid: true })}>유료 요청 승인 · 아직 호출하지 않음</button></>}
+        {job.status === 'approved' && <button className="btn blue" type="button" disabled={busy || stale || !targetCurrent || !jobMatchesTarget || !view.configuration.configured} onClick={() => void action({ action: 'execute', jobId: job.id })}>승인한 이미지 1장 가공 · 비용 발생</button>}
         {job.status === 'running' && <><p>실행 중이거나 결과 확인이 필요한 상태입니다. 같은 작업으로 유료 호출을 반복하지 않습니다.</p><button className="btn" type="button" disabled={busy} onClick={() => void refresh()}>저장된 실행 상태 새로고침 · 무료</button></>}
         {job.error && <p role="alert">{job.error.message}{job.error.mayHaveBeenCharged ? ' 비용이 발생했을 수 있습니다.' : ''}</p>}
-        {job.result && <div className="translation-field"><h4>생성 결과 검토</h4><img src={imageUrl(job.result.storageKey)} alt="AI 가공 결과 · 검토 필요" style={{ maxWidth: '100%', maxHeight: 480, objectFit: 'contain' }} /><p>번역 정확성·상표·인증·법적 표시사항을 확인한 결과가 아닙니다. 원본과 비교한 뒤 이미지 역할을 지정해주세요.</p><p>{job.result.attached ? '상품 이미지 목록에 추가했습니다. 대표·상세 역할은 자동 지정하지 않았습니다.' : '가공 중 상품이 변경되어 결과만 보관했습니다. 아래 버튼은 저장한 결과를 무료로 첨부합니다.'}</p>{job.result.attached && <><button className="btn" type="button" disabled={busy || !imageKeys.includes(job.result.storageKey)} onClick={()=>void adoptRoles()}>검토한 결과를 원본의 대표·추가·상세 위치에 적용</button><button className="btn" type="button" disabled={busy || !imageKeys.includes(job.result.storageKey)} onClick={()=>void adoptOptionImages()}>검토한 결과를 같은 원본의 옵션 대표 이미지에 적용</button><small>가공 요청 이후 콘텐츠를 수정했다면 이미지 편집에서 직접 선택해주세요.</small></>}{!job.result.attached && <button className="btn" type="button" disabled={busy} onClick={() => void action({ action: 'attach', jobId: job.id, expectedVersion: version })}>생성된 결과를 현재 상품에 추가 · 무료</button>}</div>}
+        {job.result && <div className="translation-field"><h4>생성 결과 검토</h4><img src={imageUrl(job.result.storageKey)} alt="AI 가공 결과 · 검토 필요" style={{ maxWidth: '100%', maxHeight: 480, objectFit: 'contain' }} /><p>번역 정확성·상표·인증·법적 표시사항을 확인한 결과가 아닙니다. 원본과 비교한 뒤 이미지 역할을 지정해주세요.</p><p>{job.result.attached ? '상품 이미지 목록에 추가했습니다. 대표·상세 역할은 자동 지정하지 않았습니다.' : '가공 중 상품이 변경되어 결과만 보관했습니다. 아래 버튼은 저장한 결과를 무료로 첨부합니다.'}</p>{pinned&&job.result.attached&&<p role="status">결과를 사용하려면 위 대표이미지 후보에서 선택해주세요. 선택한 옵션의 현재 견적서 연결을 확인한 뒤 저장합니다.</p>}{!pinned&&job.result.attached && <><button className="btn" type="button" disabled={busy || !imageKeys.includes(job.result.storageKey)} onClick={()=>void adoptRoles()}>검토한 결과를 원본의 대표·추가·상세 위치에 적용</button><button className="btn" type="button" disabled={busy || !imageKeys.includes(job.result.storageKey)} onClick={()=>void adoptOptionImages()}>검토한 결과를 같은 원본의 옵션 대표 이미지에 적용</button><small>가공 요청 이후 콘텐츠를 수정했다면 이미지 편집에서 직접 선택해주세요.</small></>}{!job.result.attached && <button className="btn" type="button" disabled={busy||!targetCurrent||!jobMatchesTarget} onClick={() => void action({ action: 'attach', jobId: job.id, expectedVersion: version })}>생성된 결과를 현재 상품에 추가 · 무료</button>}</div>}
       </div>}
     </>}
   </section>;
