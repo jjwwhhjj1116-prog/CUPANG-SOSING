@@ -355,20 +355,24 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     </button>
     <figcaption>{instant ? <button type="button" className="btn ghost option-additional-add" aria-label={`추가 이미지 후보 ${index + 1} 추가`} disabled={locked || selected.includes(key) || selected.length >= limit} onClick={() => addImage(key)}>{selected.includes(key) ? '추가됨' : '＋ 추가'}</button> : <label><input type="checkbox" aria-label={`선택 옵션 ${label} 후보 ${index + 1}`} checked={selected.includes(key)} disabled={locked || !mutableImage(key) || (!selected.includes(key) && selected.length >= limit)} onChange={() => toggle(key)} />이미지 {index + 1} 선택</label>}</figcaption>
   </figure>);
-  const selectedActions = (key: string, index: number) => <div className={stage === 'detail' ? 'option-detail-image-toolbar' : 'image-selected-actions'} role="group" aria-label={`${label} ${index + 1} 편집`}>
-    {stage === 'detail' && knownProtection?.includes(key) && <small>상단·하단 설정 이미지 · 원본과 위치 유지</small>}
+  const imageEditActions = (key: string, index: number) => <>
     {!instant && onEdit && <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 편집하기`} disabled={locked || !mutableImage(key) || dirty || saved?.sourceKey !== sourceKey || !view?.imageKeys.includes(key)} onClick={() => translateSelected(key, index, 'zh', true)}>편집하기</button>}
     {!instant && onTranslate && <><button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 중국어 한국어 번역`} disabled={locked || !mutableImage(key) || dirty || saved?.sourceKey !== sourceKey || !view?.imageKeys.includes(key)} onClick={() => translateSelected(key, index, 'zh')}>중국어 → 한국어</button>
-      <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 영어 한국어 번역`} disabled={locked || !mutableImage(key) || dirty || saved?.sourceKey !== sourceKey || !view?.imageKeys.includes(key)} onClick={() => translateSelected(key, index, 'en')}>영어 → 한국어</button></>}
+      <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 영어 한국어 번역`} disabled={locked || !mutableImage(key) || dirty || saved?.sourceKey !== sourceKey || !view?.imageKeys.includes(key)} onClick={() => translateSelected(key, index, 'en')}>영어 → 한국어</button></>}</>;
+  const imageOrderActions = (key: string, index: number) => <>
     <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 위로 이동`} disabled={locked || !mutableImage(key) || index === 0 || !mutableImage(selected[index - 1])} onClick={() => move(key, index, -1)}>↑</button>
     <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 아래로 이동`} disabled={locked || !mutableImage(key) || index === selected.length - 1 || !mutableImage(selected[index + 1])} onClick={() => move(key, index, 1)}>↓</button>
-    <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 선택 제거`} disabled={locked || !mutableImage(key)} onClick={() => removeImages(keys => keys[index] === key ? keys.filter((_, position) => position !== index) : keys)}>삭제</button>
+    <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 선택 제거`} disabled={locked || !mutableImage(key)} onClick={() => removeImages(keys => keys[index] === key ? keys.filter((_, position) => position !== index) : keys)}>삭제</button></>;
+  const selectedActions = (key: string, index: number) => <div className={stage === 'detail' ? 'option-detail-image-toolbar' : 'image-selected-actions'} role="group" aria-label={`${label} ${index + 1} 편집`}>
+    {stage === 'detail' && knownProtection?.includes(key) && <small>상단·하단 설정 이미지 · 원본과 위치 유지</small>}
+    {stage==='detail'?<><div className="option-detail-image-edit-actions" role="group" aria-label={`상세 이미지 ${index+1} 번역·수정`}>{imageEditActions(key,index)}</div><div className="option-detail-image-order-actions" role="group" aria-label={`상세 이미지 ${index+1} 순서·삭제`}>{imageOrderActions(key,index)}</div></>:<>{imageEditActions(key,index)}{imageOrderActions(key,index)}</>}
   </div>;
-  return <section className={`panel-stack${instant ? ' option-additional-instant' : ''}`} aria-label="선택 옵션 이미지 편집" data-quotation-source-step={stage === 'additional' ? '추가 이미지' : '상세 이미지'} data-workspace-dirty={dirty} data-workspace-saving={busy || merging || workspaceWorking}>
-    <h3>{stage === 'detail' ? '상세 페이지 이미지' : '선택 옵션 추가 이미지'}</h3><p>{row?.optionLabel || optionId} · {row?.included === false ? '견적 제외 옵션' : '선택한 옵션'}</p>
-    <p>{instant ? '＋ 추가로 이미지를 넣고 드래그 또는 ↑↓로 순서를 조정하세요. 추가·삭제·순서 변경은 바로 저장됩니다.' : '드래그 또는 ↑↓로 순서를 조정한 뒤 저장하세요.'} 선택한 이미지와 순서는 이 옵션의 견적서에만 저장합니다. 상품 공통 이미지와 다른 옵션은 유지됩니다.</p>
+  const editGuidance=<><p>{instant ? '＋ 추가로 이미지를 넣고 드래그 또는 ↑↓로 순서를 조정하세요. 추가·삭제·순서 변경은 바로 저장됩니다.' : '드래그 또는 ↑↓로 순서를 조정한 뒤 저장하세요.'} 선택한 이미지와 순서는 이 옵션의 견적서에만 저장합니다. 상품 공통 이미지와 다른 옵션은 유지됩니다.</p>
     <button type="button" className="btn ghost" disabled={!view || locked || !selected.length || !!unavailable.length} onClick={() => void downloadSelection()}>{label} ZIP 다운로드</button>
-    <small>현재 선택한 순서의 원본·편집 결과 파일을 내려받습니다. {selectionSaveHint}</small>
+    <small>현재 선택한 순서의 원본·편집 결과 파일을 내려받습니다. {selectionSaveHint}</small></>;
+  return <section className={`panel-stack${instant ? ' option-additional-instant' : ''}`} aria-label="선택 옵션 이미지 편집" data-quotation-source-step={stage === 'additional' ? '추가 이미지' : '상세 이미지'} data-workspace-dirty={dirty} data-workspace-saving={busy || merging || workspaceWorking}>
+    {!(stage==='detail'&&primaryDetailTools)&&<h3>{stage === 'detail' ? '상세 페이지 이미지' : '선택 옵션 추가 이미지'}</h3>}<p>{row?.optionLabel || optionId} · {row?.included === false ? '견적 제외 옵션' : '선택한 옵션'}</p>
+    {stage==='detail'&&primaryDetailTools?<details className="option-detail-guidance"><summary>사진 편집 안내·원본 ZIP</summary>{editGuidance}</details>:editGuidance}
     {stage === 'detail' && view && canEditSavedDetailInputs({ productId, optionId, profileId, view }) && <div className="button-row">
       <button type="button" className="btn ghost" disabled={locked || dirty || !active || saved?.sourceKey !== sourceKey} onClick={() => void reopenDetailInputs()}>저장 전 개별 사진으로 편집</button>
       <button type="button" className="btn ghost" disabled={locked || dirty || !active || saved?.sourceKey !== sourceKey} onClick={() => void reopenDetailInputs(true)}>저장 전 사진·HTML로 편집</button>
@@ -431,7 +435,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
         clearDrag(); latestDraft.current = { scope, values: { detailImages: keys.join('\n') } }; setPending(latestDraft.current);
         setMessage('보관한 작업 사진을 선택 옵션의 수동 초안으로 불러왔습니다. 기존 견적 HTML은 유지했습니다. 확인 후 선택 옵션 이미지를 저장해주세요.');
       }} /></details>}
-    {stage === 'detail' && view && <details className="option-detail-composite" open={primaryDetailTools ? true : undefined}><summary>통합 상세 이미지 미리보기·다운로드·저장</summary><DetailImageCompositePanel key={`composite:${scope}`} productId={productId} optionId={optionId} profileId={profileId} view={view} stageActive={active}
+    {stage === 'detail' && view && <details className={`option-detail-composite${primaryDetailTools?' option-detail-composite-primary':''}`} open={primaryDetailTools ? true : undefined}><summary hidden={primaryDetailTools}>통합 상세 이미지 미리보기·다운로드·저장</summary><DetailImageCompositePanel key={`composite:${scope}`} productId={productId} optionId={optionId} profileId={profileId} view={view} stageActive={active} compactToolbar={primaryDetailTools}
       disabled={disabled || busy || workspaceWorking || uncertain || dirty || !!bindingError || saved?.sourceKey !== sourceKey}
       beforeApply={() => !!keyboardGeneration && keyboardEpoch.current === keyboardGeneration && active && liveActive.current && current() && currentStage.current === 'detail' && !liveDisabled.current && !request.current && !pendingSave.current && !Object.keys(latestDraft.current.values).length}
       onBusyChange={value => { compositeBusy.current = value; setMerging(value); }}

@@ -7,11 +7,11 @@ const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value
 const text=value=>Array.isArray(value)?value.map(text).join(''):value&&typeof value==='object'?text(value.props?.children):value==null?'':String(value);
 const settle=async()=>{for(let index=0;index<14;index++)await new Promise(resolve=>setImmediate(resolve));};
 const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve};};
-function ui({active=true,permission=true,failed=false,uncertain=false,heldPrepare,heldRead,stage='detail',poolSize=3}={}){
+function ui({active=true,permission=true,failed=false,uncertain=false,heldPrepare,heldRead,stage='detail',poolSize=3,compactToolbar=false}={}){
  const slots=[],effects=[],layouts=[],calls=[],busy=[];let cursor=0,closed=false,saved=0,late=0,allow=permission;
  const keys=['owner/a.png','owner/b.png','owner/c.png'],imageKeys=[...keys];while(imageKeys.length<poolSize)imageKeys.push(`owner/source-${imageKeys.length}.png`);
  const view={productVersion:'2026-10-13T00:00:00.000Z',revision:2,imageKeys};
- let props={productId:'product',optionId:'red',profileId:'cat',stage,version:view.productVersion,active,beforeApply:()=>allow,onSaved(){saved++;props={...props,version:view.productVersion};},onBusyChange(value){busy.push(value);}};
+ let props={productId:'product',optionId:'red',profileId:'cat',stage,compactToolbar,version:view.productVersion,active,beforeApply:()=>allow,onSaved(){saved++;props={...props,version:view.productVersion};},onBusyChange(value){busy.push(value);}};
  const enqueue=(queue,fn,deps)=>{const slot=cursor++,old=slots[slot];if(!old||!deps||deps.some((value,i)=>!Object.is(value,old.deps[i]))){const next={deps,cleanup:null};slots[slot]=next;queue.push(()=>{old?.cleanup?.();next.cleanup=fn();});}};
  const react={useState(initial){const slot=cursor++;if(!(slot in slots))slots[slot]=typeof initial==='function'?initial():initial;return[slots[slot],value=>{if(closed){late++;return;}slots[slot]=typeof value==='function'?value(slots[slot]):value;}];},useRef(initial){const slot=cursor++;return slots[slot]??(slots[slot]={current:initial});},useEffect(fn,deps){enqueue(effects,fn,deps);},useLayoutEffect(fn,deps){enqueue(layouts,fn,deps);}};
  const helpers={detailBatchTranslationSlots:()=>({keys,slots:keys.map((_key,index)=>index),protectedSlots:[]}),detailBatchCapacity:value=>150-value.imageKeys.length,readDetailBatchView:async()=>{calls.push(['read']);await heldRead?.promise;return{...view};},prepareDetailImageBatch:async(input,signal,progress)=>{
@@ -29,6 +29,25 @@ function ui({active=true,permission=true,failed=false,uncertain=false,heldPrepar
  const button=label=>nodes(render()).find(node=>node.type==='button'&&text(node)===label),control=label=>nodes(render()).find(node=>node.props?.['aria-label']===label);
  return{render,calls,busy,button,control,get saved(){return saved;},get late(){return late;},update(value){props={...props,...value};return render();},permission(value){allow=value;},fail(value){uncertain=value;},async start(){render();await settle();render();},async click(label){const node=button(label);assert.ok(node&&!node.props.disabled,label+' '+text(render()));node.props.onClick();await settle();render();},review(index){const node=control(`${props.stage==='additional'?'추가':'상세'} 이미지 ${index+1} 번역 결과 검토 완료`);assert.ok(node&&!node.props.disabled);node.props.onChange({target:{checked:true}});render();},close(){closed=true;slots.forEach(slot=>slot?.cleanup?.());}};
 }
+test('compact detail tools keep explicit language actions and visible review before applying exactly the selected results',async()=>{
+ const h=ui({compactToolbar:true});
+ const entries=(value,ancestors=[])=>Array.isArray(value)?value.flatMap(child=>entries(child,ancestors)):value&&typeof value==='object'?[{node:value,ancestors},...entries(value.props?.children,[...ancestors,value])]:[];
+ const visible=entry=>!entry.ancestors.some(node=>node.props?.hidden||node.type==='details'&&!node.props.open);
+ try{
+  await h.start();assert.equal(h.calls.filter(row=>row[0]==='prepare'||row[0]==='apply').length,0);
+  let tree=entries(h.render());
+  for(const label of ['영어→한국어 번역','모든 이미지 AI 처리'])assert(visible(tree.find(entry=>entry.node.type==='button'&&text(entry.node)===label)),label);
+  assert.equal(visible(tree.find(entry=>entry.node.props?.['aria-label']==='일괄 상세 이미지 원문 언어')),false,'optional language setting stays folded');
+  await h.click('영어→한국어 번역');assert.deepEqual(h.calls.filter(row=>row[0]==='prepare'),[['prepare','en','detail']]);
+  tree=entries(h.render());const review=tree.find(entry=>entry.node.props?.['aria-label']==='상세 이미지 2 번역 결과 검토 완료');assert(review&&visible(review));
+  assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);h.review(1);
+  const retained=h.button('검토한 상세 이미지 1개 적용').props.onClick;
+  h.permission(false);retained();await settle();assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);
+  h.permission(true);await h.click('검토한 상세 이미지 1개 적용');assert.deepEqual(h.calls.filter(row=>row[0]==='apply'),[['apply',1]]);
+  assert(h.control('상세 이미지 1 번역 결과 검토 완료'));assert.equal(h.saved,1);
+ }finally{h.close();}
+});
+
 test('stage-five bulk translation has a positive review-before-save flow, preserves unchecked results, and does not read while inactive',async()=>{
  const h=ui({active:false});try{await h.start();assert.equal(h.calls.length,0);h.update({active:true});await settle();h.render();
   await h.click('모든 이미지 AI 처리');assert.equal(h.calls.filter(row=>row[0]==='prepare').length,1);assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);

@@ -42,7 +42,7 @@ test('selected Stage5 opens the existing detail editor and batch tools without a
  const h=dashboard();try{
   const image=h.child('OptionImageEditor','detail'),batch=h.child('DetailImageBatchPanel','detail');
   assert.equal(initiallyVisible(image),true);assert.equal(initiallyVisible(batch),true);assert.equal(image.node.props.primaryDetailTools,true);
-  assert.equal(image.node.props.active,true);assert.equal(batch.node.props.active,true);assert.notEqual(batch.node.props.autoPrepare,true);
+  assert.equal(image.node.props.active,true);assert.equal(batch.node.props.active,true);assert.notEqual(batch.node.props.autoPrepare,true);assert.equal(batch.node.props.compactToolbar,true);
   assert.equal(image.node.props.optionId,'red');assert.equal(batch.node.props.optionId,'red');assert.equal(batch.node.props.profileId,'cat');
   const tree=entries(h.render()),batchIndex=tree.findIndex(({node})=>node.type?.label?.endsWith(':DetailImageBatchPanel')&&node.props.stage==='detail'),imageIndex=tree.findIndex(({node})=>node.type?.label?.endsWith(':OptionImageEditor')&&node.props.stage==='detail');
   assert.ok(batchIndex<imageIndex,'all-image controls precede the selected photo stack');
@@ -57,7 +57,7 @@ test('selected Stage4 opens its existing gallery and instant tools while unscope
  const h=dashboard();try{
   h.render({tab:'추가 이미지'});const image=h.child('OptionImageEditor','additional'),batch=h.child('DetailImageBatchPanel','additional');
   assert.equal(initiallyVisible(image),true);assert.equal(initiallyVisible(batch),true);assert.equal(image.node.props.saveOnChange,true);assert.equal(initiallyVisible(h.child('ProductContentEditor')),false);
-  assert.equal(image.node.props.optionId,'red');assert.equal(batch.node.props.optionId,'red');assert.equal(batch.node.props.profileId,'cat');assert.notEqual(batch.node.props.autoPrepare,true);
+  assert.equal(image.node.props.optionId,'red');assert.equal(batch.node.props.optionId,'red');assert.equal(batch.node.props.profileId,'cat');assert.notEqual(batch.node.props.autoPrepare,true);assert.notEqual(batch.node.props.compactToolbar,true);
   const imageKey=image.node.key,batchKey=batch.node.key;
   for(const tab of ['견적서','SEO','상세 이미지','추가 이미지']){h.render({tab});const current=h.child('OptionImageEditor','additional'),currentBatch=h.child('DetailImageBatchPanel','additional');assert.equal(current.node.type,image.node.type);assert.equal(current.node.key,imageKey);assert.equal(currentBatch.node.key,batchKey);assert.equal(initiallyVisible(current),tab==='추가 이미지');assert.equal(current.node.props.active,tab==='추가 이미지');}
   h.render({tab:'추가 이미지',focusedOptionId:undefined});assert.equal(initiallyVisible(h.child('ProductContentEditor')),true);assert.equal(entries(h.render()).some(({node})=>node.type?.label?.endsWith(':OptionImageEditor')),false);
@@ -85,7 +85,10 @@ for(const company of companies)test(`${company.companyCode} primary detail photo
   const props={productId:f.product.id,optionId:'1688-red',version:f.product.updated_at,profileId:'cat',stage:'detail',primaryDetailTools:true,onTranslate(){throw Error('No implicit translation');},onEdit(){}};
   const view=await json(await f.api.route(f.base+'/quotation-fields?profileId=cat')),selected=view.resolved.rows.find(row=>row.optionId&&row.included!==false);assert.ok(selected,'an actual included option rather than the common row');props.optionId=selected.optionId;
   h=downloadUI('app/components/option-image-editor.tsx','OptionImageEditor',props,f.request);await h.idle();
-  const composite=entries(h.render()).find(({node})=>typeof node.type==='function'&&node.type.name==='DetailImageCompositePanel');assert.ok(composite);assert.equal(initiallyVisible(composite),true);assert.equal(composite.node.props.disabled,false);assert.equal(composite.node.props.beforeApply(),true);
+  const composite=entries(h.render()).find(({node})=>typeof node.type==='function'&&node.type.name==='DetailImageCompositePanel');assert.ok(composite);assert.equal(initiallyVisible(composite),true);assert.equal(composite.node.props.disabled,false);assert.equal(composite.node.props.beforeApply(),true);assert.equal(composite.node.props.compactToolbar,true);
+  assert.equal(entries(h.render()).filter(({node})=>node.type?.name==='DetailImageCompositePanel').length,1,'one original composite controller');
+  const zip=entries(h.render()).find(({node})=>node.type==='button'&&text(node)==='상세 이미지 ZIP 다운로드');assert(zip);assert.equal(initiallyVisible(zip),false);
+  for(const name of ['상세 이미지 2 번역·수정','상세 이미지 2 순서·삭제'])assert(entries(h.render()).some(({node,ancestors})=>node.props?.role==='group'&&node.props['aria-label']===name&&!ancestors.some(parent=>parent.type==='details'&&!parent.props.open)));
   const workspace=entries(h.render()).find(({node})=>typeof node.type==='function'&&node.type.name==='DetailWorkspacePanel');assert.ok(workspace);assert.equal(initiallyVisible(workspace),false,'stored work configuration remains advanced');
   for(const label of ['상세 이미지 2 편집하기','상세 이미지 2 영어 한국어 번역','상세 이미지 2 위로 이동','상세 이미지 2 선택 제거','선택 옵션 이미지 저장']){const entry=entries(h.render()).find(({node})=>node.type==='button'&&(node.props['aria-label']===label||text(node)===label));assert.ok(entry,label);assert.equal(initiallyVisible(entry),true,label);}
   const before=f.retained(),files=f.originals(),sourceOptions=JSON.stringify(f.api.sqlite.prepare('SELECT * FROM product_options').all());assert.equal(h.button('선택 옵션 이미지 저장').props.disabled,true);

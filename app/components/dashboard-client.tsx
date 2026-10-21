@@ -141,7 +141,8 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   const [sourceReviewState,setSourceReview]=useState<SourceReviewSession|null>(null);
   const sourceReview=sourceReviewState?.scope===sourceReviewScope?sourceReviewState:null;
   const sourceReviewSession=useRef<SourceReviewSession|null>(null);
-  useLayoutEffect(()=>{sourceReviewSession.current=null;return()=>{sourceReviewSession.current=null;};},[workspaceOwnerId]);
+  const sourceWorkspace=useRef<{scope:typeof sourceReviewScope;ready:boolean;company:WorkspaceSettingsScope['company']}|null>(null);
+  useLayoutEffect(()=>{sourceReviewSession.current=null;sourceWorkspace.current={scope:sourceReviewScope,ready:false,company:null};return()=>{sourceReviewSession.current=null;sourceWorkspace.current=null;};},[workspaceOwnerId,sourceReviewScope]);
   const [sourceNotice,setSourceNotice]=useState('');
   const [intakeSourceSeed,setIntakeSourceSeed]=useState<IntakeSourceSeed|undefined>();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -407,6 +408,11 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     const operation=settingsOperationRef.current;
     if(!operation.mounted||operation.ownerId!==workspaceOwnerId||productsRead!==workspaceProductsRead.current)return;
     const [productData, settingData, collectionData, categoriesData] = results;
+    const sourceScope=settingData.status==='fulfilled'?parseWorkspaceSettingsScope((settingData.value as {scope?:unknown}).scope):null;
+    // The previous request list is supplementary to a new captured item. Its
+    // read failure must not hide healthy products, settings and category data.
+    sourceWorkspace.current={scope:sourceReviewScope,ready:productData.status==='fulfilled'&&settingData.status==='fulfilled'&&categoriesData.status==='fulfilled'
+      &&sourceScope?.ownerId===workspaceOwnerId&&!!sourceScope?.company,company:sourceScope?.company??null};
     if(workspaceOwnerId&&settingData.status==='fulfilled'&&parseWorkspaceSettingsScope((settingData.value as {scope?:unknown}).scope)?.ownerId!==workspaceOwnerId){
       setLoadError('로그인 계정이 변경되었습니다. 페이지를 새로고침해주세요.');setLoading(false);return;
     }
@@ -423,7 +429,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     if (categoriesData.status === 'fulfilled'&&categoryProfilesEpoch===categoryProfilesEpochRef.current) setCategoryProfiles(categoriesData.value.profiles);
     setLoadError(results.filter(r => r.status === 'rejected').map(r => String(r.reason instanceof Error ? r.reason.message : r.reason)).join(' '));
     setLoading(false);
-  }, [workspaceOwnerId]);
+  }, [workspaceOwnerId,sourceReviewScope]);
   async function loadWorkspace() {
     const operation=settingsOperationRef.current;
     if(!operation.mounted||operation.ownerId!==workspaceOwnerId)return;
@@ -576,10 +582,13 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     finally { setBusy(false); event.target.value=''; }
   }
 
-
+  const sourceWorkspaceSnapshot=sourceWorkspace.current;
   function prepareSource(item:SourceInboxItem){
+    const operation=settingsOperationRef.current,availability=sourceWorkspace.current;
+    if(!operation.mounted||operation.ownerId!==workspaceOwnerId||availability!==sourceWorkspaceSnapshot||availability?.scope!==sourceReviewScope)return;
     try{
-      if(item.ownerId!==workspaceOwnerId||loading||loadError||busy||addOpen||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving||settingsBusyRef.current)throw Error('현재 상품 목록과 대기열을 확인한 뒤 다시 추가해주세요.');
+      if(item.ownerId!==workspaceOwnerId||!availability.ready||loading||busy||addOpen||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving||settingsBusyRef.current)throw Error('현재 상품 목록과 대기열을 확인한 뒤 다시 추가해주세요.');
+      if(!availability.company||item.company.code!==availability.company.code||item.company.name!==availability.company.name)throw Error('수집 당시 회사와 현재 로그인 계정의 승인 회사가 다릅니다. 현재 회사의 수집본을 선택해주세요.');
       if(products.some(product=>sameSourceUrl(product.source_url,item.snapshot.sourceUrl)))throw Error('이미 작업 중인 상품입니다. 기존 작업 상품은 변경하지 않았습니다.');
       const sourceCapture=sourceCaptureSelection(item);
       setSourceNotice('');
@@ -835,7 +844,7 @@ function DetailPanel({ workspaceOwnerId, onEditSeo, onReceiptSaved, onBeforeSeoG
       <div hidden={!focusedOptionId||tab!=='추가 이미지'}>{focusedOptionId&&<DetailImageBatchPanel key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}:additional-batch`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} stage="additional" active={tab==='추가 이미지'} disabled={paidImageBusy||freeImageBusy||detailBatchBusy||detailFamilyBusy||mainUploadBusy||additionalUploadBusy||detailUploadBusy||sizeChartBusy} beforeApply={()=>!imageProcessingRefs.current.paid&&!imageProcessingRefs.current.free&&!imageProcessingRefs.current.detailBatch&&!imageProcessingRefs.current.detailFamily&&!imageProcessingRefs.current.mainUpload&&!imageProcessingRefs.current.additionalUpload&&!imageProcessingRefs.current.detailUpload&&!imageProcessingRefs.current.sizeChart&&onBeforeFreeImageApply()} onBusyChange={changeAdditionalBatchBusy} onSaved={sourceSaved}/>}</div>
       </div>
       <div className="registration-detail-primary-tools panel-stack" hidden={!primaryDetailWorkflow}>
-      <div hidden={!focusedOptionId||tab!=='상세 이미지'}>{focusedOptionId&&<DetailImageBatchPanel key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}:detail-batch`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} stage="detail" active={tab==='상세 이미지'} disabled={paidImageBusy||freeImageBusy||additionalBatchBusy||detailFamilyBusy||mainUploadBusy||additionalUploadBusy||detailUploadBusy||sizeChartBusy} beforeApply={()=>!imageProcessingRefs.current.paid&&!imageProcessingRefs.current.free&&!imageProcessingRefs.current.additionalBatch&&!imageProcessingRefs.current.detailFamily&&!imageProcessingRefs.current.mainUpload&&!imageProcessingRefs.current.additionalUpload&&!imageProcessingRefs.current.detailUpload&&!imageProcessingRefs.current.sizeChart&&onBeforeFreeImageApply()} onBusyChange={changeDetailBatchBusy} onSaved={sourceSaved}/>}</div>
+      <div hidden={!focusedOptionId||tab!=='상세 이미지'}>{focusedOptionId&&<DetailImageBatchPanel key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}:detail-batch`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} stage="detail" compactToolbar active={tab==='상세 이미지'} disabled={paidImageBusy||freeImageBusy||additionalBatchBusy||detailFamilyBusy||mainUploadBusy||additionalUploadBusy||detailUploadBusy||sizeChartBusy} beforeApply={()=>!imageProcessingRefs.current.paid&&!imageProcessingRefs.current.free&&!imageProcessingRefs.current.additionalBatch&&!imageProcessingRefs.current.detailFamily&&!imageProcessingRefs.current.mainUpload&&!imageProcessingRefs.current.additionalUpload&&!imageProcessingRefs.current.detailUpload&&!imageProcessingRefs.current.sizeChart&&onBeforeFreeImageApply()} onBusyChange={changeDetailBatchBusy} onSaved={sourceSaved}/>}</div>
       <div hidden={!focusedOptionId||tab!=='상세 이미지'}>{focusedOptionId&&<OptionImageEditor key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}:detail`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} stage="detail" primaryDetailTools active={tab==='상세 이미지'} disabled={imageProcessingBusy||detailImageEditOpen} onSaved={sourceSaved} onTranslate={translateFinalImage} onEdit={editFinalImage}/>}</div>
       <details><summary>분할 상품에 상세 이미지 적용</summary><div ref={detailFamilyScope} hidden={tab!=='상세 이미지'}><DetailFamilyApplyPanel productId={product.id} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} active={tab==='상세 이미지'} disabled={paidImageBusy||freeImageBusy||additionalBatchBusy||detailBatchBusy||mainUploadBusy||additionalUploadBusy||detailUploadBusy||sizeChartBusy} onBusyChange={changeDetailFamilyBusy} onSaved={sourceSaved} beforeOpen={()=>{const state=workspaceEditState(detailFamilyScope.current?.closest('.detail-body')??null);return !state.busy&&!state.dirty&&priceFilesFree()&&onBeforeFreeImageApply();}} /></div></details>
       </div>

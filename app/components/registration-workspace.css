@@ -81,6 +81,18 @@
 .registration-workspace .product-label-add-field:hover:not(:disabled){border-color:#2eb9da;color:#24a9ca;background:#f7fcfe}
 .registration-workspace .quotation-field-length[data-quotation-length-state="warning"]{color:#bc8c29}
 .registration-workspace .quotation-field-length[data-quotation-length-state="danger"]{color:#e25b61}
+.registration-workspace .quotation-field-input-guidance{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:4px 12px}
+.registration-workspace .detail-batch-compact>.detail-stage-title{flex-basis:100%;margin:0}
+.registration-workspace .detail-batch-guidance,.registration-workspace .detail-composite-guidance,.registration-workspace .option-detail-guidance{font-size:11px;color:#758099}
+.registration-workspace :is(.detail-batch-guidance,.detail-composite-guidance,.option-detail-guidance)>summary{cursor:pointer;padding:4px 0}
+.registration-workspace .detail-batch-count{font-size:11px;color:#758099}
+.registration-workspace .detail-composite-actions,.registration-workspace .option-detail-image-edit-actions,.registration-workspace .option-detail-image-order-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.registration-workspace .detail-composite-compact{gap:6px}
+.registration-workspace .option-detail-image-toolbar{justify-content:space-between;flex-wrap:wrap;gap:8px}
+.registration-workspace .option-detail-image-order-actions{margin-left:auto;padding-left:12px;border-left:1px solid #e5e9ef}
+.registration-workspace .option-detail-image-order-actions>.btn:last-child{color:#e57a60;border-color:#efd5cb}
+.registration-workspace .option-detail-guidance{padding:0 0 6px;border-bottom:1px solid #edf0f3}
+@media(max-width:760px){.registration-workspace .option-detail-image-order-actions{padding-left:0;border-left:0}}
 /* Stage5 keeps the common actions in a compact toolbar above the photo stack. */
 .registration-workspace :is(.registration-detail-primary-tools,.registration-additional-primary-tools)>[hidden]{display:none}
 .registration-workspace :is(.registration-detail-primary-tools,.registration-additional-primary-tools)>[data-free-image-editor],.registration-workspace :is(.registration-detail-primary-tools,.registration-additional-primary-tools)>div>[data-free-image-editor]{display:flex;flex-flow:row wrap;align-items:end;gap:8px 12px;padding-bottom:14px;border-bottom:1px solid #e9ebef}

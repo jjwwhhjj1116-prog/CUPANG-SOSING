@@ -9,9 +9,9 @@ import { detailSaveEditorHtml } from '@/app/detail-editor-composition';
 
 const editorSaveOptions = { editorPolicy: DETAIL_SAVE_EDITOR_POLICY } as const;
 
-type Props = { productId: string; optionId: string; profileId?: string; view: QuotationFieldsView; disabled?: boolean; stageActive?: boolean;
+type Props = { productId: string; optionId: string; profileId?: string; view: QuotationFieldsView; disabled?: boolean; stageActive?: boolean; compactToolbar?: boolean;
   beforeApply?: () => boolean; onSaved?: (view: QuotationFieldsView) => void; onBusyChange?: (busy: boolean) => void };
-export function DetailImageCompositePanel({ productId, optionId, profileId, view, disabled = false, stageActive = true, beforeApply, onSaved, onBusyChange }: Props) {
+export function DetailImageCompositePanel({ productId, optionId, profileId, view, disabled = false, stageActive = true, compactToolbar = false, beforeApply, onSaved, onBusyChange }: Props) {
   const identity = JSON.stringify([productId, optionId, profileId ?? null]), current = useRef({ identity, view, disabled, stageActive, beforeApply, onSaved, onBusyChange });
   const active = useRef(true), request = useRef<AbortController | null>(null), attempt = useRef<DetailCompositeAttempt>({});
   const detailAttempt = useRef<DetailSaveAttempt>({}), mutationMode = useRef<'selected' | 'all' | null>(null), savedResult = useRef(false);
@@ -118,10 +118,13 @@ export function DetailImageCompositePanel({ productId, optionId, profileId, view
     textPreview = { common: textChanges.find(change => change.optionId === null && change.fieldKey === primary)?.value ?? detailSaveCommonAltText(result.view),
       selected: textChanges.find(change => change.optionId === result.optionId && change.fieldKey === primary)?.value ?? '' };
   } catch (cause) { textError = cause instanceof Error ? cause.message : '대체 텍스트 미리보기를 확인해주세요.'; }
-  return <section className="panel-stack" aria-label="상세 이미지 합치기" data-workspace-saving={busy}>
+  const guidance=<small>저장한 상단·본문·하단 사진을 현재 순서대로 한 장으로 만듭니다. 사진을 합칠 때는 원본과 HTML이 바뀌지 않습니다. 선택 옵션에 적용하면 수동 HTML을 유지하고, 상세 저장은 아래에서 확인한 전체 범위에 적용하며 HTML을 비웁니다.</small>;
+  return <section className={`panel-stack${compactToolbar?' detail-composite-compact':''}`} aria-label="상세 이미지 합치기" data-workspace-saving={busy}>
+    <div className="detail-composite-actions" role="group" aria-label="상세 이미지 통합 작업">
     <button type="button" className="btn ghost" title="통합 이미지 다운로드" disabled={!stageActive || disabled || busy || pending} onClick={() => void download()}>통합 이미지 다운로드</button>
     <button type="button" className="btn ghost" disabled={!stageActive || disabled || busy || pending} onClick={() => void prepare()}>상세 이미지 합치기</button>
-    <small>저장한 상단·본문·하단 사진을 현재 순서대로 한 장으로 만듭니다. 사진을 합칠 때는 원본과 HTML이 바뀌지 않습니다. 선택 옵션에 적용하면 수동 HTML을 유지하고, 상세 저장은 아래에서 확인한 전체 범위에 적용하며 HTML을 비웁니다.</small>
+    </div>
+    {compactToolbar?<details className="detail-composite-guidance"><summary>통합·저장 안내</summary>{guidance}</details>:guidance}
     {busy && <p role="status">상세 이미지 처리 중…</p>}{error && <p role="alert">{error}</p>}{message && <p role="status">{message}</p>}
     {result && <><p>{result.keys.length}개 → 한 장 · {result.width} × {result.height}px</p>
       {/* eslint-disable-next-line @next/next/no-img-element */}
