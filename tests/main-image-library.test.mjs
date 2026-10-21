@@ -37,13 +37,47 @@ test('missing, foreign, stale or malformed provenance is not reclassified as raw
 for(const company of companies)test(`source galleries can be browsed without writes; exact chosen SKU final image reaches XLSX (${company.code})`,async()=>{
  const f=await fixture(company,true),h=editor(f);try{
   await h.idle();const before=await f.read(),base='/api/products/'+f.product.id,body=await json(await f.backend.route(base+'/options')),frozen=snapshot(f);
-  assert.equal(h.button('옵션 이미지 보기').props['aria-pressed'],true);assert.ok(candidates(h).includes(candidateLabel(before,f.source)));
+  assert.equal(h.button('메인 이미지 보기').props['aria-pressed'],true);assert.deepEqual(candidates(h),body.imageLibrary.main.map(key=>candidateLabel(before,key)));
+  await h.click('옵션 이미지 보기');assert.ok(candidates(h).includes(candidateLabel(before,f.source)));
   await h.click('작업 이미지 보기');assert.deepEqual(candidates(h),[]);assert.ok(visible(h.render()).some(node=>node.type==='img'&&node.props.alt==='최종 견적 대표이미지'&&node.props.src==='/api/files/'+f.key));
   await h.click('메인 이미지 보기');assert.deepEqual(candidates(h),body.imageLibrary.main.map(key=>candidateLabel(before,key)));assert.equal(snapshot(f),frozen);
   await h.click(candidateLabel(before,f.source));assert.equal(h.render().props['data-workspace-dirty'],true);
   await h.click('상세 이미지 보기');assert.deepEqual(candidates(h),body.imageLibrary.detail.map(key=>candidateLabel(before,key)));assert.equal(h.render().props['data-workspace-dirty'],true);assert.ok(visible(h.render()).some(node=>node.type==='img'&&node.props.alt==='최종 견적 대표이미지'&&node.props.src==='/api/files/'+f.source));assert.equal(snapshot(f),frozen);
   await h.click('최종 견적 대표이미지 저장');assert.equal(f.calls.filter(call=>call.method==='PUT').length,1);assert.equal(f.calls.filter(call=>call.method==='PATCH').length,0);const saved=await f.read();assert.equal(saved.resolved.rows.find(row=>row.optionId===f.id).fields.mainImage.value,f.source);assert.equal(saved.resolved.rows.find(row=>row.optionId!==null&&row.optionId!==f.id).fields.mainImage.value,before.resolved.rows.find(row=>row.optionId!==null&&row.optionId!==f.id).fields.mainImage.value);
   const preview=await json(await f.backend.route(base+'/quotation',{method:'POST',body:{action:'preview',profileId:f.profile.id}})),download=await f.backend.route(base+'/quotation',{method:'POST',body:{action:'download',profileId:f.profile.id,fingerprint:preview.fingerprint}});assert.equal(download.status,200,await download.clone().text());const reader=f.backend.load('app/xlsx-template.ts'),book=reader.inspectXlsxArchive(await reader.readXlsxArchive(await download.arrayBuffer()));assert.equal(reader.xlsxHeaders(book,'견적서',2)[f.fields.indexOf('mainImage')],preview.rows[0][f.fields.indexOf('mainImage')]);assert.equal(h.saved.length,1);assert.ok(!f.backend.network.includes('supplier.coupang.com'));
+ }finally{h.close();f.close();}
+});
+
+for(const company of companies)for(const emptyMain of [false,true])test(`main is the initial candidate tab even with work and option candidates${emptyMain?' and no original main images':''} (${company.code})`,async()=>{
+ const f=await fixture(company),request=f.request;
+ // Only the read-only synthetic gallery response differs. No source/product
+ // row is changed to create an empty original gallery or processed result.
+ f.request=async(url,init)=>{const response=await request(url,init);if(!url.endsWith('/options'))return response;const body=await response.json();body.imageLibrary.work=[f.nextKey];if(emptyMain)body.imageLibrary.main=[];return Response.json(body);};
+ const h=editor(f);try{
+  const frozen=snapshot(f);await h.idle();const before=await f.read(),expectedMain=emptyMain?[]:(await json(await f.backend.route('/api/products/'+f.product.id+'/options'))).imageLibrary.main;
+  assert.equal(h.button('메인 이미지 보기').props['aria-pressed'],true);assert.deepEqual(candidates(h),expectedMain.map(key=>candidateLabel(before,key)));
+  const preview=()=>visible(h.render()).find(node=>node.type==='img'&&node.props.alt==='최종 견적 대표이미지')?.props.src;
+  const savedPreview=preview();assert.equal(savedPreview,'/api/files/'+f.key);
+  await h.click('작업 이미지 보기');assert.deepEqual(candidates(h),[candidateLabel(before,f.nextKey)]);
+  await h.click('옵션 이미지 보기');assert.ok(candidates(h).includes(candidateLabel(before,f.source)));
+  await h.click('상세 이미지 보기');assert.equal(h.button('상세 이미지 보기').props['aria-pressed'],true);
+  await h.click('메인 이미지 보기');assert.deepEqual(candidates(h),expectedMain.map(key=>candidateLabel(before,key)));
+  assert.equal(preview(),savedPreview);assert.equal(h.render().props['data-workspace-dirty'],false);assert.equal(snapshot(f),frozen);assert.equal(f.calls.filter(call=>call.method!=='GET').length,0);
+ }finally{h.close();f.close();}
+});
+
+for(const focused of [false,true])test(`${focused?'focused':'global'} option changes reset gallery to main without reviving an earlier option tab or changing saved images`,async()=>{
+ const f=await fixture(),h=editor(f);try{
+  await h.idle();if(!focused){h.props.focusedOptionId=undefined;await h.idle();}
+  const view=await f.read(),other=view.resolved.rows.find(row=>row.optionId&&row.optionId!==f.id).optionId,frozen=snapshot(f);
+  const select=async id=>{if(focused)h.props.focusedOptionId=id;else h.input('최종 대표이미지 옵션').props.onChange({target:{value:id}});await h.idle();};
+  await h.click('옵션 이미지 보기');const oldWork=h.button('작업 이미지 보기').props.onClick;
+  await select(other);assert.equal(h.button('메인 이미지 보기').props['aria-pressed'],true);oldWork();await h.idle();assert.equal(h.button('메인 이미지 보기').props['aria-pressed'],true);
+  await h.click('상세 이미지 보기');await select(f.id);assert.equal(h.button('메인 이미지 보기').props['aria-pressed'],true,'returning to an earlier option starts a new main-tab session');
+  oldWork();await h.idle();assert.equal(h.button('메인 이미지 보기').props['aria-pressed'],true,'retained callbacks from the earlier visit cannot restore its tab');
+  await h.click('작업 이미지 보기');assert.equal(h.button('작업 이미지 보기').props['aria-pressed'],true,'the current option still allows explicit tab browsing');
+  assert.ok(visible(h.render()).some(node=>node.type==='img'&&node.props.alt==='최종 견적 대표이미지'&&node.props.src==='/api/files/'+f.key));
+  assert.equal(h.render().props['data-workspace-dirty'],false);assert.equal(snapshot(f),frozen);assert.equal(f.calls.filter(call=>call.method!=='GET').length,0);
  }finally{h.close();f.close();}
 });
 

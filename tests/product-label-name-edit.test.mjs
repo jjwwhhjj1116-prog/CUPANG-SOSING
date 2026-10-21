@@ -49,7 +49,7 @@ function type(h, value, index = 2) { input(h, index).props.onChange({ target: { 
 test('caption opens a focused candidate and blocks captured saves, generation and reference writes until explicit name commit', async () => {
   const { h, f, writes } = setup();
   try {
-    await h.idle(); assert.equal(all(h).filter(node => node.type === 'input').length, 0);
+    await h.idle(); assert.equal(all(h).filter(node => node.type === 'input' && /표시사항 항목 [0-9]+ 이름$/.test(node.props['aria-label'] ?? '')).length, 0);
     assert.equal(all(h).filter(node => node.props?.className === 'product-label-name-caption').length, 9);
     h.edit('선택 옵션 제조원', '검토한 제조원\n두 번째 줄');
     const save = h.button('정보 저장하기').props.onClick, generate = h.button('한글 표시사항 생성 시작').props.onClick;

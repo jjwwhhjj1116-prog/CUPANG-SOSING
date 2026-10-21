@@ -59,12 +59,13 @@ const sourceRoot=rows=>({querySelector:selector=>rows.find(row=>{
 })??null});
 
 test('upload start consumes only its own queued files and keeps hidden or other stage drafts guarded',()=>{
- for(const stage of ['additional','detail']){
+ const stages=['main','additional','detail'];
+ for(const stage of stages){
   const own={upload:stage,dirty:true,busy:true},rows=[own],page=sourceRoot(rows);
   assert.equal(exports.workspaceSourceWriteState(page,stage+'-upload').dirty,false);
   assert.equal(exports.workspaceSourceWriteState(page,stage+'-upload').busy,false);
   assert.equal(exports.requestWorkspaceClose(page,()=>{throw Error('in-flight queue cannot be discarded');}),'busy');
-  for(const other of [{upload:stage==='additional'?'detail':'additional',dirty:true},{chart:true,dirty:true},{dirty:true,hidden:true},{busy:true,hidden:true}]){
+  for(const other of [...stages.filter(other=>other!==stage).flatMap(upload=>[{upload,dirty:true,hidden:true},{upload,busy:true,hidden:true}]),{chart:true,dirty:true},{dirty:true,hidden:true},{busy:true,hidden:true}]){
    rows.push(other);const next=exports.workspaceSourceWriteState(page,stage+'-upload');
    assert.equal(next[other.busy?'busy':'dirty'],true);rows.pop();
   }
@@ -75,7 +76,7 @@ test('size-chart commit consumes its table draft while nested document writes an
  const rows=[{chart:true,dirty:true,busy:true}],page=sourceRoot(rows);
  assert.equal(exports.workspaceSourceWriteState(page,'size-chart').dirty,false);
  assert.equal(exports.workspaceSourceWriteState(page,'size-chart').busy,false);
- for(const other of [{dirty:true,nestedDocument:true},{busy:true,nestedDocument:true},{upload:'additional',dirty:true},{upload:'detail',busy:true},{dirty:true,hidden:true}]){
+ for(const other of [{dirty:true,nestedDocument:true},{busy:true,nestedDocument:true},{upload:'main',dirty:true},{upload:'main',busy:true},{upload:'additional',dirty:true},{upload:'detail',busy:true},{dirty:true,hidden:true}]){
   rows.push(other);const next=exports.workspaceSourceWriteState(page,'size-chart');assert.equal(next[other.busy?'busy':'dirty'],true);rows.pop();
  }
  assert.equal(exports.requestWorkspaceClose(page,()=>false),'busy');

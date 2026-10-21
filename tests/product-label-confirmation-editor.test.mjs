@@ -34,7 +34,7 @@ assert.ok(setupDeclaration);
 const setupBase = vm.runInNewContext(setupDeclaration.getText(structureAst) + '\nsetup', context), { nodes, deferred } = base;
 function setup(intercept) { prompts.length = 0; confirmation = () => true; return setupBase(intercept); }
 const plain = value => JSON.parse(JSON.stringify(value)), cases = [];
-const inputs = h => nodes(h.render()).filter(node => node.type === 'textarea');
+const inputs = h => nodes(h.render()).filter(node => ['input', 'textarea'].includes(node.type) && node.props.className === 'product-label-value-input');
 const action = (h, index, name) => nodes(h.render()).find(node => node.type === 'button' && node.props['aria-label'] === `선택 옵션 표시사항 항목 ${index} ${name}`);
 const heading = (h, index) => nodes(h.render()).find(node => node.type === 'input' && node.props['aria-label'] === `선택 옵션 표시사항 항목 ${index} 이름`);
 const caption = (h, index) => nodes(h.render()).find(node => node.type === 'button' && node.props['aria-label'] === `선택 옵션 표시사항 항목 ${index} 이름 편집`);

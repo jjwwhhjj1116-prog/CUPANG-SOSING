@@ -26,7 +26,7 @@ function harness(){
  const Detail=load('app/components/dashboard-client.tsx').DetailPanel;
  const product={id:'p',title:'상품',source_price_cny:2,image_keys:'["owner/a.png"]',updated_at:'2026-10-13T00:00:00Z'};
  const settings=load('app/workspace-settings.ts').defaultSettings;
- function render(tab='추가 이미지'){cursor=0;const tree=Detail({tab,product,settings,focusedOptionId:'red',preferredProfileId:'cat',onUpload(){},onSaved(){},onManageCategories(){},onSavePrice:async()=>{},onBeforeFreeImageApply(){checks++;return allowed;},onBeforeSourceWrite(source){sourceChecks.push(source);return allowed;}});layouts.splice(0).forEach(callback=>callback());effects.splice(0).forEach(callback=>callback());return tree;}
+ function render(tab='추가 이미지',overrides={}){cursor=0;const tree=Detail({tab,product,settings,focusedOptionId:'red',preferredProfileId:'cat',onUpload(){},onSaved(){},onManageCategories(){},onSavePrice:async()=>{},onBeforeFreeImageApply(){checks++;return allowed;},onBeforeSourceWrite(source){sourceChecks.push(source);return allowed;},...overrides});layouts.splice(0).forEach(callback=>callback());effects.splice(0).forEach(callback=>callback());return tree;}
  const aliases={FreeImageTranslationPanel:'free-image-translation-panel:default',ImageGenerationPanel:'image-generation-panel:default'};
  const component=(name,tab,stage)=>nodes(render(tab)).find(node=>node.type?.label?.endsWith(aliases[name]??':'+name)&&(stage===undefined||node.props.stage===stage));
  return{render,component,sourceChecks,get checks(){return checks;},permission(value){allowed=value;}};
@@ -89,6 +89,45 @@ test('file uploads keep the product-wide category scope even when opened from an
  assert.equal(additional.props.active,true);assert.notEqual(additional.props.immediate,true);assert.equal(detail.props.immediate,true);
  assert.equal(h.component('ProductImageUploadQueue','추가 이미지','detail').props.active,false);
  assert.equal(additional.props.beforeUpload(),true);assert.equal(detail.props.beforeUpload(),true);assert.deepEqual(h.sourceChecks,['additional-upload','detail-upload']);
+});
+
+test('representative upload targets only the focused option and profile, is immediate only in its active stage, and retains the unscoped pool uploader',()=>{
+ const h=harness(),main=h.component('ProductImageUploadQueue','대표 이미지','main');
+ assert.equal(main.props.productId,'p');assert.equal(main.props.target.optionId,'red');assert.equal(main.props.target.profileId,'cat');assert.equal(main.props.immediate,true);assert.equal(main.props.active,true);
+ for(const tab of ['가격','추가 이미지','상세 이미지','견적서'])assert.equal(h.component('ProductImageUploadQueue',tab,'main').props.active,false);
+ const additional=h.component('ProductImageUploadQueue','대표 이미지','additional'),detail=h.component('ProductImageUploadQueue','대표 이미지','detail');
+ assert.equal(additional.props.target.optionId,null);assert.equal(detail.props.target.optionId,null);assert.equal(additional.props.active,false);assert.equal(detail.props.active,false);
+ const unscoped=nodes(h.render('대표 이미지',{focusedOptionId:undefined}));
+ assert.equal(unscoped.some(node=>node.type?.label?.endsWith(':ProductImageUploadQueue')&&node.props.stage==='main'),false);
+ assert.ok(unscoped.some(node=>node.type==='input'&&node.props.type==='file'&&node.props.onChange),'the existing product-pool uploader remains available without a focused option');
+});
+
+test('main upload locks retained image, price and source callbacks in the same tick, consumes only its own scope and survives an unrelated release',()=>{
+ const h=harness(),main=h.component('ProductImageUploadQueue','대표 이미지','main'),additional=h.component('ProductImageUploadQueue','추가 이미지','additional'),detail=h.component('ProductImageUploadQueue','상세 이미지','detail');
+ const additionalBatch=h.component('DetailImageBatchPanel','추가 이미지','additional'),detailBatch=h.component('DetailImageBatchPanel','상세 이미지','detail'),free=h.component('FreeImageTranslationPanel','대표 이미지'),price=h.component('ProductOptionsEditor','가격'),chart=h.component('SizeChartWorkspace','사이즈표'),family=h.component('DetailFamilyApplyPanel','상세 이미지');
+ const image=h.component('ProductOptionsEditor','대표 이미지'),content=h.component('ProductContentEditor','대표 이미지');
+ const target={kind:'quotation',profileId:'cat',optionId:'red',input:'mainImage',fieldKey:'mainImage',slotIndex:0,revision:1,inputFingerprint:'a'.repeat(64),optionRevision:1,value:'owner/a.png'};
+ main.props.onBusyChange(true);
+ // Do not render between acquiring the lock and invoking the retained
+ // callbacks: ref guards must protect the pre-commit same-tick window.
+ assert.equal(main.props.beforeUpload(),true);assert.equal(additional.props.beforeUpload(),false);assert.equal(detail.props.beforeUpload(),false);
+ assert.equal(additionalBatch.props.beforeApply(),false,'retained additional batch');assert.equal(detailBatch.props.beforeApply(),false,'retained detail batch');
+ assert.equal(free.props.beforeApply(),false,'retained free-image apply');assert.equal(price.props.beforePriceCommit(),false,'retained price commit');
+ assert.equal(chart.props.beforeSave(),false,'retained size-chart save');assert.equal(family.props.beforeOpen(),false,'retained detail-family approval');
+ image.props.onTranslate('owner/a.png','main','zh',target);image.props.onEdit('owner/a.png','main',target);content.props.onTranslateImage('owner/a.png','zh','main');
+ assert.deepEqual(h.sourceChecks,['main-upload']);assert.equal(h.checks,0);
+ additionalBatch.props.onBusyChange(false);detailBatch.props.onBusyChange(false);additional.props.onBusyChange(false);
+ assert.equal(price.props.beforePriceCommit(),false);assert.equal(free.props.beforeApply(),false);assert.equal(main.props.beforeUpload(),true);
+ assert.equal(h.component('FreeImageTranslationPanel','대표 이미지').props.translationTarget,undefined);
+ assert.equal(h.component('ProductOptionsEditor','대표 이미지').props.imageProcessingBusy,true);assert.equal(h.component('ProductContentEditor','대표 이미지').props.imageProcessingBusy,true);
+ assert.equal(h.component('ProductImageUploadQueue','대표 이미지','main').props.disabled,false,'the upload keeps its own recovery/commit scope');
+ assert.equal(h.component('ProductImageUploadQueue','추가 이미지','additional').props.disabled,true);assert.equal(h.component('ProductImageUploadQueue','상세 이미지','detail').props.disabled,true);
+ assert.equal(h.component('SizeChartWorkspace','사이즈표').props.disabled,true);assert.equal(h.component('DetailFamilyApplyPanel','상세 이미지').props.disabled,true);
+ assert.ok(nodes(h.render('대표 이미지')).some(node=>node.props.inert===true&&node.props.className==='panel-stack'));
+ additional.props.onBusyChange(true);main.props.onBusyChange(false);
+ assert.equal(main.props.beforeUpload(),false);assert.equal(price.props.beforePriceCommit(),false,'releasing main cannot release another active upload');
+ additional.props.onBusyChange(false);assert.equal(price.props.beforePriceCommit(),true);assert.equal(main.props.beforeUpload(),true);
+ h.permission(false);assert.equal(main.props.beforeUpload(),false,'the outer workspace draft guard still applies to the main upload');
 });
 
 test('common image editing is the default upload view and per-option tools remain available behind an explicit summary',()=>{

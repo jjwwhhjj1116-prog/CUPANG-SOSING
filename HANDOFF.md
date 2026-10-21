@@ -6290,3 +6290,14 @@ ExistingfreeWorker ba37200e-0c9a-4a59-9362-86d27a6fa9bc deployed. Latestactualpr
 - Chrome5 별도localhost727935592/actualDashboard+API+임시SQLite/합성schema/source/PNG 검수. context접힘·항목별설명·pair위치/readonly·예시·AI도구진입. 저장전쓰기0→새첫옵션brand명시PUT1회200→reload유지·optionsoverride그한개만. 보호합성상품·제품사실/옵션/콘텐츠/이미지보존, 새제품CASupdated_at만정상증가. source/Hub/native실제요청0·AI생성0. step765-browser-proof.json/step765-ui/quotation-named-pairs.png.
 - 최종25고유파일558case pass(실패/취소/생략0), types/build/lint0error46기존warning/fixturelint/diff/extensioncheck통과. 첫554pass4fail은 readonlytitle·nativebrand구픽스처→명시APIpremountseed+actualcomponent경계로수리·원6XLSX/price/OSRP/포장/초안단언유지·관련22pass후전체558재pass. required-summary loader/brandfixture별도수리6pass; unusedhelperlint정리9재pass는중복합산0. 운영guard완화0.
 - 기존Worker배포/커밋/푸시ID는최종JSON참조. 확장2.1.9 ZIP90파일1061081bytes SHAd51506dc889316963e3d793b57cdaa94a6a46f147d0045e5c40ee9488441b235/이전2.1.8불변·새refresh/권한/resource/migration0. 실제1688수집·AI전체초안·모든category/state 1~7 UI완전동일·Hub원본upload/readback/최종동의/docId-qvt-SKU접수 미검증. 두LIVE_VERIFIED=false유지. 기존상품보호·거절대상우회금지·합성을실접수/임의완료율로보고금지.
+
+
+## Step766 — 2026-10-21: 대표 업로드 즉시 연결·표시사항 간편 입력
+
+- docs/step766-main-upload-and-label-parity.md, outputs/step766-final-validation.json 참조. 동일 보관 Couplus JS/REA부모 재사용,19개 원본범위/UTF16/UTF8/SHA 기록. 기존상품/원본상품 열기·수정·전송0, 거절1688 재접근/우회0.
+- Stage3 선택옵션 단일업로드→정확한최종 mainImage/wire + pool을 기존 source-sealed D1 transaction으로 저장. 공통main-null UI/basis/API차단, 다른SKU/commonroles/sourceoptions/content보존. R2+DB전체원자성주장0, 파일보관·GET확인·동일키명시재연결. 초기main탭(비어있어도), 옵션왕복oldtabcallback폐기·현재선택/초안보존.
+- Stage6 드래그·이름·한줄내용·삭제 중심, 나머지도구접힘. 기존CRLFtextarea보존·명시여러줄전환·필수제품명삭제보호·PNG/quote/ACK복구유지. 제조원/수입판매원기본순서차이는 legacy no-structure PNG/proof계약때문에미수정; 키rename/기존구조자동변경0.
+- 브라우저가 숨은legacy공통label자동채움→dirty→7단계이동차단 재현. Dashboard autoFillLabel=false로자동입력만중단, 독립기본true/명시버튼/기존dirty유지·lateautoepoch차단. free-image retained beforeApply mainUpload잠금누락도독립검사에서찾아수정. 초기실패로그보존·생산보호guard완화0.
+- Chrome5 합성격리: main 파일201+link200 총2쓰기. 독립label fixture 텍스트200/PNG201/첨부200/quote200 총4쓰기·reload수정값보존·7단계진입·hidden dirty0. 보호합성상품/원본옵션rawSHA보존, 실제source/Hub/native0. 두fixture를한실상품흐름으로합산주장0. 초기PNG400은mockrange무시수정; JSONexport .900Z→.9Z변환은rawbyte수출로수정·strictSHA유지. outputs/step766-browser-proof.json과step766-ui/label-final-reopened.png.
+- 최종35고유파일310pass,0fail/cancel/skip; types/build/lint0error46기존warning/두생성모듈/ZIP검사통과. 초기279묶음1잠금실패→수정후279→legacy추가후최종310 전체pass, 반복중복가산0. 배포 Worker fa379b28-7713-44a7-8040-63534b4aacc6. 확장2.1.9 ZIP90파일1061081bytes SHAd51506dc889316963e3d793b57cdaa94a6a46f147d0045e5c40ee9488441b235 불변,새refresh/권한/resource/migration0.
+- 실제1688수집/AI전체초안/모든category-state1~7UI완전동일/Hub원본upload-readback/최종동의/docId-qvt-SKU접수미검증. 두LIVE_VERIFIED=false. 기존업무상품보호·거절대상직접간접우회금지·합성을실접수/임의완성률로보고금지.

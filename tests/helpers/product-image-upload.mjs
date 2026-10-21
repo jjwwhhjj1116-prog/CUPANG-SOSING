@@ -32,7 +32,7 @@ export async function productImageUploadFixture(company=priceTableCompanies[0]){
   const settle=async()=>{for(let i=0;i<12;i++){render();await new Promise(resolve=>setImmediate(resolve));}return render();};
   const idle=async()=>{await settle();const until=Date.now()+5000;while(render().props['aria-busy']){if(Date.now()>until)throw Error('queue UI timeout: '+text(render()));await new Promise(resolve=>setTimeout(resolve,1));await settle();}return render();};
   const button=label=>{const value=nodes(render()).find(node=>node.type==='button'&&(text(node)===label||node.props['aria-label']===label));assert.ok(value,label);return value;};
-  const select=async files=>{const input=nodes(render()).find(node=>node.type==='input'&&node.props.type==='file');assert.equal(input.props.multiple,true);const target={files,value:'chosen'};input.props.onChange({target});assert.equal(target.value,'');await idle();};
+  const select=async files=>{const input=nodes(render()).find(node=>node.type==='input'&&node.props.type==='file');assert.equal(input.props.multiple,props.stage!=='main');const target={files,value:'chosen'};input.props.onChange({target});assert.equal(target.value,'');await idle();};
   render();return {render,settle,idle,button,select,busyLeases,get saved(){return saved;},get late(){return late;},async click(label){const target=button(label);assert.equal(Boolean(target.props.disabled),false,label);target.props.onClick();await idle();},close(){slots.forEach(slot=>slot?.cleanup?.());closed=true;}};
  }
  return {api,owner,id,originalKey,objects,metadata,storage,calls,controls,product,fetcher,protectedSnapshot,before,ui,model:api.load('app/product-image-upload-queue.ts'),close:()=>api.close()};

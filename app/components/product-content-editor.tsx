@@ -22,6 +22,7 @@ type Props = {
   onTranslateImage?: (sourceKey: string, sourceLanguage?: 'zh' | 'en', role?: 'detailTop' | 'detail' | 'detailBottom') => void;
   imageProcessingBusy?: boolean;
   seoLayout?: boolean;
+  autoFillLabel?: boolean;
 };
 type Draft = {
   seo: { title: string; keywords: string; description: string };
@@ -59,7 +60,7 @@ async function fetchContent(endpoint: string, signal?: AbortSignal): Promise<{co
 
 export function ProductContentEditor(props: Props) { return <ContentEditor key={props.product.id} {...props} />; }
 
-function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslateImage, imageProcessingBusy = false, seoLayout = false }: Props) {
+function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslateImage, imageProcessingBusy = false, seoLayout = false, autoFillLabel = true }: Props) {
   const [content, setContent] = useState<ProductContent>(() => emptyProductContent(product.id));
   const [settingsBanners,setSettingsBanners]=useState<CapturedSettingsBanners|undefined>();
   const bannerSnapshot=useRef<{content:ProductContent;descriptor?:CapturedSettingsBanners;imageKeys:string[];mounted:boolean}>({content:emptyProductContent(product.id),imageKeys:[],mounted:true});
@@ -75,6 +76,8 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
   const [refreshNotice, setRefreshNotice] = useState('');
   const activeRequest=useRef<AbortController|null>(null);
   const labelAutofillAttempted=useRef(false);
+  const automaticLabelControl=useRef({enabled:autoFillLabel,epoch:{}});
+  useLayoutEffect(()=>{automaticLabelControl.current={enabled:autoFillLabel,epoch:{}};},[autoFillLabel]);
   useEffect(()=>()=>{activeRequest.current?.abort();},[]);
   const [assetFilterOverride, setAssetFilterOverride] = useState<{step:string;filter:AssetEditorFilter}|null>(null);
   const filterStep=focusedAssetRole??'all';
@@ -225,31 +228,33 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
     });
   }
 
-  const fillLabel = useCallback(async (includeGenericDefaults = true) => {
-    if(!loaded || busy || loading || activeRequest.current)return;
+  const fillLabel = useCallback(async (includeGenericDefaults = true, automatic = false) => {
+    if(!loaded || busy || loading || activeRequest.current || automatic&&!automaticLabelControl.current.enabled)return;
+    const automaticEpoch=automaticLabelControl.current.epoch;
+    const allowed=()=>!automatic||automaticLabelControl.current.enabled&&automaticLabelControl.current.epoch===automaticEpoch;
     const controller=new AbortController();activeRequest.current=controller;
     setBusy(true); setError(''); setMessage('');
     try {
       const response = await fetch(`/api/products/${encodeURIComponent(product.id)}/registration-settings`, { cache: 'no-store', signal:controller.signal });
       const body = await response.json() as { settings?: unknown; categoryId?: string | null; dateNotice?: boolean; referenceTime?: string; error?: string };
-      if(controller.signal.aborted)return;
+      if(controller.signal.aborted||!allowed())return;
       if (!response.ok) throw new Error(body.error || '저장된 기본설정을 읽지 못했습니다.');
       const next = fillLabelDraft(draft.label, content, product.title, body.settings, body.categoryId ?? null, draft.labelClears, body.referenceTime, typeof body.dateNotice === 'boolean' ? body.dateNotice : undefined, includeGenericDefaults);
       setDraft(previous => ({ ...previous, label: next.label, labelProductNameLinked: previous.labelProductNameLinked || (next.filled.includes('productName') && next.label.productName === content.seo.title.value) }));
       setMessage(next.filled.length
         ? `${next.filled.map(key => labelFields[key]).join(' · ')} 입력을 채웠습니다. 실제 상품과 대조한 뒤 표시사항을 저장하면 PNG와 견적 자료에 반영됩니다.${next.referenceFields.length ? ` ${next.referenceFields.map(key => labelFields[key]).join(' · ')}은 쿠플러스 참조 화면의 기본값이며 이 상품에서 확인된 정보는 아닙니다.` : ''}`
         : '채울 수 있는 빈 항목이 없습니다. 직접 입력·직접 비운 항목은 보존했습니다.');
-    } catch (cause) { if(!controller.signal.aborted)setError(cause instanceof Error ? cause.message : '기본설정 반영 실패'); }
+    } catch (cause) { if(!controller.signal.aborted&&allowed())setError(cause instanceof Error ? cause.message : '기본설정 반영 실패'); }
     finally { if(activeRequest.current===controller)activeRequest.current=null;if(!controller.signal.aborted)setBusy(false); }
   }, [loaded, busy, loading, product.id, product.title, draft.label, draft.labelClears, content]);
 
   // Prepare a reviewable draft once on first entry; never refill a field the
   // owner clears later or discard unsaved edits in another stage.
   useEffect(() => {
-    if (section !== '표시사항' || !loaded || loading || busy || anyDirty || activeRequest.current || labelAutofillAttempted.current) return;
+    if (!autoFillLabel || !automaticLabelControl.current.enabled || section !== '표시사항' || !loaded || loading || busy || anyDirty || activeRequest.current || labelAutofillAttempted.current) return;
     labelAutofillAttempted.current = true;
-    void fillLabel(false);
-  }, [section, loaded, loading, busy, anyDirty, fillLabel]);
+    void fillLabel(false, true);
+  }, [autoFillLabel, section, loaded, loading, busy, anyDirty, fillLabel]);
 
   async function save() {
     if(!loaded || busy || loading || conflict || activeRequest.current)return;

@@ -2,9 +2,10 @@ import {applyContentPatch,contentDetailImageKeys,type ProductContent} from '@/ap
 import {isOwnedImageKey,PRODUCT_IMAGE_POOL_LIMIT} from '@/app/image-files';
 import {optionImageTargets,quotationImageKeys} from '@/app/quotation-image-targets';
 import {applyQuotationChanges,validateQuotationChanges,quotationValueIssues,type QuotationFieldsView,type QuotationChange} from '@/app/quotation-schema';
+import {exactPrimaryQuotationTarget} from '@/app/quotation-seo-targets';
 
 export type ImageUploadTarget={optionId:string|null;profileId?:string};
-export type ImageUploadRole='additional'|'detail';
+export type ImageUploadRole='main'|'additional'|'detail';
 export type ImageUploadLinkBasis={productId:string;ownerId:string;productVersion:string;imageKeys:string[];content:ProductContent;quotation:QuotationFieldsView;target:ImageUploadTarget;stage:ImageUploadRole};
 export type ImageUploadLinkRequest={key:string;stage:ImageUploadRole;optionId:string|null;expectedProductVersion:string;expectedContentRevision:number;expectedOptionRevision:number;expectedQuotationRevision:number;expectedInputFingerprint:string};
 export type ImageUploadLinkReceipt={productVersion:string;imageKeys:string[];content:ProductContent;quotation:QuotationFieldsView};
@@ -17,7 +18,7 @@ export function validateImageUploadTarget(target:ImageUploadTarget){
 }
 export function validateImageUploadLinkBasis(base:ImageUploadLinkBasis){
  validateImageUploadTarget(base.target);const view=base.quotation;
- if(!id(base.productId)||!base.ownerId||!['additional','detail'].includes(base.stage)||!Number.isFinite(Date.parse(base.productVersion))
+ if(!id(base.productId)||!base.ownerId||!['main','additional','detail'].includes(base.stage)||base.stage==='main'&&base.target.optionId===null||!Number.isFinite(Date.parse(base.productVersion))
   ||base.content?.productId!==base.productId||!Number.isSafeInteger(base.content.revision)||base.content.revision<0
   ||!view||view.productVersion!==base.productVersion||view.contentRevision!==base.content.revision
   ||!Number.isSafeInteger(view.revision)||view.revision<0||!Number.isSafeInteger(view.optionRevision)||view.optionRevision<0||!/^[a-f0-9]{64}$/u.test(view.inputFingerprint)
@@ -25,9 +26,10 @@ export function validateImageUploadLinkBasis(base:ImageUploadLinkBasis){
   ||!view.overrides?.common||!view.overrides.options||!Array.isArray(view.resolved?.schema?.fields)||!Array.isArray(view.resolved.rows)||!Array.isArray(view.automatic?.rows)
   ||base.target.profileId!==undefined&&view.categoryContext?.profileId!==base.target.profileId
   ||base.target.optionId!==null&&view.resolved.rows.filter(row=>row.optionId===base.target.optionId).length!==1)throw imageUploadLinkChanged();
- const field=optionImageTargets(view.resolved.schema.fields)[base.stage==='additional'?'additionalImages':'detailImages'];
+ const field=uploadRoleTarget(view,base.stage);
  if(field.fields.some(value=>value.readOnly))throw Error('현재 카테고리의 이미지 연결을 수정할 수 없습니다.');
 }
+function uploadRoleTarget(view:QuotationFieldsView,stage:ImageUploadRole){return stage==='main'?exactPrimaryQuotationTarget(view.resolved.schema.fields,'mainImage'):optionImageTargets(view.resolved.schema.fields)[stage==='additional'?'additionalImages':'detailImages'];}
 /** Keep existing order and pinned bottom banners; new body photos precede them. */
 export function appendUploadRoleKey(keys:readonly string[],key:string,bottom:readonly string[]=[]){
  if(new Set(keys).size!==keys.length||keys.includes(key))throw imageUploadLinkChanged();
@@ -45,11 +47,15 @@ export function imageUploadLinkRequest(base:ImageUploadLinkBasis,key:string):Ima
 export function prepareImageUploadLink(base:ImageUploadLinkBasis,key:string,now:string){
  validateImageUploadLinkBasis(base);
  if(!isOwnedImageKey(base.ownerId,key)||base.imageKeys.includes(key)||base.imageKeys.length>=PRODUCT_IMAGE_POOL_LIMIT||!Number.isFinite(Date.parse(now))||Date.parse(now)<=Date.parse(base.productVersion))throw imageUploadLinkChanged();
- const view=base.quotation,input=base.stage==='additional'?'additionalImages':'detailImages',target=optionImageTargets(view.resolved.schema.fields)[input],bottom=base.stage==='detail'?base.content.assets.detailBottom.value:[],imageKeys=[...base.imageKeys,key];
+ const view=base.quotation,target=uploadRoleTarget(view,base.stage),bottom=base.stage==='detail'?base.content.assets.detailBottom.value:[],imageKeys=[...base.imageKeys,key];
  const commonBefore=base.stage==='additional'?base.content.assets.additional.value:contentDetailImageKeys(base.content);
  let content=base.content;const changes:QuotationChange[]=[];
  const append=(value:string)=>{const keys=appendUploadRoleKey(quotationImageKeys(value),key,bottom),limit=Math.min(30,...target.fields.map(field=>field.maxItems??30));if(keys.length>limit)throw Error(`${base.stage==='additional'?'추가':'상세'} 이미지는 최대 ${limit}개까지 연결할 수 있습니다.`);return keys.join('\n');};
- if(base.target.optionId===null){
+ if(base.stage==='main'){
+  // A representative upload replaces this exact SKU's final quote reference.
+  // Shared roles, source option images and every other SKU remain untouched.
+  for(const fieldKey of target.linked)changes.push({optionId:base.target.optionId,fieldKey,value:key});
+ }else if(base.target.optionId===null){
   const keys=appendUploadRoleKey(base.content.assets[base.stage].value,key);
   if(keys.length>30)throw Error('추가·상세 이미지는 각각 30개 이내로 연결해주세요.');
   content=applyContentPatch(base.content,{assets:{[base.stage]:keys}},now);
@@ -85,7 +91,7 @@ export function verifyImageUploadLinkReceipt(base:ImageUploadLinkBasis,key:strin
   ||view.revision!==before.revision+1||view.contentRevision!==expected.content.revision||view.optionRevision!==before.optionRevision
   ||!same(view.imageKeys,expected.imageKeys)||!same(view.overrides,expected.overrides)||!/^[a-f0-9]{64}$/u.test(view.inputFingerprint)||view.inputFingerprint===before.inputFingerprint
   ||!same(view.categoryContext,before.categoryContext)||!same(view.resolved?.schema,before.resolved.schema)||!same(view.automatic?.schema,before.automatic.schema))throw imageUploadLinkChanged();
- const target=optionImageTargets(before.resolved.schema.fields)[base.stage==='additional'?'additionalImages':'detailImages'],roleIds=new Set(target.linked),htmlIds=new Set(optionImageTargets(before.resolved.schema.fields).detailHtml.linked);
+ const target=uploadRoleTarget(before,base.stage),roleIds=new Set(target.linked),htmlIds=new Set(optionImageTargets(before.resolved.schema.fields).detailHtml.linked);
  const common=base.stage==='additional'?expected.content.assets.additional.value:contentDetailImageKeys(expected.content);
  for(const layer of ['resolved','automatic'] as const){
   const old=before[layer],next=view[layer];

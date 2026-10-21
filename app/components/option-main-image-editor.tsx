@@ -16,11 +16,15 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
  const [pending,setPending]=useState<{scope:string;optionId:string;value:string|null|undefined}>({scope,optionId:'',value:undefined}),liveDraft=useRef(pending);
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState(''),[uncertain,setUncertain]=useState(false),liveUncertain=useRef(false);
  const [library,setLibrary]=useState<{scope:string;sourceKey:string;value:MainImageLibrary|null;error:string}|null>(null);
- const [libraryTab,setLibraryTab]=useState<{scope:string;tab:MainImageLibraryTab|null}>({scope,tab:null});
  const libraryRequest=useRef<AbortController|null>(null);
  const current=()=>mounted.current&&liveScope.current===scope&&liveSource.current===sourceKey;
  useLayoutEffect(()=>{mounted.current=true;liveScope.current=scope;liveSource.current=sourceKey;if(liveDraft.current.scope!==scope)liveDraft.current={scope,optionId:'',value:undefined};return()=>{mounted.current=false;request.current?.abort();request.current=null;libraryRequest.current?.abort();libraryRequest.current=null;};},[scope,sourceKey]);
  const base=saved?.scope===scope?saved:null,rows=base?.view.resolved.rows.filter(row=>row.optionId!==null)??[],chosen=selection.scope===scope?selection.id:'',id=focusedOptionId!==undefined?focusedOptionId:chosen||(rows.find(row=>row.included)?.optionId??rows[0]?.optionId??'');
+ const tabScope=JSON.stringify([scope,id]);
+ const [libraryTab,setLibraryTab]=useState(()=>({scope:tabScope,tab:'main' as MainImageLibraryTab,token:{}}));
+ if(libraryTab.scope!==tabScope)setLibraryTab({scope:tabScope,tab:'main',token:{}});
+ const tabGeneration=libraryTab.scope===tabScope?libraryTab.token:null,liveTabGeneration=useRef(tabGeneration);
+ useLayoutEffect(()=>{liveTabGeneration.current=tabGeneration;},[tabGeneration]);
  const liveOption=useRef(id),liveTranslationEnabled=useRef(translationEnabled),liveDisabled=useRef(disabled),liveSaveOnSelect=useRef(saveOnSelect);
  useLayoutEffect(()=>{liveOption.current=id;liveTranslationEnabled.current=translationEnabled;liveDisabled.current=disabled;liveSaveOnSelect.current=saveOnSelect;},[id,translationEnabled,disabled,saveOnSelect]);
  const currentOption=()=>current()&&liveOption.current===id;
@@ -78,8 +82,7 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
  function closePreview(target:Preview){if(previewEpoch.current!==previewGeneration||livePreview.current!==target)return;livePreview.current=null;setPreview(null);}
  const libraryState=library?.scope===scope&&library.sourceKey===sourceKey?library:null;
  const groups=base&&libraryState?.value&&mainImageLibraryCurrent(libraryState.value,productId,base.view)?libraryState.value:null;
- const defaultTab=groups?(['work','options','main','detail'] as const).find(name=>groups[name].length>0)??'work':'work';
- const tab=libraryTab.scope===scope&&libraryTab.tab&&groups?libraryTab.tab:defaultTab;
+ const tab=groups?(libraryTab.scope===tabScope?libraryTab.tab:'main'):'work';
  const visiblePool=base?mainImageLibraryKeys(tab,base.view,groups):[];
  const libraryTabs=[['work','작업 이미지'],['main','메인 이미지'],['options','옵션 이미지'],['detail','상세 이미지']] as const;
  function translateSelected(key:string,sourceLanguage:'zh'|'en',manual=false){
@@ -102,7 +105,7 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
   <div className="image-edit-workspace main-image-editor-workspace">
    <aside className="image-edit-library main-image-library" aria-label="대표이미지 후보">
     <h4>이미지 선택</h4>
-    <nav aria-label="대표이미지 후보 종류" className="main-image-library-tabs">{libraryTabs.map(([name,label])=><button type="button" className={`btn ${tab===name?'primary':'ghost'}`} key={name} aria-label={`${label} 보기`} aria-pressed={tab===name} disabled={disabled||busy||name!=='work'&&!groups} onClick={()=>{if(currentOption()&&!liveDisabled.current&&!request.current)setLibraryTab({scope,tab:name});}}>{label} <small>{groups?.[name].length??'미확인'}</small></button>)}</nav>
+    <nav aria-label="대표이미지 후보 종류" className="main-image-library-tabs">{libraryTabs.map(([name,label])=><button type="button" className={`btn ${tab===name?'primary':'ghost'}`} key={name} aria-label={`${label} 보기`} aria-pressed={tab===name} disabled={disabled||busy||name!=='work'&&!groups} onClick={()=>{if(tabGeneration&&liveTabGeneration.current===tabGeneration&&currentOption()&&!liveDisabled.current&&!request.current&&(name==='work'||groups))setLibraryTab(previous=>previous.scope===tabScope&&previous.token===tabGeneration?{...previous,tab:name}:previous);}}>{label} <small>{groups?.[name].length??'미확인'}</small></button>)}</nav>
     {libraryState?.error&&<p role="status">{libraryState.error}</p>}
     <div className="image-asset-grid main-image-library-grid" aria-label={`${libraryTabs.find(([name])=>name===tab)?.[1]} 후보`}>{visiblePool.map(candidate)}</div>
     {base&&!visiblePool.length&&<p>이 종류에 연결된 이미지가 없습니다.</p>}

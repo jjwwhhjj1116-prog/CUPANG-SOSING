@@ -19,7 +19,7 @@ export async function POST(request:Request,context:{params:Promise<{id:string}>}
   const input=await readBoundedJson(request,4096) as ImageUploadLinkRequest;
   const keys=['key','stage','optionId','expectedProductVersion','expectedContentRevision','expectedOptionRevision','expectedQuotationRevision','expectedInputFingerprint'];
   if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).length!==keys.length||keys.some(key=>!Object.hasOwn(input,key))||Object.keys(input).some(key=>!keys.includes(key))
-   ||!['additional','detail'].includes(input.stage)||input.optionId!==null&&(typeof input.optionId!=='string'||!/^[A-Za-z0-9_-]{1,80}$/u.test(input.optionId)))return json({error:'이미지 연결 대상과 저장 버전을 확인해주세요.'},400);
+   ||!['main','additional','detail'].includes(input.stage)||input.stage==='main'&&input.optionId===null||input.optionId!==null&&(typeof input.optionId!=='string'||!/^[A-Za-z0-9_-]{1,80}$/u.test(input.optionId)))return json({error:'이미지 연결 대상과 저장 버전을 확인해주세요.'},400);
   const owner=await getWorkspaceOwnerId(),{id}=await context.params,query=new URL(request.url).searchParams,profileId=query.get('profileId');
   const company=user?.verifiedAccess&&user.userId===owner?approvedSupplierHubCompany(user.membership):null;
   const member=company&&user?.membership&&user.membership.email&&user.membership.role?{email:user.membership.email,role:user.membership.role,companyCode:company.code,companyName:company.name}:undefined;

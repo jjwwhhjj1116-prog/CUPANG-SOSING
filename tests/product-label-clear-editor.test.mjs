@@ -36,7 +36,7 @@ after(() => {
     externalRequests: 0, operatingProductWrites: 0, supplierHubWrites: 0,
   }, null, 2) + '\n');
 });
-const inputs = h => nodes(h.render()).filter(node => node.type === 'textarea');
+const inputs = h => nodes(h.render()).filter(node => ['input', 'textarea'].includes(node.type) && node.props.className === 'product-label-value-input');
 
 test('clear all is an unsaved required-only draft and preserves archived common and other-option facts after save', async () => {
   const { h, f, before, writes } = setup();

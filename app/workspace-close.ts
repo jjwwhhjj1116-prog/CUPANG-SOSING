@@ -7,11 +7,12 @@ export function workspaceEditState(root: Pick<ParentNode, 'querySelector'> | nul
   };
 }
 
-export type WorkspaceSourceWrite = 'additional-upload' | 'detail-upload' | 'size-chart';
+export type WorkspaceSourceWrite = 'main-upload' | 'additional-upload' | 'detail-upload' | 'size-chart';
 /** A source operation may consume its own draft, while every other mounted
  * editor, including hidden stages and nested document tools, remains guarded. */
 export function workspaceSourceWriteState(root: Pick<ParentNode, 'querySelector'> | null, source: WorkspaceSourceWrite) {
   const exclusions: Record<WorkspaceSourceWrite, string> = {
+    'main-upload': ':not([data-image-upload-queue="main"])',
     'additional-upload': ':not([data-image-upload-queue="additional"])',
     'detail-upload': ':not([data-image-upload-queue="detail"])',
     'size-chart': ':not([data-size-chart-workspace])',

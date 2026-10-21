@@ -77,7 +77,7 @@ test('primary label structure renames, reorders, removes and adds rows, then sav
     await h.idle();
     assert.equal(action(h, 1, '삭제').props.disabled, true);
     action(h, 1, '삭제').props.onClick(); await h.idle();
-    assert.equal(nodes(h.render()).filter(node => node.type === 'textarea').length, 9);
+    assert.equal(nodes(h.render()).filter(node => ['input', 'textarea'].includes(node.type) && node.props.className === 'product-label-value-input').length, 9);
     rename(h, 2, '  검토 제조원  ');
     action(h, 2, '위로').props.onClick(); await h.idle();
     action(h, 9, '삭제').props.onClick(); await h.click('＋ 표시사항 항목 추가');
