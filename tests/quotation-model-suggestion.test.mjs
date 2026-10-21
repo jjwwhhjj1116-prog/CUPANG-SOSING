@@ -124,9 +124,12 @@ for (const company of schemaCompanies) for (const scope of ['common', 'option'])
     let content = (await json(await h.route(base + '/content'))).content;
     await json(await h.route(base + '/content', { method: 'PATCH', body: { expectedRevision: content.revision, patch: { seo: { title: 'SEO에서 확인한 상품명' } } } }));
     let view = await json(await h.route(endpoint)); const options = view.resolved.rows.filter(row => row.optionId), target = options[0], retained = options[1];
+    // Keep the compatible manual API as historical fixture data. QuotationEdit
+    // now displays these saved names read-only; only the model is staged here.
+    const reviewedName = (scope === 'common' ? '수동 공통 최종 상품명 ' : '수동 옵션 최종 상품명 ') + '검토한 내용 '.repeat(12);
     await json(await h.route(endpoint, { method: 'PUT', body: { expectedRevision: view.revision, expectedInputFingerprint: view.inputFingerprint, changes: [
-      { optionId: null, fieldKey: 'title', value: '공통 견적에서 검토한 상품명' }, { optionId: null, fieldKey: 'model', value: '' },
-      { optionId: target.optionId, fieldKey: 'title', value: '선택 옵션 견적에서 검토한 상품명' }, { optionId: target.optionId, fieldKey: 'model', value: '' },
+      { optionId: null, fieldKey: 'title', value: scope === 'common' ? reviewedName : '공통 견적에서 검토한 상품명' }, { optionId: null, fieldKey: 'model', value: '' },
+      { optionId: target.optionId, fieldKey: 'title', value: scope === 'option' ? reviewedName : '선택 옵션 견적에서 검토한 상품명' }, { optionId: target.optionId, fieldKey: 'model', value: '' },
       { optionId: retained.optionId, fieldKey: 'model', value: 'RETAINED-OPTION-MODEL' },
     ] } }));
     const before = { raw: h.sqlite.prepare('SELECT payload FROM collection_results').get().payload, context: h.sqlite.prepare('SELECT payload FROM collection_context').get().payload,
@@ -136,23 +139,25 @@ for (const company of schemaCompanies) for (const scope of ['common', 'option'])
     const request = async (url, init) => { calls.push({ url, method: init?.method ?? 'GET', body: init?.body ? JSON.parse(init.body) : null }); return h.route(url, { method: init?.method ?? 'GET', ...(init?.body ? { body: JSON.parse(init.body) } : {}) }); };
     ui = quotationLabelFormUI({ productId: product().id, load: h.load, request, renderDocument() { throw Error('Image generation must not run for a model edit.'); } }); await ui.idle();
     ui.selectOption(scope === 'common' ? '' : target.optionId);
-    const draftName = (scope === 'common' ? '수동 공통 최종 상품명 ' : '수동 옵션 최종 상품명 ') + '검토한 내용 '.repeat(12);
-    ui.field('title').props.onChange({ target: { value: draftName } }); ui.render();
+    assert.equal(ui.field('title').props.readOnly, true); assert.equal(ui.field('title').props.value, reviewedName);
+    ui.field('title').props.onChange({ target: { value: '프로그램으로 시도한 상품명 수정' } }); ui.render();
+    assert.equal(ui.field('title').props.value, reviewedName, 'a read-only title callback cannot stage a manual write');
     const savedBeforeClick = h.sqlite.prepare('SELECT * FROM product_quotation_fields').get();
     assert.equal(ui.field('model').props.value, ''); assert.ok(ui.button('상품명으로 모델명 입력'));
     ui.start('상품명으로 모델명 입력'); ui.render();
-    const expected = draftName.trim().slice(0, 50);
+    const expected = reviewedName.trim().slice(0, 50);
     assert.equal(ui.field('model').props.value, expected); assert.equal(ui.button('상품명으로 모델명 입력'), undefined);
     assert.deepEqual(h.sqlite.prepare('SELECT * FROM product_quotation_fields').get(), savedBeforeClick, 'click changes only the local editor draft');
     assert.equal(calls.filter(call => call.method === 'PUT').length, 0);
     await ui.click('견적 입력 저장'); assert.equal(calls.filter(call => call.method === 'PUT').length, 1); assert.equal(ui.savedNotifications, 1);
     const written = calls.find(call => call.method === 'PUT').body;
-    assert.deepEqual(plain(written.changes), [{ fieldKey: 'title', optionId: scope === 'common' ? null : target.optionId, value: draftName }, { fieldKey: 'model', optionId: scope === 'common' ? null : target.optionId, value: expected }]);
+    assert.deepEqual(plain(written.changes), [{ fieldKey: 'model', optionId: scope === 'common' ? null : target.optionId, value: expected }]);
     view = await json(await h.route(endpoint)); const rows = view.resolved.rows.filter(row => row.included), cells = await workbook(f);
     const expectedModels = scope === 'common' ? ['', 'RETAINED-OPTION-MODEL', ...Array(4).fill(expected)] : [expected, 'RETAINED-OPTION-MODEL', ...Array(4).fill('')];
     assert.deepEqual(rows.map(row => row.fields.model.value), expectedModels);
     assert.deepEqual(cells.map(row => row[f.headers.indexOf('model')]), expectedModels);
     assert.equal(view.overrides.common.model, scope === 'common' ? expected : ''); assert.equal(view.overrides.options[retained.optionId].model, 'RETAINED-OPTION-MODEL');
+    assert.equal(scope === 'common' ? view.overrides.common.title : view.overrides.options[target.optionId].title, reviewedName, 'the full historical title is preserved while only the model is shortened');
     ui.selectOption(retained.optionId); assert.equal(ui.field('model').props.value, 'RETAINED-OPTION-MODEL'); assert.equal(ui.button('상품명으로 모델명 입력'), undefined);
     assert.equal(h.sqlite.prepare('SELECT payload FROM collection_results').get().payload, before.raw); assert.equal(h.sqlite.prepare('SELECT payload FROM collection_context').get().payload, before.context);
     assert.equal(h.sqlite.prepare('SELECT payload FROM product_content').get().payload, before.content); assert.equal(h.sqlite.prepare('SELECT payload FROM product_options').get().payload, before.options);
@@ -162,20 +167,34 @@ for (const company of schemaCompanies) for (const scope of ['common', 'option'])
   } finally { ui?.close(); h.close(); }
 });
 
-test('a captured click handler recomputes the latest same-tick title and never overwrites a newly typed model', async () => {
-  const f = await setup(schemaCompanies[0]), { h, product, endpoint } = f; let ui;
+test('a captured model action recomputes a same-tick title reset and never overwrites a newly typed model', async () => {
+  const f = await setup(schemaCompanies[0]), { h, product, base, endpoint } = f; let ui;
   try {
+    let content = (await json(await h.route(base + '/content'))).content;
+    await json(await h.route(base + '/content', { method: 'PATCH', body: { expectedRevision: content.revision, patch: { seo: { title: 'SEO에서 확인한 최신 상품명' } } } }));
+    let view = await json(await h.route(endpoint));
+    await json(await h.route(endpoint, { method: 'PUT', body: { expectedRevision: view.revision, expectedInputFingerprint: view.inputFingerprint, changes: [{ fieldKey: 'title', optionId: 'collected-1', value: '이전에 직접 저장한 상품명' }] } }));
+    view = await json(await h.route(endpoint)); const latestTitle = view.automatic.rows.find(row => row.optionId === 'collected-1').fields.title.value.trim().slice(0, 50);
     const calls = [], request = async (url, init) => { calls.push(init?.method ?? 'GET'); return h.route(url, { method: init?.method ?? 'GET', ...(init?.body ? { body: JSON.parse(init.body) } : {}) }); };
     ui = quotationLabelFormUI({ productId: product().id, load: h.load, request, renderDocument() { throw Error('Unexpected image generation'); } }); await ui.idle();
     ui.selectOption('collected-1'); const captured = ui.button('상품명으로 모델명 입력'); assert.ok(captured);
     const before = h.sqlite.prepare('SELECT * FROM product_quotation_fields').get();
-    ui.field('title').props.onChange({ target: { value: '같은 틱에서 새로 입력한 최종 상품명' } });
-    captured.props.onClick(); assert.equal(ui.field('model').props.value, '같은 틱에서 새로 입력한 최종 상품명');
+    assert.equal(ui.field('title').props.readOnly, true);
+    ui.button('상품명 수정 해제 · SEO 자동값 사용').props.onClick();
+    captured.props.onClick(); assert.equal(ui.field('model').props.value, latestTitle, 'the captured proposal reads the newly staged reset instead of its old historical title');
     ui.field('model').props.onChange({ target: { value: 'JUST-TYPED-MODEL' } });
     captured.props.onClick(); assert.equal(ui.field('model').props.value, 'JUST-TYPED-MODEL');
-    ui.field('model').props.onChange({ target: { value: '' } });
-    ui.field('title').props.onChange({ target: { value: '' } });
-    captured.props.onClick(); assert.equal(ui.field('model').props.value, '', 'a newly cleared title cannot restore an earlier proposal');
+    assert.deepEqual(h.sqlite.prepare('SELECT * FROM product_quotation_fields').get(), before); assert.equal(calls.includes('PUT'), false);
+    ui.close(); ui = null;
+    // A deliberately cleared SEO source becomes blank only after explicitly
+    // resetting the retained quotation override. A captured model action must
+    // see that same-tick reset and cannot revive its former title proposal.
+    content = (await json(await h.route(base + '/content'))).content;
+    await json(await h.route(base + '/content', { method: 'PATCH', body: { expectedRevision: content.revision, patch: { seo: { title: '' } } } }));
+    ui = quotationLabelFormUI({ productId: product().id, load: h.load, request, renderDocument() { throw Error('Unexpected image generation'); } }); await ui.idle(); ui.selectOption('collected-1');
+    const blankCaptured = ui.button('상품명으로 모델명 입력'); assert.ok(blankCaptured);
+    ui.button('상품명 수정 해제 · SEO 자동값 사용').props.onClick(); blankCaptured.props.onClick();
+    assert.equal(ui.field('title').props.value, ''); assert.equal(ui.field('model').props.value, '', 'a newly cleared source title cannot restore an earlier proposal');
     assert.equal(ui.button('상품명으로 모델명 입력'), undefined);
     assert.deepEqual(h.sqlite.prepare('SELECT * FROM product_quotation_fields').get(), before); assert.equal(calls.includes('PUT'), false);
     assert.equal((await json(await h.route(endpoint))).resolved.rows.find(row => row.optionId === 'collected-1').fields.model.value, '');

@@ -32,13 +32,14 @@ import { confirmQuotationFieldsSave, quotationFieldsSaveNeedsReadback } from '@/
 import { quotationManualModelLinkState, quotationModelSuggestionState } from '@/app/quotation-model-suggestion';
 import { QuotationExposedDuplicates } from '@/app/components/quotation-exposed-duplicates';
 import { ProductOptionSplitPanel } from '@/app/components/product-option-split-panel';
+import { assertQuotationSeoTitleDraft, isQuotationSeoTitleField } from '@/app/quotation-seo-title';
 
 export type QuotationEditorChange = { fieldKey: string; optionId: string | null; value: string | null };
 type Row = QuotationFieldsView['resolved']['rows'][number];
 type Cell = Row['fields'][string];
 type Conflict = { key: string; change: QuotationEditorChange; before: string | null; saved: string | null; unavailable: boolean; schemaChanged?: boolean; packagingChanged?:boolean;linked?: string[] };
 type BulkPreview = { mode?: 'restore'; base: string; changes: QuotationEditorChange[]; skipped?: string[]; rows: { optionId: string; optionLabel: string; fieldKey: string; label: string; before: string; after: string; beforeDisplay: string; afterDisplay: string; manualBefore: boolean }[] };
-type Props = { navigationTarget?: QuotationNavigationTarget; productId: string; profileId?: string; refreshToken?: string; onSaved?: () => void; onReceiptSaved?:()=>void; onDirtyChange?: (dirty: boolean) => void; submissionActive?: boolean };
+type Props = { navigationTarget?: QuotationNavigationTarget; productId: string; profileId?: string; refreshToken?: string; onSaved?: () => void; onReceiptSaved?:()=>void; onDirtyChange?: (dirty: boolean) => void; submissionActive?: boolean; onEditSeo?: () => void };
 const sections = [
   { id: 'start', title: '시작 정보', english: 'Start', description: '상품명과 선택한 카테고리를 확인합니다.' },
   { id: 'product', title: '상품 정보', english: 'Product', description: '기본 정보, 판매 가격과 카테고리 속성을 편집합니다.' },
@@ -414,7 +415,7 @@ function verifyQuotationRegistrationDisplay(view: QuotationFieldsView) {
 }
 
 export function QuotationFieldsEditor(props: Props) { return <QuotationFieldsForm key={`${props.productId}:${props.profileId ?? ''}`} {...props} />; }
-function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshToken, onSaved, onReceiptSaved, onDirtyChange, submissionActive = true }: Props) {
+function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshToken, onSaved, onReceiptSaved, onDirtyChange, submissionActive = true, onEditSeo }: Props) {
   const endpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId ? `?profileId=${encodeURIComponent(profileId)}` : ''}`;
   const [view, setView] = useState<QuotationFieldsView | null>(null);
   const [changes, commitChanges] = useState<QuotationEditorChange[]>([]);
@@ -435,7 +436,9 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   const activeWrite = useRef<AbortController | null>(null);
   const explicitRefreshAction = useRef<{ endpoint: string; view: QuotationFieldsView | null; optionId: string | null; changes: QuotationEditorChange[]; conflicts: Conflict[]; recovery: string; run: () => Promise<void> } | null>(null);
   const aiDraftApplied = useRef(false);
+  const titleActionEpoch = useRef(0), titleActionTicket = titleActionEpoch.current;
   function setChanges(next: QuotationEditorChange[] | ((previous: QuotationEditorChange[]) => QuotationEditorChange[])) {
+    titleActionEpoch.current++;
     explicitRefreshAction.current = null;
     aiDraftApplied.current = typeof next === 'function' || next.length > 0;
     commitChanges(next);
@@ -520,7 +523,10 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
 
   function edit(fieldKey: string, value: string | null, optionId: string | null = selectedOption) {
     if (!view || busy || loading || !view.resolved.rows.some(row => row.optionId === optionId)) return;
+    const current = modelActionState.current;
+    if (current.view !== view || current.selectedOption !== selectedOption || current.busy || current.loading || activeWrite.current) return;
     const field = view.resolved.schema.fields.find(field => field.id === fieldKey);
+    if (!field || field.readOnly || isQuotationSeoTitleField(field)) return;
     if (typeof value === 'string' && field && isPackagedDimensionsMmField(field)) value = normalizePackagedDimensionsMm(value);
     let fieldKeys: string[];
     try { fieldKeys = [...new Set(quotationPackagedWeightEditFields(view.resolved.schema.fields, fieldKey, value).flatMap(key => quotationPriceEditFields(view.resolved.schema.fields, key)))]; }
@@ -528,6 +534,25 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
     setChanges(previous => fieldKeys.reduce((draft, id) => updateQuotationEditorDraft(view.overrides, draft, { fieldKey: id, optionId, value }), previous));
     setConflicts(previous => previous.filter(conflict => !fieldKeys.some(id => conflict.key === quotationEditorKey(optionId, id))));
     setBulk(null); setMessage('');
+  }
+  function titleActionCurrent() {
+    const current = modelActionState.current;
+    return Boolean(view && titleActionEpoch.current === titleActionTicket && current.view === view && current.selectedOption === selectedOption && current.changes === changes
+      && !current.busy && !current.loading && !current.conflicts.length && !activeWrite.current
+      && observedRefresh.current === refreshToken && view.resolved.rows.some(item => item.optionId === selectedOption));
+  }
+  function editSeo() {
+    if (!titleActionCurrent() || changes.length || aiDraftApplied.current) return;
+    onEditSeo?.();
+  }
+  function restoreSeoTitle(fieldKey: string) {
+    if (!view || !titleActionCurrent()) return;
+    const field = view.resolved.schema.fields.find(item => item.id === fieldKey);
+    if (!field || field.readOnly || !isQuotationSeoTitleField(field) || manualValue(view.overrides, selectedOption, fieldKey) === null) return;
+    const next = updateQuotationEditorDraft(view.overrides, changes, { fieldKey, optionId: selectedOption, value: null });
+    modelActionState.current = { ...modelActionState.current, changes: next, applyAll: false };
+    setChanges(next); setApplyAll(false); setBulk(null);
+    setMessage('이 상품명의 직접 수정 해제를 초안에 반영했습니다. 표시된 공통·SEO 자동값을 확인한 뒤 견적 입력 저장을 눌러주세요.');
   }
   function resolveConflict(key: string, choice: 'draft' | 'saved') {
     if (!view || busy || loading) return;
@@ -542,6 +567,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
     setBusy(true); setError(''); setMessage(''); setBulk(null);
     try {
       const plan = quotationSavePlan(view, changes, selectedOption, applyAll);
+      assertQuotationSeoTitleDraft(view.resolved.schema.fields, plan.changes);
       const requested = validateQuotationChanges(plan.changes, { schema: view.resolved.schema, optionIds: view.resolved.rows.flatMap(item => item.optionId === null ? [] : [item.optionId]), ownedImageKeys: view.imageKeys, overrides: view.overrides });
       const response = await fetch(endpoint, { method: 'PUT', signal: controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: view.revision, expectedInputFingerprint: view.inputFingerprint, changes: requested }) });
       const body = await response.json() as QuotationFieldsView & { error?: string };
@@ -576,7 +602,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   const packagingReconfirmation=view?quotationPackagingReconfirmationChanges(view,selectedOption):[];
   let hasInvalidDraft = false; let invalidDraftMessage = '';
   let savePlan: ReturnType<typeof quotationSavePlan> = { changes: [], propagated: [] };
-  if (view && changes.length) try { savePlan = quotationSavePlan(view, changes, selectedOption, applyAll); validateQuotationChanges(savePlan.changes, { schema: view.resolved.schema, optionIds: view.resolved.rows.flatMap(item => item.optionId === null ? [] : [item.optionId]), ownedImageKeys: view.imageKeys, overrides: view.overrides }); } catch (cause) { hasInvalidDraft = true; invalidDraftMessage = cause instanceof Error ? cause.message : '수정한 필드의 입력 오류를 확인해주세요.'; }
+  if (view && changes.length) try { savePlan = quotationSavePlan(view, changes, selectedOption, applyAll); assertQuotationSeoTitleDraft(view.resolved.schema.fields, savePlan.changes); validateQuotationChanges(savePlan.changes, { schema: view.resolved.schema, optionIds: view.resolved.rows.flatMap(item => item.optionId === null ? [] : [item.optionId]), ownedImageKeys: view.imageKeys, overrides: view.overrides }); } catch (cause) { hasInvalidDraft = true; invalidDraftMessage = cause instanceof Error ? cause.message : '수정한 필드의 입력 오류를 확인해주세요.'; }
 
   return <section className="quotation-fields" aria-busy={loading || operationBusy || splitBusy} data-workspace-dirty={dirty || splitDrafting} data-workspace-saving={operationBusy || splitBusy}>
     <div className="quotation-fields-heading"><div><h3>카테고리별 견적 입력</h3><p>저장 자료를 자동으로 채우고, 필요한 항목만 직접 수정합니다.</p></div><button type="button" className="btn ghost" disabled={explicitRefreshBlocked} onClick={refreshExplicitly}>기본값 다시 반영</button></div>
@@ -612,7 +638,8 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
         const linkedWeight = weightManual && weightManual.fieldId !== field.id;
         const restoredWeight = ownManual && quotationPackagedWeightPeer(view.resolved.schema.fields, field.id)
           ? resolveQuotationEditorCell(view, updateQuotationEditorDraft(view.overrides, changes, { fieldKey: field.id, optionId: selectedOption, value: null }), selectedOption, field.id) : null;
-        const editable = !field.readOnly; const imageKeys = imageValues(cell.value);
+        const seoTitle = isQuotationSeoTitleField(field);
+        const editable = !field.readOnly && !seoTitle; const imageKeys = imageValues(cell.value);
         const modelState = quotationModelSuggestionState(view.resolved.schema, field.id,
           (key, optionId = selectedOption) => resolveQuotationEditorCell(view, changes, optionId, key),
           { optionId: selectedOption, optionIds: view.resolved.rows.filter(item => item.included).map(item => item.optionId) });
@@ -628,14 +655,15 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
         return [heading, <div className={`quotation-field ${field.type === 'textarea' || field.type === 'images' ? 'wide' : ''}`} key={field.id}>
           <div className="quotation-field-heading"><label htmlFor={id}>{field.label}{field.unit ? ` (${field.unit})` : ''}{field.required && <b>*</b>}</label><div className="quotation-field-badges"><span className={`quotation-field-badge ${cell.source.startsWith('manual-') ? 'manual' : ''}`}>{sourceLabels[cell.source] ?? cell.source}</span>{field.workbookWire?.requirement==='conditional'&&<span className="quotation-field-badge">조건부 필수</span>}{field.visibility === 'exposed' && <span className="quotation-field-badge">노출 속성</span>}{field.visibility === 'hidden' && <span className="quotation-field-badge">비노출 속성</span>}{cell.needsReview && <span className="quotation-field-badge review">검토 필요</span>}</div></div>
           {field.type === 'select' && editable ? <QuotationChoiceInput field={field} cell={cell} id={id} disabled={busy || loading} invalid={inputProps['aria-invalid']} onChange={value => edit(field.id, value)}/>
-            : usesRegistrationBrandChoices(field, schema?.unsupportedFields) ? <QuotationBrandInput cell={cell} brands={view.registrationBrandChoices ?? []} id={id} disabled={busy || loading} invalid={inputProps['aria-invalid']} onChange={value => {
+            : editable && usesRegistrationBrandChoices(field, schema?.unsupportedFields) ? <QuotationBrandInput cell={cell} brands={view.registrationBrandChoices ?? []} id={id} disabled={busy || loading} invalid={inputProps['aria-invalid']} onChange={value => {
               const current = modelActionState.current;
               if (brandInputEpoch.current !== brandInputTicket || current.view !== view || current.selectedOption !== selectedOption
                 || current.busy || current.loading || activeWrite.current) return;
               edit(field.id, value);
             }}/>
             : field.type === 'textarea' || field.type === 'images' ? <textarea {...inputProps} rows={field.type === 'images' ? 2 : 3} placeholder={field.type === 'images' ? '아래에서 이 상품의 이미지 파일을 선택하세요.' : '확인한 내용을 입력하세요.'} />
-              : <input {...inputProps} type="text" inputMode={field.type === 'number' ? 'decimal' : 'text'} placeholder={field.readOnly ? '' : hasCouplusEmptyAttributeDefault(field, cell) ? '해당사항없음' : '확인한 내용을 입력하세요.'} />}
+              : <input {...inputProps} type="text" inputMode={field.type === 'number' ? 'decimal' : 'text'} placeholder={!editable ? '' : hasCouplusEmptyAttributeDefault(field, cell) ? '해당사항없음' : '확인한 내용을 입력하세요.'} />}
+          {seoTitle && onEditSeo && <button type="button" className="quotation-field-text-button" disabled={dirty || busy || loading || conflicts.length > 0} onClick={editSeo}>SEO 설정에서 상품명 수정</button>}
           {modelSuggestion && <div className="quotation-field-auto">
             <small>출처: 현재 {selectedOption === null ? '공통' : '옵션'} 견적 상품명 · {sourceLabels[modelSuggestion.source] ?? modelSuggestion.source}</small>
             <p>상품명: {modelSuggestion.sourceTitle}</p><p>제안 모델명: {modelSuggestion.value}{modelSuggestion.shortened && ' · 앞 50자 이내'}</p>
@@ -676,9 +704,9 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
           {field.type === 'images' && <><div className="quotation-fields-image-list">{view.imageKeys.map((key, index) => <button className="quotation-fields-image-choice" key={key} type="button" disabled={!editable} aria-pressed={imageKeys.includes(key)} aria-label={`이미지 ${index + 1} ${imageKeys.includes(key) ? '연결 해제' : '연결'}`} onClick={() => edit(field.id, (imageKeys.includes(key) ? imageKeys.filter(item => item !== key) : field.maxItems === 1 ? [key] : [...imageKeys, key]).join('\n'))}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt={`업로드 이미지 ${index + 1}`} loading="lazy" /><span>이미지 {index + 1}</span>{imageKeys.includes(key) && <b>{imageKeys.indexOf(key) + 1}</b>}</button>)}</div>{imageKeys.length > 0 && <div className="quotation-fields-image-selected">{imageKeys.map((key, index) => <div key={key}><span>{index + 1}. {view.imageKeys.includes(key) ? `이미지 ${view.imageKeys.indexOf(key) + 1}` : `연결 확인: ${key}`}</span><button type="button" disabled={!editable || index === 0} aria-label={`${index + 1}번 이미지 앞으로`} onClick={() => { const next = [...imageKeys]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; edit(field.id, next.join('\n')); }}>↑</button><button type="button" disabled={!editable || index === imageKeys.length - 1} aria-label={`${index + 1}번 이미지 뒤로`} onClick={() => { const next = [...imageKeys]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; edit(field.id, next.join('\n')); }}>↓</button><button type="button" disabled={!editable} onClick={() => edit(field.id, imageKeys.filter(item => item !== key).join('\n'))}>제외</button></div>)}</div>}</>}
-          <div id={`${id}-notes`}>{modelSuggestion ? <p className="quotation-field-help">별도 모델명이 있으면 해당 값을 입력하세요. 모델명이 없는 상품에 한해 위 상품명과 제안값을 확인한 뒤 직접 적용할 수 있습니다.</p> : 'help' in field && field.help ? <p className="quotation-field-help">{String(field.help)}</p> : null}{priceMismatch.map(item => <p key={item.alias.id} className="quotation-field-issue">이전 요약 가격 {quotationFieldDisplay(item.alias, item.cell, '(공란)')}과 Supplier Hub 가격이 다릅니다. 저장값은 유지했습니다. 이 금액을 직접 입력하면 두 항목에 함께 반영합니다.</p>)}{issues.map(issue => <p key={issue} className="quotation-field-issue">{issue}</p>)}</div>
+          <div id={`${id}-notes`}>{seoTitle ? <p className="quotation-field-help">상품명은 SEO 설정에서 수정해주세요.</p> : modelSuggestion ? <p className="quotation-field-help">별도 모델명이 있으면 해당 값을 입력하세요. 모델명이 없는 상품에 한해 위 상품명과 제안값을 확인한 뒤 직접 적용할 수 있습니다.</p> : 'help' in field && field.help ? <p className="quotation-field-help">{String(field.help)}</p> : null}{priceMismatch.map(item => <p key={item.alias.id} className="quotation-field-issue">이전 요약 가격 {quotationFieldDisplay(item.alias, item.cell, '(공란)')}과 Supplier Hub 가격이 다릅니다. 저장값은 유지했습니다. 이 금액을 직접 입력하면 두 항목에 함께 반영합니다.</p>)}{issues.map(issue => <p key={issue} className="quotation-field-issue">{issue}</p>)}</div>
           {ownManual && <div className="quotation-field-auto">{restoredWeight ? `수정 해제 후 ${sourceLabels[restoredWeight.source]}: ${quotationFieldDisplay(field, restoredWeight, '(미입력)')}` : selectedOption !== null && draftManual(view, changes, null, field.id) !== null ? `수정 해제 후 공통값: ${quotationFieldDisplay(field, {value:draftManual(view, changes, null, field.id)!,source:'manual-common'})}` : `자동값 (${sourceLabels[automatic?.source ?? 'empty'] ?? '저장 자료'}): ${quotationFieldDisplay(field, automatic ?? {value:'',source:'empty'}, '(미입력)')}`}</div>}
-          <div className="quotation-field-footer"><div>{editable && ownManual && <button type="button" className="quotation-field-text-button" onClick={() => edit(field.id, null)}>{restoredWeight ? restoredWeight.source.startsWith('manual-') ? '수정 해제 · 연결값 사용' : '수정 해제 · 자동값 복원' : selectedOption !== null && draftManual(view, changes, null, field.id) !== null ? '수정 해제 · 공통값 사용' : '수정 해제 · 자동값 복원'}</button>}{linkedWeight ? <small>연결된 포장 무게의 {weightManual.source === 'manual-option' ? '옵션' : '공통'} 입력값을 따릅니다.</small> : inheritedManual && <small>공통값을 따릅니다. 여기서 입력하면 이 옵션만 바뀝니다.</small>}{field.minLength !== undefined && field.minLength > 0 && <small> 최소 {field.minLength}자</small>}{field.maxLength !== undefined && <small> {quotationValueLength(field, cell.value)}/{field.maxLength}자</small>}</div>{editable && optionCount > 0 && <label className="quotation-field-select-copy"><input type="checkbox" checked={selectedFields.includes(field.id)} onChange={event => { setSelectedFields(previous => event.target.checked ? [...previous, field.id] : previous.filter(key => key !== field.id)); setBulk(null); }} />다른 옵션에 적용</label>}</div>
+          <div className="quotation-field-footer"><div>{seoTitle && !field.readOnly && ownManual && <button type="button" className="quotation-field-text-button" disabled={busy || loading || conflicts.length > 0} onClick={() => restoreSeoTitle(field.id)}>{selectedOption !== null && draftManual(view, changes, null, field.id) !== null ? '상품명 수정 해제 · 공통값 사용' : '상품명 수정 해제 · SEO 자동값 사용'}</button>}{editable && ownManual && <button type="button" className="quotation-field-text-button" onClick={() => edit(field.id, null)}>{restoredWeight ? restoredWeight.source.startsWith('manual-') ? '수정 해제 · 연결값 사용' : '수정 해제 · 자동값 복원' : selectedOption !== null && draftManual(view, changes, null, field.id) !== null ? '수정 해제 · 공통값 사용' : '수정 해제 · 자동값 복원'}</button>}{linkedWeight ? <small>연결된 포장 무게의 {weightManual.source === 'manual-option' ? '옵션' : '공통'} 입력값을 따릅니다.</small> : inheritedManual && <small>{seoTitle ? '저장된 공통 상품명 수정값을 따릅니다.' : '공통값을 따릅니다. 여기서 입력하면 이 옵션만 바뀝니다.'}</small>}{field.minLength !== undefined && field.minLength > 0 && <small> 최소 {field.minLength}자</small>}{field.maxLength !== undefined && <small> {quotationValueLength(field, cell.value)}/{field.maxLength}자</small>}</div>{editable && optionCount > 0 && <label className="quotation-field-select-copy"><input type="checkbox" checked={selectedFields.includes(field.id)} onChange={event => { setSelectedFields(previous => event.target.checked ? [...previous, field.id] : previous.filter(key => key !== field.id)); setBulk(null); }} />다른 옵션에 적용</label>}</div>
         </div>];
       })}</div></fieldset>)}
       <div className="quotation-fields-actions">{selectedOption !== null && row && optionCount > 1 && <label className="quotation-apply-all"><input type="checkbox" role="switch" checked={applyAll} disabled={busy || loading} onChange={event => {
@@ -694,13 +722,14 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
       <details className="quotation-supplemental-tools"><summary>추가 견적 작업</summary>
       <QuotationOptionOverview view={view} changes={changes} disabled={busy || loading} onOpen={(optionId, section, fieldId) => { explicitRefreshAction.current = null; setSelectedOption(optionId); setApplyAll(false); openSection(section, fieldId, optionId !== selectedOption); setBulk(null); }}/>
       <ProductOptionSplitPanel productId={productId} profileId={profileId} view={view} disabled={dirty || operationBusy || Boolean(labelRecovery) || loading || conflicts.length > 0}
-        onBusyChange={next => { if (next) explicitRefreshAction.current = null; setSplitBusy(next); }} onDraftChange={next => { if (next) explicitRefreshAction.current = null; setSplitDrafting(next); }} onCommitted={() => { onSaved?.(); void refresh(); }} />
+        onBusyChange={next => { if (next) { explicitRefreshAction.current = null; titleActionEpoch.current++; } setSplitBusy(next); }} onDraftChange={next => { if (next) { explicitRefreshAction.current = null; titleActionEpoch.current++; } setSplitDrafting(next); }} onCommitted={() => { onSaved?.(); void refresh(); }} />
       <QuotationAiPanel productId={productId} profileId={profileId} view={view} optionId={selectedOption} disabled={dirty || busy || loading || conflicts.length > 0}
         onBusyChange={next=>{if(next)explicitRefreshAction.current=null;modelActionState.current={...modelActionState.current,busy:next||Boolean(labelRecovery)};setBusy(next);}}
         onApply={proposals=>{
           const current=modelActionState.current;
           if(current.view!==view||current.busy||current.loading||current.conflicts.length||changes.length||aiDraftApplied.current||activeWrite.current)return;
           const requested=validateQuotationChanges(proposals,{schema:view.resolved.schema,optionIds:view.resolved.rows.flatMap(item=>item.optionId===null?[]:[item.optionId]),ownedImageKeys:view.imageKeys,overrides:view.overrides});
+          assertQuotationSeoTitleDraft(view.resolved.schema.fields, requested);
           const nextDraft=requested.reduce((draft,change)=>updateQuotationEditorDraft(view.overrides,draft,change),[] as QuotationEditorChange[]);
           aiDraftApplied.current=nextDraft.length>0;
           setChanges(nextDraft);
@@ -711,6 +740,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
         if (current.view !== view || current.changes !== changes || current.busy || current.loading || current.conflicts.length || activeWrite.current) return false;
         try {
           const next = importQuotationWorkbookDraft(view, changes, selections, basis);
+          assertQuotationSeoTitleDraft(view.resolved.schema.fields, next);
           modelActionState.current = { ...current, changes: next, applyAll: false };
           setChanges(next); setApplyAll(false); setBulk(null); setError('');
           setMessage('선택한 이전 Excel 입력을 해당 공통·옵션의 편집 초안에 가져왔습니다. 모든 옵션에 적용을 껐습니다. 확인·수정 후 견적 입력 저장을 눌러주세요.');
@@ -718,11 +748,11 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
         } catch (cause) { setError(cause instanceof Error ? cause.message : '이전 Excel 입력을 확인해주세요.'); return false; }
       }}/>
       <LegacyQuotationImport key={`legacy:${JSON.stringify([view.revision, view.inputFingerprint, changes])}`} view={view} changes={changes} disabled={busy || loading || conflicts.length > 0} onApply={keys => {
-        try { setChanges(importLegacyQuotationDraft(view, changes, keys)); setBulk(null); setError(''); setMessage('선택한 이전 입력을 초안에 반영했습니다. 현재 분류에 저장하려면 견적 입력 저장을 눌러주세요.'); }
+        try { const next = importLegacyQuotationDraft(view, changes, keys); assertQuotationSeoTitleDraft(view.resolved.schema.fields, next); setChanges(next); setBulk(null); setError(''); setMessage('선택한 이전 입력을 초안에 반영했습니다. 현재 분류에 저장하려면 견적 입력 저장을 눌러주세요.'); }
         catch (cause) { setError(cause instanceof Error ? cause.message : '이전 입력을 확인해주세요.'); }
       }}/>
       {row && <QuotationTranslatedAttributes key={`translation:${view.inputFingerprint}:${view.revision}:${selectedOption??'common'}`} productId={productId} view={view} optionId={selectedOption} disabled={dirty || loading || busy || conflicts.length > 0} onApply={items=>items.forEach(item=>edit(item.fieldKey,item.value,item.optionId))} />}
-      {row && <QuotationLabelPanel key={`${view.inputFingerprint}:${view.revision}:${selectedOption??'common'}`} view={view} productId={productId} endpoint={endpoint} optionId={selectedOption} disabled={dirty || loading || busy || conflicts.length > 0} batchCache={labelBatchCache} uploadCache={labelUploadCache} onBusyChange={next=>{if(next)explicitRefreshAction.current=null;setBusy(next);}} onFailed={async message=>{setLabelRecovery(message);setMessage('');onSaved?.();await refresh(false,false,message);}} onAttached={(saved,batch)=>{setView(saved);setMessage(batch?.stopped ? `라벨 ${batch.completed}/${batch.total}건을 저장하고 중지했습니다. 저장 결과를 반영했으며 전체 생성·연결을 다시 누르면 이어서 진행합니다.` : '표시사항 PNG를 처리한 옵션의 라벨 이미지에 추가했습니다. 기존 첨부는 유지했습니다.');onSaved?.();}} />}
+      {row && <QuotationLabelPanel key={`${view.inputFingerprint}:${view.revision}:${selectedOption??'common'}`} view={view} productId={productId} endpoint={endpoint} optionId={selectedOption} disabled={dirty || loading || busy || conflicts.length > 0} batchCache={labelBatchCache} uploadCache={labelUploadCache} onBusyChange={next=>{if(next){explicitRefreshAction.current=null;titleActionEpoch.current++;}setBusy(next);}} onFailed={async message=>{setLabelRecovery(message);setMessage('');onSaved?.();await refresh(false,false,message);}} onAttached={(saved,batch)=>{setView(saved);setMessage(batch?.stopped ? `라벨 ${batch.completed}/${batch.total}건을 저장하고 중지했습니다. 저장 결과를 반영했으며 전체 생성·연결을 다시 누르면 이어서 진행합니다.` : '표시사항 PNG를 처리한 옵션의 라벨 이미지에 추가했습니다. 기존 첨부는 유지했습니다.');onSaved?.();}} />}
       </details>
       {schema && <details className="quotation-source-evidence"><summary>견적 양식 확인 정보</summary><p>{schema.evidence}</p></details>}
       <details className="quotation-submission-tools"><summary>저장한 견적 검토·전송</summary><p>견적 입력을 저장한 뒤 자료를 검토하고 전송을 준비하세요.</p>

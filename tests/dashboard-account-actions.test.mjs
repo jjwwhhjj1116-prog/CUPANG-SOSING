@@ -8,6 +8,7 @@ import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
 import {hubSchemaSnapshot,schemaCompanies,schemaPath} from './helpers/hub-schema.mjs';
 import {workbookArchive} from './helpers/quotation-workbook.mjs';
 import {prepareAttachments} from '../extensions/supplier-hub/package.mjs';
+import {reviewSourceFixture} from './helpers/source-review-intake.mjs';
 const native=createRequire(import.meta.url);
 const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value==='object'?[value,...nodes(value.props?.children)]:[];
 const text=value=>Array.isArray(value)?value.map(text).join(''):value&&typeof value==='object'?text(value.props?.children):value==null?'':String(value);
@@ -23,13 +24,13 @@ const assertProductNavigation=(requests,id)=>{assert.equal(requests.length,2);as
 /** Actual DashboardClient, its private DetailPanel and settings dialog. Child
  * renderers record their received props; every tested callback is the real
  * parent callback, and requests run through its real fetch/readJson code. */
-function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'계정의 저장 브랜드',exchangeRate:350},scope:scope()},deleteReply=async id=>Response.json({productId:id,removed:true}),realRegistrationBoard=false,realOptionBoard=false,confirmClose=false,profiles=[],officialFlow,registrationLayoutRequest}={}){
+function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'계정의 저장 브랜드',exchangeRate:350},scope:scope()},deleteReply=async id=>Response.json({productId:id,removed:true}),realRegistrationBoard=false,realOptionBoard=false,confirmClose=false,profiles=[],officialFlow,registrationLayoutRequest,initialIntakeRows=[],sourceRegistrationsState}={}){
  const instances=new Map(),cache=new Map(),components=new Map(),componentMounts=new Map(),componentCounts=new Map(),nativeDetails=new Map(),layoutEffects=[],effects=[],requests=[];let active,tree,closed=false,lateWrites=0;
  let currentSettings=settingsBody,replyDelete=deleteReply,nextDelete=null,nextSettings=null,replySettingsPut=null,nextProduct=null,replyProduct=null;
  let currentProfiles=profiles,nextProfiles;
  const workspaceEdits={dirty:false,busy:false,freeDirty:false,freeBusy:false};
  const products=officialFlow?.products??[product('product-a'),product('product-b')];
- const draft={rows:[],setRows(){},goal:'work',setGoal(){},ready:true,loading:false,saving:false,dirty:false,message:'',save(){},load(){}};
+ const draft={rows:initialIntakeRows,setRows(update){draft.rows=typeof update==='function'?update(draft.rows):update;},goal:'work',setGoal(){},ready:true,loading:false,saving:false,dirty:false,message:'',save(){},load(){}};
  const hooks={
   useState(initial){const instance=active,slot=instance.index++;if(!(slot in instance.slots))instance.slots[slot]=typeof initial==='function'?initial():initial;return[instance.slots[slot],value=>{if(!instance.mounted){lateWrites++;return;}instance.slots[slot]=typeof value==='function'?value(instance.slots[slot]):value;}];},
   useRef(initial){const slot=active.index++;return active.slots[slot]??(active.slots[slot]={current:initial});},
@@ -89,6 +90,7 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'�
    if(name==='react/jsx-runtime')return{jsx:(type,props,key)=>({type,props,key}),jsxs:(type,props,key)=>({type,props,key})};
    if(name.endsWith('.css'))return{};
    if(name==='@/app/components/use-intake-draft')return{useIntakeDraft:()=>draft};
+   if(name==='@/app/components/use-source-registrations'&&sourceRegistrationsState)return{useSourceRegistrations:()=>sourceRegistrationsState};
    if(['@/app/components/use-registration-layout','@/app/components/use-source-registrations'].includes(name))return load(name.slice(2)+'.ts');
    if(name==='@/app/load-category-profiles')return{loadCategoryProfiles:async()=>{
     if(nextProfiles){const pending=nextProfiles;nextProfiles=null;return pending.promise;}
@@ -741,4 +743,93 @@ test('changed product versions or login owner discard receipt-only refreshes',as
    else{const pending=h.deferProduct(first.id);saved();await h.settle();if(kind==='owner')h.switchOwner('other-owner');else h.close();pending.resolve(Response.json({product:{...first,hub_single_receipt:singleSummary()}}));await h.settle();assert.equal(h.lateWrites,0);if(kind==='owner')assert.equal(h.component('registration-board').products.find(row=>row.id===first.id)?.hub_single_receipt,undefined);}
   }finally{h.close();}
  }
+});
+
+test('failed category layout is visible, blocks navigation and preparation, and retries without discarding SEO input',async()=>{
+ let reads=0;
+ const h=harness({registrationLayoutRequest:async()=>++reads===1?Response.json({error:'합성 조회 실패'},{status:503}):Response.json({format:'yoofam-registration-layout-v1',productId:'product-a',productVersion:version,sizeChartRequired:true,categoryContext:{source:'collection',profileId:null,categoryId:'81452',categoryPath:['합성 카테고리']}})});
+ try{
+  await h.settle();h.component('registration-board').onOpen(h.products[0],'SEO');await h.settle();
+  assert.match(text(h.render()),/카테고리의 필수 단계를 다시 확인/);assert.equal(h.button('다음 →').props.disabled,true);
+  const draft=nodes(h.render()).find(node=>node.props?.['data-test-editor']==='product-content-editor');draft.props.onChange({target:{value:'보존할 SEO 초안'}});
+  h.component('quotation-panel').onPrepareSubmission();await h.settle();assert.equal(h.component('submission-review-panel'),undefined);
+  await h.click('등록 단계 다시 확인');assert.equal(reads,2);
+  const nav=nodes(h.render()).find(node=>node.props?.['aria-label']==='상품 등록 8단계');assert.ok(nav);assert.match(text(nav),/6사이즈표7한글 표시사항8견적서 작업/);
+  assert.equal(h.button('다음 →').props.disabled,false);assert.equal(nodes(h.render()).find(node=>node.props?.['data-test-editor']==='product-content-editor').props.value,'보존할 SEO 초안');
+  assert.ok(h.requests.every(request=>request.method==='GET'));
+ }finally{h.close();}
+});
+
+test('quotation SEO navigation reaches the current product and cannot move a later product',async()=>{
+ const h=harness();try{
+  await h.settle();h.component('registration-board').onOpen(h.products[0],'견적서');await h.settle();const first=h.component('quotation-panel').onEditSeo;first();await h.settle();
+  assert.equal(nodes(h.render()).find(node=>node.props?.['data-registration-stage']).props['data-registration-stage'],'SEO');
+  h.component('registration-board').onOpen(h.products[1],'가격');await h.settle();first();await h.settle();
+  assert.equal(nodes(h.render()).find(node=>node.props?.['data-registration-stage']).props['data-registration-stage'],'가격');assert.ok(h.requests.every(request=>request.method==='GET'));
+ }finally{h.close();}
+});
+
+for(const company of schemaCompanies)test(`reviewed source ACK resumes only its pinned intake row and preserves category/guidance (${company.code})`,async()=>{
+ const {before,saved}=reviewSourceFixture('test-owner',company),capture={format:'yoofam-saved-page-capture-v1',sourceUrl:before.snapshot.sourceUrl,captureId:before.id,fingerprint:before.fingerprint,revision:before.revision};
+ const row={id:'reviewed-row',profile:{id:'00000000-0000-4000-8000-000000000764',revision:3,categoryId:'81452',categoryPath:['선택한 카테고리']},url:capture.sourceUrl,features:'직접 쓴 특징',keywords:'직접 키워드',status:'draft',message:'',sourceCapture:capture},other={...row,id:'untouched-row',url:'https://detail.1688.com/offer/764000000002.html',sourceCapture:undefined},accepted=[];
+ const sourceState={items:[before],reload(){},acceptReviewed(old,next){accepted.push([old,next]);sourceState.items=[next];return true;}};
+ const h=harness({initialIntakeRows:[row,other],sourceRegistrationsState:sourceState});try{
+  await h.settle();await h.click('＋ 상품 추가');const queue=h.component('intake-queue-panel');queue.onReviewSource(before,row.id);await h.settle();
+  const panel=h.component('source-inbox-panel');assert.equal(panel.initialItem.id,before.id);panel.onReviewed(saved,before);await h.settle();
+  const current=h.component('source-inbox-panel');assert.equal(current.initialItem.revision,2);current.onAdd(saved);await h.settle();
+  const resumed=h.component('intake-queue-panel');assert.equal(resumed.rows[0].sourceCapture.revision,2);assert.equal(resumed.rows[0].profile,row.profile);assert.equal(resumed.rows[0].features,row.features);assert.equal(resumed.rows[0].keywords,row.keywords);assert.equal(resumed.rows[1],other);assert.equal(resumed.sourceItems[0],saved);assert.equal(accepted.length,1);
+  assert.ok(h.requests.every(request=>request.method==='GET'));
+ }finally{h.close();}
+});
+
+test('closed and previous-owner source review callbacks never adopt a new source revision',async()=>{
+ for(const mode of ['close','owner']){
+  const {before,saved}=reviewSourceFixture('test-owner'),capture={format:'yoofam-saved-page-capture-v1',sourceUrl:before.snapshot.sourceUrl,captureId:before.id,fingerprint:before.fingerprint,revision:1},row={id:'row',url:capture.sourceUrl,sourceCapture:capture,status:'draft'},accepted=[];
+  const h=harness({initialIntakeRows:[row],sourceRegistrationsState:{items:[before],reload(){},acceptReviewed(...args){accepted.push(args);return true;}}});try{
+   await h.settle();await h.click('＋ 상품 추가');const queue=h.component('intake-queue-panel');queue.onReviewSource(before,row.id);await h.settle();const old=h.component('source-inbox-panel');
+   if(mode==='close')old.onAdd(before);else h.switchOwner('next-owner');await h.settle();old.onReviewed(saved,before);await h.settle();
+   let current;queue.onRows(rows=>{current=rows;return rows;});assert.equal(current[0],row);assert.equal(accepted.length,0);assert.equal(h.lateWrites,0);
+  }finally{h.close();}
+ }
+});
+
+for(const mode of ['same-owner reopen','owner A/B/A'])for(const staleAction of ['add','modal-close'])test(`${mode}: retained source ${staleAction} callback cannot close a fresh review session`,async()=>{
+ const {before,saved}=reviewSourceFixture('test-owner'),capture={format:'yoofam-saved-page-capture-v1',sourceUrl:before.snapshot.sourceUrl,captureId:before.id,fingerprint:before.fingerprint,revision:1};
+ const row={id:'retained-review-row',profile:{id:'00000000-0000-4000-8000-000000000764',revision:3,categoryId:'81452',categoryPath:['보존한 카테고리']},url:capture.sourceUrl,features:'직접 쓴 특징',keywords:'직접 키워드',status:'draft',message:'',sourceCapture:capture},accepted=[];
+ const sourceState={items:[before],reload(){},acceptReviewed(old,next){accepted.push([old,next]);sourceState.items=[next];return true;}};
+ const h=harness({initialIntakeRows:[row],sourceRegistrationsState:sourceState});
+ const reviewClose=()=>{
+  const dialog=nodes(h.render()).find(node=>node.props?.role==='dialog'&&node.props['aria-label']==='수집 상품정보 확인·수정');
+  assert.ok(dialog,'The source review dialog must be visible');
+  const close=nodes(dialog).find(node=>node.type==='button'&&node.props.className==='icon-close');assert.ok(close);return close.props.onClick;
+ };
+ try{
+  await h.settle();await h.click('＋ 상품 추가');h.component('intake-queue-panel').onReviewSource(before,row.id);await h.settle();
+  const old=h.component('source-inbox-panel'),oldClose=reviewClose();
+  if(mode==='same-owner reopen')old.onAdd(before);
+  else{h.switchOwner('next-owner');await h.settle();h.switchOwner('test-owner');}
+  await h.settle();await h.click('＋ 상품 추가');h.component('intake-queue-panel').onReviewSource(before,row.id);await h.settle();
+  const fresh=h.component('source-inbox-panel');assert.ok(fresh);assert.equal(fresh.initialItem,before);
+  old.onReviewed(saved,before);if(staleAction==='add')old.onAdd(before);else oldClose();await h.settle();
+  assert.equal(accepted.length,0);reviewClose();assert.equal(Boolean(h.component('intake-queue-panel')),false,'A retained close action must leave the new review open');
+  h.component('source-inbox-panel').onReviewed(saved,before);await h.settle();assert.equal(accepted.length,1);
+  reviewClose()();await h.settle();const resumed=h.component('intake-queue-panel');assert.ok(resumed);assert.equal(resumed.rows[0].sourceCapture.revision,2);assert.equal(resumed.rows[0].features,row.features);assert.equal(resumed.rows[0].keywords,row.keywords);assert.equal(resumed.rows[0].profile,row.profile);assert.equal(h.lateWrites,0);assert.ok(h.requests.every(request=>request.method==='GET'));
+ }finally{h.close();}
+});
+
+for(const changedSelection of [false,true])test(`repeated source ACKs ${changedSelection?'keep a replaced target pruned':'advance the unchanged explicit row through revisions 1/2/3'}`,async()=>{
+ const {before,saved}=reviewSourceFixture('test-owner'),capture={format:'yoofam-saved-page-capture-v1',sourceUrl:before.snapshot.sourceUrl,captureId:before.id,fingerprint:before.fingerprint,revision:1};
+ const profile={id:'00000000-0000-4000-8000-000000000764',revision:3,categoryId:'81452',categoryPath:['보존한 카테고리']};
+ const row={id:'review-progress-row',profile,url:capture.sourceUrl,features:'직접 쓴 특징',keywords:'직접 키워드',status:'draft',message:'기존 메시지',sourceCapture:capture},other={...row,id:'same-capture-other-row'},accepted=[];
+ const sourceState={items:[before],reload(){},acceptReviewed(old,next){accepted.push([old,next]);sourceState.items=[next];return true;}};
+ const h=harness({initialIntakeRows:[row,other],sourceRegistrationsState:sourceState});
+ try{
+  await h.settle();await h.click('＋ 상품 추가');const queue=h.component('intake-queue-panel');queue.onReviewSource(before,row.id);await h.settle();const first=h.component('source-inbox-panel');
+  let replaced;
+  if(changedSelection){queue.onRows(rows=>rows.map(value=>value.id===row.id?(replaced={...value,sourceCapture:{...value.sourceCapture,revision:2},message:'검토 중 바뀐 선택'}):value));await h.settle();}
+  first.onReviewed(saved,before);await h.settle();let current;queue.onRows(rows=>{current=rows;return rows;});
+  assert.equal(current[0].sourceCapture.revision,2);assert.equal(current[1],other);if(changedSelection)assert.equal(current[0],replaced,'The first ACK must skip a target whose exact selection changed');
+  const next={...saved,revision:3,reviewed:{...saved.reviewed,title:'다시 검토한 상품명'}};h.component('source-inbox-panel').onReviewed(next,saved);await h.settle();queue.onRows(rows=>{current=rows;return rows;});
+  assert.equal(accepted.length,2);assert.equal(current[0].sourceCapture.revision,changedSelection?2:3);assert.equal(current[1],other);assert.equal(current[0].profile,profile);assert.equal(current[0].features,row.features);assert.equal(current[0].keywords,row.keywords);if(changedSelection)assert.equal(current[0],replaced,'A skipped target must not be enrolled into later review ACKs');assert.equal(h.lateWrites,0);assert.ok(h.requests.every(request=>request.method==='GET'));
+ }finally{h.close();}
 });

@@ -17,6 +17,7 @@ function fixture(){
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,URL,AbortController,crypto,structuredClone,window:{confirm:()=>false},require(name){
   if(name==='react')return hooks;
   if(name==='@/app/components/use-intake-draft')return{useIntakeDraft:()=>draft};
+  if(['@/app/components/use-registration-layout','@/app/components/use-source-registrations'].includes(name))return load(name.slice(2)+'.ts');
   if(name.startsWith('@/app/components/')){const component=()=>null;component.displayName=name.slice('@/app/components/'.length);return new Proxy({default:component},{get(target,key){return key in target?target[key]:component;}});}
   if(name==='@/app/load-category-profiles')return{loadCategoryProfiles:async()=>[]};
   return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);

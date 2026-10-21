@@ -33,7 +33,8 @@ import {SourceInboxPanel} from '@/app/components/source-inbox-panel';
 import {useSourceRegistrations} from '@/app/components/use-source-registrations';
 import type {SourceInboxItem} from '@/app/source-inbox';
 import {sameSourceUrl} from '@/app/source-registration';
-import {sourceCaptureSelection,sameSourceCaptureSelection} from '@/app/source-capture-selection';
+import {sourceCaptureSelection,sameSourceCaptureSelection,type SourceCaptureSelection} from '@/app/source-capture-selection';
+import {applyReviewedSourceToIntakeRows,validateReviewedSourceTransition} from '@/app/source-review-intake';
 import { CollectionBatchPanel } from '@/app/components/collection-batch-panel';
 import { ProductOptionBoard } from '@/app/components/product-option-board';
 import { RegistrationBoard, registrationTitle } from '@/app/components/registration-board';
@@ -98,6 +99,7 @@ async function readJson<T = unknown>(url: string, init?: RequestInit): Promise<T
 
 const imageSteps = ['대표 이미지','추가 이미지','상세 이미지'];
 const supportingTabs = [{value:'작업',label:'작업 이력'},{value:'번역',label:'번역·SEO 생성'},{value:'옵션',label:'옵션 관리'},{value:'사이즈표',label:'사이즈표'}];
+type SourceReviewSession={scope:object;item:SourceInboxItem;returnToIntake:boolean;targets:{rowId:string;sourceCapture:Readonly<SourceCaptureSelection>}[]};
 function sourceLink(value: string) {
   try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) ? url.href : undefined; } catch { return undefined; }
 }
@@ -135,7 +137,11 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
 
   const [addOpen, setAddOpen] = useState(false);
   const sourceRegistrations=useSourceRegistrations(workspaceOwnerId);
-  const [sourceReview,setSourceReview]=useState<{item:SourceInboxItem;returnToIntake:boolean}|null>(null);
+  const sourceReviewScope=useMemo(()=>({ownerId:workspaceOwnerId}),[workspaceOwnerId]);
+  const [sourceReviewState,setSourceReview]=useState<SourceReviewSession|null>(null);
+  const sourceReview=sourceReviewState?.scope===sourceReviewScope?sourceReviewState:null;
+  const sourceReviewSession=useRef<SourceReviewSession|null>(null);
+  useLayoutEffect(()=>{sourceReviewSession.current=null;return()=>{sourceReviewSession.current=null;};},[workspaceOwnerId]);
   const [sourceNotice,setSourceNotice]=useState('');
   const [intakeSourceSeed,setIntakeSourceSeed]=useState<IntakeSourceSeed|undefined>();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -183,6 +189,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   const [detailProfileId,setDetailProfileId]=useState<string|undefined>();
   const registrationLayout = useRegistrationLayout(workspaceOwnerId, detail?.id, detail?.updated_at, detailProfileId);
   const registrationSteps = registrationStepsForLayout(registrationLayout.layout ?? registrationLayout.pendingLayout);
+  const registrationLayoutReady=!!registrationLayout.layout&&!registrationLayout.loading&&!registrationLayout.error;
   const [lastRegistrationStep, setLastRegistrationStep] = useState('SEO');
   const detailBody = useRef<HTMLDivElement>(null);
   const [closeNotice, setCloseNotice] = useState('');
@@ -267,7 +274,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   const [editingCategory, setEditingCategory] = useState<CategoryProfile|null>(null);
   const [categorySeed,setCategorySeed]=useState<CategoryProfileInput|undefined>();
   function selectDetailTab(value: string) {
-    if (registrationLayout.loading && allRegistrationSteps.includes(value)) return false;
+    if (!registrationLayoutReady && allRegistrationSteps.includes(value)) {setCloseNotice('카테고리의 등록 단계를 확인한 뒤 이동해주세요. 입력은 유지됩니다.');return false;}
     if (value === '견적서') {
       const pending=quotationSourceState(detailBody.current);
       if(pending.busy){setCloseNotice('저장 중인 작업이 있습니다. 저장이 끝나면 견적서를 열어주세요.');return false;}
@@ -333,6 +340,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   function prepareCurrentSubmission(profileId?:string) {
     const operation=settingsOperationRef.current;
     if(!detail||liveSubmissionContext.current!==submissionContext||!operation.mounted||operation.ownerId!==workspaceOwnerId||detailNavigation!==productNavigation.current||(workspaceOwnerId&&detail.owner_id!==workspaceOwnerId))return;
+    if(!registrationLayoutReady){setCloseNotice('카테고리의 등록 단계를 다시 확인한 뒤 전송을 준비해주세요. 입력은 유지됩니다.');return;}
     const state=workspaceEditState(detailBody.current);
     if(state.busy){setCloseNotice('저장 중인 작업이 있습니다. 저장이 끝나면 전송을 준비해주세요.');return;}
     if(state.dirty){setCloseNotice('저장하지 않은 입력이 있습니다. 각 단계에서 저장한 뒤 전송을 준비해주세요.');return;}
@@ -587,10 +595,40 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     const body=await response.json() as {ownerId?:string;id?:string;archived?:boolean;error?:string};if(!response.ok||body.ownerId!==workspaceOwnerId||body.id!==item.id||body.archived!==true)throw Error(body.error||'수집 상품 제외 결과를 확인하지 못했습니다.');
     sourceRegistrations.reload();
   }
-  function reviewSource(item:SourceInboxItem,returnToIntake=false){
-    if(item.ownerId!==workspaceOwnerId||busy)return;setSourceReview({item,returnToIntake});if(returnToIntake)setAddOpen(false);
+  function reviewSource(item:SourceInboxItem,returnToIntake=false,rowId?:string){
+    if(item.ownerId!==workspaceOwnerId||busy)return;
+    const selected=sourceCaptureSelection(item);
+    const targets=returnToIntake?intakeRows.flatMap(row=>{
+      const capture=row.sourceCapture;
+      if(rowId!==undefined&&row.id!==rowId||row.status==='saved'||row.productId||row.forkJobId||row.pendingJobId||!capture)return [];
+      return capture.captureId===selected.captureId&&capture.fingerprint===selected.fingerprint&&capture.sourceUrl===selected.sourceUrl&&capture.revision<=selected.revision?[{rowId:row.id,sourceCapture:capture}]:[];
+    }):[];
+    const session={scope:sourceReviewScope,item,returnToIntake,targets};sourceReviewSession.current=session;setSourceReview(session);if(returnToIntake)setAddOpen(false);
   }
-  function closeSourceReview(){const reopen=sourceReview?.returnToIntake;setSourceReview(null);sourceRegistrations.reload();if(reopen)setAddOpen(true);}
+  function acceptSourceReview(session:SourceReviewSession,saved:SourceInboxItem,before:SourceInboxItem){
+    const operation=settingsOperationRef.current;
+    if(sourceReviewSession.current!==session||!operation.mounted||operation.ownerId!==workspaceOwnerId||before.ownerId!==workspaceOwnerId
+      ||!sameSourceCaptureSelection(sourceCaptureSelection(session.item),sourceCaptureSelection(before))||!validateReviewedSourceTransition(before,saved,workspaceOwnerId))return;
+    if(!sourceRegistrations.acceptReviewed(before,saved))return;
+    let targets:SourceReviewSession['targets']=[];
+    if(session.returnToIntake)setIntakeRows(rows=>{
+      const updatedRows=applyReviewedSourceToIntakeRows(rows,session.targets,before,saved);
+      // useIntakeDraft invokes this updater synchronously with its current rows.
+      // Only rows that adopted this ACK stay attached to later review saves.
+      targets=session.targets.flatMap(target=>{
+        const previous=rows.find(row=>row.id===target.rowId),updated=updatedRows.find(row=>row.id===target.rowId);
+        return previous&&updated&&previous!==updated?[{rowId:target.rowId,sourceCapture:sourceCaptureSelection(saved)}]:[];
+      });
+      return updatedRows;
+    });
+    const updated={...session,item:saved,targets};
+    sourceReviewSession.current=updated;setSourceReview(updated);
+  }
+  function closeSourceReview(session:SourceReviewSession){
+    const operation=settingsOperationRef.current;
+    if(sourceReviewSession.current!==session||session.scope!==sourceReviewScope||!operation.mounted||operation.ownerId!==workspaceOwnerId)return false;
+    sourceReviewSession.current=null;setSourceReview(null);sourceRegistrations.reload();if(session.returnToIntake)setAddOpen(true);return true;
+  }
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -636,10 +674,10 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
 
       {removedOpen&&<Modal title="삭제된 상품" subtitle="저장한 이미지와 편집 내용을 복원합니다." onClose={()=>{if(!removalBusy.current)setRemovedOpen(false);}}><ProductRemovalDialog workspaceOwnerId={workspaceOwnerId} onRestored={loadWorkspace} onBusyChange={changeRemovalBusy}/></Modal>}
 
-      {sourceReview&&sourceReview.item.ownerId===workspaceOwnerId&&<Modal wide title="수집 상품정보 확인·수정" subtitle="현재 수집한 상품만 검토합니다." onClose={closeSourceReview}><SourceInboxPanel key={sourceReview.item.id} ownerId={workspaceOwnerId} disabled={false} initialItem={sourceReview.item} onChanged={sourceRegistrations.reload} onAdd={item=>{if(sourceReview.returnToIntake){closeSourceReview();return;}setSourceReview(null);prepareSource(item);}}/></Modal>}
+      {sourceReview&&sourceReview.item.ownerId===workspaceOwnerId&&<Modal wide title="수집 상품정보 확인·수정" subtitle="현재 수집한 상품만 검토합니다." onClose={()=>{closeSourceReview(sourceReview);}}><SourceInboxPanel key={sourceReview.item.id} ownerId={workspaceOwnerId} disabled={false} initialItem={sourceReview.item} onChanged={sourceRegistrations.reload} onReviewed={(saved,before)=>acceptSourceReview(sourceReview,saved,before)} onAdd={item=>{if(!closeSourceReview(sourceReview))return;if(!sourceReview.returnToIntake)prepareSource(item);}}/></Modal>}
       {addOpen&&<Modal wide title="상품 대기열" subtitle="상품마다 카테고리·URL·특징·키워드를 지정합니다." onClose={()=>{if(!busy&&!intakeDraft.loading){setIntakeSourceSeed(undefined);setAddOpen(false);}}}>
         <div className="intake-draft-actions"><p role="status">{intakeDraft.message}{intakeDraft.dirty?' · 저장하지 않은 변경 있음':''}</p><button type="button" className="btn ghost" disabled={busy||intakeDraft.saving||!intakeDraft.ready} onClick={()=>void intakeDraft.save()}>{intakeDraft.autoPaused?'저장 다시 시도':intakeDraft.saving?'저장 중…':'지금 저장'}</button><button type="button" className="btn ghost" disabled={busy||intakeDraft.saving} onClick={()=>{if(!intakeDraft.dirty||window.confirm('현재 미저장 입력을 서버 초안으로 교체할까요?'))void intakeDraft.load();}}>{intakeDraft.ready?'서버 초안으로 교체':'초안 다시 불러오기'}</button></div>
-        {intakeDraft.ready&&!intakeDraft.loading&&<IntakeQueuePanel workspaceOwnerId={workspaceOwnerId} sourceSeed={intakeSourceSeed} sourceItems={sourceRegistrations.items} onReviewSource={item=>reviewSource(item,true)} onSourceConsumed={id=>setIntakeSourceSeed(current=>current?.id===id?undefined:current)} jobs={collectionJobs} onOpenProduct={async(id,signal)=>{await openCollectedProduct(id,'SEO',signal);if(!signal.aborted)setAddOpen(false);}} settings={settings} onSettingsReloadStarted={startSettingsReload} onSettingsReloaded={applyReloadedSettings} goal={intakeGoal} onGoal={setIntakeGoal} rows={intakeRows} onRows={setIntakeRows} profiles={categoryProfiles} onBusy={setBusy}
+        {intakeDraft.ready&&!intakeDraft.loading&&<IntakeQueuePanel workspaceOwnerId={workspaceOwnerId} sourceSeed={intakeSourceSeed} sourceItems={sourceRegistrations.items} onReviewSource={(item,rowId)=>reviewSource(item,true,rowId)} onSourceConsumed={id=>setIntakeSourceSeed(current=>current?.id===id?undefined:current)} jobs={collectionJobs} onOpenProduct={async(id,signal)=>{await openCollectedProduct(id,'SEO',signal);if(!signal.aborted)setAddOpen(false);}} settings={settings} onSettingsReloadStarted={startSettingsReload} onSettingsReloaded={applyReloadedSettings} goal={intakeGoal} onGoal={setIntakeGoal} rows={intakeRows} onRows={setIntakeRows} profiles={categoryProfiles} onBusy={setBusy}
           onProfile={profile=>setCategoryProfiles(current=>[profile,...current.filter(item=>item.id!==profile.id)])}
           onJobs={jobs=>{setCollectionJobs(current=>[...jobs,...current.filter(job=>!jobs.some(saved=>saved.id===job.id))]);if(jobs.some(job=>job.product_id))void loadWorkspace();}}
           onAdvanced={seed=>{setEditingCategory(seed?.profileId?categoryProfiles.find(profile=>profile.id===seed.profileId)??null:null);setCategorySeed(seed?{name:seed.categoryPath.at(-1)??'',categoryId:seed.categoryId,categoryPath:seed.categoryPath,template:null,mappings:[]}:undefined);setAddOpen(false);setCategoryOpen(true);}}/>}
@@ -652,10 +690,11 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
       {detail&&(!workspaceOwnerId||detail.owner_id===workspaceOwnerId)&&<div className="drawer-backdrop" onMouseDown={()=>closeWorkspace()}><aside className="detail-drawer registration-workspace" role="dialog" aria-modal="true" aria-label="상품 등록 작업 공간" onMouseDown={e=>e.stopPropagation()}>
         <header><div className="detail-heading"><h2>상품 등록 진행: {registrationTitle(detail)}</h2></div><button className="icon-close" aria-label="상품 작업 공간 닫기" onClick={()=>closeWorkspace()}>×</button></header>{closeNotice&&<p role="status" className="panel-note">{closeNotice}</p>}
         <div className="registration-progress" role="progressbar" aria-label="상품 등록 입력 단계" aria-valuemin={1} aria-valuemax={registrationSteps.length} aria-valuenow={progressStepIndex+1}><span style={{width:`${(progressStepIndex+1)/registrationSteps.length*100}%`}}/></div>
-        <nav className="registration-steps" aria-label={`상품 등록 ${registrationSteps.length}단계`} aria-busy={registrationLayout.loading}>{registrationSteps.map((value,index)=><button type="button" key={value} disabled={registrationLayout.loading} onClick={()=>selectDetailTab(value)} aria-current={tab===value?'step':undefined} className={[tab===value?'active':'',index<=progressStepIndex?'reached':''].filter(Boolean).join(' ')}><span>{index+1}</span><strong>{({SEO:'SEO 설정',가격:'가격 설정',표시사항:'한글 표시사항',견적서:'견적서 작업'} as Record<string,string>)[value]??value}</strong></button>)}</nav>
+        <nav className="registration-steps" aria-label={`상품 등록 ${registrationSteps.length}단계`} aria-busy={registrationLayout.loading}>{registrationSteps.map((value,index)=><button type="button" key={value} disabled={!registrationLayoutReady} onClick={()=>selectDetailTab(value)} aria-current={tab===value?'step':undefined} className={[tab===value?'active':'',index<=progressStepIndex?'reached':''].filter(Boolean).join(' ')}><span>{index+1}</span><strong>{({SEO:'SEO 설정',가격:'가격 설정',표시사항:'한글 표시사항',견적서:'견적서 작업'} as Record<string,string>)[value]??value}</strong></button>)}</nav>
+        {registrationLayout.error&&<div className="registration-layout-error" role="alert"><p>{registrationLayout.error} 입력은 유지했습니다. 카테고리의 필수 단계를 다시 확인해주세요.</p><button type="button" className="btn ghost" onClick={()=>{if(registrationLayout.retry())setCloseNotice('');}}>등록 단계 다시 확인</button></div>}
         <details className="registration-source-context"><summary>카테고리 · 수집 자료</summary><div className="detail-product-meta"><span>{registrationNumber(detail)}</span><time dateTime={detail.created_at}>등록 {registrationDate(detail.created_at)}</time><span>{detail.options_count}개 옵션</span></div><div className="detail-source"><span>1688 원본 URL</span>{sourceLink(detail.source_url)?<a href={sourceLink(detail.source_url)} target="_blank" rel="noopener noreferrer">{detail.source_url}</a>:<span className="detail-source-value">{detail.source_url||'원본 URL 미입력'}</span>}</div><ProductSourceContext key={detail.id} productId={detail.id} productVersion={detail.updated_at} sourceUrl={detail.source_url} step={tab} onNavigate={selectDetailTab} onSaved={loadWorkspace} onBusy={changeSourceSupplementBusy} onBeforeSupplement={()=>{const state=workspaceEditState(detailBody.current);if(state.dirty||state.busy){setCloseNotice('저장하지 않은 입력이나 진행 중인 작업이 있습니다. 먼저 저장한 뒤 상세 원문을 보완해주세요.');return false;}return true;}}/></details>
         <details className="registration-tools-menu"><summary>추가 작업</summary><nav className="registration-tools" aria-label="상품 보조 작업">{supportingTabs.filter(item=>!registrationSteps.includes(item.value)).map(item=><button key={item.value} type="button" onClick={()=>selectDetailTab(item.value)} aria-pressed={tab===item.value} className={tab===item.value?'active':''}>{item.label}</button>)}<small>단계 이동 시 입력 유지 · 각 단계에서 저장</small></nav></details>
-        <div className="detail-body" data-registration-stage={tab} ref={detailBody} inert={sourceSupplementBusy}><DetailPanel workspaceOwnerId={workspaceOwnerId} onReceiptSaved={()=>void refreshReceiptStatus(detail.id,detail.updated_at)} key={detail.id} onBeforeSeoGenerate={()=>{
+        <div className="detail-body" data-registration-stage={tab} ref={detailBody} inert={sourceSupplementBusy}><DetailPanel workspaceOwnerId={workspaceOwnerId} onEditSeo={()=>{if(detailNavigation===productNavigation.current&&settingsOperationRef.current.ownerId===workspaceOwnerId)selectDetailTab('SEO');}} onReceiptSaved={()=>void refreshReceiptStatus(detail.id,detail.updated_at)} key={detail.id} onBeforeSeoGenerate={()=>{
           if(sourceSupplementBusyRef.current||busyRef.current||detailNavigation!==productNavigation.current)return false;
           const pending=workspaceEditState(detailBody.current,false,true);
           if(pending.busy||pending.dirty){setCloseNotice('저장하지 않은 수정이나 진행 중인 작업이 있습니다. 먼저 저장한 뒤 SEO 초안을 작성해주세요.');return false;}
@@ -677,7 +716,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
           if(pending.dirty){if(selectDetailTab('견적서'))setCloseNotice('견적서에 저장하지 않은 입력이 있습니다. 먼저 저장해주세요.');return;}
           if(selectDetailTab('견적서')){setQuotationTarget({...quotationTarget,optionId,fieldId:'packagedWeightG'});setQuotationNavigationSequence(value=>value+1);}
         }} focusedOptionId={focusedOptionId} initialOptionAction={initialOptionAction} preferredProfileId={detailProfileId} quotationTarget={quotationTarget} quotationNavigationSequence={quotationNavigationSequence} onProfilePrepared={adoptPreparedProfile} onProfileSelected={id=>{if(detailNavigation===productNavigation.current&&settingsOperationRef.current.ownerId===workspaceOwnerId)setDetailProfileId(id);}} onSaved={()=>void loadWorkspace()} onManageCategories={()=>closeWorkspace(true)} onSavePrice={savePrice} tab={tab} product={detail} settings={settings} onUpload={uploadImage}/></div>
-        <footer className="registration-navigation">{detailStepIndex>=0?<><button type="button" className="btn ghost" aria-label="이전 단계" disabled={registrationLayout.loading||detailStepIndex===0} onClick={()=>selectDetailTab(registrationSteps[detailStepIndex-1])}>← 이전</button><button type="button" className="btn ghost" aria-label="다음 단계" disabled={registrationLayout.loading||detailStepIndex===registrationSteps.length-1} onClick={()=>selectDetailTab(registrationSteps[detailStepIndex+1])}>다음 →</button><span aria-label="현재 입력 단계">{detailStepIndex+1} / {registrationSteps.length}</span></>:<><span>추가 작업 · {supportingTabs.find(item=>item.value===tab)?.label}</span><button type="button" className="btn primary" onClick={()=>selectDetailTab(returnRegistrationStep)}>{registrationSteps.indexOf(returnRegistrationStep)+1}. {returnRegistrationStep} 단계로 돌아가기 →</button></>}</footer>
+        <footer className="registration-navigation">{detailStepIndex>=0?<><button type="button" className="btn ghost" aria-label="이전 단계" disabled={!registrationLayoutReady||detailStepIndex===0} onClick={()=>selectDetailTab(registrationSteps[detailStepIndex-1])}>← 이전</button><button type="button" className="btn ghost" aria-label="다음 단계" disabled={!registrationLayoutReady||detailStepIndex===registrationSteps.length-1} onClick={()=>selectDetailTab(registrationSteps[detailStepIndex+1])}>다음 →</button><span aria-label="현재 입력 단계">{detailStepIndex+1} / {registrationSteps.length}</span></>:<><span>추가 작업 · {supportingTabs.find(item=>item.value===tab)?.label}</span><button type="button" className="btn primary" disabled={!registrationLayoutReady} onClick={()=>selectDetailTab(returnRegistrationStep)}>{registrationSteps.indexOf(returnRegistrationStep)+1}. {returnRegistrationStep} 단계로 돌아가기 →</button></>}</footer>
       </aside></div>}
 
       {optionBoardProduct&&(!workspaceOwnerId||optionBoardProduct.owner_id===workspaceOwnerId)&&<div className="option-board-return-context" hidden={!!detail} inert={!!detail}><Modal wide title={registrationTitle(optionBoardProduct)} subtitle={`등록번호 ${registrationNumber(optionBoardProduct)} · 옵션별 상품 자료와 견적서를 확인합니다.`} onClose={closeOptionBoard}>{optionNavigationBusy&&<p role="status">선택한 상품의 최신 자료를 불러오는 중…</p>}<ProductOptionBoard key={optionBoardProduct.id} productId={optionBoardProduct.id} productRegistrationNumber={optionBoardProduct.registration_number} sourceUrl={optionBoardProduct.source_url} imageKeys={optionBoardProduct.image_keys} refreshToken={`${optionBoardVersion}:${optionBoardReturnRevision}`} returnFocus={detail?undefined:optionReturnFocus} onReturnFocusHandled={()=>setOptionReturnFocus(undefined)} onStage={(optionId,step)=>{if(typeof optionId==='string')void navigateOptionBoard(optionId,step);}} onManage={optionId=>{if(typeof optionId==='string')void navigateOptionBoard(optionId,'옵션',true);}} onContent={step=>void navigateOptionBoard(undefined,step)} onImage={optionId=>void navigateOptionBoard(optionId,'대표 이미지')} onEdit={optionId=>void navigateOptionBoard(optionId,'가격')} onQuotation={optionId=>void navigateOptionBoard(optionId,'견적서')}/></Modal></div>}
@@ -708,7 +747,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
 function Modal({ title, subtitle, onClose, children, wide=false }: { title:string; subtitle:string; onClose:()=>void; children:React.ReactNode; wide?:boolean }) {
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className={`modal ${wide?'wide':''}`} role="dialog" aria-modal="true" aria-label={title} onMouseDown={e=>e.stopPropagation()}><header><div><h2>{title}</h2><p>{subtitle}</p></div><button className="icon-close" onClick={onClose}>×</button></header>{children}</section></div>;
 }
-function DetailPanel({ workspaceOwnerId, onReceiptSaved, onBeforeSeoGenerate, onBeforeFreeImageApply, onBeforeSourceWrite, onPrepareSubmission, onProfilePrepared, onProfileSelected, onReviewPackaging, tab, product, settings, onUpload, onSaved, onManageCategories, preferredProfileId, quotationTarget, quotationNavigationSequence, focusedOptionId, initialOptionAction }: { workspaceOwnerId?:string;onReceiptSaved:()=>void; onBeforeSeoGenerate:()=>boolean; onBeforeFreeImageApply:()=>boolean; onBeforeSourceWrite?:(source:WorkspaceSourceWrite)=>boolean; onPrepareSubmission:(profileId?:string)=>void; onProfilePrepared:(profile:CategoryProfile,source:CategoryProfile)=>void; onProfileSelected:(id?:string)=>void; onReviewPackaging:(optionId:string|null)=>void; focusedOptionId?:string; initialOptionAction?:'remove'; quotationTarget?:QuotationNavigationTarget; quotationNavigationSequence?:number; preferredProfileId?:string; onSavePrice:(policy:PricePolicy, options?:PriceSaveOptions)=>Promise<void>; tab:string; product:Product; settings:Settings; onSaved:()=>void; onManageCategories:()=>void; onUpload:(e:ChangeEvent<HTMLInputElement>)=>void }) {
+function DetailPanel({ workspaceOwnerId, onEditSeo, onReceiptSaved, onBeforeSeoGenerate, onBeforeFreeImageApply, onBeforeSourceWrite, onPrepareSubmission, onProfilePrepared, onProfileSelected, onReviewPackaging, tab, product, settings, onUpload, onSaved, onManageCategories, preferredProfileId, quotationTarget, quotationNavigationSequence, focusedOptionId, initialOptionAction }: { workspaceOwnerId?:string;onEditSeo?:()=>void;onReceiptSaved:()=>void; onBeforeSeoGenerate:()=>boolean; onBeforeFreeImageApply:()=>boolean; onBeforeSourceWrite?:(source:WorkspaceSourceWrite)=>boolean; onPrepareSubmission:(profileId?:string)=>void; onProfilePrepared:(profile:CategoryProfile,source:CategoryProfile)=>void; onProfileSelected:(id?:string)=>void; onReviewPackaging:(optionId:string|null)=>void; focusedOptionId?:string; initialOptionAction?:'remove'; quotationTarget?:QuotationNavigationTarget; quotationNavigationSequence?:number; preferredProfileId?:string; onSavePrice:(policy:PricePolicy, options?:PriceSaveOptions)=>Promise<void>; tab:string; product:Product; settings:Settings; onSaved:()=>void; onManageCategories:()=>void; onUpload:(e:ChangeEvent<HTMLInputElement>)=>void }) {
   const [quotationRefresh, setQuotationRefresh] = useState(0);
   const seoProcessingScope=JSON.stringify([workspaceOwnerId,product.id,product.updated_at]);
   const [seoProcessingClock,setSeoProcessingClock]=useState({scope:seoProcessingScope,token:{}});
@@ -823,7 +862,7 @@ function DetailPanel({ workspaceOwnerId, onReceiptSaved, onBeforeSeoGenerate, on
     </div>
     <div hidden={tab!=='옵션'&&tab!=='사이즈표'}><SizeChartWorkspace productId={product.id} version={product.updated_at} sourceStep="사이즈표" profileId={pricingProfileId??null} active={tab==='옵션'||tab==='사이즈표'} disabled={imageOperationsBusy||seoProcessingBusy} beforeSave={sizeChartFilesFree} onBusyChange={changeSizeChartBusy} onSaved={sourceSaved}/></div>
     <div hidden={tab!=='견적서'||!focusedOptionId}><details className="registration-option-notices"><summary>상품고시 별도 편집·PNG</summary>{focusedOptionId&&<OptionLabelEditor key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} onSaved={sourceSaved}/>}</details></div>
-    <div hidden={tab!=='견적서'} className="panel-stack"><QuotationPanel submissionActive={tab==='견적서'} onReceiptSaved={onReceiptSaved} onPrepareSubmission={onPrepareSubmission} onProfilePrepared={onProfilePrepared} onProfileChange={selected=>{setQuotationScope({requested:preferredProfileId,selected});onProfileSelected(selected);}} onSaved={sourceSaved} productId={product.id} preferredProfileId={preferredProfileId} navigationTarget={quotationTarget ?? (focusedOptionId ? {optionId:focusedOptionId,fieldId:'title'} : undefined)} navigationSequence={quotationNavigationSequence} refreshToken={`${product.updated_at}:${quotationRefresh}:${JSON.stringify(settings)}`} onManageCategories={onManageCategories}/><details><summary>대표 상품 가격·내부 CSV 참고</summary><LegacyQuotePanel product={product} settings={settings}/></details></div>
+    <div hidden={tab!=='견적서'} className="panel-stack"><QuotationPanel submissionActive={tab==='견적서'} onEditSeo={onEditSeo} onReceiptSaved={onReceiptSaved} onPrepareSubmission={onPrepareSubmission} onProfilePrepared={onProfilePrepared} onProfileChange={selected=>{setQuotationScope({requested:preferredProfileId,selected});onProfileSelected(selected);}} onSaved={sourceSaved} productId={product.id} preferredProfileId={preferredProfileId} navigationTarget={quotationTarget ?? (focusedOptionId ? {optionId:focusedOptionId,fieldId:'title'} : undefined)} navigationSequence={quotationNavigationSequence} refreshToken={`${product.updated_at}:${quotationRefresh}:${JSON.stringify(settings)}`} onManageCategories={onManageCategories}/><details><summary>대표 상품 가격·내부 CSV 참고</summary><LegacyQuotePanel product={product} settings={settings}/></details></div>
   </>;
 }
 function LegacyQuotePanel({ product, settings }: {product:Product;settings:Settings}) {

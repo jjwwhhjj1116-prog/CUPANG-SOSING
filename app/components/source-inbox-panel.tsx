@@ -1,7 +1,8 @@
 'use client';
-import {useEffect,useRef,useState} from 'react';
+import {useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
 import type {SourceInboxItem} from '@/app/source-inbox';
 import type {PageSource} from '@/extensions/supplier-hub/page-source.mjs';
+import {validateReviewedSourceTransition} from '@/app/source-review-intake';
 
 function flushExtension(signal:AbortSignal):Promise<{ok:boolean;pending?:number;error?:string;errors?:string[]}>{
  return new Promise((resolve,reject)=>{
@@ -14,9 +15,11 @@ function flushExtension(signal:AbortSignal):Promise<{ok:boolean;pending?:number;
   window.postMessage({channel:'YOOFAM_SOURCE_INBOX',type:'FLUSH',requestId},location.origin);
  });
 }
-export function SourceInboxPanel({ownerId,disabled,onAdd,initialItem,onChanged}:{ownerId?:string;disabled:boolean;onAdd:(item:SourceInboxItem)=>void;initialItem?:SourceInboxItem;onChanged?:()=>void}){
+export function SourceInboxPanel({ownerId,disabled,onAdd,initialItem,onChanged,onReviewed}:{ownerId?:string;disabled:boolean;onAdd:(item:SourceInboxItem)=>void;initialItem?:SourceInboxItem;onChanged?:()=>void;onReviewed?:(saved:SourceInboxItem,before:SourceInboxItem)=>void}){
  const [items,setItems]=useState<SourceInboxItem[]>(initialItem?[initialItem]:[]),[loaded,setLoaded]=useState(!!initialItem),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[review,setReview]=useState<{item:SourceInboxItem;source:PageSource;selected:string[]}|null>(initialItem?{item:initialItem,source:structuredClone(initialItem.reviewed??initialItem.snapshot),selected:(initialItem.reviewed??initialItem.snapshot).options.map(row=>row.key)}:null);
  const alive=useRef(true),running=useRef<AbortController|null>(null);
+ const scope=useMemo(()=>({ownerId}),[ownerId]),current=useRef({ownerId,review,scope});
+ useLayoutEffect(()=>{current.current={ownerId,review,scope};},[ownerId,review,scope]);
  const expanded=useRef(false),reload=useRef<()=>void>(()=>{});
  useEffect(()=>{alive.current=true;return()=>{alive.current=false;running.current?.abort();};},[]);
  async function load(flush=false){
@@ -31,13 +34,13 @@ export function SourceInboxPanel({ownerId,disabled,onAdd,initialItem,onChanged}:
   finally{if(running.current===controller){running.current=null;if(alive.current)setBusy(false);}}
  }
  async function saveReview(){
-  if(!review||running.current||!ownerId)return;const controller=new AbortController();running.current=controller;setBusy(true);setMessage('');
+  if(!review||running.current||!ownerId||!alive.current||current.current.ownerId!==ownerId||current.current.scope!==scope||current.current.review!==review)return;const controller=new AbortController(),before=review.item;running.current=controller;setBusy(true);setMessage('');
   try{
    const response=await fetch('/api/source-inbox',{method:'PUT',signal:controller.signal,headers:{'content-type':'application/json'},body:JSON.stringify({expectedOwnerId:ownerId,id:review.item.id,expectedRevision:review.item.revision,review:{title:review.source.title,options:review.source.options.filter(row=>review.selected.includes(row.key)).map(row=>({key:row.key,name:row.name,supplierSku:row.supplierSku,unitPriceCny:row.unitPriceCny,currency:row.currency,minimumOrder:row.minimumOrder}))}})}),body=await response.json() as {ownerId?:string;error?:string;item?:SourceInboxItem};
-   if(controller.signal.aborted||!alive.current)return;
-   if(!response.ok||body.ownerId!==ownerId||body.item?.id!==review.item.id)throw Error(body.error||'상품 검토 저장을 확인하지 못했습니다.');
-   const saved=body.item!;onChanged?.();setItems(previous=>previous.map(item=>item.id===saved.id?saved:item));setReview(null);setMessage('검토한 상품정보를 저장했습니다. 카테고리를 선택해 초안을 작성하세요.');
-  }catch(error){if(!controller.signal.aborted&&alive.current)setMessage(error instanceof Error?error.message:'상품 검토 저장 실패');}
+   if(controller.signal.aborted||!alive.current||current.current.ownerId!==ownerId||current.current.scope!==scope||current.current.review!==review)return;
+   if(!response.ok||body.ownerId!==ownerId||!body.item||!validateReviewedSourceTransition(before,body.item,ownerId))throw Error(body.error||'상품 검토 저장을 확인하지 못했습니다.');
+   const saved=body.item;setItems(previous=>previous.map(item=>item.id===saved.id?saved:item));setReview(null);setMessage('검토한 상품정보를 저장했습니다. 카테고리를 선택해 초안을 작성하세요.');onReviewed?.(saved,before);onChanged?.();
+  }catch(error){if(!controller.signal.aborted&&alive.current&&current.current.ownerId===ownerId&&current.current.scope===scope)setMessage(error instanceof Error?error.message:'상품 검토 저장 실패');}
   finally{if(running.current===controller){running.current=null;if(alive.current)setBusy(false);}}
  }
  async function archive(item:SourceInboxItem){

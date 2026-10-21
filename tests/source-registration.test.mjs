@@ -21,14 +21,14 @@ test('source list entry keeps prices unknown and never overwrites or duplicates 
 });
 
 function hookFixture(fetcher){
- const states=[],effects=[],events=new Map(),timers=new Map(),posted=[],calls=[];let cursor=0,owner='owner',first=true,cleanup,nextTimer=0;
- const hooks={useState(initial){const index=cursor++;if(!(index in states))states[index]=initial;return[states[index],value=>{states[index]=typeof value==='function'?value(states[index]):value;}];},useRef(value){const index=cursor++;return states[index]??(states[index]={current:value});},useCallback:fn=>fn,useEffect(fn){if(first)effects.push(fn);}};
+ const states=[],effects=[],layouts=[],events=new Map(),timers=new Map(),posted=[],calls=[];let cursor=0,owner='owner',first=true,cleanup,nextTimer=0;
+ const hooks={useState(initial){const index=cursor++;if(!(index in states))states[index]=initial;return[states[index],value=>{states[index]=typeof value==='function'?value(states[index]):value;}];},useRef(value){const index=cursor++;return states[index]??(states[index]={current:value});},useMemo(fn,deps){const index=cursor++,previous=states[index];if(!previous||deps.some((value,i)=>!Object.is(value,previous.deps[i])))states[index]={deps,value:fn()};return states[index].value;},useCallback:fn=>fn,useLayoutEffect(fn){layouts.push(fn);},useEffect(fn){if(first)effects.push(fn);}};
  const window={addEventListener:(name,fn)=>events.set(name,fn),removeEventListener:(name,fn)=>{if(events.get(name)===fn)events.delete(name);},postMessage:value=>posted.push(value)};
  const document={visibilityState:'visible',addEventListener(){},removeEventListener(){}};
  const {useSourceRegistrations}=module('app/components/use-source-registrations.ts',{require:()=>hooks,window,document,location:{origin:'https://app.test'},crypto:{randomUUID:()=> '00000000-0000-4000-8000-000000000001'},AbortController,Error,
   setTimeout:fn=>{const id=++nextTimer;timers.set(id,fn);return id;},clearTimeout:id=>timers.delete(id),setInterval:()=>999,clearInterval(){},
   fetch:(path,init)=>{calls.push({path,init});return fetcher(path,init);}});
- const useFixtureRender=()=>{cursor=0;const result=useSourceRegistrations(owner);effects.splice(0).forEach(fn=>{cleanup=fn();});first=false;return result;};
+ const useFixtureRender=()=>{cursor=0;const result=useSourceRegistrations(owner);layouts.splice(0).forEach(fn=>fn());effects.splice(0).forEach(fn=>{cleanup=fn();});first=false;return result;};
  return{render:useFixtureRender,calls,posted,window,close:()=>cleanup?.(),owner:value=>{cleanup?.();owner=value;first=true;},event:()=>events.get('message')?.({source:window,origin:'https://app.test',data:{channel:'YOOFAM_SOURCE_INBOX_UPDATED'}}),flush:()=>{for(const fn of [...timers.values()])fn();}};
 }
 test('app automatically reads captures and refreshes the registration list after extension acknowledgement',async()=>{
