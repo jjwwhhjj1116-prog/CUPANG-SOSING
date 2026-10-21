@@ -134,7 +134,7 @@ test('trusted page button retains separate attribute scripts and the known envel
  const create=tag=>{const node={tag,style:{},textContent:'',setAttribute(){},append(){},attachShadow(){return{append(){}};},addEventListener(type,listener){if(type==='click')node.click=listener;}};elements.push(node);return node;};
  const document={getElementById:()=>null,createElement:create,documentElement:{append(){}},title:'合成测试商品',scripts:[{textContent:JSON.stringify({skuModel,offerImgList:gallery})},{textContent:entry.script}],querySelector(selector){return selector==='.price-container'?{textContent:'¥5.30 1件起批'}:null;},querySelectorAll:()=>[]};
  const window={};window.top=window;
- vm.runInNewContext(bundle.outputFiles[0].text,{window,document,location:{href:sourceUrl},URL,Date,Error,chrome:{runtime:{sendMessage:async message=>{messages.push(message);return{ok:true,delivered:true};}}},fetch:()=>assert.fail('A click capture cannot request the product endpoint')});
+ vm.runInNewContext(bundle.outputFiles[0].text,{window,document,location:{href:sourceUrl},URL,Date,Error,TextEncoder,chrome:{runtime:{sendMessage:async message=>{messages.push(message);return{ok:true,delivered:true};}}},fetch:()=>assert.fail('A click capture cannot request the product endpoint')});
  await elements.find(node=>node.tag==='button').click({isTrusted:true});
  assert.equal(messages.length,1);
  assert.deepEqual(JSON.parse(JSON.stringify(messages[0].snapshot.attributes)),entry.expected);

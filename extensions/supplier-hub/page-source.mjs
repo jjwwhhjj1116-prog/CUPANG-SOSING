@@ -362,7 +362,7 @@ export function extractPageSource(input,now=Date.now()){
  for(const {entry} of models)assertProductIdentity(entry.value,identity.offerId);
  const title=sourceTitle(scripts,models,identity.offerId)||plain(input.title,500);
  if(!title)throw Error('상품명이 보이는 상품 본문에서 다시 수집해주세요.');
- const images=[],addImage=(value,role)=>{const url=image(value);if(url&&!images.some(item=>item.url===url&&item.role===role)&&images.length<200)images.push({url,role});};
+ const images=[],addImage=(value,role)=>{const url=image(value);if(url&&!images.some(item=>item.url===url&&item.role===role)){if(images.length>=200)throw Error('상품 이미지가 200개를 초과했습니다. 옵션 이미지·상세 이미지를 일부만 담지 않았습니다. 이미지 수를 확인한 뒤 다시 수집해주세요.');images.push({url,role});}};
  for(const key of ['offerImgList','mainImageList']){
   const list=property(key);if(Array.isArray(list))for(const item of list)addImage(typeof item==='string'?item:item?.originalImageURI??item?.imageURI??item?.imageUrl??item?.url,images.some(item=>item.role==='main')?'additional':'main');
  }
@@ -396,7 +396,7 @@ export function extractPageSource(input,now=Date.now()){
    options.push({...row});if(row.imageUrl)addImage(row.imageUrl,'additional');
   }
  }
- return validatePageSource({format:'yoofam-page-source-v1',...identity,collectedAt:new Date(now).toISOString(),title,description:plain(input.description,20000),options,images,attributes:sourceAttributes(scripts,identity.offerId)},now);
+ return validatePageSourceForDelivery({format:'yoofam-page-source-v1',...identity,collectedAt:new Date(now).toISOString(),title,description:plain(input.description,20000),options,images,attributes:sourceAttributes(scripts,identity.offerId)},now);
 }
 export function validatePageSource(input,now=Date.now()){
  const keys=['format','sourceUrl','offerId','collectedAt','title','description','options','images','attributes'];
@@ -424,6 +424,14 @@ export function validatePageSource(input,now=Date.now()){
  for(const row of input.attributes)if(!object(row)||Object.keys(row).some(key=>!['name','value'].includes(key))||!plain(row.name,190)||row.name!==plain(row.name,190)||!plain(row.value,1000)||row.value!==plain(row.value,1000))throw Error('상품 속성을 확인해주세요.');
  return JSON.parse(JSON.stringify(input));
 }
+/** Keep legacy stored records readable. New captures/reviews/deliveries must
+ * fit the receiving UTF-8 byte limit and retain every observed option image. */
+export function validatePageSourceForDelivery(input,now=Date.now()){
+ const source=validatePageSource(input,now);
+ if(new TextEncoder().encode(JSON.stringify(source)).byteLength>PAGE_SOURCE_LIMIT)throw Error('상품 수집 원문은 UTF-8 기준 512KB(524,288바이트) 이하여야 합니다. 옵션·상품 설명의 분량을 확인해주세요. 일부 내용만 담지 않았습니다.');
+ if(source.options.some(option=>option.imageUrl!==null&&!source.images.some(image=>image.url===option.imageUrl)))throw Error('수집한 옵션 이미지가 원본 이미지 목록에 없습니다. 옵션 이미지를 일부만 담지 않았으니 상품 본문에서 다시 수집해주세요.');
+ return source;
+}
 export function pageSourceIssues(source){
  const issues=[];if(!source.options.length)issues.push('옵션 원문');
  if(source.options.some(row=>!row.supplierSku))issues.push('공급자 SKU');
@@ -431,5 +439,6 @@ export function pageSourceIssues(source){
  if(source.options.some(row=>row.unitPriceCny===null))issues.push('옵션 원가');
  if(source.options.some(row=>row.currency!=='CNY'))issues.push('위안(CNY) 통화');
  if(source.options.some(row=>row.minimumOrder===null))issues.push('최소 주문 수량');
+ if(source.options.some(row=>row.imageUrl!==null&&!source.images.some(image=>image.url===row.imageUrl)))issues.push('옵션 이미지 원본 연결');
  return issues;
 }

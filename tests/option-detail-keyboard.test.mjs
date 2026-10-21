@@ -25,7 +25,7 @@ function keyboardUI(fetcher,initial){
  const document={activeElement:null,addEventListener(type,listener){assert.equal(type,'keydown');listeners.add(listener);},removeEventListener(type,listener){assert.equal(type,'keydown');listeners.delete(listener);}};
  const effect=(queue,fn,deps)=>{const index=cursor++,old=slots[index];if(deps===undefined||!old||!same(old.deps,deps)){const slot={deps,cleanup:old?.cleanup};slots[index]=slot;queue.push(()=>{old?.cleanup?.();slot.cleanup=fn();});}};
  const react={useState(initial){const index=cursor++;if(!(index in slots))slots[index]=typeof initial==='function'?initial():initial;return[slots[index],value=>{assert.equal(closed,false,'no state updates after unmount');epoch++;slots[index]=typeof value==='function'?value(slots[index]):value;}];},useRef(initial){const index=cursor++;return slots[index]??(slots[index]={current:initial});},useEffect(fn,deps){effect(effects,fn,deps);},useLayoutEffect(fn,deps){effect(layouts,fn,deps);}};
- function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,document,Error,AbortController,structuredClone,TextEncoder,crypto,fetch:async(url,init={})=>{calls.push({url,method:init.method??'GET',body:init.body?JSON.parse(init.body):undefined});const response=await fetcher(url,init);if(response.ok){const body=await response.clone().json();if(init.method==='PUT')props.version=body.productVersion;}return response;},require(name){if(name==='react')return react;if(name==='react/jsx-runtime')return{jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})};if(name.startsWith('./')||name.startsWith('../'))return load(path.posix.join(path.posix.dirname(file),name)+'.ts');return name.startsWith('@/')?load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts')):native(name);}},{filename:file});return exports;}
+ function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,document,window:{confirm:message=>props.confirmImage?.(message)??true},Error,AbortController,structuredClone,TextEncoder,crypto,fetch:async(url,init={})=>{calls.push({url,method:init.method??'GET',body:init.body?JSON.parse(init.body):undefined});const response=await fetcher(url,init);if(response.ok){const body=await response.clone().json();if(init.method==='PUT')props.version=body.productVersion;}return response;},require(name){if(name==='react')return react;if(name==='react/jsx-runtime')return{jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})};if(name.startsWith('./')||name.startsWith('../'))return load(path.posix.join(path.posix.dirname(file),name)+'.ts');return name.startsWith('@/')?load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts')):native(name);}},{filename:file});return exports;}
  const Component=load('app/components/option-image-editor.tsx').OptionImageEditor;
  function render(){cursor=0;const tree=Component({...props,onSaved(){saved++;epoch++;}});layouts.splice(0).forEach(fn=>fn());effects.splice(0).forEach(fn=>fn());return tree;}
  async function idle(){let quiet=0;for(let i=0;i<300;i++){const before=epoch,count=calls.length;render();await new Promise(resolve=>setImmediate(resolve));const tree=render();if(before===epoch&&count===calls.length&&!tree.props['data-workspace-saving'])quiet++;else quiet=0;if(quiet===2)return tree;}throw Error('keyboard component did not settle');}
@@ -117,6 +117,43 @@ for(const company of companies){
    h.press();await h.idle();assert.deepEqual(h.order(),f.keys.filter(key=>key!==f.body[1]),'held Delete cannot erase the next image');
    await h.click('선택 옵션 이미지 저장');const after=await f.read(),own=after.resolved.rows.find(row=>row.optionId===f.id);assert.equal(h.saved,1);assert.equal(h.calls.filter(call=>call.method==='PUT').length,1);assert.deepEqual(own.fields.detailImages.value.split('\n'),f.keys.filter(key=>key!==f.body[1]));assert.equal(own.fields.detailHtml.value,f.html);assert.deepEqual(plain(after.overrides.common),plain(before.overrides.common));assert.deepEqual(plain(after.overrides.options[f.other]),plain(before.overrides.options[f.other]));assert.equal(f.h.sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');
   }finally{h.close();f.close();}
+ });
+ test(`single detail button and hovered Delete share confirmation; cancelling preserves clean and dirty inputs (${company.code})`,async()=>{
+  const f=await fixture(company),prompts=[],h=keyboardUI(f.request,{...f.props,confirmImage:message=>{prompts.push(message);return false;}});try{
+   await h.idle();const before=f.snapshot(),reads=h.calls.length;
+   for(const dirty of [false,true]){
+    if(dirty){h.html('');await h.idle();}
+    const order=h.order();await h.click('상세 이미지 3 선택 제거');h.hover(f.body[1]);const event=h.press();await h.idle();
+    assert.equal(event.defaultPrevented,false);assert.deepEqual(h.order(),order);assert.equal(h.render().props['data-workspace-dirty'],dirty);
+    if(dirty)assert.equal(nodes(h.render()).find(node=>node.type==='textarea').props.value,'');
+    assert.equal(h.calls.length,reads);assert.equal(h.saved,0);assert.equal(f.snapshot(),before);
+   }
+   assert.deepEqual(prompts,Array(4).fill('이 이미지를 삭제하시겠습니까?'));
+   h.props.confirmImage=message=>{prompts.push(message);return true;};h.hover(f.body[1]);assert.equal(h.press().defaultPrevented,true);await h.idle();
+   assert.deepEqual(h.order(),f.keys.filter(key=>key!==f.body[1]));assert.equal(h.calls.length,reads);assert.equal(f.snapshot(),before);
+   assert.equal(nodes(h.render()).find(node=>node.type==='textarea').props.value,'','confirmation never fills manual blank HTML');
+  }finally{h.close();f.close();}
+ });
+ test(`scope and hidden-stage ABA during native detail confirmation cannot mutate either option (${company.code})`,async()=>{
+  const f=await fixture(company),h=keyboardUI(f.request,f.props);try{
+   await h.idle();const before=f.snapshot(),reads=h.calls.length;
+   for(const trigger of ['button','keyboard'])for(const [field,value]of [['active',false],['stage','additional'],['version',new Date(Date.parse(f.props.version)+1).toISOString()],['refreshToken','changed'],['profileId','different'],['optionId',f.other],['disabled',true]]){
+    let prompts=0;h.props.confirmImage=message=>{prompts++;assert.equal(message,'이 이미지를 삭제하시겠습니까?');const previous=h.props[field];h.props[field]=value;h.render();h.props[field]=previous;h.render();return true;};
+    if(trigger==='button')await h.click('상세 이미지 3 선택 제거');else{h.hover(f.body[1]);h.press();await h.idle();}
+    assert.equal(prompts,1,trigger+' '+field);assert.deepEqual(h.order(),f.keys);assert.equal(h.render().props['data-workspace-dirty'],false);assert.equal(f.snapshot(),before);
+   }
+   assert.equal(h.calls.filter(call=>call.method==='PUT').length,0);assert.equal(h.saved,0);assert.ok(h.calls.length>=reads);
+  }finally{h.close();f.close();}
+ });
+ test(`manual input changes or unmount during confirmation are retained without applying the captured deletion (${company.code})`,async()=>{
+  const f=await fixture(company),h=keyboardUI(f.request,f.props);let closed=false;try{
+   await h.idle();const before=f.snapshot(),reads=h.calls.length;
+   h.props.confirmImage=()=>{h.html('<p>확인창 사이에 직접 수정한 HTML</p>');return true;};
+   await h.click('상세 이미지 3 선택 제거');assert.deepEqual(h.order(),f.keys);assert.equal(h.render().props['data-workspace-dirty'],true);
+   assert.equal(nodes(h.render()).find(node=>node.type==='textarea').props.value,'<p>확인창 사이에 직접 수정한 HTML</p>');assert.equal(h.calls.length,reads);assert.equal(f.snapshot(),before);
+   await h.click('입력 취소·저장 이미지 다시 조회');h.props.confirmImage=()=>{h.close();closed=true;return true;};
+   h.hover(f.body[1]);h.press();assert.equal(h.listeners.size,0);assert.equal(h.calls.filter(call=>call.method==='PUT').length,0);assert.equal(f.snapshot(),before);
+  }finally{if(!closed)h.close();f.close();}
  });
  test(`settings banners, native text Delete, modifiers and pointer leave never remove a detail selection (${company.code})`,async()=>{
   const f=await fixture(company),h=keyboardUI(f.request,f.props);try{

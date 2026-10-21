@@ -7,4 +7,5 @@ export type PageSourceDomOptions={format:'yoofam-page-dom-options-v1';sourceUrl:
 export function readPageSourceDomOptions(document:Pick<Document,'querySelectorAll'>,sourceUrl:string,scripts:string[]):PageSourceDomOptions|null;
 export function extractPageSource(input:{sourceUrl:string;scripts:string[];domOptions?:PageSourceDomOptions|null;title?:string;description?:string;gallery?:string[];detailImages?:string[];priceText?:string;minimumOrderText?:string},now?:number):PageSource;
 export function validatePageSource(input:unknown,now?:number):PageSource;
+export function validatePageSourceForDelivery(input:unknown,now?:number):PageSource;
 export function pageSourceIssues(source:PageSource):string[];

@@ -21,7 +21,7 @@ function currentButton({gallery=[],details=[],scriptMain,deliver=async()=>({ok:t
   querySelector(selector){return selector.startsWith('meta')?{content:'合成延迟图片商品'}:selector==='.price-container'?{textContent:'¥5.30 1件起批'}:null;},
   querySelectorAll(selector){if(selector.includes('.detail-gallery'))return gallery;if(selector.includes('#desc-lazyload-container'))return details;assert.fail(`Unexpected selector: ${selector}`);}};
  const window={};window.top=nested?{}:window;
- vm.runInNewContext(bundle,{window,document,location:{href:sourceUrl},URL,Date,Error,
+ vm.runInNewContext(bundle,{window,document,location:{href:sourceUrl},URL,Date,Error,TextEncoder,
   chrome:{runtime:{sendMessage:async message=>{messages.push(message);return deliver(message);}}},fetch:()=>assert.fail('Current-page collection must not fetch a source endpoint')});
  return {button:elements.find(node=>node.tag==='button'),status:elements.find(node=>node.tag==='p'),messages};
 }

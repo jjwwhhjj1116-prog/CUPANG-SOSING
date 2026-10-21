@@ -84,7 +84,7 @@ test('first qualification cannot replace a different prepared checkpoint or surv
 
 test('older preview exposes only the direct integrated-extension download and no new draft action',async()=>{
  const h=await fixture();try{await h.idle();await h.click(open);assert.equal(h.button(prepareDraft),undefined);assert.equal(h.button(start),undefined);
-  const link=nodes(h.render()).find(node=>node.type==='a'&&node.props.download!==undefined);assert.equal(link.props.href,'/downloads/yoofam-plus-supplier-hub-extension-2.1.17.zip');assert.ok(h.f.calls.every(call=>call.method==='GET'));assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview']);
+  const link=nodes(h.render()).find(node=>node.type==='a'&&node.props.download!==undefined);assert.equal(link.props.href,'/downloads/yoofam-plus-supplier-hub-extension-2.1.18.zip');assert.ok(h.f.calls.every(call=>call.method==='GET'));assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview']);
  }finally{h.close();}
 });
 for(const company of SINGLE_COMPANIES)test(`${company.code}: explicit new draft owns one reservation, reports actual document validation and unlocks only outer close`,async()=>{

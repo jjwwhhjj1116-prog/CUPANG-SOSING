@@ -1,4 +1,4 @@
-import {validatePageSource,pageSourceUrl} from './page-source.mjs';
+import {validatePageSourceForDelivery,pageSourceUrl} from './page-source.mjs';
 const origins=['https://sourceflow.jjwwhhjj1116.workers.dev','http://localhost:3000','http://127.0.0.1:3000'];
 const companies={A01526306:'유앤채',A01464742:'와이홉'};
 const identifier=value=>typeof value==='string'&&/^\w[\w-]{0,99}$/.test(value);
@@ -29,6 +29,7 @@ async function context(api,tab){
 }
 const same=(left,right)=>left.ownerId===right.ownerId&&left.origin===right.origin&&left.company.code===right.company.code&&left.company.name===right.company.name;
 async function deliver(record,tab,api,store){
+ validatePageSourceForDelivery(record.snapshot);
  const before=await context(api,tab);if(!same(before,record))throw Error('수집 당시 회원·회사로 로그인한 앱에서 불러오세요.');
  const result=await api.tabs.sendMessage(tab.id,{type:'YOOFAM_SAVE_SOURCE_CAPTURE',record},{frameId:0});
  if(result?.ok!==true||result.id!==record.id||result.fingerprint!==record.fingerprint||result.ownerId!==record.ownerId||result.company?.code!==record.company.code||result.company?.name!==record.company.name)throw Error(result?.error||'웹 수집함의 저장 확인을 받지 못했습니다. 확장 보관본은 유지됩니다.');
@@ -38,7 +39,7 @@ async function deliver(record,tab,api,store){
 /** Called by the isolated top-frame button only. No source page read/fetch here. */
 export async function savePageSource(message,sender,api=chrome,store=sourceInboxStore){
  if(sender?.frameId!==0||!Number.isSafeInteger(sender.tab?.id)||!Number.isSafeInteger(sender.tab?.windowId))throw Error('상품 본문에서 수집해주세요.');
- const page=pageSourceUrl(sender.url),snapshot=validatePageSource(message.snapshot);
+ const page=pageSourceUrl(sender.url),snapshot=validatePageSourceForDelivery(message.snapshot);
  if(page.sourceUrl!==snapshot.sourceUrl)throw Error('클릭한 상품과 수집 원문이 다릅니다.');
  if(pending.has(sender.tab.id))return pending.get(sender.tab.id);
  const run=(async()=>{

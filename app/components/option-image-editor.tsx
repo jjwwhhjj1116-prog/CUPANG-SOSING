@@ -141,7 +141,21 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     updateImages(keys => keys.includes(key) || keys.length >= limit ? keys : [...keys, key]);
     setPreview({ scope, key });
   }
-  function removeImages(update: (keys: string[]) => string[], all = false) {
+  function confirmedDetailRemoval(key: string, expectedKeys?: string[]) {
+    const base = latestSaved.current, editing = latestDraft.current;
+    if (stage !== 'detail' || !base || base.scope !== scope || base.view !== view || !cardCurrent() || request.current
+      || pendingSave.current?.scope === scope || !mutableImage(key)) return null;
+    const keys = quotationImageKeys(optionImageValue(base.view, optionId, 'detailImages', editing.scope === scope ? editing.values : {}));
+    if (!base.view.imageKeys.includes(key) || !keys.includes(key) || new Set(keys).size !== keys.length
+      || expectedKeys && JSON.stringify(keys) !== JSON.stringify(expectedKeys) || typeof window === 'undefined'
+      || !window.confirm('이 이미지를 삭제하시겠습니까?')) return null;
+    // A native dialog can outlive this exact option/stage incarnation. Keep
+    // every local input and saved basis unchanged if anything moved meanwhile.
+    if (latestSaved.current !== base || latestDraft.current !== editing || !cardCurrent() || request.current
+      || pendingSave.current?.scope === scope) return null;
+    return keys;
+  }
+  function removeImages(update: (keys: string[]) => string[], all = false, detailKey?: string) {
     if (instant) {
       const base = latestSaved.current, editing = latestDraft.current;
       if (!base || base.scope !== scope || base.view !== view || !cardCurrent() || request.current || pendingSave.current?.scope === scope || Object.keys(editing.values).length) return;
@@ -150,6 +164,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
         || !window.confirm(all ? '추가 이미지를 모두 삭제하시겠습니까?' : '이 이미지를 정말 삭제하시겠습니까?')) return;
       if (latestSaved.current !== base || latestDraft.current !== editing || !cardCurrent()) return;
     }
+    if (stage === 'detail' && !all && (!detailKey || !confirmedDetailRemoval(detailKey))) return;
     updateImages(update);
   }
   function move(key: string, index: number, direction: -1 | 1) {
@@ -244,7 +259,9 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     try {
       const keys = quotationImageKeys(optionImageValue(base.view, optionId, 'detailImages', editing));
       if (JSON.stringify(keys) !== JSON.stringify(hovered.keys) || new Set(keys).size !== keys.length || !keys.includes(hovered.key)) { hoveredDetail.current = null; return; }
-      hoveredDetail.current = null; event.preventDefault(); event.stopPropagation(); edit('detailImages', keys.filter(key => key !== hovered.key).join('\n'));
+      const confirmed = confirmedDetailRemoval(hovered.key, keys);
+      if (!confirmed || hoveredDetail.current !== hovered) return;
+      hoveredDetail.current = null; event.preventDefault(); event.stopPropagation(); edit('detailImages', confirmed.filter(key => key !== hovered.key).join('\n'));
     } catch { hoveredDetail.current = null; }
   }
   useEffect(() => {
@@ -362,7 +379,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
   const imageOrderActions = (key: string, index: number) => <>
     <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 위로 이동`} disabled={locked || !mutableImage(key) || index === 0 || !mutableImage(selected[index - 1])} onClick={() => move(key, index, -1)}>↑</button>
     <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 아래로 이동`} disabled={locked || !mutableImage(key) || index === selected.length - 1 || !mutableImage(selected[index + 1])} onClick={() => move(key, index, 1)}>↓</button>
-    <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 선택 제거`} disabled={locked || !mutableImage(key)} onClick={() => removeImages(keys => keys[index] === key ? keys.filter((_, position) => position !== index) : keys)}>삭제</button></>;
+    <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 선택 제거`} disabled={locked || !mutableImage(key)} onClick={() => removeImages(keys => keys[index] === key ? keys.filter((_, position) => position !== index) : keys, false, key)}>삭제</button></>;
   const selectedActions = (key: string, index: number) => <div className={stage === 'detail' ? 'option-detail-image-toolbar' : 'image-selected-actions'} role="group" aria-label={`${label} ${index + 1} 편집`}>
     {stage === 'detail' && knownProtection?.includes(key) && <small>상단·하단 설정 이미지 · 원본과 위치 유지</small>}
     {stage==='detail'?<><div className="option-detail-image-edit-actions" role="group" aria-label={`상세 이미지 ${index+1} 번역·수정`}>{imageEditActions(key,index)}</div><div className="option-detail-image-order-actions" role="group" aria-label={`상세 이미지 ${index+1} 순서·삭제`}>{imageOrderActions(key,index)}</div></>:<>{imageEditActions(key,index)}{imageOrderActions(key,index)}</>}

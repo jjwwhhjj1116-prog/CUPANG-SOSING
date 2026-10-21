@@ -1,4 +1,4 @@
-import {validatePageSource,pageSourceIssues,type PageSource} from '@/extensions/supplier-hub/page-source.mjs';
+import {validatePageSource,validatePageSourceForDelivery,pageSourceIssues,type PageSource} from '@/extensions/supplier-hub/page-source.mjs';
 import {validateCollectionResult,type CollectionResult} from '@/app/collection-result';
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 export type SourceInboxItem={id:string;ownerId:string;company:SupplierHubCompany;fingerprint:string;snapshot:PageSource;revision:number;receivedAt:string;reviewed:PageSource|null;issues:string[];warnings?:string[];archivedAt:string|null;captureOriginId?:string;captureVersion?:number};
@@ -35,5 +35,5 @@ export function reviewPageSource(snapshot:PageSource,input:unknown):PageSource{
   const body=row as PageSource['options'][number],original=snapshot.options.find(item=>item.key===body.key);if(!original)throw Error('수집 원문에 없는 옵션입니다.');
   return {...original,...body};
  });
- const reviewed=validatePageSource({...snapshot,title:value.title,options});pageSourceCollectionResult(reviewed,true);return reviewed;
+ const reviewed=validatePageSourceForDelivery({...snapshot,title:value.title,options});pageSourceCollectionResult(reviewed,true);return reviewed;
 }

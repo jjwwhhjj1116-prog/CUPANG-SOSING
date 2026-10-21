@@ -1,7 +1,7 @@
 import {getChatGPTUser,getWorkspaceOwnerId} from '@/app/chatgpt-auth';
 import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
 import {readBoundedJson,RequestBodyError} from '@/app/request-body';
-import {validatePageSource,PAGE_SOURCE_LIMIT} from '@/extensions/supplier-hub/page-source.mjs';
+import {validatePageSourceForDelivery,PAGE_SOURCE_LIMIT} from '@/extensions/supplier-hub/page-source.mjs';
 import {pageSourceFingerprint,reviewPageSource} from '@/app/source-inbox';
 import {listSourceInbox,readSourceInbox,storeSourceInbox,reviewSourceInbox,archiveSourceInbox,restoreSourceInbox,SourceInboxConflict,SOURCE_INBOX_ACTIVE_LIMIT,SOURCE_INBOX_RETENTION_LIMIT} from '@/db/source-inbox';
 const reply=(value:unknown,status=200)=>Response.json(value,{status,headers:{'cache-control':'no-store'}});
@@ -15,7 +15,7 @@ export async function POST(request:Request){
   const company=body.expectedCompany as {code?:unknown;name?:unknown}|undefined;
   if(body.expectedOwnerId!==auth.owner||company?.code!==auth.company.code||company?.name!==auth.company.name)return reply({error:'수집 중 로그인 회원·회사가 변경되었습니다.'},409);
   if(typeof body.id!=='string'||!/^[a-f0-9-]{36}$/.test(body.id)||typeof body.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(body.fingerprint))return reply({error:'수집 요청 번호를 확인해주세요.'},400);
-  let snapshot;try{snapshot=validatePageSource(body.snapshot);}catch(error){return reply({error:error instanceof Error?error.message:'상품 수집 내용을 확인해주세요.'},400);}
+  let snapshot;try{snapshot=validatePageSourceForDelivery(body.snapshot);}catch(error){return reply({error:error instanceof Error?error.message:'상품 수집 내용을 확인해주세요.'},400);}
   if(await pageSourceFingerprint(snapshot)!==body.fingerprint)return reply({error:'수집 원문 확인값이 일치하지 않습니다.'},400);
   const saved=await storeSourceInbox(auth.owner,auth.company,body.id,body.fingerprint,snapshot);
   if(!saved)return reply({error:`수집함은 표시 중인 원문 ${SOURCE_INBOX_ACTIVE_LIMIT}개·보존된 전체 원문 ${SOURCE_INBOX_RETENTION_LIMIT}개까지 보관합니다. 기존 원문과 작업 상품은 유지됩니다.`},409);

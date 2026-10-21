@@ -57,7 +57,7 @@ async function collectTitle({subject,productTitle='',metaTitle='Synthetic shop m
  const document={getElementById:()=>null,createElement:create,documentElement:{append(){}},title:documentTitle,scripts:[{textContent:JSON.stringify(data)}],
   querySelector(selector){if(selector==='h1')return{textContent:'Misleading generic shop heading'};if(selector.startsWith('h1.d-title'))return{textContent:productTitle};if(selector.startsWith('meta'))return{content:metaTitle};return null;},querySelectorAll:()=>[]};
  const window={};window.top=window;
- vm.runInNewContext(bundle.outputFiles[0].text,{window,document,location:{href:sourceUrl},URL,Date,Error,chrome:{runtime:{sendMessage:async message=>{messages.push(message);return{ok:true,delivered:true};}}},fetch:()=>assert.fail('No product endpoint may be fetched')});
+ vm.runInNewContext(bundle.outputFiles[0].text,{window,document,location:{href:sourceUrl},URL,Date,Error,TextEncoder,chrome:{runtime:{sendMessage:async message=>{messages.push(message);return{ok:true,delivered:true};}}},fetch:()=>assert.fail('No product endpoint may be fetched')});
  await elements.find(node=>node.tag==='button').click({isTrusted:true});
  assert.equal(messages.length,1);
  return messages[0].snapshot;
