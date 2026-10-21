@@ -38,6 +38,36 @@ export function verifySeoWorkspaceView(value: unknown, productId: string): asser
       throw Error('저장된 옵션 이름과 원문 연결을 확인하지 못했습니다.');
     ids.add(row.id);
   }
+  if (Object.hasOwn(value, 'optionOriginalReferences')) {
+    if (!record(value.optionOriginalReferences) || Object.keys(value.optionOriginalReferences).length > OPTION_LIMIT)
+      throw Error('옵션 원문 번역 참고자료를 확인하지 못했습니다.');
+    for (const [id, reference] of Object.entries(value.optionOriginalReferences)) {
+      const row = value.options.rows.find((row: Record<string, unknown>) => row.id === id);
+      if (!row || !record(reference) || Object.keys(reference).some(key => !['originalName', 'axes'].includes(key))
+        || reference.originalName !== row.originalName || !Array.isArray(reference.axes) || reference.axes.length < 1 || reference.axes.length > 2)
+        throw Error('옵션 원문 번역 참고자료의 연결을 확인하지 못했습니다.');
+      let previous = -1;
+      for (const axis of reference.axes) {
+        if (!record(axis) || Object.keys(axis).some(key => !['field', 'original', 'translated'].includes(key))
+          || !['color', 'size'].includes(String(axis.field)) || !text(axis.original) || !text(axis.translated)
+          || typeof axis.original !== 'string' || !axis.original.trim() || axis.original !== axis.original.trim() || axis.original.length > 200
+          || typeof axis.translated !== 'string' || !axis.translated.trim() || axis.translated !== axis.translated.trim() || axis.translated.length > 200
+          || row.provenance[axis.field as 'color' | 'size'] !== 'translated' || row[axis.field as 'color' | 'size'] !== axis.translated
+          || ['color', 'size'].indexOf(String(axis.field)) <= previous)
+          throw Error('현재 옵션의 색상·사이즈 번역 참고자료가 일치하지 않습니다.');
+        previous = ['color', 'size'].indexOf(String(axis.field));
+      }
+      if (reference.axes.map(axis => axis.original).join(' / ') !== row.originalName)
+        throw Error('옵션 원문 번역 참고자료가 원문 전체와 일치하지 않습니다.');
+    }
+  }
+}
+
+/** Optional GET-only captions are not part of the authoritative save payload.
+ * Both snapshots are validated before excluding only this display sidecar. */
+function savedFields(view: SeoWorkspaceView) {
+  const stored = { ...view }; delete stored.optionOriginalReferences;
+  return stored;
 }
 
 export function seoWorkspaceInput(view: SeoWorkspaceView, draft: SeoWorkspaceDraft): SeoWorkspaceInput {
@@ -59,14 +89,16 @@ export function seoWorkspaceInput(view: SeoWorkspaceView, draft: SeoWorkspaceDra
 }
 
 export function verifySeoWorkspaceSave(before: SeoWorkspaceView, input: SeoWorkspaceInput, saved: SeoWorkspaceView) {
+  verifySeoWorkspaceView(before, before.productId);
   verifySeoWorkspaceView(saved, before.productId);
   const expected = applySeoWorkspaceChanges(before, validateSeoWorkspaceInput(input), saved.productVersion);
-  if (!same(expected, saved)) throw Error('SEO 저장 응답이 수정한 항목과 일치하지 않습니다. 입력을 유지하고 저장본을 확인해주세요.');
+  if (!same(savedFields(expected), savedFields(saved))) throw Error('SEO 저장 응답이 수정한 항목과 일치하지 않습니다. 입력을 유지하고 저장본을 확인해주세요.');
 }
 
 export function seoWorkspaceSaveState(before: SeoWorkspaceView, input: SeoWorkspaceInput, latest: SeoWorkspaceView): 'saved' | 'unchanged' {
+  verifySeoWorkspaceView(before, before.productId);
   verifySeoWorkspaceView(latest, before.productId);
-  if (same(before, latest)) return 'unchanged';
+  if (same(savedFields(before), savedFields(latest))) return 'unchanged';
   verifySeoWorkspaceSave(before, input, latest);
   return 'saved';
 }

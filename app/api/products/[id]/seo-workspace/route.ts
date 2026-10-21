@@ -8,25 +8,28 @@ import { readProductContent } from '@/db/product-content';
 import { readProductOptions } from '@/db/product-options';
 import { readOptionSourceImages } from '@/db/collection-images';
 import { saveSeoWorkspace } from '@/db/seo-workspace';
+import { readSeoOptionOriginalReferences } from '@/db/seo-option-originals';
 
 type Context = { params: Promise<{ id: string }> };
 const reply = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
-async function snapshot(owner: string, id: string) {
+async function snapshot(owner: string, id: string, references = false) {
   const product = await findProduct(owner, id, true);
   if (!product) return null;
   const [content, options] = await Promise.all([readProductContent(owner, id), readProductOptions(owner, id)]);
   const sourceImageKeys = await readOptionSourceImages(owner, product, options).catch(() => ({}));
+  const originals = references ? await readSeoOptionOriginalReferences(owner, product, options).catch(() => ({})) : {};
   const current = await findProduct(owner, id, true);
   if (!current || current.updated_at !== product.updated_at || current.image_keys !== product.image_keys)
     throw new SeoWorkspaceConflict('조회 중 상품이 변경되었습니다. 수정한 입력은 유지하고 다시 확인해주세요.');
-  const view: SeoWorkspaceView = { productId: id, productVersion: product.updated_at, content, options, imageKeys: productImageKeys(product.image_keys), sourceImageKeys };
+  const view: SeoWorkspaceView = { productId: id, productVersion: product.updated_at, content, options, imageKeys: productImageKeys(product.image_keys), sourceImageKeys,
+    ...(Object.keys(originals).length ? { optionOriginalReferences: originals } : {}) };
   return { view, product };
 }
 async function authorized() { return process.env.NODE_ENV !== 'production' || (await getChatGPTUser())?.verifiedAccess; }
 export async function GET(_request: Request, context: Context) {
   if (!await authorized()) return reply({ error: '운영 인증 연결을 확인해주세요.' }, 503);
   try {
-    const value = await snapshot(await getWorkspaceOwnerId(), (await context.params).id);
+    const value = await snapshot(await getWorkspaceOwnerId(), (await context.params).id, true);
     return value ? reply(value.view) : reply({ error: '상품을 찾을 수 없습니다.' }, 404);
   } catch (cause) { return reply({ error: cause instanceof SeoWorkspaceConflict ? cause.message : 'SEO 저장본을 불러오지 못했습니다.' }, cause instanceof SeoWorkspaceConflict ? 409 : 503); }
 }

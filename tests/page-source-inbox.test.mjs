@@ -57,6 +57,38 @@ test('company change, conflicting app identities and foreign sender never clear 
  await assert.rejects(flushPageSources({}, {frameId:0,url:'https://evil.test',tab:{id:20,windowId:3}},h.api,h.store));assert.equal(h.records.size,0);
 });
 
+test('concurrent flushes from same-window same-company app tabs share the exact retained delivery operation',async()=>{
+ const h=extension({ack:false});await savePageSource({snapshot:capture()},h.source,h.api,h.store);const immutable=JSON.stringify([...h.records.values()][0]);
+ let release,saves=0;const wait=new Promise(resolve=>{release=resolve;});
+ h.api.tabs.get=async tabId=>({id:tabId,windowId:3,url:origin+'/'});
+ h.api.tabs.sendMessage=async(_tabId,message)=>{
+  if(message.type==='YOOFAM_READ_CATALOG_CONTEXT')return {ok:true,ownerId:'owner',company};
+  saves++;await wait;return {ok:true,id:message.record.id,fingerprint:message.record.fingerprint,ownerId:'owner',company};
+ };
+ const first=h.flush(),second=flushPageSources({}, {frameId:0,url:origin+'/',tab:{id:22,windowId:3}},h.api,h.store);
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(saves,1);assert.equal(JSON.stringify([...h.records.values()][0]),immutable);release();
+ const [one,two]=await Promise.all([first,second]);assert.deepEqual(one,two);assert.equal(one.delivered,1);assert.equal(h.records.size,0);assert.equal(h.calls.filter(value=>value==='delete').length,1);
+});
+
+test('flush coalescing rechecks current context and is scoped by window, origin, owner and company; finished runs release their key',async()=>{
+ const scopes=[
+  {id:30,windowId:3,origin,ownerId:'owner',company},{id:31,windowId:3,origin,ownerId:'owner',company},
+  {id:32,windowId:3,origin:'http://127.0.0.1:3000',ownerId:'owner',company},{id:33,windowId:4,origin,ownerId:'owner',company},
+  {id:34,windowId:3,origin,ownerId:'other',company},{id:35,windowId:3,origin,ownerId:'owner',company:{code:'A01526306',name:'유앤채'}},
+ ];
+ const tabs=new Map(scopes.map(scope=>[scope.id,scope]));let release,reads=0,contexts=0;const wait=new Promise(resolve=>{release=resolve;});
+ const api={tabs:{get:async id=>{const scope=tabs.get(id);return {id,windowId:scope.windowId,url:scope.origin+'/'};},sendMessage:async(id,message)=>{assert.equal(message.type,'YOOFAM_READ_CATALOG_CONTEXT');contexts++;const scope=tabs.get(id);return {ok:true,ownerId:scope.ownerId,company:scope.company};}}};
+ const store=async action=>{assert.equal(action,'list');reads++;await wait;return [];};
+ const flush=scope=>flushPageSources({}, {frameId:0,url:scope.origin+'/',tab:{id:scope.id,windowId:scope.windowId}},api,store);
+ const requests=scopes.map(flush);await new Promise(resolve=>setImmediate(resolve));assert.equal(contexts,6,'every requester rechecks fresh scope before looking up a shared operation');assert.equal(reads,5);
+ release();const results=await Promise.all(requests);for(let index=0;index<scopes.length;index++){assert.equal(results[index].ownerId,scopes[index].ownerId);assert.deepEqual(results[index].company,scopes[index].company);}
+ await flush(scopes[0]);assert.equal(reads,6,'a completed exact-scope operation cannot retain an old result indefinitely');
+ let failed=true;const retryStore=async()=>{if(failed)throw Error('transient store read failure');return [];};
+ const sender={frameId:0,url:origin+'/',tab:{id:30,windowId:3}};
+ await assert.rejects(flushPageSources({},sender,api,retryStore),/transient store/);failed=false;
+ assert.equal((await flushPageSources({},sender,api,retryStore)).ok,true,'a rejected run also releases its exact key');
+});
+
 const request=(method,body)=>new Request('https://app.test/api/source-inbox',{method,headers:{'content-type':'application/json'},body:JSON.stringify(body)});
 async function addToInbox(h,snapshot=capture()){
  const fingerprint=await h.load('app/source-inbox.ts').pageSourceFingerprint(snapshot),api=h.load('app/api/source-inbox/route.ts');

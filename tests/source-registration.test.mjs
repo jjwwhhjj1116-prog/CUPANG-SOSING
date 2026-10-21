@@ -27,7 +27,7 @@ function hookFixture(fetcher){
  const document={visibilityState:'visible',addEventListener(){},removeEventListener(){}};
  const {useSourceRegistrations}=module('app/components/use-source-registrations.ts',{require:()=>hooks,window,document,location:{origin:'https://app.test'},crypto:{randomUUID:()=> '00000000-0000-4000-8000-000000000001'},AbortController,Error,
   setTimeout:fn=>{const id=++nextTimer;timers.set(id,fn);return id;},clearTimeout:id=>timers.delete(id),setInterval:()=>999,clearInterval(){},
-  fetch:(path,init)=>{calls.push({path,init});return fetcher(path,init);}});
+  fetch:(path,init)=>{calls.push({path,init});if(path==='/api/supplier-hub/catalog-context'){const response=Response.json({ownerId:owner,company:{code:'A01464742',name:'와이홉'}});Object.defineProperty(response,'url',{value:'https://app.test'+path});return Promise.resolve(response);}return fetcher(path,init);}});
  const useFixtureRender=()=>{cursor=0;const result=useSourceRegistrations(owner);layouts.splice(0).forEach(fn=>fn());effects.splice(0).forEach(fn=>{cleanup=fn();});first=false;return result;};
  return{render:useFixtureRender,calls,posted,window,close:()=>cleanup?.(),owner:value=>{cleanup?.();owner=value;first=true;},event:()=>events.get('message')?.({source:window,origin:'https://app.test',data:{channel:'YOOFAM_SOURCE_INBOX_UPDATED'}}),flush:()=>{for(const fn of [...timers.values()])fn();}};
 }
@@ -37,7 +37,7 @@ test('app automatically reads captures and refreshes the registration list after
   h.render();await turn();assert.equal(h.calls.length,1);assert.equal(h.render().items.length,0);
   items=[item];h.event();await turn();assert.equal(h.render().items[0].id,'capture');
   assert.ok(h.calls.every(call=>call.path==='/api/source-inbox'&&!call.init.method));
-  h.flush();assert.equal(h.posted[0].channel,'YOOFAM_SOURCE_INBOX');assert.equal(h.posted[0].type,'FLUSH');
+  h.flush();await turn();assert.equal(h.posted[0].channel,'YOOFAM_SOURCE_INBOX');assert.equal(h.posted[0].type,'FLUSH');
  }finally{h.close();}
 });
 test('capture arriving during a list read queues one refresh; account change discards late old-owner data',async()=>{

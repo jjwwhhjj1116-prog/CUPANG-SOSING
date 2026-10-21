@@ -3,6 +3,7 @@ const origins=['https://sourceflow.jjwwhhjj1116.workers.dev','http://localhost:3
 const companies={A01526306:'유앤채',A01464742:'와이홉'};
 const identifier=value=>typeof value==='string'&&/^\w[\w-]{0,99}$/.test(value);
 const pending=new Map();
+const flushing=new Map();
 export function sourceInboxStore(action,value){
  return new Promise((resolve,reject)=>{
   const open=indexedDB.open('yoofam-page-source-inbox',1);
@@ -59,8 +60,15 @@ export async function savePageSource(message,sender,api=chrome,store=sourceInbox
 export async function flushPageSources(_message,sender,api=chrome,store=sourceInboxStore){
  const origin=appSender(sender),tab={id:sender.tab.id,windowId:sender.tab.windowId,url:sender.url},scope=await context(api,tab);
  if(scope.origin!==origin)throw Error('앱 출처가 변경되었습니다.');
- const records=(await store('list')).filter(record=>record.windowId===tab.windowId&&same(record,scope));
- let delivered=0;const errors=[];
- for(const record of records){try{await deliver(record,tab,api,store);delivered++;}catch(error){errors.push(error.message);}}
- return {ok:true,ownerId:scope.ownerId,company:scope.company,delivered,pending:records.length-delivered,errors};
+ // A lost app result may be retried from another tab in the same window.
+ // Revalidate its current identity before sharing only this exact queue run.
+ const key=JSON.stringify([tab.windowId,origin,scope.ownerId,scope.company.code,scope.company.name]);
+ const existing=flushing.get(key);if(existing)return existing;
+ const run=(async()=>{
+  const records=(await store('list')).filter(record=>record.windowId===tab.windowId&&same(record,scope));
+  let delivered=0;const errors=[];
+  for(const record of records){try{await deliver(record,tab,api,store);delivered++;}catch(error){errors.push(error.message);}}
+  return {ok:true,ownerId:scope.ownerId,company:scope.company,delivered,pending:records.length-delivered,errors};
+ })();
+ flushing.set(key,run);try{return await run;}finally{if(flushing.get(key)===run)flushing.delete(key);}
 }

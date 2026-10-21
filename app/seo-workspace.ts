@@ -5,7 +5,8 @@ import { applyOptionNameChanges, validateOptionNamesInput, type OptionNameChange
 import { OPTIONS_BODY_LIMIT, type ProductOptions } from '@/app/product-options';
 
 export const SEO_WORKSPACE_BODY_LIMIT = OPTIONS_BODY_LIMIT;
-export type SeoWorkspaceView = { productId: string; productVersion: string; content: ProductContent; options: ProductOptions; imageKeys: string[]; sourceImageKeys?: Record<string, string> };
+export type SeoOptionOriginalReference = { originalName: string; axes: { field: 'color' | 'size'; original: string; translated: string }[] };
+export type SeoWorkspaceView = { productId: string; productVersion: string; content: ProductContent; options: ProductOptions; imageKeys: string[]; sourceImageKeys?: Record<string, string>; optionOriginalReferences?: Record<string, SeoOptionOriginalReference> };
 export type SeoWorkspaceInput = {
   expectedProductVersion: string; expectedContentRevision: number; expectedOptionRevision: number;
   seo?: { title?: string; keywords?: string[]; description?: string; keywordText?: string };

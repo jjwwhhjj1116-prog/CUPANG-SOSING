@@ -5,46 +5,97 @@ import {validateReviewedSourceTransition} from '@/app/source-review-intake';
 
 type SourceRegistrationState={ownerId?:string;items:SourceInboxItem[];error:string};
 type SourceRegistrationSession={ownerId?:string;token:object;alive:boolean;epoch:number;cancel:()=>void;accepted:Map<string,SourceInboxItem>};
+type SourceDeliveryCompany={code:string;name:string};
+type SourceDeliveryAttempt={token:object;epoch:number;origin:string;ownerId:string;company:SourceDeliveryCompany|null;requestId:string;controller:AbortController;posted:boolean;waiting:boolean;expiresAt:number;timer?:ReturnType<typeof setTimeout>};
+const deliveryCompany=(value:unknown):SourceDeliveryCompany|null=>{
+ if(!value||typeof value!=='object')return null;const company=value as SourceDeliveryCompany;
+ return typeof company.code==='string'&&typeof company.name==='string'&&({A01526306:'유앤채',A01464742:'와이홉'} as Record<string,string>)[company.code]===company.name?{code:company.code,name:company.name}:null;
+};
+const sameCompany=(first:SourceDeliveryCompany|null|undefined,second:SourceDeliveryCompany|null|undefined)=>!!first&&!!second&&first.code===second.code&&first.name===second.name;
 
 /** Refresh the current member's captured list without touching existing products. */
 export function useSourceRegistrations(ownerId?:string){
  const [state,setState]=useState<SourceRegistrationState>({items:[],error:''});
  const token=useMemo(()=>({ownerId}),[ownerId]),current=useRef(state),owner=useRef(token),session=useRef<SourceRegistrationSession|null>(null);
+ const delivery=useRef<SourceDeliveryAttempt|null>(null),lastDeliveryAt=useRef(0);
  useLayoutEffect(()=>{current.current=state;owner.current=token;},[state,token]);
  const refresh=useRef<()=>void>(()=>{});
  useEffect(()=>{
   if(typeof window==='undefined'||typeof document==='undefined')return;
-  let alive=true,running:AbortController|null=null,queued=false;
-  const scope:SourceRegistrationSession={ownerId,token,alive:true,epoch:0,cancel:()=>{running?.abort();running=null;queued=false;},accepted:new Map()};session.current=scope;
-  const active=(epoch:number)=>alive&&scope.alive&&session.current===scope&&owner.current===token&&scope.epoch===epoch;
+  let alive=true,running:AbortController|null=null,queued=false,queuedCompany:SourceDeliveryCompany|undefined,deliveryTimer:ReturnType<typeof setTimeout>|undefined;
+  const origin=location.origin;
+  const releaseDelivery=(attempt:SourceDeliveryAttempt)=>{clearTimeout(attempt.timer);attempt.controller.abort();if(delivery.current===attempt)delivery.current=null;};
+  // An expired result wait is uncertainty, not a save acknowledgement. Only a
+  // later foreground may retry the same immutable, idempotent worker queue.
+  const expireDelivery=()=>{const attempt=delivery.current;if(attempt?.posted&&Date.now()>=attempt.expiresAt)releaseDelivery(attempt);};
+  const scope:SourceRegistrationSession={ownerId,token,alive:true,epoch:0,cancel:()=>{running?.abort();running=null;queued=false;queuedCompany=undefined;clearTimeout(deliveryTimer);deliveryTimer=undefined;const attempt=delivery.current;if(attempt?.token===token)releaseDelivery(attempt);},accepted:new Map()};session.current=scope;
+  const active=(epoch:number)=>alive&&scope.alive&&session.current===scope&&owner.current===token&&scope.epoch===epoch&&location.origin===origin;
   const publish=(value:SourceRegistrationState)=>{current.current=value;setState(value);};
-  async function load(){
+  async function load(expectedCompany?:SourceDeliveryCompany){
    if(!ownerId||!active(scope.epoch))return;
-   if(running){queued=true;return;}
+   if(running){queued=true;if(expectedCompany)queuedCompany=expectedCompany;return;}
    const controller=new AbortController(),epoch=scope.epoch;running=controller;
    const timeout=setTimeout(()=>controller.abort(),15000);
    try{
     const response=await fetch('/api/source-inbox',{cache:'no-store',redirect:'error',signal:controller.signal});
-    const body=await response.json() as {ownerId?:string;items?:SourceInboxItem[];error?:string};
+    const body=await response.json() as {ownerId?:string;company?:SourceDeliveryCompany;items?:SourceInboxItem[];error?:string};
     if(!active(epoch)||controller.signal.aborted)return;
-    if(!response.ok||body.ownerId!==ownerId||!Array.isArray(body.items)||body.items.some(item=>item.ownerId!==ownerId))throw Error(body.error||'수집 상품 목록을 확인하지 못했습니다.');
+    const readCompany=deliveryCompany(body.company);
+    if(!response.ok||body.ownerId!==ownerId||!Array.isArray(body.items)||body.items.some(item=>item.ownerId!==ownerId)||body.company!==undefined&&(!readCompany||body.items.some(item=>!sameCompany(item.company,readCompany)))||expectedCompany&&!sameCompany(readCompany,expectedCompany))throw Error(body.error||'수집 상품 목록을 확인하지 못했습니다.');
     // An old read must not roll back a review acknowledgement, including a
     // refresh that raced with propagation of the saved revision.
-    const items=body.items.map(item=>{const accepted=scope.accepted.get(item.id);if(!accepted)return item;if(item.revision>=accepted.revision){scope.accepted.delete(item.id);return item;}return accepted;});
-    for(const accepted of scope.accepted.values())if(!items.some(item=>item.id===accepted.id))items.push(accepted);
+    const items=body.items.map(item=>{const accepted=scope.accepted.get(item.id);if(!accepted||readCompany&&!sameCompany(accepted.company,readCompany))return item;if(item.revision>=accepted.revision){scope.accepted.delete(item.id);return item;}return accepted;});
+    for(const accepted of scope.accepted.values())if((!readCompany||sameCompany(accepted.company,readCompany))&&!items.some(item=>item.id===accepted.id))items.push(accepted);
     publish({ownerId,items,error:''});
    }catch(error){if(active(epoch)&&!controller.signal.aborted)publish({ownerId,items:current.current.ownerId===ownerId?current.current.items:[],error:error instanceof Error?error.message:'수집 상품 조회 실패'});}
-   finally{clearTimeout(timeout);if(running===controller){running=null;if(active(epoch)&&queued){queued=false;void load();}}}
+   finally{clearTimeout(timeout);if(running===controller){running=null;if(active(epoch)&&queued){const company=queuedCompany;queued=false;queuedCompany=undefined;void load(company);}}}
   }
   const reload=()=>{void load();};refresh.current=reload;
-  const message=(event:MessageEvent)=>{if(event.source===window&&event.origin===location.origin&&event.data?.channel==='YOOFAM_SOURCE_INBOX_UPDATED')reload();};
-  const visible=()=>{if(document.visibilityState==='visible')reload();};
-  window.addEventListener('message',message);window.addEventListener('focus',reload);document.addEventListener('visibilitychange',visible);
-  const interval=setInterval(visible,30000);reload();
-  // Deliver captures retained while the app was closed; owner/company are
-  // checked independently by the worker and the app API before acknowledgement.
-  const flush=setTimeout(()=>{if(alive&&ownerId)window.postMessage({channel:'YOOFAM_SOURCE_INBOX',type:'FLUSH',requestId:crypto.randomUUID()},location.origin);},1500);
-  return()=>{alive=false;scope.alive=false;scope.epoch++;scope.cancel();clearInterval(interval);clearTimeout(flush);window.removeEventListener('message',message);window.removeEventListener('focus',reload);document.removeEventListener('visibilitychange',visible);if(refresh.current===reload)refresh.current=()=>{};};
+  async function context(attempt:SourceDeliveryAttempt){
+   const path='/api/supplier-hub/catalog-context',timer=setTimeout(()=>attempt.controller.abort(),10000);
+   try{
+    const response=await fetch(path,{method:'GET',credentials:'same-origin',cache:'no-store',redirect:'error',signal:attempt.controller.signal});
+    if(!active(attempt.epoch)||attempt.controller.signal.aborted||delivery.current!==attempt||!response.ok||response.redirected||response.url!==origin+path)return null;
+    const text=await response.text();if(text.length>4096)return null;const body=JSON.parse(text),company=deliveryCompany(body?.company);
+    return active(attempt.epoch)&&!attempt.controller.signal.aborted&&delivery.current===attempt&&body?.ownerId===ownerId&&company?company:null;
+   }finally{clearTimeout(timer);}
+  }
+  async function flushRetained(){
+   expireDelivery();
+   if(!ownerId||!active(scope.epoch)||document.visibilityState!=='visible'||delivery.current)return;
+   const attempt:SourceDeliveryAttempt={token,epoch:scope.epoch,origin,ownerId,company:null,requestId:crypto.randomUUID(),controller:new AbortController(),posted:false,waiting:false,expiresAt:0};delivery.current=attempt;lastDeliveryAt.current=Date.now();
+   try{
+    const company=await context(attempt);if(!company||!active(attempt.epoch)||document.visibilityState!=='visible')return;
+    attempt.company=company;attempt.posted=true;attempt.waiting=true;attempt.expiresAt=Date.now()+20000;attempt.timer=setTimeout(expireDelivery,20000);
+    window.postMessage({channel:'YOOFAM_SOURCE_INBOX',type:'FLUSH',requestId:attempt.requestId},origin);
+   }catch{/* The immutable extension queue is retained for the next foreground. */}
+   finally{if(delivery.current===attempt&&!attempt.posted)delivery.current=null;}
+  }
+  const scheduleDelivery=()=>{
+   expireDelivery();
+   if(!ownerId||!active(scope.epoch)||document.visibilityState!=='visible'||delivery.current||deliveryTimer!==undefined||Date.now()-lastDeliveryAt.current<1000)return;
+   deliveryTimer=setTimeout(()=>{deliveryTimer=undefined;void flushRetained();},250);
+  };
+  const message=(event:MessageEvent)=>{
+   if(event.source!==window||event.origin!==origin||location.origin!==origin)return;
+   if(event.data?.channel==='YOOFAM_SOURCE_INBOX_UPDATED'){reload();return;}
+   expireDelivery();
+   const attempt=delivery.current,result=event.data?.result;
+   if(event.data?.channel!=='YOOFAM_SOURCE_INBOX_RESULT'||!attempt?.posted||!attempt.waiting||attempt.origin!==origin||event.data.requestId!==attempt.requestId||!result||typeof result!=='object')return;
+   const success=result.ok===true&&result.ownerId===attempt.ownerId&&sameCompany(result.company,attempt.company)&&Number.isSafeInteger(result.delivered)&&result.delivered>=0&&Number.isSafeInteger(result.pending)&&result.pending>=0&&Array.isArray(result.errors)&&result.errors.every((error:unknown)=>typeof error==='string');
+   if(!success&&!(result.ok===false&&typeof result.error==='string'))return;
+   attempt.waiting=false;
+   if(!success||attempt.token!==token||!active(attempt.epoch)||attempt.controller.signal.aborted){releaseDelivery(attempt);return;}
+   void (async()=>{try{const company=await context(attempt);if(company&&sameCompany(company,attempt.company)&&active(attempt.epoch)&&!attempt.controller.signal.aborted)void load(company);}catch{/* A result never substitutes for the current member's saved list. */}finally{releaseDelivery(attempt);}})();
+  };
+  const focused=(event:FocusEvent)=>{reload();if(event?.isTrusted===true)scheduleDelivery();};
+  const visible=(event?:Event)=>{if(document.visibilityState==='visible'){reload();if(event?.isTrusted===true)scheduleDelivery();}};
+  window.addEventListener('message',message);window.addEventListener('focus',focused);document.addEventListener('visibilitychange',visible);
+  const interval=setInterval(()=>visible(),30000);reload();
+  // Foreground retries deliver only an already captured immutable queue. A
+  // result deadline releases a local wait; its timer never retries or implies ACK.
+  deliveryTimer=setTimeout(()=>{deliveryTimer=undefined;void flushRetained();},1500);
+  return()=>{alive=false;scope.alive=false;scope.epoch++;scope.cancel();clearInterval(interval);window.removeEventListener('message',message);window.removeEventListener('focus',focused);document.removeEventListener('visibilitychange',visible);if(refresh.current===reload)refresh.current=()=>{};};
  },[ownerId,token]);
  const acceptReviewed=useCallback((before:SourceInboxItem,saved:SourceInboxItem):boolean=>{
   const scope=session.current;
