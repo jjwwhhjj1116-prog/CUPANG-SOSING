@@ -52,7 +52,7 @@ for(const company of companies)test(`reviewed option prices and main image reloa
   await enterStage(ui,rows[0].id,'가격설정');let view=await json(await f.route(f.base+'/quotation-fields'));const priceTargets=f.load('app/quotation-price-targets.ts').quotationPriceTargets(view.resolved.schema.fields);
   await json(await f.route(f.base+'/quotation-fields',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[
    {fieldKey:priceTargets.supplyPrice.primary,optionId:rows[0].id,value:'6410'},{fieldKey:priceTargets.salePrice.primary,optionId:rows[0].id,value:'10100'}]}}));
-  ui.component('price-editor').onQuotationSaved();await ui.settle();await ui.click('×');assert.equal(ui.componentMount('product-option-board'),mount);
+  ui.component('product-options-editor').onSaved();await ui.settle();await ui.click('×');assert.equal(ui.componentMount('product-option-board'),mount);
   let row=optionRows(ui).find(row=>row.props['data-option-id']===rows[0].id);assert.match(text(row),/6,410원 \(견적 공급가\)/);assert.match(text(row),/10,100원 \(견적 판매가\)/);
   await enterStage(ui,rows[0].id,'대표이미지');view=await json(await f.route(f.base+'/quotation-fields'));const target=f.load('app/quotation-seo-targets.ts').exactPrimaryQuotationTarget(view.resolved.schema.fields,'mainImage').primary;
   await json(await f.route(f.base+'/quotation-fields',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[{fieldKey:target,optionId:rows[0].id,value:'owner/synthetic639-additional.png'}]}}));

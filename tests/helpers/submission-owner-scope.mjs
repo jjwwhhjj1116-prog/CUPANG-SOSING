@@ -31,7 +31,7 @@ export async function submissionScopeFixture(company){
   await fixtureFns.settleUntil(h,()=>!h.button('공식 파일 기준으로 연결'));return snapshot();
  }
  async function open({prepare=true}={}){
-  await h.click('저장한 견적 전송 준비');await fixtureFns.settleUntil(h,()=>Boolean(h.instance('SubmissionPackage')));
+  await h.click('저장한 견적 전송 준비');await h.toggleDetails('Excel 파일 전송 · 별도 방식');await fixtureFns.settleUntil(h,()=>Boolean(h.instance('SubmissionPackage')));
   if(prepare){await h.click('견적서 + 첨부 파일 준비');await fixtureFns.settleUntil(h,()=>h.button('확장에 첨부 파일 준비')&&!nodes(h.render()).find(node=>node.props?.['aria-label']==='견적서와 첨부 파일 준비').props['aria-busy']);}
  }
  function switchOwner(next='next-owner'){

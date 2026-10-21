@@ -1,8 +1,10 @@
 import {imageFileType,isOwnedImageKey,MAX_IMAGE_BYTES} from '@/app/image-files';
 import {PRODUCT_IMAGE_POOL_LIMIT} from '@/app/image-pool-limit';
 import {productImageKeys,type ProductContent} from '@/app/product-content';
+import {imageUploadLinkRequest,prepareImageUploadLink,validateImageUploadLinkBasis,verifyImageUploadLinkReceipt,type ImageUploadTarget,type ImageUploadRole,type ImageUploadLinkBasis} from '@/app/image-upload-link';
+import type {QuotationFieldsView} from '@/app/quotation-schema';
 export type ImageUploadPhase='pending'|'uploading'|'uploaded'|'attaching'|'done'|'failed'|'uncertain-upload'|'uncertain-attachment';
-export type ProductImageUploadBasis={productId:string;ownerId:string;productVersion:string;imageKeys:string[];content:ProductContent};
+export type ProductImageUploadBasis={productId:string;ownerId:string;productVersion:string;imageKeys:string[];content:ProductContent;target?:ImageUploadTarget;stage?:ImageUploadRole;quotation?:QuotationFieldsView};
 export type ProductImageUploadItem={id:string;file:File;contentType:string;phase:ImageUploadPhase;key?:string;error?:string;attachmentBasis?:ProductImageUploadBasis;retryAttach?:boolean;dismissed?:boolean};
 type Controls={fetcher?:typeof fetch;signal?:AbortSignal;current:()=>boolean;onItem?:(item:ProductImageUploadItem)=>void};
 type UploadReply={error?:string;key?:unknown;contentType?:string;size?:number;product?:{id:string;owner_id:string;updated_at:string;image_keys:string};content?:ProductContent};
@@ -24,18 +26,25 @@ export async function prepareProductImageFiles(files:readonly File[],existing:re
  }
  return results;
 }
-export async function readProductImageUploadBasis(productId:string,ownerId:string,controls:Controls):Promise<ProductImageUploadBasis>{
+function roleBasis(base:ProductImageUploadBasis):ImageUploadLinkBasis|null{
+ if(base.target===undefined)return null;if(!base.quotation||!base.stage)throw valid();
+ const linked={...base,target:base.target,stage:base.stage,quotation:base.quotation};validateImageUploadLinkBasis(linked);return linked;
+}
+export async function readProductImageUploadBasis(productId:string,ownerId:string,controls:Controls,scope?:{target:ImageUploadTarget;stage:ImageUploadRole}):Promise<ProductImageUploadBasis>{
  current(controls);const request=controls.fetcher??fetch,endpoint=`/api/products/${encodeURIComponent(productId)}`;
  const get=async(url:string)=>{const response=await request(url,{cache:'no-store',signal:controls.signal});const body=await response.json() as UploadReply;current(controls);if(!response.ok)throw Error(body?.error||'상품 이미지 저장본을 확인하지 못했습니다.');return body;};
- const before=await get(endpoint),content=await get(endpoint+'/content'),after=await get(endpoint),product=before?.product;
+ const before=await get(endpoint),content=await get(endpoint+'/content');
+ const quotation=scope?await get(endpoint+'/quotation-fields'+(scope.target.profileId?`?profileId=${encodeURIComponent(scope.target.profileId)}`:'')) as unknown as QuotationFieldsView:undefined;
+ const after=await get(endpoint),product=before?.product;
  if(!product||product.id!==productId||product.owner_id!==ownerId||!Number.isFinite(Date.parse(product.updated_at))||!after?.product
   ||after.product.id!==productId||after.product.owner_id!==ownerId||after.product.updated_at!==product.updated_at||after.product.image_keys!==product.image_keys
   ||!content.content||content.content.productId!==productId||!Number.isSafeInteger(content.content.revision)||content.content.revision<0)throw valid();
  const imageKeys=productImageKeys(product.image_keys);if(imageKeys.length>PRODUCT_IMAGE_POOL_LIMIT||imageKeys.some(key=>!key.startsWith(ownerId+'/')))throw valid();
- return {productId,ownerId,productVersion:product.updated_at,imageKeys,content:content.content};
+ const result={productId,ownerId,productVersion:product.updated_at,imageKeys,content:content.content,...(scope?{...scope,quotation}:{})};roleBasis(result);return result;
 }
 export function sameProductImageUploadBasis(a:ProductImageUploadBasis,b:ProductImageUploadBasis){return same(a,b);}
 function verifyAttachment(basis:ProductImageUploadBasis,key:string,receipt:unknown):ProductImageUploadBasis{
+ const linked=roleBasis(basis);if(linked){const value=verifyImageUploadLinkReceipt(linked,key,receipt);return{...basis,...value};}
  const value=receipt as {content?:ProductContent;imageKeys?:string[];productVersion?:string};
  if(!value||typeof value.productVersion!=='string'||!Number.isFinite(Date.parse(value.productVersion))||Date.parse(value.productVersion)<=Date.parse(basis.productVersion)
   ||!same(value.imageKeys,[...basis.imageKeys,key])||!same(value.content,basis.content))throw valid();
@@ -48,8 +57,11 @@ export async function uploadProductImageQueueItem(basis:ProductImageUploadBasis,
  const publish=(patch:Partial<ProductImageUploadItem>)=>{item={...item,...patch};controls.onItem?.(item);};
  try{
   current(controls);if(item.phase!=='pending'&&!(item.phase==='uploaded'&&item.retryAttach))throw Error('대기 파일 또는 미연결을 확인한 파일만 처리할 수 있습니다.');
-  const observed=await readProductImageUploadBasis(basis.productId,basis.ownerId,controls);if(!sameProductImageUploadBasis(observed,basis))throw valid();
+  const scope=basis.target&&basis.stage?{target:basis.target,stage:basis.stage}:undefined;
+  const observed=await readProductImageUploadBasis(basis.productId,basis.ownerId,controls,scope);if(!sameProductImageUploadBasis(observed,basis))throw valid();
   if(basis.imageKeys.length>=PRODUCT_IMAGE_POOL_LIMIT)throw Error(`상품 이미지는 최대 ${PRODUCT_IMAGE_POOL_LIMIT}개입니다.`);
+  const linked=roleBasis(basis);
+  if(linked)prepareImageUploadLink(linked,`${basis.ownerId}/preflight-${crypto.randomUUID()}.png`,new Date(Date.parse(basis.productVersion)+1).toISOString());
   if(item.phase==='pending'){
    const form=new FormData();form.set('file',item.file);publish({phase:'uploading',error:undefined});
    let response:Response|undefined;
@@ -61,11 +73,11 @@ export async function uploadProductImageQueueItem(basis:ProductImageUploadBasis,
    }catch(cause){publish({phase:'uncertain-upload',error:cause instanceof Error?cause.message:'파일 업로드 결과 확인 불가'});return {item,basis:next,stop:controls.signal?.aborted||!controls.current()};}
   }
   current(controls);if(!item.key||!isOwnedImageKey(basis.ownerId,item.key))throw valid();
-  const beforeAttach=await readProductImageUploadBasis(basis.productId,basis.ownerId,controls);if(!sameProductImageUploadBasis(beforeAttach,basis))throw valid();
+  const beforeAttach=await readProductImageUploadBasis(basis.productId,basis.ownerId,controls,scope);if(!sameProductImageUploadBasis(beforeAttach,basis))throw valid();
   publish({phase:'attaching',attachmentBasis:basis,retryAttach:false,error:undefined});
   let response:Response|undefined;
   try{
-   response=await request(`/api/products/${encodeURIComponent(basis.productId)}/attachments`,{method:'POST',signal:controls.signal,headers:{'content-type':'application/json'},body:JSON.stringify({key:item.key,role:null,expectedVersion:basis.productVersion,expectedContentRevision:basis.content.revision})});
+   response=await request(`/api/products/${encodeURIComponent(basis.productId)}/${linked?'image-upload-link'+(linked.target.profileId?`?profileId=${encodeURIComponent(linked.target.profileId)}`:''):'attachments'}`,{method:'POST',signal:controls.signal,headers:{'content-type':'application/json'},body:JSON.stringify(linked?imageUploadLinkRequest(linked,item.key):{key:item.key,role:null,expectedVersion:basis.productVersion,expectedContentRevision:basis.content.revision})});
    const body=await response.json() as UploadReply;current(controls);
    if(!response.ok){if(response.status<500){publish({phase:'uploaded',retryAttach:false,error:body?.error||'이미지 연결을 확인해주세요.'});return {item,basis:next,stop:true};}throw Error(body?.error||'이미지 연결 결과 확인 불가');}
    next=verifyAttachment(basis,item.key,body);publish({phase:'done',error:undefined});return {item,basis:next,stop:false};
@@ -74,8 +86,8 @@ export async function uploadProductImageQueueItem(basis:ProductImageUploadBasis,
 }
 export async function recoverProductImageQueueItem(item:ProductImageUploadItem,controls:Controls){
  const base=item.attachmentBasis;if(!base||!item.key||!isOwnedImageKey(base.ownerId,item.key))throw Error('연결을 요청한 파일의 저장 기준을 확인해주세요.');
- const latest=await readProductImageUploadBasis(base.productId,base.ownerId,controls);
+ const latest=await readProductImageUploadBasis(base.productId,base.ownerId,controls,base.target&&base.stage?{target:base.target,stage:base.stage}:undefined);
  if(sameProductImageUploadBasis(latest,base))return {item:{...item,phase:'uploaded' as const,retryAttach:true,error:'아직 연결되지 않은 동일한 저장본입니다. 저장된 파일 연결을 누르면 다시 연결합니다.'},basis:latest};
- const committed=verifyAttachment(base,item.key,{content:latest.content,imageKeys:latest.imageKeys,productVersion:latest.productVersion});
+ const committed=verifyAttachment(base,item.key,{content:latest.content,imageKeys:latest.imageKeys,productVersion:latest.productVersion,...(latest.quotation?{quotation:latest.quotation}:{})});
  return {item:{...item,phase:'done' as const,retryAttach:false,error:undefined},basis:committed};
 }

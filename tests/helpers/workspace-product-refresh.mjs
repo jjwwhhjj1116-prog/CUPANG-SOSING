@@ -7,7 +7,8 @@ import {webcrypto} from 'node:crypto';
 import {mobileIntakeHarness} from './mobile-intake.mjs';
 import {quotationWorkbook} from './quotation-workbook.mjs';
 
-const native=createRequire(import.meta.url),testUrl=new URL('../dashboard-account-actions.test.mjs',import.meta.url).href;
+// The extracted harness retains its original test module's relative imports.
+const testUrl=new URL('../dashboard-account-actions.test.mjs',import.meta.url).href,native=createRequire(testUrl);
 export const companies=[{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}];
 export const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value==='object'?[value,...nodes(value.props?.children)]:[];
 export const text=value=>Array.isArray(value)?value.map(text).join(''):value&&typeof value==='object'?text(value.props?.children):value==null?'':String(value);
@@ -76,7 +77,7 @@ export async function workspaceRefreshUI(f,{initialListDeferred=false,realOption
  assert.ok(source.includes('return actualList()')&&source.includes('const products=fixtureProducts;'));
  const makeHarness=vm.runInNewContext('('+source+')',{fs,vm,ts,native,nodes,text,deferred,scope,assert,Response,Request,AbortController,URLSearchParams,URL,Date,Intl,TextEncoder,TextDecoder,
   structuredClone,crypto:webcrypto,setImmediate,setTimeout,fixtureProducts,actualList,actualPricing:(url,init)=>f.route(url,{method:init.method,body:init.body}),actualProductRequest,productBase:f.base,testUrl});
- const h=makeHarness({workspaceOwnerId:'owner',settingsBody:{settings:f.settings,scope:scope('owner',f.company.code)},profiles:[f.context.category],realOptionBoard,realRegistrationBoard,confirmClose});
+ const h=makeHarness({workspaceOwnerId:'owner',settingsBody:{settings:f.settings,scope:scope('owner',f.company.code)},profiles:[f.context.category],realOptionBoard,realRegistrationBoard,confirmClose,registrationLayoutRequest:actualProductRequest});
  h.setProductReply(f.productResponse);
  const holdDetail=async(id=f.product.id)=>{
   const response=await f.productResponse(id),pending=h.deferProduct(id);

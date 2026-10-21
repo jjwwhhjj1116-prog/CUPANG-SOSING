@@ -18,12 +18,13 @@ const settleUntil=async(h,ready)=>{const deadline=Date.now()+10000;while(!ready(
 const version='2026-10-06T00:00:00.000Z';
 const product=id=>({id,owner_id:'test-owner',title:'상품 '+id,source_url:'https://source.example.test/product/'+id,created_at:version,updated_at:version,image_keys:JSON.stringify(['test-owner/'+id+'/source.png','test-owner/'+id+'/second.png']),options_count:1,source_price_cny:2,exchange_rate:350,supply_margin:50,coupang_margin:40,supply_price:1400,sale_price:2340,msrp:3050,seo_status:'대기',image_status:'대기',quote_status:'대기',registration_status:'검토 대기',supplier_hub_status:'미전송',removal_policy:{blocked:false,code:null,reason:'',receipt:null},goal_stage:'work'});
 const singleSummary=()=>({format:'yoofam-single-receipt-summary-v1',evidence:'chrome-observation',registered:false,label:'개별 문서 등록 파일 완료 확인',company:{code:'A01526306',name:'유앤채'},fingerprint:'a'.repeat(64),categoryId:'81452',observedAt:Date.now(),createdAt:new Date().toISOString(),optionCount:1,optionId:'reviewed-option',docId:901,qvtRequestId:7901,state:'accepted',sourceStatus:'FINISHED'});
+const assertProductNavigation=(requests,id)=>{assert.equal(requests.length,2);assert.deepEqual(requests.map(request=>request.url),['/api/products/'+id,'/api/products/'+id+'/registration-layout']);for(const request of requests){assert.equal(request.method,'GET');assert.equal(request.init.cache,'no-store');assert.ok(request.init.signal instanceof AbortSignal);}};
 
 /** Actual DashboardClient, its private DetailPanel and settings dialog. Child
  * renderers record their received props; every tested callback is the real
  * parent callback, and requests run through its real fetch/readJson code. */
-function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'계정의 저장 브랜드',exchangeRate:350},scope:scope()},deleteReply=async id=>Response.json({productId:id,removed:true}),realRegistrationBoard=false,realOptionBoard=false,confirmClose=false,profiles=[],officialFlow}={}){
- const instances=new Map(),cache=new Map(),components=new Map(),componentMounts=new Map(),componentCounts=new Map(),layoutEffects=[],effects=[],requests=[];let active,tree,closed=false,lateWrites=0;
+function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'계정의 저장 브랜드',exchangeRate:350},scope:scope()},deleteReply=async id=>Response.json({productId:id,removed:true}),realRegistrationBoard=false,realOptionBoard=false,confirmClose=false,profiles=[],officialFlow,registrationLayoutRequest}={}){
+ const instances=new Map(),cache=new Map(),components=new Map(),componentMounts=new Map(),componentCounts=new Map(),nativeDetails=new Map(),layoutEffects=[],effects=[],requests=[];let active,tree,closed=false,lateWrites=0;
  let currentSettings=settingsBody,replyDelete=deleteReply,nextDelete=null,nextSettings=null,replySettingsPut=null,nextProduct=null,replyProduct=null;
  let currentProfiles=profiles,nextProfiles;
  const workspaceEdits={dirty:false,busy:false,freeDirty:false,freeBusy:false};
@@ -42,6 +43,12 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'�
   if(officialFlow&&url.includes('/quotation')||officialFlow&&url.includes('/submission-review')||officialFlow&&url.includes('/supplier-hub-receipt'))return officialFlow.request(url,init);
   if(url==='/api/products')return Response.json({products});
   if(url==='/api/collection-jobs')return Response.json({jobs:[]});
+  if(url.includes('/registration-layout')){
+   if(registrationLayoutRequest)return registrationLayoutRequest(url,init);
+   if(officialFlow)return officialFlow.request(url,init);
+   const parsed=new URL(url,'https://app.test'),id=parsed.pathname.split('/')[3],editorProduct=components.get('product-content-editor')?.product,saved=editorProduct?.id===id?editorProduct:products.find(row=>row.id===id),profileId=parsed.searchParams.get('profileId'),profile=currentProfiles.find(value=>value.id===profileId);
+   return Response.json({format:'yoofam-registration-layout-v1',productId:id,productVersion:saved?.updated_at,categoryContext:profile?{source:'profile',profileId:profile.id,categoryId:profile.categoryId,categoryPath:profile.categoryPath}:{source:'unknown',profileId:null,categoryId:null,categoryPath:[]},sizeChartRequired:load('app/registration-layout.ts').sizeChartRequiredFromSchemaString(profile?.hubSchema?.schemaString)});
+  }
   if(url==='/api/settings'){
    if(init.method==='PUT'){
     if(replySettingsPut)return replySettingsPut(url,init);
@@ -82,6 +89,7 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'�
    if(name==='react/jsx-runtime')return{jsx:(type,props,key)=>({type,props,key}),jsxs:(type,props,key)=>({type,props,key})};
    if(name.endsWith('.css'))return{};
    if(name==='@/app/components/use-intake-draft')return{useIntakeDraft:()=>draft};
+   if(['@/app/components/use-registration-layout','@/app/components/use-source-registrations'].includes(name))return load(name.slice(2)+'.ts');
    if(name==='@/app/load-category-profiles')return{loadCategoryProfiles:async()=>{
     if(nextProfiles){const pending=nextProfiles;nextProfiles=null;return pending.promise;}
     return officialFlow?(await (await officialFlow.request('/api/category-profiles')).json()).profiles:currentProfiles;
@@ -108,6 +116,7 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'�
    if(realName){components.set(realName,value.props);componentMounts.set(realName,instance);}
    return expand(value.type(value.props),key,seen,ancestors);
   }
+  if(value.type==='details')value={...value,fixturePath:path,props:{...value.props,...(nativeDetails.has(path)?{open:nativeDetails.get(path)}:{})}};
   const next={...value,props:{...value.props,children:expand(value.props?.children,path+'/children',seen,[...ancestors,value])}};
   if(next.props.ref&&typeof next.props.ref==='object'){
    const marker={getAttribute:name=>name==='data-quotation-source-step'?'SEO':name==='data-workspace-dirty'?'true':null,querySelector:()=>null};
@@ -123,11 +132,13 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'�
  const settle=async()=>{for(let i=0;i<10;i++){if(!closed)render();await new Promise(resolve=>setImmediate(resolve));}};
  const component=name=>{render();return components.get(name);};
  const button=label=>nodes(render()).find(node=>node.type==='button'&&text(node)===label);
- return{products,requests,render,settle,component,button,componentVisible(name){render();const instance=componentMounts.get(name);return!!instance&&instance.ancestors.every(node=>!node.props.hidden&&(node.type!=='details'||node.props.open===true));},componentMount(name){render();return componentMounts.get(name);},instance(name){render();return [...instances].find(([key])=>key.includes('/'+name+':'))?.[1];},componentCount(name){render();return componentCounts.get(name)??0;},async click(label){const found=button(label);assert.ok(found,'Missing button '+label);found.props.onClick();await settle();},deferDelete(){return nextDelete=deferred();},deferSettings(){return nextSettings=deferred();},deferProfiles(){return nextProfiles=deferred();},setProfiles(value){currentProfiles=value;},deferProduct(id){return nextProduct={...deferred(),id};},setProductReply(fn){replyProduct=fn;},setWorkspaceEdits(value){Object.assign(workspaceEdits,value);},setSettingsBody(value){currentSettings=value;},switchOwner(value){workspaceOwnerId=value;return render();},setDeleteReply(fn){replyDelete=fn;},setSettingsPutReply(fn){replySettingsPut=fn;},close(){closed=true;for(const instance of instances.values()){instance.mounted=false;instance.slots.forEach(slot=>slot?.cleanup?.());}},get lateWrites(){return lateWrites;}};
+ const toggleDetails=async(label,open=true)=>{const found=nodes(render()).find(node=>node.type==='details'&&(node.props['aria-label']===label||text(node.props.children?.[0])===label));assert.ok(found,'Missing details '+label);if(found.props.onToggle)found.props.onToggle({currentTarget:{open}});else nativeDetails.set(found.fixturePath,open);await settle();};
+ return{products,requests,render,settle,component,button,toggleDetails,componentVisible(name){render();const instance=componentMounts.get(name);return!!instance&&instance.ancestors.every(node=>!node.props.hidden&&(node.type!=='details'||(nativeDetails.get(node.fixturePath)??node.props.open)===true));},componentMount(name){render();return componentMounts.get(name);},instance(name){render();return [...instances].find(([key])=>key.includes('/'+name+':'))?.[1];},componentCount(name){render();return componentCounts.get(name)??0;},async click(label){const found=button(label);assert.ok(found,'Missing button '+label);found.props.onClick();await settle();},deferDelete(){return nextDelete=deferred();},deferSettings(){return nextSettings=deferred();},deferProfiles(){return nextProfiles=deferred();},setProfiles(value){currentProfiles=value;},deferProduct(id){return nextProduct={...deferred(),id};},setProductReply(fn){replyProduct=fn;},setWorkspaceEdits(value){Object.assign(workspaceEdits,value);},setSettingsBody(value){currentSettings=value;},switchOwner(value){workspaceOwnerId=value;return render();},setDeleteReply(fn){replyDelete=fn;},setSettingsPutReply(fn){replySettingsPut=fn;},close(){closed=true;for(const instance of instances.values()){instance.mounted=false;instance.slots.forEach(slot=>slot?.cleanup?.());}},get lateWrites(){return lateWrites;}};
 }
 
 async function officialSubmissionFlow(company){
  const api=mobileIntakeHarness({companyCode:company.code,companyName:company.name}),events=[],modules=new Map(),pause=deferred();
+ let registrationReceiptGate=null;
  const snapshot={...hubSchemaSnapshot(company),metadata:{displayCategoryCode:'991234',categoryId:3000,scope:'Retail_Categorized_Single',productNoticeNumber:17,version:73}};
  const raw=JSON.parse(snapshot.schemaString),common=raw.properties.productPage.properties.commonAttributes;
  common.properties.purchasePrice={type:'integer',title:'공급가',minimum:1};common.properties.coupangSalePrice={type:'integer',title:'판매가',minimum:1};common.required=['purchasePrice','coupangSalePrice'];delete raw.properties.productPage.properties.price;snapshot.schemaString=JSON.stringify(raw);
@@ -146,10 +157,14 @@ async function officialSubmissionFlow(company){
   ['xl/worksheets/sheet1.xml',`<worksheet><sheetData>${row(1,['','Retail_Categorized_Excel:Kan:3000:Notice17:Version190'])}${row(5,headers)}${row(6,fields.map(field=>field.required?'필수':'선택'))}${row(7,headers.map(()=>'작성 안내'))}${row(8,headers.map((_value,index)=>index===1?category:'예시'))}${row(9,headers.map(()=>''))}</sheetData><dataValidations><dataValidation type="list" allowBlank="true" sqref="B9:B1008"><formula1>"${category}"</formula1></dataValidation><dataValidation type="list" allowBlank="true" sqref="${categoryColumn(headers.indexOf('렌즈 유형'))}9:${categoryColumn(headers.indexOf('렌즈 유형'))}1008"><formula1>"해당사항없음,UV"</formula1></dataValidation></dataValidations></worksheet>`],
  ]);
  const request=async(url,init={})=>{
-  events.push({url,method:init.method??'GET',body:typeof init.body==='string'?JSON.parse(init.body):undefined});
+  const body=typeof init.body==='string'?JSON.parse(init.body):undefined;
+  events.push({url,method:init.method??'GET',body});
   if(url==='/api/category-profiles')return api.load('app/api/category-profiles/route.ts')[init.method??'GET'](new Request('https://app.test'+url,init));
   if(url==='/api/category-profiles/official-template')return api.load('app/api/category-profiles/official-template/route.ts').POST(new Request('https://app.test'+url,init));
-  return api.route(url,{method:init.method??'GET',body:init.body});
+  const gate=init.method==='POST'&&url.includes('/supplier-hub-receipt')&&body?.result?.registration&&!registrationReceiptGate?.started?registrationReceiptGate:null;
+  if(gate){gate.started=true;gate.arrive();await gate.wait;}
+  try{const response=await api.route(url,{method:init.method??'GET',body:init.body});gate?.complete(response.clone());return response;}
+  catch(error){gate?.fail(error);throw error;}
  };
  const parent={categoryId:'100',name:schemaPath[0],isLeaf:false},leaf={categoryId:snapshot.categoryId,name:schemaPath[1],isLeaf:true};
  const exchange=async(type,payload)=>{
@@ -178,7 +193,8 @@ async function officialSubmissionFlow(company){
   getSupplierHubResult:async(_identity,_signal,mode)=>observation(mode==='registration')};
  return{api,profile,bytes,events,request,catalog:loadCatalog('app/supplier-hub-catalog.ts'),bridge,products:[api.sqlite.prepare('SELECT * FROM products').get()],
   tracking:tracker=>({...tracker,followSupplierHubRegistration:(source,options)=>{prepared=source;trackSignal=options.signal;events.push({type:'TRACK',source});return tracker.followSupplierHubRegistration(source,{...options,maxDurationMs:10000,wait:async(_ms,signal)=>{if(!lookup)return;await Promise.race([pause.promise,new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(Error('cancelled')),{once:true}))]);}});}}),
-  get signal(){return trackSignal;},continue(){pause.resolve();},close(){pause.resolve();api.close();}};
+  holdRegistrationReceipt(){assert.equal(registrationReceiptGate,null);const arrival=deferred(),wait=deferred();let complete,fail;const saved=new Promise((resolve,reject)=>{complete=resolve;fail=reject;});registrationReceiptGate={started:false,arrive:arrival.resolve,wait:wait.promise,release:wait.resolve,complete,fail};return{arrived:arrival.promise,saved,release:wait.resolve,get started(){return registrationReceiptGate.started;}};},
+  get signal(){return trackSignal;},continue(){pause.resolve();},close(){pause.resolve();registrationReceiptGate?.release();api.close();}};
 }
 
 test('dashboard shows saved registration metadata in option and detail headers while navigation stays UUID scoped',async()=>{
@@ -189,7 +205,7 @@ test('dashboard shows saved registration metadata in option and detail headers w
   const board=h.component('product-option-board');assert.equal(board.productId,first.id);assert.equal(board.productRegistrationNumber,'261015014001');assert.match(text(h.render()),/등록번호 261015014001/);
   board.onStage('saved-option-uuid','SEO');await h.settle();
   const metadata=nodes(h.render()).find(node=>node.props?.className==='detail-product-meta');assert.match(text(metadata),/^261015014001/);assert.equal(h.component('option-seo-editor').optionId,'saved-option-uuid');
-  assert.equal(h.requests.at(-1).url,'/api/products/'+first.id);assert.ok(h.requests.every(request=>request.method==='GET'));
+  assertProductNavigation(h.requests.slice(-2),first.id);assert.ok(h.requests.every(request=>request.method==='GET'));
   h.component('registration-board').onOpen(second,'SEO');await h.settle();assert.match(text(nodes(h.render()).find(node=>node.props?.className==='detail-product-meta')),/^YP-PRODUCT-/);
   assert.equal(JSON.stringify(h.products),before);
  }finally{h.close();}
@@ -203,7 +219,7 @@ for(const company of schemaCompanies)for(const laterChange of [false,true])test(
   const stale=h.deferProfiles();h.component('product-content-editor').onSaved();await h.settle();
   await h.click('공식 파일 기준으로 연결');for(let i=0;i<30&&h.button('공식 파일 기준으로 연결');i++)await h.settle();
   const saved=await flow.api.load('db/category-profiles.ts').getCategoryProfile('owner',flow.profile.id);assert.equal(saved.revision,2);assert.equal(saved.template.workbookEvidence.templateSha256,saved.template.sha256);assert.deepEqual(flow.api.objects.get(saved.template.storageKey),flow.bytes);
-  stale.resolve([flow.profile]);await h.settle();await h.click('저장한 견적 전송 준비');await settleUntil(h,()=>Boolean(h.instance('SubmissionPackage')));
+  stale.resolve([flow.profile]);await h.settle();await h.click('저장한 견적 전송 준비');await h.toggleDetails('Excel 파일 전송 · 별도 방식');await settleUntil(h,()=>Boolean(h.instance('SubmissionPackage')));
   const mount=h.instance('SubmissionPackage');assert.ok(mount,text(h.render()));await h.click('견적서 + 첨부 파일 준비');
   await settleUntil(h,()=>h.button('확장에 첨부 파일 준비')&&!nodes(h.render()).find(node=>node.props?.['aria-label']==='견적서와 첨부 파일 준비').props['aria-busy']);
   assert.ok(h.button('확장에 첨부 파일 준비'),text(h.render()));
@@ -220,7 +236,12 @@ for(const company of schemaCompanies)for(const laterChange of [false,true])test(
    // existing unmount/cancel guard rather than hiding an actual source change.
    h.component('submission-review-panel').onReceiptSaved();await h.settle();assert.equal(flow.signal.aborted,true);assert.notEqual(h.instance('SubmissionPackage'),mount);
   }else{
-   flow.continue();await settleUntil(h,()=>text(h.render()).includes('6개의 SKU ID'));
+   const commit=flow.holdRegistrationReceipt();flow.continue();await settleUntil(h,()=>commit.started);await commit.arrived;
+   await settleUntil(h,()=>text(h.render()).includes('6개의 SKU ID'));
+   // The observed result renders before retainResult finishes its real API
+   // write. Keep that interval deterministic and await the storage response.
+   assert.equal(JSON.parse(flow.api.sqlite.prepare('SELECT payload FROM supplier_hub_receipts').get().payload).result.registration,undefined);
+   commit.release();const acknowledgement=await commit.saved;assert.equal(acknowledgement.status,200,await acknowledgement.clone().text());assert.equal((await acknowledgement.json()).saved,true);
    assert.equal(h.instance('SubmissionPackage'),mount);assert.equal(flow.signal.aborted,false);assert.match(text(h.render()),/6개의 SKU ID/);
    const receipt=JSON.parse(flow.api.sqlite.prepare('SELECT payload FROM supplier_hub_receipts').get().payload);assert.equal(receipt.result.registration.rows.length,6);assert.ok(receipt.result.registration.rows.every(row=>row.skuId));assert.equal(receipt.result.registered,false);
   }
@@ -348,7 +369,7 @@ test('free image apply excludes its own reviewed draft but guards all other draf
   h.setWorkspaceEdits({dirty:true});assert.equal(beforeApply(),false);h.setWorkspaceEdits({dirty:false,busy:true});assert.equal(beforeApply(),false);h.setWorkspaceEdits({busy:false});
   h.component('image-generation-panel').onBusyChange(true);assert.equal(beforeApply(),false);h.component('image-generation-panel').onBusyChange(false);assert.equal(beforeApply(),true);
   await h.click('＋ 상품 추가');const intakeBusy=h.component('intake-queue-panel').onBusy;intakeBusy(true);assert.equal(beforeApply(),false);intakeBusy(false);assert.equal(beforeApply(),true);
-  h.component('registration-board').onOpen(h.products[1],'상세 이미지');await h.settle();assert.equal(beforeApply(),false);assert.equal(h.component('free-image-translation-panel').productId,h.products[1].id);assert.equal(h.requests.length,reads);assert.ok(h.requests.every(request=>request.method==='GET'));
+  h.component('registration-board').onOpen(h.products[1],'상세 이미지');await h.settle();assert.equal(beforeApply(),false);assert.equal(h.component('free-image-translation-panel').productId,h.products[1].id);assert.equal(h.requests.length,reads+1);assert.equal(h.requests.at(-1).url,'/api/products/'+h.products[1].id+'/registration-layout');assert.ok(h.requests.every(request=>request.method==='GET'));
  }finally{h.close();}
 });
 
@@ -550,24 +571,26 @@ test('every typed option stage opens the intended product workspace and retains 
   const h=harness();try{
    await h.settle();const selectedProduct=h.products[1],optionId='option-b-2';h.component('registration-board').onOptions(selectedProduct);await h.settle();const board=h.component('product-option-board');assert.equal(board.productId,selectedProduct.id);assert.equal(typeof board.onStage,'function');const initialReads=h.requests.length;
    board.onStage(optionId,step);await h.settle();assert.equal(h.componentVisible('product-option-board'),false);assert.equal(h.component('product-content-editor').product.id,selectedProduct.id);assert.equal(h.component('product-options-editor').product.id,selectedProduct.id);assert.equal(h.component('product-options-editor').focusedOptionId,optionId);assert.equal(h.component('product-options-editor').initialBulkAction,undefined);
-   if(step==='옵션')assert.equal(h.button('옵션·사이즈표').props['aria-pressed'],true);else assert.ok(nodes(h.render()).some(node=>node.type==='button'&&node.props['aria-current']==='step'&&text(node)===(['SEO','가격','대표 이미지','추가 이미지','상세 이미지','표시사항','견적서'].indexOf(step)+1)+({'SEO':'SEO 설정','가격':'가격 설정','표시사항':'한글 표시사항','견적서':'견적서 작업'}[step]??step)));
+   if(step==='옵션')assert.equal(h.button('옵션 관리').props['aria-pressed'],true);else assert.ok(nodes(h.render()).some(node=>node.type==='button'&&node.props['aria-current']==='step'&&text(node)===(['SEO','가격','대표 이미지','추가 이미지','상세 이미지','표시사항','견적서'].indexOf(step)+1)+({'SEO':'SEO 설정','가격':'가격 설정','표시사항':'한글 표시사항','견적서':'견적서 작업'}[step]??step)));
    if(step==='가격')assert.equal(h.component('product-options-editor').pricingView,true);
    if(step==='대표 이미지')assert.equal(h.component('product-options-editor').imageView,true);
    if(step==='견적서')assert.deepEqual(plain(h.component('quotation-panel').navigationTarget),{optionId,fieldId:'title'});
-   const navigation=h.requests.slice(initialReads);assert.equal(navigation.length,1);assert.equal(navigation[0].url,'/api/products/'+selectedProduct.id);assert.equal(navigation[0].method,'GET');assert.equal(navigation[0].init.cache,'no-store');assert.ok(navigation[0].init.signal instanceof AbortSignal);assert.ok(h.requests.every(request=>request.method==='GET'));
+   assertProductNavigation(h.requests.slice(initialReads),selectedProduct.id);assert.ok(h.requests.every(request=>request.method==='GET'));
   }finally{h.close();}
  }
 });
 
-test('selected option SEO and common SEO stay visible in the combined workspace and preserve independent drafts across steps',async()=>{
+test('primary SEO and explicitly opened option SEO preserve independent drafts across steps',async()=>{
  const h=harness();try{
   await h.settle();const first=h.products[0],fresh={...first,updated_at:'2026-10-07T00:00:01.000Z'};
   h.setProductReply(async id=>Response.json({product:id===first.id?fresh:h.products[1]}));
   h.component('registration-board').onOptions(first);await h.settle();
   h.component('product-option-board').onStage('option-a-2','SEO');await h.settle();
   const editor=h.component('option-seo-editor');assert.ok(editor);assert.equal(editor.productId,first.id);assert.equal(editor.optionId,'option-a-2');assert.equal(editor.version,fresh.updated_at);
-  const common=nodes(h.render()).find(node=>node.type==='details'&&text(node).includes('상품 공통 SEO·설명 편집'));
-  assert.ok(common);assert.equal(common.props.open,true);assert.equal(common.props.children[0].props.hidden,true);
+  const common=nodes(h.render()).find(node=>node.type==='details'&&text(node.props.children[0])==='옵션별 추가 SEO 편집');
+  assert.ok(common);assert.notEqual(common.props.open,true);assert.equal(common.props.children[0].props.hidden,false);
+  assert.equal(h.componentVisible('option-seo-editor'),false);assert.equal(h.componentVisible('seo-workspace-editor'),true);assert.equal(h.component('seo-workspace-editor').focusedOptionId,'option-a-2');
+  await h.toggleDetails('옵션별 추가 SEO 편집');
   assert.equal(h.componentVisible('option-seo-editor'),true);assert.equal(h.componentVisible('seo-workspace-editor'),true);assert.equal(h.componentVisible('product-content-editor'),false);
   assert.equal(h.component('seo-workspace-editor').productId,first.id);assert.equal(h.component('seo-workspace-editor').version,fresh.updated_at);
   const before=editor.refreshToken;editor.onSaved();await h.settle();assert.notEqual(h.component('option-seo-editor').refreshToken,before);
@@ -586,14 +609,14 @@ test('selected option SEO and common SEO stay visible in the combined workspace 
   assert.ok(h.requests.every(request=>request.method==='GET'));
   h.component('registration-board').onOpen(h.products[1],'SEO');await h.settle();assert.equal(h.component('option-seo-editor'),undefined);assert.equal(h.component('seo-workspace-editor').productId,h.products[1].id);
   assert.equal(h.componentVisible('seo-workspace-editor'),true);assert.equal(input('seo-workspace-editor').props.value,'');
-  const normal=nodes(h.render()).find(node=>node.type==='details'&&text(node).includes('상품 공통 SEO·설명 편집'));assert.equal(normal.props.open,true);
+  const normal=nodes(h.render()).find(node=>node.type==='details'&&text(node.props.children[0])==='옵션별 추가 SEO 편집');assert.equal(normal.props.hidden,true);
  }finally{h.close();}
 });
 
 test('option management navigation prepares the existing removal editor without deleting or saving and resets for another product',async()=>{
  const h=harness();try{
   await h.settle();const first=h.products[0],second=h.products[1];h.component('registration-board').onOptions(first);await h.settle();const board=h.component('product-option-board'),initialReads=h.requests.length;assert.equal(typeof board.onManage,'function');board.onManage('option-a-2');await h.settle();
-  const editor=h.component('product-options-editor');assert.equal(editor.product.id,first.id);assert.equal(editor.focusedOptionId,'option-a-2');assert.equal(editor.initialBulkAction,'remove');assert.equal(h.button('옵션·사이즈표').props['aria-pressed'],true);assert.equal(h.componentVisible('product-option-board'),false);const navigation=h.requests.slice(initialReads);assert.equal(navigation.length,1);assert.equal(navigation[0].url,'/api/products/'+first.id);assert.equal(navigation[0].method,'GET');assert.equal(navigation[0].init.cache,'no-store');assert.ok(navigation[0].init.signal instanceof AbortSignal);assert.ok(h.requests.every(request=>request.method==='GET'));
+  const editor=h.component('product-options-editor');assert.equal(editor.product.id,first.id);assert.equal(editor.focusedOptionId,'option-a-2');assert.equal(editor.initialBulkAction,'remove');assert.equal(h.button('옵션 관리').props['aria-pressed'],true);assert.equal(h.componentVisible('product-option-board'),false);assertProductNavigation(h.requests.slice(initialReads),first.id);assert.ok(h.requests.every(request=>request.method==='GET'));
   h.component('registration-board').onOpen(second,'옵션');await h.settle();assert.equal(h.component('product-options-editor').product.id,second.id);assert.equal(h.component('product-options-editor').initialBulkAction,undefined);assert.equal(h.component('product-options-editor').focusedOptionId,undefined);assert.ok(h.requests.every(request=>request.method==='GET'));
  }finally{h.close();}
 });
@@ -654,7 +677,7 @@ test('option-stage navigation forwards the fresh owned product version and image
  const h=harness();try{
   await h.settle();const first=h.products[0],fresh={...first,title:'새로 저장된 상품명',updated_at:'2026-10-06T00:00:01.000Z',image_keys:JSON.stringify(['test-owner/'+first.id+'/fresh.png'])};h.setProductReply(async id=>Response.json({product:id===first.id?fresh:h.products[1]}));
   h.component('registration-board').onOptions(first);await h.settle();const initialReads=h.requests.length;h.component('product-option-board').onStage('option-a-2','대표 이미지');await h.settle();
-  assert.equal(h.requests.length,initialReads+1);assert.equal(h.requests.at(-1).url,'/api/products/'+first.id);assert.equal(h.requests.at(-1).init.cache,'no-store');assert.equal(h.component('product-content-editor').product.updated_at,fresh.updated_at);assert.equal(h.component('product-content-editor').product.image_keys,fresh.image_keys);assert.equal(h.component('product-options-editor').product.title,fresh.title);assert.deepEqual(Array.from(h.component('image-generation-panel').imageKeys),JSON.parse(fresh.image_keys));assert.equal(h.component('image-generation-panel').version,fresh.updated_at);assert.equal(h.component('product-options-editor').focusedOptionId,'option-a-2');assert.ok(h.requests.every(request=>request.method==='GET'));
+  assertProductNavigation(h.requests.slice(initialReads),first.id);assert.equal(h.component('product-content-editor').product.updated_at,fresh.updated_at);assert.equal(h.component('product-content-editor').product.image_keys,fresh.image_keys);assert.equal(h.component('product-options-editor').product.title,fresh.title);assert.deepEqual(Array.from(h.component('image-generation-panel').imageKeys),JSON.parse(fresh.image_keys));assert.equal(h.component('image-generation-panel').version,fresh.updated_at);assert.equal(h.component('product-options-editor').focusedOptionId,'option-a-2');assert.ok(h.requests.every(request=>request.method==='GET'));
  }finally{h.close();}
 });
 
@@ -686,7 +709,7 @@ test('global intake busy state blocks captured board and option callbacks before
   intake.onBusy(true);registration.onOptions(first);await h.settle();assert.equal(h.componentVisible('product-option-board'),false);assert.equal(h.component('product-content-editor'),undefined);assert.equal(h.requests.length,initialReads);
   intake.onBusy(false);registration.onOptions(first);await h.settle();const optionBoard=h.component('product-option-board');assert.equal(optionBoard.productId,first.id);
   intake.onBusy(true);optionBoard.onStage('option-a-2','가격');optionBoard.onManage('option-a-2');await h.settle();assert.equal(h.requests.length,initialReads);assert.equal(h.component('product-option-board').productId,first.id);assert.equal(h.component('product-options-editor'),undefined);
-  intake.onBusy(false);optionBoard.onStage('option-a-2','가격');await h.settle();const navigation=h.requests.slice(initialReads);assert.equal(navigation.length,1);assert.equal(navigation[0].url,'/api/products/'+first.id);assert.equal(navigation[0].method,'GET');assert.equal(navigation[0].init.cache,'no-store');assert.ok(navigation[0].init.signal instanceof AbortSignal);assert.equal(h.componentVisible('product-option-board'),false);assert.equal(h.component('product-options-editor').focusedOptionId,'option-a-2');assert.equal(h.component('product-options-editor').initialBulkAction,undefined);assert.ok(h.requests.every(request=>request.method==='GET'));
+  intake.onBusy(false);optionBoard.onStage('option-a-2','가격');await h.settle();assertProductNavigation(h.requests.slice(initialReads),first.id);assert.equal(h.componentVisible('product-option-board'),false);assert.equal(h.component('product-options-editor').focusedOptionId,'option-a-2');assert.equal(h.component('product-options-editor').initialBulkAction,undefined);assert.ok(h.requests.every(request=>request.method==='GET'));
  }finally{h.close();}
 });
 

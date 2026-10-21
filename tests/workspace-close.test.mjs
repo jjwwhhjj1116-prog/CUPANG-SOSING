@@ -49,3 +49,40 @@ test('quotation entry finds hidden source drafts, deduplicates steps and exclude
  page.querySelector=()=>({});assert.equal(exports.quotationSourceState(page).busy,true);
  assert.equal(exports.quotationSourceState(null).steps.length,0);
 });
+
+const sourceRoot=rows=>({querySelector:selector=>rows.find(row=>{
+ const kind=selector.includes('saving')?'busy':'dirty';
+ if(!row[kind])return false;
+ if(row.upload&&selector.includes(`:not([data-image-upload-queue="${row.upload}"])`))return false;
+ if(row.chart&&selector.includes(':not([data-size-chart-workspace])'))return false;
+ return true;
+})??null});
+
+test('upload start consumes only its own queued files and keeps hidden or other stage drafts guarded',()=>{
+ for(const stage of ['additional','detail']){
+  const own={upload:stage,dirty:true,busy:true},rows=[own],page=sourceRoot(rows);
+  assert.equal(exports.workspaceSourceWriteState(page,stage+'-upload').dirty,false);
+  assert.equal(exports.workspaceSourceWriteState(page,stage+'-upload').busy,false);
+  assert.equal(exports.requestWorkspaceClose(page,()=>{throw Error('in-flight queue cannot be discarded');}),'busy');
+  for(const other of [{upload:stage==='additional'?'detail':'additional',dirty:true},{chart:true,dirty:true},{dirty:true,hidden:true},{busy:true,hidden:true}]){
+   rows.push(other);const next=exports.workspaceSourceWriteState(page,stage+'-upload');
+   assert.equal(next[other.busy?'busy':'dirty'],true);rows.pop();
+  }
+ }
+});
+
+test('size-chart commit consumes its table draft while nested document writes and other stages still block it',()=>{
+ const rows=[{chart:true,dirty:true,busy:true}],page=sourceRoot(rows);
+ assert.equal(exports.workspaceSourceWriteState(page,'size-chart').dirty,false);
+ assert.equal(exports.workspaceSourceWriteState(page,'size-chart').busy,false);
+ for(const other of [{dirty:true,nestedDocument:true},{busy:true,nestedDocument:true},{upload:'additional',dirty:true},{upload:'detail',busy:true},{dirty:true,hidden:true}]){
+  rows.push(other);const next=exports.workspaceSourceWriteState(page,'size-chart');assert.equal(next[other.busy?'busy':'dirty'],true);rows.pop();
+ }
+ assert.equal(exports.requestWorkspaceClose(page,()=>false),'busy');
+});
+
+test('source writes fail closed if the workspace disappeared or the source kind is not supported',()=>{
+ for(const [page,source]of [[null,'size-chart'],[sourceRoot([]),'unexpected'],[sourceRoot([]),'toString']]){
+  const next=exports.workspaceSourceWriteState(page,source);assert.equal(next.busy,true);assert.equal(next.dirty,true);
+ }
+});

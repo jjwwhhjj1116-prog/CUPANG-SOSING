@@ -1,14 +1,15 @@
 'use client';
 import {useCallback,useEffect,useLayoutEffect,useRef,useState,type ChangeEvent} from 'react';
 import {PRODUCT_IMAGE_POOL_LIMIT} from '@/app/image-pool-limit';
+import type {ImageUploadTarget} from '@/app/image-upload-link';
 import './product-image-upload-queue.css';
 import {prepareProductImageFiles,readProductImageUploadBasis,sameProductImageUploadBasis,uploadProductImageQueueItem,recoverProductImageQueueItem,type ProductImageUploadItem,type ProductImageUploadBasis} from '@/app/product-image-upload-queue';
 
-type Props={productId:string;ownerId:string;version:string;storedCount:number;stage:'additional'|'detail';active?:boolean;disabled?:boolean;immediate?:boolean;
+type Props={productId:string;ownerId:string;version:string;storedCount:number;stage:'additional'|'detail';target?:ImageUploadTarget;active?:boolean;disabled?:boolean;immediate?:boolean;
  beforeUpload?:()=>boolean;onSaved?:()=>void;onBusyChange?:(busy:boolean)=>void};
 const labels={pending:'대기',uploading:'업로드 중',uploaded:'파일 보관 · 연결 대기',attaching:'상품 연결 중',done:'추가 완료',failed:'확인 필요','uncertain-upload':'업로드 결과 확인 불가','uncertain-attachment':'연결 결과 확인 필요'};
-export function ProductImageUploadQueue({productId,ownerId,version,storedCount,stage,active=true,disabled=false,immediate=false,beforeUpload,onSaved,onBusyChange}:Props){
- const identity=JSON.stringify([ownerId,productId,stage]),live=useRef({identity,version,active,disabled,mounted:true}),request=useRef<AbortController|null>(null);
+export function ProductImageUploadQueue({productId,ownerId,version,storedCount,stage,target,active=true,disabled=false,immediate=false,beforeUpload,onSaved,onBusyChange}:Props){
+ const identity=JSON.stringify([ownerId,productId,stage,target===undefined?'pool':target.optionId,target?.profileId??null]),live=useRef({identity,version,active,disabled,mounted:true}),request=useRef<AbortController|null>(null);
  const [items,setItems]=useState<ProductImageUploadItem[]>([]),itemsRef=useRef<ProductImageUploadItem[]>([]),[busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('');
  const callbacks=useRef({beforeUpload,onSaved,onBusyChange}),busyCallback=useRef<((busy:boolean)=>void)|null>(null),basisRef=useRef<ProductImageUploadBasis|null>(null);
  const update=useCallback((next:ProductImageUploadItem[]|((before:ProductImageUploadItem[])=>ProductImageUploadItem[]))=>{itemsRef.current=typeof next==='function'?next(itemsRef.current):next;setItems(itemsRef.current);},[]);
@@ -28,13 +29,13 @@ export function ProductImageUploadQueue({productId,ownerId,version,storedCount,s
  const begin=()=>{
   if(!allowed()||callbacks.current.beforeUpload?.()===false)return null;
   const controller=new AbortController(),capturedVersion=live.current.version;request.current=controller;setBusy(true);setError('');setMessage('');busyCallback.current=callbacks.current.onBusyChange??null;busyCallback.current?.(true);
-  return {controller,current:()=>!controller.signal.aborted&&live.current.mounted&&live.current.identity===identity&&live.current.active&&!live.current.disabled&&live.current.version===capturedVersion};
+  return {controller,current:()=>!controller.signal.aborted&&live.current.mounted&&live.current.identity===identity&&live.current.active&&!live.current.disabled&&live.current.version===capturedVersion&&callbacks.current.beforeUpload?.()!==false};
  };
  const finish=(controller:AbortController)=>{if(request.current!==controller)return;request.current=null;busyCallback.current?.(false);busyCallback.current=null;if(live.current.mounted){setBusy(false);}};
  async function run(onlyId?:string){
   const operation=begin();if(!operation)return;const {controller,current}=operation,controls={current,fetcher:fetch,signal:controller.signal,onItem:(item:ProductImageUploadItem)=>{if(current())update(previous=>previous.map(value=>value.id===item.id?item:value));}};let completed=0;
   try{
-   let basis=await readProductImageUploadBasis(productId,ownerId,controls);
+   let basis=await readProductImageUploadBasis(productId,ownerId,controls,target===undefined?undefined:{target,stage});
    const retained=basisRef.current;
    if(basis.productVersion!==version&&(!retained||!sameProductImageUploadBasis(retained,basis)))throw Error('상품 저장본이 변경되었습니다. 새 파일을 업로드하지 않았습니다. 파일과 현재 상품을 다시 확인해주세요.');
    basisRef.current=basis;
@@ -46,9 +47,9 @@ export function ProductImageUploadQueue({productId,ownerId,version,storedCount,s
     basis=result.basis;basisRef.current=basis;if(result.item.phase==='done')completed++;
     if(result.stop)break;
    }
-   if(current()){setMessage(completed?`${completed}개 이미지를 선택한 순서로 추가했습니다. 추가·상세 이미지에서 사용할 파일을 선택해주세요.`:'대기 파일의 처리 결과를 확인해주세요.');if(completed)callbacks.current.onSaved?.();}
+   if(current()){setMessage(completed?`${completed}개 이미지를 선택한 순서로 추가했습니다.${target===undefined?' 추가·상세 이미지에서 사용할 파일을 선택해주세요.':target.optionId===null?' 상품 공통 이미지에 연결했습니다.':' 선택한 옵션 이미지에 연결했습니다.'}`:'대기 파일의 처리 결과를 확인해주세요.');if(completed)callbacks.current.onSaved?.();}
   }catch(cause){if(current())setError(cause instanceof Error?cause.message:'이미지를 추가하지 못했습니다. 대기 파일은 유지했습니다.');}
-  finally{finish(controller);}
+  finally{if(request.current===controller&&!current())stop();else finish(controller);}
  }
  async function select(event:ChangeEvent<HTMLInputElement>){
   const files=Array.from(event.target.files??[]);event.target.value='';if(!files.length||!allowed())return;
@@ -66,7 +67,8 @@ export function ProductImageUploadQueue({productId,ownerId,version,storedCount,s
   catch(cause){if(current())setError(cause instanceof Error?cause.message:'저장 결과를 확인하지 못했습니다. 파일과 시도를 유지했습니다.');}finally{finish(controller);}
  }
  const pending=items.filter(item=>item.phase==='pending').length,dirty=items.some(item=>item.phase!=='done'&&!item.dismissed),blocked=busy||disabled||!active;
- return <section className="product-image-upload-queue" aria-label={stage==='additional'?'추가 이미지 파일 업로드':'상세 이미지 파일 업로드'} aria-busy={busy} data-quotation-source-step={stage==='additional'?'추가 이미지':'상세 이미지'} data-workspace-dirty={dirty} data-workspace-saving={busy}>
+ return <section className="product-image-upload-queue" aria-label={stage==='additional'?'추가 이미지 파일 업로드':'상세 이미지 파일 업로드'} aria-busy={busy} data-image-upload-queue={stage} data-quotation-source-step={stage==='additional'?'추가 이미지':'상세 이미지'} data-workspace-dirty={dirty} data-workspace-saving={busy}>
+  {target!==undefined&&<small>{target.optionId===null?'상품 공통':'선택 옵션'} {stage==='additional'?'추가 이미지':'상세 사진'}에 연결됩니다.{stage==='detail'?' 직접 작성한 상세 HTML은 유지하며 상세 편집에서 저장할 수 있습니다.':''}</small>}
   <div className="quote-actions"><label className="btn primary upload-btn">＋ 이미지 업로드<input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" multiple aria-label={stage==='additional'?'추가 이미지 파일 선택':'상세 이미지 파일 선택'} disabled={blocked} onChange={event=>void select(event)}/></label>
    {!immediate&&<button type="button" className="btn primary" disabled={blocked||!pending} onClick={()=>void run()}>업로드 시작{pending?` (${pending})`:''}</button>}
    {immediate&&pending>0&&<button type="button" className="btn primary" disabled={blocked} onClick={()=>void run()}>남은 파일 업로드 ({pending})</button>}

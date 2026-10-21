@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {companies,workspaceRefreshFixture,workspaceRefreshUI} from './helpers/workspace-product-refresh.mjs';
+import {companies,workspaceRefreshFixture,workspaceRefreshUI,json} from './helpers/workspace-product-refresh.mjs';
 
 const capture=async f=>({raw:f.retained(),files:await f.fileSnapshot()});
 async function unchanged(f,before){assert.equal(f.retained(),before.raw);assert.equal(await f.fileSnapshot(),before.files);assert.deepEqual(f.network,[]);}
@@ -63,7 +63,11 @@ for(const company of companies)test(`a direct reviewed price save remains newer 
   ui=await workspaceRefreshUI(f);await ui.settle();await ui.open();
   const list=ui.deferList(),detail=await ui.holdDetail();ui.notifySaved();await list.arrived;await ui.settle();
   const policy=f.load('app/pricing.ts').pricePolicy({...f.settings,exchangeRate:f.settings.exchangeRate+10});
-  await ui.component('price-editor').onSave(policy);await ui.settle();const latest=await f.current();
+  const options=await json(await f.route(f.base+'/options')),quotation=await json(await f.route(f.base+'/quotation-fields'));
+  const rows=f.load('app/stage-two-pricing.ts').recalculateStageTwoRows(f.load('app/product-options.ts').optionInputs(options.options),policy);
+  await json(await f.route(f.base+'/stage-two-pricing',{method:'POST',body:{expectedProductVersion:options.productVersion,expectedOptionRevision:options.options.revision,
+   expectedQuotationRevision:quotation.revision,expectedInputFingerprint:quotation.inputFingerprint,policy,rows,changes:[],recalculate:true}}));
+  ui.component('product-options-editor').onSaved();await ui.settle();const latest=await f.current();
   assert.equal(ui.editor().updated_at,latest.updated_at);assert.equal(ui.row().supply_price,latest.supply_price);
   const before=await capture(f);list.release();detail.release();await ui.settle();
   for(const product of [ui.editor(),ui.row()]){assert.equal(product.updated_at,latest.updated_at);assert.equal(product.supply_price,latest.supply_price);assert.equal(product.sale_price,latest.sale_price);}

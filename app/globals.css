@@ -76,6 +76,17 @@ td { border-top:1px solid #eef0f4; padding:15px; font-size:12px; white-space:now
 .modal h2 { margin:0; font-size:18px; letter-spacing:-.03em; }.modal header p { margin:6px 0 0; color:#8892a5; font-size:12px; }
 .icon-close { width:31px; height:31px; border:0; border-radius:8px; background:#f2f4f7; color:#717c8e; font-size:20px; line-height:1; }
 .modal-form,.settings-form { padding:22px 24px 24px; }
+[data-size-chart-workspace] .modal-form { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); gap:16px; padding:0; }
+[data-size-chart-workspace] label { display:flex; flex-direction:column; gap:8px; min-width:0; color:#596477; font-size:13px; }
+[data-size-chart-workspace] input,[data-size-chart-workspace] select { width:100%; min-width:0; border:1px solid #dfe4ec; border-radius:7px; background:#fff; color:#233047; padding:10px 12px; font:inherit; line-height:1.5; }
+[data-size-chart-workspace] input:focus,[data-size-chart-workspace] select:focus { outline:2px solid #2cb9de; outline-offset:1px; }
+[data-size-chart-workspace] input:disabled,[data-size-chart-workspace] select:disabled { background:#f3f5f8; color:#8791a3; cursor:not-allowed; }
+[data-size-chart-workspace] small { color:#7d889c; line-height:1.6; }
+[data-size-chart-workspace] fieldset { display:grid; gap:16px; min-width:0; background:#fbfcfe; }
+[data-size-chart-workspace] legend { padding:0 7px; font-size:13px; font-weight:700; color:#394459; }
+[data-size-chart-workspace] fieldset>button { justify-self:end; }
+[data-size-chart-workspace] [aria-label="사이즈표 미리보기"] h4 { margin:0 0 12px; font-size:14px; color:#394459; }
+[data-size-chart-workspace] .quote-actions { display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
 .field { display:flex; flex-direction:column; gap:7px; min-width:0; }.field>span { color:#596477; font-size:12px; font-weight:750; }.field b { color:#3778ff; font-size:12px; }
 .field input,.field textarea { width:100%; border:1px solid #dfe4ec; border-radius:9px; background:#fbfcfe; color:#233047; outline:0; padding:10px 11px; font-size:12px; transition:.15s; }.field input:focus,.field textarea:focus { border-color:#6d9bff; box-shadow:0 0 0 3px #3778ff13; background:#fff; }.field input:disabled { color:#8791a3; background:#f1f3f6; }.field textarea { min-height:88px; resize:vertical; line-height:1.6; }
 .form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin-top:15px; }.field.full { grid-column:1/-1; }

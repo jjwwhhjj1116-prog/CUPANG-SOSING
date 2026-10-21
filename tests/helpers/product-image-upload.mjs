@@ -19,7 +19,7 @@ export async function productImageUploadFixture(company=priceTableCompanies[0]){
  const fetcher=async(url,init={})=>{
   const parsed=new URL(url,'https://app.test'),method=init.method??'GET',call={url,method,signal:init.signal,...(init.body instanceof FormData?{name:init.body.get('file').name}:{body:typeof init.body==='string'?JSON.parse(init.body):undefined})};calls.push(call);await controls.before?.(call);
   let response;if(parsed.pathname==='/api/files'){assert.equal(method,'POST');response=await api.load('app/api/files/route.ts').POST(new Request(parsed.href,{method,body:init.body}));}
-  else{assert.ok(parsed.pathname===`/api/products/${id}`||parsed.pathname===`/api/products/${id}/content`||parsed.pathname===`/api/products/${id}/attachments`);const kind=parsed.pathname===`/api/products/${id}`?'':parsed.pathname.split('/').at(-1)+'/';response=await api.load('app/api/products/[id]/'+kind+'route.ts')[method](new Request(parsed.href,{method,...(method==='GET'?{}:{headers:{'content-type':'application/json'},body:init.body})}),{params:Promise.resolve({id})});}
+  else{assert.ok(['', '/content','/attachments','/quotation-fields','/image-upload-link'].some(suffix=>parsed.pathname===`/api/products/${id}`+suffix));const kind=parsed.pathname===`/api/products/${id}`?'':parsed.pathname.split('/').at(-1)+'/';response=await api.load('app/api/products/[id]/'+kind+'route.ts')[method](new Request(parsed.href,{method,...(method==='GET'?{}:{headers:{'content-type':'application/json'},body:init.body})}),{params:Promise.resolve({id})});}
   return controls.response?controls.response(call,response):response;
  };
  const product=()=>api.sqlite.prepare('SELECT * FROM products WHERE id=?').get(id);
@@ -35,5 +35,5 @@ export async function productImageUploadFixture(company=priceTableCompanies[0]){
   const select=async files=>{const input=nodes(render()).find(node=>node.type==='input'&&node.props.type==='file');assert.equal(input.props.multiple,true);const target={files,value:'chosen'};input.props.onChange({target});assert.equal(target.value,'');await idle();};
   render();return {render,settle,idle,button,select,busyLeases,get saved(){return saved;},get late(){return late;},async click(label){const target=button(label);assert.equal(Boolean(target.props.disabled),false,label);target.props.onClick();await idle();},close(){slots.forEach(slot=>slot?.cleanup?.());closed=true;}};
  }
- return {api,owner,id,originalKey,objects,metadata,calls,controls,product,fetcher,protectedSnapshot,before,ui,model:api.load('app/product-image-upload-queue.ts'),close:()=>api.close()};
+ return {api,owner,id,originalKey,objects,metadata,storage,calls,controls,product,fetcher,protectedSnapshot,before,ui,model:api.load('app/product-image-upload-queue.ts'),close:()=>api.close()};
 }
