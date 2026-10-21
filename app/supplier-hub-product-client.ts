@@ -15,12 +15,14 @@ const digest=async(value:unknown)=>Array.from(new Uint8Array(await crypto.subtle
 function freeze<T>(value:T):T{if(value&&typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value;}
 export class ProductDocumentBridgeError extends Error{constructor(message:string,public uncertain:boolean,public code='PRODUCT_DOCUMENT_BRIDGE'){super(message);this.name='ProductDocumentBridgeError';}}
 export type ProductDocumentPreview={format:string;requestId:string;identity:ProductReceiptIdentity;identityDigest:string;packetDigest:string;productId:string;fingerprint:string;
-  members:ProductReceiptIdentity['members'];reviewDigest:string;preparedBodySha256:string;originalBodySha256:string;liveVerified:boolean;remoteWrites:false;registered:false;draftPreparationAvailable?:boolean};
+  members:ProductReceiptIdentity['members'];reviewDigest:string;preparedBodySha256:string;originalBodySha256:string;liveVerified:boolean;remoteWrites:false;registered:false;draftPreparationAvailable?:boolean;preparedLifecycleAvailable?:boolean};
 export type ProductDocumentSession={packet:ProductDocumentPacket;preview:ProductDocumentPreview;packetDigest:string;origin:string};
 export type ProductValidationRejection={evidence:'document-validation-rejection';operationId:string;step:number;validatedSteps:number[];checkpointSequence:number;rejectedAt:number;submitted:false;consented:false};
 export type ProductDraftProof={evidence:'document-draft-preparation';validatedSteps:number[];checkpointSequence:number;observedAt:number;submitted:false;consented:false};
-export type ProductDocumentState=SingleDocumentState&{duplicate?:boolean;recovered?:boolean;validationRejection?:ProductValidationRejection;draftOnly?:true;draftProof?:ProductDraftProof};
+export type PreparedLifecycleProof={evidence:'native-prepared-draft-lifecycle';preparedCheckpointSequence:number;qualifiedCheckpointSequence:number;checkpointSequence:number;qualifiedAt:number;observedAt:number;validatedSteps:number[];consentRequested:boolean;submitRequested:boolean};
+export type ProductDocumentState=SingleDocumentState&{duplicate?:boolean;recovered?:boolean;validationRejection?:ProductValidationRejection;draftOnly?:true;draftProof?:ProductDraftProof;preparedLifecycle?:true;lifecycleProof?:PreparedLifecycleProof};
 export type ProductDraftAction='prepareDraft'|'recoverDraft';
+export type PreparedDocumentAction='reviewPreparedDraft'|'confirmPreparedDraft'|'recoverPreparedDraft'|'observePreparedDraft';
 export type ProductReceiptSaveAttempt={packet:ProductDocumentPacket;observation:ProductDocumentState};
 type Scope={productId:string;profileId?:string};
 type Actor={ownerId:string;company:SupplierHubCompany};
@@ -40,13 +42,14 @@ async function verifyIdentity(identity:unknown,expected:Awaited<ReturnType<typeo
 }
 
 /** One app click, one extension call. A missing ACK is never retried here. */
-export function productDocumentExchange(action:'preview'|SingleDocumentAction|ProductDraftAction,packet:ProductDocumentPacket,signal:AbortSignal,confirmation?:SingleConfirmation):Promise<unknown>{
+export function productDocumentExchange(action:'preview'|SingleDocumentAction|ProductDraftAction|PreparedDocumentAction,packet:ProductDocumentPacket,signal:AbortSignal,confirmation?:SingleConfirmation):Promise<unknown>{
   return new Promise((resolve,reject)=>{
     if(signal.aborted){reject(new ProductDocumentBridgeError('전체 상품 견적 작업을 취소했습니다.',false));return;}
     productReceiptCanonical(packet);
-    if(!['preview','start','resume','recover','confirm','observe','prepareDraft','recoverDraft'].includes(action)||action==='confirm'&&!confirmation||action!=='confirm'&&confirmation){reject(new ProductDocumentBridgeError('현재 전체 상품 문서의 동의 동작을 확인해주세요.',false));return;}
+    const confirming=action==='confirm'||action==='confirmPreparedDraft';
+    if(!['preview','start','resume','recover','confirm','observe','prepareDraft','recoverDraft','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(action)||confirming&&!confirmation||!confirming&&confirmation){reject(new ProductDocumentBridgeError('현재 전체 상품 문서의 동의 동작을 확인해주세요.',false));return;}
     if(confirmation)productReceiptCanonical(confirmation);
-    const requestId=crypto.randomUUID(),mutating=!['preview','observe','recover','recoverDraft'].includes(action);
+    const requestId=crypto.randomUUID(),mutating=!['preview','observe','recover','recoverDraft','recoverPreparedDraft','observePreparedDraft'].includes(action);
     const cleanup=()=>{clearTimeout(timer);window.removeEventListener('message',receive);signal.removeEventListener('abort',abort);};
     const abort=()=>{cleanup();reject(new ProductDocumentBridgeError('응답 확인을 취소했습니다. 같은 요청을 다시 보내지 말고 저장 결과를 조회해주세요.',mutating));};
     const receive=(event:MessageEvent)=>{
@@ -55,7 +58,7 @@ export function productDocumentExchange(action:'preview'|SingleDocumentAction|Pr
       if(!object(envelope)||envelope.ok!==true||!Object.hasOwn(envelope,'result'))reject(new ProductDocumentBridgeError(typeof envelope?.error==='string'?envelope.error:'전체 상품 견적 응답을 확인하지 못했습니다.',mutating,typeof envelope?.code==='string'?envelope.code:'PRODUCT_DOCUMENT_BRIDGE'));
       else{try{resolve(copy(envelope.result));}catch{reject(new ProductDocumentBridgeError('전체 상품 견적 응답의 JSON 형식·크기를 확인해주세요.',mutating));}}
     };
-    const timer=setTimeout(()=>{cleanup();reject(new ProductDocumentBridgeError('전체 상품 문서 응답이 없습니다. 같은 요청을 다시 전송하지 말고 저장 결과를 조회해주세요.',mutating,'PRODUCT_DOCUMENT_ACK_MISSING'));},action==='confirm'||action==='prepareDraft'?120000:action==='preview'?PRODUCT_DOCUMENT_PREVIEW_ACK_TIMEOUT:60000);
+    const timer=setTimeout(()=>{cleanup();reject(new ProductDocumentBridgeError('전체 상품 문서 응답이 없습니다. 같은 요청을 다시 전송하지 말고 저장 결과를 조회해주세요.',mutating,'PRODUCT_DOCUMENT_ACK_MISSING'));},confirming||action==='prepareDraft'||action==='reviewPreparedDraft'?120000:action==='preview'?PRODUCT_DOCUMENT_PREVIEW_ACK_TIMEOUT:60000);
     window.addEventListener('message',receive);signal.addEventListener('abort',abort,{once:true});
     try{window.postMessage({channel:'YOOFAM_HUB_HANDOFF',requestId,type:'PRODUCT_DOCUMENT',payload:{action,packet,...(confirmation?{confirmation}:{})}},window.location.origin);}
     catch{cleanup();reject(new ProductDocumentBridgeError('확장 전달 응답을 확인하지 못했습니다. 원래 저장 결과를 조회해주세요.',mutating));}
@@ -66,11 +69,11 @@ export async function previewProductDocument(packet:ProductDocumentPacket,signal
   const expected=await proof(packet,origin);if(signal.aborted)throw new ProductDocumentBridgeError('전체 상품 견적 확인을 취소했습니다.',false);
   const result=await productDocumentExchange('preview',packet,signal);
   try{
-    if(signal.aborted||!exact(result,['format','requestId','identity','identityDigest','packetDigest','productId','fingerprint','members','reviewDigest','preparedBodySha256','originalBodySha256','liveVerified','remoteWrites','registered'],['draftPreparationAvailable'])
+    if(signal.aborted||!exact(result,['format','requestId','identity','identityDigest','packetDigest','productId','fingerprint','members','reviewDigest','preparedBodySha256','originalBodySha256','liveVerified','remoteWrites','registered'],['draftPreparationAvailable','preparedLifecycleAvailable'])
       ||result.format!==FORMAT||result.requestId!==packet.requestId||result.productId!==packet.review.identity.productId||result.fingerprint!==packet.review.identity.fingerprint
       ||!same(result.members,packet.review.members)||result.reviewDigest!==packet.review.reviewDigest||result.originalBodySha256!==expected.originalBodySha256||result.preparedBodySha256!==expected.preparedBodySha256
       ||result.packetDigest!==expected.packetDigest||!HASH.test(String(result.identityDigest))||typeof result.liveVerified!=='boolean'||result.remoteWrites!==false||result.registered!==false
-      ||result.draftPreparationAvailable!==undefined&&typeof result.draftPreparationAvailable!=='boolean')throw Error();
+      ||result.draftPreparationAvailable!==undefined&&typeof result.draftPreparationAvailable!=='boolean'||result.preparedLifecycleAvailable!==undefined&&typeof result.preparedLifecycleAvailable!=='boolean')throw Error();
     await verifyIdentity(result.identity,expected,result.identityDigest);
     if(signal.aborted)throw Error();return freeze({packet:copy(packet),preview:copy(result) as unknown as ProductDocumentPreview,packetDigest:expected.packetDigest,origin});
   }catch{throw new ProductDocumentBridgeError('확장에 전달한 전체 옵션·회사·본문 식별값이 다릅니다.',false,'PRODUCT_DOCUMENT_REPLY_IDENTITY');}
@@ -85,11 +88,15 @@ export async function runProductDocument(session:ProductDocumentSession,action:S
   try{if(session.preview.packetDigest!==expected.packetDigest||session.packetDigest!==expected.packetDigest||session.preview.requestId!==session.packet.requestId||!same(session.preview.members,session.packet.review.members))fail();await verifyIdentity(session.preview.identity,expected,session.preview.identityDigest);}catch{fail();}
   if(signal.aborted)throw new ProductDocumentBridgeError('전체 상품 견적 작업을 취소했습니다.',false);
   const value=await productDocumentExchange(action,session.packet,signal,confirmation);
+  return verifyProductDocumentState(value,session,expected,signal,mutating);
+}
+async function verifyProductDocumentState(value:unknown,session:ProductDocumentSession,expected:Awaited<ReturnType<typeof proof>>,signal:AbortSignal,mutating:boolean){
+  const fail=():never=>{throw new ProductDocumentBridgeError('전체 상품 응답의 회원·문서·본문 연결을 확인하지 못했습니다. 원래 저장 결과를 조회해주세요.',mutating,'PRODUCT_DOCUMENT_REPLY_IDENTITY');};
   try{
     if(!exact(value,['format','requestId','identity','identityDigest','packetDigest','originalBodySha256','preparedBodySha256','state','docId','registered','success','needsRecovery'],['challenge','error','receipt','duplicate','recovered','validationRejection']))return fail();
     if(signal.aborted||value.format!==FORMAT||value.requestId!==session.packet.requestId||value.identityDigest!==session.preview.identityDigest||value.packetDigest!==expected.packetDigest
       ||value.originalBodySha256!==expected.originalBodySha256||value.preparedBodySha256!==expected.preparedBodySha256||value.registered!==false||value.success!==false||typeof value.needsRecovery!=='boolean'
-      ||!['prepared','target-requested','target-created','create-requested','created','update-requested','updated','validation-requested','validated','validation-rejected','navigation-requested','awaiting-stage-consent','stage-consent-requested','awaiting-consent','consent-requested','submit-requested','pending','accepted','rejected'].includes(String(value.state))
+      ||!['prepared','target-requested','target-created','create-requested','created','update-requested','updated','validation-requested','validated','validation-rejected','navigation-requested','navigation-ready','awaiting-stage-consent','stage-consent-requested','awaiting-consent','consent-requested','submit-requested','pending','accepted','rejected'].includes(String(value.state))
       ||value.docId!==null&&!identifier(value.docId)||value.duplicate!==undefined&&typeof value.duplicate!=='boolean'||value.recovered!==undefined&&typeof value.recovered!=='boolean')fail();
     await verifyIdentity(value.identity,expected,value.identityDigest);const result=copy(value) as unknown as ProductDocumentState;
     const beforeCreate=['prepared','target-requested','target-created','create-requested'].includes(result.state);
@@ -123,6 +130,10 @@ export async function runProductDocumentDraft(session:ProductDocumentSession,act
   try{if(session.preview.packetDigest!==expected.packetDigest||session.packetDigest!==expected.packetDigest||session.preview.requestId!==session.packet.requestId||!same(session.preview.members,session.packet.review.members))fail();await verifyIdentity(session.preview.identity,expected,session.preview.identityDigest);}catch{fail();}
   if(signal.aborted)throw new ProductDocumentBridgeError('새 견적 초안 작업을 취소했습니다.',false);
   const value=await productDocumentExchange(action,session.packet,signal);
+  return verifyDraftState(value,session,expected,signal,action);
+}
+async function verifyDraftState(value:unknown,session:ProductDocumentSession,expected:Awaited<ReturnType<typeof proof>>,signal:AbortSignal,action:ProductDraftAction){
+  const mutating=action==='prepareDraft',fail=():never=>{throw new ProductDocumentBridgeError('새 초안 응답의 원래 회원·문서·본문 또는 제출 전 검증 기록을 확인하지 못했습니다. 같은 초안의 저장 결과를 조회해주세요.',mutating,'PRODUCT_DOCUMENT_DRAFT_REPLY_IDENTITY');};
   if(exact(value,['format','requestId','state','registered','success'])&&value.format===FORMAT&&value.requestId===session.packet.requestId&&value.state==='busy'&&value.registered===false&&value.success===false)
     throw new ProductDocumentBridgeError('같은 초안을 다른 작업에서 확인 중입니다. 다시 만들지 말고 저장 결과를 조회해주세요.',mutating,'PRODUCT_DOCUMENT_DRAFT_BUSY');
   try{
@@ -151,6 +162,45 @@ export async function runProductDocumentDraft(session:ProductDocumentSession,act
     if(value.error!==undefined&&(!exact(value.error,['code','message'])||typeof value.error.code!=='string'||value.error.code.length>100||typeof value.error.message!=='string'||value.error.message.length>2000))fail();
     if(signal.aborted)fail();return freeze(copy(value) as unknown as ProductDocumentState);
   }catch{return fail();}
+}
+
+/** Only an independently qualified, already-created native draft can enter
+ * this lifecycle. The general unqualified start/resume release gate stays on. */
+export async function runPreparedProductDocument(session:ProductDocumentSession,action:PreparedDocumentAction,signal:AbortSignal,confirmation?:SingleConfirmation):Promise<ProductDocumentState>{
+  if(!['reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(action)||session.preview.preparedLifecycleAvailable!==true)
+    throw new ProductDocumentBridgeError('준비한 새 문서의 등록전송을 지원하는 통합 확장으로 자료를 다시 확인해주세요.',false,'PRODUCT_PREPARED_UNAVAILABLE');
+  if(window.location.origin!==session.origin||!ORIGINS.includes(session.origin))throw new ProductDocumentBridgeError('원래 앱에서 준비한 새 문서를 확인해주세요.',false);
+  const expected=await proof(session.packet,session.origin,action!=='reviewPreparedDraft'),mutating=['reviewPreparedDraft','confirmPreparedDraft'].includes(action);
+  const fail=():never=>{throw new ProductDocumentBridgeError('준비한 새 문서의 검증 기록·현재 약관 또는 접수 연결값을 확인하지 못했습니다. 같은 문서의 저장 결과를 조회해주세요.',mutating,'PRODUCT_PREPARED_REPLY_IDENTITY');};
+  try{if(session.preview.packetDigest!==expected.packetDigest||session.packetDigest!==expected.packetDigest||session.preview.requestId!==session.packet.requestId||!same(session.preview.members,session.packet.review.members))fail();await verifyIdentity(session.preview.identity,expected,session.preview.identityDigest);}catch{return fail();}
+  if(signal.aborted)throw new ProductDocumentBridgeError('준비한 새 문서 확인을 취소했습니다.',false);
+  const value=await productDocumentExchange(action,session.packet,signal,confirmation);
+  if(object(value)&&value.preparedLifecycle===undefined&&action==='recoverPreparedDraft')return verifyDraftState(value,session,expected,signal,'recoverDraft');
+  try{
+    if(!exact(value,['format','requestId','identity','identityDigest','packetDigest','originalBodySha256','preparedBodySha256','state','docId','registered','success','needsRecovery','draftOnly','preparedLifecycle','lifecycleProof'],['challenge','error','receipt','duplicate','recovered']))return fail();
+    if(value.draftOnly!==true||value.preparedLifecycle!==true||action==='recoverPreparedDraft'&&value.recovered!==true||!['navigation-requested','navigation-ready','awaiting-stage-consent','stage-consent-requested','awaiting-consent','consent-requested','submit-requested','pending','accepted','rejected'].includes(String(value.state)))return fail();
+    const lifecycle=value.lifecycleProof;
+    if(!exact(lifecycle,['evidence','preparedCheckpointSequence','qualifiedCheckpointSequence','checkpointSequence','qualifiedAt','observedAt','validatedSteps','consentRequested','submitRequested']))return fail();
+    if(lifecycle.evidence!=='native-prepared-draft-lifecycle'||!same(lifecycle.validatedSteps,[2,3,4,5])
+      ||![lifecycle.preparedCheckpointSequence,lifecycle.qualifiedCheckpointSequence,lifecycle.checkpointSequence].every(value=>Number.isSafeInteger(value)&&Number(value)>0)
+      ||Number(lifecycle.preparedCheckpointSequence)+1!==Number(lifecycle.qualifiedCheckpointSequence)||Number(lifecycle.qualifiedCheckpointSequence)>Number(lifecycle.checkpointSequence)
+      ||![lifecycle.qualifiedAt,lifecycle.observedAt].every(value=>Number.isSafeInteger(value)&&Number(value)>0&&Number(value)<=Date.now()+5000)
+      ||Number(lifecycle.qualifiedAt)>Number(lifecycle.observedAt)||typeof lifecycle.consentRequested!=='boolean'||typeof lifecycle.submitRequested!=='boolean'
+      ||lifecycle.submitRequested!==['submit-requested','pending','accepted','rejected'].includes(String(value.state))||lifecycle.submitRequested&&!lifecycle.consentRequested
+      ||['stage-consent-requested','consent-requested'].includes(String(value.state))&&!lifecycle.consentRequested
+      ||action==='observePreparedDraft'&&!['submit-requested','pending','accepted','rejected'].includes(String(value.state)))return fail();
+    const base=Object.fromEntries(Object.entries(value).filter(([key])=>!['draftOnly','preparedLifecycle','lifecycleProof'].includes(key)));
+    const result=await verifyProductDocumentState(base,session,expected,signal,mutating);
+    if(result.needsRecovery!==['navigation-requested','stage-consent-requested','consent-requested','submit-requested'].includes(result.state))return fail();
+    if(signal.aborted)return fail();return freeze({...result,draftOnly:true,preparedLifecycle:true,lifecycleProof:copy(lifecycle) as unknown as PreparedLifecycleProof});
+  }catch{return fail();}
+}
+
+/** Qualified lifecycle bookkeeping is not a receipt fact. Only validated
+ * lifecycle callers use this projection before the unchanged strict API save. */
+export function preparedReceiptObservation(value:ProductDocumentState):ProductDocumentState{
+  if(value.preparedLifecycle!==true||!value.lifecycleProof?.submitRequested||!['pending','accepted','rejected'].includes(value.state)||!value.receipt)throw Error('준비한 새 문서의 접수 결과를 확인해주세요.');
+  return copy(Object.fromEntries(Object.entries(value).filter(([key])=>!['draftOnly','preparedLifecycle','lifecycleProof'].includes(key)))) as ProductDocumentState;
 }
 
 const endpoint=(scope:Scope)=>{if(!ID.test(scope.productId)||scope.profileId!==undefined&&!ID.test(scope.profileId))throw Error('상품·카테고리 식별값을 확인해주세요.');return `/api/products/${encodeURIComponent(scope.productId)}/supplier-hub-product-receipt`;};

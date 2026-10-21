@@ -29,17 +29,22 @@ async function fixture(company=schemaCompanies[0],withTemplate=false){
  }catch(error){backend.close();throw error;}
 }
 function editor(f,{wrapper=false,focusedOptionId=f.id,imageView=true,onTranslate,onEdit,onProcess,imageProcessingBusy=false}={}){
- const contexts=new Map(),cache=new Map(),effects=[],saved=[];let active,seen;
+ const contexts=new Map(),cache=new Map(),effects=[],saved=[];let active,seen,pendingQuotes=0;
+ const request=async(...args)=>{const quote=args[0].includes('/quotation-fields');if(quote)pendingQuotes++;try{return await f.request(...args);}finally{if(quote)pendingQuotes--;}};
  const props={product:f.product,productId:f.product.id,profileId:f.profile.id,focusedOptionId,imageView,version:f.product.updated_at,onTranslate,onEdit,onProcess,imageProcessingBusy,disabled:imageProcessingBusy,onSaved(){saved.push(1);props.product.updated_at=f.backend.sqlite.prepare('SELECT updated_at FROM products WHERE id=?').get(f.product.id).updated_at;props.version=props.product.updated_at;}};
  const hookEffect=(fn,deps)=>{const ctx=active,i=ctx.cursor++,old=ctx.slots[i];if(!old||!sameDeps(old.deps,deps)){ctx.slots[i]={deps,cleanup:old?.cleanup};effects.push({ctx,i,fn});}};
  const react={useState(initial){const ctx=active,i=ctx.cursor++;if(!(i in ctx.slots))ctx.slots[i]=typeof initial==='function'?initial():initial;return[ctx.slots[i],value=>{ctx.slots[i]=typeof value==='function'?value(ctx.slots[i]):value;}];},useRef(initial){const ctx=active,i=ctx.cursor++;return ctx.slots[i]??(ctx.slots[i]={current:initial});},useEffect:hookEffect,useLayoutEffect:hookEffect,useMemo(fn,deps){const ctx=active,i=ctx.cursor++,old=ctx.slots[i];if(!old||!sameDeps(old.deps,deps))ctx.slots[i]={deps,value:fn()};return ctx.slots[i].value;},useCallback(fn,deps){return react.useMemo(()=>fn,deps);}};
- function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,Date,URL,AbortController,TextEncoder,TextDecoder,structuredClone,crypto,fetch:f.request,require(name){if(name.endsWith('.css'))return{};if(name==='react')return react;if(name.startsWith('@/'))return name.includes('/components/')?load(name.slice(2)+'.tsx'):f.backend.load(name.slice(2)+'.ts');return native(name);}},{filename:file});return exports;}
+ function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,Date,URL,AbortController,TextEncoder,TextDecoder,structuredClone,crypto,fetch:request,require(name){if(name.endsWith('.css'))return{};if(name==='react')return react;if(name.startsWith('@/'))return name.includes('/components/')?load(name.slice(2)+'.tsx'):f.backend.load(name.slice(2)+'.ts');return native(name);}},{filename:file});return exports;}
  const Component=wrapper?load('app/components/product-options-editor.tsx').ProductOptionsEditor:load('app/components/option-main-image-editor.tsx').OptionMainImageEditor;
  function expand(node,path){if(Array.isArray(node))return node.map((child,i)=>expand(child,path+'/'+i));if(!node||typeof node!=='object')return node;if(typeof node.type==='function'){const id=path+'/'+node.type.name+':'+String(node.key??'');seen.add(id);let ctx=contexts.get(id);if(!ctx){ctx={slots:[],cursor:0};contexts.set(id,ctx);}ctx.cursor=0;const previous=active;active=ctx;const rendered=node.type(node.props);active=previous;return expand(rendered,id);}return{...node,props:{...node.props,children:expand(node.props?.children,path+'/children')}};}
  const render=()=>{seen=new Set();const tree=expand({type:Component,key:'editor',props},'root');for(const[id,ctx]of contexts)if(!seen.has(id)){for(const slot of ctx.slots)slot?.cleanup?.();contexts.delete(id);}while(effects.length){const{ctx,i,fn}=effects.shift();ctx.slots[i].cleanup?.();ctx.slots[i].cleanup=fn();}return tree;};
+ // Retain the bounded render flush for tests that deliberately hold a request
+ // in flight. A completed user click instead observes its actual ACK/readback.
  const idle=async()=>{for(let i=0;i<16;i++){render();await new Promise(resolve=>setImmediate(resolve));}return render();};
+ const settled=async()=>{await idle();const deadline=Date.now()+5000;let quiet=0;for(;;){const tree=render(),busy=visible(tree).some(node=>node.props['data-workspace-saving']===true||node.props['aria-busy']===true);
+   quiet=!pendingQuotes&&!busy?quiet+1:0;if(quiet>=2)return tree;if(Date.now()>deadline)throw Error('Main image editor did not finish its local quotation requests and ACK/readback');await new Promise(resolve=>setImmediate(resolve));}};
  const button=label=>visible(render()).find(node=>node.type==='button'&&(node.props['aria-label']===label||text(node)===label)),input=label=>visible(render()).find(node=>node.props?.['aria-label']===label);
- return {props,saved,render,idle,button,input,async click(label){const node=button(label);assert.ok(node,label);assert.equal(node.props.disabled,false,label);node.props.onClick();await idle();},close(){for(const ctx of contexts.values())for(const slot of ctx.slots)slot?.cleanup?.();}};
+ return {props,saved,render,idle,button,input,async click(label){const node=button(label);assert.ok(node,label);assert.equal(node.props.disabled,false,label);node.props.onClick();await settled();},close(){for(const ctx of contexts.values())for(const slot of ctx.slots)slot?.cleanup?.();}};
 }
 
 test('main translation toolbar uses final quotation A with exact saved binding and blocks stale drafts, focus and stage callbacks',async()=>{
@@ -140,4 +145,14 @@ for(const company of schemaCompanies)test(`a captured global main-image candidat
   await h.click('공통·원본 대표이미지 복원');await h.click('최종 견적 대표이미지 저장');current=await f.read();assert.equal(current.resolved.rows.find(row=>row.optionId===other).fields.mainImage.value,current.automatic.rows.find(row=>row.optionId===other).fields.mainImage.value);assert.equal(Object.hasOwn(current.overrides.options[other]??{},'mainImage'),false);exported=await exportSaved();const restored=current.resolved.rows.find(row=>row.optionId===other).fields.mainImage.value;assert.equal(exported.reader.xlsxHeaders(exported.sheet,'견적서',rowIndex+2)[f.fields.indexOf('mainImage')],restored?exported.document.uploadFilenames[restored]:'');
   assert.equal(JSON.stringify(['product_content','product_options','product_price_policy'].map(table=>f.backend.sqlite.prepare('SELECT * FROM '+table+' WHERE product_id=?').get(f.product.id))),source);assert.deepEqual([...f.backend.objects].map(([key,value])=>[key,Buffer.from(value).toString('hex')]),bytes);assert.equal(f.backend.sqlite.prepare('SELECT supplier_hub_status FROM products WHERE id=?').get(f.product.id).supplier_hub_status,'미전송');assert.ok(!f.backend.network.some(host=>/supplier\.coupang|couplus/.test(host)));
  }finally{h.close();f.close();}
+});
+
+test('the main editor harness waits for actual save completion when a local quotation PUT is delayed',async()=>{
+ const f=await fixture(),original=f.request;let delayed=0,h;
+ try{
+  f.request=async(url,init={})=>{if(init.method==='PUT'){delayed++;await new Promise(resolve=>setTimeout(resolve,80));}return original(url,init);};
+  h=editor(f);await h.idle();await h.click('최종 대표이미지 비우기');await h.click('최종 견적 대표이미지 저장');
+  assert.equal(delayed,1);assert.equal(h.render().props['data-workspace-saving'],false,'idle must observe completed ACK/readback, not a fixed number of event-loop ticks');
+  assert.equal(h.saved.length,1);assert.equal((await f.read()).resolved.rows.find(row=>row.optionId===f.id).fields.mainImage.value,'');
+ }finally{h?.close();f.close();}
 });

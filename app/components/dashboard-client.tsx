@@ -846,17 +846,26 @@ function DetailPanel({ workspaceOwnerId, onEditSeo, onReceiptSaved, onBeforeSeoG
   const [mainProcessingClock,setMainProcessingClock]=useState(()=>({scope:mainProcessingScope,token:{}}));
   if(mainProcessingClock.scope!==mainProcessingScope)setMainProcessingClock({scope:mainProcessingScope,token:{}});
   const mainProcessingToken=mainProcessingClock.scope===mainProcessingScope?mainProcessingClock.token:null,liveMainProcessingToken=useRef(mainProcessingToken);
-  const [mainProcessing,setMainProcessing]=useState<{token:object;target:SelectedMainImageProcessingTarget}|null>(null);
+  const mainResultScope=JSON.stringify([workspaceOwnerId??product.owner_id??null,product.id,focusedOptionId??null,pricingProfileId??null,tab]);
+  const mainResultToken=useMemo(()=>({scope:mainResultScope}),[mainResultScope]),liveMainResultToken=useRef<object|null>(mainResultToken);
+  useLayoutEffect(()=>{liveMainResultToken.current=mainResultToken;return()=>{liveMainResultToken.current=null;};},[mainResultToken]);
+  const [mainProcessing,setMainProcessing]=useState<{token:object;resultToken:object;target:SelectedMainImageProcessingTarget}|null>(null);
   const mainProcessingSequence=useRef(0);
   useLayoutEffect(()=>{liveMainProcessingToken.current=mainProcessingToken;return()=>{liveMainProcessingToken.current=null;};},[mainProcessingToken]);
   const mainProcessingActive=!!mainProcessing&&mainProcessing.token===mainProcessingToken&&tab==='대표 이미지';
-  function processFinalMainImage(sourceKey:string,role:'main',quotationTarget:FreeImageQuotationRequest){
+  const mainResultActive=!!mainProcessing&&mainProcessing.resultToken===mainResultToken&&tab==='대표 이미지';
+  function processFinalMainImage(sourceKey:string,role:'main',quotationTarget:FreeImageQuotationRequest,quotationView?:import('@/app/quotation-schema').QuotationFieldsView){
     if(!mainProcessingToken||liveMainProcessingToken.current!==mainProcessingToken||tab!=='대표 이미지'||role!=='main'||!priceFilesFree()||detailImageEditOpenRef.current||freeImageEditState.current.dirty
       ||workspaceOwnerId&&product.owner_id!==workspaceOwnerId||!imageKeys.includes(sourceKey)||!quotationImageContext||quotationImageContext.input!=='mainImage'
       ||quotationTarget.kind!=='quotation'||quotationTarget.optionId!==quotationImageContext.optionId||quotationTarget.profileId!==quotationImageContext.profileId
       ||quotationTarget.input!=='mainImage'||quotationTarget.slotIndex!==0||quotationTarget.value!==sourceKey)return;
-    setMainProcessing({token:mainProcessingToken,target:{sourceKey,sequence:++mainProcessingSequence.current,productVersion:product.updated_at,quotationTarget}});
+    if(quotationView&&(quotationView.productVersion!==product.updated_at||quotationView.revision!==quotationTarget.revision||quotationView.inputFingerprint!==quotationTarget.inputFingerprint||quotationView.optionRevision!==quotationTarget.optionRevision))return;
+    setMainProcessing({token:mainProcessingToken,resultToken:mainResultToken,target:{sourceKey,sequence:++mainProcessingSequence.current,productVersion:product.updated_at,quotationTarget,
+      ownerId:workspaceOwnerId??product.owner_id,...(quotationView?{quotationView:JSON.parse(JSON.stringify(quotationView))}:{})}});
   }
+  function beforeSelectedMainApply(){return liveMainResultToken.current===mainResultToken&&mainResultActive&&!imageProcessingRefs.current.free&&!imageProcessingRefs.current.additionalBatch&&!imageProcessingRefs.current.detailBatch
+    &&!imageProcessingRefs.current.detailFamily&&!imageProcessingRefs.current.mainUpload&&!imageProcessingRefs.current.additionalUpload&&!imageProcessingRefs.current.detailUpload&&!imageProcessingRefs.current.sizeChart
+    &&!detailImageEditOpenRef.current&&!freeImageEditState.current.dirty&&onBeforeFreeImageApply();}
   function closeMainImageProcessing(){if(mainProcessingToken&&liveMainProcessingToken.current===mainProcessingToken&&priceFilesFree()&&!freeImageEditState.current.dirty)setMainProcessing(null);}
   const showLabelImageEditing=tab==='표시사항'&&!!quotationImageContext&&imageTranslation?.productId===product.id&&imageTranslation.quotationTarget?.input==='labelImages'
     &&imageTranslation.quotationTarget.optionId===quotationImageContext.optionId&&imageTranslation.quotationTarget.profileId===quotationImageContext.profileId;
@@ -905,7 +914,7 @@ function DetailPanel({ workspaceOwnerId, onEditSeo, onReceiptSaved, onBeforeSeoG
             translationTarget={imageTranslation?.productId===product.id?{sourceKey:imageTranslation.sourceKey,sequence:imageTranslation.sequence,sourceLanguage:imageTranslation.sourceLanguage,...(imageTranslation.role?{role:imageTranslation.role}:{}),...(imageTranslation.quotationTarget?{quotationTarget:imageTranslation.quotationTarget}:{}),...(imageTranslation.intent?{intent:imageTranslation.intent}:{})}:undefined}/>
         </details>
       </DetailImageEditDialog>
-      <details hidden={!isImageStep} open={mainProcessingActive||undefined}><summary>{mainProcessing?'선택 옵션 대표이미지 AI 처리':'추가 AI 이미지 가공'}</summary><ImageGenerationPanel key={`${workspaceOwnerId??product.owner_id??''}:${product.id}`} productId={product.id} version={product.updated_at} imageKeys={imageKeys} onProductChanged={sourceSaved} onBusyChange={changeImageProcessingBusy} processingTarget={mainProcessing?.target} processingTargetActive={mainProcessingActive} onCloseProcessingTarget={closeMainImageProcessing}/></details>
+      <details hidden={!isImageStep} open={mainProcessingActive||undefined}><summary>{mainProcessing?'선택 옵션 대표이미지 AI 처리':'추가 AI 이미지 가공'}</summary><ImageGenerationPanel key={`${workspaceOwnerId??product.owner_id??''}:${product.id}`} productId={product.id} version={product.updated_at} imageKeys={imageKeys} onProductChanged={sourceSaved} onBusyChange={changeImageProcessingBusy} processingTarget={mainProcessing?.target} processingTargetActive={mainProcessingActive} processingResultActive={mainResultActive} beforeSelectedImageApply={beforeSelectedMainApply} onCloseProcessingTarget={closeMainImageProcessing}/></details>
     </div>
     <div hidden={tab!=='표시사항'}><button type="button" className="btn ghost" aria-expanded={labelTranslationOpen} aria-controls={`label-translation-${product.id}`} onClick={()=>setLabelTranslationOpen(open=>!open)}>한글 표시사항 번역</button><details><summary>이전 공통 표시사항 PNG·추가 항목 조판</summary><p className="panel-note">이전 공통 자료와 직접 추가한 항목을 조판합니다. 제품 라벨의 항목명·순서·내용은 위 편집 영역에서 저장하고, 카테고리별 상품고시는 견적서에서 확인하세요.</p><DocumentImagePanel productId={product.id} version={product.updated_at} section="label" onSaved={sourceSaved}/></details></div>
     {tab==='작업'&&<AutomationPanel productId={product.id} version={product.updated_at}/>}

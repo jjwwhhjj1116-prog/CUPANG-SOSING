@@ -9,8 +9,9 @@ export const SINGLE_DOCUMENT_ORIGIN='https://supplier.coupang.com';
 export const SINGLE_DOCUMENT_PATHS=Object.freeze({create:'/sr/draft/api/create',update:'/sr/draft/api/update',drafts:'/sr/draft/api/drafts'});
 const COMPANIES=Object.freeze({A01526306:'유앤채',A01464742:'와이홉'});
 const PAGES=['startPage','productPage','imagePage','legalPage','logisticsPage','sourcingPage'];
-const STATES=new Set(['prepared','target-requested','target-created','create-requested','created','update-requested','updated','validation-requested','validated','validation-rejected','navigation-requested','awaiting-stage-consent','stage-consent-requested','awaiting-consent','consent-requested','submit-requested','pending','accepted','rejected','registered']);
+const STATES=new Set(['prepared','target-requested','target-created','create-requested','created','update-requested','updated','validation-requested','validated','validation-rejected','navigation-requested','navigation-ready','awaiting-stage-consent','stage-consent-requested','awaiting-consent','consent-requested','submit-requested','pending','accepted','rejected','registered']);
 const DRAFT_STATES=new Set(['prepared','target-requested','target-created','create-requested','created','update-requested','updated','validation-requested','validated','validation-rejected']);
+const PREPARED_LIFECYCLE_STATES=new Set(['navigation-requested','navigation-ready','awaiting-stage-consent','stage-consent-requested','awaiting-consent','consent-requested','submit-requested','pending','accepted','rejected']);
 const STAGE_FLAGS={productPage:{key:'msrpAgree',id:'agreeMSRPTerm'},imagePage:{key:'labelContactAgreed',id:'agreeLabelContact'}};
 const STAGES=Object.keys(STAGE_FLAGS);
 const HEX=/^[a-f0-9]{64}$/;
@@ -136,8 +137,13 @@ function checkpointValid(state,context){
     ||!Array.isArray(state.validatedSteps)||!same(state.validatedSteps,[2,3,4,5].slice(0,state.validatedSteps.length))
     ||state.validatedSteps.length>4||!(state.docId===null||identifier(state.docId))||state.docId!==null&&state.baselineDocIds.some(id=>same(id,state.docId))
     ||state.tab!==null&&!tabValid(state.tab,context.packet)||state.sessionId!==null&&(typeof state.sessionId!=='string'||!ID.test(state.sessionId)))fail('CHECKPOINT','저장한 개별 전송 기록의 연결을 확인해주세요.');
-  if(state.draftOnly!==undefined&&(state.draftOnly!==true||!DRAFT_STATES.has(state.state)||state.stageConsents?.length||state.challenge!==null||state.receipt!==null
-    ||state.humanConfirmedAt!==undefined||state.submitRequestedAt!==undefined)||state.draftOnly===true&&state.state==='validated'&&state.validatedSteps.length!==4)fail('CHECKPOINT','제출하지 않은 새 초안의 원래 준비 기록을 확인해주세요.');
+  if(state.draftOnly!==undefined&&(state.draftOnly!==true||state.preparedLifecycle!==true&&(!DRAFT_STATES.has(state.state)||state.stageConsents?.length||state.challenge!==null||state.receipt!==null
+    ||state.humanConfirmedAt!==undefined||state.submitRequestedAt!==undefined))||state.draftOnly===true&&state.state==='validated'&&state.validatedSteps.length!==4)fail('CHECKPOINT','제출하지 않은 새 초안의 원래 준비 기록을 확인해주세요.');
+  if(state.preparedLifecycle!==undefined||state.preparationOrigin!==undefined){const origin=state.preparationOrigin;
+    if(state.preparedLifecycle!==true||state.draftOnly!==true||!PREPARED_LIFECYCLE_STATES.has(state.state)||state.validatedSteps.length!==4
+      ||!object(origin)||Object.keys(origin).sort().join(',')!=='preparedCheckpointSequence,qualifiedAt,qualifiedCheckpointSequence'||!Number.isSafeInteger(origin.preparedCheckpointSequence)||origin.preparedCheckpointSequence<1
+      ||origin.qualifiedCheckpointSequence!==origin.preparedCheckpointSequence+1||origin.qualifiedCheckpointSequence>state.sequence||!Number.isSafeInteger(origin.qualifiedAt)||origin.qualifiedAt<1||origin.qualifiedAt>state.updatedAt)fail('CHECKPOINT','원래 새 초안의 단계 확인 연결을 검증하지 못했습니다.');
+  }
   const beforeTarget=['prepared','target-requested'].includes(state.state),beforeDocument=['prepared','target-requested','target-created'].includes(state.state);
   if(beforeTarget?state.ownedTarget!=null:!targetValid(state.ownedTarget,context,state.requestId))fail('CHECKPOINT','이 전송에서 만든 새 Supplier Hub 탭 기록이 없습니다. 기존 탭은 사용하지 않았습니다.');
   if(beforeDocument?state.tab!==null:!state.tab||state.tab.tabId!==state.ownedTarget.tabId||state.tab.requestId!==state.requestId||state.tab.packetDigest!==context.packetDigest)fail('CHECKPOINT','새 전송 탭과 현재 문서의 연결을 확인해주세요.');
@@ -145,6 +151,7 @@ function checkpointValid(state,context){
   if(!['prepared','target-requested','target-created','create-requested'].includes(state.state)&&state.docId===null)fail('CHECKPOINT','새 문서 식별값이 저장되지 않았습니다.');
   if(['target-requested','target-created'].includes(state.state)&&(state.operationId!==state.requestId+':target'||state.docId!==null))fail('CHECKPOINT','새 전송 탭의 원래 생성 요청을 확인해주세요.');
   const stages=state.stageConsents??[];
+  if(state.state==='navigation-ready'&&(state.preparedLifecycle!==true||!stages.length||state.challenge!==null||state.receipt!==null||state.submitRequestedAt!==undefined))fail('CHECKPOINT','원래 새 문서의 아직 요청하지 않은 다음 단계를 확인해주세요.');
   if(!Array.isArray(stages)||stages.length>2||stages.some((entry,index)=>!object(entry)||entry.stage!==STAGES[index]||!object(entry.challenge)||entry.challenge.stage!==entry.stage
     ||!same(entry.challenge.docId,state.docId)||entry.challenge.packetDigest!==context.packetDigest||!HEX.test(entry.challenge.id||'')
     ||!Number.isSafeInteger(entry.challenge.issuedAt)||entry.challenge.issuedAt<=0||entry.challenge.expiresAt!==entry.challenge.issuedAt+120000
@@ -196,13 +203,23 @@ function receiptValid(receipt,state,context,time){
     &&(!['accepted','registered'].includes(receipt.state)||identifier(receipt.receiptId))
     &&(receipt.state!=='registered'||receipt.evidence==='document-and-sku'&&identifier(receipt.skuId));
 }
+/** Preview may recover only the ID/session from this original durable native
+ * operation. No page-supplied ID, lane claim, checkpoint save or Hub call. */
+export async function readPreparedDocumentPreviewCheckpoint(context,store){
+  if(!object(context)||context.packet?.format!=='yoofam-supplier-hub-product-document-v1'||!Array.isArray(context.identity?.members)||typeof store?.get!=='function')fail('CHECKPOINT','원래 전체 상품 문서의 읽기 확인 범위를 확인해주세요.');
+  const value=await store.get(context.key);if(value===undefined||value===null)return null;
+  const state=checkpointValid(clone(value),context);
+  if(state.draftOnly!==true||state.requestId!==context.packet.requestId)fail('CHECKPOINT_MODE','원래 준비한 새 문서의 같은 요청만 읽기로 확인할 수 있습니다.');
+  return state.docId===null?null:Object.freeze({docId:state.docId,sessionId:state.sessionId,...(state.preparedLifecycle===true&&state.submitRequestedAt!==undefined?{submitRequestedAt:state.submitRequestedAt}:{})});
+}
 function result(state,extra={}){
   return {format:state.format,requestId:state.requestId,identity:clone(state.identity),identityDigest:state.identityDigest,packetDigest:state.packetDigest,originalBodySha256:state.originalBodySha256,preparedBodySha256:state.bodySha256,state:state.state,
-    docId:state.docId,registered:state.state==='registered',success:state.state==='registered',needsRecovery:['target-requested','create-requested','update-requested','validation-requested','stage-consent-requested','consent-requested','submit-requested'].includes(state.state),
+    docId:state.docId,registered:state.state==='registered',success:state.state==='registered',needsRecovery:['target-requested','create-requested','update-requested','validation-requested','stage-consent-requested','consent-requested','submit-requested'].includes(state.state)||state.preparedLifecycle===true&&state.state==='navigation-requested',
     ...(state.challenge&&['awaiting-stage-consent','awaiting-consent'].includes(state.state)?{challenge:clone(state.challenge)}:{}),...(state.receipt?{receipt:clone(state.receipt)}:{}),
     ...(Array.isArray(state.identity.members)&&state.state==='validation-rejected'?{validationRejection:{evidence:'document-validation-rejection',operationId:state.operationId,step:state.requestedStep,
       validatedSteps:clone(state.validatedSteps),checkpointSequence:state.sequence,rejectedAt:state.updatedAt,submitted:false,consented:false}}:{}),
-    ...(state.draftOnly===true?{draftOnly:true,draftProof:{evidence:'document-draft-preparation',validatedSteps:clone(state.validatedSteps),checkpointSequence:state.sequence,observedAt:state.updatedAt,submitted:false,consented:false}}:{}),...extra};
+    ...(state.draftOnly===true?state.preparedLifecycle===true?{draftOnly:true,preparedLifecycle:true,lifecycleProof:{evidence:'native-prepared-draft-lifecycle',...clone(state.preparationOrigin),checkpointSequence:state.sequence,observedAt:state.updatedAt,validatedSteps:clone(state.validatedSteps),
+      consentRequested:Boolean(state.stageConsents?.length||state.humanConfirmedAt!==undefined),submitRequested:state.submitRequestedAt!==undefined}}:{draftOnly:true,draftProof:{evidence:'document-draft-preparation',validatedSteps:clone(state.validatedSteps),checkpointSequence:state.sequence,observedAt:state.updatedAt,submitted:false,consented:false}}:{}),...extra};
 }
 
 /** Explicit adapters only; importing this module performs no browser/network
@@ -223,24 +240,26 @@ export function createSingleDocumentReceiver(options){
  * packet data. Legacy single-option validation remains its original wrapper.
  * Both wrappers share durable write/recovery/consent handling below. */
 export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},contract){
-  if(!object(contract)||Object.keys(contract).some(key=>!['format','identity','draftOnly'].includes(key))||typeof contract.format!=='string'||!contract.format||typeof contract.identity!=='function'
-    ||Object.hasOwn(contract,'draftOnly')&&contract.draftOnly!==true)throw new TypeError('A trusted document transport contract is required.');
-  const draftOnly=contract.draftOnly===true;
+  if(!object(contract)||Object.keys(contract).some(key=>!['format','identity','draftOnly','nativeLifecycle'].includes(key))||typeof contract.format!=='string'||!contract.format||typeof contract.identity!=='function'
+    ||Object.hasOwn(contract,'draftOnly')&&contract.draftOnly!==true||Object.hasOwn(contract,'nativeLifecycle')&&(contract.nativeLifecycle!==true||contract.draftOnly!==true))throw new TypeError('A trusted document transport contract is required.');
+  const draftOnly=contract.draftOnly===true,nativeLifecycle=contract.nativeLifecycle===true;
   const required=['readSource','createTarget','readTab','hubRequest','readDocument','recoverWrite','readValidation','navigate','readAgreements','verifyHumanConfirmation','confirmAgreements','submit','observeReceipt'];
-  if(!adapter||required.some(key=>typeof adapter[key]!=='function')||!store||['get','claim','compareAndSet'].some(key=>typeof store[key]!=='function')||typeof now!=='function')throw new TypeError('Single document adapter/store contract is required.');
+  if(!adapter||required.some(key=>typeof adapter[key]!=='function')||nativeLifecycle&&typeof adapter.qualifyPreparedDraft!=='function'||!store||['get','claim','compareAndSet'].some(key=>typeof store[key]!=='function')||typeof now!=='function')throw new TypeError('Single document adapter/store contract is required.');
   const active=new Set();
   const clock=()=>{const value=now();if(!Number.isSafeInteger(value)||value<=0)fail('CLOCK','전송 시각을 확인하지 못했습니다.');return value;};
   async function get(context){const value=await store.get(context.key);if(value===undefined||value===null)return null;const state=clone(checkpointValid(value,context));
-    if((state.draftOnly===true)!==draftOnly||draftOnly&&state.requestId!==context.packet.requestId)fail('CHECKPOINT_MODE','원래 새 초안 준비 요청과 같은 기록에서만 계속 확인해주세요.');return state;}
+    if((state.draftOnly===true)!==draftOnly||draftOnly&&state.requestId!==context.packet.requestId||state.preparedLifecycle===true&&!nativeLifecycle)fail('CHECKPOINT_MODE','원래 새 초안 준비 요청과 같은 기록에서만 계속 확인해주세요.');return state;}
   async function save(context,previous,changes){
     const next={...clone(previous),...clone(changes),sequence:previous.sequence+1,updatedAt:clock()};checkpointValid(next,context);
     if(await store.compareAndSet(context.key,safeValue(previous),safeValue(next))!==true)fail('CHECKPOINT_CONFLICT','더 최신 전송 기록이 있습니다. 추가 요청하지 않고 조회해주세요.');return next;
   }
   const call=(name,input)=>adapter[name](safeValue(input));
-  async function guard(context,state){
-    const proof=await call('readSource',{identity:context.identity,bodySha256:context.originalBodySha256,preparedBodySha256:context.bodySha256,packetDigest:context.packetDigest,requestId:state.requestId,docId:state.docId});
+  async function guard(context,state,readOnlyReceipt=false){
+    if(readOnlyReceipt&&(!nativeLifecycle||state.preparedLifecycle!==true||state.submitRequestedAt===undefined))fail('CHECKPOINT_MODE','이미 제출한 원래 새 문서의 읽기 확인 범위를 확인해주세요.');
+    const proof=await call('readSource',{identity:context.identity,bodySha256:context.originalBodySha256,preparedBodySha256:context.bodySha256,packetDigest:context.packetDigest,requestId:state.requestId,docId:state.docId,
+      ...(readOnlyReceipt?{receiptRecovery:{sessionId:state.sessionId,submitRequestedAt:state.submitRequestedAt}}:{})});
     if(!object(proof)||proof.current!==true||proof.submissionReady!==true||proof.priorDocumentClear!==true||!same(proof.identity,context.identity)||proof.bodySha256!==context.originalBodySha256||typeof proof.sessionId!=='string'||!ID.test(proof.sessionId)
-      ||state.sessionId!==null&&proof.sessionId!==state.sessionId)fail('SOURCE_CHANGED','현재 회원·회사·저장한 견적서가 준비한 자료와 다릅니다.');
+      ||!readOnlyReceipt&&state.sessionId!==null&&proof.sessionId!==state.sessionId)fail('SOURCE_CHANGED','현재 회원·회사·저장한 견적서가 준비한 자료와 다릅니다.');
     if(state.tab||state.ownedTarget){const target=state.tab??state.ownedTarget,tab=await call('readTab',{tab:target,identity:context.identity});if(!tabValid(tab,context.packet)||tab.tabId!==target.tabId)fail('TAB_CHANGED','새 Supplier Hub 탭·회사·로그인 상태가 변경되었습니다.');}
     return proof;
   }
@@ -299,6 +318,10 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
   }
   async function pauseNavigation(context,state,value){
     if(!object(value)||!same(value.docId,state.docId)||!same(value.company,context.packet.company)||value.productName!==context.packet.body.productName)fail('NAVIGATION','새 문서 등록 화면을 확인하지 못했습니다.');
+    if(value.readyForContinue===true){
+      if(!nativeLifecycle||state.preparedLifecycle!==true||value.readyForSubmit!==false||value.readyForConsent!==false||value.stage!==state.stageConsents.at(-1)?.stage)fail('NAVIGATION','원래 단계의 미요청 다음 동작을 확인하지 못했습니다.');
+      return save(context,state,{state:'navigation-ready',challenge:null});
+    }
     if(value.readyForConsent===true&&value.readyForSubmit===false){
       const stage=value.stage;
       if(stage!==STAGES[(state.stageConsents??[]).length]||typeof adapter.readStageAgreements!=='function'||typeof adapter.confirmStageAgreements!=='function'
@@ -344,7 +367,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
       if(draftOnly&&state.validatedSteps.length===4)return verifyDraft(context,state);
     }
     if(state.state==='validated'){
-      if(draftOnly){await verifyDraft(context,state);return state;}
+      if(draftOnly&&!state.preparedLifecycle){await verifyDraft(context,state);return state;}
       const ids=drafts(await request(context,state,'GET',SINGLE_DOCUMENT_PATHS.drafts));
       if(ids.filter(id=>same(id,state.docId)).length!==1)fail('DRAFT_NOT_FOUND','방금 생성한 문서가 중간 저장 목록에 정확히 표시되지 않습니다.');
       await readDocument(context,state);state=await save(context,state,{state:'navigation-requested'});
@@ -358,6 +381,14 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
     await readDocument(context,state);
     return state.state==='validated'?state:save(context,state,{state:'validated'});
   }
+  async function qualifyPrepared(context,state){
+    await guard(context,state);await readDocument(context,state);
+    const ids=drafts(await request(context,state,'GET',SINGLE_DOCUMENT_PATHS.drafts));if(ids.filter(id=>same(id,state.docId)).length!==1)fail('DRAFT_NOT_FOUND','원래 새 초안이 저장 목록에 정확히 표시되지 않습니다.');
+    const proof=await call('qualifyPreparedDraft',{tab:state.tab,sessionId:state.sessionId,identity:context.identity,docId:state.docId});
+    if(!object(proof)||proof.readOnly!==true||!same(proof.docId,state.docId)||!same(proof.company,context.packet.company)||proof.identityDigest!==context.identityDigest||proof.packetDigest!==context.packetDigest
+      ||proof.sourcePlanSha256!==context.identity.fingerprint||proof.metadataObserved!==true||!Number.isSafeInteger(proof.checkedAt)||Math.abs(clock()-proof.checkedAt)>60000)fail('NATIVE_PREPARED_UNCONFIRMED','현재 새 초안의 원본 파일·문서 연결을 확인하지 못했습니다.');
+    await guard(context,state);await readDocument(context,state);
+  }
   async function operate(packet,sender,action,details){
     const context=await contract.identity(packet,sender,action);
     if(!object(context)||context.packet?.format!==contract.format)fail('PACKET','요청한 문서 전송 형식과 검증한 자료가 다릅니다.');
@@ -365,6 +396,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
     active.add(context.key);let state;
     try{
       state=await get(context);
+      if(state?.preparedLifecycle&&['prepareDraft','recoverDraft'].includes(action))fail('CHECKPOINT_MODE','등록 단계 확인을 시작한 원래 새 초안의 결과를 조회해주세요.');
       if(action==='start'||draftOnly&&action==='prepareDraft'){
         if(state){await guard(context,state);
           if(draftOnly&&['prepared','target-created','created','updated','validated'].includes(state.state))state=await continuation(context,state);
@@ -375,8 +407,29 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
         state=await continuation(context,state);return result(state);
       }
       if(!state)fail('CHECKPOINT','먼저 새 개별 전송 요청을 준비해주세요.');
-      await guard(context,state);
-      if(draftOnly){
+      const readOnlyReceipt=nativeLifecycle&&state.preparedLifecycle===true&&state.submitRequestedAt!==undefined&&['recoverPreparedDraft','observePreparedDraft'].includes(action);
+      await guard(context,state,readOnlyReceipt);
+      if(nativeLifecycle&&['reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(action)){
+        if(action==='reviewPreparedDraft'){
+          if(state.preparedLifecycle){
+            if(state.state!=='navigation-ready')return result(state,{duplicate:true});
+            await qualifyPrepared(context,state);state=await save(context,state,{state:'navigation-requested'});state=await navigation(context,state);return result(state);
+          }
+          if(state.state!=='validated'||state.validatedSteps.length!==4)fail('NATIVE_PREPARED_UNCONFIRMED','먼저 원래 새 초안의 네 단계 저장·검증을 모두 확인해주세요.');
+          await qualifyPrepared(context,state);
+          state=await save(context,state,{state:'navigation-requested',preparedLifecycle:true,preparationOrigin:{preparedCheckpointSequence:state.sequence,qualifiedCheckpointSequence:state.sequence+1,qualifiedAt:clock()}});
+          state=await navigation(context,state);return result(state);
+        }
+        if(!state.preparedLifecycle){
+          if(action!=='recoverPreparedDraft')fail('CHECKPOINT_MODE','원래 새 초안의 단계 확인 기록을 조회해주세요.');
+          if(state.state==='validated'&&state.validatedSteps.length===4)await qualifyPrepared(context,state);
+          action='recoverDraft';
+        }else{
+          if(action==='confirmPreparedDraft'&&['awaiting-stage-consent','awaiting-consent'].includes(state.state))await qualifyPrepared(context,state);
+          action={confirmPreparedDraft:'confirm',recoverPreparedDraft:'recover',observePreparedDraft:'observe'}[action];
+        }
+      }
+      if(draftOnly&&!state.preparedLifecycle){
         if(action!=='recoverDraft')fail('ACTION','새 초안 준비의 읽기 확인 동작을 확인해주세요.');
         if(state.state==='target-requested')fail('TARGET_UNCONFIRMED','새 탭 생성 응답을 확인하지 못했습니다. 새 탭을 다시 만들지 않았습니다.');
         if(['create-requested','update-requested'].includes(state.state)){
@@ -412,7 +465,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
           await guard(context,state);state=await save(context,state,{state:'navigation-requested',stageConsents:[...(state.stageConsents??[]),{stage:check.stage,challenge:check,confirmedAt:state.humanConfirmedAt}]});
         }else if(state.state==='awaiting-stage-consent'){
           state=await save(context,state,{challenge:await challenge(context,state,state.challenge.stage)});
-        }else if(state.state==='navigation-requested'){
+        }else if(state.state==='navigation-requested'||nativeLifecycle&&state.state==='navigation-ready'){
           await readDocument(context,state);
           if(typeof adapter.readNavigation==='function'){
             const value=await call('readNavigation',{tab:state.tab,identity:context.identity,docId:state.docId,productName:context.packet.body.productName,stageConsents:state.stageConsents??[]});
@@ -420,7 +473,10 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
           }else state=await save(context,state,{state:'awaiting-consent',challenge:await challenge(context,state)});
         }else if(['consent-requested','awaiting-consent'].includes(state.state)){
           state=await save(context,state,{state:'awaiting-consent',challenge:await challenge(context,state)});
-        }else if(['submit-requested','pending','accepted','rejected','registered'].includes(state.state))return await observe(context,state);
+        }else if(['submit-requested','pending','accepted','rejected','registered'].includes(state.state)){const observed=await observe(context,state,readOnlyReceipt);return nativeLifecycle?{...observed,recovered:true}:observed;}
+        if(nativeLifecycle&&state.preparedLifecycle&&state.state==='navigation-requested'){
+          await readDocument(context,state);state=await pauseNavigation(context,state,await call('readNavigation',{tab:state.tab,identity:context.identity,docId:state.docId,productName:context.packet.body.productName,stageConsents:state.stageConsents??[]}));
+        }
         return result(state,{recovered:true});
       }
       if(action==='confirm'){
@@ -475,7 +531,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
         await call('submit',{tab:state.tab,sessionId:state.sessionId,identity:context.identity,docId:state.docId,requestId:state.requestId,operationId:state.operationId,challenge:check,expectedBody:withDoc(context.packet,state.docId)});
         return await observe(context,state);
       }
-      if(action==='observe')return await observe(context,state);
+      if(action==='observe')return await observe(context,state,readOnlyReceipt);
       fail('ACTION','개별 견적서 요청 동작을 확인해주세요.');
     }catch(error){
       // The saved requested state wins, including a write whose caller lost
@@ -486,9 +542,9 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
       throw error;
     }finally{active.delete(context.key);}
   }
-  async function observe(context,state){
+  async function observe(context,state,readOnlyReceipt=false){
     if(!['submit-requested','pending','accepted','rejected','registered'].includes(state.state))return result(state);
-    await guard(context,state);
+    await guard(context,state,readOnlyReceipt);
     const receipt=await call('observeReceipt',{tab:state.tab,sessionId:state.sessionId,identity:context.identity,identityDigest:context.identityDigest,preparedBodySha256:context.bodySha256,docId:state.docId,operationId:state.operationId,
       submitRequestedAt:state.submitRequestedAt??state.humanConfirmedAt,expectedBody:withDoc(context.packet,state.docId),baselineDocIds:state.baselineDocIds,previousReceipt:state.receipt});
     if(!receiptValid(receipt,state,context,clock()))fail('RECEIPT_UNCONFIRMED','새 문서와 연결된 실제 접수·SKU 증거를 확인하지 못했습니다.');
@@ -496,9 +552,11 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
     if(context.packet.format!==SINGLE_DOCUMENT_FORMAT&&state.state==='rejected'&&receipt.state!=='rejected')fail('RECEIPT_CHANGED','원래 전체 상품 문서의 반려 결과를 다른 상태로 바꿀 수 없습니다.');
     if(state.state==='registered'&&(receipt.state!=='registered'||!same(receipt.skuId,state.receipt.skuId)))fail('RECEIPT_CHANGED','원래 확인한 등록 식별값을 다른 관찰로 바꿀 수 없습니다.');
     if(state.receipt&&receipt.observedAt<state.receipt.observedAt)fail('RECEIPT_CHANGED','더 오래된 등록 결과를 반영하지 않습니다.');
-    await guard(context,state);state=await save(context,state,{state:receipt.state,receipt});return result(state);
+    await guard(context,state,readOnlyReceipt);state=await save(context,state,{state:receipt.state,receipt});return result(state);
   }
-  if(draftOnly)return Object.freeze({prepareDraft:(packet,sender)=>operate(packet,sender,'prepareDraft'),recoverDraft:(packet,sender)=>operate(packet,sender,'recoverDraft')});
+  if(draftOnly)return Object.freeze({prepareDraft:(packet,sender)=>operate(packet,sender,'prepareDraft'),recoverDraft:(packet,sender)=>operate(packet,sender,'recoverDraft'),...(nativeLifecycle?{
+    reviewPreparedDraft:(packet,sender)=>operate(packet,sender,'reviewPreparedDraft'),confirmPreparedDraft:(packet,sender,confirmation)=>operate(packet,sender,'confirmPreparedDraft',confirmation),
+    recoverPreparedDraft:(packet,sender)=>operate(packet,sender,'recoverPreparedDraft'),observePreparedDraft:(packet,sender)=>operate(packet,sender,'observePreparedDraft')}: {})});
   return Object.freeze({start:(packet,sender)=>operate(packet,sender,'start'),resume:(packet,sender)=>operate(packet,sender,'resume'),
     recover:(packet,sender)=>operate(packet,sender,'recover'),confirm:(packet,sender,confirmation)=>operate(packet,sender,'confirm',confirmation),observe:(packet,sender)=>operate(packet,sender,'observe')});
 }

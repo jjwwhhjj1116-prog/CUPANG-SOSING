@@ -2,8 +2,8 @@
 import {useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
 import type {SupplierHubProductDocumentReview} from '@/app/supplier-hub-product-document';
 import {createProductDocumentPacket,PRODUCT_DOCUMENT_REQUEST_TTL} from '../../extensions/supplier-hub/product-document.mjs';
-import {previewProductDocument,runProductDocument,runProductDocumentDraft,readNativeReceiptHistory,saveProductReceiptObservation,
-  type ProductDocumentSession,type ProductDocumentState,type ProductDraftAction,ProductDocumentBridgeError} from '@/app/supplier-hub-product-client';
+import {previewProductDocument,runProductDocument,runProductDocumentDraft,runPreparedProductDocument,preparedReceiptObservation,readNativeReceiptHistory,saveProductReceiptObservation,
+  type ProductDocumentSession,type ProductDocumentState,type ProductDraftAction,type PreparedDocumentAction,ProductDocumentBridgeError} from '@/app/supplier-hub-product-client';
 import {singleConsentConfirmation,verifySingleDocumentObservation,type SingleDocumentAction} from '@/app/supplier-hub-single-client';
 import type {NativeReceiptRecord} from '@/app/supplier-hub-product-receipt';
 import {SupplierHubRejectionDetails} from '@/app/components/supplier-hub-rejection-details';
@@ -28,8 +28,8 @@ export function SupplierHubProductTransport(props:Props){
   const [draftMode,setDraftMode]=useState(false);
   const reviewToken=useMemo(()=>({review}),[review]),reviewEpoch=useRef<typeof reviewToken|null>(reviewToken);
   useLayoutEffect(()=>{reviewEpoch.current=reviewToken;return()=>{if(reviewEpoch.current===reviewToken)reviewEpoch.current=null;};},[reviewToken]);
-  const current=useRef({props,mounted:true,session,state,uncertain,expired,approved,unsaved,intent,intentReady,intentError,draftMode}),pending=useRef<AbortController|null>(null),historyPending=useRef<AbortController|null>(null);
-  useLayoutEffect(()=>{current.current={props,mounted:true,session,state,uncertain,expired,approved,unsaved,intent,intentReady,intentError,draftMode};});
+  const current=useRef({props,mounted:true,session,state,uncertain,expired,approved,unsaved,intent,intentReady,intentError,draftMode,error}),pending=useRef<AbortController|null>(null),historyPending=useRef<AbortController|null>(null);
+  useLayoutEffect(()=>{current.current={props,mounted:true,session,state,uncertain,expired,approved,unsaved,intent,intentReady,intentError,draftMode,error};});
   // A terminal label alone cannot release the enclosing source/close guard.
   // Keep the accepted reservation for duplicate prevention, but allow closing
   // only after this exact observation is positively stored by the app API.
@@ -202,8 +202,44 @@ export function SupplierHubProductTransport(props:Props){
       setError(cause instanceof Error?cause.message:'새 견적 초안 준비 결과 확인 실패');
     }}finally{task.finish();}
   }
+  async function operatePrepared(action:PreparedDocumentAction,expected:ProductDocumentSession,challengeId?:string){
+    if(!canEnter())return;const before=current.current;
+    if(before.session!==expected||expected.preview.preparedLifecycleAvailable!==true||!before.intent||!before.draftMode||before.unsaved
+      ||action==='reviewPreparedDraft'&&(before.uncertain||before.error||!before.state||before.state.error||!(before.state.state==='validated'&&!before.state.preparedLifecycle||before.state.state==='navigation-ready'&&before.state.preparedLifecycle))
+      ||action==='confirmPreparedDraft'&&(before.error||before.uncertain||before.expired||!before.state?.preparedLifecycle||before.state.challenge?.id!==challengeId)
+      ||action==='observePreparedDraft'&&(before.uncertain||!before.state?.preparedLifecycle||!['pending','accepted','rejected'].includes(before.state.state)))return;
+    let confirmation;
+    if(action==='confirmPreparedDraft'){try{confirmation=singleConsentConfirmation(before.state!.challenge!,Object.entries(before.approved).filter(([,yes])=>yes).map(([key])=>key));}
+      catch(cause){setError(cause instanceof Error?cause.message:'현재 문서의 필수 약관을 확인해주세요.');return;}}
+    const task=begin();let dispatched=false,activeSession=expected;
+    try{
+      await fresh(task);if(!task.active()||current.current.session!==expected)return;
+      if(action==='reviewPreparedDraft'&&Date.now()-expected.packet.createdAt>=PRODUCT_DOCUMENT_REQUEST_TTL){
+        const packet=await createProductDocumentPacket(review,{requestId:expected.packet.requestId,createdAt:Date.now(),now:Date.now()}),refreshed=await previewProductDocument(packet,task.controller.signal);
+        await fresh(task);if(!task.active()||current.current.session!==expected)return;
+        if(refreshed.preview.preparedLifecycleAvailable!==true||refreshed.preview.identityDigest!==expected.preview.identityDigest||refreshed.packetDigest!==expected.packetDigest)throw Error('준비한 원래 문서의 현재 회사·본문 연결을 다시 확인해주세요.');
+        assertProductDocumentPending(review,before.intent,refreshed);activeSession=refreshed;current.current.session=refreshed;setSession(refreshed);
+      }
+      assertProductDocumentPending(review,before.intent,activeSession);dispatched=true;
+      const result=await runPreparedProductDocument(activeSession,action,task.controller.signal,confirmation);
+      await fresh(task);if(!task.active()||current.current.session!==activeSession)return;
+      verifySingleDocumentObservation(before.state,result);
+      const previous=before.state?.lifecycleProof,next=result.lifecycleProof;
+      if(!previous&&next&&before.state?.draftProof&&before.state.draftProof.checkpointSequence!==next.preparedCheckpointSequence)throw new ProductDocumentBridgeError('준비한 초안과 다른 등록 기록입니다. 원래 문서를 다시 확인해주세요.',['reviewPreparedDraft','confirmPreparedDraft'].includes(action),'PRODUCT_PREPARED_REPLY_IDENTITY');
+      if(previous&&(!next||previous.preparedCheckpointSequence!==next.preparedCheckpointSequence||previous.qualifiedCheckpointSequence!==next.qualifiedCheckpointSequence
+        ||previous.qualifiedAt!==next.qualifiedAt||next.checkpointSequence<previous.checkpointSequence||next.observedAt<previous.observedAt))throw new ProductDocumentBridgeError('준비한 원래 문서보다 오래되거나 다른 등록 기록입니다. 기존 결과를 유지했습니다.',['reviewPreparedDraft','confirmPreparedDraft'].includes(action),'PRODUCT_PREPARED_REPLY_IDENTITY');
+      if(before.state?.state==='rejected'&&result.state!=='rejected')throw new ProductDocumentBridgeError('원래 반려 문서의 결과를 다른 상태로 바꿀 수 없습니다.',false,'PRODUCT_RECEIPT_CHANGED');
+      current.current.state=result;current.current.uncertain=result.needsRecovery;current.current.approved={};current.current.expired=false;
+      setState(result);setUncertain(result.needsRecovery);setApproved({});setExpired(false);if(result.error)setError(result.error.message);
+      if(result.receipt?.evidence==='document-receipt'&&!result.needsRecovery){const attempt={packet:activeSession.packet,observation:preparedReceiptObservation(result)};current.current.unsaved=attempt;setUnsaved(attempt);await persist(attempt,task);}
+    }catch(cause){if(task.alive()){
+      if(dispatched&&(cause instanceof ProductDocumentBridgeError?cause.uncertain:true)){current.current.uncertain=true;setUncertain(true);}
+      current.current.approved={};setApproved({});setError(cause instanceof Error?cause.message:'준비한 새 문서의 등록 확인 실패');
+    }}finally{task.finish();}
+  }
   const challenge=state?.challenge,terminal=Boolean(state&&['pending','accepted','rejected','validation-rejected','scope-blocked'].includes(state.state));
-  const canConfirm=Boolean(session?.preview.liveVerified&&!draftMode&&!state?.draftOnly&&challenge&&!expired&&!uncertain&&challenge.items.filter(item=>item.required).every(item=>approved[item.key]));
+  const preparedFlow=Boolean(session?.preview.preparedLifecycleAvailable&&draftMode&&state?.preparedLifecycle);
+  const canConfirm=Boolean((preparedFlow||session?.preview.liveVerified&&!draftMode&&!state?.draftOnly)&&challenge&&!error&&!expired&&!uncertain&&challenge.items.filter(item=>item.required).every(item=>approved[item.key]));
   return <section aria-label="전체 상품 견적 전송" aria-busy={busy||!intentReady}>
     <div className="quote-actions"><button type="button" className="btn primary" disabled={disabled||busy||!intentReady||Boolean(intentError)||Boolean(session)} onClick={()=>void connect()}>{intent?'이전 문서 전송 자료 확인':'전체 옵션 전송 자료 확인'}</button>
       {session&&!state&&!uncertain&&!unsaved&&<button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>{if(!canEnter()||current.current.session!==session)return;current.current.session=null;setSession(null);setError('');}}>전송 자료 확인 닫기</button>}</div>
@@ -211,15 +247,23 @@ export function SupplierHubProductTransport(props:Props){
     {intentError&&<p role="alert">{intentError}</p>}
     {intent&&!session&&<p role="status">이 상품의 이전 전송 요청이 보관되어 있습니다. 같은 요청의 저장 결과만 확인하며 새 등록을 시작하지 않습니다.</p>}
     {session&&<p>회사 {review.identity.company.name} · 포함 옵션 {session.packet.review.members.length}개 · 견적 문서 1개 · 전체 본문 대조 완료</p>}
-    {session&&!session.preview.liveVerified&&<p role="status">전체 문서의 실제 접수 연결을 검수 중입니다. 현재 상품은 전송하지 않았습니다.</p>}
-    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.15.zip" download>통합 확장 2.1.15 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
-    {session?.preview.draftPreparationAvailable===true&&<section aria-label="새 견적 초안 준비">
+    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&!intent&&!state?.preparedLifecycle&&<p role="status">전체 문서의 실제 접수 연결을 검수 중입니다. 현재 상품은 전송하지 않았습니다.</p>}
+    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.16.zip" download>통합 확장 2.1.16 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
+    {session?.preview.draftPreparationAvailable===true&&!state?.preparedLifecycle&&<section aria-label="새 견적 초안 준비">
       <p>로그인한 Supplier Hub에 새 견적 초안 한 개를 만들고 저장한 이미지·본문과 단계 검증을 확인합니다. 약관 동의와 최종 제출은 진행하지 않습니다.</p>
       {!state&&!uncertain&&!intent&&<button type="button" className="btn primary" disabled={disabled||busy||Boolean(intentError)} onClick={()=>void operateDraft('prepareDraft',session)}>새 견적 초안 만들기 · 제출 안 함</button>}
-      {draftMode&&uncertain&&<><p role="status">초안 준비 응답을 확인하지 못했습니다. 같은 초안을 다시 만들지 않고 저장 결과만 조회합니다.</p><button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void operateDraft('recoverDraft',session)}>같은 초안 저장 결과 확인 · 읽기 전용</button></>}
-      {draftMode&&state?.draftOnly&&!uncertain&&['prepared','target-created','created','updated'].includes(state.state)&&<button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void operateDraft('prepareDraft',session)}>같은 초안 준비 계속 · 제출 안 함</button>}
-      {draftMode&&state?.draftOnly&&!uncertain&&<><p role="status">{state.docId!==null?`Supplier Hub 초안 문서 ${String(state.docId)}`:'새 초안 준비 기록 확인'} · 단계 검증 {state.draftProof!.validatedSteps.length}/4 · {validatedDraft?'초안 저장·검증 완료 · 미제출':state.state==='validation-rejected'?'제출 전 검증 반려':'초안 준비 확인 중'}</p><button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void operateDraft('recoverDraft',session)}>같은 초안 저장 결과 확인 · 읽기 전용</button></>}
-      {draftMode&&state?.draftOnly&&state.state==='validation-rejected'&&!uncertain&&<button type="button" className="btn ghost" disabled={disabled||busy||Boolean(unsaved)} onClick={()=>void releaseValidationRejection(session)}>검증 반려 확인 · 수정 허용</button>}
+      {draftMode&&uncertain&&!state?.preparedLifecycle&&<><p role="status">초안 준비 응답을 확인하지 못했습니다. 같은 초안을 다시 만들지 않고 저장 결과만 조회합니다.</p><button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void(session.preview.preparedLifecycleAvailable?operatePrepared('recoverPreparedDraft',session):operateDraft('recoverDraft',session))}>같은 초안 저장 결과 확인 · 읽기 전용</button></>}
+      {draftMode&&state?.draftOnly&&!state.preparedLifecycle&&!uncertain&&['prepared','target-created','created','updated'].includes(state.state)&&<button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void operateDraft('prepareDraft',session)}>같은 초안 준비 계속 · 제출 안 함</button>}
+      {draftMode&&state?.draftOnly&&!state.preparedLifecycle&&!uncertain&&<><p role="status">{state.docId!==null?`Supplier Hub 초안 문서 ${String(state.docId)}`:'새 초안 준비 기록 확인'} · 단계 검증 {state.draftProof!.validatedSteps.length}/4 · {validatedDraft?'초안 저장·검증 완료 · 미제출':state.state==='validation-rejected'?'제출 전 검증 반려':'초안 준비 확인 중'}</p><button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void(session.preview.preparedLifecycleAvailable?operatePrepared('recoverPreparedDraft',session):operateDraft('recoverDraft',session))}>같은 초안 저장 결과 확인 · 읽기 전용</button></>}
+      {draftMode&&state?.draftOnly&&!state.preparedLifecycle&&state.state==='validation-rejected'&&!uncertain&&<button type="button" className="btn ghost" disabled={disabled||busy||Boolean(unsaved)} onClick={()=>void releaseValidationRejection(session)}>검증 반려 확인 · 수정 허용</button>}
+    </section>}
+    {session?.preview.preparedLifecycleAvailable&&validatedDraft&&<button type="button" className="btn primary" disabled={disabled||busy||Boolean(error)} onClick={()=>void operatePrepared('reviewPreparedDraft',session)}>준비한 새 견적서 등록전송</button>}
+    {session&&preparedFlow&&<section aria-label="준비한 새 문서 등록전송">
+      <p>현재 문서 {String(state!.docId)}의 원본 파일·저장값을 다시 확인했습니다.</p>
+      {(uncertain||expired||Boolean(error))&&<p role="status">같은 문서의 저장 결과와 현재 단계를 먼저 확인해주세요. 새 문서를 만들거나 제출을 재시도하지 않습니다.</p>}
+      {state?.state==='navigation-ready'&&!uncertain&&!error&&<button type="button" className="btn primary" disabled={disabled||busy} onClick={()=>void operatePrepared('reviewPreparedDraft',session)}>같은 문서 다음 단계 계속</button>}
+      {!state?.receipt&&<button type="button" className="btn ghost" disabled={disabled||busy||Boolean(unsaved)} onClick={()=>void operatePrepared('recoverPreparedDraft',session)}>준비한 문서 단계 확인 · 읽기 전용</button>}
+      {state&&['pending','accepted','rejected'].includes(state.state)&&!uncertain&&<button type="button" className="btn ghost" disabled={disabled||busy||Boolean(unsaved)} onClick={()=>void operatePrepared('observePreparedDraft',session)}>접수 결과 조회</button>}
     </section>}
     {session?.preview.liveVerified&&!draftMode&&!state?.draftOnly&&<>
       {!state&&!uncertain&&!intent&&<button type="button" className="btn primary" disabled={disabled||busy||Boolean(intentError)} onClick={()=>void operate('start',session)}>전체 상품 견적 등록 시작</button>}
@@ -227,16 +271,17 @@ export function SupplierHubProductTransport(props:Props){
       {state?.state==='validation-rejected'&&!uncertain&&<><p role="status">제출 전 단계 검증에서 반려되었습니다. 저장된 반려 기록을 다시 확인한 뒤 상품·견적서를 수정할 수 있습니다.</p><button type="button" className="btn ghost" disabled={disabled||busy||Boolean(unsaved)} onClick={()=>void releaseValidationRejection(session)}>검증 반려 확인 · 수정 허용</button></>}
       {state&&!terminal&&!uncertain&&(!challenge||expired)&&state.state!=='target-requested'&&<button type="button" className="btn ghost" disabled={disabled||busy||Boolean(unsaved)} onClick={()=>void operate(expired?'recover':'resume',session)}>현재 문서 단계 계속 확인</button>}
       {state&&['pending','accepted'].includes(state.state)&&!uncertain&&<button type="button" className="btn ghost" disabled={disabled||busy||Boolean(unsaved)} onClick={()=>void operate('observe',session)}>접수 결과 조회</button>}
-      {challenge&&<section aria-label="전체 문서 단계별 동의"><h5>{challenge.stage?stageLabels[challenge.stage]:'최종 제출'} 동의 확인</h5>
+
+    </>}
+      {challenge&&(preparedFlow||session?.preview.liveVerified&&!draftMode&&!state?.draftOnly)&&<section aria-label="전체 문서 단계별 동의"><h5>{challenge.stage?stageLabels[challenge.stage]:'최종 제출'} 동의 확인</h5>
         {challenge.items.map(item=><article key={item.key}>{item.title&&<h6>{item.title}</h6>}<p style={{whiteSpace:'pre-wrap'}}>{item.text}</p>{item.termsText&&<div style={{whiteSpace:'pre-wrap'}}>{item.termsText}</div>}
           {item.required&&<label><input type="checkbox" checked={Boolean(approved[item.key])} disabled={disabled||busy||expired||uncertain} onChange={event=>{
             if(!canEnter()||current.current.expired||current.current.uncertain||current.current.state?.challenge?.id!==challenge.id)return;
             const next={...current.current.approved,[item.key]:event.target.checked};current.current.approved=next;setApproved(next);
           }}/>위 필수 동의 내용을 확인했습니다.</label>}</article>)}
         {!challenge.items.length&&<p>전체 옵션과 견적 내용을 확인한 뒤 최종 제출해주세요.</p>}
-        <button type="button" className="btn primary" disabled={disabled||busy||!canConfirm} onClick={()=>void operate('confirm',session,challenge.id)}>현재 문서 동의 확인 · 계속</button>
+        <button type="button" className="btn primary" disabled={disabled||busy||!canConfirm} onClick={()=>void(preparedFlow?operatePrepared('confirmPreparedDraft',session!,challenge.id):operate('confirm',session!,challenge.id))}>현재 문서 동의 확인 · 계속</button>
       </section>}
-    </>}
     {unsaved&&<button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void retrySave()}>확인 결과 저장 다시 시도</button>}
     {state?.receipt&&<p role="status">문서 {String(state.docId)} · 등록 파일 {String(state.receipt.qvtRequestId)} · {({pending:'접수 처리 중',accepted:'파일 처리 완료 · SKU 확인 전',rejected:'반려'})[state.state as 'pending']}</p>}
     {state?.receipt?.sourceStatus==='REJECTED'&&<SupplierHubRejectionDetails details={state.receipt.rejectionDetails}/>}

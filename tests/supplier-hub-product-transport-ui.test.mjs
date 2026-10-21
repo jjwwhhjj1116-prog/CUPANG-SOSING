@@ -34,9 +34,57 @@ const draftResult=(f,requestId,state='validated',extra={})=>f.state(state,{reque
  draftProof:{evidence:'document-draft-preparation',validatedSteps:state==='validated'?[2,3,4,5]:[],checkpointSequence:12,observedAt:f.clock.now,submitted:false,consented:false},...extra});
 function allowDraft(h,run){h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true}:run(payload);}
 
+const reviewPrepared='준비한 새 견적서 등록전송',confirmPrepared='현재 문서 동의 확인 · 계속',recoverPrepared='준비한 문서 단계 확인 · 읽기 전용';
+function preparedResult(h,payload,state,sequence,extra={}){
+ const submitted=['pending','accepted','rejected','submit-requested'].includes(state);
+ h.qualifiedAt??=h.f.clock.now;
+ return h.f.state(state,{requestId:payload.packet.requestId,draftOnly:true,preparedLifecycle:true,lifecycleProof:{evidence:'native-prepared-draft-lifecycle',preparedCheckpointSequence:12,qualifiedCheckpointSequence:13,checkpointSequence:sequence,qualifiedAt:h.qualifiedAt,observedAt:h.f.clock.now,validatedSteps:[2,3,4,5],consentRequested:sequence>14,submitRequested:submitted},...extra});
+}
+function allowPrepared(h,run){h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true}:payload.action==='prepareDraft'?draftResult(h.f,payload.packet.requestId):run(payload);}
+function checkTerms(h){for(const node of nodes(h.render()).filter(node=>node.type==='input'&&node.props.type==='checkbox')){assert.equal(Boolean(node.props.disabled),false);node.props.onChange({target:{checked:true}});}h.flush();}
+
+for(const company of SINGLE_COMPANIES)test(`${company.code}: prepared UI explicitly checks two complete terms stages, submits once and saves exact receipt without unqualified start`,async()=>{
+ const h=await fixture(company);let confirmations=0;try{
+  allowPrepared(h,payload=>{
+   if(payload.action==='reviewPreparedDraft')return preparedResult(h,payload,'awaiting-stage-consent',14,{challenge:h.f.challenge('productPage')});
+   if(payload.action==='confirmPreparedDraft'){
+    confirmations++;assert.ok(payload.confirmation);if(confirmations===1)return preparedResult(h,payload,'awaiting-stage-consent',17,{challenge:{...h.f.challenge('imagePage'),id:'2'.repeat(64)}});
+    if(confirmations===2)return preparedResult(h,payload,'awaiting-consent',20,{challenge:{...h.f.challenge('logisticsPage'),id:'3'.repeat(64)}});
+    return preparedResult(h,payload,'pending',23,{receipt:h.f.observation('SUBMITTED').receipt});
+   }
+   assert.equal(payload.action,'observePreparedDraft');return preparedResult(h,payload,'accepted',24,{receipt:h.f.observation('FINISHED').receipt});
+  });
+  await h.idle();await h.click(open);await h.click(prepareDraft);assert.ok(h.button(reviewPrepared));assert.equal(h.button(start),undefined);await h.click(reviewPrepared);
+  assert.match(h.text(),/마지막 문단/);assert.equal(h.button(confirmPrepared).props.disabled,true);checkTerms(h);await h.click(confirmPrepared);
+  assert.equal(h.button(confirmPrepared).props.disabled,true,'next stage never inherits previous checked keys');checkTerms(h);await h.click(confirmPrepared);
+  assert.equal(h.button(confirmPrepared).props.disabled,false,'empty final challenge still requires explicit submit click');assert.equal(h.f.history.length,0);await h.click(confirmPrepared);
+  assert.equal(h.f.history[0].receipt.sourceStatus,'SUBMITTED');assert.deepEqual(h.lockPairs.at(-1),[true,true]);assert.equal(h.button(confirmPrepared),undefined);assert.doesNotMatch(h.text(),/약관 동의와 최종 제출은 진행하지 않습니다|현재 상품은 전송하지 않았습니다|아래 현재 약관/);
+  await h.click('접수 결과 조회');assert.equal(h.f.history[0].receipt.sourceStatus,'FINISHED');assert.deepEqual(h.lockPairs.at(-1),[true,false]);
+  assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','reviewPreparedDraft','confirmPreparedDraft','confirmPreparedDraft','confirmPreparedDraft','observePreparedDraft']);assert.equal(confirmations,3);assert.equal(new Set(h.f.sent.map(row=>row.payload.packet.requestId)).size,1);assert.equal(h.f.calls.filter(row=>row.method==='POST').length,2);
+ }finally{h.close();}
+});
+
+test('prepared lost consent ACK recovers navigation-ready read-only and continues only on explicit same-document click',async()=>{
+ const h=await fixture();let recovering=false;try{allowPrepared(h,payload=>{
+  if(payload.action==='reviewPreparedDraft')return preparedResult(h,payload,'awaiting-stage-consent',recovering?18:14,{challenge:h.f.challenge(recovering?'imagePage':'productPage')});
+  if(payload.action==='confirmPreparedDraft')return undefined;
+  assert.equal(payload.action,'recoverPreparedDraft');recovering=true;return preparedResult(h,payload,'navigation-ready',17,{recovered:true});
+ });await h.idle();await h.click(open);await h.click(prepareDraft);await h.click(reviewPrepared);checkTerms(h);const old=h.button(confirmPrepared).props.onClick;old();h.flush();await h.wait(()=>h.f.sent.length===4);h.f.advance(120001);await h.idle();assert.ok(h.button(recoverPrepared));old();h.flush();assert.equal(h.f.sent.length,4);
+ await h.click(recoverPrepared);assert.ok(h.button('같은 문서 다음 단계 계속'));assert.equal(h.button(confirmPrepared),undefined);assert.equal(h.f.sent.length,5);await h.click('같은 문서 다음 단계 계속');assert.ok(h.button(confirmPrepared));assert.equal(h.button(confirmPrepared).props.disabled,true);assert.equal(h.f.sent.filter(row=>row.payload.action==='confirmPreparedDraft').length,1);assert.equal(h.f.history.length,0);assert.equal(h.stored.size,1);
+ }finally{h.close();}
+});
+
+test('first qualification cannot replace a different prepared checkpoint or survive a review ABA callback',async()=>{
+ for(const mode of ['checkpoint','ABA']){const h=await fixture();try{allowPrepared(h,payload=>{const result=preparedResult(h,payload,'awaiting-stage-consent',16,{challenge:h.f.challenge('productPage')});result.lifecycleProof.preparedCheckpointSequence=14;result.lifecycleProof.qualifiedCheckpointSequence=15;return result;});await h.idle();await h.click(open);await h.click(prepareDraft);const old=h.button(reviewPrepared).props.onClick;
+  if(mode==='ABA'){const props=h.props();h.render({...props,review:{...props.review,reviewDigest:'a'.repeat(64)}});h.render(props);old();h.flush();assert.equal(h.f.sent.length,2);}
+  else{await h.click(reviewPrepared);assert.equal(h.button(confirmPrepared),undefined);assert.ok(h.button(recoverDraft));assert.match(h.text(),/다른 등록 기록/);assert.deepEqual(h.lockPairs.at(-1),[true,true]);}
+  assert.equal(h.f.history.length,0);assert.equal(h.stored.size,1);
+ }finally{h.close();}}
+});
+
 test('older preview exposes only the direct integrated-extension download and no new draft action',async()=>{
  const h=await fixture();try{await h.idle();await h.click(open);assert.equal(h.button(prepareDraft),undefined);assert.equal(h.button(start),undefined);
-  const link=nodes(h.render()).find(node=>node.type==='a'&&node.props.download!==undefined);assert.equal(link.props.href,'/downloads/yoofam-plus-supplier-hub-extension-2.1.15.zip');assert.ok(h.f.calls.every(call=>call.method==='GET'));assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview']);
+  const link=nodes(h.render()).find(node=>node.type==='a'&&node.props.download!==undefined);assert.equal(link.props.href,'/downloads/yoofam-plus-supplier-hub-extension-2.1.16.zip');assert.ok(h.f.calls.every(call=>call.method==='GET'));assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview']);
  }finally{h.close();}
 });
 for(const company of SINGLE_COMPANIES)test(`${company.code}: explicit new draft owns one reservation, reports actual document validation and unlocks only outer close`,async()=>{

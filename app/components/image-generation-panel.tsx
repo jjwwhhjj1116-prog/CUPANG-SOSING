@@ -10,16 +10,20 @@ import type { ProductContent } from '@/app/product-content';
 import type { ImageEditJob, ImageEditView, ImagePurpose, ImageQuality, ImageSize } from '@/app/automation/image-edit';
 import { imageRecipeVersion } from '@/app/automation/image-edit';
 import type { FreeImageQuotationRequest } from '@/app/free-image-translation-client';
+import type {QuotationFieldsView} from '@/app/quotation-schema';
+import {prepareMainImageAiApply,applyMainImageAiResult,recoverMainImageAiResult,type MainImageAiApplyAttempt} from '@/app/main-image-ai-apply';
+import {MainImageSaveError} from '@/app/quotation-main-image';
 
-export type SelectedMainImageProcessingTarget = { sourceKey: string; sequence: number; productVersion: string; quotationTarget: FreeImageQuotationRequest };
+export type SelectedMainImageProcessingTarget = { sourceKey: string; sequence: number; productVersion: string; quotationTarget: FreeImageQuotationRequest;ownerId?:string;quotationView?:QuotationFieldsView };
 type Props = { productId: string; version: string; imageKeys: string[]; onProductChanged?: () => void; translationTarget?: { sourceKey: string; sequence: number; sourceLanguage?: 'zh' | 'en' }; onBusyChange?: (busy: boolean) => void;
-  processingTarget?: SelectedMainImageProcessingTarget; processingTargetActive?: boolean; onCloseProcessingTarget?: () => void };
+  processingTarget?: SelectedMainImageProcessingTarget; processingTargetActive?: boolean; onCloseProcessingTarget?: () => void;
+  processingResultActive?:boolean;beforeSelectedImageApply?:()=>boolean };
 const statuses: Record<ImageEditJob['status'], string> = { prepared: '원본·요청 검토 대기', approved: '승인됨 · 실행 대기', running: '실행 중 · 중복 호출 차단', completed: '이미지 생성 완료 · 검토 필요', failed: '실패 · 자동 재호출 없음', uncertain: '결과 확인 필요 · 자동 재호출 없음' };
 const imageUrl = (key: string) => `/api/files/${encodeURIComponent(key)}`;
 const translationTargetLimitError = '추가 요청 문구가 길어서 선택한 언어 지침을 넣을 수 없습니다. 문구를 줄인 뒤 번역 버튼을 다시 눌러주세요.';
 
 export default function ImageGenerationPanel(props: Props) { return <ImageGenerationContent key={props.productId} {...props} />; }
-function ImageGenerationContent({ productId, version, imageKeys, onProductChanged, translationTarget, onBusyChange, processingTarget, processingTargetActive = true, onCloseProcessingTarget }: Props) {
+function ImageGenerationContent({ productId, version, imageKeys, onProductChanged, translationTarget, onBusyChange, processingTarget, processingTargetActive = true, onCloseProcessingTarget,processingResultActive=false,beforeSelectedImageApply }: Props) {
   const [view, setView] = useState<ImageEditView | null>(null);
   const [sourceKey, setSourceKey] = useState('');
   const [purpose, setPurpose] = useState<ImagePurpose>('translate');
@@ -34,10 +38,13 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
   const [error, setError] = useState('');
   const [notice,setNotice]=useState('');
   const [reviewedIds,setReviewedIds]=useState<string[]>([]);
-  const imageWorkBusy = busy || Boolean(view?.jobs.some(item => item.status === 'running'));
+  const [selectedApplyPending,setSelectedApplyPending]=useState(false);
+  const imageWorkBusy = busy || selectedApplyPending || Boolean(view?.jobs.some(item => item.status === 'running'));
   const mounted=useRef(true);
   const activeRequest=useRef<AbortController|null>(null);
   const historyRequest=useRef<AbortController|null>(null);
+  const selectedApply=useRef<MainImageAiApplyAttempt|null>(null);
+  const selectedApplyRequest=useRef<AbortController|null>(null);
   const notifiedAttachment=useRef('');
   const attachmentContext=useRef({productId,imageKeys,onProductChanged});
   const panelRef=useRef<HTMLElement|null>(null);
@@ -45,7 +52,7 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
   const handledTranslation=useRef<number|null>(null);
   const handledProcessing=useRef<number|null>(null);
   const languageDirective=useRef('');
-  const processingScope=JSON.stringify([productId,version,processingTarget??null,processingTargetActive]);
+  const processingScope=JSON.stringify([productId,version,processingTarget?.sequence,processingTarget?.sourceKey,processingTarget?.productVersion,processingTarget?.quotationTarget,processingTargetActive,processingResultActive]);
   const processingToken=useMemo(()=>({scope:processingScope}),[processingScope]),liveProcessingToken=useRef<object|null>(processingToken),liveView=useRef(view);
   const pinned=!!processingTarget,targetCurrent=!processingTarget||processingTargetActive&&processingTarget.productVersion===version&&imageKeys.includes(processingTarget.sourceKey)
     &&processingTarget.quotationTarget.kind==='quotation'&&processingTarget.quotationTarget.input==='mainImage'&&processingTarget.quotationTarget.slotIndex===0
@@ -96,7 +103,7 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
     sourceRef.current?.focus({ preventScroll: true });
   },[translationTarget,imageWorkBusy,imageKeys,prompt,pinned]);
   function beginRequest(allowMissing=false,readOnly=false) {
-    if(!mounted.current||liveProcessingToken.current!==processingToken||!readOnly&&!targetCurrent||activeRequest.current||(!allowMissing&&!view))return null;
+    if(!mounted.current||liveProcessingToken.current!==processingToken||!readOnly&&(!targetCurrent||selectedApplyPending)||activeRequest.current||(!allowMissing&&!view))return null;
     const controller=new AbortController();activeRequest.current=controller;return controller;
   }
   function finishRequest(controller:AbortController) {
@@ -187,6 +194,35 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
     } catch (reason) { if(!controller.signal.aborted)setError(reason instanceof Error ? reason.message : '옵션 이미지 적용 실패'); }
     finally { finishRequest(controller); }
   }
+  async function adoptSelectedMain(){
+    const target=processingTarget,selected=job;
+    if(!target?.quotationView||!target.ownerId||!selected||!processingResultActive||!jobMatchesTarget||!selected.result?.attached||!beforeSelectedImageApply?.()
+      ||selectedApply.current&&(selectedApply.current.job.id!==selected.id||selectedApply.current.target.quotationTarget!==target.quotationTarget))return;
+    if(selectedApplyPending)return;const controller=beginRequest(false,true);if(!controller)return;selectedApplyRequest.current=controller;setBusy(true);setError('');setNotice('');let writeAttempted=false;
+    const request:typeof fetch=(url,init)=>{
+      if(controller.signal.aborted||liveProcessingToken.current!==processingToken||!processingResultActive||!beforeSelectedImageApply?.())throw Error('선택 옵션의 편집 대상 또는 저장하지 않은 입력을 확인해주세요.');
+      // A stage change may abort the ACK after this exact write has reached the
+      // server. Retain the attempt before dispatch so only a read can clear it.
+      if(init?.method==='PUT'){writeAttempted=true;setSelectedApplyPending(true);}return fetch(url,{...init,signal:controller.signal});
+    };
+    try{
+      if(!selectedApply.current){const attempt=await prepareMainImageAiApply({ownerId:target.ownerId,productId,sourceKey:target.sourceKey,productVersion:target.productVersion,quotationTarget:target.quotationTarget,quotationView:target.quotationView},selected,version,imageKeys,request);
+        if(controller.signal.aborted||liveProcessingToken.current!==processingToken)return;selectedApply.current=attempt;}
+      await applyMainImageAiResult(selectedApply.current,request);if(controller.signal.aborted||liveProcessingToken.current!==processingToken)return;
+      selectedApply.current=null;setSelectedApplyPending(false);setNotice('검토한 AI 결과를 선택 옵션의 최종 견적 대표이미지에 저장했습니다. 다른 옵션과 공통 이미지는 유지했습니다.');onProductChanged?.();
+    }catch(reason){const uncertain=writeAttempted&&!(reason instanceof MainImageSaveError&&reason.uncertain===false);
+      if(!uncertain&&selectedApplyRequest.current===controller)selectedApply.current=null;
+      if(!controller.signal.aborted){setSelectedApplyPending(uncertain);setError(reason instanceof Error?reason.message:'선택 옵션 대표이미지 저장 결과 확인 실패');}}
+    finally{if(selectedApplyRequest.current===controller)selectedApplyRequest.current=null;finishRequest(controller);}
+  }
+  async function recoverSelectedMain(){
+    const attempt=selectedApply.current;if(!attempt||!selectedApplyPending)return;const controller=beginRequest(false,true);if(!controller)return;
+    setBusy(true);setError('');
+    const request:typeof fetch=(url,init)=>{if(controller.signal.aborted||liveProcessingToken.current!==processingToken||init?.method&&init.method!=='GET')throw Error('원래 대표이미지 저장 결과만 조회할 수 있습니다.');return fetch(url,{...init,signal:controller.signal});};
+    try{await recoverMainImageAiResult(attempt,request);if(controller.signal.aborted||liveProcessingToken.current!==processingToken)return;
+      selectedApply.current=null;setSelectedApplyPending(false);setNotice('선택 옵션에 저장된 AI 대표이미지를 확인했습니다. 같은 결과를 다시 저장하지 않았습니다.');onProductChanged?.();
+    }catch(reason){if(!controller.signal.aborted)setError(reason instanceof Error?reason.message:'대표이미지 저장 결과 확인 실패');}finally{finishRequest(controller);}
+  }
   async function refresh() {
     const controller=beginRequest(true,true);if(!controller)return;
     setBusy(true); setError('');
@@ -195,10 +231,11 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
   }
   return <section ref={panelRef} className="translation-panel image-generation-panel" aria-label="원본 이미지 AI 가공">
     <h4>원본 이미지 AI 가공</h4>
-    {processingTarget&&<div className="connection-note" aria-label="선택 옵션 대표이미지 AI 처리 대상"><strong>선택 옵션 대표이미지 AI 처리</strong><p>옵션 {processingTarget.quotationTarget.optionId} · 현재 견적 대표이미지 한 장의 상품 바깥 설명 문구를 정리합니다.</p><p>원본과 결과를 검토한 뒤, 위 대표이미지 후보에서 결과를 선택해 이 옵션에 저장하세요. 번역·직접 편집과는 별도의 AI 이미지 가공입니다.</p>{!targetCurrent&&<p role="status">편집 대상이나 저장 버전이 변경되었습니다. 현재 대표이미지의 AI 처리를 다시 선택해주세요. 입력한 요청은 유지했습니다.</p>}{onCloseProcessingTarget&&<button type="button" className="btn ghost" disabled={imageWorkBusy} onClick={()=>{if(mounted.current&&liveProcessingToken.current===processingToken&&!imageWorkBusy&&!activeRequest.current)onCloseProcessingTarget();}}>선택 옵션 AI 처리 종료 · 공통 작업으로 돌아가기</button>}</div>}
+    {processingTarget&&<div className="connection-note" aria-label="선택 옵션 대표이미지 AI 처리 대상"><strong>선택 옵션 대표이미지 AI 처리</strong><p>옵션 {processingTarget.quotationTarget.optionId} · 현재 견적 대표이미지 한 장의 상품 바깥 설명 문구를 정리합니다.</p><p>원본과 결과를 검토한 뒤, 아래에서 선택 옵션 대표이미지에 적용하세요. 번역·직접 편집과는 별도의 AI 이미지 가공입니다.</p>{!targetCurrent&&<p role="status">{processingResultActive&&jobMatchesTarget&&job?.status==='completed'&&job.result?.attached?'저장된 AI 결과를 확인한 뒤 선택 옵션에 적용할 수 있습니다.':'편집 대상이나 저장 버전이 변경되었습니다. 현재 대표이미지의 AI 처리를 다시 선택해주세요. 입력한 요청은 유지했습니다.'}</p>}{onCloseProcessingTarget&&<button type="button" className="btn ghost" disabled={imageWorkBusy} onClick={()=>{if(mounted.current&&liveProcessingToken.current===processingToken&&!imageWorkBusy&&!activeRequest.current)onCloseProcessingTarget();}}>선택 옵션 AI 처리 종료 · 공통 작업으로 돌아가기</button>}</div>}
     <button type="button" className="btn" disabled={busy} onClick={() => void refresh()}>저장된 설정·실행 이력 새로고침 · 무료</button>
     <p>상품에 업로드한 PNG·JPEG·WebP 한 장을 가공합니다. 결과는 새 파일로 보관하며, 원본과 기존 이미지 역할을 보존합니다.</p>
     {error && <p className="form-error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
+    {selectedApplyPending&&<div className="connection-note"><p>선택 옵션 대표이미지의 저장 결과를 확인해야 합니다. 같은 결과를 다시 저장하지 않습니다.</p><button type="button" className="btn ghost" disabled={busy} onClick={()=>void recoverSelectedMain()}>같은 대표이미지 저장 결과 확인 · 읽기 전용</button></div>}
     {!view && !error && <p>이미지 실행 설정을 확인하고 있습니다.</p>}
     {view && <>
       {!view.configuration.configured && <div className="connection-note"><strong>이미지 서버 연결 설정이 필요합니다</strong><ul>{view.configuration.issues.map(issue => <li key={issue}>{issue}</li>)}</ul></div>}
@@ -215,8 +252,8 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
       {purpose==='cleanup'&&<p>상품 바깥 설명 문구를 정리합니다. 상품 표면의 인쇄는 유지합니다.</p>}
       <label>추가 가공 요청 · 선택<textarea rows={4} maxLength={4000} value={prompt} onChange={event => setPrompt(event.target.value)} disabled={busy} placeholder="비워두면 작업 목적과 저장된 설정으로 준비합니다. 추가로 보존할 부분·배치 요청을 적을 수 있습니다. 원문 사실과 기본 처리 규칙은 유지합니다." /></label>
       <div className="form-row"><label>결과 크기<select value={size} onChange={event => setSize(event.target.value as ImageSize)} disabled={busy}><option>1024x1024</option><option>1024x1536</option><option>1536x1024</option></select></label><label>품질<select value={quality} onChange={event => setQuality(event.target.value as ImageQuality)} disabled={busy}><option value="low">낮음</option><option value="medium">중간</option><option value="high">높음</option></select></label></div>
-      <button className="btn" type="button" disabled={busy || !targetCurrent || !source || !view.configuration.configured} onClick={() => void action({ action: 'prepare', expectedVersion: version, sourceKey: source, prompt, purpose:pinned?'cleanup':purpose, size, quality, idempotencyKey: crypto.randomUUID() })}>이미지 요청 검토하기 · 무료</button>
-      {view.jobs.length > 1 && <label>이전 이미지 작업<select value={job?.id ?? ''} onChange={event => { setSelectedId(event.target.value); setConfirmed(false); }} disabled={busy}>{view.jobs.map(item => <option key={item.id} value={item.id}>{new Date(item.createdAt).toLocaleString()} · {statuses[item.status]}</option>)}</select></label>}
+      <button className="btn" type="button" disabled={busy || selectedApplyPending || !targetCurrent || !source || !view.configuration.configured} onClick={() => void action({ action: 'prepare', expectedVersion: version, sourceKey: source, prompt, purpose:pinned?'cleanup':purpose, size, quality, idempotencyKey: crypto.randomUUID() })}>이미지 요청 검토하기 · 무료</button>
+      {view.jobs.length > 1 && <label>이전 이미지 작업<select value={job?.id ?? ''} onChange={event => {if(!selectedApplyPending){setSelectedId(event.target.value);setConfirmed(false);}}} disabled={busy||selectedApplyPending}>{view.jobs.map(item => <option key={item.id} value={item.id}>{new Date(item.createdAt).toLocaleString()} · {statuses[item.status]}</option>)}</select></label>}
       {!pinned&&<details className="translation-review"><summary>완료한 이미지 결과 여러 장 검토·적용</summary>
         <p>원본과 결과를 비교한 항목만 선택하세요. 같은 콘텐츠 버전에서 만든 결과를 한 번에 저장하여 이미지 순서를 유지합니다.</p>
         {(view.jobs.filter(item=>item.status==='completed'&&item.result?.attached)).map(item=><label key={item.id} style={{display:'block'}}>
@@ -240,11 +277,11 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
         <p>{job.review.paidNotice} <a href={job.review.pricingUrl} target="_blank" rel="noreferrer">공식 요금표</a></p>
         <p>승인 유효 기한: {new Date(job.review.expiresAt).toLocaleString()}</p>
         {stale && ['prepared', 'approved'].includes(job.status) && <p className="form-error">상품 또는 이미지 처리 설정이 변경되었습니다. 새 요청으로 원본과 설정을 다시 검토해주세요.</p>}
-        {job.status === 'prepared' && <><label><input type="checkbox" checked={confirmed} onChange={event => {if(currentProcessing())setConfirmed(event.target.checked);}} disabled={busy || stale || !targetCurrent || !jobMatchesTarget || !view.configuration.configured} />위 원본·설정·모델·요청·크기·품질의 유료 가공 1회를 승인합니다.</label><button type="button" className="btn" disabled={busy || stale || !targetCurrent || !jobMatchesTarget || !view.configuration.configured || !confirmed} onClick={() => void action({ action: 'approve', jobId: job.id, reviewFingerprint: job.review.fingerprint, confirmPaid: true })}>유료 요청 승인 · 아직 호출하지 않음</button></>}
-        {job.status === 'approved' && <button className="btn blue" type="button" disabled={busy || stale || !targetCurrent || !jobMatchesTarget || !view.configuration.configured} onClick={() => void action({ action: 'execute', jobId: job.id })}>승인한 이미지 1장 가공 · 비용 발생</button>}
+        {job.status === 'prepared' && <><label><input type="checkbox" checked={confirmed} onChange={event => {if(currentProcessing())setConfirmed(event.target.checked);}} disabled={busy || selectedApplyPending || stale || !targetCurrent || !jobMatchesTarget || !view.configuration.configured} />위 원본·설정·모델·요청·크기·품질의 유료 가공 1회를 승인합니다.</label><button type="button" className="btn" disabled={busy || selectedApplyPending || stale || !targetCurrent || !jobMatchesTarget || !view.configuration.configured || !confirmed} onClick={() => void action({ action: 'approve', jobId: job.id, reviewFingerprint: job.review.fingerprint, confirmPaid: true })}>유료 요청 승인 · 아직 호출하지 않음</button></>}
+        {job.status === 'approved' && <button className="btn blue" type="button" disabled={busy || selectedApplyPending || stale || !targetCurrent || !jobMatchesTarget || !view.configuration.configured} onClick={() => void action({ action: 'execute', jobId: job.id })}>승인한 이미지 1장 가공 · 비용 발생</button>}
         {job.status === 'running' && <><p>실행 중이거나 결과 확인이 필요한 상태입니다. 같은 작업으로 유료 호출을 반복하지 않습니다.</p><button className="btn" type="button" disabled={busy} onClick={() => void refresh()}>저장된 실행 상태 새로고침 · 무료</button></>}
         {job.error && <p role="alert">{job.error.message}{job.error.mayHaveBeenCharged ? ' 비용이 발생했을 수 있습니다.' : ''}</p>}
-        {job.result && <div className="translation-field"><h4>생성 결과 검토</h4><img src={imageUrl(job.result.storageKey)} alt="AI 가공 결과 · 검토 필요" style={{ maxWidth: '100%', maxHeight: 480, objectFit: 'contain' }} /><p>번역 정확성·상표·인증·법적 표시사항을 확인한 결과가 아닙니다. 원본과 비교한 뒤 이미지 역할을 지정해주세요.</p><p>{job.result.attached ? '상품 이미지 목록에 추가했습니다. 대표·상세 역할은 자동 지정하지 않았습니다.' : '가공 중 상품이 변경되어 결과만 보관했습니다. 아래 버튼은 저장한 결과를 무료로 첨부합니다.'}</p>{pinned&&job.result.attached&&<p role="status">결과를 사용하려면 위 대표이미지 후보에서 선택해주세요. 선택한 옵션의 현재 견적서 연결을 확인한 뒤 저장합니다.</p>}{!pinned&&job.result.attached && <><button className="btn" type="button" disabled={busy || !imageKeys.includes(job.result.storageKey)} onClick={()=>void adoptRoles()}>검토한 결과를 원본의 대표·추가·상세 위치에 적용</button><button className="btn" type="button" disabled={busy || !imageKeys.includes(job.result.storageKey)} onClick={()=>void adoptOptionImages()}>검토한 결과를 같은 원본의 옵션 대표 이미지에 적용</button><small>가공 요청 이후 콘텐츠를 수정했다면 이미지 편집에서 직접 선택해주세요.</small></>}{!job.result.attached && <button className="btn" type="button" disabled={busy||!targetCurrent||!jobMatchesTarget} onClick={() => void action({ action: 'attach', jobId: job.id, expectedVersion: version })}>생성된 결과를 현재 상품에 추가 · 무료</button>}</div>}
+        {job.result && <div className="translation-field"><h4>생성 결과 검토</h4><img src={imageUrl(job.result.storageKey)} alt="AI 가공 결과 · 검토 필요" style={{ maxWidth: '100%', maxHeight: 480, objectFit: 'contain' }} /><p>번역 정확성·상표·인증·법적 표시사항을 확인한 결과가 아닙니다. 원본과 비교한 뒤 이미지 역할을 지정해주세요.</p><p>{job.result.attached ? '상품 이미지 목록에 추가했습니다. 대표·상세 역할은 자동 지정하지 않았습니다.' : '가공 중 상품이 변경되어 결과만 보관했습니다. 아래 버튼은 저장한 결과를 무료로 첨부합니다.'}</p>{pinned&&job.result.attached&&<><p role="status">원본과 결과를 비교한 뒤 선택 옵션의 최종 견적 대표이미지에 적용할 수 있습니다.</p>{processingTarget?.quotationView&&processingTarget.ownerId&&<button type="button" className="btn primary" disabled={busy||selectedApplyPending||!processingResultActive||!jobMatchesTarget||!imageKeys.includes(job.result.storageKey)} onClick={()=>void adoptSelectedMain()}>선택 옵션 대표이미지에 적용</button>}</>}{!pinned&&job.result.attached && <><button className="btn" type="button" disabled={busy || !imageKeys.includes(job.result.storageKey)} onClick={()=>void adoptRoles()}>검토한 결과를 원본의 대표·추가·상세 위치에 적용</button><button className="btn" type="button" disabled={busy || !imageKeys.includes(job.result.storageKey)} onClick={()=>void adoptOptionImages()}>검토한 결과를 같은 원본의 옵션 대표 이미지에 적용</button><small>가공 요청 이후 콘텐츠를 수정했다면 이미지 편집에서 직접 선택해주세요.</small></>}{!job.result.attached && <button className="btn" type="button" disabled={busy||selectedApplyPending||!targetCurrent||!jobMatchesTarget} onClick={() => void action({ action: 'attach', jobId: job.id, expectedVersion: version })}>생성된 결과를 현재 상품에 추가 · 무료</button>}</div>}
       </div>}
     </>}
   </section>;

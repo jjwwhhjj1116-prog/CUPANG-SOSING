@@ -9,7 +9,7 @@ import {ImageFullscreenPreview} from '@/app/components/image-fullscreen-preview'
 type Props={productId:string;version?:string;profileId?:string;refreshToken?:string;focusedOptionId?:string;onSaved?:()=>void;translationEnabled?:boolean;disabled?:boolean;saveOnSelect?:boolean;
  onTranslate?:(sourceKey:string,role:'main',sourceLanguage:'zh'|'en',quotationTarget:FreeImageQuotationRequest)=>void;
  onEdit?:(sourceKey:string,role:'main',quotationTarget:FreeImageQuotationRequest)=>void;
- onProcess?:(sourceKey:string,role:'main',quotationTarget:FreeImageQuotationRequest)=>void};
+ onProcess?:(sourceKey:string,role:'main',quotationTarget:FreeImageQuotationRequest,quotationView?:QuotationFieldsView)=>void};
 export function OptionMainImageEditor({productId,version,profileId,refreshToken,focusedOptionId,onSaved,translationEnabled=true,disabled=false,saveOnSelect=false,onTranslate,onEdit,onProcess}:Props){
  const endpoint=`/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId?`?profileId=${encodeURIComponent(profileId)}`:''}`,scope=JSON.stringify([endpoint,focusedOptionId??'']),sourceKey=JSON.stringify([scope,version,refreshToken]);
  const liveScope=useRef(scope),liveSource=useRef(sourceKey),mounted=useRef(true),request=useRef<AbortController|null>(null);
@@ -95,7 +95,7 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
    if(value.split('\n').map(item=>item.trim()).filter(Boolean).length!==1||value.trim()!==key||target.linked.some(field=>row?.fields[field]?.value!==value))return;
    const quotationTarget:FreeImageQuotationRequest={kind:'quotation',profileId:profileId??null,optionId:id,input:'mainImage',fieldKey:target.primary,slotIndex:0,
     revision:before.view.revision,inputFingerprint:before.view.inputFingerprint,optionRevision:before.view.optionRevision,value};
-   if(process)onProcess?.(key,'main',quotationTarget);else if(manual)onEdit?.(key,'main',quotationTarget);else onTranslate?.(key,'main',sourceLanguage,quotationTarget);
+   if(process)onProcess?.(key,'main',quotationTarget,before.view);else if(manual)onEdit?.(key,'main',quotationTarget);else onTranslate?.(key,'main',sourceLanguage,quotationTarget);
   }catch(cause){setError(cause instanceof Error?cause.message:'번역할 최종 대표이미지 연결을 확인해주세요.');}
  }
  function candidate(key:string){const index=pool.indexOf(key);return <button type="button" key={key} aria-label={`최종 대표이미지 ${index+1} 선택`} aria-pressed={selected.length===1&&selected[0]===key} disabled={disabled||!valid||busy||uncertain||saveOnSelect&&dirty} onClick={()=>edit(key)}><img src={url(key)} alt={`저장 이미지 ${index+1}`} width={100} height={100} loading="lazy"/><span>이미지 {index+1}</span></button>;}

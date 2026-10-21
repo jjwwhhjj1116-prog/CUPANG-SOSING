@@ -63,6 +63,44 @@ function draftState(f,state='validated',extra={}){
  return f.state(state,{draftOnly:true,draftProof:{evidence:'document-draft-preparation',validatedSteps:steps,checkpointSequence:10,observedAt:f.clock.now,submitted:false,consented:false},...extra});
 }
 
+function lifecycleState(f,state='awaiting-stage-consent',extra={}){
+ const submitted=['submit-requested','pending','accepted','rejected'].includes(state);
+ return f.state(state,{draftOnly:true,preparedLifecycle:true,lifecycleProof:{evidence:'native-prepared-draft-lifecycle',preparedCheckpointSequence:10,qualifiedCheckpointSequence:11,checkpointSequence:12,qualifiedAt:f.clock.now,observedAt:f.clock.now,validatedSteps:[2,3,4,5],consentRequested:submitted||['stage-consent-requested','consent-requested'].includes(state),submitRequested:submitted},...extra});
+}
+
+for(const company of SINGLE_COMPANIES)test(`${company.code}: qualified prepared lifecycle carries staged terms and exact receipt through the unchanged strict API`,async()=>{
+ const f=await fixture(company);f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,preparedLifecycleAvailable:true});const session=await f.session();
+ f.bridge=async()=>lifecycleState(f,'awaiting-stage-consent',{challenge:f.challenge('productPage')});
+ const reviewed=await f.client.runPreparedProductDocument(session,'reviewPreparedDraft',new AbortController().signal);assert.equal(reviewed.preparedLifecycle,true);assert.match(reviewed.challenge.items[0].termsText,/마지막 문단/);assert.ok(Object.isFrozen(reviewed.lifecycleProof.validatedSteps));
+ const confirmation=f.load('app/supplier-hub-single-client.ts').singleConsentConfirmation(reviewed.challenge,['businessTerms']);
+ f.bridge=async()=>lifecycleState(f,'awaiting-consent',{challenge:f.challenge('logisticsPage')});
+ await f.client.runPreparedProductDocument(session,'confirmPreparedDraft',new AbortController().signal,confirmation);
+ for(const status of ['SUBMITTED','FINISHED','REJECTED']){
+  const observation=f.observation(status);f.bridge=async payload=>lifecycleState(f,observation.state,{receipt:observation.receipt,...(payload.action==='recoverPreparedDraft'?{recovered:true}:{})});
+  const result=await f.client.runPreparedProductDocument(session,status==='SUBMITTED'?'recoverPreparedDraft':'observePreparedDraft',new AbortController().signal);
+  const projected=f.client.preparedReceiptObservation(result);assert.equal(projected.draftOnly,undefined);assert.equal(projected.lifecycleProof,undefined);assert.equal(projected.receipt.sourceStatus,status);
+  const saved=await f.client.saveProductReceiptObservation({packet:session.packet,observation:projected},new AbortController().signal,f.fetch);
+  assert.equal(saved.receipt.sourceStatus,status);assert.equal(saved.registered,false);
+ }
+ await assert.rejects(f.client.runProductDocument(session,'start',new AbortController().signal),error=>error.code==='PRODUCT_DOCUMENT_LIVE_CONTRACT_UNVERIFIED');
+ assert.deepEqual(f.sent.map(row=>row.payload.action),['preview','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft','observePreparedDraft']);
+});
+
+test('prepared lifecycle rejects missing capability, malformed qualification, absent recovery marker and premature receipt projection',async()=>{
+ const f=await fixture();const old=await f.session();await assert.rejects(f.client.runPreparedProductDocument(old,'reviewPreparedDraft',new AbortController().signal),error=>error.code==='PRODUCT_PREPARED_UNAVAILABLE');assert.equal(f.sent.length,1);
+ f.bridge=async()=>({...f.preview(),preparedLifecycleAvailable:true});const session=await f.session();
+ const changes=[v=>v.lifecycleProof.qualifiedCheckpointSequence=12,v=>v.lifecycleProof.validatedSteps=[2,3,4],v=>v.lifecycleProof.submitRequested=true,v=>v.lifecycleProof.observedAt=f.clock.now+60000,v=>v.lifecycleProof.extra=true,v=>v.identity.company=SINGLE_COMPANIES[1],v=>v.packetDigest='f'.repeat(64),v=>delete v.recovered];
+ for(const change of changes){f.bridge=async()=>{const value=lifecycleState(f,'awaiting-stage-consent',{challenge:f.challenge('productPage'),recovered:true});change(value);return value;};await assert.rejects(f.client.runPreparedProductDocument(session,'recoverPreparedDraft',new AbortController().signal),error=>error.code==='PRODUCT_PREPARED_REPLY_IDENTITY'&&!error.uncertain);}
+ assert.throws(()=>f.client.preparedReceiptObservation(lifecycleState(f)),/접수 결과/);assert.equal(f.calls.length,0);
+});
+
+test('prepared read recovery accepts original partial draft without promotion; navigation ready needs explicit review action',async()=>{
+ const f=await fixture();f.bridge=async()=>({...f.preview(),preparedLifecycleAvailable:true});const session=await f.session();
+ f.bridge=async()=>draftState(f,'created',{recovered:true});const partial=await f.client.runPreparedProductDocument(session,'recoverPreparedDraft',new AbortController().signal);assert.equal(partial.preparedLifecycle,undefined);assert.equal(partial.state,'created');
+ f.bridge=async()=>lifecycleState(f,'navigation-ready',{recovered:true});const result=await f.client.runPreparedProductDocument(session,'recoverPreparedDraft',new AbortController().signal);assert.equal(result.needsRecovery,false);assert.equal(result.challenge,undefined);assert.equal(result.state,'navigation-ready');
+ assert.deepEqual(f.sent.map(row=>row.payload.action),['preview','recoverPreparedDraft','recoverPreparedDraft']);assert.equal(f.calls.length,0);
+});
+
 for(const company of SINGLE_COMPANIES)test(`${company.code}: trusted draft capability prepares/recover only a new draft while the full live gate stays false`,async()=>{
  const f=await fixture(company);f.bridge=async payload=>payload.action==='preview'?{...f.preview(),draftPreparationAvailable:true}:draftState(f,'validated',{recovered:payload.action==='recoverDraft'});
  const session=await f.session();assert.equal(session.preview.liveVerified,false);assert.equal(session.preview.draftPreparationAvailable,true);

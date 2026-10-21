@@ -28,7 +28,7 @@ type Props = { product: { id: string; title: string; image_keys: string; updated
   editableQuotationPrices?:boolean;pricePolicyLocked?:boolean;beforePriceCommit?:()=>boolean;onPriceBusyChange?:(busy:boolean,operation:object)=>void;
   onTranslate?: (sourceKey:string,role:'main',sourceLanguage:'zh'|'en',quotationTarget:FreeImageQuotationRequest)=>void;
   onEdit?: (sourceKey:string,role:'main',quotationTarget:FreeImageQuotationRequest)=>void;
-  onProcess?: (sourceKey:string,role:'main',quotationTarget:FreeImageQuotationRequest)=>void };
+  onProcess?: (sourceKey:string,role:'main',quotationTarget:FreeImageQuotationRequest,quotationView?:QuotationFieldsView)=>void };
 const won = (value: number) => `${Math.round(value).toLocaleString('ko-KR')}원`;
 const originNames = { manual: '직접 입력', collected: '수집 원문', translated: '번역 결과', unverified: '미확인' };
 async function fetchOptions(endpoint: string, signal?: AbortSignal, parent?: string): Promise<ProductOptionsResponse> {

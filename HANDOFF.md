@@ -6397,3 +6397,11 @@ ExistingfreeWorker ba37200e-0c9a-4a59-9362-86d27a6fa9bc deployed. Latestactualpr
 - 기존Chrome의독립localhost검수는실제컴포넌트/client/dispatcher함수/native adapter/앱API/SQLite를사용하되Chrome·Hub·회원·상품·PNG는합성. IndexedDB경계는SQLite store로대체. 신규문서id/4개이미지그룹/7파일·단계4/4·재조회/새로고침후같은요청복구를검수. 실제외부Hub/1688요청0·약관선택/최종submit0·보호SQL/파일/기존Hub합성문서불변. 첫trial와최종소스검수증거구분, 최종browser proof/screenshot은 step776-draft-browser-qa 및 step776-ui.
 - 통합확장2.1.15 90파일/권한·host불변, 2.1.14archive보존. 다섯다운로드링크와신규전송의업데이트안내반영. 설치Chrome실행버전확인/refresh질문0. 최종고유테스트목록·건수/동결SHA/types/lint/build·기존Worker배포·commit/push는 outputs/step776-final-validation.json. 앞선집중/반복run중복가산0; 첫소스guard TS오류·유한eventloop fixture대기실패는수정후최종검사와구분.
 - 운영앱은이번같은Chrome에서도CloudflareAccess로그인화면. 인증정책/기존자격증명/새resource/migration변경0. 실제1688수집·모든category/state1~7UI동일·원격newdoc준비/약관/실접수/옵션별SKU대응은여전히미검증. 합성을실제접수또는임의완성률로보고금지.
+
+## Step777 — 준비된 새 문서 등록전송·선택 AI 대표이미지 적용
+
+- 상세 `docs/step777-prepared-registration-and-main-image-apply.md`, 최종 검사·배포·SHA·commit/push는 `outputs/step777-final-validation.json`. 기존 업무 상품 열기·수정·삭제·전송 및 거절된 1688 직간접 재접근 0.
+- native 새 초안의 원본 계획·현재 첨부 목록·저장 본문·회사·검증 단계가 일치할 때만 qualified lifecycle로 진행한다. 단계별 실제 약관/확인과 최종 사용자 직접 확인, 단일 제출, 동일 문서/QVT 접수 조회를 연결했다. 일반 full-start 두 livegate=false는 유지한다. 요청 유실 후 readonly recovery, 동의 완료/NEXT 미요청 기록에서만 navigation-ready→명시 계속을 허용한다.
+- 실제 component/client/dispatch/native adapter/API/SQLite의 격리 브라우저 검수에서 제출 후 재접속 preview의 docId:null 때문에 원래 접수 이력도 막히는 오류를 발견했다. 신뢰된 저장소의 같은 UUID/body/identity/native checkpoint·세션 검증으로만 복구하도록 보완한다. 최초 실패와 수정 후 검수 기록을 섞지 않는다. 합성 사용자 확인은 실제 약관 수락이 아니다.
+- 완료 AI 결과를 선택 옵션 대표이미지에 직접 적용한다. 원래 옵션/원본/작업 버전과 결과 한 장 추가, 실제 저장 PNG SHA, 견적 불변값을 확인하고 기존 CAS/ACK/readback을 사용한다. 공통·다른 옵션·수동 입력 보호, 불확실 PUT는 읽기 복구, 확정 미전송/반려 시 새 명시 대상 선택을 허용한다. 공급자 실제 실행/과금 0.
+- 통합 확장 2.1.16, 기존 권한/host/2.1.15 ZIP 유지. 설치 Chrome 적용 버전은 미확인이다. 원격 앱은 같은 Chrome에서 Cloudflare Access 로그인 화면이며 직접 로그인 요청은 이미 전달했다. 새 자원·마이그레이션·Access 정책 변경 0. 실상품 1688 수집·실제 Hub 접수·전체 category/1~7 UI 완전 동등성은 아직 미검증이며 완료로 보고하지 않는다.

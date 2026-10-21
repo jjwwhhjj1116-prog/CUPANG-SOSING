@@ -83,6 +83,7 @@ export async function nativeReceiverReceiptFixture(company=companies[0],options=
   const post=value=>receipt.POST(new Request(origin+endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({profileId:source.profile.id,observation:value})}),source.context);
   const history=()=>receipt.GET(new Request(origin+endpoint+source.query),source.context).then(json);
   return{...source,...browser,source,browser,plan,review,packet,context,state,adapter:selected.adapter,receiver:receiver(),reloadReceiver:receiver,post,history,
+   reloadSourceSession:async()=>vm.runInContext('yoofamSingleSessionId=crypto.randomUUID();yoofamSingleAccount=null;',appContext),
    get submitted(){return browser.submitted;},
    close:()=>{selected.adapter.dispose();browser.close();source.close();}};
  }catch(error){selected?.adapter.dispose();browser?.close();source.close();throw error;}

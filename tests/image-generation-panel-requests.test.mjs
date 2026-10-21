@@ -31,7 +31,7 @@ function harness(handler,{status='completed',attached=true,initialPending=null,i
  hooks.useMemo=(fn,deps)=>{const i=index++,before=slots[i];if(!before||deps.some((value,j)=>!Object.is(value,before.deps[j])))slots[i]={deps,value:fn()};return slots[i].value;};
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
-   {exports,Error,AbortController,DOMException,crypto,structuredClone,fetch:request,require(name){if(name==='react')return hooks;if(name.startsWith('@/'))return load(name.slice(2)+'.ts');return native(name);}});return exports;
+   {exports,Error,AbortController,DOMException,TextEncoder,TextDecoder,Uint8Array,DataView,Blob,Response,crypto,structuredClone,fetch:request,require(name){if(name==='react')return hooks;if(name.startsWith('@/'))return load(name.slice(2)+'.ts');return native(name);}});return exports;
  }
  const content=load('app/product-content.ts').emptyProductContent('p');content.revision=1;content.assets.main.value=['owner/raw'];content.assets.label.value=['owner/label'];
  const optionRow={...load('app/product-options.ts').emptyOptionInput('one'),originalName:'原文',translatedName:'수동 옵션명',unitCostCny:12,stock:0,imageKey:'owner/raw',included:true};

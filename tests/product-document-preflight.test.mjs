@@ -6,9 +6,10 @@ import {nativeRecoveryFixture} from './helpers/native-product-recovery.mjs';
 import {SINGLE_COMPANIES,clone} from './helpers/supplier-hub-single-document.mjs';
 import {withProductDocumentChrome} from './helpers/product-document-preview.mjs';
 import {dispatchProductDocument,PRODUCT_DOCUMENT_LIVE_VERIFIED} from '../extensions/supplier-hub/product-document-dispatch.mjs';
-import {productDocumentIdentity} from '../extensions/supplier-hub/product-document-receiver.mjs';
-import {SingleDocumentError} from '../extensions/supplier-hub/single-document.mjs';
-import {PRODUCT_DOCUMENT_PREFLIGHT_TIMEOUT,PRODUCT_DOCUMENT_PREVIEW_ACK_TIMEOUT} from '../extensions/supplier-hub/product-document.mjs';
+import {productDocumentIdentity,createProductDocumentDraftReceiver} from '../extensions/supplier-hub/product-document-receiver.mjs';
+import {createVerifiedProductDocumentBrowserAdapter} from '../extensions/supplier-hub/product-document-adapter.mjs';
+import {SingleDocumentError,readPreparedDocumentPreviewCheckpoint} from '../extensions/supplier-hub/single-document.mjs';
+import {createProductDocumentPacket,PRODUCT_DOCUMENT_PREFLIGHT_TIMEOUT,PRODUCT_DOCUMENT_PREVIEW_ACK_TIMEOUT,PRODUCT_DOCUMENT_REQUEST_TTL} from '../extensions/supplier-hub/product-document.mjs';
 
 const message=f=>({type:'YOOFAM_PRODUCT_DOCUMENT_REQUEST',action:'preview',packet:f.packet});
 const snapshot=f=>JSON.stringify({documents:[...f.documents],storage:f.storage.changes,records:f.hubDocument.documentElement.dataset,source:f.state.source,tabs:f.tabs});
@@ -22,6 +23,56 @@ function sourceOnly(f,baseline){
 }
 async function preview(f){return withProductDocumentChrome(f.api,()=>dispatchProductDocument(message(f),f.sender));}
 
+test('saved own submitted receipt survives a real app source nonce reload through readonly durable preview and observation without another write',async t=>{
+ t.mock.timers.enable({apis:['Date'],now:Date.now()});const f=await nativeRecoveryFixture(SINGLE_COMPANIES[0],{browser:{registerRequestedRows:f=>[{docId:f.createdDocId,status:'SUBMITTED',qvtRequestId:'native-reload-raw',productName:f.documents.get(f.createdDocId).productName,categoryPath:f.documents.get(f.createdDocId).categoryPath}]}});
+ try{const send=f.api.tabs.sendMessage;f.api.tabs.sendMessage=async(id,value,frame)=>value.type==='YOOFAM_CONFIRM_NATIVE_PRODUCT_DOCUMENT_ACTION'?{ok:true,userInitiated:true,challengeId:value.expected.challenge.id,identityDigest:f.context.identityDigest,checkedAt:Date.now()}:send(id,value,frame);
+  const receiver=createProductDocumentDraftReceiver({adapter:f.adapter,store:f.storage.store});await receiver.prepareDraft(f.packet,f.sender);const review=await receiver.reviewPreparedDraft(f.packet,f.sender),pending=await receiver.confirmPreparedDraft(f.packet,f.sender,f.action(review));assert.equal(pending.state,'pending',JSON.stringify(pending));
+  f.state.receipts.push({format:'yoofam-product-document-receipt-v1',productId:f.context.identity.productId,company:clone(f.context.identity.company),registered:false,requestId:f.packet.requestId,docId:pending.docId,packetDigest:pending.packetDigest,identityDigest:pending.identityDigest,preparedBodySha256:pending.preparedBodySha256,receipt:clone(pending.receipt)});
+  const original=f.storage.get(f.context.key),writes=f.calls.filter(row=>row.name==='hub-fetch'&&row.init.method==='POST').length,uploads=f.state.uploads.length,submits=f.submitted;
+  await f.reloadSourceSession();t.mock.timers.tick(PRODUCT_DOCUMENT_REQUEST_TTL+1);const packet=await createProductDocumentPacket(f.packet.review,{requestId:f.packet.requestId,createdAt:Date.now(),now:Date.now()}),before=f.storage.changes.length,inputs=[];
+  const deliver=f.api.tabs.sendMessage;f.api.tabs.sendMessage=async(id,value,frame)=>{inputs.push(clone(value));return deliver(id,value,frame);};
+  const result=await withProductDocumentChrome(f.api,()=>dispatchProductDocument({type:'YOOFAM_PRODUCT_DOCUMENT_REQUEST',action:'preview',packet},f.sender),f.storage.store);
+  assert.equal(result.requestId,f.packet.requestId);assert.equal(result.packetDigest,pending.packetDigest);assert.equal(f.storage.changes.length,before);assert.ok(inputs.every(row=>row.expected.docId===pending.docId&&row.expected.receiptRecovery.sessionId===original.sessionId));
+  const recovered=await receiver.recoverPreparedDraft(packet,f.sender);assert.equal(recovered.state,'pending',JSON.stringify(recovered));assert.equal(recovered.recovered,true);assert.equal(recovered.docId,pending.docId);assert.equal(recovered.receipt.qvtRequestId,pending.receipt.qvtRequestId);assert.equal(f.storage.get(f.context.key).sessionId,original.sessionId);
+  assert.equal((await receiver.observePreparedDraft(packet,f.sender)).state,'pending');
+  const input={tab:original.tab,identity:f.context.identity,sessionId:original.sessionId,docId:original.docId,requestId:original.requestId,packetDigest:original.packetDigest};
+  for(const operation of [()=>f.adapter.createTarget(input),()=>f.adapter.hubRequest({...input,method:'POST',path:'/sr/draft/api/update',body:{...f.context.packet.body,docId:original.docId}}),()=>f.adapter.navigate(input),()=>f.adapter.qualifyPreparedDraft(input),()=>f.adapter.verifyHumanConfirmation(input),()=>f.adapter.confirmAgreements(input),()=>f.adapter.confirmStageAgreements(input),()=>f.adapter.submit(input)])await assert.rejects(operation,{code:'READ_ONLY_RECEIPT'});
+  assert.equal(f.calls.filter(row=>row.name==='hub-fetch'&&row.init.method==='POST').length,writes);assert.equal(f.state.uploads.length,uploads);assert.equal(f.submitted,submits);assert.equal((await receiver.reviewPreparedDraft(packet,f.sender)).error.code,'SOURCE_CHANGED');assert.equal((await receiver.confirmPreparedDraft(packet,f.sender,{})).error.code,'SOURCE_CHANGED');
+ }finally{f.close();t.mock.timers.reset();}
+});
+
+test('durable preview projection rejects poisoned, wrong original UUID, body, owner and full checkpoints; pre-submit nonce reload remains blocked',async()=>{
+ const f=await nativeRecoveryFixture(SINGLE_COMPANIES[1]);try{const receiver=createProductDocumentDraftReceiver({adapter:f.adapter,store:f.storage.store});await receiver.prepareDraft(f.packet,f.sender);const original=f.storage.get(f.context.key),before=f.storage.changes.length;
+  assert.deepEqual(await readPreparedDocumentPreviewCheckpoint(f.context,f.storage.store),{docId:original.docId,sessionId:original.sessionId});assert.equal(await readPreparedDocumentPreviewCheckpoint(f.context,{get:async()=>undefined}),null);
+  const invalid=[state=>{state.identity.ownerId='other';},state=>{state.bodySha256='f'.repeat(64);},state=>{state.laneKey='other';},state=>{state.requestId='other-request';},state=>{state.docId=state.baselineDocIds[0];},state=>{delete state.draftOnly;},state=>{state.preparedLifecycle=true;}];
+  for(const mutate of invalid){const state=clone(original);mutate(state);await assert.rejects(readPreparedDocumentPreviewCheckpoint(f.context,{get:async()=>state}));}
+  await assert.rejects(readPreparedDocumentPreviewCheckpoint({...f.context,packet:{...f.context.packet,requestId:'other-request'}},f.storage.store),{code:'CHECKPOINT_MODE'});assert.equal(f.storage.changes.length,before);
+  await f.reloadSourceSession();await assert.rejects(withProductDocumentChrome(f.api,()=>dispatchProductDocument(message(f),f.sender),f.storage.store),{code:'SOURCE_CHANGED'});assert.equal((await receiver.reviewPreparedDraft(f.packet,f.sender)).error.code,'SOURCE_CHANGED');assert.equal(f.submitted,0);assert.equal(f.storage.changes.length,before);
+ }finally{f.close();}
+});
+
+test('submitted readonly dispatch reattests with a fresh disposed adapter after the cached mutation watch expires, without renewing it or writing again',async t=>{
+ t.mock.timers.enable({apis:['Date'],now:Date.now()});const f=await nativeRecoveryFixture(SINGLE_COMPANIES[0],{browser:{registerRequestedRows:f=>[{docId:f.createdDocId,status:'SUBMITTED',qvtRequestId:'native-expired-watch',productName:f.documents.get(f.createdDocId).productName,categoryPath:f.documents.get(f.createdDocId).categoryPath}]}}),selected=[];
+ try{
+  const send=f.api.tabs.sendMessage;f.api.tabs.sendMessage=async(id,value,frame)=>value.type==='YOOFAM_CONFIRM_NATIVE_PRODUCT_DOCUMENT_ACTION'?{ok:true,userInitiated:true,challengeId:value.expected.challenge.id,identityDigest:f.context.identityDigest,checkedAt:Date.now()}:send(id,value,frame);
+  const source=fs.readFileSync(new URL('../extensions/supplier-hub/product-document-dispatch.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace(/export /g,''),run=vm.runInNewContext(source+'\ndispatchProductDocument',{
+   productDocumentIdentity,createProductDocumentDraftReceiver,SingleDocumentError,readPreparedDocumentPreviewCheckpoint,PRODUCT_DOCUMENT_PREFLIGHT_TIMEOUT,setTimeout,clearTimeout,Date,
+   createProductDocumentReceiver:()=>assert.fail('General unqualified receiver must stay disabled'),createProductDocumentStore:()=>f.storage.store,
+   createVerifiedProductDocumentBrowserAdapter:async context=>{const value=await createVerifiedProductDocumentBrowserAdapter(context,{api:f.api}),entry={...value,disposed:0};selected.push(entry);return{...value,adapter:{...value.adapter,dispose:()=>{entry.disposed++;value.adapter.dispose();}}};}
+  }),request=(action,packet=f.packet,confirmation)=>run({type:'YOOFAM_PRODUCT_DOCUMENT_REQUEST',action,packet,...(confirmation===undefined?{}:{confirmation})},f.sender);
+  assert.equal((await request('prepareDraft')).state,'validated');const review=await request('reviewPreparedDraft'),pending=await request('confirmPreparedDraft',f.packet,f.action(review));assert.equal(pending.state,'pending',JSON.stringify(pending));
+  f.state.receipts.push({format:'yoofam-product-document-receipt-v1',productId:f.context.identity.productId,company:clone(f.context.identity.company),registered:false,requestId:f.packet.requestId,docId:pending.docId,packetDigest:pending.packetDigest,identityDigest:pending.identityDigest,preparedBodySha256:pending.preparedBodySha256,receipt:clone(pending.receipt)});
+  const original=f.storage.get(f.context.key);t.mock.timers.tick(600001);await assert.rejects(selected[0].adapter.readTab({tab:original.tab,identity:f.context.identity}),{code:'TAB_CHANGED'});await new Promise(resolve=>setImmediate(resolve));
+  const recordBefore=JSON.parse(f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords)[f.context.packetDigest],writes=f.calls.filter(row=>row.name==='hub-fetch'&&row.init.method==='POST').length,uploads=f.state.uploads.length,submits=f.submitted,next=f.nextClicks,checkboxes=f.checkboxClicks;
+  await f.reloadSourceSession();const packet=await createProductDocumentPacket(f.packet.review,{requestId:f.packet.requestId,createdAt:Date.now(),now:Date.now()});assert.equal((await request('preview',packet)).registered,false);
+  for(const action of ['recoverPreparedDraft','observePreparedDraft','recoverPreparedDraft']){const before=selected.length,result=await request(action,packet);assert.equal(result.state,'pending',JSON.stringify(result));assert.equal(result.docId,pending.docId);assert.equal(result.receipt.qvtRequestId,pending.receipt.qvtRequestId);if(action==='recoverPreparedDraft')assert.equal(result.recovered,true);assert.equal(selected.length,before+1);assert.equal(selected.at(-1).disposed,1);}
+  assert.equal(f.storage.get(f.context.key).sessionId,original.sessionId);assert.equal(f.calls.filter(row=>row.name==='hub-fetch'&&row.init.method==='POST').length,writes);assert.equal(f.state.uploads.length,uploads);assert.equal(f.submitted,submits);assert.equal(f.nextClicks,next);assert.equal(f.checkboxClicks,checkboxes);
+  assert.deepEqual(JSON.parse(f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords)[f.context.packetDigest],recordBefore,'read-only observation must not renew or change the expired mutation watch');
+  const execute=f.api.scripting.executeScript;f.api.scripting.executeScript=async input=>{const out=await execute(input);if(input.target.tabId===original.tab.tabId)for(const row of out)row.documentId='changed-hub-frame';return out;};
+  const blocked=await request('recoverPreparedDraft',packet);assert.equal(blocked.state,'scope-blocked',JSON.stringify(blocked));assert.equal(blocked.error.code,'TAB_CHANGED');assert.equal(selected.at(-1).disposed,1);assert.equal(f.submitted,submits);assert.equal(f.nextClicks,next);
+ }finally{for(const entry of selected)entry.adapter.dispose();f.close();t.mock.timers.reset();}
+});
+
 for(const company of SINGLE_COMPANIES)test(`${company.code}: production preview independently rechecks the native source and returns no receipt or remote capability`,async()=>{
   const f=await nativeRecoveryFixture(company);try{
     f.calls.length=0;f.state.appReads.length=0;const before=snapshot(f),inputs=[];
@@ -29,7 +80,7 @@ for(const company of SINGLE_COMPANIES)test(`${company.code}: production preview 
     const out=await preview(f);assert.equal(out.liveVerified,false);assert.equal(out.remoteWrites,false);assert.equal(out.registered,false);
     assert.equal(out.identityDigest,f.context.identityDigest);assert.deepEqual(out.identity,f.context.identity);assert.equal(out.requestId,f.packet.requestId);
     assert.equal(out.preparedBodySha256,f.context.bodySha256);assert.equal(out.originalBodySha256,f.context.originalBodySha256);
-    assert.equal(out.draftPreparationAvailable,true);assert.deepEqual(Object.keys(out).sort(),['format','requestId','identity','fingerprint','productId','members','identityDigest','packetDigest','reviewDigest','preparedBodySha256','originalBodySha256','liveVerified','draftPreparationAvailable','remoteWrites','registered'].sort());
+    assert.equal(out.draftPreparationAvailable,true);assert.equal(out.preparedLifecycleAvailable,true);assert.deepEqual(Object.keys(out).sort(),['format','requestId','identity','fingerprint','productId','members','identityDigest','packetDigest','reviewDigest','preparedBodySha256','originalBodySha256','liveVerified','draftPreparationAvailable','preparedLifecycleAvailable','remoteWrites','registered'].sort());
     assert.equal(inputs.length,2);for(const value of inputs){assert.equal(value.type,'YOOFAM_VERIFY_NATIVE_PRODUCT_DOCUMENT_SOURCE');assert.deepEqual(value.expected,{identity:f.context.identity,bodySha256:f.context.originalBodySha256,preparedBodySha256:f.context.bodySha256,packetDigest:f.context.packetDigest,requestId:f.context.packet.requestId,docId:null});}
     assert.ok(f.state.appReads.length>=10);sourceOnly(f,before);assert.equal(PRODUCT_DOCUMENT_LIVE_VERIFIED,false);
   }finally{f.close();}
