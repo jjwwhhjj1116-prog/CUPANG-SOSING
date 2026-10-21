@@ -14,6 +14,18 @@ export function pageSourceUrl(value){
 function image(value){
  try{const url=new URL(String(value).startsWith('//')?'https:'+value:value);return url.protocol==='https:'&&!url.username&&!url.password&&!url.port&&!url.hash&&(url.hostname==='alicdn.com'||url.hostname.endsWith('.alicdn.com'))&&url.href.length<=2048?url.href:null;}catch{return null;}
 }
+/** Read only this image element. A truthy placeholder or foreign URL must not
+ * hide a later valid lazy URL. Preserve the caller's existing valid-source
+ * priority, and apply the same CDN validation used by the stored snapshot. */
+export function readPageSourceElementImage(element,{preferDataSource=false}={}){
+ if(!element)return null;
+ const attribute=name=>element.getAttribute(name);
+ const candidates=preferDataSource
+  ?[attribute('data-src'),element.currentSrc,attribute('src'),attribute('data-lazyload-src'),attribute('data-ks-lazyload')]
+  :[element.currentSrc,attribute('src'),attribute('data-lazyload-src'),attribute('data-src'),attribute('data-ks-lazyload')];
+ for(const candidate of candidates){const url=image(candidate);if(url)return url;}
+ return null;
+}
 /** Read a JSON value after an exact quoted property; never evaluate scripts. */
 function pageJsonProperties(text,key,firstOnly=false){
  const values=[];
@@ -277,7 +289,7 @@ export function readPageSourceDomOptions(document,sourceUrl,scripts){
   const match=prices.length===1?prices[0]:null;
   const ambiguous=match&&/^\s*(?:[-~～－–—]|起|至)/u.test(raw.slice(match.index+match[0].length));
   const unitPriceCny=match&&!ambiguous?price(match[1]):null;
-  const imageUrl=imageElement?image(imageElement.currentSrc||imageElement.getAttribute('src')||imageElement.getAttribute('data-lazyload-src')||imageElement.getAttribute('data-src')||imageElement.getAttribute('data-ks-lazyload')):null;
+  const imageUrl=readPageSourceElementImage(imageElement);
   return {name,unitPriceCny,imageUrl};
  };
  const groups=labels.map(label=>{

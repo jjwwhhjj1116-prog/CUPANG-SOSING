@@ -37,8 +37,9 @@ const translatedName=pair=>pair.name.startsWith('상품속성: ')?genericTransla
 
 /** Real handlers and SQLite, recorded public supplier facts; auth, AI and image
  * bytes are fixtures. Never contacts Supplier Hub or alters a real product. */
-export function mobileIntakeHarness({companyCode='A01464742',companyName='와이홉',capturedCompany=true,sourceFetcher,translationFetcher,desktopStatus=200,fixtureImageUrls}={}){
+export function mobileIntakeHarness({companyCode='A01464742',companyName='와이홉',capturedCompany=true,sourceFetcher,translationFetcher,desktopStatus=200,fixtureImageUrls,fixtureImageBytes}={}){
  if(fixtureImageUrls!==undefined){assert.ok(Array.isArray(fixtureImageUrls));assert.ok(fixtureImageUrls.every(value=>{const url=new URL(value);return url.protocol==='https:'&&url.hostname==='cbu01.alicdn.com'&&url.href===value;}));}
+ if(fixtureImageBytes!==undefined){assert.ok(fixtureImageUrls!==undefined&&Array.isArray(fixtureImageBytes)&&fixtureImageBytes.length===fixtureImageUrls.length);assert.ok(fixtureImageBytes.every(bytes=>bytes instanceof Uint8Array&&bytes.byteLength>0&&bytes.byteLength<=10*1024*1024));}
  const sqlite=memoryDatabase();for(const statement of runtimeDDL())sqlite.exec(statement.sql);
  const db={prepare(sql){let args=[];const q={bind(...values){args=values;return q;},execute(){return sqlite.prepare(sql).all(...args);},async all(){return {results:q.execute()};},async first(){return q.execute()[0]??null;},async run(){return sqlite.prepare(sql).run(...args);}};return q;},async batch(statements){sqlite.exec('BEGIN');try{const results=statements.map(statement=>({results:statement.execute()}));sqlite.exec('COMMIT');return results;}catch(error){sqlite.exec('ROLLBACK');throw error;}}};
  const objects=new Map(),objectMetadata=new Map(),calls=[],network=[],cache=new Map(),aiSources=[];
@@ -69,7 +70,7 @@ export function mobileIntakeHarness({companyCode='A01464742',companyName='와이
    if(stats.cancelDuringDownload)sqlite.prepare("UPDATE collection_jobs SET status='cancelled' WHERE id='job'").run();
    if(stats.failImageIndex===index)throw Error('fixture CDN interruption');
    // Unique valid PNG headers model different files without storing seller media.
-   return new Response(Buffer.concat([png,Buffer.from([index])]),{headers:{'content-type':'image/png'}});
+   return new Response(fixtureImageBytes?.[index]??Buffer.concat([png,Buffer.from([index])]),{headers:{'content-type':'image/png'}});
   }finally{stats.activeDownloads--;}
  }
  function load(file){

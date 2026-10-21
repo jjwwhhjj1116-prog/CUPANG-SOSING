@@ -53,12 +53,17 @@ test('selected Stage5 opens the existing detail editor and batch tools without a
  }finally{h.close();}
 });
 
-test('additional disclosure and unscoped common upload behavior remain intact',()=>{
+test('selected Stage4 opens its existing gallery and instant tools while unscoped common upload remains intact',()=>{
  const h=dashboard();try{
-  h.render({tab:'추가 이미지'});const image=h.child('OptionImageEditor','additional');assert.equal(initiallyVisible(image),false);assert.equal(image.node.props.saveOnChange,true);assert.equal(initiallyVisible(h.child('ProductContentEditor')),true);
+  h.render({tab:'추가 이미지'});const image=h.child('OptionImageEditor','additional'),batch=h.child('DetailImageBatchPanel','additional');
+  assert.equal(initiallyVisible(image),true);assert.equal(initiallyVisible(batch),true);assert.equal(image.node.props.saveOnChange,true);assert.equal(initiallyVisible(h.child('ProductContentEditor')),false);
+  assert.equal(image.node.props.optionId,'red');assert.equal(batch.node.props.optionId,'red');assert.equal(batch.node.props.profileId,'cat');assert.notEqual(batch.node.props.autoPrepare,true);
+  const imageKey=image.node.key,batchKey=batch.node.key;
+  for(const tab of ['견적서','SEO','상세 이미지','추가 이미지']){h.render({tab});const current=h.child('OptionImageEditor','additional'),currentBatch=h.child('DetailImageBatchPanel','additional');assert.equal(current.node.type,image.node.type);assert.equal(current.node.key,imageKey);assert.equal(currentBatch.node.key,batchKey);assert.equal(initiallyVisible(current),tab==='추가 이미지');assert.equal(current.node.props.active,tab==='추가 이미지');}
+  h.render({tab:'추가 이미지',focusedOptionId:undefined});assert.equal(initiallyVisible(h.child('ProductContentEditor')),true);assert.equal(entries(h.render()).some(({node})=>node.type?.label?.endsWith(':OptionImageEditor')),false);
   h.render({tab:'상세 이미지',focusedOptionId:undefined});assert.equal(initiallyVisible(h.child('ProductContentEditor')),true);
   assert.equal(entries(h.render()).some(({node})=>node.type?.label?.endsWith(':OptionImageEditor')),false);
-  const upload=h.child('ProductImageUploadQueue','detail').node;assert.equal(upload.props.target.optionId,null);assert.equal(upload.props.immediate,true);assert.equal(upload.props.active,true);assert.equal(h.saved,0);
+  const upload=h.child('ProductImageUploadQueue','detail').node;assert.equal(upload.props.target.optionId,null);assert.equal(upload.props.immediate,true);assert.equal(upload.props.active,true);assert.equal(h.saved,0);assert.equal(h.checks,0);
  }finally{h.close();}
 });
 

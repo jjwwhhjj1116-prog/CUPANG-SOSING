@@ -69,12 +69,12 @@
 .registration-workspace .product-label-extra-tools{margin:0;padding:4px 0;border:0;background:transparent}
 .registration-workspace .product-label-primary-actions{align-items:center}
 /* Stage5 keeps the common actions in a compact toolbar above the photo stack. */
-.registration-workspace .registration-detail-primary-tools>[hidden]{display:none}
-.registration-workspace .registration-detail-primary-tools>[data-free-image-editor],.registration-workspace .registration-detail-primary-tools>div>[data-free-image-editor]{display:flex;flex-flow:row wrap;align-items:end;gap:8px 12px;padding-bottom:14px;border-bottom:1px solid #e9ebef}
-.registration-workspace .registration-detail-primary-tools [data-free-image-editor]>h4,.registration-workspace .registration-detail-primary-tools [data-free-image-editor]>p,.registration-workspace .registration-detail-primary-tools [data-free-image-editor]>.panel-stack{flex-basis:100%;margin:0}
-.registration-workspace .registration-detail-primary-tools [data-free-image-editor]>.field{flex:0 1 220px;margin:0}
-.registration-workspace .registration-detail-primary-tools [data-free-image-editor]>.quote-actions{display:flex;flex-wrap:wrap;gap:6px;margin:0}
-.registration-workspace .registration-detail-primary-tools [data-free-image-editor]>.btn,.registration-workspace .registration-detail-primary-tools [data-free-image-editor]>.quote-actions>.btn{width:auto;flex:none}
+.registration-workspace :is(.registration-detail-primary-tools,.registration-additional-primary-tools)>[hidden]{display:none}
+.registration-workspace :is(.registration-detail-primary-tools,.registration-additional-primary-tools)>[data-free-image-editor],.registration-workspace :is(.registration-detail-primary-tools,.registration-additional-primary-tools)>div>[data-free-image-editor]{display:flex;flex-flow:row wrap;align-items:end;gap:8px 12px;padding-bottom:14px;border-bottom:1px solid #e9ebef}
+.registration-workspace :is(.registration-detail-primary-tools,.registration-additional-primary-tools) [data-free-image-editor]>h4,.registration-workspace :is(.registration-detail-primary-tools,.registration-additional-primary-tools) [data-free-image-editor]>p,.registration-workspace :is(.registration-detail-primary-tools,.registration-additional-primary-tools) [data-free-image-editor]>.panel-stack{flex-basis:100%;margin:0}
+.registration-workspace :is(.registration-detail-primary-tools,.registration-additional-primary-tools) [data-free-image-editor]>.field{flex:0 1 220px;margin:0}
+.registration-workspace :is(.registration-detail-primary-tools,.registration-additional-primary-tools) [data-free-image-editor]>.quote-actions{display:flex;flex-wrap:wrap;gap:6px;margin:0}
+.registration-workspace :is(.registration-detail-primary-tools,.registration-additional-primary-tools) [data-free-image-editor]>.btn,.registration-workspace :is(.registration-detail-primary-tools,.registration-additional-primary-tools) [data-free-image-editor]>.quote-actions>.btn{width:auto;flex:none}
 .registration-workspace .registration-detail-primary-tools .option-detail-composite{padding:8px 0;border:0;font-size:12px}
 .registration-workspace .registration-detail-primary-tools .option-detail-composite>summary{cursor:pointer;color:#65718b;margin-bottom:8px}
 .registration-workspace .registration-detail-primary-tools .option-detail-composite>section{display:flex;flex-flow:row wrap;align-items:center;gap:8px}

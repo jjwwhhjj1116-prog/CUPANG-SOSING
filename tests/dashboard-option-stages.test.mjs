@@ -150,19 +150,23 @@ test('selected image scope follows product, option, effective profile and the sa
   } finally { h.close(); }
 });
 
-test('common content keeps its draft across additional editing and collapsed selected-detail or step 6 source tools', () => {
+test('common content keeps its draft behind collapsed selected image and step 6 source tools', () => {
   const h = harness(); try {
     const common = h.record('product-content-editor'); h.edit('product-content-editor', 'shared content draft');
     for (const [tab, section, role, label] of [['추가 이미지', '이미지', 'additional', '추가 이미지'], ['상세 이미지', '이미지', 'detail', '상세 이미지'], ['표시사항', '표시사항', undefined, '추가 표시사항·이전 자료'], ['SEO', 'SEO', undefined, 'SEO·설명']]) {
       h.render({ tab }); const current = h.record('product-content-editor'), collapse = current.ancestors.findLast(element => element.type === 'details');
       assert.equal(current.instance, common.instance); assert.equal(current.draft, 'shared content draft'); assert.equal(current.props.product.id, 'product-a');
-      assert.equal(current.props.section, section); assert.equal(current.props.focusedAssetRole, role); assert.equal(collapse.props.open, tab==='추가 이미지'?true:undefined);
+      assert.equal(current.props.section, section); assert.equal(current.props.focusedAssetRole, role); assert.equal(collapse.props.open, undefined);
       assert.ok(nodes(collapse).some(node => node.type === 'summary' && node.props.hidden === false && text(node) === (tab === 'SEO' ? '옵션별 추가 SEO 편집' : '상품 공통 ' + label + ' 편집')));
+      if (tab === '추가 이미지') {
+        const primary = h.record('option-image-editor', received => received.stage === 'additional');
+        assert.equal(h.visible(primary), true); assert.ok(primary.ancestors.some(element => element.props?.className?.includes('registration-additional-primary-tools')));
+      }
     }
     h.render({ tab: '견적서' }); h.record('quotation-panel').props.onProfileChange('profile-b'); assert.equal(h.record('product-content-editor').instance, common.instance); assert.equal(h.record('product-content-editor').draft, 'shared content draft');
     h.render({ focusedOptionId: undefined, tab: '추가 이미지' }); const unscoped = h.record('product-content-editor');
     assert.equal(unscoped.instance, common.instance); assert.equal(unscoped.draft, 'shared content draft'); assert.equal(unscoped.ancestors.findLast(element => element.type === 'details').props.open, true);
-    assert.equal(h.all('option-image-editor').length, 0); assert.equal(h.all('option-label-editor').length, 0); assert.equal(h.calls.reads, 0);
+    assert.equal(h.all('option-image-editor').length, 0); assert.equal(h.all('option-label-editor').length, 0); assert.deepEqual(h.calls, { saved: 0, reads: 0, uploads: 0, submission: 0 });
   } finally { h.close(); }
 });
 

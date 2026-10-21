@@ -70,6 +70,18 @@ test('image-only option tiles remain unknown-price variants or reject a missing 
  assert.throws(()=>capture(html(tile('黑色')+'<li><img src="https://cbu01.alicdn.com/synthetic-gray.jpg"></li>')),/옵션 영역/);
 });
 
+test('DOM option thumbnails skip placeholder and foreign candidates to retain each observed lazy image without changing option facts',()=>{
+ const placeholder='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+ const images=['data-lazyload-src','data-src','data-ks-lazyload'].map((attribute,index)=>({attribute,url:`https://cbu01.alicdn.com/synthetic-lazy-option-${index}.jpg`,name:`选项${index}`}));
+ const source=capture(html(images.map(({attribute,url,name})=>`<li>${name}<img src="${placeholder}" ${attribute}="${url}"><span>¥5.30</span> 库存8</li>`).join('')));
+ assert.deepEqual(source.options.map(row=>[row.name,row.imageUrl,row.unitPriceCny,row.supplierSku,row.minimumOrder,row.stock]),images.map(({url,name})=>[name,url,5.3,null,null,null]));
+ assert.deepEqual(source.images.filter(row=>row.role==='additional').map(row=>row.url),images.map(row=>row.url));
+ const skipped=capture(html('<li>黑色<img src="https://foreign.invalid/unrelated.jpg" data-lazyload-src="https://cbu01.alicdn.com/synthetic-allowed-option.jpg"><span>¥6.10</span> 库存8</li>'));
+ assert.equal(skipped.options[0].imageUrl,'https://cbu01.alicdn.com/synthetic-allowed-option.jpg');assert.equal(skipped.options[0].unitPriceCny,6.1);
+ const unknown=capture(html(`<li>黑色<img src="${placeholder}" data-lazyload-src="https://alicdn.com.foreign.invalid/unrelated.jpg"><span>¥5.30</span> 库存8</li>`));
+ assert.equal(unknown.options[0].imageUrl,null);assert.equal(unknown.options[0].name,'黑色');assert.equal(unknown.options[0].unitPriceCny,5.3);assert.equal(unknown.images.filter(row=>row.role==='additional').length,0);
+});
+
 test('missing, ranged, duplicated or non-CNY row prices stay unknown; headline CNY and one priced row never fill other options',()=>{
  for(const uncertain of ['','5.80','₩1,000','¥5.00～6.00','¥5.00 - ¥6.00','¥5.30 起']){
   const source=capture(html(tile('黑色','¥5.30')+tile('灰色',uncertain)));

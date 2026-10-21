@@ -1,4 +1,4 @@
-import {extractPageSource,pageSourceUrl,readPageSourceDomOptions} from '../extensions/supplier-hub/page-source.mjs';
+import {extractPageSource,pageSourceUrl,readPageSourceDomOptions,readPageSourceElementImage} from '../extensions/supplier-hub/page-source.mjs';
 // Only an actual click in the top-level product document starts a capture.
 // No background source request or page/global code execution is used.
 if(window===window.top&&!document.getElementById('yoofam-page-collector')){
@@ -12,7 +12,7 @@ if(window===window.top&&!document.getElementById('yoofam-page-collector')){
   try{
    const before=pageSourceUrl(location.href).sourceUrl;
    const text=selector=>document.querySelector(selector)?.textContent?.trim()??'';
-   const urls=selector=>[...document.querySelectorAll(selector)].slice(0,200).map(node=>node.getAttribute('data-src')||node.currentSrc||node.getAttribute('src')||'');
+   const urls=selector=>[...document.querySelectorAll(selector)].slice(0,200).map(node=>readPageSourceElementImage(node,{preferDataSource:true})).filter(Boolean);
    const scripts=[];let size=0;for(const script of document.scripts){const raw=script.textContent??'';if(!/"(?:skuModel|subject|offerTitle|offerSubject|productTitle|productName|offerBaseInfo|tempModel|offerImgList|mainImageList|propsList)"\s*:/.test(raw))continue;size+=raw.length;if(size>4*1024*1024)throw Error('상품 데이터가 수집 크기를 초과했습니다.');scripts.push(raw);}
    const productTitle=text('h1.d-title,.detail-title h1,.offer-title,[data-module-name="title"] h1,[data-plg-name="title"] h1');
    const snapshot=extractPageSource({sourceUrl:before,scripts,domOptions:readPageSourceDomOptions(document,before,scripts),title:productTitle||document.querySelector('meta[property="og:title"]')?.content||document.title,
