@@ -6458,3 +6458,10 @@ ExistingfreeWorker ba37200e-0c9a-4a59-9362-86d27a6fa9bc deployed. Latestactualpr
 - Chrome4 localhost 새합성상품/actualDashboard/API/SQLite/비공개PNG: TESTONLYrunningjob+configuredfalse→추가사진1수동편집→검수문구→CanvasPNG→image-text POST200정확1→최종견적선택위치/alias만변경. 기존runningjob/원문/content/options/다른field값/원본파일/보호합성상품불변. 이미지pool PNG한장추가·재편집JSON별도보관. 최초단언의보조JSON미포함예상만수정, production완화0. screenshot/32pxdecode/최종proof step783-browser-{free-edit.png,final-proof.json}. 검수탭/서버정리. 외부번역·유료provider·source/Hub/native0.
 - 별도read-only감사: imageprovider미설정이GoogleGTX무료번역/초안조건아님, 수집함제목수정은immutable원문대신reviewrevision만갱신해추천/초안에연결. 새결함/변경/테스트재실행0.
 - 기존실제업무상품열기·수정·삭제·전송0. 거절1688직간접재시도0, 일반두livegate=false. 실제1688수집→전체UI동일→실접수미검증이며생성형imageprovider미설정유지. 확장prepared2.1.19/runtime마지막2.1.18/ZIP불변, 추가refresh질문0. 새resource/migration/Access정책변경0.
+
+### Step784 — 무료 편집 저장의 정확한 완료 안내
+- 기준d8cbfb3fce2adb0379a65fab1f494dd7261c43dd. 상세 docs/step784-confirmed-image-save-notice.md. 783브라우저실제확정 save200후자기상품갱신이성공notice를외부변경으로덮던UX수정. 검증된FreeImageApplyReply exactnextclock/key+동일editor token/epoch만1회공지유지. epoch/abort/reset/uncertain경로는그대로, 다른clock/key누락/scopeABA/새작업/실패/취소시폐기. 저장/권한증거로사용0·workspace계약별도유지.
+- 신규8회귀포함 관련5고유파일102/102 한실행 pass/fail0/skip0/cancel0, types/lint/build/diff통과. worker집중8/기존59 중복합산0. 독립리뷰·동결SHA·로그·배포/push는 outputs/step784-final-validation.json.
+- Chrome4 localhost 새합성상품 actualDashboard/API/SQLite: providerfalse+기존running유지→추가사진직접편집/완료문구→PNG→image-text POST200정확1→parentrefresh뒤정확성공notice유지. 실제32pxdecode·selectedslot/alias저장·다른quote필드/원문/content/options/원본파일/보호합성상품/이전job불변. PNG1+editJSON1보관, 외부번역·provider·source/Hub/native0. screenshot step784-browser-save-complete.png 및 final-proof.json. QA탭/서버정리.
+- REA Stage6보관원본 항목명/복원/저장/전체옵션/번역적용에새확정gap없음. 기존Evidence/SHA재사용·새producer/실패lookup반복0. 원본reset은저장구조/값재초기화라항상9항목강제와혼동금지. Hub보관69900/81452/64455 정수g/mm *치수와현wire일치·합성2옵션pureprojection값보존(실측/접수아님). SEO부분/실패이력은수동입력잠금하지않음. 해당감사생산수정/반복suite0.
+- 기존실제업무상품열기·수정·삭제·전송0. 거절1688직간접재시도0, 일반두livegate=false. 실제수집→전체UI동일→실접수미검증·생성형provider미설정유지. 확장prepared2.1.19/runtime마지막2.1.18/ZIP·권한·host불변·추가refresh질문0. 새resource/migration/Access정책변경0.

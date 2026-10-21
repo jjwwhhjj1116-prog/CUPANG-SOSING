@@ -10,7 +10,7 @@ import { FreeImageCropCanvas } from '@/app/components/free-image-crop-canvas';
 import { validateFreeImageCropRect, type FreeImageCropRect } from '@/app/free-image-crop';
 import {
   applyFreeImageTranslation, FreeImageApplyError, readFreeImageSource, recognizeFreeImage, recoverFreeImageTranslation, renderFreeImageTranslation, sameFreeImageQuotationRequest, translateFreeImageRegions,
-  type FreeImageLoaded, type FreeImageQuotationRequest, type FreeImageRegion, type FreeImageRendered,
+  type FreeImageApplyReply, type FreeImageLoaded, type FreeImageQuotationRequest, type FreeImageRegion, type FreeImageRendered,
 } from '@/app/free-image-translation-client';
 import { applyDetailWorkspaceImage, readDetailWorkspaceImage, recoverDetailWorkspaceImage, sameFreeImageWorkspaceRequest, translateDetailWorkspaceImage,
   type DetailWorkspaceEditorContext, type DetailWorkspaceImageReply, type FreeImageWorkspaceRequest } from '@/app/detail-workspace-image-client';
@@ -90,6 +90,14 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
   const workspaceTarget = translationTarget?.workspaceTarget ?? null;
   const selectionKey = JSON.stringify(workspaceContext ? ['detail-workspace', workspaceContext.target, enabled, disabled] : quotationContext ?? null), liveSelection = useRef(selectionKey);
   const editorKey = JSON.stringify([productId, version, sourceKey, role, quotationTarget, ...(workspaceTarget ? [workspaceTarget] : [])]), liveEditor = useRef(editorKey);
+  const saveNoticeScope = JSON.stringify([productId, sourceKey, role, language, quotationTarget, selectionKey, focusedOptionId ?? null, translationTarget ?? null, enabled, disabled]);
+  const liveSaveNoticeScope = useRef({ key: saveNoticeScope, token: {} });
+  const acknowledgedSaveNotice = useRef<{ fromVersion: string; productVersion: string; key: string; epoch: number; token: object; notice: string } | null>(null);
+  function clearSaveNotice() { acknowledgedSaveNotice.current = null; liveSaveNoticeScope.current.token = {}; }
+  useLayoutEffect(() => {
+    if (liveSaveNoticeScope.current.key === saveNoticeScope) return;
+    liveSaveNoticeScope.current = { key: saveNoticeScope, token: {} }; acknowledgedSaveNotice.current = null;
+  }, [saveNoticeScope]);
   const liveControls = useRef({ enabled, disabled, workspaceContext, onWorkspaceSaved });
   useLayoutEffect(() => { liveControls.current = { enabled, disabled, workspaceContext, onWorkspaceSaved }; }, [enabled, disabled, workspaceContext, onWorkspaceSaved]);
   const busyCallback = useRef(onBusyChange);
@@ -116,6 +124,11 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
   }, []);
   useEffect(() => {
     if (lastVersion.current === version) return;
+    const savedNotice = acknowledgedSaveNotice.current;
+    acknowledgedSaveNotice.current = null; // A verified ACK may explain only this one version advance.
+    const ownSave = savedNotice && savedNotice.fromVersion === lastVersion.current && savedNotice.productVersion === version
+      && savedNotice.epoch === epoch.current && savedNotice.token === liveSaveNoticeScope.current.token && imageKeys.includes(savedNotice.key)
+      && enabled && !disabled && !workspaceTarget && !workspaceContext;
     lastVersion.current = version; const scope = ++epoch.current;
     active.current?.controller.abort(); active.current = null; recoveredScope.current = null;
     if (!pendingSave.current) liveRenderedRef.current = null;
@@ -123,8 +136,12 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       if (!mounted.current || epoch.current !== scope || lastVersion.current !== version) return;
       setBusy(false); busyCallback.current?.(false); setError('');
       if (pendingSave.current) { setReadyRetry(false); setUncertain(true); setNotice('저장 버전이 변경됐습니다. 응답을 확인하지 못한 미리보기는 같은 결과로 저장 상태를 확인할 수 있습니다.'); }
-      else { setRendered(null); setNotice('상품 저장본이 변경됐습니다. 작성한 문구는 유지했습니다. 원본 저장 상태를 다시 확인한 뒤 미리보기를 만들어주세요.'); }
+      else { setRendered(null); setNotice(ownSave && savedNotice.token === liveSaveNoticeScope.current.token ? savedNotice.notice
+        : '상품 저장본이 변경됐습니다. 작성한 문구는 유지했습니다. 원본 저장 상태를 다시 확인한 뒤 미리보기를 만들어주세요.'); }
     });
+    // Additional scope changes invalidate the one-use marker in layout; they
+    // must not run this existing version-abort/reset effect a second time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [version, liveRenderedRef, setReadyRetry, setRendered, setUncertain]);
   function focusedTarget(target = liveQuotationTarget.current) {
     return liveControls.current.enabled && !liveControls.current.disabled && liveSelection.current === selectionKey
@@ -136,6 +153,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
   function current(work: RequestWork) { return mounted.current && active.current === work && work.epoch === epoch.current && !work.controller.signal.aborted && focusedTarget() && editorCurrent(); }
   function begin(kind: RequestWork['kind']) {
     if (!mounted.current || active.current || liveBrushDrawingRef.current || liveCropDrawing.current || !focusedTarget() || !editorCurrent()) return null;
+    clearSaveNotice();
     const work = { kind, epoch: epoch.current, controller: new AbortController() }; active.current = work;
     setBusy(true); busyCallback.current?.(true); setError(''); setNotice(''); return work;
   }
@@ -144,6 +162,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     active.current = null; if (mounted.current) { setBusy(false); busyCallback.current?.(false); }
   }
   function invalidateActive() {
+    clearSaveNotice();
     epoch.current++; active.current?.controller.abort(); active.current = null; busyCallback.current?.(false);
     return epoch.current;
   }
@@ -491,14 +510,14 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     try {
       const reply = workspaceContext ? await applyDetailWorkspaceImage(image, workspaceContext, work.controller.signal) : await applyFreeImageTranslation(image, work.controller.signal);
       if (!current(work)) return;
-      acknowledgeSave(image, image.source.workspaceTarget ? reply as DetailWorkspaceImageReply : undefined);
+      acknowledgeSave(image, image.source.workspaceTarget ? reply as DetailWorkspaceImageReply : undefined, image.source.workspaceTarget ? undefined : reply as FreeImageApplyReply);
     } catch (cause) {
       if (!current(work)) return;
       if (cause instanceof FreeImageApplyError && cause.uncertain) { setReadyRetry(false); setUncertain(true); setError(cause.message); }
       else { pendingSave.current = null; setReadyRetry(false); setUncertain(false); setError(cause instanceof Error ? cause.message : '이미지 적용을 완료하지 못했습니다.'); }
     } finally { finish(work); }
   }
-  function acknowledgeSave(image: FreeImageRendered, workspaceReply?: DetailWorkspaceImageReply) {
+  function acknowledgeSave(image: FreeImageRendered, workspaceReply?: DetailWorkspaceImageReply, productReply?: FreeImageApplyReply) {
     pendingSave.current = null; recoveredScope.current = null; setReadyRetry(false); setUncertain(false); resetRegions([]); setCrop(null); setCropMode(false); setCropGeneration(value => value + 1); setOptionImageIds([]); setRendered(null); setLoaded(null);
     const target = image.source.quotationTarget;
     if (image.source.workspaceTarget) {
@@ -506,8 +525,14 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       setNotice('작업 사진과 다시 편집할 문서만 상세 구성에 보관했습니다. 상품 이미지·견적서·기존 HTML은 유지됩니다.');
       liveControls.current.onWorkspaceSaved?.({ view: workspaceReply.view, workspace: workspaceReply.workspace, roles: workspaceReply.roles }); return;
     }
-    setNotice(target ? `선택 옵션의 ${roleNames[image.source.role]} ${target.slotIndex + 1}에 번역 이미지를 적용했습니다.`
-      : `${image.source.optionImages?.commonAssigned === false ? '선택한 개별 옵션의 대표 이미지에 적용했습니다. 공통 대표 이미지는 유지됩니다.' : `번역 이미지를 원본의 같은 위치에 적용했습니다.${image.optionImageIds?.length ? ` 선택한 옵션 ${image.optionImageIds.length}개의 대표 이미지에도 반영했습니다.` : ''}`} 원본 파일은 보관되며 다른 이미지와 견적서 직접 수정값은 유지됩니다.`);
+    const savedNotice = target ? `선택 옵션의 ${roleNames[image.source.role]} ${target.slotIndex + 1}에 번역 이미지를 적용했습니다.`
+      : `${image.source.optionImages?.commonAssigned === false ? '선택한 개별 옵션의 대표 이미지에 적용했습니다. 공통 대표 이미지는 유지됩니다.' : `번역 이미지를 원본의 같은 위치에 적용했습니다.${image.optionImageIds?.length ? ` 선택한 옵션 ${image.optionImageIds.length}개의 대표 이미지에도 반영했습니다.` : ''}`} 원본 파일은 보관되며 다른 이미지와 견적서 직접 수정값은 유지됩니다.`;
+    // The client already verified this exact applied source/result/clock. Keep
+    // only its notice through the matching parent refresh, never a save proof
+    // or permission to skip the normal version abort/reset/conflict handling.
+    if (productReply) acknowledgedSaveNotice.current = { fromVersion: version, productVersion: productReply.productVersion, key: productReply.key,
+      epoch: epoch.current, token: liveSaveNoticeScope.current.token, notice: savedNotice };
+    setNotice(savedNotice);
     onProductChanged?.();
   }
   async function recover() {
@@ -517,7 +542,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     try {
       const reply = workspaceContext ? await recoverDetailWorkspaceImage(image, workspaceContext, work.controller.signal) : await recoverFreeImageTranslation(image, work.controller.signal);
       if (!current(work)) return;
-      if (reply.applied) acknowledgeSave(image, image.source.workspaceTarget ? reply as DetailWorkspaceImageReply : undefined);
+      if (reply.applied) acknowledgeSave(image, image.source.workspaceTarget ? reply as DetailWorkspaceImageReply : undefined, image.source.workspaceTarget ? undefined : reply as FreeImageApplyReply);
       else { recoveredScope.current = editorKey; setUncertain(false); setReadyRetry(true); setNotice('이 미리보기는 아직 적용되지 않았습니다. 같은 미리보기를 다시 적용할 수 있습니다.'); }
     } catch (cause) { if (current(work)) { setUncertain(true); setReadyRetry(false); setError(cause instanceof Error ? cause.message : '이미지 저장 상태를 확인하지 못했습니다.'); } }
     finally { finish(work); }
