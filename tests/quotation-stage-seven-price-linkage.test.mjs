@@ -44,7 +44,10 @@ function renderedEditor(view){
  const react={useState(initial){const index=cursor++;if(!(index in states))states[index]=index===0?view:index===3?false:typeof initial==='function'?initial():initial;return[states[index],value=>states[index]=typeof value==='function'?value(states[index]):value];},useRef(initial){const index=refCursor++;return refs[index]??={current:initial};},useEffect(){},useCallback:fn=>fn,useId:()=> 'stage7-price'};
  const loadedForm=load('app/components/quotation-fields-editor.tsx',{react,document:{getElementById(id){focused.push(id);return{scrollIntoView(){},focus(){}};}}});
  const render=()=>{cursor=0;refCursor=0;const root=loadedForm.QuotationFieldsEditor({productId:'p'});return root.type(root.props);};
- const control=id=>nodes(render()).find(node=>node.type==='input'&&node.props.id==='stage7-price-'+id);
+ // Brand is the real suggestion-select component boundary; price inputs stay
+ // native text controls. Do not substitute a fake brand input for the form.
+ const control=id=>nodes(render()).find(node=>node.props.id==='stage7-price-'+id
+  &&(node.type==='input'||typeof node.type==='function'&&node.type.name==='QuotationBrandInput'));
  render();return{render,control,focused,get changes(){return states[1];},select(value){nodes(render()).find(node=>node.type==='select').props.onChange({target:{value}});}};
 }
 
@@ -57,7 +60,7 @@ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name
   assert.equal(target.ok,true);assert.equal(target.fieldId,'wire-'+input);assert.equal(target.optionId,'red');assert.ok(ui.control(target.fieldId));
   assert.equal(load('app/quotation-field-groups.ts').quotationFieldGroup(view.resolved.schema.fields.find(field=>field.id===target.fieldId),view.resolved.schema.fields),'가격 정보');
  }
- assert.ok(ui.control('wire-osrp'));assert.ok(ui.control('brand'));assert.equal(nodes(ui.render()).filter(node=>node.type==='input'&&/^stage7-price-(?:wire-(?:supplyPrice|salePrice|msrp|osrp))$/.test(node.props.id??'')).length,4);
+ assert.ok(ui.control('wire-osrp'));assert.ok(ui.control('brand'));assert.equal(ui.control('brand').type.name,'QuotationBrandInput');assert.equal(ui.control('brand').props.disabled,false);assert.equal(nodes(ui.render()).filter(node=>node.type==='input'&&/^stage7-price-(?:wire-(?:supplyPrice|salePrice|msrp|osrp))$/.test(node.props.id??'')).length,4);
  assert.equal(load('app/quotation-field-groups.ts').quotationFieldGroup(view.resolved.schema.fields.find(field=>field.id==='wire-osrp'),view.resolved.schema.fields),'가격 정보','independent official price remains distinct but belongs in the price subsection');
  assert.match(JSON.stringify(ui.render()),/이전 요약 가격/);assert.match(JSON.stringify(ui.render()),/150/);
  assert.equal(editor.quotationSectionProgress(view,[],'red').find(section=>section.id==='product').required,2);

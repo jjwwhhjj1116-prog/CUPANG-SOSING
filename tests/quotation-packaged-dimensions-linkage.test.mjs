@@ -59,12 +59,16 @@ async function fixture(company){
 for(const company of companies)test(`one common seller edit normalizes all six original XLSX rows and matches numeric option PATCH (${company.code})`,{skip:!fs.existsSync(originalPath)||!fs.existsSync(schemaPath)},async()=>{
  const f=await fixture(company);let ui;
  try{
+  // Stage seven displays the existing SEO/manual title read-only. Seed the
+  // historical compatible API value before mounting; this test edits only
+  // packaging and still checks that unrelated scalar text reaches all XLSX rows.
+  const scalar='한글 상품, × X 160x70x50';await f.save([{fieldKey:'title',optionId:null,value:scalar}]);
   const retained=()=>JSON.stringify(['product_options','product_content','collection_context','collection_results'].map(table=>f.h.sqlite.prepare('SELECT * FROM '+table).all())),before=retained(),view=await f.get(),definition=view.resolved.schema.fields.find(field=>field.id==='packagedDimensionsMm');
   assert.deepEqual(Array.from(definition.hubWire.path),['logisticsPage','skuUnitBoxDimension']);assert.equal(bound(definition),true);
   const rawSchema=JSON.parse(fs.readFileSync(schemaPath,'utf8'));assert.match(rawSchema.properties.logisticsPage.properties.skuUnitBoxDimension.description,/별표\(\*\)/);
   ui=quotationLabelFormUI({productId:f.product.id,load:f.h.load,request:(path,init={})=>f.h.route(path,{method:init.method??'GET',...(init.body?{body:JSON.parse(init.body)}:{})}),renderDocument:()=>assert.fail('measurement entry must not generate images')});await ui.idle();ui.selectOption('');
   ui.field('packagedWeightG').props.onChange({target:{value:'420'}});ui.field('packagedDimensionsMm').props.onChange({target:{value:' 160×70 X 50 '}});
-  const scalar='한글 상품, × X 160x70x50';ui.field('title').props.onChange({target:{value:scalar}});
+  assert.equal(ui.field('title').props.readOnly,true);
   assert.equal(ui.field('packagedDimensionsMm').props.value,'160*70*50');assert.equal(ui.field('title').props.value,scalar);await ui.click('견적 입력 저장');
   assert.equal(ui.view.overrides.common.packagedDimensionsMm,'160*70*50');assert.ok(ui.view.resolved.rows.filter(row=>row.included).every(row=>row.fields.packagedDimensionsMm.value==='160*70*50'&&row.fields.packagedDimensionsMm.validationIssues.length===0));assert.equal(retained(),before);
   const output=await f.workbookRows(),column=f.profile.mappings.find(mapping=>mapping.field==='packagedDimensionsMm').column,titleColumn=f.profile.mappings.find(mapping=>mapping.field==='title').column;

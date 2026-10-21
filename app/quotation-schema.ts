@@ -44,7 +44,7 @@ export type QuotationField = {
   type: 'text' | 'textarea' | 'number' | 'select' | 'images';
   required: boolean; visibility: 'common' | 'exposed' | 'hidden';
   choices?: { value: string; label: string }[]; unit?: string; minLength?: number; maxLength?: number;
-  reviewRequired?: boolean; readOnly?: boolean; help?: string;
+  reviewRequired?: boolean; readOnly?: boolean; help?: string; example?: string;
   integer?: boolean; min?: number; max?: number; maxItems?: number;
   exclusiveMinimum?: number; exclusiveMaximum?: number; multipleOf?: number;
   /** Numeric enums use a select control but must validate and export as numbers. */
@@ -104,7 +104,7 @@ const field = (id: string, section: QuotationSection, label: string, extra: Fiel
 const choices = (...values: string[]) => values.map(value => ({ value, label: value }));
 const imageHelp = '이 상품에 저장된 비공개 이미지의 참조입니다. Supplier Hub에서 접근할 공개 URL이 만들어졌다는 의미는 아닙니다.';
 const commonFields: QuotationField[] = [
-  field('title', 'start', '상품명', { required: true, maxLength: 500, help: '저장한 SEO 상품명을 우선 사용합니다. 수정값은 견적서에만 적용됩니다.' }),
+  field('title', 'start', '상품명', { required: true, maxLength: 500, help: '상품명은 SEO 설정에서 수정해주세요.' }),
   field('category', 'start', '카테고리', { required: true, readOnly: true, reviewRequired: true, help: '선택한 분류입니다. 상품과 맞는지는 별도 확인이 필요합니다.' }),
   field('model', 'product', '모델명', { required: true, maxLength: 50, reviewRequired: true, help: '확인된 모델명을 사용합니다. 상품명을 임의로 잘라 모델명으로 만들지 않습니다.' }),
   field('brand', 'product', '브랜드', { required: true, maxLength: 500, reviewRequired: true }),

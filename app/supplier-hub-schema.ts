@@ -179,6 +179,12 @@ export function compileHubQuotationSchema(snapshot:HubSchemaSnapshot,base:readon
     // separate from its empty scalar placeholder (Couplus explicitly skips it).
     const documentControl=!wire.name&&JSON.stringify(wire.path)===JSON.stringify(['legalPage','adCert'])&&node.type==='string'
       &&!['minLength','pattern','format','enum','dropdown'].some(key=>Object.hasOwn(node,key));
+    // Couplus exposes these named-attribute examples as a tooltip, never as
+    // the editable value or a default. Its lookup uses the first truthy source.
+    const exampleCandidate=wire.name&&['exposed','hidden'].includes(visibility)
+      ?node.example||(Array.isArray(node.examples)?node.examples[0]:undefined)||node.default||(Array.isArray(node.enum)?node.enum[0]:undefined):undefined;
+    const example=exampleCandidate&&(safeText(exampleCandidate,2000)||typeof exampleCandidate==='number'&&Number.isFinite(exampleCandidate)||typeof exampleCandidate==='boolean')
+      ?String(exampleCandidate):undefined;
     const result:LiveQuotationField={id,section,label,type:sizeChartImages||canonical?.type==='images'?'images':choices?'select':numeric?'number':canonical?.type==='textarea'?'textarea':'text',required:required&&!optionalNullable&&!documentControl,visibility,reviewRequired:true,hubWire:wire,
       ...(canonical?.readOnly?{readOnly:true}:{}),...(canonical?.contentField?{contentField:canonical.contentField}:{}),
       ...(pathBinding&&(canonical||sizeChartImages)?{hubInput:pathBinding,...(canonical?.unit?{unit:canonical.unit}:{})}:{}),
@@ -187,7 +193,10 @@ export function compileHubQuotationSchema(snapshot:HubSchemaSnapshot,base:readon
       maxLength:sizeChartImages?2564:canonical?.type==='images'||pathBinding&&canonical?canonical?.maxLength??2000:2000,
       ...(choices?{choices}:{}),...(numeric?{integer:types.includes('integer')&&!types.includes('number'),...(choices?{numericValue:true as const}:{})}:{}),...(draftDefault!==undefined?{draftDefault}:{}),
       ...(numericText&&canonical?{numericText:true as const,integer:canonical.integer,min:canonical.min,max:canonical.max}:{}),
-      help:'선택한 회사의 Supplier Hub 상세 양식에서 가져온 항목입니다. 기본값과 상품정보를 확인·수정해주세요.'};
+      // Descriptions are field-specific form annotations, not product values.
+      // Keep them as plain text; the editor must never execute schema HTML.
+      ...(safeText(node.description,HUB_SCHEMA_LIMIT)&&node.description.trim()?{help:node.description}:{}),
+      ...(example?{example}:{})};
     for(const key of ['minLength','maxLength'] as const)if(Object.hasOwn(node,key)){
       const limit=node[key];
       if(typeof limit!=='number'||!Number.isSafeInteger(limit)||limit<0||limit>150000)issue(path);

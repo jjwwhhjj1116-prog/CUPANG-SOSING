@@ -16,7 +16,7 @@ const object = (value: unknown): value is Node => Boolean(value && typeof value 
 const wireKey = (wire: HubWireField) => JSON.stringify([wire.path, wire.nameKey ?? null, wire.valueKey ?? null, wire.name ?? null]);
 function conflict(message: string, code: string): never { throw new SingleProjectionError(message, code); }
 const numericId = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 || typeof value === 'string' && /^\d{1,20}$/.test(value);
-const annotations = new Set(['$id', '$schema', 'name', 'level', 'parent', 'title', 'description', 'examples', 'requirement', 'hidden', 'prefilled', 'hint', 'metadata',
+const annotations = new Set(['$id', '$schema', 'name', 'level', 'parent', 'title', 'description', 'example', 'examples', 'requirement', 'hidden', 'prefilled', 'hint', 'metadata',
   'attributeUnit', 'attributeTypeId', 'attributeUnitEnum', 'exposed', 'mandatory', 'attributeDataType', 'attributeInputType', 'attributeUnitGroup', 'inputGuide', 'inputHint', 'bundleGroup',
   'noticeName', 'noticeCategoryId', 'noticeCategoryTemplateId']);
 const scalarRules = new Set(['type', 'enum', 'dropdown', 'default', 'minLength', 'maxLength', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf', 'readOnly']);

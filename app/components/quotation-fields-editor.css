@@ -91,3 +91,26 @@
 .quotation-apply-all{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:#334155;white-space:nowrap}.quotation-apply-all input{accent-color:#2bbadc;width:18px;height:18px}
 
 .quotation-field-group{grid-column:1/-1;margin:16px 0 0;padding:0 0 12px;border-bottom:1px solid #dfe4ed;color:#17245c;font-size:14px;font-weight:700}
+
+.quotation-fields-context { padding: 10px 14px; border: 1px solid #e0e6ef; border-radius: 8px; color: #526079; font-size: 12px; }
+.quotation-fields-context>summary, .quotation-field-diagnostics>summary { cursor: pointer; color: #526079; }
+.quotation-fields-context[open]>:not(summary) { margin-top: 12px; }
+.quotation-fields-context .quotation-fields-category { border: 0; padding: 0; }
+.quotation-field-diagnostics { font-size: 11px; color: #64748b; }
+.quotation-field-diagnostics>summary { width: fit-content; }
+.quotation-field-diagnostics[open]>:not(summary) { margin-top: 8px; }
+.quotation-field-diagnostics .quotation-field-footer>div { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 10px; }
+.quotation-schema-description, .quotation-field-issue { white-space: pre-line; overflow-wrap: anywhere; }
+.quotation-ai-tools { scroll-margin-top: 90px; }
+.quotation-ai-tools>p { margin: 12px 0; color: #526079; font-size: 12px; }
+.quotation-fields-actions { justify-content: flex-end; }
+.quotation-fields-actions .quotation-apply-all { margin-right: auto; }
+.quotation-field-example { display: inline-grid; place-items: center; width: 15px; height: 15px; border: 1px solid #8290a6; border-radius: 50%; margin-right: auto; color: #64748b; font-size: 10px; cursor: help; }
+.quotation-field-example:focus { outline: 2px solid #a6c1f9; outline-offset: 2px; }
+.quotation-value-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.quotation-named-pair { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 10px; align-items: start; }
+.quotation-named-pair-name { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.quotation-named-pair-name input { flex: 1; }
+.quotation-named-pair-name>b { color: #ae314a; font-size: 12px; }
+.quotation-named-pair-name .quotation-field-example { flex: 0 0 15px; margin: 0; }
+@media (max-width: 420px) { .quotation-named-pair { grid-template-columns: minmax(0, 1fr); gap: 7px; } }

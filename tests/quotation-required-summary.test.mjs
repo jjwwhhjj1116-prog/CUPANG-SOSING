@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import {createRequire} from 'node:module';
+import {fileURLToPath} from 'node:url';
 
 const requireNative=createRequire(import.meta.url),cache=new Map();
 function load(file,replacements={}){
@@ -15,6 +16,7 @@ function load(file,replacements={}){
   if(Object.hasOwn(replacements,name))return replacements[name];
   if(name.endsWith('.css'))return{};
   if(name.startsWith('@/app/')){const path=name.slice(2);return load(path+(fs.existsSync(new URL('../'+path+'.ts',import.meta.url))?'.ts':'.tsx'));}
+  if(name.endsWith('.mjs')&&(name.startsWith('../')||name.startsWith('./')))return requireNative(fileURLToPath(new URL(name,new URL('../'+file,import.meta.url))));
   if(name==='react'||name==='react/jsx-runtime')return requireNative(name);
   throw Error('Unexpected dependency '+name);
  }});
@@ -132,9 +134,14 @@ test('missing-field navigation focuses the remaining SKU after a removed selecti
  const render=()=>{stateIndex=0;refIndex=0;effectIndex=0;callbackIndex=0;const root=loaded.QuotationFieldsEditor({productId:'p'}),tree=root.type(root.props);committed=nodes(tree);queued.splice(0).forEach(run=>run());return tree;};
  const settle=async()=>{for(let index=0;index<5;index++){render();await new Promise(resolve=>setImmediate(resolve));}return render();};
  const select=value=>committed.find(node=>node.type==='select').props.onChange({target:{value}});
+ const editBrand=value=>{
+  const control=committed.find(node=>node.props?.id==='required-navigation-brand');assert.ok(control,'current brand control is mounted');
+  if(control.type==='input')control.props.onChange({target:{value}});
+  else{assert.equal(control.type.name,'QuotationBrandInput');control.props.onChange(value);}
+ };
  try{
   render();await settle();select('removed');render();
-  committed.find(node=>node.type==='input'&&node.props.id==='required-navigation-brand').props.onChange({target:{value:'retained removed-SKU draft'}});render();
+  editBrand('retained removed-SKU draft');render();
   responseView=clone(responseView);responseView.resolved.rows=responseView.resolved.rows.filter(row=>row.optionId!=='removed');responseView.automatic.rows=responseView.automatic.rows.filter(row=>row.optionId!=='removed');
   committed.find(node=>node.type==='button'&&node.props.children==='기본값 다시 반영').props.onClick();await settle();
   assert.equal(committed.find(node=>node.type==='select').props.value,'removed');assert.equal(committed.filter(node=>node.type==='fieldset').length,0);
@@ -146,7 +153,7 @@ test('missing-field navigation focuses the remaining SKU after a removed selecti
   assert.deepEqual(clone(states[1]),[{fieldKey:'brand',optionId:'removed',value:'retained removed-SKU draft'}]);
   assert.ok(states[2].some(conflict=>conflict.unavailable));
   assert.equal(committed.find(node=>node.type==='button'&&String(node.props.children).startsWith('견적 입력 저장')).props.disabled,true,'navigation cannot bypass the retained conflict');
-  committed.find(node=>node.type==='input'&&node.props.id==='required-navigation-brand').props.onChange({target:{value:'remaining draft'}});render();
+  editBrand('remaining draft');render();
   select('');render();
   assert.equal(focuses.length,1,'the pending target is consumed rather than repeated on later renders');
   const mountedOverview=committed.find(node=>node.type===loaded.QuotationOptionOverview),mountedNavigation=nodes(loaded.QuotationOptionOverview(mountedOverview.props)).find(node=>node.type==='button'&&[].concat(node.props.children).join('')==='live_weight 입력하기');
