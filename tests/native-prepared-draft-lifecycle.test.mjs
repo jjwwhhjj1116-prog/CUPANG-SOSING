@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {nativeReceiverReceiptFixture,companies} from './helpers/native-product-receiver-receipt-flow.mjs';
 import {singleDocumentFixture,clone} from './helpers/supplier-hub-single-document.mjs';
-import {createSupplierHubDocumentReceiver,singleDocumentIdentity,SingleDocumentError,SINGLE_DOCUMENT_FORMAT} from '../extensions/supplier-hub/single-document.mjs';
+import {createSupplierHubDocumentReceiver,singleDocumentIdentity,SingleDocumentError,readPreparedDocumentPreviewCheckpoint,SINGLE_DOCUMENT_FORMAT} from '../extensions/supplier-hub/single-document.mjs';
 import {createProductDocumentDraftReceiver,productDocumentIdentity} from '../extensions/supplier-hub/product-document-receiver.mjs';
 import {PRODUCT_DOCUMENT_LIVE_VERIFIED} from '../extensions/supplier-hub/product-document-dispatch.mjs';
 import {SINGLE_DOCUMENT_LIVE_VERIFIED} from '../extensions/supplier-hub/single-dispatch.mjs';
@@ -84,7 +84,7 @@ test('a forged lifecycle marker, old full checkpoint or missing current human pr
 test('public lifecycle dispatch selects only native construction, preserves original confirmation and cannot enable ordinary full operations',async()=>{
  const f=await nativeReceiverReceiptFixture();try{const expired=createProductDocumentDraftReceiver({adapter:f.adapter,store:f.storage.store,now:()=>f.packet.createdAt+PRODUCT_DOCUMENT_REQUEST_TTL+1});await assert.rejects(expired.reviewPreparedDraft(f.packet,f.sender),{code:'EXPIRED'});
   const source=fs.readFileSync(new URL('../extensions/supplier-hub/product-document-dispatch.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace(/export /g,'');
-  for(const native of [false,true]){const calls=[],sandbox={productDocumentIdentity,SingleDocumentError,createVerifiedProductDocumentBrowserAdapter:async()=>({nativeAssets:native,sourcePlanSha256:f.context.identity.fingerprint,adapter:{dispose(){calls.push('dispose');}}}),createProductDocumentStore:()=>({}),createProductDocumentReceiver:()=>assert.fail('General receiver remains gated'),
+  for(const native of [false,true]){const calls=[],sandbox={productDocumentIdentity,SingleDocumentError,readPreparedDocumentPreviewCheckpoint,createVerifiedProductDocumentBrowserAdapter:async()=>({nativeAssets:native,sourcePlanSha256:f.context.identity.fingerprint,adapter:{dispose(){calls.push('dispose');}}}),createProductDocumentStore:()=>({get:async()=>null}),createProductDocumentReceiver:()=>assert.fail('General receiver remains gated'),
    createProductDocumentDraftReceiver:()=>Object.fromEntries(['reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].map(action=>[action,async(_packet,_sender,confirmation)=>{calls.push([action,confirmation]);return{preparedLifecycle:true,state:'awaiting-stage-consent'};}]))};
    const dispatch=vm.runInNewContext(source+'\ndispatchProductDocument',sandbox);for(const action of ['reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft']){const confirmation=action==='confirmPreparedDraft'?{challengeId:'exact-human-approval'}:undefined,message={type:'YOOFAM_PRODUCT_DOCUMENT_REQUEST',action,packet:f.packet,...(confirmation?{confirmation}:{})};
     if(native){await dispatch(message,f.sender);const actual=calls.findLast(value=>Array.isArray(value));assert.equal(actual[0],action);assert.equal(actual[1],confirmation);}else await assert.rejects(dispatch(message,f.sender),{code:'PRODUCT_DRAFT_NATIVE_SOURCE_REQUIRED'});}

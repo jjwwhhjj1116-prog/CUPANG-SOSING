@@ -35,12 +35,18 @@ export function readProductDocumentPending(review:ProductDocumentPendingScope):P
 }
 export function productDocumentRejectionKey(review:ProductDocumentPendingScope){return productDocumentPendingKey(review).replace('yoofam-product-document-pending:','yoofam-product-document-rejections:');}
 const proofKeys=['evidence','operationId','step','validatedSteps','checkpointSequence','rejectedAt','submitted','consented'];
+function validationErrorsValid(value:unknown){
+ return Array.isArray(value)&&value.length<=200&&Object.keys(value).length===value.length&&Object.keys(value).every((key,index)=>key===String(index))
+  &&value.every(error=>error&&typeof error==='object'&&!Array.isArray(error)&&Object.keys(error).length===2&&Object.hasOwn(error,'columnName')&&Object.hasOwn(error,'message')
+   &&typeof error.columnName==='string'&&error.columnName.length<=500&&typeof error.message==='string'&&error.message.length<=2000);
+}
 function rejectionProof(value:unknown,pending:ProductDocumentPending):value is ProductValidationRejection{
- if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).length!==proofKeys.length||!proofKeys.every(key=>Object.hasOwn(value,key)))return false;
+ if(!value||typeof value!=='object'||Array.isArray(value)||!proofKeys.every(key=>Object.hasOwn(value,key))||Object.keys(value).some(key=>!proofKeys.includes(key)&&key!=='errors'))return false;
  const proof=value as ProductValidationRejection;
  return proof.evidence==='document-validation-rejection'&&[2,3,4,5].includes(proof.step)&&proof.operationId===pending.requestId+':validate:'+proof.step
   &&JSON.stringify(proof.validatedSteps)===JSON.stringify([2,3,4,5].slice(0,proof.step-2))&&Number.isSafeInteger(proof.checkpointSequence)&&proof.checkpointSequence>=1
-  &&Number.isSafeInteger(proof.rejectedAt)&&proof.rejectedAt>=pending.createdAt&&proof.rejectedAt<=Date.now()+5000&&proof.submitted===false&&proof.consented===false;
+  &&Number.isSafeInteger(proof.rejectedAt)&&proof.rejectedAt>=pending.createdAt&&proof.rejectedAt<=Date.now()+5000&&proof.submitted===false&&proof.consented===false
+  &&(!Object.hasOwn(proof,'errors')||validationErrorsValid(proof.errors));
 }
 const documentId=(value:unknown)=>typeof value==='number'&&Number.isSafeInteger(value)&&value>0||typeof value==='string'&&value===value.trim()&&value.length>0&&value.length<=200&&!/[\u0000-\u001f]|\.\.\.|…/.test(value);
 function receiptRejectionProof(value:unknown,pending:ProductDocumentPending):value is ProductReceiptRejection{
@@ -59,7 +65,7 @@ export function readProductDocumentRejections(review:ProductDocumentPendingScope
   const pending=parsePending(item.pending,review),validation=Object.hasOwn(item,'validationRejection'),proof=validation?item.validationRejection:item.receiptRejection;
   if(!documentId(item.docId)||!(validation?rejectionProof(proof,pending):receiptRejectionProof(proof,pending)))return fail();
   const identity=JSON.stringify([pending.reviewDigest,pending.originalBodySha256,pending.preparedBodySha256]);if(seen.has(identity))return fail();seen.add(identity);
-  if(validation)Object.freeze(proof.validatedSteps);Object.freeze(proof);return Object.freeze({pending,docId:item.docId,...(validation?{validationRejection:proof}:{receiptRejection:proof})});
+  if(validation){Object.freeze(proof.validatedSteps);if(proof.errors){proof.errors.forEach(Object.freeze);Object.freeze(proof.errors);}}Object.freeze(proof);return Object.freeze({pending,docId:item.docId,...(validation?{validationRejection:proof}:{receiptRejection:proof})});
  })) as unknown as ProductDocumentRejection[];
 }
 export function assertProductDocumentNotRejected(review:SupplierHubProductDocumentReview){
@@ -124,7 +130,11 @@ export async function clearValidationRejectedProductDocumentPending(review:Suppl
   ||!rejectionProof(proof,expected))return fail();
  assertProductDocumentPending(review,expected,session);
  return locked(review,signal,async()=>{if(!await canRemove()||signal.aborted)return false;assertProductDocumentPending(review,expected,session);
-  rememberRejection(review,{pending:expected,docId:observation.docId!,validationRejection:proof});
+  // Native diagnostics remain in the extension's immutable checkpoint and the
+  // current validated response. The small rejection ledger retains only its
+  // identity proof, so long field messages cannot exhaust the reservation log.
+  const identityProof=Object.fromEntries(proofKeys.map(key=>[key,proof[key as keyof ProductValidationRejection]])) as ProductValidationRejection;
+  rememberRejection(review,{pending:expected,docId:observation.docId!,validationRejection:identityProof});
   if(signal.aborted)return false;assertProductDocumentPending(review,expected,session);
   storage().removeItem(productDocumentPendingKey(review));if(readProductDocumentPending(review)!==null)return fail();return true;});
 }

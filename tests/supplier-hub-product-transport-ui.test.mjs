@@ -84,7 +84,7 @@ test('first qualification cannot replace a different prepared checkpoint or surv
 
 test('older preview exposes only the direct integrated-extension download and no new draft action',async()=>{
  const h=await fixture();try{await h.idle();await h.click(open);assert.equal(h.button(prepareDraft),undefined);assert.equal(h.button(start),undefined);
-  const link=nodes(h.render()).find(node=>node.type==='a'&&node.props.download!==undefined);assert.equal(link.props.href,'/downloads/yoofam-plus-supplier-hub-extension-2.1.18.zip');assert.ok(h.f.calls.every(call=>call.method==='GET'));assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview']);
+  const link=nodes(h.render()).find(node=>node.type==='a'&&node.props.download!==undefined);assert.equal(link.props.href,'/downloads/yoofam-plus-supplier-hub-extension-2.1.19.zip');assert.ok(h.f.calls.every(call=>call.method==='GET'));assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview']);
  }finally{h.close();}
 });
 for(const company of SINGLE_COMPANIES)test(`${company.code}: explicit new draft owns one reservation, reports actual document validation and unlocks only outer close`,async()=>{
@@ -366,7 +366,13 @@ for(const company of SINGLE_COMPANIES)test(company.name+': actual receiver step-
   next.f.clock.now=original.createdAt+240001;nativeReceiver.now=next.f.clock.now;nativeReceiver.remount();await next.idle();assert.equal(next.f.sent.length,0);
   next.f.bridge=async payload=>payload.action==='preview'?{...next.f.preview(),requestId:payload.packet.requestId}:nativeReceiver.receiver.recover(payload.packet,SINGLE_SENDER);
   await next.click('이전 문서 전송 자료 확인');await next.click(recover);assert.ok(next.button(release));assert.equal(next.button('현재 문서 단계 계속 확인'),undefined);assert.equal(stored.size,1,'reading rejection alone never releases reservation');
+  assert.match(next.text(),/수정할 입력 항목/);assert.match(next.text(),/supplyPrice/);assert.match(next.text(),/합성 단계 검증 반려/);
+  assert.equal(nodes(next.render()).filter(node=>node.type==='caption'&&node.props.children==='Supplier Hub 단계 검증 결과').length,1);
   const held=next.button(release).props.onClick;await next.click(release);assert.equal(stored.size,1,'compact rejected identity survives release');assert.ok(next.button(open));assert.equal(next.button(start),undefined);assert.equal(next.locks.at(-1),false);
+  assert.match(next.text(),/supplyPrice/);assert.match(next.text(),/합성 단계 검증 반려/,'explicit release keeps current review diagnostics readable');
+  assert.equal(JSON.stringify([...stored.values()]).includes('합성 단계 검증 반려'),false,'large native diagnostics never replace compact immutable rejection proof');
+  const originalProps=next.props();next.render({...originalProps,review:{...originalProps.review,identity:{...originalProps.review.identity,ownerId:'other-owner'}}});
+  assert.doesNotMatch(next.text(),/합성 단계 검증 반려/);next.render(originalProps);assert.doesNotMatch(next.text(),/합성 단계 검증 반려/,'review ABA cannot revive another view report');
   held();next.flush();assert.deepEqual(plain(next.f.sent.map(row=>row.payload.action)),['preview','recover','recover']);
   assert.ok(next.f.sent.every(row=>row.payload.packet.requestId===original.requestId));assert.equal(nativeReceiver.creates,1);assert.equal(nativeReceiver.updates,1);assert.equal(nativeReceiver.validations,1);assert.equal(next.f.calls.some(row=>row.method==='POST'),false);nativeReceiver.assertPreserved();
  }finally{next.close();}
@@ -385,6 +391,15 @@ for(const company of SINGLE_COMPANIES)test(company.name+': actual receiver step-
   await corrected.click(start);assert.equal(secondReceiver.creates,1,corrected.text());assert.equal(nativeReceiver.creates,1);assert.equal(secondReceiver.validations,1);assert.equal(stored.size,2,'prior rejection and new pending are both durable');secondReceiver.assertPreserved();
   cases.push({name:'actual validation rejection recovery '+company.code,step:2,lostAck:true,remount:true,explicitRecoveries:2,correctedBody:true,oldOperationCreates:1,syntheticCorrectedCreates:1,realProductWrites:0,hubWrites:0});
  }finally{corrected.close();nativeReceiver.close();}
+});
+
+test('legacy validation without diagnostics stays explicit and never invents an input error',async()=>{
+ const h=await fixture(SINGLE_COMPANIES[0],{verified:true});try{
+  await h.idle();await h.click(open);h.f.bridge=async payload=>validationRejected(h.f,payload.packet.requestId);await h.click(start);
+  assert.match(h.text(),/수정할 입력 항목/);assert.match(h.text(),/오류 상세가 제공되지 않았습니다/);
+  assert.equal(nodes(h.render()).some(node=>node.type==='caption'&&node.props.children==='Supplier Hub 단계 검증 결과'),false);
+  assert.equal(h.f.sent.length,2);assert.equal(h.f.calls.some(row=>row.method==='POST'),false);
+ }finally{h.close();}
 });
 
 test('validation rejection release rejects missing/altered proof, uncertain/error ACK and changed document or account',async()=>{

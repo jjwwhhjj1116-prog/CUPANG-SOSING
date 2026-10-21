@@ -3,9 +3,10 @@ import {useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
 import type {SupplierHubProductDocumentReview} from '@/app/supplier-hub-product-document';
 import {createProductDocumentPacket,PRODUCT_DOCUMENT_REQUEST_TTL} from '../../extensions/supplier-hub/product-document.mjs';
 import {previewProductDocument,runProductDocument,runProductDocumentDraft,runPreparedProductDocument,preparedReceiptObservation,readNativeReceiptHistory,saveProductReceiptObservation,
-  type ProductDocumentSession,type ProductDocumentState,type ProductDraftAction,type PreparedDocumentAction,ProductDocumentBridgeError} from '@/app/supplier-hub-product-client';
+  type ProductDocumentSession,type ProductDocumentState,type ProductDraftAction,type PreparedDocumentAction,type ProductValidationRejection,ProductDocumentBridgeError} from '@/app/supplier-hub-product-client';
 import {singleConsentConfirmation,verifySingleDocumentObservation,type SingleDocumentAction} from '@/app/supplier-hub-single-client';
 import type {NativeReceiptRecord} from '@/app/supplier-hub-product-receipt';
+import {productReceiptCanonical} from '@/app/supplier-hub-product-receipt';
 import {SupplierHubRejectionDetails} from '@/app/components/supplier-hub-rejection-details';
 import {SupplierHubNativeRegistration} from '@/app/components/supplier-hub-native-registration';
 import {readProductDocumentPending,productDocumentPendingKey,productDocumentPendingCurrent,assertProductDocumentPending,claimProductDocumentPending,
@@ -27,6 +28,7 @@ export function SupplierHubProductTransport(props:Props){
   const [intent,setIntent]=useState<ProductDocumentPending|null>(null),[intentReady,setIntentReady]=useState(false),[intentError,setIntentError]=useState('');
   const [draftMode,setDraftMode]=useState(false);
   const reviewToken=useMemo(()=>({review}),[review]),reviewEpoch=useRef<typeof reviewToken|null>(reviewToken);
+  const [releasedValidation,setReleasedValidation]=useState<{token:object;docId:string|number;rejection:ProductValidationRejection}|null>(null);
   useLayoutEffect(()=>{reviewEpoch.current=reviewToken;return()=>{if(reviewEpoch.current===reviewToken)reviewEpoch.current=null;};},[reviewToken]);
   const current=useRef({props,mounted:true,session,state,uncertain,expired,approved,unsaved,intent,intentReady,intentError,draftMode,error}),pending=useRef<AbortController|null>(null),historyPending=useRef<AbortController|null>(null);
   useLayoutEffect(()=>{current.current={props,mounted:true,session,state,uncertain,expired,approved,unsaved,intent,intentReady,intentError,draftMode,error};});
@@ -130,6 +132,7 @@ export function SupplierHubProductTransport(props:Props){
         await fresh(task);return active();
       });
       if(!removed||!active())return;
+      setReleasedValidation({token:reviewToken,docId:original.docId!,rejection:original.validationRejection!});
       current.current.intent=null;current.current.session=null;current.current.state=null;current.current.approved={};current.current.expired=false;current.current.intentError='';current.current.draftMode=false;setDraftMode(false);
       setIntent(null);setSession(null);setState(null);setApproved({});setExpired(false);setIntentError('');
       setError('제출 전 단계 검증 반려를 확인했습니다. 상품·견적서를 수정한 뒤 전체 전송 자료를 다시 확인해주세요.');
@@ -240,15 +243,33 @@ export function SupplierHubProductTransport(props:Props){
   const challenge=state?.challenge,terminal=Boolean(state&&['pending','accepted','rejected','validation-rejected','scope-blocked'].includes(state.state));
   const preparedFlow=Boolean(session?.preview.preparedLifecycleAvailable&&draftMode&&state?.preparedLifecycle);
   const canConfirm=Boolean((preparedFlow||session?.preview.liveVerified&&!draftMode&&!state?.draftOnly)&&challenge&&!error&&!expired&&!uncertain&&challenge.items.filter(item=>item.required).every(item=>approved[item.key]));
+  const sameReview=Boolean(session&&session.packet.review.reviewDigest===review.reviewDigest
+    &&session.packet.review.originalBodySha256===review.originalBodySha256&&session.packet.review.preparedBodySha256===review.preparedBodySha256
+    &&productReceiptCanonical(session.packet.review.identity)===productReceiptCanonical(review.identity)&&productReceiptCanonical(session.packet.review.members)===productReceiptCanonical(review.members));
+  // Native diagnostics are read-only. They never select fields, alter input,
+  // accept terms or retry a submission. A released report stays visible only
+  // in the exact current review; a new source/account/review cannot inherit it.
+  const validationReport=sameReview&&state?.state==='validation-rejected'&&state.validationRejection&&state.docId!==null&&!uncertain
+    ?{docId:state.docId,rejection:state.validationRejection}
+    :!session&&releasedValidation?.token===reviewToken?releasedValidation:null;
   return <section aria-label="전체 상품 견적 전송" aria-busy={busy||!intentReady}>
     <div className="quote-actions"><button type="button" className="btn primary" disabled={disabled||busy||!intentReady||Boolean(intentError)||Boolean(session)} onClick={()=>void connect()}>{intent?'이전 문서 전송 자료 확인':'전체 옵션 전송 자료 확인'}</button>
       {session&&!state&&!uncertain&&!unsaved&&<button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>{if(!canEnter()||current.current.session!==session)return;current.current.session=null;setSession(null);setError('');}}>전송 자료 확인 닫기</button>}</div>
     {error&&<p role="alert">{error}</p>}
     {intentError&&<p role="alert">{intentError}</p>}
+    {validationReport&&<section aria-label="제출 전 검증 오류" className="panel-stack">
+      <h5>수정할 입력 항목</h5>
+      <p>문서 {String(validationReport.docId)} · 검증 {validationReport.rejection.step}단계 · 미제출</p>
+      {validationReport.rejection.errors?.length?<div className="quotation-fields-bulk-table"><table>
+        <caption>Supplier Hub 단계 검증 결과</caption><thead><tr><th scope="col">항목</th><th scope="col">수정이 필요한 이유</th></tr></thead>
+        <tbody>{validationReport.rejection.errors.map((item,index)=><tr key={index}><td>{item.columnName||'항목명 미제공'}</td><td style={{whiteSpace:'pre-wrap'}}>{item.message||'오류 설명 미제공'}</td></tr>)}</tbody>
+      </table></div>:<p>이 문서의 단계 검증 오류 상세가 제공되지 않았습니다. Supplier Hub에서 확인해주세요.</p>}
+      <p>오류 내용을 확인하고 상품·견적서를 수정해주세요. 수정한 내용은 다시 검토한 뒤 전송합니다.</p>
+    </section>}
     {intent&&!session&&<p role="status">이 상품의 이전 전송 요청이 보관되어 있습니다. 같은 요청의 저장 결과만 확인하며 새 등록을 시작하지 않습니다.</p>}
     {session&&<p>회사 {review.identity.company.name} · 포함 옵션 {session.packet.review.members.length}개 · 견적 문서 1개 · 전체 본문 대조 완료</p>}
     {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&!intent&&!state?.preparedLifecycle&&<p role="status">전체 문서의 실제 접수 연결을 검수 중입니다. 현재 상품은 전송하지 않았습니다.</p>}
-    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.18.zip" download>통합 확장 2.1.18 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
+    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.19.zip" download>통합 확장 2.1.19 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
     {session?.preview.draftPreparationAvailable===true&&!state?.preparedLifecycle&&<section aria-label="새 견적 초안 준비">
       <p>로그인한 Supplier Hub에 새 견적 초안 한 개를 만들고 저장한 이미지·본문과 단계 검증을 확인합니다. 약관 동의와 최종 제출은 진행하지 않습니다.</p>
       {!state&&!uncertain&&!intent&&<button type="button" className="btn primary" disabled={disabled||busy||Boolean(intentError)} onClick={()=>void operateDraft('prepareDraft',session)}>새 견적 초안 만들기 · 제출 안 함</button>}

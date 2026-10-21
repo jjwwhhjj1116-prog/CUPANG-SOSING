@@ -17,7 +17,12 @@ export class ProductDocumentBridgeError extends Error{constructor(message:string
 export type ProductDocumentPreview={format:string;requestId:string;identity:ProductReceiptIdentity;identityDigest:string;packetDigest:string;productId:string;fingerprint:string;
   members:ProductReceiptIdentity['members'];reviewDigest:string;preparedBodySha256:string;originalBodySha256:string;liveVerified:boolean;remoteWrites:false;registered:false;draftPreparationAvailable?:boolean;preparedLifecycleAvailable?:boolean};
 export type ProductDocumentSession={packet:ProductDocumentPacket;preview:ProductDocumentPreview;packetDigest:string;origin:string};
-export type ProductValidationRejection={evidence:'document-validation-rejection';operationId:string;step:number;validatedSteps:number[];checkpointSequence:number;rejectedAt:number;submitted:false;consented:false};
+export type ProductValidationError={columnName:string;message:string};
+export type ProductValidationRejection={evidence:'document-validation-rejection';operationId:string;step:number;validatedSteps:number[];checkpointSequence:number;rejectedAt:number;submitted:false;consented:false;errors?:ProductValidationError[]};
+export function productValidationErrorsValid(value:unknown):value is ProductValidationError[]{
+  return Array.isArray(value)&&value.length<=200&&Object.keys(value).length===value.length&&Object.keys(value).every((key,index)=>key===String(index))
+    &&value.every(error=>exact(error,['columnName','message'])&&typeof error.columnName==='string'&&error.columnName.length<=500&&typeof error.message==='string'&&error.message.length<=2000);
+}
 export type ProductDraftProof={evidence:'document-draft-preparation';validatedSteps:number[];checkpointSequence:number;observedAt:number;submitted:false;consented:false};
 export type PreparedLifecycleProof={evidence:'native-prepared-draft-lifecycle';preparedCheckpointSequence:number;qualifiedCheckpointSequence:number;checkpointSequence:number;qualifiedAt:number;observedAt:number;validatedSteps:number[];consentRequested:boolean;submitRequested:boolean};
 export type ProductDocumentState=SingleDocumentState&{duplicate?:boolean;recovered?:boolean;validationRejection?:ProductValidationRejection;draftOnly?:true;draftProof?:ProductDraftProof;preparedLifecycle?:true;lifecycleProof?:PreparedLifecycleProof};
@@ -105,11 +110,12 @@ async function verifyProductDocumentState(value:unknown,session:ProductDocumentS
     else if(result.challenge!==undefined)fail();
     if(result.state==='validation-rejected'){
       const rejection=result.validationRejection;
-      if(!exact(rejection,['evidence','operationId','step','validatedSteps','checkpointSequence','rejectedAt','submitted','consented'])||rejection.evidence!=='document-validation-rejection'
+      if(!exact(rejection,['evidence','operationId','step','validatedSteps','checkpointSequence','rejectedAt','submitted','consented'],['errors'])||rejection.evidence!=='document-validation-rejection'
         ||![2,3,4,5].includes(Number(rejection.step))||!Number.isSafeInteger(rejection.step)||rejection.operationId!==result.requestId+':validate:'+rejection.step
         ||!Array.isArray(rejection.validatedSteps)||!same(rejection.validatedSteps,[2,3,4,5].slice(0,Number(rejection.step)-2))
         ||!Number.isSafeInteger(rejection.checkpointSequence)||Number(rejection.checkpointSequence)<1||!Number.isSafeInteger(rejection.rejectedAt)||Number(rejection.rejectedAt)<=0||Number(rejection.rejectedAt)>Date.now()+5000
-        ||rejection.submitted!==false||rejection.consented!==false||result.needsRecovery!==false)fail();
+        ||rejection.submitted!==false||rejection.consented!==false||result.needsRecovery!==false
+        ||Object.hasOwn(rejection,'errors')&&!productValidationErrorsValid(rejection.errors))fail();
     }else if(result.validationRejection!==undefined)fail();
     if(['pending','accepted','rejected'].includes(result.state)){
       if(result.needsRecovery!==false)fail();const observation=Object.fromEntries(Object.entries(result).filter(([key])=>!['error','duplicate','recovered'].includes(key)));
@@ -153,11 +159,12 @@ async function verifyDraftState(value:unknown,session:ProductDocumentSession,exp
       ||beforeCreate&&draft.validatedSteps.length!==0||value.state==='created'&&draft.validatedSteps.length!==0)fail();
     if(value.state==='validation-rejected'){
       const rejected=value.validationRejection;
-      if(!exact(rejected,['evidence','operationId','step','validatedSteps','checkpointSequence','rejectedAt','submitted','consented'])||rejected.evidence!=='document-validation-rejection'
+      if(!exact(rejected,['evidence','operationId','step','validatedSteps','checkpointSequence','rejectedAt','submitted','consented'],['errors'])||rejected.evidence!=='document-validation-rejection'
         ||![2,3,4,5].includes(Number(rejected.step))||!Number.isSafeInteger(rejected.step)||rejected.operationId!==value.requestId+':validate:'+rejected.step
         ||!same(rejected.validatedSteps,[2,3,4,5].slice(0,Number(rejected.step)-2))||!same(rejected.validatedSteps,draft.validatedSteps)
         ||rejected.checkpointSequence!==draft.checkpointSequence||rejected.rejectedAt!==draft.observedAt||Number(rejected.checkpointSequence)<1
-        ||rejected.submitted!==false||rejected.consented!==false)fail();
+        ||rejected.submitted!==false||rejected.consented!==false
+        ||Object.hasOwn(rejected,'errors')&&!productValidationErrorsValid(rejected.errors))fail();
     }else if(value.validationRejection!==undefined)fail();
     if(value.error!==undefined&&(!exact(value.error,['code','message'])||typeof value.error.code!=='string'||value.error.code.length>100||typeof value.error.message!=='string'||value.error.message.length>2000))fail();
     if(signal.aborted)fail();return freeze(copy(value) as unknown as ProductDocumentState);
