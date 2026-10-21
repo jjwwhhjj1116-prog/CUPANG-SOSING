@@ -48,6 +48,30 @@ function harness(handler,{status='completed',attached=true,initialPending=null,i
   update(next){props={...props,...next};render();},close(){closed=true;slots.forEach(slot=>slot?.cleanup?.());}};
 }
 
+test('one existing owned history GET publishes provider availability; refresh uncertainty and failure close only that entry',async()=>{
+ for(const configured of [true,false]){
+ const first=deferred(),refreshRead=deferred(),events=[],h=harness(()=>refreshRead.promise,{initialPending:first.promise,initialProps:{onAvailabilityChange:value=>events.push(value)}});
+ try{
+  const product={id:'p',version:'v',imageKeys:['owner/raw','owner/edited','owner/label']};
+  await settle();assert.equal(events.at(-1),null);assert.equal(h.initialCalls.length,1);assert.equal(h.calls.length,0);
+  first.resolve(Response.json({...h.view,configuration:{...h.view.configuration,configured},product}));await h.idle();
+  assert.deepEqual(JSON.parse(JSON.stringify(events.at(-1))),{productId:'p',productVersion:'v',configured});assert.equal(h.initialCalls.length,1);assert.equal(h.calls.length,0);
+  h.click(refresh)();h.render();await settle();assert.equal(events.at(-1),null);
+  refreshRead.resolve(Response.json({error:'synthetic read unavailable'},{status:503}));await h.idle();assert.equal(events.at(-1),null);
+  assert.equal(h.calls.length,1);assert.equal(h.calls[0].init.method,undefined);assert.equal(h.changed,0);
+ }finally{h.close();}
+ }
+});
+
+test('availability needs the current product, version and exact source membership; aborted histories never publish',async()=>{
+ for(const product of [undefined,{id:'other',version:'v',imageKeys:['owner/raw','owner/edited','owner/label']},{id:'p',version:'older',imageKeys:['owner/raw','owner/edited','owner/label']},{id:'p',version:'v',imageKeys:['owner/raw']}]){
+  const first=deferred(),events=[],h=harness(()=>assert.fail('No follow-up request'),{initialPending:first.promise,initialProps:{onAvailabilityChange:value=>events.push(value)}});
+  try{first.resolve(Response.json({...h.view,product}));await h.idle();assert.equal(events.at(-1),null);assert.equal(h.calls.length,0);}finally{h.close();}
+ }
+ const pending=deferred(),events=[],h=harness(()=>assert.fail('No request'),{initialPending:pending.promise,initialProps:{onAvailabilityChange:value=>events.push(value)}});
+ h.close();const before=events.length;pending.resolve(Response.json({...h.view,product:{id:'p',version:'v',imageKeys:['owner/raw','owner/edited','owner/label']}}));await settle();assert.equal(events.length,before);assert.equal(h.late,0);
+});
+
 test('image requests lock before rerender and a failed request allows explicit retry',async()=>{
  for(const [label,status,attached]of [[prepare,'completed',true],[execute,'approved',true],[attach,'completed',false],[refresh,'completed',true],[roles,'completed',true],[options,'completed',true]]){
   const pending=deferred();let attempt=0;const h=harness(async(_url,_init,data)=>++attempt===1?pending.promise:Response.json(data.view),{status,attached});

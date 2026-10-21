@@ -15,15 +15,16 @@ import {prepareMainImageAiApply,applyMainImageAiResult,recoverMainImageAiResult,
 import {MainImageSaveError} from '@/app/quotation-main-image';
 
 export type SelectedMainImageProcessingTarget = { sourceKey: string; sequence: number; productVersion: string; quotationTarget: FreeImageQuotationRequest;ownerId?:string;quotationView?:QuotationFieldsView };
+export type ImageGenerationAvailability = {productId:string;productVersion:string;configured:boolean};
 type Props = { productId: string; version: string; imageKeys: string[]; onProductChanged?: () => void; translationTarget?: { sourceKey: string; sequence: number; sourceLanguage?: 'zh' | 'en' }; onBusyChange?: (busy: boolean) => void;
   processingTarget?: SelectedMainImageProcessingTarget; processingTargetActive?: boolean; onCloseProcessingTarget?: () => void;
-  processingResultActive?:boolean;beforeSelectedImageApply?:()=>boolean };
+  processingResultActive?:boolean;beforeSelectedImageApply?:()=>boolean;onAvailabilityChange?:(value:ImageGenerationAvailability|null)=>void };
 const statuses: Record<ImageEditJob['status'], string> = { prepared: '원본·요청 검토 대기', approved: '승인됨 · 실행 대기', running: '실행 중 · 중복 호출 차단', completed: '이미지 생성 완료 · 검토 필요', failed: '실패 · 자동 재호출 없음', uncertain: '결과 확인 필요 · 자동 재호출 없음' };
 const imageUrl = (key: string) => `/api/files/${encodeURIComponent(key)}`;
 const translationTargetLimitError = '추가 요청 문구가 길어서 선택한 언어 지침을 넣을 수 없습니다. 문구를 줄인 뒤 번역 버튼을 다시 눌러주세요.';
 
 export default function ImageGenerationPanel(props: Props) { return <ImageGenerationContent key={props.productId} {...props} />; }
-function ImageGenerationContent({ productId, version, imageKeys, onProductChanged, translationTarget, onBusyChange, processingTarget, processingTargetActive = true, onCloseProcessingTarget,processingResultActive=false,beforeSelectedImageApply }: Props) {
+function ImageGenerationContent({ productId, version, imageKeys, onProductChanged, translationTarget, onBusyChange, processingTarget, processingTargetActive = true, onCloseProcessingTarget,processingResultActive=false,beforeSelectedImageApply,onAvailabilityChange }: Props) {
   const [view, setView] = useState<ImageEditView | null>(null);
   const [sourceKey, setSourceKey] = useState('');
   const [purpose, setPurpose] = useState<ImagePurpose>('translate');
@@ -34,6 +35,9 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
   const [confirmed, setConfirmed] = useState(false);
   const [requestBusy, setBusy] = useState(true);
   const [loadedVersion,setLoadedVersion]=useState('');
+  const configurationScope=JSON.stringify([productId,version,imageKeys]);
+  const configurationToken=useMemo(()=>({scope:configurationScope}),[configurationScope]);
+  const [configurationRead,setConfigurationRead]=useState<{token:object;configured:boolean}|null>(null);
   const busy=requestBusy||loadedVersion!==version;
   const [error, setError] = useState('');
   const [notice,setNotice]=useState('');
@@ -69,6 +73,10 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
   useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;activeRequest.current?.abort();activeRequest.current=null;};},[productId,version]);
   useEffect(()=>{onBusyChange?.(imageWorkBusy);},[imageWorkBusy,onBusyChange]);
   useEffect(()=>()=>onBusyChange?.(false),[onBusyChange]);
+  useEffect(()=>{
+    onAvailabilityChange?.(configurationRead?.token===configurationToken?{productId,productVersion:version,configured:configurationRead.configured}:null);
+    return()=>onAvailabilityChange?.(null);
+  },[configurationRead,configurationToken,productId,version,onAvailabilityChange]);
   useEffect(()=>{
     if(!processingTarget||handledProcessing.current===processingTarget.sequence||!currentProcessing()||imageWorkBusy||activeRequest.current)return;
     handledProcessing.current=processingTarget.sequence;
@@ -128,18 +136,25 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
   function notifyAttachment(snapshot:string) {
     if(snapshot&&notifiedAttachment.current!==snapshot){notifiedAttachment.current=snapshot;attachmentContext.current.onProductChanged?.();}
   }
+  const readAvailability=useMemo(()=>(next:ImageEditView)=>{
+    // A legacy history remains readable, but only the current owned product
+    // snapshot can enable a new generative entry in its parent workspace.
+    const snapshot=next.product;
+    setConfigurationRead(snapshot&&Array.isArray(snapshot.imageKeys)&&JSON.stringify([snapshot.id,snapshot.version,snapshot.imageKeys])===configurationToken.scope
+      &&typeof next.configuration?.configured==='boolean'?{token:configurationToken,configured:next.configuration.configured}:null);
+  },[configurationToken]);
 
   useEffect(() => {
     const controller=new AbortController();activeRequest.current=controller;historyRequest.current=controller;
     fetch(`/api/products/${encodeURIComponent(productId)}/image-generation`,{cache:'no-store',signal:controller.signal}).then(async response => {
       const value = await response.json() as ImageEditView & { error?: string };
       if (!response.ok) throw Error(value.error ?? '이미지 작업을 불러오지 못했습니다.');
-      if (!controller.signal.aborted) {const snapshot=attachmentSnapshot(value);setView(value);setConfirmed(false);notifyAttachment(snapshot);}
+      if (!controller.signal.aborted) {const snapshot=attachmentSnapshot(value);setView(value);readAvailability(value);setConfirmed(false);notifyAttachment(snapshot);}
     }).catch(reason => { if (!controller.signal.aborted) setError(reason.message); }).finally(()=>{
       if(activeRequest.current===controller){activeRequest.current=null;if(mounted.current){setLoadedVersion(version);setBusy(false);}}if(historyRequest.current===controller)historyRequest.current=null;
     });
     return () => { controller.abort(); };
-  }, [productId, version]);
+  }, [productId, version,readAvailability]);
   async function action(body: Record<string, unknown>) {
     if(['prepare','approve','execute'].includes(String(body.action))&&!liveView.current?.configuration.configured)return;
     if(pinned&&(!targetCurrent||body.action==='prepare'&&(body.sourceKey!==processingTarget!.sourceKey||body.purpose!=='cleanup'||body.expectedVersion!==processingTarget!.productVersion)
@@ -225,8 +240,8 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
   }
   async function refresh() {
     const controller=beginRequest(true,true);if(!controller)return;
-    setBusy(true); setError('');
-    try { const response = await fetch(`/api/products/${encodeURIComponent(productId)}/image-generation`,{cache:'no-store',signal:controller.signal}); const next = await response.json() as ImageEditView & { error?: string };if(controller.signal.aborted)return; if (!response.ok) throw Error(next.error ?? '조회 실패'); const snapshot=attachmentSnapshot(next);setView(next);setLoadedVersion(version);notifyAttachment(snapshot); }
+    setBusy(true); setError('');setConfigurationRead(null);
+    try { const response = await fetch(`/api/products/${encodeURIComponent(productId)}/image-generation`,{cache:'no-store',signal:controller.signal}); const next = await response.json() as ImageEditView & { error?: string };if(controller.signal.aborted)return; if (!response.ok) throw Error(next.error ?? '조회 실패'); const snapshot=attachmentSnapshot(next);setView(next);readAvailability(next);setLoadedVersion(version);notifyAttachment(snapshot); }
     catch (reason) { if(!controller.signal.aborted)setError(reason instanceof Error ? reason.message : '조회 실패'); } finally { finishRequest(controller); }
   }
   return <section ref={panelRef} className="translation-panel image-generation-panel" aria-label="원본 이미지 AI 가공">

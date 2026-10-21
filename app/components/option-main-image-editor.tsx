@@ -6,11 +6,11 @@ import type {QuotationFieldsView} from '@/app/quotation-schema';
 import type {FreeImageQuotationRequest} from '@/app/free-image-translation-client';
 import {readMainImageLibrary,mainImageLibraryCurrent,mainImageLibraryKeys,type MainImageLibrary,type MainImageLibraryTab} from '@/app/main-image-library';
 import {ImageFullscreenPreview} from '@/app/components/image-fullscreen-preview';
-type Props={productId:string;version?:string;profileId?:string;refreshToken?:string;focusedOptionId?:string;onSaved?:()=>void;translationEnabled?:boolean;disabled?:boolean;saveOnSelect?:boolean;
+type Props={productId:string;version?:string;profileId?:string;refreshToken?:string;focusedOptionId?:string;onSaved?:()=>void;translationEnabled?:boolean;disabled?:boolean;saveOnSelect?:boolean;processingConfigured?:boolean|null;
  onTranslate?:(sourceKey:string,role:'main',sourceLanguage:'zh'|'en',quotationTarget:FreeImageQuotationRequest)=>void;
  onEdit?:(sourceKey:string,role:'main',quotationTarget:FreeImageQuotationRequest)=>void;
  onProcess?:(sourceKey:string,role:'main',quotationTarget:FreeImageQuotationRequest,quotationView?:QuotationFieldsView)=>void};
-export function OptionMainImageEditor({productId,version,profileId,refreshToken,focusedOptionId,onSaved,translationEnabled=true,disabled=false,saveOnSelect=false,onTranslate,onEdit,onProcess}:Props){
+export function OptionMainImageEditor({productId,version,profileId,refreshToken,focusedOptionId,onSaved,translationEnabled=true,disabled=false,saveOnSelect=false,processingConfigured=null,onTranslate,onEdit,onProcess}:Props){
  const endpoint=`/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId?`?profileId=${encodeURIComponent(profileId)}`:''}`,scope=JSON.stringify([endpoint,focusedOptionId??'']),sourceKey=JSON.stringify([scope,version,refreshToken]);
  const liveScope=useRef(scope),liveSource=useRef(sourceKey),mounted=useRef(true),request=useRef<AbortController|null>(null);
  const [saved,setSaved]=useState<{scope:string;sourceKey:string;view:QuotationFieldsView}|null>(null),liveSaved=useRef<typeof saved>(null),[selection,setSelection]=useState<{scope:string;id:string}>({scope,id:focusedOptionId??''});
@@ -26,8 +26,8 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
  if(libraryTab.scope!==tabScope)setLibraryTab({scope:tabScope,tab:'main',token:{}});
  const tabGeneration=libraryTab.scope===tabScope?libraryTab.token:null,liveTabGeneration=useRef(tabGeneration);
  useLayoutEffect(()=>{liveTabGeneration.current=tabGeneration;},[tabGeneration]);
- const liveOption=useRef(id),liveTranslationEnabled=useRef(translationEnabled),liveDisabled=useRef(disabled),liveSaveOnSelect=useRef(saveOnSelect);
- useLayoutEffect(()=>{liveOption.current=id;liveTranslationEnabled.current=translationEnabled;liveDisabled.current=disabled;liveSaveOnSelect.current=saveOnSelect;},[id,translationEnabled,disabled,saveOnSelect]);
+ const liveOption=useRef(id),liveTranslationEnabled=useRef(translationEnabled),liveDisabled=useRef(disabled),liveSaveOnSelect=useRef(saveOnSelect),liveProcessingConfigured=useRef(processingConfigured);
+ useLayoutEffect(()=>{liveOption.current=id;liveTranslationEnabled.current=translationEnabled;liveDisabled.current=disabled;liveSaveOnSelect.current=saveOnSelect;liveProcessingConfigured.current=processingConfigured;},[id,translationEnabled,disabled,saveOnSelect,processingConfigured]);
  const currentOption=()=>current()&&liveOption.current===id;
  const dirty=pending.scope===scope&&pending.value!==undefined,editing=dirty&&pending.optionId===id?pending.value:undefined,fresh=base?.sourceKey===sourceKey;
  let selected:string[]=[];try{if(base&&id)selected=mainImageValue(base.view,id,editing).split('\n').map(key=>key.trim()).filter(Boolean);}catch{/* The read/save helpers preserve and report invalid binding. */}
@@ -64,7 +64,7 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
   try{const view=await saveMainImageView(endpoint,before.view,draft.optionId,draft.value,guarded);if(!current()||c.signal.aborted)return;store(view);clear();void groupLibrary(view);setMessage('선택 옵션의 최종 견적 대표이미지를 저장했습니다.');onSaved?.();}
   catch(cause){if(current()&&!c.signal.aborted){markUncertain(cause instanceof MainImageSaveError&&cause.uncertain);setError(cause instanceof Error?cause.message:'대표이미지 저장 실패');}}finally{finish(c);}}
  const pool=base?.view.imageKeys??[],url=(key:string)=>`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`,valid=!!id&&rows.some(row=>row.optionId===id);
- const previewScope=JSON.stringify([scope,sourceKey,id,selected,selected.map(key=>pool.includes(key)),translationEnabled,disabled]);
+ const previewScope=JSON.stringify([scope,sourceKey,id,selected,selected.map(key=>pool.includes(key)),translationEnabled,disabled,processingConfigured]);
  const [previewClock,setPreviewClock]=useState(()=>({scope:previewScope,token:{}}));
  if(previewClock.scope!==previewScope)setPreviewClock({scope:previewScope,token:{}});
  const previewGeneration=previewClock.scope===previewScope?previewClock.token:null,previewEpoch=useRef(previewGeneration);
@@ -88,7 +88,7 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
  const libraryTabs=[['work','작업 이미지'],['main','메인 이미지'],['options','옵션 이미지'],['detail','상세 이미지']] as const;
  function translateSelected(key:string,sourceLanguage:'zh'|'en',manual=false,process=false){
   const before=liveSaved.current,draft=liveDraft.current;
-  if(!(process?onProcess:manual?onEdit:onTranslate)||process&&(!previewGeneration||previewEpoch.current!==previewGeneration)||!translationEnabled||!liveTranslationEnabled.current||liveDisabled.current||!current()||liveOption.current!==id||focusedOptionId&&focusedOptionId!==id
+  if(!(process?onProcess:manual?onEdit:onTranslate)||process&&(processingConfigured!==true||liveProcessingConfigured.current!==true||!previewGeneration||previewEpoch.current!==previewGeneration)||!translationEnabled||!liveTranslationEnabled.current||liveDisabled.current||!current()||liveOption.current!==id||focusedOptionId&&focusedOptionId!==id
    ||request.current||busy||liveUncertain.current||!before||before.view!==base?.view||before.scope!==scope||before.sourceKey!==sourceKey
    ||version&&before.view.productVersion!==version||draft.scope===scope&&draft.value!==undefined||!before.view.imageKeys.includes(key))return;
   try{const target=verifyMainImageView(before.view),row=before.view.resolved.rows.find(row=>row.optionId===id),value=mainImageValue(before.view,id);
@@ -118,7 +118,7 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
      <h4>현재 메인 이미지</h4>
      {selected.length===1&&pool.includes(selected[0])?<>
       <button type="button" className="main-image-current-thumbnail" aria-label="현재 메인 이미지 크게 보기" aria-haspopup="dialog" disabled={!valid||!fresh||disabled} onClick={()=>openPreview(selected[0])}><img src={url(selected[0])} alt="현재 메인 이미지 작은 미리보기" width={160} height={160}/></button>
-      {onProcess&&<button type="button" className="btn primary" aria-label="최종 대표이미지 AI 처리" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh} onClick={()=>translateSelected(selected[0],'zh',false,true)}>AI 처리</button>}
+      {onProcess&&<button type="button" className="btn primary" aria-label="최종 대표이미지 AI 처리" disabled={processingConfigured!==true||disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh} onClick={()=>translateSelected(selected[0],'zh',false,true)}>{processingConfigured===true?'AI 처리':processingConfigured===false?'AI 서버 설정 필요':'AI 설정 확인 중'}</button>}
       {onTranslate&&<div role="group" className="main-image-current-translation" aria-label="최종 견적 대표이미지 번역"><button type="button" className="btn ghost" aria-label="최종 대표이미지 중국어 한국어 번역" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh} onClick={()=>translateSelected(selected[0],'zh')}>중국어 → 한국어</button><button type="button" className="btn ghost" aria-label="최종 대표이미지 영어 한국어 번역" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh} onClick={()=>translateSelected(selected[0],'en')}>영어 → 한국어</button></div>}
      </>:<small>{selected.length?'대표 이미지 연결을 확인해주세요.':'대표 이미지를 선택해주세요.'}</small>}
     </section>

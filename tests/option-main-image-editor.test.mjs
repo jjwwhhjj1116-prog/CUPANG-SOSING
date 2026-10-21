@@ -28,10 +28,12 @@ async function fixture(company=schemaCompanies[0],withTemplate=false){
   return {backend,profile,product,endpoint,id,source,key,fields,nextKey:view.imageKeys.find(value=>value!==key&&value!==source)??source,calls,request,read:()=>backend.route(endpoint).then(json),lost(){lose=true;},recover(){unavailable=false;},close(){backend.close();}};
  }catch(error){backend.close();throw error;}
 }
-function editor(f,{wrapper=false,focusedOptionId=f.id,imageView=true,onTranslate,onEdit,onProcess,imageProcessingBusy=false}={}){
+function editor(f,{wrapper=false,focusedOptionId=f.id,imageView=true,onTranslate,onEdit,onProcess,imageProcessingBusy=false,processingConfigured=true}={}){
  const contexts=new Map(),cache=new Map(),effects=[],saved=[];let active,seen,pendingQuotes=0;
  const request=async(...args)=>{const quote=args[0].includes('/quotation-fields');if(quote)pendingQuotes++;try{return await f.request(...args);}finally{if(quote)pendingQuotes--;}};
- const props={product:f.product,productId:f.product.id,profileId:f.profile.id,focusedOptionId,imageView,version:f.product.updated_at,onTranslate,onEdit,onProcess,imageProcessingBusy,disabled:imageProcessingBusy,onSaved(){saved.push(1);props.product.updated_at=f.backend.sqlite.prepare('SELECT updated_at FROM products WHERE id=?').get(f.product.id).updated_at;props.version=props.product.updated_at;}};
+ // Existing configured-action fixtures explicitly opt in; production's new
+ // availability prop defaults to unknown until its owned history GET finishes.
+ const props={product:f.product,productId:f.product.id,profileId:f.profile.id,focusedOptionId,imageView,version:f.product.updated_at,onTranslate,onEdit,onProcess,imageProcessingBusy,processingConfigured,disabled:imageProcessingBusy,onSaved(){saved.push(1);props.product.updated_at=f.backend.sqlite.prepare('SELECT updated_at FROM products WHERE id=?').get(f.product.id).updated_at;props.version=props.product.updated_at;}};
  const hookEffect=(fn,deps)=>{const ctx=active,i=ctx.cursor++,old=ctx.slots[i];if(!old||!sameDeps(old.deps,deps)){ctx.slots[i]={deps,cleanup:old?.cleanup};effects.push({ctx,i,fn});}};
  const react={useState(initial){const ctx=active,i=ctx.cursor++;if(!(i in ctx.slots))ctx.slots[i]=typeof initial==='function'?initial():initial;return[ctx.slots[i],value=>{ctx.slots[i]=typeof value==='function'?value(ctx.slots[i]):value;}];},useRef(initial){const ctx=active,i=ctx.cursor++;return ctx.slots[i]??(ctx.slots[i]={current:initial});},useEffect:hookEffect,useLayoutEffect:hookEffect,useMemo(fn,deps){const ctx=active,i=ctx.cursor++,old=ctx.slots[i];if(!old||!sameDeps(old.deps,deps))ctx.slots[i]={deps,value:fn()};return ctx.slots[i].value;},useCallback(fn,deps){return react.useMemo(()=>fn,deps);}};
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,Date,URL,AbortController,TextEncoder,TextDecoder,structuredClone,crypto,fetch:request,require(name){if(name.endsWith('.css'))return{};if(name==='react')return react;if(name.startsWith('@/'))return name.includes('/components/')?load(name.slice(2)+'.tsx'):f.backend.load(name.slice(2)+'.ts');return native(name);}},{filename:file});return exports;}
@@ -46,6 +48,25 @@ function editor(f,{wrapper=false,focusedOptionId=f.id,imageView=true,onTranslate
  const button=label=>visible(render()).find(node=>node.type==='button'&&(node.props['aria-label']===label||text(node)===label)),input=label=>visible(render()).find(node=>node.props?.['aria-label']===label);
  return {props,saved,render,idle,button,input,async click(label){const node=button(label);assert.ok(node,label);assert.equal(node.props.disabled,false,label);node.props.onClick();await settled();},close(){for(const ctx of contexts.values())for(const slot of ctx.slots)slot?.cleanup?.();}};
 }
+
+test('unknown or absent image provider gates only AI processing, keeps exact free/manual targets and rejects retained availability ABA callbacks',async()=>{
+ const f=await fixture(),processed=[],translated=[],edited=[],h=editor(f,{wrapper:true,processingConfigured:null,
+  onProcess:(...args)=>processed.push(args),onTranslate:(...args)=>translated.push(args),onEdit:(...args)=>edited.push(args)});
+ try{
+  await h.idle();const ai=()=>h.button('최종 대표이미지 AI 처리');
+  assert.equal(ai().props.disabled,true);assert.equal(text(ai()),'AI 설정 확인 중');ai().props.onClick();assert.equal(processed.length,0);
+  assert.equal(h.button('최종 대표이미지 중국어 한국어 번역').props.disabled,false);assert.equal(h.button('최종 대표이미지 편집하기').props.disabled,false);
+  await h.click('최종 대표이미지 중국어 한국어 번역');await h.click('최종 대표이미지 편집하기');
+  assert.equal(translated[0][0],f.key);assert.equal(edited[0][0],f.key);assert.equal(translated[0][3].optionId,f.id);assert.equal(edited[0][2].value,f.key);
+  h.props.processingConfigured=false;await h.idle();assert.equal(ai().props.disabled,true);assert.equal(text(ai()),'AI 서버 설정 필요');ai().props.onClick();assert.equal(processed.length,0);
+  assert.equal(h.button('최종 대표이미지 영어 한국어 번역').props.disabled,false);assert.equal(h.button('최종 대표이미지 편집하기').props.disabled,false);
+  h.props.processingConfigured=true;await h.idle();const before=ai().props.onClick;await h.click('최종 대표이미지 AI 처리');assert.equal(processed.length,1);
+  h.props.processingConfigured=false;await h.idle();before();assert.equal(processed.length,1);
+  h.props.processingConfigured=true;await h.idle();before();assert.equal(processed.length,1,'availability ABA cannot revive a retained source callback');
+  await h.click('최종 대표이미지 AI 처리');assert.equal(processed.length,2);assert.equal(processed[1][0],f.key);assert.equal(processed[1][2].optionId,f.id);
+  assert.ok(f.calls.every(call=>call.method==='GET'),'availability never prepares or executes a provider request');
+ }finally{h.close();f.close();}
+});
 
 test('main translation toolbar uses final quotation A with exact saved binding and blocks stale drafts, focus and stage callbacks',async()=>{
  const f=await fixture(),targets=[];let h;

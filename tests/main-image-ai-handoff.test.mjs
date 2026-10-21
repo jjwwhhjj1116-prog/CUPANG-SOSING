@@ -34,6 +34,11 @@ const all=image.nodes;
 const button=(ui,label)=>all(ui.render()).find(node=>node.type==='button'&&(node.props['aria-label']===label||image.text(node)===label));
 const input=(ui,kind,value)=>all(ui.render()).find(node=>node.type===kind&&(value===undefined||node.props.value===value));
 const paid=d=>nodes(d.render()).find(node=>node.type?.name==='@/app/components/image-generation-panel:default').props;
+async function publishOwnedImageAvailability(d,f){
+ const route=f.backend.load('app/api/products/[id]/image-generation/route.ts'),response=await route.GET(new Request('https://app.test/api/products/'+f.product.id+'/image-generation'),{params:Promise.resolve({id:f.product.id})});
+ assert.equal(response.status,200);const view=await response.json();
+ paid(d).onAvailabilityChange({productId:view.product.id,productVersion:view.product.version,configured:view.configuration.configured});d.render();
+}
 
 for(const company of schemaCompanies)test(`selected final main image travels through real card, options wrapper, dashboard and AI panel into one explicit local prepared job (${company.code})`,async()=>{
  const f=await main.fixture(company),d=detail.dashboard();let o,p;
@@ -62,10 +67,29 @@ for(const company of schemaCompanies)test(`selected final main image travels thr
  }finally{o?.close();p?.close();d.close();f.close();}
 });
 
+test('dashboard gates AI from the existing configuration callback and rejects old owner/version/option scope proofs while free tools remain supplied',()=>{
+ const d=detail.dashboard(),product={id:'p',owner_id:'owner',updated_at:'2026-10-18T00:00:00.000Z',image_keys:'["owner/a.png"]'},base={workspaceOwnerId:'owner',product,tab:'대표 이미지',focusedOptionId:'red',preferredProfileId:'profile'};
+ const proof={productId:'p',productVersion:product.updated_at,configured:true},target={kind:'quotation',profileId:'profile',optionId:'red',input:'mainImage',fieldKey:'mainImage',slotIndex:0,revision:1,inputFingerprint:'a'.repeat(64),optionRevision:1,value:'owner/a.png'};
+ try{
+  d.render(base);const card=()=>d.child('ProductOptionsEditor').props;
+  assert.equal(card().processingConfigured,null);assert.equal(typeof card().onTranslate,'function');assert.equal(typeof card().onEdit,'function');
+  card().onProcess('owner/a.png','main',target);assert.equal(paid(d).processingTarget,undefined);
+  paid(d).onAvailabilityChange({...proof,configured:false});d.render();assert.equal(card().processingConfigured,false);card().onProcess('owner/a.png','main',target);assert.equal(paid(d).processingTarget,undefined);
+  paid(d).onAvailabilityChange(proof);d.render();assert.equal(card().processingConfigured,true);
+  const old=paid(d).onAvailabilityChange;
+  for(const patch of [{tab:'추가 이미지'},{focusedOptionId:'blue'},{preferredProfileId:'other'},{product:{...product,updated_at:'2026-10-18T00:00:01.000Z'}},{workspaceOwnerId:'other'},{product:{...product,id:'other-product'}}]){
+   d.render(patch);d.render(base);old(proof);d.render();assert.equal(card().processingConfigured,null,'old configuration callback cannot cross an ABA scope');
+   card().onProcess('owner/a.png','main',target);assert.equal(paid(d).processingTarget,undefined);
+  }
+  paid(d).onAvailabilityChange(proof);d.render();card().onProcess('owner/a.png','main',target);assert.equal(paid(d).processingTarget.sourceKey,'owner/a.png');assert.equal(d.requests,0);
+ }finally{d.close();}
+});
+
 test('retained card and dashboard handoffs cannot reopen after stage, focus, profile, version or owner ABA changes',async()=>{
  const f=await main.fixture(),d=detail.dashboard();let o;
  try{
-  const product={...f.product,owner_id:'owner'},base={workspaceOwnerId:'owner',product,tab:'대표 이미지',focusedOptionId:f.id,preferredProfileId:f.profile.id};d.render(base);
+  f.backend.bindings.OPENAI_API_KEY='TEST-ONLY-NOT-A-REAL-KEY';f.backend.bindings.SOURCEFLOW_IMAGE_MODEL='gpt-image-1.5';
+  const product={...f.product,owner_id:'owner'},base={workspaceOwnerId:'owner',product,tab:'대표 이미지',focusedOptionId:f.id,preferredProfileId:f.profile.id};d.render(base);await publishOwnedImageAvailability(d,f);
   o=main.editor(f,{wrapper:true,onProcess:(...args)=>d.child('ProductOptionsEditor').props.onProcess(...args)});await o.idle();const oldCard=o.button('최종 대표이미지 AI 처리').props.onClick;
   o.props.imageView=false;await o.idle();o.props.imageView=true;await o.idle();oldCard();d.render();assert.equal(paid(d).processingTarget,undefined);
   await o.click('최종 대표이미지 AI 처리');d.render();const target=paid(d).processingTarget;assert.ok(target);
@@ -113,6 +137,7 @@ async function completedMainFixture(company){
   f.backend.bindings.OPENAI_API_KEY='TEST-ONLY-NOT-A-REAL-KEY';f.backend.bindings.SOURCEFLOW_IMAGE_MODEL='gpt-image-1.5';
   f.backend.objects.set(f.key,f.backend.objects.get(f.key).slice(0,-1));
   d.render({workspaceOwnerId:'owner',product,tab:'대표 이미지',focusedOptionId:f.id,preferredProfileId:f.profile.id});
+  await publishOwnedImageAvailability(d,f);
   o=main.editor(f,{wrapper:true,onProcess:(...args)=>d.child('ProductOptionsEditor').props.onProcess(...args)});await o.idle();await o.click('최종 대표이미지 AI 처리');d.render();const target=paid(d).processingTarget;
   assert.ok(target.quotationView);assert.equal(target.ownerId,'owner');
   const api=f.backend.load('app/api/products/[id]/image-generation/route.ts'),context={params:Promise.resolve({id:f.product.id})},readJobs=()=>api.GET(new Request('https://app.test'+base+'/image-generation'),context),config=await(await readJobs()).json();
@@ -140,7 +165,7 @@ async function completedMainFixture(company){
   p=image.harness(transport,{initialPending:readJobs(),initialProps:{...paid(d),onProductChanged(){changed++;paid(d).onProductChanged();}}});await p.idle();
   return {f,d,o,p,before,target,completed,key,bytes,calls,productNow,read:()=>f.read(),get changed(){return changed;},lost(){lose=true;},recover(){unavailable=false;},holdWrite(){heldWrite={gate:image.deferred(),started:image.deferred()};return heldWrite;},holdSaveRead(){quoteReads=0;heldSaveRead={gate:image.deferred(),started:image.deferred()};return heldSaveRead;},syncPanel(){p.update({...paid(d),onProductChanged(){changed++;paid(d).onProductChanged();}});},
    async newCleanupTarget(){
-    Object.assign(f.product,productNow());d.render({product:productNow()});o.props.version=f.product.updated_at;o.props.refreshToken=f.product.updated_at;await o.idle();await o.click('최종 대표이미지 AI 처리');d.render();
+    Object.assign(f.product,productNow());d.render({product:productNow()});await publishOwnedImageAvailability(d,f);o.props.version=f.product.updated_at;o.props.refreshToken=f.product.updated_at;await o.idle();await o.click('최종 대표이미지 AI 처리');d.render();
     const freshBefore=await f.read(),freshProduct=productNow(),freshId=crypto.randomUUID(),freshKey='owner/ai-'+freshId+'.png',freshReview=await model.prepareImageReview({sourceKey:f.key,prompt:'새로 검토한 요청',purpose:'cleanup',size:'1024x1024',quality:'low'},await model.imageMetadata(f.backend.objects.get(f.key)),'gpt-image-1.5',config.settings);
     const freshJob={...job,id:freshId,productVersion:freshProduct.updated_at,contentRevision:freshBefore.contentRevision,review:freshReview,createdAt:new Date().toISOString()};
     assert.equal((await store.createImageJob('owner',freshJob,freshProduct.image_keys,'local-fresh-'+freshId,'LOCAL-ONLY-FRESH-PROOF')).conflict,false);await store.approveImageJob('owner',f.product.id,freshId,freshReview.fingerprint,new Date().toISOString());

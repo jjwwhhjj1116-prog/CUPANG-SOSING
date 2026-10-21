@@ -24,7 +24,7 @@ import { verifyOptionPriceView } from '@/app/option-price-save';
 import { applyOptionNameChanges } from '@/app/option-seo-names';
 import {recalculateStageTwoOptionCost} from '@/app/stage-two-option-recalculation';
 
-type Props = { product: { id: string; title: string; image_keys: string; updated_at?: string; registration_number?: string }; profileId?:string;refreshToken?:string;onSaved?: () => void; onReviewPackaging?: (optionId: string | null) => void; imageView?: boolean; imageProcessingBusy?: boolean; pricingView?: boolean; seoView?: boolean; focusedOptionId?: string; initialBulkAction?: 'remove';
+type Props = { product: { id: string; title: string; image_keys: string; updated_at?: string; registration_number?: string }; profileId?:string;refreshToken?:string;onSaved?: () => void; onReviewPackaging?: (optionId: string | null) => void; imageView?: boolean; imageProcessingBusy?: boolean; processingConfigured?:boolean|null;pricingView?: boolean; seoView?: boolean; focusedOptionId?: string; initialBulkAction?: 'remove';
   editableQuotationPrices?:boolean;pricePolicyLocked?:boolean;beforePriceCommit?:()=>boolean;onPriceBusyChange?:(busy:boolean,operation:object)=>void;
   onTranslate?: (sourceKey:string,role:'main',sourceLanguage:'zh'|'en',quotationTarget:FreeImageQuotationRequest)=>void;
   onEdit?: (sourceKey:string,role:'main',quotationTarget:FreeImageQuotationRequest)=>void;
@@ -44,7 +44,7 @@ function verifyOptionsRegistrationDisplay(body: ProductOptionsResponse, productI
 export function ProductOptionsEditor(props: Props) {
   const [mainOpened,setMainOpened]=useState(props.imageView===true);
   useEffect(()=>{if(!props.imageView)return;let active=true;void Promise.resolve().then(()=>{if(active)setMainOpened(true);});return()=>{active=false;};},[props.imageView]);
-  return <><div hidden={props.imageView}><OptionsEditor key={props.product.id} {...props} imageView={false}/></div><div hidden={!props.imageView}>{(mainOpened||props.imageView)&&<OptionMainImageEditor key={`${props.product.id}:${props.profileId??''}`} productId={props.product.id} version={props.product.updated_at} profileId={props.profileId} refreshToken={props.refreshToken} focusedOptionId={props.focusedOptionId} onSaved={props.onSaved} disabled={props.imageProcessingBusy} translationEnabled={props.imageView===true} saveOnSelect={props.imageView===true} onTranslate={props.onTranslate} onEdit={props.onEdit} onProcess={props.onProcess}/>}</div></>;
+  return <><div hidden={props.imageView}><OptionsEditor key={props.product.id} {...props} imageView={false}/></div><div hidden={!props.imageView}>{(mainOpened||props.imageView)&&<OptionMainImageEditor key={`${props.product.id}:${props.profileId??''}`} productId={props.product.id} version={props.product.updated_at} profileId={props.profileId} refreshToken={props.refreshToken} focusedOptionId={props.focusedOptionId} onSaved={props.onSaved} disabled={props.imageProcessingBusy} translationEnabled={props.imageView===true} saveOnSelect={props.imageView===true} processingConfigured={props.processingConfigured} onTranslate={props.onTranslate} onEdit={props.onEdit} onProcess={props.onProcess}/>}</div></>;
 }
 function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = false, imageView = false, seoView = false, focusedOptionId, initialBulkAction,
   profileId,refreshToken,editableQuotationPrices=false,pricePolicyLocked=false,imageProcessingBusy=false,beforePriceCommit,onPriceBusyChange }: Props) {

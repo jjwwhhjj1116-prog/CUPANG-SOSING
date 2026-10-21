@@ -17,6 +17,8 @@ import { isOwnedImageKey } from '@/app/image-files';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { GET as quotationFieldsGET } from '@/app/api/products/[id]/quotation-fields/route';
+import {applyAllProductLabelValues,planAllProductLabels,verifyAllProductLabelTextSave} from '@/app/product-label-all-options';
+import type {ProductLabelValues} from '@/app/product-label';
 
 type Context = { params: Promise<{ id: string }> };
 const json = (value: unknown, status = 200) => NextResponse.json(value, { status, headers: { 'cache-control': 'no-store' } });
@@ -110,6 +112,32 @@ export async function PUT(request: Request, context: Context) {
     if (!await saveProductLabels(owner, id, overrides, current.view.revision, current.source, structure)) throw conflict();
     return json((await snapshot(owner, id, profileId, request)).view);
   } catch (error) { return failure(error); }
+}
+
+/** Explicit one-label/all-options action. The normal selected/common PUT keeps
+ * its existing scope and never silently overwrites other option edits. */
+export async function PATCH(request:Request,context:Context){
+ try{
+  const owner=await ownerId();
+  if(request.headers.get('origin')&&request.headers.get('origin')!==new URL(request.url).origin)throw new LabelError('같은 사이트에서 표시사항을 저장해주세요.',400);
+  const body=await readBoundedJson(request,PRODUCT_LABEL_BODY_LIMIT) as Record<string,unknown>;
+  if(!body||typeof body!=='object'||Array.isArray(body)||Object.keys(body).some(key=>!['action','sourceOptionId','expectedRevision','expectedInputFingerprint','values','structure'].includes(key))
+   ||body.action!=='apply-all-text'||!Number.isSafeInteger(body.expectedRevision)||(body.expectedRevision as number)<0||typeof body.expectedInputFingerprint!=='string'||!/^[a-f0-9]{64}$/.test(body.expectedInputFingerprint)
+   ||body.sourceOptionId!==null&&(typeof body.sourceOptionId!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(body.sourceOptionId)))throw new LabelError('전체 옵션 저장의 검토 대상과 버전을 확인해주세요.',400);
+  const {id}=await context.params,profileId=selection(request),current=await snapshot(owner,id,profileId,request);
+  if(body.expectedRevision!==current.view.revision||body.expectedInputFingerprint!==current.view.inputFingerprint)throw conflict();
+  let structure,overrides,plan;
+  try{
+   structure=validateProductLabelStructure(body.structure);
+   overrides=applyAllProductLabelValues(current.view,body.values as ProductLabelValues,structure);
+   plan=planAllProductLabels(current.view,body.sourceOptionId as string|null,body.values as ProductLabelValues,structure);
+  }catch(error){throw new LabelError(error instanceof Error?error.message:'검토한 전체 옵션 표시사항을 확인해주세요.',400);}
+  if(new TextEncoder().encode(JSON.stringify({schemaVersion:1,productId:id,revision:current.view.revision+1,overrides,structure,updatedAt:new Date().toISOString(),...(current.view.renderEpoch===undefined?{}:{renderEpoch:current.view.renderEpoch})})).length>PRODUCT_LABEL_STORAGE_LIMIT)
+   throw new LabelError('표시사항 저장 한도 512KB를 초과했습니다. 기존 내용은 유지됩니다.',413);
+  if(!await saveProductLabels(owner,id,overrides,current.view.revision,current.source,structure))throw conflict();
+  const after=(await snapshot(owner,id,profileId,request)).view;verifyAllProductLabelTextSave(current.view,after,plan);
+  return json(after);
+ }catch(error){return failure(error);}
 }
 
 /** Explicit regeneration advances only the label render recipe. Existing facts,
