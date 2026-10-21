@@ -123,8 +123,8 @@ test('inactive selected-image scope can explicitly reread a running job without 
  let closed=0;const h=image.harness(async(_url,init,data)=>{assert.equal(init?.method,undefined);return Response.json({...data.view,jobs:[{...data.job,status:'completed',result:{attached:true,storageKey:'owner/edited'}}]});},
   {status:'running',initialProps:{processingTarget:target(),onCloseProcessingTarget(){closed++;}}});
  try{await h.idle();input(h,'textarea').props.onChange({target:{value:'실행 결과 확인 중에도 보존'}});h.update({processingTargetActive:false});
-  assert.equal(button(h,image.prepare).props.disabled,true);assert.equal(button(h,'선택 옵션 AI 처리 종료 · 공통 작업으로 돌아가기').props.disabled,true);
-  h.click(image.refresh)();await h.idle();assert.equal(h.calls.length,1);assert.equal(h.calls[0].init.method,undefined);assert.equal(button(h,image.prepare).props.disabled,true);assert.equal(button(h,image.roles),undefined);assert.equal(button(h,image.options),undefined);assert.equal(input(h,'textarea').props.value,'실행 결과 확인 중에도 보존');
+  assert.equal(button(h,image.prepare).props.disabled,true);assert.equal(button(h,'선택 옵션 AI 처리 종료 · 공통 작업으로 돌아가기').props.disabled,false,'historical running status alone does not lock the inactive editor');
+  h.click(image.refresh)();assert.equal(button(h,'선택 옵션 AI 처리 종료 · 공통 작업으로 돌아가기').props.disabled,true,'the active history read still locks closing');await h.idle();assert.equal(h.calls.length,1);assert.equal(h.calls[0].init.method,undefined);assert.equal(button(h,image.prepare).props.disabled,true);assert.equal(button(h,image.roles),undefined);assert.equal(button(h,image.options),undefined);assert.equal(input(h,'textarea').props.value,'실행 결과 확인 중에도 보존');
   h.click('선택 옵션 AI 처리 종료 · 공통 작업으로 돌아가기')();assert.equal(closed,1);assert.equal(h.calls.some(call=>call.init.method==='POST'||call.init.method==='PATCH'),false);
  }finally{h.close();}
 });

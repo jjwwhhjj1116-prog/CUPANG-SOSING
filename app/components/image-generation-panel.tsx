@@ -45,7 +45,11 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
   const [notice,setNotice]=useState('');
   const [reviewedIds,setReviewedIds]=useState<string[]>([]);
   const [selectedApplyPending,setSelectedApplyPending]=useState(false);
-  const imageWorkBusy = busy || selectedApplyPending || Boolean(view?.jobs.some(item => item.status === 'running'));
+  // A persisted running record may outlive its client request or source
+  // version. Keep it unresolved and block new paid work, but do not let that
+  // historical status permanently lock independent free/manual editing.
+  const historyRunning = Boolean(view?.jobs.some(item => item.status === 'running'));
+  const imageWorkBusy = busy || selectedApplyPending;
   const mounted=useRef(true);
   const activeRequest=useRef<AbortController|null>(null);
   const historyRequest=useRef<AbortController|null>(null);
@@ -161,7 +165,7 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
     return () => { controller.abort(); };
   }, [productId, version,readAvailability]);
   async function action(body: Record<string, unknown>) {
-    if(['prepare','approve','execute'].includes(String(body.action))&&!liveView.current?.configuration.configured)return;
+    if(['prepare','approve','execute'].includes(String(body.action))&&(!liveView.current?.configuration.configured||liveView.current.jobs.some(item=>item.status==='running')))return;
     if(pinned&&(!targetCurrent||body.action==='prepare'&&(body.sourceKey!==processingTarget!.sourceKey||body.purpose!=='cleanup'||body.expectedVersion!==processingTarget!.productVersion)
       ||body.action!=='prepare'&&(!jobMatchesTarget||body.jobId!==job?.id)))return;
     const controller=beginRequest();if(!controller)return;
@@ -275,7 +279,7 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
       {purpose==='cleanup'&&<p>상품 바깥 설명 문구를 정리합니다. 상품 표면의 인쇄는 유지합니다.</p>}
       <label>추가 가공 요청 · 선택<textarea rows={4} maxLength={4000} value={prompt} onChange={event => setPrompt(event.target.value)} disabled={busy} placeholder="비워두면 작업 목적과 저장된 설정으로 준비합니다. 추가로 보존할 부분·배치 요청을 적을 수 있습니다. 원문 사실과 기본 처리 규칙은 유지합니다." /></label>
       <div className="form-row"><label>결과 크기<select value={size} onChange={event => setSize(event.target.value as ImageSize)} disabled={busy}><option>1024x1024</option><option>1024x1536</option><option>1536x1024</option></select></label><label>품질<select value={quality} onChange={event => setQuality(event.target.value as ImageQuality)} disabled={busy}><option value="low">낮음</option><option value="medium">중간</option><option value="high">높음</option></select></label></div>
-      <button className="btn" type="button" disabled={busy || selectedApplyPending || !targetCurrent || !source || !view.configuration.configured} onClick={() => void action({ action: 'prepare', expectedVersion: version, sourceKey: source, prompt, purpose:pinned?'cleanup':purpose, size, quality, idempotencyKey: crypto.randomUUID() })}>이미지 요청 검토하기 · 무료</button>
+      <button className="btn" type="button" disabled={busy || selectedApplyPending || historyRunning || !targetCurrent || !source || !view.configuration.configured} onClick={() => void action({ action: 'prepare', expectedVersion: version, sourceKey: source, prompt, purpose:pinned?'cleanup':purpose, size, quality, idempotencyKey: crypto.randomUUID() })}>이미지 요청 검토하기 · 무료</button>
       {view.jobs.length > 1 && <label>이전 이미지 작업<select value={job?.id ?? ''} onChange={event => {if(!selectedApplyPending){setSelectedId(event.target.value);setConfirmed(false);}}} disabled={busy||selectedApplyPending}>{view.jobs.map(item => <option key={item.id} value={item.id}>{new Date(item.createdAt).toLocaleString()} · {statuses[item.status]}</option>)}</select></label>}
       {!pinned&&<details className="translation-review"><summary>완료한 이미지 결과 여러 장 검토·적용</summary>
         <p>원본과 결과를 비교한 항목만 선택하세요. 같은 콘텐츠 버전에서 만든 결과를 한 번에 저장하여 이미지 순서를 유지합니다.</p>
@@ -300,8 +304,8 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
         <p>{job.review.paidNotice} <a href={job.review.pricingUrl} target="_blank" rel="noreferrer">공식 요금표</a></p>
         <p>승인 유효 기한: {new Date(job.review.expiresAt).toLocaleString()}</p>
         {stale && ['prepared', 'approved'].includes(job.status) && <p className="form-error">상품 또는 이미지 처리 설정이 변경되었습니다. 새 요청으로 원본과 설정을 다시 검토해주세요.</p>}
-        {job.status === 'prepared' && <><label><input type="checkbox" checked={confirmed} onChange={event => {if(currentProcessing())setConfirmed(event.target.checked);}} disabled={busy || selectedApplyPending || stale || !targetCurrent || !jobMatchesTarget || !view.configuration.configured} />위 원본·설정·모델·요청·크기·품질의 유료 가공 1회를 승인합니다.</label><button type="button" className="btn" disabled={busy || selectedApplyPending || stale || !targetCurrent || !jobMatchesTarget || !view.configuration.configured || !confirmed} onClick={() => void action({ action: 'approve', jobId: job.id, reviewFingerprint: job.review.fingerprint, confirmPaid: true })}>유료 요청 승인 · 아직 호출하지 않음</button></>}
-        {job.status === 'approved' && <button className="btn blue" type="button" disabled={busy || selectedApplyPending || stale || !targetCurrent || !jobMatchesTarget || !view.configuration.configured} onClick={() => void action({ action: 'execute', jobId: job.id })}>승인한 이미지 1장 가공 · 비용 발생</button>}
+        {job.status === 'prepared' && <><label><input type="checkbox" checked={confirmed} onChange={event => {if(currentProcessing())setConfirmed(event.target.checked);}} disabled={busy || selectedApplyPending || historyRunning || stale || !targetCurrent || !jobMatchesTarget || !view.configuration.configured} />위 원본·설정·모델·요청·크기·품질의 유료 가공 1회를 승인합니다.</label><button type="button" className="btn" disabled={busy || selectedApplyPending || historyRunning || stale || !targetCurrent || !jobMatchesTarget || !view.configuration.configured || !confirmed} onClick={() => void action({ action: 'approve', jobId: job.id, reviewFingerprint: job.review.fingerprint, confirmPaid: true })}>유료 요청 승인 · 아직 호출하지 않음</button></>}
+        {job.status === 'approved' && <button className="btn blue" type="button" disabled={busy || selectedApplyPending || historyRunning || stale || !targetCurrent || !jobMatchesTarget || !view.configuration.configured} onClick={() => void action({ action: 'execute', jobId: job.id })}>승인한 이미지 1장 가공 · 비용 발생</button>}
         {job.status === 'running' && <><p>실행 중이거나 결과 확인이 필요한 상태입니다. 같은 작업으로 유료 호출을 반복하지 않습니다.</p><button className="btn" type="button" disabled={busy} onClick={() => void refresh()}>저장된 실행 상태 새로고침 · 무료</button></>}
         {job.error && <p role="alert">{job.error.message}{job.error.mayHaveBeenCharged ? ' 비용이 발생했을 수 있습니다.' : ''}</p>}
         {job.result && <div className="translation-field"><h4>생성 결과 검토</h4><img src={imageUrl(job.result.storageKey)} alt="AI 가공 결과 · 검토 필요" style={{ maxWidth: '100%', maxHeight: 480, objectFit: 'contain' }} /><p>번역 정확성·상표·인증·법적 표시사항을 확인한 결과가 아닙니다. 원본과 비교한 뒤 이미지 역할을 지정해주세요.</p><p>{job.result.attached ? '상품 이미지 목록에 추가했습니다. 대표·상세 역할은 자동 지정하지 않았습니다.' : '가공 중 상품이 변경되어 결과만 보관했습니다. 아래 버튼은 저장한 결과를 무료로 첨부합니다.'}</p>{pinned&&job.result.attached&&<><p role="status">{`원본과 결과를 비교한 뒤 선택 옵션의 최종 견적 ${processingImageLabel}에 적용할 수 있습니다.`}</p>{processingTarget?.quotationView&&processingTarget.ownerId&&<button type="button" className="btn primary" disabled={busy||selectedApplyPending||!processingResultActive||!jobMatchesTarget||!imageKeys.includes(job.result.storageKey)} onClick={()=>void adoptSelectedMain()}>{`선택 옵션 ${processingImageLabel}에 적용`}</button>}</>}{!pinned&&job.result.attached && <><button className="btn" type="button" disabled={busy || !imageKeys.includes(job.result.storageKey)} onClick={()=>void adoptRoles()}>검토한 결과를 원본의 대표·추가·상세 위치에 적용</button><button className="btn" type="button" disabled={busy || !imageKeys.includes(job.result.storageKey)} onClick={()=>void adoptOptionImages()}>검토한 결과를 같은 원본의 옵션 대표 이미지에 적용</button><small>가공 요청 이후 콘텐츠를 수정했다면 이미지 편집에서 직접 선택해주세요.</small></>}{!job.result.attached && <button className="btn" type="button" disabled={busy||selectedApplyPending||!targetCurrent||!jobMatchesTarget} onClick={() => void action({ action: 'attach', jobId: job.id, expectedVersion: version })}>생성된 결과를 현재 상품에 추가 · 무료</button>}</div>}

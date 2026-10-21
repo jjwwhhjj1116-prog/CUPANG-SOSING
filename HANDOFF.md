@@ -6450,3 +6450,11 @@ ExistingfreeWorker ba37200e-0c9a-4a59-9362-86d27a6fa9bc deployed. Latestactualpr
 - 별도13옵션 신규 합성capture→추천category→single초안→SEO/수동수정/1~7 quote연결 양사2/2. 실제SourceFetcher호출차단, 생산수집성공/실접수로 집계금지. step782-new-capture-intake-audit/probe/log 보관.
 - 확장 이번단계 불변: prepared2.1.19/90files1113844bytes/SHA c1fe955ecc76a4917cf5f561a43d9aa4963a814ff02bdcd322ed5b245e883bd3, 마지막실행관찰2.1.18. 추가refresh질문0. 기존 업무상품 행열기·수정·삭제·전송0, source/Hub실쓰기0, 일반두livegate=false. 실제수집→전카테고리/전체1~7UI동일→실접수 여전히미검증. 새resource/migration/Access정책변경0.
 - 기존Worker 배포31d6b381-1521-4c4b-8077-a4474ddbf85b. commit/push·운영 읽기 결과는 최종validation 참조.
+
+### Step783 — 과거 AI 실행 이력의 무료 편집 영구잠금 수정
+- 기준8dd7992b28c590dd10013d62a8373af8e7d164ca. 상세 docs/step783-image-history-and-free-editing.md. REA 보관 Stage5 translateSingleImage→processedGroupsMap→detailHTML→save와 현 exact-slot 무료번역을 대조, 새확정누락없음. Stage4 cleanup과혼동해기능추가0. 원본SHA5b92873c…80ad1d9/기존부모Evidence재사용, 새producer/lookup재시도/실사이트실행0.
+- ImageGenerationPanel은 persisted running만으로모든무료편집까지영구busy였음. parentbusy=현재busy||selectedApplyPending으로분리, historyRunning은prepare/approve/execute의UI/action-time liveView가드로계속차단. 이력/공급자/API/DB불변. 실제fetch/불확실quotePUT잠금·CAS/late결과/기존무료flow보존. reviewer추가확정P1/P2없음.
+- 신규실제Dashboard/Panel회귀5건 포함 최종5고유파일55/55한실행 pass. 최초54/55는옛running-close기대true; 이력만false/실GET중true로test만보완, 쓰기차단·수동입력보존유지. 초기로그보존·중복합산0. types/lint/build/diff통과. 최종SHA/로그/배포/push는 outputs/step783-final-validation.json.
+- Chrome4 localhost 새합성상품/actualDashboard/API/SQLite/비공개PNG: TESTONLYrunningjob+configuredfalse→추가사진1수동편집→검수문구→CanvasPNG→image-text POST200정확1→최종견적선택위치/alias만변경. 기존runningjob/원문/content/options/다른field값/원본파일/보호합성상품불변. 이미지pool PNG한장추가·재편집JSON별도보관. 최초단언의보조JSON미포함예상만수정, production완화0. screenshot/32pxdecode/최종proof step783-browser-{free-edit.png,final-proof.json}. 검수탭/서버정리. 외부번역·유료provider·source/Hub/native0.
+- 별도read-only감사: imageprovider미설정이GoogleGTX무료번역/초안조건아님, 수집함제목수정은immutable원문대신reviewrevision만갱신해추천/초안에연결. 새결함/변경/테스트재실행0.
+- 기존실제업무상품열기·수정·삭제·전송0. 거절1688직간접재시도0, 일반두livegate=false. 실제1688수집→전체UI동일→실접수미검증이며생성형imageprovider미설정유지. 확장prepared2.1.19/runtime마지막2.1.18/ZIP불변, 추가refresh질문0. 새resource/migration/Access정책변경0.
