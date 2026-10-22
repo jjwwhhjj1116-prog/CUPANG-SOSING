@@ -6486,3 +6486,13 @@ ExistingfreeWorker ba37200e-0c9a-4a59-9362-86d27a6fa9bc deployed. Latestactualpr
 - 5단계 합성사진 선택제거의 기본confirm창에서 CUA가 focus timeout. getJsDialog/확인/탭닫기 모두실패, 사용자에게 로컬127.0.0.1:41786 확인창OK요청. 이번5~7브라우저검수미완료. 탭727936184/qa786는handoff, 합성서버 session48251(41786) 유지. 사용자OK뒤 같은handlestate확인부터이어갈것, 클릭중복금지. 운영live779는deliverable. 사이트/Auto-review차단과다른UI도구제한이다.
 - REA 보관가격controls/rounding/최소ON/OFF 정적대조는새gap없음. category추천→exactcapture→초안도읽기상연결. 원본Evidence/SHA재사용; 실제원본실행·기존상품접촉0.
 - 기존Worker 배포5726703b-863b-4de4-b544-0b9e9a424077. 확장이번불변prepared2.1.20/실제응답2.1.18. 앞선새로고침질문대기·추가권한없음. 지정1688이전site-safety읽기거절미해결·우회0, 실상품수집→실제Hub접수는미검증. 상세 docs/step786-prepared-receipt-recovery-and-price-display.md 및 outputs/step786-final-validation.json.
+
+## 787. 재부팅 연결 복원·5~7단계 저장·전송 준비 계산 (2026-10-22)
+
+- 사용자가 Chrome 연결 완료를 알린 뒤 기존 Chrome3에 연결했다. Supplier Hub 유앤채/A01526306, 운영 앱 jwhj1116@kakao.com 확인. 원래 Couplus 탭은 다른 세션 소유로 확인돼 조작하지 않았다. 실제 기존 상품 수정·삭제·전송0. 실행 확장2.1.18/다운로드2.1.20 구분 유지.
+- 명시한 재부팅 후 재시도 요청으로 1022260303756 URL 직접 열기1회. 브라우저 site-safety가 관찰 권한 거절: 로그인·사용자 승인·Auto-review 문제가 아님. 우회0. 실상품 수집→실제Hub접수는 여전히 미검증. outputs/step787-live-boundary.json.
+- 새 격리 실제 Dashboard/API/SQLite/Canvas: stage5 순서·HTML PUT200, stage6 내용 수정→PNG업로드201/첨부200/견적연결PUT200, stage7 모델·합성포장값PUT200/revision3 재조회. 공통/다른옵션/보호합성상품/원본파일 보존. 수동이미지 문구 미리보기도 확인(이 실행의 적용POST0). stage5~7·image-editor PNG/AX와 outputs/step787-ui-verification.json. 검수 탭/서버 종료; 운영 앱 deliverable.
+- REA 원본 processed 삭제의 native confirm·로컬편집과 original 삭제의 saveItems 차이를 대조했다. 현재 신뢰 가능한 original/processed 분류 입력이 없어 파일삭제·임의자동저장 추가0. unsaved method는 렌더 닫기에 연결 미확인. 보관 SHA/범위·Evidence는 outputs/rea-step787-detail-removal/manifest.json. 새 원본실행/동일실패lookup0.
+- 이전 native 통합 지연 원인은 같은 자료의 반복 양식/지문 계산. 전역 schema cache는 이득 없어 철회. 최종 app/exports/single-package.ts 한 요청 closure에서 최초 전체 saved DTO 키 고정; 최신 full read가 동일할 때만 이미 계산한 fingerprint 재사용, 변경/미적격은 원래 계산. auth/회사·source clock·revision·현재 라벨/R2·publicConfig·file get/head/bytes/SHA·active 호출 전부 유지. 다른 요청 공유0. actual native GET 로컬 번갈아3쌍211/207/205→137/131/127ms, source read22 그대로/fingerprint22→1, plan동일/SQL·파일불변. 운영속도로 확대금지.
+- 최종 고유12파일338/338(루트8파일306 + 추가API2파일22 + 양 native 통합2파일10), fail/skip/cancel0. worker28관련에는root6중복이므로합산제외. 타입/변경lint/build/diff 통과, 독립최종P1/P2없음. 초기실패/중단profile·전역cache철회측정과최종성공은분리보존. 새resource/DBmigration/Access/provider/확장권한변경0, 일반두livegate=false.
+- 상세 docs/step787-schema-compilation-and-stages5-7.md, 검사·배포·commit/push와SHA는 outputs/step787-final-validation.json. 실제접수·전체UI완전동등성으로보고금지.

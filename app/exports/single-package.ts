@@ -18,6 +18,36 @@ import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 
 function changed(): never { throw new SingleAssetError('준비 중 상품·견적값·이미지·회사 또는 카테고리가 변경되었습니다. 다시 검토해주세요.', 'SINGLE_SOURCE_CHANGED'); }
 
+/** Compare complete inert DTO values only inside one package request. Exotic
+ * objects use the original fingerprint path, never a partial source-clock key. */
+function packageSourceValueKey(value:unknown):string|null{
+  let count=0;const seen=new Set<object>(),objects=new Set<object>([Object.prototype]),arrays=new Set<object>([Array.prototype]);
+  const inspect=(item:unknown,depth:number):void=>{
+    if(++count>100000||depth>40||typeof item==='string'&&item.length>6_000_000)throw Error('Uncacheable source');
+    if(item===undefined||item===null||['string','number','boolean'].includes(typeof item))return;
+    if(typeof item!=='object'||seen.has(item))throw Error('Uncacheable source');
+    const array=Array.isArray(item),prototype=Object.getPrototypeOf(item),known=array?arrays:objects,keys=Reflect.ownKeys(item);
+    if(prototype!==null&&!known.has(prototype)){
+      const constructor=Object.getOwnPropertyDescriptor(prototype,'constructor')?.value;
+      if(typeof constructor!=='function'||constructor.prototype!==prototype||Function.prototype.toString.call(constructor)!==`function ${array?'Array':'Object'}() { [native code] }`)throw Error('Uncacheable source');
+      known.add(prototype);
+    }
+    if(array&&(prototype===null||keys.length!==item.length+1||Object.keys(item).length!==item.length))throw Error('Uncacheable source');
+    seen.add(item);
+    for(const key of keys){const field=Object.getOwnPropertyDescriptor(item,key)!;
+      if(typeof key!=='string'||!Object.hasOwn(field,'value')||!field.enumerable&&!(array&&key==='length'))throw Error('Uncacheable source');
+      inspect(field.value,depth+1);
+    }
+    seen.delete(item);
+  };
+  try{
+    inspect(value,0);
+    const key=JSON.stringify(value,(_key,item)=>item===undefined?'\u0000undefined':typeof item==='string'&&item.startsWith('\u0000')?'\u0000'+item
+      :typeof item==='number'&&(Object.is(item,-0)||!Number.isFinite(item))?'\u0000'+(Object.is(item,-0)?'-0':String(item)):item);
+    return key.length<=6_000_000?key:null;
+  }catch{return null;}
+}
+
 /** Shared current-source proof. A read never publishes assets or contacts Hub. */
 export async function loadSinglePackage(owner:string,id:string,profileId:string|null,company:SupplierHubCompany,active:()=>Promise<void>,prepare=false,expectedFingerprint?:string,includeNativeAssets=false){
     const saved = await readQuotationExportSource(owner, id, profileId);
@@ -33,6 +63,7 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
       throw new SingleAssetError('이 상품 회사·카테고리의 검증된 Single 원문 양식이 필요합니다.', 'SINGLE_SCHEMA');
     const config = publicDetailConfig(env as Parameters<typeof publicDetailConfig>[0]);
     const sourceFingerprint = await quotationExportFingerprint(saved, null), configVersion = await publicDetailVersion(config);
+    const sourceValueKey=packageSourceValueKey(saved);
     const projection = await projectSupplierHubSingleDocument({ snapshot: saved.hubSchema, company, categoryId: saved.categoryContext.categoryId,
       categoryPath: saved.categoryContext.categoryPath, resolved: resolveQuotationExport(saved) });
     const ownedKeys = productImageKeys(saved.product.image_keys), selection = singleAssetSelection(projection, owner, ownedKeys);
@@ -74,7 +105,8 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
       await active();
       if (!await quotationSourcesCurrent(owner, id, saved.source) || (await readQuotationFields(owner, id)).revision !== saved.state.revision) changed();
       const latest = await readQuotationExportSource(owner, id, profileId);
-      if (await quotationExportFingerprint(latest, null) !== sourceFingerprint
+      const latestFingerprint=sourceValueKey!==null&&packageSourceValueKey(latest)===sourceValueKey?sourceFingerprint:await quotationExportFingerprint(latest,null);
+      if (latestFingerprint !== sourceFingerprint
         || JSON.stringify(await publicDetailVersion(publicDetailConfig(env as Parameters<typeof publicDetailConfig>[0]))) !== JSON.stringify(configVersion)) changed();
       if (file) {
         const stored = await env.FILES.get(file.key), currentMetadata = await env.FILES.head(file.key);
