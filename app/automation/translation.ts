@@ -1,6 +1,7 @@
 import { QUOTATION_TAG_TOTAL_LIMIT, QUOTATION_TAG_ITEM_LIMIT } from '@/app/quotation-keywords';
 import { fingerprint } from '@/app/automation/model';
 import { translationAttributeIssue,translationAttributeFactText,translationNumbers,invalidOptionTranslationDestination } from '@/app/translation-attribute-evidence';
+import type { WorkersRecoveryProof, WorkersRecoveryConfiguration } from '@/app/workers-translation-recovery';
 
 export type TranslationSource = { title: string; description: string; attributes: { name: string; value: string }[]; provenance: 'manual'; reference: string; category?: { id: string; path: string[] }; guidance?: { features: string; keywords: string } };
 export type TranslationDraft = { title: string; keywords: string[]; description: string; attributes: { sourceIndex: number; name: string; value: string }[]; warnings: string[] };
@@ -12,6 +13,7 @@ export type TranslationReview = {
   optionsRetry?: { retryKey: string; optionRevision: number; scope: 'options' }; // Server-created, option-only free retry proof.
   intakeOptions?: { initialJobId: string; optionRevision: number; scope: 'options' }; // Server-created automatic continuation, distinct from an explicit retry.
   seoRetry?: {retryKey:string;scope:'seo';optionRevision:number;sourceFingerprint:string;company:{code:string;name:string}};
+  workersRecovery?: WorkersRecoveryProof;
 };
 export type TranslationResult = { draft: TranslationDraft; responseId: string; model: string; usage: { inputTokens: number; outputTokens: number; totalTokens: number } | null; generatedAt: string; provenance: 'generated'; appliedToContent: false; detectedSourceLanguages?: string[]; translationRequests?: number; googleStoppedHttpStatus?: number };
 export type TranslationJob = {
@@ -22,7 +24,7 @@ export type TranslationJob = {
   createdAt: string; approvedAt: string | null; startedAt: string | null; finishedAt: string | null;
 };
 export type TranslationConfiguration = { configured: boolean; model: string | null; maxOutputTokens: number | null; issues: string[] };
-export type TranslationView = { jobs: TranslationJob[]; configuration: TranslationConfiguration };
+export type TranslationView = { jobs: TranslationJob[]; configuration: TranslationConfiguration; workersRecovery?: WorkersRecoveryConfiguration };
 export type WorkersAiBinding = { run(model: string, input: Record<string, unknown>): Promise<unknown> };
 export type TranslationSecrets = { OPENAI_API_KEY?: string; SOURCEFLOW_TEXT_MODEL?: string; SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS?: string; SOURCEFLOW_TEXT_PROVIDER?: string; AI?: WorkersAiBinding };
 export type TranslationConfig = { apiKey: string; model: string; maxOutputTokens: number; provider?: 'openai' | 'workers-ai' | 'google-free'; ai?: WorkersAiBinding };
@@ -224,6 +226,7 @@ function usageOf(input: unknown): TranslationResult['usage'] {
 // the internal code. Never retain its description, raw response or request data.
 // https://developers.cloudflare.com/workers-ai/platform/errors/
 function workersAiFailure(error: unknown): TranslationError {
+  if (error instanceof TranslationError) return error;
   const message = error && typeof error === 'object' ? (error as { message?: unknown }).message : undefined;
   const code = typeof message === 'string' ? /^(\d{4}):/.exec(message)?.[1] : undefined;
   const guidance: Record<string, string> = {
@@ -253,6 +256,11 @@ function workersAiFailure(error: unknown): TranslationError {
 export async function executeTranslation(review: TranslationReview, config: TranslationConfig, fetcher: typeof fetch = fetch): Promise<TranslationResult> {
   if (translationDestination(config) !== review.destination || config.model !== review.model || config.maxOutputTokens !== review.maxOutputTokens) throw new TranslationError('CONFIGURATION_CHANGED', '검토한 모델 설정이 변경되었습니다. 새 요청을 검토해주세요.');
   validateTranslationSource(review.source);
+  if (Object.hasOwn(review, 'workersRecovery')) {
+    const {workersRecoveryReviewProof} = await import('@/app/workers-translation-recovery');
+    workersRecoveryReviewProof(review);
+    if (config.provider !== 'workers-ai') throw new TranslationError('CONFIGURATION_CHANGED', '검토한 Cloudflare 별도 초안만 실행할 수 있습니다.');
+  }
   if(Object.hasOwn(review,'seoRetry')){
     const {seoRetryReviewProof}=await import('@/app/seo-translation-retry');seoRetryReviewProof(review);
     if(config.provider!=='google-free')throw new TranslationError('CONFIGURATION_CHANGED','SEO 재시도는 검토한 무료 Google 번역만 사용할 수 있습니다.');

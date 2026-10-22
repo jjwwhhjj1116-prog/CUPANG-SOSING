@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { findProduct } from '@/db/queries';
 import { readProductContent } from '@/db/product-content';
-import { listTranslationJobs, getTranslationJob, createTranslationJob, approveTranslationJob, claimTranslationJob, finishTranslationJob, findIntakeTranslation, findIntakeOptionsTranslation, refreshUnstartedIntake, findOptionsRetryTranslation, createOptionsRetryTranslation, hasUnsettledTranslation,findSeoRetryTranslation,createSeoRetryTranslation,readSeoRetrySource } from '@/db/translation-jobs';
+import { listTranslationJobs, getTranslationJob, createTranslationJob, approveTranslationJob, claimTranslationJob, finishTranslationJob, findIntakeTranslation, findIntakeOptionsTranslation, refreshUnstartedIntake, findOptionsRetryTranslation, createOptionsRetryTranslation, hasUnsettledTranslation,findSeoRetryTranslation,createSeoRetryTranslation,readSeoRetrySource,readWorkersRecoverySource,findWorkersRecoveryTranslation,createWorkersRecoveryTranslation } from '@/db/translation-jobs';
 import { fingerprint } from '@/app/automation/model';
 import { optionsRetryProof } from '@/app/options-translation-retry';
 import { intakeOptionsReviewProof } from '@/app/intake-options-translation';
@@ -12,10 +12,12 @@ import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
 import {CollectionCompanyError,verifyCapturedCollectionCompany} from '@/app/collection-company';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import { TranslationError, translationDestination, translationConfiguration, requireTranslationConfig, validateTranslationSource, prepareTranslationReview, executeTranslation, type TranslationJob, type TranslationSecrets } from '@/app/automation/translation';
+import { google429RecoveryCandidate, workersRecoveryConfiguration, requireWorkersRecoveryConfig, workersRecoveryReviewProof, WORKERS_RECOVERY_MAX_INPUT_CHARACTERS } from '@/app/workers-translation-recovery';
 
 type Context = { params: Promise<{ id: string }> };
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
 const configuration = () => translationConfiguration(env as TranslationSecrets);
+const recoveryConfiguration = () => workersRecoveryConfiguration(env as TranslationSecrets);
 const unavailable = () => json({ error: '번역 요청 저장소에 연결하지 못했습니다. 실행 이력을 확인한 뒤 진행해주세요.' }, 503);
 const conflict = () => json({ error: '상품·콘텐츠·설정 또는 승인 상태가 변경되었습니다. 새 검토 요청을 만들어주세요.', code: 'TRANSLATION_CONFLICT' }, 409);
 async function seoCompany(owner:string){const user=await getChatGPTUser();return user?.verifiedAccess&&user.userId===owner?approvedSupplierHubCompany(user.membership):null;}
@@ -62,7 +64,7 @@ export async function GET(request: Request, context: Context) {
       if (job && optionsRetryProof(job)?.retryKey !== retryKey) return conflict();
       return json({ productId: id, productVersion: product.updated_at, retryKey, job, configuration: configuration() });
     }
-    return json({ jobs: await listTranslationJobs(owner, id), configuration: configuration() });
+    return json({ jobs: await listTranslationJobs(owner, id), configuration: configuration(), workersRecovery: recoveryConfiguration() });
   } catch { return unavailable(); }
 }
 
@@ -85,7 +87,43 @@ export async function POST(request: Request, context: Context) {
     // Check before preparing/replaying a job, approving/claiming it or sending
     // any source text to Google/AI. GET history stays read-only and unchanged.
     if(!await verifyTranslationCompany(owner,id))return conflict();
-    const config = requireTranslationConfig(env as TranslationSecrets);
+    const requestedJob=['approve','execute'].includes(String(body.action))&&typeof body.jobId==='string'&&/^[a-f0-9-]{36}$/.test(body.jobId)
+      ? await getTranslationJob(owner,id,body.jobId) : null;
+    let config = body.action==='prepare-collected-workers'||requestedJob&&workersRecoveryReviewProof(requestedJob.review)
+      ? requireWorkersRecoveryConfig(env as TranslationSecrets) : requireTranslationConfig(env as TranslationSecrets);
+    if(body.action==='prepare-collected-workers'){
+      if(Object.keys(body).some(key=>!['action','expectedVersion','idempotencyKey','failedJobId'].includes(key))
+        ||typeof body.idempotencyKey!=='string'||!(/^[a-zA-Z0-9_-]{8,100}$/).test(body.idempotencyKey)
+        ||typeof body.failedJobId!=='string'||!(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/).test(body.failedJobId))
+        throw new TranslationError('INVALID_REQUEST','별도 초안의 실패 이력과 중복 방지 키를 확인해주세요.');
+      if(body.expectedVersion!==product.updated_at||!await findProduct(owner,id,true))return conflict();
+      const company=await seoCompany(owner);if(!company)return json({error:'승인된 회원 회사정보가 필요합니다.'},403);
+      const [failed,previous,captured,content]=await Promise.all([getTranslationJob(owner,id,body.failedJobId),findWorkersRecoveryTranslation(owner,id,body.failedJobId),
+        readWorkersRecoverySource(owner,id,product.source_url,company),readProductContent(owner,id)]);
+      const {intakeSupplierSourceMatches}=await import('@/app/intake-supplier-source');
+      if(!google429RecoveryCandidate(failed)||!intakeSupplierSourceMatches(failed!.review.source,captured.receipt,captured.collection))return conflict();
+      if(JSON.stringify(captured.source).length>WORKERS_RECOVERY_MAX_INPUT_CHARACTERS)
+        throw new TranslationError('WORKERS_RECOVERY_SOURCE_TOO_LARGE','무료 별도 초안의 원문 길이 한도를 넘었습니다. 저장 원문과 기존 번역 이력은 유지했습니다.');
+      if(previous){const proof=workersRecoveryReviewProof(previous.review);
+        if(!proof||proof.failedJobId!==body.failedJobId||proof.company.code!==company.code||proof.company.name!==company.name
+          ||proof.sourceFingerprint!==captured.sourceFingerprint||proof.optionRevision!==captured.optionRevision
+          ||previous.productVersion!==product.updated_at||previous.contentRevision!==content.revision||JSON.stringify(previous.review.source)!==JSON.stringify(captured.source))return conflict();
+        const expiredUnstarted=['prepared','approved'].includes(previous.status)&&Date.parse(previous.review.expiresAt)<=Date.now()
+          &&!previous.startedAt&&!previous.result&&!previous.error;
+        if(!expiredUnstarted)return json({job:previous,replayed:true,configuration:configuration(),workersRecovery:recoveryConfiguration(),workersRecoveryReview:true});
+      }
+      if(await hasUnsettledTranslation(owner,id))return conflict();
+      const workersRecovery={failedJobId:body.failedJobId,scope:'collected' as const,optionRevision:captured.optionRevision,sourceFingerprint:captured.sourceFingerprint,company};
+      const prepared=await prepareTranslationReview(captured.source,config);
+      const paidNotice='저장된 이 상품의 수집 원문과 미번역 옵션을 Cloudflare Workers AI에 별도로 1회 전송합니다. 확인된 Workers Free 설정에서 견적 AI와 공유하는 일일 40회 한도를 사용하며 출력은 2,048토큰으로 제한합니다. Google 기본 번역과 실패 이력은 유지합니다. 무료 한도·오류·시간초과 이후 자동 재시도나 다른 유료 서비스 전환은 하지 않습니다. 결과는 검토한 항목만 적용하세요.';
+      const review={...prepared,paidNotice,workersRecovery,fingerprint:await fingerprint({review:prepared.fingerprint,workersRecovery,paidNotice})};
+      const value:TranslationJob={id:crypto.randomUUID(),productId:id,productVersion:product.updated_at,contentRevision:content.revision,status:'prepared',review,result:null,error:null,
+        createdAt:new Date().toISOString(),approvedAt:null,startedAt:null,finishedAt:null};
+      const requestFingerprint=await fingerprint({source:captured.source,productVersion:value.productVersion,contentRevision:value.contentRevision,workersRecovery,model:config.model,maxOutputTokens:config.maxOutputTokens});
+      const saved=await createWorkersRecoveryTranslation(owner,value,body.failedJobId,requestFingerprint,captured.optionRevision,captured.guard);
+      if(!saved||saved.conflict)return conflict();
+      return json({job:saved.job,replayed:saved.replayed,configuration:configuration(),workersRecovery:recoveryConfiguration(),workersRecoveryReview:true},saved.replayed?200:201);
+    }
     if(body.action==='prepare-seo-retry'){
       if(Object.keys(body).some(key=>!['action','expectedVersion','retryKey'].includes(key))||typeof body.retryKey!=='string'
         ||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(body.retryKey))throw new TranslationError('INVALID_REQUEST','SEO 재시도 범위와 중복 방지 키를 확인해주세요.');
@@ -253,8 +291,10 @@ export async function POST(request: Request, context: Context) {
     if (!['approve', 'execute'].includes(String(body.action)) || typeof body.jobId !== 'string' || !/^[a-f0-9-]{36}$/.test(body.jobId)) throw new TranslationError('INVALID_REQUEST', '작업과 요청 종류를 확인해주세요.');
     const allowed = body.action === 'approve' ? ['action', 'jobId', 'reviewFingerprint', 'confirmPaid'] : ['action', 'jobId'];
     if (Object.keys(body).some(key => !allowed.includes(key))) throw new TranslationError('INVALID_REQUEST', '클라이언트가 모델이나 결과를 지정할 수 없습니다.');
-    const existing = await getTranslationJob(owner, id, body.jobId);
+    const existing = requestedJob??await getTranslationJob(owner, id, body.jobId);
     if (!existing) return json({ error: '번역 요청을 찾을 수 없습니다.' }, 404);
+    const workersProof=workersRecoveryReviewProof(existing.review);
+    if(workersProof)config=requireWorkersRecoveryConfig(env as TranslationSecrets);
     if (existing.review.destination !== translationDestination(config) || existing.review.model !== config.model || existing.review.maxOutputTokens !== config.maxOutputTokens) return conflict();
     let intakeProof;
     try { intakeProof = intakeOptionsReviewProof(existing.review); }
@@ -286,6 +326,15 @@ export async function POST(request: Request, context: Context) {
     }
     const seoProof=seoRetryReviewProof(existing.review);
     let seoSource;
+    if(workersProof){
+      const company=await seoCompany(owner);if(!company||company.code!==workersProof.company.code||company.name!==workersProof.company.name)return conflict();
+      const [captured,failed,content]=await Promise.all([readWorkersRecoverySource(owner,id,product.source_url,company),getTranslationJob(owner,id,workersProof.failedJobId),readProductContent(owner,id)]);
+      const {intakeSupplierSourceMatches}=await import('@/app/intake-supplier-source');
+      if(!google429RecoveryCandidate(failed)||!intakeSupplierSourceMatches(failed!.review.source,captured.receipt,captured.collection)
+        ||captured.sourceFingerprint!==workersProof.sourceFingerprint||JSON.stringify(captured.source)!==JSON.stringify(existing.review.source)
+        ||captured.optionRevision!==workersProof.optionRevision||content.revision!==existing.contentRevision||product.updated_at!==existing.productVersion)return conflict();
+      seoSource=captured.guard;
+    }
     if(seoProof){
       const company=await seoCompany(owner);if(!company||company.code!==seoProof.company.code||company.name!==seoProof.company.name)return conflict();
       const {readProductOptions}=await import('@/db/product-options');
@@ -296,21 +345,65 @@ export async function POST(request: Request, context: Context) {
     if (body.action === 'approve') {
       if (body.confirmPaid !== true || body.reviewFingerprint !== existing.review.fingerprint) return json({ error: '검토한 원문과 모델의 생성 요청 승인이 필요합니다.', code: 'PAID_APPROVAL_REQUIRED' }, 400);
       if (existing.status === 'approved') return json({ job: existing, replayed: true });
-      const approved = await approveTranslationJob(owner, id, existing.id, existing.review.fingerprint, new Date().toISOString(),seoProof?.optionRevision??optionsRetryProof(existing)?.optionRevision??intakeProof?.optionRevision,seoSource);
+      const approved = await approveTranslationJob(owner, id, existing.id, existing.review.fingerprint, new Date().toISOString(),workersProof?.optionRevision??seoProof?.optionRevision??optionsRetryProof(existing)?.optionRevision??intakeProof?.optionRevision,seoSource);
       return approved ? json({ job: approved }) : conflict();
     }
     if (['completed', 'failed', 'uncertain'].includes(existing.status)) return json({ job: existing, replayed: true });
     if (existing.status === 'running') return json({ job: existing, replayed: true, message: '이미 실행 중이거나 결과 확인이 필요합니다. 중복 호출하지 않았습니다.' }, 202);
     if (existing.status !== 'approved') return json({ error: '먼저 검토한 생성 요청을 승인해주세요.', code: 'PAID_APPROVAL_REQUIRED' }, 409);
     const claim = crypto.randomUUID();
-    const claimed = await claimTranslationJob(owner, id, existing.id, existing.review.fingerprint, claim, new Date().toISOString(),seoProof?.optionRevision??optionsRetryProof(existing)?.optionRevision??intakeProof?.optionRevision,seoSource);
+    const claimed = await claimTranslationJob(owner, id, existing.id, existing.review.fingerprint, claim, new Date().toISOString(),workersProof?.optionRevision??seoProof?.optionRevision??optionsRetryProof(existing)?.optionRevision??intakeProof?.optionRevision,seoSource);
     if (!claimed) {
       const current = await getTranslationJob(owner, id, existing.id);
       if (current && current.status !== 'approved') return json({ job: current, replayed: true }, current.status === 'running' ? 202 : 200);
       return conflict();
     }
     let result = null; let executionError: TranslationJob['error'] = null;
-    try { result = await executeTranslation(claimed.review, config); }
+    try {
+      if(workersProof){
+        const company=await seoCompany(owner),current=await findProduct(owner,id,true);
+        if(!company||company.code!==workersProof.company.code||company.name!==workersProof.company.name||!current||current.updated_at!==claimed.productVersion)
+          throw new TranslationError('WORKERS_RECOVERY_SOURCE_CHANGED','초안 실행 직전 승인 회사 또는 상품이 변경되었습니다. 원문을 전송하지 않았습니다.');
+        const [captured,content]=await Promise.all([readWorkersRecoverySource(owner,id,current.source_url,company),readProductContent(owner,id)]);
+        if(captured.sourceFingerprint!==workersProof.sourceFingerprint||captured.optionRevision!==workersProof.optionRevision
+          ||content.revision!==claimed.contentRevision||JSON.stringify(captured.source)!==JSON.stringify(claimed.review.source))
+          throw new TranslationError('WORKERS_RECOVERY_SOURCE_CHANGED','초안 실행 직전 수집 원문 또는 옵션이 변경되었습니다. 원문을 전송하지 않았습니다.');
+        const {reserveQuotationAiRequest}=await import('@/db/quotation-ai-jobs');
+        if(!await reserveQuotationAiRequest())throw new TranslationError('WORKERS_RECOVERY_LIMIT','오늘의 무료 AI 공유 요청 한도에 도달했습니다. 원문과 기존 이력을 유지하고 자동 재시도하지 않았습니다.');
+      }
+      // Quota reservation is asynchronous. Recheck the exact actor and tuple
+      // inside the actual send boundary, rather than trusting the earlier claim.
+      const binding=config.ai;
+      const executionConfig=workersProof ? {...config,ai:{run:async(model:string,providerInput:Record<string,unknown>)=>{
+        try{
+          requireWorkersRecoveryConfig(env as TranslationSecrets);
+          const [user,current,currentOwner]=await Promise.all([getChatGPTUser(),findProduct(owner,id,true),getWorkspaceOwnerId()]);
+          const company=user?.verifiedAccess&&user.userId===owner&&user.membership?.id===owner&&['admin','member'].includes(user.membership.role)
+            ? approvedSupplierHubCompany(user.membership) : null;
+          if(currentOwner!==owner||!company||company.code!==workersProof.company.code||company.name!==workersProof.company.name
+            ||!current||current.updated_at!==claimed.productVersion||!binding||model!==config.model)
+            throw new TranslationError('WORKERS_RECOVERY_SOURCE_CHANGED','원문 전송 직전 회원·회사·상품 연결이 변경되었습니다. 원문을 전송하지 않았습니다.');
+          const [captured,content]=await Promise.all([readWorkersRecoverySource(owner,id,current.source_url,company),readProductContent(owner,id)]);
+          if(captured.sourceFingerprint!==workersProof.sourceFingerprint||captured.optionRevision!==workersProof.optionRevision
+            ||content.revision!==claimed.contentRevision||JSON.stringify(captured.source)!==JSON.stringify(claimed.review.source))
+            throw new TranslationError('WORKERS_RECOVERY_SOURCE_CHANGED','원문 전송 직전 수집 원문 또는 옵션이 변경되었습니다. 원문을 전송하지 않았습니다.');
+          const latestOwner=await getWorkspaceOwnerId();
+          const latestUser=await getChatGPTUser();
+          const latestCompany=latestUser?.verifiedAccess&&latestUser.userId===owner&&latestUser.membership?.id===owner
+            &&latestUser.membership.email===user!.membership!.email&&latestUser.membership.role===user!.membership!.role
+            ? approvedSupplierHubCompany(latestUser.membership):null;
+          if(latestOwner!==owner||!latestCompany||latestCompany.code!==company.code||latestCompany.name!==company.name
+            ||Date.now()-Date.parse(claimed.startedAt??claimed.createdAt)>=55000)
+            throw new TranslationError('WORKERS_RECOVERY_SOURCE_CHANGED','최종 원문 확인 중 회원·회사 연결이 변경되었거나 확인 시간이 지났습니다. 원문을 전송하지 않았습니다.');
+          requireWorkersRecoveryConfig(env as TranslationSecrets);
+        }catch(error){
+          if(error instanceof TranslationError)throw error;
+          throw new TranslationError('WORKERS_RECOVERY_SOURCE_CHANGED','원문 전송 직전 현재 연결을 확인하지 못했습니다. 원문을 전송하지 않았습니다.');
+        }
+        return binding!.run(model,providerInput);
+      }}} : config;
+      result = await executeTranslation(claimed.review, executionConfig);
+    }
     catch (error) { executionError = error instanceof TranslationError ? { code: error.code, message: error.message, mayHaveBeenCharged: error.mayHaveBeenCharged } : { code: 'PROVIDER_OUTCOME_UNCERTAIN', message: '실행 결과를 확인할 수 없습니다. 자동 재시도하지 않습니다.', mayHaveBeenCharged: true }; }
     try {
       const finished = await finishTranslationJob(owner, id, claimed.id, claim, result, executionError, new Date().toISOString());
@@ -318,7 +411,7 @@ export async function POST(request: Request, context: Context) {
     } catch { return json({ error: '호출 후 결과 저장에 실패했습니다. 비용이 발생했을 수 있으며 중복 호출을 차단했습니다.', code: 'RESULT_PERSISTENCE_UNCERTAIN' }, 503); }
   } catch (error) {
     if (error instanceof CollectionCompanyError) return json({ error: error.message, code: error.code },409);
-    if (error instanceof TranslationError) return json({ error: error.message, code: error.code, configuration: configuration() }, error.code === 'TRANSLATION_NOT_CONFIGURED' ? 503 : 400);
+    if (error instanceof TranslationError) return json({ error: error.message, code: error.code, configuration: configuration(),workersRecovery:recoveryConfiguration() }, ['TRANSLATION_NOT_CONFIGURED','WORKERS_RECOVERY_NOT_CONFIGURED'].includes(error.code) ? 503 : 400);
     return unavailable();
   }
 }

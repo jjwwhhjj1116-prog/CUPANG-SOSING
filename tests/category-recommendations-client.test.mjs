@@ -233,7 +233,8 @@ test('search-title API authenticates and translates Chinese text only, with no G
  assert.equal(result.response.status,200);assert.equal(result.response.headers.get('cache-control'),'no-store');
  assert.deepEqual(result.body,{ownerId:owner,company,productName:input.productName,queryProductName:'겨울 방한 귀달이 모자'});
  assert.equal(h.translations.length,1);assert.equal(h.translations[0].text,input.productName);
- assert.deepEqual({...h.translations[0].options,signal:undefined},{targetLanguage:'ko',maxCharacters:500,timeoutSeconds:10,signal:undefined});
+ const {onFailure,...options}=h.translations[0].options;assert.equal(typeof onFailure,'function');
+ assert.deepEqual({...options,signal:undefined},{targetLanguage:'ko',maxCharacters:500,timeoutSeconds:10,signal:undefined});
  assert.equal(h.translations[0].options.signal,result.request.signal);assert.deepEqual(input,before);
  assert.equal(h.userReads,2);assert.equal(h.ownerReads,2);assert.equal(h.exports.GET,undefined);
 });

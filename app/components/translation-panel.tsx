@@ -15,8 +15,10 @@ import { TranslationIntegratedPreview } from '@/app/components/translation-integ
 import { runReviewedTranslation, translationReviewExpired } from '@/app/reviewed-translation';
 import { newOptionsRetryState, parseOptionsRetryState, retryOptionsTranslation, type OptionsRetryState } from '@/app/options-translation-retry';
 import {newSeoRetryState,parseSeoRetryState,prepareSeoTranslationRetry,executeSeoTranslationRetry,seoRetryReviewProof,type SeoRetryState} from '@/app/seo-translation-retry';
+import {google429RecoveryCandidate} from '@/app/workers-translation-recovery';
+import {newWorkersSeoRecoveryRequest,prepareWorkersSeoRecovery,type WorkersSeoRecoveryRequest} from '@/app/workers-seo-recovery-client';
 
-type Props = { productId: string; version: string; title: string; profileId?: string; onContentSaved?: () => void };
+type Props = { productId: string; version: string; title: string; profileId?: string; onContentSaved?: () => void; initialJobId?:string; initialReviewFingerprint?:string; reviewOnly?:boolean };
 type RequestContext = { categoryId: string; categoryPath: string[]; features: string; keywords: string; capturedAt: string };
 type CollectedSource = { error?:string; title:string; description:string; attributes?:{name:string;value:string}[]; jobId:string; sourceUrl:string; productVersion:string; message:string; requestContext?:RequestContext|null };
 function validateCollectedSource(value: CollectedSource, version: string) {
@@ -49,8 +51,8 @@ async function readTranslationState(productId:string,signal:AbortSignal){
   return {view,content};
 }
 
-export default function TranslationPanel(props: Props) { return <TranslationContent key={`${props.productId}:${props.version}`} {...props} />; }
-function TranslationContent({ productId, version, title, profileId, onContentSaved }: Props) {
+export default function TranslationPanel(props: Props) { return <TranslationContent key={`${props.productId}:${props.version}:${props.initialJobId??''}:${props.initialReviewFingerprint??''}`} {...props} />; }
+function TranslationContent({ productId, version, title, profileId, onContentSaved,initialJobId,reviewOnly=false }: Props) {
   const [view, setView] = useState<TranslationView | null>(null);
   const [content, setContent] = useState<ProductContent | null>(null);
   const [sourceTitle, setSourceTitle] = useState(title);
@@ -62,7 +64,7 @@ function TranslationContent({ productId, version, title, profileId, onContentSav
   const [attributes, setAttributes] = useState('');
   const [collectedAttributes, setCollectedAttributes] = useState<{name:string;value:string}[]>([]);
   const [includeCollectedAttributes, setIncludeCollectedAttributes] = useState(true);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialJobId??null);
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(true);
   const [labelBusy, setLabelBusy] = useState(false), labelRequestBusy = useRef(false);
@@ -75,6 +77,7 @@ function TranslationContent({ productId, version, title, profileId, onContentSav
   const [hasSeoRetry,setHasSeoRetry]=useState(false);
   const activeRequest=useRef<AbortController|null>(null);
   const mounted=useRef(true);
+  const workersRequest=useRef<WorkersSeoRecoveryRequest|null>(null);
   const labelBusyChanged = useCallback((value: boolean) => { labelRequestBusy.current = value; if (mounted.current) setLabelBusy(value); }, []);
   useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;activeRequest.current?.abort();};},[]);
   useEffect(()=>{
@@ -106,7 +109,10 @@ function TranslationContent({ productId, version, title, profileId, onContentSav
   function finishRequest(controller:AbortController){
     if(activeRequest.current===controller){activeRequest.current=null;if(mounted.current)setBusy(false);}
   }
-  const job = view?.jobs.find(item => item.id === selectedId) ?? view?.jobs[0] ?? null;
+  const job = selectedId?view?.jobs.find(item => item.id === selectedId)??null:view?.jobs[0]??null;
+  const workersFailure=view?.jobs.find(item=>item.productId===productId&&google429RecoveryCandidate(item))??null;
+  const workersConfigured=view?.workersRecovery?.configured===true;
+  const workersJob=Boolean(job?.review.workersRecovery);
   const intakeOptionsJob = Boolean(job && Object.hasOwn(job.review,'intakeOptions'));
   const optionsOnlyJob = Boolean(job && (Object.hasOwn(job.review,'optionsRetry') || intakeOptionsJob));
   const seoRetryJob=Boolean(job&&Object.hasOwn(job.review,'seoRetry'));
@@ -125,6 +131,7 @@ function TranslationContent({ productId, version, title, profileId, onContentSav
       .then(async next=>{
         if(controller.signal.aborted)return;
         setView(next.view);setContent(next.content);
+        if(reviewOnly)return;
         // Saving a batch changes the product/content version. Historical jobs
         // must not disable source prefill for the next batch of pending options.
         // A current job still keeps its existing workflow untouched.
@@ -149,7 +156,7 @@ function TranslationContent({ productId, version, title, profileId, onContentSav
       .catch(reason=>{if(!controller.signal.aborted)setError(reason instanceof Error?reason.message:'조회 실패');})
       .finally(()=>finishRequest(controller));
     return () => controller.abort();
-  }, [productId, version, applyCollectedSource]);
+  }, [productId, version, reviewOnly, applyCollectedSource]);
 
   async function refreshState(){
     const controller=beginRequest(true);if(!controller)return;
@@ -157,7 +164,7 @@ function TranslationContent({ productId, version, title, profileId, onContentSav
     try{
       const next=await readTranslationState(productId,controller.signal);if(controller.signal.aborted)return;
       setView(next.view);setContent(next.content);
-      setSelectedId(previous=>next.view.jobs.some(item=>item.id===previous)?previous:next.view.jobs[0]?.id??null);
+      setSelectedId(previous=>next.view.jobs.some(item=>item.id===previous)?previous:initialJobId??next.view.jobs[0]?.id??null);
       setConfirmed(false);setSelectedFields([]);
       setNotice('서버에 저장된 작업 상태와 콘텐츠를 다시 읽었습니다. 작성 중인 원문·참고 메모는 유지했으며 AI 호출이나 상품 저장은 하지 않았습니다.');
     }catch(reason){if(!controller.signal.aborted)setError(reason instanceof Error?reason.message:'작업 상태 조회 실패');}
@@ -172,11 +179,27 @@ function TranslationContent({ productId, version, title, profileId, onContentSav
       const value = await response.json() as { job?: TranslationJob; configuration?: TranslationView['configuration']; error?: string; message?: string };if(controller.signal.aborted)return;
       if (!response.ok || !value.job) throw Error(value.error ?? '번역 요청을 처리하지 못했습니다.');
       const saved = value.job;
-      setView(previous => ({ configuration: value.configuration ?? previous!.configuration, jobs: [saved, ...(previous?.jobs ?? []).filter(item => item.id !== saved.id)] }));
+      setView(previous => ({...previous, configuration: value.configuration ?? previous!.configuration, jobs: [saved, ...(previous?.jobs ?? []).filter(item => item.id !== saved.id)] }));
       setSelectedId(saved.id); setConfirmed(false); setSelectedFields([]);
       if (value.message) setNotice(value.message);
     } catch (reason) { if(!controller.signal.aborted)setError(reason instanceof Error ? reason.message : '요청 실패'); }
     finally { finishRequest(controller); }
+  }
+  async function prepareWorkers(){
+    if(!workersConfigured||!workersFailure||reviewOnly)return;
+    const controller=beginRequest();if(!controller||!content)return;
+    setBusy(true);setError('');setNotice('서버 AI 검토 요청을 준비하고 있습니다…');
+    const previous=workersRequest.current;
+    const input=previous&&previous.productVersion===version&&previous.failedJobId===workersFailure.id?previous:newWorkersSeoRecoveryRequest(productId,version,workersFailure.id);
+    workersRequest.current=input;
+    try{
+      const saved=await prepareWorkersSeoRecovery(input,{signal:controller.signal,contentRevision:content.revision,fetcher:fetch});
+      if(controller.signal.aborted)return;
+      setView(previous=>previous?{...previous,jobs:[saved,...previous.jobs.filter(item=>item.id!==saved.id)]}:previous);
+      setSelectedId(saved.id);setConfirmed(false);setSelectedFields([]);
+      setNotice('Cloudflare Workers AI 요청을 준비했습니다. 전송 원문을 검토한 뒤 승인·실행해주세요. 기존 Google 이력과 직접 수정한 값은 유지했습니다.');
+    }catch(reason){if(!controller.signal.aborted){setNotice('');setError(reason instanceof Error?reason.message:'서버 AI 요청 상태를 확인하지 못했습니다.');}}
+    finally{finishRequest(controller);}
   }
   async function writeReviewedDraft() {
     if (!job || optionsOnlyJob || stale || expired || (job.status === 'prepared' && !confirmed)) return;
@@ -312,14 +335,16 @@ function TranslationContent({ productId, version, title, profileId, onContentSav
     finally { finishRequest(controller); }
   }
   return <section className="translation-panel" aria-label="원문 번역과 SEO 초안" data-workspace-saving={blocked} data-quotation-source-step="SEO">
-    <h4>원문 번역 · SEO 초안</h4>
+    <h4>{reviewOnly?'서버 AI 초안 검토':'원문 번역 · SEO 초안'}</h4>
     <button type="button" className="btn" disabled={blocked} onClick={()=>void refreshState()}>작업 상태 다시 조회 · 무료</button>
-    <p>저장된 원문으로 한국어 초안을 생성합니다. 아래 직접 입력 내용은 자동 수집 증빙으로 기록되지 않습니다.</p>
+    <p>{reviewOnly?'Cloudflare Workers AI에 보낼 원문을 확인하고 승인한 뒤 실행합니다. 결과는 검토한 항목만 직접 적용합니다.':'저장된 원문으로 한국어 초안을 생성합니다. 아래 직접 입력 내용은 자동 수집 증빙으로 기록되지 않습니다.'}</p>
     {error && <p className="form-error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     {requestContext&&<aside className="panel-note" aria-label="상품 추가 당시 요청"><strong>상품 추가 당시 요청</strong><p>{requestContext.categoryPath.join(' › ')} · {requestContext.categoryId}</p><dl><dt>상품 특징</dt><dd style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{requestContext.features||'입력 없음'}</dd><dt>타겟 키워드</dt><dd style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{requestContext.keywords||'입력 없음'}</dd></dl><small>{googleSource?'카테고리와 상품 특징·키워드는 검토 자료로 보관합니다. Google에는 카테고리·참고 메모를 전송하지 않습니다.':'선택한 카테고리 코드·경로를 번역 요청에 참고 정보로 포함합니다. 상품 특징·키워드는 아래 SEO 참고 메모에서 편집하거나 제외할 수 있습니다.'}</small></aside>}
     {!view && !error && <p>번역 설정을 확인하고 있습니다.</p>}
     {view && <>
       {!view.configuration.configured && <div className="connection-note"><strong>서버 연결 설정이 필요합니다</strong><ul>{view.configuration.issues.map(issue => <li key={issue}>{issue}</li>)}</ul></div>}
+      {!reviewOnly&&workersFailure&&<div className="panel-note"><button className="btn blue" type="button" disabled={blocked||!workersConfigured} onClick={()=>void prepareWorkers()}>서버 AI로 한국어 초안 작성</button><p>Google 번역 제한으로 완료되지 않은 원문을 별도 요청으로 준비합니다. 상품명·설명·미번역 옵션·속성을 Cloudflare Workers AI에 전송하며, 실행 전에 실제 원문과 서비스 사용 조건을 검토하고 승인합니다. 생성 결과는 원하는 항목만 직접 적용합니다.</p>{!workersConfigured&&<small>무료 서버 AI 복구 설정을 확인해야 사용할 수 있습니다.</small>}</div>}
+      {!reviewOnly&&<>
       {googleSource&&<div className="panel-note"><button className="btn blue" type="button" disabled={blocked||!view.configuration.configured} onClick={()=>void prepareFreshSeo()}>{hasSeoRetry?'SEO 재시도 상태 확인 · 무료':'현재 상품 원문으로 SEO 요청 다시 준비'}</button><p>상품명·설명만 새 번역 요청으로 준비합니다. 실패·부분 결과는 유지하며, 원문 검토와 승인을 거쳐 받은 새 초안에서 원하는 항목만 적용합니다. 직접 수정한 값과 다른 단계는 자동으로 저장하지 않습니다.</p></div>}
       {googleSource&&<div className="panel-note"><button className="btn blue" type="button" disabled={blocked||!view.configuration.configured} onClick={()=>void retryFreeOptions()}>{hasOptionsRetry?'옵션 번역 재시도 상태 확인 · 무료':'미번역 옵션 한국어로 채우기 · 무료'}</button><p>저장된 1688 원문에서 아직 번역하지 않은 포함 옵션만 한 묶음씩 번역해 저장합니다. 직접 입력하거나 비운 값, 제외 옵션, SEO·표시사항·가격은 유지합니다. 429 또는 일부 번역 실패 후에도 자동 재호출하지 않습니다.</p></div>}
       <button className="btn blue" type="button" disabled={blocked} onClick={()=>void loadCollectedSource(true)}>수집 원문·미번역 옵션 함께 불러오기 · 입력 교체</button><button className="btn" type="button" disabled={blocked} onClick={()=>void loadCollectedSource()}>수집 원문 불러오기 · 상품명·설명·상품 속성 입력 교체</button><small>{googleSource?'함께 불러온 옵션 텍스트도 한국어로 번역합니다. 이미지 번역은 별도입니다. 불러온 원문은 전송 전에 수정하고 검토할 수 있습니다.':'옵션·이미지 번역은 별도입니다. 불러온 원문도 전송 전에 수정하고 검토할 수 있습니다.'}</small><label>상품명 원문<input value={sourceTitle} maxLength={1000} onChange={event => setSourceTitle(event.target.value)} disabled={blocked} /></label>
@@ -328,7 +353,9 @@ function TranslationContent({ productId, version, title, profileId, onContentSav
       {collectedAttributes.length > 0 && <fieldset disabled={blocked}><legend>수집 상품 속성 원문 · {collectedAttributes.length}개</legend><label><input type="checkbox" checked={includeCollectedAttributes} onChange={event=>setIncludeCollectedAttributes(event.target.checked)}/>번역에 포함</label><p>판매자가 기재한 원문입니다. 옵션·직접 입력 속성은 별도로 유지합니다.</p>{collectedAttributes.map((pair,index)=><div key={index}><label>속성명<input maxLength={190} value={pair.name} onChange={event=>setCollectedAttributes(previous=>previous.map((item,i)=>i===index?{...item,name:event.target.value}:item))}/></label><label>속성값<textarea maxLength={1000} value={pair.value} onChange={event=>setCollectedAttributes(previous=>previous.map((item,i)=>i===index?{...item,value:event.target.value}:item))}/></label></div>)}</fieldset>}
       <button className="btn" type="button" disabled={blocked} onClick={()=>void loadOptionSource()}>미번역 옵션 불러오기 · 속성 입력 교체</button><label>속성 원문 · 한 줄에 속성명=값<textarea rows={3} value={attributes} onChange={event => setAttributes(event.target.value)} disabled={blocked} placeholder={'材质=棉\n颜色=白色'} /></label>
       <button className="btn" type="button" onClick={prepare} disabled={blocked || !view.configuration.configured || (!sourceTitle.trim() && !description.trim())}>번역 요청 검토하기 · 무료</button>
-      {view.jobs.length > 1 && <label>이전 번역 요청<select value={job?.id ?? ''} onChange={event => { setSelectedId(event.target.value); setConfirmed(false); setSelectedFields([]); }} disabled={blocked}>{view.jobs.map(item => <option key={item.id} value={item.id}>{new Date(item.createdAt).toLocaleString()} · {statuses[item.status]}</option>)}</select></label>}
+      </>}
+      {!reviewOnly&&view.jobs.length > 1 && <label>이전 번역 요청<select value={job?.id ?? ''} onChange={event => { setSelectedId(event.target.value); setConfirmed(false); setSelectedFields([]); }} disabled={blocked}>{view.jobs.map(item => <option key={item.id} value={item.id}>{new Date(item.createdAt).toLocaleString()} · {statuses[item.status]}</option>)}</select></label>}
+      {reviewOnly&&!job&&<p role="alert">준비한 서버 AI 요청을 찾지 못했습니다. 작업 상태를 다시 조회해주세요.</p>}
       {job && <div className="translation-review">
         <h4>{statuses[job.status]}</h4>
         {job.review.destination==='Google 번역'?<p>번역 서비스 <strong>Google 번역</strong> · 요청당 최대 5,000자</p>:<p>모델 <strong>{job.review.model}</strong> · 원문 {job.review.inputCharacters.toLocaleString()}자 · 최대 출력 {job.review.maxOutputTokens.toLocaleString()}토큰</p>}
@@ -336,7 +363,8 @@ function TranslationContent({ productId, version, title, profileId, onContentSav
         <p>전송 범위: {seoRetryJob?'현재 수집 상품명·설명만 전송합니다. 옵션값·카테고리·참고 메모는 보내지 않습니다.':optionsOnlyJob?'저장 원문에 연결된 미번역 옵션값만 전송합니다. 상품명·설명은 검토 자료로 보관하며 전송하지 않습니다.':job.review.destination==='Google 번역'?'상품명·설명·속성명·속성값·옵션값의 텍스트. 카테고리·참고 메모·옵션 ID는 전송하지 않습니다.':'아래 상품명·설명·속성 원문 및 포함한 SEO 참고 메모.'} 수신 서비스: {job.review.destination}. 승인 유효 기한: {new Date(job.review.expiresAt).toLocaleString()}</p>
         <details><summary>{job.review.destination==='Google 번역'?'번역 입력 검토':'실제로 전송할 원문 확인'}</summary><pre>{JSON.stringify(job.review.source, null, 2)}</pre></details>
         {stale && <p className="form-error">이 요청 이후 상품 또는 콘텐츠가 변경되었습니다. 새 실행에는 새 검토 요청이 필요합니다. 기존 결과는 확인할 수 있습니다.</p>}
-        {expired&&!stale&&!optionsOnlyJob&&!seoRetryJob&&<><p>검토 기한이 지났습니다. 같은 원문·옵션으로 검토 기한을 갱신할 수 있습니다.</p><button type="button" className="btn" disabled={blocked||!view.configuration.configured} onClick={()=>void action({action:'prepare',expectedVersion:version,idempotencyKey:crypto.randomUUID(),source:job.review.source})}>같은 원문으로 검토 기한 갱신</button></>}
+        {expired&&!stale&&!optionsOnlyJob&&!seoRetryJob&&!workersJob&&<><p>검토 기한이 지났습니다. 같은 원문·옵션으로 검토 기한을 갱신할 수 있습니다.</p><button type="button" className="btn" disabled={blocked||!view.configuration.configured} onClick={()=>void action({action:'prepare',expectedVersion:version,idempotencyKey:crypto.randomUUID(),source:job.review.source})}>같은 원문으로 검토 기한 갱신</button></>}
+        {expired&&workersJob&&<p>서버 AI 검토 기한이 지났습니다. 위 ‘서버 AI로 한국어 초안 작성’을 다시 누르면 아직 실행하지 않은 요청의 검토 기한을 갱신합니다. 기본 Google 요청으로 변경하거나 자동 실행하지 않습니다.</p>}
         {stale&&!optionsOnlyJob&&!googleSource&&<button type="button" className="btn" disabled={blocked||!view.configuration.configured} onClick={()=>void action({action:'prepare-collected'})}>현재 상품 원문으로 SEO 요청 다시 준비</button>}
         {optionsOnlyJob&&<p>{intakeOptionsJob?'자동 옵션 번역의 이어서 처리한 작업입니다. 저장한 상품명·설명은 유지하며 남은 옵션은 위 옵션 번역 버튼에서 확인해주세요.':'미번역 옵션 전용 재시도입니다. 위 옵션 번역 버튼에서 같은 작업을 확인하며 SEO·표시사항에는 적용하지 않습니다.'}</p>}
         {job.status === 'prepared' && !optionsOnlyJob && <><label><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} disabled={blocked || stale || expired} />{job.review.destination==='Google 번역'?'위 원문·Google 번역 서비스의 사용 조건과 번역 요청 묶음을 검토하고 승인합니다.':'위 모델·원문·위 서비스의 사용 조건과 생성 요청 1회를 검토하고 승인합니다.'}</label><button type="button" className="btn blue" disabled={blocked || stale || expired || !confirmed} onClick={() => void writeReviewedDraft()}>SEO 초안 작성</button></>}

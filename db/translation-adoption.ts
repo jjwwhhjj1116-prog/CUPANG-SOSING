@@ -10,10 +10,19 @@ export async function saveIntegratedTranslation(owner: string, content: ProductC
   categorySource?: TranslationCategorySource;
   attributeRules?: { categoryId: string; payload: string | null };
   seoSource?:SeoRetrySourceGuard;
+  member?:{id:string;email:string;role:string;companyCode:string;companyName:string};
 }) {
   if (!env.DB || content.productId !== options.productId || !content.updatedAt || content.updatedAt !== options.updatedAt
     || content.revision !== source.contentRevision + 1 || options.revision !== source.optionRevision + 1) throw Error('통합 저장 자료가 일치하지 않습니다.');
   const id = content.productId, now = content.updatedAt;
+  if(source.member&&(source.member.id!==owner||!source.member.email.trim()||!['admin','member'].includes(source.member.role)))throw Error('Invalid recovery member scope');
+  const nativeMember=source.member&&(env as {YOOFAM_AUTH_ENABLED?:string}).YOOFAM_AUTH_ENABLED==='true'?source.member:null;
+  const memberGuard=nativeMember?` AND EXISTS(SELECT 1 FROM members m WHERE m.id=products.owner_id AND m.status='approved'
+    AND lower(trim(m.email))=? AND m.role=? AND m.company_code=? AND m.company_name=?)`:'';
+  const memberArgs=nativeMember?[nativeMember.email.trim().toLowerCase(),nativeMember.role,nativeMember.companyCode,nativeMember.companyName]:[];
+  const companionMember=nativeMember?` AND EXISTS(SELECT 1 FROM members m WHERE m.id=? AND m.status='approved'
+    AND lower(trim(m.email))=? AND m.role=? AND m.company_code=? AND m.company_name=?)`:'';
+  const companionMemberArgs=nativeMember?[owner,...memberArgs]:[];
   let rulesGuard = ''; const rulesArgs: string[] = [];
   if (source.attributeRules) {
     const { categoryId, payload } = source.attributeRules;
@@ -42,7 +51,7 @@ export async function saveIntegratedTranslation(owner: string, content: ProductC
       categoryArgs.push(snapshot.id, offerId, snapshot.updatedAt, snapshot.payload);
     } else categoryGuard = ' AND NOT EXISTS(SELECT 1 FROM collection_products cp WHERE cp.product_id=products.id AND cp.owner_id=products.owner_id)';
   }
-  const result = await env.DB.batch([
+  const statements=[
     env.DB.prepare(`UPDATE products SET updated_at=?,quote_status='대기',options_count=?
       WHERE id=? AND owner_id=? AND updated_at=? AND image_keys=?
       AND NOT EXISTS(SELECT 1 FROM product_removals WHERE product_id=products.id AND owner_id=products.owner_id)
@@ -51,16 +60,28 @@ export async function saveIntegratedTranslation(owner: string, content: ProductC
       AND COALESCE((SELECT revision FROM product_content WHERE product_id=? AND owner_id=?),0)=?
       AND COALESCE((SELECT revision FROM product_options WHERE product_id=? AND owner_id=?),0)=?
       AND EXISTS(SELECT 1 FROM translation_jobs WHERE id=? AND owner_id=? AND product_id=? AND status='completed' AND product_version=? AND content_revision=?)
-      ${categoryGuard} ${rulesGuard} ${seoGuard} RETURNING id`).bind(now, options.rows.filter(row => row.included).length, id, owner, source.productVersion, source.imageKeys,
-        id, owner, source.contentRevision, id, owner, source.optionRevision, source.jobId, owner, id, source.jobProductVersion??source.productVersion, source.jobContentRevision??source.contentRevision, ...categoryArgs, ...rulesArgs,...seoArgs),
+      ${categoryGuard} ${rulesGuard} ${seoGuard} ${memberGuard} RETURNING id`).bind(now, options.rows.filter(row => row.included).length, id, owner, source.productVersion, source.imageKeys,
+        id, owner, source.contentRevision, id, owner, source.optionRevision, source.jobId, owner, id, source.jobProductVersion??source.productVersion, source.jobContentRevision??source.contentRevision, ...categoryArgs, ...rulesArgs,...seoArgs,...memberArgs),
     env.DB.prepare(`INSERT INTO product_content(product_id,owner_id,revision,payload,updated_at)
-      SELECT ?,?,?,?,? WHERE changes()=1
+      SELECT ?,?,?,?,? WHERE changes()=1 ${companionMember}
       ON CONFLICT(product_id) DO UPDATE SET revision=excluded.revision,payload=excluded.payload,updated_at=excluded.updated_at`)
-      .bind(id, owner, content.revision, JSON.stringify(content), now),
+      .bind(id, owner, content.revision, JSON.stringify(content), now,...companionMemberArgs),
     env.DB.prepare(`INSERT INTO product_options(product_id,owner_id,revision,payload,updated_at)
-      SELECT ?,?,?,?,? WHERE changes()=1
+      SELECT ?,?,?,?,? WHERE changes()=1 ${companionMember}
       ON CONFLICT(product_id) DO UPDATE SET revision=excluded.revision,payload=excluded.payload,updated_at=excluded.updated_at`)
-      .bind(id, owner, options.revision, JSON.stringify(options), now),
-  ]);
+      .bind(id, owner, options.revision, JSON.stringify(options), now,...companionMemberArgs),
+  ];
+  if(nativeMember){
+    // A trigger can change membership/source inside an otherwise atomic batch.
+    // If this writer acquired its new product clock, all sealed rows must still
+    // match; a failed assertion rolls the entire D1 batch back.
+    statements.push(env.DB.prepare(`SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM products WHERE id=? AND owner_id=? AND updated_at=?)
+      OR EXISTS(SELECT 1 FROM products WHERE id=? AND owner_id=? AND updated_at=? ${memberGuard} ${categoryGuard} ${rulesGuard} ${seoGuard}
+        AND EXISTS(SELECT 1 FROM product_content c WHERE c.product_id=products.id AND c.owner_id=products.owner_id AND c.revision=? AND c.payload=? AND c.updated_at=?)
+        AND EXISTS(SELECT 1 FROM product_options o WHERE o.product_id=products.id AND o.owner_id=products.owner_id AND o.revision=? AND o.payload=? AND o.updated_at=?))
+      THEN 1 ELSE json('workers recovery commit changed') END AS valid`)
+      .bind(id,owner,now,id,owner,now,...memberArgs,...categoryArgs,...rulesArgs,...seoArgs,content.revision,JSON.stringify(content),now,options.revision,JSON.stringify(options),now));
+  }
+  const result = await env.DB.batch(statements);
   return Boolean(result[0].results.length);
 }

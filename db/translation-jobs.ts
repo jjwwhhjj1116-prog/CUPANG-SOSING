@@ -41,6 +41,20 @@ export async function readSeoRetrySource(owner:string,productId:string,sourceUrl
   return {source,guard,sourceFingerprint:await fingerprint({owner,productId,sourceUrl,company,guard})};
 }
 
+/** Current saved supplier text and only currently untranslated option facts. */
+export async function readWorkersRecoverySource(owner:string,productId:string,sourceUrl:string,company:SupplierHubCompany) {
+  const captured=await readSeoRetrySource(owner,productId,sourceUrl,company);
+  const {readProductOptions}=await import('@/db/product-options');
+  const {findCollectionJob}=await import('@/db/collection-jobs');
+  const {collectedSeoSource}=await import('@/app/collected-seo-source');
+  const [options,collection,history]=await Promise.all([readProductOptions(owner,productId),findCollectionJob(owner,captured.guard.jobId),listTranslationJobs(owner,productId)]);
+  if(!collection||collection.product_id!==productId||options.productId!==productId||collection.updated_at!==captured.guard.jobUpdatedAt
+    ||JSON.stringify(collection.context)!==captured.guard.contextPayload)throw Error('현재 상품의 수집·옵션 원문 연결을 확인하지 못했습니다.');
+  const receipt=JSON.parse(captured.guard.resultPayload);
+  const {source}=collectedSeoSource(receipt,collection,options,false,history);
+  return {...captured,source,optionRevision:options.revision,receipt,collection};
+}
+
 type Row = { id: string; product_id: string; product_version: string; content_revision: number;
   status: TranslationJob['status']; review: string; result: string | null; error: string | null;
   created_at: string; approved_at: string | null; started_at: string | null; finished_at: string | null;
@@ -92,9 +106,21 @@ export async function findSeoRetryTranslation(ownerId:string,productId:string,re
   const db=await database();const row=await db.prepare('SELECT * FROM translation_jobs WHERE owner_id=? AND product_id=? AND idempotency_key=?')
     .bind(ownerId,productId,'seo-retry-'+retryKey).first<Row>();return row?job(row):null;
 }
+export async function findWorkersRecoveryTranslation(ownerId:string,productId:string,failedJobId:string) {
+  if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(failedJobId))throw Error('Invalid Workers recovery job');
+  const db=await database();const row=await db.prepare('SELECT * FROM translation_jobs WHERE owner_id=? AND product_id=? AND idempotency_key=?')
+    .bind(ownerId,productId,'workers-recovery-'+failedJobId).first<Row>();return row?job(row):null;
+}
 
 export async function createSeoRetryTranslation(ownerId:string,value:TranslationJob,retryKey:string,requestFingerprint:string,optionRevision:number,source:SeoRetrySourceGuard) {
   if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(retryKey)||!Number.isSafeInteger(optionRevision)||optionRevision<0)throw Error('Invalid SEO retry scope');
+  return createSourceBoundTranslation(ownerId,value,'seo-retry-'+retryKey,requestFingerprint,optionRevision,source);
+}
+export async function createWorkersRecoveryTranslation(ownerId:string,value:TranslationJob,failedJobId:string,requestFingerprint:string,optionRevision:number,source:SeoRetrySourceGuard) {
+  if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(failedJobId)||!Number.isSafeInteger(optionRevision)||optionRevision<0)throw Error('Invalid Workers recovery scope');
+  return createSourceBoundTranslation(ownerId,value,'workers-recovery-'+failedJobId,requestFingerprint,optionRevision,source);
+}
+async function createSourceBoundTranslation(ownerId:string,value:TranslationJob,key:string,requestFingerprint:string,optionRevision:number,source:SeoRetrySourceGuard) {
   const db=await database();
   const {effectiveCollectionPayload}=await import('@/db/collection-results');
   const row=await db.prepare(`INSERT INTO translation_jobs(id,owner_id,product_id,idempotency_key,request_fingerprint,
@@ -108,13 +134,29 @@ export async function createSeoRetryTranslation(ownerId:string,value:Translation
       JOIN collection_results r ON r.job_id=j.id WHERE cp.product_id=? AND cp.owner_id=? AND j.owner_id=cp.owner_id AND r.owner_id=cp.owner_id
       AND j.id=? AND j.offer_id=? AND j.status='awaiting_connector' AND j.updated_at=? AND c.payload=? AND ${effectiveCollectionPayload}=?)
     ON CONFLICT(owner_id,product_id,idempotency_key) DO NOTHING RETURNING *`)
-    .bind(value.id,ownerId,value.productId,'seo-retry-'+retryKey,requestFingerprint,value.productVersion,value.contentRevision,
+    .bind(value.id,ownerId,value.productId,key,requestFingerprint,value.productVersion,value.contentRevision,
       value.review.fingerprint,JSON.stringify(value.review),value.review.expiresAt,value.createdAt,value.productId,ownerId,value.productVersion,
       value.productId,ownerId,value.productId,ownerId,value.contentRevision,value.productId,ownerId,optionRevision,ownerId,value.productId,
       value.productId,ownerId,source.jobId,source.offerId,source.jobUpdatedAt,source.contextPayload,source.resultPayload).first<Row>();
   if(row)return {job:job(row),replayed:false,conflict:false};
+  if(key.startsWith('workers-recovery-')){
+    const sourceGuard=await seoSourceGuard(source);
+    const renewed=await db.prepare(`UPDATE translation_jobs SET status='prepared',review_fingerprint=?,review=?,expires_at=?,approved_at=NULL
+      WHERE owner_id=? AND product_id=? AND idempotency_key=? AND request_fingerprint=?
+      AND status IN ('prepared','approved') AND expires_at<=? AND started_at IS NULL AND claim_token IS NULL AND result IS NULL AND error IS NULL
+      AND product_version=? AND content_revision=?
+      AND EXISTS(SELECT 1 FROM products WHERE id=translation_jobs.product_id AND owner_id=translation_jobs.owner_id AND updated_at=translation_jobs.product_version)
+      AND NOT EXISTS(SELECT 1 FROM product_removals WHERE product_id=translation_jobs.product_id AND owner_id=translation_jobs.owner_id)
+      AND COALESCE((SELECT revision FROM product_content WHERE product_id=translation_jobs.product_id AND owner_id=translation_jobs.owner_id),0)=content_revision
+      AND COALESCE((SELECT revision FROM product_options WHERE product_id=translation_jobs.product_id AND owner_id=translation_jobs.owner_id),0)=?
+      AND NOT EXISTS(SELECT 1 FROM translation_jobs other WHERE other.owner_id=translation_jobs.owner_id AND other.product_id=translation_jobs.product_id
+        AND other.id<>translation_jobs.id AND other.status IN ('running','uncertain')) ${sourceGuard.sql} RETURNING *`)
+      .bind(value.review.fingerprint,JSON.stringify(value.review),value.review.expiresAt,ownerId,value.productId,key,requestFingerprint,value.createdAt,
+        value.productVersion,value.contentRevision,optionRevision,...sourceGuard.args).first<Row>();
+    if(renewed)return {job:job(renewed),replayed:true,conflict:false};
+  }
   const previous=await db.prepare('SELECT * FROM translation_jobs WHERE owner_id=? AND product_id=? AND idempotency_key=?')
-    .bind(ownerId,value.productId,'seo-retry-'+retryKey).first<Row>();
+    .bind(ownerId,value.productId,key).first<Row>();
   return previous?{job:job(previous),replayed:true,conflict:previous.request_fingerprint!==requestFingerprint}:null;
 }
 

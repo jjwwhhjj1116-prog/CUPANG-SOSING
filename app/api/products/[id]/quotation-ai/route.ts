@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
-import { readQuotationExportSource, quotationExportFingerprint, QuotationExportError } from '@/app/exports/quotation-source';
+import { readMappedQuotationSource, quotationExportFingerprint, QuotationExportError } from '@/app/exports/quotation-source';
 import { quotationSourcesCurrent, readQuotationFields } from '@/db/quotation-fields';
 import { fingerprint } from '@/app/automation/model';
 import { buildQuotationAiPlan, executeQuotationAi, QuotationAiError, QUOTATION_AI_MODEL } from '@/app/quotation-ai';
@@ -46,7 +46,9 @@ function profile(value: unknown) {
   return value;
 }
 async function readSource(auth: Awaited<ReturnType<typeof authorization>>, id: string, profileId: string | null) {
-  const saved = await readQuotationExportSource(auth.owner, id, profileId);
+  // The default editor omits profileId. Resolve the exact profile recorded at
+  // collection time, retaining the same company/category checks as exports.
+  const saved = await readMappedQuotationSource(auth.owner, id, profileId);
   if (!saved.company || JSON.stringify(saved.company) !== JSON.stringify(auth.company) || !saved.hubSchema
     || !saved.categoryContext.categoryId || JSON.stringify(saved.hubSchema.company) !== JSON.stringify(auth.company))
     throw new QuotationExportError('현재 회사와 선택 카테고리의 상세 양식을 확인해주세요.', 409);

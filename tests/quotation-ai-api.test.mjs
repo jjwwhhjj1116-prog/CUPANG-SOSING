@@ -5,6 +5,29 @@ import { mockProvider } from './helpers/quotation-ai.mjs';
 const json = async (response, status = 200) => { assert.equal(response.status, status, await response.clone().text()); return response.json(); };
 const unchanged = (f, state) => { assert.equal(f.state(), state); assert.deepEqual(f.h.network, []); assert.equal(f.h.aiSources.length, 0); assert.equal(f.h.objects.size, 0); };
 const view = f => f.request(undefined, 'GET').then(response => json(response));
+test('default editor without profileId uses the captured category profile for one AI request', async () => {
+  const f = await quotationAiApiFixture(); try {
+    const offer = '700000000794', url = `https://detail.1688.com/offer/${offer}.html`;
+    f.h.sqlite.prepare('UPDATE products SET source_url=? WHERE id=?').run(url, f.id);
+    f.h.sqlite.prepare('UPDATE collection_jobs SET source_url=?,offer_id=? WHERE id=?').run(url, offer, 'job');
+    f.h.context.category = f.profile;
+    f.h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(f.h.context), 'job');
+    f.h.sqlite.prepare('INSERT INTO collection_products(job_id,owner_id,product_id,created_at) VALUES(?,?,?,?)').run('job', 'owner', f.id, new Date().toISOString());
+    const initial = await json(await f.request(undefined, 'GET', '')), state = f.state();
+    assert.equal(initial.profileId, f.profile.id);
+    const body = { ...f.requestBody(initial), profileId: null };
+    const out = await json(await f.request(body, 'POST', ''));
+    assert.equal(out.job.status, 'completed'); assert.equal(out.job.profileId, f.profile.id);
+    assert.equal(out.sourceCurrent, true); assert.ok(f.provider.calls.length > 0);
+    assert.equal(f.jobs().length, 1); unchanged(f, state);
+  } finally { f.close(); }
+});
+test('an unbound legacy product cannot guess a profile when the editor omits it', async () => {
+  const f = await quotationAiApiFixture(); try {
+    const state = f.state(); await json(await f.request(undefined, 'GET', ''), 409);
+    assert.equal(f.provider.calls.length, 0); assert.equal(f.jobs().length, 0); unchanged(f, state);
+  } finally { f.close(); }
+});
 for (const company of companies) test(`actual approved session generates owned proposal once with source/history untouched (${company.code})`, async () => {
   const f = await quotationAiApiFixture(company); try {
     const initial = await view(f), state = f.state(); assert.equal(initial.configuration.configured, true); assert.equal(initial.jobs.length, 0);

@@ -20,6 +20,8 @@ import { collectionSourceReference, parseCollectionRequest } from '@/app/sourcin
 import { optionsRetryProof, optionsRetryApplicationFingerprint } from '@/app/options-translation-retry';
 import { intakeOptionsReviewProof } from '@/app/intake-options-translation';
 import {seoRetryReviewProof} from '@/app/seo-translation-retry';
+import {workersRecoveryReviewProof,google429RecoveryCandidate} from '@/app/workers-translation-recovery';
+import {readWorkersRecoverySource} from '@/db/translation-jobs';
 import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
 import {GOOGLE_TEXT_MODEL,WORKERS_TEXT_MODEL} from '@/app/automation/translation';
 import {intakeSupplierSourceMatches} from '@/app/intake-supplier-source';
@@ -60,7 +62,21 @@ export async function POST(request: Request, context: Context) {
         return json({ error: '자동 옵션 번역은 검토한 미번역 옵션에만 적용할 수 있습니다. 현재 옵션을 다시 확인해주세요.' },409);
     } catch { return json({ error: '자동 옵션 번역 원문 연결을 확인하지 못했습니다.' },409); }
     let seoSource;
+    let recoveryMember;
     try{
+      const workersProof=workersRecoveryReviewProof(job.review);
+      if(workersProof){
+        const user=await getChatGPTUser(),company=user?.verifiedAccess&&user.userId===owner?approvedSupplierHubCompany(user.membership):null;
+        if(!company||user?.membership?.id!==owner||!['admin','member'].includes(user.membership.role)
+          ||company.code!==workersProof.company.code||company.name!==workersProof.company.name||options.revision!==workersProof.optionRevision)
+          throw Error('별도 초안의 승인 회사·옵션 버전·적용 범위가 다릅니다.');
+        recoveryMember={id:owner,email:user.membership.email,role:user.membership.role,companyCode:company.code,companyName:company.name};
+        const [captured,failed]=await Promise.all([readWorkersRecoverySource(owner,id,product.source_url,company),getTranslationJob(owner,id,workersProof.failedJobId)]);
+        if(!google429RecoveryCandidate(failed)||!intakeSupplierSourceMatches(failed!.review.source,captured.receipt,captured.collection)
+          ||captured.sourceFingerprint!==workersProof.sourceFingerprint||JSON.stringify(captured.source)!==JSON.stringify(job.review.source))
+          throw Error('별도 초안 이후 수집 원문 또는 실패 이력 연결이 변경되었습니다.');
+        seoSource=captured.guard;
+      }
       const seoProof=seoRetryReviewProof(job.review);
       if(seoProof){
         const user=await getChatGPTUser(),company=user?.verifiedAccess&&user.userId===owner?approvedSupplierHubCompany(user.membership):null;
@@ -204,7 +220,7 @@ export async function POST(request: Request, context: Context) {
     if (plan.categoryAttributes) nextContent.categoryAttributes = plan.categoryAttributes;
     if(pendingGuidance&&Object.keys(pendingGuidance).length)nextContent.intakeSeoGuidancePending=initialIntakeSeoGuidancePending(nextContent,job,pendingGuidance);
     const saved = await saveIntegratedTranslation(owner, nextContent, nextOptions, { productVersion: product.updated_at, imageKeys: product.image_keys,
-      contentRevision: content.revision, optionRevision: options.revision, jobId: job.id, jobProductVersion:job.productVersion, jobContentRevision:job.contentRevision, categorySource, attributeRules,seoSource });
+      contentRevision: content.revision, optionRevision: options.revision, jobId: job.id, jobProductVersion:job.productVersion, jobContentRevision:job.contentRevision, categorySource, attributeRules,seoSource,member:recoveryMember });
     return saved ? json({ scope, productId: id, productVersion: now, contentRevision: nextContent.revision, optionRevision: nextOptions.revision, applied: plan.preview.length })
       : json({ error: '저장 중 자료가 변경되었습니다. 아무 항목도 함께 저장하지 않았습니다. 다시 검토해주세요.' }, 409);
   } catch { return json({ error: '통합 저장 상태를 확인하지 못했습니다. 저장본을 조회한 뒤 다시 검토해주세요. 자동 재저장하지 않았습니다.' }, 503); }

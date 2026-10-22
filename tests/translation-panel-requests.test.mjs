@@ -5,6 +5,9 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import {createRequire} from 'node:module';
 const native=createRequire(import.meta.url);
+const recoveryModules=new Map();
+function recoveryModule(file){if(recoveryModules.has(file))return recoveryModules.get(file);const exports={};recoveryModules.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,TextEncoder,crypto,require:name=>recoveryModule(name.slice(2)+'.ts')});return exports;}
+
 const nodes=t=>Array.isArray(t)?t.flatMap(nodes):t&&typeof t==='object'?[t,...nodes(t.props?.children)]:[];
 const label=t=>Array.isArray(t)?t.map(label).join(''):typeof t==='string'||typeof t==='number'?String(t):'';
 const settle=async()=>{for(let i=0;i<12;i++)await new Promise(r=>setImmediate(r));};
@@ -15,13 +18,14 @@ function harness(handler,status='completed',failInitial=false,emptyJobs=false,jo
  const content={revision:1,seo:Object.fromEntries(['title','description','keywords'].map(k=>[k,{value:k==='keywords'?[]:'manual'}]))};
  const job={id:'j',productId,status,productVersion:jobVersion,contentRevision:jobContentRevision,review:{model:'mock',inputCharacters:1,maxOutputTokens:1000,expiresAt,source:{title:'검토된 원문',description:'저장 설명',attributes:[],provenance:'manual',reference:'수집 원문'}},result:status==='completed'?{draft:{title:'초안',description:'설명',keywords:[],attributes:[{name:'색상',value:'검정'}],warnings:[]}}:null};
  Object.assign(job.review,reviewOverride);
- const view={jobs:emptyJobs?[]:[job],configuration:{configured:true,model:job.review.model,issues:[]}};
+ if(optionsRetry.jobError)Object.assign(job,{error:optionsRetry.jobError,startedAt:'2026-10-22T00:00:00.000Z',finishedAt:'2026-10-22T00:00:01.000Z'});
+ const view={jobs:emptyJobs?[]:[job],configuration:{configured:true,model:job.review.model,issues:[]},workersRecovery:optionsRetry.workersRecovery};
  const hooks={useCallback:fn=>fn,useState(initial){const i=index++;if(!(i in slots))slots[i]=initial;return[slots[i],v=>{if(closed)late++;slots[i]=typeof v==='function'?v(slots[i]):v;}];},useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useEffect(fn){if(first)effects.push(fn);}};
  let initial=0;
  const fetcher=async function(url,init){assert.equal(this,undefined,'native fetch cannot receive helper options as its receiver');if(initial<2){initial++;return failInitial?Response.json({error:'초기 조회 실패'},{status:503}):Response.json(url.endsWith('/translation')?view:{content});}calls.push({url,init});return handler(url,init,{content,job,view});};
  const exports={};const file='app/components/translation-panel.tsx';
- vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,crypto,sessionStorage:optionsRetry.sessionStorage,fetch:fetcher,require(name){if(name==='@/app/seo-translation-retry')return{newSeoRetryState:(productId,productVersion)=>({productId,productVersion,retryKey:crypto.randomUUID(),jobId:null,executeSubmitted:false}),parseSeoRetryState:()=>null,seoRetryReviewProof:review=>review.seoRetry??null,prepareSeoTranslationRetry:()=>{throw Error('Unexpected SEO retry');},executeSeoTranslationRetry:()=>{throw Error('Unexpected SEO execution');},...optionsRetry};if(name==='@/app/options-translation-retry')return{newOptionsRetryState:(productId,productVersion)=>({productId,productVersion,retryKey:crypto.randomUUID(),jobId:null,executeSubmitted:false,applySubmitted:false}),parseOptionsRetryState:()=>null,retryOptionsTranslation:()=>{throw Error('Unexpected options retry');},...optionsRetry};if(name==='@/app/reviewed-translation'){const result={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/reviewed-translation.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:result,Error});return result;}if(name==='react')return hooks;if(name==='@/app/components/translation-integrated-preview')return{TranslationIntegratedPreview:()=>null};if(name==='@/app/components/translation-batch-preview')return{TranslationBatchPreview:()=>null};if(name==='@/app/components/translation-label-mapping')return{TranslationLabelMappingEditor:()=>null};if(name==='@/app/components/translation-label-reuse-panel')return{TranslationLabelReusePanel:function TranslationLabelReusePanel(){return null;}};if(name==='@/app/translation-label-adoption')return{translationLabelAdoption:()=>({input:{patch:'labels'}})};if(name==='@/app/option-translation')return{optionTranslationBatch:(options,capacity=50)=>({attributes:(options.attributes??[]).slice(0,capacity),remaining:Math.max(0,(options.attributes??[]).length-capacity)}),adoptOptionTranslations:()=>({rows:[],changed:1}),confirmOptionTranslationSave:value=>{if(!value.confirmed)throw Error("저장 응답 불일치");}};if(name==='@/app/translation-adoption')return{translationSeoFields:['title','description','keywords'],translationAdoptionInput:()=>({patch:'mock'})};if(name==='@/app/collected-translation-attributes')return{collectedTranslationAttributes:()=>[]};return native(name);}});
- const render=()=>{index=0;const wrapper=exports.default({productId,version:'v',title:'원문',onContentSaved(){saved++;}});const tree=wrapper.type(wrapper.props);first=false;return tree;};
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,crypto,sessionStorage:optionsRetry.sessionStorage,fetch:fetcher,require(name){if(name==='@/app/seo-translation-retry')return{newSeoRetryState:(productId,productVersion)=>({productId,productVersion,retryKey:crypto.randomUUID(),jobId:null,executeSubmitted:false}),parseSeoRetryState:()=>null,seoRetryReviewProof:review=>review.seoRetry??null,prepareSeoTranslationRetry:()=>{throw Error('Unexpected SEO retry');},executeSeoTranslationRetry:()=>{throw Error('Unexpected SEO execution');},...optionsRetry};if(name==='@/app/options-translation-retry')return{newOptionsRetryState:(productId,productVersion)=>({productId,productVersion,retryKey:crypto.randomUUID(),jobId:null,executeSubmitted:false,applySubmitted:false}),parseOptionsRetryState:()=>null,retryOptionsTranslation:()=>{throw Error('Unexpected options retry');},...optionsRetry};if(name==='@/app/reviewed-translation'){const result={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/reviewed-translation.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:result,Error});return result;}if(name==='@/app/workers-translation-recovery')return recoveryModule('app/workers-translation-recovery.ts');if(name==='@/app/workers-seo-recovery-client')return recoveryModule('app/workers-seo-recovery-client.ts');if(name==='react')return hooks;if(name==='@/app/components/translation-integrated-preview')return{TranslationIntegratedPreview:()=>null};if(name==='@/app/components/translation-batch-preview')return{TranslationBatchPreview:()=>null};if(name==='@/app/components/translation-label-mapping')return{TranslationLabelMappingEditor:()=>null};if(name==='@/app/components/translation-label-reuse-panel')return{TranslationLabelReusePanel:function TranslationLabelReusePanel(){return null;}};if(name==='@/app/translation-label-adoption')return{translationLabelAdoption:()=>({input:{patch:'labels'}})};if(name==='@/app/option-translation')return{optionTranslationBatch:(options,capacity=50)=>({attributes:(options.attributes??[]).slice(0,capacity),remaining:Math.max(0,(options.attributes??[]).length-capacity)}),adoptOptionTranslations:()=>({rows:[],changed:1}),confirmOptionTranslationSave:value=>{if(!value.confirmed)throw Error("저장 응답 불일치");}};if(name==='@/app/translation-adoption')return{translationSeoFields:['title','description','keywords'],translationAdoptionInput:()=>({patch:'mock'})};if(name==='@/app/collected-translation-attributes')return{collectedTranslationAttributes:()=>[]};return native(name);}});
+ const render=()=>{index=0;const wrapper=exports.default({productId,version:'v',title:'원문',initialJobId:optionsRetry.initialJobId,reviewOnly:optionsRetry.reviewOnly,onContentSaved(){saved++;}});const tree=wrapper.type(wrapper.props);first=false;return tree;};
  const buttons=()=>nodes(render()).filter(n=>n.type==='button');
  render();effects.forEach(fn=>cleanup.push(fn()));
  return{calls,render,button(name){const button=buttons().find(n=>label(n.props.children)===name);assert.ok(button,name);return button.props.onClick;},close(){closed=true;cleanup.forEach(fn=>fn?.());},get late(){return late;},get saved(){return saved;}};
@@ -31,6 +35,56 @@ const options='미번역 옵션 불러오기 · 속성 입력 교체';
 const prepare='번역 요청 검토하기 · 무료';
 const execute='승인한 SEO 초안 작성 계속';
 const adopt='검토한 초안을 이 항목에 적용 · 기존 내용 교체';
+const workersConfig={configured:true,provider:'workers-ai',destination:'Cloudflare Workers AI',model:'@cf/meta/llama-3.3-70b-instruct-fp8-fast',maxOutputTokens:2048,freeOnly:true,issues:[]};
+const google429Error={code:'GOOGLE_TRANSLATION_FAILED_HTTP_429',message:'Google 번역 HTTP 429 응답',mayHaveBeenCharged:false};
+function workersJob(job){return{...job,id:'workers-job',status:'prepared',result:null,error:null,startedAt:null,finishedAt:null,
+ review:{...job.review,destination:'Cloudflare Workers AI',model:workersConfig.model,maxOutputTokens:2048,fingerprint:'a'.repeat(64),workersRecovery:{failedJobId:job.id,scope:'collected',optionRevision:1,sourceFingerprint:'b'.repeat(64),company:{code:'A01464742',name:'와이홉'}}}};}
+
+test('explicit Workers recovery prepares a separate review and preserves Google history and edited input until approval and selective apply',async()=>{
+ const pending=deferred();let prepared;
+ const h=harness(async(_url,init,{job})=>{
+  const action=JSON.parse(init.body).action;
+  if(action==='prepare-collected-workers'){await pending.promise;prepared=workersJob(job);return Response.json({job:prepared,workersRecoveryReview:true,configuration:{configured:true,model:'google-translate-gtx',issues:[]}});}
+  if(action==='approve'){prepared={...prepared,status:'approved'};return Response.json({job:prepared});}
+  if(action==='execute'){prepared={...prepared,status:'completed',result:{draft:{title:'서버 한국어 초안',description:'서버 설명',keywords:['확인'],attributes:[],warnings:[]}}};return Response.json({job:prepared});}
+  throw Error('Unexpected action '+action);
+ },'failed',false,false,'v',1,'2099-09-24',{model:'google-translate-gtx',destination:'Google 번역'},{workersRecovery:workersConfig,jobError:google429Error});
+ try{
+  await settle();assert.equal(h.calls.length,0);
+  nodes(h.render()).find(node=>node.type==='input'&&node.props.maxLength===1000).props.onChange({target:{value:'보존할 직접 입력 원문'}});
+  const click=h.button('서버 AI로 한국어 초안 작성');click();click();assert.equal(h.calls.length,1);
+  assert.equal(JSON.parse(h.calls[0].init.body).action,'prepare-collected-workers');assert.equal(JSON.parse(h.calls[0].init.body).failedJobId,'j');
+  pending.resolve();await settle();const visible=JSON.stringify(h.render());
+  assert.match(visible,/Cloudflare Workers AI/);assert.match(visible,/보존할 직접 입력 원문/);assert.match(visible,/Google 번역 제한/);assert.equal(h.saved,0);assert.equal(h.calls.length,1);
+  assert.ok(nodes(h.render()).some(node=>node.type==='button'&&label(node.props.children)==='미번역 옵션 한국어로 채우기 · 무료'),'Google remains the default configuration');
+  const approve=nodes(h.render()).find(node=>node.type==='label'&&label(node.props.children).includes('위 모델·원문'));
+  nodes(approve).find(node=>node.type==='input').props.onChange({target:{checked:true}});h.button('SEO 초안 작성')();await settle();
+  assert.deepEqual(h.calls.map(call=>JSON.parse(call.init.body).action),['prepare-collected-workers','approve','execute']);assert.equal(h.saved,0);
+  assert.match(JSON.stringify(h.render()),/서버 한국어 초안/);assert.equal(h.calls.some(call=>call.init.method==='PATCH'),false);
+ }finally{h.close();}
+});
+
+test('Workers recovery is unavailable without the server free configuration and never retries a lost ACK automatically',async()=>{
+ const unavailable=harness(()=>{throw Error('Unexpected request');},'failed',false,false,'v',1,'2099-09-24',{model:'google-translate-gtx',destination:'Google 번역'},{workersRecovery:{...workersConfig,configured:false},jobError:google429Error});
+ try{await settle();const button=nodes(unavailable.render()).find(node=>node.type==='button'&&label(node.props.children)==='서버 AI로 한국어 초안 작성');assert.equal(button.props.disabled,true);button.props.onClick();await settle();assert.equal(unavailable.calls.length,0);}finally{unavailable.close();}
+ const h=harness(()=>{throw Error('synthetic lost ACK');},'failed',false,false,'v',1,'2099-09-24',{model:'google-translate-gtx',destination:'Google 번역'},{workersRecovery:workersConfig,jobError:google429Error});
+ try{await settle();h.button('서버 AI로 한국어 초안 작성')();await settle();assert.equal(h.calls.length,1);await settle();assert.equal(h.calls.length,1);h.button('서버 AI로 한국어 초안 작성')();await settle();assert.equal(h.calls.length,2);assert.deepEqual(JSON.parse(h.calls[0].init.body),JSON.parse(h.calls[1].init.body));assert.equal(h.saved,0);}finally{h.close();}
+});
+
+test('closing pending Workers preparation aborts and discards its late response',async()=>{
+ const pending=deferred(),h=harness(async(_url,_init,{job})=>{await pending.promise;return Response.json({job:workersJob(job),workersRecoveryReview:true});},'failed',false,false,'v',1,'2099-09-24',{model:'google-translate-gtx',destination:'Google 번역'},{workersRecovery:workersConfig,jobError:google429Error});
+ await settle();h.button('서버 AI로 한국어 초안 작성')();h.close();assert.equal(h.calls[0].init.signal.aborted,true);pending.resolve();await settle();assert.equal(h.late,0);assert.equal(h.saved,0);
+});
+
+test('embedded Workers review never substitutes a different history job or exposes source replacement controls',async()=>{
+ const h=harness(()=>{throw Error('unexpected request');},'completed',false,false,'v',1,'2099-09-24',{destination:'Cloudflare Workers AI'},{initialJobId:'missing-review',reviewOnly:true});
+ try{await settle();const tree=h.render();assert.match(JSON.stringify(tree),/준비한 서버 AI 요청을 찾지 못했습니다/);assert.ok(!nodes(tree).some(node=>node.type==='button'&&/SEO 초안 작성|입력 교체/.test(label(node.props.children))));assert.ok(!nodes(tree).some(node=>node.type==='input'&&node.props.maxLength===1000));assert.equal(h.calls.length,0);assert.equal(h.saved,0);}finally{h.close();}
+});
+
+test('expired Workers proof cannot renew itself as a default Google request',async()=>{
+ const h=harness(()=>{throw Error('unexpected request');},'prepared',false,false,'v',1,'2000-01-01',{destination:'Cloudflare Workers AI',workersRecovery:{failedJobId:'google-failure',scope:'collected'}},{reviewOnly:true,initialJobId:'j'});
+ try{await settle();const tree=h.render();assert.match(JSON.stringify(tree),/서버 AI 검토 기한이 지났습니다/);assert.ok(!nodes(tree).some(node=>node.type==='button'&&label(node.props.children)==='같은 원문으로 검토 기한 갱신'));assert.equal(h.calls.length,0);}finally{h.close();}
+});
 
 test('automatic Google option continuation history shows its scope without exposing SEO or label adoption actions',async()=>{
  const h=harness(async()=>Response.json({error:'조회 시험 결과'},{status:503}),'completed',false,false,'v',1,'2099-09-24',
