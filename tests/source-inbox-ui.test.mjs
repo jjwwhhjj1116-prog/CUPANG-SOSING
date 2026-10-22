@@ -8,16 +8,21 @@ import {sourceReviewModule,reviewSourceFixture} from './helpers/source-review-in
 const require=createRequire(import.meta.url),turn=()=>new Promise(resolve=>setImmediate(resolve));
 const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value==='object'?[value,...nodes(value.props?.children)]:[];
 const text=value=>Array.isArray(value)?value.map(text).join(''):value&&typeof value==='object'?text(value.props?.children):value==null?'':String(value);
-function fixture(fetcher,{initialItem,onReviewed,onChanged}={}){
+function fixture(fetcher,{initialItem,onReviewed,onChanged,existingProducts=[]}={}){
  const states=[],effects=[],cleanups=[],calls=[],added=[];let cursor=0,first=true;
  let ownerId='owner';
  const hooks={useState(initial){const index=cursor++;if(!(index in states))states[index]=typeof initial==='function'?initial():initial;return[states[index],value=>{states[index]=typeof value==='function'?value(states[index]):value;}];},useRef(initial){const index=cursor++;return states[index]??(states[index]={current:initial});},useMemo(fn,deps){const index=cursor++,previous=states[index];if(!previous||deps.some((value,i)=>!Object.is(value,previous.deps[i])))states[index]={deps,value:fn()};return states[index].value;},useLayoutEffect(fn){effects.push(fn);},useEffect(fn){if(first)effects.push(fn);}};
  const events=new Map(),window={addEventListener:(type,fn)=>events.set(type,fn),removeEventListener:(type,fn)=>{if(events.get(type)===fn)events.delete(type);}},exports={};
- vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/source-inbox-panel.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,Error,structuredClone,window,location:{origin:'https://app.test'},fetch:async(path,init)=>{calls.push({path,init});return fetcher(path,init);},require:name=>name==='react'?hooks:name==='@/app/source-review-intake'?sourceReviewModule('app/source-review-intake.ts'):require(name)});
- const render=()=>{cursor=0;const tree=exports.SourceInboxPanel({ownerId,disabled:false,initialItem,onReviewed,onChanged,onAdd:item=>added.push(item)});effects.splice(0).forEach(fn=>cleanups.push(fn()));first=false;return tree;};
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/source-inbox-panel.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,Error,structuredClone,window,location:{origin:'https://app.test'},fetch:async(path,init)=>{calls.push({path,init});return fetcher(path,init);},require:name=>name==='react'?hooks:name.startsWith('@/app/')?sourceReviewModule(name.slice(2)+'.ts'):require(name)});
+ const render=()=>{cursor=0;const tree=exports.SourceInboxPanel({ownerId,disabled:false,initialItem,onReviewed,onChanged,existingProducts,onAdd:item=>added.push(item)});effects.splice(0).forEach(fn=>cleanups.push(fn()));first=false;return tree;};
  return {calls,added,render,button:label=>nodes(render()).find(node=>node.type==='button'&&text(node)===label),owner(value){ownerId=value;render();},open:()=>render().props.onToggle({currentTarget:{open:true}}),close:()=>cleanups.forEach(fn=>fn?.())};
 }
 const item={...reviewSourceFixture().before,issues:[]};
+
+test('an existing same-offer product labels recapture as a separate draft and delegates only the exact selected item',()=>{
+ const existingProducts=[{source_url:item.snapshot.sourceUrl+'?tracking=old'}],before=JSON.stringify(existingProducts),h=fixture(()=>assert.fail('choosing a capture does not fetch or write'),{initialItem:item,existingProducts});
+ try{const add=h.button('카테고리 선택·별도 초안 작성');assert.ok(add);assert.equal(add.props.disabled,false);assert.match(text(h.render()),/기존 작업을 유지/);add.props.onClick();assert.deepEqual(h.added,[item]);assert.equal(h.calls.length,0);assert.equal(JSON.stringify(existingProducts),before);}finally{h.close();}
+});
 test('inbox stays lazy, and adding a reviewed source delegates category selection without creating/updating a product',async()=>{
  const h=fixture(async()=>Response.json({ownerId:'owner',items:[item]}));try{
   h.render();assert.equal(h.calls.length,0);h.open();await turn();assert.equal(h.calls.length,1);assert.equal(h.calls[0].path,'/api/source-inbox');

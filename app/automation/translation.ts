@@ -2,7 +2,7 @@ import { QUOTATION_TAG_TOTAL_LIMIT, QUOTATION_TAG_ITEM_LIMIT } from '@/app/quota
 import { fingerprint } from '@/app/automation/model';
 import { translationAttributeIssue,translationAttributeFactText,translationNumbers,invalidOptionTranslationDestination } from '@/app/translation-attribute-evidence';
 import type { WorkersRecoveryProof, WorkersRecoveryConfiguration } from '@/app/workers-translation-recovery';
-import {WORKERS_QWEN_MODEL,parseWorkersQwenJson} from '@/app/automation/workers-qwen-contract';
+import {WORKERS_QWEN_MODEL,parseWorkersQwenJson,WorkersQwenContractError} from '@/app/automation/workers-qwen-contract';
 import {assertWorkersRecoveryDraftQuality,TranslationQualityError} from '@/app/product-translation-quality';
 
 export type TranslationSource = { title: string; description: string; attributes: { name: string; value: string }[]; provenance: 'manual'; reference: string; category?: { id: string; path: string[] }; guidance?: { features: string; keywords: string } };
@@ -296,7 +296,7 @@ export async function executeTranslation(review: TranslationReview, config: Tran
   }
   const request = buildTranslationRequest(review);
   if (config.provider === 'workers-ai') {
-    const qwen=config.model===WORKERS_QWEN_MODEL&&recoveryProof?.version===2;
+    const qwen=config.model===WORKERS_QWEN_MODEL&&(recoveryProof?.version===2||recoveryProof?.version===3);
     if (!config.ai || config.model !== WORKERS_TEXT_MODEL&&!qwen) throw new TranslationError('TRANSLATION_NOT_CONFIGURED', 'Workers AI 설정을 확인해주세요.');
     let payload: unknown;
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -314,7 +314,7 @@ export async function executeTranslation(review: TranslationReview, config: Tran
     } catch (error) { throw workersAiFailure(error); }
     finally { if (timeout !== undefined) clearTimeout(timeout); }
     try {
-      if (!payload || typeof payload !== 'object' || JSON.stringify(payload).length > 512 * 1024) throw new Error('Invalid envelope');
+      if (!qwen&&(!payload || typeof payload !== 'object' || JSON.stringify(payload).length > 512 * 1024)) throw new Error('Invalid envelope');
       const envelope = payload as { response?: unknown; choices?:unknown; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } };
       if(!qwen&&Object.hasOwn(envelope,'choices'))throw Error('Unexpected Llama chat envelope');
       const parsed=qwen?parseWorkersQwenJson(payload):null;
@@ -328,6 +328,11 @@ export async function executeTranslation(review: TranslationReview, config: Tran
         usage: usageOf({ input_tokens: usage?.prompt_tokens, output_tokens: usage?.completion_tokens, total_tokens: usage?.total_tokens }),
         generatedAt: new Date().toISOString(), provenance: 'generated', appliedToContent: false };
     } catch (error) {
+      if(error instanceof WorkersQwenContractError){
+        const detail=error.diagnostic;
+        throw new TranslationError(`INVALID_MODEL_OUTPUT_QWEN_${error.reason}`,
+          `Cloudflare Qwen 응답을 검증하지 못했습니다. 진단 ${error.reason} · 완료 ${detail.finish} · 본문 ${detail.contentType}/${detail.contentLength??0}자 · 모델 ${detail.model}. 원문·응답 본문·추론은 오류에 저장하지 않았고 결과를 적용하지 않았습니다. 자동 재시도하지 않았습니다.`,true);
+      }
       if(error instanceof TranslationQualityError)throw new TranslationError(error.code,error.message,true);
       if (error instanceof TranslationError) throw new TranslationError(error.code, error.message, true);
       throw new TranslationError('INVALID_MODEL_OUTPUT', 'Cloudflare 응답을 검증하지 못했습니다. 결과를 적용하지 않았습니다.', true);

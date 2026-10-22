@@ -608,13 +608,17 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     try{
       if(item.ownerId!==workspaceOwnerId||!availability.ready||loading||busy||addOpen||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving||settingsBusyRef.current)throw Error('현재 상품 목록과 대기열을 확인한 뒤 다시 추가해주세요.');
       if(!availability.company||item.company.code!==availability.company.code||item.company.name!==availability.company.name)throw Error('수집 당시 회사와 현재 로그인 계정의 승인 회사가 다릅니다. 현재 회사의 수집본을 선택해주세요.');
-      if(products.some(product=>sameSourceUrl(product.source_url,item.snapshot.sourceUrl)))throw Error('이미 작업 중인 상품입니다. 기존 작업 상품은 변경하지 않았습니다.');
+      const existingProducts=products.filter(product=>sameSourceUrl(product.source_url,item.snapshot.sourceUrl));
+      const existingIds=new Set(existingProducts.map(product=>product.id));
+      const forkJob=collectionJobs.filter(job=>job.product_id&&existingIds.has(job.product_id)&&sameSourceUrl(job.source_url,item.snapshot.sourceUrl)&&job.status!=='cancelled')
+        .sort((left,right)=>right.created_at.localeCompare(left.created_at)||right.id.localeCompare(left.id))[0];
+      if(existingProducts.length&&!forkJob)throw Error('기존 상품의 원문 연결을 확인하지 못했습니다. 기존 작업 상품은 변경하지 않았습니다.');
       const sourceCapture=sourceCaptureSelection(item);
       setSourceNotice('');
-      const queued=intakeRows.find(row=>sameSourceUrl(row.url,item.snapshot.sourceUrl));
-      if(queued){if(!sameSourceCaptureSelection(queued.sourceCapture,sourceCapture))throw Error('대기열에 같은 상품의 다른 수집본이나 URL 입력이 있습니다. 기존 행을 확인한 뒤 사용할 수집본을 다시 추가해주세요.');setView('work');setAddOpen(true);return;}
+      const queued=intakeRows.find(row=>row.status!=='saved'&&sameSourceUrl(row.url,item.snapshot.sourceUrl));
+      if(queued){if(!sameSourceCaptureSelection(queued.sourceCapture,sourceCapture)||queued.forkJobId!==forkJob?.id)throw Error('대기열에 같은 상품의 다른 수집본이나 URL 입력이 있습니다. 기존 행을 확인한 뒤 사용할 수집본을 다시 추가해주세요.');setView('work');setAddOpen(true);return;}
       if(intakeRows.length>=50)throw Error('상품 대기열은 최대 50행입니다. 기존 입력은 유지했습니다.');
-      setIntakeSourceSeed({id:crypto.randomUUID(),sourceUrl:item.snapshot.sourceUrl,title:item.reviewed?.title??item.snapshot.title,sourceCapture});setView('work');setAddOpen(true);
+      setIntakeSourceSeed({id:crypto.randomUUID(),sourceUrl:item.snapshot.sourceUrl,title:item.reviewed?.title??item.snapshot.title,sourceCapture,...(forkJob?{forkJobId:forkJob.id}:{})});setView('work');setAddOpen(true);
     }catch(error){setSourceNotice(error instanceof Error?error.message:'상품 추가 실패');}
   }
   function prepareQuerySource(item:QuerySourceCaptureSummary){
@@ -697,7 +701,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
         {view==='archive'?<><ProductManagementWorkspace/><details className="collection-panel"><summary>YOOFAM 스튜디오 작업 상품 보관함</summary><ProductArchive onOpenProduct={openArchivedProduct} refreshToken={`${collectionJobs[0]?.updated_at}:${products[0]?.updated_at}`}/></details></>:<>
         {(sourceNotice||sourceRegistrations.error)&&<p role="status" className="panel-note">{sourceNotice||sourceRegistrations.error}</p>}
         <QuerySourcePanel key={`server-query-${workspaceOwnerId??'anonymous'}`} ownerId={workspaceOwnerId} company={querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null} disabled={loading||busy||addOpen||settingsBusy||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving} onAdd={prepareQuerySource}/>
-        <SourceInboxPanel key={workspaceOwnerId??'anonymous'} ownerId={workspaceOwnerId} disabled={busy||addOpen||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving} onChanged={sourceRegistrations.reload} onAdd={prepareSource}/>
+        <SourceInboxPanel key={workspaceOwnerId??'anonymous'} ownerId={workspaceOwnerId} existingProducts={products} disabled={busy||addOpen||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving} onChanged={sourceRegistrations.reload} onAdd={prepareSource}/>
         <details className="collection-panel" aria-label="수집 대기열"><summary>상품 대기열 · {collectionJobs.filter(job=>job.status!=='cancelled').length}건</summary>
           <CollectionBatchPanel jobs={collectionJobs} onSaved={()=>void loadWorkspace()} onOpenProduct={openCollectedProduct}/>
           <div className="collection-heading"><div><h2>수집 대기열 <span>{collectionJobs.filter(job => job.status !== 'cancelled').length}</span></h2><p>{collectionBlock}</p></div><button className="btn ghost" disabled={loading || busy} onClick={()=>{setLoading(true);void loadWorkspace();}}>새로고침</button></div>

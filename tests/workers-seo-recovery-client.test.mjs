@@ -6,7 +6,7 @@ import ts from 'typescript';
 
 const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/workers-seo-recovery-client.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,crypto});
 const input=()=>exports.newWorkersSeoRecoveryRequest('product','2026-10-22T00:00:00.000Z','failed-google');
-const reviewed=request=>({workersRecoveryReview:true,job:{id:'separate-review',productId:request.productId,productVersion:request.productVersion,contentRevision:2,status:'prepared',result:null,review:{destination:'Cloudflare Workers AI',fingerprint:'a'.repeat(64),workersRecovery:{failedJobId:request.failedJobId,scope:'collected',version:2,model:'@cf/qwen/qwen3-30b-a3b-fp8'}}}});
+const reviewed=request=>({workersRecoveryReview:true,job:{id:'separate-review',productId:request.productId,productVersion:request.productVersion,contentRevision:2,status:'prepared',result:null,review:{destination:'Cloudflare Workers AI',fingerprint:'a'.repeat(64),workersRecovery:{failedJobId:request.failedJobId,scope:'collected',version:3,model:'@cf/qwen/qwen3-30b-a3b-fp8'}}}});
 
 test('Workers preparation sends one explicit same-origin review request with the retained nonce and never executes or applies',async()=>{
  const request=input(),calls=[],options={signal:new AbortController().signal,contentRevision:2,fetcher:async function(url,init){assert.equal(this,undefined);calls.push({url,init});return Response.json(reviewed(request));}};

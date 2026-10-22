@@ -15,13 +15,14 @@ function dashboard(company,initialMode='history'){
  const slots=[],layouts=[],effects=[],cache=new Map(),requests=[];let index=0,closed=false,lateWrites=0,owner='owner-a',mode=initialMode,currentCompany=company;
  const saved=reviewSourceFixture(owner,company).saved;
  const products=[{id:'protected-product',owner_id:owner,source_url:'synthetic://protected-product',title:'기존 작업 유지',updated_at:'2026-10-21T00:00:00.000Z',created_at:'2026-10-21T00:00:00.000Z',image_keys:'[]',options_count:1}];
+ const jobs=[];
  const draft={rows:[{id:'old-pending',url:'기존 미완성 URL',features:'입력 보존',keywords:'수동',status:'draft'}],goal:'work',ready:true,loading:false,saving:false,dirty:true,message:'기존 입력 보관',setRows(update){draft.rows=update(draft.rows);},setGoal(){},save(){},load(){}};
  const effect=(queue,fn,deps)=>{const i=index++,previous=slots[i];if(!previous||!deps||deps.some((value,n)=>!Object.is(value,previous.deps[n]))){const next={deps,cleanup:previous?.cleanup};slots[i]=next;queue.push(()=>{next.cleanup?.();next.cleanup=fn();});}};
  const hooks={useState(initial){const i=index++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],value=>{if(closed){lateWrites++;return;}slots[i]=typeof value==='function'?value(slots[i]):value;}];},useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useMemo(fn,deps){const i=index++,previous=slots[i];if(!previous||deps.some((value,n)=>!Object.is(value,previous.deps[n])))slots[i]={deps,value:fn()};return slots[i].value;},useCallback(fn,deps){const i=index++,previous=slots[i];if(!previous||deps.some((value,n)=>!Object.is(value,previous.deps[n])))slots[i]={deps,fn};return slots[i].fn;},useLayoutEffect(fn,deps){effect(layouts,fn,deps);},useEffect(fn,deps){effect(effects,fn,deps);}};
  const fetcher=async(url,init={})=>{
   requests.push({url,method:init.method??'GET'});assert.equal(init.method??'GET','GET','preparing a category never creates or transmits products');
   if(url==='/api/products')return mode==='products'?Response.json({error:'상품 목록 조회 실패'},{status:503}):Response.json({products});
-  if(url==='/api/collection-jobs')return mode==='history'?Response.json({error:'이전 수집 요청 목록 조회 실패'},{status:503}):Response.json({jobs:[]});
+  if(url==='/api/collection-jobs')return mode==='history'?Response.json({error:'이전 수집 요청 목록 조회 실패'},{status:503}):Response.json({jobs});
   if(url==='/api/settings')return mode==='settings'?Response.json({error:'설정 조회 실패'},{status:503}):Response.json({settings:{brand:currentCompany.name},scope:{ownerId:mode==='wrong-owner'?'foreign-owner':owner,company:mode==='no-company'?null:currentCompany}});
   assert.fail('Unexpected synthetic dashboard request '+url);
  };
@@ -38,10 +39,23 @@ function dashboard(company,initialMode='history'){
  const render=()=>{if(closed)return null;index=0;const tree=Dashboard({userName:currentCompany.name,workspaceOwnerId:owner});layouts.splice(0).forEach(fn=>fn());effects.splice(0).forEach(fn=>fn());return tree;};
  const component=name=>nodes(render()).find(node=>node.type?.displayName===name)?.props;
  const button=label=>nodes(render()).find(node=>node.type==='button'&&text(node)===label);
- return{render,component,button,requests,draft,products,saved,get lateWrites(){return lateWrites;},async settle(){for(let n=0;n<15;n++){render();await new Promise(resolve=>setImmediate(resolve));}},setMode(value){mode=value;},switchOwner(value,nextCompany=currentCompany){owner=value;currentCompany=nextCompany;render();},close(){if(closed)return;closed=true;for(const slot of slots)slot?.cleanup?.();}};
+ return{render,component,button,requests,draft,products,jobs,saved,get lateWrites(){return lateWrites;},async settle(){for(let n=0;n<15;n++){render();await new Promise(resolve=>setImmediate(resolve));}},setMode(value){mode=value;},switchOwner(value,nextCompany=currentCompany){owner=value;currentCompany=nextCompany;render();},close(){if(closed)return;closed=true;for(const slot of slots)slot?.cleanup?.();}};
 }
 
 for(const company of companies){
+ test(`${company.code}: explicit newer capture opens a separate-draft seed while saved rows and existing products remain unchanged`,async()=>{
+  const h=dashboard(company,'ready');try{
+   h.products[0].source_url=h.saved.snapshot.sourceUrl;
+   h.jobs.push({id:'11111111-1111-4111-8111-111111111111',product_id:h.products[0].id,source_url:h.saved.snapshot.sourceUrl,status:'completed',created_at:'2026-10-20T00:00:00.000Z'});
+   h.draft.rows.push({id:'saved-old',url:h.saved.snapshot.sourceUrl,status:'saved',productId:h.products[0].id,features:'직접 보존',keywords:'수동'});
+   await h.settle();const before=JSON.stringify({rows:h.draft.rows,products:h.products,jobs:h.jobs}),reads=h.requests.length;
+   h.component('source-inbox-panel').onAdd(h.saved);await h.settle();const queue=h.component('intake-queue-panel');
+   assert.ok(queue);assert.equal(queue.sourceSeed.forkJobId,h.jobs[0].id);assert.equal(queue.sourceSeed.sourceCapture.captureId,h.saved.id);
+   assert.equal(JSON.stringify({rows:h.draft.rows,products:h.products,jobs:h.jobs}),before);assert.equal(h.requests.length,reads);
+   assert.equal(h.component('source-inbox-panel').existingProducts[0].id,h.products[0].id);
+  }finally{h.close();}
+ });
+
  test(`${company.code}: failed previous-job list preserves its warning but permits exact captured-source category review without writes`,async()=>{
   const h=dashboard(company);try{
    await h.settle();const previous=JSON.stringify({rows:h.draft.rows,products:h.products}),reads=h.requests.length;

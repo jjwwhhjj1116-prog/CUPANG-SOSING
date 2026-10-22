@@ -21,7 +21,7 @@ export async function prepareWorkersSeoRecovery(input:WorkersSeoRecoveryRequest,
  if(value.workersRecoveryReview!==true||!job||job.productId!==input.productId||job.productVersion!==input.productVersion
   ||job.contentRevision!==options.contentRevision||job.review.destination!=='Cloudflare Workers AI'
   ||typeof job.id!=='string'||!job.id||!['prepared','approved','running','completed','failed','uncertain'].includes(job.status)
-  ||!proof||proof.failedJobId!==input.failedJobId||proof.scope!=='collected'||proof.version!==2||proof.model!=='@cf/qwen/qwen3-30b-a3b-fp8'
+  ||!proof||proof.failedJobId!==input.failedJobId||proof.scope!=='collected'||proof.version!==3||proof.model!=='@cf/qwen/qwen3-30b-a3b-fp8'
   ||typeof job.review.fingerprint!=='string'||!/^[a-f0-9]{64}$/u.test(job.review.fingerprint))
   throw Error('응답이 현재 상품의 서버 AI 검토 요청과 일치하지 않습니다. 생성 이력을 다시 확인해주세요.');
  return job;

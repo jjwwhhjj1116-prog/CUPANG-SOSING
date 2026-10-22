@@ -26,7 +26,9 @@ export function intakeQueryImageRecoveryJob(row:IntakeRow,jobs:readonly Collecti
   }catch{return null;}
 }
 
-export type IntakeSourceSeed={id:string;sourceUrl:string;title?:string;sourceCapture?:Readonly<SourceCaptureSelection>};
+export type IntakeSourceSeed={id:string;sourceUrl:string;title?:string;sourceCapture?:Readonly<SourceCaptureSelection>;forkJobId?:string};
+const freshCaptureFork=(row:IntakeRow)=>Boolean(row.forkJobId&&row.sourceCapture);
+const freshCaptureMessage='선택한 새 수집본을 별도 상품으로 작성합니다. 기존 작업 상품은 유지됩니다. 새 초안을 확인해주세요.';
 type IntakeCategorySelection={target:string;ownerId:string|undefined;epoch:number;completed:boolean;seed?:IntakeSourceSeed};
 export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced, onJobs, onBusy, goal, onGoal, settings, workspaceOwnerId, onSettingsReloadStarted, onSettingsReloaded, jobs = [], onOpenProduct,sourceSeed,onSourceConsumed,sourceItems=[],onReviewSource }: {
   sourceItems?:import('@/app/source-inbox').SourceInboxItem[];onReviewSource?:(item:import('@/app/source-inbox').SourceInboxItem,rowId:string)=>void;
@@ -122,10 +124,10 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     if (!controller.signal.aborted) setBusy(false);
   }
   const visible = visibleIntakeRows(rows, query);
-  const pendingRows = intakeRowsForCollection(rows),pendingRowIds=new Set(pendingRows.map(row=>row.id));
+  const pendingRows = intakeRowsForCollection(rows).filter(row=>!freshCaptureFork(row)),pendingRowIds=new Set(pendingRows.map(row=>row.id));
   const selected = pendingRows.filter(row => !excluded.includes(row.id));
   const pending = selected.length;
-  const visiblePending = intakeRowsForCollection(visible),unfilledRows=rows.filter(row=>row.status!=='saved'&&!pendingRowIds.has(row.id));
+  const visiblePending = intakeRowsForCollection(visible).filter(row=>!freshCaptureFork(row)),unfilledRows=rows.filter(row=>row.status!=='saved'&&!freshCaptureFork(row)&&!pendingRowIds.has(row.id));
   function sourceItemForRow(row:IntakeRow|undefined){
     if(!row)return undefined;
     if(row.sourceCapture){try{return selectedSourceInboxItem(sourceItems,row.sourceCapture);}catch{return undefined;}}
@@ -157,8 +159,9 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     if(sourceUrlsCandidate?.rowId===id)setSourceUrlsCandidate(null);
     const update=(previous:IntakeRow[])=>sameOwner()?previous.map(row => {
       if(row.id!==id)return row;
-      const next={ ...row, ...patch, status: 'draft' as const, message: '', productId: undefined,forkJobId:undefined,pendingJobId:undefined,pendingSourceMode:undefined,pendingSourceHash:undefined };
+      const next:IntakeRow={ ...row, ...patch, status: 'draft', message: '', productId: undefined,forkJobId:undefined,pendingJobId:undefined,pendingSourceMode:undefined,pendingSourceHash:undefined };
       if(Object.hasOwn(patch,'url')){const selected=sourceCaptureAfterUrlEdit(row.sourceCapture,next.url);if(selected)next.sourceCapture=selected;else delete next.sourceCapture;}
+      if(freshCaptureFork(row)&&next.sourceCapture){next.forkJobId=row.forkJobId;next.status='error';next.message=freshCaptureMessage;}
       return next;
     }):previous;
     navigation.current.rows=update(navigation.current.rows);
@@ -206,7 +209,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     // A collected item's explicit start does not inherit the batch selection.
     // Retained callbacks must still refer to the current, unlinked input row.
     if(target&&(!target.sourceCapture||current.rows.find(row=>row.id===target.id)!==target||!pendingRowIds.has(target.id)||intakeProductId(target,current.jobs)||target.forkJobId||target.pendingJobId))return;
-    const processing=target?[target]:selected;
+    const processing=(target?[target]:selected).filter(row=>!freshCaptureFork(row));
     if(!processing.length)return;
     const controller = new AbortController(); running.current = controller; setBusy(true); onBusy(true); setError('');
     const productIds = new Map<string,string>();
@@ -360,12 +363,14 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     if(selection.seed&&(pendingSeed.current!==selection.seed.id||categorySource.current?.id!==selection.seed.id||categorySource.current.sourceUrl!==selection.seed.sourceUrl))return;
     if(selection.seed&&(selection.seed.sourceCapture!==undefined||categorySource.current?.sourceCapture!==undefined)
       &&!sameSourceCaptureSelection(selection.seed.sourceCapture,categorySource.current?.sourceCapture))return;
+    if(selection.seed&&selection.seed.forkJobId!==categorySource.current?.forkJobId)return;
     const target=selection.target,currentRows=navigation.current.rows;
     if(target==='new'&&currentRows.length>=50){setError('상품 대기열은 최대 50행입니다. 기존 입력을 정리한 뒤 상품을 추가해주세요.');return;}
     if(target!=='new'&&!currentRows.some(row=>row.id===target&&row.status!=='saved'))return;
-    let sourceUrl='';let sourceCapture:Readonly<SourceCaptureSelection>|undefined;
+    let sourceUrl='';let sourceCapture:Readonly<SourceCaptureSelection>|undefined;let forkJobId:string|undefined;
     if(selection.seed){
-      try{[sourceUrl]=parseCollectionRequest({urls:[selection.seed.sourceUrl],goal:'collect'}).map(value=>value.sourceUrl);if(selection.seed.sourceCapture!==undefined)sourceCapture=validateSourceCaptureSelection(selection.seed.sourceCapture,sourceUrl);}
+      try{[sourceUrl]=parseCollectionRequest({urls:[selection.seed.sourceUrl],goal:'collect'}).map(value=>value.sourceUrl);if(selection.seed.sourceCapture!==undefined)sourceCapture=validateSourceCaptureSelection(selection.seed.sourceCapture,sourceUrl);
+        if(selection.seed.forkJobId!==undefined){if(!/^[a-f0-9-]{36}$/u.test(selection.seed.forkJobId)||sourceCapture?.format!=='yoofam-saved-page-capture-v1')throw Error();forkJobId=selection.seed.forkJobId;}}
       catch{setError('보관된 1688 URL을 확인해주세요. 기존 입력은 유지했습니다.');return;}
     }
     const id=target==='new'?crypto.randomUUID():target;
@@ -374,8 +379,8 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     // belongs to this completed selection until another session or owner wins.
     const update=(previous:IntakeRow[])=>{
       if(!categoryCurrent(selection,true))return previous;
-      if(target==='new')return previous.length<50&&!previous.some(row=>row.id===id)?[...previous,{...intakeRow(profile,id),url:sourceUrl,...(sourceCapture?{sourceCapture}:{})}]:previous;
-      return previous.map(row=>row.id===target&&row.status!=='saved'?{...row,profile,status:'draft' as const,message:'',productId:undefined,forkJobId:undefined,pendingJobId:undefined,pendingSourceMode:undefined,pendingSourceHash:undefined}:row);
+      if(target==='new')return previous.length<50&&!previous.some(row=>row.id===id)?[...previous,{...intakeRow(profile,id),url:sourceUrl,...(sourceCapture?{sourceCapture}:{}),...(forkJobId?{forkJobId,status:'error' as const,message:freshCaptureMessage}:{})}]:previous;
+      return previous.map(row=>row.id===target&&row.status!=='saved'?{...row,profile,status:freshCaptureFork(row)?'error' as const:'draft' as const,message:freshCaptureFork(row)?freshCaptureMessage:'',productId:undefined,forkJobId:freshCaptureFork(row)?row.forkJobId:undefined,pendingJobId:undefined,pendingSourceMode:undefined,pendingSourceHash:undefined}:row);
     };
     if(forkPreviewRef.current?.rowId===target)setForkPreview(null);
     if(pendingPreviewRef.current?.rowId===target)setPendingPreview(null);
@@ -404,7 +409,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
         <td><input ref={element => { if (element) urlInputs.current.set(row.id, element); else urlInputs.current.delete(row.id); }} aria-label={`${index + 1}번째 1688 링크`} value={row.url} maxLength={2048} disabled={busy || row.status === 'saved'} placeholder="https://detail.1688.com/offer/…" onChange={event => edit(row.id, { url: event.target.value })} />{row.url.trim() && <small className="intake-source-url">{row.url.trim()}</small>}{captured&&onReviewSource&&<><button type="button" className="btn ghost" disabled={busy||row.status==='saved'||!!row.productId||!!row.forkJobId||!!row.pendingJobId} onClick={()=>reviewSource(row,captured)}>수집정보 확인·수정</button><small>{captured.issues.length?`확인 필요: ${captured.issues.join(' · ')}`:'수집정보 준비됨'}</small>{row.sourceCapture&&captured.revision!==row.sourceCapture.revision&&<small>검토 버전이 변경되었습니다. 수집정보 확인·수정에서 저장한 뒤 시작하세요.</small>}</>}</td>
         <td><textarea aria-label={`${index + 1}번째 특징`} value={row.features} maxLength={2000} disabled={busy || row.status === 'saved'} placeholder="상품 특징" onChange={event => edit(row.id, { features: event.target.value })} /></td>
         <td><textarea aria-label={`${index + 1}번째 키워드`} value={row.keywords} maxLength={2000} disabled={busy || row.status === 'saved'} placeholder="타겟 키워드" onChange={event => edit(row.id, { keywords: event.target.value })} /></td>
-        <td role="status" className={row.status === 'error' ? 'collection-error' : ''}>{row.message || '입력 대기'}{row.sourceCapture&&pendingRowIds.has(row.id)&&!productId&&!row.forkJobId&&!row.pendingJobId&&<button type="button" className="btn primary" disabled={busy||settingsChanged} onClick={()=>void submit(row)}>이 상품 초안 작성</button>}{productId && onOpenProduct && <button type="button" className="btn ghost" disabled={busy} onClick={()=>void openSavedProduct(row.id,productId)}>초안 확인·수정</button>}{intakeQueryImageRecoveryJob(row,jobs)&&<button type="button" className="btn ghost" disabled={busy} onClick={()=>openImageRecovery(row)}>누락 원본 이미지 이어받기</button>}{row.status==='error'&&row.pendingJobId&&(row.profile.template||(row.profile.hubSchema?.metadata.scopeType??row.profile.hubSchema?.metadata.scope)==='Retail_Categorized_Single')&&<button type="button" className="btn ghost" disabled={busy||settingsChanged} onClick={()=>void inspectPendingSource(row.id)}>기존 대기 요청 확인</button>}{row.status==='error'&&row.forkJobId&&(row.profile.template||(row.profile.hubSchema?.metadata.scopeType??row.profile.hubSchema?.metadata.scope)==='Retail_Categorized_Single')&&<button type="button" className="btn ghost" disabled={busy||settingsChanged} onClick={()=>void inspectNewDraft(row.id)}>저장 원문으로 새 초안</button>}</td>
+        <td role="status" className={row.status === 'error' ? 'collection-error' : ''}>{row.message || '입력 대기'}{row.sourceCapture&&pendingRowIds.has(row.id)&&!productId&&!row.forkJobId&&!row.pendingJobId&&<button type="button" className="btn primary" disabled={busy||settingsChanged} onClick={()=>void submit(row)}>이 상품 초안 작성</button>}{productId && onOpenProduct && <button type="button" className="btn ghost" disabled={busy} onClick={()=>void openSavedProduct(row.id,productId)}>초안 확인·수정</button>}{intakeQueryImageRecoveryJob(row,jobs)&&<button type="button" className="btn ghost" disabled={busy} onClick={()=>openImageRecovery(row)}>누락 원본 이미지 이어받기</button>}{row.status==='error'&&row.pendingJobId&&(row.profile.template||(row.profile.hubSchema?.metadata.scopeType??row.profile.hubSchema?.metadata.scope)==='Retail_Categorized_Single')&&<button type="button" className="btn ghost" disabled={busy||settingsChanged} onClick={()=>void inspectPendingSource(row.id)}>기존 대기 요청 확인</button>}{row.status==='error'&&row.forkJobId&&(row.profile.template||(row.profile.hubSchema?.metadata.scopeType??row.profile.hubSchema?.metadata.scope)==='Retail_Categorized_Single')&&<button type="button" className="btn ghost" disabled={busy||settingsChanged} onClick={()=>void inspectNewDraft(row.id)}>{row.sourceCapture?'새 수집본으로 별도 초안 작성':'저장 원문으로 새 초안'}</button>}</td>
         <td><button type="button" className="btn ghost" disabled={busy || rows.length >= 50} onClick={() => { const id = crypto.randomUUID(); focusRow.current = id; setQuery(''); onRows(previous => previous.length < 50 ? [...previous, { ...intakeRow(row.profile, id), features: row.features, keywords: row.keywords }] : previous); }}>복제</button><button type="button" className="btn ghost" disabled={busy} onClick={() => removeRow(row.id)}>행 삭제</button></td>
       </tr>; })}
     </tbody></table>{rows.length > 0 && !visible.length && <p className="collection-empty">검색 결과가 없습니다. 검색을 해제하면 입력한 상품을 다시 볼 수 있습니다.</p>}{!rows.length && <p className="collection-empty">대기열이 비어있습니다. [+ 상품 추가] 버튼으로 카테고리를 선택해주세요.</p>}</div>
@@ -417,9 +422,9 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
       <button type="button" className="btn ghost" disabled={busy} onClick={()=>setPendingPreview(null)}>닫기 · 현재 입력 유지</button>
     </section>}
     {sourceUrlsCandidate&&<section role="dialog" aria-label="원문 URL 새 초안 확인" className="panel-note"><h3>원문 URL로 새 초안</h3><p>서버에서 수정하지 않은 최초 원문 상품을 확인했습니다. 저장 안 된 사진은 새 초안에서 가져옵니다. 기존 상품의 입력과 원본은 보존하며, 지금은 새 초안을 검토하는 조회만 실행합니다.</p><button type="button" className="btn primary" disabled={busy} onClick={()=>void inspectSourceUrls()}>원문 URL로 새 초안 검토</button><button type="button" className="btn ghost" disabled={busy} onClick={()=>setSourceUrlsCandidate(null)}>닫기 · 현재 입력 유지</button></section>}
-    {forkPreview&&<section role="dialog" aria-label="저장 원문으로 새 초안" className="panel-note"><h3>저장 원문으로 새 초안</h3>
+    {forkPreview&&<section role="dialog" aria-label={forkPreview.preview.target.sourceCapture?'새 수집본으로 별도 초안 작성':'저장 원문으로 새 초안'} className="panel-note"><h3>{forkPreview.preview.target.sourceCapture?'새 수집본으로 별도 초안 작성':'저장 원문으로 새 초안'}</h3>
       <p>{forkPreview.preview.source.company.name} · {forkPreview.preview.target.categoryPath.join(' > ')} · 코드 {forkPreview.preview.target.categoryId}</p>
-      <p>원문 수집 시각: {forkPreview.preview.source.collectedAt}</p><p>선택한 카테고리와 현재 기본설정으로 별도 상품을 작성합니다. 기존 상품의 수정 내용과 전송 기록은 보존합니다.</p>
+      <p>원문 수집 시각: {forkPreview.preview.source.collectedAt}</p>{forkPreview.preview.target.sourceCapture&&<p>직접 선택한 새 수집본 · 검토 v{forkPreview.preview.target.sourceCapture.revision} · 사진 {forkPreview.preview.source.imageCount}개를 별도 초안으로 가져옵니다.</p>}<p>선택한 카테고리와 현재 기본설정으로 별도 상품을 작성합니다. 기존 상품의 수정 내용과 전송 기록은 보존합니다.</p>
       {forkPreview.preview.warnings.map((warning,index)=><p key={index}>{warning}</p>)}
       <button type="button" className="btn primary" disabled={busy} onClick={()=>void makeNewDraft()}>{forkPreview.created?'새 초안 작성 이어가기':forkPreview.pending?'새 초안 저장 결과 확인':'새 초안 생성'}</button>
       <button type="button" className="btn ghost" disabled={busy} onClick={()=>setForkPreview(null)}>닫기</button>

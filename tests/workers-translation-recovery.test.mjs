@@ -49,12 +49,12 @@ for(const company of companies)test(`explicit Workers recovery preserves Google 
  try{
   const before=f.unchanged(),view=await json(await h.route(f.base+'/translation'));
   assert.equal(view.configuration.model,'google-translate-gtx');assert.equal(view.workersRecovery.configured,true);
-  assert.equal(view.workersRecovery.version,2);assert.equal(view.workersRecovery.model,'@cf/qwen/qwen3-30b-a3b-fp8');
+  assert.equal(view.workersRecovery.version,3);assert.equal(view.workersRecovery.model,'@cf/qwen/qwen3-30b-a3b-fp8');
   assert.equal(view.workersRecovery.maxOutputTokens,2048);assert.equal(h.aiSources.length,0);
   const prepared=await json(await f.prepare(),201),job=prepared.job;
   assert.equal(prepared.configuration.model,'google-translate-gtx');assert.equal(prepared.workersRecoveryReview,true);
   assert.equal(job.review.destination,'Cloudflare Workers AI');assert.equal(job.review.maxOutputTokens,2048);
-  assert.equal(job.review.workersRecovery.version,2);assert.equal(job.review.workersRecovery.model,'@cf/qwen/qwen3-30b-a3b-fp8');
+  assert.equal(job.review.workersRecovery.version,3);assert.equal(job.review.workersRecovery.model,'@cf/qwen/qwen3-30b-a3b-fp8');
   assert.equal(job.review.workersRecovery.failedJobId,f.failed.id);assert.deepEqual(job.review.workersRecovery.company,company);
   assert.equal(job.review.source.title,f.failed.review.source.title);assert.ok(job.review.source.attributes.some(pair=>pair.name.startsWith('option:')));
   assert.equal(f.unchanged(),before);assert.equal(h.aiSources.length,0);
@@ -230,7 +230,21 @@ for(const change of ['suspended','company'])test(`the final source read cannot r
  }finally{h.close();}
 });
 
-test('v2 prepares one separate Qwen review while bad completed legacy Llama remains unchanged and unapplied',async()=>{
+test('a terminal v2 parser failure remains archived while v3 requires a separate explicit approval',async()=>{
+ const f=await fixture(),{h}=f;try{
+  const {job:seed}=await json(await f.prepare(),201),review=structuredClone(seed.review);review.workersRecovery.version=2;
+  review.fingerprint=await h.load('app/automation/model.ts').fingerprint(review);
+  h.sqlite.prepare("UPDATE translation_jobs SET idempotency_key=?,status='failed',review=?,review_fingerprint=?,error=?,started_at=?,finished_at=? WHERE id=?")
+   .run('workers-recovery-v2-'+f.failed.id,JSON.stringify(review),review.fingerprint,JSON.stringify({code:'INVALID_MODEL_OUTPUT',message:'Cloudflare 응답을 검증하지 못했습니다.',mayHaveBeenCharged:true}),new Date().toISOString(),new Date().toISOString(),seed.id);
+  const before=h.sqlite.prepare('SELECT * FROM translation_jobs WHERE id=?').get(seed.id),prepared=await json(await f.prepare(),201);
+  assert.notEqual(prepared.job.id,seed.id);assert.equal(prepared.job.status,'prepared');assert.equal(prepared.job.review.workersRecovery.version,3);assert.equal(h.aiSources.length,0);
+  assert.deepEqual(h.sqlite.prepare('SELECT * FROM translation_jobs WHERE id=?').get(seed.id),before);
+  await f.execute(prepared.job);assert.equal(h.aiSources.length,0,'new contract does not authorize generation');
+  assert.equal((await json(await f.prepare())).job.id,prepared.job.id);assert.equal(h.aiSources.length,0);
+ }finally{h.close();}
+});
+
+test('v3 prepares one separate Qwen review while bad completed legacy Llama remains unchanged and unapplied',async()=>{
  const f=await fixture(),{h}=f;
  try{
   // Seed an archived v1 contract in this isolated DB, without a model call.
@@ -246,9 +260,9 @@ test('v2 prepares one separate Qwen review while bad completed legacy Llama rema
    const blocked=await json(await h.route(f.base+'/translation-apply',{method:'POST',body:{...body,action,...(action==='apply'?{fingerprint:'a'.repeat(64)}:{})}}),409);
    assert.match(blocked.error,/한자/);assert.equal(f.unchanged(),before);assert.equal(h.aiSources.length,0);
   }
-  const {job}=await json(await f.prepare(),201);assert.notEqual(job.id,seed.id);assert.equal(job.review.workersRecovery.version,2);
+  const {job}=await json(await f.prepare(),201);assert.notEqual(job.id,seed.id);assert.equal(job.review.workersRecovery.version,3);
   assert.equal(job.review.workersRecovery.model,'@cf/qwen/qwen3-30b-a3b-fp8');
-  assert.equal(h.sqlite.prepare('SELECT idempotency_key FROM translation_jobs WHERE id=?').get(job.id).idempotency_key,'workers-recovery-v2-'+f.failed.id);
+  assert.equal(h.sqlite.prepare('SELECT idempotency_key FROM translation_jobs WHERE id=?').get(job.id).idempotency_key,'workers-recovery-v3-'+f.failed.id);
   assert.deepEqual(h.sqlite.prepare('SELECT * FROM translation_jobs WHERE id=?').get(seed.id),archived);
   await json(await f.approved(job));assert.equal((await json(await f.execute(job))).job.status,'completed');assert.equal(h.aiSources.length,1);
   assert.equal((await json(await f.prepare())).job.id,job.id);assert.equal(h.aiSources.length,1);
@@ -268,7 +282,7 @@ for(const invalid of ['mixed-title','unsupported-claim','mixed-option','llama-en
    response.choices[0].message.content=JSON.stringify(draft);return response;};
   const {job}=await json(await f.prepare(),201),before=f.unchanged();await json(await f.approved(job));const failed=(await json(await f.execute(job))).job;
   assert.equal(failed.status,'failed');assert.equal(failed.result,null);assert.equal(h.aiSources.length,1);assert.equal(f.unchanged(),before);
-  assert.equal(failed.error.code,invalid==='llama-envelope'?'INVALID_MODEL_OUTPUT':invalid==='unsupported-claim'?'RECOVERY_UNSUPPORTED_CLAIM':'RECOVERY_UNTRANSLATED_TEXT');
+  assert.equal(failed.error.code,invalid==='llama-envelope'?'INVALID_MODEL_OUTPUT_QWEN_COMPLETION_TYPE':invalid==='unsupported-claim'?'RECOVERY_UNSUPPORTED_CLAIM':'RECOVERY_UNTRANSLATED_TEXT');
   await json(await f.execute(job));assert.equal((await json(await f.prepare())).job.id,job.id);assert.equal(h.aiSources.length,1);
  }finally{h.close();}
 });
