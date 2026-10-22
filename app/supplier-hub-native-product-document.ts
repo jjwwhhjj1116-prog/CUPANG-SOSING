@@ -80,10 +80,18 @@ export async function compileNativeSupplierHubProductDocument(input:Scope&{sourc
 const active=(signal:AbortSignal)=>{if(signal.aborted)fail('견적서 확인을 취소했습니다.');};
 async function readJson(path:string,signal:AbortSignal,request:typeof fetch,limit=6*1024*1024):Promise<unknown>{
  active(signal);const response=await request.call(globalThis,path,{method:'GET',cache:'no-store',credentials:'same-origin',redirect:'error',signal});active(signal);
- if(!response.ok||response.redirected||!/\bapplication\/json\b/i.test(response.headers.get('content-type')??''))return fail('현재 상품의 전송 원본을 확인하지 못했습니다.');
+ if(response.redirected||!/\bapplication\/json\b/i.test(response.headers.get('content-type')??''))return fail('현재 상품의 전송 원본을 확인하지 못했습니다. 로그인 상태와 연결을 확인한 뒤 저장 자료를 다시 조회해주세요.');
  if(response.url){const actual=new URL(response.url);if(actual.pathname+actual.search!==path||typeof location!=='undefined'&&actual.origin!==location.origin)return fail();}
  const reader=response.body?.getReader();if(!reader)return fail();let length=0;const chunks:Uint8Array[]=[],abort=()=>{void reader.cancel().catch(()=>{});};signal.addEventListener('abort',abort,{once:true});
- try{for(;;){active(signal);const part=await reader.read();active(signal);if(part.done)break;length+=part.value.byteLength;if(length>limit)return fail();chunks.push(part.value);}const bytes=new Uint8Array(length);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));}
+ try{for(;;){active(signal);const part=await reader.read();active(signal);if(part.done)break;length+=part.value.byteLength;if(length>limit)return fail();chunks.push(part.value);}const bytes=new Uint8Array(length);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}
+  let value:unknown;try{value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));}catch{return fail('전송 원본 조회 응답을 확인하지 못했습니다. 저장 자료를 다시 조회해주세요.');}
+  if(!response.ok){
+   const error=object(value)?value:null,code=typeof error?.code==='string'&&/^[A-Z][A-Z0-9_]{0,79}$/.test(error.code)?` · ${error.code}`:'';
+   const message=typeof error?.error==='string'&&error.error.length<=1000&&!/[\u0000-\u001f<>]/u.test(error.error)?` ${error.error}`:'';
+   return fail(`현재 상품의 전송 원본 조회에 실패했습니다. (HTTP ${response.status}${code})${message}`);
+  }
+  return value;
+ }
  finally{signal.removeEventListener('abort',abort);await reader.cancel().catch(()=>{});reader.releaseLock();}
 }
 export async function readCurrentNativeAssetSource(input:ReadScope):Promise<NativeAssetSourcePlan>{

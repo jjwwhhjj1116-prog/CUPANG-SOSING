@@ -49,8 +49,8 @@ for(const company of companies)test(`explicit Workers recovery preserves Google 
  try{
   const before=f.unchanged(),view=await json(await h.route(f.base+'/translation'));
   assert.equal(view.configuration.model,'google-translate-gtx');assert.equal(view.workersRecovery.configured,true);
-  assert.equal(view.workersRecovery.version,5);assert.equal(view.workersRecovery.model,'@cf/qwen/qwen3-30b-a3b-fp8');
-  assert.equal(view.workersRecovery.maxOutputTokens,2048);assert.equal(h.aiSources.length,0);
+  assert.equal(view.workersRecovery.strategy,'m2m-text-v1');assert.equal(view.workersRecovery.model,'@cf/meta/m2m100-1.2b');
+  assert.equal(view.workersRecovery.maxOutputTokens,0);assert.equal(view.workersRecovery.maxCalls,8);assert.equal(h.aiSources.length,0);
   const prepared=await json(await f.prepare(),201),job=prepared.job;
   assert.equal(prepared.configuration.model,'google-translate-gtx');assert.equal(prepared.workersRecoveryReview,true);
   assert.equal(job.review.destination,'Cloudflare Workers AI');assert.equal(job.review.maxOutputTokens,2048);

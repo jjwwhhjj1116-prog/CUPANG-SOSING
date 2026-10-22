@@ -43,6 +43,8 @@ export type ProductContent = {
   /** Manual SEO saves update an existing document with the base title. A
    * different title writer invalidates this value/clock basis automatically. */
   seoTitleDocument?: { policy: 'couplus-seo-save-v1'; sourceTitle: string; sourceUpdatedAt: string | null; value: string };
+  /** Created only by an explicit SEO save/apply; legacy packets have no projection. */
+  explicitSeoQuotationDefaults?:import('@/app/explicit-seo-quotation-defaults').ExplicitSeoQuotationDefaults;
   /** Server-created intake guidance, consumed by any explicit keyword save.
    * Absence (including legacy documents) means manual keywords stay protected. */
   intakeKeywordSeed?: { value: string[]; updatedAt: string; sourceReference: string };

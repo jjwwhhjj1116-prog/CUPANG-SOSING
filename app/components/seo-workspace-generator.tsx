@@ -12,7 +12,7 @@ import { createSeoWorkspaceDraftState, parseSeoWorkspaceDraftState, refreshSeoWo
 import { TranslationIntegratedPreview } from '@/app/components/translation-integrated-preview';
 import TranslationPanel from '@/app/components/translation-panel';
 import {google429RecoveryCandidate} from '@/app/workers-translation-recovery';
-import {newWorkersSeoRecoveryRequest,prepareWorkersSeoRecovery,type WorkersSeoRecoveryRequest} from '@/app/workers-seo-recovery-client';
+import {newWorkersSeoRecoveryRequest,prepareWorkersSeoRecovery,workersSeoRecoveryM2mLimit,type WorkersSeoRecoveryRequest} from '@/app/workers-seo-recovery-client';
 import { sameSeoAppliedSource, type SeoAppliedReceipt } from '@/app/seo-apply-focus';
 import { seoGuidanceTitle, seoGuidanceTags, validateSeoGuidanceComposition, type SeoGuidanceComposition } from '@/app/seo-guidance-composition';
 import { commitSeoGuidanceSession, initialSeoGuidanceMemo, openSeoGuidanceSession, readSeoGuidanceSession, releaseSeoGuidanceSession,
@@ -179,18 +179,19 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
     finally{finishProcessing(operation);if(request.current===controller){request.current=null;if(mounted.current)setBusy(false);}}
   }
   async function prepareWorkers(){
-    if(!basis?.workersRecovery?.configured||!basis.workersFailedJobId||basis.productVersion!==version||!mounted.current||!current.current.active
+    const workersLimit=workersSeoRecoveryM2mLimit(basis?.workersRecovery);
+    if(workersLimit===null||!basis?.workersFailedJobId||basis.productVersion!==version||!mounted.current||!current.current.active
       ||current.current.version!==version||current.current.workspaceOwnerId!==workspaceOwnerId||request.current||compositionBusyRef.current||applyUncertainRef.current||!beforeGenerate())return;
-    const context=operationContext.current,controller=new AbortController();request.current=controller;setBusy(true);setError('');setMessage('서버 AI 검토 요청을 준비하고 있습니다…');
+    const context=operationContext.current,controller=new AbortController();request.current=controller;setBusy(true);setError('');setMessage('중국어→한국어 번역 검토를 준비하고 있습니다…');
     const previous=workersRequest.current,input=previous&&previous.productVersion===version&&previous.failedJobId===basis.workersFailedJobId
       ?previous:newWorkersSeoRecoveryRequest(productId,version,basis.workersFailedJobId);
     workersRequest.current=input;
     const same=()=>mounted.current&&current.current.active&&operationContext.current===context&&current.current.version===version&&current.current.workspaceOwnerId===workspaceOwnerId;
     try{
-      const saved=await prepareWorkersSeoRecovery(input,{signal:controller.signal,contentRevision:basis.contentRevision,fetcher:fetch});
+      const saved=await prepareWorkersSeoRecovery(input,{signal:controller.signal,contentRevision:basis.contentRevision,expectedMaxCalls:workersLimit,fetcher:fetch});
       if(controller.signal.aborted||!same())return;
       setWorkersReview({productVersion:version,jobId:saved.id,fingerprint:saved.review.fingerprint,ownerId:workspaceOwnerId});
-      setMessage('서버 AI 요청을 준비했습니다. 아래 전송 원문을 확인하고 승인·실행해주세요. Google 이력과 작성 중인 입력은 유지했습니다.');
+      setMessage('Cloudflare Workers AI의 중국어→한국어 번역 요청을 준비했습니다. 아래 전송 원문과 호출 횟수를 확인하고 승인·실행해주세요. Google 이력과 작성 중인 입력은 유지했습니다.');
     }catch(cause){if(!controller.signal.aborted&&same())setError(cause instanceof Error?cause.message:'서버 AI 요청 상태를 확인하지 못했습니다. 같은 요청을 다시 확인해주세요.');}
     finally{if(request.current===controller){request.current=null;if(mounted.current)setBusy(false);}}
   }
@@ -254,7 +255,7 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
         {hasRequest&&closed&&<button className="btn ghost" type="button" disabled={busy||compositionBusy||applyUncertain} onClick={()=>{if(!mounted.current||current.current.version!==version||!current.current.active||request.current||compositionBusyRef.current||applyUncertain)return;if(basis&&draftState.current&&supplierSourceIdentity(draftState.current.source)!==basis.sourceIdentity)setMemo(basis.initialMemo);draftState.current=null;setHasRequest(false);setClosed(false);setJob(null);setConfirmAi(false);setCompositionTitle(null);setCompositionKeywords(null);setCompositionEnabled(true);setReplaceTitle(false);setReplaceKeywords(false);setMessage('새 요청의 입력을 준비했습니다. 작성 버튼을 누르면 새 초안을 요청합니다.');try{sessionStorage.removeItem(storageKey);}catch{}}}>새 초안 입력</button>}
       </div>
       {google&&<details className="seo-generation-provider"><summary>초안 작성 방법</summary><small>무료 Google 번역으로 원문을 한국어로 옮긴 뒤 브랜드·짧은 특징·타겟을 반영한 상품명과 검색태그 구성안을 확인하고 수정합니다.</small></details>}
-      {google&&basis?.workersFailedJobId&&<div className="panel-note" aria-label="서버 AI 초안 복구"><button type="button" className="btn blue" disabled={busy||compositionBusy||applyUncertain||!active||!basis.workersRecovery?.configured} onClick={()=>void prepareWorkers()}>서버 AI로 한국어 초안 작성</button><p>Google 번역 제한으로 완료되지 않은 수집 상품명·설명·미번역 옵션·속성을 Cloudflare Workers AI에 별도 전송합니다. 먼저 실제 전송 원문을 검토·승인하며, 생성 후 원하는 항목만 직접 적용합니다. 작성 중인 입력은 그대로 유지됩니다.</p>{!basis.workersRecovery?.configured&&<small>무료 서버 AI 복구 설정을 확인해야 사용할 수 있습니다.</small>}</div>}
+      {google&&basis?.workersFailedJobId&&<div className="panel-note" aria-label="중국어→한국어 번역 초안"><button type="button" className="btn blue" disabled={busy||compositionBusy||applyUncertain||!active||workersSeoRecoveryM2mLimit(basis.workersRecovery)===null} onClick={()=>void prepareWorkers()}>중국어→한국어 번역 초안</button><p>Google 번역 제한으로 완료되지 않은 저장 원문을 전용 번역 모델로 준비합니다. 먼저 전송 원문과 호출 횟수를 검토·승인하며, 번역 후 원하는 항목만 직접 적용합니다. 작성 중인 입력은 그대로 유지됩니다.</p>{workersSeoRecoveryM2mLimit(basis.workersRecovery)===null&&<small>무료 전용 번역 연결 설정을 확인해야 사용할 수 있습니다.</small>}</div>}
       {active&&workersReview?.productVersion===version&&workersReview.ownerId===workspaceOwnerId&&<TranslationPanel productId={productId} version={version} title={basis?.source.title??''} initialJobId={workersReview.jobId} initialReviewFingerprint={workersReview.fingerprint} reviewOnly onContentSaved={()=>{if(mounted.current&&current.current.active&&current.current.version===version&&current.current.workspaceOwnerId===workspaceOwnerId)statusCallbacks.current.onSaved();}}/>}
       {hasResult&&<div className="seo-generated-result"><h4>작성된 초안</h4><dl><dt>상품명</dt><dd>{job.result!.draft.title}</dd><dt>검색태그</dt><dd>{job.result!.draft.keywords.join(', ')}</dd></dl>
         {compositionInput&&<fieldset disabled={busy||compositionBusy||!active} aria-label="사용자 SEO 구성안"><legend>브랜드 · 특징 · 타겟 반영</legend>

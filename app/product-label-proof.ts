@@ -5,6 +5,7 @@ import { exactPrimaryQuotationTarget } from '@/app/quotation-seo-targets';
 import { isOwnedImageKey } from '@/app/image-files';
 import type { ResolvedQuotation } from '@/app/quotation-schema';
 import type { SubmissionIssue } from '@/app/submission-review';
+import { readProductLabelJson } from '@/app/product-label-read-response';
 
 export const PRODUCT_LABEL_PROOF_RECIPE = 'product-label-png-v1';
 export type ProductLabelProofRequest = { productId: string; optionId: string | null; endpoint: string; expectedProductVersion: string; expectedInputFingerprint: string; expectedRevision: number };
@@ -75,9 +76,7 @@ export function productLabelReceiptFromMetadata(value: unknown): ProductLabelRec
  * upload key. A filename is only a lookup locator, never a replacement proof. */
 export async function readProductLabelReceipt(uploadId: string, request: typeof fetch = fetch) {
   if (!sha256(uploadId)) throw Error('라벨 업로드 번호를 확인해주세요.');
-  const response = await request(`/api/files?labelUploadId=${uploadId}`, { cache: 'no-store' });
-  const body = await response.json() as { key?: unknown; error?: string; contentType?: unknown; size?: unknown; sha256?: unknown; productLabelProof?: unknown } | null;
-  if (!response.ok) throw Error(body?.error || '저장한 제품 표시사항 파일을 확인하지 못했습니다.');
+  const body = await readProductLabelJson<{ key?: unknown; contentType?: unknown; size?: unknown; sha256?: unknown; productLabelProof?: unknown } | null>(`/api/files?labelUploadId=${uploadId}`, request);
   if (!body || Array.isArray(body) || body.key !== null && (typeof body.key !== 'string' || !/^[^/\\\s%?#]+\/quotation-label-[a-f0-9]{64}\.png$/.test(body.key) || body.key.length > 512)) throw Error('저장한 제품 표시사항 파일의 응답을 확인하지 못했습니다.');
   const key = body.key as string | null;
   if (key && (!key.endsWith(`/quotation-label-${uploadId}.png`) || body.contentType !== 'image/png' || !Number.isSafeInteger(body.size)

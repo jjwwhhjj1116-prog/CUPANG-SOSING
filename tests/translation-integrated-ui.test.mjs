@@ -21,7 +21,7 @@ test('integrated UI submits only reviewed fingerprint and verifies save receipt'
  for(const valid of [true,false]) {
   const h=harness(async init=>JSON.parse(init.body).action==='preview'?Response.json(plan):Response.json({productId:valid?'p':'other',productVersion:'2026-09-25T01:00:01.000Z',contentRevision:1,optionRevision:2,applied:1}));
   h.click(0);await settle();h.click(1);await settle();
-  assert.deepEqual(JSON.parse(h.calls[1].init.body),{action:'apply',jobId:'j',expectedVersion:version,fingerprint:plan.fingerprint});
+  assert.deepEqual(JSON.parse(h.calls[1].init.body),{action:'apply',jobId:'j',expectedVersion:version,linkQuotationSeoDefaults:true,fingerprint:plan.fingerprint});
   assert.equal(h.saved,valid?1:0);assert.match(JSON.stringify(h.render()),valid ? /함께 저장했습니다/ : /응답이 일치하지/);
  }
 });
@@ -84,8 +84,9 @@ test('option scope is included in requests and rejects mismatched preview or rec
   const h=harness(async init=>JSON.parse(init.body).action==='preview'?Response.json({...plan,scope:mode==='preview-mismatch'?'all':'options'}):Response.json({scope:mode==='receipt-mismatch'?'all':'options',productId:'p',productVersion:'2026-09-25T01:00:01.000Z',contentRevision:1,optionRevision:2,applied:1}));
   h.render({scope:'options'});h.click(0);await settle();
   assert.equal(JSON.parse(h.calls[0].init.body).scope,'options');
+  assert.equal(Object.hasOwn(JSON.parse(h.calls[0].init.body),'linkQuotationSeoDefaults'),false);
   if(mode==='preview-mismatch')assert.equal(nodes(h.render()).filter(n=>n.type==='button').length,1);
-  else{h.click(1);await settle();assert.equal(JSON.parse(h.calls[1].init.body).scope,'options');}
+  else{h.click(1);await settle();assert.equal(JSON.parse(h.calls[1].init.body).scope,'options');assert.equal(Object.hasOwn(JSON.parse(h.calls[1].init.body),'linkQuotationSeoDefaults'),false);}
   assert.equal(h.saved,mode==='success'?1:0);
  }
 });

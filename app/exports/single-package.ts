@@ -64,8 +64,9 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
     const config = publicDetailConfig(env as Parameters<typeof publicDetailConfig>[0]);
     const sourceFingerprint = await quotationExportFingerprint(saved, null), configVersion = await publicDetailVersion(config);
     const sourceValueKey=packageSourceValueKey(saved);
+    const resolved=resolveQuotationExport(saved);
     const projection = await projectSupplierHubSingleDocument({ snapshot: saved.hubSchema, company, categoryId: saved.categoryContext.categoryId,
-      categoryPath: saved.categoryContext.categoryPath, resolved: resolveQuotationExport(saved) });
+      categoryPath: saved.categoryContext.categoryPath, resolved });
     const ownedKeys = productImageKeys(saved.product.image_keys), selection = singleAssetSelection(projection, owner, ownedKeys);
     // Invalid/unknown refs stay blocking in the plan; they never cause a read of
     // an unowned key. Selected bytes are strictly bounded by loadAttachments.
@@ -74,10 +75,10 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
     const metadata = new Map(await Promise.all(readKeys.map(async key => [key, await env.FILES.head(key)] as const)));
     const documents = readLegalDocuments(saved.content.legalDocuments, owner, id);
     const nativeLegal = await buildNativeLegalContext({snapshot:saved.hubSchema,company,categoryId:saved.categoryContext.categoryId,
-      categoryPath:saved.categoryContext.categoryPath,resolved:resolveQuotationExport(saved),documents});
+      categoryPath:saved.categoryContext.categoryPath,resolved,documents});
     const source = { productVersion: saved.product.updated_at, contentRevision: saved.content.revision, optionRevision: saved.options.revision,
       quotationRevision: saved.state.revision, profileId: saved.categoryContext.profileId, profileRevision: saved.profile?.revision ?? null };
-    const options = resolveQuotationExport(saved).rows.filter(row => row.included).map(row => ({ optionId: row.optionId, optionLabel: row.optionLabel }));
+    const options = resolved.rows.filter(row => row.included).map(row => ({ optionId: row.optionId, optionLabel: row.optionLabel }));
     const nativeIdentity = {ownerId:owner,productId:id,company,categoryId:saved.categoryContext.categoryId,categoryPath:[...saved.categoryContext.categoryPath],
         schemaSha256:projection.schemaSha256,sourceFingerprint,inputFingerprint:reviewed.view.inputFingerprint,source,
         members:options.map((option,documentIndex)=>({...option,documentIndex}))};
@@ -101,6 +102,13 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
       sourceAssetFingerprint: plan.sourceAssetFingerprint, payload: plan.payload, manifest: plan.manifest, issues: plan.issues,
       nativeLegalAttachmentPlanSha256:nativeLegalAttachmentPlan.planSha256 });
     if (expectedFingerprint !== undefined && expectedFingerprint !== packageFingerprint) changed();
+    const verifyPrivateFile = async (file:{key:string;byteLength:number;sha256:string}) => {
+      const stored = await env.FILES.get(file.key), currentMetadata = await env.FILES.head(file.key);
+      if (!stored || !currentMetadata || JSON.stringify(currentMetadata) !== JSON.stringify(metadata.get(file.key))) changed();
+      const bytes = new Uint8Array(await stored.arrayBuffer());
+      const sha256 = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('');
+      if (bytes.byteLength !== file.byteLength || sha256 !== file.sha256) changed();
+    };
     const guard = async (file?: {key:string;byteLength:number;sha256:string}) => {
       await active();
       if (!await quotationSourcesCurrent(owner, id, saved.source) || (await readQuotationFields(owner, id)).revision !== saved.state.revision) changed();
@@ -108,13 +116,7 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
       const latestFingerprint=sourceValueKey!==null&&packageSourceValueKey(latest)===sourceValueKey?sourceFingerprint:await quotationExportFingerprint(latest,null);
       if (latestFingerprint !== sourceFingerprint
         || JSON.stringify(await publicDetailVersion(publicDetailConfig(env as Parameters<typeof publicDetailConfig>[0]))) !== JSON.stringify(configVersion)) changed();
-      if (file) {
-        const stored = await env.FILES.get(file.key), currentMetadata = await env.FILES.head(file.key);
-        if (!stored || !currentMetadata || JSON.stringify(currentMetadata) !== JSON.stringify(metadata.get(file.key))) changed();
-        const bytes = new Uint8Array(await stored.arrayBuffer());
-        const sha256 = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('');
-        if (bytes.byteLength !== file.byteLength || sha256 !== file.sha256) changed();
-      }
+      if (file) await verifyPrivateFile(file);
       await active();
     };
     await guard();
@@ -128,7 +130,15 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
     await guard();
     const nativeAssetSourceGuard = async () => {
       await guard();
-      if (nativeAssetSourcePlan) for (const image of nativeAssetSourcePlan.images) await guard(image);
+      // Read-only bytes are withheld until the whole batch's final complete
+      // source/config proof. Keep each file's live membership, metadata and
+      // byte digest checks without reparsing the same source DTO per image.
+      // Publication continues to use the original per-file full guard above.
+      if (nativeAssetSourcePlan) for (const image of nativeAssetSourcePlan.images) {
+        await active();
+        await verifyPrivateFile(image);
+        await active();
+      }
       await guard();
     };
     if (includeNativeAssets) await nativeAssetSourceGuard();

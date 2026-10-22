@@ -53,6 +53,49 @@ test('source or company changes during actual private storage reads fail before 
   assert.equal((await f.raw(plan,file.key)).status,409);assert.equal(fired,true);assert.deepEqual(f.h.network,[]);
  }finally{f.close();}}
 });
+
+test('native read batches retain every private file verification while bounding full source rereads',async()=>{
+ const f=await fixture();try{
+  const source=f.h.load('app/exports/quotation-source.ts'),original=source.readQuotationExportSource,get=f.h.bindings.FILES.get;
+  let sourceReads=0;const privateReads=new Map();
+  source.readQuotationExportSource=async(...args)=>{sourceReads++;return original(...args);};
+  f.h.bindings.FILES.get=async key=>{if(f.keys.includes(key))privateReads.set(key,(privateReads.get(key)??0)+1);return get(key);};
+  const plan=await read(await f.send());assert.equal(plan.images.length,7);
+  assert.equal(sourceReads,8,'two native batches use begin/end source proofs, not one entire DTO reparse per file');
+  for(const file of plan.images)assert.ok(privateReads.get(file.key)>=3,'initial bytes plus both authenticated native verification batches: '+file.key);
+  assert.deepEqual(f.h.network,[]);assert.equal([...f.h.objects.keys()].filter(key=>key.startsWith('quotation-public-detail/')).length,0);
+ }finally{f.close();}
+});
+
+for(const index of [0,3,6])test(`native batch denies every response when source/auth/file changes at private image ${index+1}`,async()=>{
+ for(const kind of ['product','options','profile','company','file-bytes','file-metadata']){
+  const f=await fixture();try{
+   const source=f.h.load('app/exports/quotation-source.ts'),original=source.readQuotationExportSource,get=f.h.bindings.FILES.get;
+   let reads=0,fired=false;source.readQuotationExportSource=async(...args)=>{reads++;return original(...args);};
+   f.h.bindings.FILES.get=async key=>{
+    const value=await get(key);
+    // Reads 1..4 establish the package/public check. Read 5 is the native
+    // batch's complete beginning proof; mutate inside its actual file IO.
+    if(!fired&&reads===5&&key===f.keys[index]){
+     fired=true;
+     if(kind==='product')f.h.sqlite.prepare('UPDATE products SET updated_at=? WHERE id=?').run('2026-10-20T23:59:59.999Z',f.id);
+     if(kind==='options')f.h.sqlite.prepare('UPDATE product_options SET revision=revision+1 WHERE product_id=?').run(f.id);
+     if(kind==='profile')f.h.sqlite.prepare('UPDATE category_profiles SET revision=revision+1 WHERE id=?').run(f.profile.id);
+     if(kind==='company')f.h.setCompany(companies[1]);
+     if(kind==='file-bytes'){
+      const bytes=new Uint8Array(f.h.objects.get(key));bytes[bytes.length-1]^=1;f.h.objects.set(key,bytes);
+      return {...value,arrayBuffer:async()=>bytes.slice().buffer};
+     }
+     if(kind==='file-metadata')await f.h.bindings.FILES.put(key,f.h.objects.get(key),{httpMetadata:{contentType:'image/png'},customMetadata:{sha256:'a'.repeat(64)}});
+    }
+    return value;
+   };
+   const response=await f.send();assert.equal(response.status,409,kind+' '+await response.clone().text());assert.equal(fired,true,kind+' mutation reached the actual native batch');
+   const body=await response.json();assert.ok(body.error);assert.equal(body.images,undefined,'no plan or private bytes leave a failed final proof');
+   assert.deepEqual(f.h.network,[]);assert.equal(f.h.sqlite.prepare('SELECT count(*) AS n FROM supplier_hub_receipts').get().n,0);
+  }finally{f.close();}
+ }
+});
 test('actual saved quotation can select two size and two label files for native preparation without relaxing the legacy count rule',async()=>{
  const snapshot=assetSnapshot(),raw=JSON.parse(snapshot.schemaString);raw.properties.imagePage.properties.images.properties.sizeChartImage={type:'string',title:'사이즈표 파일명'};snapshot.schemaString=JSON.stringify(raw);
  const f=await fixture(companies[0],snapshot);try{

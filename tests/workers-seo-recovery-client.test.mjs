@@ -6,13 +6,13 @@ import ts from 'typescript';
 
 const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/workers-seo-recovery-client.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,crypto});
 const input=()=>exports.newWorkersSeoRecoveryRequest('product','2026-10-22T00:00:00.000Z','failed-google');
-const reviewed=request=>({workersRecoveryReview:true,job:{id:'separate-review',productId:request.productId,productVersion:request.productVersion,contentRevision:2,status:'prepared',result:null,review:{destination:'Cloudflare Workers AI',fingerprint:'a'.repeat(64),workersRecovery:{failedJobId:request.failedJobId,scope:'collected',version:5,model:'@cf/qwen/qwen3-30b-a3b-fp8'}}}});
+const reviewed=request=>({workersRecoveryReview:true,job:{id:'separate-review',productId:request.productId,productVersion:request.productVersion,contentRevision:2,status:'prepared',result:null,review:{destination:'Cloudflare Workers AI',model:'@cf/meta/m2m100-1.2b',fingerprint:'a'.repeat(64),workersRecovery:{failedJobId:request.failedJobId,scope:'collected',strategy:'m2m-text-v1',model:'@cf/meta/m2m100-1.2b',maxCalls:4}}}});
 
 test('Workers preparation sends one explicit same-origin review request with the retained nonce and never executes or applies',async()=>{
  const request=input(),calls=[],options={signal:new AbortController().signal,contentRevision:2,fetcher:async function(url,init){assert.equal(this,undefined);calls.push({url,init});return Response.json(reviewed(request));}};
  const job=await exports.prepareWorkersSeoRecovery(request,options);assert.equal(job.id,'separate-review');assert.equal(calls.length,1);
  assert.equal(calls[0].url,'/api/products/product/translation');assert.equal(calls[0].init.method,'POST');
- assert.deepEqual(JSON.parse(calls[0].init.body),{action:'prepare-collected-workers',expectedVersion:request.productVersion,idempotencyKey:request.idempotencyKey,failedJobId:request.failedJobId});
+ assert.deepEqual(JSON.parse(calls[0].init.body),{action:'prepare-collected-m2m',expectedVersion:request.productVersion,idempotencyKey:request.idempotencyKey,failedJobId:request.failedJobId});
  assert.match(request.idempotencyKey,/^[a-f0-9-]{36}$/u);assert.ok(!calls.some(call=>/execute|apply|collection|supplier-hub/.test(call.url)));
 });
 
@@ -23,11 +23,23 @@ test('wrong product, clock, revision, provider, failure reference and missing re
  }
 });
 
-test('legacy or changed recovery models cannot be accepted as a new v2 review',async()=>{
- for(const change of [value=>{value.job.review.workersRecovery.version=1;},value=>{delete value.job.review.workersRecovery.version;},value=>{value.job.review.workersRecovery.model='@cf/meta/llama-3.3-70b-instruct-fp8-fast';}]){
+test('Qwen versions, another strategy/model or an invalid call budget cannot be accepted as a dedicated translation review',async()=>{
+ for(const change of [value=>{value.job.review.workersRecovery.version=5;},value=>{delete value.job.review.workersRecovery.strategy;},value=>{value.job.review.workersRecovery.strategy='other';},value=>{value.job.review.workersRecovery.model='@cf/qwen/qwen3-30b-a3b-fp8';},value=>{value.job.review.model='@cf/qwen/qwen3-30b-a3b-fp8';},...[-1,0,9,1.5,null].map(maxCalls=>value=>{value.job.review.workersRecovery.maxCalls=maxCalls;})]){
   const request=input(),value=reviewed(request);change(value);
   await assert.rejects(()=>exports.prepareWorkersSeoRecovery(request,{signal:new AbortController().signal,contentRevision:2,fetcher:async()=>Response.json(value)}),/일치하지/);
  }
+});
+
+test('generic configured ceiling bounds the exact reviewed budget without requiring all eight calls',async()=>{
+ const request=input(),fetcher=async()=>Response.json(reviewed(request));
+ const job=await exports.prepareWorkersSeoRecovery(request,{signal:new AbortController().signal,contentRevision:2,expectedMaxCalls:8,fetcher});assert.equal(job.review.workersRecovery.maxCalls,4);
+ await assert.rejects(exports.prepareWorkersSeoRecovery(request,{signal:new AbortController().signal,contentRevision:2,expectedMaxCalls:3,fetcher}),/일치하지/);
+ let calls=0;await assert.rejects(exports.prepareWorkersSeoRecovery(request,{signal:new AbortController().signal,contentRevision:2,expectedMaxCalls:0,fetcher:async()=>{calls++;return Response.json(reviewed(request));}}));assert.equal(calls,0);
+});
+
+test('only confirmed free dedicated configuration exposes a bounded translation limit',()=>{
+ const settings={configured:true,freeOnly:true,strategy:'m2m-text-v1',model:'@cf/meta/m2m100-1.2b',maxCalls:8};assert.equal(exports.workersSeoRecoveryM2mLimit(settings),8);
+ for(const patch of [{configured:false},{freeOnly:false},{strategy:'other'},{model:'@cf/qwen/qwen3-30b-a3b-fp8'},{maxCalls:0},{maxCalls:9}])assert.equal(exports.workersSeoRecoveryM2mLimit({...settings,...patch}),null);
 });
 
 test('failed or uncertain HTTP delivery does not retry without another caller action',async()=>{

@@ -16,7 +16,7 @@ import { runReviewedTranslation, translationReviewExpired } from '@/app/reviewed
 import { newOptionsRetryState, parseOptionsRetryState, retryOptionsTranslation, type OptionsRetryState } from '@/app/options-translation-retry';
 import {newSeoRetryState,parseSeoRetryState,prepareSeoTranslationRetry,executeSeoTranslationRetry,seoRetryReviewProof,type SeoRetryState} from '@/app/seo-translation-retry';
 import {google429RecoveryCandidate} from '@/app/workers-translation-recovery';
-import {newWorkersSeoRecoveryRequest,prepareWorkersSeoRecovery,type WorkersSeoRecoveryRequest} from '@/app/workers-seo-recovery-client';
+import {newWorkersSeoRecoveryRequest,prepareWorkersSeoRecovery,workersSeoRecoveryM2mBudget,workersSeoRecoveryM2mLimit,type WorkersSeoRecoveryRequest} from '@/app/workers-seo-recovery-client';
 
 type Props = { productId: string; version: string; title: string; profileId?: string; onContentSaved?: () => void; initialJobId?:string; initialReviewFingerprint?:string; reviewOnly?:boolean };
 type RequestContext = { categoryId: string; categoryPath: string[]; features: string; keywords: string; capturedAt: string };
@@ -111,8 +111,9 @@ function TranslationContent({ productId, version, title, profileId, onContentSav
   }
   const job = selectedId?view?.jobs.find(item => item.id === selectedId)??null:view?.jobs[0]??null;
   const workersFailure=view?.jobs.find(item=>item.productId===productId&&google429RecoveryCandidate(item))??null;
-  const workersConfigured=view?.workersRecovery?.configured===true;
+  const workersLimit=workersSeoRecoveryM2mLimit(view?.workersRecovery),workersConfigured=workersLimit!==null;
   const workersJob=Boolean(job?.review.workersRecovery);
+  const m2mBudget=workersSeoRecoveryM2mBudget(job?.review.workersRecovery);
   const intakeOptionsJob = Boolean(job && Object.hasOwn(job.review,'intakeOptions'));
   const optionsOnlyJob = Boolean(job && (Object.hasOwn(job.review,'optionsRetry') || intakeOptionsJob));
   const seoRetryJob=Boolean(job&&Object.hasOwn(job.review,'seoRetry'));
@@ -188,16 +189,16 @@ function TranslationContent({ productId, version, title, profileId, onContentSav
   async function prepareWorkers(){
     if(!workersConfigured||!workersFailure||reviewOnly)return;
     const controller=beginRequest();if(!controller||!content)return;
-    setBusy(true);setError('');setNotice('서버 AI 검토 요청을 준비하고 있습니다…');
+    setBusy(true);setError('');setNotice('중국어→한국어 번역 검토를 준비하고 있습니다…');
     const previous=workersRequest.current;
     const input=previous&&previous.productVersion===version&&previous.failedJobId===workersFailure.id?previous:newWorkersSeoRecoveryRequest(productId,version,workersFailure.id);
     workersRequest.current=input;
     try{
-      const saved=await prepareWorkersSeoRecovery(input,{signal:controller.signal,contentRevision:content.revision,fetcher:fetch});
+      const saved=await prepareWorkersSeoRecovery(input,{signal:controller.signal,contentRevision:content.revision,expectedMaxCalls:workersLimit??undefined,fetcher:fetch});
       if(controller.signal.aborted)return;
       setView(previous=>previous?{...previous,jobs:[saved,...previous.jobs.filter(item=>item.id!==saved.id)]}:previous);
       setSelectedId(saved.id);setConfirmed(false);setSelectedFields([]);
-      setNotice('Cloudflare Workers AI 요청을 준비했습니다. 전송 원문을 검토한 뒤 승인·실행해주세요. 기존 Google 이력과 직접 수정한 값은 유지했습니다.');
+      setNotice('중국어→한국어 번역 요청을 준비했습니다. 전송 원문과 호출 횟수를 검토한 뒤 승인·실행해주세요. 기존 Google 이력과 직접 수정한 값은 유지했습니다.');
     }catch(reason){if(!controller.signal.aborted){setNotice('');setError(reason instanceof Error?reason.message:'서버 AI 요청 상태를 확인하지 못했습니다.');}}
     finally{finishRequest(controller);}
   }
@@ -343,7 +344,7 @@ function TranslationContent({ productId, version, title, profileId, onContentSav
     {!view && !error && <p>번역 설정을 확인하고 있습니다.</p>}
     {view && <>
       {!view.configuration.configured && <div className="connection-note"><strong>서버 연결 설정이 필요합니다</strong><ul>{view.configuration.issues.map(issue => <li key={issue}>{issue}</li>)}</ul></div>}
-      {!reviewOnly&&workersFailure&&<div className="panel-note"><button className="btn blue" type="button" disabled={blocked||!workersConfigured} onClick={()=>void prepareWorkers()}>서버 AI로 한국어 초안 작성</button><p>Google 번역 제한으로 완료되지 않은 원문을 별도 요청으로 준비합니다. 상품명·설명·미번역 옵션·속성을 Cloudflare Workers AI에 전송하며, 실행 전에 실제 원문과 서비스 사용 조건을 검토하고 승인합니다. 생성 결과는 원하는 항목만 직접 적용합니다.</p>{!workersConfigured&&<small>무료 서버 AI 복구 설정을 확인해야 사용할 수 있습니다.</small>}</div>}
+      {!reviewOnly&&workersFailure&&<div className="panel-note"><button className="btn blue" type="button" disabled={blocked||!workersConfigured} onClick={()=>void prepareWorkers()}>중국어→한국어 번역 초안</button><p>Google 번역 제한으로 완료되지 않은 저장 원문을 전용 번역 모델로 준비합니다. 필요한 텍스트만 개별 번역하며, 실행 전에 전송 원문과 호출 횟수를 검토하고 승인합니다. 결과는 원하는 항목만 직접 적용합니다.</p>{!workersConfigured&&<small>무료 전용 번역 연결 설정을 확인해야 사용할 수 있습니다.</small>}</div>}
       {!reviewOnly&&<>
       {googleSource&&<div className="panel-note"><button className="btn blue" type="button" disabled={blocked||!view.configuration.configured} onClick={()=>void prepareFreshSeo()}>{hasSeoRetry?'SEO 재시도 상태 확인 · 무료':'현재 상품 원문으로 SEO 요청 다시 준비'}</button><p>상품명·설명만 새 번역 요청으로 준비합니다. 실패·부분 결과는 유지하며, 원문 검토와 승인을 거쳐 받은 새 초안에서 원하는 항목만 적용합니다. 직접 수정한 값과 다른 단계는 자동으로 저장하지 않습니다.</p></div>}
       {googleSource&&<div className="panel-note"><button className="btn blue" type="button" disabled={blocked||!view.configuration.configured} onClick={()=>void retryFreeOptions()}>{hasOptionsRetry?'옵션 번역 재시도 상태 확인 · 무료':'미번역 옵션 한국어로 채우기 · 무료'}</button><p>저장된 1688 원문에서 아직 번역하지 않은 포함 옵션만 한 묶음씩 번역해 저장합니다. 직접 입력하거나 비운 값, 제외 옵션, SEO·표시사항·가격은 유지합니다. 429 또는 일부 번역 실패 후에도 자동 재호출하지 않습니다.</p></div>}
@@ -358,21 +359,21 @@ function TranslationContent({ productId, version, title, profileId, onContentSav
       {reviewOnly&&!job&&<p role="alert">준비한 서버 AI 요청을 찾지 못했습니다. 작업 상태를 다시 조회해주세요.</p>}
       {job && <div className="translation-review">
         <h4>{statuses[job.status]}</h4>
-        {job.review.destination==='Google 번역'?<p>번역 서비스 <strong>Google 번역</strong> · 요청당 최대 5,000자</p>:<p>모델 <strong>{job.review.model}</strong> · 원문 {job.review.inputCharacters.toLocaleString()}자 · 최대 출력 {job.review.maxOutputTokens.toLocaleString()}토큰</p>}
+        {m2mBudget!==null?<p>전용 번역 <strong>중국어 → 한국어</strong> · 모델 <strong>{job.review.model}</strong> · 최대 {m2mBudget}회 호출 · 각 호출이 공유 무료 한도에서 차감됩니다.</p>:job.review.destination==='Google 번역'?<p>번역 서비스 <strong>Google 번역</strong> · 요청당 최대 5,000자</p>:<p>모델 <strong>{job.review.model}</strong> · 원문 {job.review.inputCharacters.toLocaleString()}자 · 최대 출력 {job.review.maxOutputTokens.toLocaleString()}토큰</p>}
         <p>{job.review.paidNotice} {job.review.destination!=='Google 번역'&&job.review.pricingUrl&&<a href={job.review.pricingUrl} target="_blank" rel="noreferrer">공식 요금표</a>}</p>
-        <p>전송 범위: {seoRetryJob?'현재 수집 상품명·설명만 전송합니다. 옵션값·카테고리·참고 메모는 보내지 않습니다.':optionsOnlyJob?'저장 원문에 연결된 미번역 옵션값만 전송합니다. 상품명·설명은 검토 자료로 보관하며 전송하지 않습니다.':job.review.destination==='Google 번역'?'상품명·설명·속성명·속성값·옵션값의 텍스트. 카테고리·참고 메모·옵션 ID는 전송하지 않습니다.':'아래 상품명·설명·속성 원문 및 포함한 SEO 참고 메모.'} 수신 서비스: {job.review.destination}. 승인 유효 기한: {new Date(job.review.expiresAt).toLocaleString()}</p>
+        <p>전송 범위: {m2mBudget!==null?'저장된 상품명·설명·미번역 옵션·속성의 필요한 텍스트만 중국어에서 한국어로 번역합니다. 카테고리·SEO 참고 메모·옵션 ID는 보내지 않습니다.':seoRetryJob?'현재 수집 상품명·설명만 전송합니다. 옵션값·카테고리·참고 메모는 보내지 않습니다.':optionsOnlyJob?'저장 원문에 연결된 미번역 옵션값만 전송합니다. 상품명·설명은 검토 자료로 보관하며 전송하지 않습니다.':job.review.destination==='Google 번역'?'상품명·설명·속성명·속성값·옵션값의 텍스트. 카테고리·참고 메모·옵션 ID는 전송하지 않습니다.':'아래 상품명·설명·속성 원문 및 포함한 SEO 참고 메모.'} 수신 서비스: {job.review.destination}. 승인 유효 기한: {new Date(job.review.expiresAt).toLocaleString()}</p>
         <details><summary>{job.review.destination==='Google 번역'?'번역 입력 검토':'실제로 전송할 원문 확인'}</summary><pre>{JSON.stringify(job.review.source, null, 2)}</pre></details>
         {stale && <p className="form-error">이 요청 이후 상품 또는 콘텐츠가 변경되었습니다. 새 실행에는 새 검토 요청이 필요합니다. 기존 결과는 확인할 수 있습니다.</p>}
         {expired&&!stale&&!optionsOnlyJob&&!seoRetryJob&&!workersJob&&<><p>검토 기한이 지났습니다. 같은 원문·옵션으로 검토 기한을 갱신할 수 있습니다.</p><button type="button" className="btn" disabled={blocked||!view.configuration.configured} onClick={()=>void action({action:'prepare',expectedVersion:version,idempotencyKey:crypto.randomUUID(),source:job.review.source})}>같은 원문으로 검토 기한 갱신</button></>}
-        {expired&&workersJob&&<p>서버 AI 검토 기한이 지났습니다. 위 ‘서버 AI로 한국어 초안 작성’을 다시 누르면 아직 실행하지 않은 요청의 검토 기한을 갱신합니다. 기본 Google 요청으로 변경하거나 자동 실행하지 않습니다.</p>}
+        {expired&&workersJob&&<p>별도 번역 검토 기한이 지났습니다. 위 ‘중국어→한국어 번역 초안’에서 현재 전용 번역 요청을 명시적으로 다시 확인하세요. 이전 모델의 이력은 유지하며 자동으로 다시 실행하지 않습니다.</p>}
         {stale&&!optionsOnlyJob&&!googleSource&&<button type="button" className="btn" disabled={blocked||!view.configuration.configured} onClick={()=>void action({action:'prepare-collected'})}>현재 상품 원문으로 SEO 요청 다시 준비</button>}
         {optionsOnlyJob&&<p>{intakeOptionsJob?'자동 옵션 번역의 이어서 처리한 작업입니다. 저장한 상품명·설명은 유지하며 남은 옵션은 위 옵션 번역 버튼에서 확인해주세요.':'미번역 옵션 전용 재시도입니다. 위 옵션 번역 버튼에서 같은 작업을 확인하며 SEO·표시사항에는 적용하지 않습니다.'}</p>}
-        {job.status === 'prepared' && !optionsOnlyJob && <><label><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} disabled={blocked || stale || expired} />{job.review.destination==='Google 번역'?'위 원문·Google 번역 서비스의 사용 조건과 번역 요청 묶음을 검토하고 승인합니다.':'위 모델·원문·위 서비스의 사용 조건과 생성 요청 1회를 검토하고 승인합니다.'}</label><button type="button" className="btn blue" disabled={blocked || stale || expired || !confirmed} onClick={() => void writeReviewedDraft()}>SEO 초안 작성</button></>}
-        {job.status === 'approved' && !optionsOnlyJob && <button type="button" className="btn blue" disabled={blocked || stale || expired} onClick={() => void writeReviewedDraft()}>승인한 SEO 초안 작성 계속</button>}
+        {job.status === 'prepared' && !optionsOnlyJob && <><label><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} disabled={blocked || stale || expired} />{m2mBudget!==null?`위 모델·원문·사용 조건과 중국어→한국어 번역 최대 ${m2mBudget}회 호출 및 공유 무료 한도 차감을 검토하고 승인합니다.`:job.review.destination==='Google 번역'?'위 원문·Google 번역 서비스의 사용 조건과 번역 요청 묶음을 검토하고 승인합니다.':'위 모델·원문·위 서비스의 사용 조건과 생성 요청 1회를 검토하고 승인합니다.'}</label><button type="button" className="btn blue" disabled={blocked || stale || expired || !confirmed} onClick={() => void writeReviewedDraft()}>{m2mBudget!==null?'중국어→한국어 번역 실행':'SEO 초안 작성'}</button></>}
+        {job.status === 'approved' && !optionsOnlyJob && <button type="button" className="btn blue" disabled={blocked || stale || expired} onClick={() => void writeReviewedDraft()}>{m2mBudget!==null?'승인한 중국어→한국어 번역 계속':'승인한 SEO 초안 작성 계속'}</button>}
         {job.status === 'running' && <p>이미 시작된 요청을 다시 호출하지 않습니다. 장시간 상태가 유지되면 생성 서비스 사용량과 서버 실행 이력을 확인해주세요.</p>}
         {job.error && <p role="alert">{job.error.message}{job.error.mayHaveBeenCharged ? ' 비용이 발생했을 수 있습니다.' : ''}</p>}
         {job.result && <>
-          <p>{job.review.destination==='Google 번역'?'Google 번역 초안':'AI 생성 초안'} · 출처 검토 필요 · 기존 콘텐츠에 자동 적용하지 않았습니다.</p>
+          <p>{m2mBudget!==null?'중국어→한국어 번역 초안':job.review.destination==='Google 번역'?'Google 번역 초안':'AI 생성 초안'} · 출처 검토 필요 · 기존 콘텐츠에 자동 적용하지 않았습니다.</p>
           {!optionsOnlyJob&&<TranslationIntegratedPreview key={`integrated:${job.id}:${content?.revision}`} productId={productId} version={version} jobId={job.id} disabled={blocked || stale} onSaved={onContentSaved} />}
           {content && !optionsOnlyJob && <TranslationBatchPreview content={content} job={job} version={version} disabled={blocked || job.productVersion !== version} onApply={input => void adopt([], undefined, input)} />}
           {job.review.destination!=='Google 번역'&&job.result.usage && <p>입력 {job.result.usage.inputTokens.toLocaleString()}토큰 · 출력 {job.result.usage.outputTokens.toLocaleString()}토큰</p>}

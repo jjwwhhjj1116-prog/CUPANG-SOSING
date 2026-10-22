@@ -42,8 +42,8 @@ export function detailSaveCommonAltText(view: QuotationFieldsView): string {
   if (rows.length !== 1 || typeof value !== 'string') throw Error('공통 견적서의 대체 텍스트를 확인해주세요.');
   return value;
 }
-/** Literal vendor truthiness: whitespace is content, and only raw korName is
- * appended. Do not substitute SEO/quotation titles or an option display label. */
+/** Keep saved description truthiness and append only the saved translated option
+ * name. The snapshot supplies the final SEO title, or source title if absent. */
 export function detailSaveAltChanges(view: QuotationFieldsView, fillCommon = !detailSaveCommonAltText(view)): QuotationChange[] {
   const ids = detailSaveOptionIds(view), basis = view.detailSaveTextBasis;
   if (!basis || Object.keys(basis).length !== 4 || basis.policy !== DETAIL_SAVE_TEXT_POLICY

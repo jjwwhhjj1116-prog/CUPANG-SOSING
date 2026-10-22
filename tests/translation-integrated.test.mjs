@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { DatabaseSync } from 'node:sqlite';
+import { syntheticSnapshot, module as pureModule } from './helpers/supplier-hub-single-projection.mjs';
 function load(file,overrides={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,structuredClone,Error,crypto,TextEncoder,TextDecoder,Response,URL,process:{env:{NODE_ENV:'development'}},require:name=>name in overrides?overrides[name]:name==='@/db/quotation-attribute-rules'?{getAttributeRules:async()=>null}:name==='next/server'?{NextResponse:{json:(body,init)=>Response.json(body,init)}}:load(name.slice(2)+'.ts',overrides)});return exports;}
 const cm=load('app/product-content.ts'),om=load('app/product-options.ts');
 const model=load('app/translation-integrated-adoption.ts');
@@ -77,6 +78,40 @@ test('API previews without writes, verifies reviewed fingerprint, and applies on
   const receipt=await saved.json();assert.equal(receipt.contentRevision,1);assert.equal(receipt.optionRevision,2);assert.equal(receipt.applied,plan.preview.length);
   assert.equal((await call({action:'apply',fingerprint:plan.fingerprint})).status,409);assert.equal(saves,1);
  }finally{h.sqlite.close();}
+});
+
+test('only an explicitly reviewed all-scope apply records the native SEO linkage intent, bound into its fingerprint',async()=>{
+ for(const explicit of [false,true]){
+  const h=harness();try{
+   const snapshot=syntheticSnapshot();snapshot.categoryId='68183';
+   const schema=pureModule('app/quotation-schema.ts').getQuotationSchema(snapshot.categoryId,snapshot.categoryPath,snapshot);
+   h.data.content.initialLegalNotices=pureModule('app/initial-legal-notices.ts').createInitialLegalNotices(schema,{},version);
+   h.data.content.detail={description:{value:'',provenance:'manual',updatedAt:version},altText:{value:'직접 작성한 설명',provenance:'manual',updatedAt:version}};
+   h.data.content.detailDescriptionLinked=false;
+   const originalDetail=JSON.stringify(h.data.content.detail);
+   let saves=0;
+   const route=load('app/api/products/[id]/translation-apply/route.ts',{
+    '@/app/chatgpt-auth':{getWorkspaceOwnerId:async()=> 'owner'},
+    '@/db/queries':{findProduct:async()=>({id:'p',owner_id:'owner',updated_at:h.sqlite.prepare('SELECT updated_at FROM products').get().updated_at,image_keys:'[]'})},
+    '@/db/product-content':{readProductContent:async()=>h.data.content},'@/db/product-options':{readProductOptions:async()=>h.data.options},
+    '@/db/translation-jobs':{getTranslationJob:async()=>h.data.job},
+    '@/db/translation-category-source':{readTranslationCategorySource:async()=>{throw Error('a synthetic independent job must not read category');}},
+    '@/db/translation-adoption':{saveIntegratedTranslation:async(...args)=>{saves++;return h.store.saveIntegratedTranslation(...args);}},
+   });
+   const context={params:Promise.resolve({id:'p'})},call=body=>route.POST(new Request('https://local/api',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jobId,expectedVersion:version,...body})}),context);
+   const read=await call({action:'preview',...(explicit?{linkQuotationSeoDefaults:true}:{})});assert.equal(read.status,200);
+   const plan=await read.json();assert.equal(saves,0);assert.equal(h.data.content.explicitSeoQuotationDefaults,undefined);
+   assert.equal((await call({action:'apply',fingerprint:plan.fingerprint,...(explicit?{}:{linkQuotationSeoDefaults:true})})).status,409,'changing explicit linkage intent requires a new review');
+   assert.equal((await call({action:'preview',linkQuotationSeoDefaults:false})).status,400);
+   assert.equal((await call({action:'preview',scope:'options',linkQuotationSeoDefaults:true})).status,400);
+   const response=await call({action:'apply',fingerprint:plan.fingerprint,...(explicit?{linkQuotationSeoDefaults:true}:{})});
+   assert.equal(response.status,200,await response.clone().text());assert.equal(saves,1);
+   const saved=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload);
+   assert.equal(JSON.stringify(saved.detail),originalDetail);
+   if(explicit){assert.equal(saved.explicitSeoQuotationDefaults.productId,'p');assert.equal(saved.explicitSeoQuotationDefaults.sourceTitle,'한국어 상품');assert.equal(saved.explicitSeoQuotationDefaults.sourceUpdatedAt,saved.seo.title.updatedAt);}
+   else assert.equal(saved.explicitSeoQuotationDefaults,undefined,'automatic intake apply remains byte-compatible without opt-in');
+  }finally{h.sqlite.close();}
+ }
 });
 
 test('integrated save records same-value translations and skips them in the next option batch',async()=>{

@@ -1,6 +1,7 @@
 import { verifyProductLabelsView, type ProductLabelsView } from '@/app/product-label';
 import { applyQuotationChanges, validateQuotationChanges, type QuotationFieldsView } from '@/app/quotation-schema';
 import { exactPrimaryQuotationTarget } from '@/app/quotation-seo-targets';
+import { readProductLabelJson } from '@/app/product-label-read-response';
 
 export type ProductLabelReferenceScope = { productId: string; optionId: string | null; endpoint: string; quotationEndpoint: string };
 export type ProductLabelReferences = { view: ProductLabelsView; quotation: QuotationFieldsView; keys: string[] };
@@ -29,7 +30,7 @@ export function productLabelReferences(input: ProductLabelReferenceScope, view: 
 }
 export async function readProductLabelReferences(input: ProductLabelReferenceScope, request: typeof fetch = fetch): Promise<ProductLabelReferences> {
   scope(input);
-  async function read<T>(url:string):Promise<T>{const response=await request(url,{cache:'no-store'}),body=await response.json() as T & {error?:string};if(!response.ok)throw Error(body?.error||'최종 라벨 저장본을 읽지 못했습니다.');return body;}
+  function read<T>(url: string): Promise<T> { return readProductLabelJson<T>(url, request); }
   const before=await read<ProductLabelsView>(input.endpoint),quotation=await read<QuotationFieldsView>(input.quotationEndpoint),view=await read<ProductLabelsView>(input.endpoint);
   if (before.revision!==view.revision || before.productVersion!==view.productVersion || before.inputFingerprint!==view.inputFingerprint || before.renderEpoch!==view.renderEpoch) throw Error('라벨을 조회하는 동안 저장값이 변경됐습니다. 다시 조회해주세요.');
   return productLabelReferences(input,view,quotation);

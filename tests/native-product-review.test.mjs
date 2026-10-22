@@ -44,3 +44,15 @@ test('source responses are bounded same-origin JSON, abortable, and compared aga
   await assert.rejects(f.model.reviewCurrentNativeSupplierHubProductDocument({...f.input,signal:new AbortController().signal,fetcher}));assert.equal(sources,2);assert.deepEqual(f.h.network,[]);
  }finally{f.close();}
 });
+
+test('native source failures show bounded API diagnostics without exposing HTML or accepting failed bodies',async()=>{
+ const f=await nativeReviewFixture();try{
+  const input={...f.scope,signal:new AbortController().signal};
+  const responseFor=response=>async path=>path.includes('catalog-context')?Response.json({ownerId:'owner',company:companies[0]}):response;
+  await assert.rejects(f.model.readCurrentNativeAssetSource({...input,fetcher:responseFor(Response.json({error:'현재 첨부 파일을 확인해주세요.',code:'NATIVE_ASSET_PLAN_CHANGED'},{status:409}))}),/HTTP 409 · NATIVE_ASSET_PLAN_CHANGED.*현재 첨부 파일/);
+  for(const response of [new Response('<!DOCTYPE html>secret',{status:503,headers:{'content-type':'text/html'}}),Response.json({error:'<!DOCTYPE html>secret',code:'BAD<secret>'},{status:503}),new Response('<!DOCTYPE html>secret',{headers:{'content-type':'application/json'}})]){
+   await assert.rejects(f.model.readCurrentNativeAssetSource({...input,fetcher:responseFor(response)}),error=>!error.message.includes('secret')&&!error.message.includes('Unexpected token'));
+  }
+  assert.deepEqual(f.h.network,[]);
+ }finally{f.close();}
+});

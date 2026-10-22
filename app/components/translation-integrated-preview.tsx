@@ -34,7 +34,7 @@ function TranslationIntegratedPreviewContent({ productId, version, jobId, disabl
     let response:Response|undefined;
     try {
       response = await fetch(`/api/products/${encodeURIComponent(productId)}/translation-apply`, { method: 'POST', signal: controller.signal,
-        headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action, jobId, ...(scope === 'options' ? { scope } : {}), ...(seoComposition ? {seoComposition} : {}), expectedVersion: version, ...(action === 'apply' ? { fingerprint: plan!.fingerprint } : {}) }) });
+        headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action, jobId, ...(scope === 'options' ? { scope } : {linkQuotationSeoDefaults:true}), ...(seoComposition ? {seoComposition} : {}), expectedVersion: version, ...(action === 'apply' ? { fingerprint: plan!.fingerprint } : {}) }) });
       const raw: unknown = await response.json();
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw Error('응답 형식이 올바르지 않습니다.');
       const result = raw as Record<string, unknown>;
@@ -63,6 +63,7 @@ function TranslationIntegratedPreviewContent({ productId, version, jobId, disabl
   return <fieldset disabled={disabled || busy || done} data-workspace-saving={busy} data-quotation-source-step="SEO" aria-label={scope === 'options' ? '옵션 번역 적용' : 'SEO 표시사항 옵션 통합 적용'}>
     <legend>{scope === 'options' ? '옵션 번역 검토·저장' : 'SEO · 표시사항 · 옵션 함께 저장'}</legend>
     <p>완료된 같은 번역 결과를 한 번에 적용합니다. {seoComposition?.replaceTitle||seoComposition?.replaceKeywords?'선택한 상품명·검색태그 교체를 제외한 직접 수정값과 공란은 보존합니다.':'직접 수정한 값과 공란은 보존합니다.'} 이미지와 Supplier Hub 전송은 포함하지 않습니다.</p>
+    {scope==='all'&&<p>저장한 한국어 상품명은 비어 있는 모델명과 초기 품명 및 모델명에도 연결합니다. 직접 수정한 입력과 공란은 유지합니다.</p>}
     {seoComposition && <p>상품명·검색태그에는 검토한 사용자 구성안을 적용합니다. 판매자 속성 번역과 인증·제조국 원문은 구성안에서 바꾸지 않습니다.</p>}
     <button type="button" className="btn blue" onClick={() => void run('preview')}>{scope === 'options' ? '옵션 적용 미리보기 · 무료' : '통합 적용 미리보기 · 무료'}</button>
     {message && <p role="status">{message}</p>}

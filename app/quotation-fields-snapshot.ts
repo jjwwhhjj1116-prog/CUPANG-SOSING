@@ -112,7 +112,7 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
     ...(optionRegistrationNumbers === undefined ? {} : { optionRegistrationNumbers }),
     protectedDetailImageKeys: [...new Set([...content.assets.detailTop.value, ...content.assets.detailBottom.value])].filter(key => imageKeys.includes(key)),
     registrationBrandChoices: registrationBrandChoices(settings.brand),
-    detailSaveTextBasis: { policy: 'couplus-detail-alt-v1', productName: product.title, metaDescription: content.seo.description.value,
+    detailSaveTextBasis: { policy: 'couplus-detail-alt-v1', productName: content.seo.title.value || product.title, metaDescription: content.seo.description.value,
       optionNames: Object.fromEntries(options.rows.map(option => [option.id, option.translatedName])) },
     productVersion: product.updated_at, contentRevision: content.revision, optionRevision: options.revision, imageKeys, updatedAt: state.updatedAt, submissionReady: false };
   const retainedWorkbook=retainedQuotationWorkbook(capturedTemplate,template,resolved.schema,overrides,options.rows.map(option=>option.id),hubSchema);

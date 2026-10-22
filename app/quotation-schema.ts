@@ -1,6 +1,7 @@
 import { couplus81221Fields, couplus81221Path } from '@/app/couplus-glove-schema';
 import { QUOTATION_TAG_TOTAL_LIMIT, QUOTATION_TAG_ITEM_LIMIT } from '@/app/quotation-keywords';
 import { quotationSeoKeywordText } from '@/app/seo-keyword-text';
+import {explicitSeoQuotationDefaultsResolver} from '@/app/explicit-seo-quotation-defaults';
 import { couplus64497Fields, couplus64497Path } from '@/app/couplus-toothbrush-schema';
 import { couplus77442Fields, couplus77442Path } from '@/app/couplus-board-schema';
 import { couplus81452Fields, couplus81452Path } from '@/app/couplus-brace-schema';
@@ -399,6 +400,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
   const overrides = input.overrides ?? emptyQuotationOverrides();
   if(input.packagingBasis!==undefined)validateQuotationPackagingBasis(input.packagingBasis);
   const schema = getQuotationSchema(input.categoryId, input.categoryPath,input.hubSchema,input.template);
+  const explicitSeoDefaultFor=explicitSeoQuotationDefaultsResolver(content,schema);
   const initialNotices = readInitialLegalNotices(content.initialLegalNotices, schema);
   let ownedKeys: string[] = [];
   const reviewMessages = [schema.evidence, 'Supplier Hub 최종 접수 검증 전인 편집 자료입니다.'];
@@ -618,6 +620,8 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
         issues: [],
       };
       if(automatic.source==='empty'&&!automatic.issues?.length&&definition.schemaDefault!==undefined)automatic={value:definition.schemaDefault,source:'schema'};
+      const explicitSeoDefault=explicitSeoDefaultFor(definition,automatic);
+      if(explicitSeoDefault!==null&&!quotationValueIssues(definition,explicitSeoDefault,ownedKeys,'content').length)automatic={value:explicitSeoDefault,source:'content'};
       const manualOption = !definition.readOnly && specific && Object.hasOwn(specific, definition.id);
       const manualCommon = !definition.readOnly && Object.hasOwn(overrides.common, definition.id);
       const weightManual = quotationPackagedWeightManual(schema.fields, definition.id, optionId, (layer, id) => {

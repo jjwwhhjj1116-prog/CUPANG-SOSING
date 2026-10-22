@@ -35,16 +35,16 @@ const options='미번역 옵션 불러오기 · 속성 입력 교체';
 const prepare='번역 요청 검토하기 · 무료';
 const execute='승인한 SEO 초안 작성 계속';
 const adopt='검토한 초안을 이 항목에 적용 · 기존 내용 교체';
-const workersConfig={configured:true,provider:'workers-ai',destination:'Cloudflare Workers AI',model:'@cf/meta/llama-3.3-70b-instruct-fp8-fast',maxOutputTokens:2048,freeOnly:true,issues:[]};
+const workersConfig={configured:true,provider:'workers-ai',destination:'Cloudflare Workers AI',strategy:'m2m-text-v1',model:'@cf/meta/m2m100-1.2b',maxCalls:8,maxOutputTokens:2048,freeOnly:true,issues:[]};
 const google429Error={code:'GOOGLE_TRANSLATION_FAILED_HTTP_429',message:'Google 번역 HTTP 429 응답',mayHaveBeenCharged:false};
 function workersJob(job){return{...job,id:'workers-job',status:'prepared',result:null,error:null,startedAt:null,finishedAt:null,
- review:{...job.review,destination:'Cloudflare Workers AI',model:workersConfig.model,maxOutputTokens:2048,fingerprint:'a'.repeat(64),workersRecovery:{failedJobId:job.id,scope:'collected',optionRevision:1,sourceFingerprint:'b'.repeat(64),company:{code:'A01464742',name:'와이홉'}}}};}
+ review:{...job.review,destination:'Cloudflare Workers AI',model:workersConfig.model,maxOutputTokens:2048,fingerprint:'a'.repeat(64),paidNotice:'중국어에서 한국어로 최대 4회 호출하며 각 호출은 공유 무료 한도에서 차감됩니다.',workersRecovery:{failedJobId:job.id,scope:'collected',strategy:'m2m-text-v1',model:workersConfig.model,maxCalls:4,optionRevision:1,sourceFingerprint:'b'.repeat(64),company:{code:'A01464742',name:'와이홉'}}}};}
 
 test('explicit Workers recovery prepares a separate review and preserves Google history and edited input until approval and selective apply',async()=>{
  const pending=deferred();let prepared;
  const h=harness(async(_url,init,{job})=>{
   const action=JSON.parse(init.body).action;
-  if(action==='prepare-collected-workers'){await pending.promise;prepared=workersJob(job);return Response.json({job:prepared,workersRecoveryReview:true,configuration:{configured:true,model:'google-translate-gtx',issues:[]}});}
+  if(action==='prepare-collected-m2m'){await pending.promise;prepared=workersJob(job);return Response.json({job:prepared,workersRecoveryReview:true,configuration:{configured:true,model:'google-translate-gtx',issues:[]}});}
   if(action==='approve'){prepared={...prepared,status:'approved'};return Response.json({job:prepared});}
   if(action==='execute'){prepared={...prepared,status:'completed',result:{draft:{title:'서버 한국어 초안',description:'서버 설명',keywords:['확인'],attributes:[],warnings:[]}}};return Response.json({job:prepared});}
   throw Error('Unexpected action '+action);
@@ -52,28 +52,28 @@ test('explicit Workers recovery prepares a separate review and preserves Google 
  try{
   await settle();assert.equal(h.calls.length,0);
   nodes(h.render()).find(node=>node.type==='input'&&node.props.maxLength===1000).props.onChange({target:{value:'보존할 직접 입력 원문'}});
-  const click=h.button('서버 AI로 한국어 초안 작성');click();click();assert.equal(h.calls.length,1);
-  assert.equal(JSON.parse(h.calls[0].init.body).action,'prepare-collected-workers');assert.equal(JSON.parse(h.calls[0].init.body).failedJobId,'j');
+  const click=h.button('중국어→한국어 번역 초안');click();click();assert.equal(h.calls.length,1);
+  assert.equal(JSON.parse(h.calls[0].init.body).action,'prepare-collected-m2m');assert.equal(JSON.parse(h.calls[0].init.body).failedJobId,'j');
   pending.resolve();await settle();const visible=JSON.stringify(h.render());
-  assert.match(visible,/Cloudflare Workers AI/);assert.match(visible,/보존할 직접 입력 원문/);assert.match(visible,/Google 번역 제한/);assert.equal(h.saved,0);assert.equal(h.calls.length,1);
+  assert.match(visible,/Cloudflare Workers AI/);assert.match(visible,/보존할 직접 입력 원문/);assert.match(visible,/Google 번역 제한/);assert.match(visible,/최대 4회 호출/);assert.match(visible,/공유 무료 한도/);assert.doesNotMatch(visible,/생성 요청 1회를 검토/);assert.equal(h.saved,0);assert.equal(h.calls.length,1);
   assert.ok(nodes(h.render()).some(node=>node.type==='button'&&label(node.props.children)==='미번역 옵션 한국어로 채우기 · 무료'),'Google remains the default configuration');
   const approve=nodes(h.render()).find(node=>node.type==='label'&&label(node.props.children).includes('위 모델·원문'));
-  nodes(approve).find(node=>node.type==='input').props.onChange({target:{checked:true}});h.button('SEO 초안 작성')();await settle();
-  assert.deepEqual(h.calls.map(call=>JSON.parse(call.init.body).action),['prepare-collected-workers','approve','execute']);assert.equal(h.saved,0);
+  nodes(approve).find(node=>node.type==='input').props.onChange({target:{checked:true}});h.button('중국어→한국어 번역 실행')();await settle();
+  assert.deepEqual(h.calls.map(call=>JSON.parse(call.init.body).action),['prepare-collected-m2m','approve','execute']);assert.equal(h.saved,0);
   assert.match(JSON.stringify(h.render()),/서버 한국어 초안/);assert.equal(h.calls.some(call=>call.init.method==='PATCH'),false);
  }finally{h.close();}
 });
 
 test('Workers recovery is unavailable without the server free configuration and never retries a lost ACK automatically',async()=>{
  const unavailable=harness(()=>{throw Error('Unexpected request');},'failed',false,false,'v',1,'2099-09-24',{model:'google-translate-gtx',destination:'Google 번역'},{workersRecovery:{...workersConfig,configured:false},jobError:google429Error});
- try{await settle();const button=nodes(unavailable.render()).find(node=>node.type==='button'&&label(node.props.children)==='서버 AI로 한국어 초안 작성');assert.equal(button.props.disabled,true);button.props.onClick();await settle();assert.equal(unavailable.calls.length,0);}finally{unavailable.close();}
+ try{await settle();const button=nodes(unavailable.render()).find(node=>node.type==='button'&&label(node.props.children)==='중국어→한국어 번역 초안');assert.equal(button.props.disabled,true);button.props.onClick();await settle();assert.equal(unavailable.calls.length,0);}finally{unavailable.close();}
  const h=harness(()=>{throw Error('synthetic lost ACK');},'failed',false,false,'v',1,'2099-09-24',{model:'google-translate-gtx',destination:'Google 번역'},{workersRecovery:workersConfig,jobError:google429Error});
- try{await settle();h.button('서버 AI로 한국어 초안 작성')();await settle();assert.equal(h.calls.length,1);await settle();assert.equal(h.calls.length,1);h.button('서버 AI로 한국어 초안 작성')();await settle();assert.equal(h.calls.length,2);assert.deepEqual(JSON.parse(h.calls[0].init.body),JSON.parse(h.calls[1].init.body));assert.equal(h.saved,0);}finally{h.close();}
+ try{await settle();h.button('중국어→한국어 번역 초안')();await settle();assert.equal(h.calls.length,1);await settle();assert.equal(h.calls.length,1);h.button('중국어→한국어 번역 초안')();await settle();assert.equal(h.calls.length,2);assert.deepEqual(JSON.parse(h.calls[0].init.body),JSON.parse(h.calls[1].init.body));assert.equal(h.saved,0);}finally{h.close();}
 });
 
 test('closing pending Workers preparation aborts and discards its late response',async()=>{
  const pending=deferred(),h=harness(async(_url,_init,{job})=>{await pending.promise;return Response.json({job:workersJob(job),workersRecoveryReview:true});},'failed',false,false,'v',1,'2099-09-24',{model:'google-translate-gtx',destination:'Google 번역'},{workersRecovery:workersConfig,jobError:google429Error});
- await settle();h.button('서버 AI로 한국어 초안 작성')();h.close();assert.equal(h.calls[0].init.signal.aborted,true);pending.resolve();await settle();assert.equal(h.late,0);assert.equal(h.saved,0);
+ await settle();h.button('중국어→한국어 번역 초안')();h.close();assert.equal(h.calls[0].init.signal.aborted,true);pending.resolve();await settle();assert.equal(h.late,0);assert.equal(h.saved,0);
 });
 
 test('embedded Workers review never substitutes a different history job or exposes source replacement controls',async()=>{
@@ -83,7 +83,17 @@ test('embedded Workers review never substitutes a different history job or expos
 
 test('expired Workers proof cannot renew itself as a default Google request',async()=>{
  const h=harness(()=>{throw Error('unexpected request');},'prepared',false,false,'v',1,'2000-01-01',{destination:'Cloudflare Workers AI',workersRecovery:{failedJobId:'google-failure',scope:'collected'}},{reviewOnly:true,initialJobId:'j'});
- try{await settle();const tree=h.render();assert.match(JSON.stringify(tree),/서버 AI 검토 기한이 지났습니다/);assert.ok(!nodes(tree).some(node=>node.type==='button'&&label(node.props.children)==='같은 원문으로 검토 기한 갱신'));assert.equal(h.calls.length,0);}finally{h.close();}
+ try{await settle();const tree=h.render();assert.match(JSON.stringify(tree),/별도 번역 검토 기한이 지났습니다/);assert.ok(!nodes(tree).some(node=>node.type==='button'&&label(node.props.children)==='같은 원문으로 검토 기한 갱신'));assert.equal(h.calls.length,0);}finally{h.close();}
+});
+
+test('historical Qwen v2-v5 reviews retain their recorded model and explicit execution without being relabelled as M2M',async()=>{
+ for(const version of [2,3,4,5]){
+  const h=harness(async(_url,init,{job})=>{assert.equal(JSON.parse(init.body).action,'execute');return Response.json({job:{...job,status:'completed',result:{draft:{title:'검토할 과거 초안',description:'',keywords:[],attributes:[],warnings:[]}}}});},'approved',false,false,'v',1,'2099-09-24',
+   {destination:'Cloudflare Workers AI',model:'@cf/qwen/qwen3-30b-a3b-fp8',fingerprint:'a'.repeat(64),workersRecovery:{version,model:'@cf/qwen/qwen3-30b-a3b-fp8',failedJobId:'old-google',scope:'collected'}},{initialJobId:'j',reviewOnly:true});
+  try{await settle();assert.match(JSON.stringify(h.render()),/qwen3-30b/);assert.doesNotMatch(JSON.stringify(h.render()),/전용 번역|중국어 → 한국어/);assert.equal(h.calls.length,0);
+   h.button('승인한 SEO 초안 작성 계속')();await settle();assert.equal(h.calls.length,1);assert.equal(JSON.parse(h.calls[0].init.body).action,'execute');assert.equal(h.saved,0);assert.match(JSON.stringify(h.render()),/기존 콘텐츠에 자동 적용하지/);
+  }finally{h.close();}
+ }
 });
 
 test('automatic Google option continuation history shows its scope without exposing SEO or label adoption actions',async()=>{

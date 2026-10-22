@@ -33,18 +33,18 @@ function ui({allowed=true,storageValue=null,pending=null,registrationError=false
  render();return{render,idle,until,calls,runs,creates,storage,input:label=>nodes(render()).find(node=>node.type==='input'&&node.props['aria-label']===label),integrated:()=>nodes(render()).find(node=>node.props?.jobId),button:label=>nodes(render()).find(node=>node.type==='button'&&text(node)===label),consent:()=>nodes(render()).find(node=>node.type==='input'&&node.props.type==='checkbox'),close(){closed=true;slots.forEach(slot=>slot?.cleanup?.());},get lateWrites(){return lateWrites;},setAllowed(value){allowed=value;},setRegistrationError(value){registrationError=value;},setVersion(value){productVersion=value;source.productVersion=value;},setSource(value){Object.assign(source,value);},setProduct(id,value){productId=id;productVersion=value;source.productId=id;source.productVersion=value;},setActive(value){active=value;},setOwner(value){workspaceOwnerId=value;},setRegistrationBrand(value){registrationBrand=value;}};
 }
 
-const workersRecoverySettings={configured:true,provider:'workers-ai',destination:'Cloudflare Workers AI',model:'@cf/meta/llama-3.3-70b-instruct-fp8-fast',maxOutputTokens:2048,freeOnly:true,issues:[]};
+const workersRecoverySettings={configured:true,provider:'workers-ai',destination:'Cloudflare Workers AI',strategy:'m2m-text-v1',model:'@cf/meta/m2m100-1.2b',maxCalls:8,maxOutputTokens:2048,freeOnly:true,issues:[]};
 const failedGoogleJob={id:'failed-google',productId:'p',productVersion:version,contentRevision:2,status:'failed',result:null,error:{code:'GOOGLE_TRANSLATION_FAILED_HTTP_429',message:'Google 번역 HTTP 429 응답',mayHaveBeenCharged:false},startedAt:version,finishedAt:version,review:{destination:'Google 번역',model:'google-translate-gtx'}};
-const workersReviewJob={id:'workers-review',productId:'p',productVersion:version,contentRevision:2,status:'prepared',result:null,error:null,review:{destination:'Cloudflare Workers AI',fingerprint:'a'.repeat(64),workersRecovery:{failedJobId:failedGoogleJob.id,scope:'collected'}}};
+const workersReviewJob={id:'workers-review',productId:'p',productVersion:version,contentRevision:2,status:'prepared',result:null,error:null,review:{destination:'Cloudflare Workers AI',model:'@cf/meta/m2m100-1.2b',fingerprint:'a'.repeat(64),workersRecovery:{failedJobId:failedGoogleJob.id,scope:'collected',strategy:'m2m-text-v1',model:'@cf/meta/m2m100-1.2b',maxCalls:4}}};
 
 test('SEO card prepares Workers review only by explicit click and retains typed memo and Google workflow',async()=>{
  const pending=deferred(),h=ui({allowed:false,workspaceOwnerId:'owner-a',workersRecovery:workersRecoverySettings,failedJob:failedGoogleJob,recoveryResponder:async()=>{await pending.promise;return Response.json({job:workersReviewJob,workersRecoveryReview:true});}});
  try{
   await h.idle();assert.equal(h.calls.length,5);assert.ok(h.calls.every(call=>!call.init.method));
   h.input('SEO 상품 특징').props.onChange({target:{value:'보존할 사용자 특징'}});await h.idle();
-  h.button('서버 AI로 한국어 초안 작성').props.onClick();assert.equal(h.calls.length,5,'workspace dirty guard blocks preparation');h.setAllowed(true);
-  const click=h.button('서버 AI로 한국어 초안 작성').props.onClick;click();click();assert.equal(h.calls.length,6);
-  const body=JSON.parse(h.calls[5].init.body);assert.equal(body.action,'prepare-collected-workers');assert.equal(body.failedJobId,failedGoogleJob.id);assert.equal(body.expectedVersion,version);
+  h.button('중국어→한국어 번역 초안').props.onClick();assert.equal(h.calls.length,5,'workspace dirty guard blocks preparation');h.setAllowed(true);
+  const click=h.button('중국어→한국어 번역 초안').props.onClick;click();click();assert.equal(h.calls.length,6);
+  const body=JSON.parse(h.calls[5].init.body);assert.equal(body.action,'prepare-collected-m2m');assert.equal(body.failedJobId,failedGoogleJob.id);assert.equal(body.expectedVersion,version);
   pending.resolve();await h.idle();assert.equal(h.calls.length,6);assert.equal(h.input('SEO 상품 특징').props.value,'보존할 사용자 특징');assert.ok(h.button('한국어 초안 자동 작성'));
   const review=nodes(h.render()).find(node=>node.props?.initialJobId===workersReviewJob.id);assert.equal(review.props.reviewOnly,true);assert.equal(review.props.version,version);assert.equal(h.runs.length,0);
   assert.match(text(h.render()),/Cloudflare Workers AI/);assert.match(text(h.render()),/검토·승인/);
@@ -52,20 +52,20 @@ test('SEO card prepares Workers review only by explicit click and retains typed 
 });
 
 test('Workers card refuses missing free configuration and reuses a nonce only after another explicit click',async()=>{
- const disabled=ui({workersRecovery:{...workersRecoverySettings,configured:false},failedJob:failedGoogleJob});try{await disabled.idle();const button=disabled.button('서버 AI로 한국어 초안 작성');assert.equal(button.props.disabled,true);button.props.onClick();await disabled.idle();assert.equal(disabled.calls.length,5);}finally{disabled.close();}
- const h=ui({workersRecovery:workersRecoverySettings,failedJob:failedGoogleJob,recoveryResponder:async()=>{throw Error('synthetic lost ACK');}});try{await h.idle();h.button('서버 AI로 한국어 초안 작성').props.onClick();await h.idle();assert.equal(h.calls.length,6);await h.idle();assert.equal(h.calls.length,6);h.button('서버 AI로 한국어 초안 작성').props.onClick();await h.idle();assert.equal(h.calls.length,7);assert.deepEqual(JSON.parse(h.calls[5].init.body),JSON.parse(h.calls[6].init.body));assert.equal(h.runs.length,0);}finally{h.close();}
+ const disabled=ui({workersRecovery:{...workersRecoverySettings,configured:false},failedJob:failedGoogleJob});try{await disabled.idle();const button=disabled.button('중국어→한국어 번역 초안');assert.equal(button.props.disabled,true);button.props.onClick();await disabled.idle();assert.equal(disabled.calls.length,5);}finally{disabled.close();}
+ const h=ui({workersRecovery:workersRecoverySettings,failedJob:failedGoogleJob,recoveryResponder:async()=>{throw Error('synthetic lost ACK');}});try{await h.idle();h.button('중국어→한국어 번역 초안').props.onClick();await h.idle();assert.equal(h.calls.length,6);await h.idle();assert.equal(h.calls.length,6);h.button('중국어→한국어 번역 초안').props.onClick();await h.idle();assert.equal(h.calls.length,7);assert.deepEqual(JSON.parse(h.calls[5].init.body),JSON.parse(h.calls[6].init.body));assert.equal(h.runs.length,0);}finally{h.close();}
 });
 
 test('an explicitly renewed Workers review refreshes the embedded panel even when its job identifier is unchanged',async()=>{
  let preparations=0;const h=ui({workersRecovery:workersRecoverySettings,failedJob:failedGoogleJob,recoveryResponder:async()=>{const fingerprint=(++preparations===1?'a':'b').repeat(64);return Response.json({workersRecoveryReview:true,job:{...workersReviewJob,review:{...workersReviewJob.review,fingerprint}}});}});
- try{await h.idle();h.button('서버 AI로 한국어 초안 작성').props.onClick();await h.idle();const first=nodes(h.render()).find(node=>node.props?.initialJobId===workersReviewJob.id);assert.equal(first.props.initialReviewFingerprint,'a'.repeat(64));h.button('서버 AI로 한국어 초안 작성').props.onClick();await h.idle();const renewed=nodes(h.render()).find(node=>node.props?.initialJobId===workersReviewJob.id);assert.equal(renewed.props.initialReviewFingerprint,'b'.repeat(64));assert.equal(h.calls.length,7);assert.equal(h.runs.length,0);}finally{h.close();}
+ try{await h.idle();h.button('중국어→한국어 번역 초안').props.onClick();await h.idle();const first=nodes(h.render()).find(node=>node.props?.initialJobId===workersReviewJob.id);assert.equal(first.props.initialReviewFingerprint,'a'.repeat(64));h.button('중국어→한국어 번역 초안').props.onClick();await h.idle();const renewed=nodes(h.render()).find(node=>node.props?.initialJobId===workersReviewJob.id);assert.equal(renewed.props.initialReviewFingerprint,'b'.repeat(64));assert.equal(h.calls.length,7);assert.equal(h.runs.length,0);}finally{h.close();}
 });
 
 test('stage or account change aborts Workers preparation and cannot display its late review',async()=>{
  for(const mode of ['closed','stage-aba','owner-aba']){
   const pending=deferred(),h=ui({workspaceOwnerId:'owner-a',workersRecovery:workersRecoverySettings,failedJob:failedGoogleJob,recoveryResponder:async()=>{await pending.promise;return Response.json({job:workersReviewJob,workersRecoveryReview:true});}});
   try{
-   await h.idle();h.button('서버 AI로 한국어 초안 작성').props.onClick();const signal=h.calls[5].init.signal;
+   await h.idle();h.button('중국어→한국어 번역 초안').props.onClick();const signal=h.calls[5].init.signal;
    if(mode==='closed')h.close();if(mode==='stage-aba'){h.setActive(false);await h.idle();h.setActive(true);await h.idle();}if(mode==='owner-aba'){h.setOwner('owner-b');await h.idle();h.setOwner('owner-a');await h.idle();}
    assert.equal(signal.aborted,true);pending.resolve();if(mode==='closed')await new Promise(resolve=>setImmediate(resolve));else await h.idle();
    assert.equal(h.lateWrites,0);if(mode!=='closed')assert.ok(!nodes(h.render()).some(node=>node.props?.initialJobId===workersReviewJob.id));

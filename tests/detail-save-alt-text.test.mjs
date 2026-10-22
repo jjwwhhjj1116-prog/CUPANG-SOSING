@@ -16,14 +16,15 @@ const altTargets = view => {
 };
 const expectedAlt = (base, rawName) => rawName ? `${base} - ${rawName}` : base;
 
-async function configure(f, { common = '', description = 'SEO에서 저장한 상세 설명', productName = ' 원본 상품명 ', commonAbsent = false } = {}) {
+async function configure(f, { common = '', description = 'SEO에서 저장한 상세 설명', productName = ' 原始中文商品名 ', seoTitle = '최종 저장한 한국어 SEO 제목', commonAbsent = false } = {}) {
   const current = await json(await f.api.route(f.base + '/content'));
   await json(await f.api.route(f.base + '/content', { method: 'PATCH', body: { expectedRevision: current.content.revision,
-    patch: { seo: { title: '이 SEO 제목은 ALT의 상품명이 아님', description: description || '임시 설명' } } } }));
+    patch: { seo: { title: seoTitle || '임시 제목', description: description || '임시 설명' } } } }));
   // Simulate supported saved/legacy raw data. Public option/content editors trim
   // text; the vendor's detail action must still use stored truthiness verbatim.
   const contentRow = f.api.sqlite.prepare('SELECT payload FROM product_content').get(), content = JSON.parse(contentRow.payload);
   content.seo.description.value = description;
+  content.seo.title.value = seoTitle;
   f.api.sqlite.prepare('UPDATE product_content SET payload=?').run(JSON.stringify(content));
   f.api.sqlite.prepare('UPDATE products SET title=?').run(productName);
   const saved = JSON.parse(f.api.sqlite.prepare('SELECT payload FROM product_options').get().payload);
@@ -42,8 +43,9 @@ async function configure(f, { common = '', description = 'SEO에서 저장한 �
   f.view = await json(await f.api.route(f.qurl, { method: 'PUT', body: { expectedRevision: f.view.revision,
     expectedInputFingerprint: f.view.inputFingerprint, changes } }));
   const expectedNames = Object.fromEntries(saved.rows.map((row, index) => [row.id, names[index]]));
-  assert.deepEqual(f.view.detailSaveTextBasis, { policy, productName, metaDescription: description, optionNames: expectedNames });
-  return { targets, ids, names: expectedNames, base: description || `${productName} 상세 설명`, common };
+  const finalProductName = seoTitle || productName;
+  assert.deepEqual(f.view.detailSaveTextBasis, { policy, productName: finalProductName, metaDescription: description, optionNames: expectedNames });
+  return { targets, ids, names: expectedNames, base: description || `${finalProductName} 상세 설명`, common };
 }
 
 async function save(f, textPolicy = policy) {
@@ -115,15 +117,17 @@ for (const company of companies) test(`truthy common ALT including whitespace is
   }
 });
 
-for (const company of companies) test(`falsy common ALT falls back to raw product title and description whitespace remains truthy (${company.companyCode})`, async () => {
-  for (const description of ['', '   ']) {
+for (const company of companies) test(`empty description uses saved final SEO title, source title only without SEO, and keeps common manual ALT (${company.companyCode})`, async () => {
+  for (const description of ['', '   ']) for (const seoTitle of ['최종 저장한 한국어 SEO 제목', '']) {
     const f = await detailSaveFixture(company);
     try {
-      const expected = await configure(f, { description, productName: '  원천 상품명 보존  ' });
+      const expected = await configure(f, { description, seoTitle, productName: '  原始中文商品名  ', common: '직접 작성한 공통 한국어 ALT' });
       const { result } = await save(f);
-      assert.equal(result.quotation.overrides.common[expected.targets.primary], expected.base);
+      assert.equal(result.quotation.overrides.common[expected.targets.primary], '직접 작성한 공통 한국어 ALT');
       for (const id of expected.ids) assert.equal(layer(result.quotation, id)[expected.targets.primary], expectedAlt(expected.base, expected.names[id]));
-      assert.ok(!expected.base.includes('SEO 제목')); assert.ok(!expected.base.includes('견적서 제목'));
+      if (!description) assert.equal(expected.base, `${seoTitle || '  原始中文商品名  '} 상세 설명`);
+      if (!description && seoTitle) assert.ok(!expected.base.includes('原始中文'));
+      assert.ok(!expected.base.includes('견적서 제목'));
     } finally { f.api.close(); }
   }
 });

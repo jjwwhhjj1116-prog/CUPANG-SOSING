@@ -8,6 +8,7 @@ import { saveIntegratedTranslation } from '@/db/translation-adoption';
 import { integratedTranslationPlan, applyIntegratedOptions } from '@/app/translation-integrated-adoption';
 import { applyContentPatch } from '@/app/product-content';
 import { applySeoDocumentTitlePolicy } from '@/app/seo-title-document';
+import {applyExplicitSeoQuotationDefaults} from '@/app/explicit-seo-quotation-defaults';
 import { fingerprint } from '@/app/automation/model';
 import { readBoundedJson } from '@/app/request-body';
 import { readTranslationCategorySource } from '@/db/translation-category-source';
@@ -40,7 +41,8 @@ export async function POST(request: Request, context: Context) {
     const value = await readBoundedJson(request, 16 * 1024);
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('요청 객체가 필요합니다.');
     body = value as Record<string, unknown>;
-    if (Object.keys(body).some(key => !['action','jobId','expectedVersion','fingerprint','scope','seoComposition'].includes(key)) || !['preview','apply'].includes(String(body.action))
+    if (Object.keys(body).some(key => !['action','jobId','expectedVersion','fingerprint','scope','seoComposition','linkQuotationSeoDefaults'].includes(key)) || !['preview','apply'].includes(String(body.action))
+      ||body.linkQuotationSeoDefaults!==undefined&&(body.linkQuotationSeoDefaults!==true||body.scope==='options')
       || (body.scope !== undefined && body.scope !== 'all' && body.scope !== 'options')
       || typeof body.jobId !== 'string' || !/^[a-f0-9-]{36}$/.test(body.jobId) || typeof body.expectedVersion !== 'string'
       || (body.action === 'apply' && (typeof body.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(body.fingerprint)))) throw Error('검토 요청과 저장 지문을 확인해주세요.');
@@ -191,7 +193,7 @@ export async function POST(request: Request, context: Context) {
       }
     }
     const digest = await fingerprint({ productId: id, productVersion: product.updated_at, imageKeys: product.image_keys, content, options, job, plan, scope, categorySource: categorySource ?? null, seoSource:seoSource??null,
-      ...(seoComposition ? {seoComposition} : {}) });
+      ...(seoComposition ? {seoComposition} : {}),...(body.linkQuotationSeoDefaults===true?{linkQuotationSeoDefaults:true}:{}) });
     const optionsRetry = retryProof ? {applicationFingerprint:await optionsRetryApplicationFingerprint(job,
       applyContentPatch(content,plan.patch??{},'options-retry-application'),applyIntegratedOptions(options,plan,'options-retry-application'),'options-retry-application')} : null;
     let intakeSeoCoverage;
@@ -219,6 +221,7 @@ export async function POST(request: Request, context: Context) {
     // Reviewed stage-one composition and the exact source-bound first intake
     // share the SEO writer. Other translation and unchanged SEO keep their basis.
     if (seoComposition || canonicalIntake) applySeoDocumentTitlePolicy(nextContent, plan.patch?.seo);
+    if(body.linkQuotationSeoDefaults===true&&scope==='all')applyExplicitSeoQuotationDefaults(nextContent,plan.patch?.seo);
     if (plan.categoryAttributes) nextContent.categoryAttributes = plan.categoryAttributes;
     if(pendingGuidance&&Object.keys(pendingGuidance).length)nextContent.intakeSeoGuidancePending=initialIntakeSeoGuidancePending(nextContent,job,pendingGuidance);
     const saved = await saveIntegratedTranslation(owner, nextContent, nextOptions, { productVersion: product.updated_at, imageKeys: product.image_keys,

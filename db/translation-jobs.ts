@@ -106,19 +106,19 @@ export async function findSeoRetryTranslation(ownerId:string,productId:string,re
   const db=await database();const row=await db.prepare('SELECT * FROM translation_jobs WHERE owner_id=? AND product_id=? AND idempotency_key=?')
     .bind(ownerId,productId,'seo-retry-'+retryKey).first<Row>();return row?job(row):null;
 }
-export async function findWorkersRecoveryTranslation(ownerId:string,productId:string,failedJobId:string) {
+export async function findWorkersRecoveryTranslation(ownerId:string,productId:string,failedJobId:string,strategy?:'m2m-text-v1') {
   if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(failedJobId))throw Error('Invalid Workers recovery job');
   const db=await database();const row=await db.prepare('SELECT * FROM translation_jobs WHERE owner_id=? AND product_id=? AND idempotency_key=?')
-    .bind(ownerId,productId,'workers-recovery-v5-'+failedJobId).first<Row>();return row?job(row):null;
+    .bind(ownerId,productId,(strategy==='m2m-text-v1'?'workers-m2m-v1-':'workers-recovery-v5-')+failedJobId).first<Row>();return row?job(row):null;
 }
 
 export async function createSeoRetryTranslation(ownerId:string,value:TranslationJob,retryKey:string,requestFingerprint:string,optionRevision:number,source:SeoRetrySourceGuard) {
   if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(retryKey)||!Number.isSafeInteger(optionRevision)||optionRevision<0)throw Error('Invalid SEO retry scope');
   return createSourceBoundTranslation(ownerId,value,'seo-retry-'+retryKey,requestFingerprint,optionRevision,source);
 }
-export async function createWorkersRecoveryTranslation(ownerId:string,value:TranslationJob,failedJobId:string,requestFingerprint:string,optionRevision:number,source:SeoRetrySourceGuard) {
+export async function createWorkersRecoveryTranslation(ownerId:string,value:TranslationJob,failedJobId:string,requestFingerprint:string,optionRevision:number,source:SeoRetrySourceGuard,strategy?:'m2m-text-v1') {
   if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(failedJobId)||!Number.isSafeInteger(optionRevision)||optionRevision<0)throw Error('Invalid Workers recovery scope');
-  return createSourceBoundTranslation(ownerId,value,'workers-recovery-v5-'+failedJobId,requestFingerprint,optionRevision,source);
+  return createSourceBoundTranslation(ownerId,value,(strategy==='m2m-text-v1'?'workers-m2m-v1-':'workers-recovery-v5-')+failedJobId,requestFingerprint,optionRevision,source);
 }
 async function createSourceBoundTranslation(ownerId:string,value:TranslationJob,key:string,requestFingerprint:string,optionRevision:number,source:SeoRetrySourceGuard) {
   const db=await database();
@@ -139,7 +139,7 @@ async function createSourceBoundTranslation(ownerId:string,value:TranslationJob,
       value.productId,ownerId,value.productId,ownerId,value.contentRevision,value.productId,ownerId,optionRevision,ownerId,value.productId,
       value.productId,ownerId,source.jobId,source.offerId,source.jobUpdatedAt,source.contextPayload,source.resultPayload).first<Row>();
   if(row)return {job:job(row),replayed:false,conflict:false};
-  if(key.startsWith('workers-recovery-')){
+  if(key.startsWith('workers-recovery-')||key.startsWith('workers-m2m-v1-')){
     const sourceGuard=await seoSourceGuard(source);
     const renewed=await db.prepare(`UPDATE translation_jobs SET status='prepared',review_fingerprint=?,review=?,expires_at=?,approved_at=NULL
       WHERE owner_id=? AND product_id=? AND idempotency_key=? AND request_fingerprint=?

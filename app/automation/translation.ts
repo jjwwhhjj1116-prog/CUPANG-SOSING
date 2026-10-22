@@ -299,6 +299,21 @@ export async function executeTranslation(review: TranslationReview, config: Tran
     return {draft,responseId:`google-free-local:${crypto.randomUUID()}`,model:review.model,usage:null,generatedAt:new Date().toISOString(),provenance:'generated',appliedToContent:false,detectedSourceLanguages:translated.detectedSourceLanguages,translationRequests:translated.requests,
       ...(translated.stoppedHttpStatus===null?{}:{googleStoppedHttpStatus:translated.stoppedHttpStatus})};
   }
+  if(config.provider==='workers-ai'&&recoveryProof?.strategy==='m2m-text-v1'){
+    const {WORKERS_M2M_MODEL,executeWorkersM2mTranslation,WorkersM2mError}=await import('@/app/automation/workers-m2m-translation');
+    if(!config.ai||config.model!==WORKERS_M2M_MODEL||config.maxOutputTokens!==0)throw new TranslationError('TRANSLATION_NOT_CONFIGURED','검토한 중국어→한국어 전용 번역 설정을 확인해주세요.');
+    let attemptedCalls=0;
+    try{
+      const output=await executeWorkersM2mTranslation(review.source,{run:(model,input)=>{attemptedCalls++;return config.ai!.run(model,input);}},recoveryProof.maxCalls!);
+      const draft=validateTranslationDraft(output.draft,review.source,review.instructionsVersion);assertWorkersRecoveryDraftQuality(review,output.draft);
+      return{draft,responseId:`workers-m2m-local:${crypto.randomUUID()}`,model:review.model,usage:null,generatedAt:new Date().toISOString(),provenance:'generated',appliedToContent:false,translationRequests:output.requests};
+    }catch(error){
+      if(error instanceof WorkersM2mError)throw new TranslationError(error.code,error.message,!['INVALID_WORKERS_RECOVERY','M2M_TITLE_REQUIRED'].includes(error.code));
+      if(error instanceof TranslationQualityError)throw new TranslationError(error.code,error.message,true);
+      if(error instanceof TranslationError&&attemptedCalls>1&&!error.mayHaveBeenCharged)throw new TranslationError(error.code,error.message,true);
+      throw workersAiFailure(error);
+    }
+  }
   const request = buildTranslationRequest(review);
   if (config.provider === 'workers-ai') {
     const qwen=config.model===WORKERS_QWEN_MODEL&&(recoveryProof?.version===2||recoveryProof?.version===3||recoveryProof?.version===4||recoveryProof?.version===5);

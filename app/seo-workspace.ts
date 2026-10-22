@@ -1,5 +1,6 @@
 import { applyContentPatch, validateContentInput, type ProductContent } from '@/app/product-content';
 import { applySeoDocumentTitlePolicy } from '@/app/seo-title-document';
+import {applyExplicitSeoQuotationDefaults} from '@/app/explicit-seo-quotation-defaults';
 import { cleanSeoKeywordCandidates, prepareSeoKeywordText, quotationSeoKeywordText, seoKeywordDocumentText } from '@/app/seo-keyword-text';
 import { applyOptionNameChanges, validateOptionNamesInput, type OptionNameChange } from '@/app/option-seo-names';
 import { OPTIONS_BODY_LIMIT, type ProductOptions } from '@/app/product-options';
@@ -61,6 +62,7 @@ export function applySeoWorkspaceChanges(before: SeoWorkspaceView, input: SeoWor
     throw Error('같은 상품의 최신 SEO 저장 자료를 확인해주세요.');
   const content = input.seo ? applyContentPatch(before.content, { seo: input.seo }, now) : before.content;
   applySeoDocumentTitlePolicy(content, input.seo);
+  applyExplicitSeoQuotationDefaults(content,input.seo);
   if (input.seo?.keywordText !== undefined) {
     const keywords = content.seo.keywords.value;
     content.seoKeywordDocument = { policy: 'couplus-service-v1', sourceKeywords: [...keywords], sourceUpdatedAt: now,

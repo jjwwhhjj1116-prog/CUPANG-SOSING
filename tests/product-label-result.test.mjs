@@ -92,3 +92,30 @@ test('rewrite, label edit or reference changes during receipt lookup cannot pain
   await assert.rejects(f.read(),/변경/);assert.equal(f.calls.length,7);
  }
 });
+
+for (const phase of ['labels','quotation','receipt']) for (const failure of ['html','unauthorized','forbidden','server','redirect','invalid-json','network']) {
+ test(`label ${phase} lookup rejects ${failure} with a safe Korean error and no write or retry`,async()=>{
+  const f=await fixture(),before=JSON.stringify(f.state),calls=[];let jsonReads=0;
+  const request=async(url,init)=>{
+   calls.push({url,init});
+   assert.equal(init?.cache,'no-store');assert.equal(init?.credentials,'same-origin');assert.equal(init?.redirect,'error');
+   const target=phase==='labels'?endpoint:phase==='quotation'?quotationEndpoint:'/api/files?labelUploadId='+f.uploadId;
+   if(url!==target)return f.request(url,init);
+   if(failure==='network')throw Error('private-token-network-secret');
+   const status={unauthorized:401,forbidden:403,server:503}[failure]??200;
+   const response=new Response(failure==='redirect'?'{}':'<!DOCTYPE html>private-token-html-secret',{
+    status,headers:{'content-type':['redirect','invalid-json'].includes(failure)?'application/json; charset=utf-8':'text/html; charset=utf-8'}
+   });
+   if(failure==='redirect')Object.defineProperty(response,'redirected',{value:true});
+   const original=response.json.bind(response);response.json=async()=>{jsonReads++;return original();};
+   return response;
+  };
+  await assert.rejects(result.readCurrentProductLabelResult(input,request),error=>{
+   assert.match(error.message,/[가-힣]/);assert.doesNotMatch(error.message,/<|DOCTYPE|Unexpected|private-token|html-secret/);
+   return true;
+  });
+  assert.equal(jsonReads,failure==='invalid-json'?1:0,'status, redirect and content type precede JSON parsing');
+  assert.equal(calls.length,{labels:1,quotation:2,receipt:4}[phase],'failed reads never retry or continue verification');
+  assert.ok(calls.every(call=>(call.init?.method??'GET')==='GET'));assert.equal(JSON.stringify(f.state),before);
+ });
+}
