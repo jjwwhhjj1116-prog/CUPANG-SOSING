@@ -19,17 +19,22 @@ export type ExpectedCollectionSource={capture:Readonly<SourceCaptureSelection>;r
 export class CollectionSourceSelectionError extends Error{
  constructor(){super('선택한 수집 원문 또는 검토 버전이 변경되었습니다. 기존 작업은 유지했으니 수집본을 다시 확인해주세요.');}
 }
-const selectedSourceCondition=` AND j.source_url=? AND j.offer_id=? AND r.received_at=? AND EXISTS(
+const selectedPageSourceCondition=` AND j.source_url=? AND j.offer_id=? AND r.received_at=? AND EXISTS(
  SELECT 1 FROM (SELECT owner_id,id,company_code,company_name,offer_id,fingerprint,revision,payload FROM source_inbox
  UNION ALL SELECT owner_id,id,company_code,company_name,offer_id,fingerprint,revision,payload FROM source_inbox_captures) selected
  WHERE selected.owner_id=j.owner_id AND selected.id=? AND selected.company_code=? AND selected.company_name=?
  AND selected.offer_id=j.offer_id AND selected.fingerprint=? AND selected.revision=? AND json_extract(selected.payload,'$.sourceUrl')=j.source_url)`;
+const selectedQuerySourceCondition=` AND j.source_url=? AND j.offer_id=? AND r.received_at=? AND EXISTS(
+ SELECT 1 FROM query_source_captures selected
+ WHERE selected.owner_id=j.owner_id AND selected.id=? AND selected.company_code=? AND selected.company_name=?
+ AND selected.offer_id=j.offer_id AND selected.fingerprint=? AND selected.revision=? AND selected.archived_at IS NULL AND json_extract(selected.payload,'$.sourceUrl')=j.source_url)`;
+const selectedSourceCondition=(proof:ExpectedCollectionSource)=>proof.capture.format==='yoofam-saved-query-capture-v1'?selectedQuerySourceCondition:selectedPageSourceCondition;
 const selectedSourceArguments=(job:CollectionJob,proof:ExpectedCollectionSource)=>[proof.capture.sourceUrl,job.offer_id,proof.receivedAt,
  proof.capture.captureId,proof.company.code,proof.company.name,proof.capture.fingerprint,proof.capture.revision];
 async function assertExpectedCollectionSource(owner:string,job:CollectionJob,receipt:CollectionResult,proof:ExpectedCollectionSource){
  if(!env.DB)throw new Error('D1 unavailable');
  const current=await env.DB.prepare(`SELECT j.id FROM collection_jobs j JOIN collection_results r ON r.job_id=j.id JOIN collection_context c ON c.job_id=j.id
-  WHERE j.id=? AND j.owner_id=? AND r.owner_id=? AND j.status='awaiting_connector' AND ${effectiveCollectionPayload}=? AND c.payload=?${selectedSourceCondition}`)
+  WHERE j.id=? AND j.owner_id=? AND r.owner_id=? AND j.status='awaiting_connector' AND ${effectiveCollectionPayload}=? AND c.payload=?${selectedSourceCondition(proof)}`)
   .bind(job.id,owner,owner,JSON.stringify(receipt),JSON.stringify(job.context),...selectedSourceArguments(job,proof)).first();
  if(!current)throw new CollectionSourceSelectionError();
 }
@@ -57,7 +62,7 @@ export async function promoteCollection(owner:string,job:CollectionJob,receipt:C
   db.prepare(`INSERT INTO products(${entries.map(([key])=>key).join(',')})
    SELECT ${entries.map(()=>'?').join(',')} FROM collection_jobs j JOIN collection_results r ON r.job_id=j.id JOIN collection_context c ON c.job_id=j.id
    WHERE j.id=? AND j.owner_id=? AND r.owner_id=? AND j.status='awaiting_connector' AND ${effectiveCollectionPayload}=? AND c.payload=?
-   AND NOT EXISTS(SELECT 1 FROM collection_products WHERE job_id=j.id)${expectedSource?selectedSourceCondition:''}`)
+   AND NOT EXISTS(SELECT 1 FROM collection_products WHERE job_id=j.id)${expectedSource?selectedSourceCondition(expectedSource):''}`)
    .bind(...entries.map(([,value])=>value),job.id,owner,owner,JSON.stringify(receipt),JSON.stringify(job.context),...(expectedSource?selectedSourceArguments(job,expectedSource):[])),
   ...prepareNewProductLabels(db,owner,id,now),
   ...prepareProductRegistration(db,owner,id,now),

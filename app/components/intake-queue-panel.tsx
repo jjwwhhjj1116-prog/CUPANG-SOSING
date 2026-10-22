@@ -193,6 +193,10 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     try {
       const incomplete=processing.map(row=>{
         if(!row.sourceCapture)return sourceItems.find(item=>sameSourceUrl(item.snapshot.sourceUrl,row.url));
+        // Server-query captures have their own immutable full-source store.
+        // Their exact owner/company/version is resolved on the server; the
+        // browser PageSource review list cannot represent this source format.
+        if(row.sourceCapture.format==='yoofam-saved-query-capture-v1'){validateSourceCaptureSelection(row.sourceCapture,row.url);return undefined;}
         const item=selectedSourceInboxItem(target?current.sourceItems:sourceItems,row.sourceCapture);
         if(!item||target&&item.archivedAt||workspaceOwnerId&&item.ownerId!==workspaceOwnerId)throw Error('선택한 수집본을 다시 확인해주세요. 같은 URL의 다른 수집본으로 바꾸지 않았습니다.');
         return item;

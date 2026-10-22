@@ -1,7 +1,8 @@
 import {parseCollectionRequest} from '@/app/sourcing';
 import type {SourceInboxItem} from '@/app/source-inbox';
+import type {QuerySourceCaptureSummary} from '@/app/query-source-capture';
 
-export type SourceCaptureSelection={sourceUrl:string;format:'yoofam-saved-page-capture-v1';captureId:string;fingerprint:string;revision:number};
+export type SourceCaptureSelection={sourceUrl:string;format:'yoofam-saved-page-capture-v1'|'yoofam-saved-query-capture-v1';captureId:string;fingerprint:string;revision:number};
 const keys=['sourceUrl','format','captureId','fingerprint','revision'];
 export function validateSourceCaptureSelection(input:unknown,expectedUrl?:string):Readonly<SourceCaptureSelection>{
   if(!input||typeof input!=='object'||Array.isArray(input))throw Error('선택한 수집본 정보를 확인해주세요.');
@@ -9,7 +10,7 @@ export function validateSourceCaptureSelection(input:unknown,expectedUrl?:string
   if(Reflect.ownKeys(descriptors).length!==keys.length||keys.some(key=>!descriptors[key]||!Object.hasOwn(descriptors[key],'value')))
     throw Error('선택한 수집본 항목을 확인해주세요.');
   const value=Object.fromEntries(keys.map(key=>[key,descriptors[key].value]));
-  if(value.format!=='yoofam-saved-page-capture-v1'||typeof value.sourceUrl!=='string'
+  if(!['yoofam-saved-page-capture-v1','yoofam-saved-query-capture-v1'].includes(String(value.format))||typeof value.sourceUrl!=='string'
     ||typeof value.captureId!=='string'||!/^[a-f0-9-]{36}$/u.test(value.captureId)||typeof value.fingerprint!=='string'||!/^[a-f0-9]{64}$/u.test(value.fingerprint)
     ||!Number.isSafeInteger(value.revision)||Number(value.revision)<1)throw Error('선택한 수집본의 버전 정보를 확인해주세요.');
   const canonical=parseCollectionRequest({urls:[value.sourceUrl]})[0].sourceUrl;
@@ -19,6 +20,9 @@ export function validateSourceCaptureSelection(input:unknown,expectedUrl?:string
 }
 export function sourceCaptureSelection(item:SourceInboxItem):Readonly<SourceCaptureSelection>{
   return validateSourceCaptureSelection({sourceUrl:item.snapshot.sourceUrl,format:'yoofam-saved-page-capture-v1',captureId:item.id,fingerprint:item.fingerprint,revision:item.revision});
+}
+export function querySourceCaptureSelection(item:QuerySourceCaptureSummary):Readonly<SourceCaptureSelection>{
+  return validateSourceCaptureSelection({sourceUrl:item.sourceUrl,format:'yoofam-saved-query-capture-v1',captureId:item.id,fingerprint:item.fingerprint,revision:item.revision});
 }
 export function sameSourceCaptureSelection(left:unknown,right:unknown):boolean{
   try{return JSON.stringify(validateSourceCaptureSelection(left))===JSON.stringify(validateSourceCaptureSelection(right));}catch{return false;}
@@ -32,5 +36,6 @@ export function sourceCaptureAfterUrlEdit(selection:SourceCaptureSelection|undef
 }
 export function selectedSourceInboxItem(items:readonly SourceInboxItem[],selection:SourceCaptureSelection):SourceInboxItem|undefined{
   const selected=validateSourceCaptureSelection(selection);
+  if(selected.format!=='yoofam-saved-page-capture-v1')return undefined;
   return items.find(item=>item.id===selected.captureId&&item.fingerprint===selected.fingerprint&&item.revision===selected.revision&&item.snapshot.sourceUrl===selected.sourceUrl);
 }

@@ -30,7 +30,9 @@ export async function POST(request:Request,context:{params:Promise<{id:string}>}
  if(!job)return reply({error:'수집 요청을 찾을 수 없습니다.'},404);
  const user=await getChatGPTUser();
  const company=user?.verifiedAccess&&user.userId===owner?approvedSupplierHubCompany(user.membership):null;
- verifyCapturedCollectionCompany(job.context,company);
+ const capturedCompany=verifyCapturedCollectionCompany(job.context,company);
+ if(selection?.capture.format==='yoofam-saved-query-capture-v1'&&(!company||!capturedCompany))return reply({error:'수집 요청 당시의 회사를 확인하지 못했습니다. 기존 작업은 유지됩니다.',code:'SOURCE_SELECTION_CONFLICT'},409);
+ if(selection?.capture.format==='yoofam-saved-query-capture-v1'&&(job.product_id||await findCollectionProduct(owner,id)))return reply({error:'이미 상품이 연결된 요청입니다. 기존 상품과 편집값은 유지했습니다.',code:'SOURCE_SELECTION_EXISTING_PRODUCT'},409);
  const previous=selection?null:await findCollectionProduct(owner,id);if(previous){
   if(!await findProduct(owner,previous.product_id,true))return reply({error:'삭제된 상품의 수집 요청입니다. 상품 추가에서 같은 URL로 새 초안을 만들거나 삭제된 상품을 복원해주세요.',code:'COLLECTION_PRODUCT_REMOVED'},409);
   return reply({productId:previous.product_id,reused:true,executionStarted:false});
@@ -42,7 +44,7 @@ export async function POST(request:Request,context:{params:Promise<{id:string}>}
   try{
    if(!company||selection.receivedAt!==receipt.receivedAt)throw new CollectionSourceSelectionError();
    const capture=validateSourceCaptureSelection(selection.capture,job.source_url);
-   const selected=await (await import('@/app/owned-page-capture')).parseOwnedPageCapture(owner,capture,job.source_url);
+   const selected=capture.format==='yoofam-saved-query-capture-v1'?await (await import('@/app/owned-source-capture')).parseOwnedSourceCapture(owner,capture,job.source_url):await (await import('@/app/owned-page-capture')).parseOwnedPageCapture(owner,capture,job.source_url);
    if(!selectedPageReceiptMatches(receipt.result,selected,job.offer_id))throw new CollectionSourceSelectionError();
    expectedSource={capture,receivedAt:selection.receivedAt,company};
   }catch{return reply({error:new CollectionSourceSelectionError().message,code:'SOURCE_SELECTION_CONFLICT'},409);}

@@ -1,6 +1,6 @@
 import {exchange} from '@/app/supplier-hub-handoff';
 
-export type BrowserProductCapture={sourceUrl:string;scripts:string[]}|{sourceUrl:string;format:'1688-public-mobile-capture-v1';mobileHtml:string;skuPayload:object;detailSource:string}|{sourceUrl:string;format:'1688-public-mobile-partial-capture-v1';mobileHtml:string;skuPayload:object;detailSource:string;detailUnavailable:{status:502|503|504}}|{sourceUrl:string;format:'1688-public-sku-capture-v1';skuPayload:object}|{sourceUrl:string;format:'yoofam-saved-page-capture-v1';captureId:string;fingerprint:string;revision:number};
+export type BrowserProductCapture={sourceUrl:string;scripts:string[]}|{sourceUrl:string;format:'1688-public-mobile-capture-v1';mobileHtml:string;skuPayload:object;detailSource:string}|{sourceUrl:string;format:'1688-public-mobile-partial-capture-v1';mobileHtml:string;skuPayload:object;detailSource:string;detailUnavailable:{status:502|503|504}}|{sourceUrl:string;format:'1688-public-sku-capture-v1';skuPayload:object}|{sourceUrl:string;format:'yoofam-saved-page-capture-v1';captureId:string;fingerprint:string;revision:number}|{sourceUrl:string;format:'yoofam-saved-query-capture-v1';captureId:string;fingerprint:string;revision:number};
 
 /** Prefer an explicitly collected, durable inbox source. This reads our own
  * server only, and never opens the 1688 URL. Account checks run again on import. */

@@ -32,10 +32,12 @@ import { QuotationPanel } from '@/app/components/quotation-panel';
 import { SubmissionReviewPanel } from '@/app/components/submission-review-panel';
 import { CollectionResultPanel } from '@/app/components/collection-result-panel';
 import {SourceInboxPanel} from '@/app/components/source-inbox-panel';
+import {QuerySourcePanel} from '@/app/components/query-source-panel';
+import type {QuerySourceCaptureSummary} from '@/app/query-source-capture';
 import {useSourceRegistrations} from '@/app/components/use-source-registrations';
 import type {SourceInboxItem} from '@/app/source-inbox';
 import {sameSourceUrl} from '@/app/source-registration';
-import {sourceCaptureSelection,sameSourceCaptureSelection,type SourceCaptureSelection} from '@/app/source-capture-selection';
+import {sourceCaptureSelection,querySourceCaptureSelection,sameSourceCaptureSelection,type SourceCaptureSelection} from '@/app/source-capture-selection';
 import {applyReviewedSourceToIntakeRows,validateReviewedSourceTransition} from '@/app/source-review-intake';
 import { CollectionBatchPanel } from '@/app/components/collection-batch-panel';
 import { ProductOptionBoard } from '@/app/components/product-option-board';
@@ -144,6 +146,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   const sourceReview=sourceReviewState?.scope===sourceReviewScope?sourceReviewState:null;
   const sourceReviewSession=useRef<SourceReviewSession|null>(null);
   const sourceWorkspace=useRef<{scope:typeof sourceReviewScope;ready:boolean;company:WorkspaceSettingsScope['company']}|null>(null);
+  const [querySourceCompany,setQuerySourceCompany]=useState<{scope:object;company:WorkspaceSettingsScope['company']}>({scope:sourceReviewScope,company:null});
   useLayoutEffect(()=>{sourceReviewSession.current=null;sourceWorkspace.current={scope:sourceReviewScope,ready:false,company:null};return()=>{sourceReviewSession.current=null;sourceWorkspace.current=null;};},[workspaceOwnerId,sourceReviewScope]);
   const [sourceNotice,setSourceNotice]=useState('');
   const [intakeSourceSeed,setIntakeSourceSeed]=useState<IntakeSourceSeed|undefined>();
@@ -426,6 +429,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     // read failure must not hide healthy products, settings and category data.
     sourceWorkspace.current={scope:sourceReviewScope,ready:productData.status==='fulfilled'&&settingData.status==='fulfilled'&&categoriesData.status==='fulfilled'
       &&sourceScope?.ownerId===workspaceOwnerId&&!!sourceScope?.company,company:sourceScope?.company??null};
+    setQuerySourceCompany({scope:sourceReviewScope,company:sourceScope&&sourceScope.ownerId===workspaceOwnerId?sourceScope.company:null});
     if(workspaceOwnerId&&settingData.status==='fulfilled'&&parseWorkspaceSettingsScope((settingData.value as {scope?:unknown}).scope)?.ownerId!==workspaceOwnerId){
       setLoadError('로그인 계정이 변경되었습니다. 페이지를 새로고침해주세요.');setLoading(false);return;
     }
@@ -611,6 +615,19 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
       setIntakeSourceSeed({id:crypto.randomUUID(),sourceUrl:item.snapshot.sourceUrl,title:item.reviewed?.title??item.snapshot.title,sourceCapture});setView('work');setAddOpen(true);
     }catch(error){setSourceNotice(error instanceof Error?error.message:'상품 추가 실패');}
   }
+  function prepareQuerySource(item:QuerySourceCaptureSummary){
+    const operation=settingsOperationRef.current,availability=sourceWorkspace.current;
+    if(!operation.mounted||operation.ownerId!==workspaceOwnerId||availability!==sourceWorkspaceSnapshot||availability?.scope!==sourceReviewScope)return;
+    try{
+      if(item.ownerId!==workspaceOwnerId||!availability.ready||loading||busy||addOpen||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving||settingsBusyRef.current)throw Error('현재 상품 목록과 대기열을 확인한 뒤 다시 추가해주세요.');
+      if(!availability.company||item.company.code!==availability.company.code||item.company.name!==availability.company.name)throw Error('수집 당시 회사와 현재 로그인 계정의 승인 회사가 다릅니다. 현재 회사의 수집본을 선택해주세요.');
+      if(item.archivedAt!==null||products.some(product=>sameSourceUrl(product.source_url,item.sourceUrl)))throw Error('이미 작업 중이거나 사용할 수 없는 수집본입니다. 기존 작업 상품은 변경하지 않았습니다.');
+      const sourceCapture=querySourceCaptureSelection(item),queued=intakeRows.find(row=>sameSourceUrl(row.url,item.sourceUrl));
+      if(queued){if(!sameSourceCaptureSelection(queued.sourceCapture,sourceCapture))throw Error('대기열에 같은 상품의 다른 수집본이나 URL 입력이 있습니다. 기존 행을 확인한 뒤 사용할 수집본을 다시 추가해주세요.');setSourceNotice('');setView('work');setAddOpen(true);return;}
+      if(intakeRows.length>=50)throw Error('상품 대기열은 최대 50행입니다. 기존 입력은 유지했습니다.');
+      setSourceNotice('');setIntakeSourceSeed({id:crypto.randomUUID(),sourceUrl:item.sourceUrl,title:item.title,sourceCapture});setView('work');setAddOpen(true);
+    }catch(error){setSourceNotice(error instanceof Error?error.message:'상품 추가 실패');}
+  }
   async function archiveSource(item:SourceInboxItem){
     if(item.ownerId!==workspaceOwnerId||busy||addOpen)throw Error('진행 중인 작업을 마친 뒤 다시 시도해주세요.');
     const response=await fetch('/api/source-inbox',{method:'DELETE',headers:{'content-type':'application/json'},body:JSON.stringify({expectedOwnerId:workspaceOwnerId,id:item.id,expectedRevision:item.revision})});
@@ -676,6 +693,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
 
         {view==='archive'?<><ProductManagementWorkspace/><details className="collection-panel"><summary>YOOFAM 스튜디오 작업 상품 보관함</summary><ProductArchive onOpenProduct={openArchivedProduct} refreshToken={`${collectionJobs[0]?.updated_at}:${products[0]?.updated_at}`}/></details></>:<>
         {(sourceNotice||sourceRegistrations.error)&&<p role="status" className="panel-note">{sourceNotice||sourceRegistrations.error}</p>}
+        <QuerySourcePanel key={`server-query-${workspaceOwnerId??'anonymous'}`} ownerId={workspaceOwnerId} company={querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null} disabled={loading||busy||addOpen||settingsBusy||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving} onAdd={prepareQuerySource}/>
         <SourceInboxPanel key={workspaceOwnerId??'anonymous'} ownerId={workspaceOwnerId} disabled={busy||addOpen||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving} onChanged={sourceRegistrations.reload} onAdd={prepareSource}/>
         <details className="collection-panel" aria-label="수집 대기열"><summary>상품 대기열 · {collectionJobs.filter(job=>job.status!=='cancelled').length}건</summary>
           <CollectionBatchPanel jobs={collectionJobs} onSaved={()=>void loadWorkspace()} onOpenProduct={openCollectedProduct}/>

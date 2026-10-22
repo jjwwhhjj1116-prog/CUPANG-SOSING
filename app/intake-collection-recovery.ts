@@ -68,7 +68,7 @@ function receipt(body: unknown, job: CollectionJob): Received {
  * retry the write or open Chrome to guess whether the receipt was committed. */
 async function recover(job: CollectionJob, options: RequestOptions, reason: string): Promise<Received | undefined> {
  if (options.signal.aborted) return;
- if(options.capture&&'format' in options.capture&&options.capture.format==='yoofam-saved-page-capture-v1')
+ if(options.capture&&'format' in options.capture&&['yoofam-saved-page-capture-v1','yoofam-saved-query-capture-v1'].includes(options.capture.format))
   throw Error(`${reason} 선택한 수집본의 저장 결과가 확정되지 않았습니다. 기존 작업과 수집함을 확인한 뒤 다시 진행해주세요.`);
  try {
   const result = await readJson(`/api/collection-jobs/${encodeURIComponent(job.id)}/result`, {method: 'GET', cache: 'no-store'}, options,

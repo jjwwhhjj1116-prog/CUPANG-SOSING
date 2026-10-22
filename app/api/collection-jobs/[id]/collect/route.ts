@@ -8,6 +8,8 @@ import { collectionProvider } from '@/app/collection-provider';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import { parseBrowserProductCapture } from '@/app/browser-product-capture';
 import { selectedPageReceiptMatches } from '@/app/selected-page-receipt';
+import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
+import {verifyCapturedCollectionCompany,CollectionCompanyError} from '@/app/collection-company';
 const reply=(body:unknown,status=200)=>NextResponse.json(body,{status,headers:{'cache-control':'no-store'}});
 export async function POST(request:Request,context:{params:Promise<{id:string}>}) {
  try {
@@ -27,9 +29,15 @@ export async function POST(request:Request,context:{params:Promise<{id:string}>}
   }
   if(request.signal.aborted)return reply({error:'취소된 수집 작업입니다.'},409);
   let captured;
-  const savedPage=(browserCapture as {format?:unknown})?.format==='yoofam-saved-page-capture-v1';
+  const savedPage=['yoofam-saved-page-capture-v1','yoofam-saved-query-capture-v1'].includes(String((browserCapture as {format?:unknown})?.format));
+  const savedQuery=(browserCapture as {format?:unknown})?.format==='yoofam-saved-query-capture-v1';
+  if(savedQuery){try{
+   const user=await getChatGPTUser(),company=user?.verifiedAccess&&user.userId===owner?approvedSupplierHubCompany(user.membership):null;
+   if(!company||!verifyCapturedCollectionCompany(job.context,company))throw Error('수집 요청 당시의 회사를 확인하지 못했습니다. 카테고리와 승인 회사를 다시 선택해주세요.');
+  }catch(error){return reply({error:error instanceof Error?error.message:'수집 요청의 회사를 확인해주세요.',code:error instanceof CollectionCompanyError?error.code:'SOURCE_SELECTION_CONFLICT'},409);}}
+  if(savedQuery&&job.product_id)return reply({error:'이미 상품이 연결된 요청입니다. 기존 작업을 변경하지 않았습니다. 새 상품의 수집본을 선택해주세요.',code:'SOURCE_SELECTION_EXISTING_PRODUCT'},409);
   if(savedPage){
-   try{captured=await (await import('@/app/owned-page-capture')).parseOwnedPageCapture(owner,browserCapture,job.source_url);}
+   try{captured=savedQuery?await (await import('@/app/owned-source-capture')).parseOwnedSourceCapture(owner,browserCapture,job.source_url):await (await import('@/app/owned-page-capture')).parseOwnedPageCapture(owner,browserCapture,job.source_url);}
    catch(error){return reply({error:error instanceof Error?error.message:'수집함 원문을 확인해주세요.',code:'SOURCE_CANDIDATE_INVALID'},422);}
   }
   if(existing){

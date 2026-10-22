@@ -17,6 +17,7 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
  if(options.signal.aborted)return;
  const fetcher=options.fetcher;
  const selectedCapture=options.selectedCapture===undefined?undefined:validateSourceCaptureSelection(options.selectedCapture,job.source_url);
+ if(selectedCapture?.format==='yoofam-saved-query-capture-v1'&&job.product_id)throw Error('기존 상품이 연결된 요청입니다. 기존 이미지와 SEO 수정값은 유지했습니다. 새 상품의 수집본을 선택해주세요.');
  // A durable server write can finish after its view closes. It remains
  // recoverable, but must not publish into a reopened or newly edited queue.
  const reportJob=(value:CollectionJob)=>{if(!options.signal.aborted)options.onJob(value);};
@@ -169,6 +170,7 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
    if(typeof body.productId!=='string'||!body.productId||typeof body.reused!=='boolean')throw Error('선택한 수집본의 상품 연결 상태를 확인하지 못했습니다. 기존 작업을 확인해주세요.');
    if(resumeProductId&&body.productId!==resumeProductId)throw Error('이미지 재개 상품이 기존 작업과 다릅니다. 기존 수정값을 확인해주세요.');
    if(body.reused){
+    if(selectedCapture?.format==='yoofam-saved-query-capture-v1')throw Error('다른 요청에서 이미 상품을 저장했습니다. 기존 이미지와 SEO 수정값은 유지했습니다. 기존 작업을 확인해주세요.');
     recheckReusedImages=!resumeExistingImages;
     resumeExistingImages=true;
     resumeProductId=body.productId;
