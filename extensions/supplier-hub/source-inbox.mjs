@@ -97,14 +97,19 @@ export async function savePageSource(message,sender,api=chrome,store=sourceInbox
  const page=pageSourceUrl(sender.url),snapshot=validatePageSourceForDelivery(message.snapshot);
  if(page.sourceUrl!==snapshot.sourceUrl)throw Error('클릭한 상품과 수집 원문이 다릅니다.');
  const fingerprint=await sourceFingerprint(snapshot),active=pending.get(sender.tab.id);
+ const timeoutMs=Number.isFinite(options.timeoutMs)?Math.max(1,Math.min(12000,options.timeoutMs)):12000;
+ const pollMs=Number.isFinite(options.pollMs)?Math.max(1,Math.min(250,options.pollMs)):250;
  if(active){
-  if(active.windowId===sender.tab.windowId&&active.sourceUrl===snapshot.sourceUrl&&active.offerId===snapshot.offerId&&active.fingerprint===fingerprint)return active.promise;
-  throw Error('이 상품 탭에서 이전 상품 수집이 진행 중입니다. 완료 후 현재 상품의 수집 버튼을 다시 눌러주세요. 현재 상품은 아직 수집하지 않았습니다.');
+  if(active.windowId!==sender.tab.windowId||active.sourceUrl!==snapshot.sourceUrl||active.offerId!==snapshot.offerId||active.fingerprint!==fingerprint)throw Error('이 상품 탭에서 이전 상품 수집이 진행 중입니다. 완료 후 현재 상품의 수집 버튼을 다시 눌러주세요. 현재 상품은 아직 수집하지 않았습니다.');
+  // An exact retry can share only this operation's original receiver and scope.
+  // Recheck again after waiting so a late ACK cannot become another owner's success.
+  const receiver=await active.receiver,bounded=limitedApi(api,Date.now()+timeoutMs,()=>Error('YOOFAM 앱의 응답 시간이 초과되었습니다. 수집 결과를 확인하고 다시 시도해주세요.'));
+  await recheckReceiver(receiver,bounded);const result=await active.promise;
+  await recheckReceiver(receiver,bounded);return result;
  }
+ const receiving=appReceiver(api,sender.tab.windowId,timeoutMs,pollMs);
  const run=(async()=>{
-  const timeoutMs=Number.isFinite(options.timeoutMs)?Math.max(1,Math.min(12000,options.timeoutMs)):12000;
-  const pollMs=Number.isFinite(options.pollMs)?Math.max(1,Math.min(250,options.pollMs)):250;
-  const receiver=await appReceiver(api,sender.tab.windowId,timeoutMs,pollMs),{tab,scope}=receiver;
+  const receiver=await receiving,{tab,scope}=receiver;
   const bounded=limitedApi(api,Date.now()+timeoutMs,()=>Error('YOOFAM 앱의 응답 시간이 초과되었습니다. 수집 결과를 확인하고 다시 시도해주세요.'));await recheckReceiver(receiver,bounded);
   const records=await store('list'),previous=records.find(row=>row.windowId===sender.tab.windowId&&same(row,scope)&&row.snapshot.offerId===snapshot.offerId);
   // A repeated click retries the first immutable snapshot. It cannot overwrite
@@ -113,7 +118,7 @@ export async function savePageSource(message,sender,api=chrome,store=sourceInbox
   if(!previous){if(records.length>=40)throw Error('확장 수집함이 가득 찼습니다. 앱에서 보관된 상품을 불러와주세요.');await recheckReceiver(receiver,bounded);await store('put',record);}
   try{await recheckReceiver(receiver,bounded);const result=await deliver(record,tab,bounded,store);await activateReceiver(receiver,bounded);return {ok:true,delivered:true,duplicate:result.duplicate===true,id:record.id};}
   catch(error){return {ok:true,delivered:false,id:record.id,message:error.message};}
- })();pending.set(sender.tab.id,{promise:run,windowId:sender.tab.windowId,sourceUrl:snapshot.sourceUrl,offerId:snapshot.offerId,fingerprint});try{return await run;}finally{if(pending.get(sender.tab.id)?.promise===run)pending.delete(sender.tab.id);}
+ })();pending.set(sender.tab.id,{promise:run,receiver:receiving,windowId:sender.tab.windowId,sourceUrl:snapshot.sourceUrl,offerId:snapshot.offerId,fingerprint});try{return await run;}finally{if(pending.get(sender.tab.id)?.promise===run)pending.delete(sender.tab.id);}
 }
 export async function flushPageSources(_message,sender,api=chrome,store=sourceInboxStore){
  const origin=appSender(sender),tab={id:sender.tab.id,windowId:sender.tab.windowId,url:sender.url},scope=await context(api,tab);
