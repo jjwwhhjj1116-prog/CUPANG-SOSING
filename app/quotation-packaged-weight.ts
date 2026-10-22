@@ -24,6 +24,18 @@ export function quotationPackagedWeightEditFields(fields: readonly QuotationFiel
   const peer = value === null ? null : quotationPackagedWeightPeer(fields, fieldId);
   return peer ? [fieldId, peer] : [fieldId];
 }
+
+/** Show the native form's single g input when its exact compatibility peer
+ * resolves to the same value. Competing saved values stay separately visible;
+ * this changes neither the schema nor either saved/validated field ID. */
+export function quotationPackagedWeightDisplayField(fields: readonly QuotationField[], fieldId: string, read: (id: string) => string): string {
+  if (fieldId !== 'packagedWeightG') return fieldId;
+  const peer = quotationPackagedWeightPeer(fields, fieldId);
+  return peer && read(fieldId) === read(peer) ? peer : fieldId;
+}
+export function quotationPackagedWeightVisibleFields(fields: readonly QuotationField[], read: (id: string) => string): QuotationField[] {
+  return fields.filter(field => quotationPackagedWeightDisplayField(fields, field.id, read) === field.id);
+}
 type WeightChange = { fieldKey: string; optionId: string | null; value: string | null };
 /** Complete single-input plans before saving/copying. Keep an explicitly staged
  * per-field reset, and refuse competing literals instead of choosing by order.

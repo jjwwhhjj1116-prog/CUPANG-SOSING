@@ -1,11 +1,12 @@
-export type PageSource={format:'yoofam-page-source-v1';sourceUrl:string;offerId:string;collectedAt:string;title:string;description:string;options:{key:string;name:string;supplierSku:string|null;unitPriceCny:number|null;currency:'CNY'|null;minimumOrder:number|null;stock:number|null;imageUrl:string|null;axisValues?:{label:string;value:string}[]}[];images:{url:string;role:'main'|'additional'|'detail'}[];attributes:{name:string;value:string}[]};
+export type PageSource={format:'yoofam-page-source-v1';sourceUrl:string;offerId:string;collectedAt:string;title:string;description:string;options:{key:string;name:string;supplierSku:string|null;unitPriceCny:number|null;currency:'CNY'|null;minimumOrder:number|null;stock:number|null;imageUrl:string|null;axisValues?:{label:string;value:string}[];packaging?:import('./page-dom-facts.mjs').PagePackaging}[];images:{url:string;role:'main'|'additional'|'detail'}[];attributes:{name:string;value:string}[]};
 export const PAGE_SOURCE_LIMIT:number;
 export function pageSourceUrl(value:string):{sourceUrl:string;offerId:string};
 export function readPageSourceElementImage(element:(Pick<HTMLImageElement,'getAttribute'> & {currentSrc?:string})|null,options?:{preferDataSource?:boolean}):string|null;
 export function pageJsonProperty(text:string,key:string):unknown;
 export type PageSourceDomOptions={format:'yoofam-page-dom-options-v1';sourceUrl:string;offerId:string;options:PageSource['options']};
 export function readPageSourceDomOptions(document:Pick<Document,'querySelectorAll'>,sourceUrl:string,scripts:string[]):PageSourceDomOptions|null;
-export function extractPageSource(input:{sourceUrl:string;scripts:string[];domOptions?:PageSourceDomOptions|null;title?:string;description?:string;gallery?:string[];detailImages?:string[];priceText?:string;minimumOrderText?:string},now?:number):PageSource;
+export function readPageSourceDomFacts(document:Pick<Document,'querySelectorAll'>,sourceUrl:string,scripts:string[]):import('./page-dom-facts.mjs').PageDomFacts|null;
+export function extractPageSource(input:{sourceUrl:string;scripts:string[];domOptions?:PageSourceDomOptions|null;domFacts?:import('./page-dom-facts.mjs').PageDomFacts|null;title?:string;description?:string;gallery?:string[];detailImages?:string[];priceText?:string;minimumOrderText?:string},now?:number):PageSource;
 export function validatePageSource(input:unknown,now?:number):PageSource;
 export function validatePageSourceForDelivery(input:unknown,now?:number):PageSource;
 export function pageSourceIssues(source:PageSource):string[];

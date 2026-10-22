@@ -1,0 +1,53 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {providedOptionModule as load} from './helpers/provided-option-quotation.mjs';
+import {aiFixture} from './helpers/quotation-ai.mjs';
+import {quotationAiUI,nodes} from './helpers/quotation-ai-ui.mjs';
+import {apiFixture,companies} from './helpers/supplier-hub-single-projection.mjs';
+import {quotationLabelFormUI} from './helpers/quotation-label-form-ui.mjs';
+const helper=load('app/quotation-packaging-draft.ts'),schema=load('app/quotation-schema.ts');
+const component='app/components/quotation-packaging-draft-panel.tsx',exportName='QuotationPackagingDraftPanel';
+function setup(){const f=aiFixture(),resolved=schema.resolveQuotationFields({categoryId:f.profile.categoryId,categoryPath:f.profile.categoryPath,product:f.product,content:f.content,settings:f.saved.settings,options:f.options,overrides:f.state.overrides,hubSchema:f.snapshot});
+ const view={revision:0,inputFingerprint:'a'.repeat(64),overrides:f.state.overrides,resolved,automatic:resolved,categoryContext:f.saved.categoryContext,productVersion:f.product.updated_at,contentRevision:f.content.revision,optionRevision:f.options.revision,updatedAt:null,imageKeys:[],submissionReady:false,optionPackQuantities:Object.fromEntries(f.options.rows.map(row=>[row.id,row.unitsPerPack]))};
+ const props={productId:f.product.id,view,optionId:f.options.rows[0].id,disabled:false,onApply:()=>true};
+ const reply=body=>helper.completeQuotationPackagingDraft(helper.buildQuotationPackagingDraftPlan(view,f.options,{title:'合成后跟贴',description:'',attributes:[]},{optionId:body.optionId,applyToAllOptions:body.applyToAllOptions}));
+ return{f,view,props,reply};}
+test('panel starts with no request and only stages clearly labelled reviewed estimates without autosave',async()=>{
+ const f=setup(),applied=[],busy=[];const ui=quotationAiUI({...f.props,onApply:changes=>{applied.push(changes);return true;},onBusyChange:value=>busy.push(value)},async(_url,init)=>Response.json(f.reply(JSON.parse(init.body))),component,exportName);
+ try{ui.flush();assert.equal(ui.calls.length,0);await ui.click('포장 규격 초안 작성');assert.equal(ui.calls.length,1);assert.equal(ui.calls[0].method,'POST');assert.ok(ui.calls[0].url.endsWith('/quotation-packaging-draft'));
+  assert.equal(ui.button('확인한 초안을 입력란에 적용').props.disabled,true);assert.match(JSON.stringify(ui.render()),/실측값이 아닙니다/);
+  ui.checkbox(1).props.onChange({target:{checked:true}});await ui.click('확인한 초안을 입력란에 적용');assert.equal(applied.length,1);assert.equal(applied[0].length,4);assert.equal(ui.calls.length,1);assert.deepEqual(busy,[true,false]);assert.equal(ui.button('확인한 초안을 입력란에 적용'),undefined);
+ }finally{ui.unmount();}
+});
+test('scope switching discards previous drafts and selected-only requests cannot copy estimates to other options',async()=>{
+ const f=setup(),applied=[];const ui=quotationAiUI({...f.props,onApply:changes=>{applied.push(changes);return true;}},async(_url,init)=>Response.json(f.reply(JSON.parse(init.body))),component,exportName);
+ try{await ui.click('포장 규격 초안 작성');ui.checkbox(0).props.onChange({target:{checked:false}});assert.equal(ui.button('확인한 초안을 입력란에 적용'),undefined);
+  await ui.click('포장 규격 초안 작성');assert.equal(ui.calls[1].body.applyToAllOptions,false);ui.checkbox(1).props.onChange({target:{checked:true}});await ui.click('확인한 초안을 입력란에 적용');assert.ok(applied[0].every(row=>row.optionId===f.props.optionId));
+ }finally{ui.unmount();}
+});
+test('source change during request aborts and ignores the old response without adding editor changes',async()=>{
+ const f=setup(),applied=[],busy=[];let resolve;const waiting=new Promise(done=>{resolve=done;});
+ const props={...f.props,onApply:changes=>{applied.push(changes);return true;},onBusyChange:value=>busy.push(value)},ui=quotationAiUI(props,()=>waiting,component,exportName);
+ try{ui.flush();ui.button('포장 규격 초안 작성').props.onClick();assert.equal(ui.calls.length,1);
+  ui.render({...props,view:{...f.view,revision:1}});resolve(Response.json(f.reply(ui.calls[0].body)));await ui.idle();assert.equal(applied.length,0);assert.equal(ui.button('확인한 초안을 입력란에 적용'),undefined);assert.deepEqual(busy,[true,false]);
+ }finally{ui.unmount();}
+});
+test('disabled/manual-edited state cannot generate or apply a cached proposal',async()=>{
+ const f=setup(),applied=[],props={...f.props,onApply:changes=>{applied.push(changes);return true;}},ui=quotationAiUI(props,async(_url,init)=>Response.json(f.reply(JSON.parse(init.body))),component,exportName);
+ try{await ui.click('포장 규격 초안 작성');ui.checkbox(1).props.onChange({target:{checked:true}});ui.render({...props,disabled:true});assert.equal(ui.button('포장 규격 초안 작성').props.disabled,true);assert.equal(ui.button('확인한 초안을 입력란에 적용').props.disabled,true);ui.button('확인한 초안을 입력란에 적용').props.onClick();assert.equal(applied.length,0);assert.equal(ui.calls.length,1);
+ }finally{ui.unmount();}
+});
+test('actual editor entry stages exact option changes and only explicit Save persists them with pack-basis guards',async()=>{
+ const f=await apiFixture(companies[0],aiFixture({company:companies[0]}).snapshot);let ui;
+ try{
+  const read=()=>f.h.route(f.base+'/quotation-fields'+f.query),view=await(await read()).json();
+  ui=quotationLabelFormUI({productId:f.id,load:f.h.load,request:(path,init={})=>f.h.route(path.startsWith(f.base+'/quotation-fields')&&!path.includes('?')?path+f.query:path,{method:init.method??'GET',body:init.body}),renderDocument:()=>assert.fail('packaging never renders images')});await ui.idle();ui.selectOption('synthetic-one');
+  const boundary=nodes(ui.render().tree).find(node=>node.type==='@/app/components/quotation-packaging-draft-panel');assert.ok(boundary,'real editor exposes the packaging draft entry '+JSON.stringify({alerts:ui.alerts(),types:nodes(ui.render().tree).map(node=>node.type).filter(value=>typeof value==='string'&&value.includes('packag'))}));
+  const selectedView=boundary.props.view,options=await f.h.load('db/product-options.ts').readProductOptions('owner',f.id),plan=f.h.load('app/quotation-packaging-draft.ts').buildQuotationPackagingDraftPlan(selectedView,options,{title:'合成后跟贴',description:'',attributes:[]},{optionId:null,applyToAllOptions:true}),draft=f.h.load('app/quotation-packaging-draft.ts').completeQuotationPackagingDraft(plan);
+  const changes=f.h.load('app/quotation-packaging-draft.ts').quotationPackagingDraftChanges(selectedView,draft,f.id,{optionId:null,applyToAllOptions:true}),before=f.state();
+  assert.equal(boundary.props.onApply(changes),true);assert.equal(f.state(),before,'apply writes to the unsaved editor only');assert.equal(ui.button('견적 입력 저장').props.disabled,false);
+  await ui.click('견적 입력 저장');assert.equal(ui.savedNotifications,1);const saved=await(await read()).json();
+  for(const change of changes)assert.equal(saved.resolved.rows.find(row=>row.optionId===change.optionId).fields[change.fieldKey].value,change.value);
+  assert.ok(saved.packagingBasis);assert.equal((await f.h.load('db/product-options.ts').readProductOptions('owner',f.id)).rows[0].packagedWeightG,null,'draft adoption never rewrites supplier physical facts');
+  assert.equal(view.optionPackQuantities['synthetic-one'],1);
+ }finally{ui?.close();f.close();}
+});

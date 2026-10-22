@@ -1,6 +1,7 @@
 import { optionInputs, type ProductOptions, type OptionInput } from '@/app/product-options';
 import type { TranslationJob } from '@/app/automation/translation';
 import { translationAttributeIssue } from '@/app/translation-attribute-evidence';
+import {assertWorkersRecoveryJobQuality} from '@/app/product-translation-quality';
 
 /** Confirm the committed snapshot, not just an HTTP success status. */
 export function confirmOptionTranslationSave(input: unknown, current: ProductOptions, productVersion: string, requested: readonly OptionInput[]): void {
@@ -65,6 +66,7 @@ export function optionTranslationAttributes(options:ProductOptions, allowEmpty =
 }
 /** Match immutable reviewed source indexes to IDs and exact originals; preserve every other option field. */
 export function adoptOptionTranslations(options:ProductOptions,job:TranslationJob,productVersion:string, allowEmpty = false,recoveryJobs:readonly TranslationJob[]=[]){
+ assertWorkersRecoveryJobQuality(job);
  if(job.productId!==options.productId||job.productVersion!==productVersion||job.status!=='completed'||!job.result)throw new Error('상품이 변경됐거나 완료된 번역 결과가 아닙니다. 새 요청을 검토해주세요.');
  const rows=optionInputs(options);let changed=0;const seen=new Set<string>();
  const copied=copiedOptionAttributes(options,job.review.instructionsVersion==='sourceflow-translation-v6'?recoveryJobs:[]);

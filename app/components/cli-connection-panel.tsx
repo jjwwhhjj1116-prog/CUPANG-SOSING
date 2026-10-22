@@ -41,7 +41,7 @@ export function CliConnectionPanel({initialScope,displayName}:{initialScope:CliS
   return()=>{mounted.current=false;window.removeEventListener('hashchange',receive);window.removeEventListener('pagehide',leave);bridge.current?.stop();};
  },[]);
  const busy=state.phase==='connecting'||state.phase==='connected';
- const browserBlocked=browserEnvironment?.loopbackPermission==='denied'||browserEnvironment?.secureContext===false;
+ const browserBlocked=browserEnvironment?.loopbackPermission==='denied'||browserEnvironment?.loopbackPolicy==='blocked'||browserEnvironment?.secureContext===false;
  async function connect(){
   if(!link||busy||replacing.current||browserBlocked)return;const epoch=generation.current;let clientStarted=false;
   setState({phase:'connecting',message:'현재 로그인 회사와 로컬 CLI를 확인하고 있습니다.'});

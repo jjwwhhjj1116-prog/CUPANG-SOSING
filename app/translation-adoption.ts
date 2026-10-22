@@ -1,11 +1,13 @@
 import { validateContentInput, type ProductContent } from '@/app/product-content';
 import type { TranslationJob } from '@/app/automation/translation';
+import {assertWorkersRecoveryJobQuality} from '@/app/product-translation-quality';
 
 export const translationSeoFields = ['title', 'keywords', 'description'] as const;
 export type TranslationSeoField = typeof translationSeoFields[number];
 
 /** Option-only drafts cannot supply replacement SEO or label content. */
 export function assertContentTranslationScope(job: TranslationJob): void {
+  assertWorkersRecoveryJobQuality(job);
   if (job.review && (Object.hasOwn(job.review, 'optionsRetry') || Object.hasOwn(job.review, 'intakeOptions')))
     throw Error('옵션 전용 번역은 상품명·설명·표시사항에 적용할 수 없습니다.');
 }

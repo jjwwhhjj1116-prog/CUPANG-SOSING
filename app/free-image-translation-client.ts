@@ -198,7 +198,8 @@ export async function recognizeFreeImage(image: FreeImageLoaded, sourceLanguage:
   }
 }
 
-export type FreeImageTranslationReply = { source: FreeImageSource; regions: ImageTextTranslation[]; requests: number; stoppedHttpStatus: number | null; warnings: string[] };
+export type FreeImageWorkersRecovery={provider:'workers-ai';status:'completed'|'partial'|'failed'|'limited'|'timeout'|'invalid-response'|'input-limit';requests:0|1;sourceRegions:number;translatedRegions:number};
+export type FreeImageTranslationReply = { source: FreeImageSource; regions: ImageTextTranslation[]; requests: number; stoppedHttpStatus: number | null; warnings: string[];workersRecovery?:FreeImageWorkersRecovery };
 export function readFreeImageTranslationReply(input: unknown, source: FreeImageSource, requested: readonly ImageTextRegion[]): FreeImageTranslationReply {
   const fail = () => { throw Error('번역 응답의 원본·문구 연결이 요청과 다릅니다. 기존 편집값은 유지합니다.'); };
   if (!input || typeof input !== 'object') return fail();
@@ -213,6 +214,21 @@ export function readFreeImageTranslationReply(input: unknown, source: FreeImageS
       || !(row.translated === null || typeof row.translated === 'string' && !!row.translated.trim() && row.translated.length <= 5000 && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(row.translated))
       || !(row.issue === null || typeof row.issue === 'string' && row.issue.length <= 2000)) return fail();
     found.set(row.id, row);
+  }
+  if(Object.hasOwn(body,'workersRecovery')){
+    const recovery=body.workersRecovery;
+    if(!recovery||typeof recovery!=='object'||Object.keys(recovery).sort().join(',')!=='provider,requests,sourceRegions,status,translatedRegions'
+      ||recovery.provider!=='workers-ai'||body.stoppedHttpStatus!==429||body.requests<1
+      ||!['completed','partial','failed','limited','timeout','invalid-response','input-limit'].includes(recovery.status)
+      ||!Number.isSafeInteger(recovery.sourceRegions)||recovery.sourceRegions<1||recovery.sourceRegions>requested.length
+      ||!Number.isSafeInteger(recovery.translatedRegions)||recovery.translatedRegions<0||recovery.translatedRegions>recovery.sourceRegions
+      ||recovery.requests!==0&&recovery.requests!==1
+      ||recovery.status!=='input-limit'&&recovery.sourceRegions>30
+      ||(['limited','input-limit'].includes(recovery.status)?recovery.requests!==0||recovery.translatedRegions!==0:recovery.requests!==1)
+      ||recovery.status==='completed'&&recovery.translatedRegions!==recovery.sourceRegions
+      ||recovery.status==='partial'&&(recovery.translatedRegions===0||recovery.translatedRegions>=recovery.sourceRegions)
+      ||['failed','timeout','invalid-response'].includes(recovery.status)&&recovery.translatedRegions!==0
+      ||recovery.translatedRegions>body.regions.filter(row=>row.translated!==null&&row.issue===null).length)return fail();
   }
   return { ...body, regions: requested.map(row => found.get(row.id)!) };
 }

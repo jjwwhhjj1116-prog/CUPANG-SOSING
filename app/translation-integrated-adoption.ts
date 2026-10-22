@@ -4,8 +4,10 @@ import { applyOptionRows, optionFieldNames, type ProductOptions } from '@/app/pr
 import type { ProductContent } from '@/app/product-content';
 import { translationAttributeCoverage,type TranslationJob } from '@/app/automation/translation';
 import { translationAttributeIssue } from '@/app/translation-attribute-evidence';
+import {assertWorkersRecoveryJobQuality} from '@/app/product-translation-quality';
 
 export function integratedTranslationPlan(content: ProductContent, options: ProductOptions, job: TranslationJob, version: string, scope: 'all' | 'options' = 'all', hiddenAttributes?: boolean, intakeBrand?: string, preserveCategoryAttributes = false, optionRecoveryJobs:readonly TranslationJob[] = []) {
+  assertWorkersRecoveryJobQuality(job);
   if (options.productId !== content.productId || job.contentRevision !== content.revision) throw Error('상품 또는 번역 원문의 콘텐츠 버전이 변경되었습니다. 최신 자료를 확인해주세요.');
   let rejected=0,invalidOptions=0;
   if(job.review.instructionsVersion==='sourceflow-translation-v6'&&job.result){

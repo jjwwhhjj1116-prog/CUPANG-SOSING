@@ -10,8 +10,15 @@ import { FreeImageCropCanvas } from '@/app/components/free-image-crop-canvas';
 import { validateFreeImageCropRect, type FreeImageCropRect } from '@/app/free-image-crop';
 import {
   applyFreeImageTranslation, FreeImageApplyError, readFreeImageSource, recognizeFreeImage, recoverFreeImageTranslation, renderFreeImageTranslation, sameFreeImageQuotationRequest, translateFreeImageRegions,
-  type FreeImageApplyReply, type FreeImageLoaded, type FreeImageQuotationRequest, type FreeImageRegion, type FreeImageRendered,
+  type FreeImageApplyReply, type FreeImageLoaded, type FreeImageQuotationRequest, type FreeImageRegion, type FreeImageRendered,type FreeImageTranslationReply,
 } from '@/app/free-image-translation-client';
+function translationServiceNotice(reply:FreeImageTranslationReply){
+  const recovery=reply.workersRecovery;if(!recovery)return '';
+  if(recovery.status==='completed')return `선택 문구 중 ${recovery.translatedRegions}개는 무료 서버 AI로 번역했습니다. 원문과 한국어를 비교해주세요.`;
+  if(recovery.status==='partial')return `무료 서버 AI로 ${recovery.translatedRegions}개를 번역했으며 나머지는 원문을 유지했습니다. 자동으로 다시 요청하지 않습니다.`;
+  if(recovery.status==='limited'||recovery.status==='input-limit')return '무료 서버 AI의 이번 처리 한도로 번역하지 못한 문구는 원문을 유지했습니다. 자동으로 다시 요청하지 않습니다.';
+  return '무료 서버 AI로 번역을 완료하지 못한 문구는 원문을 유지했습니다. 자동으로 다시 요청하지 않습니다.';
+}
 import { applyDetailWorkspaceImage, readDetailWorkspaceImage, recoverDetailWorkspaceImage, sameFreeImageWorkspaceRequest, translateDetailWorkspaceImage,
   type DetailWorkspaceEditorContext, type DetailWorkspaceImageReply, type FreeImageWorkspaceRequest } from '@/app/detail-workspace-image-client';
 import type { DetailWorkspaceView } from '@/app/detail-workspace';
@@ -425,12 +432,12 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       });
       recordRegions(next);
       const complete = requested.every(row => { const translated = returned.get(row.id); return translated?.original === row.text && typeof translated.translated === 'string' && !!translated.translated.trim() && !translated.issue; });
-      if (!complete) { setError('일부 문구를 번역하지 못했습니다. 인식된 원문은 유지했습니다. 실패한 문구를 수정하거나 선택 해제한 뒤 미리보기를 만들어주세요.'); setNotice(result.warnings.join(' ')); return; }
-      if (image.source.optionImages?.commonAssigned === false && !selectedOptions.length) { setNotice('번역 문구를 준비했습니다. 적용할 개별 옵션을 선택한 뒤 미리보기를 만들어주세요.'); return; }
+      if (!complete) { setError('일부 문구를 번역하지 못했습니다. 인식된 원문은 유지했습니다. 실패한 문구를 수정하거나 선택 해제한 뒤 미리보기를 만들어주세요.'); setNotice([translationServiceNotice(result),...result.warnings].filter(Boolean).join(' ')); return; }
+      if (image.source.optionImages?.commonAssigned === false && !selectedOptions.length) { setNotice(['번역 문구를 준비했습니다. 적용할 개별 옵션을 선택한 뒤 미리보기를 만들어주세요.',translationServiceNotice(result),...result.warnings].filter(Boolean).join(' ')); return; }
       setNotice('한국어 이미지 미리보기를 만들고 있습니다.');
       const output = await renderFreeImageTranslation(image, next, work.controller.signal, selectedOptions, undefined, language);
       if (!current(work)) return;
-      setRendered(output); setNotice(['한국어 이미지 초안을 준비했습니다. 원본과 번역 문구·영역을 확인하고 수정한 뒤 적용해주세요.', ...result.warnings].join(' '));
+      setRendered(output); setNotice(['한국어 이미지 초안을 준비했습니다. 원본과 번역 문구·영역을 확인하고 수정한 뒤 적용해주세요.',translationServiceNotice(result), ...result.warnings].filter(Boolean).join(' '));
     } catch (cause) { if (current(work)) setError(cause instanceof Error ? cause.message : '이미지 번역 초안을 만들지 못했습니다. 원문과 이전 저장 이미지는 유지됩니다.'); }
     finally { finish(work); }
   }
@@ -484,7 +491,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
           ? { ...row, translated: translated.translated ?? row.translated, issue: translated.issue, translationProvenance: translated.translated === null ? row.translationProvenance : 'generated' } : row;
       });
       recordRegions(next);
-      setNotice([`${result.regions.filter(row => row.translated !== null).length}개 번역을 받았습니다. 한국어와 적용 영역을 검토해주세요.`, ...result.warnings].join(' '));
+      setNotice([`${result.regions.filter(row => row.translated !== null).length}개 번역을 받았습니다. 한국어와 적용 영역을 검토해주세요.`,translationServiceNotice(result), ...result.warnings].filter(Boolean).join(' '));
     } catch (cause) { if (current(work)) setError(cause instanceof Error ? cause.message : '문구 번역을 완료하지 못했습니다.'); }
     finally { finish(work); }
   }
@@ -569,6 +576,8 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     data-workspace-dirty={dirty ? 'true' : undefined} data-workspace-saving={busy || brushDrawing || cropDrawing ? 'true' : undefined}>
     <h4>{workspaceTarget ? '상세 작업 사진 편집' : translationTarget?.intent === 'manual' ? '이미지 편집' : '이미지 문구 번역'}</h4>
     <p>원본의 문구를 읽고 한국어로 수정합니다. 문구·영역·브러시 편집을 마친 뒤 원하는 부분을 잘라낼 수 있습니다. 상품 사진과 문구가 겹치는 영역은 미리보기에서 확인한 다음 적용해주세요.</p>
+    <p>Google 요청 제한 시, 설정된 무료 서버 AI가 선택 문구만 한 번 번역합니다. 이미지 파일은 번역 서비스에 보내지 않습니다.</p>
+    <details><summary>문구 번역 방식</summary><p>문구 인식은 이 브라우저에서 처리하고 기본 번역은 Google을 사용합니다. Google의 HTTP 429 응답이 확인된 경우에만, 번역하지 못한 선택 문구를 Cloudflare Workers AI에 한 묶음으로 한 번 보냅니다. 직접 작성한 한국어와 공란은 유지하며, 실패 후 자동으로 재요청하거나 편집 결과를 저장하지 않습니다.</p></details>
     {error && <p className="form-error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     <div className="form-row">
       <label>이미지 역할<select aria-label="번역할 이미지 역할" value={role} disabled={locked || !!quotationTarget || !!workspaceTarget} onChange={event => { if (!liveQuotationTarget.current && !workspaceTarget) selectSource(sourceKey, event.target.value as FreeImageRole); }}>

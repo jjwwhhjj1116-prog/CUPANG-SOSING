@@ -23,6 +23,7 @@ import { validateFreeImageCrop, type FreeImageCrop } from '@/app/free-image-crop
 import { validateFreeImageEditDocument, MAX_FREE_IMAGE_EDIT_BYTES, type FreeImageEditDocument } from '@/app/free-image-edit-document';
 import { FreeImageEditRecordError, freeImageEditDigest, freeImageEditDocumentBytes, prepareFreeImageEditRecord, readFreeImageEditRecord, storeFreeImageEditRecord } from '@/app/free-image-edit-record';
 import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
+import {imageTextRecoveryConfigured,imageTextRecoveryWithinLimit,recoverImageTextRegions,unavailableImageTextRecovery,ImageTextRecoveryError,type ImageTextRecoveryEnvironment} from '@/app/automation/workers-image-text-recovery';
 
 type Context = { params: Promise<{ id: string }> };
 class ImageTextError extends Error {
@@ -283,8 +284,19 @@ export async function POST(request: Request, context: Context) {
       try { source = validateFreeImageSource(input.source); regions = validateImageTextRegions(input.regions); }
       catch (error) { throw new ImageTextError(400, error instanceof Error ? error.message : '이미지 문구를 확인해주세요.'); }
       await freshSource(owner, id, source);
-      const translated = await translateImageRegions(regions, input.sourceLanguage as 'zh' | 'en', undefined, request.signal);
+      const settings=env as ImageTextRecoveryEnvironment,company=imageTextRecoveryConfigured(settings)?await editorCompany(owner):null;
+      const assertCurrent=async()=>{request.signal.throwIfAborted();if(await getWorkspaceOwnerId()!==owner||JSON.stringify(await editorCompany(owner))!==JSON.stringify(company))throw changed();await freshSource(owner,id,source);request.signal.throwIfAborted();if(await getWorkspaceOwnerId()!==owner||JSON.stringify(await editorCompany(owner))!==JSON.stringify(company))throw changed();};
+      const translated = await translateImageRegions(regions, input.sourceLanguage as 'zh' | 'en', undefined, request.signal, company?async(rows,language,signal)=>{
+        await assertCurrent();
+        if(!imageTextRecoveryWithinLimit(rows))return unavailableImageTextRecovery(rows,'input-limit',0,'무료 AI 번역은 한 번에 30개 영역·5000자 이하입니다. 영역을 나누어 선택해주세요.');
+        const {reserveQuotationAiRequest}=await import('@/db/quotation-ai-jobs');
+        if(!await reserveQuotationAiRequest())return unavailableImageTextRecovery(rows,'limited',0,'오늘의 무료 AI 공유 요청 한도에 도달했습니다. 원문과 받은 결과를 유지했습니다.');
+        await assertCurrent();
+        try{const result=await recoverImageTextRegions(rows,language,settings,signal);await assertCurrent();return result;}
+        catch(error){await assertCurrent();if(error instanceof ImageTextRecoveryError)return unavailableImageTextRecovery(rows,error.status,1,error.message);throw error;}
+      }:undefined);
       await freshSource(owner, id, source);
+      if(company)await assertCurrent();
       return response({ source, ...translated });
     }
     if (!/^multipart\/form-data(?:\s*;|$)/i.test(type)) throw new ImageTextError(400, '이미지 저장은 PNG 파일을 multipart 형식으로 요청해주세요.');

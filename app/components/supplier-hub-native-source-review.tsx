@@ -21,18 +21,21 @@ function NativeSourceScope(props:Props){
  const [plan,setPlan]=useState<NativeAssetSourcePlan|null>(null),planRef=useRef<NativeAssetSourcePlan|null>(null);
  const [review,setReview]=useState<SupplierHubProductDocumentReview|null>(null),reviewRef=useRef<SupplierHubProductDocumentReview|null>(null);
  const [busy,setBusy]=useState(false),[locked,setLocked]=useState(false),lockRef=useRef(false),closeLockRef=useRef(false),[error,setError]=useState('');
- const current=useRef({props,mounted:true}),pending=useRef<AbortController|null>(null);
+ const current=useRef({props,mounted:true}),pending=useRef<AbortController|null>(null),pendingSourceLock=useRef(false);
  useLayoutEffect(()=>{current.current={props,mounted:true};});
  const lockCallback=useRef(onLockChange);useLayoutEffect(()=>{lockCallback.current=onLockChange;},[onLockChange]);
- const reportLock=useCallback(()=>{if(current.current.mounted)lockCallback.current?.(Boolean(pending.current)||lockRef.current,Boolean(pending.current)||closeLockRef.current);},[]);
+ const reportLock=useCallback(()=>{if(current.current.mounted)lockCallback.current?.(pendingSourceLock.current||lockRef.current,pendingSourceLock.current||closeLockRef.current);},[]);
  useLayoutEffect(()=>{reportLock();},[busy,locked,onLockChange,reportLock]);
  useLayoutEffect(()=>()=>{current.current.mounted=false;pending.current?.abort();pending.current=null;lockCallback.current?.(false,false);},[]);
  const transportLock=useCallback((value:boolean,closeValue=value)=>{if(!current.current.mounted||reviewRef.current!==review)return;lockRef.current=value;closeLockRef.current=closeValue;setLocked(value);reportLock();},[reportLock,review]);
  const allowed=()=>current.current.mounted&&!current.current.props.disabled&&!pending.current&&!lockRef.current;
- function begin(){const controller=new AbortController();pending.current=controller;setBusy(true);setError('');reportLock();return{controller,active:()=>current.current.mounted&&!current.current.props.disabled&&pending.current===controller&&!controller.signal.aborted,
-  finish:()=>{if(pending.current===controller){pending.current=null;if(current.current.mounted){setBusy(false);reportLock();}}}};}
+ function begin(sourceLock=true){const controller=new AbortController();pending.current=controller;pendingSourceLock.current=sourceLock;setBusy(true);setError('');reportLock();return{controller,active:()=>current.current.mounted&&!current.current.props.disabled&&pending.current===controller&&!controller.signal.aborted,
+  finish:()=>{if(pending.current===controller){pending.current=null;pendingSourceLock.current=false;if(current.current.mounted){setBusy(false);reportLock();}}}};}
  async function load(){
-  if(!allowed())return;const task=begin();reviewRef.current=null;setReview(null);
+  // A background GET may hash many saved files. It owns this panel's pending
+  // slot, but never freezes editing or closing the surrounding quotation.
+  // Changed view/disabled keys unmount this scope and abort/discard the read.
+  if(!allowed())return;const task=begin(false);reviewRef.current=null;setReview(null);
   try{const value=await readCurrentNativeAssetSource({productId,profileId,quotationView:current.current.props.view,signal:task.controller.signal,fetcher:fetch});if(task.active()){planRef.current=value;setPlan(value);}}
   catch(cause){if(task.active()){planRef.current=null;setPlan(null);setError(cause instanceof Error?cause.message:'현재 견적서 파일을 확인하지 못했습니다.');}}
   finally{task.finish();}

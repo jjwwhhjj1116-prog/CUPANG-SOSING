@@ -22,6 +22,7 @@ import { intakeOptionsReviewProof } from '@/app/intake-options-translation';
 import {seoRetryReviewProof} from '@/app/seo-translation-retry';
 import {workersRecoveryReviewProof,google429RecoveryCandidate} from '@/app/workers-translation-recovery';
 import {readWorkersRecoverySource} from '@/db/translation-jobs';
+import {assertWorkersRecoveryJobQuality} from '@/app/product-translation-quality';
 import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
 import {GOOGLE_TEXT_MODEL,WORKERS_TEXT_MODEL} from '@/app/automation/translation';
 import {intakeSupplierSourceMatches} from '@/app/intake-supplier-source';
@@ -55,6 +56,7 @@ export async function POST(request: Request, context: Context) {
     if (product.updated_at !== body.expectedVersion) return json({ error: '상품이 변경되었습니다. 최신 상품에서 다시 검토해주세요.' }, 409);
     const [content, options, job] = await Promise.all([readProductContent(owner, id), readProductOptions(owner, id), getTranslationJob(owner, id, body.jobId as string)]);
     if (!job) return json({ error: '번역 결과를 찾을 수 없습니다.' }, 404);
+    try{assertWorkersRecoveryJobQuality(job);}catch(error){return json({error:error instanceof Error?error.message:'별도 초안 품질을 확인하지 못했습니다.'},409);}
     const scope = body.scope === 'options' ? 'options' : 'all';
     try {
       const intakeProof = intakeOptionsReviewProof(job.review);

@@ -246,6 +246,28 @@ test('manual card preparation preserves an existing draft and a failed initial G
  }finally{h.close();}
 });
 
+test('image text translation discloses the conditional text-only recovery before any translation request',async()=>{
+  const h=fixture();try{const visible=text(h.render());assert.match(visible,/Google 요청 제한 시.*선택 문구만 한 번 번역/);assert.match(visible,/이미지 파일은 번역 서비스에 보내지 않습니다/);const details=nodes(h.render()).find(node=>node.type==='details'&&text(node).includes('문구 번역 방식'));assert.ok(details&&!details.props.open);assert.match(text(details),/Cloudflare Workers AI/);assert.equal(h.calls.filter(call=>call.action==='translate').length,0);}finally{h.close();}
+});
+
+test('mixed Google and Workers image wording stays beside its original and never replaces manual blanks or auto-saves',async()=>{
+  const h=fixture();try{
+    h.setOcr(async()=>[region('r1'),region('r2'),region('r3')]);await h.click('원본 문구 읽기');await h.change('문구 3 한국어','');
+    h.setTranslate(async(source,rows)=>({source,regions:rows.map(row=>({id:row.id,original:row.text,translated:row.id==='r1'?'Google 한국어 유지':'서버 한국어 초안',issue:null})),requests:1,stoppedHttpStatus:429,warnings:[],workersRecovery:{provider:'workers-ai',status:'completed',requests:1,sourceRegions:1,translatedRegions:1}}));
+    await h.click('선택 문구 한국어 번역');assert.equal(h.field('문구 1 원문').props.value,'中文 r1');assert.equal(h.field('문구 2 원문').props.value,'中文 r2');assert.equal(h.field('문구 1 한국어').props.value,'Google 한국어 유지');assert.equal(h.field('문구 2 한국어').props.value,'서버 한국어 초안');assert.equal(h.field('문구 3 한국어').props.value,'');
+    assert.deepEqual(plain(h.calls.find(call=>call.action==='translate').rows),[{id:'r1',text:'中文 r1'},{id:'r2',text:'中文 r2'}]);assert.match(text(h.render()),/1개는 무료 서버 AI로 번역했습니다/);
+    assert.equal(h.calls.filter(call=>['preview','apply'].includes(call.action)).length,0);assert.equal(h.saved,0);
+  }finally{h.close();}
+});
+
+test('failed one-batch Workers recovery retains previous Korean and manual edits without automatic retry',async()=>{
+  const h=fixture();try{
+    await h.click('원본 문구 읽기');await h.click('선택 문구 한국어 번역');await h.change('문구 2 한국어','');
+    h.setTranslate(async(source,rows)=>({source,regions:rows.map(row=>({id:row.id,original:row.text,translated:null,issue:'번역 요청 제한'})),requests:1,stoppedHttpStatus:429,warnings:[],workersRecovery:{provider:'workers-ai',status:'limited',requests:0,sourceRegions:rows.length,translatedRegions:0}}));
+    await h.click('선택 문구 한국어 번역');await h.settle();assert.equal(h.field('문구 1 한국어').props.value,'한국어 r1');assert.equal(h.field('문구 2 한국어').props.value,'');assert.equal(h.calls.filter(call=>call.action==='translate').length,2);assert.match(text(h.render()),/처리 한도.*원문을 유지.*자동으로 다시 요청하지/);assert.equal(h.saved,0);
+  }finally{h.close();}
+});
+
 test('explicit OCR and selected translation retain manual Korean/blanks and invalidate previews on further edits', async () => {
   const h = fixture(); try {
     await h.click('원본 문구 읽기'); assert.deepEqual(h.calls.map(call => call.action), ['source', 'ocr']);

@@ -1,6 +1,6 @@
 export type CliLoopbackPermission='granted'|'prompt'|'denied'|'unsupported'|'unavailable'|'timeout';
-export type CliBrowserEnvironmentReport={secureContext:boolean;visibility:'visible'|'hidden'|'unknown';loopbackPermission:CliLoopbackPermission};
-type ReadOnlyEnvironment={secureContext?:unknown;visibility?:unknown;permissions?:unknown};
+export type CliBrowserEnvironmentReport={secureContext:boolean;visibility:'visible'|'hidden'|'unknown';loopbackPermission:CliLoopbackPermission;loopbackPolicy?:'allowed'|'blocked'|'unsupported'|'unavailable';documentContext?:'top-level'|'embedded'|'unknown'};
+type ReadOnlyEnvironment={secureContext?:unknown;visibility?:unknown;permissions?:unknown;featurePolicy?:unknown;documentContext?:unknown};
 type PermissionReader={query(descriptor:{name:'loopback-network'}):unknown};
 
 function browserEnvironment():ReadOnlyEnvironment{
@@ -8,7 +8,23 @@ function browserEnvironment():ReadOnlyEnvironment{
  try{value.secureContext=globalThis.isSecureContext;}catch{}
  try{value.visibility=typeof document==='undefined'?undefined:document.visibilityState;}catch{}
  try{value.permissions=typeof navigator==='undefined'?undefined:navigator.permissions;}catch{}
+ try{value.featurePolicy=typeof document==='undefined'?undefined:(document as Document&{featurePolicy?:unknown}).featurePolicy;}catch{}
+ try{value.documentContext=typeof window==='undefined'?'unknown':window.top===window?'top-level':'embedded';}catch{value.documentContext='unknown';}
  return value;
+}
+
+/** An effective document policy can deny a permission without a user having
+ * blocked it in Site settings. An unrecognised feature is not an explicit
+ * policy denial. Only inspect the exact loopback feature, never a legacy alias. */
+function readLoopbackPolicy(environment:ReadOnlyEnvironment):NonNullable<CliBrowserEnvironmentReport['loopbackPolicy']>{
+ try{
+  const policy=environment.featurePolicy;
+  if(!policy||typeof policy!=='object'||!('features' in policy)||typeof policy.features!=='function'||!('allowsFeature' in policy)||typeof policy.allowsFeature!=='function')return'unsupported';
+  const features=policy.features();
+  if(!Array.isArray(features)||!features.includes('loopback-network'))return'unsupported';
+  const allowed=policy.allowsFeature('loopback-network');
+  return allowed===true?'allowed':allowed===false?'blocked':'unavailable';
+ }catch{return'unavailable';}
 }
 function rejectionState(error:unknown):'unsupported'|'unavailable'{
  // Never inspect or return exception messages; they may contain runtime URLs.
@@ -23,8 +39,11 @@ export async function readCliBrowserEnvironment(options:{environment?:ReadOnlyEn
  let secureContext=false,visibility:CliBrowserEnvironmentReport['visibility']='unknown',permissions:unknown;
  try{secureContext=environment.secureContext===true;}catch{}
  try{visibility=environment.visibility==='visible'?'visible':environment.visibility==='hidden'?'hidden':'unknown';}catch{}
- try{permissions=environment.permissions;}catch{return{secureContext,visibility,loopbackPermission:'unavailable'};}
- const result=(loopbackPermission:CliLoopbackPermission):CliBrowserEnvironmentReport=>({secureContext,visibility,loopbackPermission});
+ let documentContext:CliBrowserEnvironmentReport['documentContext']='unknown';
+ try{documentContext=environment.documentContext==='top-level'?'top-level':environment.documentContext==='embedded'?'embedded':'unknown';}catch{}
+ const loopbackPolicy=readLoopbackPolicy(environment);
+ const result=(loopbackPermission:CliLoopbackPermission):CliBrowserEnvironmentReport=>({secureContext,visibility,loopbackPermission,loopbackPolicy,documentContext});
+ try{permissions=environment.permissions;}catch{return result('unavailable');}
  let reader:PermissionReader;
  try{if(!permissions||typeof permissions!=='object'||!('query' in permissions)||typeof permissions.query!=='function')return result('unsupported');reader=permissions as PermissionReader;}catch{return result('unavailable');}
  if(!secureContext)return result('unavailable');

@@ -1,5 +1,6 @@
 // Independent, inert interpretation of the current product document. No vendor
 // code, requests, cookies, globals, eval or executable script injection.
+import {readPageDomFacts,validatePageDomFacts,mergePageDomFacts,validatePagePackaging} from './page-dom-facts.mjs';
 export const PAGE_SOURCE_LIMIT=512*1024;
 const object=value=>!!value&&typeof value==='object'&&!Array.isArray(value);
 const plain=(value,max)=>typeof value==='string'?value.replace(/[\u0000-\u001f]/g,' ').trim().slice(0,max):'';
@@ -244,6 +245,28 @@ function domSourceIdentity(scripts,offerId){
  }
  if(!bound)throw domOptionsError();
 }
+function domFactsIdentity(scripts,offerId){
+ if(scripts.some(text=>pageJsonProperties(text,'globalData').length)){domSourceIdentity(scripts,offerId);return;}
+ let bound=false;
+ for(const text of scripts)for(const entry of pageJsonProperties(text,'skuModel')){
+  if(!object(entry.value))throw domOptionsError();
+  const node={value:entry.value,literal:text.slice(entry.start,entry.end)};
+  for(const key of ['offerId','productId']){
+   const field=literalChild(node,key);if(!field)continue;
+   if(!['string','number'].includes(typeof field.value)||String(field.value)!==offerId)throw domOptionsError();bound=true;
+  }
+ }
+ if(!bound)throw domOptionsError();
+}
+/** DOM facts are separate from script propsList, but need the same current
+ * offer binding before they can contribute supplier attributes or packaging. */
+export function readPageSourceDomFacts(document,sourceUrl,scripts){
+ const identity=pageSourceUrl(sourceUrl);
+ if(!Array.isArray(scripts)||scripts.length>100||scripts.some(value=>typeof value!=='string')||scripts.reduce((sum,value)=>sum+value.length,0)>4*1024*1024)throw domOptionsError();
+ const observed=readPageDomFacts(document);if(!observed)return null;
+ domFactsIdentity(scripts,identity.offerId);
+ return validatePageDomFacts({format:'yoofam-page-dom-facts-v1',...identity,...observed});
+}
 /** RS 1.0.88's retained leaf-label/sibling tiles and inventory-row selectors,
  * restricted to one current-offer SKU root. Singletons can qualify one varying
  * axis; multiple varying axes require every explicit full-combination row.
@@ -396,7 +419,13 @@ export function extractPageSource(input,now=Date.now()){
    options.push({...row});if(row.imageUrl)addImage(row.imageUrl,'additional');
   }
  }
- return validatePageSourceForDelivery({format:'yoofam-page-source-v1',...identity,collectedAt:new Date(now).toISOString(),title,description:plain(input.description,20000),options,images,attributes:sourceAttributes(scripts,identity.offerId)},now);
+ let observed={attributes:sourceAttributes(scripts,identity.offerId),options};
+ if(input.domFacts!=null){
+  const facts=validatePageDomFacts(input.domFacts);
+  if(facts.sourceUrl!==identity.sourceUrl||facts.offerId!==identity.offerId)throw domOptionsError();
+  domFactsIdentity(scripts,identity.offerId);observed=mergePageDomFacts(observed.attributes,options,facts);
+ }
+ return validatePageSourceForDelivery({format:'yoofam-page-source-v1',...identity,collectedAt:new Date(now).toISOString(),title,description:plain(input.description,20000),options:observed.options,images,attributes:observed.attributes},now);
 }
 export function validatePageSource(input,now=Date.now()){
  const keys=['format','sourceUrl','offerId','collectedAt','title','description','options','images','attributes'];
@@ -406,7 +435,7 @@ export function validatePageSource(input,now=Date.now()){
  if(!Array.isArray(input.options)||input.options.length>200||!Array.isArray(input.images)||!input.images.length||input.images.length>200||!Array.isArray(input.attributes)||input.attributes.length>50)throw Error('현재 상품의 옵션·이미지를 확인해주세요.');
  const seen=new Set();
  for(const row of input.options){
-  if(!object(row)||Object.keys(row).some(key=>!['key','name','supplierSku','unitPriceCny','currency','minimumOrder','stock','imageUrl','axisValues'].includes(key))||!plain(row.key,200)||row.key!==plain(row.key,200)||seen.has(row.key)||!plain(row.name,500)||row.name!==plain(row.name,500)
+  if(!object(row)||Object.keys(row).some(key=>!['key','name','supplierSku','unitPriceCny','currency','minimumOrder','stock','imageUrl','axisValues','packaging'].includes(key))||!plain(row.key,200)||row.key!==plain(row.key,200)||seen.has(row.key)||!plain(row.name,500)||row.name!==plain(row.name,500)
    ||row.supplierSku!==null&&(!plain(row.supplierSku,200)||row.supplierSku!==plain(row.supplierSku,200))||row.unitPriceCny!==null&&price(row.unitPriceCny)!==row.unitPriceCny||row.currency!==null&&row.currency!=='CNY'||row.minimumOrder!==null&&integer(row.minimumOrder)!==row.minimumOrder||row.stock!==null&&(!Number.isSafeInteger(row.stock)||row.stock<0)||row.imageUrl!==null&&image(row.imageUrl)!==row.imageUrl)throw Error('수집한 옵션 값이 올바르지 않습니다.');
   if(row.axisValues!==undefined){
    const labels=new Set();
@@ -417,6 +446,7 @@ export function validatePageSource(input,now=Date.now()){
     labels.add(axis.label);
    }
   }
+  if(Object.hasOwn(row,'packaging'))validatePagePackaging(row.packaging);
   seen.add(row.key);
  }
  const placements=new Set();let mains=0;

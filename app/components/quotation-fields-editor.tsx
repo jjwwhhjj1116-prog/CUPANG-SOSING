@@ -2,6 +2,7 @@
 import { validOptionRegistrationNumbers, optionRegistrationLabel } from '@/app/product-registration';
 import { QuotationTranslatedAttributes } from '@/app/components/quotation-translated-attributes';
 import { QuotationAiPanel } from '@/app/components/quotation-ai-panel';
+import { QuotationPackagingDraftPanel } from '@/app/components/quotation-packaging-draft-panel';
 import { QuotationWorkbookReview } from '@/app/components/quotation-workbook-review';
 import { importQuotationWorkbookDraft } from '@/app/quotation-workbook-review';
 import { SupplierHubSingleReview } from '@/app/components/supplier-hub-single-review';
@@ -22,7 +23,7 @@ import { quotationFieldDisplay } from '@/app/quotation-field-display';
 import { quotationValueLength } from '@/app/quotation-scalar-constraints';
 import { hasCouplusEmptyAttributeDefault } from '@/app/couplus-quotation-defaults';
 import { hasSelectedEmptyQuotationChoice } from '@/app/quotation-choice-state';
-import { quotationPackagedWeightEditChanges, quotationPackagedWeightEditFields, quotationPackagedWeightManual, quotationPackagedWeightPeer } from '@/app/quotation-packaged-weight';
+import { quotationPackagedWeightDisplayField, quotationPackagedWeightEditChanges, quotationPackagedWeightEditFields, quotationPackagedWeightManual, quotationPackagedWeightPeer } from '@/app/quotation-packaged-weight';
 import { isPackagedDimensionsMmField, normalizePackagedDimensionsMm } from '@/app/quotation-packaged-dimensions';
 import { quotationPackagingReconfirmationChanges, quotationPackagingChangeStored, quotationPackagingChangeScopeChanged } from '@/app/quotation-packaging-basis';
 import { quotationPriceDisplayField, quotationPriceEditChanges, quotationPriceEditFields, quotationPriceEditInput, quotationPriceStagedEdit, quotationPriceVisibleFields } from '@/app/quotation-price-edits';
@@ -641,7 +642,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   const row = view?.resolved.rows.find(item => item.optionId === selectedOption);
   function openSection(section: (typeof sections)[number]['id'], fieldId?: string, deferFocus = false) {
     setActive(section);
-    const visibleField = fieldId && schema ? quotationPriceDisplayField(schema.fields, fieldId) : fieldId;
+    const visibleField = fieldId && schema && view ? quotationPackagedWeightDisplayField(schema.fields, quotationPriceDisplayField(schema.fields, fieldId), key => resolveQuotationEditorCell(view, changes, selectedOption, key).value) : fieldId;
     const target = document.getElementById(visibleField ? `${prefix}-${visibleField}` : `${prefix}-section-${section}`);
     pendingFocus.current = fieldId && (deferFocus || !target) ? visibleField ?? null : null;
     target?.scrollIntoView({ block: 'start', behavior: 'smooth' });
@@ -684,6 +685,12 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
         setChanges(packagingReconfirmation.map(change=>({...change})));setApplyAll(false);setBulk(null);setMessage('현재 구성의 포장값을 확인했습니다. 견적 입력 저장을 눌러 확인 기준을 함께 저장해주세요.');
       }}>현재 구성 포장값 확인·저장</button></div>}
       {conflicts.length > 0 && <div className="quotation-fields-notice" role="alert"><strong>다시 검토할 항목 {conflicts.length}개</strong><ul className="quotation-fields-conflicts">{conflicts.map(conflict => <li key={conflict.key}><strong>{schema?.fields.find(field => field.id === conflict.change.fieldKey)?.label ?? conflict.change.fieldKey} · {view.resolved.rows.find(item => item.optionId === conflict.change.optionId)?.optionLabel ?? '삭제된 옵션'}</strong>{conflict.schemaChanged && <p>카테고리 또는 항목 규격이 변경되었습니다. 같은 값이라도 새 양식에 맞는지 확인해주세요.</p>}{conflict.packagingChanged && <p>판매 구성 수량이 변경되었습니다. 같은 값이라도 현재 구성의 포장 무게·치수를 확인해주세요.</p>}<p>{conflict.unavailable ? '현재 카테고리 또는 옵션에 없는 입력입니다.' : `현재 저장값: ${conflict.saved === null ? '자동값 사용' : conflict.saved || '(공란)'}`}</p><p>내 입력: {conflict.change.value === null ? '수동 수정 해제' : conflict.change.value || '(공란)'}</p>{(conflict.linked?.length ?? 0) > 1 && <p>연결된 항목에도 같은 선택을 적용합니다.</p>}<div className="quote-actions">{!conflict.unavailable && <button type="button" className="btn ghost" disabled={busy || loading} onClick={() => resolveConflict(conflict.key, 'draft')}>내 입력 유지</button>}<button type="button" className="btn ghost" disabled={busy || loading} onClick={() => resolveConflict(conflict.key, 'saved')}>{conflict.unavailable ? '이 입력 제외' : '저장된 값 사용'}</button></div></li>)}</ul></div>}
+      {row && <QuotationPackagingDraftPanel productId={productId} profileId={profileId} view={view} optionId={selectedOption} disabled={dirty||busy||loading||conflicts.length>0||submissionLocks.source}
+        onBusyChange={next=>{if(next)explicitRefreshAction.current=null;modelActionState.current={...modelActionState.current,busy:next||Boolean(labelRecovery)};setBusy(next);}}
+        onApply={proposals=>{const current=modelActionState.current;if(current.view!==view||current.busy||current.loading||current.conflicts.length||current.changes.length||activeWrite.current||submissionLocks.source)return false;
+          const requested=validateQuotationChanges(proposals,{schema:view.resolved.schema,optionIds:view.resolved.rows.flatMap(item=>item.optionId===null?[]:[item.optionId]),ownedImageKeys:view.imageKeys,overrides:view.overrides});
+          const nextDraft=requested.reduce((draft,change)=>updateQuotationEditorDraft(view.overrides,draft,change),[]as QuotationEditorChange[]);
+          modelActionState.current={...current,changes:nextDraft,applyAll:false};setChanges(nextDraft);setApplyAll(false);setBulk(null);setMessage('확인한 포장 초안을 입력란에 반영했습니다. 실물·원문과 비교하고 견적 입력 저장을 눌러주세요.');return true;}} />}
       {row && sections.map((section, sectionIndex) => <fieldset key={section.id} id={`${prefix}-section-${section.id}`} data-section={section.id} className="quotation-fields-section" disabled={busy || loading} style={{ padding: 0, margin: 0, minWidth: 0 }}><header><h4>{sectionIndex + 1}. {section.english} Page ({section.title})</h4><small>* 필수 입력</small></header><div className="quotation-fields-grid">{quotationPriceVisibleFields(schema?.fields ?? []).filter(field => field.section === section.id).flatMap((field, fieldIndex, sectionFields) => {
         const cell = resolveQuotationEditorCell(view, changes, selectedOption, field.id);
         const automatic = view.automatic.rows.find(item => item.optionId === selectedOption)?.fields[field.id];
@@ -725,7 +732,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
           }}/>
           : field.type === 'textarea' || field.type === 'images' || lengthInput?.role === 'searchTags' ? <textarea {...inputProps} rows={field.type === 'images' ? 2 : 3} placeholder={field.type === 'images' ? '아래에서 이 상품의 이미지 파일을 선택하세요.' : lengthInput?.role === 'searchTags' ? '검색 태그를 쉼표(,)로 구분하여 입력하세요' : '확인한 내용을 입력하세요.'} />
             : <input {...inputProps} type="text" inputMode={field.type === 'number' ? 'decimal' : 'text'} placeholder={!editable ? '' : hasCouplusEmptyAttributeDefault(field, cell) ? '해당사항없음' : '확인한 내용을 입력하세요.'} />;
-        return [heading, <div className={`quotation-field ${field.type === 'textarea' || field.type === 'images' || lengthInput?.role === 'searchTags' ? 'wide' : ''}`} key={field.id}>
+        const fieldCard = <div className={`quotation-field ${field.type === 'textarea' || field.type === 'images' || lengthInput?.role === 'searchTags' ? 'wide' : ''}`} key={field.id}>
           <div className="quotation-field-heading"><label htmlFor={id} className={namedPair ? 'quotation-value-label' : undefined}>{field.label}{field.unit ? ` (${field.unit})` : ''}{field.required && <b>*</b>}</label>{!namedPair && example}{field.workbookWire?.requirement==='conditional'&&<span className="quotation-field-badge">조건부 필수</span>}</div>
           {namedPair ? <div className="quotation-named-pair"><div className="quotation-named-pair-name"><input type="text" readOnly aria-label={`${field.label} 항목명`} value={field.hubWire!.name} tabIndex={-1}/>{field.required && <b aria-hidden="true">*</b>}{example}</div>{control}</div> : control}
           {lengthInput && <div className="quotation-field-input-guidance"><small>{lengthInput.role === 'model' ? `모델번호는 최대 ${lengthInput.maxLength}자까지 입력 가능합니다.` : `쉼표(,)로 구분하여 입력하세요. 최대 ${lengthInput.maxLength}자`}</small><small id={`${id}-length`} className="quotation-field-length" data-quotation-length-role={lengthInput.role} data-quotation-length-state={lengthInput.state}>{lengthInput.length}/{lengthInput.maxLength}자</small></div>}
@@ -777,7 +784,9 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
           {ownManual && <div className="quotation-field-auto">{restoredWeight ? `수정 해제 후 ${sourceLabels[restoredWeight.source]}: ${quotationFieldDisplay(field, restoredWeight, '(미입력)')}` : selectedOption !== null && draftManual(view, changes, null, field.id) !== null ? `수정 해제 후 공통값: ${quotationFieldDisplay(field, {value:draftManual(view, changes, null, field.id)!,source:'manual-common'})}` : `자동값 (${sourceLabels[automatic?.source ?? 'empty'] ?? '저장 자료'}): ${quotationFieldDisplay(field, automatic ?? {value:'',source:'empty'}, '(미입력)')}`}</div>}
           <div className="quotation-field-footer"><div>{seoTitle && !field.readOnly && ownManual && <button type="button" className="quotation-field-text-button" disabled={busy || loading || conflicts.length > 0} onClick={() => restoreSeoTitle(field.id)}>{selectedOption !== null && draftManual(view, changes, null, field.id) !== null ? '상품명 수정 해제 · 공통값 사용' : '상품명 수정 해제 · SEO 자동값 사용'}</button>}{editable && ownManual && <button type="button" className="quotation-field-text-button" onClick={() => edit(field.id, null)}>{restoredWeight ? restoredWeight.source.startsWith('manual-') ? '수정 해제 · 연결값 사용' : '수정 해제 · 자동값 복원' : selectedOption !== null && draftManual(view, changes, null, field.id) !== null ? '수정 해제 · 공통값 사용' : '수정 해제 · 자동값 복원'}</button>}{linkedWeight ? <small>연결된 포장 무게의 {weightManual.source === 'manual-option' ? '옵션' : '공통'} 입력값을 따릅니다.</small> : inheritedManual && <small>{seoTitle ? '저장된 공통 상품명 수정값을 따릅니다.' : '공통값을 따릅니다. 여기서 입력하면 이 옵션만 바뀝니다.'}</small>}{field.minLength !== undefined && field.minLength > 0 && <small> 최소 {field.minLength}자</small>}{!lengthInput && field.maxLength !== undefined && <small> {quotationValueLength(field, cell.value)}/{field.maxLength}자</small>}</div>{editable && optionCount > 0 && <label className="quotation-field-select-copy"><input type="checkbox" checked={selectedFields.includes(field.id)} onChange={event => { setSelectedFields(previous => event.target.checked ? [...previous, field.id] : previous.filter(key => key !== field.id)); setBulk(null); }} />다른 옵션에 적용</label>}</div>
           </details>
-        </div>];
+        </div>;
+        const foldedWeight = quotationPackagedWeightDisplayField(schema?.fields ?? [], field.id, key => resolveQuotationEditorCell(view, changes, selectedOption, key).value) !== field.id;
+        return [heading, foldedWeight ? <details key={`compat-${field.id}`} className="quotation-field-diagnostics" style={{gridColumn:'1 / -1'}}><summary>이전 포장 무게 입력 확인</summary><p>아래 원본 양식의 포장 무게와 연결된 값입니다. 기존 수정값을 개별 해제할 때 펼쳐 확인하세요.</p>{fieldCard}</details> : fieldCard];
       })}</div></fieldset>)}
       <div className="quotation-fields-actions">{selectedOption !== null && row && optionCount > 1 && <label className="quotation-apply-all"><input type="checkbox" role="switch" checked={applyAll} disabled={busy || loading} onChange={event => {
         const current = modelActionState.current;

@@ -8,7 +8,7 @@ function load(environment={}){const exports={};vm.runInNewContext(ts.transpileMo
 const read=load();
 for(const state of ['granted','prompt','denied'])test(`readonly diagnosis distinguishes actual ${state} without requesting access`,async()=>{
  const queries=[];const report=await read({environment:{secureContext:true,visibility:'visible',permissions:{query(descriptor){queries.push(descriptor);return Promise.resolve({state});},request(){throw Error('Permission request forbidden');}}}});
- assert.deepEqual(JSON.parse(JSON.stringify(report)),{secureContext:true,visibility:'visible',loopbackPermission:state});assert.equal(queries.length,1);assert.equal(queries[0].name,'loopback-network');assert.equal(JSON.stringify(queries).includes('local-network-access'),false);
+ assert.deepEqual(JSON.parse(JSON.stringify(report)),{secureContext:true,visibility:'visible',loopbackPermission:state,loopbackPolicy:'unsupported',documentContext:'unknown'});assert.equal(queries.length,1);assert.equal(queries[0].name,'loopback-network');assert.equal(JSON.stringify(queries).includes('local-network-access'),false);
 });
 test('unavailable query API reports unsupported without trying a fallback permission',async()=>{
  for(const permissions of [undefined,null,{}, {query:1}]){const result=await read({environment:{secureContext:true,visibility:'hidden',permissions}});assert.equal(result.loopbackPermission,'unsupported');assert.equal(result.visibility,'hidden');}
@@ -17,7 +17,7 @@ test('an unsupported permission name rejection stays unknown instead of being re
  for(const error of [new TypeError('secret runtime URL'),{name:'NotSupportedError',message:'secret runtime URL'}]){let queries=0;const result=await read({environment:{secureContext:true,permissions:{query(){queries++;return Promise.reject(error);}}}});assert.equal(result.loopbackPermission,'unsupported');assert.equal(queries,1);assert.doesNotMatch(JSON.stringify(result),/secret/);}
 });
 test('other query failures report unavailable and never expose exception text or identity',async()=>{
- for(const error of [new Error('private token and owner'),{name:'SecurityError',message:'private token and owner'},{get name(){throw Error('private token');}}]){const result=await read({environment:{secureContext:true,visibility:'unknown',permissions:{query(){throw error;}}}});assert.equal(result.loopbackPermission,'unavailable');assert.doesNotMatch(JSON.stringify(result),/private|token|owner/);assert.deepEqual(Object.keys(result).sort(),['loopbackPermission','secureContext','visibility']);}
+ for(const error of [new Error('private token and owner'),{name:'SecurityError',message:'private token and owner'},{get name(){throw Error('private token');}}]){const result=await read({environment:{secureContext:true,visibility:'unknown',permissions:{query(){throw error;}}}});assert.equal(result.loopbackPermission,'unavailable');assert.doesNotMatch(JSON.stringify(result),/private|token|owner/);assert.deepEqual(Object.keys(result).sort(),['documentContext','loopbackPermission','loopbackPolicy','secureContext','visibility']);}
 });
 test('a hanging permissions query has a forced deadline and late completion is discarded',async()=>{
  let resolveQuery,queries=0;const report=await read({timeoutMs:20,environment:{secureContext:true,visibility:'visible',permissions:{query(){queries++;return new Promise(resolve=>{resolveQuery=resolve;});}}}});assert.equal(report.loopbackPermission,'timeout');resolveQuery({state:'granted'});await Promise.resolve();await Promise.resolve();assert.equal(report.loopbackPermission,'timeout');assert.equal(queries,1);
@@ -33,6 +33,18 @@ test('default browser environment reads only secure context, visibility and perm
  const report=await browserRead();assert.equal(report.loopbackPermission,'prompt');assert.deepEqual(queries,['loopback-network']);assert.deepEqual(getters,['visibilityState','permissions']);
 });
 test('throwing environment getters and permissions API getters are contained',async()=>{
- const report=await read({environment:{get secureContext(){throw Error('private context');},get visibility(){throw Error('private document');},get permissions(){throw Error('private permission');}}});assert.deepEqual(JSON.parse(JSON.stringify(report)),{secureContext:false,visibility:'unknown',loopbackPermission:'unavailable'});
+ const report=await read({environment:{get secureContext(){throw Error('private context');},get visibility(){throw Error('private document');},get permissions(){throw Error('private permission');}}});assert.deepEqual(JSON.parse(JSON.stringify(report)),{secureContext:false,visibility:'unknown',loopbackPermission:'unavailable',loopbackPolicy:'unsupported',documentContext:'unknown'});
  const another=await read({environment:{secureContext:true,permissions:{get query(){throw Error('private method');}}}});assert.equal(another.loopbackPermission,'unavailable');
+});
+
+test('effective document policy is distinct from the user permission state',async()=>{
+ for(const allowed of [true,false]){
+  const calls=[];const result=await read({environment:{secureContext:true,documentContext:'embedded',featurePolicy:{features(){calls.push('features');return['loopback-network'];},allowsFeature(feature){calls.push(feature);return allowed;}},permissions:{query(){return{state:'denied'};}}}});
+  assert.equal(result.loopbackPermission,'denied');assert.equal(result.loopbackPolicy,allowed?'allowed':'blocked');assert.equal(result.documentContext,'embedded');assert.deepEqual(calls,['features','loopback-network']);
+ }
+});
+
+test('unknown features and policy failures never become an explicit document denial',async()=>{
+ const policies=[undefined,{}, {features(){return['local-network'];},allowsFeature(){throw Error('Unrecognised feature must not be queried');}}, {features(){throw Error('private policy');},allowsFeature(){return false;}}, {features(){return['loopback-network'];},allowsFeature(){return'no';}}];
+ for(const featurePolicy of policies){const result=await read({environment:{secureContext:true,documentContext:'top-level',featurePolicy,permissions:{query(){return{state:'granted'};}}}});assert.equal(result.loopbackPermission,'granted');assert.notEqual(result.loopbackPolicy,'blocked');assert.equal(result.documentContext,'top-level');assert.doesNotMatch(JSON.stringify(result),/private policy/);}
 });

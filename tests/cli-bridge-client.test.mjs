@@ -219,3 +219,14 @@ test('an explicit browser denial blocks pairing while an unknown permission stat
   h.find(node=>node.type?.name==='CliBrowserStatus').props.onChange({secureContext:false,visibility:'visible',loopbackPermission:'unavailable'});h.render();assert.equal(h.button().props.disabled,true);h.button().props.onClick();await flush();assert.equal(h.clients.length,0);
  }finally{h.unmount();}
 });
+
+test('an effective document policy denial prevents pairing even if permission was granted',async()=>{
+ const h=panelHarness({hash:syntheticHash()});try{
+  h.mount();await flush();h.render();
+  const status=h.find(node=>node.type?.name==='CliBrowserStatus');
+  status.props.onChange({secureContext:true,visibility:'visible',loopbackPermission:'granted',loopbackPolicy:'blocked',documentContext:'embedded'});h.render();
+  assert.equal(h.button().props.disabled,true);h.button().props.onClick();await flush();assert.equal(h.clients.length,0);
+  status.props.onChange({secureContext:true,visibility:'visible',loopbackPermission:'granted',loopbackPolicy:'allowed',documentContext:'top-level'});h.render();
+  assert.equal(h.button().props.disabled,false);assert.equal(h.clients.length,0);
+ }finally{h.unmount();}
+});

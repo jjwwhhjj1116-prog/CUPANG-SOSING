@@ -6,7 +6,7 @@ import ts from 'typescript';
 
 const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/workers-seo-recovery-client.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,crypto});
 const input=()=>exports.newWorkersSeoRecoveryRequest('product','2026-10-22T00:00:00.000Z','failed-google');
-const reviewed=request=>({workersRecoveryReview:true,job:{id:'separate-review',productId:request.productId,productVersion:request.productVersion,contentRevision:2,status:'prepared',result:null,review:{destination:'Cloudflare Workers AI',fingerprint:'a'.repeat(64),workersRecovery:{failedJobId:request.failedJobId,scope:'collected'}}}});
+const reviewed=request=>({workersRecoveryReview:true,job:{id:'separate-review',productId:request.productId,productVersion:request.productVersion,contentRevision:2,status:'prepared',result:null,review:{destination:'Cloudflare Workers AI',fingerprint:'a'.repeat(64),workersRecovery:{failedJobId:request.failedJobId,scope:'collected',version:2,model:'@cf/qwen/qwen3-30b-a3b-fp8'}}}});
 
 test('Workers preparation sends one explicit same-origin review request with the retained nonce and never executes or applies',async()=>{
  const request=input(),calls=[],options={signal:new AbortController().signal,contentRevision:2,fetcher:async function(url,init){assert.equal(this,undefined);calls.push({url,init});return Response.json(reviewed(request));}};
@@ -20,6 +20,13 @@ test('wrong product, clock, revision, provider, failure reference and missing re
  for(const change of [value=>{value.job.productId='other';},value=>{value.job.productVersion='old';},value=>{value.job.contentRevision=1;},value=>{value.job.review.destination='Google 번역';},value=>{value.job.review.workersRecovery.failedJobId='other-failure';},value=>{delete value.workersRecoveryReview;},value=>{delete value.job.review.workersRecovery;},value=>{value.job.review.fingerprint='invalid';}]){
   const request=input(),value=reviewed(request);change(value);let calls=0;
   await assert.rejects(()=>exports.prepareWorkersSeoRecovery(request,{signal:new AbortController().signal,contentRevision:2,fetcher:async()=>{calls++;return Response.json(value);}}),/일치하지/);assert.equal(calls,1);
+ }
+});
+
+test('legacy or changed recovery models cannot be accepted as a new v2 review',async()=>{
+ for(const change of [value=>{value.job.review.workersRecovery.version=1;},value=>{delete value.job.review.workersRecovery.version;},value=>{value.job.review.workersRecovery.model='@cf/meta/llama-3.3-70b-instruct-fp8-fast';}]){
+  const request=input(),value=reviewed(request);change(value);
+  await assert.rejects(()=>exports.prepareWorkersSeoRecovery(request,{signal:new AbortController().signal,contentRevision:2,fetcher:async()=>Response.json(value)}),/일치하지/);
  }
 });
 

@@ -1,11 +1,13 @@
 import type { TranslationJob } from '@/app/automation/translation';
 import { validateQuotationChanges, type QuotationFieldsView, type QuotationChange, type QuotationField } from '@/app/quotation-schema';
 import { translationAttributeIssue } from '@/app/translation-attribute-evidence';
+import {assertWorkersRecoveryJobQuality} from '@/app/product-translation-quality';
 
 export type AttributeMapping = { sourceIndex: number; fieldId: string };
 export type QuotationTranslationReview = { contentRevision: number };
 /** Older content is reusable only after explicit review against the current view. */
 export function quotationTranslationMatches(productId: string, view: QuotationFieldsView, job: TranslationJob, review?: QuotationTranslationReview) {
+  try{assertWorkersRecoveryJobQuality(job);}catch{return false;}
   return job.productId === productId && job.productVersion === view.productVersion && job.status === 'completed' && Boolean(job.result)
     // Category-aware translations must stay with the category used to produce
     // them. Reviewing an older content revision does not approve a new category.

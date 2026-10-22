@@ -21,7 +21,7 @@ const combination=(name,price='¥5.30')=>`<div class="sku-row">${name} <span>${p
 function documentFromHtml(value){
  const ast=parseFragment(value);
  const match=(node,selector)=>selector.split(',').some(part=>{
-  part=part.trim();if(/^[a-z]+$/u.test(part))return node.tagName===part;
+  part=part.trim();if(/^[a-z][a-z0-9]*$/u.test(part))return node.tagName===part;
   if(part==='a[href]')return node.tagName==='a'&&node.getAttribute('href')!==null;
   const attr=/^\[(class|id)\*="([^"]+)"( i)?\]$/u.exec(part);assert.ok(attr,`Unsupported fixture selector: ${part}`);
   const actual=node.getAttribute(attr[1])??'';return attr[3]?actual.toLowerCase().includes(attr[2].toLowerCase()):actual.includes(attr[2]);

@@ -19,7 +19,7 @@ function sourceOptionAxes(option:PageSource['options'][number]){
 export function pageSourceCollectionResult(snapshot:PageSource,reviewed=false):CollectionResult{
  const source=validatePageSource(snapshot),issues=sourceInboxStatus(source,null);if(issues.length)throw Error(`수집함에서 ${issues.join('·')}을 확인해주세요.`);
  const result=validateCollectionResult({schemaVersion:1,sourceUrl:source.sourceUrl,provider:reviewed?'chrome-reviewed-page-v1':'chrome-current-page-v1',collectedAt:source.collectedAt,title:source.title,description:source.description,attributes:source.attributes,images:source.images,
-  options:source.options.map(row=>({sku:row.supplierSku??'',name:row.name,unitPriceCny:row.unitPriceCny,minimumOrder:row.minimumOrder,stock:row.stock,...sourceOptionAxes(row),...(row.imageUrl&&source.images.some(item=>item.url===row.imageUrl)?{imageIndex:source.images.findIndex(item=>item.url===row.imageUrl)}:{})})),
+  options:source.options.map(row=>({sku:row.supplierSku??'',name:row.name,unitPriceCny:row.unitPriceCny,minimumOrder:row.minimumOrder,stock:row.stock,...sourceOptionAxes(row),...(row.packaging?{packaging:{...row.packaging}}:{}),...(row.imageUrl&&source.images.some(item=>item.url===row.imageUrl)?{imageIndex:source.images.findIndex(item=>item.url===row.imageUrl)}:{})})),
   ...(source.options.some(row=>row.supplierSku===null)?{pageOptionIdentity:{format:'yoofam-page-option-identity-v1',offerId:source.offerId,sourceKeys:source.options.map(row=>row.key)}}:{})},source.offerId);
  return result;
 }

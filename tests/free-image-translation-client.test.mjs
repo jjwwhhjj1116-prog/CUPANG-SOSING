@@ -206,6 +206,37 @@ test('translation echoes bind by exact ID and original despite reordered rows; m
   const before = JSON.stringify(reply); assert.equal(JSON.stringify(reply), before);
 });
 
+test('Google 429 recovery retains mixed original bindings and validates each bounded Workers status',()=>{
+  const h=fixture(),requested=[{id:'google',text:'中文一'},{id:'workers-a',text:'中文二'},{id:'workers-b',text:'中文三'},{id:'ignored',text:'123'}];
+  for(const [status,requests,translatedRegions,sourceRegions]of [['completed',1,2,2],['partial',1,1,2],['failed',1,0,2],['limited',0,0,2],['timeout',1,0,2],['invalid-response',1,0,2]]){
+    const rows=requested.map((row,index)=>({id:row.id,original:row.text,translated:index===0?'Google 성공':index>0&&index<=translatedRegions?'서버 성공 '+index:null,issue:index===0||index>0&&index<=translatedRegions?null:'원문 유지'}));
+    const reply={source,regions:rows.reverse(),requests:1,stoppedHttpStatus:429,warnings:[],workersRecovery:{provider:'workers-ai',status,requests,sourceRegions,translatedRegions}};
+    const before=JSON.stringify(reply),result=h.client.readFreeImageTranslationReply(reply,source,requested);
+    assert.equal(result.regions[0].translated,'Google 성공');assert.deepEqual(plain(result.regions.map(row=>row.original)),requested.map(row=>row.text));
+    assert.deepEqual(plain(result.workersRecovery),reply.workersRecovery);assert.equal(JSON.stringify(reply),before,'does not mutate source, Google success or recovery metadata');
+  }
+  const many=Array.from({length:31},(_,index)=>({id:'r'+index,text:'中文'+index}));
+  const result=h.client.readFreeImageTranslationReply({source,regions:many.map(row=>({id:row.id,original:row.text,translated:null,issue:'입력 한도'})),requests:1,stoppedHttpStatus:429,warnings:[],workersRecovery:{provider:'workers-ai',status:'input-limit',requests:0,sourceRegions:31,translatedRegions:0}},source,many);
+  assert.equal(result.workersRecovery.requests,0);assert.equal(result.regions.filter(row=>row.translated!==null).length,0);
+});
+
+test('unconfirmed 429, foreign providers, impossible calls or counts and malformed Workers metadata cannot replace a draft',()=>{
+  const h=fixture(),requested=[{id:'r1',text:'中文一'},{id:'r2',text:'中文二'}];
+  const reply={source,regions:requested.map(row=>({id:row.id,original:row.text,translated:'번역문',issue:null})),requests:1,stoppedHttpStatus:429,warnings:[],workersRecovery:{provider:'workers-ai',status:'completed',requests:1,sourceRegions:2,translatedRegions:2}};
+  for(const patch of [{provider:'openai'},{status:'unknown'},{requests:2},{requests:0},{sourceRegions:0},{sourceRegions:3},{translatedRegions:3},{translatedRegions:-1},{translatedRegions:1},{status:'partial'},{status:'failed'},{status:'limited'},{status:'input-limit'},{billing:'unexpected'}])
+    assert.throws(()=>h.client.readFreeImageTranslationReply({...reply,workersRecovery:{...reply.workersRecovery,...patch}},source,requested));
+  for(const patch of [{stoppedHttpStatus:null},{stoppedHttpStatus:503},{requests:0},{workersRecovery:null},{workersRecovery:undefined},{regions:[{...reply.regions[0],translated:null,issue:'실패'},reply.regions[1]]}])
+    assert.throws(()=>h.client.readFreeImageTranslationReply({...reply,...patch},source,requested));
+});
+
+test('a partial Workers response is accepted after one explicit translate transport and never triggers a client fallback or retry',async()=>{
+  const h=fixture(),requested=[{id:'r1',text:'中文一'},{id:'r2',text:'中文二'}];let calls=0;
+  const result=await h.client.translateFreeImageRegions(source,'zh',requested,new AbortController().signal,async(url,init)=>{
+    calls++;assert.equal(url,'/api/products/product/image-text');const body=JSON.parse(init.body);assert.deepEqual(body.regions,requested);assert.ok(!('image' in body)&&!('file' in body));
+    return Response.json({source,regions:[{id:'r1',original:'中文一',translated:'성공한 한국어',issue:null},{id:'r2',original:'中文二',translated:null,issue:'완료하지 못함'}],requests:1,stoppedHttpStatus:429,warnings:[],workersRecovery:{provider:'workers-ai',status:'partial',requests:1,sourceRegions:2,translatedRegions:1}});
+  });await Promise.resolve();assert.equal(calls,1);assert.equal(result.regions[1].translated,null);assert.equal(result.workersRecovery.status,'partial');
+});
+
 test('render paints only selected clipped rectangles and keeps every outside pixel intact without changing originals', async () => {
   const h = fixture(), original = image(h), before = original.canvas.pixels.slice();
   const selected = region('r1', { x: 3, y: 2, width: 8, height: 6 }), ignored = { ...region('r2', { x: 14, y: 2, width: 4, height: 4 }), selected: false, translated: '' };

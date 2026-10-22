@@ -21,7 +21,7 @@ export type CollectionResult = {
   offerDefault?: AlibabaOfferDefault;
   sourceGallery?: CollectionSourceGallery;
   pageOptionIdentity?: PageOptionIdentity;
-  options: { sku: string; name: string; unitPriceCny: number; minimumOrder: number | null; stock: number | null; imageIndex?: number; color?: string; size?: string }[];
+  options: { sku: string; name: string; unitPriceCny: number; minimumOrder: number | null; stock: number | null; imageIndex?: number; color?: string; size?: string;packaging?:{source:'package-table';weightG?:number;widthMm?:number;lengthMm?:number;heightMm?:number} }[];
   images: { url: string; role: 'main' | 'additional' | 'detail' }[];
 };
 function record(value: unknown, keys: string[]) {
@@ -33,6 +33,12 @@ function record(value: unknown, keys: string[]) {
 function text(value: unknown, max: number, required=true) {
   if(typeof value!=='string'||value.length>max||/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(value)||(required&&!value.trim()))throw new Error('수집 텍스트의 길이와 내용을 확인해주세요.');
   return value.trim();
+}
+function optionPackaging(value:unknown):NonNullable<CollectionResult['options'][number]['packaging']>{
+ const row=record(value,['source','weightG','widthMm','lengthMm','heightMm']);
+ if(row.source!=='package-table'||!['weightG','widthMm','lengthMm','heightMm'].some(key=>Object.hasOwn(row,key)))throw Error('옵션 포장 표 원문의 기준을 확인해주세요.');
+ for(const key of ['weightG','widthMm','lengthMm','heightMm'])if(Object.hasOwn(row,key)&&(!Number.isSafeInteger(row[key])||(row[key] as number)<=0||(row[key] as number)>(key==='weightG'?1e9:1e6)))throw Error('수집한 포장 무게·치수는 명시된 g·mm 단위의 양수 정수여야 합니다.');
+ return {...row} as NonNullable<CollectionResult['options'][number]['packaging']>;
 }
 export function validateCollectionResult(input: unknown, expectedOfferId: string, now=Date.now()): CollectionResult {
   const body=record(input,['schemaVersion','sourceUrl','provider','collectedAt','title','description','options','images','attributes','priceBasis','offerDefault','sourceGallery','pageOptionIdentity']);
@@ -47,7 +53,7 @@ export function validateCollectionResult(input: unknown, expectedOfferId: string
   const provider=text(body.provider,100);
   const pageOptionIdentity=Object.hasOwn(body,'pageOptionIdentity')?validatePageOptionIdentity(body.pageOptionIdentity,provider,source.offerId,body.options.length,hasOfferDefault,Object.hasOwn(body,'priceBasis')):undefined;
   const options=body.options.map(value=>{
-    const row=record(value,['sku','name','unitPriceCny','minimumOrder','stock','imageIndex','color','size']);
+    const row=record(value,['sku','name','unitPriceCny','minimumOrder','stock','imageIndex','color','size','packaging']);
     if(hasOfferDefault&&row.sku!=='')throw new Error('기본 옵션을 실제 공급자 SKU로 바꿀 수 없습니다.');
     const sku=text(row.sku,200,!hasOfferDefault&&!pageOptionIdentity);if(sku!==''&&skus.has(sku)||sku===''&&!pageOptionIdentity&&skus.has(sku))throw new Error('중복 SKU가 있습니다.');skus.add(sku);
     if(typeof row.unitPriceCny!=='number'||!Number.isFinite(row.unitPriceCny)||row.unitPriceCny<=0||row.unitPriceCny>100000000)throw new Error('옵션 원가는 양수 CNY 숫자여야 합니다.');
@@ -55,7 +61,7 @@ export function validateCollectionResult(input: unknown, expectedOfferId: string
     if(row.stock!==null&&(!Number.isSafeInteger(row.stock)||(row.stock as number)<0))throw new Error('재고 미확인은 null, 확인된 재고는 0 이상 정수여야 합니다.');
     if(row.imageIndex!==undefined&&(!Number.isInteger(row.imageIndex)||!Array.isArray(body.images)||(row.imageIndex as number)<0||(row.imageIndex as number)>=body.images.length))throw new Error('옵션 이미지 번호는 수집 이미지 목록의 0부터 시작하는 번호여야 합니다.');
     return {sku,name:text(row.name,500),unitPriceCny:row.unitPriceCny,minimumOrder:row.minimumOrder as number|null,stock:row.stock as number|null,...(row.imageIndex!==undefined?{imageIndex:row.imageIndex as number}:{}),
-      ...(row.color!==undefined?{color:text(row.color,200,false)}:{}), ...(row.size!==undefined?{size:text(row.size,200,false)}:{})};
+      ...(row.color!==undefined?{color:text(row.color,200,false)}:{}), ...(row.size!==undefined?{size:text(row.size,200,false)}:{}),...(Object.hasOwn(row,'packaging')?{packaging:optionPackaging(row.packaging)}:{})};
   });
   if(!Array.isArray(body.images)||body.images.length>200)throw new Error('이미지 주소는 200개 이하여야 합니다.');
   const seen=new Set<string>();let mainCount=0;

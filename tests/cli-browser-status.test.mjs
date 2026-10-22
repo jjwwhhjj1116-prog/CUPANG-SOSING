@@ -34,7 +34,11 @@ for(const permission of ['unsupported','unavailable','timeout'])test(`${permissi
  const h=harness();try{h.mount();h.requests[0].resolve(report(permission));await flush();h.render();assert.doesNotMatch(h.status(),/차단됨/);assert.match(h.text(),/권한 상태만으로 차단 여부를 판단할 수 없습니다/);assert.doesNotMatch(h.text(),/이 사이트의 PC 연결을 차단한 상태/);}finally{h.unmount();}
 });
 test('an explicit denied result is distinguishable from an unsupported browser',async()=>{
- const h=harness();try{h.mount();h.requests[0].resolve(report('denied'));await flush();h.render();assert.match(h.status(),/차단됨/);assert.match(h.text(),/이 사이트의 PC 연결을 차단한 상태/);assert.doesNotMatch(h.status(),/미지원/);}finally{h.unmount();}
+ const h=harness();try{h.mount();h.requests[0].resolve(report('denied'));await flush();h.render();assert.match(h.status(),/차단됨/);assert.match(h.text(),/브라우저가 이 페이지의 PC 연결 권한/);assert.match(h.text(),/이 결과만으로 사용자가 차단했는지/);assert.match(h.text(),/해당 항목이 없으면 같은 설정 변경을 반복하지/);assert.doesNotMatch(h.text(),/‘루프백 네트워크’ 상태를 확인/);assert.doesNotMatch(h.status(),/미지원/);}finally{h.unmount();}
+});
+
+test('an effective policy denial does not send the user to a missing Chrome permission item',async()=>{
+ const h=harness();try{h.mount();h.requests[0].resolve(report('denied',{loopbackPolicy:'blocked',documentContext:'embedded'}));await flush();h.render();assert.match(h.text(),/현재 페이지의 문서 정책이 PC 연결을 허용하지/);assert.match(h.text(),/다른 페이지 안에 포함됨/);assert.doesNotMatch(h.text(),/이 기기의 앱·서비스 접근|Chrome.*확인해주세요/);}finally{h.unmount();}
 });
 test('a second refresh event is ignored once the current refresh is rendered busy',async()=>{
  const h=harness();try{h.mount();h.requests[0].resolve(report('prompt'));await flush();h.render();h.button().props.onClick();h.render();h.button().props.onClick();assert.equal(h.requests.length,2);h.requests[1].resolve(report('unsupported'));await flush();h.render();assert.equal(h.button().props.disabled,false);}finally{h.unmount();}

@@ -12,7 +12,7 @@ import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
 import {CollectionCompanyError,verifyCapturedCollectionCompany} from '@/app/collection-company';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import { TranslationError, translationDestination, translationConfiguration, requireTranslationConfig, validateTranslationSource, prepareTranslationReview, executeTranslation, type TranslationJob, type TranslationSecrets } from '@/app/automation/translation';
-import { google429RecoveryCandidate, workersRecoveryConfiguration, requireWorkersRecoveryConfig, workersRecoveryReviewProof, WORKERS_RECOVERY_MAX_INPUT_CHARACTERS } from '@/app/workers-translation-recovery';
+import { google429RecoveryCandidate, workersRecoveryConfiguration, requireWorkersRecoveryConfig, workersRecoveryReviewProof, WORKERS_RECOVERY_MAX_INPUT_CHARACTERS, WORKERS_RECOVERY_VERSION } from '@/app/workers-translation-recovery';
 
 type Context = { params: Promise<{ id: string }> };
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -113,7 +113,7 @@ export async function POST(request: Request, context: Context) {
         if(!expiredUnstarted)return json({job:previous,replayed:true,configuration:configuration(),workersRecovery:recoveryConfiguration(),workersRecoveryReview:true});
       }
       if(await hasUnsettledTranslation(owner,id))return conflict();
-      const workersRecovery={failedJobId:body.failedJobId,scope:'collected' as const,optionRevision:captured.optionRevision,sourceFingerprint:captured.sourceFingerprint,company};
+      const workersRecovery:NonNullable<TranslationJob['review']['workersRecovery']>={version:WORKERS_RECOVERY_VERSION,model:config.model,failedJobId:body.failedJobId,scope:'collected',optionRevision:captured.optionRevision,sourceFingerprint:captured.sourceFingerprint,company};
       const prepared=await prepareTranslationReview(captured.source,config);
       const paidNotice='저장된 이 상품의 수집 원문과 미번역 옵션을 Cloudflare Workers AI에 별도로 1회 전송합니다. 확인된 Workers Free 설정에서 견적 AI와 공유하는 일일 40회 한도를 사용하며 출력은 2,048토큰으로 제한합니다. Google 기본 번역과 실패 이력은 유지합니다. 무료 한도·오류·시간초과 이후 자동 재시도나 다른 유료 서비스 전환은 하지 않습니다. 결과는 검토한 항목만 적용하세요.';
       const review={...prepared,paidNotice,workersRecovery,fingerprint:await fingerprint({review:prepared.fingerprint,workersRecovery,paidNotice})};

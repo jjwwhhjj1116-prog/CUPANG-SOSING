@@ -115,9 +115,13 @@ export async function savePageSource(message,sender,api=chrome,store=sourceInbox
   // A repeated click retries the first immutable snapshot. It cannot overwrite
   // an uncertain server save or an operating product with newly read values.
   const record=previous??{id:crypto.randomUUID(),...scope,windowId:sender.tab.windowId,snapshot,fingerprint};
+  // A successful retry acknowledges this retained payload, not a newer page
+  // the user may have just read. Report that distinction so a second trusted
+  // collection click can explicitly save the current page as its own version.
+  const pendingSnapshotReplayed=Boolean(previous&&previous.fingerprint!==fingerprint);
   if(!previous){if(records.length>=40)throw Error('확장 수집함이 가득 찼습니다. 앱에서 보관된 상품을 불러와주세요.');await recheckReceiver(receiver,bounded);await store('put',record);}
-  try{await recheckReceiver(receiver,bounded);const result=await deliver(record,tab,bounded,store);await activateReceiver(receiver,bounded);return {ok:true,delivered:true,duplicate:result.duplicate===true,id:record.id};}
-  catch(error){return {ok:true,delivered:false,id:record.id,message:error.message};}
+  try{await recheckReceiver(receiver,bounded);const result=await deliver(record,tab,bounded,store);await activateReceiver(receiver,bounded);return {ok:true,delivered:true,duplicate:result.duplicate===true,id:record.id,...(pendingSnapshotReplayed?{pendingSnapshotReplayed:true,newCaptureStored:false}:{})};}
+  catch(error){return {ok:true,delivered:false,id:record.id,message:error.message,...(pendingSnapshotReplayed?{pendingSnapshotReplayed:true,newCaptureStored:false}:{})};}
  })();pending.set(sender.tab.id,{promise:run,receiver:receiving,windowId:sender.tab.windowId,sourceUrl:snapshot.sourceUrl,offerId:snapshot.offerId,fingerprint});try{return await run;}finally{if(pending.get(sender.tab.id)?.promise===run)pending.delete(sender.tab.id);}
 }
 export async function flushPageSources(_message,sender,api=chrome,store=sourceInboxStore){

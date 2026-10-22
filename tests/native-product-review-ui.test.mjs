@@ -31,10 +31,10 @@ test('disabled review makes no read; a source edit rejects a retained transport 
  }finally{ui?.unmount();f.close();}
 });
 
-for(const company of companies)test(`${company.code}: source/read and native locks reach the parent synchronously while stale transport releases cannot affect a new review`,async()=>{
+for(const company of companies)test(`${company.code}: background reads stay editable while prepare/native locks reach the parent synchronously and stale transport releases cannot affect a new review`,async()=>{
  const f=await nativeReviewFixture(company),locks=[];let ui;try{
   ui=quotationAiUI({productId:f.id,profileId:f.profile.id,view:f.quotationView,disabled:false,onLockChange:(...args)=>locks.push(args)},f.request,file,name);await ui.idle();
-  assert.ok(locks.some(value=>value[0]&&value[1]),'initial source read owns the parent until it finishes');assert.deepEqual(locks.at(-1),[false,false]);
+  assert.ok(locks.every(value=>!value[0]&&!value[1]),'a read-only source scan never locks the surrounding editor or close action');assert.deepEqual(locks.at(-1),[false,false]);
   await ui.click('견적서·첨부 파일 확인');const transport=nodes(ui.render()).find(node=>node.props?.review),load=ui.button('저장한 견적 자료 다시 확인').props.onClick,close=ui.button('전체 문서 확인 닫기').props.onClick,reads=ui.calls.length;
   transport.props.onLockChange(true,true);assert.deepEqual(locks.at(-1),[true,true]);load();close();ui.flush();assert.equal(ui.calls.length,reads);assert.ok(nodes(ui.render()).some(node=>node.props?.review));
   transport.props.onLockChange(true,false);assert.deepEqual(locks.at(-1),[true,false]);assert.equal(ui.button('전체 문서 확인 닫기').props.disabled,true,'outer close may release while source-changing controls stay protected');
@@ -45,4 +45,38 @@ for(const company of companies)test(`${company.code}: source/read and native loc
   ui.unmount();assert.deepEqual(locks.at(-1),[false,false]);const ended=locks.length;latest.props.onLockChange(true,true);latest.props.onLockChange(false,false);assert.equal(locks.length,ended);
   assert.ok(ui.calls.every(call=>call.method==='GET'));assert.deepEqual(f.h.network,[]);
  }finally{ui?.unmount();f.close();}
+});
+
+const deferred=()=>{let resolve;const promise=new Promise(done=>{resolve=done;});return{promise,resolve};};
+test('a slow background source scan keeps only its panel busy, rejects duplicate entry, and a changed source aborts/discards its stale response',async()=>{
+ const f=await nativeReviewFixture(),locks=[],started=deferred(),release=deferred();let ui,oldSignal,held=false;
+ try{
+  const props={productId:f.id,profileId:f.profile.id,view:f.quotationView,disabled:false,onLockChange:(...args)=>locks.push(args)};
+  ui=quotationAiUI(props,async(path,init)=>{
+   const response=await f.request(path,init);
+   if(path===f.sourcePath&&!held){held=true;oldSignal=init.signal;started.resolve();await release.promise;}
+   return response;
+  },file,name);
+  ui.flush();await started.promise;
+  assert.equal(ui.render().props['aria-busy'],true);assert.ok(locks.every(value=>!value[0]&&!value[1]));
+  assert.equal(ui.button('저장한 견적 자료 다시 확인').props.disabled,true);assert.equal(ui.button('견적서·첨부 파일 확인').props.disabled,true);
+  const reads=ui.calls.length;ui.button('저장한 견적 자료 다시 확인').props.onClick();ui.button('견적서·첨부 파일 확인').props.onClick();await Promise.resolve();assert.equal(ui.calls.length,reads,'pending read still fences duplicate read/prepare callbacks');
+  f.h.sqlite.prepare('UPDATE products SET updated_at=? WHERE id=?').run('2026-10-22T08:00:00.000Z',f.id);
+  const fresh=await f.fields();ui.render({...props,view:fresh});await ui.idle();assert.equal(oldSignal.aborted,true);
+  const calls=ui.calls.length;release.resolve();await new Promise(resolve=>setTimeout(resolve,0));ui.flush();assert.equal(ui.calls.length,calls,'aborted old read performs no trailing actor read');
+  assert.deepEqual(ui.alerts(),[]);assert.equal(ui.button('견적서·첨부 파일 확인').props.disabled,false);assert.ok(locks.every(value=>!value[0]&&!value[1]));
+  await ui.click('견적서·첨부 파일 확인');const transport=nodes(ui.render()).find(node=>node.props?.review);assert.ok(transport);assert.equal(transport.props.review.identity.source.productVersion,fresh.productVersion);
+  assert.ok(locks.some(value=>value[0]&&value[1]),'explicit preparation retains both source and close locks');assert.ok(ui.calls.every(call=>call.method==='GET'));assert.deepEqual(f.h.network,[]);
+ }finally{release.resolve();ui?.unmount();f.close();}
+});
+
+test('closing during a read-only source scan aborts it and cannot reacquire parent locks after unmount',async()=>{
+ const f=await nativeReviewFixture(),locks=[],started=deferred(),release=deferred();let ui,signal;
+ try{
+  ui=quotationAiUI({productId:f.id,profileId:f.profile.id,view:f.quotationView,disabled:false,onLockChange:(...args)=>locks.push(args)},async(path,init)=>{
+   const response=await f.request(path,init);if(path===f.sourcePath){signal=init.signal;started.resolve();await release.promise;}return response;
+  },file,name);ui.flush();await started.promise;assert.ok(locks.every(value=>!value[0]&&!value[1]));
+  ui.unmount();assert.equal(signal.aborted,true);const ended=locks.length,reads=ui.calls.length;release.resolve();await new Promise(resolve=>setTimeout(resolve,0));
+  assert.equal(locks.length,ended);assert.equal(ui.calls.length,reads);assert.deepEqual(locks.at(-1),[false,false]);assert.ok(ui.calls.every(call=>call.method==='GET'));assert.deepEqual(f.h.network,[]);
+ }finally{release.resolve();ui?.unmount();f.close();}
 });
