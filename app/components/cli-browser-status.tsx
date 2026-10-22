@@ -8,17 +8,17 @@ const permissionLabels:Record<CliBrowserEnvironmentReport['loopbackPermission'],
 };
 
 /** Reading current permission state never requests a grant or contacts the CLI. */
-export function CliBrowserStatus(){
+export function CliBrowserStatus({onChange}:{onChange?:(value:CliBrowserEnvironmentReport)=>void}={}){
  const [environment,setEnvironment]=useState<CliBrowserEnvironmentReport|null>(null),[checking,setChecking]=useState(false);
  const alive=useRef(false),generation=useRef(0);
  useEffect(()=>{
   alive.current=true;const epoch=++generation.current;
-  void readCliBrowserEnvironment().then(value=>{if(alive.current&&epoch===generation.current)setEnvironment(value);});
+  void readCliBrowserEnvironment().then(value=>{if(alive.current&&epoch===generation.current){setEnvironment(value);onChange?.(value);}});
   return()=>{alive.current=false;};
- },[]);
+ },[onChange]);
  async function refresh(){
   if(checking)return;const epoch=++generation.current;setChecking(true);
-  try{const value=await readCliBrowserEnvironment();if(alive.current&&epoch===generation.current)setEnvironment(value);}
+  try{const value=await readCliBrowserEnvironment();if(alive.current&&epoch===generation.current){setEnvironment(value);onChange?.(value);}}
   finally{if(alive.current&&epoch===generation.current)setChecking(false);}
  }
  return <section aria-label="브라우저 PC 연결 확인" style={{borderTop:'1px solid #e7eaf0',marginTop:20,paddingTop:16,fontSize:14,lineHeight:1.7}}>

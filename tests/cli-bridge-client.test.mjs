@@ -209,3 +209,13 @@ test('CLI host choice is explicit before pairing and cannot change a connected s
   const other=h.find(node=>node.type==='button'&&h.text(node)==='127.0.0.1 주소 사용');assert.equal(other.props.disabled,true);
  }finally{h.unmount();}
 });
+
+test('an explicit browser denial blocks pairing while an unknown permission state never masquerades as denial',async()=>{
+ const h=panelHarness({hash:syntheticHash()});try{
+  h.mount();await flush();h.render();
+  const update=value=>{h.find(node=>node.type?.name==='CliBrowserStatus').props.onChange({secureContext:true,visibility:'visible',loopbackPermission:value});h.render();};
+  update('denied');assert.equal(h.button().props.disabled,true);h.button().props.onClick();await flush();assert.equal(h.clients.length,0);
+  for(const state of ['prompt','unsupported','unavailable','timeout','granted']){update(state);assert.equal(h.button().props.disabled,false);}
+  h.find(node=>node.type?.name==='CliBrowserStatus').props.onChange({secureContext:false,visibility:'visible',loopbackPermission:'unavailable'});h.render();assert.equal(h.button().props.disabled,true);h.button().props.onClick();await flush();assert.equal(h.clients.length,0);
+ }finally{h.unmount();}
+});

@@ -6526,3 +6526,13 @@ ExistingfreeWorker ba37200e-0c9a-4a59-9362-86d27a6fa9bc deployed. Latestactualpr
 - 고유5files79/79 fail/skip/cancel0, types/변경lint/패키지/build통과·독립P1P2없음. Unixnpm symlink main guard P1 realpathSync로수정. 실제임시prefix offline npm설치생성Windows.cmd로version/help/status실행. Unixsymlink WindowsEPERM은정확realpath모델분기로검수(실Mac설치claim금지).
 - 승인된Chrome3 유앤채read범위재검수: scope앱GET2회200→pair localhost시작→30초LOCAL_CLI_TIMEOUT, CLI쪽ChromeHTTP이벤트관측0/statusPAIR_REQUIRED. 구체원인미확정, 로컬권한원인단정금지. CLI종료·리스너0. 새실상품수집/접수0·일반livegatesfalse. RS확장수집경로와CLI설치분리하여사용자상태답변.
 - Worker최종d33f31c0-2e27-4e39-971d-cf763ea8a50f. 실웹설치모달/OS전환/복사완료UI/Esc확인·중앙정렬수정재검수. Clipboard도구readText공란이라OS붙여넣기까지검증claim금지. 기존상품2/대기열1보존·상품/견적/전송변경0·확장2.1.21/Access/DB/API/provider설정변경0. 최종운영tab727936480설치창deliverable, CLI검수tab정리. docs/step791-web-cli-installer-and-diagnostics.md, outputs/step791-*참조.
+
+## 792. 신규 초안 이미지 이어받기·회사 경계·CLI 실제 권한 (2026-10-22)
+
+코드/CLI0.1.2 태그 `6d8cf76`을 main에 푸시했다. 새 query 초안의 일부 이미지 실패 후 정확한 그 상품의 누락 원본만 이어받고 SEO·수동 배치를 보존한다. 단일/묶음 이미지 저장은 다운로드와 DB transaction에서 인증 회사·수집 문맥을 검증한다. 기존 운영 상품2건/대기열1건의 편집·삭제·전송은0이다. 자세한 계약과 검수는 `docs/step792-image-recovery-company-scope-and-cli-permission.md`.
+
+REA로 Couplus의 localhost HTTP/SSE와 별도 상품조회 경계를 확인했다. YOOFAM은 정확한 localhost Host 별칭과 명시적 선택을 추가했으며 Bearer/Origin/15분TTL/상품조회OFF를 유지했다. CLI 공개 패키지0.1.2 고정 태그 게시/HEAD200, 원격 설치·정책 변경0. Chrome loopback 권한 조회와 명시 차단 시 연결 중단도 추가했다.
+
+중요: 실제 Chrome에서 앱 scope200 뒤127 pair30초 timeout/CLI 수신0을 관측했다. 처음 prompt였던 브라우저 권한이 최종 새 문서에서 **denied**로 확인돼 localhost 실연결은 시도하지 않았다. 해당 사이트 Chrome PC 연결 권한 확인을 사용자에게 요청했다. 1688 직접 관측 거절을 다른 통로로 우회하지 않았고, 886034098637의 확장 수집 버튼을 사용자가 직접 눌러 새 수집본을 담는 동작도 요청한 상태다. 실상품 수집·초안·접수0이며 완료로 보고하지 않는다.
+
+고유24파일289개 검사(CLI107/복구132/이미지회사50), 타입·lint error0·패키지 검사·운영 빌드·독립 검토 통과. 합성 브라우저에서 원본0번 재사용·1/2번만 저장·기존 상품/수동필드/옵션 불변을 확인했다. 실제 접수 검증과 전체 UI 완전 동일성 검수는 남아 있다. 최종 배포·증거·정리 상태는 `outputs/step792-final-validation.json`에 기록한다.
