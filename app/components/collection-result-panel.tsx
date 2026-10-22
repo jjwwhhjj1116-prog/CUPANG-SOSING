@@ -3,15 +3,15 @@ import { CollectionPriceBasisPanel } from '@/app/components/collection-price-bas
 import { useEffect, useRef, useState } from 'react';
 import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 import { validateCollectionCapacity, collectionSelectionFits, recommendCollectionImages, type CollectionImageGroup, type CollectionCapacity } from '@/app/collection-capacity';
-import { runCollectionImport } from '@/app/collection-import';
+import { runCollectionImport, type CollectionImportOutcome } from '@/app/collection-import';
 import { registrationSteps, type CollectionEditorTab } from '@/app/registration-navigation';
 import { collectionSourceWarnings, type CollectionResult } from '@/app/collection-result';
 import { validateCollectionReceiptResponse } from '@/app/collection-receipt-response';
 import { fetchCollectionCapacity } from '@/app/collection-capacity-client';
 import { collectionRequestWithRetry } from '@/app/collection-retry';
-type Props={jobId:string;offerId:string;productId?:string|null;onSaved:()=>void;onOpenProduct?:(productId:string,tab:CollectionEditorTab,signal:AbortSignal)=>Promise<void>};
-export function CollectionResultPanel(props:Props){return <CollectionResultContent key={props.jobId} {...props}/>;}
-function CollectionResultContent({jobId,offerId,productId,onSaved,onOpenProduct}:Props){
+type Props={jobId:string;offerId:string;productId?:string|null;expectedProductId?:string;assignToStage?:boolean;isCurrent?:()=>boolean;onSaved:(outcome?:CollectionImportOutcome)=>void;onOpenProduct?:(productId:string,tab:CollectionEditorTab,signal:AbortSignal)=>Promise<void>};
+export function CollectionResultPanel(props:Props){return <CollectionResultContent key={`${props.jobId}:${props.expectedProductId??''}`} {...props}/>;}
+function CollectionResultContent({jobId,offerId,productId,expectedProductId,assignToStage,isCurrent,onSaved,onOpenProduct}:Props){
  const [result,setResult]=useState<CollectionResult|null>(null);const [message,setMessage]=useState('');const [busy,setBusy]=useState(false);
  const [capacity,setCapacity]=useState<CollectionCapacity|null>(null);
  const [capacityMessage,setCapacityMessage]=useState('');
@@ -26,9 +26,17 @@ function CollectionResultContent({jobId,offerId,productId,onSaved,onOpenProduct}
  const navigation=useRef<AbortController|null>(null);
  const capacityRead=useRef<AbortController|null>(null);
  const linkedProductId=productId||savedProductId;
+ const missingOnly=!!expectedProductId&&assignToStage===false;
+ const active=()=>mounted.current&&(!isCurrent||isCurrent());
+ const scopedFetch:typeof fetch=async(url,init)=>{
+  if(!active())throw Error('상품이나 로그인 계정이 변경되었습니다. 이 작업을 다시 열어주세요.');
+  const response=await fetch(url,init);
+  if(!active())throw Error('상품이나 로그인 계정이 변경되었습니다. 저장 결과는 원래 작업에서 확인해주세요.');
+  return response;
+ };
  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;stop.current=true;navigation.current?.abort();capacityRead.current?.abort();};},[]);
  async function openEditor(tab:CollectionEditorTab){
-  if(!linkedProductId||!onOpenProduct||running.current)return;
+  if(!linkedProductId||!onOpenProduct||running.current||!active())return;
   const controller=new AbortController();navigation.current=controller;running.current=true;setBusy(true);setOpening(true);setNavigationError('');
   try{await onOpenProduct(linkedProductId,tab,controller.signal);}
   catch(cause){if(mounted.current&&!controller.signal.aborted)setNavigationError(cause instanceof Error?cause.message:'상품 편집 화면을 열지 못했습니다. 다시 시도해주세요.');}
@@ -38,59 +46,66 @@ function CollectionResultContent({jobId,offerId,productId,onSaved,onOpenProduct}
   const controller=new AbortController();capacityRead.current?.abort();capacityRead.current=controller;
   setCapacity(null);setCapacityMessage('이미지 저장 상태 확인 중…');
   try{
-   const check=await fetchCollectionCapacity('/api/collection-jobs/'+encodeURIComponent(jobId)+'/capacity',{fetcher:fetch,signal:controller.signal});
+   const check=await fetchCollectionCapacity('/api/collection-jobs/'+encodeURIComponent(jobId)+'/capacity',{fetcher:scopedFetch,signal:controller.signal});
    const data=await check.json() as {capacity?:unknown;error?:string};
    if(!check.ok)throw new Error(data.error||'이미지 저장 여유 조회 실패');
    const current=validateCollectionCapacity(data.capacity,received.images.length);
-   if(!mounted.current||controller.signal.aborted||capacityRead.current!==controller)return;
+   if(!active()||controller.signal.aborted||capacityRead.current!==controller)return;
    setCapacity(current);setCapacityMessage('');
    const available=received.images.map((_,index)=>index).filter(index=>!current.blockedIndices?.includes(index));
    setSelectedImages(previous=>{
-    const next=initial?recommendCollectionImages(received,current):previous.filter(index=>available.includes(index));
+    const selected=initial?recommendCollectionImages(received,current):previous.filter(index=>available.includes(index));
+    const next=missingOnly?selected.filter(index=>!current.reusableIndices.includes(index)):selected;
     return next.length<=50&&collectionSelectionFits(current,next)?next:[];
    });
   }catch(cause){if(mounted.current&&!controller.signal.aborted&&capacityRead.current===controller)setCapacityMessage(`${cause instanceof Error?cause.message:'이미지 저장 상태 조회 실패'} 원문은 유지됩니다. 이미지 저장 상태를 다시 조회해주세요.`);}
   finally{if(capacityRead.current===controller)capacityRead.current=null;}
  }
  async function refreshCapacity(){
-  if(!result||running.current)return;
+  if(!result||running.current||!active())return;
   running.current=true;setBusy(true);
   try{await readCapacity(result);}finally{running.current=false;if(mounted.current)setBusy(false);}
  }
  async function importAll(productOnly=false){
-  if(!result||running.current)return;
+  if(!result||running.current||!active())return;
+  if(expectedProductId&&productId!==expectedProductId){setMessage('이어받을 상품 연결이 변경되었습니다. 기존 작업을 다시 확인해주세요.');return;}
+  const imageIndices=productOnly?[]:selectedImages.filter(index=>!missingOnly||!capacity?.reusableIndices.includes(index));
+  if(missingOnly&&!imageIndices.length){setMessage('선택한 누락 원본 이미지가 없습니다. 이미지 저장 상태를 확인해주세요.');return;}
   running.current=true;stop.current=false;setStopping(false);setWarnings([]);setBusy(true);setImporting(true);
   const onRetry=(attempt:number)=>{if(mounted.current)setMessage(`일시적인 연결 오류 · ${attempt}/3회 재시도 중…`);};
   const fetchImport:typeof fetch=async(url,init)=>{
    if(url==='/api/collection-jobs/'+encodeURIComponent(jobId)+'/capacity'){
     const controller=new AbortController();capacityRead.current=controller;
-    try{return await fetchCollectionCapacity(String(url),{fetcher:fetch,signal:controller.signal,shouldStop:()=>stop.current,attempts:3,onRetry});}
+    try{return await fetchCollectionCapacity(String(url),{fetcher:scopedFetch,signal:controller.signal,shouldStop:()=>stop.current||!active(),attempts:3,onRetry});}
     finally{if(capacityRead.current===controller)capacityRead.current=null;}
    }
-   return collectionRequestWithRetry(String(url),init??{},{fetcher:fetch,attempts:3,shouldStop:()=>stop.current,onRetry});
+   return collectionRequestWithRetry(String(url),init??{},{fetcher:scopedFetch,attempts:3,shouldStop:()=>stop.current||!active(),onRetry});
   };
   let outcome;
-  try { outcome=await runCollectionImport(jobId,result.images.length,{continueOnImageError:true,retryAttempts:1,fetcher:fetchImport,imageIndices:productOnly?[]:selectedImages,shouldStop:()=>stop.current,onProgress:progress=>{
+  try { outcome=await runCollectionImport(jobId,result.images.length,{continueOnImageError:true,retryAttempts:1,fetcher:fetchImport,imageIndices,...(assignToStage===false?{assignToStage:false}:{}),shouldStop:()=>stop.current||!active(),onProductSaved:async savedId=>{
+   if(!active()||expectedProductId&&savedId!==expectedProductId)throw Error('서버의 상품 연결이 현재 초안과 다릅니다. 이미지는 변경하지 않았습니다.');
+  },onProgress:progress=>{
    if(mounted.current)setMessage(progress.stage==='product'?'상품·옵션 반영 중…':`원본 이미지 ${progress.completedImages}/${progress.totalImages}개 저장 확인…`);
   }}); } catch(cause) {
    running.current=false;
    if(mounted.current){setMessage(cause instanceof Error?cause.message:'이미지 선택을 확인해주세요.');setBusy(false);setImporting(false);setStopping(false);}
    return;
   }
-  if(!mounted.current){running.current=false;return;}
-  if(outcome.productId)setSavedProductId(outcome.productId);
+  if(!active()){running.current=false;return;}
+  const confirmedProductId=outcome.productId&&(!expectedProductId||outcome.productId===expectedProductId)?outcome.productId:null;
+  if(confirmedProductId)setSavedProductId(confirmedProductId);
   setWarnings(outcome.warnings??[]);
   setMessage(outcome.status==='completed'?(productOnly?'상품 관리에 반영했습니다. 이미지·번역·등록은 아직 실행하지 않았습니다.':`상품·옵션과 원본 이미지 ${outcome.completedImages}개 저장을 확인했습니다. 번역·등록은 실행하지 않았습니다.`):
-   `${outcome.status==='stopped'?'중단됨':'실패'} · ${outcome.productId?'상품 반영 확인':'상품 반영 미확인'} · 이미지 ${outcome.completedImages}개 확인. ${outcome.error??''} 다시 실행하면 완료된 항목을 재사용합니다.`);
+   `${outcome.status==='stopped'?'중단됨':'실패'} · ${confirmedProductId?'상품 반영 확인':'상품 반영 미확인'} · 이미지 ${outcome.completedImages}개 확인. ${outcome.error??''} 다시 실행하면 완료된 항목을 재사용합니다.`);
   setImporting(false);setStopping(false);
   if(!productOnly)await readCapacity(result);
   running.current=false;
-  if(mounted.current){setBusy(false);if(outcome.productId)onSaved();}
+  if(active()){setBusy(false);if(confirmedProductId)onSaved(outcome);}
  }
- async function load(){if(running.current)return;running.current=true;setBusy(true);setMessage('');setWarnings([]);setCapacity(null);setCapacityMessage('');try{
- const response=await fetch(`/api/collection-jobs/${encodeURIComponent(jobId)}/result`,{cache:'no-store'});const body=await response.json() as {error?:string;message:string;receipt?:{result:CollectionResult}|null};
+ async function load(){if(running.current||!active())return;running.current=true;setBusy(true);setMessage('');setWarnings([]);setCapacity(null);setCapacityMessage('');try{
+ const response=await scopedFetch(`/api/collection-jobs/${encodeURIComponent(jobId)}/result`,{cache:'no-store'});const body=await response.json() as {error?:string;message:string;receipt?:{result:CollectionResult}|null};
  if(!response.ok)throw new Error(body.error||'결과 조회 실패');const received=validateCollectionReceiptResponse(body,jobId,offerId);
- if(!mounted.current)return;
+ if(!active())return;
  setSelectedImages([]);
  setResult(received);setMessage(productId?'상품에 반영한 원문입니다. 번역·이미지 다운로드·등록은 별도 단계입니다.':body.message);
  if(received)await readCapacity(received,true);

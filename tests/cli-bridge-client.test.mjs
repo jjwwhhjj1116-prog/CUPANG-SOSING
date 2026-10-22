@@ -48,7 +48,7 @@ test('default query permission fails closed without sending a product-query API 
  const h=harness();try{await h.bridge.start();await until(()=>h.results().length===1);assert.equal(h.results()[0].body.error.code,'QUERY_NOT_APPROVED');assert.equal(h.calls.filter(call=>call.url==='/api/product-query').length,0);assert.ok(h.calls.every(call=>!call.url.includes('1688.com')));}finally{h.bridge.stop();}
 });
 test('approved synthetic query forwards owner/company and returns unpersisted result once',async()=>{
- const h=harness({approved:true});try{await h.bridge.start();await until(()=>h.results().length===1);const request=h.calls.find(call=>call.url==='/api/product-query');assert.deepEqual(request.body,{sourceUrl,expectedOwnerId:owner.ownerId,expectedCompany:owner.company});assert.equal(request.credentials,'same-origin');assert.equal(request.redirect,'manual');assert.equal(h.results()[0].body.ok,true);assert.equal(h.results()[0].body.result.sourceStored,false);assert.ok(h.scopeReads>=5);for(const call of h.calls.filter(call=>call.url.startsWith('http:'))){assert.equal(call.credentials,'omit');assert.equal(call.headers.authorization,'Bearer '+link.token);}assert.ok(h.states.some(state=>state.lastResult?.optionCount===1));}finally{h.bridge.stop();}
+ const h=harness({approved:true});try{await h.bridge.start();await until(()=>h.results().length===1);const request=h.calls.find(call=>call.url==='/api/product-query');assert.deepEqual(request.body,{sourceUrl,expectedOwnerId:owner.ownerId,expectedCompany:owner.company});assert.equal(request.credentials,'same-origin');assert.equal(request.targetAddressSpace,undefined);assert.equal(request.redirect,'manual');assert.equal(h.results()[0].body.ok,true);assert.equal(h.results()[0].body.result.sourceStored,false);assert.ok(h.scopeReads>=5);for(const call of h.calls.filter(call=>call.url.startsWith('http:'))){assert.equal(call.credentials,'omit');assert.equal(call.targetAddressSpace,'loopback');assert.equal(call.headers.authorization,'Bearer '+link.token);}assert.ok(h.states.some(state=>state.lastResult?.optionCount===1));}finally{h.bridge.stop();}
 });
 for(const [command,payload,path] of [['status',{},'/api/product-query'],['category-profiles/list',{},'/api/cli-read?resource=category-profiles'],['collection-job/status',{jobId},'/api/cli-read?resource=collection-job&jobId='+jobId]])test(`read-only command ${command} uses a fixed same-origin endpoint`,async()=>{
  const h=harness({jobCommand:command,payload});try{await h.bridge.start();await until(()=>h.results().length===1);const request=h.calls.find(call=>call.url===path);assert.equal(request.method,'GET');assert.equal(request.body,undefined);assert.deepEqual(JSON.parse(decodeURIComponent(request.headers['x-yoofam-cli-scope'])),owner);assert.equal(h.results()[0].body.ok,true);}finally{h.bridge.stop();}
@@ -107,7 +107,7 @@ function panelHarness({hash='',search='',readError,connectError,disconnectGate,s
  const bridgeModule={...exports,async readCliScope(_fetcher,_signal,diagnostic){diagnostic?.onDiagnostic?.({stage:'scope',target:'app',outcome:'start'});if(readError)throw readError;return owner;},createCliBridge(options){const client={options,stops:0,disconnections:0,async start(){options.onDiagnostic?.({stage:'pair',target:'localhost',outcome:'response',status:200});options.onState({phase:'connecting',message:'Synthetic connecting'});if(startGate)await startGate;if(connectError){options.onState({phase:'stopped',message:'로컬 CLI 연결을 확인하지 못했습니다. 실행 상태를 확인해주세요.'});throw connectError;}options.onState({phase:'connected',message:'Synthetic connected'});},stop(){client.stops++;},async disconnect(){client.disconnections++;client.stop();if(disconnectGate)await disconnectGate;},cancelProductQuery(){}};clients.push(client);return client;}};
  const output={};
  const jsx=(type,props)=>({type,props});
- vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/cli-connection-panel.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText,{exports:output,window,queueMicrotask,Promise,Error,URLSearchParams,console:{info(...values){infoLogs.push(values);},log(...values){otherLogs.push(values);},warn(...values){otherLogs.push(values);},error(...values){otherLogs.push(values);}},require(name){if(name==='react')return hooks;if(name==='react/jsx-runtime')return{jsx,jsxs:jsx};if(name==='next/link')return()=>null;if(name==='@/app/components/cli-install-guide')return{CliInstallGuide:()=>null};if(name==='@/app/cli-bridge-client')return bridgeModule;throw Error('Unexpected panel dependency '+name);}});
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/cli-connection-panel.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText,{exports:output,window,queueMicrotask,Promise,Error,URLSearchParams,console:{info(...values){infoLogs.push(values);},log(...values){otherLogs.push(values);},warn(...values){otherLogs.push(values);},error(...values){otherLogs.push(values);}},require(name){if(name==='react')return hooks;if(name==='react/jsx-runtime')return{jsx,jsxs:jsx};if(name==='next/link')return()=>null;if(name==='@/app/components/cli-install-guide')return{CliInstallGuide:()=>null};if(name==='@/app/components/cli-browser-status')return{CliBrowserStatus:()=>null};if(name==='@/app/cli-bridge-client')return bridgeModule;throw Error('Unexpected panel dependency '+name);}});
  const render=()=>{cursor=0;tree=output.CliConnectionPanel({initialScope:owner,displayName:'Synthetic'});return tree;};
  function find(predicate,node=tree){if(!node||typeof node!=='object')return null;if(predicate(node))return node;const children=node.props?.children;for(const child of Array.isArray(children)?children:[children]){const match=find(predicate,child??null);if(match)return match;}return null;}
  const text=(node=tree)=>{if(node===undefined||node===null||typeof node==='boolean')return'';if(typeof node!=='object')return String(node);return(Array.isArray(node.props?.children)?node.props.children:[node.props?.children]).map(child=>text(child??null)).join(' ');};
@@ -181,4 +181,31 @@ test('normal CLI panel connection never writes diagnostics to the console',async
 });
 test('explicit diagnostics=1 logs only safe transport events and preserves the query while scrubbing the token',async()=>{
  const h=panelHarness({hash:syntheticHash(),search:'?diagnostics=1'});try{h.mount();assert.equal(h.location.hash,'');assert.equal(h.location.search,'?diagnostics=1');await flush();h.render();h.button().props.onClick();await flush();assert.equal(h.infoLogs.length,2);assert.equal(h.otherLogs.length,0);for(const [prefix,serialized]of h.infoLogs){assert.equal(prefix,'[YOOFAM CLI]');const event=JSON.parse(serialized);assert.ok(Object.keys(event).every(key=>['stage','target','outcome','status'].includes(key)));}const logs=JSON.stringify(h.infoLogs);for(const secret of [link.token,sessionId,owner.ownerId,owner.company.name,owner.company.code,'Bearer'])assert.equal(logs.includes(secret),false);}finally{h.unmount();}
+});
+
+test('localhost compatibility is an exact opt-in alias and never an arbitrary host or silent retry',async()=>{
+ const hash='#port=49831&token='+link.token+'&session='+sessionId;
+ assert.equal(parseCliLink(hash+'&host=localhost').host,'localhost');
+ assert.equal(parseCliLink(hash+'&host=127.0.0.1').host,'127.0.0.1');
+ for(const value of ['localhost.evil.test','localhost:49831','localhost.','LOCALHOST','127.0.0.2','[::1]','','localhost&host=localhost'])assert.throws(()=>parseCliLink(hash+'&host='+value));
+ const calls=[];
+ const bridge=createCliBridge({link:{...link,host:'localhost'},scope:owner,queryApproved:()=>false,fetcher:async(url,init)=>{
+  calls.push(url);
+  if(url==='/api/supplier-hub/catalog-context')return json(owner);
+  assert.ok(url.startsWith('http://localhost:49831/'));assert.equal(init.targetAddressSpace,'loopback');assert.equal(init.credentials,'omit');assert.equal(init.headers.authorization,'Bearer '+link.token);
+  if(url.endsWith('/pair'))return json({ok:true,protocolVersion:'1.0',sessionId,scope:owner,expiresAt:Date.now()+14*60000});
+  return new Promise((resolve,reject)=>{if(init.signal.aborted)reject(Error('cancelled'));else init.signal.addEventListener('abort',()=>reject(Error('cancelled')),{once:true});});
+ }});
+ try{await bridge.start();assert.ok(calls.includes('http://localhost:49831/pair'));assert.equal(calls.some(value=>value.startsWith('http://127.')),false);}finally{bridge.stop();}
+ for(const host of ['evil.test','localhost.evil.test','127.0.0.2'])assert.throws(()=>createCliBridge({link:{...link,host},scope:owner,queryApproved:()=>false,fetcher:()=>assert.fail('no network')}));
+});
+
+test('CLI host choice is explicit before pairing and cannot change a connected session',async()=>{
+ const h=panelHarness({hash:syntheticHash()});try{
+  h.mount();await flush();h.render();
+  const local=h.find(node=>node.type==='button'&&h.text(node)==='localhost 주소 사용');assert.ok(local);assert.equal(local.props.disabled,false);local.props.onClick();h.render();
+  assert.match(h.text(),/localhost:49831/);assert.equal(h.clients.length,0);h.button().props.onClick();await flush();h.render();
+  assert.equal(h.clients.length,1);assert.equal(h.clients[0].options.link.host,'localhost');assert.equal(h.clients[0].options.link.token,link.token);assert.deepEqual(h.clients[0].options.scope,owner);assert.equal(h.clients[0].options.queryApproved(),false);
+  const other=h.find(node=>node.type==='button'&&h.text(node)==='127.0.0.1 주소 사용');assert.equal(other.props.disabled,true);
+ }finally{h.unmount();}
 });

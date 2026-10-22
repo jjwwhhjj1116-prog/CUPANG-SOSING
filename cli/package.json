@@ -1,6 +1,6 @@
 {
   "name": "@yoofam/studio-cli",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "YOOFAM Studio local read-only connection",
   "type": "module",
   "engines": { "node": ">=22.13.0" },

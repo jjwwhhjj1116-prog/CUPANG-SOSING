@@ -13,7 +13,7 @@ yoofam-studio.cmd status
 yoofam-studio.cmd start
 ```
 
-현재 패키지 버전은 **0.1.1**입니다. `status`는 설치된 패키지와 Node.js 버전만 확인합니다. 서버 실행 여부나 YOOFAM 로그인 상태를 조회하지 않습니다. 앱 연결을 확인하려면 `start`로 실행한 뒤 출력되는 연결 주소를 현재 Chrome에서 여세요. **실행한 PowerShell을 열어 두어야 하며 Ctrl+C로 종료합니다.** 백그라운드 서비스나 자동 시작 항목을 설치하지 않습니다.
+현재 패키지 버전은 **0.1.2**입니다. `status`는 설치된 패키지와 Node.js 버전만 확인합니다. 서버 실행 여부나 YOOFAM 로그인 상태를 조회하지 않습니다. 앱 연결을 확인하려면 `start`로 실행한 뒤 출력되는 연결 주소를 현재 Chrome에서 여세요. **실행한 PowerShell을 열어 두어야 하며 Ctrl+C로 종료합니다.** 백그라운드 서비스나 자동 시작 항목을 설치하지 않습니다.
 
 `npm.cmd`와 `yoofam-studio.cmd`는 Windows용 명령입니다. macOS에서는 각각 `npm`, `yoofam-studio`를 사용합니다. `start`와 `serve`는 같은 명령입니다. `yoofam-studio --help`로 명령을 확인할 수 있습니다.
 

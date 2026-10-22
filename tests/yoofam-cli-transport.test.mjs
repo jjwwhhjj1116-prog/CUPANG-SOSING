@@ -43,7 +43,7 @@ test('launch URL contains only a random ephemeral secret, port and session in th
 
 test('DNS rebinding, untrusted Origin, missing Origin and token guesses are rejected before pairing', async (t) => {
   const { connection, server } = await setup(t);
-  for (const headers of [{ host: `localhost:${connection.port}` }, { host: `attacker.example:${connection.port}` }, { origin: 'https://sourceflow.jjwwhhjj1116.workers.dev.attacker.example' }, { origin: 'null' }, { origin: '' }]) {
+  for (const headers of [{ host: `attacker.example:${connection.port}` }, { origin: 'https://sourceflow.jjwwhhjj1116.workers.dev.attacker.example' }, { origin: 'null' }, { origin: '' }]) {
     assert.equal((await send(connection, '/pair', { sessionId: connection.sessionId, scope: A }, { headers })).status, 403);
   }
   for (const authorization of ['', 'Bearer guess', `Bearer ${'0'.repeat(64)}`, `Bearer ${'x'.repeat(200)}`]) {
@@ -51,6 +51,45 @@ test('DNS rebinding, untrusted Origin, missing Origin and token guesses are reje
     assert.equal(response.status, 401); assert.equal(response.body.error.code, 'TOKEN_INVALID'); assert.equal(JSON.stringify(response.body).includes(connection.token), false);
   }
   assert.equal(server.getState().connected, false);
+});
+
+test('exact localhost Host alias pairs only on the existing IPv4 loopback listener', async (t) => {
+  const { connection, server } = await setup(t);
+  const alias = { host: `localhost:${connection.port}` };
+  const preflight = await send(connection, '/pair', undefined, { method: 'OPTIONS', headers: { ...alias, 'access-control-request-method': 'POST', 'access-control-request-headers': 'authorization, content-type' } });
+  assert.equal(preflight.status, 204); assert.equal(preflight.headers['access-control-allow-origin'], APP_ORIGIN);
+  const response = await send(connection, '/pair', { sessionId: connection.sessionId, scope: A }, { headers: alias });
+  assert.equal(response.status, 200); assert.deepEqual(response.body.scope, A); assert.equal(server.getState().connected, true);
+  const address = await new Promise((resolve, reject) => {
+    const req = request({ hostname: '127.0.0.1', port: connection.port, path: `/next?sessionId=${connection.sessionId}&waitMs=0`, headers: { ...alias, origin: APP_ORIGIN, authorization: `Bearer ${connection.token}` } }, res => { const remoteAddress = res.socket.remoteAddress; res.resume(); res.on('end', () => resolve(remoteAddress)); });
+    req.on('error', reject); req.end();
+  });
+  assert.equal(address, '127.0.0.1');
+  for (const host of ['localhost', '0.0.0.0', '::', '[::1]']) assert.throws(() => createCliServer({ host }), { code: 'HOST_INVALID' });
+  assert.equal(new URL(connection.connectUrl).search, ''); assert.equal(new URLSearchParams(new URL(connection.connectUrl).hash.slice(1)).has('host'), false, 'default connection URL is unchanged');
+});
+
+test('localhost alias rejects wrong ports, lookalikes, local domains, IPv6 and public Host values', async (t) => {
+  const { connection, server } = await setup(t);
+  const hosts = [`localhost:${connection.port + 1}`, `localhost.attacker.example:${connection.port}`, `localhost.:${connection.port}`, `LOCALHOST:${connection.port}`, `other.localhost:${connection.port}`, `device.local:${connection.port}`, `127.0.0.1.attacker.example:${connection.port}`, `[::1]:${connection.port}`, `0.0.0.0:${connection.port}`, `192.168.1.1:${connection.port}`, `example.com:${connection.port}`, 'localhost', '127.0.0.1'];
+  for (const host of hosts) {
+    const response = await send(connection, '/pair', { sessionId: connection.sessionId, scope: A }, { headers: { host } });
+    assert.equal(response.status, 403); assert.equal(response.body.error.code, 'HOST_INVALID');
+  }
+  assert.equal(server.getState().connected, false); assert.equal(server.getState().pendingCount, 0);
+});
+
+test('localhost alias retains Origin, Bearer, session and company checks with redacted diagnostics', async (t) => {
+  const { connection, server } = await setup(t);
+  const host = `localhost:${connection.port}`, body = { sessionId: connection.sessionId, scope: A };
+  assert.equal((await send(connection, '/pair', body, { headers: { host, origin: 'https://synthetic-private-host.example' } })).body.error.code, 'ORIGIN_INVALID');
+  assert.equal((await send(connection, '/pair', body, { headers: { host, authorization: 'Bearer synthetic-private-host-token' } })).body.error.code, 'TOKEN_INVALID');
+  assert.equal((await send(connection, '/pair', { ...body, sessionId: randomUUID() }, { headers: { host } })).body.error.code, 'SESSION_INVALID');
+  assert.equal((await send(connection, '/pair', body, { headers: { host } })).status, 200);
+  assert.equal((await send(connection, '/pair', { ...body, scope: B }, { headers: { host } })).body.error.code, 'SCOPE_CHANGED');
+  const serialized = JSON.stringify(server.getDiagnostics());
+  for (const value of [host, 'synthetic-private-host.example', 'synthetic-private-host-token', connection.token, connection.sessionId, A.ownerId, A.company.code, B.ownerId]) assert.equal(serialized.includes(value), false);
+  for (const event of server.getDiagnostics().events) assert.deepEqual(Object.keys(event).sort(), ['errorCode', 'method', 'originAllowed', 'route', 'status', 'timestamp']);
 });
 
 test('strict preflight supports browser loopback permission without granting arbitrary headers', async (t) => {

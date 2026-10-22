@@ -49,7 +49,7 @@ function npmCommand(shim, args) {
 }
 
 test('npm package exposes one versioned executable with no dependencies or install lifecycle', () => {
-  assert.equal(pkg.name, '@yoofam/studio-cli'); assert.equal(pkg.version, '0.1.1');
+  assert.equal(pkg.name, '@yoofam/studio-cli'); assert.equal(pkg.version, '0.1.2');
   assert.equal(pkg.engines.node, '>=22.13.0');
   assert.deepEqual(pkg.bin, { 'yoofam-studio': './bin.mjs' });
   assert.deepEqual([...pkg.files].sort(), CLI_PACKAGE_FILES.filter((name) => name !== 'package.json').sort());

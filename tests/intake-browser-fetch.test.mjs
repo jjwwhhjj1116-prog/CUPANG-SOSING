@@ -39,7 +39,7 @@ async function queue(h,interrupted){
  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/intake-queue-panel.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,URL,AbortController,crypto,fetch:fetcher,require(name){
   if(name==='react')return hooks;
   if(name==='@/app/components/category-picker')return{CategoryPicker:()=>null};
-  if(name==='@/app/components/intake-quotation-preview')return{IntakeQuotationPreview:()=>null};
+  if(name==='@/app/components/collection-result-panel')return{CollectionResultPanel:()=>null};if(name==='@/app/components/intake-quotation-preview')return{IntakeQuotationPreview:()=>null};
   if(name==='@/app/browser-product-bridge')return{capture1688FromChrome:()=>assert.fail('recorded public source needs no browser')};
   return name.startsWith('@/')?h.load(name.slice(2)+'.ts'):native(name);
  }});

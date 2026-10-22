@@ -14,6 +14,17 @@ import {createIntakeNewDraft,recoverIntakeNewDraft,previewIntakeNewDraft,intakeN
 import {sameSourceUrl} from '@/app/source-registration';
 import {previewPendingIntakeSource,preparePendingIntakeSource,type PendingIntakeSourcePreview} from '@/app/intake-pending-source';
 import {validateSourceCaptureSelection,sourceCaptureAfterUrlEdit,selectedSourceInboxItem,sameSourceCaptureSelection,type SourceCaptureSelection} from '@/app/source-capture-selection';
+import { CollectionResultPanel } from '@/app/components/collection-result-panel';
+
+/** Recovery is limited to one newly collected query row and its exact saved link. */
+export function intakeQueryImageRecoveryJob(row:IntakeRow,jobs:readonly CollectionJob[]):CollectionJob|null{
+  if(row.status!=='error'||!row.productId||row.forkJobId||row.pendingJobId||row.sourceCapture?.format!=='yoofam-saved-query-capture-v1')return null;
+  try{
+    const capture=validateSourceCaptureSelection(row.sourceCapture,row.url);
+    const matches=jobs.filter(job=>!!job.id&&job.status!=='cancelled'&&job.product_id===row.productId&&job.source_url===capture.sourceUrl&&!!job.received_at&&Number.isFinite(Date.parse(job.received_at)));
+    return matches.length===1?matches[0]:null;
+  }catch{return null;}
+}
 
 export type IntakeSourceSeed={id:string;sourceUrl:string;title?:string;sourceCapture?:Readonly<SourceCaptureSelection>};
 type IntakeCategorySelection={target:string;ownerId:string|undefined;epoch:number;completed:boolean;seed?:IntakeSourceSeed};
@@ -58,6 +69,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   const [settingsChanged,setSettingsChanged]=useState(false);
   const [settingsMessage,setSettingsMessage]=useState('');
   const [previewId, setPreviewId] = useState<string | null>(null);
+  const [imageRecovery,setImageRecovery]=useState<{row:IntakeRow;job:CollectionJob;ownerId:string|undefined;epoch:number}|null>(null);
   const [forkPreview,setForkPreviewState]=useState<{rowId:string;inputKey:string;ownerId:string|undefined;preview:IntakeNewDraftPreview;requestId:string;pending:boolean;created?:IntakeNewDraftCreated}|null>(null);
   const [pendingPreview,setPendingPreviewState]=useState<{rowId:string;inputKey:string;ownerId:string|undefined;preview:PendingIntakeSourcePreview;pending:boolean}|null>(null);
   const [sourceUrlsCandidate,setSourceUrlsCandidateState]=useState<{rowId:string;inputKey:string;ownerId:string|undefined;candidate:IntakeNewDraftSourceUrlsAvailable['candidate']}|null>(null);
@@ -74,6 +86,18 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   useLayoutEffect(()=>{if(forkOwner.current===workspaceOwnerId)return;forkOwner.current=workspaceOwnerId;ownerEpoch.current++;setOwnerGeneration(ownerEpoch.current);forkPreviewRef.current=null;pendingPreviewRef.current=null;sourceUrlsCandidateRef.current=null;setForkPreviewState(null);setPendingPreviewState(null);setSourceUrlsCandidateState(null);const controller=running.current;forkRunning.current=null;if(!controller)return;running.current=null;controller.abort();setBusy(false);onBusy(false);},[workspaceOwnerId,onBusy]);
   const sameOwner=()=>forkOwner.current===workspaceOwnerId&&navigation.current.workspaceOwnerId===workspaceOwnerId&&ownerEpoch.current===ownerGeneration;
   const ownerCurrent=()=>sourceMounted.current&&sameOwner();
+  function imageRecoveryCurrent(value:NonNullable<typeof imageRecovery>){
+    if(!ownerCurrent()||value.ownerId!==navigation.current.workspaceOwnerId||value.epoch!==ownerEpoch.current)return false;
+    const row=navigation.current.rows.find(candidate=>candidate.id===value.row.id);
+    if(row!==value.row)return false;
+    const job=intakeQueryImageRecoveryJob(row,navigation.current.jobs);
+    return job===value.job&&job.id===value.job.id&&job.product_id===value.row.productId&&job.source_url===value.job.source_url;
+  }
+  function openImageRecovery(row:IntakeRow){
+    if(!ownerCurrent()||running.current||navigation.current.rows.find(value=>value.id===row.id)!==row)return;
+    const job=intakeQueryImageRecoveryJob(row,navigation.current.jobs);
+    if(job)setImageRecovery({row,job,ownerId:workspaceOwnerId,epoch:ownerEpoch.current});
+  }
   useLayoutEffect(()=>{busyNotice.current=onBusy;},[onBusy]);
   const urlInputs = useRef(new Map<string, HTMLInputElement>());
   useEffect(() => {
@@ -365,6 +389,12 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     setQuery('');setCategorySelection(null);
   }
   if (categorySelection) return <div className="intake-category-dialog" role="dialog" aria-label="카테고리 선택"><header><h3>카테고리 선택</h3><button type="button" className="icon-close" aria-label="카테고리 선택 취소" onClick={()=>cancelCategory(categorySelection)}>×</button></header>{error&&<p role="alert">{error}</p>}<CategoryPicker key={categorySelection.seed?.id} sourceTitle={categorySelection.seed?.title??sourceItemForRow(rows.find(row=>row.id===categorySelection.target))?.reviewed?.title??sourceItemForRow(rows.find(row=>row.id===categorySelection.target))?.snapshot.title} workspaceOwnerId={workspaceOwnerId} profiles={profiles} selectedId={rows.find(row => row.id === categorySelection.target)?.profile.id ?? ''} onAdvanced={seed=>{if(!categoryCurrent(categorySelection))return;categoryEpoch.current++;categorySelectionRef.current=null;setCategorySelection(null);onAdvanced(seed);}} onSelected={profile=>selectCategory(categorySelection,profile)}/><footer><button type="button" className="btn ghost" onClick={()=>cancelCategory(categorySelection)}>취소 · 상품 대기열로 돌아가기</button></footer></div>;
+  if(imageRecovery&&imageRecovery.ownerId===workspaceOwnerId&&imageRecovery.epoch===ownerGeneration&&rows.includes(imageRecovery.row)&&intakeQueryImageRecoveryJob(imageRecovery.row,jobs)===imageRecovery.job)return <section role="dialog" aria-label="누락 원본 이미지 이어받기" className="panel-note"><h3>누락 원본 이미지 이어받기</h3><p>이 초안에서 저장하지 못한 원본만 이어서 가져옵니다. 직접 수정한 SEO·대표·상세 이미지 배치는 유지됩니다.</p><CollectionResultPanel jobId={imageRecovery.job.id} offerId={imageRecovery.job.offer_id} productId={imageRecovery.row.productId} expectedProductId={imageRecovery.row.productId} assignToStage={false} isCurrent={()=>imageRecoveryCurrent(imageRecovery)} onSaved={outcome=>{
+    if(!outcome||outcome.status!=='completed'||outcome.productId!==imageRecovery.row.productId||!imageRecoveryCurrent(imageRecovery))return;
+    const rowId=imageRecovery.row.id;
+    onRows(previous=>imageRecoveryCurrent(imageRecovery)?previous.map(row=>row.id===rowId?{...row,message:'누락 원본 이미지를 저장했습니다. 다른 미완료 단계는 초안 확인·수정에서 이어가세요.'}:row):previous);
+    setImageRecovery(null);
+  }}/><button type="button" className="btn ghost" onClick={()=>setImageRecovery(null)}>닫기 · 상품 대기열로 돌아가기</button></section>;
   return <div className="modal-form intake-queue">
     <div className="intake-queue-tools"><label>검색<input type="search" aria-label="상품 대기열 검색" placeholder="카테고리 · 1688 URL · 특징 · 키워드" value={query} disabled={busy} onChange={event => setQuery(event.target.value)}/></label><label className="intake-pin-control"><select aria-label="상품 대기열 고정할 열 선택" value={pinnedColumn} onChange={event => setPinnedColumn(event.target.value)}><option value="none">고정할 열 선택</option><option value="category">카테고리</option><option value="url">1688 링크</option><option value="features">특징</option><option value="keywords">키워드</option><option value="status">상태</option></select></label><span>전체 {rows.length}건 · 선택 {pending}건</span>{query && <button type="button" className="btn ghost" disabled={busy} onClick={() => setQuery('')}>검색 해제</button>}</div>
     <div className="intake-queue-table" data-pinned={pinnedColumn} role="region" aria-label="상품 대기열 표" tabIndex={0}><table><thead><tr><th><input type="checkbox" aria-label="검색 결과 전체 선택" disabled={busy || !visiblePending.length} checked={visiblePending.length > 0 && visiblePending.every(row => !excluded.includes(row.id))} onChange={event => toggle(visiblePending.map(row => row.id), event.target.checked)}/></th><th>카테고리</th><th>1688 링크</th><th>특징</th><th>키워드</th><th>상태</th><th>관리</th></tr></thead><tbody>
@@ -374,7 +404,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
         <td><input ref={element => { if (element) urlInputs.current.set(row.id, element); else urlInputs.current.delete(row.id); }} aria-label={`${index + 1}번째 1688 링크`} value={row.url} maxLength={2048} disabled={busy || row.status === 'saved'} placeholder="https://detail.1688.com/offer/…" onChange={event => edit(row.id, { url: event.target.value })} />{row.url.trim() && <small className="intake-source-url">{row.url.trim()}</small>}{captured&&onReviewSource&&<><button type="button" className="btn ghost" disabled={busy||row.status==='saved'||!!row.productId||!!row.forkJobId||!!row.pendingJobId} onClick={()=>reviewSource(row,captured)}>수집정보 확인·수정</button><small>{captured.issues.length?`확인 필요: ${captured.issues.join(' · ')}`:'수집정보 준비됨'}</small>{row.sourceCapture&&captured.revision!==row.sourceCapture.revision&&<small>검토 버전이 변경되었습니다. 수집정보 확인·수정에서 저장한 뒤 시작하세요.</small>}</>}</td>
         <td><textarea aria-label={`${index + 1}번째 특징`} value={row.features} maxLength={2000} disabled={busy || row.status === 'saved'} placeholder="상품 특징" onChange={event => edit(row.id, { features: event.target.value })} /></td>
         <td><textarea aria-label={`${index + 1}번째 키워드`} value={row.keywords} maxLength={2000} disabled={busy || row.status === 'saved'} placeholder="타겟 키워드" onChange={event => edit(row.id, { keywords: event.target.value })} /></td>
-        <td role="status" className={row.status === 'error' ? 'collection-error' : ''}>{row.message || '입력 대기'}{row.sourceCapture&&pendingRowIds.has(row.id)&&!productId&&!row.forkJobId&&!row.pendingJobId&&<button type="button" className="btn primary" disabled={busy||settingsChanged} onClick={()=>void submit(row)}>이 상품 초안 작성</button>}{productId && onOpenProduct && <button type="button" className="btn ghost" disabled={busy} onClick={()=>void openSavedProduct(row.id,productId)}>초안 확인·수정</button>}{row.status==='error'&&row.pendingJobId&&(row.profile.template||(row.profile.hubSchema?.metadata.scopeType??row.profile.hubSchema?.metadata.scope)==='Retail_Categorized_Single')&&<button type="button" className="btn ghost" disabled={busy||settingsChanged} onClick={()=>void inspectPendingSource(row.id)}>기존 대기 요청 확인</button>}{row.status==='error'&&row.forkJobId&&(row.profile.template||(row.profile.hubSchema?.metadata.scopeType??row.profile.hubSchema?.metadata.scope)==='Retail_Categorized_Single')&&<button type="button" className="btn ghost" disabled={busy||settingsChanged} onClick={()=>void inspectNewDraft(row.id)}>저장 원문으로 새 초안</button>}</td>
+        <td role="status" className={row.status === 'error' ? 'collection-error' : ''}>{row.message || '입력 대기'}{row.sourceCapture&&pendingRowIds.has(row.id)&&!productId&&!row.forkJobId&&!row.pendingJobId&&<button type="button" className="btn primary" disabled={busy||settingsChanged} onClick={()=>void submit(row)}>이 상품 초안 작성</button>}{productId && onOpenProduct && <button type="button" className="btn ghost" disabled={busy} onClick={()=>void openSavedProduct(row.id,productId)}>초안 확인·수정</button>}{intakeQueryImageRecoveryJob(row,jobs)&&<button type="button" className="btn ghost" disabled={busy} onClick={()=>openImageRecovery(row)}>누락 원본 이미지 이어받기</button>}{row.status==='error'&&row.pendingJobId&&(row.profile.template||(row.profile.hubSchema?.metadata.scopeType??row.profile.hubSchema?.metadata.scope)==='Retail_Categorized_Single')&&<button type="button" className="btn ghost" disabled={busy||settingsChanged} onClick={()=>void inspectPendingSource(row.id)}>기존 대기 요청 확인</button>}{row.status==='error'&&row.forkJobId&&(row.profile.template||(row.profile.hubSchema?.metadata.scopeType??row.profile.hubSchema?.metadata.scope)==='Retail_Categorized_Single')&&<button type="button" className="btn ghost" disabled={busy||settingsChanged} onClick={()=>void inspectNewDraft(row.id)}>저장 원문으로 새 초안</button>}</td>
         <td><button type="button" className="btn ghost" disabled={busy || rows.length >= 50} onClick={() => { const id = crypto.randomUUID(); focusRow.current = id; setQuery(''); onRows(previous => previous.length < 50 ? [...previous, { ...intakeRow(row.profile, id), features: row.features, keywords: row.keywords }] : previous); }}>복제</button><button type="button" className="btn ghost" disabled={busy} onClick={() => removeRow(row.id)}>행 삭제</button></td>
       </tr>; })}
     </tbody></table>{rows.length > 0 && !visible.length && <p className="collection-empty">검색 결과가 없습니다. 검색을 해제하면 입력한 상품을 다시 볼 수 있습니다.</p>}{!rows.length && <p className="collection-empty">대기열이 비어있습니다. [+ 상품 추가] 버튼으로 카테고리를 선택해주세요.</p>}</div>

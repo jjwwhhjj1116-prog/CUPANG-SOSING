@@ -34,7 +34,7 @@ async function fixture(company,goal='work',providerFailure=true,translationRespo
   };
   const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],next=>slots[i]=typeof next==='function'?next(slots[i]):next];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useLayoutEffect(fn){layouts.push(fn);},useEffect(fn){if(first){const cleanup=fn();if(cleanup)cleanups.push(cleanup);}}};
   const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/intake-queue-panel.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,crypto,fetch:request,require(name){
-   if(name==='react')return hooks;if(name==='@/app/components/category-picker')return{CategoryPicker:()=>null};if(name==='@/app/components/intake-quotation-preview')return{IntakeQuotationPreview:()=>null};
+   if(name==='react')return hooks;if(name==='@/app/components/category-picker')return{CategoryPicker:()=>null};if(name==='@/app/components/collection-result-panel')return{CollectionResultPanel:()=>null};if(name==='@/app/components/intake-quotation-preview')return{IntakeQuotationPreview:()=>null};
    return name.startsWith('@/')?h.load(name.slice(2)+'.ts'):native(name);
   }});
   function render(){cursor=0;const tree=exports.IntakeQueuePanel({rows,jobs,settings:h.settings,profiles:[profile],goal,onGoal(){},onSettingsReloaded(){},onRows:update=>rows=update(rows),onProfile(){},onAdvanced(){},onJobs:values=>jobs=values,onBusy:value=>busy.push(value),onOpenProduct:async(id,signal)=>{

@@ -1,11 +1,12 @@
 /** First-party browser transport. The CLI never receives browser credentials. */
 export type CliScope={ownerId:string;company:{code:string;name:string}};
-export type CliLink={port:number;token:string;sessionId:string};
+export type CliLink={port:number;token:string;sessionId:string;host?:'127.0.0.1'|'localhost'};
 export type CliBridgeState={phase:'idle'|'connecting'|'connected'|'stopped';message:string;lastResult?:{command:string;title?:string;optionCount?:number;provider?:string;configured?:boolean;liveVerified?:false;stored:false}};
 export type CliBridgeStage='scope'|'pair'|'verify'|'poll'|'command'|'result'|'abort'|'disconnect';
 export type CliBridgeDiagnostic={stage:CliBridgeStage;target:'app'|'localhost';outcome:'start'|'response'|'timeout'|'cancelled'|'failed';status?:number};
 type DiagnosticCallback=(event:CliBridgeDiagnostic)=>void;
 type Fetcher=(input:string,init?:RequestInit)=>Promise<Response>;
+type LoopbackRequestInit=RequestInit&{targetAddressSpace?:'loopback'};
 type JsonRecord=Record<string,unknown>;
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_JSON=2*1024*1024;
@@ -32,10 +33,11 @@ function withDeadline<T>(operation:(signal:AbortSignal)=>Promise<T>,options:{tim
 }
 export function parseCliLink(hash:string):CliLink{
  const query=new URLSearchParams(hash.replace(/^#/,''));
- if([...query.keys()].some(key=>!['port','token','session'].includes(key))||['port','token','session'].some(key=>query.getAll(key).length!==1))throw new CliBridgeError('LINK_INVALID','CLI에서 출력한 연결 주소를 다시 열어주세요.');
+ if([...query.keys()].some(key=>!['port','token','session','host'].includes(key))||['port','token','session'].some(key=>query.getAll(key).length!==1)||query.getAll('host').length>1)throw new CliBridgeError('LINK_INVALID','CLI에서 출력한 연결 주소를 다시 열어주세요.');
  const rawPort=query.get('port')??'',token=query.get('token')??'',sessionId=query.get('session')??'';
  if(!/^[1-9]\d{3,4}$/.test(rawPort)||Number(rawPort)<1024||Number(rawPort)>65535||!/^[0-9a-f]{64}$/i.test(token)||!UUID.test(sessionId))throw new CliBridgeError('LINK_INVALID','CLI 연결 주소의 포트 또는 일회용 세션을 확인해주세요.');
- return{port:Number(rawPort),token,sessionId};
+ const host=query.get('host');if(host!==null&&host!=='127.0.0.1'&&host!=='localhost')throw new CliBridgeError('LINK_INVALID','이 컴퓨터의 로컬 CLI 주소만 연결할 수 있습니다.');
+ return{port:Number(rawPort),token,sessionId,...(host===null?{}:{host})};
 }
 export function parseCliScope(value:unknown):CliScope{
  if(!object(value)||typeof value.ownerId!=='string'||!value.ownerId.trim()||value.ownerId.length>256||/[\u0000-\u001f]/.test(value.ownerId)||!object(value.company)||typeof value.company.code!=='string'||typeof value.company.name!=='string'||!((value.company.code==='A01526306'&&value.company.name==='유앤채')||(value.company.code==='A01464742'&&value.company.name==='와이홉')))throw new CliBridgeError('SCOPE_UNCONFIRMED','현재 로그인 계정의 승인 회사를 확인하지 못했습니다.');
@@ -83,14 +85,18 @@ function parseJob(value:unknown,scope:CliScope,now:number):Job{
 }
 export function createCliBridge(options:{link:CliLink;scope:CliScope;queryApproved:()=>boolean;fetcher?:Fetcher;onState?:(state:CliBridgeState)=>void;onDiagnostic?:DiagnosticCallback;now?:()=>number;contextIntervalMs?:number}){
  const fetcher=options.fetcher??fetch,now=options.now??Date.now,scope=parseCliScope(options.scope),controller=new AbortController();
- const local='http://127.0.0.1:'+options.link.port;let active=false,used=false,epoch=0,timer:ReturnType<typeof setInterval>|undefined,expiryTimer:ReturnType<typeof setTimeout>|undefined,expiresAt=0,checking=false,inflightQuery:AbortController|null=null;
+ if(options.link.host!==undefined&&options.link.host!=='127.0.0.1'&&options.link.host!=='localhost')throw new CliBridgeError('LINK_INVALID','이 컴퓨터의 로컬 CLI 주소만 연결할 수 있습니다.');
+ const local='http://'+(options.link.host??'127.0.0.1')+':'+options.link.port;let active=false,used=false,epoch=0,timer:ReturnType<typeof setInterval>|undefined,expiryTimer:ReturnType<typeof setTimeout>|undefined,expiresAt=0,checking=false,inflightQuery:AbortController|null=null;
  const emit=(state:CliBridgeState)=>options.onState?.(state);
  const stop=(message='CLI 연결을 해제했습니다.')=>{if(!active&&used)return;active=false;epoch++;controller.abort();clearInterval(timer);clearTimeout(expiryTimer);emit({phase:'stopped',message});};
  function current(generation:number){if(!active||generation!==epoch||controller.signal.aborted||now()>=expiresAt)throw new CliBridgeError('SESSION_STOPPED','CLI 연결이 끝났습니다.');}
  async function json(path:string,init:RequestInit,loopback=false,timeoutMs=30000,extraSignal?:AbortSignal){
   const stage:CliBridgeStage=loopback?path==='/pair'?'pair':path==='/result'?'result':path==='/abort'?'abort':'poll':'command',target=loopback?'localhost' as const:'app' as const;
   try{return await withDeadline(async guardedSignal=>{
-   const response=await fetcher((loopback?local:'')+path,{...init,credentials:loopback?'omit':'same-origin',cache:'no-store',redirect:'manual',signal:guardedSignal,headers:{'content-type':'application/json',...(loopback?{authorization:'Bearer '+options.link.token}:{}),...init.headers}});
+   // Declare the destination address space without changing permission, CORS,
+   // credentials or the exact host/token contract. Older browsers ignore it.
+   const request:LoopbackRequestInit={...init,...(loopback?{targetAddressSpace:'loopback' as const}:{}),credentials:loopback?'omit':'same-origin',cache:'no-store',redirect:'manual',signal:guardedSignal,headers:{'content-type':'application/json',...(loopback?{authorization:'Bearer '+options.link.token}:{}),...init.headers}};
+   const response=await fetcher((loopback?local:'')+path,request);
    if(guardedSignal.aborted)throw new CliBridgeError('REQUEST_CANCELLED','현재 연결 요청을 취소했습니다.');
    diagnose(options.onDiagnostic,{stage,target,outcome:'response',status:response.status});
    const value=await boundedJson(response);if(!response.ok){if(!loopback&&object(value)&&typeof value.code==='string'&&Object.hasOwn(SERVER_ERRORS,value.code))throw new CliBridgeError(value.code,SERVER_ERRORS[value.code]);throw new CliBridgeError('REQUEST_FAILED',loopback?'로컬 CLI 응답을 확인하지 못했습니다.':'상품조회 서버가 요청을 완료하지 못했습니다.');}return value;
@@ -155,7 +161,7 @@ export function createCliBridge(options:{link:CliLink;scope:CliScope;queryApprov
   async disconnect(){
    if(!active){stop();return;}const wasScope=scope;stop();
    // No cookies and no job result may be sent after stop; only revoke this exact local pairing.
-   try{await withDeadline(async signal=>{const response=await fetcher(local+'/disconnect',{method:'POST',credentials:'omit',redirect:'manual',signal,headers:{'content-type':'application/json',authorization:'Bearer '+options.link.token},body:JSON.stringify({sessionId:options.link.sessionId,scope:wasScope})});if(!signal.aborted)diagnose(options.onDiagnostic,{stage:'disconnect',target:'localhost',outcome:'response',status:response.status});},{timeoutMs:3000,signals:[],timeoutError:new CliBridgeError('LOCAL_CLI_TIMEOUT','로컬 CLI 연결 해제 응답을 확인하지 못했습니다.'),onDiagnostic:options.onDiagnostic,stage:'disconnect',target:'localhost'});}catch{}
+   try{await withDeadline(async signal=>{const request:LoopbackRequestInit={method:'POST',targetAddressSpace:'loopback',credentials:'omit',redirect:'manual',signal,headers:{'content-type':'application/json',authorization:'Bearer '+options.link.token},body:JSON.stringify({sessionId:options.link.sessionId,scope:wasScope})};const response=await fetcher(local+'/disconnect',request);if(!signal.aborted)diagnose(options.onDiagnostic,{stage:'disconnect',target:'localhost',outcome:'response',status:response.status});},{timeoutMs:3000,signals:[],timeoutError:new CliBridgeError('LOCAL_CLI_TIMEOUT','로컬 CLI 연결 해제 응답을 확인하지 못했습니다.'),onDiagnostic:options.onDiagnostic,stage:'disconnect',target:'localhost'});}catch{}
   },
  };
 }

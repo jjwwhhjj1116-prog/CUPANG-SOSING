@@ -181,7 +181,9 @@ export function createCliServer(options = {}) {
   const server = createServer(async (req, res) => {
     beginDiagnostic(req, res);
     try {
-      if (req.headers.host !== `127.0.0.1:${listeningPort}`) throw failure('HOST_INVALID', '로컬 호스트가 일치하지 않습니다.', 403);
+      // Both names identify this exact loopback listener. This does not change
+      // the bind address or admit arbitrary .localhost/.local/public domains.
+      if (req.headers.host !== `127.0.0.1:${listeningPort}` && req.headers.host !== `localhost:${listeningPort}`) throw failure('HOST_INVALID', '로컬 호스트가 일치하지 않습니다.', 403);
       const origin = req.headers.origin;
       if (typeof origin !== 'string' || !allowedOrigins.has(origin)) throw failure('ORIGIN_INVALID', '허용된 앱에서만 연결할 수 있습니다.', 403);
       res.setHeader('access-control-allow-origin', origin);

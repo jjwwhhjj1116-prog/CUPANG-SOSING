@@ -3,6 +3,7 @@
 import {useEffect,useRef,useState} from 'react';
 import Link from 'next/link';
 import {CliInstallGuide} from '@/app/components/cli-install-guide';
+import {CliBrowserStatus} from '@/app/components/cli-browser-status';
 import {CliBridgeError,createCliBridge,parseCliLink,readCliScope,sameCliScope,type CliBridgeState,type CliBridgeDiagnostic,type CliLink,type CliScope} from '@/app/cli-bridge-client';
 
 export function CliConnectionPanel({initialScope,displayName}:{initialScope:CliScope;displayName:string}){
@@ -54,13 +55,15 @@ export function CliConnectionPanel({initialScope,displayName}:{initialScope:CliS
   <section className="workspace" aria-label="로컬 CLI 연결" style={{padding:24}}>
    <h2 style={{marginTop:0,fontSize:18}}>로그인된 스튜디오와 내 컴퓨터 연결</h2>
    <p style={{fontSize:14,lineHeight:1.7}}>컴퓨터에서 YOOFAM CLI를 실행하고 출력된 연결 주소를 현재 로그인한 Chrome에서 여세요. 브라우저의 로컬 네트워크 접근 안내가 표시되면 대상이 아래 로컬 CLI인지 확인하세요.</p>
-   <dl className="connection-list"><div><dt>연결 대상</dt><dd>{link?`내 컴퓨터 127.0.0.1:${link.port}`:'CLI 연결 주소 필요'}</dd></div><div><dt>연결 회사</dt><dd>{initialScope.company.name} ({initialScope.company.code})</dd></div><div><dt>유효 시간</dt><dd>일회용 연결당 최대 15분</dd></div></dl>
+   <dl className="connection-list"><div><dt>연결 대상</dt><dd>{link?`내 컴퓨터 ${link.host??'127.0.0.1'}:${link.port}`:'CLI 연결 주소 필요'}</dd></div><div><dt>연결 회사</dt><dd>{initialScope.company.name} ({initialScope.company.code})</dd></div><div><dt>유효 시간</dt><dd>일회용 연결당 최대 15분</dd></div></dl>
+   {link&&<details style={{fontSize:13,lineHeight:1.7,margin:'12px 0'}}><summary>CLI 주소 호환성 확인</summary><p>두 주소 모두 현재 컴퓨터의 같은 CLI를 가리킵니다. 연결하기 전에 주소 표기를 선택할 수 있습니다. 회사·토큰·유효 시간과 브라우저 권한 확인은 동일하게 적용됩니다.</p><button type="button" className="btn ghost" disabled={busy||state.phase==='stopped'} onClick={()=>{setLink({...link,host:link.host==='localhost'?'127.0.0.1':'localhost'});}}>{link.host==='localhost'?'127.0.0.1 주소 사용':'localhost 주소 사용'}</button></details>}
    <p style={{fontSize:13,lineHeight:1.7}}>앱 로그인 쿠키와 비밀번호는 CLI에 전달하지 않습니다. 이 연결은 상품조회와 저장된 카테고리·수집 요청 상태 조회를 지원합니다. 조회만으로 상품을 만들거나 서플라이허브로 전송하지 않습니다.</p>
    <label style={{display:'flex',gap:10,alignItems:'flex-start',fontSize:14,lineHeight:1.7,marginTop:20}}><input type="checkbox" checked={queryApproved} disabled={state.phase==='connecting'} onChange={event=>{approval.current=event.target.checked;setQueryApproved(event.target.checked);if(!event.target.checked)bridge.current?.cancelProductQuery();}}/><span><strong>상품조회 허용</strong><br/>CLI에 입력한 1688 상품 URL을 YOOFAM 상품조회 서버로 보내 원문 정보를 조회합니다. 이 선택을 해제하면 새 조회를 차단하고 진행 중인 조회도 취소합니다.</span></label>
    <div className="modal-actions"><button type="button" className="btn ghost" disabled={!busy} onClick={disconnect}>연결 해제</button><button type="button" className="btn primary" disabled={!link||busy||state.phase==='stopped'} onClick={()=>{void connect();}}>{state.phase==='connected'?'연결됨':'현재 회사로 CLI 연결'}</button></div>
    <p role="status" aria-live="polite" style={{fontSize:14,lineHeight:1.7}}>{state.message}</p>
    {state.lastResult&&<section aria-label="최근 CLI 처리 결과" style={{borderTop:'1px solid #e7eaf0',paddingTop:14}}><h3 style={{fontSize:14}}>최근 조회 결과</h3>{state.lastResult.title&&<p>{state.lastResult.title}</p>}{state.lastResult.optionCount!==undefined&&<p>원문 옵션 {state.lastResult.optionCount}개</p>}{state.lastResult.provider&&<p>조회 서버: {state.lastResult.provider} · {state.lastResult.configured?'구성됨':'설정 필요'} · 실상품 수집 검증 전</p>}<p>수집함 미저장 · 상품 초안 미생성</p></section>}
   </section>
+  <CliBrowserStatus/>
   <CliInstallGuide/>
  </main>;
 }

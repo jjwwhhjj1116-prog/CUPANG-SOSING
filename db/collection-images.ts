@@ -9,6 +9,9 @@ import {collectionResultSchema} from '@/db/collection-results';
 import type {ProductOptions} from '@/app/product-options';
 import {collectedPageOptionImageIndices} from '@/app/collected-page-option-binding';
 import type {CollectionResult} from '@/app/collection-result';
+import {CollectionCompanyError} from '@/app/collection-company';
+import type {SupplierHubCompany} from '@/app/supplier-hub-company';
+export type CollectionImageWriteFence={ownerId:string;jobId:string;contextPayload:string|null;company:SupplierHubCompany|null;actor:{email:string;role:string;companyCode:string;companyName:string}|null};
 export class CollectionImageCancelledError extends Error {
  constructor(){super('취소된 수집 요청입니다. 이미지를 상품에 반영하지 않았습니다.');}
 }
@@ -118,8 +121,25 @@ export async function readOptionSourceImages(owner:string,product:Pick<ProductRe
  }
  return images;
 }
-export async function saveCollectionImage(owner:string,jobId:string,index:number,key:string,role:'main'|'additional'|'detail',product:ProductRecord,current:ProductContent,skus:readonly string[]=[],assignToStage = true,commonStageAllowed=true){
+export async function saveCollectionImage(owner:string,jobId:string,index:number,key:string,role:'main'|'additional'|'detail',product:ProductRecord,current:ProductContent,skus:readonly string[]=[],assignToStage = true,commonStageAllowed=true,fence?:CollectionImageWriteFence){
  const db=await database();const operation=crypto.randomUUID();const now=new Date(Math.max(Date.now(),Date.parse(product.updated_at)+1)).toISOString();
+ const scopePredicates:string[]=[],scopeArgs:(string|number|null)[]=[];
+ const nativeAuth=(env as {YOOFAM_AUTH_ENABLED?:string}).YOOFAM_AUTH_ENABLED==='true';
+ if((process.env.NODE_ENV==='production'||nativeAuth)&&!fence)throw new CollectionCompanyError('이미지 저장 회사 확인이 필요합니다.','COLLECTION_COMPANY_MISMATCH');
+ if(fence){
+  if(fence.ownerId!==owner||fence.jobId!==jobId||product.owner_id!==owner)throw new CollectionCompanyError('이미지 저장 계정이 일치하지 않습니다.','COLLECTION_COMPANY_MISMATCH');
+  if(fence.contextPayload===null)scopePredicates.push('NOT EXISTS(SELECT 1 FROM collection_context c WHERE c.job_id=cp.job_id)');
+  else{scopePredicates.push('EXISTS(SELECT 1 FROM collection_context c WHERE c.job_id=cp.job_id AND c.payload=?)');scopeArgs.push(fence.contextPayload);}
+ }
+ if(nativeAuth){
+  if(!fence?.actor)throw new CollectionCompanyError('승인된 회사 로그인을 확인해주세요.','COLLECTION_COMPANY_MISMATCH');
+  scopePredicates.push("EXISTS(SELECT 1 FROM members m WHERE m.id=p.owner_id AND m.status='approved' AND lower(trim(m.email))=? AND m.role=? AND m.company_code=? AND m.company_name=?)");
+  scopeArgs.push(fence.actor.email.trim().toLowerCase(),fence.actor.role,fence.actor.companyCode,fence.actor.companyName);
+ }
+ const scopeSql=scopePredicates.length?' AND '+scopePredicates.join(' AND '):'';
+ const scopeRead=`SELECT p.id FROM products p JOIN collection_products cp ON cp.product_id=p.id AND cp.owner_id=p.owner_id WHERE p.id=? AND p.owner_id=? AND cp.job_id=?${scopeSql}`;
+ const assertScope=async()=>{if(fence&&!await db.prepare(scopeRead).bind(product.id,owner,jobId,...scopeArgs).first())throw new CollectionCompanyError('로그인 회사 또는 수집 자료가 변경되었습니다. 다시 확인해주세요.','COLLECTION_COMPANY_MISMATCH');};
+ await assertScope();
  const next=attachCollectedImage(current,JSON.parse(product.image_keys),key,role,now,assignToStage&&commonStageAllowed);
  const options=await readProductOptions(owner,product.id);
  // Intake originals belong to the image library. Choosing a source file is a
@@ -133,7 +153,8 @@ export async function saveCollectionImage(owner:string,jobId:string,index:number
    AND EXISTS(SELECT 1 FROM collection_jobs j WHERE j.id=cp.job_id AND j.owner_id=p.owner_id AND j.status='awaiting_connector')
    AND COALESCE((SELECT revision FROM product_content WHERE product_id=p.id AND owner_id=p.owner_id),0)=?
    AND COALESCE((SELECT revision FROM product_options WHERE product_id=p.id AND owner_id=p.owner_id),0)=?
-   ON CONFLICT(job_id,image_index) DO NOTHING`).bind(jobId,index,key,operation,now,product.id,owner,jobId,product.updated_at,product.image_keys,current.revision,options.revision),
+   ${scopeSql}
+   ON CONFLICT(job_id,image_index) DO NOTHING`).bind(jobId,index,key,operation,now,product.id,owner,jobId,product.updated_at,product.image_keys,current.revision,options.revision,...scopeArgs),
   db.prepare(`INSERT INTO product_content(product_id,owner_id,revision,payload,updated_at)
    SELECT ?,?,?,?,? WHERE ${guard}
    ON CONFLICT(product_id) DO UPDATE SET revision=excluded.revision,payload=excluded.payload,updated_at=excluded.updated_at`)
@@ -142,7 +163,12 @@ export async function saveCollectionImage(owner:string,jobId:string,index:number
    .bind(nextOptions.revision,JSON.stringify(nextOptions),now,product.id,owner,options.revision,operation,owner,product.id)]:[]),
   db.prepare(`UPDATE products SET image_keys=?,quote_status='대기',updated_at=? WHERE id=? AND owner_id=? AND ${guard}`)
    .bind(JSON.stringify(next.keys),now,product.id,owner,operation,owner,product.id),
+  // A trigger changing the captured company or membership during a companion
+  // write must roll back the anchor and every draft update in this batch.
+  ...(fence?[db.prepare(`UPDATE collection_images SET object_key=CASE WHEN EXISTS(${scopeRead}) THEN object_key ELSE NULL END WHERE operation_id=? AND owner_id=? AND product_id=?`)
+   .bind(product.id,owner,jobId,...scopeArgs,operation,owner,product.id)]:[]),
  ]);
+ await assertScope();
  const saved=await readCollectionImage(owner,jobId,index);
  if(!saved){
   const job=await db.prepare('SELECT status FROM collection_jobs WHERE id=? AND owner_id=?').bind(jobId,owner).first<{status:string}>();
