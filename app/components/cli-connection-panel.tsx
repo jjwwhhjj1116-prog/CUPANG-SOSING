@@ -2,15 +2,18 @@
 
 import {useEffect,useRef,useState} from 'react';
 import Link from 'next/link';
-import {CliBridgeError,createCliBridge,parseCliLink,readCliScope,sameCliScope,type CliBridgeState,type CliLink,type CliScope} from '@/app/cli-bridge-client';
+import {CliInstallGuide} from '@/app/components/cli-install-guide';
+import {CliBridgeError,createCliBridge,parseCliLink,readCliScope,sameCliScope,type CliBridgeState,type CliBridgeDiagnostic,type CliLink,type CliScope} from '@/app/cli-bridge-client';
 
 export function CliConnectionPanel({initialScope,displayName}:{initialScope:CliScope;displayName:string}){
  const [link,setLink]=useState<CliLink|null>(null),[queryApproved,setQueryApproved]=useState(false),[state,setState]=useState<CliBridgeState>({phase:'idle',message:'CLI에서 출력한 연결 주소를 이 로그인 창에서 열어주세요.'});
  const approval=useRef(false),bridge=useRef<ReturnType<typeof createCliBridge>|null>(null),mounted=useRef(false),generation=useRef(0),replacing=useRef(false);
  const pending=useRef<{epoch:number;link:CliLink|null;ready:boolean;message:string}|null>(null);
  const revoking=useRef<Promise<void>>(Promise.resolve());
+ const diagnosticEnabled=useRef(false);
  useEffect(()=>{
   mounted.current=true;
+  diagnosticEnabled.current=new URLSearchParams(window.location.search).get('diagnostics')==='1';
   const publish=()=>queueMicrotask(()=>{
    const next=pending.current;if(!mounted.current||!next?.ready||next.epoch!==generation.current)return;
    pending.current=null;replacing.current=false;setLink(next.link);setQueryApproved(false);setState({phase:next.link?'idle':'stopped',message:next.message});
@@ -39,9 +42,10 @@ export function CliConnectionPanel({initialScope,displayName}:{initialScope:CliS
   if(!link||busy||replacing.current)return;const epoch=generation.current;let clientStarted=false;
   setState({phase:'connecting',message:'현재 로그인 회사와 로컬 CLI를 확인하고 있습니다.'});
   try{
-   const actual=await readCliScope();if(!mounted.current||epoch!==generation.current)return;
+   const onDiagnostic=(event:CliBridgeDiagnostic)=>{if(diagnosticEnabled.current)console.info('[YOOFAM CLI]',JSON.stringify(event));};
+   const actual=await readCliScope(undefined,undefined,{onDiagnostic});if(!mounted.current||epoch!==generation.current)return;
    if(!sameCliScope(actual,initialScope))throw new CliBridgeError('SCOPE_CHANGED','페이지를 연 뒤 계정 또는 회사가 바뀌었습니다. 로그인 상태를 확인하고 새 연결 주소를 열어주세요.');
-   const client=createCliBridge({link,scope:actual,queryApproved:()=>approval.current,onState:value=>{if(mounted.current&&epoch===generation.current)setState(value);}});bridge.current=client;clientStarted=true;await client.start();
+   const client=createCliBridge({link,scope:actual,queryApproved:()=>approval.current,onDiagnostic,onState:value=>{if(mounted.current&&epoch===generation.current)setState(value);}});bridge.current=client;clientStarted=true;await client.start();
   }catch(error){if(!clientStarted&&mounted.current&&epoch===generation.current)setState({phase:'stopped',message:error instanceof CliBridgeError?error.message:'CLI 연결을 확인하지 못했습니다. 로컬 CLI 실행 상태와 브라우저의 로컬 네트워크 권한을 확인해주세요.'});}
  }
  function disconnect(){generation.current++;const previous=bridge.current;bridge.current=null;approval.current=false;setQueryApproved(false);setState({phase:'stopped',message:'CLI 연결을 해제했습니다. 새 연결 주소로 다시 연결해주세요.'});void previous?.disconnect();}
@@ -57,6 +61,6 @@ export function CliConnectionPanel({initialScope,displayName}:{initialScope:CliS
    <p role="status" aria-live="polite" style={{fontSize:14,lineHeight:1.7}}>{state.message}</p>
    {state.lastResult&&<section aria-label="최근 CLI 처리 결과" style={{borderTop:'1px solid #e7eaf0',paddingTop:14}}><h3 style={{fontSize:14}}>최근 조회 결과</h3>{state.lastResult.title&&<p>{state.lastResult.title}</p>}{state.lastResult.optionCount!==undefined&&<p>원문 옵션 {state.lastResult.optionCount}개</p>}{state.lastResult.provider&&<p>조회 서버: {state.lastResult.provider} · {state.lastResult.configured?'구성됨':'설정 필요'} · 실상품 수집 검증 전</p>}<p>수집함 미저장 · 상품 초안 미생성</p></section>}
   </section>
-  <section style={{marginTop:24,fontSize:13,lineHeight:1.8}} aria-label="CLI 실행 안내"><h2 style={{fontSize:16}}>실행 순서</h2><p><a className="btn ghost" href="/downloads/yoofam-studio-cli-0.1.0.zip" download>CLI 0.1.0 다운로드</a></p><ol><li>압축을 푼 폴더의 터미널에서 <code>node cli/yoofam-studio.mjs serve</code>를 실행합니다.</li><li>출력된 스튜디오 연결 주소를 현재 Chrome에서 엽니다.</li><li>현재 회사로 연결한 뒤, 필요한 경우 상품조회를 허용합니다.</li><li>CLI에 <code>query https://detail.1688.com/offer/886034098637.html</code>를 입력합니다. 명령을 직접 입력하기 전에는 조회하지 않습니다.</li></ol><p>조회 서버 구성과 실제 수집 성공은 별도로 확인합니다. 연결 성공이 상품 수집 또는 견적서 접수 완료를 뜻하지 않습니다.</p></section>
+  <CliInstallGuide/>
  </main>;
 }

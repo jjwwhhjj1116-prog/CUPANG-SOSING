@@ -59,6 +59,7 @@ import { BatchWorkPanel } from '@/app/components/batch-work-panel';
 import type { CategoryProfile, CategoryProfileInput } from '@/app/category-profiles';
 import { WorkspaceSettingsDialog } from '@/app/components/workspace-settings-dialog';
 import { SupplierHubExtensionCheck } from '@/app/components/supplier-hub-extension-check';
+import {CliInstallDialog} from '@/app/components/cli-install-guide';
 import { savedRegistrationSettings, type WorkspaceSettings as Settings } from '@/app/workspace-settings';
 import { parseWorkspaceSettingsScope, type WorkspaceSettingsScope } from '@/app/workspace-settings-scope';
 import { requestErrorMessage } from '@/app/request-error';
@@ -151,6 +152,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   const [sourceNotice,setSourceNotice]=useState('');
   const [intakeSourceSeed,setIntakeSourceSeed]=useState<IntakeSourceSeed|undefined>();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [cliInstallOpen,setCliInstallOpen]=useState(false);
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [removedOpen,setRemovedOpen]=useState(false);
   const removalBusy=useRef(false);
@@ -676,7 +678,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
           <button className={`nav-item ${view==='work'?'active':''}`} onClick={()=>changeView('work')}><span>✦</span>AI 상품등록</button>
           <button className={`nav-item ${view==='archive'?'active':''}`} onClick={()=>changeView('archive')}><span>▦</span>상품관리(신규)</button>
           <p className="nav-caption nav-gap">설정</p><button className="nav-item" onClick={()=>void checkConnections()}><span>⌁</span>연동 설정</button><button className="nav-item" onClick={()=>{setHistoryProductId(detail?.id??products[0]?.id??'');setHistoryOpen(true);}}><span>↻</span>작업 이력</button>
-          <a className="nav-item" href="/cli"><span>⌘</span>CLI 연결</a>
+          <button type="button" className="nav-item" onClick={()=>setCliInstallOpen(true)}><span>⌘</span>CLI 설치·연결</button>
         </nav>
         <div className="sidebar-status"><div><strong>YOOFAM 스튜디오</strong><small>로켓배송 상품 등록 · 관리</small></div></div>
       </aside>
@@ -685,6 +687,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
         <header className="topbar"><div><h1>{view==='work'?'로켓배송 AI상품등록':'로켓배송 상품관리(신규)'}</h1><p>{view==='work'?'상품별 등록 현황 및 관리':'등록 상품 · SKU · 가격 · 구매정보'}</p></div>
           <div className="top-actions"><a className="workspace-user" href="/account">{userName} · 계정 관리</a>{view==='work'&&<><button type="button" className="btn settings" aria-expanded={settingsOpen} aria-controls="workspace-settings-panel" disabled={settingsBusy} onClick={()=>{if(!settingsBusyRef.current)setSettingsOpen(open=>!open);}}>⚙ 기본설정</button><button className="btn primary" onClick={()=>{setAddOpen(true);}}>＋ 상품 추가</button><details className="bulk-action-menu"><summary className="btn ghost">전체 작업 ▾</summary><div><button type="button" onClick={()=>setSelected(new Set(products.map(product=>product.id)))}>최근 상품 전체 선택</button><button type="button" onClick={()=>setSelected(new Set())}>선택 해제</button><button type="button" onClick={()=>setBatchOpen(true)}>선택 상품 일괄 작업</button><button type="button" onClick={()=>{setHistoryProductId(products[0]?.id??'');setHistoryOpen(true);}}>작업 이력</button></div></details><button className="btn start" disabled={busy} onClick={runAutomation}>작업 개시</button><button className="btn rose" onClick={()=>openSubmission(null)}>등록 전송</button></>}</div></header>
 
+        {cliInstallOpen&&<CliInstallDialog onClose={()=>setCliInstallOpen(false)}/>}
         {settingsOpen&&<section id="workspace-settings-panel" className="workspace-settings-panel" aria-labelledby="workspace-settings-heading"><header><h2 id="workspace-settings-heading">기본 등록 정보 설정</h2></header><WorkspaceSettingsDialog workspaceOwnerId={workspaceOwnerId} onSave={saveWorkspaceSettings} onClose={()=>{if(!settingsBusyRef.current)setSettingsOpen(false);}} onBusy={changeSettingsBusy}/></section>}
 
         {loadError&&<div className="panel-note" role="alert"><p>{loadError}</p><button className="btn ghost" onClick={()=>{setLoading(true);setLoadError('');void loadWorkspace();}} disabled={loading}>다시 불러오기</button></div>}

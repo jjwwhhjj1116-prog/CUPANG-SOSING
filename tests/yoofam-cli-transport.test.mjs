@@ -3,8 +3,8 @@ import { request } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
-import { APP_ORIGIN, MAX_BODY_BYTES, createCliServer, validateCommand } from '../cli/server.mjs';
-import { CLI_TOOLS, parseArguments, startCli } from '../cli/yoofam-studio.mjs';
+import { APP_ORIGIN, MAX_BODY_BYTES, MAX_DIAGNOSTIC_EVENTS, createCliServer, validateCommand } from '../cli/server.mjs';
+import { CLI_TOOLS, CLI_VERSION, parseArguments, startCli } from '../cli/yoofam-studio.mjs';
 
 const A = { ownerId: 'synthetic-owner-a', company: { code: 'A01526306', name: '유앤채' } };
 const B = { ownerId: 'synthetic-owner-b', company: { code: 'A01464742', name: '와이홉' } };
@@ -202,20 +202,100 @@ test('chunked request cannot bypass the eight MiB body limit or settle the activ
 test('CLI publishes only four read tools and validates startup options', () => {
   assert.deepEqual(CLI_TOOLS.map((tool) => tool.name), ['status', 'product-query', 'category-profiles/list', 'collection-job/status']);
   assert.equal(parseArguments(['serve', '--stdio', '--port', '49832', '--allow-local-dev']).port, 49832);
+  assert.equal(parseArguments([]).diagnostics, false); assert.equal(parseArguments(['serve', '--diagnostics']).diagnostics, true);
   for (const args of [['--port', '0'], ['--host', '0.0.0.0'], ['--token', 'secret'], ['exec', 'anything']]) assert.throws(() => parseArguments(args), { code: 'ARGUMENT_INVALID' });
   assert.deepEqual(validateCommand('category-profiles/list'), {});
 });
 
+test('local diagnostics distinguish no traffic, preflight only, pair arrival and an HTTP rejection', async (t) => {
+  const observed = [];
+  const { server, connection, pair } = await setup(t, { onDiagnostic: (event) => observed.push(event) });
+  assert.deepEqual(server.getDiagnostics(), { format: 'yoofam-cli-transport-diagnostics-v1', requestCount: 0, optionsCount: 0, pairPostCount: 0, rejectedCount: 0, inFlightCount: 0, eventCapacity: MAX_DIAGNOSTIC_EVENTS, events: [] });
+  await send(connection, '/pair', undefined, { method: 'OPTIONS', headers: { 'access-control-request-method': 'POST' } });
+  let diagnostics = server.getDiagnostics();
+  assert.equal(diagnostics.optionsCount, 1); assert.equal(diagnostics.pairPostCount, 0); assert.equal(diagnostics.events[0].status, 204);
+  assert.deepEqual(observed.map((event) => event.status), [0, 204]);
+  await pair();
+  await send(connection, '/pair', { sessionId: connection.sessionId, scope: A }, { headers: { authorization: 'Bearer synthetic-wrong-token' } });
+  diagnostics = server.getDiagnostics();
+  assert.equal(diagnostics.requestCount, 3); assert.equal(diagnostics.pairPostCount, 2); assert.equal(diagnostics.rejectedCount, 1); assert.equal(diagnostics.inFlightCount, 0);
+  assert.deepEqual(diagnostics.events.map(({ method, route, originAllowed, status, errorCode }) => ({ method, route, originAllowed, status, errorCode })), [
+    { method: 'OPTIONS', route: '/pair', originAllowed: true, status: 204, errorCode: null },
+    { method: 'POST', route: '/pair', originAllowed: true, status: 200, errorCode: null },
+    { method: 'POST', route: '/pair', originAllowed: true, status: 401, errorCode: 'TOKEN_INVALID' },
+  ]);
+  for (const event of [...diagnostics.events, ...observed]) {
+    assert.deepEqual(Object.keys(event).sort(), ['errorCode', 'method', 'originAllowed', 'route', 'status', 'timestamp']);
+    assert.ok(Number.isSafeInteger(event.timestamp)); assert.ok(Number.isInteger(event.status) && event.status >= 0 && event.status <= 599);
+  }
+});
+
+test('diagnostics never retain raw path, query, Origin, authorization, cookies, scopes, body or client error text', async (t) => {
+  const observed = [];
+  const { server, connection, pair, next, result } = await setup(t, { onDiagnostic: (event) => { observed.push({ ...event }); event.method = 'mutated-copy'; event.route = 'private-callback-value'; } });
+  const forbidden = ['synthetic-private-path', 'synthetic-private-query', 'https://synthetic-private-origin.example', 'synthetic-private-authorization', 'synthetic-private-cookie', 'synthetic-private-body', 'synthetic-private-client-code', 'synthetic-private-client-message', connection.sessionId, connection.token, A.ownerId, A.company.code, A.company.name];
+  await send(connection, '/synthetic-private-path?secret=synthetic-private-query', { password: 'synthetic-private-body' }, { headers: { origin: forbidden[2], authorization: forbidden[3], cookie: forbidden[4] } });
+  await send(connection, '/pair', { password: 'synthetic-private-body' }, { headers: { authorization: forbidden[3], cookie: forbidden[4] } });
+  await pair();
+  const pending = server.enqueue('status'); const answer = observe(pending); await next();
+  await result(pending.jobId, A, { ok: false, error: { code: 'synthetic-private-client-code', message: 'synthetic-private-client-message' } });
+  assert.equal((await answer).code, 'synthetic-private-client-code');
+  const diagnostics = server.getDiagnostics();
+  const text = JSON.stringify({ diagnostics, observed });
+  for (const value of [...forbidden, pending.jobId, 'mutated-copy', 'private-callback-value']) assert.equal(text.includes(value), false, `diagnostics leaked ${value}`);
+  assert.equal(diagnostics.events[0].route, 'other'); assert.equal(diagnostics.events[0].originAllowed, false); assert.equal(diagnostics.events[0].errorCode, 'ORIGIN_INVALID');
+  assert.equal(diagnostics.events.at(-1).errorCode, null);
+  diagnostics.events[0].route = 'mutated-snapshot'; diagnostics.requestCount = -1;
+  assert.equal(server.getDiagnostics().events[0].route, 'other'); assert.ok(server.getDiagnostics().requestCount > 0);
+});
+
+test('diagnostic memory and callbacks stay bounded per request while retaining exact traffic counters', async (t) => {
+  let callbackCount = 0;
+  const { server, connection } = await setup(t, { onDiagnostic: () => { callbackCount += 1; } });
+  const count = MAX_DIAGNOSTIC_EVENTS + 7;
+  for (let index = 0; index < count; index += 1) await send(connection, '/pair', undefined, { method: 'OPTIONS', headers: { 'access-control-request-method': 'POST' } });
+  const diagnostics = server.getDiagnostics();
+  assert.equal(diagnostics.requestCount, count); assert.equal(diagnostics.optionsCount, count); assert.equal(diagnostics.inFlightCount, 0);
+  assert.equal(diagnostics.events.length, MAX_DIAGNOSTIC_EVENTS); assert.equal(callbackCount, count * 2);
+  assert.ok(diagnostics.events.every((event) => event.status === 204 && event.errorCode === null));
+  assert.equal(server.getState().connected, false); assert.equal(server.getState().pendingCount, 0);
+});
+
+test('a pair request with an unfinished body is visible as arrived and its closed socket is recorded once', async (t) => {
+  const { connection, server } = await setup(t);
+  const req = request({ hostname: '127.0.0.1', port: connection.port, path: '/pair', method: 'POST', headers: { origin: APP_ORIGIN, authorization: `Bearer ${connection.token}`, 'content-type': 'application/json', 'content-length': 20 } });
+  req.on('error', () => {}); req.write('{');
+  await delay(20);
+  assert.equal(server.getDiagnostics().pairPostCount, 1); assert.equal(server.getDiagnostics().inFlightCount, 1); assert.equal(server.getDiagnostics().events[0].status, 0);
+  req.destroy(); await delay(20);
+  assert.equal(server.getDiagnostics().inFlightCount, 0); assert.equal(server.getDiagnostics().events[0].status, 0); assert.equal(server.getDiagnostics().events[0].errorCode, 'CONNECTION_CLOSED');
+  assert.equal(server.getState().connected, false);
+});
+
+test('throwing diagnostic observers cannot grant access or break a valid pair', async (t) => {
+  const { connection, server, pair } = await setup(t, { onDiagnostic: () => { throw new Error('synthetic diagnostic observer'); } });
+  assert.equal((await send(connection, '/pair', { sessionId: connection.sessionId, scope: A }, { headers: { host: `attacker.example:${connection.port}` } })).status, 403);
+  assert.equal((await send(connection, '/pair', { sessionId: connection.sessionId, scope: A }, { headers: { origin: 'https://attacker.example' } })).status, 403);
+  assert.equal((await send(connection, '/pair', { sessionId: connection.sessionId, scope: A }, { headers: { authorization: 'Bearer wrong' } })).status, 401);
+  assert.equal((await pair()).status, 200); assert.equal(server.getState().connected, true);
+  assert.equal((await send(connection, '/diagnostics')).status, 404);
+  assert.equal(server.getDiagnostics().rejectedCount, 4);
+});
+
 test('actual stdio tool discovery and a paired status round trip use JSON Lines without shell execution', async (t) => {
   const input = new PassThrough(); const output = new PassThrough(); let text = '';
+  const diagnostic = new PassThrough(); let diagnosticText = '';
+  diagnostic.setEncoding('utf8'); diagnostic.on('data', (chunk) => { diagnosticText += chunk; });
   output.setEncoding('utf8'); output.on('data', (chunk) => { text += chunk; });
   // Reserve an ephemeral port using the same loopback server, then release it.
   const reservation = createCliServer({ port: 0 }); const reserved = await reservation.listen(); await reservation.close();
-  const cli = await startCli(['serve', '--stdio', '--port', String(reserved.port)], { input, output }); t.after(() => cli.close());
+  const cli = await startCli(['serve', '--stdio', '--port', String(reserved.port)], { input, output, diagnostic }); t.after(() => cli.close());
   const lines = () => text.trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
   assert.equal(lines()[0].method, 'notifications/connectionReady');
   input.write('{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n'); await delay(10);
   assert.equal(lines().find((line) => line.id === 1).result.tools.length, 4);
+  input.write('{"jsonrpc":"2.0","id":"package-version","method":"initialize"}\n'); await delay(10);
+  assert.equal(lines().find((line) => line.id === 'package-version').result.serverInfo.version, CLI_VERSION);
   await send(cli.connection, '/pair', { sessionId: cli.connection.sessionId, scope: A });
   input.write('{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"status","arguments":{}}}\n');
   const next = await send(cli.connection, `/next?sessionId=${cli.connection.sessionId}&waitMs=1000`);
@@ -224,4 +304,37 @@ test('actual stdio tool discovery and a paired status round trip use JSON Lines 
   await delay(10); assert.equal(lines().find((line) => line.id === 2).result.structuredContent.connected, true);
   input.write('x'.repeat(33_000)); input.write('\n'); await delay(10);
   assert.ok(lines().some((line) => line.error?.code === 'INPUT_TOO_LARGE'));
+  assert.equal(diagnosticText, '');
+});
+
+test('--diagnostics emits only sanitized transport events to stderr without adding a remote MCP method', async (t) => {
+  const input = new PassThrough(); const output = new PassThrough(); const diagnostic = new PassThrough(); let text = ''; let diagnosticText = '';
+  output.setEncoding('utf8'); output.on('data', (chunk) => { text += chunk; });
+  diagnostic.setEncoding('utf8'); diagnostic.on('data', (chunk) => { diagnosticText += chunk; });
+  const reservation = createCliServer({ port: 0 }); const reserved = await reservation.listen(); await reservation.close();
+  const cli = await startCli(['serve', '--stdio', '--diagnostics', '--port', String(reserved.port)], { input, output, diagnostic }); t.after(() => cli.close());
+  assert.equal(diagnosticText, '');
+  await send(cli.connection, '/pair', undefined, { method: 'OPTIONS', headers: { 'access-control-request-method': 'POST' } });
+  await send(cli.connection, '/pair', { sessionId: cli.connection.sessionId, scope: A });
+  const events = diagnosticText.trim().split('\n').map((line) => JSON.parse(line));
+  assert.equal(events.length, 4); assert.deepEqual(events.map((event) => event.status), [0, 204, 0, 200]);
+  assert.ok(events.every((event) => event.type === 'transport-diagnostic'));
+  for (const value of [cli.connection.token, cli.connection.sessionId, A.ownerId, A.company.code]) assert.equal(diagnosticText.includes(value), false);
+  assert.equal(text.trim().split('\n').length, 1);
+  input.write('{"jsonrpc":"2.0","id":"diag-not-remote","method":"diagnostics"}\n'); await delay(10);
+  const result = text.trim().split('\n').map((line) => JSON.parse(line)).find((line) => line.id === 'diag-not-remote');
+  assert.equal(result.error.data.code, 'METHOD_NOT_ALLOWED'); assert.equal(CLI_TOOLS.length, 4);
+});
+
+test('terminal diagnostics is local only, works before pairing and causes no HTTP requests', async (t) => {
+  const input = new PassThrough(); const output = new PassThrough(); const diagnostic = new PassThrough(); let text = ''; let diagnosticText = '';
+  output.setEncoding('utf8'); output.on('data', (chunk) => { text += chunk; });
+  diagnostic.setEncoding('utf8'); diagnostic.on('data', (chunk) => { diagnosticText += chunk; });
+  const reservation = createCliServer({ port: 0 }); const reserved = await reservation.listen(); await reservation.close();
+  const cli = await startCli(['serve', '--port', String(reserved.port)], { input, output, diagnostic }); t.after(() => cli.close());
+  text = ''; input.write('diagnostics\n'); await delay(10);
+  const summary = JSON.parse(text.trim());
+  assert.equal(summary.format, 'yoofam-cli-transport-diagnostics-v1'); assert.equal(summary.requestCount, 0); assert.deepEqual(summary.events, []);
+  assert.equal(cli.server.getState().connected, false); assert.equal(cli.server.getState().pendingCount, 0); assert.equal(diagnosticText, '');
+  for (const value of [cli.connection.token, cli.connection.sessionId]) assert.equal(text.includes(value), false);
 });

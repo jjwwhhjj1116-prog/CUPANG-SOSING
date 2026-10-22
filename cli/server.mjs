@@ -5,8 +5,12 @@ export const PROTOCOL_VERSION = '1.0';
 export const APP_ORIGIN = 'https://sourceflow.jjwwhhjj1116.workers.dev';
 export const DEFAULT_PORT = 49831;
 export const MAX_BODY_BYTES = 8 * 1024 * 1024;
+export const MAX_DIAGNOSTIC_EVENTS = 64;
 const COMPANIES = new Map([['A01526306', '유앤채'], ['A01464742', '와이홉']]);
 const CLIENT_ERRORS = new Set(['code', 'message']);
+const DIAGNOSTIC_ROUTES = new Set(['/pair', '/next', '/result', '/abort', '/disconnect']);
+const DIAGNOSTIC_METHODS = new Set(['GET', 'POST', 'OPTIONS', 'HEAD', 'PUT', 'PATCH', 'DELETE', 'CONNECT', 'TRACE']);
+const DIAGNOSTIC_ERRORS = new Set(['HOST_INVALID', 'ORIGIN_INVALID', 'SESSION_REVOKED', 'SESSION_EXPIRED', 'PREFLIGHT_INVALID', 'TOKEN_INVALID', 'REQUEST_INVALID', 'SESSION_INVALID', 'PAIR_REQUIRED', 'POLL_IN_FLIGHT', 'JOB_IN_FLIGHT', 'ROUTE_NOT_ALLOWED', 'CONTENT_TYPE_INVALID', 'BODY_TOO_LARGE', 'JSON_INVALID', 'SCOPE_INVALID', 'SCOPE_CHANGED', 'JOB_INVALID', 'JOB_ALREADY_SETTLED', 'JOB_ORDER_INVALID', 'RESULT_INVALID', 'REQUEST_FAILED', 'SESSION_DISCONNECTED', 'SERVER_CLOSED', 'CONNECTION_CLOSED']);
 
 export class CliError extends Error {
   constructor(code, message, status = 400) { super(message); this.name = 'CliError'; this.code = code; this.status = status; }
@@ -74,9 +78,49 @@ export function createCliServer(options = {}) {
   let closed = false;
   let expired = false;
   let revoked = false;
+  const diagnosticEvents = [];
+  const responseDiagnostics = new WeakMap();
+  const diagnosticCounts = { requestCount: 0, optionsCount: 0, pairPostCount: 0, rejectedCount: 0, inFlightCount: 0 };
+  const increment = (key) => { diagnosticCounts[key] = Math.min(Number.MAX_SAFE_INTEGER, diagnosticCounts[key] + 1); };
+  const emitDiagnostic = (event) => {
+    // Only this allowlisted shape leaves the transport. Never pass req/res or errors.
+    if (typeof options.onDiagnostic === 'function') {
+      try { options.onDiagnostic({ ...event }); } catch { /* Diagnostics cannot alter authorization or request handling. */ }
+    }
+  };
+  const beginDiagnostic = (req, res) => {
+    const path = String(req.url ?? '').split('?', 1)[0];
+    const event = {
+      method: DIAGNOSTIC_METHODS.has(req.method) ? req.method : 'OTHER',
+      route: DIAGNOSTIC_ROUTES.has(path) ? path : 'other',
+      originAllowed: typeof req.headers.origin === 'string' && allowedOrigins.has(req.headers.origin),
+      status: 0, errorCode: null, timestamp: Date.now(),
+    };
+    diagnosticEvents.push(event);
+    if (diagnosticEvents.length > MAX_DIAGNOSTIC_EVENTS) diagnosticEvents.shift();
+    increment('requestCount'); increment('inFlightCount');
+    if (event.method === 'OPTIONS') increment('optionsCount');
+    if (event.method === 'POST' && event.route === '/pair') increment('pairPostCount');
+    responseDiagnostics.set(res, event);
+    let finalized = false;
+    const finish = (completed) => {
+      if (finalized) return;
+      finalized = true;
+      diagnosticCounts.inFlightCount = Math.max(0, diagnosticCounts.inFlightCount - 1);
+      event.status = completed && Number.isInteger(res.statusCode) && res.statusCode >= 100 && res.statusCode <= 599 ? res.statusCode : 0;
+      if (!completed) event.errorCode = 'CONNECTION_CLOSED';
+      if (event.status >= 400) increment('rejectedCount');
+      emitDiagnostic(event);
+    };
+    res.once('finish', () => finish(true));
+    res.once('close', () => finish(res.writableFinished));
+    emitDiagnostic(event);
+  };
 
   const respond = (res, status, body) => {
     if (res.destroyed || res.writableEnded) return;
+    const event = responseDiagnostics.get(res);
+    if (event) event.errorCode = DIAGNOSTIC_ERRORS.has(body?.error?.code) ? body.error.code : null;
     res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
     res.end(JSON.stringify(body));
   };
@@ -135,6 +179,7 @@ export function createCliServer(options = {}) {
   };
 
   const server = createServer(async (req, res) => {
+    beginDiagnostic(req, res);
     try {
       if (req.headers.host !== `127.0.0.1:${listeningPort}`) throw failure('HOST_INVALID', '로컬 호스트가 일치하지 않습니다.', 403);
       const origin = req.headers.origin;
@@ -223,6 +268,7 @@ export function createCliServer(options = {}) {
       return { sessionId, token, port: listeningPort, expiresAt, connectUrl: `${APP_ORIGIN}/cli#${fragment}` };
     },
     getState() { return { protocolVersion: PROTOCOL_VERSION, connected: Boolean(ownerScope), scope: ownerScope ? copy(ownerScope) : null, expiresAt, pendingCount: jobs.size, activeJobId, expired: expired || Date.now() >= expiresAt, revoked, closed }; },
+    getDiagnostics() { return { format: 'yoofam-cli-transport-diagnostics-v1', ...diagnosticCounts, eventCapacity: MAX_DIAGNOSTIC_EVENTS, events: diagnosticEvents.map((event) => ({ ...event })) }; },
     enqueue(command, payload = {}) {
       ensureActive();
       if (!ownerScope) throw failure('PAIR_REQUIRED', '앱에서 계정과 회사를 확인하고 연결해주세요.', 409);

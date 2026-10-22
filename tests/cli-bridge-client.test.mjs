@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 
-const exports={};
-vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/cli-bridge-client.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,URLSearchParams,Response,Request,Headers,TextDecoder,Uint8Array,AbortController,setTimeout,clearTimeout,setInterval,clearInterval,Date,fetch:()=>{throw Error('Unexpected real network');}});
+function loadBridge(timers={setTimeout,clearTimeout,setInterval,clearInterval}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/cli-bridge-client.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,URLSearchParams,Response,Request,Headers,TextDecoder,Uint8Array,AbortController,...timers,Date,fetch:()=>{throw Error('Unexpected real network');}});return exports;}
+const exports=loadBridge();
 const {parseCliLink,parseCliScope,createCliBridge}=exports;
 const sessionId='00000000-0000-4000-8000-000000000789',jobId='00000000-0000-4000-8000-000000000790';
 const owner={ownerId:'synthetic-owner-a',company:{code:'A01526306',name:'유앤채'}},other={ownerId:'synthetic-owner-b',company:{code:'A01464742',name:'와이홉'}};
@@ -14,8 +14,8 @@ const sourceUrl='https://detail.1688.com/offer/700000000789.html';
 const json=(value,status=200)=>Response.json(value,{status});
 const service={format:'yoofam-product-query-service-v1',provider:'public-page',configured:true,liveVerified:false,queryPath:'/api/product-query'};
 async function until(predicate){for(let n=0;n<200;n++){if(predicate())return;await new Promise(resolve=>setTimeout(resolve,1));}throw Error('Timed out waiting for synthetic bridge');}
-function harness({approved=false,jobCommand='product-query',payload={sourceUrl},jobScope=owner,jobDeadline,interval=60000}={}){
- const calls=[],states=[],jobs=[{jobId,command:jobCommand,payload,scope:jobScope,createdAt:Date.now(),deadline:jobDeadline??Date.now()+60000}];let scope=owner,sourceGate,scopeReads=0,handler;
+function harness({approved=false,jobCommand='product-query',payload={sourceUrl},jobScope=owner,jobDeadline,interval=60000,diagnosticObserver}={}){
+ const calls=[],states=[],diagnostics=[],jobs=[{jobId,command:jobCommand,payload,scope:jobScope,createdAt:Date.now(),deadline:jobDeadline??Date.now()+60000}];let scope=owner,sourceGate,scopeReads=0,handler;
  const fetcher=async(url,init={})=>{
   calls.push({url,...init,body:init.body?JSON.parse(init.body):undefined});
   if(url==='/api/supplier-hub/catalog-context'){scopeReads++;return scope?json(scope):json({error:'logged out'},401);}
@@ -36,8 +36,8 @@ function harness({approved=false,jobCommand='product-query',payload={sourceUrl},
   throw Error('Unexpected external request '+url);
  };
  let permission=approved;
- const bridge=createCliBridge({link,scope:owner,queryApproved:()=>permission,fetcher,onState:state=>states.push(state),contextIntervalMs:interval});
- return{bridge,calls,states,scope(value){scope=value;},permission(value){permission=value;},sourceGate(value){sourceGate=value;},handler(value){handler=value;},get scopeReads(){return scopeReads;},results:()=>calls.filter(call=>call.url.endsWith('/result'))};
+ const bridge=createCliBridge({link,scope:owner,queryApproved:()=>permission,fetcher,onState:state=>states.push(state),onDiagnostic:event=>{diagnostics.push(event);diagnosticObserver?.(event);},contextIntervalMs:interval});
+ return{bridge,calls,states,diagnostics,scope(value){scope=value;},permission(value){permission=value;},sourceGate(value){sourceGate=value;},handler(value){handler=value;},get scopeReads(){return scopeReads;},results:()=>calls.filter(call=>call.url.endsWith('/result'))};
 }
 test('one-time link accepts only one port/token/session and never an arbitrary local host',()=>{
  assert.deepEqual(JSON.parse(JSON.stringify(parseCliLink('#port=49831&token='+link.token+'&session='+sessionId))),link);
@@ -100,18 +100,18 @@ test('category and collection-job reads require response ownership proof even af
  for(const [command,payload] of [['category-profiles/list',{}],['collection-job/status',{jobId}]]){const h=harness({jobCommand:command,payload});h.handler(()=>json({...other,profiles:[{id:'other-company-private'}],job:{id:jobId}}));try{await h.bridge.start();await until(()=>h.results().length===1);assert.equal(h.results()[0].body.ok,false);assert.doesNotMatch(JSON.stringify(h.results()[0].body),/other-company-private/);}finally{h.bridge.stop();}}
 });
 
-function panelHarness({hash='',readError,connectError,disconnectGate,startGate}={}){
- const slots=[],effects=[],listeners=new Map(),clients=[],location={hash,pathname:'/cli',search:''};let cursor=0,cleanup,tree;
+function panelHarness({hash='',search='',readError,connectError,disconnectGate,startGate}={}){
+ const slots=[],effects=[],listeners=new Map(),clients=[],infoLogs=[],otherLogs=[],location={hash,pathname:'/cli',search};let cursor=0,cleanup,tree;
  const hooks={useState(initial){const index=cursor++;if(!(index in slots))slots[index]=initial;return[slots[index],value=>{slots[index]=typeof value==='function'?value(slots[index]):value;}];},useRef(initial){const index=cursor++;if(!(index in slots))slots[index]={current:initial};return slots[index];},useEffect(setup){const index=cursor++;if(!(index in slots)){slots[index]=true;effects.push(setup);}}};
- const window={location,history:{replaceState(_state,_unused,url){assert.equal(url,'/cli');location.hash='';}},addEventListener(type,callback){if(!listeners.has(type))listeners.set(type,new Set());listeners.get(type).add(callback);},removeEventListener(type,callback){listeners.get(type)?.delete(callback);}};
- const bridgeModule={...exports,async readCliScope(){if(readError)throw readError;return owner;},createCliBridge(options){const client={options,stops:0,disconnections:0,async start(){options.onState({phase:'connecting',message:'Synthetic connecting'});if(startGate)await startGate;if(connectError){options.onState({phase:'stopped',message:'로컬 CLI 연결을 확인하지 못했습니다. 실행 상태를 확인해주세요.'});throw connectError;}options.onState({phase:'connected',message:'Synthetic connected'});},stop(){client.stops++;},async disconnect(){client.disconnections++;client.stop();if(disconnectGate)await disconnectGate;},cancelProductQuery(){}};clients.push(client);return client;}};
+ const window={location,history:{replaceState(_state,_unused,url){assert.equal(url,'/cli'+search);location.hash='';}},addEventListener(type,callback){if(!listeners.has(type))listeners.set(type,new Set());listeners.get(type).add(callback);},removeEventListener(type,callback){listeners.get(type)?.delete(callback);}};
+ const bridgeModule={...exports,async readCliScope(_fetcher,_signal,diagnostic){diagnostic?.onDiagnostic?.({stage:'scope',target:'app',outcome:'start'});if(readError)throw readError;return owner;},createCliBridge(options){const client={options,stops:0,disconnections:0,async start(){options.onDiagnostic?.({stage:'pair',target:'localhost',outcome:'response',status:200});options.onState({phase:'connecting',message:'Synthetic connecting'});if(startGate)await startGate;if(connectError){options.onState({phase:'stopped',message:'로컬 CLI 연결을 확인하지 못했습니다. 실행 상태를 확인해주세요.'});throw connectError;}options.onState({phase:'connected',message:'Synthetic connected'});},stop(){client.stops++;},async disconnect(){client.disconnections++;client.stop();if(disconnectGate)await disconnectGate;},cancelProductQuery(){}};clients.push(client);return client;}};
  const output={};
  const jsx=(type,props)=>({type,props});
- vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/cli-connection-panel.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText,{exports:output,window,queueMicrotask,Promise,Error,require(name){if(name==='react')return hooks;if(name==='react/jsx-runtime')return{jsx,jsxs:jsx};if(name==='next/link')return()=>null;if(name==='@/app/cli-bridge-client')return bridgeModule;throw Error('Unexpected panel dependency '+name);}});
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/cli-connection-panel.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText,{exports:output,window,queueMicrotask,Promise,Error,URLSearchParams,console:{info(...values){infoLogs.push(values);},log(...values){otherLogs.push(values);},warn(...values){otherLogs.push(values);},error(...values){otherLogs.push(values);}},require(name){if(name==='react')return hooks;if(name==='react/jsx-runtime')return{jsx,jsxs:jsx};if(name==='next/link')return()=>null;if(name==='@/app/components/cli-install-guide')return{CliInstallGuide:()=>null};if(name==='@/app/cli-bridge-client')return bridgeModule;throw Error('Unexpected panel dependency '+name);}});
  const render=()=>{cursor=0;tree=output.CliConnectionPanel({initialScope:owner,displayName:'Synthetic'});return tree;};
  function find(predicate,node=tree){if(!node||typeof node!=='object')return null;if(predicate(node))return node;const children=node.props?.children;for(const child of Array.isArray(children)?children:[children]){const match=find(predicate,child??null);if(match)return match;}return null;}
  const text=(node=tree)=>{if(node===undefined||node===null||typeof node==='boolean')return'';if(typeof node!=='object')return String(node);return(Array.isArray(node.props?.children)?node.props.children:[node.props?.children]).map(child=>text(child??null)).join(' ');};
- return{clients,location,render,text,find,mount(strict=false){render();cleanup=effects[0]();if(strict){cleanup();cleanup=effects[0]();}},unmount(){cleanup?.();},navigate(next){location.hash=next;for(const listener of listeners.get('hashchange')??[])listener();},button:()=>find(node=>node.type==='button'&&node.props.className==='btn primary'),listeners};
+ return{clients,location,render,text,find,infoLogs,otherLogs,mount(strict=false){render();cleanup=effects[0]();if(strict){cleanup();cleanup=effects[0]();}},unmount(){cleanup?.();},navigate(next){location.hash=next;for(const listener of listeners.get('hashchange')??[])listener();},button:()=>find(node=>node.type==='button'&&node.props.className==='btn primary'),listeners};
 }
 const syntheticHash=(digit='a',session=sessionId)=>'#port=49831&token='+digit.repeat(64)+'&session='+session;
 const flush=async()=>{for(let n=0;n<12;n++)await Promise.resolve();};
@@ -144,4 +144,41 @@ test('replacement link while connecting invalidates a late successful pair notic
 });
 test('rapid replacement links all wait for the original revocation and accept only the newest session',async()=>{
  let release;const h=panelHarness({hash:syntheticHash(),disconnectGate:new Promise(resolve=>{release=resolve;})});try{h.mount();await flush();h.render();h.button().props.onClick();await flush();h.navigate(syntheticHash('b','00000000-0000-4000-8000-000000000791'));h.navigate(syntheticHash('c','00000000-0000-4000-8000-000000000792'));await flush();h.render();assert.equal(h.button().props.disabled,true);assert.equal(h.clients[0].disconnections,1);release();await flush();h.render();assert.equal(h.button().props.disabled,false);h.button().props.onClick();await flush();assert.equal(h.clients.length,2);assert.equal(h.clients[1].options.link.sessionId,'00000000-0000-4000-8000-000000000792');}finally{release?.();h.unmount();}
+});
+
+function virtualTimers(){let next=0;const timers=new Map();return{setTimeout(callback,ms){const id=++next;timers.set(id,{callback,ms});return id;},clearTimeout(id){timers.delete(id);},setInterval(callback,ms){const id=++next;timers.set(id,{callback,ms,interval:true});return id;},clearInterval(id){timers.delete(id);},fire(ms){for(const[id,value]of [...timers])if(!value.interval&&value.ms===ms){timers.delete(id);value.callback();}},get pending(){return timers.size;}};}
+test('scope diagnostics identify the app request and force its deadline even if fetch ignores AbortSignal',async()=>{
+ const timers=virtualTimers(),api=loadBridge(timers),events=[];let signal;
+ const request=api.readCliScope(async(_url,init)=>{signal=init.signal;return new Promise(()=>{});},undefined,{onDiagnostic:event=>events.push(event)});await flush();timers.fire(10000);
+ await assert.rejects(request,error=>error.code==='APP_SCOPE_TIMEOUT'&&!/로컬|권한/.test(error.message));assert.equal(signal.aborted,true);assert.deepEqual(events.map(event=>JSON.parse(JSON.stringify(event))),[{stage:'scope',target:'app',outcome:'start'},{stage:'scope',target:'app',outcome:'timeout'}]);assert.equal(timers.pending,0);
+});
+test('scope deadline also bounds a response body that never completes',async()=>{
+ const timers=virtualTimers(),api=loadBridge(timers),events=[];
+ const request=api.readCliScope(async()=>new Response(new ReadableStream({start(){}}),{headers:{'content-type':'application/json'}}),undefined,{stage:'verify',onDiagnostic:event=>events.push(event)});await flush();timers.fire(10000);await assert.rejects(request,error=>error.code==='APP_SCOPE_TIMEOUT');assert.ok(events.some(event=>event.stage==='verify'&&event.target==='app'&&event.outcome==='response'&&event.status===200));assert.ok(events.some(event=>event.outcome==='timeout'));assert.equal(timers.pending,0);
+});
+test('an app scope network rejection uses a fixed safe app error rather than a local permission explanation',async()=>{
+ const api=loadBridge();await assert.rejects(api.readCliScope(async()=>{throw new TypeError('synthetic-private-raw-transport-detail');}),error=>error.code==='APP_SCOPE_NETWORK'&&!/synthetic-private|로컬|권한/.test(error.message));
+});
+test('initial scope timeout never reaches pair and reports its app stage',async()=>{
+ const timers=virtualTimers(),api=loadBridge(timers),events=[],calls=[],states=[];
+ const bridge=api.createCliBridge({link,scope:owner,queryApproved:()=>false,onDiagnostic:event=>events.push(event),onState:state=>states.push(state),fetcher:async(url)=>{calls.push(url);return new Promise(()=>{});}});
+ const started=bridge.start();await flush();timers.fire(10000);await assert.rejects(started,error=>error.code==='APP_SCOPE_TIMEOUT');assert.equal(calls.length,1);assert.equal(calls[0],'/api/supplier-hub/catalog-context');assert.equal(events.some(event=>event.target==='localhost'),false);assert.equal(states.at(-1).phase,'stopped');assert.doesNotMatch(states.at(-1).message,/로컬|권한/);assert.equal(timers.pending,0);
+});
+test('pair timeout is distinct from app scope timeout and a late pair cannot resume polling',async()=>{
+ const timers=virtualTimers(),api=loadBridge(timers),events=[],calls=[],states=[];let release,signal;
+ const bridge=api.createCliBridge({link,scope:owner,queryApproved:()=>false,onDiagnostic:event=>events.push(event),onState:state=>states.push(state),fetcher:async(url,init)=>{calls.push(url);if(url==='/api/supplier-hub/catalog-context')return json(owner);signal=init.signal;return new Promise(resolve=>{release=resolve;});}});
+ const started=bridge.start();await until(()=>calls.length===2);timers.fire(30000);await assert.rejects(started,error=>error.code==='LOCAL_CLI_TIMEOUT');assert.equal(signal.aborted,true);assert.ok(events.some(event=>event.stage==='pair'&&event.target==='localhost'&&event.outcome==='timeout'));assert.match(states.at(-1).message,/내 컴퓨터 CLI/);
+ release(json({ok:true,protocolVersion:'1.0',sessionId,scope:owner,expiresAt:Date.now()+14*60000}));await flush();assert.equal(calls.length,2);assert.equal(states.some(state=>state.phase==='connected'),false);assert.equal(timers.pending,0);
+});
+test('diagnostic payloads contain only safe phase, target, outcome and response status fields',async()=>{
+ const h=harness({approved:true});try{await h.bridge.start();await until(()=>h.results().length===1);assert.ok(h.diagnostics.some(event=>event.stage==='pair'&&event.target==='localhost'&&event.status===200));assert.ok(h.diagnostics.some(event=>event.stage==='verify'&&event.target==='app'));assert.ok(h.diagnostics.some(event=>event.stage==='command'&&event.target==='app'));assert.ok(h.diagnostics.some(event=>event.stage==='result'&&event.target==='localhost'));for(const event of h.diagnostics)assert.ok(Object.keys(event).every(key=>['stage','target','outcome','status'].includes(key)));const serialized=JSON.stringify(h.diagnostics);for(const value of [link.token,sessionId,owner.ownerId,owner.company.code,owner.company.name,sourceUrl,'Bearer','Synthetic only'])assert.equal(serialized.includes(value),false);}finally{h.bridge.stop();}
+});
+test('diagnostic observer failures cannot stop an otherwise valid transport',async()=>{
+ const h=harness({jobCommand:'status',payload:{},diagnosticObserver(){throw Error('observer failed');}});try{await h.bridge.start();await until(()=>h.results().length===1);assert.equal(h.results()[0].body.ok,true);}finally{h.bridge.stop();}
+});
+test('normal CLI panel connection never writes diagnostics to the console',async()=>{
+ const h=panelHarness({hash:syntheticHash()});try{h.mount();await flush();h.render();h.button().props.onClick();await flush();assert.equal(h.clients.length,1);assert.equal(h.infoLogs.length,0);assert.equal(h.otherLogs.length,0);}finally{h.unmount();}
+});
+test('explicit diagnostics=1 logs only safe transport events and preserves the query while scrubbing the token',async()=>{
+ const h=panelHarness({hash:syntheticHash(),search:'?diagnostics=1'});try{h.mount();assert.equal(h.location.hash,'');assert.equal(h.location.search,'?diagnostics=1');await flush();h.render();h.button().props.onClick();await flush();assert.equal(h.infoLogs.length,2);assert.equal(h.otherLogs.length,0);for(const [prefix,serialized]of h.infoLogs){assert.equal(prefix,'[YOOFAM CLI]');const event=JSON.parse(serialized);assert.ok(Object.keys(event).every(key=>['stage','target','outcome','status'].includes(key)));}const logs=JSON.stringify(h.infoLogs);for(const secret of [link.token,sessionId,owner.ownerId,owner.company.name,owner.company.code,'Bearer'])assert.equal(logs.includes(secret),false);}finally{h.unmount();}
 });

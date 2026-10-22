@@ -1,12 +1,33 @@
 # YOOFAM 스튜디오 CLI
 
-Node.js 22.13 이상에서 별도 의존성·전역 설치 없이 실행하는 로컬 연결 프로그램입니다. 기존 Chrome과 YOOFAM 로그인 세션을 사용합니다. 비밀번호, 로그인 쿠키, Supplier Hub 인증 정보를 CLI로 복사하지 않습니다.
+Node.js 22.13 이상에서 실행하는 로컬 연결 프로그램입니다. 런타임 외부 의존성과 설치 시 실행되는 스크립트가 없습니다. 기존 Chrome과 YOOFAM 로그인 세션을 사용하며 비밀번호, 로그인 쿠키, Supplier Hub 인증 정보를 CLI로 복사하지 않습니다.
+
+## 웹에서 설치하고 실행하기
+
+YOOFAM 스튜디오 웹의 **CLI 설치** 안내에서 Node.js LTS를 설치한 뒤 PowerShell을 새로 엽니다. 같은 화면의 **설치 명령 복사**를 눌러 실행하면 `@yoofam/studio-cli` 패키지가 설치됩니다. 웹에 표시되는 정식 배포 주소를 사용하세요. 아래의 주소 자리에는 그 화면의 주소가 들어갑니다.
 
 ```powershell
-node cli/yoofam-studio.mjs serve
+npm.cmd install --global --ignore-scripts --no-audit --no-fund "<웹에 표시된 YOOFAM CLI 패키지 주소>"
+yoofam-studio.cmd --version
+yoofam-studio.cmd status
+yoofam-studio.cmd start
 ```
 
-웹에서 받은 ZIP은 `cli/` 폴더를 포함합니다. 압축을 푼 뒤 `cli` 폴더가 보이는 상위 폴더에서 위 명령을 실행하세요. 이미 `cli` 폴더 안에 들어왔다면 `node yoofam-studio.mjs serve`를 사용합니다.
+현재 패키지 버전은 **0.1.1**입니다. `status`는 설치된 패키지와 Node.js 버전만 확인합니다. 서버 실행 여부나 YOOFAM 로그인 상태를 조회하지 않습니다. 앱 연결을 확인하려면 `start`로 실행한 뒤 출력되는 연결 주소를 현재 Chrome에서 여세요. **실행한 PowerShell을 열어 두어야 하며 Ctrl+C로 종료합니다.** 백그라운드 서비스나 자동 시작 항목을 설치하지 않습니다.
+
+`npm.cmd`와 `yoofam-studio.cmd`는 Windows용 명령입니다. macOS에서는 각각 `npm`, `yoofam-studio`를 사용합니다. `start`와 `serve`는 같은 명령입니다. `yoofam-studio --help`로 명령을 확인할 수 있습니다.
+
+업데이트할 때는 실행 중인 YOOFAM CLI의 터미널에서 Ctrl+C를 누르고, 웹의 최신 설치 명령을 다시 실행한 뒤 버전을 확인하고 `start`로 시작합니다. 다른 Node.js 프로그램을 강제로 종료하지 않습니다. 삭제는 `npm.cmd uninstall --global @yoofam/studio-cli`입니다.
+
+브라우저에서 조직에 의해 다운로드가 차단되었다면 조직의 배포 정책을 확인해야 합니다. 이 패키지는 해당 차단을 해제하거나 브라우저·PowerShell 보안 정책을 변경하지 않습니다.
+
+## ZIP 또는 소스에서 실행하기
+
+```powershell
+node cli/bin.mjs start
+```
+
+웹에서 받은 ZIP은 `cli/` 폴더를 포함합니다. 압축을 푼 뒤 `cli` 폴더가 보이는 상위 폴더에서 위 명령을 실행하세요. 이미 `cli` 폴더 안에 들어왔다면 `node bin.mjs start`를 사용합니다. 기존 `node cli/yoofam-studio.mjs serve` 실행도 지원합니다.
 
 출력되는 연결 주소를 **현재 로그인한 Chrome**에서 여세요. YOOFAM에서 현재 계정·회사 확인 후 연결 버튼을 눌러야 명령을 실행할 수 있습니다. 연결 주소에는 메모리에만 보관되는 일회성 토큰이 있어 공유하면 안 됩니다. 주소는 브라우저 해시에 담겨 서버 요청·리퍼러로 전달되지 않으며, 앱은 읽은 직후 해시를 제거합니다. 15분 후 프로그램을 다시 실행해 새 연결을 사용하세요.
 
@@ -24,10 +45,12 @@ quit
 
 `--port 49832`로 포트를 바꿀 수 있습니다. `--allow-local-dev`를 명시하면 `http://localhost:3000`, `http://127.0.0.1:3000` 두 개발 Origin도 허용합니다. 호스트는 항상 `127.0.0.1`이며 외부 LAN 접속은 지원하지 않습니다. Ctrl+C는 대기 작업을 취소하고 서버를 종료합니다. 자동 브라우저 실행·Chrome 프로필 변경·자동 시작 서비스 설치는 하지 않습니다.
 
+연결 실패를 진단할 때는 `yoofam-studio start --diagnostics`로 실행할 수 있습니다. 기본값은 꺼짐이며 비밀값을 제외한 전송 단계만 표준 오류(stderr)에 출력합니다. 실행 중인 터미널에 `diagnostics`를 입력하면 메모리에서 집계한 로컬 진단 정보를 확인합니다. 상품 본문이나 비밀번호·쿠키·토큰을 수집하지 않습니다.
+
 ## 표준 입출력
 
 ```powershell
-node cli/yoofam-studio.mjs serve --stdio
+yoofam-studio.cmd start --stdio
 ```
 
 첫 줄은 `notifications/connectionReady` JSON-RPC 알림이며 로컬 호출자에게 연결 주소와 만료 시각을 제공합니다. 이후 JSON Lines 입력을 받습니다. MCP `initialize`, `ping`, `tools/list`, `tools/call`, `notifications/cancelled`를 지원합니다. 도구는 `status`, `product-query`, `category-profiles/list`, `collection-job/status` 네 가지 읽기 명령만 제공합니다.

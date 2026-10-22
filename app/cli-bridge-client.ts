@@ -2,6 +2,9 @@
 export type CliScope={ownerId:string;company:{code:string;name:string}};
 export type CliLink={port:number;token:string;sessionId:string};
 export type CliBridgeState={phase:'idle'|'connecting'|'connected'|'stopped';message:string;lastResult?:{command:string;title?:string;optionCount?:number;provider?:string;configured?:boolean;liveVerified?:false;stored:false}};
+export type CliBridgeStage='scope'|'pair'|'verify'|'poll'|'command'|'result'|'abort'|'disconnect';
+export type CliBridgeDiagnostic={stage:CliBridgeStage;target:'app'|'localhost';outcome:'start'|'response'|'timeout'|'cancelled'|'failed';status?:number};
+type DiagnosticCallback=(event:CliBridgeDiagnostic)=>void;
 type Fetcher=(input:string,init?:RequestInit)=>Promise<Response>;
 type JsonRecord=Record<string,unknown>;
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -10,6 +13,23 @@ const TTL=15*60*1000;
 const SERVER_ERRORS:Record<string,string>={INVALID_QUERY_ORIGIN:'로그인된 YOOFAM 앱에서 상품조회를 요청해주세요.',INVALID_QUERY_REQUEST:'상품조회 요청 형식을 확인해주세요.',QUERY_SCOPE_CHANGED:'상품조회 중 로그인 계정·회사가 변경되었습니다.',SOURCE_QUERY_CANCELLED:'상품조회를 취소했습니다.',QUERY_UNAVAILABLE:'상품조회 서버 응답을 확인하지 못했습니다.',INVALID_SOURCE_URL:'1688 상품 상세 URL을 확인해주세요.',SOURCE_CONFIGURATION_REQUIRED:'1688 상품조회 API의 서버 설정이 필요합니다.',SOURCE_PROVIDER_FAILED:'상품조회 API에서 유효한 상품 원문을 받지 못했습니다.',SOURCE_NOT_COLLECTED:'상품 페이지에서 유효한 원문을 받지 못했습니다.',SOURCE_RESULT_INVALID:'상품번호·옵션·가격·이미지 원문을 확인하지 못했습니다.'};
 const object=(value:unknown):value is JsonRecord=>Boolean(value&&typeof value==='object'&&!Array.isArray(value));
 export class CliBridgeError extends Error{constructor(readonly code:string,message:string){super(message);this.name='CliBridgeError';}}
+function diagnose(callback:DiagnosticCallback|undefined,event:CliBridgeDiagnostic){try{callback?.(event);}catch{/* Diagnostic observers must not change transport behavior. */}}
+/** AbortSignal alone cannot bound a stalled fetch/body implementation. Settle
+ * the caller at the deadline as well, and discard any eventual late value. */
+function withDeadline<T>(operation:(signal:AbortSignal)=>Promise<T>,options:{timeoutMs:number;signals:(AbortSignal|undefined)[];timeoutError:CliBridgeError;onDiagnostic?:DiagnosticCallback;stage:CliBridgeStage;target:'app'|'localhost'}):Promise<T>{
+ const {onDiagnostic,stage,target}=options;
+ return new Promise<T>((resolve,reject)=>{
+  const controller=new AbortController();let settled=false;const parents=options.signals.filter((signal):signal is AbortSignal=>Boolean(signal));
+  const cleanup=()=>{clearTimeout(timer);for(const signal of parents)signal.removeEventListener('abort',cancel);};
+  const finish=(ok:boolean,value:unknown)=>{if(settled)return;settled=true;cleanup();if(ok)resolve(value as T);else reject(value);};
+  const cancel=()=>{if(settled)return;controller.abort();diagnose(onDiagnostic,{stage,target,outcome:'cancelled'});finish(false,new CliBridgeError('REQUEST_CANCELLED','현재 연결 요청을 취소했습니다.'));};
+  const timer=setTimeout(()=>{if(settled)return;controller.abort();diagnose(onDiagnostic,{stage,target,outcome:'timeout'});finish(false,options.timeoutError);},options.timeoutMs);
+  for(const signal of parents)signal.addEventListener('abort',cancel,{once:true});
+  diagnose(onDiagnostic,{stage,target,outcome:'start'});
+  if(parents.some(signal=>signal.aborted)){cancel();return;}
+  void Promise.resolve().then(()=>{if(settled)return undefined;return operation(controller.signal);}).then(value=>{if(!settled)finish(true,value);},error=>{if(!settled){diagnose(onDiagnostic,{stage,target,outcome:'failed'});finish(false,error);}});
+ });
+}
 export function parseCliLink(hash:string):CliLink{
  const query=new URLSearchParams(hash.replace(/^#/,''));
  if([...query.keys()].some(key=>!['port','token','session'].includes(key))||['port','token','session'].some(key=>query.getAll(key).length!==1))throw new CliBridgeError('LINK_INVALID','CLI에서 출력한 연결 주소를 다시 열어주세요.');
@@ -31,11 +51,15 @@ async function boundedJson(response:Response):Promise<unknown>{
  const bytes=new Uint8Array(length);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.byteLength;}
  try{return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));}catch{throw new CliBridgeError('RESPONSE_UNCERTAIN','JSON 응답을 해석하지 못했습니다.');}
 }
-export async function readCliScope(fetcher:Fetcher=fetch,signal?:AbortSignal):Promise<CliScope>{
- const controller=new AbortController(),abort=()=>controller.abort(),timeout=setTimeout(abort,10000);signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)controller.abort();
- try{const response=await fetcher('/api/supplier-hub/catalog-context',{credentials:'same-origin',cache:'no-store',redirect:'manual',signal:controller.signal});
- if(!response.ok)throw new CliBridgeError('SCOPE_UNCONFIRMED','로그인 또는 승인 회사가 변경되었습니다. 다시 연결해주세요.');return parseCliScope(await boundedJson(response));}
- finally{clearTimeout(timeout);signal?.removeEventListener('abort',abort);}
+export async function readCliScope(fetcher:Fetcher=fetch,signal?:AbortSignal,diagnostic?:{onDiagnostic?:DiagnosticCallback;stage?:'scope'|'verify'}):Promise<CliScope>{
+ const stage=diagnostic?.stage??'scope';
+ try{return await withDeadline(async guardedSignal=>{
+  const response=await fetcher('/api/supplier-hub/catalog-context',{credentials:'same-origin',cache:'no-store',redirect:'manual',signal:guardedSignal});
+  if(guardedSignal.aborted)throw new CliBridgeError('REQUEST_CANCELLED','현재 연결 요청을 취소했습니다.');
+  diagnose(diagnostic?.onDiagnostic,{stage,target:'app',outcome:'response',status:response.status});
+  if(!response.ok)throw new CliBridgeError('SCOPE_UNCONFIRMED','YOOFAM 앱의 로그인 또는 승인 회사가 변경되었습니다. 다시 로그인 상태를 확인해주세요.');return parseCliScope(await boundedJson(response));
+ },{timeoutMs:10000,signals:[signal],timeoutError:new CliBridgeError('APP_SCOPE_TIMEOUT','YOOFAM 앱의 로그인 회사 확인 응답이 지연되었습니다. 앱 로그인 상태를 확인한 뒤 다시 연결해주세요.'),onDiagnostic:diagnostic?.onDiagnostic,stage,target:'app'});}
+ catch(error){if(error instanceof CliBridgeError)throw error;throw new CliBridgeError('APP_SCOPE_NETWORK','YOOFAM 앱의 로그인 회사 확인에 연결하지 못했습니다. 앱 연결 상태를 확인해주세요.');}
 }
 function commandRequest(command:unknown,payload:unknown,queryApproved:boolean):{path:string;method:'GET'|'POST';body?:unknown}{
  if(!object(payload))throw new CliBridgeError('COMMAND_INVALID','CLI 명령의 입력 형식이 올바르지 않습니다.');
@@ -57,18 +81,23 @@ function parseJob(value:unknown,scope:CliScope,now:number):Job{
  if(!object(value)||typeof value.jobId!=='string'||!UUID.test(value.jobId)||typeof value.command!=='string'||!object(value.payload)||!sameCliScope(parseCliScope(value.scope),scope)||typeof value.createdAt!=='number'||!Number.isSafeInteger(value.createdAt)||value.createdAt>now+60000||typeof value.deadline!=='number'||!Number.isSafeInteger(value.deadline)||value.deadline<=now||value.deadline<=value.createdAt||value.deadline>now+TTL)throw new CliBridgeError('JOB_UNCERTAIN','CLI 요청의 회사 또는 유효 시간을 확인하지 못했습니다.');
  return{jobId:value.jobId,command:value.command,payload:value.payload,scope,deadline:value.deadline};
 }
-export function createCliBridge(options:{link:CliLink;scope:CliScope;queryApproved:()=>boolean;fetcher?:Fetcher;onState?:(state:CliBridgeState)=>void;now?:()=>number;contextIntervalMs?:number}){
+export function createCliBridge(options:{link:CliLink;scope:CliScope;queryApproved:()=>boolean;fetcher?:Fetcher;onState?:(state:CliBridgeState)=>void;onDiagnostic?:DiagnosticCallback;now?:()=>number;contextIntervalMs?:number}){
  const fetcher=options.fetcher??fetch,now=options.now??Date.now,scope=parseCliScope(options.scope),controller=new AbortController();
  const local='http://127.0.0.1:'+options.link.port;let active=false,used=false,epoch=0,timer:ReturnType<typeof setInterval>|undefined,expiryTimer:ReturnType<typeof setTimeout>|undefined,expiresAt=0,checking=false,inflightQuery:AbortController|null=null;
  const emit=(state:CliBridgeState)=>options.onState?.(state);
  const stop=(message='CLI 연결을 해제했습니다.')=>{if(!active&&used)return;active=false;epoch++;controller.abort();clearInterval(timer);clearTimeout(expiryTimer);emit({phase:'stopped',message});};
  function current(generation:number){if(!active||generation!==epoch||controller.signal.aborted||now()>=expiresAt)throw new CliBridgeError('SESSION_STOPPED','CLI 연결이 끝났습니다.');}
  async function json(path:string,init:RequestInit,loopback=false,timeoutMs=30000,extraSignal?:AbortSignal){
-  const timeout=new AbortController(),abort=()=>timeout.abort();controller.signal.addEventListener('abort',abort,{once:true});extraSignal?.addEventListener('abort',abort,{once:true});if(extraSignal?.aborted)abort();const timeoutId=setTimeout(abort,timeoutMs);
-  try{const response=await fetcher((loopback?local:'')+path,{...init,credentials:loopback?'omit':'same-origin',cache:'no-store',redirect:'manual',signal:timeout.signal,headers:{'content-type':'application/json',...(loopback?{authorization:'Bearer '+options.link.token}:{}),...init.headers}});const value=await boundedJson(response);if(!response.ok){if(!loopback&&object(value)&&typeof value.code==='string'&&Object.hasOwn(SERVER_ERRORS,value.code))throw new CliBridgeError(value.code,SERVER_ERRORS[value.code]);throw new CliBridgeError('REQUEST_FAILED',loopback?'로컬 CLI 응답을 확인하지 못했습니다.':'상품조회 서버가 요청을 완료하지 못했습니다.');}return value;}
-  finally{clearTimeout(timeoutId);controller.signal.removeEventListener('abort',abort);extraSignal?.removeEventListener('abort',abort);}
+  const stage:CliBridgeStage=loopback?path==='/pair'?'pair':path==='/result'?'result':path==='/abort'?'abort':'poll':'command',target=loopback?'localhost' as const:'app' as const;
+  try{return await withDeadline(async guardedSignal=>{
+   const response=await fetcher((loopback?local:'')+path,{...init,credentials:loopback?'omit':'same-origin',cache:'no-store',redirect:'manual',signal:guardedSignal,headers:{'content-type':'application/json',...(loopback?{authorization:'Bearer '+options.link.token}:{}),...init.headers}});
+   if(guardedSignal.aborted)throw new CliBridgeError('REQUEST_CANCELLED','현재 연결 요청을 취소했습니다.');
+   diagnose(options.onDiagnostic,{stage,target,outcome:'response',status:response.status});
+   const value=await boundedJson(response);if(!response.ok){if(!loopback&&object(value)&&typeof value.code==='string'&&Object.hasOwn(SERVER_ERRORS,value.code))throw new CliBridgeError(value.code,SERVER_ERRORS[value.code]);throw new CliBridgeError('REQUEST_FAILED',loopback?'로컬 CLI 응답을 확인하지 못했습니다.':'상품조회 서버가 요청을 완료하지 못했습니다.');}return value;
+  },{timeoutMs,signals:[controller.signal,extraSignal],timeoutError:new CliBridgeError(loopback?'LOCAL_CLI_TIMEOUT':'APP_REQUEST_TIMEOUT',loopback?'내 컴퓨터 CLI의 응답 시간을 초과했습니다. 현재 컴퓨터에서 CLI가 실행 중인지 확인해주세요.':'YOOFAM 앱 서버의 응답 시간을 초과했습니다. 앱 연결 상태를 확인해주세요.'),onDiagnostic:options.onDiagnostic,stage,target});}
+  catch(error){if(error instanceof CliBridgeError)throw error;throw new CliBridgeError(loopback?'LOCAL_CLI_NETWORK':'APP_REQUEST_NETWORK',loopback?'내 컴퓨터 CLI에 연결하지 못했습니다. CLI 실행 상태와 브라우저 연결 설정을 확인해주세요.':'YOOFAM 앱 서버에 연결하지 못했습니다. 앱 연결 상태를 확인해주세요.');}
  }
- async function checkScope(generation:number){current(generation);const actual=await readCliScope(fetcher,controller.signal);current(generation);if(!sameCliScope(actual,scope)){stop('계정 또는 회사가 변경되어 CLI 연결을 해제했습니다.');throw new CliBridgeError('SCOPE_CHANGED','현재 로그인 회사가 달라졌습니다.');}}
+ async function checkScope(generation:number,stage:'scope'|'verify'='verify'){current(generation);const actual=await readCliScope(fetcher,controller.signal,{onDiagnostic:options.onDiagnostic,stage});current(generation);if(!sameCliScope(actual,scope)){stop('계정 또는 회사가 변경되어 CLI 연결을 해제했습니다.');throw new CliBridgeError('SCOPE_CHANGED','현재 로그인 회사가 달라졌습니다.');}}
  async function deliver(job:Job,generation:number,reply:JsonRecord){current(generation);await checkScope(generation);current(generation);const ack=await json('/result',{method:'POST',body:JSON.stringify({sessionId:options.link.sessionId,jobId:job.jobId,scope,...reply})},true);current(generation);if(!object(ack)||ack.ok!==true)throw new CliBridgeError('RESULT_ACK_UNCERTAIN','CLI 결과 수신을 확인하지 못했습니다.');}
  async function processJob(job:Job,generation:number){
   await checkScope(generation);let result:unknown;let reply:JsonRecord;const queryController=job.command==='product-query'?new AbortController():null;
@@ -113,7 +142,7 @@ export function createCliBridge(options:{link:CliLink;scope:CliScope;queryApprov
  return{
   async start(){
    if(used)throw new CliBridgeError('SESSION_USED','새 CLI 연결 주소로 다시 연결해주세요.');used=true;active=true;const generation=++epoch;expiresAt=now()+TTL;emit({phase:'connecting',message:'현재 회사와 로컬 CLI를 확인하고 있습니다.'});
-   try{await checkScope(generation);const response=await json('/pair',{method:'POST',body:JSON.stringify({sessionId:options.link.sessionId,scope})},true);current(generation);
+   try{await checkScope(generation,'scope');const response=await json('/pair',{method:'POST',body:JSON.stringify({sessionId:options.link.sessionId,scope})},true);current(generation);
     if(!object(response)||response.ok!==true||response.protocolVersion!=='1.0'||response.sessionId!==options.link.sessionId||!sameCliScope(parseCliScope(response.scope),scope)||typeof response.expiresAt!=='number'||!Number.isSafeInteger(response.expiresAt)||response.expiresAt<=now()||response.expiresAt>expiresAt+1000)throw new CliBridgeError('PAIR_UNCERTAIN','CLI의 연결 세션 또는 회사를 확인하지 못했습니다.');
     expiresAt=Math.min(expiresAt,response.expiresAt);await checkScope(generation);current(generation);
     timer=setInterval(()=>{if(checking||!active)return;checking=true;void checkScope(generation).catch(error=>{if(active)stop(error instanceof CliBridgeError?error.message:'로그인 상태를 확인하지 못해 연결을 해제했습니다.');}).finally(()=>{checking=false;});},options.contextIntervalMs??5000);
@@ -126,8 +155,7 @@ export function createCliBridge(options:{link:CliLink;scope:CliScope;queryApprov
   async disconnect(){
    if(!active){stop();return;}const wasScope=scope;stop();
    // No cookies and no job result may be sent after stop; only revoke this exact local pairing.
-   const abort=new AbortController(),timeout=setTimeout(()=>abort.abort(),3000);
-   try{await fetcher(local+'/disconnect',{method:'POST',credentials:'omit',redirect:'manual',signal:abort.signal,headers:{'content-type':'application/json',authorization:'Bearer '+options.link.token},body:JSON.stringify({sessionId:options.link.sessionId,scope:wasScope})});}catch{}finally{clearTimeout(timeout);}
+   try{await withDeadline(async signal=>{const response=await fetcher(local+'/disconnect',{method:'POST',credentials:'omit',redirect:'manual',signal,headers:{'content-type':'application/json',authorization:'Bearer '+options.link.token},body:JSON.stringify({sessionId:options.link.sessionId,scope:wasScope})});if(!signal.aborted)diagnose(options.onDiagnostic,{stage:'disconnect',target:'localhost',outcome:'response',status:response.status});},{timeoutMs:3000,signals:[],timeoutError:new CliBridgeError('LOCAL_CLI_TIMEOUT','로컬 CLI 연결 해제 응답을 확인하지 못했습니다.'),onDiagnostic:options.onDiagnostic,stage:'disconnect',target:'localhost'});}catch{}
   },
  };
 }
