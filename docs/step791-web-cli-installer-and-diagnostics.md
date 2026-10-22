@@ -23,3 +23,11 @@
 독립 검수에서 Unix npm symlink와 import.meta.url의 entry guard 불일치를 찾아 realpathSync로 수정했다. Windows 환경의 파일 symlink 권한은 EPERM이므로 정확한 argv→realpath 모델 분기를 확인했고, Unix/권한 있는 환경에서는 실제 symlink를 실행하는 검사가 있다. 실제 Mac 설치를 완료했다고 주장하지 않는다. 수정 후 TGZ/ZIP/manifest를 다시 생성했다. TypeScript·변경 파일 lint·패키지 무결성 검사가 통과했고 독립 재검수에 남은 P1/P2는 없다.
 
 RS형 확장 수집 버튼 경로는 이 CLI 설치와 별개다. 이번 설치·진단 기능이 886034098637 실수집이나1~7단계 전체 UI 동일성, Supplier Hub 실제 접수 성공을 뜻하지 않는다. 기존 상품·대기열·견적서 수정이나 외부 제출은 실행하지 않는다.
+
+## 실제 게시·Chrome 검수
+
+공개 저장소 커밋 `b6088b8`과 태그 `yoofam-cli-v0.1.1`을 게시했다. 태그 TGZ의 무인증 HEAD는200/application/octet-stream/13508bytes였다. 파일 본문 원격 다운로드·원격 npm 설치는 실행하지 않았다. 최종 Worker `d33f31c0-2e27-4e39-971d-cf763ea8a50f`에 배포했다. 실제 화면에서 처음 발견한 dialog의 좌측 배치를 `position:fixed;inset:0;margin:auto`로 수정하고 중앙 정렬을 다시 확인했다. 설치창 열기·Windows/Mac 전환·복사 완료 UI·Esc 닫기·포커스 복귀를 확인했다. 브라우저 clipboard 도구의 readText는 공란이어서 OS 붙여넣기 내용까지 검증했다고 세지 않는다. 표준 Clipboard API의 writeText 완료 표시는 확인했다.
+
+기존 Chrome3에서 승인된 유앤채/localhost/15분/상품조회OFF 범위의 새 임시 세션으로 읽기 연결만 다시 실행했다. 앱scope GET 두 번은 각각200(04:32:28UTC)으로 성공했고, 이후 localhost pair 단계가04:32:58UTC에30초 timeout으로 끝났다. CLI --diagnostics에서 이 Chrome의 HTTP 수신 이벤트는 관측되지 않았고 interactive status의 결과는PAIR_REQUIRED였다. 구체적 browser/OS/proxy 정책 원인은 확정하지 않았다. 설치 안내가 없다는 사용자 답변을 재차 허용 요청으로 돌리지 않았다. 임시 CLI를 종료하고 리스너0개를 확인했다.
+
+운영 상품2건과 대기열1건을 편집·삭제·수집재실행·전송하지 않았다. 새 상품조회0, Supplier Hub 접수0. Chrome 조직 정책·권한·Cloudflare Access·DB schema·제공자 설정·확장2.1.21 변경0. 최종 증거는 outputs/step791-installer-final.png, step791-live-cli-diagnostics.json, step791-cli-failed.ax.txt 및 각 검사 로그다. 실제 연결 실패와 RS형 수집 버튼 경로를 혼동하지 않는다.
