@@ -17,21 +17,39 @@ export function unsupportedTranslatedProductClaim(output:string,source:string):s
  return null;
 }
 const han=(value:string)=>/\p{Script=Han}/u.test(value);
-function inspectText(value:string,source:string){
- if(han(value))throw new TranslationQualityError('RECOVERY_UNTRANSLATED_TEXT','한국어 초안에 번역되지 않은 한자가 포함되었습니다. 이 결과는 적용할 수 없으며 원문과 기존 수정값을 유지했습니다. 자동 재시도하지 않습니다.');
+function inspectText(value:string,source:string,location:string){
+ if(han(value))throw new TranslationQualityError('RECOVERY_UNTRANSLATED_TEXT',`한국어 초안에 번역되지 않은 한자가 포함되었습니다. 위치 ${location}. 이 결과는 적용할 수 없으며 원문과 기존 수정값을 유지했습니다. 자동 재시도하지 않습니다.`);
  const claim=unsupportedTranslatedProductClaim(value,source);
- if(claim)throw new TranslationQualityError('RECOVERY_UNSUPPORTED_CLAIM',`수집 원문에서 확인하지 못한 ${claim} 성능 표현이 포함되었습니다. 이 결과는 적용할 수 없으며 원문과 기존 수정값을 유지했습니다. 자동 재시도하지 않습니다.`);
+ if(claim)throw new TranslationQualityError('RECOVERY_UNSUPPORTED_CLAIM',`수집 원문에서 확인하지 못한 ${claim} 성능 표현이 포함되었습니다. 위치 ${location}. 이 결과는 적용할 수 없으며 원문과 기존 수정값을 유지했습니다. 자동 재시도하지 않습니다.`);
+}
+/** Original source routing identities supply display metadata only. Option
+ * adoption routes by that original identity and consumes the translated value;
+ * translationAttributeFactText excludes these names from product evidence. */
+export function workersRecoveryOptionMetadataLabel(sourceName:string):'옵션명'|'색상'|'사이즈'|null{
+ const match=/^option(?:-(color|size))?:[A-Za-z0-9_-]{1,80}$/u.exec(sourceName);return match?match[1]==='color'?'색상':match[1]==='size'?'사이즈':'옵션명':null;
+}
+/** New v5 requests canonicalize display-only option labels by exact source
+ * index, never model wording or option values. Raw and old histories stay put. */
+export function canonicalizeWorkersRecoveryOptionMetadata(review:TranslationReview,input:unknown):unknown{
+ if(Number(review.workersRecovery?.version)!==5||!input||typeof input!=='object'||Array.isArray(input))return input;
+ const value=input as Record<string,unknown>;if(!Array.isArray(value.attributes))return input;
+ return {...value,attributes:value.attributes.map(attribute=>{
+  if(!attribute||typeof attribute!=='object'||Array.isArray(attribute)||!Number.isSafeInteger(attribute.sourceIndex)||typeof attribute.name!=='string'||!attribute.name.trim()||attribute.name.length>200||/[\u0000-\u001f]/u.test(attribute.name))return attribute;
+  const original=review.source.attributes[attribute.sourceIndex],label=original?workersRecoveryOptionMetadataLabel(original.name):null;
+  return label?{...attribute,name:label}:attribute;
+ })};
 }
 export function assertWorkersRecoveryDraftQuality(review:TranslationReview,draft:TranslationDraft){
  if(!Object.hasOwn(review,'workersRecovery'))return;
  const source:TranslationSource=review.source;
  const facts=[source.title,source.description,...source.attributes.flatMap(pair=>[pair.name,pair.value])].join('\n');
- for(const value of [draft.title,draft.description,...draft.keywords])inspectText(value,facts);
- for(const attribute of draft.attributes){
-  const original=source.attributes[attribute.sourceIndex];
-  if(!original)throw new TranslationQualityError('RECOVERY_INVALID_SOURCE','별도 초안의 속성 원문 연결이 다릅니다. 결과를 적용하지 않았습니다.');
+ inspectText(draft.title,facts,'title');inspectText(draft.description,facts,'description');
+ draft.keywords.forEach((value,index)=>inspectText(value,facts,`keywords[${index}]`));
+ for(const [index,attribute] of draft.attributes.entries()){
+  const sourceIndex=Number.isSafeInteger(attribute.sourceIndex)&&attribute.sourceIndex>=0?attribute.sourceIndex:null,original=sourceIndex===null?undefined:source.attributes[sourceIndex];
+  if(!original)throw new TranslationQualityError('RECOVERY_INVALID_SOURCE',`별도 초안의 속성 원문 연결이 다릅니다. 위치 attributes[${index}].sourceIndex. 결과를 적용하지 않았습니다.`);
   const fact=[original.name,original.value].join('\n');
-  inspectText(attribute.name,fact);inspectText(attribute.value,fact);
+  inspectText(attribute.name,fact,`attributes[${index}].name · sourceIndex ${sourceIndex}`);inspectText(attribute.value,fact,`attributes[${index}].value · sourceIndex ${sourceIndex}`);
  }
 }
 /** Revalidate archived completions at every adoption boundary without editing history. */

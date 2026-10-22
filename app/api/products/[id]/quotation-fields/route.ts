@@ -1,11 +1,13 @@
 import { NextResponse } from 'next/server';
+import {env} from 'cloudflare:workers';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { saveQuotationFields } from '@/db/quotation-fields';
 import { applyQuotationChanges, validateQuotationChanges } from '@/app/quotation-schema';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import { PublicDetailError } from '@/app/quotation-public-detail';
 import { stableQuotationFieldsView as stableView, QuotationFieldsSnapshotError as FieldsError } from '@/app/quotation-fields-snapshot';
-import { applyQuotationPackagingBasis, quotationPackQuantities } from '@/app/quotation-packaging-basis';
+import { applyQuotationPackagingBasis, quotationPackQuantities,validateQuotationPackagingDraftInputs } from '@/app/quotation-packaging-basis';
+import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
 import { applyStageTwoMsrp, stageTwoMsrpEdits } from '@/app/stage-two-msrp';
 import { quotationPriceTargets } from '@/app/quotation-price-targets';
 import { resolveOptionPricePolicy } from '@/app/product-options';
@@ -14,6 +16,11 @@ import { findProduct } from '@/db/queries';
 type Context = { params: Promise<{ id: string }> };
 const json = (value: unknown, status = 200) => NextResponse.json(value, { status, headers: { 'cache-control': 'no-store' } });
 const changed = () => new FieldsError('상품·옵션·설정·카테고리 또는 다른 편집 내용이 바뀌었습니다. 입력한 수정값을 보존한 채 최신 자료를 다시 불러와 비교해주세요.', 409, 'QUOTATION_FIELDS_CONFLICT');
+async function packagingDraftActor(owner:string){
+ const user=await getChatGPTUser(),company=user?.verifiedAccess?approvedSupplierHubCompany(user.membership):null;
+ if(!company||!user?.membership||user.userId!==owner||user.membership.id!==owner||!['admin','member'].includes(user.membership.role))throw new FieldsError('승인된 현재 회사에서 포장 초안을 저장해주세요.',403);
+ return{email:user.membership.email.trim().toLowerCase(),role:user.membership.role,companyCode:company.code,companyName:company.name};
+}
 function profileSelection(request: Request) {
   const value = new URL(request.url).searchParams.get('profileId');
   if (value !== null && !/^[a-zA-Z0-9_-]{1,100}$/.test(value)) throw new FieldsError('카테고리 프로필 선택을 확인해주세요.', 400);
@@ -37,14 +44,17 @@ export async function PUT(request: Request, context: Context) {
   try {
     if (request.headers.get('origin') && request.headers.get('origin') !== new URL(request.url).origin) throw new FieldsError('같은 사이트에서 저장해주세요.', 400);
     const body = await readBoundedJson(request, 512 * 1024) as Record<string, unknown>;
-    if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => !['expectedRevision', 'expectedInputFingerprint', 'changes', 'stageTwoMsrp'].includes(key)) ||
+    if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => !['expectedRevision', 'expectedInputFingerprint', 'changes', 'stageTwoMsrp','packagingDrafts'].includes(key)) ||
       !Number.isSafeInteger(body.expectedRevision) || (body.expectedRevision as number) < 0 || typeof body.expectedInputFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(body.expectedInputFingerprint)) throw new FieldsError('저장 버전과 변경 내용을 확인해주세요.', 400);
     const owner = await getWorkspaceOwnerId(); const { id } = await context.params; const profileId = profileSelection(request);
+    const actor=body.packagingDrafts===undefined&&(env as {YOOFAM_AUTH_ENABLED?:string}).YOOFAM_AUTH_ENABLED!=='true'?null:await packagingDraftActor(owner);
     const saved = await stableView(owner, id, profileId);
     if (saved.view.revision !== body.expectedRevision || saved.view.inputFingerprint !== body.expectedInputFingerprint) throw changed();
     let changes;
     try { changes = validateQuotationChanges(body.changes, { schema: saved.view.resolved.schema, optionIds: saved.options.rows.map(option => option.id), ownedImageKeys: saved.view.imageKeys, overrides: saved.view.overrides }); }
     catch (error) { throw new FieldsError(error instanceof Error ? error.message : '변경한 견적서 필드를 확인해주세요.', 400); }
+    let packagingDrafts;try{packagingDrafts=validateQuotationPackagingDraftInputs(body.packagingDrafts,saved.view.resolved.schema.fields,quotationPackQuantities(saved.options.rows),changes);}
+    catch(error){throw new FieldsError(error instanceof Error?error.message:'포장 초안의 출처 연결을 확인해주세요.',400);}
     let derivedIds:string[]=[];
     if(body.stageTwoMsrp!==undefined){
       const requested=body.stageTwoMsrp;
@@ -63,10 +73,12 @@ export async function PUT(request: Request, context: Context) {
       }catch(error){throw new FieldsError(error instanceof Error?error.message:'2단계 MSRP 계산 기준을 확인해주세요.',400);}
     }
     const overrides = applyQuotationChanges(saved.view.overrides, changes);
-    const packagingBasis=applyQuotationPackagingBasis(saved.view.packagingBasis,saved.view.resolved.schema.fields,quotationPackQuantities(saved.options.rows),changes);
+    const packagingBasis=applyQuotationPackagingBasis(saved.view.packagingBasis,saved.view.resolved.schema.fields,quotationPackQuantities(saved.options.rows),changes,packagingDrafts);
     const stageTwoMsrp=applyStageTwoMsrp(saved.view,changes,derivedIds);
     if (new TextEncoder().encode(JSON.stringify(overrides)).length > 500 * 1024) throw new FieldsError('수동 수정 자료가 저장 한도를 초과했습니다. 긴 내용을 줄여주세요.', 413);
-    const stored = await saveQuotationFields(owner, id, overrides, saved.view.revision, saved.source, saved.view.categoryContext.categoryId,packagingBasis??null,stageTwoMsrp??null);
+    if(actor&&JSON.stringify(await packagingDraftActor(owner))!==JSON.stringify(actor))throw changed();
+    const source=actor&&(env as {YOOFAM_AUTH_ENABLED?:string}).YOOFAM_AUTH_ENABLED==='true'?{...saved.source,member:actor}:saved.source;
+    const stored = await saveQuotationFields(owner, id, overrides, saved.view.revision, source, saved.view.categoryContext.categoryId,packagingBasis??null,stageTwoMsrp??null);
     if (!stored) throw changed();
     return json((await stableView(owner, id, profileId)).view);
   } catch (error) { return failure(error); }

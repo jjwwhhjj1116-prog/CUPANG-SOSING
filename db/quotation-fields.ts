@@ -22,6 +22,8 @@ export type QuotationSourceGuard = {
   contentRevision: number; optionRevision: number; settingsPayload: string | null;
   profile: { id: string; revision: number } | null;
   collection: { offerId: string; snapshot: QuotationCollectionSource | null } | null;
+  /** Optional server-created membership seal for accepting a non-measured draft. */
+  member?:{email:string;role:string;companyCode:string;companyName:string};
 };
 type Row = { payload: string; revision: number };
 async function database() {
@@ -61,6 +63,7 @@ export function sourceGuard(owner: string, productId: string, source: QuotationS
     '(SELECT payload FROM workspace_settings WHERE owner_id=p.owner_id) IS ?',
   ];
   const args: (string | number | null)[] = [productId, owner, source.productVersion, source.imageKeys, source.pricingPolicy, source.contentRevision, source.optionRevision, source.settingsPayload];
+  if(source.member){conditions.push("EXISTS(SELECT 1 FROM members m WHERE m.id=p.owner_id AND m.status='approved' AND lower(trim(m.email))=? AND m.role=? AND m.company_code=? AND m.company_name=?)");args.push(source.member.email,source.member.role,source.member.companyCode,source.member.companyName);}
   if (source.profile) {
     conditions.push('EXISTS(SELECT 1 FROM category_profiles WHERE owner_id=p.owner_id AND id=? AND revision=?)');
     args.push(source.profile.id, source.profile.revision);
@@ -194,6 +197,10 @@ async function commitQuotationFields(owner: string, productId: string, overrides
       WHERE p.id=? AND p.owner_id=? AND p.updated_at=? AND p.image_keys=?) THEN revision ELSE 0 END
       WHERE product_id=? AND owner_id=? AND revision=? AND payload=? RETURNING payload,revision`)
       .bind(productId, owner, updatedAt, JSON.stringify(imageKeys), productId, owner, state.revision, payload)] : []),
+    ...(source.member?[db.prepare(`UPDATE product_quotation_fields SET revision=CASE WHEN EXISTS(SELECT 1 FROM members m
+      WHERE m.id=? AND m.status='approved' AND lower(trim(m.email))=? AND m.role=? AND m.company_code=? AND m.company_name=?) THEN revision ELSE 0 END
+      WHERE product_id=? AND owner_id=? AND revision=? AND payload=? RETURNING payload,revision`)
+      .bind(owner,source.member.email,source.member.role,source.member.companyCode,source.member.companyName,productId,owner,state.revision,payload)]:[]),
   ]);
   if (imageKeys && Boolean(result[0].results[0]) !== Boolean(result[1].results[0])) throw Error('Final quotation image attachment acknowledgement was incomplete.');
   return result[0].results[0] ? state : null;

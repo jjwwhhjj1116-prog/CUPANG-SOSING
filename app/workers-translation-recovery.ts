@@ -7,9 +7,9 @@ const hash = /^[a-f0-9]{64}$/;
 export const WORKERS_RECOVERY_MAX_OUTPUT_TOKENS = 2048;
 export const WORKERS_RECOVERY_MAX_INPUT_CHARACTERS = 12000;
 export const WORKERS_RECOVERY_MODEL=WORKERS_QWEN_MODEL;
-export const WORKERS_RECOVERY_VERSION=3;
-export type WorkersRecoveryProof = { version?:2|3; model?:string; failedJobId: string; scope: 'collected'; optionRevision: number; sourceFingerprint: string; company: SupplierHubCompany };
-export type WorkersRecoveryConfiguration = { configured: boolean; version:3; provider: 'workers-ai'; destination: 'Cloudflare Workers AI'; model: string; maxOutputTokens: number; freeOnly: true; issues: string[] };
+export const WORKERS_RECOVERY_VERSION=5;
+export type WorkersRecoveryProof = { version?:2|3|4|5; model?:string; failedJobId: string; scope: 'collected'; optionRevision: number; sourceFingerprint: string; company: SupplierHubCompany };
+export type WorkersRecoveryConfiguration = { configured: boolean; version:5; provider: 'workers-ai'; destination: 'Cloudflare Workers AI'; model: string; maxOutputTokens: number; freeOnly: true; issues: string[] };
 type RecoverySecrets = TranslationSecrets & { SOURCEFLOW_QUOTATION_AI_PROVIDER?: string; SOURCEFLOW_QUOTATION_AI_FREE_ONLY?: string };
 
 /** A certain, persisted Google refusal; uncertain delivery never permits fallback. */
@@ -44,7 +44,7 @@ export function workersRecoveryReviewProof(review: TranslationReview): WorkersRe
     || typeof proof.failedJobId !== 'string' || !uuid.test(proof.failedJobId) || proof.scope !== 'collected'
     || !Number.isSafeInteger(proof.optionRevision) || proof.optionRevision < 0 || typeof proof.sourceFingerprint !== 'string' || !hash.test(proof.sourceFingerprint)
     || !proof.company || Object.keys(proof.company).sort().join(',') !== 'code,name' || !supplierHubCompany(proof.company.code, proof.company.name)
-    || review.destination !== 'Cloudflare Workers AI' || (v2?![2,3].includes(proof.version??0)||proof.model!==WORKERS_RECOVERY_MODEL||review.model!==proof.model:review.model!==WORKERS_TEXT_MODEL)
+    || review.destination !== 'Cloudflare Workers AI' || (v2?![2,3,4,5].includes(proof.version??0)||proof.model!==WORKERS_RECOVERY_MODEL||review.model!==proof.model:review.model!==WORKERS_TEXT_MODEL)
     || review.maxOutputTokens !== WORKERS_RECOVERY_MAX_OUTPUT_TOKENS
     || review.instructionsVersion !== 'sourceflow-translation-v6' || ['seoRetry', 'optionsRetry', 'intakeOptions'].some(key => Object.hasOwn(review, key))
     || JSON.stringify(review.source).length > WORKERS_RECOVERY_MAX_INPUT_CHARACTERS)

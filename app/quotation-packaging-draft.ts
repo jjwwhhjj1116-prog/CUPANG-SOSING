@@ -1,7 +1,7 @@
 import type {ProductOption,ProductOptions} from '@/app/product-options';
 import type {QuotationFieldsView,QuotationField,QuotationChange} from '@/app/quotation-schema';
 import {quotationValueIssues} from '@/app/quotation-schema';
-import {isQuotationPackagingField} from '@/app/quotation-packaging-basis';
+import {isQuotationPackagingField,type QuotationPackagingDraftInput} from '@/app/quotation-packaging-basis';
 import {isPackagedDimensionsMmField,isCanonicalPackagedDimensionsMm} from '@/app/quotation-packaged-dimensions';
 import {WORKERS_QWEN_MODEL,parseWorkersQwenJson} from '@/app/automation/workers-qwen-contract';
 
@@ -146,4 +146,9 @@ export function quotationPackagingDraftChanges(view:QuotationFieldsView,result:P
    ||isPackagedDimensionsMmField(field)&&!isCanonicalPackagedDimensionsMm(item.value))throw fail('기존 포장값·빈칸·옵션 구성이 바뀌었습니다. 포장 초안을 다시 확인해주세요.');
   seen.add(key);return{optionId:item.optionId,fieldKey:item.fieldKey,value:item.value};
  });
+}
+export function quotationPackagingDraftInputs(view:QuotationFieldsView,result:PackagingDraftResult,productId:string,scope:PackagingDraftScope):QuotationPackagingDraftInput[]{
+ quotationPackagingDraftChanges(view,result,productId,scope);
+ return result.proposals.flatMap(item=>item.origin==='collected'?[]:[{optionId:item.optionId,fieldKey:item.fieldKey,value:item.value,
+  fieldSignature:JSON.stringify(view.resolved.schema.fields.find(field=>field.id===item.fieldKey)),unitsPerPack:item.unitsPerPack,origin:item.origin,measured:false as const}]);
 }

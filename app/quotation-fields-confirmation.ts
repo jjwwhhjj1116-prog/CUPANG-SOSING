@@ -1,6 +1,6 @@
 import { applyQuotationChanges, type QuotationChange, type QuotationFieldsView, type QuotationOverrides } from '@/app/quotation-schema';
 import { quotationPackagedWeightManual } from '@/app/quotation-packaged-weight';
-import { applyQuotationPackagingBasis, quotationPackagingBasisIssues, isQuotationPackagingBasisIssue, validatePackQuantities, validateQuotationPackagingBasis } from '@/app/quotation-packaging-basis';
+import { applyQuotationPackagingBasis, quotationPackagingBasisIssues, isQuotationPackagingBasisIssue, validatePackQuantities, validateQuotationPackagingBasis,type QuotationPackagingDraftInput } from '@/app/quotation-packaging-basis';
 
 const unconfirmed = () => new Error('저장 응답이 요청한 견적 입력과 다릅니다. 직접 수정값을 유지했습니다. 기본값 다시 반영으로 저장본을 확인해주세요.');
 function overrideSignature(value: QuotationOverrides): string {
@@ -57,13 +57,13 @@ function validSaveVersion(previous: QuotationFieldsView, saved: QuotationFieldsV
 /** An HTTP 200 is not proof that these direct edits were stored. Preserve the
  * exact manual layers (including blanks and resets) and the captured category
  * sources; source changes require a fresh explicit comparison in the editor. */
-export function confirmQuotationFieldsSave(previous: QuotationFieldsView, saved: QuotationFieldsView, changes: readonly QuotationChange[], readback?: QuotationFieldsView): QuotationFieldsView {
+export function confirmQuotationFieldsSave(previous: QuotationFieldsView, saved: QuotationFieldsView, changes: readonly QuotationChange[], readback?: QuotationFieldsView,drafts:readonly QuotationPackagingDraftInput[]=[]): QuotationFieldsView {
   try {
     const expected = applyQuotationChanges(previous.overrides, changes);
     if(previous.optionPackQuantities!==undefined){validatePackQuantities(previous.optionPackQuantities);validatePackQuantities(saved.optionPackQuantities);if(readback)validatePackQuantities(readback.optionPackQuantities);}
     if(previous.packagingBasis!==undefined)validateQuotationPackagingBasis(previous.packagingBasis);
     const expectedPackaging=previous.optionPackQuantities===undefined?previous.packagingBasis
-      :applyQuotationPackagingBasis(previous.packagingBasis,previous.resolved.schema.fields,previous.optionPackQuantities,changes);
+      :applyQuotationPackagingBasis(previous.packagingBasis,previous.resolved.schema.fields,previous.optionPackQuantities,changes,drafts);
     if(saved.packagingBasis!==undefined)validateQuotationPackagingBasis(saved.packagingBasis);
     if(JSON.stringify(saved.packagingBasis??null)!==JSON.stringify(expectedPackaging??null))throw unconfirmed();
     if (!Number.isSafeInteger(saved.revision) || saved.revision !== previous.revision + 1

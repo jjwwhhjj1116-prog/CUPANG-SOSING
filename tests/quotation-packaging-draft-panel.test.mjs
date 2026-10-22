@@ -43,11 +43,44 @@ test('actual editor entry stages exact option changes and only explicit Save per
   ui=quotationLabelFormUI({productId:f.id,load:f.h.load,request:(path,init={})=>f.h.route(path.startsWith(f.base+'/quotation-fields')&&!path.includes('?')?path+f.query:path,{method:init.method??'GET',body:init.body}),renderDocument:()=>assert.fail('packaging never renders images')});await ui.idle();ui.selectOption('synthetic-one');
   const boundary=nodes(ui.render().tree).find(node=>node.type==='@/app/components/quotation-packaging-draft-panel');assert.ok(boundary,'real editor exposes the packaging draft entry '+JSON.stringify({alerts:ui.alerts(),types:nodes(ui.render().tree).map(node=>node.type).filter(value=>typeof value==='string'&&value.includes('packag'))}));
   const selectedView=boundary.props.view,options=await f.h.load('db/product-options.ts').readProductOptions('owner',f.id),plan=f.h.load('app/quotation-packaging-draft.ts').buildQuotationPackagingDraftPlan(selectedView,options,{title:'合成后跟贴',description:'',attributes:[]},{optionId:null,applyToAllOptions:true}),draft=f.h.load('app/quotation-packaging-draft.ts').completeQuotationPackagingDraft(plan);
-  const changes=f.h.load('app/quotation-packaging-draft.ts').quotationPackagingDraftChanges(selectedView,draft,f.id,{optionId:null,applyToAllOptions:true}),before=f.state();
-  assert.equal(boundary.props.onApply(changes),true);assert.equal(f.state(),before,'apply writes to the unsaved editor only');assert.equal(ui.button('견적 입력 저장').props.disabled,false);
+  const changes=f.h.load('app/quotation-packaging-draft.ts').quotationPackagingDraftChanges(selectedView,draft,f.id,{optionId:null,applyToAllOptions:true}),drafts=f.h.load('app/quotation-packaging-draft.ts').quotationPackagingDraftInputs(selectedView,draft,f.id,{optionId:null,applyToAllOptions:true}),before=f.state();
+  assert.equal(boundary.props.onApply(changes,drafts),true);assert.equal(f.state(),before,'apply writes to the unsaved editor only');assert.equal(ui.button('견적 입력 저장').props.disabled,false);
   await ui.click('견적 입력 저장');assert.equal(ui.savedNotifications,1);const saved=await(await read()).json();
   for(const change of changes)assert.equal(saved.resolved.rows.find(row=>row.optionId===change.optionId).fields[change.fieldKey].value,change.value);
   assert.ok(saved.packagingBasis);assert.equal((await f.h.load('db/product-options.ts').readProductOptions('owner',f.id)).rows[0].packagedWeightG,null,'draft adoption never rewrites supplier physical facts');
+  for(const change of changes){assert.deepEqual(saved.packagingBasis.options[change.optionId][change.fieldKey].nonMeasuredDraft,{origin:'couplus-fallback',measured:false});assert.ok(saved.resolved.rows.find(row=>row.optionId===change.optionId).fields[change.fieldKey].reviewMessages.some(message=>message.includes('실측값이 아닙니다')));}
   assert.equal(view.optionPackQuantities['synthetic-one'],1);
+ }finally{ui?.close();f.close();}
+});
+test('lost Save acknowledgement recovers exact alias metadata from readback without a second write',async()=>{
+ const f=await apiFixture(companies[0],aiFixture({company:companies[0]}).snapshot);let ui,puts=0;
+ try{
+  ui=quotationLabelFormUI({productId:f.id,load:f.h.load,request:async(path,init={})=>{const response=await f.h.route(path.startsWith(f.base+'/quotation-fields')&&!path.includes('?')?path+f.query:path,{method:init.method??'GET',body:init.body});if(init.method==='PUT'){puts++;throw new TypeError('synthetic lost acknowledgement');}return response;},renderDocument:()=>assert.fail('no image rendering')});await ui.idle();ui.selectOption('synthetic-one');
+  const boundary=nodes(ui.render().tree).find(node=>node.type==='@/app/components/quotation-packaging-draft-panel'),view=boundary.props.view,options=await f.h.load('db/product-options.ts').readProductOptions('owner',f.id),helper=f.h.load('app/quotation-packaging-draft.ts'),scope={optionId:null,applyToAllOptions:true};
+  const result=helper.completeQuotationPackagingDraft(helper.buildQuotationPackagingDraftPlan(view,options,{title:'合成包装',description:'',attributes:[]},scope)),changes=helper.quotationPackagingDraftChanges(view,result,f.id,scope),drafts=helper.quotationPackagingDraftInputs(view,result,f.id,scope);
+  assert.equal(boundary.props.onApply(changes,drafts),true);await ui.click('견적 입력 저장');assert.equal(ui.savedNotifications,0);assert.equal(puts,1);assert.equal(ui.button('견적 입력 저장').props.disabled,false);
+  await ui.click('기본값 다시 반영');assert.equal(ui.button('견적 입력 저장').props.disabled,true);assert.equal(puts,1);assert.match(JSON.stringify(ui.render().tree),/실측값이 아닙니다/);
+ }finally{ui?.close();f.close();}
+});
+for(const sourceAction of ['edit','reset'])test(`real bulk copy seals target draft provenance before source ${sourceAction}`,async()=>{
+ const f=await apiFixture(companies[0],aiFixture({company:companies[0]}).snapshot);let ui;const writes=[];
+ try{
+  const optionModel=f.h.load('app/product-options.ts'),store=f.h.load('db/product-options.ts'),old=await store.readProductOptions('owner',f.id),product=await f.h.load('db/queries.ts').findProduct('owner',f.id);
+  const inputs=optionModel.optionInputs(old);inputs.push({...inputs[0],id:'synthetic-two',originalName:'白色',translatedName:'흰색',supplierSku:'SYNTHETIC-TWO',unitsPerPack:3});
+  const updated=optionModel.applyOptionRows(old,inputs,new Date(Date.parse(product.updated_at)+1).toISOString());assert.ok(await store.saveProductOptions('owner',updated,old.revision,product.updated_at));
+  ui=quotationLabelFormUI({productId:f.id,load:f.h.load,request:(path,init={})=>{if(init.method==='PUT')writes.push(JSON.parse(init.body));return f.h.route(path.startsWith(f.base+'/quotation-fields')&&!path.includes('?')?path+f.query:path,{method:init.method??'GET',body:init.body});},renderDocument:()=>assert.fail('no image rendering')});await ui.idle();ui.selectOption('synthetic-one');
+  const boundary=nodes(ui.render().tree).find(node=>node.type==='@/app/components/quotation-packaging-draft-panel'),view=boundary.props.view,helper=f.h.load('app/quotation-packaging-draft.ts'),scope={optionId:'synthetic-one',applyToAllOptions:false};
+  const result=helper.completeQuotationPackagingDraft(helper.buildQuotationPackagingDraftPlan(view,updated,{title:'合成包装',description:'',attributes:[]},scope)),changes=helper.quotationPackagingDraftChanges(view,result,f.id,scope),drafts=helper.quotationPackagingDraftInputs(view,result,f.id,scope),weight=changes.find(change=>!change.value.includes('*'));
+  assert.equal(boundary.props.onApply(changes,drafts),true);
+  const card=()=>nodes(ui.render().tree).find(node=>node.type==='div'&&node.props.className?.startsWith('quotation-field ')&&nodes(node).some(input=>input.props.id?.endsWith('-'+weight.fieldKey)));
+  const checkbox=nodes(card()).find(node=>node.type==='input'&&node.props.type==='checkbox');assert.ok(checkbox);checkbox.props.onChange({target:{checked:true}});
+  await ui.click('적용 범위 미리보기');await ui.click('확인한 범위에 적용');
+  if(sourceAction==='edit')ui.field(weight.fieldKey).props.onChange({target:{value:'110'}});
+  else{const reset=nodes(card()).find(node=>node.type==='button'&&String(node.props.children).startsWith('수정 해제'));assert.ok(reset);reset.props.onClick();}
+  await ui.idle();await ui.click('견적 입력 저장');assert.equal(ui.savedNotifications,1);assert.equal(writes.length,1);
+  const targetMetadata=writes[0].packagingDrafts.filter(item=>item.optionId==='synthetic-two');assert.ok(targetMetadata.length);assert.ok(targetMetadata.every(item=>item.value==='100'&&item.unitsPerPack===3&&item.measured===false));
+  const saved=await(await f.h.route(f.base+'/quotation-fields'+f.query)).json(),target=saved.resolved.rows.find(row=>row.optionId==='synthetic-two');
+  for(const metadata of targetMetadata){assert.equal(target.fields[metadata.fieldKey].value,'100');assert.deepEqual(saved.packagingBasis.options['synthetic-two'][metadata.fieldKey].nonMeasuredDraft,{origin:'couplus-fallback',measured:false});assert.ok(target.fields[metadata.fieldKey].reviewMessages.some(message=>message.includes('실측값이 아닙니다')));}
+  assert.equal((await store.readProductOptions('owner',f.id)).rows.find(row=>row.id==='synthetic-two').packagedWeightG,null);assert.equal(f.h.aiSources.length,0);
  }finally{ui?.close();f.close();}
 });

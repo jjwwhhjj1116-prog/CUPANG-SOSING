@@ -1,10 +1,11 @@
 'use client';
 import {useEffect,useLayoutEffect,useRef,useState} from 'react';
 import type {QuotationChange,QuotationFieldsView} from '@/app/quotation-schema';
-import {quotationPackagingDraftChanges,type PackagingDraftResult,type PackagingDraftScope} from '@/app/quotation-packaging-draft';
+import {quotationPackagingDraftChanges,quotationPackagingDraftInputs,type PackagingDraftResult,type PackagingDraftScope} from '@/app/quotation-packaging-draft';
+import type {QuotationPackagingDraftInput} from '@/app/quotation-packaging-basis';
 
 type Props={productId:string;profileId?:string;view:QuotationFieldsView;optionId:string|null;disabled:boolean;
- onBusyChange?:(busy:boolean)=>void;onApply:(changes:QuotationChange[])=>boolean};
+ onBusyChange?:(busy:boolean)=>void;onApply:(changes:QuotationChange[],drafts:QuotationPackagingDraftInput[])=>boolean};
 const origins={collected:'수집한 포장값','ai-estimate':'AI 추정값','couplus-fallback':'기본 초안'};
 export function QuotationPackagingDraftPanel(props:Props){return <PackagingDraftPanel key={JSON.stringify([props.productId,props.profileId,props.view.productVersion,
  props.view.contentRevision,props.view.optionRevision,props.view.revision,props.view.inputFingerprint,props.optionId])} {...props}/>;}
@@ -34,7 +35,7 @@ function PackagingDraftPanel({productId,profileId,view,optionId,disabled,onBusyC
  function apply(){
   if(pending.current||current.current.disabled||!result||estimated&&!confirmed)return;
   try{const changes=quotationPackagingDraftChanges(current.current.view,result,productId,scope);if(!changes.length)return;
-   if(!current.current.onApply(changes))throw Error('입력란이 변경되었습니다. 최신 견적에서 초안을 다시 확인해주세요.');setResult(null);setConfirmed(false);
+   if(!current.current.onApply(changes,quotationPackagingDraftInputs(current.current.view,result,productId,scope)))throw Error('입력란이 변경되었습니다. 최신 견적에서 초안을 다시 확인해주세요.');setResult(null);setConfirmed(false);
   }catch(cause){setError(cause instanceof Error?cause.message:'포장 초안을 다시 확인해주세요.');}
  }
  return <section className="quotation-fields-notice" aria-label="포장 규격 초안" aria-busy={busy}>

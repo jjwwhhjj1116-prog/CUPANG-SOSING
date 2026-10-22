@@ -109,7 +109,7 @@ export async function findSeoRetryTranslation(ownerId:string,productId:string,re
 export async function findWorkersRecoveryTranslation(ownerId:string,productId:string,failedJobId:string) {
   if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(failedJobId))throw Error('Invalid Workers recovery job');
   const db=await database();const row=await db.prepare('SELECT * FROM translation_jobs WHERE owner_id=? AND product_id=? AND idempotency_key=?')
-    .bind(ownerId,productId,'workers-recovery-v3-'+failedJobId).first<Row>();return row?job(row):null;
+    .bind(ownerId,productId,'workers-recovery-v5-'+failedJobId).first<Row>();return row?job(row):null;
 }
 
 export async function createSeoRetryTranslation(ownerId:string,value:TranslationJob,retryKey:string,requestFingerprint:string,optionRevision:number,source:SeoRetrySourceGuard) {
@@ -118,7 +118,7 @@ export async function createSeoRetryTranslation(ownerId:string,value:Translation
 }
 export async function createWorkersRecoveryTranslation(ownerId:string,value:TranslationJob,failedJobId:string,requestFingerprint:string,optionRevision:number,source:SeoRetrySourceGuard) {
   if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(failedJobId)||!Number.isSafeInteger(optionRevision)||optionRevision<0)throw Error('Invalid Workers recovery scope');
-  return createSourceBoundTranslation(ownerId,value,'workers-recovery-v3-'+failedJobId,requestFingerprint,optionRevision,source);
+  return createSourceBoundTranslation(ownerId,value,'workers-recovery-v5-'+failedJobId,requestFingerprint,optionRevision,source);
 }
 async function createSourceBoundTranslation(ownerId:string,value:TranslationJob,key:string,requestFingerprint:string,optionRevision:number,source:SeoRetrySourceGuard) {
   const db=await database();

@@ -21,7 +21,7 @@ import { isQuotationLegalNotice, quotationNoticeInput } from '@/app/quotation-no
 import { quotationPackagedWeightManual } from '@/app/quotation-packaged-weight';
 import { isPackagedDimensionsMmField, isCanonicalPackagedDimensionsMm, normalizePackagedDimensionsMm } from '@/app/quotation-packaged-dimensions';
 import type {TemplateDefinition} from '@/app/category-profiles';
-import { quotationPackagingBasisIssues, validateQuotationPackagingBasis, type QuotationPackagingBasis } from '@/app/quotation-packaging-basis';
+import { quotationPackagingBasisIssues, quotationPackagingDraftReviewMessages, validateQuotationPackagingBasis, type QuotationPackagingBasis } from '@/app/quotation-packaging-basis';
 import {validateOfficialWorkbookFields} from '@/app/official-workbook-field-descriptors';
 import {validateOfficialWorkbookEvidence} from '@/app/official-workbook-evidence';
 import { quotationPriceInputs, quotationPriceTargets } from '@/app/quotation-price-targets';
@@ -627,7 +627,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       const value = weightManual?.value ?? (manualOption ? specific![definition.id] : manualCommon ? overrides.common[definition.id] : automatic.value);
       const source: QuotationSource = weightManual?.source ?? (manualOption ? 'manual-option' : manualCommon ? 'manual-common' : automatic.source);
       const validationIssues = [...quotationValueIssues(definition, value, ownedKeys, source), ...(!weightManual && !manualOption && !manualCommon ? automatic.issues ?? [] : [])];
-      const reviewMessages: string[] = [];
+      const reviewMessages: string[] = quotationPackagingDraftReviewMessages(schema.fields,input.packagingBasis,overrides,optionId,definition.id);
       if (definition.id === 'title' && source === 'content'
         && content.seo.title.provenance === 'collected' && /\p{Script=Han}/u.test(content.seo.title.value))
         reviewMessages.push('수집 원문의 중국어 상품명이 남아 있습니다. 1단계에서 상품명을 확인하고 번역·수정해주세요.');

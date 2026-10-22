@@ -19,6 +19,22 @@ test('documented no_think empty prefix is accepted once without extracting reaso
  }
  for(const content of ['<think>private reasoning</think>'+JSON.stringify(draft),'<think>\n</think><think></think>'+JSON.stringify(draft),'<think></think>```json\n'+JSON.stringify(draft)+'\n```','<think></think>{"title":'])assert.throws(()=>parseWorkersQwenJson(envelope(content)));
 });
+test('chat choices stay authoritative when JSON mode returns an absent, undefined or exactly equal supplemental object',()=>{
+ const nested={...draft,attributes:[{name:'재질',value:'스펀지'}],extra:{empty:null,enabled:true,list:[1,'둘',false]}},reordered={extra:{list:[1,'둘',false],enabled:true,empty:null},warnings:[],attributes:[{value:'스펀지',name:'재질'}],description:'',keywords:[],title:draft.title};
+ for(const supplemental of [undefined,reordered]){const payload=envelope(JSON.stringify(nested));payload.response=supplemental;assert.deepEqual(JSON.parse(JSON.stringify(parseWorkersQwenJson(payload).value)),nested);}
+ const only=good();assert.deepEqual(JSON.parse(JSON.stringify(parseWorkersQwenJson(only).value)),draft);
+ const emptyThink={...envelope('<think>\n</think>\n'+JSON.stringify(draft)),response:{...draft}};assert.deepEqual(JSON.parse(JSON.stringify(parseWorkersQwenJson(emptyThink).value)),draft);
+});
+test('a supplemental response cannot change, repair, extract or replace any choice JSON',()=>{
+ for(const supplemental of [null,'',JSON.stringify(draft),[],5,false,new Date(),Object.assign(new (class Supplemental {})(),draft)]){
+  assert.throws(()=>parseWorkersQwenJson({...good(),response:supplemental}),error=>error.reason==='SUPPLEMENTAL_RESPONSE');
+ }
+ for(const supplemental of [{...draft,title:'PRIVATE_DIFFERENT_TITLE'},{...draft,extra:1},{...draft,keywords:['둘','하나']}])assert.throws(()=>parseWorkersQwenJson({...good(),response:supplemental}),error=>error.reason==='RESPONSE_MISMATCH');
+ const order=envelope(JSON.stringify({...draft,keywords:['하나','둘']}));order.response={...draft,keywords:['둘','하나']};assert.throws(()=>parseWorkersQwenJson(order),error=>error.reason==='RESPONSE_MISMATCH');
+ for(const content of ['<think>PRIVATE_REASONING</think>'+JSON.stringify(draft),'```json\n'+JSON.stringify(draft)+'\n```','{"title":',JSON.stringify([draft])])assert.throws(()=>parseWorkersQwenJson({...envelope(content),response:draft}));
+ for(const object of ['text_completion','chat.completion.chunk','PRIVATE_DISCRIMINATOR',null])assert.throws(()=>parseWorkersQwenJson({...good(),object,response:draft}),error=>error.reason==='COMPLETION_TYPE');
+ const truncated={...good(),response:draft};truncated.choices[0].finish_reason='length';assert.throws(()=>parseWorkersQwenJson(truncated),error=>error.reason==='OUTPUT_TRUNCATED');
+});
 
 const scenarios=[
  ['ENVELOPE',()=>null],
@@ -36,13 +52,16 @@ const scenarios=[
  ['CODE_FENCE',()=>envelope('```json\n{"private":"PRIVATE_RAW_SOURCE"}\n```')],
  ['JSON_SYNTAX',()=>envelope('{"private":"PRIVATE_RAW_SOURCE"')],
  ['JSON_OBJECT',()=>envelope('[]')],
+ ['SUPPLEMENTAL_RESPONSE',()=>({...good(),response:'PRIVATE_RAW_SOURCE'})],
+ ['RESPONSE_MISMATCH',()=>({...good(),response:{private:'PRIVATE_RAW_SOURCE'}})],
 ];
 for(const [reason,make] of scenarios)test(`Qwen diagnostic ${reason} exposes bounded classifications only`,()=>{
  assert.throws(()=>parseWorkersQwenJson(make()),error=>{
   assert.equal(error.reason,reason);const diagnostic=JSON.parse(JSON.stringify(error.diagnostic));
-  assert.deepEqual(Object.keys(diagnostic).sort(),['contentLength','contentType','finish','model']);
+  assert.deepEqual(Object.keys(diagnostic).sort(),['contentLength','contentType','finish','model','objectKind','responseKind']);
   assert.ok(['stop','length','other','missing'].includes(diagnostic.finish));assert.ok(['string','null','other','missing'].includes(diagnostic.contentType));
   assert.ok(['qwen','llama','other','missing'].includes(diagnostic.model));assert.ok(diagnostic.contentLength===null||Number.isSafeInteger(diagnostic.contentLength)&&diagnostic.contentLength>=0&&diagnostic.contentLength<=512*1024+1);
+  assert.ok(['chat','text','other','missing'].includes(diagnostic.objectKind));assert.ok(['missing','undefined','null','string','object','array','other'].includes(diagnostic.responseKind));
   assert.equal(JSON.stringify({message:error.message,diagnostic}).includes('PRIVATE_'),false);return true;
  });
 });
@@ -82,5 +101,11 @@ test('the actual Qwen route accepts a documented empty think prefix with one cal
   const before=f.state(),result=(await json(await f.post({action:'execute',jobId:f.recovery.id}))).job;
   assert.equal(result.status,'completed');assert.equal(result.result.draft.title,draft.title);assert.equal(f.calls(),1);assert.equal(f.state(),before);
   assert.equal(JSON.stringify(result.result).includes('<think>'),false);assert.equal(result.result.appliedToContent,false);
+ }finally{f.h.close();}
+});
+test('the actual Qwen route accepts an equal dual JSON envelope exactly once without retaining supplemental output',async()=>{
+ const f=await fixture(()=>({...envelope(JSON.stringify(draft)),response:{warnings:[],attributes:[],description:'',keywords:[],title:draft.title}}));try{
+  const before=f.state(),result=(await json(await f.post({action:'execute',jobId:f.recovery.id}))).job;assert.equal(result.status,'completed');assert.equal(result.result.draft.title,draft.title);assert.equal(f.calls(),1);assert.equal(f.state(),before);assert.equal(Object.hasOwn(result.result,'response'),false);
+  await json(await f.post({action:'execute',jobId:f.recovery.id}));assert.equal(f.calls(),1);
  }finally{f.h.close();}
 });
