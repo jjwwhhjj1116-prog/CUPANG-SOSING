@@ -659,6 +659,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
           <button className={`nav-item ${view==='work'?'active':''}`} onClick={()=>changeView('work')}><span>✦</span>AI 상품등록</button>
           <button className={`nav-item ${view==='archive'?'active':''}`} onClick={()=>changeView('archive')}><span>▦</span>상품관리(신규)</button>
           <p className="nav-caption nav-gap">설정</p><button className="nav-item" onClick={()=>void checkConnections()}><span>⌁</span>연동 설정</button><button className="nav-item" onClick={()=>{setHistoryProductId(detail?.id??products[0]?.id??'');setHistoryOpen(true);}}><span>↻</span>작업 이력</button>
+          <a className="nav-item" href="/cli"><span>⌘</span>CLI 연결</a>
         </nav>
         <div className="sidebar-status"><div><strong>YOOFAM 스튜디오</strong><small>로켓배송 상품 등록 · 관리</small></div></div>
       </aside>

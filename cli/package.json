@@ -1,0 +1,9 @@
+{
+  "name": "@yoofam/studio-cli",
+  "version": "0.1.0",
+  "description": "YOOFAM Studio local read-only connection",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=22.13.0" },
+  "bin": { "yoofam-studio": "./yoofam-studio.mjs" }
+}

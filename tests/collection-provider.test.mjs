@@ -75,9 +75,12 @@ test('strict bounded collect envelope is rejected before either provider can req
  }
 });
 
-test('immutable receipt wins before config/body validation and an aborted fresh candidate never writes',async()=>{
+test('a valid existing receipt wins before provider config while malformed or aborted requests never write',async()=>{
  const existing={receivedAt:'2026-10-19T00:00:00.000Z',result:{title:'unchanged'}};
- const saved=route({env:{ALIBABA_PRODUCT_API_ENABLED:'true'},existing}),response=await saved.call({invalid:true});assert.equal(response.status,200);assert.deepEqual((await response.json()).receipt,existing);assert.equal(saved.state.writes,0);assert.equal(saved.state.network,0);
+ const saved=route({env:{ALIBABA_PRODUCT_API_ENABLED:'true'},existing}),response=await saved.call();assert.equal(response.status,200);assert.deepEqual((await response.json()).receipt,existing);assert.equal(saved.state.writes,0);assert.equal(saved.state.network,0);
+ // Recapture version selection validates the request envelope before reusing a
+ // receipt. An unrelated malformed body must not bypass that existing guard.
+ const malformed=route({env:{ALIBABA_PRODUCT_API_ENABLED:'true'},existing});assert.equal((await malformed.call({invalid:true})).status,400);assert.equal(malformed.state.writes,0);assert.equal(malformed.state.network,0);assert.equal(malformed.state.public,0);assert.deepEqual(existing,{receivedAt:'2026-10-19T00:00:00.000Z',result:{title:'unchanged'}});
  const controller=new AbortController();controller.abort();const fresh=route({env:{}});assert.equal((await fresh.call({browserCapture:capture()},{signal:controller.signal})).status,409);assert.equal(fresh.state.writes,0);assert.equal(fresh.state.public,0);
 });
 test('existing receipts and cancelled/auth-blocked jobs make no outbound request; missing keys fail before networking',async()=>{
