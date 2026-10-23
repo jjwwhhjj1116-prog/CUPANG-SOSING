@@ -3,10 +3,10 @@ import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
 import {readBoundedJson,RequestBodyError} from '@/app/request-body';
 import {validatePageSourceForDelivery,PAGE_SOURCE_LIMIT,pageSourceUrl} from '@/extensions/supplier-hub/page-source.mjs';
 import {pageSourceFingerprint,reviewPageSource} from '@/app/source-inbox';
-import {listSourceInbox,readSourceInbox,storeSourceInbox,reviewSourceInbox,archiveSourceInbox,restoreSourceInbox,SourceInboxConflict,SOURCE_INBOX_ACTIVE_LIMIT,SOURCE_INBOX_RETENTION_LIMIT} from '@/db/source-inbox';
+import {listSourceInboxJson,readSourceInbox,storeSourceInbox,reviewSourceInbox,archiveSourceInbox,restoreSourceInbox,SourceInboxConflict,SOURCE_INBOX_ACTIVE_LIMIT,SOURCE_INBOX_RETENTION_LIMIT} from '@/db/source-inbox';
 const reply=(value:unknown,status=200)=>Response.json(value,{status,headers:{'cache-control':'no-store'}});
 async function access(){const user=await getChatGPTUser(),company=user?.verifiedAccess?approvedSupplierHubCompany(user.membership):null;return company?{owner:await getWorkspaceOwnerId(),company}:null;}
-export async function GET(){try{const auth=await access();if(!auth)return reply({error:'승인된 회사 계정으로 로그인해주세요.'},401);return reply({ownerId:auth.owner,company:auth.company,items:await listSourceInbox(auth.owner,auth.company),limits:{active:SOURCE_INBOX_ACTIVE_LIMIT,retained:SOURCE_INBOX_RETENTION_LIMIT}});}catch{return reply({error:'수집함을 불러오지 못했습니다.'},503);}}
+export async function GET(){try{const auth=await access();if(!auth)return reply({error:'승인된 회사 계정으로 로그인해주세요.'},401);const items=await listSourceInboxJson(auth.owner,auth.company),metadata=JSON.stringify({ownerId:auth.owner,company:auth.company,limits:{active:SOURCE_INBOX_ACTIVE_LIMIT,retained:SOURCE_INBOX_RETENTION_LIMIT}});return new Response(metadata.slice(0,-1)+',"items":'+items+'}',{headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}});}catch{return reply({error:'수집함을 불러오지 못했습니다. 이전 목록은 최신 수집 상태가 아닐 수 있습니다.'},503);}}
 export async function POST(request:Request){
  try{
   const auth=await access();if(!auth)return reply({error:'승인된 회사 계정으로 로그인해주세요.'},401);

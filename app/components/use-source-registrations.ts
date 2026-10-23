@@ -36,10 +36,10 @@ export function useSourceRegistrations(ownerId?:string){
    if(!ownerId||!active(scope.epoch))return;
    if(running){queued=true;if(expectedCompany)queuedCompany=expectedCompany;return;}
    const controller=new AbortController(),epoch=scope.epoch;running=controller;
-   const timeout=setTimeout(()=>controller.abort(),15000);
+   const timeout=setTimeout(()=>{if(active(epoch)&&running===controller){publish({ownerId,items:current.current.ownerId===ownerId?current.current.items:[],error:'수집 상품 목록 응답이 지연되고 있습니다. 표시된 이전 목록에 최신 수집본이 없을 수 있습니다. 다시 불러와주세요.'});controller.abort();}},15000);
    try{
     const response=await fetch('/api/source-inbox',{cache:'no-store',redirect:'error',signal:controller.signal});
-    const body=await response.json() as {ownerId?:string;company?:SourceDeliveryCompany;items?:SourceInboxItem[];error?:string};
+    const body=await response.json().catch(()=>{throw Error('수집 상품 목록을 불러오지 못했습니다.');}) as {ownerId?:string;company?:SourceDeliveryCompany;items?:SourceInboxItem[];error?:string};
     if(!active(epoch)||controller.signal.aborted)return;
     const readCompany=deliveryCompany(body.company);
     if(!response.ok||body.ownerId!==ownerId||!Array.isArray(body.items)||body.items.some(item=>item.ownerId!==ownerId)||body.company!==undefined&&(!readCompany||body.items.some(item=>!sameCompany(item.company,readCompany)))||expectedCompany&&!sameCompany(readCompany,expectedCompany))throw Error(body.error||'수집 상품 목록을 확인하지 못했습니다.');
@@ -51,7 +51,7 @@ export function useSourceRegistrations(ownerId?:string){
     }).map(item=>{const accepted=scope.accepted.get(item.id);if(!accepted||readCompany&&!sameCompany(accepted.company,readCompany))return item;if(item.revision>=accepted.revision){scope.accepted.delete(item.id);return item;}return accepted;});
     for(const accepted of scope.accepted.values())if((!readCompany||sameCompany(accepted.company,readCompany))&&!items.some(item=>item.id===accepted.id))items.push(accepted);
     publish({ownerId,items,error:''});
-   }catch(error){if(active(epoch)&&!controller.signal.aborted)publish({ownerId,items:current.current.ownerId===ownerId?current.current.items:[],error:error instanceof Error?error.message:'수집 상품 조회 실패'});}
+   }catch(error){if(active(epoch)&&!controller.signal.aborted)publish({ownerId,items:current.current.ownerId===ownerId?current.current.items:[],error:(error instanceof Error?error.message:'수집 상품 조회 실패')+' 이전 목록에 최신 수집본이 없을 수 있습니다. 다시 불러와주세요.'});}
    finally{clearTimeout(timeout);if(running===controller){running=null;if(active(epoch)&&queued){const company=queuedCompany;queued=false;queuedCompany=undefined;void load(company);}}}
   }
   const reload=()=>{void load();};refresh.current=reload;

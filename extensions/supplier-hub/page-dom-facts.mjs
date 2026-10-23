@@ -1,11 +1,11 @@
 // Read labelled current-product DOM sections only. The caller separately binds
 // these inert observations to the exact offer through the retained JSON IDs.
-import {isUnrelatedProductElement,readProductSectionLinks} from './page-dom-sections.mjs';
+import {isUnrelatedProductElement,productSectionKind,readProductSectionLinks} from './page-dom-sections.mjs';
 const object=value=>!!value&&typeof value==='object'&&!Array.isArray(value);
 const text=value=>typeof value==='string'?value.replace(/\s+/gu,' ').trim():'';
 const label=value=>text(value).replace(/[：:]$/u,'');
 const semanticLabel=value=>label(value).replace(/\s/gu,'');
-const ATTR_LABELS=['商品属性','产品属性','商品参数','产品参数','제품 속성','상품 속성'].map(semanticLabel);
+const ATTR_LABELS=['商品属性','产品属性','商品属性信息','产品属性信息','商品参数','产品参数','제품 속성','상품 속성','제품 속성 정보','상품 속성 정보'].map(semanticLabel);
 const PACK_LABELS=['包装信息','包装参数','포장 정보','제품 무게 및 치수'].map(semanticLabel);
 const ALL_LABELS=[...ATTR_LABELS,...PACK_LABELS];
 const EXCLUDED='nav,aside,footer,[role="tab"],[class*="recommend" i],[id*="recommend" i],[class*="comment" i],[class*="evaluate" i]';
@@ -18,7 +18,13 @@ function excluded(node){
  if(node.closest(EXCLUDED))return true;
  // The relationship authorizes the panel, never another product/card or a
  // navigation region nested inside it. Check ancestors for tables AND pairs.
- let depth=0;for(let current=node;current;current=current.parentElement){if(++depth>40||current.getAttribute?.('role')==='navigation'||isUnrelatedProductElement(current))return true;}
+ let depth=0;for(let current=node;current;current=current.parentElement){
+  if(++depth>40||current.getAttribute?.('role')==='navigation'||isUnrelatedProductElement(current))return true;
+  if(['DIV','SECTION','ARTICLE'].includes(current.tagName)){
+   const first=Array.from(current.children??[]).find(child=>text(child.textContent)||child.tagName==='IMG');
+   if(first&&!['SECTION','ARTICLE'].includes(first.tagName)&&first.getAttribute?.('role')!=='tabpanel'&&productSectionKind(first.textContent)==='unrelated')return true;
+  }
+ }
  return false;
 }
 
@@ -37,6 +43,9 @@ function rows(root){
  // A permitted table may still contain unrelated row groups. Keep the raw
  // row-count limit before excluding them. textContent must not smuggle a
  // nested card/navigation span into an otherwise permitted cell either.
+ return safeRows(result);
+}
+function safeRows(result){
  if(result.length>201)fail();return result.filter(row=>{
   const pending=[{node:row,depth:0}];let count=0;
   while(pending.length){
@@ -57,6 +66,15 @@ function inlineTextOnly(node){
  };
  return visit(node,0);
 }
+function pairTextOnly(node){
+ let count=0;
+ const visit=(current,depth)=>{
+  if(++count>32||depth>8||excluded(current))return false;
+  const children=Array.from(current.children??[]);
+  return children.every(child=>(INLINE_WRAPPERS.has(child.tagName?.toLowerCase())||children.length===1&&child.tagName==='DIV')&&visit(child,depth+1));
+ };
+ return visit(node,0);
+}
 function labelledHeadings(elements){
  const candidates=elements.filter(node=>ALL_LABELS.includes(semanticLabel(node.textContent))&&!excluded(node)&&inlineTextOnly(node));
  const known=new Set(candidates);
@@ -74,17 +92,63 @@ function sectionRoot(heading,kind){
  return null;
 }
 function inspectSection(scope,kind,heading=null){
- if(excluded(scope))return false;
+ if(!scope?.tagName||['HTML','BODY','MAIN'].includes(scope.tagName)||excluded(scope))return false;
+ if(heading){
+  const first=Array.from(scope.children??[]).find(child=>text(child.textContent)||child.tagName==='IMG');
+  if(first&&(productSectionKind(first.textContent)!==kind||['SECTION','ARTICLE'].includes(first.tagName)))return false;
+ }
+ // A local label cannot expand into a parent holding detail/recommendation
+ // sections. Their tables/pairs describe a different region of the document.
+ if(Array.from(scope.querySelectorAll(HEADINGS)).some(node=>['detail','unrelated'].includes(productSectionKind(node.textContent))&&inlineTextOnly(node)))return false;
  const headings=labelledHeadings(Array.from(scope.querySelectorAll(HEADINGS)));
  if(headings.some(node=>node!==heading&&(ATTR_LABELS.includes(semanticLabel(node.textContent))?'attributes':'packaging')!==kind))return false;
  const tables=Array.from(scope.querySelectorAll(ROOTS)).filter(node=>!excluded(node));
  if(scope.matches?.(ROOTS))tables.unshift(scope);
  if(tables.length>4)fail();if(tables.length)return{scope,tables};
+ if(kind==='packaging'){
+  const divTables=structuralPackageTables(scope);if(divTables.length)return{scope,tables:[],divTables};
+ }
  if(kind==='attributes'){
-  const pairs=Array.from(scope.querySelectorAll('div,li,dl')).filter(node=>node!==heading&&!excluded(node)&&node.children.length===2&&Array.from(node.children).every(inlineTextOnly)&&(!heading||!node.contains(heading)));
+  const pairs=Array.from(scope.querySelectorAll('div,li,dl')).filter(node=>node!==heading&&!excluded(node)&&node.children.length===2&&Array.from(node.children).every(pairTextOnly)&&(!heading||!node.contains(heading)));
   if(pairs.length)return{scope,tables:[],pairs};
  }
  return null;
+}
+/** CSS tables need no ARIA role to be real tables. Require one headed local
+ * package section, explicit column semantics and a rectangular row hierarchy;
+ * classes, row position and option order never supply identity or units. */
+function structuralPackageTables(scope){
+ const containers=Array.from(scope.querySelectorAll('div,ul,ol'));if(containers.length>2000)fail();
+ const atomic=(node,depth=0)=>depth<=8&&!excluded(node)&&Array.from(node.children??[]).every(child=>(INLINE_WRAPPERS.has(child.tagName?.toLowerCase())||child.tagName==='DIV')&&atomic(child,depth+1));
+ const directCells=node=>{
+  const children=Array.from(node.children??[]);
+  return children.length>=2&&children.length<=20&&children.every(child=>atomic(child))?children:null;
+ };
+ const unpack=(node,depth=0)=>{
+  if(depth>4||excluded(node))return null;
+  const children=Array.from(node.children??[]);if(!children.length||children.length>201)return null;
+  const groups=children.map(child=>unpack(child,depth+1));
+  if(groups.every(Boolean))return groups.flat();
+  return directCells(node)?[node]:null;
+ };
+ const found=[];
+ for(const root of containers){
+  if(excluded(root))continue;
+  // Start below the table root. Otherwise a two-row div table can itself
+  // look like two atomic cells after font translation wrappers are applied.
+  const groups=Array.from(root.children??[]).map(child=>unpack(child));
+  if(!groups.length||groups.some(group=>!group))continue;
+  const observed=groups.flat();if(observed.length<2)continue;
+  const first=directCells(observed[0]);if(!first)continue;
+  const columns=first.map(cell=>header(cell.textContent));
+  if(!columns.some(column=>column?.kind==='name'||column?.kind==='supplierSku'))continue;
+  if(!first.some(cell=>/^(?:重量|包装重量|毛重|무게|포장무게|총중량|(?:包装|포장)?(?:宽度|宽|长度|长|高度|高|가로|너비|세로|길이|높이))(?:[（(]|$)/u.test(semanticLabel(cell.textContent))))continue;
+  if(observed.some(row=>directCells(row)?.length!==first.length))fail();
+  const retained=safeRows(observed);if(retained[0]!==observed[0])continue;
+  found.push({root,rows:retained});
+ }
+ const unique=found.filter(table=>!found.some(other=>other!==table&&table.root.contains(other.root)));
+ if(unique.length>4)fail();return unique;
 }
 function header(value){
  const name=text(value).replace(/\s/gu,'').replace(/（/gu,'(').replace(/）/gu,')');
@@ -105,15 +169,16 @@ function measurement(value,column){
  const result=Number(match[1])*column.multiplier;
  if(!numeric(result,column.kind==='weightG'?1e9:1e6))fail();return result;
 }
-function packagingRows(root){
- const all=rows(root);if(!all.length)return[];
- const first=cells(all[0]),columns=first.map(cell=>header(cell.textContent));
+function packagingRows(root,observedRows=null){
+ const all=observedRows??rows(root);if(!all.length)return[];
+ const readCells=observedRows?row=>Array.from(row.children??[]):cells;
+ const first=readCells(all[0]),columns=first.map(cell=>header(cell.textContent));
  if(first.length>20||columns.filter(column=>column?.kind==='name').length>1||columns.filter(column=>column?.kind==='supplierSku').length>1)return fail();
  const kinds=columns.filter(Boolean).map(column=>column.kind);
  if(!kinds.some(kind=>kind==='name'||kind==='supplierSku')||!kinds.some(kind=>!['name','supplierSku'].includes(kind)))return fail();
  if(new Set(kinds).size!==kinds.length)return fail();
  return all.slice(1).map(row=>{
-  const values=cells(row);if(values.length!==first.length)return fail();
+  const values=readCells(row);if(values.length!==first.length)return fail();
   const result={packaging:{source:'package-table'}};
   columns.forEach((column,index)=>{if(!column)return;const value=text(values[index].textContent);
    if(column.kind==='name'||column.kind==='supplierSku'){if(!value||value.length>(column.kind==='name'?500:200))fail();result[column.kind]=value;}
@@ -159,6 +224,10 @@ export function readPageDomFacts(document){
    }
   }
   if(kind==='attributes')for(const pair of section.pairs??[])add(pair.children[0].textContent,pair.children[1].textContent);
+  if(kind==='packaging')for(const table of section.divTables??[]){
+   if(seenRoots.has(table.root))continue;seenRoots.add(table.root);
+   packaging.push(...packagingRows(table.root,table.rows));if(packaging.length>200)fail();
+  }
  }
  return attributes.length||packaging.length?{attributes,packaging}:null;
 }

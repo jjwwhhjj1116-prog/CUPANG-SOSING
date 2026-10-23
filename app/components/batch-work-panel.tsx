@@ -7,9 +7,65 @@ import { BatchTranslationPanel } from '@/app/components/batch-translation-panel'
 import { BatchImageWorkPanel } from '@/app/components/batch-image-work-panel';
 import { BatchLabelDraftPanel } from '@/app/components/batch-label-draft-panel';
 import { BatchSeoWorkPanel } from '@/app/components/batch-seo-work-panel';
+import type {SelectedBatchStageResult} from '@/app/batch-selected-work';
+import type {AutomationStageId} from '@/app/automation/model';
+import type {CollectionEditorTab} from '@/app/registration-navigation';
 type Item = {id:string;title:string;updated_at:string};
 type Result = {status:'waiting'|'running'|'done'|'failed';message:string};
-export function BatchWorkPanel({products,onOpen,onBusyChange}:{products:Item[];onOpen:(id:string,step?:'대표 이미지'|'견적서'|'작업')=>void;onBusyChange?:(busy:boolean)=>void}) {
+export type SelectedBatchRequest={id:string;ownerId:string;stages:AutomationStageId[];keys:Map<string,string>};
+type BatchPanelProps={products:Item[];onOpen:(id:string,step?:CollectionEditorTab|'작업')=>void;onBusyChange?:(busy:boolean)=>void;runRequest?:SelectedBatchRequest};
+const stageNames:Record<AutomationStageId,CollectionEditorTab>={seo:'SEO',pricing:'가격',mainImage:'대표 이미지',additionalImages:'추가 이미지',detailImage:'상세 이미지',sizeChart:'사이즈표',koreanLabel:'표시사항',quotation:'견적서'};
+const statusNames:Record<SelectedBatchStageResult['status'],string>={waiting:'대기',running:'처리 중',draft:'초안 검토',complete:'저장 완료',blocked:'자료·검토 필요',failed:'실패',skipped:'건너뜀'};
+
+/** A click owns one immutable queue. Mounting a review editor is never a start. */
+export function SelectedBatchWorkPanel({products,onOpen,onBusyChange,runRequest}:{products:Item[];onOpen:BatchPanelProps['onOpen'];onBusyChange?:BatchPanelProps['onBusyChange'];runRequest:SelectedBatchRequest}){
+ const [busy,setBusy]=useState(true),[stopping,setStopping]=useState(false),[results,setResults]=useState<Record<string,Partial<Record<AutomationStageId,SelectedBatchStageResult>>>>({}),[errors,setErrors]=useState<Record<string,string>>({});
+ const context=useRef<{request:SelectedBatchRequest;products:Item[];active:AbortController|null;stop:boolean;generation:number}|null>(null),callbacks=useRef({onOpen,onBusyChange});
+ useLayoutEffect(()=>{callbacks.current={onOpen,onBusyChange};},[onOpen,onBusyChange]);
+ async function execute(scope:NonNullable<typeof context.current>){
+  if(context.current!==scope||scope.active)return;
+  const active=new AbortController(),generation=++scope.generation;scope.active=active;scope.stop=false;setStopping(false);setBusy(true);setResults({});setErrors({});callbacks.current.onBusyChange?.(true);
+  const current=()=>context.current===scope&&scope.active===active&&scope.generation===generation&&!active.signal.aborted;
+  const publish=(id:string,stage:SelectedBatchStageResult)=>{if(!current()||!scope.request.stages.includes(stage.id))return;setResults(previous=>({...previous,[id]:{...previous[id],[stage.id]:stage}}));};
+  try{
+   const {runSelectedBatchProduct}=await import('@/app/batch-selected-work');
+   for(const product of scope.products){
+    if(!current()||scope.stop)break;
+    setErrors(previous=>({...previous,[product.id]:''}));
+    try{
+     const result=await runSelectedBatchProduct(product.id,{stages:[...scope.request.stages],expectedOwnerId:scope.request.ownerId,signal:active.signal,fetcher:(input,init)=>fetch(input,init),keys:scope.request.keys,newKey:()=>crypto.randomUUID(),onStage:stage=>publish(product.id,stage)});
+     if(!current())break;
+     if(!result||result.productId!==product.id)throw Error('선택한 상품의 작업 결과를 확인하지 못했습니다.');
+     for(const stage of result.stages)publish(product.id,stage);
+    }catch(error){if(!current())break;setErrors(previous=>({...previous,[product.id]:error instanceof Error?error.message:'작업 결과를 확인하지 못했습니다.'}));}
+   }
+  }catch(error){if(current())setErrors(Object.fromEntries(scope.products.map(product=>[product.id,error instanceof Error?error.message:'작업 실행기를 불러오지 못했습니다.'])));}
+  finally{if(current()){scope.active=null;setBusy(false);callbacks.current.onBusyChange?.(false);}}
+ }
+ useEffect(()=>{
+  const scope={request:{...runRequest,stages:[...runRequest.stages]},products:products.map(product=>({...product})),active:null as AbortController|null,stop:false,generation:0};context.current=scope;callbacks.current.onBusyChange?.(true);
+  // The host owns this ledger, so remounting cannot silently start the same run again.
+  void Promise.resolve().then(()=>{
+   if(context.current!==scope)return;
+   const startKey='selected-run:'+scope.request.id;
+   if(scope.request.keys.has(startKey)){setErrors(Object.fromEntries(scope.products.map(product=>[product.id,'이전 실행이 있습니다. 단계별 저장본을 확인한 뒤 필요한 작업만 다시 시도해주세요.'])));setBusy(false);callbacks.current.onBusyChange?.(false);return;}
+   scope.request.keys.set(startKey,'started');void execute(scope);
+  });
+  return()=>{if(context.current===scope){context.current=null;scope.active?.abort();callbacks.current.onBusyChange?.(false);}};
+ // eslint-disable-next-line react-hooks/exhaustive-deps -- A run ID owns its frozen products and stages; prop refreshes must not restart writes.
+ },[runRequest.id]);
+ const review=(id:string,stage:AutomationStageId)=>{const scope=context.current;if(!scope||scope.active||scope.request.id!==runRequest.id)return;callbacks.current.onOpen(id,stageNames[stage]);};
+ return <section className="modal-form" data-workspace-saving={busy} aria-label="선택 작업 진행">
+  <p>선택한 {products.length}개 상품 · {runRequest.stages.map(stage=>stageNames[stage]).join(' → ')}</p>
+  <p>저장 완료와 검토할 초안을 구분해 표시합니다. 이미 저장한 수동 수정값은 유지합니다.</p>
+  <ul className="batch-work-list">{products.map(product=><li key={product.id}><strong>{product.title}</strong>{errors[product.id]&&<p role="alert">{errors[product.id]}</p>}
+   <ol>{runRequest.stages.map(stage=>{const result=results[product.id]?.[stage];return <li key={stage} data-stage={stage} data-stage-status={result?.status??'waiting'}><strong>{stageNames[stage]} · {statusNames[result?.status??'waiting']}</strong><p role="status">{result?.message??'실행 대기'}</p><button type="button" className="btn ghost" disabled={busy} onClick={()=>review(product.id,stage)}>{stageNames[stage]} 검토 열기</button></li>;})}</ol>
+  </li>)}</ul>
+  <div className="modal-actions"><button type="button" className="btn ghost" disabled={!busy||stopping} onClick={()=>{const scope=context.current;if(scope?.active){scope.stop=true;setStopping(true);}}}>{stopping?'현재 상품을 마친 뒤 중지합니다':'현재 상품 후 중지'}</button><button type="button" className="btn primary" disabled={busy} onClick={()=>{const scope=context.current;if(scope&&!scope.active)void execute(scope);}}>선택 작업 다시 시도</button></div>
+ </section>;
+}
+
+export function BatchWorkPanel({products,onOpen,onBusyChange,runRequest}:BatchPanelProps) {
   const [busy,setBusy]=useState(false);const [results,setResults]=useState<Record<string,Result>>({});
   const [mode,setMode]=useState<'pricing'|'translation'|'labels'|'images'|'labelDrafts'|'seo'>('pricing');
   const [seoProducts,setSeoProducts]=useState<Item[]>(products),[seoBusy,setSeoBusy]=useState(false),[seoPending,setSeoPending]=useState(false);
@@ -56,6 +112,7 @@ export function BatchWorkPanel({products,onOpen,onBusyChange}:{products:Item[];o
     busyCallback.current?.(false);
     if(!active.signal.aborted){setBusy(false);if(!stop.current&&preparedProducts.length){setImageProducts(preparedProducts);setImageAutoPrepare(true);setMode('images');}}
   }
+  if(runRequest)return <SelectedBatchWorkPanel products={products} onOpen={onOpen} onBusyChange={onBusyChange} runRequest={runRequest}/>;
   const productResults=<ul className="batch-work-list">{products.map(product=><li key={product.id}><strong>{product.title}</strong><p role="status">{results[product.id]?.message??'실행 대기'}</p><button className="btn ghost" disabled={busy||imagesBusy||imagesPending||draftBusy||draftPending||seoBusy||seoPending} onClick={()=>{if(!navigationLocked())onOpen(product.id,'대표 이미지');}}>이미지 초안 검토</button><button className="btn ghost" disabled={busy||imagesBusy||imagesPending||draftBusy||draftPending||seoBusy||seoPending} onClick={()=>{if(!navigationLocked())onOpen(product.id,'견적서');}}>견적 초안 검토</button><button className="btn ghost" disabled={busy||imagesBusy||imagesPending||draftBusy||draftPending||seoBusy||seoPending} onClick={()=>{if(!navigationLocked())onOpen(product.id,'작업');}}>상품별 작업 열기</button></li>)}</ul>;
   if(mode==='seo'){const session=seoSession.current;return <div className="modal-form" data-workspace-saving={seoBusy} data-workspace-dirty={seoPending}><button type="button" className="btn ghost" disabled={seoBusy||seoPending} onClick={()=>{if(!navigationLocked()&&seoSession.current===session){seoSession.current=null;setMode('pricing');}}}>← 초안 준비 작업</button>{productResults}<BatchSeoWorkPanel products={seoProducts}
     onBusyChange={value=>{if(seoSession.current===session)changeSeoBusy(value);}} onPendingChange={value=>{if(seoSession.current===session)changeSeoPending(value);}}

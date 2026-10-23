@@ -2,6 +2,7 @@ import { productLabelPlan, verifyProductLabelsView, type ProductLabelsView } fro
 import { attachProductLabel, type ProductLabelAttachment } from '@/app/product-label-attachment';
 import { productLabelPreviewSignature, type ProductLabelUploadCache } from '@/app/product-label-upload';
 import type { DocumentImagePlan } from '@/app/document-image';
+import { productLabelResponseJson } from '@/app/product-label-read-response';
 
 type Input = { productId: string; endpoint: string; quotationEndpoint: string; optionId: string | null; view: ProductLabelsView;
   cache: Map<string, ProductLabelUploadCache>; assertCurrent: () => void;
@@ -13,8 +14,7 @@ export async function completeProductLabelSave(input: Input, request: typeof fet
   const signature = productLabelPreviewSignature(input), current = () => input.assertCurrent();
   const scoped: typeof fetch = async (url, init) => { current(); const response = await request(url, init); current(); return response; };
   async function read() {
-    const response = await scoped(input.endpoint, { cache: 'no-store' }), view = await response.json() as ProductLabelsView & { error?: string }; current();
-    if (!response.ok) throw Error(view.error || '저장한 표시사항을 확인하지 못했습니다.');
+    const response = await scoped(input.endpoint, { cache: 'no-store' }), view = await productLabelResponseJson<ProductLabelsView>(response, input.endpoint); current();
     verifyProductLabelsView(view, input.optionId);
     if (view.productId !== input.productId || view.revision !== input.view.revision || view.inputFingerprint !== input.view.inputFingerprint
       || view.productVersion !== input.view.productVersion || productLabelPreviewSignature({ ...input, view }) !== signature)

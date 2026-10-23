@@ -1,0 +1,149 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import ts from 'typescript';
+
+const plain=value=>JSON.parse(JSON.stringify(value));
+function loadModel(){
+ const cache=new Map(),timers=new Map();let clock=0;
+ function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
+   {exports,Error,Date,URL,AbortController,AbortSignal,structuredClone,setTimeout:(fn,ms)=>{timers.set(++clock,{fn,ms});return clock;},clearTimeout:id=>timers.delete(id),require(name){
+    if(name==='@/app/free-image-translation-client')return{};
+    if(name==='@/app/image-files')return{isOwnedImageKey:(owner,key)=>typeof key==='string'&&new RegExp('^'+owner+'/[a-zA-Z0-9][a-zA-Z0-9._-]*$').test(key)};
+    assert.ok(name.startsWith('@/'),name);return load(name.slice(2)+'.ts');
+   }},{filename:file});return exports;
+ }
+ return{model:load('app/batch-selected-image-work.ts'),expire(){for(const timer of [...timers.values()])timer.fn();},timers};
+}
+function fixture(stage='detail',keys=['owner/source-a.png','owner/source-b.png']){
+ const runtime=loadModel(),calls=[],canvases=[],controller=new AbortController();let current=true;
+ const field=(value,source='content')=>({value,source,issues:[],needsReview:false});
+ const fields=['mainImage','additionalImages','detailImages','detailHtml'].map(id=>({id,section:'image',label:id,type:id==='detailHtml'?'textarea':'images',required:false,visibility:'common',maxItems:id==='mainImage'?1:30}));
+ fields.push({id:'wireMain',section:'image',label:'대표',type:'images',required:false,visibility:'common',maxItems:1,hubInput:'mainImage',hubWire:{path:['imagePage','images','mainImage']}});
+ const stageField={main:'mainImage',additional:'additionalImages',detail:'detailImages'}[stage],values={mainImage:'owner/main.png',wireMain:'owner/main.png',additionalImages:'owner/add.png',detailImages:'owner/detail.png',detailHtml:'<p>수동 설명 보존</p>'};
+ values[stageField]=keys.join('\n');if(stage==='main')values.wireMain=values.mainImage;
+ const row={optionId:'option',optionLabel:'합성 옵션',included:true,fields:Object.fromEntries(Object.entries(values).map(([key,value])=>[key,field(value)]))};
+ let view={revision:1,inputFingerprint:'a'.repeat(64),productVersion:'2026-10-23T00:00:00.000Z',contentRevision:2,optionRevision:1,updatedAt:'2026-10-23T00:00:00.000Z',overrides:{common:{},options:{}},categoryContext:{source:'profile',profileId:'cat',categoryId:'991',categoryPath:['합성']},imageKeys:[...new Set(['owner/main.png','owner/add.png','owner/detail.png',...keys])],protectedDetailImageKeys:[],submissionReady:false,resolved:{schema:{fields},rows:[row],issues:[]}};
+ view.automatic=plain(view.resolved);
+ const content={schemaVersion:1,productId:'product',revision:2,assets:{main:{value:['owner/main.png'],provenance:'collected',updatedAt:null},additional:{value:['owner/add.png'],provenance:'collected',updatedAt:null},detail:{value:['owner/detail.png'],provenance:'collected',updatedAt:null}},sentinelManualOther:{keep:true}};
+ const task={productId:'product',productTitle:'합성 상품',optionId:'option',optionLabel:'합성 옵션',stage,profileId:'cat',categoryContext:plain(view.categoryContext),productVersion:view.productVersion,imageCount:keys.length};
+ const plan={scope:{ownerId:'owner',company:{code:'A01464742',name:'와이홉'}},settings:{translateImages:true},enabled:true,tasks:[task],messages:[]};
+ const productOptions={productId:'product',revision:1,rows:[{id:'option',provenance:{imageKey:'collected'}}]};
+ const options={ownerId:'owner',signal:controller.signal,fetcher:async(url,init)=>{calls.push(['fetch',url,init.method??'GET']);if(url==='/api/products/product/options')return Response.json({options:productOptions,productVersion:view.productVersion});assert.equal(url,'/api/products/product/content');return Response.json({content});},isCurrent:()=>current};
+ options.state=runtime.model.createSelectedImageStageState('owner','product',stage);
+ const region=(text,id='line')=>({id,text,box:{x:0,y:0,width:3,height:2},confidence:95,selected:true,translated:'',issue:null,translationProvenance:'empty',background:'#ffffff',foreground:'#111111',fontSize:1});
+ const deps={plan:async()=>plain(plan),refresh:async()=>plain(view),readSource:async(productId,version,sourceKey,role,signal,_fetcher,target)=>{signal.throwIfAborted();calls.push(['read',sourceKey]);assert.ok(canvases.every(canvas=>canvas.width===0),'prior canvas released before another source');const canvas={width:3,height:2};canvases.push(canvas);return{source:{productId,productVersion:version,sourceKey,role,contentRevision:2,sourceSha256:'b'.repeat(64),width:3,height:2,quotationTarget:target},blob:new Blob(['synthetic']),canvas,width:3,height:2};},recognize:async(image)=>[region(image.source.sourceKey.endsWith('b.png')?'English words':'中文文句')],translate:async(source,language,regions)=>{calls.push(['translate',language]);return{source,regions:regions.map(row=>({id:row.id,original:row.text,translated:'번역 '+row.text,issue:null})),requests:1,warnings:[],stoppedHttpStatus:null};},render:async(image,regions)=>{calls.push(['render',image.source.sourceKey]);assert.ok(regions.filter(row=>row.selected).every(row=>row.translationProvenance==='generated'));return{source:image.source,output:new Blob(['synthetic PNG'],{type:'image/png'}),width:3,height:2};},apply:async(batch,index,_signal,progress)=>{
+  calls.push(['apply',index]);assert.equal(batch.items.filter(row=>row.rendered).length,1,'one PNG retained per slot');assert.ok(canvases.every(canvas=>canvas.width===0));assert.equal(batch.view.productVersion,view.productVersion);
+  const next=plain(view),key=`owner/free-image-product-result-${index}.png`,value=next.resolved.rows[0].fields[stageField].value.split('\n').map((key,i)=>i===index?`owner/free-image-product-result-${index}.png`:key).join('\n');
+  next.revision++;next.productVersion=new Date(Date.parse(view.productVersion)+1).toISOString();next.updatedAt=next.productVersion;next.imageKeys.push(key);next.overrides.options.option={...(next.overrides.options.option??{}),[stageField]:value};next.resolved.rows[0].fields[stageField]=field(value,'manual-option');if(stage==='main')next.resolved.rows[0].fields.wireMain=field(value,'manual-option');view=next;
+  const result={...batch,view:plain(next),items:batch.items.map(row=>row.slotIndex===index?{...row,status:'applied',appliedKey:key}:row)};progress(result);return result;
+ }};
+ return{...runtime,calls,canvases,controller,content,productOptions,plan,options,deps,region,get view(){return view;},set view(value){view=value;},scope(value){current=value;},run:()=>runtime.model.processSelectedImageStage('product',stage,options,deps)};
+}
+
+for(const stage of ['main','additional','detail'])test(`${stage}: explicit action saves generated drafts one slot at a time and leaves content/original roles intact`,async()=>{
+ const h=fixture(stage,stage==='main'?['owner/source-a.png']:undefined),before=plain(h.content),result=await h.run();
+ assert.equal(result.status,'completed');assert.equal(result.applied,stage==='main'?1:2);assert.equal(result.failed,0);assert.ok(result.productVersion);assert.equal(result.recoveryBatch,undefined);assert.deepEqual(h.content,before);assert.ok(h.view.imageKeys.includes('owner/source-a.png'));assert.ok(h.canvases.every(canvas=>canvas.width===0&&canvas.height===0));assert.equal(h.timers.size,0);assert.equal(h.calls.filter(row=>row[0]==='apply').length,result.applied);assert.match(result.messages.at(-1),/초안.*검토/);
+ if(stage!=='main')assert.deepEqual(h.calls.filter(row=>row[0]==='translate').map(row=>row[1]),['zh','en']);
+});
+
+test('saved setting, manual role, manual quotation choice and previous edited results are preserved without OCR or writes',async()=>{
+ for(const kind of ['disabled','role','quotation','edited']){
+  const h=fixture('detail',kind==='edited'?['owner/free-image-product-old.png']:undefined);
+  if(kind==='disabled')h.plan.enabled=false;if(kind==='role')h.content.assets.detail={value:[],provenance:'manual',updatedAt:null};if(kind==='quotation')h.view.overrides.options.option={detailImages:h.view.resolved.rows[0].fields.detailImages.value};
+  const before=plain(h.view),result=await h.run();assert.equal(result.status,'skipped',kind);assert.equal(result.applied,0);assert.equal(h.calls.filter(row=>['read','render','apply'].includes(row[0])).length,0);assert.deepEqual(h.view,before);
+ }
+});
+
+test('detail banner slots retain exact positions and only ordinary source slots are processed',async()=>{
+ const h=fixture('detail',['owner/top.png','owner/source-a.png','owner/bottom.png']);h.view.protectedDetailImageKeys=['owner/top.png','owner/bottom.png'];
+ const result=await h.run();assert.equal(result.applied,1);assert.equal(result.skipped,2);assert.deepEqual(h.calls.filter(row=>row[0]==='read').map(row=>row[1]),['owner/source-a.png']);assert.equal(h.view.resolved.rows[0].fields.detailImages.value,'owner/top.png\nowner/free-image-product-result-1.png\nowner/bottom.png');
+});
+
+test('main stage preserves an option image that was explicitly selected in the option editor',async()=>{
+ const h=fixture('main',['owner/source-a.png']);h.productOptions.rows[0].provenance.imageKey='manual';const result=await h.run();assert.equal(result.status,'skipped');assert.equal(result.applied,0);assert.match(result.messages[0],/옵션 대표 이미지 선택을 유지/);assert.equal(h.calls.filter(row=>row[0]==='read').length,0);
+});
+
+test('no foreign text keeps the original slot while a partial translation still blocks completion',async()=>{
+ const h=fixture();h.deps.recognize=async(image)=>image.source.sourceKey.endsWith('a.png')?[]:[h.region('中文')];h.deps.translate=async(source,_language,regions)=>({source,regions:regions.map(row=>({id:row.id,translated:null,issue:'unavailable'})),warnings:['공급자 응답 지연']});
+ const before=plain(h.view),result=await h.run();assert.equal(result.status,'partial');assert.equal(result.failed,1);assert.equal(result.skipped,1);assert.equal(result.applied,0);assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);assert.deepEqual(h.view,before);assert.ok(h.canvases.every(canvas=>canvas.width===0));
+});
+
+test('plain photos with a completed empty OCR result skip accurately, while engine failure remains failed',async()=>{
+ for(const noText of [async()=>[],async()=>{throw Error('읽을 수 있는 문구를 찾지 못했습니다. 필요한 영역과 원문을 직접 추가해주세요.');}]){
+  const h=fixture('main',['owner/source-a.png']);h.deps.recognize=noText;const result=await h.run();assert.equal(result.status,'skipped');assert.equal(result.skipped,1);assert.equal(result.failed,0);assert.match(result.messages[0],/문구 인식을 완료/);assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);
+ }
+ const failed=fixture('main',['owner/source-a.png']);failed.deps.recognize=async()=>{throw Error('OCR engine failed');};const result=await failed.run();assert.equal(result.status,'partial');assert.equal(result.failed,1);assert.equal(result.skipped,0);
+});
+
+test('fallback rejection exposes the existing provider status and region issue without retrying or painting',async()=>{
+ const h=fixture('main',['owner/source-a.png']);let requests=0;
+ h.deps.translate=async(source,_language,regions)=>{requests++;return{source,regions:regions.map(row=>({id:row.id,original:row.text,translated:null,issue:'영역별 원문·숫자·단위·코드를 확인하지 못했습니다. 원문을 유지했습니다.'})),requests:1,stoppedHttpStatus:429,workersRecovery:{provider:'workers-ai',status:'invalid-response',requests:1,sourceRegions:1,translatedRegions:0},warnings:['Google HTTP 429로 중단된 문구만 무료 AI에 한 묶음으로 번역 요청했습니다.']};};
+ const result=await h.run();assert.equal(result.status,'partial');assert.equal(requests,1);assert.equal(h.calls.filter(row=>['render','apply'].includes(row[0])).length,0);assert.match(result.messages[0],/1개 문구 중 1개/);assert.match(result.messages[0],/무료 AI 결과: 응답 검증 실패 \(0\/1개 검증\)/);assert.match(result.messages[0],/영역별 원문·숫자·단위·코드/);assert.equal(h.options.state.batches.option.items[0].message,result.messages[0].split(': ').slice(1).join(': '));
+});
+
+test('an explicit retry resumes only untranslated slots after this session created a manual-option override',async()=>{
+ const h=fixture(),recognize=h.deps.recognize;h.deps.recognize=async image=>{if(image.source.sourceKey.endsWith('b.png'))throw Error('temporary OCR failure');return recognize(image);};
+ const partial=await h.run();assert.equal(partial.status,'partial');assert.equal(partial.applied,1);assert.equal(h.view.resolved.rows[0].fields.detailImages.source,'manual-option');assert.equal(partial.state,h.options.state);
+ h.deps.recognize=recognize;const before=h.calls.filter(row=>row[0]==='apply').length,complete=await h.run();assert.equal(complete.status,'completed');assert.equal(complete.applied,2);assert.equal(h.calls.filter(row=>row[0]==='apply').length,before+1);assert.deepEqual(h.calls.filter(row=>row[0]==='read').map(row=>row[1]),['owner/source-a.png','owner/source-b.png','owner/source-b.png']);
+ const count=h.calls.filter(row=>row[0]==='apply').length;assert.equal((await h.run()).status,'completed');assert.equal(h.calls.filter(row=>row[0]==='apply').length,count,'verified complete retry never uploads again');
+});
+
+test('changed views/settings and unrelated manual edits reject retained partial state before another save',async()=>{
+ for(const change of ['view','settings','content']){
+  const h=fixture(),recognize=h.deps.recognize;h.deps.recognize=async image=>{if(image.source.sourceKey.endsWith('b.png'))throw Error('temporary');return recognize(image);};await h.run();const before=h.calls.filter(row=>row[0]==='apply').length;
+  h.deps.recognize=recognize;if(change==='view'){h.view.overrides.options.option.detailImages='owner/user-choice.png';h.view.revision++;}if(change==='settings')h.plan.settings.newManualSetting=true;if(change==='content'){h.content.revision++;h.content.assets.detail.provenance='manual';}
+  await assert.rejects(h.run(),/변경/);assert.equal(h.calls.filter(row=>row[0]==='apply').length,before,change);
+ }
+});
+
+test('lost ACK state is read-only recovered before a separate explicit retry can save the next slot',async()=>{
+ const h=fixture(),apply=h.deps.apply;let captured;
+ h.deps.apply=async(batch,index,_signal,progress)=>{h.calls.push(['attempt',index]);captured={...batch,items:batch.items.map(row=>row.slotIndex===index?{...row,status:'uncertain',attempt:{image:row.rendered,before:batch.view}}:row)};progress(captured);throw Error('lost ACK');};
+ const uncertain=await h.run();assert.equal(uncertain.status,'uncertain');assert.equal(h.options.state.batches.option,captured);
+ h.deps.recover=async(batch,_signal,progress)=>{h.calls.push(['recover']);assert.equal(batch.items[0].attempt.image,captured.items[0].attempt.image);const recovered={...batch,items:batch.items.map(row=>row.status==='uncertain'?{...row,status:'ready',attempt:undefined}:row)};progress(recovered);return recovered;};
+ const reads=h.calls.filter(row=>row[0]==='read').length,recovered=await h.run();assert.equal(recovered.status,'partial');assert.equal(recovered.recovered,true);assert.equal(h.calls.filter(row=>row[0]==='read').length,reads);assert.equal(h.calls.filter(row=>row[0]==='attempt').length,1);assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);
+ h.deps.apply=apply;const completed=await h.run();assert.equal(completed.status,'completed');assert.equal(completed.applied,2);assert.equal(h.calls.filter(row=>row[0]==='read').length,reads+1,'unapplied recovery reuses exact first PNG and prepares only remaining image');
+});
+
+test('failed read-only recovery retains its PNG and cannot fall through to a new upload',async()=>{
+ const h=fixture('main',['owner/source-a.png']);h.deps.apply=async(batch,index,_signal,progress)=>{progress({...batch,items:batch.items.map(row=>({...row,status:'uncertain',attempt:{image:row.rendered,before:batch.view}}))});throw Error('lost');};await h.run();const source=h.options.state.batches.option.items[0].attempt.image;
+ h.deps.recover=async()=>{throw Error('still unknown');};const result=await h.run();assert.equal(result.status,'uncertain');assert.equal(result.recovered,undefined);assert.equal(h.options.state.batches.option.items[0].attempt.image,source);assert.equal(h.calls.filter(row=>row[0]==='read').length,1);
+});
+
+test('recovering the first option cannot complete a stage whose later options have not started',async()=>{
+ const h=fixture('main',['owner/source-a.png']),apply=h.deps.apply;h.plan.tasks.push({...h.plan.tasks[0],optionId:'later-option',optionLabel:'다음 옵션'});
+ h.deps.apply=async(batch,index,_signal,progress)=>{progress({...batch,items:batch.items.map(row=>({...row,status:'uncertain',attempt:{image:row.rendered,before:batch.view}}))});throw Error('lost');};await h.run();
+ h.deps.recover=async(batch,signal,progress)=>apply({...batch,items:batch.items.map(row=>({...row,status:'ready'}))},0,signal,progress);
+ const result=await h.run();assert.equal(result.status,'partial');assert.equal(result.recovered,true);assert.equal(result.applied,1);assert.equal(result.state.batches['later-option'],undefined);assert.match(result.messages[0],/남은 이미지/);
+});
+
+test('unknown write outcome retains exact source/PNG recovery proof and stops before the next slot',async()=>{
+ const h=fixture();h.deps.apply=async(batch,index,_signal,progress)=>{h.calls.push(['apply',index]);const entry=batch.items[index],attempt={image:entry.rendered,before:batch.view};progress({...batch,items:batch.items.map(row=>row.slotIndex===index?{...row,status:'uncertain',attempt}:row)});throw Error('ACK lost');};
+ const result=await h.run();assert.equal(result.status,'uncertain');assert.equal(result.applied,0);assert.equal(result.failed,1);assert.equal(h.calls.filter(row=>row[0]==='read').length,1);assert.equal(h.calls.filter(row=>row[0]==='apply').length,1);assert.ok(result.recoveryBatch.items[0].attempt.image.output instanceof Blob);assert.equal(result.recoveryBatch.items[0].attempt.image.source.sourceKey,'owner/source-a.png');assert.equal(result.recoveryBatch.items[1].status,'pending');
+});
+
+test('owner, initial version and foreground scope changes cannot start or publish an image mutation',async()=>{
+ const foreign=fixture();foreign.plan.scope.ownerId='other';await assert.rejects(foreign.run(),/계정/);assert.equal(foreign.calls.length,0);
+ const stale=fixture();stale.options.expectedProductVersion='2026-10-22T00:00:00Z';await assert.rejects(stale.run(),/변경/);assert.equal(stale.calls.filter(row=>row[0]==='read').length,0);
+ const changed=fixture();changed.deps.render=async()=>{changed.scope(false);return{output:new Blob(['png'],{type:'image/png'})};};await assert.rejects(changed.run(),/변경/);assert.equal(changed.calls.filter(row=>row[0]==='apply').length,0);assert.ok(changed.canvases.every(canvas=>canvas.width===0));
+});
+
+test('a new manual role/content revision before save blocks upload and a slot timeout releases canvas',async()=>{
+ const h=fixture('main',['owner/source-a.png']);const render=h.deps.render;h.deps.render=async(...args)=>{const result=await render(...args);h.content.revision++;h.content.assets.main.provenance='manual';return result;};const result=await h.run();assert.equal(result.status,'partial');assert.equal(result.applied,0);assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);
+ const timeout=fixture('main',['owner/source-a.png']);timeout.deps.recognize=async(_image,_language,signal)=>{timeout.expire();signal.throwIfAborted();};const stopped=await timeout.run();assert.equal(stopped.status,'partial');assert.equal(stopped.applied,0);assert.match(stopped.messages[0],/90초/);assert.ok(timeout.canvases.every(canvas=>canvas.width===0));assert.equal(timeout.timers.size,0);
+});
+
+test('lack of images or a missing save acknowledgement never counts as completed',async()=>{
+ const empty=fixture();empty.plan.tasks=[];empty.plan.messages=[{productId:'product',message:'저장한 이미지가 없습니다.'}];assert.equal((await empty.run()).status,'partial');
+ const fake=fixture('main',['owner/source-a.png']);fake.deps.apply=async batch=>batch;const result=await fake.run();assert.equal(result.status,'partial');assert.equal(result.applied,0);assert.equal(result.failed,1);
+});
+
+test('a pre-dispatch rejection is retryable failure, and timeout after verified save preserves its applied proof',async()=>{
+ const rejected=fixture('main',['owner/source-a.png']);rejected.deps.apply=async()=>{throw Error('source changed before dispatch');};const failed=await rejected.run();assert.equal(failed.status,'partial');assert.equal(failed.recoveryBatch,undefined);assert.equal(failed.state.batches.option.items[0].status,'failed');
+ const h=fixture('main',['owner/source-a.png']),apply=h.deps.apply;h.deps.apply=async(...args)=>{const result=await apply(...args);h.expire();return result;};
+ const stopped=await h.run();assert.equal(stopped.status,'partial');assert.equal(stopped.applied,1);assert.equal(stopped.state.batches.option.items[0].status,'applied');assert.equal(stopped.state.batches.option.items[0].rendered,undefined);h.deps.apply=apply;
+ const resumed=await h.run();assert.equal(resumed.status,'completed');assert.equal(h.calls.filter(row=>row[0]==='apply').length,1);
+});

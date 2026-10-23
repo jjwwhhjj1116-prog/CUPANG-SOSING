@@ -104,7 +104,7 @@ function panelHarness({hash='',search='',readError,connectError,disconnectGate,s
  const slots=[],effects=[],listeners=new Map(),clients=[],infoLogs=[],otherLogs=[],location={hash,pathname:'/cli',search};let cursor=0,cleanup,tree;
  const hooks={useState(initial){const index=cursor++;if(!(index in slots))slots[index]=initial;return[slots[index],value=>{slots[index]=typeof value==='function'?value(slots[index]):value;}];},useRef(initial){const index=cursor++;if(!(index in slots))slots[index]={current:initial};return slots[index];},useEffect(setup){const index=cursor++;if(!(index in slots)){slots[index]=true;effects.push(setup);}}};
  const window={location,history:{replaceState(_state,_unused,url){assert.equal(url,'/cli'+search);location.hash='';}},addEventListener(type,callback){if(!listeners.has(type))listeners.set(type,new Set());listeners.get(type).add(callback);},removeEventListener(type,callback){listeners.get(type)?.delete(callback);}};
- const bridgeModule={...exports,async readCliScope(_fetcher,_signal,diagnostic){diagnostic?.onDiagnostic?.({stage:'scope',target:'app',outcome:'start'});if(readError)throw readError;return owner;},createCliBridge(options){const client={options,stops:0,disconnections:0,async start(){options.onDiagnostic?.({stage:'pair',target:'localhost',outcome:'response',status:200});options.onState({phase:'connecting',message:'Synthetic connecting'});if(startGate)await startGate;if(connectError){options.onState({phase:'stopped',message:'로컬 CLI 연결을 확인하지 못했습니다. 실행 상태를 확인해주세요.'});throw connectError;}options.onState({phase:'connected',message:'Synthetic connected'});},stop(){client.stops++;},async disconnect(){client.disconnections++;client.stop();if(disconnectGate)await disconnectGate;},cancelProductQuery(){}};clients.push(client);return client;}};
+ const bridgeModule={...exports,async readCliScope(){assert.fail('The panel must delegate its one scope preflight to the bridge');},createCliBridge(options){const client={options,stops:0,disconnections:0,async start(){options.onState({phase:'connecting',message:'Synthetic connecting'});options.onDiagnostic?.({stage:'scope',target:'app',outcome:'start'});if(readError){options.onState({phase:'stopped',message:'YOOFAM 앱 서버의 회원·회사 확인에 연결하지 못했습니다.'});throw readError;}options.onDiagnostic?.({stage:'pair',target:'localhost',outcome:'response',status:200});if(startGate)await startGate;if(connectError){options.onState({phase:'stopped',message:'로컬 CLI 연결을 확인하지 못했습니다. 실행 상태를 확인해주세요.'});throw connectError;}options.onState({phase:'connected',message:'Synthetic connected'});},stop(){client.stops++;},async disconnect(){client.disconnections++;client.stop();if(disconnectGate)await disconnectGate;},cancelProductQuery(){}};clients.push(client);return client;}};
  const output={};
  const jsx=(type,props)=>({type,props});
  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/cli-connection-panel.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText,{exports:output,window,queueMicrotask,Promise,Error,URLSearchParams,console:{info(...values){infoLogs.push(values);},log(...values){otherLogs.push(values);},warn(...values){otherLogs.push(values);},error(...values){otherLogs.push(values);}},require(name){if(name==='react')return hooks;if(name==='react/jsx-runtime')return{jsx,jsxs:jsx};if(name==='next/link')return()=>null;if(name==='@/app/components/cli-install-guide')return{CliInstallGuide:()=>null};if(name==='@/app/components/cli-browser-status')return{CliBrowserStatus:()=>null};if(name==='@/app/cli-bridge-client')return bridgeModule;throw Error('Unexpected panel dependency '+name);}});
@@ -136,8 +136,8 @@ test('malformed replacement fragment also revokes an active session and leaves n
 test('panel keeps the friendly bridge stopped notice instead of raw AbortError text',async()=>{
  const h=panelHarness({hash:syntheticHash(),connectError:new DOMException('signal is aborted without reason','AbortError')});try{h.mount();await flush();h.render();h.button().props.onClick();await flush();h.render();assert.match(h.text(),/실행 상태를 확인/);assert.doesNotMatch(h.text(),/signal is aborted/);}finally{h.unmount();}
 });
-test('panel maps raw scope-check network failures to a fixed user message',async()=>{
- const h=panelHarness({hash:syntheticHash(),readError:new TypeError('fetch failed private transport detail')});try{h.mount();await flush();h.render();h.button().props.onClick();await flush();h.render();assert.match(h.text(),/로컬 네트워크 권한/);assert.doesNotMatch(h.text(),/private transport/);assert.equal(h.clients.length,0);}finally{h.unmount();}
+test('panel retains the bridge app-scope failure without a duplicated preflight or local permission explanation',async()=>{
+ const h=panelHarness({hash:syntheticHash(),readError:new TypeError('fetch failed private transport detail')});try{h.mount();await flush();h.render();h.button().props.onClick();await flush();h.render();assert.match(h.text(),/앱 서버.*회원·회사/);assert.doesNotMatch(h.text(),/private transport|로컬 네트워크 권한/);assert.equal(h.clients.length,1);}finally{h.unmount();}
 });
 test('replacement link while connecting invalidates a late successful pair notice',async()=>{
  let release;const h=panelHarness({hash:syntheticHash(),startGate:new Promise(resolve=>{release=resolve;})});try{h.mount();await flush();h.render();h.button().props.onClick();await flush();assert.equal(h.clients.length,1);h.navigate(syntheticHash('c','00000000-0000-4000-8000-000000000792'));await flush();h.render();assert.equal(h.clients[0].disconnections,1);assert.equal(h.button().props.disabled,false);release();await flush();h.render();assert.doesNotMatch(h.text(),/Synthetic connected/);assert.equal(h.button().props.disabled,false);assert.equal(h.clients.length,1);}finally{release?.();h.unmount();}
@@ -146,7 +146,7 @@ test('rapid replacement links all wait for the original revocation and accept on
  let release;const h=panelHarness({hash:syntheticHash(),disconnectGate:new Promise(resolve=>{release=resolve;})});try{h.mount();await flush();h.render();h.button().props.onClick();await flush();h.navigate(syntheticHash('b','00000000-0000-4000-8000-000000000791'));h.navigate(syntheticHash('c','00000000-0000-4000-8000-000000000792'));await flush();h.render();assert.equal(h.button().props.disabled,true);assert.equal(h.clients[0].disconnections,1);release();await flush();h.render();assert.equal(h.button().props.disabled,false);h.button().props.onClick();await flush();assert.equal(h.clients.length,2);assert.equal(h.clients[1].options.link.sessionId,'00000000-0000-4000-8000-000000000792');}finally{release?.();h.unmount();}
 });
 
-function virtualTimers(){let next=0;const timers=new Map();return{setTimeout(callback,ms){const id=++next;timers.set(id,{callback,ms});return id;},clearTimeout(id){timers.delete(id);},setInterval(callback,ms){const id=++next;timers.set(id,{callback,ms,interval:true});return id;},clearInterval(id){timers.delete(id);},fire(ms){for(const[id,value]of [...timers])if(!value.interval&&value.ms===ms){timers.delete(id);value.callback();}},get pending(){return timers.size;}};}
+function virtualTimers(){let next=0;const timers=new Map();return{setTimeout(callback,ms){const id=++next;timers.set(id,{callback,ms});return id;},clearTimeout(id){timers.delete(id);},setInterval(callback,ms){const id=++next;timers.set(id,{callback,ms,interval:true});return id;},clearInterval(id){timers.delete(id);},fire(ms){for(const[id,value]of [...timers])if(!value.interval&&value.ms===ms){timers.delete(id);value.callback();}},interval(ms){for(const value of [...timers.values()])if(value.interval&&value.ms===ms)value.callback();},get pending(){return timers.size;}};}
 test('scope diagnostics identify the app request and force its deadline even if fetch ignores AbortSignal',async()=>{
  const timers=virtualTimers(),api=loadBridge(timers),events=[];let signal;
  const request=api.readCliScope(async(_url,init)=>{signal=init.signal;return new Promise(()=>{});},undefined,{onDiagnostic:event=>events.push(event)});await flush();timers.fire(10000);
@@ -229,4 +229,62 @@ test('an effective document policy denial prevents pairing even if permission wa
   status.props.onChange({secureContext:true,visibility:'visible',loopbackPermission:'granted',loopbackPolicy:'allowed',documentContext:'top-level'});h.render();
   assert.equal(h.button().props.disabled,false);assert.equal(h.clients.length,0);
  }finally{h.unmount();}
+});
+
+test('one retained connect click cannot create two clients before the busy state renders',async()=>{
+ let release;const h=panelHarness({hash:syntheticHash(),startGate:new Promise(resolve=>{release=resolve;})});try{
+  h.mount();await flush();h.render();const connect=h.button().props.onClick;connect();connect();await flush();assert.equal(h.clients.length,1);assert.deepEqual(h.clients[0].options.scope,owner);release();await flush();
+ }finally{release?.();h.unmount();}
+});
+
+for(const [status,code]of [[401,'APP_SCOPE_LOGIN_REQUIRED'],[403,'APP_SCOPE_COMPANY_REQUIRED'],[429,'APP_SCOPE_BUSY'],[503,'APP_SCOPE_SERVICE_ERROR'],[302,'APP_SCOPE_RESPONSE']])test('scope HTTP '+status+' has an explicit safe diagnosis and never reaches local pairing',async()=>{
+ const calls=[],states=[],events=[],bridge=createCliBridge({link,scope:owner,queryApproved:()=>false,onState:value=>states.push(value),onDiagnostic:value=>events.push(value),fetcher:async url=>{calls.push(url);return new Response('private upstream token mentioning 로그인',{status,headers:{'content-type':'text/plain'}});}});
+ try{await assert.rejects(bridge.start(),error=>{assert.equal(error.code,code);assert.doesNotMatch(error.message,/private|token|로컬|권한/);if(status!==401)assert.doesNotMatch(error.message,/로그인/);return true;});assert.deepEqual(calls,['/api/supplier-hub/catalog-context']);assert.equal(states.at(-1).phase,'stopped');assert.ok(events.some(event=>event.status===status));}finally{bridge.stop();}
+});
+
+test('an invalid successful context response is an invalid server response, not evidence of logout',async()=>{
+ for(const response of [new Response('<html>login</html>',{headers:{'content-type':'text/html'}}),json({...owner,company:{code:owner.company.code,name:'wrong company'}})])await assert.rejects(exports.readCliScope(async()=>response),error=>error.code==='APP_SCOPE_INVALID'&&!/로그인|로컬|권한/.test(error.message));
+});
+
+test('startup keeps fresh pre/post-pair fences with exactly two context requests and no immediate poll duplicate',async()=>{
+ for(const changedAfterPair of [false,true]){
+  const calls=[];let paired=false;const bridge=createCliBridge({link,scope:owner,queryApproved:()=>false,fetcher:async(url,init)=>{
+   calls.push(url);if(url==='/api/supplier-hub/catalog-context')return json(paired&&changedAfterPair?other:owner);
+   if(url.endsWith('/pair')){paired=true;return json({ok:true,protocolVersion:'1.0',sessionId,scope:owner,expiresAt:Date.now()+14*60000});}
+   return new Promise((resolve,reject)=>init.signal.addEventListener('abort',()=>reject(Error('closed')),{once:true}));
+  }});
+  try{if(changedAfterPair)await assert.rejects(bridge.start(),error=>error.code==='SCOPE_CHANGED');else await bridge.start();await flush();assert.equal(calls.filter(url=>url==='/api/supplier-hub/catalog-context').length,2);assert.equal(calls.filter(url=>url.includes('/next?')).length,changedAfterPair?0:1);}finally{bridge.stop();}
+ }
+});
+
+test('overlapping heartbeat and idle-poll scope checks share only the unresolved connection-local read',async()=>{
+ const timers=virtualTimers(),api=loadBridge(timers),contexts=[],polls=[],states=[];
+ const bridge=api.createCliBridge({link,scope:owner,queryApproved:()=>false,onState:value=>states.push(value),fetcher:async(url,init)=>{
+  if(url==='/api/supplier-hub/catalog-context'){if(contexts.length<2){contexts.push({});return json(owner);}return new Promise(resolve=>contexts.push({resolve,signal:init.signal}));}
+  if(url.endsWith('/pair'))return json({ok:true,protocolVersion:'1.0',sessionId,scope:owner,expiresAt:Date.now()+14*60000});
+  return new Promise(resolve=>polls.push(resolve));
+ }});
+ try{
+  await bridge.start();await flush();assert.equal(contexts.length,2);assert.equal(polls.length,1);
+  timers.interval(5000);await flush();assert.equal(contexts.length,3);polls[0](json({ok:true,job:null}));await flush();assert.equal(contexts.length,3,'poll joins the unresolved heartbeat, without adding a second 10s request');
+  contexts[2].resolve(json(owner));await until(()=>polls.length===2);timers.interval(5000);await flush();assert.equal(contexts.length,4,'settled identities are never cached');
+  contexts[3].resolve(json(other));await until(()=>states.at(-1)?.phase==='stopped');assert.equal(polls.length,2);
+ }finally{bridge.stop();}
+});
+
+test('a command response uses a fresh context even while an older heartbeat is still pending',async()=>{
+ const timers=virtualTimers(),api=loadBridge(timers),calls=[],contexts=[],states=[];let releaseCommand,releaseHeartbeat,delivered=false;
+ const bridge=api.createCliBridge({link,scope:owner,queryApproved:()=>true,onState:value=>states.push(value),fetcher:async(url,init)=>{
+  calls.push(url);
+  if(url==='/api/supplier-hub/catalog-context'){contexts.push(init.signal);if(contexts.length===4)return new Promise(resolve=>{releaseHeartbeat=resolve;});return json(contexts.length>=5?other:owner);}
+  if(url.endsWith('/pair'))return json({ok:true,protocolVersion:'1.0',sessionId,scope:owner,expiresAt:Date.now()+14*60000});
+  if(url.includes('/next?')&&!delivered){delivered=true;return json({ok:true,job:{jobId,command:'product-query',payload:{sourceUrl},scope:owner,createdAt:Date.now(),deadline:Date.now()+60000}});}
+  if(url==='/api/product-query')return new Promise(resolve=>{releaseCommand=resolve;});
+  return new Promise(()=>{});
+ }});
+ try{
+  await bridge.start();await until(()=>!!releaseCommand);assert.equal(contexts.length,3);timers.interval(5000);await flush();assert.ok(releaseHeartbeat);
+  releaseCommand(json({...owner,offerId:'700000000789',source:{sourceUrl,offerId:'700000000789',title:'synthetic',options:[]},sourceStored:false,draftCreated:false}));
+  await until(()=>states.at(-1)?.phase==='stopped');assert.equal(contexts.length,5);assert.equal(calls.some(url=>url.endsWith('/result')),false);releaseHeartbeat(json(owner));await flush();assert.equal(states.at(-1).phase,'stopped');assert.equal(calls.some(url=>url.endsWith('/result')),false);
+ }finally{bridge.stop();}
 });

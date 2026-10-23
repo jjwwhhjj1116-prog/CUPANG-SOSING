@@ -7,7 +7,8 @@ import {collectionCommonImageCandidate} from '@/app/collection-gallery';
 export type CollectedImageLink = { imageIndex: number; key: string };
 
 /** Source images are editable collected drafts, never evidence of translation or review. */
-export function collectedImageDraft(owner: string, receipt: CollectionResult, links: CollectedImageLink[], keys: string[], content: ProductContent, options: ProductOptions, now: string, pageOptionIndices: ReadonlyMap<string,number> = new Map()) {
+export function collectedImageDraft(owner: string, receipt: CollectionResult, links: CollectedImageLink[], keys: string[], content: ProductContent, options: ProductOptions, now: string, pageOptionIndices: ReadonlyMap<string,number> = new Map(), roles: readonly ('main'|'additional'|'detail')[] = ['main','additional','detail']) {
+  if (!roles.length || roles.some(role=>!['main','additional','detail'].includes(role)) || new Set(roles).size!==roles.length) throw Error('이미지 작업 단계를 확인해주세요.');
   const nextContent = structuredClone(content), nextOptions = structuredClone(options);
   const available = new Map<number, string>();
   for (const link of links) {
@@ -16,6 +17,7 @@ export function collectedImageDraft(owner: string, receipt: CollectionResult, li
   }
   let changedRoles = 0, changedOptions = 0;
   for (const role of ['main', 'additional', 'detail'] as const) {
+    if (!roles.includes(role)) continue;
     const current = content.assets[role];
     if (!['unverified', 'collected'].includes(current.provenance) || current.provenance === 'unverified' && current.value.length) continue;
     const candidates = [...new Set(receipt.images.flatMap((image, index) => image.role === role && collectionCommonImageCandidate(receipt,index) && available.has(index) ? [available.get(index)!] : []))];
@@ -32,6 +34,7 @@ export function collectedImageDraft(owner: string, receipt: CollectionResult, li
   for (const row of receipt.options) sourceCounts.set(row.sku, (sourceCounts.get(row.sku) ?? 0) + 1);
   for (const row of options.rows) optionCounts.set(row.supplierSku, (optionCounts.get(row.supplierSku) ?? 0) + 1);
   for (const row of nextOptions.rows) {
+    if (!roles.includes('main')) continue;
     if (!row.included || row.provenance.imageKey !== 'unverified' || row.imageKey) continue;
     // Known SKU semantics stay unchanged. Anonymous rows require the caller's
     // verified first-import binding, never a blank-SKU join or current order.

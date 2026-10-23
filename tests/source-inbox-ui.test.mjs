@@ -13,9 +13,9 @@ function fixture(fetcher,{initialItem,onReviewed,onChanged,existingProducts=[]}=
  let ownerId='owner';
  const hooks={useState(initial){const index=cursor++;if(!(index in states))states[index]=typeof initial==='function'?initial():initial;return[states[index],value=>{states[index]=typeof value==='function'?value(states[index]):value;}];},useRef(initial){const index=cursor++;return states[index]??(states[index]={current:initial});},useMemo(fn,deps){const index=cursor++,previous=states[index];if(!previous||deps.some((value,i)=>!Object.is(value,previous.deps[i])))states[index]={deps,value:fn()};return states[index].value;},useLayoutEffect(fn){effects.push(fn);},useEffect(fn){if(first)effects.push(fn);}};
  const events=new Map(),window={addEventListener:(type,fn)=>events.set(type,fn),removeEventListener:(type,fn)=>{if(events.get(type)===fn)events.delete(type);}},exports={};
- vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/source-inbox-panel.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,Error,structuredClone,window,location:{origin:'https://app.test'},fetch:async(path,init)=>{calls.push({path,init});return fetcher(path,init);},require:name=>name==='react'?hooks:name.startsWith('@/app/')?sourceReviewModule(name.slice(2)+'.ts'):require(name)});
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/source-inbox-panel.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,Error,structuredClone,setTimeout,clearTimeout,crypto,window,location:{origin:'https://app.test'},fetch:async(path,init)=>{calls.push({path,init});return fetcher(path,init);},require:name=>name==='react'?hooks:name.startsWith('@/app/')?sourceReviewModule(name.slice(2)+'.ts'):require(name)});
  const render=()=>{cursor=0;const tree=exports.SourceInboxPanel({ownerId,disabled:false,initialItem,onReviewed,onChanged,existingProducts,onAdd:item=>added.push(item)});effects.splice(0).forEach(fn=>cleanups.push(fn()));first=false;return tree;};
- return {calls,added,render,button:label=>nodes(render()).find(node=>node.type==='button'&&text(node)===label),owner(value){ownerId=value;render();},open:()=>render().props.onToggle({currentTarget:{open:true}}),close:()=>cleanups.forEach(fn=>fn?.())};
+ return {calls,added,render,window,event:data=>events.get('message')?.({source:window,origin:'https://app.test',data}),button:label=>nodes(render()).find(node=>node.type==='button'&&text(node)===label),owner(value){ownerId=value;render();},open:()=>render().props.onToggle({currentTarget:{open:true}}),collapse:()=>render().props.onToggle({currentTarget:{open:false}}),close:()=>cleanups.forEach(fn=>fn?.())};
 }
 const item={...reviewSourceFixture().before,issues:[]};
 
@@ -31,6 +31,24 @@ test('inbox stays lazy, and adding a reviewed source delegates category selectio
 });
 test('closing the view aborts the pending load and cannot publish a late member response',async()=>{
  let release;const h=fixture(()=>new Promise(resolve=>{release=resolve;}));h.render();h.open();assert.equal(h.calls.length,1);h.close();assert.equal(h.calls[0].init.signal.aborted,true);release(Response.json({ownerId:'owner',items:[item]}));await turn();assert.equal(h.button('카테고리 선택·초안 작성'),undefined);assert.equal(h.added.length,0);
+});
+
+test('manual refresh shows saved server captures before waiting for an extension FLUSH',async()=>{
+ const posted=[],h=fixture(async()=>Response.json({ownerId:'owner',items:[item]}));h.window.postMessage=value=>posted.push(value);
+ try{h.render();h.button('수집함 불러오기').props.onClick();await turn();assert.equal(h.calls.length,1);assert.ok(h.button('카테고리 선택·초안 작성'));assert.match(text(h.render()),/서버 수집함을 불러왔습니다/);assert.equal(posted[0].type,'FLUSH');
+  h.event({channel:'YOOFAM_SOURCE_INBOX_RESULT',requestId:posted[0].requestId,result:{ok:true,pending:0}});await turn();assert.equal(h.calls.length,2);assert.match(text(h.render()),/최신 수집함을 불러왔습니다/);
+ }finally{h.close();}
+});
+
+test('saved notifications during a read queue a refresh and a closed loaded panel refreshes when reopened',async()=>{
+ const pending=[],h=fixture(()=>new Promise(resolve=>pending.push(resolve)));
+ try{h.render();h.open();h.event({channel:'YOOFAM_SOURCE_INBOX_UPDATED'});pending.shift()(Response.json({ownerId:'owner',items:[]}));await turn();assert.equal(h.calls.length,2);
+  pending.shift()(Response.json({ownerId:'owner',items:[item]}));await turn();h.collapse();h.event({channel:'YOOFAM_SOURCE_INBOX_UPDATED'});assert.equal(h.calls.length,2);h.open();assert.equal(h.calls.length,3);pending.shift()(Response.json({ownerId:'owner',items:[item]}));await turn();assert.ok(h.button('카테고리 선택·초안 작성'));
+ }finally{h.close();}
+});
+
+test('a late list response from the prior account cannot replace the current panel',async()=>{
+ let release;const h=fixture(()=>new Promise(resolve=>{release=resolve;}));try{h.render();h.open();h.owner('other');release(Response.json({ownerId:'owner',items:[item]}));await turn();assert.equal(h.button('카테고리 선택·초안 작성'),undefined);}finally{h.close();}
 });
 
 test('a partial capture may choose a category before reviewing missing source facts',async()=>{

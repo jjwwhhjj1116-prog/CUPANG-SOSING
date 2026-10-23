@@ -76,8 +76,8 @@ test('an exact duplicate click shares its operation, but another offer or change
  assert.equal([...h.server.values()].some(record=>record.snapshot.offerId===another.offerId),false,'no automatic second capture may follow the first ACK');
 });
 
-test('login timeout creates no unbound capture, releases the window lease, and explicit retry reuses the now-ready tab',async()=>{
- const h=harness({ready:false});await assert.rejects(h.save(snapshot(),h.sourceId,{timeoutMs:25,pollMs:1}),/초과.*로그인.*다시.*아직 수집함에 저장하지 않았습니다/);
+test('an unavailable context creates no unbound capture, releases the window lease, and explicit retry reuses the now-ready tab',async()=>{
+ const h=harness({ready:false});await assert.rejects(h.save(snapshot(),h.sourceId,{timeoutMs:25,pollMs:1}),error=>{assert.equal(error.code,'YOOFAM_CONTEXT_UNAVAILABLE');assert.match(error.message,/앱과 확장의 연결.*다시.*아직 수집함에 저장하지 않았습니다/);assert.doesNotMatch(error.message,/로그인/);return true;});
  assert.equal(h.count('create'),1);assert.equal(h.count('store:put'),0);assert.equal(h.count('YOOFAM_SAVE_SOURCE_CAPTURE'),0);assert.equal(h.count('update'),0);
  h.ready=true;assert.equal((await h.save()).delivered,true);assert.equal(h.count('create'),1);assert.equal(h.count('store:put'),1);
 });
@@ -153,4 +153,66 @@ test('app tabs in another Chrome window are never read, reused, activated or use
  // Even a query result containing an out-of-window tab cannot expand scope.
  h.onQuery=async()=>[...h.tabs.values()].map(tab=>({...tab}));
  assert.equal((await h.save()).delivered,true);assert.equal(h.count('create'),1);assert.equal(h.calls.some(call=>['get','YOOFAM_READ_CATALOG_CONTEXT','YOOFAM_SAVE_SOURCE_CAPTURE','update'].includes(call.type)&&call.id===foreignId),false);
+});
+
+test('a slow first background tab does not prevent the active receiver from being checked in parallel',async()=>{
+ const h=harness({existing:true}),activeId=h.appId+1000;h.add(activeId,{active:true});let release,blocked=true;
+ const gate=new Promise(resolve=>{release=resolve;});
+ h.onContext=async id=>{if(id===h.appId&&blocked)await gate;return structuredClone(h.scopes.get(id));};
+ const saving=h.save();
+ try{
+  await until(()=>h.calls.some(call=>call.type==='YOOFAM_READ_CATALOG_CONTEXT'&&call.id===activeId));
+  assert.equal(h.count('store:put'),0,'a fast receiver cannot bypass the unresolved other owner');
+ }finally{blocked=false;release();}
+ const result=await saving;assert.equal(result.delivered,true);assert.equal(h.calls.find(call=>call.type==='YOOFAM_SAVE_SOURCE_CAPTURE').id,activeId);
+});
+
+test('parallel discovery still rejects a slower conflicting owner before any storage',async()=>{
+ const h=harness({existing:true}),otherId=h.appId+1000;h.add(otherId);let release;
+ const gate=new Promise(resolve=>{release=resolve;});h.scopes.get(otherId).ownerId='different_owner';
+ h.onContext=async id=>{if(id===otherId)await gate;return structuredClone(h.scopes.get(id));};
+ const saving=h.save();await until(()=>h.contextReads===2);release();
+ await assert.rejects(saving,/서로 다릅니다/);assert.equal(h.count('store:put'),0);assert.equal(h.count('YOOFAM_SAVE_SOURCE_CAPTURE'),0);
+});
+
+test('the selected receiver is rechecked if another candidate delayed the pre-write context check',async()=>{
+ const h=harness({existing:true}),otherId=h.appId+1000;h.add(otherId);h.tabs.get(h.appId).active=true;
+ let phase=false,waiting=false,release;const gate=new Promise(resolve=>{release=resolve;});
+ h.onStore=async action=>{if(action==='list')phase=true;};
+ h.onContext=async id=>{const scope=structuredClone(h.scopes.get(id));if(phase&&id===otherId){waiting=true;await gate;}return scope;};
+ const saving=h.save();await until(()=>waiting);h.scopes.get(h.appId).ownerId='changed_during_peer_wait';release();
+ await assert.rejects(saving,/로그인 회사가 변경/);assert.equal(h.count('store:put'),0);assert.equal(h.count('YOOFAM_SAVE_SOURCE_CAPTURE'),0);
+});
+
+test('single-tab delivery avoids redundant adjacent HTTP identity reads while retaining all write and ACK fences',async()=>{
+ const h=harness({existing:true});assert.equal((await h.save()).delivered,true);
+ assert.equal(h.contextReads,5,'readiness, pre-put, pre-send, post-ACK and activation each have a fresh identity');
+ assert.equal(h.count('store:put'),1);assert.equal(h.count('store:delete'),1);
+});
+
+for(const [code,pattern] of [
+ ['YOOFAM_LOGIN_REQUIRED',/로그인이 필요하다는 응답/],['YOOFAM_COMPANY_REQUIRED',/승인 회사정보/],
+ ['YOOFAM_CONTEXT_UNAVAILABLE',/앱과 확장의 연결/],['YOOFAM_CONTEXT_INVALID',/확인 응답이 올바르지/],
+ ['YOOFAM_CONTEXT_SERVICE_ERROR',/서버.*요청에 실패/],['YOOFAM_CONTEXT_TIMEOUT',/서버.*응답 시간이 초과/],
+])test(code+': readiness preserves the observed failure instead of claiming a login timeout',async t=>{
+ let now=Date.now();t.mock.method(Date,'now',()=>now);
+ const h=harness({existing:true});h.onContext=async()=>({ok:false,code,error:'untrusted text mentioning 로그인'});
+ // Advance the readiness deadline only after the reply's final tab check.
+ // Real 30 ms budgets can expire mid-RPC under concurrent suite CPU load,
+ // correctly producing a tab timeout rather than this fixture's known code.
+ let reads=0;h.onGet=async id=>{if(++reads===2)now+=1000;return {...h.tabs.get(id)};};
+ await assert.rejects(h.save(snapshot(),h.sourceId,{timeoutMs:1000,pollMs:1}),error=>{assert.equal(error.code,code);assert.match(error.message,pattern);assert.match(error.message,/아직 수집함에 저장하지 않았습니다/);if(code!=='YOOFAM_LOGIN_REQUIRED')assert.doesNotMatch(error.message,/로그인/);return true;});
+ assert.equal(h.count('store:put'),0);assert.equal(h.count('YOOFAM_SAVE_SOURCE_CAPTURE'),0);
+});
+
+test('a hanging earlier candidate is a tab-response failure, never an inferred logout or a first-success ACK',async()=>{
+ const h=harness({existing:true}),activeId=h.appId+1000;h.add(activeId,{active:true});h.onContext=id=>id===h.appId?never():structuredClone(h.scopes.get(id));
+ await assert.rejects(h.save(snapshot(),h.sourceId,{timeoutMs:30,pollMs:1}),error=>{assert.equal(error.code,'YOOFAM_TAB_TIMEOUT');assert.match(error.message,/앱 탭 응답 시간이 초과/);assert.doesNotMatch(error.message,/로그인/);return true;});
+ assert.ok(h.calls.some(call=>call.type==='YOOFAM_READ_CATALOG_CONTEXT'&&call.id===activeId));assert.equal(h.count('store:put'),0);
+});
+
+test('a post-put service failure retains the immutable queue and never claims that no local source was saved',async()=>{
+ const h=harness({existing:true});h.onStore=async action=>{if(action==='put')h.onContext=async()=>({ok:false,code:'YOOFAM_CONTEXT_SERVICE_ERROR'});};
+ const result=await h.save();assert.equal(result.delivered,false);assert.match(result.message,/서버.*요청에 실패/);assert.doesNotMatch(result.message,/아직 수집함에 저장하지|로그인/);
+ assert.equal(h.records.size,1);assert.equal(h.count('store:delete'),0);assert.equal(h.count('YOOFAM_SAVE_SOURCE_CAPTURE'),0);
 });

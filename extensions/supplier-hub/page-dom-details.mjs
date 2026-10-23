@@ -1,13 +1,11 @@
 import {readPageSourceElementImage,pageSourceUrl} from './page-source.mjs';
-import {isUnrelatedProductElement,readProductSectionLinks} from './page-dom-sections.mjs';
+import {isUnrelatedProductElement,productSectionKind,readProductSectionLinks} from './page-dom-sections.mjs';
 
 const knownImages='#desc-lazyload-container img,.offer-description img';
-const knownContainers='#desc-lazyload-container,.offer-description,[data-module-name="description"],[data-plg-name="description"]';
+const knownContainers='#desc-lazyload-container,.offer-description,.detail-desc-decorate-richtext,[data-module-name="description"],[data-plg-name="description"]';
 const headings='h1,h2,h3,h4,h5,h6,[role="heading"]';
 const headingWrappers=headings+',div,span,font';
 const detailHeading=/^(?:商品详情|产品详情|图文详情|商品描述|产品描述|详细描述|详细说明|商品介绍|제품상세정보|상품상세정보|제품상세|상품상세|상품설명|제품설명|상세설명|상세정보)$/u;
-const unrelatedHeading=/^(?:猜你喜欢|为你推荐|为您推荐|相关推荐|商品推荐|店铺推荐|买家评价|商品评价|看了又看|추천상품|추천제품|관련상품|관련제품|상점추천|매장추천|고객리뷰|구매자리뷰|상품리뷰|상품평|함께본상품|함께보면좋은상품)$/u;
-const factsHeading=/^(?:商品属性|产品属性|商品参数|产品参数|包装信息|包装参数|제품속성|상품속성|제품매개변수|상품매개변수|포장정보|포장매개변수|제품무게및치수)$/u;
 const unrelated=/(?:gallery|sku[-_ ]?(?:list|image))/iu;
 const ignoredTags=new Set(['ASIDE','NAV','HEADER','FOOTER','SCRIPT','STYLE','NOSCRIPT','IFRAME','SVG','BUTTON']);
 const select=(root,selector)=>{try{return [...(root?.querySelectorAll?.(selector)??[])];}catch{return [];}};
@@ -26,22 +24,22 @@ function excluded(node){
   if(++depth>40)return true;
   if(ignoredTags.has(current.tagName)||attr(current,'role')==='navigation'||isUnrelatedProductElement(current,{includeOfferLinks:false})||unrelated.test([attr(current,'id'),attr(current,'class'),attr(current,'data-module-name'),attr(current,'data-plg-name')].join(' ')))return true;
   if(['SECTION','ARTICLE','DIV'].includes(current.tagName)||attr(current,'role')==='tabpanel'){
-   const label=firstLocalHeading(current);if(unrelatedHeading.test(label)||factsHeading.test(label))return true;
+   const kind=productSectionKind(firstLocalHeading(current));if(['unrelated','attributes','packaging'].includes(kind))return true;
   }
  }
  return false;
 }
 function semanticDetailRoot(heading,sourceUrl){
  if(excluded(heading)||otherOffer(heading,sourceUrl))return null;
- const label=headingText(heading);let anchor=heading,divs=heading.tagName==='DIV'?1:0,depth=0;
+ const label=headingText(heading);let anchor=heading,depth=0;
  // Collapse the heading's inert translation wrappers, not a content container
- // with sibling images/text. One div header plus inline/font wrappers suffices
- // without walking outward through arbitrary page-layout divs.
+ // with sibling images/text. Nested CSS header wrappers may have several divs;
+ // every wrapper must still contain only this same exact section label.
  while(anchor.parentElement&&depth++<12){
   const parent=anchor.parentElement;
   if(!['SPAN','FONT','DIV','H1','H2','H3','H4','H5','H6'].includes(parent.tagName)&&attr(parent,'role')!=='heading')break;
-  if(parent.tagName==='DIV'&&divs>=1||parent.children?.length!==1||headingText(parent)!==label)break;
-  if(parent.tagName==='DIV')divs++;anchor=parent;
+  if(parent.children?.length!==1||headingText(parent)!==label)break;
+  anchor=parent;
  }
  const root=anchor.parentElement;
  if(!root||!['SECTION','ARTICLE','DIV'].includes(root.tagName)&&attr(root,'role')!=='tabpanel'

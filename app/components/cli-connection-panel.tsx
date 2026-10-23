@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {CliInstallGuide} from '@/app/components/cli-install-guide';
 import {CliBrowserStatus} from '@/app/components/cli-browser-status';
 import type {CliBrowserEnvironmentReport} from '@/app/cli-browser-environment';
-import {CliBridgeError,createCliBridge,parseCliLink,readCliScope,sameCliScope,type CliBridgeState,type CliBridgeDiagnostic,type CliLink,type CliScope} from '@/app/cli-bridge-client';
+import {CliBridgeError,createCliBridge,parseCliLink,type CliBridgeState,type CliBridgeDiagnostic,type CliLink,type CliScope} from '@/app/cli-bridge-client';
 
 export function CliConnectionPanel({initialScope,displayName}:{initialScope:CliScope;displayName:string}){
  const [link,setLink]=useState<CliLink|null>(null),[queryApproved,setQueryApproved]=useState(false),[state,setState]=useState<CliBridgeState>({phase:'idle',message:'CLI에서 출력한 연결 주소를 이 로그인 창에서 열어주세요.'});
@@ -43,13 +43,13 @@ export function CliConnectionPanel({initialScope,displayName}:{initialScope:CliS
  const busy=state.phase==='connecting'||state.phase==='connected';
  const browserBlocked=browserEnvironment?.loopbackPermission==='denied'||browserEnvironment?.loopbackPolicy==='blocked'||browserEnvironment?.secureContext===false;
  async function connect(){
-  if(!link||busy||replacing.current||browserBlocked)return;const epoch=generation.current;let clientStarted=false;
+  if(!mounted.current||!link||busy||bridge.current||replacing.current||browserBlocked)return;const epoch=generation.current;let clientStarted=false;
   setState({phase:'connecting',message:'현재 로그인 회사와 로컬 CLI를 확인하고 있습니다.'});
   try{
    const onDiagnostic=(event:CliBridgeDiagnostic)=>{if(diagnosticEnabled.current)console.info('[YOOFAM CLI]',JSON.stringify(event));};
-   const actual=await readCliScope(undefined,undefined,{onDiagnostic});if(!mounted.current||epoch!==generation.current)return;
-   if(!sameCliScope(actual,initialScope))throw new CliBridgeError('SCOPE_CHANGED','페이지를 연 뒤 계정 또는 회사가 바뀌었습니다. 로그인 상태를 확인하고 새 연결 주소를 열어주세요.');
-   const client=createCliBridge({link,scope:actual,queryApproved:()=>approval.current,onDiagnostic,onState:value=>{if(mounted.current&&epoch===generation.current)setState(value);}});bridge.current=client;clientStarted=true;await client.start();
+   // start() checks this exact rendered owner/company before pairing and again
+   // after its ACK. A separate panel read duplicated the first network fence.
+   const client=createCliBridge({link,scope:initialScope,queryApproved:()=>approval.current,onDiagnostic,onState:value=>{if(mounted.current&&epoch===generation.current)setState(value);}});bridge.current=client;clientStarted=true;await client.start();
   }catch(error){if(!clientStarted&&mounted.current&&epoch===generation.current)setState({phase:'stopped',message:error instanceof CliBridgeError?error.message:'CLI 연결을 확인하지 못했습니다. 로컬 CLI 실행 상태와 브라우저의 로컬 네트워크 권한을 확인해주세요.'});}
  }
  function disconnect(){generation.current++;const previous=bridge.current;bridge.current=null;approval.current=false;setQueryApproved(false);setState({phase:'stopped',message:'CLI 연결을 해제했습니다. 새 연결 주소로 다시 연결해주세요.'});void previous?.disconnect();}

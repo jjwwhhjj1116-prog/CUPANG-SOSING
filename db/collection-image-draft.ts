@@ -10,7 +10,7 @@ import { collectedImageDraft, type CollectedImageLink } from '@/app/collection-i
 import { productImageKeys } from '@/app/product-content';
 import { collectedPageOptionImageIndices } from '@/app/collected-page-option-binding';
 
-export async function prepareCollectedImageDraft(owner: string, jobId: string, productId: string, explicit?: { expectedVersion: string }) {
+export async function prepareCollectedImageDraft(owner: string, jobId: string, productId: string, explicit?: { expectedVersion: string; roles?: ('main'|'additional'|'detail')[] }) {
   if (!env.DB) throw Error('이미지 초안 저장소 연결이 필요합니다.');
   const db = env.DB;
   const job = await findCollectionJob(owner, jobId), link = await findCollectionProduct(owner, jobId);
@@ -26,7 +26,7 @@ export async function prepareCollectedImageDraft(owner: string, jobId: string, p
   const now = new Date(Math.max(Date.now(), Date.parse(product.updated_at) + 1)).toISOString();
   const keys = productImageKeys(product.image_keys);
   const pageOptionIndices = await collectedPageOptionImageIndices(owner,job,receipt.result,options);
-  const draft = collectedImageDraft(owner, receipt.result, images.results, keys, content, options, now, pageOptionIndices);
+  const draft = collectedImageDraft(owner, receipt.result, images.results, keys, content, options, now, pageOptionIndices, explicit?.roles);
   const availableImages = images.results.filter(image => keys.includes(image.key)).length;
   const guard = `id=? AND owner_id=? AND source_url=? AND updated_at=? AND image_keys=?
     AND EXISTS(SELECT 1 FROM product_content WHERE product_id=products.id AND owner_id=products.owner_id AND revision=?)
@@ -58,13 +58,13 @@ export async function prepareCollectedImageDraft(owner: string, jobId: string, p
 
 /** An explicit work request may continue a stored SEO/price-only import without
  * rewriting the immutable intake goal or searching by URL for another job. */
-export async function prepareProductWorkDraft(owner: string, productId: string, expectedVersion: string) {
+export async function prepareProductWorkDraft(owner: string, productId: string, expectedVersion: string, roles?: ('main'|'additional'|'detail')[]) {
   const product = await findProduct(owner, productId);
   if (!product || product.updated_at !== expectedVersion) return null;
   const linked = await findProductCollection(owner, productId);
   if (!linked) return { productId, productVersion: product.updated_at, prepared: false, changedRoles: 0, changedOptions: 0, availableImages: 0,
     message: '연결된 수집 원문이 없어 이미지 초안을 만들지 않았습니다. 저장된 입력으로 가격을 확인합니다.' };
-  const result = await prepareCollectedImageDraft(owner, linked.job_id, productId, { expectedVersion });
+  const result = await prepareCollectedImageDraft(owner, linked.job_id, productId, { expectedVersion, roles });
   if (!result) return null;
   return { ...result, prepared: result.availableImages > 0,
     message: result.availableImages === 0 ? '상품에 남아 있는 수집 이미지가 없어 이미지 초안을 만들지 않았습니다. 저장된 입력으로 가격을 확인합니다.'

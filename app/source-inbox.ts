@@ -5,7 +5,11 @@ export type SourceInboxItem={id:string;ownerId:string;company:SupplierHubCompany
 /** Supplier MOQ is not needed to create an editable SEO/price draft. Its
  * unknown value stays null. A captured row key can identify an editable option
  * without inventing a supplier SKU. Price and currency still need proof. */
-export function sourceInboxStatus(snapshot:PageSource,reviewed:PageSource|null){return pageSourceIssues(validatePageSource(reviewed??snapshot)).filter(issue=>!['최소 주문 수량','공급자 SKU'].includes(issue));}
+export function sourceInboxStatus(snapshot:PageSource,reviewed:PageSource|null){return sourceInboxValidatedStatus(validatePageSource(reviewed??snapshot));}
+/** Call only after the full PageSource validator has accepted this value. List
+ * decoding already validates both receipts; repeating that work for status
+ * reparses/stringifies every image and option on every foreground refresh. */
+export function sourceInboxValidatedStatus(source:PageSource){return pageSourceIssues(source).filter(issue=>!['최소 주문 수량','공급자 SKU'].includes(issue));}
 export function sourceInboxWarnings(snapshot:PageSource,reviewed:PageSource|null){const source=reviewed??snapshot;return [
  ...(source.options.some(row=>row.minimumOrder===null)?['공급자 최소 주문 수량 미확인 · 초안 작성 후 가격 설정에서 확인하세요.']:[]),
  ...(source.options.some(row=>row.supplierSku===null)?['공급자 SKU 미확인 · 옵션 원문 키로 구분하며 공급자 코드는 공란으로 보관합니다.']:[])];}
@@ -17,7 +21,7 @@ function sourceOptionAxes(option:PageSource['options'][number]){
  return {...(color!==undefined?{color}:{}),...(size!==undefined?{size}:{})};
 }
 export function pageSourceCollectionResult(snapshot:PageSource,reviewed=false):CollectionResult{
- const source=validatePageSource(snapshot),issues=sourceInboxStatus(source,null);if(issues.length)throw Error(`수집함에서 ${issues.join('·')}을 확인해주세요.`);
+ const source=validatePageSource(snapshot),issues=sourceInboxValidatedStatus(source);if(issues.length)throw Error(`수집함에서 ${issues.join('·')}을 확인해주세요.`);
  const result=validateCollectionResult({schemaVersion:1,sourceUrl:source.sourceUrl,provider:reviewed?'chrome-reviewed-page-v1':'chrome-current-page-v1',collectedAt:source.collectedAt,title:source.title,description:source.description,attributes:source.attributes,images:source.images,
   options:source.options.map(row=>({sku:row.supplierSku??'',name:row.name,unitPriceCny:row.unitPriceCny,minimumOrder:row.minimumOrder,stock:row.stock,...sourceOptionAxes(row),...(row.packaging?{packaging:{...row.packaging}}:{}),...(row.imageUrl&&source.images.some(item=>item.url===row.imageUrl)?{imageIndex:source.images.findIndex(item=>item.url===row.imageUrl)}:{})})),
   ...(source.options.some(row=>row.supplierSku===null)?{pageOptionIdentity:{format:'yoofam-page-option-identity-v1',offerId:source.offerId,sourceKeys:source.options.map(row=>row.key)}}:{})},source.offerId);

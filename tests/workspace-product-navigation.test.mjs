@@ -72,6 +72,7 @@ function harness({submission=false,batch,integration,packaging=false,captureLabe
     if(name.endsWith('.css'))return{};
     if(name==='@/app/components/use-intake-draft')return{useIntakeDraft:()=>({rows:[],setRows(){},goal:'work',setGoal(){},ready:true,loading:false})};
     if(name==='@/app/components/use-source-registrations')return{useSourceRegistrations:()=>({items:[],error:'',reload(){}})};
+    if(name==='@/app/components/use-registration-layout')return{useRegistrationLayout:()=>({layout:{sizeChartRequired:false},pendingLayout:null,loading:false,error:''})};
     if(name==='@/app/components/intake-queue-panel')return{IntakeQueuePanel:props=>{intakeSettings=props.settings;return null;}};
     if(name==='@/app/components/product-option-board')return{ProductOptionBoard:props=>{optionBoard=props;return null;}};
     if(captureLabelBatch&&name==='@/app/components/batch-label-panel')return{BatchLabelPanel:props=>{labelBatch=props;return null;}};
@@ -360,7 +361,7 @@ async function batchFixture(){
   :api.route(url,{method:init.method??'GET',body:init.body});
  const optionId=(await (await request(base+'/options')).json()).options.rows[0].id;
  const h=harness({batch:{product,request}});
- const start=async()=>{await h.settle();nodes(h.render()).find(node=>node.props?.['aria-label']===product.title+' 선택').props.onChange({target:{checked:true}});await h.click('작업 개시');await h.click('선택 상품 초안 준비·가격 확인');
+ const start=async()=>{await h.settle();nodes(h.render()).find(node=>node.props?.['aria-label']===product.title+' 선택').props.onChange({target:{checked:true}});await h.click('선택 상품 일괄 작업');await h.click('선택 상품 초안 준비·가격 확인');
   assert.ok(h.seoBatch,'the real batch panel first opens the SEO decision queue');
   assert.equal(h.requests.some(row=>row.url===base+'/work-draft'),false,'pricing/image preparation waits for SEO decisions');
   // This navigation fixture isolates the queue child. Its actual generation,
@@ -372,7 +373,7 @@ async function batchFixture(){
 test('dashboard keeps a running label batch mounted and prevents stale review or close callbacks from losing its pending save',async()=>{
  const h=harness({captureLabelBatch:true});try{
   await h.settle();nodes(h.render()).find(node=>node.props?.['aria-label']==='상품 b 선택').props.onChange({target:{checked:true}});
-  await h.click('작업 개시');await h.click('선택 상품 표시사항 PNG 일괄 생성·연결');
+  await h.click('선택 상품 일괄 작업');await h.click('선택 상품 표시사항 PNG 일괄 생성·연결');
   const close=h.button('×').props.onClick,back=h.button('← 초안 준비 작업').props.onClick,labels=h.labelBatch,reads=h.requests.length;
   assert.ok(labels&&typeof labels.onBusyChange==='function');
   labels.onBusyChange(true);close();back();labels.onOpen('b');await h.settle();
@@ -414,7 +415,7 @@ test('batch review read errors retain retry and quotation/work review choices',a
   }
   await h.click('견적 초안 검토');assert.equal(h.button('7견적서 작업').props['aria-current'],'step');
   nodes(h.render()).find(node=>node.props?.['aria-label']==='상품 작업 공간 닫기').props.onClick();await h.settle();
-  await h.click('작업 개시');await h.click('상품별 작업 열기');assert.equal(nodes(h.workspace()).find(node=>node.type==='button'&&text(node)==='작업 이력').props['aria-pressed'],true);
+  await h.click('선택 상품 일괄 작업');await h.click('상품별 작업 열기');assert.equal(nodes(h.workspace()).find(node=>node.type==='button'&&text(node)==='작업 이력').props['aria-pressed'],true);
   assert.equal(h.requests.filter(request=>request.url===base+'/work-draft').length,1,'opening review does not repeat draft preparation');
  }finally{f.close();}
 });
@@ -424,7 +425,7 @@ test('late batch review responses cannot reopen a closed modal or replace a newe
   await f.start();h.deferProduct();await h.click('이미지 초안 검토');const closed=h.productReads.at(-1);
   await h.click('×');assert.equal(closed.signal.aborted,true);
   closed.resolve(await f.request(base));await h.settle();assert.equal(Boolean(h.workspace()),false);
-  await h.click('작업 개시');h.deferProduct();await h.click('이미지 초안 검토');const stale=h.productReads.at(-1);
+  await h.click('선택 상품 일괄 작업');h.deferProduct();await h.click('이미지 초안 검토');const stale=h.productReads.at(-1);
   await h.click('▦상품관리(신규)');await h.click('상품 작업 열기 →');h.archiveReads[0].resolve(Response.json({product:h.product('a')}));await h.settle();
   h.title().props.onChange({target:{value:''}});await h.settle();stale.resolve(await f.request(base));await h.settle();
   assert.match(text(h.workspace()),/상품 a/);assert.equal(h.title().props.value,'');

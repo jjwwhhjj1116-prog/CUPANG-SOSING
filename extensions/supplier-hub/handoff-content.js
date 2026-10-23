@@ -118,14 +118,30 @@ async function readCurrentProductTransmissionHistory(expected){
   }finally{clearTimeout(timer);}
 }
 async function readCurrentCatalogContext(){
-  const path='/api/supplier-hub/catalog-context',controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
+  const path='/api/supplier-hub/catalog-context',controller=new AbortController();let timer;
+  const failure=(code,message)=>Object.assign(Error(message),{code});
   try{
-    const response=await fetch(path,{method:'GET',cache:'no-store',credentials:'same-origin',redirect:'error',signal:controller.signal});
-    if(!response.ok||response.redirected||response.url!==location.origin+path)throw Error('승인된 회원 회사정보를 확인하지 못했습니다.');
-    const text=await response.text();if(text.length>4096)throw Error('회원 회사정보 응답이 올바르지 않습니다.');
-    const result=JSON.parse(text);
-    if(controller.signal.aborted)throw Error('회원 회사정보 확인 시간이 초과됐습니다.');
-    return {ok:true,ownerId:result.ownerId,company:result.company};
+    // Keep every authorization fence fresh. A request started before another
+    // capture's ACK must not be shared with its post-ACK identity check.
+    return await Promise.race([(async()=>{
+      const response=await fetch(path,{method:'GET',cache:'no-store',credentials:'same-origin',redirect:'error',signal:controller.signal});
+      if(response.redirected||response.url!==location.origin+path)throw failure('YOOFAM_CONTEXT_INVALID','회원 회사정보 응답의 앱 출처가 다릅니다.');
+      if(response.status===401)throw failure('YOOFAM_LOGIN_REQUIRED','YOOFAM 회원 로그인이 필요합니다.');
+      if(response.status===403)throw failure('YOOFAM_COMPANY_REQUIRED','계정 관리에서 승인된 회사코드·회사명을 확인해주세요.');
+      if(!response.ok)throw failure('YOOFAM_CONTEXT_SERVICE_ERROR','YOOFAM 서버의 회원 회사정보 요청에 실패했습니다.');
+      const contentType=response.headers?.get('content-type');
+      if(contentType&&!/^application\/json(?:\s*;|$)/i.test(contentType))throw failure('YOOFAM_CONTEXT_INVALID','회원 회사정보 응답 형식이 올바르지 않습니다.');
+      const text=await response.text();if(text.length>4096)throw failure('YOOFAM_CONTEXT_INVALID','회원 회사정보 응답이 올바르지 않습니다.');
+      let result;try{result=JSON.parse(text);}catch{throw failure('YOOFAM_CONTEXT_INVALID','회원 회사정보 응답을 읽지 못했습니다.');}
+      const companies={A01526306:'유앤채',A01464742:'와이홉'};
+      if(!/^\w[\w-]{0,99}$/.test(result?.ownerId||'')||typeof result.ownerId!=='string'||!Object.hasOwn(companies,result.company?.code)||companies[result.company.code]!==result.company.name)throw failure('YOOFAM_CONTEXT_INVALID','회원 회사정보 응답이 올바르지 않습니다.');
+      if(controller.signal.aborted)throw failure('YOOFAM_CONTEXT_TIMEOUT','회원 회사정보 확인 시간이 초과됐습니다.');
+      return {ok:true,ownerId:result.ownerId,company:{code:result.company.code,name:result.company.name}};
+    })(),new Promise((_,reject)=>{timer=setTimeout(()=>{controller.abort();reject(failure('YOOFAM_CONTEXT_TIMEOUT','회원 회사정보 확인 시간이 초과됐습니다.'));},10000);})]);
+  }catch(error){
+    if(typeof error?.code==='string'&&error.code.startsWith('YOOFAM_'))throw error;
+    if(controller.signal.aborted)throw failure('YOOFAM_CONTEXT_TIMEOUT','회원 회사정보 확인 시간이 초과됐습니다.');
+    throw failure('YOOFAM_CONTEXT_SERVICE_ERROR','YOOFAM 서버에 연결하지 못했습니다. 앱 연결 상태를 확인해주세요.');
   }finally{clearTimeout(timer);}
 }
 /** Resolves an exact stored native document through authenticated app GETs.
@@ -161,7 +177,7 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
     void savePageSourceInApp(message.record).then(respond,error=>respond({ok:false,error:error?.message||'웹 수집함 저장 확인 실패'}));return true;
   }
   if(!['YOOFAM_VERIFY_QUOTATION_SOURCE','YOOFAM_READ_QUOTATION_RECEIPT','YOOFAM_READ_TRANSMISSION_RECEIPT','YOOFAM_READ_CATALOG_CONTEXT','YOOFAM_READ_HISTORICAL_TRANSMISSION_RECEIPT','YOOFAM_READ_PRODUCT_TRANSMISSION_HISTORY'].includes(message?.type)||sender?.id!==chrome.runtime.id)return;
-  if(message.type==='YOOFAM_READ_CATALOG_CONTEXT'){void readCurrentCatalogContext().then(respond,error=>respond({ok:false,error:error?.message||'회원 회사정보 확인 실패'}));return true;}
+  if(message.type==='YOOFAM_READ_CATALOG_CONTEXT'){void readCurrentCatalogContext().then(respond,error=>respond({ok:false,error:error?.message||'회원 회사정보 확인 실패',code:error?.code||'YOOFAM_CONTEXT_SERVICE_ERROR'}));return true;}
   if(message.type==='YOOFAM_READ_PRODUCT_TRANSMISSION_HISTORY'){void readCurrentProductTransmissionHistory(message.expected).then(respond,error=>respond({ok:false,error:error?.message||'전체 전송 이력 확인 실패'}));return true;}
   if(message.type==='YOOFAM_READ_HISTORICAL_TRANSMISSION_RECEIPT'){void readCurrentQuotationReceipt(message.expected,false,true).then(respond,error=>respond({ok:false,error:error?.message||'원래 전송 결과 확인 실패'}));return true;}
   const read=message.type==='YOOFAM_READ_TRANSMISSION_RECEIPT'?expected=>readCurrentQuotationReceipt(expected,false)

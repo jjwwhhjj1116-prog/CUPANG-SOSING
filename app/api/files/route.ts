@@ -24,8 +24,8 @@ async function savedLabel(ownerId: string, uploadId: string) {
 }
 
 export async function GET(request: Request) {
-  if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return NextResponse.json({ error: '운영 인증 연결 후 라벨 파일을 확인할 수 있습니다.' }, { status: 503, headers: { 'cache-control': 'no-store' } });
   try {
+    if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return NextResponse.json({ error: '운영 인증 연결 후 라벨 파일을 확인할 수 있습니다.' }, { status: 503, headers: { 'cache-control': 'no-store' } });
     const params = new URL(request.url).searchParams, uploadId = params.get('labelUploadId');
     if (params.getAll('labelUploadId').length !== 1 || [...params.keys()].some(key => key !== 'labelUploadId') || !/^[a-f0-9]{64}$/.test(uploadId ?? '')) return NextResponse.json({ error: '라벨 업로드 번호를 확인해주세요.' }, { status: 400, headers: { 'cache-control': 'no-store' } });
     const ownerId = await getWorkspaceOwnerId();
@@ -37,8 +37,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return NextResponse.json({ error: 'Cloudflare Access 로그인 또는 서버 인증 설정을 확인해주세요.' }, { status: 503, headers: { 'cache-control': 'no-store' } });
   try {
+    if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return NextResponse.json({ error: 'Cloudflare Access 로그인 또는 서버 인증 설정을 확인해주세요.' }, { status: 503, headers: { 'cache-control': 'no-store' } });
     const ownerId = await getWorkspaceOwnerId();
     const contentType = request.headers.get('content-type') ?? '';
     if (!/^multipart\/form-data(?:\s*;|$)/i.test(contentType)) return NextResponse.json({ error: '이미지 파일을 multipart 형식으로 업로드해주세요.' }, { status: 400 });

@@ -6,7 +6,24 @@ const pending=new Map();
 const flushing=new Map();
 const opening=new Map();
 const appUrl=origins[0]+'/';
-const readinessError=()=>Error('YOOFAM 로그인 확인 시간이 초과되었습니다. 같은 Chrome 창의 앱에 승인된 회사 계정으로 로그인한 뒤 상품 수집을 다시 눌러주세요. 아직 수집함에 저장하지 않았습니다.');
+const failure=(code,message)=>Object.assign(Error(message),{code});
+const contextMessages={
+ YOOFAM_LOGIN_REQUIRED:'YOOFAM 앱에서 로그인이 필요하다는 응답을 받았습니다. 같은 Chrome 창의 앱에 로그인한 뒤 상품 수집을 다시 눌러주세요.',
+ YOOFAM_COMPANY_REQUIRED:'YOOFAM 계정의 승인 회사정보를 확인해주세요. 계정 관리에서 회사코드·회사명을 확인한 뒤 상품 수집을 다시 눌러주세요.',
+ YOOFAM_CONTEXT_UNAVAILABLE:'YOOFAM 앱과 확장의 연결을 확인하지 못했습니다. 같은 Chrome 창의 앱을 새로고침한 뒤 상품 수집을 다시 눌러주세요.',
+ YOOFAM_CONTEXT_INVALID:'YOOFAM 앱의 회원·회사 확인 응답이 올바르지 않습니다. 앱을 새로고침한 뒤 상품 수집을 다시 눌러주세요.',
+ YOOFAM_CONTEXT_SERVICE_ERROR:'YOOFAM 서버의 회원·회사 확인 요청에 실패했습니다. 앱 연결 상태를 확인한 뒤 상품 수집을 다시 눌러주세요.',
+ YOOFAM_CONTEXT_TIMEOUT:'YOOFAM 서버의 회원·회사 확인 응답 시간이 초과되었습니다. 앱 연결 상태를 확인한 뒤 상품 수집을 다시 눌러주세요.',
+ YOOFAM_TAB_TIMEOUT:'같은 Chrome 창의 YOOFAM 앱 탭 응답 시간이 초과되었습니다. 응답하지 않는 앱 탭을 새로고침하거나 닫은 뒤 상품 수집을 다시 눌러주세요.',
+};
+const contextError=code=>failure(Object.hasOwn(contextMessages,code)?code:'YOOFAM_CONTEXT_UNAVAILABLE',contextMessages[code]??contextMessages.YOOFAM_CONTEXT_UNAVAILABLE);
+function readinessError(errors=[]){
+ // Only an explicit HTTP 401 proves that login is required. A missing bridge,
+ // loading tab, network failure or timeout must not masquerade as logout.
+ const priority=['YOOFAM_TAB_TIMEOUT','YOOFAM_CONTEXT_TIMEOUT','YOOFAM_CONTEXT_SERVICE_ERROR','YOOFAM_CONTEXT_INVALID','YOOFAM_CONTEXT_UNAVAILABLE','YOOFAM_COMPANY_REQUIRED','YOOFAM_LOGIN_REQUIRED'];
+ const code=priority.find(code=>errors.some(error=>error?.code===code))??'YOOFAM_TAB_TIMEOUT';
+ return failure(code,contextMessages[code]+' 아직 수집함에 저장하지 않았습니다.');
+}
 function limitedApi(api,deadline,error=readinessError){
  const timeout=()=>{const failure=error();failure.code='YOOFAM_TAB_TIMEOUT';return failure;};
  const call=async(method,args)=>{
@@ -20,13 +37,20 @@ const appOrigin=url=>{try{const origin=new URL(url).origin;return origins.includ
 function appCandidates(tabs,windowId){return tabs.filter(tab=>tab.windowId===windowId&&(appOrigin(tab.url)||appOrigin(tab.pendingUrl)));}
 function candidateTab(tab){return {...tab,url:appOrigin(tab.url)?tab.url:tab.pendingUrl};}
 async function candidateContexts(api,windowId,expected=new Map()){
- const candidates=appCandidates(await api.tabs.query({windowId}),windowId),contexts=[];
- for(const candidate of candidates){
+ const candidates=appCandidates(await api.tabs.query({windowId}),windowId);
+ let lastContextTabId;
+ // Start every candidate together: a slow background tab cannot spend the
+ // entire window budget before the intended receiver is even inspected.
+ const results=await Promise.allSettled(candidates.map(async candidate=>{
   const tab=expected.get(candidate.id)??candidateTab(candidate);expected.set(tab.id,tab);
-  try{contexts.push({tab:{...tab,active:candidate.active},scope:await context(api,tab)});}catch(error){if(error?.code==='YOOFAM_TAB_TIMEOUT')throw error;}
- }
+  const scope=await context(api,tab);lastContextTabId=tab.id;return {tab:{...tab,active:candidate.active},scope};
+ }));
+ const contexts=results.filter(result=>result.status==='fulfilled').map(result=>result.value),errors=results.filter(result=>result.status==='rejected').map(result=>result.reason);
  if(contexts.some(item=>!same(item.scope,contexts[0].scope)))throw Error('이 창의 YOOFAM 회원이 서로 다릅니다. 수집할 회사의 앱 탭 하나만 열어주세요.');
- return {contexts};
+ // An unresponsive/invalid authenticated endpoint may conceal another owner.
+ // Do not turn first-success selection into an authorization bypass.
+ if(errors.some(error=>['YOOFAM_TAB_TIMEOUT','YOOFAM_CONTEXT_TIMEOUT','YOOFAM_CONTEXT_SERVICE_ERROR','YOOFAM_CONTEXT_INVALID'].includes(error?.code)))throw contextError(readinessError(errors).code);
+ return {contexts,errors,lastContextTabId};
 }
 async function appReceiver(api,windowId,timeoutMs,pollMs){
  const existing=opening.get(windowId);if(existing)return existing;
@@ -40,19 +64,26 @@ async function appReceiver(api,windowId,timeoutMs,pollMs){
    createdId=tab.id;expected.set(tab.id,{id:tab.id,windowId,url:appUrl});
   }
   for(;;){
-   const {contexts}=await candidateContexts(bounded,windowId,expected);
+   let checked;try{checked=await candidateContexts(bounded,windowId,expected);}catch(error){if(Object.hasOwn(contextMessages,error?.code))throw readinessError([error]);throw error;}
+   const {contexts,errors}=checked;
    const receiver=createdId===undefined?(contexts.find(item=>item.tab.active)??contexts[0]):contexts.find(item=>item.tab.id===createdId);
    if(receiver)return receiver;
-   const remaining=deadline-Date.now();if(remaining<=0)throw readinessError();
+   const remaining=deadline-Date.now();if(remaining<=0)throw readinessError(errors);
    await new Promise(resolve=>setTimeout(resolve,Math.min(pollMs,remaining)));
+   if(Date.now()>=deadline)throw readinessError(errors);
   }
  })();
  opening.set(windowId,run);try{return await run;}finally{if(opening.get(windowId)===run)opening.delete(windowId);}
 }
 async function recheckReceiver(receiver,api){
- const {contexts}=await candidateContexts(api,receiver.tab.windowId,new Map([[receiver.tab.id,receiver.tab]]));
+ const {contexts,lastContextTabId}=await candidateContexts(api,receiver.tab.windowId,new Map([[receiver.tab.id,receiver.tab]]));
  const current=contexts.find(item=>item.tab.id===receiver.tab.id);
  if(!current||!same(current.scope,receiver.scope))throw Error('수집할 앱 창 또는 로그인 회사가 변경되었습니다. 같은 회사의 앱에서 상품 수집을 다시 눌러주세요.');
+ // If another candidate took longer, refresh the selected receiver after that
+ // wait. Only this immediate check may replace deliver's adjacent extra read.
+ const scope=lastContextTabId===receiver.tab.id?current.scope:await context(api,receiver.tab);
+ if(!same(scope,receiver.scope))throw Error('수집할 앱 창 또는 로그인 회사가 변경되었습니다. 같은 회사의 앱에서 상품 수집을 다시 눌러주세요.');
+ return scope;
 }
 async function activateReceiver(receiver,api){
  // A focus/tab-close failure cannot undo the durable matching storage ACK.
@@ -77,9 +108,12 @@ function appSender(sender){
 async function context(api,tab){
  const current=await api.tabs.get(tab.id);
  if(current.windowId!==tab.windowId||current.pendingUrl||new URL(current.url).origin!==new URL(tab.url).origin)throw Error('앱 창이 변경되었습니다.');
- const result=await api.tabs.sendMessage(tab.id,{type:'YOOFAM_READ_CATALOG_CONTEXT'},{frameId:0});
+ let result;
+ try{result=await api.tabs.sendMessage(tab.id,{type:'YOOFAM_READ_CATALOG_CONTEXT'},{frameId:0});}
+ catch(error){if(error?.code==='YOOFAM_TAB_TIMEOUT')throw error;throw contextError('YOOFAM_CONTEXT_UNAVAILABLE');}
  const after=await api.tabs.get(tab.id);if(after.windowId!==tab.windowId||after.pendingUrl||new URL(after.url).origin!==new URL(tab.url).origin)throw Error('앱 창이 변경되었습니다.');
- if(result?.ok!==true||!identifier(result.ownerId)||companies[result.company?.code]!==result.company?.name)throw Error('같은 창의 YOOFAM에 승인된 회사 계정으로 로그인해주세요.');
+ if(result?.ok!==true)throw contextError(result?.code);
+ if(!identifier(result.ownerId)||!Object.hasOwn(companies,result.company?.code)||companies[result.company?.code]!==result.company?.name)throw contextError('YOOFAM_CONTEXT_INVALID');
  return {ownerId:result.ownerId,company:{code:result.company.code,name:result.company.name},origin:new URL(current.url).origin};
 }
 const same=(left,right)=>left.ownerId===right.ownerId&&left.origin===right.origin&&left.company.code===right.company.code&&left.company.name===right.company.name;
@@ -101,9 +135,9 @@ function storedSourceReceipt(result,record){
   ||received===null||collected===null||received<collected-60000||receipt.collectedAt!==record.snapshot.collectedAt)return fail();
  return {...receipt,company:{code:receipt.company.code,name:receipt.company.name}};
 }
-async function deliver(record,tab,api,store){
+async function deliver(record,tab,api,store,verifiedScope){
  validatePageSourceForDelivery(record.snapshot);
- const before=await context(api,tab);if(!same(before,record))throw Error('수집 당시 회원·회사로 로그인한 앱에서 불러오세요.');
+ const before=verifiedScope??await context(api,tab);if(!same(before,record))throw Error('수집 당시 회원·회사로 로그인한 앱에서 불러오세요.');
  const result=await api.tabs.sendMessage(tab.id,{type:'YOOFAM_SAVE_SOURCE_CAPTURE',record},{frameId:0});
  if(result?.ok!==true||result.id!==record.id||result.fingerprint!==record.fingerprint||result.ownerId!==record.ownerId||result.company?.code!==record.company.code||result.company?.name!==record.company.name)throw Error(result?.error||'웹 수집함의 저장 확인을 받지 못했습니다. 확장 보관본은 유지됩니다.');
  const storedReceipt=storedSourceReceipt(result,record);
@@ -129,7 +163,7 @@ export async function savePageSource(message,sender,api=chrome,store=sourceInbox
  const receiving=appReceiver(api,sender.tab.windowId,timeoutMs,pollMs);
  const run=(async()=>{
   const receiver=await receiving,{tab,scope}=receiver;
-  const bounded=limitedApi(api,Date.now()+timeoutMs,()=>Error('YOOFAM 앱의 응답 시간이 초과되었습니다. 수집 결과를 확인하고 다시 시도해주세요.'));await recheckReceiver(receiver,bounded);
+  const bounded=limitedApi(api,Date.now()+timeoutMs,()=>Error('YOOFAM 앱의 응답 시간이 초과되었습니다. 수집 결과를 확인하고 다시 시도해주세요.'));
   const records=await store('list'),previous=records.find(row=>row.windowId===sender.tab.windowId&&same(row,scope)&&row.snapshot.offerId===snapshot.offerId);
   // A repeated click retries the first immutable snapshot. It cannot overwrite
   // an uncertain server save or an operating product with newly read values.
@@ -139,7 +173,7 @@ export async function savePageSource(message,sender,api=chrome,store=sourceInbox
   // collection click can explicitly save the current page as its own version.
   const pendingSnapshotReplayed=Boolean(previous&&previous.fingerprint!==fingerprint);
   if(!previous){if(records.length>=40)throw Error('확장 수집함이 가득 찼습니다. 앱에서 보관된 상품을 불러와주세요.');await recheckReceiver(receiver,bounded);await store('put',record);}
-  try{await recheckReceiver(receiver,bounded);const result=await deliver(record,tab,bounded,store);await activateReceiver(receiver,bounded);return {ok:true,delivered:true,duplicate:result.duplicate===true,id:record.id,ownerId:record.ownerId,company:{code:record.company.code,name:record.company.name},fingerprint:record.fingerprint,...(result.storedReceipt?{storedReceipt:result.storedReceipt}:{}),...(pendingSnapshotReplayed?{pendingSnapshotReplayed:true,newCaptureStored:false}:{})};}
+  try{const before=await recheckReceiver(receiver,bounded);const result=await deliver(record,tab,bounded,store,before);await activateReceiver(receiver,bounded);return {ok:true,delivered:true,duplicate:result.duplicate===true,id:record.id,ownerId:record.ownerId,company:{code:record.company.code,name:record.company.name},fingerprint:record.fingerprint,...(result.storedReceipt?{storedReceipt:result.storedReceipt}:{}),...(pendingSnapshotReplayed?{pendingSnapshotReplayed:true,newCaptureStored:false}:{})};}
   catch(error){return {ok:true,delivered:false,id:record.id,message:error.message,...(pendingSnapshotReplayed?{pendingSnapshotReplayed:true,newCaptureStored:false}:{})};}
  })();pending.set(sender.tab.id,{promise:run,receiver:receiving,windowId:sender.tab.windowId,sourceUrl:snapshot.sourceUrl,offerId:snapshot.offerId,fingerprint});try{return await run;}finally{if(pending.get(sender.tab.id)?.promise===run)pending.delete(sender.tab.id);}
 }

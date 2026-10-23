@@ -45,7 +45,7 @@ export function parseCliScope(value:unknown):CliScope{
 }
 export function sameCliScope(left:CliScope,right:CliScope){return left.ownerId===right.ownerId&&left.company.code===right.company.code&&left.company.name===right.company.name;}
 async function boundedJson(response:Response):Promise<unknown>{
- if(response.redirected||response.type==='opaqueredirect'||!/^(application\/json|application\/[\w.+-]+\+json)(?:;|$)/i.test(response.headers.get('content-type')??''))throw new CliBridgeError('RESPONSE_UNCERTAIN','로그인 또는 JSON 응답을 확인하지 못했습니다. 연결을 다시 확인해주세요.');
+ if(response.redirected||response.type==='opaqueredirect'||!/^(application\/json|application\/[\w.+-]+\+json)(?:;|$)/i.test(response.headers.get('content-type')??''))throw new CliBridgeError('RESPONSE_UNCERTAIN','서버의 JSON 응답을 확인하지 못했습니다. 연결을 다시 확인해주세요.');
  const advertised=response.headers.get('content-length');if(advertised&&(!/^\d+$/.test(advertised)||Number(advertised)>MAX_JSON))throw new CliBridgeError('RESPONSE_TOO_LARGE','응답이 허용 크기를 초과했습니다.');
  const reader=response.body?.getReader();if(!reader)throw new CliBridgeError('RESPONSE_UNCERTAIN','응답 본문을 확인하지 못했습니다.');
  let length=0;const parts:Uint8Array[]=[];
@@ -59,8 +59,13 @@ export async function readCliScope(fetcher:Fetcher=fetch,signal?:AbortSignal,dia
   const response=await fetcher('/api/supplier-hub/catalog-context',{credentials:'same-origin',cache:'no-store',redirect:'manual',signal:guardedSignal});
   if(guardedSignal.aborted)throw new CliBridgeError('REQUEST_CANCELLED','현재 연결 요청을 취소했습니다.');
   diagnose(diagnostic?.onDiagnostic,{stage,target:'app',outcome:'response',status:response.status});
-  if(!response.ok)throw new CliBridgeError('SCOPE_UNCONFIRMED','YOOFAM 앱의 로그인 또는 승인 회사가 변경되었습니다. 다시 로그인 상태를 확인해주세요.');return parseCliScope(await boundedJson(response));
- },{timeoutMs:10000,signals:[signal],timeoutError:new CliBridgeError('APP_SCOPE_TIMEOUT','YOOFAM 앱의 로그인 회사 확인 응답이 지연되었습니다. 앱 로그인 상태를 확인한 뒤 다시 연결해주세요.'),onDiagnostic:diagnostic?.onDiagnostic,stage,target:'app'});}
+  if(response.status===401)throw new CliBridgeError('APP_SCOPE_LOGIN_REQUIRED','YOOFAM 앱에서 로그인이 필요하다는 응답을 받았습니다. 앱에 로그인한 뒤 새 CLI 연결 주소를 열어주세요.');
+  if(response.status===403)throw new CliBridgeError('APP_SCOPE_COMPANY_REQUIRED','YOOFAM 계정의 승인 회사정보를 확인하지 못했습니다. 계정 관리의 회사코드·회사명을 확인해주세요.');
+  if(response.status===429)throw new CliBridgeError('APP_SCOPE_BUSY','YOOFAM 서버의 회원·회사 확인 요청이 많습니다. 잠시 후 새 CLI 연결 주소로 다시 연결해주세요.');
+  if(response.status>=500)throw new CliBridgeError('APP_SCOPE_SERVICE_ERROR','YOOFAM 서버의 회원·회사 확인 요청에 실패했습니다. 잠시 후 새 CLI 연결 주소로 다시 연결해주세요.');
+  if(!response.ok)throw new CliBridgeError('APP_SCOPE_RESPONSE','YOOFAM 서버의 회원·회사 확인 응답을 확인하지 못했습니다. 새 CLI 연결 주소로 다시 연결해주세요.');
+  try{return parseCliScope(await boundedJson(response));}catch{throw new CliBridgeError('APP_SCOPE_INVALID','YOOFAM 서버의 회원·회사 확인 응답이 올바르지 않습니다. 앱을 새로고침한 뒤 다시 연결해주세요.');}
+ },{timeoutMs:10000,signals:[signal],timeoutError:new CliBridgeError('APP_SCOPE_TIMEOUT','YOOFAM 서버의 회원·회사 확인 응답이 지연되었습니다. 앱 연결 상태를 확인한 뒤 새 CLI 연결 주소로 다시 연결해주세요.'),onDiagnostic:diagnostic?.onDiagnostic,stage,target:'app'});}
  catch(error){if(error instanceof CliBridgeError)throw error;throw new CliBridgeError('APP_SCOPE_NETWORK','YOOFAM 앱의 로그인 회사 확인에 연결하지 못했습니다. 앱 연결 상태를 확인해주세요.');}
 }
 function commandRequest(command:unknown,payload:unknown,queryApproved:boolean):{path:string;method:'GET'|'POST';body?:unknown}{
@@ -87,6 +92,7 @@ export function createCliBridge(options:{link:CliLink;scope:CliScope;queryApprov
  const fetcher=options.fetcher??fetch,now=options.now??Date.now,scope=parseCliScope(options.scope),controller=new AbortController();
  if(options.link.host!==undefined&&options.link.host!=='127.0.0.1'&&options.link.host!=='localhost')throw new CliBridgeError('LINK_INVALID','이 컴퓨터의 로컬 CLI 주소만 연결할 수 있습니다.');
  const local='http://'+(options.link.host??'127.0.0.1')+':'+options.link.port;let active=false,used=false,epoch=0,timer:ReturnType<typeof setInterval>|undefined,expiryTimer:ReturnType<typeof setTimeout>|undefined,expiresAt=0,checking=false,inflightQuery:AbortController|null=null;
+ let scopeRead:Promise<CliScope>|null=null;
  const emit=(state:CliBridgeState)=>options.onState?.(state);
  const stop=(message='CLI 연결을 해제했습니다.')=>{if(!active&&used)return;active=false;epoch++;controller.abort();clearInterval(timer);clearTimeout(expiryTimer);emit({phase:'stopped',message});};
  function current(generation:number){if(!active||generation!==epoch||controller.signal.aborted||now()>=expiresAt)throw new CliBridgeError('SESSION_STOPPED','CLI 연결이 끝났습니다.');}
@@ -103,17 +109,26 @@ export function createCliBridge(options:{link:CliLink;scope:CliScope;queryApprov
   },{timeoutMs,signals:[controller.signal,extraSignal],timeoutError:new CliBridgeError(loopback?'LOCAL_CLI_TIMEOUT':'APP_REQUEST_TIMEOUT',loopback?'내 컴퓨터 CLI의 응답 시간을 초과했습니다. 현재 컴퓨터에서 CLI가 실행 중인지 확인해주세요.':'YOOFAM 앱 서버의 응답 시간을 초과했습니다. 앱 연결 상태를 확인해주세요.'),onDiagnostic:options.onDiagnostic,stage,target});}
   catch(error){if(error instanceof CliBridgeError)throw error;throw new CliBridgeError(loopback?'LOCAL_CLI_NETWORK':'APP_REQUEST_NETWORK',loopback?'내 컴퓨터 CLI에 연결하지 못했습니다. CLI 실행 상태와 브라우저 연결 설정을 확인해주세요.':'YOOFAM 앱 서버에 연결하지 못했습니다. 앱 연결 상태를 확인해주세요.');}
  }
- async function checkScope(generation:number,stage:'scope'|'verify'='verify'){current(generation);const actual=await readCliScope(fetcher,controller.signal,{onDiagnostic:options.onDiagnostic,stage});current(generation);if(!sameCliScope(actual,scope)){stop('계정 또는 회사가 변경되어 CLI 연결을 해제했습니다.');throw new CliBridgeError('SCOPE_CHANGED','현재 로그인 회사가 달라졌습니다.');}}
- async function deliver(job:Job,generation:number,reply:JsonRecord){current(generation);await checkScope(generation);current(generation);const ack=await json('/result',{method:'POST',body:JSON.stringify({sessionId:options.link.sessionId,jobId:job.jobId,scope,...reply})},true);current(generation);if(!object(ack)||ack.ok!==true)throw new CliBridgeError('RESULT_ACK_UNCERTAIN','CLI 결과 수신을 확인하지 못했습니다.');}
+ async function checkScope(generation:number,stage:'scope'|'verify'='verify',fresh=false){
+  current(generation);
+  // Coalesce only an unresolved read in this one connection. A command/pair
+  // boundary always starts a fresh read; no completed identity is cached.
+  let pending=scopeRead;
+  if(fresh||!pending){pending=readCliScope(fetcher,controller.signal,{onDiagnostic:options.onDiagnostic,stage});scopeRead=pending;const release=()=>{if(scopeRead===pending)scopeRead=null;};void pending.then(release,release);}
+  const actual=await pending;current(generation);if(!sameCliScope(actual,scope)){stop('계정 또는 회사가 변경되어 CLI 연결을 해제했습니다.');throw new CliBridgeError('SCOPE_CHANGED','현재 로그인 회사가 달라졌습니다.');}
+ }
+ // processJob has just checked the current scope after its response. Between
+ // that check and delivery only synchronous response validation is performed.
+ async function deliver(job:Job,generation:number,reply:JsonRecord){current(generation);const ack=await json('/result',{method:'POST',body:JSON.stringify({sessionId:options.link.sessionId,jobId:job.jobId,scope,...reply})},true);current(generation);if(!object(ack)||ack.ok!==true)throw new CliBridgeError('RESULT_ACK_UNCERTAIN','CLI 결과 수신을 확인하지 못했습니다.');}
  async function processJob(job:Job,generation:number){
-  await checkScope(generation);let result:unknown;let reply:JsonRecord;const queryController=job.command==='product-query'?new AbortController():null;
+  await checkScope(generation,'verify',true);let result:unknown;let reply:JsonRecord;const queryController=job.command==='product-query'?new AbortController():null;
   try{
    const request=commandRequest(job.command,job.payload,options.queryApproved());current(generation);
    if(job.deadline<=now())throw new CliBridgeError('JOB_EXPIRED','CLI 요청의 유효 시간이 끝났습니다.');
    const body=request.body?{...request.body as JsonRecord,expectedOwnerId:scope.ownerId,expectedCompany:scope.company}:undefined;
    inflightQuery=queryController;
    result=await json(request.path,{method:request.method,headers:{'x-yoofam-cli-scope':encodeURIComponent(JSON.stringify(scope))},...(body?{body:JSON.stringify(body)}:{})},false,Math.max(1,Math.min(55000,job.deadline-now(),expiresAt-now())),queryController?.signal);
-   await checkScope(generation);if(job.deadline<=now())throw new CliBridgeError('JOB_EXPIRED','CLI 요청의 유효 시간이 끝났습니다.');
+   await checkScope(generation,'verify',true);if(job.deadline<=now())throw new CliBridgeError('JOB_EXPIRED','CLI 요청의 유효 시간이 끝났습니다.');
    if(queryController?.signal.aborted||job.command==='product-query'&&!options.queryApproved())throw new CliBridgeError('QUERY_CANCELLED','상품조회 허용을 해제해 진행 중인 조회를 취소했습니다.');
    if(!object(result)||!sameCliScope(parseCliScope(result),scope))throw new CliBridgeError('RESULT_SCOPE_UNCERTAIN','CLI 조회 결과의 회사를 확인하지 못했습니다.');
    if(job.command==='product-query'&&(!object(result)||result.sourceStored!==false||result.draftCreated!==false))throw new CliBridgeError('RESULT_UNCERTAIN','상품조회 결과의 저장 여부를 확인하지 못했습니다.');
@@ -126,7 +141,7 @@ export function createCliBridge(options:{link:CliLink;scope:CliScope;queryApprov
    reply={ok:true,result};
   }catch(error){
    if(error instanceof CliBridgeError&&error.code==='QUERY_SCOPE_CHANGED'){stop(error.message);throw error;}
-   current(generation);await checkScope(generation);
+   current(generation);await checkScope(generation,'verify',true);
    const cancelled=queryController?.signal.aborted,code=cancelled?'QUERY_CANCELLED':error instanceof CliBridgeError?error.code:'REQUEST_FAILED',message=cancelled?'상품조회 허용을 해제해 진행 중인 조회를 취소했습니다.':error instanceof CliBridgeError?error.message:'요청 결과를 확인하지 못했습니다.';
    reply={ok:false,error:{code,message}};
   }finally{if(inflightQuery===queryController)inflightQuery=null;}
@@ -142,7 +157,10 @@ export function createCliBridge(options:{link:CliLink;scope:CliScope;queryApprov
   emit({phase:'connected',message:job.command==='product-query'?'상품조회가 끝났습니다. 수집함 저장과 초안 생성은 아직 하지 않았습니다.':'CLI 읽기 요청을 처리했습니다.',lastResult:{command:job.command,...(source&&typeof source.title==='string'?{title:source.title.slice(0,200)}:{}),...(source&&Array.isArray(source.options)?{optionCount:source.options.length}:{}),...(service?{provider:String(service.provider),configured:service.configured===true,liveVerified:false as const}:{}),stored:false}});
  }
  async function poll(generation:number){
-  try{while(active){await checkScope(generation);const response=await json('/next?sessionId='+encodeURIComponent(options.link.sessionId)+'&waitMs=25000',{method:'GET'},true);current(generation);if(!object(response)||response.ok!==true||!Object.hasOwn(response,'job'))throw new CliBridgeError('RESPONSE_UNCERTAIN','CLI 대기 응답을 확인하지 못했습니다.');if(response.job!==null)await processJob(parseJob(response.job,scope,now()),generation);}}
+  // start() just verified the pair ACK. The first poll only reads the local
+  // queue; any returned job still receives its own fresh pre-command check.
+  let first=true;
+  try{while(active){if(!first)await checkScope(generation);first=false;const response=await json('/next?sessionId='+encodeURIComponent(options.link.sessionId)+'&waitMs=25000',{method:'GET'},true);current(generation);if(!object(response)||response.ok!==true||!Object.hasOwn(response,'job'))throw new CliBridgeError('RESPONSE_UNCERTAIN','CLI 대기 응답을 확인하지 못했습니다.');if(response.job!==null)await processJob(parseJob(response.job,scope,now()),generation);}}
   catch(error){if(active)stop(error instanceof CliBridgeError?error.message:'CLI 연결이 끊어졌습니다. 로컬 CLI와 로그인 상태를 확인해주세요.');}
  }
  return{
@@ -150,7 +168,7 @@ export function createCliBridge(options:{link:CliLink;scope:CliScope;queryApprov
    if(used)throw new CliBridgeError('SESSION_USED','새 CLI 연결 주소로 다시 연결해주세요.');used=true;active=true;const generation=++epoch;expiresAt=now()+TTL;emit({phase:'connecting',message:'현재 회사와 로컬 CLI를 확인하고 있습니다.'});
    try{await checkScope(generation,'scope');const response=await json('/pair',{method:'POST',body:JSON.stringify({sessionId:options.link.sessionId,scope})},true);current(generation);
     if(!object(response)||response.ok!==true||response.protocolVersion!=='1.0'||response.sessionId!==options.link.sessionId||!sameCliScope(parseCliScope(response.scope),scope)||typeof response.expiresAt!=='number'||!Number.isSafeInteger(response.expiresAt)||response.expiresAt<=now()||response.expiresAt>expiresAt+1000)throw new CliBridgeError('PAIR_UNCERTAIN','CLI의 연결 세션 또는 회사를 확인하지 못했습니다.');
-    expiresAt=Math.min(expiresAt,response.expiresAt);await checkScope(generation);current(generation);
+    expiresAt=Math.min(expiresAt,response.expiresAt);await checkScope(generation,'verify',true);current(generation);
     timer=setInterval(()=>{if(checking||!active)return;checking=true;void checkScope(generation).catch(error=>{if(active)stop(error instanceof CliBridgeError?error.message:'로그인 상태를 확인하지 못해 연결을 해제했습니다.');}).finally(()=>{checking=false;});},options.contextIntervalMs??5000);
     expiryTimer=setTimeout(()=>stop('15분 연결 시간이 끝났습니다. CLI에서 새 연결 주소를 만들어주세요.'),Math.max(1,expiresAt-now()));
     emit({phase:'connected',message:'로컬 CLI가 현재 회사에 연결되었습니다. 상품조회는 별도 허용 후 실행됩니다.'});void poll(generation);

@@ -20,7 +20,7 @@ function currentButton({gallery=[],details=[],scriptMain,deliver=async()=>({ok:t
  const data={subject:'合成延迟图片商品',skuModel:{offerId,skuInfoMap:{black:{specAttrs:'黑色',skuId:'synthetic-black',price:'5.30'}}},...(scriptMain?{offerImgList:[scriptMain]}:{})};
  const {document,elements}=pageCollectorDom({title:'合成延迟图片商品',scripts:[{textContent:JSON.stringify(data)}],
   querySelector(selector){return selector.startsWith('meta')?{content:'合成延迟图片商品'}:selector==='.price-container'?{textContent:'¥5.30 1件起批'}:null;},
-  querySelectorAll(selector){if(selector.includes('.detail-gallery'))return gallery;if(selector.includes('#desc-lazyload-container'))return selector.includes(' img')?details:[];if(selector.startsWith('h1,h2,h3,h4,h5,h6')||selector==='section,article,[role="tabpanel"]')return[];assert.fail(`Unexpected selector: ${selector}`);}});
+  querySelectorAll(selector){if(selector.includes('.detail-gallery'))return gallery;if(selector.includes('#desc-lazyload-container'))return selector.includes(' img')?details:[];if(selector.startsWith('h1,h2,h3,h4,h5,h6')||['section,article,[role="tabpanel"]','[role="tab"]','[role="tabpanel"]'].includes(selector))return[];assert.fail(`Unexpected selector: ${selector}`);}});
  const window={};window.top=nested?{}:window;
  const location={href:sourceUrl};
  vm.runInNewContext(bundle,{window,document,location,URL,Date,Error,TextEncoder,

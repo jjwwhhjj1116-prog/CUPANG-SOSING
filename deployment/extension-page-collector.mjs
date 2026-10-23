@@ -1,9 +1,9 @@
 import {extractPageSource,pageSourceUrl,readPageSourceDomOptions,readPageSourceDomFacts,readPageSourceElementImage,readPageSourceDescriptionReference,validatePageSourceForDelivery} from '../extensions/supplier-hub/page-source.mjs';
 import {waitForPageDomDetails} from '../extensions/supplier-hub/page-dom-details.mjs';
-import {readProductSectionLinks} from '../extensions/supplier-hub/page-dom-sections.mjs';
+import {readProductSectionLinks,readProductSectionStructure} from '../extensions/supplier-hub/page-dom-sections.mjs';
 // This identifies the injected script itself, even when an older open page
 // outlives an extension update. The runtime manifest is not that proof.
-const COLLECTOR_SCRIPT_VERSION='2.1.25';
+const COLLECTOR_SCRIPT_VERSION='2.1.26';
 const COLLECTOR_HOST_ID='yoofam-page-collector',COLLECTOR_OWNER='yoofam-studio';
 const OWNER_ATTRIBUTE='data-yoofam-collector-owner',VERSION_ATTRIBUTE='data-yoofam-collector-version',LEASE_ATTRIBUTE='data-yoofam-collector-capture';
 const CAPTURE_LEASE_MS=60000;
@@ -97,6 +97,12 @@ function installPageCollector(){
      minimumOrderText:text('.price-container')||text('[class*="price-module"]')||text('[class*="price-component"]')});
     const sections=readProductSectionLinks(document).diagnostics;
     sectionNote=`현재 문서 영역: 탭 ${sections.tabCount}개 · 상품정보 탭 ${sections.knownTabCount}개 · 본문 패널 ${sections.panelCount}개 · 연결 확인 ${sections.linkedKnownPanelCount}개 · 연결 미확인 ${sections.unlinkedKnownTabCount}개.`;
+    if(!snapshot.attributes.length||!snapshot.images.some(image=>image.role==='detail')||snapshot.options.some(option=>!option.packaging)){
+     // Diagnostic shape only; never expose page text, identities or addresses.
+     const structure=readProductSectionStructure(document);
+     const counts=['attributes','packaging','detail'].map(kind=>structure.labels.filter(row=>row.kind===kind&&!row.excluded).length);
+     sectionNote+=` 일반 본문: 속성 제목 ${counts[0]}개 · 포장 제목 ${counts[1]}개 · 상세 제목 ${counts[2]}개.`;
+    }
     if(!snapshot.images.some(image=>image.role==='detail')){
      let reference=null;try{reference=readPageSourceDescriptionReference(before,descriptionScripts);}catch{descriptionNote='상세문서 연결: 현재 상품과 일치하는 원문을 확인하지 못했습니다.';}
      if(reference){

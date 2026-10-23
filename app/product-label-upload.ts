@@ -1,5 +1,6 @@
 import { productLabelPlan, verifyProductLabelsView, type ProductLabelsView } from '@/app/product-label';
 import { labelUploadDigest } from '@/app/label-upload-key';
+import { productLabelResponseJson } from '@/app/product-label-read-response';
 
 export type ProductLabelUploadContext = { productId: string; endpoint: string; view: ProductLabelsView; optionId: string | null };
 export type ProductLabelUploadCache = { signature: string; uploadedKey: string | null; rendered: { blob: Blob; width: number; height: number } | null };
@@ -17,9 +18,9 @@ export async function productLabelUploadId(input: ProductLabelUploadContext) {
 /** Failed lookup is never permission to create a second upload. The server's
  * owner-scoped recipe receipt survives source refreshes and editor remounts. */
 export async function findProductLabelUpload(input: ProductLabelUploadContext, request: typeof fetch = fetch) {
-  const uploadId = await productLabelUploadId(input), response = await request(`/api/files?labelUploadId=${uploadId}`, { cache: 'no-store' });
-  const body = await response.json() as { key?: unknown; contentType?: unknown; sha256?: unknown; size?: unknown; error?: string } | null;
-  if (!response.ok) throw Error(body?.error || '저장한 제품 표시사항 파일을 확인하지 못했습니다.');
+  const uploadId = await productLabelUploadId(input), endpoint = `/api/files?labelUploadId=${uploadId}`;
+  const response = await request(endpoint, { cache: 'no-store', credentials: 'same-origin', redirect: 'error' });
+  const body = await productLabelResponseJson<{ key?: unknown; contentType?: unknown; sha256?: unknown; size?: unknown } | null>(response, endpoint);
   if (!body || body.key !== null && (typeof body.key !== 'string' || !body.key || body.key.length > 512
     || body.contentType !== 'image/png' || typeof body.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(body.sha256)
     || !Number.isSafeInteger(body.size) || (body.size as number) < 1 || (body.size as number) > 10 * 1024 * 1024))

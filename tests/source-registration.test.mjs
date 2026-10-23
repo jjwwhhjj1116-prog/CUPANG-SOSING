@@ -8,16 +8,21 @@ const snapshot={sourceUrl:'https://detail.1688.com/offer/700000000001.html',offe
 const item={id:'capture',ownerId:'owner',snapshot,reviewed:null,receivedAt:'2026-10-19T00:00:00Z',archivedAt:null,issues:[]};
 function module(file,scope={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,URL,...scope});return exports;}
 
-test('source list entry keeps prices unknown and never overwrites or duplicates working products',()=>{
+test('new captures stay visible beside a working product with the same URL without modifying it',()=>{
  const {sourceRegistrationRows}=module('app/source-registration.ts');
  const product={id:'working',source_url:snapshot.sourceUrl+'?existing=1',title:'작업중 수정 제목'};
  const original=JSON.stringify(product);
- assert.equal(sourceRegistrationRows([item],[product]).length,0);
+ const captures=[{...item,id:'capture-7',captureVersion:7},{...item,id:'capture-6',captureVersion:6}];
+ const before=JSON.stringify(captures);
+ const rows=sourceRegistrationRows(captures);
+ assert.deepEqual(Array.from(rows,row=>row.id),['source:capture-7','source:capture-6']);
+ assert.deepEqual(Array.from(rows,row=>row.source_capture.captureVersion),[7,6]);
+ assert.equal(JSON.stringify(captures),before);
  assert.equal(JSON.stringify(product),original);
- const [row]=sourceRegistrationRows([item],[]);
+ const [row]=sourceRegistrationRows([item]);
  assert.equal(row.supply_price,null);assert.equal(row.sale_price,null);
  assert.equal(row.registration_status,'카테고리 대기');assert.equal(row.source_capture,item);
- assert.equal(sourceRegistrationRows([{...item,archivedAt:'2026-10-19'}],[]).length,0);
+ assert.equal(sourceRegistrationRows([{...item,archivedAt:'2026-10-19'}]).length,0);
 });
 
 function hookFixture(fetcher){

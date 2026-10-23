@@ -35,10 +35,10 @@ function harness(snapshot=source(),response=()=>({ok:true,delivered:true})){
 
 test('actual script marker is visible and a delivered title/options capture truthfully warns when all optional sections are absent',async()=>{
  const snapshot=source(),original=JSON.stringify(snapshot),h=harness(snapshot);
- assert.equal(h.button.title,'YOOFAM 상품 수집기 2.1.25');await h.button.click({isTrusted:false});assert.equal(h.messages.length,0);
+ assert.equal(h.button.title,'YOOFAM 상품 수집기 2.1.26');await h.button.click({isTrusted:false});assert.equal(h.messages.length,0);
  await h.button.click({isTrusted:true});
  assert.equal(h.button.textContent,'수집 완료');assert.equal(h.button.disabled,false);assert.equal(h.messages.length,1);
- assert.match(h.status.textContent,/^수집기 2\.1\.25 · /);assert.match(h.status.textContent,/서버 수집본 상세 미확인/);assert.doesNotMatch(h.status.textContent,/AI상품등록 목록에 담았습니다/);
+ assert.match(h.status.textContent,/^수집기 2\.1\.26 · /);assert.match(h.status.textContent,/서버 수집본 상세 미확인/);assert.doesNotMatch(h.status.textContent,/AI상품등록 목록에 담았습니다/);
  assert.match(h.status.textContent,/제품속성 0개 · 포장정보 0\/1옵션 · 상세이미지 0장/);
  assert.match(h.status.textContent,/미수집·미확인: 제품속성 · 포장정보 · 상세이미지/);assert.match(h.status.textContent,/누락 항목을 자동으로 채우지 않았습니다/);
  assert.equal(JSON.stringify(snapshot),original);assert.deepEqual(h.messages[0],{type:'YOOFAM_SAVE_PAGE_SOURCE',snapshot});
@@ -76,14 +76,14 @@ test('an uncertain app delivery stays uncertain; retry statistics belong to the 
 for(const delivered of [true,false])test(`old pending replay (${delivered}) never labels freshly read section counts as saved`,async()=>{
  const snapshot=source();snapshot.attributes=[{name:'새 원문',value:'미저장'}];
  const h=harness(snapshot,()=>({ok:true,delivered,duplicate:true,pendingSnapshotReplayed:true,newCaptureStored:false,message:'이전 수집본 확인'}));
- await h.button.click({isTrusted:true});assert.match(h.status.textContent,/수집기 2\.1\.25/);assert.match(h.status.textContent,/방금 읽은 새 상품정보는 아직 저장하지 않았습니다/);
+ await h.button.click({isTrusted:true});assert.match(h.status.textContent,/수집기 2\.1\.26/);assert.match(h.status.textContent,/방금 읽은 새 상품정보는 아직 저장하지 않았습니다/);
  assert.doesNotMatch(h.status.textContent,/수집 내용:|제품속성 1개|AI상품등록 목록에 담았습니다/);assert.notEqual(h.button.textContent,'수집 완료');assert.equal(h.messages.length,1);
 });
 
 test('missing or rejected app ACK never acquires a completion summary or success label',async()=>{
  for(const result of [{ok:true},{ok:false,error:'앱 저장 실패'}]){
   const h=harness(source(),()=>result);await h.button.click({isTrusted:true});assert.equal(h.messages.length,1);
-  assert.match(h.status.textContent,/^수집기 2\.1\.25 · /);assert.doesNotMatch(h.status.textContent,/수집 내용:|AI상품등록 목록에 담았습니다/);assert.notEqual(h.button.textContent,'수집 완료');
+  assert.match(h.status.textContent,/^수집기 2\.1\.26 · /);assert.doesNotMatch(h.status.textContent,/수집 내용:|AI상품등록 목록에 담았습니다/);assert.notEqual(h.button.textContent,'수집 완료');
  }
 });
 

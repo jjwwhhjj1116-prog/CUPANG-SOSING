@@ -1,7 +1,7 @@
 import { verifyProductLabelsView, type ProductLabelsView } from '@/app/product-label';
 import { applyQuotationChanges, validateQuotationChanges, type QuotationFieldsView } from '@/app/quotation-schema';
 import { exactPrimaryQuotationTarget } from '@/app/quotation-seo-targets';
-import { readProductLabelJson } from '@/app/product-label-read-response';
+import { productLabelResponseJson, readProductLabelJson } from '@/app/product-label-read-response';
 
 export type ProductLabelReferenceScope = { productId: string; optionId: string | null; endpoint: string; quotationEndpoint: string };
 export type ProductLabelReferences = { view: ProductLabelsView; quotation: QuotationFieldsView; keys: string[] };
@@ -71,7 +71,7 @@ export async function saveProductLabelReferences(input:ProductLabelReferenceScop
   let response:Response|undefined;
   try{
     response=await request(input.quotationEndpoint,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:before.quotation.revision,expectedInputFingerprint:before.quotation.inputFingerprint,changes:planned})});
-    const acknowledged=await response.json() as QuotationFieldsView & {error?:string};if(!response.ok)throw Error(acknowledged.error||'최종 라벨 참조를 저장하지 못했습니다.');
+    const acknowledged=await productLabelResponseJson<QuotationFieldsView>(response,input.quotationEndpoint,'PUT');
     const saved=await readProductLabelReferences(input,request);verifyProductLabelReferenceSave(input,before,saved,selected);
     if(acknowledged.revision!==saved.quotation.revision||acknowledged.productVersion!==saved.quotation.productVersion||acknowledged.inputFingerprint!==saved.quotation.inputFingerprint
       || !same(acknowledged.overrides,saved.quotation.overrides)||!same(acknowledged.resolved,saved.quotation.resolved))throw Error('최종 라벨 저장 응답과 실제 저장본이 다릅니다.');

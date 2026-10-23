@@ -5,6 +5,7 @@ import { exactPrimaryQuotationTarget } from '@/app/quotation-seo-targets';
 import { findProductLabelUpload, productLabelPreviewSignature } from '@/app/product-label-upload';
 import { productLabelProofRequest, readProductLabelReceipt } from '@/app/product-label-proof';
 import { labelUploadDigest } from '@/app/label-upload-key';
+import { productLabelResponseJson } from '@/app/product-label-read-response';
 
 type Input = { productId: string; endpoint: string; quotationEndpoint: string; renderedView: ProductLabelsView; optionId: string | null;
   blob: Blob | null; uploadedKey: string | null; onUploaded: (key: string) => void };
@@ -57,8 +58,8 @@ export async function attachProductLabel(input: Input, request: typeof fetch = f
     labelUploadDigest(new TextEncoder().encode(JSON.stringify([input.renderedView.categoryContext.categoryId,input.renderedView.categoryContext.categoryPath]))),
   ]);
   async function read<T>(url: string, init?: RequestInit): Promise<T> {
-    const response = await request(url, { cache: 'no-store', ...init }), body = await response.json() as T & { error?: string };
-    if (!response.ok) throw Error(body?.error || '제품 표시사항 이미지 연결을 확인하지 못했습니다.'); return body;
+    const response = await request(url, { cache: 'no-store', credentials: 'same-origin', redirect: 'error', ...init });
+    return productLabelResponseJson<T>(response, url, init?.method ?? 'GET');
   }
   function validateLabel(view: ProductLabelsView) {
     verifyProductLabelsView(view, input.optionId);
