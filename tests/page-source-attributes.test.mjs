@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {build} from 'esbuild';
 import {extractPageSource} from '../extensions/supplier-hub/page-source.mjs';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
+import {pageCollectorDom} from './helpers/page-collector-dom.mjs';
 
 // Synthetic current-page documents only. No source network request is made.
 const offerId='700000000001',sourceUrl=`https://detail.1688.com/offer/${offerId}.html`;
@@ -130,14 +131,15 @@ test('trusted page button retains separate attribute scripts and the known envel
   {script:'window.__INIT_DATA = '+JSON.stringify(envelope)+';',expected:envelope.data['590893002003'].data.propsList.map(({name,value})=>({name,value}))},
  ];
  for(const entry of cases){
- const elements=[],messages=[];
- const create=tag=>{const node={tag,style:{},textContent:'',setAttribute(){},append(){},attachShadow(){return{append(){}};},addEventListener(type,listener){if(type==='click')node.click=listener;}};elements.push(node);return node;};
- const document={getElementById:()=>null,createElement:create,documentElement:{append(){}},title:'合成测试商品',scripts:[{textContent:JSON.stringify({skuModel,offerImgList:gallery})},{textContent:entry.script}],querySelector(selector){return selector==='.price-container'?{textContent:'¥5.30 1件起批'}:null;},querySelectorAll:()=>[]};
+ const messages=[];
+ const {elements,document}=pageCollectorDom({title:'合成测试商品',scripts:[{textContent:JSON.stringify({skuModel,offerImgList:gallery})},{textContent:entry.script}],querySelector(selector){return selector==='.price-container'?{textContent:'¥5.30 1件起批'}:null;},querySelectorAll:()=>[]});
  const window={};window.top=window;
  vm.runInNewContext(bundle.outputFiles[0].text,{window,document,location:{href:sourceUrl},URL,Date,Error,TextEncoder,chrome:{runtime:{sendMessage:async message=>{messages.push(message);return{ok:true,delivered:true};}}},fetch:()=>assert.fail('A click capture cannot request the product endpoint')});
  await elements.find(node=>node.tag==='button').click({isTrusted:true});
- assert.equal(messages.length,1);
- assert.deepEqual(JSON.parse(JSON.stringify(messages[0].snapshot.attributes)),entry.expected);
+ const saves=messages.filter(message=>message.type==='YOOFAM_SAVE_PAGE_SOURCE');assert.equal(saves.length,1);
+ assert.ok(messages.every(message=>['YOOFAM_SAVE_PAGE_SOURCE','YOOFAM_READ_PAGE_DESCRIPTION'].includes(message.type)));
+ assert.equal(messages.filter(message=>message.type==='YOOFAM_READ_PAGE_DESCRIPTION').length,entry.script.includes('"detailUrl"')?1:0);
+ assert.deepEqual(JSON.parse(JSON.stringify(saves[0].snapshot.attributes)),entry.expected);
  }
 });
 

@@ -24,9 +24,47 @@ function dashboard() {
   let tree; function render(patch = {}) { props = { ...props, ...patch }; let turns = 0; do { changed = false; cursor = 0; tree = Detail(props); layouts.splice(0).forEach(fn => fn()); if (++turns > 6) throw Error('render loop'); } while (changed); return tree; }
   const child = suffix => nodes(tree).find(node => typeof node.type === 'function' && node.type.name.endsWith(':' + suffix));
   render(); return { render, child, card: () => nodes(tree).find(node => node.type?.name?.endsWith(':OptionImageEditor') && node.props.stage === 'detail'),
+    genericEntry: () => nodes(tree).find(node => node.props?.className === 'image-stage-editor-entry')?.props.children,
     dialog: () => child('DetailImageEditDialog'), editor: () => nodes(tree).find(node => node.props?.quotationContext && Object.hasOwn(node.props, 'onCloseGuard')), get requests() { return requests; }, close() { slots.forEach(slot => slot?.cleanup?.()); } };
 }
 const target = { kind: 'quotation', profileId: 'profile', optionId: 'red', input: 'detailImages', fieldKey: 'detail', slotIndex: 0, revision: 3, inputFingerprint: 'a'.repeat(64), optionRevision: 2, value: 'owner/a.png' };
+
+for (const [tab,role] of [['대표 이미지','main'],['추가 이미지','additional'],['상세 이미지','detail']]) test(`${tab}: generic entry explicitly carries its stage role without choosing an original or quotation slot`, () => {
+  const h=dashboard();try{
+    h.render({tab});h.editor().props.onCloseGuard(()=>true);h.genericEntry().props.onClick();h.render();
+    assert.equal(h.dialog().props.open,true);assert.equal(h.editor().props.active,true);assert.equal(h.editor().props.editorEntry.role,role);
+    assert.equal(h.editor().props.editorEntry.sequence,1);assert.equal(h.editor().props.translationTarget,undefined);assert.equal(h.requests,0);
+  }finally{h.close();}
+});
+
+test('a later generic stage entry retires a completed card selection while the next exact card still retains its original quotation target', () => {
+  const h=dashboard();try{
+    h.card().props.onEdit('owner/a.png','detail',target);h.render();h.editor().props.onCloseGuard(()=>true);h.dialog().props.onClose();h.render();
+    h.render({tab:'대표 이미지'});h.genericEntry().props.onClick();h.render();assert.equal(h.editor().props.translationTarget,undefined);assert.equal(h.editor().props.editorEntry.role,'main');
+    h.dialog().props.onClose();h.render();const mainTarget={...target,input:'mainImage',fieldKey:'main',slotIndex:0};
+    h.child('ProductOptionsEditor').props.onEdit('owner/a.png','main',mainTarget);h.render();
+    assert.deepEqual(plain(h.editor().props.translationTarget.quotationTarget),mainTarget);assert.equal(h.editor().props.translationTarget.role,'main');assert.equal(h.requests,0);
+  }finally{h.close();}
+});
+
+test('generic entry cannot retire a target while its retained editor guard is unavailable, dirty or uncertain', () => {
+  const h=dashboard();try{
+    h.genericEntry().props.onClick();h.render();assert.equal(h.dialog().props.open,false);
+    h.editor().props.onCloseGuard(()=>false);h.genericEntry().props.onClick();h.render();assert.equal(h.dialog().props.open,false);
+    h.editor().props.onCloseGuard(()=>true);h.editor().props.onEditingChange(true);h.genericEntry().props.onClick();h.render();assert.equal(h.dialog().props.open,false);
+    h.editor().props.onEditingChange(false);h.genericEntry().props.onClick();h.render();assert.equal(h.dialog().props.open,true);assert.equal(h.editor().props.editorEntry.sequence,1);assert.equal(h.requests,0);
+  }finally{h.close();}
+});
+
+test('retained generic-open callbacks cannot select a stage after stage or product-version ABA', () => {
+  for(const boundary of ['stage','version']){const h=dashboard();try{
+    h.render({tab:'대표 이미지'});h.editor().props.onCloseGuard(()=>true);const oldOpen=h.genericEntry().props.onClick;
+    if(boundary==='stage'){h.render({tab:'추가 이미지'});h.render({tab:'대표 이미지'});}
+    else{h.render({product:{id:'p',updated_at:'2026-10-18T00:00:01.000Z',image_keys:'["owner/a.png"]'}});h.render({product:{id:'p',updated_at:'2026-10-18T00:00:00.000Z',image_keys:'["owner/a.png"]'}});}
+    oldOpen();h.render();assert.equal(h.dialog().props.open,false);assert.equal(h.editor().props.editorEntry,undefined);
+    h.genericEntry().props.onClick();h.render();assert.equal(h.dialog().props.open,true);assert.equal(h.editor().props.editorEntry.role,'main');assert.equal(h.requests,0);
+  }finally{h.close();}}
+});
 
 test('the actual Stage5 card callback opens the retained editor dialog with the exact quotation target and does not write', () => {
   const h = dashboard();

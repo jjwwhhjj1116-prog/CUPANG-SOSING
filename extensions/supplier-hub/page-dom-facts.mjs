@@ -1,5 +1,6 @@
 // Read labelled current-product DOM sections only. The caller separately binds
 // these inert observations to the exact offer through the retained JSON IDs.
+import {isUnrelatedProductElement,readProductSectionLinks} from './page-dom-sections.mjs';
 const object=value=>!!value&&typeof value==='object'&&!Array.isArray(value);
 const text=value=>typeof value==='string'?value.replace(/\s+/gu,' ').trim():'';
 const label=value=>text(value).replace(/[：:]$/u,'');
@@ -7,12 +8,19 @@ const semanticLabel=value=>label(value).replace(/\s/gu,'');
 const ATTR_LABELS=['商品属性','产品属性','商品参数','产品参数','제품 속성','상품 속성'].map(semanticLabel);
 const PACK_LABELS=['包装信息','包装参数','포장 정보','제품 무게 및 치수'].map(semanticLabel);
 const ALL_LABELS=[...ATTR_LABELS,...PACK_LABELS];
-const EXCLUDED='nav,aside,footer,[role="tab"],[class*="recommend" i],[id*="recommend" i],[class*="review" i],[id*="review" i],[class*="comment" i],[class*="evaluate" i],[class*="shop" i],[class*="store" i]';
+const EXCLUDED='nav,aside,footer,[role="tab"],[class*="recommend" i],[id*="recommend" i],[class*="comment" i],[class*="evaluate" i]';
 const ROOTS='table,[role="table"],[role="grid"]';
 const HEADINGS='h1,h2,h3,h4,h5,h6,div,span,p,dt,th,legend,caption,font,strong,b,em,i,u,small,mark,sub,sup';
 const INLINE_WRAPPERS=new Set(['font','span','strong','b','em','i','u','small','mark','sub','sup','br']);
 const fail=()=>{throw Error('현재 상품의 속성·포장 표를 정확히 수집하지 못했습니다. 상품 속성과 포장 정보를 펼친 뒤 다시 수집해주세요. 옵션·치수를 임의로 채우지 않았습니다.');};
 const numeric=(value,max)=>typeof value==='number'&&Number.isSafeInteger(value)&&value>0&&value<=max;
+function excluded(node){
+ if(node.closest(EXCLUDED))return true;
+ // The relationship authorizes the panel, never another product/card or a
+ // navigation region nested inside it. Check ancestors for tables AND pairs.
+ let depth=0;for(let current=node;current;current=current.parentElement){if(++depth>40||current.getAttribute?.('role')==='navigation'||isUnrelatedProductElement(current))return true;}
+ return false;
+}
 
 export function validatePagePackaging(value){
  if(!object(value)||Object.keys(value).some(key=>!['source','weightG','widthMm','lengthMm','heightMm'].includes(key))||value.source!=='package-table'
@@ -26,7 +34,17 @@ function cells(row){
 }
 function rows(root){
  const result=Array.from(root.querySelectorAll('tr,[role="row"]')).filter(row=>row.closest(ROOTS)===root);
- if(result.length>201)fail();return result;
+ // A permitted table may still contain unrelated row groups. Keep the raw
+ // row-count limit before excluding them. textContent must not smuggle a
+ // nested card/navigation span into an otherwise permitted cell either.
+ if(result.length>201)fail();return result.filter(row=>{
+  const pending=[{node:row,depth:0}];let count=0;
+  while(pending.length){
+   const {node,depth}=pending.pop();if(++count>512||depth>40)fail();if(excluded(node))return false;
+   for(const child of Array.from(node.children??[]))pending.push({node:child,depth:depth+1});
+  }
+  return true;
+ });
 }
 /** Chrome translation wraps a label in font/span nodes. Only bounded inert
  * inline text qualifies; a container including another section/table/link is
@@ -35,12 +53,12 @@ function inlineTextOnly(node){
  let count=0;
  const visit=(current,depth)=>{
   if(++count>32||depth>8)return false;
-  return Array.from(current.children??[]).every(child=>INLINE_WRAPPERS.has(child.tagName?.toLowerCase())&&!child.closest(EXCLUDED)&&visit(child,depth+1));
+  return Array.from(current.children??[]).every(child=>INLINE_WRAPPERS.has(child.tagName?.toLowerCase())&&!excluded(child)&&visit(child,depth+1));
  };
  return visit(node,0);
 }
 function labelledHeadings(elements){
- const candidates=elements.filter(node=>ALL_LABELS.includes(semanticLabel(node.textContent))&&!node.closest(EXCLUDED)&&inlineTextOnly(node));
+ const candidates=elements.filter(node=>ALL_LABELS.includes(semanticLabel(node.textContent))&&!excluded(node)&&inlineTextOnly(node));
  const known=new Set(candidates);
  // Prefer the outer label wrapper once. A translated h3/font/font chain is
  // one heading and must not consume three slots or widen section traversal.
@@ -51,17 +69,20 @@ function labelledHeadings(elements){
 }
 function sectionRoot(heading,kind){
  for(let scope=heading.parentElement,depth=0;scope&&depth<6;scope=scope.parentElement,depth++){
-  if(scope.closest(EXCLUDED))return null;
-  const headings=labelledHeadings(Array.from(scope.querySelectorAll(HEADINGS)));
-  if(headings.some(node=>node!==heading&&(ATTR_LABELS.includes(semanticLabel(node.textContent))?'attributes':'packaging')!==kind))return null;
-  const tables=Array.from(scope.querySelectorAll(ROOTS)).filter(node=>!node.closest(EXCLUDED));
-  if(scope.matches?.(ROOTS))tables.unshift(scope);
-  if(tables.length>4)fail();
-  if(tables.length)return{scope,tables};
-  if(kind==='attributes'){
-   const pairs=Array.from(scope.querySelectorAll('div,li,dl')).filter(node=>node!==heading&&!node.closest(EXCLUDED)&&node.children.length===2&&Array.from(node.children).every(inlineTextOnly)&&!node.contains(heading));
-   if(pairs.length)return{scope,tables:[],pairs};
-  }
+  const section=inspectSection(scope,kind,heading);if(section===false)return null;if(section)return section;
+ }
+ return null;
+}
+function inspectSection(scope,kind,heading=null){
+ if(excluded(scope))return false;
+ const headings=labelledHeadings(Array.from(scope.querySelectorAll(HEADINGS)));
+ if(headings.some(node=>node!==heading&&(ATTR_LABELS.includes(semanticLabel(node.textContent))?'attributes':'packaging')!==kind))return false;
+ const tables=Array.from(scope.querySelectorAll(ROOTS)).filter(node=>!excluded(node));
+ if(scope.matches?.(ROOTS))tables.unshift(scope);
+ if(tables.length>4)fail();if(tables.length)return{scope,tables};
+ if(kind==='attributes'){
+  const pairs=Array.from(scope.querySelectorAll('div,li,dl')).filter(node=>node!==heading&&!excluded(node)&&node.children.length===2&&Array.from(node.children).every(inlineTextOnly)&&(!heading||!node.contains(heading)));
+  if(pairs.length)return{scope,tables:[],pairs};
  }
  return null;
 }
@@ -112,15 +133,22 @@ function packagingRows(root){
 export function readPageDomFacts(document){
  const elements=Array.from(document.querySelectorAll(HEADINGS));if(elements.length>20000)fail();
  const headings=labelledHeadings(elements);
- if(headings.length>30)fail();if(!headings.length)return null;
+ if(headings.length>30)fail();
+ const linked=readProductSectionLinks(document).sections.filter(section=>section.kind!=='detail');
+ if(!headings.length&&!linked.length)return null;
  const attributes=[],packaging=[],knownAttributes=new Map(),seenRoots=new Set();
  const add=(name,value)=>{
   name=label(name);value=text(value);if(!name||!value||name.length>190||value.length>1000||/[\u0000-\u001f]/u.test(name+value))fail();
   const key=name.toLowerCase();if(knownAttributes.has(key)){if(knownAttributes.get(key)!==value)fail();return;}
   if(attributes.length>=50)fail();knownAttributes.set(key,value);attributes.push({name,value});
  };
+ const discovered=linked.map(({kind,root})=>({kind,section:inspectSection(root,kind)}));
  for(const heading of headings){
   const kind=ATTR_LABELS.includes(semanticLabel(heading.textContent))?'attributes':'packaging',section=sectionRoot(heading,kind);if(!section){if(kind==='packaging')fail();continue;}
+  discovered.push({kind,section});
+ }
+ for(const {kind,section}of discovered){
+  if(!section)continue;
   for(const root of section.tables){
    if(seenRoots.has(root))continue;seenRoots.add(root);
    for(const link of root.querySelectorAll('a[href]'))if(/\/offer\/\d+\.html/u.test(link.getAttribute('href')??''))fail();

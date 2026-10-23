@@ -16,7 +16,11 @@ import {readAppNativeRegistrations} from './native-registration.mjs';
 import {dispatchSingleDocument} from './single-dispatch.mjs';
 import {dispatchProductDocument} from './product-document-dispatch.mjs';
 import {savePageSource,flushPageSources} from './source-inbox.mjs';
+import {readPageDescription} from './page-description.mjs';
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
+  if(message?.type==='YOOFAM_READ_PAGE_DESCRIPTION'){
+    readPageDescription(message,sender).then(respond,()=>respond({ok:true,available:false,detailImages:[],reason:'read-unavailable'}));return true;
+  }
   if(message?.type==='YOOFAM_QUERY_NATIVE_REGISTRATIONS'){
     readAppNativeRegistrations(message,sender).then(observation=>respond({ok:true,observation}),error=>respond({ok:false,error:error.message}));return true;
   }

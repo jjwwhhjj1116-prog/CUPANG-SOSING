@@ -24,8 +24,10 @@ import { applyDetailWorkspaceImage, readDetailWorkspaceImage, recoverDetailWorks
 import type { DetailWorkspaceView } from '@/app/detail-workspace';
 
 export type FreeImageTranslationTarget = { sourceKey: string; sequence: number; sourceLanguage?: 'zh' | 'en'; role?: FreeImageRole; quotationTarget?: FreeImageQuotationRequest; workspaceTarget?: FreeImageWorkspaceRequest; intent?: 'manual' };
+export type FreeImageEditorEntry = { role: 'main' | 'additional' | 'detail'; sequence: number };
 export type FreeImageQuotationContext = Pick<FreeImageQuotationRequest, 'profileId' | 'optionId' | 'input'>;
 type Props = { productId: string; version: string; imageKeys: string[]; translationTarget?: FreeImageTranslationTarget;
+  editorEntry?: FreeImageEditorEntry;
   focusedOptionId?: string; quotationContext?: FreeImageQuotationContext;
   workspaceContext?: DetailWorkspaceEditorContext; onWorkspaceSaved?: (reply: DetailWorkspaceView) => void;
   active?: boolean; disabled?: boolean; onEditingChange?: (dirty: boolean) => void;
@@ -58,7 +60,7 @@ function useScopedBlobUrl(blob: Blob | null) {
 }
 
 export default function FreeImageTranslationPanel(props: Props) { return <FreeImageTranslationContent key={props.productId} {...props} />; }
-function FreeImageTranslationContent({ productId, version, imageKeys, translationTarget, focusedOptionId, quotationContext, workspaceContext, onWorkspaceSaved,
+function FreeImageTranslationContent({ productId, version, imageKeys, translationTarget, editorEntry, focusedOptionId, quotationContext, workspaceContext, onWorkspaceSaved,
   active: enabled = true, disabled = false, onEditingChange, onCloseGuard, onProductChanged, onBusyChange, beforeApply }: Props) {
   const [sourceKey, setSourceKey] = useState('');
   const [role, setRole] = useState<FreeImageRole>('detail');
@@ -87,6 +89,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
   const [cardPreparation, setCardPreparation] = useState<FreeImageTranslationTarget | null>(null);
   const mounted = useRef(true), epoch = useRef(0), active = useRef<RequestWork | null>(null);
   const pendingSave = useRef<FreeImageRendered | null>(null), lastVersion = useRef(version), handledTarget = useRef<number | null>(null);
+  const handledEditorEntry = useRef<number | null>(null);
   const recoveredScope = useRef<string | null>(null);
   const pendingTarget = useRef<{ epoch: number } | null>(null);
   const manualId = useRef(0), panel = useRef<HTMLElement | null>(null), sourceControl = useRef<HTMLSelectElement | null>(null);
@@ -136,6 +139,11 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     const ownSave = savedNotice && savedNotice.fromVersion === lastVersion.current && savedNotice.productVersion === version
       && savedNotice.epoch === epoch.current && savedNotice.token === liveSaveNoticeScope.current.token && imageKeys.includes(savedNotice.key)
       && enabled && !disabled && !workspaceTarget && !workspaceContext;
+    // This retained panel also exists while closed. A clock advance in an
+    // untouched hidden editor is not evidence of lost text or an edit conflict.
+    const hiddenPristine = !enabled && !sourceKey && !loaded && !translationTarget && !workspaceTarget && !active.current && !pendingSave.current
+      && !liveRegions.current.length && !liveCrop.current && !liveRenderedRef.current && !liveOptionImageIds.current.length
+      && !liveUncertain.current && !liveReadyRetry.current && !liveBrushDrawingRef.current && !liveCropDrawing.current;
     lastVersion.current = version; const scope = ++epoch.current;
     active.current?.controller.abort(); active.current = null; recoveredScope.current = null;
     if (!pendingSave.current) liveRenderedRef.current = null;
@@ -143,7 +151,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       if (!mounted.current || epoch.current !== scope || lastVersion.current !== version) return;
       setBusy(false); busyCallback.current?.(false); setError('');
       if (pendingSave.current) { setReadyRetry(false); setUncertain(true); setNotice('저장 버전이 변경됐습니다. 응답을 확인하지 못한 미리보기는 같은 결과로 저장 상태를 확인할 수 있습니다.'); }
-      else { setRendered(null); setNotice(ownSave && savedNotice.token === liveSaveNoticeScope.current.token ? savedNotice.notice
+      else { setRendered(null); setNotice(hiddenPristine ? '' : ownSave && savedNotice.token === liveSaveNoticeScope.current.token ? savedNotice.notice
         : '상품 저장본이 변경됐습니다. 작성한 문구는 유지했습니다. 원본 저장 상태를 다시 확인한 뒤 미리보기를 만들어주세요.'); }
     });
     // Additional scope changes invalidate the one-use marker in layout; they
@@ -209,6 +217,24 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     cancel(false); discardDraft(); setSourceKey(key); setRole(nextRole); setLanguage(nextLanguage); setQuotationTarget(nextQuotationTarget); setNotice('');
     return true;
   }
+  useEffect(() => {
+    if (!editorEntry || translationTarget || handledEditorEntry.current === editorEntry.sequence) return;
+    const entry = editorEntry, scope = epoch.current; let alive = true;
+    void Promise.resolve().then(() => {
+      if (!alive || !mounted.current || epoch.current !== scope) return;
+      handledEditorEntry.current = entry.sequence;
+      // A generic stage entry selects a role, never a guessed original or an
+      // option slot. It cannot discard or interrupt an existing edit/save.
+      if (!enabled || active.current || pendingSave.current || liveUncertain.current || liveReadyRetry.current
+        || liveRegions.current.length || liveCrop.current || liveRenderedRef.current || liveOptionImageIds.current.length
+        || liveBrushDrawingRef.current || liveCropDrawing.current) return;
+      if (selectSource('', entry.role, 'zh', null)) { setCardPreparation(null); setNotice(''); }
+    });
+    return () => { alive = false; };
+    // Only a new explicit generic-open sequence may reset a pristine chooser.
+    // Source/version/visibility refreshes must not repeat an entry or I/O.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editorEntry, translationTarget]);
   useEffect(() => {
     if (!translationTarget || handledTarget.current === translationTarget.sequence) return;
     const target = translationTarget, scope = invalidateActive(); let alive = true;

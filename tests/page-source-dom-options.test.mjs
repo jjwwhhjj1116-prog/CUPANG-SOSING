@@ -5,6 +5,7 @@ import {parseFragment} from 'parse5';
 import {build} from 'esbuild';
 import {extractPageSource,readPageSourceDomOptions,pageSourceIssues} from '../extensions/supplier-hub/page-source.mjs';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
+import {pageCollectorDom} from './helpers/page-collector-dom.mjs';
 
 const offerId='700000000001',sourceUrl=`https://detail.1688.com/offer/${offerId}.html`,gallery='https://cbu01.alicdn.com/synthetic-gallery.jpg';
 const identity=(patch={})=>JSON.stringify({globalData:{offerBaseInfo:{offerId,subject:'合成测试商品'},tempModel:{offerId},...patch}});
@@ -23,6 +24,7 @@ function documentFromHtml(value){
  const match=(node,selector)=>selector.split(',').some(part=>{
   part=part.trim();if(/^[a-z][a-z0-9]*$/u.test(part))return node.tagName===part;
   if(part==='a[href]')return node.tagName==='a'&&node.getAttribute('href')!==null;
+  const exact=/^\[(role|id)(?:="([^"]*)")?\]$/u.exec(part);if(exact)return exact[2]===undefined?node.getAttribute(exact[1])!==null:node.getAttribute(exact[1])===exact[2];
   const attr=/^\[(class|id)\*="([^"]+)"( i)?\]$/u.exec(part);assert.ok(attr,`Unsupported fixture selector: ${part}`);
   const actual=node.getAttribute(attr[1])??'';return attr[3]?actual.toLowerCase().includes(attr[2].toLowerCase()):actual.includes(attr[2]);
  });
@@ -193,9 +195,8 @@ test('duplicate group labels, overlapping roots and multi-axis limits remain fai
 });
 
 test('trusted current-page button captures DOM fallback in memory with no source requests, iframe access or script execution',async()=>{
- const bundle=await build({entryPoints:['deployment/extension-page-collector.mjs'],bundle:true,write:false,format:'iife',platform:'browser',target:'chrome120'}),dom=documentFromHtml(html(tile('黑色')+tile('灰色','¥6.10'))),messages=[],created=[];
- const make=tag=>{const element={tag,id:'',style:{},textContent:'',hidden:false,disabled:false,setAttribute(){},append(){},attachShadow(){return{append(){}};},addEventListener(type,handler){if(type==='click')element.click=handler;}};created.push(element);return element;};
- const document={...dom,getElementById:()=>null,createElement:make,documentElement:{append(){}},title:'合成测试商品',scripts:[{textContent:script}],querySelector(selector){return selector.startsWith('meta')?{content:'合成测试商品'}:selector==='.price-container'?{textContent:'¥999.00'}:null;},querySelectorAll(selector){if(selector.includes('.detail-gallery'))return[{currentSrc:gallery,getAttribute:()=>gallery}];if(selector.includes('#desc-lazyload-container'))return[];return dom.querySelectorAll(selector);}};
+ const bundle=await build({entryPoints:['deployment/extension-page-collector.mjs'],bundle:true,write:false,format:'iife',platform:'browser',target:'chrome120'}),dom=documentFromHtml(html(tile('黑色')+tile('灰色','¥6.10'))),messages=[];
+ const {elements:created,document}=pageCollectorDom({title:'合成测试商品',scripts:[{textContent:script}],querySelector(selector){return selector.startsWith('meta')?{content:'合成测试商品'}:selector==='.price-container'?{textContent:'¥999.00'}:null;},querySelectorAll(selector){if(selector.includes('.detail-gallery'))return[{currentSrc:gallery,getAttribute:()=>gallery}];if(selector.includes('#desc-lazyload-container'))return[];return dom.querySelectorAll(selector);}});
  const window={};window.top=window;
  vm.runInNewContext(bundle.outputFiles[0].text,{window,document,location:{href:sourceUrl},URL,Date,Error,TextEncoder,chrome:{runtime:{sendMessage:async message=>{messages.push(message);return{ok:true,delivered:true};}}},fetch:()=>assert.fail('No source request is authorized by a DOM capture')});
  const button=created.find(element=>element.tag==='button');await button.click({isTrusted:false});assert.equal(messages.length,0);await button.click({isTrusted:true});assert.equal(messages.length,1);assert.equal(messages[0].snapshot.options.length,2);assert.equal(messages[0].snapshot.options[0].unitPriceCny,5.3);assert.equal(button.textContent,'수집 완료');

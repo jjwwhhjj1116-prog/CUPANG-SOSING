@@ -16,7 +16,9 @@ import { productImageKeys } from '@/app/product-content';
 import { isOwnedImageKey } from '@/app/image-files';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
-import { GET as quotationFieldsGET } from '@/app/api/products/[id]/quotation-fields/route';
+import {readQuotationFieldsForRequest} from '@/app/quotation-fields-read';
+import {QuotationFieldsSnapshotError} from '@/app/quotation-fields-snapshot';
+import {PublicDetailError} from '@/app/quotation-public-detail';
 import {applyAllProductLabelValues,planAllProductLabels,verifyAllProductLabelTextSave} from '@/app/product-label-all-options';
 import type {ProductLabelValues} from '@/app/product-label';
 
@@ -58,9 +60,13 @@ async function snapshot(owner: string, id: string, profileId: string | null, req
   // or maintaining a competing schema/default initialization path.
   const url = new URL(`/api/products/${encodeURIComponent(id)}/quotation-fields`, request.url);
   if (profileId) url.searchParams.set('profileId', profileId);
-  const quotationResponse = await quotationFieldsGET(new Request(url, { headers: request.headers }), { params: Promise.resolve({ id }) });
-  const quotation = await quotationResponse.json() as QuotationFieldsView & { error?: string; code?: string };
-  if (!quotationResponse.ok) throw new LabelError(quotation.error || '선택한 카테고리의 견적 원천을 확인하지 못했습니다.', quotationResponse.status, quotation.code);
+  let quotation:QuotationFieldsView;
+  try{quotation=await readQuotationFieldsForRequest(new Request(url,{headers:request.headers}),{params:Promise.resolve({id})});}
+  catch(error){
+    if(error instanceof QuotationFieldsSnapshotError)throw new LabelError(error.message,error.status,error.code);
+    if(error instanceof PublicDetailError)throw new LabelError(error.message,error.status);
+    throw new LabelError('견적서 자동 입력 자료와 수정값을 읽거나 저장하지 못했습니다.',503);
+  }
   const imageKeys = productImageKeys(product.image_keys).filter(key => isOwnedImageKey(owner, key));
   if (quotation.productVersion !== product.updated_at || quotation.contentRevision !== content.revision || quotation.optionRevision !== options.revision
     || JSON.stringify(quotation.imageKeys) !== JSON.stringify(imageKeys)) throw conflict();

@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import {fileURLToPath} from 'node:url';
 import {build} from 'esbuild';
 import {extractPageSource} from '../extensions/supplier-hub/page-source.mjs';
+import {pageCollectorDom} from './helpers/page-collector-dom.mjs';
 
 // All page fixtures are inert, synthetic and never make a source request.
 const offerId='700000000001',sourceUrl='https://detail.1688.com/offer/'+offerId+'.html';
@@ -51,11 +52,10 @@ test('missing verified structured titles use the caller fallback or reject an em
 
 const bundle=await build({entryPoints:[fileURLToPath(new URL('../deployment/extension-page-collector.mjs',import.meta.url))],bundle:true,write:false,format:'iife',platform:'browser',target:'chrome120'});
 async function collectTitle({subject,productTitle='',metaTitle='Synthetic shop metadata',documentTitle='Synthetic document title'}={}){
- const elements=[],messages=[];
- const create=tag=>{const node={tag,style:{},textContent:'',setAttribute(){},append(){},attachShadow(){return{append(){}};},addEventListener(type,listener){if(type==='click')node.click=listener;}};elements.push(node);return node;};
+ const messages=[];
  const data={skuModel,offerImgList:gallery,...subject?{subject}:{}};
- const document={getElementById:()=>null,createElement:create,documentElement:{append(){}},title:documentTitle,scripts:[{textContent:JSON.stringify(data)}],
-  querySelector(selector){if(selector==='h1')return{textContent:'Misleading generic shop heading'};if(selector.startsWith('h1.d-title'))return{textContent:productTitle};if(selector.startsWith('meta'))return{content:metaTitle};return null;},querySelectorAll:()=>[]};
+ const {elements,document}=pageCollectorDom({title:documentTitle,scripts:[{textContent:JSON.stringify(data)}],
+  querySelector(selector){if(selector==='h1')return{textContent:'Misleading generic shop heading'};if(selector.startsWith('h1.d-title'))return{textContent:productTitle};if(selector.startsWith('meta'))return{content:metaTitle};return null;},querySelectorAll:()=>[]});
  const window={};window.top=window;
  vm.runInNewContext(bundle.outputFiles[0].text,{window,document,location:{href:sourceUrl},URL,Date,Error,TextEncoder,chrome:{runtime:{sendMessage:async message=>{messages.push(message);return{ok:true,delivered:true};}}},fetch:()=>assert.fail('No product endpoint may be fetched')});
  await elements.find(node=>node.tag==='button').click({isTrusted:true});

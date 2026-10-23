@@ -3,6 +3,7 @@ export const PAGE_SOURCE_LIMIT:number;
 export function pageSourceUrl(value:string):{sourceUrl:string;offerId:string};
 export function readPageSourceElementImage(element:(Pick<HTMLImageElement,'getAttribute'> & {currentSrc?:string})|null,options?:{preferDataSource?:boolean}):string|null;
 export function pageJsonProperty(text:string,key:string):unknown;
+export function readPageSourceDescriptionReference(sourceUrl:string,scripts:string[]):{sourceUrl:string;offerId:string;detailUrl:string}|null;
 export type PageSourceDomOptions={format:'yoofam-page-dom-options-v1';sourceUrl:string;offerId:string;options:PageSource['options']};
 export function readPageSourceDomOptions(document:Pick<Document,'querySelectorAll'>,sourceUrl:string,scripts:string[]):PageSourceDomOptions|null;
 export function readPageSourceDomFacts(document:Pick<Document,'querySelectorAll'>,sourceUrl:string,scripts:string[]):import('./page-dom-facts.mjs').PageDomFacts|null;

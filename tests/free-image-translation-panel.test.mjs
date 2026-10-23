@@ -119,6 +119,36 @@ function workspaceProps(overrides = {}) {
       saved: { view: {}, roles: { top: [], bottom: [] }, workspace: { document: { photos: [{ id: 'body-photo', key: 'owner/original.png', originKey: 'owner/second.png', role: 'body' }] } } } }, ...overrides };
 }
 
+test('each explicit generic open sets its stage and leaves source unselected without source reads or stale hidden-editor warnings',async()=>{
+ for(const role of ['main','additional','detail']){
+ const h=fixture({imageKeys:[],active:false});try{
+  h.setProps({version:'2026-10-06T00:00:01.000Z'});await h.settle();assert.doesNotMatch(text(h.render()),/상품 저장본이 변경|작성한 문구는 유지/);
+  h.setProps({imageKeys:['owner/original.png','owner/second.png'],active:true,editorEntry:{sequence:1,role}});await h.settle();
+  assert.equal(h.field('번역할 이미지 역할').props.value,role);assert.equal(h.field('번역할 원본 이미지').props.value,'');assert.equal(h.calls.length,0);assert.equal(h.saved,0);
+  assert.doesNotMatch(text(h.render()),/상품 저장본이 변경|작성한 문구는 유지|같은 원본의 작성 문구/);
+  await h.change('번역할 원본 이미지','owner/second.png');assert.equal(h.calls.length,0,'a source choice does not start OCR, source reads or saving');
+  h.setProps({active:false});h.setProps({active:true});await h.settle();assert.equal(h.field('번역할 원본 이미지').props.value,'owner/second.png','visibility ABA does not replay the consumed generic entry');
+ }finally{h.close();}
+ }
+});
+
+test('another generic stage entry cannot discard manual text, crop/preview state or change its selected original and role',async()=>{
+ const h=fixture({imageKeys:[]});try{
+  h.setProps({imageKeys:['owner/original.png'],editorEntry:{sequence:1,role:'main'}});await h.settle();await h.change('번역할 원본 이미지','owner/original.png');await h.click('원본 불러오기 · 수동 편집');await h.click('문구 영역 직접 추가');await h.change('문구 1 한국어','현재 대표 이미지 수동 문구');await h.click('번역 이미지 미리보기');
+  const before=h.calls.length;h.setProps({editorEntry:{sequence:2,role:'additional'}});await h.settle();
+  assert.equal(h.field('번역할 이미지 역할').props.value,'main');assert.equal(h.field('번역할 원본 이미지').props.value,'owner/original.png');assert.equal(h.field('문구 1 한국어').props.value,'현재 대표 이미지 수동 문구');
+  assert.ok(h.button('검토한 번역 이미지 적용'));assert.equal(h.calls.length,before);assert.equal(h.saved,0);
+ }finally{h.close();}
+});
+
+test('generic open never interrupts an existing source request or automatically replays it',async()=>{
+ const h=fixture(),waiting=deferred();let requestedImage;h.setSource(image=>{requestedImage=image;return waiting.promise;});try{
+  h.button('원본 불러오기 · 수동 편집').props.onClick();await h.settle();const request=h.calls.at(-1);assert.equal(request.action,'source');assert.equal(request.signal.aborted,false);
+  h.setProps({editorEntry:{sequence:1,role:'main'}});await h.settle();assert.equal(request.signal.aborted,false);assert.equal(h.field('번역할 이미지 역할').props.value,'detail');assert.equal(h.calls.length,1);
+  waiting.resolve(requestedImage);await h.settle();assert.equal(h.calls.length,1);assert.equal(h.field('번역할 이미지 역할').props.value,'detail');assert.equal(h.saved,0);
+ }finally{waiting.resolve(requestedImage);h.close();}
+});
+
 test('workspace manual editor opens current photo pixels and uses only workspace apply and completion callbacks', async () => {
   const saved = [], editing = [], h = fixture(workspaceProps({ onWorkspaceSaved: reply => saved.push(reply), onEditingChange: value => editing.push(value) }));
   try {

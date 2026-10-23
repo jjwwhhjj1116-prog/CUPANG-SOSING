@@ -115,9 +115,9 @@ test('passive settling reads lazily appearing same-page details with a hard six-
 });
 
 test('a changed offer during passive settling aborts capture without reading frames or retrying the new offer',async()=>{
- let changed=false,reads=0;const document={querySelectorAll(){reads++;return [];}};
+ let changed=false,reads=0;const document={querySelectorAll(){assert.equal(changed,false,'No current-document read may follow the offer change');reads++;return [];}};
  await assert.rejects(()=>waitForPageDomDetails(document,sourceUrl,{wait:async()=>{changed=true;},assertCurrent(){if(changed)throw Error('changed synthetic offer');}}),/changed synthetic offer/);
- assert.equal(reads,4);
+ assert.equal(reads,6); // Original bounded selectors plus exact tab/panel discovery.
 });
 
 const bundled=await build({entryPoints:[fileURLToPath(new URL('../deployment/extension-page-collector.mjs',import.meta.url))],bundle:true,write:false,format:'iife',platform:'browser',target:'chrome120'});

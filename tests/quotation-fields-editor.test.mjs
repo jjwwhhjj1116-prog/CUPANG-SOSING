@@ -321,6 +321,39 @@ test('malformed display maps in refreshed or saved quotation responses preserve 
   assert.deepEqual(states[1],edits,operation);assert.match(states[5],/옵션 등록번호.*입력은 유지/,operation);
  }
 });
+test('non-JSON save ACK preserves drafts and confirms an already completed save only through explicit readback',async()=>{
+ const view=fixture(),edits=[change('brand','검토한 새 브랜드','red'),change('manufacturer','')],before=JSON.stringify(view);
+ const states=[view,edits,[],false,false,'','','product','red',[],true,null,false];let slot=0,notices=0,server=view;const calls=[];
+ const hooks={useState(initial){const i=slot++;if(!(i in states))states[i]=typeof initial==='function'?initial():initial;return[states[i],value=>states[i]=typeof value==='function'?value(states[i]):value];},useEffect(){},useCallback:fn=>fn,useRef:value=>({current:value}),useId:()=> 'unreadable-save'};
+ const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async(url,init={})=>{
+  calls.push({url,init});if(init.method==='PUT'){const body=JSON.parse(init.body);assert.equal(body.expectedRevision,view.revision);assert.equal(body.expectedInputFingerprint,view.inputFingerprint);assert.deepEqual(body.changes,edits);server=acknowledgedView(view,body.changes);return new Response('<html>Temporary upstream failure</html>',{status:503,headers:{'content-type':'text/html'}});}return Response.json(server);
+ }});
+ const walk=value=>Array.isArray(value)?value.flatMap(walk):value&&typeof value==='object'?[value,...walk(value.props?.children)]:[];
+ const render=()=>{slot=0;const wrapper=loaded.QuotationFieldsEditor({productId:'p1',onSaved(){notices++;}});return walk(wrapper.type(wrapper.props));};
+ const save=render().find(node=>node.type==='button'&&String(node.props.children).startsWith('견적 입력 저장'));assert.equal(save.props.disabled,false);save.props.onClick();
+ for(let i=0;i<8;i++)await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(calls.length,1);assert.equal(calls[0].init.method,'PUT');assert.equal(notices,0);assert.equal(states[0],view);assert.deepEqual(states[1],edits);assert.equal(states[4],false);
+ assert.match(states[5],/저장 완료 여부를 확인하지 못했습니다/);assert.match(states[5],/중복 저장 전에.*입력 버리고 저장본 불러오기/);assert.doesNotMatch(states[5],/Unexpected|<html>|Temporary/);assert.equal(states[6],'');
+ assert.equal(server.overrides.options.red.brand,'검토한 새 브랜드');assert.equal(server.overrides.common.manufacturer,'');assert.equal(JSON.stringify(view),before);
+ const reload=render().find(node=>node.type==='button'&&node.props.children==='입력 버리고 저장본 불러오기');assert.equal(reload.props.disabled,false);reload.props.onClick();
+ for(let i=0;i<8;i++)await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(calls.length,2);assert.equal(calls[1].init.method,undefined);assert.equal(calls.filter(call=>call.init.method==='PUT').length,1);assert.equal(notices,0);assert.equal(states[1].length,0);assert.equal(JSON.stringify(states[0]),JSON.stringify(server));assert.match(states[6],/저장본을 불러왔습니다/);
+});
+
+test('unreadable quotation GET reports a read failure while preserving the saved view and every manual draft',async()=>{
+ for(const reply of [{status:503,body:'<html>Service unavailable</html>'},{status:200,body:'{"resolved":'}]){
+  const view=fixture(),edits=[change('brand','보존할 직접 입력','red'),change('manufacturer','')],states=[view,edits,[],false,false,'','','product','red',[],true,null,false],effects=[];let slot=0,notices=0;const calls=[];
+  const hooks={useState(initial){const i=slot++;if(!(i in states))states[i]=typeof initial==='function'?initial():initial;return[states[i],value=>states[i]=typeof value==='function'?value(states[i]):value];},useEffect(fn){if(String(fn).includes('explicitRefreshAction.current = explicitRefreshBlocked'))effects.push(fn);},useCallback:fn=>fn,useRef:value=>({current:value}),useId:()=> 'unreadable-read'};
+  const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async(url,init={})=>{calls.push({url,init});return new Response(reply.body,{status:reply.status});}});
+  const wrapper=loaded.QuotationFieldsEditor({productId:'p1',onSaved(){notices++;}}),tree=wrapper.type(wrapper.props);effects.splice(0).forEach(effect=>effect());
+  const walk=value=>Array.isArray(value)?value.flatMap(walk):value&&typeof value==='object'?[value,...walk(value.props?.children)]:[];
+  const reload=walk(tree).find(node=>node.type==='button'&&node.props.children==='기본값 다시 반영');assert.equal(reload.props.disabled,false);reload.props.onClick();
+  for(let i=0;i<8;i++)await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(calls.length,1);assert.equal(calls[0].init.method,undefined);assert.equal(notices,0);assert.equal(states[0],view);assert.deepEqual(states[1],edits);assert.equal(states[3],false);
+  assert.match(states[5],/견적 입력 자료를 불러오지 못했습니다.*다시 조회/);assert.doesNotMatch(states[5],/저장 완료|Unexpected|<html>|Service unavailable/);assert.equal(states[6],'');
+ }
+});
+
 test('rendered editor has five groups, marks schema uncertainty, marks observed defaults as reviewable and escapes manual HTML', () => {
   const view = fixture();
   const start = renderEditor(view);

@@ -12,6 +12,7 @@ import { applyStageTwoMsrp, stageTwoMsrpEdits } from '@/app/stage-two-msrp';
 import { quotationPriceTargets } from '@/app/quotation-price-targets';
 import { resolveOptionPricePolicy } from '@/app/product-options';
 import { findProduct } from '@/db/queries';
+import {readQuotationFieldsForRequest,quotationFieldsProfileSelection as profileSelection} from '@/app/quotation-fields-read';
 
 type Context = { params: Promise<{ id: string }> };
 const json = (value: unknown, status = 200) => NextResponse.json(value, { status, headers: { 'cache-control': 'no-store' } });
@@ -21,11 +22,6 @@ async function packagingDraftActor(owner:string){
  if(!company||!user?.membership||user.userId!==owner||user.membership.id!==owner||!['admin','member'].includes(user.membership.role))throw new FieldsError('승인된 현재 회사에서 포장 초안을 저장해주세요.',403);
  return{email:user.membership.email.trim().toLowerCase(),role:user.membership.role,companyCode:company.code,companyName:company.name};
 }
-function profileSelection(request: Request) {
-  const value = new URL(request.url).searchParams.get('profileId');
-  if (value !== null && !/^[a-zA-Z0-9_-]{1,100}$/.test(value)) throw new FieldsError('카테고리 프로필 선택을 확인해주세요.', 400);
-  return value;
-}
 function failure(error: unknown) {
   if (error instanceof PublicDetailError) return json({ error: error.message }, error.status);
   if (error instanceof FieldsError) return json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, error.status);
@@ -33,11 +29,8 @@ function failure(error: unknown) {
   return json({ error: '견적서 자동 입력 자료와 수정값을 읽거나 저장하지 못했습니다.' }, 503);
 }
 export async function GET(request: Request, context: Context) {
-  if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return json({ error: '운영 인증 연결 후 견적서를 편집할 수 있습니다.' }, 503);
-  try {
-    const owner = await getWorkspaceOwnerId(); const { id } = await context.params;
-    return json((await stableView(owner, id, profileSelection(request))).view);
-  } catch (error) { return failure(error); }
+  try { return json(await readQuotationFieldsForRequest(request,context)); }
+  catch (error) { return failure(error); }
 }
 export async function PUT(request: Request, context: Context) {
   if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return json({ error: '운영 인증 연결 후 견적서를 편집할 수 있습니다.' }, 503);

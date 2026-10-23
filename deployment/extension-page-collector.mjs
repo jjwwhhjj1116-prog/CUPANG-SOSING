@@ -1,8 +1,9 @@
-import {extractPageSource,pageSourceUrl,readPageSourceDomOptions,readPageSourceDomFacts,readPageSourceElementImage} from '../extensions/supplier-hub/page-source.mjs';
+import {extractPageSource,pageSourceUrl,readPageSourceDomOptions,readPageSourceDomFacts,readPageSourceElementImage,readPageSourceDescriptionReference,validatePageSourceForDelivery} from '../extensions/supplier-hub/page-source.mjs';
 import {waitForPageDomDetails} from '../extensions/supplier-hub/page-dom-details.mjs';
+import {readProductSectionLinks} from '../extensions/supplier-hub/page-dom-sections.mjs';
 // This identifies the injected script itself, even when an older open page
 // outlives an extension update. The runtime manifest is not that proof.
-const COLLECTOR_SCRIPT_VERSION='2.1.24';
+const COLLECTOR_SCRIPT_VERSION='2.1.25';
 const COLLECTOR_HOST_ID='yoofam-page-collector',COLLECTOR_OWNER='yoofam-studio';
 const OWNER_ATTRIBUTE='data-yoofam-collector-owner',VERSION_ATTRIBUTE='data-yoofam-collector-version',LEASE_ATTRIBUTE='data-yoofam-collector-capture';
 const CAPTURE_LEASE_MS=60000;
@@ -79,7 +80,7 @@ function installPageCollector(){
    assertActive();
    const before=pageSourceUrl(location.href).sourceUrl;
    if(retrySnapshot&&retrySnapshot.sourceUrl!==before){retrySnapshot=null;throw Error('상품 페이지가 변경되었습니다. 이전 보관본은 확장에 유지됩니다. 현재 상품은 아직 수집하지 않았습니다. 상품 수집 버튼을 다시 눌러주세요.');}
-   let snapshot=retrySnapshot;
+   let snapshot=retrySnapshot,sectionNote='',descriptionNote='';
    if(!snapshot){
     const ready=waitForPageDomDetails(document,before,{assertCurrent:()=>{assertActive();if(pageSourceUrl(location.href).sourceUrl!==before)throw Error('상품 페이지가 변경되었습니다. 다시 수집해주세요.');}});
     assertActive();
@@ -87,13 +88,30 @@ function installPageCollector(){
     assertActive();
     const text=selector=>document.querySelector(selector)?.textContent?.trim()??'';
     const urls=selector=>[...document.querySelectorAll(selector)].slice(0,200).map(node=>readPageSourceElementImage(node,{preferDataSource:true})).filter(Boolean);
-    const scripts=[];let size=0;for(const script of document.scripts){const raw=script.textContent??'';if(!/"(?:skuModel|subject|offerTitle|offerSubject|productTitle|productName|offerBaseInfo|tempModel|offerImgList|mainImageList|propsList)"\s*:/.test(raw))continue;size+=raw.length;if(size>4*1024*1024)throw Error('상품 데이터가 수집 크기를 초과했습니다.');scripts.push(raw);}
+    const scripts=[],descriptionScripts=[];let size=0;for(const script of document.scripts){const raw=script.textContent??'',sourceData=/"(?:skuModel|subject|offerTitle|offerSubject|productTitle|productName|offerBaseInfo|tempModel|offerImgList|mainImageList|propsList)"\s*:/.test(raw),descriptionData=/"detailUrl"\s*:/.test(raw);if(!sourceData&&!descriptionData)continue;size+=raw.length;if(size>4*1024*1024)throw Error('상품 데이터가 수집 크기를 초과했습니다.');if(sourceData)scripts.push(raw);if(descriptionData)descriptionScripts.push(raw);}
     const productTitle=text('h1.d-title,.detail-title h1,.offer-title,[data-module-name="title"] h1,[data-plg-name="title"] h1');
     snapshot=extractPageSource({sourceUrl:before,scripts,domOptions:readPageSourceDomOptions(document,before,scripts),domFacts:readPageSourceDomFacts(document,before,scripts),title:productTitle||document.querySelector('meta[property="og:title"]')?.content||document.title,
      description:detail.description,
      gallery:urls('.detail-gallery img,.gallery img,[class*="gallery"] img'),detailImages:detail.detailImages,
      priceText:text('.price-container')||text('[class*="price-module"]')||text('[class*="price-component"]'),
      minimumOrderText:text('.price-container')||text('[class*="price-module"]')||text('[class*="price-component"]')});
+    const sections=readProductSectionLinks(document).diagnostics;
+    sectionNote=`현재 문서 영역: 탭 ${sections.tabCount}개 · 상품정보 탭 ${sections.knownTabCount}개 · 본문 패널 ${sections.panelCount}개 · 연결 확인 ${sections.linkedKnownPanelCount}개 · 연결 미확인 ${sections.unlinkedKnownTabCount}개.`;
+    if(!snapshot.images.some(image=>image.role==='detail')){
+     let reference=null;try{reference=readPageSourceDescriptionReference(before,descriptionScripts);}catch{descriptionNote='상세문서 연결: 현재 상품과 일치하는 원문을 확인하지 못했습니다.';}
+     if(reference){
+      assertActive();
+      const descriptionResult=await chrome.runtime.sendMessage({type:'YOOFAM_READ_PAGE_DESCRIPTION',sourceUrl:before});
+      assertActive();if(pageSourceUrl(location.href).sourceUrl!==before)throw Error('상품 페이지가 변경되었습니다. 다시 수집해주세요.');
+      if(descriptionResult?.ok===true&&descriptionResult.available===true){
+       if(descriptionResult.sourceUrl!==before||descriptionResult.offerId!==snapshot.offerId||!Array.isArray(descriptionResult.detailImages)||!descriptionResult.detailImages.length||descriptionResult.detailImages.length>80)throw Error('상세문서 응답이 현재 상품과 다릅니다.');
+       const known=new Set(snapshot.images.map(image=>image.url)),images=[...snapshot.images];
+       for(const url of descriptionResult.detailImages){if(typeof url!=='string')throw Error('상세문서 이미지 응답을 확인하지 못했습니다.');if(!known.has(url)){images.push({url,role:'detail'});known.add(url);}}
+       snapshot=validatePageSourceForDelivery({...snapshot,images});
+       descriptionNote='상세문서 연결: 현재 상품의 상세사진을 확인했습니다.';
+      }else descriptionNote='상세문서 연결: 원문을 확인하지 못했습니다. 현재 본문에서 읽은 자료만 보관합니다.';
+     }else if(!descriptionNote)descriptionNote='상세문서 연결: 현재 상품에 연결된 주소가 확인되지 않았습니다.';
+    }
    }
    assertActive();
    if(pageSourceUrl(location.href).sourceUrl!==before)throw Error('상품 페이지가 변경되었습니다. 다시 수집해주세요.');
@@ -109,7 +127,7 @@ function installPageCollector(){
     const receiptSummary=storedReceiptSummary(result,snapshot),savedDetail=receiptSummary??'서버 수집본 상세 미확인. 앱 목록에서 저장본을 확인해주세요.';
     retrySnapshot=null;
     if(result.pendingSnapshotReplayed===true&&result.newCaptureStored===false){showStatus('이전에 전송 확인을 받지 못한 수집본의 저장을 확인했습니다. 방금 읽은 새 상품정보는 아직 저장하지 않았습니다. ‘현재 상품 다시 수집’을 한 번 눌러 새 수집본으로 보관하세요. 기존 작업과 이전 검토값은 유지됩니다. '+savedDetail);button.textContent='현재 상품 다시 수집';}
-    else{showStatus((receiptSummary?(result.duplicate===true?'이미 수집함에 담긴 원문과 검토 내용을 유지했습니다. ':'YOOFAM 스튜디오 AI상품등록 목록에 담았습니다. 앱에서 카테고리를 선택하고 초안을 작성하세요. '):'앱 저장 확인 응답을 받았습니다. ')+savedDetail+' '+(receiptSummary?'':'현재 페이지 읽기 결과 · 서버 저장본의 항목 수는 미확인. ')+captureSummary(snapshot));button.textContent='수집 완료';}
+    else{showStatus((receiptSummary?(result.duplicate===true?'이미 수집함에 담긴 원문과 검토 내용을 유지했습니다. ':'YOOFAM 스튜디오 AI상품등록 목록에 담았습니다. 앱에서 카테고리를 선택하고 초안을 작성하세요. '):'앱 저장 확인 응답을 받았습니다. ')+savedDetail+' '+(receiptSummary?'':'현재 페이지 읽기 결과 · 서버 저장본의 항목 수는 미확인. ')+captureSummary(snapshot)+' '+sectionNote+' '+descriptionNote);button.textContent='수집 완료';}
    }else if(result.delivered===false){
     // Keep the first click's payload even if the visible page data changes.
     retrySnapshot=snapshot;showStatus((result.pendingSnapshotReplayed===true&&result.newCaptureStored===false?'이전에 보관한 수집본의 전송 확인을 다시 기다리고 있습니다. 방금 읽은 새 상품정보는 아직 저장하지 않았습니다. ':'확장에 보관했습니다. 앱 수집함의 저장을 확인하지 못했습니다. ')+deliveryMessage+' 같은 창의 YOOFAM 앱에서 상태를 확인한 뒤 이 버튼으로 다시 시도하거나 수집함에서 불러오세요.');button.textContent='앱 전송 다시 시도';

@@ -4,7 +4,7 @@ import {apiFixture,companies} from './helpers/supplier-hub-single-projection.mjs
 import {aiFixture} from './helpers/quotation-ai.mjs';
 const json=async(response,status=200)=>{const body=await response.json();assert.equal(response.status,status,JSON.stringify(body));return body;};
 const qwen=packages=>({choices:[{index:0,finish_reason:'stop',message:{role:'assistant',content:JSON.stringify({packages})}}]});
-async function fixture(){const f=await apiFixture(companies[0],aiFixture({company:companies[0]}).snapshot),calls=[];
+async function fixture(company=companies[0]){const f=await apiFixture(company,aiFixture({company}).snapshot),calls=[];
  f.h.bindings.SOURCEFLOW_QUOTATION_AI_PROVIDER='workers-ai';f.h.bindings.SOURCEFLOW_QUOTATION_AI_FREE_ONLY='true';
  f.h.bindings.AI.run=async(model,input)=>{calls.push({model,input});const source=JSON.parse(input.messages[1].content.slice(0,-'\n/no_think'.length));return qwen(source.packages.map(({index})=>({index,weightG:40,widthMm:60,lengthMm:80,heightMm:15})));};
  const read=()=>f.h.route(f.base+'/quotation-fields'+f.query),view=await json(await read());
@@ -23,6 +23,19 @@ test('source10g is retained across actual route while only dimensions are drafte
  const f=await fixture();try{f.mutateOptions(options=>{options.rows[0].packagedWeightG=10;options.rows[0].provenance.packagedWeightG='collected';options.rows[0].packagingUnitsPerPack=1;});
   const view=await json(await f.read()),state=f.state(),result=await json(await f.request({...f.body,expectedInputFingerprint:view.inputFingerprint}));
   assert.equal(result.proposals.length,1);assert.equal(result.proposals[0].value,'60*80*15');assert.equal(result.preserved[0].value,'10');assert.equal(f.state(),state);
+ }finally{f.close();}
+});
+for(const company of companies)test(`${company.code}: sealed common10g is protected and supplied as reviewed context to the actual size-only draft route`,async()=>{
+ const f=await fixture(company);try{
+  const field=f.view.resolved.schema.fields.find(item=>item.hubInput==='packagedWeightG');assert.ok(field);
+  const saved=await json(await f.h.route(f.base+'/quotation-fields'+f.query,{method:'PUT',body:{expectedRevision:f.view.revision,expectedInputFingerprint:f.view.inputFingerprint,changes:[{optionId:null,fieldKey:field.id,value:'10'}]}}));
+  const view=await json(await f.read()),before=f.state(),result=await json(await f.request({...f.body,expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint}));
+  assert.equal(result.proposals.length,1);assert.ok(result.proposals.every(item=>item.value==='60*80*15'&&item.origin==='ai-estimate'&&item.measured===false));
+  assert.equal(result.preserved[0].value,'10');assert.equal(f.calls.length,1);assert.equal(f.state(),before);
+  const source=JSON.parse(f.calls[0].input.messages[1].content.slice(0,-'\n/no_think'.length));
+  assert.deepEqual(source.packages[0].collectedPackage,{});assert.equal(Object.hasOwn(source.packages[0],'shippingContext'),false);
+  assert.deepEqual(source.packages[0].reviewedPackage.weight,{origin:'saved-quotation',source:'manual-common',measured:false,values:{weightG:10}});
+  const readback=await json(await f.read());assert.equal(readback.revision,saved.revision);assert.equal(readback.resolved.rows.find(row=>row.optionId==='synthetic-one').fields[field.id].value,'10');
  }finally{f.close();}
 });
 test('unconfigured/free-unconfirmed, quota-limit and uncertain model delivery use marked fallback without retry',async()=>{

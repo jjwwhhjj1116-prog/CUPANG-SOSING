@@ -174,6 +174,56 @@ function initialDataLiterals(code){
  }
  return values;
 }
+/** A detail URL is authoritative only in a literal primary product record.
+ * Do not recursively search recommendation/shop objects, evaluate assignments,
+ * or infer a CDN token from an offer number. The caller validates the URL and
+ * independently binds this read to the current browser document. */
+export function readPageSourceDescriptionReference(sourceUrl,scripts){
+ const {offerId}=pageSourceUrl(sourceUrl);
+ if(!Array.isArray(scripts)||scripts.length>100||scripts.some(text=>typeof text!=='string')||scripts.reduce((size,text)=>size+text.length,0)>4*1024*1024)throw Error('상세 원문 연결의 크기를 확인하지 못했습니다.');
+ const references=[];
+ const fail=()=>{throw Error('현재 상품의 상세 원문 연결을 확인하지 못했습니다.');};
+ const identity=(node,required=true)=>{
+  if(!object(node?.value))return fail();
+  let found=false;
+  for(const key of ['offerId','productId']){
+   const field=literalChild(node,key);if(!field)continue;found=true;
+   if(!(typeof field.value==='string'&&field.value===offerId||typeof field.value==='number'&&Number.isSafeInteger(field.value)&&String(field.value)===offerId))fail();
+  }
+  if(required&&!found)fail();
+ };
+ const publicRecord=node=>{
+  for(const key of ['isPicPrivate','isPricePrivate','isDetailForbidden']){const field=literalChild(node,key);if(field&&field.value!==false)fail();}
+ };
+ const append=node=>{
+  const field=literalChild(node,'detailUrl');if(!field)return;
+  identity(node);publicRecord(node);
+  if(typeof field.value!=='string'||!field.value||field.value.length>2048||/[\u0000-\u0020\u007f]/u.test(field.value))fail();
+  references.push(field.value);if(references.length>1)fail();
+ };
+ for(const text of scripts){
+  const trimmed=text.trim(),roots=[];
+  if(trimmed.startsWith('{')){try{const value=JSON.parse(trimmed);if(object(value))roots.push({value,literal:trimmed});}catch{continue;}}
+  else roots.push(...initialDataLiterals(text));
+  for(const root of roots){
+   const fields=ownLiteralFields(root);
+   // Direct primary JSON requires its own current identity and SKU sibling.
+   if(fields.has('detailUrl')&&fields.has('skuModel')){
+    const model=literalChild(root,'skuModel',true);identity(root);identity(model,false);publicRecord(model);
+    if(!object(model.value.skuInfoMap)&&!Array.isArray(model.value.skuProps))fail();
+    append(root);
+   }
+   // This is a fixed known primary slot, never a descendant/key search.
+   if(!fields.has('globalData'))continue;
+   const global=literalChild(root,'globalData',true);if(!object(global.value))fail();
+   if(!ownLiteralFields(global).has('detailModel'))continue;
+   identity(literalChild(global,'offerBaseInfo',true));identity(literalChild(global,'tempModel',true));publicRecord(global);
+   const signs=literalChild(global,'offerSigns');if(signs){if(!object(signs.value))fail();const forbidden=literalChild(signs,'isDetailForbidden');if(forbidden&&forbidden.value!==false)fail();}
+   append(literalChild(global,'detailModel',true));
+  }
+ }
+ return references.length?{sourceUrl:pageSourceUrl(sourceUrl).sourceUrl,offerId,detailUrl:references[0]}:null;
+}
 /** Accept direct current-offer propsList containers, and the exact recorded
  * product-attributes component of a fully bound __INIT_DATA envelope. Arbitrary
  * ancestors never authorize nested shop/recommendation attributes. */
