@@ -5,6 +5,7 @@ import {build} from 'esbuild';
 import {fileURLToPath} from 'node:url';
 import vm from 'node:vm';
 import {readPageDomDetails,waitForPageDomDetails} from '../extensions/supplier-hub/page-dom-details.mjs';
+import {pageCollectorDom} from './helpers/page-collector-dom.mjs';
 
 const sourceUrl='https://detail.1688.com/offer/700000000795.html',cdn=name=>`https://cbu01.alicdn.com/synthetic-details-${name}.jpg`;
 function dom(html){
@@ -121,11 +122,10 @@ test('a changed offer during passive settling aborts capture without reading fra
 
 const bundled=await build({entryPoints:[fileURLToPath(new URL('../deployment/extension-page-collector.mjs',import.meta.url))],bundle:true,write:false,format:'iife',platform:'browser',target:'chrome120'});
 test('the actual trusted entry waits for seven translated-heading description images and sends one snapshot without any source request',async()=>{
- let description=dom('<div><div><font><font>제품 상세 정보</font></font></div><p>상세 표시 중</p></div>'),ticks=0;const nodes=[],messages=[];
- const document={title:'合成后跟保护贴',scripts:[{textContent:JSON.stringify({subject:'合成后跟保护贴',skuModel:{offerId:'700000000795',skuInfoMap:{black:{skuId:'synthetic-black',specAttrs:'黑色',price:'0.28'}}},offerImgList:[cdn('main')]})}],
-  getElementById:()=>null,documentElement:{append(){}},querySelectorAll:selector=>description.querySelectorAll(selector),
-  querySelector(selector){return selector==='.price-container'?{textContent:'¥0.28 1件起批'}:description.querySelector(selector);},
-  createElement(tag){const node={tag,id:'',style:{},textContent:'',hidden:false,disabled:false,setAttribute(){},append(){},attachShadow(){return{append(){}};},addEventListener(type,handler){if(type==='click')node.click=handler;}};nodes.push(node);return node;}};
+ let description=dom('<div><div><font><font>제품 상세 정보</font></font></div><p>상세 표시 중</p></div>'),ticks=0;const messages=[];
+ const {document,elements:nodes}=pageCollectorDom({title:'合成后跟保护贴',scripts:[{textContent:JSON.stringify({subject:'合成后跟保护贴',skuModel:{offerId:'700000000795',skuInfoMap:{black:{skuId:'synthetic-black',specAttrs:'黑色',price:'0.28'}}},offerImgList:[cdn('main')]})}],
+  querySelectorAll:selector=>description.querySelectorAll(selector),
+  querySelector(selector){return selector==='.price-container'?{textContent:'¥0.28 1件起批'}:description.querySelector(selector);}});
  const window={};window.top=window;
  vm.runInNewContext(bundled.outputFiles[0].text,{window,document,location:{href:sourceUrl},URL,Date,Error,TextEncoder,
   setTimeout(callback,ms){assert.equal(ms,250);if(++ticks===2)description=dom('<div><div><font><font>제품 상세 정보</font></font></div><p>硅胶后跟保护贴中文原文</p>'+Array.from({length:7},(_,index)=>img('detail-'+index,'data-original')).join('')+'</div><div><div>추천 상품</div>'+img('entry-recommendation')+'</div>');queueMicrotask(callback);return ticks;},

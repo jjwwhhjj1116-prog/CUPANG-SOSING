@@ -52,9 +52,24 @@ for(const company of companies)test(company.code+': exact pending retry shares o
 
 test('an exact retry during login readiness waits for the original receiver and creates no second operation',async()=>{
  const h=harness({hold:'save'}),source=snapshot();h.ready=false;
- const first=h.save(source);await until(()=>h.count('query')>1);const retry=h.save(structuredClone(source));
- await turn();assert.equal(h.count('store:put'),0);h.ready=true;await h.reached.promise;h.gate.resolve();
- const [one,two]=await Promise.all([first,retry]);assert.deepEqual(two,one);assert.equal(two.delivered,true);assert.equal(h.count('store:put'),1);assert.equal(h.count('YOOFAM_SAVE_SOURCE_CAPTURE'),1);
+ const first=h.save(source);await until(()=>h.count('query')>1);
+ // A generic event-loop turn does not wait for native SHA-256. Under load the
+ // old fixture could finish the first save before the retry reached pending's
+ // lookup, accidentally testing a new completed-operation click instead.
+ const subtle=crypto.subtle,digest=subtle.digest,descriptor=Object.getOwnPropertyDescriptor(subtle,'digest'),fingerprintReady=deferred(),fingerprintGate=deferred();
+ Object.defineProperty(subtle,'digest',{configurable:true,writable:true,value:async(...args)=>{
+  const value=await Reflect.apply(digest,subtle,args);fingerprintReady.resolve();await fingerprintGate.promise;return value;
+ }});
+ const retry=h.save(structuredClone(source));
+ try{
+  await fingerprintReady.promise;assert.equal(h.count('store:put'),0);
+  fingerprintGate.resolve();await turn();assert.equal(h.count('store:put'),0,'the exact retry reaches pending while login readiness is still held');
+  h.ready=true;await h.reached.promise;h.gate.resolve();
+  const [one,two]=await Promise.all([first,retry]);assert.deepEqual(two,one);assert.equal(two.delivered,true);assert.equal(h.count('store:put'),1);assert.equal(h.count('YOOFAM_SAVE_SOURCE_CAPTURE'),1);
+ }finally{
+  fingerprintGate.resolve();h.ready=true;h.gate.resolve();
+  if(descriptor)Object.defineProperty(subtle,'digest',descriptor);else delete subtle.digest;
+ }
 });
 
 for(const [label,mutate] of [

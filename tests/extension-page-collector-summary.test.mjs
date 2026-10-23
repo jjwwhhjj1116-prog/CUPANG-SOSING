@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {build} from 'esbuild';
 import {fileURLToPath} from 'node:url';
+import {pageCollectorDom} from './helpers/page-collector-dom.mjs';
 
 // Exercise the production button, delivery branches and status rendering. The
 // parser is separately tested against DOM fixtures; no page/network is opened.
@@ -21,7 +22,7 @@ const source=()=>({format:'yoofam-page-source-v1',sourceUrl,offerId:'88603409863
  attributes:[],options:[{key:'black',name:'검정',supplierSku:'synthetic-black',unitPriceCny:0.28,currency:'CNY',minimumOrder:1,stock:1,imageUrl:null}],
  images:[{url:'https://cbu01.alicdn.com/synthetic-main.png',role:'main'}]});
 function harness(snapshot=source(),response=()=>({ok:true,delivered:true})){
- const elements=[],messages=[],document={scripts:[],title:snapshot.title,getElementById:()=>null,documentElement:{append(){}},querySelector:()=>null,querySelectorAll:()=>[],createElement(tag){const node={tag,style:{},textContent:'',disabled:false,hidden:false,title:'',setAttribute(){},append(){},attachShadow(){return {append(){}};},addEventListener(type,listener){if(type==='click')node.click=listener;}};elements.push(node);return node;}};
+ const {elements,document}=pageCollectorDom({title:snapshot.title}),messages=[];
  const window={};window.top=window;
  const context={window,document,location:{href:sourceUrl},URL,Date,Error,TextEncoder,captureFixture:snapshot,
   chrome:{runtime:{getManifest(){assert.fail('Manifest version cannot identify the injected collector script');},sendMessage:async message=>{messages.push(structuredClone(message));return response(messages.length,message);}}},
@@ -32,10 +33,10 @@ function harness(snapshot=source(),response=()=>({ok:true,delivered:true})){
 
 test('actual script marker is visible and a delivered title/options capture truthfully warns when all optional sections are absent',async()=>{
  const snapshot=source(),original=JSON.stringify(snapshot),h=harness(snapshot);
- assert.equal(h.button.title,'YOOFAM 상품 수집기 2.1.23');await h.button.click({isTrusted:false});assert.equal(h.messages.length,0);
+ assert.equal(h.button.title,'YOOFAM 상품 수집기 2.1.24');await h.button.click({isTrusted:false});assert.equal(h.messages.length,0);
  await h.button.click({isTrusted:true});
  assert.equal(h.button.textContent,'수집 완료');assert.equal(h.button.disabled,false);assert.equal(h.messages.length,1);
- assert.match(h.status.textContent,/^수집기 2\.1\.23 · /);assert.match(h.status.textContent,/AI상품등록 목록에 담았습니다/);
+ assert.match(h.status.textContent,/^수집기 2\.1\.24 · /);assert.match(h.status.textContent,/서버 수집본 상세 미확인/);assert.doesNotMatch(h.status.textContent,/AI상품등록 목록에 담았습니다/);
  assert.match(h.status.textContent,/제품속성 0개 · 포장정보 0\/1옵션 · 상세이미지 0장/);
  assert.match(h.status.textContent,/미수집·미확인: 제품속성 · 포장정보 · 상세이미지/);assert.match(h.status.textContent,/누락 항목을 자동으로 채우지 않았습니다/);
  assert.equal(JSON.stringify(snapshot),original);assert.deepEqual(h.messages[0],{type:'YOOFAM_SAVE_PAGE_SOURCE',snapshot});
@@ -57,7 +58,7 @@ test('a fully populated saved capture has a summary without claiming missing sec
  const snapshot=source();snapshot.attributes=[{name:'재질',value:'면'}];snapshot.options[0].packaging={source:'package-table',weightG:10,widthMm:200,lengthMm:300,heightMm:100};
  snapshot.images.push({url:'https://cbu01.alicdn.com/synthetic-detail.png',role:'detail'});
  const h=harness(snapshot,()=>({ok:true,delivered:true,duplicate:true}));await h.button.click({isTrusted:true});
- assert.match(h.status.textContent,/담긴 원문과 검토 내용을 유지/);assert.match(h.status.textContent,/제품속성 1개 · 포장정보 1\/1옵션 · 상세이미지 1장/);
+ assert.match(h.status.textContent,/서버 수집본 상세 미확인/);assert.match(h.status.textContent,/제품속성 1개 · 포장정보 1\/1옵션 · 상세이미지 1장/);
  assert.doesNotMatch(h.status.textContent,/미수집·미확인|누락 항목/);assert.equal(h.button.textContent,'수집 완료');
 });
 
@@ -73,13 +74,37 @@ test('an uncertain app delivery stays uncertain; retry statistics belong to the 
 for(const delivered of [true,false])test(`old pending replay (${delivered}) never labels freshly read section counts as saved`,async()=>{
  const snapshot=source();snapshot.attributes=[{name:'새 원문',value:'미저장'}];
  const h=harness(snapshot,()=>({ok:true,delivered,duplicate:true,pendingSnapshotReplayed:true,newCaptureStored:false,message:'이전 수집본 확인'}));
- await h.button.click({isTrusted:true});assert.match(h.status.textContent,/수집기 2\.1\.23/);assert.match(h.status.textContent,/방금 읽은 새 상품정보는 아직 저장하지 않았습니다/);
+ await h.button.click({isTrusted:true});assert.match(h.status.textContent,/수집기 2\.1\.24/);assert.match(h.status.textContent,/방금 읽은 새 상품정보는 아직 저장하지 않았습니다/);
  assert.doesNotMatch(h.status.textContent,/수집 내용:|제품속성 1개|AI상품등록 목록에 담았습니다/);assert.notEqual(h.button.textContent,'수집 완료');assert.equal(h.messages.length,1);
 });
 
 test('missing or rejected app ACK never acquires a completion summary or success label',async()=>{
  for(const result of [{ok:true},{ok:false,error:'앱 저장 실패'}]){
   const h=harness(source(),()=>result);await h.button.click({isTrusted:true});assert.equal(h.messages.length,1);
-  assert.match(h.status.textContent,/^수집기 2\.1\.23 · /);assert.doesNotMatch(h.status.textContent,/수집 내용:|AI상품등록 목록에 담았습니다/);assert.notEqual(h.button.textContent,'수집 완료');
+  assert.match(h.status.textContent,/^수집기 2\.1\.24 · /);assert.doesNotMatch(h.status.textContent,/수집 내용:|AI상품등록 목록에 담았습니다/);assert.notEqual(h.button.textContent,'수집 완료');
  }
+});
+
+const acknowledged=(snapshot,patch={})=>({ok:true,delivered:true,ownerId:'owner',company:{code:'A01464742',name:'와이홉'},fingerprint:'a'.repeat(64),
+ storedReceipt:{ownerId:'owner',company:{code:'A01464742',name:'와이홉'},sourceUrl:snapshot.sourceUrl,fingerprint:'a'.repeat(64),storedId:'00000000-0000-4000-8000-000000000024',captureVersion:3,receivedAt:'2026-10-23T01:00:01.000Z',collectedAt:snapshot.collectedAt,...patch}});
+test('only a validated server receipt shows capture version and actual received/source timestamps in Korean KST without private IDs',async()=>{
+ const snapshot=source(),h=harness(snapshot,()=>acknowledged(snapshot));await h.button.click({isTrusted:true});
+ assert.equal(h.button.textContent,'수집 완료');assert.match(h.status.textContent,/AI상품등록 목록에 담았습니다/);assert.match(h.status.textContent,/서버 수집본 3/);
+ assert.match(h.status.textContent,/저장 2026\. 10\. 23\. 10:00:01 \(KST\)/);assert.match(h.status.textContent,/원문 수집 2026\. 10\. 23\. 10:00:00 \(KST\)/);
+ assert.doesNotMatch(h.status.textContent,/00000000-0000|a{64}|서버 수집본 상세 미확인/);
+});
+
+test('old pending replay displays its actually acknowledged old capture times, never the fresh page statistics/time',async()=>{
+ const snapshot=source(),h=harness(snapshot,()=>({...acknowledged(snapshot,{collectedAt:'2026-10-23T00:00:00.000Z'}),pendingSnapshotReplayed:true,newCaptureStored:false,duplicate:true}));
+ await h.button.click({isTrusted:true});assert.equal(h.button.textContent,'현재 상품 다시 수집');assert.match(h.status.textContent,/서버 수집본 3/);assert.match(h.status.textContent,/원문 수집 2026\. 10\. 23\. 09:00:00 \(KST\)/);
+ assert.doesNotMatch(h.status.textContent,/수집 내용:|10:00:00|AI상품등록 목록에 담았습니다/);
+});
+
+test('an advertised malformed or mismatched server receipt cannot produce a completed button or saved-current-page claim',async()=>{
+ const snapshot=source();
+ for(const patch of [{ownerId:'other'},{company:{code:'A01526306',name:'유앤채'}},{fingerprint:'b'.repeat(64)},{storedId:'invalid'},
+  {sourceUrl:sourceUrl+'?different=1'},{captureVersion:0},{captureVersion:1.5},{receivedAt:'bad'},{collectedAt:'2026-10-22T01:00:00.000Z'},{extra:true}]){
+  const h=harness(snapshot,()=>acknowledged(snapshot,patch));await h.button.click({isTrusted:true});assert.notEqual(h.button.textContent,'수집 완료');assert.match(h.status.textContent,/상세 응답이 전달한 원문과 일치하지 않습니다/);assert.doesNotMatch(h.status.textContent,/목록에 담았습니다|수집 내용:/);
+ }
+ const h=harness(snapshot,()=>({ok:true,delivered:true,storedReceipt:null}));await h.button.click({isTrusted:true});assert.notEqual(h.button.textContent,'수집 완료');
 });

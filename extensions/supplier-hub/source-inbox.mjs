@@ -83,13 +83,32 @@ async function context(api,tab){
  return {ownerId:result.ownerId,company:{code:result.company.code,name:result.company.name},origin:new URL(current.url).origin};
 }
 const same=(left,right)=>left.ownerId===right.ownerId&&left.origin===right.origin&&left.company.code===right.company.code&&left.company.name===right.company.name;
+function storedSourceReceipt(result,record){
+ if(!Object.hasOwn(result,'storedReceipt'))return undefined;
+ const receipt=result.storedReceipt,keys=['ownerId','company','sourceUrl','fingerprint','storedId','captureVersion','receivedAt','collectedAt'];
+ const fail=()=>{throw Error('실제 저장된 수집본의 확인 응답이 다릅니다. 확장 보관본은 유지됩니다.');};
+ if(!receipt||typeof receipt!=='object'||Array.isArray(receipt)||Object.keys(receipt).length!==keys.length||Object.keys(receipt).some(key=>!keys.includes(key)))return fail();
+ const timestamp=value=>{
+  if(typeof value!=='string'||value.length>40||!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(value))return null;
+  const time=Date.parse(value),canonical=value.replace(/(?:\.(\d{1,3}))?Z$/,(_match,decimal)=>'.'+(decimal||'').padEnd(3,'0')+'Z');
+  return Number.isFinite(time)&&time>0&&time<=Date.now()+60000&&new Date(time).toISOString()===canonical?time:null;
+ };
+ const received=timestamp(receipt.receivedAt),collected=timestamp(receipt.collectedAt);let source;
+ try{source=pageSourceUrl(receipt.sourceUrl);}catch{return fail();}
+ if(receipt.ownerId!==record.ownerId||!receipt.company||typeof receipt.company!=='object'||Array.isArray(receipt.company)||Object.keys(receipt.company).sort().join(',')!=='code,name'
+  ||receipt.company.code!==record.company.code||receipt.company.name!==record.company.name||source.sourceUrl!==receipt.sourceUrl||receipt.sourceUrl!==record.snapshot.sourceUrl
+  ||receipt.fingerprint!==record.fingerprint||!/^[a-f0-9-]{36}$/.test(receipt.storedId||'')||!Number.isSafeInteger(receipt.captureVersion)||receipt.captureVersion<1
+  ||received===null||collected===null||received<collected-60000||receipt.collectedAt!==record.snapshot.collectedAt)return fail();
+ return {...receipt,company:{code:receipt.company.code,name:receipt.company.name}};
+}
 async function deliver(record,tab,api,store){
  validatePageSourceForDelivery(record.snapshot);
  const before=await context(api,tab);if(!same(before,record))throw Error('수집 당시 회원·회사로 로그인한 앱에서 불러오세요.');
  const result=await api.tabs.sendMessage(tab.id,{type:'YOOFAM_SAVE_SOURCE_CAPTURE',record},{frameId:0});
  if(result?.ok!==true||result.id!==record.id||result.fingerprint!==record.fingerprint||result.ownerId!==record.ownerId||result.company?.code!==record.company.code||result.company?.name!==record.company.name)throw Error(result?.error||'웹 수집함의 저장 확인을 받지 못했습니다. 확장 보관본은 유지됩니다.');
+ const storedReceipt=storedSourceReceipt(result,record);
  if(!same(await context(api,tab),record))throw Error('저장 중 로그인 회사가 변경되었습니다. 확장 보관본은 유지됩니다.');
- await store('delete',record.id);return result;
+ await store('delete',record.id);return {...result,...(storedReceipt?{storedReceipt}:{})};
 }
 /** Called by the isolated top-frame button only. No source page read/fetch here. */
 export async function savePageSource(message,sender,api=chrome,store=sourceInboxStore,options={}){
@@ -120,7 +139,7 @@ export async function savePageSource(message,sender,api=chrome,store=sourceInbox
   // collection click can explicitly save the current page as its own version.
   const pendingSnapshotReplayed=Boolean(previous&&previous.fingerprint!==fingerprint);
   if(!previous){if(records.length>=40)throw Error('확장 수집함이 가득 찼습니다. 앱에서 보관된 상품을 불러와주세요.');await recheckReceiver(receiver,bounded);await store('put',record);}
-  try{await recheckReceiver(receiver,bounded);const result=await deliver(record,tab,bounded,store);await activateReceiver(receiver,bounded);return {ok:true,delivered:true,duplicate:result.duplicate===true,id:record.id,...(pendingSnapshotReplayed?{pendingSnapshotReplayed:true,newCaptureStored:false}:{})};}
+  try{await recheckReceiver(receiver,bounded);const result=await deliver(record,tab,bounded,store);await activateReceiver(receiver,bounded);return {ok:true,delivered:true,duplicate:result.duplicate===true,id:record.id,ownerId:record.ownerId,company:{code:record.company.code,name:record.company.name},fingerprint:record.fingerprint,...(result.storedReceipt?{storedReceipt:result.storedReceipt}:{}),...(pendingSnapshotReplayed?{pendingSnapshotReplayed:true,newCaptureStored:false}:{})};}
   catch(error){return {ok:true,delivered:false,id:record.id,message:error.message,...(pendingSnapshotReplayed?{pendingSnapshotReplayed:true,newCaptureStored:false}:{})};}
  })();pending.set(sender.tab.id,{promise:run,receiver:receiving,windowId:sender.tab.windowId,sourceUrl:snapshot.sourceUrl,offerId:snapshot.offerId,fingerprint});try{return await run;}finally{if(pending.get(sender.tab.id)?.promise===run)pending.delete(sender.tab.id);}
 }

@@ -169,6 +169,24 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
   void read(message.expected).then(respond,error=>respond({ok:false,error:error?.message||'견적서 저장본 확인 실패'}));
   return true;
 });
+function sourceStoredReceipt(result,record){
+  // Older app servers did not advertise storage diagnostics. Never invent a
+  // receipt from the echoed request identity or a local clock in that case.
+  if(!['receivedAt','collectedAt','sourceUrl'].some(key=>Object.hasOwn(result,key)))return undefined;
+  const timestamp=value=>{
+    if(typeof value!=='string'||value.length>40||!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(value))return null;
+    const time=Date.parse(value),canonical=value.replace(/(?:\.(\d{1,3}))?Z$/,(_match,decimal)=>'.'+(decimal||'').padEnd(3,'0')+'Z');
+    return Number.isFinite(time)&&time>0&&time<=Date.now()+60000&&new Date(time).toISOString()===canonical?time:null;
+  };
+  const received=timestamp(result.receivedAt),collected=timestamp(result.collectedAt);let source;
+  try{source=new URL(result.sourceUrl);}catch{throw Error('실제 저장된 수집본의 주소를 확인하지 못했습니다.');}
+  if(!/^https:\/\/detail\.1688\.com\/offer\/\d{1,20}\.html$/.test(result.sourceUrl)||source.href!==result.sourceUrl||result.sourceUrl!==record.snapshot?.sourceUrl
+    ||!/^[a-f0-9-]{36}$/.test(result.storedId||'')||result.storedFingerprint!==record.fingerprint
+    ||!Number.isSafeInteger(result.captureVersion)||result.captureVersion<1||received===null||collected===null||received<collected-60000
+    ||result.collectedAt!==record.snapshot?.collectedAt)throw Error('실제 저장된 수집본의 버전·시각·원문 확인값이 다릅니다.');
+  return {ownerId:record.ownerId,company:{code:record.company.code,name:record.company.name},sourceUrl:result.sourceUrl,fingerprint:result.storedFingerprint,
+    storedId:result.storedId,captureVersion:result.captureVersion,receivedAt:result.receivedAt,collectedAt:result.collectedAt};
+}
 async function savePageSourceInApp(record){
   if(record?.origin!==location.origin||!/^[a-f0-9-]{36}$/.test(record?.id||'')||!/^[a-f0-9]{64}$/.test(record?.fingerprint||''))throw Error('수집 원문 전달 요청을 확인해주세요.');
   const before=await readCurrentCatalogContext();
@@ -180,8 +198,9 @@ async function savePageSourceInApp(record){
     const raw=await response.text();if(raw.length>600000)throw Error('수집함 저장 응답이 너무 큽니다.');const result=JSON.parse(raw);
     if(!response.ok||result.ok!==true)throw Error(result.error||'웹 수집함 저장을 확인하지 못했습니다.');
     if(result.id!==record.id||result.fingerprint!==record.fingerprint||result.ownerId!==record.ownerId||result.company?.code!==record.company.code||result.company?.name!==record.company.name)throw Error('수집함 저장 결과가 요청과 다릅니다.');
+    const storedReceipt=sourceStoredReceipt(result,record);
     window.postMessage({channel:'YOOFAM_SOURCE_INBOX_UPDATED'},location.origin);
-    return {ok:true,id:result.id,fingerprint:result.fingerprint,ownerId:result.ownerId,company:result.company,duplicate:result.duplicate===true};
+    return {ok:true,id:result.id,fingerprint:result.fingerprint,ownerId:result.ownerId,company:result.company,duplicate:result.duplicate===true,...(storedReceipt?{storedReceipt}:{})};
   }finally{clearTimeout(timer);}
 }
 window.addEventListener('message',async event=>{

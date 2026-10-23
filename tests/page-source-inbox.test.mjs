@@ -5,12 +5,12 @@ import vm from 'node:vm';
 import {extractPageSource,validatePageSource,pageSourceIssues,pageJsonProperty} from '../extensions/supplier-hub/page-source.mjs';
 import {savePageSource,flushPageSources} from '../extensions/supplier-hub/source-inbox.mjs';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
+import {pageCollectorDom} from './helpers/page-collector-dom.mjs';
 
 const url='https://detail.1688.com/offer/700000000001.html',id='00000000-0000-4000-8000-000000000747';
 const company={code:'A01464742',name:'와이홉'},origin='http://localhost:3000';
 test('shipped page button captures only a trusted click and sends no source requests',async()=>{
- const elements=[],messages=[];const create=tag=>{const node={tag,id:'',style:{},textContent:'',hidden:false,disabled:false,setAttribute(){},append(){},attachShadow(){return {append(){}};},addEventListener(type,listener){if(type==='click')node.click=listener;}};elements.push(node);return node;};
- const document={getElementById:()=>null,createElement:create,documentElement:{append(){}},title:'合成测试商品',scripts:[{textContent:JSON.stringify({skuModel:{offerId:'700000000001',skuInfoMap:{black:{specAttrs:'黑色',skuId:'supplier-black',price:'5.3'}}},offerImgList:['https://cbu01.alicdn.com/synthetic.jpg']})}],querySelector(selector){return selector.startsWith('meta')?{content:'合成测试商品'}:selector==='.price-container'?{textContent:'¥5.30 1件起批'}:null;},querySelectorAll:()=>[]};
+ const messages=[],{document,elements}=pageCollectorDom({title:'合成测试商品',scripts:[{textContent:JSON.stringify({skuModel:{offerId:'700000000001',skuInfoMap:{black:{specAttrs:'黑色',skuId:'supplier-black',price:'5.3'}}},offerImgList:['https://cbu01.alicdn.com/synthetic.jpg']})}],querySelector(selector){return selector.startsWith('meta')?{content:'合成测试商品'}:selector==='.price-container'?{textContent:'¥5.30 1件起批'}:null;}});
  const window={};window.top=window;
  vm.runInNewContext(fs.readFileSync(new URL('../extensions/supplier-hub/page-collector.js',import.meta.url),'utf8'),{window,document,location:{href:url},URL,Date,Error,TextEncoder,chrome:{runtime:{sendMessage:async message=>{messages.push(message);return {ok:true,delivered:true};}}},fetch:()=>assert.fail('The product button must not fetch a source endpoint')});
  const button=elements.find(node=>node.tag==='button');await button.click({isTrusted:false});assert.equal(messages.length,0);

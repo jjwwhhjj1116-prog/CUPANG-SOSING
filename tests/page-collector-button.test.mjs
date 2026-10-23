@@ -2,9 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import {webcrypto} from 'node:crypto';
 import {readPageSourceElementImage} from '../extensions/supplier-hub/page-source.mjs';
 import {savePageSource} from '../extensions/supplier-hub/source-inbox.mjs';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
+import {pageCollectorDom} from './helpers/page-collector-dom.mjs';
 
 // The shipped generated button runs against an inert current-document adapter.
 // It cannot execute supplier scripts, read an iframe, or request any resource.
@@ -14,12 +16,11 @@ const cdn=name=>`https://cbu01.alicdn.com/synthetic-step769-${name}.jpg`;
 const placeholder='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
 const image=(attributes={},currentSrc=attributes.src??'')=>({currentSrc,getAttribute:name=>attributes[name]??null});
 function currentButton({gallery=[],details=[],scriptMain,deliver=async()=>({ok:true,delivered:true}),nested=false}={}){
- const elements=[],messages=[];
- const create=tag=>{const node={tag,id:'',style:{},textContent:'',hidden:false,disabled:false,setAttribute(){},append(){},attachShadow(){return {append(){}};},addEventListener(type,listener){if(type==='click')node.click=listener;}};elements.push(node);return node;};
+ const messages=[];
  const data={subject:'合成延迟图片商品',skuModel:{offerId,skuInfoMap:{black:{specAttrs:'黑色',skuId:'synthetic-black',price:'5.30'}}},...(scriptMain?{offerImgList:[scriptMain]}:{})};
- const document={getElementById:()=>null,createElement:create,documentElement:{append(){}},title:'合成延迟图片商品',scripts:[{textContent:JSON.stringify(data)}],
+ const {document,elements}=pageCollectorDom({title:'合成延迟图片商品',scripts:[{textContent:JSON.stringify(data)}],
   querySelector(selector){return selector.startsWith('meta')?{content:'合成延迟图片商品'}:selector==='.price-container'?{textContent:'¥5.30 1件起批'}:null;},
-  querySelectorAll(selector){if(selector.includes('.detail-gallery'))return gallery;if(selector.includes('#desc-lazyload-container'))return details;assert.fail(`Unexpected selector: ${selector}`);}};
+  querySelectorAll(selector){if(selector.includes('.detail-gallery'))return gallery;if(selector.includes('#desc-lazyload-container'))return selector.includes(' img')?details:[];if(selector.startsWith('h1,h2,h3,h4,h5,h6')||selector==='section,article,[role="tabpanel"]')return[];assert.fail(`Unexpected selector: ${selector}`);}});
  const window={};window.top=nested?{}:window;
  const location={href:sourceUrl};
  vm.runInNewContext(bundle,{window,document,location,URL,Date,Error,TextEncoder,
@@ -28,13 +29,19 @@ function currentButton({gallery=[],details=[],scriptMain,deliver=async()=>({ok:t
 }
 function localDelivery(h,company,{ackResult=receipt=>receipt}={}){
  const records=new Map(),receipts=[],tab={id:20,windowId:3,url:'http://localhost:3000/'};
+ const origin='http://localhost:3000',bridge={window:{addEventListener(){},postMessage(){}},location:{origin},URL,Date,Error,Response,AbortController,setTimeout,clearTimeout,TextEncoder,crypto:webcrypto,
+  chrome:{runtime:{onMessage:{addListener(){}}}},fetch:async(path,init)=>{
+   let response;
+   if(path==='/api/supplier-hub/catalog-context')response=Response.json({ownerId:'owner',company});
+   else{assert.equal(path,'/api/source-inbox');assert.equal(init.method,'POST');response=await h.load('app/api/source-inbox/route.ts').POST(new Request(origin+path,init));assert.equal(response.status,200,await response.clone().text());receipts.push(await response.clone().json());}
+   Object.defineProperty(response,'url',{value:origin+path});return response;
+  }};
+ vm.runInNewContext(fs.readFileSync(new URL('../extensions/supplier-hub/handoff-content.js',import.meta.url),'utf8'),bridge);
  const store=async(action,value)=>{if(action==='list')return [...records.values()];if(action==='put')records.set(value.id,structuredClone(value));if(action==='delete')records.delete(value);};
  const api={tabs:{query:async input=>{assert.equal(input.windowId,3);return [tab];},get:async()=>tab,sendMessage:async(_id,message)=>{
   if(message.type==='YOOFAM_READ_CATALOG_CONTEXT')return {ok:true,ownerId:'owner',company};
   assert.equal(message.type,'YOOFAM_SAVE_SOURCE_CAPTURE');const record=message.record;
-  const response=await h.load('app/api/source-inbox/route.ts').POST(new Request('http://localhost:3000/api/source-inbox',{method:'POST',headers:{'content-type':'application/json'},
-   body:JSON.stringify({expectedOwnerId:record.ownerId,expectedCompany:record.company,id:record.id,fingerprint:record.fingerprint,snapshot:record.snapshot})}));
-  assert.equal(response.status,200,await response.clone().text());const receipt=await response.json();receipts.push(receipt);return ackResult(receipt);
+  return ackResult(await bridge.savePageSourceInApp(record));
  }}};
  return {records,receipts,deliver:message=>savePageSource(message,{frameId:0,url:sourceUrl,tab:{id:21,windowId:3}},api,store)};
 }
@@ -104,7 +111,7 @@ test('a manual retry resends the first immutable capture after an uncertain loca
   await fixture.button.click({isTrusted:true});
   assert.equal(fixture.messages.length,2);assert.equal(JSON.stringify(fixture.messages[1].snapshot),original);
   assert.equal(delivery.receipts.length,2);assert.equal(delivery.receipts[1].id,receipt.id);assert.equal(delivery.receipts[1].fingerprint,receipt.fingerprint);
-  assert.equal(delivery.receipts[1].duplicate,true);assert.equal(delivery.records.size,0);assert.equal(fixture.button.textContent,'수집 완료');assert.match(fixture.status.textContent,/이미 수집함에 담긴 상품/);
+  assert.equal(delivery.receipts[1].duplicate,true);assert.equal(delivery.records.size,0);assert.equal(fixture.button.textContent,'수집 완료');assert.match(fixture.status.textContent,/이미 수집함에 담긴 원문과 검토 내용을 유지/);
   assert.equal(JSON.stringify((await h.load('db/source-inbox.ts').readSourceInbox('owner',receipt.id)).snapshot),originalStored);
   assert.equal(h.network.length,0);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM products').get().n,0);assert.ok(!h.calls.some(path=>path.includes('supplier-hub-receipt')));
  }finally{h.close();}

@@ -24,7 +24,8 @@ export async function POST(request:Request){
   // A changed snapshot is a separately stored immutable capture. Only the
   // exact same fingerprint may acknowledge a previously retained version.
   if(existing.fingerprint!==body.fingerprint||existing.company.code!==auth.company.code||existing.company.name!==auth.company.name)return reply({error:'저장된 수집 원문과 회사·확인값이 다릅니다.'},409);
-  return reply({ok:true,id:body.id,fingerprint:body.fingerprint,ownerId:auth.owner,company:auth.company,storedId:existing.id,storedFingerprint:existing.fingerprint,duplicate:saved.duplicate,captureOriginId:existing.captureOriginId,captureVersion:existing.captureVersion});
+  return reply({ok:true,id:body.id,fingerprint:body.fingerprint,ownerId:auth.owner,company:auth.company,storedId:existing.id,storedFingerprint:existing.fingerprint,duplicate:saved.duplicate,captureOriginId:existing.captureOriginId,captureVersion:existing.captureVersion,
+   receivedAt:existing.receivedAt,collectedAt:existing.snapshot.collectedAt,sourceUrl:existing.snapshot.sourceUrl});
  }catch(error){return reply({error:error instanceof Error?error.message:'수집함 저장 결과를 확인하지 못했습니다.'},error instanceof RequestBodyError?error.status:error instanceof SourceInboxConflict?409:503);}
 }
 export async function DELETE(request:Request){

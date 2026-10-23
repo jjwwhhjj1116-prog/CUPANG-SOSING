@@ -6,6 +6,7 @@ import {build} from 'esbuild';
 import {fileURLToPath} from 'node:url';
 import {extractPageSource,readPageSourceDomFacts,validatePageSource} from '../extensions/supplier-hub/page-source.mjs';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
+import {pageCollectorDom} from './helpers/page-collector-dom.mjs';
 
 // Inert semantic DOM only. These are synthetic documents modelled after the
 // user-provided three-colour package table, never a source website request.
@@ -188,11 +189,11 @@ test('collection result separately rejects malformed packaging without trusting 
 
 const bundled=await build({entryPoints:[fileURLToPath(new URL('../deployment/extension-page-collector.mjs',import.meta.url))],bundle:true,write:false,format:'iife',platform:'browser',target:'chrome120'});
 test('trusted collection button reads visible package facts and preserves click-only/no-network delivery',async()=>{
- const document=documentFromHtml(attributes+table()),elements=[],messages=[];
+ const document=documentFromHtml(attributes+table()),hostDom=pageCollectorDom(),elements=hostDom.elements,messages=[];
  const queryAll=document.querySelectorAll;document.querySelectorAll=selector=>selector.includes(' img')?[]:queryAll(selector);
- document.getElementById=()=>null;document.documentElement={append(){}};document.title='合成后跟贴';document.scripts=scripts.map(textContent=>({textContent}));
+ document.getElementById=hostDom.document.getElementById;document.documentElement=hostDom.document.documentElement;document.title='合成后跟贴';document.scripts=scripts.map(textContent=>({textContent}));
  document.querySelector=selector=>selector==='.price-container'?{textContent:'¥0.28 1双起批'}:null;
- document.createElement=tag=>{const node={tag,style:{},textContent:'',setAttribute(){},append(){},attachShadow(){return{append(){}};},addEventListener(type,fn){if(type==='click')node.click=fn;}};elements.push(node);return node;};
+ document.createElement=hostDom.document.createElement;
  const window={};window.top=window;
  vm.runInNewContext(bundled.outputFiles[0].text,{window,document,location:{href:sourceUrl},URL,Date,Error,TextEncoder,chrome:{runtime:{sendMessage:async message=>{messages.push(message);return{ok:true,delivered:true};}}},fetch(){assert.fail('No source request');}});
  const button=elements.find(node=>node.tag==='button');await button.click({isTrusted:false});assert.equal(messages.length,0);await button.click({isTrusted:true});

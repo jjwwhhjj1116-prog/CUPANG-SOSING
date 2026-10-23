@@ -5,6 +5,7 @@ import {build} from 'esbuild';
 import {fileURLToPath} from 'node:url';
 import {savePageSource} from '../extensions/supplier-hub/source-inbox.mjs';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
+import {pageCollectorDom} from './helpers/page-collector-dom.mjs';
 
 const sourceUrl='https://detail.1688.com/offer/700000000796.html',offerId='700000000796',origin='http://localhost:3000';
 const main='https://cbu01.alicdn.com/synthetic-pending-796.png',detail='https://cbu01.alicdn.com/synthetic-detail-796.png';
@@ -48,7 +49,7 @@ test('an uncertain old pending replay remains queued and never claims the curren
 
 const bundle=await build({entryPoints:[fileURLToPath(new URL('../deployment/extension-page-collector.mjs',import.meta.url))],bundle:true,write:false,format:'iife',platform:'browser',target:'chrome120'});
 for(const firstDelivered of [true,false])test('button explains retained old snapshot '+(firstDelivered?'acknowledgement':'uncertainty')+' and never recollects without another trusted click',async()=>{
- const elements=[],messages=[],document={getElementById:()=>null,documentElement:{append(){}},title:'합성 원문',scripts:[{textContent:JSON.stringify({skuModel:{offerId,skuInfoMap:{black:{skuId:'synthetic-black',specAttrs:'黑色',price:'0.28'}}},offerImgList:[main]})}],querySelector:selector=>selector==='.price-container'?{textContent:'¥0.28 1双起批'}:null,querySelectorAll:()=>[],createElement(tag){const node={tag,style:{},textContent:'',setAttribute(){},append(){},attachShadow(){return{append(){}};},addEventListener(type,fn){if(type==='click')node.click=fn;}};elements.push(node);return node;}};
+ const messages=[],{elements,document}=pageCollectorDom({title:'합성 원문',scripts:[{textContent:JSON.stringify({skuModel:{offerId,skuInfoMap:{black:{skuId:'synthetic-black',specAttrs:'黑色',price:'0.28'}}},offerImgList:[main]})}],querySelector:selector=>selector==='.price-container'?{textContent:'¥0.28 1双起批'}:null});
  const window={};window.top=window;
  vm.runInNewContext(bundle.outputFiles[0].text,{window,document,location:{href:sourceUrl},URL,Date,Error,TextEncoder,chrome:{runtime:{sendMessage:async message=>{messages.push(message);return messages.length===1?{ok:true,delivered:firstDelivered,duplicate:true,pendingSnapshotReplayed:true,newCaptureStored:false,message:'Synthetic retained capture'}:{ok:true,delivered:true,duplicate:false};}}},fetch(){assert.fail('No product endpoint request');}});
  const button=elements.find(node=>node.tag==='button'),status=elements.find(node=>node.tag==='p');await button.click({isTrusted:true});
