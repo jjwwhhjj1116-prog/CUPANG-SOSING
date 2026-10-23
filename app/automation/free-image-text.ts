@@ -1,8 +1,7 @@
 import {translateGoogleFree} from '@/app/automation/google-free-translation';
 import {planGoogleTranslationRequests,parseGoogleTranslationBlock} from '@/app/automation/google-translation-batch';
-import {translationAttributeIssue,translationNumbers} from '@/app/translation-attribute-evidence';
 import {validateImageTextRegions,type ImageTextRegion,type ImageTextTranslation} from '@/app/free-image-translation';
-import type {ImageTextRecoveryResult,WorkersImageTextRecovery} from '@/app/automation/workers-image-text-recovery';
+import {imageTextTranslationIssue,type ImageTextRecoveryResult,type WorkersImageTextRecovery} from '@/app/automation/workers-image-text-recovery';
 
 /** OCR text remains untrusted plain text. A result belongs only to its exact
  * source region, never to a positional neighbour or a model-generated field. */
@@ -28,9 +27,8 @@ export async function translateImageRegions(input:ImageTextRegion[],language:'zh
   const translated=request.kind==='block'?parseGoogleTranslationBlock(result.translatedText,request):new Map([[request.text,result.translatedText.trim()]]);
   if(!translated){for(const original of originals)issues.set(original,'번역 영역 식별자가 달라 적용하지 않았습니다.');continue;}
   for(const [original,value]of translated){
-   const numbers=translationNumbers(original).sort(),returned=translationNumbers(value).sort();
-   if(!/[가-힣]/u.test(value)||translationAttributeIssue({name:'',value:original},{name:'',value})
-    ||JSON.stringify(numbers)!==JSON.stringify(returned)){issues.set(original,'원문 문구·숫자와 번역 결과를 확인해주세요.');continue;}
+   const reason=imageTextTranslationIssue(original,value,5000);
+   if(reason){issues.set(original,`번역 검증 실패: ${reason}. 원문을 유지했습니다.`);continue;}
    values.set(original,value);
   }
  }

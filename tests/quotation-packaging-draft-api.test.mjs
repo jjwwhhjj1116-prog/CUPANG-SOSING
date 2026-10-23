@@ -25,6 +25,20 @@ test('source10g is retained across actual route while only dimensions are drafte
   assert.equal(result.proposals.length,1);assert.equal(result.proposals[0].value,'60*80*15');assert.equal(result.preserved[0].value,'10');assert.equal(f.state(),state);
  }finally{f.close();}
 });
+
+for(const company of companies)test(`${company.code}: insufficient or generic-boundary dimensions preserve source10g with no replacement or retry`,async()=>{
+ for(const kind of ['insufficient','boundary']){
+  const f=await fixture(company);try{
+   f.mutateOptions(options=>{options.rows[0].packagedWeightG=10;options.rows[0].provenance.packagedWeightG='collected';options.rows[0].packagingUnitsPerPack=1;});
+   let requests=0;f.h.bindings.AI.run=async(_model,input)=>{requests++;const source=JSON.parse(input.messages[1].content.slice(0,-'\n/no_think'.length));
+    return qwen(source.packages.map(({index})=>kind==='insufficient'?{index}:{index,widthMm:10,lengthMm:10,heightMm:10}));};
+   const view=await json(await f.read()),state=f.state(),result=await json(await f.request({...f.body,expectedInputFingerprint:view.inputFingerprint}));
+   assert.equal(result.proposals.length,0);assert.equal(result.aiRequests,1);assert.equal(requests,1);
+   assert.ok(result.preserved.some(item=>item.value==='10'));assert.ok(result.warnings.some(message=>/근거가 부족|추정값으로 제안하지/.test(message)));
+   assert.equal(f.state(),state);assert.equal(JSON.stringify(await json(await f.read())),JSON.stringify(view));assert.deepEqual(f.h.network,[]);
+  }finally{f.close();}
+ }
+});
 for(const company of companies)test(`${company.code}: sealed common10g is protected and supplied as reviewed context to the actual size-only draft route`,async()=>{
  const f=await fixture(company);try{
   const field=f.view.resolved.schema.fields.find(item=>item.hubInput==='packagedWeightG');assert.ok(field);

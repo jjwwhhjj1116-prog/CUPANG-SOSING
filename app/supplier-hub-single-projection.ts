@@ -1,7 +1,8 @@
 import { getQuotationSchema, type QuotationField, type ResolvedQuotation, type ResolvedQuotationField } from '@/app/quotation-schema';
 import { compileHubQuotationSchema, validateHubSchemaSnapshot, type HubSchemaSnapshot, type HubWireField } from '@/app/supplier-hub-schema';
 import { SUPPLIER_HUB_COMPANIES, type SupplierHubCompany } from '@/app/supplier-hub-company';
-import { isQuotationDecimalMultiple } from '@/app/quotation-scalar-constraints';
+import { isQuotationDecimalMultiple, quotationScalarValueIssues } from '@/app/quotation-scalar-constraints';
+import { quotationPackagedWeightPeer } from '@/app/quotation-packaged-weight';
 
 export const SINGLE_PROJECTION_FORMAT = 'yoofam-supplier-hub-single-document-preview-v1';
 export const SINGLE_PROJECTION_OUTPUT_LIMIT = 6 * 1024 * 1024;
@@ -43,7 +44,7 @@ function identity(snapshot: HubSchemaSnapshot, raw: Node) {
   return { scope: 'Retail_Categorized_Single' as const, kan, notice, version };
 }
 
-function primitive(value: string, node: Node): { value?: Primitive; error?: string } {
+function primitive(value: string, node: Node, explicitNull = false): { value?: Primitive; error?: string; constraint?: 'string-length' } {
   if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(value)) return { error: '지원하지 않는 제어 문자가 저장값에 있습니다.' };
   // A type-less dropdown is the compiler's exact primitive choice control.
   // Declared string suggestions (brand/barcode) remain free-text annotations.
@@ -56,10 +57,10 @@ function primitive(value: string, node: Node): { value?: Primitive; error?: stri
     return { error: '단일 자료형으로 변환할 수 없는 원문 양식입니다.' };
   let result: Primitive;
   if (Array.isArray(enums)) {
-    const matches = enums.filter(item => item === null ? value === '' : String(item) === value);
+    const matches = enums.filter(item => explicitNull ? item === null : item === null ? value === '' : String(item) === value);
     if (matches.length !== 1) return { error: '원문 양식의 정확한 선택값과 일치하지 않습니다.' };
     result = matches[0] as Primitive;
-  } else if (value === '' && !types.includes('string') && types.includes('null')) result = null;
+  } else if (explicitNull || value === '' && !types.includes('string') && types.includes('null')) result = null;
   else if (types.includes('string')) result = value;
   else if (types.includes('boolean') && ['true', 'false'].includes(value)) result = value === 'true';
   else if (types.includes('number') || types.includes('integer')) {
@@ -73,7 +74,7 @@ function primitive(value: string, node: Node): { value?: Primitive; error?: stri
   if (typeof result === 'string') {
     const length = Array.from(result).length;
     if (typeof node.minLength === 'number' && length < node.minLength || typeof node.maxLength === 'number' && length > node.maxLength)
-      return { value: result, error: '원문 문자열 길이 제한을 확인해주세요.' };
+      return { value: result, error: '원문 문자열 길이 제한을 확인해주세요.', constraint: 'string-length' };
   }
   if (typeof result === 'number' && (typeof node.minimum === 'number' && result < node.minimum || typeof node.maximum === 'number' && result > node.maximum
     || typeof node.exclusiveMinimum === 'number' && result <= node.exclusiveMinimum || typeof node.exclusiveMaximum === 'number' && result >= node.exclusiveMaximum
@@ -133,7 +134,7 @@ export async function projectSupplierHubSingleDocument(input: SingleProjectionIn
       return object(child) && child.type === 'object' && object(child.properties);
     });
   const jsonDocument = included.map(row => {
-    const scalar = (node: Node, wire: HubWireField): Primitive | undefined => {
+    const scalar = (node: Node, wire: HubWireField, optionalObjectProperty = false): Primitive | undefined => {
       schemaKeys(node, scalarRules);
       const field = actualByWire.get(wireKey(wire));
       if (!field) return conflict('Single 원문 항목을 최종 견적값에 연결하지 못했습니다.', 'SINGLE_WIRE');
@@ -143,6 +144,14 @@ export async function projectSupplierHubSingleDocument(input: SingleProjectionIn
       fields.push(entry);
       if (cell.needsReview || cell.reviewMessages?.length) issue('VALUE_REVIEW', 'review', '저장한 기본값·상품정보의 검토가 필요합니다.', row.optionId, field);
       for (const message of cell.validationIssues ?? []) issue('VALUE_INVALID', 'error', message, row.optionId, field);
+      // The original initializer creates only required object properties. An
+      // absent editable placeholder must not become an invalid enum selection.
+      // Named arrays, saved clears, actual empty/null choices and initial values
+      // are supplied values and must retain their existing validation.
+      const choices = node.enum ?? (node.type === undefined ? node.dropdown : undefined);
+      if (optionalObjectProperty && !field.readOnly && cell.source === 'empty' && cell.value === ''
+        && field.draftDefault === undefined && field.schemaDefault === undefined && !Object.hasOwn(node, 'default')
+        && !(Array.isArray(choices) && choices.some(value => value === '' || value === null))) return undefined;
       if (imageWire(field) && cell.value !== '') {
         unresolvedImages.push({ optionId: row.optionId, fieldId: field.id, wire: structuredClone(wire), savedValue: cell.value, keys: cell.value.split('\n') });
         issue('IMAGE_UNRESOLVED', 'error', '비공개 이미지 참조의 Single 업로드·공개 주소가 검증되지 않았습니다.', row.optionId, field); return undefined;
@@ -157,8 +166,16 @@ export async function projectSupplierHubSingleDocument(input: SingleProjectionIn
         && wire.name !== undefined && Boolean(wire.nameKey && wire.valueKey) && cell.source === 'couplus-default' && cell.value === ''
         && Array.isArray(node.type) && node.type.length === 2 && node.type.includes('string') && node.type.includes('null')
         && !Object.hasOwn(node, 'enum') && !Object.hasOwn(node, 'dropdown');
-      const value: ReturnType<typeof primitive> = hiddenDefaultNull ? { value: null } : primitive(isCategory ? categoryPath : cell.value, node);
-      if (value.error) issue('TYPE_OR_CONSTRAINT', 'error', value.error, row.optionId, field);
+      // A raw null schema default has separate provenance from an explicitly
+      // saved empty string. Still validate its declared type and exact enum.
+      const schemaDefaultNull = cell.source === 'schema' && cell.value === '' && node.default === null;
+      const value: ReturnType<typeof primitive> = hiddenDefaultNull ? { value: null } : primitive(isCategory ? categoryPath : cell.value, node, schemaDefaultNull);
+      // The resolver already reports this missing required value above. Keep
+      // that blocker once; optional clears, empty choices and unvalidated
+      // blanks must still receive their own exact raw constraint error.
+      const requiredBlankLength = field.required && cell.value === '' && value.value === '' && value.constraint === 'string-length'
+        && cell.validationIssues?.includes('필수 값이 비어 있습니다.');
+      if (value.error && !requiredBlankLength) issue('TYPE_OR_CONSTRAINT', 'error', value.error, row.optionId, field);
       if (JSON.stringify(wire.path) === JSON.stringify(['imagePage', 'details', 'htmlProductDetailContent']) && cell.value)
         issue('DETAIL_HTML_UNVERIFIED', 'review', '저장한 HTML과 이미지 공개 주소는 별도 검증이 필요합니다.', row.optionId, field);
       if (wire.path[0] === 'imagePage' && ['msrpAgree', 'labelContactAgreed'].includes(wire.path.at(-1) ?? ''))
@@ -166,7 +183,7 @@ export async function projectSupplierHubSingleDocument(input: SingleProjectionIn
       entry.projected = value.value !== undefined;
       return value.value;
     };
-    const visit = (node: unknown, path: string[]): unknown => {
+    const visit = (node: unknown, path: string[], optionalObjectProperty = false): unknown => {
       if (!object(node)) return conflict('Single 원문 항목 구조를 확인해주세요.', 'SINGLE_UNSUPPORTED');
       if (object(node.properties)) {
         schemaKeys(node, objectRules);
@@ -178,7 +195,7 @@ export async function projectSupplierHubSingleDocument(input: SingleProjectionIn
               return conflict('숨김 소싱 항목의 정확한 초기 구조를 확인해주세요.', 'SINGLE_UNSUPPORTED');
             result[name] = null;
           } else {
-            const value = visit(child, [...path, name]); if (value !== undefined) result[name] = value;
+            const value = visit(child, [...path, name], !Array.isArray(node.required) || !node.required.includes(name)); if (value !== undefined) result[name] = value;
           }
         }
         return result;
@@ -205,7 +222,7 @@ export async function projectSupplierHubSingleDocument(input: SingleProjectionIn
           return result;
         });
       }
-      return scalar(node, { path });
+      return scalar(node, { path }, optionalObjectProperty);
     };
     const document = visit(raw, []) as Node;
     // The recorded native initializer adds these transport controls even when
@@ -227,6 +244,17 @@ export async function projectSupplierHubSingleDocument(input: SingleProjectionIn
       const cell = row.fields[field.id];
       if (!cell || !cell.value && !['manual-common', 'manual-option'].includes(cell.source)) continue;
       fields.push({ optionId: row.optionId, fieldId: field.id, path: [], source: cell.source, savedValue: cell.value, projected: false });
+      // The saved legacy g input has an exact native string-wire peer. Keep
+      // its record, but do not call it unbound after that same option's equal,
+      // valid value was actually projected. Conflicts and blanks stay visible.
+      const weightPeer = field.id === 'packagedWeightG' ? quotationPackagedWeightPeer(expected.fields, field.id) : null;
+      const peerField = weightPeer ? input.resolved.schema.fields.find(item => item.id === weightPeer) : undefined;
+      const peerCell = weightPeer ? row.fields[weightPeer] : undefined;
+      if (weightPeer && quotationPackagedWeightPeer(input.resolved.schema.fields, field.id) === weightPeer && peerField && peerCell
+        && cell.value !== '' && cell.value === peerCell.value && !cell.validationIssues?.length && !peerCell.validationIssues?.length
+        && !quotationScalarValueIssues(field, cell.value).length && !quotationScalarValueIssues(peerField, peerCell.value).length
+        && fields.some(entry => entry.optionId === row.optionId && entry.fieldId === weightPeer && entry.projected)
+        && !issues.some(item => item.optionId === row.optionId && item.fieldId === weightPeer && item.level === 'error')) continue;
       issue('UNBOUND_SAVED_FIELD', field.required ? 'error' : 'review', '이 저장값에는 확인된 Single 원문 항목 연결이 없습니다.', row.optionId, field);
       if (field.type === 'images' && cell.value) {
         unresolvedImages.push({ optionId: row.optionId, fieldId: field.id, savedValue: cell.value, keys: cell.value.split('\n') });

@@ -11,12 +11,34 @@ const boardFields=[...['title','mainImage','additionalImages','detailImages','la
 function quotation(contentRevision=undefined,imageKeys=['owner/red.png','owner/shared.png','owner/source.png','owner/size.png'],content={},options=data){const assets=content.assets??{},keys=role=>assets[role]?.value??[];return {productVersion:options.productVersion,optionRevision:options.options.revision,contentRevision,imageKeys,resolved:{schema:{categoryId:'80719',categoryPath:['바스켓'],fields:boardFields},rows:options.options.rows.map(row=>({optionId:row.id,fields:{supplyPrice:{value:'4100'},salePrice:{value:'6200'},title:{value:content.seo?.title.value??''},mainImage:{value:(row.imageKey?[row.imageKey]:keys('main')).join('\n')},additionalImages:{value:keys('additional').join('\n')},detailImages:{value:[...keys('detailTop'),...keys('detail'),...keys('detailBottom')].join('\n')},labelImages:{value:keys('label').join('\n')}}}))}};}
 const model=load('app/components/product-option-board.tsx');
 const data={productVersion:'v1',options:{schemaVersion:1,productId:'p1',revision:1,rows:[{id:'red',originalName:'Red',translatedName:'빨강',supplierSku:'sku-red',unitCostCny:4.5,unitsPerPack:2,stock:0,included:true,imageKey:'owner/red.png',provenance:{}},{id:'blue',originalName:'Blue',translatedName:'',supplierSku:'sku-blue',unitCostCny:null,unitsPerPack:1,stock:null,included:false,imageKey:'other/private.png',provenance:{translatedName:'manual'}}]},pricing:{rows:[{optionId:'red',calculation:{supplyPrice:4000,salePrice:6000},error:null}]}};
+test('option board identifies each failed read without displaying platform HTML, private bodies or parser messages',async()=>{
+ const paths=['options','content','quotation-fields'],content={productId:'p1',schemaVersion:1,assets:{main:{value:[]}}},before=JSON.stringify(data);
+ for(const stage of paths)for(const [status,type,body,reason]of [[503,'text/html','<!DOCTYPE html>PRIVATE_PLATFORM_EXCEEDED_CPU','HTML 응답'],[200,'text/html','<!DOCTYPE html>PRIVATE_LOGIN_PAGE','HTML 응답'],[403,'text/plain','PRIVATE_FORBIDDEN','JSON이 아닌 응답'],[200,'application/json','<!DOCTYPE html>PRIVATE_BAD_JSON','JSON 형식 오류']]){
+  const requests=[],signal=new AbortController().signal;
+  await assert.rejects(model.readOptionBoard('p1',signal,async(url,init)=>{
+   requests.push(url);assert.equal(init.signal,signal);assert.equal(init.cache,'no-store');
+   return url.endsWith('/'+stage)?new Response(body,{status,headers:{'content-type':type}}):Response.json(url.endsWith('/options')?data:url.endsWith('/content')?{content}:quotation());
+  }),error=>{
+   assert.ok(error.message.includes('GET /api/products/:id/'+stage));assert.ok(error.message.includes('HTTP '+status));assert.ok(error.message.includes(reason));assert.ok(error.message.length<300);
+   assert.doesNotMatch(error.message,/PRIVATE_|DOCTYPE|Unexpected|p1|owner\//);if(status===503)assert.doesNotMatch(error.message,/로그인/);return true;
+  });
+  assert.deepEqual(requests,paths.slice(0,paths.indexOf(stage)+1).map(path=>'/api/products/p1/'+path));
+ }
+ assert.equal(JSON.stringify(data),before);
+ const recovered=await model.readOptionBoard('p1',new AbortController().signal,async url=>Response.json(url.endsWith('/options')?data:url.endsWith('/content')?{content}:quotation()));
+ assert.equal(recovered.options.productId,'p1');assert.equal(recovered.quotationPrices.red.supplyPrice,'4100');
+});
+test('option board propagates an interrupted JSON body without replacing it with a login diagnosis',async()=>{
+ const controller=new AbortController(),abort=new DOMException('Stopped','AbortError');let requests=0;
+ await assert.rejects(model.readOptionBoard('p1',controller.signal,async()=>{requests++;return {ok:true,status:200,headers:new Headers({'content-type':'application/json'}),json:async()=>{controller.abort();throw abort;}};}),error=>error===abort);
+ assert.equal(requests,1);
+});
 test('option board fetch checks product identity and propagates abort signal',async()=>{
  const signal=new AbortController().signal;const requests=[];
- const received=await model.readOptionBoard('p1',signal,async(url,init)=>{requests.push({url,...init});return {ok:true,json:async()=>url.endsWith('/options')?data:url.endsWith('/quotation-fields')?quotation():{content:{productId:'p1',schemaVersion:1,assets:{main:{value:['owner/shared.png']}}}}};});assert.equal(received.options,data.options);assert.deepEqual(Array.from(received.commonImageKeys),['owner/shared.png']);const request=requests[0];assert.equal(requests[1].signal,signal);assert.equal(requests[1].url,'/api/products/p1/content');
+ const received=await model.readOptionBoard('p1',signal,async(url,init)=>{requests.push({url,...init});return {headers:new Headers({'content-type':'application/json'}),status:200,ok:true,json:async()=>url.endsWith('/options')?data:url.endsWith('/quotation-fields')?quotation():{content:{productId:'p1',schemaVersion:1,assets:{main:{value:['owner/shared.png']}}}}};});assert.equal(received.options,data.options);assert.deepEqual(Array.from(received.commonImageKeys),['owner/shared.png']);const request=requests[0];assert.equal(requests[1].signal,signal);assert.equal(requests[1].url,'/api/products/p1/content');
  assert.equal(request.url,'/api/products/p1/options');assert.equal(request.signal,signal);assert.equal(request.cache,'no-store');
- for(const bad of [null,{}, {...data,options:{...data.options,productId:'p2'}}])await assert.rejects(model.readOptionBoard('p1',signal,async()=>({ok:true,json:async()=>bad})),/응답/);
- await assert.rejects(model.readOptionBoard('p1',signal,async()=>({ok:false,json:async()=>({error:'인증 필요'})})),/인증 필요/);
+ for(const bad of [null,{}, {...data,options:{...data.options,productId:'p2'}}])await assert.rejects(model.readOptionBoard('p1',signal,async()=>({headers:new Headers({'content-type':'application/json'}),status:200,ok:true,json:async()=>bad})),/응답/);
+ await assert.rejects(model.readOptionBoard('p1',signal,async()=>({headers:new Headers({'content-type':'application/json'}),status:200,ok:false,json:async()=>({error:'인증 필요'})})),/인증 필요/);
 });
 function tree(query='',sourceUrl='https://detail.1688.com/offer/813724060928.html',boardData=data,owned=['owner/red.png'],loadedIdentity={productId:'p1',attempt:0},attempt=0,features={},snapshotKeys=boardData.imageKeys??owned){
  let slot=0;const selected=[];const edited=[];const images=[];const contentSteps=[];const stages=[];const managed=[];const states=[{...loadedIdentity,data:{...boardData,imageKeys:snapshotKeys},error:''},attempt,query];
@@ -85,9 +107,9 @@ test('option list uses the common main image only for null individual selection'
 test('common content fetch rejects mismatched product or failed response',async()=>{
  const signal=new AbortController().signal;
  for(const content of [null,{productId:'other',schemaVersion:1,assets:{main:{value:[]}}},{productId:'p1',schemaVersion:1,assets:{main:{value:[1]}}}]){
-  await assert.rejects(model.readOptionBoard('p1',signal,async url=>({ok:true,json:async()=>url.endsWith('/options')?data:url.endsWith('/quotation-fields')?quotation():{content}})),/이미지 응답/);
+  await assert.rejects(model.readOptionBoard('p1',signal,async url=>({headers:new Headers({'content-type':'application/json'}),status:200,ok:true,json:async()=>url.endsWith('/options')?data:url.endsWith('/quotation-fields')?quotation():{content}})),/이미지 응답/);
  }
- await assert.rejects(model.readOptionBoard('p1',signal,async url=>({ok:url.endsWith('/options'),json:async()=>url.endsWith('/options')?data:{error:'조회 실패'}})),/조회 실패/);
+ await assert.rejects(model.readOptionBoard('p1',signal,async url=>({headers:new Headers({'content-type':'application/json'}),status:200,ok:url.endsWith('/options'),json:async()=>url.endsWith('/options')?data:{error:'조회 실패'}})),/조회 실패/);
 });
 
 test('shared content columns count only saved product images and open their matching stages',()=>{
@@ -101,7 +123,7 @@ test('shared content columns count only saved product images and open their matc
  test('shared image roles preserve detail ordering and reject malformed references',async()=>{
  const signal=new AbortController().signal;
  const content={productId:'p1',schemaVersion:1,assets:{main:{value:[]},additional:{value:['a']},detailTop:{value:['top']},detail:{value:['body']},detailBottom:{value:['bottom']},label:{value:['label']}}};
- const fetcher=async url=>({ok:true,json:async()=>url.endsWith('/options')?data:url.endsWith('/quotation-fields')?quotation():{content}});
+ const fetcher=async url=>({headers:new Headers({'content-type':'application/json'}),status:200,ok:true,json:async()=>url.endsWith('/options')?data:url.endsWith('/quotation-fields')?quotation():{content}});
  const result=await model.readOptionBoard('p1',signal,fetcher);
  assert.deepEqual(Array.from(result.commonAssets.detail),['top','body','bottom']);
  assert.deepEqual(Array.from(result.commonAssets.additional),['a']);
@@ -168,7 +190,7 @@ test('selection changes only visible row identities and preserves saved option d
 
 test('saved SEO title and separate size-image role load without substituting a deliberately blank title',async()=>{
  const content={productId:'p1',schemaVersion:1,revision:2,seo:{title:{value:'저장한 SEO 제목',provenance:'manual'}},assets:{main:{value:[]},size:{value:['owner/size.png']}}},signal=new AbortController().signal;
- const fetcher=async url=>({ok:true,json:async()=>url.endsWith('/options')?data:url.endsWith('/quotation-fields')?quotation(2,undefined,content):{content}});
+ const fetcher=async url=>({headers:new Headers({'content-type':'application/json'}),status:200,ok:true,json:async()=>url.endsWith('/options')?data:url.endsWith('/quotation-fields')?quotation(2,undefined,content):{content}});
  const loaded=await model.readOptionBoard('p1',signal,fetcher);assert.equal(loaded.seoTitle,'저장한 SEO 제목');assert.deepEqual(Array.from(loaded.commonAssets.size),['owner/size.png']);
  content.seo.title.value='';const cleared=await model.readOptionBoard('p1',signal,fetcher);assert.equal(cleared.seoTitle,'');
  const result=tree('sku-red',undefined,cleared,['owner/size.png'],undefined,0,{stage:true});assert.equal(text(byLabel(result.tree,'옵션 red SEO설정 편집')),'미입력');assert.equal(text(byLabel(result.tree,'옵션 red 사이즈표 편집')),'1장');
@@ -186,7 +208,7 @@ test('image badges count only assigned product members and source previews never
 
 test('malformed SEO, size references and response metadata are rejected without a partial board snapshot',async()=>{
  const signal=new AbortController().signal,validContent={productId:'p1',schemaVersion:1,revision:2,seo:{title:{value:''}},assets:{main:{value:[]},size:{value:[]}}};
- const read=(options=data,content=validContent,quote=quotation(2))=>model.readOptionBoard('p1',signal,async url=>({ok:true,json:async()=>url.endsWith('/options')?options:url.endsWith('/quotation-fields')?quote:{content}}));
+ const read=(options=data,content=validContent,quote=quotation(2))=>model.readOptionBoard('p1',signal,async url=>({headers:new Headers({'content-type':'application/json'}),status:200,ok:true,json:async()=>url.endsWith('/options')?options:url.endsWith('/quotation-fields')?quote:{content}}));
  for(const seo of [null,[],{}, {title:null},{title:{value:1}}])await assert.rejects(read(data,{...validContent,seo}),/SEO 응답/);
  for(const size of [null,[],{}, {value:'owner/size.png'}, {value:[1]}])await assert.rejects(read(data,{...validContent,assets:{main:{value:[]},size}}),/이미지 응답/);
  for(const options of [{...data,productVersion:null},{...data,options:{...data.options,revision:-1}},{...data,options:{...data.options,rows:[null]}},{...data,options:{...data.options,rows:[data.options.rows[0],data.options.rows[0]]}},{...data,pricing:{rows:[null]}},{...data,pricing:{rows:[{optionId:'foreign',calculation:null}]}},{...data,pricing:{rows:[{optionId:'red',calculation:{supplyPrice:'123',salePrice:1}}]}}])await assert.rejects(read(options),/옵션 응답/);
@@ -199,7 +221,7 @@ test('a refreshed board displays newly attached images using its quotation snaps
  const content={productId:'p1',schemaVersion:1,revision:2,seo:{title:{value:'저장한 상품'}},assets:{main:{value:[]},additional:{value:['owner/new-additional.png']},size:{value:['owner/new-size.png']}}};
  const options={...data,sourceImageKeys:{red:'owner/new-source.png',blue:'owner/new-source.png'},options:{...data.options,rows:data.options.rows.map(row=>({...row,imageKey:row.id==='red'?'owner/new-main.png':null}))}};
  const keys=['owner/new-main.png','owner/new-source.png','owner/new-additional.png','owner/new-size.png'];
- const refreshed=await model.readOptionBoard('p1',new AbortController().signal,async url=>({ok:true,json:async()=>url.endsWith('/options')?options:url.endsWith('/content')?{content}:quotation(2,keys,content,options)}));
+ const refreshed=await model.readOptionBoard('p1',new AbortController().signal,async url=>({headers:new Headers({'content-type':'application/json'}),status:200,ok:true,json:async()=>url.endsWith('/options')?options:url.endsWith('/content')?{content}:quotation(2,keys,content,options)}));
  assert.deepEqual(Array.from(refreshed.imageKeys),keys);
  const result=tree('',undefined,refreshed,['owner/old-parent.png'],{productId:'p1',attempt:1},1,{stage:true});
  assert.match(renderToStaticMarkup(result.tree),/src="\/api\/files\/owner\/new-main.png"/);assert.equal(text(byLabel(result.tree,'옵션 red 대표이미지 편집')),'1장');assert.equal(text(byLabel(result.tree,'옵션 red 추가이미지 편집')),'1장');assert.equal(text(byLabel(result.tree,'옵션 red 사이즈표 편집')),'1장');
@@ -209,7 +231,7 @@ test('a refreshed board displays newly attached images using its quotation snaps
 test('a refreshed board excludes removed assignments and source previews even when the parent still lists those keys',async()=>{
  const content={productId:'p1',schemaVersion:1,revision:2,assets:{main:{value:[]},additional:{value:['owner/removed.png','owner/retained.png']},size:{value:['owner/removed.png']}}};
  const options={...data,sourceImageKeys:{red:'owner/removed.png',blue:'owner/removed.png'},options:{...data.options,rows:data.options.rows.map(row=>({...row,imageKey:row.id==='red'?'owner/removed.png':null}))}};
- const refreshed=await model.readOptionBoard('p1',new AbortController().signal,async url=>({ok:true,json:async()=>url.endsWith('/options')?options:url.endsWith('/content')?{content}:quotation(2,['owner/retained.png'],content,options)}));
+ const refreshed=await model.readOptionBoard('p1',new AbortController().signal,async url=>({headers:new Headers({'content-type':'application/json'}),status:200,ok:true,json:async()=>url.endsWith('/options')?options:url.endsWith('/content')?{content}:quotation(2,['owner/retained.png'],content,options)}));
  const result=tree('',undefined,refreshed,['owner/removed.png','owner/retained.png'],{productId:'p1',attempt:1},1,{stage:true}),html=renderToStaticMarkup(result.tree);
  assert.doesNotMatch(html,/src=/);assert.equal(text(byLabel(result.tree,'옵션 red 대표이미지 편집')),'연결 확인 필요');assert.equal(text(byLabel(result.tree,'옵션 blue 대표이미지 편집')),'0장');assert.equal(text(byLabel(result.tree,'옵션 red 추가이미지 편집')),'1장');assert.equal(text(byLabel(result.tree,'옵션 red 사이즈표 편집')),'연결 확인 필요');
 });
@@ -224,12 +246,12 @@ test('option board verifies quotation snapshot revisions and propagates errors i
  const signal=new AbortController().signal;
  const content={productId:'p1',schemaVersion:1,revision:2,assets:{main:{value:[]}}};
  for(const quote of [{...quotation(2),productVersion:'stale'},{...quotation(2),optionRevision:7},quotation(1),{...quotation(2),resolved:{...quotation(2).resolved,rows:[]}}]){
-  await assert.rejects(model.readOptionBoard('p1',signal,async url=>({ok:true,json:async()=>url.endsWith('/options')?data:url.endsWith('/content')?{content}:quote})),/変更|변경|응답/);
+  await assert.rejects(model.readOptionBoard('p1',signal,async url=>({headers:new Headers({'content-type':'application/json'}),status:200,ok:true,json:async()=>url.endsWith('/options')?data:url.endsWith('/content')?{content}:quote})),/変更|변경|응답/);
  }
  let quoteSignal;
- const result=await model.readOptionBoard('p1',signal,async(url,init)=>{if(url.endsWith('/quotation-fields'))quoteSignal=init.signal;return {ok:true,json:async()=>url.endsWith('/options')?data:url.endsWith('/content')?{content}:quotation(2)};});
+ const result=await model.readOptionBoard('p1',signal,async(url,init)=>{if(url.endsWith('/quotation-fields'))quoteSignal=init.signal;return {headers:new Headers({'content-type':'application/json'}),status:200,ok:true,json:async()=>url.endsWith('/options')?data:url.endsWith('/content')?{content}:quotation(2)};});
  assert.equal(quoteSignal,signal);assert.equal(result.quotationPrices.red.supplyPrice,'4100');
- await assert.rejects(model.readOptionBoard('p1',signal,async url=>({ok:!url.endsWith('/quotation-fields'),json:async()=>url.endsWith('/options')?data:url.endsWith('/content')?{content}:{error:'견적 조회 실패'}})),/견적 조회 실패/);
+ await assert.rejects(model.readOptionBoard('p1',signal,async url=>({headers:new Headers({'content-type':'application/json'}),status:200,ok:!url.endsWith('/quotation-fields'),json:async()=>url.endsWith('/options')?data:url.endsWith('/content')?{content}:{error:'견적 조회 실패'}})),/견적 조회 실패/);
 });
 
 test('unchosen option previews show their source image without turning it into a quotation main image',()=>{
@@ -250,8 +272,8 @@ test('unchosen option previews show their source image without turning it into a
 test('option fetch validates source preview shape and ties every preview to a returned option',async()=>{
  const content={productId:'p1',schemaVersion:1,assets:{main:{value:[]}}};
  const signal=new AbortController().signal;
- for(const bad of [null,[],{red:1},{red:''},{foreign:'owner/source.png'}])await assert.rejects(model.readOptionBoard('p1',signal,async url=>({ok:true,json:async()=>url.endsWith('/options')?{...data,sourceImageKeys:bad}:url.endsWith('/quotation-fields')?quotation():{content}})),/원본 이미지 응답/);
- const result=await model.readOptionBoard('p1',signal,async url=>({ok:true,json:async()=>url.endsWith('/options')?{...data,sourceImageKeys:{red:'owner/source.png'}}:url.endsWith('/quotation-fields')?quotation():{content}}));
+ for(const bad of [null,[],{red:1},{red:''},{foreign:'owner/source.png'}])await assert.rejects(model.readOptionBoard('p1',signal,async url=>({headers:new Headers({'content-type':'application/json'}),status:200,ok:true,json:async()=>url.endsWith('/options')?{...data,sourceImageKeys:bad}:url.endsWith('/quotation-fields')?quotation():{content}})),/원본 이미지 응답/);
+ const result=await model.readOptionBoard('p1',signal,async url=>({headers:new Headers({'content-type':'application/json'}),status:200,ok:true,json:async()=>url.endsWith('/options')?{...data,sourceImageKeys:{red:'owner/source.png'}}:url.endsWith('/quotation-fields')?quotation():{content}}));
  assert.equal(result.sourceImageKeys.red,'owner/source.png');assert.equal(result.options.rows[0].imageKey,'owner/red.png');
 });
 
@@ -291,7 +313,7 @@ function finalContentFixture(){
  for(const row of quote.resolved.rows)for(const id of ['mainImage','additionalImages','detailImages','labelImages'])Object.assign(row.fields[id],{
   validationIssues:[],issues:['실제 상품·증빙과 일치하는지 확인해주세요.','견적서에는 연결한 첨부 이미지 파일명이 기록됩니다.'],
  });
- const fetcher=async(url,init)=>{assert.equal(init.cache,'no-store');return {ok:true,json:async()=>url.endsWith('/options')?data:url.endsWith('/content')?{content}:quote};};
+ const fetcher=async(url,init)=>{assert.equal(init.cache,'no-store');return {headers:new Headers({'content-type':'application/json'}),status:200,ok:true,json:async()=>url.endsWith('/options')?data:url.endsWith('/content')?{content}:quote};};
  return {keys,content,quote,red,blue,fetcher};
 }
 

@@ -18,11 +18,16 @@ function excluded(node){
  if(node.closest(EXCLUDED))return true;
  // The relationship authorizes the panel, never another product/card or a
  // navigation region nested inside it. Check ancestors for tables AND pairs.
- let depth=0;for(let current=node;current;current=current.parentElement){
+ let depth=0,productSection=false;for(let current=node;current;current=current.parentElement){
   if(++depth>40||current.getAttribute?.('role')==='navigation'||isUnrelatedProductElement(current))return true;
   if(['DIV','SECTION','ARTICLE'].includes(current.tagName)){
    const first=Array.from(current.children??[]).find(child=>text(child.textContent)||child.tagName==='IMG');
-   if(first&&!['SECTION','ARTICLE'].includes(first.tagName)&&first.getAttribute?.('role')!=='tabpanel'&&productSectionKind(first.textContent)==='unrelated')return true;
+   const kind=first&&!['SECTION','ARTICLE'].includes(first.tagName)&&first.getAttribute?.('role')!=='tabpanel'?productSectionKind(first.textContent):null;
+   // A local product section can follow a review heading in a shared layout.
+   // Its own exact heading bounds this heuristic; explicit unrelated metadata,
+   // navigation roles and other-offer links still apply at every ancestor.
+   if(!productSection&&kind==='unrelated')return true;
+   if(kind==='attributes'||kind==='packaging')productSection=true;
   }
  }
  return false;

@@ -62,6 +62,9 @@ export async function createFreeOcrWorker(languages:string[],oem:1,options:Parti
   // its virtual root already exists, even though the language data is valid.
   await job('loadLanguage',{langs:languages,options:{langPath:LOCAL_LANG,cachePath:'yoofam-free-ocr-7.0.0',cacheMethod:'write',gzip:true,lstmOnly:true}});
   await job('initialize',{langs:languages,oem:1,config:{}});
+  // Product images mix photographs with separate captions. AUTO layout avoids
+  // forcing their textures into one text block; retain raw confidence/regions.
+  await job('setParameters',{params:{tessedit_pageseg_mode:'3'}});
   signal.throwIfAborted();
   return{recognize:async(input:ImageLike,recognizeOptions:Partial<RecognizeOptions>={},output:Partial<OutputFormats>={text:true})=>{
    if(closed||recognizing)throw Error('진행 중인 문구 인식을 마친 뒤 다시 실행해주세요.');

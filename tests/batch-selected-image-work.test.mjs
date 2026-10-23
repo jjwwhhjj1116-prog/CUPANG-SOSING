@@ -43,6 +43,85 @@ function fixture(stage='detail',keys=['owner/source-a.png','owner/source-b.png']
  return{...runtime,calls,canvases,controller,content,productOptions,plan,options,deps,region,get view(){return view;},set view(value){view=value;},scope(value){current=value;},run:()=>runtime.model.processSelectedImageStage('product',stage,options,deps)};
 }
 
+function partialFixture(stage='main',keys=['owner/source-a.png']){
+ const h=fixture(stage,keys),documents=[],readSource=h.deps.readSource;
+ h.deps.readSource=async(...args)=>{
+  const image=await readSource(...args);
+  if(args[2].includes('/free-image-')&&documents.length){assert.deepEqual(plain(args[7]),{restoreEditor:true,anchorPolicy:'current-target-v1'});return{...image,source:{...image.source,sourceKey:keys[0],editorSource:{resultKey:args[2],anchorPolicy:'current-target-v1'}},editDocument:plain(documents[0])};}
+  return image;
+ };
+ h.deps.recognize=async()=>[h.region('中文一','accepted-one'),h.region('中文二','accepted-two'),h.region('未确认','rejected')];
+ h.deps.translate=async(source,language,regions)=>{
+  h.calls.push(['translate',language]);return{source,regions:regions.map(row=>({id:row.id,original:row.text,translated:row.id==='rejected'?null:'검증된 번역',issue:row.id==='rejected'?'영역 검증 실패: 원문에 없는 성능·주장.':null})),requests:1,stoppedHttpStatus:429,warnings:[],workersRecovery:{provider:'workers-ai',status:'partial',requests:1,sourceRegions:3,translatedRegions:2}};
+ };
+ h.deps.render=async(image,regions)=>{
+  h.calls.push(['render',image.source.sourceKey]);const editDocument={format:'free-image-edit-v1',width:image.width,height:image.height,sourceLanguage:'zh',regions:plain(regions)};documents.push(editDocument);
+  return{source:image.source,output:new Blob(['synthetic PNG'],{type:'image/png'}),width:image.width,height:image.height,editDocument};
+ };
+ return{...h,documents,get view(){return h.view;},set view(value){h.view=value;}};
+}
+
+for(const stage of ['main','additional','detail'])test(`${stage}: partial translations save one editable draft, preserve rejected regions, and cannot become complete on resume`,async()=>{
+ const h=partialFixture(stage,stage==='main'?undefined:['owner/source-a.png','owner/source-b.png']),before=plain(h.content),result=await h.run();
+ assert.equal(result.status,'partial');assert.equal(result.applied,1);assert.equal(result.failed,1);assert.deepEqual(h.content,before);
+ const item=result.state.batches.option.items[0];assert.equal(item.status,'applied');assert.deepEqual(plain(item.translationReview),{status:'partial',acceptedRegions:2,unresolvedRegions:1,message:item.translationReview.message});assert.equal(item.texts.length,2);assert.equal(item.rendered,undefined);
+ const rows=h.documents[0].regions;assert.deepEqual(rows.filter(row=>row.selected).map(row=>row.id),['accepted-one','accepted-two']);assert.ok(rows.filter(row=>row.selected).every(row=>row.translationProvenance==='generated'&&row.issue===null));
+ const rejected=rows.find(row=>row.id==='rejected');assert.equal(rejected.text,'未确认');assert.equal(rejected.translated,'');assert.equal(rejected.translationProvenance,'empty');assert.equal(rejected.selected,false);assert.match(rejected.issue,/원문에 없는/);assert.deepEqual(rejected.box,{x:0,y:0,width:3,height:2});
+ const calls=h.calls.filter(row=>['read','translate','render','apply'].includes(row[0])).length,resumed=await h.run();assert.equal(resumed.status,'partial');assert.equal(resumed.applied,1);assert.equal(resumed.failed,1);assert.equal(h.calls.filter(row=>['read','translate','render','apply'].includes(row[0])).length,calls);assert.match(resumed.messages[0],/수동 편집/);
+ if(stage!=='main')assert.equal(resumed.state.batches.option.items[1].status,'pending','partial coverage stops the next image');
+});
+
+test('partial Chinese response preserves untouched English rows without another provider request',async()=>{
+ const h=partialFixture(),recognize=h.deps.recognize;h.deps.recognize=async()=>[...await recognize(),h.region('English caption','unrequested')];
+ const result=await h.run();assert.equal(result.status,'partial');assert.equal(result.applied,1);assert.deepEqual(h.calls.filter(row=>row[0]==='translate').map(row=>row[1]),['zh']);assert.equal(result.state.batches.option.items[0].translationReview.unresolvedRegions,2);
+ const row=h.documents[0].regions.find(row=>row.id==='unrequested');assert.equal(row.text,'English caption');assert.equal(row.selected,false);assert.equal(row.translated,'');assert.match(row.issue,/추가 번역 요청을 중단/);
+});
+
+test('a partial image without its editable document cannot be saved as a flattened result',async()=>{
+ const h=partialFixture(),render=h.deps.render;h.deps.render=async(...args)=>{const result=await render(...args);delete result.editDocument;return result;};const result=await h.run();assert.equal(result.status,'partial');assert.equal(result.applied,0);assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);assert.match(result.messages[0],/편집 문서/);
+});
+
+for(const committed of [false,true])test(`partial draft lost ACK (${committed?'committed':'not committed'}) retains exact editable PNG and incomplete status through recovery and resume`,async()=>{
+ const h=partialFixture('detail',['owner/source-a.png','owner/source-b.png']),apply=h.deps.apply;let writes=0,attemptImage;
+ h.deps.apply=async(batch,index,signal,progress)=>{
+  writes++;attemptImage=batch.items[index].rendered;const saved=committed?await apply(batch,index,signal,()=>{}):batch;
+  progress({...saved,view:batch.view,items:saved.items.map(row=>row.slotIndex===index?{...row,status:'uncertain',attempt:{image:attemptImage,before:batch.view}}:row)});throw Error('ACK lost');
+ };
+ const uncertain=await h.run();assert.equal(uncertain.status,'uncertain');assert.equal(writes,1);assert.equal(uncertain.recoveryBatch.items[0].translationReview.unresolvedRegions,1);assert.equal(attemptImage.editDocument.regions.find(row=>row.id==='rejected').selected,false);
+ h.deps.recover=async(batch,_signal,progress)=>{assert.equal(batch.items[0].attempt.image,attemptImage);const next={...batch,view:plain(h.view),items:batch.items.map(row=>row.status==='uncertain'?{...row,status:committed?'applied':'ready',attempt:undefined}:row)};progress(next);return next;};
+ const recovered=await h.run();assert.equal(recovered.status,'partial');assert.equal(recovered.recovered,true);assert.equal(recovered.failed,1);assert.equal(recovered.applied,committed?1:0);assert.equal(writes,1);assert.match(recovered.messages[0],/미완료/);
+ h.deps.apply=apply;const resumed=await h.run();assert.equal(resumed.status,'partial');assert.equal(resumed.applied,1);assert.equal(resumed.failed,1);assert.equal(resumed.state.batches.option.items[0].translationReview.acceptedRegions,2);assert.equal(resumed.state.batches.option.items[1].status,'pending');
+ assert.equal(h.calls.filter(row=>row[0]==='translate').length,1);assert.equal(h.calls.filter(row=>row[0]==='render').length,1);assert.equal(h.calls.filter(row=>row[0]==='apply').length,1,'the committed image is never uploaded twice');
+});
+
+test('retained partial drafts cannot cross owner, company, product, source, settings or saved view boundaries',async()=>{
+ for(const change of ['owner','company','product','source','settings','view']){
+  const h=partialFixture();await h.run();const writes=h.calls.filter(row=>row[0]==='apply').length;
+  if(change==='owner')h.plan.scope.ownerId='another';if(change==='company')h.plan.scope.company={code:'A01526306',name:'유앤채'};if(change==='product')h.options.state.productId='another';
+  if(change==='source')h.view.resolved.rows[0].fields.mainImage.value='owner/another.png';if(change==='settings')h.plan.settings.translateImages=false;if(change==='view')h.view.productVersion='2026-10-23T00:00:01.000Z';
+  await assert.rejects(h.run(),/변경/);assert.equal(h.calls.filter(row=>row[0]==='apply').length,writes,change);assert.equal(h.calls.filter(row=>row[0]==='translate').length,1,change);
+ }
+});
+
+test('a fresh run reads persisted partial issues before skipping a saved manual-option image',async()=>{
+ const h=partialFixture();await h.run();const version=h.view.productVersion;
+ assert.equal(h.view.resolved.rows[0].fields.mainImage.source,'manual-option');assert.match(h.documents[0].regions.find(row=>row.id==='rejected').issue,/^자동 번역 미완료:/);
+ h.options.state=h.model.createSelectedImageStageState('owner','product','main');const translations=h.calls.filter(row=>row[0]==='translate').length,writes=h.calls.filter(row=>row[0]==='apply').length;
+ const resumed=await h.run();assert.equal(resumed.status,'partial');assert.equal(resumed.applied,0);assert.equal(resumed.failed,1);assert.equal(resumed.skipped,0);assert.match(resumed.messages[0],/이전 작업.*미완료/);assert.equal(resumed.state.batches.option.items[0].translationReview.unresolvedRegions,1);
+ assert.equal(h.calls.filter(row=>row[0]==='translate').length,translations);assert.equal(h.calls.filter(row=>row[0]==='apply').length,writes);assert.equal(h.view.productVersion,version);assert.ok(h.canvases.every(canvas=>canvas.width===0));
+ h.documents[0].regions.find(row=>row.id==='rejected').issue='수동 재요청도 번역하지 못했습니다.';h.options.state=h.model.createSelectedImageStageState('owner','product','main');assert.equal((await h.run()).status,'partial','a newer editor failure does not erase pending review');
+ h.documents[0].regions.find(row=>row.id==='rejected').issue=null;h.documents[0].regions.find(row=>row.id==='rejected').translationProvenance='manual';h.documents[0].regions.find(row=>row.id==='rejected').translated='직접 검토한 문구';h.options.state=h.model.createSelectedImageStageState('owner','product','main');assert.equal((await h.run()).status,'skipped','explicitly reviewed editor state stays preserved');
+ assert.equal(h.calls.filter(row=>row[0]==='translate').length,translations);assert.equal(h.calls.filter(row=>row[0]==='apply').length,writes);
+});
+
+test('saved editor inspection fails closed on missing read or changed source scope without OCR or writes',async()=>{
+ for(const mode of ['read','owner','product','version','result-key','role']){
+  const h=partialFixture();await h.run();h.options.state=h.model.createSelectedImageStageState('owner','product','main');const readSource=h.deps.readSource;
+  h.deps.readSource=async(...args)=>{if(mode==='read')throw Error('saved edit read failed');const image=await readSource(...args);if(mode==='owner')image.source.sourceKey='another/private.png';if(mode==='product')image.source.productId='another';if(mode==='version')image.source.productVersion='2026-10-23T01:00:00.000Z';if(mode==='result-key')image.source.editorSource.resultKey='owner/another.png';if(mode==='role')image.source.role='detail';return image;};
+  const result=await h.run();assert.equal(result.status,'partial',mode);assert.equal(result.applied,0,mode);assert.equal(result.failed,1,mode);assert.equal(h.calls.filter(row=>row[0]==='translate').length,1,mode);assert.equal(h.calls.filter(row=>row[0]==='apply').length,1,mode);
+ }
+});
+
 for(const stage of ['main','additional','detail'])test(`${stage}: explicit action saves generated drafts one slot at a time and leaves content/original roles intact`,async()=>{
  const h=fixture(stage,stage==='main'?['owner/source-a.png']:undefined),before=plain(h.content),result=await h.run();
  assert.equal(result.status,'completed');assert.equal(result.applied,stage==='main'?1:2);assert.equal(result.failed,0);assert.ok(result.productVersion);assert.equal(result.recoveryBatch,undefined);assert.deepEqual(h.content,before);assert.ok(h.view.imageKeys.includes('owner/source-a.png'));assert.ok(h.canvases.every(canvas=>canvas.width===0&&canvas.height===0));assert.equal(h.timers.size,0);assert.equal(h.calls.filter(row=>row[0]==='apply').length,result.applied);assert.match(result.messages.at(-1),/초안.*검토/);
@@ -53,7 +132,7 @@ test('saved setting, manual role, manual quotation choice and previous edited re
  for(const kind of ['disabled','role','quotation','edited']){
   const h=fixture('detail',kind==='edited'?['owner/free-image-product-old.png']:undefined);
   if(kind==='disabled')h.plan.enabled=false;if(kind==='role')h.content.assets.detail={value:[],provenance:'manual',updatedAt:null};if(kind==='quotation')h.view.overrides.options.option={detailImages:h.view.resolved.rows[0].fields.detailImages.value};
-  const before=plain(h.view),result=await h.run();assert.equal(result.status,'skipped',kind);assert.equal(result.applied,0);assert.equal(h.calls.filter(row=>['read','render','apply'].includes(row[0])).length,0);assert.deepEqual(h.view,before);
+  const before=plain(h.view),result=await h.run();assert.equal(result.status,'skipped',kind);assert.equal(result.applied,0);assert.equal(h.calls.filter(row=>['render','apply'].includes(row[0])).length,0);assert.equal(h.calls.filter(row=>row[0]==='read').length,kind==='edited'?1:0);assert.deepEqual(h.view,before);
  }
 });
 

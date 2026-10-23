@@ -57,6 +57,7 @@ test('actual image route recovers certain429 with public text/index only and one
  assert.deepEqual(providerSource(input),{sourceLanguage:'zh',regions:[{index:0,text:'黑色'}]});
  for(const sensitive of ['user-region-private-id','new-product','owner/new-image.png',company.code,company.name,f.source.sourceSha256])assert.ok(!JSON.stringify(input).includes(sensitive));
  assert.match(input.messages[0].content,/untrusted product text/);assert.equal(input.response_format.json_schema.additionalProperties,false);
+ assert.equal(input.response_format.json_schema.properties.regions.minItems,1);assert.equal(input.response_format.json_schema.properties.regions.items.properties.translatedText.maxLength,2000);
 });
 test('unconfigured or unconfirmed Free provider retains original Google429 failure without quota/model use',async()=>{
  for(const settings of [{SOURCEFLOW_QUOTATION_AI_PROVIDER:'other'},{SOURCEFLOW_QUOTATION_AI_FREE_ONLY:'false'},{AI:undefined}]){
@@ -124,9 +125,42 @@ test('measurement numbers remain bound to their own units and unsupported functi
  assert.equal(verify('防水 IPX6 10 cm','방수 IPX6 10 cm').workersRecovery.status,'completed');
  assert.equal(verify('不防水','방수가 되지 않습니다').workersRecovery.status,'invalid-response');
 });
-test('model-specific Qwen content never falls back to Llama envelopes, thinking text or a truncated completion',async()=>{
+
+test('abrasion protection cannot invent heat resistance and a heel is not a hook without source evidence',()=>{
+ const f=fixture(),verify=(text,translatedText)=>f.helper.verifyImageTextRecovery([{id:'r',text}],qwen({regions:[{index:0,translatedText}]})).regions[0];
+ for(const [source,value]of [
+  ['ANTI ABRASION AND ANTI FALLING HEEL','내열성 및 낙하 방지 후크'],
+  ['ANTI ABRASION AND ANTI FALLING HEEL','내열성 및 뒤꿈치 벗겨짐 방지'],
+  ['SHOE SIZE HEEL PATCH','신발 크기 후크 패치'],
+  ['HEEL PATCH','훅 패치'],['HEEL PATCH','갈고리 패치'],
+  ['not heat resistant heel patch','내열성 뒤꿈치 패치'],
+ ]){const row=verify(source,value);assert.equal(row.translated,null,source);assert.match(row.issue,/원문에 없는 성능·주장|원문 부위·부품 연결/);}
+ for(const [source,value]of [
+  ['ANTI ABRASION AND ANTI FALLING HEEL','마찰 및 뒤꿈치 벗겨짐 방지'],['SHOE SIZE HEEL PATCH','신발 사이즈 뒤꿈치 패치'],
+  ['Heat resistant heel patch','내열성 뒤꿈치 패치'],['Thermal resistant heel patch','내열 뒤꿈치 패치'],['耐高温后跟贴','내열성 뒤꿈치 패치'],
+  ['Climbing heel hook','클라이밍 힐 후크'],['Heel hook-and-loop patch','뒤꿈치 후크 앤 루프 패치'],
+  ['HEEL PATCH WITH HOOKS','후크가 있는 뒤꿈치 패치'],['HEELED HOOK','굽 있는 후크'],
+ ])assert.equal(verify(source,value).translated,value,source);
+});
+
+for(const provider of ['google','workers'])test(`actual ${provider} image translation retains good regions and issues for unsupported heat/heel substitutions`,async()=>{
+ const f=fixture(),rows=[{id:'heat',text:'ANTI ABRASION AND ANTI FALLING HEEL'},{id:'heel',text:'SHOE SIZE HEEL PATCH'},{id:'valid',text:'SOFT HEEL PATCH'}],
+  texts=['내열성 및 낙하 방지 후크','신발 크기 후크 패치','부드러운 뒤꿈치 패치'];
+ if(provider==='workers')f.controls.provider=async()=>qwen({regions:texts.map((translatedText,index)=>({index,translatedText}))});
+ else f.controls.google=async url=>{
+  const q=new URL(url).searchParams.get('q'),translated=q.split('\n').map(line=>{const match=/^(\[\[YFTR\d{6}\]\]) (.+)$/u.exec(line);return match?`${match[1]} ${texts[rows.findIndex(row=>row.text===match[2])]}`:texts[rows.findIndex(row=>row.text===line)];}).join('\n');
+  return Response.json([[[translated]],null,'en']);
+ };
+ const out=await f.post(rows,'en');assert.equal(out.response.status,200);
+ assert.deepEqual(out.body.regions.map(row=>[row.id,row.original,row.translated]),rows.map((row,index)=>[row.id,row.text,index===2?texts[index]:null]));
+ for(const row of out.body.regions.slice(0,2))assert.match(row.issue,/원문.*(?:성능·주장|부위·부품 연결)/);
+ assert.equal(out.body.regions[2].issue,null);assert.equal(f.network.length,1);assert.equal(f.calls.length,provider==='workers'?1:0);
+ assert.equal(f.reservations,provider==='workers'?1:0);
+ if(provider==='workers'){assert.equal(out.body.workersRecovery.status,'partial');assert.equal(out.body.workersRecovery.translatedRegions,1);}else assert.equal(out.body.workersRecovery,undefined);
+});
+test('model-specific Qwen content never accepts response strings, thinking text or a truncated completion',async()=>{
  for(const raw of [
-  {response:{regions:[{index:0,translatedText:'검정'}]}},
+  {response:JSON.stringify({regions:[{index:0,translatedText:'검정'}]})},
   {choices:[{message:{role:'assistant',content:'<think>reasoning</think>{"regions":[{"index":0,"translatedText":"검정"}]}'}}]},
   {choices:[{message:{role:'assistant',content:'```json\n{"regions":[]}\n```'}}]},
   {choices:[{finish_reason:'length',message:{role:'assistant',content:'{"regions":[{"index":0,"translatedText":"검정"}]}'}}]},
@@ -134,4 +168,44 @@ test('model-specific Qwen content never falls back to Llama envelopes, thinking 
  ]){
   const f=fixture();f.controls.provider=async()=>raw;const out=await f.post();assert.equal(out.response.status,200);assert.equal(out.body.workersRecovery.status,'invalid-response');assert.equal(out.body.regions[0].translated,null);assert.equal(f.calls.length,1);
  }
+});
+
+test('image-only JSON mode accepts its documented response object with exact regions while shared Qwen stays strict',async()=>{
+ const value={regions:[{index:1,translatedText:'너비 10 cm'},{index:0,translatedText:'검정'}]},rows=[{id:'exact-a',text:'黑色'},{id:'exact-b',text:'宽度10 cm'}];
+ for(const raw of [{response:value},{response:value,model:'@cf/qwen/qwen3-30b-a3b-fp8',usage:{prompt_tokens:20,completion_tokens:10,total_tokens:30}},{...qwen(value),response:{regions:value.regions.map(row=>({translatedText:row.translatedText,index:row.index}))}},{...qwen(value),response:undefined}]){
+  const f=fixture();f.controls.provider=async()=>raw;const out=await f.post(rows);assert.equal(out.response.status,200);assert.equal(out.body.workersRecovery.status,'completed');assert.deepEqual(out.body.regions.map(row=>[row.id,row.translated]),[['exact-a','검정'],['exact-b','너비 10 cm']]);assert.equal(f.calls.length,1);assert.equal(f.reservations,1);assert.equal(f.network.length,1);
+ }
+ const f=fixture();assert.throws(()=>f.load('app/automation/workers-qwen-contract.ts').parseWorkersQwenJson({response:value}));
+});
+
+test('chat transport metadata does not reject valid content or repair failed provider content',async()=>{
+ const value={regions:[{index:0,translatedText:'검정'}]};
+ const f=fixture();f.controls.provider=async()=>({...qwen(value),system_fingerprint:'opaque',service_tier:'default',request_id:'opaque-id',metrics:{latency:1}});
+ const out=await f.post();assert.equal(out.body.workersRecovery.status,'completed');assert.equal(out.body.regions[0].translated,'검정');assert.equal(f.calls.length,1);
+ for(const marker of [{error:{message:'PRIVATE_ERROR'}},{errors:[{message:'PRIVATE_ERROR'}]},{success:false},{refusal:'PRIVATE_REFUSAL'},{status:'in_progress'}]){
+  const blocked=fixture();blocked.controls.provider=async()=>({...qwen(value),...marker});const result=await blocked.post();assert.equal(result.body.workersRecovery.status,'invalid-response');assert.match(result.body.regions[0].issue,/IMAGE_PROVIDER_STATUS/);assert.ok(!result.body.regions[0].issue.includes('PRIVATE_'));
+ }
+ const incomplete=fixture();incomplete.controls.provider=async()=>({...qwen(value),system_fingerprint:'opaque',choices:[{finish_reason:'length',message:{role:'assistant',content:JSON.stringify(value)}}]});
+ const stopped=await incomplete.post();assert.equal(stopped.body.regions[0].translated,null);assert.match(stopped.body.regions[0].issue,/OUTPUT_TRUNCATED/);
+});
+
+test('response-only mode rejects undocumented envelopes, declared foreign metadata, missing indices and mismatched dual content',()=>{
+ const f=fixture(),value={regions:[{index:0,translatedText:'검정'}]},rows=[{id:'exact-a',text:'黑色'}],verify=raw=>f.helper.verifyImageTextRecovery(rows,raw);
+ for(const raw of [null,[],{response:null},{response:[]},{response:'PRIVATE_BODY'},
+  {response:value,model:'@cf/meta/llama-3.3-70b-instruct-fp8-fast'},{response:value,model:'PRIVATE_MODEL'},
+  {response:value,object:'chat.completion'},{response:value,finish_reason:'length'},{response:value,request_id:'PRIVATE_ASYNC'},
+  {response:value,unknown:'PRIVATE_UNKNOWN'},{response:value,tool_calls:[]},{response:value,usage:{total_tokens:-1}},
+  {response:{regions:[]}},{response:{regions:[{index:1,translatedText:'검정'}]}},
+  {response:{regions:[{index:0,translatedText:'검정'},{index:0,translatedText:'검정'}]}},
+  {...qwen(value),response:{regions:[{index:0,translatedText:'흰색'}]}},
+  {...qwen(value),response:JSON.stringify(value)},
+ ])assert.throws(()=>verify(raw),error=>error.status==='invalid-response'&&!error.message.includes('PRIVATE_'));
+ const accessor={};Object.defineProperty(accessor,'response',{enumerable:true,get(){throw Error('must not read');}});assert.throws(()=>verify(accessor),error=>error.status==='invalid-response');
+});
+
+test('API exposes bounded contract diagnostics and per-region quality reasons without copying provider text or retrying',async()=>{
+ for(const [raw,code]of [[{choices:[{finish_reason:'length',message:{role:'assistant',content:'PRIVATE_PROVIDER_OUTPUT'}}]},'OUTPUT_TRUNCATED'],[{response:{regions:[]}},'IMAGE_REGION_COUNT'],[{choices:[{finish_reason:'stop',message:{role:'assistant',content:'PRIVATE_PROVIDER_OUTPUT'}}]},'JSON_SYNTAX']]){
+  const f=fixture();f.controls.provider=async()=>raw;const out=await f.post();assert.equal(out.body.workersRecovery.status,'invalid-response');assert.match(out.body.regions[0].issue,new RegExp(code));assert.ok(!out.body.regions[0].issue.includes('PRIVATE_'));assert.equal(f.calls.length,1);assert.equal(f.reservations,1);
+ }
+ const f=fixture();f.controls.provider=async()=>({response:{regions:[{index:0,translatedText:'너비 11 cm'}]}});const out=await f.post([{id:'exact-region',text:'宽度10 cm'}]);assert.equal(out.body.workersRecovery.status,'invalid-response');assert.match(out.body.regions[0].issue,/영역 1 검증 실패: 원문 숫자/);assert.ok(!out.body.regions[0].issue.includes('너비'));assert.equal(f.calls.length,1);
 });

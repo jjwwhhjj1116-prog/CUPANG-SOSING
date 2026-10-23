@@ -7,7 +7,7 @@ import { readProductContent } from '@/db/product-content';
 import { readProductOptions, readOptionRegistrationNumbers } from '@/db/product-options';
 import { getCategoryProfile } from '@/db/category-profiles';
 import { readQuotationFields, readQuotationCollectionSource, quotationSourcesCurrent, type QuotationSourceGuard } from '@/db/quotation-fields';
-import { resolveQuotationFields, type QuotationFieldsView } from '@/app/quotation-schema';
+import { resolveQuotationFieldsPair, type QuotationFieldsView } from '@/app/quotation-schema';
 import { savedRegistrationSettings } from '@/app/workspace-settings';
 import { validateCategoryProfile, type TemplateDefinition } from '@/app/category-profiles';
 import { validateCategoryIdentity } from '@/app/category-identity';
@@ -94,10 +94,11 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
     profile: profile ? { id: profile.id, revision: profile.revision } : null, collection };
   const inputs = { categoryId: categoryContext.categoryId, categoryPath: categoryContext.categoryPath, product, content, options, settings,...(hubSchema?{hubSchema}:{}),...(template?{template}:{}) };
   const detailConfig = publicDetailConfig(env as Parameters<typeof publicDetailConfig>[0]);
-  const automatic = (await resolvePublicDetail(resolveQuotationFields(inputs),content,owner,imageKeys,detailConfig)).resolved;
   const overrides = scopedQuotationOverrides(state, categoryContext.categoryId);
   const packagingBasis=scopedQuotationPackagingBasis(state,categoryContext.categoryId),optionPackQuantities=quotationPackQuantities(options.rows);
-  const resolved = (await resolvePublicDetail(resolveQuotationFields({ ...inputs, overrides,...(packagingBasis?{packagingBasis}:{}) }),content,owner,imageKeys,detailConfig)).resolved;
+  const pair = resolveQuotationFieldsPair({ ...inputs, overrides,...(packagingBasis?{packagingBasis}:{}) });
+  const automatic = (await resolvePublicDetail(pair.automatic,content,owner,imageKeys,detailConfig)).resolved;
+  const resolved = (await resolvePublicDetail(pair.resolved,content,owner,imageKeys,detailConfig)).resolved;
   if (categoryContext.categoryId && hasLegacyQuotationOverrides(state)) resolved.issues.push('분류가 기록되지 않은 이전 수정값은 자동 적용하지 않았습니다. 자료 다운로드의 quotation-saved-scopes.json에 보존됩니다.');
   const inputFingerprint = await fingerprint({ inputs: { ...inputs, product: productFingerprintSource(inputs.product), settings: savedProductFingerprintSettings(inputs.settings) }, schema: automatic.schema, categoryContext, profileRevision: profile?.revision ?? null, settingsPayload: source.settingsPayload, collection,
     ...(packagingBasis?{packagingBasis}:{}),

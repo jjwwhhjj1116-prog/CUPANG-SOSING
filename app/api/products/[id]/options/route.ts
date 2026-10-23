@@ -18,10 +18,10 @@ async function pricing(owner: string, product: ProductRecord, options: ProductOp
   return { ...resolved, rows: calculateOptionPrices(options.rows, resolved.policy) };
 }
 export async function GET(_: Request, context: Context) {
-  const user=await getChatGPTUser();
-  if (process.env.NODE_ENV === 'production' && !user?.verifiedAccess) return closed();
-  const owner = await getWorkspaceOwnerId(); const { id } = await context.params;
   try {
+    const user=await getChatGPTUser();
+    if (process.env.NODE_ENV === 'production' && !user?.verifiedAccess) return closed();
+    const owner = await getWorkspaceOwnerId(); const { id } = await context.params;
     const product = await findProduct(owner, id);
     if (!product) return response({ error: '상품을 찾을 수 없습니다.' }, 404);
     const options = await readProductOptions(owner, id);
@@ -46,10 +46,10 @@ async function input(request: Request) {
   try { return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown; } catch { throw new Error('올바른 JSON 객체가 필요합니다.'); }
 }
 export async function PATCH(request: Request, context: Context) {
-  if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return closed();
-  let body: unknown; try { body = await input(request); } catch (error) { return response({ error: error instanceof Error ? error.message : '입력을 확인해주세요.' }, error instanceof RangeError ? 413 : 400); }
-  const owner = await getWorkspaceOwnerId(); const { id } = await context.params;
   try {
+    if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return closed();
+    let body: unknown; try { body = await input(request); } catch (error) { return response({ error: error instanceof Error ? error.message : '입력을 확인해주세요.' }, error instanceof RangeError ? 413 : 400); }
+    const owner = await getWorkspaceOwnerId(); const { id } = await context.params;
     const product = await findProduct(owner, id); if (!product) return response({ error: '상품을 찾을 수 없습니다.' }, 404);
     let validated; try { validated = validateOptionsInput(body, owner, productImageKeys(product.image_keys)); }
     catch (error) { return response({ error: error instanceof Error ? error.message : '옵션 내용을 확인해주세요.' }, 400); }

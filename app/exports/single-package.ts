@@ -49,7 +49,9 @@ function packageSourceValueKey(value:unknown):string|null{
 }
 
 /** Shared current-source proof. A read never publishes assets or contacts Hub. */
-export async function loadSinglePackage(owner:string,id:string,profileId:string|null,company:SupplierHubCompany,active:()=>Promise<void>,prepare=false,expectedFingerprint?:string,includeNativeAssets=false){
+export async function loadSinglePackage(owner:string,id:string,profileId:string|null,company:SupplierHubCompany,active:()=>Promise<void>,prepare=false,expectedFingerprint?:string,includeNativeAssets=false,options:{nativeReadOnly?:boolean}={}){
+    const nativeReadOnly=options.nativeReadOnly===true;
+    if(nativeReadOnly&&(!includeNativeAssets||prepare))throw new SingleAssetError('원본 조회 전용 준비 범위를 확인해주세요.','NATIVE_ASSET_READ_ONLY',400);
     const saved = await readQuotationExportSource(owner, id, profileId);
     // The visible editor also binds settings, profile interpretation and source
     // context. Pair its exact fingerprint with this export's full source guard;
@@ -78,10 +80,10 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
       categoryPath:saved.categoryContext.categoryPath,resolved,documents});
     const source = { productVersion: saved.product.updated_at, contentRevision: saved.content.revision, optionRevision: saved.options.revision,
       quotationRevision: saved.state.revision, profileId: saved.categoryContext.profileId, profileRevision: saved.profile?.revision ?? null };
-    const options = resolved.rows.filter(row => row.included).map(row => ({ optionId: row.optionId, optionLabel: row.optionLabel }));
+    const includedOptions = resolved.rows.filter(row => row.included).map(row => ({ optionId: row.optionId, optionLabel: row.optionLabel }));
     const nativeIdentity = {ownerId:owner,productId:id,company,categoryId:saved.categoryContext.categoryId,categoryPath:[...saved.categoryContext.categoryPath],
         schemaSha256:projection.schemaSha256,sourceFingerprint,inputFingerprint:reviewed.view.inputFingerprint,source,
-        members:options.map((option,documentIndex)=>({...option,documentIndex}))};
+        members:includedOptions.map((option,documentIndex)=>({...option,documentIndex}))};
     const nativeLegalAttachmentPlan = await buildNativeLegalAttachmentPlan({context:nativeLegal,applicability:documents.applicability,identity:nativeIdentity});
     const sourceIssues = [...collectionSourceReview(saved.sourceGaps), ...(saved.generatedProductLabelIssues ?? []),
       ...await inspectLegalDocumentStorage(documents, id, key => env.FILES.head(key))];
@@ -105,6 +107,7 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
     const verifyPrivateFile = async (file:{key:string;byteLength:number;sha256:string}) => {
       const stored = await env.FILES.get(file.key), currentMetadata = await env.FILES.head(file.key);
       if (!stored || !currentMetadata || JSON.stringify(currentMetadata) !== JSON.stringify(metadata.get(file.key))) changed();
+      if (nativeReadOnly && stored.size !== file.byteLength) changed();
       const bytes = new Uint8Array(await stored.arrayBuffer());
       const sha256 = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('');
       if (bytes.byteLength !== file.byteLength || sha256 !== file.sha256) changed();
@@ -119,25 +122,38 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
       if (file) await verifyPrivateFile(file);
       await active();
     };
-    await guard();
-    if (prepare && plan.canPrepare) {
-      await publishSingleAssets(plan, env.FILES, guard);
-      // Re-read every selected private file after publication. A source edit
-      // never silently turns an older immutable capability into a current one.
-      for (const file of plan.files) await guard(file);
+    let published=false;
+    if(!nativeReadOnly){
+      await guard();
+      if (prepare && plan.canPrepare) {
+        await publishSingleAssets(plan, env.FILES, guard);
+        // Re-read every selected private file after publication. A source edit
+        // never silently turns an older immutable capability into a current one.
+        for (const file of plan.files) await guard(file);
+      }
+      published = plan.canPrepare && await verifySingleAssets(plan, env.FILES, guard);
+      await guard();
     }
-    const published = plan.canPrepare && await verifySingleAssets(plan, env.FILES, guard);
-    await guard();
     const nativeAssetSourceGuard = async () => {
       await guard();
       // Read-only bytes are withheld until the whole batch's final complete
-      // source/config proof. Keep each file's live membership, metadata and
-      // byte digest checks without reparsing the same source DTO per image.
+      // source/config proof. Keep live membership at both batch boundaries,
+      // plus each file's metadata and byte digest checks.
       // Publication continues to use the original per-file full guard above.
-      if (nativeAssetSourcePlan) for (const image of nativeAssetSourcePlan.images) {
-        await active();
-        await verifyPrivateFile(image);
-        await active();
+      if (nativeAssetSourcePlan&&nativeReadOnly) {
+        // This GET returns nothing until the final complete actor/source fence.
+        // Shared role aliases need one current byte proof per private key.
+        // Three bounded readers avoid N serial R2/auth round trips; writes and
+        // receipt verification retain the original per-file guards below.
+        const unique=new Map<string,{key:string;byteLength:number;sha256:string}>();
+        for(const image of nativeAssetSourcePlan.images){const prior=unique.get(image.key);if(prior&&(prior.byteLength!==image.byteLength||prior.sha256!==image.sha256))changed();unique.set(image.key,image);}
+        const files=[...unique.values()];
+        for(let index=0;index<files.length;index+=3){
+          const results=await Promise.allSettled(files.slice(index,index+3).map(verifyPrivateFile));
+          const failure=results.find(result=>result.status==='rejected');if(failure?.status==='rejected')throw failure.reason;
+        }
+      }else if (nativeAssetSourcePlan) for (const image of nativeAssetSourcePlan.images) {
+        await active();await verifyPrivateFile(image);await active();
       }
       await guard();
     };
@@ -149,7 +165,7 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
       // Response metadata only: operation fingerprints, packets and receipts
       // retain their existing contract and exact prepared body identity.
       inputFingerprint: reviewed.view.inputFingerprint,
-      source,options,
+      source,options:includedOptions,
       excludedOptions: saved.options.rows.filter(row => !row.included).map(row => ({ optionId: row.id, translatedName: row.translatedName })) };
     return { view, saved, guard, nativeAssetSourceAssets:includeNativeAssets?assets:[], nativeAssetSourceGuard };
 }

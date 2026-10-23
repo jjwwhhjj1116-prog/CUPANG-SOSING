@@ -16,8 +16,9 @@ function port(handler){
 test('pinned worker loads local models sequentially, forwards blocks and transfers image bytes, then terminates once',async()=>{
  const messages=[],p=port((request,target)=>queueMicrotask(()=>{if(request.action==='recognize')target.reply(request,'progress',{status:'recognizing text',progress:0.5});target.reply(request,'resolve',{text:'黑色',blocks:[]});}));
  const engine=await exports.createFreeOcrWorker(['chi_sim','eng'],1,{...options,logger:value=>messages.push(value)},new AbortController().signal,path=>{assert.equal(path,options.workerPath);return p;});
- assert.deepEqual(p.calls.map(row=>row.action),['load','loadLanguage','initialize']);assert.deepEqual(plain(p.calls[1].payload.langs),['chi_sim','eng']);assert.equal(p.calls[1].payload.options.langPath,options.langPath);assert.equal(p.calls[0].payload.options.corePath,options.corePath);assert.equal('dataPath' in p.calls[1].payload.options,false,'the engine default avoids mkdir of an existing virtual root');
- const input=new Uint8Array([1,2,3]),result=await engine.recognize(input,{rotateAuto:false},{blocks:true,text:true});assert.equal(result.data.text,'黑色');assert.equal(p.calls[3].payload.output.blocks,true);assert.equal(p.transfers[3].length,1);assert.deepEqual(Array.from(input),[1,2,3]);assert.equal(messages[0].progress,0.5);
+ assert.deepEqual(p.calls.map(row=>row.action),['load','loadLanguage','initialize','setParameters']);assert.deepEqual(plain(p.calls[1].payload.langs),['chi_sim','eng']);assert.equal(p.calls[1].payload.options.langPath,options.langPath);assert.equal(p.calls[0].payload.options.corePath,options.corePath);assert.equal('dataPath' in p.calls[1].payload.options,false,'the engine default avoids mkdir of an existing virtual root');
+ assert.deepEqual(plain(p.calls[3].payload),{params:{tessedit_pageseg_mode:'3'}},'Use the pinned Tesseract 7 setParameters protocol after initialization');
+ const input=new Uint8Array([1,2,3]),result=await engine.recognize(input,{rotateAuto:false},{blocks:true,text:true});assert.equal(result.data.text,'黑色');assert.equal(p.calls[4].payload.output.blocks,true);assert.equal(p.transfers[4].length,1);assert.deepEqual(Array.from(input),[1,2,3]);assert.equal(messages[0].progress,0.5);
  await engine.terminate();await engine.terminate();assert.equal(p.terminated,1);assert.equal(p.listeners,0);await assert.rejects(()=>engine.recognize(input));
 });
 test('cancelling language initialization immediately terminates the owned worker instead of awaiting a hidden SDK handle',async()=>{
@@ -25,9 +26,30 @@ test('cancelling language initialization immediately terminates the owned worker
  const starting=exports.createFreeOcrWorker(['eng'],1,options,controller.signal,()=>p);await settle();assert.deepEqual(p.calls.map(row=>row.action),['load','loadLanguage']);
  const rejected=assert.rejects(()=>starting);controller.abort();assert.equal(p.terminated,1);assert.equal(p.listeners,0);await rejected;p.reply(p.calls[1]);assert.equal(p.calls.length,2);
 });
-for(const action of ['load','loadLanguage','initialize'])test(`a ${action} rejection terminates the worker and rejects creation without an unresolved initialization`,async()=>{
+for(const action of ['load','loadLanguage','initialize','setParameters'])test(`a ${action} rejection terminates the worker and rejects creation without an unresolved initialization`,async()=>{
  const p=port((request,target)=>queueMicrotask(()=>target.reply(request,request.action===action?'reject':'resolve','fixture')));
  await assert.rejects(()=>exports.createFreeOcrWorker(['eng'],1,options,new AbortController().signal,()=>p),/인식/);assert.equal(p.terminated,1);assert.equal(p.listeners,0);assert.equal(p.calls.at(-1).action,action);
+});
+test('cancelling pending AUTO layout configuration disposes initialization and ignores a late acknowledgement',async()=>{
+ const controller=new AbortController(),p=port((request,target)=>{if(request.action!=='setParameters')queueMicrotask(()=>target.reply(request));});
+ const starting=exports.createFreeOcrWorker(['chi_sim','eng'],1,options,controller.signal,()=>p);await settle();
+ assert.deepEqual(p.calls.map(row=>row.action),['load','loadLanguage','initialize','setParameters']);
+ const rejected=assert.rejects(()=>starting);controller.abort();await rejected;
+ assert.equal(p.terminated,1);assert.equal(p.listeners,0);p.reply(p.calls.at(-1));await settle();
+ assert.equal(p.calls.length,4,'A cancelled configuration cannot expose an engine or start recognition');
+});
+test('AUTO layout forwards low-confidence caption regions and empty results without invention or retry',async()=>{
+ const line={text:'产品 展示',confidence:48,bbox:{x0:17,y0:1,x1:160,y1:34}};
+ const results=[{text:'产品 展示\n',confidence:64,blocks:[{paragraphs:[{lines:[line]}]}]},{text:'',confidence:95,blocks:[]}];
+ const p=port((request,target)=>queueMicrotask(()=>target.reply(request,'resolve',request.action==='recognize'?results.shift():{})));
+ const engine=await exports.createFreeOcrWorker(['chi_sim','eng'],1,options,new AbortController().signal,()=>p);
+ try{
+  const first=await engine.recognize(new Uint8Array([1]),{rotateAuto:false},{blocks:true,text:true});
+  assert.deepEqual(plain(first.data.blocks[0].paragraphs[0].lines[0]),line);
+  const empty=await engine.recognize(new Uint8Array([1]),{rotateAuto:false},{blocks:true,text:true});
+  assert.deepEqual(plain(empty.data),{text:'',confidence:95,blocks:[]});
+  assert.equal(p.calls.filter(row=>row.action==='recognize').length,2);
+ }finally{await engine.terminate();}
 });
 test('unmatched worker messages cannot resolve jobs; native errors terminate pending initialization',async()=>{
  const p=port();const controller=new AbortController(),starting=exports.createFreeOcrWorker(['eng'],1,options,controller.signal,()=>p);const first=p.calls[0];

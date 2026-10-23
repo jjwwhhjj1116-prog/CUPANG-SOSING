@@ -28,14 +28,16 @@ export async function GET(request:Request,context:Context){
    if(!current?.verifiedAccess||current.userId!==owner||current.membership?.id!==member.id||current.membership?.email!==member.email||current.membership?.role!==member.role||!next||next.code!==company.code||next.name!==company.name)changed();
   };
   await active();
-  const loaded=await loadSinglePackage(owner,id,profileId,company,active,false,undefined,true),plan=loaded.view.nativeAssetSourcePlan;
+  const loaded=await loadSinglePackage(owner,id,profileId,company,active,false,undefined,true,{nativeReadOnly:true}),plan=loaded.view.nativeAssetSourcePlan;
   if(!plan||plan.format!=='yoofam-native-asset-source-plan-v1'||plan.registered!==false||plan.remoteWrites!==false||plan.submissionReady!==false||plan.transportReady!==false)throw new SingleAssetError('현재 네이티브 원본 파일 계획을 확인하지 못했습니다.','NATIVE_ASSET_PLAN',503);
-  if(key===null){await loaded.nativeAssetSourceGuard();await active();return reply(plan);}
+  // The loader just finished one complete byte batch and final source fence.
+  // No asynchronous file work has happened since; do not repeat that batch.
+  if(key===null){await active();return reply(plan);}
   if(!plan.metadataValid||!plan.sourcePlanSha256||plan.sourcePlanSha256!==expected||!plan.identity||plan.identity.ownerId!==owner||plan.identity.productId!==id||plan.identity.company.code!==company.code||plan.identity.company.name!==company.name)
    return reply({error:'검토한 원본 계획이 현재 상품·회사·저장값과 다릅니다.',code:'NATIVE_ASSET_PLAN_CHANGED'},409);
   const files=plan.images.filter(file=>file.key===key),asset=loaded.nativeAssetSourceAssets.find(file=>file.key===key);
   if(!files.length||!asset||files.some(file=>file.sha256!==files[0].sha256||file.byteLength!==files[0].byteLength||file.contentType!==files[0].contentType))return reply({error:'현재 상품의 원본 계획에 포함된 파일만 조회할 수 있습니다.',code:'NATIVE_ASSET_KEY'},404);
-  await loaded.nativeAssetSourceGuard();await active();
+  await active();
   const file=files[0],bytes=new Uint8Array(asset.data);
   if(!bytes.length||bytes.length>MAX_IMAGE_BYTES||bytes.length!==file.byteLength)changed();
   try{if(imageFileType(bytes).contentType!==file.contentType)changed();}catch{changed();}

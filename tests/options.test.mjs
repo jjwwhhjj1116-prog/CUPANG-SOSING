@@ -102,11 +102,42 @@ test('real SQLite atomically persists options and selected count while blocking 
   } finally { sqlite.close(); }
 });
 
-function routeWith({ find = async () => product, read = async () => model.emptyProductOptions('test'), save = async (_owner, options) => options, head = async () => ({ httpMetadata: { contentType: 'image/png' } }), mode } = {}) {
+function routeWith({ find = async () => product, read = async () => model.emptyProductOptions('test'), save = async (_owner, options) => options, head = async () => ({ httpMetadata: { contentType: 'image/png' } }), mode, auth, library } = {}) {
   return load('app/api/products/[id]/options/route.ts', {
+    ...(auth ? {'@/app/chatgpt-auth':auth} : {}),
+    ...(library ? {'@/db/main-image-library':{readMainImageLibraryEvidence:library}} : {}),
     '@/db/queries': { findProduct: find, getSettings: async () => null }, '@/db/product-options': { readProductOptions: read, saveProductOptions: save }, 'cloudflare:workers': { env: { FILES: { head } } },
   }, mode);
 }
+test('options auth and owner failures return private JSON service errors before any product read or write',async()=>{
+  for(const method of ['GET','PATCH'])for(const failure of ['session','owner','params']){
+    const calls=[];const auth={getChatGPTUser:async()=>{calls.push('session');if(failure==='session')throw Error('PRIVATE_SESSION_DATABASE');return {verifiedAccess:true};},getWorkspaceOwnerId:async()=>{calls.push('owner');if(failure==='owner')throw Error('PRIVATE_OWNER_DATABASE');return 'owner';}};
+    const route=routeWith({mode:'production',auth,find:async()=>{calls.push('find');return product;},save:async()=>{calls.push('save');throw Error('must not write');}});
+    const params=failure==='params'?{get params(){return Promise.reject(Error('PRIVATE_ROUTE_PARAMS'));}}:context;
+    const result=await route[method](method==='GET'?new Request('http://localhost'):request(payload([row()])),params);
+    assert.equal(result.status,503);assert.equal(result.headers.get('content-type'),'application/json');assert.equal(result.headers.get('cache-control'),'no-store');
+    const body=await result.json();assert.match(body.error,method==='GET'?/불러오지 못했습니다/:/저장본을 확인/);assert.doesNotMatch(JSON.stringify(body),/PRIVATE|DOCTYPE|Unexpected/);
+    assert.equal(calls.includes('find'),false);assert.equal(calls.includes('save'),false);
+  }
+});
+test('unverified production options access remains closed before owner resolution or input parsing',async()=>{
+  let owners=0,reads=0,writes=0;
+  const route=routeWith({mode:'production',auth:{getChatGPTUser:async()=>({verifiedAccess:false}),getWorkspaceOwnerId:async()=>{owners++;return 'owner';}},find:async()=>{reads++;return product;},save:async()=>{writes++;}});
+  for(const method of ['GET','PATCH']){
+    const result=await route[method](new Request('http://localhost',{method,...(method==='PATCH'?{body:'malformed'}:{})}),context);
+    assert.equal(result.status,503);assert.match((await result.json()).error,/운영 인증 연결/);
+  }
+  assert.equal(owners,0);assert.equal(reads,0);assert.equal(writes,0);
+});
+test('options image library remains fenced by the exact approved company at the final read',async()=>{
+  const company={code:'A01526306',name:'유앤채'},membership={status:'approved',companyCode:company.code,companyName:company.name};
+  for(const latest of [membership,{...membership,companyCode:'A01464742',companyName:'와이홉'},{...membership,status:'pending'},null]){
+    let authReads=0;const scopes=[];const imageLibrary={company,entries:[]};
+    const route=routeWith({mode:'production',auth:{getChatGPTUser:async()=>({verifiedAccess:true,membership:++authReads===1?membership:latest}),getWorkspaceOwnerId:async()=>'owner'},find:async(owner,id)=>{scopes.push([owner,id]);return product;},library:async(owner,found,options,approved)=>{scopes.push([owner,found.id,options.productId]);assert.equal(approved.code,company.code);return imageLibrary;}});
+    const result=await route.GET(new Request('http://localhost'),context);assert.equal(result.status,200);const body=await result.json();
+    assert.deepEqual(body.imageLibrary,latest===membership?imageLibrary:null);assert.deepEqual(scopes,[['owner','test'],['owner','test','test']]);assert.equal(authReads,2);
+  }
+});
 test('options API returns empty data initially, recomputes prices on server and records manual edits', async () => {
   const route = routeWith(); const get = await route.GET(new Request('http://localhost'), context);
   assert.equal(get.status, 200); assert.equal(get.headers.get('cache-control'), 'no-store'); assert.equal((await get.json()).options.rows.length, 0);

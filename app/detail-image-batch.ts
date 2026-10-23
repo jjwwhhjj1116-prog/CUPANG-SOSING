@@ -12,6 +12,9 @@ export type DetailBatchItem = {
   slotIndex: number; sourceKey: string; status: 'pending' | 'ready' | 'failed' | 'applied' | 'uncertain' | 'skipped';
   message: string; texts: { original: string; translated: string }[]; rendered?: FreeImageRendered;
   attempt?: { image: FreeImageRendered; before: QuotationFieldsView; reply?: FreeImageApplyReply }; appliedKey?: string;
+  // A verified image save is distinct from complete translation coverage.
+  // Keep this marker through the existing apply/recovery item copies.
+  translationReview?: { status: 'partial'; acceptedRegions: number; unresolvedRegions: number; message: string };
 };
 export type DetailImageBatch = {
   productId: string; optionId: string; profileId: string | null; language: 'zh' | 'en';

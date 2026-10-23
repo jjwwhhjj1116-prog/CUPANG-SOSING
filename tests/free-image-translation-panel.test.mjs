@@ -92,6 +92,12 @@ function fixture(initialProps = {}, clientOverrides = {}) {
       if (name === '@/app/free-image-crop') return cropModule;
       if (name === '@/app/components/free-image-crop-canvas') return { FreeImageCropCanvas: 'FreeImageCropCanvas' };
       if (name === '@/app/detail-workspace-image-client') return workspaceClient;
+      if (name === '@/app/free-image-editor-target') return {
+        isSavedFreeImageResult: (id, key) => key.split('/').at(-1)?.startsWith(`free-image-${id}-`) === true,
+        readSavedFreeImageQuotationTarget: async (...args) => { calls.push({ action: 'resolve-target', selection: args[0], signal: args[1] });
+          if (!client.readSavedFreeImageQuotationTarget) throw Error('No current quotation target in fixture');
+          return client.readSavedFreeImageQuotationTarget(...args); },
+      };
       assert.equal(name, '@/app/free-image-translation-client'); return client;
     } });
   const render = () => { cursor = 0; const outer = exports.default(props), tree = outer.type(outer.props); effects.splice(0).forEach(fn => fn()); return tree; };
@@ -1211,7 +1217,7 @@ test('saved editor restores original pixels, all ordered text/style/brush layers
     assert.equal(h.field('문구 3 선택').props.checked, false); assert.equal(h.field('문구 3 한국어').props.value, '');
     assert.equal(h.field('문구 3 글꼴').props.value, 'gmarket'); assert.equal(h.button('되돌리기').props.disabled, true);
     assert.deepEqual(plain(h.brush().props.strokes), [{ id: 'brush-57', background: '#13579b', brush: f.document.regions[1].brush }]);
-    assert.equal(h.render().props['data-workspace-dirty'], 'true'); assert.equal(h.button('검토한 번역 이미지 적용'), undefined);
+    assert.equal(h.render().props['data-workspace-dirty'], undefined); assert.equal(h.button('검토한 번역 이미지 적용'), undefined);
     h.setRender(async (image, rows, _signal, optionImageIds, crop, sourceLanguage) => ({ source: image.source, output: new Blob(['reviewed restored pixels'], { type: 'image/png' }),
       width: crop.width, height: crop.height, crop: { ...crop, sourceWidth: image.width, sourceHeight: image.height },
       editDocument: { format: 'free-image-edit-v1', width: image.width, height: image.height, sourceLanguage, regions: plain(rows), crop: { ...crop, sourceWidth: image.width, sourceHeight: image.height } }, optionImageIds }));
@@ -1375,6 +1381,118 @@ test('current-target saved-document responses arriving after profile or selected
       assert.equal(pending.signal.aborted, true); assert.equal(h.field('문구 1 한국어'), undefined);
       assert.equal(h.button('문구 영역 직접 추가').props.disabled, true); assert.equal(h.render().props['data-workspace-dirty'], undefined);
       assert.deepEqual(h.calls.map(call => call.action), ['source']); assert.equal(h.saved, 0); assert.equal(h.late, 0);
+    } finally { h.close(); }
+  }
+});
+
+test('generic generated-image selection discovers its current option before restoring original layers and retains that exact target through explicit save', async () => {
+  let target;
+  const h = fixture({ editorProfileId: 'saved-profile' }, { readSavedFreeImageQuotationTarget: async () => target }), f = savedEditorSelection(h);
+  target = { ...f.quotationTarget, input: 'mainImage', fieldKey: 'wire-main' };
+  try {
+    h.setProps({ imageKeys: [f.originalKey, f.resultKey] });
+    await h.change('번역할 이미지 역할', 'main'); await h.change('번역할 원본 이미지', f.resultKey);
+    assert.equal(h.calls.length, 0);
+    await h.click('원본 불러오기 · 수동 편집');
+    assert.deepEqual(h.calls.map(call => call.action), ['resolve-target', 'source']);
+    assert.deepEqual(plain(h.calls[0].selection), { productId: 'product', productVersion: version, sourceKey: f.resultKey, role: 'main', profileId: 'saved-profile' });
+    assert.deepEqual(plain(h.calls[1].quotationTarget), target);
+    assert.deepEqual(plain(h.calls[1].options), { restoreEditor: true, anchorPolicy: 'current-target-v1' });
+    assert.equal(h.field('번역할 원본 이미지').props.disabled, true); assert.equal(h.field('번역할 이미지 역할').props.disabled, true);
+    assert.equal(h.field('문구 1 한국어').props.value, f.document.regions[0].translated);
+    assert.equal(h.field('문구 3 선택').props.checked, false); assert.equal(h.field('문구 3 한국어').props.value, '');
+    assert.equal(h.field('이미지 원문 언어').props.value, 'en'); assert.equal(h.saved, 0);
+    await h.change('문구 1 한국어', '직접 교정한 저장 문구'); await h.click('번역 이미지 미리보기');
+    const preview = h.calls.at(-1);
+    assert.equal(preview.image.source.sourceKey, f.originalKey); assert.equal(preview.image.source.editorSource.resultKey, f.resultKey);
+    assert.deepEqual(plain(preview.image.source.quotationTarget), { ...target, bindingSha256: 'b'.repeat(64) });
+    assert.equal(preview.rows[0].translated, '직접 교정한 저장 문구'); assert.equal(preview.rows[2].selected, false);
+    await h.click('검토한 번역 이미지 적용');
+    assert.equal(h.saved, 1); assert.deepEqual(h.calls.map(call => call.action), ['resolve-target', 'source', 'preview', 'apply']);
+    await h.click('이미지 번역 편집 초안 지우기');
+    assert.equal(h.field('번역할 원본 이미지').props.disabled, false); assert.equal(h.field('번역할 이미지 역할').props.disabled, false);
+    await h.change('번역할 원본 이미지', f.originalKey); assert.equal(h.calls.length, 4);
+  } finally { h.close(); }
+});
+
+test('generic saved-target discovery failure leaves the original chooser unpinned and performs no source read or write', async () => {
+  const h = fixture({ editorProfileId: 'saved-profile' }, { readSavedFreeImageQuotationTarget: async () => { throw Error('이 이미지를 사용하는 옵션이 여러 개입니다. 옵션별 이미지에서 편집할 대상을 선택해주세요.'); } });
+  const key = `owner/free-image-product-${'d'.repeat(64)}.png`;
+  try {
+    h.setProps({ imageKeys: [key] }); await h.change('번역할 원본 이미지', key); await h.click('원본 불러오기 · 수동 편집');
+    assert.deepEqual(h.calls.map(call => call.action), ['resolve-target']); assert.match(text(h.render()), /옵션이 여러 개/);
+    assert.equal(h.field('번역할 원본 이미지').props.disabled, false); assert.equal(h.button('문구 영역 직접 추가').props.disabled, true);
+    assert.equal(h.saved, 0);
+  } finally { h.close(); }
+});
+
+test('generic restored edits retain the discovered option and exact PNG for read-only recovery after a lost acknowledgement', async () => {
+  let target;
+  const h = fixture({ editorProfileId: 'saved-profile' }, { readSavedFreeImageQuotationTarget: async () => target }), f = savedEditorSelection(h); target = f.quotationTarget;
+  try {
+    h.setProps({ imageKeys: [f.originalKey, f.resultKey] }); await h.change('번역할 원본 이미지', f.resultKey); await h.click('원본 불러오기 · 수동 편집');
+    await h.change('문구 1 한국어', '응답 유실 뒤에도 보존할 문구'); await h.click('번역 이미지 미리보기');
+    h.setApply(async () => { throw new ApplyError('저장 응답 확인 필요', true); }); await h.click('검토한 번역 이미지 적용');
+    const sent = h.calls.find(call => call.action === 'apply').image;
+    h.setProps({ version: '2026-10-06T00:00:12.000Z' }); await h.settle();
+    assert.equal(h.field('문구 1 한국어').props.value, '응답 유실 뒤에도 보존할 문구');
+    await h.click('같은 결과의 저장 상태 다시 확인');
+    const recovered = h.calls.at(-1); assert.equal(recovered.action, 'recover'); assert.equal(recovered.image, sent);
+    assert.deepEqual(plain(recovered.image.source.quotationTarget), { ...target, bindingSha256: 'b'.repeat(64) });
+    assert.equal(h.calls.filter(call => call.action === 'resolve-target').length, 1);
+    assert.equal(h.calls.filter(call => call.action === 'apply').length, 1); assert.equal(h.saved, 1);
+  } finally { h.close(); }
+});
+
+test('a generic saved-document review releases busy and can close untouched; same-tick edits, crop, language, preview and uncertain saves still block closing', async () => {
+  let target, guard; const editing = [], wait = deferred();
+  const h = fixture({ editorProfileId: 'saved-profile', onCloseGuard: value => { guard = value; }, onEditingChange: value => editing.push(value) },
+    { readSavedFreeImageQuotationTarget: async () => wait.promise }), f = savedEditorSelection(h); target = f.quotationTarget;
+  try {
+    h.setProps({ imageKeys: [f.originalKey, f.resultKey] }); await h.change('번역할 원본 이미지', f.resultKey);
+    h.button('원본 불러오기 · 수동 편집').props.onClick(); await h.settle();
+    assert.equal(h.busy.at(-1), true); assert.equal(guard(), false);
+    wait.resolve(target); await h.settle();
+    const retainedGuard = guard;
+    assert.equal(h.busy.at(-1), false); assert.equal(h.button('이미지 작업 취소'), undefined);
+    assert.equal(h.render().props['data-workspace-saving'], undefined); assert.equal(h.render().props['data-workspace-dirty'], undefined);
+    assert.equal(editing.at(-1), false); assert.equal(retainedGuard(), true, 'reviewing an already saved document requires no discard or rewrite');
+    const originalText = h.field('문구 1 한국어').props.value;
+    h.field('문구 1 한국어').props.onChange({ target: { value: '아직 저장하지 않은 문구' } });
+    assert.equal(retainedGuard(), false, 'the previous close callback reads immediate edits before an effect'); await h.settle();
+    assert.equal(editing.at(-1), true); await h.click('되돌리기'); assert.equal(retainedGuard(), true); assert.equal(h.field('문구 1 한국어').props.value, originalText);
+    h.field('이미지 원문 언어').props.onChange({ target: { value: 'zh' } }); assert.equal(retainedGuard(), false); await h.settle();
+    await h.change('이미지 원문 언어', 'en'); assert.equal(retainedGuard(), true);
+    await h.change('이미지 잘라내기', '', true); h.field('잘라내기 x').props.onChange({ target: { value: '1' } });
+    assert.equal(retainedGuard(), false); await h.settle(); await h.change('잘라내기 x', '2'); assert.equal(retainedGuard(), true);
+    await h.change('이미지 잘라내기', '', false); await h.click('번역 이미지 미리보기'); assert.equal(retainedGuard(), false);
+    h.setApply(async () => { throw new ApplyError('저장 응답 확인 필요', true); }); await h.click('검토한 번역 이미지 적용'); assert.equal(retainedGuard(), false);
+    assert.equal(h.saved, 0); await h.click('이미지 번역 편집 초안 지우기'); assert.equal(retainedGuard(), true);
+    assert.equal(h.calls.filter(call => call.action === 'apply').length, 1);
+  } finally { h.close(); }
+});
+
+test('generic saved-target discovery and restore reject late replies after scope or visibility ABA, cancellation, version change and close', async () => {
+  for (const stage of ['discover', 'source']) for (const mode of ['profile', 'context', 'active', 'disabled', 'version', 'cancel', 'close']) {
+    const wait = deferred(); let target, reply;
+    const h = fixture({ editorProfileId: 'saved-profile' }, { readSavedFreeImageQuotationTarget: async () => stage === 'discover' ? wait.promise : target });
+    const f = savedEditorSelection(h, { sourceIntercept(image) { reply = image; return stage === 'source' ? wait.promise : image; } }); target = f.quotationTarget;
+    try {
+      h.setProps({ imageKeys: [f.resultKey] }); await h.change('번역할 원본 이미지', f.resultKey);
+      h.button('원본 불러오기 · 수동 편집').props.onClick(); await h.settle();
+      const request = h.calls.at(-1); assert.equal(request.action, stage === 'discover' ? 'resolve-target' : 'source');
+      if (mode === 'profile') { h.setProps({ editorProfileId: 'another-profile' }); h.setProps({ editorProfileId: 'saved-profile' }); }
+      else if (mode === 'context') { h.setProps({ quotationContext: { profileId: 'saved-profile', optionId: 'other', input: 'detailImages' } }); h.setProps({ quotationContext: undefined }); }
+      else if (mode === 'active') { h.setProps({ active: false }); h.setProps({ active: true }); }
+      else if (mode === 'disabled') { h.setProps({ disabled: true }); h.setProps({ disabled: false }); }
+      else if (mode === 'version') h.setProps({ version: '2026-10-06T00:00:11.000Z' });
+      else if (mode === 'cancel') await h.click('이미지 작업 취소');
+      else h.close();
+      wait.resolve(stage === 'discover' ? target : reply);
+      if (mode === 'close') { for (let index = 0; index < 6; index++) await new Promise(resolve => setImmediate(resolve)); }
+      else { await h.settle(); assert.equal(h.field('문구 1 한국어'), undefined); assert.equal(h.button('문구 영역 직접 추가').props.disabled, true); }
+      assert.equal(request.signal.aborted, true, `${stage}/${mode}`); assert.equal(h.saved, 0); assert.equal(h.late, 0);
+      assert.deepEqual(h.calls.map(call => call.action), stage === 'discover' ? ['resolve-target'] : ['resolve-target', 'source']);
     } finally { h.close(); }
   }
 });

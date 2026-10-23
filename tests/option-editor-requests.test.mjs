@@ -12,7 +12,7 @@ function harness(handler, readHandler, props={}){
  const sameDeps=(before,next)=>before&&next&&before.length===next.length&&next.every((value,index)=>Object.is(value,before[index]));
  const hooks={useState(initial){const i=si++;if(!(i in state))state[i]=typeof initial==='function'?initial():initial;return[state[i],v=>{state[i]=typeof v==='function'?v(state[i]):v;}];},useRef(initial){const i=ri++;return refs[i]??(refs[i]={current:initial});},useMemo(fn,deps){const i=mi++,before=memos[i];if(!before||!sameDeps(before.deps,deps))memos[i]={value:fn(),deps};return memos[i].value;},useCallback(fn,deps){return hooks.useMemo(()=>fn,deps);},useEffect(fn){if(first)effects.push(fn);},useLayoutEffect(fn,deps){const i=li++,before=layoutStates[i];if(!before||!sameDeps(before.deps,deps)){layoutStates[i]={deps,cleanup:before?.cleanup};layouts.push(()=>{layoutStates[i].cleanup?.();layoutStates[i].cleanup=fn();});}}};
  let body;
- function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);const source=fs.readFileSync(new URL('../'+file,import.meta.url),'utf8')+(file==='app/components/product-options-editor.tsx'?'\nexport {OptionsEditor as RegularOptionsEditor};':'');vm.runInNewContext(ts.transpileModule(source,{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,structuredClone,TextEncoder,crypto,fetch:async(url,init)=>init?.method==='PATCH'?handler(url,init,body):readHandler?readHandler(body):Response.json(body),require(name){if(name.endsWith('.css'))return{};if(name==='react')return hooks;if(name.startsWith('@/'))return load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts'));return native(name);}});return exports;}
+ function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);const source=fs.readFileSync(new URL('../'+file,import.meta.url),'utf8')+(file==='app/components/product-options-editor.tsx'?'\nexport {OptionsEditor as RegularOptionsEditor};':'');vm.runInNewContext(ts.transpileModule(source,{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,structuredClone,TextEncoder,crypto,fetch:async(url,init)=>init?.method==='PATCH'?handler(url,init,body):readHandler?readHandler(body):Response.json(body),require(name){if(name.endsWith('.css'))return{};if(name==='react')return hooks;if(name.startsWith('@/'))return load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts'));return native(name);}});return exports;}
  const model=load('app/product-options.ts');body={options:{...model.emptyProductOptions('p'),revision:1,rows:[{...model.emptyOptionInput('a'),unitCostCny:2,included:true,updatedAt:'before',provenance:{}}]},productVersion:'2026-09-24T00:00:00Z',pricing:{policy:{exchangeRate:100,supplyMargin:0,coupangMargin:0,minimumMargin:0,msrpMultiple:1,roundingUnit:1},policySource:'saved-product',rows:[]}};
  const component=load('app/components/product-options-editor.tsx').RegularOptionsEditor;
  const product={id:'p',title:'상품',image_keys:'["owner/a.png","owner/b.png"]',updated_at:body.productVersion};
@@ -22,6 +22,13 @@ function harness(handler, readHandler, props={}){
  const image=()=>nodes(render()).find(n=>n.type==='select'&&n.props['aria-label']==='옵션 1 이미지');
  return{render,button,image,product,get saves(){return saves;},async start(){render();effects.forEach(fn=>cleanups.push(fn()));await settle();},unmount(){layoutStates.forEach(value=>value.cleanup?.());cleanups.forEach(fn=>fn?.());}};
 }
+
+test('option editor displays safe read diagnostics for an HTML service failure without saving or publishing stale options',async()=>{
+ let writes=0;const h=harness(async()=>{writes++;throw Error('must not write');},()=>new Response('<!DOCTYPE html>PRIVATE_PLATFORM_DETAILS',{status:503,headers:{'content-type':'text/html'}}));
+ await h.start();const rendered=JSON.stringify(h.render());
+ assert.match(rendered,/GET \/api\/products\/:id\/options/);assert.match(rendered,/HTTP 503/);assert.match(rendered,/HTML 응답/);assert.doesNotMatch(rendered,/PRIVATE_|DOCTYPE|Unexpected/);
+ assert.equal(h.saves,0);assert.equal(writes,0);assert.equal(h.image(),undefined);h.unmount();
+});
 
 test('saved option packaging opens its exact quotation target only after a successful save',async()=>{
  let finish;const pending=new Promise(resolve=>{finish=resolve;}),requests=[],targets=[];
@@ -114,10 +121,13 @@ test('targeted price editing selects one option and saves all other rows unchang
  h.button().props.onClick();await settle();assert.equal(request.rows.length,2);assert.equal(request.rows[0].unitCostCny,2);assert.equal(request.rows[1].unitCostCny,9);
 });
 test('missing target leaves every option unselected',async()=>{
- const h=harness(()=>{},undefined,{focusedOptionId:'deleted',pricingView:true});await h.start();const all=nodes(h.render());
- assert.equal(all.find(n=>n.props?.['aria-label']==='가격 옵션 1 선택').props.checked,false);
- assert.equal(all.filter(n=>n.props?.['data-option-target']).length,0);
- assert.ok(all.some(n=>n.type==='p'&&String(n.props.children).includes('선택했던 옵션이 현재 목록에 없습니다')));
+ for(const pricingView of [true,false]){
+  const h=harness(()=>{},undefined,{focusedOptionId:'deleted',pricingView});await h.start();const all=nodes(h.render());
+  assert.equal(all.find(n=>n.props?.['aria-label']===(pricingView?'가격 옵션 1 선택':'옵션 1 일괄 편집 선택')).props.checked,false);
+  assert.equal(all.filter(n=>n.props?.['data-option-target']).length,0);
+  if(!pricingView)assert.ok(all.some(n=>n.type==='p'&&String(n.props.children).includes('선택했던 옵션이 현재 목록에 없습니다')));
+  h.unmount();
+ }
 });
 
 test('targeted option image editing saves only that image and clearing restores shared image selection',async()=>{

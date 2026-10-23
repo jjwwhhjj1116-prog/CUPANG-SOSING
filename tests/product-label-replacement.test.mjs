@@ -119,9 +119,14 @@ test('a foreign-owner receipt response or failed lookup keeps all final referenc
  const f=await fixture();try {
   const old=await f.attach(),metadata=(await f.api.bindings.FILES.head(old.key)).customMetadata,receipt=await json(await f.api.route('/api/files?labelUploadId='+metadata.labelUploadId));
   await f.save(await f.read(),[{optionId:f.selected.optionId,fieldKey:'material',value:'새 생성 원료'}]);const before=plain(await f.readQuotation()),count=f.api.objects.size;
-  for(const response of [()=>Response.json({...receipt,key:receipt.key.replace('owner/','foreign-owner/')}),()=>Response.json({error:'receipt unavailable'},{status:503})]) {
+  for(const [kind,response] of [['foreign',()=>Response.json({...receipt,key:receipt.key.replace('owner/','foreign-owner/')})],['unavailable',()=>Response.json({error:'receipt unavailable'},{status:503})]]) {
    const start=f.calls.length,request=async(url,init={})=>url==='/api/files?labelUploadId='+metadata.labelUploadId?response():f.request(url,init);
-   await assert.rejects(f.attach(f.selected.optionId,{request}),/소유자|unavailable/);assert.deepEqual(plain(await f.readQuotation()),before);assert.equal(f.api.objects.size,count);assert.ok(f.calls.slice(start).every(call=>call.method==='GET'));assert.deepEqual(f.api.objects.get(old.key),png);
+   await assert.rejects(f.attach(f.selected.optionId,{request}),error=>{
+    if(kind==='foreign')assert.match(error.message,/소유자/);
+    else assert.ok(error.message.endsWith('[GET /api/files · HTTP 503 · JSON 응답]'),error.message);
+    assert.doesNotMatch(error.message,/unavailable|labelUploadId|foreign-owner/);
+    return true;
+   });assert.deepEqual(plain(await f.readQuotation()),before);assert.equal(f.api.objects.size,count);assert.ok(f.calls.slice(start).every(call=>call.method==='GET'));assert.deepEqual(f.api.objects.get(old.key),png);
   }
  }finally {f.api.close();}
 });

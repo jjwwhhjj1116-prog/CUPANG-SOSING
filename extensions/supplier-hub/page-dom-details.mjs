@@ -19,12 +19,17 @@ function firstLocalHeading(node){
  return first?headingText(first):'';
 }
 function excluded(node){
- let depth=0;
+ let depth=0,detailSection=false;
  for(let current=node;current;current=current.parentElement){
   if(++depth>40)return true;
   if(ignoredTags.has(current.tagName)||attr(current,'role')==='navigation'||isUnrelatedProductElement(current,{includeOfferLinks:false})||unrelated.test([attr(current,'id'),attr(current,'class'),attr(current,'data-module-name'),attr(current,'data-plg-name')].join(' ')))return true;
   if(['SECTION','ARTICLE','DIV'].includes(current.tagName)||attr(current,'role')==='tabpanel'){
-   const kind=productSectionKind(firstLocalHeading(current));if(['unrelated','attributes','packaging'].includes(kind))return true;
+   const kind=productSectionKind(firstLocalHeading(current));
+   // A shared layout's earlier review/attribute heading does not describe an
+   // independently headed detail section. Only stop the heading heuristic;
+   // explicit forbidden tags, roles and metadata still apply at every level.
+   if(!detailSection&&['unrelated','attributes','packaging'].includes(kind))return true;
+   if(kind==='detail')detailSection=true;
   }
  }
  return false;
@@ -61,6 +66,27 @@ function imageUrl(node){
  }
  return readPageSourceElementImage(node,{preferDataSource:true});
 }
+function backgroundImageUrls(value){
+ if(typeof value!=='string'||value.length>16384||/[\u0000-\u001f]/u.test(value))return[];
+ const source=value.trim();if(!source||source==='none')return[];
+ // Accept complete computed url() layers only. Do not interpret CSS escapes,
+ // image-set(), gradients, arbitrary style text or URLs buried in functions.
+ const pattern=/url\(\s*(?:"([^"\\]*)"|'([^'\\]*)'|([^\s"'\\()]+))\s*\)/iy,urls=[];
+ let cursor=0;
+ while(cursor<source.length){
+  if(urls.length>=16)return[];
+  pattern.lastIndex=cursor;const match=pattern.exec(source);if(!match)return[];
+  const raw=match[1]??match[2]??match[3];
+  const url=readPageSourceElementImage({currentSrc:'',getAttribute:key=>key==='data-src'?raw:null},{preferDataSource:true});
+  urls.push(url);cursor=pattern.lastIndex;
+  while(/\s/u.test(source[cursor]??'')&&cursor<source.length)cursor++;
+  if(cursor===source.length)break;
+  if(source[cursor++]!==',')return[];
+  while(/\s/u.test(source[cursor]??'')&&cursor<source.length)cursor++;
+  if(cursor===source.length)return[];
+ }
+ return urls.filter(Boolean);
+}
 function plainDescription(root,sourceUrl){
  if(!root?.childNodes)return String(root?.textContent??'').trim().slice(0,20000);
  const parts=[];let visited=0;
@@ -90,12 +116,14 @@ export function readPageDomDetails(document,sourceUrl){
  }
  if(roots.length>30)throw Error('상품 상세 영역이 너무 많습니다. 현재 상품 본문을 확인해주세요.');
  const images=[],texts=[],seenRoots=new Set();
- const add=node=>{
-  if(excluded(node)||otherOffer(node,sourceUrl))return;
-  const url=imageUrl(node);if(!url||images.includes(url))return;
+ const addUrl=url=>{
+  if(!url||images.includes(url))return;
   if(images.length>=200)throw Error('상품 상세 이미지가 200개를 초과했습니다. 이미지를 일부만 수집하지 않았습니다.');
   images.push(url);
  };
+ const add=node=>{if(!excluded(node)&&!otherOffer(node,sourceUrl))addUrl(imageUrl(node));};
+ const readStyle=typeof document.defaultView?.getComputedStyle==='function'?node=>document.defaultView.getComputedStyle(node)
+  :typeof globalThis.getComputedStyle==='function'?node=>globalThis.getComputedStyle(node):null;
  // Retain the original exact-container path, including old same-page layouts.
  const known=select(document,knownImages);if(known.length>2000)throw Error('상품 상세 이미지 영역이 너무 큽니다.');
  for(const node of known)add(node);
@@ -104,6 +132,19 @@ export function readPageDomDetails(document,sourceUrl){
   seenRoots.add(root);
   const nodes=select(root,'img');if(nodes.length>2000)throw Error('상품 상세 이미지 영역이 너무 큽니다.');
   for(const node of nodes)add(node);
+  if(readStyle){
+   // The retained collector reads CSS backgrounds too. Restrict that feature
+   // to the same verified roots and exclusions as normal detail images; never
+   // inspect document-wide styles, pseudo-elements or another frame.
+   const pending=[root];let visited=0;
+   while(pending.length){
+    const node=pending.pop();if(++visited>6000)throw Error('상품 상세 배경 이미지 영역이 수집 크기를 초과했습니다.');
+    if(excluded(node)||otherOffer(node,sourceUrl))continue;
+    let background;try{background=readStyle(node)?.backgroundImage;}catch{/* Unreadable styles provide no image evidence. */}
+    for(const url of backgroundImageUrls(background))addUrl(url);
+    const children=Array.from(node.children??[]);for(let index=children.length-1;index>=0;index--)pending.push(children[index]);
+   }
+  }
   const text=plainDescription(root,sourceUrl);if(text&&!texts.includes(text))texts.push(text);
  }
  return {description:texts.join('\n').slice(0,20000),detailImages:images};

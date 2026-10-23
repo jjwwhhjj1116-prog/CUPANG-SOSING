@@ -61,14 +61,14 @@ function checkTarget(target){
   ||!Array.isArray(target.baselineDocIds)||target.baselineDocIds.length>10000||target.baselineDocIds.some(id=>!documentId(id)||String(id)===String(target.docId))
   ||new Set(target.baselineDocIds.map(String)).size!==target.baselineDocIds.length)fail('NEW_DOCUMENT');
 }
-const filename=value=>text(value,180)&&!/[\\/<>:"|?*%,#\u202a-\u202e\u2066-\u2069]/u.test(value)&&!/[. ]$/.test(value);
+const filename=(value,max=180)=>text(value,max)&&!/[\\/<>:"|?*%,#\u202a-\u202e\u2066-\u2069]/u.test(value)&&!/[. ]$/.test(value);
 function checkWire(wire,type){
  if(type==='LABEL')return exact(wire,['path','nameKey','valueKey','name'])&&same(wire.path,['imagePage','images','labelImages'])&&wire.nameKey==='labelImageType'&&wire.valueKey==='labelImageFiles'&&wire.name==='제품 한글 표시사항 라벨 또는 도안 이미지';
  return exact(wire,['path'])&&same(wire.path,BARE[type]);
 }
 function checkImage(file,identity){
  if(!exact(file,['key','originalName','transportName','imageType','contentType','byteLength','sha256','references'])||!TYPES.includes(file.imageType)||!text(file.key,512)||!file.key.startsWith(identity.ownerId+'/')
-  ||!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(file.key.slice(identity.ownerId.length+1))||!filename(file.originalName)||!filename(file.transportName)||typeof file.sha256!=='string'||!HASH.test(file.sha256)
+  ||!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(file.key.slice(identity.ownerId.length+1))||!filename(file.originalName,512)||!filename(file.transportName)||typeof file.sha256!=='string'||!HASH.test(file.sha256)
   ||!['image/png','image/jpeg'].includes(file.contentType)||![file.originalName,file.transportName].every(name=>(file.contentType==='image/png'?/\.png$/i:/\.jpe?g$/i).test(name))
   ||!Number.isSafeInteger(file.byteLength)||file.byteLength<24||file.byteLength>FILE_LIMIT||!Array.isArray(file.references)||!file.references.length||file.references.length>200)fail('IMAGE');
  for(const ref of file.references){

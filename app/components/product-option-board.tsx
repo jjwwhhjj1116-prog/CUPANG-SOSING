@@ -8,6 +8,7 @@ import type {QuotationField} from '@/app/quotation-schema';
 import {validOptionRegistrationNumbers} from '@/app/product-registration';
 import {exactPrimaryQuotationTarget} from '@/app/quotation-seo-targets';
 import {quotationPriceTargets} from '@/app/quotation-price-targets';
+import {readCategoryJsonResponse} from '@/app/load-category-profiles';
 import './product-option-board.css';
 
 type Props={productId:string;productRegistrationNumber?:string;sourceUrl:string;imageKeys:string;refreshToken?:string;returnFocus?:string;onReturnFocusHandled?:()=>void;onQuotation:(optionId:string)=>void;onEdit:(optionId?:string)=>void;onImage?:(optionId:string)=>void;onContent?:(step:CommonContentStep)=>void;onStage?:(optionId:string,step:CollectionEditorTab)=>void;onManage?:(optionId:string)=>void};
@@ -42,7 +43,7 @@ function validCalculation(value:unknown){
 }
 export async function readOptionBoard(productId:string,signal:AbortSignal,fetcher:typeof fetch=fetch,productRegistrationNumber?:string):Promise<OptionBoardData>{
   const response=await fetcher(`/api/products/${encodeURIComponent(productId)}/options`,{cache:'no-store',signal});
-  const body=await response.json() as ProductOptionsResponse & {optionRegistrationNumbers?:Record<string,string>;error?:string};
+  const body=await readCategoryJsonResponse<ProductOptionsResponse & {optionRegistrationNumbers?:Record<string,string>;error?:string}>(response,'옵션 목록 조회 [GET /api/products/:id/options]');
   if(!response.ok)throw Error(body?.error||'옵션을 불러오지 못했습니다.');
   if(!body||body.options?.productId!==productId||body.options.schemaVersion!==1||!Number.isSafeInteger(body.options.revision)||body.options.revision<0
     ||typeof body.productVersion!=='string'||!body.productVersion||!Array.isArray(body.options.rows)||body.options.rows.length>200||body.options.rows.some(row=>!validOption(row))
@@ -51,7 +52,7 @@ export async function readOptionBoard(productId:string,signal:AbortSignal,fetche
   if(body.sourceImageKeys!==undefined&&(!body.sourceImageKeys||typeof body.sourceImageKeys!=='object'||Array.isArray(body.sourceImageKeys)||Object.entries(body.sourceImageKeys).some(([id,key])=>typeof key!=='string'||!key||!body.options.rows.some(row=>row.id===id))))throw Error('상품의 원본 이미지 응답을 확인하지 못했습니다.');
   if(!validOptionRegistrationNumbers(body.optionRegistrationNumbers,body.options.rows,productRegistrationNumber))throw Error('상품의 옵션 등록번호 응답을 확인하지 못했습니다.');
   const contentResponse=await fetcher(`/api/products/${encodeURIComponent(productId)}/content`,{cache:'no-store',signal});
-  const saved=await contentResponse.json() as {content?:ProductContent;error?:string};
+  const saved=await readCategoryJsonResponse<{content?:ProductContent;error?:string}>(contentResponse,'공통 상품 자료 조회 [GET /api/products/:id/content]');
   if(!contentResponse.ok)throw Error(saved?.error||'공통 상품 자료를 불러오지 못했습니다.');
   const content=saved?.content;
   if(content?.productId!==productId||content.schemaVersion!==1||(content.revision!==undefined&&(!Number.isSafeInteger(content.revision)||content.revision<0))||!record(content.assets)||!Array.isArray(content.assets.main?.value)||content.assets.main.value.some((key:unknown)=>typeof key!=='string'))throw Error('상품의 공통 이미지 응답을 확인하지 못했습니다.');
@@ -62,7 +63,7 @@ export async function readOptionBoard(productId:string,signal:AbortSignal,fetche
     return keys;
   };
   const quoteResponse=await fetcher(`/api/products/${encodeURIComponent(productId)}/quotation-fields`,{cache:'no-store',signal});
-  const quote=await quoteResponse.json() as {error?:string;productVersion?:string;optionRevision?:number;contentRevision?:number;imageKeys?:string[];resolved?:{schema?:{fields:QuotationField[]};rows?:{optionId:string|null;fields:Record<string,{value:string;issues?:string[];validationIssues?:string[]}>}[]}};
+  const quote=await readCategoryJsonResponse<{error?:string;productVersion?:string;optionRevision?:number;contentRevision?:number;imageKeys?:string[];resolved?:{schema?:{fields:QuotationField[]};rows?:{optionId:string|null;fields:Record<string,{value:string;issues?:string[];validationIssues?:string[]}>}[]}}>(quoteResponse,'견적서 조회 [GET /api/products/:id/quotation-fields]');
   if(!quoteResponse.ok)throw Error(quote?.error||'저장된 견적 가격을 불러오지 못했습니다.');
   if(!quote?.resolved||!Array.isArray(quote.resolved.rows)||quote.productVersion!==body.productVersion||quote.optionRevision!==body.options.revision||quote.contentRevision!==content.revision)throw Error('상품·옵션·견적서가 변경되었습니다. 새로고침해주세요.');
   if(!Array.isArray(quote.imageKeys)||quote.imageKeys.some(key=>typeof key!=='string'||!key))throw Error('상품의 이미지 목록 응답을 확인하지 못했습니다.');

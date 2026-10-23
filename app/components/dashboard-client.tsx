@@ -1,6 +1,6 @@
 'use client';
 import '@/app/components/registration-workspace.css';
-import { loadCategoryProfiles } from '@/app/load-category-profiles';
+import { loadCategoryProfiles, readCategoryJsonResponse } from '@/app/load-category-profiles';
 
 import { allRegistrationSteps, registrationStepsForLayout, initialRegistrationStep, type CollectionEditorTab } from '@/app/registration-navigation';
 import { useRegistrationLayout } from '@/app/components/use-registration-layout';
@@ -235,6 +235,9 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   const optionBoardRenderScope=optionBoardScope.current;
   const optionNavigation=useRef<AbortController|null>(null);
   const [optionNavigationBusy,setOptionNavigationBusy]=useState(false);
+  const optionNavigationOwner=useMemo(()=>({ownerId:workspaceOwnerId}),[workspaceOwnerId]);
+  const [optionNavigationFailure,setOptionNavigationFailure]=useState<{owner:typeof optionNavigationOwner;productId:string;message:string}|null>(null);
+  const optionNavigationError=optionNavigationFailure?.owner===optionNavigationOwner&&optionNavigationFailure.productId===optionBoardProduct?.id?optionNavigationFailure.message:'';
   useEffect(()=>()=>{optionWorkspaceReturn.current=null;optionBoardScope.current=null;optionNavigation.current?.abort();optionNavigation.current=null;},[workspaceOwnerId]);
   const optionBoardVersion=[optionBoardProduct,detail,...products].reduce((version,product)=>
     optionBoardProduct&&product&&product.id===optionBoardProduct.id&&(!workspaceOwnerId||product.owner_id===workspaceOwnerId)&&Date.parse(product.updated_at)>Date.parse(version)
@@ -243,6 +246,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     if(batchBusyRef.current)return;
     productNavigation.current++;
     optionWorkspaceReturn.current=null;optionBoardScope.current=null;optionNavigation.current?.abort();optionNavigation.current=null;setOptionNavigationBusy(false);setOptionBoardProduct(null);setOptionReturnFocus(undefined);
+    setOptionNavigationFailure(null);
     setView(next);
   }
   function closeWorkspace(manageCategories = false) {
@@ -258,6 +262,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
       &&operation.mounted&&operation.ownerId===workspaceOwnerId&&origin.ownerId===workspaceOwnerId&&(!workspaceOwnerId||detail.owner_id===workspaceOwnerId);
     const generation=++productNavigation.current;
     optionWorkspaceReturn.current=null;
+    setOptionNavigationFailure(null);
     if(restoreOptions){
       optionBoardScope.current={productId:detail.id,generation,ownerId:workspaceOwnerId};setOptionBoardProduct(detail);setOptionReturnFocus(origin.focusLabel);setOptionBoardReturnRevision(value=>value+1);
     }else{optionBoardScope.current=null;setOptionBoardProduct(null);setOptionReturnFocus(undefined);}
@@ -330,6 +335,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     if(batchBusyRef.current||!operation.mounted||operation.ownerId!==workspaceOwnerId||(workspaceOwnerId&&product.owner_id!==workspaceOwnerId))return;
     setCloseNotice('');
     optionBoardScope.current=null;optionNavigation.current?.abort();optionNavigation.current=null;setOptionNavigationBusy(false);setOptionReturnFocus(undefined);
+    setOptionNavigationFailure(null);
     if(returnToOptions)setOptionBoardProduct(product);else setOptionBoardProduct(null);
     setInitialOptionAction(undefined);
     setFocusedOptionId(optionId);
@@ -344,6 +350,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     if(busyRef.current){showToast('진행 중인 작업을 마친 뒤 옵션을 선택해주세요.');return;}
     if(detail&&!closeWorkspace())return;
     optionNavigation.current?.abort();optionNavigation.current=null;setOptionNavigationBusy(false);
+    setOptionNavigationFailure(null);
     const generation=++productNavigation.current;
     optionWorkspaceReturn.current=null;setOptionReturnFocus(undefined);
     optionBoardScope.current={productId:product.id,generation,ownerId:workspaceOwnerId};setOptionBoardProduct(product);
@@ -351,6 +358,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   function closeOptionBoard(){
     if(detail||!optionBoardRenderScope||optionBoardScope.current!==optionBoardRenderScope||productNavigation.current!==optionBoardRenderScope.generation)return;
     productNavigation.current++;optionWorkspaceReturn.current=null;optionBoardScope.current=null;optionNavigation.current?.abort();optionNavigation.current=null;setOptionNavigationBusy(false);setOptionBoardProduct(null);setOptionReturnFocus(undefined);
+    setOptionNavigationFailure(null);
   }
   async function navigateOptionBoard(optionId:string|undefined,step:CollectionEditorTab,remove=false){
     const scope=optionBoardRenderScope;
@@ -361,14 +369,16 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
       ||![...allRegistrationSteps,'옵션'].includes(step)||sourceSupplementBusyRef.current||busyRef.current)return;
     if(detail&&!closeWorkspace())return;
     const focusLabel=typeof document==='undefined'?undefined:document.activeElement?.getAttribute('aria-label')??document.activeElement?.textContent?.trim();
-    const controller=new AbortController();optionNavigation.current=controller;setOptionNavigationBusy(true);
+    const controller=new AbortController();optionNavigation.current=controller;setOptionNavigationBusy(true);setOptionNavigationFailure(null);
     try{
-      const result=await readJson<{product:Product&{owner_id?:string}}>(`/api/products/${encodeURIComponent(optionBoardProduct.id)}`,{cache:'no-store',signal:controller.signal});
+      const response=await fetch(`/api/products/${encodeURIComponent(optionBoardProduct.id)}`,{cache:'no-store',signal:controller.signal});
+      const result=await readCategoryJsonResponse<{product:Product&{owner_id?:string};error?:string}>(response,'옵션 작업용 상품 조회 (GET /api/products/:id)');
       if(controller.signal.aborted||!current())return;
+      if(!response.ok)throw Error(requestErrorMessage(result));
       if(!result.product||result.product.id!==scope.productId||(workspaceOwnerId&&result.product.owner_id!==workspaceOwnerId))throw Error('선택한 계정의 상품 자료를 확인하지 못했습니다. 목록을 다시 불러와주세요.');
       openProduct(result.product,step,undefined,step==='견적서'&&optionId?{optionId,fieldId:'title'}:undefined,optionId,true,focusLabel);
       if(remove)setInitialOptionAction('remove');
-    }catch(error){if(!controller.signal.aborted&&current())showToast(error instanceof Error?error.message:'옵션 자료를 불러오지 못했습니다.');}
+    }catch(error){if(!controller.signal.aborted&&current())setOptionNavigationFailure({owner:optionNavigationOwner,productId:scope.productId,message:error instanceof Error?error.message:'옵션 자료를 불러오지 못했습니다.'});}
     finally{if(optionNavigation.current===controller){optionNavigation.current=null;setOptionNavigationBusy(false);}}
   }
   function prepareCurrentSubmission(profileId?:string) {
@@ -813,7 +823,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
         <footer className="registration-navigation">{detailStepIndex>=0?<><button type="button" className="btn ghost" aria-label="이전 단계" disabled={!registrationLayoutReady||detailStepIndex===0} onClick={()=>selectDetailTab(registrationSteps[detailStepIndex-1])}>← 이전</button><button type="button" className="btn ghost" aria-label="다음 단계" disabled={!registrationLayoutReady||detailStepIndex===registrationSteps.length-1} onClick={()=>selectDetailTab(registrationSteps[detailStepIndex+1])}>다음 →</button><span aria-label="현재 입력 단계">{detailStepIndex+1} / {registrationSteps.length}</span></>:<><span>추가 작업 · {supportingTabs.find(item=>item.value===tab)?.label}</span><button type="button" className="btn primary" disabled={!registrationLayoutReady} onClick={()=>selectDetailTab(returnRegistrationStep)}>{registrationSteps.indexOf(returnRegistrationStep)+1}. {returnRegistrationStep} 단계로 돌아가기 →</button></>}</footer>
       </aside></div>}
 
-      {optionBoardProduct&&(!workspaceOwnerId||optionBoardProduct.owner_id===workspaceOwnerId)&&<div className="option-board-return-context" hidden={!!detail} inert={!!detail}><Modal wide title={registrationTitle(optionBoardProduct)} subtitle={`등록번호 ${registrationNumber(optionBoardProduct)} · 옵션별 상품 자료와 견적서를 확인합니다.`} onClose={closeOptionBoard}>{optionNavigationBusy&&<p role="status">선택한 상품의 최신 자료를 불러오는 중…</p>}<ProductOptionBoard key={optionBoardProduct.id} productId={optionBoardProduct.id} productRegistrationNumber={optionBoardProduct.registration_number} sourceUrl={optionBoardProduct.source_url} imageKeys={optionBoardProduct.image_keys} refreshToken={`${optionBoardVersion}:${optionBoardReturnRevision}`} returnFocus={detail?undefined:optionReturnFocus} onReturnFocusHandled={()=>setOptionReturnFocus(undefined)} onStage={(optionId,step)=>{if(typeof optionId==='string')void navigateOptionBoard(optionId,step);}} onManage={optionId=>{if(typeof optionId==='string')void navigateOptionBoard(optionId,'옵션',true);}} onContent={step=>void navigateOptionBoard(undefined,step)} onImage={optionId=>void navigateOptionBoard(optionId,'대표 이미지')} onEdit={optionId=>void navigateOptionBoard(optionId,'가격')} onQuotation={optionId=>void navigateOptionBoard(optionId,'견적서')}/></Modal></div>}
+      {optionBoardProduct&&(!workspaceOwnerId||optionBoardProduct.owner_id===workspaceOwnerId)&&<div className="option-board-return-context" hidden={!!detail} inert={!!detail}><Modal wide title={registrationTitle(optionBoardProduct)} subtitle={`등록번호 ${registrationNumber(optionBoardProduct)} · 옵션별 상품 자료와 견적서를 확인합니다.`} onClose={closeOptionBoard}>{optionNavigationBusy&&<p role="status">선택한 상품의 최신 자료를 불러오는 중…</p>}{optionNavigationError&&<p role="alert">{optionNavigationError} 같은 작업 버튼을 눌러 다시 시도해주세요.</p>}<ProductOptionBoard key={optionBoardProduct.id} productId={optionBoardProduct.id} productRegistrationNumber={optionBoardProduct.registration_number} sourceUrl={optionBoardProduct.source_url} imageKeys={optionBoardProduct.image_keys} refreshToken={`${optionBoardVersion}:${optionBoardReturnRevision}`} returnFocus={detail?undefined:optionReturnFocus} onReturnFocusHandled={()=>setOptionReturnFocus(undefined)} onStage={(optionId,step)=>{if(typeof optionId==='string')void navigateOptionBoard(optionId,step);}} onManage={optionId=>{if(typeof optionId==='string')void navigateOptionBoard(optionId,'옵션',true);}} onContent={step=>void navigateOptionBoard(undefined,step)} onImage={optionId=>void navigateOptionBoard(optionId,'대표 이미지')} onEdit={optionId=>void navigateOptionBoard(optionId,'가격')} onQuotation={optionId=>void navigateOptionBoard(optionId,'견적서')}/></Modal></div>}
       {currentSubmission&&<Modal title="Supplier Hub 등록 전송" subtitle="선택 상품의 실제 저장 자료를 검사하고 필요한 항목을 수정하세요." closeDisabled={submissionLockState?.session===currentSubmission&&submissionLockState.close} onClose={()=>closeSubmission(currentSubmission)}><SubmissionReviewPanel key={submissionTarget?`${submissionTarget.product.id}:${submissionTarget.profileId}`:"selected"} products={submissionTarget?[submissionTarget.product]:products.filter(product=>selected.has(product.id)&&(!workspaceOwnerId||product.owner_id===workspaceOwnerId))} profiles={categoryProfiles} initialProfileId={submissionTarget?.profileId} onLockChange={(source,close)=>changeSubmissionLock(currentSubmission,source,close)} onReceiptSaved={()=>{if(submissionCurrent(currentSubmission))void loadWorkspace().catch(()=>{if(submissionCurrent(currentSubmission))setToast('전송 결과는 보관됐습니다. 상품 목록을 다시 불러와주세요.');});}} onEdit={(id,preferredProfileId,target)=>{if(!submissionCurrent(currentSubmission)||submissionLock.current?.session===currentSubmission&&submissionLock.current.source)return;const product=submissionTarget?.product.id===id?submissionTarget.product:products.find(item=>item.id===id);if(product&&(!workspaceOwnerId||product.owner_id===workspaceOwnerId)&&closeSubmission(currentSubmission)){openProduct(product,'견적서',preferredProfileId,target);}}}/></Modal>}
 
       {connectionsOpen&&<Modal title="연동 상태" subtitle="서버의 저장소·AI 설정 상태를 확인합니다." onClose={()=>setConnectionsOpen(false)}>
@@ -998,7 +1008,7 @@ function DetailPanel({ workspaceOwnerId, onEditSeo, onReceiptSaved, onBeforeSeoG
       <DetailImageEditDialog modal={isImageStep} open={detailImageEditOpen} identity={JSON.stringify([product.id,product.updated_at,focusedOptionId??null,pricingProfileId??null])}
         blocked={imageProcessingBusy||freeImageDirty} canClose={canCloseDetailImageEdit} onClose={closeDetailImageEdit}>
         <details open={!focusedOptionId||tab!=='대표 이미지'||imageTranslation?.quotationTarget?.input==='mainImage'||!!imageEditorEntry&&!imageTranslation}><summary hidden={!focusedOptionId||tab!=='대표 이미지'}>{imageTranslation?.quotationTarget?.input==='mainImage'?'선택 옵션 대표이미지 번역':'상품 공통 원본 이미지 번역'}</summary>
-          <FreeImageTranslationPanel productId={product.id} version={product.updated_at} imageKeys={imageKeys} focusedOptionId={focusedOptionId} quotationContext={quotationImageContext} editorEntry={imageEditorEntry}
+          <FreeImageTranslationPanel productId={product.id} version={product.updated_at} imageKeys={imageKeys} focusedOptionId={focusedOptionId} quotationContext={quotationImageContext} editorEntry={imageEditorEntry} editorProfileId={pricingProfileId??null}
             active={isImageStep?detailImageEditOpen:showLabelImageEditing} onProductChanged={sourceSaved} onBusyChange={changeFreeImageBusy} onEditingChange={changeFreeImageEditing} onCloseGuard={changeFreeImageCloseGuard}
             beforeApply={()=>!imageProcessingRefs.current.paid&&!imageProcessingRefs.current.additionalBatch&&!imageProcessingRefs.current.detailBatch&&!imageProcessingRefs.current.detailFamily&&!imageProcessingRefs.current.mainUpload&&!imageProcessingRefs.current.additionalUpload&&!imageProcessingRefs.current.detailUpload&&!imageProcessingRefs.current.sizeChart&&onBeforeFreeImageApply()}
             translationTarget={imageTranslation?.productId===product.id?{sourceKey:imageTranslation.sourceKey,sequence:imageTranslation.sequence,sourceLanguage:imageTranslation.sourceLanguage,...(imageTranslation.role?{role:imageTranslation.role}:{}),...(imageTranslation.quotationTarget?{quotationTarget:imageTranslation.quotationTarget}:{}),...(imageTranslation.intent?{intent:imageTranslation.intent}:{})}:undefined}/>

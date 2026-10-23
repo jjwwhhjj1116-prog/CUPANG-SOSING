@@ -29,6 +29,20 @@ for(const company of companies)test(`${company.code}: actual projected private r
  assert.equal(JSON.stringify(f.input.projection),before);assert.deepEqual(f.input.assets.map(file=>[file.key,sha(file.data)]),oldAssets);assert.ok(!JSON.stringify(plan.body).includes('https://'));assert.ok(!JSON.stringify(plan.body).includes('owner/'));
  const repeat=await source.buildNativeAssetSourcePlan(f.input);assert.equal(repeat.sourcePlanSha256,plan.sourcePlanSha256);
 });
+test('generated image leaves longer than 180 characters retain exact owned bytes and short Hub aliases',async()=>{
+ for(const company of companies){const f=await fixture(company),old=f.input.assets[0].key;
+  const leaf=`free-image-00000000-0000-4000-8000-000000000001-${'a'.repeat(64)}-${'b'.repeat(64)}.png`,key=`owner/${leaf}`;
+  assert.equal(leaf.length,181);
+  f.input.projection=JSON.parse(JSON.stringify(f.input.projection).split(old).join(key));
+  f.input.ownedKeys=f.input.ownedKeys.map(value=>value===old?key:value);
+  f.input.assets=f.input.assets.map(asset=>asset.key===old?{...asset,key}:asset);
+  f.input.metadata.set(key,f.input.metadata.get(old));f.input.metadata.delete(old);
+  const plan=await source.buildNativeAssetSourcePlan(f.input);
+  assert.equal(plan.metadataValid,true,JSON.stringify(plan.issues));const image=plan.images.find(image=>image.key===key);
+  assert.equal(image.originalName,leaf);assert.ok(image.transportName.length<=100);assert.equal(image.sha256,sha(f.input.assets[0].data));
+  assert.equal(plan.body.jsonDocument[0].imagePage.images.mainImage,image.transportName);assert.equal(plan.registered,false);
+ }
+});
 test('source clocks, selected bytes and native filename body each affect the independent source-plan hash',async()=>{
  const f=await fixture(),old=await source.buildNativeAssetSourcePlan(f.input);
  for(const mutate of [input=>input.identity.source.optionRevision++,input=>input.identity.sourceFingerprint='e'.repeat(64),input=>input.identity.inputFingerprint='d'.repeat(64)]){

@@ -162,7 +162,12 @@ test('durable product PNG lookup and explicit retry recover lost upload, pool at
       };
       const input = () => ({ productId: f.product.id, endpoint: f.endpoint, quotationEndpoint: f.quotationEndpoint, renderedView: view, optionId: f.selected.optionId,
         blob: rememberedKey ? null : new Blob([png], { type: 'image/png' }), uploadedKey: rememberedKey, onUploaded: key => rememberedKey = key });
-      await assert.rejects(attachment.attachProductLabel(input(), request), /acknowledgement lost|recovery read unavailable/);
+      await assert.rejects(attachment.attachProductLabel(input(), request), error => {
+        const route = stage === 'upload' ? '/api/files' : '/api/products/:id/product-labels';
+        assert.ok(error.message.endsWith(`[GET ${route} · HTTP 503 · JSON 응답]`), error.message);
+        assert.doesNotMatch(error.message, /unavailable|labelUploadId|profileId/);
+        return true;
+      });
       recoveryReadUnavailable = false;
       const result = await attachment.attachProductLabel(input(), request); assert.ok(result.key); assert.equal(result.key, rememberedKey); assert.deepEqual(f.api.objects.get(result.key), png);
       assert.equal(f.requests.filter(row => row.url === '/api/files' && row.method === 'POST').length, 1, stage);
@@ -179,7 +184,11 @@ test('durable product PNG lookup and explicit retry recover lost upload, pool at
       stale.overrides.options[f.selected.optionId] = { material: 'changed visible label' }; changedRow.values.material = 'changed visible label'; changedRow.sources.material = 'manual-option';
       assert.notEqual(await upload.productLabelUploadId({ ...context, view: stale }), originalId);
       const count = f.requests.length;
-      await assert.rejects(upload.findProductLabelUpload(context, async () => Response.json({ error: 'durable lookup unavailable' }, { status: 503 })), /durable lookup unavailable/);
+      await assert.rejects(upload.findProductLabelUpload(context, async () => Response.json({ error: 'durable lookup unavailable' }, { status: 503 })), error => {
+        assert.ok(error.message.endsWith('[GET /api/files · HTTP 503 · JSON 응답]'), error.message);
+        assert.doesNotMatch(error.message, /unavailable|labelUploadId|profileId/);
+        return true;
+      });
       assert.equal(f.requests.length, count); assert.equal((await f.read()).revision, view.revision); assert.equal(f.api.sqlite.prepare('SELECT supplier_hub_status FROM products WHERE id=?').get(f.product.id).supplier_hub_status, '미전송');
     } finally { f.api.close(); }
   }

@@ -108,7 +108,7 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'�
    if(name==='@/app/components/use-intake-draft')return{useIntakeDraft:()=>draft};
    if(name==='@/app/components/use-source-registrations'&&sourceRegistrationsState)return{useSourceRegistrations:()=>sourceRegistrationsState};
    if(['@/app/components/use-registration-layout','@/app/components/use-source-registrations'].includes(name))return load(name.slice(2)+'.ts');
-   if(name==='@/app/load-category-profiles')return{loadCategoryProfiles:async()=>{
+   if(name==='@/app/load-category-profiles')return{...load('app/load-category-profiles.ts'),loadCategoryProfiles:async()=>{
     if(nextProfiles){const pending=nextProfiles;nextProfiles=null;return pending.promise;}
     return officialFlow?(await (await officialFlow.request('/api/category-profiles')).json()).profiles:currentProfiles;
    }};
@@ -731,8 +731,45 @@ test('foreign or malformed fresh products retain the option board and permit a s
  for(const reply of [{},{product:null},null,{product:{...first,id:'different-product'}},{product:{...first,owner_id:'other-owner'}},{product:{...first,owner_id:undefined}}]){
   const h=harness();try{
    await h.settle();h.component('registration-board').onOptions(h.products[0]);await h.settle();h.setProductReply(async()=>Response.json(reply));const initialReads=h.requests.length;h.component('product-option-board').onStage('option-a-2','가격');await h.settle();
-   assert.equal(h.requests.length,initialReads+1);assert.equal(h.component('product-option-board').productId,first.id);assert.equal(h.component('product-content-editor'),undefined);assert.equal(h.component('product-options-editor'),undefined);assert.ok(nodes(h.render()).some(node=>node.props?.role==='status'));
+   assert.equal(h.requests.length,initialReads+1);assert.equal(h.component('product-option-board').productId,first.id);assert.equal(h.component('product-content-editor'),undefined);assert.equal(h.component('product-options-editor'),undefined);assert.ok(nodes(h.render()).some(node=>node.props?.role==='alert'));
    h.setProductReply(null);h.component('product-option-board').onStage('option-a-2','견적서');await h.settle();assert.equal(h.componentVisible('product-option-board'),false);assert.equal(h.component('product-options-editor').product.id,first.id);assert.deepEqual(plain(h.component('quotation-panel').navigationTarget),{optionId:'option-a-2',fieldId:'title'});assert.ok(h.requests.every(request=>request.method==='GET'));
+  }finally{h.close();}
+ }
+});
+
+const optionNavigationAlerts=h=>nodes(nodes(h.render()).find(node=>node.props?.className==='option-board-return-context')).filter(node=>node.props?.role==='alert');
+const unavailableProduct=()=>new Response('<!DOCTYPE html><title>private upstream diagnostic</title>',{status:503,headers:{'content-type':'text/html'}});
+
+test('option navigation exposes a bounded 503 alert inside the board and the same action retries without losing the board',async()=>{
+ const h=harness();try{
+  await h.settle();const first=h.products[0];h.component('registration-board').onOptions(first);await h.settle();const mount=h.componentMount('product-option-board');
+  h.setProductReply(async()=>unavailableProduct());h.component('product-option-board').onStage('option-a-2','가격');await h.settle();
+  const alerts=optionNavigationAlerts(h);assert.equal(alerts.length,1);assert.match(text(alerts[0]),/HTTP 503/);assert.match(text(alerts[0]),/GET \/api\/products\/:id/);assert.match(text(alerts[0]),/같은 작업 버튼/);assert.doesNotMatch(text(alerts[0]),/Unexpected token|DOCTYPE|private upstream diagnostic|로그인/);
+  assert.equal(h.componentMount('product-option-board'),mount);assert.equal(h.componentVisible('product-option-board'),true);assert.equal(h.component('product-options-editor'),undefined);
+  const pending=h.deferProduct(first.id),before=h.requests.length;h.component('product-option-board').onStage('option-a-2','가격');await h.settle();assert.equal(optionNavigationAlerts(h).length,0);assert.equal(h.requests.length,before+1);assert.ok(nodes(h.render()).some(node=>node.props?.role==='status'&&text(node).includes('최신 자료')));
+  pending.resolve(Response.json({product:first}));await h.settle();assert.equal(h.component('product-options-editor').focusedOptionId,'option-a-2');assert.equal(h.component('product-options-editor').pricingView,true);assert.equal(h.componentVisible('product-option-board'),false);
+  nodes(h.render()).find(node=>node.props?.['aria-label']==='상품 작업 공간 닫기').props.onClick();await h.settle();assert.equal(h.componentVisible('product-option-board'),true);assert.equal(optionNavigationAlerts(h).length,0);assert.ok(h.requests.every(request=>request.method==='GET'));assert.equal(h.lateWrites,0);
+ }finally{h.close();}
+});
+
+test('option navigation clears the visible failure on closing, new board sessions and account changes',async()=>{
+ for(const mode of ['closed','same-product','replacement','owner-roundtrip']){
+  const h=harness();try{
+   await h.settle();const first=h.products[0];h.component('registration-board').onOptions(first);await h.settle();h.setProductReply(async()=>unavailableProduct());h.component('product-option-board').onQuotation('option-a-2');await h.settle();assert.equal(optionNavigationAlerts(h).length,1);
+   if(mode==='closed'){await h.click('×');assert.equal(optionNavigationAlerts(h).length,0);h.component('registration-board').onOptions(first);}
+   else if(mode==='owner-roundtrip'){h.switchOwner('other-owner');assert.equal(optionNavigationAlerts(h).length,0);h.switchOwner('test-owner');assert.equal(optionNavigationAlerts(h).length,0);h.component('registration-board').onOptions(first);}
+   else h.component('registration-board').onOptions(mode==='same-product'?first:h.products[1]);
+   await h.settle();assert.equal(optionNavigationAlerts(h).length,0);assert.equal(h.componentVisible('product-option-board'),true);assert.ok(h.requests.every(request=>request.method==='GET'));assert.equal(h.lateWrites,0);
+  }finally{h.close();}
+ }
+});
+
+test('late failed option navigation cannot publish an alert into closed, replaced or changed-owner sessions',async()=>{
+ for(const mode of ['closed','replacement','owner-roundtrip','unmounted']){
+  const h=harness();try{
+   await h.settle();const first=h.products[0];h.component('registration-board').onOptions(first);await h.settle();const pending=h.deferProduct(first.id);h.component('product-option-board').onEdit('option-a-2');await h.settle();const read=h.requests.at(-1);
+   if(mode==='closed')await h.click('×');else if(mode==='replacement')h.component('registration-board').onOptions(h.products[1]);else if(mode==='owner-roundtrip'){h.switchOwner('other-owner');h.switchOwner('test-owner');h.component('registration-board').onOptions(first);}else h.close();
+   assert.equal(read.init.signal.aborted,true);pending.resolve(unavailableProduct());await h.settle();assert.equal(optionNavigationAlerts(h).length,0);assert.equal(h.component('product-options-editor'),undefined);assert.equal(h.lateWrites,0);assert.ok(h.requests.every(request=>request.method==='GET'));
   }finally{h.close();}
  }
 });

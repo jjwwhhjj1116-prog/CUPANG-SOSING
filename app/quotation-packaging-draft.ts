@@ -128,19 +128,27 @@ function proposal(target:Target,field:QuotationField,value:string,origin:Packagi
  fieldKey:field.id,label:field.label,value,unitsPerPack:target.unitsPerPack,origin,measured:false,
  note:origin==='collected'?'수집한 포장 표 값입니다. 원문과 현재 판매 구성을 비교해주세요.':origin==='ai-estimate'?'상품 원문·구성에 따른 추정값이며 실측값이 아닙니다.':'쿠플러스 방식의 기본 초안이며 실측값이 아닙니다. 확인·수정해주세요.'};}
 export function completeQuotationPackagingDraft(plan:PackagingDraftPlan,raw:unknown|null=null,aiRequests:0|1=0,reason?:string):PackagingDraftResult{
- let returned=new Map<number,Estimate>();const warnings=['포장 초안의 추정값은 실측 정보가 아닙니다. 확인·수정한 뒤 입력란에 적용하고 저장해주세요.'];
- if(raw!==null)try{returned=estimates(plan,raw);}catch{warnings.push('AI 응답을 확인하지 못해 누락 항목에만 기본 초안을 제안했습니다. 자동 재요청하지 않았습니다.');}
+ let returned=new Map<number,Estimate>(),receivedEstimateResponse=false;const warnings=['포장 초안의 추정값은 실측 정보가 아닙니다. 확인·수정한 뒤 입력란에 적용하고 저장해주세요.'];
+ if(raw!==null)try{returned=estimates(plan,raw);receivedEstimateResponse=true;}catch{warnings.push('AI 응답을 확인하지 못해 누락 항목에만 기본 초안을 제안했습니다. 자동 재요청하지 않았습니다.');}
  if(reason)warnings.push(reason);
  const proposals:PackagingDraftProposal[]=[];
  for(const [index,target]of plan.targets.entries()){
   const estimate=returned.get(index),basisKnown=target.sourceBasis===target.unitsPerPack;
-  if(target.weightField){const collected=basisKnown?target.fixed.weightG:undefined,value=collected??estimate?.weightG??100;
-   if(!quotationValueIssues(target.weightField,String(value)).length)proposals.push(proposal(target,target.weightField,String(value),collected!==undefined?'collected':estimate?.weightG!==undefined?'ai-estimate':'couplus-fallback'));
+  if(target.weightField){const collected=basisKnown?target.fixed.weightG:undefined,value=collected??estimate?.weightG??(receivedEstimateResponse?undefined:100);
+   if(value===undefined)warnings.push(`${target.optionLabel}: 포장 무게를 추정할 근거가 부족해 원래 입력을 유지했습니다.`);
+   else if(!quotationValueIssues(target.weightField,String(value)).length)proposals.push(proposal(target,target.weightField,String(value),collected!==undefined?'collected':estimate?.weightG!==undefined?'ai-estimate':'couplus-fallback'));
   }
   if(target.dimensionsField){const keys=['widthMm','lengthMm','heightMm']as const,known=keys.map(key=>basisKnown?target.fixed[key]:undefined);
-   let fromAi=!!estimate&&keys.every((key,axis)=>known[axis]!==undefined||estimate[key]!==undefined);
-   let values=keys.map((key,axis)=>known[axis]??(fromAi?Math.max(10,estimate![key]!):100));
-   if(values.reduce((volume,axis)=>volume*axis,1)<1000){values=known.map(value=>value??100);fromAi=false;}
+   const fromAi=!!estimate&&keys.every((key,axis)=>known[axis]!==undefined||estimate[key]!==undefined);
+   if(receivedEstimateResponse&&!fromAi&&known.some(value=>value===undefined)){
+    warnings.push(`${target.optionLabel}: 포장 사이즈를 추정할 근거가 부족해 원래 입력을 유지했습니다.`);continue;
+   }
+   const values=keys.map((key,axis)=>known[axis]??(fromAi?estimate![key]!:100));
+   // The former prompt floor is not product evidence. Never manufacture a
+   // larger estimate by clamping axes, or accept that bare floor as a package.
+   if(fromAi&&known.some(value=>value===undefined)&&(values.every(value=>value===10)||values.reduce((volume,axis)=>volume*axis,1)<1000)){
+    warnings.push(`${target.optionLabel}: AI 포장 사이즈가 일반 경계값이거나 검토 기준보다 작아 추정값으로 제안하지 않았습니다. 원문 치수·단위를 확인해주세요.`);continue;
+   }
    const value=values.join('*');
    if(values.reduce((volume,axis)=>volume*axis,1)>=1000&&!quotationValueIssues(target.dimensionsField,value).length)
     proposals.push(proposal(target,target.dimensionsField,value,known.every(value=>value!==undefined)?'collected':fromAi?'ai-estimate':'couplus-fallback'));
@@ -159,8 +167,9 @@ export async function executeQuotationPackagingDraft(plan:PackagingDraftPlan,ai:
   +'A previousEstimateOrigin means that saved value remains an unmeasured estimate. Never relabel it as measured. Reviewed quotation overrides take precedence over differing raw collectedPackage facts. '
   +'Use explicitly collectedPackage facts as source context, without changing protected saved values. '
   +'If packaging is missing, estimate a realistic physical package from the product attributes, original option and unitsPerPack. '
-  +'All inferred dimensions must be integer mm at least 10 mm per missing axis; package volume at least 1000 cubic mm. Weight must be a positive integer g. '
-  +'No numeric shipping defaults or example package dimensions are supplied. Derive each missing field from the product evidence; never claim estimates as measured. '
+  +'Dimensions must be positive integer mm and weight a positive integer g. Preserve thin package dimensions; do not increase values to generic bounds. '
+  +'Validation bounds are not product facts or suggested values. Derive each missing field from the product evidence; never claim estimates as measured. '
+  +'If the evidence cannot support a realistic estimate, omit that field. Return an index-only item when no fields can be estimated; never fill missing evidence with numeric defaults. '
   +'Return only JSON matching the supplied response schema, one package item per index. No text or reasoning.';
  const input={product:plan.facts,packages:plan.targets.map((target,index)=>({index,originalName:target.originalName,size:target.size,unitsPerPack:target.unitsPerPack,
   collectedPackage:target.collected,reviewedPackage:target.reviewedPackage}))};
@@ -169,7 +178,7 @@ export async function executeQuotationPackagingDraft(plan:PackagingDraftPlan,ai:
    onAbort=()=>reject(new PackagingDraftError('PACKAGING_DRAFT_ABORTED','포장 초안 요청이 취소되었습니다.',503));signal.addEventListener('abort',onAbort,{once:true});});
   const raw=await Promise.race([Promise.resolve().then(()=>{signal.throwIfAborted();return ai.run(PACKAGING_DRAFT_MODEL,{messages:[{role:'system',content:instructions},{role:'user',content:JSON.stringify(input)+'\n/no_think'}],
    temperature:0,max_tokens:2048,stream:false,response_format:{type:'json_schema',json_schema:{type:'object',properties:{packages:{type:'array',maxItems:plan.targets.length,
-    items:{type:'object',properties:{index:{type:'integer',minimum:0,maximum:plan.targets.length-1},weightG:{type:'integer',minimum:1,maximum:1e9},widthMm:{type:'integer',minimum:1,maximum:1e6},lengthMm:{type:'integer',minimum:1,maximum:1e6},heightMm:{type:'integer',minimum:1,maximum:1e6}},required:['index','weightG','widthMm','lengthMm','heightMm'],additionalProperties:false}}},required:['packages'],additionalProperties:false}}});}),stopped]);
+    items:{type:'object',properties:{index:{type:'integer',minimum:0,maximum:plan.targets.length-1},weightG:{type:'integer',minimum:1,maximum:1e9},widthMm:{type:'integer',minimum:1,maximum:1e6},lengthMm:{type:'integer',minimum:1,maximum:1e6},heightMm:{type:'integer',minimum:1,maximum:1e6}},required:['index'],additionalProperties:false}}},required:['packages'],additionalProperties:false}}});}),stopped]);
   signal.throwIfAborted();return completeQuotationPackagingDraft(plan,raw,1);
  }finally{if(timer!==undefined)clearTimeout(timer);if(onAbort)signal.removeEventListener('abort',onAbort);}
 }

@@ -86,3 +86,25 @@ for(const company of schemaCompanies)test(`main enforces one editable slot and r
   await assert.rejects(f.model.applyDetailBatchResult(batch,0,signal(),()=>{},f.deps));await assert.rejects(f.model.readDetailBatchView({...f.mainInput,profileId:'other-profile'},signal(),f.deps.fetcher));assert.equal(uploads(f),0);assert.equal(retained(f),changed);
  }finally{f.close();}
 });
+
+for(const company of schemaCompanies)test(`partial main draft keeps its review marker and exact editable regions through real save, lost ACK and reopen (${company.code})`,async()=>{
+ const f=await mainFixture(company);try{
+  const now=new Date().toISOString(),email=company.code==='A01526306'?'jwhj1116@kakao.com':'unari8484@gmail.com';
+  f.h.sqlite.prepare('INSERT INTO members VALUES(?,?,?,?,?,?,?,?,?,?)').run('owner',email,'fixture-not-a-password',company.code==='A01526306'?'admin':'member','approved',company.code,company.name,now,now,null);
+  const original=Buffer.from(f.h.objects.get(f.order[0])),sourceRows=f.sourceRows();
+  let batch=await prepare(f,{render:async(image,regions)=>{
+   const rendered=await f.deps.render(image,regions),accepted={...regions[0],box:{x:0,y:0,width:3,height:1}},unresolved={...regions[0],id:'unresolved',text:'未确认',selected:false,translated:'',translationProvenance:'empty',issue:'영역 검증 실패: 원문에 없는 성능·주장.',box:{x:0,y:1,width:3,height:1}};
+   return {...rendered,editDocument:f.h.load('app/free-image-edit-document.ts').validateFreeImageEditDocument({format:'free-image-edit-v1',width:image.width,height:image.height,sourceLanguage:'zh',regions:[accepted,unresolved]},image.source)};
+  }});
+  const review={status:'partial',acceptedRegions:1,unresolvedRegions:1,message:'검증된 문구만 저장한 미완료 초안입니다.'};batch.items[0].translationReview=review;
+  const document=plain(batch.items[0].rendered.editDocument),route=f.h.load('app/api/products/[id]/image-text/route.ts');let writes=0;
+  f.intercept(async(url,init)=>{if(init.body instanceof FormData){writes++;await route.POST(new Request('https://app.test'+url,init),{params:Promise.resolve({id:f.id})});throw Error('fixture partial draft ACK lost');}});
+  await assert.rejects(f.model.applyDetailBatchResult(batch,0,signal(),value=>{batch=value;},f.deps));assert.equal(batch.items[0].status,'uncertain');assert.deepEqual(plain(batch.items[0].translationReview),review);assert.deepEqual(plain(batch.items[0].attempt.image.editDocument),document);assert.equal(writes,1);
+  f.intercept(null);batch=await f.model.recoverDetailBatchResult(batch,signal(),()=>{},f.deps);assert.equal(batch.items[0].status,'applied');assert.deepEqual(plain(batch.items[0].translationReview),review);assert.equal(writes,1);
+  const key=batch.items[0].appliedKey,target=batch.items[0].rendered.source.quotationTarget,query=new URLSearchParams({sourceKey:key,role:'main',target:'quotation',profileId:f.profile.id,optionId:f.selected,fieldKey:target.fieldKey,slotIndex:'0',editor:'saved'});
+  const opened=await json(await route.GET(new Request('https://app.test'+f.base+'/image-text?'+query),{params:Promise.resolve({id:f.id})}));
+  assert.deepEqual(opened.editDocument,document);assert.equal(opened.editDocument.regions[0].translated,'번역 문구');assert.equal(opened.editDocument.regions[1].text,'未确认');assert.equal(opened.editDocument.regions[1].selected,false);assert.equal(opened.editDocument.regions[1].translated,'');assert.match(opened.editDocument.regions[1].issue,/원문에 없는/);
+  assert.equal(opened.source.sourceKey,f.order[0]);assert.equal(opened.source.editorSource.resultKey,key);assert.deepEqual(Buffer.from(f.h.objects.get(f.order[0])),original);assert.equal(f.sourceRows(),sourceRows);assert.equal(f.product().supplier_hub_status,'미전송');
+  await assert.rejects(f.model.applyDetailBatchResult(batch,0,signal(),()=>{},f.deps));assert.equal(writes,1);
+ }finally{f.close();}
+});

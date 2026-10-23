@@ -393,13 +393,30 @@ const literal = (value: unknown, source: QuotationSource): Automatic => ({ value
 const htmlEscape = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQuotation {
+  if(input.packagingBasis!==undefined)validateQuotationPackagingBasis(input.packagingBasis);
+  return resolveQuotationFieldsWithSchema(input, getQuotationSchema(input.categoryId, input.categoryPath,input.hubSchema,input.template));
+}
+
+/** Resolve both views from one validated compilation, shared only within this call. */
+export function resolveQuotationFieldsPair(input: QuotationResolverInput): { automatic: ResolvedQuotation; resolved: ResolvedQuotation } {
+  if(input.packagingBasis!==undefined)validateQuotationPackagingBasis(input.packagingBasis);
+  const schema = getQuotationSchema(input.categoryId, input.categoryPath,input.hubSchema,input.template);
+  const automaticInput = { ...input };
+  delete automaticInput.overrides;
+  delete automaticInput.packagingBasis;
+  return {
+    automatic: resolveQuotationFieldsWithSchema(automaticInput, schema),
+    // Consumers may edit either view. Never share mutable schema fields/choices.
+    resolved: resolveQuotationFieldsWithSchema(input, structuredClone(schema)),
+  };
+}
+
+function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema: QuotationSchema): ResolvedQuotation {
   const { product, content, settings } = input;
   const options: readonly ProductOption[] = Array.isArray(input.options) ? input.options : (input.options as ProductOptions).rows;
   const untouchedOptions = Array.isArray(input.options) || (input.options as ProductOptions).revision === 0;
   const includeCommonRow = options.length === 0 && untouchedOptions;
   const overrides = input.overrides ?? emptyQuotationOverrides();
-  if(input.packagingBasis!==undefined)validateQuotationPackagingBasis(input.packagingBasis);
-  const schema = getQuotationSchema(input.categoryId, input.categoryPath,input.hubSchema,input.template);
   const explicitSeoDefaultFor=explicitSeoQuotationDefaultsResolver(content,schema);
   const initialNotices = readInitialLegalNotices(content.initialLegalNotices, schema);
   let ownedKeys: string[] = [];

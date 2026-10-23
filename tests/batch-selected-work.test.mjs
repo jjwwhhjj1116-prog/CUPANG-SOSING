@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
+import {providedOptionModule} from './helpers/provided-option-quotation.mjs';
 
 const stageIds=['seo','pricing','mainImage','additionalImages','detailImage','sizeChart','koreanLabel','quotation'];
 const version='2026-10-23T00:00:00.000Z',hash='a'.repeat(64),plain=value=>JSON.parse(JSON.stringify(value));
@@ -17,6 +18,7 @@ function fixture(){
   '@/app/automation/translation':{GOOGLE_TEXT_MODEL:'google'},
   '@/app/quotation-ai-client':{quotationAiViewCurrent:()=>true,quotationAiJobForScope:()=>null,quotationAiScopedProposalChanges:()=>[]},
   '@/app/quotation-fields-confirmation':{},
+  '@/app/quotation-known-notice-proposals':providedOptionModule('app/quotation-known-notice-proposals.ts'),
   '@/app/registration-layout':{readRegistrationLayout:(raw,id,clock)=>{assert.equal(raw.productId,id);assert.equal(raw.productVersion,clock);return raw;}},
   '@/app/batch-selected-image-work':{createSelectedImageStageState:(ownerId,productId,stage)=>({ownerId,productId,stage,batches:{}}),async processSelectedImageStage(id,stage,options){calls.push({adapter:'image',id,stage,version:options.expectedProductVersion});return imageResult;}},
   '@/app/batch-selected-pricing-work':{async runSelectedPricingWork(id,options){await options.assertCurrent();const response=await options.fetcher('/api/products/'+id+'/stage-two-pricing');await options.assertCurrent();return await response.json();}},
@@ -33,9 +35,9 @@ function fixture(){
    if(url.endsWith('/work-draft'))return Response.json({productId:'product',productVersion:version});
    if(url.endsWith('/stage-two-pricing'))return Response.json({status:'draft',message:'가격 초안 계산',uncertain:false});
    if(url.endsWith('/automation'))return Response.json({workflow:{productId:'product',productVersion:version,stages:[{id:'pricing',status:'complete'}]}});
-   if(url.endsWith('/content'))return Response.json({content:{productId:'product',assets:{size:{value:[]}}}});
+   if(url.endsWith('/content'))return Response.json({content:{productId:'product',schemaVersion:1,revision:3,label:{},assets:{size:{value:[]}}}});
    if(url.endsWith('/registration-layout'))return Response.json({productId:'product',productVersion:version,sizeChartRequired:false});
-   if(url.endsWith('/quotation-fields'))return Response.json({revision:1,inputFingerprint:hash,categoryContext:{profileId:null},resolved:{rows:[],schema:{fields:[]}}});
+   if(url.endsWith('/quotation-fields'))return Response.json({revision:1,inputFingerprint:hash,contentRevision:3,overrides:{common:{},options:{}},categoryContext:{profileId:null,categoryId:'68183',categoryPath:['합성']},resolved:{rows:[{optionId:'a',included:true,fields:{}}],schema:{fields:[],status:'observed',categoryId:'68183',categoryPath:['합성']}}});
    if(url.endsWith('/quotation-ai')){
     if(call.method==='POST')return Response.json({job:{id:'quote',status:'completed',result:{changes:[]}}});
     return Response.json({configuration:{configured:true},fingerprint:hash,jobs:[]});
@@ -141,6 +143,61 @@ test('an unresolved quotation provider call cannot start another provider on ret
  const h=fixture();h.intercept(call=>call.url.endsWith('/quotation-ai')&&call.method==='POST'?Response.json({job:{status:'uncertain'}}):null);
  assert.equal((await h.run(['quotation'])).stages[0].status,'blocked');await h.run(['quotation']);
  assert.equal(h.calls.filter(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST').length,1);
+});
+
+function knownQuotationFixture(){
+ const h=fixture(),nextVersion='2026-10-23T00:00:01.000Z';
+ Object.assign(h.deps['@/app/quotation-ai-client'],providedOptionModule('app/quotation-ai-client.ts'));
+ Object.assign(h.deps['@/app/quotation-fields-confirmation'],providedOptionModule('app/quotation-fields-confirmation.ts'));
+ const fields=['제조자(수입자)','소비자상담 관련 전화번호','제조국(원산지)','재질'].map((label,index)=>({id:'notice'+index,label,section:'legal',visibility:'common',type:'text',required:false,hubWire:{path:['legalPage','notices'],name:label,nameKey:'noticeItemName',valueKey:'noticeItemValue'}}));
+ const schema={status:'observed',categoryId:'68183',categoryPath:['합성'],fields},rows=['a','b','excluded'].map(optionId=>({optionId,optionLabel:optionId,included:optionId!=='excluded',fields:Object.fromEntries(fields.map(field=>[field.id,{value:'해당사항없음',source:'couplus-default'}]))}));
+ const view={revision:1,inputFingerprint:hash,contentRevision:3,optionRevision:2,productVersion:version,updatedAt:version,imageKeys:[],overrides:{common:{},options:{b:{notice0:''}}},categoryContext:{profileId:null,categoryId:'68183',categoryPath:['합성']},automatic:{schema,rows:plain(rows)},resolved:{schema,rows}};
+ view.resolved.rows[1].fields.notice0={value:'',source:'manual-option'};
+ const content={schemaVersion:1,productId:'product',revision:3,label:Object.fromEntries(Object.entries({manufacturer:'저장 제조사',importer:'저장 수입사',contact:'02-1234-5678',countryOfOrigin:'중국'}).map(([key,value])=>[key,{value,provenance:key==='countryOfOrigin'?'generated':'manual'}]))};
+ const job={id:'quote-known',status:'completed',fingerprint:hash,quotationRevision:1,profileId:null,scope:{optionId:null,applyToAllOptions:true},result:{changes:[{optionId:'a',fieldKey:'notice3',value:'검토 재질'}],warnings:[],model:'mock',generatedAt:version}};
+ let onContent,saveResponse;const writes=[];
+ h.intercept(async call=>{
+  if(call.url.endsWith('/quotation-ai'))return Response.json({configuration:{configured:true},fingerprint:hash,productId:'product',productVersion:version,contentRevision:3,optionRevision:2,quotationRevision:1,profileId:null,jobs:[job]});
+  if(call.url.endsWith('/content')){onContent?.();return Response.json({content});}
+  if(call.url.endsWith('/quotation-fields')){
+   if(call.method!=='PUT')return Response.json(view);
+   writes.push(plain(call.body));if(saveResponse)return saveResponse(call);
+   const saved=plain(view);saved.overrides=providedOptionModule('app/quotation-schema.ts').applyQuotationChanges(saved.overrides,call.body.changes);
+   for(const change of call.body.changes)saved.resolved.rows.find(row=>row.optionId===change.optionId).fields[change.fieldKey]={value:change.value,source:'manual-option'};
+   Object.assign(saved,{revision:2,inputFingerprint:'b'.repeat(64),productVersion:nextVersion,updatedAt:nextVersion});return Response.json(saved);
+  }
+ });
+ return {...h,view,content,job,writes,onContent:callback=>onContent=callback,saveResponse:callback=>saveResponse=callback};
+}
+test('explicit quotation work saves verified AI plus saved notice sources in one CAS request and confirms their exact receipt',async()=>{
+ const h=knownQuotationFixture(),before=JSON.stringify({view:h.view,content:h.content}),result=await h.run(['quotation']);
+ assert.equal(result.stages[0].status,'draft',result.stages[0].message);assert.match(result.stages[0].message,/AI 항목 1개 · 저장된 제조·상담 정보 3개/);
+ assert.equal(h.writes.length,1);assert.equal(h.writes[0].expectedRevision,1);assert.equal(h.writes[0].expectedInputFingerprint,hash);
+ assert.deepEqual(h.writes[0].changes,[{optionId:'a',fieldKey:'notice3',value:'검토 재질'},{optionId:'a',fieldKey:'notice0',value:'제조자: 저장 제조사 / 수입자: 저장 수입사'},{optionId:'a',fieldKey:'notice1',value:'02-1234-5678'},{optionId:'b',fieldKey:'notice1',value:'02-1234-5678'}]);
+ assert.equal(JSON.stringify({view:h.view,content:h.content}),before);assert.equal(h.calls.some(call=>call.method==='POST'),false);
+ assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
+});
+test('stale or foreign saved label content blocks the combined quotation write',async()=>{
+ for(const mutate of [content=>{content.revision=4;},content=>{content.productId='other';}]){
+  const h=knownQuotationFixture();mutate(h.content);const result=await h.run(['quotation']);assert.equal(result.stages[0].status,'failed');assert.equal(h.writes.length,0);
+ }
+});
+test('company changes or cancellation after reading known sources prevent their quotation write',async()=>{
+ const h=knownQuotationFixture();h.onContent(()=>h.company({code:'A01464742',name:'와이홉'}));
+ assert.equal((await h.run(['quotation'])).stages[0].status,'failed');assert.equal(h.writes.length,0);
+ const stopped=knownQuotationFixture();stopped.onContent(()=>stopped.controller.abort());assert.equal(await stopped.run(['quotation']),null);assert.equal(stopped.writes.length,0);
+});
+test('protected manufacturer/contact AI claims still fail before any saved-source copy',async()=>{
+ for(const fieldKey of ['notice0','notice1','notice2']){
+  const h=knownQuotationFixture();h.job.result.changes=[{optionId:'a',fieldKey,value:'AI 주장'}];
+  assert.equal((await h.run(['quotation'])).stages[0].status,'failed');assert.equal(h.writes.length,0);assert.equal(h.calls.some(call=>call.url?.endsWith('/content')),false);
+ }
+});
+test('lost, rejected or false-positive quotation save cannot resend known-source changes on retry',async()=>{
+ for(const response of [()=>{throw Error('lost ACK');},()=>Response.json({error:'changed'},{status:409}),()=>Response.json({revision:2})]){
+  const h=knownQuotationFixture();h.saveResponse(response);const first=await h.run(['quotation']);assert.equal(first.stages[0].status,'failed');assert.equal(h.writes.length,1);
+  const retry=await h.run(['quotation']);assert.equal(retry.stages[0].status,'blocked');assert.equal(h.writes.length,1);
+ }
 });
 
 function seoFixture(outcome={job:{id:'seo-job',status:'completed',result:{}},closed:true,partial:false,message:'번역됨'}){

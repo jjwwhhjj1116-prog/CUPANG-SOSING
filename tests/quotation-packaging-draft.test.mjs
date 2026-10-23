@@ -26,10 +26,45 @@ test('explicit common/option blanks and underlying option manual blank are prese
  f.options.rows[1].provenance.packagedHeightMm='manual';f.options.rows[1].packagedHeightMm=null;
  const result=helper.completeQuotationPackagingDraft(f.plan());assert.equal(result.proposals.length,0);assert.ok(result.preserved.every(item=>/직접 수정/.test(item.reason)));
 });
-test('partial collected dimensions stay fixed and inferred missing axes have minimum10mm',()=>{
+test('partial collected dimensions stay fixed and inferred thin axes are never enlarged',()=>{
  const f=fixture();for(const row of f.options.rows){row.packagingUnitsPerPack=1;row.packagedWidthMm=50;row.provenance.packagedWidthMm='collected';}
  const plan=f.plan(),result=helper.completeQuotationPackagingDraft(plan,qwen(plan.targets.map((_,index)=>({index,weightG:30,widthMm:999,lengthMm:80,heightMm:3}))),1);
- assert.ok(result.proposals.filter(item=>item.value.includes('*')).every(item=>item.value==='50*80*10'));
+ assert.ok(result.proposals.filter(item=>item.value.includes('*')).every(item=>item.value==='50*80*3'&&item.origin==='ai-estimate'));
+});
+
+test('valid AI abstention leaves missing fields untouched instead of supplying fallback measurements',()=>{
+ for(const packages of [[],[{index:0}],[{index:0,widthMm:80,lengthMm:50}]]){
+  const f=fixture(),plan=f.plan(),before=JSON.stringify({saved:f.saved,plan});
+  const result=helper.completeQuotationPackagingDraft(plan,qwen(packages),1);
+  assert.equal(result.proposals.length,0);assert.equal(result.aiRequests,1);
+  assert.ok(result.warnings.some(message=>message.includes('근거가 부족')));
+  assert.equal(JSON.stringify({saved:f.saved,plan}),before);
+  assert.equal(helper.quotationPackagingDraftChanges(f.view(),result,f.product.id,f.scope).length,0);
+ }
+});
+
+test('generic all-minimum and too-small AI dimensions are withheld without clamping or replacement',()=>{
+ for(const size of [10,1,9]){
+  const f=fixture(),plan=f.plan();
+  const result=helper.completeQuotationPackagingDraft(plan,qwen(plan.targets.map((_,index)=>({index,weightG:30,widthMm:size,lengthMm:size,heightMm:size}))),1);
+  assert.equal(result.proposals.length,plan.targets.length);
+  assert.ok(result.proposals.every(item=>item.value==='30'&&item.origin==='ai-estimate'));
+  assert.ok(result.warnings.some(message=>message.includes('추정값으로 제안하지 않았습니다')));
+  assert.equal(result.proposals.some(item=>item.origin==='couplus-fallback'),false);
+ }
+});
+
+test('saved and collected small package dimensions stay unchanged even at the former generic boundary',()=>{
+ for(const size of [10,1])for(const provenance of ['collected','manual']){
+  const f=fixture();for(const row of f.options.rows){
+   Object.assign(row,{packagingUnitsPerPack:1,packagedWeightG:10,packagedWidthMm:size,packagedLengthMm:size,packagedHeightMm:size});
+   for(const key of ['packagedWeightG','packagedWidthMm','packagedLengthMm','packagedHeightMm'])row.provenance[key]=provenance;
+  }
+  const before=JSON.stringify(f.options),plan=f.plan(),result=helper.completeQuotationPackagingDraft(plan);
+  assert.equal(plan.targets.length,0);assert.equal(result.proposals.length,0);
+  assert.ok(result.preserved.some(item=>item.value===[size,size,size].join('*')));
+  assert.ok(result.preserved.some(item=>item.value==='10'));assert.equal(JSON.stringify(f.options),before);
+ }
 });
 test('old or unknown sale-pack basis cannot be borrowed or overwritten by estimates',()=>{
  for(const basis of [1,undefined]){const f=fixture();for(const row of f.options.rows){row.unitsPerPack=3;row.packagedWeightG=10;row.packagingUnitsPerPack=basis;row.provenance.packagedWeightG='collected';}
@@ -59,9 +94,12 @@ test('provider request uses public product text/local option indices without inv
   assert.equal(source.packages[0].index,0);assert.equal(source.packages[0].unitsPerPack,1);assert.equal(Object.hasOwn(source.packages[0],'shippingContext'),false);
   assert.deepEqual(plain(source.packages[0].collectedPackage),{});assert.deepEqual(plain(source.packages[0].reviewedPackage),{});
   assert.doesNotMatch(input.messages[0].content,/weightG["']?\s*:\s*100|widthMm["']?\s*:\s*100|lengthMm["']?\s*:\s*100|heightMm["']?\s*:\s*100/u);
+  assert.doesNotMatch(input.messages[0].content,/\b10\b|\b1000\b/u);
+  assert.match(input.messages[0].content,/omit that field/);
+  assert.deepEqual(plain(input.response_format.json_schema.properties.packages.items.required),['index']);
   for(const privateValue of [f.product.id,f.product.owner_id,f.profile.id,f.options.rows[0].id,f.saved.company.code])assert.ok(!JSON.stringify(source).includes(privateValue));
   return qwen(source.packages.map(({index})=>({index,weightG:20,widthMm:30,lengthMm:40,heightMm:5})));}},new AbortController().signal);
- assert.equal(calls.length,1);assert.equal(calls[0].model,'@cf/qwen/qwen3-30b-a3b-fp8');assert.equal(calls[0].input.max_tokens,2048);assert.equal(calls[0].input.temperature,0);assert.ok(result.proposals.some(item=>item.value==='30*40*10'));
+ assert.equal(calls.length,1);assert.equal(calls[0].model,'@cf/qwen/qwen3-30b-a3b-fp8');assert.equal(calls[0].input.max_tokens,2048);assert.equal(calls[0].input.temperature,0);assert.ok(result.proposals.some(item=>item.value==='30*40*5'));
 });
 
 test('a current sealed common10g quotation value reaches size-only AI as reviewed context, never collected',async()=>{

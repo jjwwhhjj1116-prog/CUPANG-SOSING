@@ -23,6 +23,7 @@ import { createBundleAddDraft, verifyBundleAddReceipt, type BundleAddition, type
 import { verifyOptionPriceView } from '@/app/option-price-save';
 import { applyOptionNameChanges } from '@/app/option-seo-names';
 import {recalculateStageTwoOptionCost} from '@/app/stage-two-option-recalculation';
+import {readCategoryJsonResponse} from '@/app/load-category-profiles';
 
 type Props = { product: { id: string; title: string; image_keys: string; updated_at?: string; registration_number?: string }; profileId?:string;refreshToken?:string;onSaved?: () => void; onReviewPackaging?: (optionId: string | null) => void; imageView?: boolean; imageProcessingBusy?: boolean; processingConfigured?:boolean|null;pricingView?: boolean; seoView?: boolean; focusedOptionId?: string; initialBulkAction?: 'remove';
   editableQuotationPrices?:boolean;pricePolicyLocked?:boolean;beforePriceCommit?:()=>boolean;onPriceBusyChange?:(busy:boolean,operation:object)=>void;
@@ -33,7 +34,7 @@ const won = (value: number) => `${Math.round(value).toLocaleString('ko-KR')}원`
 const originNames = { manual: '직접 입력', collected: '수집 원문', translated: '번역 결과', unverified: '미확인' };
 async function fetchOptions(endpoint: string, signal?: AbortSignal, parent?: string): Promise<ProductOptionsResponse> {
   const response = await fetch(endpoint, { signal, cache: 'no-store' });
-  const body = await response.json() as ProductOptionsResponse & { error?: string };
+  const body = await readCategoryJsonResponse<ProductOptionsResponse & { error?: string }>(response,'옵션 편집 조회 [GET /api/products/:id/options]');
   if (!response.ok || !body.options) throw new Error(body.error || '옵션을 불러오지 못했습니다.');
   verifyOptionsRegistrationDisplay(body,decodeURIComponent(endpoint.split('/')[3]),parent);
   return body;

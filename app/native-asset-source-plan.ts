@@ -98,7 +98,7 @@ function assign(document:Node,wire:HubWireField,value:string){
   const targets=node.filter((row):row is Node=>object(row)&&row[wire.nameKey!]===wire.name);if(targets.length!==1)throw Error('이미지 이름 배열의 정확한 항목을 확인해주세요.');targets[0][wire.valueKey]=value;
  }else{if(!object(node))throw Error('이미지 저장 항목을 확인해주세요.');node[wire.path.at(-1)!]=value;}
 }
-const filename=(value:string)=>text(value,180)&&!/[\\/<>:"|?*%,#\u202a-\u202e\u2066-\u2069]/.test(value)&&!/[. ]$/.test(value);
+const filename=(value:string,max=180)=>text(value,max)&&!/[\\/<>:"|?*%,#\u202a-\u202e\u2066-\u2069]/.test(value)&&!/[. ]$/.test(value);
 
 /** Actual owned private bytes -> filename-native body sidecar. No public image
  * secret, publication, native target ID, remote write or agreement is created.
@@ -151,7 +151,9 @@ export async function buildNativeAssetSourcePlan(input:{identity:unknown;project
     const fileId=type+'\0'+key;let file=files.get(fileId);
     if(!file){
      const originalName=key.slice(identity.ownerId.length+1),extension=proof.contentType==='image/png'?'png':'jpg',keyHash=await digest(key),transportName=`${type.toLowerCase()}-${proof.sha256}-${keyHash.slice(0,16)}.${extension}`;
-     if(!filename(originalName)||!filename(transportName)||transportName.length>100||!new RegExp(proof.contentType==='image/png'?'\\.png$':'\\.jpe?g$','i').test(originalName))throw Error('원본의 실제 저장 파일명·형식을 확인해주세요.');
+     // Internal generated leaves can exceed 180 characters. They stay within
+     // the owned-key bound; only the separate short alias is sent to the Hub.
+     if(!filename(originalName,512)||!filename(transportName)||transportName.length>100||!new RegExp(proof.contentType==='image/png'?'\\.png$':'\\.jpe?g$','i').test(originalName))throw Error('원본의 실제 저장 파일명·형식을 확인해주세요.');
      if(transportNames.has(transportName))throw Error('전송 이미지 파일명이 중복되어 있습니다.');transportNames.add(transportName);
      file={key,originalName,transportName,imageType:type,contentType:proof.contentType,byteLength:proof.bytes.length,sha256:proof.sha256,references:[]};files.set(fileId,file);
      if(files.size>150)throw Error('전송 이미지 파일 계획은 최대 150개입니다.');

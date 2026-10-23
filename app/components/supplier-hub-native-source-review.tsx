@@ -5,6 +5,7 @@ import type {NativeAssetSourcePlan} from '@/app/native-asset-source-plan';
 import type {SupplierHubProductDocumentReview} from '@/app/supplier-hub-product-document';
 import {readCurrentNativeAssetSource,reviewCurrentNativeSupplierHubProductDocument} from '@/app/supplier-hub-native-product-document';
 import {SupplierHubProductTransport} from '@/app/components/supplier-hub-product-transport';
+import {nativeSourceIssueGroups} from '@/app/supplier-hub-native-source-issues';
 
 type Props={productId:string;profileId?:string;view:QuotationFieldsView;disabled:boolean;onReceiptSaved?:()=>void;onLockChange?:(locked:boolean,closeLocked?:boolean)=>void};
 const roles={MAIN:'대표',ADDITIONAL:'추가',SIZECHART:'사이즈표',LABEL:'표시사항',DETAIL:'상세'};
@@ -51,13 +52,14 @@ function NativeSourceScope(props:Props){
   finally{task.finish();}
  }
  const errors=plan?.issues.filter(issue=>issue.level==='error')??[],notices=plan?.issues.filter(issue=>issue.level==='review')??[];
+ const errorGroups=nativeSourceIssueGroups(errors,props.view,plan?.identity??null),noticeGroups=nativeSourceIssueGroups(notices,props.view,plan?.identity??null);
  return <section className="quotation-fields-notice" aria-label="상품 견적서 전송 자료" aria-busy={busy}>
   <div className="quote-actions"><button type="button" className="btn ghost" disabled={disabled||busy||locked} onClick={()=>void load()}>저장한 견적 자료 다시 확인</button>
    {!review&&<button type="button" className="btn primary" disabled={disabled||busy||locked||!plan?.metadataValid||errors.length>0} onClick={()=>void prepare()}>견적서·첨부 파일 확인</button>}</div>
   {busy&&<p role="status">현재 저장한 견적서와 첨부 파일을 확인하고 있습니다…</p>}{error&&<p role="alert">{error}</p>}
+  {errors.length>0&&<div role="alert"><p>전송 전 확인 필요 {errors.length}건{errorGroups.length<errors.length?` · 같은 안내 ${errorGroups.length}개로 묶음`:''}</p><ul>{errorGroups.map(issue=><li key={issue.key}><strong>{issue.context}</strong>: {issue.message}{issue.count>1?` (${issue.count}건)`:''}</li>)}</ul></div>}
+  {notices.length>0&&<details><summary>견적서 검토 안내 {notices.length}건{noticeGroups.length<notices.length?` · 같은 안내 ${noticeGroups.length}개로 묶음`:''}</summary><ul>{noticeGroups.map(issue=><li key={issue.key}><strong>{issue.context}</strong>: {issue.message}{issue.count>1?` (${issue.count}건)`:''}</li>)}</ul></details>}
   {plan?.identity&&<><p>{plan.identity.company.name} · {plan.identity.categoryPath.join(' > ')} · 포함 옵션 {plan.identity.members.length}개</p>
-   {errors.length>0&&<ul>{errors.map((issue,index)=><li key={index}>{issue.message}</li>)}</ul>}
-   {notices.length>0&&<details><summary>견적서 검토 안내 {notices.length}개</summary><ul>{notices.map((issue,index)=><li key={index}>{issue.message}</li>)}</ul></details>}
    <div className="quotation-fields-bulk-table"><table><caption>옵션별 첨부 파일</caption><thead><tr><th>옵션</th><th>대표·추가·상세·사이즈표·표시사항</th></tr></thead><tbody>{plan.identity.members.map(member=><tr key={member.optionId}><td>{member.optionLabel}</td><td>{Object.entries(roles).map(([type,label])=>{
     const count=plan.images.filter(file=>file.imageType===type&&file.references.some(ref=>ref.optionId===member.optionId&&ref.documentIndex===member.documentIndex)).length;return count?`${label} ${count}개`:null;
    }).filter(Boolean).join(' · ')||'첨부 파일 없음'}</td></tr>)}</tbody></table></div>

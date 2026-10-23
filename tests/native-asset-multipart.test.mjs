@@ -38,6 +38,16 @@ async function fixture(company=companies[0],legal=true){
 }
 function mutableLegal(prepared){return{...prepared,groups:prepared.groups.map(group=>({...group,parts:group.parts.map(part=>({...part}))}))};}
 
+test('long generated original image names use unchanged short multipart transport aliases',async()=>{
+ const f=await fixture(),file=f.plan.images[0],old=file.key;
+ file.originalName=`free-image-00000000-0000-4000-8000-000000000001-${'a'.repeat(64)}-${'b'.repeat(64)}.png`;
+ assert.equal(file.originalName.length,181);file.key=`owner/${file.originalName}`;f.originals.set(file.key,f.originals.get(old));f.originals.delete(old);await resign(f);
+ const prepared=await prepareNativeAssetMultipart(f.plan,f.options),request=prepared.requests.find(row=>row.imageType===file.imageType);
+ assert.equal(request.body.get('additionalImageFiles').name,file.transportName);assert.equal(prepared.bytesVerified,true);assert.equal(prepared.remoteWrites,false);
+ for(const bad of ['../unsafe.png','a'.repeat(509)+'.png','unsafe\u202e.png']){const invalid=await fixture();invalid.plan.images[0].originalName=bad;await resign(invalid);
+  await assert.rejects(()=>prepareNativeAssetMultipart(invalid.plan,invalid.options));assert.equal(invalid.reads.length,0);}
+});
+
 for(const company of companies)test(`${company.code}: all image types and exact schema-row PDF aliases become fresh multipart requests, never a remote submission`,async()=>{
  const f=await fixture(company),before=JSON.stringify(f.plan),originals=[...f.originals].map(([key,bytes])=>[key,sha(bytes)]),oldFetch=globalThis.fetch;let fetches=0;
  globalThis.fetch=async()=>{fetches++;throw Error('Network forbidden');};
