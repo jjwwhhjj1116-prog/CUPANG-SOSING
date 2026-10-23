@@ -12,12 +12,12 @@ function elements(tree,predicate){const found=[];function visit(node){if(!node||
 function nodeText(node){return Array.isArray(node)?node.map(nodeText).join(''):node&&typeof node==='object'?nodeText(node.props?.children):typeof node==='boolean'?'':String(node??'');}
 const nativeSummary={format:'yoofam-single-receipt-summary-v1',evidence:'chrome-observation',registered:false,label:'개별 문서 등록 파일 완료 확인',company:{code:'A01526306',name:'유앤채'},fingerprint:'a'.repeat(64),categoryId:'81452',observedAt:Date.now(),createdAt:new Date().toISOString(),optionCount:1,optionId:'reviewed-one',docId:901,qvtRequestId:7901,state:'accepted',sourceStatus:'FINISHED'};
 function boardHarness(props={}){
- const values=[],confirmations=[];let cursor=0;
- const {RegistrationBoard:Board}=load('app/components/registration-board.tsx',{window:{innerWidth:1600,innerHeight:900,confirm(message){confirmations.push(message);return props.confirm!==false;}},react:{...require('react'),useRef(initial){const index=cursor++;if(!(index in values))values[index]={current:initial};return values[index];},useState(initial){const index=cursor++;if(!(index in values))values[index]=typeof initial==='function'?initial():initial;return [values[index],value=>{values[index]=typeof value==='function'?value(values[index]):value;}];}}});
+ const values=[],confirmations=[],layouts=[];let cursor=0;
+ const {RegistrationBoard:Board}=load('app/components/registration-board.tsx',{window:{innerWidth:1600,innerHeight:900,confirm(message){confirmations.push(message);return typeof props.confirm==='function'?props.confirm(message):props.confirm!==false;}},react:{...require('react'),useRef(initial){const index=cursor++;if(!(index in values))values[index]={current:initial};return values[index];},useMemo(fn,deps){const index=cursor++,previous=values[index];if(!previous||deps.some((value,i)=>!Object.is(value,previous.deps[i])))values[index]={deps,value:fn()};return values[index].value;},useLayoutEffect(fn,deps){const index=cursor++,previous=values[index];if(!previous||!deps||deps.some((value,i)=>!Object.is(value,previous.deps[i]))){const next={deps,cleanup:previous?.cleanup};values[index]=next;layouts.push(()=>{next.cleanup?.();next.cleanup=fn();});}},useState(initial){const index=cursor++;if(!(index in values))values[index]=typeof initial==='function'?initial():initial;return [values[index],value=>{values[index]=typeof value==='function'?value(values[index]):value;}];}}});
  const product={id:'12345678-abcd',title:'수집한 상품명',source_url:'https://detail.1688.com/offer/813724060928.html',created_at:'2026-09-26T00:00:00Z',image_keys:'["owner/source","owner/main"]',source_image_key:'owner/source',options_count:3,registration_status:'작업 중',seo_status:'대기',quote_status:'대기',supply_price:1000,sale_price:2000,removal_policy:{blocked:false,code:null,reason:'',receipt:null},content_summary:{seoTitle:'수정한 상품명',mainImageKey:'owner/main',seo:true,main:1,additional:0,detail:0,label:0,missingImages:false}};
  const calls=[],options=[],selections=[];
- const base={products:[product],selected:new Set(),onSelected:value=>selections.push(value),onOpen:(...args)=>calls.push(args),onOptions:value=>options.push(value),loading:false,error:'',onArchive:()=>{},...props};
- return {product:base.products[0],calls,options,selections,confirmations,render(){cursor=0;return Board(base);}};
+ const base={products:[product],sourceOwnerId:'owner',sourceCompany:{code:'A01464742',name:'와이홉'},selected:new Set(),onSelected:value=>selections.push(value),onOpen:(...args)=>calls.push(args),onOptions:value=>options.push(value),loading:false,error:'',onArchive:()=>{},...props};
+ return {product:base.products[0],calls,options,selections,confirmations,update(value){Object.assign(base,value);return this.render();},close(){for(const value of values)value?.cleanup?.();},render(){cursor=0;const tree=Board(base);layouts.splice(0).forEach(fn=>fn());return tree;}};
 }
 
 test('native receipt row keeps document and registration file distinct, never claims an issued SKU or all options',()=>{
@@ -372,13 +372,13 @@ test('the open filter trigger toggles closed and popup sorting preserves existin
  popup=openColumnFilter(h,'등록번호');popup.props.onApply({mode:'values',values:['YP-10','YP-2']});openColumnFilter(h,'등록번호').props.onSort('ascending');assert.deepEqual(boardRowIds(h),['2','10']);openColumnFilter(h,'등록번호').props.onSort('descending');assert.deepEqual(boardRowIds(h),['10','2']);assert.equal(h.options.length,0);assert.equal(h.confirmations.length,0);
 });
 
-const sourceItem={id:'capture',ownerId:'owner',snapshot:{offerId:'700000000001',sourceUrl:'https://detail.1688.com/offer/700000000001.html',title:'새 수집 상품',options:[{key:'a'}],images:[{url:'https://cbu01.alicdn.com/test.jpg',role:'main'}]},reviewed:null,receivedAt:'2026-10-19T00:00:00Z',archivedAt:null,issues:['공급자 SKU']};
+const sourceItem={id:'00000000-0000-4000-8000-000000000001',ownerId:'owner',company:{code:'A01464742',name:'와이홉'},fingerprint:'a'.repeat(64),revision:1,snapshot:{offerId:'700000000001',sourceUrl:'https://detail.1688.com/offer/700000000001.html',title:'새 수집 상품',options:[{key:'a'}],images:[{url:'https://cbu01.alicdn.com/test.jpg',role:'main'}]},reviewed:null,receivedAt:'2026-10-19T00:00:00Z',archivedAt:null,issues:['공급자 SKU']};
 test('collected product appears in the same fourteen-column board and routes category/review without existing-product handlers',()=>{
  const prepared=[],reviewed=[];const h=boardHarness({sources:[sourceItem],onPrepareSource:item=>prepared.push(item),onReviewSource:item=>reviewed.push(item)});const before=JSON.stringify(h.product);
  const tree=h.render(),sourceRow=elements(tree,node=>node.type==='tr'&&elements(node,child=>child.type==='td'&&child.props['data-column']==='product'&&nodeText(child).includes('새 수집 상품')).length)[0];
  assert.ok(sourceRow);assert.equal(elements(sourceRow,node=>node.type==='td'&&node.props['data-column']).length,14);
  assert.match(nodeText(sourceRow),/카테고리 대기/);assert.doesNotMatch(nodeText(sourceRow),/공급 0원|전송완료|등록완료/);
- const checkbox=elements(sourceRow,node=>node.type==='input'&&node.props.type==='checkbox')[0];assert.equal(checkbox.props.disabled,true);
+ const checkbox=elements(sourceRow,node=>node.type==='input'&&node.props.type==='checkbox')[0];assert.equal(checkbox.props.disabled,false);
  elements(sourceRow,node=>node.type==='button'&&node.props['aria-label']==='새 수집 상품 SEO설정 열기')[0].props.onClick();
  elements(sourceRow,node=>node.type==='button'&&node.props.className==='registration-options')[0].props.onClick();
  assert.equal(prepared[0],sourceItem);assert.equal(reviewed[0],sourceItem);assert.equal(h.calls.length,0);assert.equal(h.options.length,0);
@@ -387,4 +387,49 @@ test('collected product appears in the same fourteen-column board and routes cat
 test('only the captured entry is archived through its own handler',async()=>{
  const archived=[],deleted=[];const h=boardHarness({sources:[sourceItem],onArchiveSource:async item=>archived.push(item),onDelete:async product=>deleted.push(product)});
  const button=elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='새 수집 상품 삭제')[0];await button.props.onClick();assert.equal(archived[0],sourceItem);assert.equal(deleted.length,0);
+});
+
+test('captured checkboxes and page selection stay separate from AI/transmission product IDs and enable captured-only bulk archive',async()=>{
+ const sources=Array.from({length:13},(_,i)=>({...sourceItem,id:`00000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`,
+  fingerprint:String(i+1).padStart(64,'0'),snapshot:{...sourceItem.snapshot,title:`수집 상품 ${i+1}`,offerId:String(700000000001+i),sourceUrl:`https://detail.1688.com/offer/${700000000001+i}.html`}}));
+ const archived=[],deleted=[],h=boardHarness({sources,onArchiveSource:async item=>archived.push(item),onDelete:async item=>deleted.push(item)}),before=JSON.stringify(h.product);
+ const check=()=>elements(h.render(),node=>node.type==='input'&&node.props['aria-label']==='현재 페이지 전체 선택')[0];
+ check().props.onChange({target:{checked:true}});assert.equal(h.selections.length,0,'source-only page never adds IDs to product selection');
+ assert.match(nodeText(h.render()),/수집 선택 10건/);elements(h.render(),node=>node.type==='button'&&nodeText(node)==='다음')[0].props.onClick();
+ check().props.onChange({target:{checked:true}});assert.deepEqual([...h.selections.at(-1)],[h.product.id]);assert.match(nodeText(h.render()),/수집 선택 13건/);
+ const bulk=elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='선택한 수집 상품 삭제')[0];assert.equal(bulk.props.disabled,false);await bulk.props.onClick();
+ assert.deepEqual(archived.map(item=>item.id),sources.map(item=>item.id));assert.equal(deleted.length,0);assert.equal(JSON.stringify(h.product),before);
+ assert.equal(elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='선택한 수집 상품 삭제')[0].props.disabled,true);assert.match(nodeText(h.render()),/원문은 보존/);
+});
+
+test('captured trash ignores product removal locks, and failed bulk archive stops without retrying untouched or successful captures',async()=>{
+ const other={...sourceItem,id:'00000000-0000-4000-8000-000000000002',fingerprint:'b'.repeat(64),snapshot:{...sourceItem.snapshot,sourceUrl:'https://detail.1688.com/offer/700000000002.html',title:'두번째 수집'}};
+ const calls=[],h=boardHarness({sources:[sourceItem,other],onArchiveSource:async item=>{calls.push(item.id);if(item.id===other.id)throw Error('변경된 수집본');}});
+ const trash=elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='새 수집 상품 삭제')[0];assert.equal(trash.props.disabled,false);
+ for(const label of ['새 수집 상품 선택','두번째 수집 선택'])elements(h.render(),node=>node.type==='input'&&node.props['aria-label']===label)[0].props.onChange({target:{checked:true}});
+ const bulk=()=>elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='선택한 수집 상품 삭제')[0];await bulk().props.onClick();
+ assert.deepEqual(calls,[sourceItem.id,other.id]);assert.match(nodeText(h.render()),/1건 삭제됨.*변경된 수집본/);assert.match(nodeText(bulk()),/1/);assert.equal(h.selections.length,0);
+});
+
+test('a stale captured checkbox/archive action cannot act after source revision, account/company or disabled-state changes',async()=>{
+ for(const kind of ['revision','owner','company','disabled']){
+  const calls=[],h=boardHarness({sources:[sourceItem],onArchiveSource:async item=>calls.push(item)});
+  const old=elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='새 수집 상품 삭제')[0];
+  if(kind==='revision')h.update({sources:[{...sourceItem,revision:2}]});
+  if(kind==='owner')h.update({sourceOwnerId:'other'});
+  if(kind==='company')h.update({sourceCompany:{code:'A01526306',name:'유앤채'}});
+  if(kind==='disabled')h.update({sourceArchiveDisabled:true});
+  await old.props.onClick();assert.equal(calls.length,0,kind);h.close();
+ }
+});
+
+test('account switches and unmounts during an archive stop the remaining batch and discard old success notices',async()=>{
+ for(const change of ['owner','close']){
+  const other={...sourceItem,id:'00000000-0000-4000-8000-000000000002',fingerprint:'b'.repeat(64)},calls=[];let release;
+  const pending=new Promise(resolve=>{release=resolve;}),h=boardHarness({sources:[sourceItem,other],onArchiveSource:async item=>{calls.push(item.id);await pending;}});
+  elements(h.render(),node=>node.type==='input'&&node.props['aria-label']==='현재 페이지 전체 선택')[0].props.onChange({target:{checked:true}});
+  const operation=elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='선택한 수집 상품 삭제')[0].props.onClick();
+  assert.deepEqual(calls,[sourceItem.id]);if(change==='owner')h.update({sourceOwnerId:'other'});else h.close();release();await operation;
+  assert.deepEqual(calls,[sourceItem.id]);if(change==='owner')assert.doesNotMatch(nodeText(h.render()),/수집 상품 2건을 목록에서 삭제했습니다/);
+ }
 });

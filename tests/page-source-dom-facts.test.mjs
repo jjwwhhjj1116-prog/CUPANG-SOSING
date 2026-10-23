@@ -67,6 +67,45 @@ test('Chrome-translated Korean headings and headers retain exact original option
  assert.equal(source.attributes[0].value,'海绵');assert.deepEqual(source.options.map(row=>row.packaging),names.map(()=>({source:'package-table',weightG:10,widthMm:20,lengthMm:30,heightMm:4})));
 });
 
+test('translated nested inline/font section headings retain attributes and exact original SKU package facts',()=>{
+ for(const [attributeHeading,packageHeading]of [['商品属性','包装信息'],['상품 속성','포장 정보']]){
+  const source=capture(attributes.replace('<h2>商品属性</h2>',`<h3><font style="vertical-align:inherit"><font style="vertical-align:inherit">${attributeHeading}</font></font></h3>`)
+   +table().replace('<h2>包装信息</h2>',`<h3><font><font>${packageHeading}</font></font></h3>`));
+  assert.deepEqual(source.attributes,[{name:'材质',value:'海绵'},{name:'产品类别',value:'后跟贴'}]);
+  assert.deepEqual(source.options.map(row=>row.packaging),names.map(()=>({source:'package-table',weightG:10})));
+ }
+});
+
+test('font-only and split inline headings also support translated attribute pairs without treating their containers as headings',()=>{
+ const attrs='<section><font><font>상품 속성</font></font><div><span><font><font>材质</font></font></span><span><strong>海绵</strong></span></div><div><span>产品类别</span><span><font>后跟贴</font></span></div></section>';
+ for(const heading of ['<font><font>포장 정보</font></font>','<h3><span>포장</span><strong> 정보</strong></h3>','<p><font>包</font><span>装信息</span></p>']){
+  const source=capture(attrs+table().replace('<h2>包装信息</h2>',heading));
+  assert.deepEqual(source.attributes,[{name:'材质',value:'海绵'},{name:'产品类别',value:'后跟贴'}]);assert.deepEqual(source.options.map(row=>row.packaging.weightG),[10,10,10]);
+ }
+});
+
+test('translated wrapper labels cannot authorise excluded navigation/shop/recommendation facts or adjacent mixed sections',()=>{
+ const wrapped=value=>value.replace(/<h2>([^<]+)<\/h2>/gu,'<h3><font><font>$1</font></font></h3>');
+ const bad=wrapped(attributes.replace('海绵','错误推荐材质')+table(['颜色','重量(g)'],[[names[0],'999']]));
+ for(const [open,close]of [['<nav>','</nav>'],['<footer>','</footer>'],['<div role="tab">','</div>'],['<div class="shop-card">','</div>'],['<div id="recommend-more">','</div>'],['<div class="review-zone">','</div>']]){
+  const source=capture(open+bad+close+wrapped(attributes+table()));
+  assert.equal(source.attributes[0].value,'海绵');assert.deepEqual(source.options.map(row=>row.packaging.weightG),[10,10,10]);
+ }
+ const mixed='<section><h3><font>商品属性</font></h3><h3><font>包装信息</font></h3><table><tr><th>材质</th><td>海绵</td></tr></table></section>';
+ assert.throws(()=>capture(mixed),/속성·포장 표/,'neighbouring different section labels cannot claim a shared table');
+ const noExact=table().replace('包装信息','包装信息与推荐商品');assert.ok(capture(noExact).options.every(row=>row.packaging===undefined));
+ const wrongSku=wrapped(table(['SKU','重量(g)'],[['not-current-sku','10']]));assert.throws(()=>capture(wrongSku),/포장 표의 옵션명·SKU/);
+});
+
+test('translated nested wrappers count once while the original heading, row and attribute limits stay enforced',()=>{
+ const wrapped=attributes.replace('<h2>商品属性</h2>','<h3><font><font>商品属性</font></font></h3>');
+ assert.equal(capture(wrapped.repeat(30)).attributes.length,2,'three translated wrappers are one labelled section');
+ assert.throws(()=>capture(wrapped.repeat(31)),/속성·포장 표/);
+ assert.throws(()=>capture(table(['颜色','重量(g)'],Array.from({length:201},()=>[names[0],'10'])).replace('<h2>包装信息</h2>','<h3><font>포장 정보</font></h3>')),/속성·포장 표/);
+ const oversized='<section><h3><font>상품 속성</font></h3><table>'+Array.from({length:51},(_,i)=>`<tr><th><font>属性${i}</font></th><td><font>值</font></td></tr>`).join('')+'</table></section>';
+ assert.throws(()=>capture(oversized),/속성·포장 표/);
+});
+
 test('translated row names require stable exact supplier SKU; no row-order or translation matching is invented',()=>{
  const koreanNames=['리본 뒤꿈치 패드 베이지','리본 뒤꿈치 패드 분홍','리본 뒤꿈치 패드 검정'];
  const base=table(['색상','무게(g)'],koreanNames.map(name=>[name,'10'])).replace('包装信息','포장 정보');

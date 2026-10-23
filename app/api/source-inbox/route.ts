@@ -1,7 +1,7 @@
 import {getChatGPTUser,getWorkspaceOwnerId} from '@/app/chatgpt-auth';
 import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
 import {readBoundedJson,RequestBodyError} from '@/app/request-body';
-import {validatePageSourceForDelivery,PAGE_SOURCE_LIMIT} from '@/extensions/supplier-hub/page-source.mjs';
+import {validatePageSourceForDelivery,PAGE_SOURCE_LIMIT,pageSourceUrl} from '@/extensions/supplier-hub/page-source.mjs';
 import {pageSourceFingerprint,reviewPageSource} from '@/app/source-inbox';
 import {listSourceInbox,readSourceInbox,storeSourceInbox,reviewSourceInbox,archiveSourceInbox,restoreSourceInbox,SourceInboxConflict,SOURCE_INBOX_ACTIVE_LIMIT,SOURCE_INBOX_RETENTION_LIMIT} from '@/db/source-inbox';
 const reply=(value:unknown,status=200)=>Response.json(value,{status,headers:{'cache-control':'no-store'}});
@@ -29,13 +29,30 @@ export async function POST(request:Request){
 }
 export async function DELETE(request:Request){
  try{
-  const auth=await access();if(!auth)return reply({error:'승인된 회사 계정으로 로그인해주세요.'},401);
-  const body=await readBoundedJson(request,4096) as {expectedOwnerId?:unknown;id?:unknown;expectedRevision?:unknown};
-  if(!body||typeof body!=='object'||Array.isArray(body)||Object.keys(body).some(key=>!['expectedOwnerId','id','expectedRevision'].includes(key))||typeof body.id!=='string'||!/^[a-f0-9-]{36}$/.test(body.id)||!Number.isSafeInteger(body.expectedRevision))return reply({error:'수집함 제외 요청을 확인해주세요.'},400);
+  // Read the owner before the latest member so an async owner lookup cannot
+  // leave an older company/status snapshot authorizing the mutation.
+  const currentAccess=async()=>{const owner=await getWorkspaceOwnerId(),user=await getChatGPTUser(),member=user?.membership,company=user?.verifiedAccess?approvedSupplierHubCompany(member):null;
+   return company&&user?.userId===owner&&member?.id===owner&&typeof member.email==='string'&&['admin','member'].includes(member.role)
+    ?{owner,company,member:{id:member.id,email:member.email.trim().toLowerCase(),role:member.role}}:null;};
+  const auth=await currentAccess();if(!auth)return reply({error:'승인된 회사 계정으로 로그인해주세요.'},401);
+  const body=await readBoundedJson(request,4096) as Record<string,unknown>,identity=['expectedCompany','expectedFingerprint','expectedSourceUrl'];
+  if(!body||typeof body!=='object'||Array.isArray(body)||Object.keys(body).some(key=>!['expectedOwnerId','id','expectedRevision',...identity].includes(key))||typeof body.id!=='string'||!/^[a-f0-9-]{36}$/.test(body.id)||!Number.isSafeInteger(body.expectedRevision)||(body.expectedRevision as number)<1)return reply({error:'수집함 제외 요청을 확인해주세요.'},400);
+  const strict=identity.some(key=>Object.hasOwn(body,key));
+  if(strict){
+   const company=body.expectedCompany;
+   if(!identity.every(key=>Object.hasOwn(body,key))||!company||typeof company!=='object'||Array.isArray(company)||Object.keys(company).sort().join(',')!=='code,name'
+    ||typeof body.expectedFingerprint!=='string'||!/^[a-f0-9]{64}$/.test(body.expectedFingerprint)||typeof body.expectedSourceUrl!=='string')return reply({error:'선택한 수집 원문의 회사·확인값·주소를 함께 확인해주세요.'},400);
+   let source;try{source=pageSourceUrl(body.expectedSourceUrl);}catch{return reply({error:'선택한 수집 원문의 주소를 확인해주세요.'},400);}
+   if(source.sourceUrl!==body.expectedSourceUrl)return reply({error:'선택한 수집 원문의 정확한 주소를 확인해주세요.'},400);
+   if((company as {code?:unknown}).code!==auth.company.code||(company as {name?:unknown}).name!==auth.company.name)return reply({error:'선택 이후 로그인 회사가 변경되었습니다.'},409);
+  }
   if(body.expectedOwnerId!==auth.owner)return reply({error:'로그인 계정이 변경되었습니다.'},409);
   const item=await readSourceInbox(auth.owner,body.id);if(!item||item.company.code!==auth.company.code||item.company.name!==auth.company.name)return reply({error:'이 회사의 수집 상품을 찾을 수 없습니다.'},404);
-  const saved=await archiveSourceInbox(auth.owner,item.id,body.expectedRevision as number);
-  return saved?reply({ownerId:auth.owner,id:item.id,archived:true}):reply({error:'수집함이 변경되었습니다. 새로고침 후 확인해주세요.'},409);
+  if(item.archivedAt||item.revision!==body.expectedRevision||strict&&(item.fingerprint!==body.expectedFingerprint||item.snapshot.sourceUrl!==body.expectedSourceUrl)
+   ||await pageSourceFingerprint(item.snapshot)!==item.fingerprint)return reply({error:'선택한 수집 원문 또는 검토 버전이 변경되었습니다. 다시 선택해주세요.'},409);
+  const latest=await currentAccess();if(!latest||latest.owner!==auth.owner||JSON.stringify(latest.company)!==JSON.stringify(auth.company)||JSON.stringify(latest.member)!==JSON.stringify(auth.member))return reply({error:'수집함을 제외하는 동안 로그인 회원·회사가 변경되었습니다.'},409);
+  const saved=await archiveSourceInbox(auth.owner,item.id,body.expectedRevision as number,{item,member:auth.member});
+  return saved?reply(strict?{ownerId:auth.owner,company:auth.company,id:item.id,fingerprint:item.fingerprint,sourceUrl:item.snapshot.sourceUrl,previousRevision:item.revision,revision:saved.revision,archived:true,archivedAt:saved.archivedAt}:{ownerId:auth.owner,id:item.id,archived:true}):reply({error:'수집함이 변경되었습니다. 새로고침 후 확인해주세요.'},409);
  }catch(error){return reply({error:error instanceof RequestBodyError?error.message:'수집함 제외 결과를 확인하지 못했습니다.'},error instanceof RequestBodyError?error.status:503);}
 }
 export async function PUT(request:Request){

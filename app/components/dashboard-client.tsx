@@ -36,6 +36,7 @@ import {QuerySourcePanel} from '@/app/components/query-source-panel';
 import type {QuerySourceCaptureSummary} from '@/app/query-source-capture';
 import {useSourceRegistrations} from '@/app/components/use-source-registrations';
 import type {SourceInboxItem} from '@/app/source-inbox';
+import {archiveSourceInboxItem,sourceArchiveReference,sameSourceArchiveReference} from '@/app/source-inbox-archive-client';
 import {sameSourceUrl} from '@/app/source-registration';
 import {sourceCaptureSelection,querySourceCaptureSelection,sameSourceCaptureSelection,type SourceCaptureSelection} from '@/app/source-capture-selection';
 import {applyReviewedSourceToIntakeRows,validateReviewedSourceTransition} from '@/app/source-review-intake';
@@ -602,6 +603,11 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   }
 
   const sourceWorkspaceSnapshot=sourceWorkspace.current;
+  const sourceArchiveRequest=useRef<AbortController|null>(null);
+  const sourceArchiveDisabled=loading||busy||addOpen||settingsBusy||intakeDraft.loading||intakeDraft.saving;
+  const sourceArchiveLive=useRef({ownerId:workspaceOwnerId,scope:sourceReviewScope,items:sourceRegistrations.items,disabled:sourceArchiveDisabled});
+  useLayoutEffect(()=>{sourceArchiveLive.current={ownerId:workspaceOwnerId,scope:sourceReviewScope,items:sourceRegistrations.items,disabled:sourceArchiveDisabled};});
+  useEffect(()=>()=>{sourceArchiveRequest.current?.abort();sourceArchiveRequest.current=null;},[sourceReviewScope]);
   function prepareSource(item:SourceInboxItem){
     const operation=settingsOperationRef.current,availability=sourceWorkspace.current;
     if(!operation.mounted||operation.ownerId!==workspaceOwnerId||availability!==sourceWorkspaceSnapshot||availability?.scope!==sourceReviewScope)return;
@@ -635,10 +641,21 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     }catch(error){setSourceNotice(error instanceof Error?error.message:'상품 추가 실패');}
   }
   async function archiveSource(item:SourceInboxItem){
-    if(item.ownerId!==workspaceOwnerId||busy||addOpen)throw Error('진행 중인 작업을 마친 뒤 다시 시도해주세요.');
-    const response=await fetch('/api/source-inbox',{method:'DELETE',headers:{'content-type':'application/json'},body:JSON.stringify({expectedOwnerId:workspaceOwnerId,id:item.id,expectedRevision:item.revision})});
-    const body=await response.json() as {ownerId?:string;id?:string;archived?:boolean;error?:string};if(!response.ok||body.ownerId!==workspaceOwnerId||body.id!==item.id||body.archived!==true)throw Error(body.error||'수집 상품 제외 결과를 확인하지 못했습니다.');
-    sourceRegistrations.reload();
+    const company=sourceWorkspace.current?.company,reference=sourceArchiveReference(item,workspaceOwnerId,company);
+    if(!workspaceOwnerId||!company||!reference||sourceArchiveRequest.current)throw Error('현재 회원·회사에서 선택한 수집 상품을 다시 확인해주세요.');
+    const assertCurrent=()=>{
+      const live=sourceArchiveLive.current,operation=settingsOperationRef.current,currentCompany=sourceWorkspace.current?.company;
+      const current=live.items.find(value=>value.id===item.id);
+      if(!operation.mounted||operation.ownerId!==workspaceOwnerId||live.ownerId!==workspaceOwnerId||live.scope!==sourceReviewScope||live.disabled
+        ||!current||!currentCompany||currentCompany.code!==company.code||currentCompany.name!==company.name
+        ||!sameSourceArchiveReference(reference,sourceArchiveReference(current,workspaceOwnerId,currentCompany)))throw Error('회원·회사 또는 선택한 수집본이 변경되었습니다. 목록을 다시 불러와 확인해주세요.');
+    };
+    assertCurrent();const controller=new AbortController();sourceArchiveRequest.current=controller;
+    try{
+      const receipt=await archiveSourceInboxItem(item,{ownerId:workspaceOwnerId,company,signal:controller.signal,assertCurrent});
+      if(!sourceRegistrations.acceptArchived(item,receipt))throw Error('삭제 결과의 현재 수집본 연결을 확인하지 못했습니다. 목록을 다시 불러와 확인해주세요.');
+      sourceRegistrations.reload();
+    }finally{if(sourceArchiveRequest.current===controller)sourceArchiveRequest.current=null;}
   }
   function reviewSource(item:SourceInboxItem,returnToIntake=false,rowId?:string){
     if(item.ownerId!==workspaceOwnerId||busy)return;
@@ -710,7 +727,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
           <ul className="collection-list">{collectionJobs.filter(job=>showCancelled || job.status !== 'cancelled').map(job=><li key={job.id}><div><strong>1688 · {job.offer_id}</strong><a href={job.source_url} target="_blank" rel="noreferrer" style={{overflowWrap:"anywhere"}}>{job.source_url}</a><small>{job.context?.category.categoryPath.join(' > ') ?? '카테고리 미지정 · 기존 요청'}</small><small>목표: {goalOptions.find(goal=>goal.id===job.goal)?.title} · 요청 {new Date(job.created_at).toLocaleString('ko-KR')}</small>{job.received_at&&<small>원문 수신 {new Date(job.received_at).toLocaleString('ko-KR')}</small>}</div><span className={`collection-status ${collectionJobProgress(job).kind}`}>{collectionJobProgress(job).label}</span><CollectionResultPanel jobId={job.id} offerId={job.offer_id} productId={job.product_id} onSaved={()=>void loadWorkspace()} onOpenProduct={openCollectedProduct}/>{!job.product_id && job.status !== 'cancelled' && <button className="btn ghost" disabled={busy} aria-label={`${job.offer_id} 수집 취소`} onClick={()=>void cancelCollectionJob(job.id)}>취소</button>}</li>)}</ul>
         </details>
 
-        <RegistrationBoard products={products} sources={sourceRegistrations.items} onPrepareSource={prepareSource} onReviewSource={item=>reviewSource(item)} onArchiveSource={archiveSource} selected={selected} onSelected={setSelected} onOpen={openProduct} onOptions={openOptionBoard} onDelete={removeWorkspaceProduct} loading={loading} error={loadError} onArchive={()=>changeView('archive')}/>
+        <RegistrationBoard products={products} sources={sourceRegistrations.items} sourceOwnerId={workspaceOwnerId} sourceCompany={querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null} sourceArchiveDisabled={sourceArchiveDisabled} onPrepareSource={prepareSource} onReviewSource={item=>reviewSource(item)} onArchiveSource={archiveSource} selected={selected} onSelected={setSelected} onOpen={openProduct} onOptions={openOptionBoard} onDelete={removeWorkspaceProduct} loading={loading} error={loadError} onArchive={()=>changeView('archive')}/>
         <button type="button" className="btn ghost" onClick={()=>setRemovedOpen(true)}>삭제된 상품</button>
         <HistoricalAiRegistrationsPanel onReuseUrl={(target,signal)=>{
           if(signal.aborted)return;

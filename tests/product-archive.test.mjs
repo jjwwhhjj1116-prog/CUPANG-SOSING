@@ -115,6 +115,32 @@ test('real SQLite applies Korea-day boundaries and literal title/full URL/offer 
   } finally { sqlite.close(); }
 });
 
+test('history keeps removed products with owner-scoped removal metadata without marking matching requests or restoring data', async () => {
+  const { sqlite, db } = database();
+  try {
+    await db.listProductArchive('owner', await query());
+    const created = '2026-10-22T00:00:00.000Z', removed = '2026-10-23T00:08:12.000Z';
+    insertProduct(sqlite, 'removed', 'owner', created);
+    insertProduct(sqlite, 'active', 'owner', created);
+    insertProduct(sqlite, 'foreign', 'other', created);
+    insertRequest(sqlite, 'removed', 'owner', created);
+    insertRequest(sqlite, 'foreign', 'owner', created);
+    sqlite.prepare('INSERT INTO product_removals VALUES(?,?,?,?)').run('removed', 'owner', removed, created);
+    sqlite.prepare('INSERT INTO product_removals VALUES(?,?,?,?)').run('foreign', 'other', removed, created);
+    const before = JSON.stringify({ products: sqlite.prepare('SELECT * FROM products ORDER BY id').all(), removals: sqlite.prepare('SELECT * FROM product_removals ORDER BY product_id').all() });
+    const page = await db.listProductArchive('owner', await query());
+    assert.equal(page.items.length, 4);
+    const product = page.items.find(item => item.sourceKind === 'product' && item.id === 'removed');
+    assert.equal(product.removedAt, removed);
+    assert.equal(model.archiveStatusLabel(product), '삭제된 상품');
+    for (const item of page.items.filter(item => item !== product)) assert.equal(Object.hasOwn(item, 'removedAt'), false);
+    assert.equal(model.archiveStatusLabel(page.items.find(item => item.sourceKind === 'product' && item.id === 'active')), '수동 입력');
+    const foreign = await db.listProductArchive('other', await query());
+    assert.deepEqual(plain(foreign.items.map(item => [item.id, item.removedAt])), [['foreign', removed]]);
+    assert.equal(JSON.stringify({ products: sqlite.prepare('SELECT * FROM products ORDER BY id').all(), removals: sqlite.prepare('SELECT * FROM product_removals ORDER BY product_id').all() }), before);
+  } finally { sqlite.close(); }
+});
+
 test('category context stays owner scoped, labels product matches as references and tolerates corrupt context JSON', async () => {
   const { sqlite, db } = database();
   try {

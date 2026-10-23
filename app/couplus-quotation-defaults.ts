@@ -49,6 +49,14 @@ export function couplusScalarDraftDefault(name:string,node:{type?:unknown;dropdo
 }
 
 type DraftField = { id: string; section?: string; visibility?: string; choices?: readonly {value:string;label:string}[]; draftDefault?:string; hubWire?:unknown };
+export const isCouplusNotApplicableValue=(value:string)=>['해당사항없음','해당없음'].includes(value.replace(/\s/gu,''));
+/** Translate only an automatic N/A placeholder to one unambiguous current
+ * official choice. Unknown or ambiguous enums retain their original validation. */
+export function couplusNotApplicableWireValue(field:DraftField,value:string):string{
+  if(!isCouplusNotApplicableValue(value))return value;
+  const matches=field.choices?.filter(choice=>isCouplusNotApplicableValue(choice.value)||isCouplusNotApplicableValue(choice.label))??[];
+  return matches.length===1?matches[0].value:value;
+}
 const recordedArrays: Readonly<Record<string, ReadonlySet<string>>> = {
   ...Object.fromEntries(Object.entries(hubProductSchemas).map(([id, schema]) => [id,
     new Set([...schema.exposed, ...schema.hidden, ...schema.notices].map(field => field.id))])),
@@ -62,7 +70,7 @@ const recordedArrays: Readonly<Record<string, ReadonlySet<string>>> = {
  * Our editable string model encodes null as an empty wire value, never the text "null".
  * Only recorded category fields participate; missing schemas remain unconfirmed.
  */
-export function couplusQuotationDefault(categoryId:string|null,field:DraftField):string|undefined {
+function rawCouplusQuotationDefault(categoryId:string|null,field:DraftField):string|undefined {
   if(field.draftDefault!==undefined)return field.draftDefault;
   if(field.hubWire)return undefined;
   if (categoryId && Object.hasOwn(recordedArrays, categoryId) && recordedArrays[categoryId].has(field.id)) {
@@ -74,8 +82,11 @@ export function couplusQuotationDefault(categoryId:string|null,field:DraftField)
   if(categoryId!=='80719')return undefined;
   if(Object.hasOwn(fixed80719,field.id))return fixed80719[field.id];
   if(!notApplicable80719.has(field.id))return undefined;
-  // Supplier Hub selects encode the visible N/A choice as an empty string.
-  return field.choices?.find(choice=>choice.label==='해당사항없음')?.value ?? '해당사항없음';
+  return '해당사항없음';
+}
+export function couplusQuotationDefault(categoryId:string|null,field:DraftField):string|undefined {
+  const value=rawCouplusQuotationDefault(categoryId,field);
+  return value===undefined?undefined:couplusNotApplicableWireValue(field,value);
 }
 
 /** A default null hidden attribute displays N/A; a user-cleared text value stays blank. */

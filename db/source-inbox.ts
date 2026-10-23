@@ -60,6 +60,17 @@ export async function storeSourceInbox(owner:string,company:SupplierHubCompany,i
 }
 const table=(item:SourceInboxItem)=>item.captureVersion===1?'source_inbox':'source_inbox_captures';
 export async function reviewSourceInbox(owner:string,id:string,expectedRevision:number,reviewed:PageSource){const db=await database(),item=await readSourceInbox(owner,id);if(!item)return null;const row=await db.prepare(`UPDATE ${table(item)} SET review_payload=?,revision=revision+1 WHERE owner_id=? AND id=? AND revision=? RETURNING *`).bind(JSON.stringify(reviewed),owner,id,expectedRevision).first<Row>();return row?decode(row):null;}
-export async function archiveSourceInbox(owner:string,id:string,expectedRevision:number){const db=await database(),item=await readSourceInbox(owner,id);if(!item)return null;const row=await db.prepare(`UPDATE ${table(item)} SET archived_at=?,revision=revision+1 WHERE owner_id=? AND id=? AND revision=? AND archived_at IS NULL RETURNING *`).bind(new Date().toISOString(),owner,id,expectedRevision).first<Row>();return row?decode(row):null;}
+export type SourceInboxArchiveFence={item:SourceInboxItem;member:{id:string;email:string;role:'admin'|'member'}};
+/** Excluding a row retains its immutable original and reviews. A browser-bound
+ * archive additionally fences the exact selected version and current member. */
+export async function archiveSourceInbox(owner:string,id:string,expectedRevision:number,fence?:SourceInboxArchiveFence){
+ const db=await database(),item=fence?.item??await readSourceInbox(owner,id);
+ if(!item||item.ownerId!==owner||item.id!==id||item.revision!==expectedRevision||item.archivedAt||fence&&fence.member.id!==owner)return null;
+ const member=fence?{sql:" AND EXISTS(SELECT 1 FROM members m WHERE m.id=? AND m.status='approved' AND lower(trim(m.email))=? AND m.role=? AND m.company_code=? AND m.company_name=?)",args:[owner,fence.member.email.trim().toLowerCase(),fence.member.role,item.company.code,item.company.name]}:{sql:'',args:[]};
+ const row=await db.prepare(`UPDATE ${table(item)} SET archived_at=?,revision=revision+1 WHERE owner_id=? AND id=? AND revision=? AND archived_at IS NULL
+  AND company_code=? AND company_name=? AND offer_id=? AND fingerprint=? AND payload=? AND review_payload IS ? AND received_at=?${member.sql} RETURNING *`)
+  .bind(new Date().toISOString(),owner,id,expectedRevision,item.company.code,item.company.name,item.snapshot.offerId,item.fingerprint,JSON.stringify(item.snapshot),item.reviewed?JSON.stringify(item.reviewed):null,item.receivedAt,...member.args).first<Row>();
+ return row?decode(row):null;
+}
 export async function restoreSourceInbox(owner:string,id:string,expectedRevision?:number){const db=await database(),item=await readSourceInbox(owner,id);if(!item)return null;if(!item.archivedAt)return item;
  const row=await db.prepare(`UPDATE ${table(item)} SET archived_at=NULL,revision=revision+1 WHERE owner_id=? AND id=? AND revision=? AND archived_at IS NOT NULL AND ${count('?',true)}<40 RETURNING *`).bind(owner,id,expectedRevision??item.revision,owner,owner).first<Row>();return row?decode(row):null;}

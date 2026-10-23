@@ -12,7 +12,7 @@ import { calculateOptionPrices, resolveOptionPricePolicy, quotationMainImageKeys
 import type { WorkspaceSettings } from '@/app/workspace-settings';
 import type { ProductRecord } from '@/db/queries';
 import { hubProductSchemas } from '@/app/hub-product-schemas';
-import { couplusQuotationDefault } from '@/app/couplus-quotation-defaults';
+import { couplusQuotationDefault, couplusNotApplicableWireValue, isCouplusNotApplicableValue } from '@/app/couplus-quotation-defaults';
 import { hasSelectedEmptyQuotationChoice } from '@/app/quotation-choice-state';
 import { previousRegistrationMonth, washingPrecautionsText,couplusSettingDraftValue,type CouplusSettingRule } from '@/app/couplus-registration-defaults';
 import {compileHubQuotationSchema,validateHubSchemaSnapshot,type HubSchemaSnapshot,type HubWireField} from '@/app/supplier-hub-schema';
@@ -589,7 +589,8 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
     const specific = optionId !== null && Object.hasOwn(overrides.options, optionId) ? overrides.options[optionId] : undefined;
     const fields = Object.fromEntries(schema.fields.map(definition => {
       let automatic = auto(definition, option);
-      if(definition.hubWire&&definition.type==='select'&&automatic.source!=='empty'){
+      if(automatic.source==='couplus-default'&&isCouplusNotApplicableValue(automatic.value))automatic={...automatic,value:couplusNotApplicableWireValue(definition,automatic.value)};
+      else if(definition.hubWire&&definition.type==='select'&&automatic.source!=='empty'){
         const choices=definition.choices?.filter(choice=>choice.value===automatic.value||choice.label===automatic.value)??[];
         if(choices.length===1)automatic={...automatic,value:choices[0].value};
       }
@@ -620,6 +621,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
         issues: [],
       };
       if(automatic.source==='empty'&&!automatic.issues?.length&&definition.schemaDefault!==undefined)automatic={value:definition.schemaDefault,source:'schema'};
+      if(automatic.source==='couplus-default')automatic={...automatic,value:couplusNotApplicableWireValue(definition,automatic.value)};
       const explicitSeoDefault=explicitSeoDefaultFor(definition,automatic);
       if(explicitSeoDefault!==null&&!quotationValueIssues(definition,explicitSeoDefault,ownedKeys,'content').length)automatic={value:explicitSeoDefault,source:'content'};
       const manualOption = !definition.readOnly && specific && Object.hasOwn(specific, definition.id);

@@ -47,6 +47,57 @@ test('exact legacy containers and explicitly named module survive without class-
  assert.deepEqual(readPageDomDetails(document,sourceUrl).detailImages,[cdn('old'),cdn('second'),cdn('module')]);
 });
 
+test('Chrome-translated nested font/div detail heading selects only its bounded current-product body and ordered lazy images',()=>{
+ const document=dom(`<nav><div><font>제품 상세 정보</font></div>${img('nav')}</nav>
+ <div class="shop-card"><div><font>제품 상세 정보</font></div>${img('shop')}</div>
+ <div class="shopCard"><div><font>제품 상세 정보</font></div>${img('shop-camel')}</div>
+ <div class="storeCard"><div><font>제품 상세 정보</font></div>${img('store-camel')}</div>
+ <div><div><font style="vertical-align: inherit"><font>제품 상세 정보</font></font></div>
+  <div><p>현재 상품의 상세 설명</p>${img('translated-one','data-lazyload-src')}${img('translated-two','data-original')}</div>
+  <div><div><font><font>추천 상품</font></font></div><p>다른 추천 상품</p>${img('recommended')}</div>
+  <div><div><font>제품 속성</font></div><p>속성 표 원문</p>${img('attributes')}</div>
+  <div><div><font>포장 정보</font></div><p>포장 표 원문</p>${img('packaging')}</div>
+  <a href="https://detail.1688.com/offer/700000000796.html"><div>다른 상품 본문</div>${img('other-offer')}</a>
+  <iframe src="https://foreign.invalid/details"></iframe>
+ </div><div><div>제품 속성</div>${img('adjacent-attributes')}</div>
+ <div><div>포장 정보</div>${img('adjacent-packaging')}</div><div><div>관련 상품</div>${img('adjacent-recommendation')}</div>`);
+ Object.defineProperty(document.querySelector('iframe'),'contentWindow',{get:()=>assert.fail('Frames must never be read')});
+ const query=document.querySelectorAll;document.querySelectorAll=selector=>{assert.notEqual(selector,'img','No document-wide image fallback');assert.doesNotMatch(selector,/\bbody\b/);return query(selector);};
+ const result=readPageDomDetails(document,sourceUrl);
+ assert.deepEqual(result.detailImages,[cdn('translated-one'),cdn('translated-two')]);
+ assert.equal(result.description,'현재 상품의 상세 설명');
+});
+
+test('exact translated semantic headings work while loose labels, header/navigation and other-offer wrappers stay excluded',()=>{
+ for(const label of ['상품 상세 정보','제품 상세','상품 설명','상세 설명']){
+  const document=dom(`<header><div>${label}</div>${img('header')}</header><div role="navigation"><div>${label}</div>${img('navigation')}</div>
+   <a href="https://detail.1688.com/offer/700000000796.html"><section><h2>${label}</h2>${img('foreign')}</section></a>
+   <section><h2><font><font>${label}</font></font></h2><p>상품 본문</p>${img('local')}</section>
+   <div><div>${label} 더 보기</div>${img('loose')}</div>`);
+  const result=readPageDomDetails(document,sourceUrl);assert.deepEqual(result.detailImages,[cdn('local')]);assert.equal(result.description,'상품 본문');
+ }
+ const unscoped=dom('<div><font>제품 상세 정보</font></div>'+img('outside')+'<div>범위가 없는 본문</div>');
+ assert.deepEqual(readPageDomDetails(unscoped,sourceUrl),{description:'',detailImages:[]});
+});
+
+test('a preceding independent attribute or recommendation section cannot exclude the following detail section',()=>{
+ for(const [before,detail]of [['商品属性','商品详情'],['猜你喜欢','商品详情'],['제품 속성','제품 상세 정보'],['추천 상품','제품 상세 정보']]){
+  for(const tag of ['section','article','div role="tabpanel"']){
+   const closing=tag.split(' ')[0];
+   const document=dom(`<div><${tag}><h3>${before}</h3></${closing}><section><h3><font>${detail}</font></h3><p>현재 상세 본문</p>${img('adjacent-local')}</section></div>`);
+   const result=readPageDomDetails(document,sourceUrl);assert.deepEqual(result.detailImages,[cdn('adjacent-local')]);assert.equal(result.description,'현재 상세 본문');
+  }
+ }
+});
+
+test('translated heading discovery and scoped details retain explicit node, root, image and wrapper-depth bounds',()=>{
+ assert.throws(()=>readPageDomDetails(dom('<div>다른 영역</div>'.repeat(6001)),sourceUrl),/상품 상세 제목 영역.*크기/);
+ assert.throws(()=>readPageDomDetails(dom('<section></section>'.repeat(301)),sourceUrl),/상품 상세 구역.*크기/);
+ assert.throws(()=>readPageDomDetails(dom(Array.from({length:31},(_,index)=>`<div><div>제품 상세 정보</div>${img('scope-'+index)}</div>`).join('')),sourceUrl),/상품 상세 영역이 너무 많/);
+ assert.throws(()=>readPageDomDetails(dom('<div><div>제품 상세 정보</div>'+Array.from({length:201},(_,index)=>img('bound-'+index)).join('')+'</div>'),sourceUrl),/상세 이미지가 200개/);
+ assert.deepEqual(readPageDomDetails(dom('<section><div>'+'<font>'.repeat(14)+'제품 상세 정보'+'</font>'.repeat(14)+'</div>'+img('too-deep')+'</section>'),sourceUrl).detailImages,[]);
+});
+
 test('invalid early lazy sources cannot hide an allowed alternative, and foreign/active protocols never enter details',()=>{
  const document=dom(`<section><h3>图文详情</h3><img src="${cdn('cdn-placeholder')}" data-src="https://foreign.invalid/image.jpg" data-original="${cdn('allowed')}">
  <img src="javascript:alert(1)"><img data-original="http://cbu01.alicdn.com/no.jpg"><img data-lazy-src="https://user:secret@cbu01.alicdn.com/no.jpg"></section>`);
@@ -65,19 +116,19 @@ test('passive settling reads lazily appearing same-page details with a hard six-
 test('a changed offer during passive settling aborts capture without reading frames or retrying the new offer',async()=>{
  let changed=false,reads=0;const document={querySelectorAll(){reads++;return [];}};
  await assert.rejects(()=>waitForPageDomDetails(document,sourceUrl,{wait:async()=>{changed=true;},assertCurrent(){if(changed)throw Error('changed synthetic offer');}}),/changed synthetic offer/);
- assert.equal(reads,3);
+ assert.equal(reads,4);
 });
 
 const bundled=await build({entryPoints:[fileURLToPath(new URL('../deployment/extension-page-collector.mjs',import.meta.url))],bundle:true,write:false,format:'iife',platform:'browser',target:'chrome120'});
-test('the actual trusted entry waits for seven description images and sends one snapshot without any source request',async()=>{
- let description=dom('<section><h2>商品详情</h2><p>详情正在显示</p></section>'),ticks=0;const nodes=[],messages=[];
+test('the actual trusted entry waits for seven translated-heading description images and sends one snapshot without any source request',async()=>{
+ let description=dom('<div><div><font><font>제품 상세 정보</font></font></div><p>상세 표시 중</p></div>'),ticks=0;const nodes=[],messages=[];
  const document={title:'合成后跟保护贴',scripts:[{textContent:JSON.stringify({subject:'合成后跟保护贴',skuModel:{offerId:'700000000795',skuInfoMap:{black:{skuId:'synthetic-black',specAttrs:'黑色',price:'0.28'}}},offerImgList:[cdn('main')]})}],
   getElementById:()=>null,documentElement:{append(){}},querySelectorAll:selector=>description.querySelectorAll(selector),
   querySelector(selector){return selector==='.price-container'?{textContent:'¥0.28 1件起批'}:description.querySelector(selector);},
   createElement(tag){const node={tag,id:'',style:{},textContent:'',hidden:false,disabled:false,setAttribute(){},append(){},attachShadow(){return{append(){}};},addEventListener(type,handler){if(type==='click')node.click=handler;}};nodes.push(node);return node;}};
  const window={};window.top=window;
  vm.runInNewContext(bundled.outputFiles[0].text,{window,document,location:{href:sourceUrl},URL,Date,Error,TextEncoder,
-  setTimeout(callback,ms){assert.equal(ms,250);if(++ticks===2)description=dom('<section><h2>商品详情</h2><p>硅胶后跟保护贴中文原文</p>'+Array.from({length:7},(_,index)=>img('detail-'+index,'data-original')).join('')+'</section>');queueMicrotask(callback);return ticks;},
+  setTimeout(callback,ms){assert.equal(ms,250);if(++ticks===2)description=dom('<div><div><font><font>제품 상세 정보</font></font></div><p>硅胶后跟保护贴中文原文</p>'+Array.from({length:7},(_,index)=>img('detail-'+index,'data-original')).join('')+'</div><div><div>추천 상품</div>'+img('entry-recommendation')+'</div>');queueMicrotask(callback);return ticks;},
   chrome:{runtime:{sendMessage:async message=>{messages.push(message);return{ok:true,delivered:true};}}},fetch:()=>assert.fail('The collector must not fetch source HTML/images')});
  const button=nodes.find(node=>node.tag==='button');await button.click({isTrusted:false});assert.equal(messages.length,0);
  await button.click({isTrusted:true});assert.equal(messages.length,1);assert.equal(button.textContent,'수집 완료');

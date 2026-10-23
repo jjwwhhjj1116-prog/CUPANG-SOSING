@@ -39,7 +39,7 @@ for(const company of schemaCompanies)test(`${company.code}: native source/close 
 /** Actual DashboardClient, its private DetailPanel and settings dialog. Child
  * renderers record their received props; every tested callback is the real
  * parent callback, and requests run through its real fetch/readJson code. */
-function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'계정의 저장 브랜드',exchangeRate:350},scope:scope()},deleteReply=async id=>Response.json({productId:id,removed:true}),realRegistrationBoard=false,realOptionBoard=false,confirmClose=false,profiles=[],officialFlow,registrationLayoutRequest,initialIntakeRows=[],sourceRegistrationsState}={}){
+function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'계정의 저장 브랜드',exchangeRate:350},scope:scope()},deleteReply=async id=>Response.json({productId:id,removed:true}),realRegistrationBoard=false,realOptionBoard=false,confirmClose=false,profiles=[],officialFlow,registrationLayoutRequest,initialIntakeRows=[],sourceRegistrationsState,archiveSourceReply}={}){
  const instances=new Map(),cache=new Map(),components=new Map(),componentMounts=new Map(),componentCounts=new Map(),nativeDetails=new Map(),layoutEffects=[],effects=[],requests=[];let active,tree,closed=false,lateWrites=0;
  let currentSettings=settingsBody,replyDelete=deleteReply,nextDelete=null,nextSettings=null,replySettingsPut=null,nextProduct=null,replyProduct=null;
  let currentProfiles=profiles,nextProfiles;
@@ -56,6 +56,7 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'�
  };
  async function request(url,init={}){
   requests.push({url,init,method:init.method??'GET'});
+  if(url==='/api/source-inbox'&&init.method==='DELETE'&&archiveSourceReply)return archiveSourceReply(url,init);
   if(officialFlow&&url.includes('/quotation')||officialFlow&&url.includes('/submission-review')||officialFlow&&url.includes('/supplier-hub-receipt'))return officialFlow.request(url,init);
   if(url==='/api/products')return Response.json({products});
   if(url==='/api/collection-jobs')return Response.json({jobs:[]});
@@ -152,6 +153,33 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'�
  const toggleDetails=async(label,open=true)=>{const found=nodes(render()).find(node=>node.type==='details'&&(node.props['aria-label']===label||text(node.props.children?.[0])===label));assert.ok(found,'Missing details '+label);if(found.props.onToggle)found.props.onToggle({currentTarget:{open}});else nativeDetails.set(found.fixturePath,open);await settle();};
  return{products,requests,render,settle,component,button,toggleDetails,componentVisible(name){render();const instance=componentMounts.get(name);return!!instance&&instance.ancestors.every(node=>!node.props.hidden&&(node.type!=='details'||(nativeDetails.get(node.fixturePath)??node.props.open)===true));},componentMount(name){render();return componentMounts.get(name);},instance(name){render();return [...instances].find(([key])=>key.includes('/'+name+':'))?.[1];},componentCount(name){render();return componentCounts.get(name)??0;},async click(label){const found=button(label);assert.ok(found,'Missing button '+label);found.props.onClick();await settle();},deferDelete(){return nextDelete=deferred();},deferSettings(){return nextSettings=deferred();},deferProfiles(){return nextProfiles=deferred();},setProfiles(value){currentProfiles=value;},deferProduct(id){return nextProduct={...deferred(),id};},setProductReply(fn){replyProduct=fn;},setWorkspaceEdits(value){Object.assign(workspaceEdits,value);},setSettingsBody(value){currentSettings=value;},switchOwner(value){workspaceOwnerId=value;return render();},setDeleteReply(fn){replyDelete=fn;},setSettingsPutReply(fn){replySettingsPut=fn;},close(){closed=true;for(const instance of instances.values()){instance.mounted=false;instance.slots.forEach(slot=>slot?.cleanup?.());}},get lateWrites(){return lateWrites;}};
 }
+
+test('real dashboard source trash uses the strict capture archive client and accepts only its current durable ACK without touching products',async()=>{
+ for(const valid of [true,false]){
+  const {before}=reviewSourceFixture('test-owner',{code:'A01526306',name:'유앤채'}),accepted=[],sourceState={items:[before],reload(){},acceptReviewed(){return false;},acceptArchived(item,receipt){accepted.push([item,receipt]);sourceState.items=[];return true;}};
+  const h=harness({sourceRegistrationsState:sourceState,archiveSourceReply:async(_url,init)=>{const input=JSON.parse(init.body);return Response.json({ownerId:input.expectedOwnerId,company:input.expectedCompany,id:input.id,fingerprint:valid?input.expectedFingerprint:'b'.repeat(64),sourceUrl:input.expectedSourceUrl,previousRevision:input.expectedRevision,revision:input.expectedRevision+1,archived:true,archivedAt:'2026-10-23T01:00:00.000Z'});}});
+  try{
+   await h.settle();const original=JSON.stringify(h.products),board=h.component('registration-board');assert.equal(board.sourceOwnerId,'test-owner');assert.equal(board.sourceArchiveDisabled,false);
+   if(valid)await board.onArchiveSource(before);else await assert.rejects(()=>board.onArchiveSource(before));await h.settle();
+   const writes=h.requests.filter(call=>call.method!=='GET');assert.equal(writes.length,1);assert.equal(writes[0].url,'/api/source-inbox');assert.equal(writes[0].method,'DELETE');
+   assert.deepEqual(JSON.parse(writes[0].init.body),{expectedOwnerId:'test-owner',id:before.id,expectedRevision:before.revision,expectedCompany:before.company,expectedFingerprint:before.fingerprint,expectedSourceUrl:before.snapshot.sourceUrl});
+   assert.equal(accepted.length,valid?1:0);assert.equal(JSON.stringify(h.products),original);assert.equal(h.lateWrites,0);
+  }finally{h.close();}
+ }
+});
+
+test('dashboard source archive aborts account/unmount races and never accepts an old completion or resends it',async()=>{
+ for(const change of ['owner','close']){
+  const {before}=reviewSourceFixture('test-owner',{code:'A01526306',name:'유앤채'}),accepted=[],pending=deferred(),sourceState={items:[before],reload(){},acceptReviewed(){return false;},acceptArchived(...args){accepted.push(args);return true;}};
+  const h=harness({sourceRegistrationsState:sourceState,archiveSourceReply:()=>pending.promise});try{
+   await h.settle();const callback=h.component('registration-board').onArchiveSource,outcome=callback(before).then(()=>({ok:true}),error=>({error}));
+   const call=h.requests.find(call=>call.url==='/api/source-inbox'&&call.method==='DELETE');assert.ok(call);
+   if(change==='owner'){h.switchOwner('next-owner');await h.settle();}else h.close();assert.equal(call.init.signal.aborted,true);
+   pending.resolve(Response.json({ownerId:'test-owner',company:before.company,id:before.id,fingerprint:before.fingerprint,sourceUrl:before.snapshot.sourceUrl,previousRevision:before.revision,revision:before.revision+1,archived:true,archivedAt:'2026-10-23T01:00:00.000Z'}));
+   assert.ok((await outcome).error);assert.equal(accepted.length,0);await assert.rejects(()=>callback(before));assert.equal(h.requests.filter(call=>call.method==='DELETE').length,1);assert.equal(h.lateWrites,0);
+  }finally{h.close();}
+ }
+});
 
 async function officialSubmissionFlow(company){
  const api=mobileIntakeHarness({companyCode:company.code,companyName:company.name}),events=[],modules=new Map(),pause=deferred();

@@ -80,8 +80,9 @@ test('printable quote header displays registration metadata while its print acti
   assert.match(renderToStaticMarkup(LegacyQuotePanel({ product: legacy, settings })), /<strong>YP-15B1F850<\/strong>/);
 });
 
-test('archive displays numbers only for product rows and searches and opens through the existing server and UUID contracts', async () => {
-  const rows = [{ id: 'new-product-uuid', sourceKind: 'product', registration_number: '261015013001', title: '새 상품' },
+test('archive displays product numbers and removal guidance while only active products offer the existing UUID open action', async () => {
+  const rows = [{ id: 'removed-product-uuid', sourceKind: 'product', registration_number: '261015012001', title: '삭제 상품', removedAt: '2026-10-23T00:08:12.000Z' },
+    { id: 'new-product-uuid', sourceKind: 'product', registration_number: '261015013001', title: '새 상품' },
     { id: '12345678-legacy', sourceKind: 'product', title: '기존 상품' }, { id: 'request-uuid', sourceKind: 'request', registration_number: '261015099001', title: '수집 요청' }]
     .map(row => ({ ...row, sourceUrl: 'https://detail.1688.com/offer/813724060928.html', offerId: '813724060928', createdAt: '2026-10-15T00:00:00.000Z', updatedAt: '2026-10-15T00:00:00.000Z', status: row.sourceKind === 'request' ? 'awaiting_connector' : '등록대기', supplierHubStatus: null, category: null }));
   const before = JSON.stringify(rows), slots = [], effects = [], requests = [], opened = []; let index = 0;
@@ -99,6 +100,11 @@ test('archive displays numbers only for product rows and searches and opens thro
   try {
     await settle(); let tree = render(); const html = renderToStaticMarkup(tree);
     assert.match(html, /등록번호 261015013001/); assert.match(html, /등록번호 YP-12345678/); assert.doesNotMatch(html, /261015099001|YP-REQUEST-/);
+    const removed = nodes(tree).find(node => node.type === 'article' && text(node).includes('등록번호 261015012001'));
+    assert.match(text(removed), /삭제된 상품/); assert.match(text(removed), /삭제된 상품에서 복원 후 작업을 계속할 수 있습니다\./);
+    assert.equal(nodes(removed).some(node => node.type === 'button' && text(node) === '상품 작업 열기 →'), false);
+    assert.equal(nodes(removed).find(node => node.type === 'time' && node.props.dateTime === rows[0].removedAt)?.props.children, '2026. 10. 23. 09:08:12');
+    assert.equal(nodes(tree).filter(node => node.type === 'button' && text(node) === '상품 작업 열기 →').length, 2);
     const search = nodes(tree).find(node => node.type === 'input' && node.props.type === 'search'); search.props.onChange({ target: { value: '261015013001' } });
     tree = render(); nodes(tree).find(node => node.type === 'form').props.onSubmit({ preventDefault() {} }); await settle();
     assert.equal(new URL(requests.at(-1).url, 'https://app.test').searchParams.get('q'), '261015013001'); assert.equal(requests.at(-1).init.cache, 'no-store');

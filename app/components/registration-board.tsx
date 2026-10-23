@@ -5,9 +5,11 @@ import type { RegistrationContentSummary } from '@/app/registration-content-summ
 import type { SupplierHubReceiptSummary } from '@/app/supplier-hub-receipt';
 import type { NativeReceiptSummary } from '@/app/supplier-hub-product-receipt';
 import { productRemovalDecision, type ProductRemovalDecision } from '@/app/product-removal-policy';
-import { useRef, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type {SourceInboxItem} from '@/app/source-inbox';
 import {sourceRegistrationRows,type SourceRegistration} from '@/app/source-registration';
+import {sourceArchiveReference,sameSourceArchiveReference,type SourceArchiveReference} from '@/app/source-inbox-archive-client';
+import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 import { archiveDateBounds, type ArchiveRange } from '@/app/product-archive';
 import {matchesRegistrationColumnFilter,registrationFilterChoices,type RegistrationColumnFilter} from '@/app/registration-column-filter';
 import {RegistrationFilterPopover} from '@/app/components/registration-filter-popover';
@@ -59,7 +61,7 @@ export function registrationColumnText(product:BoardProduct,columnId:string):str
   if(columnId==='source')return product.source_url;
   if(columnId==='image')return registrationThumbnail(product)??'';
   if(columnId==='status')return registrationTransmissionLabel(product);
-  if(columnId==='management')return productRemovalDecision(product).blocked?'삭제 보호':'삭제';
+  if(columnId==='management')return product.source_capture?'수집 목록에서 삭제':productRemovalDecision(product).blocked?'삭제 보호':'삭제';
   const column=columns.find(item=>item.id===columnId);return column?.step?registrationStepLabel(product,column.step):'';
 }
 
@@ -86,7 +88,7 @@ export function sortRegistrationProducts<T extends BoardProduct>(products:T[],so
 
 function sourceUrl(value:string) {try{const url=new URL(value);return ['https:','http:'].includes(url.protocol)?url.href:undefined;}catch{return undefined;}}
 
-export function RegistrationBoard<T extends BoardProduct>({products,sources=[],onPrepareSource,onReviewSource,onArchiveSource,selected,onSelected,onOpen,onOptions,onDelete,loading,error,onArchive}:{products:T[];sources?:SourceInboxItem[];onPrepareSource?:(item:SourceInboxItem)=>void;onReviewSource?:(item:SourceInboxItem)=>void;onArchiveSource?:(item:SourceInboxItem)=>Promise<void>;selected:Set<string>;onSelected:(value:Set<string>)=>void;onOpen:(product:T,step?:string)=>void;onOptions?:(product:T)=>void;onDelete?:(product:T)=>Promise<void>;loading:boolean;error:string;onArchive:()=>void}) {
+export function RegistrationBoard<T extends BoardProduct>({products,sources=[],sourceOwnerId,sourceCompany,sourceArchiveDisabled=false,onPrepareSource,onReviewSource,onArchiveSource,selected,onSelected,onOpen,onOptions,onDelete,loading,error,onArchive}:{products:T[];sources?:SourceInboxItem[];sourceOwnerId?:string;sourceCompany?:SupplierHubCompany|null;sourceArchiveDisabled?:boolean;onPrepareSource?:(item:SourceInboxItem)=>void;onReviewSource?:(item:SourceInboxItem)=>void;onArchiveSource?:(item:SourceInboxItem)=>Promise<void>;selected:Set<string>;onSelected:(value:Set<string>)=>void;onOpen:(product:T,step?:string)=>void;onOptions?:(product:T)=>void;onDelete?:(product:T)=>Promise<void>;loading:boolean;error:string;onArchive:()=>void}) {
   type Entry=BoardProduct & (T|SourceRegistration);
   const entries:Entry[]=[...sourceRegistrationRows(sources,products),...products];
   const openEntry=(product:Entry,step?:string)=>{if(product.source_capture){if(step==='옵션')onReviewSource?.(product.source_capture);else onPrepareSource?.(product.source_capture);}else if(onOptions)onOptions(product as T);else if(step===undefined)onOpen(product as T);else onOpen(product as T,step);};
@@ -98,8 +100,16 @@ export function RegistrationBoard<T extends BoardProduct>({products,sources=[],o
   const [columnFilters,setColumnFilters]=useState<Record<string,RegistrationColumnFilter>>({});
   const [filterPopup,setFilterPopup]=useState<{columnId:string;position:{left:number;top:number};trigger:HTMLElement}|null>(null);
   const [fixedHeight,setFixedHeight]=useState(true);
-  const [deleting,setDeleting]=useState<string|null>(null);const [deleteError,setDeleteError]=useState('');
+  const sourceScope=useMemo(()=>({ownerId:sourceOwnerId,company:sourceCompany?.code,name:sourceCompany?.name}),[sourceOwnerId,sourceCompany?.code,sourceCompany?.name]);
+  const [deletingState,setDeletingState]=useState<{scope:object;id:string}|null>(null);const [deleteError,setDeleteError]=useState(''),[deleteNotice,setDeleteNotice]=useState('');
+  const deleting=deletingState?.scope===sourceScope?deletingState.id:null,setDeleting=(id:string|null)=>setDeletingState(id===null?null:{scope:sourceScope,id});
   const deleteInFlight=useRef(false);
+  const [sourceSelection,setSourceSelection]=useState<{scope:object;refs:SourceArchiveReference[]}>({scope:sourceScope,refs:[]});
+  const sourceReferences=new Map(entries.flatMap(entry=>{const ref=entry.source_capture&&sourceArchiveReference(entry.source_capture,sourceOwnerId,sourceCompany);return ref?[[entry.id,ref] as const]:[];}));
+  const selectedSources=entries.filter(entry=>entry.source_capture&&sourceSelection.scope===sourceScope&&sourceSelection.refs.some(ref=>sameSourceArchiveReference(ref,sourceReferences.get(entry.id))));
+  const alive=useRef(false),latest=useRef({sourceScope,entries,sourceReferences,selectedSources,sourceArchiveDisabled,onArchiveSource});
+  useLayoutEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
+  useLayoutEffect(()=>{latest.current={sourceScope,entries,sourceReferences,selectedSources,sourceArchiveDisabled,onArchiveSource};});
   const displayedColumns=columns.filter(column=>visibleColumns.includes(column.id));
   const pinned=(column:string)=>pinnedColumn===column?' registration-pinned':'';
   let bounds:{startUtc:string|null;endUtc:string|null}={startUtc:null,endUtc:null};let dateError='';
@@ -112,13 +122,39 @@ export function RegistrationBoard<T extends BoardProduct>({products,sources=[],o
   const popupChoices=popupColumn?registrationFilterChoices(baseFiltered.filter(product=>matches(product,popupColumn.id)).map(product=>registrationColumnText(product,popupColumn.id))):[];
   const pages=Math.max(1,Math.ceil(filtered.length/pageSize));const currentPage=Math.min(page,pages-1);
   const rows=filtered.slice(currentPage*pageSize,(currentPage+1)*pageSize);
-  const toggle=(ids:string[],include:boolean)=>{const next=new Set(selected);for(const id of ids){if(include)next.add(id);else next.delete(id);}onSelected(next);};
+  const toggle=(ids:string[],include:boolean)=>{
+    if(deleteInFlight.current||!alive.current||latest.current.sourceScope!==sourceScope)return;
+    const productIds=ids.filter(id=>products.some(product=>product.id===id)),next=new Set(selected);for(const id of productIds){if(include)next.add(id);else next.delete(id);}if(productIds.length)onSelected(next);
+    if(sourceArchiveDisabled)return;
+    const refs=ids.flatMap(id=>sourceReferences.has(id)?[sourceReferences.get(id)!]:[]);
+    setSourceSelection(previous=>{const retained=previous.scope===sourceScope?previous.refs:[],targets=new Set(refs.map(ref=>ref.id));
+      return{scope:sourceScope,refs:[...retained.filter(ref=>!targets.has(ref.id)),...(include?refs:[])]};});
+  };
   const changeSort=(column:string)=>{setSort(current=>current?.column!==column?{column,direction:'ascending'}:current.direction==='ascending'?{column,direction:'descending'}:null);setPage(0);};
+  const archiveEntries=async(targets:Entry[],requireSelected=false)=>{
+    if(deleteInFlight.current||!alive.current||latest.current.sourceScope!==sourceScope||sourceArchiveDisabled||!onArchiveSource||!targets.length)return;
+    const refs=targets.map(target=>sourceReferences.get(target.id));if(refs.some(ref=>!ref))return;
+    if(!window.confirm(targets.length===1?`“${registrationTitle(targets[0])}” 수집 상품을 목록에서 삭제할까요? 원문은 보존되며 다시 수집하면 복원됩니다. 기존 작업 상품은 변경하지 않습니다.`:`선택한 수집 상품 ${targets.length}건을 목록에서 삭제할까요? 원문은 보존되며 다시 수집하면 복원됩니다. 기존 작업 상품은 변경하지 않습니다.`))return;
+    if(!alive.current||latest.current.sourceScope!==sourceScope||latest.current.sourceArchiveDisabled)return;
+    deleteInFlight.current=true;setDeleting(targets[0].id);setDeleteError('');setDeleteNotice('');let completed=0;
+    try{
+      for(const [index,target] of targets.entries()){
+        const live=latest.current,reference=refs[index];
+        if(!alive.current||live.sourceScope!==sourceScope)return;
+        if(live.sourceArchiveDisabled||!live.onArchiveSource||!sameSourceArchiveReference(reference,live.sourceReferences.get(target.id))
+          ||requireSelected&&!live.selectedSources.some(item=>item.id===target.id))throw Error('선택한 수집본 또는 작업 상태가 변경되었습니다. 목록을 확인한 뒤 다시 선택해주세요.');
+        await live.onArchiveSource(target.source_capture!);
+        if(!alive.current||latest.current.sourceScope!==sourceScope)return;
+        completed++;
+        setSourceSelection(previous=>previous.scope===sourceScope?{scope:sourceScope,refs:previous.refs.filter(ref=>!sameSourceArchiveReference(ref,reference))}:previous);
+      }
+      setDeleteNotice(`수집 상품 ${completed}건을 목록에서 삭제했습니다. 원문은 보존되며 다시 수집하면 복원됩니다.`);
+    }catch(error){if(alive.current&&latest.current.sourceScope===sourceScope)setDeleteError(`${completed?`${completed}건 삭제됨 · `:''}${error instanceof Error?error.message:'수집 상품 삭제 결과를 확인하지 못했습니다.'}`);}
+    finally{deleteInFlight.current=false;if(alive.current&&latest.current.sourceScope===sourceScope)setDeleting(null);}
+  };
   const deleteProduct=async(product:Entry)=>{
     if(product.source_capture){
-      if(deleteInFlight.current||!onArchiveSource||!window.confirm(`“${registrationTitle(product)}” 수집 상품을 목록에서 제외할까요? 기존 작업 상품은 변경하지 않습니다.`))return;
-      deleteInFlight.current=true;setDeleting(product.id);setDeleteError('');
-      try{await onArchiveSource(product.source_capture);}catch(error){setDeleteError(error instanceof Error?error.message:'수집 상품 제외 실패');}finally{deleteInFlight.current=false;setDeleting(null);}return;
+      await archiveEntries([product]);return;
     }
     if(deleteInFlight.current||!onDelete||productRemovalDecision(product).blocked||!window.confirm(`“${registrationTitle(product)}” 상품을 삭제된 상품으로 이동할까요? 저장된 이미지와 편집 내용은 복원할 수 있습니다.`))return;
     deleteInFlight.current=true;
@@ -134,7 +170,8 @@ export function RegistrationBoard<T extends BoardProduct>({products,sources=[],o
     </div>
     {dateError&&<p role="alert">{dateError}</p>}
     {deleteError&&<p role="alert" className="collection-error">{deleteError}</p>}
-    <div className="registration-table-tools"><select aria-label="등록 상태 필터" value={status} onChange={event=>{setStatus(event.target.value);setPage(0);}}>{[...new Set(['전체','등록대기','작업 중','검토 대기','전송 가능','파일 검증 중','견적서 접수','SKU ID 확인','파일 반려','상품 반려',...entries.map(registrationTransmissionLabel)])].map(value=><option key={value}>{value}</option>)}</select><label className="search"><input type="search" aria-label="상품 검색" placeholder="상품명 · 등록번호 · 원본 URL 검색" value={query} onChange={event=>{setQuery(event.target.value);setPage(0);}}/></label><label>페이지당 <select aria-label="페이지당 상품 수" value={pageSize} onChange={event=>{setPageSize(Number(event.target.value));setPage(0);}}>{[10,25,50,100].map(count=><option key={count}>{count}</option>)}</select></label><span>{filtered.length}건 · 선택 {selected.size}건</span><small>최근 불러온 최대 200건 · 전체 기록은 상품 관리</small></div>
+    {deleteNotice&&<p role="status">{deleteNotice}</p>}
+    <div className="registration-table-tools"><select aria-label="등록 상태 필터" value={status} onChange={event=>{setStatus(event.target.value);setPage(0);}}>{[...new Set(['전체','등록대기','작업 중','검토 대기','전송 가능','파일 검증 중','견적서 접수','SKU ID 확인','파일 반려','상품 반려',...entries.map(registrationTransmissionLabel)])].map(value=><option key={value}>{value}</option>)}</select><label className="search"><input type="search" aria-label="상품 검색" placeholder="상품명 · 등록번호 · 원본 URL 검색" value={query} onChange={event=>{setQuery(event.target.value);setPage(0);}}/></label><label>페이지당 <select aria-label="페이지당 상품 수" value={pageSize} onChange={event=>{setPageSize(Number(event.target.value));setPage(0);}}>{[10,25,50,100].map(count=><option key={count}>{count}</option>)}</select></label><span>{filtered.length}건 · 작업 상품 선택 {selected.size}건 · 수집 선택 {selectedSources.length}건</span><button type="button" className="btn ghost" aria-label="선택한 수집 상품 삭제" disabled={deleting!==null||sourceArchiveDisabled||!onArchiveSource||!selectedSources.length} onClick={()=>archiveEntries(selectedSources,true)}>수집 선택 삭제 · {selectedSources.length}</button><small>수집 선택은 삭제에 사용합니다. AI 작업·등록 전송은 작업 상품 선택에만 적용됩니다.</small></div>
     <div className="registration-view-tools">
       <details className="registration-column-picker"><summary>선택 컬럼 보기 · {displayedColumns.length}/{columns.length}</summary><div role="group" aria-label="표시할 컬럼">
         <button type="button" className="btn ghost" onClick={()=>setVisibleColumns(columns.map(column=>column.id))}>전체 표시</button>
@@ -144,9 +181,9 @@ export function RegistrationBoard<T extends BoardProduct>({products,sources=[],o
       <fieldset><legend>높이 고정</legend><label><input type="radio" name="registration-height" checked={fixedHeight} onChange={()=>setFixedHeight(true)}/>Y</label><label><input type="radio" name="registration-height" checked={!fixedHeight} onChange={()=>setFixedHeight(false)}/>N</label></fieldset>
       {!!Object.keys(columnFilters).length&&<button type="button" className="btn ghost registration-filter-clear" onClick={()=>{setColumnFilters({});setFilterPopup(null);setPage(0);}}>열 필터 모두 해제 · {Object.keys(columnFilters).length}개</button>}
     </div>
-    <div className={`table-wrap registration-scroll${fixedHeight?' registration-height-fixed':''}`} tabIndex={0} aria-label="상품 등록 작업 표"><table className="couplus-work-table" style={{minWidth:Math.max(480,36+displayedColumns.reduce((width,column)=>width+column.width,0))}}><colgroup><col style={{width:36}}/>{displayedColumns.map(column=><col key={column.id} style={{width:column.width}}/>)}</colgroup><thead><tr><th><input type="checkbox" aria-label="현재 페이지 전체 선택" checked={rows.some(product=>!product.source_capture)&&rows.filter(product=>!product.source_capture).every(product=>selected.has(product.id))} onChange={event=>toggle(rows.filter(product=>!product.source_capture).map(product=>product.id),event.target.checked)}/></th>{displayedColumns.map(column=><th key={column.id} data-column={column.id} className={pinned(column.id)} aria-sort={['image','management'].includes(column.id)?undefined:sort?.column===column.id?sort.direction:'none'}><div className="registration-header-tools">{['image','management'].includes(column.id)?<span>{column.label}</span>:<button type="button" className="registration-sort" aria-label={`${column.label} 정렬`} title={sort?.column===column.id?sort.direction==='ascending'?'오름차순 · 클릭하여 내림차순':'내림차순 · 클릭하여 정렬 해제':'클릭하여 오름차순'} onClick={()=>changeSort(column.id)}><span>{column.label}</span><svg aria-hidden="true" width="9" height="12" viewBox="0 0 10 14" fill="none" stroke="currentColor" strokeWidth="1.3"><path className={sort?.column===column.id&&sort.direction==='ascending'?'active':''} d="M2 5 5 2l3 3"/><path className={sort?.column===column.id&&sort.direction==='descending'?'active':''} d="m2 9 3 3 3-3"/></svg></button>}<button type="button" className={`registration-filter-trigger${columnFilters[column.id]?' active':''}`} aria-label={`${column.label} 열 필터`} aria-expanded={filterPopup?.columnId===column.id} title={columnFilters[column.id]?'필터 적용 중':'이 열 필터'} onClick={event=>{const trigger=event.currentTarget,rect=trigger.getBoundingClientRect();setFilterPopup(current=>current?.columnId===column.id?null:{columnId:column.id,trigger,position:{left:Math.max(8,Math.min(rect.left,window.innerWidth-328)),top:Math.max(8,Math.min(rect.bottom+6,window.innerHeight-440))}});}}><svg aria-hidden="true" width="10" height="12" viewBox="0 0 12 14" fill="none" stroke="currentColor" strokeWidth="1.3"><path d="M1 2h10L7.2 6.5v5L4.8 10v-3.5Z"/></svg></button></div></th>)}</tr></thead><tbody>
+    <div className={`table-wrap registration-scroll${fixedHeight?' registration-height-fixed':''}`} tabIndex={0} aria-label="상품 등록 작업 표"><table className="couplus-work-table" style={{minWidth:Math.max(480,36+displayedColumns.reduce((width,column)=>width+column.width,0))}}><colgroup><col style={{width:36}}/>{displayedColumns.map(column=><col key={column.id} style={{width:column.width}}/>)}</colgroup><thead><tr><th><input type="checkbox" aria-label="현재 페이지 전체 선택" disabled={deleting!==null} checked={rows.some(product=>!product.source_capture||sourceReferences.has(product.id))&&rows.filter(product=>!product.source_capture||sourceReferences.has(product.id)).every(product=>product.source_capture?selectedSources.some(item=>item.id===product.id):selected.has(product.id))} onChange={event=>toggle(rows.filter(product=>!product.source_capture||sourceReferences.has(product.id)).map(product=>product.id),event.target.checked)}/></th>{displayedColumns.map(column=><th key={column.id} data-column={column.id} className={pinned(column.id)} aria-sort={['image','management'].includes(column.id)?undefined:sort?.column===column.id?sort.direction:'none'}><div className="registration-header-tools">{['image','management'].includes(column.id)?<span>{column.label}</span>:<button type="button" className="registration-sort" aria-label={`${column.label} 정렬`} title={sort?.column===column.id?sort.direction==='ascending'?'오름차순 · 클릭하여 내림차순':'내림차순 · 클릭하여 정렬 해제':'클릭하여 오름차순'} onClick={()=>changeSort(column.id)}><span>{column.label}</span><svg aria-hidden="true" width="9" height="12" viewBox="0 0 10 14" fill="none" stroke="currentColor" strokeWidth="1.3"><path className={sort?.column===column.id&&sort.direction==='ascending'?'active':''} d="M2 5 5 2l3 3"/><path className={sort?.column===column.id&&sort.direction==='descending'?'active':''} d="m2 9 3 3 3-3"/></svg></button>}<button type="button" className={`registration-filter-trigger${columnFilters[column.id]?' active':''}`} aria-label={`${column.label} 열 필터`} aria-expanded={filterPopup?.columnId===column.id} title={columnFilters[column.id]?'필터 적용 중':'이 열 필터'} onClick={event=>{const trigger=event.currentTarget,rect=trigger.getBoundingClientRect();setFilterPopup(current=>current?.columnId===column.id?null:{columnId:column.id,trigger,position:{left:Math.max(8,Math.min(rect.left,window.innerWidth-328)),top:Math.max(8,Math.min(rect.bottom+6,window.innerHeight-440))}});}}><svg aria-hidden="true" width="10" height="12" viewBox="0 0 12 14" fill="none" stroke="currentColor" strokeWidth="1.3"><path d="M1 2h10L7.2 6.5v5L4.8 10v-3.5Z"/></svg></button></div></th>)}</tr></thead><tbody>
     {rows.map(product=>{const image=registrationThumbnail(product);const title=registrationTitle(product);const removal=productRemovalDecision(product);return <tr key={product.id}>
-      <td><input type="checkbox" aria-label={`${title} 선택`} checked={!product.source_capture&&selected.has(product.id)} disabled={!!product.source_capture} title={product.source_capture?'카테고리 선택 후 초안을 작성하면 전송할 수 있습니다.':undefined} onChange={event=>toggle([product.id],event.target.checked)}/></td>
+      <td><input type="checkbox" aria-label={`${title} 선택`} checked={product.source_capture?selectedSources.some(item=>item.id===product.id):selected.has(product.id)} disabled={deleting!==null||!!product.source_capture&&(sourceArchiveDisabled||!sourceReferences.has(product.id))} title={product.source_capture?'수집 목록에서 삭제할 상품 선택 · AI 작업과 전송에는 포함되지 않습니다.':undefined} onChange={event=>toggle([product.id],event.target.checked)}/></td>
       {displayedColumns.map(column=><td key={column.id} data-column={column.id} className={`${column.id==='product'?'registration-product':''}${pinned(column.id)}`}>
         {column.id==='id'&&<><span className="registration-id">{product.source_capture?`수집 · ${product.source_capture.snapshot.offerId}`:registrationNumber(product)}</span><time dateTime={product.created_at}>{Number.isFinite(Date.parse(product.created_at))?dateTime.format(new Date(product.created_at)):'날짜 미확인'}</time></>}
         {column.id==='image'&&<button type="button" className="registration-thumbnail" onClick={()=>openEntry(product,'대표 이미지')} aria-label={`${title} 대표 이미지 열기`}>{image?<img src={image} width={56} height={56} alt="상품 이미지"/>:<span>이미지<br/>없음</span>}</button>}
@@ -156,7 +193,7 @@ export function RegistrationBoard<T extends BoardProduct>({products,sources=[],o
         {column.id==='status'&&<><span className="registration-state" title={product.hub_receipt||product.hub_single_receipt?'보관된 Supplier Hub 전송 결과':'Supplier Hub 전송·접수 여부 검증 필요'}>{registrationTransmissionLabel(product)}</span>{product.hub_receipt&&<div aria-label="최근 전송 결과"><small>{product.hub_receipt.company.name} · SKU {product.hub_receipt.issuedSkus}/{product.hub_receipt.includedOptions}개</small>{product.hub_receipt.quotationId&&<small>견적서 ID: {product.hub_receipt.quotationId}</small>}<time dateTime={new Date(product.hub_receipt.observedAt).toISOString()}>{dateTime.format(new Date(product.hub_receipt.observedAt))}</time><small>{product.hub_single_receipt?`견적서 파일 전송 기준 · ${product.hub_receipt.label}`:'최근 전송한 견적서 기준'}</small></div>}
           {product.hub_single_receipt&&<div aria-label={product.hub_single_receipt.format==='yoofam-product-document-receipt-summary-v1'?'전체 상품 문서 전송 결과':'개별 문서 전송 결과'}><small>{product.hub_single_receipt.company.name} · {product.hub_single_receipt.format==='yoofam-product-document-receipt-summary-v1'?`포함 옵션 ${product.hub_single_receipt.optionCount}개 · 문서 1개`:`개별 전송 기록 ${product.hub_single_receipt.optionCount}개`}</small><small>{product.hub_single_receipt.label}</small><small>문서 ID: {String(product.hub_single_receipt.docId)}</small><small>등록 파일 ID: {String(product.hub_single_receipt.qvtRequestId)}</small><time dateTime={new Date(product.hub_single_receipt.observedAt).toISOString()}>{dateTime.format(new Date(product.hub_single_receipt.observedAt))}</time><small>SKU 확인 전 · 해당 전송 초안 기준</small></div>}
         </>}
-        {column.id==='management'&&<div className="registration-management">{(product.source_capture?onArchiveSource:onDelete)?<button type="button" className="registration-delete" aria-label={`${title} 삭제`} title={removal.blocked?removal.reason:deleting===product.id?'삭제 중':'삭제'} disabled={deleting!==null||removal.blocked} onClick={()=>deleteProduct(product)}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6"/></svg></button>:<button type="button" className="btn ghost" aria-label={`${title} 상세`} onClick={()=>product.source_capture?openEntry(product):onOpen(product as T)}>열기</button>}</div>}
+        {column.id==='management'&&<div className="registration-management">{(product.source_capture?onArchiveSource:onDelete)?<button type="button" className="registration-delete" aria-label={`${title} 삭제`} title={product.source_capture?'수집 목록에서 삭제 · 원문 보존':removal.blocked?removal.reason:deleting===product.id?'삭제 중':'삭제'} disabled={deleting!==null||(product.source_capture?sourceArchiveDisabled||!sourceReferences.has(product.id):removal.blocked)} onClick={()=>deleteProduct(product)}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6"/></svg></button>:<button type="button" className="btn ghost" aria-label={`${title} 상세`} onClick={()=>product.source_capture?openEntry(product):onOpen(product as T)}>열기</button>}</div>}
       </td>)}
     </tr>;})}
     </tbody></table>{!rows.length&&<div className="empty"><strong>{loading?'상품을 불러오는 중입니다.':error?'상품 조회 오류를 확인해주세요.':'조건에 맞는 상품이 없습니다.'}</strong><small>상품을 추가하거나 조회 기간·검색어를 변경하세요.</small></div>}</div>

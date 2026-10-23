@@ -16,7 +16,7 @@ async function database() {
 }
 type ArchiveRow = { id: string; source_kind: 'product' | 'request'; title: string; source_url: string; offer_id: string | null;
   created_at: string; updated_at: string; status: string; supplier_hub_status: string | null; category_json: string | null; request_id: string | null;
-  registration_number: string | null };
+  registration_number: string | null; removed_at: string | null };
 function category(row: ArchiveRow): ArchiveItem['category'] {
   if (!row.category_json || !row.request_id) return null;
   try { const value = JSON.parse(row.category_json);
@@ -57,15 +57,17 @@ export async function listProductArchive(ownerId: string, query: ArchiveQuery): 
         WHERE cp.product_id=page.id AND cp.owner_id=?),(
         SELECT j.id FROM collection_jobs j WHERE j.owner_id=? AND j.source_url=substr(page.source_url,1,min(instr(page.source_url||'?','?'),instr(page.source_url||'#','#'))-1)
         ORDER BY j.created_at DESC,j.id DESC LIMIT 1)) END AS request_id FROM page
-    ) SELECT linked.*,n.registration_number,CASE WHEN json_valid(c.payload) THEN json_object('id',json_extract(c.payload,'$.category.categoryId'),'path',json_extract(c.payload,'$.category.categoryPath')) ELSE NULL END AS category_json
+    ) SELECT linked.*,n.registration_number,r.removed_at,CASE WHEN json_valid(c.payload) THEN json_object('id',json_extract(c.payload,'$.category.categoryId'),'path',json_extract(c.payload,'$.category.categoryPath')) ELSE NULL END AS category_json
       FROM linked LEFT JOIN product_registration_numbers n ON linked.source_kind='product' AND n.product_id=linked.id AND n.owner_id=?
+      LEFT JOIN product_removals r ON linked.source_kind='product' AND r.product_id=linked.id AND r.owner_id=?
       LEFT JOIN collection_context c ON c.job_id=linked.request_id ORDER BY created_at DESC,id DESC,source_kind DESC`)
-    .bind(...products.args, ...requests.args, query.limit + 1, ownerId,ownerId,ownerId).all<ArchiveRow>();
+    .bind(...products.args, ...requests.args, query.limit + 1, ownerId,ownerId,ownerId,ownerId).all<ArchiveRow>();
   const hasMore = result.results.length > query.limit;
   const items = result.results.slice(0, query.limit).map((row): ArchiveItem => ({ id: row.id, sourceKind: row.source_kind,
     title: row.title, sourceUrl: row.source_url, offerId: row.offer_id || archiveOfferId(row.source_url), createdAt: row.created_at,
     updatedAt: row.updated_at, status: row.status, supplierHubStatus: row.supplier_hub_status, category: category(row),
-    ...(row.registration_number ? {registration_number:row.registration_number} : {}) }));
+    ...(row.registration_number ? {registration_number:row.registration_number} : {}),
+    ...(row.removed_at ? {removedAt:row.removed_at} : {}) }));
   return { items, nextCursor: hasMore && items.length ? await nextArchiveCursor(items[items.length - 1], query) : null,
     range: query.range, from: query.from, to: query.to, query: query.query, limit: query.limit, timeZone: 'Asia/Seoul' };
 }

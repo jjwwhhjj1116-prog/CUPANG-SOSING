@@ -91,6 +91,7 @@ test('flush coalescing rechecks current context and is scoped by window, origin,
 
 const request=(method,body)=>new Request('https://app.test/api/source-inbox',{method,headers:{'content-type':'application/json'},body:JSON.stringify(body)});
 async function addToInbox(h,snapshot=capture()){
+ h.sqlite.prepare('INSERT OR IGNORE INTO members(id,email,password_hash,role,status,company_code,company_name,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run('owner','unari8484@gmail.com','synthetic','member','approved',company.code,company.name,'2026-10-22','2026-10-22');
  const fingerprint=await h.load('app/source-inbox.ts').pageSourceFingerprint(snapshot),api=h.load('app/api/source-inbox/route.ts');
  const input={expectedOwnerId:'owner',expectedCompany:company,id,fingerprint,snapshot};const response=await api.POST(request('POST',input));assert.equal(response.status,200,await response.clone().text());return {input,ack:await response.json(),api};
 }

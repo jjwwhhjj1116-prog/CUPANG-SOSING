@@ -4,7 +4,7 @@ export type ArchiveCategory = { id: string; path: string[]; source: 'request-sna
 export type ArchiveItem = {
   id: string; registration_number?: string; sourceKind: ArchiveKind; title: string; sourceUrl: string; offerId: string | null;
   createdAt: string; updatedAt: string; status: string; supplierHubStatus: string | null;
-  category: ArchiveCategory | null;
+  category: ArchiveCategory | null; removedAt?: string;
 };
 export type ArchiveCursor = { version: 2; createdAt: string; id: string; kind: ArchiveKind; filter: string };
 export type ArchiveQuery = { range: ArchiveRange; from: string | null; to: string | null;
@@ -71,8 +71,9 @@ export async function parseArchiveQuery(params: URLSearchParams, now = new Date(
 export async function nextArchiveCursor(item: Pick<ArchiveItem, 'id' | 'sourceKind' | 'createdAt'>, query: ArchiveQuery) {
   return encodeBase64(JSON.stringify({ version: 2, id: item.id, kind: item.sourceKind, createdAt: item.createdAt, filter: await filterKey(query) }));
 }
-export function archiveStatusLabel(item: Pick<ArchiveItem, 'sourceKind' | 'status'>) {
+export function archiveStatusLabel(item: Pick<ArchiveItem, 'sourceKind' | 'status' | 'removedAt'>) {
   if (item.sourceKind === 'request') return item.status === 'cancelled' ? '요청 취소' : item.status === 'awaiting_connector' ? '수집 연결 대기' : '요청 상태 확인 필요';
+  if (item.removedAt) return '삭제된 상품';
   return item.status || '상품 상태 확인 필요';
 }
 export function safeArchiveUrl(value: string) {

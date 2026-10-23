@@ -2,9 +2,10 @@
 import {useEffect,useLayoutEffect,useMemo,useRef,useState,useCallback} from 'react';
 import type {SourceInboxItem} from '@/app/source-inbox';
 import {validateReviewedSourceTransition} from '@/app/source-review-intake';
+import {readSourceArchiveReceipt,sourceArchiveReference,type SourceArchiveReceipt} from '@/app/source-inbox-archive-client';
 
 type SourceRegistrationState={ownerId?:string;items:SourceInboxItem[];error:string};
-type SourceRegistrationSession={ownerId?:string;token:object;alive:boolean;epoch:number;cancel:()=>void;accepted:Map<string,SourceInboxItem>};
+type SourceRegistrationSession={ownerId?:string;token:object;alive:boolean;epoch:number;cancel:()=>void;accepted:Map<string,SourceInboxItem>;archived:Map<string,SourceArchiveReceipt>};
 type SourceDeliveryCompany={code:string;name:string};
 type SourceDeliveryAttempt={token:object;epoch:number;origin:string;ownerId:string;company:SourceDeliveryCompany|null;requestId:string;controller:AbortController;posted:boolean;waiting:boolean;expiresAt:number;timer?:ReturnType<typeof setTimeout>};
 const deliveryCompany=(value:unknown):SourceDeliveryCompany|null=>{
@@ -28,7 +29,7 @@ export function useSourceRegistrations(ownerId?:string){
   // An expired result wait is uncertainty, not a save acknowledgement. Only a
   // later foreground may retry the same immutable, idempotent worker queue.
   const expireDelivery=()=>{const attempt=delivery.current;if(attempt?.posted&&Date.now()>=attempt.expiresAt)releaseDelivery(attempt);};
-  const scope:SourceRegistrationSession={ownerId,token,alive:true,epoch:0,cancel:()=>{running?.abort();running=null;queued=false;queuedCompany=undefined;clearTimeout(deliveryTimer);deliveryTimer=undefined;const attempt=delivery.current;if(attempt?.token===token)releaseDelivery(attempt);},accepted:new Map()};session.current=scope;
+  const scope:SourceRegistrationSession={ownerId,token,alive:true,epoch:0,cancel:()=>{running?.abort();running=null;queued=false;queuedCompany=undefined;clearTimeout(deliveryTimer);deliveryTimer=undefined;const attempt=delivery.current;if(attempt?.token===token)releaseDelivery(attempt);},accepted:new Map(),archived:new Map()};session.current=scope;
   const active=(epoch:number)=>alive&&scope.alive&&session.current===scope&&owner.current===token&&scope.epoch===epoch&&location.origin===origin;
   const publish=(value:SourceRegistrationState)=>{current.current=value;setState(value);};
   async function load(expectedCompany?:SourceDeliveryCompany){
@@ -44,7 +45,10 @@ export function useSourceRegistrations(ownerId?:string){
     if(!response.ok||body.ownerId!==ownerId||!Array.isArray(body.items)||body.items.some(item=>item.ownerId!==ownerId)||body.company!==undefined&&(!readCompany||body.items.some(item=>!sameCompany(item.company,readCompany)))||expectedCompany&&!sameCompany(readCompany,expectedCompany))throw Error(body.error||'수집 상품 목록을 확인하지 못했습니다.');
     // An old read must not roll back a review acknowledgement, including a
     // refresh that raced with propagation of the saved revision.
-    const items=body.items.map(item=>{const accepted=scope.accepted.get(item.id);if(!accepted||readCompany&&!sameCompany(accepted.company,readCompany))return item;if(item.revision>=accepted.revision){scope.accepted.delete(item.id);return item;}return accepted;});
+    const items=body.items.filter(item=>{const archived=scope.archived.get(item.id);if(!archived||!sameCompany(item.company,archived.company))return true;
+     if(item.fingerprint!==archived.fingerprint||item.snapshot.sourceUrl!==archived.sourceUrl)return false;
+     if(item.revision>archived.revision&&item.archivedAt===null){scope.archived.delete(item.id);return true;}return false;
+    }).map(item=>{const accepted=scope.accepted.get(item.id);if(!accepted||readCompany&&!sameCompany(accepted.company,readCompany))return item;if(item.revision>=accepted.revision){scope.accepted.delete(item.id);return item;}return accepted;});
     for(const accepted of scope.accepted.values())if((!readCompany||sameCompany(accepted.company,readCompany))&&!items.some(item=>item.id===accepted.id))items.push(accepted);
     publish({ownerId,items,error:''});
    }catch(error){if(active(epoch)&&!controller.signal.aborted)publish({ownerId,items:current.current.ownerId===ownerId?current.current.items:[],error:error instanceof Error?error.message:'수집 상품 조회 실패'});}
@@ -100,11 +104,24 @@ export function useSourceRegistrations(ownerId?:string){
  const acceptReviewed=useCallback((before:SourceInboxItem,saved:SourceInboxItem):boolean=>{
   const scope=session.current;
   if(!ownerId||owner.current!==token||!scope?.alive||scope.token!==token||scope.ownerId!==ownerId||!validateReviewedSourceTransition(before,saved,ownerId))return false;
+  // A delayed review acknowledgement cannot undo an acknowledged archive.
+  // Only a fresh list containing an explicitly newer restored revision clears
+  // this tombstone and permits subsequent review acknowledgements again.
+  if(scope.archived.has(saved.id))return false;
   const previous=current.current.ownerId===ownerId?current.current.items:[],existing=previous.find(item=>item.id===saved.id);
   if(existing&&(existing.revision>before.revision||existing.ownerId!==saved.ownerId||existing.fingerprint!==saved.fingerprint||existing.snapshot.sourceUrl!==saved.snapshot.sourceUrl||existing.company.code!==saved.company.code||existing.company.name!==saved.company.name))return false;
   scope.epoch++;scope.cancel();scope.accepted.set(saved.id,saved);
   const value={ownerId,items:existing?previous.map(item=>item.id===saved.id?saved:item):[saved,...previous],error:''};
   current.current=value;setState(value);return true;
  },[ownerId,token]);
- return {items:state.ownerId===ownerId?state.items:[],error:state.ownerId===ownerId?state.error:'',reload:useCallback(()=>refresh.current(),[]),acceptReviewed};
+ const acceptArchived=useCallback((before:SourceInboxItem,receipt:SourceArchiveReceipt):boolean=>{
+  const scope=session.current,reference=sourceArchiveReference(before,ownerId,before.company);
+  if(!ownerId||!reference||owner.current!==token||!scope?.alive||scope.token!==token||scope.ownerId!==ownerId)return false;
+  try{readSourceArchiveReceipt(receipt,reference);}catch{return false;}
+  const previous=current.current.ownerId===ownerId?current.current.items:[],existing=previous.find(item=>item.id===before.id);
+  if(existing&&(existing.revision!==before.revision||existing.fingerprint!==before.fingerprint||existing.ownerId!==ownerId||existing.snapshot.sourceUrl!==before.snapshot.sourceUrl||!sameCompany(existing.company,before.company)))return false;
+  scope.epoch++;scope.cancel();scope.accepted.delete(before.id);scope.archived.set(before.id,receipt);
+  const value={ownerId,items:previous.filter(item=>item.id!==before.id),error:''};current.current=value;setState(value);return true;
+ },[ownerId,token]);
+ return {items:state.ownerId===ownerId?state.items:[],error:state.ownerId===ownerId?state.error:'',reload:useCallback(()=>refresh.current(),[]),acceptReviewed,acceptArchived};
 }
