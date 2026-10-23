@@ -23,20 +23,20 @@ function harness(){
  const context={window,document:dom.document,location:{href:sourceUrl},URL,Date:ClockDate,Error,TextEncoder,captureFixture:snapshot,sourceReads:0,readDetails:()=>({description:'',detailImages:[]}),
   respond:()=>({ok:true,delivered:true}),chrome:{runtime:{getManifest(){assert.fail('no manifest identity shortcut');},sendMessage:async message=>{messages.push(structuredClone(message));return context.respond(message);}}},fetch(){assert.fail('lifecycle must not fetch');}};
  const makeHost=({owner,version,tag='div',open=false}={})=>{const host=dom.document.createElement(tag);host.id=HOST;host.style.cssText='position:fixed;right:22px;bottom:86px;z-index:2147483646;';host.attachShadow({mode:open?'open':'closed'});if(owner!==undefined)host.setAttribute(OWNER,owner);if(version!==undefined)host.setAttribute(VERSION,version);dom.document.documentElement.append(host);return host;};
- const install=(version='2.1.27')=>{vm.runInNewContext(bundle.outputFiles[0].text.replaceAll('"2.1.27"',JSON.stringify(version)),context);const host=dom.document.getElementById(HOST),children=host?.testShadow?.childNodes??[];return {host,button:children.find(node=>node.tag==='button'),status:children.find(node=>node.tag==='p'),badge:children.find(node=>node.tag==='small')};};
+ const install=(version='2.1.28')=>{vm.runInNewContext(bundle.outputFiles[0].text.replaceAll('"2.1.28"',JSON.stringify(version)),context);const host=dom.document.getElementById(HOST),children=host?.testShadow?.childNodes??[];return {host,button:children.find(node=>node.tag==='button'),status:children.find(node=>node.tag==='p'),badge:children.find(node=>node.tag==='small')};};
  return {...dom,context,messages,makeHost,install,advance:ms=>{now+=ms;},get now(){return now;}};
 }
 
 test('only the exact legacy closed-shadow host or an explicitly owned older/unversioned host is replaced without reading the product',()=>{
  for(const attributes of [{},{owner:'yoofam-studio'},{owner:'yoofam-studio',version:'2.1.23'}]){
   const h=harness(),old=h.makeHost(attributes),current=h.install();assert.notEqual(current.host,old);assert.equal(old.isConnected,false);
-  assert.equal(current.host.getAttribute(OWNER),'yoofam-studio');assert.equal(current.host.getAttribute(VERSION),'2.1.27');assert.equal(current.badge.textContent,'수집기 2.1.27');
+  assert.equal(current.host.getAttribute(OWNER),'yoofam-studio');assert.equal(current.host.getAttribute(VERSION),'2.1.28');assert.equal(current.badge.textContent,'수집기 2.1.28');
   assert.equal(h.context.sourceReads,0);assert.equal(h.messages.length,0);
  }
 });
 
 test('same/newer versions are idempotent; foreign/open-shadow/unknown-version same-ID hosts fail closed',()=>{
- for(const attributes of [{owner:'yoofam-studio',version:'2.1.27'},{owner:'yoofam-studio',version:'2.1.28'},
+ for(const attributes of [{owner:'yoofam-studio',version:'2.1.28'},{owner:'yoofam-studio',version:'2.1.29'},
   {owner:'someone-else',version:'2.1.23'},{owner:'yoofam-studio',version:'unknown'},{tag:'span'},{open:true}]){
   const h=harness(),old=h.makeHost(attributes),count=h.elements.length,current=h.install();assert.equal(current.host,old);assert.equal(old.isConnected,true);assert.equal(h.elements.length,count);assert.equal(h.context.sourceReads,0);assert.equal(h.messages.length,0);
  }
@@ -59,7 +59,8 @@ test('replacement during the passive detail wait stops the old capture before ex
 
 test('replacement cannot cancel an already-sent request, but its late ACK never publishes old success or overlaps a new send',async()=>{
  const h=harness();let release;h.context.respond=()=>new Promise(resolve=>{release=resolve;});
- const old=h.install('2.1.23'),operation=old.button.click({isTrusted:true}),oldStatus=old.status.textContent;assert.equal(h.messages.length,1);
+ const old=h.install('2.1.23'),operation=old.button.click({isTrusted:true}),oldStatus=old.status.textContent;
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(h.messages.length,1);
  const fresh=h.install();await fresh.button.click({isTrusted:true});assert.equal(h.messages.length,1);assert.match(fresh.status.textContent,/이전 수집 응답/);
  release({ok:true,delivered:true});await operation;assert.equal(old.status.textContent,oldStatus);assert.notEqual(old.button.textContent,'수집 완료');assert.equal(h.messages.length,1);
  h.context.respond=()=>({ok:true,delivered:true});await fresh.button.click({isTrusted:true});assert.equal(h.messages.length,2);assert.equal(fresh.button.textContent,'수집 완료');
@@ -78,7 +79,8 @@ test('after an expired lease is replaced, the old delayed closure cannot send, r
  const h=harness();let releaseOld,releaseNew;h.context.readDetails=()=>new Promise(resolve=>{releaseOld=resolve;});
  const old=h.install('2.1.23'),oldOperation=old.button.click({isTrusted:true}),oldStatus=old.status.textContent,fresh=h.install();
  h.advance(60001);h.context.readDetails=()=>({description:'',detailImages:[]});h.context.respond=()=>new Promise(resolve=>{releaseNew=resolve;});
- const freshOperation=fresh.button.click({isTrusted:true}),freshLease=h.document.documentElement.getAttribute(LEASE);assert.equal(h.messages.length,1);
+ const freshOperation=fresh.button.click({isTrusted:true}),freshLease=h.document.documentElement.getAttribute(LEASE);
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(h.messages.length,1);
  releaseOld({description:'',detailImages:[]});await oldOperation;assert.equal(h.messages.length,1);assert.equal(h.document.documentElement.getAttribute(LEASE),freshLease);assert.equal(old.status.textContent,oldStatus);
  releaseNew({ok:true,delivered:true});await freshOperation;assert.equal(fresh.button.textContent,'수집 완료');assert.equal(h.document.documentElement.getAttribute(LEASE),null);
 });

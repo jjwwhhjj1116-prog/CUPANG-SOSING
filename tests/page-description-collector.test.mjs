@@ -23,13 +23,16 @@ test('one trusted click reads one explicitly linked description and saves one va
  const h=harness();await h.button.click({isTrusted:false});assert.equal(h.messages.length,0);
  await h.button.click({isTrusted:true});assert.deepEqual(h.messages.map(message=>message.type),['YOOFAM_READ_PAGE_DESCRIPTION','YOOFAM_SAVE_PAGE_SOURCE']);
  const snapshot=h.messages[1].snapshot;assert.equal(snapshot.options.length,1);assert.deepEqual(snapshot.images,[{url:main,role:'main'},{url:detail,role:'detail'}]);
+ assert.equal(snapshot.captureDiagnostics.description,'captured');assert.doesNotMatch(JSON.stringify(snapshot.captureDiagnostics),/https?:|SYNTHETICONLY/);
  assert.equal(h.button.textContent,'수집 완료');assert.match(h.status.textContent,/상세이미지 1장/);
 });
 
 test('unproven or unavailable description links preserve the normal capture without retrying or inventing detail images',async()=>{
  const unlinked=harness({linked:false});await unlinked.button.click({isTrusted:true});assert.equal(unlinked.messages.length,1);assert.equal(unlinked.messages[0].type,'YOOFAM_SAVE_PAGE_SOURCE');
+ assert.equal(unlinked.messages[0].snapshot.captureDiagnostics.description,'reference-missing');
  const unavailable=harness({respond:async()=>({ok:true,available:false,sourceUrl,offerId,detailImages:[],reason:'link-unavailable'})});await unavailable.button.click({isTrusted:true});
  assert.equal(unavailable.messages.length,2);assert.deepEqual(unavailable.messages[1].snapshot.images,[{url:main,role:'main'}]);assert.match(unavailable.status.textContent,/상세이미지 0장/);
+ assert.equal(unavailable.messages[1].snapshot.captureDiagnostics.description,'unavailable');
 });
 
 test('wrong-offer or foreign-CDN description replies never reach inbox storage',async()=>{
@@ -41,6 +44,7 @@ test('wrong-offer or foreign-CDN description replies never reach inbox storage',
 
 test('navigation during the explicit description await stops capture before any inbox write',async()=>{
  let release;const h=harness({respond:()=>new Promise(resolve=>{release=resolve;})}),operation=h.button.click({isTrusted:true});
+ await new Promise(resolve=>setImmediate(resolve));
  assert.equal(h.messages.length,1);h.context.location.href=sourceUrl.replace(offerId,'700000000002');release({ok:true,available:true,sourceUrl,offerId,detailImages:[detail]});await operation;
  assert.equal(h.messages.length,1);assert.notEqual(h.button.textContent,'수집 완료');assert.match(h.status.textContent,/상품 페이지가 변경/);
 });

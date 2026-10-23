@@ -3,10 +3,10 @@ import fs from 'node:fs';import vm from 'node:vm';import ts from 'typescript';
 import {apiFixture,companies} from './helpers/supplier-hub-single-projection.mjs';
 import {aiFixture} from './helpers/quotation-ai.mjs';
 const json=async(response,status=200)=>{const body=await response.json();assert.equal(response.status,status,JSON.stringify(body));return body;};
-const qwen=packages=>({choices:[{index:0,finish_reason:'stop',message:{role:'assistant',content:JSON.stringify({packages})}}]});
+import {packagingResponse as qwen,packagingItem} from './helpers/quotation-packaging-provider.mjs';
 async function fixture(company=companies[0]){const f=await apiFixture(company,aiFixture({company}).snapshot),calls=[];
  f.h.bindings.SOURCEFLOW_QUOTATION_AI_PROVIDER='workers-ai';f.h.bindings.SOURCEFLOW_QUOTATION_AI_FREE_ONLY='true';
- f.h.bindings.AI.run=async(model,input)=>{calls.push({model,input});const source=JSON.parse(input.messages[1].content.slice(0,-'\n/no_think'.length));return qwen(source.packages.map(({index})=>({index,weightG:40,widthMm:60,lengthMm:80,heightMm:15})));};
+ f.h.bindings.AI.run=async(model,input)=>{calls.push({model,input});const source=JSON.parse(input.messages[1].content.slice(0,-'\n/no_think'.length));return qwen(source.packages.map(item=>packagingItem(item,{weightG:40,widthMm:60,lengthMm:80,heightMm:15})));};
  const read=()=>f.h.route(f.base+'/quotation-fields'+f.query),view=await json(await read());
  const body={action:'generate',profileId:f.profile.id,expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,optionId:null,applyToAllOptions:true};
  const request=input=>f.h.route(f.base+'/quotation-packaging-draft',{method:'POST',body:input??body});
@@ -31,10 +31,12 @@ for(const company of companies)test(`${company.code}: insufficient or generic-bo
   const f=await fixture(company);try{
    f.mutateOptions(options=>{options.rows[0].packagedWeightG=10;options.rows[0].provenance.packagedWeightG='collected';options.rows[0].packagingUnitsPerPack=1;});
    let requests=0;f.h.bindings.AI.run=async(_model,input)=>{requests++;const source=JSON.parse(input.messages[1].content.slice(0,-'\n/no_think'.length));
-    return qwen(source.packages.map(({index})=>kind==='insufficient'?{index}:{index,widthMm:10,lengthMm:10,heightMm:10}));};
+    return qwen(source.packages.map(item=>packagingItem(item,kind==='insufficient'?{}:{widthMm:10,lengthMm:10,heightMm:10})));};
    const view=await json(await f.read()),state=f.state(),result=await json(await f.request({...f.body,expectedInputFingerprint:view.inputFingerprint}));
    assert.equal(result.proposals.length,0);assert.equal(result.aiRequests,1);assert.equal(requests,1);
-   assert.ok(result.preserved.some(item=>item.value==='10'));assert.ok(result.warnings.some(message=>/근거가 부족|추정값으로 제안하지/.test(message)));
+   assert.ok(result.preserved.some(item=>item.value==='10'));assert.ok(result.warnings.some(message=>/보류했다고 응답|추정값으로 제안하지/.test(message)));
+   assert.deepEqual(result.diagnostics,{promptRevision:'packaging-estimate-v3',providerVersion:2,validationCode:null,response:'parsed',expectedOptions:1,returnedOptions:1,
+    options:[{index:0,returned:true,weight:false,width:kind==='boundary',length:kind==='boundary',height:kind==='boundary',dimensionsStatus:kind==='boundary'?'estimated':'abstained',dimensionsReason:kind==='boundary'?null:'insufficient-product-context',weightStatus:'not-requested',weightReason:null}]});
    assert.equal(f.state(),state);assert.equal(JSON.stringify(await json(await f.read())),JSON.stringify(view));assert.deepEqual(f.h.network,[]);
   }finally{f.close();}
  }
@@ -52,12 +54,12 @@ for(const company of companies)test(`${company.code}: sealed common10g is protec
   const readback=await json(await f.read());assert.equal(readback.revision,saved.revision);assert.equal(readback.resolved.rows.find(row=>row.optionId==='synthetic-one').fields[field.id].value,'10');
  }finally{f.close();}
 });
-test('unconfigured/free-unconfirmed, quota-limit and uncertain model delivery use marked fallback without retry',async()=>{
+test('unconfigured/free-unconfirmed, quota-limit and uncertain model delivery leave missing packaging incomplete without fallback or retry',async()=>{
  for(const kind of ['unconfigured','limited','provider-failed']){const f=await fixture();try{
   if(kind==='unconfigured')f.h.bindings.SOURCEFLOW_QUOTATION_AI_FREE_ONLY='false';
   if(kind==='limited'){const reserve=f.h.load('db/quotation-ai-jobs.ts').reserveQuotationAiRequest;for(let index=0;index<40;index++)assert.equal(await reserve(),true);}
   if(kind==='provider-failed')f.h.bindings.AI.run=async()=>{f.calls.push({model:'attempted'});throw Error('synthetic unknown outcome');};
-  const state=f.state(),result=await json(await f.request());assert.ok(result.proposals.every(item=>item.origin==='couplus-fallback'&&item.measured===false));assert.equal(result.aiRequests,kind==='provider-failed'?1:0);assert.equal(f.calls.length,kind==='provider-failed'?1:0);assert.equal(f.state(),state);
+  const state=f.state(),result=await json(await f.request());assert.equal(result.proposals.length,0);assert.equal(result.diagnostics.response,'unavailable');assert.ok(result.warnings.every(message=>!message.includes('기본 초안')));assert.equal(result.aiRequests,kind==='provider-failed'?1:0);assert.equal(f.calls.length,kind==='provider-failed'?1:0);assert.equal(f.state(),state);
  }finally{f.close();}}
 });
 test('manual blank/current value protects physical fields and no model is needed when every target is protected',async()=>{

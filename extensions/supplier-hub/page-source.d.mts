@@ -1,4 +1,5 @@
-export type PageSource={format:'yoofam-page-source-v1';sourceUrl:string;offerId:string;collectedAt:string;title:string;description:string;options:{key:string;name:string;supplierSku:string|null;unitPriceCny:number|null;currency:'CNY'|null;minimumOrder:number|null;stock:number|null;imageUrl:string|null;axisValues?:{label:string;value:string}[];packaging?:import('./page-dom-facts.mjs').PagePackaging}[];images:{url:string;role:'main'|'additional'|'detail'}[];attributes:{name:string;value:string}[]};
+export type PageSourceCaptureDiagnostics={format:'yoofam-page-capture-diagnostics-v1';collectorVersion:string;sections:{tabCount:number;knownTabCount:number;panelCount:number;linkedKnownPanelCount:number;unlinkedKnownTabCount:number};bodyTitles?:{attributes:number;packaging:number;detail:number};description:'not-needed'|'reference-missing'|'reference-invalid'|'unavailable'|'captured'};
+export type PageSource={format:'yoofam-page-source-v1';sourceUrl:string;offerId:string;collectedAt:string;title:string;description:string;options:{key:string;name:string;supplierSku:string|null;unitPriceCny:number|null;currency:'CNY'|null;minimumOrder:number|null;stock:number|null;imageUrl:string|null;axisValues?:{label:string;value:string}[];packaging?:import('./page-dom-facts.mjs').PagePackaging}[];images:{url:string;role:'main'|'additional'|'detail'}[];attributes:{name:string;value:string}[];captureDiagnostics?:PageSourceCaptureDiagnostics};
 export const PAGE_SOURCE_LIMIT:number;
 export function pageSourceUrl(value:string):{sourceUrl:string;offerId:string};
 export function readPageSourceElementImage(element:(Pick<HTMLImageElement,'getAttribute'> & {currentSrc?:string})|null,options?:{preferDataSource?:boolean}):string|null;
@@ -9,5 +10,6 @@ export function readPageSourceDomOptions(document:Pick<Document,'querySelectorAl
 export function readPageSourceDomFacts(document:Pick<Document,'querySelectorAll'>,sourceUrl:string,scripts:string[]):import('./page-dom-facts.mjs').PageDomFacts|null;
 export function extractPageSource(input:{sourceUrl:string;scripts:string[];domOptions?:PageSourceDomOptions|null;domFacts?:import('./page-dom-facts.mjs').PageDomFacts|null;title?:string;description?:string;gallery?:string[];detailImages?:string[];priceText?:string;minimumOrderText?:string},now?:number):PageSource;
 export function validatePageSource(input:unknown,now?:number):PageSource;
+export function validatePageSourceCaptureDiagnostics(input:unknown):PageSourceCaptureDiagnostics;
 export function validatePageSourceForDelivery(input:unknown,now?:number):PageSource;
 export function pageSourceIssues(source:PageSource):string[];

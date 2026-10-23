@@ -18,6 +18,10 @@ function fixture(fetcher,{initialItem,onReviewed,onChanged,existingProducts=[]}=
  return {calls,added,render,window,event:data=>events.get('message')?.({source:window,origin:'https://app.test',data}),button:label=>nodes(render()).find(node=>node.type==='button'&&text(node)===label),owner(value){ownerId=value;render();},open:()=>render().props.onToggle({currentTarget:{open:true}}),collapse:()=>render().props.onToggle({currentTarget:{open:false}}),close:()=>cleanups.forEach(fn=>fn?.())};
 }
 const item={...reviewSourceFixture().before,issues:[]};
+const captureDiagnostics=(patch={})=>({format:'yoofam-page-capture-diagnostics-v1',collectorVersion:'2.1.28',
+ sections:{tabCount:4,knownTabCount:3,panelCount:2,linkedKnownPanelCount:2,unlinkedKnownTabCount:1},
+ bodyTitles:{attributes:1,packaging:2,detail:3},description:'reference-missing',...patch});
+const diagnosticsNode=h=>nodes(h.render()).find(node=>node.type==='details'&&node.props['aria-label']==='수집 진단');
 
 test('an existing same-offer product labels recapture as a separate draft and delegates only the exact selected item',()=>{
  const existingProducts=[{source_url:item.snapshot.sourceUrl+'?tracking=old'}],before=JSON.stringify(existingProducts),h=fixture(()=>assert.fail('choosing a capture does not fetch or write'),{initialItem:item,existingProducts});
@@ -48,7 +52,8 @@ test('saved notifications during a read queue a refresh and a closed loaded pane
 });
 
 test('a late list response from the prior account cannot replace the current panel',async()=>{
- let release;const h=fixture(()=>new Promise(resolve=>{release=resolve;}));try{h.render();h.open();h.owner('other');release(Response.json({ownerId:'owner',items:[item]}));await turn();assert.equal(h.button('카테고리 선택·초안 작성'),undefined);}finally{h.close();}
+ const captured={...structuredClone(item),snapshot:{...structuredClone(item.snapshot),captureDiagnostics:captureDiagnostics()}};
+ let release;const h=fixture(()=>new Promise(resolve=>{release=resolve;}));try{h.render();h.open();h.owner('other');release(Response.json({ownerId:'owner',items:[captured]}));await turn();assert.equal(h.button('카테고리 선택·초안 작성'),undefined);assert.equal(diagnosticsNode(h),undefined);assert.doesNotMatch(text(h.render()),/수집기 2\.1\.28/);}finally{h.close();}
 });
 
 test('a partial capture may choose a category before reviewing missing source facts',async()=>{
@@ -126,4 +131,73 @@ test('old review handlers and responses cannot act after account changes or the 
   save.props.onClick();assert.equal(h.calls.length,1);
  }finally{h.close();}
  const closed=fixture(async()=>{throw Error('no stale write');},{initialItem:before});try{const save=closed.button('검토한 상품정보 저장');closed.button('닫기').props.onClick();closed.render();save.props.onClick();assert.equal(closed.calls.length,0);}finally{closed.close();}
+});
+
+test('capture diagnostics show immutable observed counts and collector version rather than reviewed values without requests',()=>{
+ const original=structuredClone(item);
+ original.snapshot.captureDiagnostics=captureDiagnostics();
+ original.snapshot.attributes=[{name:'材质',value:'棉'},{name:'颜色',value:'黑'}];
+ original.snapshot.options=[{...original.snapshot.options[0],packaging:{source:'package-table',weightG:15}},
+  {...original.snapshot.options[0],key:'gray'},
+  {...original.snapshot.options[0],key:'blue',packaging:{source:'package-table',widthMm:5}}];
+ original.snapshot.images.push({url:'https://cbu01.alicdn.com/detail-one.png',role:'detail'},{url:'https://cbu01.alicdn.com/detail-two.png',role:'detail'});
+ original.reviewed={...structuredClone(original.snapshot),captureDiagnostics:captureDiagnostics({collectorVersion:'99.8.7'}),attributes:[],options:[original.snapshot.options[1]],images:[]};
+ const before=JSON.stringify(original),h=fixture(()=>assert.fail('reading capture diagnostics does not fetch or write'),{initialItem:original});
+ try{
+  const panel=diagnosticsNode(h),view=text(panel);assert.ok(panel);assert.equal(panel.props.open,undefined);
+  assert.match(view,/수집기 2\.1\.28/);assert.doesNotMatch(view,/99\.8\.7/);
+  assert.match(view,/제품속성 2개 · 포장정보 2\/3옵션 · 상세이미지 2장/);
+  assert.match(view,/탭 4개 · 상품정보 탭 3개 · 본문 패널 2개 · 연결 확인 2개 · 연결 미확인 1개/);
+  assert.match(view,/일반 본문 제목: 속성 1개 · 포장 2개 · 상세 3개/);
+  assert.match(view,/현재 상품의 상세문서 주소를 찾지 못했습니다/);
+  assert.equal(panel.props.onToggle,undefined,'expansion is native display with no action');
+  h.button('카테고리 선택·초안 작성').props.onClick();assert.deepEqual(h.added,[original]);assert.equal(h.calls.length,0);assert.equal(JSON.stringify(original),before);
+ }finally{h.close();}
+});
+
+test('each selected recapture displays only its own diagnostics and old captures explicitly lack records',async()=>{
+ const latest={...structuredClone(item),id:'latest',captureVersion:2,snapshot:{...structuredClone(item.snapshot),captureDiagnostics:captureDiagnostics()}},previous={...structuredClone(item),id:'previous',captureVersion:1};
+ const before=JSON.stringify([latest,previous]),h=fixture(async()=>Response.json({ownerId:'owner',items:[latest,previous]}));
+ try{
+  h.render();h.open();await turn();
+  const entries=()=>nodes(h.render()).filter(node=>node.type==='li');
+  const open=index=>nodes(entries()[index]).find(node=>node.type==='button'&&text(node)==='상품정보 확인').props.onClick();
+  open(0);assert.match(text(diagnosticsNode(h)),/수집기 2\.1\.28/);h.button('닫기').props.onClick();
+  open(1);const older=text(diagnosticsNode(h));assert.match(older,/수집 진단 · 기록 없음/);assert.match(older,/수집기 버전·진단 기록이 없습니다/);assert.doesNotMatch(older,/2\.1\.28|연결 확인 2개/);
+  assert.deepEqual(h.calls.map(call=>[call.path,call.init.method??'GET']),[['/api/source-inbox','GET']]);assert.equal(JSON.stringify([latest,previous]),before);
+ }finally{h.close();}
+});
+
+test('malformed capture diagnostics show a safe unavailable state without exposing untrusted metadata',()=>{
+ const marker='UNTRUSTED_DIAGNOSTIC_TEXT';
+ for(const invalid of [null,undefined,captureDiagnostics({collectorVersion:marker}),captureDiagnostics({description:marker}),captureDiagnostics({rawPageText:marker}),
+  captureDiagnostics({sections:{tabCount:4,knownTabCount:3,panelCount:2,linkedKnownPanelCount:2,unlinkedKnownTabCount:2}}),
+  captureDiagnostics({bodyTitles:{attributes:60,packaging:1,detail:0}})]){
+  const captured={...structuredClone(item),snapshot:{...structuredClone(item.snapshot),captureDiagnostics:invalid}},before=JSON.stringify(captured);
+  const h=fixture(()=>assert.fail('invalid diagnostic display must not fetch'),{initialItem:captured});
+  try{const view=text(diagnosticsNode(h));assert.match(view,/수집 진단 · 기록 확인 불가/);assert.match(view,/진단 기록의 형식을 확인할 수 없습니다/);assert.doesNotMatch(view,new RegExp(marker+'|수집기 2\\.1\\.28|일반 본문 제목|수집 당시 문서 영역'));assert.equal(h.calls.length,0);assert.equal(JSON.stringify(captured),before);}finally{h.close();}
+ }
+});
+
+test('description diagnostic states use fixed labels and optional body-title records stay absent',()=>{
+ const messages={'not-needed':'별도 상세문서 조회가 필요하지 않았습니다','reference-missing':'상세문서 주소를 찾지 못했습니다',
+  'reference-invalid':'일치하는 상세문서 주소를 확인하지 못했습니다',unavailable:'상세문서에서 추가 자료를 확인하지 못했습니다',captured:'연결된 상세문서에서 상세이미지를 수집했습니다'};
+ for(const [description,message]of Object.entries(messages)){
+  const diagnostic=captureDiagnostics({description});delete diagnostic.bodyTitles;
+  const captured={...structuredClone(item),snapshot:{...structuredClone(item.snapshot),captureDiagnostics:diagnostic}},h=fixture(()=>assert.fail('display only'),{initialItem:captured});
+  try{const view=text(diagnosticsNode(h));assert.ok(view.includes(message));assert.doesNotMatch(view,/일반 본문 제목/);assert.equal(h.calls.length,0);}finally{h.close();}
+ }
+});
+
+test('review saves only editable source facts and retains immutable capture diagnostics',async()=>{
+ const {before,saved}=reviewSourceFixture();before.snapshot.captureDiagnostics=captureDiagnostics();saved.snapshot.captureDiagnostics=captureDiagnostics();saved.reviewed.captureDiagnostics=captureDiagnostics();
+ const original=JSON.stringify(before),events=[];let payload;
+ const h=fixture(async(path,init)=>{assert.equal(path,'/api/source-inbox');assert.equal(init.method,'PUT');payload=JSON.parse(init.body);return Response.json({ownerId:'owner',item:saved});},{initialItem:before,onReviewed:(value,prior)=>events.push({value,prior})});
+ try{
+  assert.match(text(diagnosticsNode(h)),/수집기 2\.1\.28/);h.button('검토한 상품정보 저장').props.onClick();await turn();
+  assert.deepEqual(Object.keys(payload).sort(),['expectedOwnerId','expectedRevision','id','review']);assert.deepEqual(Object.keys(payload.review).sort(),['options','title']);
+  for(const option of payload.review.options)assert.deepEqual(Object.keys(option).sort(),['currency','key','minimumOrder','name','supplierSku','unitPriceCny']);
+  assert.equal(events.length,1);assert.deepEqual(events[0].value.snapshot.captureDiagnostics,captureDiagnostics());assert.equal(events[0].prior,before);assert.equal(h.added.length,0);
+  h.button('상품정보 확인').props.onClick();assert.match(text(diagnosticsNode(h)),/수집기 2\.1\.28/);assert.equal(h.calls.length,1);assert.equal(JSON.stringify(before),original);
+ }finally{h.close();}
 });

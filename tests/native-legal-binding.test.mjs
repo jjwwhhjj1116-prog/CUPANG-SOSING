@@ -45,6 +45,23 @@ test('existing PDF/PNG/JPG originals remain unbound and only the exact saved PDF
  assert.throws(()=>legal.readLegalDocuments(documents,'foreign-owner','product'));
 });
 
+test('canonical KC, EMC and KCS fields bind to their saved quotation IDs instead of new live IDs',async()=>{
+ const certificates=['전기용품 및 생활용품, 어린이 (KC) 인증번호','방송통신 기자재 (EMC) 인증 번호','KCS 인증번호'];
+ const f=fixture({certificates,includeBuckets:false,value:'해당사항없음',valueSchema:{type:'string',enum:['해당사항없음','인증번호-A']}});
+ const ids=['kcCertificationNumber','emcCertificationNumber','kcsCertificationNumber'];
+ assert.deepEqual(plain(f.current.fields.filter(field=>field.hubWire?.path.join('.')==='legalPage.certificates').map(field=>field.id)),ids);
+ const before=JSON.stringify(f.input),context=await model.buildNativeLegalContext(f.input);
+ assert.deepEqual(plain(context.issues),[]);
+ assert.deepEqual(plain(context.targets.map(target=>target.binding.certificate.fieldId)),ids);
+ assert.equal(context.submissionReady,false);
+ assert.equal(JSON.stringify(f.input),before);
+ const invalid=structuredClone(f.input.resolved);
+ invalid.rows.find(row=>row.included).fields[ids[0]].validationIssues=['원문 인증값 오류'];
+ const blocked=await model.buildNativeLegalContext({...f.input,resolved:invalid});
+ assert.ok(blocked.issues.some(issue=>issue.code==='NATIVE_LEGAL_VALUE_UNCONFIRMED'&&issue.fieldId===ids[0]));
+ assert.ok(!blocked.targets.some(target=>target.binding.certificate.fieldId===ids[0]));
+});
+
 test('stale schema, row order, field identity, certificate value or target hash cannot silently rebind a saved PDF',async()=>{
  const f=fixture(),file=original(),base=await model.buildNativeLegalContext({...f.input,documents:{applicability:'required',files:[file]}}),binding=model.resolveNativeLegalBinding(base,file.key,base.targets[0].id,base.schemaSha256);
  assert.throws(()=>model.resolveNativeLegalBinding(base,file.key,base.targets[0].id,'0'.repeat(64)));

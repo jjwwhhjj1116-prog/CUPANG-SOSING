@@ -1,6 +1,7 @@
 import {projectSupplierHubSingleDocument,type SingleProjectionInput} from '@/app/supplier-hub-single-projection';
 import {readLegalDocuments,readNativeLegalBinding,type LegalDocument,type LegalDocuments} from '@/app/legal-documents';
 import {compileHubQuotationSchema,type HubWireField} from '@/app/supplier-hub-schema';
+import {getQuotationSchema} from '@/app/quotation-schema';
 
 export type NativeLegalType='certificate'|'msds'|'additional'|'import_type'|'categoryCert'|'adCert';
 type Primitive=string|number|boolean|null;
@@ -29,7 +30,9 @@ function documents(input:LegalDocuments|undefined):LegalDocument[]{
  * schema and all included saved option documents, never the first option or a
  * guessed certificate/NA name. It does not change any stage-seven value. */
 export async function buildNativeLegalContext(input:SingleProjectionInput&{documents?:LegalDocuments}):Promise<NativeLegalContext>{
- const projection=await projectSupplierHubSingleDocument(input),compiled=compileHubQuotationSchema(input.snapshot),raw=JSON.parse(input.snapshot.schemaString);
+ // Match the canonical IDs used to resolve the saved quotation. Compiling
+ // without base fields gives KC/EMC/KCS new live IDs with no saved cells.
+ const projection=await projectSupplierHubSingleDocument(input),compiled=compileHubQuotationSchema(input.snapshot,getQuotationSchema(input.categoryId,input.categoryPath).fields),raw=JSON.parse(input.snapshot.schemaString);
  const files=documents(input.documents),issues:NativeLegalIssue[]=[],targets:NativeLegalTarget[]=[];
  const add=(code:string,message:string,fieldId?:string,key?:string)=>issues.push({code,message,...(fieldId?{fieldId}:{}),...(key?{key}:{})});
  const legalPage=object(raw.properties)&&object(raw.properties.legalPage)?raw.properties.legalPage:{};

@@ -11,7 +11,8 @@ const sourceUrl='https://detail.1688.com/offer/700000000796.html',offerId='70000
 const main='https://cbu01.alicdn.com/synthetic-pending-796.png',detail='https://cbu01.alicdn.com/synthetic-detail-796.png';
 const snapshot=(fresh=false)=>({format:'yoofam-page-source-v1',sourceUrl,offerId,collectedAt:new Date(Date.now()-1000+(fresh?1:0)).toISOString(),title:'합성 원문',description:fresh?'새로 수집한 상세 설명':'',
  options:[{key:'black',name:'黑色',supplierSku:'synthetic-black',unitPriceCny:0.28,currency:'CNY',minimumOrder:1,stock:null,imageUrl:main,...(fresh?{packaging:{source:'package-table',weightG:10}}:{})}],
- images:[{url:main,role:'main'},...(fresh?[{url:detail,role:'detail'}]:[])],attributes:fresh?[{name:'材质',value:'海绵'}]:[]});
+ images:[{url:main,role:'main'},...(fresh?[{url:detail,role:'detail'}]:[])],attributes:fresh?[{name:'材质',value:'海绵'}]:[],
+ captureDiagnostics:{format:'yoofam-page-capture-diagnostics-v1',collectorVersion:fresh?'2.1.24':'2.1.23',sections:{tabCount:fresh?2:1,knownTabCount:0,panelCount:0,linkedKnownPanelCount:0,unlinkedKnownTabCount:0},description:fresh?'not-needed':'reference-missing'}});
 
 for(const company of [{code:'A01526306',name:'유앤채'},{code:'A01464742',name:'와이홉'}])test(company.code+': old pending save is truthfully acknowledged; only another explicit collection stores fresh version two',async()=>{
  const h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});try{
@@ -35,6 +36,7 @@ for(const company of [{code:'A01526306',name:'유앤채'},{code:'A01464742',name
   assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM source_inbox').get()),reviewedBefore);
   const second=await savePageSource({snapshot:fresh},sender,api,store);assert.equal(second.delivered,true);assert.equal(second.duplicate,false);assert.equal(second.pendingSnapshotReplayed,undefined);assert.notEqual(second.id,record.id);
   const latest=await h.load('db/source-inbox.ts').findSourceInbox('owner',offerId);assert.equal(latest.captureVersion,2);assert.equal(latest.snapshot.options[0].packaging.weightG,10);assert.equal(latest.snapshot.images.filter(row=>row.role==='detail').length,1);
+  assert.deepEqual(JSON.parse(JSON.stringify(latest.snapshot.captureDiagnostics)),fresh.captureDiagnostics);
   assert.equal(h.sqlite.prepare('SELECT payload FROM source_inbox').get().payload,oldRaw.payload);assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM source_inbox').get()),reviewedBefore);assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM products').all()),productsBefore);
   assert.equal(h.network.length,0);assert.equal(records.size,0);
  }finally{h.close();}

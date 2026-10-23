@@ -43,14 +43,14 @@ export async function POST(request:Request,context:Context){
    const latest=await snapshot(auth,id,body.profileId,scope);if(latest.signature!==initial.signature||JSON.stringify(await authorization())!==JSON.stringify(auth))throw changed();request.signal.throwIfAborted();};
   const settings=env as PackagingDraftEnvironment;let result;
   if(!packagingDraftNeedsAi(initial.plan))result=completeQuotationPackagingDraft(initial.plan);
-  else if(!packagingDraftConfigured(settings))result=completeQuotationPackagingDraft(initial.plan,null,0,'AI 연결을 확인하지 못해 누락 항목에 쿠플러스 방식의 기본 초안을 표시했습니다.');
+  else if(!packagingDraftConfigured(settings))result=completeQuotationPackagingDraft(initial.plan,null,0,'무료 AI 연결을 확인하지 못해 포장 추정값을 작성하지 않았습니다. 기존 입력을 유지했습니다.');
   else{
    await assertCurrent();
-   if(!await reserveQuotationAiRequest())result=completeQuotationPackagingDraft(initial.plan,null,0,'오늘의 무료 AI 공유 한도에 도달했습니다. 추가 호출 없이 기본 초안을 표시했습니다.');
+   if(!await reserveQuotationAiRequest())result=completeQuotationPackagingDraft(initial.plan,null,0,'오늘의 무료 AI 공유 한도에 도달해 포장 추정값을 작성하지 않았습니다. 기존 입력을 유지하고 추가 호출하지 않았습니다.');
    else{
     await assertCurrent();
     try{result=await executeQuotationPackagingDraft(initial.plan,settings.AI!,request.signal);}
-    catch(error){request.signal.throwIfAborted();result=completeQuotationPackagingDraft(initial.plan,null,1,error instanceof PackagingDraftError?error.message:'AI 응답을 확인하지 못했습니다. 추가 호출 없이 기본 초안을 표시했습니다.');}
+    catch(error){request.signal.throwIfAborted();result=completeQuotationPackagingDraft(initial.plan,null,1,error instanceof PackagingDraftError?error.message:'AI 응답을 확인하지 못해 포장 추정값을 작성하지 않았습니다. 기존 입력을 유지하고 추가 호출하지 않았습니다.');}
    }
   }
   await assertCurrent();return reply(result);

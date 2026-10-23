@@ -6,7 +6,7 @@ import { providedOptionModule as load } from './helpers/provided-option-quotatio
 
 const { runSelectedPackagingWork: run } = load('app/batch-selected-packaging-work.ts');
 const json = async response => { assert.equal(response.status, 200, await response.clone().text()); return response.json(); };
-const qwen = packages => ({ choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: JSON.stringify({ packages }) } }] });
+import {packagingResponse as qwen,packagingItem} from './helpers/quotation-packaging-provider.mjs';
 async function fixture(company = companies[0], count = 3) {
   const f = await apiFixture(company, aiFixture({ company }).snapshot), requests = [], models = [];
   const store = f.h.load('db/product-options.ts'), model = f.h.load('app/product-options.ts'), old = await store.readProductOptions('owner', f.id),
@@ -17,7 +17,7 @@ async function fixture(company = companies[0], count = 3) {
   assert.ok(await store.saveProductOptions('owner', options, old.revision, product.updated_at));
   f.h.bindings.SOURCEFLOW_QUOTATION_AI_PROVIDER = 'workers-ai'; f.h.bindings.SOURCEFLOW_QUOTATION_AI_FREE_ONLY = 'true';
   f.h.bindings.AI.run = async (model, input) => { models.push({ model, input }); const source = JSON.parse(input.messages[1].content.slice(0, -'\n/no_think'.length));
-    return qwen(source.packages.map(({ index }) => ({ index, widthMm: 60, lengthMm: 80, heightMm: 15 }))); };
+    return qwen(source.packages.map(item => packagingItem(item, { weightG: 35, widthMm: 60, lengthMm: 80, heightMm: 15 }))); };
   const read = () => f.h.route(f.base + '/quotation-fields' + f.query).then(json);
   const fetcher = async (url, init = {}) => { requests.push({ url, method: init.method ?? 'GET', body: init.body ? JSON.parse(init.body) : undefined });
     return f.h.route(url, { method: init.method ?? 'GET', ...(init.body ? { body: JSON.parse(init.body) } : {}) }); };
@@ -48,11 +48,11 @@ for (const company of companies) test(`${company.code}: explicit automatic work 
 });
 
 test('valid abstention and rejected10cube produce incomplete review with no save or automatic provider retry', async () => {
-  for (const mode of ['abstain', 'boundary', 'partial']) {
+  for (const mode of ['abstain', 'boundary', 'partial', 'empty']) {
     const f = await fixture(); try {
       f.h.bindings.AI.run = async (_model, input) => { f.models.push({ input }); const source = JSON.parse(input.messages[1].content.slice(0, -'\n/no_think'.length));
-        return qwen(source.packages.map(({ index }) => mode === 'boundary' ? { index, widthMm: 10, lengthMm: 10, heightMm: 10 }
-          : mode === 'partial' && index === 0 ? { index, widthMm: 60, lengthMm: 80, heightMm: 15 } : { index })); };
+        return qwen(mode === 'empty' ? [] : source.packages.map(item => packagingItem(item, mode === 'boundary' ? { widthMm: 10, lengthMm: 10, heightMm: 10 }
+          : mode === 'partial' && item.index === 0 ? { widthMm: 60, lengthMm: 80, heightMm: 15 } : {}))); };
       const before = f.state(), result = await run(f.id, await f.controls());
       assert.equal(result.status, 'incomplete'); assert.equal(result.changed, mode === 'partial' ? 1 : 0); assert.equal(result.remaining, mode === 'partial' ? 2 : 3);
       assert.equal(result.fallback, 0); assert.match(result.message, /완료되지 않았습니다/); assert.equal(f.models.length, 1);
@@ -63,15 +63,12 @@ test('valid abstention and rejected10cube produce incomplete review with no save
   }
 });
 
-test('provider failure may store only the existing explicitly marked Couplus fallback, never an AI estimate or measured source', async () => {
+test('V2 provider failure leaves work incomplete without defaults, save or provider replay', async () => {
   const f = await fixture(); try {
     f.h.bindings.AI.run = async () => { f.models.push({ attempted: true }); throw Error('synthetic provider delivery unknown'); };
-    const result = await run(f.id, await f.controls()); assert.equal(result.status, 'draft'); assert.equal(result.estimated, 0); assert.equal(result.fallback, 3);
-    assert.match(result.message, /쿠플러스 방식 기본 초안 3개/); assert.match(result.message, /실측값이 아닙니다/); assert.equal(f.models.length, 1);
-    const saved = await f.read(); for (const row of saved.resolved.rows.filter(row => row.included)) {
-      assert.equal(row.fields.packagedWeightG.value, '10');
-      assert.ok(Object.values(saved.packagingBasis.options[row.optionId]).every(value => value.value === '100*100*100' && value.nonMeasuredDraft.origin === 'couplus-fallback'));
-    }
+    const before=f.state(),result = await run(f.id, await f.controls()); assert.equal(result.status, 'incomplete'); assert.equal(result.estimated, 0); assert.equal(result.fallback, 0);assert.equal(result.remaining,3);
+    assert.equal(result.changed,0);assert.equal(f.models.length,1);assert.deepEqual(f.requests.map(call=>call.method),['POST']);assert.equal(f.state(),before);
+    assert.doesNotMatch(result.message,/기본 초안 3개/);
   } finally { f.close(); }
 });
 

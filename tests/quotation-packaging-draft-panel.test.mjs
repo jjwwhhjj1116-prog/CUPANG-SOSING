@@ -4,12 +4,13 @@ import {aiFixture} from './helpers/quotation-ai.mjs';
 import {quotationAiUI,nodes} from './helpers/quotation-ai-ui.mjs';
 import {apiFixture,companies} from './helpers/supplier-hub-single-projection.mjs';
 import {quotationLabelFormUI} from './helpers/quotation-label-form-ui.mjs';
+import {packagingResponse,packagingItem,legacyPackagingDraft} from './helpers/quotation-packaging-provider.mjs';
 const helper=load('app/quotation-packaging-draft.ts'),schema=load('app/quotation-schema.ts');
 const component='app/components/quotation-packaging-draft-panel.tsx',exportName='QuotationPackagingDraftPanel';
 function setup(){const f=aiFixture(),resolved=schema.resolveQuotationFields({categoryId:f.profile.categoryId,categoryPath:f.profile.categoryPath,product:f.product,content:f.content,settings:f.saved.settings,options:f.options,overrides:f.state.overrides,hubSchema:f.snapshot});
  const view={revision:0,inputFingerprint:'a'.repeat(64),overrides:f.state.overrides,resolved,automatic:resolved,categoryContext:f.saved.categoryContext,productVersion:f.product.updated_at,contentRevision:f.content.revision,optionRevision:f.options.revision,updatedAt:null,imageKeys:[],submissionReady:false,optionPackQuantities:Object.fromEntries(f.options.rows.map(row=>[row.id,row.unitsPerPack]))};
  const props={productId:f.product.id,view,optionId:f.options.rows[0].id,disabled:false,onApply:()=>true};
- const reply=body=>helper.completeQuotationPackagingDraft(helper.buildQuotationPackagingDraftPlan(view,f.options,{title:'合成后跟贴',description:'',attributes:[]},{optionId:body.optionId,applyToAllOptions:body.applyToAllOptions}));
+ const reply=body=>legacyPackagingDraft(helper,helper.buildQuotationPackagingDraftPlan(view,f.options,{title:'合成后跟贴',description:'',attributes:[]},{optionId:body.optionId,applyToAllOptions:body.applyToAllOptions}));
  return{f,view,props,reply};}
 test('panel starts with no request and only stages clearly labelled reviewed estimates without autosave',async()=>{
  const f=setup(),applied=[],busy=[];const ui=quotationAiUI({...f.props,onApply:changes=>{applied.push(changes);return true;},onBusyChange:value=>busy.push(value)},async(_url,init)=>Response.json(f.reply(JSON.parse(init.body))),component,exportName);
@@ -17,6 +18,27 @@ test('panel starts with no request and only stages clearly labelled reviewed est
   assert.equal(ui.button('확인한 초안을 입력란에 적용').props.disabled,true);assert.match(JSON.stringify(ui.render()),/실측값이 아닙니다/);
   ui.checkbox(1).props.onChange({target:{checked:true}});await ui.click('확인한 초안을 입력란에 적용');assert.equal(applied.length,1);assert.equal(applied[0].length,4);assert.equal(ui.calls.length,1);assert.deepEqual(busy,[true,false]);assert.equal(ui.button('확인한 초안을 입력란에 적용'),undefined);
  }finally{ui.unmount();}
+});
+
+test('empty-draft UI distinguishes explicit AI abstention from malformed responses without applying values',async()=>{
+ const f=setup(),applied=[];
+ const plan=helper.buildQuotationPackagingDraftPlan(f.view,f.f.options,{title:'PRIVATE_PRODUCT_TEXT',description:'PRIVATE_DESCRIPTION',attributes:[]},{optionId:f.props.optionId,applyToAllOptions:true});
+ const text=tree=>nodes(tree).map(node=>node.props.children).flat(Infinity).filter(value=>['string','number'].includes(typeof value)).join(' ').replace(/\s+/gu,' ').trim();
+ for(const valid of [true,false]){
+  const response=helper.completeQuotationPackagingDraft(plan,packagingResponse(valid?plan.targets.map((_,index)=>packagingItem({index,requested:{weight:true,dimensions:true}},{})):[]),1);
+  const ui=quotationAiUI({...f.props,onApply:changes=>{applied.push(changes);return true;}},async()=>Response.json(response),component,exportName);
+  try{
+   await ui.click('포장 규격 초안 작성');const rendered=text(ui.render());
+   assert.match(rendered,/packaging-estimate-v3/);assert.match(rendered,/응답 계약 V 2/);
+   if(valid){assert.match(rendered,/AI 응답 확인: 요청 2 개 · 응답 2 개/);assert.match(rendered,/AI가 상품 종류·형태 정보 부족 사유로 포장 사이즈 추정을 보류했다고 응답/);assert.match(rendered,/사이즈 보류: 상품 종류·형태 정보 부족/);}
+   else{assert.match(rendered,/invalid-package-count/);assert.match(rendered,/응답 형식 오류/);assert.doesNotMatch(rendered,/보류했다고 응답/);}
+   assert.doesNotMatch(rendered,/PRIVATE_PRODUCT_TEXT|PRIVATE_DESCRIPTION/);assert.equal(ui.button('확인한 초안을 입력란에 적용').props.disabled,true);assert.equal(applied.length,0);assert.equal(ui.calls.length,1);
+  }finally{ui.unmount();}
+ }
+ const response=helper.completeQuotationPackagingDraft(plan,packagingResponse([]),1),forged={...response,diagnostics:{...response.diagnostics,raw:'PRIVATE_PROVIDER_TEXT'}};
+ const rejected=quotationAiUI(f.props,async()=>Response.json(forged),component,exportName);
+ try{await rejected.click('포장 규격 초안 작성');assert.match(rejected.alerts().join(' '),/진단 형식/);assert.doesNotMatch(text(rejected.render()),/PRIVATE_PROVIDER_TEXT/);assert.equal(rejected.button('확인한 초안을 입력란에 적용'),undefined);}
+ finally{rejected.unmount();}
 });
 test('scope switching discards previous drafts and selected-only requests cannot copy estimates to other options',async()=>{
  const f=setup(),applied=[];const ui=quotationAiUI({...f.props,onApply:changes=>{applied.push(changes);return true;}},async(_url,init)=>Response.json(f.reply(JSON.parse(init.body))),component,exportName);
@@ -42,7 +64,7 @@ test('actual editor entry stages exact option changes and only explicit Save per
   const read=()=>f.h.route(f.base+'/quotation-fields'+f.query),view=await(await read()).json();
   ui=quotationLabelFormUI({productId:f.id,load:f.h.load,request:(path,init={})=>f.h.route(path.startsWith(f.base+'/quotation-fields')&&!path.includes('?')?path+f.query:path,{method:init.method??'GET',body:init.body}),renderDocument:()=>assert.fail('packaging never renders images')});await ui.idle();ui.selectOption('synthetic-one');
   const boundary=nodes(ui.render().tree).find(node=>node.type==='@/app/components/quotation-packaging-draft-panel');assert.ok(boundary,'real editor exposes the packaging draft entry '+JSON.stringify({alerts:ui.alerts(),types:nodes(ui.render().tree).map(node=>node.type).filter(value=>typeof value==='string'&&value.includes('packag'))}));
-  const selectedView=boundary.props.view,options=await f.h.load('db/product-options.ts').readProductOptions('owner',f.id),plan=f.h.load('app/quotation-packaging-draft.ts').buildQuotationPackagingDraftPlan(selectedView,options,{title:'合成后跟贴',description:'',attributes:[]},{optionId:null,applyToAllOptions:true}),draft=f.h.load('app/quotation-packaging-draft.ts').completeQuotationPackagingDraft(plan);
+  const selectedView=boundary.props.view,options=await f.h.load('db/product-options.ts').readProductOptions('owner',f.id),plan=f.h.load('app/quotation-packaging-draft.ts').buildQuotationPackagingDraftPlan(selectedView,options,{title:'合成后跟贴',description:'',attributes:[]},{optionId:null,applyToAllOptions:true}),draft=legacyPackagingDraft(f.h.load('app/quotation-packaging-draft.ts'),plan);
   const changes=f.h.load('app/quotation-packaging-draft.ts').quotationPackagingDraftChanges(selectedView,draft,f.id,{optionId:null,applyToAllOptions:true}),drafts=f.h.load('app/quotation-packaging-draft.ts').quotationPackagingDraftInputs(selectedView,draft,f.id,{optionId:null,applyToAllOptions:true}),before=f.state();
   assert.equal(boundary.props.onApply(changes,drafts),true);assert.equal(f.state(),before,'apply writes to the unsaved editor only');assert.equal(ui.button('견적 입력 저장').props.disabled,false);
   await ui.click('견적 입력 저장');assert.equal(ui.savedNotifications,1);const saved=await(await read()).json();
@@ -57,7 +79,7 @@ test('lost Save acknowledgement recovers exact alias metadata from readback with
  try{
   ui=quotationLabelFormUI({productId:f.id,load:f.h.load,request:async(path,init={})=>{const response=await f.h.route(path.startsWith(f.base+'/quotation-fields')&&!path.includes('?')?path+f.query:path,{method:init.method??'GET',body:init.body});if(init.method==='PUT'){puts++;throw new TypeError('synthetic lost acknowledgement');}return response;},renderDocument:()=>assert.fail('no image rendering')});await ui.idle();ui.selectOption('synthetic-one');
   const boundary=nodes(ui.render().tree).find(node=>node.type==='@/app/components/quotation-packaging-draft-panel'),view=boundary.props.view,options=await f.h.load('db/product-options.ts').readProductOptions('owner',f.id),helper=f.h.load('app/quotation-packaging-draft.ts'),scope={optionId:null,applyToAllOptions:true};
-  const result=helper.completeQuotationPackagingDraft(helper.buildQuotationPackagingDraftPlan(view,options,{title:'合成包装',description:'',attributes:[]},scope)),changes=helper.quotationPackagingDraftChanges(view,result,f.id,scope),drafts=helper.quotationPackagingDraftInputs(view,result,f.id,scope);
+  const result=legacyPackagingDraft(helper,helper.buildQuotationPackagingDraftPlan(view,options,{title:'合成包装',description:'',attributes:[]},scope)),changes=helper.quotationPackagingDraftChanges(view,result,f.id,scope),drafts=helper.quotationPackagingDraftInputs(view,result,f.id,scope);
   assert.equal(boundary.props.onApply(changes,drafts),true);await ui.click('견적 입력 저장');assert.equal(ui.savedNotifications,0);assert.equal(puts,1);assert.equal(ui.button('견적 입력 저장').props.disabled,false);
   await ui.click('기본값 다시 반영');assert.equal(ui.button('견적 입력 저장').props.disabled,true);assert.equal(puts,1);assert.match(JSON.stringify(ui.render().tree),/실측값이 아닙니다/);
  }finally{ui?.close();f.close();}
@@ -70,7 +92,7 @@ for(const sourceAction of ['edit','reset'])test(`real bulk copy seals target dra
   const updated=optionModel.applyOptionRows(old,inputs,new Date(Date.parse(product.updated_at)+1).toISOString());assert.ok(await store.saveProductOptions('owner',updated,old.revision,product.updated_at));
   ui=quotationLabelFormUI({productId:f.id,load:f.h.load,request:(path,init={})=>{if(init.method==='PUT')writes.push(JSON.parse(init.body));return f.h.route(path.startsWith(f.base+'/quotation-fields')&&!path.includes('?')?path+f.query:path,{method:init.method??'GET',body:init.body});},renderDocument:()=>assert.fail('no image rendering')});await ui.idle();ui.selectOption('synthetic-one');
   const boundary=nodes(ui.render().tree).find(node=>node.type==='@/app/components/quotation-packaging-draft-panel'),view=boundary.props.view,helper=f.h.load('app/quotation-packaging-draft.ts'),scope={optionId:'synthetic-one',applyToAllOptions:false};
-  const result=helper.completeQuotationPackagingDraft(helper.buildQuotationPackagingDraftPlan(view,updated,{title:'合成包装',description:'',attributes:[]},scope)),changes=helper.quotationPackagingDraftChanges(view,result,f.id,scope),drafts=helper.quotationPackagingDraftInputs(view,result,f.id,scope),weight=changes.find(change=>!change.value.includes('*'));
+  const result=legacyPackagingDraft(helper,helper.buildQuotationPackagingDraftPlan(view,updated,{title:'合成包装',description:'',attributes:[]},scope)),changes=helper.quotationPackagingDraftChanges(view,result,f.id,scope),drafts=helper.quotationPackagingDraftInputs(view,result,f.id,scope),weight=changes.find(change=>!change.value.includes('*'));
   assert.equal(boundary.props.onApply(changes,drafts),true);
   const card=()=>nodes(ui.render().tree).find(node=>node.type==='div'&&node.props.className?.startsWith('quotation-field ')&&nodes(node).some(input=>input.props.id?.endsWith('-'+weight.fieldKey)));
   const checkbox=nodes(card()).find(node=>node.type==='input'&&node.props.type==='checkbox');assert.ok(checkbox);checkbox.props.onChange({target:{checked:true}});

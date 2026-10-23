@@ -1,7 +1,16 @@
-import {validatePageSource,validatePageSourceForDelivery,pageSourceIssues,type PageSource} from '@/extensions/supplier-hub/page-source.mjs';
+import {validatePageSource,validatePageSourceForDelivery,validatePageSourceCaptureDiagnostics,pageSourceIssues,type PageSource,type PageSourceCaptureDiagnostics} from '@/extensions/supplier-hub/page-source.mjs';
 import {validateCollectionResult,type CollectionResult} from '@/app/collection-result';
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 export type SourceInboxItem={id:string;ownerId:string;company:SupplierHubCompany;fingerprint:string;snapshot:PageSource;revision:number;receivedAt:string;reviewed:PageSource|null;issues:string[];warnings?:string[];archivedAt:string|null;captureOriginId?:string;captureVersion?:number};
+/** Display the immutable capture only; diagnostics never change source readiness. */
+export function sourceInboxCaptureSummary(snapshot:PageSource){
+ const counts={attributes:snapshot.attributes.length,packaging:snapshot.options.filter(option=>option.packaging&&(['weightG','widthMm','lengthMm','heightMm'] as const)
+  .some(key=>{const value=option.packaging?.[key];return typeof value==='number'&&value>0;})).length,options:snapshot.options.length,detailImages:snapshot.images.filter(image=>image.role==='detail').length};
+ let diagnostics:PageSourceCaptureDiagnostics|null=null;
+ if(!Object.hasOwn(snapshot,'captureDiagnostics'))return {...counts,status:'missing' as const,diagnostics};
+ try{diagnostics=validatePageSourceCaptureDiagnostics(snapshot.captureDiagnostics);return {...counts,status:'available' as const,diagnostics};}
+ catch{return {...counts,status:'invalid' as const,diagnostics};}
+}
 /** Supplier MOQ is not needed to create an editable SEO/price draft. Its
  * unknown value stays null. A captured row key can identify an editable option
  * without inventing a supplier SKU. Price and currency still need proof. */

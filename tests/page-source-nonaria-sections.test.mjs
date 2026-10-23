@@ -43,6 +43,29 @@ test('non-ARIA Chinese/Korean section headings retain native and div package tab
  }
 });
 
+test('Korean parameter headings recognized by section diagnostics also collect exact current-product facts',()=>{
+ for(const attributeHeading of ['제품 매개 변수','상품 매개 변수'])for(const native of [false,true]){
+  const html=layout({translated:true,grouped:true,native}).replaceAll('제품 속성',attributeHeading).replaceAll('포장 정보','포장 매개 변수');
+  const {document,result}=capture(html);
+  assert.equal(readProductSectionStructure(document).bodyLabelCount,3);
+  assert.deepEqual(result.attributes,[{name:'材质',value:'海绵'},{name:'产品类别',value:'后跟贴'}]);
+  assert.deepEqual(result.options.map(row=>[row.name,row.packaging]),names.map(name=>[name,{source:'package-table',weightG:10}]));
+  assert.deepEqual(result.images.filter(row=>row.role==='detail').map(row=>row.url),[image('detail-1'),image('detail-2')]);
+  assert.throws(()=>capture(html.replaceAll('무게(g)','무게')),/속성·포장 표/u);
+  assert.throws(()=>capture(html.replace('data-sku-id="synthetic-0"','data-sku-id="foreign-sku"')),/포장 표의 옵션명·SKU/u);
+ }
+});
+
+test('Korean parameter labels cannot authorize navigation, unrelated products or loose heading text',()=>{
+ const sections='<section><h3>제품 매개 변수</h3><div><span>材质</span><span>海绵</span></div></section>'
+  +'<section><h3>포장 매개 변수</h3><table><tr><th>颜色</th><th>重量(g)</th></tr><tr><td>'+names[0]+'</td><td>10</td></tr></table></section>';
+ for(const [open,close]of [['<nav>','</nav>'],['<aside>','</aside>'],['<div class="recommendations">','</div>'],['<a href="https://detail.1688.com/offer/700000000999.html">','</a>']]){
+  const {result}=capture(open+sections+close);assert.deepEqual(result.attributes,[]);assert.ok(result.options.every(row=>row.packaging===undefined));
+ }
+ const {result}=capture(sections.replaceAll('매개 변수','매개 변수 추가'));
+ assert.deepEqual(result.attributes,[]);assert.ok(result.options.every(row=>row.packaging===undefined));
+});
+
 test('CSS package tables still require exact SKU/name, explicit units and rectangular rows',()=>{
  const base=layout({translated:true,grouped:true});
  for(const mutate of [

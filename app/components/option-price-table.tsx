@@ -41,6 +41,7 @@ export function PricePolicyRatio({policy}:{policy:Pick<PricePolicy,'supplyMargin
     <div className="price-policy-ratio-labels">{parts.map(part=><span key={part.id}>{part.label}</span>)}</div>
     {valid?<div className="price-policy-ratio-bar">{parts.map(part=><span key={part.id} data-price-ratio={part.id} style={{width:`${part.value}%`}} aria-label={`${part.label} ${part.value.toFixed(0)}%`}>{part.value.toFixed(0)}%</span>)}</div>
       :<p role="status">공급·쿠팡 마진율을 확인하면 비율이 표시됩니다.</p>}
+    {valid&&<small>입력한 설정 비율입니다. 아래 가격 요약은 최소 마진액·가격 반올림·직접 입력한 가격을 적용한 실제 계산 결과입니다.</small>}
   </section>;
 }
 
@@ -53,7 +54,7 @@ export function OptionPriceSummary({rows,calculations,priceController}:{rows:rea
   return <section className="option-price-grid-summary" aria-label="전체 옵션 가격 요약"><header><h4>가격 요약</h4><small>전체 견적 포함 {rows.filter(row=>row.included).length}개 · 계산 가능 {valid.length}개</small></header><div>
     <article><h5>평균 공급가</h5><strong>{averages.supply===null?'—':won(averages.supply)}</strong><p>평균 공급 마진: {averages.supplyMargin===null?'—':won(averages.supplyMargin)}</p></article>
     <article><h5>평균 판매가</h5><strong>{averages.sale===null?'—':won(averages.sale)}</strong><p>평균 쿠팡 마진: {averages.coupangMargin===null?'—':won(averages.coupangMargin)}</p></article>
-    <article><h5>평균 마진율</h5><strong>공급: {averages.supplyRate===null?'—':percent(averages.supplyRate)}</strong><p>쿠팡: {averages.coupangRate===null?'—':percent(averages.coupangRate)}</p></article>
+    <article><h5>평균 마진율</h5><strong>공급: {averages.supplyRate===null?'—':percent(averages.supplyRate)}</strong><p>쿠팡: {averages.coupangRate===null?'—':percent(averages.coupangRate)}</p><small>공급 마진율은 공급가 기준 · 쿠팡 마진율은 판매가 기준</small></article>
   </div></section>;
 }
 

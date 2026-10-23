@@ -477,9 +477,36 @@ export function extractPageSource(input,now=Date.now()){
  }
  return validatePageSourceForDelivery({format:'yoofam-page-source-v1',...identity,collectedAt:new Date(now).toISOString(),title,description:plain(input.description,20000),options:observed.options,images,attributes:observed.attributes},now);
 }
+/** Inert capture evidence only. Counts never authorize reading more of the
+ * page or claim that missing product facts were collected. */
+export function validatePageSourceCaptureDiagnostics(input){
+ const exact=(value,required,optional=[])=>{
+  if(!object(value))return false;
+  const descriptors=Object.getOwnPropertyDescriptors(value),keys=Reflect.ownKeys(descriptors);
+  return required.every(key=>Object.hasOwn(descriptors,key))&&keys.every(key=>typeof key==='string'&&[...required,...optional].includes(key)&&descriptors[key].enumerable&&Object.hasOwn(descriptors[key],'value'));
+ };
+ const count=(value,max)=>Number.isSafeInteger(value)&&value>=0&&value<=max;
+ const invalid=()=>{throw Error('수집 진단 기록의 형식·범위를 확인해주세요.');};
+ if(!exact(input,['format','collectorVersion','sections','description'],['bodyTitles'])||input.format!=='yoofam-page-capture-diagnostics-v1'
+  ||typeof input.collectorVersion!=='string'||!/^\d{1,6}\.\d{1,6}\.\d{1,6}$/u.test(input.collectorVersion)
+  ||!['not-needed','reference-missing','reference-invalid','unavailable','captured'].includes(input.description))invalid();
+ const sections=input.sections;
+ if(!exact(sections,['tabCount','knownTabCount','panelCount','linkedKnownPanelCount','unlinkedKnownTabCount'])
+  ||!count(sections.tabCount,300)||!count(sections.panelCount,300)||!count(sections.knownTabCount,30)
+  ||!count(sections.linkedKnownPanelCount,30)||!count(sections.unlinkedKnownTabCount,30)
+  ||sections.knownTabCount>sections.tabCount||sections.linkedKnownPanelCount>sections.panelCount
+  ||sections.linkedKnownPanelCount+sections.unlinkedKnownTabCount!==sections.knownTabCount)invalid();
+ if(Object.hasOwn(input,'bodyTitles')){
+  const titles=input.bodyTitles;
+  if(!exact(titles,['attributes','packaging','detail'])||!count(titles.attributes,60)||!count(titles.packaging,60)||!count(titles.detail,60)
+   ||titles.attributes+titles.packaging+titles.detail>60)invalid();
+ }
+ return JSON.parse(JSON.stringify(input));
+}
 export function validatePageSource(input,now=Date.now()){
- const keys=['format','sourceUrl','offerId','collectedAt','title','description','options','images','attributes'];
+ const keys=['format','sourceUrl','offerId','collectedAt','title','description','options','images','attributes','captureDiagnostics'];
  if(!object(input)||Object.keys(input).some(key=>!keys.includes(key))||input.format!=='yoofam-page-source-v1'||JSON.stringify(input).length>PAGE_SOURCE_LIMIT)throw Error('상품 수집 내용의 형식·크기를 확인해주세요.');
+ if(Object.hasOwn(input,'captureDiagnostics'))validatePageSourceCaptureDiagnostics(input.captureDiagnostics);
  const identity=pageSourceUrl(input.sourceUrl);
  if(input.sourceUrl!==identity.sourceUrl||input.offerId!==identity.offerId||typeof input.collectedAt!=='string'||!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(input.collectedAt)||!Number.isFinite(Date.parse(input.collectedAt))||Date.parse(input.collectedAt)>now+60000||!plain(input.title,500)||input.title!==plain(input.title,500)||typeof input.description!=='string'||input.description.length>20000)throw Error('상품 번호·상품명·수집 시각을 확인해주세요.');
  if(!Array.isArray(input.options)||input.options.length>200||!Array.isArray(input.images)||!input.images.length||input.images.length>200||!Array.isArray(input.attributes)||input.attributes.length>50)throw Error('현재 상품의 옵션·이미지를 확인해주세요.');
