@@ -96,10 +96,45 @@ test('provider request uses public product text/local option indices without inv
   assert.doesNotMatch(input.messages[0].content,/weightG["']?\s*:\s*100|widthMm["']?\s*:\s*100|lengthMm["']?\s*:\s*100|heightMm["']?\s*:\s*100/u);
   assert.doesNotMatch(input.messages[0].content,/\b10\b|\b1000\b/u);
   assert.match(input.messages[0].content,/omit that field/);
+  assert.match(input.messages[0].content,/too ambiguous for a realistic estimate/);
   assert.deepEqual(plain(input.response_format.json_schema.properties.packages.items.required),['index']);
   for(const privateValue of [f.product.id,f.product.owner_id,f.profile.id,f.options.rows[0].id,f.saved.company.code])assert.ok(!JSON.stringify(source).includes(privateValue));
   return qwen(source.packages.map(({index})=>({index,weightG:20,widthMm:30,lengthMm:40,heightMm:5})));}},new AbortController().signal);
  assert.equal(calls.length,1);assert.equal(calls[0].model,'@cf/qwen/qwen3-30b-a3b-fp8');assert.equal(calls[0].input.max_tokens,2048);assert.equal(calls[0].input.temperature,0);assert.ok(result.proposals.some(item=>item.value==='30*40*5'));
+});
+
+test('missing dimensions request type-based estimates for each exact sale pack while protected weight remains context',async()=>{
+ const f=fixture();for(const [index,option]of f.options.rows.entries()){
+  option.unitsPerPack=index===0?3:1;option.packagingUnitsPerPack=option.unitsPerPack;option.packagedWeightG=index===0?30:10;
+  option.provenance.packagedWeightG='manual';option.originalName=index===0?'\u7845\u80f6\u540e\u8ddf\u8d34 \u4e09\u5bf9':'\u7845\u80f6\u540e\u8ddf\u8d34 \u4e00\u5bf9';
+ }
+ const plan=f.plan(),before=JSON.stringify({options:f.options,plan}),calls=[];
+ const result=await helper.executeQuotationPackagingDraft(plan,{run:async(_model,input)=>{
+  const instructions=input.messages[0].content,source=JSON.parse(input.messages[1].content.slice(0,-'\n/no_think'.length));calls.push(source);
+  assert.match(instructions,/infer a realistic final shipping package from the product type, material and form/);
+  assert.match(instructions,/each original option and size, and its exact unitsPerPack/);
+  assert.match(instructions,/Exact supplier measurements are not required for an estimate/);
+  assert.match(instructions,/sale-pack contents and protective packaging/);
+  assert.match(instructions,/each option independently without borrowing other options' specifications/);
+  assert.match(instructions,/protected saved package weight.*consistency constraint.*do not replace that weight or multiply it again by unitsPerPack/);
+  assert.match(instructions,/Do not omit a field solely because explicit packaging measurements are absent/);
+  assert.match(instructions,/Never invent supplier statements or collected measurements/);
+  assert.match(instructions,/never claim inferred estimates as measured/);
+  assert.match(instructions,/Preserve thin package dimensions/);
+  assert.match(instructions,/never substitute generic numeric defaults/);
+  assert.deepEqual(plain(source.product),facts);
+  assert.deepEqual(source.packages.map(item=>item.unitsPerPack),[3,1]);
+  assert.deepEqual(source.packages.map(item=>item.originalName),f.options.rows.map(item=>item.originalName));
+  for(const [index,item]of source.packages.entries()){
+   assert.deepEqual(plain(item.collectedPackage),{});
+   assert.deepEqual(plain(item.reviewedPackage.weight),{origin:'saved-quotation',source:'option',measured:false,values:{weightG:index===0?30:10}});
+  }
+  return qwen(source.packages.map(({index})=>({index,weightG:999,widthMm:60,lengthMm:80,heightMm:index===0?12:4})));
+ }},new AbortController().signal);
+ assert.equal(calls.length,1);assert.equal(JSON.stringify({options:f.options,plan}),before);
+ assert.equal(result.proposals.length,2);assert.ok(result.proposals.every(item=>item.origin==='ai-estimate'&&item.measured===false&&item.value.includes('*')));
+ assert.deepEqual(plain(result.proposals.map(item=>item.value)),['60*80*12','60*80*4']);
+ assert.deepEqual(plain(result.proposals.map(item=>item.unitsPerPack)),[3,1]);
 });
 
 test('a current sealed common10g quotation value reaches size-only AI as reviewed context, never collected',async()=>{

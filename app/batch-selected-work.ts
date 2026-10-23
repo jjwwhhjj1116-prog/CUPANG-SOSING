@@ -15,6 +15,7 @@ import { runSelectedLabelWork } from '@/app/batch-selected-label-work';
 import { readRegistrationLayout } from '@/app/registration-layout';
 import { runSelectedPricingWork } from '@/app/batch-selected-pricing-work';
 import { quotationKnownNoticeProposals } from '@/app/quotation-known-notice-proposals';
+import { runSelectedPackagingWork } from '@/app/batch-selected-packaging-work';
 
 export type SelectedBatchStageResult = { id: AutomationStageId; status: 'waiting'|'running'|'draft'|'complete'|'blocked'|'failed'|'skipped'; message: string };
 type Controls = { stages: readonly AutomationStageId[]; expectedOwnerId: string; signal: AbortSignal; fetcher: typeof fetch;
@@ -184,9 +185,12 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
       view=await once('quotation:'+job.id,()=>post<QuotationFieldsView>('/quotation-fields',{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes},'PUT'));
       confirmQuotationFieldsSave(previous,view,changes);
     }
+    const packaging=await once('packaging:'+view.inputFingerprint,()=>runSelectedPackagingWork(productId,{view,signal,fetcher,assertCurrent}));
+    view=packaging.view;
     const missing=view.resolved.rows.filter(row=>row.included).flatMap(row=>view.resolved.schema.fields.filter(field=>field.required
       &&(!row.fields[field.id]?.value.trim()||row.fields[field.id]?.validationIssues?.length)).map(field=>field.label));
-    return{status:missing.length?'blocked':'draft',message:'견적서 AI 항목 '+aiChanges.length+'개'+(knownChanges.length?' · 저장된 제조·상담 정보 '+knownChanges.length+'개':'')+'를 저장했습니다.'+(missing.length?' 필수 입력 확인: '+[...new Set(missing)].slice(0,8).join(', ')+'.':' 견적서에서 최종 검토 후 등록전송할 수 있습니다.')};
+    const incomplete=missing.length>0||packaging.status==='incomplete'||packaging.remaining>0;
+    return{status:incomplete?'blocked':'draft',message:'견적서 AI 항목 '+aiChanges.length+'개'+(knownChanges.length?' · 저장된 제조·상담 정보 '+knownChanges.length+'개':'')+'를 저장했습니다. '+packaging.message+(missing.length?' 필수 입력 확인: '+[...new Set(missing)].slice(0,8).join(', ')+'.':incomplete?' 남은 포장값은 7단계에서 확인해주세요.':' 견적서에서 최종 검토 후 등록전송할 수 있습니다.')};
   }
   const result:SelectedBatchStageResult[]=automationStages.filter(id=>controls.stages.includes(id)).map(id=>({id,status:'waiting',message:'실행 대기'}));
   const publish=(index:number,outcome:Outcome)=>{result[index]={id:result[index].id,status:outcome.status,message:outcome.message};controls.onStage({...result[index]});};

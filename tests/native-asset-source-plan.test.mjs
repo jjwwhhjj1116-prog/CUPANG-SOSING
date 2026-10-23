@@ -63,6 +63,13 @@ test('unconfirmed legality, unsupported image source roles/HTML and invalid pric
  for(const kind of ['legal','html','price','wire']){const f=await fixture();if(kind==='legal')f.input.nativeLegalAttachmentPlan.metadataValid=false;if(kind==='html')f.input.projection.payload.jsonDocument[0].imagePage.details.htmlProductDetailContent='<img src="https://invalid.test/original.png">';if(kind==='price')f.input.projection.review.issues.push({code:'VALUE_INVALID',level:'error',message:'invalid saved price',optionId:'synthetic-one'});if(kind==='wire')f.input.projection.review.unresolvedImages[0].wire.path=['imagePage','details','htmlProductDetailContent'];
   const plan=await source.buildNativeAssetSourcePlan(f.input);assert.equal(plan.metadataValid,false);assert.equal(plan.sourcePlanSha256,null);assert.ok(plan.issues.some(issue=>issue.level==='error'));assert.equal(plan.transportReady,false);}
 });
+
+test('legal source blocker exposes current safe plan reasons while retaining one blocking issue and no capability',async()=>{
+ const f=await fixture();f.input.nativeLegalAttachmentPlan.metadataValid=false;f.input.nativeLegalAttachmentPlan.planSha256=null;
+ f.input.nativeLegalAttachmentPlan.issues=[{code:'NATIVE_LEGAL_APPLICABILITY_UNCONFIRMED',message:'실제 상품의 서류 해당 여부를 직접 확인해주세요.'},{code:'NATIVE_LEGAL_CONTEXT_ISSUES',message:'현재 원본 서류의 누락·미연결·저장값 문제를 먼저 해결해주세요.'}];
+ const plan=await source.buildNativeAssetSourcePlan(f.input),issues=plan.issues.filter(issue=>issue.code==='NATIVE_ASSET_LEGAL_UNCONFIRMED');
+ assert.equal(issues.length,1);assert.match(issues[0].message,/서류 해당 여부.*누락·미연결·저장값/);assert.equal(plan.metadataValid,false);assert.equal(plan.sourcePlanSha256,null);assert.equal(plan.transportReady,false);
+});
 test('explicitly saved true agreement is preserved in the original body but deferred only in its independently hashed prepared form',async()=>{
  const f=await fixture();f.input.projection.payload.jsonDocument[0].imagePage.msrpAgree=true;
  const plan=await source.buildNativeAssetSourcePlan(f.input);assert.equal(plan.metadataValid,true,JSON.stringify(plan.issues));assert.equal(plan.body.jsonDocument[0].imagePage.msrpAgree,true);assert.notEqual(plan.originalBodySha256,plan.preparedBodySha256);

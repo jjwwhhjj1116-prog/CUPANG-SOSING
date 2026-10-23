@@ -87,8 +87,9 @@ export async function buildNativeLegalAttachmentPlan(input:{context:NativeLegalC
   if(!own(context,['schemaSha256','categoryId','company','targets','issues','files','registered','remoteWrites','submissionReady'])||context.registered!==false||context.remoteWrites!==false||context.submissionReady!==false
    ||context.schemaSha256!==identity.schemaSha256||context.categoryId!==identity.categoryId||!same(context.company,identity.company)
    ||!dense(context.targets,405)||!dense(context.issues,500)||!dense(context.files,10))throw Error('현재 검증된 카테고리·서류 연결 문맥이 필요합니다.');
-  if(context.issues.length){add('NATIVE_LEGAL_CONTEXT_ISSUES','현재 원본 서류의 누락·미연결·저장값 문제를 먼저 해결해주세요.');return plan;}
-  if(raw.applicability==='unconfirmed'){add('NATIVE_LEGAL_APPLICABILITY_UNCONFIRMED','실제 상품의 서류 해당 여부를 직접 확인해주세요.');return plan;}
+  if(raw.applicability==='unconfirmed')add('NATIVE_LEGAL_APPLICABILITY_UNCONFIRMED','실제 상품의 서류 해당 여부를 직접 확인해주세요.');
+  if(context.issues.length)add('NATIVE_LEGAL_CONTEXT_ISSUES','현재 원본 서류의 누락·미연결·저장값 문제를 먼저 해결해주세요.');
+  if(plan.issues.length)return plan;
   if(raw.applicability==='required'&&!context.files.length){add('NATIVE_LEGAL_FILE_MISSING','제출할 PDF 원본이 없습니다.');return plan;}
   if(raw.applicability==='not-applicable'&&context.files.length){add('NATIVE_LEGAL_APPLICABILITY_CONFLICT','서류 해당없음과 첨부 원본이 함께 있어 제출 계획을 만들지 않았습니다.');return plan;}
   const originals=readLegalDocuments({applicability:raw.applicability,files:context.files},identity.ownerId,identity.productId).files;

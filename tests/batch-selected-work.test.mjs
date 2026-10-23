@@ -19,6 +19,7 @@ function fixture(){
   '@/app/quotation-ai-client':{quotationAiViewCurrent:()=>true,quotationAiJobForScope:()=>null,quotationAiScopedProposalChanges:()=>[]},
   '@/app/quotation-fields-confirmation':{},
   '@/app/quotation-known-notice-proposals':providedOptionModule('app/quotation-known-notice-proposals.ts'),
+  '@/app/batch-selected-packaging-work':{async runSelectedPackagingWork(id,options){await options.assertCurrent();calls.push({adapter:'packaging',id,revision:options.view.revision,fingerprint:options.view.inputFingerprint});return {view:options.view,status:'unchanged',changed:0,estimated:0,fallback:0,remaining:0,recovered:false,message:'저장한 포장값을 유지했습니다.'};}},
   '@/app/registration-layout':{readRegistrationLayout:(raw,id,clock)=>{assert.equal(raw.productId,id);assert.equal(raw.productVersion,clock);return raw;}},
   '@/app/batch-selected-image-work':{createSelectedImageStageState:(ownerId,productId,stage)=>({ownerId,productId,stage,batches:{}}),async processSelectedImageStage(id,stage,options){calls.push({adapter:'image',id,stage,version:options.expectedProductVersion});return imageResult;}},
   '@/app/batch-selected-pricing-work':{async runSelectedPricingWork(id,options){await options.assertCurrent();const response=await options.fetcher('/api/products/'+id+'/stage-two-pricing');await options.assertCurrent();return await response.json();}},
@@ -176,6 +177,25 @@ test('explicit quotation work saves verified AI plus saved notice sources in one
  assert.deepEqual(h.writes[0].changes,[{optionId:'a',fieldKey:'notice3',value:'검토 재질'},{optionId:'a',fieldKey:'notice0',value:'제조자: 저장 제조사 / 수입자: 저장 수입사'},{optionId:'a',fieldKey:'notice1',value:'02-1234-5678'},{optionId:'b',fieldKey:'notice1',value:'02-1234-5678'}]);
  assert.equal(JSON.stringify({view:h.view,content:h.content}),before);assert.equal(h.calls.some(call=>call.method==='POST'),false);
  assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
+ assert.deepEqual(h.calls.find(call=>call.adapter==='packaging'),{adapter:'packaging',id:'product',revision:2,fingerprint:'b'.repeat(64)});
+});
+
+test('quotation work retains an incomplete packaging result instead of reporting a completed draft',async()=>{
+ const h=fixture();
+ h.deps['@/app/batch-selected-packaging-work'].runSelectedPackagingWork=async(_id,{view})=>({view,status:'incomplete',remaining:3,message:'포장 사이즈 3개는 확인할 자료가 필요합니다.'});
+ const result=await h.run(['quotation']);assert.equal(result.stages[0].status,'blocked');assert.match(result.stages[0].message,/포장 사이즈 3개/);
+ assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
+});
+
+test('uncertain packaging write blocks another request rather than resending the quotation stage',async()=>{
+ const h=fixture();let count=0;
+ h.deps['@/app/batch-selected-packaging-work'].runSelectedPackagingWork=async()=>{count++;throw Error('포장 저장 확인 실패');};
+ const first=await h.run(['quotation']);assert.equal(first.stages[0].status,'failed');
+ const retry=await h.run(['quotation']);assert.equal(retry.stages[0].status,'blocked');assert.equal(count,1);
+});
+
+test('non-quotation partial work never invokes packaging generation',async()=>{
+ const h=fixture();await h.run(['pricing','koreanLabel']);assert.equal(h.calls.some(call=>call.adapter==='packaging'),false);
 });
 test('stale or foreign saved label content blocks the combined quotation write',async()=>{
  for(const mutate of [content=>{content.revision=4;},content=>{content.productId='other';}]){

@@ -9,11 +9,12 @@ const native=createRequire(import.meta.url),origin='https://sourceflow.jjwwhhjj1
 const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
 const settle=async()=>{for(let i=0;i<12;i++)await new Promise(resolve=>setImmediate(resolve));};
 function load({hooks={},fetcher=()=>assert.fail('Unexpected request'),timers={setTimeout,clearTimeout},window:browser={location:{origin}},history=async()=>({records:[],blocked:false})}={}){
- const exports={};
+ const cache=new Map();
  const pending={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/supplier-hub-product-pending.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:pending,window:browser,Error,Date});
- vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/supplier-hub-product-submission.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
-  {exports,Error,AbortController,Uint8Array,TextDecoder,...timers,window:browser,fetch:fetcher,require(name){if(name==='react')return hooks;if(name==='@/app/components/supplier-hub-single-review')return{SupplierHubSingleReview:'native-review'};if(name==='@/app/components/legal-documents-editor')return{LegalDocumentsEditor:'legal-editor'};if(name==='@/app/supplier-hub-handoff')return{getSupplierHubProductHistory:history};if(name==='@/app/supplier-hub-product-pending')return pending;return name.startsWith('@/')?module(name.slice(2)+'.ts'):native(name);}});
- return exports;
+ function loadFile(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
+  {exports,Error,AbortController,Uint8Array,TextDecoder,...timers,window:browser,fetch:fetcher,require(name){if(name==='react')return hooks;if(name==='@/app/components/supplier-hub-single-review')return{SupplierHubSingleReview:'native-review'};if(name==='@/app/components/legal-documents-editor')return{LegalDocumentsEditor:'legal-editor'};if(name==='@/app/supplier-hub-legal-edit-scope')return loadFile('app/supplier-hub-legal-edit-scope.ts');if(name==='@/app/supplier-hub-handoff')return{getSupplierHubProductHistory:history};if(name==='@/app/supplier-hub-product-pending')return pending;return name.startsWith('@/')?module(name.slice(2)+'.ts'):native(name);}});return exports;}
+ return loadFile('app/components/supplier-hub-product-submission.tsx');
 }
 const reader=load().readSupplierHubProductSubmissionView;
 async function sample(company=companies[0]){

@@ -6,10 +6,10 @@ const model=providedOptionModule('app/native-legal-binding.ts'),legal=providedOp
 const companies=[{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}],path=['합성 법적 정보','원본 연결 시험'];
 const plain=value=>JSON.parse(JSON.stringify(value)),object=(properties,required=[])=>({type:'object',properties,required});
 const original=(index=1,type='pdf')=>({key:`owner/legal/product/ legal-00000000-0000-4000-8000-${String(index).padStart(12,'0')}.${type}`.replace('/ legal-','/legal-'),name:`직접 첨부한 원본 ${index}.${type}`,byteLength:120+index,sha256:String(index).repeat(64),type});
-function fixture({company=companies[0],value='인증번호-A',valueSchema={type:'string',enum:['인증번호-A','인증번호-B']},reverse=false,includeBuckets=true,certificates=['인증 A','인증 B']}={}){
+function fixture({company=companies[0],value='인증번호-A',valueSchema={type:'string',enum:['인증번호-A','인증번호-B']},reverse=false,includeBuckets=true,certificates=['인증 A','인증 B'],requiredBuckets=[]}={}){
  const certificate=name=>({contains:object(Object.fromEntries((reverse?['certificateValue','certificateName']:['certificateName','certificateValue']).map(key=>[key,key==='certificateName'?{type:'string',enum:[name]}:valueSchema])),['certificateName','certificateValue'])});
  const raw=object({startPage:object({productName:{type:'string'},categoryPath:{type:'string'}},['productName','categoryPath']),productPage:object({}),legalPage:object({
-  certificates:{type:'array',items:{},allOf:certificates.map(certificate)},...(includeBuckets?{msds:{type:['string','null'],enum:['Y','N',null]},additional:{type:'string'},import_type:{type:'string'},categoryCert:{type:'boolean'},adCert:{type:'number'}}:{})},['certificates'])},['startPage','productPage','legalPage']);
+  certificates:{type:'array',items:{},allOf:certificates.map(certificate)},...(includeBuckets?{msds:{type:['string','null'],enum:['Y','N',null]},additional:{type:'string'},import_type:{type:'string'},categoryCert:{type:'boolean'},adCert:{type:'number'}}:{})},['certificates',...requiredBuckets])},['startPage','productPage','legalPage']);
  raw.metadata='scope:Retail_Categorized_Single;categoryId:754;version:1;productNoticeCategoryId:25';
  const snapshot={format:'supplier-hub-schema-v1',company:{...company},categoryId:'991755',categoryPath:[...path],observedAt:Date.now(),schemaString:JSON.stringify(raw),metadata:{scopeType:'Retail_Categorized_Single',kanCategoryId:754,version:1,noticeNumber:25},draftInitialization:'couplus-required-v1',inputBindings:'couplus-paths-v1'};
  const data=providedOptionFixture({reviewedNames:true});data.options.rows.push({...structuredClone(data.options.rows[0]),id:'manual-option-2'});
@@ -70,6 +70,8 @@ test('included-option certificate or bucket disagreement blocks that shared targ
  const changed=f.resolve({'manual-option-2':{[cert.id]:'인증번호-B',[msds.id]:'N'}}),context=await model.buildNativeLegalContext({...f.input,resolved:changed});
  assert.ok(context.issues.some(issue=>issue.code==='NATIVE_LEGAL_OPTION_DISAGREEMENT'&&issue.fieldId===cert.id));
  assert.ok(context.issues.some(issue=>issue.code==='NATIVE_LEGAL_OPTION_DISAGREEMENT'&&issue.fieldId===msds.id));
+ assert.ok(context.issues.find(issue=>issue.fieldId===cert.id).message.startsWith(cert.label+':'));
+ assert.ok(context.issues.find(issue=>issue.fieldId===msds.id).message.startsWith(msds.label+':'));
  assert.ok(!context.targets.some(target=>target.binding.certificate?.fieldId===cert.id||target.binding.nativeType==='msds'));
  f.data.options.rows[1].included=false;const excluded=await model.buildNativeLegalContext({...f.input,resolved:f.resolve({'manual-option-2':{[cert.id]:'인증번호-B'}})});
  assert.ok(excluded.targets.some(target=>target.binding.certificate?.fieldId===cert.id));
@@ -104,4 +106,76 @@ test('stored binding metadata has an exact, bounded shape and cannot hide identi
  assert.throws(()=>legal.readLegalDocuments({applicability:'required',files:[file],nativeUploadVerified:true},'owner','product'));
  const copy=legal.readLegalDocuments({applicability:'required',files:[{...file,nativeBinding:binding}]},'owner','product');copy.files[0].nativeBinding.certificate.value='별도 복사본';assert.equal(binding.certificate.value,'인증번호-A');
  assert.equal(context.registered,false);assert.equal(context.remoteWrites,false);assert.equal(context.submissionReady,false);
+});
+
+function absentBucket({company=companies[0],required=false,nativeType='additional'}={}){
+ const f=fixture({company,requiredBuckets:required?[nativeType]:[]});
+ const field=f.current.fields.find(field=>field.hubWire?.path.join('.')===`legalPage.${nativeType}`);
+ delete f.common[field.id];f.input.resolved=f.resolve();
+ return {...f,field};
+}
+function attachmentIdentity(f,context){return {ownerId:'owner',productId:'product',company:{...f.input.company},categoryId:f.input.categoryId,categoryPath:[...f.input.categoryPath],schemaSha256:context.schemaSha256,
+ sourceFingerprint:'a'.repeat(64),inputFingerprint:'b'.repeat(64),source:{productVersion:'2026-10-20T01:00:00.000Z',contentRevision:1,optionRevision:2,quotationRevision:3,profileId:'profile',profileRevision:4},
+ members:f.input.resolved.rows.filter(row=>row.included).map((row,documentIndex)=>({optionId:row.optionId,optionLabel:row.optionLabel,documentIndex}))};}
+
+for(const company of companies)for(const applicability of ['not-applicable','unconfirmed'])test(`${company.code}: absent optional bucket is not a file target or error; applicability ${applicability} remains explicit`,async()=>{
+ const f=absentBucket({company}),documents={applicability,files:[]},before=JSON.stringify({input:f.input,documents});
+ assert.ok(f.input.resolved.rows.every(row=>row.fields[f.field.id].source==='empty'&&row.fields[f.field.id].value===''));
+ const context=await model.buildNativeLegalContext({...f.input,documents});
+ assert.deepEqual(plain(context.issues),[]);assert.ok(!context.targets.some(target=>target.binding.nativeType==='additional'));
+ const plan=await providedOptionModule('app/native-legal-attachment-plan.ts').buildNativeLegalAttachmentPlan({context,identity:attachmentIdentity(f,context),applicability});
+ assert.equal(plan.metadataValid,applicability==='not-applicable',JSON.stringify(plan.issues));
+ assert.deepEqual(plain(plan.issues.map(issue=>issue.code)),applicability==='unconfirmed'?['NATIVE_LEGAL_APPLICABILITY_UNCONFIRMED']:[]);
+ assert.equal(JSON.stringify({input:f.input,documents}),before,'omission does not declare applicability or change saved source');
+});
+
+test('missing required buckets and existing cell validation errors remain blocked',async()=>{
+ for(const nativeType of ['additional','import_type']){
+  const f=absentBucket({required:true,nativeType});
+  const context=await model.buildNativeLegalContext({...f.input,documents:{applicability:'not-applicable',files:[]}});
+  assert.ok(context.issues.some(issue=>issue.code==='NATIVE_LEGAL_VALUE_UNCONFIRMED'&&issue.fieldId===f.field.id),nativeType);
+ }
+ const f=absentBucket();f.input.resolved.rows.find(row=>row.included).fields[f.field.id].validationIssues=['저장값의 원문 제약 오류'];
+ const invalid=await model.buildNativeLegalContext({...f.input,documents:{applicability:'not-applicable',files:[]}});
+ assert.ok(invalid.issues.some(issue=>issue.code==='NATIVE_LEGAL_VALUE_UNCONFIRMED'&&issue.fieldId===f.field.id));
+});
+
+test('an actual invalid optional stored value is never treated as legitimate omission',async()=>{
+ const f=fixture(),field=f.current.fields.find(field=>field.hubWire?.path.join('.')==='legalPage.categoryCert');
+ f.common[field.id]='invalid-boolean';f.input.resolved=f.resolve();
+ const context=await model.buildNativeLegalContext({...f.input,documents:{applicability:'not-applicable',files:[]}});
+ assert.ok(context.issues.some(issue=>issue.code==='NATIVE_LEGAL_VALUE_UNCONFIRMED'&&issue.fieldId===field.id));
+ assert.ok(!context.targets.some(target=>target.binding.nativeType==='categoryCert'));
+});
+
+test('optional bucket missing from only one included option stays blocked, while excluded options cannot supply it',async()=>{
+ const f=absentBucket(),changes={'manual-option-2':{[f.field.id]:'직접 확인한 값'}};
+ f.input.resolved=f.resolve(changes);
+ const partial=await model.buildNativeLegalContext({...f.input,documents:{applicability:'not-applicable',files:[]}});
+ assert.ok(partial.issues.some(issue=>issue.code==='NATIVE_LEGAL_VALUE_UNCONFIRMED'&&issue.fieldId===f.field.id));
+ assert.ok(!partial.targets.some(target=>target.binding.nativeType==='additional'));
+ f.data.options.rows[1].included=false;f.input.resolved=f.resolve(changes);
+ const excluded=await model.buildNativeLegalContext({...f.input,documents:{applicability:'not-applicable',files:[]}});
+ assert.deepEqual(plain(excluded.issues),[]);assert.ok(!excluded.targets.some(target=>target.binding.nativeType==='additional'));
+});
+
+test('manual blank and exact nullable choice remain saved values rather than omitted targets',async()=>{
+ const f=absentBucket();f.common[f.field.id]='';
+ const msds=f.current.fields.find(field=>field.hubWire?.path.join('.')==='legalPage.msds');f.common[msds.id]='';f.input.resolved=f.resolve();
+ const context=await model.buildNativeLegalContext({...f.input,documents:{applicability:'not-applicable',files:[]}});
+ assert.deepEqual(plain(context.issues),[]);
+ for(const nativeType of ['additional','msds'])assert.ok(context.targets.some(target=>target.binding.nativeType===nativeType));
+});
+
+for(const stale of [false,true])test(`an omitted optional bucket never discards its existing PDF binding (stale=${stale})`,async()=>{
+ const f=fixture(),file=original(),documents={applicability:'required',files:[file]},base=await model.buildNativeLegalContext({...f.input,documents});
+ const target=base.targets.find(target=>target.binding.nativeType==='additional');
+ const binding=model.resolveNativeLegalBinding(base,file.key,target.id,base.schemaSha256);
+ if(stale)binding.schemaSha256='0'.repeat(64);
+ documents.files[0]={...file,nativeBinding:binding};
+ const field=f.current.fields.find(field=>field.hubWire?.path.join('.')==='legalPage.additional');delete f.common[field.id];f.input.resolved=f.resolve();
+ const before=JSON.stringify({input:f.input,documents}),context=await model.buildNativeLegalContext({...f.input,documents});
+ assert.ok(context.issues.some(issue=>issue.code==='NATIVE_LEGAL_VALUE_UNCONFIRMED'&&issue.fieldId===field.id));
+ assert.ok(context.issues.some(issue=>issue.code==='NATIVE_LEGAL_STALE_BINDING'&&issue.key===file.key));
+ assert.deepEqual(context.files,documents.files);assert.equal(JSON.stringify({input:f.input,documents}),before);
 });

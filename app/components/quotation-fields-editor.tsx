@@ -894,7 +894,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
       </details>
       {schema && <details className="quotation-source-evidence"><summary>견적 양식 확인 정보</summary><p>{schema.evidence}</p></details>}
       <details className="quotation-submission-tools" id={`${prefix}-submission-tools`} ref={submissionTools}><summary ref={submissionSummary}>저장한 견적 검토·전송</summary><p>견적 입력을 저장한 뒤 자료를 검토하고 전송을 준비하세요.</p>
-      <SupplierHubSingleReview productId={productId} profileId={profileId} view={view} disabled={!submissionActive || dirty || formBusy || loading || conflicts.length > 0} onLockChange={changeSubmissionLock} onReceiptSaved={onReceiptSaved} primaryProduct={true}/>
+      <SupplierHubSingleReview productId={productId} profileId={profileId} view={view} disabled={!submissionActive || dirty || formBusy || loading || conflicts.length > 0} onLockChange={changeSubmissionLock} onReceiptSaved={onReceiptSaved} onSourceChanged={message=>{const current=modelActionState.current;if(current.view!==view||current.changes.length||current.formBusy||current.loading||current.conflicts.length||!current.submissionActive)return;onSaved?.();void refresh(false,false,message);}} primaryProduct={true}/>
       </details>
     </>}
   </section>;

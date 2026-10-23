@@ -119,7 +119,8 @@ export async function buildNativeAssetSourcePlan(input:{identity:unknown;project
   if(owned.length>PRODUCT_IMAGE_POOL_LIMIT||new Set(owned).size!==owned.length||owned.some(key=>!isOwnedImageKey(identity.ownerId,key)))throw Error('현재 상품 소유 이미지 목록을 확인해주세요.');
   if(input.assets.length>PRODUCT_IMAGE_POOL_LIMIT||new Set(input.assets.map(asset=>asset.key)).size!==input.assets.length)throw Error('이미지 원본 읽기 목록이 중복되어 있습니다.');
   if(!same(legal.identity,identity)||legal.registered!==false||legal.remoteWrites!==false||legal.submissionReady!==false||legal.transportReady!==false||legal.bytesVerified!==false||!legal.metadataValid||legal.issues.length||!legal.planSha256){
-   add('NATIVE_ASSET_LEGAL_UNCONFIRMED','현재 서류 해당 여부·원본·카테고리 연결을 먼저 확인해주세요.');
+   const reasons=same(legal.identity,identity)?[...new Set(legal.issues.map(issue=>issue.message))]:[];
+   add('NATIVE_ASSET_LEGAL_UNCONFIRMED',reasons.length?reasons.slice(0,5).join(' '):'현재 서류 해당 여부·원본·카테고리 연결을 먼저 확인해주세요.');
   }else{
    const {planSha256:omitted,...manifest}=legal;void omitted;
    if(await digest(manifest)!==legal.planSha256||await digest(identity)!==legal.identityDigest)throw Error('원본 서류 계획의 저장 원천 해시가 다릅니다.');

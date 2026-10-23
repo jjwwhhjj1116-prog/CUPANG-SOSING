@@ -131,3 +131,9 @@ test('unconfirmed applicability remains blocked and explicit empty not-applicabl
  const empty=plain(input);empty.applicability='not-applicable';empty.context.files=[];const plan=await model.buildNativeLegalAttachmentPlan(empty);valid(plan);
  assert.equal(plan.applicability,'not-applicable');assert.deepEqual(plain(plan.files),[]);assert.deepEqual(plain(plan.groups),[]);assert.equal(plan.bytesVerified,false);assert.equal(plan.transportReady,false);
 });
+
+test('unconfirmed applicability stays visible alongside existing legal source issues without changing the blocking decision',async()=>{
+ const input=await fixture();input.applicability='unconfirmed';input.context.issues=[{code:'NATIVE_LEGAL_VALUE_UNCONFIRMED',message:'KC: 저장값 확인',fieldId:'kc'}];
+ const plan=await model.buildNativeLegalAttachmentPlan(input);invalid(plan,'NATIVE_LEGAL_APPLICABILITY_UNCONFIRMED');invalid(plan,'NATIVE_LEGAL_CONTEXT_ISSUES');
+ assert.equal(plan.metadataValid,false);assert.equal(plan.planSha256,null);assert.equal(plan.applicability,'unconfirmed');
+});

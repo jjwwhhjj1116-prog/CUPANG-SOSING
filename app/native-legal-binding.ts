@@ -32,17 +32,19 @@ export async function buildNativeLegalContext(input:SingleProjectionInput&{docum
  const projection=await projectSupplierHubSingleDocument(input),compiled=compileHubQuotationSchema(input.snapshot),raw=JSON.parse(input.snapshot.schemaString);
  const files=documents(input.documents),issues:NativeLegalIssue[]=[],targets:NativeLegalTarget[]=[];
  const add=(code:string,message:string,fieldId?:string,key?:string)=>issues.push({code,message,...(fieldId?{fieldId}:{}),...(key?{key}:{})});
- const legal=object(raw.properties)&&object(raw.properties.legalPage)&&object(raw.properties.legalPage.properties)?raw.properties.legalPage.properties:{};
+ const legalPage=object(raw.properties)&&object(raw.properties.legalPage)?raw.properties.legalPage:{};
+ const legal=object(legalPage.properties)?legalPage.properties:{};
  const included=input.resolved.rows.filter(row=>row.included),docs=projection.payload.jsonDocument;
  const base={format:'supplier-hub-native-legal-binding-v1' as const,schemaSha256:projection.schemaSha256,categoryId:input.categoryId};
  const shared=(fieldId:string,values:unknown[]):values is Primitive[]=>{
   const cells=included.map(row=>row.fields[fieldId]);
+  const label=compiled.fields.find(field=>field.id===fieldId)?.label??'법적 정보';
   // The quotation's generic "check actual evidence" review flag is retained
   // in stage seven. Choosing a file target never clears or proves that review.
   if(values.length!==included.length||values.some(value=>!primitive(value))||cells.some(cell=>!cell||cell.validationIssues?.length)){
-   add('NATIVE_LEGAL_VALUE_UNCONFIRMED','원문 양식에 맞게 저장하고 검토한 법적 정보가 필요합니다.',fieldId);return false;
+   add('NATIVE_LEGAL_VALUE_UNCONFIRMED',`${label}: 원문 양식에 맞게 저장하고 검토한 법적 정보가 필요합니다.`,fieldId);return false;
   }
-  if(values.some(value=>!same(value,values[0]))){add('NATIVE_LEGAL_OPTION_DISAGREEMENT','포함 옵션별 법적 정보가 달라 공유 원본 서류에 연결할 수 없습니다.',fieldId);return false;}
+  if(values.some(value=>!same(value,values[0]))){add('NATIVE_LEGAL_OPTION_DISAGREEMENT',`${label}: 포함 옵션별 법적 정보가 달라 공유 원본 서류에 연결할 수 없습니다.`,fieldId);return false;}
   return true;
  };
  const certificates=object(legal.certificates)&&Array.isArray(legal.certificates.allOf)?legal.certificates.allOf:[];
@@ -68,6 +70,15 @@ export async function buildNativeLegalContext(input:SingleProjectionInput&{docum
   const fields=compiled.fields.filter(field=>wireKey(field.hubWire)===wireKey({path:['legalPage',nativeType]}));
   if(fields.length!==1){add('NATIVE_LEGAL_BUCKET_UNVERIFIED','이 서류 영역의 현재 원문 항목 연결을 확인하지 못했습니다.');continue;}
   const field=fields[0],values=docs.map(document=>object(document.legalPage)?document.legalPage[nativeType]:undefined);
+  // An untouched optional property may legitimately be absent from every
+  // saved option document. That absence offers no file target and says
+  // nothing about applicability. Never discard an existing file binding.
+  if(!(Array.isArray(legalPage.required)&&legalPage.required.includes(nativeType))
+   &&included.length>0&&docs.length===included.length
+   &&docs.every(document=>object(document.legalPage)&&!Object.hasOwn(document.legalPage,nativeType))
+   &&included.every(row=>{const cell=row.fields[field.id];return cell?.source==='empty'&&cell.value===''&&!cell.validationIssues?.length;})
+   &&!projection.review.issues.some(issue=>issue.level==='error'&&issue.fieldId===field.id)
+   &&!files.some(file=>file.nativeBinding?.nativeType===nativeType))continue;
   if(!shared(field.id,values))continue;
   targets.push({id:'bucket:'+nativeType,label:nativeType,binding:readNativeLegalBinding({...base,nativeType})});
  }

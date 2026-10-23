@@ -17,7 +17,7 @@ function nativeTargets(value:unknown):NativeTargets|null{
 function savedBinding(file:LegalDocuments['files'][number]):unknown{return 'nativeBinding' in file?file.nativeBinding:undefined;}
 function bindingHash(binding:unknown):string|null{return binding&&typeof binding==='object'&&'schemaSha256' in binding&&typeof binding.schemaSha256==='string'&&/^[a-f0-9]{64}$/.test(binding.schemaSha256)?binding.schemaSha256:null;}
 
-export function LegalDocumentsEditor({productId,disabled,onSaved,onBusyChange,guardWrite,onMutationSettled}:{productId:string;disabled:boolean;onSaved:()=>void;onBusyChange?:(busy:boolean)=>void;guardWrite?:(run:()=>Promise<Response>,signal:AbortSignal)=>Promise<Response>;onMutationSettled?:(error?:string)=>void}){
+export function LegalDocumentsEditor({productId,disabled,open,onSaved,onBusyChange,guardWrite,onMutationSettled}:{productId:string;disabled:boolean;open?:boolean;onSaved:()=>void;onBusyChange?:(busy:boolean)=>void;guardWrite?:(run:()=>Promise<Response>,signal:AbortSignal)=>Promise<Response>;onMutationSettled?:(error?:string)=>void}){
  const [saved,setSaved]=useState<Saved|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
  const active=useRef<Task|null>(null),mounted=useRef(true),scope=useRef(productId),currentSaved=useRef<Saved|null>(null);
  const visible=saved?.productId===productId?saved:null;
@@ -55,7 +55,7 @@ export function LegalDocumentsEditor({productId,disabled,onSaved,onBusyChange,gu
   if(!expectedSchemaSha256){setError('저장된 서류 연결을 확인하지 못했습니다. 목록을 다시 불러와주세요.');return;}
   void request('PATCH',{expectedRevision:visible.revision,binding:{key:file.key,targetId:target?.id??null,expectedSchemaSha256}});
  }
- return <details className="panel-stack"><summary>법적 필수서류 · 인증서/증빙 원본</summary>
+ return <details className="panel-stack" open={open}><summary>법적 필수서류 · 인증서/증빙 원본</summary>
   {!visible&&<button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void request('GET')}>서류 목록 불러오기</button>}
   {error&&<p role="alert">{error}</p>}
   {busy&&<button type="button" className="btn ghost" onClick={()=>{const task=active.current;if(!task)return;active.current=null;task.controller.abort();task.finishBusy();setBusy(false);const message='확인을 중단했습니다. 목록을 다시 불러와 저장 상태를 확인해주세요.';setError(message);if(task.mutation&&mounted.current&&latest.current.productId===task.productId&&!latest.current.disabled)latest.current.onMutationSettled?.(message);}}>서류 작업 중단</button>}
