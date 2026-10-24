@@ -244,3 +244,47 @@ test('current sealed saved dimensions are reviewed context for weight-only estim
  for(const target of plan.targets)assert.deepEqual(plain(target.reviewedPackage.dimensions),{origin:'saved-quotation',source:'manual-common',measured:false,previousEstimateOrigin:'couplus-fallback',values:{widthMm:40,lengthMm:60,heightMm:10}});
  assert.ok(helper.completeQuotationPackagingDraft(plan).proposals.every(item=>!item.value.includes('*')));
 });
+
+test('three weight-only requests preserve reviewed AI dimensions and enforce the 10g sale-unit constraint without filling protected axes',async()=>{
+ const f=fixture({count:3}),basis=load('app/quotation-packaging-basis.ts');
+ for(const option of f.options.rows){option.weightKg=0.01;option.provenance.weightKg='manual';}
+ const field=f.view().resolved.schema.fields.find(item=>item.hubInput==='packagedDimensionsMm'),changes=f.options.rows.map(option=>({optionId:option.id,fieldKey:field.id,value:'50*70*5'}));
+ for(const change of changes)f.state.overrides.options[change.optionId]={[change.fieldKey]:change.value};
+ const view=f.view(),metadata=changes.map(change=>({...change,fieldSignature:JSON.stringify(field),unitsPerPack:1,origin:'ai-estimate',measured:false}));
+ view.packagingBasis=basis.applyQuotationPackagingBasis(undefined,view.resolved.schema.fields,view.optionPackQuantities,changes,metadata);
+ const plan=helper.buildQuotationPackagingDraftPlan(view,f.options,facts,f.scope),before=JSON.stringify({view,options:f.options,plan});
+ for(const weightG of [15,5]){
+  let calls=0;const result=await helper.executeQuotationPackagingDraft(plan,{run:async(_model,input)=>{
+   calls++;const source=JSON.parse(input.messages[1].content.slice(0,-'\n/no_think'.length)),instructions=input.messages[0].content;
+   assert.equal(source.packages.length,3);
+   assert.doesNotMatch(instructions,/weight-only[^.]*invalid/u);
+   assert.match(instructions,/request for only weight or only dimensions is valid/u);
+   for(const item of source.packages){
+    assert.deepEqual(item.requested,{dimensions:false,weight:true});
+    assert.deepEqual(item.saleUnitWeight,{weightG:10,source:'manual',measured:false});
+    assert.deepEqual(item.reviewedPackage.dimensions,{origin:'saved-quotation',source:'manual-option',measured:false,previousEstimateOrigin:'ai-estimate',values:{widthMm:50,lengthMm:70,heightMm:5}});
+   }
+   return qwen(source.packages.map(item=>packagingItem(item,{weightG})));
+  }},new AbortController().signal);
+  assert.equal(calls,1);assert.equal(result.proposals.length,weightG===15?3:0);
+  assert.ok(result.proposals.every(item=>item.value==='15'&&item.origin==='ai-estimate'&&item.measured===false));
+  assert.equal(result.preserved.filter(item=>item.value==='50*70*5').length,3);
+  if(weightG===5){assert.equal(result.diagnostics.response,'parsed');assert.equal(result.diagnostics.validationCode,null);assert.equal(result.warnings.filter(message=>/5g.*10g/u.test(message)).length,3);}
+  assert.equal(helper.quotationPackagingDraftChanges(view,result,f.product.id,f.scope).length,result.proposals.length);
+  assert.equal(JSON.stringify({view,options:f.options,plan}),before);
+ }
+ const echoed=JSON.parse(answerPackagingPlan(plan,()=>({weightG:15})).choices[0].message.content);
+ Object.assign(echoed.packages[0],{dimensionsStatus:'estimated',widthMm:50,lengthMm:70,heightMm:5});
+ const invalid=qwen([]);invalid.choices[0].message.content=JSON.stringify(echoed);
+ const rejected=helper.completeQuotationPackagingDraft(plan,invalid,1);
+ assert.equal(rejected.proposals.length,0);assert.equal(rejected.diagnostics.validationCode,'invalid-package-outcome');
+ assert.equal(JSON.stringify({view,options:f.options,plan}),before);
+});
+
+test('previous v3 provider diagnostics remain readable after the weight-only prompt correction',()=>{
+ const f=fixture(),plan=f.plan();
+ for(const result of [helper.completeQuotationPackagingDraft(plan,qwen([]),1),helper.completeQuotationPackagingDraft(plan,answerPackagingPlan(plan,()=>({})),1),helper.completeQuotationPackagingDraft(plan)]){
+  assert.equal(result.proposals.length,0);result.diagnostics.promptRevision='packaging-estimate-v3';
+  assert.equal(helper.quotationPackagingDraftChanges(f.view(),result,f.product.id,f.scope).length,0);
+ }
+});

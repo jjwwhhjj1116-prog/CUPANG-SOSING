@@ -1,10 +1,13 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {apiFixture,companies} from './helpers/supplier-hub-single-projection.mjs';
 import {aiFixture} from './helpers/quotation-ai.mjs';
+import {legacyPackagingDraft} from './helpers/quotation-packaging-provider.mjs';
 const json=async(response,status=200)=>{const body=await response.json();assert.equal(response.status,status,JSON.stringify(body));return body;};
 async function fixture(){const f=await apiFixture(companies[0],aiFixture({company:companies[0]}).snapshot);
  const get=()=>f.h.route(f.base+'/quotation-fields'+f.query).then(json),view=await get(),helper=f.h.load('app/quotation-packaging-draft.ts'),basis=f.h.load('app/quotation-packaging-basis.ts'),options=await f.h.load('db/product-options.ts').readProductOptions('owner',f.id),scope={optionId:null,applyToAllOptions:true};
- const result=helper.completeQuotationPackagingDraft(helper.buildQuotationPackagingDraftPlan(view,options,{title:'合成包装',description:'',attributes:[]},scope));
+ // Provenance tests adopt an explicit historical draft. A missing provider
+ // response no longer manufactures fallback values in the production path.
+ const result=legacyPackagingDraft(helper,helper.buildQuotationPackagingDraftPlan(view,options,{title:'合成包装',description:'',attributes:[]},scope));
  const changes=helper.quotationPackagingDraftChanges(view,result,f.id,scope),drafts=helper.quotationPackagingDraftInputs(view,result,f.id,scope);
  const put=(before,edits=changes,...args)=>{const metadata=args.length?args[0]:drafts;return f.h.route(f.base+'/quotation-fields'+f.query,{method:'PUT',body:{expectedRevision:before.revision,expectedInputFingerprint:before.inputFingerprint,changes:edits,...(metadata===undefined?{}:{packagingDrafts:metadata})}});};
  return{...f,get,view,basis,changes,drafts,put};}

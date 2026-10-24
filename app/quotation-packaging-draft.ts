@@ -8,7 +8,7 @@ import {WORKERS_QWEN_MODEL,parseWorkersQwenJson} from '@/app/automation/workers-
 
 export const PACKAGING_DRAFT_FORMAT='yoofam-quotation-packaging-draft-v1';
 export const PACKAGING_DRAFT_MODEL=WORKERS_QWEN_MODEL;
-export const PACKAGING_DRAFT_PROMPT_REVISION='packaging-estimate-v3';
+export const PACKAGING_DRAFT_PROMPT_REVISION='packaging-estimate-v4';
 export const PACKAGING_DRAFT_PROVIDER_VERSION=2;
 export const PACKAGING_DRAFT_TIMEOUT_MS=20_000;
 export const PACKAGING_DRAFT_MAX_OPTIONS=20;
@@ -25,7 +25,7 @@ type AbstentionReason=typeof abstentionReasons[number];
 type EstimateStatus='estimated'|'abstained'|'not-requested';
 type Outcome={dimensionsStatus:EstimateStatus;dimensionsReason:AbstentionReason|null;weightStatus:EstimateStatus;weightReason:AbstentionReason|null};
 type ResponseCode='invalid-envelope'|'invalid-package-count'|'invalid-package-index'|'invalid-package-shape'|'invalid-package-outcome';
-type CurrentPackagingDraftDiagnostics=Omit<LegacyPackagingDraftDiagnostics,'promptRevision'|'options'>&{promptRevision:typeof PACKAGING_DRAFT_PROMPT_REVISION;providerVersion:2;validationCode:ResponseCode|null;
+type CurrentPackagingDraftDiagnostics=Omit<LegacyPackagingDraftDiagnostics,'promptRevision'|'options'>&{promptRevision:'packaging-estimate-v3'|typeof PACKAGING_DRAFT_PROMPT_REVISION;providerVersion:2;validationCode:ResponseCode|null;
  options:(LegacyPackagingDraftDiagnostics['options'][number]&{dimensionsStatus:EstimateStatus|null;dimensionsReason:AbstentionReason|null;weightStatus:EstimateStatus|null;weightReason:AbstentionReason|null})[]};
 export type PackagingDraftDiagnostics=LegacyPackagingDraftDiagnostics|CurrentPackagingDraftDiagnostics;
 export function packagingDraftAbstentionReason(reason:AbstentionReason){return{'insufficient-product-context':'상품 종류·형태 정보 부족','ambiguous-sale-pack':'판매 구성 정보 불명확','conflicting-context':'포장 관련 정보 상충'}[reason];}
@@ -166,7 +166,7 @@ function responseDiagnostics(plan:PackagingDraftPlan,returned:Map<number,Estimat
    dimensionsStatus:value?.dimensionsStatus??null,dimensionsReason:value?.dimensionsReason??null,weightStatus:value?.weightStatus??null,weightReason:value?.weightReason??null};})};
 }
 function validateResponseDiagnostics(value:unknown):value is PackagingDraftDiagnostics{
- if(!object(value))return false;const current=value.promptRevision===PACKAGING_DRAFT_PROMPT_REVISION;
+ if(!object(value))return false;const current=value.promptRevision==='packaging-estimate-v3'||value.promptRevision===PACKAGING_DRAFT_PROMPT_REVISION;
  if(Object.keys(value).sort().join(',')!==(current?'expectedOptions,options,promptRevision,providerVersion,response,returnedOptions,validationCode':'expectedOptions,options,promptRevision,response,returnedOptions')
   ||!current&&value.promptRevision!=='packaging-estimate-v2'||!['parsed','invalid','unavailable'].includes(value.response as string)
   ||!Number.isSafeInteger(value.expectedOptions)||(value.expectedOptions as number)<0||(value.expectedOptions as number)>PACKAGING_DRAFT_MAX_OPTIONS
@@ -241,7 +241,10 @@ export async function executeQuotationPackagingDraft(plan:PackagingDraftPlan,ai:
   +'Do not abstain solely because explicit packaging measurements are absent. If the product type, physical form or sale-pack information is too ambiguous for a realistic estimate, explicitly abstain; never substitute generic numeric defaults for an estimate. '
   +'Return schemaVersion 2 and exactly one complete item for every requested index, with every schema field present. requested.dimensions and requested.weight identify the only fields to estimate. '
   +'For each requested group, use status estimated with all positive values (all three axes for dimensions) and a null reason, or status abstained with all values null and one reason: insufficient-product-context, ambiguous-sale-pack, or conflicting-context. '
-  +'For an unrequested group use status not-requested, all values null and reason null. Never echo a protected value as a new estimate. Empty, index-only, weight-only or incomplete-axis items are invalid. '
+  +'A request for only weight or only dimensions is valid. Always include every schema field, including the fields for the unrequested group. '
+  +'When requested.dimensions is false, return dimensionsStatus not-requested, dimensionsReason null, and widthMm, lengthMm and heightMm null. '
+  +'When requested.weight is false, return weightStatus not-requested, weightReason null and weightG null. Never echo a protected value as a new estimate. '
+  +'Empty or index-only items, missing schema fields and incomplete axes for requested dimensions are invalid. '
   +'Return only JSON matching the supplied response schema. No text or reasoning.';
  const input={product:plan.facts,packages:plan.targets.map((target,index)=>({index,originalName:target.originalName,size:target.size,unitsPerPack:target.unitsPerPack,
   requested:requested(target),collectedPackage:target.collected,reviewedPackage:target.reviewedPackage,saleUnitWeight:target.saleUnitWeight}))};
@@ -262,7 +265,7 @@ export function quotationPackagingDraftChanges(view:QuotationFieldsView,result:P
   ||result.optionRevision!==view.optionRevision||result.quotationRevision!==view.revision||result.inputFingerprint!==view.inputFingerprint||result.profileId!==view.categoryContext.profileId
   ||JSON.stringify(result.scope)!==JSON.stringify(scope)||!Array.isArray(result.proposals)||result.proposals.length>40)throw fail('현재 옵션·판매 구성·견적 입력과 같은 포장 초안을 확인해주세요.');
  if(result.diagnostics!==undefined&&(result.proposals.length!==0||!validateResponseDiagnostics(result.diagnostics)
-  ||result.aiRequests!==1&&!(result.aiRequests===0&&result.diagnostics.promptRevision===PACKAGING_DRAFT_PROMPT_REVISION&&result.diagnostics.response==='unavailable')))throw fail('포장 초안의 응답 진단 형식을 확인하지 못했습니다.');
+  ||result.aiRequests!==1&&!(result.aiRequests===0&&result.diagnostics.promptRevision!=='packaging-estimate-v2'&&result.diagnostics.response==='unavailable')))throw fail('포장 초안의 응답 진단 형식을 확인하지 못했습니다.');
  const seen=new Set<string>();return result.proposals.map(item=>{
   const field=view.resolved.schema.fields.find(field=>field.id===item.fieldKey),row=view.resolved.rows.find(row=>row.optionId===item.optionId),key=JSON.stringify([item.optionId,item.fieldKey]);
   if(!field||!isQuotationPackagingField(view.resolved.schema.fields,field.id)||!row?.included||seen.has(key)||!safeId(item.optionId)||!scope.applyToAllOptions&&scope.optionId!==item.optionId

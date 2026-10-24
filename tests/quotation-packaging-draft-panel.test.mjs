@@ -29,7 +29,7 @@ test('empty-draft UI distinguishes explicit AI abstention from malformed respons
   const ui=quotationAiUI({...f.props,onApply:changes=>{applied.push(changes);return true;}},async()=>Response.json(response),component,exportName);
   try{
    await ui.click('포장 규격 초안 작성');const rendered=text(ui.render());
-   assert.match(rendered,/packaging-estimate-v3/);assert.match(rendered,/응답 계약 V 2/);
+   assert.match(rendered,/packaging-estimate-v4/);assert.match(rendered,/응답 계약 V 2/);
    if(valid){assert.match(rendered,/AI 응답 확인: 요청 2 개 · 응답 2 개/);assert.match(rendered,/AI가 상품 종류·형태 정보 부족 사유로 포장 사이즈 추정을 보류했다고 응답/);assert.match(rendered,/사이즈 보류: 상품 종류·형태 정보 부족/);}
    else{assert.match(rendered,/invalid-package-count/);assert.match(rendered,/응답 형식 오류/);assert.doesNotMatch(rendered,/보류했다고 응답/);}
    assert.doesNotMatch(rendered,/PRIVATE_PRODUCT_TEXT|PRIVATE_DESCRIPTION/);assert.equal(ui.button('확인한 초안을 입력란에 적용').props.disabled,true);assert.equal(applied.length,0);assert.equal(ui.calls.length,1);

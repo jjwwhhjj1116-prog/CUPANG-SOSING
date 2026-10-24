@@ -35,7 +35,7 @@ for(const company of companies)test(`${company.code}: insufficient or generic-bo
    const view=await json(await f.read()),state=f.state(),result=await json(await f.request({...f.body,expectedInputFingerprint:view.inputFingerprint}));
    assert.equal(result.proposals.length,0);assert.equal(result.aiRequests,1);assert.equal(requests,1);
    assert.ok(result.preserved.some(item=>item.value==='10'));assert.ok(result.warnings.some(message=>/보류했다고 응답|추정값으로 제안하지/.test(message)));
-   assert.deepEqual(result.diagnostics,{promptRevision:'packaging-estimate-v3',providerVersion:2,validationCode:null,response:'parsed',expectedOptions:1,returnedOptions:1,
+   assert.deepEqual(result.diagnostics,{promptRevision:'packaging-estimate-v4',providerVersion:2,validationCode:null,response:'parsed',expectedOptions:1,returnedOptions:1,
     options:[{index:0,returned:true,weight:false,width:kind==='boundary',length:kind==='boundary',height:kind==='boundary',dimensionsStatus:kind==='boundary'?'estimated':'abstained',dimensionsReason:kind==='boundary'?null:'insufficient-product-context',weightStatus:'not-requested',weightReason:null}]});
    assert.equal(f.state(),state);assert.equal(JSON.stringify(await json(await f.read())),JSON.stringify(view));assert.deepEqual(f.h.network,[]);
   }finally{f.close();}
