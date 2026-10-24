@@ -40,6 +40,16 @@ for(const company of companies)for(const version of [1,2])test(`selected version
  }finally{h.close();}
 });
 
+for(const company of companies)test(`explicit ordinary JSON promotion accepts a streaming body and preserves the already saved product (${company.companyCode})`,async()=>{
+ const h=mobileIntakeHarness(company);try{
+  const f=await fixture(h,company),first=await json(await h.route('/api/collection-jobs/job/product',{method:'POST',body:{expectedSource:f.proof}})),before=products(h);
+  const retry=await json(await h.route('/api/collection-jobs/job/product',{method:'POST',body:{action:'promote'}}));
+  assert.equal(retry.productId,first.productId);assert.equal(retry.reused,true);assert.deepEqual(products(h),before);
+  for(const body of [{action:'other'},{action:'promote',expectedSource:f.proof},{action:'promote',extra:true}])await json(await h.route('/api/collection-jobs/job/product',{method:'POST',body}),400);
+  assert.deepEqual(products(h),before);assert.deepEqual(h.network,[]);
+ }finally{h.close();}
+});
+
 test('selected promotion accepts only the strict bounded proof and resolves owner, company, URL, fingerprint, revision and receipt time',async()=>{
  const company=companies[1],h=mobileIntakeHarness(company);try{
   const f=await fixture(h,company),before=products(h);

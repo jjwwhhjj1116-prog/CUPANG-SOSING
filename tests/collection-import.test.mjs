@@ -32,7 +32,7 @@ test('import executes product first and images in order, without translation or 
  const calls=[],progress=[];
  const outcome=await runCollectionImport('job',3,{fetcher:async(url,init)=>{calls.push([url,init]);return reply(url.endsWith('/product')?{productId:'p'}:{key:'owner/image'});},onProgress:p=>progress.push(p)});
  assert.equal(outcome.status,'completed');assert.equal(outcome.productId,'p');assert.equal(outcome.completedImages,3);
- assert.equal(calls[0][0],'/api/collection-jobs/job/product');assert.deepEqual(calls.slice(1).map(([,init])=>JSON.parse(init.body).index),[0,1,2]);assert.equal(progress.at(-1).completedImages,3);
+ assert.equal(calls[0][0],'/api/collection-jobs/job/product');assert.equal(calls[0][1].headers['content-type'],'application/json');assert.deepEqual(JSON.parse(calls[0][1].body),{action:'promote'});assert.deepEqual(calls.slice(1).map(([,init])=>JSON.parse(init.body).index),[0,1,2]);assert.equal(progress.at(-1).completedImages,3);
 });
 test('product failure prevents image writes; uncertain responses are not treated as success',async()=>{
  for(const response of [reply({error:'conflict'},409),reply({})]){

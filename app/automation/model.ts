@@ -193,6 +193,10 @@ function savedDrafts(stages: AutomationStage[], product: ProductRecord, content:
     const imageKeys = id === 'detailImage' ? contentDetailImageKeys(content) : field.value;
     if (!imageKeys.length) continue;
     const stage = stages.find(item => item.id === id)!;
+    if(id==='detailImage'&&!content.assets.detail.value.some(key=>!content.assets.detailTop.value.includes(key)&&!content.assets.detailBottom.value.includes(key))){
+      stage.status='blocked';stage.attempts=0;stage.retryable=false;stage.artifacts=[];stage.evidence=structuredClone(evidence);stage.updatedAt=content.updatedAt??now;
+      stage.reason={code:'DETAIL_BODY_MISSING',message:'설정된 상단·하단 이미지만 보관되어 있습니다. 상품 상세 본문을 상세 이미지·견적 편집에서 확인해주세요.'};continue;
+    }
     const requested = [...new Set(imageKeys)];
     const valid = requested.filter(key => ownedKeys.has(key));
     const missing = requested.length - valid.length;

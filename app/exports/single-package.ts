@@ -13,6 +13,8 @@ import { buildNativeLegalAttachmentPlan } from '@/app/native-legal-attachment-pl
 import { fingerprint } from '@/app/automation/model';
 import { stableQuotationFieldsView, QuotationFieldsSnapshotError } from '@/app/quotation-fields-snapshot';
 import { buildNativeAssetSourcePlan, nativeAssetSourceImageKeys } from '@/app/native-asset-source-plan';
+import {quotationDetailBodyIssues} from '@/app/quotation-detail-body-review';
+import {workspaceBannerAssignments} from '@/app/workspace-banners';
 
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 
@@ -85,7 +87,8 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
         schemaSha256:projection.schemaSha256,sourceFingerprint,inputFingerprint:reviewed.view.inputFingerprint,source,
         members:includedOptions.map((option,documentIndex)=>({...option,documentIndex}))};
     const nativeLegalAttachmentPlan = await buildNativeLegalAttachmentPlan({context:nativeLegal,applicability:documents.applicability,identity:nativeIdentity});
-    const sourceIssues = [...collectionSourceReview(saved.sourceGaps), ...(saved.generatedProductLabelIssues ?? []),
+    const protectedDetailKeys=[...saved.content.assets.detailTop.value,...saved.content.assets.detailBottom.value,...workspaceBannerAssignments(saved.settings,owner,false).map(([,key])=>key)];
+    const sourceIssues = [...collectionSourceReview(saved.sourceGaps), ...quotationDetailBodyIssues(projection,protectedDetailKeys), ...(saved.generatedProductLabelIssues ?? []),
       ...await inspectLegalDocumentStorage(documents, id, key => env.FILES.head(key))];
     // Native filename preparation has its own reviewed body. It must never
     // silently replace the legacy public-URL payload or its operation digest.

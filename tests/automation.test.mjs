@@ -437,7 +437,7 @@ test('detail stage follows full quotation image order and blocks missing top or 
   const stage=updated.stages.find(stage=>stage.id==='detailImage');assert.equal(stage.status,'blocked');assert.equal(stage.reason.code,'SAVED_ASSET_REFERENCE_MISSING');assert.equal(stage.artifacts.length,2);assert.ok(!stage.artifacts.some(artifact=>artifact.storageKey===missing));
  }
  const banners=contentModel.applyContentPatch(content,{assets:{detail:[]}},'2026-09-24T00:00:00Z');
- const bannerPlan=await model.planAutomation(saved,settings,first,banners);assert.equal(bannerPlan.stages.find(stage=>stage.id==='detailImage').status,'draft');assert.equal(bannerPlan.stages.find(stage=>stage.id==='detailImage').artifacts.length,2);
+ const bannerPlan=await model.planAutomation(saved,settings,first,banners);assert.equal(bannerPlan.stages.find(stage=>stage.id==='detailImage').status,'blocked');assert.equal(bannerPlan.stages.find(stage=>stage.id==='detailImage').reason.code,'DETAIL_BODY_MISSING');assert.equal(bannerPlan.stages.find(stage=>stage.id==='detailImage').artifacts.length,0);
  const cleared=contentModel.applyContentPatch(banners,{assets:{detailTop:[],detailBottom:[]}},'2026-09-24T00:00:01Z');
  const clearedPlan=await model.planAutomation(saved,settings,bannerPlan,cleared);assert.equal(clearedPlan.stages.find(stage=>stage.id==='detailImage').status,'blocked');assert.equal(clearedPlan.stages.find(stage=>stage.id==='detailImage').artifacts.length,0);
  assert.equal(JSON.stringify(content),before);

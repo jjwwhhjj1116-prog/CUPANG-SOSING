@@ -48,7 +48,9 @@ export async function runCollectionImport(jobId:string,totalImages:number,option
   }
   if(stopped())return {status:'stopped',productId,completedImages};
   options.onProgress?.({stage:'product',completedImages,totalImages:selectedTotal});
-  const response=await request(`${base}/product`,{method:'POST'});
+  // Explicit JSON avoids a zero-byte POST becoming an empty readable body in
+  // the Worker request adapter. Selected captures replace this with their proof.
+  const response=await request(`${base}/product`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'promote'})});
   const body=await response.json() as {error?:string;productId?:string};
   if(!response.ok)throw new Error(body.error||'상품 반영에 실패했습니다.');
   if(!body.productId)throw new Error('상품 반영 결과를 확인하지 못했습니다. 다시 실행해주세요.');

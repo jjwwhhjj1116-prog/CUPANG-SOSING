@@ -18,12 +18,16 @@ export async function POST(request:Request,context:{params:Promise<{id:string}>}
  if(request.body){
   try{
    const input=await readBoundedJson(request,4096);
-   if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).length!==1||!Object.hasOwn(input,'expectedSource'))throw Error('선택한 수집본의 상품 반영 요청을 확인해주세요.');
+   if(!input||typeof input!=='object'||Array.isArray(input))throw Error('선택한 수집본의 상품 반영 요청을 확인해주세요.');
+   const ordinary=Object.keys(input).length===1&&'action'in input&&input.action==='promote';
+   if(!ordinary){
+   if(Object.keys(input).length!==1||!Object.hasOwn(input,'expectedSource'))throw Error('선택한 수집본의 상품 반영 요청을 확인해주세요.');
    const proof=(input as {expectedSource:unknown}).expectedSource;
    if(!proof||typeof proof!=='object'||Array.isArray(proof)||Object.keys(proof).length!==2||!Object.hasOwn(proof,'capture')||!Object.hasOwn(proof,'receivedAt'))throw Error('선택한 수집본과 원문 저장 시각을 함께 확인해주세요.');
    const value=proof as {capture:unknown;receivedAt:unknown};
    if(typeof value.receivedAt!=='string'||value.receivedAt.length>40||!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(value.receivedAt)||!Number.isFinite(Date.parse(value.receivedAt)))throw Error('원문 저장 시각을 확인해주세요.');
    selection={capture:validateSourceCaptureSelection(value.capture),receivedAt:value.receivedAt};
+   }
   }catch(error){return reply({error:error instanceof Error?error.message:'선택한 수집본을 확인해주세요.'},error instanceof RequestBodyError?error.status:400);}
  }
  const owner=await getWorkspaceOwnerId();const {id}=await context.params;const job=await findCollectionJob(owner,id);
