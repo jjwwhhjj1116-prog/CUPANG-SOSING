@@ -59,6 +59,11 @@ test('option list opens the clicked option and preserves zero, unknown and delib
  const unsafe=renderToStaticMarkup(tree('','javascript:alert(1)').tree);assert.ok(!unsafe.includes('href="javascript:'));
 });
 
+test('option board describes calculation units without claiming one physical piece or doubling the stored cost',()=>{
+ const pair={...data,options:{...data.options,rows:[{...data.options.rows[0],unitsPerPack:1,unitCostCny:0.28}]}},before=JSON.stringify(pair),html=renderToStaticMarkup(tree('',undefined,pair).tree);
+ assert.match(html,/구성 1단위 \(원가 기준\)/);assert.match(html,/¥0\.28 \/ 원가 단위/);assert.match(html,/실물 판매 단위/);assert.doesNotMatch(html,/구성 1개|¥0\.28 \/ 개/);assert.equal(JSON.stringify(pair),before);
+});
+
 test('persisted option registration display survives search, reorder and deletion while actions retain exact IDs',()=>{
  const numbered={...data,optionRegistrationNumbers:{red:'261015007001',blue:'261015007002'}},before=JSON.stringify(numbered),features={registrationNumber:'261015007001',stage:true,manage:true};
  const result=tree('sku-blue',undefined,numbered,[],undefined,0,features),row=nodes(result.tree).find(node=>node.type==='tr'&&node.props['data-option-id']==='blue'),cell=nodes(row).find(node=>node.type==='td'&&node.props['data-column']==='id');

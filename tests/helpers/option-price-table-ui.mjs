@@ -87,7 +87,7 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
   const protectedSnapshot = () => JSON.stringify(['collection_jobs', 'collection_results', 'collection_context', 'category_profiles', 'workspace_settings', 'product_price_policy']
     .filter(table => sqlite.prepare("SELECT name FROM sqlite_master WHERE name=?").get(table)).map(table => [table, sqlite.prepare('SELECT * FROM ' + table).all().map(row=>table==='product_price_policy'?Object.fromEntries(Object.entries(row).filter(([key])=>key!=='updated_at')):row)]));
   const before = protectedSnapshot(), Component = detail?load('app/components/dashboard-client.tsx').DetailPanel:load('app/components/product-options-editor.tsx').ProductOptionsEditor;
-  let currentProduct = product,profileId,refreshToken='0',policyLocked=false,fileBusy=false,allowCommit=true;
+  let currentProduct = product,profileId,refreshToken='0',policyLocked=false,fileBusy=false,allowCommit=true,pricingView=true;
   function resolve(node, location = 'root') {
     if (Array.isArray(node)) return node.map((child, index) => resolve(child, location + '/' + index));
     if (!node || typeof node !== 'object') return node;
@@ -99,8 +99,8 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
     }
     return { ...node, props: { ...node.props, children: resolve(node.props?.children, location + '/children') } };
   }
-  const render = () => { tree = resolve({ type: Component, props: { product: currentProduct, pricingView: true, focusedOptionId,
-    ...(detail?{tab:'가격',preferredProfileId:profileId,settings:{...load('app/workspace-settings.ts').defaultSettings,...policy,minimumMarginEnabled:true},
+  const render = () => { tree = resolve({ type: Component, props: { product: currentProduct, pricingView, focusedOptionId,
+    ...(detail?{tab:pricingView?'가격':'옵션',preferredProfileId:profileId,settings:{...load('app/workspace-settings.ts').defaultSettings,...policy,minimumMarginEnabled:true},
       onSavePrice:async(value,options={})=>{const response=await request('/api/products/'+productId+'/pricing',{method:'POST',body:JSON.stringify({expectedVersion:currentProduct.updated_at,policy:value,...options})});const body=await response.json();assert.equal(response.status,200,body.error);currentProduct=body.product;},
       onBeforeSeoGenerate:()=>false,onBeforeFreeImageApply:()=>false,onPrepareSubmission:()=>{},onProfilePrepared:()=>{},onReviewPackaging:()=>{},onManageCategories:()=>{},onUpload:()=>{}}:{}),
     editableQuotationPrices:integrated,profileId,refreshToken,pricePolicyLocked:policyLocked,imageProcessingBusy:fileBusy,beforePriceCommit:()=>allowCommit&&!policyLocked&&!fileBusy,
@@ -119,7 +119,7 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
     holdSave() { let release, arrive; const promise = new Promise(done => { release = done; }), arrived = new Promise(done => { arrive = done; }); heldSave = { promise, arrived: arrive }; return { release, arrived }; },
     changeProductVersion(value) { currentProduct = { ...currentProduct, updated_at: value }; },
     async reloadProduct() { currentProduct = await load('db/queries.ts').findProduct(owner,productId); },
-    selectProfile(value){profileId=value;render();},locks({policy:policyValue,files,allowed}={}){if(policyValue!==undefined)policyLocked=policyValue;if(files!==undefined)fileBusy=files;if(allowed!==undefined)allowCommit=allowed;render();},
+    selectProfile(value){profileId=value;render();},setPricingView(value){pricingView=value;render();},locks({policy:policyValue,files,allowed}={}){if(policyValue!==undefined)policyLocked=policyValue;if(files!==undefined)fileBusy=files;if(allowed!==undefined)allowCommit=allowed;render();},
     get saved() { return saveCount; }, close() { for (const instance of instances.values()) for (const slot of instance.slots) slot?.cleanup?.(); closed = true; sqlite.close(); },
   };
 }
