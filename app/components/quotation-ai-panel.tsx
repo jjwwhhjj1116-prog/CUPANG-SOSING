@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
-import { quotationAiScopedProposalChanges, quotationAiJobForScope, quotationAiViewCurrent, type QuotationAiView, type QuotationAiJobView, type QuotationAiProposal } from '@/app/quotation-ai-client';
+import { quotationReviewedProposalChanges, quotationAiJobForScope, quotationAiViewCurrent, type QuotationAiView, type QuotationAiJobView, type QuotationAiProposal } from '@/app/quotation-ai-client';
 
 type Props = { productId: string; profileId?: string; view: QuotationFieldsView; optionId: string | null; disabled: boolean;
   onBusyChange?: (busy: boolean) => void; onApply: (changes: QuotationAiProposal[], fingerprint: string) => void };
@@ -75,7 +75,7 @@ function QuotationAiPanelContent({ productId, profileId, view, optionId, disable
     finally{if(generation===sequence.current){pending.current=false;running.current=null;setBusy(false);}}
   }
   let proposals: QuotationAiProposal[] = [], invalid = '';
-  if (job?.status === 'completed' && state) try { proposals = quotationAiScopedProposalChanges(view, job, state.fingerprint, optionId, all); }
+  if (state && !unsettled && (all || optionId !== null)) try { proposals = quotationReviewedProposalChanges(state, view, productId, job?.status === 'completed' ? job : null, optionId, all); }
   catch (cause) { invalid = cause instanceof Error ? cause.message : '초안을 다시 확인해주세요.'; }
   return <section className="quotation-fields-notice" aria-label="견적서 AI 작성" aria-busy={busy}>
     <div className="quote-actions"><button type="button" className="btn primary" disabled={disabled || busy || unsettled || optionId === null && !all || !state?.configuration.configured}
@@ -92,14 +92,16 @@ function QuotationAiPanelContent({ productId, profileId, view, optionId, disable
     {state && !state.configuration.configured && <p role="status">무료 견적 AI 서비스가 아직 연결되지 않았습니다.</p>}
     {canClose && <div><label><input type="checkbox" checked={endConfirmed} disabled={busy||disabled} onChange={event=>setEndConfirmed(event.target.checked)}/> 이전 실행의 결과를 사용할 수 없음을 확인하고 종료합니다.</label><button type="button" className="btn ghost" disabled={busy||disabled||!endConfirmed} onClick={()=>void closeUncertain()}>불확실한 이전 실행 종료</button></div>}
     {error && <p role="alert">{error}</p>}{invalid && <p role="alert">{invalid}</p>}
-    {job?.status === 'completed' && <><p>AI 초안 {proposals.length}개 · 내용을 확인하고 입력란에 적용하세요.</p>
-      {job.result?.warnings.length ? <ul>{job.result.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul> : null}
-      <div className="quotation-fields-bulk-table"><table><thead><tr><th>옵션 · 항목</th><th>현재 값</th><th>AI 초안</th></tr></thead><tbody>{proposals.map(change => {
+    {(job?.status === 'completed' || proposals.length > 0) && <><p>검토 제안 {proposals.length}개 · 저장 정보와 AI 초안을 확인하고 입력란에 적용하세요.</p>
+      {state?.knownChanges?.length ? <p>‘저장 정보’는 표시사항·옵션에 직접 저장하거나 수집한 값을 그대로 복사합니다. 초기 ‘해당사항없음’과 구성 수량이 일치하는 단위 없는 수량을 채우며 직접 입력한 값·공란은 유지합니다.</p> : null}
+      {job?.result?.warnings.length ? <ul>{job.result.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul> : null}
+      <div className="quotation-fields-bulk-table"><table><thead><tr><th>옵션 · 항목</th><th>현재 값</th><th>적용 제안</th><th>출처</th></tr></thead><tbody>{proposals.map(change => {
         const row = view.resolved.rows.find(item => item.optionId === change.optionId), field = view.resolved.schema.fields.find(item => item.id === change.fieldKey);
-        return <tr key={JSON.stringify([change.optionId, change.fieldKey])}><td>{row?.optionLabel} · {field?.label}</td><td>{row?.fields[change.fieldKey]?.value || '(공란)'}</td><td>{change.value || '(공란)'}</td></tr>;
+        const known = state?.knownChanges?.some(item => item.optionId === change.optionId && item.fieldKey === change.fieldKey);
+        return <tr key={JSON.stringify([change.optionId, change.fieldKey])}><td>{row?.optionLabel} · {field?.label}</td><td>{row?.fields[change.fieldKey]?.value || '(공란)'}</td><td>{change.value || '(공란)'}</td><td>{known ? '저장 정보' : 'AI 초안'}</td></tr>;
       })}</tbody></table></div><button type="button" className="btn primary" disabled={disabled || busy || !proposals.length || Boolean(invalid)} onClick={() => {
         if (pending.current || source.current.disabled || !state || source.current.sourceKey !== sourceKey) return;
-        try { source.current.onApply(quotationAiScopedProposalChanges(source.current.view, job, state.fingerprint, optionId, all), state.fingerprint); }
+        try { source.current.onApply(quotationReviewedProposalChanges(state, source.current.view, productId, job?.status === 'completed' ? job : null, optionId, all), state.fingerprint); }
         catch (cause) { setError(cause instanceof Error ? cause.message : '초안을 다시 확인해주세요.'); }
       }}>검토한 초안 입력란에 적용</button></>}
   </section>;

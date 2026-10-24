@@ -75,3 +75,82 @@ test('ambiguous target identities and duplicate options fail rather than produci
  const f=fixture();f.fields.push({...f.fields[0],id:'duplicate'});assert.throws(()=>f.run(),/범위/);
  const g=fixture();g.view.resolved.rows.push(plain(g.view.resolved.rows[0]));assert.throws(()=>g.run(),/범위/);
 });
+
+function extendedFixture(){
+ const f=fixture();f.view.optionRevision=5;
+ const options={schemaVersion:1,productId:'product',revision:5,rows:['a','b','excluded'].map((id,index)=>({id,included:id!=='excluded',color:index?'핑크':'베이지',unitsPerPack:1,provenance:{color:'manual',unitsPerPack:'manual'},updatedAt:'2026-10-24T00:00:00Z'}))};
+ for(const label of ['색상','제품 구성','소재','치수','KC 인증정보','수량']){
+  const field={...f.fields[0],id:'extra'+f.fields.length,label,hubWire:{...f.fields[0].hubWire,name:label}};f.fields.push(field);
+  for(const row of f.view.resolved.rows)row.fields[field.id]={value:'해당사항없음',source:'couplus-default'};
+ }
+ for(const[key,value]of Object.entries({components:'1쌍',material:'스펀지',dimensions:'직접 확인한 치수'}))f.content.label[key]={value,provenance:'manual',updatedAt:'2026-10-24T00:00:00Z'};
+ return {...f,options,run:(scope=all)=>propose('product',f.view,f.content,scope,options)};
+}
+test('explicit saved-source preview fills verified label/option values while preserving physical pair unit and common defaults',()=>{
+ const f=extendedFixture(),before=JSON.stringify(f),changes=plain(f.run());
+ const value=(id,label)=>changes.find(change=>change.optionId===id&&change.fieldKey===f.fields.find(field=>field.label===label).id)?.value;
+ assert.equal(value('a','제조국(원산지)'),'중국');assert.equal(value('a','색상'),'베이지');assert.equal(value('b','색상'),'핑크');
+ assert.equal(value('a','제품 구성'),'1쌍');assert.equal(value('a','소재'),'스펀지');assert.equal(value('a','수량'),undefined);assert.equal(value('a','KC 인증정보'),undefined);
+ assert.ok(changes.every(change=>['a','b'].includes(change.optionId)));assert.equal(JSON.stringify(f),before);
+});
+test('generated or deliberately cleared label facts never become verified copy proposals',()=>{
+ for(const provenance of ['generated','translated','unverified']){
+  const f=extendedFixture();f.content.label.countryOfOrigin.provenance=provenance;f.options.rows[0].provenance.color=provenance;
+  assert.ok(f.run().every(change=>change.fieldKey!=='notice2'));
+  assert.ok(f.run().every(change=>change.optionId!=='a'||change.fieldKey!==f.fields.find(field=>field.label==='색상').id));
+ }
+ for(const value of ['', '해당사항없음']){
+  const f=extendedFixture();f.content.label.countryOfOrigin.value=value;f.content.label.components.value=value;
+  assert.ok(f.run().every(change=>!['notice2',f.fields.find(field=>field.label==='제품 구성').id].includes(change.fieldKey)));
+  f.view.overrides.options.a={notice2:value};f.content.label.countryOfOrigin.value='중국';assert.ok(f.run().every(change=>change.optionId!=='a'||change.fieldKey!=='notice2'));
+ }
+});
+test('extended source copies require the exact saved options revision and included scope',()=>{
+ for(const mutate of [f=>f.options.revision++,f=>{f.options.productId='other';},f=>{f.options.rows[0].included=false;},f=>f.options.rows.push({...f.options.rows[0]})]){
+  const f=extendedFixture();mutate(f);assert.throws(()=>f.run(),/범위/);
+ }
+ const f=extendedFixture();assert.ok(f.run({optionId:'a',applyToAllOptions:false}).every(change=>change.optionId==='a'));
+});
+test('stage-six option label storage overrides old content, including pair quantity, while blanks suppress stale content',()=>{
+ const f=extendedFixture(),quantity=f.fields.find(field=>field.label==='수량');
+ Object.assign(quantity,{section:'product',visibility:'exposed',hubWire:{path:['productPage','commonAttributes','exposedAttributes'],name:'수량',nameKey:'attributeName',valueKey:'attributeValue'}});
+ for(const row of f.view.resolved.rows)row.fields[quantity.id]={value:'1',source:'option'};
+ const labels={schemaVersion:1,productId:'product',revision:4,updatedAt:'2026-10-24T00:00:00Z',overrides:{common:{countryOfOrigin:'중국',netContents:'뒤꿈치패드1쌍',material:'스펀지'},options:{b:{countryOfOrigin:'',netContents:'',material:'해당사항없음'}}}};
+ f.content.label.countryOfOrigin={value:'중국',provenance:'generated'};f.content.label.netContents={value:'오래된 내용량 3개',provenance:'manual'};
+ const run=()=>plain(propose('product',f.view,f.content,all,f.options,labels)),changes=run();
+ assert.equal(changes.find(row=>row.optionId==='a'&&row.fieldKey===quantity.id).value,'1쌍');
+ assert.ok(changes.some(row=>row.optionId==='a'&&row.fieldKey==='notice2'&&row.value==='중국'));
+ const blocked=['notice2',quantity.id,...f.fields.filter(field=>field.label==='소재').map(field=>field.id)];
+ assert.ok(changes.every(row=>row.optionId!=='b'||!blocked.includes(row.fieldKey)));
+ assert.equal(changes.find(row=>row.optionId==='b'&&row.fieldKey===f.fields.find(field=>field.label==='제품 구성').id).value,'1쌍');
+ for(const text of ['패드 1쌍 + 스티커 2개','1쌍/2개','4D 패드 1쌍','10x20cm','1','0쌍']){
+  labels.overrides.common.netContents=text;assert.ok(run().every(row=>row.fieldKey!==quantity.id),text);
+ }
+ labels.overrides.common.netContents='뒤꿈치 패드 1쌍';f.options.rows[0].unitsPerPack=2;f.view.resolved.rows[0].fields[quantity.id].value='2';assert.ok(run().every(row=>row.fieldKey!==quantity.id));
+ f.options.rows[0].unitsPerPack=1;f.view.resolved.rows[0].fields[quantity.id].value='1';quantity.numericText=true;assert.ok(run().every(row=>row.fieldKey!==quantity.id));
+});
+test('saved component list remains independent of contents count, empty contents and explicit component blanks',()=>{
+ const f=extendedFixture(),components=f.fields.find(field=>field.label==='제품 구성'),quantity=f.fields.find(field=>field.label==='수량');
+ Object.assign(quantity,{section:'product',visibility:'exposed',hubWire:{path:['productPage','commonAttributes','exposedAttributes'],name:'수량',nameKey:'attributeName',valueKey:'attributeValue'}});
+ for(const row of f.view.resolved.rows)row.fields[quantity.id]={value:'1',source:'option'};
+ const labels={schemaVersion:1,productId:'product',revision:1,updatedAt:'2026-10-24T00:00:00Z',overrides:{common:{netContents:'1세트'},options:{}}};
+ const run=()=>plain(propose('product',f.view,f.content,all,f.options,labels));
+ for(const provenance of ['manual','collected']){
+  f.content.label.components={value:'본체 1개 + 케이블 1개',provenance};
+  assert.ok(run().filter(row=>row.fieldKey===components.id).every(row=>row.value==='본체 1개 + 케이블 1개'));
+  assert.ok(run().filter(row=>row.fieldKey===quantity.id).every(row=>row.value==='1세트'));
+  labels.overrides.common.netContents='';
+  assert.equal(run().filter(row=>row.fieldKey===components.id).length,2);assert.ok(run().every(row=>row.fieldKey!==quantity.id));
+  labels.overrides.common.netContents='1세트';
+  for(const value of ['', '해당사항없음']){
+   f.content.label.components={value,provenance};assert.ok(run().every(row=>row.fieldKey!==components.id));
+   assert.equal(run().filter(row=>row.fieldKey===quantity.id).length,2);
+  }
+ }
+ f.content.label.components={value:'',provenance:'unverified'};labels.overrides.common.netContents='뒤꿈치패드1쌍';
+ assert.ok(run().filter(row=>row.fieldKey===components.id).every(row=>row.value==='뒤꿈치패드1쌍'));
+ assert.equal(run().filter(row=>row.fieldKey===components.id).length,2);assert.ok(run().filter(row=>row.fieldKey===quantity.id).every(row=>row.value==='1쌍'));
+ for(const value of ['상세페이지 참고','패드 1쌍 + 스티커 2개','1세트/2개','10x20cm']){
+  labels.overrides.common.netContents=value;assert.ok(run().every(row=>row.fieldKey!==components.id));
+ }
+});

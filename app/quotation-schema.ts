@@ -19,7 +19,7 @@ import {compileHubQuotationSchema,validateHubSchemaSnapshot,type HubSchemaSnapsh
 import { quotationScalarValueIssues, quotationValueLength } from '@/app/quotation-scalar-constraints';
 import type {CouplusQuotationInput} from '@/app/couplus-quotation-inputs';
 import { isQuotationLegalNotice, quotationNoticeInput } from '@/app/quotation-notice-inputs';
-import { quotationPackagedWeightManual } from '@/app/quotation-packaged-weight';
+import { quotationPackagedWeightManual, quotationPackagedWeightSourceIssues } from '@/app/quotation-packaged-weight';
 import { isPackagedDimensionsMmField, isCanonicalPackagedDimensionsMm, normalizePackagedDimensionsMm } from '@/app/quotation-packaged-dimensions';
 import type {TemplateDefinition} from '@/app/category-profiles';
 import { quotationPackagingBasisIssues, quotationPackagingDraftReviewMessages, validateQuotationPackagingBasis, type QuotationPackagingBasis } from '@/app/quotation-packaging-basis';
@@ -696,6 +696,13 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
         if (!cell || cell.source.startsWith('manual-') || !cell.value.trim()) continue;
         const message = '포장 정보는 ' + option.packagingUnitsPerPack + '개입 기준입니다. 현재 ' + option.unitsPerPack + '개입의 포장 무게·치수를 옵션에서 확인해주세요.';
         cell.needsReview = true; cell.issues.push(message); cell.validationIssues!.push(message);
+      }
+    }
+    if (option) {
+      for (const definition of schema.fields) {
+        const cell = fields[definition.id];
+        const errors = quotationPackagedWeightSourceIssues(schema.fields, definition.id, cell?.value ?? '', option.weightKg);
+        if (cell && errors.length) { cell.needsReview = true; cell.validationIssues!.push(...errors); cell.issues.push(...errors); }
       }
     }
     if(option&&input.packagingBasis){

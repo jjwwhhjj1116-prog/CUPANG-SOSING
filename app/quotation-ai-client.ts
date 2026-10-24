@@ -1,4 +1,6 @@
 import { quotationValueIssues, type QuotationFieldsView } from '@/app/quotation-schema';
+import { quotationKnownNoticeTarget, quotationSavedQuantityText } from '@/app/quotation-known-notice-proposals';
+import { isCouplusNotApplicableValue } from '@/app/couplus-quotation-defaults';
 
 export type QuotationAiProposal = { optionId: string | null; fieldKey: string; value: string };
 export type QuotationAiJobView = { id: string; status: 'prepared' | 'running' | 'completed' | 'failed' | 'uncertain'; startedAt?: string | null; canClose?: boolean;
@@ -8,7 +10,34 @@ export type QuotationAiJobView = { id: string; status: 'prepared' | 'running' | 
   error: { code: string; message: string; uncertain: boolean } | null };
 export type QuotationAiView = { configuration: { configured: boolean; provider: string; model: string; freeOnly: boolean; notice: string };
   fingerprint: string; productId: string; productVersion: string; contentRevision: number; optionRevision: number;
-  quotationRevision: number; profileId: string | null; jobs: QuotationAiJobView[] };
+  quotationRevision: number; profileId: string | null; jobs: QuotationAiJobView[]; knownChanges?: QuotationAiProposal[] };
+/** These are deterministic copies from saved manual/collected sources, returned
+ * separately from model output. AI's sensitive-field allowlist remains closed. */
+export function quotationSavedSourceChanges(state: QuotationAiView, view: QuotationFieldsView, productId: string, optionId: string | null, all: boolean): QuotationAiProposal[] {
+  if (!quotationAiViewCurrent(state, view, productId) || !all && optionId === null) throw Error('저장 정보의 상품·옵션 범위를 다시 확인해주세요.');
+  if (optionId !== null && !view.resolved.rows.some(row => row.optionId === optionId && row.included)) throw Error('저장 정보를 적용할 포함 옵션을 확인해주세요.');
+  const changes = state.knownChanges ?? [], seen = new Set<string>();
+  if (!Array.isArray(changes) || changes.length > 2000) throw Error('저장 정보의 항목을 다시 확인해주세요.');
+  for (const change of changes) {
+    const field = view.resolved.schema.fields.find(item => item.id === change?.fieldKey), row = view.resolved.rows.find(item => item.optionId === change?.optionId);
+    const cell = field && row?.fields[field.id], key = JSON.stringify([change?.optionId, change?.fieldKey]);
+    const target = field && quotationKnownNoticeTarget(field, true);
+    const replaceable = cell && (target === 'quantity' ? cell.source === 'option' && /^\d+$/u.test(cell.value)
+      && typeof change?.value === 'string' && quotationSavedQuantityText(change.value, Number(cell.value))
+      : cell.source === 'couplus-default' && isCouplusNotApplicableValue(cell.value));
+    if (!field || !target || !row?.included || !replaceable || typeof change.value !== 'string' || !change.value.trim() || isCouplusNotApplicableValue(change.value)
+      || Object.hasOwn(view.overrides.common, field.id) || row.optionId !== null && Object.hasOwn(view.overrides.options[row.optionId] ?? {}, field.id)
+      || seen.has(key) || quotationValueIssues(field, change.value).length) throw Error('저장 정보의 카테고리·옵션·수동 입력을 다시 확인해주세요.');
+    seen.add(key);
+  }
+  return changes.filter(change => all || change.optionId === optionId).map(change => ({ ...change }));
+}
+export function quotationReviewedProposalChanges(state: QuotationAiView, view: QuotationFieldsView, productId: string, job: QuotationAiJobView | null, optionId: string | null, all: boolean) {
+  const known = quotationSavedSourceChanges(state, view, productId, optionId, all);
+  const ai = job ? quotationAiScopedProposalChanges(view, job, state.fingerprint, optionId, all) : [];
+  const sourceKeys = new Set(known.map(change => JSON.stringify([change.optionId, change.fieldKey])));
+  return [...ai.filter(change => !sourceKeys.has(JSON.stringify([change.optionId, change.fieldKey]))), ...known];
+}
 export function quotationAiViewCurrent(value: QuotationAiView, view: QuotationFieldsView, productId: string) {
   return value.productId === productId && /^[a-f0-9]{64}$/.test(value.fingerprint)
     && value.productVersion === view.productVersion && value.contentRevision === view.contentRevision

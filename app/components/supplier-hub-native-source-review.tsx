@@ -7,6 +7,7 @@ import {readCurrentNativeAssetSource,reviewCurrentNativeSupplierHubProductDocume
 import {SupplierHubProductTransport} from '@/app/components/supplier-hub-product-transport';
 import {nativeSourceIssueGroups} from '@/app/supplier-hub-native-source-issues';
 import {SupplierHubLegalReview} from '@/app/components/supplier-hub-legal-review';
+import {nativeSavedQuotationPreview} from '@/app/native-saved-quotation-preview';
 
 type Props={productId:string;profileId?:string;view:QuotationFieldsView;disabled:boolean;onReceiptSaved?:()=>void;onSourceChanged?:(error?:string)=>void;onReviewLegal?:()=>void;onLockChange?:(locked:boolean,closeLocked?:boolean)=>void};
 const roles={MAIN:'대표',ADDITIONAL:'추가',SIZECHART:'사이즈표',LABEL:'표시사항',DETAIL:'상세'};
@@ -61,6 +62,7 @@ function NativeSourceScope(props:Props){
  }
  const errors=plan?.issues.filter(issue=>issue.level==='error')??[],notices=plan?.issues.filter(issue=>issue.level==='review')??[];
  const errorGroups=nativeSourceIssueGroups(errors,props.view,plan?.identity??null),noticeGroups=nativeSourceIssueGroups(notices,props.view,plan?.identity??null);
+ const savedPreview=!disabled&&!busy&&plan?nativeSavedQuotationPreview(plan,props.view):[];
  return <section className="quotation-fields-notice" aria-label="상품 견적서 전송 자료" aria-busy={busy}>
   <div className="quote-actions"><button type="button" className="btn ghost" disabled={disabled||busy||locked||legalBusy} onClick={()=>void load()}>저장한 견적 자료 다시 확인</button>
    {!review&&<button type="button" className="btn primary" disabled={disabled||busy||locked||legalBusy||!plan?.metadataValid||errors.length>0} onClick={()=>void prepare()}>견적서·첨부 파일 확인</button>}</div>
@@ -69,6 +71,26 @@ function NativeSourceScope(props:Props){
   {errors.some(issue=>issue.code==='NATIVE_ASSET_LEGAL_UNCONFIRMED')&&props.onSourceChanged&&<button type="button" className="btn ghost" disabled={disabled||busy||locked||legalBusy} onClick={()=>{if(!allowed())return;if(current.current.props.onReviewLegal)current.current.props.onReviewLegal();else setLegalOpen(true);}}>서류 해당 여부 확인</button>}
   {legalOpen&&<SupplierHubLegalReview productId={productId} profileId={profileId} view={props.view} disabled={disabled||busy||locked} onBusyChange={legalLock} onMutationSettled={legalSettled}/>}
   {notices.length>0&&<details><summary>견적서 검토 안내 {notices.length}건{noticeGroups.length<notices.length?` · 같은 안내 ${noticeGroups.length}개로 묶음`:''}</summary><ul>{noticeGroups.map(issue=><li key={issue.key}><strong>{issue.context}</strong>: {issue.message}{issue.count>1?` (${issue.count}건)`:''}</li>)}</ul></details>}
+  {savedPreview.length>0&&<details aria-label="저장된 견적 미리보기"><summary>저장된 견적 미리보기 · {savedPreview.length}개 옵션</summary>
+   <p>현재 저장한 상품값과 첨부 이미지입니다. 미입력 항목과 위의 확인 사항을 검토한 뒤 등록전송을 준비하세요.</p>
+   {savedPreview.map(option=><details key={option.optionId} aria-label={`${option.optionLabel} 저장된 견적`}>
+    <summary>{option.optionLabel} · {option.title}</summary>
+    <div className="quotation-fields-bulk-table"><table><caption>{option.optionLabel} · 저장된 주요 입력값</caption><thead><tr><th>항목</th><th>저장값</th></tr></thead><tbody>
+     <tr><th scope="row">상품명</th><td>{option.title}</td></tr>
+     {option.values.filter(value=>value.primary).map(value=><tr key={value.id}><th scope="row">{value.label}</th><td style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{value.value}</td></tr>)}
+    </tbody></table></div>
+    {option.values.some(value=>!value.primary)&&<details><summary>그 외 저장 항목</summary><div className="quotation-fields-bulk-table"><table><thead><tr><th>항목</th><th>저장값</th></tr></thead><tbody>
+     {option.values.filter(value=>!value.primary).map(value=><tr key={value.id}><th scope="row">{value.label}</th><td style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{value.value}</td></tr>)}
+    </tbody></table></div></details>}
+    <details><summary>첨부 이미지 · {option.images.length}개</summary><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:12}}>
+     {option.images.map((file,index)=><figure key={`${file.key}:${file.role}:${index}`} style={{margin:0,minWidth:0}}>
+      {/* eslint-disable-next-line @next/next/no-img-element -- Saved private images require the current authenticated file route. */}
+      {file.href?<a href={file.href} target="_blank" rel="noreferrer"><img src={file.href} alt={`${option.optionLabel} ${file.role} 이미지 ${index+1}`} width={120} height={100} loading="lazy" style={{objectFit:'contain'}}/></a>:<p>이미지 연결 확인 필요</p>}
+      <figcaption style={{overflowWrap:'anywhere'}}>{file.role} · {file.filename}</figcaption>
+     </figure>)}
+    </div></details>
+   </details>)}
+  </details>}
   {plan?.identity&&<><p>{plan.identity.company.name} · {plan.identity.categoryPath.join(' > ')} · 포함 옵션 {plan.identity.members.length}개</p>
    <div className="quotation-fields-bulk-table"><table><caption>옵션별 첨부 파일</caption><thead><tr><th>옵션</th><th>대표·추가·상세·사이즈표·표시사항</th></tr></thead><tbody>{plan.identity.members.map(member=><tr key={member.optionId}><td>{member.optionLabel}</td><td>{Object.entries(roles).map(([type,label])=>{
     const count=plan.images.filter(file=>file.imageType===type&&file.references.some(ref=>ref.optionId===member.optionId&&ref.documentIndex===member.documentIndex)).length;return count?`${label} ${count}개`:null;

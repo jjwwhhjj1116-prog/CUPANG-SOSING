@@ -1,5 +1,25 @@
 import type { QuotationField, QuotationOverrides, ResolvedQuotation } from '@/app/quotation-schema';
 
+/** weightKg already describes one selling unit, including its pack quantity.
+ * It is a comparison bound only, never an automatic packaged-weight value. */
+export function quotationSaleUnitWeightG(weightKg: number | null | undefined): number | null {
+  return typeof weightKg === 'number' && Number.isFinite(weightKg) && weightKg > 0 && weightKg <= 1e6 ? weightKg * 1000 : null;
+}
+export function quotationPackagedWeightSourceIssue(packagedWeightG: number, saleUnitWeightG: number | null): string | null {
+  if (saleUnitWeightG === null || !Number.isFinite(packagedWeightG) || packagedWeightG <= 0) return null;
+  // Ignore conversion noise only, retaining real sub-gram contradictions.
+  if (saleUnitWeightG - packagedWeightG <= Number.EPSILON * Math.max(saleUnitWeightG, packagedWeightG) * 8) return null;
+  return `포장 무게 ${packagedWeightG}g이 2단계 옵션의 판매 단위 무게 ${saleUnitWeightG}g보다 작습니다. 같은 판매 구성의 상품 무게·포장 무게와 단위를 확인하고 수정해주세요. 저장값은 자동 변경하지 않았습니다.`;
+}
+export function quotationPackagedWeightSourceIssues(fields: readonly QuotationField[], fieldId: string, value: string, weightKg: number | null | undefined): string[] {
+  const field = fields.find(item => item.id === fieldId);
+  const isWeight = field?.id === 'packagedWeightG' && field.type === 'number' && field.unit === 'g'
+    || quotationPackagedWeightPeer(fields, fieldId) === 'packagedWeightG';
+  if (!isWeight || !/^\d+$/u.test(value.trim())) return [];
+  const issue = quotationPackagedWeightSourceIssue(Number(value), quotationSaleUnitWeightG(weightKg));
+  return issue ? [issue] : [];
+}
+
 /** The legacy numeric input and observed string wire are the same g quantity.
  * Keep both saved IDs; never infer aliases from a label or another weight unit. */
 export function quotationPackagedWeightPeer(fields: readonly QuotationField[], fieldId: string): string | null {

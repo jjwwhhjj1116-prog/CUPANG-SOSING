@@ -3,7 +3,7 @@ import type {QuotationFieldsView,QuotationField,QuotationChange,QuotationSource,
 import {quotationValueIssues} from '@/app/quotation-schema';
 import {isQuotationPackagingField,type QuotationPackagingDraftInput} from '@/app/quotation-packaging-basis';
 import {isPackagedDimensionsMmField,isCanonicalPackagedDimensionsMm} from '@/app/quotation-packaged-dimensions';
-import {quotationPackagedWeightManual} from '@/app/quotation-packaged-weight';
+import {quotationPackagedWeightManual,quotationSaleUnitWeightG,quotationPackagedWeightSourceIssue} from '@/app/quotation-packaged-weight';
 import {WORKERS_QWEN_MODEL,parseWorkersQwenJson} from '@/app/automation/workers-qwen-contract';
 
 export const PACKAGING_DRAFT_FORMAT='yoofam-quotation-packaging-draft-v1';
@@ -32,7 +32,8 @@ export function packagingDraftAbstentionReason(reason:AbstentionReason){return{'
 type PackageValues={weightG?:number;widthMm?:number;lengthMm?:number;heightMm?:number};
 type ReviewedValue={origin:'saved-quotation';source:QuotationSource;measured:false;previousEstimateOrigin?:'ai-estimate'|'couplus-fallback';values:PackageValues};
 type Target={optionId:string;optionLabel:string;unitsPerPack:number;weightField:QuotationField|null;dimensionsField:QuotationField|null;
- fixed:PackageValues;collected:PackageValues;reviewedPackage:{weight?:ReviewedValue;dimensions?:ReviewedValue};originalName:string;size:string;sourceBasis:number|null};
+ fixed:PackageValues;collected:PackageValues;reviewedPackage:{weight?:ReviewedValue;dimensions?:ReviewedValue};originalName:string;size:string;sourceBasis:number|null;
+ saleUnitWeight:{weightG:number;source:ProductOption['provenance']['weightKg'];measured:false}|null};
 export type PackagingDraftPlan={format:typeof PACKAGING_DRAFT_FORMAT;productId:string;productVersion:string;contentRevision:number;optionRevision:number;
  quotationRevision:number;inputFingerprint:string;profileId:string|null;scope:PackagingDraftScope;targets:Target[];preserved:PackagingDraftPreserved[];facts:PackagingDraftFacts};
 export type PackagingDraftResult=Omit<PackagingDraftPlan,'targets'|'facts'>&{proposals:PackagingDraftProposal[];warnings:string[];model:string|null;aiRequests:0|1;generatedAt:string;diagnostics?:PackagingDraftDiagnostics};
@@ -79,6 +80,7 @@ function reviewedPackageValue(view:QuotationFieldsView,row:ResolvedQuotationRow,
  if(kind==='weight'){
   if(!/^\d+$/u.test(cell.value)||!positive(Number(cell.value),1e9))return;
   values={weightG:Number(cell.value)};
+  if(quotationPackagedWeightSourceIssue(values.weightG!,quotationSaleUnitWeightG(option.weightKg)))return;
   if(cell.source==='option'&&option.packagedWeightG!==values.weightG)return;
  }else{
   if(!isCanonicalPackagedDimensionsMm(cell.value))return;
@@ -99,24 +101,26 @@ export function buildQuotationPackagingDraftPlan(view:QuotationFieldsView,option
  for(const row of included){
   const option=options.rows.find(item=>item.id===row.optionId);
   if(!option||!positive(option.unitsPerPack,1e6)||view.optionPackQuantities?.[option.id]!==option.unitsPerPack)throw fail('옵션 판매 구성 수량의 기준을 다시 확인해주세요.');
-  const fixed=fixedOption(option),basis=option.packagingUnitsPerPack??null;
+  const fixed=fixedOption(option),basis=option.packagingUnitsPerPack??null,saleUnitWeightG=quotationSaleUnitWeightG(option.weightKg);
   const stale=basis!==option.unitsPerPack&&Object.keys(fixed).length>0;
   const consider=(field:QuotationField|null,kind:'weight'|'dimensions')=>{
    if(!field)return null;const cell=row.fields[field.id];if(!cell)throw fail('포장 입력 항목과 현재 옵션의 연결을 확인해주세요.');
    const manuallyBlank=kind==='weight'?option.provenance.packagedWeightG==='manual'&&option.packagedWeightG==null
     :(['packagedWidthMm','packagedLengthMm','packagedHeightMm']as const).some(key=>option.provenance[key]==='manual'&&option[key]==null);
    if(cell.value.trim()||cell.source.startsWith('manual-')||manuallyBlank||stale){preserved.push({optionId:option.id,optionLabel:row.optionLabel,label:field.label,value:cell.value,
-    reason:stale?`${basis===null?'구성 수량 기준이 기록되지 않은':basis+'개입'} 포장값입니다. 현재 ${option.unitsPerPack}개입 구성의 확인 전에는 변경하지 않습니다.`:cell.source.startsWith('manual-')||manuallyBlank?'직접 수정한 값·빈칸을 유지합니다.':'저장·수집된 포장값을 유지합니다.'});return null;}
+    reason:(kind==='weight'?quotationPackagedWeightSourceIssue(Number(cell.value),saleUnitWeightG):null)
+     ??(stale?`${basis===null?'구성 수량 기준이 기록되지 않은':basis+'개입'} 포장값입니다. 현재 ${option.unitsPerPack}개입 구성의 확인 전에는 변경하지 않습니다.`:cell.source.startsWith('manual-')||manuallyBlank?'직접 수정한 값·빈칸을 유지합니다.':'저장·수집된 포장값을 유지합니다.')});return null;}
    return field;
   };
   const weightTarget=consider(weight,'weight'),dimensionTarget=consider(dimensions,'dimensions');
   if(weightTarget||dimensionTarget){
    const collected:PackageValues={};
    if(basis===option.unitsPerPack)for(const [key,optionKey]of [['weightG','packagedWeightG'],['widthMm','packagedWidthMm'],['lengthMm','packagedLengthMm'],['heightMm','packagedHeightMm']]as const)
-    if(option.provenance[optionKey]==='collected'&&fixed[key]!==undefined)collected[key]=fixed[key];
+    if(option.provenance[optionKey]==='collected'&&fixed[key]!==undefined&&(key!=='weightG'||!quotationPackagedWeightSourceIssue(fixed[key]!,saleUnitWeightG)))collected[key]=fixed[key];
    const reviewedWeight=reviewedPackageValue(view,row,option,weight,'weight',stale),reviewedDimensions=reviewedPackageValue(view,row,option,dimensions,'dimensions',stale);
    targets.push({optionId:option.id,optionLabel:row.optionLabel,unitsPerPack:option.unitsPerPack,
-    weightField:weightTarget,dimensionsField:dimensionTarget,fixed,collected,reviewedPackage:{...(reviewedWeight?{weight:reviewedWeight}:{}),...(reviewedDimensions?{dimensions:reviewedDimensions}:{})},originalName:option.originalName,size:option.size??'',sourceBasis:basis});
+    weightField:weightTarget,dimensionsField:dimensionTarget,fixed,collected,reviewedPackage:{...(reviewedWeight?{weight:reviewedWeight}:{}),...(reviewedDimensions?{dimensions:reviewedDimensions}:{})},originalName:option.originalName,size:option.size??'',sourceBasis:basis,
+    saleUnitWeight:saleUnitWeightG===null?null:{weightG:saleUnitWeightG,source:option.provenance.weightKg,measured:false}});
   }
  }
  const safeText=(value:string,max:number)=>typeof value==='string'&&value.length<=max&&!/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(value);
@@ -193,7 +197,10 @@ export function completeQuotationPackagingDraft(plan:PackagingDraftPlan,raw:unkn
    warnings.push(`${target.optionLabel}: ${estimate?.[`${kind}Status`]==='abstained'&&abstention?`AI가 ${packagingDraftAbstentionReason(abstention)} 사유로 ${label} 추정을 보류했다고 응답했습니다`:`유효한 ${label} 추정 응답이 없습니다`}. 원래 입력을 유지했습니다.`);};
   if(target.weightField){const collected=basisKnown?target.fixed.weightG:undefined,value=collected??estimate?.weightG;
    if(value===undefined)missing('weight');
-   else if(!quotationValueIssues(target.weightField,String(value)).length)proposals.push(proposal(target,target.weightField,String(value),collected!==undefined?'collected':'ai-estimate'));
+   else {const sourceIssue=quotationPackagedWeightSourceIssue(value,target.saleUnitWeight?.weightG??null);
+    if(sourceIssue)warnings.push(`${target.optionLabel}: ${sourceIssue} 이 포장 무게는 초안으로 제안하지 않았습니다.`);
+    else if(!quotationValueIssues(target.weightField,String(value)).length)proposals.push(proposal(target,target.weightField,String(value),collected!==undefined?'collected':'ai-estimate'));
+   }
   }
   if(target.dimensionsField){const keys=['widthMm','lengthMm','heightMm']as const,known=keys.map(key=>basisKnown?target.fixed[key]:undefined);
    const fromAi=!!estimate&&keys.every((key,axis)=>known[axis]!==undefined||estimate[key]!==undefined);
@@ -227,6 +234,8 @@ export async function executeQuotationPackagingDraft(plan:PackagingDraftPlan,ai:
   +'If packaging measurements are missing, infer a realistic final shipping package from the product type, material and form described in the title and attributes, each original option and size, and its exact unitsPerPack. '
   +'Exact supplier measurements are not required for an estimate. Use reasonable physical expectations for that product type, including the sale-pack contents and protective packaging; estimate each option independently without borrowing other options\' specifications. '
   +'Use protected saved package weight, when present, as a consistency constraint for the missing dimensions; do not replace that weight or multiply it again by unitsPerPack. '
+  +'saleUnitWeight is the saved product weight for the entire selling unit, already including its unitsPerPack. Never multiply it again by unitsPerPack. Its source is provenance, not proof of measurement. '
+  +'Final packaged weight cannot be less than saleUnitWeight.weightG. Use it only as a consistency constraint; never copy it as an automatic package estimate or clamp an estimate to it. '
   +'Dimensions must be positive integer mm and weight a positive integer g. Preserve thin package dimensions; do not increase values to generic bounds. '
   +'Validation bounds are not product facts or suggested values. Never invent supplier statements or collected measurements, and never claim inferred estimates as measured. '
   +'Do not abstain solely because explicit packaging measurements are absent. If the product type, physical form or sale-pack information is too ambiguous for a realistic estimate, explicitly abstain; never substitute generic numeric defaults for an estimate. '
@@ -235,7 +244,7 @@ export async function executeQuotationPackagingDraft(plan:PackagingDraftPlan,ai:
   +'For an unrequested group use status not-requested, all values null and reason null. Never echo a protected value as a new estimate. Empty, index-only, weight-only or incomplete-axis items are invalid. '
   +'Return only JSON matching the supplied response schema. No text or reasoning.';
  const input={product:plan.facts,packages:plan.targets.map((target,index)=>({index,originalName:target.originalName,size:target.size,unitsPerPack:target.unitsPerPack,
-  requested:requested(target),collectedPackage:target.collected,reviewedPackage:target.reviewedPackage}))};
+  requested:requested(target),collectedPackage:target.collected,reviewedPackage:target.reviewedPackage,saleUnitWeight:target.saleUnitWeight}))};
  const nullablePhysical=(maximum:number)=>({type:['integer','null'],minimum:1,maximum}),status={type:'string',enum:['estimated','abstained','not-requested']},reason={type:['string','null'],enum:[...abstentionReasons,null]};
  try{
   const stopped=new Promise<never>((_resolve,reject)=>{timer=setTimeout(()=>reject(new PackagingDraftError('PACKAGING_DRAFT_TIMEOUT','포장 추정 응답 시간이 초과됐습니다. 기존 입력을 유지하고 추가 요청하지 않았습니다.',504)),PACKAGING_DRAFT_TIMEOUT_MS);

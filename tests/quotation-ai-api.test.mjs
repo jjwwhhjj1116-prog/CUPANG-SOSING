@@ -5,6 +5,35 @@ import { mockProvider } from './helpers/quotation-ai.mjs';
 const json = async (response, status = 200) => { assert.equal(response.status, status, await response.clone().text()); return response.json(); };
 const unchanged = (f, state) => { assert.equal(f.state(), state); assert.deepEqual(f.h.network, []); assert.equal(f.h.aiSources.length, 0); assert.equal(f.h.objects.size, 0); };
 const view = f => f.request(undefined, 'GET').then(response => json(response));
+test('GET exposes deterministic saved-source proposals alongside unchanged initial notices without any writes/model calls',async()=>{
+ const f=await quotationAiApiFixture();try{
+  const model=f.h.load('app/product-content.ts'),store=f.h.load('db/product-content.ts'),before=await store.readProductContent('owner',f.id);
+  const content=model.applyContentPatch(before,{label:{material:'직접 확인한 스펀지'}},new Date().toISOString());
+  const schema=f.h.load('app/quotation-schema.ts').getQuotationSchema(f.snapshot.categoryId,f.snapshot.categoryPath,f.snapshot);
+  content.initialLegalNotices=f.h.load('app/initial-legal-notices.ts').createInitialLegalNotices(schema,{},new Date().toISOString());
+  assert.ok(await store.saveProductContent('owner',content,before.revision));
+  const original=f.state(),out=await view(f),field=schema.fields.find(field=>field.label==='소재'&&field.section==='legal');
+  assert.deepEqual(out.knownChanges,[{optionId:'synthetic-one',fieldKey:field.id,value:'직접 확인한 스펀지'}]);
+  assert.equal(f.provider.calls.length,0);assert.equal(f.jobs().length,0);unchanged(f,original);
+  assert.equal((await store.readProductContent('owner',f.id)).initialLegalNotices.fields.find(item=>item.fieldId===field.id).value,'해당사항없음');
+ }finally{f.close();}
+});
+test('actual separate stage-six label storage is used over generated/empty content and fenced by the product clock',async()=>{
+ const f=await quotationAiApiFixture();try{
+  const model=f.h.load('app/product-content.ts'),contentStore=f.h.load('db/product-content.ts'),before=await contentStore.readProductContent('owner',f.id);
+  const content=model.applyContentPatch(before,{seo:{description:'별도 표시사항 회귀검사'}},new Date().toISOString());
+  const schema=f.h.load('app/quotation-schema.ts').getQuotationSchema(f.snapshot.categoryId,f.snapshot.categoryPath,f.snapshot);
+  content.initialLegalNotices=f.h.load('app/initial-legal-notices.ts').createInitialLegalNotices(schema,{},new Date().toISOString());
+  await contentStore.saveProductContent('owner',content,before.revision);
+  const source=await f.h.load('app/exports/quotation-source.ts').readMappedQuotationSource('owner',f.id,f.profile.id),labels=f.h.load('db/product-labels.ts');
+  const previousLabels=await labels.readProductLabels('owner',f.id);
+  assert.ok(await labels.saveProductLabels('owner',f.id,{common:{material:'별도 저장한 스펀지'},options:{}},previousLabels.revision,{...source.source,quotationRevision:source.state.revision}));
+  const original=f.state(),out=await view(f),field=schema.fields.find(field=>field.label==='소재'&&field.section==='legal');
+  assert.deepEqual(out.knownChanges,[{optionId:'synthetic-one',fieldKey:field.id,value:'별도 저장한 스펀지'}]);
+  assert.equal((await contentStore.readProductContent('owner',f.id)).label.material.value,'');
+  unchanged(f,original);assert.equal(f.provider.calls.length,0);
+ }finally{f.close();}
+});
 test('default editor without profileId uses the captured category profile for one AI request', async () => {
   const f = await quotationAiApiFixture(); try {
     const offer = '700000000794', url = `https://detail.1688.com/offer/${offer}.html`;

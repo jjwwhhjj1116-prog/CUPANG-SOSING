@@ -3,7 +3,9 @@ import { NextResponse } from 'next/server';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
-import { readMappedQuotationSource, quotationExportFingerprint, QuotationExportError } from '@/app/exports/quotation-source';
+import { readMappedQuotationSource, quotationExportFingerprint, resolveQuotationExport, QuotationExportError } from '@/app/exports/quotation-source';
+import { quotationKnownNoticeProposals } from '@/app/quotation-known-notice-proposals';
+import { readProductLabels, productLabelsSourcesCurrent } from '@/db/product-labels';
 import { quotationSourcesCurrent, readQuotationFields } from '@/db/quotation-fields';
 import { fingerprint } from '@/app/automation/model';
 import { buildQuotationAiPlan, executeQuotationAi, QuotationAiError, QUOTATION_AI_MODEL } from '@/app/quotation-ai';
@@ -62,13 +64,21 @@ export async function GET(request: Request, context: Context) {
     const auth = await authorization(), { id } = await context.params, profileId = profile(query.get('profileId'));
     if (!safeId(id) || query.has('jobId') && !uuid(query.get('jobId'))) return json({ error: '상품·실행 식별값을 확인해주세요.' }, 400);
     const saved = await readSource(auth, id, profileId), currentFingerprint = await quotationExportFingerprint(saved, null);
+    const labels = await readProductLabels(auth.owner, id);
     const jobs = query.has('jobId') ? [await findQuotationAiJob(auth.owner, id, query.get('jobId')!, true)].filter((job): job is QuotationAiJob => Boolean(job))
       : await listQuotationAiJobs(auth.owner, id);
     if (!await quotationSourcesCurrent(auth.owner, id, saved.source) || (await readQuotationFields(auth.owner, id)).revision !== saved.state.revision
+      || !await productLabelsSourcesCurrent(auth.owner, id, { ...saved.source, quotationRevision: saved.state.revision }, labels.revision)
       || !await currentAuthorization(auth)) return sourceChanged();
+    const resolved = resolveQuotationExport(saved);
+    const knownChanges = resolved.rows.some(row => row.included) ? quotationKnownNoticeProposals(id, {
+      contentRevision: saved.content.revision, optionRevision: saved.options.revision,
+      categoryContext: saved.categoryContext, overrides: saved.state.overrides, resolved,
+    }, saved.content, { optionId: null, applyToAllOptions: true }, saved.options, labels) : [];
     return json({ configuration: configuration(), fingerprint: currentFingerprint, productId: id, productVersion: saved.product.updated_at,
       contentRevision: saved.content.revision, optionRevision: saved.options.revision, quotationRevision: saved.state.revision,
       profileId: saved.categoryContext.profileId,
+      knownChanges,
       jobs: jobs.filter(job => JSON.stringify(job.review.company) === JSON.stringify(auth.company) && job.review.profileId === saved.categoryContext.profileId).map(publicJob) });
   } catch (error) { return errorResponse(error); }
 }

@@ -78,3 +78,45 @@ test('source change aborts a late GET, clears old review and rebalances generati
   await ui.idle();ui.button('AI 처리').props.onClick();for(let i=0;i<20&&!post;i++)await new Promise(r=>setTimeout(r,1));assert.equal(post,true);
   ui.render({...props,view:{...x.view,revision:1},disabled:true});release();await new Promise(r=>setTimeout(r,1));assert.deepEqual(balances,[true,false]);assert.ok(!nodes(ui.render()).some(n=>n.props?.children==='검토한 초안 입력란에 적용'));ui.unmount();
 });
+
+async function knownFixture(){
+ const x=await fixture(),field={id:'saved-contact',label:'소비자상담 관련 전화번호',section:'legal',visibility:'common',type:'text',required:true,
+  hubWire:{path:['legalPage','notices'],name:'소비자상담 관련 전화번호',nameKey:'noticeItemName',valueKey:'noticeItemValue'}};
+ x.view.resolved.schema.fields.push(field);
+ for(const row of x.view.resolved.rows)row.fields[field.id]={value:'해당사항없음',source:'couplus-default',issues:[]};
+ x.state.knownChanges=x.view.resolved.rows.filter(row=>row.included).map(row=>({optionId:row.optionId,fieldKey:field.id,value:'02-1234-5678'}));
+ return {...x,field};
+}
+test('explicit editor previews known saved facts without calling AI and applies only after the existing review button',async()=>{
+ const x=await knownFixture(),applied=[],before=JSON.stringify(x.view),ui=quotationAiUI({productId:x.f.product.id,view:x.view,optionId:null,disabled:false,onApply:v=>applied.push(v)},async()=>Response.json(x.state));
+ await ui.idle();assert.deepEqual(applied,[]);assert.ok(nodes(ui.render()).some(node=>node.props.children==='저장 정보'));
+ await ui.click('검토한 초안 입력란에 적용');assert.equal(applied[0].length,2);assert.ok(applied[0].every(change=>change.fieldKey===x.field.id));
+ assert.deepEqual(ui.calls.map(call=>call.method),['GET']);assert.equal(JSON.stringify(x.view),before);ui.unmount();
+ // The model itself remains prohibited from manufacturing contact/origin facts.
+ x.job.result.changes=x.state.knownChanges;assert.throws(()=>client.quotationAiProposalChanges(x.view,x.job,x.state.fingerprint));
+});
+test('known sources keep exact scope, stale revisions and manual N/A/blank protected',async()=>{
+ for(const mutate of [x=>{x.state.optionRevision++;},x=>{x.state.productId='foreign';},x=>{x.view.overrides.common[x.field.id]='';},
+  x=>{x.view.overrides.options[x.state.knownChanges[0].optionId]={[x.field.id]:'해당사항없음'};},x=>{x.state.knownChanges.push({...x.state.knownChanges[0]});},x=>{x.field.hubWire.path=['legalPage','certificates'];}]){
+  const x=await knownFixture();mutate(x);assert.throws(()=>client.quotationSavedSourceChanges(x.state,x.view,x.f.product.id,null,true));
+ }
+ const x=await knownFixture(),id=x.state.knownChanges[1].optionId;
+ assert.deepEqual(JSON.parse(JSON.stringify(client.quotationSavedSourceChanges(x.state,x.view,x.f.product.id,id,false))),[x.state.knownChanges[1]]);
+ assert.throws(()=>client.quotationSavedSourceChanges(x.state,x.view,x.f.product.id,'foreign',false));
+});
+test('saved-source values win a conflicting model proposal without widening model permissions',async()=>{
+ const x=await fixture(),field=x.view.resolved.schema.fields.find(field=>field.label==='소재'&&field.section==='legal');assert.ok(field);
+ for(const row of x.view.resolved.rows)row.fields[field.id]={value:'해당사항없음',source:'couplus-default',issues:[]};
+ x.state.knownChanges=x.view.resolved.rows.filter(row=>row.included).map(row=>({optionId:row.optionId,fieldKey:field.id,value:'직접 저장한 소재'}));
+ const changes=client.quotationReviewedProposalChanges(x.state,x.view,x.f.product.id,x.job,null,true);
+ assert.ok(changes.filter(change=>change.fieldKey===field.id).every(change=>change.value==='직접 저장한 소재'));
+ assert.equal(new Set(changes.map(change=>JSON.stringify([change.optionId,change.fieldKey]))).size,changes.length);
+});
+test('physical quantity proposal copies an exact saved unit only to an unedited text quantity with matching count',async()=>{
+ const x=await knownFixture();Object.assign(x.field,{label:'수량',section:'product',visibility:'exposed',hubWire:{path:['productPage','commonAttributes','exposedAttributes'],name:'수량',nameKey:'attributeName',valueKey:'attributeValue'}});
+ for(const row of x.view.resolved.rows)row.fields[x.field.id]={value:'1',source:'option'};
+ for(const change of x.state.knownChanges)change.value='1쌍';
+ assert.equal(client.quotationSavedSourceChanges(x.state,x.view,x.f.product.id,null,true).length,2);
+ x.state.knownChanges[0].value='2쌍';assert.throws(()=>client.quotationSavedSourceChanges(x.state,x.view,x.f.product.id,null,true));
+ x.state.knownChanges[0].value='1쌍';x.field.type='number';assert.throws(()=>client.quotationSavedSourceChanges(x.state,x.view,x.f.product.id,null,true));
+});
