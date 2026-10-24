@@ -103,8 +103,8 @@ export async function POST(request: Request, context: Context) {
       const company=await seoCompany(owner);if(!company)return json({error:'승인된 회원 회사정보가 필요합니다.'},403);
       const [failed,previous,captured,content]=await Promise.all([getTranslationJob(owner,id,body.failedJobId),findWorkersRecoveryTranslation(owner,id,body.failedJobId,strategy),
         readWorkersRecoverySource(owner,id,product.source_url,company),readProductContent(owner,id)]);
-      const {intakeSupplierSourceMatches}=await import('@/app/intake-supplier-source');
-      if(!google429RecoveryCandidate(failed)||!intakeSupplierSourceMatches(failed!.review.source,captured.receipt,captured.collection))return conflict();
+      const {intakeSupplierFactsMatch}=await import('@/app/intake-supplier-source');
+      if(!google429RecoveryCandidate(failed)||!intakeSupplierFactsMatch(failed!.review.source,captured.receipt,captured.collection))return conflict();
       if(JSON.stringify(captured.source).length>WORKERS_RECOVERY_MAX_INPUT_CHARACTERS)
         throw new TranslationError('WORKERS_RECOVERY_SOURCE_TOO_LARGE','무료 별도 초안의 원문 길이 한도를 넘었습니다. 저장 원문과 기존 번역 이력은 유지했습니다.');
       if(previous){const proof=workersRecoveryReviewProof(previous.review);
@@ -333,8 +333,8 @@ export async function POST(request: Request, context: Context) {
     if(workersProof){
       const company=await seoCompany(owner);if(!company||company.code!==workersProof.company.code||company.name!==workersProof.company.name)return conflict();
       const [captured,failed,content]=await Promise.all([readWorkersRecoverySource(owner,id,product.source_url,company),getTranslationJob(owner,id,workersProof.failedJobId),readProductContent(owner,id)]);
-      const {intakeSupplierSourceMatches}=await import('@/app/intake-supplier-source');
-      if(!google429RecoveryCandidate(failed)||!intakeSupplierSourceMatches(failed!.review.source,captured.receipt,captured.collection)
+      const {intakeSupplierFactsMatch}=await import('@/app/intake-supplier-source');
+      if(!google429RecoveryCandidate(failed)||!intakeSupplierFactsMatch(failed!.review.source,captured.receipt,captured.collection)
         ||captured.sourceFingerprint!==workersProof.sourceFingerprint||JSON.stringify(captured.source)!==JSON.stringify(existing.review.source)
         ||captured.optionRevision!==workersProof.optionRevision||content.revision!==existing.contentRevision||product.updated_at!==existing.productVersion)return conflict();
       seoSource=captured.guard;

@@ -6,6 +6,17 @@ import { collectionSourceReference, type CollectionJob } from '@/app/sourcing';
 /** Compare supplier facts only. Editing/deleting an option does not invalidate
  * the saved SEO source; newly received supplier text cannot inherit its coverage. */
 export function intakeSupplierSourceMatches(reviewed: TranslationSource, receipt: CollectionResult, job: CollectionJob): boolean {
+  return supplierSourceMatches(reviewed,receipt,job,true);
+}
+
+/** Recovery prepares a new review from the current saved capture. Seller
+ * preferences added by the SEO editor are not supplier facts, and are never
+ * forwarded from the failed request. Keep canonical intake replay stricter. */
+export function intakeSupplierFactsMatch(reviewed: TranslationSource, receipt: CollectionResult, job: CollectionJob): boolean {
+  return supplierSourceMatches(reviewed,receipt,job,false);
+}
+
+function supplierSourceMatches(reviewed: TranslationSource, receipt: CollectionResult, job: CollectionJob, compareGuidance:boolean): boolean {
   if (receipt.offerId !== job.offer_id || receipt.sourceUrl !== job.source_url || !job.context?.category) return false;
   const category = job.context.category;
   const current = validateTranslationSource({ title: receipt.title, description: receipt.description,
@@ -15,7 +26,7 @@ export function intakeSupplierSourceMatches(reviewed: TranslationSource, receipt
     guidance: { features: job.context.features, keywords: job.context.keywords },
   });
   const supplierSource = (source: TranslationSource) => ({ title: source.title, description: source.description,
-    reference: source.reference, category: source.category, guidance: source.guidance,
+    reference: source.reference, category: source.category, ...(compareGuidance?{guidance:source.guidance}:{}),
     attributes: source.attributes.filter(pair => !/^option(?:-color|-size)?:[A-Za-z0-9_-]{1,80}$/.test(pair.name))
       .map(pair => ({ name: pair.name, value: pair.value })),
   });

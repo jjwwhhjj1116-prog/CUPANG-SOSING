@@ -26,7 +26,7 @@ import {readWorkersRecoverySource} from '@/db/translation-jobs';
 import {assertWorkersRecoveryJobQuality} from '@/app/product-translation-quality';
 import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
 import {GOOGLE_TEXT_MODEL,WORKERS_TEXT_MODEL} from '@/app/automation/translation';
-import {intakeSupplierSourceMatches} from '@/app/intake-supplier-source';
+import {intakeSupplierSourceMatches,intakeSupplierFactsMatch} from '@/app/intake-supplier-source';
 import { applyInitialIntakeSeoGuidance, initialIntakeSeoGuidancePending, applySeoGuidanceComposition, validateSeoGuidanceComposition, type SeoGuidanceComposition } from '@/app/seo-guidance-composition';
 import { verifyCapturedCollectionCompany } from '@/app/collection-company';
 
@@ -76,7 +76,7 @@ export async function POST(request: Request, context: Context) {
           throw Error('별도 초안의 승인 회사·옵션 버전·적용 범위가 다릅니다.');
         recoveryMember={id:owner,email:user.membership.email,role:user.membership.role,companyCode:company.code,companyName:company.name};
         const [captured,failed]=await Promise.all([readWorkersRecoverySource(owner,id,product.source_url,company),getTranslationJob(owner,id,workersProof.failedJobId)]);
-        if(!google429RecoveryCandidate(failed)||!intakeSupplierSourceMatches(failed!.review.source,captured.receipt,captured.collection)
+        if(!google429RecoveryCandidate(failed)||!intakeSupplierFactsMatch(failed!.review.source,captured.receipt,captured.collection)
           ||captured.sourceFingerprint!==workersProof.sourceFingerprint||JSON.stringify(captured.source)!==JSON.stringify(job.review.source))
           throw Error('별도 초안 이후 수집 원문 또는 실패 이력 연결이 변경되었습니다.');
         seoSource=captured.guard;

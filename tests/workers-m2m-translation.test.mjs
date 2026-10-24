@@ -22,12 +22,21 @@ for(const kind of ['han','english','foreign-number','unsupported-claim','async',
   await assert.rejects(()=>api.executeWorkersM2mTranslation(source,{run:async()=>{calls++;return response;}},4));assert.equal(calls,1);
  }finally{h.close();}
 });
-async function fixture(company=companies[0]){
+async function fixture(company=companies[0],seoMemo=false){
  const h=mobileIntakeHarness({companyCode:company.code,companyName:company.name,translationFetcher:async()=>new Response('synthetic rate limit',{status:429})});try{
   h.bindings.SOURCEFLOW_TEXT_PROVIDER='google-free';h.bindings.SOURCEFLOW_QUOTATION_AI_PROVIDER='workers-ai';h.bindings.SOURCEFLOW_QUOTATION_AI_FREE_ONLY='true';
   await json(await h.route('/api/collection-jobs/job/result',{method:'POST',body:{schemaVersion:1,sourceUrl:h.sourceUrl,provider:'synthetic-m2m-page-v1',collectedAt:new Date().toISOString(),title,description:'',attributes:[],images:[],options:['米色','粉色','黑色'].map((name,index)=>({sku:'synthetic-'+index,name,unitPriceCny:0.28,minimumOrder:1,stock:100}))}}));
   const {productId:id}=await json(await h.route('/api/collection-jobs/job/product',{method:'POST'})),base='/api/products/'+id,post=body=>h.route(base+'/translation',{method:'POST',body});
-  const {job}=await json(await post({action:'prepare-collected',intake:true}),201);await json(await post({action:'approve',jobId:job.id,reviewFingerprint:job.review.fingerprint,confirmPaid:true}));const failed=(await json(await post({action:'execute',jobId:job.id}))).job;assert.equal(failed.status,'failed');assert.match(failed.error.message,/429/);
+  let prepareBody={action:'prepare-collected',intake:true};
+  if(seoMemo){
+   const receipt=JSON.parse(h.sqlite.prepare('SELECT payload FROM collection_results').get().payload),collection=await h.load('db/collection-jobs.ts').findCollectionJob('owner','job');
+   const options=(await json(await h.route(base+'/options'))).options,content=(await json(await h.route(base+'/content'))).content;
+   const source=h.load('app/collected-seo-source.ts').collectedSeoSource(receipt,collection,options).source;
+   const state=h.load('app/seo-workspace-draft.ts').createSeoWorkspaceDraftState({productId:id,productVersion:h.sqlite.prepare('SELECT updated_at FROM products WHERE id=?').get(id).updated_at,contentRevision:content.revision,source,
+    memo:{brand:company.name,features:'검토용 참고 메모',keywords:'뒤꿈치 패드'},configuration:h.load('app/automation/translation.ts').translationConfiguration(h.bindings)});
+   prepareBody={action:'prepare',source:state.source,expectedVersion:state.productVersion,idempotencyKey:state.idempotencyKey};
+  }
+  const {job}=await json(await post(prepareBody),201);await json(await post({action:'approve',jobId:job.id,reviewFingerprint:job.review.fingerprint,confirmPaid:true}));const failed=(await json(await post({action:'execute',jobId:job.id}))).job;assert.equal(failed.status,'failed');assert.match(failed.error.message,/429/);
   const content=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content WHERE product_id=?').get(id).payload);await json(await h.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.revision,patch:{seo:{keywords:['직접 검색어']},label:{manufacturer:'직접 제조사'}}}}));
   const calls=[],version=()=>h.sqlite.prepare('SELECT updated_at FROM products WHERE id=?').get(id).updated_at;
   h.bindings.AI.run=async(got,input)=>{assert.equal(got,model);assert.deepEqual(Object.keys(input).sort(),['source_lang','target_lang','text']);assert.equal(input.source_lang,'zh');assert.equal(input.target_lang,'ko');calls.push(input.text);return{translated_text:translations.get(input.text)};};
@@ -37,6 +46,19 @@ async function fixture(company=companies[0]){
   return{h,id,base,post,failed,calls,version,prepare,approve,execute,unchanged};
  }catch(error){h.close();throw error;}
 }
+for(const company of companies)test(company.code+': SEO brand guidance cannot block source-bound M2M recovery or become supplier evidence',async()=>{
+ const f=await fixture(company,true),{h}=f;try{
+  const googleBefore=h.sqlite.prepare('SELECT * FROM translation_jobs WHERE id=?').get(f.failed.id),before=f.unchanged();
+  assert.match(f.failed.review.source.guidance.features,/사용자가 입력한 브랜드 참고/);
+  const {job}=await json(await f.prepare(),201);assert.doesNotMatch(job.review.source.guidance?.features??'',/검토용 참고 메모|사용자가 입력한 브랜드 참고/);
+  await json(await f.approve(job));const completed=(await json(await f.execute(job))).job;assert.equal(completed.status,'completed');assert.deepEqual(f.calls,[title,'米色','粉色','黑色']);
+  assert.equal(f.unchanged(),before);assert.deepEqual(h.sqlite.prepare('SELECT * FROM translation_jobs WHERE id=?').get(f.failed.id),googleBefore);
+  const body={jobId:job.id,expectedVersion:f.version()},preview=await json(await h.route(f.base+'/translation-apply',{method:'POST',body:{...body,action:'preview'}}));
+  await json(await h.route(f.base+'/translation-apply',{method:'POST',body:{...body,action:'apply',fingerprint:preview.fingerprint}}));
+  const options=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_options WHERE product_id=?').get(f.id).payload);assert.deepEqual(options.rows.map(row=>row.translatedName),['베이지','분홍','검정']);
+  assert.deepEqual(h.sqlite.prepare('SELECT * FROM translation_jobs WHERE id=?').get(f.failed.id),googleBefore);
+ }finally{h.close();}
+});
 for(const company of companies)test(company.code+': explicit M2M review calls four unique source texts once; preserved Google/manual history and selective apply',async()=>{
  const f=await fixture(company),{h}=f;try{const before=f.unchanged(),view=await json(await h.route(f.base+'/translation'));assert.equal(view.workersRecovery.model,model);assert.equal(view.workersRecovery.strategy,strategy);assert.equal(view.workersRecovery.maxCalls,8);assert.equal(view.configuration.model,'google-translate-gtx');
   const {job}=await json(await f.prepare(),201);assert.equal(job.review.workersRecovery.strategy,strategy);assert.equal(job.review.workersRecovery.maxCalls,4);assert.equal(job.review.workersRecovery.version,undefined);assert.equal(job.review.model,model);assert.equal(job.review.maxOutputTokens,0);assert.match(job.review.paidNotice,/최대 4회/);assert.equal(h.sqlite.prepare('SELECT idempotency_key FROM translation_jobs WHERE id=?').get(job.id).idempotency_key,'workers-m2m-v1-'+f.failed.id);assert.equal(f.calls.length,0);assert.equal(f.unchanged(),before);
