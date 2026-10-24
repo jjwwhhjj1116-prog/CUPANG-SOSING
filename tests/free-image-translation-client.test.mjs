@@ -7,6 +7,12 @@ import { webcrypto } from 'node:crypto';
 
 const version = '2026-10-06T00:00:00.000Z';
 const source = { productId: 'product', productVersion: version, contentRevision: 2, sourceKey: 'owner/original.png', sourceSha256: 'a'.repeat(64), role: 'detail', width: 20, height: 12 };
+test('role-source list validates current product, role and version before exposing keys', async () => {
+ const h=fixture(),body={productId:'product',productVersion:version,contentRevision:2,role:'detail',keys:['owner/original.png']},calls=[];
+ const result=await h.client.readFreeImageRoleSources('product',version,'detail',new AbortController().signal,async(url,options)=>{calls.push({url,options});return Response.json(body);});
+ assert.deepEqual(Array.from(result),body.keys);assert.match(calls[0].url,/list=sources&role=detail/);assert.equal(calls[0].options.cache,'no-store');assert.equal(calls.length,1);
+ for(const patch of [{productId:'other'},{productVersion:'old'},{role:'main'},{contentRevision:-1},{keys:['x','x']},{keys:[null]}])await assert.rejects(h.client.readFreeImageRoleSources('product',version,'detail',new AbortController().signal,async()=>Response.json({...body,...patch})),/저장 상태/);
+});
 const plain = value => JSON.parse(JSON.stringify(value));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const hash = async bytes => Buffer.from(await webcrypto.subtle.digest('SHA-256', bytes)).toString('hex');

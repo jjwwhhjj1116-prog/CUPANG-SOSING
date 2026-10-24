@@ -3,7 +3,7 @@ import {
   freeImageApplyIdentity, freeImageSourceIdentity, validateFreeImageOptionIds,
   type FreeImageRole, type FreeImageSource, type ImageTextRegion, type ImageTextTranslation,
 } from '@/app/free-image-translation';
-import { isOwnedImageKey, MAX_IMAGE_BYTES } from '@/app/image-files';
+import { isOwnedImageKey, MAX_IMAGE_BYTES, PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-files';
 import { resolveFreeImageTextStyle, ensureFreeImageTextFont, type FreeImageTextStyle } from '@/app/free-image-text-style';
 import { validateFreeImageBrush, MAX_FREE_IMAGE_BRUSH_TOTAL_POINTS, type FreeImageBrush } from '@/app/free-image-brush';
 import { validateFreeImageCropRect, validateFreeImageCrop, type FreeImageCropRect, type FreeImageCrop } from '@/app/free-image-crop';
@@ -22,6 +22,17 @@ export type FreeImageLoaded = { source: FreeImageSource; blob: Blob; canvas: HTM
 export type FreeImageRendered = { source: FreeImageSource; output: Blob; width: number; height: number; optionImageIds?: string[]; crop?: FreeImageCrop; editDocument?: FreeImageEditDocument };
 export type FreeImageQuotationRequest = Omit<NonNullable<FreeImageSource['quotationTarget']>, 'bindingSha256'>;
 export type FreeImageEditorReadOptions = { restoreEditor: true; anchorPolicy?: 'current-target-v1' };
+/** Metadata only: choosing a stage must not load pixels, run OCR or mutate roles. */
+export async function readFreeImageRoleSources(productId: string, productVersion: string, role: FreeImageRole, signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<string[]> {
+  const response = await fetcher(`/api/products/${encodeURIComponent(productId)}/image-text?${new URLSearchParams({ list: 'sources', role })}`, { signal, cache: 'no-store' });
+  const body = await response.json() as { error?: string; productId?: unknown; productVersion?: unknown; contentRevision?: unknown; role?: unknown; keys?: unknown };
+  signal.throwIfAborted();
+  if (!response.ok) throw Error(body.error || '현재 역할에 연결된 원본 목록을 확인하지 못했습니다.');
+  if (body.productId !== productId || body.productVersion !== productVersion || body.role !== role || !Number.isSafeInteger(body.contentRevision) || Number(body.contentRevision) < 0
+    || !Array.isArray(body.keys) || body.keys.length > PRODUCT_IMAGE_POOL_LIMIT || body.keys.some(key => typeof key !== 'string' || !key.trim()) || new Set(body.keys).size !== body.keys.length)
+    throw Error('상품·이미지 역할의 저장 상태가 달라졌습니다. 작업 화면을 다시 열어주세요.');
+  return body.keys as string[];
+}
 export function sameFreeImageQuotationRequest(actual: FreeImageSource['quotationTarget'] | FreeImageQuotationRequest | null | undefined, expected: FreeImageQuotationRequest | null | undefined): boolean {
   if (!actual || !expected) return !actual && !expected;
   return actual.kind === expected.kind && actual.profileId === expected.profileId && actual.optionId === expected.optionId && actual.input === expected.input

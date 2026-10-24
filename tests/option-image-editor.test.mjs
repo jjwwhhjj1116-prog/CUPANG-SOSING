@@ -21,7 +21,7 @@ function imageUI(fetcher,{productId='p',optionId='red',version=initialVersion,pr
  const slots=[],effects=[],layouts=[],cache=new Map(),calls=[];let cursor=0,saved=0,closed=false,lateWrites=0,saveVersion,stateEpoch=0;
  const effect=(queue,fn,deps)=>{const i=cursor++;if(!slots[i]||JSON.stringify(slots[i].deps)!==JSON.stringify(deps)){const previous=slots[i],next={deps,cleanup:previous?.cleanup};slots[i]=next;queue.push(()=>{previous?.cleanup?.();next.cleanup=fn();});}};
  const react={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return[slots[i],value=>{if(closed){lateWrites++;return;}stateEpoch++;slots[i]=typeof value==='function'?value(slots[i]):value;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useEffect(fn,deps){effect(effects,fn,deps);},useLayoutEffect(fn,deps){effect(layouts,fn,deps);}};
- function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,structuredClone,TextEncoder,crypto,window:{confirm:message=>confirmImage(message)},fetch:async(url,init)=>{calls.push({url,init});const response=await fetcher(url,init);if(response.ok)saveVersion=(await response.clone().json()).productVersion;return response;},require(name){if(name==='react')return react;if(name==='react/jsx-runtime')return{jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})};if(name.startsWith('./')||name.startsWith('../'))return load(path.posix.join(path.posix.dirname(file),name)+'.ts');return name.startsWith('@/')?load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts')):native(name);}});return exports;}
+ function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,URLSearchParams,structuredClone,TextEncoder,crypto,window:{confirm:message=>confirmImage(message)},fetch:async(url,init)=>{calls.push({url,init});const response=await fetcher(url,init);if(response.ok)saveVersion=(await response.clone().json()).productVersion;return response;},require(name){if(name==='react')return react;if(name==='react/jsx-runtime')return{jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})};if(name.startsWith('./')||name.startsWith('../'))return load(path.posix.join(path.posix.dirname(file),name)+'.ts');return name.startsWith('@/')?load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts')):native(name);}});return exports;}
  const Component=load('app/components/option-image-editor.tsx').OptionImageEditor;
  const render=(flush=true)=>{let tree;for(let attempt=0;attempt<25;attempt++){const before=stateEpoch;cursor=0;tree=Component({productId,optionId,version,profileId,refreshToken,stage,active,saveOnChange,disabled,onTranslate,onEdit,onSaved(){saved++;stateEpoch++;version=saveVersion;}});if(before===stateEpoch)break;assert.ok(attempt<24,'render-phase state updates settle before commit');}layouts.splice(0).forEach(fn=>fn());if(flush)effects.splice(0).forEach(fn=>fn());return tree;};
  // Two unchanged commit/event-loop turns include the host's post-ACK version
@@ -42,6 +42,39 @@ function fixture(){
   const view={revision:1,inputFingerprint:'a'.repeat(64),productVersion:initialVersion,updatedAt:initialVersion,contentRevision:2,optionRevision:3,imageKeys:keys,protectedDetailImageKeys:[],categoryContext:{categoryId:'80719',categoryPath:['주방'],profileId:null},overrides,resolved:{schema:{fields},rows:rows(overrides)},automatic:{schema:{fields},rows:rows({common:{},options:{}})}};
  return{keys,view,reply(url,init){if(init?.method==='PUT'){const body=JSON.parse(init.body);if(body.expectedRevision!==view.revision)return Response.json({error:'동시 이미지 수정'},{status:409});for(const change of body.changes){const own=view.overrides.options[change.optionId]??={};if(change.value===null)delete own[change.fieldKey];else own[change.fieldKey]=change.value;if(!Object.keys(own).length)delete view.overrides.options[change.optionId];}view.revision++;view.productVersion=advance(view.productVersion);view.updatedAt=view.productVersion;view.resolved.rows=rows(view.overrides);}return Response.json(view);}};
 }
+
+test('banner-only detail can start a saved-photo body at the verified top/bottom boundary and save/reload without changing other roles or HTML',async()=>{
+ for(const roles of [{top:[0],bottom:[]},{top:[],bottom:[0]},{top:[0],bottom:[1]}]){
+  const f=fixture(),anchors=[...roles.top,...roles.bottom].map(index=>f.keys[index]);
+  f.view.protectedDetailImageKeys=anchors;
+  f.reply('',{method:'PUT',body:JSON.stringify({expectedRevision:f.view.revision,changes:[
+   {optionId:'red',fieldKey:'detailImages',value:anchors.join('\n')},{optionId:'red',fieldKey:'wire-detailImages',value:anchors.join('\n')},
+   {optionId:'red',fieldKey:'detailHtml',value:'<p>수동 설명 유지</p>'},{optionId:'red',fieldKey:'wire-detailHtml',value:'<p>수동 설명 유지</p>'}
+  ]})});
+  const before=plain(f.view),h=imageUI((url,init)=>url.includes('/detail-workspace')?Response.json({view:f.view,workspace:null,roles:{top:roles.top.map(index=>f.keys[index]),bottom:roles.bottom.map(index=>f.keys[index])}}):f.reply(url,init),{stage:'detail',version:f.view.productVersion});
+  try{
+   await h.idle();await h.click('수집 사진 선택하기');h.choose('선택 옵션 상세 이미지 후보 4');await h.idle();
+   const expected=[...roles.top.map(index=>f.keys[index]),f.keys[3],...roles.bottom.map(index=>f.keys[index])];
+   assert.deepEqual(h.ordered(),expected,text(h.render()));assert.equal(h.render().props['data-workspace-dirty'],true);assert.deepEqual(plain(f.view),before,'candidate selection is still only a local draft');
+   assert.equal(h.calls.filter(call=>call.init?.method==='PUT').length,0);
+   await h.click('선택 옵션 이미지 저장');assert.equal(h.saved,1);
+   assert.equal(f.view.overrides.options.red.detailImages,expected.join('\n'));assert.equal(f.view.overrides.options.red['wire-detailImages'],expected.join('\n'));
+   assert.deepEqual(f.view.overrides.common,before.overrides.common);assert.deepEqual(f.view.overrides.options.blue,before.overrides.options.blue);
+   assert.equal(f.view.overrides.options.red.detailHtml,'<p>수동 설명 유지</p>');assert.equal(f.view.overrides.options.red['wire-detailHtml'],'<p>수동 설명 유지</p>');
+   assert.deepEqual(f.view.imageKeys,before.imageKeys);assert.deepEqual(f.view.automatic,before.automatic);
+   h.source(f.view.productVersion,'saved-photo-body');await h.idle();assert.deepEqual(h.ordered(),expected);assert.equal(h.render().props['data-workspace-dirty'],false);
+  }finally{h.close();}
+ }
+});
+
+test('saved-photo body refuses missing/contradictory banner roles and a changed view without modifying the draft',async()=>{
+ for(const mode of ['missing-role','overlap','changed-view']){
+  const f=fixture();f.view.protectedDetailImageKeys=[f.keys[0]];
+  f.reply('',{method:'PUT',body:JSON.stringify({expectedRevision:f.view.revision,changes:[{optionId:'red',fieldKey:'detailImages',value:f.keys[0]},{optionId:'red',fieldKey:'wire-detailImages',value:f.keys[0]}]})});
+  const before=plain(f.view),h=imageUI((url,init)=>url.includes('/detail-workspace')?Response.json({view:mode==='changed-view'?{...f.view,productVersion:advance(f.view.productVersion)}:f.view,workspace:null,roles:mode==='missing-role'?{top:[],bottom:[]}:mode==='overlap'?{top:[f.keys[0]],bottom:[f.keys[0]]}:{top:[f.keys[0]],bottom:[]}}):f.reply(url,init),{stage:'detail',version:f.view.productVersion});
+  try{await h.idle();h.choose('선택 옵션 상세 이미지 후보 4');await h.idle();assert.deepEqual(h.ordered(),[f.keys[0]]);assert.equal(h.render().props['data-workspace-dirty'],false);assert.deepEqual(plain(f.view),before);assert.equal(h.calls.some(call=>call.init?.method==='PUT'),false);assert.ok(nodes(h.render()).some(node=>node.props?.role==='alert'));}finally{h.close();}
+ }
+});
 
 test('native selected-image drag changes only local order in both stages until an explicit save, keeping HTML and other scopes',async()=>{
  for(const stage of ['additional','detail']){

@@ -14,7 +14,7 @@ const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);re
  * list child records the real dashboard callbacks so navigation follows the
  * primary cell -> option -> stage flow. HTTP is held at the response boundary;
  * no browser, remote product or operating storage is used. */
-function harness({submission=false,batch,integration,packaging=false,captureLabelBatch=false}={}){
+function harness({submission=false,batch,integration,packaging=false,captureLabelBatch=false,confirm}={}){
  const instances=new Map(),cache=new Map(),effects=[],layoutEffects=[],requests=[],archiveReads=[],settingsReads=[],settingsWrites=[],bannerUploads=[],productReads=[];let active,tree,closed=false,lateDashboardWrites=0,storedSettings=null,holdSettings=false,holdSettingsWrite=false,holdProductRead=false,intakeSettings;
  const now='2026-10-05T00:00:00.000Z';
  const product=id=>({id,owner_id:'test-owner',title:'상품 '+id,source_url:'https://detail.1688.com/offer/'+(id==='a'?'813724060928':'813724060929')+'.html',created_at:now,updated_at:now,image_keys:'[]',options_count:1,source_price_cny:1,exchange_rate:200,supply_margin:50,coupang_margin:40,supply_price:400,sale_price:700,msrp:1000,seo_status:'대기',image_status:'대기',quote_status:'대기',registration_status:'검토 대기',supplier_hub_status:'미전송',goal_stage:'work'});
@@ -66,7 +66,7 @@ function harness({submission=false,batch,integration,packaging=false,captureLabe
  function load(file){
   if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
-   {exports,Error,AbortController,File,FormData,URL,URLSearchParams,Date,Intl,TextEncoder,TextDecoder,structuredClone,crypto,queueMicrotask,fetch:request,window:{addEventListener(){},removeEventListener(){},confirm(){throw Error('Unexpected discard prompt');},setTimeout},require(name){
+   {exports,Error,AbortController,File,FormData,URL,URLSearchParams,Date,Intl,TextEncoder,TextDecoder,structuredClone,crypto,queueMicrotask,fetch:request,window:{addEventListener(){},removeEventListener(){},confirm(message){if(confirm)return confirm(message);throw Error('Unexpected discard prompt');},setTimeout},require(name){
     if(name==='react')return hooks;
     if(name==='react/jsx-runtime')return{jsx:(type,props,key)=>({type,props,key}),jsxs:(type,props,key)=>({type,props,key})};
     if(name.endsWith('.css'))return{};
@@ -112,7 +112,7 @@ function harness({submission=false,batch,integration,packaging=false,captureLabe
  const settle=async()=>{for(let i=0;i<12;i++){render();await new Promise(resolve=>setImmediate(resolve));}};
  const button=label=>nodes(render()).find(node=>node.type==='button'&&text(node)===label);
  return{requests,archiveReads,settingsReads,settingsWrites,bannerUploads,productReads,product,render,settle,button,get lateDashboardWrites(){return lateDashboardWrites;},get intakeSettings(){return intakeSettings;},get quotationEditor(){return quotationEditor;},
-  get packagingEditor(){return packagingEditor;},get labelBatch(){return labelBatch;},get seoBatch(){return seoBatch;},setQuotationBusy(value){quotationBusy=value;},
+  get packagingEditor(){return packagingEditor;},get optionBoard(){return optionBoard;},get labelBatch(){return labelBatch;},get seoBatch(){return seoBatch;},setQuotationBusy(value){quotationBusy=value;},
   setStoredSettings(value){storedSettings=value;},deferSettings(){holdSettings=true;},deferSettingsWrite(){holdSettingsWrite=true;},
   deferProduct(){holdProductRead=true;},
   settingsPanel:()=>nodes(render()).find(node=>node.props?.id==='workspace-settings-panel'),
@@ -133,6 +133,18 @@ function harness({submission=false,batch,integration,packaging=false,captureLabe
   close(){closed=true;for(const instance of instances.values()){instance.mounted=false;instance.slots.forEach(slot=>slot?.cleanup?.());}},
  };
 }
+
+test('common detail shortcut preserves unsaved description and opens the current product option list when clean',async()=>{
+ const confirmations=[],h=harness({confirm:message=>{confirmations.push(message);return false;}});try{
+  await h.settle();await h.click('▦상품관리(신규)');await h.click('상품 작업 열기 →');h.archiveReads[0].resolve(Response.json({product:h.product('a')}));await h.settle();
+  await h.click('5상세 이미지');assert.ok(h.button('옵션별 상세 편집'));assert.match(text(h.workspace()),/수집 사진으로 옵션별 상세 구성/);
+  const description=()=>nodes(h.workspace()).find(node=>node.type==='textarea'&&node.props['aria-label']==='상세페이지 설명');
+  const saved=description().props.value;description().props.onChange({target:{value:'보존할 상세 설명'}});await h.settle();
+  await h.click('옵션별 상세 편집');assert.equal(confirmations.length,1);assert.ok(h.workspace());assert.equal(description().props.value,'보존할 상세 설명');assert.equal(h.optionBoard,undefined);
+  description().props.onChange({target:{value:saved}});await h.settle();await h.click('옵션별 상세 편집');
+  assert.equal(h.workspace(),undefined);assert.equal(h.optionBoard.productId,'a');assert.equal(typeof h.optionBoard.onStage,'function');assert.ok(h.requests.every(request=>request.method==='GET'));
+ }finally{h.close();}
+});
 
 test('packaging review retains unsaved source and quotation fields before opening the exact saved option',async()=>{
  const h=harness({submission:true,packaging:true});try{

@@ -84,7 +84,7 @@ for(const company of companies)test(`${company.companyCode} primary detail photo
  try{
   const props={productId:f.product.id,optionId:'1688-red',version:f.product.updated_at,profileId:'cat',stage:'detail',primaryDetailTools:true,onTranslate(){throw Error('No implicit translation');},onEdit(){}};
   const view=await json(await f.api.route(f.base+'/quotation-fields?profileId=cat')),selected=view.resolved.rows.find(row=>row.optionId&&row.included!==false);assert.ok(selected,'an actual included option rather than the common row');props.optionId=selected.optionId;
-  h=downloadUI('app/components/option-image-editor.tsx','OptionImageEditor',props,f.request);await h.idle();
+  const confirmations=[];h=downloadUI('app/components/option-image-editor.tsx','OptionImageEditor',props,f.request,{confirm:message=>{confirmations.push(message);return true;}});await h.idle();
   const composite=entries(h.render()).find(({node})=>typeof node.type==='function'&&node.type.name==='DetailImageCompositePanel');assert.ok(composite);assert.equal(initiallyVisible(composite),true);assert.equal(composite.node.props.disabled,false);assert.equal(composite.node.props.beforeApply(),true);assert.equal(composite.node.props.compactToolbar,true);
   assert.equal(entries(h.render()).filter(({node})=>node.type?.name==='DetailImageCompositePanel').length,1,'one original composite controller');
   const zip=entries(h.render()).find(({node})=>node.type==='button'&&text(node)==='상세 이미지 ZIP 다운로드');assert(zip);assert.equal(initiallyVisible(zip),false);
@@ -92,7 +92,7 @@ for(const company of companies)test(`${company.companyCode} primary detail photo
   const workspace=entries(h.render()).find(({node})=>typeof node.type==='function'&&node.type.name==='DetailWorkspacePanel');assert.ok(workspace);assert.equal(initiallyVisible(workspace),false,'stored work configuration remains advanced');
   for(const label of ['상세 이미지 2 편집하기','상세 이미지 2 영어 한국어 번역','상세 이미지 2 위로 이동','상세 이미지 2 선택 제거','선택 옵션 이미지 저장']){const entry=entries(h.render()).find(({node})=>node.type==='button'&&(node.props['aria-label']===label||text(node)===label));assert.ok(entry,label);assert.equal(initiallyVisible(entry),true,label);}
   const before=f.retained(),files=f.originals(),sourceOptions=JSON.stringify(f.api.sqlite.prepare('SELECT * FROM product_options').all());assert.equal(h.button('선택 옵션 이미지 저장').props.disabled,true);
-  h.button('상세 이미지 2 선택 제거').props.onClick();assert.equal(h.render().props['data-workspace-dirty'],true);assert.equal(h.button('선택 옵션 이미지 저장').props.disabled,false);
+  h.button('상세 이미지 2 선택 제거').props.onClick();assert.equal(confirmations.length,1);assert.equal(h.render().props['data-workspace-dirty'],true);assert.equal(h.button('선택 옵션 이미지 저장').props.disabled,false);
   assert.equal(h.button('상세 이미지 1 편집하기').props.disabled,true);const blocked=entries(h.render()).find(({node})=>node.type?.name==='DetailImageCompositePanel');assert.equal(blocked.node.props.disabled,true);assert.equal(blocked.node.props.beforeApply(),false);
   assert.equal(f.retained(),before);assert.equal(f.originals(),files);assert.equal(h.requests.filter(call=>call.init?.method==='PUT'||call.init?.method==='POST').length,0);
   const retainedSave=h.button('선택 옵션 이미지 저장').props.onClick;

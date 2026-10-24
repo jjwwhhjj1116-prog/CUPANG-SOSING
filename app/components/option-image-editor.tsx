@@ -9,6 +9,8 @@ import { downloadImageSelection } from '@/app/image-selection-download';
 import { DetailImageCompositePanel } from '@/app/components/detail-image-composite-panel';
 import { DetailWorkspacePanel } from '@/app/components/detail-workspace-panel';
 import { canEditSavedDetailInputs, prepareSavedDetailInputs, prepareSavedDetailComposition } from '@/app/detail-editor-inputs-client';
+import { readDetailWorkspace } from '@/app/detail-workspace-client';
+import { startDetailBodyFromSavedPhoto } from '@/app/detail-source-draft';
 
 type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; stage: OptionImageStage; active?: boolean; saveOnChange?: boolean; primaryDetailTools?: boolean;
   disabled?: boolean; processingConfigured?: boolean | null; onSaved?: () => void; onTranslate?: (sourceKey: string, role: OptionImageStage, sourceLanguage: 'zh' | 'en', quotationTarget: FreeImageQuotationRequest) => void;
@@ -26,6 +28,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
   const [saved, setSaved] = useState<{ scope: string; sourceKey: string; view: QuotationFieldsView } | null>(null);
   const [pending, setPending] = useState<{ scope: string; values: OptionImageDraft }>({ scope, values: {} });
   const [preview, setPreview] = useState<{ scope: string; key: string } | null>(null);
+  const [sourceCandidatesOpen, setSourceCandidatesOpen] = useState(false);
   const activeDrag = useRef<ImageDrag | null>(null), liveDisabled = useRef(disabled), liveActive = useRef(active), liveSaveOnChange = useRef(saveOnChange), liveProcessingConfigured = useRef(processingConfigured);
   const [dragging, setDragging] = useState<{ token: string; key: string; target: string | null } | null>(null);
   const latestSaved = useRef<typeof saved>(null), latestDraft = useRef({ scope, values: {} as OptionImageDraft });
@@ -125,13 +128,29 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     if (JSON.stringify(before) === JSON.stringify(after) || !preservesSettingsImages(before, after)) return;
     edit(input, after.join('\n'));
   }
-  function toggle(key: string) {
+  async function toggle(key: string) {
     if (!view?.imageKeys.includes(key) || !mutableImage(key)) return;
+    const base = latestSaved.current, editing = latestDraft.current;
+    const before = quotationImageKeys(optionImageValue(view, optionId, input, editing.scope === scope ? editing.values : {}));
+    if (stage === 'detail' && !before.includes(key) && before.length > 0 && before.every(value => knownProtection?.includes(value))) {
+      if (!base || base.view !== view || base.sourceKey !== sourceKey || !cardCurrent() || request.current || pendingSave.current) return;
+      const controller = new AbortController(); request.current = controller; setBusy(true); setError('');
+      try {
+        const reply = await readDetailWorkspace({ productId, optionId, profileId, view }, controller.signal);
+        if (controller.signal.aborted || !current() || !cardCurrent() || latestSaved.current !== base || latestDraft.current !== editing) return;
+        const after = startDetailBodyFromSavedPhoto(before, key, reply.roles, knownProtection!);
+        request.current = null;
+        edit('detailImages', after.join('\n'));
+        setMessage('선택한 수집 사진으로 상세 본문을 구성했습니다. 원본 상세를 새로 수집한 결과는 아닙니다. 순서와 내용을 확인한 뒤 저장해주세요.');
+      } catch (cause) { if (!controller.signal.aborted && current()) setError(cause instanceof Error ? cause.message : '상세 본문 위치를 확인하지 못했습니다.'); }
+      finally { if (request.current === controller) request.current = null; if (!controller.signal.aborted && current()) setBusy(false); }
+      return;
+    }
     updateImages(keys => {
       if (keys.includes(key)) return keys.filter(item => item !== key);
       if (stage !== 'detail' || !keys.some(item => knownProtection?.includes(item))) return [...keys, key];
       const lastBody = keys.findLastIndex(item => !knownProtection!.includes(item));
-      if (lastBody < 0) { setMessage('설정 이미지만 남아 있습니다. 공통·자동값을 복원해 본문 위치를 확인한 뒤 사진을 추가해주세요.'); return keys; }
+      if (lastBody < 0) return keys;
       return [...keys.slice(0, lastBody + 1), key, ...keys.slice(lastBody + 1)];
     });
   }
@@ -413,6 +432,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
   return <section className={`panel-stack${instant ? ' option-additional-instant' : ''}`} aria-label="선택 옵션 이미지 편집" data-quotation-source-step={stage === 'additional' ? '추가 이미지' : '상세 이미지'} data-workspace-dirty={dirty} data-workspace-saving={busy || merging || workspaceWorking}>
     {!(stage==='detail'&&primaryDetailTools)&&<h3>{stage === 'detail' ? '상세 페이지 이미지' : '선택 옵션 추가 이미지'}</h3>}<p>{row?.optionLabel || optionId} · {row?.included === false ? '견적 제외 옵션' : '선택한 옵션'}</p>
     {stage==='detail'&&primaryDetailTools?<details className="option-detail-guidance"><summary>사진 편집 안내·원본 ZIP</summary>{editGuidance}</details>:editGuidance}
+    {stage === 'detail' && view && <div className="panel-note"><div><strong>수집 사진으로 상세 구성</strong><p>저장된 상품 사진을 직접 골라 상세 본문으로 배치할 수 있습니다. 대표·추가 이미지와 직접 작성한 HTML은 유지됩니다.</p><button type="button" className="btn ghost" disabled={locked || !active} onClick={() => setSourceCandidatesOpen(true)}>수집 사진 선택하기</button></div></div>}
     {stage === 'detail' && view && canEditSavedDetailInputs({ productId, optionId, profileId, view }) && <div className="button-row">
       <button type="button" className="btn ghost" disabled={locked || dirty || !active || saved?.sourceKey !== sourceKey} onClick={() => void reopenDetailInputs()}>저장 전 개별 사진으로 편집</button>
       <button type="button" className="btn ghost" disabled={locked || dirty || !active || saved?.sourceKey !== sourceKey} onClick={() => void reopenDetailInputs(true)}>저장 전 사진·HTML로 편집</button>
@@ -504,7 +524,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
         {/* eslint-disable-next-line @next/next/no-img-element */}
         {view.imageKeys.includes(key) ? <img src={imageUrl(key)} alt={`상세 이미지 ${index + 1}`} loading="lazy" /> : <p>현재 상품에 없는 이미지</p>}
       </figure>)}{!selected.length && <p>이 옵션에 선택한 상세 이미지가 없습니다.</p>}</section>
-        <details className="option-detail-image-candidates"><summary>모든 이미지 {view.imageKeys.length} · 상세 이미지 선택·교체</summary><div className="option-detail-image-candidate-grid">{candidateCards}</div>
+        <details className="option-detail-image-candidates" open={sourceCandidatesOpen || selected.every(key => knownProtection?.includes(key)) ? true : undefined}><summary>모든 이미지 {view.imageKeys.length} · 상세 이미지 선택·교체</summary><div className="option-detail-image-candidate-grid">{candidateCards}</div>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           {preview?.scope === scope && view.imageKeys.includes(preview.key) && <figure className="image-large-preview"><figcaption>이미지 {view.imageKeys.indexOf(preview.key) + 1} 미리보기</figcaption><img src={imageUrl(preview.key)} alt="상세 이미지 후보 큰 미리보기" /></figure>}
           {!view.imageKeys.length && <p>상품에 저장한 이미지를 먼저 추가해주세요.</p>}

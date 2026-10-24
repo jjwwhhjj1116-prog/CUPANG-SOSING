@@ -51,6 +51,7 @@ function fixture(initialProps = {}, clientOverrides = {}) {
   const sourceFor = (id, productVersion, sourceKey, role) => ({ productId: id, productVersion, contentRevision: 2, sourceKey, sourceSha256: 'a'.repeat(64), role, width: 20, height: 12 });
   const client = {
     FreeImageApplyError: ApplyError,
+    async readFreeImageRoleSources() { return [...props.imageKeys]; },
     sameFreeImageQuotationRequest(actual, expected) { const clean = target => target ? Object.fromEntries(Object.entries(target).filter(([key]) => key !== 'bindingSha256')) : null; return JSON.stringify(clean(actual)) === JSON.stringify(clean(expected)); },
     async readFreeImageSource(id, productVersion, key, role, signal, _fetcher, quotationTarget, options) { calls.push({ action: 'source', id, productVersion, key, role, signal, quotationTarget, ...(options ? { options } : {}) });
       const image = { source: { ...sourceFor(id, productVersion, key, role), ...(quotationTarget ? { quotationTarget: { ...quotationTarget, bindingSha256: 'b'.repeat(64) } } : {}) }, width: 20, height: 12, blob: new Blob(['original']), canvas: {} }; return sourceIntercept ? sourceIntercept(image, signal, options) : image; },
@@ -136,6 +137,25 @@ test('each explicit generic open sets its stage and leaves source unselected wit
   h.setProps({active:false});h.setProps({active:true});await h.settle();assert.equal(h.field('번역할 원본 이미지').props.value,'owner/second.png','visibility ABA does not replay the consumed generic entry');
  }finally{h.close();}
  }
+});
+
+test('generic detail editor excludes gallery-only sources and never reads or rewrites their pixels', async () => {
+ const h=fixture({imageKeys:[],active:false},{readFreeImageRoleSources:async()=>[]});try{
+  h.setProps({active:true,imageKeys:['owner/gallery.png'],editorEntry:{sequence:1,role:'detail'}});await h.settle();
+  assert.deepEqual(nodes(h.field('번역할 원본 이미지')).filter(node=>node.type==='option').map(node=>node.props.value),['']);
+  assert.match(text(h.render()),/상세 이미지에 연결된 원본이 없습니다/);
+  await h.change('번역할 원본 이미지','owner/gallery.png');assert.equal(h.field('번역할 원본 이미지').props.value,'');
+  assert.equal(h.button('원본 문구 읽기').props.disabled,true);assert.equal(h.calls.length,0);assert.equal(h.saved,0);
+ }finally{h.close();}
+});
+
+test('generic role-source metadata cannot restore a stale role list after a selection change', async () => {
+ const pending=deferred();const h=fixture({imageKeys:[],active:false},{readFreeImageRoleSources:async(_id,_version,role)=>role==='detail'?pending.promise:['owner/main.png']});try{
+  h.setProps({active:true,imageKeys:['owner/main.png','owner/detail.png'],editorEntry:{sequence:1,role:'detail'}});await h.settle();
+  await h.change('번역할 이미지 역할','main');pending.resolve(['owner/detail.png']);await h.settle();
+  assert.deepEqual(nodes(h.field('번역할 원본 이미지')).filter(node=>node.type==='option').map(node=>node.props.value),['','owner/main.png']);
+  assert.equal(h.calls.length,0);
+ }finally{pending.resolve([]);h.close();}
 });
 
 test('another generic stage entry cannot discard manual text, crop/preview state or change its selected original and role',async()=>{

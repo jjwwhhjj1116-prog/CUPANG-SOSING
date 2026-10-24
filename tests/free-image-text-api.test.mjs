@@ -119,7 +119,7 @@ function fixture() {
     await load('db/product-content.ts').saveProductContent('owner', content, 0);
   };
   const request = async (method = 'GET', body, options = {}) => {
-    const url = 'https://app.test/api/products/' + (options.id ?? 'product') + '/image-text' + (method === 'GET' ? '?sourceKey=' + encodeURIComponent(options.key ?? key) + '&role=' + (options.role ?? 'detail') + (options.extra ?? '') : '');
+    const url = 'https://app.test/api/products/' + (options.id ?? 'product') + '/image-text' + (method === 'GET' ? options.query ?? '?sourceKey=' + encodeURIComponent(options.key ?? key) + '&role=' + (options.role ?? 'detail') + (options.extra ?? '') : '');
     const headers = { ...(options.origin ? { origin: options.origin } : {}), ...(body instanceof FormData ? {} : method === 'POST' ? { 'content-type': 'application/json' } : {}), ...options.headers };
     return load('app/api/products/[id]/image-text/route.ts')[method](new Request(url, { method, headers, ...(body === undefined ? {} : { body: body instanceof FormData ? body : typeof body === 'string' ? body : JSON.stringify(body) }) }), { params: Promise.resolve({ id: options.id ?? 'product' }) });
   };
@@ -146,6 +146,18 @@ test('GET returns the exact owned role and validated bytes, not another product 
     assert.equal(h.writes.length, 0); assert.equal(h.translations.length, 0);
   } finally { h.close(); }
 });
+test('role-source listing is read-only and excludes stored gallery images belonging to another role', async () => {
+ const h=await ready();try{
+  const before=JSON.stringify(await h.content()), res=await h.request('GET',undefined,{query:'?list=sources&role=detail'});await assertStatus(res,200);
+  const result=await res.json();assert.deepEqual(result.keys,[h.key,'owner/first.png','owner/last.png']);assert.equal(result.productVersion,h.product().updated_at);
+  const empty=await h.request('GET',undefined,{query:'?list=sources&role=additional'});await assertStatus(empty,200);assert.deepEqual((await empty.json()).keys,[]);
+  const wrong=await h.request('GET',undefined,{key:'owner/main.png',role:'detail'});await assertStatus(wrong,409);assert.match((await wrong.json()).error,/현재 이미지 역할에 연결되어 있지/);
+  for(const query of ['?list=sources&role=detail&role=main','?list=sources&role=detail&sourceKey=owner%2Fmain.png','?list=sources&role=label'])await assertStatus(await h.request('GET',undefined,{query}),400);
+  assert.equal(JSON.stringify(await h.content()),before);assert.equal(h.writes.length,0);assert.equal(h.translations.length,0);
+  h.controls.owner='foreign';await assertStatus(await h.request('GET',undefined,{query:'?list=sources&role=detail'}),404);
+ }finally{h.close();}
+});
+
 test('production authentication and owner isolation fail before file reads, writes or translation', async () => {
   const h = await ready(); try {
     h.controls.verified = false; await assertStatus(await h.request(), 503); h.controls.verified = true; h.controls.owner = 'foreign';

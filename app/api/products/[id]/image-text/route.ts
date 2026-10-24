@@ -63,7 +63,8 @@ async function original(owner: string, id: string, sourceKey: string, role: Free
   const options = role === 'main' && includeOptions ? await readProductOptions(owner, id) : null;
   const optionIds = options?.rows.filter(row => row.imageKey === sourceKey).map(row => row.id).sort() ?? [];
   const commonAssigned = current.content.assets[role].value.includes(sourceKey);
-  if (requireRole && !commonAssigned && !(role === 'main' && options && optionIds.length)) throw changed();
+  if (requireRole && !commonAssigned && !(role === 'main' && options && optionIds.length)) throw new ImageTextError(409,
+    '선택한 원본은 현재 이미지 역할에 연결되어 있지 않습니다. 해당 단계에서 사용할 사진을 먼저 선택·저장한 뒤 이미지 카드의 편집을 열어주세요.');
   const { bytes, dimensions } = await readImage(sourceKey);
   const source: FreeImageSource = { productId: id, productVersion: current.product.updated_at, contentRevision: current.content.revision,
     sourceKey, sourceSha256: await digest(bytes), role, width: dimensions.width, height: dimensions.height,
@@ -226,6 +227,18 @@ function fail(error: unknown) {
 export async function GET(request: Request, context: Context) {
   try {
     const owner = await ownerId(), { id } = await context.params, params = new URL(request.url).searchParams;
+    if (params.get('list') === 'sources') {
+      if ([...params.keys()].some(key => !['list', 'role'].includes(key) || params.getAll(key).length !== 1)
+        || !validFreeImageRole(params.get('role')) || params.get('role') === 'label') throw new ImageTextError(400, '조회할 이미지 역할을 선택해주세요.');
+      const current = await state(owner, id), role = params.get('role') as FreeImageSource['role'];
+      const options = role === 'main' ? await readProductOptions(owner, id) : null;
+      const assigned = new Set([...current.content.assets[role].value, ...(options?.rows.flatMap(row => row.imageKey ? [row.imageKey] : []) ?? [])]);
+      const keys = current.keys.filter(key => isOwnedImageKey(owner, key) && assigned.has(key));
+      const latest = await state(owner, id);
+      if (latest.product.updated_at !== current.product.updated_at || latest.content.revision !== current.content.revision
+        || options && (await readProductOptions(owner, id)).revision !== options.revision) throw changed();
+      return response({ productId: id, productVersion: current.product.updated_at, contentRevision: current.content.revision, role, keys });
+    }
     const quotation = params.get('target') === 'quotation';
     const allowed = quotation ? ['sourceKey', 'role', 'target', 'profileId', 'optionId', 'fieldKey', 'slotIndex', 'editor'] : ['sourceKey', 'role'];
     if ([...params.keys()].some(key => !allowed.includes(key) || params.getAll(key).length !== 1) || params.getAll('sourceKey').length !== 1 || params.getAll('role').length !== 1
