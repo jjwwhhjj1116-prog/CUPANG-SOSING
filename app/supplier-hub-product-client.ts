@@ -61,7 +61,19 @@ export function productDocumentExchange(action:'preview'|SingleDocumentAction|Pr
       if(event.source!==window||event.origin!==window.location.origin||event.data?.channel!=='YOOFAM_HUB_HANDOFF_RESULT'||event.data.requestId!==requestId)return;
       cleanup();const envelope=event.data.result;
       if(!object(envelope)||envelope.ok!==true||!Object.hasOwn(envelope,'result'))reject(new ProductDocumentBridgeError(typeof envelope?.error==='string'?envelope.error:'전체 상품 견적 응답을 확인하지 못했습니다.',mutating,typeof envelope?.code==='string'?envelope.code:'PRODUCT_DOCUMENT_BRIDGE'));
-      else{try{resolve(copy(envelope.result));}catch{reject(new ProductDocumentBridgeError('전체 상품 견적 응답의 JSON 형식·크기를 확인해주세요.',mutating));}}
+      else{
+        const value=envelope.result;
+        // A correlated negative scope result cannot advance the operation or
+        // clear its reservation. Preserve the useful bounded failure instead
+        // of attempting to parse it as a successful draft observation.
+        if(exact(value,['format','requestId','state','registered','success','needsRecovery','error'])&&value.format===FORMAT&&value.requestId===packet.requestId
+          &&value.state==='scope-blocked'&&value.registered===false&&value.success===false&&value.needsRecovery===false
+          &&exact(value.error,['code','message'])&&typeof value.error.code==='string'&&/^[A-Z][A-Z0-9_]{0,99}$/.test(value.error.code)
+          &&typeof value.error.message==='string'&&value.error.message.length>0&&value.error.message.length<=2000){
+          reject(new ProductDocumentBridgeError(value.error.message,mutating,value.error.code));return;
+        }
+        try{resolve(copy(value));}catch{reject(new ProductDocumentBridgeError('전체 상품 견적 응답의 JSON 형식·크기를 확인해주세요.',mutating));}
+      }
     };
     // Native recovery independently rechecks the current private source and
     // the original saved document. Its read-only reply can exceed 60 seconds;

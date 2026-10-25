@@ -2,6 +2,7 @@ import {productDocumentIdentity,createProductDocumentReceiver,createProductDocum
 import {createVerifiedProductDocumentBrowserAdapter} from './product-document-adapter.mjs';
 import {SingleDocumentError,readPreparedDocumentPreviewCheckpoint} from './single-document.mjs';
 import {PRODUCT_DOCUMENT_PREFLIGHT_TIMEOUT} from './product-document.mjs';
+import {resolveProductSourceContext} from './product-source-context.mjs';
 
 // Enable only after the owned full document, staged terms, readback and native
 // receipt have been verified live. A page cannot override this release gate.
@@ -12,12 +13,15 @@ export async function dispatchProductDocument(message,sender){
   if(!message||message.type!=='YOOFAM_PRODUCT_DOCUMENT_REQUEST'||!['preview','prepareDraft','recoverDraft','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft','start','resume','recover','confirm','observe'].includes(message.action)
     ||Object.keys(message).some(key=>!['type','action','packet','confirmation'].includes(key))
     ||(['confirm','confirmPreparedDraft'].includes(message.action))!==Object.hasOwn(message,'confirmation'))throw new SingleDocumentError('PRODUCT_ACTION','전체 상품 견적 작업을 확인해주세요.');
-  const context=await productDocumentIdentity(message.packet,sender,{allowExpired:!['preview','start','prepareDraft','reviewPreparedDraft'].includes(message.action)});
+  let context=await productDocumentIdentity(message.packet,sender,{allowExpired:!['preview','start','prepareDraft','reviewPreparedDraft'].includes(message.action)});
+  if(['prepareDraft','recoverDraft','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(message.action))context=await resolveProductSourceContext(context);
   if(message.action==='preview'){
     const reviewDigest=message.packet.review.reviewDigest,deadlineAt=Date.now()+PRODUCT_DOCUMENT_PREFLIGHT_TIMEOUT,timeoutError=()=>new SingleDocumentError('PRODUCT_SOURCE_PREFLIGHT_TIMEOUT','현재 회원·회사·견적 원본 확인 시간이 초과됐습니다. 상품은 전송하지 않았습니다.');
     let selected,stopped=false,timer;
     const deadline=new Promise((_,reject)=>{timer=setTimeout(()=>{stopped=true;reject(timeoutError());},PRODUCT_DOCUMENT_PREFLIGHT_TIMEOUT);});
     const operation=(async()=>{
+      context=await resolveProductSourceContext(context);
+      if(stopped||Date.now()>=deadlineAt)throw timeoutError();
       const current=await createVerifiedProductDocumentBrowserAdapter(context);
       if(stopped||Date.now()>=deadlineAt){current.adapter.dispose();throw timeoutError();}selected=current;
       const prior=selected.nativeAssets===true?await readPreparedDocumentPreviewCheckpoint(context,createProductDocumentStore()):null;
@@ -44,13 +48,13 @@ export async function dispatchProductDocument(message,sender){
       // Pre-submit stage recovery still retains its original live adapter.
       const store=createProductDocumentStore();let prior,fresh=false;
       try{prior=await readPreparedDocumentPreviewCheckpoint(context,store);
-        if(message.action==='recoverDraft'||prior?.submitRequestedAt!==undefined){fresh=true;const receiver=createProductDocumentDraftReceiver({adapter:selected.adapter,store});return await receiver[message.action](message.packet,sender);}
+        if(message.action==='recoverDraft'||prior?.submitRequestedAt!==undefined){fresh=true;const receiver=createProductDocumentDraftReceiver({adapter:selected.adapter,store,resolveSourceContext:base=>resolveProductSourceContext(base,{store})});return await receiver[message.action](message.packet,sender);}
       }catch(error){if(!fresh)selected.adapter.dispose();throw error;}
       finally{if(fresh)selected.adapter.dispose();}
     }
-    const key='native-draft:'+selected.sourcePlanSha256;let receiver=receivers.get(key);
+    const key='native-draft:'+selected.sourcePlanSha256+':source:'+(context.sourceAppTabId??context.identity.appTabId);let receiver=receivers.get(key);
     if(!receiver){if(receivers.size>=100){selected.adapter.dispose();throw new SingleDocumentError('PRODUCT_RECEIVER_LIMIT','이 브라우저의 새 초안 확인 범위를 초과했습니다. 기존 요청을 먼저 확인해주세요.');}
-      receiver=createProductDocumentDraftReceiver({adapter:selected.adapter,store:createProductDocumentStore()});receivers.set(key,receiver);
+      const store=createProductDocumentStore();receiver=createProductDocumentDraftReceiver({adapter:selected.adapter,store,resolveSourceContext:base=>resolveProductSourceContext(base,{store})});receivers.set(key,receiver);
     }else selected.adapter.dispose();
     return message.action==='confirmPreparedDraft'?receiver.confirmPreparedDraft(message.packet,sender,message.confirmation):receiver[message.action](message.packet,sender);
   }

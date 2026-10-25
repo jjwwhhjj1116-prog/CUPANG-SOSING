@@ -56,7 +56,7 @@ test('submitted readonly dispatch reattests with a fresh disposed adapter after 
  try{
   const send=f.api.tabs.sendMessage;f.api.tabs.sendMessage=async(id,value,frame)=>value.type==='YOOFAM_CONFIRM_NATIVE_PRODUCT_DOCUMENT_ACTION'?{ok:true,userInitiated:true,challengeId:value.expected.challenge.id,identityDigest:f.context.identityDigest,checkedAt:Date.now()}:send(id,value,frame);
   const source=fs.readFileSync(new URL('../extensions/supplier-hub/product-document-dispatch.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace(/export /g,''),run=vm.runInNewContext(source+'\ndispatchProductDocument',{
-   productDocumentIdentity,createProductDocumentDraftReceiver,SingleDocumentError,readPreparedDocumentPreviewCheckpoint,PRODUCT_DOCUMENT_PREFLIGHT_TIMEOUT,setTimeout,clearTimeout,Date,
+   productDocumentIdentity,resolveProductSourceContext:async context=>context,createProductDocumentDraftReceiver,SingleDocumentError,readPreparedDocumentPreviewCheckpoint,PRODUCT_DOCUMENT_PREFLIGHT_TIMEOUT,setTimeout,clearTimeout,Date,
    createProductDocumentReceiver:()=>assert.fail('General unqualified receiver must stay disabled'),createProductDocumentStore:()=>f.storage.store,
    createVerifiedProductDocumentBrowserAdapter:async context=>{const value=await createVerifiedProductDocumentBrowserAdapter(context,{api:f.api}),entry={...value,disposed:0};selected.push(entry);return{...value,adapter:{...value.adapter,dispose:()=>{entry.disposed++;value.adapter.dispose();}}};}
   }),request=(action,packet=f.packet,confirmation)=>run({type:'YOOFAM_PRODUCT_DOCUMENT_REQUEST',action,packet,...(confirmation===undefined?{}:{confirmation})},f.sender);
@@ -151,7 +151,7 @@ test('dispatcher validates the exact proof even if an adapter returns a positive
     const variants=[null,[],{...good,current:1},{...good,submissionReady:undefined},{...good,priorDocumentClear:false},{...good,identity:{...good.identity,members:[]}},{...good,bodySha256:'d'.repeat(64)},
       {...good,sessionId:7},{...good,sessionId:''},{...good,sessionId:'with space'},{...good,sessionId:'x'.repeat(101)},'throw','late-packet',good];
     for(const value of variants){
-      let disposed=0,reads=0;const incoming=clone(message(f)),sandbox={productDocumentIdentity,SingleDocumentError,PRODUCT_DOCUMENT_PREFLIGHT_TIMEOUT,setTimeout,clearTimeout,
+      let disposed=0,reads=0;const incoming=clone(message(f)),sandbox={productDocumentIdentity,resolveProductSourceContext:async context=>context,SingleDocumentError,PRODUCT_DOCUMENT_PREFLIGHT_TIMEOUT,setTimeout,clearTimeout,
         createProductDocumentReceiver:()=>assert.fail('Preview must not create a receiver'),createProductDocumentStore:()=>assert.fail('Preview must not create a store'),
         createVerifiedProductDocumentBrowserAdapter:async selected=>{assert.deepEqual(selected,context);return{adapter:{readSource:async input=>{reads++;assert.deepEqual(clone(input),{identity:context.identity,bodySha256:context.originalBodySha256,preparedBodySha256:context.bodySha256,packetDigest:context.packetDigest,requestId:context.packet.requestId,docId:null});if(value==='throw')throw Error('synthetic preflight failure');if(value==='late-packet'){incoming.packet.requestId='mutated-after-validation';incoming.packet.review.reviewDigest='f'.repeat(64);return good;}return value;},dispose:()=>{disposed++;}}};}};
       const run=vm.runInNewContext(source+'\ndispatchProductDocument',sandbox);
@@ -163,16 +163,26 @@ test('dispatcher validates the exact proof even if an adapter returns a positive
 
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};};
 const drain=async()=>{for(let count=0;count<5;count++)await new Promise(resolve=>setImmediate(resolve));};
-function deadlineDispatcher(context,select){
+function deadlineDispatcher(context,select,resolveContext=async value=>value){
   const timers=new Map();let time=0,sequence=0;
   class DeadlineDate extends Date{static now(){return time;}}
   const source=fs.readFileSync(new URL('../extensions/supplier-hub/product-document-dispatch.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace(/export /g,'');
   const run=vm.runInNewContext(source+'\ndispatchProductDocument',{SingleDocumentError,PRODUCT_DOCUMENT_PREFLIGHT_TIMEOUT,Date:DeadlineDate,
-    productDocumentIdentity:async()=>context,createVerifiedProductDocumentBrowserAdapter:select,
+    productDocumentIdentity:async()=>context,resolveProductSourceContext:resolveContext,createVerifiedProductDocumentBrowserAdapter:select,
     createProductDocumentReceiver:()=>assert.fail('No preview receiver'),createProductDocumentStore:()=>assert.fail('No preview store'),
     setTimeout:(fn,delay)=>{const id=++sequence;timers.set(id,{fn,at:time+delay});return id;},clearTimeout:id=>timers.delete(id)});
   return{run,timers,advance:(amount,runTimers=true)=>{time+=amount;if(runTimers)for(const[id,timer]of[...timers])if(timer.at<=time){timers.delete(id);timer.fn();}}};
 }
+
+test('closed-tab context lookup shares the preflight deadline and a late lookup cannot start an adapter',async()=>{
+ const f=await nativeRecoveryFixture();try{
+  const waiting=deferred();let selected=0;
+  const clock=deadlineDispatcher(f.context,async()=>{selected++;throw Error('late adapter must not start');},()=>waiting.promise);
+  const pending=clock.run(message(f),f.sender);await drain();assert.equal(clock.timers.size,1);
+  clock.advance(PRODUCT_DOCUMENT_PREFLIGHT_TIMEOUT);await assert.rejects(pending,{code:'PRODUCT_SOURCE_PREFLIGHT_TIMEOUT'});
+  waiting.resolve(f.context);await drain();assert.equal(selected,0);assert.equal(clock.timers.size,0);
+ }finally{f.close();}
+});
 
 test('whole read-only preflight accepts delayed selection/source within its shared deadline and clears its timer',async()=>{
   assert.ok(PRODUCT_DOCUMENT_PREVIEW_ACK_TIMEOUT>PRODUCT_DOCUMENT_PREFLIGHT_TIMEOUT);assert.ok(PRODUCT_DOCUMENT_PREFLIGHT_TIMEOUT>30000);

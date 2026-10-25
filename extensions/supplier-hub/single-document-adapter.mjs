@@ -9,7 +9,7 @@ import {singleDocumentWatchPage} from './single-watch-page.mjs';
 import {normalizeSingleReceipt} from './single-receipt.mjs';
 import {assertSingleOwnedTarget,createSingleOwnedTarget,waitSingleOwnedTarget} from './single-owned-target.mjs';
 import {nativeProductAssetBytes,prepareAndUploadNativeProductAssets} from './native-product-assets.mjs';
-import {readAppDocumentSource,sourceReadError,normalizeSourceReadFailure} from './product-document-source.mjs';
+import {readAppDocumentSource,sourceReadError,normalizeSourceReadFailure,currentSourceAppTab} from './product-document-source.mjs';
 import {nativeAssetUploadPage} from './native-asset-upload-page.mjs';
 import {nativeAssetRecoveryPage} from './native-asset-recovery-page.mjs';
 import {nativeAssetUploadPlanSha256,validateNativeAssetUploadDescriptors} from './native-asset-multipart.mjs';
@@ -317,10 +317,11 @@ export function singleDocumentReceiptPage(input){
 export function createSingleDocumentBrowserAdapter(options={}){
   return createSupplierHubDocumentBrowserAdapter(options,{wholeProduct:false});
 }
-export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,now=Date.now,nativeAssets}={},contract){
+export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,now=Date.now,nativeAssets,sourceAppTabId}={},contract){
   if(!contract||Object.keys(contract).length!==1||typeof contract.wholeProduct!=='boolean')throw new TypeError('A trusted browser source contract is required.');
   const wholeProduct=contract.wholeProduct,nativeSha=nativeAssets?.sourcePlanSha256;
   if(nativeAssets!==undefined&&(!wholeProduct||!nativeAssets||Object.keys(nativeAssets).length!==1||typeof nativeSha!=='string'||!HASH.test(nativeSha)))throw new TypeError('An independently verified native source-plan constructor is required.');
+  if(sourceAppTabId!==undefined&&(!nativeSha||!Number.isSafeInteger(sourceAppTabId)||sourceAppTabId<0))throw new TypeError('Only a trusted native source context may replace a closed app tab.');
   const sourceType=nativeSha?'YOOFAM_VERIFY_NATIVE_PRODUCT_DOCUMENT_SOURCE':wholeProduct?'YOOFAM_VERIFY_PRODUCT_DOCUMENT_SOURCE':'YOOFAM_VERIFY_SINGLE_DOCUMENT_SOURCE',confirmationType=nativeSha?'YOOFAM_CONFIRM_NATIVE_PRODUCT_DOCUMENT_ACTION':wholeProduct?'YOOFAM_CONFIRM_PRODUCT_DOCUMENT_ACTION':'YOOFAM_CONFIRM_SINGLE_DOCUMENT_ACTION';
   if(!api?.tabs||!api?.scripting||['get','create','update','sendMessage'].some(key=>typeof api.tabs[key]!=='function')||typeof api.scripting.executeScript!=='function')throw new TypeError('Owned Chrome tab adapter is required.');
   const sourceBindings=new Map(),baselines=new Map(),pageRecords=new Map(),frameDocuments=new Map(),liveWatches=new Map();
@@ -328,22 +329,21 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
   const requireWatch=entry=>{try{entry.watch.assertCurrent(entry.expected);}catch{fail('TAB_CHANGED','불러온 새 문서의 관찰이 중단됐습니다. 다른 문서를 클릭하거나 전송하지 않았습니다.');}};
   async function appCurrent(identity){
     if(!HANDOFF_ORIGINS.includes(identity?.origin)||!Number.isSafeInteger(identity.appTabId)||!Number.isSafeInteger(identity.windowId))fail('SOURCE_CHANGED','원래 앱 탭을 확인해주세요.');
-    const tab=await api.tabs.get(identity.appTabId);let url;try{url=new URL(tab?.url);}catch{fail('SOURCE_CHANGED','원래 앱 탭을 같은 Chrome 창에 열어두세요.');}
-    if(tab.id!==identity.appTabId||tab.windowId!==identity.windowId||tab.pendingUrl||url.origin!==identity.origin||url.username||url.password)fail('SOURCE_CHANGED','원래 앱 탭 또는 Chrome 창이 변경되었습니다.');
+    await currentSourceAppTab(api,identity,sourceAppTabId);
   }
   async function readSourceUnchecked(input){
     await appCurrent(input.identity);
     if(nativeSha&&input.identity.fingerprint!==nativeSha)fail('SOURCE_CHANGED','별도로 검토한 파일명 원본 계획이 다릅니다.');
     if(wholeProduct?Object.hasOwn(input.identity,'optionId')||!Array.isArray(input.identity.members):Object.hasOwn(input.identity,'members'))fail('SOURCE_CHANGED','문서 전송 방식이 다릅니다.');
-    const response=await api.tabs.sendMessage(input.identity.appTabId,{type:sourceType,expected:copy(input)},{frameId:0});await appCurrent(input.identity);
+    const response=await api.tabs.sendMessage(sourceAppTabId??input.identity.appTabId,{type:sourceType,expected:copy(input)},{frameId:0});await appCurrent(input.identity);
     if(response?.ok!==true&&normalizeSourceReadFailure(response?.sourceFailure))throw sourceReadError(response.sourceFailure);
     const good=response?.ok===true&&response.current===true&&response.submissionReady===true&&response.priorDocumentClear===true
       &&equal(response.identity,input.identity)&&response.bodySha256===input.bodySha256&&HASH.test(input.preparedBodySha256||'')&&HASH.test(input.packetDigest||'')
       &&ID.test(response.sessionId||'')&&Number.isSafeInteger(response.checkedAt)&&Math.abs(now()-response.checkedAt)<=60000;
     if(!good){sourceBindings.delete(canonical(input.identity));return {current:false,submissionReady:false,priorDocumentClear:false,identity:input.identity,bodySha256:input.bodySha256,sessionId:'invalid-source'};}
-    const fresh=wholeProduct?{frameId:0,result:await readAppDocumentSource(api,input.identity,input,nativeSha?'native':'legacy')}:(await api.scripting.executeScript({target:{tabId:input.identity.appTabId,frameIds:[0]},func:singleDocumentAppSourcePage,args:[copy(input),wholeProduct]}))[0];await appCurrent(input.identity);
+    const fresh=wholeProduct?{frameId:0,result:await readAppDocumentSource(api,input.identity,input,nativeSha?'native':'legacy',sourceAppTabId)}:(await api.scripting.executeScript({target:{tabId:input.identity.appTabId,frameIds:[0]},func:singleDocumentAppSourcePage,args:[copy(input),wholeProduct]}))[0];await appCurrent(input.identity);
     if(fresh?.frameId!==undefined&&fresh.frameId!==0||fresh?.result?.current!==true||!equal(fresh.result.identity,input.identity)||fresh.result.bodySha256!==input.bodySha256||fresh.result.preparedBodySha256!==input.preparedBodySha256)fail('SOURCE_CHANGED','최신 Single 준비 GET의 정확한 본문을 확인하지 못했습니다.');
-    const after=await api.tabs.sendMessage(input.identity.appTabId,{type:sourceType,expected:copy(input)},{frameId:0});await appCurrent(input.identity);
+    const after=await api.tabs.sendMessage(sourceAppTabId??input.identity.appTabId,{type:sourceType,expected:copy(input)},{frameId:0});await appCurrent(input.identity);
     if(after?.ok!==true&&normalizeSourceReadFailure(after?.sourceFailure))throw sourceReadError(after.sourceFailure);
     if(after?.ok!==true||after.sessionId!==response.sessionId||!equal(after.identity,input.identity)||after.current!==true||after.submissionReady!==true||after.priorDocumentClear!==true
       ||after.bodySha256!==input.bodySha256||!Number.isSafeInteger(after.checkedAt)||Math.abs(now()-after.checkedAt)>60000)fail('SOURCE_CHANGED','조회 중 회원 세션·개별 전송 연결이 변경되었습니다.');
@@ -355,7 +355,13 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
   }
   async function readSource(input){
     try{return await readSourceUnchecked(input);}catch(error){
-      sourceBindings.delete(canonical(input.identity));if(normalizeSourceReadFailure(error?.sourceFailure))throw sourceReadError(error.sourceFailure);fail('SOURCE_CHANGED','현재 앱의 회원·회사·Single 준비 GET을 다시 확인해주세요.');
+      sourceBindings.delete(canonical(input.identity));
+      if(normalizeSourceReadFailure(error?.sourceFailure)){
+        const failure=sourceReadError(error.sourceFailure);
+        if(!nativeSha)fail('SOURCE_CHANGED',failure.message);
+        throw Object.assign(new SingleDocumentError(failure.code,failure.message),{sourceFailure:failure.sourceFailure});
+      }
+      fail('SOURCE_CHANGED','현재 앱의 회원·회사·Single 준비 GET을 다시 확인해주세요.');
     }
   }
   async function bindingFor(identity,sessionId){
@@ -411,7 +417,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
       const readCurrent=async()=>{const current=await owned({...input,docId:input.body?.docId}),record=current.record,sourcePlan=sourceBindings.get(canonical(input.identity))?.nativeSourcePlan;
         return{binding:current.binding,sourcePlan,target:{docId:record.docId,requestId:current.binding.requestId,packetDigest:current.binding.packetDigest,preparedBodySha256:current.binding.preparedBodySha256,createOperationId:record.createOperationId,baselineDocIds:copy(record.baselineDocIds)}};};
       const current=await readCurrent(),scope=sourceBindings.get(canonical(input.identity)),privateBytes=new Map();
-      const readPrivate=async(action,file)=>{const key=canonical([file.key,file.sha256,file.byteLength,file.contentType]),cached=privateBytes.get(key);if(cached)return cached.slice();await appCurrent(input.identity);const reply={frameId:0,result:await readAppDocumentSource(api,input.identity,{...copy(scope.input),action,file:copy(file)})};await appCurrent(input.identity);
+      const readPrivate=async(action,file)=>{const key=canonical([file.key,file.sha256,file.byteLength,file.contentType]),cached=privateBytes.get(key);if(cached)return cached.slice();await appCurrent(input.identity);const reply={frameId:0,result:await readAppDocumentSource(api,input.identity,{...copy(scope.input),action,file:copy(file)},'native',sourceAppTabId)};await appCurrent(input.identity);
         if(reply?.frameId!==undefined&&reply.frameId!==0||reply?.result?.current!==true||!equal(reply.result.identity,input.identity)||!equal(reply.result.sourcePlan,current.sourcePlan)||reply.result.bodySha256!==binding.originalBodySha256||reply.result.preparedBodySha256!==binding.preparedBodySha256||reply.result.file?.sha256!==file.sha256||reply.result.file?.byteLength!==file.byteLength)fail('SOURCE_CHANGED','현재 앱의 원본 파일·버전 연결을 확인하지 못했습니다.');const bytes=nativeProductAssetBytes(reply.result.file.base64);privateBytes.set(key,bytes);return bytes.slice();};
       await prepareAndUploadNativeProductAssets({...current,readCurrent,readImage:file=>readPrivate('image',file),readOriginal:file=>readPrivate('legal',file),executeGroup:async args=>{
         const result=await execute(input.tab,input.identity,nativeAssetUploadPage,[args]);if(result?.ownedRecord)pageRecords.set(binding.packetDigest,copy(result.ownedRecord));return result;
@@ -518,7 +524,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     verifyHumanConfirmation:async input=>{
       const first=await bindingFor(input.identity),prior=sourceBindings.get(canonical(input.identity));
       mutable(input.identity);
-      await appCurrent(input.identity);const response=await api.tabs.sendMessage(input.identity.appTabId,{type:confirmationType,expected:{...copy(input),sourceExpected:copy(prior.input),sessionId:first.sessionId,identityDigest:first.identityDigest}},{frameId:0});await appCurrent(input.identity);
+      await appCurrent(input.identity);const response=await api.tabs.sendMessage(sourceAppTabId??input.identity.appTabId,{type:confirmationType,expected:{...copy(input),sourceExpected:copy(prior.input),sessionId:first.sessionId,identityDigest:first.identityDigest}},{frameId:0});await appCurrent(input.identity);
       const binding=await bindingFor(input.identity);
       return {confirmed:response?.ok===true&&response.userInitiated===true&&response.challengeId===input.challenge.id&&response.identityDigest===binding.identityDigest
         &&first.sessionId===binding.sessionId&&Number.isSafeInteger(response.checkedAt)&&Math.abs(now()-response.checkedAt)<=5000,challengeId:input.challenge.id,identityDigest:binding.identityDigest,confirmedAt:response.checkedAt};

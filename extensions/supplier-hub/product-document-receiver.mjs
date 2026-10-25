@@ -55,8 +55,12 @@ export function createProductDocumentReceiver(options){
 /** A separately trusted native preparation and qualified-owned-draft lifecycle.
  * Its durable origin cannot enter the ordinary submission receiver or vice versa. */
 export function createProductDocumentDraftReceiver(options){
+  if(options.resolveSourceContext!==undefined&&typeof options.resolveSourceContext!=='function')throw new TypeError('A trusted source-context resolver is required.');
   return createSupplierHubDocumentReceiver(options,{format:PRODUCT_DOCUMENT_RECEIVER_FORMAT,draftOnly:true,nativeLifecycle:true,
-    identity:(packet,sender,action)=>productDocumentIdentity(packet,sender,{now:options.now?.()??Date.now(),allowExpired:!['prepareDraft','reviewPreparedDraft'].includes(action)})});
+    identity:async(packet,sender,action)=>{
+      const context=await productDocumentIdentity(packet,sender,{now:options.now?.()??Date.now(),allowExpired:!['prepareDraft','reviewPreparedDraft'].includes(action)});
+      return options.resolveSourceContext?options.resolveSourceContext(context):context;
+    }});
 }
 
 export const createProductDocumentStore=createSingleDocumentStore;

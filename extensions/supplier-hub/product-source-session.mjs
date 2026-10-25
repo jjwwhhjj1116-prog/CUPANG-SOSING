@@ -1,5 +1,6 @@
 import {HANDOFF_ORIGINS} from './handoff-store.mjs';
 import {createProductDocumentStore} from './product-document-receiver.mjs';
+import {currentSourceAppTab} from './product-document-source.mjs';
 
 const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canonical).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}';
 const hash=async value=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(canonical(value)))),byte=>byte.toString(16).padStart(2,'0')).join('');
@@ -10,7 +11,9 @@ const fail=()=>{throw Error('원래 앱 탭·회원·전송 요청의 연결 기
  * The trusted isolated content script calls this after independently verifying
  * current authentication, account, full source and receipt history. No cookie,
  * authorization token, Hub request, checkpoint write or new scope is involved.
- * A different app tab/window, account, source or operation cannot inherit it.
+ * An open original tab, another window, account, source or operation cannot
+ * inherit it. Closed-tab handoff retains the original private operation and
+ * requires the original source tab to remain absent at both read boundaries.
  */
 export async function readProductSourceSession(message,sender,{api=globalThis.chrome,store=createProductDocumentStore()}={}){
  const value=message?.expected,identity=value?.identity;
@@ -18,12 +21,11 @@ export async function readProductSourceSession(message,sender,{api=globalThis.ch
   ||!value||Object.keys(value).sort().join(',')!=='bodySha256,docId,identity,packetDigest,preparedBodySha256,requestId'
   ||!identity||Object.hasOwn(identity,'optionId')||!Array.isArray(identity.members)||!identity.members.length
   ||!['bodySha256','preparedBodySha256','packetDigest'].every(key=>HASH.test(value[key]||''))||!ID.test(value.requestId||'')
-  ||sender?.id!==api?.runtime?.id||sender?.frameId!==0||sender?.tab?.id!==identity.appTabId||sender.tab.windowId!==identity.windowId)fail();
+  ||sender?.id!==api?.runtime?.id||sender?.frameId!==0||!Number.isSafeInteger(sender?.tab?.id)||sender.tab.id<0||sender.tab.windowId!==identity.windowId)fail();
  const current=async()=>{
   let url;try{url=new URL(sender.url);}catch{fail();}
   if(!HANDOFF_ORIGINS.includes(url.origin)||url.origin!==identity.origin||url.username||url.password)fail();
-  const tab=await api.tabs.get(identity.appTabId),actual=new URL(tab.url);
-  if(tab.id!==identity.appTabId||tab.windowId!==identity.windowId||tab.pendingUrl||actual.origin!==url.origin||actual.username||actual.password)fail();
+  await currentSourceAppTab(api,identity,sender.tab.id);
  };
  await current();
  const key='product-document:'+value.packetDigest,state=await store.get(key);

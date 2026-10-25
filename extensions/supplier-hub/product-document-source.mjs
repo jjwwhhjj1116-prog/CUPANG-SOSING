@@ -12,10 +12,23 @@ export function sourceReadError(value){
  const error=new Error((failure.code==='SOURCE_READ_HTTP'?'현재 전송 원본 조회 요청이 실패했습니다.':messages[failure.code])+(detail?' ('+detail+')':'')+' 현재 자료 확인을 중단했습니다.');
  error.code=failure.code;error.sourceFailure=failure;return error;
 }
-export async function readAppDocumentSource(api,identity,input,kind='native'){
- let response;try{response=await api.tabs.sendMessage(identity.appTabId,{type:kind==='native'?'YOOFAM_READ_NATIVE_PRODUCT_DOCUMENT_SOURCE':'YOOFAM_READ_LEGACY_PRODUCT_DOCUMENT_SOURCE',expected:structuredClone(input)},{frameId:0});}
+export async function currentSourceAppTab(api,identity,sourceAppTabId){
+ const id=sourceAppTabId??identity.appTabId;
+ if(!Number.isSafeInteger(identity.appTabId)||identity.appTabId<0||!Number.isSafeInteger(identity.windowId)||identity.windowId<0||!Number.isSafeInteger(id)||id<0)throw sourceReadError({code:'SOURCE_CHANGED'});
+ if(id!==identity.appTabId){
+  const tabs=await api.tabs.query({});
+  if(!Array.isArray(tabs)||tabs.some(tab=>tab.id===identity.appTabId))throw sourceReadError({code:'SOURCE_CHANGED'});
+ }
+ const tab=await api.tabs.get(id),url=new URL(tab.url);
+ if(tab.id!==id||tab.windowId!==identity.windowId||tab.pendingUrl||url.origin!==identity.origin||url.username||url.password)throw sourceReadError({code:'SOURCE_CHANGED'});
+ return tab;
+}
+export async function readAppDocumentSource(api,identity,input,kind='native',sourceAppTabId){
+ if(sourceAppTabId!==undefined)await currentSourceAppTab(api,identity,sourceAppTabId);
+ let response;try{response=await api.tabs.sendMessage(sourceAppTabId??identity.appTabId,{type:kind==='native'?'YOOFAM_READ_NATIVE_PRODUCT_DOCUMENT_SOURCE':'YOOFAM_READ_LEGACY_PRODUCT_DOCUMENT_SOURCE',expected:structuredClone(input)},{frameId:0});}
  catch{throw sourceReadError({code:'SOURCE_BRIDGE_UNAVAILABLE'});}
  if(response?.ok!==true){if(!response||typeof response!=='object')throw sourceReadError({code:'SOURCE_BRIDGE_UNAVAILABLE'});throw sourceReadError(response.sourceFailure);}
  if(!response.result||typeof response.result!=='object'||Array.isArray(response.result))throw sourceReadError({code:'SOURCE_READ_RESPONSE'});
+ if(sourceAppTabId!==undefined)await currentSourceAppTab(api,identity,sourceAppTabId);
  return response.result;
 }

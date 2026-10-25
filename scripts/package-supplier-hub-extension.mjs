@@ -19,7 +19,7 @@ if(manifest.manifest_version!==3||manifest.background.service_worker!=='handoff-
 // Whole-product preview is a separate contract. Never ship an extension that
 // advertises it while omitting a runtime dependency or its source verifier.
 const productDocumentFiles=['product-document.mjs','product-document.d.mts','product-document-receiver.mjs','product-document-dispatch.mjs','product-document-adapter.mjs','rejection-details.mjs','rejection-details.d.mts','native-registration.mjs','native-registration-page.mjs','native-product-recovery.mjs','native-asset-recovery-page.mjs'];
-if([...productDocumentFiles,'product-document-source.mjs','product-source-session.mjs','native-source-content.js'].some(name=>!files.some(file=>file.name===name))||!manifest.content_scripts?.some(entry=>entry.js?.includes('single-content.js')&&entry.js?.includes('native-source-content.js')))
+if([...productDocumentFiles,'product-document-source.mjs','product-source-session.mjs','product-source-context.mjs','native-source-content.js'].some(name=>!files.some(file=>file.name===name))||!manifest.content_scripts?.some(entry=>entry.js?.includes('single-content.js')&&entry.js?.includes('native-source-content.js')))
  throw Error('전체 상품 견적 확인 확장의 실행 파일을 확인해주세요.');
 const exports={};
 vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('app/exports/zip.ts',root),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,Uint8Array,Uint32Array,DataView});

@@ -1,4 +1,4 @@
-import {readAppDocumentSource} from './product-document-source.mjs';
+import {readAppDocumentSource,currentSourceAppTab} from './product-document-source.mjs';
 import {nativeAssetUploadPlanSha256,validateNativeAssetUploadDescriptors} from './native-asset-multipart.mjs';
 import {nativeAssetRecoveryPage} from './native-asset-recovery-page.mjs';
 import {singleDocumentOwnedRecordPage} from './single-document-adapter.mjs';
@@ -12,7 +12,7 @@ const fail=()=>{throw new SingleDocumentError('NATIVE_ASSET_RECOVERY_UNCONFIRMED
 /** Add a diagnostic read to an existing recover operation. A positive file
  * list is intentionally not an update ACK: no ledger checkpoint is promoted,
  * no multipart request is repeated and the receiver remains update-requested. */
-export function withNativeProductAssetRecovery(adapter,{api,nativeSha,now=Date.now}){
+export function withNativeProductAssetRecovery(adapter,{api,nativeSha,now=Date.now,sourceAppTabId}){
  const sources=new Map();
  const readSource=async input=>{const result=await adapter.readSource(input);if(result?.current===true&&input?.identity?.fingerprint===nativeSha)sources.set(canon(input.identity),{input:copy(input),sessionId:result.sessionId});else sources.delete(canon(input.identity));return result;};
  const inspectNativeAssets=async input=>{
@@ -21,9 +21,9 @@ export function withNativeProductAssetRecovery(adapter,{api,nativeSha,now=Date.n
    ||input.identityDigest!==await digest(input.identity)||input.identity.fingerprint!==nativeSha||!same(input.expectedBody?.docId,input.docId))fail();
   const reviewed=copy(input.expectedBody);reviewed.docId=null;if(await digest(reviewed)!==source.input.preparedBodySha256)fail();
   const current=async()=>{const proof=await adapter.readSource(source.input);if(proof?.current!==true||proof.sessionId!==source.sessionId)fail();
-   const app=await api.tabs.get(input.identity.appTabId),url=new URL(app.url);if(app.id!==input.identity.appTabId||app.windowId!==input.identity.windowId||app.pendingUrl||url.origin!==input.identity.origin||url.username||url.password)fail();
-   const execution={frameId:0,result:await readAppDocumentSource(api,input.identity,source.input)};
-   const after=await api.tabs.get(input.identity.appTabId),afterUrl=new URL(after.url);if(after.id!==input.identity.appTabId||after.windowId!==input.identity.windowId||after.pendingUrl||afterUrl.origin!==input.identity.origin||afterUrl.username||afterUrl.password)fail();
+   await currentSourceAppTab(api,input.identity,sourceAppTabId);
+   const execution={frameId:0,result:await readAppDocumentSource(api,input.identity,source.input,'native',sourceAppTabId)};
+   await currentSourceAppTab(api,input.identity,sourceAppTabId);
    if(execution?.frameId!==0||execution?.result?.current!==true||execution.result.sourcePlan?.sourcePlanSha256!==nativeSha||!same(execution.result.identity,input.identity)
     ||execution.result.bodySha256!==source.input.bodySha256||execution.result.preparedBodySha256!==source.input.preparedBodySha256)fail();return execution.result.sourcePlan;
   };
