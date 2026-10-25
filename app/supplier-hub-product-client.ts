@@ -152,7 +152,7 @@ async function verifyDraftState(value:unknown,session:ProductDocumentSession,exp
       ||value.originalBodySha256!==expected.originalBodySha256||value.preparedBodySha256!==expected.preparedBodySha256||value.registered!==false||value.success!==false||value.draftOnly!==true
       ||!['prepared','target-requested','target-created','create-requested','created','update-requested','updated','validation-requested','validated','validation-rejected'].includes(String(value.state))
       ||value.needsRecovery!==['target-requested','create-requested','update-requested','validation-requested'].includes(String(value.state))
-      ||value.duplicate!==undefined&&typeof value.duplicate!=='boolean'||value.recovered!==undefined&&typeof value.recovered!=='boolean'||action==='recoverDraft'&&value.recovered!==true)fail();
+      ||value.duplicate!==undefined&&typeof value.duplicate!=='boolean'||value.recovered!==undefined&&typeof value.recovered!=='boolean')fail();
     await verifyIdentity(value.identity,expected,value.identityDigest);
     const beforeCreate=['prepared','target-requested','target-created','create-requested'].includes(String(value.state)),draft=value.draftProof;
     if(beforeCreate?value.docId!==null:!identifier(value.docId))fail();
@@ -171,8 +171,15 @@ async function verifyDraftState(value:unknown,session:ProductDocumentSession,exp
         ||Object.hasOwn(rejected,'errors')&&!productValidationErrorsValid(rejected.errors))fail();
     }else if(value.validationRejection!==undefined)fail();
     if(value.error!==undefined&&(!exact(value.error,['code','message'])||typeof value.error.code!=='string'||value.error.code.length>100||typeof value.error.message!=='string'||value.error.message.length>2000))fail();
+    if(action==='recoverDraft'&&value.recovered!==true){
+      // A failed read is not a recovered checkpoint. Retain the reservation,
+      // but show its authenticated error after validating the complete reply
+      // identity and draft proof instead of hiding every cause as bad JSON.
+      if(object(value.error))throw new ProductDocumentBridgeError(`원래 초안(${String(value.state)}) 확인을 중단했습니다. ${String(value.error.message)}`,false,'PRODUCT_DOCUMENT_DRAFT_SOURCE_FAILURE');
+      fail();
+    }
     if(signal.aborted)fail();return freeze(copy(value) as unknown as ProductDocumentState);
-  }catch{return fail();}
+  }catch(cause){if(cause instanceof ProductDocumentBridgeError&&cause.code==='PRODUCT_DOCUMENT_DRAFT_SOURCE_FAILURE')throw cause;return fail();}
 }
 
 /** Only an independently qualified, already-created native draft can enter

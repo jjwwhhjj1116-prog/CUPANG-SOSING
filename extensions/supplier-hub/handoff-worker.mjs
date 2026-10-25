@@ -17,7 +17,11 @@ import {dispatchSingleDocument} from './single-dispatch.mjs';
 import {dispatchProductDocument} from './product-document-dispatch.mjs';
 import {savePageSource,flushPageSources} from './source-inbox.mjs';
 import {readPageDescription} from './page-description.mjs';
+import {readProductSourceSession} from './product-source-session.mjs';
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
+  if(message?.type==='YOOFAM_READ_PRODUCT_SOURCE_SESSION'){
+    readProductSourceSession(message,sender).then(result=>respond({ok:true,...result}),()=>respond({ok:false,error:'원래 전송 요청의 연결 기록을 확인하지 못했습니다.'}));return true;
+  }
   if(message?.type==='YOOFAM_READ_PAGE_DESCRIPTION'){
     readPageDescription(message,sender).then(respond,()=>respond({ok:true,available:false,detailImages:[],reason:'read-unavailable'}));return true;
   }

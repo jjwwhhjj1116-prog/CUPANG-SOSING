@@ -1,6 +1,7 @@
 // Authenticated app proof only; this script never creates a Hub document.
 /* global yoofamSingleConfirmation */
 let yoofamSingleSessionId=crypto.randomUUID(),yoofamSingleAccount=null;
+let yoofamSingleSessionBound=false,yoofamSingleAccountChanged=false;
 let yoofamSingleConfirmationAttempt=null;
 const singleCanonical=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(singleCanonical).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+singleCanonical(value[key])).join(',')+'}';
 async function singleDigest(value){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(singleCanonical(value)))),b=>b.toString(16).padStart(2,'0')).join('');}
@@ -32,7 +33,7 @@ async function verifySingleDocumentSource(expected,wholeProduct=false,nativeAsse
     ||!['fingerprint','schemaSha256','accountContext'].every(key=>hash.test(identity[key]||''))||!hash.test(expected.bodySha256||'')
     ||!hash.test(expected.preparedBodySha256||'')||!hash.test(expected.packetDigest||''))throw Error('원래 회원·상품·옵션 요청을 확인해주세요.');
   const before=await singleReadJson('/api/supplier-hub/catalog-context'),context=singleCanonical([before.ownerId,before.company]);
-  if(yoofamSingleAccount!==null&&yoofamSingleAccount!==context){yoofamSingleSessionId=crypto.randomUUID();yoofamSingleAccount=context;throw Error('현재 회원 회사가 변경되었습니다.');}
+  if(yoofamSingleAccount!==null&&yoofamSingleAccount!==context){yoofamSingleSessionId=crypto.randomUUID();yoofamSingleAccount=context;yoofamSingleAccountChanged=true;yoofamSingleSessionBound=false;throw Error('현재 회원 회사가 변경되었습니다.');}
   yoofamSingleAccount=context;
   const bytes=new TextEncoder().encode(JSON.stringify(['sourceflow-managed-product-account-v1',before.ownerId,before.company?.code,before.company?.name]));
   const account=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
@@ -84,6 +85,14 @@ async function verifySingleDocumentSource(expected,wholeProduct=false,nativeAsse
   if(body.docId!==null||body.scope!=='Retail_Categorized_Single'||body.displayCategoryCode!==identity.categoryId||await singleDigest(body)!==expected.bodySha256)throw Error('준비한 개별 문서의 저장 본문이 다릅니다.');
   const deferred=structuredClone(body);for(const document of deferred.jsonDocument)for(const key of ['msrpAgree','labelContactAgreed'])if(document.imagePage&&Object.hasOwn(document.imagePage,key))document.imagePage[key]=false;
   if(await singleDigest(deferred)!==expected.preparedBodySha256)throw Error('제출 전 동의를 분리한 본문이 다릅니다.');
+  if(nativeAssets&&!yoofamSingleSessionBound&&!yoofamSingleAccountChanged){
+    const sourceExpected=Object.fromEntries(['identity','bodySha256','preparedBodySha256','packetDigest','requestId','docId'].map(key=>[key,expected[key]]));
+    const restored=await chrome.runtime.sendMessage({type:'YOOFAM_READ_PRODUCT_SOURCE_SESSION',expected:sourceExpected});
+    if(restored?.ok!==true||Object.keys(restored).sort().join(',')!=='ok,sessionId'||restored.sessionId!==null&&!/^\w[\w-]{0,99}$/.test(restored.sessionId||''))throw Error('원래 새 초안의 연결 기록을 확인하지 못했습니다.');
+    if(!same(before,await singleReadJson('/api/supplier-hub/catalog-context')))throw Error('연결 기록을 확인하는 동안 회원 회사가 변경되었습니다.');
+    if(restored.sessionId!==null)yoofamSingleSessionId=restored.sessionId;
+  }
+  yoofamSingleSessionBound=true;
   return {ok:true,current:true,submissionReady:true,priorDocumentClear:true,identity,bodySha256:expected.bodySha256,sessionId:yoofamSingleSessionId,checkedAt:Date.now()};
 }
 function singleConfirmationInput(expected,wholeProduct=false){

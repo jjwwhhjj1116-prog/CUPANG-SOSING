@@ -150,6 +150,15 @@ test('native recovery accepts a delayed original reply after sixty seconds witho
  assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);assert.equal(f.calls.length,0);
 });
 
+test('a fully bound failed draft recovery exposes its actual cause without treating it as a recovered state or retrying a write',async()=>{
+ const f=await fixture();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true});const session=await f.session();
+ f.bridge=async()=>draftState(f,'target-created',{docId:null,error:{code:'SOURCE_CHANGED',message:'현재 회원 연결을 다시 확인해주세요.'}});
+ await assert.rejects(f.client.runProductDocumentDraft(session,'recoverDraft',new AbortController().signal),error=>error.code==='PRODUCT_DOCUMENT_DRAFT_SOURCE_FAILURE'&&!error.uncertain&&/target-created.*현재 회원 연결/.test(error.message));
+ assert.deepEqual(f.sent.map(message=>message.payload.action),['preview','recoverDraft']);assert.equal(f.calls.length,0);
+ f.bridge=async()=>draftState(f,'target-created',{docId:null,identity:{...f.context.identity,ownerId:'other'},error:{code:'SOURCE_CHANGED',message:'검증되지 않은 오류'}});
+ await assert.rejects(f.client.runProductDocumentDraft(session,'recoverDraft',new AbortController().signal),error=>error.code==='PRODUCT_DOCUMENT_DRAFT_REPLY_IDENTITY'&&!/검증되지 않은 오류/.test(error.message));
+});
+
 for(const company of SINGLE_COMPANIES)test(company.name+' full preview binds all rows; production false gate emits no start and never scalar fallback',async()=>{
   const f=await fixture(company),session=await f.session();assert.equal(session.preview.members.length,2);assert.equal(session.packet.review.body.jsonDocument[1].productPage.modelNumber,'');assert.equal(Object.hasOwn(session.preview.identity,'optionId'),false);assert.equal(session.preview.packetDigest,f.context.packetDigest);
   assert.ok(Object.isFrozen(session.packet.review.body.jsonDocument[1]));await assert.rejects(f.client.runProductDocument(session,'start',new AbortController().signal),error=>error.code==='PRODUCT_DOCUMENT_LIVE_CONTRACT_UNVERIFIED'&&error.uncertain===false);

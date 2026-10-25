@@ -43,7 +43,7 @@ export async function nativeReceiverReceiptFixture(company=companies[0],options=
    else throw Error('Unexpected local app request '+absolute.href);
    return withUrl(response,absolute.href);
   };
-  const appListeners=[],appContext=vm.createContext({location:new URL(browser.sender.url),fetch:appFetch,crypto:webcrypto,AbortController,TextEncoder,TextDecoder,Uint8Array,URL,setTimeout,clearTimeout,Date,Response,structuredClone,btoa,atob,window:{},document:{visibilityState:'visible'},chrome:{runtime:{id:'synthetic-native-chain',onMessage:{addListener:listener=>appListeners.push(listener)}}}});
+  const appListeners=[],appContext=vm.createContext({location:new URL(browser.sender.url),fetch:appFetch,crypto:webcrypto,AbortController,TextEncoder,TextDecoder,Uint8Array,URL,setTimeout,clearTimeout,Date,Response,structuredClone,btoa,atob,window:{},document:{visibilityState:'visible'},chrome:{runtime:{id:'synthetic-native-chain',sendMessage:async()=>({ok:true,sessionId:null}),onMessage:{addListener:listener=>appListeners.push(listener)}}}});
   vm.runInContext(fs.readFileSync(new URL('../../extensions/supplier-hub/single-content.js',import.meta.url),'utf8'),appContext);
   vm.runInContext(fs.readFileSync(new URL('../../extensions/supplier-hub/native-source-content.js',import.meta.url),'utf8'),appContext);
   const uploadFetch=async(url,init)=>{
