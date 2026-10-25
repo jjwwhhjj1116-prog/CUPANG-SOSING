@@ -253,6 +253,7 @@ export function SupplierHubProductTransport(props:Props){
     ?{docId:state.docId,rejection:state.validationRejection}
     :!session&&releasedValidation?.token===reviewToken?releasedValidation:null;
   return <section aria-label="전체 상품 견적 전송" aria-busy={busy||!intentReady}>
+    {busy&&<p role="status">현재 회사·원본 파일과 같은 견적서의 저장 결과를 확인하고 있습니다. 이 작업이 끝날 때까지 기다려주세요.</p>}
     <div className="quote-actions"><button type="button" className="btn primary" disabled={disabled||busy||!intentReady||Boolean(intentError)||Boolean(session)} onClick={()=>void connect()}>{intent?'이전 문서 전송 자료 확인':'전체 옵션 전송 자료 확인'}</button>
       {session&&!state&&!uncertain&&!unsaved&&<button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>{if(!canEnter()||current.current.session!==session)return;current.current.session=null;setSession(null);setError('');}}>전송 자료 확인 닫기</button>}</div>
     {error&&<p role="alert">{error}</p>}

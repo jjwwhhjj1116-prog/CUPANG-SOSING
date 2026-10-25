@@ -132,10 +132,22 @@ test('draft busy and missing ACK never retry a create; recovery timeout remains 
   const f=await fixture();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true});const session=await f.session();
   f.bridge=async()=>({format:f.review.format,requestId:f.packet.requestId,state:'busy',registered:false,success:false});
   await assert.rejects(f.client.runProductDocumentDraft(session,action,new AbortController().signal),error=>error.code==='PRODUCT_DOCUMENT_DRAFT_BUSY'&&error.uncertain===(action==='prepareDraft'));
-  f.bridge=async()=>undefined;const pending=f.client.runProductDocumentDraft(session,action,new AbortController().signal);await f.wait(()=>f.sent.length===3);f.advance(action==='prepareDraft'?120001:60001);
+  f.bridge=async()=>undefined;const pending=f.client.runProductDocumentDraft(session,action,new AbortController().signal);await f.wait(()=>f.sent.length===3);f.advance(action==='prepareDraft'?120001:180001);
   await assert.rejects(pending,error=>error.code==='PRODUCT_DOCUMENT_ACK_MISSING'&&error.uncertain===(action==='prepareDraft'));
   assert.deepEqual(f.sent.map(message=>message.payload.action),['preview',action,action]);assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);
  }
+});
+
+test('native recovery accepts a delayed original reply after sixty seconds without dispatching a mutation or renewing packet TTL',async()=>{
+ const f=await fixture();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true});const session=await f.session(),createdAt=session.packet.createdAt;
+ f.bridge=async()=>undefined;
+ const pending=f.client.runProductDocumentDraft(session,'recoverDraft',new AbortController().signal);await f.wait(()=>f.sent.length===2);
+ assert.equal([...f.timers.values()][0].due-f.clock.now,180000);
+ f.advance(90000);assert.equal(f.listeners.size,1);assert.equal(f.sent.length,2);
+ f.emit(f.sent[1],draftState(f,'created',{recovered:true}));
+ const result=await pending;assert.equal(result.state,'created');assert.equal(result.receipt,undefined);assert.equal(result.registered,false);
+ assert.equal(session.packet.createdAt,createdAt);assert.deepEqual(f.sent.map(message=>message.payload.action),['preview','recoverDraft']);
+ assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);assert.equal(f.calls.length,0);
 });
 
 for(const company of SINGLE_COMPANIES)test(company.name+' full preview binds all rows; production false gate emits no start and never scalar fallback',async()=>{
