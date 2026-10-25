@@ -6,9 +6,13 @@ const singleCanonical=value=>value===null||typeof value!=='object'?JSON.stringif
 async function singleDigest(value){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(singleCanonical(value)))),b=>b.toString(16).padStart(2,'0')).join('');}
 async function singleReadJson(path){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
-  try{const response=await fetch(path,{cache:'no-store',credentials:'same-origin',redirect:'error',signal:controller.signal});
-    if(!response.ok||response.redirected||response.url!==location.origin+path)throw Error('현재 앱의 저장 자료를 읽지 못했습니다.');
-    const text=await response.text();if(text.length>6*1024*1024)throw Error('개별 견적 자료가 너무 큽니다.');return JSON.parse(text);
+  const resource=path==='/api/supplier-hub/catalog-context'?'catalog-context':path.includes('/native-assets')?'native-assets':path.includes('/supplier-hub-product-receipt')?'product-receipt':path.includes('/supplier-hub-receipt')?'receipt-history':'single-package';
+  const failure=(code,status)=>Object.assign(Error('현재 앱의 저장 자료 조회를 확인하지 못했습니다.'),{sourceFailure:{code,resource,...(status===undefined?{}:{status})}});
+  try{let response;try{response=await fetch(path,{cache:'no-store',credentials:'same-origin',redirect:'error',signal:controller.signal});}catch{throw failure(controller.signal.aborted?'SOURCE_READ_TIMEOUT':'SOURCE_READ_NETWORK');}
+    if(!response.ok)throw failure('SOURCE_READ_HTTP',response.status);
+    if(response.redirected||response.url!==location.origin+path||!/\bapplication\/json\b/i.test(response.headers.get('content-type')||''))throw failure('SOURCE_READ_RESPONSE');
+    let text;try{text=await response.text();}catch{throw failure(controller.signal.aborted?'SOURCE_READ_TIMEOUT':'SOURCE_READ_NETWORK');}
+    if(controller.signal.aborted)throw failure('SOURCE_READ_TIMEOUT');if(text.length>6*1024*1024)throw failure('SOURCE_READ_RESPONSE');try{return JSON.parse(text);}catch{throw failure('SOURCE_READ_RESPONSE');}
   }finally{clearTimeout(timer);}
 }
 function singleSourceIdentity(identity,wholeProduct){
@@ -145,5 +149,5 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
       .finally(()=>{clearTimeout(timer);window.removeEventListener('pagehide',invalidate);document.removeEventListener('visibilitychange',visibility);if(yoofamSingleConfirmationAttempt===controller)yoofamSingleConfirmationAttempt=null;});
     return true;
   }
-  verifySingleDocumentSource(message.expected,wholeProduct,nativeAssets).then(respond,error=>respond({ok:false,error:error.message}));return true;
+  verifySingleDocumentSource(message.expected,wholeProduct,nativeAssets).then(respond,error=>respond({ok:false,error:'현재 회원·회사·저장 자료를 확인하지 못했습니다.',...(error?.sourceFailure?{sourceFailure:error.sourceFailure}:{})}));return true;
 });

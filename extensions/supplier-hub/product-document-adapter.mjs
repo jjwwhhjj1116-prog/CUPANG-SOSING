@@ -1,5 +1,5 @@
 import {createSupplierHubDocumentBrowserAdapter} from './single-document-adapter.mjs';
-import {nativeProductDocumentAppSourcePage} from './native-product-assets.mjs';
+import {readAppDocumentSource,sourceReadError} from './product-document-source.mjs';
 import {withNativeProductAssetRecovery} from './native-product-recovery.mjs';
 
 /** Same owned-tab adapter and native operations, with a trusted full-product
@@ -11,13 +11,22 @@ export function createProductDocumentBrowserAdapter(options={}){
 
 /** Select native construction only after the current authenticated app source
  * independently proves the reviewed filename body. Packet fields alone never
- * select it. A fallback still runs the unchanged strict legacy source proof. */
+ * select it. Legacy is selected only by its own positive source proof; an
+ * unavailable native reader is never evidence of a legacy document. */
 export async function createVerifiedProductDocumentBrowserAdapter(context,{api=globalThis.chrome,now=Date.now}={}){
  const identity=context?.identity,input={identity,bodySha256:context?.originalBodySha256,preparedBodySha256:context?.bodySha256,packetDigest:context?.packetDigest,requestId:context?.packet?.requestId,docId:null};
- const current=async()=>{const tab=await api.tabs.get(identity.appTabId),url=new URL(tab.url);if(tab.id!==identity.appTabId||tab.windowId!==identity.windowId||tab.pendingUrl||url.origin!==identity.origin||url.username||url.password)throw Error('원래 앱의 승인된 창을 확인해주세요.');};
+ const current=async()=>{try{const tab=await api.tabs.get(identity.appTabId),url=new URL(tab.url);if(tab.id!==identity.appTabId||tab.windowId!==identity.windowId||tab.pendingUrl||url.origin!==identity.origin||url.username||url.password)throw Error();}catch{throw sourceReadError({code:'SOURCE_CHANGED'});}};
+ const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canonical).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}';
+ const same=(a,b)=>canonical(a)===canonical(b);
+ const matches=result=>result?.current===true&&same(result.identity,identity)&&result.bodySha256===input.bodySha256&&result.preparedBodySha256===input.preparedBodySha256;
  try{
-  await current();const [reply]=await api.scripting.executeScript({target:{tabId:identity.appTabId,frameIds:[0]},func:nativeProductDocumentAppSourcePage,args:[input]});await current();
-  if(reply?.frameId!==undefined&&reply.frameId!==0||reply?.result?.current!==true||reply.result.sourcePlan?.sourcePlanSha256!==identity.fingerprint||reply.result.bodySha256!==input.bodySha256||reply.result.preparedBodySha256!==input.preparedBodySha256)throw Error('현재 네이티브 원본 계획을 확인하지 못했습니다.');
+  await current();const result=await readAppDocumentSource(api,identity,input);await current();
+  if(!matches(result)||result.sourcePlan?.sourcePlanSha256!==identity.fingerprint)throw sourceReadError({code:'SOURCE_CHANGED'});
   return{adapter:createProductDocumentBrowserAdapter({api,now,nativeAssets:{sourcePlanSha256:identity.fingerprint}}),nativeAssets:true,sourcePlanSha256:identity.fingerprint};
- }catch{return{adapter:createProductDocumentBrowserAdapter({api,now}),nativeAssets:false,sourcePlanSha256:null};}
+ }catch(error){
+  if(error?.code!=='SOURCE_CONTRACT_MISMATCH')throw error;
+  await current();const result=await readAppDocumentSource(api,identity,input,'legacy');await current();
+  if(!matches(result))throw sourceReadError({code:'SOURCE_CHANGED'});
+  return{adapter:createProductDocumentBrowserAdapter({api,now}),nativeAssets:false,sourcePlanSha256:null};
+ }
 }

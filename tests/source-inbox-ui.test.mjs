@@ -18,7 +18,7 @@ function fixture(fetcher,{initialItem,onReviewed,onChanged,existingProducts=[]}=
  return {calls,added,render,window,event:data=>events.get('message')?.({source:window,origin:'https://app.test',data}),button:label=>nodes(render()).find(node=>node.type==='button'&&text(node)===label),owner(value){ownerId=value;render();},open:()=>render().props.onToggle({currentTarget:{open:true}}),collapse:()=>render().props.onToggle({currentTarget:{open:false}}),close:()=>cleanups.forEach(fn=>fn?.())};
 }
 const item={...reviewSourceFixture().before,issues:[]};
-const captureDiagnostics=(patch={})=>({format:'yoofam-page-capture-diagnostics-v1',collectorVersion:'2.1.28',
+const captureDiagnostics=(patch={})=>({format:'yoofam-page-capture-diagnostics-v1',collectorVersion:'2.1.29',
  sections:{tabCount:4,knownTabCount:3,panelCount:2,linkedKnownPanelCount:2,unlinkedKnownTabCount:1},
  bodyTitles:{attributes:1,packaging:2,detail:3},description:'reference-missing',...patch});
 const diagnosticsNode=h=>nodes(h.render()).find(node=>node.type==='details'&&node.props['aria-label']==='수집 진단');
@@ -53,7 +53,7 @@ test('saved notifications during a read queue a refresh and a closed loaded pane
 
 test('a late list response from the prior account cannot replace the current panel',async()=>{
  const captured={...structuredClone(item),snapshot:{...structuredClone(item.snapshot),captureDiagnostics:captureDiagnostics()}};
- let release;const h=fixture(()=>new Promise(resolve=>{release=resolve;}));try{h.render();h.open();h.owner('other');release(Response.json({ownerId:'owner',items:[captured]}));await turn();assert.equal(h.button('카테고리 선택·초안 작성'),undefined);assert.equal(diagnosticsNode(h),undefined);assert.doesNotMatch(text(h.render()),/수집기 2\.1\.28/);}finally{h.close();}
+ let release;const h=fixture(()=>new Promise(resolve=>{release=resolve;}));try{h.render();h.open();h.owner('other');release(Response.json({ownerId:'owner',items:[captured]}));await turn();assert.equal(h.button('카테고리 선택·초안 작성'),undefined);assert.equal(diagnosticsNode(h),undefined);assert.doesNotMatch(text(h.render()),/수집기 2\.1\.29/);}finally{h.close();}
 });
 
 test('a partial capture may choose a category before reviewing missing source facts',async()=>{
@@ -145,7 +145,7 @@ test('capture diagnostics show immutable observed counts and collector version r
  const before=JSON.stringify(original),h=fixture(()=>assert.fail('reading capture diagnostics does not fetch or write'),{initialItem:original});
  try{
   const panel=diagnosticsNode(h),view=text(panel);assert.ok(panel);assert.equal(panel.props.open,undefined);
-  assert.match(view,/수집기 2\.1\.28/);assert.doesNotMatch(view,/99\.8\.7/);
+  assert.match(view,/수집기 2\.1\.29/);assert.doesNotMatch(view,/99\.8\.7/);
   assert.match(view,/제품속성 2개 · 포장정보 2\/3옵션 · 상세이미지 2장/);
   assert.match(view,/탭 4개 · 상품정보 탭 3개 · 본문 패널 2개 · 연결 확인 2개 · 연결 미확인 1개/);
   assert.match(view,/일반 본문 제목: 속성 1개 · 포장 2개 · 상세 3개/);
@@ -162,8 +162,8 @@ test('each selected recapture displays only its own diagnostics and old captures
   h.render();h.open();await turn();
   const entries=()=>nodes(h.render()).filter(node=>node.type==='li');
   const open=index=>nodes(entries()[index]).find(node=>node.type==='button'&&text(node)==='상품정보 확인').props.onClick();
-  open(0);assert.match(text(diagnosticsNode(h)),/수집기 2\.1\.28/);h.button('닫기').props.onClick();
-  open(1);const older=text(diagnosticsNode(h));assert.match(older,/수집 진단 · 기록 없음/);assert.match(older,/수집기 버전·진단 기록이 없습니다/);assert.doesNotMatch(older,/2\.1\.28|연결 확인 2개/);
+  open(0);assert.match(text(diagnosticsNode(h)),/수집기 2\.1\.29/);h.button('닫기').props.onClick();
+  open(1);const older=text(diagnosticsNode(h));assert.match(older,/수집 진단 · 기록 없음/);assert.match(older,/수집기 버전·진단 기록이 없습니다/);assert.doesNotMatch(older,/2\.1\.29|연결 확인 2개/);
   assert.deepEqual(h.calls.map(call=>[call.path,call.init.method??'GET']),[['/api/source-inbox','GET']]);assert.equal(JSON.stringify([latest,previous]),before);
  }finally{h.close();}
 });
@@ -194,10 +194,10 @@ test('review saves only editable source facts and retains immutable capture diag
  const original=JSON.stringify(before),events=[];let payload;
  const h=fixture(async(path,init)=>{assert.equal(path,'/api/source-inbox');assert.equal(init.method,'PUT');payload=JSON.parse(init.body);return Response.json({ownerId:'owner',item:saved});},{initialItem:before,onReviewed:(value,prior)=>events.push({value,prior})});
  try{
-  assert.match(text(diagnosticsNode(h)),/수집기 2\.1\.28/);h.button('검토한 상품정보 저장').props.onClick();await turn();
+  assert.match(text(diagnosticsNode(h)),/수집기 2\.1\.29/);h.button('검토한 상품정보 저장').props.onClick();await turn();
   assert.deepEqual(Object.keys(payload).sort(),['expectedOwnerId','expectedRevision','id','review']);assert.deepEqual(Object.keys(payload.review).sort(),['options','title']);
   for(const option of payload.review.options)assert.deepEqual(Object.keys(option).sort(),['currency','key','minimumOrder','name','supplierSku','unitPriceCny']);
   assert.equal(events.length,1);assert.deepEqual(events[0].value.snapshot.captureDiagnostics,captureDiagnostics());assert.equal(events[0].prior,before);assert.equal(h.added.length,0);
-  h.button('상품정보 확인').props.onClick();assert.match(text(diagnosticsNode(h)),/수집기 2\.1\.28/);assert.equal(h.calls.length,1);assert.equal(JSON.stringify(before),original);
+  h.button('상품정보 확인').props.onClick();assert.match(text(diagnosticsNode(h)),/수집기 2\.1\.29/);assert.equal(h.calls.length,1);assert.equal(JSON.stringify(before),original);
  }finally{h.close();}
 });

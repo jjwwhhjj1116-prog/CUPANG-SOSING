@@ -13,6 +13,7 @@ import { withProductDocumentChrome } from './helpers/product-document-preview.mj
 
 const compiler = module('app/supplier-hub-product-document.ts'), origin = new URL(SINGLE_SENDER.url).origin;
 const sourceCode = fs.readFileSync(new URL('../extensions/supplier-hub/single-content.js', import.meta.url), 'utf8');
+const nativeSourceCode=fs.readFileSync(new URL('../extensions/supplier-hub/native-source-content.js',import.meta.url),'utf8');
 const promptCode = fs.readFileSync(new URL('../extensions/supplier-hub/single-confirmation.js', import.meta.url), 'utf8');
 const cases = [], cache = new Map(), json = async response => { assert.equal(response.status, 200, await response.clone().text()); return response.json(); };
 after(() => {
@@ -45,19 +46,20 @@ async function sample(company = companies[0], captured = false) {
 const expected = f => ({ identity: f.context.identity, bodySha256: f.context.originalBodySha256, preparedBodySha256: f.context.bodySha256, packetDigest: f.context.packetDigest, requestId: f.packet.requestId, docId: null });
 function sourceRuntime(f, { mutate, responsePatch } = {}) {
   const calls = [], actor = { ownerId: 'owner', company: plain(f.prepared.company) }, state = { actor, prepared: plain(f.prepared), blocked: false, native: { format: 'yoofam-native-receipt-history-v1', productId: f.id, receipts: [] } };
-  let handler;
-  const scope = { crypto: webcrypto, TextEncoder, Uint8Array, AbortController, Date, JSON, Array, Object, Error, Set, structuredClone, setTimeout, clearTimeout,
-    location: { origin }, chrome: { runtime: { id: 'synthetic-extension', onMessage: { addListener(fn) { handler = fn; } } } },
+  const handlers=[];
+  const scope = { crypto: webcrypto, TextEncoder, TextDecoder, Uint8Array, AbortController, Date, JSON, Array, Object, Error, Set, structuredClone, setTimeout, clearTimeout,
+    location: { origin }, chrome: { runtime: { id: 'synthetic-extension', onMessage: { addListener(fn) { handlers.push(fn); } } } },
     fetch: async (path, init = {}) => {
       const url = new URL(path, origin); assert.equal(url.origin, origin); assert.ok(url.pathname.startsWith('/api/'));
       calls.push({ path: url.pathname + url.search, init }); await mutate?.(state, calls.length, url);
-      const data = url.pathname.includes('catalog-context') ? state.actor : url.pathname.includes('supplier-hub-product-receipt') ? state.native : url.pathname.includes('supplier-hub-receipt') ? { history: { productId: f.id, blocked: state.blocked } } : state.prepared;
+      const data = url.pathname.includes('catalog-context') ? state.actor : url.pathname.includes('supplier-hub-product-receipt') ? state.native : url.pathname.includes('supplier-hub-receipt') ? { history: { productId: f.id, blocked: state.blocked } } : url.pathname.endsWith('/native-assets')?{format:'yoofam-native-asset-source-plan-v1',sourcePlanSha256:'0'.repeat(64)}:state.prepared;
       const response = responsePatch?.(url, data) ?? Response.json(data); Object.defineProperty(response, 'url', { value: url.href }); return response;
     } };
   vm.runInNewContext(sourceCode, scope);
+  vm.runInNewContext(nativeSourceCode,scope);
   return { scope, calls, state, page: (input = expected(f), group = true) => vm.runInNewContext(`(${singleDocumentAppSourcePage.toString()})(input,group)`, { ...scope, input, group }),
     async bridge(input = expected(f), type = 'YOOFAM_VERIFY_PRODUCT_DOCUMENT_SOURCE', sender = { id: 'synthetic-extension' }) {
-      return new Promise(resolve => { const result = handler({ type, expected: input }, sender, reply => resolve(plain(reply))); if (result !== true) resolve(undefined); });
+      return new Promise(resolve => { for(const handler of handlers){const result = handler({ type, expected: input }, sender, reply => resolve(plain(reply)));if(result===true)return;}resolve(undefined); });
     } };
 }
 function previewChrome(runtime){
@@ -153,7 +155,7 @@ for(const company of companies)test(`${company.code}: group preview independentl
   assert.equal(preview.productId,f.id);assert.deepEqual(preview.members,f.packet.review.members);assert.equal(preview.preparedBodySha256,f.context.bodySha256);
   assert.equal(preview.draftPreparationAvailable,false);assert.equal(preview.preparedLifecycleAvailable,false);assert.deepEqual(Object.keys(preview).sort(),['format','requestId','identity','fingerprint','productId','members','identityDigest','packetDigest','reviewDigest','preparedBodySha256','originalBodySha256','liveVerified','draftPreparationAvailable','preparedLifecycleAvailable','remoteWrites','registered'].sort());
   assert.equal(preview.liveVerified,false);assert.equal(preview.remoteWrites,false);assert.equal(preview.registered,false);
-  assert.equal(chrome.calls.filter(call=>call.name==='message').length,2);assert.ok(chrome.calls.some(call=>call.func==='singleDocumentAppSourcePage'));
+  assert.equal(chrome.calls.filter(call=>call.name==='message').length,5);assert.ok(chrome.calls.some(call=>call.type==='YOOFAM_READ_LEGACY_PRODUCT_DOCUMENT_SOURCE'));assert.equal(chrome.calls.some(call=>call.name==='execute'),false);
   assert.ok(chrome.calls.every(call=>['get','message','execute'].includes(call.name)));assert.ok(runtime.calls.length>8);
   assert.ok(runtime.calls.every(call=>(call.init.method??'GET')==='GET'&&call.init.body===undefined));assert.equal(JSON.stringify(f),before);
   cases.push({name:'current legacy preview '+company.code,readRequests:runtime.calls.length,hubRequests:0,remoteWrites:0,receiversCreated:0});

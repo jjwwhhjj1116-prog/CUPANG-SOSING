@@ -32,7 +32,7 @@ test('saved own submitted receipt survives a real app source nonce reload throug
   await f.reloadSourceSession();t.mock.timers.tick(PRODUCT_DOCUMENT_REQUEST_TTL+1);const packet=await createProductDocumentPacket(f.packet.review,{requestId:f.packet.requestId,createdAt:Date.now(),now:Date.now()}),before=f.storage.changes.length,inputs=[];
   const deliver=f.api.tabs.sendMessage;f.api.tabs.sendMessage=async(id,value,frame)=>{inputs.push(clone(value));return deliver(id,value,frame);};
   const result=await withProductDocumentChrome(f.api,()=>dispatchProductDocument({type:'YOOFAM_PRODUCT_DOCUMENT_REQUEST',action:'preview',packet},f.sender),f.storage.store);
-  assert.equal(result.requestId,f.packet.requestId);assert.equal(result.packetDigest,pending.packetDigest);assert.equal(f.storage.changes.length,before);assert.ok(inputs.every(row=>row.expected.docId===pending.docId&&row.expected.receiptRecovery.sessionId===original.sessionId));
+  assert.equal(result.requestId,f.packet.requestId);assert.equal(result.packetDigest,pending.packetDigest);assert.equal(f.storage.changes.length,before);assert.equal(inputs[0].type,'YOOFAM_READ_NATIVE_PRODUCT_DOCUMENT_SOURCE');assert.equal(inputs[0].expected.docId,null);assert.ok(inputs.slice(1).every(row=>row.expected.docId===pending.docId&&row.expected.receiptRecovery.sessionId===original.sessionId));
   const recovered=await receiver.recoverPreparedDraft(packet,f.sender);assert.equal(recovered.state,'pending',JSON.stringify(recovered));assert.equal(recovered.recovered,true);assert.equal(recovered.docId,pending.docId);assert.equal(recovered.receipt.qvtRequestId,pending.receipt.qvtRequestId);assert.equal(f.storage.get(f.context.key).sessionId,original.sessionId);
   assert.equal((await receiver.observePreparedDraft(packet,f.sender)).state,'pending');
   const input={tab:original.tab,identity:f.context.identity,sessionId:original.sessionId,docId:original.docId,requestId:original.requestId,packetDigest:original.packetDigest};
@@ -81,13 +81,13 @@ for(const company of SINGLE_COMPANIES)test(`${company.code}: production preview 
     assert.equal(out.identityDigest,f.context.identityDigest);assert.deepEqual(out.identity,f.context.identity);assert.equal(out.requestId,f.packet.requestId);
     assert.equal(out.preparedBodySha256,f.context.bodySha256);assert.equal(out.originalBodySha256,f.context.originalBodySha256);
     assert.equal(out.draftPreparationAvailable,true);assert.equal(out.preparedLifecycleAvailable,true);assert.deepEqual(Object.keys(out).sort(),['format','requestId','identity','fingerprint','productId','members','identityDigest','packetDigest','reviewDigest','preparedBodySha256','originalBodySha256','liveVerified','draftPreparationAvailable','preparedLifecycleAvailable','remoteWrites','registered'].sort());
-    assert.equal(inputs.length,2);for(const value of inputs){assert.equal(value.type,'YOOFAM_VERIFY_NATIVE_PRODUCT_DOCUMENT_SOURCE');assert.deepEqual(value.expected,{identity:f.context.identity,bodySha256:f.context.originalBodySha256,preparedBodySha256:f.context.bodySha256,packetDigest:f.context.packetDigest,requestId:f.context.packet.requestId,docId:null});}
+    assert.deepEqual(inputs.map(value=>value.type),['YOOFAM_READ_NATIVE_PRODUCT_DOCUMENT_SOURCE','YOOFAM_VERIFY_NATIVE_PRODUCT_DOCUMENT_SOURCE','YOOFAM_READ_NATIVE_PRODUCT_DOCUMENT_SOURCE','YOOFAM_VERIFY_NATIVE_PRODUCT_DOCUMENT_SOURCE']);for(const value of inputs){assert.deepEqual(value.expected,{identity:f.context.identity,bodySha256:f.context.originalBodySha256,preparedBodySha256:f.context.bodySha256,packetDigest:f.context.packetDigest,requestId:f.context.packet.requestId,docId:null});}
     assert.ok(f.state.appReads.length>=10);sourceOnly(f,before);assert.equal(PRODUCT_DOCUMENT_LIVE_VERIFIED,false);
   }finally{f.close();}
 });
 
 test('native preview rejects changed actor, current source, app frame and active navigation without opening a Hub target',async()=>{
-  for(const mode of ['owner','company','profile','member','body','source-clock','input-fingerprint','app-window','app-origin','pending-navigation','wrong-frame','page-throws']){
+  for(const mode of ['owner','company','profile','member','body','source-clock','input-fingerprint','app-window','app-origin','pending-navigation','wrong-proof','bridge-unavailable']){
     const f=await nativeRecoveryFixture(SINGLE_COMPANIES[1]);try{
       if(mode==='owner')f.state.source.identity.ownerId='other-owner';
       if(mode==='company')f.state.company=clone(SINGLE_COMPANIES[0]);
@@ -99,11 +99,11 @@ test('native preview rejects changed actor, current source, app frame and active
       if(['app-window','app-origin','pending-navigation'].includes(mode)){
         const get=f.api.tabs.get;f.api.tabs.get=async id=>{const tab=await get(id);if(mode==='app-window')tab.windowId++;if(mode==='app-origin')tab.url='https://other.invalid/';if(mode==='pending-navigation')tab.pendingUrl=f.sender.url;return tab;};
       }
-      if(['wrong-frame','page-throws'].includes(mode)){
-        const execute=f.api.scripting.executeScript;f.api.scripting.executeScript=async input=>{if(mode==='page-throws')throw Error('synthetic source unavailable');const out=await execute(input);out[0].frameId=1;return out;};
+      if(['wrong-proof','bridge-unavailable'].includes(mode)){
+        const send=f.api.tabs.sendMessage;f.api.tabs.sendMessage=async(...args)=>{if(mode==='bridge-unavailable')throw Error('synthetic source unavailable');const out=await send(...args);out.result.identity.appTabId++;return out;};
       }
       f.calls.length=0;f.state.appReads.length=0;const before=snapshot(f);
-      await assert.rejects(preview(f),{code:'SOURCE_CHANGED'},mode);sourceOnly(f,before);
+      await assert.rejects(preview(f),{code:mode==='bridge-unavailable'?'SOURCE_BRIDGE_UNAVAILABLE':'SOURCE_CHANGED'},mode);sourceOnly(f,before);
     }finally{f.close();}
   }
 });
@@ -120,7 +120,7 @@ test('native preview rejects invalid source bridge facts, stale responses, chang
   for(const [name,patch,ordinal=1]of patches){
     const f=await nativeRecoveryFixture(SINGLE_COMPANIES[0]);try{
       const send=f.api.tabs.sendMessage;let reads=0;
-      f.api.tabs.sendMessage=async(id,value,frame)=>{const result=await send(id,value,frame);reads++;return reads===ordinal?patch(result):result;};
+      f.api.tabs.sendMessage=async(id,value,frame)=>{const result=await send(id,value,frame);if(value.type!=='YOOFAM_VERIFY_NATIVE_PRODUCT_DOCUMENT_SOURCE')return result;reads++;return reads===ordinal?patch(result):result;};
       f.calls.length=0;f.state.appReads.length=0;const before=snapshot(f);
       await assert.rejects(preview(f),{code:'SOURCE_CHANGED'},name);assert.equal(reads,ordinal);sourceOnly(f,before);
     }finally{f.close();}
@@ -131,7 +131,7 @@ test('a company or saved body change after the first positive bridge proof is re
   for(const mode of ['company','body','revision']){
     const f=await nativeRecoveryFixture(SINGLE_COMPANIES[1]);try{
       const send=f.api.tabs.sendMessage;let reads=0;
-      f.api.tabs.sendMessage=async(id,value,frame)=>{const result=await send(id,value,frame);if(++reads===1){
+      f.api.tabs.sendMessage=async(id,value,frame)=>{const result=await send(id,value,frame);if(value.type!=='YOOFAM_VERIFY_NATIVE_PRODUCT_DOCUMENT_SOURCE')return result;if(++reads===1){
         if(mode==='company')f.state.company=clone(SINGLE_COMPANIES[0]);
         if(mode==='body')f.state.source.body.jsonDocument[0].startPage.productName='later saved body';
         if(mode==='revision')f.state.source.identity.source.optionRevision++;

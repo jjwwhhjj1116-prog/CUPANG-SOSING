@@ -43,8 +43,9 @@ export async function nativeReceiverReceiptFixture(company=companies[0],options=
    else throw Error('Unexpected local app request '+absolute.href);
    return withUrl(response,absolute.href);
   };
-  const appContext=vm.createContext({location:new URL(browser.sender.url),fetch:appFetch,crypto:webcrypto,AbortController,TextEncoder,TextDecoder,Uint8Array,URL,setTimeout,clearTimeout,Date,Response,structuredClone,btoa,atob,window:{},document:{visibilityState:'visible'},chrome:{runtime:{id:'synthetic-native-chain',onMessage:{addListener:()=>{}}}}});
+  const appListeners=[],appContext=vm.createContext({location:new URL(browser.sender.url),fetch:appFetch,crypto:webcrypto,AbortController,TextEncoder,TextDecoder,Uint8Array,URL,setTimeout,clearTimeout,Date,Response,structuredClone,btoa,atob,window:{},document:{visibilityState:'visible'},chrome:{runtime:{id:'synthetic-native-chain',onMessage:{addListener:listener=>appListeners.push(listener)}}}});
   vm.runInContext(fs.readFileSync(new URL('../../extensions/supplier-hub/single-content.js',import.meta.url),'utf8'),appContext);
+  vm.runInContext(fs.readFileSync(new URL('../../extensions/supplier-hub/native-source-content.js',import.meta.url),'utf8'),appContext);
   const uploadFetch=async(url,init)=>{
    const parsed=new URL(url),doc=parsed.pathname.split('/').at(-1);assert.equal(doc,String(browser.createdDocId),'only the newly owned synthetic document receives files');
    state.uploadReads.push({url,method:init.method});
@@ -62,15 +63,15 @@ export async function nativeReceiverReceiptFixture(company=companies[0],options=
   const hubContext=vm.createContext({location:browser.hubLocation,document:browser.hubDocument,fetch:uploadFetch,crypto:webcrypto,AbortController,TextEncoder,TextDecoder,Uint8Array,URL,setTimeout,clearTimeout,Date,Response,structuredClone,FormData,Blob,btoa,atob});
   const execute=browser.api.scripting.executeScript;
   browser.api.scripting.executeScript=async request=>{
+   if(request.target.tabId===browser.sender.tab.id)throw Error('Cannot access contents of the app URL. Extension manifest must request permission to access this host.');
    if(!['nativeProductDocumentAppSourcePage','nativeAssetUploadPage','nativeAssetRecoveryPage'].includes(request.func.name))return execute(request);
    const target=request.func.name==='nativeProductDocumentAppSourcePage'?appContext:hubContext;target.args=plain(request.args);
    const result=await vm.runInContext('('+request.func.toString()+')(...args)',target);return[{frameId:0,documentId:target===appContext?'synthetic-app-document':browser.hubDocumentId,result:plain(result)}];
   };
   const message=browser.api.tabs.sendMessage;
   browser.api.tabs.sendMessage=async(id,value,frame)=>{
-   if(value.type==='YOOFAM_VERIFY_NATIVE_PRODUCT_DOCUMENT_SOURCE'){
-    assert.equal(id,browser.sender.tab.id);assert.equal(frame.frameId,0);appContext.expected=plain(value.expected);
-    try{return await vm.runInContext('verifySingleDocumentSource(expected,true,true)',appContext);}catch(error){return{ok:false,error:error.message};}
+   if(['YOOFAM_VERIFY_NATIVE_PRODUCT_DOCUMENT_SOURCE','YOOFAM_READ_NATIVE_PRODUCT_DOCUMENT_SOURCE','YOOFAM_READ_LEGACY_PRODUCT_DOCUMENT_SOURCE'].includes(value.type)){
+    assert.equal(id,browser.sender.tab.id);assert.equal(frame.frameId,0);for(const listener of appListeners){let pending;const reply=new Promise(resolve=>{pending=listener(plain(value),{id:'synthetic-native-chain'},resolve);});if(pending===true)return plain(await reply);}return undefined;
    }
    if(value.type==='YOOFAM_CONFIRM_NATIVE_PRODUCT_DOCUMENT_ACTION'){
     assert.equal(id,browser.sender.tab.id);assert.equal(frame.frameId,0);state.humanConfirmations.push(plain(value.expected));
