@@ -428,6 +428,15 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     const value=await execute(input.tab,input.identity,input.retryCreateApproval?singleDocumentRetryCreatePage:singleDocumentHubRequestPage,[{binding,method:input.method,path:input.path,...(input.body===undefined?{}:{body:input.body}),
       ...(input.retryCreateApproval?{retryCreateApproval:copy(input.retryCreateApproval)}:{}),
       ...(input.operationId===undefined?{}:{operationId:input.operationId}),...(input.path.endsWith('/create')?{baselineDocIds:input.retryCreateApproval?copy(input.baselineDocIds):baselines.get(binding.packetDigest)??[]}:{})}]);
+    if(input.retryCreateApproval&&value?.createRetryFailure){const failed=value.createRetryFailure;
+      if(!failed||Object.keys(failed).sort().join(',')!=='canContinue,dispatched,format,identityDigest,operationId,packetDigest,phase,requestId'||failed.format!=='yoofam-create-retry-failure-v1'
+        ||failed.requestId!==binding.requestId||failed.operationId!==input.operationId||failed.packetDigest!==binding.packetDigest||failed.identityDigest!==binding.identityDigest
+        ||!['scope','body','list-unfinished','list-requested','duplicate','baseline','final-scope','create'].includes(failed.phase)
+        ||typeof failed.dispatched!=='boolean'||typeof failed.canContinue!=='boolean'||failed.canContinue&&failed.dispatched)fail('CREATE_RETRY_UNCONFIRMED','재시도 전 확인 응답의 원래 요청 연결을 검증하지 못했습니다.');
+      const labels={scope:'승인·회사·탭',body:'원래 본문·옵션','list-unfinished':'중간저장 목록','list-requested':'제출요청 목록',duplicate:'동일 상품 문서',baseline:'원래 중간저장 기준','final-scope':'최종 탭·회사',create:'생성 응답'};
+      fail(failed.canContinue?'CREATE_RETRY_PRECHECK_NOT_SENT':failed.dispatched?'CREATE_RETRY_ACK_UNCERTAIN':'CREATE_RETRY_PRECHECK_BLOCKED',
+        `재시도 ${labels[failed.phase]} 확인에서 중단했습니다. ${failed.canContinue?'이 확인에서는 생성 요청을 보내지 않았습니다. 같은 승인 범위로 준비를 이어갈 수 있습니다.':'생성을 반복하지 말고 원래 저장 결과를 확인해주세요.'}`);
+    }
     if(input.method==='GET'&&input.path==='/sr/draft/api/drafts'&&value?.ok===true&&Array.isArray(value.json)&&!baselines.has(binding.packetDigest))baselines.set(binding.packetDigest,value.json.map(row=>row.docId));
     if(value?.ownedRecord)pageRecords.set(binding.packetDigest,copy(value.ownedRecord));
     return value;

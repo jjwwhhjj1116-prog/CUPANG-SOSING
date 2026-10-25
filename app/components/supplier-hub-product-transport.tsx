@@ -27,7 +27,7 @@ export function SupplierHubProductTransport(props:Props){
   const [unsaved,setUnsaved]=useState<{packet:ProductDocumentSession['packet'];observation:ProductDocumentState}|null>(null);
   const [intent,setIntent]=useState<ProductDocumentPending|null>(null),[intentReady,setIntentReady]=useState(false),[intentError,setIntentError]=useState('');
   const [draftMode,setDraftMode]=useState(false);
-  const [missingCreate,setMissingCreate]=useState(false),[retryApproved,setRetryApproved]=useState(false),[retryAttempted,setRetryAttempted]=useState(false);
+  const [missingCreate,setMissingCreate]=useState(false),[retryApproved,setRetryApproved]=useState(false),[retryAttempted,setRetryAttempted]=useState(false),[approvedRetryPending,setApprovedRetryPending]=useState(false);
   const reviewToken=useMemo(()=>({review}),[review]),reviewEpoch=useRef<typeof reviewToken|null>(reviewToken);
   const [releasedValidation,setReleasedValidation]=useState<{token:object;docId:string|number;rejection:ProductValidationRejection}|null>(null);
   useLayoutEffect(()=>{reviewEpoch.current=reviewToken;return()=>{if(reviewEpoch.current===reviewToken)reviewEpoch.current=null;};},[reviewToken]);
@@ -177,12 +177,13 @@ export function SupplierHubProductTransport(props:Props){
       &&['prepared','target-created','created','updated'].includes(before.state.state);
     if(before.session!==expected||expected.preview.draftPreparationAvailable!==true||before.unsaved
       ||action==='prepareDraft'&&(!continuing&&(before.state||before.intent||before.uncertain))
-      ||action==='retryCreateDraft'&&(!before.draftMode||!before.intent||!before.uncertain||!missingCreate||!retryApproved||retryAttempted)
+      ||action==='retryCreateDraft'&&(!before.draftMode||!before.intent||!before.uncertain||!missingCreate||!retryApproved||retryAttempted||approvedRetryPending)
+      ||action==='resumeCreateRetryDraft'&&(!before.draftMode||!before.intent||!before.uncertain||!missingCreate||!approvedRetryPending||retryAttempted||expected.preview.createRetryContinuationAvailable!==true)
       ||action==='recoverDraft'&&(!before.draftMode||!before.intent||!before.uncertain&&before.state?.draftOnly!==true))return;
     const task=begin();let dispatched=false,activeSession=expected;
     try{
       await fresh(task);if(!task.active()||current.current.session!==expected)return;
-      if((action==='prepareDraft'||action==='retryCreateDraft')&&Date.now()-expected.packet.createdAt>=PRODUCT_DOCUMENT_REQUEST_TTL){
+      if((action==='prepareDraft'||action==='retryCreateDraft'||action==='resumeCreateRetryDraft')&&Date.now()-expected.packet.createdAt>=PRODUCT_DOCUMENT_REQUEST_TTL){
         const packet=await createProductDocumentPacket(review,{requestId:expected.packet.requestId,createdAt:Date.now(),now:Date.now()});
         const refreshed=await previewProductDocument(packet,task.controller.signal);await fresh(task);
         if(!task.active()||current.current.session!==expected)return;
@@ -196,7 +197,7 @@ export function SupplierHubProductTransport(props:Props){
         await fresh(task);if(!task.active()||current.current.session!==activeSession)return;
       }
       const saved=current.current.intent;if(!saved)throw Error('원래 새 초안 준비 요청의 보관 기록을 확인해주세요.');assertProductDocumentPending(review,saved,activeSession);
-      if(action==='prepareDraft'||action==='retryCreateDraft'){
+      if(action==='prepareDraft'||action==='retryCreateDraft'||action==='resumeCreateRetryDraft'){
         // Refresh only the short request envelope after the complete source
         // proof. The UUID, review, body and browser identity stay unchanged.
         const packet=await createProductDocumentPacket(review,{requestId:activeSession.packet.requestId,createdAt:Date.now(),now:Date.now()});
@@ -204,15 +205,15 @@ export function SupplierHubProductTransport(props:Props){
         current.current.session=activeSession;setSession(activeSession);
       }
       current.current.draftMode=true;setDraftMode(true);dispatched=true;
-      if(action==='retryCreateDraft'){setRetryAttempted(true);setRetryApproved(false);}
+      if(action==='retryCreateDraft'||action==='resumeCreateRetryDraft'){setRetryAttempted(true);setRetryApproved(false);}
       const result=await runProductDocumentDraft(activeSession,action,task.controller.signal);await fresh(task);if(!task.active()||current.current.session!==activeSession)return;
       verifySingleDocumentObservation(before.state,result);
       if(before.state?.draftProof&&(result.draftProof!.checkpointSequence<before.state.draftProof.checkpointSequence||result.draftProof!.observedAt<before.state.draftProof.observedAt))throw new ProductDocumentBridgeError('원래 새 초안보다 오래된 준비 기록입니다. 기존 결과를 유지했습니다.',action==='prepareDraft','PRODUCT_DOCUMENT_DRAFT_REPLY_IDENTITY');
       current.current.state=result;current.current.uncertain=result.needsRecovery;current.current.approved={};setState(result);setUncertain(result.needsRecovery);setApproved({});
-      setMissingCreate(false);
+      setMissingCreate(false);setApprovedRetryPending(false);
       if(result.error)setError(result.error.message);
     }catch(cause){if(task.alive()){
-      if(cause instanceof ProductDocumentBridgeError&&cause.draftState==='create-requested')setMissingCreate(true);
+      if(cause instanceof ProductDocumentBridgeError&&cause.draftState==='create-requested'){setMissingCreate(true);setApprovedRetryPending(cause.approvedCreateRetry===true);}
       if(dispatched&&(cause instanceof ProductDocumentBridgeError?cause.uncertain:true)){current.current.uncertain=true;setUncertain(true);}
       setError(cause instanceof Error?cause.message:'새 견적 초안 준비 결과 확인 실패');
     }}finally{task.finish();}
@@ -249,7 +250,7 @@ export function SupplierHubProductTransport(props:Props){
       if(result.receipt?.evidence==='document-receipt'&&!result.needsRecovery){const attempt={packet:activeSession.packet,observation:preparedReceiptObservation(result)};current.current.unsaved=attempt;setUnsaved(attempt);await persist(attempt,task);}
     }catch(cause){if(task.alive()){
       if(dispatched&&(cause instanceof ProductDocumentBridgeError?cause.uncertain:true)){current.current.uncertain=true;setUncertain(true);}
-      if(cause instanceof ProductDocumentBridgeError&&cause.draftState==='create-requested')setMissingCreate(true);
+      if(cause instanceof ProductDocumentBridgeError&&cause.draftState==='create-requested'){setMissingCreate(true);setApprovedRetryPending(cause.approvedCreateRetry===true);}
       current.current.approved={};setApproved({});setError(cause instanceof Error?cause.message:'준비한 새 문서의 등록 확인 실패');
     }}finally{task.finish();}
   }
@@ -283,15 +284,19 @@ export function SupplierHubProductTransport(props:Props){
     {intent&&!session&&<p role="status">이 상품의 이전 전송 요청이 보관되어 있습니다. 같은 요청의 저장 결과만 확인하며 새 등록을 시작하지 않습니다.</p>}
     {session&&<p>회사 {review.identity.company.name} · 포함 옵션 {session.packet.review.members.length}개 · 견적 문서 1개 · 전체 본문 대조 완료</p>}
     {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&!intent&&!state?.preparedLifecycle&&<p role="status">전체 문서의 실제 접수 연결을 검수 중입니다. 현재 상품은 전송하지 않았습니다.</p>}
-    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.32.zip" download>통합 확장 2.1.32 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
+    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.33.zip" download>통합 확장 2.1.33 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
     {session?.preview.draftPreparationAvailable===true&&!state?.preparedLifecycle&&<section aria-label="새 견적 초안 준비">
       <p>로그인한 Supplier Hub에 새 견적 초안 한 개를 만들고 저장한 이미지·본문과 단계 검증을 확인합니다. 약관 동의와 최종 제출은 진행하지 않습니다.</p>
       {!state&&!uncertain&&!intent&&<button type="button" className="btn primary" disabled={disabled||busy||Boolean(intentError)} onClick={()=>void operateDraft('prepareDraft',session)}>새 견적 초안 만들기 · 제출 안 함</button>}
       {draftMode&&uncertain&&!state?.preparedLifecycle&&<><p role="status">초안 준비 응답을 확인하지 못했습니다. 같은 초안을 다시 만들지 않고 저장 결과만 조회합니다.</p><button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void(session.preview.preparedLifecycleAvailable?operatePrepared('recoverPreparedDraft',session):operateDraft('recoverDraft',session))}>같은 초안 저장 결과 확인 · 읽기 전용</button></>}
-      {draftMode&&uncertain&&missingCreate&&!retryAttempted&&session.preview.createRetryAvailable===true&&!state?.preparedLifecycle&&<section aria-label="문서 생성 1회 재시도">
+      {draftMode&&uncertain&&missingCreate&&!retryAttempted&&!approvedRetryPending&&session.preview.createRetryAvailable===true&&!state?.preparedLifecycle&&<section aria-label="문서 생성 1회 재시도">
         <p>문서 생성 응답이 확인되지 않았습니다. 기존 요청번호·견적 내용을 유지하며, 전송 직전 중간저장·제출요청 전체 목록이 원래 기록과 일치할 때에만 생성을 한 번 다시 요청합니다. 이전 요청이 뒤늦게 처리되면 중복될 수 있습니다.</p>
         <label><input type="checkbox" checked={retryApproved} disabled={busy||disabled} onChange={event=>setRetryApproved(event.target.checked)}/>중복 가능성을 확인했고 기존 요청으로 생성 1회 재시도에 동의합니다.</label>
         <button type="button" className="btn ghost" disabled={busy||disabled||!retryApproved} onClick={()=>void operateDraft('retryCreateDraft',session)}>기존 요청으로 생성 1회 재시도</button>
+      </section>}
+      {draftMode&&uncertain&&missingCreate&&approvedRetryPending&&!retryAttempted&&session.preview.createRetryContinuationAvailable===true&&!state?.preparedLifecycle&&<section aria-label="승인된 생성 재시도 이어가기">
+        <p>원래 요청에 저장된 1회 재시도 승인을 이어갑니다. 같은 전송 탭의 생성 기록과 현재 중복 여부를 다시 확인하며, 생성 요청 기록이 있으면 반복하지 않습니다.</p>
+        <button type="button" className="btn ghost" disabled={busy||disabled} onClick={()=>void operateDraft('resumeCreateRetryDraft',session)}>승인된 1회 생성 계속</button>
       </section>}
       {draftMode&&state?.draftOnly&&!state.preparedLifecycle&&!uncertain&&['prepared','target-created','created','updated'].includes(state.state)&&<button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void operateDraft('prepareDraft',session)}>같은 초안 준비 계속 · 제출 안 함</button>}
       {draftMode&&state?.draftOnly&&!state.preparedLifecycle&&!uncertain&&<><p role="status">{state.docId!==null?`Supplier Hub 초안 문서 ${String(state.docId)}`:'새 초안 준비 기록 확인'} · 단계 검증 {state.draftProof!.validatedSteps.length}/4 · {validatedDraft?'초안 저장·검증 완료 · 미제출':state.state==='validation-rejected'?'제출 전 검증 반려':'초안 준비 확인 중'}</p><button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void(session.preview.preparedLifecycleAvailable?operatePrepared('recoverPreparedDraft',session):operateDraft('recoverDraft',session))}>같은 초안 저장 결과 확인 · 읽기 전용</button></>}

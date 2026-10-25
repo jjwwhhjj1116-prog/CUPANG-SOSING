@@ -34,28 +34,55 @@ test('approved retry reads both complete lists immediately before one create wit
  assert.deepEqual(f.calls,[{path:'/sr/draft/api/drafts',method:'GET'},{path:'/sr/draft/api/drafts/register-requested',method:'GET'},{path:'/sr/draft/api/create',method:'POST'}]);
  const record=JSON.parse(f.dataset.yoofamSingleDocumentRecords)[f.binding.packetDigest];assert.equal(record.docId,99);assert.equal(record.createOperationId,'original-request:create');
  assert.equal(record.createRetry.unfinishedCount,1);assert.equal(record.createRetry.requestedCount,0);
- await assert.rejects(f.run());assert.equal(f.calls.length,3,'a persisted attempt cannot dispatch again');
+ const blocked=await f.run();assert.equal(blocked.ok,false);assert.equal(blocked.createRetryFailure.canContinue,false);assert.equal(f.calls.length,3,'a persisted attempt cannot dispatch again');
 });
 
-test('duplicate, changed baseline, newer remote activity, failed lists, changed body/company or existing marker blocks the retry before any POST',async()=>{
- for(const mode of ['title','baseline','newer','requested','http','body','company','marker','approval']){
+test('duplicate, changed baseline, failed lists, changed body/company or existing marker blocks the retry before any POST',async()=>{
+ for(const mode of ['title','baseline','requested','http','body','company','marker','approval']){
   const f=pageFixture();
   if(mode==='title')f.input.body.productName=f.old.productName;
   if(mode==='baseline')f.input.baselineDocIds=[];
-  if(mode==='newer')f.input.retryCreateApproval.originalRequestedAt=1;
-  if(mode==='requested'){const other=pageFixture({requested:[{...f.old,docId:8,productName:f.body.productName}]});await assert.rejects(other.run());assert.equal(other.calls.some(c=>c.method==='POST'),false);continue;}
-  if(mode==='http'){const other=pageFixture({status:503});await assert.rejects(other.run());assert.equal(other.calls.some(c=>c.method==='POST'),false);continue;}
+  if(mode==='requested'){const other=pageFixture({requested:[{...f.old,docId:8,productName:f.body.productName}]});const blocked=await other.run();assert.equal(blocked.createRetryFailure.phase,'duplicate');assert.equal(blocked.createRetryFailure.canContinue,false);assert.equal(other.calls.some(c=>c.method==='POST'),false);continue;}
+  if(mode==='http'){const other=pageFixture({status:503});const blocked=await other.run();assert.equal(blocked.createRetryFailure.phase,'list-unfinished');assert.equal(blocked.createRetryFailure.dispatched,false);assert.equal(blocked.createRetryFailure.canContinue,true);assert.equal(other.calls.some(c=>c.method==='POST'),false);continue;}
   if(mode==='body')f.input.body.jsonDocument[0].productPage.supplyPrice=999;
   if(mode==='company')f.document.body.innerText='Company Code: A01464742';
   if(mode==='marker')f.dataset.yoofamSingleDocumentRecords=JSON.stringify({[f.binding.packetDigest]:{state:'create-requested'}});
   if(mode==='approval')f.input.retryCreateApproval.attempt=2;
-  await assert.rejects(f.run(),undefined,mode);assert.equal(f.calls.some(c=>c.method==='POST'),false,mode);
+  const blocked=await f.run();assert.equal(blocked.ok,false,mode);assert.equal(blocked.createRetryFailure.dispatched,false,mode);assert.equal(f.calls.some(c=>c.method==='POST'),false,mode);
  }
 });
 
 test('a lost retry ACK preserves the one attempt marker and never replays creation',async()=>{
- const f=pageFixture({lostAck:true});await assert.rejects(f.run());await assert.rejects(f.run());
+ const f=pageFixture({lostAck:true}),lost=await f.run(),blocked=await f.run();assert.equal(lost.createRetryFailure.dispatched,true);assert.equal(lost.createRetryFailure.canContinue,false);assert.equal(blocked.createRetryFailure.canContinue,false);
  assert.equal(f.calls.filter(c=>c.method==='POST').length,1);assert.equal(JSON.parse(f.dataset.yoofamSingleDocumentRecords)[f.binding.packetDigest].docId,null);
+});
+
+test('unrelated newly submitted activity does not block the original approved retry, while the same title does',async()=>{
+ const f=pageFixture({requested:[{docId:2346424,productName:'다른 PP 배수 바구니',modifiedAt:new Date().toISOString()}]});
+ f.input.retryCreateApproval.approvedAt-=300000;f.input.retryCreateApproval.originalRequestedAt-=300000;
+ const result=await f.run();assert.equal(result.ok,true);assert.equal(f.calls.filter(c=>c.method==='POST').length,1);
+ const duplicate=pageFixture({requested:[{docId:2346424,productName:f.body.productName,modifiedAt:new Date().toISOString()}]});
+ const rejected=await duplicate.run();assert.equal(rejected.createRetryFailure.phase,'duplicate');assert.equal(duplicate.calls.some(c=>c.method==='POST'),false);
+});
+
+test('a legacy interrupted approved retry continues once with its UUID, audit and owned tab; a sent marker cannot replay',async t=>{
+ t.mock.timers.enable({apis:['Date'],now:Date.now()});let f;
+ try{
+  f=await nativeRecoveryFixture(undefined,{sourceSessionId:'legacy-approved-source'});const prior=structuredClone(f.documents.get(f.prior.docId));
+  const dropped={...f.adapter,hubRequest:async input=>input.method==='POST'&&input.path.endsWith('/create')?undefined:f.adapter.hubRequest(input)};
+  const legacy=createProductDocumentDraftReceiver({adapter:dropped,store:f.storage.store});
+  await legacy.prepareDraft(f.packet,f.sender);t.mock.timers.tick(61000);
+  const pending=await legacy.retryCreateDraft(f.packet,f.sender);assert.equal(pending.state,'create-requested');assert.equal(pending.draftProof.createRetryApproved,true);
+  assert.equal(f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords,undefined);
+  const packet=await createProductDocumentPacket(f.packet.review,{requestId:f.packet.requestId,createdAt:Date.now(),now:Date.now()});
+  const receiver=createProductDocumentDraftReceiver({adapter:f.adapter,store:f.storage.store});
+  const result=await receiver.resumeCreateRetryDraft(packet,f.sender);assert.equal(result.state,'created',JSON.stringify(result));assert.equal(result.requestId,f.packet.requestId);
+  await receiver.resumeCreateRetryDraft(packet,f.sender);await receiver.retryCreateDraft(packet,f.sender);
+  assert.equal(f.calls.filter(c=>c.name==='hub-fetch'&&c.init.method==='POST'&&c.url.endsWith('/create')).length,1);
+  const record=JSON.parse(f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords)[f.context.packetDigest];
+  assert.equal(record.createRetry.attempt,1);assert.equal(record.createRetry.resumeUsed,true);
+  assert.equal(f.calls.filter(c=>c.name==='tabs-create').length,1);assert.deepEqual(f.documents.get(f.prior.docId),prior);assert.equal(f.submitted,0);
+ }finally{f?.close();t.mock.timers.reset();}
 });
 
 test('actual native receiver retains the UUID and owned target, creates once, and resumes the remaining preparation without modifying a prior draft',async t=>{
@@ -72,5 +99,20 @@ test('actual native receiver retains the UUID and owned target, creates once, an
   const packet=await createProductDocumentPacket(f.packet.review,{requestId:f.packet.requestId,createdAt:Date.now(),now:Date.now()});
   const completed=await receiver.prepareDraft(packet,f.sender);assert.equal(completed.state,'validated',JSON.stringify(completed));assert.equal(completed.draftProof.validatedSteps.length,4);
   assert.equal(posts(),1);assert.equal(f.calls.filter(c=>c.name==='tabs-create').length,1);assert.deepEqual(f.documents.get(f.prior.docId),prior);assert.equal(f.submitted,0);
+ }finally{f?.close();t.mock.timers.reset();}
+});
+
+test('a confirmed unsent list failure preserves approval and rolls back only to same-target preparation',async t=>{
+ t.mock.timers.enable({apis:['Date'],now:Date.now()});let f;
+ try{
+  f=await nativeRecoveryFixture(undefined,{sourceSessionId:'unsent-approved-source',browser:{registerRequestedStatus:503}});
+  const interrupted=createProductDocumentDraftReceiver({adapter:{...f.adapter,hubRequest:async input=>input.method==='POST'&&input.path.endsWith('/create')?undefined:f.adapter.hubRequest(input)},store:f.storage.store});
+  await assert.rejects(interrupted.resumeCreateRetryDraft(f.packet,f.sender),error=>error.code==='CHECKPOINT');
+  await interrupted.prepareDraft(f.packet,f.sender);t.mock.timers.tick(61000);
+  const receiver=createProductDocumentDraftReceiver({adapter:f.adapter,store:f.storage.store});
+  const pending=await receiver.retryCreateDraft(f.packet,f.sender);
+  assert.equal(pending.state,'target-created',JSON.stringify(pending));assert.equal(pending.error.code,'CREATE_RETRY_PRECHECK_NOT_SENT');assert.equal(pending.draftProof.createRetryApproved,true);
+  assert.equal(f.calls.some(c=>c.name==='hub-fetch'&&c.init.method==='POST'&&c.url.endsWith('/create')),false);
+  assert.equal(f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords,undefined);
  }finally{f?.close();t.mock.timers.reset();}
 });

@@ -140,7 +140,8 @@ function checkpointValid(state,context){
   if(state.draftOnly!==undefined&&(state.draftOnly!==true||state.preparedLifecycle!==true&&(!DRAFT_STATES.has(state.state)||state.stageConsents?.length||state.challenge!==null||state.receipt!==null
     ||state.humanConfirmedAt!==undefined||state.submitRequestedAt!==undefined))||state.draftOnly===true&&state.state==='validated'&&state.validatedSteps.length!==4)fail('CHECKPOINT','제출하지 않은 새 초안의 원래 준비 기록을 확인해주세요.');
   if(state.createRetry!==undefined){const retry=state.createRetry;
-    if(state.draftOnly!==true||!object(retry)||Object.keys(retry).sort().join(',')!=='approvedAt,attempt,originalRequestedAt,originalSequence'||retry.attempt!==1
+    if(state.draftOnly!==true||!object(retry)||!['approvedAt,attempt,originalRequestedAt,originalSequence','approvedAt,attempt,originalRequestedAt,originalSequence,resumeUsed'].includes(Object.keys(retry).sort().join(','))||retry.attempt!==1
+      ||retry.resumeUsed!==undefined&&retry.resumeUsed!==true
       ||![retry.approvedAt,retry.originalRequestedAt,retry.originalSequence].every(v=>Number.isSafeInteger(v)&&v>0)||retry.originalRequestedAt+60000>retry.approvedAt
       ||retry.approvedAt>state.updatedAt||retry.originalSequence>=state.sequence)fail('CHECKPOINT','원래 생성 요청의 1회 재시도 기록을 확인해주세요.');
   }
@@ -225,7 +226,7 @@ function result(state,extra={}){
       validatedSteps:clone(state.validatedSteps),checkpointSequence:state.sequence,rejectedAt:state.updatedAt,submitted:false,consented:false,
       errors:state.validationErrors.map(({columnName,message})=>({columnName,message}))}}:{}),
     ...(state.draftOnly===true?state.preparedLifecycle===true?{draftOnly:true,preparedLifecycle:true,lifecycleProof:{evidence:'native-prepared-draft-lifecycle',...clone(state.preparationOrigin),checkpointSequence:state.sequence,observedAt:state.updatedAt,validatedSteps:clone(state.validatedSteps),
-      consentRequested:Boolean(state.stageConsents?.length||state.humanConfirmedAt!==undefined),submitRequested:state.submitRequestedAt!==undefined}}:{draftOnly:true,draftProof:{evidence:'document-draft-preparation',validatedSteps:clone(state.validatedSteps),checkpointSequence:state.sequence,observedAt:state.updatedAt,submitted:false,consented:false}}:{}),...extra};
+      consentRequested:Boolean(state.stageConsents?.length||state.humanConfirmedAt!==undefined),submitRequested:state.submitRequestedAt!==undefined}}:{draftOnly:true,draftProof:{evidence:'document-draft-preparation',validatedSteps:clone(state.validatedSteps),checkpointSequence:state.sequence,observedAt:state.updatedAt,submitted:false,consented:false,...(state.createRetry?{createRetryApproved:true}:{})}}:{}),...extra};
 }
 
 /** Explicit adapters only; importing this module performs no browser/network
@@ -279,9 +280,14 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
         await save(context,state,{state:'target-created',tab:null,operationId:state.requestId+':target'});
       throw error;
     }
-    return responseJson(await call('hubRequest',{tab:state.tab,sessionId:state.sessionId,identity:context.identity,requestId:state.requestId,...(state.operationId===undefined?{}:{operationId:state.operationId}),method,path,...(body===undefined?{}:{body}),
+    try{return responseJson(await call('hubRequest',{tab:state.tab,sessionId:state.sessionId,identity:context.identity,requestId:state.requestId,...(state.operationId===undefined?{}:{operationId:state.operationId}),method,path,...(body===undefined?{}:{body}),
       ...(method==='POST'&&path===SINGLE_DOCUMENT_PATHS.create?{baselineDocIds:clone(state.baselineDocIds)}:{}),
-      ...(state.createRetry&&method==='POST'&&path===SINGLE_DOCUMENT_PATHS.create?{retryCreateApproval:clone(state.createRetry)}:{})}));
+      ...(state.createRetry&&method==='POST'&&path===SINGLE_DOCUMENT_PATHS.create?{retryCreateApproval:clone(state.createRetry)}:{})}));}
+    catch(error){
+      if(error instanceof SingleDocumentError&&error.code==='CREATE_RETRY_PRECHECK_NOT_SENT'&&state.createRetry&&method==='POST'&&path===SINGLE_DOCUMENT_PATHS.create&&state.state==='create-requested'&&state.docId===null)
+        await save(context,state,{state:'target-created',tab:null,operationId:state.requestId+':target'});
+      throw error;
+    }
   }
   async function readDocument(context,state,recovery=false,afterConsent=false){
     await guard(context,state);
@@ -425,10 +431,11 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
       if(!state)fail('CHECKPOINT','먼저 새 개별 전송 요청을 준비해주세요.');
       const readOnlyReceipt=nativeLifecycle&&state.preparedLifecycle===true&&state.submitRequestedAt!==undefined&&['recoverPreparedDraft','observePreparedDraft'].includes(action);
       await guard(context,state,readOnlyReceipt);
-      if(action==='retryCreateDraft'){
-        if(!nativeLifecycle||!draftOnly||state.preparedLifecycle||state.state!=='create-requested'||state.docId!==null||state.createRetry!==undefined
-          ||state.updatedAt+60000>clock())fail('CREATE_RETRY_SCOPE','문서번호가 없는 원래 새 초안에 승인된 1회 재시도만 허용됩니다. 저장 결과를 다시 조회해주세요.');
-        state=await save(context,state,{createRetry:{attempt:1,originalRequestedAt:state.updatedAt,originalSequence:state.sequence,approvedAt:clock()}});
+      if(action==='retryCreateDraft'||action==='resumeCreateRetryDraft'){
+        if(!nativeLifecycle||!draftOnly||state.preparedLifecycle||state.state!=='create-requested'||state.docId!==null
+          ||action==='retryCreateDraft'&&(state.createRetry!==undefined||state.updatedAt+60000>clock())
+          ||action==='resumeCreateRetryDraft'&&(!state.createRetry||state.createRetry.resumeUsed!==undefined))fail('CREATE_RETRY_SCOPE','문서번호가 없는 원래 새 초안에 승인된 1회 재시도만 허용됩니다. 저장 결과를 다시 조회해주세요.');
+        state=await save(context,state,{createRetry:action==='resumeCreateRetryDraft'?{...state.createRetry,resumeUsed:true}:{attempt:1,originalRequestedAt:state.updatedAt,originalSequence:state.sequence,approvedAt:clock()}});
         const created=await request(context,state,'POST',SINGLE_DOCUMENT_PATHS.create,context.packet.body);
         if(!object(created)||!identifier(created.docId)||state.baselineDocIds.some(id=>same(id,created.docId)))fail('CREATE_UNCONFIRMED','재시도 생성 결과를 확인하지 못했습니다. 같은 요청의 저장 결과만 조회해주세요.');
         state=await save(context,state,{state:'created',docId:created.docId});return result(state,{recovered:true});
@@ -580,6 +587,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
   }
   if(draftOnly)return Object.freeze({prepareDraft:(packet,sender)=>operate(packet,sender,'prepareDraft'),recoverDraft:(packet,sender)=>operate(packet,sender,'recoverDraft'),...(nativeLifecycle?{
     retryCreateDraft:(packet,sender)=>operate(packet,sender,'retryCreateDraft'),
+    resumeCreateRetryDraft:(packet,sender)=>operate(packet,sender,'resumeCreateRetryDraft'),
     reviewPreparedDraft:(packet,sender)=>operate(packet,sender,'reviewPreparedDraft'),confirmPreparedDraft:(packet,sender,confirmation)=>operate(packet,sender,'confirmPreparedDraft',confirmation),
     recoverPreparedDraft:(packet,sender)=>operate(packet,sender,'recoverPreparedDraft'),observePreparedDraft:(packet,sender)=>operate(packet,sender,'observePreparedDraft')}: {})});
   return Object.freeze({start:(packet,sender)=>operate(packet,sender,'start'),resume:(packet,sender)=>operate(packet,sender,'resume'),

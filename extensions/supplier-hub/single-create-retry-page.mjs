@@ -2,6 +2,8 @@
  * remote lists are checked in the same owned document immediately before the
  * POST. A persisted in-page attempt marker prevents a second dispatch. */
 export async function singleDocumentRetryCreatePage(input){
+ let phase='scope',dispatched=false,absentMarker=false,verifiedBody=false;
+ try{
  const origin='https://supplier.coupang.com',root=document.documentElement,data=root.dataset;
  const canon=v=>v===null||typeof v!=='object'?JSON.stringify(v):Array.isArray(v)?'['+v.map(canon).join(',')+']':'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canon(v[k])).join(',')+'}';
  const same=(a,b)=>canon(a)===canon(b),id=v=>Number.isSafeInteger(v)&&v>0||typeof v==='string'&&v.trim()===v&&v.length>0&&v.length<=200&&!/[\u0000-\u001f]|\.\.\.|…/.test(v);
@@ -21,16 +23,19 @@ export async function singleDocumentRetryCreatePage(input){
    ||({A01526306:'유앤채',A01464742:'와이홉'})[codes[0]]!==binding.identity.company.name
    ||!['identityDigest','packetDigest','preparedBodySha256','originalBodySha256','nativeAssetSourcePlanSha256'].every(k=>/^[a-f0-9]{64}$/.test(binding[k]||''))
    ||input.method!=='POST'||input.path!=='/sr/draft/api/create'||input.operationId!==binding.requestId+':create'
-   ||!approval||Object.keys(approval).sort().join(',')!=='approvedAt,attempt,originalRequestedAt,originalSequence'||approval.attempt!==1
+   ||!approval||!['approvedAt,attempt,originalRequestedAt,originalSequence','approvedAt,attempt,originalRequestedAt,originalSequence,resumeUsed'].includes(Object.keys(approval).sort().join(','))||approval.attempt!==1
+   ||approval.resumeUsed!==undefined&&approval.resumeUsed!==true
    ||![approval.approvedAt,approval.originalRequestedAt,approval.originalSequence].every(v=>Number.isSafeInteger(v)&&v>0)
-   ||approval.originalRequestedAt+60000>approval.approvedAt||approval.approvedAt>Date.now()+5000||Date.now()>approval.approvedAt+120000)
+   ||approval.originalRequestedAt+60000>approval.approvedAt||approval.approvedAt>Date.now()+5000)
    throw Error('원래 생성 요청의 1회 재시도 승인·회사·탭 연결을 확인해주세요.');
   const records=JSON.parse(data.yoofamSingleDocumentRecords||'{}');
-  if(!records||typeof records!=='object'||Array.isArray(records)||Object.keys(records).length>1000||Object.hasOwn(records,binding.packetDigest))
+  absentMarker=Boolean(records&&typeof records==='object'&&!Array.isArray(records)&&Object.keys(records).length<=1000&&!Object.hasOwn(records,binding.packetDigest));
+  if(!absentMarker)
    throw Error('원래 전송 탭에 생성 요청 기록이 있습니다. 다시 생성하지 않았습니다.');
   if(Array.from(document.querySelectorAll('.rsc-text-input input')).some(n=>(n.value||'').trim()))throw Error('현재 작업 중인 Supplier Hub 입력을 보존했습니다.');
  };
  check();
+ phase='body';
  const baseline=input.baselineDocIds,body=input.body,members=binding.identity.members;
  if(!Array.isArray(baseline)||baseline.length>10000||baseline.some(v=>!id(v))||new Set(baseline.map(canon)).size!==baseline.length
   ||body?.docId!==null||body.scope!=='Retail_Categorized_Single'||!Array.isArray(members)||members.length<1||members.length>200
@@ -38,6 +43,7 @@ export async function singleDocumentRetryCreatePage(input){
   ||typeof body.productName!=='string'||!body.productName.trim())throw Error('원래 견적 본문·포함 옵션·중간저장 기준 목록을 확인해주세요.');
  const bytes=new TextEncoder().encode(canon(body)),hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
  if(hash!==binding.preparedBodySha256)throw Error('승인한 원래 견적서 본문과 다릅니다.');
+ verifiedBody=true;
  const fetchJson=async(path,method='GET',value)=>{
   check();const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);
   try{
@@ -49,15 +55,17 @@ export async function singleDocumentRetryCreatePage(input){
  };
  const lists=[];
  for(const path of ['/sr/draft/api/drafts','/sr/draft/api/drafts/register-requested']){
+  phase=path.endsWith('/register-requested')?'list-requested':'list-unfinished';
   const response=await fetchJson(path),rows=response.json;
   if(!response.ok||response.status!==200||!Array.isArray(rows)||rows.length>10000||rows.some(r=>!r||!id(r.docId)||typeof r.productName!=='string'||typeof r.modifiedAt!=='string'||!Number.isFinite(Date.parse(r.modifiedAt)))
    ||new Set(rows.map(r=>canon(r.docId))).size!==rows.length)throw Error('전체 중간저장·제출요청 목록을 확인하지 못해 재생성하지 않았습니다.');
-  if(rows.some(r=>r.productName===body.productName||Date.parse(r.modifiedAt)>=approval.originalRequestedAt))throw Error('동일 상품 또는 원래 요청 이후의 원격 문서가 있습니다. 중복 방지를 위해 재생성하지 않았습니다.');
+  if(rows.some(r=>r.productName===body.productName)){phase='duplicate';throw Error('동일 상품의 원격 문서가 있습니다. 중복 방지를 위해 재생성하지 않았습니다.');}
   lists.push(rows);
  }
+ phase='baseline';
  if(!same(lists[0].map(r=>r.docId).sort((a,b)=>canon(a).localeCompare(canon(b))),baseline.slice().sort((a,b)=>canon(a).localeCompare(canon(b)))))
   throw Error('원래 중간저장 목록이 변경돼 재생성하지 않았습니다.');
- check();
+ phase='final-scope';check();
  const records=JSON.parse(data.yoofamSingleDocumentRecords||'{}');
  const record={binding,docId:null,createOperationId:input.operationId,state:'create-requested',baselineDocIds:baseline,
   createRetry:{...approval,duplicateCheckedAt:Date.now(),unfinishedCount:lists[0].length,requestedCount:lists[1].length}};
@@ -66,6 +74,7 @@ export async function singleDocumentRetryCreatePage(input){
  // rejects it, so the final POST uses the already-verified document directly.
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);
  try{
+  phase='create';dispatched=true;
   const url=origin+input.path,response=await fetch(url,{method:'POST',credentials:'include',cache:'no-store',redirect:'error',signal:controller.signal,
    headers:{accept:'application/json','content-type':'application/json;charset=UTF-8'},body:JSON.stringify(body)});
   if(response.redirected||response.url!==url||!/\bapplication\/json\b/i.test(response.headers.get('content-type')||''))throw Error('재시도 생성 응답의 출처·형식이 다릅니다. 저장 결과만 조회해주세요.');
@@ -77,4 +86,12 @@ export async function singleDocumentRetryCreatePage(input){
   if(ok){if(!id(json?.docId)||baseline.some(v=>same(v,json.docId)))throw Error('새 문서번호를 확인하지 못했습니다. 다시 생성하지 마세요.');record.docId=json.docId;record.state='created';currentRecords[binding.packetDigest]=record;data.yoofamSingleDocumentRecords=JSON.stringify(currentRecords);}
   return{ok,status:response.status,json,ownedRecord:record};
  }finally{clearTimeout(timer);}
+ }catch{
+  const messages={scope:'원래 생성 요청의 승인·회사·탭 연결을 확인하지 못했습니다.',body:'승인한 원래 견적서 본문·옵션 연결을 확인하지 못했습니다.',
+   'list-unfinished':'중간저장 전체 목록을 확인하지 못했습니다.','list-requested':'제출요청 전체 목록을 확인하지 못했습니다.',duplicate:'동일 상품의 원격 문서가 있어 생성하지 않았습니다.',
+   baseline:'원래 중간저장 기준 목록이 변경돼 생성하지 않았습니다.','final-scope':'최종 회사·탭·생성 표식 확인을 통과하지 못했습니다.',create:'생성 요청 응답을 확정하지 못했습니다. 같은 요청의 저장 결과만 조회해주세요.'};
+  return{ok:false,status:409,json:{errorCode:'CREATE_RETRY_CHECK',message:messages[phase]},createRetryFailure:{format:'yoofam-create-retry-failure-v1',
+   requestId:input?.binding?.requestId,operationId:input?.operationId,packetDigest:input?.binding?.packetDigest,identityDigest:input?.binding?.identityDigest,
+   phase,dispatched,canContinue:verifiedBody&&absentMarker&&!dispatched&&phase!=='duplicate'}};
+ }
 }

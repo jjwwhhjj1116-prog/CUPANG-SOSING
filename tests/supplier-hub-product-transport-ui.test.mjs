@@ -36,7 +36,7 @@ const release='검증 반려 확인 · 수정 허용';
 const prepareDraft='새 견적 초안 만들기 · 제출 안 함',recoverDraft='같은 초안 저장 결과 확인 · 읽기 전용',continueDraft='같은 초안 준비 계속 · 제출 안 함';
 const draftResult=(f,requestId,state='validated',extra={})=>f.state(state,{requestId,draftOnly:true,
  draftProof:{evidence:'document-draft-preparation',validatedSteps:state==='validated'?[2,3,4,5]:[],checkpointSequence:12,observedAt:f.clock.now,submitted:false,consented:false},...extra});
-function allowDraft(h,run){h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,createRetryAvailable:true}:run(payload);}
+function allowDraft(h,run){h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,createRetryAvailable:true,createRetryContinuationAvailable:true}:run(payload);}
 
 const reviewPrepared='준비한 새 견적서 등록전송',confirmPrepared='현재 문서 동의 확인 · 계속',recoverPrepared='준비한 문서 단계 확인 · 읽기 전용';
 function preparedResult(h,payload,state,sequence,extra={}){
@@ -118,6 +118,17 @@ test('an authenticated missing-create result requires explicit retry consent and
   assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','recoverDraft','retryCreateDraft']);
   assert.ok(h.f.sent.every(row=>row.payload.packet.requestId===original));assert.equal(h.stored.size,1);assert.ok(h.button(continueDraft));
   click();await h.idle();assert.equal(h.f.sent.filter(row=>row.payload.action==='retryCreateDraft').length,1);assert.equal(h.button('기존 요청으로 생성 1회 재시도'),undefined);
+ }finally{h.close();}
+});
+
+test('saved retry approval offers only same-request continuation and a double click cannot dispatch twice',async()=>{
+ const h=await fixture();try{
+  allowDraft(h,payload=>payload.action==='resumeCreateRetryDraft'?draftResult(h.f,payload.packet.requestId,'created',{recovered:true})
+   :draftResult(h.f,payload.packet.requestId,'create-requested',{docId:null,needsRecovery:true,draftProof:{evidence:'document-draft-preparation',validatedSteps:[],checkpointSequence:12,observedAt:h.f.clock.now,submitted:false,consented:false,createRetryApproved:true},...(payload.action==='recoverDraft'?{error:{code:'READBACK_UNCONFIRMED',message:'기존 승인 있음'}}:{})}));
+  await h.idle();await h.click(open);await h.click(prepareDraft);await h.click(recoverDraft);
+  assert.equal(h.button('기존 요청으로 생성 1회 재시도'),undefined);const click=h.button('승인된 1회 생성 계속').props.onClick;click();click();await h.idle();
+  assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','recoverDraft','resumeCreateRetryDraft']);
+  assert.equal(new Set(h.f.sent.map(row=>row.payload.packet.requestId)).size,1);assert.equal(h.stored.size,1);assert.ok(h.button(continueDraft));click();await h.idle();assert.equal(h.f.sent.length,4);
  }finally{h.close();}
 });
 
