@@ -12,6 +12,7 @@ import {nativeProductAssetBytes,prepareAndUploadNativeProductAssets} from './nat
 import {readAppDocumentSource,sourceReadError,normalizeSourceReadFailure,currentSourceAppTab} from './product-document-source.mjs';
 import {nativeAssetUploadPage} from './native-asset-upload-page.mjs';
 import {nativeAssetRecoveryPage} from './native-asset-recovery-page.mjs';
+import {singleDocumentRetryCreatePage} from './single-create-retry-page.mjs';
 import {nativeAssetUploadPlanSha256,validateNativeAssetUploadDescriptors} from './native-asset-multipart.mjs';
 
 const HASH=/^[a-f0-9]{64}$/;
@@ -423,8 +424,10 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
         const result=await execute(input.tab,input.identity,nativeAssetUploadPage,[args]);if(result?.ownedRecord)pageRecords.set(binding.packetDigest,copy(result.ownedRecord));return result;
       }});
     }
-    const value=await execute(input.tab,input.identity,singleDocumentHubRequestPage,[{binding,method:input.method,path:input.path,...(input.body===undefined?{}:{body:input.body}),
-      ...(input.operationId===undefined?{}:{operationId:input.operationId}),...(input.path.endsWith('/create')?{baselineDocIds:baselines.get(binding.packetDigest)??[]}:{})}]);
+    if(input.retryCreateApproval&&(!nativeSha||input.method!=='POST'||input.path!=='/sr/draft/api/create'))fail('CREATE_RETRY_SCOPE','원본을 확인한 새 초안의 생성 재시도만 허용됩니다.');
+    const value=await execute(input.tab,input.identity,input.retryCreateApproval?singleDocumentRetryCreatePage:singleDocumentHubRequestPage,[{binding,method:input.method,path:input.path,...(input.body===undefined?{}:{body:input.body}),
+      ...(input.retryCreateApproval?{retryCreateApproval:copy(input.retryCreateApproval)}:{}),
+      ...(input.operationId===undefined?{}:{operationId:input.operationId}),...(input.path.endsWith('/create')?{baselineDocIds:input.retryCreateApproval?copy(input.baselineDocIds):baselines.get(binding.packetDigest)??[]}:{})}]);
     if(input.method==='GET'&&input.path==='/sr/draft/api/drafts'&&value?.ok===true&&Array.isArray(value.json)&&!baselines.has(binding.packetDigest))baselines.set(binding.packetDigest,value.json.map(row=>row.docId));
     if(value?.ownedRecord)pageRecords.set(binding.packetDigest,copy(value.ownedRecord));
     return value;

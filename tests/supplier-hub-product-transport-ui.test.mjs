@@ -36,7 +36,7 @@ const release='검증 반려 확인 · 수정 허용';
 const prepareDraft='새 견적 초안 만들기 · 제출 안 함',recoverDraft='같은 초안 저장 결과 확인 · 읽기 전용',continueDraft='같은 초안 준비 계속 · 제출 안 함';
 const draftResult=(f,requestId,state='validated',extra={})=>f.state(state,{requestId,draftOnly:true,
  draftProof:{evidence:'document-draft-preparation',validatedSteps:state==='validated'?[2,3,4,5]:[],checkpointSequence:12,observedAt:f.clock.now,submitted:false,consented:false},...extra});
-function allowDraft(h,run){h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true}:run(payload);}
+function allowDraft(h,run){h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,createRetryAvailable:true}:run(payload);}
 
 const reviewPrepared='준비한 새 견적서 등록전송',confirmPrepared='현재 문서 동의 확인 · 계속',recoverPrepared='준비한 문서 단계 확인 · 읽기 전용';
 function preparedResult(h,payload,state,sequence,extra={}){
@@ -104,6 +104,21 @@ test('lost draft ACK and remount preserve one operation; only exact read recover
   const original=h.f.sent[1].payload.packet.requestId;h.close();remount=await fixture(SINGLE_COMPANIES[0],{stored:h.stored});allowDraft(remount,payload=>{assert.equal(payload.action,'recoverDraft');assert.equal(payload.packet.requestId,original);return draftResult(remount.f,original,'validated',{recovered:true});});
   await remount.idle();await remount.click('이전 문서 전송 자료 확인');assert.equal(remount.button(prepareDraft),undefined);assert.ok(remount.button(recoverDraft));await remount.click(recoverDraft);assert.deepEqual(plain(remount.f.sent.map(row=>row.payload.action)),['preview','recoverDraft']);assert.deepEqual(remount.lockPairs.at(-1),[true,false]);assert.equal(remount.stored.size,1);assert.equal(remount.f.calls.some(call=>call.method==='POST'),false);
  }finally{h.close();remount?.close();}
+});
+
+test('an authenticated missing-create result requires explicit retry consent and dispatches only once under the original reservation',async()=>{
+ const h=await fixture();try{
+  allowDraft(h,payload=>payload.action==='retryCreateDraft'?draftResult(h.f,payload.packet.requestId,'created',{recovered:true})
+   :draftResult(h.f,payload.packet.requestId,'create-requested',{docId:null,needsRecovery:true,...(payload.action==='recoverDraft'?{error:{code:'READBACK_UNCONFIRMED',message:'생성 문서번호 미확인'}}:{})}));
+  await h.idle();await h.click(open);await h.click(prepareDraft);const original=h.f.sent[1].payload.packet.requestId;
+  assert.equal(h.button('기존 요청으로 생성 1회 재시도'),undefined);
+  await h.click(recoverDraft);const retry=h.button('기존 요청으로 생성 1회 재시도');assert.ok(retry);assert.equal(retry.props.disabled,true);
+  const checkbox=nodes(h.render()).find(node=>node.type==='input'&&node.props.type==='checkbox');assert.ok(checkbox);checkbox.props.onChange({target:{checked:true}});h.flush();
+  const click=h.button('기존 요청으로 생성 1회 재시도').props.onClick;click();click();await h.idle();
+  assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','recoverDraft','retryCreateDraft']);
+  assert.ok(h.f.sent.every(row=>row.payload.packet.requestId===original));assert.equal(h.stored.size,1);assert.ok(h.button(continueDraft));
+  click();await h.idle();assert.equal(h.f.sent.filter(row=>row.payload.action==='retryCreateDraft').length,1);assert.equal(h.button('기존 요청으로 생성 1회 재시도'),undefined);
+ }finally{h.close();}
 });
 
 test('malformed draft proof and stale review callbacks retain the pending reservation and cannot expose consent or submit',async()=>{

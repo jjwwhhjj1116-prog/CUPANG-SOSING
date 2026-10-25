@@ -87,7 +87,7 @@ test('public preparation dispatcher requires the independently selected native a
  const f=await nativeReceiverReceiptFixture();try{
   const source=fs.readFileSync(new URL('../extensions/supplier-hub/product-document-dispatch.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace(/export /g,'');
   for(const native of [false,true]){
-   let disposed=0,constructed=0,called=0;const sandbox={productDocumentIdentity,SingleDocumentError,
+   let disposed=0,constructed=0,called=0;const sandbox={productDocumentIdentity,SingleDocumentError,resolveProductSourceContext:async context=>context,
     createVerifiedProductDocumentBrowserAdapter:async()=>({nativeAssets:native,sourcePlanSha256:f.context.identity.fingerprint,adapter:{dispose(){disposed++;}}}),
     createProductDocumentReceiver:()=>assert.fail('Full receiver must remain gated'),createProductDocumentStore:()=>({}),
     createProductDocumentDraftReceiver:()=>{constructed++;return{prepareDraft:async()=>{called++;return{draftOnly:true,state:'validated',registered:false};}};}};

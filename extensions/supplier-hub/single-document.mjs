@@ -139,6 +139,11 @@ function checkpointValid(state,context){
     ||state.tab!==null&&!tabValid(state.tab,context.packet)||state.sessionId!==null&&(typeof state.sessionId!=='string'||!ID.test(state.sessionId)))fail('CHECKPOINT','저장한 개별 전송 기록의 연결을 확인해주세요.');
   if(state.draftOnly!==undefined&&(state.draftOnly!==true||state.preparedLifecycle!==true&&(!DRAFT_STATES.has(state.state)||state.stageConsents?.length||state.challenge!==null||state.receipt!==null
     ||state.humanConfirmedAt!==undefined||state.submitRequestedAt!==undefined))||state.draftOnly===true&&state.state==='validated'&&state.validatedSteps.length!==4)fail('CHECKPOINT','제출하지 않은 새 초안의 원래 준비 기록을 확인해주세요.');
+  if(state.createRetry!==undefined){const retry=state.createRetry;
+    if(state.draftOnly!==true||!object(retry)||Object.keys(retry).sort().join(',')!=='approvedAt,attempt,originalRequestedAt,originalSequence'||retry.attempt!==1
+      ||![retry.approvedAt,retry.originalRequestedAt,retry.originalSequence].every(v=>Number.isSafeInteger(v)&&v>0)||retry.originalRequestedAt+60000>retry.approvedAt
+      ||retry.approvedAt>state.updatedAt||retry.originalSequence>=state.sequence)fail('CHECKPOINT','원래 생성 요청의 1회 재시도 기록을 확인해주세요.');
+  }
   if(state.preparedLifecycle!==undefined||state.preparationOrigin!==undefined){const origin=state.preparationOrigin;
     if(state.preparedLifecycle!==true||state.draftOnly!==true||!PREPARED_LIFECYCLE_STATES.has(state.state)||state.validatedSteps.length!==4
       ||!object(origin)||Object.keys(origin).sort().join(',')!=='preparedCheckpointSequence,qualifiedAt,qualifiedCheckpointSequence'||!Number.isSafeInteger(origin.preparedCheckpointSequence)||origin.preparedCheckpointSequence<1
@@ -265,8 +270,18 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
     return proof;
   }
   async function request(context,state,method,path,body){
-    await guard(context,state);
-    return responseJson(await call('hubRequest',{tab:state.tab,sessionId:state.sessionId,identity:context.identity,requestId:state.requestId,...(state.operationId===undefined?{}:{operationId:state.operationId}),method,path,...(body===undefined?{}:{body})}));
+    try{await guard(context,state);}catch(error){
+      // The adapter has not been called here: a failed final source/tab guard
+      // is positive local proof that create was never dispatched. Preserve
+      // the operation and owned target, but do not leave a false uncertain
+      // write checkpoint. Errors after calling the adapter remain unresolved.
+      if(method==='POST'&&path===SINGLE_DOCUMENT_PATHS.create&&state.state==='create-requested'&&state.docId===null)
+        await save(context,state,{state:'target-created',tab:null,operationId:state.requestId+':target'});
+      throw error;
+    }
+    return responseJson(await call('hubRequest',{tab:state.tab,sessionId:state.sessionId,identity:context.identity,requestId:state.requestId,...(state.operationId===undefined?{}:{operationId:state.operationId}),method,path,...(body===undefined?{}:{body}),
+      ...(method==='POST'&&path===SINGLE_DOCUMENT_PATHS.create?{baselineDocIds:clone(state.baselineDocIds)}:{}),
+      ...(state.createRetry&&method==='POST'&&path===SINGLE_DOCUMENT_PATHS.create?{retryCreateApproval:clone(state.createRetry)}:{})}));
   }
   async function readDocument(context,state,recovery=false,afterConsent=false){
     await guard(context,state);
@@ -410,6 +425,14 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
       if(!state)fail('CHECKPOINT','먼저 새 개별 전송 요청을 준비해주세요.');
       const readOnlyReceipt=nativeLifecycle&&state.preparedLifecycle===true&&state.submitRequestedAt!==undefined&&['recoverPreparedDraft','observePreparedDraft'].includes(action);
       await guard(context,state,readOnlyReceipt);
+      if(action==='retryCreateDraft'){
+        if(!nativeLifecycle||!draftOnly||state.preparedLifecycle||state.state!=='create-requested'||state.docId!==null||state.createRetry!==undefined
+          ||state.updatedAt+60000>clock())fail('CREATE_RETRY_SCOPE','문서번호가 없는 원래 새 초안에 승인된 1회 재시도만 허용됩니다. 저장 결과를 다시 조회해주세요.');
+        state=await save(context,state,{createRetry:{attempt:1,originalRequestedAt:state.updatedAt,originalSequence:state.sequence,approvedAt:clock()}});
+        const created=await request(context,state,'POST',SINGLE_DOCUMENT_PATHS.create,context.packet.body);
+        if(!object(created)||!identifier(created.docId)||state.baselineDocIds.some(id=>same(id,created.docId)))fail('CREATE_UNCONFIRMED','재시도 생성 결과를 확인하지 못했습니다. 같은 요청의 저장 결과만 조회해주세요.');
+        state=await save(context,state,{state:'created',docId:created.docId});return result(state,{recovered:true});
+      }
       if(nativeLifecycle&&['reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(action)){
         if(action==='reviewPreparedDraft'){
           if(state.preparedLifecycle){
@@ -556,6 +579,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
     await guard(context,state,readOnlyReceipt);state=await save(context,state,{state:receipt.state,receipt});return result(state);
   }
   if(draftOnly)return Object.freeze({prepareDraft:(packet,sender)=>operate(packet,sender,'prepareDraft'),recoverDraft:(packet,sender)=>operate(packet,sender,'recoverDraft'),...(nativeLifecycle?{
+    retryCreateDraft:(packet,sender)=>operate(packet,sender,'retryCreateDraft'),
     reviewPreparedDraft:(packet,sender)=>operate(packet,sender,'reviewPreparedDraft'),confirmPreparedDraft:(packet,sender,confirmation)=>operate(packet,sender,'confirmPreparedDraft',confirmation),
     recoverPreparedDraft:(packet,sender)=>operate(packet,sender,'recoverPreparedDraft'),observePreparedDraft:(packet,sender)=>operate(packet,sender,'observePreparedDraft')}: {})});
   return Object.freeze({start:(packet,sender)=>operate(packet,sender,'start'),resume:(packet,sender)=>operate(packet,sender,'resume'),

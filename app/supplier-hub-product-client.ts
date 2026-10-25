@@ -13,9 +13,9 @@ const same=(left:unknown,right:unknown)=>productReceiptCanonical(left)===product
 const copy=<T,>(value:T):T=>JSON.parse(productReceiptCanonical(value)) as T;
 const digest=async(value:unknown)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(productReceiptCanonical(value)))),byte=>byte.toString(16).padStart(2,'0')).join('');
 function freeze<T>(value:T):T{if(value&&typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value;}
-export class ProductDocumentBridgeError extends Error{constructor(message:string,public uncertain:boolean,public code='PRODUCT_DOCUMENT_BRIDGE'){super(message);this.name='ProductDocumentBridgeError';}}
+export class ProductDocumentBridgeError extends Error{constructor(message:string,public uncertain:boolean,public code='PRODUCT_DOCUMENT_BRIDGE',public draftState?:string){super(message);this.name='ProductDocumentBridgeError';}}
 export type ProductDocumentPreview={format:string;requestId:string;identity:ProductReceiptIdentity;identityDigest:string;packetDigest:string;productId:string;fingerprint:string;
-  members:ProductReceiptIdentity['members'];reviewDigest:string;preparedBodySha256:string;originalBodySha256:string;liveVerified:boolean;remoteWrites:false;registered:false;draftPreparationAvailable?:boolean;preparedLifecycleAvailable?:boolean};
+  members:ProductReceiptIdentity['members'];reviewDigest:string;preparedBodySha256:string;originalBodySha256:string;liveVerified:boolean;remoteWrites:false;registered:false;draftPreparationAvailable?:boolean;preparedLifecycleAvailable?:boolean;createRetryAvailable?:boolean};
 export type ProductDocumentSession={packet:ProductDocumentPacket;preview:ProductDocumentPreview;packetDigest:string;origin:string};
 export type ProductValidationError={columnName:string;message:string};
 export type ProductValidationRejection={evidence:'document-validation-rejection';operationId:string;step:number;validatedSteps:number[];checkpointSequence:number;rejectedAt:number;submitted:false;consented:false;errors?:ProductValidationError[]};
@@ -26,7 +26,7 @@ export function productValidationErrorsValid(value:unknown):value is ProductVali
 export type ProductDraftProof={evidence:'document-draft-preparation';validatedSteps:number[];checkpointSequence:number;observedAt:number;submitted:false;consented:false};
 export type PreparedLifecycleProof={evidence:'native-prepared-draft-lifecycle';preparedCheckpointSequence:number;qualifiedCheckpointSequence:number;checkpointSequence:number;qualifiedAt:number;observedAt:number;validatedSteps:number[];consentRequested:boolean;submitRequested:boolean};
 export type ProductDocumentState=SingleDocumentState&{duplicate?:boolean;recovered?:boolean;validationRejection?:ProductValidationRejection;draftOnly?:true;draftProof?:ProductDraftProof;preparedLifecycle?:true;lifecycleProof?:PreparedLifecycleProof};
-export type ProductDraftAction='prepareDraft'|'recoverDraft';
+export type ProductDraftAction='prepareDraft'|'recoverDraft'|'retryCreateDraft';
 export type PreparedDocumentAction='reviewPreparedDraft'|'confirmPreparedDraft'|'recoverPreparedDraft'|'observePreparedDraft';
 export type ProductReceiptSaveAttempt={packet:ProductDocumentPacket;observation:ProductDocumentState};
 type Scope={productId:string;profileId?:string};
@@ -52,7 +52,7 @@ export function productDocumentExchange(action:'preview'|SingleDocumentAction|Pr
     if(signal.aborted){reject(new ProductDocumentBridgeError('전체 상품 견적 작업을 취소했습니다.',false));return;}
     productReceiptCanonical(packet);
     const confirming=action==='confirm'||action==='confirmPreparedDraft';
-    if(!['preview','start','resume','recover','confirm','observe','prepareDraft','recoverDraft','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(action)||confirming&&!confirmation||!confirming&&confirmation){reject(new ProductDocumentBridgeError('현재 전체 상품 문서의 동의 동작을 확인해주세요.',false));return;}
+    if(!['preview','start','resume','recover','confirm','observe','prepareDraft','recoverDraft','retryCreateDraft','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(action)||confirming&&!confirmation||!confirming&&confirmation){reject(new ProductDocumentBridgeError('현재 전체 상품 문서의 동의 동작을 확인해주세요.',false));return;}
     if(confirmation)productReceiptCanonical(confirmation);
     const requestId=crypto.randomUUID(),mutating=!['preview','observe','recover','recoverDraft','recoverPreparedDraft','observePreparedDraft'].includes(action);
     const cleanup=()=>{clearTimeout(timer);window.removeEventListener('message',receive);signal.removeEventListener('abort',abort);};
@@ -78,7 +78,7 @@ export function productDocumentExchange(action:'preview'|SingleDocumentAction|Pr
     // Native recovery independently rechecks the current private source and
     // the original saved document. Its read-only reply can exceed 60 seconds;
     // allow it to arrive without retrying or extending any consent/packet TTL.
-    const nativeReadback=['recoverDraft','recoverPreparedDraft','observePreparedDraft'].includes(action);
+    const nativeReadback=['recoverDraft','recoverPreparedDraft','observePreparedDraft','retryCreateDraft'].includes(action);
     const timer=setTimeout(()=>{cleanup();reject(new ProductDocumentBridgeError('전체 상품 문서 응답이 없습니다. 같은 요청을 다시 전송하지 말고 저장 결과를 조회해주세요.',mutating,'PRODUCT_DOCUMENT_ACK_MISSING'));},nativeReadback?180000:confirming||action==='prepareDraft'||action==='reviewPreparedDraft'?120000:action==='preview'?PRODUCT_DOCUMENT_PREVIEW_ACK_TIMEOUT:60000);
     window.addEventListener('message',receive);signal.addEventListener('abort',abort,{once:true});
     try{window.postMessage({channel:'YOOFAM_HUB_HANDOFF',requestId,type:'PRODUCT_DOCUMENT',payload:{action,packet,...(confirmation?{confirmation}:{})}},window.location.origin);}
@@ -90,11 +90,12 @@ export async function previewProductDocument(packet:ProductDocumentPacket,signal
   const expected=await proof(packet,origin);if(signal.aborted)throw new ProductDocumentBridgeError('전체 상품 견적 확인을 취소했습니다.',false);
   const result=await productDocumentExchange('preview',packet,signal);
   try{
-    if(signal.aborted||!exact(result,['format','requestId','identity','identityDigest','packetDigest','productId','fingerprint','members','reviewDigest','preparedBodySha256','originalBodySha256','liveVerified','remoteWrites','registered'],['draftPreparationAvailable','preparedLifecycleAvailable'])
+    if(signal.aborted||!exact(result,['format','requestId','identity','identityDigest','packetDigest','productId','fingerprint','members','reviewDigest','preparedBodySha256','originalBodySha256','liveVerified','remoteWrites','registered'],['draftPreparationAvailable','preparedLifecycleAvailable','createRetryAvailable'])
       ||result.format!==FORMAT||result.requestId!==packet.requestId||result.productId!==packet.review.identity.productId||result.fingerprint!==packet.review.identity.fingerprint
       ||!same(result.members,packet.review.members)||result.reviewDigest!==packet.review.reviewDigest||result.originalBodySha256!==expected.originalBodySha256||result.preparedBodySha256!==expected.preparedBodySha256
       ||result.packetDigest!==expected.packetDigest||!HASH.test(String(result.identityDigest))||typeof result.liveVerified!=='boolean'||result.remoteWrites!==false||result.registered!==false
-      ||result.draftPreparationAvailable!==undefined&&typeof result.draftPreparationAvailable!=='boolean'||result.preparedLifecycleAvailable!==undefined&&typeof result.preparedLifecycleAvailable!=='boolean')throw Error();
+      ||result.draftPreparationAvailable!==undefined&&typeof result.draftPreparationAvailable!=='boolean'||result.preparedLifecycleAvailable!==undefined&&typeof result.preparedLifecycleAvailable!=='boolean'
+      ||result.createRetryAvailable!==undefined&&typeof result.createRetryAvailable!=='boolean'||result.createRetryAvailable===true&&result.draftPreparationAvailable!==true)throw Error();
     await verifyIdentity(result.identity,expected,result.identityDigest);
     if(signal.aborted)throw Error();return freeze({packet:copy(packet),preview:copy(result) as unknown as ProductDocumentPreview,packetDigest:expected.packetDigest,origin});
   }catch{throw new ProductDocumentBridgeError('확장에 전달한 전체 옵션·회사·본문 식별값이 다릅니다.',false,'PRODUCT_DOCUMENT_REPLY_IDENTITY');}
@@ -145,9 +146,10 @@ async function verifyProductDocumentState(value:unknown,session:ProductDocumentS
 /** Explicitly prepare only the new draft. This capability never enables the
  * general start/resume/terms/submit transport or manufactures a receipt. */
 export async function runProductDocumentDraft(session:ProductDocumentSession,action:ProductDraftAction,signal:AbortSignal):Promise<ProductDocumentState>{
-  if(!['prepareDraft','recoverDraft'].includes(action)||session.preview.draftPreparationAvailable!==true)throw new ProductDocumentBridgeError('새 견적 초안 준비를 지원하는 통합 확장으로 자료를 다시 확인해주세요.',false,'PRODUCT_DOCUMENT_DRAFT_UNAVAILABLE');
+  if(!['prepareDraft','recoverDraft','retryCreateDraft'].includes(action)||session.preview.draftPreparationAvailable!==true)throw new ProductDocumentBridgeError('새 견적 초안 준비를 지원하는 통합 확장으로 자료를 다시 확인해주세요.',false,'PRODUCT_DOCUMENT_DRAFT_UNAVAILABLE');
+  if(action==='retryCreateDraft'&&session.preview.createRetryAvailable!==true)throw new ProductDocumentBridgeError('1회 재시도를 지원하는 최신 통합 확장으로 연결해주세요.',false,'PRODUCT_DOCUMENT_RETRY_UNAVAILABLE');
   if(window.location.origin!==session.origin||!ORIGINS.includes(session.origin))throw new ProductDocumentBridgeError('원래 앱에서 새 견적 초안 요청을 확인해주세요.',false);
-  const mutating=action==='prepareDraft',expected=await proof(session.packet,session.origin,!mutating);
+  const mutating=action!=='recoverDraft',expected=await proof(session.packet,session.origin,!mutating);
   const fail=():never=>{throw new ProductDocumentBridgeError('새 초안 응답의 원래 회원·문서·본문 또는 제출 전 검증 기록을 확인하지 못했습니다. 같은 초안의 저장 결과를 조회해주세요.',mutating,'PRODUCT_DOCUMENT_DRAFT_REPLY_IDENTITY');};
   try{if(session.preview.packetDigest!==expected.packetDigest||session.packetDigest!==expected.packetDigest||session.preview.requestId!==session.packet.requestId||!same(session.preview.members,session.packet.review.members))fail();await verifyIdentity(session.preview.identity,expected,session.preview.identityDigest);}catch{fail();}
   if(signal.aborted)throw new ProductDocumentBridgeError('새 견적 초안 작업을 취소했습니다.',false);
@@ -155,7 +157,7 @@ export async function runProductDocumentDraft(session:ProductDocumentSession,act
   return verifyDraftState(value,session,expected,signal,action);
 }
 async function verifyDraftState(value:unknown,session:ProductDocumentSession,expected:Awaited<ReturnType<typeof proof>>,signal:AbortSignal,action:ProductDraftAction){
-  const mutating=action==='prepareDraft',fail=():never=>{throw new ProductDocumentBridgeError('새 초안 응답의 원래 회원·문서·본문 또는 제출 전 검증 기록을 확인하지 못했습니다. 같은 초안의 저장 결과를 조회해주세요.',mutating,'PRODUCT_DOCUMENT_DRAFT_REPLY_IDENTITY');};
+  const mutating=action!=='recoverDraft',fail=():never=>{throw new ProductDocumentBridgeError('새 초안 응답의 원래 회원·문서·본문 또는 제출 전 검증 기록을 확인하지 못했습니다. 같은 초안의 저장 결과를 조회해주세요.',mutating,'PRODUCT_DOCUMENT_DRAFT_REPLY_IDENTITY');};
   if(exact(value,['format','requestId','state','registered','success'])&&value.format===FORMAT&&value.requestId===session.packet.requestId&&value.state==='busy'&&value.registered===false&&value.success===false)
     throw new ProductDocumentBridgeError('같은 초안을 다른 작업에서 확인 중입니다. 다시 만들지 말고 저장 결과를 조회해주세요.',mutating,'PRODUCT_DOCUMENT_DRAFT_BUSY');
   try{
@@ -183,11 +185,11 @@ async function verifyDraftState(value:unknown,session:ProductDocumentSession,exp
         ||Object.hasOwn(rejected,'errors')&&!productValidationErrorsValid(rejected.errors))fail();
     }else if(value.validationRejection!==undefined)fail();
     if(value.error!==undefined&&(!exact(value.error,['code','message'])||typeof value.error.code!=='string'||value.error.code.length>100||typeof value.error.message!=='string'||value.error.message.length>2000))fail();
-    if(action==='recoverDraft'&&value.recovered!==true){
+    if((action==='recoverDraft'||action==='retryCreateDraft')&&value.recovered!==true){
       // A failed read is not a recovered checkpoint. Retain the reservation,
       // but show its authenticated error after validating the complete reply
       // identity and draft proof instead of hiding every cause as bad JSON.
-      if(object(value.error))throw new ProductDocumentBridgeError(`원래 초안(${String(value.state)}) 확인을 중단했습니다. ${String(value.error.message)}`,false,'PRODUCT_DOCUMENT_DRAFT_SOURCE_FAILURE');
+      if(object(value.error))throw new ProductDocumentBridgeError(`원래 초안(${String(value.state)}) 확인을 중단했습니다. ${String(value.error.message)}`,mutating,'PRODUCT_DOCUMENT_DRAFT_SOURCE_FAILURE',String(value.state));
       fail();
     }
     if(signal.aborted)fail();return freeze(copy(value) as unknown as ProductDocumentState);
