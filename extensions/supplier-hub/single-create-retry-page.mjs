@@ -2,13 +2,13 @@
  * remote lists are checked in the same owned document immediately before the
  * POST. A persisted in-page attempt marker prevents a second dispatch. */
 export async function singleDocumentRetryCreatePage(input){
- let phase='scope',dispatched=false,absentMarker=false,verifiedBody=false;
+ let phase='scope',dispatched=false,absentMarker=false;
  try{
  const origin='https://supplier.coupang.com',root=document.documentElement,data=root.dataset;
  const canon=v=>v===null||typeof v!=='object'?JSON.stringify(v):Array.isArray(v)?'['+v.map(canon).join(',')+']':'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canon(v[k])).join(',')+'}';
  const same=(a,b)=>canon(a)===canon(b),id=v=>Number.isSafeInteger(v)&&v>0||typeof v==='string'&&v.trim()===v&&v.length>0&&v.length<=200&&!/[\u0000-\u001f]|\.\.\.|…/.test(v);
  const binding=input?.binding,approval=input?.retryCreateApproval;
- if(!input||Object.keys(input).sort().join(',')!=='baselineDocIds,binding,body,method,operationId,path,retryCreateApproval')throw Error('원래 생성 재시도 요청 항목을 확인해주세요.');
+ if(!input||!['baselineDocIds,binding,body,method,operationId,path,retryCreateApproval,verifiedBodyCanonical','baselineDocIds,binding,body,inspectOnly,method,operationId,path,retryCreateApproval,verifiedBodyCanonical'].includes(Object.keys(input).sort().join(','))||input.inspectOnly!==undefined&&input.inspectOnly!==true)throw Error('원래 생성 재시도 요청 항목을 확인해주세요.');
  const readJson=async(response,signal)=>{
   const reader=response.body?.getReader();if(!reader)throw Error('중복 확인·생성 응답이 없습니다.');
   const chunks=[];let size=0;try{for(;;){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>6*1024*1024)throw Error('중복 확인·생성 응답이 너무 큽니다.');chunks.push(part.value);}}finally{await reader.cancel();}
@@ -35,15 +35,18 @@ export async function singleDocumentRetryCreatePage(input){
   if(Array.from(document.querySelectorAll('.rsc-text-input input')).some(n=>(n.value||'').trim()))throw Error('현재 작업 중인 Supplier Hub 입력을 보존했습니다.');
  };
  check();
- phase='body';
+ phase='baseline-input';
  const baseline=input.baselineDocIds,body=input.body,members=binding.identity.members;
- if(!Array.isArray(baseline)||baseline.length>10000||baseline.some(v=>!id(v))||new Set(baseline.map(canon)).size!==baseline.length
-  ||body?.docId!==null||body.scope!=='Retail_Categorized_Single'||!Array.isArray(members)||members.length<1||members.length>200
+ if(!Array.isArray(baseline)||baseline.length>10000||baseline.some(v=>!id(v))||new Set(baseline.map(canon)).size!==baseline.length)throw Error('원래 중간저장 기준의 식별값을 확인해주세요.');
+ phase='body-shape';
+ if(body?.docId!==null||body.scope!=='Retail_Categorized_Single'||!Array.isArray(members)||members.length<1||members.length>200
   ||!Array.isArray(body.jsonDocument)||body.jsonDocument.length!==members.length||members.some((v,i)=>v.documentIndex!==i)
   ||typeof body.productName!=='string'||!body.productName.trim())throw Error('원래 견적 본문·포함 옵션·중간저장 기준 목록을 확인해주세요.');
- const bytes=new TextEncoder().encode(canon(body)),hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
- if(hash!==binding.preparedBodySha256)throw Error('승인한 원래 견적서 본문과 다릅니다.');
- verifiedBody=true;
+ // The trusted extension verifies SHA-256 against its fresh native source
+ // before injection. Compare the exact verified JSON here without depending
+ // on the destination page's cryptographic globals.
+ phase='body-match';
+ if(typeof input.verifiedBodyCanonical!=='string'||input.verifiedBodyCanonical.length>1024*1024||canon(body)!==input.verifiedBodyCanonical)throw Error('승인한 원래 견적서 본문과 다릅니다.');
  const fetchJson=async(path,method='GET',value)=>{
   check();const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);
   try{
@@ -66,6 +69,8 @@ export async function singleDocumentRetryCreatePage(input){
  if(!same(lists[0].map(r=>r.docId).sort((a,b)=>canon(a).localeCompare(canon(b))),baseline.slice().sort((a,b)=>canon(a).localeCompare(canon(b)))))
   throw Error('원래 중간저장 목록이 변경돼 재생성하지 않았습니다.');
  phase='final-scope';check();
+ if(input.inspectOnly===true)return{ok:true,status:200,json:{retryPrecheck:{format:'yoofam-create-retry-precheck-v1',requestId:binding.requestId,operationId:input.operationId,
+  packetDigest:binding.packetDigest,identityDigest:binding.identityDigest,preparedBodySha256:binding.preparedBodySha256,checkedAt:Date.now(),markerAbsent:true,baselineMatched:true,duplicateMatches:0,remoteWrites:false}}};
  const records=JSON.parse(data.yoofamSingleDocumentRecords||'{}');
  const record={binding,docId:null,createOperationId:input.operationId,state:'create-requested',baselineDocIds:baseline,
   createRetry:{...approval,duplicateCheckedAt:Date.now(),unfinishedCount:lists[0].length,requestedCount:lists[1].length}};
@@ -87,11 +92,11 @@ export async function singleDocumentRetryCreatePage(input){
   return{ok,status:response.status,json,ownedRecord:record};
  }finally{clearTimeout(timer);}
  }catch{
-  const messages={scope:'원래 생성 요청의 승인·회사·탭 연결을 확인하지 못했습니다.',body:'승인한 원래 견적서 본문·옵션 연결을 확인하지 못했습니다.',
+  const messages={scope:'원래 생성 요청의 승인·회사·탭 연결을 확인하지 못했습니다.','baseline-input':'원래 중간저장 기준의 식별값을 확인하지 못했습니다.','body-shape':'승인한 원래 견적서 본문·옵션 구조를 확인하지 못했습니다.','body-match':'검증한 원래 견적서 본문과 다릅니다.',
    'list-unfinished':'중간저장 전체 목록을 확인하지 못했습니다.','list-requested':'제출요청 전체 목록을 확인하지 못했습니다.',duplicate:'동일 상품의 원격 문서가 있어 생성하지 않았습니다.',
    baseline:'원래 중간저장 기준 목록이 변경돼 생성하지 않았습니다.','final-scope':'최종 회사·탭·생성 표식 확인을 통과하지 못했습니다.',create:'생성 요청 응답을 확정하지 못했습니다. 같은 요청의 저장 결과만 조회해주세요.'};
   return{ok:false,status:409,json:{errorCode:'CREATE_RETRY_CHECK',message:messages[phase]},createRetryFailure:{format:'yoofam-create-retry-failure-v1',
    requestId:input?.binding?.requestId,operationId:input?.operationId,packetDigest:input?.binding?.packetDigest,identityDigest:input?.binding?.identityDigest,
-   phase,dispatched,canContinue:verifiedBody&&absentMarker&&!dispatched&&phase!=='duplicate'}};
+   phase,dispatched,canContinue:absentMarker&&!dispatched&&!['scope','duplicate'].includes(phase)}};
  }
 }

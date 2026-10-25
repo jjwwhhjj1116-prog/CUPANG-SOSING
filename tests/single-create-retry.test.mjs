@@ -11,7 +11,7 @@ const canon=v=>v===null||typeof v!=='object'?JSON.stringify(v):Array.isArray(v)?
 function pageFixture(options={}){
  const now=Date.now(),body={docId:null,productName:'합성 886 재시도 상품',scope:'Retail_Categorized_Single',jsonDocument:[{productPage:{supplyPrice:3420}}]},digest=createHash('sha256').update(canon(body)).digest('hex');
  const binding={identity:{company:{code:'A01526306',name:'유앤채'},members:[{documentIndex:0}]},identityDigest:'a'.repeat(64),packetDigest:'b'.repeat(64),preparedBodySha256:digest,originalBodySha256:'c'.repeat(64),nativeAssetSourcePlanSha256:'d'.repeat(64),requestId:'original-request'};
- const input={binding,method:'POST',path:'/sr/draft/api/create',operationId:'original-request:create',body,baselineDocIds:[7],retryCreateApproval:{attempt:1,originalSequence:3,originalRequestedAt:now-120000,approvedAt:now}},calls=[],dataset={};
+ const input={binding,method:'POST',path:'/sr/draft/api/create',operationId:'original-request:create',body,verifiedBodyCanonical:canon(body),baselineDocIds:[7],retryCreateApproval:{attempt:1,originalSequence:3,originalRequestedAt:now-120000,approvedAt:now}},calls=[],dataset={};
  const old={docId:7,productName:'기존 보호 상품',modifiedAt:new Date(now-86400000).toISOString()};
  const document={documentElement:{dataset},body:{innerText:'Company Code: A01526306'},querySelectorAll:()=>[]},location=new URL('https://supplier.coupang.com/dashboard/KR');
  const fetch=async(url,init)=>{
@@ -24,7 +24,7 @@ function pageFixture(options={}){
   }
   const result=Response.json(value,{status:options.status??200});Object.defineProperty(result,'url',{value:url});return result;
  };
- const context=vm.createContext({document,location,fetch,crypto:webcrypto,TextEncoder,TextDecoder,Uint8Array,AbortController,setTimeout,clearTimeout,Date});
+ const context=vm.createContext({document,location,fetch,crypto:options.noCrypto?undefined:webcrypto,TextEncoder:options.noCrypto?undefined:TextEncoder,TextDecoder,Uint8Array,AbortController,setTimeout,clearTimeout,Date});
  const run=()=>vm.runInContext('('+singleDocumentRetryCreatePage.toString()+')',context)(structuredClone(input));
  return{input,binding,body,dataset,calls,document,location,old,run};
 }
@@ -55,6 +55,20 @@ test('duplicate, changed baseline, failed lists, changed body/company or existin
 test('a lost retry ACK preserves the one attempt marker and never replays creation',async()=>{
  const f=pageFixture({lostAck:true}),lost=await f.run(),blocked=await f.run();assert.equal(lost.createRetryFailure.dispatched,true);assert.equal(lost.createRetryFailure.canContinue,false);assert.equal(blocked.createRetryFailure.canContinue,false);
  assert.equal(f.calls.filter(c=>c.method==='POST').length,1);assert.equal(JSON.parse(f.dataset.yoofamSingleDocumentRecords)[f.binding.packetDigest].docId,null);
+});
+
+test('verified body comparison has no dependency on destination crypto and read-only inspection cannot dispatch or write a marker',async()=>{
+ const f=pageFixture({noCrypto:true});f.input.inspectOnly=true;
+ const result=await f.run();assert.equal(result.json.retryPrecheck.remoteWrites,false);assert.equal(result.json.retryPrecheck.markerAbsent,true);
+ assert.equal(f.calls.length,2);assert.ok(f.calls.every(call=>call.method==='GET'));assert.deepEqual(f.dataset,{});
+ delete f.input.inspectOnly;assert.equal((await f.run()).ok,true);assert.equal(f.calls.filter(call=>call.method==='POST').length,1);
+});
+
+test('read-only inspection retains the original approval but rejects a changed exact body, duplicate, or existing marker',async()=>{
+ for(const mode of ['body','duplicate','marker']){const f=pageFixture(mode==='duplicate'?{requested:[{docId:99,productName:'합성 886 재시도 상품',modifiedAt:new Date().toISOString()}]}:{});f.input.inspectOnly=true;
+  if(mode==='body')f.input.body.productName='changed';if(mode==='marker')f.dataset.yoofamSingleDocumentRecords=JSON.stringify({[f.binding.packetDigest]:{state:'create-requested'}});
+  assert.equal((await f.run()).ok,false);assert.equal(f.calls.some(call=>call.method==='POST'),false);
+ }
 });
 
 test('unrelated newly submitted activity does not block the original approved retry, while the same title does',async()=>{
@@ -114,5 +128,21 @@ test('a confirmed unsent list failure preserves approval and rolls back only to 
   assert.equal(pending.state,'target-created',JSON.stringify(pending));assert.equal(pending.error.code,'CREATE_RETRY_PRECHECK_NOT_SENT');assert.equal(pending.draftProof.createRetryApproved,true);
   assert.equal(f.calls.some(c=>c.name==='hub-fetch'&&c.init.method==='POST'&&c.url.endsWith('/create')),false);
   assert.equal(f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords,undefined);
+ }finally{f?.close();t.mock.timers.reset();}
+});
+
+test('read recovery after a legacy unsent approved continuation proves source, marker and both lists before same-request preparation',async t=>{
+ t.mock.timers.enable({apis:['Date'],now:Date.now()});let f;
+ try{
+  f=await nativeRecoveryFixture(undefined,{sourceSessionId:'read-only-create-inspection'});const prior=structuredClone(f.documents.get(f.prior.docId));
+  const dropped={...f.adapter,hubRequest:async input=>input.method==='POST'&&input.path.endsWith('/create')?undefined:f.adapter.hubRequest(input)};
+  const legacy=createProductDocumentDraftReceiver({adapter:dropped,store:f.storage.store});await legacy.prepareDraft(f.packet,f.sender);t.mock.timers.tick(61000);
+  await legacy.retryCreateDraft(f.packet,f.sender);await legacy.resumeCreateRetryDraft(f.packet,f.sender);
+  const receiver=createProductDocumentDraftReceiver({adapter:f.adapter,store:f.storage.store}),recovered=await receiver.recoverDraft(f.packet,f.sender);
+  assert.equal(recovered.state,'target-created',JSON.stringify(recovered));assert.equal(recovered.recovered,true);assert.equal(recovered.draftProof.createRetryApproved,true);
+  const posts=()=>f.calls.filter(c=>c.name==='hub-fetch'&&c.init.method==='POST'&&c.url.endsWith('/create')).length;assert.equal(posts(),0);
+  const packet=await createProductDocumentPacket(f.packet.review,{requestId:f.packet.requestId,createdAt:Date.now(),now:Date.now()});
+  const done=await receiver.prepareDraft(packet,f.sender);assert.equal(done.state,'validated',JSON.stringify(done));assert.equal(posts(),1);
+  await receiver.recoverDraft(packet,f.sender);assert.equal(posts(),1);assert.deepEqual(f.documents.get(f.prior.docId),prior);assert.equal(f.submitted,0);
  }finally{f?.close();t.mock.timers.reset();}
 });

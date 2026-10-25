@@ -425,15 +425,17 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
       }});
     }
     if(input.retryCreateApproval&&(!nativeSha||input.method!=='POST'||input.path!=='/sr/draft/api/create'))fail('CREATE_RETRY_SCOPE','원본을 확인한 새 초안의 생성 재시도만 허용됩니다.');
+    let verifiedBodyCanonical;
+    if(input.retryCreateApproval){verifiedBodyCanonical=canonical(input.body);if(await digest(input.body)!==binding.preparedBodySha256)fail('CREATE_RETRY_BODY_CHANGED','원래 검토한 견적서와 재시도 본문이 다릅니다. 생성하지 않았습니다.');}
     const value=await execute(input.tab,input.identity,input.retryCreateApproval?singleDocumentRetryCreatePage:singleDocumentHubRequestPage,[{binding,method:input.method,path:input.path,...(input.body===undefined?{}:{body:input.body}),
-      ...(input.retryCreateApproval?{retryCreateApproval:copy(input.retryCreateApproval)}:{}),
+      ...(input.retryCreateApproval?{retryCreateApproval:copy(input.retryCreateApproval),verifiedBodyCanonical}:{}),
       ...(input.operationId===undefined?{}:{operationId:input.operationId}),...(input.path.endsWith('/create')?{baselineDocIds:input.retryCreateApproval?copy(input.baselineDocIds):baselines.get(binding.packetDigest)??[]}:{})}]);
     if(input.retryCreateApproval&&value?.createRetryFailure){const failed=value.createRetryFailure;
       if(!failed||Object.keys(failed).sort().join(',')!=='canContinue,dispatched,format,identityDigest,operationId,packetDigest,phase,requestId'||failed.format!=='yoofam-create-retry-failure-v1'
         ||failed.requestId!==binding.requestId||failed.operationId!==input.operationId||failed.packetDigest!==binding.packetDigest||failed.identityDigest!==binding.identityDigest
-        ||!['scope','body','list-unfinished','list-requested','duplicate','baseline','final-scope','create'].includes(failed.phase)
+        ||!['scope','baseline-input','body-shape','body-match','list-unfinished','list-requested','duplicate','baseline','final-scope','create'].includes(failed.phase)
         ||typeof failed.dispatched!=='boolean'||typeof failed.canContinue!=='boolean'||failed.canContinue&&failed.dispatched)fail('CREATE_RETRY_UNCONFIRMED','재시도 전 확인 응답의 원래 요청 연결을 검증하지 못했습니다.');
-      const labels={scope:'승인·회사·탭',body:'원래 본문·옵션','list-unfinished':'중간저장 목록','list-requested':'제출요청 목록',duplicate:'동일 상품 문서',baseline:'원래 중간저장 기준','final-scope':'최종 탭·회사',create:'생성 응답'};
+      const labels={scope:'승인·회사·탭','baseline-input':'원래 기준 식별값','body-shape':'원래 본문·옵션 구조','body-match':'검증한 원래 본문','list-unfinished':'중간저장 목록','list-requested':'제출요청 목록',duplicate:'동일 상품 문서',baseline:'원래 중간저장 기준','final-scope':'최종 탭·회사',create:'생성 응답'};
       fail(failed.canContinue?'CREATE_RETRY_PRECHECK_NOT_SENT':failed.dispatched?'CREATE_RETRY_ACK_UNCERTAIN':'CREATE_RETRY_PRECHECK_BLOCKED',
         `재시도 ${labels[failed.phase]} 확인에서 중단했습니다. ${failed.canContinue?'이 확인에서는 생성 요청을 보내지 않았습니다. 같은 승인 범위로 준비를 이어갈 수 있습니다.':'생성을 반복하지 말고 원래 저장 결과를 확인해주세요.'}`);
     }
@@ -454,6 +456,23 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     const fields=['docId','productName','categoryPath','categoryId','displayCategoryCode','jsonDocument','scope','productNoticeNumber','version','remark'];
     const body=Object.fromEntries(fields.filter(key=>Object.hasOwn(document,key)).map(key=>[key,document[key]]));
     return {docId,company:copy(input.identity.company),identityDigest:binding.identityDigest,body,...(recovery?{readOnly:true,operationId:input.operationId}:{})};
+  }
+  async function inspectCreateRetry(input){
+    if(!nativeSha||input.docId!==null||input.createRetryApproval?.attempt!==1||input.createRetryApproval.resumeUsed!==true)fail('CREATE_RETRY_SCOPE','원래 승인된 생성 확인 범위가 아닙니다.');
+    const binding=await bindingFor(input.identity,input.sessionId);
+    const record=await execute(input.tab,input.identity,singleDocumentOwnedRecordPage,[binding]);
+    if(record)return null; // Existing attempt markers always use ordinary read recovery.
+    const verifiedBodyCanonical=canonical(input.expectedBody);
+    if(await digest(input.expectedBody)!==binding.preparedBodySha256)fail('CREATE_RETRY_BODY_CHANGED','원래 승인한 견적서와 현재 본문이 다릅니다.');
+    const value=await execute(input.tab,input.identity,singleDocumentRetryCreatePage,[{binding,method:'POST',path:'/sr/draft/api/create',operationId:input.operationId,
+      body:copy(input.expectedBody),baselineDocIds:copy(input.baselineDocIds),retryCreateApproval:copy(input.createRetryApproval),verifiedBodyCanonical,inspectOnly:true}]);
+    const proof=value?.json?.retryPrecheck;
+    if(value?.ok!==true||value.status!==200||!proof||Object.keys(proof).sort().join(',')!=='baselineMatched,checkedAt,duplicateMatches,format,identityDigest,markerAbsent,operationId,packetDigest,preparedBodySha256,remoteWrites,requestId'
+      ||proof.format!=='yoofam-create-retry-precheck-v1'||proof.requestId!==binding.requestId||proof.operationId!==input.operationId
+      ||proof.packetDigest!==binding.packetDigest||proof.identityDigest!==binding.identityDigest||proof.preparedBodySha256!==binding.preparedBodySha256
+      ||proof.markerAbsent!==true||proof.baselineMatched!==true||proof.duplicateMatches!==0||proof.remoteWrites!==false||!Number.isSafeInteger(proof.checkedAt)||Math.abs(now()-proof.checkedAt)>60000)
+      fail('CREATE_RETRY_INSPECTION_BLOCKED','원래 생성 요청의 본문·생성 기록·중복 목록 확인을 통과하지 못했습니다. 새 문서를 만들지 않았습니다.');
+    return copy(proof);
   }
   async function qualifyPreparedDraft(input){
     if(!nativeSha)fail('NATIVE_PREPARED_UNCONFIRMED','원본 파일을 확인한 새 문서만 등록 단계를 확인할 수 있습니다.');
@@ -477,7 +496,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     return {readOnly:true,docId:record.docId,company:copy(input.identity.company),identityDigest:binding.identityDigest,packetDigest:binding.packetDigest,sourcePlanSha256:nativeSha,metadataObserved:true,checkedAt:observation.observedAt};
   }
   return Object.freeze({readSource,
-    qualifyPreparedDraft,
+    qualifyPreparedDraft,...(nativeSha?{inspectCreateRetry}:{}),
     createTarget:async input=>{
       const binding=await bindingFor(input.identity);
       mutable(input.identity);

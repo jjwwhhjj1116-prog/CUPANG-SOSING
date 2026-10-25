@@ -464,6 +464,17 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
         if(action!=='recoverDraft')fail('ACTION','새 초안 준비의 읽기 확인 동작을 확인해주세요.');
         if(state.state==='target-requested')fail('TARGET_UNCONFIRMED','새 탭 생성 응답을 확인하지 못했습니다. 새 탭을 다시 만들지 않았습니다.');
         if(['create-requested','update-requested'].includes(state.state)){
+          if(state.state==='create-requested'&&state.createRetry?.resumeUsed===true&&typeof adapter.inspectCreateRetry==='function'){
+            const inspected=await call('inspectCreateRetry',{tab:state.tab,sessionId:state.sessionId,identity:context.identity,requestId:state.requestId,operationId:state.operationId,
+              docId:null,expectedBody:context.packet.body,baselineDocIds:state.baselineDocIds,createRetryApproval:state.createRetry});
+            if(inspected!==null){
+              if(!object(inspected)||inspected.format!=='yoofam-create-retry-precheck-v1'||inspected.requestId!==state.requestId||inspected.operationId!==state.operationId
+                ||inspected.packetDigest!==context.packetDigest||inspected.identityDigest!==context.identityDigest||inspected.preparedBodySha256!==context.bodySha256
+                ||inspected.markerAbsent!==true||inspected.baselineMatched!==true||inspected.duplicateMatches!==0||inspected.remoteWrites!==false||!Number.isSafeInteger(inspected.checkedAt)||Math.abs(clock()-inspected.checkedAt)>60000)
+                fail('CREATE_RETRY_INSPECTION_BLOCKED','원래 승인된 생성 확인의 출처·본문 연결이 다릅니다.');
+              await guard(context,state);state=await save(context,state,{state:'target-created',tab:null,operationId:state.requestId+':target'});return result(state,{recovered:true});
+            }
+          }
           const proof=await readDocument(context,state,true);state=await save(context,state,{state:state.state==='create-requested'?'created':'updated',docId:proof.docId});
         }else if(state.state==='validation-requested'){
           const proof=await call('readValidation',{tab:state.tab,identity:context.identity,docId:state.docId,version:context.packet.body.version,step:state.requestedStep,operationId:state.operationId});
