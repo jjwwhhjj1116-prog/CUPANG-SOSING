@@ -75,7 +75,7 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
     // Invalid/unknown refs stay blocking in the plan; they never cause a read of
     // an unowned key. Selected bytes are strictly bounded by loadAttachments.
     const readKeys = includeNativeAssets ? [...new Set([...selection.keys, ...nativeAssetSourceImageKeys({projection,owner,ownedKeys})])] : selection.keys;
-    const assets = await loadAttachments(owner, saved.product.image_keys, readKeys);
+    const assets = await loadAttachments(owner, saved.product.image_keys, readKeys, nativeReadOnly ? {concurrency:3} : undefined);
     const metadata = new Map(await Promise.all(readKeys.map(async key => [key, await env.FILES.head(key)] as const)));
     const documents = readLegalDocuments(saved.content.legalDocuments, owner, id);
     const nativeLegal = await buildNativeLegalContext({snapshot:saved.hubSchema,company,categoryId:saved.categoryContext.categoryId,
