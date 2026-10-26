@@ -52,10 +52,11 @@ function packageSourceValueKey(value:unknown):string|null{
 }
 
 /** Shared current-source proof. A read never publishes assets or contacts Hub. */
-export async function loadSinglePackage(owner:string,id:string,profileId:string|null,company:SupplierHubCompany,active:()=>Promise<void>,prepare=false,expectedFingerprint?:string,includeNativeAssets=false,options:{nativeReadOnly?:boolean}={}){
+export async function loadSinglePackage(owner:string,id:string,profileId:string|null,company:SupplierHubCompany,active:()=>Promise<void>,prepare=false,expectedFingerprint?:string,includeNativeAssets=false,options:{nativeReadOnly?:boolean;trace?:(phase:string)=>void}={}){
     const nativeReadOnly=options.nativeReadOnly===true;
     if(nativeReadOnly&&(!includeNativeAssets||prepare))throw new SingleAssetError('원본 조회 전용 준비 범위를 확인해주세요.','NATIVE_ASSET_READ_ONLY',400);
     const saved = await readQuotationExportSource(owner, id, profileId);
+    options.trace?.('source');
     // The visible editor also binds settings, profile interpretation and source
     // context. Pair its exact fingerprint with this export's full source guard;
     // product/content/option/quotation clocks alone do not identify that view.
@@ -63,6 +64,7 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
       if(error instanceof QuotationFieldsSnapshotError)throw new QuotationExportError(error.message,error.status);
       throw error;
     });
+    options.trace?.('review');
     if (reviewed.view.revision !== saved.state.revision || JSON.stringify(reviewed.source) !== JSON.stringify(saved.source)) changed();
     if (!saved.hubSchema || !saved.company || saved.company.code !== company.code || saved.company.name !== company.name || !saved.categoryContext.categoryId)
       throw new SingleAssetError('이 상품 회사·카테고리의 검증된 Single 원문 양식이 필요합니다.', 'SINGLE_SCHEMA');
@@ -77,12 +79,17 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
     // an unowned key. Selected bytes are strictly bounded by loadAttachments.
     const readKeys = includeNativeAssets ? [...new Set([...selection.keys, ...nativeAssetSourceImageKeys({projection,owner,ownedKeys})])] : selection.keys;
     const readMetadata = async () => new Map(await Promise.all(readKeys.map(async key => [key, await env.FILES.head(key)] as const)));
+    // R2's version identifies one immutable upload, unlike an uploader-supplied
+    // SHA or an ETag. This proof lives only in this request and is recorded only
+    // after the exact private bytes have passed format and digest validation.
+    const verifiedVersions=new Map<string,{version:string;size:number}>();
+    const versioned=(object:{version?:unknown}):object is {version:string}=>typeof object.version==='string'&&object.version.length>0&&object.version.length<=512&&!/[\u0000-\u0020\u007f]/.test(object.version);
     const [assets,metadata] = await (async () => {
       // Both selectors already restrict keys to this owner's product. Leave an
       // oversized selection to loadAttachments before starting any extra I/O.
       if (nativeReadOnly && readKeys.length <= PRODUCT_IMAGE_POOL_LIMIT) {
         const [bytes,heads] = await Promise.allSettled([
-          loadAttachments(owner,saved.product.image_keys,readKeys,{concurrency:3}),readMetadata(),
+          loadAttachments(owner,saved.product.image_keys,readKeys,{concurrency:3,onVerifiedObject:(key,object)=>{if(versioned(object))verifiedVersions.set(key,{version:object.version,size:object.size});}}),readMetadata(),
         ]);
         if (bytes.status === 'rejected') throw bytes.reason;
         if (heads.status === 'rejected') throw heads.reason;
@@ -91,6 +98,7 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
       const bytes = await loadAttachments(owner,saved.product.image_keys,readKeys,nativeReadOnly ? {concurrency:3} : undefined);
       return [bytes,await readMetadata()] as const;
     })();
+    options.trace?.('private-bytes');
     const documents = readLegalDocuments(saved.content.legalDocuments, owner, id);
     const nativeLegal = await buildNativeLegalContext({snapshot:saved.hubSchema,company,categoryId:saved.categoryContext.categoryId,
       categoryPath:saved.categoryContext.categoryPath,resolved,documents});
@@ -121,7 +129,17 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
       sourceAssetFingerprint: plan.sourceAssetFingerprint, payload: plan.payload, manifest: plan.manifest, issues: plan.issues,
       nativeLegalAttachmentPlanSha256:nativeLegalAttachmentPlan.planSha256 });
     if (expectedFingerprint !== undefined && expectedFingerprint !== packageFingerprint) changed();
+    options.trace?.('plans');
     const verifyPrivateFile = async (file:{key:string;byteLength:number;sha256:string}) => {
+      const verified=nativeReadOnly?verifiedVersions.get(file.key):undefined;
+      if(verified){
+        const initial=metadata.get(file.key),current=await env.FILES.head(file.key);
+        // A same-key replacement or a metadata edit invalidates the request.
+        // Missing/unversioned storage takes the independent byte-read path.
+        if(!initial||!current||!versioned(initial)||!versioned(current)||initial.version!==verified.version||current.version!==verified.version
+          ||initial.size!==file.byteLength||current.size!==file.byteLength||verified.size!==file.byteLength||JSON.stringify(current)!==JSON.stringify(initial))changed();
+        return;
+      }
       const stored = await env.FILES.get(file.key);
       const verifyMetadata = async () => {
         const currentMetadata = await env.FILES.head(file.key);
@@ -189,6 +207,7 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
       await guard();
     };
     if (includeNativeAssets) await nativeAssetSourceGuard();
+    options.trace?.('source-fence');
     const view = { ...singleAssetPackageView(plan, published), productId: id, requestedProfileId: profileId, fingerprint: packageFingerprint,
       // A reviewed metadata mapping is not an uploaded native file or receipt.
       nativeLegal,nativeLegalAttachmentPlan,

@@ -164,3 +164,59 @@ test('actual saved quotation can select two size and two label files for native 
   assert.deepEqual(plain(await read(await f.h.route(f.endpoint))),plain(old));assert.deepEqual(f.h.network,[]);
  }finally{f.close();}
 });
+
+// Model the storage service's immutable per-upload version independently of
+// uploader-controlled metadata. Unversioned harnesses keep the byte-read path.
+function versionedStorage(f){
+ const store=f.h.bindings.FILES,get=store.get,head=store.head,put=store.put;
+ const versions=new Map(f.keys.map((key,index)=>[key,'r2-upload-'+index])),reads=new Map();
+ store.get=async key=>{const version=versions.has(key)?versions.get(key):'r2-upload-other',value=await get(key);reads.set(key,(reads.get(key)??0)+1);return value?{...value,version}:null;};
+ store.head=async key=>{const value=await head(key);return value?{...value,version:versions.has(key)?versions.get(key):'r2-upload-other'}:null;};
+ store.put=async(key,...args)=>{const result=await put(key,...args);versions.set(key,'r2-replacement-'+crypto.randomUUID());return result;};
+ return{reads,versions};
+}
+
+test('immutable R2 upload version revalidates exact request-local bytes without downloading the whole batch twice',async()=>{
+ const f=await fixture();try{
+  const storage=versionedStorage(f),plan=await read(await f.send());
+  for(const key of new Set(plan.images.map(file=>file.key)))assert.equal(storage.reads.get(key),1,'one format/digest-verified body per unique key');
+  storage.reads.clear();const file=plan.images[0],response=await f.raw(plan,file.key);
+  assert.equal(response.status,200,await response.clone().text());assert.equal(sha(new Uint8Array(await response.arrayBuffer())),file.sha256);
+  for(const key of new Set(plan.images.map(file=>file.key)))assert.equal(storage.reads.get(key),1,'response final fence uses a fresh version HEAD');
+  assert.deepEqual(f.h.network,[]);assert.equal(f.h.sqlite.prepare('SELECT count(*) AS n FROM supplier_hub_receipts').get().n,0);
+ }finally{f.close();}
+});
+
+test('versioned native reads reject replacement, metadata, scope or cancellation changes during final HEAD',async()=>{
+ for(const kind of ['replacement','metadata','missing','product','company','membership','cancel']){
+  const f=await fixture();try{
+   const storage=versionedStorage(f),head=f.h.bindings.FILES.head,controller=new AbortController(),heads=new Map();let fired=false;
+   f.h.bindings.FILES.head=async key=>{
+    heads.set(key,(heads.get(key)??0)+1);
+    if(!fired&&key===f.keys[0]&&heads.get(key)>=2&&storage.reads.has(key)){
+     fired=true;
+     if(kind==='replacement')storage.versions.set(key,'r2-another-upload');
+     if(kind==='metadata'){const value=await head(key);return {...value,customMetadata:{...value.customMetadata,sha256:'a'.repeat(64)}};}
+     if(kind==='missing')return null;
+     if(kind==='product')f.h.sqlite.prepare('UPDATE products SET updated_at=? WHERE id=?').run('2026-10-26T23:59:59.999Z',f.id);
+     if(kind==='company')f.h.setCompany(companies[1]);
+     if(kind==='membership')f.h.setMembershipStatus('suspended');
+     if(kind==='cancel')controller.abort();
+    }
+    return head(key);
+   };
+   const response=await f.send(f.query,controller.signal);assert.equal(fired,true,kind);assert.equal(response.status,409,kind);
+   assert.equal((await response.json()).images,undefined);assert.deepEqual(f.h.network,[]);
+  }finally{f.close();}
+ }
+});
+
+test('an empty, malformed or absent version never replaces independent current-byte validation',async()=>{
+ for(const version of [undefined,'','bad version','x'.repeat(513)]){
+  const f=await fixture();try{
+   const storage=versionedStorage(f);for(const key of f.keys)storage.versions.set(key,version);
+   const plan=await read(await f.send());
+   for(const file of plan.images)assert.equal(storage.reads.get(file.key),2);
+  }finally{f.close();}
+ }
+});
