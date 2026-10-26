@@ -53,7 +53,11 @@ export async function nativeRecoveryFixture(company=SINGLE_COMPANIES[0],options=
  const execute=f.api.scripting.executeScript;f.api.scripting.executeScript=async request=>{
   if(request.target.tabId===f.sender.tab.id)throw Error('Cannot access contents of the app URL. Extension manifest must request permission to access this host.');
   if(!['nativeProductDocumentAppSourcePage','nativeAssetUploadPage','nativeAssetRecoveryPage'].includes(request.func.name))return execute(request);
-  const target=request.func.name==='nativeAssetUploadPage'||request.func.name==='nativeAssetRecoveryPage'?hubContext:appContext;target.args=copy(request.args);if(options.corruptFrameBytes&&request.func.name==='nativeAssetUploadPage')target.args[0].group.parts[0].base64=Buffer.from('corrupt').toString('base64');
+  const target=request.func.name==='nativeAssetUploadPage'||request.func.name==='nativeAssetRecoveryPage'?hubContext:appContext;
+  target.args=options.browser?.dropNullArguments?JSON.parse(JSON.stringify(request.args,(key,value)=>value===null?undefined:value)):copy(request.args);
+  if(options.corruptFrameBytes&&request.func.name==='nativeAssetUploadPage'){
+   const encoded=typeof target.args[0]==='string',input=encoded?JSON.parse(target.args[0]):target.args[0];input.group.parts[0].base64=Buffer.from('corrupt').toString('base64');target.args[0]=encoded?JSON.stringify(input):input;
+  }
   const result=await vm.runInContext('('+request.func.toString()+')(...args)',target);return[{frameId:0,documentId:request.func.name==='nativeAssetUploadPage'||request.func.name==='nativeAssetRecoveryPage'?f.hubDocumentId:'app-doc',result:copy(result)}];
  };
  const message=f.api.tabs.sendMessage;f.api.tabs.sendMessage=async(id,value,frame)=>{if(!['YOOFAM_VERIFY_NATIVE_PRODUCT_DOCUMENT_SOURCE','YOOFAM_READ_NATIVE_PRODUCT_DOCUMENT_SOURCE','YOOFAM_READ_LEGACY_PRODUCT_DOCUMENT_SOURCE'].includes(value.type))return message(id,value,frame);assert.equal(id,f.sender.tab.id);assert.equal(frame.frameId,0);for(const listener of appListeners){let pending;const reply=new Promise(resolve=>{pending=listener(copy(value),{id:'fixture'},resolve);});if(pending===true)return copy(await reply);}return undefined;};

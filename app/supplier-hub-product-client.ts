@@ -13,7 +13,7 @@ const same=(left:unknown,right:unknown)=>productReceiptCanonical(left)===product
 const copy=<T,>(value:T):T=>JSON.parse(productReceiptCanonical(value)) as T;
 const digest=async(value:unknown)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(productReceiptCanonical(value)))),byte=>byte.toString(16).padStart(2,'0')).join('');
 function freeze<T>(value:T):T{if(value&&typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value;}
-export class ProductDocumentBridgeError extends Error{constructor(message:string,public uncertain:boolean,public code='PRODUCT_DOCUMENT_BRIDGE',public draftState?:string,public approvedCreateRetry?:boolean){super(message);this.name='ProductDocumentBridgeError';}}
+export class ProductDocumentBridgeError extends Error{constructor(message:string,public uncertain:boolean,public code='PRODUCT_DOCUMENT_BRIDGE',public draftState?:string,public approvedCreateRetry?:boolean,public closedTargetRecovery=false){super(message);this.name='ProductDocumentBridgeError';}}
 export type ProductDocumentPreview={format:string;requestId:string;identity:ProductReceiptIdentity;identityDigest:string;packetDigest:string;productId:string;fingerprint:string;
   members:ProductReceiptIdentity['members'];reviewDigest:string;preparedBodySha256:string;originalBodySha256:string;liveVerified:boolean;remoteWrites:false;registered:false;draftPreparationAvailable?:boolean;preparedLifecycleAvailable?:boolean;createRetryAvailable?:boolean;createRetryContinuationAvailable?:boolean};
 export type ProductDocumentSession={packet:ProductDocumentPacket;preview:ProductDocumentPreview;packetDigest:string;origin:string};
@@ -26,7 +26,7 @@ export function productValidationErrorsValid(value:unknown):value is ProductVali
 export type ProductDraftProof={evidence:'document-draft-preparation';validatedSteps:number[];checkpointSequence:number;observedAt:number;submitted:false;consented:false;createRetryApproved?:true};
 export type PreparedLifecycleProof={evidence:'native-prepared-draft-lifecycle';preparedCheckpointSequence:number;qualifiedCheckpointSequence:number;checkpointSequence:number;qualifiedAt:number;observedAt:number;validatedSteps:number[];consentRequested:boolean;submitRequested:boolean};
 export type ProductDocumentState=SingleDocumentState&{duplicate?:boolean;recovered?:boolean;validationRejection?:ProductValidationRejection;draftOnly?:true;draftProof?:ProductDraftProof;preparedLifecycle?:true;lifecycleProof?:PreparedLifecycleProof};
-export type ProductDraftAction='prepareDraft'|'recoverDraft'|'retryCreateDraft'|'resumeCreateRetryDraft';
+export type ProductDraftAction='prepareDraft'|'recoverDraft'|'retryCreateDraft'|'resumeCreateRetryDraft'|'recoverClosedTarget';
 export type PreparedDocumentAction='reviewPreparedDraft'|'confirmPreparedDraft'|'recoverPreparedDraft'|'observePreparedDraft';
 export type ProductReceiptSaveAttempt={packet:ProductDocumentPacket;observation:ProductDocumentState};
 type Scope={productId:string;profileId?:string};
@@ -52,7 +52,7 @@ export function productDocumentExchange(action:'preview'|SingleDocumentAction|Pr
     if(signal.aborted){reject(new ProductDocumentBridgeError('전체 상품 견적 작업을 취소했습니다.',false));return;}
     productReceiptCanonical(packet);
     const confirming=action==='confirm'||action==='confirmPreparedDraft';
-    if(!['preview','start','resume','recover','confirm','observe','prepareDraft','recoverDraft','retryCreateDraft','resumeCreateRetryDraft','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(action)||confirming&&!confirmation||!confirming&&confirmation){reject(new ProductDocumentBridgeError('현재 전체 상품 문서의 동의 동작을 확인해주세요.',false));return;}
+    if(!['preview','start','resume','recover','confirm','observe','prepareDraft','recoverDraft','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(action)||confirming&&!confirmation||!confirming&&confirmation){reject(new ProductDocumentBridgeError('현재 전체 상품 문서의 동의 동작을 확인해주세요.',false));return;}
     if(confirmation)productReceiptCanonical(confirmation);
     const requestId=crypto.randomUUID(),mutating=!['preview','observe','recover','recoverDraft','recoverPreparedDraft','observePreparedDraft'].includes(action);
     const cleanup=()=>{clearTimeout(timer);window.removeEventListener('message',receive);signal.removeEventListener('abort',abort);};
@@ -78,7 +78,7 @@ export function productDocumentExchange(action:'preview'|SingleDocumentAction|Pr
     // Native recovery independently rechecks the current private source and
     // the original saved document. Its read-only reply can exceed 60 seconds;
     // allow it to arrive without retrying or extending any consent/packet TTL.
-    const nativeReadback=['recoverDraft','recoverPreparedDraft','observePreparedDraft','retryCreateDraft','resumeCreateRetryDraft'].includes(action);
+    const nativeReadback=['recoverDraft','recoverPreparedDraft','observePreparedDraft','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget'].includes(action);
     const timer=setTimeout(()=>{cleanup();reject(new ProductDocumentBridgeError('전체 상품 문서 응답이 없습니다. 같은 요청을 다시 전송하지 말고 저장 결과를 조회해주세요.',mutating,'PRODUCT_DOCUMENT_ACK_MISSING'));},nativeReadback?180000:confirming||action==='prepareDraft'||action==='reviewPreparedDraft'?120000:action==='preview'?PRODUCT_DOCUMENT_PREVIEW_ACK_TIMEOUT:60000);
     window.addEventListener('message',receive);signal.addEventListener('abort',abort,{once:true});
     try{window.postMessage({channel:'YOOFAM_HUB_HANDOFF',requestId,type:'PRODUCT_DOCUMENT',payload:{action,packet,...(confirmation?{confirmation}:{})}},window.location.origin);}
@@ -147,7 +147,7 @@ async function verifyProductDocumentState(value:unknown,session:ProductDocumentS
 /** Explicitly prepare only the new draft. This capability never enables the
  * general start/resume/terms/submit transport or manufactures a receipt. */
 export async function runProductDocumentDraft(session:ProductDocumentSession,action:ProductDraftAction,signal:AbortSignal):Promise<ProductDocumentState>{
-  if(!['prepareDraft','recoverDraft','retryCreateDraft','resumeCreateRetryDraft'].includes(action)||session.preview.draftPreparationAvailable!==true)throw new ProductDocumentBridgeError('새 견적 초안 준비를 지원하는 통합 확장으로 자료를 다시 확인해주세요.',false,'PRODUCT_DOCUMENT_DRAFT_UNAVAILABLE');
+  if(!['prepareDraft','recoverDraft','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget'].includes(action)||session.preview.draftPreparationAvailable!==true)throw new ProductDocumentBridgeError('새 견적 초안 준비를 지원하는 통합 확장으로 자료를 다시 확인해주세요.',false,'PRODUCT_DOCUMENT_DRAFT_UNAVAILABLE');
   if(action==='retryCreateDraft'&&session.preview.createRetryAvailable!==true)throw new ProductDocumentBridgeError('1회 재시도를 지원하는 최신 통합 확장으로 연결해주세요.',false,'PRODUCT_DOCUMENT_RETRY_UNAVAILABLE');
   if(action==='resumeCreateRetryDraft'&&session.preview.createRetryContinuationAvailable!==true)throw new ProductDocumentBridgeError('승인된 생성 재시도 연결을 지원하는 최신 통합 확장으로 연결해주세요.',false,'PRODUCT_DOCUMENT_RETRY_UNAVAILABLE');
   if(window.location.origin!==session.origin||!ORIGINS.includes(session.origin))throw new ProductDocumentBridgeError('원래 앱에서 새 견적 초안 요청을 확인해주세요.',false);
@@ -191,7 +191,7 @@ async function verifyDraftState(value:unknown,session:ProductDocumentSession,exp
       // A failed read is not a recovered checkpoint. Retain the reservation,
       // but show its authenticated error after validating the complete reply
       // identity and draft proof instead of hiding every cause as bad JSON.
-      if(object(value.error))throw new ProductDocumentBridgeError(`원래 초안(${String(value.state)}) 확인을 중단했습니다. ${String(value.error.message)}`,mutating,'PRODUCT_DOCUMENT_DRAFT_SOURCE_FAILURE',String(value.state),draft.createRetryApproved===true);
+      if(object(value.error))throw new ProductDocumentBridgeError(`원래 초안(${String(value.state)}) 확인을 중단했습니다. ${String(value.error.message)}`,mutating,'PRODUCT_DOCUMENT_DRAFT_SOURCE_FAILURE',String(value.state),draft.createRetryApproved===true,value.error.code==='CLOSED_TARGET_APPROVAL');
       fail();
     }
     if(signal.aborted)fail();return freeze(copy(value) as unknown as ProductDocumentState);

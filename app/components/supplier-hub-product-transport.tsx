@@ -28,11 +28,12 @@ export function SupplierHubProductTransport(props:Props){
   const [intent,setIntent]=useState<ProductDocumentPending|null>(null),[intentReady,setIntentReady]=useState(false),[intentError,setIntentError]=useState('');
   const [draftMode,setDraftMode]=useState(false);
   const [missingCreate,setMissingCreate]=useState(false),[retryApproved,setRetryApproved]=useState(false),[retryAttempted,setRetryAttempted]=useState(false),[approvedRetryPending,setApprovedRetryPending]=useState(false);
+  const [closedTargetNeeded,setClosedTargetNeeded]=useState(false),[closedTargetApproved,setClosedTargetApproved]=useState(false);
   const reviewToken=useMemo(()=>({review}),[review]),reviewEpoch=useRef<typeof reviewToken|null>(reviewToken);
   const [releasedValidation,setReleasedValidation]=useState<{token:object;docId:string|number;rejection:ProductValidationRejection}|null>(null);
   useLayoutEffect(()=>{reviewEpoch.current=reviewToken;return()=>{if(reviewEpoch.current===reviewToken)reviewEpoch.current=null;};},[reviewToken]);
-  const current=useRef({props,mounted:true,session,state,uncertain,expired,approved,unsaved,intent,intentReady,intentError,draftMode,error}),pending=useRef<AbortController|null>(null),historyPending=useRef<AbortController|null>(null);
-  useLayoutEffect(()=>{current.current={props,mounted:true,session,state,uncertain,expired,approved,unsaved,intent,intentReady,intentError,draftMode,error};});
+  const current=useRef({props,mounted:true,session,state,uncertain,expired,approved,unsaved,intent,intentReady,intentError,draftMode,error,closedTargetNeeded,closedTargetApproved}),pending=useRef<AbortController|null>(null),historyPending=useRef<AbortController|null>(null);
+  useLayoutEffect(()=>{current.current={props,mounted:true,session,state,uncertain,expired,approved,unsaved,intent,intentReady,intentError,draftMode,error,closedTargetNeeded,closedTargetApproved};});
   // A terminal label alone cannot release the enclosing source/close guard.
   // Keep the accepted reservation for duplicate prevention, but allow closing
   // only after this exact observation is positively stored by the app API.
@@ -179,11 +180,12 @@ export function SupplierHubProductTransport(props:Props){
       ||action==='prepareDraft'&&(!continuing&&(before.state||before.intent||before.uncertain))
       ||action==='retryCreateDraft'&&(!before.draftMode||!before.intent||!before.uncertain||!missingCreate||!retryApproved||retryAttempted||approvedRetryPending)
       ||action==='resumeCreateRetryDraft'&&(!before.draftMode||!before.intent||!before.uncertain||!missingCreate||!approvedRetryPending||retryAttempted||expected.preview.createRetryContinuationAvailable!==true)
+      ||action==='recoverClosedTarget'&&(!before.draftMode||!before.intent||!before.uncertain||!before.closedTargetNeeded||!before.closedTargetApproved)
       ||action==='recoverDraft'&&(!before.draftMode||!before.intent||!before.uncertain&&before.state?.draftOnly!==true))return;
     const task=begin();let dispatched=false,activeSession=expected;
     try{
       await fresh(task);if(!task.active()||current.current.session!==expected)return;
-      if((action==='prepareDraft'||action==='retryCreateDraft'||action==='resumeCreateRetryDraft')&&Date.now()-expected.packet.createdAt>=PRODUCT_DOCUMENT_REQUEST_TTL){
+      if((action==='prepareDraft'||action==='retryCreateDraft'||action==='resumeCreateRetryDraft'||action==='recoverClosedTarget')&&Date.now()-expected.packet.createdAt>=PRODUCT_DOCUMENT_REQUEST_TTL){
         const packet=await createProductDocumentPacket(review,{requestId:expected.packet.requestId,createdAt:Date.now(),now:Date.now()});
         const refreshed=await previewProductDocument(packet,task.controller.signal);await fresh(task);
         if(!task.active()||current.current.session!==expected)return;
@@ -197,7 +199,7 @@ export function SupplierHubProductTransport(props:Props){
         await fresh(task);if(!task.active()||current.current.session!==activeSession)return;
       }
       const saved=current.current.intent;if(!saved)throw Error('원래 새 초안 준비 요청의 보관 기록을 확인해주세요.');assertProductDocumentPending(review,saved,activeSession);
-      if(action==='prepareDraft'||action==='retryCreateDraft'||action==='resumeCreateRetryDraft'){
+      if(action==='prepareDraft'||action==='retryCreateDraft'||action==='resumeCreateRetryDraft'||action==='recoverClosedTarget'){
         // Refresh only the short request envelope after the complete source
         // proof. The UUID, review, body and browser identity stay unchanged.
         const packet=await createProductDocumentPacket(review,{requestId:activeSession.packet.requestId,createdAt:Date.now(),now:Date.now()});
@@ -211,9 +213,10 @@ export function SupplierHubProductTransport(props:Props){
       if(before.state?.draftProof&&(result.draftProof!.checkpointSequence<before.state.draftProof.checkpointSequence||result.draftProof!.observedAt<before.state.draftProof.observedAt))throw new ProductDocumentBridgeError('원래 새 초안보다 오래된 준비 기록입니다. 기존 결과를 유지했습니다.',action==='prepareDraft','PRODUCT_DOCUMENT_DRAFT_REPLY_IDENTITY');
       current.current.state=result;current.current.uncertain=result.needsRecovery;current.current.approved={};setState(result);setUncertain(result.needsRecovery);setApproved({});
       setMissingCreate(false);setApprovedRetryPending(false);
+      setClosedTargetNeeded(false);setClosedTargetApproved(false);
       if(result.error)setError(result.error.message);
     }catch(cause){if(task.alive()){
-      if(cause instanceof ProductDocumentBridgeError&&cause.draftState==='create-requested'){setMissingCreate(true);setApprovedRetryPending(cause.approvedCreateRetry===true);}
+      if(cause instanceof ProductDocumentBridgeError&&cause.draftState==='create-requested'){setMissingCreate(!cause.closedTargetRecovery);setApprovedRetryPending(cause.approvedCreateRetry===true);setClosedTargetNeeded(cause.closedTargetRecovery);setClosedTargetApproved(false);}
       if(dispatched&&(cause instanceof ProductDocumentBridgeError?cause.uncertain:true)){current.current.uncertain=true;setUncertain(true);}
       setError(cause instanceof Error?cause.message:'새 견적 초안 준비 결과 확인 실패');
     }}finally{task.finish();}
@@ -250,7 +253,7 @@ export function SupplierHubProductTransport(props:Props){
       if(result.receipt?.evidence==='document-receipt'&&!result.needsRecovery){const attempt={packet:activeSession.packet,observation:preparedReceiptObservation(result)};current.current.unsaved=attempt;setUnsaved(attempt);await persist(attempt,task);}
     }catch(cause){if(task.alive()){
       if(dispatched&&(cause instanceof ProductDocumentBridgeError?cause.uncertain:true)){current.current.uncertain=true;setUncertain(true);}
-      if(cause instanceof ProductDocumentBridgeError&&cause.draftState==='create-requested'){setMissingCreate(true);setApprovedRetryPending(cause.approvedCreateRetry===true);}
+      if(cause instanceof ProductDocumentBridgeError&&cause.draftState==='create-requested'){setMissingCreate(!cause.closedTargetRecovery);setApprovedRetryPending(cause.approvedCreateRetry===true);setClosedTargetNeeded(cause.closedTargetRecovery);setClosedTargetApproved(false);}
       current.current.approved={};setApproved({});setError(cause instanceof Error?cause.message:'준비한 새 문서의 등록 확인 실패');
     }}finally{task.finish();}
   }
@@ -284,7 +287,7 @@ export function SupplierHubProductTransport(props:Props){
     {intent&&!session&&<p role="status">이 상품의 이전 전송 요청이 보관되어 있습니다. 같은 요청의 저장 결과만 확인하며 새 등록을 시작하지 않습니다.</p>}
     {session&&<p>회사 {review.identity.company.name} · 포함 옵션 {session.packet.review.members.length}개 · 견적 문서 1개 · 전체 본문 대조 완료</p>}
     {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&!intent&&!state?.preparedLifecycle&&<p role="status">전체 문서의 실제 접수 연결을 검수 중입니다. 현재 상품은 전송하지 않았습니다.</p>}
-    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.36.zip" download>통합 확장 2.1.36 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
+    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.38.zip" download>통합 확장 2.1.38 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
     {session?.preview.draftPreparationAvailable===true&&!state?.preparedLifecycle&&<section aria-label="새 견적 초안 준비">
       <p>로그인한 Supplier Hub에 새 견적 초안 한 개를 만들고 저장한 이미지·본문과 단계 검증을 확인합니다. 약관 동의와 최종 제출은 진행하지 않습니다.</p>
       {!state&&!uncertain&&!intent&&<button type="button" className="btn primary" disabled={disabled||busy||Boolean(intentError)} onClick={()=>void operateDraft('prepareDraft',session)}>새 견적 초안 만들기 · 제출 안 함</button>}
@@ -297,6 +300,11 @@ export function SupplierHubProductTransport(props:Props){
       {draftMode&&uncertain&&missingCreate&&approvedRetryPending&&!retryAttempted&&session.preview.createRetryContinuationAvailable===true&&!state?.preparedLifecycle&&<section aria-label="승인된 생성 재시도 이어가기">
         <p>원래 요청에 저장된 1회 재시도 승인을 이어갑니다. 같은 전송 탭의 생성 기록과 현재 중복 여부를 다시 확인하며, 생성 요청 기록이 있으면 반복하지 않습니다.</p>
         <button type="button" className="btn ghost" disabled={busy||disabled} onClick={()=>void operateDraft('resumeCreateRetryDraft',session)}>승인된 1회 생성 계속</button>
+      </section>}
+      {draftMode&&uncertain&&closedTargetNeeded&&!state?.preparedLifecycle&&<section aria-label="닫힌 전용 검증 탭 복구">
+        <p>원래 검증 탭이 닫혀 이전 생성 표식을 읽을 수 없습니다. 원래 요청번호·견적 내용·1회 승인 기록을 유지하고 새 전용 탭을 연결합니다. 이 연결 단계에서는 문서를 만들거나 제출하지 않습니다. 이후 생성 전에 현재 중간저장·제출 목록을 다시 확인하며, 이전 요청이 뒤늦게 처리되면 중복될 가능성이 남습니다.</p>
+        <label><input type="checkbox" checked={closedTargetApproved} disabled={busy||disabled} onChange={event=>setClosedTargetApproved(event.target.checked)}/>이전 생성 결과의 불확실성을 확인했고 새 전용 검증 탭 연결을 승인합니다.</label>
+        <button type="button" className="btn ghost" disabled={busy||disabled||!closedTargetApproved} onClick={()=>void operateDraft('recoverClosedTarget',session)}>원래 요청의 새 검증 탭 연결 · 생성 안 함</button>
       </section>}
       {draftMode&&state?.draftOnly&&!state.preparedLifecycle&&!uncertain&&['prepared','target-created','created','updated'].includes(state.state)&&<button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void operateDraft('prepareDraft',session)}>같은 초안 준비 계속 · 제출 안 함</button>}
       {draftMode&&state?.draftOnly&&!state.preparedLifecycle&&!uncertain&&<><p role="status">{state.docId!==null?`Supplier Hub 초안 문서 ${String(state.docId)}`:'새 초안 준비 기록 확인'} · 단계 검증 {state.draftProof!.validatedSteps.length}/4 · {validatedDraft?'초안 저장·검증 완료 · 미제출':state.state==='validation-rejected'?'제출 전 검증 반려':'초안 준비 확인 중'}</p><button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void(session.preview.preparedLifecycleAvailable?operatePrepared('recoverPreparedDraft',session):operateDraft('recoverDraft',session))}>같은 초안 저장 결과 확인 · 읽기 전용</button></>}

@@ -10,11 +10,11 @@ export const PRODUCT_DOCUMENT_LIVE_VERIFIED=false;
 const receivers=new Map();
 const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canonical).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}';
 export async function dispatchProductDocument(message,sender){
-  if(!message||message.type!=='YOOFAM_PRODUCT_DOCUMENT_REQUEST'||!['preview','prepareDraft','recoverDraft','retryCreateDraft','resumeCreateRetryDraft','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft','start','resume','recover','confirm','observe'].includes(message.action)
+  if(!message||message.type!=='YOOFAM_PRODUCT_DOCUMENT_REQUEST'||!['preview','prepareDraft','recoverDraft','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft','start','resume','recover','confirm','observe'].includes(message.action)
     ||Object.keys(message).some(key=>!['type','action','packet','confirmation'].includes(key))
     ||(['confirm','confirmPreparedDraft'].includes(message.action))!==Object.hasOwn(message,'confirmation'))throw new SingleDocumentError('PRODUCT_ACTION','전체 상품 견적 작업을 확인해주세요.');
-  let context=await productDocumentIdentity(message.packet,sender,{allowExpired:!['preview','start','prepareDraft','reviewPreparedDraft','retryCreateDraft','resumeCreateRetryDraft'].includes(message.action)});
-  if(['prepareDraft','recoverDraft','retryCreateDraft','resumeCreateRetryDraft','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(message.action))context=await resolveProductSourceContext(context);
+  let context=await productDocumentIdentity(message.packet,sender,{allowExpired:!['preview','start','prepareDraft','reviewPreparedDraft','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget'].includes(message.action)});
+  if(['prepareDraft','recoverDraft','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(message.action))context=await resolveProductSourceContext(context);
   if(message.action==='preview'){
     const reviewDigest=message.packet.review.reviewDigest,deadlineAt=Date.now()+PRODUCT_DOCUMENT_PREFLIGHT_TIMEOUT,timeoutError=()=>new SingleDocumentError('PRODUCT_SOURCE_PREFLIGHT_TIMEOUT','현재 회원·회사·견적 원본 확인 시간이 초과됐습니다. 상품은 전송하지 않았습니다.');
     let selected,stopped=false,timer;
@@ -40,15 +40,15 @@ export async function dispatchProductDocument(message,sender){
     })();
     try{return await Promise.race([operation,deadline]);}finally{stopped=true;clearTimeout(timer);selected?.adapter.dispose();}
   }
-  if(['prepareDraft','recoverDraft','retryCreateDraft','resumeCreateRetryDraft','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(message.action)){
+  if(['prepareDraft','recoverDraft','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(message.action)){
     const selected=await createVerifiedProductDocumentBrowserAdapter(context);
     if(selected.nativeAssets!==true){selected.adapter.dispose();throw new SingleDocumentError('PRODUCT_DRAFT_NATIVE_SOURCE_REQUIRED','현재 상품의 원본 파일·회사·저장 견적을 확인한 뒤 새 초안을 준비해주세요.');}
-    if(['recoverDraft','recoverPreparedDraft','observePreparedDraft'].includes(message.action)){
+    if(['recoverDraft','recoverClosedTarget','recoverPreparedDraft','observePreparedDraft'].includes(message.action)){
       // A completed submit needs a fresh read, never the expired mutation watch.
       // Pre-submit stage recovery still retains its original live adapter.
       const store=createProductDocumentStore();let prior,fresh=false;
       try{prior=await readPreparedDocumentPreviewCheckpoint(context,store);
-        if(message.action==='recoverDraft'||prior?.submitRequestedAt!==undefined){fresh=true;const receiver=createProductDocumentDraftReceiver({adapter:selected.adapter,store,resolveSourceContext:base=>resolveProductSourceContext(base,{store})});return await receiver[message.action](message.packet,sender);}
+        if(message.action==='recoverDraft'||message.action==='recoverClosedTarget'||prior?.submitRequestedAt!==undefined){fresh=true;const receiver=createProductDocumentDraftReceiver({adapter:selected.adapter,store,resolveSourceContext:base=>resolveProductSourceContext(base,{store})});return await receiver[message.action](message.packet,sender);}
       }catch(error){if(!fresh)selected.adapter.dispose();throw error;}
       finally{if(fresh)selected.adapter.dispose();}
     }

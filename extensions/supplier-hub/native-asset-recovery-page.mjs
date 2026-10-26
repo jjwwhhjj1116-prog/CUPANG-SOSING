@@ -4,6 +4,7 @@
  * row proves neither the remote byte length/type/SHA nor a successful update.
  * This function never edits the ledger, document, agreements or files. */
 export async function nativeAssetRecoveryPage(input,prepared=false){
+ if(typeof input==='string'){if(input.length>8*1024*1024)throw Error('원본 파일 조회 자료가 너무 큽니다.');input=JSON.parse(input);}
  const origin='https://supplier.coupang.com',data=document.documentElement.dataset,HASH=/^[a-f0-9]{64}$/;
  const canon=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canon).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canon(value[key])).join(',')+'}',same=(a,b)=>canon(a)===canon(b);
  const sha=async value=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(canon(value)))),byte=>byte.toString(16).padStart(2,'0')).join('');

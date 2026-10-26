@@ -145,6 +145,15 @@ function checkpointValid(state,context){
       ||![retry.approvedAt,retry.originalRequestedAt,retry.originalSequence].every(v=>Number.isSafeInteger(v)&&v>0)||retry.originalRequestedAt+60000>retry.approvedAt
       ||retry.approvedAt>state.updatedAt||retry.originalSequence>=state.sequence)fail('CHECKPOINT','원래 생성 요청의 1회 재시도 기록을 확인해주세요.');
   }
+  if(state.targetRecovery!==undefined){const recovery=state.targetRecovery;
+    if(!object(recovery)||Object.keys(recovery).some(key=>!['format','phase','previousTarget','approvedAt','target'].includes(key))||recovery.format!=='approved-closed-target-v1'
+      ||!['requested','created','bound'].includes(recovery.phase)||state.draftOnly!==true||state.createRetry?.attempt!==1||state.createRetry.resumeUsed!==true
+      ||!targetValid(recovery.previousTarget,context,state.requestId)||!Number.isSafeInteger(recovery.approvedAt)||recovery.approvedAt<1||recovery.approvedAt>state.updatedAt
+      ||recovery.phase==='requested'&&(recovery.target!==undefined||state.state!=='create-requested'||state.docId!==null||!same(state.ownedTarget,recovery.previousTarget))
+      ||recovery.phase!=='requested'&&(!targetValid(recovery.target,context,state.requestId)||recovery.target.tabId===recovery.previousTarget.tabId)
+      ||recovery.phase==='created'&&(state.state!=='create-requested'||state.docId!==null||!same(state.ownedTarget,recovery.previousTarget))
+      ||recovery.phase==='bound'&&!same(state.ownedTarget,recovery.target))fail('CHECKPOINT','승인된 닫힌 검증 탭의 원래 요청 연결을 확인해주세요.');
+  }
   if(state.preparedLifecycle!==undefined||state.preparationOrigin!==undefined){const origin=state.preparationOrigin;
     if(state.preparedLifecycle!==true||state.draftOnly!==true||!PREPARED_LIFECYCLE_STATES.has(state.state)||state.validatedSteps.length!==4
       ||!object(origin)||Object.keys(origin).sort().join(',')!=='preparedCheckpointSequence,qualifiedAt,qualifiedCheckpointSequence'||!Number.isSafeInteger(origin.preparedCheckpointSequence)||origin.preparedCheckpointSequence<1
@@ -429,6 +438,36 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
         state=await continuation(context,state);return result(state);
       }
       if(!state)fail('CHECKPOINT','먼저 새 개별 전송 요청을 준비해주세요.');
+      if(nativeLifecycle&&['recoverDraft','recoverPreparedDraft','recoverClosedTarget'].includes(action)&&state.state==='create-requested'&&state.docId===null&&state.createRetry?.attempt===1&&state.createRetry.resumeUsed===true&&typeof adapter.readOwnedTargetPresence==='function'){
+        // Establish the complete current source first. The old tab cannot be
+        // inspected when absent; positive same-window presence evidence is a
+        // separate requirement, never inferred from a generic adapter error.
+        await guard(context,{...state,ownedTarget:null,tab:null});
+        const presence=await call('readOwnedTargetPresence',{identity:context.identity,tab:state.ownedTarget,requestId:state.requestId,packetDigest:state.packetDigest});
+        if(!object(presence)||presence.requestId!==state.requestId||presence.packetDigest!==state.packetDigest||presence.tabId!==state.ownedTarget.tabId||presence.windowId!==context.identity.windowId||typeof presence.closed!=='boolean'
+          ||!Number.isSafeInteger(presence.checkedAt)||Math.abs(clock()-presence.checkedAt)>60000)fail('TAB_CHANGED','원래 검증 탭의 닫힘 확인을 검증하지 못했습니다.');
+        if(presence.closed){
+          const approval={code:'CLOSED_TARGET_APPROVAL',message:'원래 검증 탭이 닫혀 생성 표식을 읽을 수 없습니다. 원래 요청·본문·1회 승인 기록을 유지해 새 전용 탭으로 연결할지 확인해주세요. 이전 요청이 뒤늦게 처리되면 중복될 가능성이 남습니다.'};
+          if(!state.targetRecovery){
+            if(action!=='recoverClosedTarget')return result(state,{error:approval});
+            state=await save(context,state,{targetRecovery:{format:'approved-closed-target-v1',phase:'requested',previousTarget:state.ownedTarget,approvedAt:clock()}});
+            const target=await call('createTarget',{identity:context.identity,requestId:state.requestId,packetDigest:state.packetDigest});
+            if(!targetValid(target,context,state.requestId)||target.tabId===state.ownedTarget.tabId)fail('TAB_CHANGED','새 전용 검증 탭의 원래 요청 연결을 확인하지 못했습니다.');
+            // Commit the exact returned tab before waiting for login/company.
+            state=await save(context,state,{targetRecovery:{...state.targetRecovery,phase:'created',target}});
+          }
+          if(state.targetRecovery.phase==='requested')fail('CLOSED_TARGET_PENDING','새 전용 탭 생성 결과가 미확정입니다. 다른 탭을 만들지 않고 원래 기록을 유지했습니다.');
+          if(state.targetRecovery.phase==='bound')fail('CLOSED_TARGET_LIMIT','이미 한 번 복구한 전용 탭이 다시 닫혔습니다. 새 탭이나 문서를 반복 생성하지 않았습니다.');
+          await guard(context,{...state,ownedTarget:null,tab:null});
+          const target=state.targetRecovery.target,tab=await call('readTab',{identity:context.identity,tab:target});
+          if(!tabValid(tab,context.packet)||tab.tabId!==target.tabId)fail('TAB_CHANGED','복구한 전용 탭의 회사·로그인을 확인해주세요.');
+          await guard(context,{...state,ownedTarget:target,tab});
+          state=await save(context,state,{ownedTarget:target,tab,targetRecovery:{...state.targetRecovery,phase:'bound'}});
+          return result(state,{recovered:true}); // No Hub create/upload/submit.
+        }
+        if(action==='recoverClosedTarget')fail('CLOSED_TARGET_SCOPE','원래 검증 탭이 열려 있습니다. 같은 탭의 읽기 확인을 사용해주세요.');
+      }
+      if(action==='recoverClosedTarget')fail('CLOSED_TARGET_SCOPE','문서번호가 없는 원래 승인 요청의 닫힌 전용 탭만 복구할 수 있습니다.');
       const readOnlyReceipt=nativeLifecycle&&state.preparedLifecycle===true&&state.submitRequestedAt!==undefined&&['recoverPreparedDraft','observePreparedDraft'].includes(action);
       await guard(context,state,readOnlyReceipt);
       if(action==='retryCreateDraft'||action==='resumeCreateRetryDraft'){
@@ -597,6 +636,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
     await guard(context,state,readOnlyReceipt);state=await save(context,state,{state:receipt.state,receipt});return result(state);
   }
   if(draftOnly)return Object.freeze({prepareDraft:(packet,sender)=>operate(packet,sender,'prepareDraft'),recoverDraft:(packet,sender)=>operate(packet,sender,'recoverDraft'),...(nativeLifecycle?{
+    recoverClosedTarget:(packet,sender)=>operate(packet,sender,'recoverClosedTarget'),
     retryCreateDraft:(packet,sender)=>operate(packet,sender,'retryCreateDraft'),
     resumeCreateRetryDraft:(packet,sender)=>operate(packet,sender,'resumeCreateRetryDraft'),
     reviewPreparedDraft:(packet,sender)=>operate(packet,sender,'reviewPreparedDraft'),confirmPreparedDraft:(packet,sender,confirmation)=>operate(packet,sender,'confirmPreparedDraft',confirmation),

@@ -2,6 +2,7 @@
  * frame. Static SR upload/list contract SHA6fc9c0fa... [2875870,2879318).
  * Does not inspect credentials or claim remote binary persistence/acceptance. */
 export async function nativeAssetUploadPage(input){
+ if(typeof input==='string'){if(input.length>100*1024*1024)throw Error('원본 업로드 자료가 너무 큽니다.');input=JSON.parse(input);}
  const origin='https://supplier.coupang.com',data=document.documentElement.dataset,HASH=/^[a-f0-9]{64}$/;
  const canon=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canon).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canon(value[key])).join(',')+'}',same=(a,b)=>canon(a)===canon(b);
  const sha=async bytes=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),byte=>byte.toString(16).padStart(2,'0')).join(''),digest=value=>sha(new TextEncoder().encode(canon(value))),fail=message=>{throw Error(message||'현재 새 문서의 원본 업로드 확인이 필요합니다.');};

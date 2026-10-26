@@ -42,7 +42,7 @@ export function withNativeProductAssetRecovery(adapter,{api,nativeSha,now=Date.n
    images:copy(sourcePlan.images),nativeLegalAttachmentPlan:sourcePlan.nativeLegalAttachmentPlan?copy(sourcePlan.nativeLegalAttachmentPlan):null,planSha256:null,
    registered:false,remoteWrites:false,submissionReady:false,transportReady:false};
   plan.planSha256=await nativeAssetUploadPlanSha256(plan);
-  await tabCurrent();const [readback]=await api.scripting.executeScript({target:{tabId:input.tab.tabId,documentIds:[before.documentId]},func:nativeAssetRecoveryPage,args:[{binding,target,plan}]});
+  await tabCurrent();const [readback]=await api.scripting.executeScript({target:{tabId:input.tab.tabId,documentIds:[before.documentId]},func:nativeAssetRecoveryPage,args:[JSON.stringify({binding,target,plan})]});
   await tabCurrent();if(readback?.frameId!==0||readback.documentId!==before.documentId)fail();
   const [after]=await api.scripting.executeScript({target:{tabId:input.tab.tabId,documentIds:[before.documentId]},func:singleDocumentOwnedRecordPage,args:[binding]});
   if(after?.frameId!==0||after.documentId!==before.documentId||!same(after.result,record)||!same(await current(),sourcePlan))fail();

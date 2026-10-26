@@ -4,6 +4,7 @@
 export async function singleDocumentRetryCreatePage(input){
  let phase='scope',dispatched=false,absentMarker=false;
  try{
+ if(typeof input==='string'){if(input.length>8*1024*1024)throw Error('생성 확인 자료가 너무 큽니다.');input=JSON.parse(input);}
  const origin='https://supplier.coupang.com',root=document.documentElement,data=root.dataset;
  const canon=v=>v===null||typeof v!=='object'?JSON.stringify(v):Array.isArray(v)?'['+v.map(canon).join(',')+']':'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canon(v[k])).join(',')+'}';
  const same=(a,b)=>canon(a)===canon(b),id=v=>Number.isSafeInteger(v)&&v>0||typeof v==='string'&&v.trim()===v&&v.length>0&&v.length<=200&&!/[\u0000-\u001f]|\.\.\.|…/.test(v);

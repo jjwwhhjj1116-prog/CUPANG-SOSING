@@ -129,6 +129,8 @@ export async function singleBrowserFixture(company=SINGLE_COMPANIES[0],options={
   // The Hub DOM belongs to a newly extension-created tab. Existing tabs are
   // retained separately and must never be inspected, navigated or selected.
   const tabs=[appTab,...(options.extraTabs??[])];f.tabs=tabs;
+  f.closeOwnedTab=()=>{const index=tabs.findIndex(tab=>tab.id===hubTab.id);if(index<0)throw Error('Synthetic owned tab is already closed');tabs.splice(index,1);hubTab.id++;
+    hubLocation.pathname='/dashboard/KR';hubTab.url=hubLocation.origin+hubLocation.pathname;for(const key of Object.keys(dataset))delete dataset[key];productInput.value='';f.hubDocumentId=webcrypto.randomUUID();};
   const api={tabs:{
     get:async id=>{if(id===hubTab.id)hubTab.url=hubLocation.origin+hubLocation.pathname;return clone(tabs.find(tab=>tab.id===id));},
     create:async input=>{calls.push({name:'tabs-create',input});if(tabs.some(tab=>tab.id===hubTab.id))throw Error('Synthetic duplicate target creation');tabs.push(hubTab);return clone(hubTab);},
@@ -148,12 +150,13 @@ export async function singleBrowserFixture(company=SINGLE_COMPANIES[0],options={
   },scripting:{executeScript:async request=>{
     calls.push({name:'execute',func:request.func.name,target:clone(request.target)});
     if(request.target.documentIds&&!request.target.documentIds.includes(f.hubDocumentId))throw Error('Synthetic browser document changed');
-    const target=request.target.tabId===appTab.id?appContext:hubContext;target.args=clone(request.args??[]);
-    let value;try{value=await vm.runInContext('('+request.func.toString()+')(...args)',target);}catch(error){f.executeErrors.push({name:request.func.name,action:request.args?.[0]?.action,stage:request.args?.[0]?.stage,message:error.message});throw error;}
+    const target=request.target.tabId===appTab.id?appContext:hubContext,first=typeof request.args?.[0]==='string'?JSON.parse(request.args[0]):request.args?.[0];
+    target.args=options.dropNullArguments?JSON.parse(JSON.stringify(request.args??[],(key,value)=>value===null?undefined:value)):clone(request.args??[]);
+    let value;try{value=await vm.runInContext('('+request.func.toString()+')(...args)',target);}catch(error){f.executeErrors.push({name:request.func.name,action:first?.action,stage:first?.stage,message:error.message});throw error;}
     if(request.func.name==='singleDocumentStageAgreementPage'&&request.args?.[0]?.action==='confirm'&&options.stageLostExecuteAck===request.args[0].stage){options.stageLostExecuteAck=null;throw Error('Synthetic stage confirmation executeScript ACK lost after observation');}
     if(request.func.name==='singleDocumentNavigatePage'&&options.nextLostExecuteAck&&request.args?.[0]?.stageConsents?.some(entry=>entry.stage===options.nextLostExecuteAck)){options.nextLostExecuteAck=null;throw Error('Synthetic next-step executeScript ACK lost after observed page change');}
     if(request.func.name==='singleDocumentSubmitPage'&&options.submitLoseExecuteAck){options.submitLoseExecuteAck=false;throw Error('Synthetic submit ACK lost after its one click');}
-    if(options.loseExecuteAck===request.func.name&&request.args?.[0]?.path===options.losePath)throw Error('Synthetic Chrome executeScript ACK lost');
+    if(options.loseExecuteAck===request.func.name&&first?.path===options.losePath)throw Error('Synthetic Chrome executeScript ACK lost');
     return [{frameId:options.frameId??0,documentId:request.target.tabId===appTab.id?'12345678-1234-4234-9234-123456789abc':f.hubDocumentId,result:value===undefined?undefined:jsonCopy(value)}];
   }},webRequest};
   const pageEvents=new Map();hubDocument.addEventListener=(name,callback)=>{if(!pageEvents.has(name))pageEvents.set(name,new Set());pageEvents.get(name).add(callback);};hubDocument.removeEventListener=(name,callback)=>pageEvents.get(name)?.delete(callback);

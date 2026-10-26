@@ -132,6 +132,26 @@ test('saved retry approval offers only same-request continuation and a double cl
  }finally{h.close();}
 });
 
+test('a closed original target exposes a separate unchecked connection approval and retains the approved retry UUID',async()=>{
+ const h=await fixture();try{
+  allowDraft(h,payload=>draftResult(h.f,payload.packet.requestId,'create-requested',{docId:null,needsRecovery:true,
+   draftProof:{evidence:'document-draft-preparation',validatedSteps:[],checkpointSequence:12,observedAt:h.f.clock.now,submitted:false,consented:false,createRetryApproved:true},
+   ...(payload.action==='recoverDraft'?{error:{code:'CLOSED_TARGET_APPROVAL',message:'원래 검증 탭이 닫혔습니다.'}}:{})}));
+  await h.idle();await h.click(open);await h.click(prepareDraft);await h.click(recoverDraft);
+  const connect='원래 요청의 새 검증 탭 연결 · 생성 안 함';
+  assert.equal(h.button('기존 요청으로 생성 1회 재시도'),undefined);assert.equal(h.button('승인된 1회 생성 계속'),undefined);
+  assert.equal(h.button(connect).props.disabled,true);const stale=h.button(connect).props.onClick;
+  stale();await h.idle();assert.equal(h.f.sent.length,3);
+  const checkbox=nodes(h.render()).find(node=>node.type==='input'&&node.props.type==='checkbox');assert.equal(checkbox.props.checked,false);
+  checkbox.props.onChange({target:{checked:true}});h.flush();assert.equal(h.button(connect).props.disabled,false);
+  const click=h.button(connect).props.onClick;click();click();await h.idle();
+  assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','recoverDraft','recoverClosedTarget']);
+  assert.equal(new Set(h.f.sent.map(row=>row.payload.packet.requestId)).size,1);assert.equal(h.stored.size,1);
+  assert.equal(h.button(connect),undefined);click();await h.idle();assert.equal(h.f.sent.length,4);
+  assert.equal(h.f.calls.some(call=>call.method==='POST'),false);assert.equal(h.f.history.length,0);
+ }finally{h.close();}
+});
+
 test('malformed draft proof and stale review callbacks retain the pending reservation and cannot expose consent or submit',async()=>{
  for(const mode of ['receipt','proof','stale']){const h=await fixture();try{allowDraft(h,payload=>draftResult(h.f,payload.packet.requestId,'validated',mode==='receipt'?{receipt:{}}:mode==='proof'?{draftProof:{evidence:'document-draft-preparation',validatedSteps:[2,3,4],checkpointSequence:12,observedAt:h.f.clock.now,submitted:false,consented:false}}:{}));
    await h.idle();await h.click(open);const old=h.button(prepareDraft).props.onClick;

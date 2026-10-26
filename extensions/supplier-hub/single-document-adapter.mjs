@@ -92,6 +92,7 @@ export async function singleDocumentAppSourcePage(input,wholeProduct=false){
  * not import/execute vendor code and never reads cookies, tokens or storage.
  * A DOM marker contains only this task's identity and actual parsed ACKs. */
 export async function singleDocumentHubRequestPage(input){
+  if(typeof input==='string'){if(input.length>8*1024*1024)throw Error('개별 문서 요청 자료가 너무 큽니다.');input=JSON.parse(input);}
   const origin='https://supplier.coupang.com',data=document.documentElement.dataset;
   const canon=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canon).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canon(value[key])).join(',')+'}';
   const same=(left,right)=>canon(left)===canon(right);
@@ -392,7 +393,12 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
       requireWatch(entry);const [guard]=await api.scripting.executeScript({target,func:singleDocumentWatchPage,args:[{...entry.page,action:'check'}]});
       if(guard?.documentId!==documentId||guard?.result?.current!==true)fail('TAB_CHANGED','현재 새 문서의 입력 관찰을 확인하지 못했습니다.');
     }
-    const [execution]=await api.scripting.executeScript({target,func,args});
+    // Keep JSON null, zero and empty values across the browser argument
+    // boundary. The page restores the exact envelope before its unchanged
+    // source/body/owned-document checks; no default or ID is substituted.
+    const jsonPage=[singleDocumentHubRequestPage,singleDocumentRetryCreatePage,nativeAssetUploadPage,nativeAssetRecoveryPage].includes(func);
+    const wireArgs=jsonPage?[JSON.stringify(args[0]),...args.slice(1)]:args;
+    const [execution]=await api.scripting.executeScript({target,func,args:wireArgs});
     const after=await api.tabs.get(tab.tabId);if(!validHubTab(after,identity.windowId)||execution?.frameId!==undefined&&execution.frameId!==0)fail('TAB_CHANGED','개별 등록 탭·프레임이 변경되었습니다.');
     if(documentId&&execution?.documentId!==documentId)fail('TAB_CHANGED','새 문서를 불러오는 브라우저 문서가 변경되었습니다.');
     if(entry){requireWatch(entry);if(entry.ready){const [guard]=await api.scripting.executeScript({target,func:singleDocumentWatchPage,args:[{...entry.page,action:'check'}]});if(guard?.result?.current!==true)fail('TAB_CHANGED','입력 중 소유 문서 관찰이 변경되었습니다.');}}
@@ -506,6 +512,15 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
   }
   return Object.freeze({readSource,
     qualifyPreparedDraft,...(nativeSha?{inspectCreateRetry}:{}),
+    ...(nativeSha?{readOwnedTargetPresence:async input=>{
+      const binding=sourceBindings.get(canonical(input.identity))?.binding;
+      if(!binding||binding.requestId!==input.requestId||binding.packetDigest!==input.packetDigest||typeof api.tabs.query!=='function')fail('TAB_CHANGED','원래 검증 탭의 존재 여부를 확인하지 못했습니다.');
+      assertSingleOwnedTarget(input.tab,binding);await appCurrent(input.identity);
+      const tabs=await api.tabs.query({windowId:input.identity.windowId});
+      if(!Array.isArray(tabs)||tabs.length>10000||tabs.some(tab=>!Number.isSafeInteger(tab.id)||tab.windowId!==input.identity.windowId)||new Set(tabs.map(tab=>tab.id)).size!==tabs.length)fail('TAB_CHANGED','현재 Chrome 창의 탭 목록을 확인하지 못했습니다.');
+      await appCurrent(input.identity);
+      return{requestId:binding.requestId,packetDigest:binding.packetDigest,tabId:input.tab.tabId,windowId:input.identity.windowId,closed:!tabs.some(tab=>tab.id===input.tab.tabId),checkedAt:now()};
+    }}:{}),
     createTarget:async input=>{
       const binding=await bindingFor(input.identity);
       mutable(input.identity);

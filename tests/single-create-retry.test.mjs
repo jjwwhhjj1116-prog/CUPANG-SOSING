@@ -25,7 +25,7 @@ function pageFixture(options={}){
   const result=Response.json(value,{status:options.status??200});Object.defineProperty(result,'url',{value:url});return result;
  };
  const context=vm.createContext({document,location,fetch,crypto:options.noCrypto?undefined:webcrypto,TextEncoder:options.noCrypto?undefined:TextEncoder,TextDecoder,Uint8Array,AbortController,setTimeout,clearTimeout,Date});
- const run=()=>vm.runInContext('('+singleDocumentRetryCreatePage.toString()+')',context)(structuredClone(input));
+ const run=(wire={})=>{let argument=wire.json?JSON.stringify(input):structuredClone(input);if(wire.dropNull)argument=JSON.parse(JSON.stringify(argument,(key,value)=>value===null?undefined:value));return vm.runInContext('('+singleDocumentRetryCreatePage.toString()+')',context)(argument);};
  return{input,binding,body,dataset,calls,document,location,old,run};
 }
 
@@ -75,6 +75,38 @@ test('read-only structural failures identify the exact predicate without reachin
  const cases=[['body-document-id',f=>{f.input.body.docId=1;}],['body-scope',f=>{f.input.body.scope='changed';}],['body-members',f=>{f.input.binding.identity.members=null;}],
   ['body-document-count',f=>{f.input.body.jsonDocument=[];}],['body-member-order',f=>{f.input.binding.identity.members[0].documentIndex=1;}],['body-product-name',f=>{f.input.body.productName='';}]];
  for(const [phase,change]of cases){const f=pageFixture();f.input.inspectOnly=true;change(f);const result=await f.run();assert.equal(result.createRetryFailure.phase,phase);assert.equal(result.createRetryFailure.dispatched,false);assert.deepEqual(f.calls,[]);assert.deepEqual(f.dataset,{});}
+});
+
+test('the exact JSON wire preserves the null new-document ID through a lossy object-argument boundary',async()=>{
+ const broken=pageFixture();broken.input.inspectOnly=true;
+ assert.equal((await broken.run({dropNull:true})).createRetryFailure.phase,'body-document-id');assert.deepEqual(broken.calls,[]);
+ const fixed=pageFixture();fixed.input.inspectOnly=true;
+ assert.equal((await fixed.run({json:true,dropNull:true})).json.retryPrecheck.remoteWrites,false);assert.equal(fixed.calls.length,2);assert.deepEqual(fixed.dataset,{});
+ fixed.input.body.docId=10;assert.equal((await fixed.run({json:true,dropNull:true})).createRetryFailure.phase,'body-document-id');
+ assert.equal(fixed.calls.some(call=>call.method==='POST'),false,'serialization never repairs a genuinely non-null existing document ID');
+});
+
+test('native original-request retry, private uploads and four-step preparation retain exact values across lossy object arguments',async t=>{
+ t.mock.timers.enable({apis:['Date'],now:Date.now()});let f;
+ try{
+  f=await nativeRecoveryFixture(undefined,{sourceSessionId:'json-wire-null-fidelity',browser:{dropNullArguments:true}});const prior=structuredClone(f.documents.get(f.prior.docId));
+  const dropped={...f.adapter,hubRequest:async input=>input.method==='POST'&&input.path.endsWith('/create')?undefined:f.adapter.hubRequest(input)};
+  const legacy=createProductDocumentDraftReceiver({adapter:dropped,store:f.storage.store});await legacy.prepareDraft(f.packet,f.sender);t.mock.timers.tick(61000);await legacy.retryCreateDraft(f.packet,f.sender);await legacy.resumeCreateRetryDraft(f.packet,f.sender);
+  const receiver=createProductDocumentDraftReceiver({adapter:f.adapter,store:f.storage.store}),recovered=await receiver.recoverDraft(f.packet,f.sender);
+  assert.equal(recovered.state,'target-created',JSON.stringify(recovered));assert.equal(recovered.requestId,f.packet.requestId);
+  const packet=await createProductDocumentPacket(f.packet.review,{requestId:f.packet.requestId,createdAt:Date.now(),now:Date.now()}),done=await receiver.prepareDraft(packet,f.sender);
+  assert.equal(done.state,'validated',JSON.stringify(done));assert.deepEqual(done.draftProof.validatedSteps,[2,3,4,5]);
+  assert.equal(f.calls.filter(c=>c.name==='hub-fetch'&&c.init.method==='POST'&&c.url.endsWith('/create')).length,1);
+  assert.deepEqual(f.documents.get(f.prior.docId),prior);assert.equal(f.submitted,0);
+ }finally{f?.close();t.mock.timers.reset();}
+});
+
+test('ordinary native preparation also retains the null create ID and file-plan values over the JSON wire',async()=>{
+ const f=await nativeRecoveryFixture(undefined,{sourceSessionId:'ordinary-json-wire',browser:{dropNullArguments:true}});
+ try{const receiver=createProductDocumentDraftReceiver({adapter:f.adapter,store:f.storage.store}),result=await receiver.prepareDraft(f.packet,f.sender);
+  assert.equal(result.state,'validated',JSON.stringify(result));assert.equal(result.draftProof.validatedSteps.length,4);
+  assert.equal(f.calls.filter(c=>c.name==='hub-fetch'&&c.init.method==='POST'&&c.url.endsWith('/create')).length,1);assert.equal(f.submitted,0);
+ }finally{f.close();}
 });
 
 test('unrelated newly submitted activity does not block the original approved retry, while the same title does',async()=>{
