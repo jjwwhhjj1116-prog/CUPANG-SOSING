@@ -126,6 +126,27 @@ const repairProof=(h,attempted=false)=>({evidence:'document-draft-preparation',v
 const missingOwnedDraft=(h,payload,attempted=false)=>draftResult(h.f,payload.packet.requestId,'update-requested',{docId:'2347603',needsRecovery:true,draftProof:repairProof(h,attempted),...(payload.action==='recoverDraft'||payload.action==='recoverPreparedDraft'?{error:{code:'OWNED_RECORD_MISSING',message:'원래 문서 2347603의 저장 기록이 없습니다.'}}:{})});
 function allowRepair(h,run,available=true){h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true,...(available?{existingDocumentRepairAvailable:true}:{})}:run(payload);}
 
+test('an authenticated failed pre-lifecycle read retains the known document and uses only fresh draft readback next',async()=>{
+ const h=await fixture();try{
+  allowRepair(h,payload=>missingOwnedDraft(h,payload));await h.idle();await h.click(open);await h.click(prepareDraft);const original=h.f.sent[1].payload.packet.requestId;
+  await h.click(recoverDraft);assert.match(h.text(),/원래 문서 2347603/);assert.match(h.text(),/파일·본문 저장 결과 미확인/);
+  await h.click(recoverDraft);assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','recoverPreparedDraft','recoverDraft']);
+  assert.ok(h.f.sent.every(row=>row.payload.packet.requestId===original));assert.equal(h.f.history.length,0);assert.equal(h.stored.size,1);
+  assert.ok(h.f.calls.every(row=>row.method==='GET'));assert.equal(h.f.sent.filter(row=>row.payload.action==='repairExistingDraft').length,0);
+ }finally{h.close();}
+});
+
+test('a verified prior repair attempt is shown after remount and cannot become another repair permission',async()=>{
+ const stored=new Map(),first=await fixture(SINGLE_COMPANIES[0],{stored});let next;try{
+  allowRepair(first,payload=>missingOwnedDraft(first,payload));await first.idle();await first.click(open);await first.click(prepareDraft);first.close();
+  next=await fixture(SINGLE_COMPANIES[0],{stored});allowRepair(next,payload=>missingOwnedDraft(next,payload,true));await next.idle();await next.click('이전 문서 전송 자료 확인');
+  assert.doesNotMatch(next.text(),/새 견적 초안 한 개를 만들고/);await next.click(recoverDraft);
+  assert.match(next.text(),/원래 문서 2347603/);assert.match(next.text(),/같은 문서의 1회 저장 복구를 요청했습니다/);assert.equal(next.button(repairDraft),undefined);
+  await next.click(recoverDraft);assert.deepEqual(plain(next.f.sent.map(row=>row.payload.action)),['preview','recoverPreparedDraft','recoverDraft']);
+  assert.equal(next.f.sent.filter(row=>row.payload.action==='repairExistingDraft').length,0);assert.equal(stored.size,1);assert.ok(next.f.calls.every(row=>row.method==='GET'));
+ }finally{first.close();next?.close();}
+});
+
 test('same-document repair needs explicit approval, refreshes only its envelope and blocks duplicate/stale write callbacks',async()=>{
  const h=await fixture();try{
   allowRepair(h,payload=>payload.action==='repairExistingDraft'

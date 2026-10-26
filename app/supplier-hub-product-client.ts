@@ -13,7 +13,7 @@ const same=(left:unknown,right:unknown)=>productReceiptCanonical(left)===product
 const copy=<T,>(value:T):T=>JSON.parse(productReceiptCanonical(value)) as T;
 const digest=async(value:unknown)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(productReceiptCanonical(value)))),byte=>byte.toString(16).padStart(2,'0')).join('');
 function freeze<T>(value:T):T{if(value&&typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value;}
-export class ProductDocumentBridgeError extends Error{constructor(message:string,public uncertain:boolean,public code='PRODUCT_DOCUMENT_BRIDGE',public draftState?:string,public approvedCreateRetry?:boolean,public closedTargetRecovery=false,public existingDocumentRepairEligible=false,public knownDocId?:string|number){super(message);this.name='ProductDocumentBridgeError';}}
+export class ProductDocumentBridgeError extends Error{constructor(message:string,public uncertain:boolean,public code='PRODUCT_DOCUMENT_BRIDGE',public draftState?:string,public approvedCreateRetry?:boolean,public closedTargetRecovery=false,public existingDocumentRepairEligible=false,public knownDocId?:string|number,public existingDocumentRepairAttempted=false){super(message);this.name='ProductDocumentBridgeError';}}
 export type ProductDocumentPreview={format:string;requestId:string;identity:ProductReceiptIdentity;identityDigest:string;packetDigest:string;productId:string;fingerprint:string;
   members:ProductReceiptIdentity['members'];reviewDigest:string;preparedBodySha256:string;originalBodySha256:string;liveVerified:boolean;remoteWrites:false;registered:false;draftPreparationAvailable?:boolean;preparedLifecycleAvailable?:boolean;createRetryAvailable?:boolean;createRetryContinuationAvailable?:boolean;existingDocumentRepairAvailable?:boolean};
 export type ProductDocumentSession={packet:ProductDocumentPacket;preview:ProductDocumentPreview;packetDigest:string;origin:string};
@@ -195,7 +195,7 @@ async function verifyDraftState(value:unknown,session:ProductDocumentSession,exp
       // but show its authenticated error after validating the complete reply
       // identity and draft proof instead of hiding every cause as bad JSON.
       if(object(value.error))throw new ProductDocumentBridgeError(`원래 초안(${String(value.state)}) 확인을 중단했습니다. ${String(value.error.message)}`,mutating,'PRODUCT_DOCUMENT_DRAFT_SOURCE_FAILURE',String(value.state),draft.createRetryApproved===true,value.error.code==='CLOSED_TARGET_APPROVAL',
-        action==='recoverDraft'&&session.preview.existingDocumentRepairAvailable===true&&value.state==='update-requested'&&draft.validatedSteps.length===0&&draft.existingDocumentRepairAttempted!==true&&value.error.code==='OWNED_RECORD_MISSING',beforeCreate?undefined:value.docId as string|number);
+        action==='recoverDraft'&&session.preview.existingDocumentRepairAvailable===true&&value.state==='update-requested'&&draft.validatedSteps.length===0&&draft.existingDocumentRepairAttempted!==true&&value.error.code==='OWNED_RECORD_MISSING',beforeCreate?undefined:value.docId as string|number,draft.existingDocumentRepairAttempted===true);
       fail();
     }
     if(signal.aborted)fail();return freeze(copy(value) as unknown as ProductDocumentState);

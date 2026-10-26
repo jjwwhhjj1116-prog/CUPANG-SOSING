@@ -33,6 +33,7 @@ export function SupplierHubProductTransport(props:Props){
   const knownDraftDocument=useRef<{requestId:string;docId:string|number}|null>(null);
   const reviewToken=useMemo(()=>({review}),[review]),reviewEpoch=useRef<typeof reviewToken|null>(reviewToken);
   const [releasedValidation,setReleasedValidation]=useState<{token:object;docId:string|number;rejection:ProductValidationRejection}|null>(null);
+  const [draftReadHint,setDraftReadHint]=useState<{token:object;requestId:string;docId:string|number;state:string}|null>(null);
   useLayoutEffect(()=>{reviewEpoch.current=reviewToken;return()=>{if(reviewEpoch.current===reviewToken)reviewEpoch.current=null;};},[reviewToken]);
   const current=useRef({props,mounted:true,session,state,uncertain,expired,approved,unsaved,intent,intentReady,intentError,draftMode,error,closedTargetNeeded,closedTargetApproved,existingRepairNeeded,existingRepairApproved,existingRepairAttempted}),pending=useRef<AbortController|null>(null),historyPending=useRef<AbortController|null>(null);
   useLayoutEffect(()=>{current.current={props,mounted:true,session,state,uncertain,expired,approved,unsaved,intent,intentReady,intentError,draftMode,error,closedTargetNeeded,closedTargetApproved,existingRepairNeeded,existingRepairApproved,existingRepairAttempted};});
@@ -227,6 +228,7 @@ export function SupplierHubProductTransport(props:Props){
       if(result.error)setError(result.error.message);
     }catch(cause){if(task.alive()){
       if(cause instanceof ProductDocumentBridgeError&&cause.knownDocId!==undefined&&!rememberDraftDocument(activeSession,cause.knownDocId))cause=new ProductDocumentBridgeError('원래 요청에서 확인한 문서번호와 다른 조회 응답입니다. 저장 요청을 진행하지 않았습니다.',false,'PRODUCT_DOCUMENT_DRAFT_REPLY_IDENTITY');
+      rememberDraftReadFailure(cause,activeSession);
       const eligible=cause instanceof ProductDocumentBridgeError&&cause.existingDocumentRepairEligible===true&&!current.current.existingRepairAttempted;
       current.current.existingRepairNeeded=eligible;current.current.existingRepairApproved=false;setExistingRepairNeeded(eligible);setExistingRepairApproved(false);
       if(cause instanceof ProductDocumentBridgeError&&cause.draftState==='create-requested'){setMissingCreate(!cause.closedTargetRecovery);setApprovedRetryPending(cause.approvedCreateRetry===true);setClosedTargetNeeded(cause.closedTargetRecovery);setClosedTargetApproved(false);}
@@ -239,6 +241,13 @@ export function SupplierHubProductTransport(props:Props){
     const prior=knownDraftDocument.current;
     if(prior?.requestId===expected.packet.requestId&&prior.docId!==docId)return false;
     knownDraftDocument.current={requestId:expected.packet.requestId,docId};return true;
+  }
+  function rememberDraftReadFailure(cause:unknown,expected:ProductDocumentSession){
+    // Only the fully verified, pre-lifecycle reply supplies this hint. It is
+    // presentation/read routing, never ownership proof or permission to write.
+    if(!(cause instanceof ProductDocumentBridgeError)||cause.code!=='PRODUCT_DOCUMENT_DRAFT_SOURCE_FAILURE'||cause.knownDocId===undefined||!cause.draftState)return;
+    setDraftReadHint({token:reviewToken,requestId:expected.packet.requestId,docId:cause.knownDocId,state:cause.draftState});
+    if(cause.existingDocumentRepairAttempted){current.current.existingRepairAttempted=true;setExistingRepairAttempted(true);}
   }
   async function operatePrepared(action:PreparedDocumentAction,expected:ProductDocumentSession,challengeId?:string){
     if(!canEnter())return;const before=current.current;
@@ -273,6 +282,7 @@ export function SupplierHubProductTransport(props:Props){
       if(result.receipt?.evidence==='document-receipt'&&!result.needsRecovery){const attempt={packet:activeSession.packet,observation:preparedReceiptObservation(result)};current.current.unsaved=attempt;setUnsaved(attempt);await persist(attempt,task);}
     }catch(cause){if(task.alive()){
       if(cause instanceof ProductDocumentBridgeError&&cause.knownDocId!==undefined&&!rememberDraftDocument(activeSession,cause.knownDocId))cause=new ProductDocumentBridgeError('원래 요청에서 확인한 문서번호와 다른 조회 응답입니다. 저장 요청을 진행하지 않았습니다.',false,'PRODUCT_DOCUMENT_DRAFT_REPLY_IDENTITY');
+      rememberDraftReadFailure(cause,activeSession);
       const eligible=cause instanceof ProductDocumentBridgeError&&cause.existingDocumentRepairEligible===true&&!current.current.existingRepairAttempted;
       current.current.existingRepairNeeded=eligible;current.current.existingRepairApproved=false;setExistingRepairNeeded(eligible);setExistingRepairApproved(false);
       if(dispatched&&(cause instanceof ProductDocumentBridgeError?cause.uncertain:true)){current.current.uncertain=true;setUncertain(true);}
@@ -282,6 +292,7 @@ export function SupplierHubProductTransport(props:Props){
   }
   const challenge=state?.challenge,terminal=Boolean(state&&['pending','accepted','rejected','validation-rejected','scope-blocked'].includes(state.state));
   const preparedFlow=Boolean(session?.preview.preparedLifecycleAvailable&&draftMode&&state?.preparedLifecycle);
+  const currentDraftHint=draftReadHint?.token===reviewToken&&draftReadHint.requestId===session?.packet.requestId?draftReadHint:null;
   const canConfirm=Boolean((preparedFlow||session?.preview.liveVerified&&!draftMode&&!state?.draftOnly)&&challenge&&!error&&!expired&&!uncertain&&challenge.items.filter(item=>item.required).every(item=>approved[item.key]));
   const sameReview=Boolean(session&&session.packet.review.reviewDigest===review.reviewDigest
     &&session.packet.review.originalBodySha256===review.originalBodySha256&&session.packet.review.preparedBodySha256===review.preparedBodySha256
@@ -312,9 +323,10 @@ export function SupplierHubProductTransport(props:Props){
     {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&!intent&&!state?.preparedLifecycle&&<p role="status">전체 문서의 실제 접수 연결을 검수 중입니다. 현재 상품은 전송하지 않았습니다.</p>}
     {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.42.zip" download>통합 확장 2.1.42 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
     {session?.preview.draftPreparationAvailable===true&&!state?.preparedLifecycle&&<section aria-label="새 견적 초안 준비">
-      <p>로그인한 Supplier Hub에 새 견적 초안 한 개를 만들고 저장한 이미지·본문과 단계 검증을 확인합니다. 약관 동의와 최종 제출은 진행하지 않습니다.</p>
+      <p>{intent?'원래 요청과 문서의 파일·본문 저장 및 단계 검증 결과를 확인합니다.':'로그인한 Supplier Hub에 새 견적 초안 한 개를 만들고 저장한 이미지·본문과 단계 검증을 확인합니다.'} 약관 동의와 최종 제출은 진행하지 않습니다.</p>
+      {currentDraftHint&&<p role="status">원래 문서 {String(currentDraftHint.docId)} · {currentDraftHint.state==='update-requested'?'파일·본문 저장 결과 미확인':currentDraftHint.state==='validation-requested'?'단계 검증 결과 미확인':'초안 상태 확인 필요'} · 같은 요청 유지</p>}
       {!state&&!uncertain&&!intent&&<button type="button" className="btn primary" disabled={disabled||busy||Boolean(intentError)} onClick={()=>void operateDraft('prepareDraft',session)}>새 견적 초안 만들기 · 제출 안 함</button>}
-      {draftMode&&uncertain&&!state?.preparedLifecycle&&<><p role="status">초안 준비 응답을 확인하지 못했습니다. 같은 초안을 다시 만들지 않고 저장 결과만 조회합니다.</p><button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void(session.preview.preparedLifecycleAvailable?operatePrepared('recoverPreparedDraft',session):operateDraft('recoverDraft',session))}>같은 초안 저장 결과 확인 · 읽기 전용</button></>}
+      {draftMode&&uncertain&&!state?.preparedLifecycle&&<><p role="status">초안 준비 응답을 확인하지 못했습니다. 같은 초안을 다시 만들지 않고 저장 결과만 조회합니다.</p><button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void(session.preview.preparedLifecycleAvailable&&!currentDraftHint?operatePrepared('recoverPreparedDraft',session):operateDraft('recoverDraft',session))}>같은 초안 저장 결과 확인 · 읽기 전용</button></>}
       {draftMode&&uncertain&&existingRepairNeeded&&!existingRepairAttempted&&session.preview.existingDocumentRepairAvailable===true&&!state?.preparedLifecycle&&<section aria-label="같은 문서 1회 저장 복구">
         <p>원래 문서번호·견적 본문을 유지해 회사·상품과 빈 파일 목록을 다시 확인하고, 이 문서에 파일 저장과 본문 업데이트를 한 번 진행합니다. 새 문서는 만들지 않습니다. 이전 저장 결과는 미확정이므로 같은 문서의 저장 요청이 반복될 가능성이 있습니다.</p>
         <label><input type="checkbox" checked={existingRepairApproved} disabled={busy||disabled} onChange={event=>{

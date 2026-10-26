@@ -160,9 +160,9 @@ test('same-document repair validates its new capability and only authenticated m
  f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,preparedLifecycleAvailable:true,existingDocumentRepairAvailable:true});const session=await f.session();
  const missing=()=>draftState(f,'update-requested',{docId:'2347603',needsRecovery:true,error:{code:'OWNED_RECORD_MISSING',message:'원래 문서 2347603 파일 저장 결과 미확인'}});
  f.bridge=async()=>missing();
- await assert.rejects(f.client.runPreparedProductDocument(session,'recoverPreparedDraft',new AbortController().signal),error=>error.code==='PRODUCT_DOCUMENT_DRAFT_SOURCE_FAILURE'&&error.existingDocumentRepairEligible===true&&error.knownDocId==='2347603'&&!error.uncertain);
+ await assert.rejects(f.client.runPreparedProductDocument(session,'recoverPreparedDraft',new AbortController().signal),error=>error.code==='PRODUCT_DOCUMENT_DRAFT_SOURCE_FAILURE'&&error.existingDocumentRepairEligible===true&&error.knownDocId==='2347603'&&!error.existingDocumentRepairAttempted&&!error.uncertain);
  for(const change of [value=>value.error.code='SOURCE_CHANGED',value=>value.draftProof.existingDocumentRepairAttempted=true]){
-  f.bridge=async()=>{const value=missing();change(value);return value;};await assert.rejects(f.client.runProductDocumentDraft(session,'recoverDraft',new AbortController().signal),error=>error.code==='PRODUCT_DOCUMENT_DRAFT_SOURCE_FAILURE'&&!error.existingDocumentRepairEligible);
+  let attempted=false;f.bridge=async()=>{const value=missing();change(value);attempted=value.draftProof.existingDocumentRepairAttempted===true;return value;};await assert.rejects(f.client.runProductDocumentDraft(session,'recoverDraft',new AbortController().signal),error=>error.code==='PRODUCT_DOCUMENT_DRAFT_SOURCE_FAILURE'&&!error.existingDocumentRepairEligible&&error.existingDocumentRepairAttempted===attempted);
  }
  for(const change of [value=>value.identity.company=SINGLE_COMPANIES[1],value=>value.preparedBodySha256='0'.repeat(64),value=>value.draftProof.existingDocumentRepairAttempted=false]){
   f.bridge=async()=>{const value=missing();change(value);return value;};await assert.rejects(f.client.runProductDocumentDraft(session,'recoverDraft',new AbortController().signal),error=>error.code==='PRODUCT_DOCUMENT_DRAFT_REPLY_IDENTITY'&&!error.existingDocumentRepairEligible);
