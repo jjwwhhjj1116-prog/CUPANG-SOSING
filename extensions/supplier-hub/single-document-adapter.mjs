@@ -22,7 +22,7 @@ const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(valu
 const equal=(left,right)=>canonical(left)===canonical(right);
 const copy=value=>structuredClone(value);
 const digest=async value=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(canonical(value)))),byte=>byte.toString(16).padStart(2,'0')).join('');
-const retryPhaseLabels={scope:'승인·회사·탭','baseline-input':'원래 기준 식별값','body-shape':'원래 본문·옵션 구조','body-match':'검증한 원래 본문','list-unfinished':'중간저장 목록','list-requested':'제출요청 목록',duplicate:'동일 상품 문서',baseline:'원래 중간저장 기준','final-scope':'최종 탭·회사',create:'생성 응답'};
+const retryPhaseLabels={scope:'승인·회사·탭','baseline-input':'원래 기준 식별값','body-shape':'원래 본문·옵션 구조','body-document-id':'새 문서 본문의 식별값','body-scope':'원래 문서 본문 종류','body-members':'원래 포함 옵션 목록','body-document-count':'옵션·문서 개수','body-member-order':'옵션 문서 순서','body-product-name':'문서 상품명','body-match':'검증한 원래 본문','list-unfinished':'중간저장 목록','list-requested':'제출요청 목록',duplicate:'동일 상품 문서',baseline:'원래 중간저장 기준','final-scope':'최종 탭·회사',create:'생성 응답'};
 function correlatedRetryFailure(value,binding,operationId){
   const failed=value?.createRetryFailure;if(!failed)return null;
   if(Object.keys(failed).sort().join(',')!=='canContinue,dispatched,format,identityDigest,operationId,packetDigest,phase,requestId'||failed.format!=='yoofam-create-retry-failure-v1'

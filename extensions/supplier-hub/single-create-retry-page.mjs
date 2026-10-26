@@ -38,10 +38,18 @@ export async function singleDocumentRetryCreatePage(input){
  phase='baseline-input';
  const baseline=input.baselineDocIds,body=input.body,members=binding.identity.members;
  if(!Array.isArray(baseline)||baseline.length>10000||baseline.some(v=>!id(v))||new Set(baseline.map(canon)).size!==baseline.length)throw Error('원래 중간저장 기준의 식별값을 확인해주세요.');
- phase='body-shape';
- if(body?.docId!==null||body.scope!=='Retail_Categorized_Single'||!Array.isArray(members)||members.length<1||members.length>200
-  ||!Array.isArray(body.jsonDocument)||body.jsonDocument.length!==members.length||members.some((v,i)=>v.documentIndex!==i)
-  ||typeof body.productName!=='string'||!body.productName.trim())throw Error('원래 견적 본문·포함 옵션·중간저장 기준 목록을 확인해주세요.');
+ phase='body-document-id';
+ if(body?.docId!==null)throw Error('새 문서 본문의 식별값을 확인해주세요.');
+ phase='body-scope';
+ if(body.scope!=='Retail_Categorized_Single')throw Error('새 문서 본문 종류를 확인해주세요.');
+ phase='body-members';
+ if(!Array.isArray(members)||members.length<1||members.length>200)throw Error('원래 포함 옵션 목록을 확인해주세요.');
+ phase='body-document-count';
+ if(!Array.isArray(body.jsonDocument)||body.jsonDocument.length!==members.length)throw Error('원래 옵션과 문서 개수를 확인해주세요.');
+ phase='body-member-order';
+ if(members.some((v,i)=>!v||v.documentIndex!==i))throw Error('원래 옵션 문서 순서를 확인해주세요.');
+ phase='body-product-name';
+ if(typeof body.productName!=='string'||!body.productName.trim())throw Error('원래 문서 상품명을 확인해주세요.');
  // The trusted extension verifies SHA-256 against its fresh native source
  // before injection. Compare the exact verified JSON here without depending
  // on the destination page's cryptographic globals.
@@ -92,7 +100,8 @@ export async function singleDocumentRetryCreatePage(input){
   return{ok,status:response.status,json,ownedRecord:record};
  }finally{clearTimeout(timer);}
  }catch{
-  const messages={scope:'원래 생성 요청의 승인·회사·탭 연결을 확인하지 못했습니다.','baseline-input':'원래 중간저장 기준의 식별값을 확인하지 못했습니다.','body-shape':'승인한 원래 견적서 본문·옵션 구조를 확인하지 못했습니다.','body-match':'검증한 원래 견적서 본문과 다릅니다.',
+  const messages={scope:'원래 생성 요청의 승인·회사·탭 연결을 확인하지 못했습니다.','baseline-input':'원래 중간저장 기준의 식별값을 확인하지 못했습니다.',
+   'body-document-id':'새 문서 본문의 식별값을 확인하지 못했습니다.','body-scope':'원래 문서 본문 종류를 확인하지 못했습니다.','body-members':'원래 포함 옵션 목록을 확인하지 못했습니다.','body-document-count':'원래 옵션과 문서 개수가 다릅니다.','body-member-order':'원래 옵션의 문서 순서가 다릅니다.','body-product-name':'원래 문서 상품명을 확인하지 못했습니다.','body-match':'검증한 원래 견적서 본문과 다릅니다.',
    'list-unfinished':'중간저장 전체 목록을 확인하지 못했습니다.','list-requested':'제출요청 전체 목록을 확인하지 못했습니다.',duplicate:'동일 상품의 원격 문서가 있어 생성하지 않았습니다.',
    baseline:'원래 중간저장 기준 목록이 변경돼 생성하지 않았습니다.','final-scope':'최종 회사·탭·생성 표식 확인을 통과하지 못했습니다.',create:'생성 요청 응답을 확정하지 못했습니다. 같은 요청의 저장 결과만 조회해주세요.'};
   return{ok:false,status:409,json:{errorCode:'CREATE_RETRY_CHECK',message:messages[phase]},createRetryFailure:{format:'yoofam-create-retry-failure-v1',

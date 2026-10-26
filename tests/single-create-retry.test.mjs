@@ -71,6 +71,12 @@ test('read-only inspection retains the original approval but rejects a changed e
  }
 });
 
+test('read-only structural failures identify the exact predicate without reaching any remote request',async()=>{
+ const cases=[['body-document-id',f=>{f.input.body.docId=1;}],['body-scope',f=>{f.input.body.scope='changed';}],['body-members',f=>{f.input.binding.identity.members=null;}],
+  ['body-document-count',f=>{f.input.body.jsonDocument=[];}],['body-member-order',f=>{f.input.binding.identity.members[0].documentIndex=1;}],['body-product-name',f=>{f.input.body.productName='';}]];
+ for(const [phase,change]of cases){const f=pageFixture();f.input.inspectOnly=true;change(f);const result=await f.run();assert.equal(result.createRetryFailure.phase,phase);assert.equal(result.createRetryFailure.dispatched,false);assert.deepEqual(f.calls,[]);assert.deepEqual(f.dataset,{});}
+});
+
 test('unrelated newly submitted activity does not block the original approved retry, while the same title does',async()=>{
  const f=pageFixture({requested:[{docId:2346424,productName:'다른 PP 배수 바구니',modifiedAt:new Date().toISOString()}]});
  f.input.retryCreateApproval.approvedAt-=300000;f.input.retryCreateApproval.originalRequestedAt-=300000;
