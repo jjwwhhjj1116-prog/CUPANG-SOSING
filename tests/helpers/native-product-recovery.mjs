@@ -55,6 +55,7 @@ export async function nativeRecoveryFixture(company=SINGLE_COMPANIES[0],options=
   if(!['nativeProductDocumentAppSourcePage','nativeAssetUploadPage','nativeAssetRecoveryPage'].includes(request.func.name))return execute(request);
   const target=request.func.name==='nativeAssetUploadPage'||request.func.name==='nativeAssetRecoveryPage'?hubContext:appContext;
   target.args=options.browser?.dropNullArguments?JSON.parse(JSON.stringify(request.args,(key,value)=>value===null?undefined:value)):copy(request.args);
+  if(options.browser?.sortObjectArguments){const ordered=value=>Array.isArray(value)?value.map(ordered):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,ordered(value[key])])):value;target.args=ordered(target.args);}
   if(options.corruptFrameBytes&&request.func.name==='nativeAssetUploadPage'){
    const encoded=typeof target.args[0]==='string',input=encoded?JSON.parse(target.args[0]):target.args[0];input.group.parts[0].base64=Buffer.from('corrupt').toString('base64');target.args[0]=encoded?JSON.stringify(input):input;
   }

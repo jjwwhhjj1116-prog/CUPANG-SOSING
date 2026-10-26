@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YOOFAM 스튜디오 · 판매량 조회·상품 수집",
-  "version": "2.1.38",
+  "version": "2.1.39",
   "minimum_chrome_version": "120",
   "description": "쿠팡 판매량 조회, 현재 1688 상품 수집, YOOFAM 스튜디오 AI상품등록과 Supplier Hub 견적서 전달을 하나로 연결합니다.",
   "permissions": [

@@ -503,6 +503,19 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
         if(action!=='recoverDraft')fail('ACTION','새 초안 준비의 읽기 확인 동작을 확인해주세요.');
         if(state.state==='target-requested')fail('TARGET_UNCONFIRMED','새 탭 생성 응답을 확인하지 못했습니다. 새 탭을 다시 만들지 않았습니다.');
         if(['create-requested','update-requested'].includes(state.state)){
+          if(state.state==='update-requested'&&nativeLifecycle&&typeof adapter.inspectUnsentUpdate==='function'){
+            const proof=await call('inspectUnsentUpdate',{tab:state.tab,sessionId:state.sessionId,identity:context.identity,requestId:state.requestId,
+              operationId:state.operationId,docId:state.docId,baselineDocIds:state.baselineDocIds,expectedBody:withDoc(context.packet,state.docId)});
+            if(proof!==null){
+              if(!object(proof)||Object.keys(proof).sort().join(',')!=='checkedAt,docId,draftMetadataMatched,format,identityDigest,operationId,packetDigest,preparedBodySha256,readOnly,remoteWrites,requestId,updateNotRequested,uploadsNotRequested'
+                ||proof.format!=='yoofam-unsent-native-update-v1'||proof.requestId!==state.requestId||proof.operationId!==state.operationId||!same(proof.docId,state.docId)
+                ||proof.identityDigest!==context.identityDigest||proof.packetDigest!==context.packetDigest||proof.preparedBodySha256!==context.bodySha256
+                ||proof.readOnly!==true||proof.draftMetadataMatched!==true||proof.updateNotRequested!==true||proof.uploadsNotRequested!==true||proof.remoteWrites!==false
+                ||!Number.isSafeInteger(proof.checkedAt)||Math.abs(clock()-proof.checkedAt)>60000)
+                fail('UNSENT_UPDATE_UNCONFIRMED','원래 문서의 미전송 저장 확인을 검증하지 못했습니다. 같은 요청을 보관했습니다.');
+              state=await save(context,state,{state:'created',operationId:state.requestId+':create'});return result(state,{recovered:true});
+            }
+          }
           if(state.state==='create-requested'&&state.createRetry?.resumeUsed===true&&typeof adapter.inspectCreateRetry==='function'){
             const inspected=await call('inspectCreateRetry',{tab:state.tab,sessionId:state.sessionId,identity:context.identity,requestId:state.requestId,operationId:state.operationId,
               docId:null,expectedBody:context.packet.body,baselineDocIds:state.baselineDocIds,createRetryApproval:state.createRetry});

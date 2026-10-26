@@ -71,7 +71,7 @@ export function SupplierHubCategoryBrowser({disabled,onChoice,onNavigating}:{dis
   return <div className="hub-category-browser" aria-busy={loading}>
     <div className="workspace-actions"><button className="btn ghost" type="button" disabled={disabled||loading} onClick={()=>void load([])}>카테고리 목록 새로고침</button></div>
     {loading&&<p role="status">하위 카테고리를 불러오는 중입니다.</p>}
-    {error&&<div role="alert"><p>{error}</p><button type="button" className="btn ghost" disabled={disabled||loading} onClick={()=>void load(retryTrail.current)}>다시 불러오기</button><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.38.zip" download>상품 수집·전송 확장 2.1.38</a></div>}
+    {error&&<div role="alert"><p>{error}</p><button type="button" className="btn ghost" disabled={disabled||loading} onClick={()=>void load(retryTrail.current)}>다시 불러오기</button><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.39.zip" download>상품 수집·전송 확장 2.1.39</a></div>}
     <div className="category-tree" role="group" aria-label="단계별 Supplier Hub 카테고리">{branches.map((branch,depth)=>{
       const key=JSON.stringify(branch.trail),chosen=branch.children.findIndex(node=>trail[depth]?.categoryId===node.categoryId||selected===node.categoryId);
       return <section key={key} aria-label={`${depth+1}단계 카테고리`} ref={element=>{if(element)columns.current.set(key,element);else columns.current.delete(key);}}><h3>{depth+1}단계 카테고리</h3><div className="category-tree-options">{branch.children.map((node,index)=>{

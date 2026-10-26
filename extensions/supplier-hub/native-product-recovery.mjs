@@ -33,7 +33,7 @@ export function withNativeProductAssetRecovery(adapter,{api,nativeSha,now=Date.n
   const tabCurrent=async()=>{const tab=await api.tabs.get(input.tab.tabId),url=new URL(tab.url);if(tab.id!==input.tab.tabId||tab.windowId!==input.identity.windowId||tab.pendingUrl||tab.status!=='complete'
    ||url.origin!=='https://supplier.coupang.com'||url.pathname!=='/dashboard/KR'||url.username||url.password||url.search||url.hash)fail();};
   await tabCurrent();
-  const [before]=await api.scripting.executeScript({target:{tabId:input.tab.tabId,frameIds:[0]},func:singleDocumentOwnedRecordPage,args:[binding]});
+  const [before]=await api.scripting.executeScript({target:{tabId:input.tab.tabId,frameIds:[0]},func:singleDocumentOwnedRecordPage,args:[JSON.stringify(binding)]});
   const record=before?.result;if(before?.frameId!==0||typeof before?.documentId!=='string'||!record||!same(record.binding,binding)||!same(record.docId,input.docId)
    ||record.state!=='created'||record.updateOperationId!==undefined||!same(record.baselineDocIds,input.baselineDocIds)||record.baselineDocIds.some(id=>String(id)===String(input.docId)))fail();
   const target={docId:record.docId,requestId:binding.requestId,packetDigest:binding.packetDigest,preparedBodySha256:binding.preparedBodySha256,
@@ -44,7 +44,7 @@ export function withNativeProductAssetRecovery(adapter,{api,nativeSha,now=Date.n
   plan.planSha256=await nativeAssetUploadPlanSha256(plan);
   await tabCurrent();const [readback]=await api.scripting.executeScript({target:{tabId:input.tab.tabId,documentIds:[before.documentId]},func:nativeAssetRecoveryPage,args:[JSON.stringify({binding,target,plan})]});
   await tabCurrent();if(readback?.frameId!==0||readback.documentId!==before.documentId)fail();
-  const [after]=await api.scripting.executeScript({target:{tabId:input.tab.tabId,documentIds:[before.documentId]},func:singleDocumentOwnedRecordPage,args:[binding]});
+  const [after]=await api.scripting.executeScript({target:{tabId:input.tab.tabId,documentIds:[before.documentId]},func:singleDocumentOwnedRecordPage,args:[JSON.stringify(binding)]});
   if(after?.frameId!==0||after.documentId!==before.documentId||!same(after.result,record)||!same(await current(),sourcePlan))fail();
   const observation=readback.result;
   const keys=['format','requestId','docId','packetDigest','identityDigest','sourcePlanSha256','planSha256','groups','observedAt','readOnly','ledgerMutated','unresolved','canContinue','remoteWrites','actualUploadVerified','remoteBytesVerified','registered'];

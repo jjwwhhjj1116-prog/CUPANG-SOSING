@@ -183,23 +183,27 @@ export async function singleDocumentHubRequestPage(input){
 /** Only observed response data is recoverable. A lost in-tab ACK with no new
  * docId cannot be replaced by a name/position/time guess from existing drafts. */
 export function singleDocumentOwnedRecordPage(binding){
+  if(typeof binding==='string')binding=JSON.parse(binding);
+  const canon=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canon).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canon(value[key])).join(',')+'}';
   if(location.origin!=='https://supplier.coupang.com')throw Error('Supplier Hub 탭을 확인해주세요.');
   const codes=Array.from((document.body.innerText||'').matchAll(/Company Code:\s*(A\d+)\b/g),match=>match[1]);
   if(codes.length!==1||codes[0]!==binding.identity.company.code)throw Error('현재 Supplier Hub 회사가 다릅니다.');
   let records;try{records=JSON.parse(document.documentElement.dataset.yoofamSingleDocumentRecords||'{}');}catch{return null;}
   const record=records[binding.packetDigest];
-  if(!record||JSON.stringify(record.binding)!==JSON.stringify(binding))return null;
+  if(!record||canon(record.binding)!==canon(binding))return null;
   return record;
 }
 
 /** Carry only this previously observed own ACK across an authorized same-tab
  * navigation. Browser navigation clears datasets; it does not create ownership. */
 export function singleDocumentRestoreOwnedRecordPage(input){
+  if(typeof input==='string')input=JSON.parse(input);
+  const canon=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canon).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canon(value[key])).join(',')+'}';
   if(location.origin!=='https://supplier.coupang.com'||!/^\/sr\/registration\/step\//.test(location.pathname))throw Error('원래 개별 등록 탭이 아닙니다.');
   const codes=Array.from((document.body.innerText||'').matchAll(/Company Code:\s*(A\d+)\b/g),match=>match[1]);
-  if(codes.length!==1||codes[0]!==input.binding.identity.company.code||JSON.stringify(input.record?.binding)!==JSON.stringify(input.binding)||!input.record.docId)throw Error('원래 새 문서의 관찰 기록을 확인해주세요.');
+  if(codes.length!==1||codes[0]!==input.binding.identity.company.code||canon(input.record?.binding)!==canon(input.binding)||!input.record.docId)throw Error('원래 새 문서의 관찰 기록을 확인해주세요.');
   const data=document.documentElement.dataset,records=JSON.parse(data.yoofamSingleDocumentRecords||'{}'),previous=records[input.binding.packetDigest];
-  if(previous&&JSON.stringify(previous)!==JSON.stringify(input.record))throw Error('더 최신 개별 전송 기록을 보존했습니다.');
+  if(previous&&canon(previous)!==canon(input.record))throw Error('더 최신 개별 전송 기록을 보존했습니다.');
   records[input.binding.packetDigest]=input.record;data.yoofamSingleDocumentRecords=JSON.stringify(records);return true;
 }
 
@@ -396,7 +400,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     // Keep JSON null, zero and empty values across the browser argument
     // boundary. The page restores the exact envelope before its unchanged
     // source/body/owned-document checks; no default or ID is substituted.
-    const jsonPage=[singleDocumentHubRequestPage,singleDocumentRetryCreatePage,nativeAssetUploadPage,nativeAssetRecoveryPage].includes(func);
+    const jsonPage=[singleDocumentHubRequestPage,singleDocumentRetryCreatePage,nativeAssetUploadPage,nativeAssetRecoveryPage,singleDocumentOwnedRecordPage,singleDocumentRestoreOwnedRecordPage].includes(func);
     const wireArgs=jsonPage?[JSON.stringify(args[0]),...args.slice(1)]:args;
     const [execution]=await api.scripting.executeScript({target,func,args:wireArgs});
     const after=await api.tabs.get(tab.tabId);if(!validHubTab(after,identity.windowId)||execution?.frameId!==undefined&&execution.frameId!==0)fail('TAB_CHANGED','개별 등록 탭·프레임이 변경되었습니다.');
@@ -489,6 +493,27 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
       fail('CREATE_RETRY_INSPECTION_BLOCKED','원래 생성 요청의 본문·생성 기록·중복 목록 확인을 통과하지 못했습니다. 새 문서를 만들지 않았습니다.');
     return copy(proof);
   }
+  async function inspectUnsentUpdate(input){
+    if(!nativeSha||input.operationId!==input.requestId+':update')return null;
+    const {binding,record}=await owned(input);
+    const unsent=value=>value&&value.state==='created'&&value.createOperationId===binding.requestId+':create'&&equal(value.docId,input.docId)
+      &&equal(value.baselineDocIds,input.baselineDocIds)&&value.nativeAssets===undefined&&value.updateOperationId===undefined&&value.loadedDocId===undefined&&value.watchToken===undefined;
+    if(!unsent(record))return null;
+    const reviewed=copy(input.expectedBody);reviewed.docId=null;
+    if(await digest(reviewed)!==binding.preparedBodySha256)return null;
+    const response=await execute(input.tab,input.identity,singleDocumentHubRequestPage,[{binding,method:'GET',path:'/sr/draft/api/drafts'}]);
+    const rows=response?.json;
+    if(response?.ok!==true||!Array.isArray(rows)||rows.length>10000)return null;
+    const matches=rows.filter(row=>equal(row?.docId,input.docId));
+    if(matches.length!==1||matches[0].status!=='UNFINISHED')return null;
+    const row=matches[0],fields=['productName','categoryPath','categoryId','displayCategoryCode','scope','productNoticeNumber','version','remark'].filter(key=>Object.hasOwn(input.expectedBody,key));
+    if(fields.some(key=>!Object.hasOwn(row,key)||(['categoryId','displayCategoryCode','productNoticeNumber'].includes(key)
+      ?String(row[key])!==String(input.expectedBody[key]):!equal(row[key],input.expectedBody[key]))))return null;
+    const after=await execute(input.tab,input.identity,singleDocumentOwnedRecordPage,[binding]);
+    if(!unsent(after)||!equal(record,after))return null;
+    return{format:'yoofam-unsent-native-update-v1',requestId:binding.requestId,operationId:input.operationId,docId:input.docId,identityDigest:binding.identityDigest,
+      packetDigest:binding.packetDigest,preparedBodySha256:binding.preparedBodySha256,draftMetadataMatched:true,readOnly:true,updateNotRequested:true,uploadsNotRequested:true,remoteWrites:false,checkedAt:now()};
+  }
   async function qualifyPreparedDraft(input){
     if(!nativeSha)fail('NATIVE_PREPARED_UNCONFIRMED','원본 파일을 확인한 새 문서만 등록 단계를 확인할 수 있습니다.');
     const {binding,record}=await owned(input),sourcePlan=sourceBindings.get(canonical(input.identity))?.nativeSourcePlan;mutable(input.identity);
@@ -511,7 +536,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     return {readOnly:true,docId:record.docId,company:copy(input.identity.company),identityDigest:binding.identityDigest,packetDigest:binding.packetDigest,sourcePlanSha256:nativeSha,metadataObserved:true,checkedAt:observation.observedAt};
   }
   return Object.freeze({readSource,
-    qualifyPreparedDraft,...(nativeSha?{inspectCreateRetry}:{}),
+    qualifyPreparedDraft,...(nativeSha?{inspectCreateRetry,inspectUnsentUpdate}:{}),
     ...(nativeSha?{readOwnedTargetPresence:async input=>{
       const binding=sourceBindings.get(canonical(input.identity))?.binding;
       if(!binding||binding.requestId!==input.requestId||binding.packetDigest!==input.packetDigest||typeof api.tabs.query!=='function')fail('TAB_CHANGED','원래 검증 탭의 존재 여부를 확인하지 못했습니다.');
