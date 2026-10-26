@@ -36,8 +36,13 @@ export async function nativeRecoveryFixture(company=SINGLE_COMPANIES[0],options=
   if(path.endsWith('/supplier-hub-product-receipt'))return jsonResponse(absolute.href,{format:'yoofam-native-receipt-history-v1',productId:p.productId,receipts:state.receipts});
   if(path.endsWith('/legal-documents')){assert.equal(absolute.searchParams.get('key'),legalPlan.files[0].key);const response=new Response(pdf,{headers:{'content-type':'application/pdf'}});Object.defineProperty(response,'url',{value:absolute.href});return response;}
   assert.ok(path.endsWith('/native-assets'),path);
+  if(options.imageBatch&&absolute.searchParams.get('bundle')==='images'){
+   assert.equal(absolute.searchParams.get('sourcePlanSha256'),source.sourcePlanSha256);
+   const files=[...new Map(source.images.map(file=>[file.key,file])).values()].map(file=>({key:file.key,byteLength:file.byteLength,sha256:file.sha256,contentType:file.contentType,base64:Buffer.from(options.badPrivateBytes?png.subarray(1):png).toString('base64')}));
+   return jsonResponse(absolute.href,{format:'yoofam-native-image-batch-v1',sourcePlanSha256:source.sourcePlanSha256,files,registered:false,remoteWrites:false});
+  }
   if(absolute.searchParams.has('key')){const file=source.images.find(file=>file.key===absolute.searchParams.get('key'));assert.ok(file);assert.equal(absolute.searchParams.get('sourcePlanSha256'),source.sourcePlanSha256);const bytes=options.badPrivateBytes?png.subarray(1):png,response=new Response(bytes,{headers:{'content-type':'image/png','x-yoofam-source-plan-sha256':source.sourcePlanSha256,'x-yoofam-file-sha256':file.sha256}});Object.defineProperty(response,'url',{value:absolute.href});return response;}
-  return jsonResponse(absolute.href,state.source);
+  const response=jsonResponse(absolute.href,state.source);if(options.imageBatch)response.headers.set('x-yoofam-native-image-batch','v1');return response;
  };
  const appListeners=[],appContext=vm.createContext({location:new URL(f.sender.url),fetch:appFetch,crypto:webcrypto,AbortController,TextEncoder,TextDecoder,Uint8Array,URL,setTimeout,clearTimeout,Date,Response,structuredClone,btoa,atob,window:{},document:{visibilityState:'visible'},chrome:{runtime:{id:'fixture',sendMessage:async message=>{options.onSourceSessionRead?.(copy(message));return {ok:true,sessionId:options.sourceSessionId??null};},onMessage:{addListener:listener=>appListeners.push(listener)}}}});
  vm.runInContext(fs.readFileSync(new URL('../../extensions/supplier-hub/single-content.js',import.meta.url),'utf8'),appContext);

@@ -17,9 +17,9 @@ export async function GET(request:Request,context:Context){
  const started=Date.now(),phaseMs:Record<string,number>={};let last=started,result='failed';
  const trace=(phase:string)=>{const now=Date.now();phaseMs[phase]=Math.round(now-last);last=now;};
  try{
-  const url=new URL(request.url),params=url.searchParams,profileId=params.get('profileId'),key=params.get('key'),expected=params.get('sourcePlanSha256');
-  if([...params.keys()].some(name=>!['profileId','key','sourcePlanSha256'].includes(name))||['profileId','key','sourcePlanSha256'].some(name=>params.getAll(name).length>1)
-   ||profileId!==null&&!/^\w[\w-]{0,99}$/.test(profileId)||((key===null)!==(expected===null))||expected!==null&&!/^[a-f0-9]{64}$/.test(expected))return reply({error:'현재 원본 파일 계획·프로필 식별값으로 요청해주세요.',code:'NATIVE_ASSET_REQUEST'},400);
+  const url=new URL(request.url),params=url.searchParams,profileId=params.get('profileId'),key=params.get('key'),expected=params.get('sourcePlanSha256'),bundle=params.get('bundle');
+  if([...params.keys()].some(name=>!['profileId','key','sourcePlanSha256','bundle'].includes(name))||['profileId','key','sourcePlanSha256','bundle'].some(name=>params.getAll(name).length>1)
+   ||profileId!==null&&!/^\w[\w-]{0,99}$/.test(profileId)||(bundle!==null?(bundle!=='images'||key!==null||expected===null):((key===null)!==(expected===null)))||expected!==null&&!/^[a-f0-9]{64}$/.test(expected))return reply({error:'현재 원본 파일 계획·프로필 식별값으로 요청해주세요.',code:'NATIVE_ASSET_REQUEST'},400);
   const user=await getChatGPTUser();if(!user?.verifiedAccess)return reply({error:'로그인 후 현재 상품 원본을 확인해주세요.',code:'AUTH_REQUIRED'},503);
   trace('actor');
   const owner=await getWorkspaceOwnerId(),company=approvedSupplierHubCompany(user.membership),member={id:user.membership?.id,email:user.membership?.email,role:user.membership?.role},{id}=await context.params;
@@ -36,9 +36,24 @@ export async function GET(request:Request,context:Context){
   if(!plan||plan.format!=='yoofam-native-asset-source-plan-v1'||plan.registered!==false||plan.remoteWrites!==false||plan.submissionReady!==false||plan.transportReady!==false)throw new SingleAssetError('현재 네이티브 원본 파일 계획을 확인하지 못했습니다.','NATIVE_ASSET_PLAN',503);
   // The loader just finished one complete byte batch and final source fence.
   // No asynchronous file work has happened since; do not repeat that batch.
-  if(key===null){await active();result='plan';return reply(plan);}
+  if(key===null&&bundle===null){await active();result='plan';const response=reply(plan);response.headers.set('x-yoofam-native-image-batch','v1');return response;}
   if(!plan.metadataValid||!plan.sourcePlanSha256||plan.sourcePlanSha256!==expected||!plan.identity||plan.identity.ownerId!==owner||plan.identity.productId!==id||plan.identity.company.code!==company.code||plan.identity.company.name!==company.name)
    return reply({error:'검토한 원본 계획이 현재 상품·회사·저장값과 다릅니다.',code:'NATIVE_ASSET_PLAN_CHANGED'},409);
+  if(bundle==='images'){
+   const unique=new Map<string,typeof plan.images[number]>();
+   for(const file of plan.images){const prior=unique.get(file.key);if(prior&&(prior.sha256!==file.sha256||prior.byteLength!==file.byteLength||prior.contentType!==file.contentType))changed();unique.set(file.key,file);}
+   if(!unique.size||[...unique.values()].reduce((sum,file)=>sum+file.byteLength,0)>8*1024*1024)return reply({error:'이 이미지 묶음은 개별 파일 조회를 사용해주세요.',code:'NATIVE_ASSET_BATCH_LIMIT'},413);
+   const files=[];
+   for(const file of unique.values()){
+    const asset=loaded.nativeAssetSourceAssets.find(asset=>asset.key===file.key)??changed(),bytes=new Uint8Array(asset.data);
+    if(bytes.byteLength!==file.byteLength||bytes.length>MAX_IMAGE_BYTES||imageFileType(bytes).contentType!==file.contentType)changed();
+    const sha256=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),byte=>byte.toString(16).padStart(2,'0')).join('');if(sha256!==file.sha256)changed();
+    let binary='';for(let index=0;index<bytes.length;index+=16384)binary+=String.fromCharCode(...bytes.subarray(index,index+16384));
+    files.push({key:file.key,byteLength:file.byteLength,sha256,contentType:file.contentType,base64:btoa(binary)});
+   }
+   await loaded.nativeAssetSourceGuard();await active();trace('response-fence');result='batch';
+   return reply({format:'yoofam-native-image-batch-v1',sourcePlanSha256:plan.sourcePlanSha256,files,registered:false,remoteWrites:false});
+  }
   const files=plan.images.filter(file=>file.key===key),asset=loaded.nativeAssetSourceAssets.find(file=>file.key===key);
   if(!files.length||!asset||files.some(file=>file.sha256!==files[0].sha256||file.byteLength!==files[0].byteLength||file.contentType!==files[0].contentType))return reply({error:'현재 상품의 원본 계획에 포함된 파일만 조회할 수 있습니다.',code:'NATIVE_ASSET_KEY'},404);
   await active();

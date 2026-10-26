@@ -39,7 +39,8 @@ export async function nativeAssetUploadPage(input){
   if(total>20*1024*1024)fail('브라우저 프레임 전송 범위를 초과했습니다.');parts.push({field,file,bytes});
  }
  const groupKey=group.kind+':'+kindKey,allKeys=[...imageTypes.filter(type=>plan.images.some(file=>file.imageType===type)).map(type=>'image:'+type),...(plan.nativeLegalAttachmentPlan?.groups??[]).map(item=>'legal:'+item.nativeType)],operationId=binding.requestId+':assets:'+groupKey;
- const save=()=>{check();record.nativeAssets=ledger;records[binding.packetDigest]=record;data.yoofamSingleDocumentRecords=JSON.stringify(records);};
+ let ledgerSnapshot=canon(record.nativeAssets??null);
+ const save=()=>{check();if(canon(record.nativeAssets??null)!==ledgerSnapshot)fail('다른 원본 업로드 기록이 먼저 변경되어 중복 요청하지 않았습니다.');record.nativeAssets=ledger;records[binding.packetDigest]=record;data.yoofamSingleDocumentRecords=JSON.stringify(records);ledgerSnapshot=canon(ledger);};
  ledger=record.nativeAssets??{sourcePlanSha256:input.sourcePlanSha256,planSha256:plan.planSha256,groups:{},state:'preparing',remoteBytesVerified:false,actualUploadVerified:false,registered:false};
  if(!allKeys.includes(groupKey)||Object.keys(ledger.groups).some(key=>!allKeys.includes(key)))fail();
  function descriptors(rows,files){

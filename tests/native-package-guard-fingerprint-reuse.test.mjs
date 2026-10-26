@@ -14,8 +14,8 @@ async function fixture(company=companies[0],alter){
 for(const company of companies)test(company.code+': identical full DTOs reuse only pure fingerprint calculation while current source and file guards still run',async()=>{
  const f=await fixture(company);try{
   const before=f.state(),objects=f.objectState(),response=await f.get(),plan=await json(response);
-  assert.equal(plan.metadataValid,true);assert.equal(f.counts.fingerprints,1);assert.equal(f.counts.reads,3,'initial source and full current-source proofs before/after native bytes');
-  const firstReads=f.counts.reads;await json(await f.get());assert.equal(f.counts.fingerprints,2,'another request must calculate its own initial fingerprint');assert.equal(f.counts.reads,firstReads+3);
+  assert.equal(plan.metadataValid,true);assert.equal(f.counts.fingerprints,1);assert.equal(f.counts.reads,2,'complete initial snapshot and final full saved values around native bytes');
+  const firstReads=f.counts.reads;await json(await f.get());assert.equal(f.counts.fingerprints,2,'another request must calculate its own initial fingerprint');assert.equal(f.counts.reads,firstReads+2);
   assert.equal(f.state(),before);assert.equal(f.objectState(),objects);
  }finally{f.close();}
 });
@@ -28,7 +28,7 @@ test('same source clocks with changed full DTO content still use the original fi
 
 test('a changed registration display number falls back to its equal original fingerprint and stays allowed',async()=>{
  const f=await fixture(companies[0],(value,reads)=>{if(reads>1)value.product.registration_number=987654;});try{
-  assert.equal((await json(await f.get())).metadataValid,true);assert.equal(f.counts.fingerprints,3);assert.equal(f.counts.reads,3);
+  assert.equal((await json(await f.get())).metadataValid,true);assert.equal(f.counts.fingerprints,2);assert.equal(f.counts.reads,2);
  }finally{f.close();}
 });
 
@@ -42,6 +42,6 @@ test('undefined/null, numeric edge and marker-looking string values cannot colli
 
 test('custom inherited and accessor DTOs always keep the original fingerprint path',async()=>{
  for(const mode of ['prototype','accessor']){const f=await fixture(companies[0],value=>{if(mode==='prototype')Object.setPrototypeOf(value,Object.assign(Object.create(null),{inherited:'untrusted'}));else Object.defineProperty(value,'keyProbe',{get:()=>null,enumerable:true});});try{
-  assert.equal((await json(await f.get())).metadataValid,true);assert.equal(f.counts.fingerprints,3);assert.equal(f.counts.reads,3);
+  assert.equal((await json(await f.get())).metadataValid,true);assert.equal(f.counts.fingerprints,2);assert.equal(f.counts.reads,2);
  }finally{f.close();}}
 });

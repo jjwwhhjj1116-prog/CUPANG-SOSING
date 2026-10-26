@@ -13,9 +13,9 @@ const same=(left:unknown,right:unknown)=>productReceiptCanonical(left)===product
 const copy=<T,>(value:T):T=>JSON.parse(productReceiptCanonical(value)) as T;
 const digest=async(value:unknown)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(productReceiptCanonical(value)))),byte=>byte.toString(16).padStart(2,'0')).join('');
 function freeze<T>(value:T):T{if(value&&typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value;}
-export class ProductDocumentBridgeError extends Error{constructor(message:string,public uncertain:boolean,public code='PRODUCT_DOCUMENT_BRIDGE',public draftState?:string,public approvedCreateRetry?:boolean,public closedTargetRecovery=false,public existingDocumentRepairEligible=false,public knownDocId?:string|number,public existingDocumentRepairAttempted=false,public existingDocumentRepairRetryAttempted=false,public existingDocumentRepairRetryEligible=false){super(message);this.name='ProductDocumentBridgeError';}}
+export class ProductDocumentBridgeError extends Error{constructor(message:string,public uncertain:boolean,public code='PRODUCT_DOCUMENT_BRIDGE',public draftState?:string,public approvedCreateRetry?:boolean,public closedTargetRecovery=false,public existingDocumentRepairEligible=false,public knownDocId?:string|number,public existingDocumentRepairAttempted=false,public existingDocumentRepairRetryAttempted=false,public existingDocumentRepairRetryEligible=false,public existingDocumentRepairContinuationAttempted=false){super(message);this.name='ProductDocumentBridgeError';}}
 export type ProductDocumentPreview={format:string;requestId:string;identity:ProductReceiptIdentity;identityDigest:string;packetDigest:string;productId:string;fingerprint:string;
-  members:ProductReceiptIdentity['members'];reviewDigest:string;preparedBodySha256:string;originalBodySha256:string;liveVerified:boolean;remoteWrites:false;registered:false;draftPreparationAvailable?:boolean;preparedLifecycleAvailable?:boolean;createRetryAvailable?:boolean;createRetryContinuationAvailable?:boolean;existingDocumentRepairAvailable?:boolean;existingDocumentRepairRetryAvailable?:boolean};
+  members:ProductReceiptIdentity['members'];reviewDigest:string;preparedBodySha256:string;originalBodySha256:string;liveVerified:boolean;remoteWrites:false;registered:false;draftPreparationAvailable?:boolean;preparedLifecycleAvailable?:boolean;createRetryAvailable?:boolean;createRetryContinuationAvailable?:boolean;existingDocumentRepairAvailable?:boolean;existingDocumentRepairRetryAvailable?:boolean;existingDocumentRepairContinuationAvailable?:boolean};
 export type ProductDocumentSession={packet:ProductDocumentPacket;preview:ProductDocumentPreview;packetDigest:string;origin:string};
 export type ProductValidationError={columnName:string;message:string};
 export type ProductValidationRejection={evidence:'document-validation-rejection';operationId:string;step:number;validatedSteps:number[];checkpointSequence:number;rejectedAt:number;submitted:false;consented:false;errors?:ProductValidationError[]};
@@ -23,10 +23,10 @@ export function productValidationErrorsValid(value:unknown):value is ProductVali
   return Array.isArray(value)&&value.length<=200&&Object.keys(value).length===value.length&&Object.keys(value).every((key,index)=>key===String(index))
     &&value.every(error=>exact(error,['columnName','message'])&&typeof error.columnName==='string'&&error.columnName.length<=500&&typeof error.message==='string'&&error.message.length<=2000);
 }
-export type ProductDraftProof={evidence:'document-draft-preparation';validatedSteps:number[];checkpointSequence:number;observedAt:number;submitted:false;consented:false;createRetryApproved?:true;existingDocumentRepairAttempted?:true;existingDocumentRepairRetryAttempted?:true};
+export type ProductDraftProof={evidence:'document-draft-preparation';validatedSteps:number[];checkpointSequence:number;observedAt:number;submitted:false;consented:false;createRetryApproved?:true;existingDocumentRepairAttempted?:true;existingDocumentRepairRetryAttempted?:true;existingDocumentRepairContinuationAttempted?:true};
 export type PreparedLifecycleProof={evidence:'native-prepared-draft-lifecycle';preparedCheckpointSequence:number;qualifiedCheckpointSequence:number;checkpointSequence:number;qualifiedAt:number;observedAt:number;validatedSteps:number[];consentRequested:boolean;submitRequested:boolean};
 export type ProductDocumentState=SingleDocumentState&{duplicate?:boolean;recovered?:boolean;validationRejection?:ProductValidationRejection;draftOnly?:true;draftProof?:ProductDraftProof;preparedLifecycle?:true;lifecycleProof?:PreparedLifecycleProof};
-export type ProductDraftAction='prepareDraft'|'recoverDraft'|'retryCreateDraft'|'resumeCreateRetryDraft'|'recoverClosedTarget'|'repairExistingDraft'|'retryExistingDraftRepair';
+export type ProductDraftAction='prepareDraft'|'recoverDraft'|'retryCreateDraft'|'resumeCreateRetryDraft'|'recoverClosedTarget'|'repairExistingDraft'|'retryExistingDraftRepair'|'continueApprovedRepair';
 export type PreparedDocumentAction='reviewPreparedDraft'|'confirmPreparedDraft'|'recoverPreparedDraft'|'observePreparedDraft';
 export type ProductReceiptSaveAttempt={packet:ProductDocumentPacket;observation:ProductDocumentState};
 type Scope={productId:string;profileId?:string};
@@ -52,7 +52,7 @@ export function productDocumentExchange(action:'preview'|SingleDocumentAction|Pr
     if(signal.aborted){reject(new ProductDocumentBridgeError('전체 상품 견적 작업을 취소했습니다.',false));return;}
     productReceiptCanonical(packet);
     const confirming=action==='confirm'||action==='confirmPreparedDraft';
-    if(!['preview','start','resume','recover','confirm','observe','prepareDraft','recoverDraft','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','repairExistingDraft','retryExistingDraftRepair','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(action)||confirming&&!confirmation||!confirming&&confirmation){reject(new ProductDocumentBridgeError('현재 전체 상품 문서의 동의 동작을 확인해주세요.',false));return;}
+    if(!['preview','start','resume','recover','confirm','observe','prepareDraft','recoverDraft','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','repairExistingDraft','retryExistingDraftRepair','continueApprovedRepair','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(action)||confirming&&!confirmation||!confirming&&confirmation){reject(new ProductDocumentBridgeError('현재 전체 상품 문서의 동의 동작을 확인해주세요.',false));return;}
     if(confirmation)productReceiptCanonical(confirmation);
     const requestId=crypto.randomUUID(),mutating=!['preview','observe','recover','recoverDraft','recoverPreparedDraft','observePreparedDraft'].includes(action);
     const cleanup=()=>{clearTimeout(timer);window.removeEventListener('message',receive);signal.removeEventListener('abort',abort);};
@@ -78,8 +78,11 @@ export function productDocumentExchange(action:'preview'|SingleDocumentAction|Pr
     // Native recovery independently rechecks the current private source and
     // the original saved document. Its read-only reply can exceed 60 seconds;
     // allow it to arrive without retrying or extending any consent/packet TTL.
-    const nativeReadback=['recoverDraft','recoverPreparedDraft','observePreparedDraft','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','repairExistingDraft','retryExistingDraftRepair'].includes(action);
-    const timer=setTimeout(()=>{cleanup();reject(new ProductDocumentBridgeError('전체 상품 문서 응답이 없습니다. 같은 요청을 다시 전송하지 말고 저장 결과를 조회해주세요.',mutating,'PRODUCT_DOCUMENT_ACK_MISSING'));},nativeReadback?180000:confirming||action==='prepareDraft'||action==='reviewPreparedDraft'?120000:action==='preview'?PRODUCT_DOCUMENT_PREVIEW_ACK_TIMEOUT:60000);
+    const nativeReadback=['recoverDraft','recoverPreparedDraft','observePreparedDraft','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','repairExistingDraft','retryExistingDraftRepair','continueApprovedRepair'].includes(action);
+    // Continue the already-approved bounded work without timing out its UI
+    // before the source/duplicate/file checks finish. This does not extend a
+    // packet/consent TTL and never retries a message or remote request.
+    const timer=setTimeout(()=>{cleanup();reject(new ProductDocumentBridgeError('전체 상품 문서 응답이 없습니다. 같은 요청을 다시 전송하지 말고 저장 결과를 조회해주세요.',mutating,'PRODUCT_DOCUMENT_ACK_MISSING'));},action==='continueApprovedRepair'?240000:nativeReadback?180000:confirming||action==='prepareDraft'||action==='reviewPreparedDraft'?120000:action==='preview'?PRODUCT_DOCUMENT_PREVIEW_ACK_TIMEOUT:60000);
     window.addEventListener('message',receive);signal.addEventListener('abort',abort,{once:true});
     try{window.postMessage({channel:'YOOFAM_HUB_HANDOFF',requestId,type:'PRODUCT_DOCUMENT',payload:{action,packet,...(confirmation?{confirmation}:{})}},window.location.origin);}
     catch{cleanup();reject(new ProductDocumentBridgeError('확장 전달 응답을 확인하지 못했습니다. 원래 저장 결과를 조회해주세요.',mutating));}
@@ -90,7 +93,7 @@ export async function previewProductDocument(packet:ProductDocumentPacket,signal
   const expected=await proof(packet,origin);if(signal.aborted)throw new ProductDocumentBridgeError('전체 상품 견적 확인을 취소했습니다.',false);
   const result=await productDocumentExchange('preview',packet,signal);
   try{
-    if(signal.aborted||!exact(result,['format','requestId','identity','identityDigest','packetDigest','productId','fingerprint','members','reviewDigest','preparedBodySha256','originalBodySha256','liveVerified','remoteWrites','registered'],['draftPreparationAvailable','preparedLifecycleAvailable','createRetryAvailable','createRetryContinuationAvailable','existingDocumentRepairAvailable','existingDocumentRepairRetryAvailable'])
+    if(signal.aborted||!exact(result,['format','requestId','identity','identityDigest','packetDigest','productId','fingerprint','members','reviewDigest','preparedBodySha256','originalBodySha256','liveVerified','remoteWrites','registered'],['draftPreparationAvailable','preparedLifecycleAvailable','createRetryAvailable','createRetryContinuationAvailable','existingDocumentRepairAvailable','existingDocumentRepairRetryAvailable','existingDocumentRepairContinuationAvailable'])
       ||result.format!==FORMAT||result.requestId!==packet.requestId||result.productId!==packet.review.identity.productId||result.fingerprint!==packet.review.identity.fingerprint
       ||!same(result.members,packet.review.members)||result.reviewDigest!==packet.review.reviewDigest||result.originalBodySha256!==expected.originalBodySha256||result.preparedBodySha256!==expected.preparedBodySha256
       ||result.packetDigest!==expected.packetDigest||!HASH.test(String(result.identityDigest))||typeof result.liveVerified!=='boolean'||result.remoteWrites!==false||result.registered!==false
@@ -98,6 +101,7 @@ export async function previewProductDocument(packet:ProductDocumentPacket,signal
       ||result.createRetryAvailable!==undefined&&typeof result.createRetryAvailable!=='boolean'||result.createRetryAvailable===true&&result.draftPreparationAvailable!==true
       ||result.createRetryContinuationAvailable!==undefined&&typeof result.createRetryContinuationAvailable!=='boolean'||result.createRetryContinuationAvailable===true&&result.createRetryAvailable!==true
       ||result.existingDocumentRepairAvailable!==undefined&&typeof result.existingDocumentRepairAvailable!=='boolean'||result.existingDocumentRepairAvailable===true&&result.draftPreparationAvailable!==true
+      ||result.existingDocumentRepairContinuationAvailable!==undefined&&(typeof result.existingDocumentRepairContinuationAvailable!=='boolean'||result.existingDocumentRepairContinuationAvailable===true&&result.existingDocumentRepairRetryAvailable!==true)
       ||result.existingDocumentRepairRetryAvailable!==undefined&&typeof result.existingDocumentRepairRetryAvailable!=='boolean'||result.existingDocumentRepairRetryAvailable===true&&result.existingDocumentRepairAvailable!==true)throw Error();
     await verifyIdentity(result.identity,expected,result.identityDigest);
     if(signal.aborted)throw Error();return freeze({packet:copy(packet),preview:copy(result) as unknown as ProductDocumentPreview,packetDigest:expected.packetDigest,origin});
@@ -149,11 +153,12 @@ async function verifyProductDocumentState(value:unknown,session:ProductDocumentS
 /** Explicitly prepare only the new draft. This capability never enables the
  * general start/resume/terms/submit transport or manufactures a receipt. */
 export async function runProductDocumentDraft(session:ProductDocumentSession,action:ProductDraftAction,signal:AbortSignal):Promise<ProductDocumentState>{
-  if(!['prepareDraft','recoverDraft','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','repairExistingDraft','retryExistingDraftRepair'].includes(action)||session.preview.draftPreparationAvailable!==true)throw new ProductDocumentBridgeError('새 견적 초안 준비를 지원하는 통합 확장으로 자료를 다시 확인해주세요.',false,'PRODUCT_DOCUMENT_DRAFT_UNAVAILABLE');
+  if(!['prepareDraft','recoverDraft','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','repairExistingDraft','retryExistingDraftRepair','continueApprovedRepair'].includes(action)||session.preview.draftPreparationAvailable!==true)throw new ProductDocumentBridgeError('새 견적 초안 준비를 지원하는 통합 확장으로 자료를 다시 확인해주세요.',false,'PRODUCT_DOCUMENT_DRAFT_UNAVAILABLE');
   if(action==='retryCreateDraft'&&session.preview.createRetryAvailable!==true)throw new ProductDocumentBridgeError('1회 재시도를 지원하는 최신 통합 확장으로 연결해주세요.',false,'PRODUCT_DOCUMENT_RETRY_UNAVAILABLE');
   if(action==='resumeCreateRetryDraft'&&session.preview.createRetryContinuationAvailable!==true)throw new ProductDocumentBridgeError('승인된 생성 재시도 연결을 지원하는 최신 통합 확장으로 연결해주세요.',false,'PRODUCT_DOCUMENT_RETRY_UNAVAILABLE');
   if(action==='repairExistingDraft'&&session.preview.existingDocumentRepairAvailable!==true)throw new ProductDocumentBridgeError('같은 문서의 1회 저장 복구를 지원하는 최신 통합 확장으로 자료를 다시 확인해주세요.',false,'PRODUCT_DOCUMENT_REPAIR_UNAVAILABLE');
   if(action==='retryExistingDraftRepair'&&session.preview.existingDocumentRepairRetryAvailable!==true)throw new ProductDocumentBridgeError('추가 1회 복구를 지원하는 통합 확장으로 연결해주세요.',false,'PRODUCT_DOCUMENT_REPAIR_RETRY_UNAVAILABLE');
+  if(action==='continueApprovedRepair'&&session.preview.existingDocumentRepairContinuationAvailable!==true)throw new ProductDocumentBridgeError('승인된 복구의 남은 저장을 지원하는 통합 확장으로 연결해주세요.',false,'PRODUCT_DOCUMENT_REPAIR_CONTINUATION_UNAVAILABLE');
   if(window.location.origin!==session.origin||!ORIGINS.includes(session.origin))throw new ProductDocumentBridgeError('원래 앱에서 새 견적 초안 요청을 확인해주세요.',false);
   const mutating=action!=='recoverDraft',expected=await proof(session.packet,session.origin,!mutating);
   const fail=():never=>{throw new ProductDocumentBridgeError('새 초안 응답의 원래 회원·문서·본문 또는 제출 전 검증 기록을 확인하지 못했습니다. 같은 초안의 저장 결과를 조회해주세요.',mutating,'PRODUCT_DOCUMENT_DRAFT_REPLY_IDENTITY');};
@@ -176,7 +181,8 @@ async function verifyDraftState(value:unknown,session:ProductDocumentSession,exp
     await verifyIdentity(value.identity,expected,value.identityDigest);
     const beforeCreate=['prepared','target-requested','target-created','create-requested'].includes(String(value.state)),draft=value.draftProof;
     if(beforeCreate?value.docId!==null:!identifier(value.docId))fail();
-    if(!exact(draft,['evidence','validatedSteps','checkpointSequence','observedAt','submitted','consented'],['createRetryApproved','existingDocumentRepairAttempted','existingDocumentRepairRetryAttempted'])||!Array.isArray(draft.validatedSteps)||draft.createRetryApproved!==undefined&&draft.createRetryApproved!==true
+    if(!exact(draft,['evidence','validatedSteps','checkpointSequence','observedAt','submitted','consented'],['createRetryApproved','existingDocumentRepairAttempted','existingDocumentRepairRetryAttempted','existingDocumentRepairContinuationAttempted'])||!Array.isArray(draft.validatedSteps)||draft.createRetryApproved!==undefined&&draft.createRetryApproved!==true
+      ||draft.existingDocumentRepairContinuationAttempted!==undefined&&(draft.existingDocumentRepairContinuationAttempted!==true||draft.existingDocumentRepairRetryAttempted!==true)
       ||draft.existingDocumentRepairRetryAttempted!==undefined&&(draft.existingDocumentRepairRetryAttempted!==true||draft.existingDocumentRepairAttempted!==true)
       ||draft.existingDocumentRepairAttempted!==undefined&&draft.existingDocumentRepairAttempted!==true||draft.existingDocumentRepairAttempted===true&&(beforeCreate||value.state==='created'))return fail();
     if(draft.evidence!=='document-draft-preparation'||draft.validatedSteps.length>4||!same(draft.validatedSteps,[2,3,4,5].slice(0,draft.validatedSteps.length))
@@ -193,13 +199,13 @@ async function verifyDraftState(value:unknown,session:ProductDocumentSession,exp
         ||Object.hasOwn(rejected,'errors')&&!productValidationErrorsValid(rejected.errors))fail();
     }else if(value.validationRejection!==undefined)fail();
     if(value.error!==undefined&&(!exact(value.error,['code','message'])||typeof value.error.code!=='string'||value.error.code.length>100||typeof value.error.message!=='string'||value.error.message.length>2000))fail();
-    if((action==='recoverDraft'||action==='retryCreateDraft'||action==='resumeCreateRetryDraft'||action==='repairExistingDraft'||action==='retryExistingDraftRepair')&&value.recovered!==true){
+    if((action==='recoverDraft'||action==='retryCreateDraft'||action==='resumeCreateRetryDraft'||action==='repairExistingDraft'||action==='retryExistingDraftRepair'||action==='continueApprovedRepair')&&value.recovered!==true){
       // A failed read is not a recovered checkpoint. Retain the reservation,
       // but show its authenticated error after validating the complete reply
       // identity and draft proof instead of hiding every cause as bad JSON.
       if(object(value.error))throw new ProductDocumentBridgeError(`원래 초안(${String(value.state)}) 확인을 중단했습니다. ${String(value.error.message)}`,mutating,'PRODUCT_DOCUMENT_DRAFT_SOURCE_FAILURE',String(value.state),draft.createRetryApproved===true,value.error.code==='CLOSED_TARGET_APPROVAL',
         action==='recoverDraft'&&session.preview.existingDocumentRepairAvailable===true&&value.state==='update-requested'&&draft.validatedSteps.length===0&&draft.existingDocumentRepairAttempted!==true&&value.error.code==='OWNED_RECORD_MISSING',beforeCreate?undefined:value.docId as string|number,draft.existingDocumentRepairAttempted===true,draft.existingDocumentRepairRetryAttempted===true,
-        action==='recoverDraft'&&session.preview.existingDocumentRepairRetryAvailable===true&&value.state==='update-requested'&&draft.validatedSteps.length===0&&draft.existingDocumentRepairAttempted===true&&draft.existingDocumentRepairRetryAttempted!==true&&value.error.code==='OWNED_RECORD_MISSING');
+        action==='recoverDraft'&&session.preview.existingDocumentRepairRetryAvailable===true&&value.state==='update-requested'&&draft.validatedSteps.length===0&&draft.existingDocumentRepairAttempted===true&&draft.existingDocumentRepairRetryAttempted!==true&&value.error.code==='OWNED_RECORD_MISSING',draft.existingDocumentRepairContinuationAttempted===true);
       fail();
     }
     if(signal.aborted)fail();return freeze(copy(value) as unknown as ProductDocumentState);

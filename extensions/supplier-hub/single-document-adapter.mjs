@@ -383,7 +383,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     const recovery=input.receiptRecovery;
     if(recovery!==undefined&&(!nativeSha||!recovery||Object.keys(recovery).sort().join(',')!=='sessionId,submitRequestedAt'||!ID.test(recovery.sessionId||'')||!Number.isSafeInteger(recovery.submitRequestedAt)||recovery.submitRequestedAt<1||recovery.submitRequestedAt>now()+5000||input.docId===null||input.docId===undefined))fail('SOURCE_CHANGED','이미 제출한 원래 문서의 읽기 확인 연결이 다릅니다.');
     const binding={identity:copy(input.identity),identityDigest:await digest(input.identity),packetDigest:input.packetDigest,preparedBodySha256:input.preparedBodySha256,originalBodySha256:input.bodySha256,sessionId:recovery?.sessionId??response.sessionId,requestId:input.requestId,...(nativeSha?{nativeAssetSourcePlanSha256:nativeSha}:{})};
-    sourceBindings.set(canonical(input.identity),{input:copy(input),binding,readOnlyReceipt:recovery!==undefined,...(nativeSha?{nativeSourcePlan:copy(fresh.result.sourcePlan)}:{})});
+    sourceBindings.set(canonical(input.identity),{input:copy(input),binding,readOnlyReceipt:recovery!==undefined,...(nativeSha?{nativeSourcePlan:copy(fresh.result.sourcePlan),imageBatchAvailable:fresh.result.imageBatchAvailable===true}:{})});
     return {current:true,submissionReady:true,priorDocumentClear:true,identity:copy(response.identity),bodySha256:response.bodySha256,sessionId:response.sessionId};
   }
   async function readSource(input){
@@ -469,8 +469,24 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     if(nativeSha&&input.method==='POST'&&input.path==='/sr/draft/api/update'){
       const readCurrent=async()=>{const current=await owned({...input,docId:input.body?.docId}),record=current.record,sourcePlan=sourceBindings.get(canonical(input.identity))?.nativeSourcePlan;
         return{binding:current.binding,sourcePlan,target:{docId:record.docId,requestId:current.binding.requestId,packetDigest:current.binding.packetDigest,preparedBodySha256:current.binding.preparedBodySha256,createOperationId:record.createOperationId,baselineDocIds:copy(record.baselineDocIds)}};};
-      const current=await readCurrent(),scope=sourceBindings.get(canonical(input.identity)),privateBytes=new Map(),privateReads=new Map();
+      const current=await readCurrent(),scope=sourceBindings.get(canonical(input.identity)),privateBytes=new Map(),privateReads=new Map();let imageBatch;
+      const imageFiles=[...new Map(current.sourcePlan.images.map(file=>[file.key,file])).values()];
+      const canBatch=scope.imageBatchAvailable===true&&imageFiles.length>0&&imageFiles.reduce((sum,file)=>sum+file.byteLength,0)<=8*1024*1024;
+      const readImageBatch=async()=>{
+        if(!imageBatch)imageBatch=(async()=>{
+          await appCurrent(input.identity);const reply=await readAppDocumentSource(api,input.identity,{...copy(scope.input),action:'images'},'native',sourceAppTabId);await appCurrent(input.identity);
+          if(reply?.current!==true||!equal(reply.identity,input.identity)||!equal(reply.sourcePlan,current.sourcePlan)||reply.bodySha256!==binding.originalBodySha256||reply.preparedBodySha256!==binding.preparedBodySha256
+            ||!Array.isArray(reply.files)||reply.files.length!==imageFiles.length)fail('SOURCE_CHANGED','현재 이미지 묶음의 원본 계획이 다릅니다.');
+          const seen=new Set(),verified=[];
+          for(const value of reply.files){const file=imageFiles.find(file=>file.key===value?.key);if(!file||seen.has(value.key)||value.sha256!==file.sha256||value.byteLength!==file.byteLength||value.contentType!==file.contentType)fail('SOURCE_CHANGED','이미지 묶음의 파일 연결이 다릅니다.');
+            const bytes=nativeProductAssetBytes(value.base64);if(bytes.length!==file.byteLength)fail('SOURCE_CHANGED','이미지 묶음의 실제 원본 크기가 다릅니다.');seen.add(file.key);verified.push([canonical([file.key,file.sha256,file.byteLength,file.contentType]),bytes]);}
+          // Publish no partial cache: every part is independently hashed again
+          // by multipart preparation before the first upload can be constructed.
+          for(const [key,bytes]of verified)privateBytes.set(key,bytes);
+        })();return imageBatch;
+      };
       const readPrivate=async(action,file)=>{const key=canonical([file.key,file.sha256,file.byteLength,file.contentType]),cached=privateBytes.get(key);if(cached)return cached.slice();
+        if(action==='image'&&canBatch){await readImageBatch();const bytes=privateBytes.get(key);if(!bytes)fail('SOURCE_CHANGED','원본 묶음에 요청한 파일이 없습니다.');return bytes.slice();}
         let pending=privateReads.get(key);if(!pending){pending=(async()=>{await appCurrent(input.identity);const reply={frameId:0,result:await readAppDocumentSource(api,input.identity,{...copy(scope.input),action,file:copy(file)},'native',sourceAppTabId)};await appCurrent(input.identity);
           if(reply?.frameId!==undefined&&reply.frameId!==0||reply?.result?.current!==true||!equal(reply.result.identity,input.identity)||!equal(reply.result.sourcePlan,current.sourcePlan)||reply.result.bodySha256!==binding.originalBodySha256||reply.result.preparedBodySha256!==binding.preparedBodySha256||reply.result.file?.sha256!==file.sha256||reply.result.file?.byteLength!==file.byteLength)fail('SOURCE_CHANGED','현재 앱의 원본 파일·버전 연결을 확인하지 못했습니다.');
           const bytes=nativeProductAssetBytes(reply.result.file.base64);privateBytes.set(key,bytes);return bytes;})();privateReads.set(key,pending);}
@@ -605,8 +621,22 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     const after=await owned(input);if(!equal(after.record,record)||!equal(sourceBindings.get(canonical(input.identity))?.nativeSourcePlan,sourcePlan))fail('NATIVE_PREPARED_UNCONFIRMED','파일 조회 중 원래 새 문서·원본이 변경되었습니다.');
     return {readOnly:true,docId:record.docId,company:copy(input.identity.company),identityDigest:binding.identityDigest,packetDigest:binding.packetDigest,sourcePlanSha256:nativeSha,metadataObserved:true,checkedAt:observation.observedAt};
   }
+  async function inspectExistingRepairContinuation(input){
+    if(!nativeSha||input.operationId!==input.requestId+':update'||input.repair?.attempt!==2)fail('EXISTING_REPAIR_CONTINUATION','승인된 추가 복구의 남은 저장만 확인할 수 있습니다.');
+    const {binding,record}=await owned(input),repair=record.recoveryRepair;
+    if(!repair||!equal(Object.fromEntries(Object.keys(input.repair).map(key=>[key,repair[key]])),input.repair))fail('EXISTING_REPAIR_CONTINUATION','원래 추가 복구 기록과 다릅니다.');
+    const response=JSON.parse(await execute(input.tab,input.identity,singleExistingDocumentRepairPage,[{...copy(input),binding,mode:'inspect-continuation',expectedRecord:record}]));
+    const proof=response?.proof;
+    if(response?.record!==null||!proof||proof.format!=='yoofam-existing-repair-continuation-inspection-v1'||proof.requestId!==binding.requestId||!equal(proof.docId,input.docId)
+      ||proof.operationId!==input.operationId||proof.packetDigest!==binding.packetDigest||proof.identityDigest!==binding.identityDigest||proof.preparedBodySha256!==binding.preparedBodySha256
+      ||proof.sourcePlanSha256!==nativeSha||proof.repairSha256!==await digest(input.repair)||proof.ledgerSha256!==await digest(record.nativeAssets)||proof.recordSha256!==await digest(record)
+      ||!HASH.test(proof.metadataSha256||'')||!['original-exact','server-unreadable'].includes(proof.bodyState)||proof.duplicateMatches!==0||proof.updateNotRequested!==true
+      ||proof.readOnly!==true||proof.remoteWrites!==false||!Number.isSafeInteger(proof.checkedAt)||Math.abs(now()-proof.checkedAt)>60000)fail('EXISTING_REPAIR_CONTINUATION','남은 복구의 문서·회사·미요청 증거를 확인하지 못했습니다.');
+    const after=await owned(input);if(!equal(after.record,record))fail('EXISTING_REPAIR_CONTINUATION','조회 중 원래 업로드 기록이 변경됐습니다.');
+    return copy(proof);
+  }
   return Object.freeze({readSource,
-    qualifyPreparedDraft,...(nativeSha?{inspectCreateRetry,inspectUnsentUpdate,inspectExistingDocument,bindExistingDocumentRepair:input=>inspectExistingDocument(input,'bind')}:{}),
+    qualifyPreparedDraft,...(nativeSha?{inspectCreateRetry,inspectUnsentUpdate,inspectExistingDocument,inspectExistingRepairContinuation,bindExistingDocumentRepair:input=>inspectExistingDocument(input,'bind')}:{}),
     ...(nativeSha?{readOwnedTargetPresence:async input=>{
       const binding=sourceBindings.get(canonical(input.identity))?.binding;
       if(!binding||binding.requestId!==input.requestId||binding.packetDigest!==input.packetDigest||typeof api.tabs.query!=='function')fail('TAB_CHANGED','원래 검증 탭의 존재 여부를 확인하지 못했습니다.');

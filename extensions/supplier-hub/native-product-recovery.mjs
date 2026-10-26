@@ -75,5 +75,13 @@ export function withNativeProductAssetRecovery(adapter,{api,nativeSha,now=Date.n
   const error=new SingleDocumentError('NATIVE_ASSET_RECOVERY_READ_ONLY',`원래 문서의 파일 목록 ${listed}/${total}개를 조회했습니다. 원격 파일의 용량·형식·원본 바이트와 문서 저장 결과는 미확정입니다. 같은 요청을 보관했습니다.`);
   error.observation=observation;throw error;
  };
- return Object.freeze({...adapter,readSource,recoverWrite,inspectNativeAssets});
+ const inspectRepairContinuation=async input=>{
+  if(typeof adapter.inspectExistingRepairContinuation!=='function'||input.repair?.attempt!==2)fail();
+  const assets=await inspectNativeAssets(input);
+  if(!assets.groups.some(group=>group.requestState==='observed')||!assets.groups.some(group=>group.requestState==='not-requested')
+   ||assets.groups.some(group=>!['observed','not-requested'].includes(group.requestState)||group.state!==(group.requestState==='observed'?'metadata-current':'not-requested')))fail();
+  const inspection=await adapter.inspectExistingRepairContinuation(input);
+  return{format:'yoofam-approved-repair-continuation-v1',inspection,assets};
+ };
+ return Object.freeze({...adapter,readSource,recoverWrite,inspectNativeAssets,inspectRepairContinuation});
 }

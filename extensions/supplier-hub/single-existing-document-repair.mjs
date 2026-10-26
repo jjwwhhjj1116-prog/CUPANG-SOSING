@@ -10,7 +10,8 @@ export async function singleExistingDocumentRepairPage(input){
  const same=(a,b)=>canon(a)===canon(b),hash=async value=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(canon(value)))),byte=>byte.toString(16).padStart(2,'0')).join('');
  const fail=message=>{throw Error(message);},binding=input?.binding,docId=input?.docId,body=input?.expectedBody,baseline=input?.baselineDocIds;
  const identifier=value=>Number.isSafeInteger(value)&&value>0||typeof value==='string'&&/^[A-Za-z0-9_-]{1,100}$/.test(value);
- if(!['inspect','bind'].includes(input?.mode)||!binding||!identifier(docId)||!body||!same(body.docId,docId)||body.scope!=='Retail_Categorized_Single'
+ const continuation=input?.mode==='inspect-continuation';let recordSnapshot;
+ if(!['inspect','bind','inspect-continuation'].includes(input?.mode)||!binding||!identifier(docId)||!body||!same(body.docId,docId)||body.scope!=='Retail_Categorized_Single'
   ||input.operationId!==binding.requestId+':update'||!Array.isArray(baseline)||baseline.some(id=>String(id)===String(docId))
   ||!['identityDigest','packetDigest','preparedBodySha256','nativeAssetSourcePlanSha256'].every(key=>/^[a-f0-9]{64}$/.test(binding[key]||'')))fail('원래 생성된 문서의 복구 연결이 다릅니다.');
  const normalized=JSON.parse(JSON.stringify(body));normalized.docId=null;
@@ -20,7 +21,18 @@ export async function singleExistingDocumentRepairPage(input){
   const codes=Array.from((document.body.innerText||'').matchAll(/Company Code:\s*(A\d+)\b/g),match=>match[1]);
   if(codes.length!==1||codes[0]!==binding.identity?.company?.code||({A01526306:'유앤채',A01464742:'와이홉'})[codes[0]]!==binding.identity.company.name)fail('복구 문서의 승인 회사가 다릅니다.');
   let records;try{records=JSON.parse(root.dataset.yoofamSingleDocumentRecords||'{}');}catch{fail('현재 문서 기록을 확인할 수 없습니다.');}
-  if(!records||Array.isArray(records)||Object.keys(records).length>1000||records[binding.packetDigest]||Object.values(records).some(record=>record?.binding?.requestId===binding.requestId||String(record?.docId)===String(docId)))fail('이 문서의 다른 작업 기록이 있어 덮어쓰지 않았습니다.');
+  if(!records||Array.isArray(records)||Object.keys(records).length>1000)fail('이 문서의 다른 작업 기록이 있어 덮어쓰지 않았습니다.');
+  const record=records[binding.packetDigest];
+  if(continuation){
+   const repair=record?.recoveryRepair,expected=input.repair;
+   if(!record||!same(record,input.expectedRecord)||!same(record.binding,binding)||!same(record.docId,docId)||record.state!=='created'
+    ||record.createOperationId!==binding.requestId+':create'||!same(record.baselineDocIds,baseline)||record.updateOperationId!==undefined||record.loadedDocId!==undefined||record.watchToken!==undefined
+    ||!expected||expected.attempt!==2||expected.format!=='yoofam-existing-document-repair-retry-v1'||!repair||!same(Object.fromEntries(Object.keys(expected).map(key=>[key,repair[key]])),expected)
+    ||!record.nativeAssets||record.nativeAssets.state!=='preparing'||record.nativeAssets.sourcePlanSha256!==binding.nativeAssetSourcePlanSha256
+    ||!Object.values(record.nativeAssets.groups??{}).length||Object.values(record.nativeAssets.groups).some(group=>group?.state!=='observed')
+    ||recordSnapshot!==undefined&&canon(record)!==recordSnapshot)fail('승인된 복구의 미요청 파일·본문 연결이 달라 이어 저장하지 않았습니다.');
+   recordSnapshot=canon(record);
+  }else if(record||Object.values(records).some(record=>record?.binding?.requestId===binding.requestId||String(record?.docId)===String(docId)))fail('이 문서의 다른 작업 기록이 있어 덮어쓰지 않았습니다.');
   return records;
  };
  check();const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),30000);
@@ -43,6 +55,13 @@ export async function singleExistingDocumentRepairPage(input){
   if(fields.some(key=>!Object.hasOwn(row,key)||(['categoryId','displayCategoryCode','productNoticeNumber'].includes(key)?String(row[key])!==String(body[key]):!same(row[key],body[key]))))fail('원래 문서의 상품·카테고리·양식이 변경되어 복구하지 않았습니다.');
   const doc=encodeURIComponent(String(docId)),remoteBody=await read('/sr/draft/api/get-by-id/'+doc,false,true);
   if(!remoteBody.unreadable){const value=remoteBody.json,keys=Object.keys(body);if(!value||!same(value.docId,docId)||value.status!=='UNFINISHED'||!same(Object.fromEntries(keys.map(key=>[key,value[key]])),body))fail('서버 문서 본문이 원래 요청과 달라 덮어쓰지 않았습니다.');}
+  if(continuation){
+   const record=check()[binding.packetDigest];
+   return JSON.stringify({proof:{format:'yoofam-existing-repair-continuation-inspection-v1',requestId:binding.requestId,operationId:input.operationId,docId,
+    identityDigest:binding.identityDigest,packetDigest:binding.packetDigest,preparedBodySha256:binding.preparedBodySha256,sourcePlanSha256:binding.nativeAssetSourcePlanSha256,
+    repairSha256:await hash(input.repair),ledgerSha256:await hash(record.nativeAssets),recordSha256:await hash(record),metadataSha256:await hash(row),
+    bodyState:remoteBody.unreadable?'server-unreadable':'original-exact',duplicateMatches:0,updateNotRequested:true,readOnly:true,remoteWrites:false,checkedAt:Date.now()},record:null});
+  }
   const images=(await read('/sr/draft/api/get-images-by-id/'+doc)).json;
   if(!Array.isArray(images)||images.length)fail('원래 문서에 파일이 있어 자동으로 다시 업로드하지 않았습니다.');
   const legalTypes=['import_type','certificate','additional','categoryCert','adCert','msds'];

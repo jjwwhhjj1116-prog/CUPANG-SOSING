@@ -166,6 +166,12 @@ function checkpointValid(state,context){
       ||recovery.phase==='created'&&(state.state!=='create-requested'||state.docId!==null||!same(state.ownedTarget,recovery.previousTarget))
       ||recovery.phase==='bound'&&!same(state.ownedTarget,recovery.target))fail('CHECKPOINT','승인된 닫힌 검증 탭의 원래 요청 연결을 확인해주세요.');
   }
+  if(state.existingDocumentRepairContinuation!==undefined){const next=state.existingDocumentRepairContinuation;
+    if(!state.existingDocumentRepairRetry||!object(next)||Object.keys(next).sort().join(',')!=='docId,format,inspectionSha256,priorSequence,repairSha256,startedAt'
+      ||next.format!=='yoofam-approved-repair-continuation-v1'||!same(next.docId,state.docId)||!HEX.test(next.inspectionSha256||'')||!HEX.test(next.repairSha256||'')
+      ||!Number.isSafeInteger(next.priorSequence)||next.priorSequence<=state.existingDocumentRepairRetry.priorSequence||next.priorSequence>=state.sequence
+      ||!Number.isSafeInteger(next.startedAt)||next.startedAt<state.existingDocumentRepairRetry.startedAt||next.startedAt>state.updatedAt)fail('CHECKPOINT','승인된 복구의 남은 저장 기록이 다릅니다.');
+  }
   if(state.preparedLifecycle!==undefined||state.preparationOrigin!==undefined){const origin=state.preparationOrigin;
     if(state.preparedLifecycle!==true||state.draftOnly!==true||!PREPARED_LIFECYCLE_STATES.has(state.state)||state.validatedSteps.length!==4
       ||!object(origin)||Object.keys(origin).sort().join(',')!=='preparedCheckpointSequence,qualifiedAt,qualifiedCheckpointSequence'||!Number.isSafeInteger(origin.preparedCheckpointSequence)||origin.preparedCheckpointSequence<1
@@ -247,7 +253,7 @@ function result(state,extra={}){
       validatedSteps:clone(state.validatedSteps),checkpointSequence:state.sequence,rejectedAt:state.updatedAt,submitted:false,consented:false,
       errors:state.validationErrors.map(({columnName,message})=>({columnName,message}))}}:{}),
     ...(state.draftOnly===true?state.preparedLifecycle===true?{draftOnly:true,preparedLifecycle:true,lifecycleProof:{evidence:'native-prepared-draft-lifecycle',...clone(state.preparationOrigin),checkpointSequence:state.sequence,observedAt:state.updatedAt,validatedSteps:clone(state.validatedSteps),
-      consentRequested:Boolean(state.stageConsents?.length||state.humanConfirmedAt!==undefined),submitRequested:state.submitRequestedAt!==undefined}}:{draftOnly:true,draftProof:{evidence:'document-draft-preparation',validatedSteps:clone(state.validatedSteps),checkpointSequence:state.sequence,observedAt:state.updatedAt,submitted:false,consented:false,...(state.createRetry?{createRetryApproved:true}:{}),...(state.existingDocumentRepair?{existingDocumentRepairAttempted:true}:{}),...(state.existingDocumentRepairRetry?{existingDocumentRepairRetryAttempted:true}:{})}}:{}),...extra};
+      consentRequested:Boolean(state.stageConsents?.length||state.humanConfirmedAt!==undefined),submitRequested:state.submitRequestedAt!==undefined}}:{draftOnly:true,draftProof:{evidence:'document-draft-preparation',validatedSteps:clone(state.validatedSteps),checkpointSequence:state.sequence,observedAt:state.updatedAt,submitted:false,consented:false,...(state.createRetry?{createRetryApproved:true}:{}),...(state.existingDocumentRepair?{existingDocumentRepairAttempted:true}:{}),...(state.existingDocumentRepairRetry?{existingDocumentRepairRetryAttempted:true}:{}),...(state.existingDocumentRepairContinuation?{existingDocumentRepairContinuationAttempted:true}:{})}}:{}),...extra};
 }
 
 /** Explicit adapters only; importing this module performs no browser/network
@@ -482,6 +488,32 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
       if(action==='recoverClosedTarget')fail('CLOSED_TARGET_SCOPE','문서번호가 없는 원래 승인 요청의 닫힌 전용 탭만 복구할 수 있습니다.');
       const readOnlyReceipt=nativeLifecycle&&state.preparedLifecycle===true&&state.submitRequestedAt!==undefined&&['recoverPreparedDraft','observePreparedDraft'].includes(action);
       await guard(context,state,readOnlyReceipt);
+      if(action==='continueApprovedRepair'){
+        if(!nativeLifecycle||!draftOnly||state.preparedLifecycle||state.state!=='update-requested'||state.docId===null||state.validatedSteps.length
+          ||!state.existingDocumentRepairRetry||state.existingDocumentRepairContinuation!==undefined||state.operationId!==state.requestId+':update'||typeof adapter.inspectRepairContinuation!=='function')
+          fail('EXISTING_REPAIR_CONTINUATION','같은 승인 작업에서 아직 요청하지 않은 저장만 1회 이어갈 수 있습니다.');
+        const proof=await call('inspectRepairContinuation',{tab:state.tab,sessionId:state.sessionId,identity:context.identity,identityDigest:context.identityDigest,requestId:state.requestId,
+          operation:'update',operationId:state.operationId,docId:state.docId,baselineDocIds:state.baselineDocIds,expectedBody:withDoc(context.packet,state.docId),repair:state.existingDocumentRepairRetry});
+        const inspection=proof?.inspection,assets=proof?.assets;
+        if(!object(proof)||Object.keys(proof).sort().join(',')!=='assets,format,inspection'||proof.format!=='yoofam-approved-repair-continuation-v1'
+          ||!object(inspection)||inspection.format!=='yoofam-existing-repair-continuation-inspection-v1'||inspection.requestId!==state.requestId||inspection.operationId!==state.operationId||!same(inspection.docId,state.docId)
+          ||inspection.identityDigest!==context.identityDigest||inspection.packetDigest!==context.packetDigest||inspection.preparedBodySha256!==context.bodySha256||inspection.sourcePlanSha256!==context.identity.fingerprint
+          ||inspection.repairSha256!==await digest(state.existingDocumentRepairRetry)||!['ledgerSha256','recordSha256','metadataSha256'].every(key=>HEX.test(inspection[key]||''))
+          ||inspection.updateNotRequested!==true||inspection.duplicateMatches!==0||!['original-exact','server-unreadable'].includes(inspection.bodyState)||inspection.readOnly!==true||inspection.remoteWrites!==false
+          ||!Number.isSafeInteger(inspection.checkedAt)||Math.abs(clock()-inspection.checkedAt)>60000
+          ||!object(assets)||assets.format!=='yoofam-native-asset-recovery-observation-v1'||assets.requestId!==state.requestId||!same(assets.docId,state.docId)
+          ||assets.identityDigest!==context.identityDigest||assets.packetDigest!==context.packetDigest||assets.sourcePlanSha256!==context.identity.fingerprint||!HEX.test(assets.planSha256||'')
+          ||assets.readOnly!==true||assets.ledgerMutated!==false||assets.remoteWrites!==false||assets.canContinue!==false||assets.unresolved!==true
+          ||['actualUploadVerified','remoteBytesVerified','registered'].some(key=>assets[key]!==false)||!Number.isSafeInteger(assets.observedAt)||Math.abs(clock()-assets.observedAt)>180000
+          ||!Array.isArray(assets.groups)||!assets.groups.length||assets.groups.length>11||!assets.groups.some(group=>group.requestState==='observed')||!assets.groups.some(group=>group.requestState==='not-requested')
+          ||assets.groups.some(group=>!['observed','not-requested'].includes(group.requestState)||group.state!==(group.requestState==='observed'?'metadata-current':'not-requested')))
+          fail('EXISTING_REPAIR_CONTINUATION','기존 저장 응답·남은 미요청 파일·중복 조회를 확인하지 못했습니다. 저장하지 않았습니다.');
+        await guard(context,state);
+        state=await save(context,state,{existingDocumentRepairContinuation:{format:'yoofam-approved-repair-continuation-v1',docId:state.docId,priorSequence:state.sequence,startedAt:clock(),repairSha256:inspection.repairSha256,inspectionSha256:await digest(proof)}});
+        const updated=await request(context,state,'POST',SINGLE_DOCUMENT_PATHS.update,withDoc(context.packet,state.docId));
+        if(!object(updated)||updated.errorCode!==undefined&&updated.errorCode!==null&&updated.errorCode!=='')fail('UPDATE_UNCONFIRMED','같은 문서의 이어 저장 응답을 확정하지 못했습니다. 반복하지 않고 읽기로 확인해주세요.');
+        await readDocument(context,state);state=await save(context,state,{state:'updated'});return result(state,{recovered:true});
+      }
       if(action==='repairExistingDraft'||action==='retryExistingDraftRepair'){
         const retry=action==='retryExistingDraftRepair';
         if(!nativeLifecycle||!draftOnly||state.preparedLifecycle||state.state!=='update-requested'||state.docId===null||state.validatedSteps.length
@@ -692,6 +724,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
     recoverClosedTarget:(packet,sender)=>operate(packet,sender,'recoverClosedTarget'),
     repairExistingDraft:(packet,sender)=>operate(packet,sender,'repairExistingDraft'),
     retryExistingDraftRepair:(packet,sender)=>operate(packet,sender,'retryExistingDraftRepair'),
+    continueApprovedRepair:(packet,sender)=>operate(packet,sender,'continueApprovedRepair'),
     retryCreateDraft:(packet,sender)=>operate(packet,sender,'retryCreateDraft'),
     resumeCreateRetryDraft:(packet,sender)=>operate(packet,sender,'resumeCreateRetryDraft'),
     reviewPreparedDraft:(packet,sender)=>operate(packet,sender,'reviewPreparedDraft'),confirmPreparedDraft:(packet,sender,confirmation)=>operate(packet,sender,'confirmPreparedDraft',confirmation),

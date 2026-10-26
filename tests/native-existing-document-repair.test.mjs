@@ -42,6 +42,72 @@ async function reservedFirstRepairWithoutDispatch(f){
  f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords='{}';await f.recordMirror.flush();return first;
 }
 
+async function partialApprovedRepair(company=SINGLE_COMPANIES[0],browser={}){
+ let interrupted=true;
+ const f=await pendingFixture(company,{repairBodyFailure:true,browser,imageBatch:true,beforeNativeAppFetch:async(_url,_init,state)=>{if(interrupted&&state.uploads.includes('MAIN'))throw Error('synthetic source failure after MAIN ACK');}});
+ try{
+  const first=await reservedFirstRepairWithoutDispatch(f),result=await f.receiver.retryExistingDraftRepair(f.packet,f.sender);
+  assert.equal(result.state,'update-requested',JSON.stringify(result));assert.equal(result.draftProof.existingDocumentRepairRetryAttempted,true);
+  const record=JSON.parse(marker(f))[f.context.packetDigest];assert.equal(record.nativeAssets.groups['image:MAIN'].state,'observed');assert.equal(record.updateOperationId,undefined);
+  assert.deepEqual(f.state.uploads,['MAIN']);assert.equal(updated(f).length,0);interrupted=false;
+  return{...f,first,partialRecord:copy(record)};
+ }catch(error){f.close();throw error;}
+}
+
+for(const company of SINGLE_COMPANIES)test(`${company.code}: continuation preserves both approvals and observed MAIN, sends only unrequested groups and one original update`,async()=>{
+ const f=await partialApprovedRepair(company);try{
+  const result=await f.receiver.continueApprovedRepair(f.packet,f.sender);assert.equal(result.state,'updated',JSON.stringify(result));
+  assert.equal(result.docId,f.createdDocId);assert.equal(result.draftProof.existingDocumentRepairContinuationAttempted,true);
+  const checkpoint=await f.storage.store.get(f.context.key);assert.deepEqual(checkpoint.existingDocumentRepair,f.first);
+  assert.deepEqual(checkpoint.existingDocumentRepairRetry.priorRepair,f.first);assert.equal(checkpoint.existingDocumentRepairContinuation.format,'yoofam-approved-repair-continuation-v1');
+  assert.deepEqual(f.state.uploads,['MAIN','ADDITIONAL','LABEL','DETAIL']);assert.equal(updated(f).length,1);
+  assert.equal(f.state.appReads.filter(url=>new URL(url).searchParams.get('bundle')==='images').length,2,'one bounded image read for each original/continued preparation');
+  assert.equal(f.state.appReads.filter(url=>new URL(url).pathname.endsWith('/native-assets')&&new URL(url).searchParams.has('key')).length,0,'batch support avoids one full source scan per image');
+  const current=JSON.parse(marker(f))[f.context.packetDigest];assert.deepEqual(current.nativeAssets.groups['image:MAIN'],f.partialRecord.nativeAssets.groups['image:MAIN']);
+  const writes=copy(documentWrites(f)),again=await f.receiver.continueApprovedRepair(f.packet,f.sender);assert.ok(again.error);assert.deepEqual(documentWrites(f),writes);unchanged(f);
+ }finally{f.close();}
+});
+
+test('continuation refuses an unknown upload ACK, an update marker or a duplicate document without reserving or writing',async()=>{
+ for(const kind of ['unknown-upload','update-marker','duplicate']){const f=await partialApprovedRepair();try{
+  if(kind==='duplicate')f.documents.set(f.createdDocId+1,{...copy(f.documents.get(f.createdDocId)),docId:f.createdDocId+1});
+  else{const records=JSON.parse(marker(f)),record=records[f.context.packetDigest];
+   if(kind==='unknown-upload')record.nativeAssets.groups['image:MAIN']={operationId:f.packet.requestId+':assets:image:MAIN',state:'requested'};
+   else record.updateOperationId=f.packet.requestId+':update';
+   f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords=JSON.stringify(records);}
+  const before=copy(await f.storage.store.get(f.context.key)),result=await f.receiver.continueApprovedRepair(f.packet,f.sender);assert.ok(result.error,kind);
+  assert.deepEqual(await f.storage.store.get(f.context.key),before);assert.deepEqual(f.state.uploads,['MAIN']);assert.equal(updated(f).length,0);unchanged(f);
+ }finally{f.close();}}
+});
+
+test('two continuation receivers reserve the same remaining work only once',async()=>{
+ const f=await partialApprovedRepair();try{
+  const other=createProductDocumentDraftReceiver({adapter:f.adapter,store:f.storage.store});
+  const results=await Promise.allSettled([f.receiver.continueApprovedRepair(f.packet,f.sender),other.continueApprovedRepair(f.packet,f.sender)]);
+  assert.equal(results.filter(value=>value.status==='fulfilled'&&value.value.state==='updated').length,1);
+  assert.deepEqual(f.state.uploads,['MAIN','ADDITIONAL','LABEL','DETAIL']);assert.equal(updated(f).length,1);unchanged(f);
+ }finally{f.close();}
+});
+
+test('lost continuation update ACK keeps both repair audits and cannot repeat any remaining upload or update',async()=>{
+ const browser={},f=await partialApprovedRepair(undefined,browser);try{
+  browser.loseExecuteAck='singleDocumentHubRequestPage';browser.losePath='/sr/draft/api/update';
+  const result=await f.receiver.continueApprovedRepair(f.packet,f.sender);assert.equal(result.state,'update-requested');assert.equal(result.draftProof.existingDocumentRepairContinuationAttempted,true);
+  const before=copy(await f.storage.store.get(f.context.key)),writes=copy(documentWrites(f));
+  assert.deepEqual(before.existingDocumentRepair,f.first);assert.deepEqual(before.existingDocumentRepairRetry.priorRepair,f.first);assert.equal(updated(f).length,1);
+  const again=await f.receiver.continueApprovedRepair(f.packet,f.sender);assert.ok(again.error);assert.deepEqual(documentWrites(f),writes);assert.deepEqual(await f.storage.store.get(f.context.key),before);
+  assert.deepEqual(f.state.uploads,['MAIN','ADDITIONAL','LABEL','DETAIL']);unchanged(f);
+ }finally{f.close();}
+});
+
+test('a corrupted byte in a supported image batch stops before every multipart upload',async()=>{
+ const f=await pendingFixture(undefined,{imageBatch:true,badPrivateBytes:true});try{
+  await reservedFirstRepairWithoutDispatch(f);const result=await f.receiver.retryExistingDraftRepair(f.packet,f.sender);
+  assert.ok(result.error);assert.equal(f.state.appReads.filter(url=>new URL(url).searchParams.get('bundle')==='images').length,1);
+  assert.deepEqual(f.state.uploads,[]);assert.equal(updated(f).length,0);unchanged(f);
+ }finally{f.close();}
+});
+
 for(const company of SINGLE_COMPANIES)test(`${company.code}: separately approved additional repair preserves the first audit and writes the same document at most once`,async()=>{
  const f=await pendingFixture(company,{repairBodyFailure:true});try{
   const first=await reservedFirstRepairWithoutDispatch(f),result=await f.receiver.retryExistingDraftRepair(f.packet,f.sender);

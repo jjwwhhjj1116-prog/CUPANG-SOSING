@@ -184,7 +184,15 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
       await guard();
     }
     const nativeAssetSourceGuard = async () => {
-      await guard();
+      if(nativeReadOnly){
+        // The initial saved/reviewed snapshots already supplied the complete
+        // beginning proof. Recheck their clocks before this byte batch, then
+        // compare the full saved values again at its end. Do not rebuild the
+        // entire projection three times inside one read-only response.
+        await active();
+        const [current,state]=await Promise.all([quotationSourcesCurrent(owner,id,saved.source),readQuotationFields(owner,id)]);
+        if(!current||state.revision!==saved.state.revision)changed();
+      }else await guard();
       // Read-only bytes are withheld until the whole batch's final complete
       // source/config proof. Keep live membership at both batch boundaries,
       // plus each file's metadata and byte digest checks.

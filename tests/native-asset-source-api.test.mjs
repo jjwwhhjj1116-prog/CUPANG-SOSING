@@ -67,7 +67,7 @@ test('native plan GET verifies every private file once in a bounded batch with c
    try{return await get(key);}finally{inFlight--;}
   };
   const plan=await read(await f.send());assert.equal(plan.images.length,7);
-  assert.equal(sourceReads,3,'initial full source plus a complete proof on both sides of native byte validation');
+  assert.equal(sourceReads,2,'initial complete snapshot plus final complete saved values, with a clock fence before bytes');
   for(const file of plan.images)assert.equal(privateReads.get(file.key),2,'initial bytes plus one current native verification: '+file.key);
   assert.equal(maxInFlight,3,'current-byte readers overlap but remain bounded to three');assert.equal(inFlight,0);
   assert.deepEqual(f.h.network,[]);assert.equal([...f.h.objects.keys()].filter(key=>key.startsWith('quotation-public-detail/')).length,0);
@@ -90,9 +90,9 @@ test('synthetic delayed storage measures fewer native plan reads without changin
    await active();results.push({...counts,elapsedMs:Math.round(performance.now()-start),plan:loaded.view.nativeAssetSourcePlan});
   }
   const [previous,current]=results;assert.equal(previous.plan.sourcePlanSha256,current.plan.sourcePlanSha256);
-  assert.equal(previous.sources,8);assert.equal(current.sources,3);assert.equal(previous.gets,23);assert.equal(current.gets,14);
+  assert.equal(previous.sources,8);assert.equal(current.sources,2);assert.equal(previous.gets,23);assert.equal(current.gets,14);
   assert.equal(previous.privateGets,22);assert.equal(current.privateGets,14);
-  assert.ok(current.active<previous.active);assert.equal(current.active,6);
+  assert.ok(current.active<previous.active);assert.equal(current.active,5);
   t.diagnostic('Synthetic 7-image path, 4ms per storage/auth call: '+JSON.stringify(results.map(({plan,...metrics})=>({images:plan.images.length,...metrics}))));
   assert.deepEqual(f.h.network,[]);assert.equal(f.h.sqlite.prepare('SELECT count(*) AS n FROM supplier_hub_receipts').get().n,0);
  }finally{f.close();}
@@ -219,4 +219,37 @@ test('an empty, malformed or absent version never replaces independent current-b
    for(const file of plan.images)assert.equal(storage.reads.get(file.key),2);
   }finally{f.close();}
  }
+});
+
+test('authenticated bounded image batch returns exactly the reviewed unique bytes without changing its plan or any product',async()=>{
+ const f=await fixture();try{
+  const response=await f.send(),plan=await read(response);assert.equal(response.headers.get('x-yoofam-native-image-batch'),'v1');
+  const before=JSON.stringify(f.h.sqlite.prepare('SELECT * FROM products').all()),objects=f.objectState(),batch=await read(await f.send(f.query+'&sourcePlanSha256='+plan.sourcePlanSha256+'&bundle=images'));
+  assert.equal(batch.format,'yoofam-native-image-batch-v1');assert.equal(batch.sourcePlanSha256,plan.sourcePlanSha256);assert.equal(batch.registered,false);assert.equal(batch.remoteWrites,false);
+  const unique=new Map(plan.images.map(file=>[file.key,file]));assert.equal(batch.files.length,unique.size);
+  for(const value of batch.files){const file=unique.get(value.key),bytes=Buffer.from(value.base64,'base64');assert.ok(file);assert.equal(value.contentType,file.contentType);assert.equal(bytes.length,file.byteLength);assert.equal(sha(bytes),file.sha256);assert.deepEqual(bytes,Buffer.from(f.h.objects.get(file.key)));}
+  assert.equal(JSON.stringify(f.h.sqlite.prepare('SELECT * FROM products').all()),before);assert.equal(f.objectState(),objects);assert.deepEqual(f.h.network,[]);
+  for(const suffix of ['&bundle=other','&bundle=images&key='+encodeURIComponent(plan.images[0].key),'&bundle=images&bundle=images'])assert.equal((await f.send(f.query+'&sourcePlanSha256='+plan.sourcePlanSha256+suffix)).status,400);
+  assert.equal((await f.send(f.query+'&sourcePlanSha256='+'f'.repeat(64)+'&bundle=images')).status,409);
+ }finally{f.close();}
+});
+
+test('image batch keeps a final independent scope/byte proof before releasing any base64',async()=>{
+ for(const kind of ['company','bytes','cancel']){const f=await fixture();try{
+  const plan=await read(await f.send()),key=plan.images[0].key,get=f.h.bindings.FILES.get,controller=new AbortController();let reads=0,fired=false;
+  f.h.bindings.FILES.get=async selected=>{const value=await get(selected);if(selected!==key||++reads!==3)return value;fired=true;
+   if(kind==='company')f.h.setCompany(companies[1]);if(kind==='cancel')controller.abort();
+   if(kind==='bytes'){const bytes=new Uint8Array(f.h.objects.get(key));bytes[bytes.length-1]^=1;return {...value,arrayBuffer:async()=>bytes.buffer};}return value;};
+  const response=await f.send(f.query+'&sourcePlanSha256='+plan.sourcePlanSha256+'&bundle=images',controller.signal);assert.equal(fired,true,kind);assert.equal(response.status,409,kind);assert.equal((await response.json()).files,undefined);
+  assert.deepEqual(f.h.network,[]);
+ }finally{f.close();}}
+});
+
+test('an image batch above 8 MiB is rejected without a partial response while individual files remain available',async()=>{
+ const f=await fixture();try{
+  for(const key of f.keys.slice(0,7)){const original=f.h.objects.get(key),bytes=new Uint8Array(1300*1024);bytes.set(original);await f.h.bindings.FILES.put(key,bytes,{httpMetadata:{contentType:'image/png'},customMetadata:{sha256:sha(bytes)}});}
+  const plan=await read(await f.send()),response=await f.send(f.query+'&sourcePlanSha256='+plan.sourcePlanSha256+'&bundle=images');
+  assert.equal(response.status,413);assert.equal((await response.json()).files,undefined);
+  const single=await f.raw(plan,plan.images[0].key);assert.equal(single.status,200);assert.equal((await single.arrayBuffer()).byteLength,plan.images[0].byteLength);assert.deepEqual(f.h.network,[]);
+ }finally{f.close();}
 });

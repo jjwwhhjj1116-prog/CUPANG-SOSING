@@ -87,3 +87,15 @@ test('changed source/private bytes/frame parts and a prior blocked receipt stop 
   assert.equal(f.state.uploads.length,0);assert.equal(f.calls.filter(call=>call.name==='hub-fetch'&&call.url.endsWith('/update')).length,0);assert.equal(f.submitted,0);
  }finally{f.close();}}
 });
+
+test('independent same-group calls cannot overwrite a newer ledger reservation or duplicate multipart uploads',async()=>{
+ const f=await fixture(SINGLE_COMPANIES[0]);try{
+  const common=await f.start(),prior=copy(f.documents.get(f.prior.docId));
+  const results=await Promise.allSettled([f.update(common),f.update(common)]);
+  assert.ok(results.some(result=>result.status==='rejected'));
+  assert.equal(f.state.uploads.filter(type=>type==='MAIN').length,1);
+  assert.equal(f.state.uploads.length,new Set(f.state.uploads).size);
+  assert.ok(f.calls.filter(call=>call.name==='hub-fetch'&&call.url.endsWith('/update')).length<=1);
+  assert.deepEqual(f.documents.get(f.prior.docId),prior);assert.equal(f.submitted,0);
+ }finally{f.close();}
+});

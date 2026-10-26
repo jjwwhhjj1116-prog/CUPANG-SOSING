@@ -25,7 +25,8 @@ export async function nativeProductDocumentAppSourcePage(input){
   const reader=response.body?.getReader();if(!reader)throw readError('SOURCE_READ_RESPONSE',kind);const parts=[];let length=0;try{for(;;){const item=await reader.read();if(controller.signal.aborted)throw readError('SOURCE_READ_TIMEOUT',kind);if(item.done)break;length+=item.value.length;if(length>limit)throw readError('SOURCE_READ_RESPONSE',kind);parts.push(item.value);}}catch(error){throw error?.sourceFailure?error:readError(controller.signal.aborted?'SOURCE_READ_TIMEOUT':'SOURCE_READ_NETWORK',kind);}finally{await reader.cancel().catch(()=>{});}
   const bytes=new Uint8Array(length);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.length;}return{response,bytes};
  }
- const json=async path=>{const value=await read(path,6*1024*1024);try{return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(value.bytes));}catch{throw readError('SOURCE_READ_RESPONSE',resource(path));}};
+ let imageBatchAvailable=false;
+ const json=async(path,limit=6*1024*1024)=>{const value=await read(path,limit);if(path.startsWith('/api/products/')&&path.includes('/native-assets')&&!path.includes('bundle=')&&value.response.headers.get('x-yoofam-native-image-batch')==='v1')imageBatchAvailable=true;try{return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(value.bytes));}catch{throw readError('SOURCE_READ_RESPONSE',resource(path));}};
  function scope(plan){const identity=plan?.identity,source={...expected.source,profileId:expected.profileId};
   // Only an actual native plan with a different review fingerprint may be
   // tested against the separate legacy contract. Transport failure cannot.
@@ -42,8 +43,21 @@ export async function nativeProductDocumentAppSourcePage(input){
   if(await digest(manifest)!==expected.fingerprint||await digest(plan.identity)!==plan.identityDigest||await digest(plan.body)!==input.bodySha256)throw Error('현재 원본 계획의 독립 해시가 다릅니다.');
   const deferred=JSON.parse(JSON.stringify(plan.body));for(const document of deferred.jsonDocument)for(const key of ['msrpAgree','labelContactAgreed'])if(document.imagePage&&Object.hasOwn(document.imagePage,key))document.imagePage[key]=false;
   if(await digest(deferred)!==input.preparedBodySha256)throw Error('파일명 문서의 제출 전 저장값이 다릅니다.');
-  let fileReply;
-  if(input.action==='image'||input.action==='legal'){
+  let fileReply,imageFiles;
+  if(input.action==='images'){
+   const unique=new Map();for(const file of plan.images){const prior=unique.get(file.key);if(prior&&(prior.sha256!==file.sha256||prior.byteLength!==file.byteLength||prior.contentType!==file.contentType))throw Error('동일 원본의 이미지 연결이 다릅니다.');unique.set(file.key,file);}
+   if(!imageBatchAvailable||!unique.size||[...unique.values()].reduce((sum,file)=>sum+file.byteLength,0)>8*1024*1024)throw Error('현재 서버의 이미지 묶음 조회 범위를 확인해주세요.');
+   const batch=await json(path+'?sourcePlanSha256='+expected.fingerprint+'&bundle=images'+(requested===null?'':'&profileId='+encodeURIComponent(requested)),12*1024*1024);
+   if(!batch||Object.keys(batch).sort().join(',')!=='files,format,registered,remoteWrites,sourcePlanSha256'||batch.format!=='yoofam-native-image-batch-v1'||batch.sourcePlanSha256!==expected.fingerprint||batch.registered!==false||batch.remoteWrites!==false||!Array.isArray(batch.files)||batch.files.length!==unique.size)throw Error('현재 상품의 이미지 묶음 응답이 다릅니다.');
+   const seen=new Set();imageFiles=[];
+   for(const value of batch.files){const file=unique.get(value?.key);
+    if(!file||Object.keys(value).sort().join(',')!=='base64,byteLength,contentType,key,sha256'||seen.has(value.key)||value.byteLength!==file.byteLength||value.sha256!==file.sha256||value.contentType!==file.contentType
+      ||typeof value.base64!=='string'||value.base64.length!==4*Math.ceil(file.byteLength/3)||!/^[A-Za-z0-9+/]*={0,2}$/.test(value.base64))throw Error('이미지 묶음의 원본 파일 식별값이 다릅니다.');
+    const binary=atob(value.base64),bytes=Uint8Array.from(binary,character=>character.charCodeAt(0));if(bytes.length!==file.byteLength||btoa(binary)!==value.base64||await sha(bytes)!==file.sha256)throw Error('이미지 묶음의 실제 원본 바이트가 다릅니다.');
+    seen.add(value.key);imageFiles.push(value);
+   }
+   const latest=await json(path+query);scope(latest);if(!same(plan,latest))throw Error('이미지 묶음 조회 중 상품·견적·파일이 변경됐습니다.');
+  }else if(input.action==='image'||input.action==='legal'){
    const candidates=input.action==='image'?plan.images:plan.nativeLegalAttachmentPlan?.files,files=candidates?.filter(file=>same(file,input.file));if(files?.length!==1)throw Error('현재 원본 계획에 포함된 정확한 파일만 조회할 수 있습니다.');const file=files[0];
    const filePath=input.action==='image'?path+'?sourcePlanSha256='+expected.fingerprint+'&key='+encodeURIComponent(file.key)+(requested===null?'':'&profileId='+encodeURIComponent(requested)):'/api/products/'+encodeURIComponent(expected.productId)+'/legal-documents?key='+encodeURIComponent(file.key);
    const original=await read(filePath,file.byteLength,file.contentType);if(original.bytes.length!==file.byteLength||await sha(original.bytes)!==file.sha256)throw Error('원본의 실제 길이·해시가 다릅니다.');
@@ -52,7 +66,7 @@ export async function nativeProductDocumentAppSourcePage(input){
    let binary='';for(let offset=0;offset<original.bytes.length;offset+=16384)binary+=String.fromCharCode(...original.bytes.subarray(offset,offset+16384));fileReply={base64:btoa(binary),byteLength:file.byteLength,sha256:file.sha256,contentType:file.contentType};
   }else if(input.action!==undefined&&input.action!=='plan')throw Error('원본 조회 동작을 확인해주세요.');
   const after=await json('/api/supplier-hub/catalog-context');if(!same(before,after)||controller.signal.aborted)throw Error('조회 중 회원 회사가 변경됐습니다.');
-  return{current:true,identity:expected,bodySha256:input.bodySha256,preparedBodySha256:input.preparedBodySha256,checkedAt:Date.now(),sourcePlan:plan,...(fileReply?{file:fileReply}:{})};
+  return{current:true,identity:expected,bodySha256:input.bodySha256,preparedBodySha256:input.preparedBodySha256,checkedAt:Date.now(),sourcePlan:plan,...(imageBatchAvailable?{imageBatchAvailable:true}:{}),...(imageFiles?{files:imageFiles}:{}),...(fileReply?{file:fileReply}:{})};
  }finally{clearTimeout(timer);}
 }
 
