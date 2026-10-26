@@ -30,6 +30,7 @@ export async function nativeRecoveryFixture(company=SINGLE_COMPANIES[0],options=
  const review={format:'yoofam-supplier-hub-product-document-v1',type:'YOOFAM_PRODUCT_DOCUMENT_REVIEW',identity:scope,members:[member],body,originalBodySha256:source.originalBodySha256,preparedBodySha256:source.preparedBodySha256,reviewDigest:null,registered:false,remoteWrites:false,submissionReady:false};review.reviewDigest=digest({format:review.format,type:review.type,identity:scope,members:review.members,originalBodySha256:review.originalBodySha256,preparedBodySha256:review.preparedBodySha256});
  const packet=await createProductDocumentPacket(review),context=await productDocumentIdentity(packet,f.sender),state={company:copy(company),source,uploads:[],appReads:[],lists:0,blocked:false,registry:new Map(),recoveryRequests:[],inspectionRequests:[],repairRequestedRows:[],receipts:[]};
  const appFetch=async(url,init)=>{const absolute=new URL(url,f.sender.url),path=absolute.pathname;state.appReads.push(absolute.href);assert.equal(init.method??'GET','GET');
+  if(options.beforeNativeAppFetch)await options.beforeNativeAppFetch(absolute,init,state);
   if(path.endsWith('/catalog-context'))return jsonResponse(absolute.href,{ownerId:owner,company:state.company});
   if(path.endsWith('/supplier-hub-receipt'))return jsonResponse(absolute.href,{history:{productId:p.productId,blocked:state.blocked}});
   if(path.endsWith('/supplier-hub-product-receipt'))return jsonResponse(absolute.href,{format:'yoofam-native-receipt-history-v1',productId:p.productId,receipts:state.receipts});
@@ -64,6 +65,7 @@ export async function nativeRecoveryFixture(company=SINGLE_COMPANIES[0],options=
  };
  const hubContext=vm.createContext({location:f.hubLocation,document:f.hubDocument,fetch:hubFetch,crypto:webcrypto,AbortController,TextEncoder,TextDecoder,Uint8Array,URL,setTimeout,clearTimeout,Date,Response,structuredClone,FormData,Blob,btoa,atob});
  const inspectionContext=vm.createContext({location:f.hubLocation,document:f.hubDocument,fetch:inspectionFetch,crypto:webcrypto,AbortController,TextEncoder,TextDecoder,Uint8Array,URL,setTimeout,clearTimeout,Date,Response,structuredClone});
+ const recordMirror=f.recordMirror;
  const execute=f.api.scripting.executeScript;f.api.scripting.executeScript=async request=>{
   if(request.target.tabId===f.sender.tab.id)throw Error('Cannot access contents of the app URL. Extension manifest must request permission to access this host.');
   if(!['nativeProductDocumentAppSourcePage','nativeAssetUploadPage','nativeAssetRecoveryPage','singleExistingDocumentRepairPage'].includes(request.func.name))return execute(request);
@@ -79,5 +81,5 @@ export async function nativeRecoveryFixture(company=SINGLE_COMPANIES[0],options=
  const selected=await createVerifiedProductDocumentBrowserAdapter(context,{api:f.api}),adapter=selected.adapter,proof={identity:context.identity,bodySha256:context.originalBodySha256,preparedBodySha256:context.bodySha256,packetDigest:context.packetDigest,requestId:packet.requestId,docId:null};
  const start=async()=>{const source=await adapter.readSource(proof);assert.equal(source.current,true);const target=await adapter.createTarget({identity:context.identity,requestId:packet.requestId,packetDigest:context.packetDigest}),tab=await adapter.readTab({tab:target,identity:context.identity});const common={tab,identity:context.identity,sessionId:source.sessionId,requestId:packet.requestId};await adapter.hubRequest({...common,method:'GET',path:'/sr/draft/api/drafts'});const created=await adapter.hubRequest({...common,method:'POST',path:'/sr/draft/api/create',operationId:packet.requestId+':create',body:copy(context.packet.body)});assert.equal(created.json.docId,f.createdDocId);return common;};
  const update=common=>adapter.hubRequest({...common,method:'POST',path:'/sr/draft/api/update',operationId:packet.requestId+':update',body:{...copy(context.packet.body),docId:f.createdDocId}});
- return{...f,packet,context,state,selected,adapter,start,update,reloadSourceSession:async()=>vm.runInContext('yoofamSingleSessionId=crypto.randomUUID();yoofamSingleAccount=null;yoofamSingleSessionBound=false;yoofamSingleAccountChanged=false;',appContext),close:()=>{adapter.dispose();f.close();}};
+ return{...f,packet,context,state,selected,adapter,start,update,recordMirror,reloadSourceSession:async()=>vm.runInContext('yoofamSingleSessionId=crypto.randomUUID();yoofamSingleAccount=null;yoofamSingleSessionBound=false;yoofamSingleAccountChanged=false;',appContext),close:()=>{recordMirror.close();adapter.dispose();f.close();}};
 }

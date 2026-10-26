@@ -127,7 +127,7 @@ test('native preview rejects invalid source bridge facts, stale responses, chang
   }
 });
 
-test('a company or saved body change after the first positive bridge proof is rejected by the independent current-source read',async()=>{
+test('a company or saved body change after the first positive bridge proof is rejected by the current-source fences',async()=>{
   for(const mode of ['company','body','revision']){
     const f=await nativeRecoveryFixture(SINGLE_COMPANIES[1]);try{
       const send=f.api.tabs.sendMessage;let reads=0;
@@ -137,7 +137,8 @@ test('a company or saved body change after the first positive bridge proof is re
         if(mode==='revision')f.state.source.identity.source.optionRevision++;
       }return result;};
       f.calls.length=0;f.state.appReads.length=0;const before=snapshot(f);
-      await assert.rejects(preview(f),{code:'SOURCE_CHANGED'});assert.equal(reads,1);
+      await assert.rejects(preview(f),{code:'SOURCE_CHANGED'});
+      assert.ok(reads===1||reads===2,'the concurrent source read or its final bridge fence must reject before any Hub action');
       const expected=JSON.parse(before);if(mode==='body')expected.source.body.jsonDocument[0].startPage.productName='later saved body';if(mode==='revision')expected.source.identity.source.optionRevision++;
       sourceOnly(f,JSON.stringify(expected));
     }finally{f.close();}

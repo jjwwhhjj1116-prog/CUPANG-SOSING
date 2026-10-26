@@ -38,6 +38,20 @@ async function fixture(company=companies[0],legal=true){
 }
 function mutableLegal(prepared){return{...prepared,groups:prepared.groups.map(group=>({...group,parts:group.parts.map(part=>({...part}))}))};}
 
+test('private image reads overlap in bounded batches and preserve wire order despite reversed completion',{timeout:3000},async()=>{
+ const f=await fixture(undefined,false);let active=0,peak=0;const waiting=[];
+ f.options.readImage=image=>new Promise(resolve=>{active++;peak=Math.max(peak,active);waiting.push(()=>{active--;resolve(f.originals.get(image.key));});if(waiting.length===3){const batch=waiting.splice(0);for(const complete of batch.reverse())complete();}});
+ const result=await prepareNativeAssetMultipart(f.plan,f.options);assert.equal(peak,3);assert.equal(active,0);assert.equal(result.bytesVerified,true);
+ const additional=result.requests.find(row=>row.imageType==='ADDITIONAL');assert.deepEqual(additional.files.map(file=>file.transportName),f.plan.images.filter(file=>file.imageType==='ADDITIONAL').map(file=>file.transportName));
+});
+
+test('a failed byte batch settles its slow peer and never starts the next batch',{timeout:3000},async()=>{
+ const f=await fixture(undefined,false);let release,startedResolve,reads=0,settled=false;const started=new Promise(resolve=>{startedResolve=resolve;});
+ f.options.readImage=async image=>{const index=reads++;if(reads===3)startedResolve();if(index===0)throw Error('synthetic failed private read');if(index===1)return new Promise(resolve=>{release=()=>resolve(f.originals.get(image.key));});return f.originals.get(image.key);};
+ const pending=prepareNativeAssetMultipart(f.plan,f.options);pending.then(()=>{settled=true;},()=>{settled=true;});await started;await Promise.resolve();await Promise.resolve();assert.equal(settled,false);assert.equal(reads,3);
+ release();await assert.rejects(pending,/synthetic failed private read/);assert.equal(reads,3);
+});
+
 test('long generated original image names use unchanged short multipart transport aliases',async()=>{
  const f=await fixture(),file=f.plan.images[0],old=file.key;
  file.originalName=`free-image-00000000-0000-4000-8000-000000000001-${'a'.repeat(64)}-${'b'.repeat(64)}.png`;
@@ -107,7 +121,7 @@ test('private buffers are copied; malformed PNG/JPEG and shared/wrong-length byt
 });
 
 test('input/authority/reader/signal changes or cancellation across an injected read cannot publish stale parts',async()=>{
- for(const kind of ['plan','expected','target','reader','signal','abort']){const f=await fixture(undefined,false),controller=new AbortController();f.options.signal=controller.signal;let reads=0;f.options.readImage=async()=>{reads++;await Promise.resolve();if(kind==='plan')f.plan.identity.inputFingerprint='9'.repeat(64);if(kind==='expected')f.options.expectedIdentity.source.optionRevision++;if(kind==='target')f.options.expectedTarget.docId++;if(kind==='reader')f.options.readImage=async()=>png;if(kind==='signal')f.options.signal=new AbortController().signal;if(kind==='abort')controller.abort();return png;};await assert.rejects(prepareNativeAssetMultipart(f.plan,f.options));assert.equal(reads,1);}
+ for(const kind of ['plan','expected','target','reader','signal','abort']){const f=await fixture(undefined,false),controller=new AbortController();f.options.signal=controller.signal;let reads=0;f.options.readImage=async()=>{reads++;await Promise.resolve();if(kind==='plan')f.plan.identity.inputFingerprint='9'.repeat(64);if(kind==='expected')f.options.expectedIdentity.source.optionRevision++;if(kind==='target')f.options.expectedTarget.docId++;if(kind==='reader')f.options.readImage=async()=>png;if(kind==='signal')f.options.signal=new AbortController().signal;if(kind==='abort')controller.abort();return png;};await assert.rejects(prepareNativeAssetMultipart(f.plan,f.options));assert.equal(reads,3,'only the already validated, bounded first batch may start; no later batch or upload request is produced');}
 });
 
 test('accessors and special metadata are rejected without executing getters or private readers',async()=>{

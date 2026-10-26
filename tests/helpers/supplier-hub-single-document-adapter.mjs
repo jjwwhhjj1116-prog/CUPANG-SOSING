@@ -3,6 +3,7 @@ import {webcrypto} from 'node:crypto';
 import {createSingleDocumentBrowserAdapter} from '../../extensions/supplier-hub/single-document-adapter.mjs';
 import {createSingleDocumentReceiver,singleDocumentIdentity} from '../../extensions/supplier-hub/single-document.mjs';
 import {singlePacket,SINGLE_SENDER,SINGLE_COMPANIES,sqliteSingleStore,clone} from './supplier-hub-single-document.mjs';
+import {ownedRecordMirrorRuntime} from './owned-record-mirror.mjs';
 
 const jsonCopy=value=>JSON.parse(JSON.stringify(value));
 const response=(url,json,status=200,contentType='application/json')=>{
@@ -84,6 +85,7 @@ export async function singleBrowserFixture(company=SINGLE_COMPANIES[0],options={
       if(selector==='button[type="submit"]')return [advance];if(selector==='button')return [companyButton];return [];
     },querySelector:selector=>selector==='#root__title'?element({innerText:title()}):selector==='.text-primary'?element({innerText:f.submitted?'상품 등록 완료':''}):null};
   f.hubDocument=hubDocument;f.hubLocation=hubLocation;
+  const recordMirror=ownedRecordMirrorRuntime(hubDocument,hubLocation);let mirrorDocumentId=f.hubDocumentId;f.recordMirror=recordMirror;
   const appFetch=async(url,init)=>{
     calls.push({name:'app-fetch',url,init:{...init,signal:undefined}});f.appReads++;
     if(options.beforeAppFetch)await options.beforeAppFetch(url,init,f);
@@ -150,6 +152,11 @@ export async function singleBrowserFixture(company=SINGLE_COMPANIES[0],options={
   },scripting:{executeScript:async request=>{
     calls.push({name:'execute',func:request.func.name,target:clone(request.target)});
     if(request.target.documentIds&&!request.target.documentIds.includes(f.hubDocumentId))throw Error('Synthetic browser document changed');
+    if(request.func.name==='singleRecordMirrorPage'){
+      if(mirrorDocumentId!==f.hubDocumentId){recordMirror.reset();mirrorDocumentId=f.hubDocumentId;}
+      const input=typeof request.args[0]==='string'?JSON.parse(request.args[0]):clone(request.args[0]);
+      return [{frameId:options.frameId??0,documentId:f.hubDocumentId,result:recordMirror.run(input)}];
+    }
     const target=request.target.tabId===appTab.id?appContext:hubContext,first=typeof request.args?.[0]==='string'?JSON.parse(request.args[0]):request.args?.[0];
     target.args=options.dropNullArguments?JSON.parse(JSON.stringify(request.args??[],(key,value)=>value===null?undefined:value)):clone(request.args??[]);
     if(options.sortObjectArguments){const ordered=value=>Array.isArray(value)?value.map(ordered):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,ordered(value[key])])):value;target.args=ordered(target.args);}
@@ -165,5 +172,5 @@ export async function singleBrowserFixture(company=SINGLE_COMPANIES[0],options={
   for(const name of ['onUpdated','onDetached','onRemoved','onReplaced'])api.tabs[name]=requestEvent();
   f.api=api;f.adapter=createSingleDocumentBrowserAdapter({api,now:clock});f.receiver=createSingleDocumentReceiver({adapter:f.adapter,store:storage.store,now:clock});
   f.action=started=>({action:['productPage','imagePage'].includes(started.challenge.stage)?'confirm-and-continue':'confirm-and-submit',...(started.challenge.stage?{stage:started.challenge.stage}:{}),userInitiated:true,challengeId:started.challenge.id,confirmedAt:clock(),approvedKeys:started.challenge.items.filter(item=>item.required).map(item=>item.key)});
-  f.close=()=>{f.adapter.dispose();f.hubEvent('pointerdown');storage.db.close();};return f;
+  f.close=()=>{recordMirror.close();f.adapter.dispose();f.hubEvent('pointerdown');storage.db.close();};return f;
 }

@@ -155,7 +155,13 @@ export async function prepareNativeAssetMultipart(input,options){
   const bytes=bytesCopy(await Blob.prototype.arrayBuffer.call(file),metadata.byteLength);stable();
   if(!/^%PDF-\d\.\d/.test(new TextDecoder().decode(bytes.subarray(0,8)))||!/%%EOF[\t\n\r ]*$/.test(new TextDecoder().decode(bytes.subarray(Math.max(0,bytes.length-1024))))||await byteDigest(bytes)!==metadata.sha256)fail('PDF_BYTES');stable();parts.push({metadata,bytes});
  }legalGroups.push({nativeType:group.nativeType,parts});}
- for(const image of plan.images){stable();const bytes=bytesCopy(await readImage(freeze(copy(image))),image.byteLength);stable();if(!imageHeader(bytes,image.contentType))fail('IMAGE_HEADER');if(await byteDigest(bytes)!==image.sha256)fail('BYTE_DIGEST');stable();verified.push({metadata:image,bytes});}
+ // Bound independent private reads to three. No upload request is constructed
+ // until every byte has verified, and a failed batch settles before returning.
+ for(let offset=0;offset<plan.images.length;offset+=3){
+  const batch=await Promise.allSettled(plan.images.slice(offset,offset+3).map(async image=>{stable();const bytes=bytesCopy(await readImage(freeze(copy(image))),image.byteLength);stable();if(!imageHeader(bytes,image.contentType))fail('IMAGE_HEADER');if(await byteDigest(bytes)!==image.sha256)fail('BYTE_DIGEST');stable();return{metadata:image,bytes};}));
+  const rejected=batch.find(value=>value.status==='rejected');if(rejected)throw rejected.reason;
+  stable();verified.push(...batch.map(value=>value.value));
+ }
  if(!verified.length&&!legalGroups.length)fail('EMPTY');stable();
  const requests=[],doc=encodeURIComponent(String(plan.target.docId)),imageGroups=TYPES.filter(type=>verified.some(file=>file.metadata.imageType===type));
  for(const imageType of imageGroups){const selected=verified.filter(file=>file.metadata.imageType===imageType),body=new FormData();for(const {metadata,bytes}of selected)body.append('additionalImageFiles',new Blob([bytes],{type:metadata.contentType}),metadata.transportName);requests.push(Object.freeze({kind:'image',imageType,method:'POST',path:`/sr/draft/api/upload-images/${doc}?imageType=${imageType}`,body,files:freeze(selected.map(({metadata})=>({transportName:metadata.transportName,contentType:metadata.contentType,byteLength:metadata.byteLength,sha256:metadata.sha256})))}));}

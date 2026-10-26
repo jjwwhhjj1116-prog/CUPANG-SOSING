@@ -67,7 +67,7 @@ export async function prepareAndUploadNativeProductAssets({sourcePlan,binding,ta
  if(legal)legalPreparation=await prepareNativeLegalBytes(legal,{expectedIdentity:expected,expectedPlanSha256:legal.planSha256,readOriginal});
  const plan={format:'yoofam-native-asset-upload-plan-v1',identity:expected,identityDigest:sourcePlan.identityDigest,target:expectedTarget,images:copy(sourcePlan.images),nativeLegalAttachmentPlan:legal?copy(legal):null,planSha256:null,registered:false,remoteWrites:false,submissionReady:false,transportReady:false};
  plan.planSha256=await nativeAssetUploadPlanSha256(plan);
- const prepared=await prepareNativeAssetMultipart(plan,{expectedIdentity:expected,expectedTarget,expectedPlanSha256:plan.planSha256,readImage,...(legalPreparation?{legalPreparation}:{})});await current();
+ const prepared=await prepareNativeAssetMultipart(plan,{expectedIdentity:expected,expectedTarget,expectedPlanSha256:plan.planSha256,readImage,...(legalPreparation?{legalPreparation}:{})});
  const groups=[];
  for(const request of prepared.requests){const parts=[],entries=[...request.body.entries()];if(entries.length!==request.files.length)fail('NATIVE_ASSET_PARTS');let length=0;
   for(let index=0;index<entries.length;index++){const [name,file]=entries[index],metadata=request.files[index],bytes=new Uint8Array(await Blob.prototype.arrayBuffer.call(file));length+=bytes.length;
@@ -77,8 +77,10 @@ export async function prepareAndUploadNativeProductAssets({sourcePlan,binding,ta
   // One Chrome frame call carries one upload group, never the entire 64MiB plan.
   if(length>20*1024*1024)fail('NATIVE_ASSET_FRAME_LIMIT');groups.push({kind:request.kind,...(request.kind==='image'?{imageType:request.imageType}:{nativeType:request.nativeType}),path:request.path,parts});
  }
- const observations=[];
- for(const group of groups){await current();const value=await executeGroup({binding:copy(binding),sourcePlanSha256:sourcePlan.sourcePlanSha256,plan:copy(plan),expectedTarget:copy(expectedTarget),group});await current();
+ const observations=[];await current();
+ // The post-write source fence also precedes the next group; between them only
+ // synchronous descriptor validation runs. Keep a fresh fence around each write.
+ for(const group of groups){const value=await executeGroup({binding:copy(binding),sourcePlanSha256:sourcePlan.sourcePlanSha256,plan:copy(plan),expectedTarget:copy(expectedTarget),group});await current();
   if(value?.metadataObserved!==true||value.remoteBytesVerified!==false||value.actualUploadVerified!==false||value.registered!==false||!same(value.docId,target.docId)||value.planSha256!==plan.planSha256)fail('NATIVE_ASSET_UPLOAD_UNCONFIRMED');
   validateNativeAssetUploadDescriptors(value.descriptors,{kind:group.kind,expectedFiles:group.parts});observations.push(copy(value));
  }

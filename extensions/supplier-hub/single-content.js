@@ -39,9 +39,15 @@ async function verifySingleDocumentSource(expected,wholeProduct=false,nativeAsse
   const account=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
   if(before.ownerId!==identity.ownerId||!same(before.company,identity.company)||account!==identity.accountContext)throw Error('원래 회원 회사로 로그인해주세요.');
   const requested=wholeProduct?identity.requestedProfileId:identity.profileId;
-  const value=await singleReadJson(`/api/products/${encodeURIComponent(identity.productId)}/${nativeAssets?'native-assets':'supplier-hub-single-package'}${requested===null?'':`?profileId=${encodeURIComponent(requested)}`}`);
-  const history=await singleReadJson(`/api/products/${encodeURIComponent(identity.productId)}/supplier-hub-receipt?mode=history`);
-  const native=await singleReadJson(`/api/products/${encodeURIComponent(identity.productId)}/supplier-hub-product-receipt`),after=await singleReadJson('/api/supplier-hub/catalog-context');
+  // These three authenticated reads are independent. Keep both account fences
+  // and await every result before interpreting any source or receipt proof.
+  const reads=await Promise.allSettled([
+    singleReadJson(`/api/products/${encodeURIComponent(identity.productId)}/${nativeAssets?'native-assets':'supplier-hub-single-package'}${requested===null?'':`?profileId=${encodeURIComponent(requested)}`}`),
+    singleReadJson(`/api/products/${encodeURIComponent(identity.productId)}/supplier-hub-receipt?mode=history`),
+    singleReadJson(`/api/products/${encodeURIComponent(identity.productId)}/supplier-hub-product-receipt`),
+  ]);
+  const failed=reads.find(result=>result.status==='rejected');if(failed)throw failed.reason;
+  const [value,history,native]=reads.map(result=>result.value),after=await singleReadJson('/api/supplier-hub/catalog-context');
   const identifier=value=>Number.isSafeInteger(value)&&value>0||typeof value==='string'&&value===value.trim()&&value.length>0&&value.length<=200&&!/[\u0000-\u001f]|\.\.\.|…/.test(value);
   const nativeAllowed=row=>{
     const receipt=row?.receipt,states={SUBMITTED:'pending',FINISHED:'accepted',REJECTED:'rejected'};

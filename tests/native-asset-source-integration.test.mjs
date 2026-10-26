@@ -63,7 +63,7 @@ for(const company of companies)test(`${company.code}: actual private source API 
 test('a saved source edit between planning and multipart reads rejects all preparation without reusing stale filenames',async()=>{
  const f=await fixture();try{
   const u=await uploadFixture(f);f.h.sqlite.prepare('UPDATE products SET updated_at=? WHERE id=?').run('2026-10-20T23:59:59.999Z',f.id);
-  await assert.rejects(prepareNativeAssetMultipart(u.plan,u.options));assert.equal(u.reads,1);
+  await assert.rejects(prepareNativeAssetMultipart(u.plan,u.options));assert.equal(u.reads,Math.min(3,u.source.images.length),'only the initial concurrent batch is read; no upload is constructed');
   assert.deepEqual(f.h.network,[]);assert.equal(f.h.sqlite.prepare('SELECT count(*) AS n FROM supplier_hub_receipts').get().n,0);
  }finally{f.close();}
 });
@@ -71,7 +71,7 @@ test('private same-key binary replacement cannot satisfy the reviewed source pla
  const f=await fixture();try{
   const u=await uploadFixture(f),file=u.source.images[0],bytes=new Uint8Array(f.h.objects.get(file.key));bytes[40]^=1;
   await f.h.bindings.FILES.put(file.key,bytes,{httpMetadata:{contentType:'image/png'},customMetadata:{sha256:sha(bytes)}});
-  await assert.rejects(prepareNativeAssetMultipart(u.plan,u.options));assert.equal(u.reads,1);assert.deepEqual(f.h.network,[]);
+  await assert.rejects(prepareNativeAssetMultipart(u.plan,u.options));assert.equal(u.reads,Math.min(3,u.source.images.length),'a rejected byte check prevents every subsequent batch');assert.deepEqual(f.h.network,[]);
  }finally{f.close();}
 });
 test('independent company and created-document checkpoints reject a sidecar substitution before any private API read',async()=>{
