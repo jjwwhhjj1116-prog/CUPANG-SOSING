@@ -10,7 +10,7 @@ for(const company of companies)test(`${company.code}: current private source pla
   assert.equal(review.identity.fingerprint,f.sourcePlan.sourcePlanSha256);assert.equal(review.identity.requestedProfileId,f.profile.id);assert.equal(review.members.length,2);assert.ok(Object.isFrozen(review));assert.ok(Object.isFrozen(review.members));
   assert.deepEqual(plain(review.body),f.sourcePlan.body);assert.equal(review.originalBodySha256,f.sourcePlan.originalBodySha256);assert.equal(review.preparedBodySha256,f.sourcePlan.preparedBodySha256);
   const packet=await createProductDocumentPacket(plain(review)),validated=await validateProductDocumentPacket(packet);assert.equal(validated.packet.review.identity.fingerprint,review.identity.fingerprint);
-  assert.equal(f.calls.length,6);assert.ok(f.calls.every(call=>call.method==='GET'));assert.equal(f.state(),db);assert.equal(f.objectState(),bytes);assert.deepEqual(plain(await(await f.h.route(f.endpoint)).json()),old);assert.deepEqual(f.h.network,[]);
+  assert.equal(f.calls.length,3);assert.equal(f.calls.filter(call=>call.url===f.sourcePath).length,1);assert.ok(f.calls.every(call=>call.method==='GET'));assert.equal(f.state(),db);assert.equal(f.objectState(),bytes);assert.deepEqual(plain(await(await f.h.route(f.endpoint)).json()),old);assert.deepEqual(f.h.network,[]);
   assert.equal([...f.h.objects.keys()].some(key=>key.startsWith('quotation-public-detail/')),false);assert.equal(f.h.sqlite.prepare('SELECT count(*) AS n FROM supplier_hub_receipts').get().n,0);
  }finally{f.close();}
 });
@@ -40,8 +40,8 @@ test('source responses are bounded same-origin JSON, abortable, and compared aga
   const controller=new AbortController();controller.abort();await assert.rejects(f.model.readCurrentNativeAssetSource({...f.scope,signal:controller.signal,fetcher:f.request}));assert.equal(f.calls.length,0);
   for(const response of [()=>new Response('{}',{headers:{'content-type':'text/html'}}),()=>new Response('x'.repeat(6*1024*1024+1),{headers:{'content-type':'application/json'}})])await assert.rejects(f.model.readCurrentNativeAssetSource({...f.scope,signal:new AbortController().signal,fetcher:async path=>path.includes('catalog-context')?Response.json({ownerId:'owner',company:companies[0]}):response()}));
   for(const images of [{},[{imageType:'MAIN'}]])await assert.rejects(f.model.readCurrentNativeAssetSource({...f.scope,signal:new AbortController().signal,fetcher:async path=>Response.json(path.includes('catalog-context')?{ownerId:'owner',company:companies[0]}:{...plain(f.sourcePlan),metadataValid:false,images})}));
-  let sources=0;const fetcher=async function(path,init){const response=await f.request(path,init);if(path===f.sourcePath&&++sources===2){const body=await response.json();body.images[0].transportName='different.png';return Response.json(body);}return response;};
-  await assert.rejects(f.model.reviewCurrentNativeSupplierHubProductDocument({...f.input,signal:new AbortController().signal,fetcher}));assert.equal(sources,2);assert.deepEqual(f.h.network,[]);
+  let sources=0;const fetcher=async function(path,init){const response=await f.request(path,init);if(path===f.sourcePath){sources++;const body=await response.json();body.images[0].transportName='different.png';return Response.json(body);}return response;};
+  await assert.rejects(f.model.reviewCurrentNativeSupplierHubProductDocument({...f.input,signal:new AbortController().signal,fetcher}));assert.equal(sources,1);assert.deepEqual(f.h.network,[]);
  }finally{f.close();}
 });
 

@@ -3,6 +3,7 @@ import { readQuotationExportSource, resolveQuotationExport, quotationExportFinge
 import { readQuotationFields, quotationSourcesCurrent } from '@/db/quotation-fields';
 import { productImageKeys } from '@/app/product-content';
 import { loadAttachments } from '@/app/exports/attachments';
+import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-files';
 import { publicDetailConfig, publicDetailVersion } from '@/app/quotation-public-detail';
 import { projectSupplierHubSingleDocument } from '@/app/supplier-hub-single-projection';
 import { buildSingleAssetPlan, singleAssetSelection, singleAssetPackageView, publishSingleAssets, verifySingleAssets, SingleAssetError } from '@/app/supplier-hub-single-assets';
@@ -75,8 +76,21 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
     // Invalid/unknown refs stay blocking in the plan; they never cause a read of
     // an unowned key. Selected bytes are strictly bounded by loadAttachments.
     const readKeys = includeNativeAssets ? [...new Set([...selection.keys, ...nativeAssetSourceImageKeys({projection,owner,ownedKeys})])] : selection.keys;
-    const assets = await loadAttachments(owner, saved.product.image_keys, readKeys, nativeReadOnly ? {concurrency:3} : undefined);
-    const metadata = new Map(await Promise.all(readKeys.map(async key => [key, await env.FILES.head(key)] as const)));
+    const readMetadata = async () => new Map(await Promise.all(readKeys.map(async key => [key, await env.FILES.head(key)] as const)));
+    const [assets,metadata] = await (async () => {
+      // Both selectors already restrict keys to this owner's product. Leave an
+      // oversized selection to loadAttachments before starting any extra I/O.
+      if (nativeReadOnly && readKeys.length <= PRODUCT_IMAGE_POOL_LIMIT) {
+        const [bytes,heads] = await Promise.allSettled([
+          loadAttachments(owner,saved.product.image_keys,readKeys,{concurrency:3}),readMetadata(),
+        ]);
+        if (bytes.status === 'rejected') throw bytes.reason;
+        if (heads.status === 'rejected') throw heads.reason;
+        return [bytes.value,heads.value] as const;
+      }
+      const bytes = await loadAttachments(owner,saved.product.image_keys,readKeys,nativeReadOnly ? {concurrency:3} : undefined);
+      return [bytes,await readMetadata()] as const;
+    })();
     const documents = readLegalDocuments(saved.content.legalDocuments, owner, id);
     const nativeLegal = await buildNativeLegalContext({snapshot:saved.hubSchema,company,categoryId:saved.categoryContext.categoryId,
       categoryPath:saved.categoryContext.categoryPath,resolved,documents});
@@ -108,12 +122,26 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
       nativeLegalAttachmentPlanSha256:nativeLegalAttachmentPlan.planSha256 });
     if (expectedFingerprint !== undefined && expectedFingerprint !== packageFingerprint) changed();
     const verifyPrivateFile = async (file:{key:string;byteLength:number;sha256:string}) => {
-      const stored = await env.FILES.get(file.key), currentMetadata = await env.FILES.head(file.key);
-      if (!stored || !currentMetadata || JSON.stringify(currentMetadata) !== JSON.stringify(metadata.get(file.key))) changed();
-      if (nativeReadOnly && stored.size !== file.byteLength) changed();
-      const bytes = new Uint8Array(await stored.arrayBuffer());
-      const sha256 = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('');
-      if (bytes.byteLength !== file.byteLength || sha256 !== file.sha256) changed();
+      const stored = await env.FILES.get(file.key);
+      const verifyMetadata = async () => {
+        const currentMetadata = await env.FILES.head(file.key);
+        if (!stored || !currentMetadata || JSON.stringify(currentMetadata) !== JSON.stringify(metadata.get(file.key))) changed();
+      };
+      const verifyBytes = async () => {
+        if (!stored || nativeReadOnly && stored.size !== file.byteLength) changed();
+        const bytes = new Uint8Array(await stored.arrayBuffer());
+        const sha256 = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('');
+        if (bytes.byteLength !== file.byteLength || sha256 !== file.sha256) changed();
+      };
+      if (nativeReadOnly) {
+        // Start HEAD only after GET resolves, so a metadata edit during GET is
+        // still observed. The response body/hash and that fresh HEAD can overlap.
+        const results = await Promise.allSettled([verifyMetadata(),verifyBytes()]);
+        const failure = results.find(result => result.status === 'rejected');
+        if (failure?.status === 'rejected') throw failure.reason;
+      } else {
+        await verifyMetadata();await verifyBytes();
+      }
     };
     const guard = async (file?: {key:string;byteLength:number;sha256:string}) => {
       await active();

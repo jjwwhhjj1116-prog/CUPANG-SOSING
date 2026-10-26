@@ -64,3 +64,15 @@ test('an injection error is reported as execution failure instead of a missing d
   assert.equal(result.state,'update-requested');assert.equal(result.error.code,'PAGE_EXECUTION_FAILED');assert.equal(f.state.uploads.length,0);assert.equal(f.submitted,0);
  }finally{f.close();}
 });
+
+test('a verified update recovery does not repeat the same full document readback',async()=>{
+ const f=await nativeRecoveryFixture();try{
+  const failed={...f.adapter,hubRequest:async input=>{const result=await f.adapter.hubRequest(input);if(input.path.endsWith('/update'))throw Error('Synthetic acknowledgement interruption after update');return result;}};
+  const pending=await createProductDocumentDraftReceiver({adapter:failed,store:f.storage.store}).prepareDraft(f.packet,f.sender);assert.equal(pending.state,'update-requested');
+  let recoveryReads=0,duplicateReads=0;
+  const adapter={...f.adapter,recoverWrite:async input=>{recoveryReads++;return f.adapter.recoverWrite(input);},readDocument:async input=>{duplicateReads++;return f.adapter.readDocument(input);}};
+  const result=await createProductDocumentDraftReceiver({adapter,store:f.storage.store}).recoverDraft(f.packet,f.sender);
+  assert.equal(result.state,'updated',JSON.stringify(result));assert.equal(result.recovered,true);assert.equal(recoveryReads,1);assert.equal(duplicateReads,0);
+  assert.equal(f.state.uploads.length,4);assert.equal(f.calls.filter(row=>row.name==='hub-fetch'&&row.init.method==='POST'&&row.url.endsWith('/create')).length,1);assert.equal(f.submitted,0);
+ }finally{f.close();}
+});

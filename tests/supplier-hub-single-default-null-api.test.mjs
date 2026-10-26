@@ -104,7 +104,9 @@ for (const company of companies) test(`${company.code}: automatic hidden nulls s
       assert.deepEqual(plain(packet.body.jsonDocument[0]), first.payload.jsonDocument[index]); assert.equal(packet.company.code, company.code);
       assert.ok(Object.isFrozen(packet) && Object.isFrozen(packet.body.jsonDocument[0]));
       assert.equal(first.payload.jsonDocument[index].productPage.modelNumber, '');
-      assert.equal(first.payload.jsonDocument[index].productPage.commonAttributes.optionalNumber, null);
+      // Unlike the named hidden defaults above, this optional object property
+      // has no saved value or schema default. The native initializer omits it.
+      assert.equal(Object.hasOwn(first.payload.jsonDocument[index].productPage.commonAttributes, 'optionalNumber'), false);
       assert.equal(first.payload.jsonDocument[index].productPage.commonAttributes.count, 0);
       assert.equal(first.payload.jsonDocument[index].productPage.commonAttributes.booleanValue, false);
       assert.equal(first.payload.jsonDocument[index].productPage.commonAttributes.purchasePrice, '11960');

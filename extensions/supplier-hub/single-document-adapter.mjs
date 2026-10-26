@@ -14,6 +14,7 @@ import {nativeAssetUploadPage} from './native-asset-upload-page.mjs';
 import {nativeAssetRecoveryPage} from './native-asset-recovery-page.mjs';
 import {singleDocumentRetryCreatePage} from './single-create-retry-page.mjs';
 import {nativeAssetUploadPlanSha256,validateNativeAssetUploadDescriptors} from './native-asset-multipart.mjs';
+import {singleExistingDocumentRepairPage} from './single-existing-document-repair.mjs';
 
 const HASH=/^[a-f0-9]{64}$/;
 const ID=/^\w[\w-]{0,99}$/;
@@ -411,7 +412,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     // Keep JSON null, zero and empty values across the browser argument
     // boundary. The page restores the exact envelope before its unchanged
     // source/body/owned-document checks; no default or ID is substituted.
-    const jsonPage=[singleDocumentHubRequestPage,singleDocumentRetryCreatePage,nativeAssetUploadPage,nativeAssetRecoveryPage,singleDocumentOwnedRecordPage,singleDocumentRestoreOwnedRecordPage].includes(func);
+    const jsonPage=[singleDocumentHubRequestPage,singleDocumentRetryCreatePage,nativeAssetUploadPage,nativeAssetRecoveryPage,singleDocumentOwnedRecordPage,singleDocumentRestoreOwnedRecordPage,singleExistingDocumentRepairPage].includes(func);
     const wireArgs=jsonPage?[JSON.stringify(args[0]),...args.slice(1)]:args;
     const [execution]=await api.scripting.executeScript({target,func,args:wireArgs});
     if(execution?.error)fail('PAGE_EXECUTION_FAILED','원래 문서 기록의 페이지 실행 응답이 실패했습니다. 새 요청을 보내지 않고 같은 문서를 유지했습니다.');
@@ -510,7 +511,13 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
   }
   async function inspectUnsentUpdate(input){
     if(!nativeSha||input.operationId!==input.requestId+':update')return null;
-    const {binding,record}=await owned(input);
+    let current;
+    try{current=await owned(input);}catch(error){
+      if(error?.code!=='OWNED_RECORD_MISSING')throw error;
+      const inspection=await inspectExistingDocument(input);
+      fail('OWNED_RECORD_MISSING',`문서 ${String(input.docId)}의 원래 회사·상품과 빈 파일 목록을 확인했습니다. ${inspection.bodyState==='server-unreadable'?'Supplier Hub 본문 조회가 HTTP 500으로 실패했습니다.':'서버 본문은 원래 견적서와 같습니다.'} 이전 저장 결과는 미확정이며 새 생성·업로드·수정은 하지 않았습니다.`);
+    }
+    const {binding,record}=current;
     const unsent=value=>value&&value.state==='created'&&value.createOperationId===binding.requestId+':create'&&equal(value.docId,input.docId)
       &&equal(value.baselineDocIds,input.baselineDocIds)&&value.nativeAssets===undefined&&value.updateOperationId===undefined&&value.loadedDocId===undefined&&value.watchToken===undefined;
     if(!unsent(record))return null;
@@ -528,6 +535,34 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     if(!unsent(after)||!equal(record,after))return null;
     return{format:'yoofam-unsent-native-update-v1',requestId:binding.requestId,operationId:input.operationId,docId:input.docId,identityDigest:binding.identityDigest,
       packetDigest:binding.packetDigest,preparedBodySha256:binding.preparedBodySha256,draftMetadataMatched:true,readOnly:true,updateNotRequested:true,uploadsNotRequested:true,remoteWrites:false,checkedAt:now()};
+  }
+  async function inspectExistingDocument(input,mode='inspect'){
+    if(!nativeSha||input.operationId!==input.requestId+':update'||input.docId===null||input.docId===undefined)fail('EXISTING_REPAIR_SCOPE','원래 생성된 문서의 저장 복구만 허용됩니다.');
+    const binding=await bindingFor(input.identity,input.sessionId);
+    const marker=await execute(input.tab,input.identity,singleDocumentOwnedRecordPage,[binding]);
+    if(marker)fail('EXISTING_REPAIR_RECORD_PRESENT','원래 문서 기록이 남아 있어 일반 저장 결과 조회를 사용합니다.');
+    let reply;try{reply=JSON.parse(await execute(input.tab,input.identity,singleExistingDocumentRepairPage,[{...copy(input),binding,mode}]));}catch(error){
+      if(error instanceof SingleDocumentError)throw error;
+      const detail=['원래 생성된 문서의 복구 연결이 다릅니다.','원래 요청의 견적 본문이 변경되었습니다.','원래 전용 Supplier Hub 대시보드에서 복구해주세요.',
+        '복구 문서의 승인 회사가 다릅니다.','이 문서의 다른 작업 기록이 있어 덮어쓰지 않았습니다.','원래 문서가 중간저장 상태인지 확인해주세요.',
+        '동일 상품의 다른 문서 또는 제출 기록이 있어 다시 저장하지 않았습니다.','원래 문서의 상품·카테고리·양식이 변경되어 복구하지 않았습니다.',
+        '서버 문서 본문이 원래 요청과 달라 덮어쓰지 않았습니다.','원래 문서에 파일이 있어 자동으로 다시 업로드하지 않았습니다.','원래 문서에 증빙 파일이 있어 덮어쓰지 않았습니다.',
+        '원래 문서 복구 예약 또는 현재 파일 상태가 변경됐습니다.'].find(message=>typeof error?.message==='string'&&error.message.includes(message));
+      fail('EXISTING_REPAIR_INSPECTION_FAILED',detail??'같은 문서의 상품·중간저장 상태·빈 파일 목록 확인에 실패했습니다. 새 문서는 만들지 않았습니다.');
+    }
+    const proof=reply?.proof;
+    if(!proof||proof.format!=='yoofam-existing-document-inspection-v1'||proof.requestId!==binding.requestId||proof.operationId!==input.operationId||!equal(proof.docId,input.docId)
+      ||proof.identityDigest!==binding.identityDigest||proof.packetDigest!==binding.packetDigest||proof.preparedBodySha256!==binding.preparedBodySha256||proof.sourcePlanSha256!==nativeSha
+      ||proof.emptyImages!==true||proof.duplicateMatches!==0||!equal(proof.emptyLegalTypes,['import_type','certificate','additional','categoryCert','adCert','msds'])||proof.readOnly!==true||proof.remoteWrites!==false
+      ||proof.priorUpdateOutcome!=='unknown'||!HASH.test(proof.metadataSha256||'')||!['original-exact','server-unreadable'].includes(proof.bodyState)||Math.abs(now()-proof.checkedAt)>60000)
+      fail('EXISTING_REPAIR_PROOF','원래 문서의 복구 조회 증거를 확인하지 못했습니다.');
+    if(mode==='bind'){
+      const record=reply.record;if(!record||!equal(record.binding,binding)||!equal(record.docId,input.docId)||record.createOperationId!==binding.requestId+':create'
+        ||record.state!=='created'||record.nativeAssets!==undefined||record.updateOperationId!==undefined||!equal(record.baselineDocIds,input.baselineDocIds)
+        ||record.recoveryRepair?.priorUpdateOutcome!=='unknown'||!equal(Object.fromEntries(Object.keys(input.repair).map(key=>[key,record.recoveryRepair[key]])),input.repair))fail('EXISTING_REPAIR_PROOF','같은 문서의 복구 예약 연결이 다릅니다.');
+      pageRecords.set(binding.packetDigest,copy(record));
+    }else if(reply.record!==null)fail('EXISTING_REPAIR_PROOF','읽기 확인에서 문서 기록을 변경하지 않았습니다.');
+    return proof;
   }
   async function qualifyPreparedDraft(input){
     if(!nativeSha)fail('NATIVE_PREPARED_UNCONFIRMED','원본 파일을 확인한 새 문서만 등록 단계를 확인할 수 있습니다.');
@@ -551,7 +586,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     return {readOnly:true,docId:record.docId,company:copy(input.identity.company),identityDigest:binding.identityDigest,packetDigest:binding.packetDigest,sourcePlanSha256:nativeSha,metadataObserved:true,checkedAt:observation.observedAt};
   }
   return Object.freeze({readSource,
-    qualifyPreparedDraft,...(nativeSha?{inspectCreateRetry,inspectUnsentUpdate}:{}),
+    qualifyPreparedDraft,...(nativeSha?{inspectCreateRetry,inspectUnsentUpdate,inspectExistingDocument,bindExistingDocumentRepair:input=>inspectExistingDocument(input,'bind')}:{}),
     ...(nativeSha?{readOwnedTargetPresence:async input=>{
       const binding=sourceBindings.get(canonical(input.identity))?.binding;
       if(!binding||binding.requestId!==input.requestId||binding.packetDigest!==input.packetDigest||typeof api.tabs.query!=='function')fail('TAB_CHANGED','원래 검증 탭의 존재 여부를 확인하지 못했습니다.');

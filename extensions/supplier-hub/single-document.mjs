@@ -145,6 +145,12 @@ function checkpointValid(state,context){
       ||![retry.approvedAt,retry.originalRequestedAt,retry.originalSequence].every(v=>Number.isSafeInteger(v)&&v>0)||retry.originalRequestedAt+60000>retry.approvedAt
       ||retry.approvedAt>state.updatedAt||retry.originalSequence>=state.sequence)fail('CHECKPOINT','원래 생성 요청의 1회 재시도 기록을 확인해주세요.');
   }
+  if(state.existingDocumentRepair!==undefined){const repair=state.existingDocumentRepair;
+    if(state.draftOnly!==true||state.docId===null||!object(repair)||Object.keys(repair).sort().join(',')!=='attempt,docId,format,inspectionSha256,priorOperationId,priorSequence,startedAt'
+      ||repair.format!=='yoofam-existing-document-repair-v1'||repair.attempt!==1||!same(repair.docId,state.docId)||repair.priorOperationId!==state.requestId+':update'
+      ||!Number.isSafeInteger(repair.priorSequence)||repair.priorSequence<1||repair.priorSequence>=state.sequence||!Number.isSafeInteger(repair.startedAt)||repair.startedAt<1||repair.startedAt>state.updatedAt
+      ||!HEX.test(repair.inspectionSha256||''))fail('CHECKPOINT','같은 문서의 승인된 1회 저장 복구 기록을 확인해주세요.');
+  }
   if(state.targetRecovery!==undefined){const recovery=state.targetRecovery;
     if(!object(recovery)||Object.keys(recovery).some(key=>!['format','phase','previousTarget','approvedAt','target'].includes(key))||recovery.format!=='approved-closed-target-v1'
       ||!['requested','created','bound'].includes(recovery.phase)||state.draftOnly!==true||state.createRetry?.attempt!==1||state.createRetry.resumeUsed!==true
@@ -235,7 +241,7 @@ function result(state,extra={}){
       validatedSteps:clone(state.validatedSteps),checkpointSequence:state.sequence,rejectedAt:state.updatedAt,submitted:false,consented:false,
       errors:state.validationErrors.map(({columnName,message})=>({columnName,message}))}}:{}),
     ...(state.draftOnly===true?state.preparedLifecycle===true?{draftOnly:true,preparedLifecycle:true,lifecycleProof:{evidence:'native-prepared-draft-lifecycle',...clone(state.preparationOrigin),checkpointSequence:state.sequence,observedAt:state.updatedAt,validatedSteps:clone(state.validatedSteps),
-      consentRequested:Boolean(state.stageConsents?.length||state.humanConfirmedAt!==undefined),submitRequested:state.submitRequestedAt!==undefined}}:{draftOnly:true,draftProof:{evidence:'document-draft-preparation',validatedSteps:clone(state.validatedSteps),checkpointSequence:state.sequence,observedAt:state.updatedAt,submitted:false,consented:false,...(state.createRetry?{createRetryApproved:true}:{})}}:{}),...extra};
+      consentRequested:Boolean(state.stageConsents?.length||state.humanConfirmedAt!==undefined),submitRequested:state.submitRequestedAt!==undefined}}:{draftOnly:true,draftProof:{evidence:'document-draft-preparation',validatedSteps:clone(state.validatedSteps),checkpointSequence:state.sequence,observedAt:state.updatedAt,submitted:false,consented:false,...(state.createRetry?{createRetryApproved:true}:{}),...(state.existingDocumentRepair?{existingDocumentRepairAttempted:true}:{})}}:{}),...extra};
 }
 
 /** Explicit adapters only; importing this module performs no browser/network
@@ -470,6 +476,31 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
       if(action==='recoverClosedTarget')fail('CLOSED_TARGET_SCOPE','문서번호가 없는 원래 승인 요청의 닫힌 전용 탭만 복구할 수 있습니다.');
       const readOnlyReceipt=nativeLifecycle&&state.preparedLifecycle===true&&state.submitRequestedAt!==undefined&&['recoverPreparedDraft','observePreparedDraft'].includes(action);
       await guard(context,state,readOnlyReceipt);
+      if(action==='repairExistingDraft'){
+        if(!nativeLifecycle||!draftOnly||state.preparedLifecycle||state.state!=='update-requested'||state.docId===null||state.validatedSteps.length
+          ||state.existingDocumentRepair!==undefined||state.operationId!==state.requestId+':update'||typeof adapter.inspectExistingDocument!=='function'||typeof adapter.bindExistingDocumentRepair!=='function')
+          fail('EXISTING_REPAIR_SCOPE','원래 문서의 파일 저장·동일 본문 복구는 명시적으로 승인한 1회만 가능합니다. 저장 결과를 읽기로 확인해주세요.');
+        const input={tab:state.tab,sessionId:state.sessionId,identity:context.identity,requestId:state.requestId,operationId:state.operationId,docId:state.docId,baselineDocIds:state.baselineDocIds,expectedBody:withDoc(context.packet,state.docId)};
+        const inspection=await call('inspectExistingDocument',input);
+        if(!object(inspection)||inspection.format!=='yoofam-existing-document-inspection-v1'||inspection.requestId!==state.requestId||inspection.operationId!==state.operationId||!same(inspection.docId,state.docId)
+          ||inspection.identityDigest!==context.identityDigest||inspection.packetDigest!==context.packetDigest||inspection.preparedBodySha256!==context.bodySha256||!HEX.test(inspection.sourcePlanSha256||'')||!HEX.test(inspection.metadataSha256||'')
+          ||!['server-unreadable','original-exact'].includes(inspection.bodyState)||inspection.emptyImages!==true||inspection.duplicateMatches!==0||!same(inspection.emptyLegalTypes,['import_type','certificate','additional','categoryCert','adCert','msds'])
+          ||inspection.readOnly!==true||inspection.remoteWrites!==false||inspection.priorUpdateOutcome!=='unknown'||!Number.isSafeInteger(inspection.checkedAt)||Math.abs(clock()-inspection.checkedAt)>60000)
+          fail('EXISTING_REPAIR_PROOF','원래 문서의 회사·본문·빈 파일 조회를 확인하지 못했습니다. 수정하지 않았습니다.');
+        await guard(context,state);
+        // Reserve before binding or sending any file. The original uncertain
+        // update checkpoint is retained, never reclassified as an unsent write.
+        const repair={format:'yoofam-existing-document-repair-v1',attempt:1,docId:state.docId,startedAt:clock(),priorSequence:state.sequence,priorOperationId:state.operationId,inspectionSha256:await digest(inspection)};
+        state=await save(context,state,{existingDocumentRepair:repair});
+        const bound=await call('bindExistingDocumentRepair',{...input,inspection,repair});
+        if(!object(bound)||bound.format!=='yoofam-existing-document-inspection-v1'||!same(bound.docId,state.docId)||bound.packetDigest!==context.packetDigest
+          ||bound.identityDigest!==context.identityDigest||bound.requestId!==state.requestId||bound.operationId!==state.operationId||bound.preparedBodySha256!==context.bodySha256
+          ||bound.metadataSha256!==inspection.metadataSha256||bound.sourcePlanSha256!==inspection.sourcePlanSha256||bound.bodyState!==inspection.bodyState||bound.emptyImages!==true
+          ||!same(bound.emptyLegalTypes,inspection.emptyLegalTypes)||bound.duplicateMatches!==0||bound.remoteWrites!==false||bound.readOnly!==true||bound.priorUpdateOutcome!=='unknown')fail('EXISTING_REPAIR_PROOF','같은 문서의 1회 복구 연결을 확인하지 못했습니다. 요청을 반복하지 않았습니다.');
+        const updated=await request(context,state,'POST',SINGLE_DOCUMENT_PATHS.update,withDoc(context.packet,state.docId));
+        if(!object(updated)||updated.errorCode!==undefined&&updated.errorCode!==null&&updated.errorCode!=='')fail('UPDATE_UNCONFIRMED','같은 문서의 저장 결과를 확정하지 못했습니다. 재전송하지 않고 조회해주세요.');
+        await readDocument(context,state);state=await save(context,state,{state:'updated'});return result(state,{recovered:true});
+      }
       if(action==='retryCreateDraft'||action==='resumeCreateRetryDraft'){
         if(!nativeLifecycle||!draftOnly||state.preparedLifecycle||state.state!=='create-requested'||state.docId!==null
           ||action==='retryCreateDraft'&&(state.createRetry!==undefined||state.updatedAt+60000>clock())
@@ -500,10 +531,11 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
         }
       }
       if(draftOnly&&!state.preparedLifecycle){
+        let documentReadVerified=false;
         if(action!=='recoverDraft')fail('ACTION','새 초안 준비의 읽기 확인 동작을 확인해주세요.');
         if(state.state==='target-requested')fail('TARGET_UNCONFIRMED','새 탭 생성 응답을 확인하지 못했습니다. 새 탭을 다시 만들지 않았습니다.');
         if(['create-requested','update-requested'].includes(state.state)){
-          if(state.state==='update-requested'&&nativeLifecycle&&typeof adapter.inspectUnsentUpdate==='function'){
+          if(state.state==='update-requested'&&nativeLifecycle&&state.existingDocumentRepair===undefined&&typeof adapter.inspectUnsentUpdate==='function'){
             const proof=await call('inspectUnsentUpdate',{tab:state.tab,sessionId:state.sessionId,identity:context.identity,requestId:state.requestId,
               operationId:state.operationId,docId:state.docId,baselineDocIds:state.baselineDocIds,expectedBody:withDoc(context.packet,state.docId)});
             if(proof!==null){
@@ -527,7 +559,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
               await guard(context,state);state=await save(context,state,{state:'target-created',tab:null,operationId:state.requestId+':target'});return result(state,{recovered:true});
             }
           }
-          const proof=await readDocument(context,state,true);state=await save(context,state,{state:state.state==='create-requested'?'created':'updated',docId:proof.docId});
+          const proof=await readDocument(context,state,true);state=await save(context,state,{state:state.state==='create-requested'?'created':'updated',docId:proof.docId});documentReadVerified=true;
         }else if(state.state==='validation-requested'){
           const proof=await call('readValidation',{tab:state.tab,identity:context.identity,docId:state.docId,version:context.packet.body.version,step:state.requestedStep,operationId:state.operationId});
           if(!object(proof)||proof.readOnly!==true||proof.operationId!==state.operationId||!same(proof.docId,state.docId)||!same(proof.company,context.packet.company)||proof.step!==state.requestedStep)fail('READBACK_UNCONFIRMED','원래 초안 단계의 검증 결과를 확인하지 못했습니다.');
@@ -535,7 +567,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
           state=await save(context,state,validated.valid?{state:'updated',validatedSteps:[...state.validatedSteps,state.requestedStep]}:{state:'validation-rejected',validationErrors:validated.errors});
         }
         if(['updated','validated'].includes(state.state)&&state.validatedSteps.length===4)state=await verifyDraft(context,state);
-        else if(state.docId!==null)await readDocument(context,state);
+        else if(state.docId!==null&&!documentReadVerified)await readDocument(context,state);
         return result(state,{recovered:true});
       }
       if(action==='resume'){
@@ -650,6 +682,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},c
   }
   if(draftOnly)return Object.freeze({prepareDraft:(packet,sender)=>operate(packet,sender,'prepareDraft'),recoverDraft:(packet,sender)=>operate(packet,sender,'recoverDraft'),...(nativeLifecycle?{
     recoverClosedTarget:(packet,sender)=>operate(packet,sender,'recoverClosedTarget'),
+    repairExistingDraft:(packet,sender)=>operate(packet,sender,'repairExistingDraft'),
     retryCreateDraft:(packet,sender)=>operate(packet,sender,'retryCreateDraft'),
     resumeCreateRetryDraft:(packet,sender)=>operate(packet,sender,'resumeCreateRetryDraft'),
     reviewPreparedDraft:(packet,sender)=>operate(packet,sender,'reviewPreparedDraft'),confirmPreparedDraft:(packet,sender,confirmation)=>operate(packet,sender,'confirmPreparedDraft',confirmation),

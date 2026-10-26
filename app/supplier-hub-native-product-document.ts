@@ -78,8 +78,31 @@ export async function compileNativeSupplierHubProductDocument(input:Scope&{sourc
  return freeze({format:PRODUCT_DOCUMENT_FORMAT,type:PRODUCT_DOCUMENT_TYPE,identity:reviewIdentity,members,body,originalBodySha256,preparedBodySha256,reviewDigest,registered:false as const,remoteWrites:false as const,submissionReady:false as const});
 }
 const active=(signal:AbortSignal)=>{if(signal.aborted)fail('견적서 확인을 취소했습니다.');};
+export const NATIVE_SOURCE_READ_TIMEOUT_MS=45000;
+export class NativeSourceReadError extends Error{
+ readonly code:'SOURCE_READ_TIMEOUT'|'SOURCE_READ_ABORTED';
+ constructor(code:'SOURCE_READ_TIMEOUT'|'SOURCE_READ_ABORTED'){
+  super(code==='SOURCE_READ_TIMEOUT'?'현재 상품의 원본 자료 확인이 45초 안에 끝나지 않았습니다. 저장 자료를 다시 조회해주세요.':'견적서 확인을 취소했습니다.');
+  this.name='NativeSourceReadError';this.code=code;
+ }
+}
+/** Bound the whole actor/source/actor observation, including response bodies.
+ * The caller's controller belongs to the UI task and must remain active when
+ * our local deadline expires so that the timeout can be rendered there. */
+async function sourceReadWithinDeadline<T>(signal:AbortSignal,read:(signal:AbortSignal)=>Promise<T>):Promise<T>{
+ if(signal.aborted)throw new NativeSourceReadError('SOURCE_READ_ABORTED');
+ const controller=new AbortController();let timer:ReturnType<typeof setTimeout>|undefined,abort=()=>{};
+ const interrupted=new Promise<never>((_,reject)=>{
+  abort=()=>{reject(new NativeSourceReadError('SOURCE_READ_ABORTED'));controller.abort();};
+  signal.addEventListener('abort',abort,{once:true});
+  timer=setTimeout(()=>{reject(new NativeSourceReadError('SOURCE_READ_TIMEOUT'));controller.abort();},NATIVE_SOURCE_READ_TIMEOUT_MS);
+ });
+ try{return await Promise.race([read(controller.signal),interrupted]);}
+ finally{clearTimeout(timer);signal.removeEventListener('abort',abort);controller.abort();}
+}
 async function readJson(path:string,signal:AbortSignal,request:typeof fetch,limit=6*1024*1024):Promise<unknown>{
- active(signal);const response=await request.call(globalThis,path,{method:'GET',cache:'no-store',credentials:'same-origin',redirect:'error',signal});active(signal);
+ active(signal);const response=await request.call(globalThis,path,{method:'GET',cache:'no-store',credentials:'same-origin',redirect:'error',signal});
+ if(signal.aborted){void response.body?.cancel().catch(()=>{});active(signal);}
  if(response.redirected||!/\bapplication\/json\b/i.test(response.headers.get('content-type')??''))return fail('현재 상품의 전송 원본을 확인하지 못했습니다. 로그인 상태와 연결을 확인한 뒤 저장 자료를 다시 조회해주세요.');
  if(response.url){const actual=new URL(response.url);if(actual.pathname+actual.search!==path||typeof location!=='undefined'&&actual.origin!==location.origin)return fail();}
  const reader=response.body?.getReader();if(!reader)return fail();let length=0;const chunks:Uint8Array[]=[],abort=()=>{void reader.cancel().catch(()=>{});};signal.addEventListener('abort',abort,{once:true});
@@ -92,18 +115,23 @@ async function readJson(path:string,signal:AbortSignal,request:typeof fetch,limi
   }
   return value;
  }
- finally{signal.removeEventListener('abort',abort);await reader.cancel().catch(()=>{});reader.releaseLock();}
+ finally{signal.removeEventListener('abort',abort);void reader.cancel().catch(()=>{});reader.releaseLock();}
 }
 export async function readCurrentNativeAssetSource(input:ReadScope):Promise<NativeAssetSourcePlan>{
  const request=input.fetcher??fetch,scope=clone({productId:input.productId,...(input.profileId?{profileId:input.profileId}:{}),quotationView:input.quotationView});
  if(!ID.test(scope.productId)||input.profileId!==undefined&&!ID.test(input.profileId))return fail();
- const before=actor(await readJson('/api/supplier-hub/catalog-context',input.signal,request,4096)),path='/api/products/'+encodeURIComponent(scope.productId)+'/native-assets'+(scope.profileId?'?profileId='+encodeURIComponent(scope.profileId):'');
- const plan=scoped(await readJson(path,input.signal,request),scope,before),after=actor(await readJson('/api/supplier-hub/catalog-context',input.signal,request,4096));active(input.signal);
- if(!same(before,after)||!same(input.quotationView,scope.quotationView)||input.productId!==scope.productId||(input.profileId??null)!==(scope.profileId??null))return fail();
- return freeze(plan);
+ return sourceReadWithinDeadline(input.signal,async signal=>{
+  const before=actor(await readJson('/api/supplier-hub/catalog-context',signal,request,4096)),path='/api/products/'+encodeURIComponent(scope.productId)+'/native-assets'+(scope.profileId?'?profileId='+encodeURIComponent(scope.profileId):'');
+  const plan=scoped(await readJson(path,signal,request),scope,before),after=actor(await readJson('/api/supplier-hub/catalog-context',signal,request,4096));active(signal);
+  if(!same(before,after)||!same(input.quotationView,scope.quotationView)||input.productId!==scope.productId||(input.profileId??null)!==(scope.profileId??null))return fail();
+  return freeze(plan);
+ });
 }
 export async function reviewCurrentNativeSupplierHubProductDocument(input:ReadScope&{sourcePlan:NativeAssetSourcePlan}):Promise<SupplierHubProductDocumentReview>{
- const original=canonical(input.sourcePlan),quote=canonical(input.quotationView),plan=await readCurrentNativeAssetSource(input);if(canonical(plan)!==original||!plan.identity)return fail();
+ active(input.signal);const plan=clone(input.sourcePlan),original=canonical(plan),quote=canonical(input.quotationView);if(!plan.identity)return fail();
+ // Compilation only examines the retained plan. One fresh complete source
+ // observation after it detects any changed source or actor without reading
+ // the same expensive plan twice during a single read-only review.
  const review=await compileNativeSupplierHubProductDocument({...input,sourcePlan:plan,ownerId:plan.identity.ownerId});active(input.signal);
  const after=await readCurrentNativeAssetSource(input);if(canonical(after)!==original||canonical(input.sourcePlan)!==original||canonical(input.quotationView)!==quote)return fail();return review;
 }

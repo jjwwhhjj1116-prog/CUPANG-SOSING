@@ -121,6 +121,74 @@ test('an authenticated missing-create result requires explicit retry consent and
  }finally{h.close();}
 });
 
+const repairDraft='같은 문서 파일 저장·본문 복구 1회';
+const repairProof=(h,attempted=false)=>({evidence:'document-draft-preparation',validatedSteps:[],checkpointSequence:12,observedAt:h.f.clock.now,submitted:false,consented:false,...(attempted?{existingDocumentRepairAttempted:true}:{})});
+const missingOwnedDraft=(h,payload,attempted=false)=>draftResult(h.f,payload.packet.requestId,'update-requested',{docId:'2347603',needsRecovery:true,draftProof:repairProof(h,attempted),...(payload.action==='recoverDraft'||payload.action==='recoverPreparedDraft'?{error:{code:'OWNED_RECORD_MISSING',message:'원래 문서 2347603의 저장 기록이 없습니다.'}}:{})});
+function allowRepair(h,run,available=true){h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true,...(available?{existingDocumentRepairAvailable:true}:{})}:run(payload);}
+
+test('same-document repair needs explicit approval, refreshes only its envelope and blocks duplicate/stale write callbacks',async()=>{
+ const h=await fixture();try{
+  allowRepair(h,payload=>payload.action==='repairExistingDraft'
+   ?draftResult(h.f,payload.packet.requestId,'updated',{docId:'2347603',recovered:true,draftProof:{...repairProof(h,true),checkpointSequence:13}})
+   :payload.action==='prepareDraft'&&h.f.sent.some(row=>row.payload.action==='repairExistingDraft')
+    ?draftResult(h.f,payload.packet.requestId,'validated',{docId:'2347603',draftProof:{...repairProof(h,true),validatedSteps:[2,3,4,5],checkpointSequence:18}})
+    :missingOwnedDraft(h,payload));
+  await h.idle();await h.click(open);await h.click(prepareDraft);const original=plain(h.f.sent[1].payload.packet);assert.equal(h.button(repairDraft),undefined);
+  await h.click(recoverDraft);assert.ok(h.button(repairDraft));assert.equal(h.button(repairDraft).props.disabled,true);
+  const unchecked=h.button(repairDraft).props.onClick;unchecked();await h.idle();assert.equal(h.f.sent.length,3);
+  const checkbox=nodes(h.render()).find(node=>node.type==='input'&&node.props.type==='checkbox');assert.equal(checkbox.props.checked,false);
+  checkbox.props.onChange({target:{checked:true}});h.flush();h.f.advance(PRODUCT_DOCUMENT_REQUEST_TTL+1);
+  const repair=h.button(repairDraft).props.onClick;repair();repair();await h.idle();
+  assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','recoverPreparedDraft','preview','repairExistingDraft']);
+  const sent=h.f.sent.at(-1).payload;assert.equal(sent.packet.requestId,original.requestId);assert.deepEqual(plain(sent.packet.review),original.review);assert.ok(sent.packet.createdAt>original.createdAt);
+  assert.deepEqual(Object.keys(sent).sort(),['action','packet']);assert.equal(h.stored.size,1);assert.match(h.text(),/초안 문서 2347603/);assert.ok(h.button(continueDraft));assert.equal(h.button(reviewPrepared),undefined);
+  assert.equal(h.button(repairDraft),undefined);assert.equal(h.button(start),undefined);
+  repair();unchecked();await h.idle();assert.equal(h.f.sent.filter(row=>row.payload.action==='repairExistingDraft').length,1);
+  await h.click(continueDraft);assert.match(h.text(),/검증\s*4\s*\/4/);assert.ok(h.button(reviewPrepared));assert.ok(h.f.sent.every(row=>row.payload.packet.requestId===original.requestId));
+  assert.equal(h.f.history.length,0);assert.ok(h.f.calls.every(row=>row.method==='GET'));
+ }finally{h.close();}
+});
+
+test('lost same-document repair ACK offers only readback and a durable attempt blocks another repair after remount',async()=>{
+ const h=await fixture();let next;try{
+  allowRepair(h,payload=>payload.action==='repairExistingDraft'?undefined:missingOwnedDraft(h,payload));
+  await h.idle();await h.click(open);await h.click(prepareDraft);await h.click(recoverDraft);
+  const checkbox=nodes(h.render()).find(node=>node.type==='input'&&node.props.type==='checkbox');checkbox.props.onChange({target:{checked:true}});h.flush();
+  const repair=h.button(repairDraft).props.onClick;repair();h.flush();await h.wait(()=>h.f.sent.length===4);h.f.advance(180001);await h.idle();
+  assert.equal(h.button(repairDraft),undefined);assert.ok(h.button(recoverDraft));assert.match(h.text(),/다시 저장하지 않고 원래 문서의 결과만 확인/);repair();await h.idle();assert.equal(h.f.sent.length,4);
+  const original=h.f.sent.at(-1).payload.packet.requestId;h.close();next=await fixture(SINGLE_COMPANIES[0],{stored:h.stored});
+  allowRepair(next,payload=>missingOwnedDraft(next,payload,true));await next.idle();await next.click('이전 문서 전송 자료 확인');await next.click(recoverDraft);
+  assert.equal(next.button(repairDraft),undefined);assert.ok(next.button(recoverDraft));assert.equal(next.button(prepareDraft),undefined);assert.equal(next.button(start),undefined);
+  assert.deepEqual(plain(next.f.sent.map(row=>row.payload.action)),['preview','recoverPreparedDraft']);assert.ok(next.f.sent.every(row=>row.payload.packet.requestId===original));assert.equal(next.stored.size,1);assert.equal(next.f.history.length,0);
+ }finally{h.close();next?.close();}
+});
+
+test('repair UI rejects old capability, altered identity, unrelated errors, non-update state and prior attempts',async()=>{
+ for(const mode of ['old-extension','identity','digest','other-error','prior-attempt','wrong-state','extra-proof']){const h=await fixture();try{
+  allowRepair(h,payload=>{const value=missingOwnedDraft(h,payload,mode==='prior-attempt');if(payload.action==='recoverPreparedDraft'){
+   if(mode==='identity')value.identity.company=SINGLE_COMPANIES[1];
+   if(mode==='digest')value.preparedBodySha256='0'.repeat(64);
+   if(mode==='other-error')value.error.code='SOURCE_CHANGED';
+   if(mode==='wrong-state'){value.state='created';value.needsRecovery=false;}
+   if(mode==='extra-proof')value.draftProof.untrusted=true;
+  }return value;},mode!=='old-extension');
+  await h.idle();await h.click(open);await h.click(prepareDraft);await h.click(recoverDraft);assert.equal(h.button(repairDraft),undefined,mode);
+  assert.ok(h.button(recoverDraft),mode);assert.equal(h.f.sent.filter(row=>row.payload.action==='repairExistingDraft').length,0);assert.equal(h.f.history.length,0);
+ }finally{h.close();}}
+});
+
+test('a failed recovery retains its authenticated document number across later repair replies without selecting a docId in the request',async()=>{
+ const h=await fixture();let next;try{
+  allowRepair(h,payload=>missingOwnedDraft(h,payload));await h.idle();await h.click(open);await h.click(prepareDraft);h.close();
+  next=await fixture(SINGLE_COMPANIES[0],{stored:h.stored});allowRepair(next,payload=>missingOwnedDraft(next,payload));
+  await next.idle();await next.click('이전 문서 전송 자료 확인');await next.click(recoverDraft);assert.ok(next.button(repairDraft));
+  const checkbox=nodes(next.render()).find(node=>node.type==='input'&&node.props.type==='checkbox');checkbox.props.onChange({target:{checked:true}});next.flush();
+  allowRepair(next,payload=>draftResult(next.f,payload.packet.requestId,'updated',{docId:'different-document',recovered:true,draftProof:{...repairProof(next,true),checkpointSequence:13}}));
+  await next.click(repairDraft);assert.match(next.text(),/문서번호와 다른 복구 응답/);assert.equal(next.button(continueDraft),undefined);assert.equal(next.button(reviewPrepared),undefined);assert.equal(next.button(repairDraft),undefined);assert.ok(next.button(recoverDraft));
+  const sent=next.f.sent.at(-1).payload;assert.equal(sent.action,'repairExistingDraft');assert.equal(Object.hasOwn(sent,'docId'),false);assert.equal(Object.hasOwn(sent.packet,'docId'),false);assert.equal(sent.packet.review.body.docId,null);assert.equal(next.stored.size,1);assert.equal(next.f.history.length,0);
+ }finally{h.close();next?.close();}
+});
+
 test('saved retry approval offers only same-request continuation and a double click cannot dispatch twice',async()=>{
  const h=await fixture();try{
   allowDraft(h,payload=>payload.action==='resumeCreateRetryDraft'?draftResult(h.f,payload.packet.requestId,'created',{recovered:true})

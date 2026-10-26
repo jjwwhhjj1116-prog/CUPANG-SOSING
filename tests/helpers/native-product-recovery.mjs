@@ -28,7 +28,7 @@ export async function nativeRecoveryFixture(company=SINGLE_COMPANIES[0],options=
  const source={format:'yoofam-native-asset-source-plan-v1',storageNameSemantics:'private-key-leaf',identity,identityDigest:digest(identity),images,nativeLegalAttachmentPlan:legalPlan,body,originalBodySha256:digest(body),preparedBodySha256:digest(deferred),sourcePlanSha256:null,issues:[],metadataValid:true,registered:false,remoteWrites:false,submissionReady:false,transportReady:false,bytesVerified:false};const {sourcePlanSha256:omitted,...manifest}=source;void omitted;source.sourcePlanSha256=digest(manifest);
  const scope={ownerId:owner,company:copy(company),productId:p.productId,profileId:p.profileId,requestedProfileId:p.profileId,categoryId:p.categoryId,fingerprint:source.sourcePlanSha256,inputFingerprint:identity.inputFingerprint,schemaSha256:p.schemaSha256,source:identity.source};
  const review={format:'yoofam-supplier-hub-product-document-v1',type:'YOOFAM_PRODUCT_DOCUMENT_REVIEW',identity:scope,members:[member],body,originalBodySha256:source.originalBodySha256,preparedBodySha256:source.preparedBodySha256,reviewDigest:null,registered:false,remoteWrites:false,submissionReady:false};review.reviewDigest=digest({format:review.format,type:review.type,identity:scope,members:review.members,originalBodySha256:review.originalBodySha256,preparedBodySha256:review.preparedBodySha256});
- const packet=await createProductDocumentPacket(review),context=await productDocumentIdentity(packet,f.sender),state={company:copy(company),source,uploads:[],appReads:[],lists:0,blocked:false,registry:new Map(),recoveryRequests:[],receipts:[]};
+ const packet=await createProductDocumentPacket(review),context=await productDocumentIdentity(packet,f.sender),state={company:copy(company),source,uploads:[],appReads:[],lists:0,blocked:false,registry:new Map(),recoveryRequests:[],inspectionRequests:[],repairRequestedRows:[],receipts:[]};
  const appFetch=async(url,init)=>{const absolute=new URL(url,f.sender.url),path=absolute.pathname;state.appReads.push(absolute.href);assert.equal(init.method??'GET','GET');
   if(path.endsWith('/catalog-context'))return jsonResponse(absolute.href,{ownerId:owner,company:state.company});
   if(path.endsWith('/supplier-hub-receipt'))return jsonResponse(absolute.href,{history:{productId:p.productId,blocked:state.blocked}});
@@ -49,17 +49,31 @@ export async function nativeRecoveryFixture(company=SINGLE_COMPANIES[0],options=
   const record=JSON.parse(f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords)[context.packetDigest];assert.equal(record.nativeAssets.groups[(image?'image:':'legal:')+group].state,'requested','write checkpoint precedes every multipart request');
   state.uploads.push(group);for(const row of metadata)state.registry.set(row.imageName??row.fileName,row);if(options.loseUploadAck&&(!options.loseUploadAckGroup||group===options.loseUploadAckGroup))throw Error('synthetic lost upload ACK');return jsonResponse(url,options.badEnvelope?{data:metadata}:metadata);
  };
+ const inspectionFetch=async(url,init)=>{
+  state.inspectionRequests.push({url,method:init.method,body:init.body});const parsed=new URL(url),path=parsed.pathname;
+  if(path==='/sr/draft/api/drafts/register-requested'){assert.equal(init.method,'GET');return jsonResponse(url,state.repairRequestedRows);}
+  if(path==='/sr/draft/api/drafts')return jsonResponse(url,[...f.documents.values()].map(row=>({...copy(row),status:'UNFINISHED',...(row.docId===f.createdDocId?options.repairRowChanges:{})})));
+  assert.equal(path.split('/').at(-1),String(f.createdDocId),'inspection must use only the created synthetic document');
+  if(path.startsWith('/sr/draft/api/get-by-id/')){
+   if(options.repairBodyFailure){const response=Response.json({errorCode:'INTERNAL_SERVER_ERROR'},{status:500});Object.defineProperty(response,'url',{value:url});return response;}
+   return jsonResponse(url,{...copy(f.documents.get(f.createdDocId)),status:'UNFINISHED',...options.repairBodyChanges});
+  }
+  if(path.startsWith('/sr/draft/api/get-images-by-id/'))return jsonResponse(url,[...state.registry.values()].filter(row=>row.imageName));
+  if(path.startsWith('/sr/draft/api/get-files-by-type/')){assert.equal(init.method,'POST');assert.equal(init.body,'{}');return jsonResponse(url,[...state.registry.values()].filter(row=>row.fileType===parsed.searchParams.get('fileType')));}
+  throw Error('Unexpected synthetic inspection request '+path);
+ };
  const hubContext=vm.createContext({location:f.hubLocation,document:f.hubDocument,fetch:hubFetch,crypto:webcrypto,AbortController,TextEncoder,TextDecoder,Uint8Array,URL,setTimeout,clearTimeout,Date,Response,structuredClone,FormData,Blob,btoa,atob});
+ const inspectionContext=vm.createContext({location:f.hubLocation,document:f.hubDocument,fetch:inspectionFetch,crypto:webcrypto,AbortController,TextEncoder,TextDecoder,Uint8Array,URL,setTimeout,clearTimeout,Date,Response,structuredClone});
  const execute=f.api.scripting.executeScript;f.api.scripting.executeScript=async request=>{
   if(request.target.tabId===f.sender.tab.id)throw Error('Cannot access contents of the app URL. Extension manifest must request permission to access this host.');
-  if(!['nativeProductDocumentAppSourcePage','nativeAssetUploadPage','nativeAssetRecoveryPage'].includes(request.func.name))return execute(request);
-  const target=request.func.name==='nativeAssetUploadPage'||request.func.name==='nativeAssetRecoveryPage'?hubContext:appContext;
+  if(!['nativeProductDocumentAppSourcePage','nativeAssetUploadPage','nativeAssetRecoveryPage','singleExistingDocumentRepairPage'].includes(request.func.name))return execute(request);
+  const target=request.func.name==='singleExistingDocumentRepairPage'?inspectionContext:request.func.name==='nativeAssetUploadPage'||request.func.name==='nativeAssetRecoveryPage'?hubContext:appContext;
   target.args=options.browser?.dropNullArguments?JSON.parse(JSON.stringify(request.args,(key,value)=>value===null?undefined:value)):copy(request.args);
   if(options.browser?.sortObjectArguments){const ordered=value=>Array.isArray(value)?value.map(ordered):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,ordered(value[key])])):value;target.args=ordered(target.args);}
   if(options.corruptFrameBytes&&request.func.name==='nativeAssetUploadPage'){
    const encoded=typeof target.args[0]==='string',input=encoded?JSON.parse(target.args[0]):target.args[0];input.group.parts[0].base64=Buffer.from('corrupt').toString('base64');target.args[0]=encoded?JSON.stringify(input):input;
   }
-  const result=await vm.runInContext('('+request.func.toString()+')(...args)',target);return[{frameId:0,documentId:request.func.name==='nativeAssetUploadPage'||request.func.name==='nativeAssetRecoveryPage'?f.hubDocumentId:'app-doc',result:copy(result)}];
+  const result=await vm.runInContext('('+request.func.toString()+')(...args)',target);return[{frameId:0,documentId:target===appContext?'app-doc':f.hubDocumentId,result:copy(result)}];
  };
  const message=f.api.tabs.sendMessage;f.api.tabs.sendMessage=async(id,value,frame)=>{if(!['YOOFAM_VERIFY_NATIVE_PRODUCT_DOCUMENT_SOURCE','YOOFAM_READ_NATIVE_PRODUCT_DOCUMENT_SOURCE','YOOFAM_READ_LEGACY_PRODUCT_DOCUMENT_SOURCE'].includes(value.type))return message(id,value,frame);assert.equal(id,f.sender.tab.id);assert.equal(frame.frameId,0);for(const listener of appListeners){let pending;const reply=new Promise(resolve=>{pending=listener(copy(value),{id:'fixture'},resolve);});if(pending===true)return copy(await reply);}return undefined;};
  const selected=await createVerifiedProductDocumentBrowserAdapter(context,{api:f.api}),adapter=selected.adapter,proof={identity:context.identity,bodySha256:context.originalBodySha256,preparedBodySha256:context.bodySha256,packetDigest:context.packetDigest,requestId:packet.requestId,docId:null};
