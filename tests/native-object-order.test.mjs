@@ -50,3 +50,17 @@ test('an altered unsent-update proof cannot rewind the pending checkpoint or per
   assert.equal(result.state,'update-requested');assert.equal(result.error.code,'UNSENT_UPDATE_UNCONFIRMED');assert.deepEqual(await f.storage.store.get(f.context.key),before);assert.equal(f.state.uploads.length,0);
  }finally{f.close();}}
 });
+
+test('a real binding mismatch names only the differing field and cannot upload or recreate',async()=>{
+ const f=await interrupted();try{const all=JSON.parse(f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords);all[f.context.packetDigest].binding.sessionId='changed-session';f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords=JSON.stringify(all);
+  const result=await createProductDocumentDraftReceiver({adapter:f.adapter,store:f.storage.store}).recoverDraft(f.packet,f.sender);
+  assert.equal(result.state,'update-requested');assert.equal(result.error.code,'OWNED_RECORD_BINDING_CHANGED');assert.match(result.error.message,/sessionId/);assert.doesNotMatch(result.error.message,/changed-session/);assert.equal(f.state.uploads.length,0);
+ }finally{f.close();}
+});
+
+test('an injection error is reported as execution failure instead of a missing document',async()=>{
+ const f=await nativeRecoveryFixture();try{const execute=f.api.scripting.executeScript;f.api.scripting.executeScript=async request=>request.func.name==='singleDocumentOwnedRecordPage'?[{frameId:0,documentId:f.hubDocumentId,error:{name:'ReferenceError'}}]:execute(request);
+  const result=await createProductDocumentDraftReceiver({adapter:f.adapter,store:f.storage.store}).prepareDraft(f.packet,f.sender);
+  assert.equal(result.state,'update-requested');assert.equal(result.error.code,'PAGE_EXECUTION_FAILED');assert.equal(f.state.uploads.length,0);assert.equal(f.submitted,0);
+ }finally{f.close();}
+});

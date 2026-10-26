@@ -188,10 +188,21 @@ export function singleDocumentOwnedRecordPage(binding){
   if(location.origin!=='https://supplier.coupang.com')throw Error('Supplier Hub 탭을 확인해주세요.');
   const codes=Array.from((document.body.innerText||'').matchAll(/Company Code:\s*(A\d+)\b/g),match=>match[1]);
   if(codes.length!==1||codes[0]!==binding.identity.company.code)throw Error('현재 Supplier Hub 회사가 다릅니다.');
-  let records;try{records=JSON.parse(document.documentElement.dataset.yoofamSingleDocumentRecords||'{}');}catch{return null;}
+  let records;try{records=JSON.parse(document.documentElement.dataset.yoofamSingleDocumentRecords||'{}');}catch{return JSON.stringify({format:'yoofam-owned-record-result-v1',record:null,mismatchedFields:['record-json']});}
   const record=records[binding.packetDigest];
-  if(!record||canon(record.binding)!==canon(binding))return null;
-  return record;
+  const fields=record&&canon(record.binding)!==canon(binding)?[...new Set([...Object.keys(record.binding??{}),...Object.keys(binding)])].flatMap(key=>{
+    if(canon(record.binding?.[key])===canon(binding[key]))return[];
+    return key==='identity'&&record.binding?.identity&&binding.identity?[...new Set([...Object.keys(record.binding.identity),...Object.keys(binding.identity)])].filter(name=>canon(record.binding.identity[name])!==canon(binding.identity[name])).map(name=>'identity.'+name):[key];
+  }).slice(0,20).map(key=>/^[A-Za-z0-9_.-]{1,80}$/.test(key)?key:'unknown'):!record&&Object.values(records).some(value=>value?.binding?.requestId===binding.requestId)?['packet-key']:[];
+  return JSON.stringify({format:'yoofam-owned-record-result-v1',record:fields.length?null:record??null,mismatchedFields:fields});
+}
+export function decodeSingleOwnedRecordResult(value){
+  let result;try{if(typeof value!=='string'||value.length>8*1024*1024)throw Error();result=JSON.parse(value);}catch{fail('OWNED_RECORD_REPLY','원래 문서 기록 조회의 응답 형식을 확인하지 못했습니다. 같은 문서를 보관했습니다.');}
+  if(!result||Object.keys(result).sort().join(',')!=='format,mismatchedFields,record'||result.format!=='yoofam-owned-record-result-v1'||!Array.isArray(result.mismatchedFields)||result.mismatchedFields.length>20
+    ||result.mismatchedFields.some(key=>typeof key!=='string'||!/^[A-Za-z0-9_.-]{1,80}$/.test(key)))fail('OWNED_RECORD_REPLY','원래 문서 기록의 연결 진단 응답을 확인하지 못했습니다.');
+  if(result.mismatchedFields.length)fail('OWNED_RECORD_BINDING_CHANGED','원래 생성 문서의 연결 항목이 다릅니다: '+result.mismatchedFields.join(', ')+'. 같은 문서를 유지했습니다.');
+  if(result.record!==null&&(!result.record||typeof result.record!=='object'||Array.isArray(result.record)))fail('OWNED_RECORD_REPLY','원래 생성 문서 기록의 응답을 확인해주세요.');
+  return result.record;
 }
 
 /** Carry only this previously observed own ACK across an authorized same-tab
@@ -403,11 +414,12 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     const jsonPage=[singleDocumentHubRequestPage,singleDocumentRetryCreatePage,nativeAssetUploadPage,nativeAssetRecoveryPage,singleDocumentOwnedRecordPage,singleDocumentRestoreOwnedRecordPage].includes(func);
     const wireArgs=jsonPage?[JSON.stringify(args[0]),...args.slice(1)]:args;
     const [execution]=await api.scripting.executeScript({target,func,args:wireArgs});
+    if(execution?.error)fail('PAGE_EXECUTION_FAILED','원래 문서 기록의 페이지 실행 응답이 실패했습니다. 새 요청을 보내지 않고 같은 문서를 유지했습니다.');
     const after=await api.tabs.get(tab.tabId);if(!validHubTab(after,identity.windowId)||execution?.frameId!==undefined&&execution.frameId!==0)fail('TAB_CHANGED','개별 등록 탭·프레임이 변경되었습니다.');
     if(documentId&&execution?.documentId!==documentId)fail('TAB_CHANGED','새 문서를 불러오는 브라우저 문서가 변경되었습니다.');
     if(entry){requireWatch(entry);if(entry.ready){const [guard]=await api.scripting.executeScript({target,func:singleDocumentWatchPage,args:[{...entry.page,action:'check'}]});if(guard?.result?.current!==true)fail('TAB_CHANGED','입력 중 소유 문서 관찰이 변경되었습니다.');}}
     if(execution?.frameId===0&&typeof execution.documentId==='string')frameDocuments.set(tab.tabId,execution.documentId);
-    return execution?.result;
+    return func===singleDocumentOwnedRecordPage?decodeSingleOwnedRecordResult(execution?.result):execution?.result;
   }
   async function readTab(input){
     const binding=sourceBindings.get(canonical(input.identity))?.binding;if(!binding)fail('SOURCE_CHANGED','원래 앱의 전송 연결을 확인해주세요.');
@@ -419,7 +431,10 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
   }
   async function owned(input){
     const binding=await bindingFor(input.identity,input.sessionId),record=await execute(input.tab,input.identity,singleDocumentOwnedRecordPage,[binding]);
-    if(!record||record.binding.identityDigest!==binding.identityDigest||record.binding.packetDigest!==binding.packetDigest||input.docId!==null&&input.docId!==undefined&&!equal(record.docId,input.docId))fail('READBACK_UNCONFIRMED','현재 요청에서 생성한 새 문서의 식별값이 없습니다.');
+    if(!record)fail('OWNED_RECORD_MISSING','원래 전용 탭에서 이 요청의 생성 기록을 읽지 못했습니다. 같은 문서를 유지했습니다.');
+    if(record.binding?.identityDigest!==binding.identityDigest)fail('OWNED_IDENTITY_CHANGED','원래 생성 문서의 회사·상품 연결 식별값이 다릅니다.');
+    if(record.binding?.packetDigest!==binding.packetDigest)fail('OWNED_PACKET_CHANGED','원래 생성 문서의 견적 요청 식별값이 다릅니다.');
+    if(input.docId!==null&&input.docId!==undefined&&!equal(record.docId,input.docId))fail('OWNED_DOCUMENT_ID_CHANGED','원래 생성 문서번호와 요청 문서번호가 다릅니다. (기록 '+typeof record.docId+', 요청 '+typeof input.docId+')');
     if(record.loadedDocId!==undefined){const entry=liveWatches.get(input.tab.tabId),readOnly=sourceBindings.get(canonical(input.identity))?.readOnlyReceipt;
       if(readOnly&&!entry){
         if(record.state!=='submit-requested'||!equal(record.loadedDocId,record.docId)||record.submitOperationId!==binding.requestId+':submit'||record.submitProof?.operationId!==record.submitOperationId

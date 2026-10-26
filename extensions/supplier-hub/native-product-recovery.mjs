@@ -1,7 +1,7 @@
 import {readAppDocumentSource,currentSourceAppTab} from './product-document-source.mjs';
 import {nativeAssetUploadPlanSha256,validateNativeAssetUploadDescriptors} from './native-asset-multipart.mjs';
 import {nativeAssetRecoveryPage} from './native-asset-recovery-page.mjs';
-import {singleDocumentOwnedRecordPage} from './single-document-adapter.mjs';
+import {singleDocumentOwnedRecordPage,decodeSingleOwnedRecordResult} from './single-document-adapter.mjs';
 import {assertSingleOwnedTarget} from './single-owned-target.mjs';
 import {SingleDocumentError} from './single-document.mjs';
 const canon=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canon).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canon(value[key])).join(',')+'}';
@@ -34,7 +34,7 @@ export function withNativeProductAssetRecovery(adapter,{api,nativeSha,now=Date.n
    ||url.origin!=='https://supplier.coupang.com'||url.pathname!=='/dashboard/KR'||url.username||url.password||url.search||url.hash)fail();};
   await tabCurrent();
   const [before]=await api.scripting.executeScript({target:{tabId:input.tab.tabId,frameIds:[0]},func:singleDocumentOwnedRecordPage,args:[JSON.stringify(binding)]});
-  const record=before?.result;if(before?.frameId!==0||typeof before?.documentId!=='string'||!record||!same(record.binding,binding)||!same(record.docId,input.docId)
+  const record=decodeSingleOwnedRecordResult(before?.result);if(before?.frameId!==0||typeof before?.documentId!=='string'||!record||!same(record.binding,binding)||!same(record.docId,input.docId)
    ||record.state!=='created'||record.updateOperationId!==undefined||!same(record.baselineDocIds,input.baselineDocIds)||record.baselineDocIds.some(id=>String(id)===String(input.docId)))fail();
   const target={docId:record.docId,requestId:binding.requestId,packetDigest:binding.packetDigest,preparedBodySha256:binding.preparedBodySha256,
    createOperationId:record.createOperationId,baselineDocIds:copy(record.baselineDocIds)};
@@ -45,7 +45,7 @@ export function withNativeProductAssetRecovery(adapter,{api,nativeSha,now=Date.n
   await tabCurrent();const [readback]=await api.scripting.executeScript({target:{tabId:input.tab.tabId,documentIds:[before.documentId]},func:nativeAssetRecoveryPage,args:[JSON.stringify({binding,target,plan})]});
   await tabCurrent();if(readback?.frameId!==0||readback.documentId!==before.documentId)fail();
   const [after]=await api.scripting.executeScript({target:{tabId:input.tab.tabId,documentIds:[before.documentId]},func:singleDocumentOwnedRecordPage,args:[JSON.stringify(binding)]});
-  if(after?.frameId!==0||after.documentId!==before.documentId||!same(after.result,record)||!same(await current(),sourcePlan))fail();
+  if(after?.frameId!==0||after.documentId!==before.documentId||!same(decodeSingleOwnedRecordResult(after.result),record)||!same(await current(),sourcePlan))fail();
   const observation=readback.result;
   const keys=['format','requestId','docId','packetDigest','identityDigest','sourcePlanSha256','planSha256','groups','observedAt','readOnly','ledgerMutated','unresolved','canContinue','remoteWrites','actualUploadVerified','remoteBytesVerified','registered'];
   if(!observation||Object.keys(observation).length!==keys.length||Object.keys(observation).some(key=>!keys.includes(key))||observation.format!=='yoofam-native-asset-recovery-observation-v1'||observation.requestId!==binding.requestId||!same(observation.docId,target.docId)
