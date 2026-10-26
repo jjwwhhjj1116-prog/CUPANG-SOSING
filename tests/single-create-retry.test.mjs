@@ -146,3 +146,18 @@ test('read recovery after a legacy unsent approved continuation proves source, m
   await receiver.recoverDraft(packet,f.sender);assert.equal(posts(),1);assert.deepEqual(f.documents.get(f.prior.docId),prior);assert.equal(f.submitted,0);
  }finally{f?.close();t.mock.timers.reset();}
 });
+
+test('read-only retry recovery reports the correlated failing list without creating or releasing the original checkpoint',async t=>{
+ t.mock.timers.enable({apis:['Date'],now:Date.now()});let f;
+ try{
+  f=await nativeRecoveryFixture(undefined,{sourceSessionId:'inspect-list-diagnostic',browser:{registerRequestedStatus:503}});
+  const dropped={...f.adapter,hubRequest:async input=>input.method==='POST'&&input.path.endsWith('/create')?undefined:f.adapter.hubRequest(input)};
+  const legacy=createProductDocumentDraftReceiver({adapter:dropped,store:f.storage.store});
+  await legacy.prepareDraft(f.packet,f.sender);t.mock.timers.tick(61000);await legacy.retryCreateDraft(f.packet,f.sender);await legacy.resumeCreateRetryDraft(f.packet,f.sender);
+  const receiver=createProductDocumentDraftReceiver({adapter:f.adapter,store:f.storage.store}),result=await receiver.recoverDraft(f.packet,f.sender);
+  assert.equal(result.state,'create-requested');assert.equal(result.error.code,'CREATE_RETRY_INSPECTION_BLOCKED');assert.match(result.error.message,/제출요청 목록/);
+  assert.equal(result.requestId,f.packet.requestId);assert.equal(result.docId,null);
+  assert.equal(f.calls.some(c=>c.name==='hub-fetch'&&c.init.method==='POST'&&c.url.endsWith('/create')),false);
+  assert.equal(f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords,undefined);
+ }finally{f?.close();t.mock.timers.reset();}
+});

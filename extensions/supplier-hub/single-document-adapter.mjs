@@ -22,6 +22,15 @@ const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(valu
 const equal=(left,right)=>canonical(left)===canonical(right);
 const copy=value=>structuredClone(value);
 const digest=async value=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(canonical(value)))),byte=>byte.toString(16).padStart(2,'0')).join('');
+const retryPhaseLabels={scope:'승인·회사·탭','baseline-input':'원래 기준 식별값','body-shape':'원래 본문·옵션 구조','body-match':'검증한 원래 본문','list-unfinished':'중간저장 목록','list-requested':'제출요청 목록',duplicate:'동일 상품 문서',baseline:'원래 중간저장 기준','final-scope':'최종 탭·회사',create:'생성 응답'};
+function correlatedRetryFailure(value,binding,operationId){
+  const failed=value?.createRetryFailure;if(!failed)return null;
+  if(Object.keys(failed).sort().join(',')!=='canContinue,dispatched,format,identityDigest,operationId,packetDigest,phase,requestId'||failed.format!=='yoofam-create-retry-failure-v1'
+    ||failed.requestId!==binding.requestId||failed.operationId!==operationId||failed.packetDigest!==binding.packetDigest||failed.identityDigest!==binding.identityDigest
+    ||!Object.hasOwn(retryPhaseLabels,failed.phase)||typeof failed.dispatched!=='boolean'||typeof failed.canContinue!=='boolean'||failed.canContinue&&failed.dispatched)
+    fail('CREATE_RETRY_UNCONFIRMED','재시도 전 확인 응답의 원래 요청 연결을 검증하지 못했습니다.');
+  return failed;
+}
 const allowedPath=path=>['/dashboard/KR','/qvt/registration','/qvt/wims','/sr/registration'].includes(path)||/^\/sr\/registration\/step\/(startPage|productPage|imagePage|legalPage|logisticsPage)$/.test(path);
 function validHubTab(tab,windowId){
   try{const url=new URL(tab.url);return Number.isSafeInteger(tab.id)&&tab.id>=0&&tab.windowId===windowId&&!tab.pendingUrl&&tab.status==='complete'
@@ -430,14 +439,9 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     const value=await execute(input.tab,input.identity,input.retryCreateApproval?singleDocumentRetryCreatePage:singleDocumentHubRequestPage,[{binding,method:input.method,path:input.path,...(input.body===undefined?{}:{body:input.body}),
       ...(input.retryCreateApproval?{retryCreateApproval:copy(input.retryCreateApproval),verifiedBodyCanonical}:{}),
       ...(input.operationId===undefined?{}:{operationId:input.operationId}),...(input.path.endsWith('/create')?{baselineDocIds:input.retryCreateApproval?copy(input.baselineDocIds):baselines.get(binding.packetDigest)??[]}:{})}]);
-    if(input.retryCreateApproval&&value?.createRetryFailure){const failed=value.createRetryFailure;
-      if(!failed||Object.keys(failed).sort().join(',')!=='canContinue,dispatched,format,identityDigest,operationId,packetDigest,phase,requestId'||failed.format!=='yoofam-create-retry-failure-v1'
-        ||failed.requestId!==binding.requestId||failed.operationId!==input.operationId||failed.packetDigest!==binding.packetDigest||failed.identityDigest!==binding.identityDigest
-        ||!['scope','baseline-input','body-shape','body-match','list-unfinished','list-requested','duplicate','baseline','final-scope','create'].includes(failed.phase)
-        ||typeof failed.dispatched!=='boolean'||typeof failed.canContinue!=='boolean'||failed.canContinue&&failed.dispatched)fail('CREATE_RETRY_UNCONFIRMED','재시도 전 확인 응답의 원래 요청 연결을 검증하지 못했습니다.');
-      const labels={scope:'승인·회사·탭','baseline-input':'원래 기준 식별값','body-shape':'원래 본문·옵션 구조','body-match':'검증한 원래 본문','list-unfinished':'중간저장 목록','list-requested':'제출요청 목록',duplicate:'동일 상품 문서',baseline:'원래 중간저장 기준','final-scope':'최종 탭·회사',create:'생성 응답'};
+    if(input.retryCreateApproval&&value?.createRetryFailure){const failed=correlatedRetryFailure(value,binding,input.operationId);
       fail(failed.canContinue?'CREATE_RETRY_PRECHECK_NOT_SENT':failed.dispatched?'CREATE_RETRY_ACK_UNCERTAIN':'CREATE_RETRY_PRECHECK_BLOCKED',
-        `재시도 ${labels[failed.phase]} 확인에서 중단했습니다. ${failed.canContinue?'이 확인에서는 생성 요청을 보내지 않았습니다. 같은 승인 범위로 준비를 이어갈 수 있습니다.':'생성을 반복하지 말고 원래 저장 결과를 확인해주세요.'}`);
+        `재시도 ${retryPhaseLabels[failed.phase]} 확인에서 중단했습니다. ${failed.canContinue?'이 확인에서는 생성 요청을 보내지 않았습니다. 같은 승인 범위로 준비를 이어갈 수 있습니다.':'생성을 반복하지 말고 원래 저장 결과를 확인해주세요.'}`);
     }
     if(input.method==='GET'&&input.path==='/sr/draft/api/drafts'&&value?.ok===true&&Array.isArray(value.json)&&!baselines.has(binding.packetDigest))baselines.set(binding.packetDigest,value.json.map(row=>row.docId));
     if(value?.ownedRecord)pageRecords.set(binding.packetDigest,copy(value.ownedRecord));
@@ -466,6 +470,11 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     if(await digest(input.expectedBody)!==binding.preparedBodySha256)fail('CREATE_RETRY_BODY_CHANGED','원래 승인한 견적서와 현재 본문이 다릅니다.');
     const value=await execute(input.tab,input.identity,singleDocumentRetryCreatePage,[{binding,method:'POST',path:'/sr/draft/api/create',operationId:input.operationId,
       body:copy(input.expectedBody),baselineDocIds:copy(input.baselineDocIds),retryCreateApproval:copy(input.createRetryApproval),verifiedBodyCanonical,inspectOnly:true}]);
+    const failed=correlatedRetryFailure(value,binding,input.operationId);
+    if(failed){
+      if(failed.dispatched||failed.phase==='create')fail('CREATE_RETRY_UNCONFIRMED','읽기 전용 생성 확인의 응답 범위를 검증하지 못했습니다.');
+      fail('CREATE_RETRY_INSPECTION_BLOCKED',`원래 생성 요청의 ${retryPhaseLabels[failed.phase]} 확인에서 중단했습니다. 읽기 전용 확인이며 새 문서를 만들지 않았습니다.`);
+    }
     const proof=value?.json?.retryPrecheck;
     if(value?.ok!==true||value.status!==200||!proof||Object.keys(proof).sort().join(',')!=='baselineMatched,checkedAt,duplicateMatches,format,identityDigest,markerAbsent,operationId,packetDigest,preparedBodySha256,remoteWrites,requestId'
       ||proof.format!=='yoofam-create-retry-precheck-v1'||proof.requestId!==binding.requestId||proof.operationId!==input.operationId
