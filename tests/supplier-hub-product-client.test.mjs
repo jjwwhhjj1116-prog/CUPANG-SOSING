@@ -158,6 +158,7 @@ test('same-document repair validates its new capability and only authenticated m
   f.bridge=async()=>({...f.preview(),...capabilities});await assert.rejects(f.session(),error=>error.code==='PRODUCT_DOCUMENT_REPLY_IDENTITY');
  }
  f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,preparedLifecycleAvailable:true,existingDocumentRepairAvailable:true});const session=await f.session();
+ await assert.rejects(f.client.runProductDocumentDraft(session,'retryExistingDraftRepair',new AbortController().signal),error=>error.code==='PRODUCT_DOCUMENT_REPAIR_RETRY_UNAVAILABLE');
  const missing=()=>draftState(f,'update-requested',{docId:'2347603',needsRecovery:true,error:{code:'OWNED_RECORD_MISSING',message:'원래 문서 2347603 파일 저장 결과 미확인'}});
  f.bridge=async()=>missing();
  await assert.rejects(f.client.runPreparedProductDocument(session,'recoverPreparedDraft',new AbortController().signal),error=>error.code==='PRODUCT_DOCUMENT_DRAFT_SOURCE_FAILURE'&&error.existingDocumentRepairEligible===true&&error.knownDocId==='2347603'&&!error.existingDocumentRepairAttempted&&!error.uncertain);

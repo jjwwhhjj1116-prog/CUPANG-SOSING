@@ -126,6 +126,19 @@ const repairProof=(h,attempted=false)=>({evidence:'document-draft-preparation',v
 const missingOwnedDraft=(h,payload,attempted=false)=>draftResult(h.f,payload.packet.requestId,'update-requested',{docId:'2347603',needsRecovery:true,draftProof:repairProof(h,attempted),...(payload.action==='recoverDraft'||payload.action==='recoverPreparedDraft'?{error:{code:'OWNED_RECORD_MISSING',message:'원래 문서 2347603의 저장 기록이 없습니다.'}}:{})});
 function allowRepair(h,run,available=true){h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true,...(available?{existingDocumentRepairAvailable:true}:{})}:run(payload);}
 
+test('additional same-document repair needs its separate capability and explicit approval, and duplicate callbacks cannot dispatch twice',async()=>{
+ const h=await fixture();try{
+  h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true,existingDocumentRepairAvailable:true,existingDocumentRepairRetryAvailable:true}
+   :payload.action==='retryExistingDraftRepair'?draftResult(h.f,payload.packet.requestId,'updated',{docId:'2347603',recovered:true,draftProof:{...repairProof(h,true),existingDocumentRepairRetryAttempted:true,checkpointSequence:15}}):missingOwnedDraft(h,payload,true);
+  await h.idle();await h.click(open);await h.click(prepareDraft);await h.click(recoverDraft);const label='같은 문서 추가 1회 복구';
+  assert.equal(h.button(repairDraft),undefined);assert.equal(h.button(label).props.disabled,true);const unapproved=h.button(label).props.onClick;unapproved();await h.idle();assert.equal(h.f.sent.length,3);
+  const checkbox=nodes(h.render()).find(node=>node.type==='input'&&node.props.type==='checkbox');checkbox.props.onChange({target:{checked:true}});h.flush();
+  const approved=h.button(label).props.onClick;approved();approved();await h.idle();assert.equal(h.f.sent.filter(row=>row.payload.action==='retryExistingDraftRepair').length,1);
+  assert.ok(h.button(continueDraft));assert.equal(h.button(label),undefined);assert.equal(h.button(repairDraft),undefined);approved();unapproved();await h.idle();assert.equal(h.f.sent.filter(row=>row.payload.action==='retryExistingDraftRepair').length,1);
+  assert.equal(new Set(h.f.sent.map(row=>row.payload.packet.requestId)).size,1);assert.equal(h.f.history.length,0);assert.ok(h.f.calls.every(row=>row.method==='GET'));
+ }finally{h.close();}
+});
+
 test('an authenticated failed pre-lifecycle read retains the known document and uses only fresh draft readback next',async()=>{
  const h=await fixture();try{
   allowRepair(h,payload=>missingOwnedDraft(h,payload));await h.idle();await h.click(open);await h.click(prepareDraft);const original=h.f.sent[1].payload.packet.requestId;

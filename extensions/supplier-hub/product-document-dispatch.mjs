@@ -10,11 +10,11 @@ export const PRODUCT_DOCUMENT_LIVE_VERIFIED=false;
 const receivers=new Map();
 const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canonical).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}';
 export async function dispatchProductDocument(message,sender){
-  if(!message||message.type!=='YOOFAM_PRODUCT_DOCUMENT_REQUEST'||!['preview','prepareDraft','recoverDraft','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','repairExistingDraft','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft','start','resume','recover','confirm','observe'].includes(message.action)
+  if(!message||message.type!=='YOOFAM_PRODUCT_DOCUMENT_REQUEST'||!['preview','prepareDraft','recoverDraft','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','repairExistingDraft','retryExistingDraftRepair','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft','start','resume','recover','confirm','observe'].includes(message.action)
     ||Object.keys(message).some(key=>!['type','action','packet','confirmation'].includes(key))
     ||(['confirm','confirmPreparedDraft'].includes(message.action))!==Object.hasOwn(message,'confirmation'))throw new SingleDocumentError('PRODUCT_ACTION','전체 상품 견적 작업을 확인해주세요.');
-  let context=await productDocumentIdentity(message.packet,sender,{allowExpired:!['preview','start','prepareDraft','reviewPreparedDraft','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','repairExistingDraft'].includes(message.action)});
-  if(['prepareDraft','recoverDraft','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','repairExistingDraft','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(message.action))context=await resolveProductSourceContext(context);
+  let context=await productDocumentIdentity(message.packet,sender,{allowExpired:!['preview','start','prepareDraft','reviewPreparedDraft','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','repairExistingDraft','retryExistingDraftRepair'].includes(message.action)});
+  if(['prepareDraft','recoverDraft','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','repairExistingDraft','retryExistingDraftRepair','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(message.action))context=await resolveProductSourceContext(context);
   if(message.action==='preview'){
     const reviewDigest=message.packet.review.reviewDigest,deadlineAt=Date.now()+PRODUCT_DOCUMENT_PREFLIGHT_TIMEOUT,timeoutError=()=>new SingleDocumentError('PRODUCT_SOURCE_PREFLIGHT_TIMEOUT','현재 회원·회사·견적 원본 확인 시간이 초과됐습니다. 상품은 전송하지 않았습니다.');
     let selected,stopped=false,timer;
@@ -36,11 +36,11 @@ export async function dispatchProductDocument(message,sender){
         fingerprint:context.packet.fingerprint,productId:context.packet.productId,members:context.identity.members,
         identityDigest:context.identityDigest,packetDigest:context.packetDigest,reviewDigest,
         preparedBodySha256:context.bodySha256,originalBodySha256:context.originalBodySha256,
-        liveVerified:PRODUCT_DOCUMENT_LIVE_VERIFIED,draftPreparationAvailable:selected.nativeAssets===true,preparedLifecycleAvailable:selected.nativeAssets===true,createRetryAvailable:selected.nativeAssets===true,createRetryContinuationAvailable:selected.nativeAssets===true,existingDocumentRepairAvailable:selected.nativeAssets===true,remoteWrites:false,registered:false};
+        liveVerified:PRODUCT_DOCUMENT_LIVE_VERIFIED,draftPreparationAvailable:selected.nativeAssets===true,preparedLifecycleAvailable:selected.nativeAssets===true,createRetryAvailable:selected.nativeAssets===true,createRetryContinuationAvailable:selected.nativeAssets===true,existingDocumentRepairAvailable:selected.nativeAssets===true,existingDocumentRepairRetryAvailable:selected.nativeAssets===true,remoteWrites:false,registered:false};
     })();
     try{return await Promise.race([operation,deadline]);}finally{stopped=true;clearTimeout(timer);selected?.adapter.dispose();}
   }
-  if(['prepareDraft','recoverDraft','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','repairExistingDraft','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(message.action)){
+  if(['prepareDraft','recoverDraft','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','repairExistingDraft','retryExistingDraftRepair','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(message.action)){
     const selected=await createVerifiedProductDocumentBrowserAdapter(context);
     if(selected.nativeAssets!==true){selected.adapter.dispose();throw new SingleDocumentError('PRODUCT_DRAFT_NATIVE_SOURCE_REQUIRED','현재 상품의 원본 파일·회사·저장 견적을 확인한 뒤 새 초안을 준비해주세요.');}
     if(['recoverDraft','recoverClosedTarget','recoverPreparedDraft','observePreparedDraft'].includes(message.action)){

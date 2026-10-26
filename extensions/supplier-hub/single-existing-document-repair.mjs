@@ -52,7 +52,13 @@ export async function singleExistingDocumentRepairPage(input){
    emptyImages:true,emptyLegalTypes:legalTypes,duplicateMatches:0,readOnly:true,remoteWrites:false,priorUpdateOutcome:'unknown',checkedAt:Date.now()};
   if(input.mode==='inspect')return JSON.stringify({proof,record:null});
   const audit=input.repair,prior=input.inspection;
-  if(!audit||Object.keys(audit).sort().join(',')!=='attempt,docId,format,inspectionSha256,priorOperationId,priorSequence,startedAt'||audit.format!=='yoofam-existing-document-repair-v1'||audit.attempt!==1||!same(audit.docId,docId)
+  const retry=audit?.format==='yoofam-existing-document-repair-retry-v1';
+  if(!audit||Object.keys(audit).sort().join(',')!==(retry?'attempt,docId,format,inspectionSha256,priorOperationId,priorRepair,priorSequence,startedAt':'attempt,docId,format,inspectionSha256,priorOperationId,priorSequence,startedAt')
+   ||(retry?audit.attempt!==2||!audit.priorRepair||Object.keys(audit.priorRepair).sort().join(',')!=='attempt,docId,format,inspectionSha256,priorOperationId,priorSequence,startedAt'
+      ||audit.priorRepair.format!=='yoofam-existing-document-repair-v1'||audit.priorRepair.attempt!==1||!same(audit.priorRepair.docId,docId)||audit.priorRepair.priorOperationId!==input.operationId
+      ||!Number.isSafeInteger(audit.priorRepair.priorSequence)||audit.priorRepair.priorSequence<1||audit.priorRepair.priorSequence>=audit.priorSequence
+      ||!Number.isSafeInteger(audit.priorRepair.startedAt)||audit.priorRepair.startedAt<1||audit.priorRepair.startedAt>audit.startedAt||!/^[a-f0-9]{64}$/.test(audit.priorRepair.inspectionSha256||'')
+     :audit.format!=='yoofam-existing-document-repair-v1'||audit.attempt!==1)||!same(audit.docId,docId)
    ||audit.priorOperationId!==input.operationId||!Number.isSafeInteger(audit.priorSequence)||audit.priorSequence<1||!Number.isSafeInteger(audit.startedAt)||audit.startedAt>Date.now()+5000||Date.now()-audit.startedAt>180000
    ||!prior||await hash(prior)!==audit.inspectionSha256||prior.metadataSha256!==proof.metadataSha256||prior.bodyState!==proof.bodyState||prior.docId!==docId||prior.packetDigest!==proof.packetDigest
    ||prior.identityDigest!==proof.identityDigest||prior.requestId!==proof.requestId||prior.operationId!==proof.operationId||prior.sourcePlanSha256!==proof.sourcePlanSha256

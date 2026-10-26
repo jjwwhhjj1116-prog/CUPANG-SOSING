@@ -33,6 +33,54 @@ async function pendingFixture(company=SINGLE_COMPANIES[0],options={}){
 }
 function unchanged(f){assert.deepEqual(f.documents.get(f.prior.docId),f.protectedBefore);assert.equal(created(f).length,1);assert.equal(f.submitted,0);}
 
+async function reservedFirstRepairWithoutDispatch(f){
+ const request=f.adapter.hubRequest;
+ f.adapter.hubRequest=async input=>{if(input.method==='POST'&&input.path==='/sr/draft/api/update')throw Error('synthetic first repair interrupted before dispatch');return request(input);};
+ try{const result=await f.receiver.repairExistingDraft(f.packet,f.sender);assert.equal(result.state,'update-requested');}
+ finally{f.adapter.hubRequest=request;}
+ const first=copy((await f.storage.store.get(f.context.key)).existingDocumentRepair);assert.equal(first.attempt,1);assert.equal(f.state.uploads.length,0);assert.equal(updated(f).length,0);
+ f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords='{}';await f.recordMirror.flush();return first;
+}
+
+for(const company of SINGLE_COMPANIES)test(`${company.code}: separately approved additional repair preserves the first audit and writes the same document at most once`,async()=>{
+ const f=await pendingFixture(company,{repairBodyFailure:true});try{
+  const first=await reservedFirstRepairWithoutDispatch(f),result=await f.receiver.retryExistingDraftRepair(f.packet,f.sender);
+  assert.equal(result.state,'updated',JSON.stringify(result));assert.equal(result.docId,f.createdDocId);assert.equal(result.draftProof.existingDocumentRepairRetryAttempted,true);
+  const checkpoint=await f.storage.store.get(f.context.key);assert.deepEqual(checkpoint.existingDocumentRepair,first);assert.equal(checkpoint.existingDocumentRepairRetry.attempt,2);
+  assert.deepEqual(checkpoint.existingDocumentRepairRetry.priorRepair,first);assert.equal(updated(f).length,1);assert.deepEqual(f.state.uploads,['MAIN','ADDITIONAL','LABEL','DETAIL']);
+  const before=copy(documentWrites(f));for(const action of ['repairExistingDraft','retryExistingDraftRepair']){const duplicate=await f.receiver[action](f.packet,f.sender);assert.ok(duplicate.error);assert.deepEqual(documentWrites(f),before);}
+  assert.deepEqual(await f.storage.store.get(f.context.key),checkpoint);unchanged(f);
+ }finally{f.close();}
+});
+
+test('an additional repair requires the preserved first attempt and refuses existing files before reserving another write',async()=>{
+ for(const mode of ['no-first-attempt','existing-image']){const f=await pendingFixture();try{
+  if(mode==='existing-image'){await reservedFirstRepairWithoutDispatch(f);f.state.registry.set('already.png',{imageName:'already.png',imageUrl:'/stored/already.png',s3Link:'stored/already.png'});}
+  const before=copy(await f.storage.store.get(f.context.key)),result=await f.receiver.retryExistingDraftRepair(f.packet,f.sender);assert.ok(result.error,mode);
+  assert.deepEqual(await f.storage.store.get(f.context.key),before);assert.equal(f.state.uploads.length,0);assert.equal(updated(f).length,0);unchanged(f);
+ }finally{f.close();}}
+});
+
+test('a lost additional repair ACK preserves both attempts and cannot cause a third remote write',async()=>{
+ const browser={},f=await pendingFixture(undefined,{browser});try{
+  const first=await reservedFirstRepairWithoutDispatch(f);browser.loseExecuteAck='singleDocumentHubRequestPage';browser.losePath='/sr/draft/api/update';
+  const result=await f.receiver.retryExistingDraftRepair(f.packet,f.sender);assert.equal(result.state,'update-requested');assert.equal(result.draftProof.existingDocumentRepairRetryAttempted,true);
+  const before=copy(await f.storage.store.get(f.context.key)),writes=copy(documentWrites(f)),uploads=copy(f.state.uploads);assert.deepEqual(before.existingDocumentRepair,first);assert.equal(updated(f).length,1);
+  const second=await f.receiver.retryExistingDraftRepair(f.packet,f.sender);assert.ok(second.error);assert.deepEqual(await f.storage.store.get(f.context.key),before);
+  assert.deepEqual(documentWrites(f),writes);assert.deepEqual(f.state.uploads,uploads);unchanged(f);
+ }finally{f.close();}
+});
+
+test('two additional-repair receivers share one durable reservation and cannot duplicate the upload or update',async()=>{
+ const f=await pendingFixture(undefined,{repairBodyFailure:true});try{
+  const first=await reservedFirstRepairWithoutDispatch(f),other=createProductDocumentDraftReceiver({adapter:f.adapter,store:f.storage.store});
+  const results=await Promise.allSettled([f.receiver.retryExistingDraftRepair(f.packet,f.sender),other.retryExistingDraftRepair(f.packet,f.sender)]);
+  assert.equal(results.filter(value=>value.status==='fulfilled'&&value.value.state==='updated').length,1);
+  assert.equal(updated(f).length,1);assert.deepEqual(f.state.uploads,['MAIN','ADDITIONAL','LABEL','DETAIL']);
+  const checkpoint=await f.storage.store.get(f.context.key);assert.deepEqual(checkpoint.existingDocumentRepair,first);assert.equal(checkpoint.existingDocumentRepairRetry.attempt,2);unchanged(f);
+ }finally{f.close();}
+});
+
 for(const company of SINGLE_COMPANIES)test(`${company.code}: approved repair writes only the original document, then the explicit preparation action validates all steps`,async()=>{
   const f=await pendingFixture(company,{repairBodyFailure:true,browser:{sortObjectArguments:true,dropNullArguments:true}});
   try{
