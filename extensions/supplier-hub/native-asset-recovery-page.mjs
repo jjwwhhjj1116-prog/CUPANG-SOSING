@@ -10,8 +10,8 @@ export function decodeNativeAssetRecoveryResult(value){
 
 /** Only fixed, non-sensitive diagnostics may cross the page boundary. */
 export function nativeAssetRecoveryErrorCode(value){
- const stages=['input','record-before','plan','ledger','files-read','http-request','http-response','http-body','file-descriptors','group-comparison','record-after'];
- const codes=['input-too-large','page-guard','record-changed','missing-upload-record','source-file-mismatch','file-list','file-list-mismatch','unexpected-file','unrecognized'];
+ const stages=['input','record-before','plan','ledger','files-read','http-guard','http-request','http-response','http-body','file-descriptors','group-comparison','record-after'];
+ const codes=['input-too-large','page-guard','record-changed','missing-upload-record','source-file-mismatch','file-list','file-list-mismatch','unexpected-file','http-timeout','http-aborted','http-network','http-redirect','http-401','http-403','http-404','http-429','http-500','http-502','http-503','http-504','http-status','unrecognized'];
  return value&&Object.keys(value).sort().join(',')==='code,format,stage'&&value.format==='yoofam-native-asset-recovery-error-v1'&&codes.includes(value.code)&&stages.includes(value.stage)?{code:value.code,stage:value.stage}:null;
 }
 
@@ -60,21 +60,26 @@ export async function nativeAssetRecoveryPage(input,prepared=false){
    for(let index=0;index<group.files.length;index++){const expected=group.files[index],part=prior.localParts[index];if(!part||Object.keys(part).sort().join(',')!=='byteLength,sha256,transportName'||part.transportName!==expected.transportName||part.byteLength!==expected.byteLength||part.sha256!==expected.sha256)fail('보관된 원본 파일명·길이·SHA가 현재 원본 계획과 다릅니다.');}
   }
  }
- const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),30000),doc=encodeURIComponent(String(target.docId));
- const read=async(path,legal=false)=>{stage='http-request';readRecord();const url=origin+path,response=await fetch(url,{method:legal?'POST':'GET',credentials:'include',redirect:'error',cache:'no-store',signal:controller.signal,
-  headers:{accept:'application/json',...(legal?{'content-type':'application/json;charset=UTF-8'}:{})},...(legal?{body:'{}'}:{})});
+ const doc=encodeURIComponent(String(target.docId));
+ const read=async(path,legal=false)=>{stage='http-guard';readRecord();const url=origin+path,controller=new AbortController(),timer=setTimeout(()=>controller.abort(),30000);stage='http-request';let response;
+  try{
+  try{response=await fetch(url,{method:legal?'POST':'GET',credentials:'include',redirect:'manual',cache:'no-store',signal:controller.signal,
+   headers:{accept:'application/json',...(legal?{'content-type':'application/json;charset=UTF-8'}:{})},...(legal?{body:'{}'}:{})});}
+  catch(error){if(controller.signal.aborted)fail('FILE_READ_TIMEOUT');if(error?.name==='AbortError')fail('FILE_READ_ABORTED');if(error?.name==='TypeError')fail('FILE_READ_NETWORK');throw error;}
   stage='http-response';
+  if(response.type==='opaqueredirect'||response.status>=300&&response.status<400)fail('FILE_READ_REDIRECT');
+  if(!response.ok){const status=[401,403,404,429,500,502,503,504].includes(response.status)?response.status:'OTHER';fail('FILE_READ_HTTP_'+status);}
   if(!response.ok||response.status!==200||response.redirected||response.url!==url||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')||''))fail();
   stage='http-body';
-  const reader=response.body?.getReader();if(!reader)fail();const chunks=[];let length=0;try{for(;;){const item=await reader.read();if(item.done)break;length+=item.value.byteLength;if(length>6*1024*1024)fail();chunks.push(item.value);}}finally{await reader.cancel().catch(()=>{});}
-  const bytes=new Uint8Array(length);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}const rows=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));readRecord();if(!Array.isArray(rows)||rows.length>150)fail('원래 문서의 파일 목록 배열을 확인하지 못했습니다.');return rows;
+  const reader=response.body?.getReader();if(!reader)fail();const chunks=[];let length=0;try{for(;;){const item=await reader.read();if(item.done)break;length+=item.value.byteLength;if(length>6*1024*1024)fail();chunks.push(item.value);}}catch(error){if(controller.signal.aborted)fail('FILE_READ_TIMEOUT');if(error?.name==='AbortError')fail('FILE_READ_ABORTED');if(error?.name==='TypeError')fail('FILE_READ_NETWORK');throw error;}finally{await reader.cancel().catch(()=>{});}
+  const bytes=new Uint8Array(length);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}const rows=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));readRecord();if(controller.signal.aborted)fail('FILE_READ_TIMEOUT');if(!Array.isArray(rows)||rows.length>150)fail('원래 문서의 파일 목록 배열을 확인하지 못했습니다.');return rows;
+  }finally{clearTimeout(timer);}
  };
  const descriptors=(rows,kind,type)=>{stage='file-descriptors';const names=new Set(),allowed=prepared?new Set(groups.filter(group=>group.kind===kind&&(kind==='image'||group.type===type)).flatMap(group=>group.files.map(file=>file.transportName))):allNames;return rows.map(row=>{const name=row?.[kind==='image'?'imageName':'fileName'];if(typeof name!=='string'||!allowed.has(name)||names.has(name)||typeof row.s3Link!=='string'||!row.s3Link.trim()||row.s3Link.length>4096||/[\u0000-\u001f]/.test(row.s3Link))fail();names.add(name);
    if(kind==='legal'){if(row.fileType!==type)fail();return{fileName:name,fileType:type,s3Link:row.s3Link};}
    if(typeof row.imageUrl!=='string'||row.imageUrl.length>4096||row.imageUrl.includes('\\')||!(/^(https:\/\/|\/[^/])/.test(row.imageUrl)))fail();let url;try{url=new URL(row.imageUrl,origin);}catch{fail();}if(url.protocol!=='https:'||url.username||url.password)fail();
    return{imageName:name,imageUrl:row.imageUrl,s3Link:row.s3Link,...(row.host===undefined?{}:{host:row.host}),...(row.mainImage===undefined?{}:{mainImage:row.mainImage})};
   }).sort((a,b)=>String(a.imageName??a.fileName).localeCompare(String(b.imageName??b.fileName)));};
- try{
   stage='files-read';
   const images=groups.some(group=>group.kind==='image')?descriptors(await read('/sr/draft/api/get-images-by-id/'+doc),'image'):[];
   stage='group-comparison';
@@ -88,10 +93,9 @@ export async function nativeAssetRecoveryPage(input,prepared=false){
     expectedFiles:group.files.map(file=>({transportName:file.transportName,sha256:file.sha256,byteLength:file.byteLength,contentType:file.contentType})),listedFiles:listed,
     remoteByteLengthVerified:false,remoteContentTypeVerified:false,remoteBytesVerified:false});
   }
-  stage='record-after';readRecord();if(controller.signal.aborted)fail();return JSON.stringify({format:prepared?'yoofam-native-prepared-files-v1':'yoofam-native-asset-recovery-observation-v1',requestId:binding.requestId,docId:target.docId,packetDigest:binding.packetDigest,identityDigest:binding.identityDigest,
+  stage='record-after';readRecord();return JSON.stringify({format:prepared?'yoofam-native-prepared-files-v1':'yoofam-native-asset-recovery-observation-v1',requestId:binding.requestId,docId:target.docId,packetDigest:binding.packetDigest,identityDigest:binding.identityDigest,
    sourcePlanSha256:binding.nativeAssetSourcePlanSha256,planSha256:plan.planSha256,groups:observations,observedAt:Date.now(),readOnly:true,ledgerMutated:false,
    unresolved:!prepared,canContinue:false,remoteWrites:false,actualUploadVerified:false,remoteBytesVerified:false,registered:false});
- }finally{clearTimeout(timer);}
  }catch(error){
   // Chrome may discard exceptions from injected async functions. Return only a
   // fixed label; never return the original exception or page/user data.
@@ -103,7 +107,10 @@ export async function nativeAssetRecoveryPage(input,prepared=false){
    '보관된 원본 파일명·길이·SHA가 현재 원본 계획과 다릅니다.':'source-file-mismatch',
    '원래 문서의 파일 목록 배열을 확인하지 못했습니다.':'file-list',
    '현재 파일 목록이 원래 확인한 업로드 응답과 다릅니다.':'file-list-mismatch',
-   '요청하지 않은 파일이 원래 새 문서에 있어 미확정 상태를 유지했습니다.':'unexpected-file'
+   '요청하지 않은 파일이 원래 새 문서에 있어 미확정 상태를 유지했습니다.':'unexpected-file',
+   'FILE_READ_TIMEOUT':'http-timeout','FILE_READ_ABORTED':'http-aborted','FILE_READ_NETWORK':'http-network','FILE_READ_REDIRECT':'http-redirect',
+   'FILE_READ_HTTP_401':'http-401','FILE_READ_HTTP_403':'http-403','FILE_READ_HTTP_404':'http-404','FILE_READ_HTTP_429':'http-429',
+   'FILE_READ_HTTP_500':'http-500','FILE_READ_HTTP_502':'http-502','FILE_READ_HTTP_503':'http-503','FILE_READ_HTTP_504':'http-504','FILE_READ_HTTP_OTHER':'http-status'
   };
   const message=typeof error?.message==='string'?error.message:'';
   return JSON.stringify({format:'yoofam-native-asset-recovery-error-v1',code:Object.hasOwn(known,message)?known[message]:'unrecognized',stage});

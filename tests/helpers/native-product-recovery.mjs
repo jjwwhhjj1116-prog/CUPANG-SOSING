@@ -48,6 +48,8 @@ export async function nativeRecoveryFixture(company=SINGLE_COMPANIES[0],options=
  vm.runInContext(fs.readFileSync(new URL('../../extensions/supplier-hub/single-content.js',import.meta.url),'utf8'),appContext);
  vm.runInContext(fs.readFileSync(new URL('../../extensions/supplier-hub/native-source-content.js',import.meta.url),'utf8'),appContext);
  const hubFetch=async(url,init)=>{const parsed=new URL(url),doc=parsed.pathname.split('/').at(-1);assert.equal(doc,String(f.createdDocId),'only the newly owned document may receive file operations');state.recoveryRequests.push({url,method:init.method});
+  if(typeof state.onRecoveryFetch==='function'&&(parsed.pathname.includes('/get-images-by-id/')||parsed.pathname.includes('/get-files-by-type/')))state.onRecoveryFetch(url,init);
+  if(typeof state.recoveryFetchOverride==='function'&&parsed.pathname.includes('/get-images-by-id/'))return state.recoveryFetchOverride(url,init);
   const image=parsed.pathname.includes('/get-images-by-id/')||parsed.pathname.includes('/upload-images/'),group=image?parsed.searchParams.get('imageType'):parsed.searchParams.get('fileType');
   if(parsed.pathname.includes('/get-images-by-id/')||parsed.pathname.includes('/get-files-by-type/')){state.lists++;const values=[...state.registry.values()].filter(row=>image?row.imageName:row.fileType===group);return jsonResponse(url,options.badList?values.map(row=>({...row,s3Link:'changed'})):values);}
   assert.ok(parsed.pathname.includes(image?'/upload-images/':'/upload-files-by-type/'));assert.equal(init.method,'POST');assert.equal(Object.hasOwn(init.headers,'content-type'),false,'multipart boundary belongs to the browser');const metadata=[];
@@ -68,7 +70,9 @@ export async function nativeRecoveryFixture(company=SINGLE_COMPANIES[0],options=
   if(path.startsWith('/sr/draft/api/get-files-by-type/')){assert.equal(init.method,'POST');assert.equal(init.body,'{}');return jsonResponse(url,[...state.registry.values()].filter(row=>row.fileType===parsed.searchParams.get('fileType')));}
   throw Error('Unexpected synthetic inspection request '+path);
  };
- const hubContext=vm.createContext({location:f.hubLocation,document:f.hubDocument,fetch:hubFetch,crypto:webcrypto,AbortController,TextEncoder,TextDecoder,Uint8Array,URL,setTimeout,clearTimeout,Date,Response,structuredClone,FormData,Blob,btoa,atob});
+ const hubContext=vm.createContext({location:f.hubLocation,document:f.hubDocument,fetch:hubFetch,crypto:webcrypto,AbortController,TextEncoder,TextDecoder,Uint8Array,URL,
+  setTimeout:(fn,delay)=>state.recoveryTimerHarness?state.recoveryTimerHarness.setTimeout(fn,delay):setTimeout(fn,delay),
+  clearTimeout:timer=>state.recoveryTimerHarness?state.recoveryTimerHarness.clearTimeout(timer):clearTimeout(timer),Date,Response,structuredClone,FormData,Blob,btoa,atob});
  const inspectionContext=vm.createContext({location:f.hubLocation,document:f.hubDocument,fetch:inspectionFetch,crypto:webcrypto,AbortController,TextEncoder,TextDecoder,Uint8Array,URL,setTimeout,clearTimeout,Date,Response,structuredClone});
  const recordMirror=f.recordMirror;
  const execute=f.api.scripting.executeScript;f.api.scripting.executeScript=async request=>{

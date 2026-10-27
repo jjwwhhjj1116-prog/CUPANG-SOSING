@@ -141,3 +141,45 @@ test('injected page returns only bounded allowlisted failures before and during 
   }finally{f.close();}
  }
 });
+
+test('file list request distinguishes redirects, status, abort and network without retries or writes',async()=>{
+ for(const [kind,expectedStage,expectedCode] of [
+  ['redirect','http-response','http-redirect'],['unauthorized','http-response','http-401'],
+  ['server','http-response','http-503'],['unknown-status','http-response','http-status'],
+  ['network','http-request','http-network'],['abort','http-request','http-aborted'],['unknown-error','http-request','unrecognized']
+ ]){
+  const f=await nativeRecoveryFixture(SINGLE_COMPANIES[0],{loseUploadAck:true});try{
+   const common=await f.start();await assert.rejects(f.update(common));
+   let calls=0;f.state.recoveryFetchOverride=async(_url,init)=>{calls++;assert.equal(init.method,'GET');assert.equal(init.redirect,'manual');assert.equal(init.credentials,'include');
+    if(kind==='network')throw new TypeError('private server detail');if(kind==='abort')throw new DOMException('private server detail','AbortError');
+    if(kind==='unknown-error')throw Error('private server detail');if(kind==='redirect')return Response.redirect('https://example.invalid/login',302);
+    return new Response('',{status:kind==='unauthorized'?401:kind==='server'?503:418});
+   };
+   const before=records(f),writes=mutations(f).length,uploads=f.state.uploads.length;
+   await assert.rejects(f.adapter.inspectNativeAssets(observationInput(f,common)),error=>error.code==='NATIVE_ASSET_RECOVERY_UNCONFIRMED'&&error.message.includes('observation-page')&&error.message.includes(expectedStage)&&error.message.includes(expectedCode)&&!error.message.includes('private server detail'));
+   assert.equal(calls,1);assert.equal(records(f),before);assert.equal(mutations(f).length,writes);assert.equal(f.state.uploads.length,uploads);assert.equal(f.submitted,0);
+  }finally{f.close();}
+ }
+});
+
+test('each image or legal file list gets its own bounded timer and an expired prior request cannot abort the next',async()=>{
+ const f=await nativeRecoveryFixture(SINGLE_COMPANIES[0],{pdf:true,loseUploadAck:true});try{
+  const common=await f.start();await assert.rejects(f.update(common));const timers=[],signals=[];
+  f.state.recoveryTimerHarness={setTimeout:(fn,delay)=>{const timer={fn,delay,cleared:false};timers.push(timer);return timer;},clearTimeout:timer=>{timer.cleared=true;}};
+  f.state.onRecoveryFetch=(_url,init)=>{signals.push(init.signal);if(signals.length===2){assert.equal(timers[0].cleared,true);timers[0].fn();assert.equal(init.signal.aborted,false,'prior request deadline must not cancel a later request');}};
+  const before=records(f),writes=mutations(f).length,uploads=f.state.uploads.length,result=await f.adapter.inspectNativeAssets(observationInput(f,common));
+  assert.equal(signals.length,2);assert.notEqual(signals[0],signals[1]);assert.equal(timers.length,2);assert.deepEqual(timers.map(timer=>timer.delay),[30000,30000]);assert.ok(timers.every(timer=>timer.cleared));
+  assert.equal(result.readOnly,true);assert.equal(result.canContinue,false);assert.equal(records(f),before);assert.equal(mutations(f).length,writes);assert.equal(f.state.uploads.length,uploads);assert.equal(f.submitted,0);
+ }finally{f.close();}
+});
+
+test('a timed out read aborts the active request and leaves the original document unresolved',async()=>{
+ const f=await nativeRecoveryFixture(SINGLE_COMPANIES[0],{loseUploadAck:true});try{
+  const common=await f.start();await assert.rejects(f.update(common));let timer,calls=0;
+  f.state.recoveryTimerHarness={setTimeout:(fn,delay)=>{timer={fn,delay,cleared:false};return timer;},clearTimeout:handle=>{handle.cleared=true;}};
+  f.state.recoveryFetchOverride=async(_url,init)=>{calls++;timer.fn();assert.equal(init.signal.aborted,true);throw new DOMException('private timeout details','AbortError');};
+  const before=records(f),uploads=f.state.uploads.length,writes=mutations(f).length;
+  await assert.rejects(f.adapter.inspectNativeAssets(observationInput(f,common)),error=>error.code==='NATIVE_ASSET_RECOVERY_UNCONFIRMED'&&error.message.includes('http-request')&&error.message.includes('http-timeout')&&!error.message.includes('private timeout details'));
+  assert.equal(calls,1);assert.equal(timer.delay,30000);assert.equal(timer.cleared,true);assert.equal(records(f),before);assert.equal(f.state.uploads.length,uploads);assert.equal(mutations(f).length,writes);assert.equal(f.submitted,0);
+ }finally{f.close();}
+});
