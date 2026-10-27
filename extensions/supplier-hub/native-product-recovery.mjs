@@ -1,6 +1,6 @@
 import {readAppDocumentSource,currentSourceAppTab} from './product-document-source.mjs';
 import {nativeAssetUploadPlanSha256,validateNativeAssetUploadDescriptors} from './native-asset-multipart.mjs';
-import {nativeAssetRecoveryPage} from './native-asset-recovery-page.mjs';
+import {nativeAssetRecoveryPage,decodeNativeAssetRecoveryResult} from './native-asset-recovery-page.mjs';
 import {singleDocumentOwnedRecordPage,decodeSingleOwnedRecordResult} from './single-document-adapter.mjs';
 import {assertSingleOwnedTarget} from './single-owned-target.mjs';
 import {SingleDocumentError} from './single-document.mjs';
@@ -8,6 +8,21 @@ const canon=value=>value===null||typeof value!=='object'?JSON.stringify(value):A
 const copy=value=>structuredClone(value),same=(a,b)=>canon(a)===canon(b);
 const digest=async value=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(canon(value)))),byte=>byte.toString(16).padStart(2,'0')).join('');
 const fail=(phase='scope',fields=[])=>{throw new SingleDocumentError('NATIVE_ASSET_RECOVERY_UNCONFIRMED','원래 새 문서·회원·원본 파일의 업로드 결과를 읽기로 확인하지 못했습니다. 미확정 요청을 유지했습니다. 확인 단계: '+phase+(fields.length?' · 항목: '+fields.join(', '):''));};
+// Report only known page errors. Chrome may return a page exception in the
+// execution result or reject the promise; never disclose arbitrary text.
+const pageErrorLabel=error=>{
+ const known=new Map([
+  ['원본 파일 조회 자료가 너무 큽니다.','input-too-large'],
+  ['이 요청의 원본 업로드 목록을 읽기로 확인하지 못했습니다. 미확정 상태를 유지했습니다.','page-guard'],
+  ['조회 중 원래 업로드 요청 기록이 변경됐습니다. 미확정 상태를 유지했습니다.','record-changed'],
+  ['원래 새 문서의 완료된 파일 업로드 기록이 없습니다.','missing-upload-record'],
+  ['보관된 원본 파일명·길이·SHA가 현재 원본 계획과 다릅니다.','source-file-mismatch'],
+  ['원래 문서의 파일 목록 배열을 확인하지 못했습니다.','file-list'],
+  ['현재 파일 목록이 원래 확인한 업로드 응답과 다릅니다.','file-list-mismatch'],
+  ['요청하지 않은 파일이 원래 새 문서에 있어 미확정 상태를 유지했습니다.','unexpected-file']
+ ]);
+ const message=typeof error==='string'?error:typeof error?.message==='string'?error.message:'';return known.get(message)||'unrecognized';
+};
 
 /** Add a diagnostic read to an existing recover operation. A positive file
  * list is intentionally not an update ACK: no ledger checkpoint is promoted,
@@ -48,12 +63,15 @@ export function withNativeProductAssetRecovery(adapter,{api,nativeSha,now=Date.n
    images:copy(sourcePlan.images),nativeLegalAttachmentPlan:sourcePlan.nativeLegalAttachmentPlan?copy(sourcePlan.nativeLegalAttachmentPlan):null,planSha256:null,
    registered:false,remoteWrites:false,submissionReady:false,transportReady:false};
   plan.planSha256=await nativeAssetUploadPlanSha256(plan);
-  await tabCurrent();const [readback]=await api.scripting.executeScript({target:{tabId:input.tab.tabId,documentIds:[before.documentId]},func:nativeAssetRecoveryPage,args:[JSON.stringify({binding,target,plan})]});
-  await tabCurrent();if(readback?.frameId!==0||readback.documentId!==before.documentId)fail('observation-frame');
+  await tabCurrent();let readback;try{[readback]=await api.scripting.executeScript({target:{tabId:input.tab.tabId,documentIds:[before.documentId]},func:nativeAssetRecoveryPage,args:[JSON.stringify({binding,target,plan})]});}
+  catch(error){fail('observation-execution',['rejected',pageErrorLabel(error)]);}
+  await tabCurrent();if(readback?.error!==undefined&&readback.error!==null)fail('observation-execution',['page-error',pageErrorLabel(readback.error)]);
+  if(readback?.frameId!==0||readback.documentId!==before.documentId)fail('observation-frame');
   const [after]=await api.scripting.executeScript({target:{tabId:input.tab.tabId,documentIds:[before.documentId]},func:singleDocumentOwnedRecordPage,args:[JSON.stringify(binding)]});
   if(after?.frameId!==0||after.documentId!==before.documentId)fail('record-after-frame');
   if(!same(decodeSingleOwnedRecordResult(after.result),record))fail('record-after');if(!same(await current(),sourcePlan))fail('source-after');
-  const observation=readback.result;
+  const observation=decodeNativeAssetRecoveryResult(readback.result);
+  if(!observation){const value=readback.result,type=value===null?'null':Array.isArray(value)?'array':typeof value;fail('observation-json',['type-'+type,...(typeof value==='string'?['length-'+value.length]:[])]);}
   const keys=['format','requestId','docId','packetDigest','identityDigest','sourcePlanSha256','planSha256','groups','observedAt','readOnly','ledgerMutated','unresolved','canContinue','remoteWrites','actualUploadVerified','remoteBytesVerified','registered'];
   if(!observation||Object.keys(observation).length!==keys.length||Object.keys(observation).some(key=>!keys.includes(key))||observation.format!=='yoofam-native-asset-recovery-observation-v1'||observation.requestId!==binding.requestId||!same(observation.docId,target.docId)
    ||observation.packetDigest!==binding.packetDigest||observation.identityDigest!==binding.identityDigest||observation.sourcePlanSha256!==nativeSha||observation.planSha256!==plan.planSha256

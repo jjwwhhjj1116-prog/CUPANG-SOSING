@@ -54,7 +54,7 @@ test('changed actor/source/body/frame/document/ledger and unfamiliar list entrie
   if(['doc','old-doc','ledger'].includes(kind)){const all=JSON.parse(records(f)),record=all[f.context.packetDigest];if(kind==='doc')record.docId='different-doc';if(kind==='old-doc')record.baselineDocIds.push(record.docId);if(kind==='ledger')record.nativeAssets.planSha256='f'.repeat(64);f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords=JSON.stringify(all);}
   if(kind==='unknown-file')f.state.registry.set('unexpected.png',{imageName:'unexpected.png',imageUrl:'/stored/unexpected.png',s3Link:'stored/unexpected.png'});
   if(kind==='observed-list'){const key=f.state.source.images[0].transportName;f.state.registry.set(key,{...f.state.registry.get(key),s3Link:'different-storage'});}
-  if(['local-size','local-type','group-promotion'].includes(kind)){const execute=f.api.scripting.executeScript;f.api.scripting.executeScript=async request=>{const result=await execute(request);if(request.func.name==='nativeAssetRecoveryPage'){const group=result[0].result.groups[0];if(kind==='local-size')group.expectedFiles[0].byteLength++;if(kind==='local-type')group.expectedFiles[0].contentType='image/jpeg';if(kind==='group-promotion')group.remoteBytesVerified=true;}return result;};}
+  if(['local-size','local-type','group-promotion'].includes(kind)){const execute=f.api.scripting.executeScript;f.api.scripting.executeScript=async request=>{const result=await execute(request);if(request.func.name==='nativeAssetRecoveryPage'){const observation=JSON.parse(result[0].result),group=observation.groups[0];if(kind==='local-size')group.expectedFiles[0].byteLength++;if(kind==='local-type')group.expectedFiles[0].contentType='image/jpeg';if(kind==='group-promotion')group.remoteBytesVerified=true;result[0].result=JSON.stringify(observation);}return result;};}
   const before=records(f);await assert.rejects(f.adapter.inspectNativeAssets(input));assert.equal(records(f),before);assert.equal(mutations(f).length,writes);assert.equal(f.state.uploads.length,uploads);assert.equal(f.submitted,0);
  }finally{f.close();}}
 });
@@ -65,9 +65,57 @@ test('dispatch live gate remains false and no new start is enabled by the read-o
 test('failed native readback names only its comparison phase and fields, preserving every write guard',async()=>{
  const f=await nativeRecoveryFixture(SINGLE_COMPANIES[0],{loseUploadAck:true});try{
   const common=await f.start();await assert.rejects(f.update(common));const input=observationInput(f,common),execute=f.api.scripting.executeScript;
-  f.api.scripting.executeScript=async request=>{const result=await execute(request);if(request.func.name==='nativeAssetRecoveryPage')result[0].result.observedAt=Date.now()-60001;return result;};
+  f.api.scripting.executeScript=async request=>{const result=await execute(request);if(request.func.name==='nativeAssetRecoveryPage'){const observation=JSON.parse(result[0].result);observation.observedAt=Date.now()-60001;result[0].result=JSON.stringify(observation);}return result;};
   const before=records(f),writes=mutations(f).length,uploads=f.state.uploads.length;
   await assert.rejects(f.adapter.inspectNativeAssets(input),error=>error.code==='NATIVE_ASSET_RECOVERY_UNCONFIRMED'&&error.message.includes('observation-envelope')&&error.message.includes('observed-at')&&!error.message.includes(f.packet.requestId));
   assert.equal(records(f),before);assert.equal(mutations(f).length,writes);assert.equal(f.state.uploads.length,uploads);assert.equal(f.submitted,0);
  }finally{f.close();}
+});
+
+// Simulate a transport that drops null-valued object properties, while strings
+// pass through unchanged; omitted operation IDs must survive without defaults.
+test('JSON result preserves unrequested group nulls through a null-dropping transport',async()=>{
+ const f=await nativeRecoveryFixture(SINGLE_COMPANIES[0],{loseUploadAck:true,loseUploadAckGroup:'ADDITIONAL'});try{
+  const common=await f.start();await assert.rejects(f.update(common));const execute=f.api.scripting.executeScript;let demonstrated=false;
+  const dropNull=value=>Array.isArray(value)?value.map(dropNull):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).filter(([,v])=>v!==null).map(([k,v])=>[k,dropNull(v)])):value;
+  f.api.scripting.executeScript=async request=>{const result=await execute(request);if(request.func.name==='nativeAssetRecoveryPage'){
+   assert.equal(typeof result[0].result,'string');const raw=JSON.parse(result[0].result),group=raw.groups.find(item=>item.requestState==='not-requested');assert.ok(group);
+   assert.equal(group.operationId,null);assert.equal(Object.hasOwn(dropNull(raw).groups.find(item=>item.requestState==='not-requested'),'operationId'),false);demonstrated=true;
+   result[0].result=dropNull(result[0].result);
+  }return result;};
+  const before=records(f),writes=mutations(f).length,uploads=f.state.uploads.length;const result=await f.adapter.inspectNativeAssets(observationInput(f,common));
+  assert.equal(demonstrated,true);assert.equal(result.groups.find(group=>group.requestState==='not-requested').operationId,null);
+  assert.equal(records(f),before);assert.equal(mutations(f).length,writes);assert.equal(f.state.uploads.length,uploads);assert.equal(f.submitted,0);
+ }finally{f.close();}
+});
+
+test('invalid or tampered JSON recovery results fail closed without writes',async()=>{
+ for(const kind of ['object','malformed','null','array','oversize','missing-null','foreign-doc','promoted']){
+  const f=await nativeRecoveryFixture(SINGLE_COMPANIES[0],{loseUploadAck:true,loseUploadAckGroup:'ADDITIONAL'});try{
+   const common=await f.start();await assert.rejects(f.update(common));const execute=f.api.scripting.executeScript;
+   f.api.scripting.executeScript=async request=>{const result=await execute(request);if(request.func.name==='nativeAssetRecoveryPage'){
+    const original=JSON.parse(result[0].result);if(kind==='object')result[0].result=original;else if(kind==='malformed')result[0].result='{';else if(kind==='null')result[0].result='null';else if(kind==='array')result[0].result='[]';else if(kind==='oversize')result[0].result=' '.repeat(6*1024*1024+1);else{
+     if(kind==='missing-null')delete original.groups.find(group=>group.requestState==='not-requested').operationId;
+     if(kind==='foreign-doc')original.docId='different';if(kind==='promoted')original.remoteWrites=true;result[0].result=JSON.stringify(original);
+    }
+   }return result;};
+   const before=records(f),writes=mutations(f).length,uploads=f.state.uploads.length;
+   await assert.rejects(f.adapter.inspectNativeAssets(observationInput(f,common)),{code:'NATIVE_ASSET_RECOVERY_UNCONFIRMED'});
+   assert.equal(records(f),before);assert.equal(mutations(f).length,writes);assert.equal(f.state.uploads.length,uploads);assert.equal(f.submitted,0);
+  }finally{f.close();}
+ }
+});
+
+test('page execution error diagnostics disclose only allowlisted labels and never exception text',async()=>{
+ for(const mode of ['known-result','unknown-result','known-rejection','unknown-rejection']){
+  const f=await nativeRecoveryFixture(SINGLE_COMPANIES[0],{loseUploadAck:true});try{
+   const common=await f.start();await assert.rejects(f.update(common));const execute=f.api.scripting.executeScript;
+   const message=mode.startsWith('known')?'현재 파일 목록이 원래 확인한 업로드 응답과 다릅니다.':'secret customer identifier';
+   f.api.scripting.executeScript=async request=>{if(request.func.name==='nativeAssetRecoveryPage'&&mode.endsWith('rejection'))throw Error(message);
+    const result=await execute(request);if(request.func.name==='nativeAssetRecoveryPage')result[0].error={message};return result;};
+   const before=records(f),writes=mutations(f).length,uploads=f.state.uploads.length;
+   await assert.rejects(f.adapter.inspectNativeAssets(observationInput(f,common)),error=>error.code==='NATIVE_ASSET_RECOVERY_UNCONFIRMED'&&error.message.includes('observation-execution')&&error.message.includes(mode.startsWith('known')?'file-list-mismatch':'unrecognized')&&!error.message.includes(message));
+   assert.equal(records(f),before);assert.equal(mutations(f).length,writes);assert.equal(f.state.uploads.length,uploads);assert.equal(f.submitted,0);
+  }finally{f.close();}
+ }
 });

@@ -3,6 +3,11 @@
  * The default keeps the earlier pre-update lost-ACK recovery contract. A list
  * row proves neither the remote byte length/type/SHA nor a successful update.
  * This function never edits the ledger, document, agreements or files. */
+export function decodeNativeAssetRecoveryResult(value){
+ if(typeof value!=='string'||value.length>6*1024*1024||new TextEncoder().encode(value).byteLength>6*1024*1024)return null;
+ try{const result=JSON.parse(value);return result&&typeof result==='object'&&!Array.isArray(result)?result:null;}catch{return null;}
+}
+
 export async function nativeAssetRecoveryPage(input,prepared=false){
  if(typeof input==='string'){if(input.length>8*1024*1024)throw Error('원본 파일 조회 자료가 너무 큽니다.');input=JSON.parse(input);}
  const origin='https://supplier.coupang.com',data=document.documentElement.dataset,HASH=/^[a-f0-9]{64}$/;
@@ -69,8 +74,8 @@ export async function nativeAssetRecoveryPage(input,prepared=false){
     expectedFiles:group.files.map(file=>({transportName:file.transportName,sha256:file.sha256,byteLength:file.byteLength,contentType:file.contentType})),listedFiles:listed,
     remoteByteLengthVerified:false,remoteContentTypeVerified:false,remoteBytesVerified:false});
   }
-  readRecord();if(controller.signal.aborted)fail();return{format:prepared?'yoofam-native-prepared-files-v1':'yoofam-native-asset-recovery-observation-v1',requestId:binding.requestId,docId:target.docId,packetDigest:binding.packetDigest,identityDigest:binding.identityDigest,
+  readRecord();if(controller.signal.aborted)fail();return JSON.stringify({format:prepared?'yoofam-native-prepared-files-v1':'yoofam-native-asset-recovery-observation-v1',requestId:binding.requestId,docId:target.docId,packetDigest:binding.packetDigest,identityDigest:binding.identityDigest,
    sourcePlanSha256:binding.nativeAssetSourcePlanSha256,planSha256:plan.planSha256,groups:observations,observedAt:Date.now(),readOnly:true,ledgerMutated:false,
-   unresolved:!prepared,canContinue:false,remoteWrites:false,actualUploadVerified:false,remoteBytesVerified:false,registered:false};
+   unresolved:!prepared,canContinue:false,remoteWrites:false,actualUploadVerified:false,remoteBytesVerified:false,registered:false});
  }finally{clearTimeout(timer);}
 }
