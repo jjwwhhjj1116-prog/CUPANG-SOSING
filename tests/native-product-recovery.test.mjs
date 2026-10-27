@@ -61,3 +61,13 @@ test('changed actor/source/body/frame/document/ledger and unfamiliar list entrie
 test('dispatch live gate remains false and no new start is enabled by the read-only recovery helper',async()=>{
  const f=await nativeRecoveryFixture(SINGLE_COMPANIES[0]);try{assert.equal(PRODUCT_DOCUMENT_LIVE_VERIFIED,false);const preview=await withProductDocumentChrome(f.api,()=>dispatchProductDocument({type:'YOOFAM_PRODUCT_DOCUMENT_REQUEST',action:'preview',packet:f.packet},f.sender));assert.equal(preview.liveVerified,false);await assert.rejects(dispatchProductDocument({type:'YOOFAM_PRODUCT_DOCUMENT_REQUEST',action:'start',packet:f.packet},f.sender),error=>error.code==='PRODUCT_LIVE_CONTRACT_UNVERIFIED');assert.equal(f.state.uploads.length,0);assert.equal(f.submitted,0);}finally{f.close();}
 });
+
+test('failed native readback names only its comparison phase and fields, preserving every write guard',async()=>{
+ const f=await nativeRecoveryFixture(SINGLE_COMPANIES[0],{loseUploadAck:true});try{
+  const common=await f.start();await assert.rejects(f.update(common));const input=observationInput(f,common),execute=f.api.scripting.executeScript;
+  f.api.scripting.executeScript=async request=>{const result=await execute(request);if(request.func.name==='nativeAssetRecoveryPage')result[0].result.observedAt=Date.now()-60001;return result;};
+  const before=records(f),writes=mutations(f).length,uploads=f.state.uploads.length;
+  await assert.rejects(f.adapter.inspectNativeAssets(input),error=>error.code==='NATIVE_ASSET_RECOVERY_UNCONFIRMED'&&error.message.includes('observation-envelope')&&error.message.includes('observed-at')&&!error.message.includes(f.packet.requestId));
+  assert.equal(records(f),before);assert.equal(mutations(f).length,writes);assert.equal(f.state.uploads.length,uploads);assert.equal(f.submitted,0);
+ }finally{f.close();}
+});
