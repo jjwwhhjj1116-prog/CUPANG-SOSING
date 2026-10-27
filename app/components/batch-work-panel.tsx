@@ -12,7 +12,7 @@ import type {AutomationStageId} from '@/app/automation/model';
 import type {CollectionEditorTab} from '@/app/registration-navigation';
 type Item = {id:string;title:string;updated_at:string};
 type Result = {status:'waiting'|'running'|'done'|'failed';message:string};
-export type SelectedBatchRequest={id:string;ownerId:string;stages:AutomationStageId[];keys:Map<string,string>};
+export type SelectedBatchRequest={id:string;ownerId:string;mode?:'full'|'selected';stages:AutomationStageId[];keys:Map<string,string>};
 type BatchPanelProps={products:Item[];onOpen:(id:string,step?:CollectionEditorTab|'작업')=>void;onBusyChange?:(busy:boolean)=>void;runRequest?:SelectedBatchRequest};
 const stageNames:Record<AutomationStageId,CollectionEditorTab>={seo:'SEO',pricing:'가격',mainImage:'대표 이미지',additionalImages:'추가 이미지',detailImage:'상세 이미지',sizeChart:'사이즈표',koreanLabel:'표시사항',quotation:'견적서'};
 const statusNames:Record<SelectedBatchStageResult['status'],string>={waiting:'대기',running:'처리 중',draft:'초안 검토',complete:'저장 완료',blocked:'자료·검토 필요',failed:'실패',skipped:'건너뜀'};
@@ -33,7 +33,7 @@ export function SelectedBatchWorkPanel({products,onOpen,onBusyChange,runRequest}
     if(!current()||scope.stop)break;
     setErrors(previous=>({...previous,[product.id]:''}));
     try{
-     const result=await runSelectedBatchProduct(product.id,{stages:[...scope.request.stages],expectedOwnerId:scope.request.ownerId,signal:active.signal,fetcher:(input,init)=>fetch(input,init),keys:scope.request.keys,newKey:()=>crypto.randomUUID(),onStage:stage=>publish(product.id,stage)});
+     const result=await runSelectedBatchProduct(product.id,{stages:[...scope.request.stages],mode:scope.request.mode,expectedOwnerId:scope.request.ownerId,signal:active.signal,fetcher:(input,init)=>fetch(input,init),keys:scope.request.keys,newKey:()=>crypto.randomUUID(),onStage:stage=>publish(product.id,stage)});
      if(!current())break;
      if(!result||result.productId!==product.id)throw Error('선택한 상품의 작업 결과를 확인하지 못했습니다.');
      for(const stage of result.stages)publish(product.id,stage);
@@ -57,7 +57,7 @@ export function SelectedBatchWorkPanel({products,onOpen,onBusyChange,runRequest}
  const review=(id:string,stage:AutomationStageId)=>{const scope=context.current;if(!scope||scope.active||scope.request.id!==runRequest.id)return;callbacks.current.onOpen(id,stageNames[stage]);};
  return <section className="modal-form" data-workspace-saving={busy} aria-label="선택 작업 진행">
   <p>선택한 {products.length}개 상품 · {runRequest.stages.map(stage=>stageNames[stage]).join(' → ')}</p>
-  <p>저장 완료와 검토할 초안을 구분해 표시합니다. 이미 저장한 수동 수정값은 유지합니다.</p>
+  <p>{runRequest.mode==='full'?'전체 작업은 현재 저장본에서 완료된 단계를 건너뜁니다. ':'선택한 단계만 작업합니다. '}저장 완료와 검토할 초안을 구분해 표시합니다. 이미 저장한 수동 수정값은 유지합니다.</p>
   <ul className="batch-work-list">{products.map(product=><li key={product.id}><strong>{product.title}</strong>{errors[product.id]&&<p role="alert">{errors[product.id]}</p>}
    <ol>{runRequest.stages.map(stage=>{const result=results[product.id]?.[stage];return <li key={stage} data-stage={stage} data-stage-status={result?.status??'waiting'}><strong>{stageNames[stage]} · {statusNames[result?.status??'waiting']}</strong><p role="status">{result?.message??'실행 대기'}</p><button type="button" className="btn ghost" disabled={busy} onClick={()=>review(product.id,stage)}>{stageNames[stage]} 검토 열기</button></li>;})}</ol>
   </li>)}</ul>

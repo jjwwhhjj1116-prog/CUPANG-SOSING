@@ -18,7 +18,7 @@ import { quotationKnownNoticeProposals } from '@/app/quotation-known-notice-prop
 import { runSelectedPackagingWork } from '@/app/batch-selected-packaging-work';
 
 export type SelectedBatchStageResult = { id: AutomationStageId; status: 'waiting'|'running'|'draft'|'complete'|'blocked'|'failed'|'skipped'; message: string };
-type Controls = { stages: readonly AutomationStageId[]; expectedOwnerId: string; signal: AbortSignal; fetcher: typeof fetch;
+type Controls = { stages: readonly AutomationStageId[]; mode?:'full'|'selected'; expectedOwnerId: string; signal: AbortSignal; fetcher: typeof fetch;
   keys: Map<string,string>; newKey:()=>string; onStage:(result:SelectedBatchStageResult)=>void };
 type Outcome = Pick<SelectedBatchStageResult,'status'|'message'> & {uncertain?:boolean;stop?:boolean};
 // The request owns keys across React remounts; keep binary image recovery state
@@ -37,6 +37,7 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
   if(!imageStates){imageStates=new Map();imageRunStates.set(keys,imageStates);}
   if(signal.aborted)return null;
   if(!/^[\w-]{1,100}$/u.test(productId)||!/^[\w-]{1,100}$/u.test(controls.expectedOwnerId)
+    ||controls.mode!==undefined&&!['full','selected'].includes(controls.mode)
     ||!controls.stages.length||new Set(controls.stages).size!==controls.stages.length||controls.stages.some(id=>!automationStages.includes(id)))
     throw Error('작업 상품·계정·단계를 확인해주세요.');
   const base='/api/products/'+encodeURIComponent(productId), identity=controls.expectedOwnerId+':'+productId;
@@ -209,6 +210,18 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     publish(index,{status:'running',message:'선택한 단계 작업 중…'});
     try{
       await assertCurrent();
+      if(controls.mode==='full'){
+        // Full work preserves a positively current completed stage. Explicit
+        // partial selection still enters that stage's own reviewed workflow.
+        // A stale/missing workflow is never evidence that a stage is complete.
+        const current=await product(),saved=await read<{workflow:{productId:string;productVersion:string;stages:{id:AutomationStageId;status:string}[]}|null;stale:boolean}>('/automation');
+        await assertCurrent();
+        if(saved.workflow!==null&&(!object(saved.workflow)||saved.workflow.productId!==productId||!Array.isArray(saved.workflow.stages)
+          ||new Set(saved.workflow.stages.map(stage=>stage.id)).size!==saved.workflow.stages.length))throw Error('전체 작업의 저장 단계가 현재 상품과 다릅니다.');
+        if(saved.stale===false&&saved.workflow?.productVersion===current.updated_at&&saved.workflow.stages.some(stage=>stage.id===id&&stage.status==='complete')){
+          publish(index,{status:'skipped',message:'현재 저장본에서 완료된 단계라 전체 작업에서 건너뛰었습니다. 다시 작업하려면 이 단계만 선택해주세요.'});continue;
+        }
+      }
       const outcome:Outcome=id==='seo'?await seo():id==='pricing'?await pricing():id==='mainImage'||id==='additionalImages'||id==='detailImage'?await image(id)
         :id==='sizeChart'?await sizeChart():id==='koreanLabel'?await once('label:'+(await product()).updated_at,()=>runSelectedLabelWork(productId,{signal,fetcher,assertCurrent}))
         :await quotation();

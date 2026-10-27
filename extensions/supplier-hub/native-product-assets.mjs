@@ -16,14 +16,15 @@ export async function nativeProductDocumentAppSourcePage(input){
  if(!['https://sourceflow.jjwwhhjj1116.workers.dev','http://localhost:3000','http://127.0.0.1:3000'].includes(origin)||origin!==expected?.origin||!HASH.test(expected.fingerprint||''))throw Error('원래 앱의 원본 파일 요청이 아닙니다.');
  let nodes=0;const canon=(value,depth=0)=>{if(++nodes>100000||depth>30)throw Error('원본 계획이 처리 범위를 초과했습니다.');return value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(item=>canon(item,depth+1)).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canon(value[key],depth+1)).join(',')+'}';};
  const canonical=value=>{nodes=0;return canon(value);},same=(a,b)=>canonical(a)===canonical(b),sha=async bytes=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),byte=>byte.toString(16).padStart(2,'0')).join(''),digest=value=>sha(new TextEncoder().encode(canonical(value)));
- const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),30000),requested=expected.requestedProfileId,query=requested===null?'':'?profileId='+encodeURIComponent(requested),path='/api/products/'+encodeURIComponent(expected.productId)+'/native-assets';
+ const requested=expected.requestedProfileId,query=requested===null?'':'?profileId='+encodeURIComponent(requested),path='/api/products/'+encodeURIComponent(expected.productId)+'/native-assets';
  const readError=(code,resource,status)=>Object.assign(Error('현재 전송 원본 조회를 확인하지 못했습니다.'),{sourceFailure:{code,resource,...(status===undefined?{}:{status})}});
  const resource=path=>path==='/api/supplier-hub/catalog-context'?'catalog-context':path.includes('/legal-documents?')?'legal-documents':'native-assets';
- async function read(path,limit,type){const url=origin+path,kind=resource(path);let response;try{response=await fetch(url,{method:'GET',credentials:'same-origin',redirect:'error',cache:'no-store',signal:controller.signal,headers:{accept:type||'application/json'}});}catch{throw readError(controller.signal.aborted?'SOURCE_READ_TIMEOUT':'SOURCE_READ_NETWORK',kind);}
+ async function read(path,limit,type){const url=origin+path,kind=resource(path),controller=new AbortController(),timer=setTimeout(()=>controller.abort(),30000);let response;try{try{response=await fetch(url,{method:'GET',credentials:'same-origin',redirect:'error',cache:'no-store',signal:controller.signal,headers:{accept:type||'application/json'}});}catch{throw readError(controller.signal.aborted?'SOURCE_READ_TIMEOUT':'SOURCE_READ_NETWORK',kind);}
   if(!response.ok)throw readError('SOURCE_READ_HTTP',kind,response.status);
   if(response.redirected||response.url!==url||type&&response.headers.get('content-type')?.split(';')[0]!==type||!type&&!/\bapplication\/json\b/i.test(response.headers.get('content-type')||''))throw readError('SOURCE_READ_RESPONSE',kind);
   const reader=response.body?.getReader();if(!reader)throw readError('SOURCE_READ_RESPONSE',kind);const parts=[];let length=0;try{for(;;){const item=await reader.read();if(controller.signal.aborted)throw readError('SOURCE_READ_TIMEOUT',kind);if(item.done)break;length+=item.value.length;if(length>limit)throw readError('SOURCE_READ_RESPONSE',kind);parts.push(item.value);}}catch(error){throw error?.sourceFailure?error:readError(controller.signal.aborted?'SOURCE_READ_TIMEOUT':'SOURCE_READ_NETWORK',kind);}finally{await reader.cancel().catch(()=>{});}
   const bytes=new Uint8Array(length);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.length;}return{response,bytes};
+  }finally{clearTimeout(timer);controller.abort();}
  }
  let imageBatchAvailable=false;
  const json=async(path,limit=6*1024*1024)=>{const value=await read(path,limit);if(path.startsWith('/api/products/')&&path.includes('/native-assets')&&!path.includes('bundle=')&&value.response.headers.get('x-yoofam-native-image-batch')==='v1')imageBatchAvailable=true;try{return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(value.bytes));}catch{throw readError('SOURCE_READ_RESPONSE',resource(path));}};
@@ -36,7 +37,7 @@ export async function nativeProductDocumentAppSourcePage(input){
    ||identity.categoryId!==expected.categoryId||identity.schemaSha256!==expected.schemaSha256||identity.inputFingerprint!==expected.inputFingerprint||!same(identity.source,source)||!same(identity.members,expected.members)
    ||plan.originalBodySha256!==input.bodySha256||plan.preparedBodySha256!==input.preparedBodySha256||plan.body?.docId!==null||plan.body?.scope!=='Retail_Categorized_Single'||plan.body?.jsonDocument?.length!==expected.members?.length)throw Error('검토한 원본·회사·포함 옵션·파일명 본문이 현재 저장값과 다릅니다.');
  }
- try{
+ {
   const before=await json('/api/supplier-hub/catalog-context');if(before.ownerId!==expected.ownerId||!same(before.company,expected.company))throw Error('현재 승인 회원 회사가 다릅니다.');
   const account=await sha(new TextEncoder().encode(JSON.stringify(['sourceflow-managed-product-account-v1',before.ownerId,before.company.code,before.company.name])));if(account!==expected.accountContext)throw Error('현재 회원 연결이 변경됐습니다.');
   const plan=await json(path+query);scope(plan);const {sourcePlanSha256:omitted,...manifest}=plan;void omitted;
@@ -65,9 +66,9 @@ export async function nativeProductDocumentAppSourcePage(input){
    const latest=await json(path+query);scope(latest);if(!same(plan,latest))throw Error('원본 조회 중 상품·견적·파일이 변경됐습니다.');
    let binary='';for(let offset=0;offset<original.bytes.length;offset+=16384)binary+=String.fromCharCode(...original.bytes.subarray(offset,offset+16384));fileReply={base64:btoa(binary),byteLength:file.byteLength,sha256:file.sha256,contentType:file.contentType};
   }else if(input.action!==undefined&&input.action!=='plan')throw Error('원본 조회 동작을 확인해주세요.');
-  const after=await json('/api/supplier-hub/catalog-context');if(!same(before,after)||controller.signal.aborted)throw Error('조회 중 회원 회사가 변경됐습니다.');
+  const after=await json('/api/supplier-hub/catalog-context');if(!same(before,after))throw Error('조회 중 회원 회사가 변경됐습니다.');
   return{current:true,identity:expected,bodySha256:input.bodySha256,preparedBodySha256:input.preparedBodySha256,checkedAt:Date.now(),sourcePlan:plan,...(imageBatchAvailable?{imageBatchAvailable:true}:{}),...(imageFiles?{files:imageFiles}:{}),...(fileReply?{file:fileReply}:{})};
- }finally{clearTimeout(timer);}
+ }
 }
 
 /** Actual adapter update boundary. It consumes independently re-read server

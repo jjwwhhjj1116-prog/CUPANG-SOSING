@@ -55,6 +55,23 @@ test('price-only run checks calculated option prices without unrelated writes',a
  assert.deepEqual(h.events.map(row=>row.status),['running','draft']);
 });
 
+test('full work skips only a fresh completed stage; explicit partial work and stale evidence still enter it',async()=>{
+ for(const mode of ['full','selected'])for(const stale of [false,true]){const h=fixture();h.options.mode=mode;
+  h.intercept(call=>call.url.endsWith('/automation')?Response.json({stale,workflow:{productId:'product',productVersion:version,stages:[{id:'pricing',status:'complete'}]}}):null);
+  const result=await h.run(['pricing']),skip=mode==='full'&&!stale;
+  assert.equal(result.stages[0].status,skip?'skipped':'draft');assert.equal(h.calls.some(call=>call.url?.endsWith('/stage-two-pricing')),!skip);
+  assert.equal(h.calls.some(call=>call.method==='POST'),false);
+ }
+});
+
+test('full work does not reuse another product or an older version as completion proof',async()=>{
+ for(const wrong of ['product','version']){const h=fixture();h.options.mode='full';
+  h.intercept(call=>call.url.endsWith('/automation')?Response.json({stale:false,workflow:{productId:wrong==='product'?'other':'product',productVersion:wrong==='version'?'2026-10-22T00:00:00.000Z':version,stages:[{id:'pricing',status:'complete'}]}}):null);
+  const result=await h.run(['pricing']);assert.equal(result.stages[0].status,wrong==='product'?'failed':'draft');
+  assert.equal(h.calls.some(call=>call.url?.endsWith('/stage-two-pricing')),wrong!=='product');
+ }
+});
+
 test('HTML account and product responses identify the endpoint without exposing body or retrying',async()=>{
  const h=fixture();h.intercept(call=>call.url==='/api/supplier-hub/catalog-context'?new Response('<!DOCTYPE html>private-login',{status:503,headers:{'content-type':'text/html'}}):null);
  await assert.rejects(h.run(['pricing']),error=>/계정·회사.*HTTP 503.*text\/html/.test(error.message)&&!error.message.includes('private-login'));

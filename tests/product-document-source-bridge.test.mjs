@@ -13,11 +13,12 @@ const copy=value=>JSON.parse(JSON.stringify(value));
 const privateMarker='private-source-token-do-not-expose';
 const proofFor=f=>({identity:f.context.identity,bodySha256:f.context.originalBodySha256,preparedBodySha256:f.context.bodySha256,packetDigest:f.context.packetDigest,requestId:f.packet.requestId,docId:null});
 function contentFixture(f,{failure}={}){
- const calls=[],timers=new Map(),handlers=[],origin=f.context.identity.origin;let timerId=0;
+ const calls=[],signals=[],timerHistory=[],timers=new Map(),handlers=[],origin=f.context.identity.origin;let timerId=0;
  const setTimer=(callback,delay)=>{const id=++timerId;timers.set(id,{callback,delay});return id;};
  const reply=(url,value,status=200,contentType='application/json')=>{const response=new Response(typeof value==='string'?value:JSON.stringify(value),{status,headers:{'content-type':contentType}});Object.defineProperty(response,'url',{value:url});return response;};
  const fetch=async(url,init)=>{
   const parsed=new URL(url,origin);calls.push({path:parsed.pathname,query:parsed.search,method:init.method??'GET'});
+  signals.push(init.signal);timerHistory.push([...timers.keys()]);assert.equal(init.signal.aborted,false,'each resource starts with its own live deadline');
   assert.equal(init.credentials,'same-origin');assert.equal(init.cache,'no-store');assert.equal(init.redirect,'error');assert.equal(init.method??'GET','GET');
   if(parsed.pathname.endsWith('/catalog-context'))return reply(parsed.href,{ownerId:f.context.identity.ownerId,company:f.context.identity.company});
   assert.equal(parsed.pathname,'/api/products/'+f.context.identity.productId+'/native-assets');
@@ -37,7 +38,7 @@ function contentFixture(f,{failure}={}){
  const dispatch=(message,sender={id:'source-bridge-fixture'})=>new Promise((resolve,reject)=>{
   try{const kept=handlers[0](copy(message),sender,value=>resolve(copy(value)));if(kept!==true)resolve(undefined);}catch(error){reject(error);}
  });
- return{calls,timers,dispatch};
+ return{calls,signals,timerHistory,timers,dispatch};
 }
 async function withFixture(run){const f=await nativeRecoveryFixture();try{await run(f);}finally{f.close();}}
 const nativeMessage=expected=>({type:'YOOFAM_READ_NATIVE_PRODUCT_DOCUMENT_SOURCE',expected});
@@ -65,6 +66,8 @@ test('actual bundled native reader proves the complete source through a top-fram
   assert.deepEqual(h.calls.map(row=>row.path),['/api/supplier-hub/catalog-context','/api/products/'+f.context.identity.productId+'/native-assets','/api/supplier-hub/catalog-context']);
   assert.equal(new URLSearchParams(h.calls[1].query).get('profileId'),f.context.identity.requestedProfileId);
   assert.equal(h.timers.size,0);
+  assert.equal(new Set(h.signals).size,3,'actor, plan and final actor each receive a fresh timeout');
+  assert.equal(new Set(h.timerHistory.flat()).size,3);assert.ok(h.signals.every(signal=>signal.aborted),'completed resource controllers are disposed');
  });
 });
 

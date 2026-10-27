@@ -280,6 +280,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     return () => window.removeEventListener('beforeunload', protect);
   }, [detail]);
   const [selectedBatchStages,setSelectedBatchStages]=useState<AutomationStageId[]>(()=>batchStages.map(stage=>stage.id));
+  const [selectedBatchMode,setSelectedBatchMode]=useState<'full'|'selected'>('full');
   type BatchRun={request:SelectedBatchRequest;products:Product[]};
   const batchScope=useMemo(()=>({ownerId:workspaceOwnerId}),[workspaceOwnerId]);
   type BatchState={scope:typeof batchScope;open:boolean;busy:boolean;run:BatchRun|null};
@@ -552,11 +553,11 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     if(!chosen.length){showToast('작업할 상품을 선택해주세요.');return;}
     if(chosen.some(item=>item.owner_id!==workspaceOwnerId)){showToast('현재 계정의 상품을 다시 선택해주세요.');return;}
     if(!selectedBatchStages.length){showToast('실행할 작업을 하나 이상 선택해주세요.');return;}
-    const run={request:{id:crypto.randomUUID(),ownerId:workspaceOwnerId,stages:[...selectedBatchStages],keys:new Map<string,string>()},products:chosen.map(product=>({...product}))};
+    const run={request:{id:crypto.randomUUID(),ownerId:workspaceOwnerId,mode:selectedBatchMode,stages:[...selectedBatchStages],keys:new Map<string,string>()},products:chosen.map(product=>({...product}))};
     batchRunRef.current=run;setBatchRun(run);changeBatchBusy(true);setBatchOpenError('');setBatchOpen(true);
   }
   function openBatchReview(){const operation=settingsOperationRef.current;if(batchScopeRef.current!==batchScope||batchBusyRef.current||!operation.mounted||operation.ownerId!==workspaceOwnerId)return;batchRunRef.current=null;setBatchRun(null);setBatchOpenError('');setBatchOpen(true);}
-  function chooseBatchStage(id:AutomationStageId,enabled:boolean){const operation=settingsOperationRef.current;if(batchScopeRef.current!==batchScope||batchBusyRef.current||!operation.mounted||operation.ownerId!==workspaceOwnerId)return;setSelectedBatchStages(current=>batchStages.filter(stage=>stage.id===id?enabled:current.includes(stage.id)).map(stage=>stage.id));}
+  function chooseBatchStage(id:AutomationStageId,enabled:boolean){const operation=settingsOperationRef.current;if(batchScopeRef.current!==batchScope||batchBusyRef.current||!operation.mounted||operation.ownerId!==workspaceOwnerId)return;setSelectedBatchMode('selected');setSelectedBatchStages(current=>batchStages.filter(stage=>stage.id===id?enabled:current.includes(stage.id)).map(stage=>stage.id));}
 
   async function saveWorkspaceSettings(value: Settings, scope?:WorkspaceSettingsScope) {
     const operation=settingsOperationRef.current;
@@ -744,7 +745,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
       <section className="content">
         <header className="topbar"><div><h1>{view==='work'?'로켓배송 AI상품등록':'로켓배송 상품관리(신규)'}</h1><p>{view==='work'?'상품별 등록 현황 및 관리':'등록 상품 · SKU · 가격 · 구매정보'}</p></div>
           <div className="top-actions"><a className="workspace-user" href="/account">{userName} · 계정 관리</a>{view==='work'&&<><button type="button" className="btn settings" aria-expanded={settingsOpen} aria-controls="workspace-settings-panel" disabled={settingsBusy||batchBusy} onClick={()=>{if(!settingsBusyRef.current&&!batchBusyRef.current)setSettingsOpen(open=>!open);}}>⚙ 기본설정</button><button className="btn primary" disabled={batchBusy} onClick={()=>{if(!batchBusyRef.current)setAddOpen(true);}}>＋ 상품 추가</button>
-          <details className="bulk-action-menu"><summary className="btn ghost">{selectedBatchStages.length===batchStages.length?'전체 작업':'부분 작업 ('+selectedBatchStages.length+')'} ▾</summary><div><fieldset disabled={batchBusy} aria-label="실행할 작업 선택"><legend>실행할 작업</legend><label><input type="checkbox" aria-label="전체 작업" checked={selectedBatchStages.length===batchStages.length} onChange={event=>{if(!batchBusyRef.current)setSelectedBatchStages(event.target.checked?batchStages.map(stage=>stage.id):[]);}}/> 전체 작업</label>{batchStages.map(stage=><label key={stage.id} style={{display:'flex',gap:8,padding:'6px 0'}}><input type="checkbox" aria-label={stage.label+' 작업'} checked={selectedBatchStages.includes(stage.id)} onChange={event=>chooseBatchStage(stage.id,event.target.checked)}/>{stage.label}</label>)}</fieldset></div></details>
+          <details className="bulk-action-menu"><summary className="btn ghost">{selectedBatchMode==='full'?'전체 작업':'부분 작업 ('+selectedBatchStages.length+')'} ▾</summary><div><fieldset disabled={batchBusy} aria-label="실행할 작업 선택"><legend>실행할 작업</legend><label><input type="checkbox" aria-label="전체 작업" checked={selectedBatchMode==='full'} onChange={event=>{if(!batchBusyRef.current){setSelectedBatchMode(event.target.checked?'full':'selected');setSelectedBatchStages(event.target.checked?batchStages.map(stage=>stage.id):[]);}}}/> 전체 작업</label>{batchStages.map(stage=><label key={stage.id} style={{display:'flex',gap:8,padding:'6px 0'}}><input type="checkbox" aria-label={stage.label+' 작업'} checked={selectedBatchStages.includes(stage.id)} onChange={event=>chooseBatchStage(stage.id,event.target.checked)}/>{stage.label}</label>)}</fieldset></div></details>
           <details className="bulk-action-menu"><summary className="btn ghost">상품 선택 ▾</summary><div><button type="button" disabled={batchBusy} onClick={()=>{if(!batchBusyRef.current)setSelected(new Set(products.map(product=>product.id)));}}>최근 상품 전체 선택</button><button type="button" disabled={batchBusy} onClick={()=>{if(!batchBusyRef.current)setSelected(new Set());}}>선택 해제</button><button type="button" disabled={batchBusy} onClick={openBatchReview}>선택 상품 일괄 작업</button><button type="button" onClick={()=>{setHistoryProductId(products[0]?.id??'');setHistoryOpen(true);}}>작업 이력</button></div></details><button className="btn start" disabled={busy||batchBusy||!selectedBatchStages.length} onClick={runAutomation}>작업 개시</button><button className="btn rose" disabled={batchBusy} onClick={()=>openSubmission(null)}>등록 전송</button></>}</div></header>
 
         {cliInstallOpen&&<CliInstallDialog onClose={()=>setCliInstallOpen(false)}/>}

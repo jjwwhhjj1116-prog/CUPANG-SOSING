@@ -20,6 +20,15 @@ test('partial work freezes only chosen stages/products and rejects repeated or r
  const h=harness();try{await h.settle();check(h,'전체 작업',false);check(h,'SEO 작업',true);check(h,'견적서 작업',true);h.component('registration-board').onSelected(new Set([h.products[1].id]));const start=h.button('작업 개시').props.onClick;start();const first=h.component('batch-work-panel');assert.deepEqual(plain(first.runRequest.stages),['seo','quotation']);assert.deepEqual(plain(first.products.map(item=>item.id)),[h.products[1].id]);start();assert.equal(h.component('batch-work-panel').runRequest.id,first.runRequest.id);check(h,'가격 작업',true);h.component('registration-board').onSelected(new Set([h.products[0].id]));assert.deepEqual(plain(h.component('batch-work-panel').runRequest.stages),['seo','quotation']);assert.deepEqual(plain(h.component('batch-work-panel').products.map(item=>item.id)),[h.products[1].id]);first.onBusyChange(false);await h.click('×');await h.click('선택 상품 일괄 작업');assert.equal(h.component('batch-work-panel').runRequest,undefined);}finally{h.close();}
 });
 
+test('choosing every individual stage remains an explicit partial run instead of changing to full work',async()=>{
+ const h=harness();try{
+  await h.settle();check(h,'전체 작업',false);
+  for(const label of ['SEO','가격','대표 이미지','추가 이미지','상세 이미지','사이즈표','한글 표시사항','견적서'])check(h,label+' 작업',true);
+  h.component('registration-board').onSelected(new Set([h.products[0].id]));await h.click('작업 개시');
+  const request=h.component('batch-work-panel').runRequest;assert.equal(request.mode,'selected');assert.deepEqual(plain(request.stages),stageIds);
+ }finally{h.close();}
+});
+
 test('no selected task cannot start, and old scope callbacks cannot revive or unlock a new owner run',async()=>{
  const h=harness();try{await h.settle();h.component('registration-board').onSelected(new Set([h.products[0].id]));check(h,'전체 작업',false);assert.equal(h.button('작업 개시').props.disabled,true);h.button('작업 개시').props.onClick();assert.equal(h.component('batch-work-panel'),undefined);check(h,'SEO 작업',true);const oldStart=h.button('작업 개시').props.onClick;await h.click('작업 개시');const old=h.component('batch-work-panel');h.products[0].owner_id='next-owner';h.setSettingsBody({settings:{},scope:{ownerId:'next-owner',company:{code:'A01464742',name:'와이홉'}}});h.switchOwner('next-owner');await h.settle();assert.equal(h.component('batch-work-panel'),undefined);oldStart();old.onBusyChange(true);old.onOpen(h.products[0].id,'SEO');assert.equal(h.component('batch-work-panel'),undefined);await h.click('작업 개시');const current=h.component('batch-work-panel');assert.equal(current.runRequest.ownerId,'next-owner');old.onBusyChange(false);assert.equal(h.button('작업 개시').props.disabled,true);current.onBusyChange(false);}finally{h.close();}
 });
