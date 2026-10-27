@@ -164,9 +164,9 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     let view=await read<QuotationFieldsView>('/quotation-fields');
     const state=await read<QuotationAiView>('/quotation-ai');
     if(!quotationAiViewCurrent(state,view,productId))throw Error('견적서와 AI 작성 원문이 다릅니다.');
-    if(!state.configuration.configured)return{status:'blocked',message:'견적서 AI 서비스 설정을 확인해주세요.'};
-    let job=quotationAiJobForScope(state,view,productId,null,true);
-    if(!job){
+    const aiConfigured=state.configuration.configured;
+    let job=aiConfigured?quotationAiJobForScope(state,view,productId,null,true):null;
+    if(aiConfigured&&!job){
       const key=identity+':quote:'+state.fingerprint;
       if(!keys.has(key))keys.set(key,controls.newKey());
       keys.set(identity+':pending:quotation','견적서 AI 실행 결과 확인 필요');
@@ -175,14 +175,14 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
       if(result.sourceCurrent===false)throw Error('견적 작성 중 자료가 변경됐습니다.');
       job=result.job;
     }
-    if(!job||job.status!=='completed')return{status:'blocked',message:job?.error?.message??'견적서 AI 실행 결과를 먼저 확인해주세요. 중복 실행하지 않았습니다.',uncertain:!job||job.status!=='failed'};
-    const aiChanges=quotationAiScopedProposalChanges(view,job,state.fingerprint,null,true);
+    if(aiConfigured&&(!job||job.status!=='completed'))return{status:'blocked',message:job?.error?.message??'견적서 AI 실행 결과를 먼저 확인해주세요. 중복 실행하지 않았습니다.',uncertain:!job||job.status!=='failed'};
+    const aiChanges=job?quotationAiScopedProposalChanges(view,job,state.fingerprint,null,true):[];
     const {content}=await read<{content:ProductContent}>('/content');
     const knownChanges=quotationKnownNoticeProposals(productId,view,content,{optionId:null,applyToAllOptions:true});
     const changes=[...aiChanges,...knownChanges];
     if(changes.length){
       const previous=view;
-      view=await once('quotation:'+job.id,()=>post<QuotationFieldsView>('/quotation-fields',{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes},'PUT'));
+      view=await once('quotation:'+(job?.id??'saved-notice:'+view.inputFingerprint),()=>post<QuotationFieldsView>('/quotation-fields',{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes},'PUT'));
       confirmQuotationFieldsSave(previous,view,changes);
     }
     const packaging=await once('packaging:'+view.inputFingerprint,()=>runSelectedPackagingWork(productId,{view,signal,fetcher,assertCurrent}));
@@ -190,7 +190,9 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     const missing=view.resolved.rows.filter(row=>row.included).flatMap(row=>view.resolved.schema.fields.filter(field=>field.required
       &&(!row.fields[field.id]?.value.trim()||row.fields[field.id]?.validationIssues?.length)).map(field=>field.label));
     const incomplete=missing.length>0||packaging.status==='incomplete'||packaging.remaining>0;
-    return{status:incomplete?'blocked':'draft',message:'견적서 AI 항목 '+aiChanges.length+'개'+(knownChanges.length?' · 저장된 제조·상담 정보 '+knownChanges.length+'개':'')+'를 저장했습니다. '+packaging.message+(missing.length?' 필수 입력 확인: '+[...new Set(missing)].slice(0,8).join(', ')+'.':incomplete?' 남은 포장값은 7단계에서 확인해주세요.':' 견적서에서 최종 검토 후 등록전송할 수 있습니다.')};
+    const message=(aiConfigured?'견적서 AI 항목 '+aiChanges.length+'개'+(knownChanges.length?' · 저장된 제조·상담 정보 '+knownChanges.length+'개':'')+'를 저장했습니다. '
+      :'견적서 AI가 설정되지 않아 AI 작성은 실행하지 않았습니다. '+(knownChanges.length?'저장된 제조·상담 정보 '+knownChanges.length+'개를 적용했습니다. ':'저장된 제조·상담 정보는 기존 값을 유지했습니다. '))+packaging.message;
+    return{status:!aiConfigured||incomplete?'blocked':'draft',message:message+(missing.length?' 필수 입력 확인: '+[...new Set(missing)].slice(0,8).join(', ')+'.':incomplete?' 남은 포장값은 7단계에서 확인해주세요.':!aiConfigured?' AI 설정과 견적 내용을 확인해주세요.':' 견적서에서 최종 검토 후 등록전송할 수 있습니다.')};
   }
   const result:SelectedBatchStageResult[]=automationStages.filter(id=>controls.stages.includes(id)).map(id=>({id,status:'waiting',message:'실행 대기'}));
   const publish=(index:number,outcome:Outcome)=>{result[index]={id:result[index].id,status:outcome.status,message:outcome.message};controls.onStage({...result[index]});};

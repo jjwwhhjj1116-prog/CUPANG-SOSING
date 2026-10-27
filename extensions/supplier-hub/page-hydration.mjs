@@ -1,6 +1,6 @@
 /** A bounded viewport sweep inside one explicit collection click. This never
  * clicks page controls, follows links, reads frames or requests source data. */
-export async function hydratePageForCapture(document,view,{assertCurrent=()=>{},capture,wait,now=()=>Date.now()}={}){
+export async function hydratePageForCapture(document,view,{assertCurrent=()=>{},capture,observe,wait,now=()=>Date.now()}={}){
  assertCurrent();
  const root=document.documentElement,scroller=document.scrollingElement;
  const delay=wait??(typeof globalThis.setTimeout==='function'?ms=>new Promise(resolve=>globalThis.setTimeout(resolve,ms)):null);
@@ -28,6 +28,10 @@ export async function hydratePageForCapture(document,view,{assertCurrent=()=>{},
  view.addEventListener('pagehide',pagehide,options);document.addEventListener('visibilitychange',visibility,options);
  try{
   checked();
+  // Virtualized product sections can disappear when the viewport moves. Take
+  // bounded synchronous observations while each section is still mounted.
+  const observeViewport=()=>{if(!observe)return;checked();const result=observe(checked);if(result&&typeof result.then==='function')throw Error('상품 화면 확인은 동기식이어야 합니다.');checked();};
+  observeViewport();
   // A lazy module can grow the document between moves, but neither that nor
   // related-product infinite scrolling can extend the fixed distance/count.
   // Do not move farther down an already deep viewport.
@@ -37,10 +41,10 @@ export async function hydratePageForCapture(document,view,{assertCurrent=()=>{},
    if(!Number.isFinite(limit)||expected.y>=limit-2)break;
    const target=Math.min(limit,expected.y+step);
    view.scrollTo({left:original.x,top:target,behavior:'instant'});moved=true;expected=position();
-   checked();await delay(350);checked();
+   checked();await delay(350);checked();observeViewport();
    if(expected.y<target-2)break;
   }
-  if(moved){await delay(500);checked();}
+  if(moved){await delay(500);checked();observeViewport();}
   // The caller reads all fields before restoration; a virtualized viewport
   // must not lose the just-observed DOM merely because we restored first.
   const result=await capture(checked);checked();return result;

@@ -70,6 +70,13 @@ test('static HTML extraction skips executable strings, foreign subtrees, comment
  assert.deepEqual(parsePageDescriptionImages(`<textarea><img src="${first}"></textarea>`),[]);
 });
 
+test('static detail HTML retains allowlisted lazy image attributes when src is an unsafe placeholder',()=>{
+ for(const attribute of ['data-original','data-original-src','data-lazy-src','data-lazyload']){
+  assert.deepEqual(parsePageDescriptionImages(`<img src="data:image/png;base64,AA" ${attribute}="${first}"><img ${attribute}="https://evil.test/image.jpg">`),[first]);
+  assert.deepEqual(parsePageDescriptionImages(`<img src="${second}" ${attribute}="${first}">`),[first],'explicit lazy product image precedes a CDN-hosted placeholder');
+ }
+});
+
 test('spaces after tag openers never turn text or script literals into static images',()=>{
  for(const prefix of ['< img','< /img','<\nimg'])assert.deepEqual(parsePageDescriptionImages(`${prefix} src="${second}"><img src="${first}">`),[first]);
  for(const closing of ['< /script>','</ script>','<\n/script>'])assert.deepEqual(parsePageDescriptionImages(`<script>const literal="${closing}<img src='${second}'>";</script><img src="${first}">`),[first]);

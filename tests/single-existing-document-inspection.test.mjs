@@ -10,7 +10,7 @@ function fixture(options={}){
  const binding={requestId,identity:{company:{code:'A01526306',name:'유앤채'}},identityDigest:'a'.repeat(64),packetDigest:'b'.repeat(64),preparedBodySha256:sha({...body,docId:null}),nativeAssetSourcePlanSha256:'c'.repeat(64)};
  const input={mode:'inspect',binding,docId,operationId:requestId+':update',expectedBody:body,baselineDocIds:[834000]},calls=[],dataset={},document={documentElement:{dataset},body:{innerText:'Company Code: A01526306'}};
  const row={...body,status:'UNFINISHED',jsonDocument:null,modifiedAt:'2026-10-26T00:00:00Z',...options.row};
- const fetch=async(url,init)=>{calls.push({url,method:init.method,body:init.body});const path=new URL(url).pathname;let json,status=200;
+ const fetch=async(url,init)=>{calls.push({url,method:init.method,body:init.body});await options.onFetch?.(calls.length,init);const path=new URL(url).pathname;let json,status=200;
   if(path.endsWith('/register-requested'))json=options.requested??[];
   else if(path.endsWith('/drafts'))json=[row,...options.duplicates??[]];
   else if(path.includes('/get-by-id/')){if(options.bodyFailure){json={errorCode:'INTERNAL_SERVER_ERROR'};status=500;}else json={...body,status:'UNFINISHED',...options.body};}
@@ -19,7 +19,7 @@ function fixture(options={}){
   else throw Error('Unexpected network path');
   const response=Response.json(json,{status});Object.defineProperty(response,'url',{value:url});return response;
  };
- const context=vm.createContext({input:JSON.stringify(input),location:new URL('https://supplier.coupang.com/dashboard/KR'),document,fetch,crypto:webcrypto,AbortController,TextEncoder,Uint8Array,setTimeout,clearTimeout,Date,URL});
+ const context=vm.createContext({input:JSON.stringify(input),location:new URL('https://supplier.coupang.com/dashboard/KR'),document,fetch,crypto:webcrypto,AbortController,TextEncoder,Uint8Array,setTimeout:options.setTimeout??setTimeout,clearTimeout:options.clearTimeout??clearTimeout,Date,URL});
  return{calls,dataset,input,run:async()=>JSON.parse(await vm.runInContext('('+singleExistingDocumentRepairPage.toString()+')(input)',context))};
 }
 test('checkpoint-owned inspection reads only the exact document and all file buckets without writing a marker',async()=>{
@@ -41,4 +41,19 @@ test('a current page record prevents overwrite and a baseline ID cannot select a
  const g=fixture();g.input.baselineDocIds.push(g.input.docId);
  const code='('+singleExistingDocumentRepairPage.toString()+')('+JSON.stringify(JSON.stringify(g.input))+')';
  await assert.rejects(vm.runInNewContext(code,{crypto:webcrypto,TextEncoder,Uint8Array,document:{documentElement:{}},location:{}}));
+});
+test('each document or file list read has an independent bounded timer',async()=>{
+ const timers=[],signals=[];
+ const f=fixture({setTimeout:(fire,ms)=>{const t={fire,ms,cleared:false};timers.push(t);return t;},clearTimeout:t=>{t.cleared=true;},onFetch:(index,init)=>{
+  signals.push(init.signal);if(index===2){assert.equal(timers[0].cleared,true);timers[0].fire();assert.equal(signals[0].aborted,true);assert.equal(init.signal.aborted,false);}
+ }});
+ const result=await f.run();assert.equal(result.proof.readOnly,true);assert.equal(f.calls.length,10);assert.equal(timers.length,10);
+ assert.equal(new Set(signals).size,10);assert.ok(timers.every(t=>t.ms===30000&&t.cleared));assert.deepEqual(f.dataset,{});
+});
+test('an expired active read cannot authorize a document repair or mutate its record',async()=>{
+ const timers=[];
+ const f=fixture({setTimeout:(fire,ms)=>{const t={fire,ms,cleared:false};timers.push(t);return t;},clearTimeout:t=>{t.cleared=true;},onFetch:(index,init)=>{
+  if(index===1){timers[0].fire();assert.equal(init.signal.aborted,true);}
+ }});
+ await assert.rejects(f.run(),/조회 시간이 초과/);assert.equal(f.calls.length,1);assert.ok(timers[0].cleared);assert.deepEqual(f.dataset,{});
 });

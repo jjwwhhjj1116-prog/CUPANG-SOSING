@@ -9,10 +9,10 @@ const bundle=await build({entryPoints:[fileURLToPath(new URL('../deployment/exte
  build.onLoad({filter:/[/\\]page-source\.mjs$/},()=>({loader:'js',contents:`
   export const pageSourceUrl=value=>{const url=new URL(value);return {sourceUrl:url.origin+url.pathname};};
   export const extractPageSource=()=>{globalThis.sourceReads++;return globalThis.captureFixture;};
-  export const readPageSourceDomOptions=()=>[];export const readPageSourceDomFacts=()=>({});export const readPageSourceElementImage=()=>null;
+  export const readPageSourceDomOptions=()=>[];export const readPageSourceDomFacts=()=>null;export const readPageSourceElementImage=()=>null;
   export const readPageSourceDescriptionReference=()=>null;export const validatePageSourceForDelivery=value=>value;
  `}));
- build.onLoad({filter:/[/\\]page-dom-details\.mjs$/},()=>({loader:'js',contents:'export const waitForPageDomDetails=()=>{globalThis.sourceReads++;return globalThis.readDetails();};'}));
+ build.onLoad({filter:/[/\\]page-dom-details\.mjs$/},()=>({loader:'js',contents:'export const readPageDomDetails=()=>({description:"",detailImages:[]});export const waitForPageDomDetails=()=>{globalThis.sourceReads++;return globalThis.readDetails();};'}));
 }}]});
 const HOST='yoofam-page-collector',OWNER='data-yoofam-collector-owner',VERSION='data-yoofam-collector-version',LEASE='data-yoofam-collector-capture';
 const sourceUrl='https://detail.1688.com/offer/886034098637.html',snapshot={format:'yoofam-page-source-v1',sourceUrl,offerId:'886034098637',collectedAt:'2026-10-23T01:00:00.000Z',title:'합성 상품',description:'',attributes:[],options:[{key:'black',name:'검정'}],images:[]};
@@ -23,20 +23,20 @@ function harness(){
  const context={window,document:dom.document,location:{href:sourceUrl},URL,Date:ClockDate,Error,TextEncoder,captureFixture:snapshot,sourceReads:0,readDetails:()=>({description:'',detailImages:[]}),
   respond:()=>({ok:true,delivered:true}),chrome:{runtime:{getManifest(){assert.fail('no manifest identity shortcut');},sendMessage:async message=>{messages.push(structuredClone(message));return context.respond(message);}}},fetch(){assert.fail('lifecycle must not fetch');}};
  const makeHost=({owner,version,tag='div',open=false}={})=>{const host=dom.document.createElement(tag);host.id=HOST;host.style.cssText='position:fixed;right:22px;bottom:86px;z-index:2147483646;';host.attachShadow({mode:open?'open':'closed'});if(owner!==undefined)host.setAttribute(OWNER,owner);if(version!==undefined)host.setAttribute(VERSION,version);dom.document.documentElement.append(host);return host;};
- const install=(version='2.1.48')=>{vm.runInNewContext(bundle.outputFiles[0].text.replaceAll('"2.1.48"',JSON.stringify(version)),context);const host=dom.document.getElementById(HOST),children=host?.testShadow?.childNodes??[];return {host,button:children.find(node=>node.tag==='button'),status:children.find(node=>node.tag==='p'),badge:children.find(node=>node.tag==='small')};};
+ const install=(version='2.1.49')=>{vm.runInNewContext(bundle.outputFiles[0].text.replaceAll('"2.1.49"',JSON.stringify(version)),context);const host=dom.document.getElementById(HOST),children=host?.testShadow?.childNodes??[];return {host,button:children.find(node=>node.tag==='button'),status:children.find(node=>node.tag==='p'),badge:children.find(node=>node.tag==='small')};};
  return {...dom,context,messages,makeHost,install,advance:ms=>{now+=ms;},get now(){return now;}};
 }
 
 test('only the exact legacy closed-shadow host or an explicitly owned older/unversioned host is replaced without reading the product',()=>{
  for(const attributes of [{},{owner:'yoofam-studio'},{owner:'yoofam-studio',version:'2.1.23'}]){
   const h=harness(),old=h.makeHost(attributes),current=h.install();assert.notEqual(current.host,old);assert.equal(old.isConnected,false);
-  assert.equal(current.host.getAttribute(OWNER),'yoofam-studio');assert.equal(current.host.getAttribute(VERSION),'2.1.48');assert.equal(current.badge.textContent,'수집기 2.1.48');
+  assert.equal(current.host.getAttribute(OWNER),'yoofam-studio');assert.equal(current.host.getAttribute(VERSION),'2.1.49');assert.equal(current.badge.textContent,'수집기 2.1.49');
   assert.equal(h.context.sourceReads,0);assert.equal(h.messages.length,0);
  }
 });
 
 test('same/newer versions are idempotent; foreign/open-shadow/unknown-version same-ID hosts fail closed',()=>{
- for(const attributes of [{owner:'yoofam-studio',version:'2.1.48'},{owner:'yoofam-studio',version:'2.1.48'},
+ for(const attributes of [{owner:'yoofam-studio',version:'2.1.49'},{owner:'yoofam-studio',version:'2.1.49'},
   {owner:'someone-else',version:'2.1.23'},{owner:'yoofam-studio',version:'unknown'},{tag:'span'},{open:true}]){
   const h=harness(),old=h.makeHost(attributes),count=h.elements.length,current=h.install();assert.equal(current.host,old);assert.equal(old.isConnected,true);assert.equal(h.elements.length,count);assert.equal(h.context.sourceReads,0);assert.equal(h.messages.length,0);
  }

@@ -8,6 +8,9 @@ import {resolveProductSourceContext} from './product-source-context.mjs';
 // receipt have been verified live. A page cannot override this release gate.
 export const PRODUCT_DOCUMENT_LIVE_VERIFIED=false;
 const receivers=new Map();
+// Service-worker-local only. Durable checkpoints remain the sole authority
+// across worker restarts; an empty set never proves an earlier action stopped.
+const activeDocumentKeys=new Set();
 const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canonical).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}';
 export async function dispatchProductDocument(message,sender){
   if(!message||message.type!=='YOOFAM_PRODUCT_DOCUMENT_REQUEST'||!['preview','prepareDraft','recoverDraft','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','repairExistingDraft','retryExistingDraftRepair','continueApprovedRepair','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft','start','resume','recover','confirm','observe'].includes(message.action)
@@ -41,6 +44,9 @@ export async function dispatchProductDocument(message,sender){
     try{return await Promise.race([operation,deadline]);}finally{stopped=true;clearTimeout(timer);selected?.adapter.dispose();}
   }
   if(['prepareDraft','recoverDraft','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','repairExistingDraft','retryExistingDraftRepair','continueApprovedRepair','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(message.action)){
+    // Avoid even opening a fresh adapter while the same verified request is
+    // already running. The receiver also checks atomically after adapter setup.
+    if(activeDocumentKeys.has(context.key))return {format:context.packet.format,requestId:message.packet.requestId,state:'busy',registered:false,success:false};
     const selected=await createVerifiedProductDocumentBrowserAdapter(context);
     if(selected.nativeAssets!==true){selected.adapter.dispose();throw new SingleDocumentError('PRODUCT_DRAFT_NATIVE_SOURCE_REQUIRED','현재 상품의 원본 파일·회사·저장 견적을 확인한 뒤 새 초안을 준비해주세요.');}
     if(['recoverDraft','recoverClosedTarget','recoverPreparedDraft','observePreparedDraft'].includes(message.action)){
@@ -48,19 +54,19 @@ export async function dispatchProductDocument(message,sender){
       // Pre-submit stage recovery still retains its original live adapter.
       const store=createProductDocumentStore();let prior,fresh=false;
       try{prior=await readPreparedDocumentPreviewCheckpoint(context,store);
-        if(message.action==='recoverDraft'||message.action==='recoverClosedTarget'||prior?.submitRequestedAt!==undefined){fresh=true;const receiver=createProductDocumentDraftReceiver({adapter:selected.adapter,store,resolveSourceContext:base=>resolveProductSourceContext(base,{store})});return await receiver[message.action](message.packet,sender);}
+        if(message.action==='recoverDraft'||message.action==='recoverClosedTarget'||prior?.submitRequestedAt!==undefined){fresh=true;const receiver=createProductDocumentDraftReceiver({adapter:selected.adapter,store,activeKeys:activeDocumentKeys,resolveSourceContext:base=>resolveProductSourceContext(base,{store})});return await receiver[message.action](message.packet,sender);}
       }catch(error){if(!fresh)selected.adapter.dispose();throw error;}
       finally{if(fresh)selected.adapter.dispose();}
     }
     const key='native-draft:'+selected.sourcePlanSha256+':source:'+(context.sourceAppTabId??context.identity.appTabId);let receiver=receivers.get(key);
     if(!receiver){if(receivers.size>=100){selected.adapter.dispose();throw new SingleDocumentError('PRODUCT_RECEIVER_LIMIT','이 브라우저의 새 초안 확인 범위를 초과했습니다. 기존 요청을 먼저 확인해주세요.');}
-      const store=createProductDocumentStore();receiver=createProductDocumentDraftReceiver({adapter:selected.adapter,store,resolveSourceContext:base=>resolveProductSourceContext(base,{store})});receivers.set(key,receiver);
+      const store=createProductDocumentStore();receiver=createProductDocumentDraftReceiver({adapter:selected.adapter,store,activeKeys:activeDocumentKeys,resolveSourceContext:base=>resolveProductSourceContext(base,{store})});receivers.set(key,receiver);
     }else selected.adapter.dispose();
     return message.action==='confirmPreparedDraft'?receiver.confirmPreparedDraft(message.packet,sender,message.confirmation):receiver[message.action](message.packet,sender);
   }
   if(!PRODUCT_DOCUMENT_LIVE_VERIFIED)throw new SingleDocumentError('PRODUCT_LIVE_CONTRACT_UNVERIFIED','전체 상품 견적의 실제 접수 연결을 검수 중입니다. 현재 상품은 전송하지 않았습니다.');
   const selected=await createVerifiedProductDocumentBrowserAdapter(context),key=selected.nativeAssets?'native:'+selected.sourcePlanSha256:'legacy';
   let receiver=receivers.get(key);
-  if(!receiver){if(receivers.size>=100)throw new SingleDocumentError('PRODUCT_RECEIVER_LIMIT','이 브라우저의 전송 확인 범위를 초과했습니다. 기존 응답을 확인해주세요.');receiver=createProductDocumentReceiver({adapter:selected.adapter,store:createProductDocumentStore()});receivers.set(key,receiver);}
+  if(!receiver){if(receivers.size>=100)throw new SingleDocumentError('PRODUCT_RECEIVER_LIMIT','이 브라우저의 전송 확인 범위를 초과했습니다. 기존 응답을 확인해주세요.');receiver=createProductDocumentReceiver({adapter:selected.adapter,store:createProductDocumentStore(),activeKeys:activeDocumentKeys});receivers.set(key,receiver);}
   return message.action==='confirm'?receiver.confirm(message.packet,sender,message.confirmation):receiver[message.action](message.packet,sender);
 }

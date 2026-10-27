@@ -273,13 +273,18 @@ export function createSingleDocumentReceiver(options){
 /** The transport contract is supplied by trusted extension modules, never by
  * packet data. Legacy single-option validation remains its original wrapper.
  * Both wrappers share durable write/recovery/consent handling below. */
-export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},contract){
+export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,activeKeys},contract){
   if(!object(contract)||Object.keys(contract).some(key=>!['format','identity','draftOnly','nativeLifecycle'].includes(key))||typeof contract.format!=='string'||!contract.format||typeof contract.identity!=='function'
     ||Object.hasOwn(contract,'draftOnly')&&contract.draftOnly!==true||Object.hasOwn(contract,'nativeLifecycle')&&(contract.nativeLifecycle!==true||contract.draftOnly!==true))throw new TypeError('A trusted document transport contract is required.');
   const draftOnly=contract.draftOnly===true,nativeLifecycle=contract.nativeLifecycle===true;
   const required=['readSource','createTarget','readTab','hubRequest','readDocument','recoverWrite','readValidation','navigate','readAgreements','verifyHumanConfirmation','confirmAgreements','submit','observeReceipt'];
   if(!adapter||required.some(key=>typeof adapter[key]!=='function')||nativeLifecycle&&typeof adapter.qualifyPreparedDraft!=='function'||!store||['get','claim','compareAndSet'].some(key=>typeof store[key]!=='function')||typeof now!=='function')throw new TypeError('Single document adapter/store contract is required.');
-  const active=new Set();
+  // Receivers in the same extension service worker may use different adapter
+  // instances for fresh reads. Share a trusted in-memory lock across them so a
+  // read cannot race a write before that write's durable checkpoint is saved.
+  // This is not durable and must never be used as evidence after worker restart.
+  const active=activeKeys??new Set();
+  if(!active||typeof active.has!=='function'||typeof active.add!=='function'||typeof active.delete!=='function')throw new TypeError('A trusted document active-key set is required.');
   const clock=()=>{const value=now();if(!Number.isSafeInteger(value)||value<=0)fail('CLOCK','전송 시각을 확인하지 못했습니다.');return value;};
   async function get(context){const value=await store.get(context.key);if(value===undefined||value===null)return null;const state=clone(checkpointValid(value,context));
     if((state.draftOnly===true)!==draftOnly||draftOnly&&state.requestId!==context.packet.requestId||state.preparedLifecycle===true&&!nativeLifecycle)fail('CHECKPOINT_MODE','원래 새 초안 준비 요청과 같은 기록에서만 계속 확인해주세요.');return state;}

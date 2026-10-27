@@ -64,6 +64,21 @@ test('an early detail image cannot end hydration before later viewport-triggered
  assert.deepEqual(snapshot,['already-visible','later-image']);assert.equal(captures,1);assert.ok(h.moves.some(move=>move.y>=3000));assert.equal(h.view.scrollY,0);assert.equal(h.listenerCount(),0);
 });
 
+test('virtualized sections are observed at each mounted viewport before they disappear',async()=>{
+ const h=fixture({y:0}),seen=[];let captures=0;
+ const value=()=>h.view.scrollY<900?'attributes':h.view.scrollY<2200?'packaging':'detail';
+ const result=await hydratePageForCapture(h.document,h.view,options(h,checked=>{checked();captures++;return [...seen];},{observe(checked){checked();const item=value();if(!seen.includes(item))seen.push(item);}}));
+ assert.deepEqual(result,['attributes','packaging','detail']);assert.equal(captures,1);assert.equal(h.view.scrollY,0);assert.equal(h.listenerCount(),0);
+});
+
+test('interrupted or asynchronous viewport observations never return a partial capture',async()=>{
+ for(const asyncObserver of [false,true]){
+  const h=fixture({y:0});let captures=0,observations=0;
+  await assert.rejects(hydratePageForCapture(h.document,h.view,options(h,()=>{captures++;},{observe(){observations++;if(asyncObserver)return Promise.resolve();h.emit('wheel');}})));
+  assert.equal(captures,0);assert.equal(observations,1);assert.equal(h.listenerCount(),0);
+ }
+});
+
 for(const type of ['wheel','touchstart','pointerdown','keydown'])test(`trusted ${type} interrupts hydration without capture or forced restoration`,async()=>{
  const h=fixture();let captures=0;h.onWait(()=>h.emit(type,{key:'ArrowDown'}));
  await assert.rejects(hydratePageForCapture(h.document,h.view,options(h,()=>{captures++;})));

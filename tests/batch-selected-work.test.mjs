@@ -146,7 +146,7 @@ test('an unresolved quotation provider call cannot start another provider on ret
  assert.equal(h.calls.filter(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST').length,1);
 });
 
-function knownQuotationFixture(){
+function knownQuotationFixture({configured=true}={}){
  const h=fixture(),nextVersion='2026-10-23T00:00:01.000Z';
  Object.assign(h.deps['@/app/quotation-ai-client'],providedOptionModule('app/quotation-ai-client.ts'));
  Object.assign(h.deps['@/app/quotation-fields-confirmation'],providedOptionModule('app/quotation-fields-confirmation.ts'));
@@ -158,7 +158,7 @@ function knownQuotationFixture(){
  const job={id:'quote-known',status:'completed',fingerprint:hash,quotationRevision:1,profileId:null,scope:{optionId:null,applyToAllOptions:true},result:{changes:[{optionId:'a',fieldKey:'notice3',value:'검토 재질'}],warnings:[],model:'mock',generatedAt:version}};
  let onContent,saveResponse;const writes=[];
  h.intercept(async call=>{
-  if(call.url.endsWith('/quotation-ai'))return Response.json({configuration:{configured:true},fingerprint:hash,productId:'product',productVersion:version,contentRevision:3,optionRevision:2,quotationRevision:1,profileId:null,jobs:[job]});
+  if(call.url.endsWith('/quotation-ai'))return Response.json({configuration:{configured},fingerprint:hash,productId:'product',productVersion:version,contentRevision:3,optionRevision:2,quotationRevision:1,profileId:null,jobs:configured?[job]:[]});
   if(call.url.endsWith('/content')){onContent?.();return Response.json({content});}
   if(call.url.endsWith('/quotation-fields')){
    if(call.method!=='PUT')return Response.json(view);
@@ -178,6 +178,33 @@ test('explicit quotation work saves verified AI plus saved notice sources in one
  assert.equal(JSON.stringify({view:h.view,content:h.content}),before);assert.equal(h.calls.some(call=>call.method==='POST'),false);
  assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
  assert.deepEqual(h.calls.find(call=>call.adapter==='packaging'),{adapter:'packaging',id:'product',revision:2,fingerprint:'b'.repeat(64)});
+});
+
+test('unconfigured quotation AI preserves manual values while applying known notices and checking packaging',async()=>{
+ const h=knownQuotationFixture({configured:false}),before=JSON.stringify({view:h.view,content:h.content}),result=await h.run(['quotation']);
+ assert.equal(result.stages[0].status,'blocked');assert.match(result.stages[0].message,/AI가 설정되지 않아 AI 작성은 실행하지 않았습니다/);
+ assert.match(result.stages[0].message,/저장된 제조·상담 정보 3개/);assert.match(result.stages[0].message,/포장값/);
+ assert.equal(h.calls.some(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST'),false);
+ assert.equal(h.writes.length,1);assert.equal(h.writes[0].expectedRevision,1);assert.equal(h.writes[0].expectedInputFingerprint,hash);
+ assert.deepEqual(h.writes[0].changes,[{optionId:'a',fieldKey:'notice0',value:'제조자: 저장 제조사 / 수입자: 저장 수입사'},{optionId:'a',fieldKey:'notice1',value:'02-1234-5678'},{optionId:'b',fieldKey:'notice1',value:'02-1234-5678'}]);
+ assert.equal(JSON.stringify({view:h.view,content:h.content}),before);
+ assert.deepEqual(h.calls.find(call=>call.adapter==='packaging'),{adapter:'packaging',id:'product',revision:2,fingerprint:'b'.repeat(64)});
+});
+
+test('without quotation AI, an unknown notice save cannot be repeated or start packaging',async()=>{
+ const h=knownQuotationFixture({configured:false});h.saveResponse(()=>{throw Error('lost ACK');});
+ assert.equal((await h.run(['quotation'])).stages[0].status,'failed');assert.equal(h.writes.length,1);
+ assert.equal((await h.run(['quotation'])).stages[0].status,'blocked');assert.equal(h.writes.length,1);
+ assert.equal(h.calls.some(call=>call.adapter==='packaging'),false);
+});
+
+test('without quotation AI, company change or a different content revision blocks all quotation changes',async()=>{
+ const changed=knownQuotationFixture({configured:false});changed.onContent(()=>changed.company({code:'A01464742',name:'와이홉'}));
+ assert.equal((await changed.run(['quotation'])).stages[0].status,'failed');assert.equal(changed.writes.length,0);
+ assert.equal(changed.calls.some(call=>call.adapter==='packaging'),false);
+ const stale=knownQuotationFixture({configured:false});stale.content.revision++;
+ assert.equal((await stale.run(['quotation'])).stages[0].status,'failed');assert.equal(stale.writes.length,0);
+ assert.equal(stale.calls.some(call=>call.adapter==='packaging'),false);
 });
 
 test('quotation work retains an incomplete packaging result instead of reporting a completed draft',async()=>{

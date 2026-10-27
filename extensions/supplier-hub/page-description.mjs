@@ -88,7 +88,7 @@ export function parsePageDescriptionImages(html){
   }
   if(excluded.has(tag)){if(tag!=='embed'&&!(selfClosing&&['svg','math'].includes(tag)))blocked.push(tag);continue;}
   if(blocked.length||tag!=='img')continue;
-  for(const key of ['data-src','src','data-lazyload-src','data-ks-lazyload']){
+  for(const key of ['data-src','data-lazyload-src','data-ks-lazyload','data-original','data-original-src','data-lazy-src','data-lazyload','src']){
    const candidate=imageUrl(decodeAttribute(attrs.get(key)??''));if(!candidate)continue;
    if(!images.includes(candidate)){if(images.length>=80)fail('image-limit');images.push(candidate);}break;
   }

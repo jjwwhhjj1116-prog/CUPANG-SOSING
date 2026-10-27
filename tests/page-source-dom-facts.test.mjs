@@ -199,3 +199,25 @@ test('trusted collection button reads visible package facts and preserves click-
  const button=elements.find(node=>node.tag==='button');await button.click({isTrusted:false});assert.equal(messages.length,0);await button.click({isTrusted:true});
  assert.equal(messages.length,1,elements.find(node=>node.tag==='p').textContent);assert.deepEqual(JSON.parse(JSON.stringify(messages[0].snapshot.options.map(row=>row.packaging.weightG))),[10,10,10]);assert.equal(button.textContent,'수집 완료');
 });
+
+test('trusted button keeps virtualized attributes, package table and later detail images across one viewport sweep',async()=>{
+ const early=documentFromHtml(attributes),middle=documentFromHtml(table()),late=documentFromHtml(''),hostDom=pageCollectorDom(),messages=[];
+ const document=hostDom.document,view={scrollX:0,scrollY:0,innerHeight:800,addEventListener(){},removeEventListener(){}};view.top=view;view.scrollTo=position=>{view.scrollX=position.left;view.scrollY=position.top;};
+ document.scrollingElement={scrollHeight:6000};document.visibilityState='visible';document.addEventListener=()=>{};document.removeEventListener=()=>{};document.defaultView=view;
+ document.title='合成后跟贴';document.scripts=scripts.map(textContent=>({textContent}));
+ const imageUrl='https://cbu01.alicdn.com/synthetic-virtual-detail.png',virtualImage={tagName:'IMG',currentSrc:imageUrl,getAttribute:name=>name==='src'?imageUrl:null};
+ document.querySelectorAll=selector=>{
+  if(selector==='#desc-lazyload-container img,.offer-description img')return view.scrollY>=1600?[virtualImage]:[];
+  if(selector==='#desc-lazyload-container,.offer-description,.detail-desc-decorate-richtext,[data-module-name="description"],[data-plg-name="description"]')return[];
+  return (view.scrollY<600?early:view.scrollY<1400?middle:late).querySelectorAll(selector);
+ };
+ document.querySelector=selector=>selector==='.price-container'?{textContent:'¥0.28 1双起批'}:null;
+ vm.runInNewContext(bundled.outputFiles[0].text,{window:view,document,location:{href:sourceUrl},URL,Date,Error,TextEncoder,setTimeout:callback=>{callback();return 1;},clearTimeout(){},
+  chrome:{runtime:{sendMessage:async message=>{messages.push(message);return{ok:true,delivered:true};}}},fetch(){assert.fail('No source request');}});
+ const button=hostDom.elements.find(node=>node.tag==='button');await button.click({isTrusted:true});
+ assert.equal(messages.length,1,hostDom.elements.find(node=>node.tag==='p').textContent);
+ assert.deepEqual(JSON.parse(JSON.stringify(messages[0].snapshot.attributes)),[{name:'材质',value:'海绵'},{name:'产品类别',value:'后跟贴'}]);
+ assert.deepEqual(JSON.parse(JSON.stringify(messages[0].snapshot.options.map(row=>row.packaging.weightG))),[10,10,10]);
+ assert.deepEqual(JSON.parse(JSON.stringify(messages[0].snapshot.images.filter(row=>row.role==='detail').map(row=>row.url))),[imageUrl]);
+ assert.equal(view.scrollY,0);assert.equal(button.textContent,'수집 완료');
+});

@@ -35,16 +35,17 @@ export async function singleExistingDocumentRepairPage(input){
   }else if(record||Object.values(records).some(record=>record?.binding?.requestId===binding.requestId||String(record?.docId)===String(docId)))fail('이 문서의 다른 작업 기록이 있어 덮어쓰지 않았습니다.');
   return records;
  };
- check();const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),30000);
+ check();
  const read=async(path,legal=false,allowBodyFailure=false)=>{
-  check();const url=origin+path,response=await fetch(url,{method:legal?'POST':'GET',credentials:'include',redirect:'error',cache:'no-store',signal:controller.signal,
+  check();const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),30000);
+  try{const url=origin+path,response=await fetch(url,{method:legal?'POST':'GET',credentials:'include',redirect:'error',cache:'no-store',signal:controller.signal,
    headers:{accept:'application/json',...(legal?{'content-type':'application/json;charset=UTF-8'}:{})},...(legal?{body:'{}'}:{})});
   if(response.redirected||response.url!==url||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')||''))fail('원래 문서 조회 응답의 출처를 확인하지 못했습니다.');
-  const text=await response.text();if(text.length>6*1024*1024)fail('원래 문서 조회 응답이 너무 큽니다.');const json=JSON.parse(text);check();
+  const text=await response.text();if(controller.signal.aborted)fail('원래 문서 조회 시간이 초과되었습니다.');if(text.length>6*1024*1024)fail('원래 문서 조회 응답이 너무 큽니다.');const json=JSON.parse(text);check();
   if(!response.ok){if(allowBodyFailure&&response.status===500&&json?.errorCode==='INTERNAL_SERVER_ERROR')return{unreadable:true,status:500,errorCode:json.errorCode};fail('원래 문서 조회에 실패했습니다. HTTP '+response.status);}
   return{unreadable:false,json};
+  }finally{clearTimeout(timer);}
  };
- try{
   const rows=(await read('/sr/draft/api/drafts')).json;
   if(!Array.isArray(rows)||rows.length>10000)fail('중간저장 문서 목록을 확인하지 못했습니다.');
   const matches=rows.filter(row=>same(row?.docId,docId));if(matches.length!==1||matches[0].status!=='UNFINISHED')fail('원래 문서가 중간저장 상태인지 확인해주세요.');
@@ -86,5 +87,4 @@ export async function singleExistingDocumentRepairPage(input){
    recoveryRepair:{...audit,priorUpdateOutcome:'unknown',emptyFilesObservedAt:proof.checkedAt}};
   records[binding.packetDigest]=record;root.dataset.yoofamSingleDocumentRecords=JSON.stringify(records);
   return JSON.stringify({proof,record});
- }finally{clearTimeout(timer);}
 }

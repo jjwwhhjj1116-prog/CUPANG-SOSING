@@ -1,10 +1,11 @@
 import {extractPageSource,pageSourceUrl,readPageSourceDomOptions,readPageSourceDomFacts,readPageSourceElementImage,readPageSourceDescriptionReference,validatePageSourceForDelivery} from '../extensions/supplier-hub/page-source.mjs';
-import {waitForPageDomDetails} from '../extensions/supplier-hub/page-dom-details.mjs';
+import {readPageDomDetails,waitForPageDomDetails} from '../extensions/supplier-hub/page-dom-details.mjs';
 import {hydratePageForCapture} from '../extensions/supplier-hub/page-hydration.mjs';
+import {createPageCaptureObservations} from '../extensions/supplier-hub/page-capture-observations.mjs';
 import {readProductSectionLinks,readProductSectionStructure} from '../extensions/supplier-hub/page-dom-sections.mjs';
 // This identifies the injected script itself, even when an older open page
 // outlives an extension update. The runtime manifest is not that proof.
-const COLLECTOR_SCRIPT_VERSION='2.1.48';
+const COLLECTOR_SCRIPT_VERSION='2.1.49';
 const COLLECTOR_HOST_ID='yoofam-page-collector',COLLECTOR_OWNER='yoofam-studio';
 const OWNER_ATTRIBUTE='data-yoofam-collector-owner',VERSION_ATTRIBUTE='data-yoofam-collector-version',LEASE_ATTRIBUTE='data-yoofam-collector-capture';
 const CAPTURE_LEASE_MS=60000;
@@ -91,18 +92,23 @@ function installPageCollector(){
    let snapshot=retrySnapshot;
    if(!snapshot){
     showStatus('화면을 잠시 내려 상품정보를 확인한 뒤 원래 위치로 돌아갑니다. 화면을 조작하면 수집을 중단합니다.');
-    const observed=await hydratePageForCapture(document,window,{assertCurrent:()=>{assertActive();if(pageSourceUrl(location.href).sourceUrl!==before)throw Error('상품 페이지가 변경되었습니다. 다시 수집해주세요.');},capture:async assertCurrent=>{
+    const views=createPageCaptureObservations(before);
+    const pageScripts=()=>{const scripts=[],descriptionScripts=[];let size=0;for(const script of document.scripts){const raw=script.textContent??'',sourceData=/"(?:skuModel|subject|offerTitle|offerSubject|productTitle|productName|offerBaseInfo|tempModel|offerImgList|mainImageList|propsList)"\s*:/.test(raw),descriptionData=/"detailUrl"\s*:/.test(raw);if(!sourceData&&!descriptionData)continue;size+=raw.length;if(size>4*1024*1024)throw Error('상품 데이터가 수집 크기를 초과했습니다.');if(sourceData)scripts.push(raw);if(descriptionData)descriptionScripts.push(raw);}return {scripts,descriptionScripts};};
+    const observed=await hydratePageForCapture(document,window,{assertCurrent:()=>{assertActive();if(pageSourceUrl(location.href).sourceUrl!==before)throw Error('상품 페이지가 변경되었습니다. 다시 수집해주세요.');},observe:checked=>{
+     checked();const {scripts}=pageScripts();const facts=scripts.length?readPageSourceDomFacts(document,before,scripts):null;views.add(facts,readPageDomDetails(document,before));checked();
+    },capture:async assertCurrent=>{
     const ready=waitForPageDomDetails(document,before,{assertCurrent});
     assertActive();
     const detail=ready&&typeof ready.then==='function'?await ready:ready;
     assertActive();
     const text=selector=>document.querySelector(selector)?.textContent?.trim()??'';
     const urls=selector=>[...document.querySelectorAll(selector)].slice(0,200).map(node=>readPageSourceElementImage(node,{preferDataSource:true})).filter(Boolean);
-    const scripts=[],descriptionScripts=[];let size=0;for(const script of document.scripts){const raw=script.textContent??'',sourceData=/"(?:skuModel|subject|offerTitle|offerSubject|productTitle|productName|offerBaseInfo|tempModel|offerImgList|mainImageList|propsList)"\s*:/.test(raw),descriptionData=/"detailUrl"\s*:/.test(raw);if(!sourceData&&!descriptionData)continue;size+=raw.length;if(size>4*1024*1024)throw Error('상품 데이터가 수집 크기를 초과했습니다.');if(sourceData)scripts.push(raw);if(descriptionData)descriptionScripts.push(raw);}
+    const {scripts,descriptionScripts}=pageScripts();
+    views.add(readPageSourceDomFacts(document,before,scripts),detail);const collected=views.result();
     const productTitle=text('h1.d-title,.detail-title h1,.offer-title,[data-module-name="title"] h1,[data-plg-name="title"] h1');
-    const snapshot=extractPageSource({sourceUrl:before,scripts,domOptions:readPageSourceDomOptions(document,before,scripts),domFacts:readPageSourceDomFacts(document,before,scripts),title:productTitle||document.querySelector('meta[property="og:title"]')?.content||document.title,
-     description:detail.description,
-     gallery:urls('.detail-gallery img,.gallery img,[class*="gallery"] img'),detailImages:detail.detailImages,
+    const snapshot=extractPageSource({sourceUrl:before,scripts,domOptions:readPageSourceDomOptions(document,before,scripts),domFacts:collected.facts,title:productTitle||document.querySelector('meta[property="og:title"]')?.content||document.title,
+     description:collected.detail.description,
+     gallery:urls('.detail-gallery img,.gallery img,[class*="gallery"] img'),detailImages:collected.detail.detailImages,
      priceText:text('.price-container')||text('[class*="price-module"]')||text('[class*="price-component"]'),
      minimumOrderText:text('.price-container')||text('[class*="price-module"]')||text('[class*="price-component"]')});
     const sections=readProductSectionLinks(document).diagnostics;
