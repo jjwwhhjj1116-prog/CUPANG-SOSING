@@ -1,6 +1,6 @@
 import {readAppDocumentSource,currentSourceAppTab} from './product-document-source.mjs';
 import {nativeAssetUploadPlanSha256,validateNativeAssetUploadDescriptors} from './native-asset-multipart.mjs';
-import {nativeAssetRecoveryPage,decodeNativeAssetRecoveryResult} from './native-asset-recovery-page.mjs';
+import {nativeAssetRecoveryPage,decodeNativeAssetRecoveryResult,nativeAssetRecoveryErrorCode} from './native-asset-recovery-page.mjs';
 import {singleDocumentOwnedRecordPage,decodeSingleOwnedRecordResult} from './single-document-adapter.mjs';
 import {assertSingleOwnedTarget} from './single-owned-target.mjs';
 import {SingleDocumentError} from './single-document.mjs';
@@ -72,6 +72,7 @@ export function withNativeProductAssetRecovery(adapter,{api,nativeSha,now=Date.n
   if(!same(decodeSingleOwnedRecordResult(after.result),record))fail('record-after');if(!same(await current(),sourcePlan))fail('source-after');
   const observation=decodeNativeAssetRecoveryResult(readback.result);
   if(!observation){const value=readback.result,type=value===null?'null':Array.isArray(value)?'array':typeof value;fail('observation-json',['type-'+type,...(typeof value==='string'?['length-'+value.length]:[])]);}
+  const pageError=nativeAssetRecoveryErrorCode(observation);if(pageError)fail('observation-page',[pageError.stage,pageError.code]);
   const keys=['format','requestId','docId','packetDigest','identityDigest','sourcePlanSha256','planSha256','groups','observedAt','readOnly','ledgerMutated','unresolved','canContinue','remoteWrites','actualUploadVerified','remoteBytesVerified','registered'];
   if(!observation||Object.keys(observation).length!==keys.length||Object.keys(observation).some(key=>!keys.includes(key))||observation.format!=='yoofam-native-asset-recovery-observation-v1'||observation.requestId!==binding.requestId||!same(observation.docId,target.docId)
    ||observation.packetDigest!==binding.packetDigest||observation.identityDigest!==binding.identityDigest||observation.sourcePlanSha256!==nativeSha||observation.planSha256!==plan.planSha256

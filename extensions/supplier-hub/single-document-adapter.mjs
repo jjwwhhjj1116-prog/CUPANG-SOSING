@@ -11,7 +11,7 @@ import {assertSingleOwnedTarget,createSingleOwnedTarget,waitSingleOwnedTarget} f
 import {nativeProductAssetBytes,prepareAndUploadNativeProductAssets} from './native-product-assets.mjs';
 import {readAppDocumentSource,sourceReadError,normalizeSourceReadFailure,currentSourceAppTab} from './product-document-source.mjs';
 import {nativeAssetUploadPage} from './native-asset-upload-page.mjs';
-import {nativeAssetRecoveryPage,decodeNativeAssetRecoveryResult} from './native-asset-recovery-page.mjs';
+import {nativeAssetRecoveryPage,decodeNativeAssetRecoveryResult,nativeAssetRecoveryErrorCode} from './native-asset-recovery-page.mjs';
 import {singleDocumentRetryCreatePage} from './single-create-retry-page.mjs';
 import {nativeAssetUploadPlanSha256,validateNativeAssetUploadDescriptors} from './native-asset-multipart.mjs';
 import {singleExistingDocumentRepairPage} from './single-existing-document-repair.mjs';
@@ -608,6 +608,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
       plan={format:'yoofam-native-asset-upload-plan-v1',identity:copy(sourcePlan.identity),identityDigest:sourcePlan.identityDigest,target,images:copy(sourcePlan.images),nativeLegalAttachmentPlan:sourcePlan.nativeLegalAttachmentPlan?copy(sourcePlan.nativeLegalAttachmentPlan):null,planSha256:null,registered:false,remoteWrites:false,submissionReady:false,transportReady:false};
     plan.planSha256=await nativeAssetUploadPlanSha256(plan);
     const observation=decodeNativeAssetRecoveryResult(await execute(input.tab,input.identity,nativeAssetRecoveryPage,[{binding,target,plan},true]));
+    const pageError=nativeAssetRecoveryErrorCode(observation);if(pageError)fail('NATIVE_PREPARED_UNCONFIRMED','원래 문서의 파일 조회가 중단됐습니다. 확인 단계: '+pageError.stage+' · 항목: '+pageError.code);
     const expectedGroups=[...['MAIN','ADDITIONAL','SIZECHART','LABEL','DETAIL'].filter(type=>plan.images.some(file=>file.imageType===type)).map(type=>({key:'image:'+type,kind:'image',files:plan.images.filter(file=>file.imageType===type)})),
       ...(plan.nativeLegalAttachmentPlan?.groups??[]).map(group=>({key:'legal:'+group.nativeType,kind:'legal',files:plan.nativeLegalAttachmentPlan.files.filter(file=>file.nativeType===group.nativeType)}))];
     if(!observation||observation.format!=='yoofam-native-prepared-files-v1'||observation.requestId!==binding.requestId||!equal(observation.docId,record.docId)||observation.packetDigest!==binding.packetDigest||observation.identityDigest!==binding.identityDigest

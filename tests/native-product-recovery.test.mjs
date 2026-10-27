@@ -5,6 +5,7 @@ import {SINGLE_COMPANIES} from './helpers/supplier-hub-single-document.mjs';
 import {createProductDocumentReceiver} from '../extensions/supplier-hub/product-document-receiver.mjs';
 import {PRODUCT_DOCUMENT_LIVE_VERIFIED,dispatchProductDocument} from '../extensions/supplier-hub/product-document-dispatch.mjs';
 import {withProductDocumentChrome} from './helpers/product-document-preview.mjs';
+import {nativeAssetRecoveryPage,nativeAssetRecoveryErrorCode} from '../extensions/supplier-hub/native-asset-recovery-page.mjs';
 const copy=value=>JSON.parse(JSON.stringify(value));
 const observationInput=(f,common)=>({...common,identityDigest:f.context.identityDigest,operation:'update',operationId:f.packet.requestId+':update',docId:f.createdDocId,
  baselineDocIds:[f.prior.docId],expectedBody:{...copy(f.context.packet.body),docId:f.createdDocId}});
@@ -116,6 +117,27 @@ test('page execution error diagnostics disclose only allowlisted labels and neve
    const before=records(f),writes=mutations(f).length,uploads=f.state.uploads.length;
    await assert.rejects(f.adapter.inspectNativeAssets(observationInput(f,common)),error=>error.code==='NATIVE_ASSET_RECOVERY_UNCONFIRMED'&&error.message.includes('observation-execution')&&error.message.includes(mode.startsWith('known')?'file-list-mismatch':'unrecognized')&&!error.message.includes(message));
    assert.equal(records(f),before);assert.equal(mutations(f).length,writes);assert.equal(f.state.uploads.length,uploads);assert.equal(f.submitted,0);
+  }finally{f.close();}
+ }
+});
+
+test('injected page returns only bounded allowlisted failures before and during file inspection',async()=>{
+ const oversized=JSON.parse(await nativeAssetRecoveryPage(' '.repeat(8*1024*1024+1)));
+ assert.deepEqual(oversized,{format:'yoofam-native-asset-recovery-error-v1',code:'input-too-large',stage:'input'});
+ assert.equal(nativeAssetRecoveryErrorCode({...oversized,extra:'private'}),null);
+ assert.equal(nativeAssetRecoveryErrorCode({...oversized,code:'private'}),null);
+ for(const fault of ['mismatch','unexpected-network-error']){
+  const f=await nativeRecoveryFixture(SINGLE_COMPANIES[0],{loseUploadAck:true,loseUploadAckGroup:'ADDITIONAL'});try{
+   const common=await f.start();await assert.rejects(f.update(common));
+   if(fault==='mismatch'){const key=f.state.source.images[0].transportName;f.state.registry.set(key,{...f.state.registry.get(key),s3Link:'different-storage'});}
+   else f.state.registry.values=()=>{throw Error('sensitive synthetic customer detail');};
+   // Model Chrome's loss of an injected-function rejection as result:null.
+   // A failure caught inside the page must still cross as a JSON diagnostic.
+   const execute=f.api.scripting.executeScript;let lostException=false;
+   f.api.scripting.executeScript=async request=>{try{return await execute(request);}catch(error){if(request.func.name!=='nativeAssetRecoveryPage')throw error;lostException=true;return[{frameId:0,documentId:f.hubDocumentId,result:null}];}};
+   const before=records(f),writes=mutations(f).length,uploads=f.state.uploads.length;
+   await assert.rejects(f.adapter.inspectNativeAssets(observationInput(f,common)),error=>error.code==='NATIVE_ASSET_RECOVERY_UNCONFIRMED'&&error.message.includes('observation-page')&&error.message.includes(fault==='mismatch'?'file-list-mismatch':'unrecognized')&&!error.message.includes('sensitive synthetic customer detail'));
+   assert.equal(lostException,false);assert.equal(records(f),before);assert.equal(mutations(f).length,writes);assert.equal(f.state.uploads.length,uploads);assert.equal(f.submitted,0);
   }finally{f.close();}
  }
 });
