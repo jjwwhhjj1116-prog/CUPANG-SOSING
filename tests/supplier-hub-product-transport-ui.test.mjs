@@ -162,6 +162,19 @@ test('unverified recovery replies do not create an authenticated reservation sna
   await h.click(recoverDraft);assert.match(h.text(),/원래 회원·문서·본문/);assert.doesNotMatch(h.text(),/이번 읽기 시점에(?:는)? 이어 저장 예약 기록/);
  }finally{h.close();}
 });
+test('first prepared read after remount displays the verified original reservation snapshot',async()=>{
+ for(const reserved of [false,true]){const initial=await fixture();let restored;try{
+  allowDraft(initial,()=>undefined);await initial.idle();await initial.click(open);const start=initial.button(prepareDraft).props.onClick;start();initial.flush();await initial.wait(()=>initial.f.sent.length===2);initial.f.advance(120001);await initial.idle();
+  const original=initial.f.sent[1].payload.packet.requestId;initial.close();restored=await fixture(SINGLE_COMPANIES[0],{stored:initial.stored});
+  restored.f.bridge=async payload=>payload.action==='preview'?{...restored.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true,existingDocumentRepairAvailable:true,existingDocumentRepairRetryAvailable:true,existingDocumentRepairContinuationAvailable:true}
+   :draftResult(restored.f,payload.packet.requestId,'update-requested',{docId:'2347603',needsRecovery:true,draftProof:{...repairProof(restored,true),existingDocumentRepairRetryAttempted:true,...(reserved?{existingDocumentRepairContinuationAttempted:true}:{})},error:{code:'NATIVE_ASSET_RECOVERY_READ_ONLY',message:'원래 문서 파일 목록 2/9개 확인'}});
+  await restored.idle();await restored.click('이전 문서 전송 자료 확인');await restored.click(recoverDraft);
+  assert.deepEqual(plain(restored.f.sent.map(row=>row.payload.action)),['preview','recoverPreparedDraft']);assert.ok(restored.f.sent.every(row=>row.payload.packet.requestId===original));
+  assert.match(restored.text(),reserved?/이번 읽기 시점에 이어 저장 예약 기록이 확인됐습니다.*저장 완료를 뜻하지 않습니다/:/이번 읽기 시점에는 이어 저장 예약 기록이 확인되지 않았습니다.*이전 작업이 아직 진행 중일 수 있으므로/);
+  if(reserved)assert.equal(restored.button('승인된 복구의 남은 저장 이어가기'),undefined);
+  assert.ok(restored.f.calls.every(row=>row.method==='GET'));
+ }finally{initial.close();restored?.close();}}
+});
 const missingOwnedDraft=(h,payload,attempted=false)=>draftResult(h.f,payload.packet.requestId,'update-requested',{docId:'2347603',needsRecovery:true,draftProof:repairProof(h,attempted),...(payload.action==='recoverDraft'||payload.action==='recoverPreparedDraft'?{error:{code:'OWNED_RECORD_MISSING',message:'원래 문서 2347603의 저장 기록이 없습니다.'}}:{})});
 function allowRepair(h,run,available=true){h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true,...(available?{existingDocumentRepairAvailable:true}:{})}:run(payload);}
 

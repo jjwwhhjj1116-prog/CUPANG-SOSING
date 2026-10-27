@@ -270,6 +270,7 @@ export function SupplierHubProductTransport(props:Props){
     let confirmation;
     if(action==='confirmPreparedDraft'){try{confirmation=singleConsentConfirmation(before.state!.challenge!,Object.entries(before.approved).filter(([,yes])=>yes).map(([key])=>key));}
       catch(cause){setError(cause instanceof Error?cause.message:'현재 문서의 필수 약관을 확인해주세요.');return;}}
+    if(action==='recoverPreparedDraft')setDraftReadHint(previous=>previous?{...previous,continuationSnapshot:undefined}:previous);
     const task=begin();let dispatched=false,activeSession=expected;
     try{
       await fresh(task);if(!task.active()||current.current.session!==expected)return;
@@ -294,7 +295,7 @@ export function SupplierHubProductTransport(props:Props){
       if(result.receipt?.evidence==='document-receipt'&&!result.needsRecovery){const attempt={packet:activeSession.packet,observation:preparedReceiptObservation(result)};current.current.unsaved=attempt;setUnsaved(attempt);await persist(attempt,task);}
     }catch(cause){if(task.alive()){
       if(cause instanceof ProductDocumentBridgeError&&cause.knownDocId!==undefined&&!rememberDraftDocument(activeSession,cause.knownDocId))cause=new ProductDocumentBridgeError('원래 요청에서 확인한 문서번호와 다른 조회 응답입니다. 저장 요청을 진행하지 않았습니다.',false,'PRODUCT_DOCUMENT_DRAFT_REPLY_IDENTITY');
-      rememberDraftReadFailure(cause,activeSession);
+      rememberDraftReadFailure(cause,activeSession,action==='recoverPreparedDraft');
       const eligible=cause instanceof ProductDocumentBridgeError&&(cause.existingDocumentRepairEligible===true&&!current.current.existingRepairAttempted||cause.existingDocumentRepairRetryEligible===true&&current.current.existingRepairAttempted&&!current.current.existingRepairRetryAttempted);
       current.current.existingRepairNeeded=eligible;current.current.existingRepairApproved=false;setExistingRepairNeeded(eligible);setExistingRepairApproved(false);
       if(dispatched&&(cause instanceof ProductDocumentBridgeError?cause.uncertain:true)){current.current.uncertain=true;setUncertain(true);}
