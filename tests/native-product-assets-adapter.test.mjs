@@ -10,14 +10,16 @@ import {productDocumentIdentity} from '../extensions/supplier-hub/product-docume
 import {createVerifiedProductDocumentBrowserAdapter} from '../extensions/supplier-hub/product-document-adapter.mjs';
 import {PRODUCT_DOCUMENT_LIVE_VERIFIED,dispatchProductDocument} from '../extensions/supplier-hub/product-document-dispatch.mjs';
 import {withProductDocumentChrome} from './helpers/product-document-preview.mjs';
+import {largeNativePng} from './helpers/native-large-image.mjs';
 const canon=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canon).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canon(value[key])).join(',')+'}',copy=value=>JSON.parse(JSON.stringify(value)),sha=value=>createHash('sha256').update(value).digest('hex'),digest=value=>sha(canon(value));
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2RkcAAAAASUVORK5CYII=','base64');
 const pdf=Buffer.from('%PDF-1.7\nSynthetic private immutable certificate\n%%EOF\n');
 const jsonResponse=(url,value,headers={})=>{const response=Response.json(value,{headers});Object.defineProperty(response,'url',{value:url});return response;};
 async function fixture(company=SINGLE_COMPANIES[0],options={}){
+ const imageBytes=options.imageBytes??png;
  const f=await singleBrowserFixture(company),p=f.packet,owner=p.ownerId,member={optionId:'native-option',optionLabel:'검정',documentIndex:0},identity={ownerId:owner,productId:p.productId,company:copy(company),categoryId:p.categoryId,categoryPath:['합성','카테고리'],schemaSha256:p.schemaSha256,sourceFingerprint:'d'.repeat(64),inputFingerprint:'e'.repeat(64),source:{...p.source,profileId:p.profileId},members:[member]};
  const body=copy(p.body),types=['MAIN','ADDITIONAL','LABEL','DETAIL'],paths={MAIN:['imagePage','images','mainImage'],ADDITIONAL:['imagePage','images','additionalImage'],DETAIL:['imagePage','details','detailedImage'],LABEL:['imagePage','images','labelImages']};
- const images=types.map((imageType,index)=>({key:owner+'/native-'+index+'.png',originalName:'native-'+index+'.png',transportName:imageType.toLowerCase()+'-'+sha(png)+'.png',imageType,contentType:'image/png',byteLength:png.length,sha256:sha(png),references:[{optionId:member.optionId,documentIndex:0,wire:imageType==='LABEL'?{path:paths.LABEL,nameKey:'labelImageType',valueKey:'labelImageFiles',name:'제품 한글 표시사항 라벨 또는 도안 이미지'}:{path:paths[imageType]},slotIndex:0}]}));
+ const images=types.map((imageType,index)=>({key:owner+'/native-'+index+'.png',originalName:'native-'+index+'.png',transportName:imageType.toLowerCase()+'-'+sha(imageBytes)+'.png',imageType,contentType:'image/png',byteLength:imageBytes.length,sha256:sha(imageBytes),references:[{optionId:member.optionId,documentIndex:0,wire:imageType==='LABEL'?{path:paths.LABEL,nameKey:'labelImageType',valueKey:'labelImageFiles',name:'제품 한글 표시사항 라벨 또는 도안 이미지'}:{path:paths[imageType]},slotIndex:0}]}));
  if(options.sharedImages)for(const image of images){image.key=owner+'/shared-original.png';image.originalName='shared-original.png';}
  body.imagePage=undefined;delete body.imagePage;body.jsonDocument[0].imagePage.images={mainImage:images[0].transportName,additionalImage:images[1].transportName,labelImages:[{labelImageType:'제품 한글 표시사항 라벨 또는 도안 이미지',labelImageFiles:images[2].transportName}]};body.jsonDocument[0].imagePage.details.detailedImage=images[3].transportName;
  let legalPlan=null;
@@ -38,7 +40,7 @@ async function fixture(company=SINGLE_COMPANIES[0],options={}){
   if(path.endsWith('/supplier-hub-product-receipt'))return jsonResponse(absolute.href,{format:'yoofam-native-receipt-history-v1',productId:p.productId,receipts:[]});
   if(path.endsWith('/legal-documents')){assert.equal(absolute.searchParams.get('key'),legalPlan.files[0].key);const response=new Response(pdf,{headers:{'content-type':'application/pdf'}});Object.defineProperty(response,'url',{value:absolute.href});return response;}
   assert.ok(path.endsWith('/native-assets'),path);
-  if(absolute.searchParams.has('key')){const file=source.images.find(file=>file.key===absolute.searchParams.get('key'));assert.ok(file);assert.equal(absolute.searchParams.get('sourcePlanSha256'),source.sourcePlanSha256);const bytes=options.badPrivateBytes?png.subarray(1):png,response=new Response(bytes,{headers:{'content-type':'image/png','x-yoofam-source-plan-sha256':source.sourcePlanSha256,'x-yoofam-file-sha256':file.sha256}});Object.defineProperty(response,'url',{value:absolute.href});return response;}
+  if(absolute.searchParams.has('key')){const file=source.images.find(file=>file.key===absolute.searchParams.get('key'));assert.ok(file);assert.equal(absolute.searchParams.get('sourcePlanSha256'),source.sourcePlanSha256);const bytes=options.badPrivateBytes?imageBytes.subarray(1):imageBytes,response=new Response(bytes,{headers:{'content-type':'image/png','x-yoofam-source-plan-sha256':source.sourcePlanSha256,'x-yoofam-file-sha256':file.sha256}});Object.defineProperty(response,'url',{value:absolute.href});return response;}
   return jsonResponse(absolute.href,state.source);
  };
  const appListeners=[],appContext=vm.createContext({location:new URL(f.sender.url),fetch:appFetch,crypto:webcrypto,AbortController,TextEncoder,TextDecoder,Uint8Array,URL,setTimeout,clearTimeout,Date,Response,structuredClone,btoa,atob,window:{},document:{visibilityState:'visible'},chrome:{runtime:{id:'fixture',sendMessage:async()=>({ok:true,sessionId:null}),onMessage:{addListener:listener=>appListeners.push(listener)}}}});
@@ -74,6 +76,21 @@ for(const company of SINGLE_COMPANIES)test(`${company.code}: actual whole-produc
  }finally{f.close();}});
 test('actual native adapter attaches an immutable private PDF using certificate schema row 1, preserving every legal value',async()=>{
  const f=await fixture(SINGLE_COMPANIES[1],{pdf:true});try{const legalBefore=copy(f.packet.review.body.jsonDocument[0].legalPage),common=await f.start();await f.update(common);assert.deepEqual(f.state.uploads,['MAIN','ADDITIONAL','LABEL','DETAIL','certificate']);assert.ok(f.state.registry.has('cert1-한글 인증 원본.pdf'));assert.deepEqual(f.documents.get(f.createdDocId).jsonDocument[0].legalPage,legalBefore);const ledger=JSON.parse(f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords)[f.context.packetDigest].nativeAssets;assert.equal(ledger.state,'complete');assert.equal(ledger.groups['legal:certificate'].localParts[0].sha256,sha(pdf));assert.equal(ledger.remoteBytesVerified,false);assert.equal(f.submitted,0);}finally{f.close();}
+});
+
+test('megabyte PNG ACKs validate only metadata and continue every native group without duplicate uploads',async()=>{
+ // A valid ancillary tEXt chunk keeps the one-pixel image decodable while
+ // making its base64 exceed the separate 1 MiB metadata JSON ceiling.
+ const bytes=largeNativePng(),f=await fixture(SINGLE_COMPANIES[0],{imageBytes:bytes});
+ try{
+  const prior=copy(f.documents.get(f.prior.docId)),common=await f.start();await f.update(common);
+  assert.deepEqual(f.state.uploads,['MAIN','ADDITIONAL','LABEL','DETAIL']);
+  const ledger=JSON.parse(f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords)[f.context.packetDigest].nativeAssets;
+  assert.equal(ledger.state,'complete');
+  for(const group of Object.values(ledger.groups)){assert.equal(group.state,'observed');assert.equal(group.localParts[0].byteLength,bytes.length);assert.equal(group.localParts[0].sha256,sha(bytes));}
+  assert.equal(f.calls.filter(call=>call.name==='hub-fetch'&&call.url.endsWith('/update')).length,1);
+  assert.deepEqual(f.documents.get(f.prior.docId),prior);assert.equal(f.submitted,0);
+ }finally{f.close();}
 });
 test('the same original used across four roles is privately read once per guarded operation and independently copied into each native upload',async()=>{
  const f=await fixture(SINGLE_COMPANIES[0],{sharedImages:true});try{const common=await f.start();await f.update(common);assert.equal(f.state.appReads.filter(url=>new URL(url).searchParams.has('key')).length,1);assert.deepEqual(f.state.uploads,['MAIN','ADDITIONAL','LABEL','DETAIL']);assert.equal(f.state.registry.size,4);assert.equal(f.submitted,0);}finally{f.close();}

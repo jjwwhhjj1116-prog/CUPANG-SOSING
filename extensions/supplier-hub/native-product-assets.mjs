@@ -99,7 +99,11 @@ export async function prepareAndUploadNativeProductAssets({sourcePlan,binding,ta
  for(const group of groups){if(onlyGroup!==undefined&&group.kind+':'+(group.imageType??group.nativeType)!==onlyGroup)continue;
   const value=await executeGroup({binding:copy(binding),sourcePlanSha256:sourcePlan.sourcePlanSha256,plan:copy(plan),expectedTarget:copy(expectedTarget),group});await current();
   if(value?.metadataObserved!==true||value.remoteBytesVerified!==false||value.actualUploadVerified!==false||value.registered!==false||!same(value.docId,target.docId)||value.planSha256!==plan.planSha256)fail('NATIVE_ASSET_UPLOAD_UNCONFIRMED');
-  validateNativeAssetUploadDescriptors(value.descriptors,{kind:group.kind,expectedFiles:group.parts});observations.push(copy(value));
+  // This validator compares remote names/types only. Multipart bytes were
+  // independently hashed above and by the Hub frame before dispatch. Keeping
+  // base64 here incorrectly applies the metadata JSON limit after a valid ACK.
+  const expectedFiles=group.parts.map(part=>({transportName:part.transportName,...(group.kind==='legal'?{nativeType:group.nativeType}:{})}));
+  validateNativeAssetUploadDescriptors(value.descriptors,{kind:group.kind,expectedFiles});observations.push(copy(value));
  }
  return{sourcePlanSha256:sourcePlan.sourcePlanSha256,planSha256:plan.planSha256,groups:observations,metadataObserved:true,remoteBytesVerified:false,actualUploadVerified:false,registered:false};
 }

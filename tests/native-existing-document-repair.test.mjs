@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {nativeRecoveryFixture} from './helpers/native-product-recovery.mjs';
 import {SINGLE_COMPANIES} from './helpers/supplier-hub-single-document.mjs';
 import {createProductDocumentDraftReceiver} from '../extensions/supplier-hub/product-document-receiver.mjs';
+import {largeNativePng} from './helpers/native-large-image.mjs';
 
 const copy=value=>structuredClone(value);
 const documentWrites=f=>f.calls.filter(call=>call.name==='hub-fetch'&&call.init.method==='POST').map(call=>({path:new URL(call.url).pathname,body:JSON.parse(call.init.body)}));
@@ -42,9 +43,9 @@ async function reservedFirstRepairWithoutDispatch(f){
  f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords='{}';await f.recordMirror.flush();return first;
 }
 
-async function partialApprovedRepair(company=SINGLE_COMPANIES[0],browser={}){
+async function partialApprovedRepair(company=SINGLE_COMPANIES[0],browser={},options={}){
  let interrupted=true;
- const f=await pendingFixture(company,{repairBodyFailure:true,browser,imageBatch:true,beforeNativeAppFetch:async(_url,_init,state)=>{if(interrupted&&state.uploads.includes('MAIN'))throw Error('synthetic source failure after MAIN ACK');}});
+ const f=await pendingFixture(company,{...options,repairBodyFailure:true,browser,imageBatch:true,beforeNativeAppFetch:async(_url,_init,state)=>{if(interrupted&&state.uploads.includes('MAIN'))throw Error('synthetic source failure after MAIN ACK');}});
  try{
   const first=await reservedFirstRepairWithoutDispatch(f),result=await f.receiver.retryExistingDraftRepair(f.packet,f.sender);
   assert.equal(result.state,'update-requested',JSON.stringify(result));assert.equal(result.draftProof.existingDocumentRepairRetryAttempted,true);
@@ -100,8 +101,8 @@ test('lost continuation update ACK keeps both repair audits and cannot repeat an
  }finally{f.close();}
 });
 
-async function reservedContinuationWithoutDispatch(){
- const f=await partialApprovedRepair(),request=f.adapter.hubRequest;
+async function reservedContinuationWithoutDispatch(options={}){
+ const f=await partialApprovedRepair(SINGLE_COMPANIES[0],{},options),request=f.adapter.hubRequest;
  f.adapter.hubRequest=async input=>{if(input.method==='POST'&&input.path==='/sr/draft/api/update')throw Error('synthetic caller lost before native dispatch');return request(input);};
  try{const result=await f.receiver.continueApprovedRepair(f.packet,f.sender);assert.equal(result.state,'update-requested');assert.equal(result.draftProof.existingDocumentRepairContinuationAttempted,true);}
  finally{f.adapter.hubRequest=request;}
@@ -128,6 +129,20 @@ test('reserved continuation resumes only never-requested files, preserving origi
   assert.deepEqual(f.state.uploads,['MAIN','ADDITIONAL','LABEL','DETAIL']);assert.equal(updated(f).length,1);
   assert.deepEqual(JSON.parse(marker(f))[f.context.packetDigest].nativeAssets.groups['image:MAIN'],f.partialRecord.nativeAssets.groups['image:MAIN']);
   const writes=copy(documentWrites(f)),again=await f.receiver.resumeReservedRepair(f.packet,f.sender);assert.ok(again.error);assert.deepEqual(documentWrites(f),writes);unchanged(f);
+ }finally{f.close();}
+});
+
+test('megabyte files resume after observed MAIN and ADDITIONAL without replaying either group or replacing the reservation',async()=>{
+ const f=await reservedContinuationWithoutDispatch({imageBytes:largeNativePng()});try{
+  const first=await f.receiver.resumeReservedRepair(f.packet,f.sender);assert.equal(first.recovered,true);assert.equal(first.error,undefined);
+  assert.deepEqual(f.state.uploads,['MAIN','ADDITIONAL']);
+  const original=copy(await f.storage.store.get(f.context.key)),groups=copy(JSON.parse(marker(f))[f.context.packetDigest].nativeAssets.groups);
+  const result=await finishReservedSegments(f);assert.equal(result.state,'updated',JSON.stringify(result));
+  assert.deepEqual(f.state.uploads,['MAIN','ADDITIONAL','LABEL','DETAIL']);assert.equal(updated(f).length,1);
+  const final=await f.storage.store.get(f.context.key),ledger=JSON.parse(marker(f))[f.context.packetDigest].nativeAssets;
+  for(const key of ['existingDocumentRepair','existingDocumentRepairRetry','existingDocumentRepairContinuation','existingDocumentRepairContinuationResume'])assert.deepEqual(final[key],original[key]);
+  for(const key of ['image:MAIN','image:ADDITIONAL'])assert.deepEqual(ledger.groups[key],groups[key]);
+  assert.equal(result.requestId,f.packet.requestId);assert.equal(result.docId,f.createdDocId);unchanged(f);
  }finally{f.close();}
 });
 
