@@ -132,7 +132,7 @@ test('failed file-list reads preserve reservations but revoke current and stale 
   await h.idle();await h.click(open);await h.click(prepareDraft);await h.click(recoverDraft);
   const label=reserved?'원래 예약의 미요청 파일만 이어 저장':'승인된 복구의 남은 저장 이어가기';const stale=h.button(label).props.onClick;
   const reservation=[...h.stored.entries()];failed=true;await h.click(recoverDraft);
-  assert.equal(h.button(label),undefined);assert.match(h.text(),/파일 목록을 읽지 못해 이어 저장을 보류/);assert.doesNotMatch(h.text(),/아직 요청하지 않은 자료만 이어 저장할 수 있습니다/);
+  assert.equal(h.button(label),undefined);assert.match(h.text(),/파일·본문 저장 결과가 아직 확인되지 않아 이어 저장을 보류/);assert.doesNotMatch(h.text(),/아직 요청하지 않은 자료만 이어 저장할 수 있습니다/);
   stale();await h.idle();assert.equal(h.f.sent.filter(row=>['continueApprovedRepair','resumeReservedRepair'].includes(row.payload.action)).length,0);assert.deepEqual([...h.stored.entries()],reservation);
   failed=false;await h.click(recoverDraft);assert.ok(h.button(label));assert.equal(new Set(h.f.sent.map(row=>row.payload.packet.requestId)).size,1);assert.equal(h.f.history.length,0);
  }finally{h.close();}}

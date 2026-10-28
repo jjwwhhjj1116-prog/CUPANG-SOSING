@@ -23,20 +23,20 @@ function harness(){
  const context={window,document:dom.document,location:{href:sourceUrl},URL,Date:ClockDate,Error,TextEncoder,captureFixture:snapshot,sourceReads:0,readDetails:()=>({description:'',detailImages:[]}),
   respond:()=>({ok:true,delivered:true}),chrome:{runtime:{getManifest(){assert.fail('no manifest identity shortcut');},sendMessage:async message=>{messages.push(structuredClone(message));return context.respond(message);}}},fetch(){assert.fail('lifecycle must not fetch');}};
  const makeHost=({owner,version,tag='div',open=false}={})=>{const host=dom.document.createElement(tag);host.id=HOST;host.style.cssText='position:fixed;right:22px;bottom:86px;z-index:2147483646;';host.attachShadow({mode:open?'open':'closed'});if(owner!==undefined)host.setAttribute(OWNER,owner);if(version!==undefined)host.setAttribute(VERSION,version);dom.document.documentElement.append(host);return host;};
- const install=(version='2.1.53')=>{vm.runInNewContext(bundle.outputFiles[0].text.replaceAll('"2.1.53"',JSON.stringify(version)),context);const host=dom.document.getElementById(HOST),children=host?.testShadow?.childNodes??[];return {host,button:children.find(node=>node.tag==='button'),status:children.find(node=>node.tag==='p'),badge:children.find(node=>node.tag==='small')};};
+ const install=(version='2.1.54')=>{vm.runInNewContext(bundle.outputFiles[0].text.replaceAll('"2.1.54"',JSON.stringify(version)),context);const host=dom.document.getElementById(HOST),children=host?.testShadow?.childNodes??[];return {host,button:children.find(node=>node.tag==='button'),status:children.find(node=>node.tag==='p'),badge:children.find(node=>node.tag==='small')};};
  return {...dom,context,messages,makeHost,install,advance:ms=>{now+=ms;},get now(){return now;}};
 }
 
 test('only the exact legacy closed-shadow host or an explicitly owned older/unversioned host is replaced without reading the product',()=>{
  for(const attributes of [{},{owner:'yoofam-studio'},{owner:'yoofam-studio',version:'2.1.23'}]){
   const h=harness(),old=h.makeHost(attributes),current=h.install();assert.notEqual(current.host,old);assert.equal(old.isConnected,false);
-  assert.equal(current.host.getAttribute(OWNER),'yoofam-studio');assert.equal(current.host.getAttribute(VERSION),'2.1.53');assert.equal(current.badge.textContent,'수집기 2.1.53');
+  assert.equal(current.host.getAttribute(OWNER),'yoofam-studio');assert.equal(current.host.getAttribute(VERSION),'2.1.54');assert.equal(current.badge.textContent,'수집기 2.1.54');
   assert.equal(h.context.sourceReads,0);assert.equal(h.messages.length,0);
  }
 });
 
 test('same/newer versions are idempotent; foreign/open-shadow/unknown-version same-ID hosts fail closed',()=>{
- for(const attributes of [{owner:'yoofam-studio',version:'2.1.53'},{owner:'yoofam-studio',version:'2.1.53'},
+ for(const attributes of [{owner:'yoofam-studio',version:'2.1.54'},{owner:'yoofam-studio',version:'2.1.54'},
   {owner:'someone-else',version:'2.1.23'},{owner:'yoofam-studio',version:'unknown'},{tag:'span'},{open:true}]){
   const h=harness(),old=h.makeHost(attributes),count=h.elements.length,current=h.install();assert.equal(current.host,old);assert.equal(old.isConnected,true);assert.equal(h.elements.length,count);assert.equal(h.context.sourceReads,0);assert.equal(h.messages.length,0);
  }

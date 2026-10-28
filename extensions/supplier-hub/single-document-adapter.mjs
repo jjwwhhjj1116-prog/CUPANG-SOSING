@@ -24,6 +24,23 @@ const fail=(code,message)=>{throw new SingleDocumentError(code,message);};
 const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canonical).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}';
 const equal=(left,right)=>canonical(left)===canonical(right);
 const copy=value=>structuredClone(value);
+/** Project only the round-trip forms observed in native doc2347603. Preserve
+ * every value and all other differences for the receiver's exact comparison.
+ * This never changes the reviewed packet, outbound request or saved record. */
+export function normalizeNativeDocumentReadback(body,expected){
+ const result=copy(body),object=value=>!!value&&typeof value==='object'&&!Array.isArray(value);
+ if(!object(result)||!object(expected))return result;
+ const integer=(actual,wanted)=>typeof wanted==='string'&&/^(0|[1-9]\d*)$/.test(wanted)&&Number.isSafeInteger(actual)&&actual>=0&&String(actual)===wanted?wanted:actual;
+ if(Object.hasOwn(result,'displayCategoryCode'))result.displayCategoryCode=integer(result.displayCategoryCode,expected.displayCategoryCode);
+ if(!Object.hasOwn(expected,'remark')&&result.remark===null)delete result.remark;
+ if(Array.isArray(result.jsonDocument)&&Array.isArray(expected.jsonDocument))for(let index=0;index<result.jsonDocument.length;index++){
+  const document=result.jsonDocument[index],wanted=expected.jsonDocument[index];if(!object(document)||!object(wanted))continue;
+  const prices=document.productPage?.commonAttributes,wantedPrices=wanted.productPage?.commonAttributes;
+  if(object(prices)&&object(wantedPrices))for(const key of ['purchasePrice','coupangSalePrice','msrp','osrp'])if(Object.hasOwn(prices,key))prices[key]=integer(prices[key],wantedPrices[key]);
+  if(object(document.legalPage)&&object(wanted.legalPage)&&wanted.legalPage.adCert===''&&!Object.hasOwn(document.legalPage,'adCert'))document.legalPage.adCert='';
+ }
+ return result;
+}
 const digest=async value=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(canonical(value)))),byte=>byte.toString(16).padStart(2,'0')).join('');
 const retryPhaseLabels={scope:'승인·회사·탭','baseline-input':'원래 기준 식별값','body-shape':'원래 본문·옵션 구조','body-document-id':'새 문서 본문의 식별값','body-scope':'원래 문서 본문 종류','body-members':'원래 포함 옵션 목록','body-document-count':'옵션·문서 개수','body-member-order':'옵션 문서 순서','body-product-name':'문서 상품명','body-match':'검증한 원래 본문','list-unfinished':'중간저장 목록','list-requested':'제출요청 목록',duplicate:'동일 상품 문서',baseline:'원래 중간저장 기준','final-scope':'최종 탭·회사',create:'생성 응답'};
 function correlatedRetryFailure(value,binding,operationId){
@@ -565,7 +582,9 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
       ||!['UNFINISHED','REJECTED'].includes(document.status)||!Array.isArray(document.jsonDocument)||document.jsonDocument.length!==(wholeProduct?input.identity.members.length:1)
       ||document.scope!=='Retail_Categorized_Single')return null;
     const fields=['docId','productName','categoryPath','categoryId','displayCategoryCode','jsonDocument','scope','productNoticeNumber','version','remark'];
-    const body=Object.fromEntries(fields.filter(key=>Object.hasOwn(document,key)).map(key=>[key,document[key]]));
+    const rawBody=Object.fromEntries(fields.filter(key=>Object.hasOwn(document,key)).map(key=>[key,document[key]]));
+    const expected=input.expectedBody??sourceBindings.get(canonical(input.identity))?.nativeSourcePlan?.body;
+    const body=nativeSha?normalizeNativeDocumentReadback(rawBody,expected):rawBody;
     return {docId,company:copy(input.identity.company),identityDigest:binding.identityDigest,body,...(recovery?{readOnly:true,operationId:input.operationId}:{})};
   }
   async function inspectCreateRetry(input){
