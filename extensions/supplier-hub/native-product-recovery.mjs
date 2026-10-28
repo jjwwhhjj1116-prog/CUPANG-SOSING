@@ -35,7 +35,15 @@ export function withNativeProductAssetRecovery(adapter,{api,nativeSha,now=Date.n
   if(!source||input.operation!=='update'||input.requestId!==source.input.requestId||input.operationId!==source.input.requestId+':update'
    ||input.identityDigest!==await digest(input.identity)||input.identity.fingerprint!==nativeSha||!same(input.expectedBody?.docId,input.docId))fail('request-scope');
   const reviewed=copy(input.expectedBody);reviewed.docId=null;if(await digest(reviewed)!==source.input.preparedBodySha256)fail('review-body');
-  const current=async()=>{const proof=await adapter.readSource(source.input);if(proof?.current!==true||proof.sessionId!==source.sessionId)fail('source-session');
+  const current=async()=>{
+   if(typeof adapter.readNativeSourceSnapshot==='function'){
+    const fresh=await adapter.readNativeSourceSnapshot(source.input),proof=fresh?.proof,plan=fresh?.sourcePlan;
+    if(proof?.current!==true||proof.sessionId!==source.sessionId||!same(proof.identity,input.identity)||proof.bodySha256!==source.input.bodySha256)fail('source-session');
+    if(plan?.sourcePlanSha256!==nativeSha||plan.identity?.ownerId!==input.identity.ownerId||plan.identity?.productId!==input.identity.productId||!same(plan.identity?.company,input.identity.company)
+     ||plan.originalBodySha256!==source.input.bodySha256||plan.preparedBodySha256!==source.input.preparedBodySha256)fail('source-plan');
+    return plan;
+   }
+   const proof=await adapter.readSource(source.input);if(proof?.current!==true||proof.sessionId!==source.sessionId)fail('source-session');
    await currentSourceAppTab(api,input.identity,sourceAppTabId);
    const execution={frameId:0,result:await readAppDocumentSource(api,input.identity,source.input,'native',sourceAppTabId)};
    await currentSourceAppTab(api,input.identity,sourceAppTabId);

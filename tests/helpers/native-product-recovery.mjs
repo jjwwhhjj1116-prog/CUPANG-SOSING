@@ -58,6 +58,7 @@ export async function nativeRecoveryFixture(company=SINGLE_COMPANIES[0],options=
   state.uploads.push(group);for(const row of metadata)state.registry.set(row.imageName??row.fileName,row);if(options.loseUploadAck&&(!options.loseUploadAckGroup||group===options.loseUploadAckGroup))throw Error('synthetic lost upload ACK');return jsonResponse(url,options.badEnvelope?{data:metadata}:metadata);
  };
  const inspectionFetch=async(url,init)=>{
+  if(typeof state.beforeInspectionFetch==='function')await state.beforeInspectionFetch(url,init);
   state.inspectionRequests.push({url,method:init.method,body:init.body});const parsed=new URL(url),path=parsed.pathname;
   if(path==='/sr/draft/api/drafts/register-requested'){assert.equal(init.method,'GET');return jsonResponse(url,state.repairRequestedRows);}
   if(path==='/sr/draft/api/drafts')return jsonResponse(url,[...f.documents.values()].map(row=>({...copy(row),status:'UNFINISHED',...(row.docId===f.createdDocId?options.repairRowChanges:{})})));

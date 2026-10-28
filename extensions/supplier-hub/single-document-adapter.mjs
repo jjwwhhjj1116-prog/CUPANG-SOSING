@@ -14,7 +14,7 @@ import {nativeAssetUploadPage} from './native-asset-upload-page.mjs';
 import {nativeAssetRecoveryPage,decodeNativeAssetRecoveryResult,nativeAssetRecoveryErrorCode} from './native-asset-recovery-page.mjs';
 import {singleDocumentRetryCreatePage} from './single-create-retry-page.mjs';
 import {nativeAssetUploadPlanSha256,validateNativeAssetUploadDescriptors} from './native-asset-multipart.mjs';
-import {singleExistingDocumentRepairPage} from './single-existing-document-repair.mjs';
+import {singleExistingDocumentRepairPage,existingRepairPageFailure} from './single-existing-document-repair.mjs';
 import {singleRecordMirrorPage} from './single-record-mirror-page.mjs';
 
 const HASH=/^[a-f0-9]{64}$/;
@@ -397,6 +397,14 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
       fail('SOURCE_CHANGED','현재 앱의 회원·회사·Single 준비 GET을 다시 확인해주세요.');
     }
   }
+  async function readNativeSourceSnapshot(input){
+    if(!nativeSha)fail('SOURCE_CHANGED','네이티브 원본 확인 범위가 아닙니다.');
+    const proof=await readSource(input),snapshot=sourceBindings.get(canonical(input.identity));
+    if(proof.current!==true||!snapshot?.nativeSourcePlan)fail('SOURCE_CHANGED','현재 원본 파일 계획을 확인하지 못했습니다.');
+    // This exact plan was independently read and hashed inside readSource.
+    // Do not fetch it a fourth time just to return that same current snapshot.
+    return {proof:copy(proof),sourcePlan:copy(snapshot.nativeSourcePlan)};
+  }
   async function bindingFor(identity,sessionId){
     const prior=sourceBindings.get(canonical(identity));if(!prior)fail('SOURCE_CHANGED','현재 앱의 개별 견적서 저장본을 먼저 확인해주세요.');
     const proof=await readSource(prior.input),current=sourceBindings.get(canonical(identity));if(!proof.current||sessionId!==undefined&&(current?.readOnlyReceipt?current.binding.sessionId:proof.sessionId)!==sessionId)fail('SOURCE_CHANGED','현재 회원 세션·준비한 개별 견적서가 변경되었습니다.');
@@ -447,8 +455,13 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     await execute(input.tab,input.identity,verifySupplierHubCompany,[input.identity.company,'catalog']);
     return {...copy(input.tab),tabId:tab.id,windowId:tab.windowId,origin:SINGLE_DOCUMENT_ORIGIN,authenticated:true,company:copy(input.identity.company)};
   }
-  async function owned(input){
-    const binding=await bindingFor(input.identity,input.sessionId),record=await execute(input.tab,input.identity,singleDocumentOwnedRecordPage,[binding,input.docId??input.body?.docId??null]);
+  async function owned(input,freshBinding){
+    // Only hubRequest can supply the source proof it just read. There is no
+    // asynchronous work between that proof and this ownership check, and this
+    // value is never cached across requests or accepted from a page message.
+    const binding=freshBinding??await bindingFor(input.identity,input.sessionId);
+    if(freshBinding&&!equal(sourceBindings.get(canonical(input.identity))?.binding,freshBinding))fail('SOURCE_CHANGED','요청 직전 원본 연결이 변경됐습니다.');
+    const record=await execute(input.tab,input.identity,singleDocumentOwnedRecordPage,[binding,input.docId??input.body?.docId??null]);
     if(!record)fail('OWNED_RECORD_MISSING','원래 전용 탭에서 이 요청의 생성 기록을 읽지 못했습니다. 같은 문서를 유지했습니다.');
     if(record.binding?.identityDigest!==binding.identityDigest)fail('OWNED_IDENTITY_CHANGED','원래 생성 문서의 회사·상품 연결 식별값이 다릅니다.');
     if(record.binding?.packetDigest!==binding.packetDigest)fail('OWNED_PACKET_CHANGED','원래 생성 문서의 견적 요청 식별값이 다릅니다.');
@@ -465,7 +478,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
   async function hubRequest(input){
     const binding=await bindingFor(input.identity,input.sessionId);
     if(input.method==='POST')mutable(input.identity);
-    if(input.method==='POST'&&!input.path.endsWith('/create'))await owned({...input,docId:input.body?.docId});
+    if(input.method==='POST'&&!input.path.endsWith('/create'))await owned({...input,docId:input.body?.docId},binding);
     if(nativeSha&&input.method==='POST'&&input.path==='/sr/draft/api/update'){
       const readCurrent=async()=>{const current=await owned({...input,docId:input.body?.docId}),record=current.record,sourcePlan=sourceBindings.get(canonical(input.identity))?.nativeSourcePlan;
         return{binding:current.binding,sourcePlan,target:{docId:record.docId,requestId:current.binding.requestId,packetDigest:current.binding.packetDigest,preparedBodySha256:current.binding.preparedBodySha256,createOperationId:record.createOperationId,baselineDocIds:copy(record.baselineDocIds)}};};
@@ -586,6 +599,8 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
         '원래 문서 복구 예약 또는 현재 파일 상태가 변경됐습니다.'].find(message=>typeof error?.message==='string'&&error.message.includes(message));
       fail('EXISTING_REPAIR_INSPECTION_FAILED',detail??'같은 문서의 상품·중간저장 상태·빈 파일 목록 확인에 실패했습니다. 새 문서는 만들지 않았습니다.');
     }
+    const pageFailure=existingRepairPageFailure(reply);
+    if(pageFailure)fail('EXISTING_REPAIR_INSPECTION_FAILED','원래 문서 복구 확인을 중단했습니다. 확인 단계: '+pageFailure.resource+' / '+pageFailure.stage+' / '+pageFailure.code+'. 새 파일·본문을 보내지 않았습니다.');
     const proof=reply?.proof;
     if(!proof||proof.format!=='yoofam-existing-document-inspection-v1'||proof.requestId!==binding.requestId||proof.operationId!==input.operationId||!equal(proof.docId,input.docId)
       ||proof.identityDigest!==binding.identityDigest||proof.packetDigest!==binding.packetDigest||proof.preparedBodySha256!==binding.preparedBodySha256||proof.sourcePlanSha256!==nativeSha
@@ -626,7 +641,10 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     if(!nativeSha||input.operationId!==input.requestId+':update'||input.repair?.attempt!==2)fail('EXISTING_REPAIR_CONTINUATION','승인된 추가 복구의 남은 저장만 확인할 수 있습니다.');
     const {binding,record}=await owned(input),repair=record.recoveryRepair;
     if(!repair||!equal(Object.fromEntries(Object.keys(input.repair).map(key=>[key,repair[key]])),input.repair))fail('EXISTING_REPAIR_CONTINUATION','원래 추가 복구 기록과 다릅니다.');
-    const response=JSON.parse(await execute(input.tab,input.identity,singleExistingDocumentRepairPage,[{...copy(input),binding,mode:'inspect-continuation',expectedRecord:record}]));
+    let response;try{response=JSON.parse(await execute(input.tab,input.identity,singleExistingDocumentRepairPage,[{...copy(input),binding,mode:'inspect-continuation',expectedRecord:record}]));}
+    catch(error){if(error instanceof SingleDocumentError)throw error;fail('EXISTING_REPAIR_INSPECTION_FAILED','남은 파일 저장 전 문서 조회 응답을 읽지 못했습니다. 파일·본문은 보내지 않았습니다.');}
+    const pageFailure=existingRepairPageFailure(response);
+    if(pageFailure)fail('EXISTING_REPAIR_INSPECTION_FAILED','남은 파일 저장 전 확인을 중단했습니다. 확인 단계: '+pageFailure.resource+' / '+pageFailure.stage+' / '+pageFailure.code+'. 파일·본문은 보내지 않았습니다.');
     const proof=response?.proof;
     if(response?.record!==null||!proof||proof.format!=='yoofam-existing-repair-continuation-inspection-v1'||proof.requestId!==binding.requestId||!equal(proof.docId,input.docId)
       ||proof.operationId!==input.operationId||proof.packetDigest!==binding.packetDigest||proof.identityDigest!==binding.identityDigest||proof.preparedBodySha256!==binding.preparedBodySha256
@@ -637,7 +655,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     return copy(proof);
   }
   return Object.freeze({readSource,
-    qualifyPreparedDraft,...(nativeSha?{inspectCreateRetry,inspectUnsentUpdate,inspectExistingDocument,inspectExistingRepairContinuation,bindExistingDocumentRepair:input=>inspectExistingDocument(input,'bind')}:{}),
+    qualifyPreparedDraft,...(nativeSha?{readNativeSourceSnapshot,inspectCreateRetry,inspectUnsentUpdate,inspectExistingDocument,inspectExistingRepairContinuation,bindExistingDocumentRepair:input=>inspectExistingDocument(input,'bind')}:{}),
     ...(nativeSha?{readOwnedTargetPresence:async input=>{
       const binding=sourceBindings.get(canonical(input.identity))?.binding;
       if(!binding||binding.requestId!==input.requestId||binding.packetDigest!==input.packetDigest||typeof api.tabs.query!=='function')fail('TAB_CHANGED','원래 검증 탭의 존재 여부를 확인하지 못했습니다.');

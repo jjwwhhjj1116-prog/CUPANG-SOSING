@@ -163,11 +163,19 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
     };
     const guard = async (file?: {key:string;byteLength:number;sha256:string}) => {
       await active();
-      if (!await quotationSourcesCurrent(owner, id, saved.source) || (await readQuotationFields(owner, id)).revision !== saved.state.revision) changed();
-      const latest = await readQuotationExportSource(owner, id, profileId);
+      // These reads are independent. The complete value comparison and final
+      // live-member fence still run before any byte or plan can leave this GET.
+      const reads = await Promise.allSettled([
+        quotationSourcesCurrent(owner,id,saved.source),readQuotationFields(owner,id),
+        readQuotationExportSource(owner,id,profileId),publicDetailVersion(publicDetailConfig(env as Parameters<typeof publicDetailConfig>[0])),
+      ] as const);
+      const value=<T,>(result:PromiseSettledResult<T>):T=>{if(result.status==='rejected')throw result.reason;return result.value;};
+      const sourceCurrent=value(reads[0]),fields=value(reads[1]);
+      if (!sourceCurrent || fields.revision !== saved.state.revision) changed();
+      const latest=value(reads[2]),currentConfig=value(reads[3]);
       const latestFingerprint=sourceValueKey!==null&&packageSourceValueKey(latest)===sourceValueKey?sourceFingerprint:await quotationExportFingerprint(latest,null);
       if (latestFingerprint !== sourceFingerprint
-        || JSON.stringify(await publicDetailVersion(publicDetailConfig(env as Parameters<typeof publicDetailConfig>[0]))) !== JSON.stringify(configVersion)) changed();
+        || JSON.stringify(currentConfig) !== JSON.stringify(configVersion)) changed();
       if (file) await verifyPrivateFile(file);
       await active();
     };

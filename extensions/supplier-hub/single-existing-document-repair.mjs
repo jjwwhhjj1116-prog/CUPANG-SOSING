@@ -4,6 +4,8 @@
  * It preserves that uncertainty and performs no remote write itself.
  */
 export async function singleExistingDocumentRepairPage(input){
+ let stage='input',resource='none',failureCode='comparison';
+ try{
  if(typeof input==='string')input=JSON.parse(input);
  const origin='https://supplier.coupang.com',root=document.documentElement;
  const canon=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canon).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canon(value[key])).join(',')+'}';
@@ -35,14 +37,20 @@ export async function singleExistingDocumentRepairPage(input){
   }else if(record||Object.values(records).some(record=>record?.binding?.requestId===binding.requestId||String(record?.docId)===String(docId)))fail('이 문서의 다른 작업 기록이 있어 덮어쓰지 않았습니다.');
   return records;
  };
- check();
+ stage='record';check();
  const read=async(path,legal=false,allowBodyFailure=false)=>{
+  resource=path.endsWith('/drafts/register-requested')?'requested-list':path.endsWith('/drafts')?'draft-list':path.includes('/get-by-id/')?'body':path.includes('/get-images-by-id/')?'images':'legal';stage='http-request';
   check();const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),30000);
-  try{const url=origin+path,response=await fetch(url,{method:legal?'POST':'GET',credentials:'include',redirect:'error',cache:'no-store',signal:controller.signal,
-   headers:{accept:'application/json',...(legal?{'content-type':'application/json;charset=UTF-8'}:{})},...(legal?{body:'{}'}:{})});
+  try{const url=origin+path;let response;
+  try{response=await fetch(url,{method:legal?'POST':'GET',credentials:'include',redirect:'error',cache:'no-store',signal:controller.signal,
+   headers:{accept:'application/json',...(legal?{'content-type':'application/json;charset=UTF-8'}:{})},...(legal?{body:'{}'}:{})});}
+  catch(error){failureCode=controller.signal.aborted?'timeout':'network';throw error;}
+  stage='http-response';
   if(response.redirected||response.url!==url||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')||''))fail('원래 문서 조회 응답의 출처를 확인하지 못했습니다.');
-  const text=await response.text();if(controller.signal.aborted)fail('원래 문서 조회 시간이 초과되었습니다.');if(text.length>6*1024*1024)fail('원래 문서 조회 응답이 너무 큽니다.');const json=JSON.parse(text);check();
-  if(!response.ok){if(allowBodyFailure&&response.status===500&&json?.errorCode==='INTERNAL_SERVER_ERROR')return{unreadable:true,status:500,errorCode:json.errorCode};fail('원래 문서 조회에 실패했습니다. HTTP '+response.status);}
+  stage='http-body';let text;try{text=await response.text();}catch(error){failureCode=controller.signal.aborted?'timeout':'network';throw error;}
+  if(controller.signal.aborted){failureCode='timeout';fail('원래 문서 조회 시간이 초과되었습니다.');}if(text.length>6*1024*1024)fail('원래 문서 조회 응답이 너무 큽니다.');const json=JSON.parse(text);check();
+  if(!response.ok){if(allowBodyFailure&&response.status===500&&json?.errorCode==='INTERNAL_SERVER_ERROR')return{unreadable:true,status:500,errorCode:json.errorCode};failureCode=[401,403,404,429,500,502,503,504].includes(response.status)?'http-'+response.status:'http-status';fail('원래 문서 조회에 실패했습니다. HTTP '+response.status);}
+  stage='comparison';
   return{unreadable:false,json};
   }finally{clearTimeout(timer);}
  };
@@ -57,6 +65,7 @@ export async function singleExistingDocumentRepairPage(input){
   const doc=encodeURIComponent(String(docId)),remoteBody=await read('/sr/draft/api/get-by-id/'+doc,false,true);
   if(!remoteBody.unreadable){const value=remoteBody.json,keys=Object.keys(body);if(!value||!same(value.docId,docId)||value.status!=='UNFINISHED'||!same(Object.fromEntries(keys.map(key=>[key,value[key]])),body))fail('서버 문서 본문이 원래 요청과 달라 덮어쓰지 않았습니다.');}
   if(continuation){
+   stage='proof';
    const record=check()[binding.packetDigest];
    return JSON.stringify({proof:{format:'yoofam-existing-repair-continuation-inspection-v1',requestId:binding.requestId,operationId:input.operationId,docId,
     identityDigest:binding.identityDigest,packetDigest:binding.packetDigest,preparedBodySha256:binding.preparedBodySha256,sourcePlanSha256:binding.nativeAssetSourcePlanSha256,
@@ -83,8 +92,19 @@ export async function singleExistingDocumentRepairPage(input){
    ||!prior||await hash(prior)!==audit.inspectionSha256||prior.metadataSha256!==proof.metadataSha256||prior.bodyState!==proof.bodyState||prior.docId!==docId||prior.packetDigest!==proof.packetDigest
    ||prior.identityDigest!==proof.identityDigest||prior.requestId!==proof.requestId||prior.operationId!==proof.operationId||prior.sourcePlanSha256!==proof.sourcePlanSha256
    ||prior.preparedBodySha256!==proof.preparedBodySha256||prior.emptyImages!==true||!same(prior.emptyLegalTypes,legalTypes)||prior.priorUpdateOutcome!=='unknown')fail('원래 문서 복구 예약 또는 현재 파일 상태가 변경됐습니다.');
-  const records=check(),record={binding,docId,createOperationId:binding.requestId+':create',state:'created',baselineDocIds:baseline,
+  stage='bind';const records=check(),record={binding,docId,createOperationId:binding.requestId+':create',state:'created',baselineDocIds:baseline,
    recoveryRepair:{...audit,priorUpdateOutcome:'unknown',emptyFilesObservedAt:proof.checkedAt}};
   records[binding.packetDigest]=record;root.dataset.yoofamSingleDocumentRecords=JSON.stringify(records);
   return JSON.stringify({proof,record});
+ }catch{
+  // Chrome may discard a rejected injected function's Error. Return only fixed
+  // diagnostics, never a response body, URL, credential or exception string.
+  return JSON.stringify({format:'yoofam-existing-repair-error-v1',stage,resource,code:failureCode});
+ }
+}
+
+export function existingRepairPageFailure(value){
+ const stages=['input','record','http-request','http-response','http-body','comparison','proof','bind'],resources=['none','requested-list','draft-list','body','images','legal'];
+ const codes=['comparison','timeout','network','http-401','http-403','http-404','http-429','http-500','http-502','http-503','http-504','http-status'];
+ return value&&Object.keys(value).sort().join(',')==='code,format,resource,stage'&&value.format==='yoofam-existing-repair-error-v1'&&stages.includes(value.stage)&&resources.includes(value.resource)&&codes.includes(value.code)?{stage:value.stage,resource:value.resource,code:value.code}:null;
 }

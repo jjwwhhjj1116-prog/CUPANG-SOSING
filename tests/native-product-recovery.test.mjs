@@ -47,6 +47,17 @@ test('legal queries use only the observed read-only files-by-type operation and 
 test('missing or full filename lists are diagnostic facts rather than remote byte/type/size evidence',async()=>{
  for(const missing of [false,true]){const f=await nativeRecoveryFixture(SINGLE_COMPANIES[0],{loseUploadAck:true});try{const common=await f.start();await assert.rejects(f.update(common));if(missing)f.state.registry.clear();const before=records(f),result=await f.adapter.inspectNativeAssets(observationInput(f,common));assert.equal(result.groups[0].state,missing?'not-observed':'listed-unconfirmed');assert.equal(result.remoteBytesVerified,false);assert.equal(result.actualUploadVerified,false);assert.equal(result.canContinue,false);assert.equal(records(f),before);}finally{f.close();}}
 });
+
+test('read recovery uses each independently verified native source snapshot without a fourth duplicate source GET',async()=>{
+ const f=await nativeRecoveryFixture(SINGLE_COMPANIES[0],{loseUploadAck:true});try{
+  const common=await f.start();await assert.rejects(f.update(common));
+  const planReads=()=>f.state.appReads.filter(url=>{const parsed=new URL(url);return parsed.pathname.endsWith('/native-assets')&&!parsed.searchParams.has('key')&&!parsed.searchParams.has('bundle');}).length;
+  const before=planReads(),writes=mutations(f).length,ledger=records(f);
+  await f.adapter.inspectNativeAssets(observationInput(f,common));
+  assert.equal(planReads()-before,6,'three independent source observations at each read boundary');
+  assert.equal(mutations(f).length,writes);assert.equal(records(f),ledger);assert.equal(f.submitted,0);
+ }finally{f.close();}
+});
 test('changed actor/source/body/frame/document/ledger and unfamiliar list entries fail closed without writes',async()=>{
  for(const kind of ['actor','source','body','tab','frame','doc','old-doc','ledger','unknown-file','observed-list','local-size','local-type','group-promotion']){const f=await nativeRecoveryFixture(SINGLE_COMPANIES[0],{loseUploadAck:true,loseUploadAckGroup:kind==='observed-list'?'ADDITIONAL':undefined});try{const common=await f.start();await assert.rejects(f.update(common));const input=observationInput(f,common),writes=mutations(f).length,uploads=f.state.uploads.length;
   if(kind==='actor')f.state.company=copy(SINGLE_COMPANIES[1]);if(kind==='source')f.state.source={...f.state.source,inputFingerprint:'f'.repeat(64)};

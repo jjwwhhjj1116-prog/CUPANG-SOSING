@@ -133,6 +133,18 @@ test('reserved resume blocks pending upload, any update marker and duplicates be
  }finally{f.close();}}
 });
 
+test('a continuation inspection network failure crosses the Chrome boundary without private exception text or a write reservation',async()=>{
+ const f=await reservedContinuationWithoutDispatch();try{
+  f.state.beforeInspectionFetch=()=>{throw Error('private response and credential must not cross the boundary');};
+  const before=copy(await f.storage.store.get(f.context.key)),result=await f.receiver.resumeReservedRepair(f.packet,f.sender);
+  assert.equal(result.error.code,'EXISTING_REPAIR_INSPECTION_FAILED');
+  assert.match(result.error.message,/draft-list \/ http-request \/ network/);
+  assert.doesNotMatch(result.error.message,/private response|credential/);
+  assert.deepEqual(await f.storage.store.get(f.context.key),before);
+  assert.deepEqual(f.state.uploads,['MAIN']);assert.equal(updated(f).length,0);unchanged(f);
+ }finally{f.close();}
+});
+
 test('two reserved resumes can reserve and dispatch only once',async()=>{
  const f=await reservedContinuationWithoutDispatch();try{
   const other=createProductDocumentDraftReceiver({adapter:f.adapter,store:f.storage.store});
