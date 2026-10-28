@@ -14,6 +14,7 @@ import { singlePacket, singleDocumentFixture, SINGLE_COMPANIES, SINGLE_SENDER } 
 import {SupplierHubRejectionDetails} from './helpers/rejection-details-ui.mjs';
 import {productValidationRejectionFixture} from './helpers/product-validation-rejection.mjs';
 import {normalizeRejectionDetails} from '../extensions/supplier-hub/rejection-details.mjs';
+import {runReservedSegments} from '../app/supplier-hub-reserved-work.mjs';
 
 const releaseVersion=JSON.parse(fs.readFileSync(new URL('../extensions/supplier-hub/manifest.json',import.meta.url),'utf8')).version;
 const releaseDownload='/downloads/yoofam-plus-supplier-hub-extension-'+releaseVersion+'.zip';
@@ -123,6 +124,19 @@ test('an authenticated missing-create result requires explicit retry consent and
 
 const repairDraft='같은 문서 파일 저장·본문 복구 1회';
 const repairProof=(h,attempted=false)=>({evidence:'document-draft-preparation',validatedSteps:[],checkpointSequence:12,observedAt:h.f.clock.now,submitted:false,consented:false,...(attempted?{existingDocumentRepairAttempted:true}:{})});
+test('failed file-list reads preserve reservations but revoke current and stale continuation controls until a fresh listed result',async()=>{
+ for(const reserved of [false,true]){const h=await fixture();let failed=false;try{
+  const proof=()=>({...repairProof(h,true),existingDocumentRepairRetryAttempted:true,...(reserved?{existingDocumentRepairContinuationAttempted:true,existingDocumentRepairContinuationResumed:true}:{})});
+  h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true,existingDocumentRepairAvailable:true,existingDocumentRepairRetryAvailable:true,existingDocumentRepairContinuationAvailable:true,existingDocumentRepairReservedResumeAvailable:true,existingDocumentRepairSegmentedAvailable:true}
+   :draftResult(h.f,payload.packet.requestId,'update-requested',{docId:'2347603',needsRecovery:true,draftProof:proof(),...(payload.action.startsWith('recover')?{error:{code:failed?'NATIVE_ASSET_RECOVERY_UNCONFIRMED':'NATIVE_ASSET_RECOVERY_READ_ONLY',message:failed?'확인 단계: observation-page · 항목: http-response, http-redirect':'원래 문서 파일 목록 2/9개 확인'}}:{})});
+  await h.idle();await h.click(open);await h.click(prepareDraft);await h.click(recoverDraft);
+  const label=reserved?'원래 예약의 미요청 파일만 이어 저장':'승인된 복구의 남은 저장 이어가기';const stale=h.button(label).props.onClick;
+  const reservation=[...h.stored.entries()];failed=true;await h.click(recoverDraft);
+  assert.equal(h.button(label),undefined);assert.match(h.text(),/파일 목록을 읽지 못해 이어 저장을 보류/);assert.doesNotMatch(h.text(),/아직 요청하지 않은 자료만 이어 저장할 수 있습니다/);
+  stale();await h.idle();assert.equal(h.f.sent.filter(row=>['continueApprovedRepair','resumeReservedRepair'].includes(row.payload.action)).length,0);assert.deepEqual([...h.stored.entries()],reservation);
+  failed=false;await h.click(recoverDraft);assert.ok(h.button(label));assert.equal(new Set(h.f.sent.map(row=>row.payload.packet.requestId)).size,1);assert.equal(h.f.history.length,0);
+ }finally{h.close();}}
+});
 test('reserved resume needs a verified read snapshot and dispatches once with the same request and document',async()=>{
  for(const resumed of [false,true]){const h=await fixture();try{
   const proof=()=>({...repairProof(h,true),existingDocumentRepairRetryAttempted:true,existingDocumentRepairContinuationAttempted:true,...(resumed?{existingDocumentRepairContinuationResumed:true}:{})});
@@ -388,7 +402,7 @@ async function fixture(company = SINGLE_COMPANIES[0], options = {}) {
   const exports = {}, component = 'app/components/supplier-hub-product-transport.tsx';
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../' + component, import.meta.url), 'utf8'), { fileName: component, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
     { exports, Error, Date: LocalDate, window:f.window, AbortController, fetch: f.fetch, setTimeout: (fn, delay) => { const id = ++sequence; f.timers.set(id, { fn, due: f.clock.now + delay }); return id; }, clearTimeout: id => f.timers.delete(id),
-      require: name => name === '@/app/components/supplier-hub-native-registration' ? {SupplierHubNativeRegistration:()=>null} : name === '@/app/components/supplier-hub-rejection-details' ? {SupplierHubRejectionDetails} : name === 'react' ? react : name === '@/app/supplier-hub-product-client' ? f.client : name.startsWith('@/') ? f.load(name.slice(2) + '.ts') : name.endsWith('product-document.mjs') ? {
+      require: name => name === '@/app/components/supplier-hub-native-registration' ? {SupplierHubNativeRegistration:()=>null} : name === '@/app/components/supplier-hub-rejection-details' ? {SupplierHubRejectionDetails} : name === '@/app/supplier-hub-reserved-work.mjs' ? {runReservedSegments} : name === 'react' ? react : name === '@/app/supplier-hub-product-client' ? f.client : name.startsWith('@/') ? f.load(name.slice(2) + '.ts') : name.endsWith('product-document.mjs') ? {
         // Each fresh preview gets a different real UUID. Recovery must supply
         // its original UUID explicitly; a constant test seed cannot mask loss.
         createProductDocumentPacket: (review,value={}) => createProductDocumentPacket(review, { ...value,createdAt:value.createdAt??f.clock.now,now:f.clock.now }),
