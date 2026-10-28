@@ -8,12 +8,13 @@ import {createSingleDocumentWatch} from './single-document-watch.mjs';
 import {singleDocumentWatchPage} from './single-watch-page.mjs';
 import {normalizeSingleReceipt} from './single-receipt.mjs';
 import {assertSingleOwnedTarget,createSingleOwnedTarget,waitSingleOwnedTarget} from './single-owned-target.mjs';
-import {nativeProductAssetBytes,prepareAndUploadNativeProductAssets} from './native-product-assets.mjs';
+import {nativeProductAssetBytes,prepareAndUploadNativeProductAssets,NativeProductAssetsError} from './native-product-assets.mjs';
 import {readAppDocumentSource,sourceReadError,normalizeSourceReadFailure,currentSourceAppTab} from './product-document-source.mjs';
-import {nativeAssetUploadPage} from './native-asset-upload-page.mjs';
+import {nativeAssetUploadPage,nativeUploadFailure} from './native-asset-upload-page.mjs';
 import {nativeAssetRecoveryPage,decodeNativeAssetRecoveryResult,nativeAssetRecoveryErrorCode} from './native-asset-recovery-page.mjs';
 import {singleDocumentRetryCreatePage} from './single-create-retry-page.mjs';
-import {nativeAssetUploadPlanSha256,validateNativeAssetUploadDescriptors} from './native-asset-multipart.mjs';
+import {nativeAssetUploadPlanSha256,validateNativeAssetUploadDescriptors,NativeAssetMultipartError} from './native-asset-multipart.mjs';
+import {NativeLegalBytesError} from './native-legal-bytes.mjs';
 import {singleExistingDocumentRepairPage,existingRepairPageFailure} from './single-existing-document-repair.mjs';
 import {singleRecordMirrorPage} from './single-record-mirror-page.mjs';
 
@@ -383,7 +384,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     const recovery=input.receiptRecovery;
     if(recovery!==undefined&&(!nativeSha||!recovery||Object.keys(recovery).sort().join(',')!=='sessionId,submitRequestedAt'||!ID.test(recovery.sessionId||'')||!Number.isSafeInteger(recovery.submitRequestedAt)||recovery.submitRequestedAt<1||recovery.submitRequestedAt>now()+5000||input.docId===null||input.docId===undefined))fail('SOURCE_CHANGED','이미 제출한 원래 문서의 읽기 확인 연결이 다릅니다.');
     const binding={identity:copy(input.identity),identityDigest:await digest(input.identity),packetDigest:input.packetDigest,preparedBodySha256:input.preparedBodySha256,originalBodySha256:input.bodySha256,sessionId:recovery?.sessionId??response.sessionId,requestId:input.requestId,...(nativeSha?{nativeAssetSourcePlanSha256:nativeSha}:{})};
-    sourceBindings.set(canonical(input.identity),{input:copy(input),binding,readOnlyReceipt:recovery!==undefined,...(nativeSha?{nativeSourcePlan:copy(fresh.result.sourcePlan),imageBatchAvailable:fresh.result.imageBatchAvailable===true}:{})});
+    sourceBindings.set(canonical(input.identity),{input:copy(input),binding,sourceCheckedAt:now(),readOnlyReceipt:recovery!==undefined,...(nativeSha?{nativeSourcePlan:copy(fresh.result.sourcePlan),imageBatchAvailable:fresh.result.imageBatchAvailable===true}:{})});
     return {current:true,submissionReady:true,priorDocumentClear:true,identity:copy(response.identity),bodySha256:response.bodySha256,sessionId:response.sessionId};
   }
   async function readSource(input){
@@ -475,14 +476,12 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     }
     return {binding,record};
   }
-  async function hubRequest(input){
-    const binding=await bindingFor(input.identity,input.sessionId);
-    if(input.method==='POST')mutable(input.identity);
-    if(input.method==='POST'&&!input.path.endsWith('/create'))await owned({...input,docId:input.body?.docId},binding);
-    if(nativeSha&&input.method==='POST'&&input.path==='/sr/draft/api/update'){
-      const readCurrent=async()=>{const current=await owned({...input,docId:input.body?.docId}),record=current.record,sourcePlan=sourceBindings.get(canonical(input.identity))?.nativeSourcePlan;
-        return{binding:current.binding,sourcePlan,target:{docId:record.docId,requestId:current.binding.requestId,packetDigest:current.binding.packetDigest,preparedBodySha256:current.binding.preparedBodySha256,createOperationId:record.createOperationId,baselineDocIds:copy(record.baselineDocIds)}};};
-      const current=await readCurrent(),scope=sourceBindings.get(canonical(input.identity)),privateBytes=new Map(),privateReads=new Map();let imageBatch;
+  async function uploadNativeAssets(input,binding,onlyMissing=false){
+    try{
+      const readCurrentFresh=async(fresh)=>{const current=await owned({...input,docId:input.body?.docId},fresh),record=current.record,sourcePlan=sourceBindings.get(canonical(input.identity))?.nativeSourcePlan;
+        return{ledger:copy(record.nativeAssets??null),binding:current.binding,sourcePlan,target:{docId:record.docId,requestId:current.binding.requestId,packetDigest:current.binding.packetDigest,preparedBodySha256:current.binding.preparedBodySha256,createOperationId:record.createOperationId,baselineDocIds:copy(record.baselineDocIds)}};};
+      const current=await readCurrentFresh(binding);let first=true;const readCurrent=async()=>{if(first){first=false;return current;}return readCurrentFresh();};
+      const scope=sourceBindings.get(canonical(input.identity)),privateBytes=new Map(),privateReads=new Map();let imageBatch;
       const imageFiles=[...new Map(current.sourcePlan.images.map(file=>[file.key,file])).values()];
       const canBatch=scope.imageBatchAvailable===true&&imageFiles.length>0&&imageFiles.reduce((sum,file)=>sum+file.byteLength,0)<=8*1024*1024;
       const readImageBatch=async()=>{
@@ -504,10 +503,30 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
           if(reply?.frameId!==undefined&&reply.frameId!==0||reply?.result?.current!==true||!equal(reply.result.identity,input.identity)||!equal(reply.result.sourcePlan,current.sourcePlan)||reply.result.bodySha256!==binding.originalBodySha256||reply.result.preparedBodySha256!==binding.preparedBodySha256||reply.result.file?.sha256!==file.sha256||reply.result.file?.byteLength!==file.byteLength)fail('SOURCE_CHANGED','현재 앱의 원본 파일·버전 연결을 확인하지 못했습니다.');
           const bytes=nativeProductAssetBytes(reply.result.file.base64);privateBytes.set(key,bytes);return bytes;})();privateReads.set(key,pending);}
         return (await pending).slice();};
-      await prepareAndUploadNativeProductAssets({...current,readCurrent,readImage:file=>readPrivate('image',file),readOriginal:file=>readPrivate('legal',file),executeGroup:async args=>{
-        const result=await execute(input.tab,input.identity,nativeAssetUploadPage,[args]);if(result?.ownedRecord)pageRecords.set(binding.packetDigest,copy(result.ownedRecord));return result;
+      const keys=[...['MAIN','ADDITIONAL','SIZECHART','LABEL','DETAIL'].filter(type=>current.sourcePlan.images.some(file=>file.imageType===type)).map(type=>'image:'+type),...(current.sourcePlan.nativeLegalAttachmentPlan?.groups??[]).map(group=>'legal:'+group.nativeType)];
+      if(onlyMissing&&Object.values(current.ledger?.groups??{}).some(group=>group.state!=='observed'))fail('NATIVE_ASSET_UNCERTAIN','미확정 파일 요청이 있어 같은 파일을 다시 보내지 않았습니다.');
+      const next=onlyMissing?keys.find(key=>!current.ledger?.groups?.[key]):undefined;
+      if(onlyMissing&&!next){if(current.ledger?.state!=='complete'||!keys.length)fail('NATIVE_ASSET_UNCERTAIN','원래 문서의 완료된 파일 기록을 확인해주세요.');return {allObserved:true};}
+      await prepareAndUploadNativeProductAssets({...current,...(onlyMissing?{onlyGroup:next}:{}),readCurrent,readImage:file=>readPrivate('image',file),readOriginal:file=>readPrivate('legal',file),executeGroup:async args=>{
+        const result=await execute(input.tab,input.identity,nativeAssetUploadPage,[args]),failure=nativeUploadFailure(result);
+        if(failure)fail('NATIVE_ASSET_UPLOAD_FAILED','원본 파일 저장 확인을 중단했습니다. 단계: '+failure.phase+' / '+failure.code+'. '+(failure.writeRequested?'요청한 파일은 다시 보내지 말고 저장 결과를 조회해주세요.':'이 파일 그룹의 저장 응답은 확인되지 않았습니다.'));
+        if(result?.ownedRecord)pageRecords.set(binding.packetDigest,copy(result.ownedRecord));return result;
       }});
+      return {allObserved:false,groupKey:next};
+    }catch(error){
+      if(error instanceof SingleDocumentError)throw error;
+      const sourceFailure=normalizeSourceReadFailure(error?.sourceFailure);
+      if(sourceFailure){const failure=sourceReadError(sourceFailure);throw Object.assign(new SingleDocumentError(failure.code,failure.message),{sourceFailure});}
+      if(error instanceof NativeProductAssetsError||error instanceof NativeAssetMultipartError||error instanceof NativeLegalBytesError)
+        fail('NATIVE_ASSET_PREPARATION_FAILED','원본 파일 준비를 중단했습니다. 확인 항목: '+String(error.code).replace(/[^A-Z_]/g,'').slice(0,80)+'. 같은 문서의 저장 기록을 조회해주세요.');
+      throw error;
     }
+  }
+  async function hubRequest(input){
+    const binding=await bindingFor(input.identity,input.sessionId);
+    if(input.method==='POST')mutable(input.identity);
+    if(input.method==='POST'&&!input.path.endsWith('/create'))await owned({...input,docId:input.body?.docId},binding);
+    if(nativeSha&&input.method==='POST'&&input.path==='/sr/draft/api/update')await uploadNativeAssets(input,binding);
     if(input.retryCreateApproval&&(!nativeSha||input.method!=='POST'||input.path!=='/sr/draft/api/create'))fail('CREATE_RETRY_SCOPE','원본을 확인한 새 초안의 생성 재시도만 허용됩니다.');
     let verifiedBodyCanonical;
     if(input.retryCreateApproval){verifiedBodyCanonical=canonical(input.body);if(await digest(input.body)!==binding.preparedBodySha256)fail('CREATE_RETRY_BODY_CHANGED','원래 검토한 견적서와 재시도 본문이 다릅니다. 생성하지 않았습니다.');}
@@ -521,6 +540,19 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     if(input.method==='GET'&&input.path==='/sr/draft/api/drafts'&&value?.ok===true&&Array.isArray(value.json)&&!baselines.has(binding.packetDigest))baselines.set(binding.packetDigest,value.json.map(row=>row.docId));
     if(value?.ownedRecord)pageRecords.set(binding.packetDigest,copy(value.ownedRecord));
     return value;
+  }
+  async function continueReservedAssets(input){
+    if(!nativeSha||input.operationId!==input.requestId+':update'||!equal(input.expectedBody?.docId,input.docId))fail('EXISTING_REPAIR_SCOPE','원래 예약의 미요청 파일만 이어 저장할 수 있습니다.');
+    const binding=await bindingFor(input.identity,input.sessionId);mutable(input.identity);
+    const next=await uploadNativeAssets({...input,body:input.expectedBody},binding,true);
+    const base={format:'yoofam-native-reserved-segment-v1',requestId:binding.requestId,docId:input.docId,packetDigest:binding.packetDigest,preparedBodySha256:binding.preparedBodySha256};
+    if(!next.allObserved)return {...base,groupKey:next.groupKey,bodyUpdated:false};
+    // All prior groups were independently observed by the core's fresh read.
+    // The native page requires a complete ledger and atomically reserves the
+    // original update operation before POST. Unknown updates never replay.
+    const response=await execute(input.tab,input.identity,singleDocumentHubRequestPage,[{binding,method:'POST',path:'/sr/draft/api/update',body:input.expectedBody,operationId:input.operationId}]);
+    if(response?.ownedRecord)pageRecords.set(binding.packetDigest,copy(response.ownedRecord));
+    return {...base,groupKey:null,bodyUpdated:true,response};
   }
   async function readDocument(input,recovery=false){
     const {binding,record}=await owned(input),docId=record.docId;
@@ -639,7 +671,11 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
   }
   async function inspectExistingRepairContinuation(input){
     if(!nativeSha||input.operationId!==input.requestId+':update'||input.repair?.attempt!==2)fail('EXISTING_REPAIR_CONTINUATION','승인된 추가 복구의 남은 저장만 확인할 수 있습니다.');
-    const {binding,record}=await owned(input),repair=record.recoveryRepair;
+    // The segmented core just finished the full source/file observation. Use
+    // that beginning proof for this read-only inspection; its final owned()
+    // below still independently re-reads the complete source before any write.
+    const recent=sourceBindings.get(canonical(input.identity)),fresh=input.allowComplete===true&&recent&&now()-recent.sourceCheckedAt>=0&&now()-recent.sourceCheckedAt<30000?recent.binding:undefined;
+    const {binding,record}=await owned(input,fresh),repair=record.recoveryRepair;
     if(!repair||!equal(Object.fromEntries(Object.keys(input.repair).map(key=>[key,repair[key]])),input.repair))fail('EXISTING_REPAIR_CONTINUATION','원래 추가 복구 기록과 다릅니다.');
     let response;try{response=JSON.parse(await execute(input.tab,input.identity,singleExistingDocumentRepairPage,[{...copy(input),binding,mode:'inspect-continuation',expectedRecord:record}]));}
     catch(error){if(error instanceof SingleDocumentError)throw error;fail('EXISTING_REPAIR_INSPECTION_FAILED','남은 파일 저장 전 문서 조회 응답을 읽지 못했습니다. 파일·본문은 보내지 않았습니다.');}
@@ -655,7 +691,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     return copy(proof);
   }
   return Object.freeze({readSource,
-    qualifyPreparedDraft,...(nativeSha?{readNativeSourceSnapshot,inspectCreateRetry,inspectUnsentUpdate,inspectExistingDocument,inspectExistingRepairContinuation,bindExistingDocumentRepair:input=>inspectExistingDocument(input,'bind')}:{}),
+    qualifyPreparedDraft,...(nativeSha?{continueReservedAssets,readNativeSourceSnapshot,inspectCreateRetry,inspectUnsentUpdate,inspectExistingDocument,inspectExistingRepairContinuation,bindExistingDocumentRepair:input=>inspectExistingDocument(input,'bind')}:{}),
     ...(nativeSha?{readOwnedTargetPresence:async input=>{
       const binding=sourceBindings.get(canonical(input.identity))?.binding;
       if(!binding||binding.requestId!==input.requestId||binding.packetDigest!==input.packetDigest||typeof api.tabs.query!=='function')fail('TAB_CHANGED','원래 검증 탭의 존재 여부를 확인하지 못했습니다.');

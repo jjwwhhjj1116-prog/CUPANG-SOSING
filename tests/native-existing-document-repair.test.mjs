@@ -108,9 +108,19 @@ async function reservedContinuationWithoutDispatch(){
  return f;
 }
 
+async function finishReservedSegments(f,receiver=f.receiver){
+ for(let index=0;index<8;index++){
+  const before=f.state.uploads.length,result=await receiver.resumeReservedRepair(f.packet,f.sender);
+  assert.ok(f.state.uploads.length-before<=1,'one background event uploads at most one never-requested group');
+  if(result.error||result.state!=='update-requested')return result;
+  assert.equal(result.recovered,true);assert.equal(updated(f).length,0,'body follows all file groups in a separate event');
+ }
+ throw Error('Synthetic reserved segments did not finish');
+}
+
 test('reserved continuation resumes only never-requested files, preserving original request, document and all audits',async()=>{
  const f=await reservedContinuationWithoutDispatch();try{
-  const before=copy(await f.storage.store.get(f.context.key)),result=await f.receiver.resumeReservedRepair(f.packet,f.sender);
+  const before=copy(await f.storage.store.get(f.context.key)),result=await finishReservedSegments(f);
   assert.equal(result.state,'updated',JSON.stringify(result));assert.equal(result.docId,f.createdDocId);assert.equal(result.draftProof.existingDocumentRepairContinuationResumed,true);
   const after=await f.storage.store.get(f.context.key);
   for(const key of ['existingDocumentRepair','existingDocumentRepairRetry','existingDocumentRepairContinuation'])assert.deepEqual(after[key],before[key]);
@@ -149,7 +159,8 @@ test('two reserved resumes can reserve and dispatch only once',async()=>{
  const f=await reservedContinuationWithoutDispatch();try{
   const other=createProductDocumentDraftReceiver({adapter:f.adapter,store:f.storage.store});
   const results=await Promise.allSettled([f.receiver.resumeReservedRepair(f.packet,f.sender),other.resumeReservedRepair(f.packet,f.sender)]);
-  assert.equal(results.filter(value=>value.status==='fulfilled'&&value.value.state==='updated').length,1);
+  assert.equal(results.filter(value=>value.status==='fulfilled'&&value.value.recovered===true&&!value.value.error).length,1);
+  assert.equal((await finishReservedSegments(f)).state,'updated');
   assert.deepEqual(f.state.uploads,['MAIN','ADDITIONAL','LABEL','DETAIL']);assert.equal(updated(f).length,1);unchanged(f);
  }finally{f.close();}
 });
@@ -163,7 +174,7 @@ test('a late original continuation cannot duplicate groups or update after a res
  };
  let original;try{
   original=f.receiver.continueApprovedRepair(f.packet,f.sender);await arrived;
-  const other=createProductDocumentDraftReceiver({adapter:f.adapter,store:f.storage.store}),resumed=await other.resumeReservedRepair(f.packet,f.sender);
+  const other=createProductDocumentDraftReceiver({adapter:f.adapter,store:f.storage.store}),resumed=await finishReservedSegments(f,other);
   assert.equal(resumed.state,'updated',JSON.stringify(resumed));release();await original;
   assert.deepEqual(f.state.uploads,['MAIN','ADDITIONAL','LABEL','DETAIL']);assert.equal(updated(f).length,1);unchanged(f);
  }finally{release();await original?.catch(()=>{});f.close();}
@@ -171,11 +182,45 @@ test('a late original continuation cannot duplicate groups or update after a res
 
 test('lost reserved-resume update ACK cannot dispatch any group or update again',async()=>{
  const f=await reservedContinuationWithoutDispatch();try{
-  const request=f.adapter.hubRequest;f.adapter.hubRequest=async input=>{const result=await request(input);if(input.method==='POST'&&input.path==='/sr/draft/api/update')throw Error('synthetic lost update ACK');return result;};
-  const result=await f.receiver.resumeReservedRepair(f.packet,f.sender);assert.equal(result.state,'update-requested');assert.equal(result.draftProof.existingDocumentRepairContinuationResumed,true);
+  const execute=f.api.scripting.executeScript;f.api.scripting.executeScript=async input=>{const result=await execute(input);if(input.func.name==='singleDocumentHubRequestPage'){const arg=typeof input.args[0]==='string'?JSON.parse(input.args[0]):input.args[0];if(arg.path==='/sr/draft/api/update')throw Error('synthetic lost update ACK');}return result;};
+  const result=await finishReservedSegments(f);assert.equal(result.state,'update-requested');assert.equal(result.draftProof.existingDocumentRepairContinuationResumed,true);
   const before=copy(await f.storage.store.get(f.context.key)),writes=copy(documentWrites(f));
   const again=await f.receiver.resumeReservedRepair(f.packet,f.sender);assert.ok(again.error);assert.deepEqual(await f.storage.store.get(f.context.key),before);assert.deepEqual(documentWrites(f),writes);
   assert.deepEqual(f.state.uploads,['MAIN','ADDITIONAL','LABEL','DETAIL']);assert.equal(updated(f).length,1);unchanged(f);
+ }finally{f.close();}
+});
+
+test('interrupted reserved segment keeps its original reservation and resumes only never-requested groups',async()=>{
+ const f=await reservedContinuationWithoutDispatch();try{
+  const next=f.adapter.continueReservedAssets;let stop=true;
+  f.adapter.continueReservedAssets=async input=>{if(stop)throw Error('synthetic worker ended before group dispatch');return next(input);};
+  const first=await f.receiver.resumeReservedRepair(f.packet,f.sender);assert.ok(first.error);assert.deepEqual(f.state.uploads,['MAIN']);
+  const reservation=copy((await f.storage.store.get(f.context.key)).existingDocumentRepairContinuationResume);stop=false;
+  const completed=await finishReservedSegments(f);assert.equal(completed.state,'updated');
+  assert.deepEqual((await f.storage.store.get(f.context.key)).existingDocumentRepairContinuationResume,reservation,'no reservation reset or extra repair approval');
+  assert.deepEqual(f.state.uploads,['MAIN','ADDITIONAL','LABEL','DETAIL']);assert.equal(updated(f).length,1);unchanged(f);
+ }finally{f.close();}
+});
+
+test('a missing upload ACK in a later segment cannot replay that group or reach the body',async()=>{
+ const f=await reservedContinuationWithoutDispatch();try{
+  const first=await f.receiver.resumeReservedRepair(f.packet,f.sender);assert.equal(first.recovered,true);assert.deepEqual(f.state.uploads,['MAIN','ADDITIONAL']);
+  f.state.loseNextUploadAck='LABEL';const failed=await f.receiver.resumeReservedRepair(f.packet,f.sender);
+  assert.equal(failed.error.code,'NATIVE_ASSET_UPLOAD_FAILED');assert.match(failed.error.message,/upload/);
+  const records=JSON.parse(marker(f)),label=records[f.context.packetDigest].nativeAssets.groups['image:LABEL'];assert.equal(label.state,'requested');
+  const before=copy(await f.storage.store.get(f.context.key)),writes=copy(documentWrites(f));
+  const again=await f.receiver.resumeReservedRepair(f.packet,f.sender);assert.ok(again.error);assert.deepEqual(await f.storage.store.get(f.context.key),before);
+  assert.deepEqual(documentWrites(f),writes);assert.deepEqual(f.state.uploads,['MAIN','ADDITIONAL','LABEL']);assert.equal(updated(f).length,0);unchanged(f);
+ }finally{f.close();}
+});
+
+test('a newly visible duplicate after all file segments blocks the original body update',async()=>{
+ const f=await reservedContinuationWithoutDispatch();try{
+  for(let index=0;index<3;index++){const result=await f.receiver.resumeReservedRepair(f.packet,f.sender);assert.equal(result.recovered,true);assert.equal(result.state,'update-requested');}
+  assert.deepEqual(f.state.uploads,['MAIN','ADDITIONAL','LABEL','DETAIL']);assert.equal(updated(f).length,0);
+  f.state.repairRequestedRows=[{docId:f.createdDocId+1,productName:f.context.packet.body.productName}];
+  const before=copy(await f.storage.store.get(f.context.key)),result=await f.receiver.resumeReservedRepair(f.packet,f.sender);assert.ok(result.error);
+  assert.deepEqual(await f.storage.store.get(f.context.key),before);assert.equal(updated(f).length,0);unchanged(f);
  }finally{f.close();}
 });
 

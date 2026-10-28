@@ -500,13 +500,13 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
       const readOnlyReceipt=nativeLifecycle&&state.preparedLifecycle===true&&state.submitRequestedAt!==undefined&&['recoverPreparedDraft','observePreparedDraft'].includes(action);
       await guard(context,state,readOnlyReceipt);
       if(action==='continueApprovedRepair'||action==='resumeReservedRepair'){
-        const reserved=action==='resumeReservedRepair';
+        const reserved=action==='resumeReservedRepair',segmented=reserved&&typeof adapter.continueReservedAssets==='function';
         if(!nativeLifecycle||!draftOnly||state.preparedLifecycle||state.state!=='update-requested'||state.docId===null||state.validatedSteps.length
-          ||!state.existingDocumentRepairRetry||(reserved?!state.existingDocumentRepairContinuation||state.existingDocumentRepairContinuationResume!==undefined:state.existingDocumentRepairContinuation!==undefined)
+          ||!state.existingDocumentRepairRetry||(reserved?!state.existingDocumentRepairContinuation||!segmented&&state.existingDocumentRepairContinuationResume!==undefined:state.existingDocumentRepairContinuation!==undefined)
           ||state.operationId!==state.requestId+':update'||typeof adapter.inspectRepairContinuation!=='function')
           fail('EXISTING_REPAIR_CONTINUATION','같은 승인 작업에서 아직 요청하지 않은 저장만 1회 이어갈 수 있습니다.');
         const proof=await call('inspectRepairContinuation',{tab:state.tab,sessionId:state.sessionId,identity:context.identity,identityDigest:context.identityDigest,requestId:state.requestId,
-          operation:'update',operationId:state.operationId,docId:state.docId,baselineDocIds:state.baselineDocIds,expectedBody:withDoc(context.packet,state.docId),repair:state.existingDocumentRepairRetry});
+          operation:'update',operationId:state.operationId,docId:state.docId,baselineDocIds:state.baselineDocIds,expectedBody:withDoc(context.packet,state.docId),repair:state.existingDocumentRepairRetry,...(segmented?{allowComplete:true}:{})});
         const inspection=proof?.inspection,assets=proof?.assets;
         if(!object(proof)||Object.keys(proof).sort().join(',')!=='assets,format,inspection'||proof.format!=='yoofam-approved-repair-continuation-v1'
           ||!object(inspection)||inspection.format!=='yoofam-existing-repair-continuation-inspection-v1'||inspection.requestId!==state.requestId||inspection.operationId!==state.operationId||!same(inspection.docId,state.docId)
@@ -518,7 +518,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
           ||assets.identityDigest!==context.identityDigest||assets.packetDigest!==context.packetDigest||assets.sourcePlanSha256!==context.identity.fingerprint||!HEX.test(assets.planSha256||'')
           ||assets.readOnly!==true||assets.ledgerMutated!==false||assets.remoteWrites!==false||assets.canContinue!==false||assets.unresolved!==true
           ||['actualUploadVerified','remoteBytesVerified','registered'].some(key=>assets[key]!==false)||!Number.isSafeInteger(assets.observedAt)||Math.abs(clock()-assets.observedAt)>180000
-          ||!Array.isArray(assets.groups)||!assets.groups.length||assets.groups.length>11||!assets.groups.some(group=>group.requestState==='observed')||!assets.groups.some(group=>group.requestState==='not-requested')
+          ||!Array.isArray(assets.groups)||!assets.groups.length||assets.groups.length>11||!assets.groups.some(group=>group.requestState==='observed')||!segmented&&!assets.groups.some(group=>group.requestState==='not-requested')
           ||assets.groups.some(group=>!['observed','not-requested'].includes(group.requestState)||group.state!==(group.requestState==='observed'?'metadata-current':'not-requested')))
           fail('EXISTING_REPAIR_CONTINUATION','기존 저장 응답·남은 미요청 파일·중복 조회를 확인하지 못했습니다. 저장하지 않았습니다.');
         await guard(context,state);
@@ -526,8 +526,20 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
         // CAS may only resume the original reservation after fresh inspection
         // proves every recorded group observed and the rest never requested.
         // Page-side per-group CAS still arbitrates a late original execution.
-        state=await save(context,state,reserved?{existingDocumentRepairContinuationResume:{format:'yoofam-reserved-repair-resume-v1',docId:state.docId,priorSequence:state.sequence,startedAt:clock(),continuationSha256:await digest(state.existingDocumentRepairContinuation),inspectionSha256:await digest(proof)}}
+        state=await save(context,state,reserved?state.existingDocumentRepairContinuationResume?{}:{existingDocumentRepairContinuationResume:{format:'yoofam-reserved-repair-resume-v1',docId:state.docId,priorSequence:state.sequence,startedAt:clock(),continuationSha256:await digest(state.existingDocumentRepairContinuation),inspectionSha256:await digest(proof)}}
           :{existingDocumentRepairContinuation:{format:'yoofam-approved-repair-continuation-v1',docId:state.docId,priorSequence:state.sequence,startedAt:clock(),repairSha256:inspection.repairSha256,inspectionSha256:await digest(proof)}});
+        if(segmented){
+          const next=assets.groups.find(group=>group.requestState==='not-requested');
+          const part=await call('continueReservedAssets',{tab:state.tab,sessionId:state.sessionId,identity:context.identity,requestId:state.requestId,operationId:state.operationId,docId:state.docId,expectedBody:withDoc(context.packet,state.docId)});
+          if(!object(part)||part.format!=='yoofam-native-reserved-segment-v1'||part.requestId!==state.requestId||!same(part.docId,state.docId)||part.packetDigest!==context.packetDigest||part.preparedBodySha256!==context.bodySha256
+            ||(next?Object.keys(part).sort().join(',')!=='bodyUpdated,docId,format,groupKey,packetDigest,preparedBodySha256,requestId'||part.bodyUpdated!==false||part.groupKey!==next.groupKey
+              :Object.keys(part).sort().join(',')!=='bodyUpdated,docId,format,groupKey,packetDigest,preparedBodySha256,requestId,response'||part.bodyUpdated!==true||part.groupKey!==null))
+            fail('NATIVE_ASSET_SEGMENT_UNCONFIRMED','파일 그룹 저장 응답을 확인하지 못했습니다. 같은 문서의 저장 기록을 조회해주세요.');
+          if(next)return result(state,{recovered:true});
+          const updated=responseJson(part.response);
+          if(!object(updated)||updated.errorCode!==undefined&&updated.errorCode!==null&&updated.errorCode!=='')fail('UPDATE_UNCONFIRMED','같은 문서의 본문 저장 응답이 미확정입니다. 다시 보내지 말고 조회해주세요.');
+          await readDocument(context,state);state=await save(context,state,{state:'updated'});return result(state,{recovered:true});
+        }
         const updated=await request(context,state,'POST',SINGLE_DOCUMENT_PATHS.update,withDoc(context.packet,state.docId));
         if(!object(updated)||updated.errorCode!==undefined&&updated.errorCode!==null&&updated.errorCode!=='')fail('UPDATE_UNCONFIRMED','같은 문서의 이어 저장 응답을 확정하지 못했습니다. 반복하지 않고 읽기로 확인해주세요.');
         await readDocument(context,state);state=await save(context,state,{state:'updated'});return result(state,{recovered:true});

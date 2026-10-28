@@ -119,7 +119,7 @@ export function withNativeProductAssetRecovery(adapter,{api,nativeSha,now=Date.n
  const inspectRepairContinuation=async input=>{
   if(typeof adapter.inspectExistingRepairContinuation!=='function'||input.repair?.attempt!==2)fail('continuation-scope');
   const assets=await inspectNativeAssets(input);
-  if(!assets.groups.some(group=>group.requestState==='observed')||!assets.groups.some(group=>group.requestState==='not-requested')
+  if(!assets.groups.some(group=>group.requestState==='observed')||input.allowComplete!==true&&!assets.groups.some(group=>group.requestState==='not-requested')
    ||assets.groups.some(group=>!['observed','not-requested'].includes(group.requestState)||group.state!==(group.requestState==='observed'?'metadata-current':'not-requested')))fail('continuation-group-state');
   const inspection=await adapter.inspectExistingRepairContinuation(input);
   return{format:'yoofam-approved-repair-continuation-v1',inspection,assets};

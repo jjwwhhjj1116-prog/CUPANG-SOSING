@@ -8,6 +8,7 @@ import {singleConsentConfirmation,verifySingleDocumentObservation,type SingleDoc
 import type {NativeReceiptRecord} from '@/app/supplier-hub-product-receipt';
 import {productReceiptCanonical} from '@/app/supplier-hub-product-receipt';
 import {SupplierHubRejectionDetails} from '@/app/components/supplier-hub-rejection-details';
+import {runReservedSegments} from '@/app/supplier-hub-reserved-work.mjs';
 import {SupplierHubNativeRegistration} from '@/app/components/supplier-hub-native-registration';
 import {readProductDocumentPending,productDocumentPendingKey,productDocumentPendingCurrent,assertProductDocumentPending,claimProductDocumentPending,
   readProductDocumentRejections,productDocumentRejectionKey,assertProductDocumentNotRejected,
@@ -35,6 +36,7 @@ export function SupplierHubProductTransport(props:Props){
   const [existingRepairRetryAttempted,setExistingRepairRetryAttempted]=useState(false);
   const [repairContinuationAttempted,setRepairContinuationAttempted]=useState(false);
   const [repairContinuationResumed,setRepairContinuationResumed]=useState(false);
+  const [savedFileGroups,setSavedFileGroups]=useState(0);
   const knownDraftDocument=useRef<{requestId:string;docId:string|number}|null>(null);
   const reviewToken=useMemo(()=>({review}),[review]),reviewEpoch=useRef<typeof reviewToken|null>(reviewToken);
   const [releasedValidation,setReleasedValidation]=useState<{token:object;docId:string|number;rejection:ProductValidationRejection}|null>(null);
@@ -192,7 +194,7 @@ export function SupplierHubProductTransport(props:Props){
       ||action==='repairExistingDraft'&&(!before.draftMode||!before.intent||!before.uncertain||!before.existingRepairNeeded||!before.existingRepairApproved||before.existingRepairAttempted||expected.preview.existingDocumentRepairAvailable!==true)
       ||action==='retryExistingDraftRepair'&&(!before.draftMode||!before.intent||!before.uncertain||!before.existingRepairNeeded||!before.existingRepairApproved||!before.existingRepairAttempted||before.existingRepairRetryAttempted||expected.preview.existingDocumentRepairRetryAvailable!==true)
       ||action==='continueApprovedRepair'&&(!before.draftMode||!before.intent||!before.uncertain||!before.existingRepairRetryAttempted||before.repairContinuationAttempted||expected.preview.existingDocumentRepairContinuationAvailable!==true)
-      ||action==='resumeReservedRepair'&&(!before.draftMode||!before.intent||!before.uncertain||!before.existingRepairRetryAttempted||!before.repairContinuationAttempted||before.repairContinuationResumed||currentDraftHint?.continuationSnapshot!==true||currentDraftHint?.resumeSnapshot!==false||expected.preview.existingDocumentRepairReservedResumeAvailable!==true)
+      ||action==='resumeReservedRepair'&&(!before.draftMode||!before.intent||!before.uncertain||!before.existingRepairRetryAttempted||!before.repairContinuationAttempted||(before.repairContinuationResumed&&expected.preview.existingDocumentRepairSegmentedAvailable!==true)||currentDraftHint?.continuationSnapshot!==true||typeof currentDraftHint?.resumeSnapshot!=='boolean'||currentDraftHint.resumeSnapshot&&expected.preview.existingDocumentRepairSegmentedAvailable!==true||expected.preview.existingDocumentRepairReservedResumeAvailable!==true)
       ||action==='recoverDraft'&&(!before.draftMode||!before.intent||!before.uncertain&&before.state?.draftOnly!==true))return;
     if(action==='recoverDraft')setDraftReadHint(previous=>previous?{...previous,continuationSnapshot:undefined,resumeSnapshot:undefined}:previous);
     const task=begin();let dispatched=false,activeSession=expected;
@@ -227,8 +229,22 @@ export function SupplierHubProductTransport(props:Props){
       }
       if(action==='retryExistingDraftRepair'){current.current.existingRepairRetryAttempted=true;current.current.existingRepairApproved=false;current.current.existingRepairNeeded=false;setExistingRepairRetryAttempted(true);setExistingRepairApproved(false);setExistingRepairNeeded(false);}
       if(action==='continueApprovedRepair'){current.current.repairContinuationAttempted=true;setRepairContinuationAttempted(true);}
-      if(action==='resumeReservedRepair'){current.current.repairContinuationResumed=true;setRepairContinuationResumed(true);}
-      const result=await runProductDocumentDraft(activeSession,action,task.controller.signal);await fresh(task);if(!task.active()||current.current.session!==activeSession)return;
+      if(action==='resumeReservedRepair'){current.current.repairContinuationResumed=true;setRepairContinuationResumed(true);setDraftReadHint(null);setSavedFileGroups(0);}
+      const send=async()=>{
+        if(action==='resumeReservedRepair'&&activeSession.preview.existingDocumentRepairSegmentedAvailable===true){
+          const now=draftOperationTime(),packet=await createProductDocumentPacket(review,{requestId:activeSession.packet.requestId,createdAt:now,now});
+          if(!task.active()||current.current.session!==activeSession)throw Error('회사·상품 연결이 바뀌어 다음 파일을 요청하지 않았습니다.');
+          const renewed={...activeSession,packet};assertProductDocumentPending(review,saved,renewed);
+          activeSession=renewed;current.current.session=renewed;setSession(renewed);
+        }
+        return runProductDocumentDraft(activeSession,action,task.controller.signal);
+      };
+      const known=knownDraftDocument.current?.requestId===activeSession.packet.requestId?knownDraftDocument.current.docId:undefined;
+      const result=action==='resumeReservedRepair'&&activeSession.preview.existingDocumentRepairSegmentedAvailable===true&&known!==undefined
+        ?await runReservedSegments({expected:{requestId:activeSession.packet.requestId,docId:known,packetDigest:activeSession.packetDigest,preparedBodySha256:activeSession.preview.preparedBodySha256},send,signal:task.controller.signal,
+          fresh:async()=>{await fresh(task);if(!task.active()||current.current.session!==activeSession)throw Error('현재 회사·상품 자료가 변경되어 다음 파일을 요청하지 않았습니다.');},onProgress:groups=>{if(task.active())setSavedFileGroups(groups);}})
+        :await send();
+      await fresh(task);if(!task.active()||current.current.session!==activeSession)return;
       if(!rememberDraftDocument(activeSession,result.docId))throw new ProductDocumentBridgeError('원래 요청에서 확인한 문서번호와 다른 복구 응답입니다. 원래 문서의 결과만 다시 확인해주세요.',action!=='recoverDraft','PRODUCT_DOCUMENT_DRAFT_REPLY_IDENTITY');
       verifySingleDocumentObservation(before.state,result);
       if(before.state?.draftProof&&(result.draftProof!.checkpointSequence<before.state.draftProof.checkpointSequence||result.draftProof!.observedAt<before.state.draftProof.observedAt))throw new ProductDocumentBridgeError('원래 새 초안보다 오래된 준비 기록입니다. 기존 결과를 유지했습니다.',action==='prepareDraft','PRODUCT_DOCUMENT_DRAFT_REPLY_IDENTITY');
@@ -341,12 +357,12 @@ export function SupplierHubProductTransport(props:Props){
     {intent&&!session&&<p role="status">이 상품의 이전 전송 요청이 보관되어 있습니다. 같은 요청의 저장 결과만 확인하며 새 등록을 시작하지 않습니다.</p>}
     {session&&<p>회사 {review.identity.company.name} · 포함 옵션 {session.packet.review.members.length}개 · 견적 문서 1개 · 전체 본문 대조 완료</p>}
     {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&!intent&&!state?.preparedLifecycle&&<p role="status">전체 문서의 실제 접수 연결을 검수 중입니다. 현재 상품은 전송하지 않았습니다.</p>}
-    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.51.zip" download>통합 확장 2.1.51 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
+    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.52.zip" download>통합 확장 2.1.52 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
     {session?.preview.draftPreparationAvailable===true&&!state?.preparedLifecycle&&<section aria-label="새 견적 초안 준비">
       <p>{intent?'원래 요청과 문서의 파일·본문 저장 및 단계 검증 결과를 확인합니다.':'로그인한 Supplier Hub에 새 견적 초안 한 개를 만들고 저장한 이미지·본문과 단계 검증을 확인합니다.'} 약관 동의와 최종 제출은 진행하지 않습니다.</p>
       {currentDraftHint&&<p role="status">원래 문서 {String(currentDraftHint.docId)} · {currentDraftHint.state==='update-requested'?'파일·본문 저장 결과 미확인':currentDraftHint.state==='validation-requested'?'단계 검증 결과 미확인':'초안 상태 확인 필요'} · 같은 요청 유지</p>}
       {currentDraftHint?.continuationSnapshot!==undefined&&<p role="status">{currentDraftHint.continuationSnapshot?'이번 읽기 시점에 이어 저장 예약 기록이 확인됐습니다. 저장 완료를 뜻하지 않습니다.':'이번 읽기 시점에는 이어 저장 예약 기록이 확인되지 않았습니다. 이전 작업이 아직 진행 중일 수 있으므로 이것만으로 종료 여부를 확정할 수 없습니다.'}</p>}
-      {currentDraftHint?.resumeSnapshot!==undefined&&<p role="status">{currentDraftHint.resumeSnapshot?'미요청 파일 재개 예약이 서버 기록에 있습니다. 저장 결과를 조회하고 요청을 반복하지 마세요.':'이번 읽기에서는 미요청 파일 재개 예약이 서버 기록에 없습니다. 파일 요청 여부는 같은 문서의 저장 기록으로 확인합니다.'}</p>}
+      {currentDraftHint?.resumeSnapshot!==undefined&&<p role="status">{currentDraftHint.resumeSnapshot?session?.preview.existingDocumentRepairSegmentedAvailable===true?'원래 재개 예약을 유지합니다. 확인된 파일은 보존하고 아직 요청하지 않은 자료만 이어 저장할 수 있습니다.':'미요청 파일 재개 예약이 서버 기록에 있습니다. 저장 결과를 조회하고 요청을 반복하지 마세요.':'이번 읽기에서는 미요청 파일 재개 예약이 서버 기록에 없습니다. 파일 요청 여부는 같은 문서의 저장 기록으로 확인합니다.'}</p>}
       {!state&&!uncertain&&!intent&&<button type="button" className="btn primary" disabled={disabled||busy||Boolean(intentError)} onClick={()=>void operateDraft('prepareDraft',session)}>새 견적 초안 만들기 · 제출 안 함</button>}
       {draftMode&&uncertain&&!state?.preparedLifecycle&&<><p role="status">초안 준비 응답을 확인하지 못했습니다. 같은 초안을 다시 만들지 않고 저장 결과만 조회합니다.</p><button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void(session.preview.preparedLifecycleAvailable&&!currentDraftHint?operatePrepared('recoverPreparedDraft',session):operateDraft('recoverDraft',session))}>같은 초안 저장 결과 확인 · 읽기 전용</button></>}
       {draftMode&&uncertain&&existingRepairNeeded&&!existingRepairAttempted&&session.preview.existingDocumentRepairAvailable===true&&!state?.preparedLifecycle&&<section aria-label="같은 문서 1회 저장 복구">
@@ -370,13 +386,14 @@ export function SupplierHubProductTransport(props:Props){
         <p>기존 저장 응답은 보존하고 아직 요청하지 않은 파일과 본문만 이어 저장합니다. 회사·중복·파일 목록을 다시 대조하며, 미확정 업로드나 본문 요청이 있으면 중단합니다.</p>
         <button type="button" className="btn ghost" disabled={busy||disabled} onClick={()=>void operateDraft('continueApprovedRepair',session)}>승인된 복구의 남은 저장 이어가기</button>
       </section>}
-      {draftMode&&uncertain&&repairContinuationAttempted&&!repairContinuationResumed&&currentDraftHint?.continuationSnapshot===true&&currentDraftHint.resumeSnapshot===false&&session.preview.existingDocumentRepairReservedResumeAvailable===true&&<section aria-label="원래 예약의 미요청 파일 이어 저장">
+      {draftMode&&uncertain&&repairContinuationAttempted&&(!repairContinuationResumed||session.preview.existingDocumentRepairSegmentedAvailable===true)&&currentDraftHint?.continuationSnapshot===true&&typeof currentDraftHint.resumeSnapshot==='boolean'&&(!currentDraftHint.resumeSnapshot||session.preview.existingDocumentRepairSegmentedAvailable===true)&&session.preview.existingDocumentRepairReservedResumeAvailable===true&&<section aria-label="원래 예약의 미요청 파일 이어 저장">
         <p>원래 요청과 저장 예약을 유지합니다. 서버 중복·파일 목록을 다시 대조해 아직 요청하지 않은 파일만 저장하며, 응답이 미확정인 업로드나 본문 요청은 반복하지 않습니다.</p>
         <button type="button" className="btn ghost" disabled={busy||disabled} onClick={()=>void operateDraft('resumeReservedRepair',session)}>원래 예약의 미요청 파일만 이어 저장</button>
       </section>}
       {draftMode&&repairContinuationAttempted&&<p role="status">원래 이어 저장 예약을 유지하고 있습니다. 요청한 파일과 본문은 다시 보내지 않습니다.</p>}
-      {draftMode&&repairContinuationResumed&&<p role="status">미요청 파일 이어 저장을 요청했습니다. 반복하지 않고 같은 문서의 결과만 확인합니다.</p>}
-      {draftMode&&uncertain&&existingRepairRetryAttempted&&!state?.preparedLifecycle&&<p role="status">같은 문서의 추가 1회 복구를 요청했습니다. 더 저장하지 않고 원래 문서의 결과만 확인합니다.</p>}
+      {draftMode&&repairContinuationResumed&&<p role="status">미요청 파일 저장만 이어갑니다. 요청 결과가 미확정인 파일과 본문은 다시 보내지 않습니다.</p>}
+      {busy&&savedFileGroups>0&&<p role="status">추가 파일 그룹 {savedFileGroups}개 저장 확인 · 다음 미요청 자료를 확인하고 있습니다.</p>}
+      {draftMode&&uncertain&&existingRepairRetryAttempted&&!state?.preparedLifecycle&&<p role="status">{session.preview.existingDocumentRepairSegmentedAvailable===true?'원래 추가 복구 기록을 보존합니다. 미확정 요청은 결과를 조회하며, 아직 요청하지 않은 자료만 이어갑니다.':'같은 문서의 추가 1회 복구를 요청했습니다. 더 저장하지 않고 원래 문서의 결과만 확인합니다.'}</p>}
       {draftMode&&uncertain&&missingCreate&&!retryAttempted&&!approvedRetryPending&&session.preview.createRetryAvailable===true&&!state?.preparedLifecycle&&<section aria-label="문서 생성 1회 재시도">
         <p>문서 생성 응답이 확인되지 않았습니다. 기존 요청번호·견적 내용을 유지하며, 전송 직전 중간저장·제출요청 전체 목록이 원래 기록과 일치할 때에만 생성을 한 번 다시 요청합니다. 이전 요청이 뒤늦게 처리되면 중복될 수 있습니다.</p>
         <label><input type="checkbox" checked={retryApproved} disabled={busy||disabled} onChange={event=>setRetryApproved(event.target.checked)}/>중복 가능성을 확인했고 기존 요청으로 생성 1회 재시도에 동의합니다.</label>

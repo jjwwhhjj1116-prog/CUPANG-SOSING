@@ -2,6 +2,8 @@
  * frame. Static SR upload/list contract SHA6fc9c0fa... [2875870,2879318).
  * Does not inspect credentials or claim remote binary persistence/acceptance. */
 export async function nativeAssetUploadPage(input){
+ let phase='input',writeRequested=false;
+ try{
  if(typeof input==='string'){if(input.length>100*1024*1024)throw Error('원본 업로드 자료가 너무 큽니다.');input=JSON.parse(input);}
  const origin='https://supplier.coupang.com',data=document.documentElement.dataset,HASH=/^[a-f0-9]{64}$/;
  const canon=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canon).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canon(value[key])).join(',')+'}',same=(a,b)=>canon(a)===canon(b);
@@ -18,7 +20,7 @@ export async function nativeAssetUploadPage(input){
   if(record.watchToken!==undefined)fail('사용자가 불러온 문서에는 원본을 다시 업로드하지 않았습니다.');
   if(record.nativeAssets&&(record.nativeAssets.planSha256!==plan.planSha256||record.nativeAssets.sourcePlanSha256!==input.sourcePlanSha256))fail('원래 업로드 계획이 변경됐습니다.');
  };
- check();
+ phase='plan';check();
  if(plan?.format!=='yoofam-native-asset-upload-plan-v1'||!HASH.test(plan.planSha256||'')||!same(plan.target,target)||!same(plan.identity.company,binding.identity.company)||plan.identity.ownerId!==binding.identity.ownerId||plan.identity.productId!==binding.identity.productId
   ||plan.identity.categoryId!==binding.identity.categoryId||plan.identity.schemaSha256!==binding.identity.schemaSha256||plan.identity.inputFingerprint!==binding.identity.inputFingerprint||!same(plan.identity.members,binding.identity.members)
   ||!same(plan.identity.source,{...binding.identity.source,profileId:binding.identity.profileId})||['registered','remoteWrites','submissionReady','transportReady'].some(key=>plan[key]!==false)||!Array.isArray(plan.images)||plan.images.length>150)fail();
@@ -30,7 +32,7 @@ export async function nativeAssetUploadPage(input){
  const uploadPath=isImage?`/sr/draft/api/upload-images/${doc}?imageType=${kindKey}`:`/sr/draft/api/upload-files-by-type/${doc}?fileType=${kindKey}`;
  if(!expected?.length||!Array.isArray(group.parts)||group.parts.length!==expected.length||group.path!==uploadPath)fail();
  if(plan.images.reduce((sum,file)=>sum+file.byteLength,0)>64*1024*1024)fail('역할별 원본 파일의 전송 용량이 초과됐습니다.');
- const parts=[];let total=0;
+ phase='file-bytes';const parts=[];let total=0;
  for(let index=0;index<expected.length;index++){
   const file=expected[index],part=group.parts[index],limit=isImage?10*1024*1024:5*1024*1024,field=isImage?'additionalImageFiles':'uploadFiles';
   if(part.fieldName!==field||part.transportName!==file.transportName||part.contentType!==file.contentType||part.byteLength!==file.byteLength||part.sha256!==file.sha256||!HASH.test(part.sha256||'')||!Number.isSafeInteger(part.byteLength)||part.byteLength<1||part.byteLength>limit
@@ -61,17 +63,36 @@ export async function nativeAssetUploadPage(input){
   if(rows.length>150||rows.some(row=>typeof row?.[nameKey]!=='string'||!known.includes(row[nameKey])||seen.has(row[nameKey])||!seen.add(row[nameKey])))fail('새 문서에 원래 계획 밖의 파일 또는 중복 파일이 있습니다.');
   return rows.filter(row=>expected.some(file=>file.transportName===row[nameKey]));
  }
- const previous=ledger.groups[groupKey];
+ phase='before-upload';const previous=ledger.groups[groupKey];
  if(previous){
   if(previous.operationId!==operationId||previous.state!=='observed'||!previous.ack)fail('이전 원본 업로드 응답이 미확정입니다. 같은 파일을 다시 업로드하지 않았습니다.');
   const listed=descriptors(await list(),expected);if(!same(listed,previous.ack))fail('저장된 원본 파일 목록이 원래 업로드 응답과 다릅니다.');
  }else{
   if((await list()).length)fail('새 문서에 같은 이름의 파일이 이미 있어 덮어쓰지 않았습니다.');
-  ledger.groups[groupKey]={operationId,state:'requested'};save();
+  ledger.groups[groupKey]={operationId,state:'requested'};save();writeRequested=true;phase='upload';
   const form=new FormData();for(const part of parts)form.append(part.field,new Blob([part.bytes],{type:part.file.contentType}),part.file.transportName);
   const ack=descriptors(await request(uploadPath,'POST',form,true),expected),listed=descriptors(await list(),expected);if(!same(ack,listed))fail('업로드 응답과 같은 문서의 원본 목록이 다릅니다.');
   ledger.groups[groupKey]={operationId,state:'observed',ack,localParts:expected.map(file=>({transportName:file.transportName,sha256:file.sha256,byteLength:file.byteLength})),remoteBytesVerified:false,actualUploadVerified:false};
-  ledger.state=allKeys.every(key=>ledger.groups[key]?.state==='observed')?'complete':'preparing';save();
+  ledger.state=allKeys.every(key=>ledger.groups[key]?.state==='observed')?'complete':'preparing';phase='save-observation';save();
  }
  return{docId:target.docId,planSha256:plan.planSha256,descriptors:ledger.groups[groupKey].ack,metadataObserved:true,remoteBytesVerified:false,actualUploadVerified:false,registered:false,ownedRecord:record};
+ }catch(error){
+  const known=new Map([
+   ['현재 Supplier Hub 회사가 다릅니다.','company'],['이 요청에서 생성한 정확한 새 문서만 업로드할 수 있습니다.','owned-document'],
+   ['원래 업로드 계획이 변경됐습니다.','plan-changed'],['원래 원본 파일 계획의 해시가 다릅니다.','plan-hash'],
+   ['원본 파일명·길이·해시 연결이 다릅니다.','file-metadata'],['전송 직전 실제 원본 바이트가 다릅니다.','file-bytes'],
+   ['이전 원본 업로드 응답이 미확정입니다. 같은 파일을 다시 업로드하지 않았습니다.','unknown-ack'],
+   ['저장된 원본 파일 목록이 원래 업로드 응답과 다릅니다.','file-list-changed'],
+   ['새 문서에 같은 이름의 파일이 이미 있어 덮어쓰지 않았습니다.','existing-file'],
+   ['새 문서에 원래 계획 밖의 파일 또는 중복 파일이 있습니다.','unexpected-file'],
+   ['다른 원본 업로드 기록이 먼저 변경되어 중복 요청하지 않았습니다.','ledger-race']
+  ]);
+  const code=known.get(error?.message)??(error?.name==='AbortError'?'timeout':error?.name==='TypeError'?'network':error?.name==='RangeError'?'runtime-range':'unrecognized');
+  return{format:'yoofam-native-upload-error-v1',phase,code,writeRequested};
+ }
+}
+
+export function nativeUploadFailure(value){
+ const phases=['input','plan','file-bytes','before-upload','upload','save-observation'],codes=['company','owned-document','plan-changed','plan-hash','file-metadata','file-bytes','unknown-ack','file-list-changed','existing-file','unexpected-file','ledger-race','timeout','network','runtime-range','unrecognized'];
+ return value&&Object.keys(value).sort().join(',')==='code,format,phase,writeRequested'&&value.format==='yoofam-native-upload-error-v1'&&phases.includes(value.phase)&&codes.includes(value.code)&&typeof value.writeRequested==='boolean'?{phase:value.phase,code:value.code,writeRequested:value.writeRequested}:null;
 }

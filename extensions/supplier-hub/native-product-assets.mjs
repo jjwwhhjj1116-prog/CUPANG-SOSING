@@ -74,7 +74,7 @@ export async function nativeProductDocumentAppSourcePage(input){
 /** Actual adapter update boundary. It consumes independently re-read server
  * plan/owned-create records, then uploads only verified private multipart parts.
  * Hub metadata agreement is not remote binary persistence or a receipt. */
-export async function prepareAndUploadNativeProductAssets({sourcePlan,binding,target,readImage,readOriginal,readCurrent,executeGroup}){
+export async function prepareAndUploadNativeProductAssets({sourcePlan,binding,target,readImage,readOriginal,readCurrent,executeGroup,onlyGroup}){
  const original=canon(sourcePlan),expected=copy(sourcePlan.identity),expectedTarget=copy(target);
  const current=async()=>{const fresh=await readCurrent();if(canon(fresh.sourcePlan)!==original||!same(fresh.target,expectedTarget)||!same(fresh.binding,binding))fail('NATIVE_ASSET_SOURCE_CHANGED');};
  await current();if(sourcePlan.sourcePlanSha256!==binding.nativeAssetSourcePlanSha256||sourcePlan.preparedBodySha256!==binding.preparedBodySha256||sourcePlan.originalBodySha256!==binding.originalBodySha256)fail('NATIVE_ASSET_BODY');
@@ -93,9 +93,11 @@ export async function prepareAndUploadNativeProductAssets({sourcePlan,binding,ta
   if(length>20*1024*1024)fail('NATIVE_ASSET_FRAME_LIMIT');groups.push({kind:request.kind,...(request.kind==='image'?{imageType:request.imageType}:{nativeType:request.nativeType}),path:request.path,parts});
  }
  const observations=[];await current();
+ if(onlyGroup!==undefined&&(!groups.some(group=>group.kind+':'+(group.imageType??group.nativeType)===onlyGroup)))fail('NATIVE_ASSET_GROUP');
  // The post-write source fence also precedes the next group; between them only
  // synchronous descriptor validation runs. Keep a fresh fence around each write.
- for(const group of groups){const value=await executeGroup({binding:copy(binding),sourcePlanSha256:sourcePlan.sourcePlanSha256,plan:copy(plan),expectedTarget:copy(expectedTarget),group});await current();
+ for(const group of groups){if(onlyGroup!==undefined&&group.kind+':'+(group.imageType??group.nativeType)!==onlyGroup)continue;
+  const value=await executeGroup({binding:copy(binding),sourcePlanSha256:sourcePlan.sourcePlanSha256,plan:copy(plan),expectedTarget:copy(expectedTarget),group});await current();
   if(value?.metadataObserved!==true||value.remoteBytesVerified!==false||value.actualUploadVerified!==false||value.registered!==false||!same(value.docId,target.docId)||value.planSha256!==plan.planSha256)fail('NATIVE_ASSET_UPLOAD_UNCONFIRMED');
   validateNativeAssetUploadDescriptors(value.descriptors,{kind:group.kind,expectedFiles:group.parts});observations.push(copy(value));
  }

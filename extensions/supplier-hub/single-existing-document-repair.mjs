@@ -30,7 +30,7 @@ export async function singleExistingDocumentRepairPage(input){
    if(!record||!same(record,input.expectedRecord)||!same(record.binding,binding)||!same(record.docId,docId)||record.state!=='created'
     ||record.createOperationId!==binding.requestId+':create'||!same(record.baselineDocIds,baseline)||record.updateOperationId!==undefined||record.loadedDocId!==undefined||record.watchToken!==undefined
     ||!expected||expected.attempt!==2||expected.format!=='yoofam-existing-document-repair-retry-v1'||!repair||!same(Object.fromEntries(Object.keys(expected).map(key=>[key,repair[key]])),expected)
-    ||!record.nativeAssets||record.nativeAssets.state!=='preparing'||record.nativeAssets.sourcePlanSha256!==binding.nativeAssetSourcePlanSha256
+    ||!record.nativeAssets||!(input.allowComplete===true?['preparing','complete']:['preparing']).includes(record.nativeAssets.state)||record.nativeAssets.sourcePlanSha256!==binding.nativeAssetSourcePlanSha256
     ||!Object.values(record.nativeAssets.groups??{}).length||Object.values(record.nativeAssets.groups).some(group=>group?.state!=='observed')
     ||recordSnapshot!==undefined&&canon(record)!==recordSnapshot)fail('승인된 복구의 미요청 파일·본문 연결이 달라 이어 저장하지 않았습니다.');
    recordSnapshot=canon(record);
