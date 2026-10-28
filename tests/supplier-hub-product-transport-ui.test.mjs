@@ -151,6 +151,19 @@ test('reserved resume needs a verified read snapshot and dispatches once with th
   assert.equal(h.button(label),undefined);assert.ok(h.button(continueDraft));
  }finally{h.close();}}
 });
+test('segmented reserved UI carries one original reservation through confirmed groups to the original body update',async()=>{
+ const h=await fixture();let segments=0;try{
+  const proof=sequence=>({...repairProof(h,true),existingDocumentRepairRetryAttempted:true,existingDocumentRepairContinuationAttempted:true,existingDocumentRepairContinuationResumed:true,checkpointSequence:sequence});
+  h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true,existingDocumentRepairAvailable:true,existingDocumentRepairRetryAvailable:true,existingDocumentRepairContinuationAvailable:true,existingDocumentRepairReservedResumeAvailable:true,existingDocumentRepairSegmentedAvailable:true}
+   :payload.action==='resumeReservedRepair'?draftResult(h.f,payload.packet.requestId,++segments===3?'updated':'update-requested',{docId:'2347603',recovered:true,needsRecovery:segments<3,draftProof:proof(12+segments)})
+   :draftResult(h.f,payload.packet.requestId,'update-requested',{docId:'2347603',needsRecovery:true,draftProof:proof(12),...(payload.action.startsWith('recover')?{error:{code:'NATIVE_ASSET_RECOVERY_READ_ONLY',message:'파일 목록 2/9개 확인'}}:{})});
+  await h.idle();await h.click(open);await h.click(prepareDraft);await h.click(recoverDraft);
+  const stale=h.button('원래 예약의 미요청 파일만 이어 저장').props.onClick;stale();await h.idle();
+  assert.equal(segments,3);assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','recoverPreparedDraft','resumeReservedRepair','resumeReservedRepair','resumeReservedRepair']);
+  assert.equal(new Set(h.f.sent.map(row=>row.payload.packet.requestId)).size,1);assert.ok(h.button(continueDraft));assert.equal(h.button('원래 예약의 미요청 파일만 이어 저장'),undefined);
+  stale();await h.idle();assert.equal(segments,3);assert.equal(h.f.history.length,0);assert.ok(h.f.calls.every(row=>row.method==='GET'));
+ }finally{h.close();}
+});
 test('approved repair continuation retains the original request and dispatches once only when the extension supports remaining-work checks',async()=>{
  for(const available of [false,true]){const h=await fixture();try{
   const proof=()=>({...repairProof(h,true),existingDocumentRepairRetryAttempted:true});
