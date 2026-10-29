@@ -44,6 +44,22 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
  }finally{h.close();}
 });
 
+test('a distinct same-URL capture appends one explicit fork row and preserves all five pending rows and unknown requests',async()=>{
+ const h=await fixture({rowCount:5});try{
+  const sourceUrl='https://detail.1688.com/offer/813724060928.html',jobId='11111111-1111-4111-8111-111111111111';
+  h.rows.forEach((row,index)=>{row.url=sourceUrl;row.status=index===4?'saved':'error';row.message='기존 보관 '+index;if(index===0)row.pendingJobId='unknown-request';if(index===1){row.forkJobId=jobId;row.sourceCapture={format:'yoofam-saved-page-capture-v1',sourceUrl,captureId:'22222222-2222-4222-8222-222222222222',fingerprint:'b'.repeat(64),revision:1};}});
+  const sourceCapture={format:'yoofam-saved-page-capture-v1',sourceUrl,captureId:'33333333-3333-4333-8333-333333333333',fingerprint:'c'.repeat(64),revision:2};
+  h.setSeed({id:'distinct-capture',sourceUrl,sourceCapture,forkJobId:jobId});const before=JSON.stringify(h.rows),references=[...h.rows],products=h.api.sqlite.prepare('SELECT COUNT(*) n FROM products').get().n;
+  const selected=h.picker().props.onSelected;selected(h.api.context.category);selected(h.api.context.category);
+  assert.equal(h.rows.length,6);assert.equal(JSON.stringify(h.rows.slice(0,5)),before);assert.ok(h.rows.slice(0,5).every((row,index)=>row===references[index]));
+  const added=h.rows[5];assert.equal(added.forkJobId,jobId);assert.equal(added.status,'error');assert.equal(added.productId,undefined);assert.equal(added.pendingJobId,undefined);assert.deepEqual(JSON.parse(JSON.stringify(added.sourceCapture)),sourceCapture);
+  assert.equal(added.features,'');assert.equal(added.keywords,'');assert.deepEqual(h.consumed,['distinct-capture']);assert.equal(h.calls.length,0,'category selection only appends a local review row');
+  assert.equal(h.api.sqlite.prepare('SELECT COUNT(*) n FROM products').get().n,products);assert.match(text(h.render()),/선택한 새 수집본을 별도 상품으로 작성합니다/);
+  assert.equal(h.button('새 수집본으로 별도 초안 작성'),undefined,'the existing verified category schema guard is still required before fork review');
+  const validation=h.api.load('app/intake-queue.ts').validateIntakeQueue(h.rows,'work');assert.ok(validation.errors.some(item=>item.messages.some(message=>message.includes('URL 중복'))),'ordinary multi-row enqueue still enforces URL deduplication');
+ }finally{h.close();}
+});
+
 test('cancel/unmount rejects late seeded category callbacks, and the next ordinary category starts with an empty URL',async()=>{
  for(const action of ['cancel','unmount']){
   const h=await fixture();try{

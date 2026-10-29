@@ -696,8 +696,12 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
       if(existingProducts.length&&!forkJob)throw Error('기존 상품의 원문 연결을 확인하지 못했습니다. 기존 작업 상품은 변경하지 않았습니다.');
       const sourceCapture=sourceCaptureSelection(item);
       setSourceNotice('');
-      const queued=intakeRows.find(row=>row.status!=='saved'&&sameSourceUrl(row.url,item.snapshot.sourceUrl));
-      if(queued){if(!sameSourceCaptureSelection(queued.sourceCapture,sourceCapture)||queued.forkJobId!==forkJob?.id)throw Error('대기열에 같은 상품의 다른 수집본이나 URL 입력이 있습니다. 기존 행을 확인한 뒤 사용할 수집본을 다시 추가해주세요.');setIntakeCategoryEntry(undefined);setView('work');setAddOpen(true);return;}
+      const sameUrlRows=intakeRows.filter(row=>row.status!=='saved'&&sameSourceUrl(row.url,item.snapshot.sourceUrl));
+      const queued=sameUrlRows.find(row=>sameSourceCaptureSelection(row.sourceCapture,sourceCapture));
+      if(queued){if(queued.forkJobId!==forkJob?.id)throw Error('대기열에 선택한 수집본의 다른 요청 연결이 있습니다. 기존 행과 원래 요청의 결과를 확인해주세요.');setIntakeCategoryEntry(undefined);setView('work');setAddOpen(true);return;}
+      // A different immutable capture may review its own fork without editing
+      // the existing URL rows. Normal enqueue deduplication stays unchanged.
+      if(sameUrlRows.length&&forkJob?.status!=='awaiting_connector')throw Error('대기열에 같은 상품의 다른 수집본이나 URL 입력이 있습니다. 기존 행을 확인한 뒤 사용할 수집본을 다시 추가해주세요.');
       if(intakeRows.length>=50)throw Error('상품 대기열은 최대 50행입니다. 기존 입력은 유지했습니다.');
       setIntakeCategoryEntry(undefined);setIntakeSourceSeed({id:crypto.randomUUID(),sourceUrl:item.snapshot.sourceUrl,title:item.reviewed?.title??item.snapshot.title,sourceCapture,...(forkJob?{forkJobId:forkJob.id}:{})});setView('work');setAddOpen(true);
     }catch(error){setSourceNotice(error instanceof Error?error.message:'상품 추가 실패');}

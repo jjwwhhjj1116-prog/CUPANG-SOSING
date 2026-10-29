@@ -43,6 +43,40 @@ function dashboard(company,initialMode='history'){
 }
 
 for(const company of companies){
+ test(`${company.code}: a distinct immutable capture opens only a new local fork seed while five same-URL pending rows stay exact`,async()=>{
+  const h=dashboard(company,'ready');try{
+   const sourceUrl=h.saved.snapshot.sourceUrl,jobId='11111111-1111-4111-8111-111111111111';h.products[0].source_url=sourceUrl;
+   h.jobs.push({id:jobId,product_id:h.products[0].id,source_url:sourceUrl,status:'awaiting_connector',created_at:'2026-10-20T00:00:00.000Z'});
+   h.draft.rows=Array.from({length:5},(_,index)=>({id:'preserved-'+index,url:sourceUrl,status:index===4?'saved':index%2?'error':'draft',features:'수동 특징 '+index,keywords:'수동 키워드 '+index,message:'보관 '+index,
+    ...(index===0?{pendingJobId:'unknown-request'}:index===1?{forkJobId:jobId,sourceCapture:{format:'yoofam-saved-page-capture-v1',sourceUrl,captureId:'22222222-2222-4222-8222-222222222222',fingerprint:'b'.repeat(64),revision:1}}:index===4?{productId:'old-saved-product'}:{})}));
+   await h.settle();const before=JSON.stringify({rows:h.draft.rows,products:h.products,jobs:h.jobs}),references=[...h.draft.rows],reads=h.requests.length;
+   h.component('source-inbox-panel').onAdd(h.saved);await h.settle();const queue=h.component('intake-queue-panel');assert.ok(queue);
+   assert.equal(queue.sourceSeed.forkJobId,jobId);assert.equal(queue.sourceSeed.sourceCapture.captureId,h.saved.id);assert.equal(queue.sourceSeed.sourceCapture.fingerprint,h.saved.fingerprint);
+   assert.equal(h.requests.length,reads,'new seed never posts or retries an existing request');assert.equal(JSON.stringify({rows:h.draft.rows,products:h.products,jobs:h.jobs}),before);assert.ok(h.draft.rows.every((row,index)=>row===references[index]));
+  }finally{h.close();}
+ });
+
+ test(`${company.code}: exact capture is found after another same-URL row and reused without a new category seed`,async()=>{
+  const h=dashboard(company,'ready');try{
+   const sourceUrl=h.saved.snapshot.sourceUrl,jobId='11111111-1111-4111-8111-111111111111';h.products[0].source_url=sourceUrl;
+   h.jobs.push({id:jobId,product_id:h.products[0].id,source_url:sourceUrl,status:'awaiting_connector',created_at:'2026-10-20T00:00:00.000Z'});
+   h.draft.rows.push({id:'other-capture',url:sourceUrl,status:'error',forkJobId:jobId,sourceCapture:{format:'yoofam-saved-page-capture-v1',sourceUrl,captureId:'22222222-2222-4222-8222-222222222222',fingerprint:'b'.repeat(64),revision:1}},
+    {id:'exact-capture',url:sourceUrl,status:'error',forkJobId:jobId,sourceCapture:{format:'yoofam-saved-page-capture-v1',sourceUrl,captureId:h.saved.id,fingerprint:h.saved.fingerprint,revision:h.saved.revision}});
+   await h.settle();const before=JSON.stringify(h.draft.rows),reads=h.requests.length;h.component('source-inbox-panel').onAdd(h.saved);await h.settle();
+   const queue=h.component('intake-queue-panel');assert.ok(queue);assert.equal(queue.sourceSeed,undefined);assert.equal(JSON.stringify(h.draft.rows),before);assert.equal(h.requests.length,reads);
+  }finally{h.close();}
+ });
+
+ test(`${company.code}: no known fork, active job, changed exact request and full queues keep their original guards`,async()=>{
+  for(const mode of ['no-fork','running','exact-other-request','full']){const h=dashboard(company,'ready');try{
+   const sourceUrl=h.saved.snapshot.sourceUrl,jobId='11111111-1111-4111-8111-111111111111';
+   if(mode!=='no-fork'){h.products[0].source_url=sourceUrl;h.jobs.push({id:jobId,product_id:h.products[0].id,source_url:sourceUrl,status:mode==='running'?'processing':'awaiting_connector',created_at:'2026-10-20T00:00:00.000Z'});}
+   h.draft.rows=Array.from({length:mode==='full'?50:1},(_,index)=>({id:'pending-'+index,url:sourceUrl,status:'error',pendingJobId:'unknown-request',features:'수동 보관',...(mode==='exact-other-request'?{forkJobId:'22222222-2222-4222-8222-222222222222',sourceCapture:{format:'yoofam-saved-page-capture-v1',sourceUrl,captureId:h.saved.id,fingerprint:h.saved.fingerprint,revision:h.saved.revision}}:{})}));
+   await h.settle();const before=JSON.stringify({rows:h.draft.rows,products:h.products,jobs:h.jobs}),reads=h.requests.length;h.component('source-inbox-panel').onAdd(h.saved);await h.settle();
+   assert.equal(h.component('intake-queue-panel'),undefined,mode);assert.equal(JSON.stringify({rows:h.draft.rows,products:h.products,jobs:h.jobs}),before,mode);assert.equal(h.requests.length,reads,mode);
+  }finally{h.close();}}
+ });
+
  test(`${company.code}: explicit newer capture opens a separate-draft seed while saved rows and existing products remain unchanged`,async()=>{
   const h=dashboard(company,'ready');try{
    h.products[0].source_url=h.saved.snapshot.sourceUrl;
