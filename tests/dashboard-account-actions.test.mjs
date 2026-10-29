@@ -913,3 +913,51 @@ for(const changedSelection of [false,true])test(`repeated source ACKs ${changedS
   assert.equal(accepted.length,2);assert.equal(current[0].sourceCapture.revision,changedSelection?2:3);assert.equal(current[1],other);assert.equal(current[0].profile,profile);assert.equal(current[0].features,row.features);assert.equal(current[0].keywords,row.keywords);if(changedSelection)assert.equal(current[0],replaced,'A skipped target must not be enrolled into later review ACKs');assert.equal(h.lateWrites,0);assert.ok(h.requests.every(request=>request.method==='GET'));
  }finally{h.close();}
 });
+
+test('acquisition entry exposes both real paths and keeps URL-first source collection available',async()=>{
+ const h=harness();try{
+  await h.settle();const tree=h.render(),links=nodes(tree).filter(node=>node.type==='a');
+  assert.ok(links.some(node=>text(node)==='1688 상품 페이지 열기'&&node.props.href==='https://www.1688.com/'&&node.props.target==='_blank'&&node.props.rel==='noopener noreferrer'));
+  assert.ok(links.some(node=>text(node)==='수집한 상품 확인'&&node.props.href==='#captured-source-inbox'));
+  assert.ok(nodes(tree).some(node=>node.props?.id==='captured-source-inbox'));assert.equal(h.componentVisible('query-source-panel'),false);
+  const queryMount=h.componentMount('query-source-panel');await h.toggleDetails('1688 URL로 원문 먼저 담기 · 서버 수집');
+  assert.equal(h.componentVisible('query-source-panel'),true);assert.equal(h.componentMount('query-source-panel'),queryMount,'opening the existing collector does not remount or reset its inputs');
+  assert.ok(h.requests.every(request=>request.method==='GET'));assert.equal(h.component('intake-queue-panel'),undefined);
+ }finally{h.close();}
+});
+
+test('acquisition category entry preserves the shared queue and consumes only its exact one-shot request',async()=>{
+ const row={id:'preserved-entry-row',url:'https://detail.1688.com/offer/647000000009.html',features:'사용자 입력 보존',status:'draft'};
+ const h=harness({initialIntakeRows:[row]});
+ const closeButton=()=>nodes(nodes(h.render()).find(node=>node.props?.role==='dialog'&&node.props['aria-label']==='상품 대기열')).find(node=>node.type==='button'&&node.props.className==='icon-close');
+ try{
+  await h.settle();await h.click('카테고리 선택 후 1688 URL 등록');const first=h.component('intake-queue-panel'),entry=first.initialCategorySelection;
+  assert.equal(entry.ownerId,'test-owner');assert.match(entry.id,/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u);
+  assert.equal(first.sourceSeed,undefined);assert.equal(first.rows[0],row);assert.equal(first.goal,'work');
+  first.onInitialCategorySelectionConsumed('unrelated');await h.settle();assert.equal(h.component('intake-queue-panel').initialCategorySelection,entry);
+  first.onInitialCategorySelectionConsumed(entry.id);first.onInitialCategorySelectionConsumed(entry.id);await h.settle();assert.equal(h.component('intake-queue-panel').initialCategorySelection,undefined);
+  closeButton().props.onClick();await h.settle();await h.click('＋ 상품 추가');const fresh=h.component('intake-queue-panel'),next=fresh.initialCategorySelection;
+  assert.notEqual(next.id,entry.id);first.onInitialCategorySelectionConsumed(entry.id);await h.settle();assert.equal(h.component('intake-queue-panel').initialCategorySelection,next);assert.equal(fresh.rows[0],row);
+  assert.ok(h.requests.every(request=>request.method==='GET'));assert.equal(h.products.length,2);
+ }finally{h.close();}
+});
+
+test('acquisition header rejects a retained owner A/B/A entry callback and cannot replace an open request',async()=>{
+ const h=harness();try{
+  await h.settle();const old=h.button('＋ 상품 추가').props.onClick;
+  h.switchOwner('next-owner');await h.settle();h.switchOwner('test-owner');await h.settle();
+  old();await h.settle();assert.equal(h.component('intake-queue-panel'),undefined);await h.click('＋ 상품 추가');const current=h.component('intake-queue-panel').initialCategorySelection;assert.equal(current.ownerId,'test-owner');
+  await h.click('＋ 상품 추가');assert.equal(h.component('intake-queue-panel').initialCategorySelection,current);
+  h.close();old();assert.equal(h.lateWrites,0);assert.ok(h.requests.every(request=>request.method==='GET'));
+ }finally{h.close();}
+});
+
+test('acquisition page capture keeps recommendation-first inputs and never starts work when added',async()=>{
+ const {saved}=reviewSourceFixture('test-owner',{code:'A01526306',name:'유앤채'}),h=harness({sourceRegistrationsState:{items:[saved],reload(){},acceptReviewed(){return false;}}});
+ try{
+  await h.settle();h.component('source-inbox-panel').onAdd(saved);await h.settle();const queue=h.component('intake-queue-panel');
+  assert.equal(queue.initialCategorySelection,undefined);assert.equal(queue.sourceSeed.sourceUrl,saved.snapshot.sourceUrl);assert.equal(queue.sourceSeed.title,saved.reviewed.title);
+  assert.equal(queue.sourceSeed.sourceCapture.captureId,saved.id);assert.equal(queue.sourceSeed.sourceCapture.fingerprint,saved.fingerprint);assert.equal(queue.sourceSeed.sourceCapture.revision,saved.revision);assert.equal(queue.goal,'work');assert.equal(queue.rows.length,0);
+  assert.match(text(h.render()),/선택한 수집본 → 추천 카테고리 확인/);assert.ok(h.requests.every(request=>request.method==='GET'));
+ }finally{h.close();}
+});

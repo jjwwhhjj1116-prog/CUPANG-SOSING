@@ -211,8 +211,14 @@ test('owner, initial version and foreground scope changes cannot start or publis
 });
 
 test('a new manual role/content revision before save blocks upload and a slot timeout releases canvas',async()=>{
- const h=fixture('main',['owner/source-a.png']);const render=h.deps.render;h.deps.render=async(...args)=>{const result=await render(...args);h.content.revision++;h.content.assets.main.provenance='manual';return result;};const result=await h.run();assert.equal(result.status,'partial');assert.equal(result.applied,0);assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);
+ const h=fixture('main',['owner/source-a.png']);const render=h.deps.render;h.deps.render=async(...args)=>{const result=await render(...args);h.content.revision++;h.content.assets.main.provenance='manual';return result;};const result=await h.run();assert.equal(result.status,'partial');assert.equal(result.sourceChanged,true);assert.equal(result.applied,0);assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);
  const timeout=fixture('main',['owner/source-a.png']);timeout.deps.recognize=async(_image,_language,signal)=>{timeout.expire();signal.throwIfAborted();};const stopped=await timeout.run();assert.equal(stopped.status,'partial');assert.equal(stopped.applied,0);assert.match(stopped.messages[0],/90초/);assert.ok(timeout.canvases.every(canvas=>canvas.width===0));assert.equal(timeout.timers.size,0);
+});
+
+test('a caught typed source mismatch stops before another image and is distinguishable from confirmed OCR failure',async()=>{
+ const changed=fixture(),read=changed.deps.readSource;changed.deps.readSource=async(...args)=>{const image=await read(...args);image.source.sourceKey='owner/different-source.png';return image;};
+ const result=await changed.run();assert.equal(result.status,'partial');assert.equal(result.sourceChanged,true);assert.equal(result.applied,0);assert.equal(changed.calls.filter(row=>row[0]==='read').length,1);assert.equal(changed.calls.some(row=>row[0]==='apply'),false);assert.equal(result.state.batches.option.items[1].status,'pending');assert.ok(changed.canvases.every(canvas=>canvas.width===0));
+ const failed=fixture();failed.deps.recognize=async()=>{throw Error('ordinary confirmed OCR error');};const partial=await failed.run();assert.equal(partial.status,'partial');assert.equal(partial.sourceChanged,undefined);assert.equal(partial.applied,0);assert.equal(failed.calls.filter(row=>row[0]==='read').length,2);assert.equal(failed.calls.some(row=>row[0]==='apply'),false);
 });
 
 test('lack of images or a missing save acknowledgement never counts as completed',async()=>{

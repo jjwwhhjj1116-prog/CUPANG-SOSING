@@ -25,6 +25,40 @@ const fail=(code,message)=>{throw new SingleDocumentError(code,message);};
 const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canonical).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}';
 const equal=(left,right)=>canonical(left)===canonical(right);
 const copy=value=>structuredClone(value);
+const LEGAL_DIAGNOSTIC_KEYS=['attachmentType','byteLength','categoryId','certificateType','code','contentType','createdAt','data','disabled','docId','documentId','errorCode','fileId','fileName','fileSize','fileType','host','id','imageData','imageName','imageUrl','mainImage','message','mimeType','modifiedAt','name','productId','s3Link','sha256','size','status','type','version'];
+const LEGAL_DIAGNOSTIC_TYPES=['missing','null','array','object','string-empty','string','number','boolean'];
+const LEGAL_DIAGNOSTIC_FILE_TYPES=['import_type','certificate','additional','categoryCert','adCert','msds','MAIN','ADDITIONAL','SIZECHART','LABEL','DETAIL'];
+/** A failed legal collection read remains failed. Accept only bounded,
+ * value-free page diagnostics; never serialize an unknown server field. */
+function savedLegalFailureSummary(value){
+ const object=item=>Boolean(item&&typeof item==='object'&&!Array.isArray(item));
+ const exact=(item,keys)=>object(item)&&Object.keys(item).length===keys.length&&keys.every(key=>Object.hasOwn(item,key));
+ const dense=(items,limit)=>Array.isArray(items)&&items.length<=limit&&Object.keys(items).length===items.length&&Object.keys(items).every((key,index)=>key===String(index));
+ const bounded=(item,min=0)=>Number.isSafeInteger(item)&&item>=min&&item<=3145728;
+ const failure=value?.currentReadFailure;
+ if(!exact(value,['currentReadFailure'])||!exact(failure,['format','phase','code','diagnostics'])||failure.format!=='yoofam-current-saved-draft-read-failure-v1'||failure.phase!=='legal-lists'||failure.code!=='legal-array-nonempty')return '';
+ const diagnostic=failure.diagnostics;
+ if(!exact(diagnostic,['format','collection','count','truncated','rows'])||diagnostic.format!=='yoofam-saved-draft-legal-diagnostics-v1'||diagnostic.collection!=='array'||!bounded(diagnostic.count,1)
+   ||!dense(diagnostic.rows,12)||diagnostic.rows.length!==Math.min(diagnostic.count,12)||diagnostic.truncated!==(diagnostic.count>diagnostic.rows.length))return '';
+ for(const [index,row]of diagnostic.rows.entries()){
+  if(!exact(row,['index','type','keys','keyCount','keysTruncated','fileType','fileName','imageName','s3Link','docId'])||row.index!==index||!['null','array','object','string','number','boolean'].includes(row.type)
+    ||!dense(row.keys,12)||row.keys.some((key,position)=>!LEGAL_DIAGNOSTIC_KEYS.includes(key)||position>0&&row.keys[position-1]>=key)||!bounded(row.keyCount)||row.keyCount<row.keys.length||row.keysTruncated!==(row.keyCount>row.keys.length)
+    ||!exact(row.fileType,['type','knownType','identifier'])||!LEGAL_DIAGNOSTIC_TYPES.includes(row.fileType.type)||typeof row.fileType.identifier!=='boolean'
+    ||!(row.fileType.knownType===null||LEGAL_DIAGNOSTIC_FILE_TYPES.includes(row.fileType.knownType))||row.fileType.identifier&&row.fileType.type!=='string'
+    ||row.fileType.knownType!==null&&(row.fileType.type!=='string'||row.fileType.identifier!==true)
+    ||!exact(row.docId,['type','same'])||!LEGAL_DIAGNOSTIC_TYPES.includes(row.docId.type)||typeof row.docId.same!=='boolean'||row.docId.same&&!['number','string'].includes(row.docId.type))return '';
+  for(const key of ['fileName','imageName','s3Link']){const field=row[key];if(!exact(field,['type','expectedImageMatch'])||!LEGAL_DIAGNOSTIC_TYPES.includes(field.type)||typeof field.expectedImageMatch!=='boolean'||field.expectedImageMatch&&field.type!=='string')return '';}
+  if(row.type!=='object'&&(row.keys.length||row.keyCount!==0||row.keysTruncated||['fileType','fileName','imageName','s3Link','docId'].some(key=>row[key].type!=='missing')||row.fileType.knownType!==null||row.fileType.identifier||row.docId.same
+    ||['fileName','imageName','s3Link'].some(key=>row[key].expectedImageMatch)))return '';
+  if(row.type==='object'&&['fileType','fileName','imageName','s3Link','docId'].some(key=>row.keys.includes(key)?row[key].type==='missing':row.keys.length<12&&row[key].type!=='missing'))return '';
+ }
+ const counts=values=>{const result=new Map();for(const item of values)result.set(item,(result.get(item)??0)+1);return [...result].sort(([left],[right])=>left<right?-1:left>right?1:0).map(([key,count])=>key+':'+count).join(',');};
+ const rows=diagnostic.rows,keys=[...new Set(rows.flatMap(row=>row.keys))].sort();
+ return ' 진단: 배열 '+diagnostic.count+'행·표본 '+rows.length+'행'+(diagnostic.truncated?'(일부)':'')+'; 행종류 '+counts(rows.map(row=>row.type))
+   +'; fileType '+counts(rows.map(row=>row.fileType.type))+' / 알려진종류 '+(counts(rows.filter(row=>row.fileType.knownType!==null).map(row=>row.fileType.knownType))||'없음')+' / 기타식별자 '+rows.filter(row=>row.fileType.identifier&&row.fileType.knownType===null).length
+   +['fileName','imageName','s3Link'].map(key=>'; '+key+' '+counts(rows.map(row=>row[key].type))+' / 원본이미지연결 일치 '+rows.filter(row=>row[key].expectedImageMatch).length).join('')
+   +'; docId '+counts(rows.map(row=>row.docId.type))+' / 동일문서 '+rows.filter(row=>row.docId.same).length+'; 허용키 '+(keys.join(',')||'없음')+' / 숨긴키가 있는 행 '+rows.filter(row=>row.keysTruncated).length+'.';
+}
 /** Project only the round-trip forms observed in native doc2347603. Preserve
  * every value and all other differences for the receiver's exact comparison.
  * This never changes the reviewed packet, outbound request or saved record. */
@@ -694,7 +728,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     try{if(typeof value==='string'){if(value.length>6*1024*1024)throw Error();value=JSON.parse(value);}}catch{fail('SAVED_DRAFT_TARGET_UNCONFIRMED','현재 저장 문서의 읽기 응답 형식을 확인하지 못했습니다.');}
     const failure=value?.currentReadFailure;
     if(failure){const phase=typeof failure.phase==='string'&&/^[a-z0-9-]{1,40}$/.test(failure.phase)?failure.phase:'read',code=typeof failure.code==='string'&&/^[a-z0-9-]{1,40}$/.test(failure.code)?failure.code:'comparison';
-      fail('SAVED_DRAFT_TARGET_UNCONFIRMED','같은 저장 문서의 현재 읽기 확인이 중단됐습니다. 단계: '+phase+' / '+code+'. 파일·본문은 다시 보내지 않았습니다.');}
+      fail('SAVED_DRAFT_TARGET_UNCONFIRMED','같은 저장 문서의 현재 읽기 확인이 중단됐습니다. 단계: '+phase+' / '+code+'.'+savedLegalFailureSummary(value)+' 파일·본문은 다시 보내지 않았습니다.');}
     const keys=['body','files','fileSetSha256','byteSetSha256','rawBodySha256','filesCount','duplicateMatches','documentState','readOnly','remoteWrites','historicalAckRecovered','observedAt',...(mode==='bind'?['record']:[])];
     if(!value||Object.keys(value).sort().join(',')!==keys.sort().join(',')||!Array.isArray(value.files)||value.filesCount!==expectedImages.length||value.files.length!==expectedImages.length
       ||value.duplicateMatches!==0||value.documentState!=='UNFINISHED'||value.readOnly!==true||value.remoteWrites!==false||value.historicalAckRecovered!==false

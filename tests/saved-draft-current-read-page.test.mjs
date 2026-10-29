@@ -86,6 +86,48 @@ test('all-legal scalar shapes and every nonempty collection fail with fixed dist
  }
 });
 
+test('nonempty legal arrays report bounded field kinds and manifest matches while retaining the failure and hiding all raw file identities',async()=>{
+ const f=fixture(),name=f.input.expectedImages[0].transportName,link=f.state.files[0].s3Link;
+ f.state.legal=[{fileType:'certificate',fileName:'PRIVATE_UNKNOWN_FILE.pdf',s3Link:'PRIVATE_S3_KEY',docId:f.input.docId},
+  {fileType:'MAIN',imageName:name,s3Link:link,docId:f.input.docId},
+  {fileType:'additional',fileName:'',s3Link:' \t',docId:String(f.input.docId)}];
+ const before=f.snapshot(),result=await f.run();expectFailure(result);assert.equal(result.currentReadFailure.code,'legal-array-nonempty');
+ const diagnostics=result.currentReadFailure.diagnostics;assert.deepEqual(Object.keys(diagnostics).sort(),['collection','count','format','rows','truncated']);assert.equal(diagnostics.format,'yoofam-saved-draft-legal-diagnostics-v1');assert.equal(diagnostics.collection,'array');assert.equal(diagnostics.count,3);assert.equal(diagnostics.truncated,false);
+ const [legal,image,empty]=diagnostics.rows;assert.deepEqual(legal.keys,['docId','fileName','fileType','s3Link']);assert.equal(legal.keyCount,4);assert.equal(legal.keysTruncated,false);assert.equal(legal.type,'object');assert.equal(legal.index,0);
+ assert.deepEqual(legal.fileType,{type:'string',knownType:'certificate',identifier:true});assert.deepEqual(legal.fileName,{type:'string',expectedImageMatch:false});assert.deepEqual(legal.imageName,{type:'missing',expectedImageMatch:false});assert.deepEqual(legal.s3Link,{type:'string',expectedImageMatch:false});assert.deepEqual(legal.docId,{type:'number',same:true});
+ assert.deepEqual(image.fileType,{type:'string',knownType:'MAIN',identifier:true});assert.deepEqual(image.imageName,{type:'string',expectedImageMatch:true});assert.deepEqual(image.s3Link,{type:'string',expectedImageMatch:true});assert.deepEqual(empty.fileName,{type:'string-empty',expectedImageMatch:false});assert.deepEqual(empty.s3Link,{type:'string-empty',expectedImageMatch:false});assert.deepEqual(empty.docId,{type:'string',same:false});
+ assert.doesNotMatch(JSON.stringify(result),/PRIVATE_UNKNOWN_FILE|PRIVATE_S3_KEY|stored\/native|stored-image/);assert.equal(f.snapshot(),before);assert.equal(f.writes(),0);assert.equal(f.calls.some(call=>call.path.startsWith('/sr/api/image/')),false);
+});
+
+test('malformed legal rows and nested credential values reveal only fixed types with no raw strings or property values',async()=>{
+ const f=fixture(),secret='SECRET_DO_NOT_LEAK_899162';f.state.legal=[null,[],secret,false,34,{},
+  {fileType:{token:secret},fileName:[secret],imageName:34,s3Link:false,docId:{secret}},
+  {fileType:secret,fileName:secret,imageName:secret,s3Link:'https://private.example/?credential='+secret,docId:secret},
+  {fileType:'A'.repeat(40)}, {fileType:'B'.repeat(41)}, {fileType:'한글 원문'}];
+ const result=await f.run();expectFailure(result);const rows=result.currentReadFailure.diagnostics.rows;
+ assert.deepEqual(rows.map(row=>row.type),['null','array','string','boolean','number','object','object','object','object','object','object']);
+ for(const row of rows.slice(0,5)){assert.deepEqual(row.keys,[]);assert.equal(row.keyCount,0);assert.equal(row.keysTruncated,false);assert.deepEqual(row.fileType,{type:'missing',knownType:null,identifier:false});for(const key of ['fileName','imageName','s3Link'])assert.deepEqual(row[key],{type:'missing',expectedImageMatch:false});assert.deepEqual(row.docId,{type:'missing',same:false});}
+ assert.deepEqual(rows[6].fileType,{type:'object',knownType:null,identifier:false});assert.deepEqual(rows[6].fileName,{type:'array',expectedImageMatch:false});assert.deepEqual(rows[6].imageName,{type:'number',expectedImageMatch:false});assert.deepEqual(rows[6].s3Link,{type:'boolean',expectedImageMatch:false});assert.deepEqual(rows[6].docId,{type:'object',same:false});
+ assert.deepEqual(rows[7].fileType,{type:'string',knownType:null,identifier:true});assert.equal(rows[8].fileType.identifier,true);assert.equal(rows[9].fileType.identifier,false);assert.equal(rows[10].fileType.identifier,false);
+ assert.doesNotMatch(JSON.stringify(result),/SECRET_DO_NOT_LEAK|private\.example|credential|한글|AAAAAAAAAAAA|BBBBBBBBBBBB/);assert.equal(f.writes(),0);
+});
+
+test('legal diagnostic samples cap both rows and own keys and never expose unknown identifier keys or credential-shaped property names',async()=>{
+ const f=fixture(),knownKeys=['attachmentType','byteLength','categoryId','certificateType','code','contentType','createdAt','data','disabled','docId','documentId','errorCode','fileId','fileName','fileSize','fileType','host','id','imageData','imageName','imageUrl','mainImage','message','mimeType','modifiedAt','name','productId','s3Link','sha256','size','status','type','version'];
+ const row=Object.fromEntries([...knownKeys.map(key=>[key,'PRIVATE_VALUE_80129']),['SECRET_CREDENTIAL_80129','PRIVATE_VALUE_80129'],['https://private.example/','PRIVATE_VALUE_80129'],['X'.repeat(81),'PRIVATE_VALUE_80129'],['__proto__',{token:'PRIVATE_VALUE_80129'}]]);
+ f.state.legal=Array.from({length:100},()=>copy(row));const result=await f.run();expectFailure(result);const diagnostics=result.currentReadFailure.diagnostics;assert.equal(diagnostics.count,100);assert.equal(diagnostics.rows.length,12);assert.equal(diagnostics.truncated,true);
+ for(const [index,sample] of diagnostics.rows.entries()){assert.equal(sample.index,index);assert.equal(sample.keyCount,37);assert.equal(sample.keys.length,12);assert.deepEqual(sample.keys,knownKeys.slice().sort().slice(0,12));assert.equal(sample.keysTruncated,true);assert.ok(sample.keys.every(key=>/^[A-Za-z_][A-Za-z0-9_]{0,39}$/.test(key)));}
+ const encoded=JSON.stringify(result);assert.ok(encoded.length<10000);assert.doesNotMatch(encoded,/PRIVATE_VALUE|SECRET_CREDENTIAL|private\.example|__proto__|XXXXXXXXXXXXXXXX/);assert.equal(f.writes(),0);
+});
+
+test('legal diagnostic failure also blocks bind and check without altering an existing current-read record or fabricating acknowledgements',async()=>{
+ for(const mode of ['bind','check']){const f=fixture(),read=await f.run();if(mode==='check')await f.run(f.bindInput(read));const before=f.snapshot(),writes=f.writes();f.state.legal=[{fileType:'LABEL',imageName:f.input.expectedImages[0].transportName,s3Link:f.state.files[0].s3Link}];
+  const input=mode==='bind'?f.bindInput(read):{...copy(f.input),mode:'check'},encoded=await f.run(JSON.stringify(input));assert.equal(typeof encoded,'string');const result=JSON.parse(encoded);expectFailure(result);assert.equal(result.currentReadFailure.code,'legal-array-nonempty');assert.equal(result.currentReadFailure.diagnostics.rows[0].fileType.knownType,'LABEL');assert.equal(result.record,undefined);assert.equal(result.body,undefined);assert.equal(f.snapshot(),before);assert.equal(f.writes(),writes);
+ }
+ for(const legal of [{data:[]},null]){const f=fixture();f.state.legal=legal;const result=await f.run();expectFailure(result);assert.equal(Object.hasOwn(result.currentReadFailure,'diagnostics'),false);}
+ const f=fixture();f.state.files[0].host='other.invalid';const result=await f.run();expectFailure(result);assert.equal(Object.hasOwn(result.currentReadFailure,'diagnostics'),false);
+});
+
 test('bind independently rereads current hashes, records no historical ACK and can idempotently refresh only its current-read proof',async()=>{
  const f=fixture(),read=await f.run(),input=f.bindInput(read),bound=await f.run(input);assert.equal(bound.currentReadFailure,undefined);assert.equal(f.writes(),1);assert.deepEqual(bound.record,f.record());
  const record=f.record();assert.equal(record.state,'updated');assert.equal(record.createOperationId,f.input.binding.requestId+':create');assert.deepEqual(record.baselineDocIds,f.input.baselineDocIds);assert.equal(record.updateOperationId,undefined);assert.equal(record.nativeAssets,undefined);assert.equal(record.validation,undefined);

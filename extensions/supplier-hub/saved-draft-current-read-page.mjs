@@ -2,7 +2,7 @@
  * observations, never reconstructed upload/update/validation acknowledgements.
  * Only the DOM task record may be bound; every remote operation is a query. */
 export async function savedDraftCurrentReadPage(input){
- const serialized=typeof input==='string';let phase='input';const controllers=new Set();
+ const serialized=typeof input==='string';let phase='input',safeDiagnostics;const controllers=new Set();
  const failure=code=>Object.assign(Error('CURRENT_SAVED_DRAFT_READ'),{currentReadCode:code});
  const fail=code=>{throw failure(code);};
  try{
@@ -123,7 +123,25 @@ export async function savedDraftCurrentReadPage(input){
   // collection. Only a literal empty array or empty plain object proves that
   // this document has no legal files of any type; envelopes are not unwrapped.
   phase='legal-lists';const legal=await read('/sr/draft/api/get-files-by-type/'+doc,{legal:true});
-  if(Array.isArray(legal)){if(legal.length!==0)fail('legal-array-nonempty');}
+  if(Array.isArray(legal)){if(legal.length!==0){
+   // Classify a bounded sample without returning any filename, URL, S3 key,
+   // unknown enum, body or byte value. Even unknown own-key names are hidden:
+   // a credential can itself have been used as a property name.
+   const keyNames=new Set(['attachmentType','byteLength','categoryId','certificateType','code','contentType','createdAt','data','disabled','docId','documentId','errorCode','fileId','fileName','fileSize','fileType','host','id','imageData','imageName','imageUrl','mainImage','message','mimeType','modifiedAt','name','productId','s3Link','sha256','size','status','type','version']);
+   const knownTypes=new Set(['import_type','certificate','additional','categoryCert','adCert','msds','MAIN','ADDITIONAL','SIZECHART','LABEL','DETAIL']);
+   const expectedLinks=new Set(files.map(file=>file.s3Link));
+   const fieldType=(row,key)=>{if(!object(row)||!Object.hasOwn(row,key))return'missing';const value=row[key];return value===null?'null':Array.isArray(value)?'array':typeof value==='string'?(value.trim()===''?'string-empty':'string'):typeof value;};
+   const matchProbe=(row,key,expected)=>({type:fieldType(row,key),expectedImageMatch:object(row)&&Object.hasOwn(row,key)&&typeof row[key]==='string'&&row[key].trim()!==''&&expected.has(row[key])});
+   safeDiagnostics={format:'yoofam-saved-draft-legal-diagnostics-v1',collection:'array',count:legal.length,truncated:legal.length>12,rows:legal.slice(0,12).map((row,index)=>{
+    const ownKeys=object(row)?Object.keys(row):[],keys=ownKeys.filter(key=>keyNames.has(key)).sort().slice(0,12),type=row===null?'null':Array.isArray(row)?'array':typeof row;
+    const fileType=object(row)&&Object.hasOwn(row,'fileType')?row.fileType:undefined;
+    return{index,type,keys,keyCount:ownKeys.length,keysTruncated:ownKeys.length>keys.length,
+     fileType:{type:fieldType(row,'fileType'),knownType:typeof fileType==='string'&&knownTypes.has(fileType)?fileType:null,identifier:typeof fileType==='string'&&/^[A-Za-z][A-Za-z0-9_-]{0,39}$/.test(fileType)},
+     fileName:matchProbe(row,'fileName',names),imageName:matchProbe(row,'imageName',names),s3Link:matchProbe(row,'s3Link',expectedLinks),
+     docId:{type:fieldType(row,'docId'),same:object(row)&&Object.hasOwn(row,'docId')&&(typeof row.docId==='string'||typeof row.docId==='number')&&row.docId===docId}};
+   })};
+   fail('legal-array-nonempty');
+  }}
   else if(object(legal)&&Object.getPrototypeOf(legal)===Object.prototype){if(Object.keys(legal).length!==0)fail('legal-object-nonempty');}
   else fail('legal-response-shape');
   phase='image-bytes';const observations=new Array(images.length);let next=0;
@@ -151,5 +169,5 @@ export async function savedDraftCurrentReadPage(input){
    fence();observation.record=copy(record);
   }
   phase='record-after';fence();return serialized?JSON.stringify(observation):observation;
- }catch(error){for(const controller of controllers)controller.abort();const result={currentReadFailure:{format:'yoofam-current-saved-draft-read-failure-v1',phase,code:typeof error?.currentReadCode==='string'?error.currentReadCode:'unrecognized'}};return serialized?JSON.stringify(result):result;}
+ }catch(error){for(const controller of controllers)controller.abort();const result={currentReadFailure:{format:'yoofam-current-saved-draft-read-failure-v1',phase,code:typeof error?.currentReadCode==='string'?error.currentReadCode:'unrecognized',...(safeDiagnostics?{diagnostics:safeDiagnostics}:{})}};return serialized?JSON.stringify(result):result;}
 }

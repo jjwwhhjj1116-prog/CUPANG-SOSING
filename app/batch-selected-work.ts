@@ -78,7 +78,7 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
   const post=async<T>(suffix:string,body:unknown,method='POST')=>await responseJson(await fetcher(base+suffix,{method,credentials:'same-origin',redirect:'error',headers:{'content-type':'application/json'},body:JSON.stringify(body)}),`상품 ${suffix} 저장`) as T;
   const product=async()=>{
     const value=await read<{product:{id:string;updated_at:string;title:string}}>('');
-    if(value.product?.id!==productId||!Number.isFinite(Date.parse(value.product.updated_at)))throw Error('현재 상품을 확인하지 못했습니다.');
+    if(value.product?.id!==productId||!Number.isFinite(Date.parse(value.product.updated_at)))throw new ScopeChanged('현재 상품을 확인하지 못했습니다.');
     return value.product;
   };
   let activeStage:AutomationStageId|null=null;
@@ -148,8 +148,15 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     }
     const result=await processSelectedImageStage(productId,role,{state,ownerId:controls.expectedOwnerId,signal,fetcher,expectedProductVersion,isCurrent:()=>!signal.aborted,
       onProgress:message=>controls.onStage({id,status:'running',message})});
+    if(result.status!=='uncertain'&&!result.sourceChanged){
+      const savedVersion=result.productVersion??state.view?.productVersion??expectedProductVersion??current.updated_at;
+      if((await product()).updated_at!==savedVersion)throw new ScopeChanged('이미지 작업 중 상품·원본 또는 저장값이 변경되어 뒤의 작업을 멈췄습니다. 확인된 저장본은 유지했습니다.');
+    }
     if(['completed','skipped'].includes(result.status))imageStates!.delete(stateKey);
-    return{status:result.status==='completed'?'draft':result.status==='skipped'?'skipped':'blocked',message:result.messages.join(' '),uncertain:result.status==='uncertain',stop:result.recovered||result.status==='partial'};
+    // A confirmed partial needs correction in this stage, but is not an
+    // ambiguous write. Other selected stages can use the current saved source.
+    // Recovery stays a read-only action; scope changes still stop the run.
+    return{status:result.status==='completed'?'draft':result.status==='skipped'?'skipped':'blocked',message:result.messages.join(' '),uncertain:result.status==='uncertain',stop:result.recovered||result.sourceChanged};
   }
   async function sizeChart():Promise<Outcome>{
     const current=await product();

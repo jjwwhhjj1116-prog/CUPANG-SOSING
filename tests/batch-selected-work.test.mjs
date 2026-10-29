@@ -46,7 +46,16 @@ function fixture(){
    return Response.json({product:{id:'product',title:'검증 상품',updated_at:version}});
   }};
  return{calls,events,keys,options,controller,deps,run:stages=>exports.runSelectedBatchProduct('product',{...options,stages}),
-  owner:value=>owner=value,company:value=>company=value,intercept:value=>onFetch=value,image:value=>imageResult=value,label:value=>labelResult=value};
+  owner:value=>owner=value,company:value=>company=value,intercept:value=>onFetch=value,prependIntercept:value=>{const previous=onFetch;onFetch=async(...args)=>await value(...args)??await previous?.(...args);},image:value=>imageResult=value,label:value=>labelResult=value};
+}
+
+// Reuse the isolated actual image runner fixtures without loading their tests.
+// OCR/provider/render/upload effects remain local dependency fakes.
+function actualImageFixture(stage='detail',keys=['owner/source-a.png','owner/source-b.png']){
+ const sourceUrl=new URL('./batch-selected-image-work.test.mjs',import.meta.url),source=fs.readFileSync(sourceUrl,'utf8'),ast=ts.createSourceFile(sourceUrl.pathname,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
+ const declarations=ast.statements.filter(statement=>ts.isFunctionDeclaration(statement)&&['loadModel','fixture','partialFixture'].includes(statement.name?.text)).map(statement=>statement.getText(ast)).join('\n').replaceAll('import.meta.url',JSON.stringify(sourceUrl.href));
+ const factory=vm.runInNewContext(declarations+'\n({fixture,partialFixture})',{assert,fs,vm,ts,plain,Error,Date,URL,AbortController,AbortSignal,structuredClone,Blob,Response});
+ return factory.partialFixture(stage,keys);
 }
 test('price-only run checks calculated option prices without unrelated writes',async()=>{
  const h=fixture(),result=await h.run(['pricing']);assert.equal(result.stages[0].status,'draft');
@@ -94,6 +103,39 @@ test('execution follows canonical stage order, never dropdown click order and ne
  assert.deepEqual(plain(result.stages.map(row=>row.id)),['pricing','detailImage','koreanLabel','quotation']);
  assert.equal(h.calls.some(call=>/supplier-hub.*receipt|single-package|submission/.test(call.url??'')),false);
  assert.equal(result.stages.at(-1).status,'draft');
+});
+
+test('confirmed partial main, additional and detail image stages stay blocked while one action continues to label and quotation',async()=>{
+ const h=fixture();h.image({status:'partial',messages:['확인된 일부 번역 초안 · 나머지 문구 확인 필요']});const result=await h.run(['quotation','detailImage','koreanLabel','additionalImages','mainImage']);
+ assert.deepEqual(plain(result.stages.map(row=>[row.id,row.status])),[['mainImage','blocked'],['additionalImages','blocked'],['detailImage','blocked'],['koreanLabel','draft'],['quotation','draft']]);
+ assert.deepEqual(h.calls.filter(call=>call.adapter==='image').map(call=>call.stage),['main','additional','detail']);assert.equal(h.calls.filter(call=>call.adapter==='label').length,1);assert.equal(h.calls.filter(call=>call.adapter==='packaging').length,1);
+ assert.equal(h.calls.filter(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST').length,1);assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
+});
+
+test('confirmed image failure reasons do not leave stale pending fences or hold later selected stages',async()=>{
+ for(const message of ['OCR 실패','번역 응답 없음','새 번역 이미지를 저장할 공간이 없습니다.','처리할 저장 이미지 연결이 없습니다.']){const h=fixture();h.image({status:'partial',messages:[message]});
+  const result=await h.run(['detailImage','koreanLabel','quotation']);assert.equal(result.stages[0].status,'blocked');assert.match(result.stages[0].message,new RegExp(message.replace(/[.]/g,'\\.')));assert.equal(result.stages[1].status,'draft');assert.equal(result.stages[2].status,'draft');assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
+ }
+});
+
+test('known label blocks and failures clear their confirmed once fence and continue to quotation',async()=>{
+ for(const status of ['blocked','failed']){const h=fixture();h.label({status,message:'미실행 또는 확인된 오류 · 수동 입력 유지',uncertain:false});const result=await h.run(['koreanLabel','quotation']);
+  assert.equal(result.stages[0].status,status);assert.equal(result.stages[1].status,'draft');assert.equal(h.calls.filter(call=>call.adapter==='label').length,1);assert.equal(h.calls.filter(call=>call.adapter==='packaging').length,1);assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
+ }
+});
+
+test('typed source changes, saved product version changes and account/company changes hold every later stage',async()=>{
+ for(const change of ['typed-source','product-version','owner','company']){const h=fixture();let changed=false;const image=h.deps['@/app/batch-selected-image-work'].processSelectedImageStage;
+  h.image({status:'partial',messages:['확인 필요'],...(change==='typed-source'?{sourceChanged:true}:{})});
+  h.deps['@/app/batch-selected-image-work'].processSelectedImageStage=async(...args)=>{const result=await image(...args);changed=true;if(change==='owner')h.owner('other');if(change==='company')h.company({code:'A01464742',name:'와이홉'});return result;};
+  h.intercept(call=>change==='product-version'&&changed&&call.url==='/api/products/product'?Response.json({product:{id:'product',updated_at:'2026-10-23T00:00:02.000Z'}}):null);
+  const result=await h.run(['mainImage','additionalImages','detailImage','koreanLabel','quotation']);assert.ok(['blocked','failed'].includes(result.stages[0].status));assert.ok(result.stages.slice(1).every(row=>row.status==='blocked'&&row.message.includes('아직 시작하지 않았습니다')));
+  assert.equal(h.calls.filter(call=>call.adapter==='image').length,1,change);assert.equal(h.calls.some(call=>call.adapter==='label'||call.adapter==='packaging'||call.url?.endsWith('/quotation-ai')),false,change);
+ }
+});
+
+test('recovering an image save remains read-only and cannot implicitly start later work',async()=>{
+ const h=fixture();h.image({status:'partial',recovered:true,messages:['이전 이미지 저장 상태만 확인했습니다.']});const result=await h.run(['detailImage','koreanLabel','quotation']);assert.equal(result.stages[0].status,'blocked');assert.ok(result.stages.slice(1).every(row=>row.message.includes('아직 시작하지 않았습니다')));assert.equal(h.calls.some(call=>call.adapter==='label'||call.url?.endsWith('/quotation-ai')),false);assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
 });
 test('unknown image save stops later stages and retry cannot issue new saves',async()=>{
  const h=fixture();h.image({status:'uncertain',messages:['저장 응답 미확인'],recoveryBatch:{}});
@@ -187,6 +229,20 @@ function knownQuotationFixture({configured=true}={}){
  });
  return {...h,view,content,job,writes,onContent:callback=>onContent=callback,saveResponse:callback=>saveResponse=callback};
 }
+
+test('an actual editable partial image draft continues to label and verified quotation save while preserving manual fields',async()=>{
+ const h=knownQuotationFixture(),image=actualImageFixture(),contentBefore=plain(h.content),imageContentBefore=plain(image.content),manualBlank=h.view.resolved.rows[1].fields.notice0,manualHtml=image.view.resolved.rows[0].fields.detailHtml;let labelStarted=false;
+ h.company({code:'A01464742',name:'와이홉'});h.prependIntercept(call=>{
+  if(call.url==='/api/products/product')return Response.json({product:{id:'product',title:'검증 상품',updated_at:image.view.productVersion}});
+  if(call.url.endsWith('/work-draft'))return Response.json({productId:'product',productVersion:image.view.productVersion});
+  if(call.url.endsWith('/content')&&!labelStarted)return Response.json({content:image.content});
+ });
+ const imageAdapter=h.deps['@/app/batch-selected-image-work'];imageAdapter.createSelectedImageStageState=image.model.createSelectedImageStageState;imageAdapter.processSelectedImageStage=(id,role,options)=>image.model.processSelectedImageStage(id,role,options,image.deps);
+ const labelAdapter=h.deps['@/app/batch-selected-label-work'],label=labelAdapter.runSelectedLabelWork;labelAdapter.runSelectedLabelWork=async(...args)=>{labelStarted=true;return label(...args);};
+ const result=await h.run(['detailImage','koreanLabel','quotation']);assert.deepEqual(plain(result.stages.map(row=>row.status)),['blocked','draft','draft']);assert.match(result.stages[0].message,/미완료|일부 번역/);
+ assert.equal(image.calls.filter(row=>row[0]==='apply').length,1);assert.equal(image.calls.filter(row=>row[0]==='translate').length,1);assert.equal(image.documents[0].regions.find(row=>row.id==='rejected').selected,false);assert.equal(image.documents[0].regions.find(row=>row.id==='rejected').translated,'');assert.match(image.documents[0].regions.find(row=>row.id==='rejected').issue,/원문에 없는/);
+ assert.equal(h.calls.filter(call=>call.adapter==='label').length,1);assert.equal(h.writes.length,1);assert.ok(h.writes[0].changes.every(change=>change.optionId!=='b'||change.fieldKey!=='notice0'));assert.deepEqual(h.view.resolved.rows[1].fields.notice0,manualBlank);assert.deepEqual(plain(image.view.resolved.rows[0].fields.detailHtml),plain(manualHtml));assert.deepEqual(h.content,contentBefore);assert.deepEqual(plain(image.content),imageContentBefore);assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
+});
 test('explicit quotation work saves verified AI plus saved notice sources in one CAS request and confirms their exact receipt',async()=>{
  const h=knownQuotationFixture(),before=JSON.stringify({view:h.view,content:h.content}),result=await h.run(['quotation']);
  assert.equal(result.stages[0].status,'draft',result.stages[0].message);assert.match(result.stages[0].message,/AI 항목 1개 · 저장된 제조·상담 정보 3개/);
@@ -274,7 +330,7 @@ function seoFixture(outcome={job:{id:'seo-job',status:'completed',result:{}},clo
  const nextVersion='2026-10-23T00:00:01.000Z';
  h.intercept(call=>{
   if(call.url.endsWith('/translation'))return Response.json({configuration:{configured:true,model:'google'},jobs:[]});
-  if(call.url.endsWith('/content'))return Response.json({content:{productId:'product',revision:3,seo:{title:{value:'原名',provenance:'collected'},keywords:{value:[],provenance:'collected'},description:{value:'原文',provenance:'collected'}}}});
+  if(call.url.endsWith('/content'))return Response.json({content:{schemaVersion:1,productId:'product',revision:3,label:{},assets:{size:{value:[]}},seo:{title:{value:'原名',provenance:'collected'},keywords:{value:[],provenance:'collected'},description:{value:'原文',provenance:'collected'}}}});
   if(call.url.endsWith('/translation-source'))return Response.json({productId:'product',productVersion:version,jobId:'source',sourceUrl:'https://detail.1688.com/offer/886034098637.html',title:'原名',description:'原文',attributes:[],requestContext:{categoryId:'68183',categoryPath:['깔창','쿠션패드'],features:'',keywords:''}});
   if(call.url.endsWith('/options'))return Response.json({options:{productId:'product',revision:2},productVersion:version});
   if(call.url.endsWith('/registration-settings'))return Response.json({productId:'product',settings:{brand:'유앤채'}});
@@ -298,6 +354,25 @@ test('unknown SEO provider outcome stops later stages and preserves the same req
  const before=h.calls.length;await h.run(['seo','pricing']);
  assert.equal(h.calls.some(call=>call.url?.endsWith('/stage-two-pricing')||call.url?.endsWith('/translation-apply')),false);
  assert.equal(h.calls.length,before+1);
+});
+
+test('one full action runs SEO, pricing, all selected image roles, label and quotation despite confirmed image partials',async()=>{
+ const h=seoFixture();h.options.mode='full';h.image({status:'partial',messages:['확인된 일부 이미지 초안 · 오류 문구만 수정 필요']});let productVersion=version;
+ const content={schemaVersion:1,productId:'product',revision:3,seo:{title:{value:'수동 제목 보존',provenance:'manual'},keywords:{value:[],provenance:'collected'},description:{value:'原文',provenance:'collected'}},label:{contact:{value:'직접 입력',provenance:'manual'}},assets:{size:{value:[]}}},before=plain(content);
+ h.prependIntercept(call=>{
+  if(call.url==='/api/products/product')return Response.json({product:{id:'product',title:'검증 상품',updated_at:productVersion}});
+  if(call.url.endsWith('/content'))return Response.json({content});
+  if(call.url.endsWith('/work-draft'))return Response.json({productId:'product',productVersion});
+  if(call.url.endsWith('/registration-layout'))return Response.json({productId:'product',productVersion,sizeChartRequired:false});
+  if(call.url.endsWith('/translation-apply')&&call.body.action==='apply'){productVersion='2026-10-23T00:00:01.000Z';return Response.json({productId:'product',productVersion,contentRevision:4,optionRevision:3,applied:1});}
+ });
+ const result=await h.run(stageIds.slice().reverse());assert.deepEqual(plain(result.stages.map(row=>row.id)),stageIds);assert.deepEqual(plain(result.stages.map(row=>row.status)),['draft','draft','blocked','blocked','blocked','skipped','draft','draft']);
+ const executed=h.calls.flatMap(call=>call.url?.endsWith('/translation-apply')&&call.body.action==='apply'?['seo']:call.url?.endsWith('/stage-two-pricing')?['pricing']:call.adapter==='image'?[call.stage]:call.adapter==='label'?['koreanLabel']:call.url?.endsWith('/quotation-ai')&&call.method==='POST'?['quotation']:[]);
+ assert.deepEqual(executed,['seo','pricing','main','additional','detail','koreanLabel','quotation']);assert.deepEqual(content,before);assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
+});
+
+test('a closed failed SEO generation clears only its confirmed pending fence and continues later work',async()=>{
+ const h=seoFixture({job:{status:'failed'},closed:true,message:'확인된 SEO 생성 실패'}),result=await h.run(['seo','pricing','koreanLabel','quotation']);assert.equal(result.stages[0].status,'blocked');assert.equal(result.stages[1].status,'draft');assert.equal(result.stages[2].status,'draft');assert.equal(result.stages[3].status,'draft');assert.equal(h.calls.some(call=>call.url?.endsWith('/translation-apply')),false);assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
 });
 
 for(const role of ['main','additional','detail'])test('partial image preparation only changes selected '+role+' in actual local persistence',async()=>{

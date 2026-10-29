@@ -27,12 +27,14 @@ export function intakeQueryImageRecoveryJob(row:IntakeRow,jobs:readonly Collecti
 }
 
 export type IntakeSourceSeed={id:string;sourceUrl:string;title?:string;sourceCapture?:Readonly<SourceCaptureSelection>;forkJobId?:string};
+export type IntakeCategoryEntry=Readonly<{id:string;ownerId:string|undefined}>;
 const freshCaptureFork=(row:IntakeRow)=>Boolean(row.forkJobId&&row.sourceCapture);
 const freshCaptureMessage='선택한 새 수집본을 별도 상품으로 작성합니다. 기존 작업 상품은 유지됩니다. 새 초안을 확인해주세요.';
 type IntakeCategorySelection={target:string;ownerId:string|undefined;epoch:number;completed:boolean;seed?:IntakeSourceSeed};
-export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced, onJobs, onBusy, goal, onGoal, settings, workspaceOwnerId, onSettingsReloadStarted, onSettingsReloaded, jobs = [], onOpenProduct,sourceSeed,onSourceConsumed,sourceItems=[],onReviewSource }: {
+export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced, onJobs, onBusy, goal, onGoal, settings, workspaceOwnerId, onSettingsReloadStarted, onSettingsReloaded, jobs = [], onOpenProduct,sourceSeed,onSourceConsumed,initialCategorySelection,onInitialCategorySelectionConsumed,sourceItems=[],onReviewSource }: {
   sourceItems?:import('@/app/source-inbox').SourceInboxItem[];onReviewSource?:(item:import('@/app/source-inbox').SourceInboxItem,rowId:string)=>void;
   sourceSeed?:IntakeSourceSeed;onSourceConsumed?:(id:string)=>void;
+  initialCategorySelection?:IntakeCategoryEntry;onInitialCategorySelectionConsumed?:(id:string)=>void;
   jobs?:CollectionJob[]; onOpenProduct?:(id:string,signal:AbortSignal)=>Promise<void>;
   workspaceOwnerId?:string; onSettingsReloadStarted?:()=>number;
   settings:WorkspaceSettings; onSettingsReloaded:(settings:WorkspaceSettings,scope?:WorkspaceSettingsScope,epoch?:number)=>void;
@@ -42,7 +44,9 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   goal: string; onGoal: (goal: string) => void;
 }) {
   const categoryEpoch=useRef(0),categoryMounted=useRef(true),categoryOwner=useRef(workspaceOwnerId),categorySource=useRef(sourceSeed);
-  const [categorySelection,setCategorySelection]=useState<IntakeCategorySelection|null>(sourceSeed?{target:'new',ownerId:workspaceOwnerId,epoch:0,completed:false,seed:sourceSeed}:null);
+  const categoryEntry=useRef(initialCategorySelection);
+  const [categorySelection,setCategorySelection]=useState<IntakeCategorySelection|null>(()=>sourceSeed?{target:'new',ownerId:workspaceOwnerId,epoch:0,completed:false,seed:sourceSeed}
+    :initialCategorySelection?.ownerId===workspaceOwnerId&&/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(initialCategorySelection?.id??'')?{target:'new',ownerId:workspaceOwnerId,epoch:0,completed:false}:null);
   const categorySelectionRef=useRef(categorySelection),categoryTarget=categorySelection?.target??null;
   const pendingSeed=useRef(sourceSeed?.id??null);
   const focusRow = useRef<string | null>(null),busyNotice=useRef(onBusy);
@@ -59,6 +63,12 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     if(categoryOwner.current===workspaceOwnerId)return;
     categoryOwner.current=workspaceOwnerId;categoryEpoch.current++;categorySelectionRef.current=null;pendingSeed.current=null;focusRow.current=null;setCategorySelection(null);
   },[workspaceOwnerId,sourceSeed]);
+  useEffect(()=>{
+    const entry=categoryEntry.current;categoryEntry.current=undefined;
+    if(!entry||sourceSeed||entry.ownerId!==workspaceOwnerId||categoryOwner.current!==entry.ownerId||!categoryMounted.current
+      ||!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(entry.id))return;
+    onInitialCategorySelectionConsumed?.(entry.id);
+  },[workspaceOwnerId,sourceSeed,onInitialCategorySelectionConsumed]);
   const sourceMounted=useRef(true);
   useEffect(()=>{sourceMounted.current=true;return()=>{sourceMounted.current=false;};},[]);
   const reloadOwnerRef=useRef(workspaceOwnerId);
@@ -434,7 +444,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
       ['work', 'SEO·가격 + 이미지 초안', '원본을 대표·추가·상세·옵션 이미지에 배치합니다. 번역·편집 후 확인하세요.'],
       ['collect', '상품정보만 가져오기', '원문·옵션·가격을 가져오고 SEO 작성은 나중에 진행합니다.'],
     ].map(([id, title, description]) => <label className="goal-card" key={id}><input type="radio" name="queue-goal" checked={(goal==='collect'?'collect':goal==='work'?'work':'price') === id} onChange={() => onGoal(id)} /><span><strong>{title}</strong><small>{description}</small></span></label>)}</fieldset>
-    <p className="collection-notice">{collectionBlock} <a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.56.zip" download>상품 수집·전송 확장 2.1.56 다운로드</a></p><small>복제는 카테고리·특징·키워드를 복사하며 새 URL을 입력해야 합니다. 행 삭제는 이 입력 목록만 지우며 서버에 저장한 요청을 취소하지 않습니다.</small>
+    <p className="collection-notice">{collectionBlock} <a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.57.zip" download>상품 수집·전송 확장 2.1.57 다운로드</a></p><small>복제는 카테고리·특징·키워드를 복사하며 새 URL을 입력해야 합니다. 행 삭제는 이 입력 목록만 지우며 서버에 저장한 요청을 취소하지 않습니다.</small>
     {selected.some(row => !visible.some(item => item.id === row.id)) && <p className="collection-notice">검색으로 숨겨진 선택 상품도 함께 처리합니다. 선택 {pending}건 중 숨겨진 상품 {selected.filter(row => !visible.some(item => item.id === row.id)).length}건</p>}
     {!!unfilledRows.length&&<p className="collection-notice">URL을 입력하지 않은 {unfilledRows.length}개 행은 시작 대상에서 제외됩니다.</p>}
     {settingsChanged&&<div className="panel-note"><p>기본설정이 변경돼 남은 상품 처리를 멈췄습니다.</p><button type="button" className="btn ghost" disabled={busy} onClick={()=>void reloadSettings()}>최신 기본설정 불러오기</button></div>}
