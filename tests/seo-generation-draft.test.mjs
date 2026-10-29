@@ -45,9 +45,20 @@ test('stored draft validation stays strict when a caller ignores the returned dr
  }finally{f.h.close();}
 });
 
+test('fresh comma-separated keyword items normalize without hiding any unsafe term or weakening stored draft validation',async()=>{
+ const f=await fixture();try{
+  const raw={...clone(f.good),keywords:[' 뒤꿈치\t패드, 구두\n패드, 뒤꿈치 패드, ']},before=JSON.stringify(raw);
+  const draft=f.normalize(raw);assert.deepEqual(Array.from(draft.keywords),['뒤꿈치 패드','구두 패드']);assert.equal(JSON.stringify(raw),before);
+  assert.deepEqual(Array.from(f.seo.validateSeoGenerationDraft(draft,f.review).keywords),['뒤꿈치 패드','구두 패드']);
+  assert.throws(()=>f.seo.validateSeoGenerationDraft({...clone(f.good),keywords:['패드,쿠션']},f.review),error=>error.reason==='keyword-characters');
+  for(const [term,reason]of [['패드 99999','unsupported-number'],['항균 패드','unsupported-claim'],['실리콘 패드','unsupported-material'],['鞋贴 패드','untranslated']])rejects(f,{...clone(f.good),keywords:['뒤꿈치 패드, '+term]},reason);
+  rejects(f,{...clone(f.good),keywords:[', ,']},'keyword-empty');rejects(f,{...clone(f.good),keywords:[Array(31).fill('패드').join(',')]},'keywords-count');
+ }finally{f.h.close();}
+});
+
 test('invalid shape, type, size and dangerous keyword characters retain fixed detailed reasons without raw values',async()=>{
  const f=await fixture();try{
-  const cases=[['draft-keys',value=>value.private='PRIVATE_VALUE'],['title-type',value=>value.title=4],['title-empty',value=>value.title=' '],['title-limit',value=>value.title='가'.repeat(101)],['title-characters',value=>value.title='패드\n'],['description-type',value=>value.description=[]],['description-limit',value=>value.description='가'.repeat(20001)],['keywords-type',value=>value.keywords='PRIVATE_VALUE'],['keywords-count',value=>value.keywords=[]],['keywords-count',value=>value.keywords=Array(31).fill('패드')],['keyword-type',value=>value.keywords=[{}]],['keyword-empty',value=>value.keywords=[' ']],['keyword-limit',value=>value.keywords=['가'.repeat(21)]],['keyword-characters',value=>value.keywords=['패드,쿠션']],['keyword-characters',value=>value.keywords=['패드\t쿠션']],['keyword-characters',value=>value.keywords=['패드\u007f']],['attributes-type',value=>value.attributes={}],['attributes-content',value=>value.attributes=[{name:'PRIVATE_VALUE'}]],['warnings-type',value=>value.warnings={}],['warnings-count',value=>value.warnings=Array(31).fill('')],['warning-type',value=>value.warnings=[4]],['warning-limit',value=>value.warnings=['가'.repeat(2001)]],['untranslated',value=>value.title='PRIVATE_TITLE'],['control-characters',value=>value.description='PRIVATE_VALUE\u0000']];
+  const cases=[['draft-keys',value=>value.private='PRIVATE_VALUE'],['title-type',value=>value.title=4],['title-empty',value=>value.title=' '],['title-limit',value=>value.title='가'.repeat(101)],['title-characters',value=>value.title='패드\n'],['description-type',value=>value.description=[]],['description-limit',value=>value.description='가'.repeat(20001)],['keywords-type',value=>value.keywords='PRIVATE_VALUE'],['keywords-count',value=>value.keywords=[]],['keywords-count',value=>value.keywords=Array(31).fill('패드')],['keyword-type',value=>value.keywords=[{}]],['keyword-empty',value=>value.keywords=[' ']],['keyword-limit',value=>value.keywords=['가'.repeat(21)]],['keyword-characters',value=>value.keywords=['패드\u0000쿠션']],['keyword-characters',value=>value.keywords=['패드\u007f']],['attributes-type',value=>value.attributes={}],['attributes-content',value=>value.attributes=[{name:'PRIVATE_VALUE'}]],['warnings-type',value=>value.warnings={}],['warnings-count',value=>value.warnings=Array(31).fill('')],['warning-type',value=>value.warnings=[4]],['warning-limit',value=>value.warnings=['가'.repeat(2001)]],['untranslated',value=>value.title='PRIVATE_TITLE'],['control-characters',value=>value.description='PRIVATE_VALUE\u0000']];
   for(const [reason,mutate]of cases){const raw=clone(f.good);mutate(raw);assert.throws(()=>f.normalize(raw),error=>error.code==='SEO_GENERATION_INVALID'&&error.reason===reason&&!error.message.includes('PRIVATE_'));}
  }finally{f.h.close();}
 });

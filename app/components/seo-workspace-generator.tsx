@@ -80,7 +80,7 @@ function SeoGenerationPanelContent(props:GenerationPanelProps){
  const currentJob=job?.productId===props.productId&&job.productVersion===props.version&&job.status==='completed'&&job.result;
  return <section aria-label="무료 AI SEO 생성" data-workspace-saving={busy} data-workspace-dirty={Boolean(state)||uncertain}>
   <h4>AI SEO 상품명·검색태그·설명 생성</h4>
-  {view&&<p>{view.configuration.destination} · {view.configuration.notice}</p>}
+  {view&&<><p>{view.configuration.destination} · {view.configuration.notice}</p><small>모델 {view.configuration.model} · 최대 출력 {view.configuration.maxOutputTokens}토큰 · 무료 사용만 허용 · 유료 전환 없음</small></>}
   {view&&!view.configuration.configured&&<p role="alert">{view.configuration.issues.join(' ')} Google 번역을 AI 최적화 완료로 표시하지 않습니다.</p>}
   {view?.configuration.configured&&<label className="seo-ai-consent"><input type="checkbox" aria-label="무료 AI SEO 생성 확인" checked={confirmed} disabled={busy||props.disabled||Boolean(state?.executeSubmitted)} onChange={event=>{if(current()&&!pending.current){setConfirmedToken(event.target.checked?memoScope:null);}}}/>위 전송 대상과 공유 무료 한도를 확인했습니다.</label>}
   {error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}

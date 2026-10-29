@@ -22,7 +22,7 @@ function harness({configured=true,wait=null,stored=null}={}){
 }
 
 test('manual generation displays actual free destination before its explicit action and never executes until checked',async()=>{
- const h=harness();try{await h.idle();assert.match(h.text(),/Cloudflare Workers AI/);assert.match(h.text(),/무료 일일 40회 공유/);assert.deepEqual(h.calls.map(call=>call.action),['read']);
+ const h=harness();try{await h.idle();assert.match(h.text(),/Cloudflare Workers AI/);assert.match(h.text(),/무료 일일 40회 공유/);assert.match(h.text(),/@cf\/meta\/llama-3\.3-70b-instruct-fp8-fast.*2048.*무료 사용만 허용.*유료 전환 없음/s);assert.deepEqual(h.calls.map(call=>call.action),['read']);
   h.button('무료 AI SEO 초안 생성').props.onClick();await h.idle();assert.equal(h.calls.find(call=>call.action==='run').confirmed,false);assert.equal(h.pendingStates.at(-1),true);assert.equal(nodes(h.render()).some(node=>node.props?.purpose==='seo-generation'),false);
   h.checkbox().props.onChange({target:{checked:true}});await h.idle();h.button('같은 AI SEO 생성 계속').props.onClick();await h.idle();assert.equal(h.calls.filter(call=>call.action==='run').at(-1).confirmed,true);assert.match(h.text(),/면 장갑 설명/);const preview=nodes(h.render()).find(node=>node.props?.purpose==='seo-generation');assert.equal(preview.props.jobId,'generated-job');assert.equal(preview.props.seoComposition,undefined);assert.equal(h.storage.size,1);
  }finally{h.close();}

@@ -56,9 +56,19 @@ export function validateSeoGenerationDraft(raw:unknown,review:TranslationReview,
  if(typeof raw.description!=='string')return draftFail('description-type');if(raw.description.length>20000)return draftFail('description-limit');
  if(!Array.isArray(raw.keywords))return draftFail('keywords-type');if(!raw.keywords.length||raw.keywords.length>30)return draftFail('keywords-count');
  const candidates:string[]=[];for(const value of raw.keywords){
-  if(typeof value!=='string')return draftFail('keyword-type');if(!value.trim())return draftFail('keyword-empty');if(value.length>20)return draftFail('keyword-limit');if(/[,\u0000-\u001f\u007f]/u.test(value))return draftFail('keyword-characters');
-  candidates.push(value.trim().replace(/\s+/gu,' '));
+  if(typeof value!=='string')return draftFail('keyword-type');if(!value.trim())return draftFail('keyword-empty');
+  // Model output sometimes puts a comma-separated list inside an array item.
+  // Split formatting only on fresh execution; stored drafts remain canonical.
+  if(normalizeProviderKeywords){
+   if(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value))return draftFail('keyword-characters');
+   if(value.length>(value.includes(',')?STORED_KEYWORDS_LENGTH:20))return draftFail('keyword-limit');
+   for(const part of value.split(',')){const term=part.trim().replace(/\s+/gu,' ');if(!term)continue;if(term.length>20)return draftFail('keyword-limit');candidates.push(term);}
+  }else{
+   if(value.length>20)return draftFail('keyword-limit');if(/[,\u0000-\u001f\u007f]/u.test(value))return draftFail('keyword-characters');
+   candidates.push(value.trim().replace(/\s+/gu,' '));
+  }
  }
+ if(!candidates.length)return draftFail('keyword-empty');if(candidates.length>30)return draftFail('keywords-count');
  if(!Array.isArray(raw.attributes))return draftFail('attributes-type');if(raw.attributes.length)return draftFail('attributes-content');
  if(!Array.isArray(raw.warnings))return draftFail('warnings-type');if(raw.warnings.length>30)return draftFail('warnings-count');for(const value of raw.warnings){if(typeof value!=='string')return draftFail('warning-type');if(value.length>2000)return draftFail('warning-limit');}
  const facts=[review.source.title,review.source.description,...review.source.attributes.flatMap(pair=>[pair.name,pair.value])].join('\n'),texts=[[raw.title,raw.description,...raw.keywords].join('\n'),[raw.title,raw.description,...candidates].join('\n')];

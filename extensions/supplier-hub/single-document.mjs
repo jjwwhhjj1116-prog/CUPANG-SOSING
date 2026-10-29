@@ -509,7 +509,9 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
     }
     if(state.savedDraftTargetRecovery.phase==='requested')fail('SAVED_DRAFT_TARGET_PENDING','새 전용 탭 생성 결과가 미확정입니다. 원래 기록을 유지하며 추가 탭을 만들지 않았습니다.');
     if(action!=='recoverSavedDraftTarget')return result(state,{error:{code:'SAVED_DRAFT_TARGET_CLOSED',message:'예약한 같은 문서의 새 전용 탭에서 현재 본문·전체 파일의 읽기 확인을 계속해주세요.'}});
-    const target=state.savedDraftTargetRecovery.target,tab=await call('readTab',{identity:context.identity,tab:target});
+    const target=state.savedDraftTargetRecovery.target,presenceOfRecoveryTarget=await targetPresence(context,state,target);
+    if(presenceOfRecoveryTarget.closed)fail('SAVED_DRAFT_RECOVERY_TARGET_CLOSED','같은 저장 문서의 현재 읽기를 위해 예약한 전용 복구 탭이 닫힌 것을 확인했습니다. 원래 요청·문서·복구 예약을 유지했으며 새 탭이나 문서를 만들지 않았습니다.');
+    const tab=await call('readTab',{identity:context.identity,tab:target});
     if(!tabValid(tab,context.packet)||tab.tabId!==target.tabId||tab.requestId!==state.requestId||tab.packetDigest!==context.packetDigest)fail('TAB_CHANGED','같은 문서의 새 전용 탭·회사·로그인 연결을 확인해주세요.');
     // Browser creation keeps its independent source guard. Only the already
     // reserved read-only span may consume this exact start proof once.

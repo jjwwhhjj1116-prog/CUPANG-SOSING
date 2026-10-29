@@ -96,6 +96,22 @@ test('created target remains reserved through company/proof failures and retries
   f.tabCompany=copy(f.original.identity.company);assert.equal((await f.receiver().recoverSavedDraftTarget(f.packet,f.sender)).state,'updated');assert.equal(f.created,1);f.assertReadOnly();
 });
 
+test('a positively closed reserved recovery target fails before readTab and preserves the exact created audit without another tab',async()=>{
+ const f=await fixture({proof:()=>null});assert.equal((await f.receiver().recoverSavedDraftTarget(f.packet,f.sender)).error.code,'SAVED_DRAFT_TARGET_UNCONFIRMED');const reserved=f.saved();f.newClosed=true;f.calls=[];
+ const reply=await f.receiver().recoverSavedDraftTarget(f.packet,f.sender);assert.equal(reply.error.code,'SAVED_DRAFT_RECOVERY_TARGET_CLOSED');assert.equal(reply.docId,reserved.docId);assert.equal(reply.draftOnly,true);assert.deepEqual(f.saved(),reserved);assert.equal(f.created,1);assert.equal(f.calls.some(call=>['readTab','qualifySavedDraftTarget','createTarget','cas'].includes(call.name)),false);assert.deepEqual(f.calls.filter(call=>call.name==='presence').map(call=>call.input.tab.tabId),[71,90]);f.assertReadOnly();
+});
+
+test('failed or malformed recovery-target presence remains unconfirmed and is never called closed',async()=>{
+ for(const mode of ['failed','wrong-target','missing-closed','stale']){const f=await fixture({proof:()=>null});await f.receiver().recoverSavedDraftTarget(f.packet,f.sender);const reserved=f.saved(),presence=f.adapter.readOwnedTargetPresence;f.calls=[];f.adapter.readOwnedTargetPresence=async input=>{const value=await presence(input);if(input.tab.tabId!==90)return value;if(mode==='failed')throw Error('private API failure');if(mode==='wrong-target')return{...value,tabId:91};if(mode==='missing-closed'){delete value.closed;return value;}return{...value,checkedAt:f.now-60001};};
+  const reply=await f.receiver().recoverSavedDraftTarget(f.packet,f.sender);assert.equal(reply.error.code,mode==='failed'?'ADAPTER_FAILURE':'TAB_CHANGED');assert.notEqual(reply.error.code,'SAVED_DRAFT_RECOVERY_TARGET_CLOSED');assert.equal(f.calls.some(call=>['readTab','qualifySavedDraftTarget','createTarget','cas'].includes(call.name)),false);assert.deepEqual(f.saved(),reserved);assert.equal(f.created,1);f.assertReadOnly();
+ }
+});
+
+test('an existing reserved recovery target still reaches only its exact readTab and qualifier',async()=>{
+ const f=await fixture({proof:()=>null});await f.receiver().recoverSavedDraftTarget(f.packet,f.sender);f.proof=undefined;f.calls=[];
+ assert.equal((await f.receiver().recoverSavedDraftTarget(f.packet,f.sender)).state,'updated');assert.equal(f.created,1);const names=f.calls.map(call=>call.name),presence=f.calls.findIndex(call=>call.name==='presence'&&call.input.tab.tabId===90);assert.ok(presence>=0&&presence<names.indexOf('readTab'));assert.deepEqual(f.calls.filter(call=>call.name==='readTab').map(call=>call.input.tab.tabId),[90,90]);assert.equal(f.calls.some(call=>call.name==='createTarget'),false);f.assertReadOnly();
+});
+
 test('lost browser target ACK reserves requested phase and blocks every subsequent target creation',async()=>{
   const f=await fixture({lostTargetAck:true});assert.equal((await f.receiver().recoverSavedDraftTarget(f.packet,f.sender)).error.code,'ADAPTER_FAILURE');assert.equal(f.saved().savedDraftTargetRecovery.phase,'requested');
   for(const action of ['recoverDraft','recoverPreparedDraft','recoverSavedDraftTarget'])assert.equal((await f.receiver()[action](f.packet,f.sender)).error.code,'SAVED_DRAFT_TARGET_PENDING');assert.equal(f.created,1);assert.equal(f.qualified,0);f.assertReadOnly();

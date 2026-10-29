@@ -13,13 +13,14 @@ const configurationReply=(configuration=seoConfiguration(),ownerId='test-owner',
 const select=h=>h.component('registration-board').onSelected(new Set([h.products[0].id]));
 const check=(h,label,checked)=>nodes(h.render()).find(node=>node.type==='input'&&node.props['aria-label']===label).props.onChange({target:{checked}});
 
-test('before one-click work, authenticated server notice is visible and its free-only snapshot reaches the frozen run',async()=>{
+test('compact dashboard moves the server notice into the work dialog while one-click work retains its free-only snapshot',async()=>{
  const expected=seoConfiguration(),h=harness({seoConfigurationReply:async()=>configurationReply(expected)});
  try{
-  await h.settle();const notice=nodes(h.render()).find(node=>node.props?.['aria-label']==='SEO 실행 전 안내');assert.ok(notice);assert.ok(text(notice).includes(expected.notice));assert.match(text(notice),/Cloudflare Workers AI.*무료 사용만 허용/s);
+  await h.settle();assert.equal(nodes(h.render()).some(node=>node.props?.['aria-label']==='SEO 실행 전 안내'),false);assert.ok(!text(h.render()).includes(expected.notice));
   const read=h.requests.find(request=>request.url==='/api/seo-generation/configuration');assert.equal(read.method,'GET');assert.equal(read.init.cache,'no-store');assert.equal(read.init.credentials,'same-origin');assert.equal(read.init.redirect,'error');assert.ok(read.init.signal instanceof AbortSignal);
   select(h);const before=JSON.stringify(h.products);await h.click('작업 개시');const first=h.component('batch-work-panel').runRequest;
   assert.deepEqual(plain(first.seoGenerationConsent),plain(expected));assert.notEqual(first.seoGenerationConsent,expected);assert.equal(first.seoGenerationConsent.freeOnly,true);assert.equal(JSON.stringify(h.products),before);
+  const notice=nodes(h.render()).find(node=>node.props?.['aria-label']==='SEO 실행 전 안내');assert.equal(notice.type,'details');assert.notEqual(notice.props.open,true);assert.equal(text(notice.props.children[0]),'SEO 실행 안내');assert.ok(text(notice).includes(expected.notice));assert.match(text(notice),/Cloudflare Workers AI.*2048.*무료 사용만 허용/s);await h.toggleDetails('SEO 실행 전 안내');assert.equal(h.component('batch-work-panel').runRequest.id,first.id);
   assert.deepEqual(JSON.parse(first.keys.get('batch-owner:test-owner')),{ownerId:'test-owner',company:plain(scope().company)},'the runner must compare its first account read with the exact company shown before click');
   await h.click('작업 개시');assert.equal(h.component('batch-work-panel').runRequest.id,first.id);assert.ok(h.requests.every(request=>request.method==='GET'));
  }finally{h.close();}
@@ -44,13 +45,13 @@ for(const invalid of ['owner','company','freeOnly','provider','missing','failure
  }});
  try{
   await h.settle();select(h);assert.equal(h.button('작업 개시').props.disabled,true);await h.click('작업 개시');assert.equal(h.component('batch-work-panel'),undefined);
-  h.setSeoConfigurationReply(async()=>configurationReply());await h.click('SEO 실행 안내 다시 확인');assert.equal(h.button('작업 개시').props.disabled,false);await h.click('작업 개시');assert.equal(h.component('batch-work-panel').runRequest.seoGenerationConsent.freeOnly,true);assert.ok(h.requests.every(request=>request.method==='GET'));
+  await h.click('선택 상품 일괄 작업');assert.ok(nodes(h.render()).some(node=>node.props?.['aria-label']==='SEO 실행 전 안내'));h.setSeoConfigurationReply(async()=>configurationReply());await h.toggleDetails('SEO 실행 전 안내');await h.click('SEO 실행 안내 다시 확인');assert.equal(h.button('작업 개시').props.disabled,false);await h.click('작업 개시');assert.equal(h.component('batch-work-panel').runRequest.seoGenerationConsent.freeOnly,true);assert.ok(h.requests.every(request=>request.method==='GET'));
  }finally{h.close();}
 });
 
 test('configured false is honestly displayed and carries no permission for a paid fallback',async()=>{
  const config={...seoConfiguration(),configured:false,issues:['무료 AI 바인딩을 확인해주세요.']},h=harness({seoConfigurationReply:async()=>configurationReply(config)});
- try{await h.settle();select(h);assert.match(text(h.render()),/SEO 생성 사용 불가: 무료 AI 바인딩/);assert.equal(h.button('작업 개시').props.disabled,false);await h.click('작업 개시');assert.deepEqual(plain(h.component('batch-work-panel').runRequest.seoGenerationConsent),plain(config));}finally{h.close();}
+ try{await h.settle();select(h);assert.doesNotMatch(text(h.render()),/SEO 생성 사용 불가: 무료 AI 바인딩/);assert.equal(h.button('작업 개시').props.disabled,false);await h.click('작업 개시');assert.match(text(h.render()),/SEO 생성 사용 불가: 무료 AI 바인딩/);assert.deepEqual(plain(h.component('batch-work-panel').runRequest.seoGenerationConsent),plain(config));}finally{h.close();}
 });
 
 test('owner A/B/A revokes old consent and drops late configuration responses before a fresh one-click start',async()=>{

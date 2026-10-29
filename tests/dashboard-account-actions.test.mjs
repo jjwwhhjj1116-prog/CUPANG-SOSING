@@ -916,11 +916,9 @@ for(const changedSelection of [false,true])test(`repeated source ACKs ${changedS
  }finally{h.close();}
 });
 
-test('acquisition entry exposes both real paths and keeps URL-first source collection available',async()=>{
+test('compact dashboard retains captured sources and existing collection without registration-choice cards',async()=>{
  const h=harness();try{
-  await h.settle();const tree=h.render(),links=nodes(tree).filter(node=>node.type==='a');
-  assert.ok(links.some(node=>text(node)==='1688 상품 페이지 열기'&&node.props.href==='https://www.1688.com/'&&node.props.target==='_blank'&&node.props.rel==='noopener noreferrer'));
-  assert.ok(links.some(node=>text(node)==='수집한 상품 확인'&&node.props.href==='#captured-source-inbox'));
+  await h.settle();const tree=h.render();assert.equal(nodes(tree).some(node=>node.props?.id==='acquisition-entry-heading'),false);assert.doesNotMatch(text(tree),/상품 등록 방식 선택|1688에서 수집 후 등록|카테고리 선택 후 URL 등록/);assert.ok(h.button('＋ 상품 추가'));assert.ok(h.component('source-inbox-panel'));assert.ok(h.component('registration-board'));assert.equal(nodes(tree).some(node=>node.props?.['aria-label']==='SEO 실행 전 안내'),false);
   assert.ok(nodes(tree).some(node=>node.props?.id==='captured-source-inbox'));assert.equal(h.componentVisible('query-source-panel'),false);
   const queryMount=h.componentMount('query-source-panel');await h.toggleDetails('1688 URL로 원문 먼저 담기 · 서버 수집');
   assert.equal(h.componentVisible('query-source-panel'),true);assert.equal(h.componentMount('query-source-panel'),queryMount,'opening the existing collector does not remount or reset its inputs');
@@ -933,7 +931,7 @@ test('acquisition category entry preserves the shared queue and consumes only it
  const h=harness({initialIntakeRows:[row]});
  const closeButton=()=>nodes(nodes(h.render()).find(node=>node.props?.role==='dialog'&&node.props['aria-label']==='상품 대기열')).find(node=>node.type==='button'&&node.props.className==='icon-close');
  try{
-  await h.settle();await h.click('카테고리 선택 후 1688 URL 등록');const first=h.component('intake-queue-panel'),entry=first.initialCategorySelection;
+  await h.settle();await h.click('＋ 상품 추가');const first=h.component('intake-queue-panel'),entry=first.initialCategorySelection;
   assert.equal(entry.ownerId,'test-owner');assert.match(entry.id,/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u);
   assert.equal(first.sourceSeed,undefined);assert.equal(first.rows[0],row);assert.equal(first.goal,'work');
   first.onInitialCategorySelectionConsumed('unrelated');await h.settle();assert.equal(h.component('intake-queue-panel').initialCategorySelection,entry);

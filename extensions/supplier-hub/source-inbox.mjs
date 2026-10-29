@@ -164,17 +164,13 @@ export async function savePageSource(message,sender,api=chrome,store=sourceInbox
  const run=(async()=>{
   const receiver=await receiving,{tab,scope}=receiver;
   const bounded=limitedApi(api,Date.now()+timeoutMs,()=>Error('YOOFAM 앱의 응답 시간이 초과되었습니다. 수집 결과를 확인하고 다시 시도해주세요.'));
-  const records=await store('list'),previous=records.find(row=>row.windowId===sender.tab.windowId&&same(row,scope)&&row.snapshot.offerId===snapshot.offerId);
-  // A repeated click retries the first immutable snapshot. It cannot overwrite
-  // an uncertain server save or an operating product with newly read values.
+  const records=await store('list'),previous=records.find(row=>row.windowId===sender.tab.windowId&&same(row,scope)&&row.snapshot.offerId===snapshot.offerId&&row.fingerprint===fingerprint);
+  // Retry only this exact immutable snapshot. A fresh capture gets its own
+  // record; older uncertain captures stay retained for the existing flush path.
   const record=previous??{id:crypto.randomUUID(),...scope,windowId:sender.tab.windowId,snapshot,fingerprint};
-  // A successful retry acknowledges this retained payload, not a newer page
-  // the user may have just read. Report that distinction so a second trusted
-  // collection click can explicitly save the current page as its own version.
-  const pendingSnapshotReplayed=Boolean(previous&&previous.fingerprint!==fingerprint);
   if(!previous){if(records.length>=40)throw Error('확장 수집함이 가득 찼습니다. 앱에서 보관된 상품을 불러와주세요.');await recheckReceiver(receiver,bounded);await store('put',record);}
-  try{const before=await recheckReceiver(receiver,bounded);const result=await deliver(record,tab,bounded,store,before);await activateReceiver(receiver,bounded);return {ok:true,delivered:true,duplicate:result.duplicate===true,id:record.id,ownerId:record.ownerId,company:{code:record.company.code,name:record.company.name},fingerprint:record.fingerprint,...(result.storedReceipt?{storedReceipt:result.storedReceipt}:{}),...(pendingSnapshotReplayed?{pendingSnapshotReplayed:true,newCaptureStored:false}:{})};}
-  catch(error){return {ok:true,delivered:false,id:record.id,message:error.message,...(pendingSnapshotReplayed?{pendingSnapshotReplayed:true,newCaptureStored:false}:{})};}
+  try{const before=await recheckReceiver(receiver,bounded);const result=await deliver(record,tab,bounded,store,before);await activateReceiver(receiver,bounded);return {ok:true,delivered:true,duplicate:result.duplicate===true,id:record.id,ownerId:record.ownerId,company:{code:record.company.code,name:record.company.name},fingerprint:record.fingerprint,...(result.storedReceipt?{storedReceipt:result.storedReceipt}:{})};}
+  catch(error){return {ok:true,delivered:false,id:record.id,message:error.message};}
  })();pending.set(sender.tab.id,{promise:run,receiver:receiving,windowId:sender.tab.windowId,sourceUrl:snapshot.sourceUrl,offerId:snapshot.offerId,fingerprint});try{return await run;}finally{if(pending.get(sender.tab.id)?.promise===run)pending.delete(sender.tab.id);}
 }
 export async function flushPageSources(_message,sender,api=chrome,store=sourceInboxStore){

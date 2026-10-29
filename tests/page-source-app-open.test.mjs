@@ -122,15 +122,15 @@ test('the approved owner cannot change between readiness and the record write, e
  await assert.rejects(h.save(),/로그인 회사가 변경/);assert.equal(h.count('store:put'),0);assert.equal(h.count('YOOFAM_SAVE_SOURCE_CAPTURE'),0);
 });
 
-test('lost or mismatched ACK retains the first immutable record; explicit reclick sends that exact snapshot and deletes only for the matching durable ACK',async()=>{
+test('lost or mismatched ACK retains its immutable record; an exact snapshot retry deletes only for the matching durable ACK',async()=>{
  for(const mismatch of [false,true]){
   const h=harness({existing:true}),input=snapshot();h.onSave=async(_id,record)=>{
    h.server.set(record.id,structuredClone(record));if(!mismatch)throw Error('lost app ACK');
    return {ok:true,id:record.id,fingerprint:'0'.repeat(64),ownerId:record.ownerId,company:record.company};
   };
   const first=await h.save(input);assert.equal(first.delivered,false);assert.equal(h.records.size,1);assert.equal(h.count('store:delete'),0);assert.equal(h.count('update'),0);
-  const immutable=JSON.stringify([...h.records.values()][0]);input.title='later reclick must not overwrite an uncertain capture';input.options[0].unitPriceCny=99;
-  h.onSave=null;const second=await h.save(input);assert.equal(second.delivered,true);assert.equal(second.duplicate,true);assert.equal(second.id,first.id);assert.equal(h.count('store:put'),1);assert.equal(h.count('store:delete'),1);assert.equal(h.records.size,0);
+  const immutable=JSON.stringify([...h.records.values()][0]),retry=structuredClone(input);input.title='later reclick must not overwrite an uncertain capture';input.options[0].unitPriceCny=99;
+  h.onSave=null;const second=await h.save(retry);assert.equal(second.delivered,true);assert.equal(second.duplicate,true);assert.equal(second.id,first.id);assert.equal(h.count('store:put'),1);assert.equal(h.count('store:delete'),1);assert.equal(h.records.size,0);
   assert.equal(JSON.stringify(h.server.get(first.id)),immutable);assert.equal(h.count('create'),0);
  }
 });

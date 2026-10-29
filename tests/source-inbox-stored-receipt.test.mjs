@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {webcrypto} from 'node:crypto';
-import {savePageSource,sourceFingerprint} from '../extensions/supplier-hub/source-inbox.mjs';
+import {savePageSource,flushPageSources,sourceFingerprint} from '../extensions/supplier-hub/source-inbox.mjs';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
 
 const origin='http://localhost:3000',sourceUrl='https://detail.1688.com/offer/700000000802.html',offerId='700000000802';
@@ -36,6 +36,7 @@ function harness(company=companyList[0]){
   return x.transformApp?x.transformApp(result):result;
  }}};
  const store=async(action,value)=>{if(action==='list')return [...records.values()].map(item=>structuredClone(item));if(action==='put')records.set(value.id,structuredClone(value));if(action==='delete')records.delete(value);};
+ x.api=api;x.store=store;x.tab=tab;
  x.save=snapshot=>savePageSource({snapshot},sender,api,store,{timeoutMs:1000,pollMs:1});
  x.post=async(snapshot,id)=>{const fingerprint=await sourceFingerprint(snapshot),response=await route.POST(new Request(origin+'/api/source-inbox',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({expectedOwnerId:'owner',expectedCompany:company,id,fingerprint,snapshot})}));assert.equal(response.status,200,await response.clone().text());return response.json();};
  x.count=()=>h.sqlite.prepare('SELECT (SELECT count(*) FROM source_inbox)+(SELECT count(*) FROM source_inbox_captures) n').get().n;
@@ -55,13 +56,39 @@ for(const company of companyList)test(company.code+': real API → classic app b
  }finally{x.h.close();}
 });
 
-test('an old pending replay reports the retained snapshot receipt, never the newly read capture time, and stores fresh facts only on another explicit click',async()=>{
+test('a fresh click reports its new stored receipt while retaining the older uncertain snapshot until its own exact retry',async()=>{
  const x=harness();try{
   const old=source(),fresh=source(2);x.loseAcknowledgement=true;
-  assert.equal((await x.save(old)).delivered,false);const before=x.h.sqlite.prepare('SELECT * FROM source_inbox').get();assert.equal(x.records.size,1);
-  x.loseAcknowledgement=false;const replay=await x.save(fresh);assert.equal(replay.delivered,true);assert.equal(replay.pendingSnapshotReplayed,true);assert.equal(replay.newCaptureStored,false);
-  assert.equal(replay.storedReceipt.collectedAt,old.collectedAt);assert.notEqual(replay.storedReceipt.collectedAt,fresh.collectedAt);assert.equal(replay.storedReceipt.receivedAt,before.received_at);assert.equal(replay.storedReceipt.storedId,before.id);assert.equal(replay.storedReceipt.captureVersion,1);assert.equal(x.count(),1);
-  const actualFresh=await x.save(fresh);assert.equal(actualFresh.storedReceipt.captureVersion,2);assert.equal(actualFresh.storedReceipt.collectedAt,fresh.collectedAt);assert.equal(x.count(),2);assert.equal(x.records.size,0);
+  assert.equal((await x.save(old)).delivered,false);const before=x.h.sqlite.prepare('SELECT * FROM source_inbox').get(),retained=JSON.stringify([...x.records.values()]);assert.equal(x.records.size,1);
+  x.loseAcknowledgement=false;const actualFresh=await x.save(fresh);assert.equal(actualFresh.delivered,true);assert.equal(actualFresh.duplicate,false);assert.equal(actualFresh.pendingSnapshotReplayed,undefined);
+  assert.equal(actualFresh.storedReceipt.captureVersion,2);assert.equal(actualFresh.storedReceipt.collectedAt,fresh.collectedAt);assert.notEqual(actualFresh.storedReceipt.storedId,before.id);assert.equal(x.count(),2);assert.equal(x.records.size,1);assert.equal(JSON.stringify([...x.records.values()]),retained);
+  assert.equal(x.sends.length,2);assert.deepEqual(x.sends[1].snapshot,fresh);assert.deepEqual(x.h.sqlite.prepare('SELECT * FROM source_inbox').get(),before);
+  const exactRetry=await x.save(old);assert.equal(exactRetry.duplicate,true);assert.equal(exactRetry.id,before.id);assert.equal(exactRetry.storedReceipt.captureVersion,1);assert.equal(exactRetry.storedReceipt.collectedAt,old.collectedAt);assert.equal(x.count(),2);assert.equal(x.records.size,0);
+ }finally{x.h.close();}
+});
+
+for(const company of companyList)test(company.code+': a focus-triggered old FLUSH cannot replace or suppress the fresh click receipt while its old ACK is delayed',async()=>{
+ const x=harness(company);let release,flush;const gate=new Promise(resolve=>{release=resolve;});try{
+  const old=source(),fresh=source(2);x.loseAcknowledgement=true;assert.equal((await x.save(old)).delivered,false);
+  const oldRecord=JSON.stringify([...x.records.values()][0]),oldId=[...x.records.keys()][0];x.loseAcknowledgement=false;
+  x.transformApp=async result=>{if(result.id===oldId)await gate;return result;};
+  // Existing activation/foreground FLUSH is a separate operation. Its policy
+  // is unchanged; it still replays the retained old capture and strict ACK.
+  x.api.tabs.update=async()=>{flush=flushPageSources({}, {frameId:0,url:x.tab.url,tab:x.tab},x.api,x.store);return x.tab;};
+  const outcome=await x.save(fresh);assert.ok(flush);for(let count=0;count<100&&x.sends.length<3;count++)await new Promise(resolve=>setImmediate(resolve));assert.equal(x.sends.length,3,'the old FLUSH reaches its delayed ACK while the fresh result is already available');assert.equal(outcome.delivered,true);assert.equal(outcome.storedReceipt.captureVersion,2);assert.equal(outcome.storedReceipt.collectedAt,fresh.collectedAt);assert.notEqual(outcome.id,oldId);
+  assert.equal(outcome.fingerprint,await sourceFingerprint(fresh));assert.equal(outcome.pendingSnapshotReplayed,undefined);assert.equal(x.count(),2);assert.equal(JSON.stringify(x.records.get(oldId)),oldRecord);
+  release();const oldFlush=await flush;assert.equal(oldFlush.delivered,1);assert.equal(oldFlush.pending,0);assert.equal(x.records.size,0);
+  assert.equal(outcome.storedReceipt.captureVersion,2);assert.equal(outcome.storedReceipt.collectedAt,fresh.collectedAt);
+  const latest=await x.h.load('db/source-inbox.ts').findSourceInbox('owner',offerId);assert.equal(latest.captureVersion,2);assert.equal(latest.fingerprint,outcome.fingerprint);assert.deepEqual(x.sends.map(record=>record.snapshot.collectedAt),[old.collectedAt,fresh.collectedAt,old.collectedAt]);
+  assert.equal(x.h.sqlite.prepare('SELECT count(*) n FROM products').get().n,0);assert.equal(x.h.network.length,0);
+ }finally{release();await flush;x.h.close();}
+});
+
+test('an old capture acknowledgement cannot clear the fresh record or claim its save succeeded',async()=>{
+ const x=harness();try{
+  const old=source(),fresh=source(2);x.loseAcknowledgement=true;await x.save(old);x.loseAcknowledgement=false;
+  const oldRecord=structuredClone([...x.records.values()][0]);x.transformApp=result=>({...result,id:oldRecord.id,fingerprint:oldRecord.fingerprint});
+  const result=await x.save(fresh);assert.equal(result.delivered,false);assert.equal(result.storedReceipt,undefined);assert.equal(x.records.size,2);assert.deepEqual(x.records.get(oldRecord.id),oldRecord);assert.equal(x.count(),2,'the uncertain fresh row is preserved without another source send');assert.equal(x.sends.length,2);
  }finally{x.h.close();}
 });
 
