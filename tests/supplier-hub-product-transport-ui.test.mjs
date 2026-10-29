@@ -129,6 +129,78 @@ const savedTargetCapabilities={draftPreparationAvailable:true,preparedLifecycleA
 function savedTargetProof(h,sequence=12){return {...repairProof(h,true),existingDocumentRepairRetryAttempted:true,existingDocumentRepairContinuationAttempted:true,existingDocumentRepairContinuationResumed:true,checkpointSequence:sequence};}
 function savedTargetClosed(h,payload,code='SAVED_DRAFT_TARGET_CLOSED'){return draftResult(h.f,payload.packet.requestId,'update-requested',{docId:'2347603',needsRecovery:true,draftProof:savedTargetProof(h),error:{code,message:'원래 저장 문서의 전용 검증 탭이 닫혔습니다.'}});}
 
+test('a finished verified draft read error releases only view close and remount preserves the exact request and records',async()=>{
+ const h=await fixture();let next;try{
+  allowDraft(h,payload=>payload.action==='prepareDraft'?draftResult(h.f,payload.packet.requestId,'update-requested',{docId:'2347603',needsRecovery:true}):savedTargetClosed(h,payload,'NATIVE_ASSET_RECOVERY_UNCONFIRMED'));
+  await h.idle();await h.click(open);await h.click(prepareDraft);const reservation=[...h.stored.entries()],original=h.f.sent[1].payload.packet.requestId;
+  assert.deepEqual(h.lockPairs.at(-1),[true,true]);await h.click(recoverDraft);
+  assert.deepEqual(h.lockPairs.at(-1),[true,false]);assert.match(h.text(),/이 화면을 닫아도 원래 요청과 문서 보관 기록은 유지/);
+  assert.match(h.text(),/원본 편집은 계속 잠겨/);assert.equal(h.button(prepareDraft),undefined);assert.equal(h.button(continueDraft),undefined);assert.equal(h.button(start),undefined);
+  assert.deepEqual([...h.stored.entries()],reservation);h.close();assert.deepEqual([...h.stored.entries()],reservation,'dismiss never clears reservations or other durable local records');
+  next=await fixture(SINGLE_COMPANIES[0],{stored:h.stored});allowDraft(next,payload=>{assert.equal(payload.action,'recoverDraft');assert.equal(payload.packet.requestId,original);return savedTargetClosed(next,payload,'NATIVE_ASSET_RECOVERY_UNCONFIRMED');});
+  await next.idle();assert.deepEqual(next.lockPairs.at(-1),[true,true]);await next.click('이전 문서 전송 자료 확인');assert.equal(next.button(prepareDraft),undefined);assert.ok(next.button(recoverDraft));
+  assert.deepEqual(next.lockPairs.at(-1),[true,true],'the old view dismissal never authorizes a new view');await next.click(recoverDraft);assert.deepEqual(next.lockPairs.at(-1),[true,false]);
+  assert.deepEqual(plain(next.f.sent.map(row=>row.payload.action)),['preview','recoverDraft']);assert.deepEqual([...next.stored.entries()],reservation);
+  assert.equal(next.f.history.length,0);assert.ok([...h.f.calls,...next.f.calls].every(row=>row.method==='GET'));
+ }finally{h.close();next?.close();}
+});
+
+test('saved-target read failure can dismiss only after settling and a new read immediately restores both guards',async()=>{
+ const h=await fixture(),held=deferred();let hold=false;try{
+  h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,...savedTargetCapabilities,preparedLifecycleAvailable:false}
+   :payload.action==='prepareDraft'?draftResult(h.f,payload.packet.requestId,'update-requested',{docId:'2347603',needsRecovery:true,draftProof:savedTargetProof(h)})
+   :hold?held.promise:savedTargetClosed(h,payload);
+  await h.idle();await h.click(open);await h.click(prepareDraft);await h.click(recoverDraft);assert.deepEqual(h.lockPairs.at(-1),[true,false]);
+  const reservation=[...h.stored.entries()];hold=true;h.button(recoverSavedTarget).props.onClick();h.flush();await h.wait(()=>h.f.sent.at(-1).payload.action==='recoverSavedDraftTarget');
+  assert.deepEqual(h.lockPairs.at(-1),[true,true]);assert.doesNotMatch(h.text(),/이 화면을 닫아도 원래 요청/);
+  const packet=h.f.sent.at(-1).payload.packet;held.resolve(savedTargetClosed(h,{packet},'CURRENT_READ_ONLY_UNCONFIRMED'));await h.idle();
+  assert.deepEqual(h.lockPairs.at(-1),[true,false]);assert.deepEqual([...h.stored.entries()],reservation);
+  assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','recoverDraft','recoverSavedDraftTarget']);assert.equal(h.f.history.length,0);
+ }finally{held.resolve();h.close();}
+});
+
+test('busy, missing ACK, unknown document and unverified read errors never release view close',async()=>{
+ for(const mode of ['busy','timeout','generic','identity','document','request','unknown-document']){const h=await fixture();try{
+  allowDraft(h,payload=>{
+   if(payload.action==='prepareDraft')return draftResult(h.f,payload.packet.requestId,'update-requested',{docId:'2347603',needsRecovery:true});
+   if(mode==='busy')return {format:h.f.review.format,requestId:payload.packet.requestId,state:'busy',registered:false,success:false};
+   if(mode==='timeout')return undefined;if(mode==='generic')throw Error('읽기 응답 없음');
+   const value=savedTargetClosed(h,payload);if(mode==='identity')value.packetDigest='f'.repeat(64);if(mode==='document')value.docId='other-document';
+   if(mode==='request')value.requestId='00000000-0000-4000-8000-000000000000';if(mode==='unknown-document'){value.state='create-requested';value.docId=null;value.draftProof=repairProof(h);}
+   return value;
+  });await h.idle();await h.click(open);await h.click(prepareDraft);const reservation=[...h.stored.entries()];
+  if(mode==='timeout'){h.button(recoverDraft).props.onClick();h.flush();await h.wait(()=>h.f.sent.length===3);h.f.advance(180001);await h.idle();}else await h.click(recoverDraft);
+  assert.deepEqual(h.lockPairs.at(-1),[true,true],mode);assert.doesNotMatch(h.text(),/이 화면을 닫아도 원래 요청/,mode);assert.deepEqual([...h.stored.entries()],reservation,mode);
+ }finally{h.close();}}
+});
+
+test('review ABA, changed durable intent, unreadable storage and changed source revoke the idle read dismissal',async()=>{
+ for(const mode of ['review-ABA','intent-ABA','storage','source']){const options={},h=await fixture(SINGLE_COMPANIES[0],options);try{
+  allowDraft(h,payload=>payload.action==='prepareDraft'?draftResult(h.f,payload.packet.requestId,'update-requested',{docId:'2347603',needsRecovery:true}):savedTargetClosed(h,payload));
+  await h.idle();await h.click(open);await h.click(prepareDraft);await h.click(recoverDraft);assert.deepEqual(h.lockPairs.at(-1),[true,false]);
+  const oldRead=h.button(recoverDraft).props.onClick,reservation=[...h.stored.entries()];
+  if(mode==='review-ABA'){const props=h.props();h.render({...props,review:{...props.review,reviewDigest:'a'.repeat(64)}});h.flush();h.render(props);await h.idle();oldRead();await h.idle();assert.equal(h.f.sent.length,3);}
+  if(mode==='intent-ABA'){const [key,raw]=reservation[0];h.stored.set(key,JSON.stringify({...JSON.parse(raw),requestId:'00000000-0000-4000-8000-000000000000'}));h.storageChanged(key);h.stored.set(key,raw);h.storageChanged(key);}
+  if(mode==='storage'){options.storageReadError=true;h.flush();}
+  if(mode==='source'){h.f.refresh=async()=>({...h.f.review,preparedBodySha256:'f'.repeat(64)});await h.click(recoverDraft);assert.equal(h.f.sent.length,3,'source change must be fenced before another bridge dispatch');}
+  h.flush();assert.deepEqual(h.lockPairs.at(-1),[true,true],mode);assert.doesNotMatch(h.text(),/이 화면을 닫아도 원래 요청/,mode);assert.deepEqual([...h.stored.entries()],reservation,mode);
+ }finally{h.close();}}
+});
+
+test('a write error and prepared lifecycle read error cannot inherit the explicit draft-read dismissal',async()=>{
+ const h=await fixture();try{
+  h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,existingDocumentRepairAvailable:true}
+   :payload.action==='prepareDraft'?draftResult(h.f,payload.packet.requestId,'update-requested',{docId:'2347603',needsRecovery:true})
+   :draftResult(h.f,payload.packet.requestId,'update-requested',{docId:'2347603',needsRecovery:true,error:{code:'OWNED_RECORD_MISSING',message:'동일 문서 읽기 오류'}});
+  await h.idle();await h.click(open);await h.click(prepareDraft);await h.click(recoverDraft);assert.deepEqual(h.lockPairs.at(-1),[true,false]);
+  const reservation=[...h.stored.entries()];checkTerms(h);await h.click(repairDraft);assert.deepEqual(h.lockPairs.at(-1),[true,true]);assert.doesNotMatch(h.text(),/이 화면을 닫아도 원래 요청/);assert.deepEqual([...h.stored.entries()],reservation);
+ }finally{h.close();}
+ const prepared=await fixture();try{
+  allowPrepared(prepared,payload=>savedTargetClosed(prepared,payload));await prepared.idle();await prepared.click(open);await prepared.click(prepareDraft);await prepared.click(recoverDraft);
+  assert.equal(prepared.f.sent.at(-1).payload.action,'recoverPreparedDraft');assert.deepEqual(prepared.lockPairs.at(-1),[true,true]);assert.doesNotMatch(prepared.text(),/이 화면을 닫아도 원래 요청/);
+ }finally{prepared.close();}
+});
+
 test('saved original document recovers only its verification tab after remount, then validates only on an explicit continuation',async()=>{
  const seed=await fixture();let h;try{
   allowDraft(seed,payload=>draftResult(seed.f,payload.packet.requestId,'update-requested',{docId:'2347603',needsRecovery:true,draftProof:savedTargetProof(seed)}));

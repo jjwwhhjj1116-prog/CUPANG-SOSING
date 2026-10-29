@@ -30,7 +30,7 @@ function fixture(){
  const f={input,state,calls,clock,timers,dataset,document,location,binaries,response,beforeFetch:null,override:null};
  const fetch=async(url,init)=>{
   const parsed=new URL(url),path=parsed.pathname+parsed.search;calls.push({path,method:init.method,credentials:init.credentials,redirect:init.redirect,cache:init.cache,headers:copy(init.headers),...(init.body?{body:init.body}:{})});
-  assert.equal(parsed.origin,origin);assert.equal(init.credentials,'include');assert.equal(init.redirect,'error');assert.equal(init.cache,'no-store');
+  assert.equal(parsed.origin,origin);assert.equal(init.credentials,'include');assert.equal(init.redirect,'manual');assert.equal(init.cache,'no-store');
   await f.beforeFetch?.(path,init);const override=await f.override?.(path,init);if(override!==undefined)return override;
   if(path==='/sr/draft/api/drafts'){assert.equal(init.method,'GET');return response(path,state.drafts);}
   if(path==='/sr/draft/api/drafts/register-requested'){assert.equal(init.method,'GET');return response(path,state.requested);}
@@ -203,6 +203,33 @@ test('actual bytes must match immutable SHA, MIME and bounded length with no red
 test('HTTP failures expose only the bounded status enum without reading or returning raw server errors',async()=>{
  for(const status of [401,403,404,429,500,502,503,504,418]){const f=fixture();f.override=path=>{if(path!=='/sr/draft/api/drafts')return;const response=f.response(path,{error:'private-raw-server-error',url:'https://private.example/session'});Object.defineProperty(response,'status',{value:status});return response;};
   const result=await f.run();expectFailure(result);assert.equal(result.currentReadFailure.code,status===418?'http-response':'http-'+status);assert.doesNotMatch(JSON.stringify(result),/private-raw|private\.example/);assert.equal(f.calls.length,1);assert.equal(f.writes(),0);
+ }
+});
+
+test('manual redirects fail closed in read, bind and check without reading or following the authentication target',async()=>{
+ const variants=[{type:'opaqueredirect',status:0,redirected:false},{type:'basic',status:200,redirected:true},{type:'basic',status:0,redirected:false},{type:'basic',status:302,redirected:false},{type:'basic',status:307,redirected:false}];
+ for(const mode of ['read','bind','check'])for(const variant of variants){const f=fixture();let input=f.input;
+  if(mode!=='read'){const read=await f.run();input=mode==='bind'?f.bindInput(read):{...copy(f.input),mode:'check'};if(mode==='check')assert.equal((await f.run(f.bindInput(read))).currentReadFailure,undefined);}
+  const before=f.snapshot(),writes=f.writes(),calls=f.calls.length;let inspected=0;
+  f.override=path=>path==='/sr/draft/api/drafts'?{...variant,ok:variant.status===200,get url(){inspected++;return 'https://private.example/sso?token=private-redirect';},get headers(){inspected++;throw Error('redirect headers must not be inspected');},get body(){inspected++;throw Error('redirect body must not be inspected');}}:undefined;
+  const result=await f.run(input);expectFailure(result);assert.deepEqual(result.currentReadFailure,{format:'yoofam-current-saved-draft-read-failure-v1',phase:'draft-list',code:'http-redirect'});
+  assert.equal(inspected,0,JSON.stringify({mode,variant}));assert.equal(f.snapshot(),before);assert.equal(f.writes(),writes);assert.equal(f.timers.size,0);
+  assert.deepEqual(f.calls.slice(calls).map(call=>[call.path,call.redirect]),[['/sr/draft/api/drafts','manual']]);assert.doesNotMatch(JSON.stringify(result),/private|sso|token/);
+ }
+});
+
+test('redirect classification protects every metadata and byte read before consuming any redirect response',async()=>{
+ const phases=[['draft-list','/sr/draft/api/drafts'],['requested-list','/sr/draft/api/drafts/register-requested'],['body','/sr/draft/api/get-by-id/2347603'],['image-list','/sr/draft/api/get-images-by-id/2347603'],['legal-lists','/sr/draft/api/get-files-by-type/2347603'],['image-bytes','/sr/api/image/get-by-key?']];
+ for(const [phase,path] of phases){const f=fixture(),before=f.snapshot();let inspected=0;
+  f.override=current=>current.startsWith(path)?{type:'opaqueredirect',status:0,redirected:false,get url(){inspected++;throw Error('redirect URL must not be inspected');},get headers(){inspected++;throw Error('redirect headers must not be inspected');},get body(){inspected++;throw Error('redirect body must not be inspected');}}:undefined;
+  const result=await f.run();expectFailure(result);assert.equal(result.currentReadFailure.phase,phase);assert.equal(result.currentReadFailure.code,'http-redirect');assert.equal(inspected,0);
+  assert.equal(f.snapshot(),before);assert.equal(f.writes(),0);assert.equal(f.timers.size,0);assert.ok(f.calls.every(call=>call.redirect==='manual'));assert.ok(f.calls.every(call=>!call.path.includes('/login')&&!call.path.includes('/sso')));
+ }
+});
+
+test('fetch exceptions remain fixed network failures without leaking error names, messages, stacks or authentication URLs',async()=>{
+ for(const name of ['TypeError','RangeError','PrivateCredentialError']){const f=fixture(),before=f.snapshot();f.override=()=>{const error=Error('private-cookie=secret; https://private.example/sr/sso/login');error.name=name;error.stack='private-stack-with-session';throw error;};
+  const result=await f.run();expectFailure(result);assert.deepEqual(result.currentReadFailure,{format:'yoofam-current-saved-draft-read-failure-v1',phase:'draft-list',code:'http-network'});assert.doesNotMatch(JSON.stringify(result),/TypeError|RangeError|PrivateCredentialError|private|secret|session/);assert.equal(f.calls.length,1);assert.equal(f.snapshot(),before);assert.equal(f.writes(),0);assert.equal(f.timers.size,0);
  }
 });
 

@@ -80,9 +80,12 @@ export async function savedDraftCurrentReadPage(input){
    fence();const controller=new AbortController();controllers.add(controller);let timer;
    const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>{controller.abort();reject(failure('http-timeout'));},30000);});
    const consume=async()=>{
-    const url=origin+path;let response;try{response=await fetch(url,{method:legal?'POST':'GET',credentials:'include',redirect:'error',cache:'no-store',signal:controller.signal,
+    const url=origin+path;let response;try{response=await fetch(url,{method:legal?'POST':'GET',credentials:'include',redirect:'manual',cache:'no-store',signal:controller.signal,
      headers:{accept:bytes?expectedFile.contentType:'application/json',...(legal?{'content-type':'application/json;charset=UTF-8'}:{})},...(legal?{body:'{}'}:{})});}catch{fail(controller.signal.aborted?'http-timeout':'http-network');}
-    fence();if(!response||response.redirected||response.type==='opaqueredirect'||response.url!==url)fail('http-response');
+    fence();if(!response)fail('http-response');
+    // Never follow an SSO/login redirect or inspect its target, headers or body.
+    if(response.redirected||response.type==='opaqueredirect'||response.status===0||response.status>=300&&response.status<400)fail('http-redirect');
+    if(response.url!==url)fail('http-response');
     if(!response.ok||response.status!==200)fail([401,403,404,429,500,502,503,504].includes(response.status)?'http-'+response.status:'http-response');
     const mime=(response.headers.get('content-type')||'').split(';')[0].trim().toLowerCase();if(mime!==(bytes?expectedFile.contentType:'application/json'))fail(mime==='application/octet-stream'?'http-type-octet-stream':'http-type-other');
     const limit=bytes?10*1024*1024:6*1024*1024,size=response.headers.get('content-length');

@@ -734,7 +734,8 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     try{if(typeof value==='string'){if(value.length>6*1024*1024)throw Error();value=JSON.parse(value);}}catch{fail('SAVED_DRAFT_TARGET_UNCONFIRMED','현재 저장 문서의 읽기 응답 형식을 확인하지 못했습니다.');}
     const failure=value?.currentReadFailure;
     if(failure){const phase=typeof failure.phase==='string'&&/^[a-z0-9-]{1,40}$/.test(failure.phase)?failure.phase:'read',code=typeof failure.code==='string'&&/^[a-z0-9-]{1,40}$/.test(failure.code)?failure.code:'comparison';
-      fail('SAVED_DRAFT_TARGET_UNCONFIRMED','같은 저장 문서의 현재 읽기 확인이 중단됐습니다. 단계: '+phase+' / '+code+'.'+savedLegalFailureSummary(value)+' 파일·본문은 다시 보내지 않았습니다.');}
+      const advice=['http-redirect','http-401','http-403'].includes(code)?' Supplier Hub 개별 상품 등록의 로그인·접근 권한을 다시 확인해주세요. 회사명이 표시돼도 등록 서비스의 인증은 별도로 확인해야 합니다.':code==='http-type-other'?' Supplier Hub가 필요한 JSON·이미지와 다른 형식으로 응답했습니다. 공식 개별 상품 등록 화면의 로그인 상태를 확인해주세요.':'';
+      fail('SAVED_DRAFT_TARGET_UNCONFIRMED','같은 저장 문서의 현재 읽기 확인이 중단됐습니다. 단계: '+phase+' / '+code+'.'+advice+savedLegalFailureSummary(value)+' 파일·본문은 다시 보내지 않았습니다.');}
     const keys=['body','files','fileSetSha256','byteSetSha256','rawBodySha256','filesCount','duplicateMatches','documentState','readOnly','remoteWrites','historicalAckRecovered','observedAt',...(mode==='bind'?['record']:[])];
     if(!value||Object.keys(value).sort().join(',')!==keys.sort().join(',')||!Array.isArray(value.files)||value.filesCount!==expectedImages.length||value.files.length!==expectedImages.length
       ||value.duplicateMatches!==0||value.documentState!=='UNFINISHED'||value.readOnly!==true||value.remoteWrites!==false||value.historicalAckRecovered!==false

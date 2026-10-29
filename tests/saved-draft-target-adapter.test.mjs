@@ -192,3 +192,13 @@ test('sampled legal diagnostic summaries stay bounded and report only fixed key 
   assert.equal(q.f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords,undefined);
  }finally{q.close();}
 });
+
+for(const code of ['http-redirect','http-401','http-403','http-type-other'])test('saved read '+code+' provides registration login advice without replay',async()=>{
+ const q=await fixture({currentReadReply:{currentReadFailure:{format:'yoofam-current-saved-draft-read-failure-v1',phase:'draft-list',code}}});try{
+  const before={uploads:copy(q.f.state.uploads),body:copy([...q.f.documents]),writes:q.f.calls.filter(call=>call.name==='hub-fetch'&&call.init.method==='POST').length};
+  await assert.rejects(q.adapter.qualifySavedDraftTarget(q.input),error=>error.code==='SAVED_DRAFT_TARGET_UNCONFIRMED'&&error.message.includes('로그인')&&error.message.includes('파일·본문은 다시 보내지 않았습니다.'));
+  assert.equal(q.f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords,undefined);
+  assert.deepEqual(q.f.state.uploads,before.uploads);assert.deepEqual([...q.f.documents],before.body);
+  assert.equal(q.f.calls.filter(call=>call.name==='hub-fetch'&&call.init.method==='POST').length,before.writes);
+ }finally{q.close();}
+});
