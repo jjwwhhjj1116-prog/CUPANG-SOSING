@@ -116,3 +116,18 @@
 .quotation-named-pair-name>b { color: #ae314a; font-size: 12px; }
 .quotation-named-pair-name .quotation-field-example { flex: 0 0 15px; margin: 0; }
 @media (max-width: 420px) { .quotation-named-pair { grid-template-columns: minmax(0, 1fr); gap: 7px; } }
+
+/* Keep the registration form centered within the wide seven-stage editor. */
+.registration-workspace .quotation-fields{max-width:880px;margin-inline:auto;padding:16px;border:1px solid #dfe3eb;border-radius:6px;background:#fff;gap:16px}
+.registration-workspace .quotation-fields-heading{margin:-16px -16px 0;padding:16px;background:#cacdd5;align-items:center}
+.registration-workspace .quotation-fields-heading h3{font-size:13px;font-weight:500;color:#17204b}
+.registration-workspace .quotation-fields-heading .btn{font-size:11px;padding:6px 10px}
+.registration-workspace .quotation-fields-section{border:0;border-radius:6px;background:#f8f9fb;padding:10px!important}
+.registration-workspace .quotation-fields-section>header{border:0;border-radius:7px;padding:9px 10px;min-height:34px}
+.registration-workspace .quotation-fields-section>header h4{font-size:14px;line-height:1.2}
+.registration-workspace .quotation-fields-section .quotation-fields-grid{padding:16px 12px;gap:26px}
+.registration-workspace .quotation-field-heading>label{font-size:12px;font-weight:500}
+.registration-workspace .quotation-field input:not([type=checkbox]),.registration-workspace .quotation-field textarea,.registration-workspace .quotation-field select{border-radius:6px;padding:9px 10px;font-size:12px;background:#fff}
+.registration-workspace .quotation-fields-actions{top:auto;bottom:0;border-radius:8px;padding:10px 12px;box-shadow:0 2px 8px #1f293710}
+@media(min-width:1400px){.registration-workspace .quotation-fields-actions{position:fixed;right:32px;top:52%;bottom:auto;width:220px;display:grid;gap:10px;border-radius:14px;background:#f4f5f7;box-shadow:0 2px 8px #1f29371c}.registration-workspace .quotation-fields-actions>div{display:grid;gap:6px}.registration-workspace .quotation-fields-actions .btn{font-size:11px;padding:7px 9px}.registration-workspace .quotation-fields-actions .quotation-apply-all{margin:0;font-size:11px}}
+@media(max-width:600px){.registration-workspace .quotation-fields{padding:12px}.registration-workspace .quotation-fields-heading{margin:-12px -12px 0;padding:14px 12px}.registration-workspace .quotation-fields-section{padding:7px!important}.registration-workspace .quotation-fields-section .quotation-fields-grid{padding:12px 8px;gap:22px}.registration-workspace .quotation-fields-actions{position:static}}

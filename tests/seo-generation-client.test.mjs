@@ -27,6 +27,15 @@ test('free SEO context and notice parser reject any paid/model/destination or ma
  assert.equal(f.actions().length,0);
 });
 
+test('the optional generic Qwen paid-usage notice comes only from the configured server model and preserves strict nested boundaries',async()=>{
+ const f=await fixture(),server=providedOptionModule('app/seo-generation.ts'),configuration=server.seoGenerationConfiguration({SOURCEFLOW_QUOTATION_AI_PROVIDER:'workers-ai',SOURCEFLOW_QUOTATION_AI_FREE_ONLY:'true',SOURCEFLOW_TEXT_PROVIDER:'workers-ai',SOURCEFLOW_TEXT_MODEL:'@cf/qwen/qwen3-30b-a3b-fp8',SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS:'4096',AI:{run:async()=>assert.fail('Remote AI forbidden')}});
+ assert.equal(configuration.translationConfig.configured,true);assert.equal(configuration.translationConfig.freeOnly,false);assert.equal(configuration.translationConfig.maxOutputTokens,4096);assert.match(configuration.translationConfig.notice,/비용/);assert.ok(f.api.parseSeoGenerationConfiguration(configuration));
+ for(const patch of [{freeOnly:true},{provider:'openai'},{model:'other-model'},{maxOutputTokens:0},{maxOutputTokens:8001},{maxOutputTokens:null},{destination:'OpenAI Responses API'},{notice:''},{extra:true}])assert.equal(f.api.parseSeoGenerationConfiguration({...configuration,translationConfig:{...configuration.translationConfig,...patch}}),null,JSON.stringify(patch));
+ const unavailable={...configuration,translationConfig:{...configuration.translationConfig,configured:false,maxOutputTokens:null,issues:['출력 한도 설정 필요']}};assert.ok(f.api.parseSeoGenerationConfiguration(unavailable));
+ assert.equal(server.seoGenerationConfiguration({SOURCEFLOW_TEXT_PROVIDER:'google-free'}).translationConfig,undefined);
+ assert.equal(server.seoGenerationConfiguration({SOURCEFLOW_TEXT_PROVIDER:'workers-ai',SOURCEFLOW_TEXT_MODEL:'@cf/meta/llama-3.3-70b-instruct-fp8-fast'}).translationConfig,undefined);
+});
+
 test('AI SEO prepares only until the real destination and free budget notice is confirmed',async()=>{
  const f=await fixture(),source=plain(f.state.source),outcome=await f.api.runSeoGenerationDraft(f.state,f.controls);assert.equal(outcome.job.status,'prepared');assert.equal(outcome.closed,false);assert.deepEqual(f.actions(),['prepare']);assert.match(outcome.message,/Cloudflare Workers AI|무료 한도/);assert.deepEqual(plain(f.state.source),source);assert.deepEqual(plain(outcome.job.review.seoGeneration.memo),f.view.memo);
  assert.equal(f.state.approvalSubmitted,false);assert.equal(f.state.executeSubmitted,false);assert.equal(f.calls.some(call=>/apply|content|options/.test(call.url)),false);

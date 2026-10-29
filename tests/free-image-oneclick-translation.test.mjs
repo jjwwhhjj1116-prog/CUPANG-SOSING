@@ -11,6 +11,19 @@ const quotation = { kind: 'quotation', profileId: 'profile', optionId: 'red', in
   revision: 2, inputFingerprint: 'c'.repeat(64), optionRevision: 3, value: 'owner/second.png\nowner/original.png' };
 const context = { profileId: quotation.profileId, optionId: quotation.optionId, input: quotation.input };
 
+test('Vision card prepares a preview from its existing Korean blocks without Google and keeps apply explicit',async()=>{
+ const h=fixture({translationTarget:target(1)});try{
+  h.setOcr(image=>{image.visionResult={provider:'workers-ai-vision',notice:'Cloudflare 무료 사용량 초과 시 사용료 발생'};return[{id:'vision-1',text:'黑色',translated:'검정',issue:null,translationProvenance:'generated',selected:true,confidence:0,box:{x:1,y:1,width:10,height:5},background:'#ffffff',foreground:'#111111',fontSize:3}];});
+  h.setTranslate(()=>{throw Error('Vision must not be translated a second time');});await h.settle();assert.deepEqual(actions(h),['source','ocr','preview']);assert.equal(h.saved,0);assert.ok(h.button('검토한 번역 이미지 적용'));assert.match(text(h.render()),/사용료 발생/);
+ }finally{h.close();}
+});
+test('partial Vision card retains failed text and never automatically sends it to Google or creates a PNG',async()=>{
+ const h=fixture({translationTarget:target(1)});try{
+  h.setOcr(image=>{image.visionResult={provider:'workers-ai-vision',notice:'Cloudflare 사용량 과금 가능'};return[{id:'vision-1',text:'黑色',translated:'',issue:'번역 검증 실패',translationProvenance:'empty',selected:true,confidence:0,box:{x:1,y:1,width:10,height:5},background:'#ffffff',foreground:'#111111',fontSize:3}];});
+  h.setTranslate(()=>{throw Error('No automatic fallback');});await h.settle();assert.deepEqual(actions(h),['source','ocr']);assert.equal(h.saved,0);assert.match(text(h.render()),/일부 문구를 번역하지 못했습니다/);
+ }finally{h.close();}
+});
+
 test('a fresh Chinese or English card action reads owned source, recognizes, translates and prepares PNG while applying stays explicit', async () => {
   for (const language of ['zh', 'en']) {
     const h = fixture({ translationTarget: target(1, { sourceLanguage: language, quotationTarget: quotation }), quotationContext: context });

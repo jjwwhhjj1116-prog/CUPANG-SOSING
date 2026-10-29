@@ -349,6 +349,24 @@ test('Workers AI configuration rejects absent binding, unsupported model and unk
   }
 });
 
+test('ordinary Qwen translation uses its own Cloudflare JSON contract once without Google or an API key',async()=>{
+ let calls=0;
+ const own=model.requireTranslationConfig({SOURCEFLOW_TEXT_PROVIDER:'workers-ai',SOURCEFLOW_TEXT_MODEL:model.WORKERS_QWEN_MODEL,SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS:'4096',AI:{run:async(name,input)=>{
+  calls++;assert.equal(name,model.WORKERS_QWEN_MODEL);assert.equal(input.temperature,0);assert.match(input.messages[1].content,/\/no_think$/u);assert.equal(input.response_format.type,'json_schema');
+  return{response:draft,model:name,usage:{prompt_tokens:100,completion_tokens:80,total_tokens:180}};
+ }}});
+ const review=await model.prepareTranslationReview(source,own);assert.equal(review.destination,'Cloudflare Workers AI');assert.match(review.paidNotice,/과금/u);
+ const result=await model.executeTranslation(review,own,()=>{throw Error('Google and OpenAI must not be called');});
+ assert.equal(calls,1);assert.equal(result.draft.title,draft.title);assert.equal(result.model,model.WORKERS_QWEN_MODEL);assert.equal(result.usage.totalTokens,180);assert.equal(result.appliedToContent,false);
+});
+
+test('Qwen structured translation rejects different models, reasoning and malformed responses without retrying',async()=>{
+ for(const payload of [{model:model.WORKERS_TEXT_MODEL,response:draft},{response:JSON.stringify(draft)},{response:draft,reasoning_content:'not source facts'},{response:{...draft,title:'새상품 999'}}]){
+  let calls=0;const own=model.requireTranslationConfig({SOURCEFLOW_TEXT_PROVIDER:'workers-ai',SOURCEFLOW_TEXT_MODEL:model.WORKERS_QWEN_MODEL,SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS:'4096',AI:{run:async()=>{calls++;return payload;}}});
+  const review=await model.prepareTranslationReview(source,own);await assert.rejects(()=>model.executeTranslation(review,own),error=>error.mayHaveBeenCharged===true);assert.equal(calls,1);
+ }
+});
+
 test('Workers AI error codes expose only fixed guidance and never retry', async () => {
   const known = [[3036,'무료'],[3040,'처리 용량'],[5007,'모델'],[5028,'폐기'],[3042,'모델'],[5035,'Paid'],[5016,'약관'],[5018,'접근'],[3041,'접근'],[3023,'계정'],[3006,'크기'],[3007,'시간'],[3008,'중단']];
   for (const [code, guidance] of known) {

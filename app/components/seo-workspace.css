@@ -45,8 +45,8 @@
 .seo-workspace-tools>.panel-stack{padding-top:12px}
 .seo-generation-provider{font-size:12px;color:#8a909d}
 .seo-generation-provider small{display:block;margin-top:8px}
-.registration-workspace .registration-seo-heading,.registration-workspace .seo-content-columns{width:min(850px,100%)}
-.registration-workspace .registration-seo-heading>h2{font-size:20px;margin:10px 0 24px}
+.registration-workspace .registration-seo-heading,.registration-workspace .seo-content-columns{width:min(840px,100%)}
+.registration-workspace .registration-seo-heading>h2{font-size:18px;margin:10px 0 24px}
 .registration-workspace .seo-generation-card{margin-bottom:20px}
 .registration-workspace .seo-generation-card>h3,.registration-workspace .seo-common-editor>h3,.registration-workspace .seo-option-names>h3{padding:17px 16px;font-size:15px}
 .registration-workspace .seo-generation-body{padding:18px 16px;gap:16px}

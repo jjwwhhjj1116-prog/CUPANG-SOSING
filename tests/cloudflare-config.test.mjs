@@ -82,12 +82,20 @@ test('Workers AI deployment is opt-in and binds only the validated model', () =>
   const config = { ...productionConfig({ ...input, SOURCEFLOW_TEXT_PROVIDER: 'workers-ai' }, hosting), no_bundle: true };
   assert.deepEqual(config.ai, { binding: 'AI' });
   assert.equal(config.vars.SOURCEFLOW_TEXT_PROVIDER, 'workers-ai');
-  assert.equal(config.vars.SOURCEFLOW_TEXT_MODEL, '@cf/meta/llama-3.3-70b-instruct-fp8-fast');
+  assert.equal(config.vars.SOURCEFLOW_TEXT_MODEL, '@cf/qwen/qwen3-30b-a3b-fp8');
   assert.equal(config.vars.SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS, '4096');
   assert.doesNotThrow(() => assertProductionArtifactConfig(config, hosting));
   assert.throws(() => assertProductionArtifactConfig({ ...config, ai: { binding: 'OTHER' } }, hosting));
   assert.throws(() => assertProductionArtifactConfig({ ...config, vars: { ...config.vars, SOURCEFLOW_TEXT_MODEL: 'different' } }, hosting));
   assert.throws(() => assertProductionArtifactConfig({ ...config, vars: { ...config.vars, SOURCEFLOW_TEXT_MODEL: '@cf/meta/llama-3.1-8b-instruct' } }, hosting));
+});
+
+test('Qwen Vision deployment requires the exact model and explicit usage-billing permission',()=>{
+ const settings={...input,SOURCEFLOW_TEXT_PROVIDER:'workers-ai',SOURCEFLOW_IMAGE_TEXT_PROVIDER:'workers-ai-vision',SOURCEFLOW_IMAGE_TEXT_MODEL:'@cf/qwen/qwen3.8-27b',SOURCEFLOW_IMAGE_TEXT_PAID_ALLOWED:'true'};
+ const config={...productionConfig(settings,hosting),no_bundle:true};
+ assert.equal(config.vars.SOURCEFLOW_TEXT_MODEL,'@cf/qwen/qwen3-30b-a3b-fp8');assert.equal(config.vars.SOURCEFLOW_IMAGE_TEXT_MODEL,'@cf/qwen/qwen3.8-27b');
+ assert.equal(config.vars.SOURCEFLOW_IMAGE_TEXT_PAID_ALLOWED,'true');assert.doesNotThrow(()=>assertProductionArtifactConfig(config,hosting));
+ for(const change of [{SOURCEFLOW_IMAGE_TEXT_PAID_ALLOWED:undefined},{SOURCEFLOW_IMAGE_TEXT_PAID_ALLOWED:'false'},{SOURCEFLOW_IMAGE_TEXT_MODEL:'different'},{SOURCEFLOW_IMAGE_TEXT_PROVIDER:'different'}])assert.throws(()=>productionConfig({...settings,...change},hosting));
 });
 
 test('Google deployment packages the keyless fixed model and zero tokens without retaining AI binding or secrets', () => {
@@ -126,7 +134,7 @@ test('packaged Google artifact rejects leftover Workers binding, model or token 
 });
 
 test('authenticated runtime GET distinguishes unconfigured translation from explicitly selected keyless Google without invoking providers or changing historical results', async () => {
-  const env = {}, modules = new Map(), history = [{ id: 'historical', status: 'completed', result: { model: 'old-model', draft: { title: '기존 저장 초안' } } }];
+  const env = {}, modules = new Map(), history = [{ id: 'historical', status: 'completed', review: {model:'old-model'}, result: { model: 'old-model', draft: { title: '기존 저장 초안' } } }];
   const before = JSON.stringify(history); let reads = 0;
   const forbidden = () => { throw Error('Status read must not write or contact a provider'); };
   function load(file) {

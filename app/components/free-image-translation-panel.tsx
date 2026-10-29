@@ -9,7 +9,7 @@ import { FreeImageBrushCanvas } from '@/app/components/free-image-brush-canvas';
 import { FreeImageCropCanvas } from '@/app/components/free-image-crop-canvas';
 import { validateFreeImageCropRect, type FreeImageCropRect } from '@/app/free-image-crop';
 import {
-  applyFreeImageTranslation, FreeImageApplyError, readFreeImageSource, readFreeImageRoleSources, recognizeFreeImage, recoverFreeImageTranslation, renderFreeImageTranslation, sameFreeImageQuotationRequest, translateFreeImageRegions,
+  applyFreeImageTranslation, FreeImageApplyError, readFreeImageSource, readFreeImageRoleSources, recognizeFreeImage, recognizeLocalFreeImage, recoverFreeImageTranslation, renderFreeImageTranslation, sameFreeImageQuotationRequest, translateFreeImageRegions,
   type FreeImageApplyReply, type FreeImageLoaded, type FreeImageQuotationRequest, type FreeImageRegion, type FreeImageRendered,type FreeImageTranslationReply,
 } from '@/app/free-image-translation-client';
 function translationServiceNotice(reply:FreeImageTranslationReply){
@@ -489,7 +489,8 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       const requested = rows.filter(row => row.selected && row.erase !== true && row.translationProvenance !== 'manual' && row.text.trim()).map(({ id, text }) => ({ id, text }));
       if (!requested.length) { setNotice('자동 번역할 문구를 찾지 못했습니다. 원본과 인식 영역을 확인하거나 문구 영역을 직접 추가해주세요.'); return; }
       setNotice('인식한 문구를 한국어로 번역하고 있습니다.');
-      const result = workspaceContext ? await translateDetailWorkspaceImage(image.source, language, requested, work.controller.signal)
+      const result:FreeImageTranslationReply = image.visionResult?{source:image.source,regions:rows.map(row=>({id:row.id,original:row.text,translated:row.translated||null,issue:row.issue})),requests:image.visionExecution?.requests??1,stoppedHttpStatus:null,warnings:[image.visionExecution?.cached?'같은 원본의 검증된 번역을 재사용했습니다. 추가 AI 요청은 0회입니다.':image.visionResult.notice]}
+        : workspaceContext ? await translateDetailWorkspaceImage(image.source, language, requested, work.controller.signal)
         : await translateFreeImageRegions(image.source, language, requested, work.controller.signal);
       if (!current(work)) return;
       const returned = new Map(result.regions.map(row => [row.id, row]));
@@ -509,7 +510,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     } catch (cause) { if (current(work)) setError(cause instanceof Error ? cause.message : '이미지 번역 초안을 만들지 못했습니다. 원문과 이전 저장 이미지는 유지됩니다.'); }
     finally { finish(work); }
   }
-  async function recognize() {
+  async function recognize(local=false) {
     if (!sourceKey || !sourceEligible || liveUncertain.current || liveReadyRetry.current || !focusedTarget() || !editorCurrent()) return;
     if (liveRegions.current.length || liveCrop.current || liveRenderedRef.current || liveOptionImageIds.current.length || pendingSave.current) { setNotice('작성한 문구와 잘라내기·옵션 선택을 유지했습니다. 원본 문구를 다시 읽으려면 먼저 이미지 번역 편집 초안을 지워주세요.'); return; }
     const work = begin('ocr'); if (!work) return;
@@ -519,8 +520,8 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
         : await readFreeImageSource(productId, version, sourceKey, role, work.controller.signal, undefined, liveQuotationTarget.current ?? undefined);
       if (!current(work)) return; setLoaded(image);
       setOptionImageIds(focusedOptionId && image.source.optionImages?.optionIds.includes(focusedOptionId) ? [focusedOptionId] : []);
-      const rows = await recognizeFreeImage(image, language, work.controller.signal, message => { if (current(work)) setNotice(message); });
-      if (!current(work)) return; resetRegions(rows); setNotice(`문구 ${rows.length}개를 읽었습니다. 원문·영역을 확인하고 번역할 문구를 선택해주세요.`);
+      const rows = await (local?recognizeLocalFreeImage:recognizeFreeImage)(image, language, work.controller.signal, message => { if (current(work)) setNotice(message); });
+      if (!current(work)) return; resetRegions(rows); setNotice(image.visionResult?`${image.visionExecution?.cached?'같은 원본의 Vision 번역을 재사용했습니다. 추가 AI 요청은 0회입니다.':`Vision으로 문구 ${rows.length}개와 한국어 초안을 읽었습니다.`} ${image.visionResult.notice}`:`문구 ${rows.length}개를 읽었습니다. 원문·영역을 확인하고 번역할 문구를 선택해주세요.`);
     } catch (cause) { if (current(work)) setError(cause instanceof Error ? cause.message : '문구 인식을 완료하지 못했습니다.'); }
     finally { finish(work); }
   }
@@ -645,8 +646,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     data-workspace-dirty={dirty ? 'true' : undefined} data-workspace-saving={busy || brushDrawing || cropDrawing ? 'true' : undefined}>
     <h4>{workspaceTarget ? '상세 작업 사진 편집' : translationTarget?.intent === 'manual' ? '이미지 편집' : '이미지 문구 번역'}</h4>
     <p>원본의 문구를 읽고 한국어로 수정합니다. 문구·영역·브러시 편집을 마친 뒤 원하는 부분을 잘라낼 수 있습니다. 상품 사진과 문구가 겹치는 영역은 미리보기에서 확인한 다음 적용해주세요.</p>
-    <p>Google 요청 제한 시, 설정된 무료 서버 AI가 선택 문구만 한 번 번역합니다. 이미지 파일은 번역 서비스에 보내지 않습니다.</p>
-    <details><summary>문구 번역 방식</summary><p>문구 인식은 이 브라우저에서 처리하고 기본 번역은 Google을 사용합니다. Google의 HTTP 429 응답이 확인된 경우에만, 번역하지 못한 선택 문구를 Cloudflare Workers AI에 한 묶음으로 한 번 보냅니다. 직접 작성한 한국어와 공란은 유지하며, 실패 후 자동으로 재요청하거나 편집 결과를 저장하지 않습니다.</p></details>
+    <details><summary>이미지 번역 방식·사용료 안내</summary><p>기본 작업은 설정된 Cloudflare Qwen3.8 Vision으로 본인 소유 원본 한 장의 문구와 한국어 번역을 한 번 읽습니다. Cloudflare 무료 사용량 초과 시 사용료가 발생할 수 있습니다. 이미지 생성은 하지 않으며 실패 후 자동 재요청하지 않습니다. 문구와 영역을 검토한 뒤 적용해주세요. 상세 작업공간의 보관 사진은 기존 브라우저 인식을 사용합니다.</p><p>브라우저 문구 읽기를 별도로 선택하면 이미지 파일을 번역 서비스에 보내지 않습니다. 선택 문구 번역은 Google을 사용하며, Google HTTP 429 확인 시에만 설정된 무료 AI에 남은 문구를 한 번 보냅니다. 직접 작성한 한국어와 기존 저장본은 유지합니다.</p></details>
     {error && <p className="form-error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     <div className="form-row">
       <label>이미지 역할<select aria-label="번역할 이미지 역할" value={role} disabled={locked || !!quotationTarget || !!workspaceTarget} onChange={event => { if (!liveQuotationTarget.current && !workspaceTarget) selectSource(restrictRoleSources ? '' : sourceKey, event.target.value as FreeImageRole); }}>
@@ -664,6 +664,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     <div className="actions">
       <button type="button" className="btn blue" disabled={locked || !sourceKey || !sourceEligible || regions.length > 0 || crop !== null || optionImageIds.length > 0 || rendered !== null} onClick={() => void prepareManualSource()}>원본 불러오기 · 수동 편집</button>
       <button type="button" className="btn blue" disabled={locked || !sourceKey || !sourceEligible || regions.length > 0 || crop !== null || optionImageIds.length > 0 || rendered !== null} onClick={() => void recognize()}>원본 문구 읽기</button>
+      <button type="button" className="btn" disabled={locked || !sourceKey || !sourceEligible || regions.length > 0 || crop !== null || optionImageIds.length > 0 || rendered !== null} onClick={() => void recognize(true)}>브라우저 문구 읽기 · 기존 방식</button>
       {loaded && <button type="button" className="btn" disabled={locked || !imageKeys.includes(sourceKey)} onClick={() => void refreshSource()}>원본 저장 상태 다시 확인</button>}
       <button type="button" className="btn" disabled={locked || !currentImage || regions.length >= MAX_OCR_REGIONS} onClick={addRegion}>문구 영역 직접 추가</button>
       {busy && <button type="button" className="btn" onClick={() => cancel()}>이미지 작업 취소</button>}

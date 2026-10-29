@@ -65,6 +65,7 @@ async function fixture(company) {
         return api.route(url, { method: init.method ?? 'GET', ...(body ? { body } : {}) });
       },
       require(name) {
+        if (name.endsWith('.css')) return {};
         if (name === 'react') return react;
         if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
         if (name.startsWith('./') || name.startsWith('../')) return load(path.posix.join(path.posix.dirname(file), name) + '.ts');

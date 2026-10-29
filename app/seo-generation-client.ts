@@ -1,4 +1,4 @@
-import {WORKERS_TEXT_MODEL,validateTranslationSource,type TranslationJob,type TranslationSource} from '@/app/automation/translation';
+import {WORKERS_TEXT_MODEL,WORKERS_QWEN_MODEL,validateTranslationSource,type TranslationJob,type TranslationSource} from '@/app/automation/translation';
 import {seoGenerationReviewProof,validateSeoGenerationMemo,validateSeoGenerationDraft,type SeoGenerationMemo,type SeoGenerationConfiguration} from '@/app/seo-generation';
 import {supplierHubCompany,type SupplierHubCompany} from '@/app/supplier-hub-company';
 import {translationReviewExpired} from '@/app/reviewed-translation';
@@ -17,10 +17,16 @@ const validVersion=(value:unknown):value is string=>typeof value==='string'&&val
 const revision=(value:unknown)=>Number.isSafeInteger(value)&&Number(value)>=0;
 const inFlight=new Set<string>();
 
-/** A notice snapshot can authorize only the fixed free Workers destination. */
+/** The optional paid translation destination is a separate, exact notice snapshot. */
 export function parseSeoGenerationConfiguration(raw:unknown):SeoGenerationConfiguration|null{
- if(!exact(raw,'configured,destination,freeOnly,issues,maxOutputTokens,model,notice')||typeof raw.configured!=='boolean'||raw.model!==WORKERS_TEXT_MODEL||raw.maxOutputTokens!==2048||raw.freeOnly!==true||raw.destination!=='Cloudflare Workers AI'
+ if(!object(raw)||!exact(Object.fromEntries(Object.entries(raw).filter(([key])=>key!=='translationConfig')),'configured,destination,freeOnly,issues,maxOutputTokens,model,notice')||typeof raw.configured!=='boolean'||raw.model!==WORKERS_TEXT_MODEL||raw.maxOutputTokens!==2048||raw.freeOnly!==true||raw.destination!=='Cloudflare Workers AI'
   ||!Array.isArray(raw.issues)||raw.issues.length>20||raw.issues.some(value=>typeof value!=='string'||value.length>2000)||typeof raw.notice!=='string'||!raw.notice.trim()||raw.notice.length>4000)return null;
+ if(Object.hasOwn(raw,'translationConfig')){
+  const translation=raw.translationConfig;
+  if(!exact(translation,'configured,destination,freeOnly,issues,maxOutputTokens,model,notice,provider')||typeof translation.configured!=='boolean'||translation.provider!=='workers-ai'||translation.model!==WORKERS_QWEN_MODEL||translation.freeOnly!==false||translation.destination!=='Cloudflare Workers AI'
+   ||!(translation.maxOutputTokens===null&&!translation.configured||Number.isSafeInteger(translation.maxOutputTokens)&&Number(translation.maxOutputTokens)>=256&&Number(translation.maxOutputTokens)<=8000)
+   ||!Array.isArray(translation.issues)||translation.issues.length>20||translation.issues.some(value=>typeof value!=='string'||value.length>2000)||typeof translation.notice!=='string'||!translation.notice.trim()||translation.notice.length>4000)return null;
+ }
  return structuredClone(raw) as SeoGenerationConfiguration;
 }
 function context(raw:unknown,productId:string):SeoGenerationContext{

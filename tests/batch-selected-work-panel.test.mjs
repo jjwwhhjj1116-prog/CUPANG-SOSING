@@ -67,11 +67,11 @@ test('a failed product still exposes its stage editor and never gains a fabricat
 });
 
 test('the displayed SEO configuration snapshot reaches every runner and cannot change with parent props',async()=>{
- const configuration={configured:true,model:'@cf/meta/llama-3.3-70b-instruct-fp8-fast',maxOutputTokens:2048,freeOnly:true,destination:'Cloudflare Workers AI',issues:[],notice:'현재 무료 SEO 실행 안내'},expected=JSON.parse(JSON.stringify(configuration));
+ const configuration={configured:true,model:'@cf/meta/llama-3.3-70b-instruct-fp8-fast',maxOutputTokens:2048,freeOnly:true,destination:'Cloudflare Workers AI',issues:[],notice:'현재 무료 SEO 실행 안내',translationConfig:{configured:true,provider:'workers-ai',model:'@cf/qwen/qwen3-30b-a3b-fp8',maxOutputTokens:4096,freeOnly:false,destination:'Cloudflare Workers AI',issues:[],notice:'현재 Qwen 사용량 비용 안내'}},expected=JSON.parse(JSON.stringify(configuration));
  const request={id:'seo-consent-run',ownerId:'owner',stages:['seo'],keys:new Map(),seoGenerationConsent:configuration},h=harness(async id=>({productId:id,stages:[]}),{runRequest:request});
  try{
-  h.render();configuration.notice='부모의 변경된 안내';configuration.issues.push('늦은 변경');await tick();await tick();
-  assert.equal(h.calls.length,2);for(const call of h.calls){assert.deepEqual(JSON.parse(JSON.stringify(call.options.seoGenerationConsent)),expected);assert.notEqual(call.options.seoGenerationConsent,configuration);assert.notEqual(call.options.seoGenerationConsent.issues,configuration.issues);}
+  h.render();configuration.notice='부모의 변경된 안내';configuration.issues.push('늦은 변경');configuration.translationConfig.notice='늦은 Qwen 안내';configuration.translationConfig.maxOutputTokens=8000;configuration.translationConfig.issues.push('늦은 Qwen 오류');await tick();await tick();
+  assert.equal(h.calls.length,2);for(const call of h.calls){assert.deepEqual(JSON.parse(JSON.stringify(call.options.seoGenerationConsent)),expected);assert.notEqual(call.options.seoGenerationConsent,configuration);assert.notEqual(call.options.seoGenerationConsent.issues,configuration.issues);assert.notEqual(call.options.seoGenerationConsent.translationConfig,configuration.translationConfig);assert.notEqual(call.options.seoGenerationConsent.translationConfig.issues,configuration.translationConfig.issues);assert.equal(call.options.seoGenerationConsent.translationConfig.freeOnly,false);}
   assert.equal(h.calls[0].options.seoGenerationConsent.freeOnly,true);
  }finally{h.close();}
 });

@@ -11,7 +11,7 @@ function harness(handle, focusedAssetRole, lifecycle=false, initialize=()=>{}){
  const slots=[],effects=[],cleanups=[],cache=new Map(), dependencies=[],callbacks=[];let ei=0,ci=0;let index=0,first=true,notices=0,content;
  const hooks={useState(initial){const i=index++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],v=>{slots[i]=typeof v==='function'?v(slots[i]):v;}];},useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useCallback(fn,deps){if(!lifecycle)return fn;const i=ci++;if(!callbacks[i]||deps.some((v,j)=>!Object.is(v,callbacks[i].deps[j])))callbacks[i]={fn,deps};return callbacks[i].fn;},useEffect(fn,deps){const i=ei++;if(lifecycle){if(!dependencies[i]||deps.some((v,j)=>!Object.is(v,dependencies[i][j]))){dependencies[i]=deps;effects.push(()=>{cleanups[i]?.();cleanups[i]=fn();});}}else if(first)effects.push(fn);}};
  hooks.useLayoutEffect=hooks.useEffect;
- function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,structuredClone,TextEncoder,crypto,fetch:async(url,init)=>handle(url,init,content)??Response.json({content}),require(name){if(name==='react')return hooks;if(name.startsWith('@/'))return load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts'));return native(name);}});return exports;}
+ function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,structuredClone,TextEncoder,crypto,fetch:async(url,init)=>handle(url,init,content)??Response.json({content}),require(name){if(name.endsWith('.css'))return{};if(name==='react')return hooks;if(name.startsWith('@/'))return load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts'));return native(name);}});return exports;}
  const model=load('app/product-content.ts');content=model.emptyProductContent('p');
  initialize(content);
  const component=load('app/components/product-content-editor.tsx').ProductContentEditor;
@@ -19,6 +19,14 @@ function harness(handle, focusedAssetRole, lifecycle=false, initialize=()=>{}){
  const button=(name,section)=>nodes(render(section)).find(n=>n.type==='button'&&n.props.children===name);
  return{render,button,model,load,setStage(stage){focusedAssetRole=stage;},async flush(){effects.splice(0).forEach(fn=>fn());await settle();},get notices(){return notices;},async start(){render();if(lifecycle)effects.splice(0).forEach(fn=>fn());else effects.forEach(fn=>cleanups.push(fn()));await settle();},unmount(){cleanups.forEach(fn=>fn?.());}};
 }
+
+test('stage visual scopes retain the image library and selection handlers without affecting SEO or issuing writes',async()=>{
+ const writes=[],h=harness((_url,init)=>{if(init?.method)writes.push(init.method);},'main',true);
+ try{
+  await h.start();for(const stage of ['main','additional','detail']){h.setStage(stage);h.render();await h.flush();const tree=h.render(),scope=nodes(tree).find(node=>node.props?.['data-image-stage']===stage);assert.ok(scope);assert.match(scope.props.className,new RegExp('step-image-visual--'+stage));assert.equal(nodes(scope).filter(node=>node.type==='button'&&/이미지 \d 크게 보기/u.test(node.props['aria-label']??'')).length,3);assert.ok(nodes(scope).some(node=>node.props?.['aria-label']==='현재 선택 이미지 순서'));}
+  h.setStage('main');h.render();await h.flush();const choose=nodes(h.render()).find(node=>node.type==='button'&&node.props.children==='대표 이미지로 선택');assert.ok(choose);choose.props.onClick();const strip=nodes(h.render()).find(node=>node.props?.['aria-label']==='현재 선택 이미지 순서');assert.equal(nodes(strip).filter(node=>node.type==='img').length,1);assert.equal(nodes(h.render('SEO')).some(node=>node.props?.['data-image-stage']),false);assert.deepEqual(writes,[]);
+ }finally{h.unmount();}
+});
 
 test('image save sends once, retains another tab draft and reaches resolved quotation image cells',async()=>{
  let finish,saved;const pending=new Promise(resolve=>{finish=resolve;});const calls=[];

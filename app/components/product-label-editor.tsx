@@ -517,7 +517,7 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
     }catch(cause){if(!controller.signal.aborted&&stageCurrent())setError(cause instanceof Error?cause.message:'표시사항 재작성 결과 조회 실패');}
     finally{finish(controller);}
   }
-  return <section className="panel-stack product-label-editor" aria-label={`${caption} 제품 표시사항`} data-quotation-source-step="표시사항" data-source-step="표시사항" data-workspace-dirty={dirty||namePending||referencesDirty||rewriteUncertain||incompleteSave||allBlocked} data-workspace-saving={busy||referencesBusy}>
+  return <section className="panel-stack product-label-editor step-image-visual step-image-visual--label" aria-label={`${caption} 제품 표시사항`} data-quotation-source-step="표시사항" data-source-step="표시사항" data-workspace-dirty={dirty||namePending||referencesDirty||rewriteUncertain||incompleteSave||allBlocked} data-workspace-saving={busy||referencesBusy}>
     <h3>제품 한글 표시사항</h3><p>{row?.optionLabel || (optionId === null ? '상품 공통' : optionId)}{optionId !== null && row?.included === false ? ' · 견적 제외 옵션' : ''}</p>
     <p>{optionId === null ? '공통 내용은 개별 표시사항을 수정하지 않은 옵션에 적용합니다. 각 옵션의 직접 수정값은 유지됩니다.' : '이 옵션의 제품 표시사항 내용을 편집합니다. 다른 옵션과 상품 공통 내용은 유지됩니다.'} 항목명·순서·추가·삭제는 상품의 모든 옵션에 공통 적용됩니다. 카테고리별 상품고시는 견적서에서 따로 확인합니다.</p>
     {busy && <p role="status">제품 표시사항 처리 중…</p>}{error && <p role="alert">{error}</p>}{message && <p role="status">{message}</p>}
@@ -539,7 +539,7 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
     {resultError?.token===resultToken&&<p role="status">저장된 생성 라벨을 확인하지 못했습니다. {resultError.message}</p>}
     <fieldset disabled={allBlocked} style={{border:0,padding:0,margin:0,minWidth:0}}>
     {completed&&<section className="product-label-completed" aria-label={`${caption} 표시사항 생성 완료`}>
-      <h4>표시 정보 결과</h4><div className="product-label-preview" style={{maxHeight:600,overflow:'auto'}}>
+      <h4 className="step-label-result-heading">표시 정보 결과</h4><div className="product-label-preview" style={{maxHeight:600,overflow:'auto'}}>
         {/* eslint-disable-next-line @next/next/no-img-element -- Use the authenticated saved PNG, not an unsaved canvas preview. */}
         <img src={`/api/files/${completed.key.split('/').map(encodeURIComponent).join('/')}`} alt={`${caption} 생성 완료 표시사항`} data-current-label-result style={{width:'100%',height:'auto'}}/>
       </div><div className="quote-actions"><a className="btn ghost" href={`/api/files/${completed.key.split('/').map(encodeURIComponent).join('/')}`} download={completed.key.split('/').at(-1)}>이미지 다운로드</a>

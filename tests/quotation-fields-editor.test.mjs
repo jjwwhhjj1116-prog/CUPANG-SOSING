@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
+import {fileURLToPath} from 'node:url';
 import ts from 'typescript';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -21,6 +22,7 @@ function load(file, overrides = {}) {
   vm.runInNewContext(compiled, { exports, Error, TextEncoder, URLSearchParams, structuredClone, AbortController, fetch: overrides.fetch ?? fetch, require(name) {
     if (name in overrides) return overrides[name];
     if (name.endsWith('.css')) return {};
+    if (name.startsWith('@/') && name.endsWith('.mjs')) return requireNative(fileURLToPath(new URL(`../${name.slice(2)}`, import.meta.url)));
     if (name.startsWith('.') && name.endsWith('.mjs')) return createRequire(new URL(`../${file}`, import.meta.url))(name);
     if (name.startsWith('@/app/')) {
       const modulePath = name.slice(2);

@@ -38,6 +38,7 @@ export function PricePolicyRatio({policy}:{policy:Pick<PricePolicy,'supplyMargin
   const parts=[{id:'cost',label:'상품 원가',value:Math.max(1,100-policy.supplyMargin-policy.coupangMargin)},
     {id:'supply',label:'공급 마진',value:policy.supplyMargin},{id:'coupang',label:'쿠팡 마진',value:policy.coupangMargin}];
   return <section className="price-policy-ratio" aria-label="가격 설정 비율" data-price-ratio-valid={valid}>
+    <h4>가격 구성 비율</h4>
     <div className="price-policy-ratio-labels">{parts.map(part=><span key={part.id}>{part.label}</span>)}</div>
     {valid?<div className="price-policy-ratio-bar">{parts.map(part=><span key={part.id} data-price-ratio={part.id} style={{width:`${part.value}%`}} aria-label={`${part.label} ${part.value.toFixed(0)}%`}>{part.value.toFixed(0)}%</span>)}</div>
       :<p role="status">공급·쿠팡 마진율을 확인하면 비율이 표시됩니다.</p>}

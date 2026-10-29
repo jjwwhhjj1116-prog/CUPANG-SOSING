@@ -44,7 +44,7 @@ export function SelectedBatchWorkPanel({products,onOpen,onBusyChange,runRequest}
   finally{if(current()){scope.active=null;setBusy(false);callbacks.current.onBusyChange?.(false);}}
  }
  useEffect(()=>{
-  const scope={request:{...runRequest,stages:[...runRequest.stages],...(runRequest.seoGenerationConsent?{seoGenerationConsent:{...runRequest.seoGenerationConsent,issues:[...runRequest.seoGenerationConsent.issues]}}:{})},products:products.map(product=>({...product})),active:null as AbortController|null,stop:false,generation:0};context.current=scope;callbacks.current.onBusyChange?.(true);
+  const scope={request:{...runRequest,stages:[...runRequest.stages],...(runRequest.seoGenerationConsent?{seoGenerationConsent:{...runRequest.seoGenerationConsent,issues:[...runRequest.seoGenerationConsent.issues],...(runRequest.seoGenerationConsent.translationConfig?{translationConfig:{...runRequest.seoGenerationConsent.translationConfig,issues:[...runRequest.seoGenerationConsent.translationConfig.issues]}}:{})}}:{})},products:products.map(product=>({...product})),active:null as AbortController|null,stop:false,generation:0};context.current=scope;callbacks.current.onBusyChange?.(true);
   // The host owns this ledger, so remounting cannot silently start the same run again.
   void Promise.resolve().then(()=>{
    if(context.current!==scope)return;

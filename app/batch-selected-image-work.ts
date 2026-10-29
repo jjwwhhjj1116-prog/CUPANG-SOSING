@@ -145,7 +145,12 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
     const selectedRegions=regions.filter(region=>region.selected&&(/\p{Script=Han}/u.test(region.text)||/[a-z]{2}/iu.test(region.text)));
     if(!selectedRegions.length)throw new NoForeignText();
     const translated=new Map<string,string>(),issues=new Map<string,string>();let incompleteMessage='';
+    if(image.visionResult){
+     for(const region of selectedRegions){if(region.translationProvenance==='generated'&&region.translated.trim()&&!region.issue)translated.set(region.id,region.translated);else issues.set(region.id,region.issue||'Vision 번역 검증을 통과하지 못했습니다.');}
+     if(issues.size)incompleteMessage='Vision으로 읽은 일부 문구의 한국어 검증을 통과하지 못했습니다. 자동으로 다른 번역 서비스를 요청하지 않았습니다.';
+    }
     for(const language of ['zh','en'] as const){
+     if(image.visionResult)break;
      const group=selectedRegions.filter(region=>/\p{Script=Han}/u.test(region.text)===(language==='zh'));if(!group.length)continue;
      progress('한국어 번역 중');const reply=await(deps.translate??translateFreeImageRegions)(image.source,language,group.map(({id,text})=>({id,text})),controller.signal,fetcher);check();
      const failures=group.flatMap(region=>{

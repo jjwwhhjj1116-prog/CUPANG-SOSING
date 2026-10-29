@@ -21,6 +21,7 @@ function componentHarness(file,exportName,initialProps,request,overrides={}){
  const hooks={
   useState(initial){const slot=index++;if(!(slot in slots))slots[slot]=typeof initial==='function'?initial():initial;return[slots[slot],value=>{slots[slot]=typeof value==='function'?value(slots[slot]):value;}];},
   useRef(initial){const slot=index++;return slots[slot]??(slots[slot]={current:initial});},
+  useMemo(factory,deps){const slot=index++,old=slots[slot];if(!old||deps.some((value,i)=>!Object.is(value,old.deps[i])))slots[slot]={value:factory(),deps};return slots[slot].value;},
   useCallback(fn,deps){const slot=index++,old=slots[slot];if(!old||deps.some((value,i)=>!Object.is(value,old.deps[i])))slots[slot]={fn,deps};return slots[slot].fn;},
   useEffect(fn,deps){const slot=index++,old=slots[slot];if(!old||!deps||deps.some((value,i)=>!Object.is(value,old.deps[i]))){const next={deps,cleanup:null};slots[slot]=next;effects.push(()=>{old?.cleanup?.();next.cleanup=fn();});}}
  };
@@ -29,7 +30,7 @@ function componentHarness(file,exportName,initialProps,request,overrides={}){
   if(cache.has(path))return cache.get(path);
   const exports={};cache.set(path,exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+path,import.meta.url),'utf8'),{fileName:path,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
-   {exports,Error,AbortController,DOMException,TextEncoder,crypto,structuredClone,URL,fetch:request,require(name){if(name==='react')return hooks;if(overrides[name])return overrides[name];if(name.startsWith('@/'))return load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts'));return native(name);}});
+   {exports,Error,AbortController,DOMException,TextEncoder,crypto,structuredClone,URL,fetch:request,require(name){if(name.endsWith('.css'))return{};if(name==='react')return hooks;if(overrides[name])return overrides[name];if(name.startsWith('@/'))return load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts'));return native(name);}});
   return exports;
  }
  const Component=load(file)[exportName];
@@ -248,10 +249,18 @@ test('active image requests report busy and discard translation targets without 
  }finally{h.close();}
 });
 
-test('a persisted running image job keeps external actions busy and ignores translation handoff',async()=>{
- const h=panelHarness(undefined,{},'running');try{await h.start();assert.equal(h.busyChanges.at(-1),true);
-  h.select('translate').props.onChange({target:{value:'cleanup'}});h.update({translationTarget:{sourceKey:panelKeys[1],sourceLanguage:'en',sequence:1}});
-  assert.equal(h.select(panelKeys[0]).props.value,panelKeys[0]);assert.equal(h.select('translate').props.value,'cleanup');assert.equal(h.prompt().props.value,'');assert.equal(h.domActions.length,0);assert.equal(h.calls.length,1);assert.equal(h.changed,0);
+test('a persisted running paid job permits independent manual handoff while blocking every paid action and retained stale-job callback',async()=>{
+ const h=panelHarness(undefined,{},'running'),prepared={...plain(h.job),id:'older-prepared-job',status:'prepared',productVersion:'older-version'},approved={...plain(h.job),id:'older-approved-job',status:'approved',productVersion:'older-version'};
+ h.view.jobs.push(prepared,approved);
+ try{await h.start();assert.equal(h.busyChanges.at(-1),false);const prepareButton=h.button(prepare);assert.equal(prepareButton.props.disabled,true);assert.equal(h.button(refresh).props.disabled,false);
+  h.select('translate').props.onChange({target:{value:'cleanup'}});const retainedPrompt='직접 편집한 요청을 유지해주세요.';assert.equal(h.prompt().props.disabled,false);h.prompt().props.onChange({target:{value:retainedPrompt}});
+  h.update({translationTarget:{sourceKey:panelKeys[1],sourceLanguage:'en',sequence:1}});
+  assert.equal(h.select(panelKeys[1]).props.value,panelKeys[1]);assert.equal(h.select('translate').props.value,'translate');assert.ok(h.prompt().props.value.startsWith(retainedPrompt));assert.match(h.prompt().props.value,/영어→한국어 번역:/);assert.deepEqual(h.domActions.map(item=>item.action),['scroll','focus']);assert.equal(h.calls.length,1);assert.equal(h.changed,0);assert.equal(h.busyChanges.at(-1),false);
+  h.select(prepared.id).props.onChange({target:{value:prepared.id}});const approveButton=h.button('유료 요청 승인 · 아직 호출하지 않음');assert.equal(approveButton.props.disabled,true);assert.equal(h.checkbox().props.disabled,true);assert.match(text(h.render()),/상품 또는 이미지 처리 설정이 변경되었습니다/);
+  h.select(approved.id).props.onChange({target:{value:approved.id}});const executeButton=h.button('승인한 이미지 1장 가공 · 비용 발생');assert.equal(executeButton.props.disabled,true);
+  for(const button of [prepareButton,approveButton,executeButton])button.props.onClick();await settle();h.render();assert.equal(h.calls.length,1,'calling disabled callbacks cannot dispatch paid prepare, approve or execute');
+  h.view.jobs=[h.job];h.button(refresh).props.onClick();await settle();h.render();assert.equal(h.calls.length,2);assert.equal(h.busyChanges.at(-1),false);
+  for(const button of [prepareButton,approveButton,executeButton])button.props.onClick();await settle();h.render();assert.equal(h.calls.length,2,'callbacks retained for removed historical jobs remain blocked by the current running record');assert.ok(h.calls.every(call=>!call.init?.method||call.init.method==='GET'));assert.equal(h.changed,0);
   h.close();assert.equal(h.busyChanges.at(-1),false);
  }finally{h.close();}
 });

@@ -13,6 +13,7 @@ import { CustomLabelEditor } from '@/app/components/custom-label-editor';
 import { attachResizedImage, imageTransformPlan, readResizeSource, renderResizedImage, type ImageTransform, type ResizeSource, type ResizedImage } from '@/app/local-image-resize';
 import { downloadImageSelection } from '@/app/image-selection-download';
 import {capturedSettingsBannerChangeAllowed,capturedSettingsBannerKeys,parseCapturedSettingsBanners,type CapturedSettingsBanners} from '@/app/captured-settings-banners';
+import './step-image-visual.css';
 
 type Props = {
   product: { id: string; title: string; image_keys: string; updated_at?: string };
@@ -363,8 +364,8 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
         </div>)}</div>
         <CustomLabelEditor rows={draft.customLabels} onChange={customLabels=>setDraft(previous=>({...previous,customLabels}))}/>
       </>}
-      {section === '이미지' && <div className="panel-stack">
-        {editingDetail && <><button type="button" className="btn ghost" disabled={busy || loading || conflict || imageProcessingBusy || !detailPreview.length || detailImageKeys(draft.assets).some(key => !imageKeys.includes(key))} onClick={() => void downloadDetailImages()}>상세 이미지 ZIP 다운로드</button><small>상단·본문·하단의 현재 선택 순서로 원본과 편집 결과를 내려받습니다. 미저장 선택은 견적서에 자동 저장하지 않습니다.</small></>}
+      {section === '이미지' && <div className={`panel-stack step-image-visual step-image-visual--${focusedAssetRole??'all'}`} data-image-stage={focusedAssetRole??'all'}>
+        {editingDetail && <><button type="button" className="btn ghost step-image-download" disabled={busy || loading || conflict || imageProcessingBusy || !detailPreview.length || detailImageKeys(draft.assets).some(key => !imageKeys.includes(key))} onClick={() => void downloadDetailImages()}>상세 이미지 ZIP 다운로드</button><small>상단·본문·하단의 현재 선택 순서로 원본과 편집 결과를 내려받습니다. 미저장 선택은 견적서에 자동 저장하지 않습니다.</small></>}
         <small style={{ color: '#64748b' }}>Supplier Hub 안내: 대표 1,000×1,000px 이상 권장 · 상세 상단·본문·하단 각각 가로 780px, 세로 1,500px 이내. 표시 크기는 브라우저가 읽은 값이며 화질·번역·접수 완료를 뜻하지 않습니다. 원본 헤더 기준 견적 검사와 다를 수 있습니다.</small>
         {focusedAssetRole&&<div className="image-step-summary"><div><strong>{assetRoles[focusedAssetRole]} <b>{draft.assets[focusedAssetRole].length}장</b></strong><p>{focusedAssetRole==='main'?'상품을 대표할 이미지 한 장을 선택하세요.':focusedAssetRole==='additional'?'상품의 다른 모습과 옵션 이미지를 선택하고 순서를 조정하세요.':'이미지 역할에서 상단·본문·하단을 선택하세요. 상단과 하단은 각각 한 장이며 본문 순서는 ↑↓로 조정합니다.'} 저장한 선택은 견적 자료에 반영됩니다.</p></div><button type="button" className="btn ghost" disabled={!draft.assets[focusedAssetRole].length} onClick={()=>setAssetFilter(focusedAssetRole)}>선택한 이미지 보기</button></div>}
         {!imageKeys.length && <p>위 업로드 버튼으로 이미지 파일을 추가하면 역할을 지정할 수 있습니다.</p>}

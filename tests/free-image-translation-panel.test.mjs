@@ -56,6 +56,7 @@ function fixture(initialProps = {}, clientOverrides = {}) {
     async readFreeImageSource(id, productVersion, key, role, signal, _fetcher, quotationTarget, options) { calls.push({ action: 'source', id, productVersion, key, role, signal, quotationTarget, ...(options ? { options } : {}) });
       const image = { source: { ...sourceFor(id, productVersion, key, role), ...(quotationTarget ? { quotationTarget: { ...quotationTarget, bindingSha256: 'b'.repeat(64) } } : {}) }, width: 20, height: 12, blob: new Blob(['original']), canvas: {} }; return sourceIntercept ? sourceIntercept(image, signal, options) : image; },
     async recognizeFreeImage(image, language, signal, progress) { calls.push({ action: 'ocr', image, language, signal }); progress('인식 중'); return ocrIntercept ? ocrIntercept(image, signal) : [region('r1'), region('r2')]; },
+    async recognizeLocalFreeImage(image, language, signal, progress) { calls.push({ action: 'local-ocr', image, language, signal }); progress('브라우저 인식 중'); return ocrIntercept ? ocrIntercept(image, signal) : [region('r1'), region('r2')]; },
     async translateFreeImageRegions(source, language, rows, signal) { calls.push({ action: 'translate', source, language, rows, signal });
       return translateIntercept ? translateIntercept(source, rows, signal) : { source, regions: rows.map(row => ({ id: row.id, original: row.text, translated: '한국어 ' + row.id, issue: null })), requests: 1, stoppedHttpStatus: null, warnings: [] }; },
     async renderFreeImageTranslation(image, rows, signal, optionImageIds = [], crop, sourceLanguage) {
@@ -302,8 +303,11 @@ test('manual card preparation preserves an existing draft and a failed initial G
  }finally{h.close();}
 });
 
-test('image text translation discloses the conditional text-only recovery before any translation request',async()=>{
-  const h=fixture();try{const visible=text(h.render());assert.match(visible,/Google 요청 제한 시.*선택 문구만 한 번 번역/);assert.match(visible,/이미지 파일은 번역 서비스에 보내지 않습니다/);const details=nodes(h.render()).find(node=>node.type==='details'&&text(node).includes('문구 번역 방식'));assert.ok(details&&!details.props.open);assert.match(text(details),/Cloudflare Workers AI/);assert.equal(h.calls.filter(call=>call.action==='translate').length,0);}finally{h.close();}
+test('image text translation discloses billed Vision and explicit local/text-only modes before any request',async()=>{
+  const h=fixture();try{const visible=text(h.render());assert.match(visible,/Cloudflare Qwen3.8 Vision.*본인 소유 원본 한 장/);assert.match(visible,/무료 사용량 초과 시 사용료/);assert.match(visible,/이미지 생성은 하지 않으며 실패 후 자동 재요청하지 않습니다/);assert.match(visible,/브라우저 문구 읽기를 별도로 선택하면 이미지 파일을 번역 서비스에 보내지 않습니다/);const details=nodes(h.render()).find(node=>node.type==='details'&&text(node).includes('이미지 번역 방식·사용료 안내'));assert.ok(details&&!details.props.open);assert.match(text(details),/Google HTTP 429 확인 시에만/);assert.equal(h.calls.length,0);}finally{h.close();}
+});
+test('explicit browser OCR never dispatches Vision or Google and keeps existing review/apply steps separate',async()=>{
+  const h=fixture();try{await h.click('브라우저 문구 읽기 · 기존 방식');assert.deepEqual(plain(h.calls.map(row=>row.action)),['source','local-ocr']);assert.equal(h.saved,0);assert.equal(h.button('검토한 번역 이미지 적용'),undefined);}finally{h.close();}
 });
 
 test('mixed Google and Workers image wording stays beside its original and never replaces manual blanks or auto-saves',async()=>{

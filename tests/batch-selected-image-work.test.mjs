@@ -232,3 +232,15 @@ test('a pre-dispatch rejection is retryable failure, and timeout after verified 
  const stopped=await h.run();assert.equal(stopped.status,'partial');assert.equal(stopped.applied,1);assert.equal(stopped.state.batches.option.items[0].status,'applied');assert.equal(stopped.state.batches.option.items[0].rendered,undefined);h.deps.apply=apply;
  const resumed=await h.run();assert.equal(resumed.status,'completed');assert.equal(h.calls.filter(row=>row[0]==='apply').length,1);
 });
+
+test('Vision Korean results in selected main/additional/detail jobs are never sent to a second provider',async()=>{
+ for(const stage of ['main','additional','detail']){
+  const h=fixture(stage,['owner/source-a.png']);h.deps.recognize=async image=>{image.visionResult={provider:'workers-ai-vision',notice:'Cloudflare 사용량 과금 가능'};return[{...h.region('中文'),translated:'검정',translationProvenance:'generated'}];};
+  h.deps.translate=async()=>{throw Error('Vision must never start Google or another provider');};
+  const result=await h.run();assert.equal(result.status,'completed');assert.equal(result.applied,1);assert.equal(h.calls.filter(row=>row[0]==='render').length,1);assert.equal(h.calls.filter(row=>row[0]==='apply').length,1);
+ }
+});
+test('failed Vision blocks preserve the source and stop without a second translation request or image save',async()=>{
+ const h=fixture('main',['owner/source-a.png']);h.deps.recognize=async image=>{image.visionResult={provider:'workers-ai-vision',notice:'Cloudflare 사용량 과금 가능'};return[{...h.region('中文'),issue:'번역 검증 실패'}];};h.deps.translate=async()=>{throw Error('No fallback');};
+ const result=await h.run();assert.equal(result.status,'partial');assert.equal(result.applied,0);assert.equal(h.calls.filter(row=>row[0]==='render'||row[0]==='apply'||row[0]==='translate').length,0);
+});

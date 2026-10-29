@@ -1,4 +1,4 @@
-import {WORKERS_TEXT_MODEL,type TranslationDraft,type TranslationReview,type TranslationResult,type TranslationSource,type WorkersAiBinding} from '@/app/automation/translation';
+import {WORKERS_TEXT_MODEL,WORKERS_QWEN_MODEL,translationConfiguration,type TranslationSecrets,type TranslationDraft,type TranslationReview,type TranslationResult,type TranslationSource,type WorkersAiBinding} from '@/app/automation/translation';
 import {fingerprint} from '@/app/automation/model';
 import {supplierHubCompany,type SupplierHubCompany} from '@/app/supplier-hub-company';
 import {translationNumbers} from '@/app/translation-attribute-evidence';
@@ -8,8 +8,9 @@ import {unsupportedProductMaterial} from '@/app/product-material-evidence';
 
 export type SeoGenerationMemo={brand:string;features:string;keywords:string};
 export type SeoGenerationProof={purpose:'seo-generation';version:1;sourceFingerprint:string;optionRevision:number;company:SupplierHubCompany;memo:SeoGenerationMemo};
-export type SeoGenerationConfiguration={configured:boolean;model:typeof WORKERS_TEXT_MODEL;maxOutputTokens:2048;freeOnly:true;destination:'Cloudflare Workers AI';issues:string[];notice:string};
-export type SeoGenerationSecrets={SOURCEFLOW_QUOTATION_AI_PROVIDER?:string;SOURCEFLOW_QUOTATION_AI_FREE_ONLY?:string;AI?:WorkersAiBinding};
+export type BatchTranslationConfiguration={configured:boolean;provider:'workers-ai';model:typeof WORKERS_QWEN_MODEL;maxOutputTokens:number|null;freeOnly:false;destination:'Cloudflare Workers AI';issues:string[];notice:string};
+export type SeoGenerationConfiguration={configured:boolean;model:typeof WORKERS_TEXT_MODEL;maxOutputTokens:2048;freeOnly:true;destination:'Cloudflare Workers AI';issues:string[];notice:string;translationConfig?:BatchTranslationConfiguration};
+export type SeoGenerationSecrets=TranslationSecrets&{SOURCEFLOW_QUOTATION_AI_PROVIDER?:string;SOURCEFLOW_QUOTATION_AI_FREE_ONLY?:string;AI?:WorkersAiBinding};
 export type SeoGenerationInvalidReason='json'|'draft-keys'|'title-type'|'title-empty'|'title-limit'|'title-characters'|'description-type'|'description-limit'|'keywords-type'|'keywords-count'|'keyword-type'|'keyword-empty'|'keyword-limit'|'keyword-characters'|'keywords-not-normalized'|'attributes-type'|'attributes-content'|'warnings-type'|'warnings-count'|'warning-type'|'warning-limit'|'control-characters'|'untranslated'|'description-without-source'|'unsupported-number'|'unsupported-claim'|'unsupported-material';
 export class SeoGenerationError extends Error{constructor(public code:string,message:string,public status=409,public uncertain=false,public reason?:SeoGenerationInvalidReason){super(message);}}
 const exact=(value:unknown,keys:string):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).sort().join(',')===keys;
@@ -26,7 +27,10 @@ export function seoGenerationConfiguration(secrets:SeoGenerationSecrets):SeoGene
  const issues:string[]=[];
  if(secrets.SOURCEFLOW_QUOTATION_AI_PROVIDER!=='workers-ai'||secrets.SOURCEFLOW_QUOTATION_AI_FREE_ONLY!=='true')issues.push('확인된 Workers Free 견적 AI 설정이 필요합니다.');
  if(typeof secrets.AI?.run!=='function')issues.push('Cloudflare AI 바인딩을 확인해주세요.');
+ const translation=secrets.SOURCEFLOW_TEXT_PROVIDER==='workers-ai'&&secrets.SOURCEFLOW_TEXT_MODEL?.trim()===WORKERS_QWEN_MODEL?translationConfiguration(secrets):null;
  return {configured:!issues.length,model:WORKERS_TEXT_MODEL,maxOutputTokens:2048,freeOnly:true,destination:'Cloudflare Workers AI',issues,
+  ...(translation?{translationConfig:{configured:translation.configured,provider:'workers-ai' as const,model:WORKERS_QWEN_MODEL,maxOutputTokens:translation.maxOutputTokens,freeOnly:false as const,destination:'Cloudflare Workers AI' as const,issues:[...translation.issues],
+   notice:'저장된 상품명·설명·상품 속성과 아직 번역되지 않은 옵션 원문을 Cloudflare Workers AI Qwen에 1회 전송해 한국어 SEO·옵션·표시 속성 초안을 만듭니다. Workers AI 사용량에 따라 유료 사용 비용이 발생할 수 있습니다. 오류·시간초과 후 자동 재시도하지 않으며 직접 수정한 값과 공란은 보존합니다.'}}:{}),
   notice:'저장된 상품 원문·선택 카테고리와 SEO 참고 입력을 Cloudflare Workers AI에 1회 전송해 한국어 상품명·검색태그·설명 초안을 만듭니다. 기존 견적 AI와 일일 40회 무료 요청 한도를 공유하며, 한도·오류·시간초과 후 자동 재시도나 유료 서비스 전환은 하지 않습니다. 옵션 번역은 Google 번역을 유지하고 직접 수정한 값은 보존합니다.'};
 }
 export function seoGenerationReviewProof(review:TranslationReview):SeoGenerationProof|null{

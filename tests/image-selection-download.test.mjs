@@ -64,13 +64,22 @@ test('the actual content API maximum of top plus thirty body plus bottom remains
 });
 
 for(const company of companies)test(`option detail download follows original, translated and manually removed slots only (${company.companyCode})`,async()=>{
- const f=await downloadFixture(company);let ui;try{const qurl=f.base+'/quotation-fields',view=await json(await f.api.route(qurl)),option=view.resolved.rows.find(row=>row.optionId!==null);
-  await json(await f.api.route(qurl,{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[{optionId:option.optionId,fieldKey:'detailImages',value:[f.keys[3],f.keys[4],f.keys[5]].join('\n')},{optionId:option.optionId,fieldKey:'detailHtml',value:'<p>수동 상세 HTML 보존</p>'}]}}));
-  const current=await json(await f.api.route(qurl));ui=downloadUI('app/components/option-image-editor.tsx','OptionImageEditor',{productId:f.product.id,optionId:option.optionId,version:current.productVersion,stage:'detail'},f.request);await ui.idle();
+ const f=await downloadFixture(company);let ui;try{
+  const translated='owner/reviewed-option-korean-detail.png',original=f.api.objects.get(f.keys[4]);await f.api.bindings.FILES.put(translated,new Uint8Array([...original,42]),{httpMetadata:{contentType:'image/png'}});
+  const content=(await json(await f.api.route(f.base+'/content'))).content;
+  await json(await f.api.route(f.base+'/attachments',{method:'POST',body:{key:translated,expectedVersion:f.product.updated_at,expectedContentRevision:content.revision,role:null}}));
+  const qurl=f.base+'/quotation-fields',view=await json(await f.api.route(qurl)),option=view.resolved.rows.find(row=>row.optionId!==null);
+  await json(await f.api.route(qurl,{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[{optionId:option.optionId,fieldKey:'detailImages',value:[f.keys[3],translated,f.keys[5]].join('\n')},{optionId:option.optionId,fieldKey:'detailHtml',value:'<p>수동 상세 HTML 보존</p>'}]}}));
+  let approved=false;const confirmations=[];
+  const current=await json(await f.api.route(qurl));ui=downloadUI('app/components/option-image-editor.tsx','OptionImageEditor',{productId:f.product.id,optionId:option.optionId,version:current.productVersion,stage:'detail'},f.request,{confirm:message=>{confirmations.push(message);return approved;}});await ui.idle();
   const before=f.retained(),bytes=f.originals();await ui.click('상세 이미지 1 아래로 이동');await ui.click('상세 이미지 2 선택 제거');await ui.click('상세 이미지 ZIP 다운로드');
-  const files=unzip(await ui.downloads[0].blob.arrayBuffer());assert.deepEqual([...files.keys()],['image-001.png','image-002.png']);assert.deepEqual(files.get('image-001.png'),Buffer.from(f.api.objects.get(f.keys[4])));assert.deepEqual(files.get('image-002.png'),Buffer.from(f.api.objects.get(f.keys[5])));
+  const cancelled=unzip(await ui.downloads[0].blob.arrayBuffer());assert.deepEqual([...cancelled.keys()],['image-001.png','image-002.png','image-003.png']);
+  for(const [index,key]of [translated,f.keys[3],f.keys[5]].entries())assert.deepEqual(cancelled.get(`image-${String(index+1).padStart(3,'0')}.png`),Buffer.from(f.api.objects.get(key)));
+  assert.equal(f.retained(),before);assert.equal(f.originals(),bytes);assert.ok(ui.requests.every(call=>!call.init?.method||call.init.method==='GET'));
+  approved=true;await ui.click('상세 이미지 2 선택 제거');await ui.click('상세 이미지 ZIP 다운로드');
+  const files=unzip(await ui.downloads[1].blob.arrayBuffer());assert.deepEqual([...files.keys()],['image-001.png','image-002.png']);assert.deepEqual(files.get('image-001.png'),Buffer.from(f.api.objects.get(translated)));assert.deepEqual(files.get('image-002.png'),Buffer.from(f.api.objects.get(f.keys[5])));assert.deepEqual(confirmations,['이 이미지를 삭제하시겠습니까?','이 이미지를 삭제하시겠습니까?']);
   assert.equal(f.retained(),before);assert.equal(f.originals(),bytes);assert.equal(nodes(ui.render()).find(node=>node.props['aria-label']==='선택 옵션 상세 HTML').props.value,'<p>수동 상세 HTML 보존</p>');
-  await ui.click('선택 옵션 이미지 저장');const saved=await json(await f.api.route(qurl));assert.equal(saved.resolved.rows.find(row=>row.optionId===option.optionId).fields.detailImages.value,[f.keys[4],f.keys[5]].join('\n'));assert.deepEqual(saved.overrides.common,current.overrides.common);for(const row of current.resolved.rows)if(row.optionId!==option.optionId)assert.deepEqual(saved.resolved.rows.find(item=>item.optionId===row.optionId).fields,row.fields);
-  const exported=await f.exportQuote(),index=exported.document.rows.findIndex(row=>row.optionId===option.optionId),cells=exported.cells(index);assert.equal(cells[exported.fields.indexOf('detailImages')],[f.keys[4],f.keys[5]].map(key=>exported.document.uploadFilenames[key]).join('\n'));assert.equal(cells[exported.fields.indexOf('detailHtml')],'<p>수동 상세 HTML 보존</p>');
+  await ui.click('선택 옵션 이미지 저장');const saved=await json(await f.api.route(qurl));assert.equal(saved.resolved.rows.find(row=>row.optionId===option.optionId).fields.detailImages.value,[translated,f.keys[5]].join('\n'));assert.deepEqual(saved.overrides.common,current.overrides.common);for(const row of current.resolved.rows)if(row.optionId!==option.optionId)assert.deepEqual(saved.resolved.rows.find(item=>item.optionId===row.optionId).fields,row.fields);
+  const exported=await f.exportQuote(),index=exported.document.rows.findIndex(row=>row.optionId===option.optionId),cells=exported.cells(index);assert.equal(cells[exported.fields.indexOf('detailImages')],[translated,f.keys[5]].map(key=>exported.document.uploadFilenames[key]).join('\n'));assert.equal(cells[exported.fields.indexOf('detailHtml')],'<p>수동 상세 HTML 보존</p>');
  }finally{ui?.close();f.api.close();}
 });

@@ -1,4 +1,4 @@
-import { GOOGLE_TEXT_MODEL, WORKERS_TEXT_MODEL, validateTranslationDraft, validateTranslationSource,
+import { GOOGLE_TEXT_MODEL, WORKERS_TEXT_MODEL, WORKERS_QWEN_MODEL, validateTranslationDraft, validateTranslationSource,
   type TranslationConfiguration, type TranslationJob, type TranslationSource } from '@/app/automation/translation';
 import { translationReviewExpired } from '@/app/reviewed-translation';
 
@@ -47,7 +47,7 @@ function configurationInput(value: DraftConfiguration): DraftConfiguration {
 export function seoWorkspaceDraftProvider(configuration: DraftConfiguration) {
   const config = configurationInput(configuration);
   return config.model === GOOGLE_TEXT_MODEL ? { kind: 'google' as const, label: '무료 Google 번역 초안', destination: 'Google 번역' as const }
-    : { kind: 'ai' as const, label: 'AI 초안', destination: config.model === WORKERS_TEXT_MODEL ? 'Cloudflare Workers AI' as const : 'OpenAI Responses API' as const };
+    : { kind: 'ai' as const, label: config.model===WORKERS_QWEN_MODEL?'Cloudflare Qwen 번역 초안':'AI 초안', destination: config.model === WORKERS_TEXT_MODEL||config.model===WORKERS_QWEN_MODEL ? 'Cloudflare Workers AI' as const : 'OpenAI Responses API' as const };
 }
 
 /** Memo stays separate from supplier facts. Google translates saved text only;

@@ -5,7 +5,7 @@ import { optionTranslationBatch } from '@/app/option-translation';
 import { collectionSourceReference } from '@/app/sourcing';
 import { createSeoWorkspaceDraftState, parseSeoWorkspaceDraftState, runSeoWorkspaceDraft,
   readSeoGenerationContext,createSeoGenerationDraftState,parseSeoGenerationDraftState,runSeoGenerationDraft,parseSeoGenerationConfiguration,type SeoGenerationConfiguration } from '@/app/seo-workspace-draft';
-import { GOOGLE_TEXT_MODEL, type TranslationSource, type TranslationView } from '@/app/automation/translation';
+import { GOOGLE_TEXT_MODEL, WORKERS_QWEN_MODEL, type TranslationSource, type TranslationView } from '@/app/automation/translation';
 import type { ProductContent } from '@/app/product-content';
 import type { ProductOptionsResponse } from '@/app/product-options';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
@@ -128,11 +128,47 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
       ||saved.optionRevision!==plan.optionRevision+1||saved.applied!==plan.preview.length)throw Error('SEO 저장 결과를 확인하지 못했습니다. 저장본을 확인해주세요.');
     return{status:generated.partial||batch.remaining?'blocked':'draft',message:'Google 옵션 번역 '+saved.applied+'개 항목을 저장했습니다.'+(generated.partial?' 일부 원문 번역을 확인해주세요.':'')+(batch.remaining?' 남은 옵션 항목 '+batch.remaining+'개는 추가 작업이 필요합니다.':'')};
   }
+  async function qwenSeo(consent:SeoGenerationConfiguration):Promise<Outcome>{
+    const configuration=consent.translationConfig;
+    if(!configuration?.configured||configuration.model!==WORKERS_QWEN_MODEL||configuration.freeOnly!==false)
+      return{status:'blocked',message:'Qwen 번역 설정을 확인하지 못해 실행하지 않았습니다. '+(configuration?.issues.join(' ')??'')};
+    await assertCurrent();const current=await product();
+    const [view,history,contentBody,options]=await Promise.all([
+      readSeoGenerationContext(productId,signal,fetcher),read<TranslationView>('/translation'),read<{content:ProductContent}>('/content'),read<ProductOptionsResponse>('/options')]);
+    await assertCurrent();
+    if(view.productVersion!==current.updated_at||!same(view.company,expected.company)||contentBody.content?.productId!==productId||contentBody.content.revision!==view.contentRevision
+      ||options.options?.productId!==productId||options.productVersion!==current.updated_at||options.options.revision!==view.optionRevision)
+      throw new ScopeChanged('Qwen 번역 상품·원문·옵션·회사가 변경되어 작업을 멈췄습니다.');
+    if(!same(parseSeoGenerationConfiguration(view.configuration),consent)||history.configuration.configured!==true
+      ||history.configuration.model!==configuration.model||history.configuration.maxOutputTokens!==configuration.maxOutputTokens)
+      return{status:'blocked',message:'작업 개시 전에 본 Qwen 모델·출력 한도·비용 안내와 현재 설정이 달라 실행하지 않았습니다.'};
+    const attributes=view.source.attributes,batch=optionTranslationBatch(options.options,50-attributes.length,history.jobs);
+    const input:TranslationSource={...view.source,attributes:[...attributes,...batch.attributes]};
+    const stateKey=identity+':seo-qwen:'+current.updated_at+':'+view.contentRevision+':'+view.optionRevision,stored=keys.get(stateKey);
+    const state=stored?parseSeoWorkspaceDraftState(stored,productId):createSeoWorkspaceDraftState({productId,productVersion:current.updated_at,contentRevision:view.contentRevision,
+      source:input,configuration:history.configuration,memo:view.memo});
+    if(!state)throw Error('이전 Qwen 실행 정보를 확인하지 못했습니다. 새 요청은 만들지 않았습니다.');
+    keys.set(stateKey,JSON.stringify(state));keys.set(identity+':pending:seo','Qwen 번역 결과 확인 필요');
+    const generated=await runSeoWorkspaceDraft(state,{signal,fetcher,confirmAi:true,onState:value=>keys.set(stateKey,JSON.stringify(value))});
+    await assertCurrent();
+    if(generated.job?.status!=='completed'||!generated.job.result)return{status:'blocked',message:generated.message,uncertain:!generated.closed};
+    const request={jobId:generated.job.id,expectedVersion:current.updated_at,scope:'all',linkQuotationSeoDefaults:true};
+    const plan=await post<{scope:string;productId:string;productVersion:string;contentRevision:number;optionRevision:number;fingerprint:string;preview:unknown[]}>('/translation-apply',{...request,action:'preview'});
+    if(plan.scope!=='all'||plan.productId!==productId||plan.productVersion!==current.updated_at||plan.contentRevision!==view.contentRevision||plan.optionRevision!==view.optionRevision||!hash(plan.fingerprint)||!Array.isArray(plan.preview))
+      throw Error('Qwen SEO·옵션·표시 속성 적용 범위가 현재 상품과 다릅니다.');
+    const partial=generated.partial||batch.remaining>0;
+    if(!plan.preview.length)return{status:partial?'blocked':'skipped',message:'Qwen 초안을 확인했으며 새로 적용할 값이 없어 직접 수정한 값과 공란을 유지했습니다.'+(partial?' 일부 원문·남은 옵션은 해당 단계에서 확인해주세요.':'')};
+    const saved=await once('seo-qwen:'+plan.fingerprint,()=>post<{scope:string;productId:string;productVersion:string;contentRevision:number;optionRevision:number;applied:number}>('/translation-apply',{...request,action:'apply',fingerprint:plan.fingerprint}));
+    if(saved.scope!=='all'||saved.productId!==productId||!(Date.parse(saved.productVersion)>Date.parse(current.updated_at))||saved.contentRevision!==plan.contentRevision+1||saved.optionRevision!==plan.optionRevision+1||saved.applied!==plan.preview.length)
+      throw Error('Qwen 저장 결과를 확인하지 못했습니다. 같은 요청을 다시 적용하지 말고 저장본을 확인해주세요.');
+    return{status:partial?'blocked':'draft',message:'Cloudflare Workers AI Qwen SEO·옵션·표시 속성 '+saved.applied+'개 항목의 저장을 확인했습니다. 직접 수정한 값과 공란은 유지했습니다.'+(generated.partial?' 일부 원문 번역을 확인해주세요.':'')+(batch.remaining?' 남은 옵션 '+batch.remaining+'개는 추가 작업이 필요합니다.':'')};
+  }
   async function seo():Promise<Outcome>{
+    const consent=parseSeoGenerationConfiguration(controls.seoGenerationConsent);
+    if(consent?.translationConfig)return qwenSeo(consent);
     const translated=await translateSeoOptions();
     if(translated.uncertain||translated.stop)return translated;
     const message=translated.message+' ';
-    const consent=parseSeoGenerationConfiguration(controls.seoGenerationConsent);
     if(!consent)return{status:'blocked',message:message+'Cloudflare Workers AI의 실제 무료 한도 안내를 확인한 작업 개시가 필요합니다. Google 번역을 AI SEO 생성 완료로 표시하지 않았습니다.'};
     await assertCurrent();const before=await product(),view=await readSeoGenerationContext(productId,signal,fetcher);await assertCurrent();
     if(view.productVersion!==before.updated_at||!same(view.company,expected.company))throw new ScopeChanged('SEO 생성 상품·회사·원문이 변경되어 작업을 멈췄습니다.');

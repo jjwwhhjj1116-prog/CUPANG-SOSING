@@ -3,6 +3,7 @@ import {useEffect,useState} from 'react';
 import Link from 'next/link';
 import type {WorkspaceMember} from '@/app/workspace-members';
 import {LoginPreferencesPanel} from '@/app/components/login-preferences-panel';
+import {MemberConnectionsPanel} from '@/app/components/member-connections-panel';
 const labels={pending:'승인 대기',approved:'사용 중',rejected:'거절',suspended:'이용 정지'};
 async function readMembership(signal?:AbortSignal){
  const response=await fetch('/api/membership',{cache:'no-store',signal});
@@ -24,6 +25,7 @@ export default function AccountPage(){
   <p role="status" aria-live="polite">{loading?'계정을 불러오는 중…':message}</p>
   {self&&<section className="membership-card"><h2>{self.role==='admin'?'관리자':'회원'} 계정</h2><p>{self.email}</p><p>{self.companyName} · {self.companyCode}</p><p>로그인 계정에 지정된 Supplier Hub 회사로 상품과 견적서를 관리합니다.</p></section>}
   {self&&<LoginPreferencesPanel email={self.email}/>}
+  {self?.status==='approved'&&<MemberConnectionsPanel key={`${self.id}:${self.companyCode}:${self.companyName}`} ownerId={self.id} company={{code:self.companyCode,name:self.companyName}}/>}
   {self?.role==='admin'&&<section className="membership-card"><div className="membership-header"><h2>지정 계정 관리</h2><button className="btn ghost" disabled={busy} onClick={()=>{setBusy(true);void refresh().catch(error=>setMessage(error.message)).finally(()=>setBusy(false));}}>새로고침</button></div><p>유앤채·와이홉의 지정 계정 2개만 사용할 수 있습니다.</p>
    <div className="membership-table"><table><thead><tr><th>이메일</th><th>회사코드</th><th>회사명</th><th>상태</th><th>처리</th></tr></thead><tbody>{members.map(member=><tr key={member.id}><td>{member.email}{member.role==='admin'?' (관리자)':''}</td><td>{member.companyCode}</td><td>{member.companyName}</td><td>{labels[member.status]}</td><td>{member.role!=='admin'&&(member.status==='approved'?<button className="btn rose" disabled={busy} onClick={()=>void act('suspend',member.id)}>이용 정지</button>:<button className="btn primary" disabled={busy} onClick={()=>void act('approve',member.id)}>이용 재개</button>)}</td></tr>)}</tbody></table></div>
   </section>}

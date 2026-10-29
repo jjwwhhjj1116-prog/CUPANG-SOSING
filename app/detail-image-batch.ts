@@ -115,7 +115,8 @@ export async function prepareDetailImageBatch(input: Omit<DetailImageBatch, 'ite
       const chosen = regions.filter(region => region.selected && (batch.language === 'zh'
         ? /\p{Script=Han}/u.test(region.text) : !/\p{Script=Han}/u.test(region.text) && /[a-z]{2}/iu.test(region.text)));
       if (!chosen.length) throw Error('확실하게 읽은 문구가 없습니다. 개별 이미지 편집에서 원문과 영역을 확인해주세요.');
-      const translated = await (deps.translate ?? translateFreeImageRegions)(image.source, batch.language, chosen.map(({ id, text }) => ({ id, text })), signal, deps.fetcher);
+      const translated = image.visionResult?{regions:chosen.map(row=>({id:row.id,original:row.text,translated:row.translated||null,issue:row.issue})),warnings:[image.visionResult.notice]}
+        :await (deps.translate ?? translateFreeImageRegions)(image.source, batch.language, chosen.map(({ id, text }) => ({ id, text })), signal, deps.fetcher);
       signal.throwIfAborted();
       const results = new Map(translated.regions.map(region => [region.id, region]));
       if (chosen.some(region => !results.get(region.id)?.translated || results.get(region.id)?.issue))

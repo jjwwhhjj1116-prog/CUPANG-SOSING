@@ -7,12 +7,6 @@ import { webcrypto } from 'node:crypto';
 
 const version = '2026-10-06T00:00:00.000Z';
 const source = { productId: 'product', productVersion: version, contentRevision: 2, sourceKey: 'owner/original.png', sourceSha256: 'a'.repeat(64), role: 'detail', width: 20, height: 12 };
-test('role-source list validates current product, role and version before exposing keys', async () => {
- const h=fixture(),body={productId:'product',productVersion:version,contentRevision:2,role:'detail',keys:['owner/original.png']},calls=[];
- const result=await h.client.readFreeImageRoleSources('product',version,'detail',new AbortController().signal,async(url,options)=>{calls.push({url,options});return Response.json(body);});
- assert.deepEqual(Array.from(result),body.keys);assert.match(calls[0].url,/list=sources&role=detail/);assert.equal(calls[0].options.cache,'no-store');assert.equal(calls.length,1);
- for(const patch of [{productId:'other'},{productVersion:'old'},{role:'main'},{contentRevision:-1},{keys:['x','x']},{keys:[null]}])await assert.rejects(h.client.readFreeImageRoleSources('product',version,'detail',new AbortController().signal,async()=>Response.json({...body,...patch})),/저장 상태/);
-});
 const plain = value => JSON.parse(JSON.stringify(value));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const hash = async bytes => Buffer.from(await webcrypto.subtle.digest('SHA-256', bytes)).toString('hex');
@@ -84,6 +78,13 @@ const line = (text, confidence, bbox = { x0: 1, y0: 1, x1: 12, y1: 8 }) => ({ te
 const quotationRequest = (input = 'detailImages') => ({ kind: 'quotation', profileId: null, optionId: 'sku-a', input, fieldKey: 'wire-' + input, slotIndex: input === 'mainImage' ? 0 : 1,
   revision: 7, inputFingerprint: 'c'.repeat(64), optionRevision: 3, value: input === 'mainImage' ? 'owner/original.png' : 'owner/other.png\nowner/original.png' });
 
+test('role-source list validates current product, role and version before exposing keys', async () => {
+ const h=fixture(),body={productId:'product',productVersion:version,contentRevision:2,role:'detail',keys:['owner/original.png']},calls=[];
+ const result=await h.client.readFreeImageRoleSources('product',version,'detail',new AbortController().signal,async(url,options)=>{calls.push({url,options});return Response.json(body);});
+ assert.deepEqual(Array.from(result),body.keys);assert.match(calls[0].url,/list=sources&role=detail/);assert.equal(calls[0].options.cache,'no-store');assert.equal(calls.length,1);
+ for(const patch of [{productId:'other'},{productVersion:'old'},{role:'main'},{contentRevision:-1},{keys:['x','x']},{keys:[null]}])await assert.rejects(h.client.readFreeImageRoleSources('product',version,'detail',new AbortController().signal,async()=>Response.json({...body,...patch})),/저장 상태/);
+});
+
 test('saved final-slot source reads bind the exact quotation request before any file read', async () => {
   const bytes = new TextEncoder().encode('authenticated original bytes'), sha256 = await hash(bytes);
   for (const input of ['mainImage', 'additionalImages', 'detailImages']) {
@@ -149,6 +150,8 @@ test('owned source reads verify exact version, role, SHA-256 and raw/swapped vis
     });
     assert.equal(calls.length, 2); assert.match(calls[0], /sourceKey=owner%2Foriginal.png&role=detail/); assert.equal(calls[1], '/api/files/owner/original.png');
     assert.equal(loaded.width, width); assert.equal(loaded.height, height); assert.deepEqual(loaded.canvas.pixels, pixels(width, height)); assert.equal(h.revoked.length, 1);
+    assert.equal(loaded.visionConfiguration.configured,false,'a legacy server without Vision metadata never silently authorizes local/Google fallback');
+    await assert.rejects(h.client.recognizeFreeImage(loaded,'zh',new AbortController().signal),/Vision이 설정되지/);
   }
   for (const change of [{ productId: 'another' }, { productVersion: '2026-10-06T00:00:01Z' }, { role: 'main' }, { sourceKey: 'owner/another.png' }, { sourceSha256: 'b'.repeat(64) }]) {
     const h = fixture(); let calls = 0;

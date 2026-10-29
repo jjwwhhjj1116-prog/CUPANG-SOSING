@@ -9,6 +9,7 @@ import { validateFreeImageBrush, MAX_FREE_IMAGE_BRUSH_TOTAL_POINTS, type FreeIma
 import { validateFreeImageCropRect, validateFreeImageCrop, type FreeImageCropRect, type FreeImageCrop } from '@/app/free-image-crop';
 import { validateFreeImageEditDocument, type FreeImageEditDocument } from '@/app/free-image-edit-document';
 import type { Worker, WorkerOptions, LoggerMessage } from 'tesseract.js';
+import {IMAGE_TEXT_VISION_MODEL,IMAGE_TEXT_VISION_NOTICE,parseImageTextVisionConfiguration,parseImageTextVisionResult,type ImageTextVisionConfiguration,type ImageTextVisionResult} from '@/app/image-text-vision';
 
 export type OcrBox = { x: number; y: number; width: number; height: number };
 export type FreeImageRegion = FreeImageTextStyle & {
@@ -18,7 +19,8 @@ export type FreeImageRegion = FreeImageTextStyle & {
   erase?: boolean;
   brush?: FreeImageBrush;
 };
-export type FreeImageLoaded = { source: FreeImageSource; blob: Blob; canvas: HTMLCanvasElement; width: number; height: number; editDocument?: FreeImageEditDocument };
+export type FreeImageLoaded = { source: FreeImageSource; blob: Blob; canvas: HTMLCanvasElement; width: number; height: number; editDocument?: FreeImageEditDocument;
+ visionConfiguration?:ImageTextVisionConfiguration;visionRequestId?:string;visionResult?:ImageTextVisionResult;visionExecution?:{requests:0|1;cached:boolean};visionFetcher?:typeof fetch };
 export type FreeImageRendered = { source: FreeImageSource; output: Blob; width: number; height: number; optionImageIds?: string[]; crop?: FreeImageCrop; editDocument?: FreeImageEditDocument };
 export type FreeImageQuotationRequest = Omit<NonNullable<FreeImageSource['quotationTarget']>, 'bindingSha256'>;
 export type FreeImageEditorReadOptions = { restoreEditor: true; anchorPolicy?: 'current-target-v1' };
@@ -110,7 +112,7 @@ export async function readFreeImageSource(productId: string, version: string, so
   const editorMode = options?.anchorPolicy === 'current-target-v1' ? 'saved-current-target-v1' : 'saved';
   let restoring = savedEditor;
   let response = await fetcher(`/api/products/${encodeURIComponent(productId)}/image-text?${new URLSearchParams({ ...params, ...(savedEditor ? { editor: editorMode } : {}) })}`, { signal, cache: 'no-store' });
-  let body = await response.json() as { source?: unknown; error?: string; code?: string; editDocument?: unknown }; signal.throwIfAborted();
+  let body = await response.json() as { source?: unknown; error?: string; code?: string; editDocument?: unknown;visionConfiguration?:unknown }; signal.throwIfAborted();
   if (savedEditor && response.status === 404 && body.code === 'image-edit-document-missing') {
     restoring = false;
     response = await fetcher(`/api/products/${encodeURIComponent(productId)}/image-text?${new URLSearchParams(params)}`, { signal, cache: 'no-store' });
@@ -126,7 +128,10 @@ export async function readFreeImageSource(productId: string, version: string, so
     || !sameFreeImageQuotationRequest(source.quotationTarget, quotationTarget)) throw Error('상품·이미지·역할 또는 저장 버전이 변경됐습니다. 최신 저장본에서 다시 선택해주세요.');
   const editDocument = body.editDocument === undefined ? undefined : validateFreeImageEditDocument(body.editDocument, source);
   if (editDocument && await editDocumentDigest(editDocument) !== source.editorSource!.documentSha256) throw Error('저장한 편집 내용의 연결을 확인하지 못했습니다.');
-  return readFreeImageSourcePixels(source, signal, fetcher, editDocument);
+  const configuration:ImageTextVisionConfiguration|null=body.visionConfiguration===undefined?{provider:'workers-ai-vision',model:IMAGE_TEXT_VISION_MODEL,configured:false,paidAllowed:false,notice:IMAGE_TEXT_VISION_NOTICE}:parseImageTextVisionConfiguration(body.visionConfiguration);
+  if(configuration===null)throw Error('이미지 Vision 제공자 설정을 확인하지 못했습니다. 자동 요청하지 않았습니다.');
+  const loaded=await readFreeImageSourcePixels(source, signal, fetcher, editDocument);
+  return{...loaded,...(configuration?{visionConfiguration:configuration,visionFetcher:fetcher}:{})};
 }
 
 /** Shared authenticated pixel loader. Target authorization remains the caller's
@@ -179,7 +184,7 @@ export function readOcrRegions(data: unknown, width: number, height: number): Fr
   return regions;
 }
 
-export async function recognizeFreeImage(image: FreeImageLoaded, sourceLanguage: 'zh' | 'en', signal: AbortSignal,
+export async function recognizeLocalFreeImage(image: FreeImageLoaded, sourceLanguage: 'zh' | 'en', signal: AbortSignal,
   onProgress: (message: string) => void = () => {}, factory?: OcrWorkerFactory): Promise<FreeImageRegion[]> {
   dimensions(image.width, image.height); signal.throwIfAborted();
   const previous = workerSlot; let release: () => void = () => {};
@@ -207,6 +212,29 @@ export async function recognizeFreeImage(image: FreeImageLoaded, sourceLanguage:
       void starting.then(() => terminate(), () => terminate()).finally(release);
     } else { try { await terminate(); } finally { release(); } }
   }
+}
+
+/** A configured Vision operation sends only the server-bound original, once.
+ * The legacy local OCR remains an explicit choice, never an error fallback. */
+export async function recognizeFreeImage(image:FreeImageLoaded,sourceLanguage:'zh'|'en',signal:AbortSignal,onProgress:(message:string)=>void=()=>{},factory?:OcrWorkerFactory):Promise<FreeImageRegion[]>{
+ if(factory||image.visionConfiguration===undefined)return recognizeLocalFreeImage(image,sourceLanguage,signal,onProgress,factory);
+ const configuration=parseImageTextVisionConfiguration(image.visionConfiguration);
+ if(!configuration?.configured)throw Error('이미지 Vision이 설정되지 않았습니다. 브라우저 문구 읽기를 별도로 선택할 수 있습니다. 자동 대체 요청하지 않았습니다.');
+ if(image.source.workspaceTarget||image.width!==image.source.width||image.height!==image.source.height)throw Error('이 원본 방향·작업공간은 Vision 영역 적용을 지원하지 않습니다. 브라우저 문구 읽기를 선택해주세요.');
+ signal.throwIfAborted();onProgress('Cloudflare Qwen3.8 Vision으로 문구와 한국어 번역을 한 번 읽고 있습니다.');
+ const requestId=image.visionRequestId??=crypto.randomUUID();
+ const response=await(image.visionFetcher??fetch)(`/api/products/${encodeURIComponent(image.source.productId)}/image-text`,{method:'POST',signal,cache:'no-store',headers:{'content-type':'application/json'},body:JSON.stringify({action:'vision',source:image.source,sourceLanguage,configuration,requestId})});
+ const body=await response.json() as Record<string,unknown>;signal.throwIfAborted();
+ if(!response.ok)throw Error(typeof body?.error==='string'?body.error:'이미지 Vision 응답을 확인하지 못했습니다. 자동으로 다시 요청하지 않습니다.');
+ const received=parseImageTextVisionConfiguration(body?.configuration),result=parseImageTextVisionResult(body?.result,image.width,image.height);
+ const execution=body.execution as {requests:unknown;cached:unknown}|null;
+ if(Object.keys(body).sort().join(',')!=='configuration,execution,replayed,requestId,result,source'||body.requestId!==requestId||typeof body.replayed!=='boolean'||!sameFreeImageSource(body.source,image.source)||!received||JSON.stringify(received)!==JSON.stringify(configuration)||!result
+  ||!execution||typeof execution!=='object'||Array.isArray(execution)||Object.keys(execution).sort().join(',')!=='cached,requests'||!(execution.requests===0&&execution.cached===true||execution.requests===1&&execution.cached===false)||body.replayed&&execution.requests!==0)throw Error('이미지 Vision의 원본·제공자·영역 응답 연결이 다릅니다. 자동으로 다시 요청하지 않습니다.');
+ image.visionResult=result;
+ image.visionExecution={requests:execution.requests as 0|1,cached:execution.cached as boolean};
+ if(execution.cached)onProgress('같은 원본의 검증된 Vision 번역을 재사용했습니다. 추가 AI 요청은 0회입니다.');
+ if(!result.blocks.length)throw Error('읽을 수 있는 문구를 찾지 못했습니다. 필요한 영역과 원문을 직접 추가해주세요.');
+ return result.blocks.map(row=>({id:row.id,text:row.text,box:row.box,confidence:0,selected:true,translated:row.translated??'',issue:row.issue,translationProvenance:row.translated===null?'empty':'generated',background:'#ffffff',foreground:'#111111',fontSize:Math.max(1,Math.min(200,Math.floor(row.box.height*0.8)))}));
 }
 
 export type FreeImageWorkersRecovery={provider:'workers-ai';status:'completed'|'partial'|'failed'|'limited'|'timeout'|'invalid-response'|'input-limit';requests:0|1;sourceRegions:number;translatedRegions:number};

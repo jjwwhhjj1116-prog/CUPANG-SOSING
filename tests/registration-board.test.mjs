@@ -111,7 +111,7 @@ test('every stage and product option badge keeps its real connected handler',()=
  const [options]=elements(tree,node=>node.type==='button'&&node.props.className==='registration-options');options.props.onClick();assert.equal(h.calls.at(-1)[1],'옵션');
  const management=elements(tree,node=>node.type==='td'&&node.props['data-column']==='management')[0];
  const [open]=elements(management,node=>node.type==='button');assert.equal(nodeText(open),'열기');open.props.onClick();assert.equal(h.calls.at(-1)[0],h.product);assert.equal(h.calls.at(-1).length,1);
- assert.equal(elements(tree,node=>node.type==='button'&&nodeText(node)==='삭제').length,0);
+ assert.equal(elements(management,node=>node.type==='button'&&nodeText(node)==='삭제').length,0);
  const fallback=boardHarness({onOptions:undefined});const [badge]=elements(fallback.render(),node=>node.type==='button'&&node.props.className==='registration-options');badge.props.onClick();assert.equal(fallback.calls.at(-1)[1],'옵션');
 });
 
@@ -303,7 +303,7 @@ test('receipt-backed deletion locks keep the Couplus trash shape and exact toolt
   h.product.hub_receipt={...accepted,label:'파일 반려',quotationId:null,fingerprint:'b'.repeat(64)};
   h.product.removal_policy={blocked:true,code:'PRODUCT_HUB_TRANSMITTED',reason,receipt:accepted};
   const before=JSON.stringify(h.product),tree=h.render(),management=elements(tree,node=>node.type==='td'&&node.props['data-column']==='management')[0];
-  const [trash]=elements(management,node=>node.type==='button');assert.equal(trash.props.className,'registration-delete');assert.equal(trash.props.disabled,true);assert.equal(trash.props.title,reason);assert.equal(elements(trash,node=>node.type==='svg').length,1);
+  const [trash]=elements(management,node=>node.type==='button');assert.equal(trash.props.className,'registration-delete');assert.equal(trash.props.disabled,true);assert.equal(trash.props.title,reason);assert.equal(nodeText(trash),'삭제');
   await trash.props.onClick();assert.equal(writes,0);assert.equal(h.confirmations.length,0);assert.equal(JSON.stringify(h.product),before);
   const status=elements(tree,node=>node.type==='td'&&node.props['data-column']==='status')[0];assert.match(nodeText(status),/파일 반려/,'the latest observed status remains independent of older transmission evidence');
  }
@@ -395,8 +395,8 @@ test('captured checkboxes and page selection stay separate from AI/transmission 
  const archived=[],deleted=[],h=boardHarness({sources,onArchiveSource:async item=>archived.push(item),onDelete:async item=>deleted.push(item)}),before=JSON.stringify(h.product);
  const check=()=>elements(h.render(),node=>node.type==='input'&&node.props['aria-label']==='현재 페이지 전체 선택')[0];
  check().props.onChange({target:{checked:true}});assert.equal(h.selections.length,0,'source-only page never adds IDs to product selection');
- assert.match(nodeText(h.render()),/수집 선택 10건/);elements(h.render(),node=>node.type==='button'&&nodeText(node)==='다음')[0].props.onClick();
- check().props.onChange({target:{checked:true}});assert.deepEqual([...h.selections.at(-1)],[h.product.id]);assert.match(nodeText(h.render()),/수집 선택 13건/);
+ assert.match(elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='선택한 수집 상품 삭제')[0].props.title,/10건 삭제/);elements(h.render(),node=>node.type==='button'&&nodeText(node)==='다음')[0].props.onClick();
+ check().props.onChange({target:{checked:true}});assert.deepEqual([...h.selections.at(-1)],[h.product.id]);assert.match(elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='선택한 수집 상품 삭제')[0].props.title,/13건 삭제/);
  const bulk=elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='선택한 수집 상품 삭제')[0];assert.equal(bulk.props.disabled,false);await bulk.props.onClick();
  assert.deepEqual(archived.map(item=>item.id),sources.map(item=>item.id));assert.equal(deleted.length,0);assert.equal(JSON.stringify(h.product),before);
  assert.equal(elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='선택한 수집 상품 삭제')[0].props.disabled,true);assert.match(nodeText(h.render()),/원문은 보존/);
@@ -408,7 +408,7 @@ test('captured trash ignores product removal locks, and failed bulk archive stop
  const trash=elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='새 수집 상품 삭제')[0];assert.equal(trash.props.disabled,false);
  for(const label of ['새 수집 상품 선택','두번째 수집 선택'])elements(h.render(),node=>node.type==='input'&&node.props['aria-label']===label)[0].props.onChange({target:{checked:true}});
  const bulk=()=>elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='선택한 수집 상품 삭제')[0];await bulk().props.onClick();
- assert.deepEqual(calls,[sourceItem.id,other.id]);assert.match(nodeText(h.render()),/1건 삭제됨.*변경된 수집본/);assert.match(nodeText(bulk()),/1/);assert.equal(h.selections.length,0);
+ assert.deepEqual(calls,[sourceItem.id,other.id]);assert.match(nodeText(h.render()),/1건 삭제됨.*변경된 수집본/);assert.match(bulk().props.title,/1건 삭제/);assert.equal(nodeText(bulk()),'삭제');assert.equal(h.selections.length,0);
 });
 
 test('a stale captured checkbox/archive action cannot act after source revision, account/company or disabled-state changes',async()=>{

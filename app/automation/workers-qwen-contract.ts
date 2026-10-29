@@ -71,3 +71,18 @@ export function parseWorkersQwenJson(payload:unknown):{value:unknown;usage?:{pro
  }
  return {value,usage:response.usage as {prompt_tokens?:number;completion_tokens?:number;total_tokens?:number}|undefined};
 }
+
+/** The standard translation path also accepts the documented JSON Mode
+ * parsed response object. Historical recovery keeps its stricter chat-only
+ * authority above; neither adapter mines reasoning or repairs model text. */
+export function parseWorkersQwenTranslationJson(payload:unknown):ReturnType<typeof parseWorkersQwenJson>{
+ if(payload&&typeof payload==='object'&&!Array.isArray(payload)&&Object.hasOwn(payload,'choices'))return parseWorkersQwenJson(payload);
+ const fail=(reason:WorkersQwenFailure):never=>{throw new WorkersQwenContractError(reason,diagnostic(payload));};
+ if(!plainObject(payload))return fail('ENVELOPE');
+ const encoded=canonicalJson(payload);if(encoded===null)return fail('ENVELOPE');if(encoded.length>512*1024)return fail('RESPONSE_SIZE');
+ if(Object.keys(payload).some(key=>!['response','usage','model'].includes(key)))return fail('ENVELOPE');
+ if(payload.model!==undefined&&payload.model!==WORKERS_QWEN_MODEL&&payload.model!=='qwen3-30b-a3b-fp8')return fail('MODEL');
+ if(payload.error!==undefined||payload.errors!==undefined||payload.tool_calls!==undefined||payload.refusal!==undefined||payload.reasoning!==undefined||payload.reasoning_content!==undefined)return fail('TOOL_OR_REFUSAL');
+ if(!plainObject(payload.response)||canonicalJson(payload.response)===null)return fail('JSON_OBJECT');
+ return{value:payload.response,usage:payload.usage as {prompt_tokens?:number;completion_tokens?:number;total_tokens?:number}|undefined};
+}

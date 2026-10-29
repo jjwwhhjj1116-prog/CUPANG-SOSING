@@ -24,6 +24,8 @@ import { validateFreeImageEditDocument, MAX_FREE_IMAGE_EDIT_BYTES, type FreeImag
 import { FreeImageEditRecordError, freeImageEditDigest, freeImageEditDocumentBytes, prepareFreeImageEditRecord, readFreeImageEditRecord, storeFreeImageEditRecord } from '@/app/free-image-edit-record';
 import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
 import {imageTextRecoveryConfigured,imageTextRecoveryWithinLimit,recoverImageTextRegions,unavailableImageTextRecovery,ImageTextRecoveryError,type ImageTextRecoveryEnvironment} from '@/app/automation/workers-image-text-recovery';
+import {imageVisionConfiguration,readImageVision,readStoredImageVisionResult,ImageVisionError,type ImageVisionEnvironment} from '@/app/automation/workers-image-vision';
+import {parseImageTextVisionConfiguration} from '@/app/image-text-vision';
 
 type Context = { params: Promise<{ id: string }> };
 class ImageTextError extends Error {
@@ -219,6 +221,7 @@ function sameOrigin(request: Request) {
   if ((origin && origin !== new URL(request.url).origin) || request.headers.get('sec-fetch-site') === 'cross-site') throw new ImageTextError(400, '같은 사이트의 이미지 편집 화면에서 요청해주세요.');
 }
 function fail(error: unknown) {
+  if(error instanceof ImageVisionError)return response({error:error.message,code:`IMAGE_VISION_${error.reason}`,uncertain:error.uncertain},error.reason==='NOT_CONFIGURED'?503:409);
   if (error instanceof FreeImageEditRecordError) return response({ error: error.message, ...(error.code ? { code: error.code } : {}) }, error.status);
   if (error instanceof ImageTextError || error instanceof RequestBodyError) return response({ error: error.message }, error.status);
   if (error instanceof QuotationFieldsSnapshotError || error instanceof PublicDetailError) return response({ error: error.message }, error.status);
@@ -258,7 +261,7 @@ export async function GET(request: Request, context: Context) {
       : await original(owner, id, params.get('sourceKey')!, role, current, true, true));
     // Never return a snapshot whose source/version changed while R2 was read.
     await freshSource(owner, id, source);
-    return response({ source, ...(editor ? { editDocument: editor.editDocument } : {}) });
+    return response({ source, visionConfiguration:imageVisionConfiguration(env as ImageVisionEnvironment), ...(editor ? { editDocument: editor.editDocument } : {}) });
   } catch (error) { return fail(error); }
 }
 export async function POST(request: Request, context: Context) {
@@ -275,6 +278,52 @@ export async function POST(request: Request, context: Context) {
         || (body as Record<string, unknown>).action !== 'recover' || (body as Record<string, unknown>).editDocument === undefined)) throw new RequestBodyError(413, '편집 문서가 없는 요청은 96KiB 이하이어야 합니다.');
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new ImageTextError(400, '번역할 문구를 확인해주세요.');
       const input = body as Record<string, unknown>;
+      if(input.action==='vision'){
+        if(request.headers.get('origin')!==new URL(request.url).origin)throw new ImageTextError(400,'현재 서비스 화면에서 이미지 Vision을 실행해주세요.');
+        if(Object.keys(input).sort().join(',')!=='action,configuration,requestId,source,sourceLanguage'||typeof input.requestId!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.requestId)||!['zh','en'].includes(String(input.sourceLanguage)))throw new ImageTextError(400,'이미지 Vision 요청과 중복 방지 번호를 확인해주세요.');
+        const source=validateFreeImageSource(input.source),settings=env as ImageVisionEnvironment,configuration=imageVisionConfiguration(settings),expected=parseImageTextVisionConfiguration(input.configuration);
+        if(!expected||JSON.stringify(expected)!==JSON.stringify(configuration))throw changed();
+        if(!configuration.configured)throw new ImageVisionError('NOT_CONFIGURED');
+        if(source.workspaceTarget||source.productId!==id||!isOwnedImageKey(owner,source.sourceKey))throw new ImageTextError(400,'이 상품의 본인 소유 원본만 Vision으로 읽을 수 있습니다.');
+        const company=await editorCompany(owner);
+        const currentMember=async()=>{const user=await getChatGPTUser(),member=user?.membership;if(!user?.verifiedAccess||user.userId!==owner||member?.id!==owner||member.status!=='approved'||member.email!==user.email||JSON.stringify(approvedSupplierHubCompany(member))!==JSON.stringify(company))throw changed();return{email:member.email.toLowerCase().trim(),role:member.role};};
+        const member=await currentMember();
+        const assertCurrent=async()=>{request.signal.throwIfAborted();if(await ownerId()!==owner||JSON.stringify(await currentMember())!==JSON.stringify(member)||JSON.stringify(imageVisionConfiguration(settings))!==JSON.stringify(configuration))throw changed();await freshSource(owner,id,source);request.signal.throwIfAborted();if(await ownerId()!==owner||JSON.stringify(await currentMember())!==JSON.stringify(member))throw changed();};
+        await assertCurrent();
+        const image=await readImage(source.sourceKey);
+        if(await digest(image.bytes)!==source.sourceSha256||image.dimensions.width!==source.width||image.dimensions.height!==source.height)throw changed();
+        await assertCurrent();
+        const scope={owner,productId:id,requestId:input.requestId,company,member,model:configuration.model,productVersion:source.productVersion,contentRevision:source.contentRevision,
+          fingerprint:await digest(new TextEncoder().encode(JSON.stringify({source:freeImageSourceIdentity(source),company,member,configuration,language:input.sourceLanguage}))),
+          sourceScope:await digest(new TextEncoder().encode(JSON.stringify([source.sourceKey,source.sourceSha256,company,configuration.model,input.sourceLanguage])))};
+        const {claimImageVisionRequest,finishImageVisionRequest,completedImageVisionResult}=await import('@/db/image-vision-requests');
+        const claimed=await claimImageVisionRequest(scope);
+        if(!claimed.claimed){
+          if(claimed.record?.request_fingerprint!==scope.fingerprint)throw new ImageTextError(409,'같은 원본의 이미지 Vision 요청이 진행 중이거나 응답을 확인하지 못했습니다. 자동 재요청하지 않습니다.');
+          if(claimed.record.status!=='completed')throw new ImageTextError(409,'이 이미지 Vision 요청은 이미 실행됐거나 응답이 불명확합니다. 자동 재요청하지 않습니다.');
+          let saved:unknown;try{saved=JSON.parse(claimed.record.result??'null');}catch{throw new ImageVisionError('BLOCKS');}
+          const result=readStoredImageVisionResult(saved,source.width,source.height);
+          await assertCurrent();return response({source,configuration,requestId:scope.requestId,result,replayed:true,execution:{requests:0,cached:true}});
+        }
+        let invoked=false;
+        try{
+          const completed=await completedImageVisionResult(scope);
+          if(completed){
+            let saved:unknown;try{saved=JSON.parse(completed.result??'null');}catch{throw new ImageVisionError('BLOCKS');}
+            const result=readStoredImageVisionResult(saved,source.width,source.height);
+            await assertCurrent();await finishImageVisionRequest(scope,{status:'completed',result,requests:0});await assertCurrent();
+            return response({source,configuration,requestId:scope.requestId,result,replayed:false,execution:{requests:0,cached:true}});
+          }
+          await assertCurrent();invoked=true;
+          const result=await readImageVision(image.bytes,source,input.sourceLanguage as 'zh'|'en',settings,request.signal);
+          await assertCurrent();
+          await finishImageVisionRequest(scope,{status:'completed',result,requests:1});
+          await assertCurrent();return response({source,configuration,requestId:scope.requestId,result,replayed:false,execution:{requests:1,cached:false}});
+        }catch(error){
+          try{await finishImageVisionRequest(scope,{status:error instanceof ImageVisionError?(error.uncertain?'uncertain':'failed'):invoked?'uncertain':'failed',failure:error instanceof ImageVisionError?error.reason:invoked?'CURRENT_CHANGED':'BEFORE_CALL',requests:invoked?1:0});}catch{/* A retained running row also fences retries. */}
+          throw error;
+        }
+      }
       if (input.action === 'recover') {
         if (Object.keys(input).some(key => !['action', 'source', 'outputSha256', 'outputBytes', 'crop', 'editDocument'].includes(key)) || typeof input.outputSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(input.outputSha256)
           || !Number.isSafeInteger(input.outputBytes) || (input.outputBytes as number) < 1 || (input.outputBytes as number) > MAX_IMAGE_BYTES) throw new ImageTextError(400, '복구할 PNG 결과 번호와 크기를 확인해주세요.');

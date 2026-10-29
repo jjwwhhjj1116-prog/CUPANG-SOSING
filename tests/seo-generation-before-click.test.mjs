@@ -12,6 +12,7 @@ const plain=value=>JSON.parse(JSON.stringify(value));
 const configurationReply=(configuration=seoConfiguration(),ownerId='test-owner',company=scope().company)=>Response.json({purpose:'seo-generation',ownerId,company,configuration});
 const select=h=>h.component('registration-board').onSelected(new Set([h.products[0].id]));
 const check=(h,label,checked)=>nodes(h.render()).find(node=>node.type==='input'&&node.props['aria-label']===label).props.onChange({target:{checked}});
+const qwenConfiguration=()=>({...seoConfiguration(),translationConfig:{configured:true,provider:'workers-ai',model:'@cf/qwen/qwen3-30b-a3b-fp8',maxOutputTokens:4096,freeOnly:false,destination:'Cloudflare Workers AI',issues:[],notice:'합성 서버 Qwen 안내: 저장 원문을 Workers AI로 전송하며 사용량에 따라 비용이 발생합니다.'}});
 
 test('compact dashboard moves the server notice into the work dialog while one-click work retains its free-only snapshot',async()=>{
  const expected=seoConfiguration(),h=harness({seoConfigurationReply:async()=>configurationReply(expected)});
@@ -34,6 +35,28 @@ test('unknown configuration blocks SEO consent, while excluding SEO preserves th
   const request=h.component('batch-work-panel').runRequest;assert.deepEqual(plain(request.stages),['pricing']);assert.equal(request.seoGenerationConsent,undefined);assert.ok(h.requests.every(request=>request.method==='GET'));
   pending.resolve(configurationReply());await h.settle();assert.equal(h.component('batch-work-panel').runRequest.id,request.id);
  }finally{h.close();}
+});
+
+test('Qwen cost and destination stay inside work review and the exact nested snapshot reaches one-click work',async()=>{
+ const expected=qwenConfiguration(),h=harness({seoConfigurationReply:async()=>configurationReply(expected)});
+ try{
+  await h.settle();select(h);assert.equal(nodes(h.render()).some(node=>node.props?.['aria-label']==='자동 번역·SEO 실행 전 안내'),false);assert.ok(!text(h.render()).includes(expected.translationConfig.notice));assert.equal(h.component('batch-work-panel'),undefined);
+  await h.click('선택 상품 일괄 작업');const notice=nodes(h.render()).find(node=>node.props?.['aria-label']==='SEO 실행 전 안내');assert.ok(notice);assert.ok(text(notice).includes(expected.translationConfig.notice));assert.match(text(notice),/Cloudflare Workers AI.*@cf\/qwen\/qwen3-30b-a3b-fp8.*4096토큰.*사용량에 따라 비용 발생/s);assert.doesNotMatch(text(notice),/무료 사용만 허용|유료 전환 없음|llama/);
+  await h.click('작업 개시');const request=h.component('batch-work-panel').runRequest;assert.deepEqual(plain(request.seoGenerationConsent),plain(expected));assert.notEqual(request.seoGenerationConsent.translationConfig,expected.translationConfig);assert.notEqual(request.seoGenerationConsent.translationConfig.issues,expected.translationConfig.issues);assert.equal(request.seoGenerationConsent.translationConfig.freeOnly,false);assert.deepEqual(JSON.parse(request.keys.get('batch-owner:test-owner')),{ownerId:'test-owner',company:plain(scope().company)});
+  const dialogNotice=nodes(h.render()).find(node=>node.props?.['aria-label']==='SEO 실행 전 안내');assert.ok(text(dialogNotice).includes(expected.translationConfig.notice));assert.doesNotMatch(text(dialogNotice),/무료 사용만 허용|유료 전환 없음|llama/);await h.click('작업 개시');assert.equal(h.component('batch-work-panel').runRequest.id,request.id);assert.ok(h.requests.every(request=>request.method==='GET'));
+ }finally{h.close();}
+});
+
+test('unavailable Qwen displays its own issues and missing cap without borrowing the configured Llama notice',async()=>{
+ const config=qwenConfiguration();Object.assign(config.translationConfig,{configured:false,maxOutputTokens:null,issues:['Qwen 출력 한도를 설정해주세요.']});const h=harness({seoConfigurationReply:async()=>configurationReply(config)});
+ try{
+  await h.settle();select(h);assert.ok(!text(h.render()).includes(config.translationConfig.notice));await h.click('선택 상품 일괄 작업');const notice=nodes(h.render()).find(node=>node.props?.['aria-label']==='SEO 실행 전 안내');assert.match(text(notice),/출력 토큰 설정 필요/);assert.match(text(notice),/자동 번역·SEO 사용 불가: Qwen 출력 한도를 설정해주세요/);assert.doesNotMatch(text(notice),/무료 사용만 허용|유료 전환 없음|llama/);assert.equal(h.button('작업 개시').props.disabled,false);await h.click('작업 개시');assert.deepEqual(plain(h.component('batch-work-panel').runRequest.seoGenerationConsent),plain(config));
+ }finally{h.close();}
+});
+
+for(const invalid of ['provider','freeOnly','maxOutputTokens'])test('invalid nested Qwen '+invalid+' cannot authorize a batch from an otherwise valid Llama configuration',async()=>{
+ const config=qwenConfiguration();if(invalid==='provider')config.translationConfig.provider='other';if(invalid==='freeOnly')config.translationConfig.freeOnly=true;if(invalid==='maxOutputTokens')config.translationConfig.maxOutputTokens=8001;const h=harness({seoConfigurationReply:async()=>configurationReply(config)});
+ try{await h.settle();select(h);assert.equal(h.button('작업 개시').props.disabled,true);await h.click('작업 개시');assert.equal(h.component('batch-work-panel'),undefined);assert.equal(nodes(h.render()).some(node=>node.props?.['aria-label']==='자동 번역·SEO 실행 전 안내'),false);}finally{h.close();}
 });
 
 for(const invalid of ['owner','company','freeOnly','provider','missing','failure'])test('unverified '+invalid+' configuration never authorizes SEO and an explicit notice retry may recover',async()=>{

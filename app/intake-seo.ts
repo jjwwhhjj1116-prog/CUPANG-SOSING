@@ -1,4 +1,4 @@
-import { GOOGLE_TEXT_MODEL, WORKERS_TEXT_MODEL, translationAttributeCoverage, validateTranslationSource, type TranslationJob } from '@/app/automation/translation';
+import { GOOGLE_TEXT_MODEL, WORKERS_TEXT_MODEL, WORKERS_QWEN_MODEL, translationAttributeCoverage, validateTranslationSource, type TranslationJob } from '@/app/automation/translation';
 import { runReviewedTranslation } from '@/app/reviewed-translation';
 import { awaitIntakeTranslation } from '@/app/intake-translation-result';
 
@@ -120,7 +120,7 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
       &&Number.isInteger(stoppedStatus)&&(stoppedStatus===429||(stoppedStatus??0)>=500&&(stoppedStatus??0)<=599);
     const canonicalInitialResult=!body.optionsOnly&&job.result.model===job.review.model
       &&(job.review.destination==='Google 번역'&&job.review.model===GOOGLE_TEXT_MODEL
-        ||job.review.destination==='Cloudflare Workers AI'&&job.review.model===WORKERS_TEXT_MODEL)
+        ||job.review.destination==='Cloudflare Workers AI'&&[WORKERS_TEXT_MODEL,WORKERS_QWEN_MODEL].includes(job.review.model))
       &&job.review.instructionsVersion==='sourceflow-translation-v6'
       &&!Object.hasOwn(job.review,'optionsRetry')&&!Object.hasOwn(job.review,'intakeOptions')&&!Object.hasOwn(job.review,'seoRetry');
     const titleAbsent=canonicalInitialResult&&typeof job.review.source.title==='string'&&!!job.review.source.title.trim()

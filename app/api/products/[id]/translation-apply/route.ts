@@ -25,7 +25,7 @@ import {workersRecoveryReviewProof,google429RecoveryCandidate} from '@/app/worke
 import {readWorkersRecoverySource} from '@/db/translation-jobs';
 import {assertWorkersRecoveryJobQuality} from '@/app/product-translation-quality';
 import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
-import {GOOGLE_TEXT_MODEL,WORKERS_TEXT_MODEL} from '@/app/automation/translation';
+import {GOOGLE_TEXT_MODEL,WORKERS_TEXT_MODEL,WORKERS_QWEN_MODEL} from '@/app/automation/translation';
 import {intakeSupplierSourceMatches,intakeSupplierFactsMatch} from '@/app/intake-supplier-source';
 import { applyInitialIntakeSeoGuidance, initialIntakeSeoGuidancePending, applySeoGuidanceComposition, validateSeoGuidanceComposition, type SeoGuidanceComposition } from '@/app/seo-guidance-composition';
 import { verifyCapturedCollectionCompany } from '@/app/collection-company';
@@ -200,7 +200,7 @@ export async function POST(request: Request, context: Context) {
     let intakeSeoCoverage;
     if(scope==='all'&&job.status==='completed'&&job.result&&job.result.model===job.review.model
       &&(job.review.destination==='Google 번역'&&job.review.model===GOOGLE_TEXT_MODEL
-        ||job.review.destination==='Cloudflare Workers AI'&&job.review.model===WORKERS_TEXT_MODEL)
+        ||job.review.destination==='Cloudflare Workers AI'&&[WORKERS_TEXT_MODEL,WORKERS_QWEN_MODEL].includes(job.review.model))
       &&job.review.instructionsVersion==='sourceflow-translation-v6'
       &&!Object.hasOwn(job.review,'optionsRetry')&&!Object.hasOwn(job.review,'intakeOptions')&&!Object.hasOwn(job.review,'seoRetry')
       &&(job.review.source.title.trim()&&!job.result.draft.title.trim()
@@ -222,13 +222,14 @@ export async function POST(request: Request, context: Context) {
     // A source-bound automatic intake is provider output, not a manual edit.
     // Only fields actually adopted now receive this stamp; existing saved
     // manual values and explicitly composed owner input keep their provenance.
-    if(canonicalIntake&&!seoComposition&&scope==='all'&&job.status==='completed'&&job.result&&job.result.model===job.review.model){
-      const provenance=job.review.model===GOOGLE_TEXT_MODEL?'translated':job.review.model===WORKERS_TEXT_MODEL?'generated':null;
+    const qwenDraft=job.review.model===WORKERS_QWEN_MODEL&&job.review.destination==='Cloudflare Workers AI'&&job.review.instructionsVersion==='sourceflow-translation-v6'&&!Object.hasOwn(job.review,'workersRecovery');
+    if((canonicalIntake||qwenDraft)&&!seoComposition&&scope==='all'&&job.status==='completed'&&job.result&&job.result.model===job.review.model){
+      const provenance=job.review.model===GOOGLE_TEXT_MODEL?'translated':[WORKERS_TEXT_MODEL,WORKERS_QWEN_MODEL].includes(job.review.model)?'generated':null;
       if(provenance)for(const key of ['title','keywords','description'] as const)if(plan.patch?.seo?.[key]!==undefined)nextContent.seo[key].provenance=provenance;
     }
     // Reviewed stage-one composition and the exact source-bound first intake
     // share the SEO writer. Other translation and unchanged SEO keep their basis.
-    if (seoComposition || canonicalIntake) applySeoDocumentTitlePolicy(nextContent, plan.patch?.seo);
+    if (seoComposition || canonicalIntake || qwenDraft) applySeoDocumentTitlePolicy(nextContent, plan.patch?.seo);
     if(body.linkQuotationSeoDefaults===true&&scope==='all')applyExplicitSeoQuotationDefaults(nextContent,plan.patch?.seo);
     if (plan.categoryAttributes) nextContent.categoryAttributes = plan.categoryAttributes;
     if(pendingGuidance&&Object.keys(pendingGuidance).length)nextContent.intakeSeoGuidancePending=initialIntakeSeoGuidancePending(nextContent,job,pendingGuidance);

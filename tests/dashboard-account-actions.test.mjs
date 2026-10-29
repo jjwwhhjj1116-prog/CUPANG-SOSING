@@ -926,6 +926,18 @@ test('compact dashboard retains captured sources and existing collection without
  }finally{h.close();}
 });
 
+test('compact upper utilities retain the actual CLI, history and account entries while the sidebar keeps only the two workspaces',async()=>{
+ const h=harness();try{
+  await h.settle();const menu=()=>nodes(h.render()).find(node=>node.type==='nav'&&node.props['aria-label']==='주 메뉴'),utility=()=>nodes(h.render()).find(node=>node.type==='nav'&&node.props['aria-label']==='계정 및 연결 도구'),action=label=>nodes(utility()).find(node=>node.type==='button'&&node.props['aria-label']===label);
+  assert.equal(nodes(menu()).filter(node=>node.type==='button').length,2);assert.doesNotMatch(text(menu()),/연동 설정|작업 이력|CLI/);assert.match(text(menu()),/AI 상품등록.*상품관리/s);assert.ok(nodes(utility()).some(node=>node.type==='a'&&node.props.href==='/account'&&node.props['aria-label']==='테스트 관리자 계정 관리'));
+  const connection=nodes(utility()).find(node=>node.type==='button'&&node.props['aria-label']?.startsWith('연동 설정'));assert.equal(connection.props['data-state'],'unknown');assert.match(connection.props['aria-label'],/확인 전/);assert.doesNotMatch(text(utility()),/연결 완료|연결됨|MCP|GPT/);
+  for(const label of ['⚙ 기본설정','＋ 상품 추가','작업 개시','등록 전송'])assert.ok(h.button(label));assert.ok(nodes(h.render()).some(node=>node.type==='summary'&&text(node)==='전체 작업 ▾'));assert.ok(nodes(h.render()).some(node=>node.type==='summary'&&text(node)==='상품 선택 ▾'));
+  action('CLI 설치·연결').props.onClick();await h.settle();assert.ok(h.component('cli-install-guide'));h.component('cli-install-guide').onClose();await h.settle();assert.equal(h.component('cli-install-guide'),undefined);
+  action('작업 이력').props.onClick();await h.settle();const dialog=nodes(h.render()).find(node=>node.props?.role==='dialog'&&node.props['aria-label']==='상품별 작업 이력');assert.ok(dialog);assert.equal(nodes(dialog).find(node=>node.type==='select').props.value,h.products[0].id);nodes(dialog).find(node=>node.type==='button'&&node.props.className==='icon-close').props.onClick();await h.settle();
+  nodes(menu()).find(node=>node.type==='button'&&text(node).includes('상품관리')).props.onClick();await h.settle();assert.ok(utility());assert.ok(action('CLI 설치·연결'));assert.ok(action('작업 이력'));assert.ok(nodes(utility()).some(node=>node.type==='a'&&node.props.href==='/account'));assert.ok(h.requests.every(request=>request.method==='GET'));
+ }finally{h.close();}
+});
+
 test('acquisition category entry preserves the shared queue and consumes only its exact one-shot request',async()=>{
  const row={id:'preserved-entry-row',url:'https://detail.1688.com/offer/647000000009.html',features:'사용자 입력 보존',status:'draft'};
  const h=harness({initialIntakeRows:[row]});

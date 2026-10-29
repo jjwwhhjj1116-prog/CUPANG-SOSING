@@ -15,7 +15,7 @@ function fixture(){
   '@/app/automation/model':{automationStages:stageIds},
   '@/app/supplier-hub-company':{supplierHubCompany:(code,name)=>['A01526306','A01464742'].includes(code)?{code,name}:null},
   '@/app/collected-translation-attributes':{},'@/app/option-translation':{},'@/app/sourcing':{},'@/app/seo-workspace-draft':{parseSeoGenerationConfiguration:raw=>raw?.freeOnly===true&&raw.destination==='Cloudflare Workers AI'?plain(raw):null},
-  '@/app/automation/translation':{GOOGLE_TEXT_MODEL:'google'},
+  '@/app/automation/translation':{GOOGLE_TEXT_MODEL:'google',WORKERS_QWEN_MODEL:'@cf/qwen/qwen3-30b-a3b-fp8'},
   '@/app/quotation-ai-client':{quotationAiViewCurrent:()=>true,quotationAiJobForScope:()=>null,quotationAiScopedProposalChanges:()=>[]},
   '@/app/quotation-fields-confirmation':{},
   '@/app/quotation-known-notice-proposals':providedOptionModule('app/quotation-known-notice-proposals.ts'),
@@ -356,6 +356,49 @@ function withSeoGeneration(h){
  });
  return generation;
 }
+
+function qwenFixture(outcome={job:{id:'qwen-job',status:'completed',result:{draft:{title:'Qwen 상품명',keywords:['검색어'],description:'Qwen 설명',attributes:[],warnings:[]}}},closed:true,partial:false,message:'Qwen 확인 완료'}){
+ const h=seoFixture(outcome),generation=withSeoGeneration(h),translationConfig={configured:true,provider:'workers-ai',model:'@cf/qwen/qwen3-30b-a3b-fp8',maxOutputTokens:4096,freeOnly:false,destination:'Cloudflare Workers AI',issues:[],notice:'Qwen 실제 상품·옵션 원문 1회 전송, 사용량에 따른 유료 비용 발생 가능'};
+ generation.view.configuration.translationConfig=plain(translationConfig);generation.view.source.attributes=[{name:'상품속성: 材质',value:'棉'}];h.options.seoGenerationConsent=plain(generation.view.configuration);
+ const optionAttributes=[{name:'option:sku-a',value:'白色'},{name:'option-color:sku-a',value:'白色'}];
+ h.deps['@/app/option-translation'].optionTranslationBatch=(options,capacity)=>{assert.equal(capacity,49);return{total:2,remaining:0,attributes:plain(optionAttributes)};};
+ Object.assign(h.deps['@/app/seo-workspace-draft'],{createSeoWorkspaceDraftState:input=>input,runSeoWorkspaceDraft:async(state,controls)=>{h.calls.push({adapter:'qwen-translation',state:plain(state),confirmAi:controls.confirmAi});controls.onState(state);return outcome;}});
+ h.prependIntercept(call=>{
+  if(call.url.endsWith('/translation'))return Response.json({configuration:{configured:true,model:translationConfig.model,maxOutputTokens:translationConfig.maxOutputTokens,issues:[]},jobs:[]});
+  if(call.url.endsWith('/translation-apply'))return Response.json(call.body.action==='preview'?{scope:'all',productId:'product',productVersion:version,contentRevision:3,optionRevision:2,fingerprint:hash,preview:[{field:'title'},{field:'option'}]}:{scope:'all',productId:'product',productVersion:'2026-10-23T00:00:01.000Z',contentRevision:4,optionRevision:3,applied:2});
+ });
+ return{h,generation,translationConfig,optionAttributes};
+}
+
+test('one paid-notice-bound Qwen call combines factual attributes and pending option bindings, adopts all once and skips duplicate Llama SEO',async()=>{
+ const {h,optionAttributes}=qwenFixture(),result=await h.run(['seo','pricing','koreanLabel','quotation']);
+ assert.deepEqual(plain(result.stages.map(row=>row.status)),['draft','draft','draft','draft']);
+ const calls=h.calls.filter(call=>call.adapter==='qwen-translation');assert.equal(calls.length,1);assert.equal(calls[0].confirmAi,true);
+ assert.deepEqual(calls[0].state.source.attributes,[{name:'상품속성: 材质',value:'棉'},...optionAttributes]);assert.equal(calls[0].state.source.title,'原名');assert.equal(calls[0].state.source.description,'原文');
+ assert.equal(h.calls.some(call=>call.adapter==='seo-generation'),false);assert.equal(h.calls.some(call=>call.url?.endsWith('/translation-source')),false);
+ const applied=h.calls.filter(call=>call.url?.endsWith('/translation-apply'));assert.deepEqual(applied.map(call=>call.body.action),['preview','apply']);assert.ok(applied.every(call=>call.body.scope==='all'&&call.body.linkQuotationSeoDefaults===true));
+ assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
+});
+
+test('Qwen refuses changed cost notice, model, output cap, company or missing pre-click consent before any provider or apply mutation',async()=>{
+ for(const change of ['notice','model','tokens','company','consent','disabled']){const {h,generation}=qwenFixture();
+  if(change==='notice')generation.view.configuration.translationConfig.notice+=' 변경';if(change==='model')h.prependIntercept(call=>call.url.endsWith('/translation')?Response.json({configuration:{configured:true,model:'google',maxOutputTokens:0},jobs:[]}):null);
+  if(change==='tokens')h.prependIntercept(call=>call.url.endsWith('/translation')?Response.json({configuration:{configured:true,model:'@cf/qwen/qwen3-30b-a3b-fp8',maxOutputTokens:8000},jobs:[]}):null);
+  if(change==='company')generation.view.company={code:'A01464742',name:'와이홉'};if(change==='consent')delete h.options.seoGenerationConsent;if(change==='disabled')h.options.seoGenerationConsent.translationConfig.configured=false;
+  const result=await h.run(['seo','pricing']);assert.ok(['blocked','failed'].includes(result.stages[0].status),change);assert.equal(h.calls.some(call=>call.adapter==='qwen-translation'||call.adapter==='seo-generation'||call.url?.endsWith('/translation-apply')),false,change);
+  if(change==='company')assert.equal(h.calls.some(call=>call.url?.endsWith('/stage-two-pricing')),false);
+ }
+});
+
+test('Qwen confirmed partial or failed generation permits later stages, while uncertain execution and unknown apply retain their fences',async()=>{
+ for(const mode of ['partial','failed','uncertain','apply']){const outcome=mode==='failed'?{job:{status:'failed'},closed:true,partial:false,message:'확인된 Qwen 실패'}:mode==='uncertain'?{job:{status:'uncertain'},closed:false,partial:false,message:'Qwen 응답 미확인'}:undefined;
+  const {h}=qwenFixture(outcome);if(mode==='partial')h.deps['@/app/seo-workspace-draft'].runSeoWorkspaceDraft=async()=>({job:{id:'qwen-partial',status:'completed',result:{}},closed:true,partial:true,message:'일부 번역만 확인'});
+  if(mode==='apply')h.prependIntercept(call=>{if(call.url.endsWith('/translation-apply')&&call.body.action==='apply')throw Error('local lost write acknowledgement');});
+  const result=await h.run(['seo','pricing']);assert.equal(result.stages[0].status,mode==='apply'?'failed':'blocked',mode);
+  const stopped=['uncertain','apply'].includes(mode);assert.equal(h.calls.some(call=>call.url?.endsWith('/stage-two-pricing')),!stopped,mode);assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:seo')),stopped,mode);
+  if(stopped){const before=h.calls.length;await h.run(['seo','pricing']);assert.equal(h.calls.length,before+1,mode);}
+ }
+});
 
 test('Google option translation applies its exact preview while missing AI consent cannot masquerade as generated SEO completion',async()=>{
  const h=seoFixture(),result=await h.run(['seo']);assert.equal(result.stages[0].status,'blocked');assert.match(result.stages[0].message,/AI SEO 생성 완료로 표시하지 않았습니다/);
