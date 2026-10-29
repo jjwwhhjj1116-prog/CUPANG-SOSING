@@ -36,13 +36,13 @@ function fixture(){
   if(path==='/sr/draft/api/drafts/register-requested'){assert.equal(init.method,'GET');return response(path,state.requested);}
   if(path==='/sr/draft/api/get-by-id/2347603'){assert.equal(init.method,'GET');return response(path,state.body);}
   if(path==='/sr/draft/api/get-images-by-id/2347603'){assert.equal(init.method,'GET');return response(path,state.files);}
-  if(path.startsWith('/sr/draft/api/get-files-by-type/2347603?fileType=')){assert.equal(init.method,'POST');assert.equal(init.body,'{}');return response(path,state.legal);}
+  if(path==='/sr/draft/api/get-files-by-type/2347603'){assert.equal(init.method,'POST');assert.equal(init.body,'{}');return response(path,state.legal);}
   if(parsed.pathname==='/sr/api/image/get-by-key'){
    assert.equal(init.method,'GET');const name=parsed.searchParams.get('key').split('/').at(-1);assert.ok(binaries.has(name));state.activeBytes++;state.maxActiveBytes=Math.max(state.maxActiveBytes,state.activeBytes);await turn();state.activeBytes--;return response(path,binaries.get(name),'image/png');
   }
   assert.fail('Unapproved remote operation '+path);
  };
- const context=vm.createContext({document,location,crypto:webcrypto,TextEncoder,TextDecoder,Uint8Array,AbortController,URL,Error,Date:ClockDate,fetch,JSON,Promise,Set,Map,
+ const context=vm.createContext({document,location,crypto:webcrypto,TextEncoder,TextDecoder,Uint8Array,AbortController,URL,Error,Date:ClockDate,fetch,Promise,Set,Map,
   setTimeout(fn,ms){const id=++sequence;timers.set(id,{fn,ms});return id;},clearTimeout:id=>timers.delete(id)});
  for(const key of ['localStorage','sessionStorage'])Object.defineProperty(context,key,{get(){assert.fail('Storage must never be read.');}});
  f.run=async(value=f.input)=>{context.currentInput=value;return plain(await vm.runInContext('('+savedDraftCurrentReadPage.toString()+')(currentInput)',context));};
@@ -51,15 +51,39 @@ function fixture(){
  f.bindInput=observation=>({...copy(input),mode:'bind',proof:f.proof(observation),expectedObservation:Object.fromEntries(['fileSetSha256','byteSetSha256','rawBodySha256','filesCount'].map(key=>[key,observation[key]]))});
  return f;
 }
-function expectFailure(result){assert.deepEqual(Object.keys(result),['currentReadFailure']);assert.equal(result.currentReadFailure.format,'yoofam-current-saved-draft-read-failure-v1');assert.match(result.currentReadFailure.phase,/^[a-z-]+$/);assert.match(result.currentReadFailure.code,/^[a-z-]+$/);assert.doesNotMatch(JSON.stringify(result),/https:|2347603|stored-image|current-owner|원래 저장/);}
+function expectFailure(result){assert.deepEqual(Object.keys(result),['currentReadFailure']);assert.equal(result.currentReadFailure.format,'yoofam-current-saved-draft-read-failure-v1');assert.match(result.currentReadFailure.phase,/^[a-z-]+$/);assert.match(result.currentReadFailure.code,/^[a-z][a-z0-9-]+$/);assert.doesNotMatch(JSON.stringify(result),/https:|2347603|stored-image|current-owner|원래 저장/);}
 
 test('fresh owned tab reads the exact original body and nine actual image bytes with at most three parallel downloads',async()=>{
  const f=fixture(),before=f.snapshot(),result=await f.run();assert.equal(result.currentReadFailure,undefined);assert.equal(result.filesCount,9);assert.equal(result.duplicateMatches,0);assert.equal(result.documentState,'UNFINISHED');assert.equal(result.readOnly,true);assert.equal(result.remoteWrites,false);assert.equal(result.historicalAckRecovered,false);assert.equal(result.record,undefined);
  const body=Object.fromEntries(['docId','productName','categoryPath','categoryId','displayCategoryCode','jsonDocument','scope','productNoticeNumber','version','remark'].map(key=>[key,f.state.body[key]]));
  const files=f.state.files.map(row=>Object.fromEntries(['imageName','imageUrl','s3Link','host','mainImage'].filter(key=>Object.hasOwn(row,key)).map(key=>[key,row[key]]))).sort((a,b)=>a.imageName.localeCompare(b.imageName));
  assert.deepEqual(result.body,body);assert.deepEqual(result.files,files);assert.equal(result.rawBodySha256,sha(body));assert.equal(result.fileSetSha256,sha(files));assert.equal(result.byteSetSha256,sha(f.input.expectedImages));assert.equal(f.state.maxActiveBytes,3);
- assert.equal(f.snapshot(),before);assert.equal(f.writes(),0);assert.equal(f.calls.length,19);assert.equal(f.calls.filter(call=>call.method==='POST').length,6);assert.ok(f.calls.every(call=>call.method==='GET'||call.path.startsWith('/sr/draft/api/get-files-by-type/')));assert.equal(f.timers.size,0);
+ assert.equal(f.snapshot(),before);assert.equal(f.writes(),0);assert.equal(f.calls.length,14);assert.deepEqual(f.calls.filter(call=>call.method==='POST').map(call=>[call.path,call.body]),[['/sr/draft/api/get-files-by-type/2347603','{}']]);assert.equal(f.calls.some(call=>call.path.includes('fileType=')),false);assert.ok(f.calls.every(call=>call.method==='GET'||call.path==='/sr/draft/api/get-files-by-type/2347603'));assert.equal(f.timers.size,0);
  const stringResult=await f.run(JSON.stringify(f.input));assert.equal(typeof stringResult,'string');assert.equal(JSON.parse(stringResult).fileSetSha256,result.fileSetSha256);
+});
+
+test('one unfiltered all-legal query accepts only literal empty arrays or objects through read, bind and check',async()=>{
+ for(const legal of [[],{}]){const f=fixture();f.state.legal=legal;const read=await f.run();assert.equal(read.currentReadFailure,undefined);assert.equal(f.calls.length,14);
+  const bound=await f.run(f.bindInput(read));assert.equal(bound.currentReadFailure,undefined);assert.equal(f.calls.length,28);const record=f.snapshot(),writes=f.writes();
+  const checked=await f.run({...copy(f.input),mode:'check'});assert.equal(checked.currentReadFailure,undefined);assert.equal(f.calls.length,42);assert.equal(f.snapshot(),record);assert.equal(f.writes(),writes);
+  assert.deepEqual(f.calls.filter(call=>call.method==='POST').map(call=>[call.path,call.body]),Array.from({length:3},()=>['/sr/draft/api/get-files-by-type/2347603','{}']));
+  assert.ok(f.calls.every(call=>call.method==='GET'||call.path==='/sr/draft/api/get-files-by-type/2347603'));assert.equal(f.calls.some(call=>call.path.includes('fileType=')),false);
+ }
+});
+
+test('all-legal scalar shapes and every nonempty collection fail with fixed distinct diagnostics without unwrapping or leaking responses',async()=>{
+ const responses=[null,false,0,''].map(legal=>({legal,code:'legal-response-shape'})).concat([
+  [{fileName:'raw-private-file.pdf',fileType:'unfamiliar-native-type'}],
+  {fileName:'raw-private-file.pdf',fileType:'certificate'},
+  {error:'raw-private-server-error',url:'https://private.example/legal'},
+  {data:[]},
+  {format:'native-typed-empty',files:[]},
+  {certificate:{}},
+ ].map(legal=>({legal,code:Array.isArray(legal)?'legal-array-nonempty':'legal-object-nonempty'})));
+ for(const {legal,code} of responses){const f=fixture();f.state.legal=legal;const before=f.snapshot(),result=await f.run();expectFailure(result);assert.equal(result.currentReadFailure.phase,'legal-lists');assert.equal(result.currentReadFailure.code,code);
+  assert.doesNotMatch(JSON.stringify(result),/raw-private|private\.example|unfamiliar-native-type|native-typed-empty/);assert.equal(f.snapshot(),before);assert.equal(f.writes(),0);assert.equal(f.calls.some(call=>call.path.startsWith('/sr/api/image/')),false);
+  assert.deepEqual(f.calls.filter(call=>call.method==='POST').map(call=>[call.path,call.body]),[['/sr/draft/api/get-files-by-type/2347603','{}']]);assert.equal(f.calls.some(call=>call.path.includes('fileType=')),false);
+ }
 });
 
 test('bind independently rereads current hashes, records no historical ACK and can idempotently refresh only its current-read proof',async()=>{
@@ -131,6 +155,18 @@ test('actual bytes must match immutable SHA, MIME and bounded length with no red
    if(mode==='declared-size')response=f.response(path,new Uint8Array(raw),'image/png',{'content-length':String(10*1024*1024+1)});return response;
   };
   expectFailure(await f.run());assert.equal(f.writes(),0,mode);assert.ok(f.calls.every(call=>call.method==='GET'||call.path.startsWith('/sr/draft/api/get-files-by-type/')));
+ }
+});
+
+test('HTTP failures expose only the bounded status enum without reading or returning raw server errors',async()=>{
+ for(const status of [401,403,404,429,500,502,503,504,418]){const f=fixture();f.override=path=>{if(path!=='/sr/draft/api/drafts')return;const response=f.response(path,{error:'private-raw-server-error',url:'https://private.example/session'});Object.defineProperty(response,'status',{value:status});return response;};
+  const result=await f.run();expectFailure(result);assert.equal(result.currentReadFailure.code,status===418?'http-response':'http-'+status);assert.doesNotMatch(JSON.stringify(result),/private-raw|private\.example/);assert.equal(f.calls.length,1);assert.equal(f.writes(),0);
+ }
+});
+
+test('MIME diagnostics use fixed buckets while unchanged image bytes still require their exact source MIME',async()=>{
+ for(const mime of ['application/octet-stream','image/jpeg']){const f=fixture();f.override=path=>path.startsWith('/sr/api/image/')?f.response(path,f.binaries.get(f.input.expectedImages[0].transportName),mime):undefined;
+  const result=await f.run();expectFailure(result);assert.equal(result.currentReadFailure.code,mime==='application/octet-stream'?'http-type-octet-stream':'http-type-other');assert.equal(f.writes(),0);
  }
 });
 

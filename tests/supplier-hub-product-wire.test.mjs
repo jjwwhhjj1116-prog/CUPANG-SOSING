@@ -89,6 +89,6 @@ test('unified release unions sales permissions while retaining quotation app ori
     const code = read(file); assert.ok(code.includes(download), file); assert.equal(code.includes('0.2.78'), false, file);
   }
   const minimumCompatibleVersion=/info\.version\.localeCompare\('(\d+\.\d+\.\d+)'/.exec(read('app/components/supplier-hub-extension-check.tsx'))?.[1];
-  assert.equal(minimumCompatibleVersion,'2.1.55');assert.ok(manifest.version.localeCompare(minimumCompatibleVersion,'en',{numeric:true})>=0);
+  assert.equal(minimumCompatibleVersion,'2.1.56');assert.ok(manifest.version.localeCompare(minimumCompatibleVersion,'en',{numeric:true})>=0);
   cases.push({ name: 'release and scope', version: manifest.version, minimumCompatibleVersion, newPermissions: 2, newHosts: 2, downloadComponents: 5 });
 });

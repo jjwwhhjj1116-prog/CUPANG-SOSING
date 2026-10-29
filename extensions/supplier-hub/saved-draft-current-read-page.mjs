@@ -82,8 +82,9 @@ export async function savedDraftCurrentReadPage(input){
    const consume=async()=>{
     const url=origin+path;let response;try{response=await fetch(url,{method:legal?'POST':'GET',credentials:'include',redirect:'error',cache:'no-store',signal:controller.signal,
      headers:{accept:bytes?expectedFile.contentType:'application/json',...(legal?{'content-type':'application/json;charset=UTF-8'}:{})},...(legal?{body:'{}'}:{})});}catch{fail(controller.signal.aborted?'http-timeout':'http-network');}
-    fence();if(!response||!response.ok||response.status!==200||response.redirected||response.type==='opaqueredirect'||response.url!==url)fail('http-response');
-    const mime=(response.headers.get('content-type')||'').split(';')[0].trim().toLowerCase();if(mime!==(bytes?expectedFile.contentType:'application/json'))fail('http-type');
+    fence();if(!response||response.redirected||response.type==='opaqueredirect'||response.url!==url)fail('http-response');
+    if(!response.ok||response.status!==200)fail([401,403,404,429,500,502,503,504].includes(response.status)?'http-'+response.status:'http-response');
+    const mime=(response.headers.get('content-type')||'').split(';')[0].trim().toLowerCase();if(mime!==(bytes?expectedFile.contentType:'application/json'))fail(mime==='application/octet-stream'?'http-type-octet-stream':'http-type-other');
     const limit=bytes?10*1024*1024:6*1024*1024,size=response.headers.get('content-length');
     if(size!==null&&(!/^\d+$/.test(size)||Number(size)>limit||bytes&&Number(size)!==expectedFile.byteLength))fail('http-size');
     const reader=response.body?.getReader();if(!reader)fail('http-body');const chunks=[];let length=0;
@@ -118,7 +119,13 @@ export async function savedDraftCurrentReadPage(input){
     ||!(row.imageUrl.startsWith('/sr/api/image/get-by-key?')||row.imageUrl.startsWith(origin+'/sr/api/image/get-by-key?')))fail('image-url');
    listedNames.add(row.imageName);paths.set(row.imageName,url.pathname+url.search);return{imageName:row.imageName,imageUrl:row.imageUrl,s3Link:row.s3Link,host:row.host,...(row.mainImage===undefined?{}:{mainImage:row.mainImage})};
   }).sort((a,b)=>a.imageName<b.imageName?-1:a.imageName>b.imageName?1:0);
-  phase='legal-lists';for(const type of ['import_type','certificate','additional','categoryCert','adCert','msds']){const legal=await read('/sr/draft/api/get-files-by-type/'+doc+'?fileType='+type,{legal:true});if(!Array.isArray(legal)||legal.length!==0)fail('legal-files-present');}
+  // The shipped native caller omits fileType and consumes the complete
+  // collection. Only a literal empty array or empty plain object proves that
+  // this document has no legal files of any type; envelopes are not unwrapped.
+  phase='legal-lists';const legal=await read('/sr/draft/api/get-files-by-type/'+doc,{legal:true});
+  if(Array.isArray(legal)){if(legal.length!==0)fail('legal-array-nonempty');}
+  else if(object(legal)&&Object.getPrototypeOf(legal)===Object.prototype){if(Object.keys(legal).length!==0)fail('legal-object-nonempty');}
+  else fail('legal-response-shape');
   phase='image-bytes';const observations=new Array(images.length);let next=0;
   await Promise.all(Array.from({length:Math.min(3,images.length)},async()=>{for(;;){const index=next++;if(index>=images.length)return;const file=images[index];observations[index]=await read(paths.get(file.transportName),{bytes:true,expectedFile:file});}}));
   observations.sort((a,b)=>a.transportName<b.transportName?-1:a.transportName>b.transportName?1:0);
