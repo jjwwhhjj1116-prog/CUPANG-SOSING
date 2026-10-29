@@ -145,6 +145,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
 
 
   const [addOpen, setAddOpen] = useState(false);
+  const [collectionQueueOpen,setCollectionQueueOpen]=useState(false);
   const sourceRegistrations=useSourceRegistrations(workspaceOwnerId);
   const sourceReviewScope=useMemo(()=>({ownerId:workspaceOwnerId}),[workspaceOwnerId]);
   const [sourceReviewState,setSourceReview]=useState<SourceReviewSession|null>(null);
@@ -170,7 +171,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   const settingsBusyRef=useRef(false);
   const changeSettingsBusy=useCallback((value:boolean)=>{settingsBusyRef.current=value;setSettingsBusy(value);},[]);
   const settingsOperationRef=useRef({ownerId:workspaceOwnerId,mounted:false,epoch:0,saving:false});
-  useEffect(()=>{
+  useLayoutEffect(()=>{
     const operation=settingsOperationRef.current;
     operation.ownerId=workspaceOwnerId;operation.mounted=true;operation.saving=false;operation.epoch++;
     return()=>{operation.mounted=false;operation.saving=false;operation.epoch++;};
@@ -678,7 +679,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   function openCategoryFirstIntake(){
     const operation=settingsOperationRef.current;
     if(batchScopeRef.current!==batchScope||batchBusyRef.current||addOpen||!operation.mounted||operation.ownerId!==workspaceOwnerId)return;
-    setIntakeSourceSeed(undefined);setIntakeCategoryEntry({id:crypto.randomUUID(),ownerId:workspaceOwnerId});setView('work');setAddOpen(true);
+    setIntakeSourceSeed(undefined);setIntakeCategoryEntry({id:crypto.randomUUID(),ownerId:workspaceOwnerId});setView('work');setCollectionQueueOpen(true);setAddOpen(true);
   }
   const sourceArchiveRequest=useRef<AbortController|null>(null);
   const sourceArchiveDisabled=loading||busy||batchBusy||addOpen||settingsBusy||intakeDraft.loading||intakeDraft.saving;
@@ -802,7 +803,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
         {(sourceNotice||sourceRegistrations.error)&&<p role="status" className="panel-note">{sourceNotice||sourceRegistrations.error}</p>}
         <div id="captured-source-inbox"><SourceInboxPanel key={workspaceOwnerId??'anonymous'} ownerId={workspaceOwnerId} existingProducts={products} disabled={busy||batchBusy||addOpen||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving} onChanged={sourceRegistrations.reload} onAdd={prepareSource}/></div>
         <details className="collection-panel"><summary>1688 URL로 원문 먼저 담기 · 서버 수집</summary><QuerySourcePanel key={`server-query-${workspaceOwnerId??'anonymous'}`} ownerId={workspaceOwnerId} company={querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null} disabled={loading||busy||batchBusy||addOpen||settingsBusy||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving} onAdd={prepareQuerySource}/></details>
-        <details className="collection-panel" aria-label="수집 대기열"><summary>상품 대기열 · {collectionJobs.filter(job=>job.status!=='cancelled').length}건</summary>
+        <details className="collection-panel" aria-label="수집 대기열" open={collectionQueueOpen} onToggle={event=>setCollectionQueueOpen(event.currentTarget.open)}><summary>상품 대기열 · {collectionJobs.filter(job=>job.status!=='cancelled').length}건</summary>
           <CollectionBatchPanel jobs={collectionJobs} onSaved={()=>void loadWorkspace()} onOpenProduct={openCollectedProduct}/>
           <div className="collection-heading"><div><h2>수집 대기열 <span>{collectionJobs.filter(job => job.status !== 'cancelled').length}</span></h2><p>{collectionBlock}</p></div><button className="btn ghost" disabled={loading || busy} onClick={()=>{setLoading(true);void loadWorkspace();}}>새로고침</button></div>
           <label className="collection-history"><input type="checkbox" checked={showCancelled} onChange={event=>setShowCancelled(event.target.checked)} />취소한 요청 보기 · 최근 200건</label>
