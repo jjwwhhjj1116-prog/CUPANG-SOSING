@@ -18,6 +18,7 @@ import { ProductContentEditor } from '@/app/components/product-content-editor';
 import { OptionSeoEditor } from '@/app/components/option-seo-editor';
 import { SeoWorkspaceGenerator } from '@/app/components/seo-workspace-generator';
 import { setSeoGuidanceSessionOwner } from '@/app/seo-guidance-session';
+import {parseSeoGenerationConfiguration,type SeoGenerationConfiguration} from '@/app/seo-workspace-draft';
 import { SeoWorkspaceEditor } from '@/app/components/seo-workspace-editor';
 import { sameSeoAppliedSource, type SeoAppliedReceipt } from '@/app/seo-apply-focus';
 import { OptionImageEditor } from '@/app/components/option-image-editor';
@@ -295,6 +296,31 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   const setBatchOpen=(open:boolean)=>updateBatch({open}),setBatchRun=(run:BatchRun|null)=>updateBatch({run});
   const changeBatchBusy=(value:boolean)=>{if(batchScopeRef.current!==batchScope)return;batchBusyRef.current=value;updateBatch({busy:value});};
   useLayoutEffect(()=>{batchScopeRef.current=batchScope;batchRunRef.current=null;batchBusyRef.current=false;return()=>{if(batchScopeRef.current!==batchScope)return;batchScopeRef.current=null;batchRunRef.current=null;batchBusyRef.current=false;batchNavigation.current?.abort();batchNavigation.current=null;};},[batchScope]);
+  const [seoConfigurationReload,setSeoConfigurationReload]=useState(0);
+  const seoConfigurationScope=useMemo(()=>({ownerId:workspaceOwnerId,company:querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null,settings,reload:seoConfigurationReload}),[workspaceOwnerId,sourceReviewScope,querySourceCompany,settings,seoConfigurationReload]);
+  const [seoConfigurationState,setSeoConfigurationState]=useState<{scope:typeof seoConfigurationScope;configuration:SeoGenerationConfiguration|null;settingsEpoch:number;error:string}|null>(null);
+  const seoConfigurationLive=useRef<typeof seoConfigurationScope|null>(seoConfigurationScope),seoConfigurationRead=useRef<AbortController|null>(null);
+  useLayoutEffect(()=>{seoConfigurationLive.current=seoConfigurationScope;return()=>{seoConfigurationLive.current=null;seoConfigurationRead.current?.abort();seoConfigurationRead.current=null;};},[seoConfigurationScope]);
+  useEffect(()=>{
+    const scope=seoConfigurationScope,operation=settingsOperationRef.current;
+    if(!scope.ownerId||!scope.company||!operation.mounted||operation.ownerId!==scope.ownerId)return;
+    const active=new AbortController(),settingsEpoch=operation.epoch;seoConfigurationRead.current=active;
+    const current=()=>seoConfigurationLive.current===scope&&seoConfigurationRead.current===active&&!active.signal.aborted&&operation.mounted&&operation.ownerId===scope.ownerId;
+    void(async()=>{
+      try{
+        const raw=await readJson<{purpose?:unknown;ownerId?:unknown;company?:unknown;configuration?:unknown}>('/api/seo-generation/configuration',{cache:'no-store',credentials:'same-origin',redirect:'error',signal:active.signal});
+        if(!current())return;
+        const account=parseWorkspaceSettingsScope({ownerId:raw.ownerId,company:raw.company}),configuration=parseSeoGenerationConfiguration(raw.configuration);
+        if(Object.keys(raw).sort().join(',')!=='company,configuration,ownerId,purpose'||raw.purpose!=='seo-generation'||!account||account.ownerId!==scope.ownerId||JSON.stringify(account.company)!==JSON.stringify(scope.company)||!configuration)throw Error('현재 계정·회사와 SEO 실행 안내를 확인하지 못했습니다.');
+        if(operation.epoch!==settingsEpoch||operation.saving)throw Error('기본설정이 변경되었습니다. SEO 실행 안내를 다시 확인해주세요.');
+        setSeoConfigurationState({scope,configuration,settingsEpoch,error:''});
+      }catch(error){if(current())setSeoConfigurationState({scope,configuration:null,settingsEpoch,error:error instanceof Error?error.message:'SEO 실행 안내를 확인하지 못했습니다.'});}
+    })();
+    return()=>{active.abort();if(seoConfigurationRead.current===active)seoConfigurationRead.current=null;};
+  },[seoConfigurationScope]);
+  const currentSeoConfiguration=seoConfigurationState?.scope===seoConfigurationScope?seoConfigurationState.configuration:null;
+  const seoConfigurationError=seoConfigurationState?.scope===seoConfigurationScope?seoConfigurationState.error:'';
+  const seoNoticeRequired=selectedBatchStages.includes('seo');
   const [batchOpenError,setBatchOpenError]=useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyProductId, setHistoryProductId] = useState('');
@@ -554,7 +580,10 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     if(!chosen.length){showToast('작업할 상품을 선택해주세요.');return;}
     if(chosen.some(item=>item.owner_id!==workspaceOwnerId)){showToast('현재 계정의 상품을 다시 선택해주세요.');return;}
     if(!selectedBatchStages.length){showToast('실행할 작업을 하나 이상 선택해주세요.');return;}
-    const run={request:{id:crypto.randomUUID(),ownerId:workspaceOwnerId,mode:selectedBatchMode,stages:[...selectedBatchStages],keys:new Map<string,string>()},products:chosen.map(product=>({...product}))};
+    if(seoNoticeRequired&&(seoConfigurationLive.current!==seoConfigurationScope||!currentSeoConfiguration||seoConfigurationState?.settingsEpoch!==operation.epoch)){showToast('SEO 실행 안내를 확인한 뒤 작업을 시작해주세요.');return;}
+    const keys=new Map<string,string>();
+    if(seoNoticeRequired)keys.set('batch-owner:'+workspaceOwnerId,JSON.stringify({ownerId:workspaceOwnerId,company:seoConfigurationScope.company}));
+    const run={request:{id:crypto.randomUUID(),ownerId:workspaceOwnerId,mode:selectedBatchMode,stages:[...selectedBatchStages],keys,...(seoNoticeRequired&&currentSeoConfiguration?{seoGenerationConsent:structuredClone(currentSeoConfiguration)}:{})},products:chosen.map(product=>({...product}))};
     batchRunRef.current=run;setBatchRun(run);changeBatchBusy(true);setBatchOpenError('');setBatchOpen(true);
   }
   function openBatchReview(){const operation=settingsOperationRef.current;if(batchScopeRef.current!==batchScope||batchBusyRef.current||!operation.mounted||operation.ownerId!==workspaceOwnerId)return;batchRunRef.current=null;setBatchRun(null);setBatchOpenError('');setBatchOpen(true);}
@@ -566,6 +595,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     if(batchBusyRef.current)throw Error('일괄 작업을 마친 뒤 기본설정을 저장해주세요. 입력은 유지했습니다.');
     if(operation.saving)throw Error('기본설정을 저장 중입니다. 저장 결과를 먼저 확인해주세요.');
     if(workspaceOwnerId&&scope?.ownerId!==workspaceOwnerId)throw Error('기본설정을 불러온 계정을 확인하지 못했습니다. 페이지를 새로고침해주세요.');
+    setSeoConfigurationState(null);
     const settingsEpoch=++operation.epoch;operation.saving=true;
     try{
       const result = await readJson<{settings:Settings;scope?:unknown}>('/api/settings', {method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({...value,...(scope?{expectedOwnerId:scope.ownerId}:{})})});
@@ -582,6 +612,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     const operation=settingsOperationRef.current;
     if(!operation.mounted||operation.ownerId!==workspaceOwnerId)throw Error('로그인 계정이 변경되었습니다. 상품 대기열을 다시 열어주세요.');
     if(operation.saving)throw Error('기본설정을 저장 중입니다. 저장 결과를 먼저 확인해주세요.');
+    setSeoConfigurationState(null);
     return ++operation.epoch;
   }
   function applyReloadedSettings(value:Settings,scope?:WorkspaceSettingsScope,epoch?:number) {
@@ -589,7 +620,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     if(!operation.mounted||operation.ownerId!==workspaceOwnerId||operation.saving||epoch!==operation.epoch
       ||workspaceOwnerId&&parsedScope?.ownerId!==workspaceOwnerId||scope!==undefined&&!parsedScope)
       throw Error('계정 또는 기본설정 저장 작업이 변경되었습니다. 최신 기본설정을 다시 불러와주세요.');
-    operation.epoch++;setSettings(value);
+    operation.epoch++;setSettings(value);setSeoConfigurationReload(current=>current+1);
   }
 
   async function removeWorkspaceProduct(product:Product){
@@ -752,7 +783,12 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
         <header className="topbar"><div><h1>{view==='work'?'로켓배송 AI상품등록':'로켓배송 상품관리(신규)'}</h1><p>{view==='work'?'상품별 등록 현황 및 관리':'등록 상품 · SKU · 가격 · 구매정보'}</p></div>
           <div className="top-actions"><a className="workspace-user" href="/account">{userName} · 계정 관리</a>{view==='work'&&<><button type="button" className="btn settings" aria-expanded={settingsOpen} aria-controls="workspace-settings-panel" disabled={settingsBusy||batchBusy} onClick={()=>{if(!settingsBusyRef.current&&!batchBusyRef.current)setSettingsOpen(open=>!open);}}>⚙ 기본설정</button><button className="btn primary" disabled={batchBusy} onClick={openCategoryFirstIntake}>＋ 상품 추가</button>
           <details className="bulk-action-menu"><summary className="btn ghost">{selectedBatchMode==='full'?'전체 작업':'부분 작업 ('+selectedBatchStages.length+')'} ▾</summary><div><fieldset disabled={batchBusy} aria-label="실행할 작업 선택"><legend>실행할 작업</legend><label><input type="checkbox" aria-label="전체 작업" checked={selectedBatchMode==='full'} onChange={event=>{if(!batchBusyRef.current){setSelectedBatchMode(event.target.checked?'full':'selected');setSelectedBatchStages(event.target.checked?batchStages.map(stage=>stage.id):[]);}}}/> 전체 작업</label>{batchStages.map(stage=><label key={stage.id} style={{display:'flex',gap:8,padding:'6px 0'}}><input type="checkbox" aria-label={stage.label+' 작업'} checked={selectedBatchStages.includes(stage.id)} onChange={event=>chooseBatchStage(stage.id,event.target.checked)}/>{stage.label}</label>)}</fieldset></div></details>
-          <details className="bulk-action-menu"><summary className="btn ghost">상품 선택 ▾</summary><div><button type="button" disabled={batchBusy} onClick={()=>{if(!batchBusyRef.current)setSelected(new Set(products.map(product=>product.id)));}}>최근 상품 전체 선택</button><button type="button" disabled={batchBusy} onClick={()=>{if(!batchBusyRef.current)setSelected(new Set());}}>선택 해제</button><button type="button" disabled={batchBusy} onClick={openBatchReview}>선택 상품 일괄 작업</button><button type="button" onClick={()=>{setHistoryProductId(products[0]?.id??'');setHistoryOpen(true);}}>작업 이력</button></div></details><button className="btn start" disabled={busy||batchBusy||!selectedBatchStages.length} onClick={runAutomation}>작업 개시</button><button className="btn rose" disabled={batchBusy} onClick={()=>openSubmission(null)}>등록 전송</button></>}</div></header>
+          <details className="bulk-action-menu"><summary className="btn ghost">상품 선택 ▾</summary><div><button type="button" disabled={batchBusy} onClick={()=>{if(!batchBusyRef.current)setSelected(new Set(products.map(product=>product.id)));}}>최근 상품 전체 선택</button><button type="button" disabled={batchBusy} onClick={()=>{if(!batchBusyRef.current)setSelected(new Set());}}>선택 해제</button><button type="button" disabled={batchBusy} onClick={openBatchReview}>선택 상품 일괄 작업</button><button type="button" onClick={()=>{setHistoryProductId(products[0]?.id??'');setHistoryOpen(true);}}>작업 이력</button></div></details><button className="btn start" disabled={busy||batchBusy||!selectedBatchStages.length||seoNoticeRequired&&!currentSeoConfiguration} onClick={runAutomation}>작업 개시</button><button className="btn rose" disabled={batchBusy} onClick={()=>openSubmission(null)}>등록 전송</button></>}</div></header>
+
+        {view==='work'&&seoNoticeRequired&&<section className="panel-note" aria-label="SEO 실행 전 안내">
+          {currentSeoConfiguration?<><strong>SEO 초안 생성 · {currentSeoConfiguration.destination}</strong><p>{currentSeoConfiguration.notice}</p><small>모델 {currentSeoConfiguration.model} · 무료 사용만 허용 · 유료 전환 없음</small>{!currentSeoConfiguration.configured&&<p role="status">SEO 생성 사용 불가: {currentSeoConfiguration.issues.join(' ')} 다른 선택 작업은 계속 진행합니다.</p>}</>:<p role="status">{seoConfigurationError||'현재 계정·회사의 SEO 실행 안내를 확인하는 중입니다. 안내 확인 전에는 SEO 작업을 시작하지 않습니다.'}</p>}
+          <button type="button" className="btn ghost" disabled={batchBusy||settingsBusy} onClick={()=>{if(batchScopeRef.current===batchScope&&!batchBusyRef.current&&!settingsBusyRef.current)setSeoConfigurationReload(value=>value+1);}}>SEO 실행 안내 다시 확인</button>
+        </section>}
 
         {cliInstallOpen&&<CliInstallDialog onClose={()=>setCliInstallOpen(false)}/>}
         {settingsOpen&&<section id="workspace-settings-panel" className="workspace-settings-panel" aria-labelledby="workspace-settings-heading"><header><h2 id="workspace-settings-heading">기본 등록 정보 설정</h2></header>{batchBusy&&<p role="status">일괄 작업 중에는 기본설정 입력과 저장을 잠시 멈춥니다. 작성한 입력은 유지됩니다.</p>}<fieldset aria-label="기본설정 편집" disabled={batchBusy} style={{border:0,padding:0,margin:0,minWidth:0}}><WorkspaceSettingsDialog workspaceOwnerId={workspaceOwnerId} onSave={saveWorkspaceSettings} onClose={()=>{if(!settingsBusyRef.current&&!batchBusyRef.current)setSettingsOpen(false);}} onBusy={changeSettingsBusy}/></fieldset></section>}

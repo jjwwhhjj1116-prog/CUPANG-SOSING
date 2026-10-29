@@ -14,7 +14,7 @@ function fixture(){
  const exports={},deps={
   '@/app/automation/model':{automationStages:stageIds},
   '@/app/supplier-hub-company':{supplierHubCompany:(code,name)=>['A01526306','A01464742'].includes(code)?{code,name}:null},
-  '@/app/collected-translation-attributes':{},'@/app/option-translation':{},'@/app/sourcing':{},'@/app/seo-workspace-draft':{},
+  '@/app/collected-translation-attributes':{},'@/app/option-translation':{},'@/app/sourcing':{},'@/app/seo-workspace-draft':{parseSeoGenerationConfiguration:raw=>raw?.freeOnly===true&&raw.destination==='Cloudflare Workers AI'?plain(raw):null},
   '@/app/automation/translation':{GOOGLE_TEXT_MODEL:'google'},
   '@/app/quotation-ai-client':{quotationAiViewCurrent:()=>true,quotationAiJobForScope:()=>null,quotationAiScopedProposalChanges:()=>[]},
   '@/app/quotation-fields-confirmation':{},
@@ -341,11 +341,27 @@ function seoFixture(outcome={job:{id:'seo-job',status:'completed',result:{}},clo
  return h;
 }
 
-test('SEO executes translation then applies the exact preview fingerprint and revisions',async()=>{
- const h=seoFixture(),result=await h.run(['seo']);assert.equal(result.stages[0].status,'draft');
+function withSeoGeneration(h){
+ const configuration={configured:true,model:'@cf/meta/llama-3.3-70b-instruct-fp8-fast',maxOutputTokens:2048,freeOnly:true,destination:'Cloudflare Workers AI',issues:[],notice:'Cloudflare Workers AI · 기존 견적 AI와 공유하는 일일 무료 한도 · 자동 유료 전환 없음'};
+ const generation={view:{purpose:'seo-generation',productId:'product',productVersion:version,contentRevision:3,optionRevision:2,sourceFingerprint:'c'.repeat(64),company:{code:'A01526306',name:'유앤채'},configuration,memo:{brand:'브랜드',features:'특징',keywords:'검색어'},source:{title:'原名',description:'原文',attributes:[],provenance:'manual',reference:'source'},jobs:[]},outcome:{job:{id:'generated-seo-job',status:'completed',result:{draft:{title:'생성 상품명',keywords:['검색어'],description:'생성 설명',attributes:[],warnings:[]}}},closed:true,message:'AI SEO 생성 완료'}};
+ h.options.seoGenerationConsent=plain(configuration);
+ Object.assign(h.deps['@/app/seo-workspace-draft'],{
+  readSeoGenerationContext:async()=>plain(generation.view),createSeoGenerationDraftState:view=>({...plain(view),idempotencyKey:'generation-key',executeSubmitted:false}),parseSeoGenerationDraftState:JSON.parse,
+  runSeoGenerationDraft:async(state,controls)=>{h.calls.push({adapter:'seo-generation',confirmAi:controls.confirmAi,productVersion:state.productVersion});state.executeSubmitted=true;controls.onState(state);return generation.outcome;},
+ });
+ h.prependIntercept(call=>{
+  if(!call.url.endsWith('/seo-generation')||call.method!=='POST')return;
+  if(call.body.action==='preview')return Response.json({purpose:'seo-generation',scope:'all',productId:'product',productVersion:generation.view.productVersion,contentRevision:3,optionRevision:2,fingerprint:'d'.repeat(64),preview:[{name:'상품명',before:'',after:'생성 상품명'}],skipped:[]});
+  if(call.body.action==='apply')return Response.json({purpose:'seo-generation',scope:'all',productId:'product',productVersion:new Date(Date.parse(generation.view.productVersion)+2).toISOString(),contentRevision:4,optionRevision:3,applied:1});
+ });
+ return generation;
+}
+
+test('Google option translation applies its exact preview while missing AI consent cannot masquerade as generated SEO completion',async()=>{
+ const h=seoFixture(),result=await h.run(['seo']);assert.equal(result.stages[0].status,'blocked');assert.match(result.stages[0].message,/AI SEO 생성 완료로 표시하지 않았습니다/);
  const writes=h.calls.filter(call=>call.url?.endsWith('/translation-apply'));
  assert.deepEqual(writes.map(call=>call.body.action),['preview','apply']);assert.equal(writes[1].body.fingerprint,hash);
- assert.equal(writes[1].body.linkQuotationSeoDefaults,true);
+ assert.equal(writes[1].body.scope,'options');assert.equal(writes[1].body.linkQuotationSeoDefaults,undefined);assert.equal(h.calls.some(call=>call.adapter==='seo-generation'),false);
 });
 
 test('unknown SEO provider outcome stops later stages and preserves the same request fence',async()=>{
@@ -356,19 +372,30 @@ test('unknown SEO provider outcome stops later stages and preserves the same req
  assert.equal(h.calls.length,before+1);
 });
 
-test('one full action runs SEO, pricing, all selected image roles, label and quotation despite confirmed image partials',async()=>{
- const h=seoFixture();h.options.mode='full';h.image({status:'partial',messages:['확인된 일부 이미지 초안 · 오류 문구만 수정 필요']});let productVersion=version;
+test('one full action runs Google options then generated SEO, pricing, all image roles, label and quotation despite confirmed image partials',async()=>{
+ const h=seoFixture(),generation=withSeoGeneration(h);h.options.mode='full';h.image({status:'partial',messages:['확인된 일부 이미지 초안 · 오류 문구만 수정 필요']});let productVersion=version;
  const content={schemaVersion:1,productId:'product',revision:3,seo:{title:{value:'수동 제목 보존',provenance:'manual'},keywords:{value:[],provenance:'collected'},description:{value:'原文',provenance:'collected'}},label:{contact:{value:'직접 입력',provenance:'manual'}},assets:{size:{value:[]}}},before=plain(content);
  h.prependIntercept(call=>{
   if(call.url==='/api/products/product')return Response.json({product:{id:'product',title:'검증 상품',updated_at:productVersion}});
   if(call.url.endsWith('/content'))return Response.json({content});
   if(call.url.endsWith('/work-draft'))return Response.json({productId:'product',productVersion});
   if(call.url.endsWith('/registration-layout'))return Response.json({productId:'product',productVersion,sizeChartRequired:false});
-  if(call.url.endsWith('/translation-apply')&&call.body.action==='apply'){productVersion='2026-10-23T00:00:01.000Z';return Response.json({productId:'product',productVersion,contentRevision:4,optionRevision:3,applied:1});}
+  if(call.url.endsWith('/translation-apply')&&call.body.action==='apply'){productVersion='2026-10-23T00:00:01.000Z';generation.view.productVersion=productVersion;return Response.json({productId:'product',productVersion,contentRevision:4,optionRevision:3,applied:1});}
+  if(call.url.endsWith('/seo-generation')&&call.body.action==='apply'){productVersion=new Date(Date.parse(productVersion)+2).toISOString();return Response.json({purpose:'seo-generation',scope:'all',productId:'product',productVersion,contentRevision:4,optionRevision:3,applied:1});}
  });
  const result=await h.run(stageIds.slice().reverse());assert.deepEqual(plain(result.stages.map(row=>row.id)),stageIds);assert.deepEqual(plain(result.stages.map(row=>row.status)),['draft','draft','blocked','blocked','blocked','skipped','draft','draft']);
- const executed=h.calls.flatMap(call=>call.url?.endsWith('/translation-apply')&&call.body.action==='apply'?['seo']:call.url?.endsWith('/stage-two-pricing')?['pricing']:call.adapter==='image'?[call.stage]:call.adapter==='label'?['koreanLabel']:call.url?.endsWith('/quotation-ai')&&call.method==='POST'?['quotation']:[]);
- assert.deepEqual(executed,['seo','pricing','main','additional','detail','koreanLabel','quotation']);assert.deepEqual(content,before);assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
+ const executed=h.calls.flatMap(call=>call.url?.endsWith('/translation-apply')&&call.body.action==='apply'?['google-options']:call.adapter==='seo-generation'?['generated-seo']:call.url?.endsWith('/stage-two-pricing')?['pricing']:call.adapter==='image'?[call.stage]:call.adapter==='label'?['koreanLabel']:call.url?.endsWith('/quotation-ai')&&call.method==='POST'?['quotation']:[]);
+ assert.deepEqual(executed,['google-options','generated-seo','pricing','main','additional','detail','koreanLabel','quotation']);assert.equal(h.calls.find(call=>call.adapter==='seo-generation').confirmAi,true);assert.deepEqual(content,before);assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
+});
+
+test('changed notice/company, a known unavailable free service and failed generation cannot claim AI SEO completion',async()=>{
+ for(const mode of ['notice','company','unavailable','failed','uncertain']){const h=seoFixture(),generation=withSeoGeneration(h);if(mode==='notice')generation.view.configuration.notice+=' 변경';if(mode==='company')generation.view.company={code:'A01464742',name:'와이홉'};if(mode==='unavailable')generation.view.configuration.configured=false;if(mode==='failed')generation.outcome={job:{status:'failed'},closed:true,message:'확인된 AI 생성 실패'};if(mode==='uncertain')generation.outcome={job:{status:'uncertain'},closed:false,message:'AI 생성 응답 미확인'};
+  const result=await h.run(['seo','pricing']);assert.ok(['blocked','failed'].includes(result.stages[0].status));assert.equal(h.calls.some(call=>call.url?.endsWith('/seo-generation')&&call.body.action==='apply'),false,mode);assert.equal(h.calls.some(call=>call.url?.endsWith('/stage-two-pricing')),!['company','uncertain'].includes(mode),mode);assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:seo')),['company','uncertain'].includes(mode),mode);
+ }
+});
+
+test('a notice seeded original company blocks a changed account before any option or SEO provider mutation',async()=>{
+ const h=seoFixture();withSeoGeneration(h);h.keys.set('batch-owner:owner',JSON.stringify({ownerId:'owner',company:{code:'A01464742',name:'와이홉'}}));await assert.rejects(h.run(['seo','pricing']),/회사/);assert.equal(h.calls.some(call=>call.method==='POST'||call.adapter==='seo-generation'),false);
 });
 
 test('a closed failed SEO generation clears only its confirmed pending fence and continues later work',async()=>{

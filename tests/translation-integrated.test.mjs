@@ -148,6 +148,26 @@ test('a partial v6 refresh preserves an existing category snapshot when an origi
  assert.equal(plan.patch.seo.title,'한국어 상품');assert.equal(plan.rows[0].translatedName,'빨강 옵션');
 });
 
+test('strict SEO generation treats factual attributes as input and preserves category snapshots and options without a false omission warning',async()=>{
+ const {content,options,job}=fixture(),generation=load('app/seo-generation.ts');
+ const source={title:'棉手套',description:'棉制手套',attributes:[{name:'상품속성: 材质',value:'棉'}],provenance:'manual',reference:'saved-source',category:{id:'80719',path:['주방용품','바스켓']}};
+ const configuration=generation.seoGenerationConfiguration({SOURCEFLOW_QUOTATION_AI_PROVIDER:'workers-ai',SOURCEFLOW_QUOTATION_AI_FREE_ONLY:'true',AI:{run(){}}});
+ job.review=await generation.prepareSeoGenerationReview(source,{purpose:'seo-generation',version:1,sourceFingerprint:'a'.repeat(64),optionRevision:options.revision,company:{code:'A01526306',name:'유앤채'},memo:{brand:'',features:'',keywords:''}},configuration);
+ job.result.draft={title:'면 장갑',description:'면으로 만든 장갑',keywords:['면장갑'],attributes:[],warnings:[]};
+ content.categoryAttributes={categoryId:'80719',jobId:'previous-review',values:[{sourceName:'상품속성: 材质',name:'재질',value:'검토한 면'}],reservedFields:['material'],bindings:[{fieldId:'material',fieldSignature:'saved-signature',value:'검토값'}]};
+ options.rows[0].translatedName='검토한 옵션';options.rows[0].provenance.translatedName='manual';
+ const before=JSON.stringify({content,options,job}),plan=model.integratedTranslationPlan(content,options,job,version,'all',undefined,undefined,true);
+ assert.equal(plan.categoryAttributes,undefined);assert.equal(plan.reviewedOptions.length,0);assert.equal(JSON.stringify(plan.rows),JSON.stringify(om.optionInputs(options)));assert.equal(JSON.stringify({content,options,job}),before);
+ assert.equal(JSON.stringify(model.applyIntegratedOptions(options,plan,nextVersion).rows),JSON.stringify(options.rows));assert.equal(JSON.stringify(cm.applyContentPatch(content,plan.patch,nextVersion).categoryAttributes),JSON.stringify(content.categoryAttributes));
+ assert.equal(plan.patch.seo.title,'면 장갑');assert.ok(!plan.skipped.some(message=>message.includes('상품 속성 번역이 누락')));
+ const ordinary=structuredClone(job);delete ordinary.review.seoGeneration;
+ const partial=model.integratedTranslationPlan(content,options,ordinary,version,'all',undefined,undefined,true);
+ assert.ok(partial.skipped.some(message=>message.includes('상품 속성 번역이 누락')),'ordinary translation must retain the real missing-attribute warning');assert.equal(partial.categoryAttributes,undefined);assert.equal(JSON.stringify(partial.rows),JSON.stringify(om.optionInputs(options)));
+ for(const corrupt of [value=>value.review.seoGeneration=null,value=>value.review.seoGeneration.purpose='translation',value=>value.review.seoGeneration.company.code='unknown',value=>value.review.model='google-translate-gtx',value=>value.review.intakeOptions={initialJobId:jobId,optionRevision:options.revision,scope:'options'}]){
+  const invalid=structuredClone(job);corrupt(invalid);assert.throws(()=>model.integratedTranslationPlan(content,options,invalid,version,'all',undefined,undefined,true),/SEO 생성/);
+ }
+});
+
 test('stored v6 Chinese copies stay pending without replacing labels, category bindings or manual option blanks',()=>{
  const {content,options,job}=fixture();job.review.instructionsVersion='sourceflow-translation-v6';job.review.source.category={id:'80719',path:['주방용품','바스켓']};
  job.review.source.attributes[0].value='棉 검토';job.result.draft.attributes[0].value='棉 검토';

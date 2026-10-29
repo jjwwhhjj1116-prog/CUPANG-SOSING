@@ -8,7 +8,8 @@ import { collectedTranslationAttributes } from '@/app/collected-translation-attr
 import { optionTranslationBatch } from '@/app/option-translation';
 import { collectionSourceReference } from '@/app/sourcing';
 import { createSeoWorkspaceDraftState, parseSeoWorkspaceDraftState, refreshSeoWorkspaceDraft, runSeoWorkspaceDraft,
-  type SeoWorkspaceDraftMemo, type SeoWorkspaceDraftState } from '@/app/seo-workspace-draft';
+  readSeoGenerationContext,createSeoGenerationDraftState,parseSeoGenerationDraftState,runSeoGenerationDraft,refreshSeoGenerationDraft,
+  type SeoGenerationContext,type SeoGenerationDraftState,type SeoWorkspaceDraftMemo, type SeoWorkspaceDraftState } from '@/app/seo-workspace-draft';
 import { TranslationIntegratedPreview } from '@/app/components/translation-integrated-preview';
 import TranslationPanel from '@/app/components/translation-panel';
 import {google429RecoveryCandidate} from '@/app/workers-translation-recovery';
@@ -33,11 +34,72 @@ const supplierSourceIdentity=(source:TranslationSource)=>JSON.stringify([source.
 export function SeoWorkspaceGenerator(props: Props) {
   return <SeoWorkspaceGeneratorContent key={JSON.stringify([props.workspaceOwnerId??null,props.productId])} {...props}/>;
 }
+
+type GenerationPanelProps={productId:string;workspaceOwnerId?:string;version:string;memo:SeoWorkspaceDraftMemo;active:boolean;disabled:boolean;beforeGenerate:()=>boolean;onBusyChange:(value:boolean)=>void;onPendingChange:(value:boolean)=>void;onSaved:()=>void;onApplied?:Props['onApplied'];onRestoreMemo:(memo:SeoWorkspaceDraftMemo)=>void};
+/** The generation request has its own purpose, saved key and review. Mounting
+ * this panel only reads configuration; it cannot authorize an AI execution. */
+export function SeoGenerationPanel(props:GenerationPanelProps){
+ return <SeoGenerationPanelContent key={JSON.stringify([props.workspaceOwnerId??null,props.productId,props.version])} {...props}/>;
+}
+function SeoGenerationPanelContent(props:GenerationPanelProps){
+ const [view,setView]=useState<SeoGenerationContext|null>(null),[state,setState]=useState<SeoGenerationDraftState|null>(null),[job,setJob]=useState<TranslationJob|null>(null);
+ const [busy,setBusy]=useState(true),[message,setMessage]=useState(''),[error,setError]=useState(''),[confirmedToken,setConfirmedToken]=useState<object|null>(null),[closed,setClosed]=useState(false),[uncertain,setUncertain]=useState(false),[invalid,setInvalid]=useState(false);
+ const pending=useRef<AbortController|null>(null),mounted=useRef(true),live=useRef(props),saved=useRef<SeoGenerationDraftState|null>(null);
+ const scope=useMemo(()=>({owner:props.workspaceOwnerId,productId:props.productId,version:props.version}),[props.workspaceOwnerId,props.productId,props.version]),currentScope=useRef<typeof scope|null>(scope);
+ const memoKey=JSON.stringify(props.memo),memoScope=useMemo(()=>({value:memoKey}),[memoKey]),memoEpoch=useRef<typeof memoScope|null>(memoScope),confirmed=confirmedToken===memoScope;
+ const {onBusyChange,onPendingChange}=props;
+ const storageKey='yoofam-seo-generation:'+JSON.stringify([props.workspaceOwnerId??null,props.productId]);
+ useLayoutEffect(()=>{live.current=props;currentScope.current=scope;return()=>{if(currentScope.current===scope)currentScope.current=null;};},[props,scope]);
+ useLayoutEffect(()=>{memoEpoch.current=memoScope;return()=>{if(memoEpoch.current===memoScope)memoEpoch.current=null;};},[memoScope]);
+ useLayoutEffect(()=>{onBusyChange(busy);onPendingChange(Boolean(state)||uncertain);},[busy,state,uncertain,onBusyChange,onPendingChange]);
+ useEffect(()=>{
+  const controller=new AbortController();pending.current=controller;mounted.current=true;
+  void readSeoGenerationContext(props.productId,controller.signal,fetch).then(value=>{
+   if(!mounted.current||controller.signal.aborted||currentScope.current!==scope)return;
+   if(value.productVersion!==props.version)throw Error('현재 상품 버전의 AI SEO 원문을 다시 열어주세요.');setView(value);
+   const raw=sessionStorage.getItem(storageKey);if(raw){const retained=parseSeoGenerationDraftState(raw,props.productId);if(!retained){setInvalid(true);throw Error('원래 AI SEO 생성 요청의 복구 정보를 확인하지 못했습니다. 새 요청을 만들지 않았습니다.');}saved.current=retained;setState(retained);live.current.onRestoreMemo(retained.memo);setMessage('이전 AI SEO 요청이 있습니다. 같은 요청의 상태를 먼저 확인해주세요.');}
+  }).catch(cause=>{if(!controller.signal.aborted&&mounted.current&&currentScope.current===scope)setError(cause instanceof Error?cause.message:'AI SEO 생성 연결을 확인하지 못했습니다.');}).finally(()=>{if(pending.current===controller){pending.current=null;if(mounted.current&&!controller.signal.aborted&&currentScope.current===scope)setBusy(false);}});
+  return()=>{controller.abort();if(pending.current===controller)pending.current=null;};
+ },[props.productId,props.version,scope,storageKey]);
+ useEffect(()=>()=>{mounted.current=false;pending.current?.abort();live.current.onBusyChange(false);},[]);
+ const current=()=>mounted.current&&currentScope.current===scope&&memoEpoch.current===memoScope&&live.current.active&&!live.current.disabled;
+ const persist=(value:SeoGenerationDraftState)=>{saved.current=value;sessionStorage.setItem(storageKey,JSON.stringify(value));if(current())setState(value);};
+ async function run(readOnly=false){
+  if(!current()||pending.current||invalid||uncertain||!view||readOnly&&!saved.current)return;
+  if(!readOnly&&(!view.configuration.configured||!live.current.beforeGenerate()))return;
+  const controller=new AbortController();pending.current=controller;setBusy(true);setError('');setMessage('');
+  const input=JSON.stringify(live.current.memo),active=()=>current()&&!controller.signal.aborted&&pending.current===controller&&JSON.stringify(live.current.memo)===input;
+  try{
+   const request=saved.current??createSeoGenerationDraftState(view,live.current.memo);
+   if(!readOnly&&(request.productVersion!==props.version||JSON.stringify(request.memo)!==input))throw Error('원래 AI SEO 요청의 상품·참고 입력이 다릅니다. 상태만 조회해주세요.');persist(request);
+   const controls={signal:controller.signal,fetcher:fetch,confirmAi:confirmed,isContextCurrent:active,onState:persist,onJob:(value:TranslationJob)=>{if(active())setJob(value);}};
+   const result=await(readOnly?refreshSeoGenerationDraft(request,controls):runSeoGenerationDraft(request,controls));if(!active())return;setJob(result.job);setClosed(result.closed);setMessage(result.message);
+  }catch(cause){if(active())setError(cause instanceof Error?cause.message:'AI SEO 생성 상태를 확인하지 못했습니다.');}
+  finally{if(pending.current===controller){pending.current=null;if(mounted.current&&currentScope.current===scope)setBusy(false);}}
+ }
+ const currentJob=job?.productId===props.productId&&job.productVersion===props.version&&job.status==='completed'&&job.result;
+ return <section aria-label="무료 AI SEO 생성" data-workspace-saving={busy} data-workspace-dirty={Boolean(state)||uncertain}>
+  <h4>AI SEO 상품명·검색태그·설명 생성</h4>
+  {view&&<p>{view.configuration.destination} · {view.configuration.notice}</p>}
+  {view&&!view.configuration.configured&&<p role="alert">{view.configuration.issues.join(' ')} Google 번역을 AI 최적화 완료로 표시하지 않습니다.</p>}
+  {view?.configuration.configured&&<label className="seo-ai-consent"><input type="checkbox" aria-label="무료 AI SEO 생성 확인" checked={confirmed} disabled={busy||props.disabled||Boolean(state?.executeSubmitted)} onChange={event=>{if(current()&&!pending.current){setConfirmedToken(event.target.checked?memoScope:null);}}}/>위 전송 대상과 공유 무료 한도를 확인했습니다.</label>}
+  {error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}
+  <button type="button" className="btn blue" disabled={busy||props.disabled||!props.active||invalid||uncertain||!view?.configuration.configured} onClick={()=>void run()}>{state?'같은 AI SEO 생성 계속':'무료 AI SEO 초안 생성'}</button>
+  {state&&<button type="button" className="btn ghost" disabled={busy||props.disabled||!props.active||uncertain} onClick={()=>void run(true)}>AI SEO 상태 조회 · 새 호출 안 함</button>}
+  {state&&closed&&<button type="button" className="btn ghost" disabled={busy||props.disabled||uncertain} onClick={()=>{if(!current()||pending.current)return;saved.current=null;setState(null);setJob(null);setClosed(false);setConfirmedToken(null);sessionStorage.removeItem(storageKey);}}>새 AI SEO 입력 준비</button>}
+  {currentJob&&<><dl><dt>상품명</dt><dd>{job!.result!.draft.title}</dd><dt>검색태그</dt><dd>{job!.result!.draft.keywords.join(', ')}</dd><dt>설명</dt><dd>{job!.result!.draft.description}</dd></dl>
+   <TranslationIntegratedPreview purpose="seo-generation" productId={props.productId} version={props.version} jobId={job!.id} disabled={busy||props.disabled||!props.active||uncertain} beforeApply={()=>current()&&!uncertain&&live.current.beforeGenerate()}
+    onBusyChange={setBusy} onUncertainChange={setUncertain} onApplied={props.onApplied} onSaved={()=>{if(!current())return;saved.current=null;sessionStorage.removeItem(storageKey);setState(null);live.current.onSaved();}}/>
+  </>}
+ </section>;
+}
 function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, brand, active, beforeGenerate, onSaved, onProcessingChange, onBusyChange, onPendingChange, onApplyUncertainChange, onApplied }: Props) {
   const [basis,setBasis]=useState<Basis|null>(null),[memo,setMemo]=useState<SeoWorkspaceDraftMemo>({brand,features:'',keywords:''});
   const [busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('');
   const [job,setJob]=useState<TranslationJob|null>(null),[hasRequest,setHasRequest]=useState(false),[closed,setClosed]=useState(false);
   const [confirmAi,setConfirmAi]=useState(false);
+  const [generationBusy,setGenerationBusy]=useState(false),[generationPending,setGenerationPending]=useState(false);
+  const generationLocked=useRef(false);useLayoutEffect(()=>{generationLocked.current=generationBusy||generationPending;},[generationBusy,generationPending]);
   const [workersReview,setWorkersReview]=useState<{productVersion:string;jobId:string;fingerprint:string;ownerId?:string}|null>(null);
   const workersRequest=useRef<WorkersSeoRecoveryRequest|null>(null);
   const [recoveryInvalid,setRecoveryInvalid]=useState(false);
@@ -137,7 +199,7 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
     });
     return()=>{controller.abort();if(request.current===controller){request.current=null;void Promise.resolve().then(()=>{if(mounted.current&&!request.current)setBusy(false);});}};
   },[active,productId,workspaceOwnerId,version,brand,storageKey,attempt,loadScope]);
-  function edit(key:keyof SeoWorkspaceDraftMemo,value:string){if(!mounted.current||current.current.version!==version||current.current.workspaceOwnerId!==workspaceOwnerId||!current.current.active||request.current||draftState.current)return;setMemo(previous=>{const next={...previous,[key]:value};current.current.memo=next;return next;});setConfirmAi(false);setGuidanceError('');}
+  function edit(key:keyof SeoWorkspaceDraftMemo,value:string){if(generationLocked.current||!mounted.current||current.current.version!==version||current.current.workspaceOwnerId!==workspaceOwnerId||!current.current.active||request.current||draftState.current)return;setMemo(previous=>{const next={...previous,[key]:value};current.current.memo=next;return next;});setConfirmAi(false);setGuidanceError('');}
   function blur(key:keyof SeoWorkspaceDraftMemo,value:string,session:SeoGuidanceSession|null){
     if(!basis||!mounted.current||current.current.workspaceOwnerId!==workspaceOwnerId||current.current.version!==version||!current.current.active
       ||request.current||draftState.current||compositionBusyRef.current||basis.productVersion!==version||loaded.current?.guidanceKey!==basis.guidanceKey
@@ -149,6 +211,7 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
     }catch(cause){setGuidanceError(cause instanceof Error?cause.message:'SEO 참고 입력을 확인해주세요. 입력 원문은 유지됩니다.');}
   }
   async function generate(readOnly=false){
+    if(generationLocked.current)return;
     if(!readOnly&&applyUncertainRef.current)return;
     if(!basis||basis.productVersion!==version||!mounted.current||current.current.version!==version||current.current.workspaceOwnerId!==workspaceOwnerId||recoveryInvalid||request.current||compositionBusyRef.current||!current.current.active)return;
     if(readOnly&&!draftState.current)return;
@@ -207,7 +270,7 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
   const compositionDirty=!!compositionInput&&(compositionTitle!==null||compositionKeywords!==null||!compositionEnabled||replaceTitle||replaceKeywords);
   useLayoutEffect(()=>{
     const lease=statusLease.current;if(!lease||!mounted.current)return;
-    const nextBusy=busy||compositionBusy||active&&loaded.current?.version!==version&&settledLoad.current!==loadScope,nextPending=memoDirty||compositionDirty||hasRequest||applyUncertain,callbacks=statusCallbacks.current;
+    const nextBusy=busy||compositionBusy||generationBusy||active&&loaded.current?.version!==version&&settledLoad.current!==loadScope,nextPending=memoDirty||compositionDirty||hasRequest||applyUncertain||generationPending,callbacks=statusCallbacks.current;
     if(lease.busy!==nextBusy||lease.callbacks.onBusyChange!==callbacks.onBusyChange)callbacks.onBusyChange?.(nextBusy);
     if(lease.pending!==nextPending||lease.callbacks.onPendingChange!==callbacks.onPendingChange)callbacks.onPendingChange?.(nextPending);
     if(lease.uncertain!==applyUncertain||lease.callbacks.onApplyUncertainChange!==callbacks.onApplyUncertainChange)callbacks.onApplyUncertainChange?.(applyUncertain);
@@ -232,17 +295,20 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
   useLayoutEffect(()=>{compositionCallback.current=compositionPublisher;},[compositionPublisher]);
   const currentComposition=()=>mounted.current&&current.current.active&&current.current.version===version&&current.current.workspaceOwnerId===workspaceOwnerId&&compositionCallback.current===compositionPublisher;
   const renderGuidanceSession=guidanceSession.current;
-  return <section className="seo-generation-card" aria-label="SEO 자동 작성" data-workspace-saving={busy||compositionBusy} data-workspace-dirty={memoDirty||compositionDirty} data-seo-generation-input data-quotation-source-step="SEO">
+  return <section className="seo-generation-card" aria-label="SEO 자동 작성" data-workspace-saving={busy||compositionBusy||generationBusy} data-workspace-dirty={memoDirty||compositionDirty||generationPending} data-seo-generation-input data-quotation-source-step="SEO">
     <h3>{!basis?'초안 자동 작성':google?'한국어 초안 자동 작성':'AI 자동 생성'}</h3>
     {processing&&<p role="status" data-seo-processing>상품정보로 SEO 초안을 처리하고 있습니다…</p>}
     <div className="seo-generation-body" hidden={processing} inert={processing}>
       <p>수집한 상품정보로 초안을 작성합니다. 결과를 확인한 뒤 적용하고 수정해주세요.</p>
       <div className="seo-generation-inputs">
-        <label>브랜드<input aria-label="SEO 브랜드" value={memo.brand} maxLength={100} disabled={busy||hasRequest} onChange={event=>edit('brand',event.target.value)} onBlur={event=>blur('brand',event.target.value,renderGuidanceSession)}/><small>기본설정의 브랜드가 자동으로 입력됩니다.</small></label>
-        <label>상품 특징<input aria-label="SEO 상품 특징" value={memo.features} maxLength={2000} disabled={busy||hasRequest} placeholder="상품 특징을 입력하세요" onChange={event=>edit('features',event.target.value)} onBlur={event=>blur('features',event.target.value,renderGuidanceSession)}/><small>상품명에 포함할 원문의 주요 특징을 입력하세요.</small></label>
-        <label>타겟 키워드 *<input aria-label="SEO 타겟 키워드" aria-required="true" value={memo.keywords} maxLength={2000} disabled={busy||hasRequest} placeholder="핵심 타겟 키워드를 입력하세요" onChange={event=>edit('keywords',event.target.value)} onBlur={event=>blur('keywords',event.target.value,renderGuidanceSession)}/><small>이 키워드를 중심으로 상품명을 구성합니다.</small></label>
+        <label>브랜드<input aria-label="SEO 브랜드" value={memo.brand} maxLength={100} disabled={busy||hasRequest||generationBusy||generationPending} onChange={event=>edit('brand',event.target.value)} onBlur={event=>blur('brand',event.target.value,renderGuidanceSession)}/><small>기본설정의 브랜드가 자동으로 입력됩니다.</small></label>
+        <label>상품 특징<input aria-label="SEO 상품 특징" value={memo.features} maxLength={2000} disabled={busy||hasRequest||generationBusy||generationPending} placeholder="상품 특징을 입력하세요" onChange={event=>edit('features',event.target.value)} onBlur={event=>blur('features',event.target.value,renderGuidanceSession)}/><small>상품명에 포함할 원문의 주요 특징을 입력하세요.</small></label>
+        <label>타겟 키워드 *<input aria-label="SEO 타겟 키워드" aria-required="true" value={memo.keywords} maxLength={2000} disabled={busy||hasRequest||generationBusy||generationPending} placeholder="핵심 타겟 키워드를 입력하세요" onChange={event=>edit('keywords',event.target.value)} onBlur={event=>blur('keywords',event.target.value,renderGuidanceSession)}/><small>이 키워드를 중심으로 상품명을 구성합니다.</small></label>
       </div>
       <div className="seo-title-example"><strong>생성될 상품명 예시:</strong> {titleExample}</div>
+      <SeoGenerationPanel productId={productId} workspaceOwnerId={workspaceOwnerId} version={version} memo={memo} active={active} disabled={busy||hasRequest||compositionBusy||!basis}
+        beforeGenerate={beforeGenerate} onBusyChange={setGenerationBusy} onPendingChange={setGenerationPending} onSaved={onSaved} onApplied={onApplied}
+        onRestoreMemo={value=>{setMemo(value);current.current.memo=value;}}/>
       {!google&&basis?.configuration.configured&&<label className="seo-ai-consent"><input type="checkbox" checked={confirmAi} disabled={busy} onChange={event=>{if(mounted.current&&current.current.version===version&&current.current.active&&!request.current)setConfirmAi(event.target.checked);}}/> AI 초안 생성 요청 1회를 실행합니다. 서비스 사용량에 따라 비용이 발생할 수 있습니다.</label>}
       {!!basis?.remainingOptions&&<small>이번 요청 한도를 넘는 옵션 번역 항목 {basis.remainingOptions}개는 원문에 유지됩니다. 추가 번역은 아래 생성 이력에서 이어갈 수 있습니다.</small>}
       {busy&&<p role="status">{basis?'초안 요청 상태를 확인하고 있습니다…':'수집 원문을 불러오는 중입니다…'}</p>}
@@ -250,7 +316,7 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
       {guidanceError&&<p role="alert">{guidanceError}</p>}
       {error&&(!basis||basis.productVersion!==version)&&<button className="btn ghost" type="button" disabled={busy} onClick={()=>setAttempt(value=>value+1)}>수집 원문 다시 조회</button>}
       {basis&&!basis.configuration.configured&&<p role="alert">{basis.configuration.issues.join(' ')}</p>}
-      <div className="seo-generation-actions"><button className="btn ghost" type="button" disabled={busy||compositionBusy||recoveryInvalid||!basis?.configuration.configured||basis.productVersion!==version||(!hasRequest&&!memo.keywords.trim())} onClick={()=>void generate()}>{hasRequest&&!job?'같은 초안 요청 확인':!basis?'초안 작성':google?'한국어 초안 자동 작성':'AI로 자동 생성'}</button>
+      <div className="seo-generation-actions"><button className="btn ghost" type="button" disabled={busy||compositionBusy||generationBusy||generationPending||recoveryInvalid||!basis?.configuration.configured||basis.productVersion!==version||(!hasRequest&&!memo.keywords.trim())} onClick={()=>void generate()}>{hasRequest&&!job?'같은 초안 요청 확인':!basis?'초안 작성':google?'한국어 초안 자동 작성':'AI로 자동 생성'}</button>
         {hasRequest&&<button className="btn ghost" type="button" disabled={busy||compositionBusy} onClick={()=>void generate(true)}>초안 상태 조회</button>}
         {hasRequest&&closed&&<button className="btn ghost" type="button" disabled={busy||compositionBusy||applyUncertain} onClick={()=>{if(!mounted.current||current.current.version!==version||!current.current.active||request.current||compositionBusyRef.current||applyUncertain)return;if(basis&&draftState.current&&supplierSourceIdentity(draftState.current.source)!==basis.sourceIdentity)setMemo(basis.initialMemo);draftState.current=null;setHasRequest(false);setClosed(false);setJob(null);setConfirmAi(false);setCompositionTitle(null);setCompositionKeywords(null);setCompositionEnabled(true);setReplaceTitle(false);setReplaceKeywords(false);setMessage('새 요청의 입력을 준비했습니다. 작성 버튼을 누르면 새 초안을 요청합니다.');try{sessionStorage.removeItem(storageKey);}catch{}}}>새 초안 입력</button>}
       </div>

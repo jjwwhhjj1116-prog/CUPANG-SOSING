@@ -90,7 +90,7 @@ for (const company of companies) test(`Google two-request intake persists exact 
     assert.equal(result.googleStoppedHttpStatus, undefined); assert.equal(result.usage, null);
     const generatedTitle = `${company.companyName} 우드 패턴 다리 남녀공용 선글라스`;
     assert.equal(product(h).title, source.title); assert.equal(content.seo.title.value, generatedTitle);
-    assert.equal(content.seo.title.provenance, 'manual');
+    assert.equal(content.seo.title.provenance, 'translated');
     assert.deepEqual(content.seoTitleDocument, { policy: 'couplus-seo-save-v1', sourceTitle: generatedTitle,
       sourceUpdatedAt: content.seo.title.updatedAt, value: generatedTitle });
     assert.equal(content.label.productName.value, generatedTitle); assert.equal(content.labelProductNameLinked, true);

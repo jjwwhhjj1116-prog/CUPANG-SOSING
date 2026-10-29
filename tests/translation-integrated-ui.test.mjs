@@ -26,6 +26,18 @@ test('integrated UI submits only reviewed fingerprint and verifies save receipt'
  }
 });
 
+test('AI SEO preview uses only its purpose endpoint and rejects ordinary translation replies before applying',async()=>{
+ for(const mode of ['valid','missing-purpose','wrong-scope']){const h=harness(async init=>JSON.parse(init.body).action==='preview'?Response.json({...plan,scope:mode==='wrong-scope'?'options':'all',...(mode==='missing-purpose'?{}:{purpose:'seo-generation'})}):Response.json({purpose:'seo-generation',scope:'all',productId:'p',productVersion:'2026-09-25T01:00:01.000Z',contentRevision:1,optionRevision:2,applied:1}));
+  h.render({purpose:'seo-generation'});h.click(0);await settle();assert.equal(h.calls[0].url,'/api/products/p/seo-generation');assert.equal(JSON.parse(h.calls[0].init.body).linkQuotationSeoDefaults,true);assert.equal(JSON.parse(h.calls[0].init.body).seoComposition,undefined);
+  if(mode==='valid'){h.click(1);await settle();assert.equal(h.saved,1);assert.equal(h.calls[1].url,'/api/products/p/seo-generation');assert.match(JSON.stringify(h.render()),/AI 생성 SEO/);}
+  else{assert.equal(h.saved,0);assert.equal(nodes(h.render()).filter(node=>node.type==='button').length,1);}h.close();
+ }
+});
+
+test('changing from a translated result to generated SEO retires the old apply callback and reviewed fingerprint',async()=>{
+ const h=harness(async()=>Response.json(plan));h.click(0);await settle();const old=nodes(h.render()).filter(node=>node.type==='button')[1].props.onClick;h.render({purpose:'seo-generation'});old();await settle();assert.equal(h.calls.length,1);assert.equal(h.saved,0);assert.equal(nodes(h.render()).filter(node=>node.type==='button').length,1);h.close();
+});
+
 test('only a verified save publishes the exact editor handoff, and navigation failure cannot unset that save',async()=>{
  for(const mode of ['valid','invalid','callback-error']){
   const receipts=[],h=harness(async init=>JSON.parse(init.body).action==='preview'?Response.json(plan):Response.json({productId:mode==='invalid'?'other':'p',productVersion:'2026-09-25T01:00:01.000Z',contentRevision:1,optionRevision:2,applied:1}));

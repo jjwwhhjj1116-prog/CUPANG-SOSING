@@ -79,7 +79,7 @@ for(const company of schemaCompanies)test(`live category intake never repurposes
   for(const option of savedOptions.rows){assert.equal(option.translatedName,koreanNames[option.supplierSku]);assert.equal(option.provenance.translatedName,'translated');}
   // Canonical intake now saves the existing SEO document. Its exact title is
   // read directly; Korean option-name composition is the absent-document fallback.
-  assert.equal(content.seo.title.value,'우드 패턴 다리 선글라스');assert.equal(content.seo.title.provenance,'manual');
+  assert.equal(content.seo.title.value,'우드 패턴 다리 선글라스');assert.equal(content.seo.title.provenance,'generated');
   assert.deepEqual(content.seoTitleDocument,{policy:'couplus-seo-save-v1',sourceTitle:'우드 패턴 다리 선글라스',sourceUpdatedAt:content.seo.title.updatedAt,value:'우드 패턴 다리 선글라스'});
   for(const row of view.resolved.rows){assert.equal(row.fields.title.value,'우드 패턴 다리 선글라스');assert.equal(row.fields.title.source,'content');}
   const source=await h.load('app/exports/quotation-source.ts').readMappedQuotationSource('owner',created.productId,null);

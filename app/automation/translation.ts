@@ -4,6 +4,7 @@ import { translationAttributeIssue,translationAttributeFactText,translationNumbe
 import type { WorkersRecoveryProof, WorkersRecoveryConfiguration } from '@/app/workers-translation-recovery';
 import {WORKERS_QWEN_MODEL,parseWorkersQwenJson,WorkersQwenContractError} from '@/app/automation/workers-qwen-contract';
 import {assertWorkersRecoveryDraftQuality,TranslationQualityError,workersRecoveryOptionMetadataLabel,canonicalizeWorkersRecoveryOptionMetadata} from '@/app/product-translation-quality';
+import type {SeoGenerationProof} from '@/app/seo-generation';
 
 export type TranslationSource = { title: string; description: string; attributes: { name: string; value: string }[]; provenance: 'manual'; reference: string; category?: { id: string; path: string[] }; guidance?: { features: string; keywords: string } };
 export type TranslationDraft = { title: string; keywords: string[]; description: string; attributes: { sourceIndex: number; name: string; value: string }[]; warnings: string[] };
@@ -16,6 +17,7 @@ export type TranslationReview = {
   intakeOptions?: { initialJobId: string; optionRevision: number; scope: 'options' }; // Server-created automatic continuation, distinct from an explicit retry.
   seoRetry?: {retryKey:string;scope:'seo';optionRevision:number;sourceFingerprint:string;company:{code:string;name:string}};
   workersRecovery?: WorkersRecoveryProof;
+  seoGeneration?: SeoGenerationProof;
 };
 export type TranslationResult = { draft: TranslationDraft; responseId: string; model: string; usage: { inputTokens: number; outputTokens: number; totalTokens: number } | null; generatedAt: string; provenance: 'generated'; appliedToContent: false; detectedSourceLanguages?: string[]; translationRequests?: number; googleStoppedHttpStatus?: number };
 export type TranslationJob = {

@@ -116,6 +116,15 @@ export async function createSeoRetryTranslation(ownerId:string,value:Translation
   if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(retryKey)||!Number.isSafeInteger(optionRevision)||optionRevision<0)throw Error('Invalid SEO retry scope');
   return createSourceBoundTranslation(ownerId,value,'seo-retry-'+retryKey,requestFingerprint,optionRevision,source);
 }
+export async function findSeoGenerationTranslation(ownerId:string,productId:string,key:string){
+ if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u.test(key))throw Error('Invalid SEO generation key');
+ const db=await database(),row=await db.prepare('SELECT * FROM translation_jobs WHERE owner_id=? AND product_id=? AND idempotency_key=?').bind(ownerId,productId,'seo-generation-v1-'+key).first<Row>();
+ return row?job(row):null;
+}
+export async function createSeoGenerationTranslation(ownerId:string,value:TranslationJob,key:string,requestFingerprint:string,optionRevision:number,source:SeoRetrySourceGuard){
+ if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u.test(key))throw Error('Invalid SEO generation key');
+ return createSourceBoundTranslation(ownerId,value,'seo-generation-v1-'+key,requestFingerprint,optionRevision,source);
+}
 export async function createWorkersRecoveryTranslation(ownerId:string,value:TranslationJob,failedJobId:string,requestFingerprint:string,optionRevision:number,source:SeoRetrySourceGuard,strategy?:'m2m-text-v1') {
   if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(failedJobId)||!Number.isSafeInteger(optionRevision)||optionRevision<0)throw Error('Invalid Workers recovery scope');
   return createSourceBoundTranslation(ownerId,value,(strategy==='m2m-text-v1'?'workers-m2m-v1-':'workers-recovery-v5-')+failedJobId,requestFingerprint,optionRevision,source);
@@ -272,7 +281,8 @@ export async function claimTranslationJob(ownerId: string, productId: string, id
     AND NOT EXISTS(SELECT 1 FROM translation_jobs other WHERE other.owner_id=translation_jobs.owner_id AND other.product_id=translation_jobs.product_id
       AND other.id<>translation_jobs.id AND other.status IN ('running','uncertain')
       AND (translation_jobs.idempotency_key LIKE 'options-retry-%' OR other.idempotency_key LIKE 'options-retry-%'
-        OR translation_jobs.idempotency_key LIKE 'seo-retry-%' OR other.idempotency_key LIKE 'seo-retry-%'))
+        OR translation_jobs.idempotency_key LIKE 'seo-retry-%' OR other.idempotency_key LIKE 'seo-retry-%'
+        OR translation_jobs.idempotency_key LIKE 'seo-generation-v1-%' OR other.idempotency_key LIKE 'seo-generation-v1-%'))
     ${retryGuard}
     ${sourceGuard.sql}
     RETURNING *`).bind(now, claim, ownerId, productId, id, reviewFingerprint, now, ...(optionRevision === undefined ? [] : [optionRevision]),...sourceGuard.args).first<Row>();

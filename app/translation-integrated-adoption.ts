@@ -5,9 +5,11 @@ import type { ProductContent } from '@/app/product-content';
 import { translationAttributeCoverage,type TranslationJob } from '@/app/automation/translation';
 import { translationAttributeIssue } from '@/app/translation-attribute-evidence';
 import {assertWorkersRecoveryJobQuality} from '@/app/product-translation-quality';
+import {seoGenerationReviewProof} from '@/app/seo-generation';
 
 export function integratedTranslationPlan(content: ProductContent, options: ProductOptions, job: TranslationJob, version: string, scope: 'all' | 'options' = 'all', hiddenAttributes?: boolean, intakeBrand?: string, preserveCategoryAttributes = false, optionRecoveryJobs:readonly TranslationJob[] = []) {
   assertWorkersRecoveryJobQuality(job);
+  const seoGeneration=seoGenerationReviewProof(job.review);
   if (options.productId !== content.productId || job.contentRevision !== content.revision) throw Error('상품 또는 번역 원문의 콘텐츠 버전이 변경되었습니다. 최신 자료를 확인해주세요.');
   let rejected=0,invalidOptions=0;
   if(job.review.instructionsVersion==='sourceflow-translation-v6'&&job.result){
@@ -22,7 +24,7 @@ export function integratedTranslationPlan(content: ProductContent, options: Prod
   if(invalidOptions)text.skipped.push(`옵션명 500자·색상/사이즈 200자 이내의 한 줄 입력 규격과 맞지 않는 번역 ${invalidOptions}개는 적용하지 않고 원문과 기존 값을 유지했습니다. 해당 옵션은 확인·수정해주세요.`);
   const translated = adoptOptionTranslations(options, job, version, true, optionRecoveryJobs);
   const preview = [...text.preview];
-  if(content.categoryAttributes && job.review.instructionsVersion==='sourceflow-translation-v6' && job.result &&
+  if(!seoGeneration && content.categoryAttributes && job.review.instructionsVersion==='sourceflow-translation-v6' && job.result &&
     translationAttributeCoverage(job.review.source,job.result.draft).missingSourceIndexes.some(index=>job.review.source.attributes[index].name.startsWith('상품속성: '))){
     // A partial refresh is not a replacement for the previously reviewed
     // category snapshot or its explicit field bindings.

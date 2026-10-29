@@ -65,3 +65,18 @@ test('a remounted run does not auto-resend and an explicit retry keeps the origi
 test('a failed product still exposes its stage editor and never gains a fabricated completed state',async()=>{
  const h=harness(async()=>{throw Error('저장 응답을 확인하지 못했습니다.');},{selected:['koreanLabel','quotation'],products:[product('a')]});try{h.render();await tick();assert.match(text(h.render()),/저장 응답을 확인하지/);assert.equal(nodes(h.render()).some(node=>node.props?.['data-stage-status']==='complete'),false);h.button('표시사항 검토 열기').props.onClick();h.button('견적서 검토 열기').props.onClick();assert.deepEqual(h.opened,[['a','표시사항'],['a','견적서']]);}finally{h.close();}
 });
+
+test('the displayed SEO configuration snapshot reaches every runner and cannot change with parent props',async()=>{
+ const configuration={configured:true,model:'@cf/meta/llama-3.3-70b-instruct-fp8-fast',maxOutputTokens:2048,freeOnly:true,destination:'Cloudflare Workers AI',issues:[],notice:'현재 무료 SEO 실행 안내'},expected=JSON.parse(JSON.stringify(configuration));
+ const request={id:'seo-consent-run',ownerId:'owner',stages:['seo'],keys:new Map(),seoGenerationConsent:configuration},h=harness(async id=>({productId:id,stages:[]}),{runRequest:request});
+ try{
+  h.render();configuration.notice='부모의 변경된 안내';configuration.issues.push('늦은 변경');await tick();await tick();
+  assert.equal(h.calls.length,2);for(const call of h.calls){assert.deepEqual(JSON.parse(JSON.stringify(call.options.seoGenerationConsent)),expected);assert.notEqual(call.options.seoGenerationConsent,configuration);assert.notEqual(call.options.seoGenerationConsent.issues,configuration.issues);}
+  assert.equal(h.calls[0].options.seoGenerationConsent.freeOnly,true);
+ }finally{h.close();}
+});
+
+test('an owner/run replacement never inherits the previous SEO consent',async()=>{
+ const configuration={configured:true,model:'@cf/meta/llama-3.3-70b-instruct-fp8-fast',maxOutputTokens:2048,freeOnly:true,destination:'Cloudflare Workers AI',issues:[],notice:'이전 계정 안내'},h=harness(async id=>({productId:id,stages:[]}),{products:[product('a')],runRequest:{id:'old-seo-consent',ownerId:'owner',stages:['seo'],keys:new Map(),seoGenerationConsent:configuration}});
+ try{h.render();await tick();h.replace({runRequest:{id:'new-no-consent',ownerId:'new-owner',stages:['pricing'],keys:new Map()}});await tick();assert.equal(h.calls.length,2);assert.equal(h.calls[1].options.expectedOwnerId,'new-owner');assert.equal(h.calls[1].options.seoGenerationConsent,undefined);}finally{h.close();}
+});

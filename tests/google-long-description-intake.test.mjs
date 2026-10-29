@@ -34,7 +34,7 @@ for(const company of schemaCompanies)for(const length of [5600,20000])test(`a va
  try{
   const message=await h.intake(),saved=content(h),parts=f.queries.filter(query=>/[甲乙]/u.test(query));
   assert.equal(parts.join(''),f.description,'requests preserve all source characters, order and paragraph separators');assert.ok(parts.length>=2);assert.ok(parts.every(part=>part.length<=5000));
-  assert.equal(saved.seo.description.value,translate(f.description));assert.equal(saved.seo.description.provenance,'manual');assert.equal(saved.detailDescriptionLinked,true);assert.doesNotMatch(message,/상품 설명 번역을 받지 못했습니다/);
+  assert.equal(saved.seo.description.value,translate(f.description));assert.equal(saved.seo.description.provenance,'translated');assert.equal(saved.detailDescriptionLinked,true);assert.doesNotMatch(message,/상품 설명 번역을 받지 못했습니다/);
   const quotation=await json(await h.route('/api/products/'+product(h).id+'/quotation-fields'));
   assert.ok(quotation.resolved.rows[0].fields.detailHtml.value.includes('가'));assert.ok(quotation.resolved.rows[0].fields.detailHtml.value.includes('나'));assert.ok(!quotation.resolved.rows[0].fields.detailHtml.value.includes('甲'));
   const before=current(h),requests=f.queries.length;await h.intake();assert.equal(current(h),before);assert.equal(f.queries.length,requests,'reopening an acknowledged source draft does not repeat any chunk');

@@ -58,6 +58,7 @@ export async function POST(request: Request, context: Context) {
     if (product.updated_at !== body.expectedVersion) return json({ error: '상품이 변경되었습니다. 최신 상품에서 다시 검토해주세요.' }, 409);
     const [content, options, job] = await Promise.all([readProductContent(owner, id), readProductOptions(owner, id), getTranslationJob(owner, id, body.jobId as string)]);
     if (!job) return json({ error: '번역 결과를 찾을 수 없습니다.' }, 404);
+    if(Object.hasOwn(job.review,'seoGeneration'))return json({error:'SEO 생성 결과는 SEO 생성 전용 검토에서 적용해주세요.'},409);
     try{assertWorkersRecoveryJobQuality(job);}catch(error){return json({error:error instanceof Error?error.message:'별도 초안 품질을 확인하지 못했습니다.'},409);}
     const scope = body.scope === 'options' ? 'options' : 'all';
     try {
@@ -218,6 +219,13 @@ export async function POST(request: Request, context: Context) {
     if (!plan.preview.length) return json({ error: '새로 적용할 번역 항목이 없습니다.' }, 409);
     const now = new Date(Math.max(Date.now(), Date.parse(product.updated_at) + 1)).toISOString();
     const nextContent = applyContentPatch(content, plan.patch ?? {}, now), nextOptions = applyIntegratedOptions(options, plan, now);
+    // A source-bound automatic intake is provider output, not a manual edit.
+    // Only fields actually adopted now receive this stamp; existing saved
+    // manual values and explicitly composed owner input keep their provenance.
+    if(canonicalIntake&&!seoComposition&&scope==='all'&&job.status==='completed'&&job.result&&job.result.model===job.review.model){
+      const provenance=job.review.model===GOOGLE_TEXT_MODEL?'translated':job.review.model===WORKERS_TEXT_MODEL?'generated':null;
+      if(provenance)for(const key of ['title','keywords','description'] as const)if(plan.patch?.seo?.[key]!==undefined)nextContent.seo[key].provenance=provenance;
+    }
     // Reviewed stage-one composition and the exact source-bound first intake
     // share the SEO writer. Other translation and unchanged SEO keep their basis.
     if (seoComposition || canonicalIntake) applySeoDocumentTitlePolicy(nextContent, plan.patch?.seo);

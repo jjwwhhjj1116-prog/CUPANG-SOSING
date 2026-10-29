@@ -65,7 +65,7 @@ export async function GET(request: Request, context: Context) {
       if (job && optionsRetryProof(job)?.retryKey !== retryKey) return conflict();
       return json({ productId: id, productVersion: product.updated_at, retryKey, job, configuration: configuration() });
     }
-    return json({ jobs: await listTranslationJobs(owner, id), configuration: configuration(), workersRecovery: recoveryConfiguration() });
+    return json({ jobs: (await listTranslationJobs(owner, id)).filter(job=>!Object.hasOwn(job.review,'seoGeneration')), configuration: configuration(), workersRecovery: recoveryConfiguration() });
   } catch { return unavailable(); }
 }
 
@@ -297,6 +297,7 @@ export async function POST(request: Request, context: Context) {
     if (Object.keys(body).some(key => !allowed.includes(key))) throw new TranslationError('INVALID_REQUEST', '클라이언트가 모델이나 결과를 지정할 수 없습니다.');
     const existing = requestedJob??await getTranslationJob(owner, id, body.jobId);
     if (!existing) return json({ error: '번역 요청을 찾을 수 없습니다.' }, 404);
+    if(Object.hasOwn(existing.review,'seoGeneration'))return json({error:'SEO 생성 요청은 SEO 생성 전용 화면에서 확인해주세요.'},409);
     const workersProof=workersRecoveryReviewProof(existing.review);
     if(workersProof)config=requireWorkersRecoveryConfig(env as TranslationSecrets,workersProof);
     if (existing.review.destination !== translationDestination(config) || existing.review.model !== config.model || existing.review.maxOutputTokens !== config.maxOutputTokens) return conflict();

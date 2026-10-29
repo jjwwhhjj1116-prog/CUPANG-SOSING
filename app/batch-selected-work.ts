@@ -3,7 +3,8 @@ import { supplierHubCompany } from '@/app/supplier-hub-company';
 import { collectedTranslationAttributes } from '@/app/collected-translation-attributes';
 import { optionTranslationBatch } from '@/app/option-translation';
 import { collectionSourceReference } from '@/app/sourcing';
-import { createSeoWorkspaceDraftState, parseSeoWorkspaceDraftState, runSeoWorkspaceDraft } from '@/app/seo-workspace-draft';
+import { createSeoWorkspaceDraftState, parseSeoWorkspaceDraftState, runSeoWorkspaceDraft,
+  readSeoGenerationContext,createSeoGenerationDraftState,parseSeoGenerationDraftState,runSeoGenerationDraft,parseSeoGenerationConfiguration,type SeoGenerationConfiguration } from '@/app/seo-workspace-draft';
 import { GOOGLE_TEXT_MODEL, type TranslationSource, type TranslationView } from '@/app/automation/translation';
 import type { ProductContent } from '@/app/product-content';
 import type { ProductOptionsResponse } from '@/app/product-options';
@@ -19,7 +20,7 @@ import { runSelectedPackagingWork } from '@/app/batch-selected-packaging-work';
 
 export type SelectedBatchStageResult = { id: AutomationStageId; status: 'waiting'|'running'|'draft'|'complete'|'blocked'|'failed'|'skipped'; message: string };
 type Controls = { stages: readonly AutomationStageId[]; mode?:'full'|'selected'; expectedOwnerId: string; signal: AbortSignal; fetcher: typeof fetch;
-  keys: Map<string,string>; newKey:()=>string; onStage:(result:SelectedBatchStageResult)=>void };
+  keys: Map<string,string>; newKey:()=>string; onStage:(result:SelectedBatchStageResult)=>void;seoGenerationConsent?:SeoGenerationConfiguration };
 type Outcome = Pick<SelectedBatchStageResult,'status'|'message'> & {uncertain?:boolean;stop?:boolean};
 // The request owns keys across React remounts; keep binary image recovery state
 // with that same lifetime without persisting source images in localStorage.
@@ -90,7 +91,7 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     keys.set(key,'submitted');stageWrites.add(key);
     const result=await operation();keys.set(key,'confirmed');return result;
   };
-  async function seo():Promise<Outcome>{
+  async function translateSeoOptions():Promise<Outcome>{
     const current=await product();
     const [history,contentBody,source,options,registration]=await Promise.all([
       read<TranslationView>('/translation'),read<{content:ProductContent}>('/content'),
@@ -103,18 +104,13 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
       ||!source.requestContext?.categoryId||!Array.isArray(source.requestContext.categoryPath)||!source.requestContext.categoryPath.length)
       return {status:'blocked',message:'수집 원문과 공식 카테고리를 먼저 연결해주세요.'};
     const attributes=collectedTranslationAttributes(source.attributes),batch=optionTranslationBatch(options.options,50-attributes.length,history.jobs);
-    const missing=(['title','keywords','description'] as const).some(key=>{
-      const field=content.seo[key];return field.provenance!=='manual'&&(
-        !['translated','generated'].includes(field.provenance)||!(Array.isArray(field.value)?field.value.length:field.value.trim()))
-        &&(key!=='description'||source.description.trim());
-    });
-    if(!missing&&!batch.total)return{status:'skipped',message:'저장한 SEO·옵션 번역과 직접 수정한 값을 유지했습니다.'};
+    if(!batch.total)return{status:'skipped',message:'저장한 옵션 번역과 직접 수정한 값을 유지했습니다.'};
     if(!history.configuration.configured)return{status:'blocked',message:'번역 서비스 설정을 확인해주세요.'};
     if(history.configuration.model!==GOOGLE_TEXT_MODEL)return{status:'blocked',message:'SEO 편집에서 설정된 AI 서비스의 실행 안내를 확인해주세요.'};
-    const input:TranslationSource={title:source.title,description:source.description,attributes:[...attributes,...batch.attributes],provenance:'manual',
+    const input:TranslationSource={title:source.title,description:source.description,attributes:batch.attributes,provenance:'manual',
       reference:collectionSourceReference(source.jobId,source.sourceUrl),category:{id:source.requestContext.categoryId,path:source.requestContext.categoryPath},
       guidance:{features:source.requestContext.features,keywords:source.requestContext.keywords}};
-    const stateKey=identity+':seo:'+current.updated_at+':'+content.revision;
+    const stateKey=identity+':seo-options:'+current.updated_at+':'+content.revision;
     const stored=keys.get(stateKey),state=stored?parseSeoWorkspaceDraftState(stored,productId):createSeoWorkspaceDraftState({
       productId,productVersion:current.updated_at,contentRevision:content.revision,source:input,configuration:history.configuration,
       memo:{brand:registration.settings.brand,features:source.requestContext.features,keywords:source.requestContext.keywords}});
@@ -123,14 +119,41 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     keys.set(identity+':pending:seo','SEO 실행 결과 확인 필요');
     const generated=await runSeoWorkspaceDraft(state,{signal,fetcher,onState:value=>keys.set(stateKey,JSON.stringify(value))});
     if(generated.job?.status!=='completed'||!generated.job.result)return{status:'blocked',message:generated.message,uncertain:!generated.closed};
-    const request={jobId:generated.job.id,expectedVersion:current.updated_at,linkQuotationSeoDefaults:true};
+    const request={jobId:generated.job.id,expectedVersion:current.updated_at,scope:'options'};
     const plan=await post<{productId:string;productVersion:string;contentRevision:number;optionRevision:number;fingerprint:string;preview:unknown[]}>('/translation-apply',{...request,action:'preview'});
-    if(plan.productId!==productId||plan.productVersion!==current.updated_at||!hash(plan.fingerprint)||!Array.isArray(plan.preview))throw Error('SEO 적용 범위가 현재 상품과 다릅니다.');
+    if(plan.productId!==productId||plan.productVersion!==current.updated_at||!hash(plan.fingerprint)||!Array.isArray(plan.preview))throw Error('옵션 번역 적용 범위가 현재 상품과 다릅니다.');
     if(!plan.preview.length)return{status:generated.partial?'blocked':'skipped',message:'새로 적용할 번역이 없습니다. 수동 수정값을 유지했습니다. '+(generated.partial?'일부 원문 번역을 확인해주세요.':'')};
     const saved=await once('seo:'+plan.fingerprint,()=>post<{productId:string;productVersion:string;contentRevision:number;optionRevision:number;applied:number}>('/translation-apply',{...request,action:'apply',fingerprint:plan.fingerprint}));
     if(saved.productId!==productId||!(Date.parse(saved.productVersion)>Date.parse(current.updated_at))||saved.contentRevision!==plan.contentRevision+1
       ||saved.optionRevision!==plan.optionRevision+1||saved.applied!==plan.preview.length)throw Error('SEO 저장 결과를 확인하지 못했습니다. 저장본을 확인해주세요.');
-    return{status:generated.partial||batch.remaining?'blocked':'draft',message:'SEO·옵션 번역 '+saved.applied+'개 항목을 저장했습니다.'+(generated.partial?' 일부 원문 번역을 확인해주세요.':'')+(batch.remaining?' 남은 옵션 항목 '+batch.remaining+'개는 추가 작업이 필요합니다.':'')};
+    return{status:generated.partial||batch.remaining?'blocked':'draft',message:'Google 옵션 번역 '+saved.applied+'개 항목을 저장했습니다.'+(generated.partial?' 일부 원문 번역을 확인해주세요.':'')+(batch.remaining?' 남은 옵션 항목 '+batch.remaining+'개는 추가 작업이 필요합니다.':'')};
+  }
+  async function seo():Promise<Outcome>{
+    const translated=await translateSeoOptions();
+    if(translated.uncertain||translated.stop)return translated;
+    const message=translated.message+' ';
+    const consent=parseSeoGenerationConfiguration(controls.seoGenerationConsent);
+    if(!consent)return{status:'blocked',message:message+'Cloudflare Workers AI의 실제 무료 한도 안내를 확인한 작업 개시가 필요합니다. Google 번역을 AI SEO 생성 완료로 표시하지 않았습니다.'};
+    await assertCurrent();const before=await product(),view=await readSeoGenerationContext(productId,signal,fetcher);await assertCurrent();
+    if(view.productVersion!==before.updated_at||!same(view.company,expected.company))throw new ScopeChanged('SEO 생성 상품·회사·원문이 변경되어 작업을 멈췄습니다.');
+    const configuration=parseSeoGenerationConfiguration(view.configuration);
+    if(!configuration||!same(configuration,consent)||!configuration.configured)return{status:'blocked',message:message+'무료 SEO 생성 설정이 없거나 작업 개시 전에 본 안내와 달라 실행하지 않았습니다. '+(configuration?.issues.join(' ')??'')};
+    const {content}=await read<{content:ProductContent}>('/content');
+    if(content.productId!==productId||content.revision!==view.contentRevision)throw new ScopeChanged('SEO 생성 중 저장한 상품 내용이 변경됐습니다.');
+    if((['title','keywords','description'] as const).every(key=>content.seo[key].provenance==='manual'))return{status:translated.status==='blocked'?'blocked':'skipped',message:message+'직접 저장한 SEO와 공란을 모두 유지했습니다. AI 생성은 실행하지 않았습니다.'};
+    const stateKey=identity+':seo-generation:'+view.productVersion+':'+view.contentRevision,stored=keys.get(stateKey),state=stored?parseSeoGenerationDraftState(stored,productId):createSeoGenerationDraftState(view);
+    if(!state)throw Error('이전 SEO 생성 요청을 확인하지 못했습니다. 새 요청은 만들지 않았습니다.');
+    keys.set(stateKey,JSON.stringify(state));keys.set(identity+':pending:seo','SEO 생성 결과 확인 필요');
+    const generated=await runSeoGenerationDraft(state,{signal,fetcher,confirmAi:true,onState:value=>keys.set(stateKey,JSON.stringify(value))});
+    await assertCurrent();
+    if(generated.job?.status!=='completed'||!generated.job.result)return{status:'blocked',message:message+generated.message,uncertain:!generated.closed};
+    const request={jobId:generated.job.id,expectedVersion:view.productVersion,linkQuotationSeoDefaults:true};
+    const plan=await post<{purpose:string;scope:string;productId:string;productVersion:string;contentRevision:number;optionRevision:number;fingerprint:string;preview:unknown[]}>('/seo-generation',{...request,action:'preview'});
+    if(plan.purpose!=='seo-generation'||plan.scope!=='all'||plan.productId!==productId||plan.productVersion!==view.productVersion||plan.contentRevision!==view.contentRevision||plan.optionRevision!==view.optionRevision||!hash(plan.fingerprint)||!Array.isArray(plan.preview))throw Error('생성된 SEO 적용 범위가 현재 상품과 다릅니다.');
+    if(!plan.preview.length)return{status:translated.status==='blocked'?'blocked':'skipped',message:message+'AI SEO 초안을 확인했으며 새로 적용할 값이 없어 수동 수정값과 공란을 유지했습니다.'};
+    const saved=await once('seo-generation:'+plan.fingerprint,()=>post<{purpose:string;scope:string;productId:string;productVersion:string;contentRevision:number;optionRevision:number;applied:number}>('/seo-generation',{...request,action:'apply',fingerprint:plan.fingerprint}));
+    if(saved.purpose!=='seo-generation'||saved.scope!=='all'||saved.productId!==productId||!(Date.parse(saved.productVersion)>Date.parse(view.productVersion))||saved.contentRevision!==plan.contentRevision+1||saved.optionRevision!==plan.optionRevision+1||saved.applied!==plan.preview.length)throw Error('AI SEO 저장 결과를 확인하지 못했습니다. 같은 요청을 다시 적용하지 말고 저장본을 확인해주세요.');
+    return{status:translated.status==='blocked'?'blocked':'draft',message:message+'Cloudflare Workers AI 생성 SEO '+saved.applied+'개 항목의 저장을 확인했습니다. 직접 수정값은 유지했습니다.'};
   }
   async function pricing():Promise<Outcome>{
     return runSelectedPricingWork(productId,{fetcher,signal,assertCurrent});

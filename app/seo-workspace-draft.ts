@@ -216,3 +216,8 @@ async function advance(state: SeoWorkspaceDraftState, controls: SeoWorkspaceDraf
 export const runSeoWorkspaceDraft = (state: SeoWorkspaceDraftState, controls: SeoWorkspaceDraftControls) => advance(state, controls, true);
 /** Recovery always reads history; it cannot prepare, approve or execute. */
 export const refreshSeoWorkspaceDraft = (state: SeoWorkspaceDraftState, controls: SeoWorkspaceDraftControls) => advance(state, controls, false);
+
+// Purpose-scoped generation keeps the established Google translation state
+// and its saved recovery keys separate from Workers SEO generation.
+export {parseSeoGenerationConfiguration,readSeoGenerationContext,createSeoGenerationDraftState,parseSeoGenerationDraftState,runSeoGenerationDraft,refreshSeoGenerationDraft,
+  type SeoGenerationConfiguration,type SeoGenerationContext,type SeoGenerationDraftState} from '@/app/seo-generation-client';
