@@ -352,7 +352,7 @@ test('Workers AI configuration rejects absent binding, unsupported model and unk
 test('ordinary Qwen translation uses its own Cloudflare JSON contract once without Google or an API key',async()=>{
  let calls=0;
  const own=model.requireTranslationConfig({SOURCEFLOW_TEXT_PROVIDER:'workers-ai',SOURCEFLOW_TEXT_MODEL:model.WORKERS_QWEN_MODEL,SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS:'4096',AI:{run:async(name,input)=>{
-  calls++;assert.equal(name,model.WORKERS_QWEN_MODEL);assert.equal(input.temperature,0);assert.match(input.messages[1].content,/\/no_think$/u);assert.equal(input.response_format.type,'json_schema');
+  calls++;assert.equal(name,model.WORKERS_QWEN_MODEL);assert.equal(input.temperature,0);assert.match(input.messages[1].content,/\/no_think$/u);assert.equal(Object.hasOwn(input,'response_format'),false);
   return{response:draft,model:name,usage:{prompt_tokens:100,completion_tokens:80,total_tokens:180}};
  }}});
  const review=await model.prepareTranslationReview(source,own);assert.equal(review.destination,'Cloudflare Workers AI');assert.match(review.paidNotice,/과금/u);

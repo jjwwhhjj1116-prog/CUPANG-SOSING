@@ -23,7 +23,7 @@ export function SelectedBatchWorkPanel({products,onOpen,onBusyChange,runRequest}
  const [busy,setBusy]=useState(true),[stopping,setStopping]=useState(false),[results,setResults]=useState<Record<string,Partial<Record<AutomationStageId,SelectedBatchStageResult>>>>({}),[errors,setErrors]=useState<Record<string,string>>({});
  const context=useRef<{request:SelectedBatchRequest;products:Item[];active:AbortController|null;stop:boolean;generation:number}|null>(null),callbacks=useRef({onOpen,onBusyChange});
  useLayoutEffect(()=>{callbacks.current={onOpen,onBusyChange};},[onOpen,onBusyChange]);
- async function execute(scope:NonNullable<typeof context.current>){
+ async function execute(scope:NonNullable<typeof context.current>,retryFailedQwen=false){
   if(context.current!==scope||scope.active)return;
   const active=new AbortController(),generation=++scope.generation;scope.active=active;scope.stop=false;setStopping(false);setBusy(true);setResults({});setErrors({});callbacks.current.onBusyChange?.(true);
   const current=()=>context.current===scope&&scope.active===active&&scope.generation===generation&&!active.signal.aborted;
@@ -34,7 +34,7 @@ export function SelectedBatchWorkPanel({products,onOpen,onBusyChange,runRequest}
     if(!current()||scope.stop)break;
     setErrors(previous=>({...previous,[product.id]:''}));
     try{
-     const result=await runSelectedBatchProduct(product.id,{stages:[...scope.request.stages],mode:scope.request.mode,seoGenerationConsent:scope.request.seoGenerationConsent,expectedOwnerId:scope.request.ownerId,signal:active.signal,fetcher:(input,init)=>fetch(input,init),keys:scope.request.keys,newKey:()=>crypto.randomUUID(),onStage:stage=>publish(product.id,stage)});
+     const result=await runSelectedBatchProduct(product.id,{stages:[...scope.request.stages],mode:scope.request.mode,seoGenerationConsent:scope.request.seoGenerationConsent,retryFailedQwen,expectedOwnerId:scope.request.ownerId,signal:active.signal,fetcher:(input,init)=>fetch(input,init),keys:scope.request.keys,newKey:()=>crypto.randomUUID(),onStage:stage=>publish(product.id,stage)});
      if(!current())break;
      if(!result||result.productId!==product.id)throw Error('선택한 상품의 작업 결과를 확인하지 못했습니다.');
      for(const stage of result.stages)publish(product.id,stage);
@@ -62,7 +62,7 @@ export function SelectedBatchWorkPanel({products,onOpen,onBusyChange,runRequest}
   <ul className="batch-work-list">{products.map(product=><li key={product.id}><strong>{product.title}</strong>{errors[product.id]&&<p role="alert">{errors[product.id]}</p>}
    <ol>{runRequest.stages.map(stage=>{const result=results[product.id]?.[stage];return <li key={stage} data-stage={stage} data-stage-status={result?.status??'waiting'}><strong>{stageNames[stage]} · {statusNames[result?.status??'waiting']}</strong><p role="status">{result?.message??'실행 대기'}</p><button type="button" className="btn ghost" disabled={busy} onClick={()=>review(product.id,stage)}>{stageNames[stage]} 검토 열기</button></li>;})}</ol>
   </li>)}</ul>
-  <div className="modal-actions"><button type="button" className="btn ghost" disabled={!busy||stopping} onClick={()=>{const scope=context.current;if(scope?.active){scope.stop=true;setStopping(true);}}}>{stopping?'현재 상품을 마친 뒤 중지합니다':'현재 상품 후 중지'}</button><button type="button" className="btn primary" disabled={busy} onClick={()=>{const scope=context.current;if(scope&&!scope.active)void execute(scope);}}>선택 작업 다시 시도</button></div>
+  <div className="modal-actions"><button type="button" className="btn ghost" disabled={!busy||stopping} onClick={()=>{const scope=context.current;if(scope?.active){scope.stop=true;setStopping(true);}}}>{stopping?'현재 상품을 마친 뒤 중지합니다':'현재 상품 후 중지'}</button><button type="button" className="btn primary" disabled={busy} onClick={()=>{const scope=context.current;if(scope&&!scope.active)void execute(scope,true);}}>선택 작업 다시 시도</button></div>
  </section>;
 }
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { TranslationJob, TranslationSource, TranslationView } from '@/app/automation/translation';
+import {WORKERS_QWEN_MODEL} from '@/app/automation/workers-qwen-contract';
 import type { ProductContent } from '@/app/product-content';
 import type { ProductOptionsResponse } from '@/app/product-options';
 import { collectedTranslationAttributes } from '@/app/collected-translation-attributes';
@@ -119,7 +120,7 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
   const [guidanceError,setGuidanceError]=useState('');
   const request=useRef<AbortController|null>(null), draftState=useRef<SeoWorkspaceDraftState|null>(null);
   const guidanceSession=useRef<SeoGuidanceSession|null>(null),memoBaseline=useRef<SeoWorkspaceDraftMemo|null>(null);
-  const current=useRef({active,version,memo,workspaceOwnerId}),mounted=useRef(true),loaded=useRef<{version:string;sourceIdentity:string;guidanceKey:string}|null>(null);
+  const current=useRef({active,version,memo,workspaceOwnerId,confirmAi}),mounted=useRef(true),loaded=useRef<{version:string;sourceIdentity:string;guidanceKey:string}|null>(null);
   const settledLoad=useRef<string|null>(null),loadScope=JSON.stringify([workspaceOwnerId??null,productId,version,brand,attempt]);
   const storageKey=`yoofam-seo-workspace:${productId}`;
   function finishProcessing(operation?:object){
@@ -139,8 +140,8 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
       if(sourceChanged||!compositionBusyRef.current){finishProcessing();compositionBusyRef.current=false;setCompositionBusy(false);}
       setBusy(false);
     }
-    current.current={active,version,memo,workspaceOwnerId};
-  },[active,version,memo,workspaceOwnerId]);
+    current.current={active,version,memo,workspaceOwnerId,confirmAi};
+  },[active,version,memo,workspaceOwnerId,confirmAi]);
   useLayoutEffect(()=>{
     const lease=processingLease.current;
     if(processingCallback.current===onProcessingChange)return;
@@ -223,16 +224,34 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
     const input=structuredClone(current.current.memo),inputKey=JSON.stringify(input);
     const same=()=>mounted.current&&current.current.active&&operationContext.current===context&&current.current.version===version&&current.current.workspaceOwnerId===workspaceOwnerId&&JSON.stringify(current.current.memo)===inputKey;
     try{
-      const state=draftState.current??createSeoWorkspaceDraftState({productId,productVersion:version,contentRevision:basis.contentRevision,
+      let state=draftState.current??createSeoWorkspaceDraftState({productId,productVersion:version,contentRevision:basis.contentRevision,
         source:basis.source,memo:input,configuration:basis.configuration});
       const sourceIdentity=(source:TranslationSource)=>JSON.stringify([source.title,source.description,source.attributes,source.reference,source.category]);
       if(!readOnly&&(state.productVersion!==version||state.contentRevision!==basis.contentRevision||sourceIdentity(state.source)!==sourceIdentity(basis.source)))
         throw Error('이전 요청 이후 상품 원문이 변경되었습니다. 초안 상태를 조회한 뒤 새 입력을 준비해주세요. 이전 요청을 다시 실행하지 않았습니다.');
       const persist=(saved:SeoWorkspaceDraftState)=>{draftState.current=saved;try{sessionStorage.setItem(storageKey,JSON.stringify(saved));}catch{}
         if(!controller.signal.aborted&&same())setHasRequest(true);};
-      persist(state);
       const controls={signal:controller.signal,fetcher:fetch,isContextCurrent:same,confirmAi,onState:persist,
         onJob:(value:TranslationJob)=>{if(!controller.signal.aborted&&same())setJob(value);}};
+      const retryFailedQwen=!readOnly&&closed&&job?.status==='failed'&&job.productId===productId&&job.productVersion===version
+        &&job.review?.model===WORKERS_QWEN_MODEL&&!Object.hasOwn(job.review,'workersRecovery')
+        &&state.jobId===job.id&&state.reviewFingerprint===job.review.fingerprint&&state.configuration.model===WORKERS_QWEN_MODEL;
+      if(retryFailedQwen){
+        if(!confirmAi||!current.current.confirmAi)return;
+        let latestConfiguration:TranslationView['configuration']|undefined;
+        const previous=state,verified=await refreshSeoWorkspaceDraft(structuredClone(previous),{...controls,fetcher:async(target,init)=>{
+          const response=await fetch(target,init),value=await response.clone().json() as Partial<TranslationView>;latestConfiguration=value.configuration;return response;
+        },onState:()=>{},onJob:()=>{}});
+        if(controller.signal.aborted||!same()||draftState.current!==previous||!current.current.confirmAi||!beforeGenerate())return;
+        if(!verified.closed||verified.job?.status!=='failed'||verified.job.id!==previous.jobId||verified.job.review.fingerprint!==previous.reviewFingerprint
+          ||verified.job.review.model!==WORKERS_QWEN_MODEL||Object.hasOwn(verified.job.review,'workersRecovery')
+          ||latestConfiguration?.configured!==true||latestConfiguration.model!==basis.configuration.model||latestConfiguration.maxOutputTokens!==basis.configuration.maxOutputTokens){
+          setMessage('원래 Qwen 작업의 실패 상태를 확인하지 못했습니다. 기존 요청을 유지했습니다. 초안 상태를 다시 조회해주세요.');return;
+        }
+        state=createSeoWorkspaceDraftState({productId,productVersion:version,contentRevision:basis.contentRevision,source:basis.source,memo:input,configuration:basis.configuration});
+        setClosed(false);
+      }
+      persist(state);
       const result=await (readOnly?refreshSeoWorkspaceDraft(state,controls):runSeoWorkspaceDraft(state,controls));
       if(controller.signal.aborted||!same())return;
       const preparedOnly=!!result.job&&['prepared','approved'].includes(result.job.status)&&!state.executeSubmitted
@@ -261,6 +280,8 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
   const google=basis?.configuration.model==='google-translate-gtx';
   const titleExample=[memo.brand.trim(),memo.features.trim()||'상품 특징',memo.keywords.trim()||'타겟 키워드'].filter(Boolean).join(' ');
   const currentJob=job?.productVersion===version&&job.productId===productId;
+  const failedQwenRetry=hasRequest&&closed&&currentJob&&job.status==='failed'&&job.review?.model===WORKERS_QWEN_MODEL
+    &&!Object.hasOwn(job.review,'workersRecovery')&&basis?.configuration.model===WORKERS_QWEN_MODEL;
   const hasResult=currentJob&&job.status==='completed'&&!!job.result;
   const memoDirty=!hasRequest&&!!basis&&JSON.stringify(memo)!==JSON.stringify(basis.initialMemo);
   let composition: SeoGuidanceComposition|undefined, compositionError='', compositionTags:string[]=[], omittedTags:string[]=[];
@@ -317,7 +338,7 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
       {guidanceError&&<p role="alert">{guidanceError}</p>}
       {error&&(!basis||basis.productVersion!==version)&&<button className="btn ghost" type="button" disabled={busy} onClick={()=>setAttempt(value=>value+1)}>수집 원문 다시 조회</button>}
       {basis&&!basis.configuration.configured&&<p role="alert">{basis.configuration.issues.join(' ')}</p>}
-      <div className="seo-generation-actions"><button className="btn ghost" type="button" disabled={busy||compositionBusy||generationBusy||generationPending||recoveryInvalid||!basis?.configuration.configured||basis.productVersion!==version||(!hasRequest&&!memo.keywords.trim())} onClick={()=>void generate()}>{hasRequest&&!job?'같은 초안 요청 확인':!basis?'초안 작성':google?'한국어 초안 자동 작성':'AI로 자동 생성'}</button>
+      <div className="seo-generation-actions"><button className="btn ghost" type="button" disabled={busy||compositionBusy||generationBusy||generationPending||recoveryInvalid||!basis?.configuration.configured||basis.productVersion!==version||(!hasRequest&&!memo.keywords.trim())||failedQwenRetry&&!confirmAi} onClick={()=>void generate()}>{failedQwenRetry?'실패한 Qwen 새 초안':hasRequest&&!job?'같은 초안 요청 확인':!basis?'초안 작성':google?'한국어 초안 자동 작성':'AI로 자동 생성'}</button>
         {hasRequest&&<button className="btn ghost" type="button" disabled={busy||compositionBusy} onClick={()=>void generate(true)}>초안 상태 조회</button>}
         {hasRequest&&closed&&<button className="btn ghost" type="button" disabled={busy||compositionBusy||applyUncertain} onClick={()=>{if(!mounted.current||current.current.version!==version||!current.current.active||request.current||compositionBusyRef.current||applyUncertain)return;if(basis&&draftState.current&&supplierSourceIdentity(draftState.current.source)!==basis.sourceIdentity)setMemo(basis.initialMemo);draftState.current=null;setHasRequest(false);setClosed(false);setJob(null);setConfirmAi(false);setCompositionTitle(null);setCompositionKeywords(null);setCompositionEnabled(true);setReplaceTitle(false);setReplaceKeywords(false);setMessage('새 요청의 입력을 준비했습니다. 작성 버튼을 누르면 새 초안을 요청합니다.');try{sessionStorage.removeItem(storageKey);}catch{}}}>새 초안 입력</button>}
       </div>

@@ -12,7 +12,7 @@ const stages=['seo','pricing','mainImage','additionalImages','detailImage','size
 const product=id=>({id,title:'상품 '+id,updated_at:'2026-10-23T00:00:00.000Z'});
 test('the frozen full mode reaches each product runner without expanding selected stages',async()=>{
  const h=harness(async id=>({productId:id,stages:[]}),{products:[product('a')],runRequest:{id:'full-mode',ownerId:'owner',mode:'full',stages:['pricing'],keys:new Map()}});
- try{h.render();await tick();assert.equal(h.calls.length,1);assert.equal(h.calls[0].options.mode,'full');assert.deepEqual([...h.calls[0].options.stages],['pricing']);}finally{h.close();}
+ try{h.render();await tick();assert.equal(h.calls.length,1);assert.equal(h.calls[0].options.mode,'full');assert.deepEqual([...h.calls[0].options.stages],['pricing']);assert.equal(h.calls[0].options.retryFailedQwen,false);}finally{h.close();}
 });
 function harness(runner,{selected=stages,products=[product('a'),product('b')],runRequest={id:'run-one',ownerId:'owner',stages:selected,keys:new Map()}}={}){
  const slots=[],effects=[],layouts=[],calls=[],locks=[],opened=[];let cursor=0,closed=false,lateWrites=0,props={products,runRequest,onOpen:(...values)=>opened.push(values),onBusyChange:value=>locks.push(value)};
@@ -35,7 +35,7 @@ test('the selected queue starts directly once, passes only chosen stages and dis
 test('stop finishes only the current product; explicit retries retain keys and reject callbacks from an earlier attempt',async()=>{
  const gate=defer();let oldProgress;const h=harness(async(id,options,index)=>{options.keys.set('uncertain-key','exact-key');options.onStage({id:'seo',status:'running',message:'진행 중'});if(index===1){oldProgress=options.onStage;await gate.promise;}return{productId:id,stages:[{id:'seo',status:'draft',message:'초안 보관됨'}]};},{selected:['seo']});
  try{h.render();await tick();const oldOpen=h.button('SEO 검토 열기').props.onClick;h.button('현재 상품 후 중지').props.onClick();oldOpen();assert.equal(h.opened.length,0);gate.resolve();await tick();assert.deepEqual(h.calls.map(call=>call.id),['a']);
-  h.button('선택 작업 다시 시도').props.onClick();oldOpen();assert.equal(h.opened.length,0);oldProgress({id:'seo',status:'complete',message:'late stale success'});await tick();assert.deepEqual(h.calls.map(call=>call.id),['a','a','b']);assert.equal(h.calls[0].options.keys,h.calls[1].options.keys);assert.equal(h.calls[1].options.keys.get('uncertain-key'),'exact-key');assert.doesNotMatch(text(h.render()),/late stale success/);
+  h.button('선택 작업 다시 시도').props.onClick();oldOpen();assert.equal(h.opened.length,0);oldProgress({id:'seo',status:'complete',message:'late stale success'});await tick();assert.deepEqual(h.calls.map(call=>call.id),['a','a','b']);assert.equal(h.calls[0].options.keys,h.calls[1].options.keys);assert.equal(h.calls[1].options.keys.get('uncertain-key'),'exact-key');assert.equal(h.calls[1].options.retryFailedQwen,true);assert.doesNotMatch(text(h.render()),/late stale success/);
  }finally{h.close();}
 });
 

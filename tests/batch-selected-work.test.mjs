@@ -370,6 +370,34 @@ function qwenFixture(outcome={job:{id:'qwen-job',status:'completed',result:{draf
  return{h,generation,translationConfig,optionAttributes};
 }
 
+function qwenRetryFixture(){
+ const {h,generation}=qwenFixture();let creates=0,providerCalls=0,status='failed',reads=0;const provider=h.deps['@/app/seo-workspace-draft'];
+ provider.createSeoWorkspaceDraftState=input=>({...plain(input),idempotencyKey:'new-key-'+ ++creates,jobId:null});
+ provider.runSeoWorkspaceDraft=async(state,controls)=>{if(!state.jobId){providerCalls++;state.jobId='job-'+providerCalls;}controls.onState(state);return{job:{id:state.jobId,status:'failed',result:null},closed:true,partial:false,message:'확인된 실패'};};
+ provider.refreshSeoWorkspaceDraft=async(state,controls)=>{reads++;controls.onState(state);return{job:{id:state.jobId,status,result:null},closed:['failed','completed'].includes(status),partial:false,message:'같은 요청 조회'};};
+ return{h,generation,status:value=>status=value,get creates(){return creates;},get providerCalls(){return providerCalls;},get reads(){return reads;}};
+}
+
+test('only an explicit retry and fresh failed Qwen proof replace the local request UUID without replaying history',async()=>{
+ const f=qwenRetryFixture(),{h}=f;await h.run(['seo']);const old=[...h.keys.entries()].find(([key])=>key.includes(':seo-qwen:'))[1];assert.equal(f.creates,1);assert.equal(f.providerCalls,1);
+ await h.run(['seo']);assert.equal(f.creates,1);assert.equal(f.providerCalls,1);assert.equal(f.reads,0);
+ h.options.retryFailedQwen=true;h.keys.set('owner:product:pending:seo','Qwen 번역 결과 확인 필요');const result=await h.run(['seo']);assert.equal(result.stages[0].status,'blocked');assert.equal(f.reads,1);assert.equal(f.creates,2);assert.equal(f.providerCalls,2);
+ const fresh=[...h.keys.entries()].find(([key])=>key.includes(':seo-qwen:'))[1];assert.notEqual(JSON.parse(fresh).idempotencyKey,JSON.parse(old).idempotencyKey);assert.equal(JSON.parse(old).jobId,'job-1');assert.equal(h.keys.has('owner:product:pending:seo'),false);
+});
+
+test('explicit retry never replaces completed, running, uncertain or unconfirmed-write Qwen state',async()=>{
+ for(const status of ['completed','running','uncertain','write']){const f=qwenRetryFixture(),{h}=f;await h.run(['seo']);const before=[...h.keys.entries()].find(([key])=>key.includes(':seo-qwen:'))[1];h.options.retryFailedQwen=true;f.status(status==='write'?'failed':status);
+  if(status==='write'){h.keys.set('owner:product:pending:seo','저장 결과 확인 필요');h.keys.set('owner:product:write:seo-qwen:unknown','submitted');}
+  await h.run(['seo','pricing']);assert.equal(f.creates,1,status);assert.equal(f.providerCalls,1,status);assert.equal([...h.keys.entries()].find(([key])=>key.includes(':seo-qwen:'))[1],before,status);
+  if(status==='write'){assert.equal(f.reads,0);assert.equal(h.keys.get('owner:product:write:seo-qwen:unknown'),'submitted');assert.equal(h.keys.get('owner:product:pending:seo'),'저장 결과 확인 필요');}
+ }
+});
+
+test('failed Qwen retry keeps current original-source scope and manual values instead of allocating on a changed source',async()=>{
+ const f=qwenRetryFixture(),{h}=f;await h.run(['seo']);const before=[...h.keys.entries()].find(([key])=>key.includes(':seo-qwen:'))[1];h.options.retryFailedQwen=true;f.generation.view.source.title='변경된 다른 원문';
+ const result=await h.run(['seo','pricing']);assert.equal(result.stages[0].status,'failed');assert.match(result.stages[0].message,/원문/);assert.equal(f.creates,1);assert.equal(f.providerCalls,1);assert.equal([...h.keys.entries()].find(([key])=>key.includes(':seo-qwen:'))[1],before);assert.equal(h.calls.some(call=>call.url?.endsWith('/stage-two-pricing')),false);
+});
+
 test('one paid-notice-bound Qwen call combines factual attributes and pending option bindings, adopts all once and skips duplicate Llama SEO',async()=>{
  const {h,optionAttributes}=qwenFixture(),result=await h.run(['seo','pricing','koreanLabel','quotation']);
  assert.deepEqual(plain(result.stages.map(row=>row.status)),['draft','draft','draft','draft']);

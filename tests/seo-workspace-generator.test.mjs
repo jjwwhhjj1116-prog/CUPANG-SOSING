@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
+import {providedOptionModule} from './helpers/provided-option-quotation.mjs';
 const plain=value=>JSON.parse(JSON.stringify(value)),deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve};};
 const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value==='object'?[value,...nodes(value.props?.children)]:[];
 const text=value=>Array.isArray(value)?value.map(text).join(''):value&&typeof value==='object'?text(value.props?.children):value==null?'':String(value);
@@ -24,7 +25,7 @@ function ui({allowed=true,storageValue=null,pending=null,registrationError=false
   if(url.endsWith('/options'))return Response.json({productVersion,options:{productId,rows:[]}});throw Error(url);};
  const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/seo-workspace-generator.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
   {exports,fetch:api,AbortController,structuredClone,sessionStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)},require(name){if(name==='react')return react;if(name==='react/jsx-runtime')return{jsx:(type,props,key)=>({type,props,key}),jsxs:(type,props,key)=>({type,props,key})};
-   if(name.endsWith('.css'))return{};if(name==='@/app/components/translation-panel')return{default:()=>null};if(name==='@/app/workers-translation-recovery')return compositionModule('app/workers-translation-recovery.ts');if(name==='@/app/workers-seo-recovery-client')return compositionModule('app/workers-seo-recovery-client.ts');if(name==='@/app/seo-workspace-draft')return helper;if(name==='@/app/seo-guidance-session')return compositionModule('app/seo-guidance-session.ts');if(name==='@/app/seo-guidance-composition')return compositionModule('app/seo-guidance-composition.ts');if(name==='@/app/seo-apply-focus')return compositionModule('app/seo-apply-focus.ts');if(name==='@/app/components/translation-integrated-preview')return{TranslationIntegratedPreview:()=>null};
+   if(name.endsWith('.css'))return{};if(name==='@/app/automation/workers-qwen-contract')return compositionModule('app/automation/workers-qwen-contract.ts');if(name==='@/app/components/translation-panel')return{default:()=>null};if(name==='@/app/workers-translation-recovery')return compositionModule('app/workers-translation-recovery.ts');if(name==='@/app/workers-seo-recovery-client')return compositionModule('app/workers-seo-recovery-client.ts');if(name==='@/app/seo-workspace-draft')return helper;if(name==='@/app/seo-guidance-session')return compositionModule('app/seo-guidance-session.ts');if(name==='@/app/seo-guidance-composition')return compositionModule('app/seo-guidance-composition.ts');if(name==='@/app/seo-apply-focus')return compositionModule('app/seo-apply-focus.ts');if(name==='@/app/components/translation-integrated-preview')return{TranslationIntegratedPreview:()=>null};
    if(sourceHelpers?.[name])return sourceHelpers[name];if(name==='@/app/collected-translation-attributes')return{collectedTranslationAttributes:value=>value.map(item=>({name:'상품속성: '+item.name,value:item.value}))};
    if(name==='@/app/option-translation')return{optionTranslationBatch:()=>({attributes:[],remaining:0})};if(name==='@/app/sourcing')return{collectionSourceReference:(id,url)=>id+' '+url};throw Error(name);}});
  const render=(passive=true)=>{cursor=0;const root=exports.SeoWorkspaceGenerator({productId,workspaceOwnerId,version:productVersion,brand,active,beforeGenerate:()=>allowed,onApplied,onSaved(){throw Error('Unexpected product save');}});if(lastKey!==undefined&&lastKey!==root.key){slots.forEach(slot=>slot?.cleanup?.());slots.splice(0);effects.splice(0);layouts.splice(0);}lastKey=root.key;const tree=root.type(root.props);layouts.splice(0).forEach(fn=>fn());if(passive)effects.splice(0).forEach(fn=>fn());return tree;};
@@ -34,6 +35,60 @@ function ui({allowed=true,storageValue=null,pending=null,registrationError=false
 }
 
 const workersRecoverySettings={configured:true,provider:'workers-ai',destination:'Cloudflare Workers AI',strategy:'m2m-text-v1',model:'@cf/meta/m2m100-1.2b',maxCalls:8,maxOutputTokens:2048,freeOnly:true,issues:[]};
+
+function failedQwenRetryUi({model='@cf/qwen/qwen3-30b-a3b-fp8',recovery=false}={}){
+ const api=providedOptionModule('app/seo-workspace-draft.ts'),maxOutputTokens=model==='google-translate-gtx'?0:4096,configuration={configured:true,model,maxOutputTokens,issues:[]};
+ const raw={productId:'p',productVersion:version,jobId:'source-job',sourceUrl:'https://detail.1688.com/offer/123456789012.html',title:'黑色手套',description:'棉',attributes:[{name:'材质',value:'棉'}],requestContext:{categoryId:'82533',categoryPath:['장갑'],features:'보온',keywords:'면장갑'}};
+ const state=api.createSeoWorkspaceDraftState({productId:'p',productVersion:version,contentRevision:2,source:{title:raw.title,description:raw.description,attributes:[{name:'상품속성: 材质',value:'棉'}],provenance:'manual',reference:raw.jobId+' '+raw.sourceUrl,category:{id:'82533',path:['장갑']},guidance:{features:'보온',keywords:'면장갑'}},memo:{brand:'와이홉',features:'보온',keywords:'면장갑'},configuration});
+ Object.assign(state,{jobId:'00000000-0000-4000-8000-000000000001',reviewFingerprint:'a'.repeat(64),prepareSubmitted:true,approvalSubmitted:true,executeSubmitted:true});
+ const old={id:state.jobId,productId:'p',productVersion:version,contentRevision:2,status:'failed',startedAt:version,finishedAt:version,result:null,error:{code:'QWEN_UNTRANSLATED_TEXT',message:'합성 이전 Qwen 실패',mayHaveBeenCharged:true},review:{model,maxOutputTokens,destination:model==='google-translate-gtx'?'Google 번역':'Cloudflare Workers AI',instructionsVersion:'sourceflow-translation-v6',source:plain(state.source),fingerprint:state.reviewFingerprint,paidNotice:'합성 Qwen 사용량 비용 안내',expiresAt:'2099-01-01',...(recovery?{workersRecovery:{version:5}}:{})}};
+ const requests=[];let latest=plain(old),currentConfiguration=plain(configuration),gate=null,newJob=null;
+ const good={title:'검정 면장갑',keywords:['면장갑'],description:'면',attributes:[{sourceIndex:0,name:'상품속성: 소재',value:'면'}],warnings:[]};
+ const fetcher=async(target,init={})=>{
+  const body=init.body?JSON.parse(init.body):null;requests.push({target,body,signal:init.signal});
+  if(target.endsWith('/translation')){
+   if(!body){if(gate)await gate.promise;return Response.json({configuration:currentConfiguration,jobs:latest?[latest]:[]});}
+   if(body.action==='prepare'){newJob={...plain(old),id:'00000000-0000-4000-8000-000000000002',status:'prepared',startedAt:null,finishedAt:null,error:null,review:{...plain(old.review),source:body.source,fingerprint:'b'.repeat(64)}};}
+   else if(body.action==='approve'){assert.equal(body.jobId,newJob.id);newJob.status='approved';}
+   else if(body.action==='execute'){assert.equal(body.jobId,newJob.id);newJob.status='completed';newJob.result={model,appliedToContent:false,provenance:'generated',draft:good};}
+   else assert.fail(body.action);return Response.json({job:plain(newJob)});
+  }
+  if(target.endsWith('/content'))return Response.json({content:{productId:'p',revision:2}});
+  if(target.endsWith('/translation-source'))return Response.json(raw);
+  if(target.endsWith('/options'))return Response.json({productVersion:version,options:{productId:'p',rows:[]}});
+  if(target.endsWith('/registration-settings'))return Response.json({productId:'p',settings:{brand:'와이홉'}});
+  assert.fail(target);
+ };
+ const h=ui({workspaceOwnerId:'owner-a',storageValue:JSON.stringify(state),draftHelper:api,fetcher});
+ return{h,state,old,requests,setLatest(value){latest=value;},setConfiguration(value){currentConfiguration=value;},hold(){gate=deferred();return gate;},async ready(){await h.idle();h.button('초안 상태 조회').props.onClick();await h.idle();assert.ok(h.button('실패한 Qwen 새 초안'));h.consent().props.onChange({target:{checked:true}});await h.idle();},posts(){return requests.filter(request=>request.body);}};
+}
+
+test('an explicitly confirmed failed Qwen retry rereads the exact old job, creates one new UUID and never re-executes the failed job',async()=>{
+ const f=failedQwenRetryUi(),{h}=f;try{await f.ready();const before=JSON.stringify(f.old),key=f.state.idempotencyKey,readCount=f.requests.length,click=h.button('실패한 Qwen 새 초안').props.onClick;click();click();await h.idle();
+  assert.equal(f.requests[readCount].body,null,'current server failure is read before a new prepare');assert.deepEqual(f.posts().map(request=>request.body.action),['prepare','approve','execute']);assert.equal(h.creates.length,1);assert.notEqual(f.posts()[0].body.idempotencyKey,key);assert.equal(f.posts()[0].body.idempotencyKey,JSON.parse(h.storage.get('yoofam-seo-workspace:p')).idempotencyKey);assert.ok(f.posts().slice(1).every(request=>request.body.jobId!==f.old.id));assert.equal(JSON.stringify(f.old),before);assert.match(text(h.render()),/검정 면장갑/);
+ }finally{h.close();}
+});
+
+test('a failed Qwen retry retains its original state when a fresh read is running, uncertain, completed, missing or has a changed configuration',async()=>{
+ for(const change of ['running','uncertain','completed','missing','configuration','fingerprint']){const f=failedQwenRetryUi(),{h}=f;try{await f.ready();const before=h.storage.get('yoofam-seo-workspace:p');
+   if(change==='missing')f.setLatest(null);else if(change==='configuration')f.setConfiguration({configured:true,model:'@cf/meta/llama-3.3-70b-instruct-fp8-fast',maxOutputTokens:2048,issues:[]});else{const latest=plain(f.old);if(change==='fingerprint')latest.review.fingerprint='c'.repeat(64);else{latest.status=change;latest.error=change==='uncertain'?{code:'unknown',message:'상태 확인 필요',mayHaveBeenCharged:true}:null;if(change==='completed')latest.result={model:latest.review.model,appliedToContent:false,provenance:'generated',draft:{title:'검정 면장갑',keywords:['면장갑'],description:'면',attributes:[{sourceIndex:0,name:'상품속성: 소재',value:'면'}],warnings:[]}};}f.setLatest(latest);}
+   h.button('실패한 Qwen 새 초안').props.onClick();await h.idle();assert.equal(f.posts().length,0,change);assert.equal(h.creates.length,0,change);assert.equal(h.storage.get('yoofam-seo-workspace:p'),before,change);
+  }finally{h.close();}}
+});
+
+test('failed Qwen renewal requires live consent and rejects dirty, owner, version and stage changes during the failure read',async()=>{
+ for(const change of ['consent','dirty','owner','version','stage']){const f=failedQwenRetryUi(),{h}=f;try{await f.ready();const before=h.storage.get('yoofam-seo-workspace:p'),click=h.button('실패한 Qwen 새 초안').props.onClick;
+   if(change==='consent'){h.consent().props.onChange({target:{checked:false}});await h.idle();assert.equal(h.button('실패한 Qwen 새 초안').props.disabled,true);click();await h.idle();}
+   else{const gate=f.hold();click();await h.idle();if(change==='dirty')h.setAllowed(false);if(change==='owner')h.setOwner('owner-b');if(change==='version')h.setVersion('2026-10-10T00:00:01.000Z');if(change==='stage')h.setActive(false);h.render();gate.resolve();await h.idle();}
+   assert.equal(f.posts().length,0,change);assert.equal(h.creates.length,0,change);assert.equal(h.storage.get('yoofam-seo-workspace:p'),before,change);
+  }finally{h.close();}}
+});
+
+test('ordinary Google, Llama and historical recovery failures retain their prior same-request workflow without a new UUID',async()=>{
+ for(const options of [{model:'google-translate-gtx'},{model:'@cf/meta/llama-3.3-70b-instruct-fp8-fast'},{recovery:true}]){const f=failedQwenRetryUi(options),{h}=f;try{
+  await h.idle();h.button('초안 상태 조회').props.onClick();await h.idle();assert.equal(h.button('실패한 Qwen 새 초안'),undefined);const before=h.storage.get('yoofam-seo-workspace:p');h.button(options.model==='google-translate-gtx'?'한국어 초안 자동 작성':'AI로 자동 생성').props.onClick();await h.idle();assert.equal(f.posts().length,0);assert.equal(h.creates.length,0);assert.equal(h.storage.get('yoofam-seo-workspace:p'),before);
+ }finally{h.close();}}
+});
 const failedGoogleJob={id:'failed-google',productId:'p',productVersion:version,contentRevision:2,status:'failed',result:null,error:{code:'GOOGLE_TRANSLATION_FAILED_HTTP_429',message:'Google 번역 HTTP 429 응답',mayHaveBeenCharged:false},startedAt:version,finishedAt:version,review:{destination:'Google 번역',model:'google-translate-gtx'}};
 const workersReviewJob={id:'workers-review',productId:'p',productVersion:version,contentRevision:2,status:'prepared',result:null,error:null,review:{destination:'Cloudflare Workers AI',model:'@cf/meta/m2m100-1.2b',fingerprint:'a'.repeat(64),workersRecovery:{failedJobId:failedGoogleJob.id,scope:'collected',strategy:'m2m-text-v1',model:'@cf/meta/m2m100-1.2b',maxCalls:4}}};
 
