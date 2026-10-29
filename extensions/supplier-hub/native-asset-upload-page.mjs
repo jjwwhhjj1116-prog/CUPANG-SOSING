@@ -14,6 +14,7 @@ export async function nativeAssetUploadPage(input){
   const codes=Array.from((document.body.innerText||'').matchAll(/Company Code:\s*(A\d+)\b/g),match=>match[1]);
   if(codes.length!==1||codes[0]!==binding?.identity?.company?.code||({A01526306:'유앤채',A01464742:'와이홉'})[codes[0]]!==binding.identity.company.name)fail('현재 Supplier Hub 회사가 다릅니다.');
   try{records=JSON.parse(data.yoofamSingleDocumentRecords||'{}');record=records[binding.packetDigest];}catch{fail();}
+  if(record?.currentReadRecovery)fail('현재 읽기로 복구한 문서의 원본 파일을 다시 보내지 않았습니다.');
   if(!record||!same(record.binding,binding)||!same(record.docId,target?.docId)||record.createOperationId!==target?.createOperationId||record.createOperationId!==binding.requestId+':create'
    ||!same(record.baselineDocIds,target.baselineDocIds)||target.baselineDocIds.some(id=>String(id)===String(record.docId))||record.loadedDocId!==undefined||!['created','update-requested','updated'].includes(record.state)
    ||!HASH.test(binding.nativeAssetSourcePlanSha256||'')||binding.nativeAssetSourcePlanSha256!==input.sourcePlanSha256||target.requestId!==binding.requestId||target.packetDigest!==binding.packetDigest||target.preparedBodySha256!==binding.preparedBodySha256)fail('이 요청에서 생성한 정확한 새 문서만 업로드할 수 있습니다.');

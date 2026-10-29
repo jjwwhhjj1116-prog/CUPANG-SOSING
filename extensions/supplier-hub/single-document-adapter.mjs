@@ -17,6 +17,7 @@ import {nativeAssetUploadPlanSha256,validateNativeAssetUploadDescriptors,NativeA
 import {NativeLegalBytesError} from './native-legal-bytes.mjs';
 import {singleExistingDocumentRepairPage,existingRepairPageFailure} from './single-existing-document-repair.mjs';
 import {singleRecordMirrorPage} from './single-record-mirror-page.mjs';
+import {savedDraftCurrentReadPage} from './saved-draft-current-read-page.mjs';
 
 const HASH=/^[a-f0-9]{64}$/;
 const ID=/^\w[\w-]{0,99}$/;
@@ -147,6 +148,7 @@ export async function singleDocumentHubRequestPage(input){
       ||record.baselineDocIds?.some(id=>same(id,record.docId)))throw Error('이 요청에서 새로 만든 정확한 문서만 조회할 수 있습니다.');
   }
   if(input.method==='POST'){
+    if(record?.currentReadRecovery&&['/sr/draft/api/create','/sr/draft/api/update'].includes(input.path))throw Error('현재 읽기로 복구한 문서의 파일·본문은 다시 전송할 수 없습니다.');
     if(typeof input.operationId!=='string'||!input.operationId.startsWith(binding.requestId+':'))throw Error('원래 개별 문서 요청을 확인해주세요.');
     if(input.path.endsWith('/create')){
       if(record)throw Error('문서 생성은 이미 요청했습니다. 읽기로 확인해주세요.');
@@ -225,8 +227,9 @@ export function decodeSingleOwnedRecordResult(value){
   return result.record;
 }
 
-/** Carry only this previously observed own ACK across an authorized same-tab
- * navigation. Browser navigation clears datasets; it does not create ownership. */
+/** Carry only this previously observed own record across an authorized same-tab
+ * navigation. It can contain original ACKs or a distinct current-server read
+ * proof. Navigation creates neither ownership nor historical acknowledgments. */
 export function singleDocumentRestoreOwnedRecordPage(input){
   if(typeof input==='string')input=JSON.parse(input);
   const canon=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canon).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canon(value[key])).join(',')+'}';
@@ -455,7 +458,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     // Keep JSON null, zero and empty values across the browser argument
     // boundary. The page restores the exact envelope before its unchanged
     // source/body/owned-document checks; no default or ID is substituted.
-    const jsonPage=[singleDocumentHubRequestPage,singleDocumentRetryCreatePage,nativeAssetUploadPage,nativeAssetRecoveryPage,singleDocumentOwnedRecordPage,singleDocumentRestoreOwnedRecordPage,singleExistingDocumentRepairPage].includes(func);
+    const jsonPage=[singleDocumentHubRequestPage,singleDocumentRetryCreatePage,nativeAssetUploadPage,nativeAssetRecoveryPage,singleDocumentOwnedRecordPage,singleDocumentRestoreOwnedRecordPage,singleExistingDocumentRepairPage,savedDraftCurrentReadPage].includes(func);
     const wireArgs=jsonPage?[JSON.stringify(args[0]),...args.slice(1)]:args;
     const [execution]=await api.scripting.executeScript({target,func,args:wireArgs});
     if(execution?.error)fail('PAGE_EXECUTION_FAILED','원래 문서 기록의 페이지 실행 응답이 실패했습니다. 새 요청을 보내지 않고 같은 문서를 유지했습니다.');
@@ -496,6 +499,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
   async function uploadNativeAssets(input,binding,onlyMissing=false){
     try{
       const readCurrentFresh=async(fresh)=>{const current=await owned({...input,docId:input.body?.docId},fresh),record=current.record,sourcePlan=sourceBindings.get(canonical(input.identity))?.nativeSourcePlan;
+        if(record.currentReadRecovery)fail('SAVED_DRAFT_TARGET_READ_ONLY','현재 읽기로 복구한 문서의 원본 파일을 다시 보내지 않았습니다.');
         return{ledger:copy(record.nativeAssets??null),binding:current.binding,sourcePlan,target:{docId:record.docId,requestId:current.binding.requestId,packetDigest:current.binding.packetDigest,preparedBodySha256:current.binding.preparedBodySha256,createOperationId:record.createOperationId,baselineDocIds:copy(record.baselineDocIds)}};};
       const current=await readCurrentFresh(binding);let first=true;const readCurrent=async()=>{if(first){first=false;return current;}return readCurrentFresh();};
       const scope=sourceBindings.get(canonical(input.identity)),privateBytes=new Map(),privateReads=new Map();let imageBatch;
@@ -666,9 +670,84 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     }else if(reply.record!==null)fail('EXISTING_REPAIR_PROOF','읽기 확인에서 문서 기록을 변경하지 않았습니다.');
     return proof;
   }
+  function savedReadBody(sourcePlan,docId){
+    const body=copy(sourcePlan.body);body.docId=docId;
+    for(const document of body.jsonDocument)for(const key of ['msrpAgree','labelContactAgreed'])if(document.imagePage&&Object.hasOwn(document.imagePage,key))document.imagePage[key]=false;
+    return body;
+  }
+  function savedReadBeforeConsents(body,stages){
+    const result=copy(body),keys={productPage:'msrpAgree',imagePage:'labelContactAgreed'};
+    for(const document of result.jsonDocument??[])for(const stage of stages){const key=keys[stage],page=document?.imagePage;
+      if(page&&Object.hasOwn(page,key)){if(typeof page[key]!=='boolean')fail('NATIVE_PREPARED_UNCONFIRMED','동의 이후의 문서 값이 변경되었습니다.');page[key]=false;}}
+    return result;
+  }
+  async function currentSavedRead(input,binding,sourcePlan,mode,extra={},documentId){
+    if(!nativeSha||!wholeProduct||!sourcePlan||sourcePlan.sourcePlanSha256!==nativeSha||sourcePlan.nativeLegalAttachmentPlan?.files?.length
+      ||!Array.isArray(sourcePlan.images)||sourcePlan.images.length<1||sourcePlan.images.length>150)fail('SAVED_DRAFT_TARGET_UNCONFIRMED','같은 저장 문서의 전체 원본 계획·증빙 범위를 확인하지 못했습니다. 파일·본문을 다시 보내지 않았습니다.');
+    const expectedBody=input.expectedBody??savedReadBody(sourcePlan,input.docId),prepared=copy(expectedBody);prepared.docId=null;
+    if(await digest(prepared)!==binding.preparedBodySha256||!equal(expectedBody.docId,input.docId))fail('SAVED_DRAFT_TARGET_UNCONFIRMED','원래 검토한 견적 본문과 현재 저장본이 다릅니다.');
+    const expectedImages=sourcePlan.images.map(file=>Object.fromEntries(['transportName','contentType','byteLength','sha256'].map(key=>[key,file[key]])));
+    const authorizedStages=mode==='check'?(input.stageConsents??[]).map(entry=>entry.stage):[];
+    if(authorizedStages.length>2||authorizedStages.some((stage,index)=>stage!==['productPage','imagePage'][index]))fail('NATIVE_PREPARED_UNCONFIRMED','원래 단계별 사용자 동의 기록을 확인하지 못했습니다.');
+    let value=await execute(input.tab,input.identity,savedDraftCurrentReadPage,[{binding,expectedTarget:{tabId:input.tab.tabId,windowId:input.tab.windowId},docId:input.docId,
+      baselineDocIds:copy(input.baselineDocIds),expectedImages,expectedBody,previousTarget:Object.fromEntries(['tabId','windowId','origin','requestId','packetDigest'].map(key=>[key,(input.previousTarget??input.tab)[key]])),mode,...(mode==='check'?{authorizedStages}:{}),...extra}],documentId);
+    try{if(typeof value==='string'){if(value.length>6*1024*1024)throw Error();value=JSON.parse(value);}}catch{fail('SAVED_DRAFT_TARGET_UNCONFIRMED','현재 저장 문서의 읽기 응답 형식을 확인하지 못했습니다.');}
+    const failure=value?.currentReadFailure;
+    if(failure){const phase=typeof failure.phase==='string'&&/^[a-z0-9-]{1,40}$/.test(failure.phase)?failure.phase:'read',code=typeof failure.code==='string'&&/^[a-z0-9-]{1,40}$/.test(failure.code)?failure.code:'comparison';
+      fail('SAVED_DRAFT_TARGET_UNCONFIRMED','같은 저장 문서의 현재 읽기 확인이 중단됐습니다. 단계: '+phase+' / '+code+'. 파일·본문은 다시 보내지 않았습니다.');}
+    const keys=['body','files','fileSetSha256','byteSetSha256','rawBodySha256','filesCount','duplicateMatches','documentState','readOnly','remoteWrites','historicalAckRecovered','observedAt',...(mode==='bind'?['record']:[])];
+    if(!value||Object.keys(value).sort().join(',')!==keys.sort().join(',')||!Array.isArray(value.files)||value.filesCount!==expectedImages.length||value.files.length!==expectedImages.length
+      ||value.duplicateMatches!==0||value.documentState!=='UNFINISHED'||value.readOnly!==true||value.remoteWrites!==false||value.historicalAckRecovered!==false
+      ||!['fileSetSha256','byteSetSha256','rawBodySha256'].every(key=>HASH.test(value[key]||''))||!Number.isSafeInteger(value.observedAt)||Math.abs(now()-value.observedAt)>60000
+      ||value.fileSetSha256!==await digest(value.files)||value.rawBodySha256!==await digest(value.body)
+      ||value.byteSetSha256!==await digest(expectedImages.sort((a,b)=>a.transportName<b.transportName?-1:a.transportName>b.transportName?1:0))
+      ||!equal(savedReadBeforeConsents(normalizeNativeDocumentReadback(value.body,expectedBody),authorizedStages),expectedBody))fail('SAVED_DRAFT_TARGET_UNCONFIRMED','현재 저장 문서의 본문·전체 파일·실제 바이트가 원래 견적과 일치하지 않습니다. 파일·본문을 다시 보내지 않았습니다.');
+    validateNativeAssetUploadDescriptors(value.files,{kind:'image',expectedFiles:sourcePlan.images});
+    return value;
+  }
+  async function qualifySavedDraftTarget(input){
+    if(!nativeSha||!wholeProduct||input.docId===null||input.docId===undefined||input.requestId!==input.tab?.requestId||!Array.isArray(input.baselineDocIds)
+      ||input.baselineDocIds.some(id=>String(id)===String(input.docId)))fail('SAVED_DRAFT_TARGET_SCOPE','원래 요청의 알려진 저장 문서에서만 전용 검증 탭을 복구할 수 있습니다.');
+    const binding=await bindingFor(input.identity,input.sessionId),sourcePlan=copy(sourceBindings.get(canonical(input.identity))?.nativeSourcePlan);
+    assertSingleOwnedTarget(input.tab,binding);assertSingleOwnedTarget(input.previousTarget,binding);mutable(input.identity);
+    if(input.tab.tabId===input.previousTarget.tabId)fail('SAVED_DRAFT_TARGET_SCOPE','닫힌 원래 탭과 구분된 새 전용 검증 탭이 아닙니다.');
+    const existing=await execute(input.tab,input.identity,singleDocumentOwnedRecordPage,[binding,input.docId]);
+    if(existing&&(!existing.currentReadRecovery||!equal(existing.docId,input.docId)||!equal(existing.baselineDocIds,input.baselineDocIds)||existing.loadedDocId!==undefined||existing.watchToken!==undefined
+      ||existing.validation!==undefined||existing.updateOperationId!==undefined||existing.nativeAssets!==undefined||existing.submitOperationId!==undefined))fail('SAVED_DRAFT_TARGET_SCOPE','새 전용 검증 탭에 더 진행된 기록이 있어 변경하지 않았습니다.');
+    const observed=await currentSavedRead(input,binding,sourcePlan,existing?'check':'read'),frame=frameDocuments.get(input.tab.tabId);
+    if(typeof frame!=='string')fail('SAVED_DRAFT_TARGET_UNCONFIRMED','현재 읽기 확인을 수행한 정확한 브라우저 문서를 확인하지 못했습니다.');
+    await bindingFor(input.identity,input.sessionId);
+    if(!equal(sourceBindings.get(canonical(input.identity))?.nativeSourcePlan,sourcePlan))fail('SOURCE_CHANGED','조회 중 원래 상품·파일 계획이 변경되었습니다.');
+    const proof={format:'yoofam-current-saved-draft-target-v1',requestId:binding.requestId,docId:input.docId,tabId:input.tab.tabId,windowId:input.identity.windowId,
+      identityDigest:binding.identityDigest,packetDigest:binding.packetDigest,preparedBodySha256:binding.preparedBodySha256,sourcePlanSha256:nativeSha,
+      baselineSha256:await digest(input.baselineDocIds),bodySha256:binding.preparedBodySha256,fileSetSha256:observed.fileSetSha256,byteSetSha256:observed.byteSetSha256,
+      filesCount:observed.filesCount,duplicateMatches:0,documentState:'UNFINISHED',readOnly:true,remoteWrites:false,historicalAckRecovered:false,observedAt:now()};
+    const bound=await currentSavedRead(input,binding,sourcePlan,'bind',{proof,expectedObservation:Object.fromEntries(['rawBodySha256','fileSetSha256','byteSetSha256','filesCount'].map(key=>[key,observed[key]]))},frame),record=bound.record;
+    if(!record||!equal(record.binding,binding)||!equal(record.docId,input.docId)||record.state!=='updated'||record.createOperationId!==binding.requestId+':create'
+      ||!equal(record.baselineDocIds,input.baselineDocIds)||record.updateOperationId!==undefined||record.nativeAssets!==undefined||record.validation!==undefined||record.loadedDocId!==undefined
+      ||record.currentReadRecovery?.fileBodyWritesAllowed!==false||record.currentReadRecovery?.historicalAckRecovered!==false||!equal(record.currentReadRecovery.proof,proof)
+      ||record.currentReadRecovery.proofSha256!==await digest(proof))fail('SAVED_DRAFT_TARGET_UNCONFIRMED','현재 읽기만 수행한 같은 문서의 복구 기록을 확인하지 못했습니다.');
+    const after=await bindingFor(input.identity,input.sessionId);
+    if(!equal(after,binding)||!equal(sourceBindings.get(canonical(input.identity))?.nativeSourcePlan,sourcePlan))fail('SOURCE_CHANGED','복구 확인 중 원래 요청의 상품·회사가 변경되었습니다.');
+    pageRecords.set(binding.packetDigest,copy(record));return proof;
+  }
   async function qualifyPreparedDraft(input){
     if(!nativeSha)fail('NATIVE_PREPARED_UNCONFIRMED','원본 파일을 확인한 새 문서만 등록 단계를 확인할 수 있습니다.');
     const {binding,record}=await owned(input),sourcePlan=sourceBindings.get(canonical(input.identity))?.nativeSourcePlan;mutable(input.identity);
+    if(record.currentReadRecovery){
+      const recovery=record.currentReadRecovery,proof=recovery.proof;
+      if(!sourcePlan||!['updated','validated'].includes(record.state)||recovery.fileBodyWritesAllowed!==false||recovery.historicalAckRecovered!==false
+        ||record.updateOperationId!==undefined||record.nativeAssets!==undefined||!proof||proof.format!=='yoofam-current-saved-draft-target-v1'||proof.requestId!==binding.requestId||!equal(proof.docId,record.docId)
+        ||proof.tabId!==input.tab.tabId||proof.windowId!==input.identity.windowId||proof.identityDigest!==binding.identityDigest||proof.packetDigest!==binding.packetDigest
+        ||proof.sourcePlanSha256!==nativeSha||proof.preparedBodySha256!==binding.preparedBodySha256||proof.bodySha256!==binding.preparedBodySha256||proof.baselineSha256!==await digest(record.baselineDocIds)
+        ||proof.readOnly!==true||proof.remoteWrites!==false||proof.historicalAckRecovered!==false||recovery.proofSha256!==await digest(proof))fail('NATIVE_PREPARED_UNCONFIRMED','같은 저장 문서의 현재 읽기 복구 증거가 원래 요청과 다릅니다.');
+      const observation=await currentSavedRead({...input,baselineDocIds:record.baselineDocIds},binding,sourcePlan,'check');
+      const authorizedStages=(input.stageConsents??[]).map(entry=>entry.stage);
+      if(authorizedStages.some(stage=>record.stageConsentOperations?.[stage]?.state!=='observed'||record.stageConsentOperations[stage].operationId!==binding.requestId+':stage-consent:'+stage)
+        ||['fileSetSha256','byteSetSha256','filesCount'].some(key=>recovery[key]!==observation[key])||recovery.rawBodySha256!==await digest(savedReadBeforeConsents(observation.body,authorizedStages)))fail('NATIVE_PREPARED_UNCONFIRMED','복구 이후 같은 문서의 파일·본문이 변경되었습니다.');
+      const after=await owned(input);if(!equal(after.record,record)||!equal(sourceBindings.get(canonical(input.identity))?.nativeSourcePlan,sourcePlan))fail('NATIVE_PREPARED_UNCONFIRMED','현재 읽기 확인 중 문서·원본 계획이 변경되었습니다.');
+      return{readOnly:true,docId:record.docId,company:copy(input.identity.company),identityDigest:binding.identityDigest,packetDigest:binding.packetDigest,sourcePlanSha256:nativeSha,metadataObserved:true,checkedAt:observation.observedAt};
+    }
     if(!sourcePlan||!['updated','validated'].includes(record.state)||record.updateOperationId!==binding.requestId+':update'||record.nativeAssets?.state!=='complete')fail('NATIVE_PREPARED_UNCONFIRMED','원래 새 문서의 저장·원본 업로드 완료 기록을 확인해주세요.');
     const target={docId:record.docId,requestId:binding.requestId,packetDigest:binding.packetDigest,preparedBodySha256:binding.preparedBodySha256,createOperationId:record.createOperationId,baselineDocIds:copy(record.baselineDocIds)},
       plan={format:'yoofam-native-asset-upload-plan-v1',identity:copy(sourcePlan.identity),identityDigest:sourcePlan.identityDigest,target,images:copy(sourcePlan.images),nativeLegalAttachmentPlan:sourcePlan.nativeLegalAttachmentPlan?copy(sourcePlan.nativeLegalAttachmentPlan):null,planSha256:null,registered:false,remoteWrites:false,submissionReady:false,transportReady:false};
@@ -710,7 +789,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     return copy(proof);
   }
   return Object.freeze({readSource,
-    qualifyPreparedDraft,...(nativeSha?{continueReservedAssets,readNativeSourceSnapshot,inspectCreateRetry,inspectUnsentUpdate,inspectExistingDocument,inspectExistingRepairContinuation,bindExistingDocumentRepair:input=>inspectExistingDocument(input,'bind')}:{}),
+    qualifyPreparedDraft,...(nativeSha?{qualifySavedDraftTarget,continueReservedAssets,readNativeSourceSnapshot,inspectCreateRetry,inspectUnsentUpdate,inspectExistingDocument,inspectExistingRepairContinuation,bindExistingDocumentRepair:input=>inspectExistingDocument(input,'bind')}:{}),
     ...(nativeSha?{readOwnedTargetPresence:async input=>{
       const binding=sourceBindings.get(canonical(input.identity))?.binding;
       if(!binding||binding.requestId!==input.requestId||binding.packetDigest!==input.packetDigest||typeof api.tabs.query!=='function')fail('TAB_CHANGED','원래 검증 탭의 존재 여부를 확인하지 못했습니다.');

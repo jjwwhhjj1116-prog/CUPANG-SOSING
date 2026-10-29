@@ -150,6 +150,43 @@ test('native recovery accepts a delayed original reply after sixty seconds witho
  assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);assert.equal(f.calls.length,0);
 });
 
+test('saved-document target recovery requires its boolean capability and never inherits a general draft permission',async()=>{
+ for(const available of [undefined,false]){const f=await fixture();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,...(available===undefined?{}:{savedDraftTargetRecoveryAvailable:available})});const session=await f.session();
+  await assert.rejects(f.client.runProductDocumentDraft(session,'recoverSavedDraftTarget',new AbortController().signal),error=>error.code==='PRODUCT_DOCUMENT_SAVED_TARGET_RECOVERY_UNAVAILABLE'&&!error.uncertain);assert.equal(f.sent.length,1);
+ }
+ for(const capability of ['true',null,1,true]){const f=await fixture();f.bridge=async()=>({...f.preview(),savedDraftTargetRecoveryAvailable:capability,...(capability===true?{}:{draftPreparationAvailable:true})});
+  await assert.rejects(f.session(),error=>error.code==='PRODUCT_DOCUMENT_REPLY_IDENTITY');
+ }
+});
+
+test('only a fully bound closed saved-document read exposes target recovery eligibility',async()=>{
+ for(const mode of ['eligible','unrelated','no-capability','request','identity','packet','original-body','prepared-body','no-document','proof']){const f=await fixture();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,...(mode==='no-capability'?{}:{savedDraftTargetRecoveryAvailable:true})});const session=await f.session();
+  f.bridge=async()=>{const value=draftState(f,'update-requested',{docId:'2347603',needsRecovery:true,error:{code:mode==='unrelated'?'OWNED_RECORD_MISSING':'SAVED_DRAFT_TARGET_CLOSED',message:'원래 전용 검증 탭이 닫혔습니다.'}});
+   if(mode==='request')value.requestId='different-request';if(mode==='identity')value.identityDigest='a'.repeat(64);if(mode==='packet')value.packetDigest='b'.repeat(64);
+   if(mode==='original-body')value.originalBodySha256='c'.repeat(64);if(mode==='prepared-body')value.preparedBodySha256='d'.repeat(64);if(mode==='no-document')value.docId=null;if(mode==='proof')value.draftProof.consented=true;
+   return value;
+  };
+  await assert.rejects(f.client.runProductDocumentDraft(session,'recoverDraft',new AbortController().signal),error=>{
+   assert.equal(error.savedDraftTargetClosed,mode==='eligible');assert.equal(error.uncertain,false);
+   if(['eligible','unrelated','no-capability'].includes(mode)){assert.equal(error.code,'PRODUCT_DOCUMENT_DRAFT_SOURCE_FAILURE');assert.equal(error.knownDocId,'2347603');}
+   else assert.equal(error.code,'PRODUCT_DOCUMENT_DRAFT_REPLY_IDENTITY');return true;
+  });assert.deepEqual(f.sent.map(row=>row.payload.action),['preview','recoverDraft']);assert.equal(f.calls.length,0);
+ }
+});
+
+test('saved-document target recovery accepts only an independently read updated checkpoint and uses a read-only timeout',async()=>{
+ const f=await fixture();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,savedDraftTargetRecoveryAvailable:true});const session=await f.session();
+ f.bridge=async()=>undefined;const pending=f.client.runProductDocumentDraft(session,'recoverSavedDraftTarget',new AbortController().signal);await f.wait(()=>f.sent.length===2);
+ assert.equal([...f.timers.values()][0].due-f.clock.now,180000);f.advance(90000);assert.equal(f.listeners.size,1);assert.equal(f.sent.length,2);
+ f.emit(f.sent[1],draftState(f,'updated',{docId:'2347603',recovered:true}));const recovered=await pending;
+ assert.equal(recovered.state,'updated');assert.equal(recovered.docId,'2347603');assert.deepEqual(plain(recovered.draftProof.validatedSteps),[]);assert.equal(recovered.receipt,undefined);assert.equal(recovered.challenge,undefined);
+ for(const mode of ['created','validated','missing-recovered','error']){f.bridge=async()=>draftState(f,['created','validated'].includes(mode)?mode:'updated',{docId:'2347603',...(mode==='missing-recovered'?{}:{recovered:true}),...(mode==='error'?{error:{code:'UNQUALIFIED',message:'미확인'}}:{})});
+  await assert.rejects(f.client.runProductDocumentDraft(session,'recoverSavedDraftTarget',new AbortController().signal),error=>error.code==='PRODUCT_DOCUMENT_DRAFT_REPLY_IDENTITY'&&!error.uncertain);
+ }
+ f.bridge=async()=>undefined;const missing=f.client.runProductDocumentDraft(session,'recoverSavedDraftTarget',new AbortController().signal);await f.wait(()=>f.sent.length===7);f.advance(180001);
+ await assert.rejects(missing,error=>error.code==='PRODUCT_DOCUMENT_ACK_MISSING'&&!error.uncertain&&!error.savedDraftTargetClosed);assert.equal(f.calls.length,0);assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);
+});
+
 test('same-document repair validates its new capability and only authenticated missing-record evidence enables approval',async()=>{
  const f=await fixture();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true});const older=await f.session();
  await assert.rejects(f.client.runProductDocumentDraft(older,'repairExistingDraft',new AbortController().signal),error=>error.code==='PRODUCT_DOCUMENT_REPAIR_UNAVAILABLE'&&!error.uncertain);

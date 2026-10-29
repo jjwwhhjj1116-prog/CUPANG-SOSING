@@ -124,6 +124,69 @@ test('an authenticated missing-create result requires explicit retry consent and
 
 const repairDraft='같은 문서 파일 저장·본문 복구 1회';
 const repairProof=(h,attempted=false)=>({evidence:'document-draft-preparation',validatedSteps:[],checkpointSequence:12,observedAt:h.f.clock.now,submitted:false,consented:false,...(attempted?{existingDocumentRepairAttempted:true}:{})});
+const recoverSavedTarget='원래 저장 문서 검증 탭 복구 · 파일·본문 재전송 안 함';
+const savedTargetCapabilities={draftPreparationAvailable:true,preparedLifecycleAvailable:true,savedDraftTargetRecoveryAvailable:true,existingDocumentRepairAvailable:true,existingDocumentRepairRetryAvailable:true,existingDocumentRepairContinuationAvailable:true,existingDocumentRepairReservedResumeAvailable:true,existingDocumentRepairSegmentedAvailable:true};
+function savedTargetProof(h,sequence=12){return {...repairProof(h,true),existingDocumentRepairRetryAttempted:true,existingDocumentRepairContinuationAttempted:true,existingDocumentRepairContinuationResumed:true,checkpointSequence:sequence};}
+function savedTargetClosed(h,payload,code='SAVED_DRAFT_TARGET_CLOSED'){return draftResult(h.f,payload.packet.requestId,'update-requested',{docId:'2347603',needsRecovery:true,draftProof:savedTargetProof(h),error:{code,message:'원래 저장 문서의 전용 검증 탭이 닫혔습니다.'}});}
+
+test('saved original document recovers only its verification tab after remount, then validates only on an explicit continuation',async()=>{
+ const seed=await fixture();let h;try{
+  allowDraft(seed,payload=>draftResult(seed.f,payload.packet.requestId,'update-requested',{docId:'2347603',needsRecovery:true,draftProof:savedTargetProof(seed)}));
+  await seed.idle();await seed.click(open);await seed.click(prepareDraft);const original=seed.f.sent[1].payload.packet.requestId,reservation=[...seed.stored.entries()];seed.close();
+  h=await fixture(SINGLE_COMPANIES[0],{stored:seed.stored});h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,...savedTargetCapabilities}
+   :payload.action==='recoverSavedDraftTarget'?draftResult(h.f,payload.packet.requestId,'updated',{docId:'2347603',recovered:true,draftProof:savedTargetProof(h,13)})
+   :payload.action==='prepareDraft'?draftResult(h.f,payload.packet.requestId,'validated',{docId:'2347603',draftProof:{...savedTargetProof(h,14),validatedSteps:[2,3,4,5]}})
+   :savedTargetClosed(h,payload);
+  await h.idle();await h.click('이전 문서 전송 자료 확인');assert.equal(h.button(recoverSavedTarget),undefined);await h.click(recoverDraft);
+  assert.ok(h.button(recoverSavedTarget));assert.equal(h.button(prepareDraft),undefined);assert.equal(h.button(repairDraft),undefined);assert.equal(h.button('원래 예약의 미요청 파일만 이어 저장'),undefined);assert.equal(h.button('원래 요청의 새 검증 탭 연결 · 생성 안 함'),undefined);
+  assert.equal(nodes(h.render()).filter(node=>node.type==='input'&&node.props.type==='checkbox').length,0);
+  const stale=h.button(recoverSavedTarget).props.onClick;stale();stale();await h.idle();
+  assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','recoverPreparedDraft','recoverSavedDraftTarget']);assert.ok(h.button(continueDraft));assert.equal(h.button(recoverSavedTarget),undefined);assert.equal(h.button(reviewPrepared),undefined);
+  assert.deepEqual([...h.stored.entries()],reservation);assert.deepEqual(h.lockPairs.at(-1),[true,true]);stale();await h.idle();assert.equal(h.f.sent.length,3);
+  await h.click(continueDraft);assert.ok(h.button(reviewPrepared));assert.equal(h.button(confirmPrepared),undefined);assert.equal(h.f.sent.filter(row=>row.payload.action==='prepareDraft').length,1);
+  assert.ok(h.f.sent.every(row=>row.payload.packet.requestId===original));assert.ok(h.f.sent.every(row=>row.payload.packet.review.preparedBodySha256===h.f.review.preparedBodySha256));assert.equal(h.f.history.length,0);assert.ok(h.f.calls.every(row=>row.method==='GET'));
+ }finally{seed.close();h?.close();}
+});
+
+test('saved-target button requires its exact closed response and native flag, and unrelated or stale reads revoke old callbacks',async()=>{
+ for(const mode of ['no-flag','unrelated','identity','document','stale-read','source-ABA']){const h=await fixture();let code='SAVED_DRAFT_TARGET_CLOSED';try{
+  h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,...savedTargetCapabilities,...(mode==='no-flag'?{savedDraftTargetRecoveryAvailable:false}:{})}
+   :payload.action==='prepareDraft'?draftResult(h.f,payload.packet.requestId,'update-requested',{docId:'2347603',needsRecovery:true,draftProof:savedTargetProof(h)})
+   :(()=>{const value=savedTargetClosed(h,payload,mode==='unrelated'?'UNRELATED_READ_FAILURE':code);if(mode==='identity')value.packetDigest='a'.repeat(64);if(mode==='document')value.docId='other-document';return value;})();
+  await h.idle();await h.click(open);await h.click(prepareDraft);await h.click(recoverDraft);
+  if(['no-flag','unrelated','identity','document'].includes(mode)){assert.equal(h.button(recoverSavedTarget),undefined);assert.equal(h.f.sent.some(row=>row.payload.action==='recoverSavedDraftTarget'),false);continue;}
+  const stale=h.button(recoverSavedTarget).props.onClick,reservation=[...h.stored.entries()];
+  if(mode==='stale-read'){code='UNRELATED_READ_FAILURE';await h.click(recoverDraft);}
+  else{const props=h.props();h.render({...props,review:{...props.review,reviewDigest:'a'.repeat(64)}});h.render(props);}
+  assert.equal(h.button(recoverSavedTarget),undefined);stale();await h.idle();assert.equal(h.f.sent.some(row=>row.payload.action==='recoverSavedDraftTarget'),false);assert.deepEqual([...h.stored.entries()],reservation);assert.equal(h.f.history.length,0);
+ }finally{h.close();}}
+});
+
+test('saved-target recovery timeout retains the original reservation and needs another authenticated read before any retry',async()=>{
+ const h=await fixture();try{
+  h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,...savedTargetCapabilities}
+   :payload.action==='prepareDraft'?draftResult(h.f,payload.packet.requestId,'update-requested',{docId:'2347603',needsRecovery:true,draftProof:savedTargetProof(h)})
+   :payload.action==='recoverSavedDraftTarget'?undefined:savedTargetClosed(h,payload);
+  await h.idle();await h.click(open);await h.click(prepareDraft);await h.click(recoverDraft);const reservation=[...h.stored.entries()],stale=h.button(recoverSavedTarget).props.onClick;
+  stale();h.flush();await h.wait(()=>h.f.sent.some(row=>row.payload.action==='recoverSavedDraftTarget'));h.f.advance(180001);await h.idle();assert.equal(h.button(recoverSavedTarget),undefined);assert.ok(h.button(recoverDraft));assert.equal(h.button(continueDraft),undefined);assert.deepEqual(h.lockPairs.at(-1),[true,true]);
+  stale();await h.idle();assert.equal(h.f.sent.filter(row=>row.payload.action==='recoverSavedDraftTarget').length,1);assert.deepEqual([...h.stored.entries()],reservation);
+  await h.click(recoverDraft);assert.ok(h.button(recoverSavedTarget));assert.equal(h.f.history.length,0);assert.ok(h.f.calls.every(row=>row.method==='GET'));
+ }finally{h.close();}
+});
+
+test('saved-target recovery rejects a different document and cannot publish a late result across a source ABA',async()=>{
+ for(const mode of ['document','source-ABA']){const h=await fixture(),reply=deferred();try{
+  h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,...savedTargetCapabilities}
+   :payload.action==='prepareDraft'?draftResult(h.f,payload.packet.requestId,'update-requested',{docId:'2347603',needsRecovery:true,draftProof:savedTargetProof(h)})
+   :payload.action==='recoverSavedDraftTarget'?reply.promise:savedTargetClosed(h,payload);
+  await h.idle();await h.click(open);await h.click(prepareDraft);await h.click(recoverDraft);const reservation=[...h.stored.entries()],stale=h.button(recoverSavedTarget).props.onClick;
+  stale();h.flush();await h.wait(()=>h.f.sent.some(row=>row.payload.action==='recoverSavedDraftTarget'));
+  if(mode==='source-ABA'){const props=h.props();h.render({...props,review:{...props.review,reviewDigest:'a'.repeat(64)}});h.render(props);}
+  const requestId=h.f.sent.at(-1).payload.packet.requestId;reply.resolve(draftResult(h.f,requestId,'updated',{docId:mode==='document'?'other-document':'2347603',recovered:true,draftProof:savedTargetProof(h,13)}));await h.idle();
+  assert.equal(h.button(continueDraft),undefined);assert.equal(h.button(recoverSavedTarget),undefined);assert.equal(h.button(reviewPrepared),undefined);stale();await h.idle();assert.equal(h.f.sent.filter(row=>row.payload.action==='recoverSavedDraftTarget').length,1);assert.deepEqual([...h.stored.entries()],reservation);assert.equal(h.f.history.length,0);
+ }finally{h.close();}}
+});
+
 test('failed file-list reads preserve reservations but revoke current and stale continuation controls until a fresh listed result',async()=>{
  for(const reserved of [false,true]){const h=await fixture();let failed=false;try{
   const proof=()=>({...repairProof(h,true),existingDocumentRepairRetryAttempted:true,...(reserved?{existingDocumentRepairContinuationAttempted:true,existingDocumentRepairContinuationResumed:true}:{})});
