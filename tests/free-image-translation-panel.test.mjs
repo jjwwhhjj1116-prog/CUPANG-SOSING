@@ -309,6 +309,20 @@ test('image text translation discloses billed Vision and explicit local/text-onl
 test('explicit browser OCR never dispatches Vision or Google and keeps existing review/apply steps separate',async()=>{
   const h=fixture();try{await h.click('브라우저 문구 읽기 · 기존 방식');assert.deepEqual(plain(h.calls.map(row=>row.action)),['source','local-ocr']);assert.equal(h.saved,0);assert.equal(h.button('검토한 번역 이미지 적용'),undefined);}finally{h.close();}
 });
+test('completed zero-block Vision replaces progress with normal source-preserved notice and no error or save',async()=>{
+ const h=fixture();try{
+  h.setOcr(image=>{image.visionResult={provider:'workers-ai-vision',blocks:[],notice:'Vision 완료'};throw Error('읽을 수 있는 문구를 찾지 못했습니다. 필요한 영역과 원문을 직접 추가해주세요.');});
+  await h.click('원본 문구 읽기');assert.match(text(h.render()),/문구 확인을 완료했습니다. 번역할 문구가 없어 원본 이미지를 유지했습니다/);assert.doesNotMatch(text(h.render()),/인식 중|읽고 있습니다/);assert.equal(nodes(h.render()).filter(node=>node.props?.role==='alert').length,0);assert.equal(h.saved,0);assert.deepEqual(plain(h.calls.map(row=>row.action)),['source','ocr']);
+ }finally{h.close();}
+});
+test('failed recognition clears progress but keeps the actual error, and successful Vision reports completion',async()=>{
+ const h=fixture();try{
+  h.setOcr(()=>{throw Error('문구 인식 응답 실패');});await h.click('원본 문구 읽기');assert.match(text(h.render()),/문구 인식 응답 실패/);assert.match(text(h.render()),/문구 확인을 완료하지 못해 원본 이미지를 유지했습니다/);assert.doesNotMatch(text(h.render()),/인식 중|읽고 있습니다/);assert.equal(nodes(h.render()).filter(node=>node.props?.role==='alert').length,1);assert.equal(h.saved,0);
+ }finally{h.close();}
+ const completed=fixture();try{
+  completed.setOcr(image=>{image.visionResult={provider:'workers-ai-vision',blocks:[{}],notice:'확인 후 적용'};return[{...region('vision-1','검정'),translationProvenance:'generated'}];});await completed.click('원본 문구 읽기');assert.match(text(completed.render()),/Vision으로 문구 1개와 한국어 초안을 읽었습니다/);assert.doesNotMatch(text(completed.render()),/인식 중|읽고 있습니다/);assert.equal(completed.saved,0);
+ }finally{completed.close();}
+});
 
 test('mixed Google and Workers image wording stays beside its original and never replaces manual blanks or auto-saves',async()=>{
   const h=fixture();try{

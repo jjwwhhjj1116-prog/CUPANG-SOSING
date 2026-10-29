@@ -1,7 +1,7 @@
 import { validateContentInput, type ProductContent, type ContentPatch } from '@/app/product-content';
 import { assertContentTranslationScope, translationSeoFields } from '@/app/translation-adoption';
 import { suggestTranslationLabels, translationLabelAdoption } from '@/app/translation-label-adoption';
-import type { TranslationJob } from '@/app/automation/translation';
+import {WORKERS_QWEN_MODEL,validateQwenTranslationDraft,type TranslationJob} from '@/app/automation/translation';
 import { collectionKeywords } from '@/app/sourcing';
 
 const names = { title: '상품명', keywords: '검색어', description: '상품 설명' };
@@ -9,8 +9,15 @@ const display = (value: string | string[]) => Array.isArray(value) ? value.join(
 
 /** Couplus's observed intake title starts with the explicitly captured brand.
  * Keep this separate from supplier facts and never infer a brand from a company. */
-function brandedIntakeTitle(title: string, brand = ''): string {
+function brandedIntakeTitle(title: string, brand = '',qwen=false): string {
   const name = title.trim(), prefix = brand.trim();
+  if(qwen&&prefix&&name.startsWith(prefix)){
+    const rest=name.slice(prefix.length).trimStart();
+    if(rest===prefix||rest.startsWith(prefix+' '))throw Error('Qwen 상품명에 브랜드가 반복되었습니다. 위치 title. 결과를 적용하지 않았습니다.');
+    // A missing separator must not append the same captured brand twice.
+    // Keep the received text and every model/code character unchanged.
+    return name;
+  }
   if (!name || !prefix || name === prefix ||
     (name.startsWith(prefix) && /^\s/u.test(name.slice(prefix.length)))) return name;
   return `${prefix} ${name}`;
@@ -35,13 +42,14 @@ export function translationBatchAdoption(content: ProductContent, job: Translati
   if (job.productId !== content.productId || job.productVersion !== version || job.status !== 'completed' || !job.result) {
     throw Error('현재 상품의 완료된 번역 결과를 선택해주세요.');
   }
+  if(job.review.model===WORKERS_QWEN_MODEL&&job.review.instructionsVersion==='sourceflow-translation-v6'&&!Object.hasOwn(job.review,'workersRecovery'))validateQwenTranslationDraft(job.result.draft,job.review.source);
   const patch: ContentPatch = {};
   const preview: { name: string; before: string; after: string }[] = [];
   const skipped: string[] = [];
   for (const field of translationSeoFields) {
     const current = content.seo[field];
     if (current.provenance === 'manual' && !(field === 'keywords' && untouchedIntakeKeywords(content, job))) { skipped.push(`${names[field]}: 직접 수정한 값을 유지합니다.`); continue; }
-    const next = field === 'title' ? brandedIntakeTitle(job.result.draft.title, intakeBrand) : job.result.draft[field];
+    const next = field === 'title' ? brandedIntakeTitle(job.result.draft.title, intakeBrand,job.review.model===WORKERS_QWEN_MODEL&&job.review.instructionsVersion==='sourceflow-translation-v6'&&!Object.hasOwn(job.review,'workersRecovery')) : job.result.draft[field];
     if (!display(next).trim() || JSON.stringify(current.value) === JSON.stringify(next)) continue;
     const validated = validateContentInput({ expectedRevision: content.revision, patch: { seo: { [field]: next } } }, [], '');
     patch.seo = { ...patch.seo, ...validated.patch.seo };

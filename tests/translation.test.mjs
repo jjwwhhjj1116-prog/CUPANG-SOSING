@@ -360,6 +360,33 @@ test('ordinary Qwen translation uses its own Cloudflare JSON contract once witho
  assert.equal(calls,1);assert.equal(result.draft.title,draft.title);assert.equal(result.model,model.WORKERS_QWEN_MODEL);assert.equal(result.usage.totalTokens,180);assert.equal(result.appliedToContent,false);
 });
 
+test('generic Qwen rejects mixed Chinese passthrough and exact option metadata/missing indexes before v6 filtering can hide it',async()=>{
+ const input={...source,title:'隐形海绵后跟贴 AB-005',description:'10 cm',attributes:[{name:'option:sku-a',value:'黑色 AB-005'},{name:'option-size:sku-a',value:'10 cm'}]},good={title:'뒤꿈치 패드 AB-005',description:'10 cm 크기의 패드',keywords:['뒤꿈치 패드','AB-005','10 cm'],attributes:[{sourceIndex:0,name:'옵션명',value:'검정 AB-005'},{sourceIndex:1,name:'사이즈',value:'10 cm'}],warnings:[]};
+ const cases=[['title',{title:'유앤채隐形海绵后跟贴'}],['title',{title:'한국어 패드\u{20000}'}],['keywords[0]',{keywords:['한국어隐形']}],['keywords[0]',{keywords:['heel pads']}],['description',{description:'한국어 海绵'}],['attributes[0]',{attributes:[{...good.attributes[0],name:'颜色'},good.attributes[1]]}],['sourceIndex 0.value',{attributes:[{...good.attributes[0],value:'한국어 黑色'},good.attributes[1]]}],['sourceIndex 0.value',{attributes:[{...good.attributes[0],value:'black AB-005'},good.attributes[1]]}],['sourceIndex 0',{attributes:[good.attributes[1]]}]];
+ for(const [location,patch]of cases){let calls=0;const output={...good,...patch},before=JSON.stringify(output),own=model.requireTranslationConfig({SOURCEFLOW_TEXT_PROVIDER:'workers-ai',SOURCEFLOW_TEXT_MODEL:model.WORKERS_QWEN_MODEL,SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS:'4096',AI:{run:async()=>{calls++;return{response:output};}}}),review=await model.prepareTranslationReview(input,own);
+  await assert.rejects(model.executeTranslation(review,own),error=>error.code.startsWith('QWEN_')&&error.message.includes(location)&&error.mayHaveBeenCharged);assert.equal(calls,1);assert.equal(JSON.stringify(output),before);
+ }
+ const normalized=model.validateQwenTranslationDraft(good,input);assert.deepEqual(JSON.parse(JSON.stringify(normalized)),good);assert.deepEqual(normalized.attributes.map(value=>value.sourceIndex),[0,1]);
+ for(const [sourceIndex,value]of [[0,'검정 AB-006'],[0,'검정 AB005'],[1,'10 mm'],[1,'작은 사이즈'],[1,'10 cm\n사이즈']])assert.throws(()=>model.validateQwenTranslationDraft({...good,attributes:good.attributes.map(attribute=>attribute.sourceIndex===sourceIndex?{...attribute,value}:attribute)},input),error=>error.code.startsWith('QWEN_')&&error.message.includes(`sourceIndex ${sourceIndex}.value`));
+ const review=await model.prepareTranslationReview(input,{...config,model:model.WORKERS_QWEN_MODEL,provider:'workers-ai'}),request=model.buildTranslationRequest(review);assert.match(request.instructions,/실제 한국어 번역/);assert.match(request.instructions,/브랜드는 앱에서 별도로 한 번/);assert.match(request.instructions,/outputName/);assert.deepEqual(JSON.parse(request.input[0].content[0].text).attributes.map(row=>row.outputName),['옵션명','사이즈']);
+ assert.equal(request.text.format.schema.properties.attributes.minItems,2);assert.equal(model.buildTranslationRequest({...review,model:model.WORKERS_TEXT_MODEL}).text.format.schema.properties.attributes.minItems,0);
+});
+
+test('Qwen legal manufacturer names retain exact originals separately from missing Korean attribute coverage and legacy Llama keeps its contract',async()=>{
+ const input={...source,attributes:[{name:'상품속성: 生产厂家',value:'义乌市某某家居用品厂'}]},value={...draft,attributes:[{sourceIndex:0,name:'제조사',value:input.attributes[0].value}]},before=JSON.stringify(value);
+ const result=model.validateQwenTranslationDraft(value,input);assert.equal(result.attributes.length,0);assert.ok(result.warnings.some(value=>value.includes('법정 상호 원문')&&value.includes('sourceIndex 0')));assert.equal(JSON.stringify(value),before);
+ for(const name of ['다른公司','추정한 한국 제조사'])assert.throws(()=>model.validateQwenTranslationDraft({...value,attributes:[{...value.attributes[0],value:name}]},input),error=>error.code==='QWEN_LEGAL_NAME_CHANGED'&&error.message.includes('sourceIndex 0.value'));
+ const review=await model.prepareTranslationReview(input,{...config,model:model.WORKERS_QWEN_MODEL,provider:'workers-ai'}),request=model.buildTranslationRequest(review);assert.deepEqual(Array.from(request.text.format.schema.properties.attributes.items.anyOf[0].properties.value.enum),[input.attributes[0].value]);
+ const old={...draft,title:'红豆 면 수납 주머니',keywords:['면 주머니']};assert.equal(model.validateTranslationDraft(old,source,'sourceflow-translation-v6').title,old.title);
+});
+
+test('Qwen batch title adoption never prefixes an already attached brand twice and rejects repeated brand tokens without rewriting model codes',()=>{
+ const adoption=load('app/translation-batch-adoption.ts'),content=load('app/product-content.ts').emptyProductContent('p'),version='2026-10-29T00:00:00.000Z';
+ const job=title=>({productId:'p',productVersion:version,status:'completed',review:{model:model.WORKERS_QWEN_MODEL,instructionsVersion:'sourceflow-translation-v6',source:{...source,title:source.title+' AB-005',attributes:[]}},result:{draft:{...draft,title,attributes:[]}}});
+ for(const title of ['유앤채 뒤꿈치 패드 AB-005','유앤채뒤꿈치 패드 AB-005'])assert.equal(adoption.translationBatchAdoption(content,job(title),version,'유앤채').input.patch.seo.title,title);
+ assert.throws(()=>adoption.translationBatchAdoption(content,job('유앤채 유앤채 뒤꿈치 패드'),version,'유앤채'),/브랜드.*반복.*title/);
+});
+
 test('Qwen structured translation rejects different models, reasoning and malformed responses without retrying',async()=>{
  for(const payload of [{model:model.WORKERS_TEXT_MODEL,response:draft},{response:JSON.stringify(draft)},{response:draft,reasoning_content:'not source facts'},{response:{...draft,title:'새상품 999'}}]){
   let calls=0;const own=model.requireTranslationConfig({SOURCEFLOW_TEXT_PROVIDER:'workers-ai',SOURCEFLOW_TEXT_MODEL:model.WORKERS_QWEN_MODEL,SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS:'4096',AI:{run:async()=>{calls++;return payload;}}});

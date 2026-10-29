@@ -306,9 +306,10 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
         <label>타겟 키워드 *<input aria-label="SEO 타겟 키워드" aria-required="true" value={memo.keywords} maxLength={2000} disabled={busy||hasRequest||generationBusy||generationPending} placeholder="핵심 타겟 키워드를 입력하세요" onChange={event=>edit('keywords',event.target.value)} onBlur={event=>blur('keywords',event.target.value,renderGuidanceSession)}/><small>이 키워드를 중심으로 상품명을 구성합니다.</small></label>
       </div>
       <div className="seo-title-example"><strong>생성될 상품명 예시:</strong> {titleExample}</div>
-      <SeoGenerationPanel productId={productId} workspaceOwnerId={workspaceOwnerId} version={version} memo={memo} active={active} disabled={busy||hasRequest||compositionBusy||!basis}
+      <details className="seo-generation-provider"><summary>기존 무료 AI SEO 생성</summary><SeoGenerationPanel productId={productId} workspaceOwnerId={workspaceOwnerId} version={version} memo={memo} active={active} disabled={busy||hasRequest||compositionBusy||!basis}
         beforeGenerate={beforeGenerate} onBusyChange={setGenerationBusy} onPendingChange={setGenerationPending} onSaved={onSaved} onApplied={onApplied}
-        onRestoreMemo={value=>{setMemo(value);current.current.memo=value;}}/>
+        onRestoreMemo={value=>{setMemo(value);current.current.memo=value;}}/></details>
+      {!google&&basis?.configuration.configured&&<details className="seo-generation-provider" aria-label="SEO 번역 모델·사용료"><summary>번역 모델·사용료</summary><small>{basis.configuration.model?.startsWith('@cf/')?'Cloudflare Workers AI':'설정된 AI 서비스'} · {basis.configuration.model} · 최대 출력 {basis.configuration.maxOutputTokens}토큰 · 사용량에 따라 비용이 발생할 수 있습니다.</small></details>}
       {!google&&basis?.configuration.configured&&<label className="seo-ai-consent"><input type="checkbox" checked={confirmAi} disabled={busy} onChange={event=>{if(mounted.current&&current.current.version===version&&current.current.active&&!request.current)setConfirmAi(event.target.checked);}}/> AI 초안 생성 요청 1회를 실행합니다. 서비스 사용량에 따라 비용이 발생할 수 있습니다.</label>}
       {!!basis?.remainingOptions&&<small>이번 요청 한도를 넘는 옵션 번역 항목 {basis.remainingOptions}개는 원문에 유지됩니다. 추가 번역은 아래 생성 이력에서 이어갈 수 있습니다.</small>}
       {busy&&<p role="status">{basis?'초안 요청 상태를 확인하고 있습니다…':'수집 원문을 불러오는 중입니다…'}</p>}

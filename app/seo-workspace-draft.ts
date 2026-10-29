@@ -1,4 +1,4 @@
-import { GOOGLE_TEXT_MODEL, WORKERS_TEXT_MODEL, WORKERS_QWEN_MODEL, validateTranslationDraft, validateTranslationSource,
+import { GOOGLE_TEXT_MODEL, WORKERS_TEXT_MODEL, WORKERS_QWEN_MODEL, validateQwenTranslationDraft, validateTranslationDraft, validateTranslationSource,
   type TranslationConfiguration, type TranslationJob, type TranslationSource } from '@/app/automation/translation';
 import { translationReviewExpired } from '@/app/reviewed-translation';
 
@@ -137,7 +137,8 @@ async function advance(state: SeoWorkspaceDraftState, controls: SeoWorkspaceDraf
     if (job.status === 'completed') {
       if (!job.result || job.result.model !== job.review.model || job.result.appliedToContent !== false || job.result.provenance !== 'generated')
         throw Error('SEO 결과의 서비스·저장 범위를 확인하지 못했습니다.');
-      validateTranslationDraft(job.result.draft, state.source, job.review.instructionsVersion);
+      if(job.review.model===WORKERS_QWEN_MODEL&&!Object.hasOwn(job.review,'workersRecovery'))validateQwenTranslationDraft(job.result.draft,state.source);
+      else validateTranslationDraft(job.result.draft, state.source, job.review.instructionsVersion);
     } else if (job.result !== null || ['prepared', 'approved', 'running'].includes(job.status) && job.error !== null)
       throw Error('SEO 작업의 결과 상태를 확인하지 못했습니다.');
     keep({ jobId: job.id, reviewFingerprint: job.review.fingerprint,
@@ -158,7 +159,11 @@ async function advance(state: SeoWorkspaceDraftState, controls: SeoWorkspaceDraf
     return matches.length === 1 ? validate(matches[0]) : null;
   };
   const outcome = (job: TranslationJob | null, message?: string): SeoWorkspaceDraftOutcome => {
-    const draft = job?.result?.draft;
+    const rawDraft = job?.result?.draft;
+    // Historical legal-name exceptions stay in the stored record, while only
+    // usable returned fields count toward translation coverage.
+    const draft = rawDraft&&job?.review.model===WORKERS_QWEN_MODEL&&!Object.hasOwn(job.review,'workersRecovery')
+      ?validateQwenTranslationDraft(rawDraft,state.source):rawDraft;
     const missing = draft ? state.source.attributes.filter((_, index) => !draft.attributes.some(item => item.sourceIndex === index)).length : 0;
     const stopped = provider.kind === 'google' ? job?.result?.googleStoppedHttpStatus : undefined;
     const partial = Boolean(draft && (missing || state.source.title && !draft.title.trim() || state.source.description && !draft.description.trim()

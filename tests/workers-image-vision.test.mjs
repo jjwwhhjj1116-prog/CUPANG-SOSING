@@ -37,7 +37,7 @@ function fixture(options={}){
 }
 test('owned bytes use exact Vision model, low reasoning, schema and one request, completed UUID replays without writes',async()=>{
  const h=fixture(),before=JSON.stringify([h.source,h.product,h.content]);const result=await h.post();assert.equal(result.status,200,JSON.stringify(result.body));assert.equal(h.calls.length,1);assert.equal(result.body.result.blocks[0].translated,'검정');
- const call=h.calls[0];assert.equal(call.model,'@cf/qwen/qwen3.8-27b');assert.equal(call.input.reasoning_effort,'low');assert.equal(call.input.max_completion_tokens,8192);assert.equal(call.input.stream,false);assert.equal(call.input.tool_choice,'none');assert.equal(call.input.response_format.type,'json_schema');
+ const call=h.calls[0];assert.equal(call.model,'@cf/qwen/qwen3.8-27b');assert.equal(call.input.reasoning_effort,'low');assert.equal(call.input.max_completion_tokens,4096);assert.equal(call.input.stream,false);assert.equal(call.input.tool_choice,'none');assert.equal(call.input.response_format.type,'json_schema');
  assert.equal(call.input.messages[1].content[1].image_url.url,'data:image/png;base64,AQID');assert.ok(!JSON.stringify(call.input).includes('owner/source.png'));assert.equal(JSON.stringify([h.source,h.product,h.content]),before);
   assert.equal((await h.post()).body.replayed,true);assert.equal(h.calls.length,1);
 });
@@ -59,6 +59,7 @@ test('schema/model/truncation/coordinates/malformed text fail closed; no raw pro
   const value=chat({blocks:[block()]});mutate(value);assert.throws(()=>h.helper.parseImageVisionResponse(value,100,80),error=>!error.message.includes('secret-token'));
  }
  assert.throws(()=>h.helper.parseImageVisionResponse(chat({blocks:[block('private https://secret.test','검정')]}),100,80));
+ const truncated=chat({blocks:[block()]});truncated.choices[0].finish_reason='length';assert.throws(()=>h.helper.parseImageVisionResponse(truncated,100,80),error=>error.reason==='TRUNCATED');
 });
 test('documented JSON Mode object envelope works without weakening malformed choices or accepting response strings',()=>{
  const h=fixture(),value={blocks:[block()]};assert.equal(h.helper.parseImageVisionResponse({response:value},100,80).blocks[0].translated,'검정');

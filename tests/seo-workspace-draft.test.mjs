@@ -6,6 +6,42 @@ const json=async(response,status=200)=>{assert.equal(response.status,status,awai
 const colors=new Map([['亮黑','유광 검정'],['砂黑','무광 검정'],['砂灰','무광 회색']]);
 const sizes=new Map([['太阳镜','선글라스'],['太阳镜 加005 盒子','선글라스 + 005 케이스']]);
 const plain=value=>JSON.parse(JSON.stringify(value));
+
+function storedQwenFixture(draft){
+ const h=mobileIntakeHarness(),api=h.load('app/seo-workspace-draft.ts'),configuration={configured:true,model:'@cf/qwen/qwen3-30b-a3b-fp8',maxOutputTokens:4096};
+ const input={productId:'synthetic-stored-product',productVersion:'2026-10-29T00:00:00Z',contentRevision:2,source:{title:'太阳镜',description:'商品说明',attributes:[{name:'option:synthetic-option',value:'亮黑 / 太阳镜'}],provenance:'manual',reference:'synthetic:stored-source'},memo:{brand:'',features:'',keywords:''},configuration};
+ const state=api.createSeoWorkspaceDraftState(input),id=crypto.randomUUID(),fingerprint='a'.repeat(64),calls=[],published=[];
+ Object.assign(state,{jobId:id,reviewFingerprint:fingerprint,prepareSubmitted:true,approvalSubmitted:true,executeSubmitted:true});
+ const job={id,productId:state.productId,productVersion:state.productVersion,contentRevision:state.contentRevision,status:'completed',review:{fingerprint,model:configuration.model,maxOutputTokens:configuration.maxOutputTokens,destination:'Cloudflare Workers AI',instructionsVersion:'sourceflow-translation-v6',source:plain(state.source),paidNotice:'합성 Qwen 사용량 비용 안내'},result:{model:configuration.model,appliedToContent:false,provenance:'generated',draft:plain(draft)},error:null};
+ const controls={signal:new AbortController().signal,confirmAi:true,onState:()=>{},onJob:value=>published.push(value),fetcher:async(target,init={})=>{calls.push({target,method:init.method??'GET'});assert.equal(target,'/api/products/'+state.productId+'/translation');assert.equal(init.method,undefined,'stored Qwen recovery must not prepare, approve or execute');return Response.json({configuration,jobs:[job]});}};
+ return{h,api,state,job,calls,published,controls};
+}
+const koreanQwenDraft=()=>({title:'선글라스',keywords:['선글라스'],description:'상품 설명',attributes:[{sourceIndex:0,name:'옵션명',value:'유광 검정 / 선글라스'}],warnings:[]});
+
+test('stored generic Qwen Han in a title, keyword or indexed option is not returned as applicable completed output and never triggers another write',async()=>{
+ for(const [location,mutate]of [[/위치 title/u,draft=>{draft.title='선글라스镜';}],[/위치 keywords\[0\]/u,draft=>{draft.keywords=['선글라스镜'];}],[/위치 attributes\[0\].*sourceIndex 0\.value/u,draft=>{draft.attributes[0].value='유광 검정镜';}]]){
+  const draft=koreanQwenDraft();mutate(draft);const f=storedQwenFixture(draft);try{
+   const before=JSON.stringify({state:f.state,job:f.job});for(const read of [f.api.refreshSeoWorkspaceDraft,f.api.runSeoWorkspaceDraft])await assert.rejects(read(f.state,f.controls),error=>{assert.equal(error.code,'QWEN_UNTRANSLATED_TEXT');assert.match(error.message,location);return true;});
+   assert.equal(f.calls.length,2);assert.ok(f.calls.every(call=>call.method==='GET'));assert.equal(f.published.length,0);assert.equal(JSON.stringify({state:f.state,job:f.job}),before,'invalid historical data stays preserved for review');
+  }finally{f.h.close();}
+ }
+});
+
+test('valid saved Korean Qwen output remains readable as the same completed job with no prepare or execute replay',async()=>{
+ const f=storedQwenFixture(koreanQwenDraft());try{
+  const source=plain(f.state.source);for(const read of [f.api.refreshSeoWorkspaceDraft,f.api.runSeoWorkspaceDraft]){const result=await read(f.state,f.controls);assert.equal(result.job.id,f.job.id);assert.equal(result.job.status,'completed');assert.equal(result.partial,false);assert.equal(result.closed,true);assert.equal(result.label,'Cloudflare Qwen 번역 초안');}
+  assert.deepEqual(plain(f.state.source),source);assert.equal(f.calls.length,2);assert.ok(f.calls.every(call=>call.method==='GET'));assert.equal(f.published.length,2);
+ }finally{f.h.close();}
+});
+
+test('an unchanged legal manufacturer name remains in the saved Qwen job but never counts as completed Korean attribute coverage',async()=>{
+ const f=storedQwenFixture(koreanQwenDraft());try{
+  f.state.source.attributes.push({name:'상품속성: 制造商',value:'义乌市合成工厂'});f.job.review.source=plain(f.state.source);f.job.result.draft.attributes.push({sourceIndex:1,name:'제조사',value:'义乌市合成工厂'});
+  const before=JSON.stringify({state:f.state,job:f.job});for(const read of [f.api.refreshSeoWorkspaceDraft,f.api.runSeoWorkspaceDraft]){const result=await read(f.state,f.controls);assert.equal(result.job.id,f.job.id);assert.equal(result.partial,true);assert.match(result.message,/누락 항목 1개/u);assert.equal(result.job.result.draft.attributes[1].value,'义乌市合成工厂');}
+  assert.equal(JSON.stringify({state:f.state,job:f.job}),before);assert.equal(f.calls.length,2);assert.ok(f.calls.every(call=>call.method==='GET'));
+ }finally{f.h.close();}
+});
+
 async function fixture({partial=false,ai=false}={}){
  const queries=[],actions=[],states=[],jobs=[],translations=new Map([...colors,...sizes]);
  for(const [color,colorText]of colors)for(const [size,sizeText]of sizes)translations.set(color+' / '+size,colorText+' / '+sizeText);

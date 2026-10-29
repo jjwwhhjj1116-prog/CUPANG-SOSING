@@ -25,7 +25,7 @@ import {workersRecoveryReviewProof,google429RecoveryCandidate} from '@/app/worke
 import {readWorkersRecoverySource} from '@/db/translation-jobs';
 import {assertWorkersRecoveryJobQuality} from '@/app/product-translation-quality';
 import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
-import {GOOGLE_TEXT_MODEL,WORKERS_TEXT_MODEL,WORKERS_QWEN_MODEL} from '@/app/automation/translation';
+import {GOOGLE_TEXT_MODEL,WORKERS_TEXT_MODEL,WORKERS_QWEN_MODEL,validateQwenTranslationDraft} from '@/app/automation/translation';
 import {intakeSupplierSourceMatches,intakeSupplierFactsMatch} from '@/app/intake-supplier-source';
 import { applyInitialIntakeSeoGuidance, initialIntakeSeoGuidancePending, applySeoGuidanceComposition, validateSeoGuidanceComposition, type SeoGuidanceComposition } from '@/app/seo-guidance-composition';
 import { verifyCapturedCollectionCompany } from '@/app/collection-company';
@@ -60,6 +60,10 @@ export async function POST(request: Request, context: Context) {
     if (!job) return json({ error: '번역 결과를 찾을 수 없습니다.' }, 404);
     if(Object.hasOwn(job.review,'seoGeneration'))return json({error:'SEO 생성 결과는 SEO 생성 전용 검토에서 적용해주세요.'},409);
     try{assertWorkersRecoveryJobQuality(job);}catch(error){return json({error:error instanceof Error?error.message:'별도 초안 품질을 확인하지 못했습니다.'},409);}
+    if(job.status==='completed'&&job.result&&job.review.model===WORKERS_QWEN_MODEL&&job.review.instructionsVersion==='sourceflow-translation-v6'&&!Object.hasOwn(job.review,'workersRecovery')){
+      try{if(job.result.model!==job.review.model)throw Error('검토한 Qwen 모델과 저장 결과의 모델이 다릅니다.');validateQwenTranslationDraft(job.result.draft,job.review.source);}
+      catch(error){return json({error:error instanceof Error?error.message:'Qwen 한국어 번역 결과를 확인하지 못했습니다.'},409);}
+    }
     const scope = body.scope === 'options' ? 'options' : 'all';
     try {
       const intakeProof = intakeOptionsReviewProof(job.review);

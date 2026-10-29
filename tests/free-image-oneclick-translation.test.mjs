@@ -23,6 +23,14 @@ test('partial Vision card retains failed text and never automatically sends it t
   h.setTranslate(()=>{throw Error('No automatic fallback');});await h.settle();assert.deepEqual(actions(h),['source','ocr']);assert.equal(h.saved,0);assert.match(text(h.render()),/일부 문구를 번역하지 못했습니다/);
  }finally{h.close();}
 });
+test('zero-block Vision card completes normally and a failed card clears all previous progress wording',async()=>{
+ const empty=fixture({translationTarget:target(1)});try{
+  empty.setOcr(image=>{image.visionResult={provider:'workers-ai-vision',blocks:[],notice:'완료'};throw Error('읽을 수 있는 문구를 찾지 못했습니다. 필요한 영역과 원문을 직접 추가해주세요.');});await empty.settle();assert.match(text(empty.render()),/문구 확인을 완료했습니다. 번역할 문구가 없어 원본 이미지를 유지했습니다/);assert.doesNotMatch(text(empty.render()),/인식 중|읽고 있습니다/);assert.equal(nodes(empty.render()).filter(node=>node.props?.role==='alert').length,0);assert.deepEqual(actions(empty),['source','ocr']);assert.equal(empty.saved,0);
+ }finally{empty.close();}
+ const failed=fixture({translationTarget:target(1)});try{
+  failed.setRender(()=>{throw Error('미리보기 실패');});await failed.settle();assert.equal(nodes(failed.render()).filter(node=>node.props?.role==='alert').length,1);assert.match(text(failed.render()),/이미지 번역 처리를 중단했습니다. 원문과 기존 저장 이미지는 유지했습니다/);assert.doesNotMatch(text(failed.render()),/인식 중|번역하고 있습니다|미리보기를 만들고 있습니다/);assert.equal(failed.saved,0);
+ }finally{failed.close();}
+});
 
 test('a fresh Chinese or English card action reads owned source, recognizes, translates and prepares PNG while applying stays explicit', async () => {
   for (const language of ['zh', 'en']) {

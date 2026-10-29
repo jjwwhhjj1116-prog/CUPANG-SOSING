@@ -476,11 +476,12 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     }
     const work = begin('ocr'); if (!work) return;
     discardDraft();
+    let processingImage:FreeImageLoaded|null=null;
     try {
       const image = workspaceContext ? await readDetailWorkspaceImage(workspaceContext, work.controller.signal)
         : await readFreeImageSource(productId, version, sourceKey, role, work.controller.signal, undefined, liveQuotationTarget.current ?? undefined);
       if (!current(work)) return;
-      setLoaded(image);
+      processingImage=image;setLoaded(image);
       const selectedOptions = focusedOptionId && image.source.optionImages?.optionIds.includes(focusedOptionId) ? [focusedOptionId] : [];
       setOptionImageIds(selectedOptions);
       const rows = await recognizeFreeImage(image, language, work.controller.signal, message => { if (current(work)) setNotice(message); });
@@ -507,7 +508,10 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       const output = await renderFreeImageTranslation(image, next, work.controller.signal, selectedOptions, undefined, language);
       if (!current(work)) return;
       setRendered(output); setNotice(['한국어 이미지 초안을 준비했습니다. 원본과 번역 문구·영역을 확인하고 수정한 뒤 적용해주세요.',translationServiceNotice(result), ...result.warnings].filter(Boolean).join(' '));
-    } catch (cause) { if (current(work)) setError(cause instanceof Error ? cause.message : '이미지 번역 초안을 만들지 못했습니다. 원문과 이전 저장 이미지는 유지됩니다.'); }
+    } catch (cause) { if (current(work)) {
+      if(processingImage?.visionResult?.blocks.length===0){setError('');setNotice('문구 확인을 완료했습니다. 번역할 문구가 없어 원본 이미지를 유지했습니다.');}
+      else{setError(cause instanceof Error ? cause.message : '이미지 번역 초안을 만들지 못했습니다. 원문과 이전 저장 이미지는 유지됩니다.');setNotice('이미지 번역 처리를 중단했습니다. 원문과 기존 저장 이미지는 유지했습니다.');}
+    } }
     finally { finish(work); }
   }
   async function recognize(local=false) {
@@ -515,14 +519,18 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     if (liveRegions.current.length || liveCrop.current || liveRenderedRef.current || liveOptionImageIds.current.length || pendingSave.current) { setNotice('작성한 문구와 잘라내기·옵션 선택을 유지했습니다. 원본 문구를 다시 읽으려면 먼저 이미지 번역 편집 초안을 지워주세요.'); return; }
     const work = begin('ocr'); if (!work) return;
     discardDraft();
+    let processingImage:FreeImageLoaded|null=null;
     try {
       const image = workspaceContext ? await readDetailWorkspaceImage(workspaceContext, work.controller.signal)
         : await readFreeImageSource(productId, version, sourceKey, role, work.controller.signal, undefined, liveQuotationTarget.current ?? undefined);
-      if (!current(work)) return; setLoaded(image);
+      if (!current(work)) return;processingImage=image;setLoaded(image);
       setOptionImageIds(focusedOptionId && image.source.optionImages?.optionIds.includes(focusedOptionId) ? [focusedOptionId] : []);
       const rows = await (local?recognizeLocalFreeImage:recognizeFreeImage)(image, language, work.controller.signal, message => { if (current(work)) setNotice(message); });
       if (!current(work)) return; resetRegions(rows); setNotice(image.visionResult?`${image.visionExecution?.cached?'같은 원본의 Vision 번역을 재사용했습니다. 추가 AI 요청은 0회입니다.':`Vision으로 문구 ${rows.length}개와 한국어 초안을 읽었습니다.`} ${image.visionResult.notice}`:`문구 ${rows.length}개를 읽었습니다. 원문·영역을 확인하고 번역할 문구를 선택해주세요.`);
-    } catch (cause) { if (current(work)) setError(cause instanceof Error ? cause.message : '문구 인식을 완료하지 못했습니다.'); }
+    } catch (cause) { if (current(work)) {
+      if(processingImage?.visionResult?.blocks.length===0){setError('');setNotice('문구 확인을 완료했습니다. 번역할 문구가 없어 원본 이미지를 유지했습니다.');}
+      else{setError(cause instanceof Error ? cause.message : '문구 인식을 완료하지 못했습니다.');setNotice('문구 확인을 완료하지 못해 원본 이미지를 유지했습니다. 자동으로 다시 요청하지 않았습니다.');}
+    } }
     finally { finish(work); }
   }
   async function refreshSource() {
