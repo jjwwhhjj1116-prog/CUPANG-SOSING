@@ -23,7 +23,7 @@ async function fixture(options={}){
   if(request.func.name!=='savedDraftCurrentReadPage')return baseExecute(request);
   if(Object.hasOwn(options,'currentReadReply')){const frame=(await baseExecute({target:{tabId:request.target.tabId,frameIds:[0]},func:()=>true,args:[]}))[0];return[{frameId:0,documentId:frame.documentId,result:copy(options.currentReadReply)}];}
   const scope=vm.createContext({document:f.hubDocument,location:f.hubLocation,crypto:webcrypto,AbortController,TextEncoder,TextDecoder,Uint8Array,URL,Response,Date,setTimeout,clearTimeout,structuredClone,
-   fetch:async(url,init)=>{requests.push({url,method:init.method,body:init.body});const path=new URL(url).pathname;
+   fetch:async(url,init)=>{requests.push({url,method:init.method,body:init.body});if(options.beforeCurrentReadFetch)await options.beforeCurrentReadFetch(url,init,f);const path=new URL(url).pathname;
     if(path==='/sr/draft/api/drafts')return response(url,[...f.documents.values()].map(row=>({...copy(row),status:'UNFINISHED'})));
     if(path==='/sr/draft/api/drafts/register-requested')return response(url,options.submitted?[{docId:f.createdDocId,productName:f.documents.get(f.createdDocId).productName}]:[]);
     if(path==='/sr/draft/api/get-by-id/'+f.createdDocId){const row={...copy(f.documents.get(f.createdDocId)),status:'UNFINISHED'};if(options.changedBody)row.productName+='changed';return response(url,row);}
@@ -83,6 +83,61 @@ test('real native receiver preserves original requested update and completes onl
   const checkpoint=await q.f.storage.store.get(q.f.context.key);assert.equal(checkpoint.requestId,checkpointBefore.requestId);assert.equal(checkpoint.operationId,checkpointBefore.requestId+':validate:5');assert.deepEqual(checkpoint.baselineDocIds,checkpointBefore.baselineDocIds);assert.deepEqual(checkpoint.savedDraftTargetRecovery.previousTarget,checkpointBefore.ownedTarget);
   const writes=q.f.calls.filter(call=>call.name==='hub-fetch'&&call.init.method==='POST').map(call=>call.url);assert.deepEqual(writes.slice(before.writes.length),[2,3,4,5].map(step=>'https://supplier.coupang.com/sr/qvt/api/validate-step/'+step));
   assert.deepEqual(q.f.state.uploads,before.uploads);assert.deepEqual([...q.f.documents],before.body);assert.equal(q.f.submitted,0);
+ }finally{q.close();}
+});
+
+test('a reserved-target recovery retains full start/final source checks with seven native plan GETs including fresh adapter selection',async()=>{
+ const options={receiver:true,missingFile:true},q=await fixture(options);let selected;
+ try{
+  const failed=await q.receiver.recoverSavedDraftTarget(q.f.packet,q.f.sender);assert.equal(failed.error.code,'SAVED_DRAFT_TARGET_UNCONFIRMED');
+  const reserved=await q.f.storage.store.get(q.f.context.key),target=copy(reserved.savedDraftTargetRecovery.target);assert.equal(reserved.savedDraftTargetRecovery.phase,'created');options.missingFile=false;
+  const start=q.f.state.appReads.length,requests=q.requests.length,created=q.f.calls.filter(call=>call.name==='tabs-create').length,before=JSON.stringify({uploads:q.f.state.uploads,documents:[...q.f.documents]});
+  selected=await createVerifiedProductDocumentBrowserAdapter(q.f.context,{api:q.f.api});
+  const receiver=createProductDocumentDraftReceiver({adapter:selected.adapter,store:q.f.storage.store}),result=await receiver.recoverSavedDraftTarget(q.f.packet,q.f.sender);
+  assert.equal(result.error,undefined,JSON.stringify(result));assert.equal(result.state,'updated');
+  const reads=q.f.state.appReads.slice(start).filter(url=>new URL(url).pathname.endsWith('/native-assets'));assert.equal(reads.length,7,'selection 1 + full start 3 + full final 3; no nested qualifier source GETs');
+  const current=q.requests.slice(requests),metadata=current.filter(call=>new URL(call.url).pathname.startsWith('/sr/draft/api/')),binary=current.filter(call=>new URL(call.url).pathname==='/sr/api/image/get-by-key');
+  assert.equal(metadata.length,10,'both complete read/bind observations keep all five server metadata reads');assert.equal(binary.length,q.f.state.source.images.length*2,'both observations independently verify every file byte');
+  assert.equal(q.f.calls.filter(call=>call.name==='tabs-create').length,created);assert.equal(JSON.stringify({uploads:q.f.state.uploads,documents:[...q.f.documents]}),before);
+  const saved=await q.f.storage.store.get(q.f.context.key);assert.deepEqual(saved.savedDraftTargetRecovery.target,target);assert.deepEqual(saved.ownedTarget,target);assert.equal(saved.savedDraftTargetRecovery.proof.historicalAckRecovered,false);
+ }finally{selected?.adapter.dispose();q.close();}
+});
+
+test('saved-target source receipts are opaque, latest-only, consumed on failure, and invalid after disposal',async()=>{
+ for(const scenario of ['clone','superseded','scope-failure','read-failure','disposed']){
+  const options={},q=await fixture(options);
+  try{
+   const input={identity:q.input.identity,bodySha256:q.f.context.originalBodySha256,preparedBodySha256:q.f.context.bodySha256,packetDigest:q.f.context.packetDigest,requestId:q.input.requestId,docId:q.input.docId};
+   const proof=await q.adapter.readSource(input);let lease={sourceProof:proof};
+   if(scenario==='clone')lease={sourceProof:copy(proof)};
+   if(scenario==='superseded')await q.adapter.readSource(input);
+   if(scenario==='scope-failure'){await assert.rejects(q.adapter.qualifySavedDraftTarget({...q.input,docId:null},lease),error=>error.code==='SAVED_DRAFT_TARGET_SCOPE');}
+   if(scenario==='read-failure'){options.missingFile=true;await assert.rejects(q.adapter.qualifySavedDraftTarget(q.input,lease),error=>error.code==='SAVED_DRAFT_TARGET_UNCONFIRMED');options.missingFile=false;}
+   if(scenario==='disposed')q.adapter.dispose();
+   const before=q.requests.length;await assert.rejects(q.adapter.qualifySavedDraftTarget(q.input,lease),error=>error.code==='SOURCE_CHANGED');assert.equal(q.requests.length,before,'an invalid receipt cannot reach the Hub reader');
+   assert.equal(q.f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords,undefined);
+  }finally{q.close();}
+ }
+});
+
+test('a saved-target read receipt cannot bypass the independent source and ownership guards of a body write',async()=>{
+ const q=await fixture();try{
+  const input={identity:q.input.identity,bodySha256:q.f.context.originalBodySha256,preparedBodySha256:q.f.context.bodySha256,packetDigest:q.f.context.packetDigest,requestId:q.input.requestId,docId:q.input.docId},proof=await q.adapter.readSource(input),start=q.f.state.appReads.length,writes=q.f.calls.filter(call=>call.name==='hub-fetch'&&call.init.method==='POST').length;
+  await assert.rejects(q.adapter.hubRequest({...q.input,method:'POST',path:'/sr/draft/api/update',operationId:q.input.requestId+':update',body:q.input.expectedBody},{sourceProof:proof}),error=>error.code==='OWNED_RECORD_MISSING');
+  assert.equal(q.f.state.appReads.slice(start).filter(url=>new URL(url).pathname.endsWith('/native-assets')).length,3,'body-write guards always perform their own complete source verification');
+  assert.equal(q.f.calls.filter(call=>call.name==='hub-fetch'&&call.init.method==='POST').length,writes);await assert.rejects(q.adapter.qualifySavedDraftTarget(q.input,{sourceProof:proof}),error=>error.code==='SOURCE_CHANGED');
+ }finally{q.close();}
+});
+
+for(const drift of ['company','source','session'])test('reserved-target final source verification rejects '+drift+' drift after read-only observations',async()=>{
+ const options={receiver:true,missingFile:true},q=await fixture(options);
+ try{
+  assert.equal((await q.receiver.recoverSavedDraftTarget(q.f.packet,q.f.sender)).error.code,'SAVED_DRAFT_TARGET_UNCONFIRMED');options.missingFile=false;
+  const before=JSON.stringify({uploads:q.f.state.uploads,documents:[...q.f.documents]}),reserved=await q.f.storage.store.get(q.f.context.key);let changed=false;
+  options.beforeCurrentReadFetch=async(url,_init,f)=>{if(changed||new URL(url).pathname!=='/sr/api/image/get-by-key')return;changed=true;
+   if(drift==='company')f.state.company={code:'A01464742',name:'와이홉'};else if(drift==='source')f.state.source.body.productName+='changed';else await f.reloadSourceSession();};
+  const reply=await q.receiver.recoverSavedDraftTarget(q.f.packet,q.f.sender);assert.equal(reply.error.code,'SOURCE_CHANGED',JSON.stringify(reply));assert.equal(changed,true);
+  const saved=await q.f.storage.store.get(q.f.context.key);assert.equal(saved.savedDraftTargetRecovery.phase,'created');assert.deepEqual(saved.savedDraftTargetRecovery.target,reserved.savedDraftTargetRecovery.target);assert.equal(JSON.stringify({uploads:q.f.state.uploads,documents:[...q.f.documents]}),before);
  }finally{q.close();}
 });
 

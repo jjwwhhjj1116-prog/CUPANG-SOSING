@@ -141,6 +141,9 @@ test('an in-flight result cannot mark a different current offer complete or retr
  for(const result of [{ok:true,delivered:true},{ok:true,delivered:false,message:'합성 이전 상품 ACK 미확인'}]){
   let release;const response=new Promise(resolve=>{release=resolve;});
   const fixture=currentButton({scriptMain:cdn('late-result'),deliver:()=>response}),inFlight=fixture.button.click({isTrusted:true});
+  // The hydration wrapper settles before the immutable send. Observe the
+  // actual pending delivery, rather than assuming a synchronous click body.
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(fixture.messages.length,1);assert.equal(fixture.button.disabled,true);
   await fixture.button.click({isTrusted:true});assert.equal(fixture.messages.length,1,'a second click while pending cannot start another capture');
   fixture.location.href='https://detail.1688.com/offer/700000000788.html';release(result);await inFlight;

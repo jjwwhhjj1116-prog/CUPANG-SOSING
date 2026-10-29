@@ -1,6 +1,7 @@
 // Independent, inert interpretation of the current product document. No vendor
 // code, requests, cookies, globals, eval or executable script injection.
 import {readPageDomFacts,validatePageDomFacts,mergePageDomFacts,validatePagePackaging} from './page-dom-facts.mjs';
+import {isUnrelatedProductElement} from './page-dom-sections.mjs';
 export const PAGE_SOURCE_LIMIT=512*1024;
 const object=value=>!!value&&typeof value==='object'&&!Array.isArray(value);
 const plain=(value,max)=>typeof value==='string'?value.replace(/[\u0000-\u001f]/g,' ').trim().slice(0,max):'';
@@ -15,6 +16,8 @@ export function pageSourceUrl(value){
 function image(value){
  try{const url=new URL(String(value).startsWith('//')?'https:'+value:value);return url.protocol==='https:'&&!url.username&&!url.password&&!url.port&&!url.hash&&(url.hostname==='alicdn.com'||url.hostname.endsWith('.alicdn.com'))&&url.href.length<=2048?url.href:null;}catch{return null;}
 }
+function firstImage(...values){for(const value of values){if(typeof value!=='string')continue;const url=image(value);if(url)return url;}return null;}
+const optionParts=value=>value.split(/&gt;|＞|[;，,>|]/u).map(part=>part.trim()).filter(Boolean);
 /** Read only this image element. A truthy placeholder or foreign URL must not
  * hide a later valid lazy URL. Preserve the caller's existing valid-source
  * priority, and apply the same CDN validation used by the stored snapshot. */
@@ -317,15 +320,91 @@ export function readPageSourceDomFacts(document,sourceUrl,scripts){
  domFactsIdentity(scripts,identity.offerId);
  return validatePageDomFacts({format:'yoofam-page-dom-facts-v1',...identity,...observed});
 }
+/** Script variants remain authoritative. This separate observation can supply
+ * only one missing image for an exact, unique full option name; it cannot
+ * contribute variants, prices, supplier IDs, ordering or partial-axis guesses. */
+function scriptImageModel(scripts,offerId){
+  const declarations=scripts.flatMap(text=>pageJsonProperties(text,'skuModel').map(entry=>({...entry,text})));
+  if(!declarations.length||declarations.length>100||declarations.some(entry=>!object(entry.value))
+   ||scripts.reduce((count,text)=>count+[...text.matchAll(/"skuModel"\s*:/gu)].length,0)!==declarations.length)throw domOptionsError();
+  const models=declarations.map(entry=>entry.value);
+  if(new Set(models.map(value=>JSON.stringify(value))).size!==1)throw domOptionsError();
+  domFactsIdentity(scripts,offerId);
+  for(const entry of declarations){
+   const node={value:entry.value,literal:entry.text.slice(entry.start,entry.end)};
+   for(const key of ['offerId','productId']){const field=literalChild(node,key);if(field&&!(typeof field.value==='string'&&field.value===offerId||typeof field.value==='number'&&Number.isSafeInteger(field.value)&&String(field.value)===offerId))throw domOptionsError();}
+   for(const key of ['isPicPrivate','isPricePrivate','isDetailForbidden']){const field=literalChild(node,key);if(field&&field.value!==false)throw domOptionsError();}
+  }
+  return models[0];
+}
+function readScriptOptionImages(document,identity,scripts){
+ try{
+  const model=scriptImageModel(scripts,identity.offerId),map=model.skuInfoMap??model.skuInfoMapOriginal;
+  if(!object(map)||!Object.keys(map).length||Object.keys(map).length>200)return null;
+  const expected=new Map();
+  for(const [key,row]of Object.entries(map)){
+   if(!object(row))return null;
+   const name=plain(row.specAttrs??row.name??key,500);if(!name)return null;
+   expected.set(name,(expected.get(name)??0)+1);
+  }
+  const excluded=element=>{
+   if(element.closest?.(DOM_OPTION_EXCLUDED))return true;
+   for(let current=element,depth=0;current;current=current.parentElement){
+    if(++depth>40||['ASIDE','NAV','HEADER','FOOTER','IFRAME','SCRIPT','STYLE','NOSCRIPT'].includes(current.tagName?.toUpperCase())
+     ||['navigation','tab','tablist'].includes(current.getAttribute?.('role'))||isUnrelatedProductElement(current))return true;
+    for(const key of ['data-offer-id','data-offerid','data-product-id','data-productid']){
+     const value=current.getAttribute?.(key);if(value!==null&&value!==undefined&&value!==identity.offerId)return true;
+    }
+   }
+   return false;
+  };
+  const roots=Array.from(document.querySelectorAll(DOM_OPTION_ROOT));if(roots.length>400)return null;
+  const candidates=[];
+  for(const root of roots){
+   if(excluded(root)||roots.some(other=>other!==root&&other.contains(root)&&!excluded(other)))continue;
+   const labels=Array.from(root.querySelectorAll('div,span,dt,th,label,p,b,strong')).filter(element=>!element.children.length&&DOM_OPTION_LABELS.includes(domLabel(element.textContent))&&!excluded(element));
+   if(labels.length)candidates.push({root,labels});
+  }
+  if(candidates.length!==1)return null;
+  const {root,labels}=candidates[0];
+  if(labels.length>10||new Set(labels.map(label=>domLabel(label.textContent))).size!==labels.length)return null;
+  for(const link of root.querySelectorAll('a[href]')){
+   const url=new URL(link.getAttribute('href'),identity.sourceUrl);
+   if(/\/offer\/\d+\.html$/u.test(url.pathname)&&(url.origin!=='https://detail.1688.com'||url.origin+url.pathname!==identity.sourceUrl))return null;
+  }
+  const observed=new Map(),containers=[];
+  for(const label of labels){
+   const container=label.nextElementSibling||label.parentElement?.nextElementSibling||label.parentElement;
+   if(!container||!root.contains(container)||excluded(container)||labels.some(other=>other!==label&&container.contains(other))
+    ||containers.some(other=>other.contains(container)||container.contains(other)))return null;
+   containers.push(container);
+   const tiles=Array.from(container.children);if(tiles.length>200)return null;
+   for(const tile of tiles){
+    if(excluded(tile))continue;
+    const images=Array.from(tile.querySelectorAll('img'));if(images.length>200)return null;
+    const raw=domText(tile.textContent),textName=raw.split(/[¥￥]/u)[0].replace(/库存.*$/u,'').replace(/[-−+]+\s*\d*\s*$/u,'').trim();
+    const title=domText(tile.getAttribute('title')),alt=domText(images[0]?.getAttribute('alt'));
+    const name=title||textName||alt;
+    if(!name||name.length>500||DOM_OPTION_LABELS.includes(domLabel(name)))continue;
+    if(title&&textName&&title!==textName||alt&&alt!==name)return null;
+    const previous=observed.get(name);observed.set(name,{count:(previous?.count??0)+1,imageUrl:images.length===1&&!excluded(images[0])?readPageSourceElementImage(images[0]):null});
+   }
+  }
+  const images=[];
+  for(const [name,row]of observed)if(expected.get(name)===1&&row.count===1&&row.imageUrl)images.push({name,imageUrl:row.imageUrl});
+  return images.length?{format:'yoofam-page-dom-option-images-v1',...identity,images}:null;
+ }catch{return null;}
+}
 /** RS 1.0.88's retained leaf-label/sibling tiles and inventory-row selectors,
  * restricted to one current-offer SKU root. Singletons can qualify one varying
  * axis; multiple varying axes require every explicit full-combination row.
  * No invented variants, headline price, supplier IDs or source fetches.
- * A script SKU declaration always wins, including empty/invalid declarations. */
+ * A script SKU declaration always wins, including empty/invalid declarations;
+ * valid declarations permit only the separate exact-name image observation. */
 export function readPageSourceDomOptions(document,sourceUrl,scripts){
  const identity=pageSourceUrl(sourceUrl);
  if(!Array.isArray(scripts)||scripts.length>100||scripts.some(value=>typeof value!=='string')||scripts.reduce((sum,value)=>sum+value.length,0)>4*1024*1024)throw domOptionsError();
- if(scripts.some(text=>/"skuModel"\s*:/.test(text)))return null;
+ if(scripts.some(text=>/"skuModel"\s*:/.test(text)))return readScriptOptionImages(document,identity,scripts);
  domSourceIdentity(scripts,identity.offerId);
  const excluded=element=>!!element.closest(DOM_OPTION_EXCLUDED);
  const roots=Array.from(document.querySelectorAll(DOM_OPTION_ROOT));if(roots.length>400)throw domOptionsError();
@@ -437,13 +516,13 @@ export function extractPageSource(input,now=Date.now()){
  if(!title)throw Error('상품명이 보이는 상품 본문에서 다시 수집해주세요.');
  const images=[],addImage=(value,role)=>{const url=image(value);if(url&&!images.some(item=>item.url===url&&item.role===role)){if(images.length>=200)throw Error('상품 이미지가 200개를 초과했습니다. 옵션 이미지·상세 이미지를 일부만 담지 않았습니다. 이미지 수를 확인한 뒤 다시 수집해주세요.');images.push({url,role});}};
  for(const key of ['offerImgList','mainImageList']){
-  const list=property(key);if(Array.isArray(list))for(const item of list)addImage(typeof item==='string'?item:item?.originalImageURI??item?.imageURI??item?.imageUrl??item?.url,images.some(item=>item.role==='main')?'additional':'main');
+  const list=property(key);if(Array.isArray(list))for(const item of list)addImage(typeof item==='string'?item:firstImage(item?.originalImageURI,item?.imageURI,item?.imageUrl,item?.url,item?.fullPathImageURI,item?.fullPathImageUri,item?.image),images.some(item=>item.role==='main')?'additional':'main');
  }
  if(!images.length&&Array.isArray(input.gallery))for(const url of input.gallery)addImage(url,images.length?'additional':'main');
  const details=Array.isArray(input.detailImages)?input.detailImages:[];
  for(const url of details)addImage(url,'detail');
  const valueImages=new Map();
- if(object(sm)&&Array.isArray(sm.skuProps))for(const prop of sm.skuProps)for(const value of Array.isArray(prop.value)?prop.value:[]){const url=image(value.imageUrl??value.image??value.picUrl??value.imageURI);if(url)valueImages.set(plain(value.name,500),url);}
+ if(object(sm)&&Array.isArray(sm.skuProps))for(const prop of sm.skuProps)for(const value of Array.isArray(prop.value)?prop.value:[]){const url=firstImage(value.imageUrl,value.image,value.picUrl,value.imageURI);if(url)valueImages.set(plain(value.name,500),url);}
  const currency=/(?:CNY|人民币|[¥￥])/.test(plain(input.priceText,2000))?'CNY':null;
  const order=plain(input.minimumOrderText,1000).match(/(?:^|\s)(\d+)\s*(?:件|顶|个|双|套)?\s*起批/u);
  const minimumOrder=object(sm)?integer(sm.beginAmount??sm.minOrderQuantity)??(order?integer(order[1]):null):order?integer(order[1]):null;
@@ -455,9 +534,30 @@ export function extractPageSource(input,now=Date.now()){
   const rawSku=row.skuId??row.specId;
   const name=plain(row.specAttrs??row.name??key,500),supplierSku=plain(typeof rawSku==='number'&&Number.isSafeInteger(rawSku)?String(rawSku):rawSku,200)||null;
   const unitPriceCny=price(row.discountPrice??row.price??row.skuPrice??row.consignPrice);
-  const imageUrl=image(row.imageUrl??row.image)??valueImages.get(name)??[...valueImages].find(([label])=>name.split(/[;，,>|]/).some(part=>part.trim()===label))?.[1]??null;
+  const imageUrl=firstImage(row.imageUrl,row.image)??valueImages.get(name)??[...valueImages].find(([label])=>optionParts(name).includes(label))?.[1]??null;
   if(imageUrl)addImage(imageUrl,'additional');
   options.push({key:plain(key,200),name,supplierSku,unitPriceCny,currency,minimumOrder,stock:Number.isSafeInteger(row.stock)&&row.stock>=0?row.stock:null,imageUrl});
+ }
+ if(object(sm)&&input.domOptions?.format==='yoofam-page-dom-option-images-v1'){
+  // An invalid/ambiguous optional observation never erases valid script facts.
+  let supplement=null;
+  try{
+   scriptImageModel(scripts,identity.offerId);
+   const dom=input.domOptions;
+   if(Object.keys(dom).sort().join(',')!=='format,images,offerId,sourceUrl'||dom.sourceUrl!==identity.sourceUrl||dom.offerId!==identity.offerId
+    ||pageSourceUrl(dom.sourceUrl).sourceUrl!==dom.sourceUrl||!Array.isArray(dom.images)||dom.images.length>200)throw domOptionsError();
+   const entries=new Map();
+   for(const row of dom.images){
+    if(!object(row)||Object.keys(row).sort().join(',')!=='imageUrl,name'||!plain(row.name,500)||row.name!==plain(row.name,500)
+     ||typeof row.imageUrl!=='string'||image(row.imageUrl)!==row.imageUrl||entries.has(row.name))throw domOptionsError();
+    entries.set(row.name,row.imageUrl);
+   }
+   supplement=entries;
+  }catch{/* Keep the script-only result when this image evidence cannot qualify. */}
+  if(supplement){
+   const counts=new Map();for(const row of options)counts.set(row.name,(counts.get(row.name)??0)+1);
+   for(const row of options)if(!row.imageUrl&&counts.get(row.name)===1&&supplement.has(row.name)){row.imageUrl=supplement.get(row.name);addImage(row.imageUrl,'additional');}
+  }
  }
  if(!models.length&&!scripts.some(text=>/"skuModel"\s*:/.test(text))&&input.domOptions!=null){
   domSourceIdentity(scripts,identity.offerId);

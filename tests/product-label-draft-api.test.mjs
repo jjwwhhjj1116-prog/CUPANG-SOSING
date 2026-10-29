@@ -90,11 +90,28 @@ for(const company of companies)test(`Stage6 Workers draft proposes only three ac
   h.sqlite.prepare('UPDATE products SET source_url=? WHERE id=?').run('synthetic://legacy-label-draft',f.id);
   const legacyContent=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content WHERE product_id=?').get(f.id).payload);delete legacyContent.detail;
   h.sqlite.prepare('UPDATE product_content SET payload=? WHERE product_id=?').run(JSON.stringify(legacyContent),f.id);
-  view=await f.read();const legacyState=f.state(),legacy=await json(await f.generate(view));assert.deepEqual(legacy.values,{material:values.material});assert.deepEqual(f.state(),legacyState);
+  view=await f.read();const legacyState=f.state(),legacy=await json(await f.generate(view),409);assert.equal(legacy.code,'PRODUCT_LABEL_DRAFT_EVIDENCE');assert.deepEqual(f.state(),legacyState);
   const legacyFacts=JSON.parse(f.calls.at(-1).input.messages[1].content).facts;assert.deepEqual(legacyFacts.attributes,[]);assert.equal(legacyFacts.description,legacyContent.seo.description.value);
   assert.deepEqual(h.network,[]);assert.equal(f.storage.privatePutAttempts,0);assert.equal(f.storage.publicPutAttempts,0);assert.equal(f.quota(),f.calls.length);
-  proofs.push({company,kind:'proposals',syntheticSource:true,proposal:result.values,manualBlankProtected:true,commonValueProtected:true,contentManualProtected:true,deletedFieldOmitted:true,exactOptionSeoAndBlank:true,optionalLegacyDetailSupported:true,
+  proofs.push({company,kind:'proposals',syntheticSource:true,proposal:result.values,manualBlankProtected:true,commonValueProtected:true,contentManualProtected:true,deletedFieldOmitted:true,exactOptionSeoAndBlank:true,legacyMissingMaterialEvidenceBlocked:true,
    businessDataAndR2ReadOnly:true,quotaReservations:f.quota(),providerCalls:f.calls.length,apiRequests:f.requests.length,sourceBeforeSha256:sha(before.db),sourceAfterFirstDraftSha256:sha(afterFirst.db)});
+ }finally{f.close();}
+});
+
+for(const company of companies)test(`Stage6 rejects invented label facts with no business writes and permits original cotton (${company.code})`,async()=>{
+ frozenHashes??=hashes();const f=await fixture(company);
+ try{
+  const {h}=f,receipt={...plain(f.receipt),title:'海绵清洁块',description:'海绵商品说明',attributes:[{name:'材质',value:'海绵'},{name:'包装数量',value:'2个'}]};
+  h.sqlite.prepare('UPDATE collection_results SET payload=? WHERE job_id=?').run(JSON.stringify(receipt),'job');
+  for(const [output,reason]of [[{content:'2개',material:'면 소재',type:'세척 블록'},/면 재질/],[{content:'2쌍',material:'스펀지',type:'세척 블록'},/포장·판매 단위/],[{content:'2개',material:'스펀지',type:'항균 세척 블록'},/항균/]]){
+   f.setProvider(async()=>({response:JSON.stringify(output)}));const view=await f.read(),before=f.state(),count=f.calls.length,result=await json(await f.generate(view),409);
+   assert.equal(result.code,'PRODUCT_LABEL_DRAFT_EVIDENCE');assert.match(result.error,reason);assert.equal(f.calls.length,count+1);assert.deepEqual(f.state(),before);assert.equal(f.storage.privatePutAttempts,0);assert.equal(f.storage.publicPutAttempts,0);
+  }
+  receipt.title='纯棉清洁块';receipt.attributes[0].value='纯棉';h.sqlite.prepare('UPDATE collection_results SET payload=? WHERE job_id=?').run(JSON.stringify(receipt),'job');
+  f.setProvider(async()=>({response:JSON.stringify({content:'2개',material:'순면 소재',type:'세척 블록'})}));let view=await f.read(),before=f.state();assert.equal((await json(await f.generate(view))).values.material,'순면 소재');assert.deepEqual(f.state(),before);
+  view=await f.save([{optionId:null,fieldKey:'netContents',value:''},{optionId:option,fieldKey:'material',value:''}]);before=f.state();f.setProvider(async()=>({response:JSON.stringify({content:'999개',material:'실리콘',type:'세척 블록'})}));
+  assert.deepEqual((await json(await f.generate(view))).values,{productType:'세척 블록'});assert.deepEqual(f.state(),before);assert.equal((await f.read()).rows.find(row=>row.optionId===option).values.material,'');assert.equal((await f.read()).rows.find(row=>row.optionId===option).values.netContents,'');
+  assert.deepEqual(h.network,[]);assert.equal(f.quota(),f.calls.length);
  }finally{f.close();}
 });
 
@@ -120,7 +137,7 @@ for(const company of companies)test(`Stage6 draft rejects stale/auth/provider fa
    f.setProvider(async()=>bad);const response=await f.generate(view);assert.ok([422,502,503].includes(response.status),await response.clone().text());assert.deepEqual(f.state(),before);
   }
   f.setProvider(async()=>{throw Error('private upstream token must not escape');});const failed=await f.generate(view);assert.ok([502,503].includes(failed.status));assert.doesNotMatch(await failed.text(),/private upstream token/);assert.deepEqual(f.state(),before);
-  f.setProvider(async()=>({response:JSON.stringify({...fields,material:''})}));const empty=await json(await f.generate(view));assert.deepEqual(empty.values,{netContents:values.netContents,productType:values.productType});assert.ok(empty.warnings.length);assert.deepEqual(f.state(),before);
+  f.setProvider(async()=>({response:JSON.stringify({...fields,material:''})}));const empty=await json(await f.generate(view),409);assert.equal(empty.code,'PRODUCT_LABEL_DRAFT_EVIDENCE');assert.deepEqual(f.state(),before);
   // A real concurrent manual save advances the label source while inference is
   // in flight. Only that explicit save may remain; the late AI response is stale.
   let concurrent;

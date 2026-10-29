@@ -408,6 +408,9 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
   const sourceType=nativeSha?'YOOFAM_VERIFY_NATIVE_PRODUCT_DOCUMENT_SOURCE':wholeProduct?'YOOFAM_VERIFY_PRODUCT_DOCUMENT_SOURCE':'YOOFAM_VERIFY_SINGLE_DOCUMENT_SOURCE',confirmationType=nativeSha?'YOOFAM_CONFIRM_NATIVE_PRODUCT_DOCUMENT_ACTION':wholeProduct?'YOOFAM_CONFIRM_PRODUCT_DOCUMENT_ACTION':'YOOFAM_CONFIRM_SINGLE_DOCUMENT_ACTION';
   if(!api?.tabs||!api?.scripting||['get','create','update','sendMessage'].some(key=>typeof api.tabs[key]!=='function')||typeof api.scripting.executeScript!=='function')throw new TypeError('Owned Chrome tab adapter is required.');
   const sourceBindings=new Map(),baselines=new Map(),pageRecords=new Map(),frameDocuments=new Map(),liveWatches=new Map();
+  // Object-identity receipts stay inside this adapter and the trusted core.
+  // They are single use, are not a TTL cache, and never enter a page/message.
+  let savedTargetReadReceipts=new WeakMap();
   const mutable=identity=>{if(sourceBindings.get(canonical(identity))?.readOnlyReceipt)fail('READ_ONLY_RECEIPT','이미 제출한 원래 문서의 읽기 확인에서는 수정·동의·재제출하지 않습니다.');};
   const requireWatch=entry=>{try{entry.watch.assertCurrent(entry.expected);}catch{fail('TAB_CHANGED','불러온 새 문서의 관찰이 중단됐습니다. 다른 문서를 클릭하거나 전송하지 않았습니다.');}};
   async function appCurrent(identity){
@@ -438,8 +441,11 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     const recovery=input.receiptRecovery;
     if(recovery!==undefined&&(!nativeSha||!recovery||Object.keys(recovery).sort().join(',')!=='sessionId,submitRequestedAt'||!ID.test(recovery.sessionId||'')||!Number.isSafeInteger(recovery.submitRequestedAt)||recovery.submitRequestedAt<1||recovery.submitRequestedAt>now()+5000||input.docId===null||input.docId===undefined))fail('SOURCE_CHANGED','이미 제출한 원래 문서의 읽기 확인 연결이 다릅니다.');
     const binding={identity:copy(input.identity),identityDigest:await digest(input.identity),packetDigest:input.packetDigest,preparedBodySha256:input.preparedBodySha256,originalBodySha256:input.bodySha256,sessionId:recovery?.sessionId??response.sessionId,requestId:input.requestId,...(nativeSha?{nativeAssetSourcePlanSha256:nativeSha}:{})};
-    sourceBindings.set(canonical(input.identity),{input:copy(input),binding,sourceCheckedAt:now(),readOnlyReceipt:recovery!==undefined,...(nativeSha?{nativeSourcePlan:copy(fresh.result.sourcePlan),imageBatchAvailable:fresh.result.imageBatchAvailable===true}:{})});
-    return {current:true,submissionReady:true,priorDocumentClear:true,identity:copy(response.identity),bodySha256:response.bodySha256,sessionId:response.sessionId};
+    const snapshot={input:copy(input),binding,sourceCheckedAt:now(),readOnlyReceipt:recovery!==undefined,...(nativeSha?{nativeSourcePlan:copy(fresh.result.sourcePlan),imageBatchAvailable:fresh.result.imageBatchAvailable===true}:{})};
+    sourceBindings.set(canonical(input.identity),snapshot);
+    const proof={current:true,submissionReady:true,priorDocumentClear:true,identity:copy(response.identity),bodySha256:response.bodySha256,sessionId:response.sessionId};
+    if(nativeSha&&recovery===undefined)savedTargetReadReceipts.set(proof,snapshot);
+    return proof;
   }
   async function readSource(input){
     try{return await readSourceUnchecked(input);}catch(error){
@@ -739,10 +745,19 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     validateNativeAssetUploadDescriptors(value.files,{kind:'image',expectedFiles:sourcePlan.images});
     return value;
   }
-  async function qualifySavedDraftTarget(input){
+  async function qualifySavedDraftTarget(input,readLease){
+    const suppliedProof=readLease?.sourceProof;
+    const snapshot=suppliedProof&&typeof suppliedProof==='object'?savedTargetReadReceipts.get(suppliedProof):undefined;
+    if(suppliedProof&&typeof suppliedProof==='object')savedTargetReadReceipts.delete(suppliedProof);
     if(!nativeSha||!wholeProduct||input.docId===null||input.docId===undefined||input.requestId!==input.tab?.requestId||!Array.isArray(input.baselineDocIds)
       ||input.baselineDocIds.some(id=>String(id)===String(input.docId)))fail('SAVED_DRAFT_TARGET_SCOPE','원래 요청의 알려진 저장 문서에서만 전용 검증 탭을 복구할 수 있습니다.');
-    const binding=await bindingFor(input.identity,input.sessionId),sourcePlan=copy(sourceBindings.get(canonical(input.identity))?.nativeSourcePlan);
+    if(readLease!==undefined){
+      if(!readLease||Object.keys(readLease).sort().join(',')!=='sourceProof'||!snapshot||sourceBindings.get(canonical(input.identity))!==snapshot||snapshot.readOnlyReceipt
+        ||snapshot.input.docId!==input.docId||snapshot.input.requestId!==input.requestId||snapshot.binding.sessionId!==input.sessionId||!equal(snapshot.binding.identity,input.identity))
+        fail('SOURCE_CHANGED','같은 저장 문서 읽기의 원래 시작 검증을 확인하지 못했습니다.');
+    }
+    const binding=snapshot?.binding??await bindingFor(input.identity,input.sessionId),sourcePlan=copy(sourceBindings.get(canonical(input.identity))?.nativeSourcePlan);
+    const readCurrent=()=>{const current=sourceBindings.get(canonical(input.identity));if(snapshot&&current!==snapshot||!equal(current?.binding,binding)||!equal(current?.nativeSourcePlan,sourcePlan))fail('SOURCE_CHANGED','같은 저장 문서 읽기 중 원본 검증 연결이 변경되었습니다.');};
     assertSingleOwnedTarget(input.tab,binding);assertSingleOwnedTarget(input.previousTarget,binding);mutable(input.identity);
     if(input.tab.tabId===input.previousTarget.tabId)fail('SAVED_DRAFT_TARGET_SCOPE','닫힌 원래 탭과 구분된 새 전용 검증 탭이 아닙니다.');
     const existing=await execute(input.tab,input.identity,singleDocumentOwnedRecordPage,[binding,input.docId]);
@@ -750,7 +765,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
       ||existing.validation!==undefined||existing.updateOperationId!==undefined||existing.nativeAssets!==undefined||existing.submitOperationId!==undefined))fail('SAVED_DRAFT_TARGET_SCOPE','새 전용 검증 탭에 더 진행된 기록이 있어 변경하지 않았습니다.');
     const observed=await currentSavedRead(input,binding,sourcePlan,existing?'check':'read'),frame=frameDocuments.get(input.tab.tabId);
     if(typeof frame!=='string')fail('SAVED_DRAFT_TARGET_UNCONFIRMED','현재 읽기 확인을 수행한 정확한 브라우저 문서를 확인하지 못했습니다.');
-    await bindingFor(input.identity,input.sessionId);
+    if(snapshot)readCurrent();else await bindingFor(input.identity,input.sessionId);
     if(!equal(sourceBindings.get(canonical(input.identity))?.nativeSourcePlan,sourcePlan))fail('SOURCE_CHANGED','조회 중 원래 상품·파일 계획이 변경되었습니다.');
     const proof={format:'yoofam-current-saved-draft-target-v1',requestId:binding.requestId,docId:input.docId,tabId:input.tab.tabId,windowId:input.identity.windowId,
       identityDigest:binding.identityDigest,packetDigest:binding.packetDigest,preparedBodySha256:binding.preparedBodySha256,sourcePlanSha256:nativeSha,
@@ -761,7 +776,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
       ||!equal(record.baselineDocIds,input.baselineDocIds)||record.updateOperationId!==undefined||record.nativeAssets!==undefined||record.validation!==undefined||record.loadedDocId!==undefined
       ||record.currentReadRecovery?.fileBodyWritesAllowed!==false||record.currentReadRecovery?.historicalAckRecovered!==false||!equal(record.currentReadRecovery.proof,proof)
       ||record.currentReadRecovery.proofSha256!==await digest(proof))fail('SAVED_DRAFT_TARGET_UNCONFIRMED','현재 읽기만 수행한 같은 문서의 복구 기록을 확인하지 못했습니다.');
-    const after=await bindingFor(input.identity,input.sessionId);
+    const after=snapshot?(readCurrent(),binding):await bindingFor(input.identity,input.sessionId);
     if(!equal(after,binding)||!equal(sourceBindings.get(canonical(input.identity))?.nativeSourcePlan,sourcePlan))fail('SOURCE_CHANGED','복구 확인 중 원래 요청의 상품·회사가 변경되었습니다.');
     pageRecords.set(binding.packetDigest,copy(record));return proof;
   }
@@ -911,6 +926,6 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
         company:copy(input.identity.company),identityDigest:binding.identityDigest,preparedBodySha256:binding.preparedBodySha256,tabId:input.tab.tabId,windowId:input.identity.windowId,documentId,operationId:input.operationId,submitRequestedAt:input.submitRequestedAt},
         provenance:{...response?.receiptProvenance,tabId:input.tab.tabId,windowId:input.identity.windowId,documentId},observedAt,...(input.previousReceipt?{previousReceipt:input.previousReceipt}:{})});
     },
-    dispose:()=>{for(const [tabId,entry] of liveWatches){entry.watch.close();if(entry.ready)api.scripting.executeScript({target:{tabId,documentIds:[entry.expected.documentId]},func:singleDocumentWatchPage,args:[{...entry.page,action:'close'}]}).catch(()=>{});}liveWatches.clear();},
+    dispose:()=>{savedTargetReadReceipts=new WeakMap();for(const [tabId,entry] of liveWatches){entry.watch.close();if(entry.ready)api.scripting.executeScript({target:{tabId,documentIds:[entry.expected.documentId]},func:singleDocumentWatchPage,args:[{...entry.page,action:'close'}]}).catch(()=>{});}liveWatches.clear();},
   });
 }

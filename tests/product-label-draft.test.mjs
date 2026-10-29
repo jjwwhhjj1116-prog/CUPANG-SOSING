@@ -61,16 +61,37 @@ test('scope, malformed source facts and bounded input are rejected before any pr
 test('one bounded Workers call maps only the original three outputs and returns a verifiable review proposal',async()=>{
  const f=fixture(),before=JSON.stringify(f),calls=[],result=await draft.executeProductLabelDraft(f.plan(),{async run(model,input){calls.push({model,input});return {response:JSON.stringify(response)};}});
  assert.equal(calls.length,1);assert.equal(calls[0].model,draft.PRODUCT_LABEL_DRAFT_MODEL);assert.equal(calls[0].input.messages.length,2);
- assert.match(calls[0].input.messages[0].content,/상세정보참조/);assert.match(calls[0].input.messages[0].content,/참고 데이터/);
+ assert.match(calls[0].input.messages[0].content,/빈 문자열/);assert.match(calls[0].input.messages[0].content,/참고 데이터/);assert.match(calls[0].input.messages[0].content,/원가 계산 단위/);
  assert.deepEqual(plain(result.values),expected);assert.equal(result.labelRevision,f.view.revision);assert.equal(result.inputFingerprint,f.view.inputFingerprint);
  assert.equal(result.provider,'Cloudflare Workers AI');assert.equal(draft.verifyProductLabelDraftResult(f.view,'one',result),result);assert.equal(JSON.stringify(f),before);
 });
 
-test('empty provider values are omitted without fallback or clearing and whitespace/literal text remains reviewable data',async()=>{
- const f=fixture(),result=await draft.executeProductLabelDraft(f.plan(),provider({content:'',material:' \t\n ',type:'<b>문자열</b>'}));
- assert.deepEqual(plain(result.values),{material:' \t\n ',productType:'<b>문자열</b>'});assert.match(result.warnings.join('\n'),/지우지 않고 생략/);
- assert.equal(f.view.rows[1].values.netContents,'2个');draft.verifyProductLabelDraftResult(f.view,'one',result);
- const fallback=await draft.executeProductLabelDraft(f.plan(),provider({content:'상세정보참조',material:'상세정보참조',type:'상세정보참조'}));assert.equal(fallback.values.material,'상세정보참조');
+test('missing evidence, whitespace and placeholder outputs block the whole proposal without clearing original values',async()=>{
+ const f=fixture(),before=JSON.stringify(f);
+ for(const value of [{...response,content:''},{...response,material:' \t\n '},{content:'상세정보참조',material:'상세정보참조',type:'상세정보참조'}])
+  await assert.rejects(draft.executeProductLabelDraft(f.plan(),provider(value)),code('PRODUCT_LABEL_DRAFT_EVIDENCE',409));
+ assert.equal(JSON.stringify(f),before);assert.equal(f.view.rows[1].values.netContents,'2个');
+ const literal=await draft.executeProductLabelDraft(f.plan(),provider({...response,type:'<b>문자열</b>'}));assert.equal(literal.values.productType,'<b>문자열</b>');
+});
+
+test('sponge is not cotton, actual cotton is permitted, and Korean surface text is not a cotton material claim',async()=>{
+ const f=fixture(),before=JSON.stringify(f.view);f.source.originalTitle='海绵清洁块';f.source.attributes=[{name:'材质',value:'海绵'},{name:'包装数量',value:'2个'}];
+ await assert.rejects(draft.executeProductLabelDraft(f.plan(),provider({...response,material:'면 소재'})),error=>code('PRODUCT_LABEL_DRAFT_EVIDENCE',409)(error)&&/면 재질/.test(error.message));
+ const result=await draft.executeProductLabelDraft(f.plan(),provider({...response,material:'스펀지',type:'표면 세척 블록'}));assert.equal(result.values.material,'스펀지');
+ f.source.originalTitle='纯棉清洁块';f.source.attributes[0].value='纯棉';const cotton=await draft.executeProductLabelDraft(f.plan(),provider({...response,material:'순면 소재'}));assert.equal(cotton.values.material,'순면 소재');assert.equal(JSON.stringify(f.view),before);
+});
+
+test('cost units and generated names cannot prove physical quantity; real sale units and performance evidence are checked',async()=>{
+ const f=fixture();f.source.attributes=[{name:'材质',value:'硅胶'},{name:'上市年份',value:'2024'}];f.source.productName='검토 2개';f.source.option.unitsPerPack=2;
+ await assert.rejects(draft.executeProductLabelDraft(f.plan(),provider()),error=>code('PRODUCT_LABEL_DRAFT_EVIDENCE',409)(error)&&/숫자/.test(error.message));
+ f.source.description='最低起订2个';f.source.attributes.push({name:'库存数量',value:'2个'});
+ await assert.rejects(draft.executeProductLabelDraft(f.plan(),provider()),error=>code('PRODUCT_LABEL_DRAFT_EVIDENCE',409)(error)&&/포장·판매 단위/.test(error.message));
+ f.source.attributes.push({name:'包装数量',value:'2个'});
+ await assert.rejects(draft.executeProductLabelDraft(f.plan(),provider({...response,content:'2쌍'})),error=>code('PRODUCT_LABEL_DRAFT_EVIDENCE',409)(error)&&/포장·판매 단위/.test(error.message));
+ await assert.rejects(draft.executeProductLabelDraft(f.plan(),provider({...response,type:'항균 무릎 보호용품'})),code('PRODUCT_LABEL_DRAFT_EVIDENCE',409));
+ assert.equal((await draft.executeProductLabelDraft(f.plan(),provider())).values.netContents,'2개');
+ const manual=fixture({common:{netContents:''},specific:{material:''}}),before=JSON.stringify(manual.view);
+ const protectedResult=await draft.executeProductLabelDraft(manual.plan(),provider({content:'999개',material:'면 소재',type:'보호 용품'}));assert.deepEqual(plain(protectedResult.values),{productType:'보호 용품'});assert.equal(JSON.stringify(manual.view),before);
 });
 
 test('strict JSON rejects extra, missing, duplicate, fenced, prose, unsafe and nonstring outputs without retries',async()=>{

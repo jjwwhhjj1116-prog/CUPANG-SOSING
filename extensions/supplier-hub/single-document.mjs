@@ -490,7 +490,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
       fail('SAVED_DRAFT_TARGET_SCOPE','같은 저장 문서의 검증 전 원래 요청에서만 현재 읽기 탭을 복구할 수 있습니다.');
     // Current app identity/body may outlive routine authentication refresh. No
     // old or replacement tab is selected, and no new session is committed yet.
-    await guard(context,{...state,ownedTarget:null,tab:null,sessionId:null});
+    let source=await guard(context,{...state,ownedTarget:null,tab:null,sessionId:null});
     const recovery=state.savedDraftTargetRecovery;
     if(recovery?.phase==='bound'){
       const presence=await targetPresence(context,state,state.ownedTarget);
@@ -511,8 +511,10 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
     if(action!=='recoverSavedDraftTarget')return result(state,{error:{code:'SAVED_DRAFT_TARGET_CLOSED',message:'예약한 같은 문서의 새 전용 탭에서 현재 본문·전체 파일의 읽기 확인을 계속해주세요.'}});
     const target=state.savedDraftTargetRecovery.target,tab=await call('readTab',{identity:context.identity,tab:target});
     if(!tabValid(tab,context.packet)||tab.tabId!==target.tabId||tab.requestId!==state.requestId||tab.packetDigest!==context.packetDigest)fail('TAB_CHANGED','같은 문서의 새 전용 탭·회사·로그인 연결을 확인해주세요.');
-    const source=await guard(context,{...state,ownedTarget:target,tab,sessionId:null});
-    const proof=await call('qualifySavedDraftTarget',{tab,identity:context.identity,sessionId:source.sessionId,requestId:state.requestId,docId:state.docId,baselineDocIds:state.baselineDocIds,expectedBody:withDoc(context.packet,state.docId),previousTarget:state.savedDraftTargetRecovery.previousTarget});
+    // Browser creation keeps its independent source guard. Only the already
+    // reserved read-only span may consume this exact start proof once.
+    if(!recovery)source=await guard(context,{...state,ownedTarget:target,tab,sessionId:null});
+    const proof=await adapter.qualifySavedDraftTarget(safeValue({tab,identity:context.identity,sessionId:source.sessionId,requestId:state.requestId,docId:state.docId,baselineDocIds:state.baselineDocIds,expectedBody:withDoc(context.packet,state.docId),previousTarget:state.savedDraftTargetRecovery.previousTarget}),{sourceProof:source});
     if(!savedTargetProofValid(proof,state,context,target)||proof.baselineSha256!==await digest(state.baselineDocIds)||Math.abs(clock()-proof.observedAt)>60000||proof.observedAt<state.savedDraftTargetRecovery.startedAt)
       fail('SAVED_DRAFT_TARGET_UNCONFIRMED','같은 저장 문서의 현재 본문·전체 파일·바이트 증거를 확인하지 못했습니다. 파일과 본문을 다시 보내지 않았습니다.');
     await guard(context,{...state,ownedTarget:target,tab,sessionId:source.sessionId});

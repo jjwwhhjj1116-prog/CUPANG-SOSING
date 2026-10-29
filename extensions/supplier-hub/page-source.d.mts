@@ -6,9 +6,10 @@ export function readPageSourceElementImage(element:(Pick<HTMLImageElement,'getAt
 export function pageJsonProperty(text:string,key:string):unknown;
 export function readPageSourceDescriptionReference(sourceUrl:string,scripts:string[]):{sourceUrl:string;offerId:string;detailUrl:string}|null;
 export type PageSourceDomOptions={format:'yoofam-page-dom-options-v1';sourceUrl:string;offerId:string;options:PageSource['options']};
-export function readPageSourceDomOptions(document:Pick<Document,'querySelectorAll'>,sourceUrl:string,scripts:string[]):PageSourceDomOptions|null;
+export type PageSourceDomOptionImages={format:'yoofam-page-dom-option-images-v1';sourceUrl:string;offerId:string;images:{name:string;imageUrl:string}[]};
+export function readPageSourceDomOptions(document:Pick<Document,'querySelectorAll'>,sourceUrl:string,scripts:string[]):PageSourceDomOptions|PageSourceDomOptionImages|null;
 export function readPageSourceDomFacts(document:Pick<Document,'querySelectorAll'>,sourceUrl:string,scripts:string[]):import('./page-dom-facts.mjs').PageDomFacts|null;
-export function extractPageSource(input:{sourceUrl:string;scripts:string[];domOptions?:PageSourceDomOptions|null;domFacts?:import('./page-dom-facts.mjs').PageDomFacts|null;title?:string;description?:string;gallery?:string[];detailImages?:string[];priceText?:string;minimumOrderText?:string},now?:number):PageSource;
+export function extractPageSource(input:{sourceUrl:string;scripts:string[];domOptions?:PageSourceDomOptions|PageSourceDomOptionImages|null;domFacts?:import('./page-dom-facts.mjs').PageDomFacts|null;title?:string;description?:string;gallery?:string[];detailImages?:string[];priceText?:string;minimumOrderText?:string},now?:number):PageSource;
 export function validatePageSource(input:unknown,now?:number):PageSource;
 export function validatePageSourceCaptureDiagnostics(input:unknown):PageSourceCaptureDiagnostics;
 export function validatePageSourceForDelivery(input:unknown,now?:number):PageSource;

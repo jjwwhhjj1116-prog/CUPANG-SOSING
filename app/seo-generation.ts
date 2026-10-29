@@ -4,6 +4,7 @@ import {supplierHubCompany,type SupplierHubCompany} from '@/app/supplier-hub-com
 import {translationNumbers} from '@/app/translation-attribute-evidence';
 import {unsupportedTranslatedProductClaim} from '@/app/product-translation-quality';
 import {quotationAiProviderResponse} from '@/app/quotation-ai-provider';
+import {unsupportedProductMaterial} from '@/app/product-material-evidence';
 
 export type SeoGenerationMemo={brand:string;features:string;keywords:string};
 export type SeoGenerationProof={purpose:'seo-generation';version:1;sourceFingerprint:string;optionRevision:number;company:SupplierHubCompany;memo:SeoGenerationMemo};
@@ -58,9 +59,7 @@ export function validateSeoGenerationDraft(raw:unknown,review:TranslationReview)
  const allowedNumbers=new Set(translationNumbers(facts+'\n'+proof.memo.brand));
  if(translationNumbers(text).some(value=>!allowedNumbers.has(value)))return fail('SEO 초안에 원문에서 확인하지 못한 숫자가 포함되었습니다.');
  if(unsupportedTranslatedProductClaim(text,facts))return fail('SEO 초안에 원문에서 확인하지 못한 성능 표현이 포함되었습니다.');
- const materials=[[/실리콘/iu,/硅胶|silicone|실리콘/iu],[/스테인리스/iu,/不锈钢|stainless|스테인리스/iu],[/폴리에스테르/iu,/聚酯|涤纶|polyester|폴리에스테르/iu],[/나일론/iu,/尼龙|nylon|나일론/iu],[/천연가죽/iu,/真皮|genuine\s+leather|천연가죽/iu],[/인조가죽/iu,/人造革|仿皮|合成革|synthetic\s+leather|인조가죽/iu],
-  [/순면|면\s*(?:소재|원단|혼방)|cotton|코튼/iu,/棉|cotton|코튼|순면|(?:^|[\s:：,])면(?:$|[\s,]|혼방|소재|원단)/imu]];
- if(materials.some(([output,evidence])=>output.test(text)&&!evidence.test(facts)))return fail('SEO 초안에 원문에서 확인하지 못한 재질이 포함되었습니다.');
+ if(unsupportedProductMaterial(text,facts))return fail('SEO 초안에 원문에서 확인하지 못한 재질이 포함되었습니다.');
  // Factual attributes are input evidence, not omitted translation targets.
  // This purpose deliberately returns no attribute/option writes or coverage warnings.
  return {title:raw.title.trim(),description:raw.description.trim(),keywords:(raw.keywords as string[]).map(value=>value.trim()),attributes:[],warnings:(raw.warnings as string[]).map(value=>value.trim()).filter(Boolean)};

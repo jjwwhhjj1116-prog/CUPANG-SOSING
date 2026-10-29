@@ -124,12 +124,18 @@ test('a committed text save with a lost acknowledgement is proven by one read an
  assert.equal(f.view.rows[1].values.material,'스펀지');assert.deepEqual(f.attachments,['one','two']);
 });
 
+test('a definite label evidence rejection preserves manual values and blanks, blocks with a reason, and never writes or renders',async()=>{
+ const f=fixture({prepare(view){view.overrides.common.netContents='';view.overrides.options.one={material:''};},intercept(url){if(url.endsWith('/product-label-draft'))return Response.json({code:'PRODUCT_LABEL_DRAFT_EVIDENCE',error:'상품 유형: 원문에서 확인하지 못한 항균 성능 표현이 포함됐습니다.'},{status:409});}}),before=clone(f.view),result=await f.run();
+ assert.equal(result.status,'blocked');assert.equal(result.uncertain,false);assert.match(result.message,/항균/);assert.equal(f.calls.filter(call=>call.url.endsWith('/product-label-draft')).length,1);assert.equal(f.calls.filter(call=>call.init.method==='PUT').length,0);assert.equal(f.plans.length,0);assert.equal(f.attachments.length,0);assert.deepEqual(f.view,before);
+});
+
 test('real label draft/save/upload/reference handlers persist the proposed values and exact option PNGs in local SQLite only',async()=>{
  const h=mobileIntakeHarness();try{
   await h.intake();const product=h.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id;
   const originalGet=h.bindings.FILES.get;h.bindings.FILES.get=async(key,options)=>{const object=await originalGet(key),bytes=h.objects.get(key);if(!object||!bytes)return object;const offset=options?.range?.offset??0,end=options?.range?.length===undefined?bytes.byteLength:offset+options.range.length;return{...object,body:new Response(bytes.slice(offset,end)).body};};
   h.bindings.SOURCEFLOW_QUOTATION_AI_PROVIDER='workers-ai';h.bindings.SOURCEFLOW_QUOTATION_AI_FREE_ONLY='true';let aiCalls=0;
-  h.bindings.AI.run=async(_model,input)=>{assert.equal(JSON.parse(input.messages[1].content).task,'KOREAN_LABELS');aiCalls++;return{response:JSON.stringify({content:'1개',material:'합성 시험 재질',type:'합성 시험 유형'})};};
+  h.bindings.AI.run=async(_model,input)=>{assert.equal(JSON.parse(input.messages[1].content).task,'KOREAN_LABELS');aiCalls++;return{response:JSON.stringify({content:'1개',material:'실리콘',type:'합성 시험 유형'})};};
+  const sourceReceipt=JSON.parse(h.sqlite.prepare('SELECT payload FROM collection_results').get().payload);sourceReceipt.attributes.push({name:'材质',value:'硅胶'},{name:'包装数量',value:'1个'});h.sqlite.prepare('UPDATE collection_results SET payload=?').run(JSON.stringify(sourceReceipt));
   const before=await(await h.route(base+'/product-labels')).json(),included=before.rows.filter(row=>row.optionId!==null&&row.included);assert.ok(included.length);
   const excluded=before.rows.filter(row=>row.optionId===null||!row.included),calls=[],rendered=[],controller=new AbortController();
   const request=async(url,init={})=>{assert.equal(init.signal,controller.signal);calls.push({url,method:init.method??'GET'});if(url==='/api/files')return h.load('app/api/files/route.ts').POST(new Request('https://app.test/api/files',{method:'POST',body:init.body}));return h.route(url,{method:init.method??'GET',...(init.body?{body:JSON.parse(init.body)}:{})});};
@@ -137,7 +143,7 @@ test('real label draft/save/upload/reference handlers persist the proposed value
   assert.equal(result.status,'draft',result.message);assert.equal(result.completedOptions,included.length);assert.equal(result.uncertain,false);assert.equal(aiCalls,included.length);assert.equal(rendered.length,included.length);
   const saved=await(await h.route(base+'/product-labels')).json(),quote=await(await h.route(base+'/quotation-fields')).json();
   assert.deepEqual(saved.rows.filter(row=>row.optionId===null||!row.included),excluded);
-  for(const row of included){const next=saved.rows.find(item=>item.optionId===row.optionId),key=quote.resolved.rows.find(item=>item.optionId===row.optionId).fields.labelImages.value;assert.equal(next.values.material,'합성 시험 재질');assert.match(key,/owner\/quotation-label-[a-f0-9]{64}\.png/u);assert.deepEqual(h.objects.get(key),png);}
+  for(const row of included){const next=saved.rows.find(item=>item.optionId===row.optionId),key=quote.resolved.rows.find(item=>item.optionId===row.optionId).fields.labelImages.value;assert.equal(next.values.material,'실리콘');assert.match(key,/owner\/quotation-label-[a-f0-9]{64}\.png/u);assert.deepEqual(h.objects.get(key),png);}
   assert.equal(calls.filter(call=>call.url==='/api/files'&&call.method==='POST').length,included.length);assert.equal(h.network.length,beforeNetwork,'No live source/provider requests');
  }finally{h.close();}
 });

@@ -75,6 +75,13 @@ test('bound recovery enters only the existing four validation steps and retains 
   assert.equal(f.created,1);f.assertReadOnly();
 });
 
+test('a reserved read target uses exactly full start and final source guards without creating another tab',async()=>{
+ const f=await fixture({proof:()=>null});assert.equal((await f.receiver().recoverSavedDraftTarget(f.packet,f.sender)).error.code,'SAVED_DRAFT_TARGET_UNCONFIRMED');
+ const reserved=f.saved();f.proof=undefined;f.calls=[];const result=await f.receiver().recoverSavedDraftTarget(f.packet,f.sender);
+ assert.equal(result.state,'updated',JSON.stringify(result));assert.equal(f.calls.filter(call=>call.name==='readSource').length,2);assert.equal(f.calls.some(call=>call.name==='createTarget'),false);assert.equal(f.created,1);
+ assert.deepEqual(f.saved().savedDraftTargetRecovery.target,reserved.savedDraftTargetRecovery.target);f.assertReadOnly();
+});
+
 const proofMutations={missing:()=>null,extra:proof=>({...proof,claimedHistoricAck:true}),identity:proof=>({...proof,identityDigest:'3'.repeat(64)}),packet:proof=>({...proof,packetDigest:'3'.repeat(64)}),body:proof=>({...proof,bodySha256:'3'.repeat(64)}),source:proof=>({...proof,sourcePlanSha256:'3'.repeat(64)}),baseline:proof=>({...proof,baselineSha256:'3'.repeat(64)}),document:proof=>({...proof,docId:2347604}),tab:proof=>({...proof,tabId:91}),window:proof=>({...proof,windowId:999}),duplicate:proof=>({...proof,duplicateMatches:1}),state:proof=>({...proof,documentState:'SUBMITTED'}),historic:proof=>({...proof,historicalAckRecovered:true}),writes:proof=>({...proof,remoteWrites:true}),bytes:proof=>({...proof,byteSetSha256:'bad'}),files:proof=>({...proof,filesCount:0}),stale:proof=>({...proof,observedAt:proof.observedAt-60001}),future:proof=>({...proof,observedAt:proof.observedAt+60001})};
 for(const [name,proof]of Object.entries(proofMutations))test(`current server proof rejects ${name} without rebinding or any document write`,async()=>{
   const f=await fixture({proof}),reply=await f.receiver().recoverSavedDraftTarget(f.packet,f.sender);assert.equal(reply.error.code,'SAVED_DRAFT_TARGET_UNCONFIRMED',JSON.stringify(reply));assert.equal(f.saved().savedDraftTargetRecovery.phase,'created');assert.equal(f.saved().ownedTarget.tabId,71);assert.equal(f.saved().sessionId,'historic-session');assert.equal(f.created,1);f.assertReadOnly();
