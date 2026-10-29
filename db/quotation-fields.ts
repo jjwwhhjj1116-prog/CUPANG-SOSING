@@ -26,11 +26,17 @@ export type QuotationSourceGuard = {
   member?:{email:string;role:string;companyCode:string;companyName:string};
 };
 type Row = { payload: string; revision: number };
+// Remember completed setup for this exact binding only. In-flight D1 I/O must
+// stay with its own Workers request; every source/quotation SELECT stays fresh.
+const schemaReadyBindings=new WeakSet<D1Database>();
 async function database() {
-  if (!env.DB) throw new Error('D1 unavailable');
-  await env.DB.batch([env.DB.prepare(quotationFieldsSchema), env.DB.prepare(collectionSchema), env.DB.prepare(collectionProductSchema),
-    env.DB.prepare('CREATE TABLE IF NOT EXISTS collection_context (job_id TEXT PRIMARY KEY REFERENCES collection_jobs(id), payload TEXT NOT NULL)')]);
-  return env.DB;
+  const db=env.DB;if (!db) throw new Error('D1 unavailable');
+  if(!schemaReadyBindings.has(db)){
+    await db.batch([db.prepare(quotationFieldsSchema), db.prepare(collectionSchema), db.prepare(collectionProductSchema),
+      db.prepare('CREATE TABLE IF NOT EXISTS collection_context (job_id TEXT PRIMARY KEY REFERENCES collection_jobs(id), payload TEXT NOT NULL)')]);
+    schemaReadyBindings.add(db);
+  }
+  return db;
 }
 export async function readQuotationFields(owner: string, productId: string): Promise<QuotationFieldsState> {
   const db = await database();

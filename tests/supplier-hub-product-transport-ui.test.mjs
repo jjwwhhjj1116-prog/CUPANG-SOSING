@@ -15,6 +15,7 @@ import {SupplierHubRejectionDetails} from './helpers/rejection-details-ui.mjs';
 import {productValidationRejectionFixture} from './helpers/product-validation-rejection.mjs';
 import {normalizeRejectionDetails} from '../extensions/supplier-hub/rejection-details.mjs';
 import {runReservedSegments} from '../app/supplier-hub-reserved-work.mjs';
+import {sourceReadError} from '../extensions/supplier-hub/product-document-source.mjs';
 
 const releaseVersion=JSON.parse(fs.readFileSync(new URL('../extensions/supplier-hub/manifest.json',import.meta.url),'utf8')).version;
 const releaseDownload='/downloads/yoofam-plus-supplier-hub-extension-'+releaseVersion+'.zip';
@@ -128,6 +129,61 @@ const recoverSavedTarget='원래 저장 문서 검증 탭 복구 · 파일·본�
 const savedTargetCapabilities={draftPreparationAvailable:true,preparedLifecycleAvailable:true,savedDraftTargetRecoveryAvailable:true,existingDocumentRepairAvailable:true,existingDocumentRepairRetryAvailable:true,existingDocumentRepairContinuationAvailable:true,existingDocumentRepairReservedResumeAvailable:true,existingDocumentRepairSegmentedAvailable:true};
 function savedTargetProof(h,sequence=12){return {...repairProof(h,true),existingDocumentRepairRetryAttempted:true,existingDocumentRepairContinuationAttempted:true,existingDocumentRepairContinuationResumed:true,checkpointSequence:sequence};}
 function savedTargetClosed(h,payload,code='SAVED_DRAFT_TARGET_CLOSED'){return draftResult(h.f,payload.packet.requestId,'update-requested',{docId:'2347603',needsRecovery:true,draftProof:savedTargetProof(h),error:{code,message:'원래 저장 문서의 전용 검증 탭이 닫혔습니다.'}});}
+async function seedOriginalPreviewIntent(h){
+ const pending=h.f.load('app/supplier-hub-product-pending.ts');
+ await pending.claimProductDocumentPending(h.f.review,{packet:h.f.packet,preview:h.f.preview(),packetDigest:h.f.context.packetDigest,origin:h.f.window.location.origin},new AbortController().signal);
+ return [...h.stored.entries()];
+}
+
+for(const company of SINGLE_COMPANIES)test(`${company.code}: completed bounded preview source failures release only view close before any session exists`,async()=>{
+ for(const code of ['SOURCE_READ_TIMEOUT','SOURCE_READ_NETWORK','SOURCE_READ_RESPONSE','SOURCE_READ_HTTP']){const h=await fixture(company);try{
+  const reservation=await seedOriginalPreviewIntent(h),original=h.f.packet.requestId;
+  h.f.bridge=async()=>{throw sourceReadError({code,resource:'native-assets',...(code==='SOURCE_READ_HTTP'?{status:503}:{})});};
+  await h.idle();assert.deepEqual(h.lockPairs.at(-1),[true,true]);await h.click('이전 문서 전송 자료 확인');
+  assert.deepEqual(h.lockPairs.at(-1),[true,false],code);assert.match(h.text(),/이 화면을 닫아도 원래 요청/);assert.equal(h.button(prepareDraft),undefined);assert.equal(h.button(start),undefined);assert.equal(h.button(recoverDraft),undefined);
+  assert.equal(h.f.sent.length,1);assert.equal(h.f.sent[0].payload.action,'preview');assert.equal(h.f.sent[0].payload.packet.requestId,original);assert.ok(h.f.calls.every(row=>row.method==='GET'));assert.deepEqual([...h.stored.entries()],reservation);
+  h.close();assert.deepEqual([...h.stored.entries()],reservation,'view dismissal never clears the original reservation');
+ }finally{h.close();}}
+});
+
+test('preview source failure dismissal resets on another connect, then remount recovers the same reserved request without create',async()=>{
+ const h=await fixture(),held=deferred();let next;try{
+  const reservation=await seedOriginalPreviewIntent(h),original=h.f.packet.requestId;
+  h.f.bridge=async()=>{throw sourceReadError({code:'SOURCE_READ_TIMEOUT',resource:'native-assets'});};await h.idle();await h.click('이전 문서 전송 자료 확인');assert.deepEqual(h.lockPairs.at(-1),[true,false]);
+  h.f.bridge=()=>held.promise;h.button('이전 문서 전송 자료 확인').props.onClick();h.flush();await h.wait(()=>h.f.sent.length===2);
+  assert.deepEqual(h.lockPairs.at(-1),[true,true]);assert.doesNotMatch(h.text(),/이 화면을 닫아도 원래 요청/);
+  const message=h.f.sent.at(-1);h.f.emit(message,null,{ok:false,error:sourceReadError({code:'SOURCE_READ_NETWORK',resource:'native-assets'}).message,code:'SOURCE_READ_NETWORK'});await h.idle();assert.deepEqual(h.lockPairs.at(-1),[true,false]);
+  h.close();next=await fixture(SINGLE_COMPANIES[0],{stored:h.stored});allowDraft(next,payload=>{assert.equal(payload.action,'recoverDraft');return draftResult(next.f,payload.packet.requestId,'updated',{docId:'2347603',recovered:true});});
+  await next.idle();assert.deepEqual(next.lockPairs.at(-1),[true,true]);await next.click('이전 문서 전송 자료 확인');assert.ok(next.button(recoverDraft));assert.equal(next.button(prepareDraft),undefined);assert.equal(next.button(start),undefined);await next.click(recoverDraft);
+  assert.deepEqual(plain(next.f.sent.map(row=>row.payload.action)),['preview','recoverDraft']);assert.ok(next.f.sent.every(row=>row.payload.packet.requestId===original));assert.deepEqual([...next.stored.entries()],reservation);assert.equal(next.f.history.length,0);assert.ok(next.f.calls.every(row=>row.method==='GET'));
+ }finally{held.resolve();h.close();next?.close();}
+});
+
+test('preview generic, ACK, scope and malformed source errors never release an existing reservation',async()=>{
+ for(const mode of ['generic','ack-timeout','preflight-timeout','scope','malformed-message','wrong-resource','fresh-source']){const h=await fixture();try{
+  const reservation=await seedOriginalPreviewIntent(h);h.f.bridge=async()=>{
+   if(mode==='ack-timeout')return undefined;if(mode==='generic')throw Error('알 수 없는 실행 오류');
+   if(mode==='scope')throw sourceReadError({code:'SOURCE_CHANGED'});
+   if(mode==='preflight-timeout')throw Object.assign(Error('현재 회원·회사·견적 원본 확인 시간이 초과됐습니다. 상품은 전송하지 않았습니다.'),{code:'PRODUCT_SOURCE_PREFLIGHT_TIMEOUT'});
+   const error=sourceReadError({code:'SOURCE_READ_TIMEOUT',resource:'native-assets'});if(mode==='malformed-message')error.message='검증되지 않은 오류';if(mode==='wrong-resource')error.message=error.message.replace('/api/products/:id/native-assets','https://unknown.invalid/private');throw error;
+  };await h.idle();if(mode==='fresh-source')h.f.refresh=async()=>({...h.f.review,preparedBodySha256:'f'.repeat(64)});
+  if(mode==='ack-timeout'){h.button('이전 문서 전송 자료 확인').props.onClick();h.flush();await h.wait(()=>h.f.sent.length===1);h.f.advance(180001);await h.idle();}else await h.click('이전 문서 전송 자료 확인');
+  assert.deepEqual(h.lockPairs.at(-1),[true,true],mode);assert.doesNotMatch(h.text(),/이 화면을 닫아도 원래 요청/,mode);assert.deepEqual([...h.stored.entries()],reservation,mode);assert.ok(h.f.sent.every(row=>row.payload.action==='preview'));
+ }finally{h.close();}}
+});
+
+test('preview close allowance is revoked by review ABA, disabled scope, storage error and changed intent while a read is pending',async()=>{
+ for(const mode of ['review-ABA','disabled','storage','intent-pending']){const options={},h=await fixture(SINGLE_COMPANIES[0],options),held=deferred();try{
+  const reservation=await seedOriginalPreviewIntent(h);h.f.bridge=async()=>{throw sourceReadError({code:'SOURCE_READ_TIMEOUT',resource:'native-assets'});};await h.idle();await h.click('이전 문서 전송 자료 확인');assert.deepEqual(h.lockPairs.at(-1),[true,false]);
+  if(mode==='review-ABA'){const props=h.props();h.render({...props,review:{...props.review,reviewDigest:'a'.repeat(64)}});h.render(props);await h.idle();}
+  if(mode==='disabled')h.render({...h.props(),disabled:true});if(mode==='storage'){options.storageReadError=true;h.flush();}
+  if(mode==='intent-pending'){
+   h.f.bridge=()=>held.promise;h.button('이전 문서 전송 자료 확인').props.onClick();h.flush();await h.wait(()=>h.f.sent.length===2);const message=h.f.sent.at(-1),[key,raw]=reservation[0];
+   h.stored.set(key,JSON.stringify({...JSON.parse(raw),requestId:'00000000-0000-4000-8000-000000000000'}));h.storageChanged(key);h.f.emit(message,null,{ok:false,error:sourceReadError({code:'SOURCE_READ_TIMEOUT',resource:'native-assets'}).message,code:'SOURCE_READ_TIMEOUT'});await h.idle();
+  }
+  h.flush();assert.deepEqual(h.lockPairs.at(-1),[true,true],mode);assert.doesNotMatch(h.text(),/이 화면을 닫아도 원래 요청/,mode);assert.ok(h.f.sent.every(row=>row.payload.action==='preview'));
+ }finally{held.resolve();h.close();}}
+});
 
 test('a finished verified draft read error releases only view close and remount preserves the exact request and records',async()=>{
  const h=await fixture();let next;try{
@@ -550,7 +606,7 @@ async function fixture(company = SINGLE_COMPANIES[0], options = {}) {
   const exports = {}, component = 'app/components/supplier-hub-product-transport.tsx';
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../' + component, import.meta.url), 'utf8'), { fileName: component, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
     { exports, Error, Date: LocalDate, window:f.window, AbortController, fetch: f.fetch, setTimeout: (fn, delay) => { const id = ++sequence; f.timers.set(id, { fn, due: f.clock.now + delay }); return id; }, clearTimeout: id => f.timers.delete(id),
-      require: name => name === '@/app/components/supplier-hub-native-registration' ? {SupplierHubNativeRegistration:()=>null} : name === '@/app/components/supplier-hub-rejection-details' ? {SupplierHubRejectionDetails} : name === '@/app/supplier-hub-reserved-work.mjs' ? {runReservedSegments} : name === 'react' ? react : name === '@/app/supplier-hub-product-client' ? f.client : name.startsWith('@/') ? f.load(name.slice(2) + '.ts') : name.endsWith('product-document.mjs') ? {
+      require: name => name === '@/app/components/supplier-hub-native-registration' ? {SupplierHubNativeRegistration:()=>null} : name === '@/app/components/supplier-hub-rejection-details' ? {SupplierHubRejectionDetails} : name === '@/app/supplier-hub-reserved-work.mjs' ? {runReservedSegments} : name === 'react' ? react : name === '@/app/supplier-hub-product-client' ? f.client : name.startsWith('@/') ? f.load(name.slice(2) + '.ts') : name.endsWith('product-document-source.mjs') ? {sourceReadError} : name.endsWith('product-document.mjs') ? {
         // Each fresh preview gets a different real UUID. Recovery must supply
         // its original UUID explicitly; a constant test seed cannot mask loss.
         createProductDocumentPacket: (review,value={}) => createProductDocumentPacket(review, { ...value,createdAt:value.createdAt??f.clock.now,now:f.clock.now }),
