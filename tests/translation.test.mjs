@@ -368,7 +368,7 @@ test('generic Qwen rejects mixed Chinese passthrough and exact option metadata/m
  }
  const normalized=model.validateQwenTranslationDraft(good,input);assert.deepEqual(JSON.parse(JSON.stringify(normalized)),good);assert.deepEqual(normalized.attributes.map(value=>value.sourceIndex),[0,1]);
  for(const [sourceIndex,value]of [[0,'검정 AB-006'],[0,'검정 AB005'],[1,'10 mm'],[1,'작은 사이즈'],[1,'10 cm\n사이즈']])assert.throws(()=>model.validateQwenTranslationDraft({...good,attributes:good.attributes.map(attribute=>attribute.sourceIndex===sourceIndex?{...attribute,value}:attribute)},input),error=>error.code.startsWith('QWEN_')&&error.message.includes(`sourceIndex ${sourceIndex}.value`));
- const review=await model.prepareTranslationReview(input,{...config,model:model.WORKERS_QWEN_MODEL,provider:'workers-ai'}),request=model.buildTranslationRequest(review);assert.match(request.instructions,/실제 한국어 번역/);assert.match(request.instructions,/브랜드는 앱에서 별도로 한 번/);assert.match(request.instructions,/outputName/);assert.deepEqual(JSON.parse(request.input[0].content[0].text).attributes.map(row=>row.outputName),['옵션명','사이즈']);
+ const review=await model.prepareTranslationReview(input,{...config,model:model.WORKERS_QWEN_MODEL,provider:'workers-ai'}),request=model.buildTranslationRequest(review);assert.match(request.instructions,/실제 한국어로 번역/);assert.match(request.instructions,/브랜드는 앱에서 별도로 한 번/);assert.match(request.instructions,/outputName/);assert.deepEqual(JSON.parse(request.input[0].content[0].text).attributes.map(row=>row.outputName),['옵션명','사이즈']);
  assert.equal(request.text.format.schema.properties.attributes.minItems,2);assert.equal(model.buildTranslationRequest({...review,model:model.WORKERS_TEXT_MODEL}).text.format.schema.properties.attributes.minItems,0);
 });
 

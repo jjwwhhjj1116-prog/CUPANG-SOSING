@@ -112,6 +112,7 @@ export async function prepareDetailImageBatch(input: Omit<DetailImageBatch, 'ite
       signal.throwIfAborted();
       const regions = await (deps.recognize ?? recognizeFreeImage)(image, batch.language, signal, message => onProgress(batch, `${position}/${selected.slots.length} · ${message}`));
       signal.throwIfAborted();
+      if(image.visionStyleIssues?.length)throw Error(`Vision 초기 스타일 검토가 필요합니다: ${image.visionStyleIssues.join(', ')}. 원본을 유지했습니다. 이미지 편집에서 문구와 영역을 확인해주세요.`);
       const chosen = regions.filter(region => region.selected && (batch.language === 'zh'
         ? /\p{Script=Han}/u.test(region.text) : !/\p{Script=Han}/u.test(region.text) && /[a-z]{2}/iu.test(region.text)));
       if (!chosen.length) throw Error('확실하게 읽은 문구가 없습니다. 개별 이미지 편집에서 원문과 영역을 확인해주세요.');

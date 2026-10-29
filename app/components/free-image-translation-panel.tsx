@@ -487,6 +487,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       const rows = await recognizeFreeImage(image, language, work.controller.signal, message => { if (current(work)) setNotice(message); });
       if (!current(work)) return;
       resetRegions(rows);
+      if(image.visionStyleIssues?.length){setError(`Vision 초기 스타일 검토가 필요합니다: ${image.visionStyleIssues.join(', ')}.`);setNotice('원문·한국어·영역을 보존했습니다. 선택 해제된 영역의 배경색·글자 크기·겹침을 직접 확인하고 수정한 뒤 미리보기를 만들어주세요. 자동 적용하지 않았습니다.');return;}
       const requested = rows.filter(row => row.selected && row.erase !== true && row.translationProvenance !== 'manual' && row.text.trim()).map(({ id, text }) => ({ id, text }));
       if (!requested.length) { setNotice('자동 번역할 문구를 찾지 못했습니다. 원본과 인식 영역을 확인하거나 문구 영역을 직접 추가해주세요.'); return; }
       setNotice('인식한 문구를 한국어로 번역하고 있습니다.');
@@ -718,9 +719,9 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       <p>선택 옵션 {optionImageIds.length}개 · 옵션 범위를 바꾸면 미리보기를 다시 만들어주세요.</p>
     </fieldset>}
     {regions.length > 0 && <>
-      <p>체크한 문구만 번역·미리보기에 사용합니다. 영역 지우기를 선택하면 문구 없이 배경색만 덮어씁니다. 인식 정확도가 낮은 영역은 기본 선택하지 않습니다. 직접 수정한 번역 문구는 다시 번역해도 유지합니다. 목록에서 나중에 오는 영역이 위에 그려집니다. 앞으로·뒤로 버튼으로 겹치는 순서를 조정할 수 있습니다.</p>
+      <p>체크한 문구만 번역·미리보기에 사용합니다. 영역 지우기를 선택하면 문구 없이 배경색만 덮어씁니다. 브라우저 인식 정확도가 낮은 영역은 기본 선택하지 않습니다. 직접 수정한 번역 문구는 다시 번역해도 유지합니다. 목록에서 나중에 오는 영역이 위에 그려집니다. 앞으로·뒤로 버튼으로 겹치는 순서를 조정할 수 있습니다.</p>
       <div style={{ maxHeight: 480, overflowY: 'auto' }}>{regions.map((region, index) => <fieldset key={region.id} className="translation-field" disabled={locked || !currentImage}>
-        <legend><label><input type="checkbox" aria-label={`문구 ${index + 1} 선택`} checked={region.selected} onChange={event => editRegion(region.id, { selected: event.target.checked })} />문구 {index + 1} · {region.brush ? '브러시 획' : `인식 ${Math.round(region.confidence)}%`}</label></legend>
+        <legend><label><input type="checkbox" aria-label={`문구 ${index + 1} 선택`} checked={region.selected} onChange={event => editRegion(region.id, { selected: event.target.checked })} />문구 {index + 1} · {region.brush ? '브러시 획' : /^vision-[1-9]\d*$/u.test(region.id) ? 'AI 문구 인식 · 신뢰도 미제공' : `인식 ${Math.round(region.confidence)}%`}</label></legend>
         {region.brush && <p>색상 브러시 획입니다. 경로와 지름은 고정되며 색상·선택·겹치는 순서를 수정할 수 있습니다. 문구와 겹치는 최종 모습은 PNG 미리보기에서 확인해주세요.</p>}
         <label><input type="checkbox" aria-label={`문구 ${index + 1} 영역 지우기`} disabled={!!region.brush} checked={region.erase === true} onChange={event => editRegion(region.id, { erase: event.target.checked })} />영역 지우기 · 배경색만 적용</label>
         <label>원문<textarea aria-label={`문구 ${index + 1} 원문`} rows={2} maxLength={5000} disabled={region.erase === true || !!region.brush} value={region.text} onFocus={endRegionEditGroup} onBlur={endRegionEditGroup} onChange={event => editRegion(region.id, { text: event.target.value,

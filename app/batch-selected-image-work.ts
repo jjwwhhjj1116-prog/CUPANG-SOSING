@@ -142,6 +142,7 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
     if(image.source.productId!==productId||!isOwnedImageKey(ownerId,image.source.sourceKey)||image.source.sourceKey!==entry.sourceKey||image.source.productVersion!==batch.view.productVersion||image.source.role!==stage)throw changed();
     let regions:FreeImageRegion[];
     try{regions=await(deps.recognize??recognizeFreeImage)(image,'zh',controller.signal,progress);}catch(cause){if(cause instanceof Error&&cause.message===noTextMessage)throw new NoForeignText();throw cause;}check();
+    if(image.visionStyleIssues?.length)throw Error(`Vision 초기 스타일 검토가 필요합니다: ${image.visionStyleIssues.join(', ')}. 원본을 유지했습니다. 이미지 편집에서 문구와 영역을 확인해주세요.`);
     const selectedRegions=regions.filter(region=>region.selected&&(/\p{Script=Han}/u.test(region.text)||/[a-z]{2}/iu.test(region.text)));
     if(!selectedRegions.length)throw new NoForeignText();
     const translated=new Map<string,string>(),issues=new Map<string,string>();let incompleteMessage='';

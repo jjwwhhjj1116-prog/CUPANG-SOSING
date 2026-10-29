@@ -244,3 +244,7 @@ test('failed Vision blocks preserve the source and stop without a second transla
  const h=fixture('main',['owner/source-a.png']);h.deps.recognize=async image=>{image.visionResult={provider:'workers-ai-vision',notice:'Cloudflare 사용량 과금 가능'};return[{...h.region('中文'),issue:'번역 검증 실패'}];};h.deps.translate=async()=>{throw Error('No fallback');};
  const result=await h.run();assert.equal(result.status,'partial');assert.equal(result.applied,0);assert.equal(h.calls.filter(row=>row[0]==='render'||row[0]==='apply'||row[0]==='translate').length,0);
 });
+test('unsafe Vision geometry is a review failure, never no-foreign-text success or an automatic image apply',async()=>{
+ const h=fixture('main',['owner/source-a.png']);h.deps.recognize=async image=>{image.visionResult={provider:'workers-ai-vision'};image.visionStyleIssues=['VISION_REGION_OVERLAP'];return[{...h.region('中文'),translated:'검정',translationProvenance:'generated',selected:false,issue:'VISION_REGION_OVERLAP'}];};
+ const result=await h.run();assert.equal(result.status,'partial');assert.equal(result.failed,1);assert.equal(result.applied,0);assert.match(result.messages.join(' '),/VISION_REGION_OVERLAP/);assert.equal(h.calls.filter(row=>['translate','render','apply'].includes(row[0])).length,0);
+});

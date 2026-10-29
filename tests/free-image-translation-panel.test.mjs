@@ -315,6 +315,13 @@ test('completed zero-block Vision replaces progress with normal source-preserved
   await h.click('원본 문구 읽기');assert.match(text(h.render()),/문구 확인을 완료했습니다. 번역할 문구가 없어 원본 이미지를 유지했습니다/);assert.doesNotMatch(text(h.render()),/인식 중|읽고 있습니다/);assert.equal(nodes(h.render()).filter(node=>node.props?.role==='alert').length,0);assert.equal(h.saved,0);assert.deepEqual(plain(h.calls.map(row=>row.action)),['source','ocr']);
  }finally{h.close();}
 });
+test('Vision region labels do not invent a zero confidence while browser OCR retains its percentage',async()=>{
+ const h=fixture();try{
+  h.setOcr(()=>[{...region('vision-1','검정'),confidence:0},{...region('ocr-1'),confidence:72}]);await h.click('원본 문구 읽기');
+  const legends=nodes(h.render()).filter(node=>node.type==='legend').map(text);
+  assert.match(legends[0],/AI 문구 인식 · 신뢰도 미제공/);assert.doesNotMatch(legends[0],/0%/);assert.match(legends[1],/인식 72%/);assert.equal(h.field('문구 1 한국어').props.value,'검정');assert.equal(h.saved,0);assert.deepEqual(plain(h.calls.map(row=>row.action)),['source','ocr']);
+ }finally{h.close();}
+});
 test('failed recognition clears progress but keeps the actual error, and successful Vision reports completion',async()=>{
  const h=fixture();try{
   h.setOcr(()=>{throw Error('문구 인식 응답 실패');});await h.click('원본 문구 읽기');assert.match(text(h.render()),/문구 인식 응답 실패/);assert.match(text(h.render()),/문구 확인을 완료하지 못해 원본 이미지를 유지했습니다/);assert.doesNotMatch(text(h.render()),/인식 중|읽고 있습니다/);assert.equal(nodes(h.render()).filter(node=>node.props?.role==='alert').length,1);assert.equal(h.saved,0);

@@ -10,6 +10,7 @@ import { validateFreeImageCropRect, validateFreeImageCrop, type FreeImageCropRec
 import { validateFreeImageEditDocument, type FreeImageEditDocument } from '@/app/free-image-edit-document';
 import type { Worker, WorkerOptions, LoggerMessage } from 'tesseract.js';
 import {IMAGE_TEXT_VISION_MODEL,IMAGE_TEXT_VISION_NOTICE,parseImageTextVisionConfiguration,parseImageTextVisionResult,type ImageTextVisionConfiguration,type ImageTextVisionResult} from '@/app/image-text-vision';
+import {initializeVisionRegions,type VisionStyleIssue} from '@/app/free-image-vision-style';
 
 export type OcrBox = { x: number; y: number; width: number; height: number };
 export type FreeImageRegion = FreeImageTextStyle & {
@@ -20,7 +21,7 @@ export type FreeImageRegion = FreeImageTextStyle & {
   brush?: FreeImageBrush;
 };
 export type FreeImageLoaded = { source: FreeImageSource; blob: Blob; canvas: HTMLCanvasElement; width: number; height: number; editDocument?: FreeImageEditDocument;
- visionConfiguration?:ImageTextVisionConfiguration;visionRequestId?:string;visionResult?:ImageTextVisionResult;visionExecution?:{requests:0|1;cached:boolean};visionFetcher?:typeof fetch };
+ visionConfiguration?:ImageTextVisionConfiguration;visionRequestId?:string;visionResult?:ImageTextVisionResult;visionExecution?:{requests:0|1;cached:boolean};visionStyleIssues?:VisionStyleIssue[];visionFetcher?:typeof fetch };
 export type FreeImageRendered = { source: FreeImageSource; output: Blob; width: number; height: number; optionImageIds?: string[]; crop?: FreeImageCrop; editDocument?: FreeImageEditDocument };
 export type FreeImageQuotationRequest = Omit<NonNullable<FreeImageSource['quotationTarget']>, 'bindingSha256'>;
 export type FreeImageEditorReadOptions = { restoreEditor: true; anchorPolicy?: 'current-target-v1' };
@@ -234,7 +235,8 @@ export async function recognizeFreeImage(image:FreeImageLoaded,sourceLanguage:'z
  image.visionExecution={requests:execution.requests as 0|1,cached:execution.cached as boolean};
  if(execution.cached)onProgress('같은 원본의 검증된 Vision 번역을 재사용했습니다. 추가 AI 요청은 0회입니다.');
  if(!result.blocks.length)throw Error('읽을 수 있는 문구를 찾지 못했습니다. 필요한 영역과 원문을 직접 추가해주세요.');
- return result.blocks.map(row=>({id:row.id,text:row.text,box:row.box,confidence:0,selected:true,translated:row.translated??'',issue:row.issue,translationProvenance:row.translated===null?'empty':'generated',background:'#ffffff',foreground:'#111111',fontSize:Math.max(1,Math.min(200,Math.floor(row.box.height*0.8)))}));
+ const styled=initializeVisionRegions(result.blocks,image.canvas,image.width,image.height);image.visionStyleIssues=styled.issues;
+ return styled.regions;
 }
 
 export type FreeImageWorkersRecovery={provider:'workers-ai';status:'completed'|'partial'|'failed'|'limited'|'timeout'|'invalid-response'|'input-limit';requests:0|1;sourceRegions:number;translatedRegions:number};

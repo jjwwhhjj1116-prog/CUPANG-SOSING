@@ -23,6 +23,12 @@ test('partial Vision card retains failed text and never automatically sends it t
   h.setTranslate(()=>{throw Error('No automatic fallback');});await h.settle();assert.deepEqual(actions(h),['source','ocr']);assert.equal(h.saved,0);assert.match(text(h.render()),/일부 문구를 번역하지 못했습니다/);
  }finally{h.close();}
 });
+test('unsafe Vision card keeps every editable block but withholds automatic preview and apply',async()=>{
+ const h=fixture({translationTarget:target(1)});try{
+  h.setOcr(image=>{image.visionResult={provider:'workers-ai-vision',blocks:[{},{}],notice:'확인 필요'};image.visionStyleIssues=['VISION_REGION_OVERLAP'];return[1,2].map(index=>({id:`vision-${index}`,text:`원문 ${index}`,translated:`한국어 ${index}`,issue:'VISION_REGION_OVERLAP',translationProvenance:'generated',selected:false,confidence:0,box:{x:1,y:1,width:10,height:5},background:'#f0caac',foreground:'#111111',fontSize:2}));});
+  await h.settle();assert.deepEqual(actions(h),['source','ocr']);assert.equal(h.field('문구 1 한국어').props.value,'한국어 1');assert.equal(h.field('문구 2 한국어').props.value,'한국어 2');assert.match(text(h.render()),/VISION_REGION_OVERLAP/);assert.match(text(h.render()),/원문·한국어·영역을 보존/);assert.equal(h.saved,0);assert.equal(h.button('검토한 번역 이미지 적용'),undefined);
+ }finally{h.close();}
+});
 test('zero-block Vision card completes normally and a failed card clears all previous progress wording',async()=>{
  const empty=fixture({translationTarget:target(1)});try{
   empty.setOcr(image=>{image.visionResult={provider:'workers-ai-vision',blocks:[],notice:'완료'};throw Error('읽을 수 있는 문구를 찾지 못했습니다. 필요한 영역과 원문을 직접 추가해주세요.');});await empty.settle();assert.match(text(empty.render()),/문구 확인을 완료했습니다. 번역할 문구가 없어 원본 이미지를 유지했습니다/);assert.doesNotMatch(text(empty.render()),/인식 중|읽고 있습니다/);assert.equal(nodes(empty.render()).filter(node=>node.props?.role==='alert').length,0);assert.deepEqual(actions(empty),['source','ocr']);assert.equal(empty.saved,0);
