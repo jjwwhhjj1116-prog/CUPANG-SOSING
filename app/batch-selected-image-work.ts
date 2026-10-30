@@ -9,6 +9,8 @@ import type {ProductOptionsResponse} from '@/app/product-options';
 import type {WorkspaceSettingsScope} from '@/app/workspace-settings-scope';
 import type {WorkspaceSettings} from '@/app/workspace-settings';
 import {selectedImagePurpose,hasForeignImageText,prepareSelectedImageCleanup} from '@/app/selected-image-purpose';
+import {initializeVisionRegions} from '@/app/free-image-vision-style';
+import {parseImageTextVisionResult} from '@/app/image-text-vision';
 
 export type SelectedImageStage='main'|'additional'|'detail';
 export type SelectedImageInferencePending={optionId:string;slotIndex:number;attempt:FreeImageVisionAttempt;code:string;message:string;observation?:FreeImageVisionStatus};
@@ -46,15 +48,31 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
  const plan=await(deps.plan??planBatchImageWork)([{id:productId,title:productId}],signal,fetcher);active();
  if(plan.scope.ownerId!==ownerId||!plan.scope.company||state.scope&&!same(state.scope,plan.scope))throw changed();
  state.scope??=structuredClone(plan.scope);
+ let recoveredInference:SelectedImageInferencePending|undefined;
  if(state.inferencePending){
-  result.inferencePending=true;result.failed=1;
   const pending=state.inferencePending;
   try{
    const observation=await(deps.observe??readFreeImageVisionStatus)(pending.attempt,signal,fetcher);active();pending.observation=observation;
+   if(observation.status==='completed'){
+    if(observation.format!=='yoofam-image-vision-status-v1'||observation.requestId!==pending.attempt.requestId||observation.sourceLanguage!==pending.attempt.sourceLanguage
+      ||!same(observation.source,pending.attempt.source)||!same(observation.configuration,pending.attempt.configuration)||observation.readOnly!==true||observation.execution?.requests!==0
+      ||observation.failure!==null||!parseImageTextVisionResult(observation.result,pending.attempt.source.width,pending.attempt.source.height))throw changed();
+    recoveredInference=pending;
+    result.messages.push('원래 Vision 요청의 완료된 번역을 읽었습니다. 현재 원본과 저장 버전을 다시 대조한 뒤 이어 적용하며 새 추론은 요청하지 않습니다.');
+   }else if(observation.status==='failed'){
+    if(observation.format!=='yoofam-image-vision-status-v1'||observation.requestId!==pending.attempt.requestId||observation.sourceLanguage!==pending.attempt.sourceLanguage
+      ||!same(observation.source,pending.attempt.source)||!same(observation.configuration,pending.attempt.configuration)||observation.readOnly!==true||observation.execution?.requests!==0||observation.result!==null)throw changed();
+    // A terminal failure is no longer an unknown inference. A later explicit
+    // selected-work action may retry, but this observation never starts it.
+    delete state.inferencePending;result.failed=1;
+    result.messages.push(`원래 이미지 Vision 요청 ${pending.attempt.requestId}의 확정 실패를 확인했습니다. 원본을 유지했으며 새 추론·업로드는 요청하지 않았습니다.`);return result;
+   }else{
+    result.inferencePending=true;result.failed=1;
    const labels={running:'처리 중',completed:'번역 응답 확인 · 적용 전 검토 필요',failed:'확정 실패',uncertain:'추론 결과 미확정','not-found':'같은 요청 기록 미확인'};
    result.messages.push(`원래 이미지 Vision 요청 ${pending.attempt.requestId}: ${labels[observation.status]}. 새 추론·업로드는 요청하지 않았습니다. 남은 이미지는 자동 실행하지 않습니다.`);
-  }catch(cause){active();result.messages.push(note(cause)+' 원래 요청 '+pending.attempt.requestId+'를 보존하고 새 추론·업로드는 요청하지 않았습니다.');}
-  return result;
+    return result;
+   }
+  }catch(cause){active();result.inferencePending=true;result.failed=1;result.messages.push(note(cause)+' 원래 요청 '+pending.attempt.requestId+'를 보존하고 새 추론·업로드는 요청하지 않았습니다.');return result;}
  }
  // A retry of an unknown save is read-only. Keep its exact PNG and attempt
  // before dispatch so cancellation/ACK loss cannot erase the recovery proof.
@@ -88,6 +106,9 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
  if(state.content&&!same(state.content,originalContent))throw changed();state.content??=structuredClone(originalContent);
  if(originalContent.assets[stage].provenance==='manual'){result.status='skipped';result.skipped=originalContent.assets[stage].value.length||1;result.messages.push(`직접 저장한 ${label[stage]} 역할과 빈 값을 유지했습니다.`);return result;}
  const tasks=plan.tasks.filter(task=>task.productId===productId&&task.stage===stage);
+ const recoveryTarget=recoveredInference;
+ if(recoveryTarget&&!tasks.some(task=>task.optionId===recoveryTarget.optionId
+   &&state.batches[task.optionId]?.items.some(item=>item.slotIndex===recoveryTarget.slotIndex&&item.sourceKey===recoveryTarget.attempt.source.sourceKey)))throw changed();
  if(!tasks.length){result.failed=1;result.messages.push(...(plan.messages.length?plan.messages.map(row=>row.message):['처리할 저장 이미지 연결이 없습니다. 이미지 설정을 확인해주세요.']));return result;}
  let latest=state.view;
  for(const task of tasks){
@@ -155,7 +176,19 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
     image=await(deps.readSource??readFreeImageSource)(productId,batch.view.productVersion,entry.sourceKey,stage,controller.signal,fetcher,{kind:'quotation',profileId:task.profileId,optionId:task.optionId,input:stage==='main'?'mainImage':stage==='additional'?'additionalImages':'detailImages',fieldKey:target.target.primary,slotIndex,revision:batch.view.revision,inputFingerprint:batch.view.inputFingerprint,optionRevision:batch.view.optionRevision,value:target.value});check();
     if(image.source.productId!==productId||!isOwnedImageKey(ownerId,image.source.sourceKey)||image.source.sourceKey!==entry.sourceKey||image.source.productVersion!==batch.view.productVersion||image.source.role!==stage)throw changed();
     let regions:FreeImageRegion[];
-    try{regions=await(deps.recognize??recognizeFreeImage)(image,'zh',controller.signal,progress);}catch(cause){if(cause instanceof Error&&cause.message===noTextMessage)throw new NoForeignText();throw cause;}check();
+    if(recoveredInference&&recoveredInference.optionId===task.optionId&&recoveredInference.slotIndex===slotIndex){
+     const pending=recoveredInference,observation=pending.observation!;
+     if(!same(image.source,pending.attempt.source)||image.visionConfiguration&&!same(image.visionConfiguration,pending.attempt.configuration))throw changed();
+     const vision=parseImageTextVisionResult(observation.result,image.width,image.height);if(!vision)throw changed();
+     image.visionRequestId=pending.attempt.requestId;image.visionResult=vision;image.visionExecution={requests:0,cached:true};
+     if(!vision.blocks.length){delete state.inferencePending;recoveredInference=undefined;throw new NoForeignText();}
+     const styled=initializeVisionRegions(vision.blocks,image.canvas,image.width,image.height);image.visionStyleIssues=styled.issues;regions=styled.regions;
+    }else{
+     // No other slot may bypass a retained, completed-but-not-yet-consumed
+     // result through a fresh provider call.
+     if(recoveredInference)throw changed();
+     try{regions=await(deps.recognize??recognizeFreeImage)(image,'zh',controller.signal,progress);}catch(cause){if(cause instanceof Error&&cause.message===noTextMessage)throw new NoForeignText();throw cause;}
+    }check();
     let prepared:FreeImageRegion[],translationReview:DetailImageBatch['items'][number]['translationReview'],texts:{original:string;translated:string}[];
     if(purpose==='cleanup'){
      prepared=prepareSelectedImageCleanup(image,regions);
@@ -202,6 +235,7 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
     if((purpose==='cleanup'||translationReview)&&!rendered.editDocument)throw Error(`${action} 초안의 편집 문서를 확인하지 못했습니다. 원본을 유지했습니다.`);
     remember({...batch,items:batch.items.map(item=>item.slotIndex===slotIndex?{...item,status:'ready',rendered,translationReview,
      texts}:item)});
+    if(recoveredInference?.optionId===task.optionId&&recoveredInference.slotIndex===slotIndex){delete state.inferencePending;recoveredInference=undefined;}
     }
     await content(batch.view,controller.signal);check();
     progress(`${action} 이미지 초안 저장 중`);

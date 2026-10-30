@@ -87,7 +87,7 @@ function MemberConnectionsScope(scope:Props){
   void write({action:'save',...current,alias,loginId,password:secret},{id:current.id,revision:current.expectedRevision,service:current.service,alias,loginId});
  }
  const disabled=busy||uncertain||!view;
- return <section className="membership-card member-connections" aria-label="멀티 계정 설정" aria-busy={busy}>
+ return <section id="multi-account-settings" className="membership-card member-connections" aria-label="멀티 계정 설정" aria-busy={busy}>
   <div className="membership-header"><h2>멀티 계정 설정</h2><button type="button" className="btn ghost" disabled={busy} onClick={()=>void reload()}>목록 새로고침</button></div>
   {busy&&<p role="status">불러오는 중…</p>}{error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}
   {uncertain&&<p role="status">이전 저장 결과를 먼저 확인해주세요. 자동으로 다시 저장하지 않습니다.</p>}

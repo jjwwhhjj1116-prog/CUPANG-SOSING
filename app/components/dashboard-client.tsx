@@ -1,5 +1,6 @@
 'use client';
 import '@/app/components/registration-workspace.css';
+import '@/app/components/dashboard-utility-tools.css';
 import { loadCategoryProfiles, readCategoryJsonResponse } from '@/app/load-category-profiles';
 
 import { allRegistrationSteps, registrationStepsForLayout, initialRegistrationStep, type CollectionEditorTab } from '@/app/registration-navigation';
@@ -146,6 +147,19 @@ const goalOptions = [
 ];
 
 const won = (value: number) => `${Math.round(value).toLocaleString('ko-KR')}원`;
+type UtilityIconKind='integrations'|'history'|'cli'|'operations'|'sources'|'account'|'multi';
+function UtilityIcon({kind}:{kind:UtilityIconKind}){
+ const paths:Record<UtilityIconKind,React.ReactNode>={
+  integrations:<><path d="m9 3 1 3h4l1-3m-5 15 1 3h2l1-3M3 9l3 1v4l-3 1m15-5 3 1v2l-3 1"/><rect x="6" y="6" width="12" height="12" rx="3"/><circle cx="12" cy="12" r="3"/></>,
+  history:<><path d="M3 11a9 9 0 1 1 2.6 7.3M3 5v6h6m3-4v5l3 2"/></>,
+  cli:<><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3m6 0h4"/></>,
+  operations:<><path d="M4 20V10h4v10m4 0V4h4v16m4 0V8h1v12M2 20h20"/></>,
+  sources:<><path d="M4 8h16l1 12H3L4 8Zm3 0V4h10v4m-8 5h6m-3-3v6"/></>,
+  account:<><circle cx="12" cy="7" r="3"/><path d="M5 20v-2a7 7 0 0 1 14 0v2m-14 0h14"/></>,
+  multi:<><circle cx="9" cy="7" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2m1-15a3 3 0 0 1 0 6m2 3a5 5 0 0 1 3 4v2M3 20h12"/></>,
+ };
+ return <svg className="workspace-utility-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[kind]}</svg>;
+}
 export default function DashboardClient({ userName, workspaceOwnerId }: { userName: string; workspaceOwnerId?:string }) {
   useMenuDismissal();
   useLayoutEffect(()=>{setSeoGuidanceSessionOwner(workspaceOwnerId);},[workspaceOwnerId]);
@@ -171,6 +185,9 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   const [collectionQueueOpen,setCollectionQueueOpen]=useState(false);
   const sourceRegistrations=useSourceRegistrations(workspaceOwnerId);
   const sourceReviewScope=useMemo(()=>({ownerId:workspaceOwnerId}),[workspaceOwnerId]);
+  const [captureToolsScope,setCaptureToolsScope]=useState<object|null>(null);
+  const captureToolsOpen=captureToolsScope===sourceReviewScope;
+  const captureToolsTrigger=useRef<HTMLButtonElement|null>(null);
   const [sourceReviewState,setSourceReview]=useState<SourceReviewSession|null>(null);
   const sourceReview=sourceReviewState?.scope===sourceReviewScope?sourceReviewState:null;
   const sourceReviewSession=useRef<SourceReviewSession|null>(null);
@@ -870,6 +887,11 @@ useEffect(()=>{
     if(sourceReviewSession.current!==session||session.scope!==sourceReviewScope||!operation.mounted||operation.ownerId!==workspaceOwnerId)return false;
     sourceReviewSession.current=null;setSourceReview(null);sourceRegistrations.reload();if(session.returnToIntake)setAddOpen(true);return true;
   }
+  function closeCaptureTools(){
+    if(sourceWorkspace.current?.scope!==sourceReviewScope)return;
+    setCaptureToolsScope(null);captureToolsTrigger.current?.focus?.({preventScroll:true});
+  }
+  const captureToolsVisible=captureToolsOpen&&!addOpen&&!sourceReview&&!detail&&!categoryOpen;
   return (
     <main className="app-shell studio-shell">
       <StudioSidebar active={view} expandedGroup={navigationGroup} mobileOpen={mobileNavigationOpen} onToggleGroup={group=>setNavigationGroup(current=>current===group?null:group)} onRocketView={changeView} onBeforeNavigate={guardOperationsNavigation} onClose={()=>setMobileNavigationOpen(false)}/>
@@ -877,11 +899,13 @@ useEffect(()=>{
       <section className="content">
         <header className="topbar"><div><button type="button" className="studio-mobile-menu" aria-label="메뉴 열기" aria-expanded={mobileNavigationOpen} aria-controls="studio-navigation" onClick={()=>setMobileNavigationOpen(value=>!value)}>☰</button><h1>{view==='work'?'로켓배송 AI상품등록':'로켓배송 상품관리(신규)'}</h1><p>{view==='work'?'상품별 등록 현황 및 관리':'등록 상품 · SKU · 가격 · 구매정보'}</p></div>
           <div className="topbar-tools"><nav className="workspace-utilities" aria-label="계정 및 연결 도구">
-            <button type="button" className="workspace-utility utility-integrations" data-state={utilityConnectionState} aria-label={'연동 설정 · '+utilityConnectionLabel} title={utilityConnectionLabel} aria-haspopup="dialog" aria-expanded={connectionsOpen} disabled={checkingConnections} onClick={()=>void checkConnections()}><span aria-hidden="true">⌁</span>연동 설정<span className="utility-status-dot" aria-hidden="true"/></button>
-            <button type="button" className="workspace-utility utility-history" aria-label="작업 이력" aria-haspopup="dialog" aria-expanded={historyOpen} onClick={()=>{setHistoryProductId(detail?.id??products[0]?.id??'');setHistoryOpen(true);}}><span aria-hidden="true">↻</span>작업 이력</button>
-            <button type="button" className="workspace-utility utility-cli" aria-label="CLI 설치·연결" aria-haspopup="dialog" aria-expanded={cliInstallOpen} onClick={()=>setCliInstallOpen(true)}><span aria-hidden="true">⌘</span>CLI 설치·연결</button>
-            <a className="workspace-utility utility-operations" href="/operations" aria-disabled={busy||batchBusy||!!sourceWork} onClick={guardOperationsNavigation}><span aria-hidden="true">▥</span>운영관리</a>
-            <a className="workspace-utility utility-account" href="/account" aria-label={userName+' 계정 관리'}>{userName} · 계정 관리</a>
+            <button type="button" className="workspace-utility utility-integrations" data-state={utilityConnectionState} aria-label={'연동 설정 · '+utilityConnectionLabel} title={utilityConnectionLabel} aria-haspopup="dialog" aria-expanded={connectionsOpen} disabled={checkingConnections} onClick={()=>void checkConnections()}><UtilityIcon kind="integrations"/><span className="utility-label">연동 설정</span><span className="utility-status-dot" aria-hidden="true"/></button>
+            <button type="button" className="workspace-utility utility-history" aria-label="작업 이력" aria-haspopup="dialog" aria-expanded={historyOpen} onClick={()=>{setHistoryProductId(detail?.id??products[0]?.id??'');setHistoryOpen(true);}}><UtilityIcon kind="history"/><span className="utility-label">작업 이력</span></button>
+            <button type="button" className="workspace-utility utility-cli" aria-label="CLI 설치·연결" aria-haspopup="dialog" aria-expanded={cliInstallOpen} onClick={()=>setCliInstallOpen(true)}><UtilityIcon kind="cli"/><span className="utility-label">CLI</span></button>
+            <a className="workspace-utility utility-operations" href="/operations" aria-disabled={busy||batchBusy||!!sourceWork} onClick={guardOperationsNavigation}><UtilityIcon kind="operations"/><span className="utility-label">운영관리</span></a>
+            <button ref={captureToolsTrigger} type="button" className="workspace-utility utility-sources" aria-label="수집함·수집 대기열" aria-haspopup="dialog" aria-expanded={captureToolsOpen} aria-controls="capture-tools-dialog" disabled={busy||batchBusy||!!sourceWork} onClick={()=>{const operation=settingsOperationRef.current;if(!operation.mounted||operation.ownerId!==workspaceOwnerId||sourceWorkspace.current?.scope!==sourceReviewScope||batchBusyRef.current||busyRef.current||sourceWorkRef.current)return;let blocked=false;guardOperationsNavigation({preventDefault(){blocked=true;}});if(!blocked){if(view!=='work')changeView('work');setCaptureToolsScope(sourceReviewScope);}}}><UtilityIcon kind="sources"/><span className="utility-label">수집함</span></button>
+            <a className="workspace-utility utility-multi" href="/account#multi-account-settings" title="Supplier Hub·1688 계정 등록 및 관리" aria-label="멀티 계정 관리" onClick={guardOperationsNavigation}><UtilityIcon kind="multi"/><span className="utility-label">멀티 계정</span></a>
+            <details className="workspace-account-menu" data-dismissable-menu><summary className="workspace-utility utility-account" title={userName+' · 개인설정·비밀번호 변경·로그아웃'} aria-label={userName+' 계정 설정'}><UtilityIcon kind="account"/><span className="utility-label">설정</span></summary><nav className="workspace-account-dropdown" aria-label="계정 설정 메뉴"><strong>{userName}</strong><a href="/account" aria-label={userName+' 계정 관리'} onClick={guardOperationsNavigation}>계정 관리</a><a href="/account#password-change" onClick={guardOperationsNavigation}>비밀번호 변경</a><a href="/account#multi-account-settings" onClick={guardOperationsNavigation}>멀티 계정 관리</a><a href="/account#account-session" title="계정 관리에서 로그아웃" onClick={guardOperationsNavigation}>로그아웃 관리</a></nav></details>
           </nav><div className="top-actions">{view==='work'&&<><button type="button" className="btn settings" aria-expanded={settingsOpen} aria-controls="workspace-settings-panel" disabled={settingsBusy||batchBusy} onClick={()=>{if(!settingsBusyRef.current&&!batchBusyRef.current)setSettingsOpen(open=>!open);}}>⚙ 기본설정</button><button className="btn primary" disabled={batchBusy} onClick={openCategoryFirstIntake}>＋ 상품 추가</button>
           <details className="bulk-action-menu" data-dismissable-menu><summary className="btn ghost">{selectedBatchMode==='full'?'전체 작업':'부분 작업 ('+selectedBatchStages.length+')'} ▾</summary><div><fieldset disabled={batchBusy} aria-label="실행할 작업 선택"><legend>실행할 작업</legend><label><input type="checkbox" aria-label="전체 작업" checked={selectedBatchMode==='full'} onChange={event=>{if(!batchBusyRef.current){setSelectedBatchMode(event.target.checked?'full':'selected');setSelectedBatchStages(event.target.checked?batchStages.map(stage=>stage.id):[]);}}}/> 전체 작업</label>{batchStages.map(stage=><label key={stage.id} style={{display:'flex',gap:8,padding:'6px 0'}}><input type="checkbox" aria-label={stage.label+' 작업'} checked={selectedBatchStages.includes(stage.id)} onChange={event=>chooseBatchStage(stage.id,event.target.checked)}/>{stage.label}</label>)}</fieldset></div></details>
           <details className="bulk-action-menu" data-dismissable-menu><summary className="btn ghost">상품 선택 ▾</summary><div><button type="button" disabled={batchBusy} onClick={()=>{if(!batchBusyRef.current)setSelected(new Set(products.map(product=>product.id)));}}>최근 상품 전체 선택</button><button type="button" disabled={batchBusy} onClick={()=>{if(!batchBusyRef.current)setSelected(new Set());}}>선택 해제</button><button type="button" disabled={batchBusy} onClick={openBatchReview}>선택 상품 일괄 작업</button><button type="button" onClick={()=>{setHistoryProductId(products[0]?.id??'');setHistoryOpen(true);}}>작업 이력</button></div></details><button className="btn start" disabled={busy||batchBusy||!!sourceWork||!selectedBatchStages.length} onClick={runAutomation}>작업 개시</button><button className="btn rose" disabled={batchBusy} onClick={()=>openSubmission(null)}>등록 전송</button></>}</div></div></header>
@@ -897,6 +921,15 @@ useEffect(()=>{
         {(sourceNotice||sourceRegistrations.error)&&<p role="status" className="panel-note">{sourceNotice||sourceRegistrations.error}</p>}
         <RegistrationBoard products={projectBatchBoardFeedback(products,workspaceOwnerId,batchBoardScope,batchBoardFeedback)} sources={sourceRegistrations.items} sourceOwnerId={workspaceOwnerId} sourceCompany={querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null} sourceArchiveDisabled={sourceArchiveDisabled} onPrepareSource={item=>prepareSource(item)} onSourceSelectionChange={sourceSelectionChanged} onReviewSource={item=>reviewSource(item)} onArchiveSource={archiveSource} selected={selected} onSelected={setSelected} onOpen={openProduct} onOptions={openOptionBoard} onDelete={removeWorkspaceProduct} loading={loading} error={loadError} onArchive={()=>changeView('archive')}/>
         <button type="button" className="btn ghost" onClick={()=>setRemovedOpen(true)}>삭제된 상품</button>
+        <div className="modal-backdrop intake-tools-backdrop" hidden={!captureToolsVisible} role="presentation" onMouseDown={closeCaptureTools}>
+        <section id="capture-tools-dialog" className="modal wide capture-tools-dialog" role={captureToolsVisible?'dialog':undefined} aria-modal={captureToolsVisible?true:undefined} aria-label="수집함·수집 대기열" onMouseDown={event=>event.stopPropagation()} onKeyDown={event=>{
+          if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeCaptureTools();return;}
+          if(event.key!=='Tab')return;
+          const items=Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),summary,[tabindex]:not([tabindex="-1"])')).filter(item=>item.getClientRects().length>0);
+          const first=items[0],last=items.at(-1);if(!first||!last)return;
+          if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}
+        }}>
+        {captureToolsVisible&&<header><div><h2>수집함·수집 대기열</h2><p>수집한 원문과 진행 중인 수집 요청을 확인합니다.</p></div><button type="button" className="icon-close" aria-label="수집함 닫기" autoFocus onClick={closeCaptureTools}>×</button></header>}
         <div id="captured-source-inbox"><SourceInboxPanel key={workspaceOwnerId??'anonymous'} ownerId={workspaceOwnerId} existingProducts={products} disabled={busy||batchBusy||addOpen||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving} onChanged={sourceRegistrations.reload} onAdd={prepareSource}/></div>
         <details className="collection-panel"><summary>1688 URL로 원문 먼저 담기 · 서버 수집</summary><QuerySourcePanel key={`server-query-${workspaceOwnerId??'anonymous'}`} ownerId={workspaceOwnerId} company={querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null} disabled={loading||busy||batchBusy||addOpen||settingsBusy||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving} onAdd={prepareQuerySource}/></details>
         <details className="collection-panel" aria-label="수집 대기열" open={collectionQueueOpen} onToggle={event=>setCollectionQueueOpen(event.currentTarget.open)}><summary>상품 대기열 · {collectionJobs.filter(job=>job.status!=='cancelled').length}건</summary>
@@ -906,6 +939,7 @@ useEffect(()=>{
           {!collectionJobs.some(job=>showCancelled || job.status !== 'cancelled') && <p className="collection-empty">{loading ? '대기열을 불러오는 중입니다.' : loadError ? '대기열 조회 상태를 확인해주세요.' : '아직 수집 요청이 없습니다. 상품 추가에서 URL을 붙여넣으세요.'}</p>}
           <ul className="collection-list">{collectionJobs.filter(job=>showCancelled || job.status !== 'cancelled').map(job=><li key={job.id}><div><strong>1688 · {job.offer_id}</strong><a href={job.source_url} target="_blank" rel="noreferrer" style={{overflowWrap:"anywhere"}}>{job.source_url}</a><small>{job.context?.category.categoryPath.join(' > ') ?? '카테고리 미지정 · 기존 요청'}</small><small>목표: {goalOptions.find(goal=>goal.id===job.goal)?.title} · 요청 {new Date(job.created_at).toLocaleString('ko-KR')}</small>{job.received_at&&<small>원문 수신 {new Date(job.received_at).toLocaleString('ko-KR')}</small>}</div><span className={`collection-status ${collectionJobProgress(job).kind}`}>{collectionJobProgress(job).label}</span><CollectionResultPanel jobId={job.id} offerId={job.offer_id} productId={job.product_id} onSaved={()=>void loadWorkspace()} onOpenProduct={openCollectedProduct}/>{!job.product_id && job.status !== 'cancelled' && <button className="btn ghost" disabled={busy} aria-label={`${job.offer_id} 수집 취소`} onClick={()=>void cancelCollectionJob(job.id)}>취소</button>}</li>)}</ul>
         </details>
+        </section></div>
 
         <HistoricalAiRegistrationsPanel onReuseUrl={(target,signal)=>{
           if(signal.aborted)return;

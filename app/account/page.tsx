@@ -75,9 +75,14 @@ export default function AccountPage(){
   }catch(cause){if(active(controller)){setError(true);setMessage(cause instanceof Error?cause.message:'변경 결과를 확인하지 못했습니다. 다시 로그인해 확인해주세요.');}}
   finally{finish(controller);}
  }
+ useEffect(()=>{
+  if(loading||!self?.id)return;
+  const anchor=(window.location.hash??'').slice(1);
+  if(['multi-account-settings','password-change','account-session'].includes(anchor))document.getElementById(anchor)?.scrollIntoView({block:'start'});
+ },[loading,self?.id]);
  const companyConfigured=!!self?.companyCode&&!!self?.companyName;
  return <main className="membership-page">
-  <header className="membership-header"><div><Link href="/">← 상품등록</Link><h1>계정 관리</h1></div>{self&&<button className="btn ghost" disabled={busy} onClick={()=>void act('logout',self)}>로그아웃</button>}</header>
+  <header id="account-session" className="membership-header"><div><Link href="/">← 상품등록</Link><h1>계정 관리</h1></div>{self&&<button className="btn ghost" disabled={busy} onClick={()=>void act('logout',self)}>로그아웃</button>}</header>
   {(loading||message)&&<p className={error?styles.error:styles.feedback} role={error?'alert':'status'} aria-live="polite">{loading?'계정을 불러오는 중…':message}</p>}
   {!loading&&!self&&error&&<button type="button" className="btn ghost" disabled={busy} onClick={()=>void refresh()}>다시 불러오기</button>}
   {self&&<>
@@ -85,7 +90,7 @@ export default function AccountPage(){
    <AccountSecurityPanel key={self.id} ownerId={self.id} isAdmin={self.role==='admin'}/>
    <LoginPreferencesPanel key={'preferences:'+self.id} email={self.loginId||self.email}/>
    {self.status==='approved'&&companyConfigured&&<MemberConnectionsPanel key={JSON.stringify([self.id,self.companyCode,self.companyName])} ownerId={self.id} company={{code:self.companyCode,name:self.companyName}}/>}
-   <section className="membership-card"><h2>비밀번호 변경</h2><p>비밀번호를 변경하면 모든 기기에서 로그아웃됩니다.</p><form ref={passwordForm} key={'password:'+self.id} onSubmit={event=>void changePassword(event,self)} aria-busy={busy} autoComplete="off">
+   <section id="password-change" className="membership-card"><h2>비밀번호 변경</h2><p>비밀번호를 변경하면 모든 기기에서 로그아웃됩니다.</p><form ref={passwordForm} key={'password:'+self.id} onSubmit={event=>void changePassword(event,self)} aria-busy={busy} autoComplete="off">
     <label>현재 비밀번호<input name="currentPassword" type="password" required minLength={10} maxLength={128} autoComplete="current-password" disabled={busy}/></label>
     <label>새 비밀번호<input name="newPassword" type="password" required minLength={10} maxLength={128} autoComplete="new-password" placeholder="10자 이상 입력하세요" disabled={busy}/></label>
     <label>새 비밀번호 확인<input name="confirmPassword" type="password" required minLength={10} maxLength={128} autoComplete="new-password" disabled={busy}/></label>

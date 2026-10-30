@@ -392,9 +392,40 @@ test('quotation work retains an incomplete packaging result instead of reporting
 
 test('uncertain packaging write blocks another request rather than resending the quotation stage',async()=>{
  const h=fixture();let count=0;
- h.deps['@/app/batch-selected-packaging-work'].runSelectedPackagingWork=async()=>{count++;throw Error('포장 저장 확인 실패');};
+ h.deps['@/app/batch-selected-packaging-work'].runSelectedPackagingWork=async(_id,options)=>{count++;await options.fetcher('/api/products/product/quotation-packaging-draft',{method:'POST'});throw Error('포장 저장 확인 실패');};
  const first=await h.run(['quotation']);assert.equal(first.stages[0].status,'failed');
  const retry=await h.run(['quotation']);assert.equal(retry.stages[0].status,'blocked');assert.equal(count,1);
+});
+
+test('packaging preflight rejection releases only confirmed fences so an explicit later retry can run',async()=>{
+ const h=fixture();let count=0;
+ h.deps['@/app/batch-selected-packaging-work'].runSelectedPackagingWork=async(_id,options)=>{
+  count++;await options.assertCurrent();if(count===1)throw Error('포장 초안 입력 검증 실패: 요청 전');
+  await options.fetcher('/api/products/product/quotation-packaging-draft',{method:'POST'});
+  return{view:options.view,status:'unchanged',remaining:0,message:'포장 초안 확인'};
+ };
+ const first=await h.run(['quotation']);assert.equal(first.stages[0].status,'failed');assert.match(first.stages[0].message,/요청 전/);
+ assert.equal(h.calls.filter(call=>call.url?.endsWith('/quotation-packaging-draft')).length,0);assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
+ const next=await h.run(['quotation']);assert.equal(next.stages[0].status,'draft');assert.equal(count,2);assert.equal(h.calls.filter(call=>call.url?.endsWith('/quotation-packaging-draft')).length,1);
+});
+
+test('the final account preflight failing inside packaging fetch does not count as mutation dispatch',async()=>{
+ const h=fixture();let count=0;
+ h.deps['@/app/batch-selected-packaging-work'].runSelectedPackagingWork=async(_id,options)=>{
+  count++;if(count===1)h.owner('changed-owner');
+  await options.fetcher('/api/products/product/quotation-packaging-draft',{method:'POST'});
+  return{view:options.view,status:'unchanged',remaining:0,message:'포장 확인'};
+ };
+ const stopped=await h.run(['quotation']);assert.equal(stopped.stages[0].status,'failed');assert.match(stopped.stages[0].message,/계정|회사/);
+ assert.equal(h.calls.filter(call=>call.url?.endsWith('/quotation-packaging-draft')).length,0);assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
+ h.owner('owner');const next=await h.run(['quotation']);assert.equal(next.stages[0].status,'draft');assert.equal(count,2);assert.equal(h.calls.filter(call=>call.url?.endsWith('/quotation-packaging-draft')).length,1);
+});
+
+test('a completed image recovery clears the cross-role inference fence before continuing selected image work',async()=>{
+ const h=fixture();h.image({status:'partial',inferencePending:true,messages:['원래 요청 미확정']});await h.run(['mainImage','additionalImages']);
+ h.image({status:'completed',messages:['원래 번역 결과 저장 확인']});const resumed=await h.run(['mainImage','additionalImages','detailImage']);
+ assert.deepEqual(resumed.stages.map(row=>row.status),['draft','draft','draft']);assert.equal(h.keys.has('owner:product:vision-inference-pending'),false);
+ assert.deepEqual(h.calls.filter(call=>call.adapter==='image').map(call=>call.stage),['main','main','additional','detail']);
 });
 
 test('non-quotation partial work never invokes packaging generation',async()=>{

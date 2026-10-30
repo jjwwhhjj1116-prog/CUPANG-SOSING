@@ -150,10 +150,34 @@ test('nonempty legal collection remains blocked while only bounded classificatio
   await assert.rejects(q.adapter.qualifySavedDraftTarget(q.input),error=>{
    assert.equal(error.code,'SAVED_DRAFT_TARGET_UNCONFIRMED');assert.match(error.message,/legal-lists \/ legal-array-nonempty/);assert.match(error.message,/진단: 배열 4행·표본 4행/);assert.match(error.message,/행종류 null:1,object:3/);
    assert.match(error.message,/알려진종류 MAIN:1,certificate:1/);assert.match(error.message,/기타식별자 1/);assert.match(error.message,/동일문서 1/);assert.match(error.message,/숨긴키가 있는 행 1/);assert.ok(error.message.length<=2000);
+   assert.match(error.message,/동일 이미지명·S3 1/);assert.match(error.message,/인증 접두 행 없음/);assert.match(error.message,/법적 본문 원래값 일치/);
    for(const secret of [...secrets,image.transportName,descriptor.s3Link])assert.equal(error.message.includes(secret),false,secret);return true;
   });
   assert.equal(q.f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords,undefined);assert.deepEqual(q.f.state.uploads,before.uploads);assert.deepEqual([...q.f.documents],before.body);assert.equal(q.f.calls.filter(call=>call.name==='hub-fetch'&&call.init.method==='POST').length,before.writes);
   assert.equal(q.requests.some(call=>new URL(call.url).pathname==='/sr/api/image/get-by-key'),false);
+ }finally{q.close();}
+});
+
+test('v2 association diagnostics remain failure-only and reject malformed relations without reflecting unknown values',async()=>{
+ const missing={type:'missing',expectedImageMatch:false},row={index:0,type:'object',keys:['docId','fileName','fileType','s3Link'],keyCount:4,keysTruncated:false,
+  fileType:{type:'string',knownType:'certificate',identifier:true},fileName:{type:'string',expectedImageMatch:true},imageName:missing,s3Link:{type:'string',expectedImageMatch:true},docId:{type:'number',same:true},
+  certificateNamePrefix:{type:'string',matchedIndex:0,ambiguous:false,scanComplete:true,memberRowMatches:1},pairedImageDescriptorMatch:true,expectedLabelReferences:1};
+ const certificate={index:0,type:'object',fieldCount:2,fieldKinds:{null:0,array:0,object:0,'string-empty':0,string:2,number:0,boolean:0},expectedRowMatch:true};
+ const member={index:0,remoteLegalType:'object',expectedLegalType:'object',remoteCertificatesType:'array',expectedCertificatesType:'array',remoteCount:1,expectedCount:1,matchesExpected:true,truncated:false,rows:[certificate]};
+ const relation={format:'yoofam-saved-draft-legal-body-relations-v1',memberCount:1,truncated:false,remoteLegalMatchesExpected:true,members:[member]};
+ const reply={currentReadFailure:{format:'yoofam-current-saved-draft-read-failure-v1',phase:'legal-lists',code:'legal-array-nonempty',diagnostics:{format:'yoofam-saved-draft-legal-diagnostics-v2',collection:'array',count:1,truncated:false,rows:[row],bodyRelations:relation}}};
+ const secret='PRIVATE_RELATION_CREDENTIAL_876',options={currentReadReply:reply},q=await fixture(options);try{
+  await assert.rejects(q.adapter.qualifySavedDraftTarget(q.input),error=>{assert.equal(error.code,'SAVED_DRAFT_TARGET_UNCONFIRMED');assert.match(error.message,/동일 이미지명·S3 1/);assert.match(error.message,/LABEL 원래 본문 참조 1/);assert.match(error.message,/인증 접두 행 0 \/ 모호 0/);assert.match(error.message,/본문 연결행 1/);assert.match(error.message,/법적 본문 원래값 일치/);assert.ok(error.message.length<=2000);return true;});
+  const mutate=[
+   d=>{d.extra=secret;},d=>{delete d.bodyRelations;},d=>{d.bodyRelations.extra=secret;},d=>{d.bodyRelations.format=secret;},d=>{d.bodyRelations.memberCount=201;},d=>{d.bodyRelations.memberCount=0;},d=>{d.bodyRelations.memberCount=1.5;},d=>{d.bodyRelations.truncated=true;},d=>{d.bodyRelations.remoteLegalMatchesExpected=secret;},
+   d=>{d.bodyRelations.members[0].extra=secret;},d=>{d.bodyRelations.members[0].index=1;},d=>{d.bodyRelations.members[0].remoteLegalType=secret;},d=>{d.bodyRelations.members[0].remoteCount=null;},d=>{d.bodyRelations.members[0].remoteCount=0;},d=>{d.bodyRelations.members[0].expectedCount=-1;},d=>{d.bodyRelations.members[0].expectedCount=2;},d=>{d.bodyRelations.members[0].matchesExpected=secret;},d=>{d.bodyRelations.members[0].matchesExpected=false;},d=>{d.bodyRelations.members[0].expectedCertificatesType='object';d.bodyRelations.members[0].expectedCount=null;},d=>{d.bodyRelations.members[0].truncated=true;},
+   d=>{d.bodyRelations.members[0].rows[0].extra=secret;},d=>{d.bodyRelations.members[0].rows[0].fieldKinds.extra=secret;},d=>{d.bodyRelations.members[0].rows[0].fieldKinds.string=3;},d=>{d.bodyRelations.members[0].rows[0].fieldKinds.string=-1;},d=>{d.bodyRelations.members[0].rows[0].type='string';},d=>{d.bodyRelations.members[0].rows[0].type=secret;},d=>{d.bodyRelations.members[0].rows[0].expectedRowMatch=secret;},d=>{d.bodyRelations.members[0].rows[0].expectedRowMatch=false;},
+   d=>{d.rows[0].certificateNamePrefix.extra=secret;},d=>{d.rows[0].certificateNamePrefix.type='missing';},d=>{d.rows[0].certificateNamePrefix.matchedIndex=200;},d=>{d.rows[0].certificateNamePrefix.matchedIndex=-1;},d=>{d.rows[0].certificateNamePrefix.matchedIndex=null;},d=>{d.rows[0].certificateNamePrefix.ambiguous=true;},d=>{d.rows[0].certificateNamePrefix.scanComplete=false;},d=>{d.rows[0].certificateNamePrefix.memberRowMatches=2;},
+   d=>{d.rows[0].pairedImageDescriptorMatch=secret;},d=>{d.rows[0].fileName.expectedImageMatch=false;},d=>{d.rows[0].expectedLabelReferences=40001;},d=>{d.rows[0].expectedLabelReferences=secret;},
+   d=>{d.bodyRelations.members[0].remoteCount=13;d.bodyRelations.members[0].rows=Array.from({length:13},(_,index)=>({...copy(certificate),index}));},
+  ];
+  for(const change of mutate){const invalid=copy(reply);change(invalid.currentReadFailure.diagnostics);options.currentReadReply=invalid;await assert.rejects(q.adapter.qualifySavedDraftTarget(q.input),error=>{assert.equal(error.code,'SAVED_DRAFT_TARGET_UNCONFIRMED');assert.equal(error.message.includes('진단:'),false);assert.equal(error.message.includes(secret),false);return true;});}
+  assert.equal(q.f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords,undefined);assert.equal(q.requests.length,0);
  }finally{q.close();}
 });
 

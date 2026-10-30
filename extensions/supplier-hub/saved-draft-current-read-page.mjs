@@ -135,13 +135,38 @@ export async function savedDraftCurrentReadPage(input){
    const expectedLinks=new Set(files.map(file=>file.s3Link));
    const fieldType=(row,key)=>{if(!object(row)||!Object.hasOwn(row,key))return'missing';const value=row[key];return value===null?'null':Array.isArray(value)?'array':typeof value==='string'?(value.trim()===''?'string-empty':'string'):typeof value;};
    const matchProbe=(row,key,expected)=>({type:fieldType(row,key),expectedImageMatch:object(row)&&Object.hasOwn(row,key)&&typeof row[key]==='string'&&row[key].trim()!==''&&expected.has(row[key])});
-   safeDiagnostics={format:'yoofam-saved-draft-legal-diagnostics-v1',collection:'array',count:legal.length,truncated:legal.length>12,rows:legal.slice(0,12).map((row,index)=>{
+   const valueType=value=>value===null?'null':Array.isArray(value)?'array':typeof value==='string'?(value.trim()===''?'string-empty':'string'):typeof value;
+   const normalizeLegal=(actual,wanted)=>{const value=copy(actual);if(object(value)&&object(wanted)&&wanted.adCert===''&&!Object.hasOwn(value,'adCert'))value.adCert='';return value;};
+   const legalOf=member=>object(member)&&Object.hasOwn(member,'legalPage')?member.legalPage:undefined;
+   const certificatesOf=member=>object(legalOf(member))&&Object.hasOwn(legalOf(member),'certificates')?legalOf(member).certificates:undefined;
+   const legalEqual=(actual,wanted)=>actual===undefined||wanted===undefined?actual===wanted:same(normalizeLegal(actual,wanted),wanted);
+   // These paths are distinct in the shipped SR client. certificateFile is
+   // an assembled UI cell, not a stored-body field, so it is never probed.
+   const labelReferences=(documents,name)=>{let count=0;for(const member of documents){if(!Object.hasOwn(member,'imagePage'))continue;const page=member.imagePage;if(!object(page))return null;if(!Object.hasOwn(page,'images'))continue;const group=page.images;if(!object(group))return null;if(!Object.hasOwn(group,'labelImages'))continue;const rows=group.labelImages;if(rows===null)continue;if(!Array.isArray(rows)||rows.length>200)return null;
+     for(const row of rows){if(!object(row)||!Object.hasOwn(row,'labelImageFiles'))return null;const value=row.labelImageFiles;if(value===null||value==='')continue;if(typeof value!=='string'||value.length>8192)return null;const parts=value.split(',');if(parts.length>200)return null;count+=parts.filter(part=>part===name).length;if(count>40000)return null;}}
+    return count;};
+   const prefixProbe=row=>{const type=fieldType(row,'fileName'),name=object(row)?row.fileName:undefined;if(typeof name!=='string'||name.length>512)return{type,matchedIndex:null,ambiguous:false,scanComplete:typeof name!=='string',memberRowMatches:0};
+    const indices=new Set();let unsupported=false;for(const match of name.matchAll(/cert(0|[1-9]\d*)-/g)){const index=Number(match[1]);if(!Number.isSafeInteger(index)||index>199)unsupported=true;else indices.add(index);}
+    const matchedIndex=!unsupported&&indices.size===1?[...indices][0]:null;
+    return{type,matchedIndex,ambiguous:indices.size>1,scanComplete:!unsupported,memberRowMatches:matchedIndex===null?0:body.jsonDocument.filter(member=>Array.isArray(certificatesOf(member))&&certificatesOf(member).length>matchedIndex).length};};
+   let rowBudget=12;
+   const bodyRelations={format:'yoofam-saved-draft-legal-body-relations-v1',memberCount:body.jsonDocument.length,truncated:body.jsonDocument.length>12,
+    remoteLegalMatchesExpected:body.jsonDocument.every((member,index)=>legalEqual(legalOf(member),legalOf(expected.jsonDocument[index]))),members:body.jsonDocument.slice(0,12).map((member,index)=>{
+     const actual=certificatesOf(member),wanted=certificatesOf(expected.jsonDocument[index]),rows=Array.isArray(actual)?actual:[],samples=rows.slice(0,rowBudget);rowBudget-=samples.length;
+     return{index,remoteLegalType:fieldType(member,'legalPage'),expectedLegalType:fieldType(expected.jsonDocument[index],'legalPage'),remoteCertificatesType:fieldType(legalOf(member),'certificates'),expectedCertificatesType:fieldType(legalOf(expected.jsonDocument[index]),'certificates'),
+      remoteCount:Array.isArray(actual)?actual.length:null,expectedCount:Array.isArray(wanted)?wanted.length:null,matchesExpected:actual===undefined||wanted===undefined?actual===wanted:same(actual,wanted),truncated:rows.length>samples.length,
+      rows:samples.map((row,rowIndex)=>{const values=object(row)?Object.values(row):[],kinds={null:0,array:0,object:0,'string-empty':0,string:0,number:0,boolean:0};for(const value of values){const type=valueType(value);if(Object.hasOwn(kinds,type))kinds[type]++;}
+       return{index:rowIndex,type:valueType(row),fieldCount:values.length,fieldKinds:kinds,expectedRowMatch:Array.isArray(wanted)&&rowIndex<wanted.length&&same(row,wanted[rowIndex])};})};
+    })};
+   safeDiagnostics={format:'yoofam-saved-draft-legal-diagnostics-v2',collection:'array',count:legal.length,truncated:legal.length>12,bodyRelations,rows:legal.slice(0,12).map((row,index)=>{
     const ownKeys=object(row)?Object.keys(row):[],keys=ownKeys.filter(key=>keyNames.has(key)).sort().slice(0,12),type=row===null?'null':Array.isArray(row)?'array':typeof row;
     const fileType=object(row)&&Object.hasOwn(row,'fileType')?row.fileType:undefined;
     return{index,type,keys,keyCount:ownKeys.length,keysTruncated:ownKeys.length>keys.length,
      fileType:{type:fieldType(row,'fileType'),knownType:typeof fileType==='string'&&knownTypes.has(fileType)?fileType:null,identifier:typeof fileType==='string'&&/^[A-Za-z][A-Za-z0-9_-]{0,39}$/.test(fileType)},
      fileName:matchProbe(row,'fileName',names),imageName:matchProbe(row,'imageName',names),s3Link:matchProbe(row,'s3Link',expectedLinks),
-     docId:{type:fieldType(row,'docId'),same:object(row)&&Object.hasOwn(row,'docId')&&(typeof row.docId==='string'||typeof row.docId==='number')&&row.docId===docId}};
+     docId:{type:fieldType(row,'docId'),same:object(row)&&Object.hasOwn(row,'docId')&&(typeof row.docId==='string'||typeof row.docId==='number')&&row.docId===docId},
+     certificateNamePrefix:prefixProbe(row),pairedImageDescriptorMatch:object(row)&&typeof row.fileName==='string'&&typeof row.s3Link==='string'&&files.some(file=>file.imageName===row.fileName&&file.s3Link===row.s3Link),
+     expectedLabelReferences:object(row)&&typeof row.fileName==='string'&&row.fileName.trim()!==''?labelReferences(expected.jsonDocument,row.fileName):null};
    })};
    fail('legal-array-nonempty');
   }}

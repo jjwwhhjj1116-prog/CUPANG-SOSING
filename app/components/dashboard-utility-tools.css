@@ -1,0 +1,22 @@
+.studio-shell .workspace-utilities{gap:2px;align-items:stretch}
+.studio-shell .workspace-utility{position:relative;display:inline-flex;flex-direction:column;justify-content:center;align-items:center;gap:3px;min-width:48px;min-height:43px;padding:4px 7px;border:0;border-radius:4px;background:transparent;color:#8790a7;font-size:9px;line-height:1.2;white-space:nowrap;box-shadow:none}
+.studio-shell .workspace-utility-icon{display:block;flex:none;width:19px;height:19px;color:inherit}
+.studio-shell .workspace-utility .utility-label{color:inherit;max-width:76px;overflow:hidden;text-overflow:ellipsis}
+.studio-shell .workspace-utility:hover{color:#269bc4;background:#f1f8fb;border:0}
+.studio-shell .workspace-utility:focus-visible{outline:2px solid #29b9df;outline-offset:2px}
+.studio-shell .workspace-utility:disabled{cursor:wait;opacity:.55}
+.studio-shell .utility-multi{margin-left:6px;border-left:1px solid #edf0f6;border-radius:0;padding-left:12px}
+.studio-shell .workspace-account-menu{position:relative}
+.studio-shell .workspace-account-menu>summary{list-style:none;cursor:pointer}
+.studio-shell .workspace-account-menu>summary::-webkit-details-marker{display:none}
+.studio-shell .workspace-account-menu[open]>summary{color:#269bc4;background:#f1f8fb}
+.studio-shell .workspace-account-dropdown{position:absolute;top:calc(100% + 6px);right:0;z-index:30;display:flex;flex-direction:column;min-width:192px;padding:8px;background:white;border:1px solid #dce3ed;border-radius:7px;box-shadow:0 9px 24px #17233e1c;text-align:left}
+.studio-shell .workspace-account-dropdown>strong{display:block;max-width:240px;padding:8px;color:#172b53;font-size:11px;overflow-wrap:anywhere}
+.studio-shell .workspace-account-dropdown>a{display:block;padding:9px 10px;border-radius:4px;color:#65728a;font-size:11px;line-height:1.5;text-decoration:none}
+.studio-shell .workspace-account-dropdown>a:hover,.studio-shell .workspace-account-dropdown>a:focus-visible{color:#1798c5;background:#f1f8fb;outline:2px solid transparent}
+.studio-shell .workspace-account-dropdown>a:last-child{margin-top:4px;border-top:1px solid #edf0f6;border-radius:0;color:#d86970}
+.studio-shell .utility-status-dot{position:absolute;top:3px;right:12px;width:5px;height:5px;box-shadow:0 0 0 2px white}
+.studio-shell .intake-tools-backdrop[hidden]{display:none!important}
+.studio-shell .capture-tools-dialog>.collection-panel,.studio-shell .capture-tools-dialog>#captured-source-inbox{margin:14px 24px}
+.studio-shell .capture-tools-dialog>#captured-source-inbox>.collection-panel{margin:0}
+@media(max-width:720px){.studio-shell .workspace-utilities{gap:0;justify-content:flex-end}.studio-shell .workspace-utility{min-width:42px;padding:4px;font-size:8px}.studio-shell .workspace-utility-icon{width:18px;height:18px}.studio-shell .utility-multi{margin-left:3px;padding-left:8px}.studio-shell .capture-tools-dialog>.collection-panel,.studio-shell .capture-tools-dialog>#captured-source-inbox{margin:12px 16px}}

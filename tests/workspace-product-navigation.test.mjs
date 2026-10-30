@@ -194,7 +194,7 @@ test('packaging review from a category-bound submission target keeps the quotati
 test('connection dialog displays returned server states without static collection or transmission failure claims',async()=>{
  const integration={checkedAt:'2026-10-05T00:00:00Z',authentication:'cloudflare_access',database:'query_ok',databaseSchema:{status:'tables_present',missingTables:[]},files:'binding_present',translation:{configured:true,model:'fixture-text'},imageProcessing:{configured:false,model:null}};
  const h=harness({integration});try{
-  await h.settle();const utility=()=>nodes(h.render()).find(node=>node.type==='nav'&&node.props['aria-label']==='계정 및 연결 도구'),connection=()=>nodes(utility()).find(node=>node.type==='button'&&node.props['aria-label']?.startsWith('연동 설정'));assert.equal(connection().props['data-state'],'unknown');await h.click('⌁연동 설정');assert.equal(connection().props['data-state'],'read');assert.match(connection().props['aria-label'],/실제 AI 호출은 별도 확인/);
+  await h.settle();const utility=()=>nodes(h.render()).find(node=>node.type==='nav'&&node.props['aria-label']==='계정 및 연결 도구'),connection=()=>nodes(utility()).find(node=>node.type==='button'&&node.props['aria-label']?.startsWith('연동 설정'));assert.equal(connection().props['data-state'],'unknown');await h.click('연동 설정');assert.equal(connection().props['data-state'],'read');assert.match(connection().props['aria-label'],/실제 AI 호출은 별도 확인/);
   const dialog=()=>nodes(h.render()).find(node=>node.props?.['aria-label']==='연동 상태');
   assert.match(text(dialog()),/Cloudflare Access 검증됨/);assert.match(text(dialog()),/읽기 쿼리 성공/);assert.match(text(dialog()),/fixture-text/);assert.match(text(dialog()),/별도 이미지 가공 모델·키 설정 필요/);
   assert.doesNotMatch(text(dialog()),/공급원 연결 필요|쿠플러스 확장|역할 분석 필요|전달받았|제안 전송은 차단/);

@@ -311,3 +311,35 @@ for(const stage of ['main','additional','detail'])test(`${stage}: confirmed capa
  assert.equal(result.state.batches.option.items[0].status,'failed');assert.ok(result.state.batches.option.items.slice(1).every(row=>row.status==='pending'));assert.equal(result.state.batches['later-option'],undefined);assert.match(result.messages.join(' '),/혼잡|남은 이미지/);
  assert.deepEqual(plain([h.content,h.view]),before);assert.ok(h.canvases.every(canvas=>canvas.width===0));
 });
+
+function lateVisionFixture(stage='detail'){
+ const h=fixture(stage,['owner/source-a.png']),requestId='0fa1748b-fd6e-4b16-8120-754071c7a73f',configuration={provider:'workers-ai-vision',model:h.visionContract.IMAGE_TEXT_VISION_MODEL,configured:true,paidAllowed:true,notice:h.visionContract.IMAGE_TEXT_VISION_NOTICE};
+ const read=h.deps.readSource;h.deps.readSource=async(...args)=>{const image=await read(...args);image.source.quotationTarget.bindingSha256='c'.repeat(64);image.visionConfiguration=plain(configuration);return image;};
+ h.deps.recognize=async image=>{h.calls.push(['vision',image.source.sourceKey]);image.visionRequestId=requestId;throw new h.vision.FreeImageVisionError('provider response uncertain','IMAGE_VISION_ACK_MISSING',true,{requestId,source:image.source,sourceLanguage:'zh',configuration});};
+ const result={provider:'workers-ai-vision',model:configuration.model,requests:1,blocks:[{id:'vision-1',text:'中文',translated:'검정',issue:null,box:{x:20,y:20,width:40,height:20}}],notice:configuration.notice};
+ h.deps.observe=async attempt=>{h.calls.push(['vision-status',attempt.requestId]);return{format:'yoofam-image-vision-status-v1',source:plain(attempt.source),configuration:plain(configuration),sourceLanguage:'zh',requestId,status:'completed',result:plain(result),failure:null,execution:{requests:0},readOnly:true};};
+ h.deps.translate=async()=>assert.fail('a completed Vision response cannot start a second translation provider');
+ return h;
+}
+
+for(const stage of ['main','additional','detail'])test(`${stage}: late completed Vision response resumes the exact slot without another inference and releases its latch after confirmed apply`,async()=>{
+ const h=lateVisionFixture(stage),first=await h.run();assert.equal(first.inferencePending,true);assert.equal(h.calls.filter(row=>row[0]==='vision').length,1);
+ const resumed=await h.run();assert.equal(resumed.status,'completed');assert.equal(resumed.applied,1);assert.equal(resumed.inferencePending,undefined);assert.equal(resumed.state.inferencePending,undefined);
+ assert.equal(h.calls.filter(row=>row[0]==='vision').length,1);assert.equal(h.calls.filter(row=>row[0]==='vision-status').length,1);assert.equal(h.calls.filter(row=>row[0]==='apply').length,1);assert.equal(h.calls.filter(row=>row[0]==='render').length,1);
+ assert.equal(resumed.state.batches.option.items[0].status,'applied');assert.ok(h.canvases.every(canvas=>canvas.width===0));
+ const again=await h.run();assert.equal(again.status,'completed');assert.equal(h.calls.filter(row=>row[0]==='vision'||row[0]==='apply'||row[0]==='vision-status').length,3);
+});
+
+test('late Vision completion cannot cross a changed saved view or malformed request identity',async()=>{
+ const stale=lateVisionFixture();await stale.run();stale.view.revision++;await assert.rejects(stale.run(),/변경/);assert.equal(stale.calls.filter(row=>row[0]==='vision').length,1);assert.equal(stale.calls.filter(row=>row[0]==='apply').length,0);assert.ok(stale.options.state.inferencePending);
+ const malformed=lateVisionFixture();await malformed.run();const observe=malformed.deps.observe;malformed.deps.observe=async(...args)=>({...await observe(...args),requestId:'da1dd761-dfa4-4267-b76f-a6068cd1ec6c'});
+ const held=await malformed.run();assert.equal(held.inferencePending,true);assert.equal(held.applied,0);assert.equal(malformed.calls.filter(row=>['render','apply'].includes(row[0])).length,0);
+});
+
+test('completed Vision rendering failures retain the result for read-only recovery, while confirmed failure releases the inference latch without a new call',async()=>{
+ const h=lateVisionFixture(),render=h.deps.render;await h.run();h.deps.render=async()=>{throw Error('local canvas unavailable');};
+ const failed=await h.run();assert.equal(failed.status,'partial');assert.equal(failed.inferencePending,undefined);assert.ok(h.options.state.inferencePending);assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);
+ h.deps.render=render;assert.equal((await h.run()).status,'completed');assert.equal(h.calls.filter(row=>row[0]==='vision').length,1);assert.equal(h.calls.filter(row=>row[0]==='apply').length,1);
+ const terminal=lateVisionFixture();await terminal.run();const observe=terminal.deps.observe;terminal.deps.observe=async(...args)=>({...await observe(...args),status:'failed',result:null,failure:'PROVIDER_FAILED'});
+ const closed=await terminal.run();assert.equal(closed.status,'partial');assert.equal(closed.inferencePending,undefined);assert.equal(terminal.options.state.inferencePending,undefined);assert.equal(terminal.calls.filter(row=>row[0]==='vision').length,1);assert.equal(terminal.calls.filter(row=>row[0]==='apply').length,0);
+});

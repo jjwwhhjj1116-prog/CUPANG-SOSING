@@ -917,12 +917,17 @@ for(const changedSelection of [false,true])test(`repeated source ACKs ${changedS
  }finally{h.close();}
 });
 
-test('compact dashboard retains captured sources and existing collection without registration-choice cards',async()=>{
+test('compact dashboard keeps intake tools hidden until their icon opens them without resetting their mounted inputs',async()=>{
  const h=harness();try{
   await h.settle();const tree=h.render();assert.equal(nodes(tree).some(node=>node.props?.id==='acquisition-entry-heading'),false);assert.doesNotMatch(text(tree),/상품 등록 방식 선택|1688에서 수집 후 등록|카테고리 선택 후 URL 등록/);assert.ok(h.button('＋ 상품 추가'));assert.ok(h.component('source-inbox-panel'));assert.ok(h.component('registration-board'));assert.equal(nodes(tree).some(node=>node.props?.['aria-label']==='SEO 실행 전 안내'),false);
-  assert.ok(nodes(tree).some(node=>node.props?.id==='captured-source-inbox'));assert.equal(h.componentVisible('query-source-panel'),false);
-  const queryMount=h.componentMount('query-source-panel');await h.toggleDetails('1688 URL로 원문 먼저 담기 · 서버 수집');
+  assert.ok(nodes(tree).some(node=>node.props?.id==='captured-source-inbox'));assert.equal(h.componentVisible('query-source-panel'),false);assert.equal(h.componentVisible('source-inbox-panel'),false);
+  const hiddenTools=()=>nodes(h.render()).find(node=>node.props?.className==='modal-backdrop intake-tools-backdrop');assert.equal(hiddenTools().props.hidden,true);
+  const queryMount=h.componentMount('query-source-panel'),sourceMount=h.componentMount('source-inbox-panel');await h.click('수집함');assert.equal(hiddenTools().props.hidden,false);assert.equal(h.componentVisible('source-inbox-panel'),true);
+  await h.toggleDetails('1688 URL로 원문 먼저 담기 · 서버 수집');
   assert.equal(h.componentVisible('query-source-panel'),true);assert.equal(h.componentMount('query-source-panel'),queryMount,'opening the existing collector does not remount or reset its inputs');
+  const popup=nodes(h.render()).find(node=>node.props?.id==='capture-tools-dialog');assert.equal(nodes(popup).find(node=>node.type==='button'&&node.props['aria-label']==='수집함 닫기').props.autoFocus,true);
+  let escaped=0;popup.props.onKeyDown({key:'Escape',preventDefault(){escaped++;},stopPropagation(){escaped++;}});await h.settle();assert.equal(escaped,2);assert.equal(hiddenTools().props.hidden,true);assert.equal(h.componentVisible('source-inbox-panel'),false);assert.equal(h.componentMount('query-source-panel'),queryMount);
+  await h.click('수집함');assert.equal(hiddenTools().props.hidden,false);assert.equal(h.componentMount('query-source-panel'),queryMount);assert.equal(h.componentMount('source-inbox-panel'),sourceMount);assert.equal(h.componentVisible('query-source-panel'),true);
   assert.ok(h.requests.every(request=>request.method==='GET'));assert.equal(h.component('intake-queue-panel'),undefined);
  }finally{h.close();}
 });
@@ -932,6 +937,10 @@ test('compact upper utilities retain the actual CLI, history and account entries
   await h.settle();const menu=()=>nodes(h.render()).find(node=>node.type==='nav'&&node.props['aria-label']==='주 메뉴'),utility=()=>nodes(h.render()).find(node=>node.type==='nav'&&node.props['aria-label']==='계정 및 연결 도구'),action=label=>nodes(utility()).find(node=>node.type==='button'&&node.props['aria-label']===label);
   assert.equal(nodes(menu()).filter(node=>node.type==='button'&&node.props['aria-controls']).length,5);assert.equal(nodes(menu()).filter(node=>node.type==='button'&&!node.props['aria-controls']).length,2);assert.doesNotMatch(text(menu()),/연동 설정|작업 이력|CLI/);assert.match(text(menu()),/AI상품등록.*상품관리/s);assert.ok(nodes(utility()).some(node=>node.type==='a'&&node.props.href==='/account'&&node.props['aria-label']==='테스트 관리자 계정 관리'));
   const connection=nodes(utility()).find(node=>node.type==='button'&&node.props['aria-label']?.startsWith('연동 설정'));assert.equal(connection.props['data-state'],'unknown');assert.match(connection.props['aria-label'],/확인 전/);assert.doesNotMatch(text(utility()),/연결 완료|연결됨|MCP|GPT/);
+  assert.ok(nodes(utility()).some(node=>node.type==='a'&&node.props.href==='/account#multi-account-settings'&&node.props['aria-label']==='멀티 계정 관리'));
+  const accountMenu=nodes(utility()).find(node=>node.type==='details'&&node.props.className==='workspace-account-menu');assert.ok(Object.hasOwn(accountMenu.props,'data-dismissable-menu'));assert.ok(nodes(accountMenu).some(node=>node.type==='summary'&&text(node)==='설정'));
+  for(const target of ['/account','/account#password-change','/account#multi-account-settings','/account#account-session'])assert.ok(nodes(accountMenu).some(node=>node.type==='a'&&node.props.href===target&&typeof node.props.onClick==='function'));
+  assert.equal(nodes(utility()).filter(node=>node.type==='svg'&&node.props.className==='workspace-utility-icon').length,7,'all compact tools have consistent vector icons above their labels');
   for(const label of ['⚙ 기본설정','＋ 상품 추가','작업 개시','등록 전송'])assert.ok(h.button(label));assert.ok(nodes(h.render()).some(node=>node.type==='summary'&&text(node)==='전체 작업 ▾'));assert.ok(nodes(h.render()).some(node=>node.type==='summary'&&text(node)==='상품 선택 ▾'));
   action('CLI 설치·연결').props.onClick();await h.settle();assert.ok(h.component('cli-install-guide'));h.component('cli-install-guide').onClose();await h.settle();assert.equal(h.component('cli-install-guide'),undefined);
   action('작업 이력').props.onClick();await h.settle();const dialog=nodes(h.render()).find(node=>node.props?.role==='dialog'&&node.props['aria-label']==='상품별 작업 이력');assert.ok(dialog);assert.equal(nodes(dialog).find(node=>node.type==='select').props.value,h.products[0].id);nodes(dialog).find(node=>node.type==='button'&&node.props.className==='icon-close').props.onClick();await h.settle();
@@ -1003,5 +1012,25 @@ test('native sidebar links block dirty editors while leaving ordinary category n
   h.setWorkspaceEdits({dirty:false,busy:true});blocked=false;link().props.onClick({preventDefault(){blocked=true;}});assert.equal(blocked,true);
   h.setWorkspaceEdits({busy:false});blocked=false;link().props.onClick({preventDefault(){blocked=true;}});assert.equal(blocked,false);
   assert.ok(h.requests.every(request=>request.method==='GET'));
+ }finally{h.close();}
+});
+
+test('account and multi-account navigation retain active submission and dirty-editor guards',async()=>{
+ const h=harness();try{
+  await h.settle();const accountLinks=()=>nodes(h.render()).filter(node=>node.type==='a'&&typeof node.props.href==='string'&&node.props.href.startsWith('/account'));
+  h.component('registration-board').onOpen(h.products[0]);await h.settle();h.setWorkspaceEdits({dirty:true});
+  assert.ok(accountLinks().length>=5);for(const link of accountLinks()){let blocked=false;link.props.onClick({preventDefault(){blocked=true;}});assert.equal(blocked,true,link.props.href);}
+  h.setWorkspaceEdits({dirty:false});await h.click('등록 전송');h.component('submission-review-panel').onLockChange(true,true);
+  for(const link of accountLinks()){let blocked=false;link.props.onClick({preventDefault(){blocked=true;}});assert.equal(blocked,true,link.props.href);}
+  assert.ok(h.requests.every(request=>request.method==='GET'),'navigation inspection must not log out or change credentials');
+ }finally{h.close();}
+});
+
+test('captured-source tool visibility is scoped to the current owner and old callbacks cannot reopen it after A/B/A',async()=>{
+ const h=harness();try{
+  await h.settle();const open=h.button('수집함').props.onClick,panel=()=>nodes(h.render()).find(node=>node.props?.className==='modal-backdrop intake-tools-backdrop');
+  open();await h.settle();assert.equal(panel().props.hidden,false);h.switchOwner('other-owner');await h.settle();assert.equal(panel().props.hidden,true);
+  h.switchOwner('test-owner');await h.settle();assert.equal(panel().props.hidden,true);open();await h.settle();assert.equal(panel().props.hidden,true);await h.click('수집함');assert.equal(panel().props.hidden,false);
+  assert.ok(h.requests.every(request=>request.method==='GET'));assert.equal(h.lateWrites,0);
  }finally{h.close();}
 });

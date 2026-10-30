@@ -66,10 +66,14 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
   if(keys.has(scopeKey)&&keys.get(scopeKey)!==JSON.stringify(expected))throw new ScopeChanged('작업을 시작한 회사가 변경되어 선택 상품 작업을 중단했습니다.');
   keys.set(scopeKey,JSON.stringify(expected));
   const assertCurrent=async()=>{if(!same(await account(),expected))throw new ScopeChanged('로그인 회사가 변경되어 작업을 멈췄습니다.');};
+  let onMutationDispatch:(()=>void)|undefined;
   const fetcher:typeof fetch=async(input,init)=>{
     signal.throwIfAborted();
     if(init?.method&&!['GET','HEAD'].includes(init.method.toUpperCase()))await assertCurrent();
     const requestSignal=init?.signal?AbortSignal.any([signal,init.signal]):signal;
+    // Mark dispatch after the account preflight, immediately before handing
+    // the mutation to the transport. A rejected preflight sent nothing.
+    if(init?.method&&!['GET','HEAD'].includes(init.method.toUpperCase()))onMutationDispatch?.();
     const response=await controls.fetcher(input,{...init,signal:requestSignal});
     signal.throwIfAborted();
     if(init?.method&&!['GET','HEAD'].includes(init.method.toUpperCase()))await assertCurrent();
@@ -88,12 +92,27 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
   };
   let activeStage:AutomationStageId|null=null;
   const stageWrites=new Set<string>();
-  const once=async<T>(name:string,operation:()=>Promise<T>)=>{
+  const once=async<T>(name:string,operation:()=>Promise<T>,trackDispatch=false)=>{
     const key=identity+':write:'+name;
     if(keys.has(key))throw Error('이전 작업의 저장 결과를 단계 편집에서 먼저 확인해주세요. 같은 요청을 다시 보내지 않았습니다.');
     if(activeStage)keys.set(identity+':pending:'+activeStage,'저장 결과 확인 필요');
     keys.set(key,'submitted');stageWrites.add(key);
-    const result=await operation();keys.set(key,'confirmed');return result;
+    const previousDispatch=onMutationDispatch;let dispatched=false;
+    if(trackDispatch)onMutationDispatch=()=>{dispatched=true;previousDispatch?.();};
+    try{const result=await operation();keys.set(key,'confirmed');return result;}
+    catch(cause){
+      if(trackDispatch&&!dispatched){
+        keys.delete(key);stageWrites.delete(key);
+        // Packaging is entered only after prior quotation writes have been
+        // verified. Their confirmed fences must not turn a local validation
+        // failure into a permanently ambiguous save.
+        if([...stageWrites].every(value=>keys.get(value)==='confirmed')){
+          for(const value of stageWrites)keys.delete(value);stageWrites.clear();
+          if(activeStage)keys.delete(identity+':pending:'+activeStage);
+        }
+      }
+      throw cause;
+    }finally{if(trackDispatch)onMutationDispatch=previousDispatch;}
   };
   async function translateSeoOptions():Promise<Outcome>{
     const current=await product();
@@ -290,7 +309,7 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
       view=await once('quotation:'+(job?.id??'saved-notice:'+view.inputFingerprint),()=>post<QuotationFieldsView>('/quotation-fields',{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes},'PUT'));
       confirmQuotationFieldsSave(previous,view,changes);
     }
-    const packaging=await once('packaging:'+view.inputFingerprint,()=>runSelectedPackagingWork(productId,{view,signal,fetcher,assertCurrent}));
+    const packaging=await once('packaging:'+view.inputFingerprint,()=>runSelectedPackagingWork(productId,{view,signal,fetcher,assertCurrent}),true);
     view=packaging.view;
     const missing=view.resolved.rows.filter(row=>row.included).flatMap(row=>view.resolved.schema.fields.filter(field=>field.required
       &&(!row.fields[field.id]?.value.trim()||row.fields[field.id]?.validationIssues?.length)).map(field=>field.label));
