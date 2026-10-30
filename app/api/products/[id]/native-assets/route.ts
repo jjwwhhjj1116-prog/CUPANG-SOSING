@@ -1,4 +1,5 @@
 import {NextResponse} from 'next/server';
+import {env} from 'cloudflare:workers';
 import {getChatGPTUser,getWorkspaceOwnerId} from '@/app/chatgpt-auth';
 import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
 import {loadSinglePackage} from '@/app/exports/single-package';
@@ -31,6 +32,14 @@ export async function GET(request:Request,context:Context){
    if(!current?.verifiedAccess||current.userId!==owner||current.membership?.id!==member.id||current.membership?.email!==member.email||current.membership?.role!==member.role||!next||next.code!==company.code||next.name!==company.name)changed();
   };
   await active();
+  // An archived original is a local source-state issue, not a Supplier Hub
+  // login failure. Report it before reading any private image bytes. The
+  // loader retains its independent final source/removal fence for races.
+  const archived=await env.DB.prepare(`SELECT r.removed_at FROM products p
+    JOIN product_removals r ON r.product_id=p.id AND r.owner_id=p.owner_id
+    WHERE p.owner_id=? AND p.id=?`).bind(owner,id).first<{removed_at:string}>();
+  await active();
+  if(archived)return reply({error:'삭제 보관된 상품이라 전송 원본 검증을 중단했습니다. 삭제된 상품 목록에서 이 초안의 복원 여부를 확인해주세요. 기존 문서를 새로 만들거나 파일·본문을 다시 전송하지 않았습니다.',code:'NATIVE_ASSET_PRODUCT_ARCHIVED'},409);
   trace('initial-scope');
   const loaded=await loadSinglePackage(owner,id,profileId,company,active,false,undefined,true,{nativeReadOnly:true,trace}),plan=loaded.view.nativeAssetSourcePlan;
   if(!plan||plan.format!=='yoofam-native-asset-source-plan-v1'||plan.registered!==false||plan.remoteWrites!==false||plan.submissionReady!==false||plan.transportReady!==false)throw new SingleAssetError('현재 네이티브 원본 파일 계획을 확인하지 못했습니다.','NATIVE_ASSET_PLAN',503);

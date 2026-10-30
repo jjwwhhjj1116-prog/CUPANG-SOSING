@@ -8,6 +8,7 @@ import type {QuotationFieldsView} from '@/app/quotation-schema';
 import type {ProductOptionsResponse} from '@/app/product-options';
 import type {WorkspaceSettingsScope} from '@/app/workspace-settings-scope';
 import type {WorkspaceSettings} from '@/app/workspace-settings';
+import {selectedImagePurpose,hasForeignImageText,prepareSelectedImageCleanup} from '@/app/selected-image-purpose';
 
 export type SelectedImageStage='main'|'additional'|'detail';
 export type SelectedImageInferencePending={optionId:string;slotIndex:number;attempt:FreeImageVisionAttempt;code:string;message:string;observation?:FreeImageVisionStatus};
@@ -38,6 +39,7 @@ function manualTarget(view:QuotationFieldsView,task:BatchImageTask){
  * source-bound CAS + reread verifier. No upload is retried automatically. */
 export async function processSelectedImageStage(productId:string,stage:SelectedImageStage,options:SelectedImageStageOptions,deps:Dependencies={}):Promise<SelectedImageStageResult>{
  const {signal,fetcher,ownerId}=options,state=options.state??createSelectedImageStageState(ownerId,productId,stage),result:SelectedImageStageResult={status:'partial',applied:0,failed:0,skipped:0,messages:[],state};
+ const purpose=selectedImagePurpose(stage),action=purpose==='cleanup'?'문구 제거':'번역';
  const active=()=>{signal.throwIfAborted();if(options.isCurrent?.()===false)throw changed();};
  active();if(!/^[A-Za-z0-9_-]{1,100}$/.test(productId)||!['main','additional','detail'].includes(stage)||!isOwnedImageKey(ownerId,ownerId+'/scope.png'))throw changed();
  if(state.ownerId!==ownerId||state.productId!==productId||state.stage!==stage||!object(state.batches))throw changed();
@@ -122,7 +124,7 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
    }
    if(entry.status==='skipped'){result.skipped++;continue;}
    const savedEdit=savedEditKey(entry.sourceKey);
-   if(!savedEdit&&!detailBatchCapacity(batch.view)){result.failed++;entry.status='failed';result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: 새 번역 이미지를 저장할 공간이 없습니다.`);continue;}
+   if(!savedEdit&&!detailBatchCapacity(batch.view)){result.failed++;entry.status='failed';result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: 새 ${action} 이미지를 저장할 공간이 없습니다.`);continue;}
    const controller=new AbortController(),abort=()=>controller.abort(signal.reason);signal.addEventListener('abort',abort,{once:true});
    const timer=setTimeout(()=>controller.abort(Error('이 이미지의 처리 시간이 90초를 초과했습니다. 원본과 확인된 저장 결과를 유지했습니다.')),SELECTED_IMAGE_SLOT_TIMEOUT_MS);
    let image:FreeImageLoaded|undefined;
@@ -154,8 +156,14 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
     if(image.source.productId!==productId||!isOwnedImageKey(ownerId,image.source.sourceKey)||image.source.sourceKey!==entry.sourceKey||image.source.productVersion!==batch.view.productVersion||image.source.role!==stage)throw changed();
     let regions:FreeImageRegion[];
     try{regions=await(deps.recognize??recognizeFreeImage)(image,'zh',controller.signal,progress);}catch(cause){if(cause instanceof Error&&cause.message===noTextMessage)throw new NoForeignText();throw cause;}check();
+    let prepared:FreeImageRegion[],translationReview:DetailImageBatch['items'][number]['translationReview'],texts:{original:string;translated:string}[];
+    if(purpose==='cleanup'){
+     prepared=prepareSelectedImageCleanup(image,regions);
+     const chosen=prepared.filter(region=>region.selected);if(!chosen.length)throw new NoForeignText();
+     texts=chosen.map(region=>({original:region.text,translated:''}));
+    }else{
     if(image.visionStyleIssues?.length)throw Error(`Vision 초기 스타일 검토가 필요합니다: ${image.visionStyleIssues.join(', ')}. 원본을 유지했습니다. 이미지 편집에서 문구와 영역을 확인해주세요.`);
-    const selectedRegions=regions.filter(region=>region.selected&&(/\p{Script=Han}/u.test(region.text)||/[a-z]{2}/iu.test(region.text)));
+    const selectedRegions=regions.filter(region=>region.selected&&hasForeignImageText(region.text));
     if(!selectedRegions.length)throw new NoForeignText();
     const translated=new Map<string,string>(),issues=new Map<string,string>();let incompleteMessage='';
     if(image.visionResult){
@@ -184,19 +192,21 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
     if(!translated.size)throw Error(incompleteMessage||'검증된 번역 문구가 없어 원본을 유지했습니다.');
     const unresolved=selectedRegions.filter(region=>!translated.has(region.id));
     for(const region of unresolved)if(!issues.has(region.id))issues.set(region.id,'앞선 문구의 일부 번역이 미완료여서 추가 번역 요청을 중단했습니다. 원문을 유지했습니다.');
-    const prepared:FreeImageRegion[]=regions.map(region=>translated.has(region.id)?{...region,translated:translated.get(region.id)!,issue:null,translationProvenance:'generated'}:{...region,selected:false,...(issues.has(region.id)?{translated:'',translationProvenance:'empty' as const,issue:(incompleteRegionIssue+issues.get(region.id)!).slice(0,2000)}:{})});
-    const translationReview=unresolved.length?{status:'partial' as const,acceptedRegions:translated.size,unresolvedRegions:unresolved.length,
+    prepared=regions.map(region=>translated.has(region.id)?{...region,translated:translated.get(region.id)!,issue:null,translationProvenance:'generated'}:{...region,selected:false,...(issues.has(region.id)?{translated:'',translationProvenance:'empty' as const,issue:(incompleteRegionIssue+issues.get(region.id)!).slice(0,2000)}:{})});
+    translationReview=unresolved.length?{status:'partial' as const,acceptedRegions:translated.size,unresolvedRegions:unresolved.length,
      message:`검증된 ${translated.size}개 문구만 초안에 반영했습니다. ${unresolved.length}개 미완료 문구는 원문과 오류를 보존하고 선택 해제했습니다. ${incompleteMessage}`} : undefined;
-    progress('번역 이미지 초안 생성 중');const rendered=await(deps.render??renderFreeImageTranslation)(image,prepared,controller.signal,[],undefined,'zh');check();release(image);image=undefined;
-    if(!rendered.output.size||rendered.output.size>10*1024*1024||rendered.output.type!=='image/png')throw Error('번역 이미지 초안 파일을 확인하지 못했습니다. 원본을 유지했습니다.');
-    if(translationReview&&!rendered.editDocument)throw Error('일부 번역 초안의 편집 문서를 확인하지 못했습니다. 원본을 유지했습니다.');
+    texts=selectedRegions.filter(region=>translated.has(region.id)).map(region=>({original:region.text,translated:translated.get(region.id)!}));
+    }
+    progress(`${action} 이미지 초안 생성 중`);const rendered=await(deps.render??renderFreeImageTranslation)(image,prepared,controller.signal,[],undefined,'zh');check();release(image);image=undefined;
+    if(!rendered.output.size||rendered.output.size>10*1024*1024||rendered.output.type!=='image/png')throw Error(`${action} 이미지 초안 파일을 확인하지 못했습니다. 원본을 유지했습니다.`);
+    if((purpose==='cleanup'||translationReview)&&!rendered.editDocument)throw Error(`${action} 초안의 편집 문서를 확인하지 못했습니다. 원본을 유지했습니다.`);
     remember({...batch,items:batch.items.map(item=>item.slotIndex===slotIndex?{...item,status:'ready',rendered,translationReview,
-     texts:selectedRegions.filter(region=>translated.has(region.id)).map(region=>({original:region.text,translated:translated.get(region.id)!}))}:item)});
+     texts}:item)});
     }
     await content(batch.view,controller.signal);check();
-    progress('번역 이미지 초안 저장 중');
+    progress(`${action} 이미지 초안 저장 중`);
     remember(await(deps.apply??applyDetailBatchResult)(batch,slotIndex,controller.signal,remember,{fetcher,readSource:async(...args)=>{const loaded=await(deps.readSource??readFreeImageSource)(...args);release(loaded);return loaded;}}));
-    if(batch.items.find(item=>item.slotIndex===slotIndex)?.status!=='applied')throw Error('번역 이미지 저장 확인을 받지 못했습니다.');
+    if(batch.items.find(item=>item.slotIndex===slotIndex)?.status!=='applied')throw Error(`${action} 이미지 저장 확인을 받지 못했습니다.`);
     result.applied++;latest=batch.view;result.productVersion=batch.view.productVersion;
     // Keep only verified keys after a save, freeing the prior PNG immediately.
     remember({...batch,items:batch.items.map(item=>item.slotIndex===slotIndex?{...item,rendered:undefined,attempt:undefined}:item)});check();
@@ -222,7 +232,7 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
     active();
     if(batch.items.find(item=>item.slotIndex===slotIndex)?.status==='applied'){result.failed++;result.messages.push(note(cause)+' 확인된 저장 결과를 유지하고 다음 이미지 처리를 멈췄습니다.');return result;}
     if(result.sourceChanged){result.failed++;result.messages.push(note(cause));remember({...batch,items:batch.items.map(item=>item.slotIndex===slotIndex?{...item,status:'failed',message:note(cause),rendered:undefined}:item)});return result;}
-    if(cause instanceof NoForeignText){const message='문구 인식을 완료했으며 자동 번역할 중국어·영어 문구를 찾지 못해 원본을 유지했습니다.';result.skipped++;result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: ${message}`);remember({...batch,items:batch.items.map(item=>item.slotIndex===slotIndex?{...item,status:'skipped',message,rendered:undefined}:item)});}
+    if(cause instanceof NoForeignText){const message=`문구 인식을 완료했으며 자동 ${action}할 중국어·영어 문구를 찾지 못해 원본을 유지했습니다.`;result.skipped++;result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: ${message}`);remember({...batch,items:batch.items.map(item=>item.slotIndex===slotIndex?{...item,status:'skipped',message,rendered:undefined}:item)});}
     else{result.failed++;result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: ${controller.signal.aborted?note(controller.signal.reason):note(cause)}`);remember({...batch,items:batch.items.map(item=>item.slotIndex===slotIndex?{...item,status:'failed',message:note(cause),rendered:undefined}:item)});}
    }finally{clearTimeout(timer);signal.removeEventListener('abort',abort);release(image);}
   }
@@ -230,6 +240,6 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
   if(result.failed)break;
  }
  active();result.status=result.failed?'partial':result.applied?'completed':'skipped';
- result.messages.push(result.applied?`${label[stage]} 번역 초안 ${result.applied}개 저장 확인 · 최종 사용 전 결과를 검토해주세요.`:result.failed?`${label[stage]} 번역 초안을 저장하지 못했습니다. 원본을 유지했습니다.`:`${label[stage]}의 원본·직접 저장한 선택·편집 결과를 유지했습니다.`);
+ result.messages.push(result.applied?`${label[stage]} ${action} 초안 ${result.applied}개 저장 확인 · 최종 사용 전 결과를 검토해주세요.`:result.failed?`${label[stage]} ${action} 초안을 저장하지 못했습니다. 원본을 유지했습니다.`:`${label[stage]}의 원본·직접 저장한 선택·편집 결과를 유지했습니다.`);
  return result;
 }

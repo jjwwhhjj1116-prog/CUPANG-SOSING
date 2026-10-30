@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
-function load(file,overrides={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,URL,Error,window:overrides.window,require:name=>name.endsWith('.css')?{}:name in overrides?overrides[name]:name.startsWith('@/')?load(name.slice(2)+(fs.existsSync(new URL('../'+name.slice(2)+'.ts',import.meta.url))?'.ts':'.tsx'),overrides):require(name)});return exports;}
+function load(file,overrides={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,URL,Error,window:overrides.window,document:overrides.document,HTMLElement:overrides.HTMLElement,require:name=>name.endsWith('.css')?{}:name in overrides?overrides[name]:name.startsWith('@/')?load(name.slice(2)+(fs.existsSync(new URL('../'+name.slice(2)+'.ts',import.meta.url))?'.ts':'.tsx'),overrides):require(name)});return exports;}
 const {registrationTitle,registrationNumber,registrationThumbnail,registrationStepLabel,registrationTransmissionLabel,RegistrationBoard,filterRegistrationProducts,sortRegistrationProducts}=load('app/components/registration-board.tsx');
 const columnLabels=['등록번호','상품이미지','상품명','구매링크','SEO설정','가격설정','대표이미지','추가이미지','상세이미지','사이즈표','한글표시사항','견적서','등록상태','관리'];
 function elements(tree,predicate){const found=[];function visit(node){if(!node||typeof node!=='object')return;if(Array.isArray(node)){node.forEach(visit);return;}if(predicate(node))found.push(node);visit(node.props?.children);}visit(tree);return found;}
@@ -13,12 +13,73 @@ function nodeText(node){return Array.isArray(node)?node.map(nodeText).join(''):n
 const nativeSummary={format:'yoofam-single-receipt-summary-v1',evidence:'chrome-observation',registered:false,label:'개별 문서 등록 파일 완료 확인',company:{code:'A01526306',name:'유앤채'},fingerprint:'a'.repeat(64),categoryId:'81452',observedAt:Date.now(),createdAt:new Date().toISOString(),optionCount:1,optionId:'reviewed-one',docId:901,qvtRequestId:7901,state:'accepted',sourceStatus:'FINISHED'};
 function boardHarness(props={}){
  const values=[],confirmations=[],layouts=[];let cursor=0;
- const {RegistrationBoard:Board}=load('app/components/registration-board.tsx',{window:{innerWidth:1600,innerHeight:900,confirm(message){confirmations.push(message);return typeof props.confirm==='function'?props.confirm(message):props.confirm!==false;}},react:{...require('react'),useRef(initial){const index=cursor++;if(!(index in values))values[index]={current:initial};return values[index];},useMemo(fn,deps){const index=cursor++,previous=values[index];if(!previous||deps.some((value,i)=>!Object.is(value,previous.deps[i])))values[index]={deps,value:fn()};return values[index].value;},useLayoutEffect(fn,deps){const index=cursor++,previous=values[index];if(!previous||!deps||deps.some((value,i)=>!Object.is(value,previous.deps[i]))){const next={deps,cleanup:previous?.cleanup};values[index]=next;layouts.push(()=>{next.cleanup?.();next.cleanup=fn();});}},useState(initial){const index=cursor++;if(!(index in values))values[index]=typeof initial==='function'?initial():initial;return [values[index],value=>{values[index]=typeof value==='function'?value(values[index]):value;}];}}});
+ const {RegistrationBoard:Board}=load('app/components/registration-board.tsx',{document:props.document,HTMLElement:props.HTMLElement,window:{innerWidth:1600,innerHeight:900,confirm(message){confirmations.push(message);return typeof props.confirm==='function'?props.confirm(message):props.confirm!==false;}},react:{...require('react'),useRef(initial){const index=cursor++;if(!(index in values))values[index]={current:initial};return values[index];},useMemo(fn,deps){const index=cursor++,previous=values[index];if(!previous||deps.some((value,i)=>!Object.is(value,previous.deps[i])))values[index]={deps,value:fn()};return values[index].value;},useLayoutEffect(fn,deps){const index=cursor++,previous=values[index];if(!previous||!deps||deps.some((value,i)=>!Object.is(value,previous.deps[i]))){const next={deps,cleanup:previous?.cleanup};values[index]=next;layouts.push(()=>{next.cleanup?.();next.cleanup=fn();});}},useState(initial){const index=cursor++;if(!(index in values))values[index]=typeof initial==='function'?initial():initial;return [values[index],value=>{values[index]=typeof value==='function'?value(values[index]):value;}];}}});
  const product={id:'12345678-abcd',title:'수집한 상품명',source_url:'https://detail.1688.com/offer/813724060928.html',created_at:'2026-09-26T00:00:00Z',image_keys:'["owner/source","owner/main"]',source_image_key:'owner/source',options_count:3,registration_status:'작업 중',seo_status:'대기',quote_status:'대기',supply_price:1000,sale_price:2000,removal_policy:{blocked:false,code:null,reason:'',receipt:null},content_summary:{seoTitle:'수정한 상품명',mainImageKey:'owner/main',seo:true,main:1,additional:0,detail:0,label:0,missingImages:false}};
  const calls=[],options=[],selections=[];
  const base={products:[product],sourceOwnerId:'owner',sourceCompany:{code:'A01464742',name:'와이홉'},selected:new Set(),onSelected:value=>selections.push(value),onOpen:(...args)=>calls.push(args),onOptions:value=>options.push(value),loading:false,error:'',onArchive:()=>{},...props};
- return {product:base.products[0],calls,options,selections,confirmations,update(value){Object.assign(base,value);return this.render();},close(){for(const value of values)value?.cleanup?.();},render(){cursor=0;const tree=Board(base);layouts.splice(0).forEach(fn=>fn());return tree;}};
+ return {product:base.products[0],calls,options,selections,confirmations,update(value){Object.assign(base,value);return this.render();},close(){for(const value of values)value?.cleanup?.();},render(){cursor=0;const tree=Board(base);props.attach?.(tree);layouts.splice(0).forEach(fn=>fn());return tree;}};
 }
+const removalDialog=h=>elements(h.render(),node=>node.props?.role==='dialog'&&/삭제 확인/.test(node.props['aria-label']))[0];
+const removalConfirm=h=>elements(removalDialog(h),node=>node.type==='button'&&node.props['aria-label']==='삭제 확인')[0];
+const approveRemoval=h=>{assert.ok(removalDialog(h),'app confirmation must be visible');return removalConfirm(h).props.onClick();};
+
+test('app confirmation shows the exact product snapshot and cancel/Escape never deletes or opens a browser dialog',async()=>{
+ const deleted=[],h=boardHarness({onDelete:async product=>deleted.push(product)});h.product.registration_number='261024001001';
+ const trash=()=>elements(h.render(),node=>node.type==='button'&&node.props.className==='registration-delete')[0];
+ trash().props.onClick();const dialog=removalDialog(h);assert.ok(dialog);assert.match(nodeText(dialog),/수정한 상품명/);assert.match(nodeText(dialog),/261024001001/);assert.match(nodeText(dialog),/12345678-abcd/);assert.match(nodeText(dialog),/복원할 수 있습니다/);assert.equal(deleted.length,0);assert.equal(h.confirmations.length,0);
+ elements(dialog,node=>node.type==='button'&&nodeText(node)==='취소')[0].props.onClick();assert.equal(removalDialog(h),undefined);assert.equal(deleted.length,0);
+ trash().props.onClick();let prevented=false;removalDialog(h).props.onKeyDown({key:'Escape',preventDefault(){prevented=true;}});assert.equal(prevented,true);assert.equal(removalDialog(h),undefined);assert.equal(deleted.length,0);
+});
+
+test('app confirmation rejects stale row, version, owner, company, protected state and loading without deleting a replacement',async()=>{
+ for(const change of ['row','version','owner','company','policy','loading','removed','unmounted']){
+  const deleted=[],h=boardHarness({onDelete:async product=>deleted.push(product)});Object.assign(h.product,{owner_id:'owner',updated_at:'2026-10-30T00:00:00Z'});
+  elements(h.render(),node=>node.type==='button'&&node.props.className==='registration-delete')[0].props.onClick();const confirm=removalConfirm(h);assert.ok(confirm,change);
+  if(change==='row')h.update({products:[{...h.product,id:'replacement',title:'다른 상품'}]});
+  if(change==='version'){h.product.updated_at='2026-10-30T00:00:01Z';h.render();}
+  if(change==='owner'){h.product.owner_id='other-owner';h.render();}
+  if(change==='company')h.update({sourceCompany:{code:'A01526306',name:'유앤채'}});
+  if(change==='policy'){h.product.removal_policy=null;h.render();}
+  if(change==='loading')h.update({loading:true});if(change==='removed')h.update({products:[]});if(change==='unmounted')h.close();
+  await confirm.props.onClick();assert.equal(deleted.length,0,change);assert.equal(h.confirmations.length,0,change);
+ }
+});
+
+test('app confirmation accepts an equivalent rerender but retained cancelled handlers cannot delete another dialog target',async()=>{
+ const deleted=[],h=boardHarness({onDelete:async product=>deleted.push(product)}),first=h.product,second={...h.product,id:'second',title:'다음 상품',content_summary:{...h.product.content_summary,seoTitle:'다음 상품'}};
+ h.update({products:[first,second]});const trash=title=>elements(h.render(),node=>node.type==='button'&&node.props['aria-label']===title+' 삭제')[0];
+ trash('수정한 상품명').props.onClick();const stale=removalConfirm(h);elements(removalDialog(h),node=>node.type==='button'&&nodeText(node)==='취소')[0].props.onClick();
+ trash('다음 상품').props.onClick();await stale.props.onClick();assert.equal(deleted.length,0);assert.match(nodeText(removalDialog(h)),/second/);
+ const equivalent=JSON.parse(JSON.stringify(second));h.update({products:[first,equivalent]});await approveRemoval(h);assert.deepEqual(deleted,[equivalent]);assert.equal(removalDialog(h),undefined);
+});
+
+test('app confirmation keeps focus inside while busy and restores focus after failure/cancel or success',async()=>{
+ for(const outcome of ['failed','success']){
+  const document={activeElement:null};
+  class Element{
+   constructor(){this.isConnected=true;this.disabled=false;this.children=[];}
+   focus(){document.activeElement=this;}
+   hasAttribute(name){return name==='disabled'&&this.disabled;}
+   contains(element){return element===this||this.children.includes(element);}
+   querySelectorAll(selector){return this.children.filter(child=>!selector.includes(':not')||!child.disabled);}
+   querySelector(selector){return this.querySelectorAll(selector)[0];}
+  }
+  document.body=new Element();const trigger=new Element();trigger.focus();let root,ref,finish,reject;
+  const h=boardHarness({document,HTMLElement:Element,onDelete:()=>new Promise((resolve,no)=>{finish=resolve;reject=no;}),attach(tree){
+   const section=elements(tree,node=>node.props?.role==='dialog')[0];
+   if(!section){if(ref)ref.current=null;if(root)root.isConnected=false;return;}
+   if(!root){root=new Element();root.children=[new Element(),new Element()];}
+   root.isConnected=true;ref=section.props.ref;ref.current=root;
+   elements(section,node=>node.type==='button').forEach((button,index)=>{const control=root.children[index];control.disabled=button.props.disabled===true;if(control.disabled&&document.activeElement===control)document.body.focus();});
+  }});
+  elements(h.render(),node=>node.type==='button'&&node.props.className==='registration-delete')[0].props.onClick();h.render();assert.equal(document.activeElement,root.children[0]);
+  const confirm=removalConfirm(h);root.children[1].focus();const pending=confirm.props.onClick();h.render();assert.equal(document.activeElement,root,'disabled confirmation focus remains inside the modal');
+  let prevented=false;removalDialog(h).props.onKeyDown({key:'Tab',preventDefault(){prevented=true;}});assert.equal(prevented,true);assert.equal(document.activeElement,root);
+  if(outcome==='failed')reject(Error('server declined'));else finish();await pending;h.render();
+  if(outcome==='failed'){assert.equal(document.activeElement,root.children[0]);elements(removalDialog(h),node=>node.type==='button'&&nodeText(node)==='취소')[0].props.onClick();h.render();}
+  assert.equal(document.activeElement,trigger);assert.equal(removalDialog(h),undefined);h.close();
+ }
+});
 
 test('native receipt row keeps document and registration file distinct, never claims an issued SKU or all options',()=>{
  const h=boardHarness();h.product.hub_single_receipt=nativeSummary;
@@ -282,16 +343,17 @@ test('connected trash button confirms removal, calls the actual async callback a
  const before=JSON.stringify(h.product),tree=h.render();
  const management=elements(tree,node=>node.type==='td'&&node.props['data-column']==='management')[0];assert.equal(elements(management,node=>node.type==='button').length,1);assert.equal(elements(management,node=>node.type==='button'&&nodeText(node)==='열기').length,0);
  const [trash]=elements(tree,node=>node.type==='button'&&node.props.className==='registration-delete');assert.ok(trash);assert.equal(trash.props['aria-label'],'수정한 상품명 삭제');
- const pending=trash.props.onClick();await trash.props.onClick();assert.equal(deleted.length,1);assert.equal(deleted[0],h.product);assert.equal(h.confirmations.length,1);assert.match(h.confirmations[0],/복원할 수 있습니다/);
+ trash.props.onClick();await trash.props.onClick();assert.equal(deleted.length,0);const confirm=removalConfirm(h),pending=confirm.props.onClick();await confirm.props.onClick();await trash.props.onClick();assert.equal(deleted.length,1);assert.equal(deleted[0],h.product);assert.equal(h.confirmations.length,0);
  const [busy]=elements(h.render(),node=>node.type==='button'&&node.props.className==='registration-delete');assert.equal(busy.props.disabled,true);assert.equal(busy.props.title,'삭제 중');
+ assert.equal(removalConfirm(h).props.disabled,true);assert.equal(elements(removalDialog(h),node=>node.type==='button'&&nodeText(node)==='취소')[0].props.disabled,true);removalDialog(h).props.onKeyDown({key:'Escape',preventDefault(){}});assert.ok(removalDialog(h));
  finish();await pending;const [ready]=elements(h.render(),node=>node.type==='button'&&node.props.className==='registration-delete');assert.equal(ready.props.disabled,false);assert.equal(JSON.stringify(h.product),before);
 });
 
 test('cancelled or failed removal keeps the product available and surfaces the server error',async()=>{
- let calls=0;const cancelled=boardHarness({confirm:false,onDelete:async()=>{calls++;}});
- const [cancel]=elements(cancelled.render(),node=>node.type==='button'&&node.props.className==='registration-delete');await cancel.props.onClick();assert.equal(calls,0);
+ let calls=0;const cancelled=boardHarness({onDelete:async()=>{calls++;}});
+ const [cancel]=elements(cancelled.render(),node=>node.type==='button'&&node.props.className==='registration-delete');await cancel.props.onClick();elements(removalDialog(cancelled),node=>node.type==='button'&&nodeText(node)==='취소')[0].props.onClick();assert.equal(calls,0);assert.equal(removalDialog(cancelled),undefined);
  const h=boardHarness({onDelete:async()=>{throw Error('상품이 변경되었습니다. 목록을 다시 불러와주세요.');}});const before=JSON.stringify(h.product);
- const [trash]=elements(h.render(),node=>node.type==='button'&&node.props.className==='registration-delete');await trash.props.onClick();
+ const [trash]=elements(h.render(),node=>node.type==='button'&&node.props.className==='registration-delete');await trash.props.onClick();await approveRemoval(h);
  assert.equal(JSON.stringify(h.product),before);assert.equal(elements(h.render(),node=>node.props?.role==='alert').map(nodeText).join(''),'상품이 변경되었습니다. 목록을 다시 불러와주세요.');
 });
 
@@ -317,7 +379,7 @@ test('unconfirmed deletion policies stay inert while verified unsubmitted or fai
  for(const state of ['미전송','파일 반려']){
   let writes=0;const h=boardHarness({onDelete:async()=>{writes++;}});h.product.supplier_hub_status=state;
   if(state==='파일 반려')h.product.hub_receipt={label:state,company:{code:'A01464742',name:'와이홉'},quotationId:null,fingerprint:'a'.repeat(64),categoryId:'80719',observedAt:1,includedOptions:3,issuedSkus:0};
-  const [trash]=elements(h.render(),node=>node.type==='button'&&node.props.className==='registration-delete');assert.equal(trash.props.disabled,false);assert.equal(trash.props.title,'삭제');await trash.props.onClick();assert.equal(writes,1);assert.equal(h.confirmations.length,1);
+  const [trash]=elements(h.render(),node=>node.type==='button'&&node.props.className==='registration-delete');assert.equal(trash.props.disabled,false);assert.equal(trash.props.title,'삭제');await trash.props.onClick();await approveRemoval(h);assert.equal(writes,1);assert.equal(h.confirmations.length,0);
  }
 });
 
@@ -386,7 +448,7 @@ test('collected product appears in the same fourteen-column board and routes cat
 });
 test('only the captured entry is archived through its own handler',async()=>{
  const archived=[],deleted=[];const h=boardHarness({sources:[sourceItem],onArchiveSource:async item=>archived.push(item),onDelete:async product=>deleted.push(product)});
- const button=elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='새 수집 상품 삭제')[0];await button.props.onClick();assert.equal(archived[0],sourceItem);assert.equal(deleted.length,0);
+ const button=elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='새 수집 상품 삭제')[0];await button.props.onClick();await approveRemoval(h);assert.equal(archived[0],sourceItem);assert.equal(deleted.length,0);assert.equal(h.confirmations.length,0);
 });
 
 test('checked source rows publish their exact saved capture identity independently of product selection and stable rerenders',()=>{
@@ -436,6 +498,7 @@ test('captured checkboxes and page selection stay separate from AI/transmission 
  assert.match(elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='선택한 수집 상품 삭제')[0].props.title,/10건 삭제/);elements(h.render(),node=>node.type==='button'&&nodeText(node)==='다음')[0].props.onClick();
  check().props.onChange({target:{checked:true}});assert.deepEqual([...h.selections.at(-1)],[h.product.id]);assert.match(elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='선택한 수집 상품 삭제')[0].props.title,/13건 삭제/);
  const bulk=elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='선택한 수집 상품 삭제')[0];assert.equal(bulk.props.disabled,false);await bulk.props.onClick();
+ assert.equal(archived.length,0);await approveRemoval(h);
  assert.deepEqual(archived.map(item=>item.id),sources.map(item=>item.id));assert.equal(deleted.length,0);assert.equal(JSON.stringify(h.product),before);
  assert.equal(elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='선택한 수집 상품 삭제')[0].props.disabled,true);assert.match(nodeText(h.render()),/원문은 보존/);
 });
@@ -446,6 +509,7 @@ test('captured trash ignores product removal locks, and failed bulk archive stop
  const trash=elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='새 수집 상품 삭제')[0];assert.equal(trash.props.disabled,false);
  for(const label of ['새 수집 상품 선택','두번째 수집 선택'])elements(h.render(),node=>node.type==='input'&&node.props['aria-label']===label)[0].props.onChange({target:{checked:true}});
  const bulk=()=>elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='선택한 수집 상품 삭제')[0];await bulk().props.onClick();
+ await approveRemoval(h);
  assert.deepEqual(calls,[sourceItem.id,other.id]);assert.match(nodeText(h.render()),/1건 삭제됨.*변경된 수집본/);assert.match(bulk().props.title,/1건 삭제/);assert.equal(nodeText(bulk()),'삭제');assert.equal(h.selections.length,0);
 });
 
@@ -457,7 +521,18 @@ test('a stale captured checkbox/archive action cannot act after source revision,
   if(kind==='owner')h.update({sourceOwnerId:'other'});
   if(kind==='company')h.update({sourceCompany:{code:'A01526306',name:'유앤채'}});
   if(kind==='disabled')h.update({sourceArchiveDisabled:true});
-  await old.props.onClick();assert.equal(calls.length,0,kind);h.close();
+  await old.props.onClick();assert.equal(calls.length,0,kind);assert.equal(removalDialog(h),undefined,kind);h.close();
+ }
+});
+
+test('open source confirmation binds its capture revision, company and bulk selection before any archive',async()=>{
+ for(const change of ['revision','fingerprint','url','owner','company','disabled','selection']){
+  const archived=[],h=boardHarness({sources:[sourceItem],onArchiveSource:async item=>archived.push(item)}),checkbox=()=>elements(h.render(),node=>node.type==='input'&&node.props['aria-label']==='새 수집 상품 선택')[0];
+  checkbox().props.onChange({target:{checked:true}});elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='선택한 수집 상품 삭제')[0].props.onClick();const confirm=removalConfirm(h);assert.ok(confirm,change);assert.match(nodeText(removalDialog(h)),new RegExp(sourceItem.id));
+  if(change==='revision')h.update({sources:[{...sourceItem,revision:2}]});if(change==='fingerprint')h.update({sources:[{...sourceItem,fingerprint:'b'.repeat(64)}]});
+  if(change==='url')h.update({sources:[{...sourceItem,snapshot:{...sourceItem.snapshot,sourceUrl:'https://detail.1688.com/offer/700000000002.html'}}]});
+  if(change==='owner')h.update({sourceOwnerId:'other'});if(change==='company')h.update({sourceCompany:{code:'A01526306',name:'유앤채'}});if(change==='disabled')h.update({sourceArchiveDisabled:true});if(change==='selection'){checkbox().props.onChange({target:{checked:false}});h.render();}
+  await confirm.props.onClick();assert.equal(archived.length,0,change);assert.equal(h.confirmations.length,0,change);h.close();
  }
 });
 
@@ -466,7 +541,7 @@ test('account switches and unmounts during an archive stop the remaining batch a
   const other={...sourceItem,id:'00000000-0000-4000-8000-000000000002',fingerprint:'b'.repeat(64)},calls=[];let release;
   const pending=new Promise(resolve=>{release=resolve;}),h=boardHarness({sources:[sourceItem,other],onArchiveSource:async item=>{calls.push(item.id);await pending;}});
   elements(h.render(),node=>node.type==='input'&&node.props['aria-label']==='현재 페이지 전체 선택')[0].props.onChange({target:{checked:true}});
-  const operation=elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='선택한 수집 상품 삭제')[0].props.onClick();
+  elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='선택한 수집 상품 삭제')[0].props.onClick();const operation=approveRemoval(h);
   assert.deepEqual(calls,[sourceItem.id]);if(change==='owner')h.update({sourceOwnerId:'other'});else h.close();release();await operation;
   assert.deepEqual(calls,[sourceItem.id]);if(change==='owner')assert.doesNotMatch(nodeText(h.render()),/수집 상품 2건을 목록에서 삭제했습니다/);
  }

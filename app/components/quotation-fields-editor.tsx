@@ -742,7 +742,10 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
         const restoredWeight = ownManual && quotationPackagedWeightPeer(view.resolved.schema.fields, field.id)
           ? resolveQuotationEditorCell(view, updateQuotationEditorDraft(view.overrides, changes, { fieldKey: field.id, optionId: selectedOption, value: null }), selectedOption, field.id) : null;
         const seoTitle = isQuotationSeoTitleField(field);
-        const fieldHelp = field.help && !(seoTitle && ['상품명은 SEO 설정에서 수정해주세요.', '저장한 SEO 상품명을 우선 사용합니다. 수정값은 견적서에만 적용됩니다.'].includes(field.help));
+        const originalHelp = field.help && !(seoTitle && ['상품명은 SEO 설정에서 수정해주세요.', '저장한 SEO 상품명을 우선 사용합니다. 수정값은 견적서에만 적용됩니다.'].includes(field.help)) ? field.help : null;
+        const quantityUnitHelp = field.visibility === 'exposed' && field.label.trim() === '수량' && field.type === 'text' && !field.unit && !field.numericText && !field.numericValue
+          ? '판매 단위를 확인해주세요. 이 카테고리의 공식 예시가 단위 포함 표기를 요구하면 실제 구성에 맞춰 1개·1쌍·1세트처럼 입력하세요. 숫자만 요구하는 양식에는 단위를 붙이지 않습니다.' : null;
+        const fieldHelp = Boolean(originalHelp || quantityUnitHelp);
         const editable = !field.readOnly && !seoTitle; const imageKeys = imageValues(cell.value);
         const modelState = quotationModelSuggestionState(view.resolved.schema, field.id,
           (key, optionId = selectedOption) => resolveQuotationEditorCell(view, changes, optionId, key),
@@ -770,7 +773,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
             : <input {...inputProps} type="text" inputMode={field.type === 'number' ? 'decimal' : 'text'} placeholder={!editable ? '' : hasCouplusEmptyAttributeDefault(field, cell) ? '해당사항없음' : '확인한 내용을 입력하세요.'} />;
         const fieldCard = <div className={`quotation-field ${field.type === 'textarea' || field.type === 'images' || lengthInput?.role === 'searchTags' ? 'wide' : ''}`} key={field.id}>
           <div className="quotation-field-heading"><label htmlFor={id} className={namedPair ? 'quotation-value-label' : undefined}>{field.label}{field.unit ? ` (${field.unit})` : ''}{field.required && <b>*</b>}</label>{!namedPair && example}{field.workbookWire?.requirement==='conditional'&&<span className="quotation-field-badge">조건부 필수</span>}</div>
-          {fieldHelp && <p id={`${id}-description`} className="quotation-field-help quotation-schema-description">{field.help}</p>}
+          {fieldHelp && <p id={`${id}-description`} className="quotation-field-help quotation-schema-description">{originalHelp}{originalHelp && quantityUnitHelp && <br/>}{quantityUnitHelp}</p>}
           {namedPair ? <div className="quotation-named-pair"><div className="quotation-named-pair-name"><input type="text" readOnly aria-label={`${field.label} 항목명`} value={field.hubWire!.name} tabIndex={-1}/>{field.required && <b aria-hidden="true">*</b>}{example}</div>{control}</div> : control}
           {lengthInput && <div className="quotation-field-input-guidance"><small>{lengthInput.role === 'model' ? `모델번호는 최대 ${lengthInput.maxLength}자까지 입력 가능합니다.` : `쉼표(,)로 구분하여 입력하세요. 최대 ${lengthInput.maxLength}자`}</small><small id={`${id}-length`} className="quotation-field-length" data-quotation-length-role={lengthInput.role} data-quotation-length-state={lengthInput.state}>{lengthInput.length}/{lengthInput.maxLength}자</small></div>}
           {seoTitle && onEditSeo && <button type="button" className="quotation-field-text-button" disabled={dirty || busy || loading || conflicts.length > 0} onClick={editSeo}>SEO 설정에서 상품명 수정</button>}

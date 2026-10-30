@@ -54,7 +54,7 @@ function fixture(){
 function actualImageFixture(stage='detail',keys=['owner/source-a.png','owner/source-b.png']){
  const sourceUrl=new URL('./batch-selected-image-work.test.mjs',import.meta.url),source=fs.readFileSync(sourceUrl,'utf8'),ast=ts.createSourceFile(sourceUrl.pathname,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
  const declarations=ast.statements.filter(statement=>ts.isFunctionDeclaration(statement)&&['loadModel','fixture','partialFixture'].includes(statement.name?.text)).map(statement=>statement.getText(ast)).join('\n').replaceAll('import.meta.url',JSON.stringify(sourceUrl.href));
- const factory=vm.runInNewContext(declarations+'\n({fixture,partialFixture})',{assert,fs,vm,ts,plain,Error,Date,URL,AbortController,AbortSignal,structuredClone,Blob,Response});
+ const factory=vm.runInNewContext(declarations+'\n({fixture,partialFixture})',{assert,fs,vm,ts,plain,Error,Date,URL,TextEncoder,AbortController,AbortSignal,structuredClone,Blob,Response});
  return factory.partialFixture(stage,keys);
 }
 test('price-only run checks calculated option prices without unrelated writes',async()=>{

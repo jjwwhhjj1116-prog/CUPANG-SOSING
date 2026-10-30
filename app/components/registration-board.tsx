@@ -123,6 +123,10 @@ export function RegistrationBoard<T extends BoardProduct>({products,sources=[],s
   const [deletingState,setDeletingState]=useState<{scope:object;id:string}|null>(null);const [deleteError,setDeleteError]=useState(''),[deleteNotice,setDeleteNotice]=useState('');
   const deleting=deletingState?.scope===sourceScope?deletingState.id:null,setDeleting=(id:string|null)=>setDeletingState(id===null?null:{scope:sourceScope,id});
   const deleteInFlight=useRef(false);
+  type DeleteTarget={id:string;title:string;number:string;identity:string;source?:SourceArchiveReference};
+  type DeleteConfirmation={scope:object;kind:'product'|'source';targets:DeleteTarget[];requireSelected:boolean};
+  const [deleteConfirmation,setDeleteConfirmation]=useState<DeleteConfirmation|null>(null),deleteConfirmationRequest=useRef<DeleteConfirmation|null>(null),deleteDialogRoot=useRef<HTMLElement>(null);
+  const confirmation=deleteConfirmation?.scope===sourceScope?deleteConfirmation:null;
   const [sourceSelection,setSourceSelection]=useState<{scope:object;refs:SourceArchiveReference[]}>({scope:sourceScope,refs:[]});
   const sourceReferences=new Map(entries.flatMap(entry=>{const ref=entry.source_capture&&sourceArchiveReference(entry.source_capture,sourceOwnerId,sourceCompany);return ref?[[entry.id,ref] as const]:[];}));
   const selectedSources=entries.filter(entry=>entry.source_capture&&sourceSelection.scope===sourceScope&&sourceSelection.refs.some(ref=>sameSourceArchiveReference(ref,sourceReferences.get(entry.id))));
@@ -135,9 +139,22 @@ export function RegistrationBoard<T extends BoardProduct>({products,sources=[],s
     publishedSourceSelection.current=sourceSelectionKey;
     onSourceSelectionChange(selectedSourceReferences.map(reference=>({...reference,company:{...reference.company}})));
   });
-  const alive=useRef(false),latest=useRef({sourceScope,entries,sourceReferences,selectedSources,sourceArchiveDisabled,onArchiveSource});
+  const alive=useRef(false),latest=useRef({sourceScope,entries,sourceReferences,selectedSources,sourceArchiveDisabled,onArchiveSource,onDelete,loading});
   useLayoutEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
-  useLayoutEffect(()=>{latest.current={sourceScope,entries,sourceReferences,selectedSources,sourceArchiveDisabled,onArchiveSource};});
+  useLayoutEffect(()=>{latest.current={sourceScope,entries,sourceReferences,selectedSources,sourceArchiveDisabled,onArchiveSource,onDelete,loading};if(deleteConfirmationRequest.current&&deleteConfirmationRequest.current.scope!==sourceScope)deleteConfirmationRequest.current=null;});
+  useLayoutEffect(()=>{
+    if(!confirmation||typeof document==='undefined')return;
+    const previous=typeof HTMLElement!=='undefined'&&document.activeElement instanceof HTMLElement?document.activeElement:null;
+    deleteDialogRoot.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    return()=>{if(previous?.isConnected)previous.focus();};
+  },[confirmation]);
+  useLayoutEffect(()=>{
+    const root=deleteDialogRoot.current;if(!confirmation||!root||typeof document==='undefined')return;
+    const active=document.activeElement;
+    if(active===root||!root.contains(active)||typeof HTMLElement!=='undefined'&&active instanceof HTMLElement&&active.hasAttribute('disabled')){
+      (root.querySelector<HTMLButtonElement>('button:not([disabled])')??root).focus();
+    }
+  },[confirmation,deleting]);
   const displayedColumns=columns.filter(column=>visibleColumns.includes(column.id));
   const pinned=(column:string)=>pinnedColumn===column?' registration-pinned':'';
   let bounds:{startUtc:string|null;endUtc:string|null}={startUtc:null,endUtc:null};let dateError='';
@@ -159,37 +176,52 @@ export function RegistrationBoard<T extends BoardProduct>({products,sources=[],s
       return{scope:sourceScope,refs:[...retained.filter(ref=>!targets.has(ref.id)),...(include?refs:[])]};});
   };
   const changeSort=(column:string)=>{setSort(current=>current?.column!==column?{column,direction:'ascending'}:current.direction==='ascending'?{column,direction:'descending'}:null);setPage(0);};
-  const archiveEntries=async(targets:Entry[],requireSelected=false)=>{
-    if(deleteInFlight.current||!alive.current||latest.current.sourceScope!==sourceScope||sourceArchiveDisabled||!onArchiveSource||!targets.length)return;
-    const refs=targets.map(target=>sourceReferences.get(target.id));if(refs.some(ref=>!ref))return;
-    if(!window.confirm(targets.length===1?`“${registrationTitle(targets[0])}” 수집 상품을 목록에서 삭제할까요? 원문은 보존되며 다시 수집하면 복원됩니다. 기존 작업 상품은 변경하지 않습니다.`:`선택한 수집 상품 ${targets.length}건을 목록에서 삭제할까요? 원문은 보존되며 다시 수집하면 복원됩니다. 기존 작업 상품은 변경하지 않습니다.`))return;
-    if(!alive.current||latest.current.sourceScope!==sourceScope||latest.current.sourceArchiveDisabled)return;
-    deleteInFlight.current=true;setDeleting(targets[0].id);setDeleteError('');setDeleteNotice('');let completed=0;
-    try{
-      for(const [index,target] of targets.entries()){
-        const live=latest.current,reference=refs[index];
-        if(!alive.current||live.sourceScope!==sourceScope)return;
-        if(live.sourceArchiveDisabled||!live.onArchiveSource||!sameSourceArchiveReference(reference,live.sourceReferences.get(target.id))
-          ||requireSelected&&!live.selectedSources.some(item=>item.id===target.id))throw Error('선택한 수집본 또는 작업 상태가 변경되었습니다. 목록을 확인한 뒤 다시 선택해주세요.');
-        await live.onArchiveSource(target.source_capture!);
-        if(!alive.current||latest.current.sourceScope!==sourceScope)return;
-        completed++;
-        setSourceSelection(previous=>previous.scope===sourceScope?{scope:sourceScope,refs:previous.refs.filter(ref=>!sameSourceArchiveReference(ref,reference))}:previous);
-      }
-      setDeleteNotice(`수집 상품 ${completed}건을 목록에서 삭제했습니다. 원문은 보존되며 다시 수집하면 복원됩니다.`);
-    }catch(error){if(alive.current&&latest.current.sourceScope===sourceScope)setDeleteError(`${completed?`${completed}건 삭제됨 · `:''}${error instanceof Error?error.message:'수집 상품 삭제 결과를 확인하지 못했습니다.'}`);}
-    finally{deleteInFlight.current=false;if(alive.current&&latest.current.sourceScope===sourceScope)setDeleting(null);}
-  };
-  const deleteProduct=async(product:Entry)=>{
-    if(product.source_capture){
-      await archiveEntries([product]);return;
+  const confirmationIssue=(snapshot:DeleteConfirmation,target:DeleteTarget,live:typeof latest.current)=>{
+    if(live.sourceScope!==snapshot.scope)return '계정 또는 회사가 변경되었습니다. 목록에서 다시 선택해주세요.';
+    if(live.loading)return '상품 목록을 불러오는 중입니다. 완료 후 다시 선택해주세요.';
+    const matches=live.entries.filter(entry=>entry.id===target.id),current=matches[0];
+    if(matches.length!==1||!current||JSON.stringify(current)!==target.identity)return '선택한 상품 또는 수집본이 변경되었습니다. 목록을 확인한 뒤 다시 선택해주세요.';
+    if(snapshot.kind==='source'){
+      if(!current.source_capture||live.sourceArchiveDisabled||!live.onArchiveSource||!sameSourceArchiveReference(target.source,live.sourceReferences.get(target.id))
+        ||snapshot.requireSelected&&!live.selectedSources.some(item=>item.id===target.id))return '선택한 수집본 또는 작업 상태가 변경되었습니다. 목록을 확인한 뒤 다시 선택해주세요.';
+    }else{
+      if(current.source_capture||!live.onDelete)return '선택한 상품의 삭제 연결이 변경되었습니다. 목록에서 다시 선택해주세요.';
+      const decision=productRemovalDecision(current);if(decision.blocked)return decision.reason;
     }
-    if(deleteInFlight.current||!onDelete||productRemovalDecision(product).blocked||!window.confirm(`“${registrationTitle(product)}” 상품을 삭제된 상품으로 이동할까요? 저장된 이미지와 편집 내용은 복원할 수 있습니다.`))return;
-    deleteInFlight.current=true;
-    setDeleting(product.id);setDeleteError('');
-    try{await onDelete(product as T);}catch(cause){setDeleteError(cause instanceof Error?cause.message:'상품을 삭제하지 못했습니다. 다시 시도해주세요.');}
-    finally{deleteInFlight.current=false;setDeleting(null);}
+    return '';
   };
+  const requestRemoval=(targets:Entry[],requireSelected=false)=>{
+    if(deleteInFlight.current||deleteConfirmationRequest.current?.scope===sourceScope||!alive.current||latest.current.sourceScope!==sourceScope||loading||!targets.length||new Set(targets.map(target=>target.id)).size!==targets.length)return;
+    const kind=targets[0].source_capture?'source':'product';if(targets.some(target=>Boolean(target.source_capture)!==(kind==='source'))||kind==='product'&&targets.length!==1)return;
+    const snapshot:DeleteConfirmation={scope:sourceScope,kind,requireSelected,targets:targets.map(target=>({id:target.id,title:registrationTitle(target),number:target.source_capture?target.source_capture.snapshot.offerId:registrationNumber(target),identity:JSON.stringify(target),...(target.source_capture?{source:sourceReferences.get(target.id)}:{})}))};
+    if(snapshot.targets.some(target=>confirmationIssue(snapshot,target,latest.current)))return;
+    deleteConfirmationRequest.current=snapshot;setDeleteConfirmation(snapshot);setDeleteError('');setDeleteNotice('');
+  };
+  const cancelRemoval=(snapshot:DeleteConfirmation)=>{
+    if(deleteInFlight.current||deleteConfirmationRequest.current!==snapshot)return;
+    deleteConfirmationRequest.current=null;setDeleteConfirmation(null);setDeleteError('');
+  };
+  const confirmRemoval=async(snapshot:DeleteConfirmation)=>{
+    if(deleteInFlight.current||deleteConfirmationRequest.current!==snapshot||!alive.current)return;
+    const issue=snapshot.targets.map(target=>confirmationIssue(snapshot,target,latest.current)).find(Boolean);
+    if(issue){if(latest.current.sourceScope===snapshot.scope)setDeleteError(issue);return;}
+    deleteInFlight.current=true;setDeleting(snapshot.targets[0].id);setDeleteError('');setDeleteNotice('');let completed=0;
+    try{
+      for(const target of snapshot.targets){
+        if(!alive.current)return;
+        const live=latest.current,issue=confirmationIssue(snapshot,target,live);if(issue)throw Error(issue);
+        const current=live.entries.find(entry=>entry.id===target.id)!;
+        if(snapshot.kind==='source')await live.onArchiveSource!(current.source_capture!);else await live.onDelete!(current as T);
+        if(!alive.current||latest.current.sourceScope!==snapshot.scope)return;
+        completed++;
+        if(snapshot.kind==='source')setSourceSelection(previous=>previous.scope===snapshot.scope?{scope:snapshot.scope,refs:previous.refs.filter(ref=>!sameSourceArchiveReference(ref,target.source))}:previous);
+      }
+      if(snapshot.kind==='source')setDeleteNotice(`수집 상품 ${completed}건을 목록에서 삭제했습니다. 원문은 보존되며 다시 수집하면 복원됩니다.`);
+      if(deleteConfirmationRequest.current===snapshot){deleteConfirmationRequest.current=null;setDeleteConfirmation(null);}
+    }catch(error){if(alive.current&&latest.current.sourceScope===snapshot.scope)setDeleteError(`${snapshot.kind==='source'&&completed?`${completed}건 삭제됨 · `:''}${error instanceof Error?error.message:'상품 삭제 결과를 확인하지 못했습니다.'}`);}
+    finally{deleteInFlight.current=false;if(alive.current&&latest.current.sourceScope===snapshot.scope)setDeleting(null);}
+  };
+  const currentConfirmationIssue=confirmation?.targets.map(target=>confirmationIssue(confirmation,target,{sourceScope,entries,sourceReferences,selectedSources,sourceArchiveDisabled,onArchiveSource,onDelete,loading})).find(Boolean)??'';
   return <section className="registration-board" aria-label="상품별 등록 현황">
     <div className="registration-datebar" role="group" aria-label="등록일 필터">
       {([['today','오늘'],['7days','7일'],['month','이번 달'],['all','전체']] as const).map(([id,label])=><label key={id}><input type="radio" name="registration-range" checked={range===id} onChange={()=>{setRange(id);setPage(0);}}/>{label}</label>)}
@@ -197,7 +229,7 @@ export function RegistrationBoard<T extends BoardProduct>({products,sources=[],s
       <button type="button" className="btn ghost" onClick={onArchive}>전체 보관함</button>
     </div>
     {dateError&&<p role="alert">{dateError}</p>}
-    {deleteError&&<p role="alert" className="collection-error">{deleteError}</p>}
+    {deleteError&&!confirmation&&<p role="alert" className="collection-error">{deleteError}</p>}
     {deleteNotice&&<p role="status">{deleteNotice}</p>}
     <div className="registration-table-tools registration-view-tools registration-toolbar" role="group" aria-label="상품 목록 도구">
       <select className="registration-status-filter" aria-label="등록 상태 필터" value={status} onChange={event=>{setStatus(event.target.value);setPage(0);}}>{[...new Set(['전체','등록대기','작업 중','검토 대기','전송 가능','파일 검증 중','견적서 접수','SKU ID 확인','파일 반려','상품 반려',...entries.map(registrationTransmissionLabel)])].map(value=><option key={value}>{value}</option>)}</select>
@@ -208,7 +240,7 @@ export function RegistrationBoard<T extends BoardProduct>({products,sources=[],s
         {columns.map(column=><label key={column.id}><input type="checkbox" aria-label={`${column.label} 컬럼 표시`} checked={visibleColumns.includes(column.id)} onChange={event=>{setVisibleColumns(current=>event.target.checked?[...current,column.id]:current.filter(value=>value!==column.id));setFilterPopup(null);}}/>{column.label}</label>)}
       </div></details>
       <label className="registration-pin-picker"><select aria-label="고정할 열 선택" value={pinnedColumn} onChange={event=>setPinnedColumn(event.target.value)}><option value="">고정할 열 선택</option>{displayedColumns.map(column=><option key={column.id} value={column.id}>{column.label}</option>)}</select></label>
-      <button type="button" className="registration-bulk-delete" aria-label="선택한 수집 상품 삭제" title={selectedSources.length?`선택한 수집 상품 ${selectedSources.length}건 삭제`:'삭제할 수집 상품을 선택하세요'} disabled={deleting!==null||sourceArchiveDisabled||!onArchiveSource||!selectedSources.length} onClick={()=>archiveEntries(selectedSources,true)}>삭제</button>
+      <button type="button" className="registration-bulk-delete" aria-label="선택한 수집 상품 삭제" title={selectedSources.length?`선택한 수집 상품 ${selectedSources.length}건 삭제`:'삭제할 수집 상품을 선택하세요'} disabled={deleting!==null||sourceArchiveDisabled||!onArchiveSource||!selectedSources.length} onClick={()=>requestRemoval(selectedSources,true)}>삭제</button>
       <fieldset><legend>높이 고정</legend><label><input type="radio" name="registration-height" checked={fixedHeight} onChange={()=>setFixedHeight(true)}/>Y</label><label><input type="radio" name="registration-height" checked={!fixedHeight} onChange={()=>setFixedHeight(false)}/>N</label></fieldset>
       {!!Object.keys(columnFilters).length&&<button type="button" className="btn ghost registration-filter-clear" onClick={()=>{setColumnFilters({});setFilterPopup(null);setPage(0);}}>열 필터 모두 해제 · {Object.keys(columnFilters).length}개</button>}
     </div>
@@ -224,11 +256,33 @@ export function RegistrationBoard<T extends BoardProduct>({products,sources=[],s
         {column.id==='status'&&<><span className="registration-state" data-state={transmissionState(product)} title={product.hub_receipt||product.hub_single_receipt?'보관된 Supplier Hub 전송 결과':'Supplier Hub 전송·접수 여부 검증 필요'}>{registrationTransmissionLabel(product)}</span>{product.hub_receipt&&<div aria-label="최근 전송 결과"><small>{product.hub_receipt.company.name} · SKU {product.hub_receipt.issuedSkus}/{product.hub_receipt.includedOptions}개</small>{product.hub_receipt.quotationId&&<small>견적서 ID: {product.hub_receipt.quotationId}</small>}<time dateTime={new Date(product.hub_receipt.observedAt).toISOString()}>{dateTime.format(new Date(product.hub_receipt.observedAt))}</time><small>{product.hub_single_receipt?`견적서 파일 전송 기준 · ${product.hub_receipt.label}`:'최근 전송한 견적서 기준'}</small></div>}
           {product.hub_single_receipt&&<div aria-label={product.hub_single_receipt.format==='yoofam-product-document-receipt-summary-v1'?'전체 상품 문서 전송 결과':'개별 문서 전송 결과'}><small>{product.hub_single_receipt.company.name} · {product.hub_single_receipt.format==='yoofam-product-document-receipt-summary-v1'?`포함 옵션 ${product.hub_single_receipt.optionCount}개 · 문서 1개`:`개별 전송 기록 ${product.hub_single_receipt.optionCount}개`}</small><small>{product.hub_single_receipt.label}</small><small>문서 ID: {String(product.hub_single_receipt.docId)}</small><small>등록 파일 ID: {String(product.hub_single_receipt.qvtRequestId)}</small><time dateTime={new Date(product.hub_single_receipt.observedAt).toISOString()}>{dateTime.format(new Date(product.hub_single_receipt.observedAt))}</time><small>SKU 확인 전 · 해당 전송 초안 기준</small></div>}
         </>}
-        {column.id==='management'&&<div className="registration-management">{(product.source_capture?onArchiveSource:onDelete)?<button type="button" className="registration-delete" aria-label={`${title} 삭제`} title={product.source_capture?'수집 목록에서 삭제 · 원문 보존':removal.blocked?removal.reason:deleting===product.id?'삭제 중':'삭제'} disabled={deleting!==null||(product.source_capture?sourceArchiveDisabled||!sourceReferences.has(product.id):removal.blocked)} onClick={()=>deleteProduct(product)}>삭제</button>:<button type="button" className="btn ghost" aria-label={`${title} 상세`} onClick={()=>product.source_capture?openEntry(product):onOpen(product as T)}>열기</button>}</div>}
+        {column.id==='management'&&<div className="registration-management">{(product.source_capture?onArchiveSource:onDelete)?<button type="button" className="registration-delete" aria-label={`${title} 삭제`} title={product.source_capture?'수집 목록에서 삭제 · 원문 보존':removal.blocked?removal.reason:deleting===product.id?'삭제 중':'삭제'} disabled={deleting!==null||(product.source_capture?sourceArchiveDisabled||!sourceReferences.has(product.id):removal.blocked)} onClick={()=>requestRemoval([product])}>삭제</button>:<button type="button" className="btn ghost" aria-label={`${title} 상세`} onClick={()=>product.source_capture?openEntry(product):onOpen(product as T)}>열기</button>}</div>}
       </td>)}
     </tr>;})}
     </tbody></table>{!rows.length&&<div className="empty"><strong>{loading?'상품을 불러오는 중입니다.':error?'상품 조회 오류를 확인해주세요.':'조건에 맞는 상품이 없습니다.'}</strong><small>상품을 추가하거나 조회 기간·검색어를 변경하세요.</small></div>}</div>
     <footer className="registration-pagination"><button type="button" disabled={currentPage===0} onClick={()=>setPage(currentPage-1)}>이전</button><span>{currentPage+1} / {pages}</span><button type="button" disabled={currentPage>=pages-1} onClick={()=>setPage(currentPage+1)}>다음</button></footer>
+    {confirmation&&<div className="modal-backdrop" style={{zIndex:1200}}>
+      <section ref={deleteDialogRoot} className="modal" role="dialog" aria-modal="true" aria-label={confirmation.kind==='source'?'수집 상품 삭제 확인':'상품 삭제 확인'} aria-busy={deleting!==null} tabIndex={-1} onKeyDown={event=>{
+        if(event.key==='Escape'&&!deleteInFlight.current){event.preventDefault();cancelRemoval(confirmation);}
+        if(event.key==='Tab'){
+          const controls=Array.from(deleteDialogRoot.current?.querySelectorAll<HTMLButtonElement>('button:not([disabled])')??[]),first=controls[0],last=controls.at(-1),active=typeof document==='undefined'?null:document.activeElement;
+          if(!first){event.preventDefault();deleteDialogRoot.current?.focus();}
+          else if(event.shiftKey&&(!controls.includes(active as HTMLButtonElement)||active===first)){event.preventDefault();last?.focus();}
+          else if(!event.shiftKey&&(!controls.includes(active as HTMLButtonElement)||active===last)){event.preventDefault();first.focus();}
+        }
+      }}>
+        <header><div><h2>{confirmation.kind==='source'?'수집 상품 삭제':'상품 삭제'}</h2><p>{confirmation.targets.length}건을 확인해주세요.</p></div></header>
+        <div className="modal-form">
+          <ul style={{paddingLeft:20,marginTop:0}}>{confirmation.targets.map(target=><li key={target.id} style={{marginBottom:12,overflowWrap:'anywhere'}}><strong>{target.title}</strong><div>등록번호: {target.number}</div><small>상품 ID: {target.id}</small></li>)}</ul>
+          <p>{confirmation.kind==='source'?'수집 목록에서 삭제합니다. 원문은 보존되며 다시 수집하면 복원됩니다. 기존 작업 상품은 변경하지 않습니다.':'삭제된 상품으로 이동합니다. 저장된 이미지와 편집 내용은 복원할 수 있습니다.'}</p>
+          {(deleteError||currentConfirmationIssue)&&<p role="alert" className="collection-error">{deleteError||currentConfirmationIssue}</p>}
+          <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:20}}>
+            <button type="button" className="btn ghost" disabled={deleting!==null} onClick={()=>cancelRemoval(confirmation)}>취소</button>
+            <button type="button" className="btn primary" aria-label="삭제 확인" disabled={deleting!==null||!!currentConfirmationIssue} onClick={()=>confirmRemoval(confirmation)}>{deleting!==null?'삭제 중…':'삭제'}</button>
+          </div>
+        </div>
+      </section>
+    </div>}
     {popupColumn&&filterPopup&&<RegistrationFilterPopover key={popupColumn.id} label={popupColumn.label} choices={popupChoices} allValues={registrationFilterChoices(entries.map(product=>registrationColumnText(product,popupColumn.id))).map(choice=>choice.value)} filter={columnFilters[popupColumn.id]} position={filterPopup.position} trigger={filterPopup.trigger}
       onClose={()=>setFilterPopup(null)} onSort={direction=>{setSort({column:popupColumn.id,direction});setPage(0);setFilterPopup(null);}}
       onApply={filter=>{setColumnFilters(current=>{const next={...current};if(filter)next[popupColumn.id]=filter;else delete next[popupColumn.id];return next;});setPage(0);setFilterPopup(null);}}/>}

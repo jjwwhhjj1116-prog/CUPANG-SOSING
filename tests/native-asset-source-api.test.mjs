@@ -31,6 +31,19 @@ test('exact source plan SHA plus current product membership are both required fo
   assert.deepEqual(f.h.network,[]);
  }finally{f.close();}
 });
+
+test('archived owned source is reported before private reads without changing its product, files, receipts or removal marker',async()=>{
+ const f=await fixture();try{
+  const plan=await read(await f.send()),file=plan.images[0];
+  f.h.sqlite.prepare('INSERT INTO product_removals(product_id,owner_id,removed_at,product_version) SELECT id,owner_id,?,updated_at FROM products WHERE id=?').run('2026-10-30T06:01:06.000Z',f.id);
+  const before=JSON.stringify(f.h.sqlite.prepare('SELECT * FROM products WHERE id=?').get(f.id)),removed=JSON.stringify(f.h.sqlite.prepare('SELECT * FROM product_removals WHERE product_id=?').get(f.id)),objects=f.objectState();let privateReads=0;
+  const get=f.h.bindings.FILES.get;f.h.bindings.FILES.get=async key=>{privateReads++;return get(key);};
+  for(const query of [f.query,f.query+'&sourcePlanSha256='+plan.sourcePlanSha256+'&key='+encodeURIComponent(file.key),f.query+'&sourcePlanSha256='+plan.sourcePlanSha256+'&bundle=images']){
+   const body=await read(await f.send(query),409);assert.equal(body.code,'NATIVE_ASSET_PRODUCT_ARCHIVED');assert.match(body.error,/삭제 보관/);assert.equal(body.images,undefined);assert.equal(body.sourcePlanSha256,undefined);
+  }
+  assert.equal(privateReads,0);assert.equal(JSON.stringify(f.h.sqlite.prepare('SELECT * FROM products WHERE id=?').get(f.id)),before);assert.equal(JSON.stringify(f.h.sqlite.prepare('SELECT * FROM product_removals WHERE product_id=?').get(f.id)),removed);assert.equal(f.objectState(),objects);assert.deepEqual(f.h.network,[]);assert.equal(f.h.sqlite.prepare('SELECT count(*) AS n FROM supplier_hub_receipts').get().n,0);
+ }finally{f.close();}
+});
 test('option/product source edits invalidate old image capabilities before bytes can be returned',async()=>{
  for(const kind of ['option','product']){const f=await fixture();try{
   const plan=await read(await f.send()),file=plan.images[0];
