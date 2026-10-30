@@ -363,7 +363,9 @@ export async function singleDocumentNavigatePage(input){
     if(checkboxes.some(node=>(node.required||['agreeMSRPTerm','agreeLabelContact'].includes(node.id))&&!node.checked))throw Error('현재 단계의 필수 동의를 확인해주세요. 자동으로 선택하지 않았습니다.');
     const buttons=Array.from(document.querySelectorAll('button[type="submit"]')).filter(node=>visible(node)&&!node.disabled&&node.getAttribute('aria-disabled')!=='true');
     if(buttons.length!==1)throw Error('다음 개별 등록 단계 버튼을 확인해주세요.');
-    const currentRecord=check();if(currentRecord.nextOperations?.[stage])throw Error('이 단계의 다음 요청은 이미 실행했습니다. 화면을 읽기로 확인하고 다시 누르지 않았습니다.');
+    const currentRecord=check();
+    if(currentRecord.currentReadRecovery!==undefined)throw Error('공식 다음 버튼은 본문 저장을 함께 실행하므로 현재 읽기로 복구한 문서는 진행하지 않았습니다. 원래 문서의 파일·본문을 재전송하지 않았습니다.');
+    if(currentRecord.nextOperations?.[stage])throw Error('이 단계의 다음 요청은 이미 실행했습니다. 화면을 읽기로 확인하고 다시 누르지 않았습니다.');
     currentRecord.nextOperations??={};currentRecord.nextOperations[stage]={next,state:'requested'};
     document.documentElement.dataset.yoofamSingleDocumentRecords=JSON.stringify({...JSON.parse(document.documentElement.dataset.yoofamSingleDocumentRecords||'{}'),[input.binding.packetDigest]:currentRecord});
     buttons[0].click();await wait(()=>(document.querySelector('#root__title')?.innerText||'').trim()===next);
@@ -431,6 +433,7 @@ export function singleDocumentSubmitPage(input){
   if(record?.watchToken!==undefined&&(record.watchState!=='active'||Date.now()>=record.watchExpiresAt))throw Error('현재 새 문서의 입력 관찰이 중단됐습니다.');
   if(codes.length!==1||codes[0]!==input.binding.identity.company.code||!record||canon(record.binding)!==canon(input.binding)||record.docId!==input.docId||record.loadedDocId!==input.docId
     ||record.confirmedChallengeId!==input.challenge.id||record.submitOperationId)throw Error('원래 새 문서의 제출 확인을 읽기로 확인해주세요.');
+  if(record.currentReadRecovery!==undefined)throw Error('공식 등록 버튼은 본문 저장을 함께 실행하므로 현재 읽기로 복구한 문서는 제출하지 않았습니다. 원래 문서의 파일·본문을 재전송하지 않았습니다.');
   const visible=node=>Boolean(node&&node.getClientRects().length);
   for(const item of input.challenge.items.filter(item=>item.required)){
     const nodes=Array.from(document.querySelectorAll('input[type="checkbox"]')).filter(node=>visible(node)&&node.id===item.id);
@@ -942,6 +945,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
       ?{readOnly:true,operationId:input.operationId,docId:record.docId,company:copy(input.identity.company),step:input.step,response:observation.response}:null;},
     navigate:async input=>{
       const {binding,record}=await owned(input);if(!equal(record.docId,input.docId))fail('NAVIGATION','원래 새 문서만 불러올 수 있습니다.');
+      if(record.currentReadRecovery!==undefined)fail('SAVED_DRAFT_NATIVE_BUTTON_WRITE_BLOCKED','공식 다음 버튼은 본문 저장을 함께 실행하므로 현재 읽기로 복구한 문서는 진행하지 않았습니다. 원래 문서의 파일·본문을 재전송하지 않았습니다.');
       mutable(input.identity);
       const tab=await api.tabs.get(input.tab.tabId),url=new URL(tab.url);
       if(!/^\/sr\/registration\/step\//.test(url.pathname)){
@@ -996,7 +1000,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
         &&first.sessionId===binding.sessionId&&Number.isSafeInteger(response.checkedAt)&&Math.abs(now()-response.checkedAt)<=5000,challengeId:input.challenge.id,identityDigest:binding.identityDigest,confirmedAt:response.checkedAt};
     },
     confirmAgreements:async input=>{const {binding}=await owned(input);mutable(input.identity);return execute(input.tab,input.identity,singleDocumentAgreementPage,[{binding,docId:input.docId,action:'confirm',challenge:input.challenge,confirmation:input.confirmation}]);},
-    submit:async input=>{const {binding}=await owned(input);mutable(input.identity);return execute(input.tab,input.identity,singleDocumentSubmitPage,[{binding,docId:input.docId,operationId:input.operationId,challenge:input.challenge,expectedBody:input.expectedBody}]);},
+    submit:async input=>{const {binding,record}=await owned(input);if(record.currentReadRecovery!==undefined)fail('SAVED_DRAFT_NATIVE_BUTTON_WRITE_BLOCKED','공식 등록 버튼은 본문 저장을 함께 실행하므로 현재 읽기로 복구한 문서는 제출하지 않았습니다. 원래 문서의 파일·본문을 재전송하지 않았습니다.');mutable(input.identity);return execute(input.tab,input.identity,singleDocumentSubmitPage,[{binding,docId:input.docId,operationId:input.operationId,challenge:input.challenge,expectedBody:input.expectedBody}]);},
     observeReceipt:async input=>{
       const {binding,record}=await owned(input),proof=record.submitProof,entry=liveWatches.get(input.tab.tabId),freshRead=sourceBindings.get(canonical(input.identity))?.readOnlyReceipt===true&&!entry,
         documentId=freshRead?record.loadObservation?.documentId:entry?.expected.documentId;
