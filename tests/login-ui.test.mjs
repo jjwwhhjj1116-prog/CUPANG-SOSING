@@ -16,7 +16,7 @@ function ui({panel=false,storage=new Map(),reply=async()=>Response.json({ok:true
  class FormValues{constructor(form){this.values=new Map([...form.controls.values()].filter(control=>!control.disabled&&(control.type!=='checkbox'||control.checked)).map(control=>[control.name,control.type==='checkbox'?'on':control.value]));}get(name){return this.values.get(name)??null;}}
  const window={location:{assign:url=>redirects.push(url)},localStorage:{getItem(key){if(storageBlocked)throw Error('Storage disabled');return storage.get(key)??null;},setItem(key,value){if(storageBlocked)throw Error('Storage disabled');storageWrites.push({key,value});storage.set(key,value);}}};
  function load(file){if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);
-  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,FormData:FormValues,window,fetch:async(url,init)=>{const call={url,method:init.method,body:JSON.parse(init.body)};calls.push(call);return reply(call);},require(name){if(name==='react')return hooks;if(name.endsWith('.css'))return{default:new Proxy({},{get:(_target,key)=>String(key)})};if(name.startsWith('@/'))return load(name.slice(2)+'.ts');return native(name);}});return exports;
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,FormData:FormValues,window,fetch:async(url,init)=>{const call={url,method:init.method,body:JSON.parse(init.body)};calls.push(call);return reply(call);},require(name){if(name==='react')return hooks;if(name.endsWith('.css'))return{default:new Proxy({},{get:(_target,key)=>String(key)})};if(name.startsWith('@/'))return load(name.slice(2)+'.ts');return native(name);}});return exports;
  }
  const component=panel?load('app/components/login-preferences-panel.tsx').LoginPreferencesPanel:load('app/login/page.tsx').default;
  let initial=true;
@@ -24,7 +24,7 @@ function ui({panel=false,storage=new Map(),reply=async()=>Response.json({ok:true
   for(const key of controls.keys())if(!present.has(key))controls.delete(key);
   for(const node of inputs){const {name,type}=node.props;let control=controls.get(name);if(!control){control={name,type,value:node.props.defaultValue??'',checked:Boolean(node.props.defaultChecked)};controls.set(name,control);}Object.assign(control,{type,disabled:Boolean(node.props.disabled),node});if(node.props.value!==undefined)control.value=node.props.value;if(node.props.checked!==undefined)control.checked=node.props.checked;}
   if(initial&&autofill){for(const [name,value]of Object.entries(autofill))controls.get(name).value=value;}initial=false;
-  const form=nodes(tree).find(node=>node.type==='form'),dom={controls,elements:{namedItem:name=>controls.get(name)??null}};form.props.ref.current=dom;
+  const form=nodes(tree).find(node=>node.type==='form'),dom={controls,elements:{namedItem:name=>controls.get(name)??null}};if(form)form.props.ref.current=dom;
   effects.splice(0).forEach(effect=>effect());return tree;
  }
  const form=()=>nodes(render()).find(node=>node.type==='form');render();
@@ -43,7 +43,7 @@ test('login submits selected duration, remembers only email and choices, and res
   assert.equal(h.input('rememberEmail').checked,true);assert.equal(h.input('rememberMe').checked,true);
   assert.equal(h.input('email').node.props.autoComplete,'username');assert.equal(h.input('password').node.props.autoComplete,'current-password');
   h.choose('email','Member@Example.Test');h.choose('password','TEST-ONLY-password-123');await h.submit();
-  assert.deepEqual(h.calls,[{url:'/api/membership',method:'POST',body:{action:'login',email:'Member@Example.Test',password:'TEST-ONLY-password-123',rememberMe:true}}]);
+  assert.deepEqual(h.calls,[{url:'/api/membership',method:'POST',body:{action:'login',loginId:'Member@Example.Test',password:'TEST-ONLY-password-123',rememberMe:true}}]);
   assert.deepEqual(JSON.parse(storage.get(storageKey)),{email:'member@example.test',rememberEmail:true,rememberMe:true});assert.deepEqual(h.redirects,['/']);
   assert.ok(h.storageWrites.every(write=>!write.value.includes('password')&&!write.value.includes('TEST-ONLY')));
   const returned=ui({storage});try{assert.equal(returned.input('email').value,'member@example.test');assert.equal(returned.input('password').value,'');assert.equal(returned.input('rememberMe').checked,true);}finally{returned.close();}
@@ -70,12 +70,35 @@ test('failed login preserves form entries, does not persist credentials, and pre
  }finally{h.close();}
 });
 
-test('closed workspace has login only, no signup or editable company inputs',async()=>{
+test('login accepts an ID or legacy email, has recovery links and never asks for a company',async()=>{
  const h=ui();try{
-  assert.equal(h.button('회원가입 요청'),undefined);assert.equal(h.input('companyCode'),undefined);assert.equal(h.input('companyName'),undefined);
-  assert.match(text(h.render()),/유앤채·와이홉/);assert.equal(h.input('password').node.props.autoComplete,'current-password');
+  assert.ok(h.button('회원가입'));assert.equal(h.input('companyCode'),undefined);assert.equal(h.input('companyName'),undefined);
+  assert.equal(h.input('email').type,'text');assert.match(h.input('email').node.props.placeholder,/아이디 또는 기존 이메일/);assert.equal(h.input('password').node.props.autoComplete,'current-password');
+  assert.ok(nodes(h.render()).some(node=>node.type==='a'&&node.props.href==='/recover?purpose=find-id'));assert.ok(nodes(h.render()).some(node=>node.type==='a'&&node.props.href==='/recover?purpose=reset-password'));
   h.click('비밀번호 보기');assert.equal(h.input('password').type,'text');h.click('비밀번호 숨기기');assert.equal(h.input('password').type,'password');
+  h.choose('email','new.member');h.choose('password','synthetic-only-password');await h.submit();assert.equal(h.calls[0].body.loginId,'new.member');
  }finally{h.close();}
+});
+
+test('signup sends exactly four fields once and stays unauthenticated after a pending response',async()=>{
+ let resolve;const h=ui({reply:()=>new Promise(done=>{resolve=done;})});try{
+  h.click('회원가입');assert.deepEqual(nodes(h.render()).filter(node=>node.type==='input').map(node=>node.props.name),['loginId','password','name','phone']);
+  h.choose('loginId','new.member');h.choose('password','synthetic-signup-password');h.choose('name','테스트 회원');h.choose('phone','010-1234-5678');
+  assert.equal(h.input('password').node.props.autoComplete,'new-password');assert.equal(h.input('phone').type,'tel');
+  const first=h.submit(),second=h.submit();assert.equal(h.calls.length,1);assert.equal(h.button('로그인').props.disabled,true);
+  assert.deepEqual(h.calls[0].body,{action:'signup',loginId:'new.member',password:'synthetic-signup-password',name:'테스트 회원',phone:'010-1234-5678'});
+  resolve(Response.json({ok:true,status:'pending',message:'관리자 승인 후 로그인할 수 있습니다.'},{status:201}));await Promise.all([first,second]);
+  assert.match(text(h.render()),/승인 요청 완료/);assert.match(text(h.render()),/관리자 승인 후/);assert.equal(h.storage.size,0);assert.deepEqual(h.redirects,[]);assert.equal(h.input('password'),undefined);
+  h.click('로그인으로 돌아가기');assert.equal(h.input('password').value,'');assert.equal(h.input('email').node.props.autoComplete,'username');
+ }finally{h.close();}
+});
+
+test('signup failure retains non-secret fields and a late response after leaving cannot redirect or persist credentials',async()=>{
+ const failed=ui({reply:async()=>Response.json({error:'이미 사용 중인 아이디입니다.'},{status:409})});try{
+  failed.click('회원가입');for(const [name,value]of Object.entries({loginId:'taken.member',password:'synthetic-password',name:'테스트',phone:'01012345678'}))failed.choose(name,value);await failed.submit();
+  assert.match(text(failed.render()),/이미 사용 중인 아이디/);assert.equal(failed.input('name').value,'테스트');assert.equal(failed.storage.size,0);assert.deepEqual(failed.redirects,[]);
+ }finally{failed.close();}
+ let resolve;const h=ui({reply:()=>new Promise(done=>{resolve=done;})});h.choose('email','late.member');h.choose('password','synthetic-password');const pending=h.submit();h.close();resolve(Response.json({ok:true}));await pending;assert.deepEqual(h.redirects,[]);assert.equal(h.storage.size,0);
 });
 
 test('password manager entries and storage-disabled browsers remain usable without persisting secrets',async()=>{

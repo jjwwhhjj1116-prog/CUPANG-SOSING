@@ -6,8 +6,8 @@ import ts from 'typescript';
 import {DatabaseSync} from 'node:sqlite';
 const cryptoEnv={crypto,TextEncoder,TextDecoder,URL,Response,Request};
 function runtime({authenticate=false}={}){
- const sql=new DatabaseSync(':memory:');sql.exec(fs.readFileSync('db/migrations/0009_members.sql','utf8'));
- const DB={prepare(query){let args=[];return {bind(...values){args=values;return this;},async first(){return sql.prepare(query).get(...args)??null;},async all(){return {results:sql.prepare(query).all(...args)};},async run(){return {meta:sql.prepare(query).run(...args)};}};},async batch(statements){sql.exec('BEGIN');try{const results=[];for(const statement of statements)results.push(await statement.run());sql.exec('COMMIT');return results;}catch(error){sql.exec('ROLLBACK');throw error;}}};
+ const sql=new DatabaseSync(':memory:');sql.exec(fs.readFileSync('db/migrations/0009_members.sql','utf8'));sql.exec(fs.readFileSync('db/migrations/0036_member_registration.sql','utf8'));let batches=Promise.resolve();
+ const DB={prepare(query){let args=[];return {bind(...values){args=values;return this;},async first(){return sql.prepare(query).get(...args)??null;},async all(){return {results:sql.prepare(query).all(...args)};},async run(){return {meta:sql.prepare(query).run(...args)};}};},batch(statements){const execute=async()=>{sql.exec('BEGIN');try{const results=[];for(const statement of statements)results.push(await statement.run());sql.exec('COMMIT');return results;}catch(error){sql.exec('ROLLBACK');throw error;}};const next=batches.then(execute);batches=next.catch(()=>{});return next;}};
  const env={DB,YOOFAM_AUTH_ENABLED:'true',YOOFAM_PASSWORD_PEPPER:'fixture-pepper-with-at-least-32-characters'};let user=null;const cache=new Map();
  class Reply extends Response {cookieWrites=[];cookies={set:(name,value,options)=>this.cookieWrites.push({name,value,options})};static json(body,init){return new Reply(JSON.stringify(body),init);}}
  function load(file){if(cache.has(file))return cache.get(file);const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{...cryptoEnv,exports,process:{env:{NODE_ENV:'production'}},require(name){if(name==='cloudflare:workers')return {env};if(name==='next/headers')return {headers:async()=>new Headers({cookie:env.TEST_COOKIE??''})};if(name==='next/navigation')return {redirect:()=>{throw Error('redirect');}};if(name==='next/server')return {NextResponse:Reply};if(name==='@/app/chatgpt-auth'&&!authenticate)return {getChatGPTUser:async()=>user};if(name.startsWith('@/'))return load(name.slice(2)+'.ts');throw Error(name);}});cache.set(file,exports);return exports;}
@@ -42,13 +42,16 @@ test('only the designated member can be approved; suspension revokes sessions an
  }finally{r.sql.close();}
 });
 
-test('public signup cannot create or replace either designated account or a third account',async()=>{
+test('public signup never replaces seeded identities or accepts role, approval, company or metadata injection',async()=>{
  const r=runtime();try{
   r.insert('admin','admin','approved');r.insert('member','member','approved');
   const before=r.sql.prepare('SELECT * FROM members ORDER BY id').all();
-  for(const email of ['new@example.test','jwhj1116@kakao.com','unari8484@gmail.com']){
-   const response=await r.post({action:'signup',email,password:'fixture-password-123',companyCode:'A01526306',companyName:'유앤채',role:'admin',status:'approved'});
-   assert.equal(response.status,403);assert.deepEqual(r.sql.prepare('SELECT * FROM members ORDER BY id').all(),before);
+  const signup={action:'signup',loginId:'new-member',password:'fixture-password-123',name:'가입 회원',phone:'010-1234-5678'};
+  for(const injected of [{role:'admin'},{status:'approved'},{companyCode:'A01526306'},{companyName:'유앤채'},{id:'admin'},{registrationVersion:1},{phoneVerifiedAt:'now'},{email:'new@example.test'},{phoneVerificationToken:'forged'}]){
+   const response=await r.post({...signup,...injected});assert.equal(response.status,400);assert.deepEqual(r.sql.prepare('SELECT * FROM members ORDER BY id').all(),before);
+  }
+  for(const loginId of ['jwhj1116@kakao.com','unari8484@gmail.com','JWHJ1116','unari8484']){
+   const response=await r.post({...signup,loginId});assert.equal(response.status,409);assert.equal(response.cookieWrites.length,0);assert.deepEqual(r.sql.prepare('SELECT * FROM members ORDER BY id').all(),before);
   }
  }finally{r.sql.close();}
 });
@@ -257,5 +260,75 @@ test('inflight login with the previous password cannot recreate a session after 
   const response=await r.post({action:'login',email:'unari8484@gmail.com',password:previous});
   assert.equal(response.status,401);assert.equal(response.cookieWrites.length,0);assert.equal(r.sql.prepare('SELECT count(*) n FROM member_sessions').get().n,0);
   r.env.DB.batch=original;const current=await r.post({action:'login',email:'unari8484@gmail.com',password:replacement});assert.equal(current.status,200);assert.equal(current.cookieWrites.length,1);
+ }finally{r.sql.close();}
+});
+
+const signupBody=(loginId='new.member')=>({action:'signup',loginId,password:'fixture-password-123',name:'신규 회원',phone:'010-1234-5678'});
+test('four signup fields create an unverified pending member with no company or session; only approval permits login',async()=>{
+ const r=runtime({authenticate:true});try{
+  r.insert('admin','admin','approved');r.env.TEST_COOKIE='yoofam_session='+await r.store.createSession('admin');
+  const original=r.sql.prepare("SELECT * FROM members WHERE id='admin'").get(),signup=await r.post(signupBody(' New.Member '));
+  assert.equal(signup.status,201);assert.deepEqual(await signup.json(),{ok:true,status:'pending',message:'가입 신청이 완료되었습니다. 관리자 승인 후 로그인할 수 있습니다.'});assert.equal(signup.cookieWrites.length,0);
+  const member=r.sql.prepare("SELECT * FROM members WHERE login_id='new.member'").get();
+  assert.ok(member);assert.equal(member.email,'new.member');assert.equal(member.full_name,'신규 회원');assert.equal(member.phone_number,'+821012345678');assert.equal(member.phone_verified_at,null);
+  assert.equal(member.registration_version,1);assert.equal(member.role,'member');assert.equal(member.status,'pending');assert.equal(member.company_code,'');assert.equal(member.company_name,'');
+  assert.equal(await r.helper.verifyPassword(signupBody().password,member.password_hash,r.env.YOOFAM_PASSWORD_PEPPER),true);assert.deepEqual(r.sql.prepare("SELECT * FROM members WHERE id='admin'").get(),original);
+  assert.equal((await r.post({action:'login',loginId:'new.member',password:signupBody().password})).status,401);assert.equal(await r.store.createSession(member.id),null);
+  const listing=await (await r.route.GET()).json(),row=listing.members.find(value=>value.id===member.id);assert.equal(row.loginId,'new.member');assert.equal(row.name,'신규 회원');assert.equal(row.phoneNumber,'+821012345678');assert.ok(!JSON.stringify(listing).includes(member.password_hash));
+  assert.equal((await r.post({action:'approve',memberId:member.id,expectedStatus:'pending'})).status,200);
+  const login=await r.post({action:'login',loginId:'NEW.MEMBER',password:signupBody().password});assert.equal(login.status,200);r.env.TEST_COOKIE='yoofam_session='+login.cookieWrites[0].value;
+  const own=await (await r.route.GET()).json();assert.equal(own.member.id,member.id);assert.equal(own.member.companyCode,'');assert.equal(own.members,undefined);
+  assert.equal((await r.post({action:'approve',memberId:'admin'})).status,403);
+ }finally{r.sql.close();}
+});
+test('signup validates four required fields, protects legacy identity collisions and serializes normalized duplicate registrations',async()=>{
+ const r=runtime();try{
+  r.insert('legacy','member','rejected','unchanged',{email:'old.member@example.test'});
+  for(const patch of [{loginId:''},{loginId:'has space'},{name:''},{name:'bad\nname'},{phone:''},{phone:'010-1234'},{password:'short'}])assert.equal((await r.post({...signupBody(),...patch})).status,400);
+  assert.equal((await r.post(signupBody('OLD.MEMBER@example.test'))).status,409);
+  const responses=await Promise.all([r.post(signupBody('Duplicate.ID')),r.post(signupBody(' duplicate.id '))]);assert.deepEqual(responses.map(value=>value.status).sort(),[201,409]);
+  assert.equal(r.sql.prepare("SELECT count(*) n FROM members WHERE login_id='duplicate.id'").get().n,1);assert.equal(r.sql.prepare("SELECT password_hash FROM members WHERE id='legacy'").get().password_hash,'unchanged');
+ }finally{r.sql.close();}
+});
+test('signup review is atomic, designated-admin only, and explicit reapproval invalidates credentials from the old approval',async()=>{
+ const r=runtime();try{
+  r.insert('admin','admin','approved');r.insert('legacy-admin-lookalike','member','approved');await r.post(signupBody());
+  const id=r.sql.prepare("SELECT id FROM members WHERE login_id='new.member'").get().id;
+  assert.equal(await r.store.reviewMember('legacy-admin-lookalike',id,'approve','pending'),false);
+  const decisions=await Promise.all([r.store.reviewMember('admin',id,'approve','pending'),r.store.reviewMember('admin',id,'reject','pending')]);assert.equal(decisions.filter(Boolean).length,1);
+  assert.equal(r.sql.prepare('SELECT count(*) n FROM member_audit WHERE member_id=?').get(id).n,1);
+  await r.post(signupBody('rejected.member'));const rejected=r.sql.prepare("SELECT id FROM members WHERE login_id='rejected.member'").get().id;
+  assert.equal(await r.store.reviewMember('admin',rejected,'reject','pending'),true);assert.equal(await r.store.reviewMember('admin',rejected,'approve','pending'),false);assert.equal(await r.store.reviewMember('admin',rejected,'approve','rejected'),true);
+  assert.equal(r.sql.prepare('SELECT credential_version FROM members WHERE id=?').get(rejected).credential_version,2);
+  assert.equal(await r.store.reviewMember('admin',rejected,'suspend','approved'),true);assert.equal(await r.store.reviewMember('admin',rejected,'approve','suspended'),true);assert.equal(r.sql.prepare('SELECT credential_version FROM members WHERE id=?').get(rejected).credential_version,4);
+  r.sql.prepare("UPDATE members SET company_code='A01526306',company_name='유앤채' WHERE id=?").run(id);assert.equal(await r.store.createSession(id),null);
+ }finally{r.sql.close();}
+});
+test('seeded short IDs log in but a nonregistered legacy row still cannot receive sessions',async()=>{
+ const r=runtime();try{
+  const password='fixture-password-123';r.insert('admin','admin','approved',await r.helper.passwordHash(password,r.env.YOOFAM_PASSWORD_PEPPER));r.insert('second','member','approved');
+  const login=await r.post({action:'login',loginId:'JWHJ1116',password});assert.equal(login.status,200);assert.equal((await r.store.sessionMember('yoofam_session='+login.cookieWrites[0].value)).id,'admin');assert.equal(await r.store.createSession('second'),null);
+ }finally{r.sql.close();}
+});
+test('own password change requires the current password, revokes every session, increments challenge version and keeps other members intact',async()=>{
+ const r=runtime({authenticate:true});try{
+  const password='fixture-password-123',next='fixture-new-password-456';r.insert('admin','admin','approved');r.insert('member','member','approved',await r.helper.passwordHash(password,r.env.YOOFAM_PASSWORD_PEPPER));
+  const token=await r.store.createSession('member'),parallel=await r.store.createSession('member'),other=await r.store.createSession('admin');r.env.TEST_COOKIE='yoofam_session='+token;
+  assert.equal((await r.post({action:'change-password',memberId:'admin',currentPassword:password,newPassword:next})).status,403);
+  assert.equal((await r.post({action:'change-password',currentPassword:'incorrect-password',newPassword:next})).status,403);
+  assert.equal((await r.post({action:'change-password',currentPassword:password,newPassword:password})).status,400);
+  assert.ok(await r.store.sessionMember('yoofam_session='+parallel));
+  const response=await r.post({action:'change-password',currentPassword:password,newPassword:next});assert.equal(response.status,200);assert.deepEqual(await response.json(),{ok:true,reauthenticate:true});assert.equal(response.cookieWrites[0].options.maxAge,0);
+  const row=r.sql.prepare("SELECT * FROM members WHERE id='member'").get();assert.equal(await r.helper.verifyPassword(next,row.password_hash,r.env.YOOFAM_PASSWORD_PEPPER),true);assert.equal(row.credential_version,1);
+  assert.equal(await r.store.sessionMember('yoofam_session='+token),null);assert.equal(await r.store.sessionMember('yoofam_session='+parallel),null);assert.ok(await r.store.sessionMember('yoofam_session='+other));assert.equal(r.sql.prepare("SELECT count(*) n FROM member_audit WHERE action='change-password'").get().n,1);
+  assert.equal((await r.post({action:'login',loginId:'unari8484',password})).status,401);assert.equal((await r.post({action:'login',loginId:'unari8484',password:next})).status,200);
+ }finally{r.sql.close();}
+});
+test('password compare-and-swap permits one concurrent change and a stale login cannot restore a revoked session',async()=>{
+ const r=runtime();try{
+  const password='fixture-password-123',original=await r.helper.passwordHash(password,r.env.YOOFAM_PASSWORD_PEPPER);r.insert('member','member','approved',original);await r.store.createSession('member');
+  const [one,two]=await Promise.all([r.helper.passwordHash('first-replacement-password',r.env.YOOFAM_PASSWORD_PEPPER),r.helper.passwordHash('second-replacement-password',r.env.YOOFAM_PASSWORD_PEPPER)]);
+  assert.equal((await Promise.all([r.store.changeMemberPassword('member',original,one),r.store.changeMemberPassword('member',original,two)])).filter(Boolean).length,1);
+  assert.equal(await r.store.createSession('member',true,original),null);assert.equal(r.sql.prepare('SELECT count(*) n FROM member_sessions').get().n,0);assert.equal(r.sql.prepare("SELECT credential_version FROM members WHERE id='member'").get().credential_version,1);assert.equal(r.sql.prepare('SELECT count(*) n FROM member_audit').get().n,1);
  }finally{r.sql.close();}
 });

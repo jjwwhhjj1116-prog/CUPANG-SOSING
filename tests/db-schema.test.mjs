@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { assertAdditiveBootstrap, checkDatabaseSchema, ddlFromSource, memoryDatabase, readBootstrap, readMigrationFiles, readMigrations, runtimeDDL, schemaSnapshot } from '../scripts/check-db-schema.mjs';
+import { applyMigrations, assertAdditiveBootstrap, assertAdditiveMigrations, checkDatabaseSchema, ddlFromSource, memoryDatabase, readBootstrap, readMigrationFiles, readMigrations, runtimeDDL, schemaSnapshot } from '../scripts/check-db-schema.mjs';
 
 const bootstrap = readBootstrap();
 const migrations = readMigrations();
@@ -40,7 +40,8 @@ function seedCompanions(db) {
 
 test('ordered migrations match every runtime table, constraint, column and named index on fresh SQLite', () => {
   const result = checkDatabaseSchema();
-  assert.equal(result.tables, 40); assert.equal(result.indexes, 17); assert.equal(result.runtimeModules, 26);
+  const declarations=runtimeDDL();
+  assert.equal(result.tables,declarations.filter(value=>value.type==='table').length);assert.equal(result.indexes,declarations.filter(value=>value.type==='index').length);assert.equal(result.runtimeModules,new Set(declarations.map(value=>value.file)).size);
 });
 
 test('legacy Drizzle schema upgrade preserves product/settings rows, defaults, PK declarations and indexes', () => {
@@ -97,8 +98,8 @@ test('reapplying bootstrap preserves every current table including uncertain/run
     db.prepare('INSERT INTO product_registration_numbers VALUES(?,?,?,?,?,?)').run(productId,owner,'2026-09-22',1,'260922001001',now);
     db.prepare('INSERT INTO product_registration_options VALUES(?,?,?,?)').run(productId,owner,'synthetic-option',1);
     const before = tableData(db); const schema = schemaSnapshot(db);
-    assert.equal(before.length, 40); assert.ok(before.every(table => table.rows.length === 1));
-    db.exec(migrations); db.exec(migrations);
+    assert.equal(before.filter(table=>table.rows.length===1).length,40);assert.ok(before.every(table=>table.rows.length<=1));
+    applyMigrations(db);applyMigrations(db);
     assert.deepEqual(tableData(db), before); assert.deepEqual(schemaSnapshot(db), schema);
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
     assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');
@@ -145,7 +146,7 @@ test('schema checker detects missing indexes, changed CHECK/default/unique defin
 });
 
 test('quotation-fields migration adds one guarded table without changing the existing thirteen tables or rows', () => {
-  const files=readMigrationFiles();assert.deepEqual(files.map(file=>file.name),['0001_sourceflow_bootstrap.sql','0002_quotation_fields.sql','0003_archive_indexes.sql','0004_collection_results.sql','0005_collection_products.sql','0006_collection_images.sql','0007_quotation_attribute_rules.sql','0008_intake_drafts.sql','0009_members.sql','0010_category_profile_pagination.sql','0011_supplier_hub_receipts.sql','0012_collection_source_supplements.sql','0013_managed_products.sql','0014_historical_ai_records.sql','0015_product_removals.sql','0016_product_labels.sql','0017_collection_offer_claims.sql','0018_managed_import_prices.sql','0019_managed_store_settings.sql','0020_quotation_ai_jobs.sql','0021_managed_product_companions.sql','0022_supplier_hub_single_receipts.sql','0023_collection_offer_lookup.sql','0024_product_registration.sql']);
+  const files=readMigrationFiles();assert.equal(files[0].name,'0001_sourceflow_bootstrap.sql');assert.equal(files[1].name,'0002_quotation_fields.sql');assert.deepEqual(files.map(file=>file.name.slice(0,4)),Array.from({length:files.length},(_,index)=>String(index+1).padStart(4,'0')));
   const db=memoryDatabase();
   try {
     db.exec(bootstrap);seedLegacy(db);seedCompanions(db);
@@ -175,7 +176,7 @@ test('product-removals migration preserves existing tables and repeated applicat
   assert.throws(()=>db.prepare('INSERT INTO product_removals VALUES(?,?,?,?)').run('missing-product',owner,now,now),/FOREIGN KEY/);
   db.prepare('INSERT INTO product_removals VALUES(?,?,?,?)').run(productId,owner,now,now);
   assert.throws(()=>db.prepare('INSERT INTO product_removals VALUES(?,?,?,?)').run(productId,owner,now,now),/UNIQUE/);
-  const withRemoval=tableData(db);db.exec(migration.sql);assert.deepEqual(tableData(db),withRemoval);db.exec(migrations);
+  const withRemoval=tableData(db);db.exec(migration.sql);assert.deepEqual(tableData(db),withRemoval);applyMigrations(db);
   const current=tableData(db);for(const table of withRemoval)assert.deepEqual(current.find(item=>item.name===table.name),table);
   assert.equal(current.find(item=>item.name==='product_labels').rows.length,0);assert.equal(current.find(item=>item.name==='collection_offer_claims').rows.length,0);
   assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
@@ -192,4 +193,29 @@ test('runtime DDL discovery reads literal TypeScript and rejects dynamic or dest
   assert.throws(() => ddlFromSource('db.prepare("DROP INDEX idx_collection_active_offer");'), /unsupported runtime DDL/);
   assert.throws(() => ddlFromSource('db.prepare("DROP INDEX IF EXISTS idx_collection_active_offer; DELETE FROM collection_jobs");'), /unsupported runtime DDL/);
   assert.throws(() => ddlFromSource('db.prepare("CREATE TABLE IF NOT EXISTS fixture (id TEXT); DELETE FROM products");'), /unsupported runtime DDL/);
+});
+
+test('member registration migration preserves existing member identities, hashes, companies, business rows and old sessions',()=>{
+ const files=readMigrationFiles(),index=files.findIndex(file=>file.name==='0036_member_registration.sql');assert.ok(index>0);const db=memoryDatabase();
+ try{
+  applyMigrations(db,files.slice(0,index).map(file=>file.sql).join('\n'));seedLegacy(db);
+  const insert=db.prepare("INSERT INTO members(id,email,password_hash,role,status,company_code,company_name,created_at,updated_at) VALUES(?,?,?,?,'approved',?,?,'original-created','original-updated')");
+  insert.run('existing-admin','jwhj1116@kakao.com','old-admin-hash','admin','A01526306','유앤채');insert.run('existing-member','unari8484@gmail.com','old-member-hash','member','A01464742','와이홉');
+  db.prepare('INSERT INTO member_sessions VALUES(?,?,?)').run('old-session','existing-admin',123456);
+  const members=db.prepare('SELECT * FROM members ORDER BY id').all(),business=tableData(db).filter(table=>table.name!=='members');
+  applyMigrations(db,files[index].sql);applyMigrations(db,files[index].sql);
+  const migrated=db.prepare('SELECT * FROM members ORDER BY id').all();for(let row=0;row<members.length;row++)for(const key of Object.keys(members[row]))assert.equal(migrated[row][key],members[row][key]);
+  assert.deepEqual(tableData(db).filter(table=>table.name!=='members'),business);
+  for(const member of migrated){assert.equal(member.login_id,null);assert.equal(member.full_name,'');assert.equal(member.phone_number,'');assert.equal(member.phone_verified_at,null);assert.equal(member.registration_version,0);assert.equal(member.credential_version,0);}
+  db.prepare("UPDATE members SET login_id='Case.Member' WHERE id='existing-admin'").run();assert.throws(()=>db.prepare("UPDATE members SET login_id='case.member' WHERE id='existing-member'").run(),/UNIQUE/);
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
+ }finally{db.close();}
+});
+test('migration verifier accepts only the reviewed member additions and refuses incompatible installed defaults',()=>{
+ const sql=readMigrationFiles().find(file=>file.name==='0036_member_registration.sql').sql;
+ assert.doesNotThrow(()=>assertAdditiveMigrations(sql));
+ for(const statement of ["ALTER TABLE members DROP COLUMN email;","ALTER TABLE products ADD COLUMN full_name TEXT NOT NULL DEFAULT '';","ALTER TABLE members ADD COLUMN role TEXT;","ALTER TABLE members ADD COLUMN credential_version INTEGER NOT NULL DEFAULT 1;",sql+'\nUPDATE members SET status=\'approved\';'])assert.throws(()=>assertAdditiveMigrations(statement),/reviewed additive|only create missing/);
+ const db=memoryDatabase();try{
+  db.exec("CREATE TABLE members (id TEXT PRIMARY KEY,full_name TEXT NOT NULL DEFAULT 'unexpected')");const schema=schemaSnapshot(db);assert.throws(()=>applyMigrations(db,sql),/different dflt_value/);assert.deepEqual(schemaSnapshot(db),schema);
+ }finally{db.close();}
 });

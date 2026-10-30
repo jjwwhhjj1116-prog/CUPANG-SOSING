@@ -1,5 +1,5 @@
-export type WorkspaceMember = { id: string; email: string; role: 'admin'|'member'; status: 'pending'|'approved'|'rejected'|'suspended'; companyCode: string; companyName: string };
-/** These are the only native accounts; provisioning preserves each existing member id. */
+export type WorkspaceMember = { id: string; email: string; role: 'admin'|'member'; status: 'pending'|'approved'|'rejected'|'suspended'; companyCode: string; companyName: string; loginId?:string|null; name?:string; phoneNumber?:string; phoneVerifiedAt?:string|null; registrationVersion?:number; createdAt?:string };
+/** Existing native accounts retain their member IDs, credentials and assigned companies. */
 export const WORKSPACE_ACCOUNTS = [
  {email:'jwhj1116@kakao.com',role:'admin',companyCode:'A01526306',companyName:'유앤채'},
  {email:'unari8484@gmail.com',role:'member',companyCode:'A01464742',companyName:'와이홉'},
@@ -7,9 +7,29 @@ export const WORKSPACE_ACCOUNTS = [
 export function workspaceAccount(email:unknown){
  return typeof email==='string'?WORKSPACE_ACCOUNTS.find(account=>account.email===email.trim().toLowerCase())??null:null;
 }
-export function matchesWorkspaceAccount(member:Pick<WorkspaceMember,'email'|'role'|'companyCode'|'companyName'>){
+export function matchesWorkspaceAccount(member:Pick<WorkspaceMember,'email'|'role'|'companyCode'|'companyName'|'loginId'|'registrationVersion'>){
  const account=workspaceAccount(member.email);
- return !!account&&member.role===account.role&&member.companyCode===account.companyCode&&member.companyName===account.companyName;
+ if(account)return (member.registrationVersion??0)===0&&member.role===account.role&&member.companyCode===account.companyCode&&member.companyName===account.companyName;
+ return member.registrationVersion===1&&member.role==='member'&&member.companyCode===''&&member.companyName===''&&typeof member.loginId==='string'&&member.loginId===member.email&&member.loginId===member.loginId.trim().toLowerCase()&&!reservedMemberLoginId(member.loginId);
+}
+/** Email identities remain usable; a short alias of a seeded account is reserved. */
+export function memberLoginId(value:unknown){
+ if(typeof value!=='string'||value.length>254)throw Error('아이디를 확인해주세요.');
+ const normalized=value.trim().toLowerCase();
+ if(!/^[a-z0-9][a-z0-9._-]{3,63}$/.test(normalized)&&!/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,63}$/.test(normalized))throw Error('아이디는 영문·숫자·점·밑줄·하이픈 4~64자 또는 이메일로 입력해주세요.');
+ return normalized;
+}
+export function reservedMemberLoginId(value:string){return WORKSPACE_ACCOUNTS.some(account=>value===account.email||value===account.email.split('@')[0]);}
+export function memberName(value:unknown){
+ if(typeof value!=='string'||!value.trim()||value.trim().length>80||/[\u0000-\u001f\u007f]/.test(value))throw Error('이름을 1~80자로 입력해주세요.');
+ return value.trim();
+}
+export function normalizeMemberPhone(value:unknown){
+ if(typeof value!=='string'||value.length>40||!/^[+0-9 ()-]+$/.test(value))throw Error('휴대전화번호를 확인해주세요.');
+ const phone=value.replace(/[ ()-]/g,'');
+ if(/^010\d{8}$/.test(phone))return '+82'+phone.slice(1);
+ if(/^\+8210\d{8}$/.test(phone))return phone;
+ throw Error('010 휴대전화번호를 입력해주세요.');
 }
 export function memberEmail(value: unknown) {
  if(typeof value!=='string'||value.length>254||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim()))throw Error('이메일을 확인해주세요.');

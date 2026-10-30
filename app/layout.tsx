@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Noto_Sans_KR } from 'next/font/google';
 import './globals.css';
+import { MemberApprovalNotifications } from './components/member-approval-notifications';
 
 const notoSans = Noto_Sans_KR({ variable: '--font-noto', subsets: ['latin'] });
 
@@ -22,5 +23,5 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="ko"><body className={notoSans.variable}>{children}</body></html>;
+  return <html lang="ko"><body className={notoSans.variable}>{children}<MemberApprovalNotifications/></body></html>;
 }

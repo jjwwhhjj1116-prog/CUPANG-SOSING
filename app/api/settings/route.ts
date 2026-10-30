@@ -29,8 +29,10 @@ async function currentSettingsScope(): Promise<WorkspaceSettingsScope> {
   if (nativeAuthentication || user?.membership) {
     const member = user?.membership;
     if (!user?.verifiedAccess || !member || member.status !== 'approved' || member.id !== user.userId || member.email !== user.email || !matchesWorkspaceAccount(member)) throw new SettingsScopeError(503, AUTH_ERROR);
-    const account = workspaceAccount(member.email)!;
-    company = { code: account.companyCode, name: account.companyName };
+    const account = workspaceAccount(member.email);
+    if(account)company = { code: account.companyCode, name: account.companyName };
+    // A newly approved member owns a separate workspace; do not borrow a seeded company.
+    else if(member.registrationVersion!==1)throw new SettingsScopeError(503,AUTH_ERROR);
   }
   const scope = parseWorkspaceSettingsScope({ ownerId: user?.userId ?? 'local-demo', company });
   if (!scope) throw new SettingsScopeError(503, AUTH_ERROR);
@@ -55,7 +57,7 @@ export async function PUT(request: Request) {
     const suppliedOwner = Object.hasOwn(input, 'expectedOwnerId');
     const expectedOwner = (input as Record<string, unknown>).expectedOwnerId;
     if (suppliedOwner && !parseWorkspaceSettingsScope({ ownerId: expectedOwner, company: null })) throw new RequestBodyError(400, '올바른 기본 설정 계정 정보가 필요합니다.');
-    if ((suppliedOwner && expectedOwner !== scope.ownerId) || (scope.company && !suppliedOwner)) throw new SettingsScopeError(409, SCOPE_ERROR);
+    if ((suppliedOwner && expectedOwner !== scope.ownerId) || ((scope.company || (env as {YOOFAM_AUTH_ENABLED?:string}).YOOFAM_AUTH_ENABLED==='true') && !suppliedOwner)) throw new SettingsScopeError(409, SCOPE_ERROR);
     validateSettings(input);
     settings = savedRegistrationSettings(input);
   } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : '올바른 설정 객체가 필요합니다.' }, { status: error instanceof RequestBodyError || error instanceof SettingsScopeError ? error.status : 400 }); }

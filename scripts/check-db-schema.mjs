@@ -91,6 +91,54 @@ export function assertAdditiveBootstrap(sql) {
   }
 }
 
+// This one reviewed ALTER migration extends members in place. Keep its exact
+// definitions here so the verification runner cannot disguise a data rewrite.
+const memberAdditions = {
+  login_id: {definition:'text collate nocase',type:'TEXT',notnull:0,dflt_value:null},
+  full_name: {definition:"text not null default ''",type:'TEXT',notnull:1,dflt_value:"''"},
+  phone_number: {definition:"text not null default ''",type:'TEXT',notnull:1,dflt_value:"''"},
+  phone_verified_at: {definition:'text',type:'TEXT',notnull:0,dflt_value:null},
+  registration_version: {definition:'integer not null default 0',type:'INTEGER',notnull:1,dflt_value:'0'},
+  credential_version: {definition:'integer not null default 0',type:'INTEGER',notnull:1,dflt_value:'0'},
+};
+function migrationStatements(sql) {
+  const statements=[];let tokens=[];
+  for(const token of sqlTokens(sql)){
+    if(token===';'){if(tokens.length)statements.push(tokens);tokens=[];}
+    else tokens.push(token);
+  }
+  if(tokens.length)statements.push(tokens);
+  return statements;
+}
+function statementSql(tokens){
+  const parts=[];
+  for(const token of tokens){
+    if(['<=','>=','!=','<>','==','||','->','->>'].includes((parts.at(-1)??'')+token))parts[parts.length-1]+=token;
+    else parts.push(token==='nocase'?'NOCASE':token);
+  }
+  return parts.join(' ')+';';
+}
+export function assertAdditiveMigrations(sql){
+  for(const tokens of migrationStatements(sql)){
+    if(tokens[0]!=='alter'){assertAdditiveBootstrap(statementSql(tokens));continue;}
+    const addition=memberAdditions[tokens[5]];
+    assert.ok(addition&&tokens.slice(0,5).join(' ')==='alter table members add column'&&tokens.slice(6).join(' ')===addition.definition,'Only the reviewed additive member columns may use ALTER TABLE.');
+  }
+}
+/** In-memory verification only: safely skip already installed, matching member columns. */
+export function applyMigrations(db,sql=readMigrations()){
+  assertAdditiveMigrations(sql);
+  const statements=migrationStatements(sql),existingColumns=db.prepare('PRAGMA table_info(members)').all();
+  for(const tokens of statements.filter(value=>value[0]==='alter')){
+    const name=tokens[5],existing=existingColumns.find(column=>column.name===name);
+    if(existing)for(const key of ['type','notnull','dflt_value'])assert.equal(existing[key],memberAdditions[name][key],`Existing members.${name} has a different ${key}.`);
+  }
+  for(const tokens of statements){
+    if(tokens[0]==='alter'&&existingColumns.some(column=>column.name===tokens[5]))continue;
+    db.exec(statementSql(tokens));
+  }
+}
+
 export function memoryDatabase() {
   // Intentionally accepts no path, URI, binding, credentials or network client.
   const db = new DatabaseSync(':memory:');
@@ -112,14 +160,14 @@ export function schemaSnapshot(db) {
 }
 
 export function checkDatabaseSchema(sql = readMigrations(), statements = runtimeDDL()) {
-  assertAdditiveBootstrap(sql);
+  assertAdditiveMigrations(sql);
   const runtime = memoryDatabase(); const migrated = memoryDatabase();
   try {
     for (const statement of statements) runtime.exec(statement.sql);
-    migrated.exec(sql);
+    applyMigrations(migrated,sql);
     const expected = schemaSnapshot(runtime);
     assert.deepEqual(schemaSnapshot(migrated), expected, 'Bootstrap schema differs from runtime DDL (columns, constraints, foreign keys, indexes or predicates).');
-    migrated.exec(sql);
+    applyMigrations(migrated,sql);
     assert.deepEqual(schemaSnapshot(migrated), expected, 'Applying the bootstrap twice changed the schema.');
     assert.deepEqual(migrated.prepare('PRAGMA foreign_key_check').all(), []);
     assert.equal(migrated.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');

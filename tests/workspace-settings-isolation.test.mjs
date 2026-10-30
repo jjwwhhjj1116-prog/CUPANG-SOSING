@@ -38,8 +38,18 @@ async function harness({native=true,production=true}={}){
   sqlite.prepare('INSERT INTO member_sessions VALUES(?,?,?)').run(await load('app/workspace-members.ts').tokenHash(token),account.id,Date.now()+60000);cookies.set(account.id,`yoofam_session=${token}`);
  }
  const route=load('app/api/settings/route.ts');
- return {sqlite,calls,bannerReads,load,login(account){currentCookie=cookies.get(account.id);},logout(){currentCookie=null;},afterAuth(fn){onHeaders=fn;},get headerReads(){return headerReads;},get:()=>route.GET(),put:body=>route.PUT(new Request('https://app.test/api/settings',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(body)})),seed(account,settings){sqlite.prepare('INSERT INTO workspace_settings VALUES(?,?,?)').run(account.id,JSON.stringify(settings),'2026-01-01T00:00:00.000Z');},rows(){return sqlite.prepare('SELECT * FROM workspace_settings ORDER BY owner_id').all().map(row=>({...row}));},close(){sqlite.close();}};
+ return {sqlite,calls,bannerReads,load,async register(account){const token='c'.repeat(64),now=new Date().toISOString();sqlite.prepare("INSERT INTO members(id,email,password_hash,role,status,created_at,updated_at,login_id,registration_version) VALUES(?,?,'unused','member','approved',?,?,?,1)").run(account.id,account.email,now,now,account.email);sqlite.prepare('INSERT INTO member_sessions VALUES(?,?,?)').run(await load('app/workspace-members.ts').tokenHash(token),account.id,Date.now()+60000);cookies.set(account.id,'yoofam_session='+token);},login(account){currentCookie=cookies.get(account.id);},logout(){currentCookie=null;},afterAuth(fn){onHeaders=fn;},get headerReads(){return headerReads;},get:()=>route.GET(),put:body=>route.PUT(new Request('https://app.test/api/settings',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(body)})),seed(account,settings){sqlite.prepare('INSERT INTO workspace_settings VALUES(?,?,?)').run(account.id,JSON.stringify(settings),'2026-01-01T00:00:00.000Z');},rows(){return sqlite.prepare('SELECT * FROM workspace_settings ORDER BY owner_id').all().map(row=>({...row}));},close(){sqlite.close();}};
 }
+
+test('an approved registration owns independent basic settings without borrowing a seeded company',async()=>{
+ const h=await harness();try{
+  const member={id:'new-registration-fixture',email:'new-seller'};await h.register(member);h.seed(accounts[0],{brand:'기존 브랜드'});const before=h.rows();h.login(member);
+  const response=await h.get();assert.equal(response.status,200);assert.deepEqual(await response.json(),{settings:null,scope:{ownerId:member.id,company:null}});
+  assert.equal((await h.put({brand:'누락된 소유자'})).status,409);assert.equal((await h.put({expectedOwnerId:accounts[0].id,brand:'타인'})).status,409);
+  assert.equal((await h.put({expectedOwnerId:member.id,brand:'내 브랜드'})).status,200);
+  const rows=h.rows();assert.deepEqual(rows.find(row=>row.owner_id===accounts[0].id),before[0]);assert.equal(JSON.parse(rows.find(row=>row.owner_id===member.id).payload).brand,'내 브랜드');
+ }finally{h.close();}
+});
 
 test('native settings GET exposes current owner and fixed company without copying another saved row',async()=>{
  const h=await harness();try{

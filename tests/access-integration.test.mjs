@@ -4,16 +4,31 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 
+function summaryStorage(calls = []) {
+  const read = name => async (owner, products) => { calls.push({ name, owner, products }); return {}; };
+  const mutation = name => async (...args) => { calls.push({ name, args }); return null; };
+  return {
+    '@/db/product-content': { readRegistrationSummaries: read('registration') },
+    '@/db/collection-images': { readRegistrationSourceImages: read('source-images') },
+    '@/db/supplier-hub-receipts': { readSupplierHubReceiptSummaries: read('receipts') },
+    '@/db/supplier-hub-single-receipts': { readSingleReceiptSummaries: read('single-receipts') },
+    '@/db/product-removals': { readProductRemovalPolicies: read('removal-policies'), removeProduct: mutation('remove'), restoreProduct: mutation('restore') },
+    '@/app/product-removal-policy': { unconfirmedProductRemovalDecision: () => {
+      calls.push({ name: 'removal-fallback' });
+      return { blocked: true, code: 'PRODUCT_HUB_EVIDENCE_UNCONFIRMED', reason: 'Synthetic unconfirmed receipt storage', receipt: null };
+    } },
+  };
+}
+
 function load(file, dependencies = {}, mode = 'production') {
   const exports = {};
+  const emptyStorage = summaryStorage();
   const output = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   vm.runInNewContext(output, { exports, crypto, TextEncoder, TextDecoder, URL, Response, atob, btoa, AbortController, setTimeout, clearTimeout, process: { env: { NODE_ENV: mode } }, require: name => {
     if (name in dependencies) return dependencies[name];
     if (name === 'cloudflare:workers') return {env:{}};
     if (name === '@/db/workspace-banners') return load('db/workspace-banners.ts', dependencies, mode);
-    if (name === '@/db/product-content') return {readRegistrationSummaries: async()=>({})};
-    if (name === '@/db/collection-images') return {readRegistrationSourceImages: async()=>({})};
-    if (name === '@/db/supplier-hub-receipts') return {readSupplierHubReceiptSummaries: async()=>({})};
+    if (name in emptyStorage) return emptyStorage[name];
     if (name === 'next/server') return { NextResponse: Response };
     if (name === 'next/navigation') return { redirect: () => { throw Error('Redirect not expected'); } };
     if (name === '@/app/workspace-settings') return load('app/workspace-settings.ts', {}, mode);
@@ -39,9 +54,9 @@ function runtime(sequence, environment = env, mode = 'production') {
   const verifier = access.createCloudflareAccessVerifier({ now: () => clock, fetcher: async () => Response.json({ keys: [jwk] }) });
   let read = 0;
   const auth = load('app/chatgpt-auth.ts', { 'cloudflare:workers': { env: environment }, 'next/headers': { headers: async () => sequence[Math.min(read++, sequence.length - 1)] }, '@/app/cloudflare-access': { ...access, authenticateCloudflareAccess: verifier.authenticate } }, mode);
-  return { auth, mode };
+  return { auth, mode, storageCalls: [] };
 }
-function route(file, context, queries) { return load(file, { '@/app/chatgpt-auth': context.auth, '@/db/queries': queries }, context.mode); }
+function route(file, context, queries) { return load(file, { '@/app/chatgpt-auth': context.auth, '@/db/queries': queries, ...summaryStorage(context.storageCalls) }, context.mode); }
 
 test('production identity ignores forged OpenAI/email headers and remains closed with missing Access configuration', async () => {
   const forged = new Headers({ 'oai-authenticated-user-id': 'arbitrary', 'oai-authenticated-user-email': 'attacker@example.invalid', 'cf-access-authenticated-user-email': 'attacker@example.invalid', verifiedAccess: 'true' });
@@ -61,6 +76,7 @@ test('production settings and products reject unverified requests before any dat
   assert.equal((await products.GET()).status, 503);
   assert.equal((await products.POST(new Request('http://localhost', { method: 'POST', body: '{}' }))).status, 503);
   assert.equal(touched, false);
+  assert.deepEqual(context.storageCalls, [], 'Anonymous requests must not read receipt, image or removal storage.');
 });
 
 test('verified production API calls use isolated JWT-derived owners and preserve local-demo as a separate development space', async () => {
@@ -69,6 +85,8 @@ test('verified production API calls use isolated JWT-derived owners and preserve
   assert.equal((await route('app/api/settings/route.ts', context, queries).GET()).status, 200);
   assert.equal((await route('app/api/products/route.ts', context, queries).GET()).status, 200);
   assert.ok(calls.every(owner => /^cf:[a-f0-9]{64}$/.test(owner))); assert.equal(new Set(calls).size, 1);
+  assert.deepEqual(context.storageCalls.map(call => call.name).sort(), ['receipts', 'registration', 'removal-policies', 'single-receipts', 'source-images']);
+  assert.ok(context.storageCalls.every(call => call.owner === calls[0] && Array.isArray(call.products) && call.products.length === 0), 'Every product enrichment read must use the verified owner and the owner-scoped product list.');
   const previous = calls[0]; const other = runtime([await signedHeaders('another-user', 'another@example.invalid')]);
   assert.equal((await route('app/api/settings/route.ts', other, queries).GET()).status, 200); assert.notEqual(calls.at(-1), previous);
   const development = runtime([new Headers()], {}, 'development');
@@ -94,7 +112,7 @@ test('production page does not render the working dashboard for an unverified id
 
 test('production image/file routes and generic product PATCH reject unauthenticated requests before storage', async () => {
   const context = runtime([new Headers()]); let touched = false;
-  const dependencies = { '@/app/chatgpt-auth': context.auth, 'cloudflare:workers': { env: { FILES: { get: async () => { touched = true; }, put: async () => { touched = true; } } } }, '@/db/queries': { findProduct: async () => { touched = true; }, updateProduct: async () => { touched = true; } } };
+  const dependencies = { '@/app/chatgpt-auth': context.auth, 'cloudflare:workers': { env: { FILES: { get: async () => { touched = true; }, put: async () => { touched = true; } } } }, '@/db/queries': { findProduct: async () => { touched = true; }, updateProduct: async () => { touched = true; } }, ...summaryStorage(context.storageCalls) };
   const upload = load('app/api/files/route.ts', dependencies);
   const file = load('app/api/files/[...key]/route.ts', dependencies);
   const product = load('app/api/products/[id]/route.ts', dependencies);
@@ -103,7 +121,9 @@ test('production image/file routes and generic product PATCH reject unauthentica
   const params = { params: Promise.resolve({ id: 'synthetic' }) };
   assert.equal((await product.GET(new Request('http://localhost'), params)).status, 503);
   assert.equal((await product.PATCH(new Request('http://localhost', { method: 'PATCH', body: '{"title":"test"}' }), params)).status, 503);
+  assert.equal((await product.DELETE(new Request('http://localhost', { method: 'DELETE', body: '{}' }), params)).status, 503);
   assert.equal(touched, false);
+  assert.deepEqual(context.storageCalls, [], 'Unauthenticated product reads, updates and removals must not touch any enrichment or removal storage.');
 });
 
 test('production login reports a safe authentication reason while keeping access closed', async () => {
