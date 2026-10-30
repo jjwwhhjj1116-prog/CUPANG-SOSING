@@ -53,6 +53,28 @@ test('stage-seven review remains valid without display metadata and retains the 
   assert.equal((await put(h,before,[{fieldKey:'brand',optionId:null,value:'검토한 브랜드'}])).status,200);
  }finally{h.sqlite.close();}
 });
+
+test('fresh automatic ALT follows saved SEO while explicit blank ALT and quotation overrides remain blank',async()=>{
+ const h=await harness();try{
+  const model=h.load('app/product-content.ts'),initial=model.emptyProductContent('product');
+  const content=model.applyContentPatch(initial,{seo:{title:'검토한 한국어 상품명'}},version);
+  h.sqlite.prepare('INSERT INTO product_content VALUES(?,?,?,?,?)').run('product','owner',1,JSON.stringify(content),version);
+  const view=await get(h);assert.equal(view.resolved.rows[0].fields.altText.value,'검토한 한국어 상품명');
+  assert.equal(model.currentDetailContent(content,product.title).altText.value,'검토한 한국어 상품명');
+  for(const provenance of ['collected','translated','generated']){
+   const explicit=structuredClone(content);explicit.detail.altText={value:'',provenance,updatedAt:version};
+   assert.equal(model.currentDetailContent(explicit,product.title).altText.value,'');
+   h.sqlite.prepare('UPDATE product_content SET payload=? WHERE product_id=?').run(JSON.stringify(explicit),'product');
+   assert.equal((await get(h)).resolved.rows[0].fields.altText.value,'',provenance+' blank is retained');
+  }
+  const manual=model.applyContentPatch(content,{detail:{altText:''}},version);
+  assert.equal(model.currentDetailContent(manual,product.title).altText.value,'');
+  h.sqlite.prepare('UPDATE product_content SET revision=?, payload=? WHERE product_id=?').run(2,JSON.stringify(manual),'product');
+  const blank=await get(h);assert.equal(blank.resolved.rows[0].fields.altText.value,'');
+  const override=await put(h,blank,[{fieldKey:'altText',optionId:null,value:''}]);assert.equal(override.status,200);
+  assert.equal((await override.json()).resolved.rows[0].fields.altText.value,'');
+ }finally{h.sqlite.close();}
+});
 async function profile(h,id='80719'){return h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'LOCAL TEST category',categoryId:id,categoryPath:h.load('app/quotation-schema.ts').getQuotationSchema(id).categoryPath.length?[...h.load('app/quotation-schema.ts').getQuotationSchema(id).categoryPath]:['미확인 카테고리'],template:null,mappings:[]});}
 const baseGuard=()=>({productVersion:version,imageKeys:product.image_keys,pricingPolicy:null,contentRevision:0,optionRevision:0,settingsPayload:null,profile:null,collection:null});
 

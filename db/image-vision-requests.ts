@@ -17,6 +17,15 @@ const membership="EXISTS(SELECT 1 FROM members m WHERE m.id=? AND lower(trim(m.e
 const memberArgs=(scope:Scope)=>[scope.owner,scope.member.email,scope.member.role,scope.company.code,scope.company.name];
 async function record(db:Awaited<ReturnType<typeof database>>,scope:Scope){return db.prepare('SELECT status,request_fingerprint,result,failure FROM image_vision_requests WHERE owner_id=? AND product_id=? AND request_id=? AND company_code=? AND company_name=? AND model=?')
  .bind(scope.owner,scope.productId,scope.requestId,scope.company.code,scope.company.name,scope.model).first<Row>();}
+/** A historical observation never initializes storage, claims a request or
+ * changes an uncertain row. Full original source/config fingerprints bind it. */
+export async function readImageVisionRequest(scope:Scope):Promise<Row|null>{
+ const db=env.DB;if(!db)throw Error('Image Vision store unavailable');
+ return db.prepare(`SELECT status,request_fingerprint,result,failure FROM image_vision_requests r WHERE r.owner_id=? AND r.product_id=? AND r.request_id=?
+ AND r.company_code=? AND r.company_name=? AND r.model=? AND r.request_fingerprint=? AND r.source_scope=? AND ${membership}
+ AND EXISTS(SELECT 1 FROM products p WHERE p.id=r.product_id AND p.owner_id=r.owner_id)`)
+ .bind(scope.owner,scope.productId,scope.requestId,scope.company.code,scope.company.name,scope.model,scope.fingerprint,scope.sourceScope,...memberArgs(scope)).first<Row>();
+}
 /** Claim precedes inference. Source bytes stay in R2; only bounded proposals live here. */
 export async function claimImageVisionRequest(scope:Scope){
  const db=await database();
@@ -44,4 +53,20 @@ export async function finishImageVisionRequest(scope:Scope,value:({status:'compl
  const row=await db.prepare(`UPDATE image_vision_requests SET status=?,result=?,failure=?,provider_requests=?,finished_at=? WHERE owner_id=? AND product_id=? AND request_id=? AND company_code=? AND company_name=? AND model=? AND request_fingerprint=? AND source_scope=? AND status='running' AND ${membership} RETURNING status`)
  .bind(value.status,result,failure,value.requests,new Date().toISOString(),scope.owner,scope.productId,scope.requestId,scope.company.code,scope.company.name,scope.model,scope.fingerprint,scope.sourceScope,...memberArgs(scope)).first();
  if(!row)throw Error('Image Vision request changed');
+}
+/** Only a retained promise from this original provider invocation may finish
+ * its existing claim. Terminal rows and all source/product content stay put. */
+export async function finishLateImageVisionRequest(scope:Scope,value:{status:'completed';result:ImageTextVisionResult}|{status:'failed';failure:string}){
+ const db=env.DB;if(!db)throw Error('Image Vision store unavailable');
+ if(value.status!=='completed'&&value.status!=='failed'||value.status==='failed'&&(!('failure'in value)||typeof value.failure!=='string')
+   ||value.status==='completed'&&(!('result'in value)||!value.result||typeof value.result!=='object'))throw Error('Invalid late Image Vision observation');
+ const result='result'in value?JSON.stringify(value.result):null,failure='failure'in value?value.failure:null;
+ if(result&&(new TextEncoder().encode(result).length>96*1024||value.status!=='completed'||!('result'in value)||value.result.requests!==1||value.result.model!==scope.model))throw Error('Invalid late Image Vision result');
+ if(failure!==null&&!/^[A-Z_]{1,32}$/.test(failure))throw Error('Invalid late Image Vision failure');
+ const row=await db.prepare(`UPDATE image_vision_requests SET status=?,result=?,failure=?,provider_requests=1,finished_at=?
+ WHERE owner_id=? AND product_id=? AND request_id=? AND company_code=? AND company_name=? AND model=? AND request_fingerprint=? AND source_scope=?
+ AND ((status='running' AND provider_requests IS NULL) OR (status='uncertain' AND provider_requests=1)) AND ${membership}
+ AND EXISTS(SELECT 1 FROM products p WHERE p.id=image_vision_requests.product_id AND p.owner_id=image_vision_requests.owner_id) RETURNING status`)
+ .bind(value.status,result,failure,new Date().toISOString(),scope.owner,scope.productId,scope.requestId,scope.company.code,scope.company.name,scope.model,scope.fingerprint,scope.sourceScope,...memberArgs(scope)).first();
+ return!!row;
 }

@@ -1,6 +1,7 @@
 import {planBatchImageWork,refreshBatchImageTask,type BatchImageTask} from '@/app/batch-image-work';
 import {applyDetailBatchResult,recoverDetailBatchResult,detailBatchCapacity,detailBatchSelection,detailBatchTranslationSlots,type DetailImageBatch} from '@/app/detail-image-batch';
-import {readFreeImageSource,recognizeFreeImage,translateFreeImageRegions,renderFreeImageTranslation,type FreeImageLoaded,type FreeImageRegion} from '@/app/free-image-translation-client';
+import {readFreeImageSource,recognizeFreeImage,translateFreeImageRegions,renderFreeImageTranslation,readFreeImageVisionStatus,type FreeImageVisionStatus,type FreeImageLoaded,type FreeImageRegion} from '@/app/free-image-translation-client';
+import {FreeImageVisionError,type FreeImageVisionAttempt} from '@/app/free-image-vision-error';
 import {isOwnedImageKey} from '@/app/image-files';
 import type {ProductContent} from '@/app/product-content';
 import type {QuotationFieldsView} from '@/app/quotation-schema';
@@ -9,11 +10,12 @@ import type {WorkspaceSettingsScope} from '@/app/workspace-settings-scope';
 import type {WorkspaceSettings} from '@/app/workspace-settings';
 
 export type SelectedImageStage='main'|'additional'|'detail';
-export type SelectedImageStageState={ownerId:string;productId:string;stage:SelectedImageStage;scope?:WorkspaceSettingsScope;settings?:WorkspaceSettings;content?:ProductContent;view?:QuotationFieldsView;batches:Record<string,DetailImageBatch>};
+export type SelectedImageInferencePending={optionId:string;slotIndex:number;attempt:FreeImageVisionAttempt;code:string;message:string;observation?:FreeImageVisionStatus};
+export type SelectedImageStageState={ownerId:string;productId:string;stage:SelectedImageStage;scope?:WorkspaceSettingsScope;settings?:WorkspaceSettings;content?:ProductContent;view?:QuotationFieldsView;batches:Record<string,DetailImageBatch>;inferencePending?:SelectedImageInferencePending};
 export function createSelectedImageStageState(ownerId:string,productId:string,stage:SelectedImageStage):SelectedImageStageState{return{ownerId,productId,stage,batches:{}};}
-export type SelectedImageStageResult={status:'completed'|'partial'|'skipped'|'uncertain';applied:number;failed:number;skipped:number;messages:string[];productVersion?:string;recoveryBatch?:DetailImageBatch;state:SelectedImageStageState;recovered?:boolean;sourceChanged?:true};
+export type SelectedImageStageResult={status:'completed'|'partial'|'skipped'|'uncertain';applied:number;failed:number;skipped:number;messages:string[];productVersion?:string;recoveryBatch?:DetailImageBatch;state:SelectedImageStageState;recovered?:boolean;sourceChanged?:true;inferencePending?:true};
 export type SelectedImageStageOptions={ownerId:string;signal:AbortSignal;fetcher:typeof fetch;isCurrent?:()=>boolean;onProgress?:(message:string)=>void;expectedProductVersion?:string;state?:SelectedImageStageState};
-type Dependencies={plan?:typeof planBatchImageWork;refresh?:typeof refreshBatchImageTask;readSource?:typeof readFreeImageSource;recognize?:typeof recognizeFreeImage;translate?:typeof translateFreeImageRegions;render?:typeof renderFreeImageTranslation;apply?:typeof applyDetailBatchResult;recover?:typeof recoverDetailBatchResult};
+type Dependencies={plan?:typeof planBatchImageWork;refresh?:typeof refreshBatchImageTask;readSource?:typeof readFreeImageSource;recognize?:typeof recognizeFreeImage;translate?:typeof translateFreeImageRegions;render?:typeof renderFreeImageTranslation;apply?:typeof applyDetailBatchResult;recover?:typeof recoverDetailBatchResult;observe?:typeof readFreeImageVisionStatus};
 const label={main:'대표 이미지',additional:'추가 이미지',detail:'상세 이미지'};
 export const SELECTED_IMAGE_SLOT_TIMEOUT_MS=90000;
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
@@ -42,6 +44,16 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
  const plan=await(deps.plan??planBatchImageWork)([{id:productId,title:productId}],signal,fetcher);active();
  if(plan.scope.ownerId!==ownerId||!plan.scope.company||state.scope&&!same(state.scope,plan.scope))throw changed();
  state.scope??=structuredClone(plan.scope);
+ if(state.inferencePending){
+  result.inferencePending=true;result.failed=1;
+  const pending=state.inferencePending;
+  try{
+   const observation=await(deps.observe??readFreeImageVisionStatus)(pending.attempt,signal,fetcher);active();pending.observation=observation;
+   const labels={running:'처리 중',completed:'번역 응답 확인 · 적용 전 검토 필요',failed:'확정 실패',uncertain:'추론 결과 미확정','not-found':'같은 요청 기록 미확인'};
+   result.messages.push(`원래 이미지 Vision 요청 ${pending.attempt.requestId}: ${labels[observation.status]}. 새 추론·업로드는 요청하지 않았습니다. 남은 이미지는 자동 실행하지 않습니다.`);
+  }catch(cause){active();result.messages.push(note(cause)+' 원래 요청 '+pending.attempt.requestId+'를 보존하고 새 추론·업로드는 요청하지 않았습니다.');}
+  return result;
+ }
  // A retry of an unknown save is read-only. Keep its exact PNG and attempt
  // before dispatch so cancellation/ACK loss cannot erase the recovery proof.
  const uncertain=Object.values(state.batches).find(batch=>batch.items.some(item=>item.status==='uncertain'));
@@ -191,6 +203,14 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
     const partial=batch.items.find(item=>item.slotIndex===slotIndex)?.translationReview;
     if(partial?.status==='partial'){result.failed++;result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: ${partial.message} 저장된 이미지를 수동 편집에서 열어 확인해주세요.`);break;}
    }catch(cause){
+    if(cause instanceof FreeImageVisionError&&cause.uncertain){
+     if(!image||cause.attempt.requestId!==image.visionRequestId||!same(cause.attempt.source,image.source))throw changed();
+     const pending={optionId:task.optionId,slotIndex,attempt:structuredClone(cause.attempt),code:cause.code,message:note(cause)};
+     state.inferencePending=pending;result.inferencePending=true;result.failed++;
+     remember({...batch,items:batch.items.map(item=>item.slotIndex===slotIndex?{...item,status:'failed',message:note(cause),rendered:undefined}:item)});
+     result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: ${note(cause)} 원래 요청 ${cause.attempt.requestId}를 보존하고 남은 이미지 추론을 멈췄습니다.`);
+     return result;
+    }
     if(cause instanceof SelectedImageScopeChanged)result.sourceChanged=true;
     if(batch.items.some(item=>item.status==='uncertain')){result.status='uncertain';result.failed++;result.recoveryBatch=batch;result.messages.push(note(cause)+' 같은 이미지의 저장 상태를 확인하기 전에는 다음 이미지에 적용하지 않습니다.');return result;}
     active();

@@ -561,7 +561,8 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
         const description = currentDetailContent(content).description.value;
         return literal(description ? `<p>${htmlEscape(description).replace(/\r?\n/g, '<br>')}</p>` : '', 'content');
       }
-      case 'altText': return content.detail?.altText ? contentValue(content.detail.altText) : { value: title, source: titleSource };
+      case 'altText': return content.detail?.altText && (content.detail.altText.provenance !== 'unverified' || content.detail.altText.value !== '')
+        ? contentValue(content.detail.altText) : { value: title, source: titleSource };
       case 'noticeNameModel': {
         const value = [...new Set([savedTextOrFallback(content.label.productName, title), content.label.model.value].filter(Boolean))].join(' / ');
         return content.label.productName.provenance === 'manual' || content.label.model.provenance === 'manual' ? { value, source: 'content' } : literal(value, 'content');

@@ -215,8 +215,11 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     return runSelectedPricingWork(productId,{fetcher,signal,assertCurrent});
   }
   async function image(id:'mainImage'|'additionalImages'|'detailImage'):Promise<Outcome>{
-    const role=({mainImage:'main',additionalImages:'additional',detailImage:'detail'} as const)[id],current=await product();
+    const role=({mainImage:'main',additionalImages:'additional',detailImage:'detail'} as const)[id];
     const stateKey=identity+':'+id;
+    const inferenceLatch=identity+':vision-inference-pending',pendingInference=keys.get(inferenceLatch);
+    if(pendingInference&&pendingInference!==stateKey)return{status:'blocked',message:'앞선 이미지 번역 응답이 확정되지 않아 추가 이미지 호출을 멈췄습니다. 표시사항·견적서 등 독립된 단계는 계속 진행합니다.'};
+    const current=await product();
     let state=imageStates!.get(stateKey),expectedProductVersion:string|undefined;
     keys.set(identity+':pending:'+id,'이미지 저장 결과 확인 필요');
     if(!state){
@@ -227,6 +230,8 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     }
     const result=await processSelectedImageStage(productId,role,{state,ownerId:controls.expectedOwnerId,signal,fetcher,expectedProductVersion,isCurrent:()=>!signal.aborted,
       onProgress:message=>controls.onStage({id,status:'running',message})});
+    if(result.inferencePending)keys.set(inferenceLatch,stateKey);
+    else if(pendingInference===stateKey)keys.delete(inferenceLatch);
     if(result.status!=='uncertain'&&!result.sourceChanged){
       const savedVersion=result.productVersion??state.view?.productVersion??expectedProductVersion??current.updated_at;
       if((await product()).updated_at!==savedVersion)throw new ScopeChanged('이미지 작업 중 상품·원본 또는 저장값이 변경되어 뒤의 작업을 멈췄습니다. 확인된 저장본은 유지했습니다.');

@@ -15,7 +15,7 @@ function loadModel(){
     assert.ok(name.startsWith('@/'),name);return load(name.slice(2)+'.ts');
    }},{filename:file});return exports;
  }
- return{model:load('app/batch-selected-image-work.ts'),expire(){for(const timer of [...timers.values()])timer.fn();},timers};
+ return{model:load('app/batch-selected-image-work.ts'),vision:load('app/free-image-vision-error.ts'),visionContract:load('app/image-text-vision.ts'),expire(){for(const timer of [...timers.values()])timer.fn();},timers};
 }
 function fixture(stage='detail',keys=['owner/source-a.png','owner/source-b.png']){
  const runtime=loadModel(),calls=[],canvases=[],controller=new AbortController();let current=true;
@@ -247,4 +247,18 @@ test('failed Vision blocks preserve the source and stop without a second transla
 test('unsafe Vision geometry is a review failure, never no-foreign-text success or an automatic image apply',async()=>{
  const h=fixture('main',['owner/source-a.png']);h.deps.recognize=async image=>{image.visionResult={provider:'workers-ai-vision'};image.visionStyleIssues=['VISION_REGION_OVERLAP'];return[{...h.region('中文'),translated:'검정',translationProvenance:'generated',selected:false,issue:'VISION_REGION_OVERLAP'}];};
  const result=await h.run();assert.equal(result.status,'partial');assert.equal(result.failed,1);assert.equal(result.applied,0);assert.match(result.messages.join(' '),/VISION_REGION_OVERLAP/);assert.equal(h.calls.filter(row=>['translate','render','apply'].includes(row[0])).length,0);
+});
+
+for(const stage of ['main','additional','detail'])test(`${stage}: uncertain Vision inference retains one source attempt and stops all later slots/options without upload recovery`,async()=>{
+ const h=fixture(stage,stage==='main'?['owner/source-a.png']:undefined),requestId='0fa1748b-fd6e-4b16-8120-754071c7a73f';
+ h.plan.tasks.push({...h.plan.tasks[0],optionId:'later-option',optionLabel:'후속 옵션'});
+ const read=h.deps.readSource;h.deps.readSource=async(...args)=>{const loaded=await read(...args);loaded.source.quotationTarget.bindingSha256='c'.repeat(64);return loaded;};
+ h.deps.recognize=async image=>{h.calls.push(['vision',image.source.sourceKey]);image.visionRequestId=requestId;throw new h.vision.FreeImageVisionError('provider response uncertain','IMAGE_VISION_TIMEOUT',true,{requestId,source:image.source,sourceLanguage:'zh',configuration:{provider:'workers-ai-vision',model:h.visionContract.IMAGE_TEXT_VISION_MODEL,configured:true,paidAllowed:true,notice:h.visionContract.IMAGE_TEXT_VISION_NOTICE}});};
+ h.deps.recover=async()=>assert.fail('Vision is not an uncertain upload');
+ h.deps.observe=async attempt=>{h.calls.push(['vision-status',attempt.requestId]);return{status:'uncertain'};};
+ const result=await h.run();assert.equal(result.status,'partial');assert.equal(result.inferencePending,true);assert.equal(result.recoveryBatch,undefined);assert.equal(result.applied,0);assert.equal(result.failed,1);
+ assert.equal(h.calls.filter(row=>row[0]==='read').length,1);assert.equal(h.calls.filter(row=>row[0]==='vision').length,1);assert.equal(h.calls.some(row=>['translate','render','apply'].includes(row[0])),false);assert.ok(h.canvases.every(canvas=>canvas.width===0));
+ const pending=plain(result.state.inferencePending);assert.equal(pending.attempt.requestId,requestId);assert.equal(pending.optionId,'option');assert.equal(pending.slotIndex,0);assert.equal(pending.attempt.source.sourceKey,'owner/source-a.png');assert.equal(result.state.batches['later-option'],undefined);
+ const calls=h.calls.length,resumed=await h.run();assert.equal(resumed.inferencePending,true);assert.equal(h.calls.length,calls+1,'only the retained request status is read');assert.equal(h.calls.at(-1)[0],'vision-status');assert.deepEqual(plain(resumed.state.inferencePending),{...pending,observation:{status:'uncertain'}});
+ h.plan.scope.company={code:'A01526306',name:'유앤채'};await assert.rejects(h.run(),/변경/);assert.equal(h.calls.length,calls+1);
 });

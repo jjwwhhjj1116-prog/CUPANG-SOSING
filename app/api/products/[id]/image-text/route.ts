@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { env } from 'cloudflare:workers';
+import { env, waitUntil } from 'cloudflare:workers';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { findProduct } from '@/db/queries';
 import { readProductContent } from '@/db/product-content';
@@ -230,6 +230,30 @@ function fail(error: unknown) {
 export async function GET(request: Request, context: Context) {
   try {
     const owner = await ownerId(), { id } = await context.params, params = new URL(request.url).searchParams;
+    if(params.has('visionRequestId')){
+      sameOrigin(request);
+      if(request.url.length>65536||[...params.keys()].some(key=>!['visionRequestId','source','sourceLanguage'].includes(key)||params.getAll(key).length!==1)
+        ||!['zh','en'].includes(params.get('sourceLanguage')??'')||!params.has('source')
+        ||!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(params.get('visionRequestId')??''))throw new ImageTextError(400,'조회할 원래 이미지 Vision 요청을 확인해주세요.');
+      let raw:unknown;try{raw=JSON.parse(params.get('source')!);}catch{throw new ImageTextError(400,'원래 이미지 Vision 원본 정보를 확인해주세요.');}
+      const source=validateFreeImageSource(raw),configuration=imageVisionConfiguration(env as ImageVisionEnvironment),sourceLanguage=params.get('sourceLanguage') as 'zh'|'en',company=await editorCompany(owner);
+      if(source.workspaceTarget||source.productId!==id||!isOwnedImageKey(owner,source.sourceKey))throw new ImageTextError(400,'이 상품의 본인 소유 Vision 기록만 조회할 수 있습니다.');
+      const memberNow=async()=>{const user=await getChatGPTUser(),member=user?.membership;if(!user?.verifiedAccess||user.userId!==owner||member?.id!==owner||member.status!=='approved'||member.email!==user.email||JSON.stringify(approvedSupplierHubCompany(member))!==JSON.stringify(company))throw changed();return{email:member.email.toLowerCase().trim(),role:member.role};};
+      const member=await memberNow(),requestId=params.get('visionRequestId')!;
+      const scope={owner,productId:id,requestId,company,member,model:configuration.model,productVersion:source.productVersion,contentRevision:source.contentRevision,
+        fingerprint:await digest(new TextEncoder().encode(JSON.stringify({source:freeImageSourceIdentity(source),company,member,configuration,language:sourceLanguage}))),
+        sourceScope:await digest(new TextEncoder().encode(JSON.stringify([source.sourceKey,source.sourceSha256,company,configuration.model,sourceLanguage])))};
+      const {readImageVisionRequest}=await import('@/db/image-vision-requests'),record=await readImageVisionRequest(scope);
+      request.signal.throwIfAborted();if(await ownerId()!==owner||JSON.stringify(await memberNow())!==JSON.stringify(member)||JSON.stringify(imageVisionConfiguration(env as ImageVisionEnvironment))!==JSON.stringify(configuration))throw changed();
+      if(record&&(!['running','completed','failed','uncertain'].includes(record.status)||record.request_fingerprint!==scope.fingerprint
+        ||record.failure!==null&&!/^[A-Z_]{1,32}$/.test(record.failure)))throw new ImageTextError(409,'원래 이미지 Vision 기록의 상태를 확인하지 못했습니다.');
+      let result=null;
+      if(record?.status==='completed'){
+        let stored:unknown;try{stored=JSON.parse(record.result??'null');}catch{throw new ImageVisionError('BLOCKS');}
+        result=readStoredImageVisionResult(stored,source.width,source.height);
+      }
+      return response({format:'yoofam-image-vision-status-v1',source,configuration,sourceLanguage,requestId,status:record?.status??'not-found',result,failure:record?.failure??null,execution:{requests:0},readOnly:true});
+    }
     if (params.get('list') === 'sources') {
       if ([...params.keys()].some(key => !['list', 'role'].includes(key) || params.getAll(key).length !== 1)
         || !validFreeImageRole(params.get('role')) || params.get('role') === 'label') throw new ImageTextError(400, '조회할 이미지 역할을 선택해주세요.');
@@ -296,7 +320,7 @@ export async function POST(request: Request, context: Context) {
         const scope={owner,productId:id,requestId:input.requestId,company,member,model:configuration.model,productVersion:source.productVersion,contentRevision:source.contentRevision,
           fingerprint:await digest(new TextEncoder().encode(JSON.stringify({source:freeImageSourceIdentity(source),company,member,configuration,language:input.sourceLanguage}))),
           sourceScope:await digest(new TextEncoder().encode(JSON.stringify([source.sourceKey,source.sourceSha256,company,configuration.model,input.sourceLanguage])))};
-        const {claimImageVisionRequest,finishImageVisionRequest,completedImageVisionResult}=await import('@/db/image-vision-requests');
+        const {claimImageVisionRequest,finishImageVisionRequest,completedImageVisionResult,finishLateImageVisionRequest}=await import('@/db/image-vision-requests');
         const claimed=await claimImageVisionRequest(scope);
         if(!claimed.claimed){
           if(claimed.record?.request_fingerprint!==scope.fingerprint)throw new ImageTextError(409,'같은 원본의 이미지 Vision 요청이 진행 중이거나 응답을 확인하지 못했습니다. 자동 재요청하지 않습니다.');
@@ -320,7 +344,26 @@ export async function POST(request: Request, context: Context) {
           await finishImageVisionRequest(scope,{status:'completed',result,requests:1});
           await assertCurrent();return response({source,configuration,requestId:scope.requestId,result,replayed:false,execution:{requests:1,cached:false}});
         }catch(error){
-          try{await finishImageVisionRequest(scope,{status:error instanceof ImageVisionError?(error.uncertain?'uncertain':'failed'):invoked?'uncertain':'failed',failure:error instanceof ImageVisionError?error.reason:invoked?'CURRENT_CHANGED':'BEFORE_CALL',requests:invoked?1:0});}catch{/* A retained running row also fences retries. */}
+          // Create the foreground ledger write only once. The background
+          // observer waits for it, so it cannot be overwritten by TIMEOUT.
+          const finished=finishImageVisionRequest(scope,{status:error instanceof ImageVisionError?(error.uncertain?'uncertain':'failed'):invoked?'uncertain':'failed',failure:error instanceof ImageVisionError?error.reason:invoked?'CURRENT_CHANGED':'BEFORE_CALL',requests:invoked?1:0}).catch(()=>{/* A retained running row also fences retries. */});
+          if(invoked&&error instanceof ImageVisionError&&error.lateResult&&typeof waitUntil==='function'){
+            const original=error.lateResult;
+            let admit:(accepted:boolean)=>void=()=>{};
+            const admitted=new Promise<boolean>(resolve=>{admit=resolve;});
+            const observation=(async()=>{
+              if(!await admitted)return;
+              await finished;
+              try{const result=await original;await finishLateImageVisionRequest(scope,{status:'completed',result});}
+              catch(late){
+                // A transport rejection remains uncertain. Only a completed
+                // but invalid provider result is a confirmed semantic failure.
+                if(late instanceof ImageVisionError&&!late.uncertain)await finishLateImageVisionRequest(scope,{status:'failed',failure:late.reason});
+              }
+            })().catch(()=>{/* Keep the original fenced request if observation fails. */});
+            try{waitUntil(observation);admit(true);}catch{admit(false);/* Keep uncertain when background support is unavailable. */}
+          }
+          await finished;
           throw error;
         }
       }

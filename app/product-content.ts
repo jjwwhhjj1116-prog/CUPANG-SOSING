@@ -102,9 +102,10 @@ export function withCurrentLabelFields(content: ProductContent): ProductContent 
 
 /** Resolve new draft linkage and preserve the former fallback for legacy work. */
 export function currentDetailContent(content: ProductContent, fallbackTitle = '') {
+  const altText = content.detail?.altText;
   return {
     description: content.detailDescriptionLinked === true ? content.seo.description : content.detail?.description ?? content.seo.description,
-    altText: content.detail?.altText ?? { ...content.seo.title, value: savedTextOrFallback(content.seo.title, fallbackTitle) },
+    altText: altText && (altText.provenance !== 'unverified' || altText.value !== '') ? altText : { ...content.seo.title, value: savedTextOrFallback(content.seo.title, fallbackTitle) },
   };
 }
 

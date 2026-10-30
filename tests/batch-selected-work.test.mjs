@@ -63,6 +63,18 @@ test('price-only run checks calculated option prices without unrelated writes',a
  assert.deepEqual(h.events.map(row=>row.status),['running','draft']);
 });
 
+test('an uncertain Vision inference stops later image calls while independent labels and quotation still run',async()=>{
+ const h=fixture();h.image({status:'partial',inferencePending:true,messages:['원래 Vision 요청 결과 미확정']});
+ const result=await h.run(['mainImage','additionalImages','detailImage','koreanLabel','quotation']);
+ assert.deepEqual(h.calls.filter(call=>call.adapter==='image').map(call=>call.stage),['main']);
+ assert.equal(h.calls.filter(call=>call.url?.endsWith('/work-draft')).length,1);
+ assert.equal(h.calls.some(call=>call.adapter==='label'),true);assert.equal(h.calls.some(call=>call.adapter==='packaging'),true);
+ assert.deepEqual(result.stages.slice(0,3).map(row=>row.status),['blocked','blocked','blocked']);
+ assert.match(result.stages[1].message,/독립된 단계는 계속/);
+ const before=h.calls.filter(call=>call.adapter==='image').length;
+ await h.run(['additionalImages']);assert.equal(h.calls.filter(call=>call.adapter==='image').length,before,'same queue cannot bypass its pending inference through another image role');
+});
+
 const savedSummary=(completed=[])=>({seo:completed.includes('seo'),seoTitle:null,mainImageKey:null,main:0,additional:0,detail:0,label:0,missingImages:false,
  stages:Object.fromEntries(stageIds.map(id=>[id,{state:completed.includes(id)?'complete':'pending',detail:'서버에서 확인한 현재 저장값'}]))});
 

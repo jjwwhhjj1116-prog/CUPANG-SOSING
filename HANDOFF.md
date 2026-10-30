@@ -6620,3 +6620,10 @@ REA로 Couplus의 localhost HTTP/SSE와 별도 상품조회 경계를 확인했�
 - 분리12파일304개 검사 최초303pass/1version기대실패, 해당2.1.60 기대 수정 후 관련7/7pass. tsc/lint/build 통과·독립P1P2없음. 전체 성공으로 숫자를 부풀리지 않는다.
 - QA261030001001에서 전송 버튼 노출과 전체 작업 SEO/가격 skip을 실제 확인했다. 이미지 Vision TIMEOUT 후 추가 이미지도 대기해 원래 AI 요청을 재시도하지 않고 QA 탭 reload로 중단했다. 이미지 오류 정보 소실/미확정 복구는 후속 수정 중이다.
 - 원래886/요청f29491bd-1882-456a-8a63-eec8586db6c6/문서2347603은 생성·파일·본문 재전송0, 보관 상태 유지. D1 원래35테이블48행 hash동일. Supplier Hub 사이트 관측은 자동 승인 origin거절로 정확한 사이트 범위 승인 대기이며 우회0. 실제 접수 미완료. docs/step864-quotation-workflow-and-preserved-request.md 참조.
+### Step865 — 이미지 추론 미확정·견적 기본값 실제 검수 (2026-10-30)
+
+- 이미지 추론의 원래 UUID/source/config와 uncertain을 유지하고 이후 이미지 단계의 반복 호출을 막는다. 동일 단계 재진입은 원래 결과 GET만 실행한다. 표시사항·견적 독립 작업은 유지한다. 업로드 미확정과 구분한다.
+- 늦은 원래 Qwen 응답만 waitUntil 수명 안에서 관찰해 foreground 기록 저장 뒤 같은 ledger CAS로 갱신한다. 추가 AI/자동 이미지 적용/Hub 요청0. timeout 밖의 무한 복구를 주장하지 않는다.
+- 빈 unverified ALT만 저장 한글 SEO 제목을 사용하고 다른 provenance의 공란을 보존한다. 배치 표시 제목도 보드와 통일했다.
+- 고유8파일266/266, tsc/lint/build 통과. 분리16파일 hash일치. Worker2b6fa7dd-41d9-45fa-b57c-114b6144e11a 배포. QA261030001001의 한글 ALT/invalid=false 실제 확인. 기존 견적 단독 작업36AI+6저장정보+12포장추정, 라벨 작업은 내용량 원문부족으로 저장하지 않음. 전체 단계/이미지 번역/접수 성공으로 보고금지.
+- 기존886/요청f29491bd-1882-456a-8a63-eec8586db6c6/문서2347603 생성·파일·본문 재전송0. 보관상태유지, D1기존35테이블48행 hash동일. Supplier Hub origin거절 승인 및2.1.60 Chrome적용 응답 대기. 우회0. docs/step865-image-vision-recovery-and-quotation-defaults.md 참조.
