@@ -21,6 +21,7 @@ type Props = { rows: readonly OptionInput[]; calculations: readonly OptionCalcul
   exchangeRate?:number;
   priceController?:OptionPriceController;priceBlocked?:boolean;
   showSummary?:boolean;
+  imageKeys?:readonly string[];sourceImageKeys?:Readonly<Record<string,string>>;
   layout?:'standard'|'registration';
   onChange: <K extends OptionField>(id: string, key: K, value: OptionInput[K]) => void };
 const won = (value: number) => `${Math.round(value).toLocaleString('ko-KR')}원`;
@@ -62,7 +63,7 @@ export function OptionPriceSummary({rows,calculations,priceController}:{rows:rea
 }
 
 /** Presentation state never replaces the editor's complete option draft. */
-export function OptionPriceTable({ rows, calculations, selected, focusedOptionId, optionRegistrationNumbers, onSelect, onChange,exchangeRate,priceController,priceBlocked=false,showSummary=true,layout='standard' }: Props) {
+export function OptionPriceTable({ rows, calculations, selected, focusedOptionId, optionRegistrationNumbers, onSelect, onChange,exchangeRate,priceController,priceBlocked=false,showSummary=true,layout='standard',imageKeys=[],sourceImageKeys }: Props) {
   const [query, setQuery] = useState(''), [pageSize, setPageSize] = useState(defaultPageSize);
   const [page, setPage] = useState(() => Math.max(0, Math.floor(rows.findIndex(row => row.id === focusedOptionId) / defaultPageSize)));
   const [visibleColumns, setVisibleColumns] = useState<ColumnId[]>(() => columns.map(column => column.id));
@@ -98,17 +99,22 @@ export function OptionPriceTable({ rows, calculations, selected, focusedOptionId
     const next = new Set(selected); if (checked) next.add(id); else next.delete(id); onSelect([...next]);
   }
   function toggleColumn(id: ColumnId, checked: boolean) {
-    if (!checked && visibleColumns.length === 1) return;
+    if (!checked && shownColumns.length === 1) return;
     setVisibleColumns(previous => columns.filter(column => checked ? previous.includes(column.id) || column.id === id : previous.includes(column.id) && column.id !== id).map(column => column.id));
     if (!checked && pinned === id) setPinned('');
   }
   function editable(row:OptionInput){return !priceBlocked&&!priceController?.busy&&!priceController?.uncertain&&!!priceController?.targets&&row.included&&priceController.view?.resolved.rows.some(value=>value.optionId===row.id&&value.included);}
+  function restoreButton(row:OptionInput,index:number,input:'supplyPrice'|'salePrice'|'msrp',label:string){return <button type="button" className="btn ghost" aria-label={`가격 옵션 ${index+1} ${label} 복원`} disabled={!editable(row)} onClick={()=>priceController?.change(row.id,input,null)}>{label} 복원</button>;}
   function priceInput(row:OptionInput,index:number,input:'supplyPrice'|'salePrice'|'msrp',label:string){const values=effective?.get(row.id),value=input==='supplyPrice'?values?.supply:input==='salePrice'?values?.sale:values?.msrp;
-    return <><input type="number" min={1} step={1} aria-label={`가격 옵션 ${index+1} ${label}`} value={value??''} disabled={!editable(row)} onKeyDown={event=>{if(event.key==='Enter')event.preventDefault();}} onChange={event=>priceController?.change(row.id,input,event.target.value)}/><button type="button" className="btn ghost" aria-label={`가격 옵션 ${index+1} ${label} 복원`} disabled={!editable(row)} onClick={()=>priceController?.change(row.id,input,null)}>복원</button></>;}
+    return <><input type="number" min={1} step={1} aria-label={`가격 옵션 ${index+1} ${label}`} value={value??''} disabled={!editable(row)} onKeyDown={event=>{if(event.key==='Enter')event.preventDefault();}} onChange={event=>priceController?.change(row.id,input,event.target.value)}/>{(layout!=='registration'||input==='msrp')&&restoreButton(row,index,input,label)}</>;}
   function cell(id: ColumnId, row: OptionInput, index: number, result: typeof displayed[number] | undefined) {
     const calculation = result?.calculation;
     switch (id) {
-      case 'name': return <><strong>{row.translatedName || row.originalName || `옵션 ${index + 1}`}</strong><small>{row.supplierSku || '공급자 SKU 미입력'}</small></>;
+      case 'name': {
+        const key=row.imageKey??sourceImageKeys?.[row.id],thumbnail=key&&imageKeys.includes(key)?key:null;
+        // eslint-disable-next-line @next/next/no-img-element -- Authenticated stored source images are served without transformation.
+        return <div className={layout==='registration'?'option-price-name-with-image':undefined}>{layout==='registration'&&(thumbnail?<img className="option-price-thumbnail" src={`/api/files/${thumbnail.split('/').map(encodeURIComponent).join('/')}`} alt={`가격 옵션 ${index+1} 이미지`} width={48} height={48} loading="lazy"/>:<span className="option-price-no-thumbnail">이미지 없음</span>)}<div><strong>{row.translatedName || row.originalName || `옵션 ${index + 1}`}</strong><small>{layout==='registration'?savedOptionRegistrationNumber(row.id,optionRegistrationNumbers):row.supplierSku || '공급자 SKU 미입력'}</small></div></div>;
+      }
       case 'id': return savedOptionRegistrationNumber(row.id,optionRegistrationNumbers);
       case 'quantity': return <input aria-label={`가격 옵션 ${index + 1} 구성 수량`} type="number" min="1" step="1" disabled={priceBlocked} value={Number.isFinite(row.unitsPerPack) ? row.unitsPerPack : ''} onChange={event => onChange(row.id, 'unitsPerPack', event.target.valueAsNumber)} />;
       case 'stock': return row.stock == null ? '미확인' : row.stock.toLocaleString('ko-KR');
@@ -122,7 +128,7 @@ export function OptionPriceTable({ rows, calculations, selected, focusedOptionId
           ? totalCny * exchangeRate : null;
         return <>
           <input aria-label={`가격 옵션 ${index + 1} 개당 원가`} type="number" min="0" step="any" disabled={priceBlocked} value={row.unitCostCny === null || !Number.isFinite(row.unitCostCny) ? '' : row.unitCostCny} onChange={event => onChange(row.id, 'unitCostCny', event.target.value === '' ? null : event.target.valueAsNumber)} />
-          {generalKrw !== null && Number.isFinite(generalKrw) && generalKrw > 0 && <small className="option-price-source-cost" aria-label={`가격 옵션 ${index + 1} 일반 환율 환산 원가`} title="개당 위안 원가 × 현재 구성 수량 × 일반 적용환율. 통합통관 매입가는 별도로 계산합니다.">{generalKrw.toLocaleString('ko-KR')}원 · 일반 환율 환산</small>}
+          {generalKrw !== null && Number.isFinite(generalKrw) && generalKrw > 0 && <small className="option-price-source-cost" aria-label={`가격 옵션 ${index + 1} 일반 환율 환산 원가`} title="개당 위안 원가 × 현재 구성 수량 × 일반 적용환율. 통합통관 매입가는 별도로 계산합니다.">{generalKrw.toLocaleString('ko-KR')}원{layout==='registration'?'':' · 일반 환율 환산'}</small>}
           {validTotal && row.unitsPerPack > 1 && <small className="option-price-source-cost" aria-label={`가격 옵션 ${index + 1} 구성 합계 위안 원가`}>(¥{totalCny.toLocaleString('ko-KR')} · {row.unitsPerPack.toLocaleString('ko-KR')}개 합계)</small>}
         </>;
       }
@@ -151,7 +157,7 @@ export function OptionPriceTable({ rows, calculations, selected, focusedOptionId
         <colgroup><col style={{ width: selectionWidth }} />{shownColumns.map(column => <col key={column.id} style={{ width: columnWidth(column) }} />)}</colgroup>
         <thead><tr><th className="option-price-grid-selection"><input type="checkbox" aria-label="가격 검색 결과 전체 선택" aria-checked={partiallyFilteredSelected ? 'mixed' : allFilteredSelected} ref={input => { if(input) input.indeterminate = partiallyFilteredSelected; }} checked={allFilteredSelected} disabled={!filtered.length} onChange={event => onSelect(event.target.checked ? filtered.map(({ row }) => row.id) : [])} /></th>{shownColumns.map(column => <th key={column.id} data-price-column={column.id} className={pinned === column.id ? 'option-price-grid-pinned' : undefined}>{column.label}</th>)}</tr></thead>
         <tbody>{pageRows.map(({ row, index, result }) => <tr key={row.id} data-option-target={row.id === focusedOptionId} data-price-option-id={row.id}>
-          <td className="option-price-grid-selection"><label><input type="checkbox" aria-label={`가격 옵션 ${index + 1} 선택`} checked={selected.has(row.id)} onChange={event => toggleSelection(row.id, event.target.checked)} /><span className="sr-only">선택</span></label><label><input type="checkbox" aria-label={`가격 옵션 ${index + 1} 견적 포함`} disabled={priceBlocked} checked={row.included} onChange={event => onChange(row.id, 'included', event.target.checked)} /><span className="sr-only">견적 포함</span></label></td>
+          <td className="option-price-grid-selection"><label><input type="checkbox" aria-label={`가격 옵션 ${index + 1} 선택`} checked={selected.has(row.id)} onChange={event => toggleSelection(row.id, event.target.checked)} /><span className="sr-only">선택</span></label>{(layout!=='registration'||!priceController)&&<label><input type="checkbox" aria-label={`가격 옵션 ${index + 1} 견적 포함`} disabled={priceBlocked} checked={row.included} onChange={event => onChange(row.id, 'included', event.target.checked)} /><span className="sr-only">견적 포함</span></label>}</td>
           {shownColumns.map(column => <td key={column.id} data-price-column={column.id} className={pinned === column.id ? 'option-price-grid-pinned' : undefined}>{cell(column.id, row, index, result)}</td>)}
         </tr>)}</tbody>
       </table>
@@ -159,7 +165,10 @@ export function OptionPriceTable({ rows, calculations, selected, focusedOptionId
     </div>
     <div className="option-price-grid-pagination"><span>{filtered.length ? `${currentPage * pageSize + 1}–${Math.min((currentPage + 1) * pageSize, filtered.length)}` : '0'} / {filtered.length}개</span><button type="button" className="btn ghost" aria-label="가격표 이전 페이지" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>이전</button><span aria-label="가격표 현재 페이지">{currentPage + 1} / {pageCount}</span><button type="button" className="btn ghost" aria-label="가격표 다음 페이지" disabled={currentPage + 1 >= pageCount} onClick={() => setPage(currentPage + 1)}>다음</button></div>
     {showSummary&&<OptionPriceSummary rows={rows} calculations={calculations} priceController={priceController}/>}
-    {priceController&&<details><summary>권장소비자가·가격 복원</summary>{rows.filter(row=>row.included).map(row=>{const index=rows.findIndex(value=>value.id===row.id);return <label className="field" key={row.id}><span>{optionRegistrationLabel(row.id,row.translatedName||row.originalName||row.id,optionRegistrationNumbers)} · 권장소비자가</span><div>{priceInput(row,index,'msrp','권장소비자가')}</div></label>;})}</details>}
+    {priceController&&<details><summary>권장소비자가·가격 복원</summary>{rows.map((row,index)=><div className="option-price-advanced-row" key={row.id}>
+      {layout==='registration'&&<label><input type="checkbox" aria-label={`가격 옵션 ${index+1} 견적 포함`} disabled={priceBlocked} checked={row.included} onChange={event=>onChange(row.id,'included',event.target.checked)}/> {optionRegistrationLabel(row.id,row.translatedName||row.originalName||row.id,optionRegistrationNumbers)} · 견적 포함</label>}
+      {row.included&&<><label className="field"><span>{optionRegistrationLabel(row.id,row.translatedName||row.originalName||row.id,optionRegistrationNumbers)} · 권장소비자가</span><div>{priceInput(row,index,'msrp','권장소비자가')}</div></label>{layout==='registration'&&<div className="option-price-restore-actions">{restoreButton(row,index,'supplyPrice','공급가')}{restoreButton(row,index,'salePrice','판매가')}</div>}</>}
+    </div>)}</details>}
     <p>{showSummary?'옵션명·이미지·치수·복제는 상단 옵션·사이즈표에서 수정합니다. 왼쪽 가격 정책은 저장한 뒤 이 표에 반영됩니다.':'가격 설정과 표의 수정값은 저장하기를 누를 때 함께 반영됩니다.'}</p>
   </div>;
 }

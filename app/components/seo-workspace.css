@@ -99,3 +99,4 @@
 .registration-workspace .seo-workspace-save .btn{min-height:37px;padding:9px 14px;border-radius:6px;font-size:12px;font-weight:600}
 .registration-workspace .seo-workspace-tools{width:min(840px,100%);margin:12px auto 0;font-size:11px}
 @media(max-width:760px){.seo-generation-inputs,.seo-content-columns{grid-template-columns:1fr;gap:20px}.seo-generation-body{padding:18px 15px}.registration-seo-heading>h2{margin:8px 0 20px}.seo-generation-card>h3,.seo-common-editor>h3,.seo-option-names>h3{padding:17px 15px;font-size:16px}.seo-option-names-body{padding:15px}}
+.seo-button-icon{display:inline-block;flex:none;vertical-align:-1px;margin-right:5px}

@@ -7,6 +7,7 @@ import type { QuotationPackagingBasis } from '@/app/quotation-packaging-basis';
 import type { DetailSaveBackup } from '@/app/detail-save-plan';
 import type { DetailEditorInputs } from '@/app/detail-editor-inputs';
 import type { StageTwoMsrp } from '@/app/stage-two-msrp';
+import type { StageTwoPricingReview } from '@/app/stage-two-pricing-review';
 
 export const quotationFieldsSchema = `CREATE TABLE IF NOT EXISTS product_quotation_fields (
   product_id TEXT PRIMARY KEY REFERENCES products(id), owner_id TEXT NOT NULL,
@@ -15,7 +16,8 @@ export const quotationFieldsSchema = `CREATE TABLE IF NOT EXISTS product_quotati
 export type QuotationFieldsState = { schemaVersion: 1; productId: string; revision: number; overrides: QuotationOverrides; categoryOverrides?: Record<string, QuotationOverrides>;
   packagingBasis?:QuotationPackagingBasis;categoryPackagingBasis?:Record<string,QuotationPackagingBasis>;updatedAt: string | null;
   detailSaveBackups?: Record<string, DetailSaveBackup[]>; detailEditorInputs?: Record<string, DetailEditorInputs>;
-  stageTwoMsrp?: StageTwoMsrp; categoryStageTwoMsrp?: Record<string, StageTwoMsrp> };
+  stageTwoMsrp?: StageTwoMsrp; categoryStageTwoMsrp?: Record<string, StageTwoMsrp>;
+  stageTwoPricingReviews?: Record<string, StageTwoPricingReview> };
 export type QuotationCollectionSource = { id: string; payload: string; updatedAt: string; linked?: boolean };
 export type QuotationSourceGuard = {
   productVersion: string; imageKeys: string; pricingPolicy: string | null;

@@ -77,7 +77,8 @@ for (const company of priceTableCompanies) test(`actual option editor shows curr
     const total = priceTableNodes(rendered).find(node => node.props?.['aria-label'] === '가격 옵션 1 구성 합계 위안 원가');
     const general = priceTableNodes(rendered).find(node => node.props?.['aria-label'] === '가격 옵션 1 일반 환율 환산 원가');
     assert.equal(priceTableText(total), '(¥8.97 · 3개 합계)');
-    assert.equal(priceTableText(general), '3,139.5원 · 일반 환율 환산');
+    assert.equal(priceTableText(general), '3,139.5원');
+    assert.match(general.props.title,/통합통관 매입가는 별도로/);
     h.node('가격 옵션 1 개당 원가').props.onChange({ target: { value: '', valueAsNumber: NaN } });
     assert.equal(h.node('가격 옵션 1 개당 원가').props.value, '');
     assert.equal(priceTableNodes(h.render()).find(node => node.props?.['aria-label'] === '가격 옵션 1 일반 환율 환산 원가'), undefined);

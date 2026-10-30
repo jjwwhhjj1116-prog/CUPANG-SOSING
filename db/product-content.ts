@@ -15,13 +15,13 @@ function listingLabels(ownerId:string,product:{id:string;image_keys:string},row:
  if(options.schemaVersion!==1||options.productId!==product.id||options.revision!==(row.option_revision??0))throw Error('Invalid listing options');
  const state=row.quotation_payload?JSON.parse(row.quotation_payload):{schemaVersion:1,productId:product.id,revision:0,overrides:{common:{},options:{}}};
  if(state.schemaVersion!==1||state.productId!==product.id||state.revision!==(row.quotation_revision??0))throw Error('Invalid listing quotation');
- let categoryId:string|null=null,categoryPath:string[]=[],hubSchema:RegistrationQuotationLabels['hubSchema'],template:RegistrationQuotationLabels['template'];
+ let profileId:string|null=null,categoryId:string|null=null,categoryPath:string[]=[],hubSchema:RegistrationQuotationLabels['hubSchema'],template:RegistrationQuotationLabels['template'];
  if(row.linked_job){
   if(row.valid_job!==row.linked_job||!row.context_payload||parseCollectionRequest({urls:[row.source_url]})[0].offerId!==row.job_offer)throw Error('Invalid listing capture link');
   const captured=JSON.parse(row.context_payload);
-  if(captured?.category){const category=validateCategoryProfile(captured.category);validateCategoryIdentity(category);categoryId=category.categoryId||null;categoryPath=category.categoryPath;hubSchema=category.hubSchema;template=category.template;}
+  if(captured?.category){const category=validateCategoryProfile(captured.category);validateCategoryIdentity(category);profileId=typeof captured.category.id==='string'?captured.category.id:null;categoryId=category.categoryId||null;categoryPath=category.categoryPath;hubSchema=category.hubSchema;template=category.template;}
  }
- return {ownerId,categoryId,categoryPath,...(hubSchema?{hubSchema}:{}),...(template?{template}:{}),options,state};
+ return {ownerId,profileId,categoryId,categoryPath,...(hubSchema?{hubSchema}:{}),...(template?{template}:{}),options,state};
 }
 async function database() {
   if (!env.DB) throw new Error('D1 binding DB is unavailable.');

@@ -36,6 +36,11 @@ export async function commitStageTwoPricing(owner: string, product: ProductRecor
     || (fence.options === null ? previousOptions.revision !== 0 : fence.options.revision !== previousOptions.revision || !equal(JSON.parse(fence.options.payload), previousOptions))
     || (fence.quotation === null ? previousQuotation.revision !== 0 : fence.quotation.revision !== previousQuotation.revision || !equal(JSON.parse(fence.quotation.payload), previousQuotation)))
     throw Error('Invalid atomic stage-two source.');
+  const reviews=Object.values(quotation.stageTwoPricingReviews??{}).filter(review=>review.productVersion===version);
+  if(options.rows.some(row=>row.included)?reviews.length!==1||reviews[0].ownerId!==owner||reviews[0].productId!==id||reviews[0].sourceProductVersion!==product.updated_at
+    ||!/^[a-f0-9]{64}$/.test(reviews[0].sourceInputFingerprint)
+    ||source.profile&&reviews[0].profileId!==source.profile.id
+    ||fence.actor&&(reviews[0].companyCode!==fence.actor.companyCode||reviews[0].companyName!==fence.actor.companyName):reviews.length!==0)throw Error('Invalid atomic stage-two review.');
   const optionPayload = JSON.stringify(options), quotePayload = JSON.stringify(quotation), policyPayload = JSON.stringify(policy);
   if ([optionPayload, quotePayload].some(payload => new TextEncoder().encode(payload).length > 512 * 1024)) throw RangeError('가격·견적 자료가 저장 한도를 초과했습니다.');
   const guard = sourceGuard(owner, id, source), args: (string | number | null)[] = [...guard.args], extra: string[] = [];

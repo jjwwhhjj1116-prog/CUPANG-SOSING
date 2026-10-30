@@ -6,16 +6,17 @@ import { sameSeoAppliedSource, seoAppliedReceiptKey, seoAppliedViewReady, type S
 import { cleanSeoKeywordCandidates, prepareSeoKeywordText, quotationSeoKeywordText,seoKeywordDocumentText } from '@/app/seo-keyword-text';
 import { emptySeoWorkspaceDraft, hasSeoWorkspaceDraft, readSeoWorkspace, saveSeoWorkspace, seoWorkspaceInput, seoWorkspaceRefreshConflicts, seoWorkspaceSaveState,
   SeoWorkspaceSaveError, type SeoWorkspaceDraft } from '@/app/seo-workspace-client';
+import {mergeSeoGeneratedDraft,seoGeneratedDraftKey,type SeoGeneratedDraft} from '@/app/seo-generated-draft';
 import './seo-workspace.css';
 
-type Props = { productId: string; version: string; focusedOptionId?: string; active?: boolean; disabled?: boolean; onSaved?: () => void; focusAfterApply?: SeoAppliedReceipt };
+type Props = { productId: string; version: string;workspaceOwnerId?:string;generatedDraft?:SeoGeneratedDraft|null; focusedOptionId?: string; active?: boolean; disabled?: boolean; onSaved?: () => void; focusAfterApply?: SeoAppliedReceipt };
 type Saved = { scope: string; sourceKey: string; view: SeoWorkspaceView };
 type Attempt = { scope: string; before: SeoWorkspaceView; input: SeoWorkspaceInput };
 type Comparison = { scope: string; sourceKey: string; before: SeoWorkspaceView; latest: SeoWorkspaceView; fields: string[] };
 const provenance = { unverified: '미작성', collected: '수집 원문', translated: '번역 결과', generated: '자동 생성 결과', manual: '직접 수정' };
 
-export function SeoWorkspaceEditor({ productId, version, focusedOptionId, active = true, disabled = false, onSaved, focusAfterApply }: Props) {
-  const scope = productId, sourceKey = JSON.stringify([scope, version]);
+export function SeoWorkspaceEditor({ productId, version,workspaceOwnerId,generatedDraft, focusedOptionId, active = true, disabled = false, onSaved, focusAfterApply }: Props) {
+  const scope = JSON.stringify([workspaceOwnerId??null,productId]), sourceKey = JSON.stringify([scope, version]);
   const live = useRef({ scope, sourceKey, active, disabled, mounted: true, onSaved }), request = useRef<AbortController | null>(null);
   const [saved, setSaved] = useState<Saved | null>(null), savedRef = useRef<Saved | null>(null);
   const [pending, setPending] = useState({ scope, values: emptySeoWorkspaceDraft() }), draftRef = useRef(pending);
@@ -24,6 +25,7 @@ export function SeoWorkspaceEditor({ productId, version, focusedOptionId, active
   const [busy, setBusy] = useState(false), [uncertain, setUncertain] = useState(false), [conflict, setConflict] = useState(false);
   const [busyAction, setBusyAction] = useState<'read' | 'save' | null>(null);
   const [error, setError] = useState(''), [message, setMessage] = useState(''), [comparison, setComparison] = useState<Comparison | null>(null);
+  const consumedGenerated=useRef(new Set<string>()),[generatedOrigin,setGeneratedOrigin]=useState<{scope:string;jobId:string;model:string;warnings:string[]}|null>(null);
   const current = () => live.current.mounted && live.current.active && live.current.scope === scope && live.current.sourceKey === sourceKey;
   useLayoutEffect(() => {
     live.current = { ...live.current, scope, sourceKey, active, mounted: true };
@@ -48,7 +50,23 @@ export function SeoWorkspaceEditor({ productId, version, focusedOptionId, active
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[focusAfterApply,active,productId,version,disabled,busy,uncertain,conflict,fresh,view,dirty]);
   const store = (value: SeoWorkspaceView) => { savedRef.current = { scope, sourceKey, view: value }; setSaved(savedRef.current); };
-  const clearDraft = () => { draftRef.current = { scope, values: emptySeoWorkspaceDraft() }; setPending(draftRef.current); };
+  const clearDraft = () => { draftRef.current = { scope, values: emptySeoWorkspaceDraft() }; setPending(draftRef.current);setGeneratedOrigin(null); };
+  useEffect(()=>{
+    if(!generatedDraft)return;
+    const key=seoGeneratedDraftKey(generatedDraft);if(consumedGenerated.current.has(key))return;
+    if(generatedDraft.ownerId!==(workspaceOwnerId??null)||generatedDraft.productId!==productId||generatedDraft.productVersion!==version){consumedGenerated.current.add(key);return;}
+    if(!current()||disabled||busy||uncertain||conflict||request.current||attempt.current||!fresh||!view)return;
+    consumedGenerated.current.add(key);
+    try{
+      draftRef.current={scope,values:mergeSeoGeneratedDraft(generatedDraft,view,workspaceOwnerId,latestDraft())};setPending(draftRef.current);
+      setGeneratedOrigin({scope,jobId:generatedDraft.jobId,model:generatedDraft.model,warnings:generatedDraft.warnings});setError('');
+      setMessage(hasSeoWorkspaceDraft(draftRef.current.values)?'생성한 SEO 초안을 불러왔습니다. 아래 입력을 확인·수정한 뒤 SEO 설정 저장을 눌러주세요.':'직접 저장한 값과 공란을 유지했습니다. 변경할 항목은 입력란에서 직접 수정해주세요.');
+      titleInput.current?.focus({preventScroll:true});
+    }catch(cause){setError(cause instanceof Error?cause.message:'생성한 SEO 초안의 원문 연결을 확인하지 못했습니다. 현재 입력은 유지했습니다.');}
+    // A generated seed is consumed once for its exact saved source. Re-renders,
+    // stage hiding and later manual edits cannot reapply it over user input.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[generatedDraft,workspaceOwnerId,productId,version,active,disabled,busy,uncertain,conflict,fresh,view]);
   function finish(controller: AbortController) {
     if (request.current === controller) { request.current = null; if (!controller.signal.aborted && current()) { setBusy(false); setBusyAction(null); } }
   }
@@ -136,6 +154,7 @@ export function SeoWorkspaceEditor({ productId, version, focusedOptionId, active
   const savedKeywords = keywordPlan ? cleanSeoKeywordCandidates(keywordPlan.keywords) : null;
   const savedDocumentKeywords=view?quotationSeoKeywordText(view.content):'';
   const nextDocumentKeywords=draft.clearDocumentKeywords?'':savedKeywords?.length?seoKeywordDocumentText(savedKeywords):savedDocumentKeywords;
+  const keywordReviewRequired=Boolean(draft.clearDocumentKeywords||keywordPlan?.shortened||keywordEdited&&savedKeywords&&!savedKeywords.length&&savedDocumentKeywords);
   const tagsLength = keywordText.length;
   const keywordLengthState = tagsLength > 140 ? 'danger' : tagsLength > 120 ? 'warning' : 'normal';
   const locked = disabled || busy || uncertain;
@@ -143,15 +162,17 @@ export function SeoWorkspaceEditor({ productId, version, focusedOptionId, active
     {busy && <p role="status">{busyAction === 'save' ? 'SEO 설정을 저장하고 있습니다…' : 'SEO·옵션 저장본을 확인하고 있습니다…'}</p>}{!busy && error && <p role="alert">{error}</p>}{!busy && message && <p role="status">{message}</p>}
     {dirty && !fresh && <p role="status">상품 저장 상태가 변경되었습니다. 입력은 유지했습니다. 최신 저장본을 확인해주세요.</p>}
     {!busy && uncertain && <p role="status">저장 결과를 아직 확인하지 못했습니다. 결과 확인은 저장본 조회만 수행합니다.</p>}
+    {generatedOrigin?.scope===scope&&!!generatedOrigin.warnings.length&&<p role="status">{generatedOrigin.warnings.join(' ')}</p>}
     {view && <div className="seo-content-columns" style={{ width: '100%' }}>
       <section className="seo-common-editor"><h3>상품명 / 검색태그</h3><fieldset disabled={locked} style={{ border: 0, margin: 0 }}>
         <label className="field"><span>상품명</span><input ref={titleInput} aria-label="SEO 상품명" placeholder="검색 최적화된 상품명을 입력하세요" value={seoValue('title')} maxLength={100} onChange={event => edit(previous => ({ ...previous, seo: { ...previous.seo, title: event.target.value } }))}/></label>
         <small className={seoValue('title').length > 100 ? 'seo-input-count exceeded' : 'seo-input-count'}>{seoValue('title').length}/100자{seoValue('title').length > 100 && ' · 기존 저장값은 유지합니다.'}</small>
         <label className="field"><span>검색태그 (쉼표로 구분)</span><textarea aria-label="SEO 검색태그" placeholder="키워드1, 키워드2, 키워드3 형태로 입력하세요" value={seoValue('keywords')} rows={3} maxLength={5050} onChange={event => editKeywords(event.target.value)}/></label>
         <div className="seo-keyword-caption"><small>검색에 노출되길 원하는 키워드를 쉼표로 구분하여 입력하세요 (최대 150자)</small><small className={tagsLength > 150 ? 'seo-input-count exceeded' : 'seo-input-count'} data-seo-keyword-length={keywordLengthState}>{tagsLength}/150자{tagsLength > 150 && !keywordEdited && ' · 기존 저장값은 유지합니다.'}</small></div>
+        <details className="seo-keyword-review" open={keywordReviewRequired||undefined}><summary>검색태그 저장안 · 견적서 반영</summary>
         {keywordPlan?.shortened && <section className="panel-note" aria-label="검색태그 저장안"><div><p>길이 조정 후 검색태그: {keywordPlan.text || '(공란)'}</p><p>입력 원문이 150자를 초과하여 뒤 태그 {keywordPlan.removedTags}개를 제외합니다. 저장 전까지 입력 원문은 유지합니다.</p></div></section>}
         {savedKeywords && <section className="panel-note" aria-label="검색태그 최종 저장안"><div><p>최종 저장 검색태그: {savedKeywords.join(', ') || '(공란)'}</p><p>한국어 자모가 포함된 태그, 20자를 넘는 태그와 중복 태그를 제외하고 특수문자는 공백으로 정리합니다.</p></div></section>}
-        <details className="seo-keyword-review" open={keywordEdited||undefined}><summary>견적서 검색태그 반영 · 함께 비우기</summary><section className="panel-note" aria-label="견적서 검색태그 반영안"><div>
+        <section className="panel-note" aria-label="견적서 검색태그 반영안"><div>
           <p>{keywordEdited?'저장 후 견적서 자동 검색태그':'현재 견적서 자동 검색태그'}: {nextDocumentKeywords||'(공란)'}</p>
           {draft.clearDocumentKeywords?<p>저장하면 검색태그와 견적서 자동 검색태그를 모두 비웁니다.</p>
             :keywordEdited&&savedKeywords&&!savedKeywords.length&&savedDocumentKeywords&&<p>이 입력으로 저장하면 견적서에는 이전 검색태그가 유지됩니다. 함께 비우려면 아래 버튼을 눌러주세요.</p>}
@@ -161,12 +182,13 @@ export function SeoWorkspaceEditor({ productId, version, focusedOptionId, active
       </fieldset></section>
       <section className="seo-option-names"><h3>옵션명</h3><div className="seo-option-names-body">{view.options.rows.map((row, index) => {
         const key = row.imageKey ?? view.sourceImageKeys?.[row.id], thumbnail = key && view.imageKeys.includes(key) ? key : null;
+        const optionName=Object.hasOwn(draft.optionNames,row.id)?draft.optionNames[row.id]:row.translatedName;
         const reference = view.optionOriginalReferences && Object.hasOwn(view.optionOriginalReferences, row.id) ? view.optionOriginalReferences[row.id] : undefined, original = reference
           ? reference.axes.map(axis => `${axis.original} (${axis.translated})`).join(' / ') : row.originalName || row.supplierSku || `옵션 ${index + 1}`;
         return <article key={row.id} className="seo-option-name" data-option-target={row.id === focusedOptionId}>
           {/* eslint-disable-next-line @next/next/no-img-element -- Only an exact owned saved option image is shown. */}
           {thumbnail && <img src={'/api/files/' + thumbnail.split('/').map(encodeURIComponent).join('/')} alt="" width={64} height={64} loading="lazy"/>}
-          <label><span>원본: {original}</span><input aria-label={`${index + 1}번째 한국어 옵션명`} placeholder="한글 옵션명 입력" value={Object.hasOwn(draft.optionNames, row.id) ? draft.optionNames[row.id] : row.translatedName} maxLength={500} disabled={locked} onChange={event => edit(previous => ({ ...previous, optionNames: { ...previous.optionNames, [row.id]: event.target.value } }))}/>{(!row.included||!row.translatedName)&&<small>{row.included ? '한국어 옵션명을 입력해주세요.' : '견적 제외'}</small>}</label>
+          <label><span>원본: {original}</span><input aria-label={`${index + 1}번째 한국어 옵션명`} placeholder="한글 옵션명 입력" value={optionName} maxLength={500} disabled={locked} onChange={event => edit(previous => ({ ...previous, optionNames: { ...previous.optionNames, [row.id]: event.target.value } }))}/>{(!row.included||!optionName.trim())&&<small>{row.included ? '한국어 옵션명을 입력해주세요.' : '견적 제외'}</small>}</label>
         </article>;
       })}{!view.options.rows.length && <p>저장된 옵션이 없습니다.</p>}</div></section>
     </div>}
@@ -175,12 +197,13 @@ export function SeoWorkspaceEditor({ productId, version, focusedOptionId, active
       {(Object.keys(draft.seo) as (keyof SeoWorkspaceDraft['seo'])[]).map(key => <tr key={key}><th>{({ title: '상품명', keywords: '검색태그', description: '상품 설명' })[key]}</th><td>{key === 'keywords' ? shownComparison.latest.content.seo.keywords.value.join(', ') : shownComparison.latest.content.seo[key].value || '(공란)'}</td><td>{draft.seo[key] || '(공란)'}</td></tr>)}
       {Object.keys(draft.optionNames).map(id => <tr key={id}><th>{shownComparison.latest.options.rows.find(row => row.id === id)?.originalName || id}</th><td>{shownComparison.latest.options.rows.find(row => row.id === id)?.translatedName || '(공란)'}</td><td>{draft.optionNames[id] || '(공란)'}</td></tr>)}
     </tbody></table><button type="button" className="btn ghost" disabled={locked} onClick={reviewLatest}>입력 유지·비교한 최신 기준 사용</button></section>}
-    <div className="seo-workspace-save"><button type="button" className="btn primary" disabled={!view || disabled || busy || !dirty || !uncertain && (!fresh || conflict || !!issues.length)} onClick={() => void save()}>{busy ? busyAction === 'save' ? 'SEO 설정 저장 중…' : 'SEO 저장본 조회 중…' : uncertain ? 'SEO 저장 결과 확인' : 'SEO 설정 저장'}</button></div>
+    <div className="seo-workspace-save"><button type="button" className="btn primary" disabled={!view || disabled || busy || !dirty || !uncertain && (!fresh || conflict || !!issues.length)} onClick={() => void save()}><svg className="seo-button-icon" aria-hidden="true" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2"><path d="M3 2.5h8l2 2v9H3zM5 2.5v4h5v-4M5 13.5v-5h6v5M8.5 3.5v2"/></svg>{busy ? busyAction === 'save' ? 'SEO 설정 저장 중…' : 'SEO 저장본 조회 중…' : uncertain ? 'SEO 저장 결과 확인' : 'SEO 설정 저장'}</button></div>
     <details className="seo-workspace-tools" open={uncertain||conflict||dirty&&!fresh||undefined}><summary>저장본 조회 · 상품 설명 · 입력 출처</summary><div className="panel-stack"><div className="quote-actions">
       {dirty && <button type="button" className="btn ghost" disabled={disabled||busy} onClick={() => reload(true)}>입력 유지·최신 SEO 조회</button>}
       <button type="button" className="btn ghost" disabled={disabled||busy} onClick={() => reload(false)}>{dirty ? '입력 취소·저장본 다시 조회' : 'SEO 저장본 다시 조회'}</button></div>
       {view&&<><label className="field"><span>상품 설명 · {provenance[view.content.seo.description.provenance]}</span><textarea aria-label="SEO 상품 설명" value={seoValue('description')} rows={7} maxLength={20000} disabled={locked} onChange={event => edit(previous => ({ ...previous, seo: { ...previous.seo, description: event.target.value } }))}/></label><small>상품명: {provenance[view.content.seo.title.provenance]} · 검색태그: {provenance[view.content.seo.keywords.provenance]}</small></>}
       <small>수정한 상품명·검색태그·한국어 옵션명을 함께 저장합니다. 공란도 직접 수정값으로 저장합니다.</small>
+      {generatedOrigin?.scope===scope&&<small>초안 출처: {generatedOrigin.model} · 생성 결과는 편집 입력입니다. SEO 설정 저장을 누르면 직접 확인한 입력으로 저장합니다.</small>}
     </div></details>
   </section>;
 }

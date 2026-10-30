@@ -19,7 +19,7 @@ const version = '2026-10-14T02:00:00.000Z';
 
 /** Actual OptionsEditor + price table and options API/SQLite. The source URL is
  * inert synthetic data; all external requests and unrelated components fail shut. */
-export async function optionPriceTableUI(company = priceTableCompanies[0], { count = 73, focusedOptionId, integrated=false,detail=false,fileStorage } = {}) {
+export async function optionPriceTableUI(company = priceTableCompanies[0], { count = 73, focusedOptionId, integrated=false,detail=false,fileStorage,imageKeys=[],sourceImageKeys={},rowImages={} } = {}) {
   const sqlite = memoryDatabase(); for (const statement of runtimeDDL()) sqlite.exec(statement.sql);
   const owner = 'price-owner-' + company.code, productId = 'price-product-' + company.code;
   const apiCalls = [], writes = [], cache = new Map(), instances = new Map(), effects = [], layouts=[], focused = [],controls={};
@@ -34,7 +34,7 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
     '@/extensions/supplier-hub/page-source.mjs':pageSource,'../extensions/supplier-hub/page-source.mjs':pageSource,
     '@/app/chatgpt-auth': { getWorkspaceOwnerId: async () => owner, getChatGPTUser: async () => ({ verifiedAccess: true, userId: owner,
       membership: { status: 'approved', companyCode: company.code, companyName: company.name } }) },
-    '@/db/collection-images': { readOptionSourceImages: async () => ({}),readRegistrationSourceImages:async()=>({}) } };
+    '@/db/collection-images': { readOptionSourceImages: async () => sourceImageKeys,readRegistrationSourceImages:async()=>({}) } };
   const hooks = {
     useState(initial) { const index = cursor++, instance = currentInstance; if (!(index in instance.slots)) instance.slots[index] = { value: typeof initial === 'function' ? initial() : initial };
       return [instance.slots[index].value, value => { if (closed) return; instance.slots[index].value = typeof value === 'function' ? value(instance.slots[index].value) : value; }]; },
@@ -78,11 +78,11 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
   const product = { id: productId, owner_id: owner, source_url: 'https://detail.1688.com/offer/652000000001.html', title: company.name + ' 합성 가격표',
     source_price_cny: 2.99, exchange_rate: 350, supply_margin: 50, coupang_margin: 40, supply_price: 4050, sale_price: 6750, msrp: 8780,
     options_count: count, seo_status: '대기', image_status: '대기', quote_status: '대기', registration_status: '미전송', supplier_hub_status: '미전송',
-    image_keys: '[]', goal_stage: 'collect', created_at: version, updated_at: version };
+    image_keys: JSON.stringify(imageKeys), goal_stage: 'collect', created_at: version, updated_at: version };
   await load('db/queries.ts').insertProduct(product, policy);
   const rowInputs = Array.from({ length: count }, (_, index) => ({ ...model.emptyOptionInput('price-' + String(index + 1).padStart(3, '0')),
     originalName: '合成选项 ' + (index + 1), translatedName: '합성 옵션 ' + (index + 1), supplierSku: 'fixture-sku-' + (index + 1),
-    unitCostCny: index % 2 ? 3.99 : 2.99, stock: index === 0 ? 0 : index === 1 ? null : 100 + index, included: true }));
+    unitCostCny: index % 2 ? 3.99 : 2.99, stock: index === 0 ? 0 : index === 1 ? null : 100 + index, included: true,imageKey:rowImages['price-'+String(index+1).padStart(3,'0')]??null }));
   await load('db/product-options.ts').saveProductOptions(owner, model.applyOptionRows(model.emptyProductOptions(productId), rowInputs, version), 0, version);
   const protectedSnapshot = () => JSON.stringify(['collection_jobs', 'collection_results', 'collection_context', 'category_profiles', 'workspace_settings', 'product_price_policy']
     .filter(table => sqlite.prepare("SELECT name FROM sqlite_master WHERE name=?").get(table)).map(table => [table, sqlite.prepare('SELECT * FROM ' + table).all().map(row=>table==='product_price_policy'?Object.fromEntries(Object.entries(row).filter(([key])=>key!=='updated_at')):row)]));

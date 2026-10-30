@@ -2,6 +2,33 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {stageTwoFixture,companies,json,plain} from './helpers/stage-two-pricing.mjs';
 
+for(const company of companies)test(`explicit unchanged save preserves arithmetic and sources, records a real review and survives unrelated quotation editing (${company.code})`,async()=>{
+ const h=await stageTwoFixture(company);try{
+  const legacy=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_price_policy WHERE product_id=?').get(h.id).payload);delete legacy.recalculationMode;
+  h.sqlite.prepare('UPDATE product_price_policy SET payload=? WHERE product_id=?').run(JSON.stringify(legacy),h.id);
+  const schema=h.load('app/quotation-schema.ts').getQuotationSchema('80719'),profile=await h.load('db/category-profiles.ts').createCategoryProfile(h.owner,{name:'가격 검토',categoryId:'80719',categoryPath:schema.categoryPath,template:null,mappings:[]},'review-profile');
+  const suffix='?profileId='+profile.id,before=await json(await h.get(suffix)),body=h.body(before),status=h.load('app/registration-pricing-status.ts').savedRecalculatedRegistrationPricing;
+  const currentState=()=>h.load('db/quotation-fields.ts').readQuotationFields(h.owner,h.id);
+  const complete=async receipt=>status(receipt.product,receipt.options.options,await currentState(),receipt.quotation.resolved.schema,{ownerId:h.owner,profileId:profile.id});
+  assert.equal(body.recalculate,false);assert.equal(body.policy.recalculationMode,undefined);assert.equal(before.pricingReview,null);assert.equal(await complete(before),false);
+  const result=await json(await h.post(body,suffix));assert.equal(h.batches,1);assert.equal(result.product.pricing_policy,before.product.pricing_policy);assert.deepEqual(result.options.options.rows,before.options.options.rows);
+  assert.equal(result.pricingReview.sourceInputFingerprint,body.expectedInputFingerprint);assert.equal(result.pricingReview.sourceProductVersion,before.product.updated_at);assert.equal(result.pricingReview.profileId,profile.id);assert.equal(result.pricingReview.ownerId,h.owner);
+  assert.equal(await complete(result),true);h.load('app/stage-two-pricing.ts').verifyStageTwoPricingReceipt(before.options,before.quotation,body,result);
+  const snapshot=await h.load('app/quotation-fields-snapshot.ts').stableQuotationFieldsView(h.owner,h.id,profile.id),overrides=plain(snapshot.view.overrides);overrides.common.title='가격 외 제목 검토';
+  assert.ok(await h.load('db/quotation-fields.ts').saveQuotationFields(h.owner,h.id,overrides,snapshot.view.revision,snapshot.source,snapshot.view.categoryContext.categoryId));
+  const later=await json(await h.get(suffix));assert.equal(await complete(later),true,'a later title save preserves the sealed price configuration');assert.deepEqual(later.pricingReview,result.pricingReview);assert.equal(later.product.pricing_policy,before.product.pricing_policy);
+  const changed=plain(later.options.options);changed.rows[0].unitCostCny+=1;assert.equal(status(later.product,changed,await currentState(),later.quotation.resolved.schema,{ownerId:h.owner,profileId:profile.id}),false);
+ }finally{h.close();}
+});
+
+test('excluding every option still saves atomically without manufacturing a completed pricing review',async()=>{
+ const h=await stageTwoFixture();try{
+  const before=await json(await h.get()),body=h.body(before);body.rows=body.rows.map(row=>({...row,included:false}));
+  const result=await json(await h.post(body));assert.equal(h.batches,1);assert.equal(result.product.options_count,0);assert.equal(result.pricingReview,null);
+  h.load('app/stage-two-pricing.ts').verifyStageTwoPricingReceipt(before.options,before.quotation,body,result);
+ }finally{h.close();}
+});
+
 for(const company of companies){
  test(`stage-two one commit preserves sources, manual count and packaging while policy/prices/quote share one clock (${company.code})`,async()=>{
   const h=await stageTwoFixture(company);try{

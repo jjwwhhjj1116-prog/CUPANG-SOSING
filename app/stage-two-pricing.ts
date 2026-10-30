@@ -10,10 +10,11 @@ import { applyStageTwoMsrp, scopedStageTwoMsrp, stageTwoMsrpEdits } from '@/app/
 import { quotationScope, scopedQuotationOverrides } from '@/app/quotation-scopes';
 import type { ProductRecord } from '@/db/queries';
 import type { QuotationFieldsState } from '@/db/quotation-fields';
+import {matchesStageTwoPricingReview,type StageTwoPricingReview} from '@/app/stage-two-pricing-review';
 
 export type StageTwoPricingRequest = { expectedProductVersion: string; expectedOptionRevision: number; expectedQuotationRevision: number;
   expectedInputFingerprint: string; policy: PricePolicy; rows: OptionInput[]; changes: QuotationChange[]; recalculate: boolean };
-export type StageTwoPricingReceipt = { product: ProductRecord; options: ProductOptionsResponse; quotation: QuotationFieldsView };
+export type StageTwoPricingReceipt = { product: ProductRecord; options: ProductOptionsResponse; quotation: QuotationFieldsView;pricingReview?:StageTwoPricingReview|null };
 const sorted = (value: unknown): unknown => Array.isArray(value) ? value.map(sorted) : value && typeof value === 'object'
   ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, sorted(item)])) : value;
 const equal = (a: unknown, b: unknown): boolean => JSON.stringify(sorted(a)) === JSON.stringify(sorted(b));
@@ -104,6 +105,9 @@ export function verifyStageTwoPricingReceipt(base: ProductOptionsResponse, quota
     || product.supply_margin !== policy.supplyMargin || product.coupang_margin !== policy.coupangMargin) throw bad();
   const calculated = calculatePrice(product.source_price_cny, policy);
   if (product.supply_price !== calculated.supplyPrice || product.sale_price !== calculated.salePrice || product.msrp !== calculated.msrp) throw bad();
+  if(expected.rows.some(row=>row.included)&&(!receipt.pricingReview||receipt.pricingReview.productVersion!==product.updated_at
+    ||!matchesStageTwoPricingReview(receipt.pricingReview,{ownerId:product.owner_id,product,policy,options:expected,state:{...plan.state,productId:product.id},
+      schema:quote.resolved.schema,profileId:quote.categoryContext.profileId,sourceInputFingerprint:request.expectedInputFingerprint,sourceProductVersion:request.expectedProductVersion})))throw bad();
   const targets = quotationPriceTargets(quote.resolved.schema.fields), prices = calculateOptionPrices(expected.rows, policy);
   for (const row of quote.resolved.rows) {
     const automatic = quote.automatic.rows.find(item => item.optionId === row.optionId);

@@ -13,6 +13,8 @@ import { calculatePrice, pricePolicy } from '@/app/pricing';
 import { calculateOptionPrices, resolveOptionPricePolicy, validateOptionsInput, type ProductOptionsResponse } from '@/app/product-options';
 import { applyStageTwoRows, stageTwoQuotationDraft, type StageTwoPricingReceipt, type StageTwoPricingRequest } from '@/app/stage-two-pricing';
 import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
+import {createStageTwoPricingReview} from '@/app/stage-two-pricing-review';
+import {quotationScope} from '@/app/quotation-scopes';
 
 type Context = { params: Promise<{ id: string }> };
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
@@ -47,15 +49,16 @@ async function currentReceipt(owner: string, id: string, profileId: string | nul
   const saved = await stableView(owner, id, profileId), product = await findProduct(owner, id);
   if (!product || product.updated_at !== saved.view.productVersion) throw changed();
   const pricing = resolveOptionPricePolicy(product, saved.source.settingsPayload ? JSON.parse(saved.source.settingsPayload) : undefined);
-  const [sourceImageKeys, optionRegistrationNumbers] = await Promise.all([readOptionSourceImages(owner, product, saved.options).catch(() => ({})),
-    product.registration_number ? readOptionRegistrationNumbers(owner, product, saved.options) : undefined]);
+  const [sourceImageKeys, optionRegistrationNumbers, state] = await Promise.all([readOptionSourceImages(owner, product, saved.options).catch(() => ({})),
+    product.registration_number ? readOptionRegistrationNumbers(owner, product, saved.options) : undefined,readQuotationFields(owner,id)]);
   const checked = await stableView(owner, id, profileId), checkedProduct = await findProduct(owner, id);
   if (!checkedProduct || JSON.stringify(checkedProduct) !== JSON.stringify(product) || checked.view.inputFingerprint !== saved.view.inputFingerprint
-    || checked.view.revision !== saved.view.revision || checked.options.revision !== saved.options.revision) throw changed();
+    || checked.view.revision !== saved.view.revision || checked.options.revision !== saved.options.revision || state.revision!==saved.view.revision) throw changed();
   const options: ProductOptionsResponse = { options: saved.options, productVersion: product.updated_at, sourceImageKeys,
     pricing: { ...pricing, rows: calculateOptionPrices(saved.options.rows, pricing.policy) },
     ...(optionRegistrationNumbers === undefined ? {} : { optionRegistrationNumbers }) };
-  return { product, options, quotation: checked.view };
+  const scope=checked.view.categoryContext.categoryId?quotationScope(checked.view.categoryContext.categoryId):'common';
+  return { product, options, quotation: checked.view,pricingReview:state.stageTwoPricingReviews?.[scope]??null };
 }
 export async function GET(request: Request, context: Context) {
   if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return json({ error: '운영 인증 연결 후 가격을 편집할 수 있습니다.' }, 503);
@@ -92,6 +95,16 @@ export async function POST(request: Request, context: Context) {
       quotation = { ...stageTwoQuotationDraft(saved.view, body.policy, body.recalculate, body.changes, previousQuotation).state,
         revision: previousQuotation.revision + 1, updatedAt: version };
       calculation = calculatePrice(product.source_price_cny, body.policy);
+      const scope=saved.view.categoryContext.categoryId?quotationScope(saved.view.categoryContext.categoryId):'common';
+      if(options.rows.some(row=>row.included)){
+        const review=createStageTwoPricingReview({ownerId:owner,product:{...product,updated_at:version},policy:body.policy,options,state:quotation,
+          schema:saved.view.resolved.schema,profileId:saved.view.categoryContext.profileId,sourceInputFingerprint:body.expectedInputFingerprint,
+          sourceProductVersion:body.expectedProductVersion,savedAt:version,...(fence.actor?{company:{code:fence.actor.companyCode,name:fence.actor.companyName}}:{})});
+        quotation.stageTwoPricingReviews={...quotation.stageTwoPricingReviews,[scope]:review};
+      }else if(quotation.stageTwoPricingReviews){
+        const reviews={...quotation.stageTwoPricingReviews};delete reviews[scope];
+        if(Object.keys(reviews).length)quotation.stageTwoPricingReviews=reviews;else delete quotation.stageTwoPricingReviews;
+      }
     } catch (error) { throw new FieldsError(error instanceof Error ? error.message : '가격·옵션·견적서 내용을 확인해주세요.', 400); }
     const images = [...new Set(options.rows.flatMap(row => row.imageKey ? [row.imageKey] : []))];
     if (images.length && !env.FILES) throw new FieldsError('이미지 저장소가 연결되지 않았습니다.', 503);

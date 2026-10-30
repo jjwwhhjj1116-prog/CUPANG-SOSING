@@ -5,6 +5,25 @@ import { seoWorkspaceEditor, nodes, visibleText, deferred, nextVersion, response
 
 const patches = h => h.calls.filter(call => call.method === 'PATCH');
 const nameLabel = '1번째 한국어 옵션명';
+
+test('option-name guidance follows the edited value before the single explicit SEO save',async()=>{
+ const api=seoWorkspaceHarness(),h=seoWorkspaceEditor(api);try{
+  await h.idle();const before=api.stored(),option=()=>nodes(h.render()).find(node=>node.type==='article'&&nodes(node).some(child=>child.props?.['aria-label']===nameLabel));
+  assert.doesNotMatch(visibleText(option()),/한국어 옵션명을 입력해주세요/);
+  h.edit(nameLabel,'');assert.match(visibleText(option()),/한국어 옵션명을 입력해주세요/);
+  h.edit(nameLabel,'검토한 한국어 옵션');assert.doesNotMatch(visibleText(option()),/한국어 옵션명을 입력해주세요/);assert.equal(h.input(nameLabel).props.value,'검토한 한국어 옵션');
+  assert.equal(patches(h).length,0);assert.deepEqual(api.stored(),before);await h.click('SEO 설정 저장');assert.equal(patches(h).length,1);assert.equal(h.input(nameLabel).props.value,'검토한 한국어 옵션');
+ }finally{h.close();api.close();}
+});
+
+test('ordinary tag edits keep technical save previews collapsed while shortening and validation remain visible',async()=>{
+ const api=seoWorkspaceHarness(),h=seoWorkspaceEditor(api);try{
+  await h.idle();const details=()=>nodes(h.render()).find(node=>node.type==='details'&&node.props.className==='seo-keyword-review');
+  h.edit('SEO 검색태그','검토한 태그');assert.equal(details().props.open,undefined);assert.ok(nodes(details()).some(node=>node.props?.['aria-label']==='검색태그 최종 저장안'));assert.equal(patches(h).length,0);
+  h.edit('SEO 검색태그','정상, '+'가'.repeat(147));assert.equal(details().props.open,true,'a shortened save plan is exposed before saving');assert.ok(nodes(details()).some(node=>node.props?.['aria-label']==='검색태그 저장안'));
+  h.edit('SEO 상품명','가'.repeat(101));const alerts=nodes(h.render()).filter(node=>node.props.role==='alert');assert.ok(alerts.length);assert.ok(alerts.every(alert=>!nodes(details()).includes(alert)),'actual validation errors remain outside the collapsed technical details');assert.equal(h.button('SEO 설정 저장').props.disabled,true);assert.equal(patches(h).length,0);
+ }finally{h.close();api.close();}
+});
 async function concurrent(api, change, { content = false, options = false } = {}) {
   const latest = await responseJson(await api.request()); latest.productVersion = nextVersion(latest.productVersion); change(latest);
   if (content) { latest.content.revision++; latest.content.updatedAt = latest.productVersion; }

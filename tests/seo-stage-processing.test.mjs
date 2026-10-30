@@ -24,7 +24,7 @@ test('SEO processing hides both forms without remounting buffers or disabling it
   assert.equal(common(h).instance,first.instance);assert.equal(selected(h).instance,option.instance);assert.equal(common(h).draft,'보관할 공통 상품명');assert.equal(selected(h).draft,'보관할 옵션 공란');
   assert.equal(h.visible(generator(h)),true);assert.equal(generator(h).instance,source.instance);assert.notEqual(generator(h).props.disabled,true,'the producer can finish its own operation');
   assert.equal(h.visible(h.record('translation-panel')),false,'advanced mutation controls are hidden with the stage');
-  h.render({tab:'가격'});assert.equal(h.visible(h.record('price-editor')),true,'SEO processing does not hide unrelated stage layouts');
+  h.render({tab:'가격'});const pricing=h.record('product-options-editor');assert.equal(h.visible(pricing),true,'SEO processing does not hide unrelated stage layouts');assert.equal(pricing.props.pricingView,true);
   h.render({tab:'SEO'});assert.equal(h.visible(common(h)),false);
   source.props.onProcessingChange(false,operation);assert.equal(h.visible(common(h)),true);assert.equal(common(h).props.disabled,false);assert.equal(selected(h).props.disabled,false);assert.equal(common(h).draft,'보관할 공통 상품명');
   assert.deepEqual(JSON.parse(JSON.stringify(h.calls)),{saved:0,reads:0,uploads:0,submission:0});

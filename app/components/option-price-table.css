@@ -38,6 +38,12 @@
 .option-price-grid-summary p,.option-price-grid>p{font-size:12px;color:#68728a}
 @media(max-width:640px){.option-price-grid-summary>div{grid-template-columns:1fr}.option-price-grid-tools>label{width:100%}.option-price-grid-tools input:not([type=checkbox]):not([type=radio]),.option-price-grid-tools select{flex:1;min-width:0}.option-price-grid-tools fieldset{margin-left:auto}}
 .option-price-grid-table .option-price-source-cost{text-align:right;font-size:11px;line-height:1.5}
+.option-price-name-with-image{display:flex;align-items:center;gap:10px;min-width:0}
+.option-price-name-with-image>div{min-width:0}
+.option-price-thumbnail{display:block;flex:0 0 48px;object-fit:contain;background:#f7f8fa;border:1px solid #e5e8ef;border-radius:3px}
+.option-price-no-thumbnail{display:flex;flex:0 0 48px;min-height:48px;align-items:center;justify-content:center;font-size:10px;color:#7d879b;background:#f7f8fa;text-align:center}
+.option-price-advanced-row{display:grid;gap:10px;padding:12px 0;border-bottom:1px solid #e5e8ef;font-size:12px}
+.option-price-restore-actions{display:flex;gap:8px;flex-wrap:wrap}
 
 /* Stage two presentation shares the existing policy and exact price grid. */
 .registration-workspace .stage-two-pricing-workspace{grid-template-columns:250px minmax(0,1fr);gap:24px}

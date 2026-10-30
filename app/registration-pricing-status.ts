@@ -5,8 +5,10 @@ import {quotationScalarValueIssues} from '@/app/quotation-scalar-constraints';
 import {scopedQuotationOverrides} from '@/app/quotation-scopes';
 import type {QuotationSchema} from '@/app/quotation-schema';
 import type {QuotationFieldsState} from '@/db/quotation-fields';
+import {matchesStageTwoPricingReview} from '@/app/stage-two-pricing-review';
+import {quotationScope} from '@/app/quotation-scopes';
 
-export type RegistrationPricingProduct={id:string;created_at?:string;updated_at?:string;pricing_policy?:string|null;source_price_cny?:number;exchange_rate?:number;supply_margin?:number;coupang_margin?:number;supply_price?:number|null;sale_price?:number|null;msrp?:number|null;options_count?:number};
+export type RegistrationPricingProduct={id:string;owner_id?:string;created_at?:string;updated_at?:string;pricing_policy?:string|null;source_price_cny?:number;exchange_rate?:number;supply_margin?:number;coupang_margin?:number;supply_price?:number|null;sale_price?:number|null;msrp?:number|null;options_count?:number};
 const positive=(value:unknown):value is number=>typeof value==='number'&&Number.isFinite(value)&&value>0;
 const timestamp=(value:unknown):value is string=>typeof value==='string'&&Number.isFinite(Date.parse(value));
 
@@ -14,7 +16,7 @@ const timestamp=(value:unknown):value is string=>typeof value==='string'&&Number
  * Its saved arithmetic policy records explicit intent; completion additionally
  * requires coherent current product, included-option and exact bound prices.
  * This is saved configuration, never an external price/registration assertion. */
-export function savedRecalculatedRegistrationPricing(product:RegistrationPricingProduct,options:ProductOptions,state:QuotationFieldsState,schema:QuotationSchema):boolean {
+export function savedRecalculatedRegistrationPricing(product:RegistrationPricingProduct,options:ProductOptions,state:QuotationFieldsState,schema:QuotationSchema,context?:{ownerId?:string;profileId?:string|null}):boolean {
  try{
   if(!product.pricing_policy||!timestamp(product.updated_at)||schema.status!=='observed'||schema.unsupportedFields?.length
     ||options.schemaVersion!==1||options.productId!==product.id||!Number.isSafeInteger(options.revision)||options.revision<1
@@ -22,7 +24,7 @@ export function savedRecalculatedRegistrationPricing(product:RegistrationPricing
     ||state.schemaVersion!==1||state.productId!==product.id||!Number.isSafeInteger(state.revision)||state.revision<1
     ||!timestamp(state.updatedAt)||Date.parse(state.updatedAt)>Date.parse(product.updated_at))return false;
   const raw:unknown=JSON.parse(product.pricing_policy);
-  if(!raw||typeof raw!=='object'||Array.isArray(raw)||(raw as {recalculationMode?:unknown}).recalculationMode!=='couplus-stage-two-v1')return false;
+  if(!raw||typeof raw!=='object'||Array.isArray(raw))return false;
   const policy=pricePolicy(raw);
   if(!positive(product.source_price_cny)||product.exchange_rate!==policy.exchangeRate||product.supply_margin!==policy.supplyMargin||product.coupang_margin!==policy.coupangMargin)return false;
   const representative=calculatePrice(product.source_price_cny,policy);
@@ -41,6 +43,9 @@ export function savedRecalculatedRegistrationPricing(product:RegistrationPricing
       ||(input==='msrp'?Number(value)<0:Number(value)<=0)||quotationScalarValueIssues(field,value).length)||values.some(({value})=>value!==values[0].value))return false;
    }
   }
-  return true;
+  if(policy.recalculationMode==='couplus-stage-two-v1')return true;
+  const review=state.stageTwoPricingReviews?.[schema.categoryId?quotationScope(schema.categoryId):'common'];
+  return matchesStageTwoPricingReview(review,{ownerId:context?.ownerId??product.owner_id??'',product:{id:product.id,source_price_cny:product.source_price_cny,updated_at:product.updated_at},policy,options,state,schema,
+    ...(context&&Object.hasOwn(context,'profileId')?{profileId:context.profileId}:{})});
  }catch{return false;}
 }

@@ -5,12 +5,12 @@ import './couplus-form-stages.css';
 
 export type StageTwoPricePolicyFieldsProps={
   policy:PricePolicy;onChange:(policy:PricePolicy)=>void;onRecalculate:()=>void;onSave:()=>void;
-  dirty:boolean;sourceDirty?:boolean;busy:boolean;disabled?:boolean;error?:string;
+  dirty:boolean;sourceDirty?:boolean;busy:boolean;disabled?:boolean;error?:string;allowUnchangedSave?:boolean;
 };
 const numeric=(value:unknown)=>typeof value==='number'&&Number.isFinite(value)?value:'';
 /** Controlled policy inputs share the option grid's draft and explicit save.
  * Rendering this panel never changes a product or workspace defaults. */
-export function StageTwoPricePolicyFields({policy,onChange,onRecalculate,onSave,dirty,sourceDirty=dirty,busy,disabled=false,error}:StageTwoPricePolicyFieldsProps){
+export function StageTwoPricePolicyFields({policy,onChange,onRecalculate,onSave,dirty,sourceDirty=dirty,busy,disabled=false,error,allowUnchangedSave=false}:StageTwoPricePolicyFieldsProps){
   const minimum=priceMinimumMarginEnabled(policy),lastMinimum=useRef(minimum?policy.minimumMargin:3000);
   const blocked=disabled||busy;
   const change=(next:PricePolicy)=>{if(!blocked)onChange(next);};
@@ -54,7 +54,7 @@ export function StageTwoPricePolicyFields({policy,onChange,onRecalculate,onSave,
       <details className="pricing-policy-save-guide"><summary>계산·저장 안내</summary><p>공급가 = 원가 + 최소 공급 마진액, 판매가 = 공급가 ÷ (1 - 쿠팡마진율)로 계산됩니다.</p><p>입력한 설정과 옵션 가격은 아래 저장하기를 누를 때 함께 저장됩니다.</p></details>
       {error&&<p role="alert">{error}</p>}
       <button type="button" className="btn ghost" disabled={blocked} onClick={()=>{if(!blocked)onRecalculate();}}>일괄 재계산</button>
-      <button type="button" className="btn primary" aria-label="가격 설정 저장하기" disabled={blocked||!dirty||Boolean(error)} onClick={()=>{if(!blocked&&dirty&&!error)onSave();}}>{busy?'저장 중…':'저장하기'}</button>
+      <button type="button" className="btn primary" aria-label="가격 설정 저장하기" disabled={blocked||(!dirty&&!allowUnchangedSave)||Boolean(error)} onClick={()=>{if(!blocked&&(dirty||allowUnchangedSave)&&!error)onSave();}}>{busy?'저장 중…':'저장하기'}</button>
     </fieldset>
   </section>;
 }
