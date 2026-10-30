@@ -16,18 +16,19 @@ function initial(){
   rows:[{optionId:null,optionLabel:'공통',included:false},{optionId:'one',optionLabel:'베이지',included:true},{optionId:'two',optionLabel:'검정',included:true},{optionId:'excluded',optionLabel:'제외',included:false}]
    .map(row=>({...row,automatic:{...automatic},values:{...automatic},sources:Object.fromEntries(Object.entries(automatic).map(([key,value])=>[key,value?'content':'empty']))}))};
 }
-function fixture({intercept,complete,prepare,afterWrite,currentCheck}={}){
- let view=initial();prepare?.(view);const calls=[],plans=[],attachments=[],controller=new AbortController();let scope=true,checks=0;
+function fixture({intercept,complete,prepare,afterWrite,currentCheck,renderImage,beforeMutation}={}){
+ let view=initial();prepare?.(view);const calls=[],plans=[],attachments=[],controller=new AbortController();let scope=true,checks=0,onDispatch;
  const refresh=()=>{for(const row of view.rows){const own=row.optionId?view.overrides.options[row.optionId]??{}:{};row.values={...row.automatic,...view.overrides.common,...own};row.sources=Object.fromEntries(Object.keys(row.values).map(key=>[key,Object.hasOwn(own,key)?'manual-option':Object.hasOwn(view.overrides.common,key)?'manual-common':row.automatic[key]?'content':'empty']));}};
  refresh();const exports={};
- const render=async plan=>{plans.push(clone(plan));return{blob:new Blob([png],{type:'image/png'}),width:800,height:500};};
+ const render=async plan=>{plans.push(clone(plan));if(renderImage)return renderImage(plan);return{blob:new Blob([png],{type:'image/png'}),width:800,height:500};};
  const dependencies={
   '@/app/product-label':labels,'@/app/product-label-draft':draftModule,'@/app/document-image-render':{renderDocument:render},
   '@/app/product-label-save':{completeProductLabelSave:async(input,request)=>{input.assertCurrent();attachments.push(input.optionId);if(complete)return complete(input,request,{get view(){return view;},controller});await input.render(labels.productLabelPlan(input.view,input.optionId));await request(input.quotationEndpoint,{cache:'no-store'});return{view:clone(view),key:'owner/synthetic.png',quotation:{}};}},
  };
  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/batch-selected-label-work.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,Date,URL,Blob,require:name=>{assert.ok(dependencies[name],name);return dependencies[name];}});
  const fetcher=async(url,init={})=>{
-  assert.equal(init.signal,controller.signal);assert.equal(init.redirect,'error');assert.equal(init.credentials,'same-origin');calls.push({url,init});
+  assert.equal(init.signal,controller.signal);assert.equal(init.redirect,'error');assert.equal(init.credentials,'same-origin');
+  if(init.method&&!['GET','HEAD'].includes(init.method.toUpperCase())){await beforeMutation?.(url,init);onDispatch?.();}calls.push({url,init});
   const state={get view(){return view;},set view(next){view=next;},controller,refresh};
   const replaced=await intercept?.(url,init,state);if(replaced)return replaced;
   if(url.endsWith('/quotation-fields'))return Response.json({});
@@ -46,7 +47,8 @@ function fixture({intercept,complete,prepare,afterWrite,currentCheck}={}){
   }
   return Response.json(view);
  };
- const controls={fetcher,signal:controller.signal,assertCurrent(){checks++;if(!scope)throw Error('owner/company changed');return currentCheck?.();},render};
+ const controls={fetcher,signal:controller.signal,assertCurrent(){checks++;if(!scope)throw Error('owner/company changed');return currentCheck?.();},render,
+  trackMutationDispatch:mark=>{onDispatch=mark;return()=>{onDispatch=undefined;};}};
  return{run:()=>exports.runSelectedLabelWork('selected-label',controls),calls,plans,attachments,controller,get view(){return view;},setScope(value){scope=value;},get checks(){return checks;}};
 }
 
@@ -92,10 +94,41 @@ test('asynchronous account verification is awaited and a later denied scope prev
 
 test('unacknowledged or mismatched text writes and PNG attachment failures report uncertainty and stop the option queue',async()=>{
  for(const mode of ['lost','wrong','png']){
-  const f=fixture({intercept(url,init){if(url.endsWith('/product-labels')&&init.method==='PUT'&&mode!=='png')return mode==='wrong'?Response.json({...initial(),productId:'other'}):new Response('<html>503</html>',{status:503});},
-   ...(mode==='png'?{complete:async()=>{throw Error('PNG receipt unavailable');}}:{})});
+  const f=fixture({intercept(url,init){if(url==='/api/files')return Response.json({error:'PNG receipt unavailable'},{status:503});if(url.endsWith('/product-labels')&&init.method==='PUT'&&mode!=='png')return mode==='wrong'?Response.json({...initial(),productId:'other'}):new Response('<html>503</html>',{status:503});},
+   ...(mode==='png'?{complete:async(_input,request)=>{await request('/api/files',{method:'POST'});throw Error('PNG receipt unavailable');}}:{})});
   const result=await f.run();assert.equal(result.status,'blocked');assert.equal(result.uncertain,true);assert.equal(result.completedOptions,0);
   assert.match(result.message,/저장 결과가 미확인/);assert.equal(f.calls.filter(call=>call.url.endsWith('/product-label-draft')).length,1);assert.equal(f.calls.filter(call=>call.init.method==='PUT').length,1);
+ }
+});
+
+test('an actual label-save helper render failure sends no mutation and remains a retryable stage failure',async()=>{
+ const save=providedOptionModule('app/product-label-save.ts').completeProductLabelSave;let failRender=true;
+ const f=fixture({prepare(view){view.overrides.common={netContents:'1개',material:'실리콘',productType:'생활용품'};},
+  complete:(input,request)=>save(input,request),renderImage(){if(failRender)throw Error('local canvas render failed');return{blob:new Blob([png],{type:'image/png'}),width:800,height:500};}}),before=clone(f.view);
+ const failed=await f.run();assert.equal(failed.status,'failed');assert.equal(failed.uncertain,false);assert.equal(failed.completedOptions,0);assert.match(failed.message,/local canvas render failed/);
+ assert.equal(f.calls.some(call=>call.init.method==='POST'||call.init.method==='PUT'),false);assert.equal(f.plans.length,1);assert.deepEqual(f.view,before);
+ // No false remote-save diagnosis: another explicit attempt enters the same
+ // actual helper and renderer. Stop its following read before any upload.
+ failRender=false;const retry=await f.run();assert.equal(f.plans.length,2);assert.equal(retry.uncertain,false);assert.equal(f.calls.some(call=>call.init.method==='POST'||call.init.method==='PUT'),false);
+});
+
+test('a rejected protected preflight before draft, text or PNG dispatch does not create an unknown mutation',async()=>{
+ for(const mode of ['draft','text','png']){
+  let reject=true;const f=fixture({beforeMutation(url,init){if(reject&&(mode==='draft'&&url.endsWith('/product-label-draft')||mode==='text'&&url.endsWith('/product-labels')&&init.method==='PUT'||mode==='png'&&url==='/api/files'))throw Error('protected preflight rejected');},
+   ...(mode==='png'?{prepare(view){view.overrides.common={netContents:'1개',material:'실리콘',productType:'생활용품'};},complete:async(_input,request)=>{await request('/api/files',{method:'POST'});throw Error('upload response unknown');},intercept(url){if(url==='/api/files')return Response.json({});}}:{})});
+  const failed=await f.run();assert.equal(failed.uncertain,false,mode);assert.ok(['blocked','failed'].includes(failed.status),mode);assert.equal(failed.completedOptions,0);
+  assert.equal(f.calls.some(call=>mode==='draft'?call.url.endsWith('/product-label-draft'):mode==='text'?call.init.method==='PUT':call.url==='/api/files'),false,mode);
+  if(mode==='draft'){reject=false;const retry=await f.run();assert.equal(retry.status,'draft');assert.equal(retry.uncertain,false);}
+ }
+});
+
+test('dispatched unknown upload, pool and quotation reference writes remain uncertain and stop every following option',async()=>{
+ for(const target of ['/api/files','/api/products/selected-label/image-pool','/api/products/selected-label/quotation-fields']){
+  const f=fixture({prepare(view){view.overrides.common={netContents:'1개',material:'실리콘',productType:'생활용품'};},
+   complete:async(_input,request)=>{await request(target,{method:target==='/api/files'?'POST':'PUT'});throw Error('dispatched reply lost');},
+   intercept(url,init){if(url===target&&init.method)throw Error('dispatched reply lost');}}),before=clone(f.view),result=await f.run();
+  assert.equal(result.status,'blocked',target);assert.equal(result.uncertain,true,target);assert.equal(result.completedOptions,0);assert.deepEqual(f.attachments,['one']);
+  assert.equal(f.calls.filter(call=>call.url===target&&call.init.method).length,1);assert.deepEqual(f.view,before);assert.match(result.message,/저장 결과가 미확인/);
  }
 });
 

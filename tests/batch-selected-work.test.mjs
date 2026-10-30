@@ -234,6 +234,20 @@ test('a pricing adapter rejection is never shown as complete',async()=>{
  const result=await h.run(['pricing']);assert.equal(result.stages[0].status,'failed');
 });
 
+test('a real stage-six local render failure stays failed and retryable while stage seven continues in the same action',async()=>{
+ const h=fixture(),model=providedOptionModule('app/product-label.ts'),runLabel=providedOptionModule('app/batch-selected-label-work.ts').runSelectedLabelWork;
+ const values=Object.fromEntries(model.productLabelFields.map(field=>[field.key,({productName:'보존할 제품명',netContents:'1개',material:'실리콘',productType:'생활용품'})[field.key]??'']));
+ const view={productId:'product',revision:1,inputFingerprint:hash,productVersion:version,contentRevision:3,optionRevision:1,quotationRevision:1,quotationInputFingerprint:hash,
+  categoryContext:{source:'collection',profileId:null,categoryId:'80719',categoryPath:['합성 분류']},imageKeys:[],overrides:{common:values,options:{}},updatedAt:version,
+  rows:[{optionId:null,optionLabel:'공통',included:false},{optionId:'a',optionLabel:'검정',included:true}].map(row=>({...row,values,automatic:values,sources:Object.fromEntries(model.productLabelFields.map(field=>[field.key,'manual-common']))}))};
+ let renders=0;h.intercept(call=>call.url.endsWith('/product-labels')?Response.json(view):null);
+ h.deps['@/app/batch-selected-label-work'].runSelectedLabelWork=(id,controls)=>runLabel(id,{...controls,render:async()=>{renders++;throw Error('local canvas unavailable');}});
+ const result=await h.run(['koreanLabel','quotation']);assert.equal(result.stages[0].status,'failed');assert.match(result.stages[0].message,/local canvas unavailable/);
+ assert.equal(result.stages[1].status,'draft');assert.equal(h.calls.filter(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST').length,1);
+ assert.equal(h.calls.some(call=>call.url==='/api/files'||call.url?.endsWith('/product-label-draft')),false);assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:koreanLabel')||key.includes(':write:label:')),false);
+ await h.run(['koreanLabel']);assert.equal(renders,2,'A subsequent explicit action is not permanently blocked by an unsent save');
+});
+
 test('required chart without an original blocks instead of pretending the category is optional',async()=>{
  const h=fixture();h.intercept(call=>call.url.endsWith('/registration-layout')?Response.json({productId:'product',productVersion:version,sizeChartRequired:true}):null);
  const result=await h.run(['sizeChart']);assert.equal(result.stages[0].status,'blocked');assert.match(result.stages[0].message,/필수/);

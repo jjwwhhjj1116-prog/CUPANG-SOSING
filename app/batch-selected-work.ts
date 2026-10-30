@@ -361,7 +361,9 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
         }
       }
       const outcome:Outcome=id==='seo'?await seo():id==='pricing'?await pricing():id==='mainImage'||id==='additionalImages'||id==='detailImage'?await image(id)
-        :id==='sizeChart'?await sizeChart():id==='koreanLabel'?await once('label:'+(await product()).updated_at,()=>runSelectedLabelWork(productId,{signal,fetcher,assertCurrent}))
+        :id==='sizeChart'?await sizeChart():id==='koreanLabel'?await once('label:'+(await product()).updated_at,()=>runSelectedLabelWork(productId,{signal,fetcher,assertCurrent,trackMutationDispatch:mark=>{
+          const previousDispatch=onMutationDispatch;onMutationDispatch=()=>{mark();previousDispatch?.();};return()=>{onMutationDispatch=previousDispatch;};
+        }}))
         :await quotation();
       await assertCurrent();publish(index,outcome);
       if(outcome.uncertain){holdRemaining(index);break;}

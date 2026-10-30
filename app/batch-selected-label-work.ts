@@ -5,7 +5,7 @@ import { renderDocument } from '@/app/document-image-render';
 import type { ProductLabelUploadCache } from '@/app/product-label-upload';
 
 export type SelectedLabelWorkResult = { status: 'draft' | 'blocked' | 'failed' | 'complete'; message: string; completedOptions: number; totalOptions: number; uncertain: boolean };
-type Controls = { fetcher?: typeof fetch; signal: AbortSignal; assertCurrent?: () => void | Promise<void>; render?: typeof renderDocument };
+type Controls = { fetcher?: typeof fetch; signal: AbortSignal; assertCurrent?: () => void | Promise<void>; render?: typeof renderDocument;trackMutationDispatch?:(onDispatch:()=>void)=>()=>void };
 const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
 const draftKeys = new Set(['netContents', 'material', 'productType']);
 class LabelWorkError extends Error { constructor(message: string, public status: 'blocked' | 'failed', public code?: string) { super(message); } }
@@ -28,13 +28,20 @@ export async function runSelectedLabelWork(productId: string, controls: Controls
  };
  const request: typeof fetch = async (url, init) => {
   await current();
-  // Provider generation is not durably recoverable. Once dispatched, a lost
-  // response must also stop automatic retries, even before any label save.
-  if (typeof url === 'string' && url.endsWith('/product-label-draft') && init?.method === 'POST') pendingDraft = true;
-  const response = await (controls.fetcher ?? fetch)(url, { ...init, signal: controls.signal, credentials: 'same-origin', redirect: 'error' });
-  await current();
-  if (response.redirected || response.type === 'opaqueredirect' || response.status >= 300 && response.status < 400) throw new LabelWorkError('표시사항 응답이 다른 화면으로 이동했습니다. 로그인 상태를 확인해주세요.', 'blocked');
-  return response;
+  // Local planning, reads and rendering cannot leave an unknown remote write.
+  // The protected outer fetcher reports dispatch only after its account check.
+  // Once any provider/text/upload/reference mutation is handed to transport,
+  // a lost response must still fence retries until its exact save is proved.
+  const mutation=!!init?.method&&!['GET','HEAD'].includes(init.method.toUpperCase());
+  const mark=()=>{if(typeof url==='string'&&url.endsWith('/product-label-draft')&&init?.method==='POST')pendingDraft=true;else pendingSave=true;};
+  const stopTracking=mutation?controls.trackMutationDispatch?.(mark):undefined;
+  try{
+   if(mutation&&!controls.trackMutationDispatch)mark();
+   const response = await (controls.fetcher ?? fetch)(url, { ...init, signal: controls.signal, credentials: 'same-origin', redirect: 'error' });
+   await current();
+   if (response.redirected || response.type === 'opaqueredirect' || response.status >= 300 && response.status < 400) throw new LabelWorkError('표시사항 응답이 다른 화면으로 이동했습니다. 로그인 상태를 확인해주세요.', 'blocked');
+   return response;
+  }finally{stopTracking?.();}
  };
  async function json<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await request(url, { cache: 'no-store', ...init });
@@ -80,7 +87,6 @@ export async function runSelectedLabelWork(productId: string, controls: Controls
    }
    if (Object.keys(draft).length) {
     const before = view, changes = productLabelChanges(before, optionId, draft);
-    pendingSave = true;
     try {
      const saved = await json<ProductLabelsView>(endpoint, { method: 'PUT', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ expectedRevision: before.revision, expectedInputFingerprint: before.inputFingerprint, changes }) });
@@ -95,7 +101,6 @@ export async function runSelectedLabelWork(productId: string, controls: Controls
     }
     savedTexts++; pendingSave = false;
    }
-   pendingSave = true;
    const saved = await completeProductLabelSave({ productId, endpoint, quotationEndpoint, optionId, view, cache,
     render: async plan => { await current(); const rendered = await (controls.render ?? renderDocument)(plan); await current(); return rendered; },
     // The existing helper's assertion is synchronous. Async account checks are
