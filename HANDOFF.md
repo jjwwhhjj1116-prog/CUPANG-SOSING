@@ -6658,3 +6658,20 @@ REA로 Couplus의 localhost HTTP/SSE와 별도 상품조회 경계를 확인했�
 - helper는Hub생성/파일/본문/검증/동의/제출을호출하지않고복구후기존검증→전송흐름을명시클릭으로잇는다. native readback은기존로컬checkpoint를updated→validated승격가능. claim뒤마지막읽기실패에도원래예약보존; samewindow storageevent부재로잠금풀리던P2를catch동기화+회귀로수정, unreturned session채택0. 독립남은P1/P2없음.
 - 분리고유10파일최신196/196(초기195 중 UI86을최종87로교체), tsc/변경4TS ESLint/최종build/9파일SHA일치. 최초UIfixture f.messages오타1실패는f.sent로수정하고원본로그보관. 최종Worker4598d490-d71d-4619-9795-fe432af90be7. 이번단계확장버전/권한/hosts/모델/요금변경0, 실제Chrome2.1.59/준비2.1.61 적용응답대기.
 - 기존원래범위35테이블47행hash39f1f5b9ff48173e6d68b0e8d9689aac8eb587f2fb469a0ed6b2984913a3455d는869와일치. 실제상품/견적/옵션/파일참조변경0, Hub생성/파일·본문재전송/제출0. 운영재로그인시Cloudflare기존인증과승인된유앤채로그인을정상복구, Hub탭은보존. 실제재연결·단계검증·접수성공은미완료. docs/step871-original-request-reconnect.md 및 outputs/step870-original-local-link.png 참조.
+
+
+### Step872 — 접이식 운영 메뉴·미확정 원래 문서 읽기 (2026-10-30)
+
+- 운영관리 상품소싱/판매관리/손익계산/물류를 한 그룹씩 접기·펼치기로 변경. 기존 링크·값·키보드 접근 유지. 215개 관련 검사/tsc/lint/분리빌드 통과, Worker8d09acae-c567-409a-8c44-98bc82242b65 배포.
+- 실제 확장2.1.61 확인. e2f8037c/f29491bd/doc2347603의 privatecheckpoint는 update-requested·seq22·검증0/4·포함3, webpending부재. inspector에 미확정 상태와 접힌 요청 연결 정보를 추가.
+- 같은 :update operation/원래UUID/doc/미제출/빈검증목록을 두번 확인하고 실제 native read가 저장본문 일치를 검증해 updated·seq23으로 승격한 경우만 원래 웹 예약 복원 허용. 새생성/파일/본문재전송0. 실제 읽기복구/접수 미완료. docs/step872-navigation-and-uncertain-document-read.md.
+
+### Step873 — RS 검색 카드 다중 담기·AI/비교함 목적지 선택 (2026-10-30)
+
+- 최종 사용자 지시: 다중 선택→담기→AI상품등록 수집함/1688 소싱·로켓 비교함 중 한곳 또는 양쪽. 상세페이지 개별 버튼은 기존 직접 AI수집 유지. REA 설치RS1.0.89의 카드요약→비교함 저장을 확인; 같은 해시가1.0.88에도 있으므로 신규추가 단정0. 우리 UI/배치/서버 독립구현.
+- 현재 로드된 카드 최대60개 선택, 사라짐/재활용/중복 검증. AI는 소유 비활성 상세탭의 실제 원문→기존수집함 서버버전/시각ACK; 비교는 원문카드 후보→기존ops workspace 원자적CAS/멤버승인 저장. 카드표시가격과 확인개당가격 분리, 기존후보 덮어쓰기0. 두목적지ACK 분리.
+- 회원/회사/창/URL 고정·매항목 재검사. 안정captureID/배치/순번과 저장상태 보관, 미확정 자동재전송0, genericFLUSH도 engine-owned미확정 skip. 사용중/다른URL/Hub탭 닫기0. 시작전 명확한거절+durable부재증명만 선택잠금해제, 실제ACK유실은잠금유지.
+- 독립검수 P1(비활성 타이머1초정렬이5500ms를초과)→인증된 owned hidden만15초, 일반5500ms/6회3600px/60초lease유지. P2시작거절UI잠금과UUID배열강제변환도회귀검사포함수정. 최종16고유파일304/304, tsc/lint/분리운영build/44파일hash일치. 최초PING1실패는구버전capability테스트기대수정후전체재검사.
+- Worker9fd88c9b-9241-4da7-a065-9e4bbed51407 배포. 확장2.1.62 ZIP111파일1593345bytes SHA7187b83e26411780c80869c02c728803d779d8f4806625deb8996618f68538dd. 실제설치폴더백업후111파일hash일치, 새s.1688.com host추가/다른permissions동일. 사용자2.1.62적용완료회신; 현재제어연결의정상앱/Hub탭0이므로실제실행버전확정못함. 검증용새상품1개의양쪽저장결과문구응답대기.
+- 원래범위D1 35테이블47행hash39f1f5b9ff48173e6d68b0e8d9689aac8eb587f2fb469a0ed6b2984913a3455d로871과동일. ops workspace0건. Hub신규생성/파일/본문재전송/제출0. 실제다중수집/상세누락해결/접수성공 미검증.
+- 검수용qa872가 CloudflareAccess로이동해 origin승인gate가인증도메인읽기를거절. 사용자로그인완료뒤에도같은거절지속, 우회0. qa872보존표식완료; 이전hub861핸들은더이상없어검수중단(탭닫기실행0). 다음에는승인된YOOFAM앱의정상열린탭과Hub실제연결부터확인. 상세 docs/step873-dual-destination-listing-collection.md.

@@ -27,8 +27,9 @@ test('actual content PING reports the runtime manifest version while retaining i
   assert.equal(replies.length,1);assert.equal(replies[0].targetOrigin,origin);
   const {message}=replies[0];assert.equal(message.channel,'YOOFAM_HUB_HANDOFF_RESULT');assert.equal(message.requestId,'a'.repeat(36));
   assert.equal(message.result.version,manifest.version);assert.equal(manifestReads,1);assert.equal(commands,0);
-  const {version:reportedVersion,nativeRegistrationStatus,...current}=JSON.parse(JSON.stringify(message.result));assert.equal(reportedVersion,manifest.version);
+  const {version:reportedVersion,nativeRegistrationStatus,preservedProductCheckpointInspection,...current}=JSON.parse(JSON.stringify(message.result));assert.equal(reportedVersion,manifest.version);
   const [major,minor,patch]=manifest.version.split('.').map(Number);assert.equal(nativeRegistrationStatus,major>2||major===2&&(minor>1||minor===1&&patch>=4));
+  assert.equal(preservedProductCheckpointInspection,major>2||major===2&&(minor>1||minor===1&&patch>=60));
   assert.equal(current.ok,true);assert.equal(current.popupWindowBinding,true);assert.equal(current.serverReceiptReplayProtection,true);
   assert.equal(current.pendingReceiptRefreshRecovery,true);assert.equal(current.registrationObservationCas,true);
   assert.equal(current.originalFileObservationCas,true);

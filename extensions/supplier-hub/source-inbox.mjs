@@ -89,6 +89,27 @@ async function activateReceiver(receiver,api){
  // A focus/tab-close failure cannot undo the durable matching storage ACK.
  try{await recheckReceiver(receiver,api);await api.tabs.update(receiver.tab.id,{active:true});}catch{}
 }
+/** Internal extension entry points. Callers retain this exact same-window
+ * authenticated receiver; these functions expose no cookies or credentials. */
+export async function resolveSourceInboxReceiver(windowId,api=chrome,options={}){
+ if(!Number.isSafeInteger(windowId)||windowId<0)throw Error('같은 Chrome 창에서 수집해주세요.');
+ const timeoutMs=Number.isFinite(options.timeoutMs)?Math.max(1,Math.min(12000,options.timeoutMs)):12000;
+ const pollMs=Number.isFinite(options.pollMs)?Math.max(1,Math.min(250,options.pollMs)):250;
+ const receiver=await appReceiver(api,windowId,timeoutMs,pollMs);
+ return {tab:{id:receiver.tab.id,windowId:receiver.tab.windowId,url:receiver.tab.url},scope:{ownerId:receiver.scope.ownerId,company:{...receiver.scope.company},origin:receiver.scope.origin}};
+}
+function expectedReceiver(value,windowId){
+ if(!value||!Number.isSafeInteger(value.tab?.id)||value.tab.windowId!==windowId||!identifier(value.scope?.ownerId)
+  ||!origins.includes(value.scope?.origin)||appOrigin(value.tab.url)!==value.scope.origin
+  ||!Object.hasOwn(companies,value.scope.company?.code)||companies[value.scope.company.code]!==value.scope.company.name)throw Error('수집 시작 당시의 앱·회원·회사 연결이 올바르지 않습니다.');
+ return value;
+}
+export async function recheckSourceInboxReceiver(receiver,api=chrome,options={}){
+ expectedReceiver(receiver,receiver?.tab?.windowId);
+ const timeoutMs=Number.isFinite(options.timeoutMs)?Math.max(1,Math.min(12000,options.timeoutMs)):12000;
+ return recheckReceiver(receiver,limitedApi(api,Date.now()+timeoutMs));
+}
+export async function activateSourceInboxReceiver(receiver,api=chrome){expectedReceiver(receiver,receiver?.tab?.windowId);await activateReceiver(receiver,limitedApi(api,Date.now()+12000));}
 export function sourceInboxStore(action,value){
  return new Promise((resolve,reject)=>{
   const open=indexedDB.open('yoofam-page-source-inbox',1);
@@ -135,12 +156,13 @@ function storedSourceReceipt(result,record){
   ||received===null||collected===null||received<collected-60000||receipt.collectedAt!==record.snapshot.collectedAt)return fail();
  return {...receipt,company:{code:receipt.company.code,name:receipt.company.name}};
 }
-async function deliver(record,tab,api,store,verifiedScope){
+async function deliver(record,tab,api,store,verifiedScope,requireReceipt=false){
  validatePageSourceForDelivery(record.snapshot);
  const before=verifiedScope??await context(api,tab);if(!same(before,record))throw Error('수집 당시 회원·회사로 로그인한 앱에서 불러오세요.');
  const result=await api.tabs.sendMessage(tab.id,{type:'YOOFAM_SAVE_SOURCE_CAPTURE',record},{frameId:0});
  if(result?.ok!==true||result.id!==record.id||result.fingerprint!==record.fingerprint||result.ownerId!==record.ownerId||result.company?.code!==record.company.code||result.company?.name!==record.company.name)throw Error(result?.error||'웹 수집함의 저장 확인을 받지 못했습니다. 확장 보관본은 유지됩니다.');
  const storedReceipt=storedSourceReceipt(result,record);
+ if(requireReceipt&&!storedReceipt)throw Error('실제 서버 저장 영수증을 확인하지 못했습니다. 확장 보관본은 유지됩니다.');
  if(!same(await context(api,tab),record))throw Error('저장 중 로그인 회사가 변경되었습니다. 확장 보관본은 유지됩니다.');
  await store('delete',record.id);return {...result,...(storedReceipt?{storedReceipt}:{})};
 }
@@ -152,26 +174,31 @@ export async function savePageSource(message,sender,api=chrome,store=sourceInbox
  const fingerprint=await sourceFingerprint(snapshot),active=pending.get(sender.tab.id);
  const timeoutMs=Number.isFinite(options.timeoutMs)?Math.max(1,Math.min(12000,options.timeoutMs)):12000;
  const pollMs=Number.isFinite(options.pollMs)?Math.max(1,Math.min(250,options.pollMs)):250;
+ const captureId=options.captureId;
+ if(captureId!==undefined&&!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(captureId))throw Error('수집 요청번호가 올바르지 않습니다.');
+ const fixedReceiver=options.expectedReceiver===undefined?null:expectedReceiver(options.expectedReceiver,sender.tab.windowId);
  if(active){
-  if(active.windowId!==sender.tab.windowId||active.sourceUrl!==snapshot.sourceUrl||active.offerId!==snapshot.offerId||active.fingerprint!==fingerprint)throw Error('이 상품 탭에서 이전 상품 수집이 진행 중입니다. 완료 후 현재 상품의 수집 버튼을 다시 눌러주세요. 현재 상품은 아직 수집하지 않았습니다.');
+  if(active.windowId!==sender.tab.windowId||active.sourceUrl!==snapshot.sourceUrl||active.offerId!==snapshot.offerId||active.fingerprint!==fingerprint||captureId!==active.captureId)throw Error('이 상품 탭에서 이전 상품 수집이 진행 중입니다. 완료 후 현재 상품의 수집 버튼을 다시 눌러주세요. 현재 상품은 아직 수집하지 않았습니다.');
   // An exact retry can share only this operation's original receiver and scope.
   // Recheck again after waiting so a late ACK cannot become another owner's success.
   const receiver=await active.receiver,bounded=limitedApi(api,Date.now()+timeoutMs,()=>Error('YOOFAM 앱의 응답 시간이 초과되었습니다. 수집 결과를 확인하고 다시 시도해주세요.'));
+  if(fixedReceiver&&(fixedReceiver.tab.id!==receiver.tab.id||!same(fixedReceiver.scope,receiver.scope)))throw Error('수집 시작 당시의 회원·회사 또는 앱 탭이 달라졌습니다.');
   await recheckReceiver(receiver,bounded);const result=await active.promise;
   await recheckReceiver(receiver,bounded);return result;
  }
- const receiving=appReceiver(api,sender.tab.windowId,timeoutMs,pollMs);
+ const receiving=fixedReceiver?(async()=>{await recheckSourceInboxReceiver(fixedReceiver,api,{timeoutMs});return fixedReceiver;})():appReceiver(api,sender.tab.windowId,timeoutMs,pollMs);
  const run=(async()=>{
   const receiver=await receiving,{tab,scope}=receiver;
   const bounded=limitedApi(api,Date.now()+timeoutMs,()=>Error('YOOFAM 앱의 응답 시간이 초과되었습니다. 수집 결과를 확인하고 다시 시도해주세요.'));
-  const records=await store('list'),previous=records.find(row=>row.windowId===sender.tab.windowId&&same(row,scope)&&row.snapshot.offerId===snapshot.offerId&&row.fingerprint===fingerprint);
+  const records=await store('list'),previous=captureId===undefined?records.find(row=>row.windowId===sender.tab.windowId&&same(row,scope)&&row.snapshot.offerId===snapshot.offerId&&row.fingerprint===fingerprint):records.find(row=>row.id===captureId);
+  if(previous&&(previous.windowId!==sender.tab.windowId||!same(previous,scope)||previous.snapshot.offerId!==snapshot.offerId||previous.fingerprint!==fingerprint))throw Error('원래 수집 요청번호의 원문·회원·회사가 다릅니다. 보관본을 변경하지 않았습니다.');
   // Retry only this exact immutable snapshot. A fresh capture gets its own
   // record; older uncertain captures stay retained for the existing flush path.
-  const record=previous??{id:crypto.randomUUID(),...scope,windowId:sender.tab.windowId,snapshot,fingerprint};
+  const record=previous??{id:captureId??crypto.randomUUID(),...scope,windowId:sender.tab.windowId,snapshot,fingerprint,...(options.manualRetryOnly===true?{manualRetryOnly:true}:{})};
   if(!previous){if(records.length>=40)throw Error('확장 수집함이 가득 찼습니다. 앱에서 보관된 상품을 불러와주세요.');await recheckReceiver(receiver,bounded);await store('put',record);}
-  try{const before=await recheckReceiver(receiver,bounded);const result=await deliver(record,tab,bounded,store,before);await activateReceiver(receiver,bounded);return {ok:true,delivered:true,duplicate:result.duplicate===true,id:record.id,ownerId:record.ownerId,company:{code:record.company.code,name:record.company.name},fingerprint:record.fingerprint,...(result.storedReceipt?{storedReceipt:result.storedReceipt}:{})};}
+  try{const before=await recheckReceiver(receiver,bounded);const result=await deliver(record,tab,bounded,store,before,options.requireStoredReceipt===true);if(options.activate!==false)await activateReceiver(receiver,bounded);return {ok:true,delivered:true,duplicate:result.duplicate===true,id:record.id,ownerId:record.ownerId,company:{code:record.company.code,name:record.company.name},fingerprint:record.fingerprint,...(result.storedReceipt?{storedReceipt:result.storedReceipt}:{})};}
   catch(error){return {ok:true,delivered:false,id:record.id,message:error.message};}
- })();pending.set(sender.tab.id,{promise:run,receiver:receiving,windowId:sender.tab.windowId,sourceUrl:snapshot.sourceUrl,offerId:snapshot.offerId,fingerprint});try{return await run;}finally{if(pending.get(sender.tab.id)?.promise===run)pending.delete(sender.tab.id);}
+ })();pending.set(sender.tab.id,{promise:run,receiver:receiving,windowId:sender.tab.windowId,sourceUrl:snapshot.sourceUrl,offerId:snapshot.offerId,fingerprint,captureId});try{return await run;}finally{if(pending.get(sender.tab.id)?.promise===run)pending.delete(sender.tab.id);}
 }
 export async function flushPageSources(_message,sender,api=chrome,store=sourceInboxStore){
  const origin=appSender(sender),tab={id:sender.tab.id,windowId:sender.tab.windowId,url:sender.url},scope=await context(api,tab);
@@ -183,7 +210,12 @@ export async function flushPageSources(_message,sender,api=chrome,store=sourceIn
  const run=(async()=>{
   const records=(await store('list')).filter(record=>record.windowId===tab.windowId&&same(record,scope));
   let delivered=0;const errors=[];
-  for(const record of records){try{await deliver(record,tab,api,store);delivered++;}catch(error){errors.push(error.message);}}
+  for(const record of records){
+   // A batch owns its one immutable save attempt. Generic app refresh/flush
+   // must never replay a retained save whose server outcome is uncertain.
+   if(record.manualRetryOnly===true){errors.push('미확정 다중 수집 보관본은 자동으로 다시 저장하지 않았습니다. 원래 수집 결과를 먼저 확인해주세요.');continue;}
+   try{await deliver(record,tab,api,store);delivered++;}catch(error){errors.push(error.message);}
+  }
   return {ok:true,ownerId:scope.ownerId,company:scope.company,delivered,pending:records.length-delivered,errors};
  })();
  flushing.set(key,run);try{return await run;}finally{if(flushing.get(key)===run)flushing.delete(key);}

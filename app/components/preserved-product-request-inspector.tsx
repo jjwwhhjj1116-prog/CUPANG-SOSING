@@ -4,7 +4,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import { inspectPreservedProductRequest, PreservedProductInspectionError, type PreservedProductInspection, type PreservedProductPendingDiagnostic } from '@/app/preserved-product-request-client';
 
 const states: Record<string, string> = {
-  prepared: '전송 준비 기록', created: '문서 생성 확인', updated: '본문 저장 확인', validated: '단계 검증 완료',
+  prepared: '전송 준비 기록', created: '문서 생성 확인', 'update-requested': '파일·본문 저장 결과 미확정', updated: '본문 저장 확인', validated: '단계 검증 완료',
   'validation-requested': '단계 검증 응답 미확정', 'validation-rejected': '단계 검증 반려',
   'submit-requested': '제출 요청됨 · 결과 조회 필요', pending: '접수 처리 중', accepted: '파일 처리 완료', rejected: '반려',
 };
@@ -55,6 +55,11 @@ export function PreservedProductRequestInspector({ ownerId }: { ownerId?: string
           <div><dt>검증 단계</dt><dd>{checkpoint.validatedSteps.length}/4 · 포함 옵션 {checkpoint.membersCount}개</dd></div>
           <div><dt>기록 시각</dt><dd>{new Date(checkpoint.updatedAt).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })} KST</dd></div>
         </dl>}
+        {checkpoint && <details><summary>요청 연결 정보</summary><dl className="connection-list">
+          <div><dt>원래 작업</dt><dd>{checkpoint.operationId ?? '기록 없음'}</dd></div>
+          <div><dt>원래 검증 탭</dt><dd>{checkpoint.savedHubTabId === null ? '기록 없음' : String(checkpoint.savedHubTabId)}</dd></div>
+          <div><dt>문서 단계</dt><dd>{checkpoint.preparedLifecycle ? '등록전송 단계' : '초안 저장·검증 단계'}</dd></div>
+        </dl></details>}
         <small>확장에 남은 기록의 조회 결과입니다. Supplier Hub의 현재 저장·접수 상태를 확인한 결과와 구분합니다. 이 조회에서는 문서 생성·파일 저장·본문 업데이트·제출을 실행하지 않습니다.</small>
       </section>}
     </div>

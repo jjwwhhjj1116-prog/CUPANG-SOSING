@@ -5,10 +5,33 @@ import {createPageCaptureObservations} from '../extensions/supplier-hub/page-cap
 import {readProductSectionLinks,readProductSectionStructure} from '../extensions/supplier-hub/page-dom-sections.mjs';
 // This identifies the injected script itself, even when an older open page
 // outlives an extension update. The runtime manifest is not that proof.
-const COLLECTOR_SCRIPT_VERSION='2.1.61';
+const COLLECTOR_SCRIPT_VERSION='2.1.62';
 const COLLECTOR_HOST_ID='yoofam-page-collector',COLLECTOR_OWNER='yoofam-studio';
 const OWNER_ATTRIBUTE='data-yoofam-collector-owner',VERSION_ATTRIBUTE='data-yoofam-collector-version',LEASE_ATTRIBUTE='data-yoofam-collector-capture';
 const CAPTURE_LEASE_MS=60000;
+const BULK_UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u;
+const BULK_ORIGINS=['https://sourceflow.jjwwhhjj1116.workers.dev','http://localhost:3000','http://127.0.0.1:3000'];
+const bulkObject=value=>!!value&&typeof value==='object'&&!Array.isArray(value);
+const bulkExact=(value,keys)=>bulkObject(value)&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
+function bulkPayload(value){
+ if(!bulkExact(value,['batchId','itemId','leaseNonce','sourceUrl','deadlineAt'])||!BULK_UUID.test(value.batchId)||!BULK_UUID.test(value.itemId)
+  ||typeof value.leaseNonce!=='string'||!/^[A-Za-z0-9_-]{16,128}$/u.test(value.leaseNonce)||!Number.isSafeInteger(value.deadlineAt)||value.deadlineAt<=Date.now()||value.deadlineAt>Date.now()+CAPTURE_LEASE_MS
+  ||pageSourceUrl(value.sourceUrl).sourceUrl!==value.sourceUrl||pageSourceUrl(location.href).sourceUrl!==value.sourceUrl)throw Error('현재 상품의 일괄 수집 연결을 확인하지 못했습니다.');
+ return Object.freeze({...value});
+}
+async function verifyBulkLease(payload){
+ const answer=await chrome.runtime.sendMessage({type:'YOOFAM_VALIDATE_BULK_PAGE',payload});
+ const lease=answer?.lease;
+ if(!bulkExact(answer,['ok','lease'])||answer.ok!==true||!bulkExact(lease,['batchId','itemId','leaseNonce','sourceUrl','deadlineAt','ownerId','company','origin','appTabId','windowId','tabId'])
+  ||!['batchId','itemId','leaseNonce','sourceUrl','deadlineAt'].every(key=>lease[key]===payload[key])||!Number.isSafeInteger(lease.deadlineAt)||lease.deadlineAt<=Date.now()
+  ||typeof lease.ownerId!=='string'||!/^\w[\w-]{0,99}$/u.test(lease.ownerId)||!bulkExact(lease.company,['code','name'])||({A01526306:'유앤채',A01464742:'와이홉'})[lease.company.code]!==lease.company.name
+  ||!BULK_ORIGINS.includes(lease.origin)||!['appTabId','windowId','tabId'].every(key=>Number.isSafeInteger(lease[key])&&lease[key]>=0)
+  ||pageSourceUrl(location.href).sourceUrl!==payload.sourceUrl||document.visibilityState!=='hidden')throw Error('현재 회원·회사와 일괄 수집 탭의 연결을 확인하지 못했습니다.');
+ return Object.freeze({...lease,company:Object.freeze({...lease.company})});
+}
+function sameBulkLease(left,right){
+ return ['batchId','itemId','leaseNonce','sourceUrl','deadlineAt','ownerId','origin','appTabId','windowId','tabId'].every(key=>left[key]===right[key])&&left.company.code===right.company.code&&left.company.name===right.company.name;
+}
 function collectorVersion(value){
  if(typeof value!=='string'||!/^\d{1,6}\.\d{1,6}\.\d{1,6}$/u.test(value))return null;
  return value.split('.').map(Number);
@@ -53,8 +76,8 @@ function captureDiagnosticSummary(snapshot){
  const descriptions={'not-needed':'','reference-missing':'상세문서 연결: 현재 상품에 연결된 주소가 확인되지 않았습니다.','reference-invalid':'상세문서 연결: 현재 상품과 일치하는 원문을 확인하지 못했습니다.',unavailable:'상세문서 연결: 원문을 확인하지 못했습니다. 현재 본문에서 읽은 자료만 보관합니다.',captured:'상세문서 연결: 현재 상품의 상세사진을 확인했습니다.'};
  return note+(titles?` 일반 본문: 속성 제목 ${titles.attributes}개 · 포장 제목 ${titles.packaging}개 · 상세 제목 ${titles.detail}개.`:'')+' '+descriptions[diagnostics.description];
 }
-// Only an actual click in the top-level product document starts a capture.
-// No background source request or page/global code execution is used.
+// An actual single-page click or an authenticated worker-owned bulk tab may
+// capture this exact top-level product. No page/global code is executed.
 function installPageCollector(){
  try{pageSourceUrl(location.href);}catch{throw Error('Not a product document');}
  const previous=document.getElementById(COLLECTOR_HOST_ID);
@@ -72,18 +95,28 @@ function installPageCollector(){
  const badge=document.createElement('small'),button=document.createElement('button'),status=document.createElement('p');badge.textContent=`수집기 ${COLLECTOR_SCRIPT_VERSION}`;button.type='button';button.textContent='YOOFAM 스튜디오 상품 수집';button.title=`YOOFAM 상품 수집기 ${COLLECTOR_SCRIPT_VERSION}`;status.setAttribute('role','status');status.hidden=true;root.append(style,badge,button,status);document.documentElement.append(host);
  const showStatus=message=>{status.textContent=`수집기 ${COLLECTOR_SCRIPT_VERSION} · ${message}`;};
  const isCurrent=()=>host.isConnected&&document.getElementById(COLLECTOR_HOST_ID)===host;
- let pending=false,retrySnapshot=null,sequence=0;
- button.addEventListener('click',async event=>{
-  if(!event.isTrusted||pending||!isCurrent())return;
+ let pending=false,retrySnapshot=null,sequence=0,bulkAttempt=null;
+ async function collect(bulk=null){
+  if(pending||!isCurrent()){if(bulk)throw Error('현재 상품 수집기가 이미 작업 중이거나 교체됐습니다.');return;}
+  if(bulk&&retrySnapshot)throw Error('이 상품 탭의 이전 보관본이 남아 있습니다. 일괄 수집을 다시 시작하지 않았습니다.');
   const leaseRoot=document.documentElement;
-  const previousLease=leaseRoot.getAttribute(LEASE_ATTRIBUTE),started=Date.now(),deadline=started+CAPTURE_LEASE_MS;
+  const previousLease=leaseRoot.getAttribute(LEASE_ATTRIBUTE),started=Date.now(),deadline=bulk?Math.min(started+CAPTURE_LEASE_MS,bulk.payload.deadlineAt):started+CAPTURE_LEASE_MS;
   if(previousLease!==null){
    const prior=captureLease(previousLease,started);
-   if(!prior){status.hidden=false;showStatus('이전 수집기 연결 상태를 확인하지 못했습니다. 상품 페이지를 새로고침한 뒤 다시 눌러주세요. 새 수집은 시작하지 않았습니다.');return;}
-   if(prior.expires>started){status.hidden=false;showStatus('이전 수집 응답을 기다리고 있습니다. 완료하거나 최대 60초 후 상품 수집을 다시 눌러주세요. 새 수집은 시작하지 않았습니다.');return;}
+   if(!prior){status.hidden=false;showStatus('이전 수집기 연결 상태를 확인하지 못했습니다. 상품 페이지를 새로고침한 뒤 다시 눌러주세요. 새 수집은 시작하지 않았습니다.');if(bulk)throw Error('이전 수집기 연결 상태를 확인하지 못했습니다.');return;}
+   if(prior.expires>started){status.hidden=false;showStatus('이전 수집 응답을 기다리고 있습니다. 완료하거나 최대 60초 후 상품 수집을 다시 눌러주세요. 새 수집은 시작하지 않았습니다.');if(bulk)throw Error('이전 상품 수집 응답이 미확정입니다.');return;}
   }
   const lease=`${COLLECTOR_OWNER}:${COLLECTOR_SCRIPT_VERSION}:${started}:${deadline}:${++sequence}`;leaseRoot.setAttribute(LEASE_ATTRIBUTE,lease);
-  const assertActive=()=>{if(!isCurrent()||document.documentElement!==leaseRoot||leaseRoot.getAttribute(LEASE_ATTRIBUTE)!==lease)throw Error('수집기가 교체되어 이전 수집을 중단했습니다. 현재 수집기에서 다시 확인해주세요.');if(Date.now()>=deadline)throw Error('수집 확인 시간이 60초를 초과했습니다. 자동으로 다시 수집하지 않았습니다. 앱 저장본을 확인한 뒤 다시 눌러주세요.');};
+  let ownedPageUnloaded=false;
+  const onOwnedPageHide=()=>{ownedPageUnloaded=true;};
+  if(bulk&&typeof window.addEventListener==='function')window.addEventListener('pagehide',onOwnedPageHide,{capture:true});
+  const assertOwnedBulkScope=()=>{
+   if(!bulk||ownedPageUnloaded||document.visibilityState!=='hidden'||pageSourceUrl(location.href).sourceUrl!==bulk.payload.sourceUrl||Date.now()>=bulk.payload.deadlineAt)throw Error('일괄 수집 탭의 상품·활성 상태 또는 연결 시간이 변경되어 중단했습니다.');
+   const title=typeof document.title==='string'?document.title.trim():'';
+   if(/^(?:请完成)?(?:安全验证|滑动验证|访问验证|验证码)/u.test(title))throw Error('1688 보안 확인 화면입니다. 일괄 수집을 중단했고 자동 재시도하지 않았습니다.');
+   if(/^(?:1688|阿里巴巴)?(?:会员)?(?:登录|登入)(?:\s|[-_—]|$)/u.test(title))throw Error('1688 로그인 화면입니다. 일괄 수집을 중단했고 자동 재시도하지 않았습니다.');
+  };
+  const assertActive=()=>{if(!isCurrent()||document.documentElement!==leaseRoot||leaseRoot.getAttribute(LEASE_ATTRIBUTE)!==lease)throw Error('수집기가 교체되어 이전 수집을 중단했습니다. 현재 수집기에서 다시 확인해주세요.');if(Date.now()>=deadline)throw Error('수집 확인 시간이 60초를 초과했습니다. 자동으로 다시 수집하지 않았습니다. 앱 저장본을 확인한 뒤 다시 눌러주세요.');if(bulk)assertOwnedBulkScope();};
   pending=true;button.disabled=true;button.textContent=retrySnapshot?'앱 전송 중…':'수집 중…';status.hidden=false;showStatus(retrySnapshot?'처음 보관한 원문을 앱에 다시 전달합니다.':'현재 페이지의 상품정보를 확인합니다.');
   try{
    assertActive();
@@ -94,7 +127,7 @@ function installPageCollector(){
     showStatus('화면을 잠시 내려 상품정보를 확인한 뒤 원래 위치로 돌아갑니다. 화면을 조작하면 수집을 중단합니다.');
     const views=createPageCaptureObservations(before);
     const pageScripts=()=>{const scripts=[],descriptionScripts=[];let size=0;for(const script of document.scripts){const raw=script.textContent??'',sourceData=/"(?:skuModel|subject|offerTitle|offerSubject|productTitle|productName|offerBaseInfo|tempModel|offerImgList|mainImageList|propsList)"\s*:/.test(raw),descriptionData=/"detailUrl"\s*:/.test(raw);if(!sourceData&&!descriptionData)continue;size+=raw.length;if(size>4*1024*1024)throw Error('상품 데이터가 수집 크기를 초과했습니다.');if(sourceData)scripts.push(raw);if(descriptionData)descriptionScripts.push(raw);}return {scripts,descriptionScripts};};
-    const observed=await hydratePageForCapture(document,window,{assertCurrent:()=>{assertActive();if(pageSourceUrl(location.href).sourceUrl!==before)throw Error('상품 페이지가 변경되었습니다. 다시 수집해주세요.');},observe:checked=>{
+    const observed=await hydratePageForCapture(document,window,{...(bulk?{assertOwnedBulkScope}:{}),assertCurrent:()=>{assertActive();if(pageSourceUrl(location.href).sourceUrl!==before)throw Error('상품 페이지가 변경되었습니다. 다시 수집해주세요.');},observe:checked=>{
      checked();const {scripts}=pageScripts();const facts=scripts.length?readPageSourceDomFacts(document,before,scripts):null;views.add(facts,readPageDomDetails(document,before));checked();
     },capture:async assertCurrent=>{
     const ready=waitForPageDomDetails(document,before,{assertCurrent});
@@ -144,7 +177,8 @@ function installPageCollector(){
    }
    assertActive();
    if(pageSourceUrl(location.href).sourceUrl!==before)throw Error('상품 페이지가 변경되었습니다. 다시 수집해주세요.');
-   const result=await chrome.runtime.sendMessage({type:'YOOFAM_SAVE_PAGE_SOURCE',snapshot});
+   if(bulk){const currentLease=await verifyBulkLease(bulk.payload);assertActive();if(!sameBulkLease(currentLease,bulk.lease))throw Error('일괄 수집 중 회원·회사 연결이 변경됐습니다. 원문을 전송하지 않았습니다.');}
+   const result=await chrome.runtime.sendMessage({type:'YOOFAM_SAVE_PAGE_SOURCE',snapshot,...(bulk?{bulk:{batchId:bulk.payload.batchId,itemId:bulk.payload.itemId,leaseNonce:bulk.payload.leaseNonce}}:{})});
    assertActive();
    if(result?.ok!==true)throw Error(result?.error||'수집 결과를 확인하지 못했습니다. 다시 누르면 저장 결과를 확인합니다.');
    const deliveryMessage=typeof result.message==='string'&&result.message.trim()?result.message:'앱의 저장 확인 응답을 받지 못했습니다.';
@@ -154,15 +188,39 @@ function installPageCollector(){
    }
    if(result.delivered===true){
     const receiptSummary=storedReceiptSummary(result,snapshot),savedDetail=receiptSummary??'서버 수집본 상세 미확인. 앱 목록에서 저장본을 확인해주세요.';
+    if(bulk&&(!receiptSummary||result.pendingSnapshotReplayed===true||result.newCaptureStored===false||result.ownerId!==bulk.lease.ownerId||result.company?.code!==bulk.lease.company.code||result.company?.name!==bulk.lease.company.name||result.storedReceipt.collectedAt!==snapshot.collectedAt))throw Error('일괄 수집 원문의 정확한 서버 저장 확인을 받지 못했습니다. 자동 재전송하지 않았습니다.');
     retrySnapshot=null;
     if(result.pendingSnapshotReplayed===true&&result.newCaptureStored===false){showStatus('이전에 전송 확인을 받지 못한 수집본의 저장을 확인했습니다. 방금 읽은 새 상품정보는 아직 저장하지 않았습니다. ‘현재 상품 다시 수집’을 한 번 눌러 새 수집본으로 보관하세요. 기존 작업과 이전 검토값은 유지됩니다. '+savedDetail);button.textContent='현재 상품 다시 수집';}
     else{showStatus((receiptSummary?(result.duplicate===true?'이미 수집함에 담긴 원문과 검토 내용을 유지했습니다. ':'YOOFAM 스튜디오 AI상품등록 목록에 담았습니다. 앱에서 카테고리를 선택하고 초안을 작성하세요. '):'앱 저장 확인 응답을 받았습니다. ')+savedDetail+' '+(receiptSummary?'':'현재 페이지 읽기 결과 · 서버 저장본의 항목 수는 미확인. ')+captureSummary(snapshot)+' '+captureDiagnosticSummary(snapshot));button.textContent='수집 완료';}
    }else if(result.delivered===false){
     // Keep the first click's payload even if the visible page data changes.
-    retrySnapshot=snapshot;showStatus((result.pendingSnapshotReplayed===true&&result.newCaptureStored===false?'이전에 보관한 수집본의 전송 확인을 다시 기다리고 있습니다. 방금 읽은 새 상품정보는 아직 저장하지 않았습니다. ':'확장에 보관했습니다. 앱 수집함의 저장을 확인하지 못했습니다. ')+deliveryMessage+' 같은 창의 YOOFAM 앱에서 상태를 확인한 뒤 이 버튼으로 다시 시도하거나 수집함에서 불러오세요.');button.textContent='앱 전송 다시 시도';
+    if(!bulk)retrySnapshot=snapshot;showStatus((result.pendingSnapshotReplayed===true&&result.newCaptureStored===false?'이전에 보관한 수집본의 전송 확인을 다시 기다리고 있습니다. 방금 읽은 새 상품정보는 아직 저장하지 않았습니다. ':'확장에 보관했습니다. 앱 수집함의 저장을 확인하지 못했습니다. ')+deliveryMessage+' 같은 창의 YOOFAM 앱에서 상태를 확인한 뒤 이 버튼으로 다시 시도하거나 수집함에서 불러오세요.');button.textContent=bulk?'일괄 저장 결과 미확정':'앱 전송 다시 시도';
    }else throw Error('앱 수집함의 저장 결과를 확인하지 못했습니다. 다시 누르면 저장 결과를 확인합니다.');
-  }catch(error){if(isCurrent()){showStatus(error?.message||'상품 수집 실패');button.textContent=retrySnapshot?'앱 전송 다시 시도':'YOOFAM 스튜디오 상품 수집';}}
-  finally{if(leaseRoot.getAttribute(LEASE_ATTRIBUTE)===lease)leaseRoot.removeAttribute(LEASE_ATTRIBUTE);pending=false;if(isCurrent())button.disabled=false;}
+   return result;
+  }catch(error){if(isCurrent()){showStatus(error?.message||'상품 수집 실패');button.textContent=retrySnapshot?'앱 전송 다시 시도':'YOOFAM 스튜디오 상품 수집';}if(bulk)throw error;}
+  finally{if(bulk&&typeof window.removeEventListener==='function')window.removeEventListener('pagehide',onOwnedPageHide,{capture:true});if(leaseRoot.getAttribute(LEASE_ATTRIBUTE)===lease)leaseRoot.removeAttribute(LEASE_ATTRIBUTE);pending=false;if(isCurrent())button.disabled=false;}
+ }
+ button.addEventListener('click',async event=>{
+  if(!event.isTrusted||pending||!isCurrent())return;
+  if(bulkAttempt){status.hidden=false;showStatus('일괄 수집 요청은 이 탭에서 한 번만 처리합니다. 목록의 저장 결과를 확인해주세요. 새 수집은 시작하지 않았습니다.');return;}
+  await collect();
+ });
+ if(typeof chrome.runtime.onMessage?.addListener==='function')chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
+  if(!['YOOFAM_BULK_PAGE_READY','YOOFAM_BULK_COLLECT_PAGE'].includes(message?.type)||!isCurrent())return;
+  if(typeof chrome.runtime.id!=='string'||!chrome.runtime.id||sender?.id!==chrome.runtime.id||sender.tab!==undefined||sender.frameId!==undefined)return;
+  if(message.type==='YOOFAM_BULK_PAGE_READY'){
+   if(!bulkExact(message,['type'])){sendResponse({ok:false,error:'일괄 수집 준비 요청을 확인하지 못했습니다.'});return;}
+   try{const source=pageSourceUrl(location.href);sendResponse({ok:true,result:{sourceUrl:source.sourceUrl,offerId:source.offerId,version:COLLECTOR_SCRIPT_VERSION}});}catch(error){sendResponse({ok:false,error:error?.message||'상품 페이지가 아닙니다.'});}return;
+  }
+  let payload;
+  try{if(!bulkExact(message,['type','payload']))throw Error('일괄 수집 요청 형식을 확인하지 못했습니다.');payload=bulkPayload(message.payload);}catch(error){sendResponse({ok:false,error:error?.message||'일괄 수집 요청을 확인하지 못했습니다.'});return;}
+  const key=JSON.stringify(['batchId','itemId','leaseNonce','sourceUrl','deadlineAt'].map(name=>payload[name]));
+  if(bulkAttempt&&bulkAttempt.key!==key){sendResponse({ok:false,error:'이 탭에서 원래 일괄 수집 요청을 이미 처리했습니다. 다시 수집하지 않았습니다.'});return;}
+  if(!bulkAttempt){
+   const promise=(async()=>{const lease=await verifyBulkLease(payload);if(!isCurrent())throw Error('일괄 수집기가 교체됐습니다.');return collect({payload,lease});})();
+   bulkAttempt={key,promise};
+  }
+  bulkAttempt.promise.then(result=>sendResponse(result),error=>sendResponse({ok:false,error:typeof error?.message==='string'?error.message.slice(0,1000):'일괄 수집 실패'}));return true;
  });
 }
 if(window===window.top)installPageCollector();

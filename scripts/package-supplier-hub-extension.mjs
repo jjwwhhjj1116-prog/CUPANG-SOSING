@@ -21,6 +21,9 @@ if(manifest.manifest_version!==3||manifest.background.service_worker!=='handoff-
 const productDocumentFiles=['product-document.mjs','product-document.d.mts','product-document-receiver.mjs','product-document-dispatch.mjs','product-document-adapter.mjs','single-create-retry-page.mjs','single-record-mirror-page.mjs','saved-draft-current-read-page.mjs','rejection-details.mjs','rejection-details.d.mts','native-registration.mjs','native-registration-page.mjs','native-product-recovery.mjs','native-asset-recovery-page.mjs'];
 if([...productDocumentFiles,'product-document-source.mjs','product-source-session.mjs','product-source-context.mjs','native-source-content.js'].some(name=>!files.some(file=>file.name===name))||!manifest.content_scripts?.some(entry=>entry.js?.includes('single-content.js')&&entry.js?.includes('native-source-content.js')))
  throw Error('전체 상품 견적 확인 확장의 실행 파일을 확인해주세요.');
+if(['listing-picker.js','listing-candidates.mjs','listing-batch.mjs'].some(name=>!files.some(file=>file.name===name))
+ ||!manifest.host_permissions.includes('https://s.1688.com/*')||!manifest.content_scripts.some(entry=>entry.matches?.includes('https://s.1688.com/selloffer/offer_search.htm*')&&entry.js?.includes('listing-picker.js')&&entry.all_frames===false))
+ throw Error('1688 다중 담기의 실행 파일과 검색 목록 연결을 확인해주세요.');
 const exports={};
 vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('app/exports/zip.ts',root),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,Uint8Array,Uint32Array,DataView});
 const archive=new Uint8Array(exports.zipFiles(files)),unpacked=readPackageZip(archive);

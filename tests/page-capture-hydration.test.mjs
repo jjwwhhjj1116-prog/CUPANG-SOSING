@@ -164,3 +164,48 @@ test('inert fixtures without real scrolling or event APIs pass through capture w
   assert.equal(captures,1);assert.ok(checks>0);assert.deepEqual(h.moves,[]);assert.deepEqual(h.waits,[]);assert.equal(h.listenerCount(),0);
  }
 });
+
+test('ordinary initially hidden documents cannot capture, including passive readers',async()=>{
+ for(const passive of [false,true]){
+  const h=fixture();h.document.visibilityState='hidden';if(passive)delete h.view.scrollTo;
+  let captures=0;await assert.rejects(hydratePageForCapture(h.document,h.view,options(h,()=>{captures++;})),/숨겨져/);
+  assert.equal(captures,0);assert.equal(h.moves.length,0);assert.equal(h.listenerCount(),0);
+ }
+});
+
+test('an authenticated owned hidden tab hydrates within existing limits and restores before delivery',async()=>{
+ const h=fixture();h.document.visibilityState='hidden';let checks=0,captures=0;
+ const result=await hydratePageForCapture(h.document,h.view,options(h,checked=>{checked();captures++;return 'full source';},{assertOwnedBulkScope(){checks++;}}));
+ assert.equal(result,'full source');assert.equal(captures,1);assert.ok(checks>2);assert.ok(h.moves.length<=7);
+ assert.deepEqual([h.view.scrollX,h.view.scrollY],[7,120]);assert.equal(h.listenerCount(),0);
+});
+
+test('owned hidden capture tolerates inactive one-second timer alignment while preserving its movement bounds',async()=>{
+ const h=fixture();h.document.visibilityState='hidden';let captures=0,leaseChecks=0;
+ h.onWait(ms=>h.advance(Math.max(0,1000-ms)));
+ const result=await hydratePageForCapture(h.document,h.view,options(h,checked=>{checked();captures++;return 'full source';},{assertOwnedBulkScope(){leaseChecks++;}}));
+ assert.equal(result,'full source');assert.equal(captures,1);assert.equal(h.now(),7000);assert.ok(leaseChecks>7);
+ assert.equal(h.moves.length,7);assert.ok(h.moves.every(move=>move.y<=3600));assert.deepEqual([h.view.scrollX,h.view.scrollY],[7,120]);assert.equal(h.listenerCount(),0);
+});
+
+test('owned hidden capture still aborts at fifteen seconds before capture even with delayed timers',async()=>{
+ const h=fixture();h.document.visibilityState='hidden';let captures=0;
+ h.onWait(ms=>h.advance(Math.max(0,3000-ms)));
+ await assert.rejects(hydratePageForCapture(h.document,h.view,options(h,()=>{captures++;},{assertOwnedBulkScope(){}})),/확인 시간을 초과/);
+ assert.equal(captures,0);assert.equal(h.now(),15000);assert.ok(h.moves.length<=7);assert.ok(h.moves.every(move=>move.y<=3600));assert.equal(h.listenerCount(),0);
+});
+
+for(const change of ['lease','activation','input','pagehide'])test(`owned hidden hydration stops on ${change} without partial capture or forced restore`,async()=>{
+ const h=fixture();h.document.visibilityState='hidden';let valid=true,captures=0;
+ h.onWait(()=>{if(change==='lease')valid=false;if(change==='activation'){h.document.visibilityState='visible';h.emit('visibilitychange');}if(change==='input')h.emit('pointerdown');if(change==='pagehide')h.emit('pagehide');});
+ await assert.rejects(hydratePageForCapture(h.document,h.view,options(h,()=>{captures++;},{assertOwnedBulkScope(){if(!valid)throw Error('lease expired');}})));
+ assert.equal(captures,0);assert.equal(h.moves.length,1);assert.notEqual(h.view.scrollY,120);assert.equal(h.listenerCount(),0);
+});
+
+test('owned mode requires a callable guard and a still hidden document before any read',async()=>{
+ for(const guard of [null,true,()=>{}]){
+  const h=fixture();let captures=0;
+  await assert.rejects(hydratePageForCapture(h.document,h.view,options(h,()=>{captures++;},{assertOwnedBulkScope:guard})));
+  assert.equal(captures,0);assert.equal(h.moves.length,0);
+ }
+});

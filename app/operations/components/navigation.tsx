@@ -12,14 +12,14 @@ export function operationsLocation(id:string|null){
  return locations.find(item=>item.id===id)??locations[0];
 }
 
-export function OperationsNavigation({view,open,onNavigate,onClose}:{view:string;open:boolean;onNavigate:(id:string)=>void;onClose:()=>void}){
+export function OperationsNavigation({view,open,expandedGroup,onToggleGroup,onNavigate,onClose}:{view:string;open:boolean;expandedGroup:string|null;onToggleGroup:(group:string)=>void;onNavigate:(id:string)=>void;onClose:()=>void}){
  return <aside id="operations-navigation" className={'ops-sidebar '+(open?'open':'')}>
   <Link className="ops-brand" href="/"><span className="ops-brand-icon">Y</span><span>YOOFAM 스튜디오</span></Link>
   <nav className="ops-workspace-nav" aria-label="작업 공간 이동"><Link href="/" className="ops-workspace-return"><span aria-hidden="true">←</span> AI 상품등록</Link><span className="ops-workspace-current"><span aria-hidden="true">▥</span> 운영관리</span></nav>
   <button type="button" className="ops-mobile-close" onClick={onClose} aria-label="운영 메뉴 닫기">×</button>
   <nav aria-label="운영관리 메뉴">{operationsMenus.map(group=><section className="ops-menu-group" key={group.group} aria-label={group.group}>
-   <h2><span aria-hidden="true">{group.icon}</span>{group.group}</h2>
-   {group.items.map(([id,name])=><button type="button" key={id} aria-current={view===id?'page':undefined} className={view===id?'active':''} onClick={()=>onNavigate(id)}>{name}</button>)}
+   <h2><button type="button" className={'ops-menu-toggle '+(group.items.some(([id])=>id===view)?'current':'')} aria-label={group.group} aria-expanded={expandedGroup===group.group} aria-controls={'operations-menu-'+group.items[0][0]} onClick={()=>onToggleGroup(group.group)}><span className="ops-menu-label"><span aria-hidden="true">{group.icon}</span>{group.group}</span><span className="ops-menu-chevron" aria-hidden="true">⌄</span></button></h2>
+   <div className="ops-menu-items" id={'operations-menu-'+group.items[0][0]} hidden={expandedGroup!==group.group}>{group.items.map(([id,name])=><button type="button" key={id} aria-current={view===id?'page':undefined} className={view===id?'active':''} onClick={()=>onNavigate(id)}>{name}</button>)}</div>
   </section>)}</nav>
   <nav className="ops-sidebar-tools" aria-label="운영관리 설정"><button type="button" className={'ops-return '+(view==='settings'?'active':'')} aria-current={view==='settings'?'page':undefined} onClick={()=>onNavigate('settings')}><span aria-hidden="true">⚙</span> 공통 SKU·데이터 연결</button></nav>
  </aside>;

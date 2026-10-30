@@ -19,7 +19,7 @@ const candidateFields: Field[] = [
   {key:'name',label:'원문 상품명',required:true}, {key:'nameKo',label:'한국어 상품명'},
   {key:'offerId',label:'1688 상품번호'}, {key:'sourceProductId',label:'기존 YOOFAM 상품 ID'},
   {key:'url',label:'상품 원문 URL'}, {key:'image',label:'이미지 URL'},
-  {key:'price',label:'표시가격(외화)',type:'number'}, {key:'keyword',label:'쿠팡 비교 검색어'},
+  {key:'displayPrice',label:'검색 카드 표시가격'}, {key:'price',label:'확인한 개당 가격(외화)',type:'number'}, {key:'keyword',label:'쿠팡 비교 검색어'},
   {key:'status',label:'검토 상태',type:'select',options:['미검토','비교 중','제안 후보','보류'],default:'미검토'},
   {key:'memo',label:'차별점·공급조건 메모',type:'textarea'},
 ];
@@ -165,9 +165,9 @@ function Compare({ctx}:{ctx:OperationsContext}) {
         <label>비교할 후보<select value={selected} onChange={event=>setSelected(event.target.value)}><option value="">전체 후보</option>{candidates.map(row=><option key={row.id} value={row.id}>{str(row.values.nameKo)||str(row.values.name)}</option>)}</select></label>
         {candidate&&str(candidate.values.keyword).trim()&&<CollectButton ctx={ctx} kind="coupangCompare" label="후보 검색어로 쿠팡 비교" values={{keyword:str(candidate.values.keyword),candidateId:candidate.id}} dataset="comparisons" />}
       </div>
-      {candidate&&<p><strong>{str(candidate.values.nameKo)||str(candidate.values.name)}</strong> · 표시가격 {str(candidate.values.price)||'미확인'} · {str(candidate.values.memo)||'차별점 메모를 추가하세요.'}</p>}
+      {candidate&&<p><strong>{str(candidate.values.nameKo)||str(candidate.values.name)}</strong> · 표시가격 {str(candidate.values.displayPrice)||str(candidate.values.price)||'미확인'} · {str(candidate.values.memo)||'차별점 메모를 추가하세요.'}</p>}
     </section>
-    <RecordPanel ctx={ctx} dataset="sourcingCandidates" title="소싱 후보" fields={candidateFields} columns={[{key:'nameKo',label:'한국어명'},{key:'name',label:'원문명'},{key:'offerId',label:'1688 번호'},{key:'price',label:'표시가격'},{key:'keyword',label:'쿠팡 검색어'},{key:'status',label:'검토 상태'},{key:'memo',label:'차별점·메모'}]}
+    <RecordPanel ctx={ctx} dataset="sourcingCandidates" title="소싱 후보" fields={candidateFields} columns={[{key:'nameKo',label:'한국어명'},{key:'name',label:'원문명'},{key:'offerId',label:'1688 번호'},{key:'displayPrice',label:'카드 표시가격'},{key:'price',label:'확인한 개당 가격'},{key:'keyword',label:'쿠팡 검색어'},{key:'status',label:'검토 상태'},{key:'memo',label:'차별점·메모'}]}
       rowActions={row=><><ActionButton onClick={()=>setSelected(row.id)}>비교 보기</ActionButton><ActionButton disabled={ctx.busy} onClick={async()=>{if(window.confirm(`‘${str(row.values.nameKo)||str(row.values.name)}’을 공통 SKU로 연결할까요? 연결 후 구매·재고·판매에서 선택할 수 있습니다.`))await ctx.command({type:'promote-candidate',id:row.id});}}>SKU로 연결</ActionButton></>} />
     <ReadTable title="후보별 비교 요약" rows={linkRows} columns={[{key:'candidate',label:'공급 후보'},{key:'name',label:'쿠팡 상품'},{key:'price',label:'판매가',format:'money'},{key:'seller',label:'확인 판매자'},{key:'delivery',label:'배송방식'},{key:'decision',label:'비교 판단'},{key:'evidence',label:'확인 근거'},{key:'memo',label:'차별점'}]} />
     {candidate?<RecordPanel ctx={ctx} dataset="comparisons" title="비교 근거 기록" description="판매자명·옵션ID·근거 URL을 함께 기록하세요. 목록의 로켓 배지만으로 직매입이라고 확정하지 않습니다."

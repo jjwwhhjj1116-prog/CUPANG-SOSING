@@ -9,10 +9,17 @@
 .ops-root a.ops-workspace-return{color:#77809c}
 .ops-workspace-current{background:#fff8f3;color:#f07845;font-weight:600}
 .ops-workspace-nav span[aria-hidden]{width:17px;text-align:center}
-.ops-menu-group{margin:0 0 10px}
-.ops-menu-group>h2{display:flex;gap:8px;font-size:11px;font-weight:500;color:#959caf;margin:9px 10px 4px}
-.ops-menu-group>h2>span{width:15px;text-align:center;color:#959caf}
+.ops-menu-group{margin:0 0 4px}
+.ops-menu-group>h2{margin:0;font:inherit}
 .ops-menu-group button{min-height:28px;padding:4px 11px 4px 33px;border-radius:3px;font-size:12px;line-height:1.6;color:#77809c}
+.ops-menu-group .ops-menu-toggle{min-height:42px;padding:8px 11px;font-weight:500}
+.ops-menu-toggle .ops-menu-label{display:flex;align-items:center;gap:8px;color:inherit}
+.ops-menu-label>span{width:15px;text-align:center;color:#959caf}
+.ops-menu-toggle .ops-menu-chevron{color:#959caf;transform:rotate(-90deg);transition:transform .15s ease}
+.ops-menu-toggle[aria-expanded=true] .ops-menu-chevron{transform:rotate(0)}
+.ops-menu-group .ops-menu-toggle.current{color:#f07845;font-weight:600}
+.ops-menu-items{padding:1px 0 7px}
+.ops-menu-items[hidden]{display:none}
 .ops-menu-group button.active,.ops-sidebar-tools button.active{background:#fff8f3;color:#f07845;font-weight:600}
 .ops-menu-group button:hover,.ops-sidebar-tools button:hover{background:#f7f9fc}
 .ops-menu-group button.active:hover,.ops-sidebar-tools button.active:hover{background:#fff3e9}

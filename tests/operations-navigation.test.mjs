@@ -7,6 +7,7 @@ import ts from 'typescript';
 import {createRequire} from 'node:module';
 const native=createRequire(import.meta.url);
 const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
+const visibleNodes=tree=>Array.isArray(tree)?tree.flatMap(visibleNodes):tree&&typeof tree==='object'&&!tree.props?.hidden?[tree,...visibleNodes(tree.props?.children)]:[];
 const text=tree=>Array.isArray(tree)?tree.map(text).join(''):tree&&typeof tree==='object'?text(tree.props?.children):tree==null?'':String(tree);
 const turn=()=>new Promise(resolve=>setImmediate(resolve));
 
@@ -33,7 +34,7 @@ function fixture(initialSearch='',{fetcher}={}){
  const client=load('app/operations/operations-client.tsx').default,nav=load('app/operations/components/navigation.tsx');
  function render(){assert.equal(closed,false);for(let pass=0;pass<20;pass++){dirty=false;cursor=0;tree=client();effects.splice(0).forEach(fn=>fn());if(!dirty)return tree;}assert.fail('Unstable operations navigation');}
  function sidebar(){const element=nodes(render()).find(node=>node.type===nav.OperationsNavigation);assert.ok(element);return nav.OperationsNavigation(element.props);}
- function button(label){return nodes(sidebar()).find(node=>node.type==='button'&&text(node).trim()===label);}
+ function button(label){return visibleNodes(sidebar()).find(node=>node.type==='button'&&(node.props['aria-label']===label||text(node).trim()===label));}
  render();
  return {requests,pushed,snapshot,render,sidebar,button,location,Link,
   title:()=>text(nodes(render()).find(node=>node.type==='h1')),
@@ -51,9 +52,9 @@ function fixture(initialSearch='',{fetcher}={}){
 
 test('all nineteen grouped operations and the studio return remain available without writing a workspace',async()=>{
  const h=fixture();try{
-  await h.settle();const groups=nodes(h.sidebar()).filter(node=>node.type==='section'&&node.props.className==='ops-menu-group');assert.equal(groups.length,4);assert.deepEqual(groups.map(group=>nodes(group).filter(node=>node.type==='button').length),[5,6,4,4]);
+  await h.settle();const groups=nodes(h.sidebar()).filter(node=>node.type==='section'&&node.props.className==='ops-menu-group');assert.equal(groups.length,4);assert.deepEqual(groups.map(group=>nodes(group).filter(node=>node.type==='button'&&!node.props['aria-controls']).length),[5,6,4,4]);
   assert.equal(h.title(),'신규상품 발굴');assert.deepEqual(h.active(),['신규상품 발굴']);assert.ok(nodes(h.sidebar()).some(node=>node.type===h.Link&&node.props.href==='/'&&text(node).includes('AI 상품등록')));
-  for(const group of groups)for(const item of nodes(group).filter(node=>node.type==='button')){const label=text(item);h.click(label);assert.equal(h.title(),label);assert.deepEqual(h.active(),[label]);}
+  for(const group of groups){const toggle=h.button(group.props['aria-label']);if(!toggle.props['aria-expanded'])h.click(group.props['aria-label']);for(const item of nodes(group).filter(node=>node.type==='button'&&!node.props['aria-controls'])){const label=text(item);h.click(label);assert.equal(h.title(),label);assert.deepEqual(h.active(),[label]);}}
   assert.equal(h.pushed.length,19);assert.equal(h.requests.length,1);assert.ok(h.requests.every(request=>(request.options?.method??'GET')==='GET'));
  }finally{h.close();}
 });
@@ -126,10 +127,17 @@ test('an older read revision, a retained prior-account writer and a wrong-scope 
 test('settings deep links and browser back/forward keep the heading, breadcrumb and one active menu synchronized',async()=>{
  const h=fixture('?view=settings');try{
   await h.settle();assert.equal(h.title(),'공통 SKU·데이터 연결');assert.deepEqual(h.active(),['⚙ 공통 SKU·데이터 연결']);
+  const toggles=()=>nodes(h.sidebar()).filter(node=>node.type==='button'&&node.props.className?.startsWith('ops-menu-toggle'));
+  assert.equal(toggles().length,4);assert.ok(toggles().every(node=>node.props['aria-expanded']===false));assert.equal(h.button('손익계산서'),undefined,'collapsed children cannot receive a menu click');
+  h.click('손익계산');assert.equal(h.button('손익계산').props['aria-expanded'],true);assert.equal(h.button('손익계산').props['aria-controls'],'operations-menu-pnl');assert.ok(h.button('손익계산서'));
+  h.click('손익계산');assert.equal(h.button('손익계산').props['aria-expanded'],false);assert.equal(h.button('손익계산서'),undefined);assert.equal(h.title(),'공통 SKU·데이터 연결');assert.equal(h.pushed.length,0);assert.equal(h.requests.length,1);
   const breadcrumb=()=>nodes(h.render()).find(node=>node.type==='nav'&&node.props['aria-label']==='현재 위치');assert.match(text(breadcrumb()),/운영관리\/설정\/공통 SKU·데이터 연결/);
+  h.click('손익계산');
   h.click('손익계산서');assert.equal(h.location.search,'?view=pnl');assert.equal(h.title(),'손익계산서');
   h.pop('?view=settings');assert.equal(h.title(),'공통 SKU·데이터 연결');assert.deepEqual(h.active(),['⚙ 공통 SKU·데이터 연결']);
-  h.pop('?view=inventory');assert.equal(h.title(),'쿠팡 재고 현황');assert.deepEqual(h.active(),['쿠팡 재고 현황']);
+  assert.ok(toggles().every(node=>node.props['aria-expanded']===false));
+  h.pop('?view=inventory');assert.equal(h.title(),'쿠팡 재고 현황');assert.deepEqual(h.active(),['쿠팡 재고 현황']);assert.equal(h.button('판매관리').props['aria-expanded'],true);assert.equal(toggles().filter(node=>node.props['aria-expanded']).length,1);
+  h.click('판매관리');h.render();assert.equal(h.button('판매관리').props['aria-expanded'],false,'same-view rerender preserves a manual collapse');
   h.pop('?view=invalid');assert.equal(h.title(),'신규상품 발굴');assert.equal(h.requests.length,1);
  }finally{h.close();}
 });
@@ -138,7 +146,7 @@ test('mobile navigation announces its state and closes after a selection or its 
  const h=fixture();try{
   await h.settle();const toggle=()=>nodes(h.render()).find(node=>node.type==='button'&&node.props['aria-controls']==='operations-navigation');assert.equal(toggle().props['aria-expanded'],false);
   toggle().props.onClick();h.render();assert.equal(toggle().props['aria-expanded'],true);assert.match(h.sidebar().props.className,/open/);
-  h.click('매출 관리');assert.equal(toggle().props['aria-expanded'],false);assert.equal(h.title(),'매출 관리');
+  h.click('판매관리');assert.equal(toggle().props['aria-expanded'],true,'expanding a category keeps the mobile menu open');h.click('매출 관리');assert.equal(toggle().props['aria-expanded'],false);assert.equal(h.title(),'매출 관리');
   toggle().props.onClick();h.render();nodes(h.sidebar()).find(node=>node.props?.['aria-label']==='운영 메뉴 닫기').props.onClick();h.render();assert.equal(toggle().props['aria-expanded'],false);assert.equal(h.requests.length,1);
  }finally{h.close();}
 });

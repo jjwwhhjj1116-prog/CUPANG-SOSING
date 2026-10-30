@@ -1,23 +1,34 @@
-/** A bounded viewport sweep inside one explicit collection click. This never
+/** A bounded viewport sweep inside one authorized page capture. This never
  * clicks page controls, follows links, reads frames or requests source data. */
-export async function hydratePageForCapture(document,view,{assertCurrent=()=>{},capture,observe,wait,now=()=>Date.now()}={}){
+export async function hydratePageForCapture(document,view,{assertCurrent=()=>{},capture,observe,wait,now=()=>Date.now(),assertOwnedBulkScope}={}){
+ // Only the trusted isolated collector supplies this guard after the worker
+ // authenticates its exact owned tab/lease. Ordinary captures still stop when
+ // hidden. A user activating an owned background tab also stops the sweep.
+ if(assertOwnedBulkScope!==undefined&&typeof assertOwnedBulkScope!=='function')throw Error('일괄 수집 탭의 연결을 확인하지 못했습니다.');
+ const ownedBulk=typeof assertOwnedBulkScope==='function';
+ const ownedVisibility=()=>{if(ownedBulk){assertOwnedBulkScope();if(document.visibilityState!=='hidden')throw Error('일괄 수집 탭이 활성화되어 자동 수집을 중단했습니다.');}};
+ ownedVisibility();
+ if(!ownedBulk&&document.visibilityState==='hidden')throw Error('상품 탭이 숨겨져 수집을 중단했습니다.');
  assertCurrent();
  const root=document.documentElement,scroller=document.scrollingElement;
  const delay=wait??(typeof globalThis.setTimeout==='function'?ms=>new Promise(resolve=>globalThis.setTimeout(resolve,ms)):null);
  // Non-window/inert readers retain their existing passive collection behavior.
  if(!scroller||!delay||typeof view?.scrollTo!=='function'||typeof view.addEventListener!=='function'||typeof view.removeEventListener!=='function'||typeof document.addEventListener!=='function'||typeof document.removeEventListener!=='function')return capture(assertCurrent);
- const start=now(),deadline=start+5500;
+ // Inactive Chrome tabs can align these short waits to one-second timer
+ // ticks. Only an authenticated owned hidden capture gets extra wall time;
+ // movement limits and the caller's exact lease/deadline remain unchanged.
+ const start=now(),deadline=start+(ownedBulk?15000:5500);
  const position=()=>({x:Number(view.scrollX),y:Number(view.scrollY)});
  const original=position(),viewport=Number(view.innerHeight),height=Number(scroller.scrollHeight);
  if(!Number.isFinite(original.x)||!Number.isFinite(original.y)||!Number.isFinite(viewport)||viewport<=0||!Number.isFinite(height))return capture(assertCurrent);
  let interrupted=false,moved=false,expected=original;
  const interrupt=event=>{if(event.isTrusted)interrupted=true;};
- const visibility=()=>{if(document.visibilityState==='hidden')interrupted=true;};
+ const visibility=()=>{if(ownedBulk?document.visibilityState!=='hidden':document.visibilityState==='hidden')interrupted=true;};
  const pagehide=()=>{interrupted=true;};
  const inputEvents=['wheel','touchstart','pointerdown','keydown'];
  const options={capture:true,passive:true};
  const samePosition=()=>{const current=position();return Math.abs(current.x-expected.x)<=2&&Math.abs(current.y-expected.y)<=2;};
- const scope=()=>{assertCurrent();if(document.documentElement!==root||document.scrollingElement!==scroller)throw Error('상품 문서가 변경되어 화면 확인을 중단했습니다. 다시 수집해주세요.');};
+ const scope=()=>{assertCurrent();ownedVisibility();if(document.documentElement!==root||document.scrollingElement!==scroller)throw Error('상품 문서가 변경되어 화면 확인을 중단했습니다. 다시 수집해주세요.');};
  const checked=()=>{
   scope();visibility();
   if(moved&&!samePosition())interrupted=true;
@@ -51,7 +62,7 @@ export async function hydratePageForCapture(document,view,{assertCurrent=()=>{},
  }finally{
   try{
    let current=false;try{scope();current=true;}catch{/* Never scroll a replacement document/collector. */}
-   if(moved&&current&&!interrupted&&document.visibilityState!=='hidden'&&samePosition())view.scrollTo({left:original.x,top:original.y,behavior:'instant'});
+   if(moved&&current&&!interrupted&&(ownedBulk?document.visibilityState==='hidden':document.visibilityState!=='hidden')&&samePosition())view.scrollTo({left:original.x,top:original.y,behavior:'instant'});
   }finally{
    for(const type of inputEvents)view.removeEventListener(type,interrupt,options);
    view.removeEventListener('pagehide',pagehide,options);document.removeEventListener('visibilitychange',visibility,options);

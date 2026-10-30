@@ -16,9 +16,9 @@ export type PreservedProductReconnectResult = Readonly<{ session: ProductDocumen
 const canonical = productDocumentReviewCanonical;
 const equal = (left: unknown, right: unknown) => canonical(left) === canonical(right);
 const reject = (message: string): never => { throw Error(message); };
-const checkpointError = () => reject('원래 문서의 저장 완료·미제출 기록을 확인하지 못했습니다. 문서 생성·파일 저장·본문 전송은 실행하지 않았습니다.');
+const checkpointError = (): never => reject('원래 문서의 저장 완료·미제출 기록을 확인하지 못했습니다. 문서 생성·파일 저장·본문 전송은 실행하지 않았습니다.');
 
-/** Reconnect only an already-saved original draft after fresh native proof.
+/** Reconnect an original saved draft or positively read-back saved update.
  * Inspection metadata alone never creates a session or grants a capability.
  * This helper claims only the Web Locks-protected web reservation. Native
  * readback may promote an already verified local extension checkpoint; Hub
@@ -42,9 +42,11 @@ export async function reconnectPreservedProductDraft(input: PreservedProductReco
   const checked = (report: PreservedProductInspection) => {
     const raw = Object.fromEntries(Object.entries(report).filter(([key]) => key !== 'pendingDiagnostic'));
     const parsed = validatePreservedProductInspectionResult(raw, target), c = parsed.checkpoint;
+    if (!c) return checkpointError();
     if (parsed.status !== 'found' || parsed.found !== true || parsed.complete !== true || parsed.canResume !== false
-      || !c || c.draftOnly !== true || c.preparedLifecycle !== false || !['updated', 'validated'].includes(c.state)
+      || c.draftOnly !== true || c.preparedLifecycle !== false || !['update-requested', 'updated', 'validated'].includes(c.state)
       || c.submitRequestedAt !== null || c.requestId !== target.requestId || String(c.docId) !== String(target.docId)) checkpointError();
+    if (c.state === 'update-requested' && (c.operationId !== target.requestId + ':update' || c.requestedStep !== null || c.validatedSteps.length !== 0)) checkpointError();
     return JSON.parse(canonical(c)) as NonNullable<PreservedProductInspection['checkpoint']>;
   };
   const previewMatches = (checkpoint: NonNullable<PreservedProductInspection['checkpoint']>, session: ProductDocumentSession) => {
@@ -76,18 +78,23 @@ export async function reconnectPreservedProductDraft(input: PreservedProductReco
   const observation = await runProductDocumentDraft(session, 'recoverDraft', input.signal);
   await fresh(); absent();
   const proof = observation.draftProof, promoted = second.state === 'updated' && second.validatedSteps.length === 4;
+  // The existing native receiver can positively verify an uncertain update's
+  // complete saved body/file references and advance its local checkpoint
+  // without sending it. This does not claim every remote file byte was read.
+  // An unsent update becomes `created`, which deliberately remains ineligible.
+  const recoveredUpdate = second.state === 'update-requested', advanced = promoted || recoveredUpdate;
   if (observation.requestId !== target.requestId || String(observation.docId) !== String(target.docId)
     || observation.draftOnly !== true || observation.preparedLifecycle !== undefined || observation.recovered !== true
     || observation.needsRecovery !== false || observation.error !== undefined || observation.receipt !== undefined || observation.challenge !== undefined
     || observation.registered !== false || observation.success !== false || !['updated', 'validated'].includes(observation.state)
-    || observation.state !== (promoted ? 'validated' : second.state)
+    || observation.state !== (recoveredUpdate ? 'updated' : promoted ? 'validated' : second.state)
     || observation.identityDigest !== session.preview.identityDigest || observation.packetDigest !== session.packetDigest
     || !equal(observation.identity, session.preview.identity) || observation.originalBodySha256 !== review.originalBodySha256
     || observation.preparedBodySha256 !== review.preparedBodySha256 || !proof || proof.evidence !== 'document-draft-preparation'
     || proof.submitted !== false || proof.consented !== false || !equal(proof.validatedSteps, second.validatedSteps)
-    || proof.checkpointSequence !== second.sequence + (promoted ? 1 : 0)
+    || proof.checkpointSequence !== second.sequence + (advanced ? 1 : 0)
     || !Number.isSafeInteger(proof.observedAt) || proof.observedAt < second.updatedAt || proof.observedAt > Date.now() + 5000
-    || !promoted && proof.observedAt !== second.updatedAt) checkpointError();
+    || !advanced && proof.observedAt !== second.updatedAt) checkpointError();
   const pending = await claimProductDocumentPending(review, session, input.signal, async () => { await fresh(); absent(); });
   // Cancellation after the confirmed claim retains this exact reservation.
   // Never delete or replace it to make another operation appear available.

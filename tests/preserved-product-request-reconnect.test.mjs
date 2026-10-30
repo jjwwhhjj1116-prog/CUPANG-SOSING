@@ -40,10 +40,10 @@ async function fixture(){
    liveVerified:false,draftPreparationAvailable:true,preparedLifecycleAvailable:true,remoteWrites:false,registered:false,...copy(f.previewPatch??{})},packetDigest:c.packetDigest,origin:context.identity.origin};
  };
  const client={previewProductDocument:async(next,signal)=>{actions.push('preview');assert.equal(signal,controller.signal);await f.beforePreview?.();return f.session(next);},
-  runProductDocumentDraft:async(session,action,signal)=>{actions.push(action);assert.equal(action,'recoverDraft');assert.equal(signal,controller.signal);await f.beforeRecover?.();const c=f.checkpoint,promoted=c.state==='updated'&&c.validatedSteps.length===4;
+  runProductDocumentDraft:async(session,action,signal)=>{actions.push(action);assert.equal(action,'recoverDraft');assert.equal(signal,controller.signal);await f.beforeRecover?.();const c=f.checkpoint,promoted=c.state==='updated'&&c.validatedSteps.length===4,recoveredUpdate=c.state==='update-requested',advanced=promoted||recoveredUpdate;
    return {format:review.format,requestId:target.requestId,identity:copy(session.preview.identity),identityDigest:session.preview.identityDigest,packetDigest:session.packetDigest,
-    originalBodySha256:review.originalBodySha256,preparedBodySha256:review.preparedBodySha256,state:promoted?'validated':c.state,docId:c.docId,registered:false,success:false,needsRecovery:false,recovered:true,draftOnly:true,
-    draftProof:{evidence:'document-draft-preparation',validatedSteps:copy(c.validatedSteps),checkpointSequence:c.sequence+(promoted?1:0),observedAt:promoted?Date.now():c.updatedAt,submitted:false,consented:false},...copy(f.observationPatch??{})};}};
+    originalBodySha256:review.originalBodySha256,preparedBodySha256:review.preparedBodySha256,state:recoveredUpdate?'updated':promoted?'validated':c.state,docId:c.docId,registered:false,success:false,needsRecovery:false,recovered:true,draftOnly:true,
+    draftProof:{evidence:'document-draft-preparation',validatedSteps:copy(c.validatedSteps),checkpointSequence:c.sequence+(advanced?1:0),observedAt:advanced?Date.now():c.updatedAt,submitted:false,consented:false},...copy(f.observationPatch??{})};}};
  const helpers=compile('app/preserved-product-request-reconnect.ts',{'@/app/preserved-product-request-client':inspect,'@/app/supplier-hub-product-document':document,'@/app/supplier-hub-product-client':client,
   '@/app/supplier-hub-product-pending':pending,'../extensions/supplier-hub/product-document.mjs':{createProductDocumentPacket},'../extensions/supplier-hub/preserved-product-checkpoint.mjs':inspectionParser});
  f.pending=pending;f.key=pending.productDocumentPendingKey(review);f.run=()=>helpers.reconnectPreservedProductDraft({review,target,signal:controller.signal,isCurrent:()=>f.alive,refresh:async signal=>{assert.equal(signal,controller.signal);refreshes.push('current server review');await f.beforeRefresh?.(refreshes.length);return copy(f.latest);}});
@@ -66,6 +66,14 @@ test('an already validated draft and read-only updated-to-validated checkpoint p
  for(const state of ['updated','validated']){const f=await fixture();f.checkpoint.state=state;f.checkpoint.validatedSteps=[2,3,4,5];const result=await f.run();assert.equal(result.observation.state,'validated');assert.deepEqual(f.actions,['preview','recoverDraft']);assert.equal(f.writes.length,1);}
 });
 
+test('an exact uncertain update is reserved only after native positive readback of its saved body and file references',async()=>{
+ const f=await fixture();f.checkpoint.state='update-requested';const before=copy(f.checkpoint),result=await f.run();
+ assert.deepEqual(f.actions,['preview','recoverDraft']);assert.equal(f.inspections.length,2);assert.equal(result.observation.state,'updated');assert.equal(result.observation.needsRecovery,false);
+ assert.equal(result.observation.draftProof.checkpointSequence,before.sequence+1);assert.ok(result.observation.draftProof.observedAt>=before.updatedAt);assert.deepEqual(copy(result.observation.draftProof.validatedSteps),[]);
+ assert.equal(result.observation.docId,f.target.docId);assert.equal(result.pending.requestId,f.target.requestId);assert.equal(f.writes.length,1);assert.equal(f.locks.length,1);
+ assert.deepEqual(f.checkpoint,before,'the helper never manufactures or edits the extension checkpoint');
+});
+
 test('existing exact, different, corrupt or rejected web reservations never get overwritten',async()=>{
  for(const kind of ['same','different','corrupt','rejected']){
   const f=await fixture();if(kind==='corrupt')f.data.set(f.key,'{broken');else if(kind==='rejected')f.data.set(f.pending.productDocumentRejectionKey(f.review),'{broken');else f.seed(kind==='different'?{requestId:'00000000-0000-4000-8000-000000000734'}:{});
@@ -74,7 +82,7 @@ test('existing exact, different, corrupt or rejected web reservations never get 
 });
 
 test('unsupported inspection, missing/ambiguous checkpoint and non-saved modes cannot preview or reserve',async()=>{
- for(const kind of ['unsupported','not-found','ambiguous','created','update-requested','validation-requested','lifecycle','submit','other-doc','other-request']){
+ for(const kind of ['unsupported','not-found','ambiguous','created','validation-requested','lifecycle','submit','other-doc','other-request']){
   const f=await fixture();
   if(kind==='unsupported')f.beforeInspect=()=>{throw Error('현재 Chrome 확장 2.1.59은 원래 전송 기록 조회를 지원하지 않습니다.');};
   else if(kind==='not-found'||kind==='ambiguous'){const report=f.report;f.report=()=>({...report(),status:kind,found:kind==='ambiguous',checkpoint:null,diagnostic:{code:kind,message:kind==='not-found'?'이 확장 보관함에서 같은 회원·회사·상품의 요청을 찾지 못했습니다. 새 요청을 만들지 않았습니다.':'같은 범위의 요청번호에 여러 기록이 있습니다. 하나를 임의로 선택하지 않았습니다.'}});}
@@ -84,6 +92,24 @@ test('unsupported inspection, missing/ambiguous checkpoint and non-saved modes c
   else if(kind==='other-request')f.checkpoint.requestId='00000000-0000-4000-8000-000000000734';
   else f.checkpoint.state=kind;
   await assert.rejects(f.run());assert.equal(f.actions.length,0);assert.equal(f.writes.length,0);assert.equal(f.data.size,0);
+ }
+});
+
+test('uncertain-update mode requires the exact original update operation with no requested or validated step',async()=>{
+ for(const patch of [{operationId:null},{operationId:'f29491bd-1882-456a-8a63-eec8586db6c6:create'},{operationId:'00000000-0000-4000-8000-000000000734:update'},
+  {validatedSteps:[2]},{requestedStep:2},{preparedLifecycle:true},{submitRequestedAt:Date.now()-2000}]){
+  const f=await fixture();Object.assign(f.checkpoint,{state:'update-requested'},patch);await assert.rejects(f.run());assert.equal(f.inspections.length,1);assert.deepEqual(f.actions,[]);assert.equal(f.writes.length,0);
+ }
+});
+
+test('uncertain-update recovery never claims on a missing write, partial read, uncertainty or wrong positive proof',async()=>{
+ for(const patch of [{state:'created'},{state:'update-requested',needsRecovery:true},{state:'updated',needsRecovery:true},{recovered:false},{error:{code:'WRITE_NOT_CONFIRMED',message:'unconfirmed'}},
+  {docId:2347604},{preparedBodySha256:'f'.repeat(64)},{identityDigest:'f'.repeat(64)},
+  {draftProof:{evidence:'document-draft-preparation',validatedSteps:[],checkpointSequence:12,observedAt:Date.now(),submitted:false,consented:false}},
+  {draftProof:{evidence:'document-draft-preparation',validatedSteps:[],checkpointSequence:14,observedAt:Date.now(),submitted:false,consented:false}},
+  {draftProof:{evidence:'document-draft-preparation',validatedSteps:[2],checkpointSequence:13,observedAt:Date.now(),submitted:false,consented:false}},
+  {draftProof:{evidence:'document-draft-preparation',validatedSteps:[],checkpointSequence:13,observedAt:1,submitted:false,consented:false}}]){
+  const f=await fixture();f.checkpoint.state='update-requested';f.observationPatch=patch;await assert.rejects(f.run());assert.deepEqual(f.actions,['preview','recoverDraft']);assert.equal(f.writes.length,0);assert.equal(f.data.size,0);
  }
 });
 

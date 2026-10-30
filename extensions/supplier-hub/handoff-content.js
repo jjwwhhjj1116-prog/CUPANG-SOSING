@@ -203,6 +203,9 @@ async function readCurrentNativeReceiptScope(expected){
 }
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
   if(message?.type==='YOOFAM_READ_NATIVE_RECEIPT_SCOPE'&&sender?.id===chrome.runtime.id){void readCurrentNativeReceiptScope(message.expected).then(respond,error=>respond({ok:false,error:error?.message||'원래 문서 접수 확인 실패'}));return true;}
+  if(message?.type==='YOOFAM_SAVE_LISTING_COMPARISONS'&&sender?.id===chrome.runtime.id){
+    void saveListingComparisonsInApp(message).then(respond,error=>respond({ok:false,error:error?.message||'로켓 비교함 저장을 확인하지 못했습니다.',uncertain:error?.uncertain===true}));return true;
+  }
   if(message?.type==='YOOFAM_SAVE_SOURCE_CAPTURE'&&sender?.id===chrome.runtime.id){
     void savePageSourceInApp(message.record).then(respond,error=>respond({ok:false,error:error?.message||'웹 수집함 저장 확인 실패'}));return true;
   }
@@ -215,6 +218,46 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
   void read(message.expected).then(respond,error=>respond({ok:false,error:error?.message||'견적서 저장본 확인 실패'}));
   return true;
 });
+async function saveListingComparisonsInApp(message){
+  const object=value=>Boolean(value&&typeof value==='object'&&!Array.isArray(value)),exact=(value,keys)=>object(value)&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
+  const literal=(value,max,empty=false)=>typeof value==='string'&&value.length<=max&&(empty||value.trim().length>0)&&value===value.trim()&&!/[\u0000-\u001f\u007f]/.test(value);
+  const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+  if(!exact(message,['type','batchId','captureId','expectedOwnerId','company','listingUrl','items'])||message.type!=='YOOFAM_SAVE_LISTING_COMPARISONS'||typeof message.batchId!=='string'||typeof message.captureId!=='string'||!uuid.test(message.batchId)||!uuid.test(message.captureId)
+    ||!exact(message.company,['code','name'])||!literal(message.company.code,30)||!literal(message.company.name,100)||!literal(message.expectedOwnerId,100)||!literal(message.listingUrl,6000)
+    ||!Array.isArray(message.items)||message.items.length<1||message.items.length>60||Object.keys(message.items).length!==message.items.length)throw Error('선택 상품 담기 요청을 확인해주세요.');
+  const payload=structuredClone({batchId:message.batchId,captureId:message.captureId,listingUrl:message.listingUrl,items:message.items}),company=structuredClone(message.company),ownerId=message.expectedOwnerId,origin=location.origin;
+  let listing;try{listing=new URL(payload.listingUrl);}catch{throw Error('검색 목록 주소를 확인해주세요.');}
+  if(listing.protocol!=='https:'||listing.hostname!=='s.1688.com'||listing.pathname!=='/selloffer/offer_search.htm'||listing.port||listing.username||listing.password)throw Error('지원하는 1688 검색 목록이 아닙니다.');
+  const ids=new Set();for(const item of payload.items){
+    if(!exact(item,['offerId','sourceUrl','title','thumbnail','displayPrice'])||typeof item.offerId!=='string'||!/^[1-9]\d{0,19}$/.test(item.offerId)||ids.has(item.offerId)
+      ||item.sourceUrl!=='https://detail.1688.com/offer/'+item.offerId+'.html'||!literal(item.title,500)||!literal(item.thumbnail,2048,true)||!literal(item.displayPrice,120,true))throw Error('선택 상품의 원문을 확인해주세요.');
+    if(item.thumbnail){let image;try{image=new URL(item.thumbnail);}catch{throw Error('상품 이미지 주소를 확인해주세요.');}if(image.protocol!=='https:'||image.port||image.username||image.password||image.hash||!/(?:^|\.)(?:alicdn\.com|1688\.com)$/.test(image.hostname))throw Error('상품 이미지 출처를 확인해주세요.');}
+    ids.add(item.offerId);
+  }
+  const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canonical).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}';
+  const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(canonical(payload)))),value=>value.toString(16).padStart(2,'0')).join('');
+  const same=context=>context?.ownerId===ownerId&&context.company?.code===company.code&&context.company?.name===company.name;
+  const before=await readCurrentCatalogContext();if(!same(before)||location.origin!==origin)throw Error('담기를 시작한 회원·회사가 변경되었습니다.');
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);let posted=false;
+  try{
+    const path='/api/operations/listing-candidates';posted=true;
+    const response=await fetch(path,{method:'POST',credentials:'same-origin',redirect:'error',cache:'no-store',signal:controller.signal,headers:{'content-type':'application/json'},body:JSON.stringify({expectedOwnerId:ownerId,expectedCompany:company,...payload})});
+    if(response.redirected||response.url!==origin+path||!response.headers.get('content-type')?.toLowerCase().includes('application/json'))throw Error('비교함 저장 응답의 주소·형식을 확인하지 못했습니다.');
+    const reader=response.body?.getReader();if(!reader)throw Error('비교함 저장 응답이 비어 있습니다.');const chunks=[];let size=0;
+    try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>65536){await reader.cancel();throw Error('비교함 저장 응답이 한도를 넘었습니다.');}chunks.push(value);}}finally{reader.releaseLock();}
+    const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}
+    const result=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));if(!response.ok||result.ok!==true)throw Error(result.error||'비교함 저장을 확인하지 못했습니다.');
+    const receipt=result.receipt;
+    if(!exact(receipt,['format','captureId','batchId','ownerId','company','stored','revision','storedCount','existingCount','itemOfferIds','payloadSha256','recordedAt'])
+      ||receipt.format!=='yoofam-listing-comparison-receipt-v1'||receipt.captureId!==payload.captureId||receipt.batchId!==payload.batchId||!same(receipt)||!exact(receipt.company,['code','name'])||receipt.stored!==true
+      ||!Number.isSafeInteger(receipt.revision)||receipt.revision<1||!Number.isSafeInteger(receipt.storedCount)||receipt.storedCount<0||!Number.isSafeInteger(receipt.existingCount)||receipt.existingCount<0||receipt.storedCount+receipt.existingCount!==payload.items.length
+      ||canonical(receipt.itemOfferIds)!==canonical(payload.items.map(item=>item.offerId))||receipt.payloadSha256!==hash||typeof receipt.recordedAt!=='string'||!Number.isFinite(Date.parse(receipt.recordedAt))||Date.parse(receipt.recordedAt)<=0||Date.parse(receipt.recordedAt)>Date.now()+5000)throw Error('비교함 저장 확인값이 선택한 상품·회원·회사와 다릅니다.');
+    const after=await readCurrentCatalogContext();if(controller.signal.aborted||location.origin!==origin||!same(after))throw Error('저장 결과 확인 중 회원·회사가 변경되었습니다.');
+    window.postMessage({channel:'YOOFAM_OPERATIONS_UPDATED',revision:receipt.revision},origin);
+    return {ok:true,receipt};
+  }catch(error){const failure=error instanceof Error?error:Error('비교함 저장 결과를 확인하지 못했습니다.');failure.uncertain=posted;throw failure;}
+  finally{clearTimeout(timer);}
+}
 function sourceStoredReceipt(result,record){
   // Older app servers did not advertise storage diagnostics. Never invent a
   // receipt from the echoed request identity or a local clock in that case.
