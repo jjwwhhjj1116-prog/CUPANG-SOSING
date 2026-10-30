@@ -78,7 +78,7 @@ test('legacy Google429 sidecars resume once with configured Qwen and reuse liter
  const x=await fixture();let calls=0;try{
   x.h.sqlite.prepare(`INSERT INTO source_inbox_titles VALUES(?,?,?,?,?,?,?,'failed',NULL,?,1,0,?)`).run(x.item.ownerId,x.item.id,x.item.company.code,x.item.company.name,x.item.fingerprint,x.item.revision,source.title,'상품명 번역 요청이 제한되었습니다. 원문을 보존했습니다.',new Date().toISOString());
   x.h.bindings.SOURCEFLOW_TEXT_PROVIDER='workers-ai';x.h.bindings.SOURCEFLOW_TEXT_MODEL=QWEN;
-  x.h.bindings.AI.run=async(model,input)=>{calls++;assert.equal(model,QWEN);assert.equal(input.max_tokens,1024);assert.equal(input.stream,false);assert.equal(input.temperature,0.7);assert.equal(input.top_p,0.8);assert.equal(input.top_k,20);assert.equal(Object.hasOwn(input,'response_format'),false);assert.equal(input.messages.length,2);assert.deepEqual(JSON.parse(input.messages[1].content.replace(/\n\/no_think$/u,'')),{sourceProductName:source.title});assert.doesNotMatch(JSON.stringify(input),/owner|회원 브랜드|764000000009|unari8484/);return qwen('합성 테스트 상품');};
+  x.h.bindings.AI.run=async(model,input)=>{calls++;assert.equal(model,QWEN);assert.equal(input.max_tokens,1024);assert.equal(input.stream,false);assert.equal(input.temperature,0.7);assert.equal(input.top_p,0.8);assert.equal(input.top_k,20);assert.equal(Object.hasOwn(input,'response_format'),false);assert.equal(input.messages.length,2);assert.deepEqual(JSON.parse(input.messages[1].content.replace(/\n\/no_think$/u,'')),{sourceProductName:source.title,requiredNumberTokens:[]});assert.doesNotMatch(JSON.stringify(input),/owner|회원 브랜드|764000000009|unari8484/);return qwen('합성 테스트 상품');};
   const before=x.raw(),ready=(await json(await x.api.GET())).items[0];assert.equal(ready.titlePreparation.state,'pending');assert.equal(ready.titlePreparation.attempts,0);assert.match(ready.titlePreparation.providerSignature,/workers-ai.*qwen3/);
   const result=await json(await x.title.POST(x.request(ready)));assert.equal(result.displayTitle,'회원 브랜드 합성 테스트 상품');assert.equal(result.titlePreparation.provider,'workers-ai');assert.equal(result.titlePreparation.model,QWEN);assert.equal(result.titlePreparation.attempts,1);assert.equal(calls,1);assert.equal(x.requests,0);assert.equal(x.raw(),before);
   await json(await x.title.POST(x.request(ready)));assert.equal(calls,1);
@@ -92,7 +92,24 @@ test('legacy Google429 sidecars resume once with configured Qwen and reuse liter
 
 test('configured Qwen rejects unsupported facts and never silently falls back to Google',async()=>{
  const x=await fixture();let calls=0;try{x.h.bindings.SOURCEFLOW_TEXT_PROVIDER='workers-ai';x.h.bindings.SOURCEFLOW_TEXT_MODEL=QWEN;x.h.bindings.AI.run=async()=>{calls++;return qwen('방수 합성 테스트 상품 999');};
-  const result=await json(await x.title.POST(x.request(x.item)));assert.equal(result.titlePreparation.state,'failed');assert.equal(result.titlePreparation.retryable,false);assert.equal(result.displayTitle,source.title);await json(await x.title.POST(x.request(x.item)));assert.equal(calls,1);assert.equal(x.requests,0);
+  const result=await json(await x.title.POST(x.request(x.item)));assert.equal(result.titlePreparation.state,'failed');assert.equal(result.titlePreparation.retryable,true);assert.equal(result.displayTitle,source.title);
+  const error=JSON.parse(x.h.sqlite.prepare('SELECT error FROM source_inbox_titles').get().error);assert.equal(error.code,'TITLE_FACTS');assert.equal(error.diagnostic.unsupportedClaim,'방수');assert.deepEqual(error.diagnostic.extraNumbers,['999']);assert.equal(error.diagnostic.candidate,'방수 합성 테스트 상품 999');assert.equal(result.titlePreparation.message.includes('diagnostic'),false);
+  const second=await json(await x.title.POST(x.request(x.item)));assert.equal(second.titlePreparation.retryable,false);await json(await x.title.POST(x.request(x.item)));assert.equal(calls,2);assert.equal(x.requests,0);
+ }finally{x.close();}
+});
+
+test('literal-title-v2 retries a confirmed v1 failure for the exact public heel-pad title with unchanged fact guards',async()=>{
+ const original='隐形海绵后跟贴4D翅膀后跟足贴加厚防滑防磨脚贴高跟鞋防掉跟鞋贴',snapshot={...source,title:original},x=await fixture(companies[1],()=>assert.fail('Workers title never falls back to Google'),snapshot);let calls=0;
+ const faithful='티 나지 않는 스펀지 뒤꿈치 패드 4D 날개형 두꺼운 미끄럼 방지 마찰 방지 하이힐 뒤꿈치 벗겨짐 방지 신발 패드';
+ try{
+  const oldSignature='workers-ai:'+QWEN+':literal-title-v1',stamp=new Date().toISOString();
+  x.h.sqlite.prepare(`INSERT INTO source_inbox_titles VALUES(?,?,?,?,?,?,?,'failed',NULL,?,1,0,?)`).run(x.item.ownerId,x.item.id,x.item.company.code,x.item.company.name,x.item.fingerprint,x.item.revision,original,'상품명 번역의 원문·숫자·성능 표현을 확인하지 못했습니다. 원문은 보존됩니다.',stamp);
+  x.h.sqlite.prepare(`INSERT INTO source_inbox_title_runs VALUES(?,?,?,?,?,?,?,1,'failed',0,?)`).run(x.item.ownerId,x.item.id,x.item.fingerprint,x.item.revision,oldSignature,'workers-ai',QWEN,stamp);
+  x.h.bindings.SOURCEFLOW_TEXT_PROVIDER='workers-ai';x.h.bindings.SOURCEFLOW_TEXT_MODEL=QWEN;x.h.bindings.AI.run=async(_model,input)=>{calls++;const publicInput=JSON.parse(input.messages[1].content.replace(/\n\/no_think$/u,''));assert.deepEqual(publicInput,{sourceProductName:original,requiredNumberTokens:['4']});assert.match(input.messages[0].content,/防滑=미끄럼 방지/);assert.match(input.messages[0].content,/防磨=마찰 방지/);assert.match(input.messages[0].content,/防掉跟=뒤꿈치 벗겨짐 방지/);assert.match(input.messages[0].content,/한자를 한 글자도 남기지/);return qwen(calls===1?'스펀지 뒤꿈치 패드 4D 방수':faithful);};
+  const before=x.raw(),pending=(await json(await x.api.GET())).items[0];assert.equal(pending.titlePreparation.state,'pending');assert.match(pending.titlePreparation.providerSignature,/literal-title-v2$/);
+  const first=await json(await x.title.POST(x.request(pending)));assert.equal(first.titlePreparation.state,'failed');assert.equal(first.titlePreparation.retryable,true);assert.equal(JSON.parse(x.h.sqlite.prepare('SELECT error FROM source_inbox_titles').get().error).diagnostic.unsupportedClaim,'방수');
+  const final=await json(await x.title.POST(x.request(pending)));assert.equal(final.displayTitle,'회원 브랜드 '+faithful);assert.equal(final.titlePreparation.attempts,2);assert.equal(final.titlePreparation.state,'completed');assert.equal(calls,2);assert.equal(x.raw(),before);
+  const provider=sourceReviewModule('app/source-inbox-title-provider.ts');assert.throws(()=>provider.verifyLiteralSourceTitle(original,{translatedText:'뒤꿈치 패드'}),error=>error.diagnostic.missingNumbers.includes('4'));assert.throws(()=>provider.verifyLiteralSourceTitle(original,{translatedText:'后跟 스펀지 패드 4D'}),error=>error.diagnostic.han===true);
  }finally{x.close();}
 });
 

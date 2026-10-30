@@ -6,15 +6,16 @@ import './category-recommendations-panel.css';
 type Props={
  initialTitle:string;
  workspaceOwnerId?:string;
+ sourceScope?:string;
  selectionScope?:string;
  disabled:boolean;
  onChoose:(candidate:HubCategoryRecommendation,result:HubCategoryRecommendations)=>Promise<void>|void;
 };
-type Context={initialTitle:string;ownerId?:string;selectionScope?:string;name:string;disabled:boolean};
-const sameContext=(left:Context,right:Context)=>left.initialTitle===right.initialTitle&&left.ownerId===right.ownerId&&left.selectionScope===right.selectionScope&&left.name===right.name;
+type Context={initialTitle:string;ownerId?:string;sourceScope?:string;selectionScope?:string;name:string;disabled:boolean};
+const sameContext=(left:Context,right:Context)=>left.initialTitle===right.initialTitle&&left.ownerId===right.ownerId&&left.sourceScope===right.sourceScope&&left.selectionScope===right.selectionScope&&left.name===right.name;
 
 /** Only the member's radio selection resolves a recommendation into a category. */
-export function CategoryRecommendationsPanel({initialTitle,workspaceOwnerId,selectionScope,disabled,onChoose}:Props){
+export function CategoryRecommendationsPanel({initialTitle,workspaceOwnerId,sourceScope,selectionScope,disabled,onChoose}:Props){
  const id=useId(),[name,setName]=useState(initialTitle.trim()),[result,setResult]=useState<HubCategoryRecommendations|null>(null);
  const [chosen,setChosen]=useState<string|null>(null),[pending,setPending]=useState(false),[applying,setApplying]=useState(false),[error,setError]=useState('');
  const mounted=useRef(false),generation=useRef(0),applyGeneration=useRef(0),applyingRef=useRef(false);
@@ -22,8 +23,9 @@ export function CategoryRecommendationsPanel({initialTitle,workspaceOwnerId,sele
  const [resultContext,setResultContext]=useState<(Context&{generation:number})|null>(null);
  const selfBusyCycle=useRef(false);
  const previousSelectionScope=useRef(selectionScope),scopeInvalidated=useRef(false);
- const context=useRef<Context>({initialTitle,ownerId:workspaceOwnerId,selectionScope,name,disabled}),choose=useRef(onChoose);
- useLayoutEffect(()=>{context.current={initialTitle,ownerId:workspaceOwnerId,selectionScope,name,disabled};choose.current=onChoose;});
+ const nameEdited=useRef(false),nameSource=useRef({initialTitle,ownerId:workspaceOwnerId,sourceScope});
+ const context=useRef<Context>({initialTitle,ownerId:workspaceOwnerId,sourceScope,selectionScope,name,disabled}),choose=useRef(onChoose);
+ useLayoutEffect(()=>{context.current={initialTitle,ownerId:workspaceOwnerId,sourceScope,selectionScope,name,disabled};choose.current=onChoose;});
 
  function cancel(){
   generation.current++;controller.current?.abort();controller.current=null;
@@ -58,9 +60,15 @@ export function CategoryRecommendationsPanel({initialTitle,workspaceOwnerId,sele
  },[selectionScope]);
 
  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;cancel();};},[]);
- // Switching the source/member must discard its editable name, without writing any product.
- // eslint-disable-next-line react-hooks/set-state-in-effect
- useEffect(()=>{setName(initialTitle.trim());},[initialTitle,workspaceOwnerId]);
+ // A late title for the same exact source follows the default query until the
+ // member edits it. Another source/member starts with its own title.
+ useEffect(()=>{
+  const previous=nameSource.current;
+  const changedSource=previous.ownerId!==workspaceOwnerId||previous.sourceScope!==sourceScope||sourceScope===undefined&&previous.initialTitle!==initialTitle;
+  nameSource.current={initialTitle,ownerId:workspaceOwnerId,sourceScope};
+  if(changedSource)nameEdited.current=false;
+  if(!nameEdited.current)setName(initialTitle.trim());
+ },[initialTitle,workspaceOwnerId,sourceScope]);
  useEffect(()=>{
   // Member/source changes invalidate recommendations before a debounced read.
   // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -69,7 +77,7 @@ export function CategoryRecommendationsPanel({initialTitle,workspaceOwnerId,sele
   return cancel;
   // Reset is intentionally scoped to the source and query, not its own parent selection busy state.
   // eslint-disable-next-line react-hooks/exhaustive-deps
- },[initialTitle,workspaceOwnerId,name]);
+ },[initialTitle,workspaceOwnerId,sourceScope,name]);
  useEffect(()=>{
   if(applyingRef.current){if(disabled)selfBusyCycle.current=true;return;}
   if(!disabled&&selfBusyCycle.current){selfBusyCycle.current=false;return;}
@@ -84,7 +92,7 @@ export function CategoryRecommendationsPanel({initialTitle,workspaceOwnerId,sele
   // eslint-disable-next-line react-hooks/exhaustive-deps
  },[disabled]);
 
- const activeResult=result&&resultContext&&sameContext(resultContext,{initialTitle,ownerId:workspaceOwnerId,selectionScope,name,disabled})&&!disabled?result:null;
+ const activeResult=result&&resultContext&&sameContext(resultContext,{initialTitle,ownerId:workspaceOwnerId,sourceScope,selectionScope,name,disabled})&&!disabled?result:null;
  const visible=activeResult?.items.slice(0,3)??[];
  const candidate=visible.find(item=>item.id===chosen),blocked=disabled||pending||applying||!workspaceOwnerId;
  async function apply(selection:HubCategoryRecommendation){
@@ -102,7 +110,7 @@ export function CategoryRecommendationsPanel({initialTitle,workspaceOwnerId,sele
  return <section className="category-recommendations-card" aria-labelledby={`${id}-heading`}>
   <h3 id={`${id}-heading`}>기본정보</h3>
   <label className="category-recommendations-title" htmlFor={`${id}-title`}>추천 검색용 상품명</label>
-  <input id={`${id}-title`} className="category-recommendations-input" value={name} maxLength={500} placeholder="추천 카테고리를 검색할 상품명을 입력하세요" aria-describedby={`${id}-title-help`} disabled={disabled||applying} onChange={event=>{reset();context.current={...context.current,name:event.target.value};setName(event.target.value);}}/>
+  <input id={`${id}-title`} className="category-recommendations-input" value={name} maxLength={500} placeholder="추천 카테고리를 검색할 상품명을 입력하세요" aria-describedby={`${id}-title-help`} disabled={disabled||applying} onChange={event=>{nameEdited.current=true;reset();context.current={...context.current,name:event.target.value};setName(event.target.value);}}/>
   <p id={`${id}-title-help`} className="category-recommendations-help">카테고리 추천에만 사용합니다. 판매 상품명은 초안 작성 후 SEO 설정에서 수정하세요.</p>
   <div className="category-recommendations-heading"><label htmlFor={`${id}-choices`}>카테고리</label><button type="button" className="category-recommendations-refresh" disabled={blocked||!name.trim()} onClick={()=>void request(true)}>{pending?'추천 불러오는 중…':'↻ 추천 새로고침'}</button></div>
   <p id={`${id}-help`} className="category-recommendations-help">상품명을 기준으로 추천 카테고리 최대 3개를 표시합니다. 경로를 확인하고 하나를 선택하세요.</p>

@@ -14,6 +14,7 @@ import {createIntakeNewDraft,recoverIntakeNewDraft,previewIntakeNewDraft,intakeN
 import {sameSourceUrl} from '@/app/source-registration';
 import {previewPendingIntakeSource,preparePendingIntakeSource,type PendingIntakeSourcePreview} from '@/app/intake-pending-source';
 import {validateSourceCaptureSelection,sourceCaptureAfterUrlEdit,selectedSourceInboxItem,sameSourceCaptureSelection,type SourceCaptureSelection} from '@/app/source-capture-selection';
+import {sourceInboxDisplayTitle} from '@/app/source-inbox-title';
 import { CollectionResultPanel } from '@/app/components/collection-result-panel';
 
 /** Recovery is limited to one newly collected query row and its exact saved link. */
@@ -150,6 +151,18 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     if(!row)return undefined;
     if(row.sourceCapture){try{return selectedSourceInboxItem(sourceItems,row.sourceCapture);}catch{return undefined;}}
     return sourceItems.find(item=>sameSourceUrl(item.snapshot.sourceUrl,row.url));
+  }
+  function categorySourceTitle(selection:IntakeCategorySelection){
+    const seed=selection.seed;
+    if(seed){
+      if(seed.sourceCapture){try{
+        const item=selectedSourceInboxItem(sourceItems,seed.sourceCapture);
+        if(item&&(!workspaceOwnerId||item.ownerId===workspaceOwnerId))return sourceInboxDisplayTitle(item);
+      }catch{/* A missing exact capture keeps the title pinned to this seed. */}}
+      return seed.title;
+    }
+    const item=sourceItemForRow(rows.find(row=>row.id===selection.target));
+    return item&&(!workspaceOwnerId||item.ownerId===workspaceOwnerId)?sourceInboxDisplayTitle(item):undefined;
   }
   function reviewItemForRow(row:IntakeRow){
     const exact=sourceItemForRow(row);
@@ -425,7 +438,11 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     if(!categoryCurrent(selection,true))return;
     setQuery('');setCategorySelection(null);
   }
-  if (categorySelection) return <div className="intake-category-dialog" role="dialog" aria-label="카테고리 선택"><header><h3>카테고리 선택</h3><button type="button" className="icon-close" aria-label="카테고리 선택 취소" onClick={()=>cancelCategory(categorySelection)}>×</button></header>{error&&<p role="alert">{error}</p>}<CategoryPicker key={categorySelection.seed?.id} sourceTitle={categorySelection.seed?.title??sourceItemForRow(rows.find(row=>row.id===categorySelection.target))?.reviewed?.title??sourceItemForRow(rows.find(row=>row.id===categorySelection.target))?.snapshot.title} workspaceOwnerId={workspaceOwnerId} profiles={profiles} selectedId={rows.find(row => row.id === categorySelection.target)?.profile.id ?? ''} onAdvanced={seed=>{if(!categoryCurrent(categorySelection))return;categoryEpoch.current++;categorySelectionRef.current=null;setCategorySelection(null);onAdvanced(seed);}} onSelected={profile=>selectCategory(categorySelection,profile)}/><footer><button type="button" className="btn ghost" onClick={()=>cancelCategory(categorySelection)}>취소 · 상품 대기열로 돌아가기</button></footer></div>;
+  if (categorySelection) {
+    const row=rows.find(row=>row.id===categorySelection.target),seed=categorySelection.seed;
+    const sourceScope=JSON.stringify([workspaceOwnerId,seed?.id??null,categorySelection.target,seed?.sourceUrl??row?.url??null,seed?.sourceCapture??row?.sourceCapture??null]);
+    return <div className="intake-category-dialog" role="dialog" aria-label="카테고리 선택"><header><h3>카테고리 선택</h3><button type="button" className="icon-close" aria-label="카테고리 선택 취소" onClick={()=>cancelCategory(categorySelection)}>×</button></header>{error&&<p role="alert">{error}</p>}<CategoryPicker key={seed?.id??categorySelection.target} sourceTitle={categorySourceTitle(categorySelection)} sourceScope={sourceScope} workspaceOwnerId={workspaceOwnerId} profiles={profiles} selectedId={row?.profile.id??''} onAdvanced={seed=>{if(!categoryCurrent(categorySelection))return;categoryEpoch.current++;categorySelectionRef.current=null;setCategorySelection(null);onAdvanced(seed);}} onSelected={profile=>selectCategory(categorySelection,profile)}/><footer><button type="button" className="btn ghost" onClick={()=>cancelCategory(categorySelection)}>취소 · 상품 대기열로 돌아가기</button></footer></div>;
+  }
   if(imageRecovery&&imageRecovery.ownerId===workspaceOwnerId&&imageRecovery.epoch===ownerGeneration&&rows.includes(imageRecovery.row)&&intakeQueryImageRecoveryJob(imageRecovery.row,jobs)===imageRecovery.job)return <section role="dialog" aria-label="누락 원본 이미지 이어받기" className="panel-note"><h3>누락 원본 이미지 이어받기</h3><p>이 초안에서 저장하지 못한 원본만 이어서 가져옵니다. 직접 수정한 SEO·대표·상세 이미지 배치는 유지됩니다.</p><CollectionResultPanel jobId={imageRecovery.job.id} offerId={imageRecovery.job.offer_id} productId={imageRecovery.row.productId} expectedProductId={imageRecovery.row.productId} assignToStage={false} isCurrent={()=>imageRecoveryCurrent(imageRecovery)} onSaved={outcome=>{
     if(!outcome||outcome.status!=='completed'||outcome.productId!==imageRecovery.row.productId||!imageRecoveryCurrent(imageRecovery))return;
     const rowId=imageRecovery.row.id;

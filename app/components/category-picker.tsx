@@ -54,7 +54,7 @@ function codeEvidenceLabel(choice: CategoryChoice, profile?: CategoryProfile) {
   return '분류 코드 미확인';
 }
 
-export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspaceOwnerId, onSelected, onAdvanced,sourceTitle }: {sourceTitle?:string; profiles: CategoryProfile[]; selectedId: string; workspaceOwnerId?: string; onSelected: (profile: CategoryProfile) => void; onAdvanced: (seed?: CategoryAdvancedSeed) => void }) {
+export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspaceOwnerId, onSelected, onAdvanced,sourceTitle,sourceScope }: {sourceTitle?:string;sourceScope?:string; profiles: CategoryProfile[]; selectedId: string; workspaceOwnerId?: string; onSelected: (profile: CategoryProfile) => void; onAdvanced: (seed?: CategoryAdvancedSeed) => void }) {
   const [refreshedProfiles, setRefreshedProfiles] = useState<CategoryProfile[] | null>(null);
   const [liveChoice,setLiveChoice]=useState<CategoryChoice|null>(null);
   const [catalogMode,setCatalogMode]=useState<'live'|'saved'|'recommend'>(sourceTitle?.trim()?'recommend':'live');
@@ -73,7 +73,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
   const selectionEpoch = useRef(0);
   const workbookSelectionRef = useRef<WorkbookSelection | null>(null);
   const [workbookSelection, setWorkbookSelection] = useState<WorkbookSelection | null>(null);
-  const selectionInputs=useMemo(()=>JSON.stringify([sourceTitle??null,selectedId,suppliedProfiles]),[sourceTitle,selectedId,suppliedProfiles]);
+  const selectionInputs=useMemo(()=>JSON.stringify([sourceTitle??null,selectedId,suppliedProfiles,sourceScope??null]),[sourceTitle,selectedId,suppliedProfiles,sourceScope]);
   const previousSelectionInputs=useRef(selectionInputs);
   function clearWorkbookSelection() { workbookSelectionRef.current = null; setWorkbookSelection(null); }
   useAccountEffect(()=>{
@@ -293,7 +293,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
     finally { if (activeRequest.current === controller) activeRequest.current = null; if (!cancelled()) setBusy(false); }
   }
   return <div className="category-picker" aria-busy={busy}>
-    <CategoryRecommendationsPanel initialTitle={sourceTitle??''} workspaceOwnerId={workspaceOwnerId} selectionScope={selectionInputs} disabled={busy} onChoose={chooseRecommendation}/>
+    <CategoryRecommendationsPanel initialTitle={sourceTitle??''} workspaceOwnerId={workspaceOwnerId} sourceScope={sourceScope} selectionScope={selectionInputs} disabled={busy} onChoose={chooseRecommendation}/>
     <p className="category-instructions">등록할 상품의 카테고리를 선택해주세요. 단계별로 선택하면 하위 카테고리가 표시됩니다.</p>
     <div className="workspace-actions" role="group" aria-label="카테고리 목록 선택"><button type="button" className={`btn ${catalogMode==='recommend'?'primary':'ghost'}`} disabled={busy} onClick={()=>setCatalogMode('recommend')}>상품명 추천</button><button type="button" className={`btn ${catalogMode==='live'?'primary':'ghost'}`} disabled={busy} onClick={()=>setCatalogMode('live')}>Supplier Hub 카테고리</button><button type="button" className={`btn ${catalogMode==='saved'?'primary':'ghost'}`} disabled={busy} onClick={()=>setCatalogMode('saved')}>저장된 목록</button></div>
     {catalogMode==='live'&&<SupplierHubCategoryBrowser disabled={busy} onNavigating={()=>{if(!current()||activeRequest.current)return;selectionEpoch.current++;clearWorkbookSelection();completed.current=false;setLiveChoice(null);setSelectedKey('');setPath([]);setError('');}} onChoice={choice=>{if(!current()||activeRequest.current||completed.current)return;selectionEpoch.current++;clearWorkbookSelection();setLiveChoice(choice);setPath(choice.path);setSelectedKey(choice.key);setError('');if(canConfirmCategory(choice))void confirm(choice);}}/>}

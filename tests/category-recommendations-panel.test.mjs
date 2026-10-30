@@ -92,6 +92,33 @@ test('a source title change resets its query and selection and a translated quer
  }finally{h.close();}
 });
 
+test('a late translated title updates an untouched exact-source query and rejects the earlier prediction',async()=>{
+ const old=deferred(),h=fixture(name=>name==='旅行包'?old.promise:Promise.resolve(response(name,'owner',[option('여행가방')])));try{
+  h.set({initialTitle:'旅行包',sourceScope:'capture-one',selectionScope:'raw-title-settings'});await h.advance(600);assert.equal(h.requests.length,1);assert.equal(h.requests[0].name,'旅行包');
+  h.set({initialTitle:'가벼운 여행 가방',selectionScope:'translated-title-settings'});assert.equal(h.input().props.value,'가벼운 여행 가방');assert.equal(h.requests[0].options.signal.aborted,true);assert.equal(h.radios().length,0);
+  old.resolve(response('旅行包','owner',[option('이전경로')]));await h.settle();assert.equal(h.radios().length,0);assert.equal(h.choices.length,0);
+  await h.advance(600);assert.deepEqual(h.requests.map(item=>item.name),['旅行包','가벼운 여행 가방']);assert.equal(h.radios()[0].props.value,'여행가방');assert.equal(h.choices.length,0);
+ }finally{h.close();}
+});
+
+test('a late provider title preserves the member query while invalidating its old selectable result',async()=>{
+ const h=fixture();try{
+  h.set({initialTitle:'旅行包',sourceScope:'capture-one',selectionScope:'raw-title-settings'});h.type('직접 고른 가방 검색어');await h.advance(600);const oldChoice=h.radios()[0];assert.ok(oldChoice);
+  h.set({initialTitle:'가벼운 여행 가방',selectionScope:'translated-title-settings'});assert.equal(h.input().props.value,'직접 고른 가방 검색어');assert.equal(h.radios().length,0);oldChoice.props.onChange();await h.settle();assert.equal(h.choices.length,0,'the old title context cannot apply a retained radio callback');
+  await h.advance(600);assert.equal(h.requests.at(-1).name,'직접 고른 가방 검색어');assert.equal(h.input().props.value,'직접 고른 가방 검색어');h.select('hat');await h.settle();assert.equal(h.choices.length,1);assert.equal(h.choices[0].result.productName,'직접 고른 가방 검색어');
+ }finally{h.close();}
+});
+
+test('another exact source or member resets an edited query even when its initial title is unchanged',async()=>{
+ for(const change of [{sourceScope:'capture-two'},{workspaceOwnerId:'second'}]){
+  const old=deferred(),h=fixture((name,options)=>name==='직접 검색어'?old.promise:Promise.resolve(response(name,options.workspaceOwnerId)));try{
+   h.set({initialTitle:'같은 상품명',sourceScope:'capture-one'});h.type('직접 검색어');await h.advance(600);assert.equal(h.requests[0].name,'직접 검색어');
+   h.set(change);assert.equal(h.input().props.value,'같은 상품명');assert.equal(h.requests[0].options.signal.aborted,true);old.resolve(response('직접 검색어'));await h.settle();assert.equal(h.radios().length,0);assert.equal(h.choices.length,0);
+   await h.advance(600);assert.equal(h.requests.at(-1).name,'같은 상품명');assert.equal(h.requests.at(-1).options.workspaceOwnerId,change.workspaceOwnerId??'owner');assert.equal(h.radios().length,1);
+  }finally{h.close();}
+ }
+});
+
 test('empty, malformed identity and live errors remain visible without invented categories',async()=>{
  for(const answer of [()=>response('수집한 모자','owner',[]),()=>response('수집한 모자','another'),()=>Promise.reject(Error('Supplier Hub에 로그인해주세요.'))]){
   const h=fixture(answer);try{await h.advance(600);assert.equal(h.radios().length,0);assert.equal(h.button('선택한 카테고리 적용'),undefined);assert.equal(h.choices.length,0);

@@ -330,7 +330,7 @@ test('real collected draft renders a product preview while quotation image field
   const {products}=await response.json(),product=products[0];assert.ok(product.source_image_key);
   const html=renderToStaticMarkup(createElement(RegistrationBoard,{products,selected:new Set(),onSelected:()=>{},onOpen:()=>{},loading:false,error:'',onArchive:()=>{}}));
   assert.ok(html.includes(`src="${registrationThumbnail(product)}"`));assert.ok(!html.includes('이미지<br/>없음'));
-  assert.match(html,/우드 패턴 다리 선글라스/);assert.equal((html.match(/>대기<\/button>/g)||[]).length,7);
+  assert.match(html,/우드 패턴 다리 선글라스/);assert.equal(registrationStepLabel(product,'SEO'),'완료');assert.equal((html.match(/>대기<\/button>/g)||[]).length,6);
   const fields=await h.route('/api/products/'+product.id+'/quotation-fields');assert.equal(fields.status,200);
   for(const row of (await fields.json()).resolved.rows)for(const key of ['mainImage','additionalImages','detailImages'])assert.equal(row.fields[key].value,'');
  }finally{h.close();}

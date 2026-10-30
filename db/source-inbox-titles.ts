@@ -3,7 +3,7 @@ import type {SourceInboxItem} from '@/app/source-inbox';
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 import {sourceHasManualTitle,sourceInboxDisplayTitle,validCollectedTitleTranslation,type SourceInboxTitlePreparation} from '@/app/source-inbox-title';
 import {savedRegistrationSettings} from '@/app/workspace-settings';
-import {sourceTitleProvider,LEGACY_SOURCE_TITLE_SIGNATURE,type SourceTitleProvider,type SourceTitleEnvironment} from '@/app/source-inbox-title-provider';
+import {sourceTitleProvider,sourceTitleErrorMessage,confirmedInvalidSourceTitleError,LEGACY_SOURCE_TITLE_SIGNATURE,type SourceTitleProvider,type SourceTitleEnvironment} from '@/app/source-inbox-title-provider';
 export const sourceInboxTitleSchema=`CREATE TABLE IF NOT EXISTS source_inbox_titles (
  owner_id TEXT NOT NULL,capture_id TEXT NOT NULL,company_code TEXT NOT NULL,company_name TEXT NOT NULL,
  fingerprint TEXT NOT NULL,source_revision INTEGER NOT NULL,source_title TEXT NOT NULL,
@@ -33,10 +33,10 @@ function preparation(item:SourceInboxItem,row:Row|undefined,brand:string,run?:Ru
  if(row&&matches(row,item)&&row.status==='completed'&&validCollectedTitleTranslation(item.snapshot.title,row.translated_title))return {...base,state:'completed',translatedTitle:row.translated_title,attempts:row.attempts,retryable:false,message:'수집 상품명 번역 완료 · SEO 작업 전'};
  if(!configured.configured)return {...base,state:'failed',translatedTitle:null,attempts:0,retryable:false,message:'설정된 상품명 번역 서비스를 확인해주세요. 원문은 보존됩니다.'};
  const changed=actual.signature!==configured.signature;
- if(!row||!matches(row,item)||changed&&actual.provider==='google-free'&&(row.status!=='completed'||!validCollectedTitleTranslation(item.snapshot.title,row.translated_title)))return {...base,state:'pending',translatedTitle:null,attempts:0,retryable:true,message:'설정된 서비스로 한국어 상품명 준비 대기'};
+ if(!row||!matches(row,item)||changed&&(actual.provider==='google-free'&&(row.status!=='completed'||!validCollectedTitleTranslation(item.snapshot.title,row.translated_title))||run?.status==='failed'&&confirmedInvalidSourceTitleError(row.error)))return {...base,state:'pending',translatedTitle:null,attempts:0,retryable:true,message:'설정된 서비스로 한국어 상품명 준비 대기'};
  const running=row.status==='running',stale=running&&Date.now()-Date.parse(row.updated_at)>30000;
  const uncertain=run?.status==='uncertain'||stale&&actual.provider==='workers-ai';
- return {...base,state:running&&!stale?'running':'failed',translatedTitle:null,attempts:row.attempts,retryable:!uncertain&&!changed&&row.attempts<2&&(stale||row.retryable===1),message:running&&!stale?'한국어 상품명 준비 중':uncertain?'상품명 번역 결과가 확정되지 않았습니다. 자동 재요청하지 않으며 원문은 보존됩니다.':row.error||'상품명 번역을 완료하지 못했습니다. 원문은 보존됩니다.'};
+ return {...base,state:running&&!stale?'running':'failed',translatedTitle:null,attempts:row.attempts,retryable:!uncertain&&!changed&&row.attempts<2&&(stale||row.retryable===1),message:running&&!stale?'한국어 상품명 준비 중':uncertain?'상품명 번역 결과가 확정되지 않았습니다. 자동 재요청하지 않으며 원문은 보존됩니다.':sourceTitleErrorMessage(row.error)||'상품명 번역을 완료하지 못했습니다. 원문은 보존됩니다.'};
 }
 export function sourceTitleFields(item:SourceInboxItem,row:Row|undefined,brand:string,run?:Run){const titlePreparation=preparation(item,row,brand,run),decorated={...item,titlePreparation};return {titlePreparation,displayTitle:sourceInboxDisplayTitle(decorated)};}
 export async function decorateSourceInboxTitles(owner:string,company:SupplierHubCompany,items:SourceInboxItem[]){

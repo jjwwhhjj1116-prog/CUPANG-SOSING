@@ -11,7 +11,9 @@ import {reviewSourceFixture,sourceReviewModule} from './helpers/source-review-in
 const helperUrl=new URL('./helpers/intake-owner-scope.mjs',import.meta.url);
 let helper=fs.readFileSync(helperUrl,'utf8').replaceAll('import.meta.url',JSON.stringify(helperUrl.href));
 helper=helper.replace('sourceSeed,rowCount=1}={})','sourceSeed,rowCount=1,autoStartSource=false}={})')
- .replace('sourceSeed:seed,onSourceConsumed','sourceSeed:seed,autoStartSource,sourceItems:seed?.sourceItem?[seed.sourceItem]:[],onSourceConsumed')
+ .replace('seed=sourceSeed;','seed=sourceSeed,sourceItemsOverride;')
+ .replace('sourceSeed:seed,onSourceConsumed','sourceSeed:seed,autoStartSource,sourceItems:sourceItemsOverride??(seed?.sourceItem?[seed.sourceItem]:[]),onSourceConsumed')
+ .replace('setSeed(value){seed=value;render();}','setSourceItems(value){sourceItemsOverride=value;render();},setSeed(value){seed=value;render();}')
  .replace("goal:'work',onGoal(){}","goal:autoStartSource?'collect':'work',onGoal(){}");
 const exports={};vm.runInNewContext(ts.transpileModule(helper,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText,
  {exports,require:createRequire(helperUrl),URL,URLSearchParams,Response,Request,Headers,File,Blob,FormData,AbortController,AbortSignal,TextEncoder,TextDecoder,structuredClone,crypto,queueMicrotask,setTimeout,clearTimeout,setImmediate});
@@ -56,5 +58,33 @@ test('category cancel or owner change fences retained confirmation callbacks bef
 test('autostart waits for the category row commit instead of sending an old or missing queue snapshot',async()=>{
  const company=companies[0],h=harness(company,{sourceSeed:seed(company),rowCount:0,autoStartSource:true,deferRows:true});try{
   await h.settle();picker(h).props.onSelected(h.profile);await h.settle();assert.equal(h.posts.length,0);assert.equal(h.rows.length,0);assert.ok(h.flushRows()>0);await h.settle();assert.equal(h.posts.length,1);assert.equal(h.collections.length,1);await finish(h,0,'deferred-row-product');h.flushRows();await h.settle();assert.equal(h.posts.length,1);
+ }finally{h.close();}
+});
+
+function pendingTitleSeed(company){
+ const value=seed(company),item=value.sourceItem;item.snapshot.title='便携旅行收纳包';item.reviewed.title=item.snapshot.title;value.title=item.snapshot.title;
+ item.titlePreparation={format:'yoofam-collected-title-v1',fingerprint:item.fingerprint,revision:item.revision,sourceTitle:item.snapshot.title,state:'running',translatedTitle:null,brand:company.name,attempts:1,retryable:false,message:'한국어 제목 준비 중'};
+ return value;
+}
+function completedTitleItem(value){return {...value.sourceItem,titlePreparation:{...value.sourceItem.titlePreparation,state:'completed',translatedTitle:'휴대용 여행 수납 가방',message:'한국어 제목 준비 완료'}};}
+
+test('a late title sidecar updates only the exact selected category source without recreating or submitting its seed',async()=>{
+ const company=companies[0],selected=pendingTitleSeed(company),h=harness(company,{sourceSeed:selected,rowCount:0,autoStartSource:true});try{
+  await h.settle();const first=picker(h).props,sourceBefore=JSON.stringify(selected.sourceItem),captureBefore=JSON.stringify(selected.sourceCapture);
+  assert.equal(first.sourceTitle,selected.title);assert.equal(h.posts.length,0);
+  const completed=completedTitleItem(selected);h.setSourceItems([completed]);await h.settle();const updated=picker(h).props;
+  assert.equal(updated.sourceTitle,company.name+' 휴대용 여행 수납 가방');assert.equal(updated.sourceScope,first.sourceScope);assert.equal(JSON.stringify(selected.sourceItem),sourceBefore);assert.equal(JSON.stringify(selected.sourceCapture),captureBefore);assert.equal(h.posts.length,0);assert.equal(h.rows.length,0);
+  const wrongRevision={...completed,revision:completed.revision+1},wrongOwner={...completed,ownerId:companies[1].owner},otherCapture={...completed,id:'76400000-0000-4000-8000-000000000099'};
+  for(const item of [wrongRevision,wrongOwner,otherCapture]){h.setSourceItems([item]);await h.settle();assert.equal(picker(h).props.sourceTitle,selected.title,'another owner/capture/revision cannot replace the pinned title');assert.equal(h.posts.length,0);}
+  h.setSourceItems([completed]);await h.settle();picker(h).props.onSelected(h.profile);await h.settle();assert.equal(h.posts.length,1);assert.deepEqual(plain(h.collections[0].callbacks.selectedCapture),plain(selected.sourceCapture));assert.equal(h.posts[0].body.urls[0],selected.sourceUrl);await finish(h,0,'late-title-product');
+ }finally{h.close();}
+});
+
+test('queued-row category source uses its current exact title sidecar and keeps the row inputs unchanged',async()=>{
+ const company=companies[0],selected=pendingTitleSeed(company),h=harness(company);try{
+  const row={...h.rows[0],url:selected.sourceUrl,sourceCapture:selected.sourceCapture};h.setRows([row]);h.setSourceItems([completedTitleItem(selected)]);await h.settle();
+  const before=JSON.stringify(h.rows),category=nodes(h.render()).find(node=>node.type==='button'&&node.props.className==='intake-category-button');category.props.onClick();await h.settle();
+  assert.equal(picker(h).props.sourceTitle,company.name+' 휴대용 여행 수납 가방');assert.ok(picker(h).props.sourceScope.includes(row.id));assert.equal(JSON.stringify(h.rows),before);assert.equal(h.posts.length,0);
+  h.setSourceItems([{...completedTitleItem(selected),revision:selected.sourceCapture.revision+1}]);await h.settle();assert.equal(picker(h).props.sourceTitle,undefined,'a newer capture revision is not the queued row selection');assert.equal(JSON.stringify(h.rows),before);
  }finally{h.close();}
 });
