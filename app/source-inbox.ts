@@ -1,7 +1,8 @@
 import {validatePageSource,validatePageSourceForDelivery,validatePageSourceCaptureDiagnostics,pageSourceIssues,type PageSource,type PageSourceCaptureDiagnostics} from '@/extensions/supplier-hub/page-source.mjs';
 import {validateCollectionResult,type CollectionResult} from '@/app/collection-result';
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
-export type SourceInboxItem={id:string;ownerId:string;company:SupplierHubCompany;fingerprint:string;snapshot:PageSource;revision:number;receivedAt:string;reviewed:PageSource|null;issues:string[];warnings?:string[];archivedAt:string|null;captureOriginId?:string;captureVersion?:number};
+import type {SourceInboxTitlePreparation} from '@/app/source-inbox-title';
+export type SourceInboxItem={id:string;ownerId:string;company:SupplierHubCompany;fingerprint:string;snapshot:PageSource;revision:number;receivedAt:string;reviewed:PageSource|null;issues:string[];warnings?:string[];archivedAt:string|null;captureOriginId?:string;captureVersion?:number;displayTitle?:string;titlePreparation?:SourceInboxTitlePreparation};
 /** Display the immutable capture only; diagnostics never change source readiness. */
 export function sourceInboxCaptureSummary(snapshot:PageSource){
  const counts={attributes:snapshot.attributes.length,packaging:snapshot.options.filter(option=>option.packaging&&(['weightG','widthMm','lengthMm','heightMm'] as const)

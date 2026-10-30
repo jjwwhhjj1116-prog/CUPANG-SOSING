@@ -9,14 +9,30 @@ import {importPriceFixture,postImportPrices} from './helpers/managed-import-pric
 const native=createRequire(import.meta.url),nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
 const text=tree=>typeof tree==='string'||typeof tree==='number'?String(tree):Array.isArray(tree)?tree.map(text).join(''):tree&&typeof tree==='object'?text(tree.props?.children):'';
 function ui(fetcher){
- const slots=[],effects=[],cleanups=new Map(),downloads=[];let cursor=0;
+ const slots=[],effects=[],cleanups=new Map(),downloads=[],dismissals=[];let cursor=0;
  const hooks={useState(initial){const index=cursor++;if(!(index in slots))slots[index]=typeof initial==='function'?initial():initial;return[slots[index],value=>{slots[index]=typeof value==='function'?value(slots[index]):value;}];},useRef(initial){const index=cursor++;return slots[index]??(slots[index]={current:initial});},useEffect(fn,deps){const index=cursor++,prior=slots[index];if(!prior||deps.some((dep,i)=>dep!==prior[i])){slots[index]=deps;effects.push(()=>{cleanups.get(index)?.();cleanups.set(index,fn());});}}};
  const table={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/managed-product-table.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:table,URLSearchParams,Error});
  const files=new Map();class TestURL extends URL{static createObjectURL(blob){const key='blob:managed-'+files.size;files.set(key,blob);return key;}static revokeObjectURL(){}}
- const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/managed-products-panel.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,URL:TestURL,URLSearchParams,FormData,AbortController,Error,queueMicrotask,setTimeout(fn){fn();},document:{createElement(){return{click(){downloads.push({name:this.download,blob:files.get(this.href)});}};}},fetch:fetcher,require:name=>name==='react'?hooks:name==='@/app/managed-product-table'?table:name==='@/app/components/managed-import-prices-panel'?{ManagedImportPricesPanel:function ManagedImportPricesPanel(){}}:name==='@/app/components/managed-purchase-info-panel'?{ManagedPurchaseInfoPanel:function ManagedPurchaseInfoPanel(){}}:name==='@/app/components/managed-product-barcode-panel'?{ManagedProductBarcodePanel:function ManagedProductBarcodePanel(){}}:name==='@/app/components/managed-store-settings-panel'?{ManagedStoreSettingsPanel:function ManagedStoreSettingsPanel(){}}:name.endsWith('.css')?{}:native(name)});
- const render=()=>{cursor=0;const tree=exports.ManagedProductsPanel();while(effects.length)effects.shift()();return tree;};
- return{render,downloads,async settle(){for(let i=0;i<12;i++){render();await new Promise(resolve=>setImmediate(resolve));}},close(){for(const cleanup of cleanups.values())cleanup?.();},button(label){const result=nodes(render()).find(n=>n.type==='button'&&text(n)===label);assert.ok(result,'missing button '+label);return result;}};
+ const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/managed-products-panel.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,URL:TestURL,URLSearchParams,FormData,AbortController,Error,queueMicrotask,setTimeout(fn){fn();},document:{createElement(){return{click(){downloads.push({name:this.download,blob:files.get(this.href)});}};}},fetch:fetcher,require:name=>name==='react'?hooks:name==='@/app/components/use-menu-dismissal'?{usePopupDismissal:(root,onDismiss,active,trigger)=>dismissals.push({root,onDismiss,active,trigger})}:name==='@/app/managed-product-table'?table:name==='@/app/components/managed-import-prices-panel'?{ManagedImportPricesPanel:function ManagedImportPricesPanel(){}}:name==='@/app/components/managed-purchase-info-panel'?{ManagedPurchaseInfoPanel:function ManagedPurchaseInfoPanel(){}}:name==='@/app/components/managed-product-barcode-panel'?{ManagedProductBarcodePanel:function ManagedProductBarcodePanel(){}}:name==='@/app/components/managed-store-settings-panel'?{ManagedStoreSettingsPanel:function ManagedStoreSettingsPanel(){}}:name.endsWith('.css')?{}:native(name)});
+ const render=()=>{cursor=0;dismissals.length=0;const tree=exports.ManagedProductsPanel();while(effects.length)effects.shift()();return tree;};
+ return{render,downloads,dismissals:()=>[...dismissals],async settle(){for(let i=0;i<12;i++){render();await new Promise(resolve=>setImmediate(resolve));}},close(){for(const cleanup of cleanups.values())cleanup?.();},button(label){const result=nodes(render()).find(n=>n.type==='button'&&text(n)===label);assert.ok(result,'missing button '+label);return result;}};
 }
+test('managed selection popovers wire their trigger and dismissal without applying a filter or changing saved data',async()=>{
+ const h=managedProductHarness(),panel=ui(h.fetcher),outsideTrigger={contains(){return false;}};
+ try{
+  await panel.settle();const before=JSON.stringify(h.sqlite.prepare('SELECT * FROM managed_products').all()),calls=h.state.calls.length;
+  const find=label=>nodes(panel.render()).find(node=>node.props?.['aria-label']===label);
+  assert.ok(nodes(panel.render()).some(node=>node.type==='details'&&node.props['data-dismissable-menu']===true));
+  find('발주가능상태 필터').props.onClick({currentTarget:outsideTrigger});panel.render();
+  assert.ok(find('발주가능상태 선택'));assert.equal(panel.dismissals()[0].active,true);assert.equal(panel.dismissals()[0].trigger,outsideTrigger);
+  panel.dismissals()[0].onDismiss();panel.render();assert.equal(find('발주가능상태 선택'),undefined);
+  find('상품명 열 필터').props.onClick({currentTarget:outsideTrigger});find('상품관리 열 필터 값').props.onChange({target:{value:'아직 적용하지 않은 검색'}});panel.render();
+  assert.equal(panel.dismissals()[1].active,true);assert.equal(panel.dismissals()[1].trigger,outsideTrigger);assert.equal(find('상품관리 열 필터 값').props.value,'아직 적용하지 않은 검색');
+  panel.dismissals()[1].onDismiss();await panel.settle();assert.equal(find('상품관리 열 필터 값'),undefined);
+  assert.equal(h.state.calls.length,calls,'closing menus performs no list query, filter application or write');assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM managed_products').all()),before);
+ }finally{panel.close();h.close();}
+});
+
 test('actual component previews owner file, requires company confirmation, imports once and exposes every exported field',async()=>{
  const h=managedProductHarness(),panel=ui(h.fetcher);try{
   await panel.settle();const file=new File([managedFixture(3,rows=>{rows[0].latestImportPrice='0';rows[0].priceHistory='[{"price":8000}]';rows[0]['판매링크']='javascript:alert(1)';})],'상품DB.xlsx');

@@ -37,6 +37,7 @@ import {QuerySourcePanel} from '@/app/components/query-source-panel';
 import type {QuerySourceCaptureSummary} from '@/app/query-source-capture';
 import {useSourceRegistrations} from '@/app/components/use-source-registrations';
 import type {SourceInboxItem} from '@/app/source-inbox';
+import {sourceInboxDisplayTitle} from '@/app/source-inbox-title';
 import {archiveSourceInboxItem,sourceArchiveReference,sameSourceArchiveReference} from '@/app/source-inbox-archive-client';
 import {sameSourceUrl} from '@/app/source-registration';
 import {sourceCaptureSelection,querySourceCaptureSelection,sameSourceCaptureSelection,type SourceCaptureSelection} from '@/app/source-capture-selection';
@@ -44,6 +45,8 @@ import {applyReviewedSourceToIntakeRows,validateReviewedSourceTransition} from '
 import { CollectionBatchPanel } from '@/app/components/collection-batch-panel';
 import { ProductOptionBoard } from '@/app/components/product-option-board';
 import { RegistrationBoard, registrationTitle } from '@/app/components/registration-board';
+import type {RegistrationSourceSelectionReference} from '@/app/components/registration-board';
+import {useMenuDismissal} from '@/app/components/use-menu-dismissal';
 import { registrationNumber } from '@/app/product-registration';
 import { ProductRemovalDialog } from '@/app/components/product-removal-dialog';
 import { ProductSourceContext } from '@/app/components/product-source-context';
@@ -139,6 +142,7 @@ const goalOptions = [
 
 const won = (value: number) => `${Math.round(value).toLocaleString('ko-KR')}원`;
 export default function DashboardClient({ userName, workspaceOwnerId }: { userName: string; workspaceOwnerId?:string }) {
+  useMenuDismissal();
   useLayoutEffect(()=>{setSeoGuidanceSessionOwner(workspaceOwnerId);},[workspaceOwnerId]);
   const [products, setProducts] = useState<Product[]>([]);
   const receiptReadSequence=useRef(new Map<string,number>());
@@ -147,6 +151,8 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState(() => savedRegistrationSettings(null));
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selectedSources,setSelectedSources]=useState<RegistrationSourceSelectionReference[]>([]);
+  const sourceSelectionChanged=useCallback((references:RegistrationSourceSelectionReference[])=>setSelectedSources(references),[]);
 
 
   const [addOpen, setAddOpen] = useState(false);
@@ -290,6 +296,11 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   const [selectedBatchStages,setSelectedBatchStages]=useState<AutomationStageId[]>(()=>batchStages.map(stage=>stage.id));
   const [selectedBatchMode,setSelectedBatchMode]=useState<'full'|'selected'>('full');
   type BatchRun={request:SelectedBatchRequest;products:Product[]};
+  type SourceWorkPlan={scope:object;ownerId:string;company:string;settingsEpoch:number;request:SelectedBatchRequest;sources:RegistrationSourceSelectionReference[];index:number;products:Product[];existingIds:Set<string>;phase:'next'|'preparing'|'ready'};
+  const [sourceWorkState,setSourceWorkState]=useState<SourceWorkPlan|null>(null),sourceWorkRef=useRef<SourceWorkPlan|null>(null);
+  const sourceWork=sourceWorkState?.scope===sourceReviewScope?sourceWorkState:null;
+  function setSourceWork(value:SourceWorkPlan|null){sourceWorkRef.current=value;setSourceWorkState(value);}
+  useEffect(()=>()=>{sourceWorkRef.current=null;},[workspaceOwnerId]);
   const batchScope=useMemo(()=>({ownerId:workspaceOwnerId}),[workspaceOwnerId]);
   type BatchState={scope:typeof batchScope;open:boolean;busy:boolean;run:BatchRun|null};
   const [batchState,setBatchState]=useState<BatchState>(()=>({scope:batchScope,open:false,busy:false,run:null}));
@@ -587,15 +598,42 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     if(batchScopeRef.current!==batchScope||busyRef.current||batchBusyRef.current||settingsBusyRef.current||operation.saving||!operation.mounted||operation.ownerId!==workspaceOwnerId)return;
     if(!workspaceOwnerId){showToast('현재 로그인 계정을 확인한 뒤 작업을 시작해주세요.');return;}
     const chosen=products.filter(item=>selected.has(item.id));
-    if(!chosen.length){showToast('작업할 상품을 선택해주세요.');return;}
+    if(!chosen.length&&!selectedSources.length){showToast('작업할 상품을 선택해주세요.');return;}
     if(chosen.some(item=>item.owner_id!==workspaceOwnerId)){showToast('현재 계정의 상품을 다시 선택해주세요.');return;}
     if(!selectedBatchStages.length){showToast('실행할 작업을 하나 이상 선택해주세요.');return;}
     if(seoNoticeRequired&&(seoConfigurationLive.current!==seoConfigurationScope||!currentSeoConfiguration||seoConfigurationState?.settingsEpoch!==operation.epoch)){showToast('상품의 SEO 설정 또는 선택 상품 일괄 작업에서 실행 안내를 확인해주세요.');return;}
     const keys=new Map<string,string>();
     if(seoNoticeRequired)keys.set('batch-owner:'+workspaceOwnerId,JSON.stringify({ownerId:workspaceOwnerId,company:seoConfigurationScope.company}));
     const run={request:{id:crypto.randomUUID(),ownerId:workspaceOwnerId,mode:selectedBatchMode,stages:[...selectedBatchStages],keys,...(seoNoticeRequired&&currentSeoConfiguration?{seoGenerationConsent:structuredClone(currentSeoConfiguration)}:{})},products:chosen.map(product=>({...product}))};
+    if(selectedSources.length){
+      const company=sourceWorkspace.current?.company;
+      if(!company||sourceWorkRef.current||addOpen||loading||!intakeDraft.ready||intakeDraft.loading||intakeDraft.saving){showToast('상품 목록과 카테고리 대기열을 불러온 뒤 다시 시작해주세요.');return;}
+      const sources=selectedSources.map(reference=>sourceRegistrations.items.find(item=>sameSourceArchiveReference(reference,sourceArchiveReference(item,workspaceOwnerId,company))));
+      if(sources.some(item=>!item||item.archivedAt)){showToast('선택한 수집본이 변경되었습니다. 현재 목록에서 다시 선택해주세요.');return;}
+      if(new Set(sources.map(item=>item!.snapshot.sourceUrl)).size!==sources.length){showToast('같은 상품의 수집본은 하나만 선택해주세요.');return;}
+      setIntakeGoal('collect');
+      setSourceWork({scope:sourceReviewScope,ownerId:workspaceOwnerId,company:JSON.stringify(company),settingsEpoch:operation.epoch,request:run.request,sources:[...selectedSources],index:0,products:run.products,existingIds:new Set(products.map(product=>product.id)),phase:'next'});
+      return;
+    }
     batchRunRef.current=run;setBatchRun(run);changeBatchBusy(true);setBatchOpenError('');setBatchOpen(true);
   }
+  function sourceWorkCurrent(plan:SourceWorkPlan){
+    const operation=settingsOperationRef.current;
+    return sourceWorkRef.current===plan&&plan.scope===sourceReviewScope&&operation.mounted&&operation.ownerId===plan.ownerId&&workspaceOwnerId===plan.ownerId&&!operation.saving&&operation.epoch===plan.settingsEpoch&&JSON.stringify(sourceWorkspace.current?.company)===plan.company
+      &&plan.sources.every(reference=>sourceRegistrations.items.some(item=>!item.archivedAt&&sameSourceArchiveReference(reference,sourceArchiveReference(item,workspaceOwnerId,sourceWorkspace.current?.company))));
+  }
+  async function continueSourceWork(id:string,signal:AbortSignal){
+    const plan=sourceWorkRef.current;
+    if(!plan)return false;
+    if(!sourceWorkCurrent(plan)||plan.phase!=='preparing')throw Error('회원·회사 또는 기본설정이 변경되었습니다. 수집 상품을 다시 선택해주세요.');
+    const reference=plan.sources[plan.index];
+    const {product}=await readJson<{product:Product}>('/api/products/'+encodeURIComponent(id),{cache:'no-store',signal});
+    if(signal.aborted||!sourceWorkCurrent(plan))return true;
+    if(product.id!==id||product.owner_id!==plan.ownerId||!sameSourceUrl(product.source_url,reference.sourceUrl)||plan.existingIds.has(id))throw Error('기존 상품은 자동 작업하지 않았습니다. 선택한 수집본으로 별도 초안을 작성해주세요.');
+    setSourceWork({...plan,index:plan.index+1,products:[...plan.products,product],phase:plan.index+1===plan.sources.length?'ready':'next'});
+    return true;
+  }
+
   function openBatchReview(){const operation=settingsOperationRef.current;if(batchScopeRef.current!==batchScope||batchBusyRef.current||!operation.mounted||operation.ownerId!==workspaceOwnerId)return;batchRunRef.current=null;setBatchRun(null);setBatchOpenError('');setBatchOpen(true);}
   function chooseBatchStage(id:AutomationStageId,enabled:boolean){const operation=settingsOperationRef.current;if(batchScopeRef.current!==batchScope||batchBusyRef.current||!operation.mounted||operation.ownerId!==workspaceOwnerId)return;setSelectedBatchMode('selected');setSelectedBatchStages(current=>batchStages.filter(stage=>stage.id===id?enabled:current.includes(stage.id)).map(stage=>stage.id));}
 
@@ -693,11 +731,12 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   const sourceArchiveLive=useRef({ownerId:workspaceOwnerId,scope:sourceReviewScope,items:sourceRegistrations.items,disabled:sourceArchiveDisabled});
   useLayoutEffect(()=>{sourceArchiveLive.current={ownerId:workspaceOwnerId,scope:sourceReviewScope,items:sourceRegistrations.items,disabled:sourceArchiveDisabled};});
   useEffect(()=>()=>{sourceArchiveRequest.current?.abort();sourceArchiveRequest.current=null;},[sourceReviewScope]);
-  function prepareSource(item:SourceInboxItem){
+  function prepareSource(item:SourceInboxItem,continuing=false){
     const operation=settingsOperationRef.current,availability=sourceWorkspace.current;
-    if(!operation.mounted||operation.ownerId!==workspaceOwnerId||availability!==sourceWorkspaceSnapshot||availability?.scope!==sourceReviewScope)return;
+    if(!operation.mounted||operation.ownerId!==workspaceOwnerId||availability!==sourceWorkspaceSnapshot||availability?.scope!==sourceReviewScope)return false;
+    if(!continuing)setSourceWork(null);
     try{
-      if(item.ownerId!==workspaceOwnerId||!availability.ready||loading||busy||batchBusyRef.current||addOpen||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving||settingsBusyRef.current)throw Error('현재 상품 목록과 대기열을 확인한 뒤 다시 추가해주세요.');
+      if(item.ownerId!==workspaceOwnerId||!availability.ready||loading||busy||batchBusyRef.current||addOpen&&!continuing||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving||settingsBusyRef.current)throw Error('현재 상품 목록과 대기열을 확인한 뒤 다시 추가해주세요.');
       if(!availability.company||item.company.code!==availability.company.code||item.company.name!==availability.company.name)throw Error('수집 당시 회사와 현재 로그인 계정의 승인 회사가 다릅니다. 현재 회사의 수집본을 선택해주세요.');
       const existingProducts=products.filter(product=>sameSourceUrl(product.source_url,item.snapshot.sourceUrl));
       const existingIds=new Set(existingProducts.map(product=>product.id));
@@ -708,14 +747,33 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
       setSourceNotice('');
       const sameUrlRows=intakeRows.filter(row=>row.status!=='saved'&&sameSourceUrl(row.url,item.snapshot.sourceUrl));
       const queued=sameUrlRows.find(row=>sameSourceCaptureSelection(row.sourceCapture,sourceCapture));
-      if(queued){if(queued.forkJobId!==forkJob?.id)throw Error('대기열에 선택한 수집본의 다른 요청 연결이 있습니다. 기존 행과 원래 요청의 결과를 확인해주세요.');setIntakeCategoryEntry(undefined);setView('work');setAddOpen(true);return;}
+      if(queued){if(queued.forkJobId!==forkJob?.id)throw Error('대기열에 선택한 수집본의 다른 요청 연결이 있습니다. 기존 행과 원래 요청의 결과를 확인해주세요.');setIntakeCategoryEntry(undefined);if(continuing)setIntakeSourceSeed({id:crypto.randomUUID(),sourceUrl:item.snapshot.sourceUrl,title:sourceInboxDisplayTitle(item),sourceCapture,targetRowId:queued.id,...(forkJob?{forkJobId:forkJob.id}:{})});setView('work');setAddOpen(true);return true;}
       // A different immutable capture may review its own fork without editing
       // the existing URL rows. Normal enqueue deduplication stays unchanged.
       if(sameUrlRows.length&&forkJob?.status!=='awaiting_connector')throw Error('대기열에 같은 상품의 다른 수집본이나 URL 입력이 있습니다. 기존 행을 확인한 뒤 사용할 수집본을 다시 추가해주세요.');
       if(intakeRows.length>=50)throw Error('상품 대기열은 최대 50행입니다. 기존 입력은 유지했습니다.');
-      setIntakeCategoryEntry(undefined);setIntakeSourceSeed({id:crypto.randomUUID(),sourceUrl:item.snapshot.sourceUrl,title:item.reviewed?.title??item.snapshot.title,sourceCapture,...(forkJob?{forkJobId:forkJob.id}:{})});setView('work');setAddOpen(true);
-    }catch(error){setSourceNotice(error instanceof Error?error.message:'상품 추가 실패');}
+      setIntakeCategoryEntry(undefined);setIntakeSourceSeed({id:crypto.randomUUID(),sourceUrl:item.snapshot.sourceUrl,title:sourceInboxDisplayTitle(item),sourceCapture,...(forkJob?{forkJobId:forkJob.id}:{})});setView('work');setAddOpen(true);
+      return true;
+    }catch(error){setSourceNotice(error instanceof Error?error.message:'상품 추가 실패');return false;}
   }
+  // The continuation owns its ref; each render only advances a new phase once.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+useEffect(()=>{
+    const plan=sourceWorkRef.current;
+    if(!plan||plan!==sourceWork||busy||batchBusy)return;
+    if(!sourceWorkCurrent(plan)){setSourceWork(null);setSourceNotice('회원·회사 또는 기본설정이 변경되어 자동 작업 연결을 중단했습니다. 저장한 초안은 유지됩니다.');return;}
+    if(plan.phase==='ready'){
+      const run={request:plan.request,products:plan.products};
+      setSourceWork(null);setIntakeSourceSeed(undefined);setAddOpen(false);setSelected(new Set(run.products.map(product=>product.id)));
+      batchRunRef.current=run;setBatchRun(run);changeBatchBusy(true);setBatchOpenError('');setBatchOpen(true);return;
+    }
+    if(plan.phase!=='next')return;
+    const reference=plan.sources[plan.index],company=sourceWorkspace.current?.company;
+    const item=sourceRegistrations.items.find(candidate=>sameSourceArchiveReference(reference,sourceArchiveReference(candidate,workspaceOwnerId,company)));
+    if(!item||item.archivedAt){setSourceWork(null);setSourceNotice('선택한 수집본이 변경되었습니다. 현재 목록에서 다시 선택해주세요.');return;}
+    setSourceWork({...plan,phase:'preparing'});
+    if(!prepareSource(item,true))setSourceWork(null);
+  });
   function prepareQuerySource(item:QuerySourceCaptureSummary){
     const operation=settingsOperationRef.current,availability=sourceWorkspace.current;
     if(!operation.mounted||operation.ownerId!==workspaceOwnerId||availability!==sourceWorkspaceSnapshot||availability?.scope!==sourceReviewScope)return;
@@ -799,8 +857,8 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
             <button type="button" className="workspace-utility utility-cli" aria-label="CLI 설치·연결" aria-haspopup="dialog" aria-expanded={cliInstallOpen} onClick={()=>setCliInstallOpen(true)}><span aria-hidden="true">⌘</span>CLI 설치·연결</button>
             <a className="workspace-utility utility-account" href="/account" aria-label={userName+' 계정 관리'}>{userName} · 계정 관리</a>
           </nav><div className="top-actions">{view==='work'&&<><button type="button" className="btn settings" aria-expanded={settingsOpen} aria-controls="workspace-settings-panel" disabled={settingsBusy||batchBusy} onClick={()=>{if(!settingsBusyRef.current&&!batchBusyRef.current)setSettingsOpen(open=>!open);}}>⚙ 기본설정</button><button className="btn primary" disabled={batchBusy} onClick={openCategoryFirstIntake}>＋ 상품 추가</button>
-          <details className="bulk-action-menu"><summary className="btn ghost">{selectedBatchMode==='full'?'전체 작업':'부분 작업 ('+selectedBatchStages.length+')'} ▾</summary><div><fieldset disabled={batchBusy} aria-label="실행할 작업 선택"><legend>실행할 작업</legend><label><input type="checkbox" aria-label="전체 작업" checked={selectedBatchMode==='full'} onChange={event=>{if(!batchBusyRef.current){setSelectedBatchMode(event.target.checked?'full':'selected');setSelectedBatchStages(event.target.checked?batchStages.map(stage=>stage.id):[]);}}}/> 전체 작업</label>{batchStages.map(stage=><label key={stage.id} style={{display:'flex',gap:8,padding:'6px 0'}}><input type="checkbox" aria-label={stage.label+' 작업'} checked={selectedBatchStages.includes(stage.id)} onChange={event=>chooseBatchStage(stage.id,event.target.checked)}/>{stage.label}</label>)}</fieldset></div></details>
-          <details className="bulk-action-menu"><summary className="btn ghost">상품 선택 ▾</summary><div><button type="button" disabled={batchBusy} onClick={()=>{if(!batchBusyRef.current)setSelected(new Set(products.map(product=>product.id)));}}>최근 상품 전체 선택</button><button type="button" disabled={batchBusy} onClick={()=>{if(!batchBusyRef.current)setSelected(new Set());}}>선택 해제</button><button type="button" disabled={batchBusy} onClick={openBatchReview}>선택 상품 일괄 작업</button><button type="button" onClick={()=>{setHistoryProductId(products[0]?.id??'');setHistoryOpen(true);}}>작업 이력</button></div></details><button className="btn start" disabled={busy||batchBusy||!selectedBatchStages.length||seoNoticeRequired&&!currentSeoConfiguration} onClick={runAutomation}>작업 개시</button><button className="btn rose" disabled={batchBusy} onClick={()=>openSubmission(null)}>등록 전송</button></>}</div></div></header>
+          <details className="bulk-action-menu" data-dismissable-menu><summary className="btn ghost">{selectedBatchMode==='full'?'전체 작업':'부분 작업 ('+selectedBatchStages.length+')'} ▾</summary><div><fieldset disabled={batchBusy} aria-label="실행할 작업 선택"><legend>실행할 작업</legend><label><input type="checkbox" aria-label="전체 작업" checked={selectedBatchMode==='full'} onChange={event=>{if(!batchBusyRef.current){setSelectedBatchMode(event.target.checked?'full':'selected');setSelectedBatchStages(event.target.checked?batchStages.map(stage=>stage.id):[]);}}}/> 전체 작업</label>{batchStages.map(stage=><label key={stage.id} style={{display:'flex',gap:8,padding:'6px 0'}}><input type="checkbox" aria-label={stage.label+' 작업'} checked={selectedBatchStages.includes(stage.id)} onChange={event=>chooseBatchStage(stage.id,event.target.checked)}/>{stage.label}</label>)}</fieldset></div></details>
+          <details className="bulk-action-menu" data-dismissable-menu><summary className="btn ghost">상품 선택 ▾</summary><div><button type="button" disabled={batchBusy} onClick={()=>{if(!batchBusyRef.current)setSelected(new Set(products.map(product=>product.id)));}}>최근 상품 전체 선택</button><button type="button" disabled={batchBusy} onClick={()=>{if(!batchBusyRef.current)setSelected(new Set());}}>선택 해제</button><button type="button" disabled={batchBusy} onClick={openBatchReview}>선택 상품 일괄 작업</button><button type="button" onClick={()=>{setHistoryProductId(products[0]?.id??'');setHistoryOpen(true);}}>작업 이력</button></div></details><button className="btn start" disabled={busy||batchBusy||!!sourceWork||!selectedBatchStages.length} onClick={runAutomation}>작업 개시</button><button className="btn rose" disabled={batchBusy} onClick={()=>openSubmission(null)}>등록 전송</button></>}</div></div></header>
 
         {cliInstallOpen&&<CliInstallDialog onClose={()=>setCliInstallOpen(false)}/>}
         {settingsOpen&&<section id="workspace-settings-panel" className="workspace-settings-panel" aria-labelledby="workspace-settings-heading"><header><h2 id="workspace-settings-heading">기본 등록 정보 설정</h2></header>{batchBusy&&<p role="status">일괄 작업 중에는 기본설정 입력과 저장을 잠시 멈춥니다. 작성한 입력은 유지됩니다.</p>}<fieldset aria-label="기본설정 편집" disabled={batchBusy} style={{border:0,padding:0,margin:0,minWidth:0}}><WorkspaceSettingsDialog workspaceOwnerId={workspaceOwnerId} onSave={saveWorkspaceSettings} onClose={()=>{if(!settingsBusyRef.current&&!batchBusyRef.current)setSettingsOpen(false);}} onBusy={changeSettingsBusy}/></fieldset></section>}
@@ -811,7 +869,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
 
         {view==='archive'?<><ProductManagementWorkspace/><details className="collection-panel"><summary>YOOFAM 스튜디오 작업 상품 보관함</summary><ProductArchive onOpenProduct={openArchivedProduct} refreshToken={`${collectionJobs[0]?.updated_at}:${products[0]?.updated_at}`}/></details></>:<>
         {(sourceNotice||sourceRegistrations.error)&&<p role="status" className="panel-note">{sourceNotice||sourceRegistrations.error}</p>}
-        <RegistrationBoard products={products} sources={sourceRegistrations.items} sourceOwnerId={workspaceOwnerId} sourceCompany={querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null} sourceArchiveDisabled={sourceArchiveDisabled} onPrepareSource={prepareSource} onReviewSource={item=>reviewSource(item)} onArchiveSource={archiveSource} selected={selected} onSelected={setSelected} onOpen={openProduct} onOptions={openOptionBoard} onDelete={removeWorkspaceProduct} loading={loading} error={loadError} onArchive={()=>changeView('archive')}/>
+        <RegistrationBoard products={products} sources={sourceRegistrations.items} sourceOwnerId={workspaceOwnerId} sourceCompany={querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null} sourceArchiveDisabled={sourceArchiveDisabled} onPrepareSource={item=>prepareSource(item)} onSourceSelectionChange={sourceSelectionChanged} onReviewSource={item=>reviewSource(item)} onArchiveSource={archiveSource} selected={selected} onSelected={setSelected} onOpen={openProduct} onOptions={openOptionBoard} onDelete={removeWorkspaceProduct} loading={loading} error={loadError} onArchive={()=>changeView('archive')}/>
         <button type="button" className="btn ghost" onClick={()=>setRemovedOpen(true)}>삭제된 상품</button>
         <div id="captured-source-inbox"><SourceInboxPanel key={workspaceOwnerId??'anonymous'} ownerId={workspaceOwnerId} existingProducts={products} disabled={busy||batchBusy||addOpen||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving} onChanged={sourceRegistrations.reload} onAdd={prepareSource}/></div>
         <details className="collection-panel"><summary>1688 URL로 원문 먼저 담기 · 서버 수집</summary><QuerySourcePanel key={`server-query-${workspaceOwnerId??'anonymous'}`} ownerId={workspaceOwnerId} company={querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null} disabled={loading||busy||batchBusy||addOpen||settingsBusy||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving} onAdd={prepareQuerySource}/></details>
@@ -834,9 +892,9 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
       {removedOpen&&<Modal title="삭제된 상품" subtitle="저장한 이미지와 편집 내용을 복원합니다." onClose={()=>{if(!removalBusy.current)setRemovedOpen(false);}}><ProductRemovalDialog workspaceOwnerId={workspaceOwnerId} onRestored={loadWorkspace} onBusyChange={changeRemovalBusy}/></Modal>}
 
       {sourceReview&&sourceReview.item.ownerId===workspaceOwnerId&&<Modal wide title="수집 상품정보 확인·수정" subtitle="현재 수집한 상품만 검토합니다." onClose={()=>{closeSourceReview(sourceReview);}}><SourceInboxPanel key={sourceReview.item.id} ownerId={workspaceOwnerId} disabled={false} initialItem={sourceReview.item} onChanged={sourceRegistrations.reload} onReviewed={(saved,before)=>acceptSourceReview(sourceReview,saved,before)} onAdd={item=>{if(!closeSourceReview(sourceReview))return;if(!sourceReview.returnToIntake)prepareSource(item);}}/></Modal>}
-      {addOpen&&<Modal wide title="상품 대기열" subtitle={intakeSourceSeed?'선택한 수집본 → 추천 카테고리 확인 → 상품 대기열. 시작 버튼에서 고른 작업을 진행합니다.':'카테고리 선택 → 1688 URL 입력 → 상품 대기열. 시작 버튼에서 고른 작업을 진행합니다.'} onClose={()=>{if(!busy&&!intakeDraft.loading){setIntakeSourceSeed(undefined);setIntakeCategoryEntry(undefined);setAddOpen(false);}}}>
+      {addOpen&&<Modal wide title="상품 대기열" subtitle={intakeSourceSeed?'선택한 수집본 → 추천 카테고리 확인 → 상품 대기열. 시작 버튼에서 고른 작업을 진행합니다.':'카테고리 선택 → 1688 URL 입력 → 상품 대기열. 시작 버튼에서 고른 작업을 진행합니다.'} onClose={()=>{if(!busy&&!intakeDraft.loading){setSourceWork(null);setIntakeSourceSeed(undefined);setIntakeCategoryEntry(undefined);setAddOpen(false);}}}>
         <div className="intake-draft-actions"><p role="status">{intakeDraft.message}{intakeDraft.dirty?' · 저장하지 않은 변경 있음':''}</p><button type="button" className="btn ghost" disabled={busy||intakeDraft.saving||!intakeDraft.ready} onClick={()=>void intakeDraft.save()}>{intakeDraft.autoPaused?'저장 다시 시도':intakeDraft.saving?'저장 중…':'지금 저장'}</button><button type="button" className="btn ghost" disabled={busy||intakeDraft.saving} onClick={()=>{if(!intakeDraft.dirty||window.confirm('현재 미저장 입력을 서버 초안으로 교체할까요?'))void intakeDraft.load();}}>{intakeDraft.ready?'서버 초안으로 교체':'초안 다시 불러오기'}</button></div>
-        {intakeDraft.ready&&!intakeDraft.loading&&<IntakeQueuePanel workspaceOwnerId={workspaceOwnerId} sourceSeed={intakeSourceSeed} initialCategorySelection={intakeCategoryEntry} onInitialCategorySelectionConsumed={id=>setIntakeCategoryEntry(current=>current?.id===id&&current.ownerId===workspaceOwnerId?undefined:current)} sourceItems={sourceRegistrations.items} onReviewSource={(item,rowId)=>reviewSource(item,true,rowId)} onSourceConsumed={id=>setIntakeSourceSeed(current=>current?.id===id?undefined:current)} jobs={collectionJobs} onOpenProduct={async(id,signal)=>{await openCollectedProduct(id,'SEO',signal);if(!signal.aborted)setAddOpen(false);}} settings={settings} onSettingsReloadStarted={startSettingsReload} onSettingsReloaded={applyReloadedSettings} goal={intakeGoal} onGoal={setIntakeGoal} rows={intakeRows} onRows={setIntakeRows} profiles={categoryProfiles} onBusy={setBusy}
+        {intakeDraft.ready&&!intakeDraft.loading&&<IntakeQueuePanel onSourceCancelled={()=>setSourceWork(null)} autoStartSource={!!sourceWork&&sourceWork.ownerId===workspaceOwnerId} workspaceOwnerId={workspaceOwnerId} sourceSeed={intakeSourceSeed} initialCategorySelection={intakeCategoryEntry} onInitialCategorySelectionConsumed={id=>setIntakeCategoryEntry(current=>current?.id===id&&current.ownerId===workspaceOwnerId?undefined:current)} sourceItems={sourceRegistrations.items} onReviewSource={(item,rowId)=>reviewSource(item,true,rowId)} onSourceConsumed={id=>setIntakeSourceSeed(current=>current?.id===id?undefined:current)} jobs={collectionJobs} onOpenProduct={async(id,signal)=>{if(await continueSourceWork(id,signal))return;await openCollectedProduct(id,'SEO',signal);if(!signal.aborted)setAddOpen(false);}} settings={settings} onSettingsReloadStarted={startSettingsReload} onSettingsReloaded={applyReloadedSettings} goal={intakeGoal} onGoal={setIntakeGoal} rows={intakeRows} onRows={setIntakeRows} profiles={categoryProfiles} onBusy={setBusy}
           onProfile={profile=>setCategoryProfiles(current=>[profile,...current.filter(item=>item.id!==profile.id)])}
           onJobs={jobs=>{setCollectionJobs(current=>[...jobs,...current.filter(job=>!jobs.some(saved=>saved.id===job.id))]);if(jobs.some(job=>job.product_id))void loadWorkspace();}}
           onAdvanced={seed=>{setEditingCategory(seed?.profileId?categoryProfiles.find(profile=>profile.id===seed.profileId)??null:null);setCategorySeed(seed?{name:seed.categoryPath.at(-1)??'',categoryId:seed.categoryId,categoryPath:seed.categoryPath,template:null,mappings:[]}:undefined);setAddOpen(false);setCategoryOpen(true);}}/>}
@@ -849,7 +907,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
           {batchSeoConfiguration?<BatchAiNotice configuration={batchSeoConfiguration}/>:<p role="status">{seoConfigurationError||'현재 계정·회사의 SEO 실행 안내를 확인하는 중입니다. 안내 확인 전에는 SEO 작업을 시작하지 않습니다.'}</p>}
           <button type="button" className="btn ghost" disabled={batchBusy||settingsBusy} onClick={()=>{if(batchScopeRef.current===batchScope&&!batchBusyRef.current&&!settingsBusyRef.current)setSeoConfigurationReload(value=>value+1);}}>SEO 실행 안내 다시 확인</button>
         </details>}
-        <BatchWorkPanel key={batchRun?.request.id??'review'} products={batchRun?.products??products.filter(product=>selected.has(product.id))} runRequest={batchRun?.request} onOpen={(id,step)=>{if(batchRunRef.current===batchRun)void openBatchProduct(id,step);}} onBusyChange={value=>{const operation=settingsOperationRef.current;if(operation.mounted&&operation.ownerId===workspaceOwnerId&&batchRunRef.current===batchRun)changeBatchBusy(value);}}/>
+        <BatchWorkPanel key={batchRun?.request.id??'review'} products={batchRun?.products??products.filter(product=>selected.has(product.id))} runRequest={batchRun?.request} onOpen={(id,step)=>{if(batchRunRef.current===batchRun)void openBatchProduct(id,step);}} onBusyChange={value=>{const operation=settingsOperationRef.current;if(operation.mounted&&operation.ownerId===workspaceOwnerId&&batchRunRef.current===batchRun){const finished=batchBusyRef.current&&!value;changeBatchBusy(value);if(finished&&batchRun)void loadWorkspace();}}}/>
       </Modal>}
       {historyOpen&&<Modal wide title="상품별 작업 이력" subtitle="각 상품에 저장된 단계별 산출물과 실행 이력을 확인합니다." onClose={()=>setHistoryOpen(false)}><div className="modal-form"><label>상품 선택<select aria-label="작업 이력 상품 선택" value={historyProductId} onChange={event=>setHistoryProductId(event.target.value)}>{!products.length&&<option value="">저장된 상품 없음</option>}{products.map(product=><option key={product.id} value={product.id}>{product.title}</option>)}</select></label>{products.filter(product=>product.id===historyProductId).map(product=><AutomationPanel key={product.id} productId={product.id} version={product.updated_at}/>)}</div></Modal>}
 

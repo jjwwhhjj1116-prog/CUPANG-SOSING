@@ -39,11 +39,33 @@ test('exact saved final overrides work independently of legacy content, while du
  row.additional=['owner/a.png','owner/a.png'];assert.equal(read().additionalImages.state,'pending');row.main=['owner/missing.png'];assert.equal(read().mainImage.state,'pending');row.main=['owner/main.png'];row.manualImages.main=false;assert.equal(read().mainImage.state,'pending');
  assert.equal(status.registrationStagesFromSavedContent(product,null,null,keys,[]).mainImage.state,'pending');
 });
-test('explicitly reviewed generated SEO differs from the initial unreviewed generated draft',()=>{
- const content=applyContentPatch(emptyProductContent('p'),{seo:{title:'검토한 상품',keywords:['상품']}},now);content.seo.title.provenance='generated';
+test('adopted generated or translated SEO documents complete independently of quotation legal-notice defaults',()=>{
+ for(const provenance of ['generated','translated']){
+  const content=applyContentPatch(emptyProductContent('p'),{seo:{title:'저장한 상품',keywords:['상품']}},now);content.seo.title.provenance=provenance;
+  const options={productId:'p',rows:[{id:'one',translatedName:'빨강',provenance:{translatedName:'translated'}}]},read=()=>status.registrationStagesFromSavedContent(product,content,options,[],null);
+  assert.equal(read().seo.state,'pending','a generated draft without an adoption document stays pending');
+  content.seoTitleDocument={policy:'couplus-seo-save-v1',sourceTitle:content.seo.title.value,sourceUpdatedAt:now,value:content.seo.title.value};
+  assert.equal(content.initialLegalNotices,undefined);assert.equal(content.explicitSeoQuotationDefaults,undefined);
+  const before=JSON.stringify({content,options});assert.equal(read().seo.state,'complete');assert.equal(content.seo.title.provenance,provenance);assert.equal(JSON.stringify({content,options}),before,'completion reads must preserve provider provenance and saved values');
+ }
+});
+test('saved generated SEO still requires the exact current document and complete Korean final values',()=>{
+ const content=applyContentPatch(emptyProductContent('p'),{seo:{title:'저장한 상품',keywords:['상품']}},now);content.seo.title.provenance='generated';
  content.seoTitleDocument={policy:'couplus-seo-save-v1',sourceTitle:content.seo.title.value,sourceUpdatedAt:now,value:content.seo.title.value};
- const options={productId:'p',rows:[{id:'one',translatedName:'빨강',provenance:{translatedName:'translated'}}]},scoped={...product,categoryId:'80719'},read=()=>status.registrationStagesFromSavedContent(scoped,content,options,[],null);
- assert.equal(read().seo.state,'pending');content.explicitSeoQuotationDefaults={policy:'couplus-explicit-seo-defaults-v1',productId:'p',categoryId:'80719',sourceTitle:content.seo.title.value,sourceUpdatedAt:now};assert.equal(read().seo.state,'complete');content.explicitSeoQuotationDefaults.categoryId='123';assert.equal(read().seo.state,'pending');
+ const options={productId:'p',rows:[{id:'one',translatedName:'빨강',included:true,provenance:{translatedName:'translated'}}]},final=[{optionId:'one',title:'저장한 상품',main:[],additional:[],detail:[],label:[]}];
+ const read=(c=content,o=options,f=final)=>status.registrationStagesFromSavedContent(product,c,o,[],f).seo.state;
+ assert.equal(read(),'complete');
+ for(const change of [
+  c=>{delete c.seoTitleDocument;},c=>{c.seoTitleDocument.policy='unknown';},c=>{c.seoTitleDocument.sourceTitle='이전 상품';},c=>{c.seoTitleDocument.value='다른 문서';},
+  c=>{c.seoTitleDocument.sourceUpdatedAt='2026-10-19T01:00:00.000Z';},c=>{c.seo.title.value='새 상품';},c=>{c.seo.title.updatedAt='2026-10-19T01:00:00.000Z';},
+  c=>{c.seo.title.updatedAt=c.seoTitleDocument.sourceUpdatedAt=null;},c=>{c.seo.title.updatedAt=c.seoTitleDocument.sourceUpdatedAt='2026-10-21T01:00:00.000Z';},
+  c=>{c.seo.title.provenance='unverified';},c=>{c.seo.title.value=c.seoTitleDocument.value=c.seoTitleDocument.sourceTitle='商品';},
+  c=>{c.seo.title.value=c.seoTitleDocument.value=c.seoTitleDocument.sourceTitle='가'.repeat(101);},c=>{c.seo.keywords.value=['商品'];}
+ ]){const changed=structuredClone(content);change(changed);assert.equal(read(changed),'pending');}
+ for(const change of [o=>{o.productId='other';},o=>{o.rows[0].translatedName='红色';},o=>{o.rows[0].provenance.translatedName='unverified';},o=>{o.rows.push({id:'excluded',included:false,translatedName:'蓝色',provenance:{translatedName:'translated'}});}]){
+  const changed=structuredClone(options);change(changed);assert.equal(read(content,changed),'pending');
+ }
+ assert.equal(read(content,options,[{...final[0],title:'原文商品'}]),'pending');
 });
 test('stale versions, missing execution evidence and draft artifacts never become green',()=>{
  const workflow=base();pricing(workflow);

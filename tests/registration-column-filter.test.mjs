@@ -59,13 +59,22 @@ test('condition tab edits require explicit apply, supports a blank equality and 
 test('close, escape, outside click and scroll cancel pending filters while explicit clear and sort invoke only their callbacks',()=>{
  const h=popupHarness();const tree=h.render();control(tree,'상품명 열 필터 닫기').props.onClick();
  const inside=new h.Node();tree.props.ref.current={contains:node=>node===inside};h.listeners.get('mousedown')({target:inside});assert.equal(h.calls.close,1);
- h.listeners.get('mousedown')({target:new h.Node()});h.listeners.get('scroll')({target:inside});h.listeners.get('scroll')({target:new h.Node()});let prevented=false;h.listeners.get('keydown')({key:'Escape',preventDefault(){prevented=true;}});
- assert.equal(h.calls.close,4);assert.equal(prevented,true);assert.deepEqual(h.calls.apply,[]);
+ h.listeners.get('mousedown')({target:new h.Node()});h.listeners.get('scroll')({target:inside});h.listeners.get('scroll')({target:new h.Node()});
+ assert.equal(h.calls.close,3);assert.deepEqual(h.calls.apply,[]);
+ const escape=popupHarness();escape.render();let prevented=false,stopped=false;escape.listeners.get('keydown')({key:'Escape',preventDefault(){prevented=true;},stopPropagation(){stopped=true;}});
+ assert.equal(escape.calls.close,1);assert.equal(prevented,true);assert.equal(stopped,true);assert.deepEqual(escape.calls.apply,[]);escape.cleanup();
  button(tree,'해제').props.onClick();button(tree,'↑ 오름차순').props.onClick();button(tree,'↓ 내림차순').props.onClick();assert.deepEqual(h.calls.apply,[null]);assert.deepEqual(h.calls.sort,['ascending','descending']);
- h.cleanup();assert.equal(h.removed.length,4);
+ h.cleanup();assert.equal(h.removed.length,7);
 });
 test('the same header trigger does not close on mousedown before its click can toggle the popover',()=>{
  const h=popupHarness(),trigger=new h.Node(),icon=new h.Node();trigger.contains=target=>target===trigger||target===icon;h.props.trigger=trigger;h.render();
  h.listeners.get('mousedown')({target:trigger});h.listeners.get('mousedown')({target:icon});assert.equal(h.calls.close,0);
  h.listeners.get('mousedown')({target:new h.Node()});assert.equal(h.calls.close,1);assert.deepEqual(h.calls.apply,[]);
+});
+
+test('filter focus can move among choices and its trigger; leaving cancels without applying the edited draft',()=>{
+ const h=popupHarness(),inside=new h.Node(),second=new h.Node(),trigger=new h.Node();trigger.contains=target=>target===trigger;h.props.trigger=trigger;
+ let tree=h.render();tree.props.ref.current={contains:target=>target===inside||target===second};control(tree,'가 2').props.onChange({target:{checked:false}});tree=h.render();
+ h.listeners.get('focusout')({target:inside,relatedTarget:second});h.listeners.get('focusin')({target:second});h.listeners.get('focusout')({target:second,relatedTarget:trigger});h.listeners.get('focusin')({target:trigger});assert.equal(h.calls.close,0);
+ h.listeners.get('focusin')({target:new h.Node()});assert.equal(h.calls.close,1);assert.deepEqual(h.calls.apply,[]);h.cleanup();
 });

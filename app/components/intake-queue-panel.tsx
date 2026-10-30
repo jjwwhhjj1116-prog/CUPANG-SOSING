@@ -26,14 +26,15 @@ export function intakeQueryImageRecoveryJob(row:IntakeRow,jobs:readonly Collecti
   }catch{return null;}
 }
 
-export type IntakeSourceSeed={id:string;sourceUrl:string;title?:string;sourceCapture?:Readonly<SourceCaptureSelection>;forkJobId?:string};
+export type IntakeSourceSeed={id:string;sourceUrl:string;title?:string;sourceCapture?:Readonly<SourceCaptureSelection>;forkJobId?:string;targetRowId?:string};
 export type IntakeCategoryEntry=Readonly<{id:string;ownerId:string|undefined}>;
 const freshCaptureFork=(row:IntakeRow)=>Boolean(row.forkJobId&&row.sourceCapture);
 const freshCaptureMessage='선택한 새 수집본을 별도 상품으로 작성합니다. 기존 작업 상품은 유지됩니다. 새 초안을 확인해주세요.';
 type IntakeCategorySelection={target:string;ownerId:string|undefined;epoch:number;completed:boolean;seed?:IntakeSourceSeed};
-export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced, onJobs, onBusy, goal, onGoal, settings, workspaceOwnerId, onSettingsReloadStarted, onSettingsReloaded, jobs = [], onOpenProduct,sourceSeed,onSourceConsumed,initialCategorySelection,onInitialCategorySelectionConsumed,sourceItems=[],onReviewSource }: {
+export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced, onJobs, onBusy, goal, onGoal, settings, workspaceOwnerId, onSettingsReloadStarted, onSettingsReloaded, jobs = [], onOpenProduct,sourceSeed,onSourceConsumed,onSourceCancelled,initialCategorySelection,onInitialCategorySelectionConsumed,sourceItems=[],onReviewSource,autoStartSource=false }: {
+  autoStartSource?:boolean;
   sourceItems?:import('@/app/source-inbox').SourceInboxItem[];onReviewSource?:(item:import('@/app/source-inbox').SourceInboxItem,rowId:string)=>void;
-  sourceSeed?:IntakeSourceSeed;onSourceConsumed?:(id:string)=>void;
+  sourceSeed?:IntakeSourceSeed;onSourceConsumed?:(id:string)=>void;onSourceCancelled?:()=>void;
   initialCategorySelection?:IntakeCategoryEntry;onInitialCategorySelectionConsumed?:(id:string)=>void;
   jobs?:CollectionJob[]; onOpenProduct?:(id:string,signal:AbortSignal)=>Promise<void>;
   workspaceOwnerId?:string; onSettingsReloadStarted?:()=>number;
@@ -45,10 +46,13 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
 }) {
   const categoryEpoch=useRef(0),categoryMounted=useRef(true),categoryOwner=useRef(workspaceOwnerId),categorySource=useRef(sourceSeed);
   const categoryEntry=useRef(initialCategorySelection);
-  const [categorySelection,setCategorySelection]=useState<IntakeCategorySelection|null>(()=>sourceSeed?{target:'new',ownerId:workspaceOwnerId,epoch:0,completed:false,seed:sourceSeed}
+  const [categorySelection,setCategorySelection]=useState<IntakeCategorySelection|null>(()=>sourceSeed?{target:sourceSeed.targetRowId??'new',ownerId:workspaceOwnerId,epoch:0,completed:false,seed:sourceSeed}
     :initialCategorySelection?.ownerId===workspaceOwnerId&&/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(initialCategorySelection?.id??'')?{target:'new',ownerId:workspaceOwnerId,epoch:0,completed:false}:null);
   const categorySelectionRef=useRef(categorySelection),categoryTarget=categorySelection?.target??null;
   const pendingSeed=useRef(sourceSeed?.id??null);
+  const seenSourceSeeds=useRef(new Set(sourceSeed?[sourceSeed.id]:[]));
+  const running = useRef<AbortController | null>(null);
+  const autoStartRow=useRef<{id:string;capture:Readonly<SourceCaptureSelection>;ownerId:string|undefined}|null>(null);
   const focusRow = useRef<string | null>(null),busyNotice=useRef(onBusy);
   useLayoutEffect(()=>{
     categoryMounted.current=true;
@@ -60,8 +64,13 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   },[]);
   useLayoutEffect(()=>{
     categorySource.current=sourceSeed;
-    if(categoryOwner.current===workspaceOwnerId)return;
-    categoryOwner.current=workspaceOwnerId;categoryEpoch.current++;categorySelectionRef.current=null;pendingSeed.current=null;focusRow.current=null;setCategorySelection(null);
+    if(categoryOwner.current!==workspaceOwnerId){
+      categoryOwner.current=workspaceOwnerId;categoryEpoch.current++;categorySelectionRef.current=null;pendingSeed.current=null;autoStartRow.current=null;focusRow.current=null;setCategorySelection(null);return;
+    }
+    if(!sourceSeed||seenSourceSeeds.current.has(sourceSeed.id)||!categoryMounted.current||running.current)return;
+    seenSourceSeeds.current.add(sourceSeed.id);pendingSeed.current=sourceSeed.id;
+    const selection={target:sourceSeed.targetRowId??'new',ownerId:workspaceOwnerId,epoch:++categoryEpoch.current,completed:false,seed:sourceSeed};
+    categorySelectionRef.current=selection;setCategorySelection(selection);
   },[workspaceOwnerId,sourceSeed]);
   useEffect(()=>{
     const entry=categoryEntry.current;categoryEntry.current=undefined;
@@ -91,7 +100,6 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   function setPendingPreview(value:typeof pendingPreview|((previous:typeof pendingPreview)=>typeof pendingPreview)){const next=typeof value==='function'?value(pendingPreviewRef.current):value;pendingPreviewRef.current=next;setPendingPreviewState(next);}
   function setSourceUrlsCandidate(value:typeof sourceUrlsCandidate){sourceUrlsCandidateRef.current=value;setSourceUrlsCandidateState(value);}
   const previewRow = rows.find(row => row.id === previewId);
-  const running = useRef<AbortController | null>(null);
   const forkRunning=useRef<AbortController|null>(null),forkOwner=useRef(workspaceOwnerId);
   const navigation = useRef({rows,jobs,onOpenProduct,workspaceOwnerId,goal,settings,sourceItems});
   useLayoutEffect(()=>{navigation.current={rows,jobs,onOpenProduct,workspaceOwnerId,goal,settings,sourceItems};},[rows,jobs,onOpenProduct,workspaceOwnerId,goal,settings,sourceItems]);
@@ -251,6 +259,18 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     } catch (cause) { if (active()) setError(cause instanceof Error ? cause.message : '입력 내용을 확인해주세요.'); }
     finally { finish(controller); }
   }
+  // Category selection commits the exact capture to the queue first. Start on
+  // the next render, when submit's owner/input guards see that committed row.
+  useEffect(()=>{
+    const pending=autoStartRow.current;
+    if(!pending||!autoStartSource||running.current||!ownerCurrent())return;
+    const row=rows.find(candidate=>candidate.id===pending.id);
+    if(!row)return;
+    autoStartRow.current=null;
+    if(pending.ownerId!==workspaceOwnerId||!sameSourceCaptureSelection(pending.capture,row.sourceCapture))return;
+    if(row.forkJobId){setError('기존 상품은 유지됩니다. 아래에서 새 수집본의 별도 초안을 확인하면 선택한 자동 작업으로 이어집니다.');return;}
+    if(row.status==='draft'&&goal==='collect')void submit(row);
+  },[autoStartSource,rows,workspaceOwnerId,goal]); // eslint-disable-line react-hooks/exhaustive-deps
   async function inspectNewDraft(rowId:string){
     const current=navigation.current,row=current.rows.find(value=>value.id===rowId);
     if(!ownerCurrent()||running.current||!row?.forkJobId||current.workspaceOwnerId!==workspaceOwnerId||settingsChanged)return;
@@ -367,6 +387,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     categoryEpoch.current++;categorySelectionRef.current=null;setCategorySelection(null);
     const id=pendingSeed.current;pendingSeed.current=null;
     if(id)onSourceConsumed?.(id);
+    onSourceCancelled?.();
   }
   function selectCategory(selection:IntakeCategorySelection,profile:CategoryProfile){
     if(!categoryCurrent(selection)||running.current)return;
@@ -396,6 +417,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     if(pendingPreviewRef.current?.rowId===target)setPendingPreview(null);
     if(sourceUrlsCandidateRef.current?.rowId===target)setSourceUrlsCandidate(null);
     navigation.current.rows=update(currentRows);focusRow.current=id;onRows(update);
+    if(autoStartSource&&selection.seed&&sourceCapture)autoStartRow.current={id,capture:sourceCapture,ownerId:workspaceOwnerId};
     if(!categoryCurrent(selection,true))return;
     const seedId=selection.seed?.id;if(seedId){pendingSeed.current=null;onSourceConsumed?.(seedId);}
     if(!categoryCurrent(selection,true))return;

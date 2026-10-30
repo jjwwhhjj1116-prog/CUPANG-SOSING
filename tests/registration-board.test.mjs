@@ -389,6 +389,44 @@ test('only the captured entry is archived through its own handler',async()=>{
  const button=elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='새 수집 상품 삭제')[0];await button.props.onClick();assert.equal(archived[0],sourceItem);assert.equal(deleted.length,0);
 });
 
+test('checked source rows publish their exact saved capture identity independently of product selection and stable rerenders',()=>{
+ const published=[],h=boardHarness({sources:[sourceItem],onSourceSelectionChange:refs=>published.push(refs)});
+ h.render();assert.deepEqual(published.map(refs=>refs.length),[0]);
+ const checkbox=elements(h.render(),node=>node.type==='input'&&node.props['aria-label']==='새 수집 상품 선택')[0];
+ assert.match(checkbox.props.title,/작업개시.*카테고리/);checkbox.props.onChange({target:{checked:true}});h.render();
+ assert.equal(h.selections.length,0,'source identity never enters the ordinary product-ID selection');assert.equal(published.length,2);
+ const [selected]=published.at(-1);assert.deepEqual(JSON.parse(JSON.stringify(selected)),{ownerId:'owner',company:{code:'A01464742',name:'와이홉'},id:sourceItem.id,fingerprint:sourceItem.fingerprint,sourceUrl:sourceItem.snapshot.sourceUrl,revision:sourceItem.revision});
+ h.render();h.update({onSourceSelectionChange:refs=>published.push(refs)});h.render();assert.equal(published.length,2,'inline parent callbacks and unchanged rerenders cannot republish indefinitely');
+ selected.company.name='changed callback copy';h.render();assert.equal(published.length,2,'published values cannot mutate the internal selection');
+ elements(h.render(),node=>node.type==='input'&&node.props['aria-label']==='새 수집 상품 선택')[0].props.onChange({target:{checked:false}});h.render();assert.equal(published.at(-1).length,0);
+});
+
+test('collected title preparation has inline progress/errors and completion returns the full SEO stage to waiting',()=>{
+ const titlePreparation={format:'yoofam-collected-title-v1',fingerprint:sourceItem.fingerprint,revision:sourceItem.revision,sourceTitle:sourceItem.snapshot.title,state:'pending',translatedTitle:null,brand:'',attempts:0,retryable:true,message:'한국어 상품명 준비 대기'};
+ const source={...sourceItem,titlePreparation},h=boardHarness({sources:[source]});
+ const badge=()=>elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='새 수집 상품 SEO설정 열기')[0];
+ assert.equal(nodeText(badge()),'번역 중');assert.match(badge().props.title,/전체 SEO 작업은 대기/);
+ h.update({sources:[{...source,titlePreparation:{...titlePreparation,state:'failed',message:'번역 요청 제한'}}]});assert.equal(nodeText(badge()),'번역 오류');assert.match(badge().props.title,/번역 요청 제한/);
+ h.update({sources:[{...source,titlePreparation:{...titlePreparation,state:'completed',translatedTitle:'새 수집 상품'}}]});assert.equal(nodeText(badge()),'대기');
+ h.update({sources:[{...source,revision:2,titlePreparation:{...titlePreparation,state:'failed'}}]});assert.equal(nodeText(badge()),'대기','old preparation errors never attach to a different review revision');
+});
+
+test('published source selections persist through view filters but revoke changed capture, account and company identities',()=>{
+ for(const change of ['revision','fingerprint','url','removed','owner','company']){
+  const published=[],h=boardHarness({sources:[sourceItem],onSourceSelectionChange:refs=>published.push(refs)});
+  const checkbox=elements(h.render(),node=>node.type==='input'&&node.props['aria-label']==='새 수집 상품 선택')[0];checkbox.props.onChange({target:{checked:true}});h.render();assert.equal(published.at(-1).length,1);
+  openColumnFilter(h,'상품명').props.onApply({mode:'values',values:['수정한 상품명']});h.render();assert.equal(published.at(-1).length,1,'hiding a selected capture does not silently deselect it');
+  if(change==='revision')h.update({sources:[{...sourceItem,revision:sourceItem.revision+1}]});
+  if(change==='fingerprint')h.update({sources:[{...sourceItem,fingerprint:'b'.repeat(64)}]});
+  if(change==='url')h.update({sources:[{...sourceItem,snapshot:{...sourceItem.snapshot,sourceUrl:'https://detail.1688.com/offer/700000000002.html'}}]});
+  if(change==='removed')h.update({sources:[]});
+  if(change==='owner')h.update({sourceOwnerId:'other-owner'});
+  if(change==='company')h.update({sourceCompany:{code:'A01526306',name:'유앤채'}});
+  assert.equal(published.at(-1).length,0,change);
+  checkbox.props.onChange({target:{checked:true}});h.render();assert.equal(published.at(-1).length,0,'a stale checkbox cannot restore revoked work identity');h.close();
+ }
+});
+
 test('captured checkboxes and page selection stay separate from AI/transmission product IDs and enable captured-only bulk archive',async()=>{
  const sources=Array.from({length:13},(_,i)=>({...sourceItem,id:`00000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`,
   fingerprint:String(i+1).padStart(64,'0'),snapshot:{...sourceItem.snapshot,title:`수집 상품 ${i+1}`,offerId:String(700000000001+i),sourceUrl:`https://detail.1688.com/offer/${700000000001+i}.html`}}));

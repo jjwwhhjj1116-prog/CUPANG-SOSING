@@ -46,8 +46,8 @@ export function registrationStagesFromWorkflow(product:{id:string;updated_at?:st
 
 export type RegistrationFinalContent = {optionId:string|null;title:string;main:string[];additional:string[];detail:string[];label:string[];imageIssues?:Partial<Record<'main'|'additional'|'detail'|'label',boolean>>;manualImages?:Partial<Record<'main'|'additional'|'detail'|'label',boolean>>;manualPrices?:{supplyPrice:string;salePrice:string}};
 const korean=(value:unknown)=>typeof value==='string'&&!!value.trim()&&/\p{Script=Hangul}/u.test(value)&&!/\p{Script=Han}|[\u0000-\u001f]/u.test(value);
-/** Explicit saved field intent is stage-edit completion; automatic intake and
- * unassigned provider output have no manual provenance and cannot satisfy it. */
+/** Explicit saved field intent or an exact adopted SEO document proves saved
+ * work. Unassigned provider output and generated drafts cannot satisfy it. */
 export function registrationStagesFromSavedContent(product:{id:string;owner_id?:string;updated_at?:string;categoryId?:string|null},content:ProductContent|null,options:ProductOptions|null,keys:readonly string[],finalRows:RegistrationFinalContent[]|null):RegistrationStageSummary {
   const size=content?.assets?.size,used=!!size?.value?.length||!!content?.manualSizeChart;
   const result=pendingRegistrationStages(used);
@@ -63,11 +63,11 @@ export function registrationStagesFromSavedContent(product:{id:string;owner_id?:
   if(!content||content.productId!==product.id||content.schemaVersion!==1||!Number.isSafeInteger(content.revision)||content.revision<1||!time(content.updatedAt))return result;
   const saved=(field:{provenance?:string;updatedAt?:string|null}|undefined)=>field?.provenance==='manual'&&time(field.updatedAt)&&(!product.updated_at||Date.parse(field.updatedAt!)<=Date.parse(product.updated_at));
   const document=content.seoTitleDocument,title=content.seo?.title,rows=options?.rows??[];
-  const explicit=content.explicitSeoQuotationDefaults,reviewedSeo=saved(title)||['generated','translated'].includes(title?.provenance)&&explicit?.policy==='couplus-explicit-seo-defaults-v1'
-    &&explicit.productId===product.id&&explicit.categoryId===product.categoryId&&explicit.sourceTitle===title.value&&explicit.sourceUpdatedAt===title.updatedAt&&time(title.updatedAt);
+  const savedSeoTitle=saved(title)||['generated','translated'].includes(title?.provenance)&&time(title.updatedAt)
+    &&(!product.updated_at||Date.parse(title.updatedAt!)<=Date.parse(product.updated_at));
   if(document?.policy==='couplus-seo-save-v1'&&document.sourceTitle===title?.value&&document.value===title.value&&document.sourceUpdatedAt===title.updatedAt
-    &&reviewedSeo&&korean(title.value)&&title.value.length<=100&&options?.productId===product.id&&rows.every(row=>korean(row.translatedName)&&['manual','translated'].includes(row.provenance?.translatedName))
-    &&content.seo.keywords.value.every(value=>! /\p{Script=Han}/u.test(value))&&(!finalRows||finalRows.every(row=>korean(row.title))))done('seo','직접 저장한 현재 SEO 상품명과 한국어 옵션명 확인');
+    &&savedSeoTitle&&korean(title.value)&&title.value.length<=100&&options?.productId===product.id&&rows.every(row=>korean(row.translatedName)&&['manual','translated'].includes(row.provenance?.translatedName))
+    &&content.seo.keywords.value.every(value=>! /\p{Script=Han}/u.test(value))&&(!finalRows||finalRows.every(row=>korean(row.title))))done('seo',saved(title)?'직접 저장한 현재 SEO 상품명과 한국어 옵션명 확인':'저장된 현재 SEO 상품명과 한국어 옵션명 확인');
   const exact=(left:readonly string[],right:readonly string[])=>JSON.stringify(left)===JSON.stringify(right);
   if(finalRows?.length){
     for(const [id,role] of [['mainImage','main'],['additionalImages','additional'],['detailImage','detail'],['koreanLabel','label']] as const){

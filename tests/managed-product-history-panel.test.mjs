@@ -34,9 +34,11 @@ function ui(fetcher) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
   }).outputText, { exports, URL: TestURL, URLSearchParams, FormData, AbortController, Error, queueMicrotask,
     setTimeout(fn) { fn(); }, document: { createElement() { return { click() { downloads.push({ name: this.download, blob: files.get(this.href) }); } }; } },
-    fetch: fetcher, require: name => name === 'react' ? hooks : name === '@/app/managed-product-table' ? table
+    fetch: fetcher, require: name => name === 'react' ? hooks : name === '@/app/components/use-menu-dismissal' ? {usePopupDismissal(){}} : name === '@/app/managed-product-table' ? table
       : name === '@/app/components/managed-import-prices-panel' ? { ManagedImportPricesPanel: function ManagedImportPricesPanel() {} }
         : name === '@/app/components/managed-purchase-info-panel' ? { ManagedPurchaseInfoPanel: function ManagedPurchaseInfoPanel() {} }
+          : name === '@/app/components/managed-product-barcode-panel' ? { ManagedProductBarcodePanel: function ManagedProductBarcodePanel() {} }
+            : name === '@/app/components/managed-store-settings-panel' ? { ManagedStoreSettingsPanel: function ManagedStoreSettingsPanel() {} }
           : name.endsWith('.css') ? {} : native(name),
   });
   const render = () => { cursor = 0; const tree = exports.ManagedProductsPanel(); while (effects.length) effects.shift()(); return tree; };

@@ -6,7 +6,7 @@ import ts from 'typescript';
 const turn=()=>new Promise(resolve=>setImmediate(resolve));
 const snapshot={sourceUrl:'https://detail.1688.com/offer/700000000001.html',offerId:'700000000001',title:'테스트 수집 상품',options:[{key:'one'}],images:[]};
 const item={id:'capture',ownerId:'owner',snapshot,reviewed:null,receivedAt:'2026-10-19T00:00:00Z',archivedAt:null,issues:[]};
-function module(file,scope={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,URL,...scope});return exports;}
+function module(file,scope={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,URL,require:name=>module(name.slice(2)+'.ts',scope),...scope});return exports;}
 
 test('new captures stay visible beside a working product with the same URL without modifying it',()=>{
  const {sourceRegistrationRows}=module('app/source-registration.ts');

@@ -1,6 +1,7 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
 import {createPortal} from 'react-dom';
+import {usePopupDismissal} from '@/app/components/use-menu-dismissal';
 import type {RegistrationColumnFilter,RegistrationFilterChoice,RegistrationFilterCondition} from '@/app/registration-column-filter';
 
 type Props={label:string;choices:RegistrationFilterChoice[];allValues:string[];filter?:RegistrationColumnFilter;position:{left:number;top:number};trigger?:HTMLElement;
@@ -10,12 +11,11 @@ export function RegistrationFilterPopover({label,choices,allValues,filter,positi
  const [selected,setSelected]=useState(()=>filter?.mode==='values'?filter.values:allValues);
  const [conditions,setConditions]=useState<RegistrationFilterCondition[]>(()=>filter?.mode==='conditions'?filter.conditions:[{operator:'',value:''},{operator:'',value:''}]);
  const [error,setError]=useState(''),root=useRef<HTMLDivElement|null>(null);
+ usePopupDismissal(root,onClose,true,trigger);
  useEffect(()=>{
-  const outside=(event:MouseEvent)=>{if(event.target instanceof Node&&!root.current?.contains(event.target)&&!trigger?.contains(event.target))onClose();};
-  const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'){event.preventDefault();onClose();}};
   const scroll=(event:Event)=>{if(!(event.target instanceof Node)||!root.current?.contains(event.target))onClose();};
-  document.addEventListener('mousedown',outside);document.addEventListener('keydown',escape);document.addEventListener('scroll',scroll,true);window.addEventListener('resize',onClose);
-  return()=>{document.removeEventListener('mousedown',outside);document.removeEventListener('keydown',escape);document.removeEventListener('scroll',scroll,true);window.removeEventListener('resize',onClose);};
+  document.addEventListener('scroll',scroll,true);window.addEventListener('resize',onClose);
+  return()=>{document.removeEventListener('scroll',scroll,true);window.removeEventListener('resize',onClose);};
  },[onClose,trigger]);
  const shown=choices.filter(choice=>choice.value.toLocaleLowerCase('ko-KR').includes(query.trim().toLocaleLowerCase('ko-KR'))),all=shown.length>0&&shown.every(choice=>selected.includes(choice.value));
  const total=shown.reduce((sum,choice)=>sum+choice.count,0);

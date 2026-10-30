@@ -2,6 +2,7 @@ import {env} from 'cloudflare:workers';
 import {validatePageSource,type PageSource} from '@/extensions/supplier-hub/page-source.mjs';
 import {sourceInboxValidatedStatus,sourceInboxWarnings,type SourceInboxItem} from '@/app/source-inbox';
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
+import {decorateSourceInboxTitles} from '@/db/source-inbox-titles';
 export const sourceInboxSchema=`CREATE TABLE IF NOT EXISTS source_inbox (
  owner_id TEXT NOT NULL,id TEXT NOT NULL,company_code TEXT NOT NULL,company_name TEXT NOT NULL,
  offer_id TEXT NOT NULL,fingerprint TEXT NOT NULL,payload TEXT NOT NULL,review_payload TEXT,
@@ -28,14 +29,15 @@ const allRows=`SELECT ${columns},id AS origin_id,1 AS capture_version FROM sourc
 const count=(owner:string,active=false)=>`(SELECT count(*) FROM source_inbox WHERE owner_id=${owner}${active?' AND archived_at IS NULL':''})+(SELECT count(*) FROM source_inbox_captures WHERE owner_id=${owner}${active?' AND archived_at IS NULL':''})`;
 function decode(row:Row):SourceInboxItem{const snapshot=validatePageSource(JSON.parse(row.payload)),reviewed=row.review_payload!==null?validatePageSource(JSON.parse(row.review_payload)):null;return {id:row.id,ownerId:row.owner_id,company:{code:row.company_code,name:row.company_name},fingerprint:row.fingerprint,snapshot,reviewed,revision:row.revision,receivedAt:row.received_at,archivedAt:row.archived_at,captureOriginId:row.origin_id??row.id,captureVersion:row.capture_version??1,issues:sourceInboxValidatedStatus(reviewed??snapshot),warnings:sourceInboxWarnings(snapshot,reviewed)};}
 async function listRows(owner:string,company:SupplierHubCompany){const db=await database();const result=await db.prepare(`SELECT * FROM (${allRows}) WHERE owner_id=? AND company_code=? AND company_name=? AND archived_at IS NULL ORDER BY received_at DESC,capture_version DESC,id DESC LIMIT 40`).bind(owner,company.code,company.name).all<Row>();return result.results;}
-export async function listSourceInbox(owner:string,company:SupplierHubCompany){return (await listRows(owner,company)).map(decode);}
+export async function listSourceInbox(owner:string,company:SupplierHubCompany){const items=(await listRows(owner,company)).map(decode);return decorateSourceInboxTitles(owner,company,items).catch(()=>items);}
 /** Preserve the established full-receipt API without reserializing all source
  * options/images a third time. Each raw JSON value is parsed and fully validated
  * before embedding it; malformed stored data still fails the read visibly. */
 export async function listSourceInboxJson(owner:string,company:SupplierHubCompany):Promise<string>{
  const rows=await listRows(owner,company);
- return '['+rows.map(row=>{
-  const item=decode(row),{snapshot,reviewed,...metadata}=item;
+ const decoded=rows.map(decode),items=await decorateSourceInboxTitles(owner,company,decoded).catch(()=>decoded);
+ return '['+rows.map((row,index)=>{
+  const item=items[index],{snapshot,reviewed,...metadata}=item;
   void snapshot;void reviewed;
   return JSON.stringify(metadata).slice(0,-1)+',"snapshot":'+row.payload+',"reviewed":'+(row.review_payload??'null')+'}';
  }).join(',')+']';

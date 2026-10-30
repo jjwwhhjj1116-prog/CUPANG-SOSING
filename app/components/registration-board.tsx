@@ -9,6 +9,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type {SourceInboxItem} from '@/app/source-inbox';
 import {sourceRegistrationRows,type SourceRegistration} from '@/app/source-registration';
 import {sourceArchiveReference,sameSourceArchiveReference,type SourceArchiveReference} from '@/app/source-inbox-archive-client';
+export type RegistrationSourceSelectionReference=SourceArchiveReference;
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 import { archiveDateBounds, type ArchiveRange } from '@/app/product-archive';
 import {matchesRegistrationColumnFilter,registrationFilterChoices,type RegistrationColumnFilter} from '@/app/registration-column-filter';
@@ -27,9 +28,14 @@ export function filterRegistrationProducts<T extends BoardProduct>(products:T[],
   });
 }
 export function registrationStepLabel(product: BoardProduct, step: string) {
+  if(product.source_capture&&step==='SEO'){const state=registrationStepStatus(product,step).state;if(state==='running')return '번역 중';if(state==='failed')return '번역 오류';}
   return registrationStageLabel(registrationStepStatus(product,step).state);
 }
 export function registrationStepStatus(product:BoardProduct,step:string):RegistrationStageStatus {
+  if(product.source_capture&&step==='SEO'){
+    const item=product.source_capture,value=item.titlePreparation;
+    if(value&&value.fingerprint===item.fingerprint&&value.revision===item.revision&&value.sourceTitle===item.snapshot.title&&value.state!=='completed')return {state:value.state==='failed'?'failed':'running',detail:value.message+' · 전체 SEO 작업은 대기 상태입니다.'};
+  }
   const id=registrationStepIds[step];
   return !product.source_capture&&id&&product.content_summary?.stages?.[id]||pendingRegistrationStages()[id??'seo'];
 }
@@ -101,7 +107,7 @@ export function sortRegistrationProducts<T extends BoardProduct>(products:T[],so
 
 function sourceUrl(value:string) {try{const url=new URL(value);return ['https:','http:'].includes(url.protocol)?url.href:undefined;}catch{return undefined;}}
 
-export function RegistrationBoard<T extends BoardProduct>({products,sources=[],sourceOwnerId,sourceCompany,sourceArchiveDisabled=false,onPrepareSource,onReviewSource,onArchiveSource,selected,onSelected,onOpen,onOptions,onDelete,loading,error,onArchive}:{products:T[];sources?:SourceInboxItem[];sourceOwnerId?:string;sourceCompany?:SupplierHubCompany|null;sourceArchiveDisabled?:boolean;onPrepareSource?:(item:SourceInboxItem)=>void;onReviewSource?:(item:SourceInboxItem)=>void;onArchiveSource?:(item:SourceInboxItem)=>Promise<void>;selected:Set<string>;onSelected:(value:Set<string>)=>void;onOpen:(product:T,step?:string)=>void;onOptions?:(product:T)=>void;onDelete?:(product:T)=>Promise<void>;loading:boolean;error:string;onArchive:()=>void}) {
+export function RegistrationBoard<T extends BoardProduct>({products,sources=[],sourceOwnerId,sourceCompany,sourceArchiveDisabled=false,onPrepareSource,onReviewSource,onArchiveSource,onSourceSelectionChange,selected,onSelected,onOpen,onOptions,onDelete,loading,error,onArchive}:{products:T[];sources?:SourceInboxItem[];sourceOwnerId?:string;sourceCompany?:SupplierHubCompany|null;sourceArchiveDisabled?:boolean;onPrepareSource?:(item:SourceInboxItem)=>void;onReviewSource?:(item:SourceInboxItem)=>void;onArchiveSource?:(item:SourceInboxItem)=>Promise<void>;onSourceSelectionChange?:(references:RegistrationSourceSelectionReference[])=>void;selected:Set<string>;onSelected:(value:Set<string>)=>void;onOpen:(product:T,step?:string)=>void;onOptions?:(product:T)=>void;onDelete?:(product:T)=>Promise<void>;loading:boolean;error:string;onArchive:()=>void}) {
   type Entry=BoardProduct & (T|SourceRegistration);
   const entries:Entry[]=[...sourceRegistrationRows(sources),...products];
   const openEntry=(product:Entry,step?:string)=>{if(product.source_capture){if(step==='옵션')onReviewSource?.(product.source_capture);else onPrepareSource?.(product.source_capture);}else if(onOptions)onOptions(product as T);else if(step===undefined)onOpen(product as T);else onOpen(product as T,step);};
@@ -120,6 +126,15 @@ export function RegistrationBoard<T extends BoardProduct>({products,sources=[],s
   const [sourceSelection,setSourceSelection]=useState<{scope:object;refs:SourceArchiveReference[]}>({scope:sourceScope,refs:[]});
   const sourceReferences=new Map(entries.flatMap(entry=>{const ref=entry.source_capture&&sourceArchiveReference(entry.source_capture,sourceOwnerId,sourceCompany);return ref?[[entry.id,ref] as const]:[];}));
   const selectedSources=entries.filter(entry=>entry.source_capture&&sourceSelection.scope===sourceScope&&sourceSelection.refs.some(ref=>sameSourceArchiveReference(ref,sourceReferences.get(entry.id))));
+  const selectedSourceReferences=selectedSources.flatMap(entry=>{const reference=sourceReferences.get(entry.id);return reference?[reference]:[];});
+  const sourceSelectionKey=JSON.stringify(selectedSourceReferences);
+  const publishedSourceSelection=useRef<string|null>(null);
+  useLayoutEffect(()=>{
+    if(!onSourceSelectionChange){publishedSourceSelection.current=null;return;}
+    if(publishedSourceSelection.current===sourceSelectionKey)return;
+    publishedSourceSelection.current=sourceSelectionKey;
+    onSourceSelectionChange(selectedSourceReferences.map(reference=>({...reference,company:{...reference.company}})));
+  });
   const alive=useRef(false),latest=useRef({sourceScope,entries,sourceReferences,selectedSources,sourceArchiveDisabled,onArchiveSource});
   useLayoutEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
   useLayoutEffect(()=>{latest.current={sourceScope,entries,sourceReferences,selectedSources,sourceArchiveDisabled,onArchiveSource};});
@@ -188,7 +203,7 @@ export function RegistrationBoard<T extends BoardProduct>({products,sources=[],s
       <select className="registration-status-filter" aria-label="등록 상태 필터" value={status} onChange={event=>{setStatus(event.target.value);setPage(0);}}>{[...new Set(['전체','등록대기','작업 중','검토 대기','전송 가능','파일 검증 중','견적서 접수','SKU ID 확인','파일 반려','상품 반려',...entries.map(registrationTransmissionLabel)])].map(value=><option key={value}>{value}</option>)}</select>
       <label className="search"><input type="search" aria-label="상품 검색" placeholder="Search" title="상품명 · 등록번호 · 원본 URL 검색" value={query} onChange={event=>{setQuery(event.target.value);setPage(0);}}/><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><circle cx="10" cy="10" r="6.5"/><path d="m15 15 5 5"/></svg></label>
       <label className="registration-page-size"><span>Items per page</span><select aria-label="페이지당 상품 수" value={pageSize} onChange={event=>{setPageSize(Number(event.target.value));setPage(0);}}>{[10,25,50,100].map(count=><option key={count}>{count}</option>)}</select></label>
-      <details className="registration-column-picker"><summary>선택 컬럼 보기</summary><div role="group" aria-label="표시할 컬럼">
+      <details className="registration-column-picker" data-dismissable-menu><summary>선택 컬럼 보기</summary><div role="group" aria-label="표시할 컬럼">
         <button type="button" className="btn ghost" onClick={()=>setVisibleColumns(columns.map(column=>column.id))}>전체 표시</button>
         {columns.map(column=><label key={column.id}><input type="checkbox" aria-label={`${column.label} 컬럼 표시`} checked={visibleColumns.includes(column.id)} onChange={event=>{setVisibleColumns(current=>event.target.checked?[...current,column.id]:current.filter(value=>value!==column.id));setFilterPopup(null);}}/>{column.label}</label>)}
       </div></details>
@@ -199,7 +214,7 @@ export function RegistrationBoard<T extends BoardProduct>({products,sources=[],s
     </div>
     <div className={`table-wrap registration-scroll${fixedHeight?' registration-height-fixed':''}`} tabIndex={0} aria-label="상품 등록 작업 표"><table className="couplus-work-table" style={{minWidth:Math.max(480,36+displayedColumns.reduce((width,column)=>width+column.width,0))}}><colgroup><col style={{width:36}}/>{displayedColumns.map(column=><col key={column.id} style={{width:column.width}}/>)}</colgroup><thead><tr><th><input type="checkbox" aria-label="현재 페이지 전체 선택" disabled={deleting!==null} checked={rows.some(product=>!product.source_capture||sourceReferences.has(product.id))&&rows.filter(product=>!product.source_capture||sourceReferences.has(product.id)).every(product=>product.source_capture?selectedSources.some(item=>item.id===product.id):selected.has(product.id))} onChange={event=>toggle(rows.filter(product=>!product.source_capture||sourceReferences.has(product.id)).map(product=>product.id),event.target.checked)}/></th>{displayedColumns.map(column=><th key={column.id} data-column={column.id} className={pinned(column.id)} aria-sort={['image','management'].includes(column.id)?undefined:sort?.column===column.id?sort.direction:'none'}><div className="registration-header-tools">{['image','management'].includes(column.id)?<span>{column.label}</span>:<button type="button" className="registration-sort" aria-label={`${column.label} 정렬`} title={sort?.column===column.id?sort.direction==='ascending'?'오름차순 · 클릭하여 내림차순':'내림차순 · 클릭하여 정렬 해제':'클릭하여 오름차순'} onClick={()=>changeSort(column.id)}><span>{column.label}</span><svg aria-hidden="true" width="9" height="12" viewBox="0 0 10 14" fill="none" stroke="currentColor" strokeWidth="1.3"><path className={sort?.column===column.id&&sort.direction==='ascending'?'active':''} d="M2 5 5 2l3 3"/><path className={sort?.column===column.id&&sort.direction==='descending'?'active':''} d="m2 9 3 3 3-3"/></svg></button>}<button type="button" className={`registration-filter-trigger${columnFilters[column.id]?' active':''}`} aria-label={`${column.label} 열 필터`} aria-expanded={filterPopup?.columnId===column.id} title={columnFilters[column.id]?'필터 적용 중':'이 열 필터'} onClick={event=>{const trigger=event.currentTarget,rect=trigger.getBoundingClientRect();setFilterPopup(current=>current?.columnId===column.id?null:{columnId:column.id,trigger,position:{left:Math.max(8,Math.min(rect.left,window.innerWidth-328)),top:Math.max(8,Math.min(rect.bottom+6,window.innerHeight-440))}});}}><svg aria-hidden="true" width="10" height="12" viewBox="0 0 12 14" fill="none" stroke="currentColor" strokeWidth="1.3"><path d="M1 2h10L7.2 6.5v5L4.8 10v-3.5Z"/></svg></button></div></th>)}</tr></thead><tbody>
     {rows.map(product=>{const image=registrationThumbnail(product);const title=registrationTitle(product);const removal=productRemovalDecision(product);return <tr key={product.id}>
-      <td><input type="checkbox" aria-label={`${title} 선택`} checked={product.source_capture?selectedSources.some(item=>item.id===product.id):selected.has(product.id)} disabled={deleting!==null||!!product.source_capture&&(sourceArchiveDisabled||!sourceReferences.has(product.id))} title={product.source_capture?'수집 목록에서 삭제할 상품 선택 · AI 작업과 전송에는 포함되지 않습니다.':undefined} onChange={event=>toggle([product.id],event.target.checked)}/></td>
+      <td><input type="checkbox" aria-label={`${title} 선택`} checked={product.source_capture?selectedSources.some(item=>item.id===product.id):selected.has(product.id)} disabled={deleting!==null||!!product.source_capture&&(sourceArchiveDisabled||!sourceReferences.has(product.id))} title={product.source_capture?'작업개시 시 선택한 수집본의 카테고리를 확인하고 상품 초안을 준비합니다. 삭제도 같은 선택을 사용합니다.':undefined} onChange={event=>toggle([product.id],event.target.checked)}/></td>
       {displayedColumns.map(column=><td key={column.id} data-column={column.id} className={`${column.id==='product'?'registration-product':''}${pinned(column.id)}`}>
         {column.id==='id'&&<><span className="registration-id">{product.source_capture?product.source_capture.snapshot.offerId:registrationNumber(product)}</span>{product.source_capture&&<small style={{display:'block'}}>수집본 {product.source_capture.captureVersion??1}</small>}<time dateTime={product.created_at}>{Number.isFinite(Date.parse(product.created_at))?dateTime.format(new Date(product.created_at)):'날짜 미확인'}</time></>}
         {column.id==='image'&&<button type="button" className="registration-thumbnail" onClick={()=>openEntry(product,'대표 이미지')} aria-label={`${title} 대표 이미지 열기`}>{image?<img src={image} width={56} height={56} alt="상품 이미지"/>:<span>이미지<br/>없음</span>}</button>}

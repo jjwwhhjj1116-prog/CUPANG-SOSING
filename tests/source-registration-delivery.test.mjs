@@ -21,7 +21,7 @@ function fixture({list=async owner=>json({ownerId:owner,company,items:[]}),conte
  const location={origin};
  const {useSourceRegistrations}=sourceReviewModule('app/components/use-source-registrations.ts',{hooks,window,document,location,crypto:webcrypto,Date:class extends Date{static now(){return clock;}},
   setTimeout:(fn,delay)=>{const id=++timer;timers.set(id,{fn,due:clock+delay});return id;},clearTimeout:id=>timers.delete(id),setInterval:(fn)=>{const id=++timer;intervals.set(id,fn);return id;},clearInterval:id=>intervals.delete(id),
-  fetch:(path,init)=>{calls.push({path,init,owner});assert.ok(['/api/source-inbox','/api/supplier-hub/catalog-context'].includes(path),'no source endpoint or working product request');return path==='/api/source-inbox'?list(owner,init):context(owner,init);}});
+  fetch:(path,init)=>{calls.push({path,init,owner});assert.ok(['/api/source-inbox','/api/supplier-hub/catalog-context','/api/source-inbox/title'].includes(path),'no upstream source or working product request');if(path==='/api/source-inbox/title'){assert.equal(init.method,'POST');const body=JSON.parse(init.body);assert.equal(body.expectedOwnerId,owner);assert.ok(body.id&&body.expectedFingerprint&&body.expectedRevision);return Response.json({error:'Title preparation is outside this delivery fixture'},{status:503});}return path==='/api/source-inbox'?list(owner,init):context(owner,init);}});
  function FixtureRender(passive=true){cursor=0;const result=useSourceRegistrations(owner);layouts.splice(0).forEach(fn=>fn());if(passive)effects.splice(0).forEach(fn=>fn());return result;}
  const emit=(target,name,event)=>{for(const fn of [...(listeners[target].get(name)??[])])fn(event);};
  const reply=(result,extra={})=>emit('window','message',{source:window,origin,data:{channel:'YOOFAM_SOURCE_INBOX_RESULT',requestId:posted.at(-1)?.data.requestId,result},...extra});
@@ -39,7 +39,7 @@ const ack=(patch={})=>({ok:true,ownerId:'owner',company,delivered:0,pending:1,er
 for(const selectedCompany of [company,otherCompany])test(selectedCompany.code+': retained trusted capture survives a transient ACK failure, then genuine app focus delivers exact immutable record to the saved own list',async()=>{
  const company=selectedCompany,backend=mobileIntakeHarness({companyCode:company.code,companyName:company.name}),records=new Map(),{before}=reviewSourceFixture('owner',company),source=before.snapshot,api=backend.load('app/api/source-inbox/route.ts');
  const working={id:'untouched-working-product',title:'수정 중인 기존 상품',source_url:'https://detail.1688.com/offer/764000000002.html'},workingBefore=JSON.stringify(working);
- let offline=true,h;
+ let offline=true,h,flushComplete=Promise.resolve();
  const store=async(action,value)=>action==='list'?[...records.values()]:action==='put'?records.set(value.id,structuredClone(value)):records.delete(value);
  const appTab={id:20,windowId:3,url:origin+'/'},extension={tabs:{query:async()=>[appTab],get:async()=>appTab,sendMessage:async(_tab,message)=>{
   if(message.type==='YOOFAM_READ_CATALOG_CONTEXT')return {ok:true,ownerId:'owner',company};
@@ -50,14 +50,14 @@ for(const selectedCompany of [company,otherCompany])test(selectedCompany.code+':
  try{
   const captured=await savePageSource({snapshot:source},{frameId:0,url:source.sourceUrl,tab:{id:21,windowId:3}},extension,store);
   assert.equal(captured.delivered,false);assert.equal(records.size,1);const immutable=JSON.stringify([...records.values()][0]);
-  h=fixture({list:async()=>api.GET(),context:async()=>json({ownerId:'owner',company},'/api/supplier-hub/catalog-context'),post:()=>{void flushPageSources({}, {frameId:0,url:appTab.url,tab:appTab},extension,store).then(result=>h.reply(result));}});
+  h=fixture({list:async()=>api.GET(),context:async()=>json({ownerId:'owner',company},'/api/supplier-hub/catalog-context'),post:()=>{flushComplete=flushPageSources({}, {frameId:0,url:appTab.url,tab:appTab},extension,store).then(result=>h.reply(result));}});
   h.render();await turn();await h.advance(1500);await turn();assert.equal(h.posted.length,1);assert.equal(records.size,1);assert.equal(h.render().items.length,0);
-  offline=false;await h.advance(1000);h.focus();h.visible();await h.advance(250);await turn();assert.equal(h.posted.length,2);assert.equal(records.size,0);
+  offline=false;await h.advance(1000);h.focus();h.visible();await h.advance(250);await flushComplete;await turn();assert.equal(h.posted.length,2);assert.equal(records.size,0);
   await turn();const rows=h.render().items;assert.equal(rows.length,1);assert.equal(rows[0].id,captured.id);assert.equal(rows[0].ownerId,'owner');assert.equal(rows[0].company.code,company.code);
   const retained=JSON.parse(immutable);assert.equal(rows[0].fingerprint,retained.fingerprint);assert.deepEqual(JSON.parse(JSON.stringify(rows[0].snapshot)),retained.snapshot);
   assert.equal(JSON.stringify(working),workingBefore);assert.equal(backend.sqlite.prepare('SELECT count(*) n FROM source_inbox').get().n,1);
   h.interval();await turn();await h.advance(30000);assert.equal(h.posted.length,2,'the list polling interval cannot flush or fetch a source page');
-  assert.ok(h.calls.every(call=>!call.init.method||call.init.method==='GET'));
+  assert.ok(h.calls.every(call=>!call.init.method||call.init.method==='GET'||call.path==='/api/source-inbox/title'&&call.init.method==='POST'));
  }finally{h?.close();backend.close();}
 });
 
@@ -75,7 +75,7 @@ test('duplicate foreground events retain one outstanding lease; untrusted and in
 
 for(const selectedCompany of [company,otherCompany])test(selectedCompany.code+': lost flush result expires without a write, then extension recovery and trusted foreground replay exact persisted capture idempotently',async()=>{
  const company=selectedCompany,backend=mobileIntakeHarness({companyCode:company.code,companyName:company.name}),records=new Map(),source=reviewSourceFixture('owner',company).before.snapshot,api=backend.load('app/api/source-inbox/route.ts');
- let extensionAvailable=false,loseSaveAck=true,postCount=0,h;
+ let extensionAvailable=false,loseSaveAck=true,postCount=0,h,flushComplete=Promise.resolve();
  const store=async(action,value)=>action==='list'?[...records.values()]:action==='put'?records.set(value.id,structuredClone(value)):records.delete(value);
  const appTab={id:20,windowId:3,url:origin+'/'},extension={tabs:{query:async()=>[appTab],get:async()=>appTab,sendMessage:async(_tab,message)=>{
   if(message.type==='YOOFAM_READ_CATALOG_CONTEXT')return {ok:true,ownerId:'owner',company};
@@ -86,10 +86,10 @@ for(const selectedCompany of [company,otherCompany])test(selectedCompany.code+':
  try{
   const first=await savePageSource({snapshot:source},{frameId:0,url:source.sourceUrl,tab:{id:21,windowId:3}},extension,store);assert.equal(first.delivered,false);assert.equal(records.size,1);const immutable=JSON.stringify([...records.values()][0]);
   assert.equal(backend.sqlite.prepare('SELECT count(*) n FROM source_inbox').get().n,1);
-  h=fixture({list:async()=>api.GET(),context:async()=>json({ownerId:'owner',company},'/api/supplier-hub/catalog-context'),post:()=>{if(extensionAvailable)void flushPageSources({}, {frameId:0,url:appTab.url,tab:appTab},extension,store).then(result=>h.reply(result));}});
+  h=fixture({list:async()=>api.GET(),context:async()=>json({ownerId:'owner',company},'/api/supplier-hub/catalog-context'),post:()=>{if(extensionAvailable)flushComplete=flushPageSources({}, {frameId:0,url:appTab.url,tab:appTab},extension,store).then(result=>h.reply(result));}});
   h.render();await turn();await h.advance(1500);assert.equal(h.posted.length,1);assert.equal(postCount,1);assert.equal(records.size,1);
   await h.advance(20000);assert.equal(h.posted.length,1,'deadline itself must never flush');assert.equal(postCount,1);assert.equal(JSON.stringify([...records.values()][0]),immutable);
-  loseSaveAck=false;extensionAvailable=true;h.focus();h.visible();await h.advance(250);await turn();await turn();
+  loseSaveAck=false;extensionAvailable=true;h.focus();h.visible();await h.advance(250);await flushComplete;await turn();await turn();
   assert.equal(h.posted.length,2);assert.equal(postCount,2);assert.equal(records.size,0);assert.equal(h.render().items.length,1);assert.equal(h.render().items[0].id,first.id);
   assert.equal(backend.sqlite.prepare('SELECT count(*) n FROM source_inbox').get().n,1);assert.equal(backend.sqlite.prepare('SELECT count(*) n FROM source_inbox_captures').get().n,0,'an exact retry is not a new capture version');
   assert.equal(h.render().items[0].fingerprint,JSON.parse(immutable).fingerprint);assert.deepEqual(JSON.parse(JSON.stringify(h.render().items[0].snapshot)),JSON.parse(immutable).snapshot);

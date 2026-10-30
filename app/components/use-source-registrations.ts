@@ -2,7 +2,9 @@
 import {useEffect,useLayoutEffect,useMemo,useRef,useState,useCallback} from 'react';
 import type {SourceInboxItem} from '@/app/source-inbox';
 import {validateReviewedSourceTransition} from '@/app/source-review-intake';
-import {readSourceArchiveReceipt,sourceArchiveReference,type SourceArchiveReceipt} from '@/app/source-inbox-archive-client';
+import {readSourceArchiveReceipt,sourceArchiveReference,sameSourceArchiveReference,type SourceArchiveReceipt} from '@/app/source-inbox-archive-client';
+import {sourceHasManualTitle} from '@/app/source-inbox-title';
+import {prepareSourceInboxDisplayTitle} from '@/app/source-inbox-title-client';
 
 type SourceRegistrationState={ownerId?:string;items:SourceInboxItem[];error:string};
 type SourceRegistrationSession={ownerId?:string;token:object;alive:boolean;epoch:number;cancel:()=>void;accepted:Map<string,SourceInboxItem>;archived:Map<string,SourceArchiveReceipt>};
@@ -23,15 +25,41 @@ export function useSourceRegistrations(ownerId?:string){
  const refresh=useRef<()=>void>(()=>{});
  useEffect(()=>{
   if(typeof window==='undefined'||typeof document==='undefined')return;
-  let alive=true,running:AbortController|null=null,queued=false,queuedCompany:SourceDeliveryCompany|undefined,deliveryTimer:ReturnType<typeof setTimeout>|undefined;
+  let alive=true,running:AbortController|null=null,titleRunning:AbortController|null=null,titleQueued=false,queued=false,queuedCompany:SourceDeliveryCompany|undefined,deliveryTimer:ReturnType<typeof setTimeout>|undefined,titleRetry:ReturnType<typeof setTimeout>|undefined;
+  const titleAttempts=new Map<string,number>();
   const origin=location.origin;
   const releaseDelivery=(attempt:SourceDeliveryAttempt)=>{clearTimeout(attempt.timer);attempt.controller.abort();if(delivery.current===attempt)delivery.current=null;};
   // An expired result wait is uncertainty, not a save acknowledgement. Only a
   // later foreground may retry the same immutable, idempotent worker queue.
   const expireDelivery=()=>{const attempt=delivery.current;if(attempt?.posted&&Date.now()>=attempt.expiresAt)releaseDelivery(attempt);};
-  const scope:SourceRegistrationSession={ownerId,token,alive:true,epoch:0,cancel:()=>{running?.abort();running=null;queued=false;queuedCompany=undefined;clearTimeout(deliveryTimer);deliveryTimer=undefined;const attempt=delivery.current;if(attempt?.token===token)releaseDelivery(attempt);},accepted:new Map(),archived:new Map()};session.current=scope;
+  const scope:SourceRegistrationSession={ownerId,token,alive:true,epoch:0,cancel:()=>{running?.abort();running=null;titleRunning?.abort();titleRunning=null;titleQueued=false;clearTimeout(titleRetry);titleRetry=undefined;queued=false;queuedCompany=undefined;clearTimeout(deliveryTimer);deliveryTimer=undefined;const attempt=delivery.current;if(attempt?.token===token)releaseDelivery(attempt);},accepted:new Map(),archived:new Map()};session.current=scope;
   const active=(epoch:number)=>alive&&scope.alive&&session.current===scope&&owner.current===token&&scope.epoch===epoch&&location.origin===origin;
   const publish=(value:SourceRegistrationState)=>{current.current=value;setState(value);};
+  async function prepareTitles(items:SourceInboxItem[]){
+   if(!ownerId||!active(scope.epoch))return;if(titleRunning){titleQueued=true;return;}
+   const controller=new AbortController(),epoch=scope.epoch;titleRunning=controller;
+   try{for(const item of items){
+    if(!active(epoch)||controller.signal.aborted)return;
+    if(item.titlePreparation?.format!=='yoofam-collected-title-v1')continue;
+    const reference=sourceArchiveReference(item,ownerId,item.company),value=item.titlePreparation,key=reference&&JSON.stringify([reference,value.providerSignature??'legacy-google-free']);
+    if(!key||value?.format!=='yoofam-collected-title-v1'||sourceHasManualTitle(item)||value.state==='completed'||value.state==='running'||value.state==='failed'&&!value.retryable||(titleAttempts.get(key)??0)>=2)continue;
+    titleAttempts.set(key,(titleAttempts.get(key)??0)+1);
+    const timer=setTimeout(()=>controller.abort(),35000);
+    try{
+     const fields=await prepareSourceInboxDisplayTitle(item,controller.signal);if(!active(epoch)||controller.signal.aborted)return;
+     const latest=current.current;if(latest.ownerId!==ownerId)continue;
+     const rows=latest.items.map(row=>sameSourceArchiveReference(reference,sourceArchiveReference(row,ownerId,row.company))?{...row,...fields}:row);
+     publish({ownerId,items:rows,error:latest.error});
+     if(fields.titlePreparation?.retryable&&fields.titlePreparation.state==='failed'&&titleRetry===undefined)titleRetry=setTimeout(()=>{titleRetry=undefined;void prepareTitles(current.current.items);},2000);
+    }catch{
+     if(active(epoch)){
+      const latest=current.current;if(latest.ownerId===ownerId)publish({ownerId,error:latest.error,items:latest.items.map(row=>sameSourceArchiveReference(reference,sourceArchiveReference(row,ownerId,row.company))
+       ?{...row,displayTitle:row.reviewed?.title??row.snapshot.title,titlePreparation:{...value,state:'failed',translatedTitle:null,retryable:false,attempts:Math.max(value.attempts,titleAttempts.get(key)??1),message:controller.signal.aborted?'상품명 준비 응답이 지연되었습니다. 원문을 보존했습니다.':'상품명 준비 결과를 확인하지 못했습니다. 원문을 보존했습니다.'}}:row)});
+     }
+    }
+    finally{clearTimeout(timer);}
+   }}finally{if(titleRunning===controller){titleRunning=null;if(active(epoch)&&titleQueued){titleQueued=false;void prepareTitles(current.current.items);}}}
+  }
   async function load(expectedCompany?:SourceDeliveryCompany){
    if(!ownerId||!active(scope.epoch))return;
    if(running){queued=true;if(expectedCompany)queuedCompany=expectedCompany;return;}
@@ -50,7 +78,7 @@ export function useSourceRegistrations(ownerId?:string){
      if(item.revision>archived.revision&&item.archivedAt===null){scope.archived.delete(item.id);return true;}return false;
     }).map(item=>{const accepted=scope.accepted.get(item.id);if(!accepted||readCompany&&!sameCompany(accepted.company,readCompany))return item;if(item.revision>=accepted.revision){scope.accepted.delete(item.id);return item;}return accepted;});
     for(const accepted of scope.accepted.values())if((!readCompany||sameCompany(accepted.company,readCompany))&&!items.some(item=>item.id===accepted.id))items.push(accepted);
-    publish({ownerId,items,error:''});
+    publish({ownerId,items,error:''});void prepareTitles(items);
    }catch(error){if(active(epoch)&&!controller.signal.aborted)publish({ownerId,items:current.current.ownerId===ownerId?current.current.items:[],error:(error instanceof Error?error.message:'수집 상품 조회 실패')+' 이전 목록에 최신 수집본이 없을 수 있습니다. 다시 불러와주세요.'});}
    finally{clearTimeout(timeout);if(running===controller){running=null;if(active(epoch)&&queued){const company=queuedCompany;queued=false;queuedCompany=undefined;void load(company);}}}
   }

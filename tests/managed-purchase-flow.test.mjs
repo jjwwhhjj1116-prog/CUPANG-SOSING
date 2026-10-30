@@ -39,7 +39,10 @@ function purchaseUI(h){
   if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,URL,URLSearchParams,FormData,File,Blob,AbortController,Error,structuredClone,queueMicrotask,setTimeout,clearTimeout,fetch:request,require(name){
    if(name==='react')return hooks;
+   if(name==='@/app/components/use-menu-dismissal')return{usePopupDismissal(){}};
    if(name==='@/app/components/managed-import-prices-panel')return{ManagedImportPricesPanel:()=>null};
+   if(name==='@/app/components/managed-product-barcode-panel')return{ManagedProductBarcodePanel:()=>null};
+   if(name==='@/app/components/managed-store-settings-panel')return{ManagedStoreSettingsPanel:()=>null};
    if(name.endsWith('.css'))return{};
    if(name.startsWith('@/app/components/'))return load(name.slice(2)+'.tsx');
    if(name.startsWith('@/'))return h.load(name.slice(2)+'.ts');

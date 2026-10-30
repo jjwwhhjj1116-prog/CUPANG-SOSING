@@ -4,8 +4,11 @@ import {readBoundedJson,RequestBodyError} from '@/app/request-body';
 import {validatePageSourceForDelivery,PAGE_SOURCE_LIMIT,pageSourceUrl} from '@/extensions/supplier-hub/page-source.mjs';
 import {pageSourceFingerprint,reviewPageSource} from '@/app/source-inbox';
 import {listSourceInboxJson,readSourceInbox,storeSourceInbox,reviewSourceInbox,archiveSourceInbox,restoreSourceInbox,SourceInboxConflict,SOURCE_INBOX_ACTIVE_LIMIT,SOURCE_INBOX_RETENTION_LIMIT} from '@/db/source-inbox';
+import {waitUntil} from 'cloudflare:workers';
+import {prepareCollectedSourceTitle} from '@/app/source-inbox-title-service';
 const reply=(value:unknown,status=200)=>Response.json(value,{status,headers:{'cache-control':'no-store'}});
-async function access(){const user=await getChatGPTUser(),company=user?.verifiedAccess?approvedSupplierHubCompany(user.membership):null;return company?{owner:await getWorkspaceOwnerId(),company}:null;}
+async function access(){const user=await getChatGPTUser(),company=user?.verifiedAccess?approvedSupplierHubCompany(user.membership):null;if(!company)return null;const owner=await getWorkspaceOwnerId(),member=user?.membership;
+ return {owner,company,member:user?.userId===owner&&member?.id===owner&&member.status==='approved'&&['admin','member'].includes(member.role)?{id:owner,email:member.email.trim().toLowerCase(),role:member.role as 'admin'|'member'}:null};}
 export async function GET(){try{const auth=await access();if(!auth)return reply({error:'승인된 회사 계정으로 로그인해주세요.'},401);const items=await listSourceInboxJson(auth.owner,auth.company),metadata=JSON.stringify({ownerId:auth.owner,company:auth.company,limits:{active:SOURCE_INBOX_ACTIVE_LIMIT,retained:SOURCE_INBOX_RETENTION_LIMIT}});return new Response(metadata.slice(0,-1)+',"items":'+items+'}',{headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}});}catch{return reply({error:'수집함을 불러오지 못했습니다. 이전 목록은 최신 수집 상태가 아닐 수 있습니다.'},503);}}
 export async function POST(request:Request){
  try{
@@ -24,6 +27,7 @@ export async function POST(request:Request){
   // A changed snapshot is a separately stored immutable capture. Only the
   // exact same fingerprint may acknowledge a previously retained version.
   if(existing.fingerprint!==body.fingerprint||existing.company.code!==auth.company.code||existing.company.name!==auth.company.name)return reply({error:'저장된 수집 원문과 회사·확인값이 다릅니다.'},409);
+  if(auth.member&&typeof waitUntil==='function')waitUntil(prepareCollectedSourceTitle(existing,auth.member).catch(()=>{}));
   return reply({ok:true,id:body.id,fingerprint:body.fingerprint,ownerId:auth.owner,company:auth.company,storedId:existing.id,storedFingerprint:existing.fingerprint,duplicate:saved.duplicate,captureOriginId:existing.captureOriginId,captureVersion:existing.captureVersion,
    receivedAt:existing.receivedAt,collectedAt:existing.snapshot.collectedAt,sourceUrl:existing.snapshot.sourceUrl});
  }catch(error){return reply({error:error instanceof Error?error.message:'수집함 저장 결과를 확인하지 못했습니다.'},error instanceof RequestBodyError?error.status:error instanceof SourceInboxConflict?409:503);}

@@ -1,4 +1,5 @@
 import type {SourceInboxItem} from '@/app/source-inbox';
+import {sourceInboxDisplayTitle} from '@/app/source-inbox-title';
 
 export function sameSourceUrl(first:string,second:string){
  try{const a=new URL(first),b=new URL(second);return a.origin===b.origin&&a.pathname===b.pathname;}catch{return false;}
@@ -9,7 +10,7 @@ export function sourceRegistrationRows(items:SourceInboxItem[]){
  // visible even when an older version has already become a working product.
  // Only the explicit, recoverable archive action removes a capture row.
  return items.filter(item=>!item.archivedAt).map(item=>({
-  id:`source:${item.id}`,source_capture:item,title:item.reviewed?.title??item.snapshot.title,
+  id:`source:${item.id}`,source_capture:item,title:sourceInboxDisplayTitle(item),
   source_url:item.snapshot.sourceUrl,created_at:item.receivedAt,image_keys:'[]',
   options_count:(item.reviewed??item.snapshot).options.length,registration_status:'카테고리 대기',
   seo_status:'대기',quote_status:'대기',supply_price:null,sale_price:null,
