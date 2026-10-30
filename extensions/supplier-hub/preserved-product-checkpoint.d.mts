@@ -1,0 +1,12 @@
+export type PreservedProductInspectionTarget={requestId:string;docId:string|number;productId:string;company:{code:string;name:string}};
+export type PreservedProductCheckpoint={state:string;sequence:number;updatedAt:number;requestId:string;docId:string|number;identityDigest:string;packetDigest:string;
+  originalBodySha256:string;preparedBodySha256:string;sourcePlanSha256:string;profileId:string|null;categoryId:string|null;
+  source:{productVersion:string;contentRevision:number;optionRevision:number;quotationRevision:number;profileRevision:number|null};membersCount:number;validatedSteps:number[];
+  draftOnly:true;preparedLifecycle:boolean;operationId:string|null;requestedStep:number|null;submitRequestedAt:number|null;savedAppTabId:number;savedWindowId:number;savedHubTabId:number|null;
+  laneMatched:true;durableBodyAvailable:false;durableSourcePlanAvailable:false};
+export type PreservedProductInspectionResult={format:'yoofam-preserved-product-checkpoint-inspection-v1';target:PreservedProductInspectionTarget;
+  status:'found'|'not-found'|'storage-missing'|'scan-limit'|'ambiguous'|'document-mismatch'|'checkpoint-invalid';found:boolean;scanned:number;complete:boolean;
+  readOnly:true;remoteWrites:false;checkpointWrites:false;registered:false;canResume:false;checkpoint:PreservedProductCheckpoint|null;diagnostic:{code:string;message:string}};
+export function validatePreservedProductInspectionTarget(value:unknown):Readonly<PreservedProductInspectionTarget>;
+export function validatePreservedProductInspectionResult(value:unknown,expectedTarget:PreservedProductInspectionTarget):Readonly<PreservedProductInspectionResult>;
+export function inspectPreservedProductDocument(message:unknown,sender:unknown,options?:{api?:unknown;store?:unknown;now?:()=>number}):Promise<Readonly<PreservedProductInspectionResult>>;

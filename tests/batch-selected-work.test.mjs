@@ -16,9 +16,8 @@ function fixture(){
   '@/app/supplier-hub-company':{supplierHubCompany:(code,name)=>['A01526306','A01464742'].includes(code)?{code,name}:null},
   '@/app/collected-translation-attributes':{},'@/app/option-translation':{},'@/app/sourcing':{},'@/app/seo-workspace-draft':{parseSeoGenerationConfiguration:raw=>raw?.freeOnly===true&&raw.destination==='Cloudflare Workers AI'?plain(raw):null},
   '@/app/automation/translation':{GOOGLE_TEXT_MODEL:'google',WORKERS_QWEN_MODEL:'@cf/qwen/qwen3-30b-a3b-fp8'},
-  '@/app/quotation-ai-client':{quotationAiViewCurrent:()=>true,quotationAiJobForScope:()=>null,quotationAiScopedProposalChanges:()=>[]},
+  '@/app/quotation-ai-client':{quotationAiViewCurrent:()=>true,quotationAiJobForScope:()=>null,quotationReviewedProposalChanges:()=>[],quotationSavedSourceChanges:()=>[]},
   '@/app/quotation-fields-confirmation':{},
-  '@/app/quotation-known-notice-proposals':providedOptionModule('app/quotation-known-notice-proposals.ts'),
   '@/app/batch-selected-packaging-work':{async runSelectedPackagingWork(id,options){await options.assertCurrent();calls.push({adapter:'packaging',id,revision:options.view.revision,fingerprint:options.view.inputFingerprint});return {view:options.view,status:'unchanged',changed:0,estimated:0,fallback:0,remaining:0,recovered:false,message:'저장한 포장값을 유지했습니다.'};}},
   '@/app/registration-layout':{readRegistrationLayout:(raw,id,clock)=>{assert.equal(raw.productId,id);assert.equal(raw.productVersion,clock);return raw;}},
   '@/app/batch-selected-image-work':{createSelectedImageStageState:(ownerId,productId,stage)=>({ownerId,productId,stage,batches:{}}),async processSelectedImageStage(id,stage,options){calls.push({adapter:'image',id,stage,version:options.expectedProductVersion});return imageResult;}},
@@ -64,20 +63,40 @@ test('price-only run checks calculated option prices without unrelated writes',a
  assert.deepEqual(h.events.map(row=>row.status),['running','draft']);
 });
 
-test('full work skips only a fresh completed stage; explicit partial work and stale evidence still enter it',async()=>{
- for(const mode of ['full','selected'])for(const stale of [false,true]){const h=fixture();h.options.mode=mode;
-  h.intercept(call=>call.url.endsWith('/automation')?Response.json({stale,workflow:{productId:'product',productVersion:version,stages:[{id:'pricing',status:'complete'}]}}):null);
-  const result=await h.run(['pricing']),skip=mode==='full'&&!stale;
+const savedSummary=(completed=[])=>({seo:completed.includes('seo'),seoTitle:null,mainImageKey:null,main:0,additional:0,detail:0,label:0,missingImages:false,
+ stages:Object.fromEntries(stageIds.map(id=>[id,{state:completed.includes(id)?'complete':'pending',detail:'서버에서 확인한 현재 저장값'}]))});
+
+test('full work skips server-confirmed board completion; explicit partial work and pending stages still enter it',async()=>{
+ for(const mode of ['full','selected'])for(const complete of [false,true]){const h=fixture();h.options.mode=mode;
+  h.intercept(call=>call.url==='/api/products/product'?Response.json({product:{id:'product',owner_id:'owner',title:'검수 상품',updated_at:version,content_summary:savedSummary(complete?['pricing']:[])}}):null);
+  const result=await h.run(['pricing']),skip=mode==='full'&&complete;
   assert.equal(result.stages[0].status,skip?'skipped':'draft');assert.equal(h.calls.some(call=>call.url?.endsWith('/stage-two-pricing')),!skip);
-  assert.equal(h.calls.some(call=>call.method==='POST'),false);
+  assert.equal(h.calls.some(call=>call.method==='POST'||call.url?.endsWith('/automation')),false);
  }
 });
 
-test('full work does not reuse another product or an older version as completion proof',async()=>{
- for(const wrong of ['product','version']){const h=fixture();h.options.mode='full';
-  h.intercept(call=>call.url.endsWith('/automation')?Response.json({stale:false,workflow:{productId:wrong==='product'?'other':'product',productVersion:wrong==='version'?'2026-10-22T00:00:00.000Z':version,stages:[{id:'pricing',status:'complete'}]}}):null);
-  const result=await h.run(['pricing']);assert.equal(result.stages[0].status,wrong==='product'?'failed':'draft');
-  assert.equal(h.calls.some(call=>call.url?.endsWith('/stage-two-pricing')),wrong!=='product');
+test('full work does not reuse another product or owner or invalid source version as completion proof',async()=>{
+ for(const wrong of ['product','owner','version']){const h=fixture();h.options.mode='full';
+  h.intercept(call=>call.url==='/api/products/product'?Response.json({product:{id:wrong==='product'?'other':'product',owner_id:wrong==='owner'?'other':'owner',updated_at:wrong==='version'?'invalid':version,content_summary:savedSummary(['pricing'])}}):null);
+  const result=await h.run(['pricing']);assert.equal(result.stages[0].status,'failed');
+  assert.equal(h.calls.some(call=>call.url?.endsWith('/stage-two-pricing')||call.method==='POST'),false);
+ }
+});
+
+test('full mode preserves current saved SEO and images while ignoring weaker legacy automation completion',async()=>{
+ const h=fixture();h.options.mode='full';h.intercept(call=>call.url==='/api/products/product'?Response.json({product:{id:'product',owner_id:'owner',updated_at:version,content_summary:savedSummary(['seo','mainImage','additionalImages','detailImage','koreanLabel'])}}):null);
+ const result=await h.run(['seo','mainImage','additionalImages','detailImage','koreanLabel']);assert.ok(result.stages.every(row=>row.status==='skipped'));
+ assert.equal(h.calls.some(call=>call.adapter||call.method==='POST'||call.url?.endsWith('/automation')),false);
+ for(const summary of [undefined,null,{seo:true}]){
+  const f=fixture();f.options.mode='full';f.intercept(call=>call.url==='/api/products/product'?Response.json({product:{id:'product',owner_id:'owner',updated_at:version,...(summary===undefined?{}:{content_summary:summary})}}):null);
+  assert.equal((await f.run(['pricing'])).stages[0].status,'draft');assert.equal(f.calls.some(call=>call.url?.endsWith('/automation')),false);
+ }
+});
+
+test('malformed board completion cannot skip or automatically replace a saved stage',async()=>{
+ for(const mutate of [summary=>{summary.stages.pricing.state=true;},summary=>{summary.stages.pricing.detail='';},summary=>{delete summary.stages.seo;},summary=>{summary.stages.extra={state:'complete',detail:'외부'};},summary=>{summary.missingImages='false';},summary=>{summary.main=-1;},summary=>{summary.seo='true';}]){
+  const h=fixture(),summary=savedSummary(['pricing']);mutate(summary);h.options.mode='full';h.intercept(call=>call.url==='/api/products/product'?Response.json({product:{id:'product',owner_id:'owner',updated_at:version,content_summary:summary}}):null);
+  const result=await h.run(['pricing','mainImage']);assert.equal(result.stages[0].status,'failed');assert.equal(result.stages[1].status,'blocked');assert.equal(h.calls.some(call=>call.adapter||call.method==='POST'||call.url?.endsWith('/stage-two-pricing')),false);
  }
 });
 
@@ -215,9 +234,12 @@ function knownQuotationFixture({configured=true}={}){
  view.resolved.rows[1].fields.notice0={value:'',source:'manual-option'};
  const content={schemaVersion:1,productId:'product',revision:3,label:Object.fromEntries(Object.entries({manufacturer:'저장 제조사',importer:'저장 수입사',contact:'02-1234-5678',countryOfOrigin:'중국'}).map(([key,value])=>[key,{value,provenance:key==='countryOfOrigin'?'generated':'manual'}]))};
  const job={id:'quote-known',status:'completed',fingerprint:hash,quotationRevision:1,profileId:null,scope:{optionId:null,applyToAllOptions:true},result:{changes:[{optionId:'a',fieldKey:'notice3',value:'검토 재질'}],warnings:[],model:'mock',generatedAt:version}};
- let onContent,saveResponse;const writes=[];
+ const savedOptions={schemaVersion:1,productId:'product',revision:2,rows:['a','b','excluded'].map((id,index)=>({id,included:id!=='excluded',color:index?'핑크':'베이지',unitsPerPack:1,provenance:{color:'manual',unitsPerPack:'manual'},updatedAt:version}))};
+ const savedLabels={schemaVersion:1,productId:'product',revision:1,updatedAt:version,overrides:{common:{},options:{}}};
+ let onContent,saveResponse,knownOverride;const writes=[];
  h.intercept(async call=>{
-  if(call.url.endsWith('/quotation-ai'))return Response.json({configuration:{configured},fingerprint:hash,productId:'product',productVersion:version,contentRevision:3,optionRevision:2,quotationRevision:1,profileId:null,jobs:configured?[job]:[]});
+  if(call.url.endsWith('/quotation-ai'))return Response.json({configuration:{configured},fingerprint:hash,productId:'product',productVersion:version,contentRevision:3,optionRevision:2,quotationRevision:1,profileId:null,
+   knownChanges:knownOverride??providedOptionModule('app/quotation-known-notice-proposals.ts').quotationKnownNoticeProposals('product',view,content,{optionId:null,applyToAllOptions:true},savedOptions,savedLabels),jobs:configured?[job]:[]});
   if(call.url.endsWith('/content')){onContent?.();return Response.json({content});}
   if(call.url.endsWith('/quotation-fields')){
    if(call.method!=='PUT')return Response.json(view);
@@ -227,7 +249,7 @@ function knownQuotationFixture({configured=true}={}){
    Object.assign(saved,{revision:2,inputFingerprint:'b'.repeat(64),productVersion:nextVersion,updatedAt:nextVersion});return Response.json(saved);
   }
  });
- return {...h,view,content,job,writes,onContent:callback=>onContent=callback,saveResponse:callback=>saveResponse=callback};
+ return {...h,view,content,job,writes,fields,savedOptions,savedLabels,onContent:callback=>onContent=callback,saveResponse:callback=>saveResponse=callback,overrideKnownChanges:value=>knownOverride=value};
 }
 
 test('an actual editable partial image draft continues to label and verified quotation save while preserving manual fields',async()=>{
@@ -245,7 +267,7 @@ test('an actual editable partial image draft continues to label and verified quo
 });
 test('explicit quotation work saves verified AI plus saved notice sources in one CAS request and confirms their exact receipt',async()=>{
  const h=knownQuotationFixture(),before=JSON.stringify({view:h.view,content:h.content}),result=await h.run(['quotation']);
- assert.equal(result.stages[0].status,'draft',result.stages[0].message);assert.match(result.stages[0].message,/AI 항목 1개 · 저장된 제조·상담 정보 3개/);
+ assert.equal(result.stages[0].status,'draft',result.stages[0].message);assert.match(result.stages[0].message,/AI 항목 1개 · 저장된 표시·옵션 정보 3개/);
  assert.equal(h.writes.length,1);assert.equal(h.writes[0].expectedRevision,1);assert.equal(h.writes[0].expectedInputFingerprint,hash);
  assert.deepEqual(h.writes[0].changes,[{optionId:'a',fieldKey:'notice3',value:'검토 재질'},{optionId:'a',fieldKey:'notice0',value:'제조자: 저장 제조사 / 수입자: 저장 수입사'},{optionId:'a',fieldKey:'notice1',value:'02-1234-5678'},{optionId:'b',fieldKey:'notice1',value:'02-1234-5678'}]);
  assert.equal(JSON.stringify({view:h.view,content:h.content}),before);assert.equal(h.calls.some(call=>call.method==='POST'),false);
@@ -256,12 +278,62 @@ test('explicit quotation work saves verified AI plus saved notice sources in one
 test('unconfigured quotation AI preserves manual values while applying known notices and checking packaging',async()=>{
  const h=knownQuotationFixture({configured:false}),before=JSON.stringify({view:h.view,content:h.content}),result=await h.run(['quotation']);
  assert.equal(result.stages[0].status,'blocked');assert.match(result.stages[0].message,/AI가 설정되지 않아 AI 작성은 실행하지 않았습니다/);
- assert.match(result.stages[0].message,/저장된 제조·상담 정보 3개/);assert.match(result.stages[0].message,/포장값/);
+ assert.match(result.stages[0].message,/저장된 표시·옵션 정보 3개/);assert.match(result.stages[0].message,/포장값/);
  assert.equal(h.calls.some(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST'),false);
  assert.equal(h.writes.length,1);assert.equal(h.writes[0].expectedRevision,1);assert.equal(h.writes[0].expectedInputFingerprint,hash);
  assert.deepEqual(h.writes[0].changes,[{optionId:'a',fieldKey:'notice0',value:'제조자: 저장 제조사 / 수입자: 저장 수입사'},{optionId:'a',fieldKey:'notice1',value:'02-1234-5678'},{optionId:'b',fieldKey:'notice1',value:'02-1234-5678'}]);
  assert.equal(JSON.stringify({view:h.view,content:h.content}),before);
  assert.deepEqual(h.calls.find(call=>call.adapter==='packaging'),{adapter:'packaging',id:'product',revision:2,fingerprint:'b'.repeat(64)});
+});
+
+function extendedKnownQuotationFixture(){
+ const h=knownQuotationFixture();
+ for(const [key,value] of Object.entries({countryOfOrigin:'중국',material:'내용의 재질',components:'1쌍',dimensions:'120×40mm',precautions:'화기 주의'}))h.content.label[key]={value,provenance:'manual'};
+ h.savedLabels.overrides.common={material:'표시사항에서 저장한 재질',netContents:'1쌍'};
+ for(const label of ['제품 구성','치수','취급시 주의사항','색상','수량']){
+  const quantity=label==='수량',id='extended'+h.fields.length;
+  h.fields.push({id,label,section:quantity?'product':'legal',visibility:quantity?'exposed':'common',type:'text',required:false,
+   hubWire:quantity?{path:['productPage','commonAttributes','exposedAttributes'],name:label,nameKey:'attributeName',valueKey:'attributeValue'}
+    :{path:['legalPage','notices'],name:label,nameKey:'noticeItemName',valueKey:'noticeItemValue'}});
+  for(const row of [...h.view.resolved.rows,...h.view.automatic.rows])row.fields[id]=quantity?{value:'1',source:'option'}:{value:'해당사항없음',source:'couplus-default'};
+ }
+ const color=h.fields.find(field=>field.label==='색상').id;
+ h.view.overrides.options.b[color]='';h.view.resolved.rows[1].fields[color]={value:'',source:'manual-option'};
+ return h;
+}
+
+test('batch quotation consumes server saved options and label overrides, wins AI duplicate and preserves pair quantity and manual blank',async()=>{
+ const h=extendedKnownQuotationFixture(),before=JSON.stringify({view:h.view,content:h.content,options:h.savedOptions,labels:h.savedLabels});
+ const result=await h.run(['quotation']);assert.equal(result.stages[0].status,'draft',result.stages[0].message);assert.equal(h.writes.length,1);
+ const changes=h.writes[0].changes,value=(id,label)=>changes.find(change=>change.optionId===id&&change.fieldKey===h.fields.find(field=>field.label===label).id)?.value;
+ assert.equal(value('a','재질'),'표시사항에서 저장한 재질');assert.equal(value('b','재질'),'표시사항에서 저장한 재질');
+ assert.equal(value('a','제조국(원산지)'),'중국');assert.equal(value('a','제품 구성'),'1쌍');assert.equal(value('a','수량'),'1쌍');
+ assert.equal(value('a','치수'),'120×40mm');assert.equal(value('a','취급시 주의사항'),'화기 주의');assert.equal(value('a','색상'),'베이지');assert.equal(value('b','색상'),undefined);
+ assert.ok(changes.every(change=>change.optionId!=='excluded'));assert.equal(changes.some(change=>change.value==='검토 재질'),false);
+ assert.equal(new Set(changes.map(change=>JSON.stringify([change.optionId,change.fieldKey]))).size,changes.length);
+ assert.match(result.stages[0].message,/AI 항목 0개/);assert.equal(JSON.stringify({view:h.view,content:h.content,options:h.savedOptions,labels:h.savedLabels}),before);
+ assert.equal(h.calls.some(call=>call.method==='POST'),false);assert.equal(h.calls.filter(call=>call.adapter==='packaging').length,1);
+});
+
+test('malformed, excluded or manual-blank server source targets cannot enter combined quotation save or packaging',async()=>{
+ for(const mutate of [changes=>changes.push(plain(changes[0])),changes=>{changes[0].optionId='excluded';},changes=>{changes[0].optionId='b';changes[0].fieldKey='notice0';},changes=>{changes[0].fieldKey='unknown';},changes=>{changes[0].value='해당사항없음';}]){
+  const h=extendedKnownQuotationFixture(),changes=plain(providedOptionModule('app/quotation-known-notice-proposals.ts').quotationKnownNoticeProposals('product',h.view,h.content,{optionId:null,applyToAllOptions:true},h.savedOptions,h.savedLabels));
+  mutate(changes);h.overrideKnownChanges(changes);const result=await h.run(['quotation']);assert.equal(result.stages[0].status,'failed');assert.equal(h.writes.length,0);assert.equal(h.calls.some(call=>call.adapter==='packaging'),false);
+ }
+});
+
+test('confirmed failed quotation AI still copies verified saved sources and checks packaging without rerunning AI or claiming completion',async()=>{
+ const h=extendedKnownQuotationFixture();h.job.status='failed';h.job.result=null;h.job.error={code:'PROVIDER_FAILED',message:'확인된 모델 오류',uncertain:false};
+ const result=await h.run(['quotation']);assert.equal(result.stages[0].status,'blocked');assert.match(result.stages[0].message,/AI 실패: 확인된 모델 오류/);assert.match(result.stages[0].message,/저장된 표시·옵션 정보/);
+ assert.equal(h.writes.length,1);assert.equal(h.calls.filter(call=>call.adapter==='packaging').length,1);assert.equal(h.calls.some(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST'),false);
+ assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
+});
+
+test('unresolved quotation AI and uncertain failed proof never copy sources or start packaging',async()=>{
+ for(const status of ['prepared','running','uncertain','failed']){
+  const h=extendedKnownQuotationFixture();h.job.status=status;h.job.result=null;h.job.error={code:'UNCONFIRMED',message:'현재 결과 미확정',uncertain:true};
+  const result=await h.run(['quotation','pricing']);assert.equal(result.stages.find(row=>row.id==='quotation').status,'blocked');assert.equal(h.writes.length,0);assert.equal(h.calls.some(call=>call.adapter==='packaging'),false);
+ }
 });
 
 test('without quotation AI, an unknown notice save cannot be repeated or start packaging',async()=>{

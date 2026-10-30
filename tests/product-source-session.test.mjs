@@ -57,7 +57,7 @@ test('actual isolated source code restores only once after fresh full proof and 
   await f.adapter.readSource(input);assert.equal(calls.length,1);
   await f.reloadSourceSession();const restored=await f.adapter.readSource(input);assert.equal(restored.sessionId,nonce);assert.equal(calls.length,2);
   assert.equal(f.state.uploads.length,0);assert.equal(f.state.recoveryRequests.length,0);
-  f.state.company={code:'A01464742',name:'와이홉'};assert.equal((await f.adapter.readSource(input)).current,false);assert.equal(calls.length,2);
+  f.state.company={code:'A01464742',name:'와이홉'};await assert.rejects(f.adapter.readSource(input),{code:'SOURCE_CHANGED'});assert.equal(calls.length,2);
   f.state.company=copy(input.identity.company);assert.equal((await f.adapter.readSource(input)).current,false);
   assert.notEqual((await f.adapter.readSource(input)).sessionId,nonce,'an observed account ABA cannot restore the prior nonce inside the same page');assert.equal(calls.length,2);
  }finally{f.close();}

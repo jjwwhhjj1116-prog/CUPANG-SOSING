@@ -61,6 +61,7 @@ export function SelectedBatchWorkPanel({products,onOpen,onBusyChange,runRequest}
   <p>{runRequest.mode==='full'?'전체 작업은 현재 저장본에서 완료된 단계를 건너뜁니다. ':'선택한 단계만 작업합니다. '}저장 완료와 검토할 초안을 구분해 표시합니다. 이미 저장한 수동 수정값은 유지합니다.</p>
   <ul className="batch-work-list">{products.map(product=><li key={product.id}><strong>{product.title}</strong>{errors[product.id]&&<p role="alert">{errors[product.id]}</p>}
    <ol>{runRequest.stages.map(stage=>{const result=results[product.id]?.[stage];return <li key={stage} data-stage={stage} data-stage-status={result?.status??'waiting'}><strong>{stageNames[stage]} · {statusNames[result?.status??'waiting']}</strong><p role="status">{result?.message??'실행 대기'}</p><button type="button" className="btn ghost" disabled={busy} onClick={()=>review(product.id,stage)}>{stageNames[stage]} 검토 열기</button></li>;})}</ol>
+   {runRequest.stages.includes('quotation')&&results[product.id]?.quotation&&<button type="button" className="btn primary" disabled={busy} onClick={()=>review(product.id,'quotation')}>견적서 검토·등록 전송</button>}
   </li>)}</ul>
   <div className="modal-actions"><button type="button" className="btn ghost" disabled={!busy||stopping} onClick={()=>{const scope=context.current;if(scope?.active){scope.stop=true;setStopping(true);}}}>{stopping?'현재 상품을 마친 뒤 중지합니다':'현재 상품 후 중지'}</button><button type="button" className="btn primary" disabled={busy} onClick={()=>{const scope=context.current;if(scope&&!scope.active)void execute(scope,true);}}>선택 작업 다시 시도</button></div>
  </section>;

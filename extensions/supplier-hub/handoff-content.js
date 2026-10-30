@@ -1,11 +1,40 @@
 // This script only runs on the three explicitly listed app origins.
+async function readPreservedProductInspectionScope(expected){
+  const object=value=>Boolean(value&&typeof value==='object'&&!Array.isArray(value)),exact=(value,keys)=>object(value)&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
+  const allowed=['https://sourceflow.jjwwhhjj1116.workers.dev','http://localhost:3000','http://127.0.0.1:3000'],companies={A01526306:'유앤채',A01464742:'와이홉'},uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+  const target=expected?.target,docId=target?.docId;
+  if(!exact(expected,['origin','target'])||expected.origin!==location.origin||!allowed.includes(location.origin)||!exact(target,['requestId','docId','productId','company'])
+    ||!uuid.test(target.requestId||'')||!uuid.test(target.productId||'')||!(typeof docId==='number'&&Number.isSafeInteger(docId)&&docId>0||typeof docId==='string'&&/^[1-9]\d{0,29}$/.test(docId))
+    ||!exact(target.company,['code','name'])||!Object.hasOwn(companies,target.company.code)||companies[target.company.code]!==target.company.name)throw Error('기존 요청의 앱·문서·회사 범위를 확인해주세요.');
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000),originalOrigin=location.origin;
+  const read=async()=>{
+    if(location.origin!==originalOrigin||controller.signal.aborted)throw Error('기존 요청 확인 중 앱 연결이 변경되었습니다.');
+    const response=await fetch('/api/supplier-hub/catalog-context',{credentials:'include',cache:'no-store',redirect:'manual',signal:controller.signal});
+    if(!response.ok||response.redirected||!response.headers.get('content-type')?.toLowerCase().includes('application/json'))throw Error('현재 승인 회원의 회사 확인에 실패했습니다.');
+    const reader=response.body?.getReader();if(!reader)throw Error('현재 회원 확인 응답을 읽지 못했습니다.');const chunks=[];let size=0;
+    try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>16384){await reader.cancel();throw Error('회원 확인 응답이 한도를 넘었습니다.');}chunks.push(value);}}finally{reader.releaseLock();}
+    const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}
+    const context=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
+    if(!exact(context,['ownerId','company'])||!/^\w[\w-]{0,99}$/.test(context.ownerId||'')||!exact(context.company,['code','name'])||context.company.code!==target.company.code||context.company.name!==target.company.name
+      ||location.origin!==originalOrigin||controller.signal.aborted)throw Error('현재 승인 회원·회사와 요청의 회사가 다릅니다.');
+    return context;
+  };
+  try{const before=await read(),after=await read();if(before.ownerId!==after.ownerId||before.company.code!==after.company.code||before.company.name!==after.company.name)throw Error('조회 중 로그인 회원·회사가 변경되었습니다.');
+    return {ownerId:after.ownerId,company:structuredClone(after.company),target:structuredClone(target)};
+  }finally{clearTimeout(timer);}
+}
+chrome.runtime.onMessage.addListener((message,sender,respond)=>{
+  if(message?.type!=='YOOFAM_READ_PRESERVED_PRODUCT_DOCUMENT_SCOPE'||sender?.id!==chrome.runtime.id)return;
+  if(Object.keys(message).sort().join(',')!=='expected,type'){respond({ok:false,error:'기존 요청 확인 범위를 확인해주세요.'});return;}
+  readPreservedProductInspectionScope(message.expected).then(scope=>respond({ok:true,scope}),()=>respond({ok:false,error:'현재 승인 회원·회사와 기존 요청의 연결을 확인하지 못했습니다.'}));return true;
+});
 window.addEventListener('message',async event=>{
   if(event.source!==window||event.origin!==location.origin||event.data?.channel!=='YOOFAM_HUB_HANDOFF'||!/^[a-f0-9-]{36}$/.test(event.data.requestId||''))return;
   const {requestId,type}=event.data;
-  if(!['PING','PREPARE','RESULT','TRANSMIT','VALIDATE','REFRESH','REGISTRATION','COMPANY_REGISTRATIONS','NATIVE_REGISTRATIONS','HISTORY','RECOMMEND_CATEGORIES','CATEGORIES','SCHEMA','TEMPLATE','SINGLE_DOCUMENT','PRODUCT_DOCUMENT'].includes(type))return;
+  if(!['PING','PREPARE','RESULT','TRANSMIT','VALIDATE','REFRESH','REGISTRATION','COMPANY_REGISTRATIONS','NATIVE_REGISTRATIONS','PRESERVED_PRODUCT_DOCUMENT','HISTORY','RECOMMEND_CATEGORIES','CATEGORIES','SCHEMA','TEMPLATE','SINGLE_DOCUMENT','PRODUCT_DOCUMENT'].includes(type))return;
   let result;
   try{
-    const commands={PREPARE:'YOOFAM_PREPARE_PACKAGE',RESULT:'YOOFAM_GET_RESULT',TRANSMIT:'YOOFAM_TRANSMIT_PACKAGE',VALIDATE:'YOOFAM_RESUME_VALIDATION',REFRESH:'YOOFAM_REFRESH_RESULT',REGISTRATION:'YOOFAM_REFRESH_REGISTRATION',COMPANY_REGISTRATIONS:'YOOFAM_QUERY_COMPANY_REGISTRATIONS',NATIVE_REGISTRATIONS:'YOOFAM_QUERY_NATIVE_REGISTRATIONS',HISTORY:'YOOFAM_GET_PRODUCT_TRANSMISSIONS',RECOMMEND_CATEGORIES:'YOOFAM_RECOMMEND_CATEGORIES',CATEGORIES:'YOOFAM_READ_CATEGORY_BRANCH',SCHEMA:'YOOFAM_READ_CATEGORY_SCHEMA',TEMPLATE:'YOOFAM_READ_CATEGORY_TEMPLATE',SINGLE_DOCUMENT:'YOOFAM_SINGLE_DOCUMENT_REQUEST',PRODUCT_DOCUMENT:'YOOFAM_PRODUCT_DOCUMENT_REQUEST'};
+    const commands={PREPARE:'YOOFAM_PREPARE_PACKAGE',RESULT:'YOOFAM_GET_RESULT',TRANSMIT:'YOOFAM_TRANSMIT_PACKAGE',VALIDATE:'YOOFAM_RESUME_VALIDATION',REFRESH:'YOOFAM_REFRESH_RESULT',REGISTRATION:'YOOFAM_REFRESH_REGISTRATION',COMPANY_REGISTRATIONS:'YOOFAM_QUERY_COMPANY_REGISTRATIONS',NATIVE_REGISTRATIONS:'YOOFAM_QUERY_NATIVE_REGISTRATIONS',PRESERVED_PRODUCT_DOCUMENT:'YOOFAM_INSPECT_PRESERVED_PRODUCT_DOCUMENT',HISTORY:'YOOFAM_GET_PRODUCT_TRANSMISSIONS',RECOMMEND_CATEGORIES:'YOOFAM_RECOMMEND_CATEGORIES',CATEGORIES:'YOOFAM_READ_CATEGORY_BRANCH',SCHEMA:'YOOFAM_READ_CATEGORY_SCHEMA',TEMPLATE:'YOOFAM_READ_CATEGORY_TEMPLATE',SINGLE_DOCUMENT:'YOOFAM_SINGLE_DOCUMENT_REQUEST',PRODUCT_DOCUMENT:'YOOFAM_PRODUCT_DOCUMENT_REQUEST'};
     const version=type==='PING'?chrome.runtime.getManifest().version:'';
     const [major,minor,patch]=version.split('.').map(Number);
     // An app reload may inject updated disk content while the old unpacked
@@ -16,7 +45,8 @@ window.addEventListener('message',async event=>{
     const existingProductProbe=major>0||major===0&&(minor>2||minor===2&&patch>=81);
     const categoryRecommendations=major>2||major===2&&(minor>1||minor===1&&patch>=1);
     const nativeRegistrationStatus=major>2||major===2&&(minor>1||minor===1&&patch>=4);
-    result=type==='PING'?{ok:true,version,categoryCatalog:true,categoryRecommendations,categorySchema:true,categoryTemplate:true,categoryExcelSchema:true,legalDocumentAttachments:true,validationResume:true,companyMenuRecovery:true,attachmentLifecycleRecovery:true,exactAgreementLabels:true,acceptedReceiptRefreshRecovery:true,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,originalFileObservationCas,productDocumentPreview,existingProductProbe,nativeRegistrationStatus,productTransmissionHistory:true,historicalReceiptLookup:true,resultTableRefreshObservation:true,popupWindowBinding:true,publicMobileCapture:true,publicSingleSkuCapture:true,companyRegistrationStatus:true,companyBinding:true,directTransmission:true,latestSourceBinding:true,savedSubmission:true,durableAttachmentRecovery:true,imageIntegrityBinding:true,registrationLookup:true,registrationPages:true,serverReceiptRecovery:true,serverReceiptReplayProtection:true}:await chrome.runtime.sendMessage({...event.data.payload,type:commands[type]});
+    const preservedProductCheckpointInspection=major>2||major===2&&(minor>1||minor===1&&patch>=60);
+    result=type==='PING'?{ok:true,version,categoryCatalog:true,categoryRecommendations,categorySchema:true,categoryTemplate:true,categoryExcelSchema:true,legalDocumentAttachments:true,validationResume:true,companyMenuRecovery:true,attachmentLifecycleRecovery:true,exactAgreementLabels:true,acceptedReceiptRefreshRecovery:true,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,originalFileObservationCas,productDocumentPreview,existingProductProbe,nativeRegistrationStatus,preservedProductCheckpointInspection,productTransmissionHistory:true,historicalReceiptLookup:true,resultTableRefreshObservation:true,popupWindowBinding:true,publicMobileCapture:true,publicSingleSkuCapture:true,companyRegistrationStatus:true,companyBinding:true,directTransmission:true,latestSourceBinding:true,savedSubmission:true,durableAttachmentRecovery:true,imageIntegrityBinding:true,registrationLookup:true,registrationPages:true,serverReceiptRecovery:true,serverReceiptReplayProtection:true}:await chrome.runtime.sendMessage({...event.data.payload,type:commands[type]});
   }catch{result={ok:false,error:'확장 연결을 새로고침한 뒤 다시 준비해주세요.'};}
   window.postMessage({channel:'YOOFAM_HUB_HANDOFF_RESULT',requestId,result},location.origin);
 });

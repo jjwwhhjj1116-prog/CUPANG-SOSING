@@ -1142,6 +1142,7 @@ test('saved quotation entry reveals and focuses the same mounted current-product
  const view=fixture(),before=JSON.stringify(view),h=allOptionForm(view,[],'red'),entry=submissionEntry(h);
  assert.equal(view.submissionReady,false,'review must remain reachable to inspect incomplete required inputs');
  assert.equal(entry.button.props.disabled,false);assert.equal(entry.button.props['aria-controls'],entry.details.props.id);
+ assert.equal(h.nodes(entry.tree).filter(node=>node.type==='details').some(node=>h.nodes(node).includes(entry.button)),false,'primary transfer entry is visible without opening a secondary menu');
  const reviews=h.nodes(entry.details).filter(node=>node.props?.primaryProduct===true);assert.equal(reviews.length,1);
  assert.equal(reviews[0].props.view,view);assert.equal(reviews[0].props.productId,'p1');
  entry.button.props.onClick();assert.equal(entry.observed.open,true);assert.deepEqual(clone(entry.observed.scrolls),[{block:'start'}]);assert.deepEqual(clone(entry.observed.focus),[{preventScroll:true}]);

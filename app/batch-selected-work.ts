@@ -9,13 +9,12 @@ import { GOOGLE_TEXT_MODEL, WORKERS_QWEN_MODEL, type TranslationSource, type Tra
 import type { ProductContent } from '@/app/product-content';
 import type { ProductOptionsResponse } from '@/app/product-options';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
-import { quotationAiJobForScope, quotationAiScopedProposalChanges, quotationAiViewCurrent, type QuotationAiView, type QuotationAiJobView } from '@/app/quotation-ai-client';
+import { quotationAiJobForScope, quotationReviewedProposalChanges, quotationSavedSourceChanges, quotationAiViewCurrent, type QuotationAiView, type QuotationAiJobView } from '@/app/quotation-ai-client';
 import { confirmQuotationFieldsSave } from '@/app/quotation-fields-confirmation';
 import { processSelectedImageStage, createSelectedImageStageState, type SelectedImageStageState } from '@/app/batch-selected-image-work';
 import { runSelectedLabelWork } from '@/app/batch-selected-label-work';
 import { readRegistrationLayout } from '@/app/registration-layout';
 import { runSelectedPricingWork } from '@/app/batch-selected-pricing-work';
-import { quotationKnownNoticeProposals } from '@/app/quotation-known-notice-proposals';
 import { runSelectedPackagingWork } from '@/app/batch-selected-packaging-work';
 
 export type SelectedBatchStageResult = { id: AutomationStageId; status: 'waiting'|'running'|'draft'|'complete'|'blocked'|'failed'|'skipped'; message: string };
@@ -78,8 +77,9 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
   const read=async<T>(suffix:string)=>await responseJson(await fetcher(base+suffix,{cache:'no-store',credentials:'same-origin',redirect:'error'}),`상품 ${suffix||'/'} 조회`) as T;
   const post=async<T>(suffix:string,body:unknown,method='POST')=>await responseJson(await fetcher(base+suffix,{method,credentials:'same-origin',redirect:'error',headers:{'content-type':'application/json'},body:JSON.stringify(body)}),`상품 ${suffix} 저장`) as T;
   const product=async()=>{
-    const value=await read<{product:{id:string;updated_at:string;title:string}}>('');
-    if(value.product?.id!==productId||!Number.isFinite(Date.parse(value.product.updated_at)))throw new ScopeChanged('현재 상품을 확인하지 못했습니다.');
+    const value=await read<{product:{id:string;owner_id?:string;updated_at:string;title:string;content_summary?:unknown}}>('');
+    if(value.product?.id!==productId||!Number.isFinite(Date.parse(value.product.updated_at))
+      ||value.product.owner_id!==undefined&&value.product.owner_id!==controls.expectedOwnerId)throw new ScopeChanged('현재 상품을 확인하지 못했습니다.');
     return value.product;
   };
   let activeStage:AutomationStageId|null=null;
@@ -262,11 +262,19 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
       if(result.sourceCurrent===false)throw Error('견적 작성 중 자료가 변경됐습니다.');
       job=result.job;
     }
-    if(aiConfigured&&(!job||job.status!=='completed'))return{status:'blocked',message:job?.error?.message??'견적서 AI 실행 결과를 먼저 확인해주세요. 중복 실행하지 않았습니다.',uncertain:!job||job.status!=='failed'};
-    const aiChanges=job?quotationAiScopedProposalChanges(view,job,state.fingerprint,null,true):[];
+    const failed=aiConfigured&&job?.status==='failed'&&job.error?.uncertain===false
+      &&job.fingerprint===state.fingerprint&&job.quotationRevision===view.revision&&job.profileId===view.categoryContext.profileId
+      &&job.scope?.optionId===null&&job.scope.applyToAllOptions===true;
+    if(aiConfigured&&(!job||job.status!=='completed')&&!failed)return{status:'blocked',message:job?.error?.message??'견적서 AI 실행 결과를 먼저 확인해주세요. 중복 실행하지 않았습니다.',uncertain:true};
+    // Use the same reviewed merge as the interactive editor. The server's
+    // knownChanges includes exact saved option/label sources; recomputing from
+    // product content alone silently drops material, country, quantity, etc.
+    const knownChanges=quotationSavedSourceChanges(state,view,productId,null,true);
+    const changes=quotationReviewedProposalChanges(state,view,productId,job?.status==='completed'?job:null,null,true);
+    const aiCount=changes.length-knownChanges.length;
     const {content}=await read<{content:ProductContent}>('/content');
-    const knownChanges=quotationKnownNoticeProposals(productId,view,content,{optionId:null,applyToAllOptions:true});
-    const changes=[...aiChanges,...knownChanges];
+    if(content?.productId!==productId||content.schemaVersion!==1||content.revision!==view.contentRevision)
+      throw new ScopeChanged('견적 작성 중 저장된 표시사항 원본이 변경되어 작업을 멈췄습니다.');
     if(changes.length){
       const previous=view;
       view=await once('quotation:'+(job?.id??'saved-notice:'+view.inputFingerprint),()=>post<QuotationFieldsView>('/quotation-fields',{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes},'PUT'));
@@ -277,9 +285,11 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     const missing=view.resolved.rows.filter(row=>row.included).flatMap(row=>view.resolved.schema.fields.filter(field=>field.required
       &&(!row.fields[field.id]?.value.trim()||row.fields[field.id]?.validationIssues?.length)).map(field=>field.label));
     const incomplete=missing.length>0||packaging.status==='incomplete'||packaging.remaining>0;
-    const message=(aiConfigured?'견적서 AI 항목 '+aiChanges.length+'개'+(knownChanges.length?' · 저장된 제조·상담 정보 '+knownChanges.length+'개':'')+'를 저장했습니다. '
-      :'견적서 AI가 설정되지 않아 AI 작성은 실행하지 않았습니다. '+(knownChanges.length?'저장된 제조·상담 정보 '+knownChanges.length+'개를 적용했습니다. ':'저장된 제조·상담 정보는 기존 값을 유지했습니다. '))+packaging.message;
-    return{status:!aiConfigured||incomplete?'blocked':'draft',message:message+(missing.length?' 필수 입력 확인: '+[...new Set(missing)].slice(0,8).join(', ')+'.':incomplete?' 남은 포장값은 7단계에서 확인해주세요.':!aiConfigured?' AI 설정과 견적 내용을 확인해주세요.':' 견적서에서 최종 검토 후 등록전송할 수 있습니다.')};
+    const knownMessage=knownChanges.length?'저장된 표시·옵션 정보 '+knownChanges.length+'개를 적용했습니다. ':'저장된 표시·옵션 정보는 기존 값을 유지했습니다. ';
+    const message=(failed?'견적서 AI 실패: '+job!.error!.message+' '+knownMessage
+      :aiConfigured?'견적서 AI 항목 '+aiCount+'개'+(knownChanges.length?' · 저장된 표시·옵션 정보 '+knownChanges.length+'개':'')+'를 저장했습니다. '
+      :'견적서 AI가 설정되지 않아 AI 작성은 실행하지 않았습니다. '+knownMessage)+packaging.message;
+    return{status:!aiConfigured||failed||incomplete?'blocked':'draft',message:message+(missing.length?' 필수 입력 확인: '+[...new Set(missing)].slice(0,8).join(', ')+'.':incomplete?' 남은 포장값은 7단계에서 확인해주세요.':!aiConfigured||failed?' AI 설정·실행 이력과 견적 내용을 확인해주세요.':' 견적서에서 최종 검토 후 등록전송할 수 있습니다.')};
   }
   const result:SelectedBatchStageResult[]=automationStages.filter(id=>controls.stages.includes(id)).map(id=>({id,status:'waiting',message:'실행 대기'}));
   const publish=(index:number,outcome:Outcome)=>{result[index]={id:result[index].id,status:outcome.status,message:outcome.message};controls.onStage({...result[index]});};
@@ -298,14 +308,24 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     try{
       await assertCurrent();
       if(controls.mode==='full'){
-        // Full work preserves a positively current completed stage. Explicit
-        // partial selection still enters that stage's own reviewed workflow.
-        // A stale/missing workflow is never evidence that a stage is complete.
-        const current=await product(),saved=await read<{workflow:{productId:string;productVersion:string;stages:{id:AutomationStageId;status:string}[]}|null;stale:boolean}>('/automation');
+        // Read the same server-derived saved-source projection as the board.
+        // The older automation model calls adopted manual work a draft, so
+        // using its workflow alone repeats already-completed paid stages.
+        // No board cache or client completion flag is accepted here.
+        const current=await product(),summary=current.content_summary;
         await assertCurrent();
-        if(saved.workflow!==null&&(!object(saved.workflow)||saved.workflow.productId!==productId||!Array.isArray(saved.workflow.stages)
-          ||new Set(saved.workflow.stages.map(stage=>stage.id)).size!==saved.workflow.stages.length))throw Error('전체 작업의 저장 단계가 현재 상품과 다릅니다.');
-        if(saved.stale===false&&saved.workflow?.productVersion===current.updated_at&&saved.workflow.stages.some(stage=>stage.id===id&&stage.status==='complete')){
+        // Missing legacy/failed optional metadata is unknown, never complete.
+        // A non-null malformed positive projection must not trigger either a
+        // skip or automatic replacement of the saved stage.
+        if(summary!==undefined&&summary!==null&&(!object(summary)||summary.stages!==undefined&&(current.owner_id!==controls.expectedOwnerId
+          ||typeof summary.seo!=='boolean'||typeof summary.missingImages!=='boolean'
+          ||summary.seoTitle!==null&&typeof summary.seoTitle!=='string'||summary.mainImageKey!==null&&typeof summary.mainImageKey!=='string'
+          ||['main','additional','detail','label'].some(role=>!Number.isSafeInteger(summary[role])||Number(summary[role])<0)
+          ||!object(summary.stages)||Object.keys(summary.stages).length!==automationStages.length
+          ||automationStages.some(stage=>{const value=(summary.stages as Record<string,unknown>)[stage];return!object(value)
+            ||!['pending','complete','failed','running','unused'].includes(String(value.state))||typeof value.detail!=='string'||!value.detail.trim();}))))
+          throw new ScopeChanged('전체 작업의 저장 단계 확인값이 현재 회원·상품과 다릅니다. 목록을 다시 확인해주세요.');
+        if(object(summary)&&object(summary.stages)&&object(summary.stages[id])&&summary.stages[id].state==='complete'){
           publish(index,{status:'skipped',message:'현재 저장본에서 완료된 단계라 전체 작업에서 건너뛰었습니다. 다시 작업하려면 이 단계만 선택해주세요.'});continue;
         }
       }

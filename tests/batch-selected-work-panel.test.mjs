@@ -66,6 +66,15 @@ test('a failed product still exposes its stage editor and never gains a fabricat
  const h=harness(async()=>{throw Error('저장 응답을 확인하지 못했습니다.');},{selected:['koreanLabel','quotation'],products:[product('a')]});try{h.render();await tick();assert.match(text(h.render()),/저장 응답을 확인하지/);assert.equal(nodes(h.render()).some(node=>node.props?.['data-stage-status']==='complete'),false);h.button('표시사항 검토 열기').props.onClick();h.button('견적서 검토 열기').props.onClick();assert.deepEqual(h.opened,[['a','표시사항'],['a','견적서']]);}finally{h.close();}
 });
 
+test('quotation handoff opens only the same product review after processing and never submits from the batch panel',async()=>{
+ const gate=defer(),h=harness(async(id,options)=>{options.onStage({id:'quotation',status:'running',message:'견적 작성 중'});await gate.promise;return{productId:id,stages:[{id:'quotation',status:'blocked',message:'필수 항목을 검토해주세요.'}]};},{selected:['quotation'],products:[product('a')]});
+ try{
+  h.render();await tick();const during=h.button('견적서 검토·등록 전송');assert.equal(during.props.disabled,true);during.props.onClick();assert.equal(h.opened.length,0);
+  gate.resolve();await tick();const finished=h.button('견적서 검토·등록 전송');assert.equal(finished.props.disabled,false);finished.props.onClick();assert.deepEqual(h.opened,[['a','견적서']]);assert.equal(h.calls.length,1);
+  h.close();finished.props.onClick();assert.equal(h.opened.length,1,'closed panel cannot reopen a retained product');
+ }finally{h.close();}
+});
+
 test('the displayed SEO configuration snapshot reaches every runner and cannot change with parent props',async()=>{
  const configuration={configured:true,model:'@cf/meta/llama-3.3-70b-instruct-fp8-fast',maxOutputTokens:2048,freeOnly:true,destination:'Cloudflare Workers AI',issues:[],notice:'현재 무료 SEO 실행 안내',translationConfig:{configured:true,provider:'workers-ai',model:'@cf/qwen/qwen3-30b-a3b-fp8',maxOutputTokens:4096,freeOnly:false,destination:'Cloudflare Workers AI',issues:[],notice:'현재 Qwen 사용량 비용 안내'}},expected=JSON.parse(JSON.stringify(configuration));
  const request={id:'seo-consent-run',ownerId:'owner',stages:['seo'],keys:new Map(),seoGenerationConsent:configuration},h=harness(async id=>({productId:id,stages:[]}),{runRequest:request});

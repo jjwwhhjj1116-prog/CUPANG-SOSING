@@ -892,5 +892,72 @@ export function createSingleDocumentStore(indexedDBApi=globalThis.indexedDB){
       transaction.onerror=()=>reject(transaction.error??new Error('Single checkpoint transaction failed.'));
     });}finally{db.close();}
   }
-  return Object.freeze({get:key=>transact('get',key),claim:(key,value)=>transact('claim',key,null,value),compareAndSet:(key,expected,next)=>transact('cas',key,expected,next)});
+  // An inspection must not create an empty database or initialize its store.
+  // Aborting a missing database's versionchange is the fallback for browsers
+  // without indexedDB.databases(); the ordinary writer above is unchanged.
+  async function openInspection(){
+    if(typeof indexedDBApi.databases==='function'){
+      const databases=await indexedDBApi.databases();
+      if(!databases.some(database=>database.name==='yoofam-single-document-handoff'))return null;
+    }
+    return new Promise((resolve,reject)=>{
+      const request=indexedDBApi.open('yoofam-single-document-handoff');let missing=false,blocked=false;
+      request.onupgradeneeded=()=>{missing=true;request.transaction.abort();};
+      request.onerror=()=>missing?resolve(null):reject(request.error??new Error('Single checkpoint inspection could not open its database.'));
+      request.onblocked=()=>{blocked=true;reject(new Error('Single checkpoint inspection database is blocked.'));};
+      request.onsuccess=()=>{
+        const db=request.result;
+        if(blocked){db.close();return;}
+        if(missing||!db.objectStoreNames.contains('operations')){db.close();resolve(null);return;}
+        resolve(db);
+      };
+    });
+  }
+  async function inspectProductRequest(input){
+    const keys=['origin','ownerId','company','productId','requestId','docId'];
+    if(!object(input)||Object.keys(input).length!==keys.length||keys.some(key=>!Object.hasOwn(input,key)))fail('CHECKPOINT_SCOPE','원래 상품 문서의 정확한 조회 범위를 확인해주세요.');
+    const scope=safeValue(input);
+    if(!HANDOFF_ORIGINS.includes(scope.origin)||typeof scope.ownerId!=='string'||!ID.test(scope.ownerId)||!company(scope.company)
+      ||typeof scope.productId!=='string'||!ID.test(scope.productId)||typeof scope.requestId!=='string'||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(scope.requestId)||!identifier(scope.docId))fail('CHECKPOINT_SCOPE','원래 상품 문서의 정확한 조회 범위를 확인해주세요.');
+    const db=await openInspection();
+    if(!db)return {matches:[],scanned:0,complete:true,available:false};
+    try{return await new Promise((resolve,reject)=>{
+      const transaction=db.transaction('operations','readonly'),table=transaction.objectStore('operations'),matches=[];
+      let scanned=0,complete=true,failure;
+      const abort=error=>{failure=error;try{transaction.abort();}catch{reject(error);}};
+      transaction.oncomplete=()=>failure?reject(failure):resolve({matches,scanned,complete,available:true});
+      transaction.onabort=()=>reject(failure??transaction.error??new Error('Single checkpoint inspection transaction aborted.'));
+      transaction.onerror=()=>{failure=transaction.error??new Error('Single checkpoint inspection transaction failed.');};
+      const prefix='product-document:';let range;
+      if(typeof globalThis.IDBKeyRange?.bound==='function')range=globalThis.IDBKeyRange.bound(prefix,prefix+'\uffff');
+      const request=table.openCursor(range);
+      request.onsuccess=()=>{
+        try{
+          const cursor=request.result;if(!cursor)return;
+          const key=cursor.key;
+          if(typeof key!=='string'){
+            if(typeof indexedDBApi.cmp!=='function'){complete=false;return;}
+            if(indexedDBApi.cmp(key,prefix)<0)cursor.continue(prefix);
+            return;
+          }
+          if(key<prefix){cursor.continue(prefix);return;}
+          if(!key.startsWith(prefix))return;
+          if(scanned===500){complete=false;return;}scanned++;
+          const checkpoint=cursor.value,identity=checkpoint?.identity;
+          if(/^product-document:[a-f0-9]{64}$/.test(key)&&identity?.origin===scope.origin&&identity?.ownerId===scope.ownerId
+            &&identity?.productId===scope.productId&&identity?.company?.code===scope.company.code&&identity?.company?.name===scope.company.name&&checkpoint?.requestId===scope.requestId){
+            // Preserve a conflicting docId for the caller's full validation.
+            // The lookup itself is neither checkpoint approval nor a lease.
+            if(matches.length===2){complete=false;return;}
+            const match={key,checkpoint,lane:null};matches.push(match);
+            if(typeof checkpoint.laneKey==='string'&&/^product-document-lane:[a-f0-9]{64}$/.test(checkpoint.laneKey)){
+              const lane=table.get(checkpoint.laneKey);lane.onsuccess=()=>{match.lane=lane.result??null;};
+            }
+          }
+          cursor.continue();
+        }catch(error){abort(error);}
+      };
+    });}finally{db.close();}
+  }
+  return Object.freeze({get:key=>transact('get',key),claim:(key,value)=>transact('claim',key,null,value),compareAndSet:(key,expected,next)=>transact('cas',key,expected,next),inspectProductRequest});
 }

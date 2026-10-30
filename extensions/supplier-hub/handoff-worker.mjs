@@ -18,7 +18,11 @@ import {dispatchProductDocument} from './product-document-dispatch.mjs';
 import {savePageSource,flushPageSources} from './source-inbox.mjs';
 import {readPageDescription} from './page-description.mjs';
 import {readProductSourceSession} from './product-source-session.mjs';
+import {inspectPreservedProductDocument} from './preserved-product-checkpoint.mjs';
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
+  if(message?.type==='YOOFAM_INSPECT_PRESERVED_PRODUCT_DOCUMENT'){
+    inspectPreservedProductDocument(message,sender).then(result=>respond({ok:true,result}),error=>respond({ok:false,error:error?.code?error.message:'보관된 요청을 읽지 못했습니다. 기존 기록은 변경하지 않았습니다.',code:error?.code??'PRESERVED_INSPECTION_FAILED'}));return true;
+  }
   if(message?.type==='YOOFAM_READ_PRODUCT_SOURCE_SESSION'){
     readProductSourceSession(message,sender).then(result=>respond({ok:true,...result}),()=>respond({ok:false,error:'원래 전송 요청의 연결 기록을 확인하지 못했습니다.'}));return true;
   }
