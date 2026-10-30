@@ -51,3 +51,40 @@ test('schema-free generic Qwen still rejects malformed JSON, source index drift 
   chat({...draft(),attributes:draft().attributes.map(row=>row.sourceIndex===0?{...row,sourceIndex:99}:row)}),chat({...draft(),extra:'untrusted extra field'})];
  for(const response of responses){const f=configuration(),review=await api.prepareTranslationReview(plain(source),f.config),before=JSON.stringify(review);f.config.ai.run=async(_model,input)=>{f.calls.push(plain(input));return response;};await assert.rejects(api.executeTranslation(review,f.config,noNetwork),error=>{assert.equal(error.mayHaveBeenCharged,true);return true;});assert.equal(f.calls.length,1);assert.equal(Object.hasOwn(f.calls[0],'response_format'),false);assert.equal(JSON.stringify(review),before);}
 });
+
+
+test('generic Qwen rejects source-free performance claims in every translated field after one call without retry or source mutation',async()=>{
+ const scenarios=[
+  {location:'title',change:value=>{value.title='방수 면 수납 주머니 ABC-007';}},
+  {location:'description',change:value=>{value.description='방수 수납 주머니 크기 10 cm';}},
+  {location:'keywords[0]',change:value=>{value.keywords=['방수 주머니'];}},
+  {location:'attributes[0] · sourceIndex 0.name',change:value=>{value.attributes[0].name='방수 옵션명';}},
+  {location:'attributes[0] · sourceIndex 0.value',change:value=>{value.attributes[0].value='방수 검정';}},
+ ];
+ for(const scenario of scenarios){
+  const output=draft();scenario.change(output);
+  const bound=plain(source);bound.category.path=['방수'];bound.guidance={features:'방수',keywords:'waterproof'};
+  // A routing identifier carries no evidence, even when it contains a claim.
+  bound.attributes[0].name=scenario.location.endsWith('.name')?'颜色':'option:waterproof';
+  const f=configuration(undefined,4096,output),review=await api.prepareTranslationReview(bound,f.config),before=JSON.stringify(review);
+  await assert.rejects(api.executeTranslation(review,f.config,noNetwork),error=>{assert.equal(error.code,'QWEN_UNSUPPORTED_CLAIM');assert.ok(error.message.includes('위치 '+scenario.location));assert.equal(error.mayHaveBeenCharged,true);return true;});
+  assert.equal(f.calls.length,1);assert.equal(JSON.stringify(review),before);
+ }
+});
+
+test('generic Qwen accepts source-supported waterproof wording while attribute facts remain bound to their own index',async()=>{
+ const bound=plain(source);bound.title='防水纯棉收纳袋 ABC-007';bound.attributes[0].value='防水黑色';
+ const output=draft();output.title='방수 면 수납 주머니 ABC-007';output.keywords=['방수 주머니'];output.description='방수 수납 주머니 크기 10 cm';output.attributes[0].value='방수 검정';
+ const f=configuration(undefined,4096,output),review=await api.prepareTranslationReview(bound,f.config);
+ const result=await api.executeTranslation(review,f.config,noNetwork);assert.deepEqual(plain(result.draft),output);assert.equal(f.calls.length,1);assert.equal(result.appliedToContent,false);
+ const wrong=plain(source);wrong.title='防水纯棉收纳袋 ABC-007';
+ assert.throws(()=>api.validateQwenTranslationDraft(output,wrong),error=>error.code==='QWEN_UNSUPPORTED_CLAIM'&&error.message.includes('sourceIndex 0.value'));
+ assert.throws(()=>api.validateQwenTranslationDraft({...draft(),title:'방수 면 수납 주머니 ABC-007'}, {...plain(source),title:'不防水纯棉收纳袋 ABC-007'}),error=>error.code==='QWEN_UNSUPPORTED_CLAIM');
+});
+
+
+test('retained Korean heel-pad hallucination is rejected even though its title contains no Han',()=>{
+ const bound={title:'隐形海绵后跟贴4D翅膀后跟足贴加厚防滑防磨脚贴高跟鞋防掉跟鞋贴',description:'',attributes:[],provenance:'manual',reference:'isolated observed shape'};
+ const output={title:'4D 날개형 스펀지 후면 패드 고무 방수 발바닥 보호판',description:'',keywords:['방수 패드'],attributes:[],warnings:[]};
+ assert.throws(()=>api.validateQwenTranslationDraft(output,bound),error=>error.code==='QWEN_UNSUPPORTED_CLAIM'&&error.message.includes('위치 title.'));
+});

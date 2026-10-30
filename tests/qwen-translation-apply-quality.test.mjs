@@ -35,6 +35,10 @@ test('existing bad completed Qwen title, keywords, indexed option Han or missing
   const base='/api/products/'+product.id+'/translation-apply',outboundBefore=[...h.network],aiBefore=h.aiSources.length,bytesBefore=[...h.objects].map(([key,bytes])=>[key,hash(bytes)]);
   assert.ok(aiBefore>0);h.bindings.AI={run:async()=>assert.fail('quality rejection must never request another AI completion')};
   const cases=[
+   {name:'unsupported title claim',claim:true,location:/위치 title\./u,mutate:draft=>{draft.title='방수 선글라스';}},
+   {name:'unsupported keyword claim',claim:true,location:/위치 keywords\[0\]\./u,mutate:draft=>{draft.keywords=['방수 선글라스'];}},
+   {name:'unsupported description claim',claim:true,location:/위치 description\./u,mutate:draft=>{draft.description='방수 선글라스입니다';}},
+   {name:'unsupported indexed option claim',claim:true,location:new RegExp('위치 attributes\\['+outputIndex+'\\].*sourceIndex '+sourceIndex+'\\.value'),mutate:draft=>{draft.attributes[outputIndex].value='방수 유광 검정';}},
    {name:'title',location:/위치 title\./u,mutate:draft=>{draft.title='선글라스镜';}},
    {name:'keywords[0]',location:/위치 keywords\[0\]\./u,mutate:draft=>{draft.keywords=['선글라스镜'];}},
    {name:'indexed option value',location:new RegExp('위치 attributes\\['+outputIndex+'\\].*sourceIndex '+sourceIndex+'\\.value'),mutate:draft=>{draft.attributes[outputIndex].value='유광 검정黑';}},
@@ -46,7 +50,7 @@ test('existing bad completed Qwen title, keywords, indexed option Han or missing
    const before=businessSnapshot(h),badJob=h.sqlite.prepare('SELECT * FROM translation_jobs WHERE id=?').get(original.id);
    for(const action of ['preview','apply']){
     const body={action,jobId:original.id,expectedVersion:product.updated_at,scope:'all',linkQuotationSeoDefaults:true,...(action==='apply'?{fingerprint:'a'.repeat(64)}:{})};
-    const response=await json(await h.route(base,{method:'POST',body}),409);assert.deepEqual(Object.keys(response),['error']);assert.match(response.error,/Qwen 한국어 번역을 확인하지 못했습니다/u,scenario.name);assert.match(response.error,scenario.location,scenario.name);assert.match(response.error,scenario.name==='missing option sourceIndex'?/요청한 번역이 누락/u:/번역되지 않은 중국어/u,scenario.name);
+    const response=await json(await h.route(base,{method:'POST',body}),409);assert.deepEqual(Object.keys(response),['error']);assert.match(response.error,scenario.claim?/Qwen 번역에 원문에서 확인하지 못한 방수/u:/Qwen 한국어 번역을 확인하지 못했습니다/u,scenario.name);assert.match(response.error,scenario.location,scenario.name);if(!scenario.claim)assert.match(response.error,scenario.name==='missing option sourceIndex'?/요청한 번역이 누락/u:/번역되지 않은 중국어/u,scenario.name);
     assert.deepEqual(businessSnapshot(h),before,scenario.name+' '+action+' may not alter any business table');assert.deepEqual(h.sqlite.prepare('SELECT * FROM translation_jobs WHERE id=?').get(original.id),badJob,'the stored bad job remains available for review');
    }
   }
