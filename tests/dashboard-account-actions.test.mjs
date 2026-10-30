@@ -94,7 +94,7 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'�
   // props. Its modal behavior is covered by the dedicated dialog tests.
   if(name==='detail-image-edit-dialog')return{DetailImageEditDialog:props=>{components.set(name,props);return props.children;}};
   let component=stubs.get(name);if(!component){component=props=>{components.set(name,props);componentMounts.set(name,active);componentCounts.set(name,(componentCounts.get(name)??0)+1);
-   if(name==='option-seo-editor'||name==='product-content-editor'||name==='seo-workspace-editor'){
+   if(name==='option-seo-editor'||name==='product-content-editor'||name==='seo-workspace-editor'||name==='historical-ai-registrations-panel'){
     const [draft,setDraft]=hooks.useState('');
     return{type:'textarea',props:{'data-test-editor':name,value:draft,onChange:event=>setDraft(event.target.value)}};
    }
@@ -920,15 +920,36 @@ for(const changedSelection of [false,true])test(`repeated source ACKs ${changedS
 test('compact dashboard keeps intake tools hidden until their icon opens them without resetting their mounted inputs',async()=>{
  const h=harness();try{
   await h.settle();const tree=h.render();assert.equal(nodes(tree).some(node=>node.props?.id==='acquisition-entry-heading'),false);assert.doesNotMatch(text(tree),/상품 등록 방식 선택|1688에서 수집 후 등록|카테고리 선택 후 URL 등록/);assert.ok(h.button('＋ 상품 추가'));assert.ok(h.component('source-inbox-panel'));assert.ok(h.component('registration-board'));assert.equal(nodes(tree).some(node=>node.props?.['aria-label']==='SEO 실행 전 안내'),false);
-  assert.ok(nodes(tree).some(node=>node.props?.id==='captured-source-inbox'));assert.equal(h.componentVisible('query-source-panel'),false);assert.equal(h.componentVisible('source-inbox-panel'),false);
+  assert.ok(nodes(tree).some(node=>node.props?.id==='captured-source-inbox'));assert.equal(h.componentVisible('query-source-panel'),false);assert.equal(h.componentVisible('source-inbox-panel'),false);assert.equal(h.componentVisible('historical-ai-registrations-panel'),false);
   const hiddenTools=()=>nodes(h.render()).find(node=>node.props?.className==='modal-backdrop intake-tools-backdrop');assert.equal(hiddenTools().props.hidden,true);
-  const queryMount=h.componentMount('query-source-panel'),sourceMount=h.componentMount('source-inbox-panel');await h.click('수집함');assert.equal(hiddenTools().props.hidden,false);assert.equal(h.componentVisible('source-inbox-panel'),true);
+  const queryMount=h.componentMount('query-source-panel'),sourceMount=h.componentMount('source-inbox-panel'),historyMount=h.componentMount('historical-ai-registrations-panel');await h.click('수집함');assert.equal(hiddenTools().props.hidden,false);assert.equal(h.componentVisible('source-inbox-panel'),true);assert.equal(h.componentVisible('historical-ai-registrations-panel'),true);
+  const historyInput=()=>nodes(h.render()).find(node=>node.props?.['data-test-editor']==='historical-ai-registrations-panel');historyInput().props.onChange({target:{value:'보존할 원본 기록 검색 입력'}});await h.settle();
   await h.toggleDetails('1688 URL로 원문 먼저 담기 · 서버 수집');
   assert.equal(h.componentVisible('query-source-panel'),true);assert.equal(h.componentMount('query-source-panel'),queryMount,'opening the existing collector does not remount or reset its inputs');
   const popup=nodes(h.render()).find(node=>node.props?.id==='capture-tools-dialog');assert.equal(nodes(popup).find(node=>node.type==='button'&&node.props['aria-label']==='수집함 닫기').props.autoFocus,true);
-  let escaped=0;popup.props.onKeyDown({key:'Escape',preventDefault(){escaped++;},stopPropagation(){escaped++;}});await h.settle();assert.equal(escaped,2);assert.equal(hiddenTools().props.hidden,true);assert.equal(h.componentVisible('source-inbox-panel'),false);assert.equal(h.componentMount('query-source-panel'),queryMount);
-  await h.click('수집함');assert.equal(hiddenTools().props.hidden,false);assert.equal(h.componentMount('query-source-panel'),queryMount);assert.equal(h.componentMount('source-inbox-panel'),sourceMount);assert.equal(h.componentVisible('query-source-panel'),true);
+  let escaped=0;popup.props.onKeyDown({key:'Escape',preventDefault(){escaped++;},stopPropagation(){escaped++;}});await h.settle();assert.equal(escaped,2);assert.equal(hiddenTools().props.hidden,true);assert.equal(h.componentVisible('source-inbox-panel'),false);assert.equal(h.componentVisible('historical-ai-registrations-panel'),false);assert.equal(h.componentMount('query-source-panel'),queryMount);assert.equal(h.componentMount('historical-ai-registrations-panel'),historyMount);assert.equal(historyInput().props.value,'보존할 원본 기록 검색 입력');
+  await h.click('수집함');assert.equal(hiddenTools().props.hidden,false);assert.equal(h.componentMount('query-source-panel'),queryMount);assert.equal(h.componentMount('source-inbox-panel'),sourceMount);assert.equal(h.componentVisible('query-source-panel'),true);assert.equal(h.componentMount('historical-ai-registrations-panel'),historyMount);assert.equal(historyInput().props.value,'보존할 원본 기록 검색 입력');
   assert.ok(h.requests.every(request=>request.method==='GET'));assert.equal(h.component('intake-queue-panel'),undefined);
+ }finally{h.close();}
+});
+
+test('hidden historical source tools reset visibility and mounted private inputs when the workspace owner changes',async()=>{
+ const h=harness();try{
+  await h.settle();await h.click('수집함');const mount=h.componentMount('historical-ai-registrations-panel'),oldToolsButton=h.button('수집함');
+  const input=()=>nodes(h.render()).find(node=>node.props?.['data-test-editor']==='historical-ai-registrations-panel');input().props.onChange({target:{value:'이전 계정 입력'}});await h.settle();
+  h.switchOwner('next-owner');await h.settle();assert.equal(h.componentVisible('historical-ai-registrations-panel'),false);assert.notEqual(h.componentMount('historical-ai-registrations-panel'),mount);assert.equal(input().props.value,'');
+  oldToolsButton.props.onClick();await h.settle();assert.equal(h.componentVisible('historical-ai-registrations-panel'),false);assert.equal(h.lateWrites,0);assert.ok(h.requests.every(request=>request.method==='GET'));
+ }finally{h.close();}
+});
+
+test('historical reuse keeps the exact opening-session guard invalid after synchronous close and reopen ABA without remounting inputs',async()=>{
+ const h=harness();try{
+  await h.settle();assert.equal(h.component('historical-ai-registrations-panel').canReuseUrl(),false);await h.click('수집함');
+  const history=h.component('historical-ai-registrations-panel'),mount=h.componentMount('historical-ai-registrations-panel');assert.equal(history.canReuseUrl(),true);
+  const popup=nodes(h.render()).find(node=>node.props?.id==='capture-tools-dialog');popup.props.onKeyDown({key:'Escape',preventDefault(){},stopPropagation(){}});
+  assert.equal(history.canReuseUrl(),false,'close invalidates a GET lease synchronously, before another render');
+  await h.click('수집함');assert.equal(h.component('historical-ai-registrations-panel').canReuseUrl(),true);assert.equal(history.canReuseUrl(),false,'a new open cannot reauthorize the previous GET');assert.equal(h.componentMount('historical-ai-registrations-panel'),mount);
+  const reopened=h.component('historical-ai-registrations-panel');h.switchOwner('next-owner');assert.equal(reopened.canReuseUrl(),false);h.switchOwner('test-owner');assert.equal(reopened.canReuseUrl(),false);assert.ok(h.requests.every(request=>request.method==='GET'));
  }finally{h.close();}
 });
 

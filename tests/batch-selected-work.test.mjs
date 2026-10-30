@@ -276,7 +276,7 @@ test('an unresolved quotation provider call cannot start another provider on ret
  assert.equal(h.calls.filter(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST').length,1);
 });
 
-function knownQuotationFixture({configured=true}={}){
+function knownQuotationFixture({configured=true,generateFirst=false}={}){
  const h=fixture(),nextVersion='2026-10-23T00:00:01.000Z';
  Object.assign(h.deps['@/app/quotation-ai-client'],providedOptionModule('app/quotation-ai-client.ts'));
  Object.assign(h.deps['@/app/quotation-fields-confirmation'],providedOptionModule('app/quotation-fields-confirmation.ts'));
@@ -288,10 +288,13 @@ function knownQuotationFixture({configured=true}={}){
  const job={id:'quote-known',status:'completed',fingerprint:hash,quotationRevision:1,profileId:null,scope:{optionId:null,applyToAllOptions:true},result:{changes:[{optionId:'a',fieldKey:'notice3',value:'검토 재질'}],warnings:[],model:'mock',generatedAt:version}};
  const savedOptions={schemaVersion:1,productId:'product',revision:2,rows:['a','b','excluded'].map((id,index)=>({id,included:id!=='excluded',color:index?'핑크':'베이지',unitsPerPack:1,provenance:{color:'manual',unitsPerPack:'manual'},updatedAt:version}))};
  const savedLabels={schemaVersion:1,productId:'product',revision:1,updatedAt:version,overrides:{common:{},options:{}}};
- let onContent,saveResponse,knownOverride;const writes=[];
+ let onContent,saveResponse,knownOverride,generated=!generateFirst;const writes=[];
  h.intercept(async call=>{
-  if(call.url.endsWith('/quotation-ai'))return Response.json({configuration:{configured},fingerprint:hash,productId:'product',productVersion:version,contentRevision:3,optionRevision:2,quotationRevision:1,profileId:null,
-   knownChanges:knownOverride??providedOptionModule('app/quotation-known-notice-proposals.ts').quotationKnownNoticeProposals('product',view,content,{optionId:null,applyToAllOptions:true},savedOptions,savedLabels),jobs:configured?[job]:[]});
+  if(call.url.endsWith('/quotation-ai')){
+   if(call.method==='POST'){generated=true;return Response.json({job,sourceCurrent:true});}
+   return Response.json({configuration:{configured},fingerprint:hash,productId:'product',productVersion:version,contentRevision:3,optionRevision:2,quotationRevision:1,profileId:null,
+    knownChanges:knownOverride??providedOptionModule('app/quotation-known-notice-proposals.ts').quotationKnownNoticeProposals('product',view,content,{optionId:null,applyToAllOptions:true},savedOptions,savedLabels),jobs:configured&&generated?[job]:[]});
+  }
   if(call.url.endsWith('/content')){onContent?.();return Response.json({content});}
   if(call.url.endsWith('/quotation-fields')){
    if(call.method!=='PUT')return Response.json(view);
@@ -325,6 +328,29 @@ test('explicit quotation work saves verified AI plus saved notice sources in one
  assert.equal(JSON.stringify({view:h.view,content:h.content}),before);assert.equal(h.calls.some(call=>call.method==='POST'),false);
  assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
  assert.deepEqual(h.calls.find(call=>call.adapter==='packaging'),{adapter:'packaging',id:'product',revision:2,fingerprint:'b'.repeat(64)});
+});
+
+test('quotation PUT rejected by its final protected account preflight releases only the unsent fence and reuses the confirmed AI job',async()=>{
+ const h=knownQuotationFixture({generateFirst:true});let armed=true,rejectAccount=false;
+ h.onContent(()=>{if(armed){armed=false;rejectAccount=true;}});
+ h.prependIntercept(call=>{if(call.url==='/api/supplier-hub/catalog-context'&&rejectAccount){rejectAccount=false;return Response.json({error:'temporary catalog read failure'},{status:503});}});
+ const first=await h.run(['quotation']);assert.equal(first.stages[0].status,'failed');assert.match(first.stages[0].message,/temporary catalog read failure/);
+ assert.equal(h.calls.filter(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST').length,1);assert.equal(h.writes.length,0);assert.equal(h.calls.some(call=>call.adapter==='packaging'),false);
+ assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:quotation')||key.includes(':write:quotation:')),false);
+ const priorAiKey=h.keys.get('owner:product:quote:'+hash);assert.ok(priorAiKey);
+ const next=await h.run(['quotation']);assert.equal(next.stages[0].status,'draft');assert.equal(h.writes.length,1);assert.equal(h.calls.filter(call=>call.adapter==='packaging').length,1);
+ assert.equal(h.calls.filter(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST').length,1,'The server-confirmed AI result is reused instead of inferred again');assert.equal(h.keys.get('owner:product:quote:'+hash),priorAiKey);
+ assert.equal(h.view.resolved.rows[1].fields.notice0.value,'');assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
+});
+
+test('a dispatched quotation PUT with a lost or invalid receipt keeps its fence and confirmed AI result without resending either',async()=>{
+ for(const mode of ['lost','invalid']){
+  const h=knownQuotationFixture({generateFirst:true});h.saveResponse(()=>{if(mode==='lost')throw Error('quotation PUT ACK lost');return Response.json({...plain(h.view),revision:99});});
+  const first=await h.run(['quotation']);assert.equal(first.stages[0].status,'failed',mode);assert.equal(h.writes.length,1);assert.equal(h.calls.some(call=>call.adapter==='packaging'),false);
+  const retained=JSON.stringify([...h.keys.entries()]);assert.equal(h.keys.has('owner:product:pending:quotation'),true);assert.equal([...h.keys.keys()].some(key=>key.includes(':write:quotation:')),true);
+  assert.ok(h.keys.get('owner:product:quote:'+hash));assert.equal((await h.run(['quotation'])).stages[0].status,'blocked');assert.equal(h.writes.length,1);assert.equal(h.calls.filter(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST').length,1);
+  assert.equal(JSON.stringify([...h.keys.entries()]),retained);assert.equal(h.view.resolved.rows[1].fields.notice0.value,'');
+ }
 });
 
 test('unconfigured quotation AI preserves manual values while applying known notices and checking packaging',async()=>{

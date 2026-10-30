@@ -77,7 +77,7 @@ test('empty, noncanonical and unsafe historical URLs disable reuse and never rea
 test('legacy list responses need a fresh verified account context before URL reuse',async()=>{
  for(const available of [true,false]){
   const h=historicalHarness();await storedHistory(h);let reads=0,called=0;const panel=ui(h,async(url,init)=>{const response=await h.fetcher(url,init),body=await response.json();if(++reads===1||!available)delete body.accountContext;return Response.json(body);},{onReuseUrl:()=>called++});try{
-   await panel.flush();panel.click('이 URL로 상품 추가');await panel.flush();assert.equal(reads,2);assert.equal(called,available?1:0);if(!available)assert.match(text(panel.render()),/현재 계정·회사의 원본 기록을 확인하지 못/);
+   await panel.waitUntil(()=>panel.button('이 URL로 상품 추가')?.props.disabled===false);panel.click('이 URL로 상품 추가');await panel.flush();assert.equal(reads,2);assert.equal(called,available?1:0);if(!available)assert.match(text(panel.render()),/현재 계정·회사의 원본 기록을 확인하지 못/);
   }finally{panel.close();h.close();}
  }
 });
@@ -118,5 +118,19 @@ test('a failed history refresh blocks retained rows until a successful retry wit
  const h=historicalHarness();await storedHistory(h);let reads=0,called=0;const before=unchangedHistory(h),panel=ui(h,async(url,init)=>++reads===2?Response.json({error:'시험 조회 오류'},{status:503}):h.fetcher(url,init),{onReuseUrl:()=>called++});try{
   await panel.flush();const retained=panel.button('이 URL로 상품 추가').props.onClick;panel.click('새로고침');await panel.flush();assert.equal(panel.button('이 URL로 상품 추가').props.disabled,true);retained();await panel.flush();assert.equal(called,0);assert.match(text(panel.render()),/시험 조회 오류/);
   panel.click('새로고침');await panel.flush();panel.click('이 URL로 상품 추가');await panel.flush();assert.equal(called,1);assert.equal(unchangedHistory(h),before);
+ }finally{panel.close();h.close();}
+});
+
+for(const reopen of [false,true])test(`a real historical reuse GET cannot reopen a dismissed tools dialog${reopen?' after close/reopen ABA':''}`,async()=>{
+ const h=historicalHarness();await storedHistory(h);let reads=0,release,called=0,currentSession={},session=currentSession;
+ const guard=()=>currentSession===session;
+ const panel=ui(h,async(url,init)=>{const response=await h.fetcher(url,init);if(++reads===2)return await new Promise(resolve=>release=()=>resolve(response));return response;},{onReuseUrl:()=>called++,canReuseUrl:guard});
+ try{
+  await panel.flush();const before=unchangedHistory(h),input=()=>nodes(panel.render()).find(node=>node.type==='input'&&node.props.maxLength===200);
+  input().props.onChange({target:{value:'숨겨도 유지할 검색 입력'}});panel.click('이 URL로 상품 추가');await panel.flush();assert.ok(release);assert.equal(called,0);
+  currentSession=null;assert.equal(guard(),false);
+  if(reopen){const next={};currentSession=next;panel.setProps({onReuseUrl:()=>called++,canReuseUrl:()=>currentSession===next});}
+  release();await panel.flush();assert.equal(called,0,'the completed GET retains the captured old opening guard');assert.equal(input().props.value,'숨겨도 유지할 검색 입력');assert.equal(unchangedHistory(h),before);assert.ok(h.state.calls.slice(2).every(call=>call.method==='GET'));
+  if(reopen){panel.click('이 URL로 상품 추가');await panel.flush();assert.equal(called,1,'a deliberate new request in the current open still works');}
  }finally{panel.close();h.close();}
 });

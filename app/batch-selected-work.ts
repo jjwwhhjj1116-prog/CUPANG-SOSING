@@ -308,7 +308,7 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
       throw new ScopeChanged('견적 작성 중 저장된 표시사항 원본이 변경되어 작업을 멈췄습니다.');
     if(changes.length){
       const previous=view;
-      view=await once('quotation:'+(job?.id??'saved-notice:'+view.inputFingerprint),()=>post<QuotationFieldsView>('/quotation-fields',{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes},'PUT'));
+      view=await once('quotation:'+(job?.id??'saved-notice:'+view.inputFingerprint),()=>post<QuotationFieldsView>('/quotation-fields',{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes},'PUT'),true);
       confirmQuotationFieldsSave(previous,view,changes);
     }
     const packaging=await once('packaging:'+view.inputFingerprint,()=>runSelectedPackagingWork(productId,{view,signal,fetcher,assertCurrent}),true);

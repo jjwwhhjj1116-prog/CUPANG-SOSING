@@ -2,8 +2,8 @@
 import {useCallback,useEffect,useRef,useState} from 'react';
 import {canonicalHistoricalAiSourceUrl,historicalAiCompany,type HistoricalAiCounts,type HistoricalAiList,type HistoricalAiQuote,type HistoricalAiRecord,type HistoricalAiUrlReuse} from '@/app/historical-ai-registrations';
 type Preview={sha256:string;counts:HistoricalAiCounts;sample:{registrationId:string;optionId:string;title:string;kind:string}[]};
-export type HistoricalAiRegistrationsPanelProps={onReuseUrl?:(target:HistoricalAiUrlReuse,signal:AbortSignal)=>void|Promise<void>};
-export default function HistoricalAiRegistrationsPanel({onReuseUrl}:HistoricalAiRegistrationsPanelProps={}){
+export type HistoricalAiRegistrationsPanelProps={onReuseUrl?:(target:HistoricalAiUrlReuse,signal:AbortSignal)=>void|Promise<void>;canReuseUrl?:()=>boolean};
+export default function HistoricalAiRegistrationsPanel({onReuseUrl,canReuseUrl}:HistoricalAiRegistrationsPanelProps={}){
  const [data,setData]=useState<HistoricalAiList|null>(null),[page,setPage]=useState(1),[search,setSearch]=useState(''),[draft,setDraft]=useState(''),[refresh,setRefresh]=useState(0),[loading,setLoading]=useState(true),[error,setError]=useState(''),[forbidden,setForbidden]=useState(false);
  const [files,setFiles]=useState<File[]>([]),[preview,setPreview]=useState<Preview|null>(null),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[selected,setSelected]=useState<string|null>(null),[quotes,setQuotes]=useState<HistoricalAiQuote[]>([]),[quoteError,setQuoteError]=useState('');
  const active=useRef<AbortController|null>(null);
@@ -41,8 +41,8 @@ export default function HistoricalAiRegistrationsPanel({onReuseUrl}:HistoricalAi
  }
  function validList(value:HistoricalAiList):boolean{return value?.company?.code===historicalAiCompany.code&&value.company.name===historicalAiCompany.name&&Array.isArray(value.records)&&(value.accountContext===undefined||typeof value.accountContext==='string'&&/^[a-f0-9]{64}$/.test(value.accountContext));}
  async function reuseUrl(row:HistoricalAiRecord){
-  const snapshot=currentList.current,sourceUrl=canonicalHistoricalAiSourceUrl(row.sourceUrl),callback=onReuseUrl;
-  if(!callback||!reuseCallback.current||!sourceUrl||!snapshot||snapshot!==data||!listReady||loading||busy||active.current||reuseRequest.current||!mounted.current||!snapshot.records.includes(row))return;
+  const snapshot=currentList.current,sourceUrl=canonicalHistoricalAiSourceUrl(row.sourceUrl),callback=onReuseUrl,requestAllowed=canReuseUrl;
+  if(!callback||!reuseCallback.current||requestAllowed&&!requestAllowed()||!sourceUrl||!snapshot||snapshot!==data||!listReady||loading||busy||active.current||reuseRequest.current||!mounted.current||!snapshot.records.includes(row))return;
   const controller=new AbortController();reuseRequest.current=controller;setReusingId(row.registrationId);setError('');
   try{
    const response=await fetch('/api/historical-ai-registrations?'+new URLSearchParams({page:String(page),search}),{signal:controller.signal,cache:'no-store'});
@@ -54,7 +54,10 @@ export default function HistoricalAiRegistrationsPanel({onReuseUrl}:HistoricalAi
    if(snapshot.accountContext!==undefined&&snapshot.accountContext!==fresh.accountContext){currentList.current=null;setListReady(false);setData(null);setSelected(null);throw Error('로그인 계정 또는 회사정보가 변경되었습니다. 원본 기록을 다시 조회해주세요.');}
    const matches=fresh.records.filter(item=>item.registrationId===row.registrationId);
    if(matches.length!==1||canonicalHistoricalAiSourceUrl(matches[0].sourceUrl)!==sourceUrl)throw Error('선택한 원본 URL이 변경되었습니다. 원본 기록을 다시 조회해주세요.');
-   if(!mounted.current||controller.signal.aborted||reuseRequest.current!==controller||currentList.current!==snapshot)return;
+   // Capture the opening-session guard before the GET. A later render may
+   // supply a new callback for a reopened dialog, but cannot authorize this
+   // earlier request after its opening session was synchronously dismissed.
+   if(!mounted.current||controller.signal.aborted||reuseRequest.current!==controller||currentList.current!==snapshot||requestAllowed&&!requestAllowed())return;
    const currentCallback=reuseCallback.current;if(!currentCallback)return;
    await currentCallback({sourceUrl,registrationId:row.registrationId,company:{...historicalAiCompany},accountContext:fresh.accountContext},controller.signal);
   }catch(cause){if(mounted.current&&!controller.signal.aborted&&reuseRequest.current===controller)setError(cause instanceof Error?cause.message:'상품 추가 화면을 열지 못했습니다. 원본 기록은 유지됩니다.');}

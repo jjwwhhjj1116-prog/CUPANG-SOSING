@@ -185,15 +185,16 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   const [collectionQueueOpen,setCollectionQueueOpen]=useState(false);
   const sourceRegistrations=useSourceRegistrations(workspaceOwnerId);
   const sourceReviewScope=useMemo(()=>({ownerId:workspaceOwnerId}),[workspaceOwnerId]);
-  const [captureToolsScope,setCaptureToolsScope]=useState<object|null>(null);
-  const captureToolsOpen=captureToolsScope===sourceReviewScope;
+  const [captureToolsScope,setCaptureToolsScope]=useState<{scope:object}|null>(null);
+  const captureToolsSession=useRef<{scope:object}|null>(null);
+  const captureToolsOpen=captureToolsScope!==null&&captureToolsScope.scope===sourceReviewScope;
   const captureToolsTrigger=useRef<HTMLButtonElement|null>(null);
   const [sourceReviewState,setSourceReview]=useState<SourceReviewSession|null>(null);
   const sourceReview=sourceReviewState?.scope===sourceReviewScope?sourceReviewState:null;
   const sourceReviewSession=useRef<SourceReviewSession|null>(null);
   const sourceWorkspace=useRef<{scope:typeof sourceReviewScope;ready:boolean;company:WorkspaceSettingsScope['company']}|null>(null);
   const [querySourceCompany,setQuerySourceCompany]=useState<{scope:object;company:WorkspaceSettingsScope['company']}>({scope:sourceReviewScope,company:null});
-  useLayoutEffect(()=>{sourceReviewSession.current=null;sourceWorkspace.current={scope:sourceReviewScope,ready:false,company:null};return()=>{sourceReviewSession.current=null;sourceWorkspace.current=null;};},[workspaceOwnerId,sourceReviewScope]);
+  useLayoutEffect(()=>{captureToolsSession.current=null;sourceReviewSession.current=null;sourceWorkspace.current={scope:sourceReviewScope,ready:false,company:null};return()=>{captureToolsSession.current=null;sourceReviewSession.current=null;sourceWorkspace.current=null;};},[workspaceOwnerId,sourceReviewScope]);
   const [sourceNotice,setSourceNotice]=useState('');
   const [intakeSourceSeed,setIntakeSourceSeed]=useState<IntakeSourceSeed|undefined>();
   const [intakeCategoryEntry,setIntakeCategoryEntry]=useState<IntakeCategoryEntry|undefined>();
@@ -889,6 +890,7 @@ useEffect(()=>{
   }
   function closeCaptureTools(){
     if(sourceWorkspace.current?.scope!==sourceReviewScope)return;
+    captureToolsSession.current=null;
     setCaptureToolsScope(null);captureToolsTrigger.current?.focus?.({preventScroll:true});
   }
   const captureToolsVisible=captureToolsOpen&&!addOpen&&!sourceReview&&!detail&&!categoryOpen;
@@ -903,7 +905,7 @@ useEffect(()=>{
             <button type="button" className="workspace-utility utility-history" aria-label="작업 이력" aria-haspopup="dialog" aria-expanded={historyOpen} onClick={()=>{setHistoryProductId(detail?.id??products[0]?.id??'');setHistoryOpen(true);}}><UtilityIcon kind="history"/><span className="utility-label">작업 이력</span></button>
             <button type="button" className="workspace-utility utility-cli" aria-label="CLI 설치·연결" aria-haspopup="dialog" aria-expanded={cliInstallOpen} onClick={()=>setCliInstallOpen(true)}><UtilityIcon kind="cli"/><span className="utility-label">CLI</span></button>
             <a className="workspace-utility utility-operations" href="/operations" aria-disabled={busy||batchBusy||!!sourceWork} onClick={guardOperationsNavigation}><UtilityIcon kind="operations"/><span className="utility-label">운영관리</span></a>
-            <button ref={captureToolsTrigger} type="button" className="workspace-utility utility-sources" aria-label="수집함·수집 대기열" aria-haspopup="dialog" aria-expanded={captureToolsOpen} aria-controls="capture-tools-dialog" disabled={busy||batchBusy||!!sourceWork} onClick={()=>{const operation=settingsOperationRef.current;if(!operation.mounted||operation.ownerId!==workspaceOwnerId||sourceWorkspace.current?.scope!==sourceReviewScope||batchBusyRef.current||busyRef.current||sourceWorkRef.current)return;let blocked=false;guardOperationsNavigation({preventDefault(){blocked=true;}});if(!blocked){if(view!=='work')changeView('work');setCaptureToolsScope(sourceReviewScope);}}}><UtilityIcon kind="sources"/><span className="utility-label">수집함</span></button>
+            <button ref={captureToolsTrigger} type="button" className="workspace-utility utility-sources" aria-label="수집함·수집 대기열" aria-haspopup="dialog" aria-expanded={captureToolsOpen} aria-controls="capture-tools-dialog" disabled={busy||batchBusy||!!sourceWork} onClick={()=>{const operation=settingsOperationRef.current;if(!operation.mounted||operation.ownerId!==workspaceOwnerId||sourceWorkspace.current?.scope!==sourceReviewScope||batchBusyRef.current||busyRef.current||sourceWorkRef.current)return;let blocked=false;guardOperationsNavigation({preventDefault(){blocked=true;}});if(!blocked){if(view!=='work')changeView('work');const session={scope:sourceReviewScope};captureToolsSession.current=session;setCaptureToolsScope(session);}}}><UtilityIcon kind="sources"/><span className="utility-label">수집함</span></button>
             <a className="workspace-utility utility-multi" href="/account#multi-account-settings" title="Supplier Hub·1688 계정 등록 및 관리" aria-label="멀티 계정 관리" onClick={guardOperationsNavigation}><UtilityIcon kind="multi"/><span className="utility-label">멀티 계정</span></a>
             <details className="workspace-account-menu" data-dismissable-menu><summary className="workspace-utility utility-account" title={userName+' · 개인설정·비밀번호 변경·로그아웃'} aria-label={userName+' 계정 설정'}><UtilityIcon kind="account"/><span className="utility-label">설정</span></summary><nav className="workspace-account-dropdown" aria-label="계정 설정 메뉴"><strong>{userName}</strong><a href="/account" aria-label={userName+' 계정 관리'} onClick={guardOperationsNavigation}>계정 관리</a><a href="/account#password-change" onClick={guardOperationsNavigation}>비밀번호 변경</a><a href="/account#multi-account-settings" onClick={guardOperationsNavigation}>멀티 계정 관리</a><a href="/account#account-session" title="계정 관리에서 로그아웃" onClick={guardOperationsNavigation}>로그아웃 관리</a></nav></details>
           </nav><div className="top-actions">{view==='work'&&<><button type="button" className="btn settings" aria-expanded={settingsOpen} aria-controls="workspace-settings-panel" disabled={settingsBusy||batchBusy} onClick={()=>{if(!settingsBusyRef.current&&!batchBusyRef.current)setSettingsOpen(open=>!open);}}>⚙ 기본설정</button><button className="btn primary" disabled={batchBusy} onClick={openCategoryFirstIntake}>＋ 상품 추가</button>
@@ -939,14 +941,13 @@ useEffect(()=>{
           {!collectionJobs.some(job=>showCancelled || job.status !== 'cancelled') && <p className="collection-empty">{loading ? '대기열을 불러오는 중입니다.' : loadError ? '대기열 조회 상태를 확인해주세요.' : '아직 수집 요청이 없습니다. 상품 추가에서 URL을 붙여넣으세요.'}</p>}
           <ul className="collection-list">{collectionJobs.filter(job=>showCancelled || job.status !== 'cancelled').map(job=><li key={job.id}><div><strong>1688 · {job.offer_id}</strong><a href={job.source_url} target="_blank" rel="noreferrer" style={{overflowWrap:"anywhere"}}>{job.source_url}</a><small>{job.context?.category.categoryPath.join(' > ') ?? '카테고리 미지정 · 기존 요청'}</small><small>목표: {goalOptions.find(goal=>goal.id===job.goal)?.title} · 요청 {new Date(job.created_at).toLocaleString('ko-KR')}</small>{job.received_at&&<small>원문 수신 {new Date(job.received_at).toLocaleString('ko-KR')}</small>}</div><span className={`collection-status ${collectionJobProgress(job).kind}`}>{collectionJobProgress(job).label}</span><CollectionResultPanel jobId={job.id} offerId={job.offer_id} productId={job.product_id} onSaved={()=>void loadWorkspace()} onOpenProduct={openCollectedProduct}/>{!job.product_id && job.status !== 'cancelled' && <button className="btn ghost" disabled={busy} aria-label={`${job.offer_id} 수집 취소`} onClick={()=>void cancelCollectionJob(job.id)}>취소</button>}</li>)}</ul>
         </details>
-        </section></div>
-
-        <HistoricalAiRegistrationsPanel onReuseUrl={(target,signal)=>{
+        <HistoricalAiRegistrationsPanel key={`historical-${workspaceOwnerId??'anonymous'}`} canReuseUrl={()=>captureToolsScope!==null&&captureToolsSession.current===captureToolsScope&&captureToolsScope.scope===sourceReviewScope} onReuseUrl={(target,signal)=>{
           if(signal.aborted)return;
           if(busy||batchBusyRef.current||addOpen||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving||settingsBusyRef.current)throw Error('현재 상품 대기열 작업을 마친 뒤 다시 추가해주세요. 보관된 원본은 유지됩니다.');
           if(intakeRows.length>=50)throw Error('상품 대기열은 최대 50행입니다. 기존 입력을 정리한 뒤 다시 추가해주세요.');
           setIntakeSourceSeed({id:crypto.randomUUID(),sourceUrl:target.sourceUrl});setView('work');setAddOpen(true);
-        }}/></>}
+        }}/>
+        </section></div></>}
       </section>
 
       {removedOpen&&<Modal title="삭제된 상품" subtitle="저장한 이미지와 편집 내용을 복원합니다." onClose={()=>{if(!removalBusy.current)setRemovedOpen(false);}}><ProductRemovalDialog workspaceOwnerId={workspaceOwnerId} onRestored={loadWorkspace} onBusyChange={changeRemovalBusy}/></Modal>}
