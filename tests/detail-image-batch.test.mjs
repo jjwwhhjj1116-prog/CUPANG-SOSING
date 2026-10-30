@@ -68,7 +68,7 @@ for (const company of schemaCompanies) {
  test(`English image batch keeps its language when its editable result is saved and reopened (${company.code})`,async()=>{
   const f=await fixture(company);try{
    const now=new Date().toISOString(),email=company.code==='A01526306'?'jwhj1116@kakao.com':'unari8484@gmail.com';
-   f.h.sqlite.prepare('INSERT INTO members VALUES(?,?,?,?,?,?,?,?,?,?)').run('owner',email,'fixture-not-a-password',company.code==='A01526306'?'admin':'member','approved',company.code,company.name,now,now,null);
+   f.h.sqlite.prepare('INSERT INTO members(id,email,password_hash,role,status,company_code,company_name,created_at,updated_at,reviewed_by) VALUES(?,?,?,?,?,?,?,?,?,?)').run('owner',email,'fixture-not-a-password',company.code==='A01526306'?'admin':'member','approved',company.code,company.name,now,now,null);
    f.input.language='en';const before=f.sourceRows();let renderCalls=0;
    let batch=await f.prepare({render:async(image,regions,signal,optionIds,crop,language)=>{
     renderCalls++;assert.equal(language,'en');assert.deepEqual(plain(optionIds),[]);assert.equal(crop,undefined);signal.throwIfAborted();
@@ -188,3 +188,36 @@ for (const company of schemaCompanies) {
   }finally{f.close();}
  });
 }
+
+
+test('selected detailed photos use the real stage planner and verified image CAS even when an unrelated main-image field is invalid',async()=>{
+ const company=schemaCompanies[0],f=await fixture(company);
+ try{
+  const now=new Date().toISOString();f.h.sqlite.prepare('INSERT INTO members(id,email,password_hash,role,status,company_code,company_name,created_at,updated_at,reviewed_by) VALUES(?,?,?,?,?,?,?,?,?,?)').run('owner','jwhj1116@kakao.com','fixture-not-a-password','admin','approved',company.code,company.name,now,now,null);
+  await f.h.load('db/queries.ts').saveSettings('owner',JSON.stringify({...f.h.load('app/workspace-settings.ts').newWorkspaceSettings,...f.h.settings,translateImages:true}));
+  const stored=f.h.sqlite.prepare('SELECT payload FROM product_options WHERE product_id=?').get(f.id),options=JSON.parse(stored.payload);options.rows.forEach(row=>row.included=row.id===f.selected);f.h.sqlite.prepare('UPDATE product_options SET payload=? WHERE product_id=?').run(JSON.stringify(options),f.id);
+  await json(await f.h.route(f.base+'/work-draft',{method:'POST',body:{expectedVersion:f.product().updated_at,roles:['detail']}}));
+  let view=await f.read();const detail=f.h.load('app/quotation-image-targets.ts').optionImageTargets(view.resolved.schema.fields).detailImages,main=f.h.load('app/quotation-seo-targets.ts').exactPrimaryQuotationTarget(view.resolved.schema.fields,'mainImage');
+  await json(await f.h.route(f.qurl,{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:detail.linked.map(fieldKey=>({optionId:f.selected,fieldKey,value:null}))}}));
+  // Simulate a retained legacy quotation with two images in its one-image main
+  // field. Only fixture SQLite is seeded; every subsequent read/save is real.
+  const quotation=f.h.sqlite.prepare('SELECT payload FROM product_quotation_fields WHERE product_id=?').get(f.id),state=JSON.parse(quotation.payload),scope=f.h.load('app/quotation-scopes.ts').quotationScope(f.profile.categoryId);
+  for(const field of main.linked)state.categoryOverrides[scope].options[f.selected][field]=f.keys.slice(0,2).join('\n');
+  f.h.sqlite.prepare('UPDATE product_quotation_fields SET payload=? WHERE product_id=?').run(JSON.stringify(state),f.id);
+  view=await f.read();assert.throws(()=>f.h.load('app/detail-image-batch.ts').detailBatchSelection(view,f.selected,f.profile.id,'main'));
+  const selected=f.h.load('app/detail-image-batch.ts').detailBatchTranslationSlots(view,f.selected,f.profile.id,'detail');assert.ok(selected.slots.length>0,'actual collected source photos are connected');
+  const imageRoute=f.h.load('app/api/products/[id]/image-text/route.ts'),settingsRoute=f.h.load('app/api/settings/route.ts'),events=[];
+  const fetcher=async(url,init={})=>{if(url==='/api/settings')return settingsRoute.GET();if(url.includes('/image-text')){if(init.body instanceof FormData)events.push('cas-save');return imageRoute[init.method??'GET'](new Request('https://app.test'+url,init),{params:Promise.resolve({id:f.id})});}return f.h.route(url,{method:init.method??'GET',body:init.body?JSON.parse(init.body):undefined});};
+  const before={source:f.sourceRows(),main:main.linked.map(key=>view.resolved.rows.find(row=>row.optionId===f.selected).fields[key]),detail:selected.keys.slice(),objects:new Map(f.h.objects)};
+  const runner=f.h.load('app/batch-selected-image-work.ts'),result=await runner.processSelectedImageStage(f.id,'detail',{ownerId:'owner',signal:new AbortController().signal,fetcher,expectedProductVersion:view.productVersion},{
+   readSource:async(productId,version,key,role,signal,_fetch,target)=>{const query=new URLSearchParams({sourceKey:key,role,target:'quotation',optionId:target.optionId,fieldKey:target.fieldKey,slotIndex:String(target.slotIndex)});if(target.profileId)query.set('profileId',target.profileId);const {source}=await json(await fetcher(f.base+'/image-text?'+query,{signal}));assert.equal(source.productVersion,version);return{source,blob:new Blob([f.h.objects.get(key)],{type:'image/png'}),canvas:{},width:source.width,height:source.height};},
+   recognize:async()=>{events.push('ocr');return[{id:'line',text:'中文',confidence:95,selected:true,box:{x:0,y:0,width:3,height:2},translated:'',issue:null,translationProvenance:'empty',background:'#ffffff',foreground:'#000000',fontSize:1}];},
+   translate:async(source,_language,regions)=>{events.push('translation');return{source,regions:regions.map(row=>({id:row.id,original:row.text,translated:'한국어',issue:null})),requests:1,warnings:[],stoppedHttpStatus:null};},
+   render:async(image,regions)=>{events.push('render');assert.equal(regions[0].translated,'한국어');return{source:image.source,output:new Blob([png(90+image.source.quotationTarget.slotIndex)],{type:'image/png'}),width:image.width,height:image.height};},
+  });
+  assert.equal(result.status,'completed',JSON.stringify(result.messages));assert.equal(result.applied,selected.slots.length);assert.deepEqual(events,plain(selected.slots.flatMap(()=>['ocr','translation','render','cas-save'])));
+  const after=await f.read(),row=after.resolved.rows.find(row=>row.optionId===f.selected);assert.deepEqual(main.linked.map(key=>row.fields[key]),before.main);assert.equal(f.sourceRows(),before.source);for(const [key,bytes]of before.objects)assert.deepEqual(f.h.objects.get(key),bytes);assert.equal(f.product().supplier_hub_status,'미전송');
+  assert.ok(after.revision>view.revision);assert.ok(selected.keys.every(key=>f.h.objects.has(key)));assert.ok(f.h.load('app/detail-image-batch.ts').detailBatchSelection(after,f.selected,f.profile.id,'detail').keys.every(key=>key.startsWith('owner/free-image-')));
+  const full=await f.h.load('app/batch-image-work.ts').planBatchImageWork([{id:f.id,title:'실제 저장'}],new AbortController().signal,fetcher);assert.equal(full.tasks.length,0,'default all-stage review still reports the unrelated main field error');
+ }finally{f.close();}
+});

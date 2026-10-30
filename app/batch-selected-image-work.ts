@@ -45,7 +45,7 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
  const active=()=>{signal.throwIfAborted();if(options.isCurrent?.()===false)throw changed();};
  active();if(!/^[A-Za-z0-9_-]{1,100}$/.test(productId)||!['main','additional','detail'].includes(stage)||!isOwnedImageKey(ownerId,ownerId+'/scope.png'))throw changed();
  if(state.ownerId!==ownerId||state.productId!==productId||state.stage!==stage||!object(state.batches))throw changed();
- const plan=await(deps.plan??planBatchImageWork)([{id:productId,title:productId}],signal,fetcher);active();
+ const plan=await(deps.plan??planBatchImageWork)([{id:productId,title:productId}],signal,fetcher,[stage]);active();
  if(plan.scope.ownerId!==ownerId||!plan.scope.company||state.scope&&!same(state.scope,plan.scope))throw changed();
  state.scope??=structuredClone(plan.scope);
  let recoveredInference:SelectedImageInferencePending|undefined;

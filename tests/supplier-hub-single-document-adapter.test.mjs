@@ -1,7 +1,42 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import vm from 'node:vm';
+import {singleDocumentHubRequestPage,singleDocumentOwnedRecordPage} from '../extensions/supplier-hub/single-document-adapter.mjs';
+import {validateSingleStepResponse} from '../extensions/supplier-hub/single-document.mjs';
 import {singleBrowserFixture} from './helpers/supplier-hub-single-document-adapter.mjs';
 import {SINGLE_COMPANIES} from './helpers/supplier-hub-single-document.mjs';
+
+test('serialized step adapter classifies every native result and retains malformed observations without resending',async()=>{
+  const error={columnName:'옵션 3 포장 크기',message:'필수 값입니다.'},good={success:true},bad={success:false,errors:[error]};
+  const cases=[
+    {data:[good,good,good],state:'validated'},
+    {data:[good,bad,good],state:'validation-rejected'},
+    {data:[good,good,bad],state:'validation-rejected'},
+    {data:[good,{success:false}],state:'validation-rejected'},
+    {data:[],state:'validation-requested'},
+    {data:[good,null],state:'validation-requested'},
+    {data:[good,{success:'true'}],state:'validation-requested'},
+    {data:[good,{success:true,errors:[error]}],state:'validation-requested'},
+    {data:[good,{success:false,errors:'invalid'}],state:'validation-requested'},
+    {data:Array.from({length:201},()=>good),state:'validation-requested'},
+    {data:[{success:false,errors:Array.from({length:100},()=>error)},{success:false,errors:Array.from({length:101},()=>error)}],state:'validation-requested'},
+  ];
+  for(const fixture of cases){
+    const response={code:200,data:fixture.data},binding={requestId:'validation-array-test',packetDigest:'1'.repeat(64),identityDigest:'2'.repeat(64),preparedBodySha256:'3'.repeat(64),originalBodySha256:'4'.repeat(64),identity:{company:SINGLE_COMPANIES[0]}},
+      record={binding,docId:2347603,state:'updated',baselineDocIds:[]},dataset={yoofamSingleDocumentRecords:JSON.stringify({[binding.packetDigest]:record})},calls=[],
+      input={binding,method:'POST',path:'/sr/qvt/api/validate-step/2',body:{docId:2347603,version:17},operationId:binding.requestId+':validate:2'},
+      context=vm.createContext({input,binding,location:{origin:'https://supplier.coupang.com',pathname:'/dashboard/KR'},document:{documentElement:{dataset},body:{innerText:'Company Code: '+SINGLE_COMPANIES[0].code}},AbortController,TextDecoder,Uint8Array,setTimeout,clearTimeout,
+        fetch:async(url,init)=>{calls.push({url,init});const value=new Response(JSON.stringify(response),{status:200,headers:{'content-type':'application/json'}});Object.defineProperty(value,'url',{value:url});return value;}}),
+      run=()=>vm.runInContext('('+singleDocumentHubRequestPage.toString()+')(input)',context);
+    const observed=await run();assert.equal(observed.ownedRecord.state,fixture.state);assert.equal(observed.ownedRecord.validation[2].state,'observed');
+    assert.deepEqual(JSON.parse(JSON.stringify(observed.ownedRecord.validation[2].response)),response);
+    if(fixture.state==='validation-requested')assert.throws(()=>validateSingleStepResponse(response),error=>error.code==='VALIDATION_RESPONSE');
+    else assert.equal(validateSingleStepResponse(response).valid,fixture.state==='validated');
+    const read=JSON.parse(vm.runInContext('('+singleDocumentOwnedRecordPage.toString()+')(binding)',context));assert.equal(read.record.state,fixture.state);assert.deepEqual(read.record.validation[2].response,response);
+    await assert.rejects(run);assert.equal(calls.length,1);
+    assert.equal(calls[0].url,'https://supplier.coupang.com/sr/qvt/api/validate-step/2');assert.deepEqual(JSON.parse(calls[0].init.body),{docId:2347603,version:17});
+  }
+});
 
 for(const company of SINGLE_COMPANIES){
   test(company.name+' modal and next-step clicks may close the verified company menu without losing the owned document',async()=>{

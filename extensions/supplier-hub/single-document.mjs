@@ -110,11 +110,26 @@ export async function singleDocumentIdentity(packet,sender){
   return {packet:value,identity:scope,identityDigest,bodySha256,originalBodySha256,packetDigest,laneKey,key:'single-document:'+packetDigest};
 }
 export function validateSingleStepResponse(value){
-  if(!object(value)||value.code!==200||!Array.isArray(value.data)||value.data.length!==1||!object(value.data[0])||typeof value.data[0].success!=='boolean')fail('VALIDATION_RESPONSE','Supplier Hub 단계 검증 응답을 확인하지 못했습니다.');
-  if(value.data[0].success===true){if(value.data[0].errors!==undefined&&(!Array.isArray(value.data[0].errors)||value.data[0].errors.length))fail('VALIDATION_RESPONSE','단계 검증 성공과 오류 항목이 일치하지 않습니다.');return {valid:true,errors:[]};}
-  const errors=value.data[0].errors;
-  if(errors!==undefined&&(!Array.isArray(errors)||errors.length>200||errors.some(error=>!object(error)||typeof error.columnName!=='string'||typeof error.message!=='string'||error.columnName.length>500||error.message.length>2000)))fail('VALIDATION_RESPONSE','단계 검증 오류 자료를 확인해주세요.');
-  return {valid:false,errors:clone(errors??[])};
+  // The shipped Hub client aggregates every result in data, rather than
+  // requiring one result per request. Keep this contract aligned with the
+  // self-contained classifier in singleDocumentHubRequestPage.
+  if(!object(value)||value.code!==200||!Array.isArray(value.data)||value.data.length<1||value.data.length>200)fail('VALIDATION_RESPONSE','Supplier Hub 단계 검증 응답을 확인하지 못했습니다.');
+  let valid=true;const errors=[];
+  for(let index=0;index<value.data.length;index++){
+    const row=value.data[index];
+    if(!Object.hasOwn(value.data,index)||!object(row)||typeof row.success!=='boolean')fail('VALIDATION_RESPONSE','Supplier Hub 단계 검증 응답을 확인하지 못했습니다.');
+    if(row.errors!==undefined){
+      if(!Array.isArray(row.errors)||row.errors.length+errors.length>200)fail('VALIDATION_RESPONSE','단계 검증 오류 자료를 확인해주세요.');
+      if(row.success&&row.errors.length)fail('VALIDATION_RESPONSE','단계 검증 성공과 오류 항목이 일치하지 않습니다.');
+      for(let errorIndex=0;errorIndex<row.errors.length;errorIndex++){
+        const error=row.errors[errorIndex];
+        if(!Object.hasOwn(row.errors,errorIndex)||!object(error)||typeof error.columnName!=='string'||typeof error.message!=='string'||error.columnName.length>500||error.message.length>2000)fail('VALIDATION_RESPONSE','단계 검증 오류 자료를 확인해주세요.');
+        errors.push(error);
+      }
+    }
+    if(!row.success)valid=false;
+  }
+  return {valid,errors:clone(errors)};
 }
 function drafts(value){
   if(!Array.isArray(value)||value.length>10000||value.some(row=>!object(row)||!identifier(row.docId)))fail('DRAFT_LIST','Supplier Hub 중간 저장 목록을 확인하지 못했습니다.');

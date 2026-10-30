@@ -174,6 +174,35 @@ test('pure validation response requires affirmative exact shape, never truthy st
   for(const value of [false,{}, {code:'200',data:[{success:true}]},{code:200,data:[{success:'true'}]},{code:200,data:[{success:false,errors:['error']}]}])assert.throws(()=>validateSingleStepResponse(value));
 });
 
+test('native step validation accepts all successful members and preserves every later member failure',()=>{
+  assert.deepEqual(validateSingleStepResponse({code:200,data:[{success:true},{success:true,errors:[]},{success:true}]}),{valid:true,errors:[]});
+  const second={columnName:'옵션 2 포장 크기',message:'필수 값입니다.'},third={columnName:'옵션 3 표시사항',message:'확인해주세요.'};
+  const response={code:200,data:[{success:true},{success:false,errors:[second]},{success:false,errors:[third]}]};
+  const result=validateSingleStepResponse(response);assert.deepEqual(result,{valid:false,errors:[second,third]});
+  result.errors[0].message='changed';assert.equal(response.data[1].errors[0].message,'필수 값입니다.');
+  assert.deepEqual(validateSingleStepResponse({code:200,data:[{success:true},{success:false}]}),{valid:false,errors:[]});
+});
+
+test('native step validation rejects empty, sparse, contradictory or oversized aggregates without partial success',()=>{
+  const good={success:true},failure={success:false,errors:[{columnName:'옵션',message:'검토 필요'}]},sparseRows=[good,,good],sparseErrors=[];
+  sparseErrors.length=1;
+  const invalid=[
+    {code:200}, {code:200,data:[]}, {code:200,data:{success:true}},
+    {code:200,data:sparseRows}, {code:200,data:[good,null]}, {code:200,data:[good,{success:1}]},
+    {code:200,data:[good,{success:false,errors:{message:'not an array'}}]},
+    {code:200,data:[good,{success:true,errors:[{columnName:'옵션',message:'contradiction'}]}]},
+    {code:200,data:[good,{success:false,errors:sparseErrors}]},
+    {code:200,data:[good,{success:false,errors:[{columnName:1,message:'invalid'}]}]},
+    {code:200,data:[good,{success:false,errors:[{columnName:'x'.repeat(501),message:'invalid'}]}]},
+    {code:200,data:[good,{success:false,errors:[{columnName:'옵션',message:'x'.repeat(2001)}]}]},
+    {code:200,data:Array.from({length:201},()=>good)},
+    {code:200,data:[{success:false,errors:Array.from({length:100},()=>failure.errors[0])},{success:false,errors:Array.from({length:101},()=>failure.errors[0])}]},
+  ];
+  for(const response of invalid)assert.throws(()=>validateSingleStepResponse(response),error=>error.code==='VALIDATION_RESPONSE');
+  assert.deepEqual(validateSingleStepResponse({code:200,data:Array.from({length:200},()=>good)}),{valid:true,errors:[]});
+  assert.equal(validateSingleStepResponse({code:200,data:[{success:false,errors:Array.from({length:100},()=>failure.errors[0])},{success:false,errors:Array.from({length:100},()=>failure.errors[0])}]}).errors.length,200);
+});
+
 test('two independent receivers share atomic lane/claim: held create gets only one remote request even with new request ID/app tab',async()=>{
   const wait=deferred(),f=await singleDocumentFixture(SINGLE_COMPANIES[0],{createWait:wait});
   try{

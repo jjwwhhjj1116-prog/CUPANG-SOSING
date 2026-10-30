@@ -239,7 +239,7 @@ export async function singleDocumentHubRequestPage(input){
         if(record.state!=='updated'&&record.state!=='validated')throw Error('새 문서 수정 결과를 먼저 확인해주세요.');
         const step=Number(input.path.at(-1));record.validation??={};
         if(record.validation[step])throw Error('이 단계 검증은 이미 요청했습니다. 읽기로 확인해주세요.');
-        record.validation[step]={operationId:input.operationId,state:'requested'};save();
+        record.validation[step]={operationId:input.operationId,state:'requested'};record.state='validation-requested';save();
       }
     }
     const normalized=copyBody(input.body);if(input.path.endsWith('/create')||input.path.endsWith('/update')){
@@ -264,12 +264,32 @@ export async function singleDocumentHubRequestPage(input){
         if(!identifier(json?.docId)||record.baselineDocIds.some(id=>same(id,json.docId)))throw Error('새 문서 생성 식별값을 확인하지 못했습니다.');
         record.docId=json.docId;record.state='created';save();
       }else if(input.path.endsWith('/update')){record.state='updated';save();}
-      else{const step=Number(input.path.at(-1));record.validation[step]={operationId:input.operationId,state:'observed',response:json};record.state=json?.data?.[0]?.success===true?'validated':'validation-rejected';save();}
+      else{const step=Number(input.path.at(-1)),validation=validationResult(json);record.validation[step]={operationId:input.operationId,state:'observed',response:json};record.state=validation===true?'validated':validation===false?'validation-rejected':'validation-requested';save();}
     }
     return {ok,status:response.status,json,...(record?{ownedRecord:record}:{}),...(receiptRead?{receiptProvenance:{method:'GET',url:response.url,status:response.status,redirected:response.redirected,contentType:response.headers.get('content-type'),cache:'no-store',readOnly:true,
       docId:record.docId,company:binding.identity.company,identityDigest:binding.identityDigest,preparedBodySha256:binding.preparedBodySha256,operationId:input.operationId}}:{})};
   }finally{clearTimeout(timer);}
   function copyBody(value){return JSON.parse(JSON.stringify(value));}
+  // Serialized into the Hub tab: no imported parser is available here. The
+  // parity fixtures cover the same bounded all-result contract as
+  // validateSingleStepResponse; null preserves an unresolved observed ACK.
+  function validationResult(value){
+    const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
+    if(!object(value)||value.code!==200||!Array.isArray(value.data)||value.data.length<1||value.data.length>200)return null;
+    let valid=true,errorCount=0;
+    for(let index=0;index<value.data.length;index++){
+      const row=value.data[index];if(!Object.hasOwn(value.data,index)||!object(row)||typeof row.success!=='boolean')return null;
+      if(row.errors!==undefined){
+        if(!Array.isArray(row.errors)||row.errors.length+errorCount>200||row.success&&row.errors.length)return null;
+        for(let errorIndex=0;errorIndex<row.errors.length;errorIndex++){
+          const error=row.errors[errorIndex];if(!Object.hasOwn(row.errors,errorIndex)||!object(error)||typeof error.columnName!=='string'||typeof error.message!=='string'||error.columnName.length>500||error.message.length>2000)return null;
+        }
+        errorCount+=row.errors.length;
+      }
+      if(!row.success)valid=false;
+    }
+    return valid;
+  }
 }
 
 /** Only observed response data is recoverable. A lost in-tab ACK with no new

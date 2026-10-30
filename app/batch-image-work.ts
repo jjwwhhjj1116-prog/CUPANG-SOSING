@@ -8,6 +8,7 @@ export type BatchImageTask = {
   stage: 'main' | 'additional' | 'detail'; profileId: string | null;
   categoryContext: QuotationFieldsView['categoryContext']; productVersion: string; imageCount: number;
 };
+export type BatchImageStage = BatchImageTask['stage'];
 export type BatchImagePlan = {
   tasks: BatchImageTask[]; messages: { productId: string; message: string }[];
   scope: WorkspaceSettingsScope; settings: WorkspaceSettings; enabled: boolean;
@@ -71,9 +72,16 @@ function fieldsUrl(productId: string, profileId: string | null = null) {
 
 /** Build a read-only review queue after pricing. Merely planning never starts
  * OCR, changes image references, uploads a file, or transmits a quotation. */
-export async function planBatchImageWork(products: { id: string; title: string }[], signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<BatchImagePlan> {
+export async function planBatchImageWork(
+  products: { id: string; title: string }[], signal: AbortSignal, fetcher: typeof fetch = fetch,
+  requestedStages: readonly BatchImageStage[] = ['main', 'additional', 'detail'],
+): Promise<BatchImagePlan> {
   signal.throwIfAborted();
   if (!Array.isArray(products) || products.some(product => !product || !identifier(product.id) || typeof product.title !== 'string')) throw invalid();
+  if (!Array.isArray(requestedStages) || requestedStages.length < 1 || requestedStages.length > 3
+    || Object.keys(requestedStages).length !== requestedStages.length || new Set(requestedStages).size !== requestedStages.length
+    || requestedStages.some(stage => !['main', 'additional', 'detail'].includes(stage))) throw invalid();
+  const stages = (['main', 'additional', 'detail'] as const).filter(stage => requestedStages.includes(stage));
   const unique = [...new Map(products.map(product => [product.id, product])).values()];
   if (unique.length > 100) throw Error('이미지 작업은 한 번에 상품 100개까지 준비할 수 있습니다.');
   const initial = await readSettings(signal, fetcher);
@@ -84,10 +92,10 @@ export async function planBatchImageWork(products: { id: string; title: string }
       const view = viewContext(await readJson(fieldsUrl(product.id), signal, fetcher));
       const rows = view.resolved.rows.filter(row => row.included && row.optionId !== null);
       if (!rows.length) { plan.messages.push({ productId: product.id, message: '이미지 작업에 포함된 옵션이 없습니다.' }); continue; }
-      // Collect atomically per product: malformed later slots cannot leave a
-      // misleading partial queue for that same quotation.
+      // Collect the requested stages atomically per product. A single-stage
+      // automatic action must not depend on an unrelated image-stage field.
       const tasks: BatchImageTask[] = [], messages: BatchImagePlan['messages'] = [];
-      for (const row of rows) for (const stage of ['main', 'additional', 'detail'] as const) {
+      for (const row of rows) for (const stage of stages) {
         const profileId = selectedProfile(view.categoryContext);
         const selected = detailBatchTranslationSlots(view, row.optionId!, profileId, stage);
         if (!selected.slots.length) {

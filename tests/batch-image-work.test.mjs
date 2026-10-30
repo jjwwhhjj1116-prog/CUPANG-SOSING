@@ -62,6 +62,16 @@ function fixture(company, { enabled = true, values = { one: view() }, settingsRe
 }
 
 for (const company of schemaCompanies) {
+  test(`selected detail planning ignores unrelated main aliases while full review remains atomic (${company.code})`,async()=>{
+    const broken=view();broken.resolved.rows[0].fields.wireMain.value='owner/add.png';const f=fixture(company,{values:{one:broken}}),before=JSON.stringify(f.values);
+    const selected=await model.planBatchImageWork([{id:'one',title:'수집 상세'}],signal(),f.fetcher,['detail']);
+    assert.deepEqual(plain(selected.tasks.map(task=>[task.optionId,task.stage,task.imageCount])),[['second','detail',1]]);assert.equal(JSON.stringify(f.values),before);
+    await model.refreshBatchImageTask(selected.tasks[0],selected,signal(),f.fetcher);
+    const full=await model.planBatchImageWork([{id:'one',title:'수집 상세'}],signal(),f.fetcher);assert.equal(full.tasks.length,0);assert.equal(full.messages.length,1);
+    const malformed=view();malformed.resolved.rows[1].fields.detailImages.value='owner/missing.png';const atomic=fixture(company,{values:{one:malformed}});
+    assert.equal((await model.planBatchImageWork([{id:'one',title:'수집 상세'}],signal(),atomic.fetcher,['detail'])).tasks.length,0,'a later invalid selected-stage option discards the product queue');
+    for(const stages of [[],['detail','detail'],['unknown'],new Array(1)]){const invalid=fixture(company);await assert.rejects(model.planBatchImageWork([{id:'one',title:'수집 상세'}],signal(),invalid.fetcher,stages));assert.equal(invalid.calls.length,0);}
+  });
   test(`image work queue keeps stable included option/stage order, manual blanks, banners and originals (${company.code})`, async () => {
     const f = fixture(company), before = JSON.stringify(f.values);
     const plan = await model.planBatchImageWork([{ id: 'one', title: '작업 상품' }, { id: 'one', title: '작업 상품' }], signal(), f.fetcher);
