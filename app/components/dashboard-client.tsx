@@ -263,6 +263,11 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     setOptionNavigationFailure(null);
     setView(next);
   }
+  function guardOperationsNavigation(event:{preventDefault:()=>void}){
+    if(busyRef.current||batchBusyRef.current||settingsBusyRef.current||sourceSupplementBusyRef.current||sourceWorkRef.current){
+      event.preventDefault();setToast('진행 중인 상품 작업을 마친 뒤 운영관리를 열어주세요.');
+    }
+  }
   function closeWorkspace(manageCategories = false) {
     if(!settingsOperationRef.current.mounted||settingsOperationRef.current.ownerId!==workspaceOwnerId||detailNavigation!==productNavigation.current)return false;
     if(busyRef.current){setCloseNotice('작업이 진행 중입니다. 현재 작업을 마친 뒤 닫아주세요.');return false;}
@@ -845,6 +850,7 @@ useEffect(()=>{
         <nav aria-label="주 메뉴"><p className="nav-caption">로켓배송</p>
           <button className={`nav-item ${view==='work'?'active':''}`} onClick={()=>changeView('work')}><span>✦</span>AI 상품등록</button>
           <button className={`nav-item ${view==='archive'?'active':''}`} onClick={()=>changeView('archive')}><span>▦</span>상품관리(신규)</button>
+          <a className="nav-item" href="/operations" aria-label="상품소싱·판매관리·손익계산 운영관리" aria-disabled={busy||batchBusy||!!sourceWork} onClick={guardOperationsNavigation}><span aria-hidden="true">▥</span>운영관리</a>
         </nav>
         <div className="sidebar-status"><div><strong>YOOFAM 스튜디오</strong><small>로켓배송 상품 등록 · 관리</small></div></div>
       </aside>
@@ -855,6 +861,7 @@ useEffect(()=>{
             <button type="button" className="workspace-utility utility-integrations" data-state={utilityConnectionState} aria-label={'연동 설정 · '+utilityConnectionLabel} title={utilityConnectionLabel} aria-haspopup="dialog" aria-expanded={connectionsOpen} disabled={checkingConnections} onClick={()=>void checkConnections()}><span aria-hidden="true">⌁</span>연동 설정<span className="utility-status-dot" aria-hidden="true"/></button>
             <button type="button" className="workspace-utility utility-history" aria-label="작업 이력" aria-haspopup="dialog" aria-expanded={historyOpen} onClick={()=>{setHistoryProductId(detail?.id??products[0]?.id??'');setHistoryOpen(true);}}><span aria-hidden="true">↻</span>작업 이력</button>
             <button type="button" className="workspace-utility utility-cli" aria-label="CLI 설치·연결" aria-haspopup="dialog" aria-expanded={cliInstallOpen} onClick={()=>setCliInstallOpen(true)}><span aria-hidden="true">⌘</span>CLI 설치·연결</button>
+            <a className="workspace-utility utility-operations" href="/operations" aria-disabled={busy||batchBusy||!!sourceWork} onClick={guardOperationsNavigation}><span aria-hidden="true">▥</span>운영관리</a>
             <a className="workspace-utility utility-account" href="/account" aria-label={userName+' 계정 관리'}>{userName} · 계정 관리</a>
           </nav><div className="top-actions">{view==='work'&&<><button type="button" className="btn settings" aria-expanded={settingsOpen} aria-controls="workspace-settings-panel" disabled={settingsBusy||batchBusy} onClick={()=>{if(!settingsBusyRef.current&&!batchBusyRef.current)setSettingsOpen(open=>!open);}}>⚙ 기본설정</button><button className="btn primary" disabled={batchBusy} onClick={openCategoryFirstIntake}>＋ 상품 추가</button>
           <details className="bulk-action-menu" data-dismissable-menu><summary className="btn ghost">{selectedBatchMode==='full'?'전체 작업':'부분 작업 ('+selectedBatchStages.length+')'} ▾</summary><div><fieldset disabled={batchBusy} aria-label="실행할 작업 선택"><legend>실행할 작업</legend><label><input type="checkbox" aria-label="전체 작업" checked={selectedBatchMode==='full'} onChange={event=>{if(!batchBusyRef.current){setSelectedBatchMode(event.target.checked?'full':'selected');setSelectedBatchStages(event.target.checked?batchStages.map(stage=>stage.id):[]);}}}/> 전체 작업</label>{batchStages.map(stage=><label key={stage.id} style={{display:'flex',gap:8,padding:'6px 0'}}><input type="checkbox" aria-label={stage.label+' 작업'} checked={selectedBatchStages.includes(stage.id)} onChange={event=>chooseBatchStage(stage.id,event.target.checked)}/>{stage.label}</label>)}</fieldset></div></details>

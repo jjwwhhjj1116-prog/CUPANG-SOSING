@@ -1,0 +1,12 @@
+{
+ "manifest_version":3,
+ "name":"YOOFAM 스튜디오 · 운영 데이터 연결",
+ "version":"1.0.0",
+ "minimum_chrome_version":"120",
+ "description":"YOOFAM 운영관리에서 열린 쿠팡·서플라이어허브·광고센터의 자료를 읽어 계정이 일치하는 원장에 연결합니다.",
+ "permissions":["tabs","scripting","storage"],
+ "host_permissions":["https://www.coupang.com/*","https://wing.coupang.com/*","https://supplier.coupang.com/*","https://advertising.coupang.com/*"],
+ "background":{"service_worker":"worker.mjs","type":"module"},
+ "content_scripts":[{"matches":["https://sourceflow.jjwwhhjj1116.workers.dev/*","http://localhost/*","http://127.0.0.1/*"],"js":["content.js"],"run_at":"document_idle","all_frames":false}],
+ "action":{"default_title":"YOOFAM 운영 데이터 연결","default_popup":"popup.html"}
+}

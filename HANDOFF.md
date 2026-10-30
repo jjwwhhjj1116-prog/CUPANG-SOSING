@@ -6585,3 +6585,21 @@ REA로 Couplus의 localhost HTTP/SSE와 별도 상품조회 경계를 확인했�
 - 고유27파일의최신결과416검사통과(앞선17파일328중견적editor106을후속108로교체, 별도labels6파일46, packaging4파일40;중복실행숫자합산0). tsc/변경lint/diff/생성물/ZIP/운영빌드pass, 독립P1/P2없음. 초기fixture실패/최종로그는별도보관. labels46로그는완료tool실행의검증요약임을명시했다. 세부 docs/step805-collection-sections-and-editor-verification.md.
 - 최종Worker6349dbd3-afe2-4ce4-81ad-548cef15a3f4(직전721e7fe4-ad29-474a-8632-bd86aed2c517). 2.1.25 ZIP95files/1203542bytes/SHAb7b19b7a76cbd97a5954b1bb15f313350fd5be205e431ee5db4d5502a757484a. 실제로드폴더step805-loaded-extension-backup후95파일동기화·전SHA일치, permissions/hosts/DBmigration/CPU·요금·인증설정변경0. 마지막실제관찰2.1.24, 사용자에게2.1.25새로고침→상품F5→1회수집결과요청대기.
 - SupplierHub유앤채/A01526306로그인확인, 기존Hub상품접촉0/신규접수0. source-inbox/quotation-ai/native-assets에도간헐적exceededCpu가남았으며요금제조회API403으로실제plan미확인(추가권한/구독변경0). 모든실행제한이해결됐다고보고금지. CLI리스너0·기존15분읽기승인만료상태/권한범위유지. 새수집원문·포장크기·색상3개견적속성·원본상세사진과최종실접수는후속검수필요. 최종metadata outputs/step805-final-status.json.
+
+### 2026-10-30 — YOOFAM 운영관리 로컬 준비
+
+- 상품소싱 5·판매관리 6·손익계산 4·물류 4, 총 19개 메뉴와 공통 SKU→매입·판매세트 원가→수불부/재고→매출·광고→확정 경비·손익 연결을 추가했다. 회원·회사별 D1 문서와 revision CAS, 월 마감·취소 및 파일/표 가져오기 기준은 docs/OPERATIONS.md에 정리했다. 실제 API+SQLite 합성 업무 흐름과 전용 연결 확장 검사를 사용하며 최종 검사 수는 최종 검증 기록을 따른다.
+- 공식 공개 사용법 12개의 확보된 자동 생성 자막을 판독했다. 전 구간 음성·모든 프레임 시청 결과는 아니며 줌 라이브 녹화 본문은 미확인이다. 상세 근거는 2026-10-30 작업공간 work/operations-tutorial-findings.md와 work/operations-tutorials/에 보존했다.
+- 현재 로컬 구현·검증 준비 상태다. 이번 운영관리 변경의 배포·운영 DB 마이그레이션·확장 실제 설치 및 로그인 계정의 외부 수집/명세서 승인은 실행하지 않았다. 전용 연결 확장 ZIP과 설치 절차는 준비했으며 합성 검사 통과를 실제 서비스 성공으로 확대하지 않는다. 기존 상품등록 작업과 앞선 실제 운영 상태는 별도다.
+
+운영관리 최종 로컬 검증(동일 2026-10-30 작업): tests/operations*.test.mjs 6파일 65/65 pass(중복 실행 수 합산 없음), 전체 TypeScript 및 운영관리·홈 진입 링크 변경 파일 ESLint pass, 분리한 work/yoofam-operations-validation 복사본의 vinext build pass. 실제 API+SQLite 검사와 별도 합성 React UI에서 경비 확정 전후 순이익 10,000→8,000을 확인했다. 브라우저 캡처 시간초과 및 대체 도구 주소 확인 제한으로 캡처·추가 시각검수는 완료하지 못했고 임시 UI 서버는 종료했다. 실계정 연동·운영 배포·DB 마이그레이션·확장 설치·외부 승인0을 유지한다. 검토·이관 패키지와 구현보고서는 2026-10-30/new-chat/outputs/YOOFAM_operations_integration.zip, YOOFAM_운영관리_구현검증.html이며 docs/OPERATIONS.md에서 19메뉴와 저장 한도·계산 정책·설치 절차·남은 검증을 확인한다.
+
+### Step862 — 운영관리 이관 통합·운영 웹 검수 (2026-10-30)
+
+- 위 로컬 준비 상태를 이어 운영 웹으로 통합했다. Step861의 드롭다운 외부 클릭 닫기, 수집 선택→카테고리→선택 단계 작업, Qwen 한국어 수집 제목과 브랜드 접두, SEO 저장 완료 표시를 보존했다. `app/page.tsx`의 떠 있는 진입 링크 대신 기존 Dashboard의 사이드바·상단 도구에 작은 운영관리 링크를 배치했다. 작업 중 이탈은 기존 busy/batch/source-work 상태로 막는다.
+- 운영관리 19개 메뉴를 5/6/4/4로 묶고 설정 주소·현재 위치·활성 메뉴를 맞췄다. 오래된 조회 응답이 새 저장·회원·회사·연도의 화면을 덮어쓰지 않게 했고 인증/회사 거절 시 이전 회사 원장을 지운다. 일반 revision 충돌은 입력을 보존한다. 실제 저장 시각을 표시하며 빈 원장을 저장 완료로 표현하지 않는다. 검색 라벨이 세로로 줄바꿈되는 문제도 수정했다.
+- 상품관리 SKU 동기화는 모르는 숫자/빈 ID를 0/공백으로 덮어쓰지 않고 명시적 0은 반영한다. owner/company 경계와 원래 상품 read-only는 유지했다. 단일 D1 문서의 UTF-8 저장 상한을 1,800,000 bytes로 낮춰 DB 한도 전에 413으로 거절한다. 장기 대용량 저장에는 분할 설계가 추가로 필요하다.
+- 고유 8파일 운영관리·진입 검사86/86, 기존 상품등록 통합 회귀86/86(별도 실행, 중복 합산 안 함), TypeScript·변경 ESLint·인메모리 schema52tables/18indexes·최종 Cloudflare build가 통과했다. 분리 `outputs/step862-release`를 배포했고 최종 Worker `244721a0-bf1e-4e7a-a86e-ca5fc97483a5`다. 새 바인딩·요금·인증 권한 변경은 없다.
+- 로그인된 유앤채 운영 웹에서 19개 메뉴 제목/URL/오류 없음과 설정 deep-link reload, 기존 Dashboard 진입 링크를 확인했다. 공통 SKU 표의 미리보기에서 `000123`·`000456`·바코드 앞자리0·누락 가격 미확인을 확인하고 취소했다. 운영 원장 추가/수정/동기화·외부 승인·신규 확장 설치는 실행하지 않았다. 첫 API GET의 CREATE TABLE IF NOT EXISTS는 실행됐으며 운영 workspace row는0이다. 스크린샷과 메뉴 기록은 `outputs/step862-*`에 보존했다.
+- 기존 원장 SELECT 대조에서 Step861 기준35테이블45행과 달리35테이블46행이 관찰됐다. 차이는 `product_removals`의 2026-10-30 15:01:03 KST 보관기록과 수집본4~11의15:01:15~30 보관 metadata다. 나머지33테이블은 원래 hash와 일치한다. 이번 운영관리 검수는 삭제/보관/복원 명령을 실행하지 않았고 원인을 사용자/다른 작업으로 단정하지 않는다. 상태를 임의 복원하지 않았다. `outputs/step862-original-scoped-after.json` 및 `step862-original-mismatch-metadata.json` 참조. 기존 요청 f29491bd-1882-456a-8a63-eec8586db6c6 / Hub문서2347603에 생성·파일·본문 재전송0이다.
+- 운영관리 별도 연결 확장1.0.0 ZIP은11files/65153bytes/SHA5949c177eb0aeaf269721e4dfd0ddf96f7a3e4d0a1096c60923843f96248cf96로 준비됐다. 실제 설치·로그인 사이트 외부 수집·거래명세서 승인 성공은 미검증이다. 다운로드 존재/합성 검사로 성공을 주장하지 않는다. 1688 속성/포장/상세 누락, 이미지 통번역 품질, 쿠플러스 전 단계 동일성 및 기존 Hub 실제 접수는 아직 별도 남은 작업이다.
