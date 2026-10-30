@@ -3,7 +3,8 @@ import {useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
 import type {SupplierHubProductDocumentReview} from '@/app/supplier-hub-product-document';
 import {createProductDocumentPacket,PRODUCT_DOCUMENT_REQUEST_TTL} from '../../extensions/supplier-hub/product-document.mjs';
 import {sourceReadError} from '../../extensions/supplier-hub/product-document-source.mjs';
-import {previewProductDocument,runProductDocument,runProductDocumentDraft,runPreparedProductDocument,preparedReceiptObservation,readNativeReceiptHistory,saveProductReceiptObservation,
+import {previewProductDocument,auditUnexpectedLegal,runProductDocument,runProductDocumentDraft,runPreparedProductDocument,preparedReceiptObservation,readNativeReceiptHistory,saveProductReceiptObservation,
+  type UnexpectedLegalAuditReport,
   type ProductDocumentSession,type ProductDocumentState,type ProductDraftAction,type PreparedDocumentAction,type ProductValidationRejection,ProductDocumentBridgeError} from '@/app/supplier-hub-product-client';
 import {singleConsentConfirmation,verifySingleDocumentObservation,type SingleDocumentAction} from '@/app/supplier-hub-single-client';
 import type {NativeReceiptRecord} from '@/app/supplier-hub-product-receipt';
@@ -19,6 +20,8 @@ import {readProductDocumentPending,productDocumentPendingKey,productDocumentPend
 type Props={review:SupplierHubProductDocumentReview;disabled:boolean;refresh:(signal:AbortSignal)=>Promise<SupplierHubProductDocumentReview>;
   onLockChange:(locked:boolean,closeLocked?:boolean)=>void;onReceiptSaved?:()=>void};
 const stageLabels={productPage:'상품 정보',imagePage:'이미지',logisticsPage:'최종 제출'};
+const auditPathLabels:Record<string,string>={'document-header':'문서 기본정보','member-shape':'옵션 구성',startPage:'시작 정보',productPage:'상품 정보',imagePage:'이미지 연결',logisticsPage:'물류 정보',sourcingPage:'소싱 정보',legalPage:'법적 서류 정보','legalPage.other':'기타 서류 정보','legalPage.certificates':'인증 항목','legalPage.certificates.name':'인증 항목명','legalPage.certificates.value':'인증 값','legalPage.certificates.row-shape':'인증 항목 구성','legalPage.certificates.order':'인증 항목 순서'};
+const auditValueLabels={missing:'항목 없음',empty:'빈 값',na:'해당사항없음',present:'값 있음','not-applicable':'—'};
 // Sample the envelope clock only from an explicit event operation.
 const draftOperationTime=()=>Date.now();
 function completedPreviewSourceReadFailure(cause:unknown):cause is ProductDocumentBridgeError{
@@ -55,6 +58,10 @@ export function SupplierHubProductTransport(props:Props){
   useLayoutEffect(()=>{reconnectInputRef.current=reconnectInput;},[reconnectInput]);
   const [reconnectReadTarget,setReconnectReadTarget]=useState<{token:object;input:NonNullable<typeof reconnectInput>}|null>(null);
   const reconnectReadTargetCurrent=Boolean(reconnectReadTarget?.token===reviewToken&&reconnectReadTarget.input===reconnectInput&&reconnectInput?.token===reviewToken);
+  const [originalAuditContext,setOriginalAuditContext]=useState<{token:object;input:NonNullable<typeof reconnectInput>}|null>(null);
+  const originalAuditCurrent=Boolean(originalAuditContext?.token===reviewToken&&originalAuditContext.input===reconnectInput&&reconnectInput?.token===reviewToken);
+  const [originalAuditReport,setOriginalAuditReport]=useState<{context:NonNullable<typeof originalAuditContext>;report:UnexpectedLegalAuditReport}|null>(null);
+  const shownOriginalAudit=originalAuditCurrent&&originalAuditReport?.context===originalAuditContext?originalAuditReport.report:null;
   const [releasedValidation,setReleasedValidation]=useState<{token:object;docId:string|number;rejection:ProductValidationRejection}|null>(null);
   const [draftReadHint,setDraftReadHint]=useState<{token:object;requestId:string;docId:string|number;state:string;identityDigest:string;packetDigest:string;originalBodySha256:string;preparedBodySha256:string;savedDraftTargetClosed?:boolean;continuationSnapshot?:boolean;resumeSnapshot?:boolean;nativeFileListObserved?:boolean}|null>(null);
   const [finishedReadError,setFinishedReadError]=useState<{token:object;session:ProductDocumentSession;intent:ProductDocumentPending;docId:string|number;message:string;reviewDigest:string;identityDigest:string;packetDigest:string;originalBodySha256:string;preparedBodySha256:string}|null>(null);
@@ -136,7 +143,7 @@ export function SupplierHubProductTransport(props:Props){
     },Math.max(0,challenge.expiresAt-Date.now()));return()=>clearTimeout(timer);
   },[state?.challenge]);
   const canEnter=()=>reviewEpoch.current===reviewToken&&current.current.mounted&&!current.current.props.disabled&&!pending.current&&current.current.props.review===review&&current.current.intentReady&&!current.current.intentError;
-  function begin(){const controller=new AbortController();pending.current=controller;setFinishedReadError(null);setFinishedPreviewReadError(null);setBusy(true);setError('');current.current.props.onLockChange(true,true);
+  function begin(){const controller=new AbortController();pending.current=controller;setFinishedReadError(null);setFinishedPreviewReadError(null);setOriginalAuditReport(null);setBusy(true);setError('');current.current.props.onLockChange(true,true);
     return {controller,alive:()=>reviewEpoch.current===reviewToken&&current.current.mounted&&current.current.props.review===review&&!controller.signal.aborted&&pending.current===controller,
       active:()=>reviewEpoch.current===reviewToken&&current.current.mounted&&current.current.props.review===review&&!current.current.props.disabled&&!controller.signal.aborted&&pending.current===controller,
       finish:()=>{if(pending.current===controller){pending.current=null;if(current.current.mounted)setBusy(false);}}};}
@@ -189,7 +196,11 @@ export function SupplierHubProductTransport(props:Props){
       current.current.draftMode=true;current.current.uncertain=false;current.current.approved={};current.current.expired=false;current.current.error='';
       knownDraftDocument.current={requestId,docId:recovered.observation.docId!};
       setReconnectReadTarget(null);setIntent(recovered.pending);setSession(recovered.session);setState(recovered.observation);setDraftMode(true);setUncertain(false);setApproved({});setExpired(false);setError('');
+      setOriginalAuditContext(null);
     }catch(cause){if(task.alive()){
+      if(active()&&reconnectInput&&cause instanceof ProductDocumentBridgeError&&cause.uncertain===false
+        &&cause.code==='PRODUCT_DOCUMENT_DRAFT_SOURCE_FAILURE'&&['update-requested','updated'].includes(cause.draftState??'')&&String(cause.knownDocId)===docId)
+        setOriginalAuditContext({token:reviewToken,input:reconnectInput});
       if(active()&&reconnectInput&&cause instanceof ProductDocumentBridgeError&&cause.uncertain===false&&cause.savedDraftTargetClosed===true
         &&cause.code==='PRODUCT_DOCUMENT_DRAFT_SOURCE_FAILURE'&&['update-requested','updated'].includes(cause.draftState??'')&&String(cause.knownDocId)===docId)
         setReconnectReadTarget({token:reviewToken,input:reconnectInput});
@@ -206,6 +217,29 @@ export function SupplierHubProductTransport(props:Props){
       }catch{current.current.intentError='원래 요청의 보관 상태를 확인하지 못했습니다. 새 전송을 시작하지 말고 저장 결과를 확인해주세요.';setIntentError(current.current.intentError);}
       setError(cause instanceof Error?cause.message:'원래 문서의 연결을 복구하지 못했습니다. 새 문서와 파일·본문은 전송하지 않았습니다.');
     }}
+    finally{task.finish();}
+  }
+  async function auditOriginalSavedDocument(){
+    if(!canEnter()||!originalAuditCurrent||!originalAuditContext||reconnectInputRef.current!==originalAuditContext.input||current.current.session||current.current.intent||current.current.state||current.current.unsaved)return;
+    const context=originalAuditContext,input=context.input,requestId=input.requestId.trim(),docId=input.docId.trim();
+    if(!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(requestId)||!/^[1-9]\d{0,29}$/.test(docId))return;
+    const task=begin();
+    const active=()=>task.active()&&reconnectInputRef.current===input&&!current.current.session&&!current.current.intent&&!current.current.state&&!current.current.unsaved&&!current.current.intentError;
+    const freshAudit=async()=>{await fresh(task);if(!active())throw Error('원래 문서 읽기 범위가 변경되었습니다.');
+      if(readProductDocumentPending(review)!==null)throw Error('이 상품의 전송 요청이 이미 보관되어 있습니다. 원래 요청의 조회를 이용해주세요.');
+      assertProductDocumentNotRejected(review);};
+    try{
+      await freshAudit();const now=draftOperationTime(),packet=await createProductDocumentPacket(review,{requestId,createdAt:now,now});
+      await freshAudit();const preview=await previewProductDocument(packet,task.controller.signal);
+      await freshAudit();
+      if(preview.packet.requestId!==requestId||productReceiptCanonical(preview.packet.review)!==productReceiptCanonical(review))throw Error('원래 견적의 읽기 연결이 다릅니다.');
+      const report=await auditUnexpectedLegal(preview,task.controller.signal);await freshAudit();
+      if(report.requestId!==requestId||String(report.docId)!==docId||report.identityDigest!==preview.preview.identityDigest||report.packetDigest!==preview.packetDigest)
+        throw Error('현재 문서의 읽기 결과가 원래 요청과 다릅니다.');
+      // A complete audit is still an observation. It cannot adopt a session,
+      // claim the web reservation, delete files or enable registration.
+      setOriginalAuditReport({context,report});
+    }catch(cause){if(active())setError(cause instanceof Error?cause.message:'원래 문서의 저장 내용 대조에 실패했습니다.');}
     finally{task.finish();}
   }
   async function persist(attempt:NonNullable<typeof unsaved>,task:ReturnType<typeof begin>){
@@ -492,10 +526,25 @@ export function SupplierHubProductTransport(props:Props){
         <p>원래 문서 {reconnectDocument}의 검증 탭이 닫혔습니다. 같은 문서의 현재 파일·본문을 새 전용 탭에서 읽어 확인합니다.</p>
         <button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void reconnectOriginal(true)}>원래 문서의 새 읽기 탭 연결 · 재전송 안 함</button>
       </section>}
+      {originalAuditCurrent&&<section aria-label="원래 문서 저장 내용 대조">
+        <button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void auditOriginalSavedDocument()}>원래 문서 본문·첨부 전체 대조 · 읽기 전용</button>
+        {shownOriginalAudit&&<div role="status">
+          <p>문서 {String(shownOriginalAudit.docId)} · 이미지 {shownOriginalAudit.imageCount}개 대조 · 서류 첨부 {shownOriginalAudit.legalCount}개 · 원래 본문 {shownOriginalAudit.bodyMatchesExpected?'일치':'불일치'}</p>
+          <p>조회 결과만 확인했습니다. 파일 삭제·본문 저장·등록전송은 실행하지 않았습니다.</p>
+          {shownOriginalAudit.legalEntries.length>0&&<table><caption>현재 서류 첨부 연결</caption><thead><tr><th>첨부</th><th>종류</th><th>인증 항목 연결</th></tr></thead><tbody>
+            {shownOriginalAudit.legalEntries.map(row=><tr key={row.index}><td>{row.index+1}</td><td>{row.kind==='certificate'?'인증서':'기타 서류'}</td><td>{{unlinked:'연결 없음',linked:'연결됨',ambiguous:'여러 항목 연결',unknown:'확인 필요'}[row.association]}</td></tr>)}
+          </tbody></table>}
+          {shownOriginalAudit.differenceCount>0&&<details><summary>본문 차이 {shownOriginalAudit.differenceCount}개</summary>
+            <table><caption>원래 견적과 다른 저장 항목</caption><thead><tr><th>옵션</th><th>항목</th><th>원래 값 상태</th><th>현재 값 상태</th></tr></thead><tbody>
+              {shownOriginalAudit.differences.map((row,index)=><tr key={index}><td>{row.documentIndex===null?'공통':row.documentIndex+1}</td><td>{auditPathLabels[row.path]??'저장 항목'}{row.schemaIndex===null?'':` (${row.schemaIndex+1})`}</td><td>{auditValueLabels[row.expectedValueKind]}</td><td>{auditValueLabels[row.actualValueKind]}</td></tr>)}
+            </tbody></table>
+          </details>}
+        </div>}
+      </section>}
     </details>}
     {session&&<p>회사 {review.identity.company.name} · 포함 옵션 {session.packet.review.members.length}개 · 견적 문서 1개 · 전체 본문 대조 완료</p>}
     {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&!intent&&!state?.preparedLifecycle&&<p role="status">전체 문서의 실제 접수 연결을 검수 중입니다. 현재 상품은 전송하지 않았습니다.</p>}
-    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.64.zip" download>통합 확장 2.1.64 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
+    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.65.zip" download>통합 확장 2.1.65 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
     {session?.preview.draftPreparationAvailable===true&&!state?.preparedLifecycle&&<section aria-label="새 견적 초안 준비">
       <p>{intent?'원래 요청과 문서의 파일·본문 저장 및 단계 검증 결과를 확인합니다.':'로그인한 Supplier Hub에 새 견적 초안 한 개를 만들고 저장한 이미지·본문과 단계 검증을 확인합니다.'} 약관 동의와 최종 제출은 진행하지 않습니다.</p>
       {currentDraftHint&&<p role="status">원래 문서 {String(currentDraftHint.docId)} · {currentDraftHint.state==='update-requested'?'파일·본문 저장 결과 미확인':currentDraftHint.state==='validation-requested'?'단계 검증 결과 미확인':'초안 상태 확인 필요'} · 같은 요청 유지</p>}

@@ -679,6 +679,49 @@ test('post-claim reconnect failure retains original source and close locks witho
 });
 
 const reconnectSavedTarget='원래 문서의 새 읽기 탭 연결 · 재전송 안 함';
+const auditOriginal='원래 문서 본문·첨부 전체 대조 · 읽기 전용';
+function originalAuditFixtureReport(session,patch={}){
+ return {requestId:session.packet.requestId,docId:'2347603',identityDigest:session.preview.identityDigest,packetDigest:session.packetDigest,
+  imageCount:24,legalCount:1,bodyMatchesExpected:false,legalEntries:[{index:0,kind:'certificate',association:'unlinked'}],
+  differences:[{documentIndex:0,schemaIndex:0,path:'legalPage.certificates.value',expectedValueKind:'na',actualValueKind:'empty'}],differenceCount:1,...patch};
+}
+test('original document full audit is explicit and cannot adopt a session, claim a reservation or submit',async()=>{
+ const audited=[],h=await fixture(undefined,{reconnect:async(_input,f)=>{throw reconnectClosedError(f,{savedDraftTargetClosed:false});}});try{
+  h.f.bridge=async payload=>{assert.equal(payload.action,'preview');return{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true};};
+  h.f.client.auditUnexpectedLegal=async(session,signal)=>{assert.equal(signal.aborted,false);audited.push(session);return originalAuditFixtureReport(session);};
+  await h.idle();reconnectInputs(h);assert.equal(h.button(auditOriginal),undefined);await h.click('원래 저장 문서 연결 복구');
+  assert.ok(h.button(auditOriginal));assert.equal(audited.length,0);const click=h.button(auditOriginal).props.onClick;click();click();await h.idle();
+  assert.equal(audited.length,1);assert.equal(audited[0].packet.requestId,'f29491bd-1882-456a-8a63-eec8586db6c6');assert.match(h.text(),/문서\s+2347603/);assert.match(h.text(),/원래 본문\s+불일치/);
+  assert.equal(h.stored.size,0);assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview']);assert.ok(h.f.calls.every(row=>row.method==='GET'));
+  for(const label of [start,prepareDraft,reviewPrepared,'현재 문서 동의 확인 · 계속'])assert.equal(h.button(label),undefined);
+ }finally{h.close();}
+});
+test('audit callback expires on original input, review ABA, disabled scope and unmount',async()=>{
+ for(const mode of ['input-ABA','review-ABA','disabled','unmount']){
+  let calls=0;const h=await fixture(undefined,{reconnect:async(_input,f)=>{throw reconnectClosedError(f,{savedDraftTargetClosed:false});}});try{
+   h.f.client.auditUnexpectedLegal=async()=>{calls++;throw Error('must not audit');};await h.idle();reconnectInputs(h);await h.click('원래 저장 문서 연결 복구');
+   const callback=h.button(auditOriginal).props.onClick;
+   if(mode==='input-ABA'){reconnectInputs(h,undefined,'2347604');reconnectInputs(h);}
+   if(mode==='review-ABA'){const props=h.props();h.render({...props,review:{...props.review,reviewDigest:'f'.repeat(64)}});h.flush();h.render(props);h.flush();}
+   if(mode==='disabled')h.render({...h.props(),disabled:true});
+   if(mode==='unmount')h.close();callback();await turn();h.flush();assert.equal(calls,0);assert.equal(h.f.sent.length,0);assert.equal(h.stored.size,0);
+  }finally{h.close();}
+ }
+});
+test('late or mismatched audit result never displays as current or unlocks continuation',async()=>{
+ for(const mode of ['disabled','input','doc','request','digest']){
+  const gate=deferred();let entered=false;const h=await fixture(undefined,{reconnect:async(_input,f)=>{throw reconnectClosedError(f,{savedDraftTargetClosed:false});}});try{
+   h.f.bridge=async payload=>({...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true});
+   h.f.client.auditUnexpectedLegal=async session=>{entered=true;await gate.promise;return originalAuditFixtureReport(session,mode==='doc'?{docId:'2347604'}:mode==='request'?{requestId:'other-request'}:mode==='digest'?{packetDigest:'f'.repeat(64)}:{});};
+   await h.idle();reconnectInputs(h);await h.click('원래 저장 문서 연결 복구');h.button(auditOriginal).props.onClick();await h.wait(()=>entered);
+   if(mode==='disabled')h.render({...h.props(),disabled:true});
+   // A real input is disabled during a read; a changed review is the source
+   // boundary that can invalidate it while that response is in flight.
+   if(mode==='input')h.render({...h.props(),review:{...h.props().review,reviewDigest:'e'.repeat(64)}});
+   gate.resolve();await h.idle();assert.doesNotMatch(h.text(),/원래 본문\s+불일치/);assert.equal(h.stored.size,0);assert.equal(h.button(reviewPrepared),undefined);assert.equal(h.button(start),undefined);
+  }finally{gate.resolve();h.close();}
+ }
+});
 function reconnectClosedError(f,patch={}){
  return Object.assign(new f.client.ProductDocumentBridgeError('원래 저장 문서 검증 탭이 닫혔습니다.',false,'PRODUCT_DOCUMENT_DRAFT_SOURCE_FAILURE','update-requested'),{savedDraftTargetClosed:true,knownDocId:'2347603',...patch});
 }

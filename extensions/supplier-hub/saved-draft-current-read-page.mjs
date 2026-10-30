@@ -16,9 +16,14 @@ export async function savedDraftCurrentReadPage(input){
   const identifier=value=>Number.isSafeInteger(value)&&value>0||typeof value==='string'&&/^[A-Za-z0-9_-]{1,200}$/.test(value);
   const origin='https://supplier.coupang.com',root=document.documentElement,data=root.dataset;
   const required=['binding','expectedTarget','docId','baselineDocIds','expectedImages','expectedBody','previousTarget','mode'];
-  if(!exact(input,required,['proof','expectedObservation','authorizedStages'])||!['read','bind','check'].includes(input.mode)
+  if(!exact(input,required,['proof','expectedObservation','authorizedStages','audit'])||!['read','bind','check','audit'].includes(input.mode)
+   ||(input.mode==='audit')!==Object.hasOwn(input,'audit')||input.mode==='audit'&&(Object.hasOwn(input,'proof')||Object.hasOwn(input,'expectedObservation'))
    ||input.authorizedStages!==undefined&&(input.mode!=='check'||!Array.isArray(input.authorizedStages)||!same(input.authorizedStages,['productPage','imagePage'].slice(0,input.authorizedStages.length))||input.authorizedStages.length>2))fail('input-fields');
   input=copy(input);const {binding,expectedTarget:target,docId,baselineDocIds:baseline,expectedImages:images,expectedBody:expected,previousTarget:previous,mode}=input;
+  const audit=input.audit;
+  if(mode==='audit'&&(!exact(audit,['checkpointSequence','schemaBindingComplete','certificateBindings'])||!Number.isSafeInteger(audit.checkpointSequence)||audit.checkpointSequence<1||audit.checkpointSequence>100000
+   ||typeof audit.schemaBindingComplete!=='boolean'||!Array.isArray(audit.certificateBindings)||audit.certificateBindings.length>400||!audit.schemaBindingComplete&&audit.certificateBindings.length
+   ||audit.certificateBindings.some((row,index)=>!exact(row,['schemaIndex','nameKey','valueKey','name','value'])||row.schemaIndex!==index||!['nameKey','valueKey'].every(key=>typeof row[key]==='string'&&/^[A-Za-z_][A-Za-z0-9_]{0,79}$/.test(row[key]))||row.nameKey===row.valueKey||typeof row.name!=='string'||row.name.length>2000||!(row.value===null||['string','boolean','number'].includes(typeof row.value)))))fail('audit-input');
   if(!exact(binding,['identity','identityDigest','packetDigest','preparedBodySha256','originalBodySha256','nativeAssetSourcePlanSha256','sessionId','requestId'])
    ||!object(binding.identity)||!['identityDigest','packetDigest','preparedBodySha256','originalBodySha256','nativeAssetSourcePlanSha256'].every(key=>HASH.test(binding[key]||''))
    ||!/^\w[\w-]{0,99}$/.test(binding.requestId||'')||!/^\w[\w-]{0,99}$/.test(binding.sessionId||'')||!identifier(docId)
@@ -126,7 +131,7 @@ export async function savedDraftCurrentReadPage(input){
   // collection. Only a literal empty array or empty plain object proves that
   // this document has no legal files of any type; envelopes are not unwrapped.
   phase='legal-lists';const legal=await read('/sr/draft/api/get-files-by-type/'+doc,{legal:true});
-  if(Array.isArray(legal)){if(legal.length!==0){
+  if(Array.isArray(legal)){if(legal.length>2000&&mode==='audit')fail('legal-list-size');if(legal.length!==0&&mode!=='audit'){
    // Classify a bounded sample without returning any filename, URL, S3 key,
    // unknown enum, body or byte value. Even unknown own-key names are hidden:
    // a credential can itself have been used as a property name.
@@ -176,6 +181,75 @@ export async function savedDraftCurrentReadPage(input){
   await Promise.all(Array.from({length:Math.min(3,images.length)},async()=>{for(;;){const index=next++;if(index>=images.length)return;const file=images[index];observations[index]=await read(paths.get(file.transportName),{bytes:true,expectedFile:file});}}));
   observations.sort((a,b)=>a.transportName<b.transportName?-1:a.transportName>b.transportName?1:0);
   phase='hashes';const fileSetSha256=await hash(files),byteSetSha256=await hash(observations),rawBodySha256=await hash(body);fence();
+  if(mode==='audit'){
+   // Evidence only: this branch never binds the DOM record or reconstructs a
+   // write acknowledgement. All image bytes were checked above even when an
+   // unexpected legal file is present.
+   const normalized=copy(body);
+   const integer=(actual,wanted)=>typeof wanted==='string'&&/^(0|[1-9]\d*)$/.test(wanted)&&Number.isSafeInteger(actual)&&actual>=0&&String(actual)===wanted?wanted:actual;
+   if(Object.hasOwn(normalized,'displayCategoryCode'))normalized.displayCategoryCode=integer(normalized.displayCategoryCode,expected.displayCategoryCode);
+   if(normalized.remark===null&&!Object.hasOwn(expected,'remark'))delete normalized.remark;
+   for(const [index,member]of normalized.jsonDocument.entries()){
+    const wanted=expected.jsonDocument[index],common=member.productPage?.commonAttributes,wantedCommon=wanted.productPage?.commonAttributes;
+    if(object(common)&&object(wantedCommon))for(const key of ['purchasePrice','coupangSalePrice','msrp','osrp'])if(Object.hasOwn(common,key))common[key]=integer(common[key],wantedCommon[key]);
+    if(object(member.legalPage)&&object(wanted.legalPage)&&wanted.legalPage.adCert===''&&!Object.hasOwn(member.legalPage,'adCert'))member.legalPage.adCert='';
+   }
+   const type=value=>value===undefined?'missing':value===null?'null':Array.isArray(value)?'array':typeof value==='string'?(value===''?'string-empty':'string'):typeof value;
+   const equal=(a,b)=>a===undefined||b===undefined?a===b:same(a,b),differences=[];let differenceCount=0;
+   const kind=value=>value===undefined?'missing':value===''?'empty':['해당사항없음','N/A'].includes(value)?'na':'present';
+   const add=(path,wanted,actual,documentIndex=null,schemaIndex=null)=>{differenceCount++;if(differences.length<24)differences.push({documentIndex,schemaIndex,path,expectedType:type(wanted),actualType:type(actual),expectedValueKind:path==='legalPage.certificates.value'?kind(wanted):'not-applicable',actualValueKind:path==='legalPage.certificates.value'?kind(actual):'not-applicable'});};
+   const certificateBindings=audit.certificateBindings;
+   // A trusted schema read is still checked against every original member.
+   const schemaBindingComplete=audit.schemaBindingComplete;
+   if(schemaBindingComplete)for(const member of expected.jsonDocument){const rows=member.legalPage?.certificates;if(certificateBindings.length===0&&(rows===undefined||Array.isArray(rows)&&rows.length===0))continue;
+    if(!Array.isArray(rows)||rows.length!==certificateBindings.length||certificateBindings.some(binding=>{const hits=rows.filter(row=>object(row)&&row[binding.nameKey]===binding.name);return hits.length!==1||Object.keys(hits[0]).length!==2||!Object.hasOwn(hits[0],binding.valueKey)||!equal(hits[0][binding.valueKey],binding.value);}))fail('audit-schema');}
+   const head=value=>Object.fromEntries(Object.entries(value).filter(([key])=>key!=='jsonDocument'));
+   if(!equal(head(expected),head(normalized)))add('document-header',head(expected),head(normalized));
+   for(const [index,member]of normalized.jsonDocument.entries()){
+    const wanted=expected.jsonDocument[index],pageKeys=['startPage','productPage','imagePage','logisticsPage','sourcingPage','legalPage'];
+    if(!equal(Object.keys(member).sort(),Object.keys(wanted).sort())||Object.keys(member).some(key=>!pageKeys.includes(key)))if(!equal(member,wanted))add('member-shape',wanted,member,index);
+    for(const page of pageKeys.filter(key=>key!=='legalPage'))if(!equal(wanted[page],member[page]))add(page,wanted[page],member[page],index);
+    const wantedLegal=wanted.legalPage,actualLegal=member.legalPage;
+    if(equal(wantedLegal,actualLegal))continue;
+    if(!object(wantedLegal)||!object(actualLegal)){add('legalPage',wantedLegal,actualLegal,index);continue;}
+    const withoutCert=value=>Object.fromEntries(Object.entries(value).filter(([key])=>key!=='certificates'));
+    if(!equal(withoutCert(wantedLegal),withoutCert(actualLegal)))add('legalPage.other',withoutCert(wantedLegal),withoutCert(actualLegal),index);
+    const expectedRows=wantedLegal.certificates,actualRows=actualLegal.certificates;
+    if(equal(expectedRows,actualRows))continue;
+    if(!schemaBindingComplete||!Array.isArray(expectedRows)||!Array.isArray(actualRows)){add('legalPage.certificates',expectedRows,actualRows,index);continue;}
+    const consumed=new Set();let orderMismatch=false;
+    for(const binding of certificateBindings){
+     const hits=actualRows.map((row,rowIndex)=>({row,rowIndex})).filter(({row})=>object(row)&&row[binding.nameKey]===binding.name),expectedRow=expectedRows.find(row=>row[binding.nameKey]===binding.name);
+     if(hits.length!==1){add('legalPage.certificates.name',binding.name,hits.length?null:undefined,index,binding.schemaIndex);continue;}
+     const {row,rowIndex}=hits[0];consumed.add(rowIndex);if(rowIndex!==expectedRows.indexOf(expectedRow))orderMismatch=true;
+     if(Object.keys(row).length!==2||!Object.hasOwn(row,binding.valueKey))add('legalPage.certificates.row-shape',expectedRow,row,index,binding.schemaIndex);
+     if(!equal(expectedRow[binding.valueKey],row[binding.valueKey]))add('legalPage.certificates.value',expectedRow[binding.valueKey],row[binding.valueKey],index,binding.schemaIndex);
+    }
+    if(consumed.size!==actualRows.length)add('legalPage.certificates',expectedRows,actualRows,index);
+    if(orderMismatch)add('legalPage.certificates.order',expectedRows,actualRows,index);
+   }
+   const prepared=copy(normalized);prepared.docId=null;const normalizedBodySha256=await hash(prepared),bodyMatchesExpected=normalizedBodySha256===binding.preparedBodySha256;
+   if(!bodyMatchesExpected&&!differenceCount)add('member-shape',expected.jsonDocument,normalized.jsonDocument);
+   const labelReferences=name=>{let count=0;for(const member of expected.jsonDocument){const page=member.imagePage;if(page===undefined)continue;if(!object(page))return null;const group=page.images;if(group===undefined)continue;if(!object(group))return null;const rows=group.labelImages;if(rows===undefined||rows===null)continue;if(!Array.isArray(rows)||rows.length>200)return null;
+     for(const row of rows){if(!object(row)||!Object.hasOwn(row,'labelImageFiles'))return null;const value=row.labelImageFiles;if(value===null||value==='')continue;if(typeof value!=='string'||value.length>8192)return null;const parts=value.split(',');if(parts.length>200)return null;count+=parts.filter(part=>part===name).length;if(count>40000)return null;}}return count;};
+   const certificateRowsMatch=schemaBindingComplete&&normalized.jsonDocument.every(member=>{const rows=member.legalPage?.certificates;return certificateBindings.length===0&&(rows===undefined||Array.isArray(rows)&&rows.length===0)||Array.isArray(rows)&&rows.length===certificateBindings.length&&certificateBindings.every(binding=>{const hits=rows.filter(row=>object(row)&&row[binding.nameKey]===binding.name);return hits.length===1&&Object.keys(hits[0]).length===2&&Object.hasOwn(hits[0],binding.valueKey)&&equal(hits[0][binding.valueKey],binding.value);});});
+   const legalRows=Array.isArray(legal)?legal:[],legalEntries=[];
+   for(const [index,row]of legalRows.slice(0,12).entries()){
+    const name=object(row)?row.fileName:undefined,kind=object(row)&&row.fileType==='certificate'?'certificate':'other';let association='unknown',schemaIndex=null;
+    if(kind==='certificate'&&certificateRowsMatch&&typeof name==='string'&&name.length>0&&name.length<=512){
+     const hits=certificateBindings.filter(binding=>name.includes('cert'+binding.schemaIndex+'-'));
+     // Coverage proves schema indices, but a malformed/duplicate prefix is
+     // still unknown rather than proof that a file is unused.
+     const prefixes=[...name.matchAll(/cert(0|[1-9]\d*)-/g)].map(match=>Number(match[1]));
+     const unsupported=prefixes.some(value=>!Number.isSafeInteger(value)||value>=certificateBindings.length);
+     const collisions=hits.length===1?legalRows.filter(other=>object(other)&&other.fileType==='certificate'&&typeof other.fileName==='string'&&other.fileName.includes('cert'+hits[0].schemaIndex+'-')).length:0;
+     if(hits.length>1||collisions>1)association='ambiguous';else if(!unsupported){association=hits.length===1?'linked':'unlinked';schemaIndex=hits.length===1?hits[0].schemaIndex:null;}
+    }
+    legalEntries.push({index,kind,descriptorSha256:await hash(row),association,schemaIndex,pairedImageDescriptorMatch:object(row)&&typeof name==='string'&&typeof row.s3Link==='string'&&files.some(file=>file.imageName===name&&file.s3Link===row.s3Link),expectedLabelReferences:typeof name==='string'&&name.length>0&&name.length<=512?labelReferences(name):null});
+   }
+   const report={format:'yoofam-unexpected-legal-audit-v1',requestId:binding.requestId,docId,identityDigest:binding.identityDigest,packetDigest:binding.packetDigest,originalBodySha256:binding.originalBodySha256,preparedBodySha256:binding.preparedBodySha256,sourcePlanSha256:binding.nativeAssetSourcePlanSha256,checkpointSequence:audit.checkpointSequence,target,observedAt:Date.now(),imageCount:files.length,legalCount:legalRows.length,bodyMatchesExpected,schemaBindingComplete,rawBodySha256,normalizedBodySha256,fileSetSha256,byteSetSha256,legalSetSha256:await hash(legal),legalEntries,legalEntriesTruncated:legalRows.length>12,differences,differenceCount,differencesTruncated:differenceCount>24,readOnly:true,remoteWrites:false,checkpointWrites:false,canResume:false,canDelete:false,registered:false,historicalAckRecovered:false};
+   fence();return serialized?JSON.stringify(report):report;
+  }
   const observation={body,files,fileSetSha256,byteSetSha256,rawBodySha256,filesCount:files.length,duplicateMatches:0,documentState:'UNFINISHED',readOnly:true,remoteWrites:false,historicalAckRecovered:false,observedAt:Date.now()};
   if(existing){
    if(['fileSetSha256','byteSetSha256','filesCount'].some(key=>existing.currentReadRecovery[key]!==observation[key]))fail('record-observation');

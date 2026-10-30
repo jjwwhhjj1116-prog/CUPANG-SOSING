@@ -375,3 +375,19 @@ test('terminal transport metadata is copied away before strict local receipt sav
     const f=await fixture(),observation=f.observation();patch(observation);await assert.rejects(f.client.saveProductReceiptObservation({packet:f.packet,observation},new AbortController().signal,f.fetch));assert.equal(f.calls.filter(call=>call.method==='POST').length,0);assert.equal(f.sent.length,0);
   }
 });
+
+
+function legalAuditReply(f){return{format:'yoofam-unexpected-legal-audit-v1',requestId:f.packet.requestId,docId:2347603,identityDigest:f.context.identityDigest,packetDigest:f.context.packetDigest,originalBodySha256:f.context.originalBodySha256,preparedBodySha256:f.context.bodySha256,sourcePlanSha256:f.context.identity.fingerprint,checkpointSequence:24,target:{tabId:90,windowId:f.context.identity.windowId},observedAt:f.clock.now,imageCount:4,legalCount:1,bodyMatchesExpected:true,schemaBindingComplete:false,rawBodySha256:'1'.repeat(64),normalizedBodySha256:f.context.bodySha256,fileSetSha256:'2'.repeat(64),byteSetSha256:'3'.repeat(64),legalSetSha256:'4'.repeat(64),legalEntries:[{index:0,kind:'certificate',descriptorSha256:'5'.repeat(64),association:'unknown',schemaIndex:null,pairedImageDescriptorMatch:false,expectedLabelReferences:0}],legalEntriesTruncated:false,differences:[],differenceCount:0,differencesTruncated:false,readOnly:true,remoteWrites:false,checkpointWrites:false,canResume:false,canDelete:false,registered:false,historicalAckRecovered:false};}
+test('audit client requires its explicit capability and returns a frozen correlated read-only report without adopting draft state',async()=>{
+ const f=await fixture(),old=await f.session();await assert.rejects(f.client.auditUnexpectedLegal(old,new AbortController().signal),error=>error.code==='UNEXPECTED_LEGAL_AUDIT_UNAVAILABLE'&&!error.uncertain);assert.equal(f.sent.length,1);
+ f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,unexpectedLegalAuditAvailable:true});const session=await f.session(),before=plain(session);f.bridge=async payload=>{assert.equal(payload.action,'auditUnexpectedLegal');return legalAuditReply(f);};
+ const report=await f.client.auditUnexpectedLegal(session,new AbortController().signal);assert.equal(report.docId,2347603);assert.equal(report.canResume,false);assert.equal(report.canDelete,false);assert.ok(Object.isFrozen(report));assert.ok(Object.isFrozen(report.legalEntries));assert.deepEqual(plain(session),before);assert.equal(f.calls.length,0);assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);assert.deepEqual(f.sent.map(row=>row.payload.action),['preview','preview','auditUnexpectedLegal']);
+});
+test('audit client rejects cross-source or mutation-capable reports while retaining exact bounded bridge failure phase',async()=>{
+ const f=await fixture();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,unexpectedLegalAuditAvailable:true});const session=await f.session();
+ for(const change of [report=>report.requestId='other-request',report=>report.packetDigest='9'.repeat(64),report=>report.canDelete=true,report=>report.checkpointWrites=true,report=>report.legalEntries[0].fileName='PRIVATE',report=>report.bodyMatchesExpected=false]){
+  f.bridge=async()=>{const report=legalAuditReply(f);change(report);return report;};await assert.rejects(f.client.auditUnexpectedLegal(session,new AbortController().signal),error=>error.code==='UNEXPECTED_LEGAL_AUDIT_REPLY'&&!error.uncertain);
+ }
+ f.bridge=async()=>{throw Object.assign(Error('읽기 전용 감사를 중단했습니다. 단계: image-bytes / byte-sha.'),{code:'UNEXPECTED_LEGAL_AUDIT_READ'});};await assert.rejects(f.client.auditUnexpectedLegal(session,new AbortController().signal),error=>error.code==='UNEXPECTED_LEGAL_AUDIT_READ'&&error.message.includes('image-bytes / byte-sha')&&!error.uncertain);
+ assert.equal(f.calls.length,0);assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);
+});

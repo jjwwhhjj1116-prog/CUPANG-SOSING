@@ -243,3 +243,22 @@ test('prepared qualification receives only exact previously confirmed checkpoint
   const before=f.saved(),reply=await f.receiver().confirmPreparedDraft(f.packet,f.sender,{}),qualifications=f.calls.filter(call=>call.name==='qualifyPreparedDraft');
   assert.equal(reply.error.code,'HUMAN_CONFIRMATION');assert.equal(qualifications.length,1);assert.deepEqual(qualifications[0].input.stageConsents,[previous]);assert.deepEqual(f.saved(),before);assert.equal(f.calls.some(call=>call.name==='confirmAgreements'),false);f.assertReadOnly();
 });
+
+
+function auditReport(f,input){return{format:'yoofam-unexpected-legal-audit-v1',requestId:f.packet.requestId,docId:f.original.docId,identityDigest:f.context.identityDigest,packetDigest:f.context.packetDigest,originalBodySha256:f.context.originalBodySha256,preparedBodySha256:f.context.bodySha256,sourcePlanSha256:f.context.identity.fingerprint,checkpointSequence:input.checkpointSequence,target:{tabId:input.tab.tabId,windowId:input.tab.windowId},observedAt:f.now,imageCount:5,legalCount:1,bodyMatchesExpected:true,schemaBindingComplete:false,rawBodySha256:'1'.repeat(64),normalizedBodySha256:f.context.bodySha256,fileSetSha256:'2'.repeat(64),byteSetSha256:'3'.repeat(64),legalSetSha256:'4'.repeat(64),legalEntries:[{index:0,kind:'certificate',descriptorSha256:'5'.repeat(64),association:'unknown',schemaIndex:null,pairedImageDescriptorMatch:false,expectedLabelReferences:0}],legalEntriesTruncated:false,differences:[],differenceCount:0,differencesTruncated:false,readOnly:true,remoteWrites:false,checkpointWrites:false,canResume:false,canDelete:false,registered:false,historicalAckRecovered:false};}
+async function auditFixture(){const f=await fixture({proof:()=>null});assert.equal((await f.receiver().recoverSavedDraftTarget(f.packet,f.sender)).error.code,'SAVED_DRAFT_TARGET_UNCONFIRMED');f.calls=[];f.adapter.auditUnexpectedLegal=async input=>{f.calls.push({name:'audit',input:copy(input)});return auditReport(f,input);};return f;}
+test('independent audit requires the exact reserved read target and leaves every durable operation unchanged',async()=>{
+ const f=await auditFixture(),before=f.saved(),result=await f.receiver().auditUnexpectedLegal(f.packet,f.sender);
+ assert.equal(result.format,'yoofam-unexpected-legal-audit-v1');assert.equal(result.checkpointSequence,before.sequence);assert.equal(result.target.tabId,before.savedDraftTargetRecovery.target.tabId);assert.deepEqual(f.saved(),before);assert.equal(f.created,1);assert.equal(f.calls.some(call=>['cas','createTarget','readTab','qualifySavedDraftTarget','hubRequest'].includes(call.name)),false);
+ assert.deepEqual(f.calls.filter(call=>call.name==='readSource').length,2);assert.deepEqual(f.calls.filter(call=>call.name==='presence').map(call=>call.input.tab.tabId),[71,90]);assert.equal(f.calls.find(call=>call.name==='audit').input.sessionId,'fresh-session');f.assertReadOnly();
+});
+test('audit rejects scope/report/source drift without claiming a write or consuming a checkpoint',async()=>{
+ for(const scenario of ['no-recovery','closed-reserved','original-open','wrong-document','mutation-flag','source-change','checkpoint-change']){
+  const f=await auditFixture(),before=f.saved();
+  if(scenario==='no-recovery')f.force(f.original);
+  if(scenario==='closed-reserved')f.newClosed=true;
+  if(scenario==='original-open')f.oldClosed=false;
+  const base=f.adapter.auditUnexpectedLegal;f.adapter.auditUnexpectedLegal=async input=>{const report=await base(input);if(scenario==='wrong-document')report.docId=2347604;if(scenario==='mutation-flag')report.remoteWrites=true;if(scenario==='source-change')f.currentSession='changed-session';if(scenario==='checkpoint-change')f.force({...before,sequence:before.sequence+1});return report;};
+  const initial=f.saved();await assert.rejects(f.receiver().auditUnexpectedLegal(f.packet,f.sender),error=>typeof error.code==='string',scenario);assert.equal(f.calls.some(call=>['cas','createTarget','hubRequest','readTab'].includes(call.name)),false);assert.equal(f.created,1);if(scenario!=='checkpoint-change')assert.deepEqual(f.saved(),initial);f.assertReadOnly();
+ }
+});

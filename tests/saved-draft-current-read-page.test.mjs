@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {validateUnexpectedLegalAuditReport} from '../extensions/supplier-hub/unexpected-legal-audit.mjs';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {createHash,webcrypto} from 'node:crypto';
@@ -311,4 +312,51 @@ test('per-request timeout produces only fixed diagnostics and never binds after 
  // WebCrypto may wait for a busy worker pool. Advance the synthetic timer only
  // after the actual fetch starts, rather than counting arbitrary event turns.
  await Promise.race([started,pending.then(()=>{throw Error('Expected one pending read');})]);assert.equal(f.calls.length,1);assert.equal(f.timers.size,1);const timer=[...f.timers.values()][0];assert.equal(timer.ms,30000);timer.fn();const failed=await pending;expectFailure(failed);assert.equal(failed.currentReadFailure.code,'http-timeout');assert.equal(f.writes(),0);assert.equal(f.timers.size,0);
+});
+
+
+const auditInput=(f,bindings=null)=>({...copy(f.input),mode:'audit',audit:{checkpointSequence:24,schemaBindingComplete:bindings!==null,certificateBindings:bindings??[]}});
+function certificateFixture(){
+ const f=fixture(),bindings=[0,1,2].map(schemaIndex=>({schemaIndex,nameKey:'certificateTitle',valueKey:'certificateNumber',name:'PRIVATE_SCHEMA_TITLE_'+schemaIndex,value:'해당사항없음'}));
+ for(const member of f.input.expectedBody.jsonDocument)member.legalPage.certificates=bindings.map(row=>({[row.nameKey]:row.name,[row.valueKey]:row.value}));
+ for(const member of f.state.body.jsonDocument)member.legalPage.certificates=copy(f.input.expectedBody.jsonDocument[0].legalPage.certificates);
+ resealExpected(f);return{f,bindings};
+}
+test('independent audit reads full legal list and every original image byte without binding, acceptance or legal reclassification',async()=>{
+ const f=fixture(),name=f.state.files[0].imageName;f.state.legal=[{fileType:'certificate',fileName:name,s3Link:'PRIVATE_WRONG_S3'}];
+ const before=f.snapshot(),report=await f.run(auditInput(f));validateUnexpectedLegalAuditReport(report,{binding:{...f.input.binding,sourcePlanSha256:f.input.binding.nativeAssetSourcePlanSha256,docId:f.input.docId,checkpointSequence:24},target:f.input.expectedTarget},f.clock.now);
+ assert.equal(report.bodyMatchesExpected,true);assert.equal(report.legalCount,1);assert.equal(report.imageCount,9);assert.equal(report.schemaBindingComplete,false);assert.equal(report.legalEntries[0].association,'unknown');assert.equal(report.legalEntries[0].pairedImageDescriptorMatch,false);assert.equal(report.differenceCount,0);
+ for(const key of ['canResume','canDelete','registered','remoteWrites','checkpointWrites','historicalAckRecovered'])assert.equal(report[key],false,key);
+ assert.equal(report.readOnly,true);assert.equal(f.writes(),0);assert.equal(f.snapshot(),before);assert.equal(f.calls.length,14);assert.doesNotMatch(JSON.stringify(report),/PRIVATE_WRONG|stored-image|stored\/native|certificateTitle/);
+ const normal=await f.run();assert.equal(normal.currentReadFailure.code,'legal-array-nonempty');assert.equal(f.writes(),0);
+});
+test('schema-bound audit distinguishes canonical NA from empty and missing without revealing certificate names or values',async()=>{
+ const {f,bindings}=certificateFixture();f.state.body.jsonDocument[0].legalPage.certificates[0].certificateNumber='';delete f.state.body.jsonDocument[1].legalPage.certificates[1].certificateNumber;
+ f.state.body.jsonDocument[2].legalPage.certificates[2].certificateNumber='PRIVATE_UNEXPECTED_NUMBER';f.state.legal=[{fileType:'certificate',fileName:'PRIVATE_NO_PREFIX',s3Link:'PRIVATE_S3'}];
+ const report=await f.run(auditInput(f,bindings));validateUnexpectedLegalAuditReport(report,{},f.clock.now);assert.equal(report.schemaBindingComplete,true);assert.equal(report.bodyMatchesExpected,false);assert.notEqual(report.normalizedBodySha256,report.preparedBodySha256);
+ assert.deepEqual(report.differences.filter(row=>row.path==='legalPage.certificates.value').map(row=>[row.documentIndex,row.schemaIndex,row.expectedValueKind,row.actualValueKind]),[[0,0,'na','empty'],[1,1,'na','missing'],[2,2,'na','present']]);
+ assert.equal(report.legalEntries[0].association,'unknown','nonmatching actual rows do not prove unused');assert.doesNotMatch(JSON.stringify(report),/PRIVATE_|certificateTitle|certificateNumber|해당사항없음/);assert.equal(f.writes(),0);
+});
+test('schema names bind native prefix indices independently of raw body row ordering and reject ambiguous prefixes',async()=>{
+ const {f,bindings}=certificateFixture();for(const member of f.state.body.jsonDocument)member.legalPage.certificates.reverse();
+ f.state.legal=[{fileType:'certificate',fileName:'prefix-cert2-private.pdf',s3Link:'private-0'},{fileType:'certificate',fileName:'cert0-private-cert1-private.pdf',s3Link:'private-1'},{fileType:'certificate',fileName:'no-schema-prefix',s3Link:'private-2'},{fileType:'certificate',fileName:'cert01-private.pdf',s3Link:'private-3'},{fileType:'certificate',fileName:'cert399-private.pdf',s3Link:'private-4'}];
+ const report=await f.run(auditInput(f,bindings));validateUnexpectedLegalAuditReport(report,{},f.clock.now);assert.equal(report.bodyMatchesExpected,false);assert.deepEqual(report.legalEntries.map(row=>[row.association,row.schemaIndex]),[['linked',2],['ambiguous',null],['unlinked',null],['unlinked',null],['unknown',null]]);
+ assert.equal(report.differences.filter(row=>row.path==='legalPage.certificates.order').length,3);assert.equal(report.canDelete,false);assert.equal(f.writes(),0);
+});
+test('audit bounds the public digest and difference samples while preserving complete legal count and exact pair matching',async()=>{
+ const {f,bindings}=certificateFixture(),secret='PRIVATE_DO_NOT_EXPOSE';f.state.legal=Array.from({length:30},(_,index)=>({fileType:index===0?'certificate':secret,fileName:index===0?f.state.files[0].imageName:secret,s3Link:index===0?f.state.files[0].s3Link:secret,[secret]:{token:secret}}));
+ for(const member of f.state.body.jsonDocument)member.legalPage.certificates.forEach(row=>row.certificateNumber=secret);
+ const report=await f.run(auditInput(f,bindings));validateUnexpectedLegalAuditReport(report,{},f.clock.now);assert.equal(report.legalCount,30);assert.equal(report.legalEntries.length,12);assert.equal(report.legalEntriesTruncated,true);assert.equal(report.legalEntries[0].pairedImageDescriptorMatch,true);assert.equal(report.differenceCount,9);assert.ok(JSON.stringify(report).length<16000);assert.doesNotMatch(JSON.stringify(report),/PRIVATE_DO_NOT|stored-image|token|certificateNumber/);assert.equal(f.writes(),0);
+ const changed=copy(report);changed.legalEntries[0].fileName=secret;assert.throws(()=>validateUnexpectedLegalAuditReport(changed,{},f.clock.now));
+ for(const key of ['remoteWrites','checkpointWrites','canResume','canDelete','registered']){const changed=copy(report);changed[key]=true;assert.throws(()=>validateUnexpectedLegalAuditReport(changed,{},f.clock.now));}
+});
+test('audit preserves image-byte, duplicate and source fences and rejects forged or sparse schema bindings',async()=>{
+ for(const scenario of ['byte','duplicate','source','schema']){
+  const {f,bindings}=certificateFixture();f.state.legal=[{fileType:'certificate',fileName:'PRIVATE',s3Link:'PRIVATE'}];const input=auditInput(f,bindings);
+  if(scenario==='byte')f.binaries.set(f.input.expectedImages[0].transportName,new Uint8Array([1]));
+  if(scenario==='duplicate')f.state.drafts.push({...copy(f.state.drafts[0]),docId:2347604});
+  if(scenario==='source')f.beforeFetch=async path=>{if(path==='/sr/draft/api/get-by-id/2347603')f.state.company='Company Code: A01464742';};
+  if(scenario==='schema')input.audit.certificateBindings[1].schemaIndex=2;
+  const result=await f.run(input);expectFailure(result);assert.equal(f.writes(),0);assert.ok(f.calls.every(call=>call.method==='GET'||call.path==='/sr/draft/api/get-files-by-type/2347603'));
+ }
 });

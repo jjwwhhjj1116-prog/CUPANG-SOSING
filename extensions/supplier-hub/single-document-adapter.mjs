@@ -18,6 +18,7 @@ import {NativeLegalBytesError} from './native-legal-bytes.mjs';
 import {singleExistingDocumentRepairPage,existingRepairPageFailure} from './single-existing-document-repair.mjs';
 import {singleRecordMirrorPage} from './single-record-mirror-page.mjs';
 import {savedDraftCurrentReadPage} from './saved-draft-current-read-page.mjs';
+import {unexpectedLegalAuditSchemaPage,validateUnexpectedLegalAuditReport} from './unexpected-legal-audit.mjs';
 
 const HASH=/^[a-f0-9]{64}$/;
 const ID=/^\w[\w-]{0,99}$/;
@@ -519,7 +520,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
       requireWatch(entry);const [guard]=await api.scripting.executeScript({target,func:singleDocumentWatchPage,args:[{...entry.page,action:'check'}]});
       if(guard?.documentId!==documentId||guard?.result?.current!==true)fail('TAB_CHANGED','현재 새 문서의 입력 관찰을 확인하지 못했습니다.');
     }
-    if(nativeSha){
+    if(nativeSha&&!(func===savedDraftCurrentReadPage&&args[0]?.mode==='audit')){
       const knownDocId=func===singleDocumentOwnedRecordPage?args[1]??null:null;
       const [mirror]=await api.scripting.executeScript({target,func:singleRecordMirrorPage,args:[JSON.stringify({binding,target:tab,knownDocId})]});
       const value=mirror?.result,writing=func===nativeAssetUploadPage||func===singleDocumentRetryCreatePage||func===singleDocumentSubmitPage||func===singleDocumentNavigatePage
@@ -781,6 +782,33 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     validateNativeAssetUploadDescriptors(value.files,{kind:'image',expectedFiles:sourcePlan.images});
     return value;
   }
+  async function auditUnexpectedLegal(input){
+    if(!nativeSha||!wholeProduct||input.docId===null||input.docId===undefined||input.requestId!==input.tab?.requestId||!Number.isSafeInteger(input.checkpointSequence)||input.checkpointSequence<1)
+      fail('UNEXPECTED_LEGAL_AUDIT_SCOPE','원래 저장 요청의 예약된 읽기 탭에서만 인증서 감사를 수행할 수 있습니다.');
+    const binding=await bindingFor(input.identity,input.sessionId),sourcePlan=copy(sourceBindings.get(canonical(input.identity))?.nativeSourcePlan);
+    assertSingleOwnedTarget(input.tab,binding);assertSingleOwnedTarget(input.previousTarget,binding);
+    if(input.tab.tabId===input.previousTarget.tabId||!sourcePlan||sourcePlan.sourcePlanSha256!==nativeSha||sourcePlan.nativeLegalAttachmentPlan?.files?.length
+      ||!Array.isArray(sourcePlan.images)||sourcePlan.images.length<1||sourcePlan.images.length>150||!Array.isArray(input.baselineDocIds)||input.baselineDocIds.some(id=>String(id)===String(input.docId)))
+      fail('UNEXPECTED_LEGAL_AUDIT_SCOPE','원래 전체 옵션·파일 계획·문서·읽기 전용 탭을 확인하지 못했습니다.');
+    const expectedBody=input.expectedBody??savedReadBody(sourcePlan,input.docId),prepared=copy(expectedBody);prepared.docId=null;
+    if(!equal(expectedBody.docId,input.docId)||await digest(prepared)!==binding.preparedBodySha256)fail('SOURCE_CHANGED','원래 검토한 견적 본문과 읽기 요청이 다릅니다.');
+    await appCurrent(input.identity);
+    const [schemaExecution]=await api.scripting.executeScript({target:{tabId:sourceAppTabId??input.identity.appTabId,frameIds:[0]},func:unexpectedLegalAuditSchemaPage,args:[{identity:copy(input.identity),expectedBody:copy(expectedBody)}]});
+    await appCurrent(input.identity);
+    const schema=schemaExecution?.result;
+    if(schemaExecution?.frameId!==undefined&&schemaExecution.frameId!==0||!schema||Object.keys(schema).sort().join(',')!=='bindings,complete'||typeof schema.complete!=='boolean'||!Array.isArray(schema.bindings)||schema.bindings.length>400||!schema.complete&&schema.bindings.length)
+      fail('UNEXPECTED_LEGAL_AUDIT_SCHEMA','원래 앱의 인증서 스키마 읽기 결과를 확인하지 못했습니다.');
+    const expectedImages=sourcePlan.images.map(file=>Object.fromEntries(['transportName','contentType','byteLength','sha256'].map(key=>[key,file[key]])));
+    let value=await execute(input.tab,input.identity,savedDraftCurrentReadPage,[{binding,expectedTarget:{tabId:input.tab.tabId,windowId:input.tab.windowId},docId:input.docId,baselineDocIds:copy(input.baselineDocIds),expectedImages,expectedBody,
+      previousTarget:Object.fromEntries(['tabId','windowId','origin','requestId','packetDigest'].map(key=>[key,input.previousTarget[key]])),mode:'audit',audit:{checkpointSequence:input.checkpointSequence,schemaBindingComplete:schema.complete,certificateBindings:copy(schema.bindings)}}]);
+    if(typeof value==='string'){if(value.length>100000)fail('UNEXPECTED_LEGAL_AUDIT_REPLY','읽기 전용 감사 결과의 크기를 확인하지 못했습니다.');try{value=JSON.parse(value);}catch{fail('UNEXPECTED_LEGAL_AUDIT_REPLY','읽기 전용 감사 결과의 형식을 확인하지 못했습니다.');}}
+    if(value?.currentReadFailure){const phase=value.currentReadFailure.phase,code=value.currentReadFailure.code;
+      fail('UNEXPECTED_LEGAL_AUDIT_READ','읽기 전용 감사를 중단했습니다. 단계: '+(/^[a-z0-9-]{1,40}$/.test(phase)?phase:'read')+' / '+(/^[a-z0-9-]{1,40}$/.test(code)?code:'comparison')+'. 문서·파일·본문을 변경하지 않았습니다.');}
+    const result=validateUnexpectedLegalAuditReport(value,{binding:{...binding,docId:input.docId,sourcePlanSha256:nativeSha,checkpointSequence:input.checkpointSequence},target:{tabId:input.tab.tabId,windowId:input.tab.windowId}},now());
+    const after=await bindingFor(input.identity,input.sessionId);
+    if(!equal(binding,after)||!equal(sourcePlan,sourceBindings.get(canonical(input.identity))?.nativeSourcePlan))fail('SOURCE_CHANGED','읽기 전용 감사 중 원래 회원·견적 연결이 변경되었습니다.');
+    return result;
+  }
   async function qualifySavedDraftTarget(input,readLease){
     const suppliedProof=readLease?.sourceProof;
     const snapshot=suppliedProof&&typeof suppliedProof==='object'?savedTargetReadReceipts.get(suppliedProof):undefined;
@@ -874,7 +902,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     return copy(proof);
   }
   return Object.freeze({readSource,
-    qualifyPreparedDraft,...(nativeSha?{qualifySavedDraftTarget,continueReservedAssets,readNativeSourceSnapshot,inspectCreateRetry,inspectUnsentUpdate,inspectExistingDocument,inspectExistingRepairContinuation,bindExistingDocumentRepair:input=>inspectExistingDocument(input,'bind')}:{}),
+    qualifyPreparedDraft,...(nativeSha?{auditUnexpectedLegal,qualifySavedDraftTarget,continueReservedAssets,readNativeSourceSnapshot,inspectCreateRetry,inspectUnsentUpdate,inspectExistingDocument,inspectExistingRepairContinuation,bindExistingDocumentRepair:input=>inspectExistingDocument(input,'bind')}:{}),
     ...(nativeSha?{readOwnedTargetPresence:async input=>{
       const binding=sourceBindings.get(canonical(input.identity))?.binding;
       if(!binding||binding.requestId!==input.requestId||binding.packetDigest!==input.packetDigest||typeof api.tabs.query!=='function')fail('TAB_CHANGED','원래 검증 탭의 존재 여부를 확인하지 못했습니다.');

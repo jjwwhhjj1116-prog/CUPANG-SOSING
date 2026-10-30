@@ -20,6 +20,14 @@ async function fixture(options={}){
  for(const [key,row]of f.state.registry){const s3Link=row.s3Link;f.state.registry.set(key,{...row,imageUrl:'/sr/api/image/get-by-key?key='+encodeURIComponent(s3Link),host:'supplier.coupang.com'});}
  const requests=[],baseExecute=f.api.scripting.executeScript;
  f.api.scripting.executeScript=async request=>{
+  if(request.func.name==='unexpectedLegalAuditSchemaPage'){
+   const identity=request.args[0].identity,appOrigin=identity.origin,scope=vm.createContext({location:new URL(appOrigin),AbortController,TextEncoder,URL,Date,setTimeout,clearTimeout,
+    fetch:async(url,init)=>{assert.equal(init.method,'GET');requests.push({url,method:init.method});const path=new URL(url).pathname;
+     if(path==='/api/supplier-hub/catalog-context')return response(url,{ownerId:identity.ownerId,company:copy(f.state.company)});
+     assert.equal(path,'/api/products/'+identity.productId+'/legal-documents');return response(url,{revision:identity.source.contentRevision,documents:{applicability:'not-applicable',files:[]},native:{schemaSha256:identity.schemaSha256,categoryId:identity.categoryId,company:copy(identity.company),targets:[],issues:[],files:[]}});
+    }});
+   scope.args=copy(request.args);return[{frameId:0,documentId:'fixture-app-current',result:copy(await vm.runInContext('('+request.func.toString()+')(...args)',scope))}];
+  }
   if(request.func.name!=='savedDraftCurrentReadPage')return baseExecute(request);
   if(Object.hasOwn(options,'currentReadReply')){const frame=(await baseExecute({target:{tabId:request.target.tabId,frameIds:[0]},func:()=>true,args:[]}))[0];return[{frameId:0,documentId:frame.documentId,result:copy(options.currentReadReply)}];}
   const scope=vm.createContext({document:f.hubDocument,location:f.hubLocation,crypto:webcrypto,AbortController,TextEncoder,TextDecoder,Uint8Array,URL,Response,Date,setTimeout,clearTimeout,structuredClone,
@@ -224,5 +232,21 @@ for(const code of ['http-redirect','http-401','http-403','http-type-other'])test
   assert.equal(q.f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords,undefined);
   assert.deepEqual(q.f.state.uploads,before.uploads);assert.deepEqual([...q.f.documents],before.body);
   assert.equal(q.f.calls.filter(call=>call.name==='hub-fetch'&&call.init.method==='POST').length,before.writes);
+ }finally{q.close();}
+});
+
+
+test('real native reserved-target audit keeps the original checkpoint, DOM, files and body byte-for-byte while still verifying bytes and duplicate lists',async()=>{
+ const options={receiver:true,legalResponse:[{fileType:'certificate',fileName:'PRIVATE_UNEXPECTED_FILE.pdf',s3Link:'PRIVATE_UNEXPECTED_S3'}]},q=await fixture(options);
+ try{
+  assert.equal((await q.receiver.recoverSavedDraftTarget(q.f.packet,q.f.sender)).error.code,'SAVED_DRAFT_TARGET_UNCONFIRMED');
+  const before=JSON.stringify({checkpoint:await q.f.storage.store.get(q.f.context.key),dataset:q.f.hubDocument.documentElement.dataset,uploads:q.f.state.uploads,body:[...q.f.documents]}),created=q.f.calls.filter(call=>call.name==='tabs-create').length,start=q.requests.length;
+  const result=await q.receiver.auditUnexpectedLegal(q.f.packet,q.f.sender);
+  assert.equal(result.error,undefined,JSON.stringify(result));assert.equal(result.format,'yoofam-unexpected-legal-audit-v1');assert.equal(result.docId,q.f.createdDocId);assert.equal(result.legalCount,1);assert.equal(result.imageCount,4);assert.equal(result.bodyMatchesExpected,true);assert.equal(result.canResume,false);assert.equal(result.canDelete,false);assert.equal(result.remoteWrites,false);assert.equal(result.checkpointWrites,false);assert.equal(result.legalEntries[0].association,'unknown');
+  assert.equal(JSON.stringify({checkpoint:await q.f.storage.store.get(q.f.context.key),dataset:q.f.hubDocument.documentElement.dataset,uploads:q.f.state.uploads,body:[...q.f.documents]}),before);
+  assert.equal(q.f.calls.filter(call=>call.name==='tabs-create').length,created);assert.equal(q.f.submitted,0);assert.doesNotMatch(JSON.stringify(result),/PRIVATE_|s3Link|fileName/);
+  const current=q.requests.slice(start);assert.equal(current.filter(call=>new URL(call.url).pathname==='/sr/api/image/get-by-key').length,4);assert.equal(current.filter(call=>new URL(call.url).pathname==='/api/products/'+q.f.context.identity.productId+'/legal-documents').length,1);assert.equal(current.filter(call=>new URL(call.url).pathname.includes('/get-files-by-type/')).length,1);
+  assert.ok(current.every(call=>call.method==='GET'||new URL(call.url).pathname.includes('/get-files-by-type/')&&call.body==='{}'));
+  assert.equal((await q.receiver.recoverSavedDraftTarget(q.f.packet,q.f.sender)).error.code,'SAVED_DRAFT_TARGET_UNCONFIRMED','normal qualification is not weakened by the audit');
  }finally{q.close();}
 });
