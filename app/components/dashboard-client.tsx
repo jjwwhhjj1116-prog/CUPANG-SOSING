@@ -63,6 +63,7 @@ import { SizeChartWorkspace } from '@/app/components/size-chart-workspace';
 import type { ProductContent } from '@/app/product-content';
 import type { RegistrationContentSummary } from '@/app/registration-content-summary';
 import { BatchWorkPanel,type SelectedBatchRequest } from '@/app/components/batch-work-panel';
+import {batchBoardSource,projectBatchBoardFeedback,updateBatchBoardFeedback,type BatchBoardActivity,type BatchBoardFeedback} from '@/app/batch-board-feedback';
 import type {AutomationStageId} from '@/app/automation/model';
 import type { CategoryProfile, CategoryProfileInput } from '@/app/category-profiles';
 import { WorkspaceSettingsDialog } from '@/app/components/workspace-settings-dialog';
@@ -99,6 +100,7 @@ type IntegrationStatus = {
   checkedAt: string; database: string; files: string; authentication: string;
   databaseSchema?: {status: string; missingTables: string[]};
   translation: { configured: boolean; model: string|null; issues: string[] };
+  imageTextVision?: { configured: boolean; model: string; paidAllowed: boolean; executionVerified: false };
   imageProcessing: { configured: boolean; model: string|null; issues: string[] };
 };
 
@@ -320,6 +322,17 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   const setBatchOpen=(open:boolean)=>updateBatch({open}),setBatchRun=(run:BatchRun|null)=>updateBatch({run});
   const changeBatchBusy=(value:boolean)=>{if(batchScopeRef.current!==batchScope)return;batchBusyRef.current=value;updateBatch({busy:value});};
   useLayoutEffect(()=>{batchScopeRef.current=batchScope;batchRunRef.current=null;batchBusyRef.current=false;return()=>{if(batchScopeRef.current!==batchScope)return;batchScopeRef.current=null;batchRunRef.current=null;batchBusyRef.current=false;batchNavigation.current?.abort();batchNavigation.current=null;};},[batchScope]);
+  const [boardSettingsEpoch,setBoardSettingsEpoch]=useState(0);
+  const boardSettingsScope=JSON.stringify(settings),boardCompanyScope=JSON.stringify(querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null),boardSelectionScope=JSON.stringify([[...selected].sort(),selectedSources]);
+  const batchBoardScope=useMemo(()=>({ownerId:workspaceOwnerId,ownerScope:batchScope,settings:boardSettingsScope,settingsEpoch:boardSettingsEpoch,company:boardCompanyScope,selection:boardSelectionScope}),[workspaceOwnerId,batchScope,boardSettingsScope,boardSettingsEpoch,boardCompanyScope,boardSelectionScope]);
+  const [batchBoardFeedback,setBatchBoardFeedback]=useState<BatchBoardFeedback|null>(null),batchBoardLive=useRef<object|null>(batchBoardScope);
+  useLayoutEffect(()=>{batchBoardLive.current=batchBoardScope;return()=>{if(batchBoardLive.current===batchBoardScope)batchBoardLive.current=null;};},[batchBoardScope]);
+  function recordBatchBoardActivity(run:BatchRun,event:BatchBoardActivity){
+    const operation=settingsOperationRef.current;
+    if(batchScopeRef.current!==batchScope||batchBoardLive.current!==batchBoardScope||batchRunRef.current!==run||run.request.ownerId!==workspaceOwnerId
+      ||!operation.mounted||operation.ownerId!==workspaceOwnerId||operation.saving||event.kind!=='finish'&&!batchBusyRef.current)return;
+    setBatchBoardFeedback(previous=>updateBatchBoardFeedback(previous,batchBoardScope,run.request,run.products.map(product=>product.id),event));
+  }
   const [seoConfigurationReload,setSeoConfigurationReload]=useState(0);
   const seoConfigurationScope=useMemo(()=>({ownerId:workspaceOwnerId,company:querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null,settings,reload:seoConfigurationReload}),[workspaceOwnerId,sourceReviewScope,querySourceCompany,settings,seoConfigurationReload]);
   const [seoConfigurationState,setSeoConfigurationState]=useState<{scope:typeof seoConfigurationScope;configuration:SeoGenerationConfiguration|null;settingsEpoch:number;error:string}|null>(null);
@@ -651,7 +664,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     if(operation.saving)throw Error('기본설정을 저장 중입니다. 저장 결과를 먼저 확인해주세요.');
     if(workspaceOwnerId&&scope?.ownerId!==workspaceOwnerId)throw Error('기본설정을 불러온 계정을 확인하지 못했습니다. 페이지를 새로고침해주세요.');
     setSeoConfigurationState(null);
-    const settingsEpoch=++operation.epoch;operation.saving=true;
+    const settingsEpoch=++operation.epoch;operation.saving=true;setBoardSettingsEpoch(value=>value+1);
     try{
       const result = await readJson<{settings:Settings;scope?:unknown}>('/api/settings', {method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({...value,...(scope?{expectedOwnerId:scope.ownerId}:{})})});
       if(!operation.mounted||operation.ownerId!==workspaceOwnerId||operation.epoch!==settingsEpoch)throw Error('저장 중 로그인 계정이 변경되었습니다. 기본설정을 다시 열어주세요.');
@@ -667,7 +680,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     const operation=settingsOperationRef.current;
     if(!operation.mounted||operation.ownerId!==workspaceOwnerId)throw Error('로그인 계정이 변경되었습니다. 상품 대기열을 다시 열어주세요.');
     if(operation.saving)throw Error('기본설정을 저장 중입니다. 저장 결과를 먼저 확인해주세요.');
-    setSeoConfigurationState(null);
+    setSeoConfigurationState(null);setBoardSettingsEpoch(value=>value+1);
     return ++operation.epoch;
   }
   function applyReloadedSettings(value:Settings,scope?:WorkspaceSettingsScope,epoch?:number) {
@@ -878,7 +891,7 @@ useEffect(()=>{
 
         {view==='archive'?<><ProductManagementWorkspace/><details className="collection-panel"><summary>YOOFAM 스튜디오 작업 상품 보관함</summary><ProductArchive onOpenProduct={openArchivedProduct} refreshToken={`${collectionJobs[0]?.updated_at}:${products[0]?.updated_at}`}/></details></>:<>
         {(sourceNotice||sourceRegistrations.error)&&<p role="status" className="panel-note">{sourceNotice||sourceRegistrations.error}</p>}
-        <RegistrationBoard products={products} sources={sourceRegistrations.items} sourceOwnerId={workspaceOwnerId} sourceCompany={querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null} sourceArchiveDisabled={sourceArchiveDisabled} onPrepareSource={item=>prepareSource(item)} onSourceSelectionChange={sourceSelectionChanged} onReviewSource={item=>reviewSource(item)} onArchiveSource={archiveSource} selected={selected} onSelected={setSelected} onOpen={openProduct} onOptions={openOptionBoard} onDelete={removeWorkspaceProduct} loading={loading} error={loadError} onArchive={()=>changeView('archive')}/>
+        <RegistrationBoard products={projectBatchBoardFeedback(products,workspaceOwnerId,batchBoardScope,batchBoardFeedback)} sources={sourceRegistrations.items} sourceOwnerId={workspaceOwnerId} sourceCompany={querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null} sourceArchiveDisabled={sourceArchiveDisabled} onPrepareSource={item=>prepareSource(item)} onSourceSelectionChange={sourceSelectionChanged} onReviewSource={item=>reviewSource(item)} onArchiveSource={archiveSource} selected={selected} onSelected={setSelected} onOpen={openProduct} onOptions={openOptionBoard} onDelete={removeWorkspaceProduct} loading={loading} error={loadError} onArchive={()=>changeView('archive')}/>
         <button type="button" className="btn ghost" onClick={()=>setRemovedOpen(true)}>삭제된 상품</button>
         <div id="captured-source-inbox"><SourceInboxPanel key={workspaceOwnerId??'anonymous'} ownerId={workspaceOwnerId} existingProducts={products} disabled={busy||batchBusy||addOpen||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving} onChanged={sourceRegistrations.reload} onAdd={prepareSource}/></div>
         <details className="collection-panel"><summary>1688 URL로 원문 먼저 담기 · 서버 수집</summary><QuerySourcePanel key={`server-query-${workspaceOwnerId??'anonymous'}`} ownerId={workspaceOwnerId} company={querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null} disabled={loading||busy||batchBusy||addOpen||settingsBusy||intakeDraft.loading||!intakeDraft.ready||intakeDraft.saving} onAdd={prepareQuerySource}/></details>
@@ -916,7 +929,7 @@ useEffect(()=>{
           {batchSeoConfiguration?<BatchAiNotice configuration={batchSeoConfiguration}/>:<p role="status">{seoConfigurationError||'현재 계정·회사의 SEO 실행 안내를 확인하는 중입니다. 안내 확인 전에는 SEO 작업을 시작하지 않습니다.'}</p>}
           <button type="button" className="btn ghost" disabled={batchBusy||settingsBusy} onClick={()=>{if(batchScopeRef.current===batchScope&&!batchBusyRef.current&&!settingsBusyRef.current)setSeoConfigurationReload(value=>value+1);}}>SEO 실행 안내 다시 확인</button>
         </details>}
-        <BatchWorkPanel key={batchRun?.request.id??'review'} products={(batchRun?.products??products.filter(product=>selected.has(product.id))).map(product=>({...product,title:registrationTitle(product)}))} runRequest={batchRun?.request} onOpen={(id,step)=>{if(batchRunRef.current===batchRun)void openBatchProduct(id,step);}} onBusyChange={value=>{const operation=settingsOperationRef.current;if(operation.mounted&&operation.ownerId===workspaceOwnerId&&batchRunRef.current===batchRun){const finished=batchBusyRef.current&&!value;changeBatchBusy(value);if(finished&&batchRun)void loadWorkspace();}}}/>
+        <BatchWorkPanel key={batchRun?.request.id??'review'} products={(batchRun?.products??products.filter(product=>selected.has(product.id))).map(product=>({...product,title:registrationTitle(product),boardSource:batchBoardSource(product)}))} runRequest={batchRun?.request} onActivity={event=>{if(batchRun)recordBatchBoardActivity(batchRun,event);}} onOpen={(id,step)=>{if(batchRunRef.current===batchRun)void openBatchProduct(id,step);}} onBusyChange={value=>{const operation=settingsOperationRef.current;if(operation.mounted&&operation.ownerId===workspaceOwnerId&&batchRunRef.current===batchRun){const finished=batchBusyRef.current&&!value;changeBatchBusy(value);if(finished&&batchRun)void loadWorkspace();}}}/>
       </Modal>}
       {historyOpen&&<Modal wide title="상품별 작업 이력" subtitle="각 상품에 저장된 단계별 산출물과 실행 이력을 확인합니다." onClose={()=>setHistoryOpen(false)}><div className="modal-form"><label>상품 선택<select aria-label="작업 이력 상품 선택" value={historyProductId} onChange={event=>setHistoryProductId(event.target.value)}>{!products.length&&<option value="">저장된 상품 없음</option>}{products.map(product=><option key={product.id} value={product.id}>{product.title}</option>)}</select></label>{products.filter(product=>product.id===historyProductId).map(product=><AutomationPanel key={product.id} productId={product.id} version={product.updated_at}/>)}</div><PreservedProductRequestInspector ownerId={workspaceOwnerId}/></Modal>}
 
@@ -966,7 +979,8 @@ useEffect(()=>{
             <div><dt>저장 테이블</dt><dd>{connections.databaseSchema?.status==='tables_present'?'필요 테이블 있음 · 열 구조 및 저장 동작은 별도 검증':connections.databaseSchema?.status==='missing_tables'?`업데이트 필요 · 누락: ${connections.databaseSchema.missingTables.join(', ')}`:'테이블 확인 실패 · 연결을 다시 확인해주세요'}</dd></div>
             <div><dt>R2 · 이미지 파일</dt><dd>{connections.files==='binding_present'?'바인딩 있음 · 읽기/쓰기 미검증':'바인딩 없음'}</dd></div>
             <div><dt>AI 번역·SEO</dt><dd>{connections.translation.configured?'서버 설정됨 · '+connections.translation.model+' · 실제 호출 별도 검증':'서버 모델·키 설정 필요'}</dd></div>
-            <div><dt>AI 이미지 가공</dt><dd>{connections.imageProcessing.configured?'서버 설정됨 · '+connections.imageProcessing.model+' · 실제 호출 별도 검증':'서버 모델·키 설정 필요'}</dd></div>
+            <div><dt>이미지 문구 인식·번역</dt><dd>{connections.imageTextVision?.configured?'서버 설정됨 · '+connections.imageTextVision.model+' · 실제 호출 별도 검증':connections.imageTextVision?'이미지 문구 번역 설정 확인 필요':'서버 상태 다시 확인 필요'}</dd></div>
+            <div><dt>이미지 생성·배경 복원</dt><dd>{connections.imageProcessing.configured?'서버 설정됨 · '+connections.imageProcessing.model+' · 실제 호출 별도 검증':'별도 이미지 가공 모델·키 설정 필요'}</dd></div>
           </dl><small>확인 시각: {new Date(connections.checkedAt).toLocaleString('ko-KR')}</small></>}
           <div className="modal-actions"><button className="btn ghost" onClick={()=>setConnectionsOpen(false)}>닫기</button><button className="btn primary" disabled={checkingConnections} onClick={()=>void checkConnections()}>다시 확인</button></div>
         </div>

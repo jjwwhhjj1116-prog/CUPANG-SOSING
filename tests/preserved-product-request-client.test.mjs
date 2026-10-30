@@ -9,11 +9,11 @@ import * as parser from '../extensions/supplier-hub/preserved-product-checkpoint
 const selection={requestId:'f29491bd-1882-456a-8a63-eec8586db6c6',docId:2347603,productId:'e2f8037c-294e-45a8-b06d-58cc5909683c'};
 const actor={ownerId:'member-a',company:{code:'A01526306',name:'유앤채'}};
 function fixture(){
-  const listeners=new Set(),sent=[],timers=new Map(),contexts=[];let timerId=0;
+  const listeners=new Set(),sent=[],timers=new Map(),contexts=[],pings=[];let timerId=0;
   const win={location:{origin:'https://sourceflow.jjwwhhjj1116.workers.dev'},addEventListener:(type,fn)=>{assert.equal(type,'message');listeners.add(fn);},removeEventListener:(type,fn)=>listeners.delete(fn),postMessage:(message,origin)=>{assert.equal(origin,win.location.origin);sent.push(message);}};
-  const exports={};const scope={exports,Error,crypto:webcrypto,window:win,AbortController,Object,setTimeout(fn){const id=++timerId;timers.set(id,fn);return id;},clearTimeout:id=>timers.delete(id),require:name=>name.includes('preserved-product-checkpoint')?parser:{readSingleCatalogContext:async signal=>{assert.equal(signal.aborted,false);contexts.push('GET catalog-context');return structuredClone(contexts.length===2&&f.after?f.after:actor);}}};
+  const exports={};const scope={exports,Error,crypto:webcrypto,window:win,AbortController,Object,setTimeout(fn){const id=++timerId;timers.set(id,fn);return id;},clearTimeout:id=>timers.delete(id),require:name=>name.includes('preserved-product-checkpoint')?parser:name==='@/app/supplier-hub-handoff'?{exchange:async(type,payload,signal)=>{assert.equal(type,'PING');assert.equal(payload,null);assert.equal(signal.aborted,false);pings.push(type);if(f.pingError)throw f.pingError;return structuredClone(f.capability);}}:{readSingleCatalogContext:async signal=>{assert.equal(signal.aborted,false);contexts.push('GET catalog-context');return structuredClone(contexts.length===2&&f.after?f.after:actor);}}};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/preserved-product-request-client.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,scope);
-  const f={client:exports,listeners,sent,timers,contexts,window:win,after:null};
+  const f={client:exports,listeners,sent,timers,contexts,pings,capability:{version:'2.1.61',preservedProductCheckpointInspection:true},pingError:null,window:win,after:null};
   f.reply=(override={},event={})=>{const request=sent.at(-1),target={...selection,company:actor.company};const result={format:'yoofam-preserved-product-checkpoint-inspection-v1',target,status:'not-found',found:false,scanned:3,complete:true,readOnly:true,remoteWrites:false,checkpointWrites:false,registered:false,canResume:false,checkpoint:null,diagnostic:{code:'not-found',message:'이 확장 보관함에서 같은 회원·회사·상품의 요청을 찾지 못했습니다. 새 요청을 만들지 않았습니다.'},...override};for(const fn of [...listeners])fn({source:win,origin:win.location.origin,data:{channel:'YOOFAM_HUB_HANDOFF_RESULT',requestId:request.requestId,result:{ok:true,result}},...event});};
   return f;
 }
@@ -22,13 +22,25 @@ const settle=async()=>{for(let i=0;i<4;i++)await new Promise(resolve=>setImmedia
 test('preserved request inspection sends exactly one read-only command and validates current owner/company around it',async()=>{
  const f=fixture(),controller=new AbortController(),pending=f.client.inspectPreservedProductRequest(selection,actor.ownerId,controller.signal);await settle();
  assert.equal(f.sent.length,1);assert.equal(f.sent[0].type,'PRESERVED_PRODUCT_DOCUMENT');assert.deepEqual(JSON.parse(JSON.stringify(f.sent[0].payload)),{action:'inspect',target:{...selection,company:actor.company}});
+ assert.deepEqual(f.pings,['PING']);
  f.reply();const result=await pending;assert.equal(result.status,'not-found');assert.equal(result.canResume,false);assert.deepEqual(f.contexts,['GET catalog-context','GET catalog-context']);assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);assert.equal(f.sent.length,1);
 });
 
 test('wrong actor or malformed target never dispatches a request',async()=>{
  for(const [input,owner]of[[selection,'different-owner'],[{...selection,docId:NaN},actor.ownerId],[{...selection,requestId:'new-guess'},actor.ownerId]]){
-  const f=fixture();await assert.rejects(f.client.inspectPreservedProductRequest(input,owner,new AbortController().signal));assert.equal(f.sent.length,0);
+  const f=fixture();await assert.rejects(f.client.inspectPreservedProductRequest(input,owner,new AbortController().signal));assert.equal(f.sent.length,0);assert.equal(f.pings.length,0);
  }
+});
+
+test('an old or mismatched installed worker fails before the unsupported command, listener or long timer',async()=>{
+ for(const capability of [{version:'2.1.59',preservedProductCheckpointInspection:false},{version:'2.1.59',preservedProductCheckpointInspection:true},{version:'2.1.61',preservedProductCheckpointInspection:false},{version:'2.1.61'},{version:'not-a-version',preservedProductCheckpointInspection:true},{version:'2.1.65536',preservedProductCheckpointInspection:true}]){
+  const f=fixture();f.capability=capability;
+  await assert.rejects(f.client.inspectPreservedProductRequest(selection,actor.ownerId,new AbortController().signal),/Chrome 확장/);
+  assert.deepEqual(f.pings,['PING']);assert.equal(f.sent.length,0);assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);assert.equal(f.contexts.length,1);
+ }
+ const f=fixture();f.pingError=Error('extension disconnected');
+ await assert.rejects(f.client.inspectPreservedProductRequest(selection,actor.ownerId,new AbortController().signal),/disconnected/);
+ assert.equal(f.sent.length,0);assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);
 });
 
 test('cross-origin and uncorrelated replies cannot finish an inspection; widened capability responses are rejected',async()=>{

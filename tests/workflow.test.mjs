@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+
+const nativeRequire = createRequire(import.meta.url);
 
 // Execute the actual route modules with D1/auth/HTTP dependencies substituted.
 // No remote service, credential or production database is used.
@@ -14,9 +18,11 @@ function load(relative, overrides = {}) {
     exports, crypto, URL, Response, TextEncoder, TextDecoder, Uint8Array, DataView, process: {env: {NODE_ENV: 'development'}},
     require: name => {
       if (name in overrides) return overrides[name];
+      if (name.startsWith('../extensions/') && name.endsWith('.mjs')) return nativeRequire(fileURLToPath(new URL(name, new URL('../' + relative, import.meta.url))));
       if (name === '@/db/product-content') return {readRegistrationSummaries: async()=>({})};
       if (name === '@/db/collection-images') return {readRegistrationSourceImages: async()=>({})};
       if (name === '@/db/supplier-hub-receipts') return {readSupplierHubReceiptSummaries: async()=>({})};
+      if (name === '@/db/supplier-hub-single-receipts') return {readSingleReceiptSummaries: async()=>({})};
       if (name === '@/db/product-removals') return {
         readProductRemovalPolicies: async (_owner, products) => { assert.equal(products.length, 0); return {}; },
         removeProduct: async()=>{assert.fail('PATCH workflow must not remove a product.');},
@@ -174,9 +180,26 @@ test('integration diagnostics distinguish D1 query from R2 binding and never cla
     assert.equal(body.submissionEnabled, false);
     assert.equal(body.translation.configured, false);
     assert.equal(body.imageProcessing.configured, false);
+    assert.equal(body.imageTextVision.configured, false);
+    assert.equal(body.imageTextVision.executionVerified, false);
     assert.equal(body.collection.configured, false);
     assert.equal(response.headers.get('cache-control'), 'no-store');
   }
+});
+
+test('configured Qwen image text remains distinct from image generation and diagnostics never run a model or expose keys', async () => {
+  let calls = 0;
+  const route = load('app/api/integrations/route.ts', { 'cloudflare:workers': { env: {
+    SOURCEFLOW_IMAGE_TEXT_PROVIDER: 'workers-ai-vision', SOURCEFLOW_IMAGE_TEXT_MODEL: '@cf/qwen/qwen3.8-27b', SOURCEFLOW_IMAGE_TEXT_PAID_ALLOWED: 'true',
+    AI: { run: async () => { calls++; assert.fail('Configuration observation must not call AI.'); } },
+    UNRELATED_API_KEY: 'synthetic-secret-must-not-leak',
+  } } });
+  const response = await route.GET(), body = await response.json();
+  assert.equal(body.imageTextVision.configured, true);
+  assert.equal(body.imageTextVision.model, '@cf/qwen/qwen3.8-27b');
+  assert.equal(body.imageTextVision.executionVerified, false);
+  assert.equal(body.imageProcessing.configured, false);
+  assert.equal(calls, 0); assert.equal(JSON.stringify(body).includes('synthetic-secret-must-not-leak'), false);
 });
 
 test('integration diagnostics expose missing storage tables without hiding a successful connection', async () => {

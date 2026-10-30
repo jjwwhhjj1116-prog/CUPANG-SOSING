@@ -1,4 +1,5 @@
 import { automationStages, type AutomationStageId } from '@/app/automation/model';
+import {batchBoardSource,type BatchBoardSource} from '@/app/batch-board-feedback';
 import { supplierHubCompany } from '@/app/supplier-hub-company';
 import { collectedTranslationAttributes } from '@/app/collected-translation-attributes';
 import { optionTranslationBatch } from '@/app/option-translation';
@@ -17,7 +18,7 @@ import { readRegistrationLayout } from '@/app/registration-layout';
 import { runSelectedPricingWork } from '@/app/batch-selected-pricing-work';
 import { runSelectedPackagingWork } from '@/app/batch-selected-packaging-work';
 
-export type SelectedBatchStageResult = { id: AutomationStageId; status: 'waiting'|'running'|'draft'|'complete'|'blocked'|'failed'|'skipped'; message: string };
+export type SelectedBatchStageResult = { id: AutomationStageId; status: 'waiting'|'running'|'draft'|'complete'|'blocked'|'failed'|'skipped'; message: string;boardSource?:BatchBoardSource };
 type Controls = { stages: readonly AutomationStageId[]; mode?:'full'|'selected'; expectedOwnerId: string; signal: AbortSignal; fetcher: typeof fetch;
   keys: Map<string,string>; newKey:()=>string; onStage:(result:SelectedBatchStageResult)=>void;seoGenerationConsent?:SeoGenerationConfiguration;retryFailedQwen?:boolean };
 type Outcome = Pick<SelectedBatchStageResult,'status'|'message'> & {uncertain?:boolean;stop?:boolean};
@@ -76,10 +77,13 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
   };
   const read=async<T>(suffix:string)=>await responseJson(await fetcher(base+suffix,{cache:'no-store',credentials:'same-origin',redirect:'error'}),`상품 ${suffix||'/'} 조회`) as T;
   const post=async<T>(suffix:string,body:unknown,method='POST')=>await responseJson(await fetcher(base+suffix,{method,credentials:'same-origin',redirect:'error',headers:{'content-type':'application/json'},body:JSON.stringify(body)}),`상품 ${suffix} 저장`) as T;
+  const boardObservation:{current:BatchBoardSource|null}={current:null};
+  let boardSourceLost=false;
   const product=async()=>{
-    const value=await read<{product:{id:string;owner_id?:string;updated_at:string;title:string;content_summary?:unknown}}>('');
+    const value=await read<{product:{id:string;owner_id?:string;updated_at:string;title:string;source_url?:string;image_keys?:string;content_summary?:unknown}}>('');
     if(value.product?.id!==productId||!Number.isFinite(Date.parse(value.product.updated_at))
       ||value.product.owner_id!==undefined&&value.product.owner_id!==controls.expectedOwnerId)throw new ScopeChanged('현재 상품을 확인하지 못했습니다.');
+    boardObservation.current=batchBoardSource(value.product);
     return value.product;
   };
   let activeStage:AutomationStageId|null=null;
@@ -230,6 +234,7 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     }
     const result=await processSelectedImageStage(productId,role,{state,ownerId:controls.expectedOwnerId,signal,fetcher,expectedProductVersion,isCurrent:()=>!signal.aborted,
       onProgress:message=>controls.onStage({id,status:'running',message})});
+    if(result.sourceChanged)boardSourceLost=true;
     if(result.inferencePending)keys.set(inferenceLatch,stateKey);
     else if(pendingInference===stateKey)keys.delete(inferenceLatch);
     if(result.status!=='uncertain'&&!result.sourceChanged){
@@ -297,7 +302,7 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     return{status:!aiConfigured||failed||incomplete?'blocked':'draft',message:message+(missing.length?' 필수 입력 확인: '+[...new Set(missing)].slice(0,8).join(', ')+'.':incomplete?' 남은 포장값은 7단계에서 확인해주세요.':!aiConfigured||failed?' AI 설정·실행 이력과 견적 내용을 확인해주세요.':' 견적서에서 최종 검토 후 등록전송할 수 있습니다.')};
   }
   const result:SelectedBatchStageResult[]=automationStages.filter(id=>controls.stages.includes(id)).map(id=>({id,status:'waiting',message:'실행 대기'}));
-  const publish=(index:number,outcome:Outcome)=>{result[index]={id:result[index].id,status:outcome.status,message:outcome.message};controls.onStage({...result[index]});};
+  const publish=(index:number,outcome:Outcome)=>{result[index]={id:result[index].id,status:outcome.status,message:outcome.message,...(boardObservation.current?{boardSource:{...boardObservation.current}}:{})};controls.onStage({...result[index]});};
   const holdRemaining=(index:number)=>{
     for(let next=index+1;next<result.length;next++)publish(next,{status:'blocked',message:'앞 단계의 처리·저장 결과를 확인해야 하므로 이 단계는 아직 시작하지 않았습니다. 해당 단계만 선택해 별도로 작업할 수 있습니다.'});
   };
@@ -344,9 +349,23 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
       if(outcome.stop){holdRemaining(index);break;}
     }catch(cause){
       if(signal.aborted)return null;
+      if(cause instanceof ScopeChanged)boardSourceLost=true;
       publish(index,{status:'failed',message:cause instanceof Error?cause.message:'작업 결과를 확인하지 못했습니다.'});
       if(cause instanceof ScopeChanged||keys.has(identity+':pending:'+id)){holdRemaining(index);break;}
     }
+  }
+  // Later independent quotation/label saves can advance the product version.
+  // Keep a display-only failure across those saves only if its observed source
+  // DTO is still identical. Never carry an old failure onto changed images.
+  if(boardSourceLost){for(const stage of result)delete stage.boardSource;}
+  else if(boardObservation.current&&result.some(stage=>stage.status==='failed'||stage.status==='blocked')){
+    try{
+      await product();await assertCurrent();
+      for(const stage of result){
+        if(stage.boardSource&&boardObservation.current&&stage.boardSource.sourceFingerprint===boardObservation.current.sourceFingerprint)stage.boardSource={...boardObservation.current};
+        else delete stage.boardSource;
+      }
+    }catch{/* Missing fresh display proof never starts or repeats work. */}
   }
   return{productId,stages:result};
 }

@@ -11,23 +11,25 @@ import type {SelectedBatchStageResult} from '@/app/batch-selected-work';
 import type {AutomationStageId} from '@/app/automation/model';
 import type {CollectionEditorTab} from '@/app/registration-navigation';
 import type {SeoGenerationConfiguration} from '@/app/seo-workspace-draft';
-type Item = {id:string;title:string;updated_at:string};
+import {batchBoardSource,type BatchBoardActivity,type BatchBoardSource} from '@/app/batch-board-feedback';
+type Item = {id:string;title:string;updated_at:string;source_url?:string;image_keys?:string;content_summary?:unknown;boardSource?:BatchBoardSource|null};
 type Result = {status:'waiting'|'running'|'done'|'failed';message:string};
 export type SelectedBatchRequest={id:string;ownerId:string;mode?:'full'|'selected';stages:AutomationStageId[];keys:Map<string,string>;seoGenerationConsent?:SeoGenerationConfiguration};
-type BatchPanelProps={products:Item[];onOpen:(id:string,step?:CollectionEditorTab|'작업')=>void;onBusyChange?:(busy:boolean)=>void;runRequest?:SelectedBatchRequest};
+type BatchPanelProps={products:Item[];onOpen:(id:string,step?:CollectionEditorTab|'작업')=>void;onBusyChange?:(busy:boolean)=>void;onActivity?:(event:BatchBoardActivity)=>void;runRequest?:SelectedBatchRequest};
 const stageNames:Record<AutomationStageId,CollectionEditorTab>={seo:'SEO',pricing:'가격',mainImage:'대표 이미지',additionalImages:'추가 이미지',detailImage:'상세 이미지',sizeChart:'사이즈표',koreanLabel:'표시사항',quotation:'견적서'};
 const statusNames:Record<SelectedBatchStageResult['status'],string>={waiting:'대기',running:'처리 중',draft:'초안 검토',complete:'저장 완료',blocked:'자료·검토 필요',failed:'실패',skipped:'건너뜀'};
 
 /** A click owns one immutable queue. Mounting a review editor is never a start. */
-export function SelectedBatchWorkPanel({products,onOpen,onBusyChange,runRequest}:{products:Item[];onOpen:BatchPanelProps['onOpen'];onBusyChange?:BatchPanelProps['onBusyChange'];runRequest:SelectedBatchRequest}){
+export function SelectedBatchWorkPanel({products,onOpen,onBusyChange,onActivity,runRequest}:{products:Item[];onOpen:BatchPanelProps['onOpen'];onBusyChange?:BatchPanelProps['onBusyChange'];onActivity?:BatchPanelProps['onActivity'];runRequest:SelectedBatchRequest}){
  const [busy,setBusy]=useState(true),[stopping,setStopping]=useState(false),[results,setResults]=useState<Record<string,Partial<Record<AutomationStageId,SelectedBatchStageResult>>>>({}),[errors,setErrors]=useState<Record<string,string>>({});
- const context=useRef<{request:SelectedBatchRequest;products:Item[];active:AbortController|null;stop:boolean;generation:number}|null>(null),callbacks=useRef({onOpen,onBusyChange});
- useLayoutEffect(()=>{callbacks.current={onOpen,onBusyChange};},[onOpen,onBusyChange]);
+ const context=useRef<{request:SelectedBatchRequest;products:Item[];active:AbortController|null;stop:boolean;generation:number}|null>(null),callbacks=useRef({onOpen,onBusyChange,onActivity});
+ useLayoutEffect(()=>{callbacks.current={onOpen,onBusyChange,onActivity};},[onOpen,onBusyChange,onActivity]);
  async function execute(scope:NonNullable<typeof context.current>,retryFailedQwen=false){
   if(context.current!==scope||scope.active)return;
   const active=new AbortController(),generation=++scope.generation;scope.active=active;scope.stop=false;setStopping(false);setBusy(true);setResults({});setErrors({});callbacks.current.onBusyChange?.(true);
+  callbacks.current.onActivity?.({kind:'start',runId:scope.request.id,attempt:generation});
   const current=()=>context.current===scope&&scope.active===active&&scope.generation===generation&&!active.signal.aborted;
-  const publish=(id:string,stage:SelectedBatchStageResult)=>{if(!current()||!scope.request.stages.includes(stage.id))return;setResults(previous=>({...previous,[id]:{...previous[id],[stage.id]:stage}}));};
+  const publish=(id:string,stage:SelectedBatchStageResult)=>{if(!current()||!scope.request.stages.includes(stage.id))return;setResults(previous=>({...previous,[id]:{...previous[id],[stage.id]:stage}}));const product=scope.products.find(product=>product.id===id),source=stage.boardSource??(stage.status==='running'&&product?(product.boardSource??batchBoardSource(product)):null);callbacks.current.onActivity?.({kind:'stage',runId:scope.request.id,attempt:generation,productId:id,result:{...stage,...(source?{boardSource:{...source}}:{})}});};
   try{
    const {runSelectedBatchProduct}=await import('@/app/batch-selected-work');
    for(const product of scope.products){
@@ -41,7 +43,7 @@ export function SelectedBatchWorkPanel({products,onOpen,onBusyChange,runRequest}
     }catch(error){if(!current())break;setErrors(previous=>({...previous,[product.id]:error instanceof Error?error.message:'작업 결과를 확인하지 못했습니다.'}));}
    }
   }catch(error){if(current())setErrors(Object.fromEntries(scope.products.map(product=>[product.id,error instanceof Error?error.message:'작업 실행기를 불러오지 못했습니다.'])));}
-  finally{if(current()){scope.active=null;setBusy(false);callbacks.current.onBusyChange?.(false);}}
+  finally{if(current()){callbacks.current.onActivity?.({kind:'finish',runId:scope.request.id,attempt:generation});scope.active=null;setBusy(false);callbacks.current.onBusyChange?.(false);}}
  }
  useEffect(()=>{
   const scope={request:{...runRequest,stages:[...runRequest.stages],...(runRequest.seoGenerationConsent?{seoGenerationConsent:{...runRequest.seoGenerationConsent,issues:[...runRequest.seoGenerationConsent.issues],...(runRequest.seoGenerationConsent.translationConfig?{translationConfig:{...runRequest.seoGenerationConsent.translationConfig,issues:[...runRequest.seoGenerationConsent.translationConfig.issues]}}:{})}}:{})},products:products.map(product=>({...product})),active:null as AbortController|null,stop:false,generation:0};context.current=scope;callbacks.current.onBusyChange?.(true);
@@ -52,7 +54,7 @@ export function SelectedBatchWorkPanel({products,onOpen,onBusyChange,runRequest}
    if(scope.request.keys.has(startKey)){setErrors(Object.fromEntries(scope.products.map(product=>[product.id,'이전 실행이 있습니다. 단계별 저장본을 확인한 뒤 필요한 작업만 다시 시도해주세요.'])));setBusy(false);callbacks.current.onBusyChange?.(false);return;}
    scope.request.keys.set(startKey,'started');void execute(scope);
   });
-  return()=>{if(context.current===scope){context.current=null;scope.active?.abort();callbacks.current.onBusyChange?.(false);}};
+  return()=>{if(context.current===scope){callbacks.current.onActivity?.({kind:'finish',runId:scope.request.id,attempt:scope.generation});context.current=null;scope.active?.abort();callbacks.current.onBusyChange?.(false);}};
  // eslint-disable-next-line react-hooks/exhaustive-deps -- A run ID owns its frozen products and stages; prop refreshes must not restart writes.
  },[runRequest.id]);
  const review=(id:string,stage:AutomationStageId)=>{const scope=context.current;if(!scope||scope.active||scope.request.id!==runRequest.id)return;callbacks.current.onOpen(id,stageNames[stage]);};
@@ -67,7 +69,7 @@ export function SelectedBatchWorkPanel({products,onOpen,onBusyChange,runRequest}
  </section>;
 }
 
-export function BatchWorkPanel({products,onOpen,onBusyChange,runRequest}:BatchPanelProps) {
+export function BatchWorkPanel({products,onOpen,onBusyChange,onActivity,runRequest}:BatchPanelProps) {
   const [busy,setBusy]=useState(false);const [results,setResults]=useState<Record<string,Result>>({});
   const [mode,setMode]=useState<'pricing'|'translation'|'labels'|'images'|'labelDrafts'|'seo'>('pricing');
   const [seoProducts,setSeoProducts]=useState<Item[]>(products),[seoBusy,setSeoBusy]=useState(false),[seoPending,setSeoPending]=useState(false);
@@ -114,7 +116,7 @@ export function BatchWorkPanel({products,onOpen,onBusyChange,runRequest}:BatchPa
     busyCallback.current?.(false);
     if(!active.signal.aborted){setBusy(false);if(!stop.current&&preparedProducts.length){setImageProducts(preparedProducts);setImageAutoPrepare(true);setMode('images');}}
   }
-  if(runRequest)return <SelectedBatchWorkPanel products={products} onOpen={onOpen} onBusyChange={onBusyChange} runRequest={runRequest}/>;
+  if(runRequest)return <SelectedBatchWorkPanel products={products} onOpen={onOpen} onBusyChange={onBusyChange} onActivity={onActivity} runRequest={runRequest}/>;
   const productResults=<ul className="batch-work-list">{products.map(product=><li key={product.id}><strong>{product.title}</strong><p role="status">{results[product.id]?.message??'실행 대기'}</p><button className="btn ghost" disabled={busy||imagesBusy||imagesPending||draftBusy||draftPending||seoBusy||seoPending} onClick={()=>{if(!navigationLocked())onOpen(product.id,'대표 이미지');}}>이미지 초안 검토</button><button className="btn ghost" disabled={busy||imagesBusy||imagesPending||draftBusy||draftPending||seoBusy||seoPending} onClick={()=>{if(!navigationLocked())onOpen(product.id,'견적서');}}>견적 초안 검토</button><button className="btn ghost" disabled={busy||imagesBusy||imagesPending||draftBusy||draftPending||seoBusy||seoPending} onClick={()=>{if(!navigationLocked())onOpen(product.id,'작업');}}>상품별 작업 열기</button></li>)}</ul>;
   if(mode==='seo'){const session=seoSession.current;return <div className="modal-form" data-workspace-saving={seoBusy} data-workspace-dirty={seoPending}><button type="button" className="btn ghost" disabled={seoBusy||seoPending} onClick={()=>{if(!navigationLocked()&&seoSession.current===session){seoSession.current=null;setMode('pricing');}}}>← 초안 준비 작업</button>{productResults}<BatchSeoWorkPanel products={seoProducts}
     onBusyChange={value=>{if(seoSession.current===session)changeSeoBusy(value);}} onPendingChange={value=>{if(seoSession.current===session)changeSeoPending(value);}}

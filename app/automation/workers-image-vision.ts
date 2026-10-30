@@ -2,10 +2,10 @@ import {IMAGE_TEXT_VISION_MODEL,IMAGE_TEXT_VISION_NOTICE,parseImageTextVisionRes
 import {imageTextTranslationIssue} from '@/app/automation/workers-image-text-recovery';
 import {inspectImage} from '@/app/automation/image-edit';
 import {MAX_IMAGE_BYTES} from '@/app/image-files';
-export type ImageVisionEnvironment={SOURCEFLOW_IMAGE_TEXT_PROVIDER?:string;SOURCEFLOW_IMAGE_TEXT_MODEL?:string;SOURCEFLOW_IMAGE_TEXT_PAID_ALLOWED?:string;AI?:{run:(model:string,input:Record<string,unknown>)=>Promise<unknown>}};
+export type ImageVisionEnvironment={SOURCEFLOW_IMAGE_TEXT_PROVIDER?:string;SOURCEFLOW_IMAGE_TEXT_MODEL?:string;SOURCEFLOW_IMAGE_TEXT_PAID_ALLOWED?:string;AI?:{run:(model:string,input:Record<string,unknown>,options?:{rejectIfBusy:true})=>Promise<unknown>}};
 export class ImageVisionError extends Error{
  declare readonly lateResult?:Promise<ImageTextVisionResult>;
- constructor(public reason:'NOT_CONFIGURED'|'INPUT'|'TIMEOUT'|'ABORTED'|'PROVIDER'|'ENVELOPE'|'MODEL'|'TRUNCATED'|'JSON'|'BLOCKS',public uncertain=false){super(`이미지 Vision ${reason}: 원본은 유지했습니다. 자동으로 다시 요청하지 않습니다.`);}
+ constructor(public reason:'NOT_CONFIGURED'|'INPUT'|'TIMEOUT'|'ABORTED'|'CAPACITY'|'PROVIDER'|'ENVELOPE'|'MODEL'|'TRUNCATED'|'JSON'|'BLOCKS',public uncertain=false){super(reason==='CAPACITY'?'이미지 번역 서버가 혼잡합니다. 원본은 유지했습니다. 잠시 후 직접 다시 실행해주세요. 자동 재요청하지 않았습니다.':`이미지 Vision ${reason}: 원본은 유지했습니다. 자동으로 다시 요청하지 않습니다.`);}
 }
 export function imageVisionConfiguration(env:ImageVisionEnvironment):ImageTextVisionConfiguration{
  const paidAllowed=env.SOURCEFLOW_IMAGE_TEXT_PAID_ALLOWED==='true';
@@ -14,6 +14,18 @@ export function imageVisionConfiguration(env:ImageVisionEnvironment):ImageTextVi
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
 const keys=(value:Record<string,unknown>,names:string)=>Object.keys(value).sort().join(',')===names;
 const canonical=(value:unknown):string=>JSON.stringify(value,(_key,item)=>object(item)?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
+/** Only an explicit rejection from AI.run can establish non-admission. The
+ * SDK error shape is not assumed: unmatched 429/transport details stay unknown. */
+function rejectedCapacity(error:unknown):boolean{
+ if(!object(error))return false;
+ try{
+  const own=Object.getOwnPropertyDescriptors(error),data=(key:string)=>!own[key]||Object.hasOwn(own[key],'value');
+  if(!['message','code','status','statusCode'].every(key=>data(key)&&(own[key]||!(key in error)))||typeof own.message?.value!=='string'||own.message.value.length>256)return false;
+  if(own.code&&own.code.value!==3040||['status','statusCode'].some(key=>own[key]&&own[key].value!==429))return false;
+  const message=own.message.value,capacity='Capacity temporarily exceeded, please try again.';
+  return own.code?.value===3040&&message===capacity||message==='3040: '+capacity||message==='AI_ERROR: 3040: '+capacity;
+ }catch{return false;}
+}
 export function readStoredImageVisionResult(value:unknown,width:number,height:number):ImageTextVisionResult{
  const result=parseImageTextVisionResult(value,width,height);
  if(!result||result.blocks.some(row=>row.translated!==null&&imageTextTranslationIssue(row.text,row.translated,1000)))throw new ImageVisionError('BLOCKS');
@@ -68,9 +80,10 @@ export async function readImageVision(bytes:Uint8Array,source:{width:number;heig
  // Retaining it never dispatches inference again or changes image pixels.
  const provider=Promise.resolve().then(()=>{
   if(signal?.aborted)throw new ImageVisionError('ABORTED');
-  return env.AI!.run(IMAGE_TEXT_VISION_MODEL,input);
+  return env.AI!.run(IMAGE_TEXT_VISION_MODEL,input,{rejectIfBusy:true});
  }).then(value=>parseImageVisionResponse(value,source.width,source.height),error=>{
   if(error instanceof ImageVisionError&&error.reason==='ABORTED'&&!error.uncertain)throw error;
+  if(rejectedCapacity(error))throw new ImageVisionError('CAPACITY');
   throw new ImageVisionError('PROVIDER',true);
  });
  try{

@@ -24,6 +24,7 @@ function fixture(){
   '@/app/batch-selected-pricing-work':{async runSelectedPricingWork(id,options){await options.assertCurrent();const response=await options.fetcher('/api/products/'+id+'/stage-two-pricing');await options.assertCurrent();return await response.json();}},
   '@/app/batch-selected-label-work':{async runSelectedLabelWork(id,options){await options.assertCurrent();calls.push({adapter:'label',id});return labelResult;}},
  };
+ const boardFeedback={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/batch-board-feedback.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:boardFeedback,Date,Object,JSON});deps['@/app/batch-board-feedback']=boardFeedback;
  const code=ts.transpileModule(fs.readFileSync(new URL('../app/batch-selected-work.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
  vm.runInNewContext(code,{exports,Error,Date,AbortSignal,Map,Set,JSON,require:name=>{assert.ok(deps[name],name);return deps[name];}},{filename:'batch-selected-work.ts'});
  const options={stages:['pricing'],expectedOwnerId:'owner',signal:controller.signal,keys,newKey:()=> '11111111-1111-4111-8111-111111111111',onStage:row=>events.push(plain(row)),
@@ -73,6 +74,24 @@ test('an uncertain Vision inference stops later image calls while independent la
  assert.match(result.stages[1].message,/독립된 단계는 계속/);
  const before=h.calls.filter(call=>call.adapter==='image').length;
  await h.run(['additionalImages']);assert.equal(h.calls.filter(call=>call.adapter==='image').length,before,'same queue cannot bypass its pending inference through another image role');
+});
+
+for(const sourceChanged of[false,true])test(`display metadata across own later label save (${sourceChanged?'changed source discarded':'same source kept'}) is never a completion receipt`,async()=>{
+ const h=fixture();let currentVersion=version,imageKeys='["owner/source.png"]';const later='2026-10-30T01:00:00.000Z';
+ h.intercept(call=>call.url==='/api/products/product'?Response.json({product:{id:'product',owner_id:'owner',title:'原文',source_url:'https://source.test/product',image_keys:imageKeys,updated_at:currentVersion}}):null);
+ h.image({status:'partial',inferencePending:true,messages:['原래 추론 응답 미확정']});
+ h.deps['@/app/batch-selected-label-work'].runSelectedLabelWork=async()=>{currentVersion=later;if(sourceChanged)imageKeys='["owner/source.png","owner/new-label.png"]';return{status:'draft',message:'own label save',uncertain:false};};
+ const result=await h.run(['mainImage','koreanLabel']);assert.equal(result.stages[0].status,'blocked');assert.equal(result.stages[1].status,'draft');
+ if(sourceChanged)assert.equal(result.stages[0].boardSource,undefined);
+ else{assert.equal(result.stages[0].boardSource.productVersion,later);assert.match(result.stages[0].boardSource.sourceFingerprint,/owner\/source\.png/);}
+ assert.equal(h.calls.filter(call=>call.adapter==='image').length,1);assert.equal(h.calls.some(call=>call.url?.endsWith('/automation')),false);
+});
+
+test('an option source change inside the same product image pool cannot rebind a previous failure to the later version',async()=>{
+ const h=fixture(),later='2026-10-30T01:00:00.000Z';let currentVersion=version;
+ h.intercept(call=>call.url==='/api/products/product'?Response.json({product:{id:'product',owner_id:'owner',title:'原文',source_url:'https://source.test/product',image_keys:'["owner/source-a.png","owner/source-b.png"]',updated_at:currentVersion}}):null);
+ h.deps['@/app/batch-selected-image-work'].processSelectedImageStage=async()=>{currentVersion=later;return{status:'partial',sourceChanged:true,messages:['선택 옵션의 대표 이미지가 변경되었습니다.']};};
+ const result=await h.run(['mainImage','koreanLabel']);assert.equal(result.stages[0].status,'blocked');assert.equal(result.stages[0].boardSource,undefined);assert.equal(result.stages[1].boardSource,undefined);assert.equal(h.calls.some(call=>call.adapter==='label'),false);
 });
 
 const savedSummary=(completed=[])=>({seo:completed.includes('seo'),seoTitle:null,mainImageKey:null,main:0,additional:0,detail:0,label:0,missingImages:false,

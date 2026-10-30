@@ -648,6 +648,48 @@ test('an accepted observation whose local save fails keeps both guards until ret
  }finally{h.close();}
 });
 
+for(const initial of ['SUBMITTED','FINISHED'])test(`a newer stored rejection supersedes displayed ${initial} without trapping the released original request`,async()=>{
+ const h=await fixture(SINGLE_COMPANIES[0],{verified:true,beforeSaveReply(record,f){record.receipt.observedAt=f.clock.now+1;record.receipt.state='rejected';record.receipt.sourceStatus='REJECTED';}});try{
+  await h.idle();await h.click(open);h.f.bridge=async payload=>({...h.f.observation(initial),requestId:payload.packet.requestId});await h.click(start);
+  assert.equal(h.f.history[0].receipt.sourceStatus,'REJECTED');assert.deepEqual(h.lockPairs.at(-1),[false,false]);
+  assert.match(h.text().replace(/\s+/gu,' '),/문서 new-document-728 · 등록 파일 qvt-728 · 반려/);assert.doesNotMatch(h.text().replace(/\s+/gu,' '),/문서 new-document-728 · 등록 파일 qvt-728 · (접수 처리 중|파일 처리 완료)/);
+  assert.equal([...h.stored.keys()].some(key=>key.startsWith('yoofam-product-document-pending:')),false);assert.equal(h.stored.size,1,'the exact immutable rejection ledger is retained');
+  assert.equal(h.button('접수 결과 조회'),undefined);assert.equal(h.button('확인 결과 저장 다시 시도'),undefined);
+  assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','start']);assert.equal(h.f.calls.filter(row=>row.method==='POST').length,1);
+ }finally{h.close();}
+});
+
+test('a newer stored acceptance releases closing while retaining its exact original request and document',async()=>{
+ const h=await fixture(SINGLE_COMPANIES[0],{verified:true,beforeSaveReply(record,f){record.receipt.observedAt=f.clock.now+1;record.receipt.state='accepted';record.receipt.sourceStatus='FINISHED';}});try{
+  await h.idle();await h.click(open);h.f.bridge=async payload=>({...h.f.observation('SUBMITTED'),requestId:payload.packet.requestId});await h.click(start);
+  assert.equal(h.f.history[0].receipt.sourceStatus,'FINISHED');assert.deepEqual(h.lockPairs.at(-1),[true,false]);
+  assert.match(h.text().replace(/\s+/gu,' '),/문서 new-document-728 · 등록 파일 qvt-728 · 파일 처리 완료/);assert.equal(h.stored.size,1);assert.ok([...h.stored.keys()][0].startsWith('yoofam-product-document-pending:'));
+  assert.ok(h.button('접수 결과 조회'));assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','start']);assert.equal(h.f.calls.filter(row=>row.method==='POST').length,1);
+ }finally{h.close();}
+});
+
+test('prepared rejection superseding a pending receipt preserves lifecycle proof, releases closing, and exposes no inert observation action',async()=>{
+ const h=await fixture(SINGLE_COMPANIES[0],{beforeSaveReply(record,f){record.receipt.observedAt=f.clock.now+1;record.receipt.state='rejected';record.receipt.sourceStatus='REJECTED';}});try{
+  allowPrepared(h,payload=>payload.action==='reviewPreparedDraft'?preparedResult(h,payload,'awaiting-consent',14,{challenge:h.f.challenge('logisticsPage')}):preparedResult(h,payload,'pending',17,{receipt:h.f.observation('SUBMITTED').receipt}));
+  await h.idle();await h.click(open);await h.click(prepareDraft);await h.click(reviewPrepared);await h.click(confirmPrepared);
+  assert.deepEqual(h.lockPairs.at(-1),[false,false]);assert.match(h.text().replace(/\s+/gu,' '),/문서 new-document-728 · 등록 파일 qvt-728 · 반려/);
+  assert.equal(h.button('접수 결과 조회'),undefined);assert.equal(h.button(recoverPrepared),undefined);assert.equal(h.stored.size,1);
+  assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','reviewPreparedDraft','confirmPreparedDraft']);assert.equal(h.f.calls.filter(row=>row.method==='POST').length,1);
+ }finally{h.close();}
+});
+
+for(const mode of ['disabled','review-ABA'])test(`a newer stored receipt cannot release or replace ${mode} local observation ownership`,async()=>{
+ const gate=deferred(),h=await fixture(SINGLE_COMPANIES[0],{verified:true,beforeSaveReply:async(record,f)=>{await gate.promise;record.receipt.observedAt=f.clock.now+1;record.receipt.state='rejected';record.receipt.sourceStatus='REJECTED';}});try{
+  await h.idle();await h.click(open);h.f.bridge=async payload=>({...h.f.observation('SUBMITTED'),requestId:payload.packet.requestId});h.button(start).props.onClick();h.flush();await h.wait(()=>h.f.calls.some(call=>call.method==='POST'));
+  const before=h.props();if(mode==='disabled')h.render({...before,disabled:true});else{h.render({...before,review:{...before.review,reviewDigest:'e'.repeat(64)}});h.render(before);}h.flush();
+  gate.resolve();await h.idle();if(mode==='disabled'){h.render(before);h.flush();}
+  assert.equal(h.f.history[0].receipt.sourceStatus,'REJECTED','the isolated API save may finish, but its stale acknowledgement cannot mutate the current UI');
+  assert.deepEqual(h.lockPairs.at(-1),[true,true]);assert.ok([...h.stored.keys()].some(key=>key.startsWith('yoofam-product-document-pending:')));assert.ok([...h.stored.keys()].every(key=>!key.startsWith('yoofam-product-document-rejections:')));
+  assert.doesNotMatch(h.text().replace(/\s+/gu,' '),/문서 new-document-728 · 등록 파일 qvt-728 · 반려/);assert.ok(h.button('확인 결과 저장 다시 시도'));
+  assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','start']);assert.equal(h.f.calls.filter(row=>row.method==='POST').length,1);
+ }finally{gate.resolve();h.close();}
+});
+
 for (const company of SINGLE_COMPANIES) test(company.name + ': explicit preview rechecks before/after and retains all included options without live actions', async () => {
   const h = await fixture(company); try {
     await h.idle(); await h.wait(() => h.f.calls.length === 3); assert.equal(h.f.sent.length, 0); assert.equal(h.refreshCalls.length, 0);

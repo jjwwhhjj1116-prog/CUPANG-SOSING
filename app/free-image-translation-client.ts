@@ -239,6 +239,9 @@ export async function recognizeFreeImage(image:FreeImageLoaded,sourceLanguage:'z
  if(!response.ok){
   const message=typeof body?.error==='string'&&body.error.length<=2000?body.error:'이미지 Vision 응답을 확인하지 못했습니다. 자동으로 다시 요청하지 않습니다.';
   const known=typeof body?.code==='string'&&/^IMAGE_VISION_[A-Z_]{1,64}$/.test(body.code)&&typeof body.uncertain==='boolean';
+  // An exact non-admitted capacity response permits only a later explicit
+  // click to get a fresh UUID. Preserve the rejected attempt in its error.
+  if(response.status===429&&Object.keys(body).sort().join(',')==='code,error,uncertain'&&typeof body.error==='string'&&body.error.length<=2000&&body.code==='IMAGE_VISION_CAPACITY'&&body.uncertain===false)image.visionRequestId=undefined;
   return failVision(message,known?body.code as string:'IMAGE_VISION_RESPONSE_UNCONFIRMED',known?body.uncertain as boolean:true);
  }
  const received=parseImageTextVisionConfiguration(body?.configuration),result=parseImageTextVisionResult(body?.result,image.width,image.height);

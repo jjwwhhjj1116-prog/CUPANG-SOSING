@@ -15,13 +15,13 @@ test('the frozen full mode reaches each product runner without expanding selecte
  try{h.render();await tick();assert.equal(h.calls.length,1);assert.equal(h.calls[0].options.mode,'full');assert.deepEqual([...h.calls[0].options.stages],['pricing']);assert.equal(h.calls[0].options.retryFailedQwen,false);}finally{h.close();}
 });
 function harness(runner,{selected=stages,products=[product('a'),product('b')],runRequest={id:'run-one',ownerId:'owner',stages:selected,keys:new Map()}}={}){
- const slots=[],effects=[],layouts=[],calls=[],locks=[],opened=[];let cursor=0,closed=false,lateWrites=0,props={products,runRequest,onOpen:(...values)=>opened.push(values),onBusyChange:value=>locks.push(value)};
+ const slots=[],effects=[],layouts=[],calls=[],locks=[],opened=[],activity=[];let cursor=0,closed=false,lateWrites=0,props={products,runRequest,onOpen:(...values)=>opened.push(values),onBusyChange:value=>locks.push(value),onActivity:event=>activity.push(event)};
  const same=(before,after)=>Array.isArray(before)&&before.length===after?.length&&after.every((value,index)=>Object.is(value,before[index]));
  const effect=(queue,fn,deps)=>{const index=cursor++,old=slots[index];if(!old||!same(old.deps,deps)){const next={deps,fn,cleanup:old?.cleanup};slots[index]=next;queue.push(()=>{next.cleanup?.();next.cleanup=fn();});}};
  const hooks={useState(initial){const index=cursor++;if(!(index in slots))slots[index]=typeof initial==='function'?initial():initial;return[slots[index],value=>{if(closed){lateWrites++;return;}slots[index]=typeof value==='function'?value(slots[index]):value;}];},useRef(initial){const index=cursor++;return slots[index]??(slots[index]={current:initial});},useEffect:(fn,deps)=>effect(effects,fn,deps),useLayoutEffect:(fn,deps)=>effect(layouts,fn,deps)};
  const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/batch-work-panel.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,crypto,fetch:()=>assert.fail('The panel test cannot perform network requests'),require:name=>name==='react'?hooks:name==='react/jsx-runtime'?{jsx:(type,props,key)=>({type,props,key}),jsxs:(type,props,key)=>({type,props,key})}:name==='@/app/batch-selected-work'?{runSelectedBatchProduct:async(id,options)=>{calls.push({id,options});return runner(id,options,calls.length);}}:new Proxy({},{get:()=>()=>null})});
  const render=()=>{cursor=0;const tree=exports.SelectedBatchWorkPanel(props);layouts.splice(0).forEach(fn=>fn());effects.splice(0).forEach(fn=>fn());return tree;};
- return{calls,locks,opened,render,button:label=>nodes(render()).find(node=>node.type==='button'&&text(node)===label),replace(value){props={...props,...value};return render();},replayEffects(){for(const slot of slots)if(slot?.fn){slot.cleanup?.();slot.cleanup=slot.fn();}},close(){closed=true;slots.forEach(slot=>slot?.cleanup?.());},get lateWrites(){return lateWrites;}};
+ return{calls,locks,opened,activity,render,button:label=>nodes(render()).find(node=>node.type==='button'&&text(node)===label),replace(value){props={...props,...value};return render();},replayEffects(){for(const slot of slots)if(slot?.fn){slot.cleanup?.();slot.cleanup=slot.fn();}},close(){closed=true;slots.forEach(slot=>slot?.cleanup?.());},get lateWrites(){return lateWrites;}};
 }
 
 test('the selected queue starts directly once, passes only chosen stages and displays actual draft/complete/blocked results',async()=>{
@@ -88,4 +88,16 @@ test('the displayed SEO configuration snapshot reaches every runner and cannot c
 test('an owner/run replacement never inherits the previous SEO consent',async()=>{
  const configuration={configured:true,model:'@cf/meta/llama-3.3-70b-instruct-fp8-fast',maxOutputTokens:2048,freeOnly:true,destination:'Cloudflare Workers AI',issues:[],notice:'이전 계정 안내'},h=harness(async id=>({productId:id,stages:[]}),{products:[product('a')],runRequest:{id:'old-seo-consent',ownerId:'owner',stages:['seo'],keys:new Map(),seoGenerationConsent:configuration}});
  try{h.render();await tick();h.replace({runRequest:{id:'new-no-consent',ownerId:'new-owner',stages:['pricing'],keys:new Map()}});await tick();assert.equal(h.calls.length,2);assert.equal(h.calls[1].options.expectedOwnerId,'new-owner');assert.equal(h.calls[1].options.seoGenerationConsent,undefined);}finally{h.close();}
+});
+
+test('board feedback carries its exact run attempt and verified source while stale callbacks cannot replace it',async()=>{
+ const gate=defer(),source={productVersion:product('a').updated_at,sourceFingerprint:'verified-source'},events=[];let oldProgress;
+ const h=harness(async(id,options,index)=>{options.onStage({id:'mainImage',status:'running',message:'reading'});if(index===1){oldProgress=options.onStage;await gate.promise;}return{productId:id,stages:[{id:'mainImage',status:'failed',message:'원래 추론 응답 미확정',boardSource:source}]};},{products:[{...product('a'),boardSource:source}],selected:['mainImage']});
+ try{
+  h.render();await tick();assert.equal(h.activity[0].kind,'start');assert.equal(h.activity[0].attempt,1);assert.equal(h.activity[1].kind,'stage');assert.deepEqual(JSON.parse(JSON.stringify(h.activity[1].result.boardSource)),source);assert.notEqual(h.activity[1].result.boardSource,source);
+  gate.resolve();await tick();assert.equal(h.activity.at(-1).kind,'finish');assert.equal(h.activity.at(-2).result.status,'failed');
+  h.button('선택 작업 다시 시도').props.onClick();oldProgress({id:'mainImage',status:'complete',message:'late success',boardSource:source});await tick();
+  events.push(...h.activity);assert.equal(events.filter(event=>event.kind==='start').length,2);assert.equal(events.filter(event=>event.kind==='stage'&&event.result.message==='late success').length,0);assert.equal(events.at(-1).attempt,2);
+  const count=events.length;h.close();oldProgress({id:'mainImage',status:'failed',message:'after close'});assert.equal(h.activity.filter(event=>event.kind==='stage').length,events.filter(event=>event.kind==='stage').length);assert.ok(h.activity.length>=count);
+ }finally{h.close();}
 });

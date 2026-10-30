@@ -203,6 +203,12 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
     const partial=batch.items.find(item=>item.slotIndex===slotIndex)?.translationReview;
     if(partial?.status==='partial'){result.failed++;result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: ${partial.message} 저장된 이미지를 수동 편집에서 열어 확인해주세요.`);break;}
    }catch(cause){
+    if(cause instanceof FreeImageVisionError&&cause.code==='IMAGE_VISION_CAPACITY'&&!cause.uncertain){
+     active();
+     if(!image||!same(cause.attempt.source,image.source))throw changed();
+     result.failed++;remember({...batch,items:batch.items.map(item=>item.slotIndex===slotIndex?{...item,status:'failed',message:note(cause),rendered:undefined}:item)});
+     result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: ${note(cause)} 남은 이미지 처리를 멈췄습니다.`);return result;
+    }
     if(cause instanceof FreeImageVisionError&&cause.uncertain){
      if(!image||cause.attempt.requestId!==image.visionRequestId||!same(cause.attempt.source,image.source))throw changed();
      const pending={optionId:task.optionId,slotIndex,attempt:structuredClone(cause.attempt),code:cause.code,message:note(cause)};

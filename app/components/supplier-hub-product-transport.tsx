@@ -163,8 +163,17 @@ export function SupplierHubProductTransport(props:Props){
     }}finally{task.finish();}
   }
   async function persist(attempt:NonNullable<typeof unsaved>,task:ReturnType<typeof begin>){
-    try{const result=await saveProductReceiptObservation(attempt,task.controller.signal,fetch);if(!task.active()||current.current.unsaved!==attempt)return;
+    const shown=current.current.state;
+    try{const result=await saveProductReceiptObservation(attempt,task.controller.signal,fetch);if(!task.active()||current.current.unsaved!==attempt||current.current.state!==shown)return;
+      if(!shown?.receipt||(['requestId','docId','identityDigest','packetDigest','originalBodySha256','preparedBodySha256'] as const).some(key=>shown[key]!==attempt.observation[key])
+        ||productReceiptCanonical(shown.identity)!==productReceiptCanonical(attempt.observation.identity)||shown.receipt.qvtRequestId!==attempt.observation.receipt?.qvtRequestId
+        ||result.receipt.observedAt<shown.receipt.observedAt||shown.receipt.state==='accepted'&&result.receipt.state==='pending'||shown.receipt.state==='rejected'&&result.receipt.state!=='rejected')throw Error('원래 문서의 현재 접수 기록과 저장 결과가 다릅니다. 확인한 결과는 유지했습니다.');
       historyPending.current?.abort();historyPending.current=null;setHistory(rows=>[result,...rows.filter(row=>row.requestId!==result.requestId)]);setHistoryError('');
+      // The API may return a newer receipt for this exact request/document/qvt.
+      // Keep its validated state and the displayed receipt together before a
+      // rejection releases the reservation; the original packet/proofs remain.
+      const storedObservation={...shown,state:result.receipt.state,receipt:result.receipt};
+      current.current.state=storedObservation;setState(storedObservation);
       const saved=current.current.intent;if(saved&&result.receipt.sourceStatus==='REJECTED'){
         await clearRejectedProductDocumentPending(review,saved,result,task.controller.signal);if(!task.active())return;current.current.intent=null;setIntent(null);
       }
@@ -494,7 +503,7 @@ export function SupplierHubProductTransport(props:Props){
       {(uncertain||expired||Boolean(error))&&<p role="status">같은 문서의 저장 결과와 현재 단계를 먼저 확인해주세요. 새 문서를 만들거나 제출을 재시도하지 않습니다.</p>}
       {state?.state==='navigation-ready'&&!uncertain&&!error&&<button type="button" className="btn primary" disabled={disabled||busy} onClick={()=>void operatePrepared('reviewPreparedDraft',session)}>같은 문서 다음 단계 계속</button>}
       {(!state?.receipt||uncertain)&&<button type="button" className="btn ghost" disabled={disabled||busy||Boolean(unsaved)} onClick={()=>void operatePrepared('recoverPreparedDraft',session)}>준비한 문서 단계 확인 · 읽기 전용</button>}
-      {state&&['pending','accepted','rejected'].includes(state.state)&&!uncertain&&<button type="button" className="btn ghost" disabled={disabled||busy||Boolean(unsaved)} onClick={()=>void operatePrepared('observePreparedDraft',session)}>접수 결과 조회</button>}
+      {state&&['pending','accepted'].includes(state.state)&&!uncertain&&<button type="button" className="btn ghost" disabled={disabled||busy||Boolean(unsaved)} onClick={()=>void operatePrepared('observePreparedDraft',session)}>접수 결과 조회</button>}
     </section>}
     {session?.preview.liveVerified&&!draftMode&&!state?.draftOnly&&<>
       {!state&&!uncertain&&!intent&&<button type="button" className="btn primary" disabled={disabled||busy||Boolean(intentError)} onClick={()=>void operate('start',session)}>전체 상품 견적 등록 시작</button>}

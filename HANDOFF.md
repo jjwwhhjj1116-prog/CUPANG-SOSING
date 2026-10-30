@@ -6632,3 +6632,13 @@ REA로 Couplus의 localhost HTTP/SSE와 별도 상품조회 경계를 확인했�
 - REA 보관RS1.0.88·1688관찰·앱서버parser와 비교해 확장만 var offer_details strictJSON content를 거절하던 차이를 수정했다. 기존HTMLtokenizer·원래상품/문서연결·한GET·MIME/host/image검증유지, eval/새host/권한확대0. 악성tail·중복/poison키·깊이/크기·구조한도검사.
 - 분리10파일78/78, tsc/lint/확장생성물/ZIP/build통과, 15릴리스파일hash일치. 초기버전기대5실패는수정했고최종78pass. Worker84271095-94a3-4907-9a11-7e242afdd877 배포.2.1.61 ZIP108files/1500707bytes/SHA9961c1bd24b64b3c5ce839f805f91e46d53b29e000ca8629a4d108d9e0d7a052. 실제설치폴더108파일백업·갱신/hash일치. Chrome적용은미확인.
 - RS는포장·속성필드전송없음. 이전886 reference-missing은문서요청전획득문제이므로이번수정으로0/0/0해결을주장하지않는다. 원래상품/요청/문서2347603에쓰기0, Supplier Hub origin승인대기·우회0, 실제접수미완료. docs/step866-detail-description-literal-compatibility.md 참조.
+
+### Step867 — 단계 오류 표시·접수 관찰 상태 동기화·정확한 연결 진단 (2026-10-30)
+
+- 배치의 current-session running/failed/blocked를 회원/회사/설정/선택/run/원본 범위로 보드에 반영한다. 완료는 서버 근거만 사용한다. sourceChanged/ScopeChanged·오래된 callback/ABA는 폐기하고 모달 닫기 후 현재 오류는 유지한다. 새로고침 이후의 durable 실패 이력은 아니다.
+- 동일 요청/문서 최신 접수 관찰 저장 때 화면 상태+receipt를 함께 동기화하고 lifecycle 증거를 보존해 terminal 결과 후 창 잠김을 수정했다. 기존 Hub 요청/쓰기 순서는 불변이다. 원래 요청 inspect는 버전/capability PING을 먼저 확인하여 구버전 무응답30초를 제거했다.
+- 진단에 Qwen 이미지 문구 인식·번역을 별도 표시하고 DB52개 테이블을 SELECT로 확인한다. AI.run thirdarg rejectIfBusy 및 엄격3040 CAPACITY만 확정거절, 나머지 uncertain 유지. 확정 혼잡 후 잔여 사진 중단·사용자 다음 실행 UUID해제, 자동재시도/과거TIMEOUT해제0. 모델/60초/late/CAS불변.
+- 분리 고유10파일254/254·tsc/lint/build 통과,23파일SHA일치. 독립P2 상속오류 경계 수정 후 남은P1/P2없음. Worker d269ea3a-b65b-4dab-87a7-665b21d5bfbe 배포. 확장 이번단계변경0, 설치준비2.1.61/실제실행2.1.59. 사용자2.1.61 새로고침 요청 대기.
+- 별도QA261030001001 실제부분작업: 원래7bd4209c Vision미확정 유지·잔여중단, 모달닫기뒤 대표이미지 오류·UUID툴팁 확인, SEO/가격완료보존. 화면 outputs/step867-live-board-stage-error.png. 실제이미지번역/인페인팅성공아님.
+- Supplier Hub 같은도구 읽기접근 정상화: 이전origin승인대기는 현재차단아님. 중간저장243행에서 동일상품명/68183/2026.10.29 13:15 한행 관찰. 화면문서번호없어2347603확정못함. 등록요청현재143행 일치없음은 전체과거미접수증거아님. 신규생성/파일/본문/단계검증/제출0. 원래35테이블48행hash전후동일,보관상태유지.
+- 886직접읽기는 같은브라우저 도구의 site-safety 거절, 우회0. 수집누락 실해결/실접수/전체동일성미완료. Couplus main/additional cleanup vs detail번역 역할 차이도 REA로 재확인; inpainting provider/mask아직미구현. 상세 docs/step867-stage-feedback-and-receipt-recovery.md.

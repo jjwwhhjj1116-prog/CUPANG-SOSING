@@ -8,6 +8,12 @@ export const requiredDatabaseTables = [
   'members', 'member_sessions', 'member_rate_limits', 'member_audit', 'supplier_hub_receipts', 'collection_source_supplements', 'managed_products', 'historical_ai_records', 'product_removals',
   'collection_offer_claims', 'product_labels', 'managed_import_prices',
   'supplier_hub_single_receipts',
+  'detail_family_apply_operations', 'image_vision_requests', 'managed_product_history',
+  'managed_purchase_info', 'managed_store_settings', 'member_connections', 'operations_workspaces',
+  'product_detail_workspaces', 'product_option_split_members', 'product_option_split_operations',
+  'product_registration_counters', 'product_registration_numbers', 'product_registration_options',
+  'query_source_captures', 'quotation_ai_daily', 'quotation_ai_jobs',
+  'source_inbox', 'source_inbox_captures', 'source_inbox_title_runs', 'source_inbox_titles',
 ] as const;
 
 export async function inspectDatabaseTables(database: D1Database) {

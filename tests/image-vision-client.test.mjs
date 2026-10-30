@@ -48,6 +48,22 @@ test('confirmed provider rejection keeps its typed false uncertainty without fab
  assert.equal(h.image.visionPending,undefined);assert.equal(h.calls.length,1);
 });
 
+test('exact non-admitted capacity keeps its original error attempt and allows a new UUID only on a later explicit call',async()=>{
+ const h=fixture(),succeed=h.image.visionFetcher;h.image.visionFetcher=async(_url,init)=>{h.calls.push({body:JSON.parse(init.body)});return Response.json({error:'이미지 번역 서버가 혼잡합니다.',code:'IMAGE_VISION_CAPACITY',uncertain:false},{status:429});};
+ let rejected;await assert.rejects(h.client.recognizeFreeImage(h.image,'zh',new AbortController().signal),cause=>{rejected=cause;return cause instanceof h.client.FreeImageVisionError&&cause.code==='IMAGE_VISION_CAPACITY'&&!cause.uncertain;});
+ assert.equal(h.calls.length,1);assert.equal(rejected.attempt.requestId,h.calls[0].body.requestId);assert.equal(h.image.visionRequestId,undefined);assert.equal(h.image.visionPending,undefined);assert.equal(h.image.visionResult,undefined);
+ h.image.visionFetcher=succeed;await h.client.recognizeFreeImage(h.image,'zh',new AbortController().signal);assert.equal(h.calls.length,2);assert.notEqual(h.calls[1].body.requestId,rejected.attempt.requestId);assert.equal(rejected.attempt.requestId,h.calls[0].body.requestId);
+});
+
+test('other failures and mismatched capacity envelopes cannot free the original Vision UUID',async()=>{
+ for(const reply of [{status:409,body:{error:'not a capacity response',code:'IMAGE_VISION_PROVIDER',uncertain:false}},
+  {status:429,body:{error:'busy',code:'IMAGE_VISION_CAPACITY',uncertain:true}},{status:409,body:{error:'busy',code:'IMAGE_VISION_CAPACITY',uncertain:false}},
+  {status:429,body:{error:'busy',code:'IMAGE_VISION_CAPACITY',uncertain:false,extra:'unknown'}}]){
+  const h=fixture();h.image.visionFetcher=async(_url,init)=>{h.calls.push({body:JSON.parse(init.body)});return Response.json(reply.body,{status:reply.status});};
+  await assert.rejects(h.client.recognizeFreeImage(h.image,'zh',new AbortController().signal));assert.equal(h.calls.length,1);assert.equal(h.image.visionRequestId,h.calls[0].body.requestId);
+ }
+});
+
 test('original Vision request observations use only GET and preserve exact pending source without another inference',async()=>{
  const h=fixture(),attempt={requestId:'0fa1748b-fd6e-4b16-8120-754071c7a73f',source:h.image.source,sourceLanguage:'zh',configuration:h.config};
  for(const status of ['running','uncertain','failed','completed','not-found']){

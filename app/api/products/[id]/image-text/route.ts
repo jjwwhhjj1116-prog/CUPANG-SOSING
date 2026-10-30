@@ -221,7 +221,7 @@ function sameOrigin(request: Request) {
   if ((origin && origin !== new URL(request.url).origin) || request.headers.get('sec-fetch-site') === 'cross-site') throw new ImageTextError(400, '같은 사이트의 이미지 편집 화면에서 요청해주세요.');
 }
 function fail(error: unknown) {
-  if(error instanceof ImageVisionError)return response({error:error.message,code:`IMAGE_VISION_${error.reason}`,uncertain:error.uncertain},error.reason==='NOT_CONFIGURED'?503:409);
+  if(error instanceof ImageVisionError)return response({error:error.message,code:`IMAGE_VISION_${error.reason}`,uncertain:error.uncertain},error.reason==='NOT_CONFIGURED'?503:error.reason==='CAPACITY'?429:409);
   if (error instanceof FreeImageEditRecordError) return response({ error: error.message, ...(error.code ? { code: error.code } : {}) }, error.status);
   if (error instanceof ImageTextError || error instanceof RequestBodyError) return response({ error: error.message }, error.status);
   if (error instanceof QuotationFieldsSnapshotError || error instanceof PublicDetailError) return response({ error: error.message }, error.status);

@@ -15,7 +15,7 @@ function fixture(options={}){
  const calls=[],ledger=new Map(),cache=new Map(),background=[],events=[];let bytes=new Uint8Array([1,2,3]),claims=0,reads=0;
  const controls={owner:'owner',company:{...company},verified:true,provider:null,afterClaim:null,afterFinish:null,afterRead:null,claimAckLost:false,finishAckLost:false,finishBeforeCommitFailure:false};
  const product={id:'new-product',owner_id:'owner',updated_at:'2026-10-29T00:00:00.000Z',image_keys:'["owner/source.png"]'},content={revision:2,assets:{detail:{value:['owner/source.png']},additional:{value:['owner/source.png']},main:{value:['owner/source.png']}}};
- const env={SOURCEFLOW_IMAGE_TEXT_PROVIDER:'workers-ai-vision',SOURCEFLOW_IMAGE_TEXT_MODEL:'@cf/qwen/qwen3.8-27b',SOURCEFLOW_IMAGE_TEXT_PAID_ALLOWED:'true',AI:{async run(model,input){calls.push({model,input:plain(input)});return controls.provider?controls.provider(model,input):chat({blocks:[block()]});}},FILES:{async get(){return{size:bytes.length,body:new Response(bytes).body};},put(){throw Error('No image writes');}},...options.env};
+ const env={SOURCEFLOW_IMAGE_TEXT_PROVIDER:'workers-ai-vision',SOURCEFLOW_IMAGE_TEXT_MODEL:'@cf/qwen/qwen3.8-27b',SOURCEFLOW_IMAGE_TEXT_PAID_ALLOWED:'true',AI:{async run(model,input,runOptions){calls.push({model,input:plain(input),options:runOptions&&plain(runOptions)});return controls.provider?controls.provider(model,input):chat({blocks:[block()]});}},FILES:{async get(){return{size:bytes.length,body:new Response(bytes).body};},put(){throw Error('No image writes');}},...options.env};
  const notUsed=class extends Error{};
  const stubs={'cloudflare:workers':{env,...(options.background?{waitUntil(task){if(options.background==='throw')throw Error('background unavailable');background.push(task);}}:{})},'next/server':{NextResponse:Response},parse5,
   '@/app/chatgpt-auth':{getChatGPTUser:async()=>({userId:controls.owner,email:'fixture@example.test',verifiedAccess:controls.verified,membership:{id:controls.owner,email:'fixture@example.test',role:'admin',status:'approved',companyCode:controls.company.code,companyName:controls.company.name}}),getWorkspaceOwnerId:async()=>controls.owner},
@@ -43,8 +43,29 @@ function fixture(options={}){
 test('owned bytes use exact Vision model, low reasoning, schema and one request, completed UUID replays without writes',async()=>{
  const h=fixture(),before=JSON.stringify([h.source,h.product,h.content]);const result=await h.post();assert.equal(result.status,200,JSON.stringify(result.body));assert.equal(h.calls.length,1);assert.equal(result.body.result.blocks[0].translated,'검정');
  const call=h.calls[0];assert.equal(call.model,'@cf/qwen/qwen3.8-27b');assert.equal(call.input.reasoning_effort,'low');assert.equal(call.input.max_completion_tokens,4096);assert.equal(call.input.stream,false);assert.equal(call.input.tool_choice,'none');assert.equal(call.input.response_format.type,'json_schema');
+ assert.deepEqual(call.options,{rejectIfBusy:true});assert.equal(Object.hasOwn(call.input,'rejectIfBusy'),false);
  assert.equal(call.input.messages[1].content[1].image_url.url,'data:image/png;base64,AQID');assert.ok(!JSON.stringify(call.input).includes('owner/source.png'));assert.equal(JSON.stringify([h.source,h.product,h.content]),before);
   assert.equal((await h.post()).body.replayed,true);assert.equal(h.calls.length,1);
+});
+
+test('only exact documented capacity rejections return 429 with a confirmed failure and one binding attempt',async()=>{
+ const message='Capacity temporarily exceeded, please try again.';
+ for(const error of [{code:3040,message},{code:3040,message,status:429},{message:'3040: '+message,statusCode:429},{message:'AI_ERROR: 3040: '+message}]){
+  const h=fixture({background:true}),before=JSON.stringify([h.product,h.content]);h.controls.provider=()=>Promise.reject(error);
+  const response=await h.post();assert.equal(response.status,429);assert.equal(response.body.code,'IMAGE_VISION_CAPACITY');assert.equal(response.body.uncertain,false);
+  const row=[...h.ledger.values()][0];assert.equal(row.status,'failed');assert.equal(row.failure,'CAPACITY');assert.equal(row.provider_requests,1);assert.equal(h.calls.length,1);assert.deepEqual(h.calls[0].options,{rejectIfBusy:true});assert.equal(h.background.length,0);
+  assert.equal((await h.post()).status,409);assert.equal(h.calls.length,1,'the original failed UUID is not dispatched again');assert.equal(JSON.stringify([h.product,h.content]),before);
+ }
+});
+
+test('general 429, contradictory codes, inherited/accessor details and near capacity messages remain uncertain',async()=>{
+ const message='Capacity temporarily exceeded, please try again.';let getterReads=0;
+ const errors=[{status:429,message},{code:'3040',message},{code:3041,message:'3040: '+message},{code:3040,status:503,message},{code:3040,status:429,statusCode:503,message},
+  {code:3040,message:message+' '},{code:3040,message:'private prefix: '+message},{message:'AI_ERROR: 3040: '+message+' retry now'},Object.create({code:3040,message}),
+  Object.assign(Object.create({status:503}),{code:3040,message}),Object.assign(Object.create({code:3041}),{message:'3040: '+message}),Object.assign(Object.create({statusCode:429}),{code:3040,message}),
+  Object.defineProperty({message},'code',{get(){getterReads++;return 3040;}})];
+ for(const error of errors){const h=fixture({background:true});h.controls.provider=()=>Promise.reject(error);const response=await h.post();assert.equal(response.status,409);assert.equal(response.body.code,'IMAGE_VISION_PROVIDER');assert.equal(response.body.uncertain,true);assert.equal(h.calls.length,1);assert.equal([...h.ledger.values()][0].status,'uncertain');assert.equal(h.background.length,0);assert.equal((await h.post()).status,409);assert.equal(h.calls.length,1);}
+ assert.equal(getterReads,0);
 });
 
 test('original Vision status reads never claim or infer, including missing, uncertain and completed original requests',async()=>{

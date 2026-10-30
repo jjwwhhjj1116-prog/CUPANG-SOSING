@@ -3,6 +3,7 @@ import { env } from 'cloudflare:workers';
 import { NextResponse } from 'next/server';
 import { translationConfiguration, type TranslationSecrets } from '@/app/automation/translation';
 import { imageConfiguration, type ImageSecrets } from '@/app/automation/image-edit';
+import { imageVisionConfiguration, type ImageVisionEnvironment } from '@/app/automation/workers-image-vision';
 import { inspectDatabaseTables } from '@/app/database-readiness';
 
 export async function GET() {
@@ -24,6 +25,7 @@ export async function GET() {
     files: env.FILES ? 'binding_present' : 'unavailable',
     authentication: process.env.NODE_ENV === 'production' ? 'cloudflare_access' : 'local_development',
     translation: { ...translationConfiguration(env as TranslationSecrets), executionVerified: false },
+    imageTextVision: { ...imageVisionConfiguration(env as ImageVisionEnvironment), executionVerified: false },
     imageProcessing: { ...imageConfiguration(env as ImageSecrets), executionVerified: false },
     collection: { configured: false, status: 'awaiting_connector' },
     extension: 'unverified', supplierHub: 'unverified', cli: 'unverified',
