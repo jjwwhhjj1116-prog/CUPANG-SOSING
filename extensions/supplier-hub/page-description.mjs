@@ -49,11 +49,54 @@ function decodeAttribute(value){
  return /&(?:[A-Za-z][A-Za-z0-9]*|#[^;\s]*);/u.test(decoded)?'':decoded;
 }
 
+/** The observed CDN format is one literal `var offer_details = {content:…}`
+ * assignment containing strict JSON. Inspect it as text, never as JavaScript.
+ * Bound depth and members before JSON.parse, rejecting duplicate/poison keys
+ * even when escaped; then feed only its own content to the HTML tokenizer. */
+function descriptionHtml(body){
+ if(/^\s*</u.test(body))return body;
+ const assignment=/^\s*var\s+offer_details\s*=\s*/u.exec(body);
+ if(!assignment||body[assignment[0].length]!=='{')fail('html-unavailable');
+ const start=assignment[0].length,stack=[];
+ let quoted=false,escaped=false,stringStart=0,members=0,end=-1;
+ for(let position=start;position<body.length;position++){
+  const character=body[position];
+  if(quoted){
+   if(escaped){escaped=false;continue;}
+   if(character==='\\'){escaped=true;continue;}
+   if(character!=='"')continue;
+   quoted=false;
+   let next=position+1;while(/[\t\n\r ]/u.test(body[next]??''))next++;
+   if(body[next]===':'){
+    let key;try{key=JSON.parse(body.slice(stringStart,position+1));}catch{return fail('html-unavailable');}
+    const object=stack.at(-1);
+    if(object?.kind!=='{'||++members>10000||['__proto__','constructor','prototype'].includes(key)||object.keys.has(key))fail('html-unavailable');
+    object.keys.add(key);
+   }
+   continue;
+  }
+  if(character==='"'){quoted=true;stringStart=position;continue;}
+  if(character==='{'||character==='['){
+   if(stack.length>=40)fail('html-unavailable');
+   stack.push({kind:character,keys:character==='{'?new Set():null});continue;
+  }
+  if(character==='}'||character===']'){
+   if(stack.at(-1)?.kind!==(character==='}'?'{':'['))fail('html-unavailable');
+   stack.pop();if(!stack.length){end=position+1;break;}
+  }
+ }
+ if(end<0||!/^\s*;?\s*$/u.test(body.slice(end)))fail('html-unavailable');
+ let value;try{value=JSON.parse(body.slice(start,end));}catch{return fail('html-unavailable');}
+ if(!value||typeof value!=='object'||Array.isArray(value)||!Object.hasOwn(value,'content')||typeof value.content!=='string')fail('html-unavailable');
+ return value.content;
+}
+
 /** Small conservative HTML tokenizer. It never creates a DOM or requests an
  * image. Only explicit attributes of static HTML img tags can leave it; raw
  * script/style/iframe text and foreign/template subtrees are skipped. */
 export function parsePageDescriptionImages(html){
  if(typeof html!=='string'||new TextEncoder().encode(html).byteLength>PAGE_DESCRIPTION_LIMIT)fail('response-too-large');
+ html=descriptionHtml(html);
  if(!/^\s*</u.test(html))fail('html-unavailable');
  const images=[],blocked=[],raw=new Set(['script','style','iframe','xmp','textarea','title','noscript','plaintext']),excluded=new Set([...raw,'template','object','embed','svg','math']);
  let cursor=0,tokens=0;

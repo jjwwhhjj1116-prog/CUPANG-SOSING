@@ -6627,3 +6627,8 @@ REA로 Couplus의 localhost HTTP/SSE와 별도 상품조회 경계를 확인했�
 - 빈 unverified ALT만 저장 한글 SEO 제목을 사용하고 다른 provenance의 공란을 보존한다. 배치 표시 제목도 보드와 통일했다.
 - 고유8파일266/266, tsc/lint/build 통과. 분리16파일 hash일치. Worker2b6fa7dd-41d9-45fa-b57c-114b6144e11a 배포. QA261030001001의 한글 ALT/invalid=false 실제 확인. 기존 견적 단독 작업36AI+6저장정보+12포장추정, 라벨 작업은 내용량 원문부족으로 저장하지 않음. 전체 단계/이미지 번역/접수 성공으로 보고금지.
 - 기존886/요청f29491bd-1882-456a-8a63-eec8586db6c6/문서2347603 생성·파일·본문 재전송0. 보관상태유지, D1기존35테이블48행 hash동일. Supplier Hub origin거절 승인 및2.1.60 Chrome적용 응답 대기. 우회0. docs/step865-image-vision-recovery-and-quotation-defaults.md 참조.
+### Step866 — 상세사진 원문 literal wrapper 호환 (2026-10-30)
+
+- REA 보관RS1.0.88·1688관찰·앱서버parser와 비교해 확장만 var offer_details strictJSON content를 거절하던 차이를 수정했다. 기존HTMLtokenizer·원래상품/문서연결·한GET·MIME/host/image검증유지, eval/새host/권한확대0. 악성tail·중복/poison키·깊이/크기·구조한도검사.
+- 분리10파일78/78, tsc/lint/확장생성물/ZIP/build통과, 15릴리스파일hash일치. 초기버전기대5실패는수정했고최종78pass. Worker84271095-94a3-4907-9a11-7e242afdd877 배포.2.1.61 ZIP108files/1500707bytes/SHA9961c1bd24b64b3c5ce839f805f91e46d53b29e000ca8629a4d108d9e0d7a052. 실제설치폴더108파일백업·갱신/hash일치. Chrome적용은미확인.
+- RS는포장·속성필드전송없음. 이전886 reference-missing은문서요청전획득문제이므로이번수정으로0/0/0해결을주장하지않는다. 원래상품/요청/문서2347603에쓰기0, Supplier Hub origin승인대기·우회0, 실제접수미완료. docs/step866-detail-description-literal-compatibility.md 참조.

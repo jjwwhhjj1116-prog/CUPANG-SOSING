@@ -63,11 +63,50 @@ test('the description destination accepts only exact, bounded, current-offer CDN
 test('static HTML extraction skips executable strings, foreign subtrees, comments and invalid CDN sources',()=>{
  const html=`<!doctype html><!-- <img src="${second}"> --><script>globalThis.executed=true;"<img src='${second}'>"</script><style>x{content:"<img src='${second}'>"}</style><iframe><img src="${second}"></iframe><template><img src="${second}"></template><svg><img src="${second}"></svg><math><img src="${second}"></math><div title="<img src='${second}'>"><img src="https://evil.test/image.jpg"><img src="data:image/png,xx"><img data-src="//cbu01.alicdn.com/img/ibank/SYNTHETIC-1.jpg"><img src="${first}"><img src="${second}?a=1&amp;b=2"></div>`;
  assert.deepEqual(parsePageDescriptionImages(html),[first,second+'?a=1&b=2']);
- assert.throws(()=>parsePageDescriptionImages('var offer_details='+JSON.stringify({content:`<img src="${first}">`})),/상세 원문/);
+ assert.deepEqual(parsePageDescriptionImages('var offer_details='+JSON.stringify({content:`<img src="${first}">`})),[first]);
  assert.throws(()=>parsePageDescriptionImages(`<img src="${first}" src="${second}">`));
  assert.throws(()=>parsePageDescriptionImages(Array.from({length:81},(_,index)=>`<img src="https://cbu01.alicdn.com/SYNTHETIC-${index}.jpg">`).join('')));
  assert.throws(()=>parsePageDescriptionImages('<div>'+'a'.repeat(PAGE_DESCRIPTION_LIMIT)));
  assert.deepEqual(parsePageDescriptionImages(`<textarea><img src="${first}"></textarea>`),[]);
+});
+
+test('literal offer_details content reuses the HTML tokenizer without evaluating script, strings or metadata',()=>{
+ const content=`<div>中文商品详情 { } [ ] \\ &amp;</div><script>globalThis.__yoofamExecuted=true;"<img src='${second}'>";</script><img data-original="${first}"><img src="${first}">`;
+ const wrapped=' \nvar\t offer_details \n = '+JSON.stringify({content,metadata:{ignoredImage:second,rows:[1,null,true]}})+' ; \n';
+ assert.deepEqual(parsePageDescriptionImages(wrapped),[first]);
+ assert.deepEqual(parsePageDescriptionImages('var offer_details = {"con\\u0074ent":'+JSON.stringify(`<img src="${second}">`)+'};'),[second]);
+ assert.equal(Object.hasOwn(globalThis,'__yoofamExecuted'),false);
+ for(const content of [`<script>"<img src='${first}'>"</script>`,`<iframe><img src="${first}"></iframe>`,`<template><img src="${first}"></template>`])assert.deepEqual(parsePageDescriptionImages('var offer_details='+JSON.stringify({content})+';'),[]);
+});
+
+test('only one complete strict JSON offer_details assignment is accepted, with no JSONP, executable tail or alternate binding',()=>{
+ const json=JSON.stringify({content:`<img src="${first}">`});
+ for(const body of [
+  `offer_details=${json};`,`let offer_details=${json};`,`const offer_details=${json};`,`window.offer_details=${json};`,`callback(${json});`,
+  `var offer_details=JSON.parse(${JSON.stringify(json)});`,`var offer_details=(${json});`,`var offer_details=${json};globalThis.__yoofamExecuted=true;`,
+  `var offer_details=${json};var offer_details=${json};`,`var offer_details=${json};/* trailing comment */`,`/* prefix */var offer_details=${json};`,
+  `var offer_details={content:"<img src='${first}'>"};`,`var offer_details={'content':"<img src='${first}'>"};`,
+  `var offer_details={"content":${JSON.stringify(`<img src="${first}">`)},};`,`var offer_details={"content":(()=>"x")()};`,
+  `var offer_details=${json.slice(0,-1)}];`,`var offer_details=${json.slice(0,-1)};`,`var offer_details=[${json}];`,
+  'var offer_details={"content":42};','var offer_details={"nested":{"content":"<img>"}};',
+ ])assert.throws(()=>parsePageDescriptionImages(body),/상세 원문/);
+ assert.equal(Object.hasOwn(globalThis,'__yoofamExecuted'),false);
+});
+
+test('literal wrappers reject duplicate decoded keys, prototype keys and excessive structural work',()=>{
+ const content=JSON.stringify(`<img src="${first}">`);
+ for(const body of [
+  `var offer_details={"content":${content},"content":${content}};`,
+  `var offer_details={"content":${content},"con\\u0074ent":${content}};`,
+  `var offer_details={"content":${content},"meta":{"same":1,"sa\\u006de":2}};`,
+  ...['__proto__','constructor','prototype','__pro\\u0074o__'].map(key=>`var offer_details={"content":${content},"meta":{"${key}":{"polluted":true}}};`),
+  `var offer_details={"content":${content},"meta":`+'['.repeat(41)+'0'+']'.repeat(41)+'};',
+  `var offer_details={"content":${content},"meta":{`+Array.from({length:10001},(_,index)=>`"p${index}":0`).join(',')+'}};',
+  'var offer_details={"content":"'+'a'.repeat(PAGE_DESCRIPTION_LIMIT)+'"};',
+ ])assert.throws(()=>parsePageDescriptionImages(body),/상세 원문/);
+ assert.equal(Object.hasOwn(Object.prototype,'polluted'),false);
+ // JSON brackets inside strings do not consume structural depth.
+ assert.deepEqual(parsePageDescriptionImages('var offer_details='+JSON.stringify({content:`<p>${'[]{}'.repeat(1000)}</p><img src="${first}">`})+';'),[first]);
 });
 
 test('static detail HTML retains allowlisted lazy image attributes when src is an unsafe placeholder',()=>{
@@ -99,6 +138,13 @@ test('one mocked read returns only validated detail URLs and binds every injecti
  for(const specification of h.calls.scripts){assert.deepEqual(specification.target,{tabId:7,documentIds:['synthetic-document-1']});assert.equal(specification.world,'ISOLATED');assert.equal(specification.func,readPageDescriptionDocument);assert.deepEqual(specification.args,[sourceUrl]);}
  const {url,init}=h.calls.fetch[0];assert.equal(url,detailUrl);assert.equal(init.credentials,'omit');assert.equal(init.redirect,'error');assert.equal(init.method,'GET');assert.equal(init.cache,'no-store');assert.equal(init.referrerPolicy,'no-referrer');assert.ok(init.signal instanceof AbortSignal);assert.deepEqual(init.headers,{accept:'text/html,text/plain;q=0.9'});
  assert.equal(JSON.stringify(result).includes('SYNTHETICONLY'),false);assert.equal(Object.hasOwn(result,'html'),false);assert.equal(Object.hasOwn(result,'scripts'),false);
+});
+
+test('one bound detail GET can read the observed offer_details wrapper and still rechecks the original document',async()=>{
+ const h=harness({fetcher:async()=>reply('var offer_details = '+JSON.stringify({content:`<img data-src="${first}"><img src="${second}">`})+';')});
+ assert.deepEqual(await h.run(),{ok:true,available:true,sourceUrl,offerId,detailImages:[first,second]});
+ assert.equal(h.calls.fetch.length,1);assert.equal(h.calls.scripts.length,2);assert.equal(h.calls.tabs.length,5);
+ for(const read of h.calls.scripts)assert.deepEqual(read.target,{tabId:7,documentIds:['synthetic-document-1']});
 });
 
 test('foreign, framed, inactive, unbound and malformed callers cannot read scripts or fetch',async()=>{
@@ -134,7 +180,7 @@ test('HTTP, redirects, final URL, content type, executable body and byte bounds 
   ()=>reply(`<img src="${first}">`,{headers:{'content-type':'application/javascript'}}),
   ()=>reply(`<img src="${first}">`,{headers:{'content-type':'text/html','content-length':String(PAGE_DESCRIPTION_LIMIT+1)}}),
   ()=>reply('<div>'+'a'.repeat(PAGE_DESCRIPTION_LIMIT)),()=>reply(`<script>"<img src='${first}'>"</script>`),
-  ()=>reply('var offer_details='+JSON.stringify({content:`<img src="${first}">`})),
+  ()=>reply('var offer_details='+JSON.stringify({content:`<img src="${first}">`})+'; globalThis.__yoofamExecuted=true;'),
   ()=>reply(`<img src="${first}">`,{headers:{'content-type':'text/html; charset=synthetic-unsupported'}}),
   ()=>new Response(new Uint8Array([60,100,105,118,62,255]),{headers:{'content-type':'text/html; charset=utf-8'}}),
  ];
