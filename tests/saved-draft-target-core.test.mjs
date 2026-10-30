@@ -32,18 +32,18 @@ async function fixture(options={}){
     createRetry:{attempt:1,originalRequestedAt:now-90000,originalSequence:2,approvedAt:now-20000,resumeUsed:true},
     existingDocumentRepair:{format:'yoofam-existing-document-repair-v1',attempt:1,docId:2347603,startedAt:now-15000,priorSequence:5,priorOperationId:packet.requestId+':update',inspectionSha256:'e'.repeat(64)}};
   let saved=copy(original);
-  const f={now,packet,sender,context,original:copy(original),sourceSnapshot:copy(packet),previousTarget,calls:[],oldClosed:true,newClosed:false,currentSession:'fresh-session',current:true,sourceCompany:copy(base.company),tabCompany:copy(base.company),created:0,qualified:0,writes:[],casFailures:new Set(),...options};
+  const f={now,packet,sender,context,original:copy(original),sourceSnapshot:copy(packet),previousTarget,calls:[],oldClosed:true,newClosed:false,closedTabIds:new Set(),currentSession:'fresh-session',current:true,sourceCompany:copy(base.company),tabCompany:copy(base.company),created:0,qualified:0,writes:[],casFailures:new Set(),...options};
   const store={get:async()=>copy(saved),claim:unexpected,compareAndSet:async(_key,prior,next)=>{f.calls.push({name:'cas',phase:next.savedDraftTargetRecovery?.phase});if(f.casFailures.delete(next.savedDraftTargetRecovery?.phase))return false;if(canonical(saved)!==canonical(prior))return false;saved=copy(next);return true;}};
   f.saved=()=>copy(saved);f.force=value=>{saved=copy(value);};
   const record=(name,input)=>f.calls.push({name,input:copy(input)});
   const adapter={
     readSource:async input=>{record('readSource',input);return {current:f.current,submissionReady:true,priorDocumentClear:true,identity:{...copy(context.identity),company:copy(f.sourceCompany)},bodySha256:context.originalBodySha256,sessionId:f.currentSession,...f.sourceProof};},
-    readOwnedTargetPresence:async input=>{record('presence',input);return {requestId:packet.requestId,packetDigest:context.packetDigest,tabId:input.tab.tabId,windowId:sender.tab.windowId,closed:input.tab.tabId===71?f.oldClosed:f.newClosed,checkedAt:f.now,...f.presenceProof};},
-    createTarget:async input=>{record('createTarget',input);f.created++;if(f.lostTargetAck)throw Error('synthetic lost browser-tab ACK');return {...previousTarget,tabId:90};},
+    readOwnedTargetPresence:async input=>{record('presence',input);return {requestId:packet.requestId,packetDigest:context.packetDigest,tabId:input.tab.tabId,windowId:sender.tab.windowId,closed:input.tab.tabId===71?f.oldClosed:f.closedTabIds.has(input.tab.tabId)||input.tab.tabId===90&&f.newClosed,checkedAt:f.now,...f.presenceProof};},
+    createTarget:async input=>{record('createTarget',input);f.created++;await f.beforeCreateTarget?.();if(f.lostTargetAck)throw Error('synthetic lost browser-tab ACK');return {...previousTarget,tabId:89+f.created};},
     readTab:async input=>{record('readTab',input);return {...copy(input.tab),authenticated:true,company:copy(f.tabCompany)};},
     qualifySavedDraftTarget:async input=>{record('qualifySavedDraftTarget',input);f.qualified++;const proof={format:'yoofam-current-saved-draft-target-v1',requestId:packet.requestId,docId:original.docId,tabId:input.tab.tabId,windowId:input.tab.windowId,identityDigest:context.identityDigest,packetDigest:context.packetDigest,preparedBodySha256:context.bodySha256,sourcePlanSha256:context.identity.fingerprint,baselineSha256:digest(original.baselineDocIds),bodySha256:context.bodySha256,fileSetSha256:'1'.repeat(64),byteSetSha256:'2'.repeat(64),filesCount:5,duplicateMatches:0,documentState:'UNFINISHED',readOnly:true,remoteWrites:false,historicalAckRecovered:false,observedAt:f.now};return f.proof?f.proof(proof):proof;},
     hubRequest:async input=>{record('hubRequest',input);if(input.method==='GET')return {ok:true,status:200,json:[{docId:original.docId}]};if(input.path.includes('/validate-step/'))return {ok:true,status:200,json:{code:200,data:[{success:true,errors:[]}]}};f.writes.push(copy(input));return unexpected();},
-    readDocument:async input=>{record('readDocument',input);assert.equal(input.tab.tabId,90);return {docId:original.docId,company:copy(base.company),identityDigest:context.identityDigest,body:{...copy(prepared),docId:original.docId}};},
+    readDocument:async input=>{record('readDocument',input);assert.equal(input.tab.tabId,89+f.created);return {docId:original.docId,company:copy(base.company),identityDigest:context.identityDigest,body:{...copy(prepared),docId:original.docId}};},
     qualifyPreparedDraft:async input=>{record('qualifyPreparedDraft',input);return {readOnly:true,docId:input.docId,company:copy(base.company),identityDigest:context.identityDigest,packetDigest:context.packetDigest,sourcePlanSha256:context.identity.fingerprint,metadataObserved:true,checkedAt:f.now};},
     recoverWrite:unexpected,readValidation:unexpected,navigate:unexpected,readAgreements:unexpected,verifyHumanConfirmation:unexpected,confirmAgreements:unexpected,submit:unexpected,observeReceipt:unexpected,
   };
@@ -96,9 +96,63 @@ test('created target remains reserved through company/proof failures and retries
   f.tabCompany=copy(f.original.identity.company);assert.equal((await f.receiver().recoverSavedDraftTarget(f.packet,f.sender)).state,'updated');assert.equal(f.created,1);f.assertReadOnly();
 });
 
-test('a positively closed reserved recovery target fails before readTab and preserves the exact created audit without another tab',async()=>{
- const f=await fixture({proof:()=>null});assert.equal((await f.receiver().recoverSavedDraftTarget(f.packet,f.sender)).error.code,'SAVED_DRAFT_TARGET_UNCONFIRMED');const reserved=f.saved();f.newClosed=true;f.calls=[];
- const reply=await f.receiver().recoverSavedDraftTarget(f.packet,f.sender);assert.equal(reply.error.code,'SAVED_DRAFT_RECOVERY_TARGET_CLOSED');assert.equal(reply.docId,reserved.docId);assert.equal(reply.draftOnly,true);assert.deepEqual(f.saved(),reserved);assert.equal(f.created,1);assert.equal(f.calls.some(call=>['readTab','qualifySavedDraftTarget','createTarget','cas'].includes(call.name)),false);assert.deepEqual(f.calls.filter(call=>call.name==='presence').map(call=>call.input.tab.tabId),[71,90]);f.assertReadOnly();
+test('only explicit read recovery replaces one positively closed reserved tab, preserving its evidence and original document audit',async()=>{
+ const f=await fixture({proof:()=>null});assert.equal((await f.receiver().recoverSavedDraftTarget(f.packet,f.sender)).error.code,'SAVED_DRAFT_TARGET_UNCONFIRMED');const reserved=f.saved();f.newClosed=true;f.proof=undefined;f.calls=[];
+ const read=await f.receiver().recoverDraft(f.packet,f.sender);assert.equal(read.error.code,'SAVED_DRAFT_TARGET_CLOSED');assert.deepEqual(f.saved(),reserved);assert.equal(f.created,1);
+ f.calls=[];const reply=await f.receiver().recoverSavedDraftTarget(f.packet,f.sender),saved=f.saved(),audit=saved.savedDraftTargetRecovery;
+ assert.equal(reply.state,'updated',JSON.stringify(reply));assert.equal(reply.docId,reserved.docId);assert.equal(reply.draftOnly,true);assert.equal(reply.recovered,true);assert.equal(saved.sequence,reserved.sequence+3);assert.equal(f.created,2);assert.equal(audit.target.tabId,91);assert.equal(saved.ownedTarget.tabId,91);
+ assert.deepEqual(f.calls.filter(call=>call.name==='cas').map(call=>call.phase),['requested','created','bound']);assert.equal(f.calls.filter(call=>call.name==='createTarget').length,1);assert.equal(f.calls.filter(call=>call.name==='qualifySavedDraftTarget').length,1);
+ assert.deepEqual(audit.closedTargetHistory,[{target:reserved.savedDraftTargetRecovery.target,priorSequence:reserved.sequence,presence:{requestId:f.packet.requestId,packetDigest:f.context.packetDigest,tabId:90,windowId:f.sender.tab.windowId,closed:true,checkedAt:f.now}}]);
+ for(const key of ['previousTarget','priorState','priorSequence','previousSessionId','startedAt','docId'])assert.deepEqual(audit[key],reserved.savedDraftTargetRecovery[key],key);
+ for(const key of ['requestId','identity','identityDigest','bodySha256','originalBodySha256','packetDigest','baselineDocIds','createRetry','existingDocumentRepair','operationId'])assert.deepEqual(saved[key],reserved[key],key);
+ const input=f.calls.find(call=>call.name==='qualifySavedDraftTarget').input;assert.equal(input.docId,reserved.docId);assert.equal(input.expectedBody.docId,reserved.docId);assert.deepEqual(input.previousTarget,f.previousTarget);f.assertReadOnly();
+});
+
+async function closedReservedFixture(){
+ const f=await fixture({proof:()=>null});assert.equal((await f.receiver().recoverSavedDraftTarget(f.packet,f.sender)).error.code,'SAVED_DRAFT_TARGET_UNCONFIRMED');f.proof=undefined;f.newClosed=true;f.calls=[];return f;
+}
+test('a lost replacement-tab ACK preserves requested history and never creates another target on a repeated read',async()=>{
+ const f=await closedReservedFixture(),before=f.saved();f.lostTargetAck=true;
+ assert.equal((await f.receiver().recoverSavedDraftTarget(f.packet,f.sender)).error.code,'ADAPTER_FAILURE');const pending=f.saved();assert.equal(pending.savedDraftTargetRecovery.phase,'requested');assert.equal(pending.sequence,before.sequence+1);assert.equal(pending.savedDraftTargetRecovery.closedTargetHistory.length,1);assert.equal(f.created,2);
+ for(const action of ['recoverDraft','recoverPreparedDraft','recoverSavedDraftTarget'])assert.equal((await f.receiver()[action](f.packet,f.sender)).error.code,'SAVED_DRAFT_TARGET_PENDING');
+ assert.equal(f.created,2);assert.deepEqual(f.saved(),pending);assert.equal(f.calls.some(call=>call.name==='qualifySavedDraftTarget'),false);f.assertReadOnly();
+});
+test('replacement CAS conflicts never create before requested commit or replay an unacknowledged target',async()=>{
+ for(const phase of ['requested','created','bound']){
+  const f=await closedReservedFixture(),before=f.saved();f.casFailures.add(phase);
+  assert.equal((await f.receiver().recoverSavedDraftTarget(f.packet,f.sender)).error.code,'CHECKPOINT_CONFLICT');assert.equal(f.created,phase==='requested'?1:2);
+  const failed=f.saved();if(phase==='requested'){assert.deepEqual(failed,before);assert.equal(f.calls.some(call=>call.name==='createTarget'),false);}
+  if(phase==='created'){assert.equal(failed.savedDraftTargetRecovery.phase,'requested');assert.equal((await f.receiver().recoverSavedDraftTarget(f.packet,f.sender)).error.code,'SAVED_DRAFT_TARGET_PENDING');assert.equal(f.created,2);assert.deepEqual(f.saved(),failed);}
+  if(phase==='bound'){assert.equal(failed.savedDraftTargetRecovery.phase,'created');assert.equal(failed.savedDraftTargetRecovery.target.tabId,91);assert.equal((await f.receiver().recoverSavedDraftTarget(f.packet,f.sender)).state,'updated');assert.equal(f.created,2);assert.deepEqual(f.saved().savedDraftTargetRecovery.closedTargetHistory,failed.savedDraftTargetRecovery.closedTargetHistory);}
+  f.assertReadOnly();
+ }
+});
+test('replacement current-read proof failures keep the new reserved tab and immutable original/closed-target audits',async()=>{
+ const f=await closedReservedFixture();f.proof=()=>null;const before=f.saved(),reply=await f.receiver().recoverSavedDraftTarget(f.packet,f.sender),reserved=f.saved();
+ assert.equal(reply.error.code,'SAVED_DRAFT_TARGET_UNCONFIRMED');assert.equal(reserved.savedDraftTargetRecovery.phase,'created');assert.equal(reserved.savedDraftTargetRecovery.target.tabId,91);assert.deepEqual(reserved.ownedTarget,before.ownedTarget);assert.equal(reserved.sessionId,before.sessionId);
+ f.proof=undefined;f.calls=[];assert.equal((await f.receiver().recoverSavedDraftTarget(f.packet,f.sender)).state,'updated');assert.equal(f.created,2);assert.equal(f.calls.some(call=>call.name==='createTarget'),false);assert.deepEqual(f.saved().savedDraftTargetRecovery.closedTargetHistory,reserved.savedDraftTargetRecovery.closedTargetHistory);f.assertReadOnly();
+});
+test('failed presence and changed company/source never archive a closed target or reserve its replacement',async()=>{
+ for(const mode of ['malformed-presence','cross-company','source-before-cas']){
+  const f=await closedReservedFixture(),before=f.saved();
+  if(mode==='malformed-presence')f.presenceProof={closed:'true'};
+  if(mode==='cross-company')f.sourceCompany={code:'A01464742',name:'와이홉'};
+  if(mode==='source-before-cas'){const presence=f.adapter.readOwnedTargetPresence;f.adapter.readOwnedTargetPresence=async input=>{const result=await presence(input);if(input.tab.tabId===90)f.current=false;return result;};}
+  const reply=await f.receiver().recoverSavedDraftTarget(f.packet,f.sender);assert.ok(['TAB_CHANGED','SOURCE_CHANGED'].includes(reply.error.code),JSON.stringify(reply));assert.deepEqual(f.saved(),before);assert.equal(f.created,1);assert.equal(f.calls.some(call=>call.name==='cas'||call.name==='createTarget'),false);f.assertReadOnly();
+ }
+});
+test('a replacement closed immediately after its own creation stops this click; a later explicit click can replace only that positively closed tab',async()=>{
+ const f=await closedReservedFixture();f.beforeCreateTarget=()=>{if(f.created===2)f.closedTabIds.add(91);};
+ assert.equal((await f.receiver().recoverSavedDraftTarget(f.packet,f.sender)).error.code,'SAVED_DRAFT_RECOVERY_TARGET_CLOSED');const first=f.saved();assert.equal(f.created,2);assert.equal(first.savedDraftTargetRecovery.target.tabId,91);assert.equal(first.savedDraftTargetRecovery.closedTargetHistory.length,1);
+ f.calls=[];const next=await f.receiver().recoverSavedDraftTarget(f.packet,f.sender);assert.equal(next.state,'updated');assert.equal(f.created,3);assert.equal(f.calls.filter(call=>call.name==='createTarget').length,1);assert.equal(f.saved().ownedTarget.tabId,92);assert.deepEqual(f.saved().savedDraftTargetRecovery.closedTargetHistory.slice(0,1),first.savedDraftTargetRecovery.closedTargetHistory);assert.equal(f.saved().savedDraftTargetRecovery.closedTargetHistory[1].target.tabId,91);f.assertReadOnly();
+});
+test('closed-target history is bounded and malformed, reused, cross-scope or out-of-order audit evidence fails before any adapter action',async()=>{
+ const mutations=[audit=>{audit.closedTargetHistory=[];},audit=>{audit.closedTargetHistory[0].unexpected=true;},audit=>{audit.closedTargetHistory[0].presence.closed=false;},audit=>{audit.closedTargetHistory[0].presence.packetDigest='f'.repeat(64);},
+  audit=>{audit.closedTargetHistory[0].presence.tabId=999;},audit=>{audit.closedTargetHistory[0].presence.windowId=999;},audit=>{audit.closedTargetHistory[0].presence.checkedAt=Date.now()+60001;},audit=>{audit.closedTargetHistory[0].priorSequence=audit.priorSequence;},
+  audit=>{audit.closedTargetHistory[0].target=copy(audit.previousTarget);},audit=>{audit.closedTargetHistory[0].target=copy(audit.target);},audit=>{audit.closedTargetHistory.push(copy(audit.closedTargetHistory[0]));}];
+ for(const mutate of mutations){const f=await closedReservedFixture();await f.receiver().recoverSavedDraftTarget(f.packet,f.sender);const saved=f.saved();mutate(saved.savedDraftTargetRecovery);f.force(saved);f.calls=[];await assert.rejects(f.receiver().recoverSavedDraftTarget(f.packet,f.sender),error=>error.code==='CHECKPOINT');assert.equal(f.calls.length,0);assert.equal(f.created,2);f.assertReadOnly();}
+ const f=await closedReservedFixture(),saved=f.saved(),base=saved.savedDraftTargetRecovery;f.force({...saved,sequence:200,savedDraftTargetRecovery:{...base,closedTargetHistory:Array.from({length:64},(_,index)=>({target:{...base.target,tabId:100+index},priorSequence:20+index,presence:{requestId:f.packet.requestId,packetDigest:f.context.packetDigest,tabId:100+index,windowId:f.sender.tab.windowId,closed:true,checkedAt:f.now}}))}});
+ const full=f.saved();f.calls=[];assert.equal((await f.receiver().recoverSavedDraftTarget(f.packet,f.sender)).error.code,'SAVED_DRAFT_RECOVERY_TARGET_CLOSED');assert.deepEqual(f.saved(),full);assert.equal(f.created,1);assert.equal(f.calls.some(call=>call.name==='cas'||call.name==='createTarget'),false);f.assertReadOnly();
 });
 
 test('failed or malformed recovery-target presence remains unconfirmed and is never called closed',async()=>{

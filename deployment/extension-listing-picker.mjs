@@ -19,6 +19,8 @@ export function installListingPicker({document:doc=globalThis.document,location:
  const top=doc.createElement('div');top.className='top';const title=doc.createElement('strong');title.textContent='YOOFAM · 여러 상품 담기';
  const minimize=button('접기');minimize.setAttribute('aria-label','여러 상품 담기 패널 접기');minimize.setAttribute('aria-expanded','true');top.append(title,minimize);
  const body=doc.createElement('div');body.className='body';const counts=doc.createElement('p'),note=doc.createElement('small');note.textContent='현재 로드된 카드만 선택합니다. 전체 검색결과를 자동으로 불러오지 않습니다.';
+ let runtimeVersion='';try{const value=runtime.getManifest?.().version;if(typeof value==='string'&&/^\d+\.\d+\.\d+$/u.test(value))runtimeVersion=value;}catch{/* A missing manifest does not invent an installed version. */}
+ if(runtimeVersion)note.textContent=`확장 ${runtimeVersion} · `+note.textContent;
  const actions=doc.createElement('div');actions.className='actions';const all=button('로딩된 상품 모두 선택'),none=button('선택 해제'),choose=button('선택 상품 담기','primary');actions.append(all,none,choose);
  const status=doc.createElement('p');status.className='status';status.setAttribute('role','status');status.setAttribute('aria-live','polite');
  const choice=doc.createElement('section');choice.className='choice';choice.hidden=true;choice.setAttribute('role','dialog');choice.setAttribute('aria-label','담을 위치 선택');choice.setAttribute('aria-modal','false');
@@ -127,7 +129,7 @@ export function installListingPicker({document:doc=globalThis.document,location:
  minimize.addEventListener('click',event=>{if(!event.isTrusted)return;const collapsed=panel.className.includes('minimized');panel.className=collapsed?'panel':'panel minimized';minimize.textContent=collapsed?'접기':'펼치기';minimize.setAttribute('aria-expanded',String(collapsed));minimize.setAttribute('aria-label',`여러 상품 담기 패널 ${collapsed?'접기':'펼치기'}`);});
  const cleanup=()=>{if(stopped)return;stopped=true;observer?.disconnect();if(scanTimer!==null)clearLater(scanTimer);if(pollTimer!==null)clearLater(pollTimer);for(const entry of decorations.values())entry.host.remove();decorations.clear();host.remove();doc.defaultView?.removeEventListener('pagehide',cleanup);};
  doc.defaultView?.addEventListener('pagehide',cleanup,{once:true});
- if(typeof Observe==='function'){observer=new Observe(scheduleScan);observer.observe(doc.documentElement,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['href','data-offer-id','data-offerid','hidden','aria-hidden','class','src','data-src','data-lazyload-src','title']});}
+ if(typeof Observe==='function'){observer=new Observe(scheduleScan);observer.observe(doc.documentElement,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['href','data-offer-id','data-offerid','data-complete-offer-id','data-offer-expose-id','data-renderkey','data-aplus-report','data-extra','data-price','hidden','aria-hidden','class','src','data-src','data-lazyload-src','data-ks-lazyload','title']});}
  scan();void readStatus();
  return Object.freeze({host,cleanup,scan,selection,readStatus});
 }

@@ -23,20 +23,20 @@ function harness(){
  const context={window,document:dom.document,location:{href:sourceUrl},URL,Date:ClockDate,Error,TextEncoder,captureFixture:snapshot,sourceReads:0,readDetails:()=>({description:'',detailImages:[]}),
   respond:()=>({ok:true,delivered:true}),chrome:{runtime:{getManifest(){assert.fail('no manifest identity shortcut');},sendMessage:async message=>{messages.push(structuredClone(message));return context.respond(message);}}},fetch(){assert.fail('lifecycle must not fetch');}};
  const makeHost=({owner,version,tag='div',open=false}={})=>{const host=dom.document.createElement(tag);host.id=HOST;host.style.cssText='position:fixed;right:22px;bottom:86px;z-index:2147483646;';host.attachShadow({mode:open?'open':'closed'});if(owner!==undefined)host.setAttribute(OWNER,owner);if(version!==undefined)host.setAttribute(VERSION,version);dom.document.documentElement.append(host);return host;};
- const install=(version='2.1.62')=>{vm.runInNewContext(bundle.outputFiles[0].text.replaceAll('"2.1.62"',JSON.stringify(version)),context);const host=dom.document.getElementById(HOST),children=host?.testShadow?.childNodes??[];return {host,button:children.find(node=>node.tag==='button'),status:children.find(node=>node.tag==='p'),badge:children.find(node=>node.tag==='small')};};
+ const install=(version='2.1.63')=>{vm.runInNewContext(bundle.outputFiles[0].text.replaceAll('"2.1.63"',JSON.stringify(version)),context);const host=dom.document.getElementById(HOST),children=host?.testShadow?.childNodes??[];return {host,button:children.find(node=>node.tag==='button'),launcher:children.find(node=>node.className==='launcher'),status:children.find(node=>node.tag==='p'),badge:children.find(node=>node.tag==='small'),style:children.find(node=>node.tag==='style')};};
  return {...dom,context,messages,makeHost,install,advance:ms=>{now+=ms;},get now(){return now;}};
 }
 
 test('only the exact legacy closed-shadow host or an explicitly owned older/unversioned host is replaced without reading the product',()=>{
  for(const attributes of [{},{owner:'yoofam-studio'},{owner:'yoofam-studio',version:'2.1.23'}]){
   const h=harness(),old=h.makeHost(attributes),current=h.install();assert.notEqual(current.host,old);assert.equal(old.isConnected,false);
-  assert.equal(current.host.getAttribute(OWNER),'yoofam-studio');assert.equal(current.host.getAttribute(VERSION),'2.1.62');assert.equal(current.badge.textContent,'수집기 2.1.62');
+  assert.equal(current.host.getAttribute(OWNER),'yoofam-studio');assert.equal(current.host.getAttribute(VERSION),'2.1.63');assert.equal(current.badge.textContent,'수집기 2.1.63');
   assert.equal(h.context.sourceReads,0);assert.equal(h.messages.length,0);
  }
 });
 
 test('same/newer versions are idempotent; foreign/open-shadow/unknown-version same-ID hosts fail closed',()=>{
- for(const attributes of [{owner:'yoofam-studio',version:'2.1.62'},{owner:'yoofam-studio',version:'2.1.63'},
+ for(const attributes of [{owner:'yoofam-studio',version:'2.1.63'},{owner:'yoofam-studio',version:'2.1.64'},
   {owner:'someone-else',version:'2.1.23'},{owner:'yoofam-studio',version:'unknown'},{tag:'span'},{open:true}]){
   const h=harness(),old=h.makeHost(attributes),count=h.elements.length,current=h.install();assert.equal(current.host,old);assert.equal(old.isConnected,true);assert.equal(h.elements.length,count);assert.equal(h.context.sourceReads,0);assert.equal(h.messages.length,0);
  }
@@ -88,4 +88,24 @@ test('after an expired lease is replaced, the old delayed closure cannot send, r
 test('the same active handler checks its deadline after await and never sends a timed-out capture or retries automatically',async()=>{
  const h=harness();let release;h.context.readDetails=()=>new Promise(resolve=>{release=resolve;});const current=h.install(),operation=current.button.click({isTrusted:true});
  h.advance(60001);release({description:'',detailImages:[]});await operation;assert.equal(h.messages.length,0);assert.match(current.status.textContent,/60초를 초과/);assert.equal(current.button.disabled,false);assert.equal(h.document.documentElement.getAttribute(LEASE),null);
+});
+
+test('round YFS launcher uses the existing embedded brand and keeps compact collection visible by default',()=>{
+ const h=harness(),current=h.install();assert.equal(current.button.textContent,'상품 수집');assert.equal(current.button.hidden,false);assert.equal(current.badge.hidden,false);assert.equal(current.launcher.type,'button');assert.equal(current.launcher.getAttribute('aria-expanded'),'true');assert.equal(current.launcher.getAttribute('aria-label'),'YFS 상품 수집 메뉴 접기');assert.equal(current.status.hidden,true);
+ const [icon,wordmark]=current.launcher.childNodes;assert.match(icon.src,/^data:image\/svg\+xml/);assert.match(decodeURIComponent(icon.src),/yf-mint/);assert.equal(icon.alt,'');assert.equal(wordmark.textContent,'YFS');assert.equal(current.launcher.getAttribute('aria-controls'),'yoofam-collector-action yoofam-collector-version yoofam-collector-status');assert.match(current.style.textContent,/\.launcher\{[^}]*border-radius:50%/);assert.match(current.style.textContent,/\.collect\{order:2/);assert.match(current.style.textContent,/\.launcher\{order:3/);assert.equal(h.context.sourceReads,0);assert.equal(h.messages.length,0);
+});
+
+test('trusted keyboard-style launcher activation toggles presentation without collecting; Escape collapses it',async()=>{
+ const h=harness(),current=h.install();await current.launcher.click({isTrusted:false,detail:0});assert.equal(current.button.hidden,false);
+ await current.launcher.click({isTrusted:true,detail:0});assert.equal(current.button.hidden,true);assert.equal(current.badge.hidden,true);assert.equal(current.status.hidden,true);assert.equal(current.launcher.getAttribute('aria-expanded'),'false');assert.equal(current.launcher.getAttribute('aria-label'),'YFS 상품 수집 메뉴 펼치기');
+ await current.launcher.click({isTrusted:true,detail:0});assert.equal(current.button.hidden,false);assert.equal(current.launcher.getAttribute('aria-expanded'),'true');let prevented=false;await current.button.emit('keydown',{isTrusted:true,key:'Escape',preventDefault(){prevented=true;},stopPropagation(){}});assert.equal(prevented,true);assert.equal(current.button.hidden,true);assert.equal(h.context.sourceReads,0);assert.equal(h.messages.length,0);
+});
+
+test('collapsing during capture preserves the original lease and hides late status until expanded',async()=>{
+ const h=harness();let release;h.context.respond=()=>new Promise(resolve=>{release=resolve;});const current=h.install(),capture=current.button.click({isTrusted:true});await new Promise(resolve=>setImmediate(resolve));assert.equal(h.messages.length,1);const lease=h.document.documentElement.getAttribute(LEASE);await current.launcher.click({isTrusted:true});assert.equal(current.button.hidden,true);assert.equal(current.status.hidden,true);assert.equal(h.document.documentElement.getAttribute(LEASE),lease);
+ release({ok:true,delivered:true});await capture;assert.equal(h.messages.length,1);assert.equal(current.button.textContent,'수집 완료');assert.equal(current.status.hidden,true);await current.launcher.click({isTrusted:true});assert.equal(current.status.hidden,false);assert.match(current.status.textContent,/서버 수집본 상세 미확인/);assert.equal(h.document.documentElement.getAttribute(LEASE),null);
+});
+
+test('replaced launcher cannot change the new collector presentation or initiate collection',async()=>{
+ const h=harness(),old=h.install('2.1.23'),fresh=h.install();await old.launcher.click({isTrusted:true});assert.equal(fresh.button.hidden,false);assert.equal(fresh.launcher.getAttribute('aria-expanded'),'true');assert.equal(h.context.sourceReads,0);assert.equal(h.messages.length,0);
 });

@@ -23,7 +23,7 @@ async function fixture(){
  review.originalBodySha256=digest(body);review.preparedBodySha256=digest(deferred);review.reviewDigest=digest({format:review.format,type:review.type,identity,members:review.members,originalBodySha256:review.originalBodySha256,preparedBodySha256:review.preparedBodySha256});
  const target={requestId:'f29491bd-1882-456a-8a63-eec8586db6c6',productId:identity.productId,docId:2347603,company:copy(identity.company)},packet=await createProductDocumentPacket(review,{requestId:target.requestId});
  const context=await productDocumentIdentity(packet,SINGLE_SENDER),data=new Map(),writes=[],actions=[],inspections=[],refreshes=[],locks=[],controller=new AbortController();let tail=Promise.resolve();
- const f={review,target,context,data,writes,actions,inspections,refreshes,locks,controller,alive:true,latest:copy(review),beforeInspect:null,beforePreview:null,beforeRecover:null,beforeRefresh:null,beforeLock:null,onWrite:null,previewPatch:null,observationPatch:null};
+ const f={review,target,context,data,writes,actions,inspections,refreshes,locks,controller,alive:true,latest:copy(review),beforeInspect:null,beforePreview:null,beforeRecover:null,beforeTargetRecovery:null,beforeRefresh:null,beforeLock:null,onWrite:null,previewPatch:null,observationPatch:null,targetDelta:3,targetCheckpointPatch:null,targetObservationPatch:null};
  const win={location:{origin:context.identity.origin},localStorage:{getItem:key=>data.get(key)??null,setItem(key,value){writes.push(['set',key]);data.set(key,value);f.onWrite?.();},removeItem(key){writes.push(['remove',key]);data.delete(key);}},navigator:{locks:{request(key,options,run){locks.push(key);const result=tail.then(async()=>{if(options.signal.aborted)throw Error('aborted lock');await f.beforeLock?.();return run();});tail=result.catch(()=>{});return result;}}}};
  const pending=compile('app/supplier-hub-product-pending.ts',{}, {window:win});
  const document=compile('app/supplier-hub-product-document.ts',{'@/app/supplier-hub-single-client':{},'@/app/supplier-hub-company':{}});
@@ -37,16 +37,23 @@ async function fixture(){
  f.session=async next=>{
   const c=await productDocumentIdentity(next,SINGLE_SENDER);return {packet:next,preview:{format:review.format,requestId:next.requestId,identity:copy(c.identity),identityDigest:c.identityDigest,packetDigest:c.packetDigest,
    productId:identity.productId,fingerprint:identity.fingerprint,members:copy(review.members),reviewDigest:review.reviewDigest,preparedBodySha256:review.preparedBodySha256,originalBodySha256:review.originalBodySha256,
-   liveVerified:false,draftPreparationAvailable:true,preparedLifecycleAvailable:true,remoteWrites:false,registered:false,...copy(f.previewPatch??{})},packetDigest:c.packetDigest,origin:context.identity.origin};
+   liveVerified:false,draftPreparationAvailable:true,preparedLifecycleAvailable:true,savedDraftTargetRecoveryAvailable:true,remoteWrites:false,registered:false,...copy(f.previewPatch??{})},packetDigest:c.packetDigest,origin:context.identity.origin};
  };
  const client={previewProductDocument:async(next,signal)=>{actions.push('preview');assert.equal(signal,controller.signal);await f.beforePreview?.();return f.session(next);},
-  runProductDocumentDraft:async(session,action,signal)=>{actions.push(action);assert.equal(action,'recoverDraft');assert.equal(signal,controller.signal);await f.beforeRecover?.();const c=f.checkpoint,promoted=c.state==='updated'&&c.validatedSteps.length===4,recoveredUpdate=c.state==='update-requested',advanced=promoted||recoveredUpdate;
+  runProductDocumentDraft:async(session,action,signal)=>{actions.push(action);assert.ok(['recoverDraft','recoverSavedDraftTarget'].includes(action));assert.equal(signal,controller.signal);
+   if(action==='recoverSavedDraftTarget'){
+    await f.beforeTargetRecovery?.();const before=f.checkpoint;f.checkpoint={...before,state:'updated',sequence:before.sequence+f.targetDelta,updatedAt:f.targetDelta?Date.now():before.updatedAt,savedHubTabId:f.targetDelta?72:before.savedHubTabId,...copy(f.targetCheckpointPatch??{})};
+    const c=f.checkpoint;return {format:review.format,requestId:target.requestId,identity:copy(session.preview.identity),identityDigest:session.preview.identityDigest,packetDigest:session.packetDigest,
+     originalBodySha256:review.originalBodySha256,preparedBodySha256:review.preparedBodySha256,state:'updated',docId:target.docId,registered:false,success:false,needsRecovery:false,recovered:true,draftOnly:true,
+     draftProof:{evidence:'document-draft-preparation',validatedSteps:[],checkpointSequence:c.sequence,observedAt:c.updatedAt,submitted:false,consented:false},...copy(f.targetObservationPatch??{})};
+   }
+   await f.beforeRecover?.();const c=f.checkpoint,promoted=c.state==='updated'&&c.validatedSteps.length===4,recoveredUpdate=c.state==='update-requested',advanced=promoted||recoveredUpdate;
    return {format:review.format,requestId:target.requestId,identity:copy(session.preview.identity),identityDigest:session.preview.identityDigest,packetDigest:session.packetDigest,
     originalBodySha256:review.originalBodySha256,preparedBodySha256:review.preparedBodySha256,state:recoveredUpdate?'updated':promoted?'validated':c.state,docId:c.docId,registered:false,success:false,needsRecovery:false,recovered:true,draftOnly:true,
     draftProof:{evidence:'document-draft-preparation',validatedSteps:copy(c.validatedSteps),checkpointSequence:c.sequence+(advanced?1:0),observedAt:advanced?Date.now():c.updatedAt,submitted:false,consented:false},...copy(f.observationPatch??{})};}};
  const helpers=compile('app/preserved-product-request-reconnect.ts',{'@/app/preserved-product-request-client':inspect,'@/app/supplier-hub-product-document':document,'@/app/supplier-hub-product-client':client,
   '@/app/supplier-hub-product-pending':pending,'../extensions/supplier-hub/product-document.mjs':{createProductDocumentPacket},'../extensions/supplier-hub/preserved-product-checkpoint.mjs':inspectionParser});
- f.pending=pending;f.key=pending.productDocumentPendingKey(review);f.run=()=>helpers.reconnectPreservedProductDraft({review,target,signal:controller.signal,isCurrent:()=>f.alive,refresh:async signal=>{assert.equal(signal,controller.signal);refreshes.push('current server review');await f.beforeRefresh?.(refreshes.length);return copy(f.latest);}});
+ f.pending=pending;f.key=pending.productDocumentPendingKey(review);f.run=(options={})=>helpers.reconnectPreservedProductDraft({review,target,signal:controller.signal,isCurrent:()=>f.alive,refresh:async signal=>{assert.equal(signal,controller.signal);refreshes.push('current server review');await f.beforeRefresh?.(refreshes.length);return copy(f.latest);},...options});
  f.seed=(patch={})=>{const value={format:'yoofam-product-document-pending-v1',origin:context.identity.origin,ownerId:identity.ownerId,companyCode:identity.company.code,companyName:identity.company.name,
   productId:identity.productId,requestId:target.requestId,createdAt:Date.now()-10000,reviewDigest:review.reviewDigest,originalBodySha256:review.originalBodySha256,preparedBodySha256:review.preparedBodySha256,
   identityDigest:context.identityDigest,appTabId:context.identity.appTabId,windowId:context.identity.windowId,...patch};data.set(f.key,JSON.stringify(value));return value;};
@@ -154,4 +161,46 @@ test('a pending that appears while waiting for Web Locks is preserved instead of
 test('cancellation or source change after the local claim leaves only the exact original reservation',async()=>{
  for(const kind of ['abort','changed-source']){const f=await fixture();f.onWrite=()=>{if(kind==='abort')f.controller.abort();else f.latest.identity.source.contentRevision++;};await assert.rejects(f.run());
   assert.equal(f.writes.length,1);assert.equal(f.writes[0][0],'set');assert.equal(f.data.size,1);assert.equal(f.pending.readProductDocumentPending(f.review).requestId,f.target.requestId);assert.deepEqual(f.actions,['preview','recoverDraft']);}
+});
+
+test('explicit saved-target read rebases only the actual native +3/+1/current-bound checkpoint, then reads before claiming',async()=>{
+ for(const delta of [3,1,0]){
+  const f=await fixture();f.targetDelta=delta;if(delta)f.checkpoint.state='update-requested';const before=copy(f.checkpoint),reviewBefore=copy(f.review);
+  const result=await f.run({recoverSavedTarget:true});assert.deepEqual(f.actions,['preview','recoverSavedDraftTarget','recoverDraft']);assert.equal(f.inspections.length,3);
+  assert.equal(result.observation.state,'updated');assert.equal(result.observation.docId,f.target.docId);assert.equal(result.observation.draftProof.checkpointSequence,before.sequence+delta);
+  assert.equal(result.pending.requestId,f.target.requestId);assert.equal(f.writes.length,1);assert.equal(f.locks.length,1);assert.equal(f.data.size,1);assert.deepEqual(f.review,reviewBefore);
+  assert.equal(f.checkpoint.savedHubTabId,delta?72:before.savedHubTabId);assert.equal(f.actions.some(action=>/create|prepare|repair|submit|confirm/i.test(action)),false);
+ }
+});
+
+test('target read requires its advertised capability and unvalidated original update checkpoint',async()=>{
+ for(const change of [f=>f.previewPatch={savedDraftTargetRecoveryAvailable:false},f=>f.checkpoint.validatedSteps=[2],f=>{f.checkpoint.state='validated';f.checkpoint.validatedSteps=[2,3,4,5];},f=>f.checkpoint.operationId=null,f=>f.checkpoint.savedHubTabId=null]){
+  const f=await fixture();change(f);await assert.rejects(f.run({recoverSavedTarget:true}));assert.deepEqual(f.actions,['preview']);assert.equal(f.data.size,0);assert.equal(f.writes.length,0);
+ }
+});
+
+test('changed or unqualified target read proof never invokes ordinary recovery or reserves the web request',async()=>{
+ const checkpointPatches=[{state:'created'},{state:'validated',validatedSteps:[2,3,4,5]},{state:'update-requested'},{preparedLifecycle:true},{submitRequestedAt:Date.now()-100},
+  {savedHubTabId:71},{sourcePlanSha256:'f'.repeat(64)},{packetDigest:'f'.repeat(64)},{operationId:null},{requestedStep:2},{membersCount:2}];
+ for(const patch of checkpointPatches){const f=await fixture();f.checkpoint.state='update-requested';f.targetCheckpointPatch=patch;await assert.rejects(f.run({recoverSavedTarget:true}));assert.deepEqual(f.actions,['preview','recoverSavedDraftTarget']);assert.equal(f.writes.length,0);}
+ for(const delta of [2,4,-1]){const f=await fixture();f.targetDelta=delta;await assert.rejects(f.run({recoverSavedTarget:true}));assert.deepEqual(f.actions,['preview','recoverSavedDraftTarget']);assert.equal(f.writes.length,0);}
+ for(const patch of [{recovered:false},{needsRecovery:true},{docId:2347604},{success:true},{registered:true},{preparedLifecycle:true},{receipt:{}},{challenge:{}},{error:{code:'UNCONFIRMED',message:'not confirmed'}},
+  {identityDigest:'f'.repeat(64)},{preparedBodySha256:'f'.repeat(64)},{draftProof:{evidence:'document-draft-preparation',validatedSteps:[],checkpointSequence:12,observedAt:Date.now(),submitted:false,consented:false}}]){
+  const f=await fixture();f.targetObservationPatch=patch;await assert.rejects(f.run({recoverSavedTarget:true}));assert.deepEqual(f.actions,['preview','recoverSavedDraftTarget']);assert.equal(f.writes.length,0);
+ }
+ const unchanged=await fixture();unchanged.targetDelta=0;unchanged.targetCheckpointPatch={updatedAt:Date.now()};await assert.rejects(unchanged.run({recoverSavedTarget:true}));assert.equal(unchanged.writes.length,0);
+});
+
+test('saved-target recovery abort, changed source, competing reservation and a later failed read retain no unproven session or claim',async()=>{
+ for(const stage of ['target-abort','target-epoch','post-checkpoint','changed-source','other-reservation','ordinary-read']){
+  const f=await fixture();
+  if(stage==='target-abort')f.beforeTargetRecovery=()=>f.controller.abort();
+  if(stage==='target-epoch')f.beforeTargetRecovery=()=>{f.alive=false;};
+  if(stage==='post-checkpoint')f.beforeInspect=index=>{if(index===3)f.alive=false;};
+  if(stage==='changed-source')f.beforeTargetRecovery=()=>{f.latest.identity.source.quotationRevision++;};
+  if(stage==='other-reservation')f.beforeTargetRecovery=()=>f.seed({requestId:'00000000-0000-4000-8000-000000000734'});
+  if(stage==='ordinary-read')f.beforeRecover=()=>{throw Error('native read unavailable');};
+  await assert.rejects(f.run({recoverSavedTarget:true}));assert.equal(f.writes.length,0);assert.equal(f.locks.length,0);
+  assert.equal(f.data.size,stage==='other-reservation'?1:0);
+ }
 });

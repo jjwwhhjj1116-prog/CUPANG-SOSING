@@ -40,43 +40,93 @@ function isLoaded(card){
  if(card.style?.display==='none'||card.style?.visibility==='hidden')return false;
  return !card.closest?.('[hidden], [aria-hidden="true"]');
 }
+function officialTrackingLink(value,base){
+ try{const url=new URL(value,base);return url.protocol==='https:'&&url.hostname==='dj.1688.com'&&!url.port&&!url.username&&!url.password;}catch{return false;}
+}
+function cardIdentity(card,base){
+ const found=new Set();let invalid=false;
+ const push=value=>{if(value===null||value===undefined||value==='')return;if(typeof value==='number'){if(!Number.isSafeInteger(value)){invalid=true;return;}value=String(value);}if(typeof value!=='string'||value.length>64||!ID.test(value.trim())){invalid=true;return;}found.add(value.trim());};
+ const keys=['data-offer-id','data-offerid','data-complete-offer-id','data-offer-expose-id'];
+ // Shipped RS evidence: href can be dj.1688.com and contain no offer ID.
+ // These are local card observations; tracking links are never followed.
+ for(const node of [card,...descendants(card,keys.map(key=>`[${key}]`).join(','))])for(const key of keys)push(attr(node,key));
+ const links=[card,...descendants(card,'a[href]')];
+ for(const link of links){
+  const href=attr(link,'href'),identity=listingOfferUrl(href,base);if(identity)push(identity.offerId);
+  if(!identity&&!officialTrackingLink(href,base)&&!String(attr(link,'class')||'').includes('offerCard'))continue;
+  const render=attr(link,'data-renderkey');if(render&&render.length<=2048){const match=/_([0-9]+)$/u.exec(render);if(match)push(match[1]);}
+  const aplus=attr(link,'data-aplus-report');if(aplus){if(aplus.length>8192){invalid=true;continue;}const matches=[...aplus.matchAll(/(?:^|[&;|,^\s])object_id@([0-9]+)(?=$|[&;|,^\s])/gu)];if(/(?:^|[&;|,^\s])object_id@/u.test(aplus)&&!matches.length)invalid=true;for(const match of matches)push(match[1]);}
+ }
+ for(const node of [card,...descendants(card,'[data-extra]')]){
+  const raw=attr(node,'data-extra');if(!raw||!raw.includes('"offerId"'))continue;if(raw.length>8192){invalid=true;continue;}
+  try{const root=JSON.parse(raw),queue=[{value:root,depth:0}];let visited=0;while(queue.length){const {value,depth}=queue.shift();if(!object(value)&&!Array.isArray(value))continue;if(++visited>64||depth>4){invalid=true;break;}if(Object.hasOwn(value,'offerId'))push(value.offerId);for(const child of Object.values(value))if(child&&typeof child==='object')queue.push({value:child,depth:depth+1});}}catch{invalid=true;}
+ }
+ if(invalid||found.size!==1)return null;
+ const offerId=[...found][0];return {offerId,sourceUrl:`https://detail.1688.com/offer/${offerId}.html`};
+}
+function cardPrice(card){
+ const explicit=descendants(card,'[data-price]')[0];if(explicit){const value=text(attr(explicit,'data-price')||explicit.textContent,120);if(value)return value;}
+ const row=descendants(card,'[class*="priceRow"], [class*="price-row"]')[0]||descendants(card,'[class*="price"]')[0];if(!row)return '';
+ const pieces=descendants(row,'[class*="priceItem"], [class*="price-item"]');if(pieces.length)return text(pieces.map(piece=>piece.textContent||'').join(' – '),120);
+ let visited=0,overflow=false;const withoutSales=(node,depth=0)=>{if(++visited>512||depth>32){overflow=true;return '';}if(/descText|desc-text/u.test(String(attr(node,'class')||'')))return '';const children=node.childNodes;if(!children?.length)return String(node.textContent||'');return Array.from(children).map(child=>withoutSales(child,depth+1)).join('');};
+ const observed=withoutSales(row);return overflow?'':text(observed,120);
+}
 export function readListingCard(card,baseUrl){
  if(!isLoaded(card))return null;
- const base=listingPageUrl(baseUrl),links=[card,...descendants(card,'a[href]')];
- const found=new Map();
- for(const element of links){const identity=listingOfferUrl(attr(element,'href'),base);if(identity)found.set(identity.offerId,identity);}
- // Mixed recommendation containers and recycled cards never choose an ID by
- // source order. An explicit offer attribute must agree with every valid link.
- if(found.size!==1)return null;
- const identity=[...found.values()][0];
- for(const name of ['data-offer-id','data-offerid']){const value=attr(card,name);if(value!==null&&(!ID.test(value)||value!==identity.offerId))return null;}
+ const base=listingPageUrl(baseUrl),links=[card,...descendants(card,'a[href]')],identity=cardIdentity(card,base);if(!identity)return null;
  let title='';
- for(const selector of ['[data-offer-title]','[class*="title"]','[class*="subject"]','h3']){
+ for(const selector of ['[data-offer-title]','[class*="titleText"]','[class*="title"]','[class*="subject"]','h3']){
   const element=descendants(card,selector)[0];title=text(attr(element,'data-offer-title')||attr(element,'title')||element?.textContent,500);if(title)break;
  }
  if(!title)for(const element of links){title=text(attr(element,'title'),500);if(title)break;}
  let thumbnail='';
- for(const image of descendants(card,'img')){
+ for(const image of [...new Set([...descendants(card,'img[class*="mainImg"]'),...descendants(card,'img')])]){
   if(!title)title=text(attr(image,'alt'),500);
   for(const value of [image.currentSrc,attr(image,'src'),attr(image,'data-src'),attr(image,'data-lazyload-src'),attr(image,'data-ks-lazyload')]){thumbnail=thumbnailUrl(value);if(thumbnail)break;}
   if(thumbnail)break;
  }
- let displayPrice='';
- for(const selector of ['[data-price]','[class*="price"]']){
-  const element=descendants(card,selector)[0];displayPrice=text(attr(element,'data-price')||element?.textContent,120);if(displayPrice)break;
- }
+ const displayPrice=cardPrice(card);
  return title?Object.freeze({...identity,title,thumbnail,displayPrice}):null;
 }
 export function scanListingCards(document,baseUrl){
  listingPageUrl(baseUrl);
- const roots=[...descendants(document,'[data-offer-grid-cell]'),...descendants(document,'a[class*="offerCard"]')];
+ const marker='[data-offer-grid-cell],[data-complete-offer-id],[data-offer-expose-id],[data-offer-id],[data-offerid]';
+ const markedRoot=element=>{const grid=element.closest?.('[data-offer-grid-cell]');if(grid)return grid;let result=null,cursor=element;for(let depth=0;cursor&&depth<7;depth++){const next=cursor.closest?.(marker);if(!next)break;result=next;cursor=next.parentElement||next.parentNode;}return result;};
+ const visualWrapper=element=>{
+  const marked=markedRoot(element);if(marked)return marked;
+  let cursor=element.parentElement||element.parentNode;
+  for(let depth=0;cursor&&depth<4;depth++,cursor=cursor.parentElement||cursor.parentNode){
+   const tag=String(cursor.localName||cursor.tagName||cursor.tag||'').toLowerCase();if(['html','body','nav','header','footer'].includes(tag))break;
+   const semantic=tag==='li'||tag==='article'||/(?:offer|product)[-_]?(?:card|item)|(?:offer|product)[-_]wrapper/iu.test(String(attr(cursor,'class')||''));
+   const links=descendants(cursor,'a[href]').filter(link=>listingOfferUrl(attr(link,'href'),baseUrl)||officialTrackingLink(attr(link,'href'),baseUrl));
+   if(semantic)return cursor; // Mixed product identities in one card reject it.
+   if(links.length>1)break; // Never use the entire search grid as a card.
+   if(links.length===1&&descendants(cursor,'[data-extra]').length>descendants(element,'[data-extra]').length)return cursor;
+  }
+  return element;
+ };
+ const roots=[...descendants(document,marker),...descendants(document,'a[class*="offerCard"]')];
  const elements=new Set(),offers=new Set(),result=[];
- for(const raw of roots.slice(0,LISTING_SCAN_LIMIT)){
-  const element=raw.closest?.('[data-offer-grid-cell]')||raw;
-  if(elements.has(element))continue;elements.add(element);
+ const add=element=>{
+  if(elements.has(element)||element.closest?.('nav,header,footer,[role="navigation"]'))return;elements.add(element);
   const candidate=readListingCard(element,baseUrl);
-  if(!candidate||offers.has(candidate.offerId))continue;
+  if(!candidate||offers.has(candidate.offerId))return;
   offers.add(candidate.offerId);result.push({element,candidate});
+ };
+ for(const raw of roots.slice(0,LISTING_SCAN_LIMIT))add(visualWrapper(raw));
+ // Logged-in variants need not carry the measured RS class prefixes. Start
+ // only at an official detail/tracking link, then take the nearest unambiguous visual
+ // product card with its own price. Navigation/whole-grid containers fail.
+ for(const link of descendants(document,'a[href]')){
+  if(result.length>=LISTING_SCAN_LIMIT)break;
+  if(!listingOfferUrl(attr(link,'href'),baseUrl)&&!officialTrackingLink(attr(link,'href'),baseUrl)||link.closest?.('nav,header,footer,[role="navigation"]'))continue;
+  const marked=markedRoot(link);if(marked){add(marked);continue;}
+  let node=visualWrapper(link);
+  for(let depth=0;node&&depth<7;depth++,node=node.parentElement||node.parentNode){
+   if(['html','body','nav','header','footer'].includes(String(node.localName||node.tagName||node.tag||'').toLowerCase()))break;
+   const candidate=readListingCard(node,baseUrl);
+   if(candidate?.thumbnail&&candidate.displayPrice){add(node);break;}
+  }
  }
  return result;
 }

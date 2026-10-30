@@ -22,6 +22,19 @@ function snapshot(source=payload(),{status='running',itemStatus='queued',compare
 const clone=value=>structuredClone(value);
 const flush=async()=>{for(let n=0;n<12;n++)await Promise.resolve();};
 
+// Synthetic reconstruction of the selectors documented in the shipped RS
+// rcmp-1688-card.js/core.js, outputs/step872-rs-bulk-static. This is deliberately
+// not represented as a live 1688 DOM capture. The tracking href has no offer ID.
+function rsTrackingCard(dom,offerId='886034098637',{grid=true,metadata=true}={}){
+ const root=dom.element(grid?'div':'a'),link=grid?dom.element('a'):root;root.setAttribute('data-offer-grid-cell','');if(!grid)root.removeAttribute('data-offer-grid-cell');
+ link.className='offerCard--shipped-hash';link.setAttribute('href','https://dj.1688.com/ci_bb?spm=search&resource=opaque-ad-token');
+ if(metadata){if(grid){root.setAttribute('data-complete-offer-id',offerId);root.setAttribute('data-offer-expose-id',offerId);}link.setAttribute('data-renderkey','offer_card_'+offerId);link.setAttribute('data-aplus-report','object_type@offer^object_id@'+offerId+'^sub_object_type@p4p^_p_isad@1');}
+ const heading=dom.element('div');heading.className='titleText--shipped-hash';heading.textContent='专业跑步腰包防水运动手机袋';const image=dom.element('img');image.className='mainImg--shipped-hash';image.setAttribute('data-src','//cbu01.alicdn.com/img/running-bag.jpg');image.setAttribute('alt','跑步腰包');
+ const priceRow=dom.element('div');priceRow.className='priceRow--shipped-hash';const price=dom.element('div');price.className='priceItem--shipped-hash';price.append(dom.document.createTextNode('¥'),dom.document.createTextNode('14'),dom.document.createTextNode('.9'));
+ const sales=dom.element('span');sales.className='descText--shipped-hash';sales.textContent='800+件';priceRow.append(price,sales);link.append(image,heading,priceRow);if(grid)root.append(link);
+ const wangwang=dom.element('button');if(metadata)wangwang.setAttribute('data-extra',JSON.stringify({offerId}));root.append(wangwang);dom.document.documentElement.append(root);return {root,link,heading,image,priceRow,price,sales,wangwang};
+}
+
 test('listing scope accepts only the reviewed HTTPS search route and canonical detail identities',()=>{
  assert.equal(listingPageUrl(listing+'#fragment'),listing);
  for(const bad of ['http://s.1688.com/selloffer/offer_search.htm','https://s.1688.com:8443/selloffer/offer_search.htm','https://s.1688.com/selloffer/offer_search.htm/','https://s.1688.com.evil.example/selloffer/offer_search.htm','https://user@s.1688.com/selloffer/offer_search.htm','https://detail.1688.com/offer/886034098637.html'])assert.throws(()=>listingPageUrl(bad));
@@ -45,6 +58,61 @@ test('mixed links, explicit-ID disagreement, hidden cards and disconnected cards
  source.root.style.visibility='hidden';assert.equal(readListingCard(source.root,listing),null);source.root.style.visibility='';
  const parent=dom.element('div');parent.setAttribute('aria-hidden','true');dom.document.documentElement.append(parent);parent.append(source.root);assert.equal(readListingCard(source.root,listing),null);
  parent.removeAttribute('aria-hidden');assert.ok(readListingCard(source.root,listing));source.root.remove();assert.equal(readListingCard(source.root,listing),null);
+});
+
+test('measured RS tracking-link card is recognized from unanimous local IDs without visiting its href',()=>{
+ const dom=listingPickerDom(),card=rsTrackingCard(dom),entries=scanListingCards(dom.document,listing);assert.equal(listingOfferUrl(card.link.getAttribute('href')),null);assert.equal(entries.length,1);assert.equal(entries[0].element===card.root,true);assert.equal(entries[0].candidate.offerId,'886034098637');assert.equal(entries[0].candidate.sourceUrl,'https://detail.1688.com/offer/886034098637.html');assert.equal(entries[0].candidate.thumbnail,'https://cbu01.alicdn.com/img/running-bag.jpg');assert.equal(entries[0].candidate.title,'专业跑步腰包防水运动手机袋');assert.equal(entries[0].candidate.displayPrice,'¥14.9');assert.equal(entries[0].candidate.displayPrice.includes('800'),false);
+ const fallback=rsTrackingCard(dom,'963861920029',{grid:false});assert.equal(scanListingCards(dom.document,listing).find(entry=>entry.candidate.offerId==='963861920029').element===fallback.root,true);
+});
+
+test('each shipped card-local ID provenance can establish one exact positive offer ID',()=>{
+ for(const signal of ['complete','expose','renderkey','aplus','extra']){
+  const dom=listingPickerDom(),card=rsTrackingCard(dom,'886034098637',{metadata:false});
+  if(signal==='complete')card.root.setAttribute('data-complete-offer-id','886034098637');if(signal==='expose')card.root.setAttribute('data-offer-expose-id','886034098637');if(signal==='renderkey')card.link.setAttribute('data-renderkey','offer_886034098637');if(signal==='aplus')card.link.setAttribute('data-aplus-report','object_type@offer^object_id@886034098637^sub_object_id@12');if(signal==='extra')card.wangwang.setAttribute('data-extra','{"context":{"offerId":"886034098637"}}');
+  assert.equal(scanListingCards(dom.document,listing)[0]?.candidate.offerId,'886034098637',signal);
+ }
+ const absent=listingPickerDom();rsTrackingCard(absent,'886034098637',{metadata:false});assert.equal(scanListingCards(absent.document,listing).length,0);
+});
+
+test('conflicting href, complete/expose, renderkey, aplus or JSON IDs reject the whole card without fallback bypass',()=>{
+ const mutations=[card=>card.root.setAttribute('data-complete-offer-id','963861920029'),card=>card.root.setAttribute('data-offer-expose-id','963861920029'),card=>card.link.setAttribute('data-renderkey','offer_963861920029'),card=>card.link.setAttribute('data-aplus-report','object_id@963861920029'),card=>card.wangwang.setAttribute('data-extra','{"offerId":"963861920029"}'),card=>card.link.setAttribute('href','https://detail.1688.com/offer/963861920029.html'),card=>card.link.setAttribute('data-offer-id','963861920029')];
+ for(const mutate of mutations){const dom=listingPickerDom(),card=rsTrackingCard(dom);mutate(card);assert.equal(readListingCard(card.root,listing),null);assert.equal(scanListingCards(dom.document,listing).length,0);}
+ const dom=listingPickerDom(),card=rsTrackingCard(dom);card.root.removeAttribute('data-offer-grid-cell');card.link.setAttribute('data-offer-id','963861920029');assert.equal(scanListingCards(dom.document,listing).length,0,'nearest fallback must not ignore conflicting ancestor IDs');
+});
+
+test('malformed, unsafe numeric, oversized, ambiguous and non-product tracking metadata is rejected',()=>{
+ for(const extra of ['{"offerId":"0"}','{"offerId":"123456789012345678901"}','{"offerId":12345678901234567890}','{"one":{"offerId":"886034098637"},"two":{"offerId":"963861920029"}}','{"offerId":']){const dom=listingPickerDom(),card=rsTrackingCard(dom);card.wangwang.setAttribute('data-extra',extra);assert.equal(scanListingCards(dom.document,listing).length,0);}
+ const malformed=listingPickerDom(),card=rsTrackingCard(malformed);card.link.setAttribute('data-aplus-report','object_id@886034098637suffix');assert.equal(scanListingCards(malformed.document,listing).length,0);
+ const tooLarge=listingPickerDom(),large=rsTrackingCard(tooLarge);large.wangwang.setAttribute('data-extra','{"offerId":"886034098637","padding":"'+'x'.repeat(8200)+'"}');assert.equal(scanListingCards(tooLarge.document,listing).length,0);
+});
+
+test('canonical-link fallback finds the nearest visual product card but excludes navigation and mixed grids',()=>{
+ const dom=listingPickerDom(),list=dom.element('div');dom.document.documentElement.append(list);
+ const card=dom.element('li'),imageLink=dom.element('a'),image=dom.element('img'),heading=dom.element('h3'),price=dom.element('span');imageLink.setAttribute('href','https://detail.1688.com/offer/886034098637.html?from=unknown-layout');image.setAttribute('src','https://cbu01.alicdn.com/img/bag.jpg');image.setAttribute('alt','商品图');imageLink.append(image);heading.textContent='未标记的商品卡片';price.className='sale-price';price.textContent='¥4.60';card.append(imageLink,heading,price);list.append(card);
+ const entries=scanListingCards(dom.document,listing);assert.equal(entries.length,1);assert.equal(entries[0].element===card,true);assert.equal(entries[0].candidate.title,'未标记的商品卡片');
+ const nav=dom.element('nav');dom.document.documentElement.append(nav);nav.append(card);assert.equal(scanListingCards(dom.document,listing).length,0);list.append(card);
+ const second=dom.element('a');second.setAttribute('href','https://detail.1688.com/offer/963861920029.html');const secondImage=dom.element('img');secondImage.setAttribute('src','https://cbu01.alicdn.com/img/hat.jpg');secondImage.setAttribute('alt','混合推荐');second.append(secondImage);card.append(second);assert.equal(scanListingCards(dom.document,listing).length,0);
+});
+
+test('tracking-card selection is invalidated when attribute identity changes and rendered checkboxes follow it',async()=>{
+ const dom=listingPickerDom(),card=rsTrackingCard(dom),timers=listingTimers(),runtime={sendMessage(_message,callback){callback({ok:true,batch:null});}};const installed=installListingPicker({document:dom.document,location:{href:listing},runtime,MutationObserver:undefined,setTimeout:timers.setTimeout,clearTimeout:timers.clearTimeout,crypto:{randomUUID}});await flush();
+ assert.equal(dom.document.querySelectorAll('[data-yoofam-listing-card]').length,1);const selection=scanListingCards(dom.document,listing);installed.selection.set(selection[0],true);const old=card.root.firstChild;
+ for(const key of ['data-complete-offer-id','data-offer-expose-id'])card.root.setAttribute(key,'963861920029');card.link.setAttribute('data-renderkey','offer_963861920029');card.link.setAttribute('data-aplus-report','object_id@963861920029');card.wangwang.setAttribute('data-extra','{"offerId":"963861920029"}');installed.scan();assert.equal(installed.selection.size,0);assert.equal(old.isConnected,false);assert.equal(dom.document.querySelectorAll('[data-yoofam-listing-card]').length,1);installed.cleanup();
+});
+
+test('sixty loaded tracking-link cards all receive checkboxes and can be selected without any detail navigation',async()=>{
+ const dom=listingPickerDom();for(let i=0;i<60;i++)rsTrackingCard(dom,String(886034098637+i));const timers=listingTimers(),messages=[],runtime={sendMessage(message,callback){messages.push(message);callback({ok:true,batch:null});}},installed=installListingPicker({document:dom.document,location:{href:listing},runtime,MutationObserver:undefined,setTimeout:timers.setTimeout,clearTimeout:timers.clearTimeout,crypto:{randomUUID}});await flush();
+ assert.equal(dom.document.querySelectorAll('[data-yoofam-listing-card]').length,60);await dom.find('로딩된 상품 모두 선택').emit('click');assert.equal(installed.selection.size,60);assert.equal(messages.length,1);assert.equal(messages[0].type,'YOOFAM_LISTING_BATCH_STATUS');assert.ok(dom.elements.some(node=>node.textContent==='선택 60개 · 로딩된 상품 60개'));installed.cleanup();
+});
+
+test('price fragments exclude sales descriptions for camel-case and kebab-case shipped layouts',()=>{
+ const dom=listingPickerDom(),card=rsTrackingCard(dom);card.priceRow.className='offer-price-row';card.price.className='price-item';card.sales.className='desc-text';assert.equal(readListingCard(card.root,listing).displayPrice,'¥14.9');
+ card.price.className='plain-price-content';assert.equal(readListingCard(card.root,listing).displayPrice,'¥14.9');assert.equal(readListingCard(card.root,listing).displayPrice.includes('800'),false);
+});
+
+test('unmarked offerCard anchor reads sibling card metadata before accepting an identity',()=>{
+ const dom=listingPickerDom(),card=rsTrackingCard(dom,'886034098637',{grid:false}),wrapper=dom.element('li'),sibling=dom.element('button');dom.document.documentElement.append(wrapper);wrapper.append(card.root,sibling);sibling.setAttribute('data-extra','{"offerId":"963861920029"}');assert.equal(scanListingCards(dom.document,listing).length,0,'narrow anchor cannot bypass conflicting sibling ID');
+ sibling.setAttribute('data-extra','{"offerId":"886034098637"}');const entries=scanListingCards(dom.document,listing);assert.equal(entries.length,1);assert.equal(entries[0].element===wrapper,true);assert.equal(entries[0].candidate.offerId,'886034098637');
 });
 
 test('selection belongs to the same connected card, and dispatch re-reads recycled identities',()=>{

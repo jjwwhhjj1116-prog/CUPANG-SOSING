@@ -123,7 +123,7 @@ test('a retry from a different offer is refused before messaging and leaves the 
  const nextOffer='700000000788';fixture.location.href=`https://detail.1688.com/offer/${nextOffer}.html`;
  await fixture.button.click({isTrusted:true});
  assert.equal(fixture.messages.length,1);assert.equal(JSON.stringify(fixture.messages[0].snapshot),original);
- assert.equal(fixture.button.textContent,'YOOFAM 스튜디오 상품 수집');assert.match(fixture.status.textContent,/이전 보관본은 확장에 유지/);assert.match(fixture.status.textContent,/현재 상품은 아직 수집하지 않았습니다/);
+ assert.equal(fixture.button.textContent,'상품 수집');assert.match(fixture.status.textContent,/이전 보관본은 확장에 유지/);assert.match(fixture.status.textContent,/현재 상품은 아직 수집하지 않았습니다/);
  const changed=JSON.parse(fixture.document.scripts[0].textContent);changed.skuModel.offerId=nextOffer;fixture.document.scripts[0].textContent=JSON.stringify(changed);
  await fixture.button.click({isTrusted:true});assert.equal(fixture.messages.length,2);assert.equal(fixture.messages[1].snapshot.offerId,nextOffer);assert.equal(fixture.messages[1].snapshot.sourceUrl,fixture.location.href);
 });
@@ -131,7 +131,7 @@ test('a retry from a different offer is refused before messaging and leaves the 
 test('only an explicit delivered true can show completion; malformed or rejected responses show an error',async()=>{
  for(const result of [{ok:true},{ok:true,delivered:null},{ok:true,delivered:'true'},{ok:true,delivered:1},{ok:false,error:'합성 서버 검증 실패'}]){
   const fixture=currentButton({scriptMain:cdn('unknown-result'),deliver:async()=>result});await fixture.button.click({isTrusted:true});
-  assert.equal(fixture.messages.length,1);assert.equal(fixture.button.textContent,'YOOFAM 스튜디오 상품 수집');assert.equal(fixture.button.disabled,false);
+  assert.equal(fixture.messages.length,1);assert.equal(fixture.button.textContent,'상품 수집');assert.equal(fixture.button.disabled,false);
   assert.doesNotMatch(fixture.status.textContent,/AI상품등록 목록에 담았습니다|이미 수집함에 담긴|확장에 보관했습니다/);
   assert.match(fixture.status.textContent,/확인하지 못했습니다|합성 서버 검증 실패/);
  }
@@ -147,7 +147,7 @@ test('an in-flight result cannot mark a different current offer complete or retr
   assert.equal(fixture.messages.length,1);assert.equal(fixture.button.disabled,true);
   await fixture.button.click({isTrusted:true});assert.equal(fixture.messages.length,1,'a second click while pending cannot start another capture');
   fixture.location.href='https://detail.1688.com/offer/700000000788.html';release(result);await inFlight;
-  assert.equal(fixture.messages.length,1);assert.equal(fixture.button.textContent,'YOOFAM 스튜디오 상품 수집');assert.equal(fixture.button.disabled,false);
+  assert.equal(fixture.messages.length,1);assert.equal(fixture.button.textContent,'상품 수집');assert.equal(fixture.button.disabled,false);
   assert.match(fixture.status.textContent,/현재 상품은 아직 수집하지 않았습니다/);assert.doesNotMatch(fixture.status.textContent,/AI상품등록 목록에 담았습니다/);
   if(result.delivered)assert.match(fixture.status.textContent,/이전 상품은 앱 수집함에 저장되었습니다/);
   else{assert.match(fixture.status.textContent,/이전 상품은 확장에 보관했습니다/);assert.ok(fixture.status.textContent.includes(result.message));}

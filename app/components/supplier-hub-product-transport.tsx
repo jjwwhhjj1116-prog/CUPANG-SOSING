@@ -51,6 +51,10 @@ export function SupplierHubProductTransport(props:Props){
   const [reconnectInput,setReconnectInput]=useState<{token:object;requestId:string;docId:string}|null>(null);
   const reconnectRequest=reconnectInput?.token===reviewToken?reconnectInput.requestId:'';
   const reconnectDocument=reconnectInput?.token===reviewToken?reconnectInput.docId:'';
+  const reconnectInputRef=useRef(reconnectInput);
+  useLayoutEffect(()=>{reconnectInputRef.current=reconnectInput;},[reconnectInput]);
+  const [reconnectReadTarget,setReconnectReadTarget]=useState<{token:object;input:NonNullable<typeof reconnectInput>}|null>(null);
+  const reconnectReadTargetCurrent=Boolean(reconnectReadTarget?.token===reviewToken&&reconnectReadTarget.input===reconnectInput&&reconnectInput?.token===reviewToken);
   const [releasedValidation,setReleasedValidation]=useState<{token:object;docId:string|number;rejection:ProductValidationRejection}|null>(null);
   const [draftReadHint,setDraftReadHint]=useState<{token:object;requestId:string;docId:string|number;state:string;identityDigest:string;packetDigest:string;originalBodySha256:string;preparedBodySha256:string;savedDraftTargetClosed?:boolean;continuationSnapshot?:boolean;resumeSnapshot?:boolean;nativeFileListObserved?:boolean}|null>(null);
   const [finishedReadError,setFinishedReadError]=useState<{token:object;session:ProductDocumentSession;intent:ProductDocumentPending;docId:string|number;message:string;reviewDigest:string;identityDigest:string;packetDigest:string;originalBodySha256:string;preparedBodySha256:string}|null>(null);
@@ -166,15 +170,16 @@ export function SupplierHubProductTransport(props:Props){
       setError(cause instanceof Error?cause.message:'전체 견적 전송 자료 확인 실패');
     }}finally{task.finish();}
   }
-  async function reconnectOriginal(){
+  async function reconnectOriginal(recoverSavedTarget=false){
     if(!canEnter()||current.current.session||current.current.intent||current.current.state||current.current.unsaved)return;
+    if(reconnectInputRef.current!==reconnectInput||recoverSavedTarget&&!reconnectReadTargetCurrent)return;
     const requestId=reconnectRequest.trim(),docId=reconnectDocument.trim();
     if(!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(requestId)||!/^[1-9]\d{0,29}$/.test(docId))return;
     const task=begin();
-    const active=()=>task.active()&&!current.current.session&&!current.current.intent&&!current.current.state&&!current.current.unsaved&&!current.current.intentError;
+    const active=()=>task.active()&&reconnectInputRef.current===reconnectInput&&!current.current.session&&!current.current.intent&&!current.current.state&&!current.current.unsaved&&!current.current.intentError;
     try{
       const recovered=await reconnectPreservedProductDraft({review,target:{requestId,docId,productId:review.identity.productId,company:review.identity.company},
-        signal:task.controller.signal,isCurrent:active,refresh:signal=>current.current.props.refresh(signal)});
+        signal:task.controller.signal,isCurrent:active,refresh:signal=>current.current.props.refresh(signal),...(recoverSavedTarget?{recoverSavedTarget:true}:{})});
       if(!active())return;
       // The helper has read the actual private checkpoint and the current full
       // source. It reserves this exact original request only after readback;
@@ -183,8 +188,11 @@ export function SupplierHubProductTransport(props:Props){
       current.current.intent=recovered.pending;current.current.session=recovered.session;current.current.state=recovered.observation;
       current.current.draftMode=true;current.current.uncertain=false;current.current.approved={};current.current.expired=false;current.current.error='';
       knownDraftDocument.current={requestId,docId:recovered.observation.docId!};
-      setIntent(recovered.pending);setSession(recovered.session);setState(recovered.observation);setDraftMode(true);setUncertain(false);setApproved({});setExpired(false);setError('');
+      setReconnectReadTarget(null);setIntent(recovered.pending);setSession(recovered.session);setState(recovered.observation);setDraftMode(true);setUncertain(false);setApproved({});setExpired(false);setError('');
     }catch(cause){if(task.alive()){
+      if(active()&&reconnectInput&&cause instanceof ProductDocumentBridgeError&&cause.uncertain===false&&cause.savedDraftTargetClosed===true
+        &&cause.code==='PRODUCT_DOCUMENT_DRAFT_SOURCE_FAILURE'&&['update-requested','updated'].includes(cause.draftState??'')&&String(cause.knownDocId)===docId)
+        setReconnectReadTarget({token:reviewToken,input:reconnectInput});
       // A post-claim read can fail after the original reservation was written.
       // Same-window storage writes emit no event: synchronise its lock here
       // without adopting an unreturned session or authorising another request.
@@ -480,10 +488,14 @@ export function SupplierHubProductTransport(props:Props){
         <label className="field"><span>원래 문서번호</span><input aria-label="복구할 원래 문서번호" inputMode="numeric" disabled={disabled||busy} value={reconnectDocument} onChange={event=>{if(canEnter())setReconnectInput({token:reviewToken,requestId:reconnectRequest,docId:event.target.value});}}/></label>
       </div>
       <button type="button" className="btn ghost" disabled={disabled||busy||!reconnectRequest.trim()||!reconnectDocument.trim()} onClick={()=>void reconnectOriginal()}>원래 저장 문서 연결 복구</button>
+      {reconnectReadTargetCurrent&&<section aria-label="원래 문서 읽기 탭 연결 복구">
+        <p>원래 문서 {reconnectDocument}의 검증 탭이 닫혔습니다. 같은 문서의 현재 파일·본문을 새 전용 탭에서 읽어 확인합니다.</p>
+        <button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void reconnectOriginal(true)}>원래 문서의 새 읽기 탭 연결 · 재전송 안 함</button>
+      </section>}
     </details>}
     {session&&<p>회사 {review.identity.company.name} · 포함 옵션 {session.packet.review.members.length}개 · 견적 문서 1개 · 전체 본문 대조 완료</p>}
     {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&!intent&&!state?.preparedLifecycle&&<p role="status">전체 문서의 실제 접수 연결을 검수 중입니다. 현재 상품은 전송하지 않았습니다.</p>}
-    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.62.zip" download>통합 확장 2.1.62 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
+    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.63.zip" download>통합 확장 2.1.63 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
     {session?.preview.draftPreparationAvailable===true&&!state?.preparedLifecycle&&<section aria-label="새 견적 초안 준비">
       <p>{intent?'원래 요청과 문서의 파일·본문 저장 및 단계 검증 결과를 확인합니다.':'로그인한 Supplier Hub에 새 견적 초안 한 개를 만들고 저장한 이미지·본문과 단계 검증을 확인합니다.'} 약관 동의와 최종 제출은 진행하지 않습니다.</p>
       {currentDraftHint&&<p role="status">원래 문서 {String(currentDraftHint.docId)} · {currentDraftHint.state==='update-requested'?'파일·본문 저장 결과 미확인':currentDraftHint.state==='validation-requested'?'단계 검증 결과 미확인':'초안 상태 확인 필요'} · 같은 요청 유지</p>}

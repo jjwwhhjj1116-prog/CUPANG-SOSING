@@ -10,6 +10,7 @@ export type PreservedProductReconnectTarget = { requestId: string; productId: st
 export type PreservedProductReconnectInput = {
   review: SupplierHubProductDocumentReview; target: PreservedProductReconnectTarget; signal: AbortSignal;
   refresh: (signal: AbortSignal) => Promise<SupplierHubProductDocumentReview>; isCurrent: () => boolean;
+  recoverSavedTarget?: boolean;
 };
 export type PreservedProductReconnectResult = Readonly<{ session: ProductDocumentSession; observation: ProductDocumentState; pending: ProductDocumentPending }>;
 
@@ -72,9 +73,36 @@ export async function reconnectPreservedProductDraft(input: PreservedProductReco
   await fresh(); absent();
   const session = await previewProductDocument(packet, input.signal);
   await fresh(); absent(); previewMatches(first, session);
-  const second = checked(await inspectPreservedProductRequest(target, review.identity.ownerId, input.signal));
+  let second = checked(await inspectPreservedProductRequest(target, review.identity.ownerId, input.signal));
   await fresh(); absent(); previewMatches(second, session);
   if (!equal(first, second)) reject('확인 중 원래 문서의 단계나 저장 기록이 변경됐습니다. 다시 연결하거나 전송하지 않았습니다.');
+  if (input.recoverSavedTarget === true) {
+    if (session.preview.savedDraftTargetRecoveryAvailable !== true || !['update-requested', 'updated'].includes(second.state)
+      || second.operationId !== target.requestId + ':update' || second.requestedStep !== null || second.validatedSteps.length !== 0
+      || second.savedHubTabId === null) checkpointError();
+    // This explicit native action may create one browser read tab, never a
+    // Hub document or another upload/update. Only its fully qualified native
+    // result and a matching post-checkpoint can rebase the ordinary read.
+    const recoveredTarget = await runProductDocumentDraft(session, 'recoverSavedDraftTarget', input.signal);
+    await fresh(); absent();
+    const post = checked(await inspectPreservedProductRequest(target, review.identity.ownerId, input.signal));
+    await fresh(); absent(); previewMatches(post, session);
+    const stable = (checkpoint: typeof second) => Object.fromEntries(Object.entries(checkpoint).filter(([key]) => !['state', 'sequence', 'updatedAt', 'savedHubTabId'].includes(key)));
+    const delta = post.sequence - second.sequence, targetProof = recoveredTarget.draftProof;
+    if (!equal(stable(second), stable(post)) || post.state !== 'updated' || post.operationId !== target.requestId + ':update'
+      || post.requestedStep !== null || post.validatedSteps.length !== 0 || post.savedHubTabId === null || post.updatedAt < second.updatedAt
+      || !(delta === 0 ? second.state === 'updated' && equal(post, second) : [1, 3].includes(delta) && post.savedHubTabId !== second.savedHubTabId)
+      || recoveredTarget.requestId !== target.requestId || String(recoveredTarget.docId) !== String(target.docId)
+      || recoveredTarget.state !== 'updated' || recoveredTarget.recovered !== true || recoveredTarget.needsRecovery !== false
+      || recoveredTarget.error !== undefined || recoveredTarget.receipt !== undefined || recoveredTarget.challenge !== undefined
+      || recoveredTarget.draftOnly !== true || recoveredTarget.preparedLifecycle !== undefined || recoveredTarget.registered !== false || recoveredTarget.success !== false
+      || recoveredTarget.identityDigest !== session.preview.identityDigest || recoveredTarget.packetDigest !== session.packetDigest
+      || !equal(recoveredTarget.identity, session.preview.identity) || recoveredTarget.originalBodySha256 !== review.originalBodySha256
+      || recoveredTarget.preparedBodySha256 !== review.preparedBodySha256 || !targetProof || targetProof.evidence !== 'document-draft-preparation'
+      || targetProof.submitted !== false || targetProof.consented !== false || targetProof.validatedSteps.length !== 0
+      || targetProof.checkpointSequence !== post.sequence || targetProof.observedAt !== post.updatedAt) checkpointError();
+    second = post;
+  }
   const observation = await runProductDocumentDraft(session, 'recoverDraft', input.signal);
   await fresh(); absent();
   const proof = observation.draftProof, promoted = second.state === 'updated' && second.validatedSteps.length === 4;

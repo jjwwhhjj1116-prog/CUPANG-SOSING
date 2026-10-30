@@ -678,6 +678,57 @@ test('post-claim reconnect failure retains original source and close locks witho
  }finally{h.close();}
 });
 
+const reconnectSavedTarget='원래 문서의 새 읽기 탭 연결 · 재전송 안 함';
+function reconnectClosedError(f,patch={}){
+ return Object.assign(new f.client.ProductDocumentBridgeError('원래 저장 문서 검증 탭이 닫혔습니다.',false,'PRODUCT_DOCUMENT_DRAFT_SOURCE_FAILURE','update-requested'),{savedDraftTargetClosed:true,knownDocId:'2347603',...patch});
+}
+test('a correlated closed original tab exposes only explicit target read recovery before any web reservation or session adoption',async()=>{
+ const calls=[],h=await fixture(undefined,{reconnect:async(input,f)=>{
+  calls.push({recoverSavedTarget:input.recoverSavedTarget,target:plain(input.target)});
+  if(!input.recoverSavedTarget)throw reconnectClosedError(f);
+  assert.equal(input.isCurrent(),true);assert.equal(h.stored.size,0);
+  const packet=await createProductDocumentPacket(input.review,{requestId:input.target.requestId,createdAt:f.clock.now,now:f.clock.now}),session=await f.client.previewProductDocument(packet,input.signal);
+  const pending=await f.load('app/supplier-hub-product-pending.ts').claimProductDocumentPending(input.review,session,input.signal,async()=>assert.equal(input.isCurrent(),true));
+  return {session,pending,observation:draftResult(f,input.target.requestId,'validated',{docId:input.target.docId})};
+ }});try{
+  h.f.bridge=async payload=>{assert.equal(payload.action,'preview');return {...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true};};
+  await h.idle();reconnectInputs(h);assert.equal(h.button(reconnectSavedTarget),undefined);await h.click('원래 저장 문서 연결 복구');
+  assert.ok(h.button(reconnectSavedTarget));assert.equal(h.stored.size,0);assert.equal(h.f.sent.length,0);assert.equal(h.button(prepareDraft),undefined);assert.equal(h.button(start),undefined);assert.equal(h.button(reviewPrepared),undefined);
+  assert.deepEqual(calls.map(row=>row.recoverSavedTarget),[undefined]);await h.click(reconnectSavedTarget);
+  assert.deepEqual(calls.map(row=>row.recoverSavedTarget),[undefined,true]);assert.ok(calls.every(row=>row.target.requestId==='f29491bd-1882-456a-8a63-eec8586db6c6'&&row.target.docId==='2347603'));
+  assert.equal(h.stored.size,1);assert.equal(h.button(reconnectSavedTarget),undefined);assert.ok(h.button(reviewPrepared));assert.equal(h.button(prepareDraft),undefined);assert.equal(h.button(start),undefined);
+  assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview']);assert.ok(h.f.calls.every(row=>row.method==='GET'));assert.equal(h.f.history.length,0);
+ }finally{h.close();}
+});
+
+test('generic, uncertain or mismatched closed errors cannot create a target recovery control',async()=>{
+ for(const patch of [{generic:true},{uncertain:true},{savedDraftTargetClosed:false},{knownDocId:'2347604'},{draftState:'created'},{code:'OTHER'}]){
+  const h=await fixture(undefined,{reconnect:async(_input,f)=>{if(patch.generic)throw Object.assign(Error('closed'),{savedDraftTargetClosed:true,knownDocId:'2347603'});throw reconnectClosedError(f,patch);}});try{
+   await h.idle();reconnectInputs(h);await h.click('원래 저장 문서 연결 복구');assert.equal(h.button(reconnectSavedTarget),undefined);assert.equal(h.stored.size,0);assert.equal(h.f.sent.length,0);
+  }finally{h.close();}
+ }
+});
+
+test('closed-target hint and captured callbacks expire on input epochs, disabled scope, review ABA and unmount',async()=>{
+ for(const mode of ['input','input-ABA','disabled','review-ABA','unmount']){
+  let calls=0;const h=await fixture(undefined,{reconnect:async(_input,f)=>{calls++;throw reconnectClosedError(f);}});try{
+   await h.idle();reconnectInputs(h);await h.click('원래 저장 문서 연결 복구');const stale=h.button(reconnectSavedTarget).props.onClick;
+   if(mode==='input'||mode==='input-ABA'){reconnectInputs(h,'f29491bd-1882-456a-8a63-eec8586db6c6','2347604');if(mode==='input-ABA')reconnectInputs(h);assert.equal(h.button(reconnectSavedTarget),undefined);}
+   if(mode==='disabled')h.render({...h.props(),disabled:true});
+   if(mode==='review-ABA'){const props=h.props(),next=plain(props.review);next.reviewDigest='f'.repeat(64);h.render({...props,review:next});h.flush();h.render(props);h.flush();assert.equal(h.button(reconnectSavedTarget),undefined);}
+   if(mode==='unmount')h.close();
+   stale();await turn();h.flush();assert.equal(calls,1);assert.equal(h.stored.size,0);assert.equal(h.f.sent.length,0);
+  }finally{h.close();}
+ }
+});
+
+test('a late closed error after the review is disabled does not offer a recovery action',async()=>{
+ const gate=deferred(),h=await fixture(undefined,{reconnect:async(_input,f)=>{await gate.promise;throw reconnectClosedError(f);}});try{
+  await h.idle();reconnectInputs(h);h.button('원래 저장 문서 연결 복구').props.onClick();h.flush();h.render({...h.props(),disabled:true});gate.resolve();await turn();h.flush();
+  assert.equal(h.button(reconnectSavedTarget),undefined);assert.equal(h.stored.size,0);assert.equal(h.f.sent.length,0);
+ }finally{h.close();}
+});
+
 for(const company of SINGLE_COMPANIES)for(const status of ['SUBMITTED','FINISHED','REJECTED'])test(`${company.code}: ${status} releases enclosing close/source guards only after its exact local receipt is positively saved`,async()=>{
  const gate=deferred(),h=await fixture(company,{verified:true,beforeSaveReply:()=>gate.promise});try{
   h.render();assert.deepEqual(h.lockPairs.at(-1),[true,true],'unchecked local pending storage is not yet permission to leave or change the source');

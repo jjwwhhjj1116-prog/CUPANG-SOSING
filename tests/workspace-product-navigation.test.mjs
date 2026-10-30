@@ -30,7 +30,7 @@ function harness({submission=false,batch,integration,packaging=false,captureLabe
   useLayoutEffect(fn,deps){const instance=active,index=instance.index++,old=instance.slots[index];if(!old||!deps||deps.some((value,i)=>!Object.is(value,old.deps[i]))){const next={deps,cleanup:old?.cleanup};instance.slots[index]=next;layoutEffects.push({cleanup:old?.cleanup,commit:()=>{next.cleanup=fn();}});}},
   useId(){const index=active.index++;return 'test-'+index;},
  };
- const implemented=new Set(['dashboard-client','product-archive','registration-board','product-content-editor','workspace-settings-dialog','workspace-settings-editor','settings-price-preview']);
+ const implemented=new Set(['studio-navigation','dashboard-client','product-archive','registration-board','product-content-editor','workspace-settings-dialog','workspace-settings-editor','settings-price-preview']);
  if(batch){implemented.add('batch-work-panel');implemented.add('image-generation-panel');}
  if(captureLabelBatch)implemented.add('batch-work-panel');
  if(submission){implemented.add('quotation-panel');implemented.add('submission-review-panel');}
@@ -136,7 +136,7 @@ function harness({submission=false,batch,integration,packaging=false,captureLabe
 
 test('common detail shortcut preserves unsaved description and opens the current product option list when clean',async()=>{
  const confirmations=[],h=harness({confirm:message=>{confirmations.push(message);return false;}});try{
-  await h.settle();await h.click('▦상품관리(신규)');await h.click('상품 작업 열기 →');h.archiveReads[0].resolve(Response.json({product:h.product('a')}));await h.settle();
+  await h.settle();await h.click('상품관리');await h.click('상품 작업 열기 →');h.archiveReads[0].resolve(Response.json({product:h.product('a')}));await h.settle();
   await h.click('5상세 이미지');assert.ok(h.button('옵션별 상세 편집'));assert.match(text(h.workspace()),/수집 사진으로 옵션별 상세 구성/);
   const description=()=>nodes(h.workspace()).find(node=>node.type==='textarea'&&node.props['aria-label']==='상세페이지 설명');
   const saved=description().props.value;description().props.onChange({target:{value:'보존할 상세 설명'}});await h.settle();
@@ -196,7 +196,7 @@ test('connection dialog displays returned server states without static collectio
  const h=harness({integration});try{
   await h.settle();const utility=()=>nodes(h.render()).find(node=>node.type==='nav'&&node.props['aria-label']==='계정 및 연결 도구'),connection=()=>nodes(utility()).find(node=>node.type==='button'&&node.props['aria-label']?.startsWith('연동 설정'));assert.equal(connection().props['data-state'],'unknown');await h.click('⌁연동 설정');assert.equal(connection().props['data-state'],'read');assert.match(connection().props['aria-label'],/실제 AI 호출은 별도 확인/);
   const dialog=()=>nodes(h.render()).find(node=>node.props?.['aria-label']==='연동 상태');
-  assert.match(text(dialog()),/Cloudflare Access 검증됨/);assert.match(text(dialog()),/읽기 쿼리 성공/);assert.match(text(dialog()),/fixture-text/);assert.match(text(dialog()),/서버 모델·키 설정 필요/);
+  assert.match(text(dialog()),/Cloudflare Access 검증됨/);assert.match(text(dialog()),/읽기 쿼리 성공/);assert.match(text(dialog()),/fixture-text/);assert.match(text(dialog()),/별도 이미지 가공 모델·키 설정 필요/);
   assert.doesNotMatch(text(dialog()),/공급원 연결 필요|쿠플러스 확장|역할 분석 필요|전달받았|제안 전송은 차단/);
   integration.database='unavailable';integration.translation.configured=false;await h.click('다시 확인');
   assert.match(text(dialog()),/연결 확인 실패/);assert.doesNotMatch(text(dialog()),/fixture-text/);
@@ -207,14 +207,14 @@ test('connection dialog displays returned server states without static collectio
 test('reviewed archive product enters transmission preparation with its own profile without replacing board selection',async()=>{
  const h=harness({submission:true});try{
   await h.settle();nodes(h.render()).find(node=>node.props?.['aria-label']==='상품 b 선택').props.onChange({target:{checked:true}});
-  await h.click('▦상품관리(신규)');await h.click('상품 작업 열기 →');h.archiveReads[0].resolve(Response.json({product:h.product('a')}));await h.settle();
+  await h.click('상품관리');await h.click('상품 작업 열기 →');h.archiveReads[0].resolve(Response.json({product:h.product('a')}));await h.settle();
   const step=nodes(h.render()).find(node=>node.type==='button'&&text(node)==='7견적서 작업');assert.ok(step);step.props.onClick();await h.settle();
   await h.click('저장한 견적 전송 준비');
   assert.equal(h.workspace(),undefined);assert.match(text(h.render()),/선택한 상품 1건/);
   let reads=h.requests.filter(request=>request.url.includes('/submission-review'));assert.equal(reads.length,1);assert.equal(reads[0].url,'/api/products/a/submission-review');
   await h.click('견적서 수정하기');assert.match(text(h.workspace()),/상품 a/);assert.equal(h.quotationEditor.profileId,undefined,'the captured profile is resolved by immutable product context, without an override');
   await h.click('저장한 견적 전송 준비');reads=h.requests.filter(request=>request.url.includes('/submission-review'));assert.equal(reads.length,2);assert.equal(reads[1].url,reads[0].url);
-  await h.click('×');await h.click('✦AI 상품등록');
+  await h.click('×');await h.click('AI상품등록');
   assert.equal(nodes(h.render()).find(node=>node.props?.['aria-label']==='상품 b 선택').props.checked,true);
   await h.click('등록 전송');reads=h.requests.filter(request=>request.url.includes('/submission-review'));assert.equal(reads.at(-1).url,'/api/products/b/submission-review');
   assert.ok(h.requests.every(request=>request.method==='GET'),'preparation navigation never writes, exports or sends files');
@@ -234,8 +234,8 @@ test('transmission preparation preserves unsaved quotation and retained source i
 
 test('late archive open cannot replace a newer product workspace or its unsaved SEO value',async()=>{
  for(const value of ['직접 수정한 상품명','']){const h=harness();try{
-  await h.settle();await h.click('▦상품관리(신규)');await h.click('상품 작업 열기 →');assert.equal(h.archiveReads.length,1);
-  await h.click('✦AI 상품등록');await h.openBoardStage('상품 b');
+  await h.settle();await h.click('상품관리');await h.click('상품 작업 열기 →');assert.equal(h.archiveReads.length,1);
+  await h.click('AI상품등록');await h.openBoardStage('상품 b');
   h.title().props.onChange({target:{value}});await h.settle();assert.equal(h.title().props.value,value);
   h.archiveReads[0].resolve(Response.json({product:h.product('a')}));await h.settle();
   assert.match(text(h.workspace()),/상품 b/);assert.equal(h.title().props.value,value);
@@ -244,7 +244,7 @@ test('late archive open cannot replace a newer product workspace or its unsaved 
 });
 
 test('archive open ignores completion after dashboard unmount',async()=>{
- const h=harness();await h.settle();await h.click('▦상품관리(신규)');await h.click('상품 작업 열기 →');h.close();
+ const h=harness();await h.settle();await h.click('상품관리');await h.click('상품 작업 열기 →');h.close();
  h.archiveReads[0].resolve(Response.json({product:h.product('a')}));await h.settle();assert.equal(h.lateDashboardWrites,0);
 });
 
@@ -338,9 +338,9 @@ test('collapsing an inline settings read aborts it and reopening ignores the old
 });
 
 test('leaving the archive cancels a pending product open before another product is selected',async()=>{
- for(const returnToArchive of [null,'▦상품관리(신규)','전체 보관함']){const h=harness();try{
-  await h.settle();await h.click('▦상품관리(신규)');await h.click('상품 작업 열기 →');
-  await h.click('✦AI 상품등록');
+ for(const returnToArchive of [null,'상품관리','전체 보관함']){const h=harness();try{
+  await h.settle();await h.click('상품관리');await h.click('상품 작업 열기 →');
+  await h.click('AI상품등록');
   if(returnToArchive)await h.click(returnToArchive);
   h.archiveReads[0].resolve(Response.json({product:h.product('a')}));await h.settle();
   assert.equal(Boolean(h.workspace()),false);
@@ -354,7 +354,7 @@ test('leaving the archive cancels a pending product open before another product 
 test('missing or mismatched archive product keeps the archive available for a successful retry',async()=>{
  for(const response of [Response.json({error:'상품 없음'},{status:404}),Response.json({product:{id:'unexpected'}})]){
   const h=harness();try{
-   await h.settle();await h.click('▦상품관리(신규)');await h.click('상품 작업 열기 →');h.archiveReads[0].resolve(response);await h.settle();
+   await h.settle();await h.click('상품관리');await h.click('상품 작업 열기 →');h.archiveReads[0].resolve(response);await h.settle();
    assert.equal(Boolean(h.workspace()),false);assert.match(text(h.render()),/상품을 열지 못했습니다/);
    await h.click('상품 작업 열기 →');h.archiveReads[1].resolve(Response.json({product:h.product('a')}));await h.settle();assert.match(text(h.workspace()),/상품 a/);
   }finally{h.close();}
@@ -438,7 +438,7 @@ test('late batch review responses cannot reopen a closed modal or replace a newe
   await h.click('×');assert.equal(closed.signal.aborted,true);
   closed.resolve(await f.request(base));await h.settle();assert.equal(Boolean(h.workspace()),false);
   await h.click('선택 상품 일괄 작업');h.deferProduct();await h.click('이미지 초안 검토');const stale=h.productReads.at(-1);
-  await h.click('▦상품관리(신규)');await h.click('상품 작업 열기 →');h.archiveReads[0].resolve(Response.json({product:h.product('a')}));await h.settle();
+  await h.click('상품관리');await h.click('상품 작업 열기 →');h.archiveReads[0].resolve(Response.json({product:h.product('a')}));await h.settle();
   h.title().props.onChange({target:{value:''}});await h.settle();stale.resolve(await f.request(base));await h.settle();
   assert.match(text(h.workspace()),/상품 a/);assert.equal(h.title().props.value,'');
   h.deferProduct();await h.click('이미지 초안 검토');const unmounted=h.productReads.at(-1);h.close();assert.equal(unmounted.signal.aborted,true);

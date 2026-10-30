@@ -13,14 +13,19 @@ const check=(h,label,value)=>{const input=nodes(h.render()).find(node=>node.type
 const plain=value=>JSON.parse(JSON.stringify(value));
 
 
-test('operations navigation uses compact studio links and preserves active work',async()=>{
+test('all shared category links and the compact operations utility preserve active work',async()=>{
  const h=harness();try{
-  await h.settle();const links=()=>nodes(h.render()).filter(n=>n.type==='a'&&n.props.href==='/operations');
-  assert.equal(links().length,2);assert.ok(links().some(n=>n.props.className==='nav-item'));assert.ok(links().some(n=>n.props.className.includes('workspace-utility')));
-  let stopped=false;links()[0].props.onClick({preventDefault(){stopped=true;}});assert.equal(stopped,false);
+  await h.settle();const links=()=>nodes(h.render()).filter(n=>n.type==='a'&&(n.props.href==='/operations'||n.props.href?.startsWith('/operations?view=')));
+  const categories=()=>links().filter(n=>n.props.className.startsWith('studio-menu-item'));
+  const expected=['discovery','related','keyword','reviews','compare','inventory','sales-report','revenue','inbound','ad-reports','campaigns','pnl','cost-details','expense-categories','expenses','purchasing','import-cost','ledger','statements','settings'];
+  assert.equal(links().length,21);assert.deepEqual(plain(categories().map(n=>n.props.href)),expected.map(id=>'/operations?view='+id));
+  const utility=()=>links().find(n=>n.props.href==='/operations');assert.ok(utility().props.className.includes('workspace-utility'));
+  for(const link of links()){let stopped=false;link.props.onClick({preventDefault(){stopped=true;}});assert.equal(stopped,false,link.props.href);}
   h.component('registration-board').onSelected(new Set([h.products[0].id]));await h.click('작업 개시');
-  for(const link of links()){assert.equal(link.props['aria-disabled'],true);stopped=false;link.props.onClick({preventDefault(){stopped=true;}});assert.equal(stopped,true);}
+  assert.equal(utility().props['aria-disabled'],true);
+  for(const link of links()){let stopped=false;link.props.onClick({preventDefault(){stopped=true;}});assert.equal(stopped,true,link.props.href);}
   assert.ok(h.component('batch-work-panel'));assert.ok(h.requests.every(call=>call.method==='GET'));
-  h.component('batch-work-panel').onBusyChange(false);await h.settle();assert.ok(links().every(n=>n.props['aria-disabled']===false));
+  h.component('batch-work-panel').onBusyChange(false);await h.settle();assert.equal(utility().props['aria-disabled'],false);
+  for(const link of links()){let stopped=false;link.props.onClick({preventDefault(){stopped=true;}});assert.equal(stopped,false,link.props.href);}
  }finally{h.close();}
 });

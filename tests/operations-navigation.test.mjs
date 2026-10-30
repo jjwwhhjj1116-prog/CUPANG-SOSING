@@ -28,7 +28,7 @@ function fixture(initialSearch='',{fetcher}={}){
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
    {exports,URLSearchParams,Intl,Date,Error,AbortController,location,window:{addEventListener:(name,fn)=>events.set(name,fn),removeEventListener:(name,fn)=>{if(events.get(name)===fn)events.delete(name);},scrollTo(){}},history:{pushState(_state,_unused,url){pushed.push(url);location.search=new URL(url,'https://app.test').search;}},
     fetch:async(url,options)=>{const request={url,options};requests.push(request);if(fetcher)return fetcher(request,requests.length-1,snapshot);assert.equal(options?.method??'GET','GET','view navigation cannot write or collect');return Response.json(snapshot);},
-    require(name){if(name==='react')return hooks;if(name==='next/link')return{default:Link};if(name==='./components/sourcing')return{SourcingView};if(name==='./components/sales')return{SalesView};if(name==='./components/finance')return{FinanceView};if(name==='./components/logistics')return{LogisticsView};if(name==='./components/shared')return{ActionButton,RecordPanel};if(name==='./collector')return{collectorRows:()=>assert.fail('navigation must not ingest'),requestCollector:()=>assert.fail('navigation must not contact external collectors'),supportsCollection:()=>false};if(name.startsWith('.')){const target=path.posix.normalize(path.posix.join(path.posix.dirname(file),name));return load(target+(fs.existsSync(new URL('../'+target+'.tsx',import.meta.url))?'.tsx':'.ts'));}return native(name);}
+    require(name){if(name.endsWith('.css'))return{};if(name==='react')return hooks;if(name==='next/link')return{default:Link};if(name==='./components/sourcing')return{SourcingView};if(name==='./components/sales')return{SalesView};if(name==='./components/finance')return{FinanceView};if(name==='./components/logistics')return{LogisticsView};if(name==='./components/shared')return{ActionButton,RecordPanel};if(name==='./collector')return{collectorRows:()=>assert.fail('navigation must not ingest'),requestCollector:()=>assert.fail('navigation must not contact external collectors'),supportsCollection:()=>false};if(name.startsWith('.')){const target=path.posix.normalize(path.posix.join(path.posix.dirname(file),name));return load(target+(fs.existsSync(new URL('../'+target+'.tsx',import.meta.url))?'.tsx':'.ts'));}return native(name);}
    },{filename:file});return exports;
  }
  const client=load('app/operations/operations-client.tsx').default,nav=load('app/operations/components/navigation.tsx');
@@ -52,9 +52,10 @@ function fixture(initialSearch='',{fetcher}={}){
 
 test('all nineteen grouped operations and the studio return remain available without writing a workspace',async()=>{
  const h=fixture();try{
-  await h.settle();const groups=nodes(h.sidebar()).filter(node=>node.type==='section'&&node.props.className==='ops-menu-group');assert.equal(groups.length,4);assert.deepEqual(groups.map(group=>nodes(group).filter(node=>node.type==='button'&&!node.props['aria-controls']).length),[5,6,4,4]);
-  assert.equal(h.title(),'신규상품 발굴');assert.deepEqual(h.active(),['신규상품 발굴']);assert.ok(nodes(h.sidebar()).some(node=>node.type===h.Link&&node.props.href==='/'&&text(node).includes('AI 상품등록')));
-  for(const group of groups){const toggle=h.button(group.props['aria-label']);if(!toggle.props['aria-expanded'])h.click(group.props['aria-label']);for(const item of nodes(group).filter(node=>node.type==='button'&&!node.props['aria-controls'])){const label=text(item);h.click(label);assert.equal(h.title(),label);assert.deepEqual(h.active(),[label]);}}
+  await h.settle();const groups=nodes(h.sidebar()).filter(node=>node.type==='section'&&node.props.className==='studio-menu-group');assert.equal(groups.length,5);assert.deepEqual(groups.map(group=>nodes(group).filter(node=>node.type==='button'&&!node.props['aria-controls']).length),[0,5,6,4,4]);
+  assert.equal(h.title(),'신규상품 발굴');assert.deepEqual(h.active(),['신규상품 발굴']);assert.ok(nodes(h.sidebar()).some(node=>node.type==='a'&&node.props.href==='/'&&text(node)==='AI상품등록'));
+  assert.ok(nodes(h.sidebar()).some(node=>node.type==='a'&&node.props.href==='/?view=archive'&&text(node)==='상품관리'));
+  for(const group of groups.filter(group=>group.props['aria-label']!=='로켓배송')){const toggle=h.button(group.props['aria-label']);if(!toggle.props['aria-expanded'])h.click(group.props['aria-label']);for(const item of nodes(group).filter(node=>node.type==='button'&&!node.props['aria-controls'])){const label=text(item);h.click(label);assert.equal(h.title(),label);assert.deepEqual(h.active(),[label]);}}
   assert.equal(h.pushed.length,19);assert.equal(h.requests.length,1);assert.ok(h.requests.every(request=>(request.options?.method??'GET')==='GET'));
  }finally{h.close();}
 });
@@ -126,18 +127,18 @@ test('an older read revision, a retained prior-account writer and a wrong-scope 
 
 test('settings deep links and browser back/forward keep the heading, breadcrumb and one active menu synchronized',async()=>{
  const h=fixture('?view=settings');try{
-  await h.settle();assert.equal(h.title(),'공통 SKU·데이터 연결');assert.deepEqual(h.active(),['⚙ 공통 SKU·데이터 연결']);
-  const toggles=()=>nodes(h.sidebar()).filter(node=>node.type==='button'&&node.props.className?.startsWith('ops-menu-toggle'));
-  assert.equal(toggles().length,4);assert.ok(toggles().every(node=>node.props['aria-expanded']===false));assert.equal(h.button('손익계산서'),undefined,'collapsed children cannot receive a menu click');
-  h.click('손익계산');assert.equal(h.button('손익계산').props['aria-expanded'],true);assert.equal(h.button('손익계산').props['aria-controls'],'operations-menu-pnl');assert.ok(h.button('손익계산서'));
+  await h.settle();assert.equal(h.title(),'공통 SKU·데이터 연결');assert.deepEqual(h.active(),['공통 SKU·데이터 연결']);
+  const toggles=()=>nodes(h.sidebar()).filter(node=>node.type==='button'&&node.props.className?.startsWith('studio-menu-toggle'));
+  assert.equal(toggles().length,5);assert.ok(toggles().every(node=>node.props['aria-expanded']===false));assert.equal(h.button('손익계산서'),undefined,'collapsed children cannot receive a menu click');
+  h.click('손익계산');assert.equal(h.button('손익계산').props['aria-expanded'],true);assert.equal(h.button('손익계산').props['aria-controls'],'studio-menu-finance');assert.ok(h.button('손익계산서'));
   h.click('손익계산');assert.equal(h.button('손익계산').props['aria-expanded'],false);assert.equal(h.button('손익계산서'),undefined);assert.equal(h.title(),'공통 SKU·데이터 연결');assert.equal(h.pushed.length,0);assert.equal(h.requests.length,1);
   const breadcrumb=()=>nodes(h.render()).find(node=>node.type==='nav'&&node.props['aria-label']==='현재 위치');assert.match(text(breadcrumb()),/운영관리\/설정\/공통 SKU·데이터 연결/);
   h.click('손익계산');
   h.click('손익계산서');assert.equal(h.location.search,'?view=pnl');assert.equal(h.title(),'손익계산서');
-  h.pop('?view=settings');assert.equal(h.title(),'공통 SKU·데이터 연결');assert.deepEqual(h.active(),['⚙ 공통 SKU·데이터 연결']);
+  h.pop('?view=settings');assert.equal(h.title(),'공통 SKU·데이터 연결');assert.deepEqual(h.active(),['공통 SKU·데이터 연결']);
   assert.ok(toggles().every(node=>node.props['aria-expanded']===false));
-  h.pop('?view=inventory');assert.equal(h.title(),'쿠팡 재고 현황');assert.deepEqual(h.active(),['쿠팡 재고 현황']);assert.equal(h.button('판매관리').props['aria-expanded'],true);assert.equal(toggles().filter(node=>node.props['aria-expanded']).length,1);
-  h.click('판매관리');h.render();assert.equal(h.button('판매관리').props['aria-expanded'],false,'same-view rerender preserves a manual collapse');
+  h.pop('?view=inventory');assert.equal(h.title(),'쿠팡 재고 현황');assert.deepEqual(h.active(),['쿠팡 재고 현황']);assert.equal(h.button('판매/분석').props['aria-expanded'],true);assert.equal(toggles().filter(node=>node.props['aria-expanded']).length,1);
+  h.click('판매/분석');h.render();assert.equal(h.button('판매/분석').props['aria-expanded'],false,'same-view rerender preserves a manual collapse');
   h.pop('?view=invalid');assert.equal(h.title(),'신규상품 발굴');assert.equal(h.requests.length,1);
  }finally{h.close();}
 });
@@ -146,7 +147,7 @@ test('mobile navigation announces its state and closes after a selection or its 
  const h=fixture();try{
   await h.settle();const toggle=()=>nodes(h.render()).find(node=>node.type==='button'&&node.props['aria-controls']==='operations-navigation');assert.equal(toggle().props['aria-expanded'],false);
   toggle().props.onClick();h.render();assert.equal(toggle().props['aria-expanded'],true);assert.match(h.sidebar().props.className,/open/);
-  h.click('판매관리');assert.equal(toggle().props['aria-expanded'],true,'expanding a category keeps the mobile menu open');h.click('매출 관리');assert.equal(toggle().props['aria-expanded'],false);assert.equal(h.title(),'매출 관리');
-  toggle().props.onClick();h.render();nodes(h.sidebar()).find(node=>node.props?.['aria-label']==='운영 메뉴 닫기').props.onClick();h.render();assert.equal(toggle().props['aria-expanded'],false);assert.equal(h.requests.length,1);
+  h.click('판매/분석');assert.equal(toggle().props['aria-expanded'],true,'expanding a category keeps the mobile menu open');h.click('매출 관리');assert.equal(toggle().props['aria-expanded'],false);assert.equal(h.title(),'매출 관리');
+  toggle().props.onClick();h.render();nodes(h.sidebar()).find(node=>node.props?.['aria-label']==='메뉴 닫기').props.onClick();h.render();assert.equal(toggle().props['aria-expanded'],false);assert.equal(h.requests.length,1);
  }finally{h.close();}
 });

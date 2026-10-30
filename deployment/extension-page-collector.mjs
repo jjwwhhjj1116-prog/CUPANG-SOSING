@@ -5,9 +5,12 @@ import {createPageCaptureObservations} from '../extensions/supplier-hub/page-cap
 import {readProductSectionLinks,readProductSectionStructure} from '../extensions/supplier-hub/page-dom-sections.mjs';
 // This identifies the injected script itself, even when an older open page
 // outlives an extension update. The runtime manifest is not that proof.
-const COLLECTOR_SCRIPT_VERSION='2.1.62';
+const COLLECTOR_SCRIPT_VERSION='2.1.63';
 const COLLECTOR_HOST_ID='yoofam-page-collector',COLLECTOR_OWNER='yoofam-studio';
 const OWNER_ATTRIBUTE='data-yoofam-collector-owner',VERSION_ATTRIBUTE='data-yoofam-collector-version',LEASE_ATTRIBUTE='data-yoofam-collector-capture';
+// Existing extensions/supplier-hub/icons/yoofam.svg, embedded to keep the
+// launcher self-contained without an additional host or asset permission.
+const COLLECTOR_ICON='data:image/svg+xml;charset=utf-8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none"><defs><linearGradient id="yf-blue" x1="16" y1="8" x2="110" y2="126" gradientUnits="userSpaceOnUse"><stop stop-color="#6576FF"/><stop offset=".48" stop-color="#3A56EC"/><stop offset="1" stop-color="#2539B7"/></linearGradient><linearGradient id="yf-mint" x1="73" y1="36" x2="96" y2="54" gradientUnits="userSpaceOnUse"><stop stop-color="#C7FFE8"/><stop offset="1" stop-color="#70E9CA"/></linearGradient></defs><rect x="4" y="4" width="120" height="120" rx="32" fill="url(#yf-blue)"/><rect x="5" y="5" width="118" height="118" rx="31" stroke="white" stroke-opacity=".16" stroke-width="2"/><path d="M37 43C37 38 43 35 47 39L68 61C71 64 73 68 73 73V91C73 96 69 99 64 99C59 99 55 96 55 91V76C55 73 54 71 52 69L40 54C38 51 37 48 37 43Z" fill="white"/><path d="M70 56C69 46 75 36 86 34L96 32L94 42C92 53 83 59 73 59C71 59 70 58 70 56Z" fill="url(#yf-mint)"/></svg>');
 const CAPTURE_LEASE_MS=60000;
 const BULK_UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u;
 const BULK_ORIGINS=['https://sourceflow.jjwwhhjj1116.workers.dev','http://localhost:3000','http://127.0.0.1:3000'];
@@ -91,10 +94,18 @@ function installPageCollector(){
   previous.remove();
  }
  const host=document.createElement('div');host.id=COLLECTOR_HOST_ID;host.setAttribute(OWNER_ATTRIBUTE,COLLECTOR_OWNER);host.setAttribute(VERSION_ATTRIBUTE,COLLECTOR_SCRIPT_VERSION);host.style.cssText='position:fixed;right:22px;bottom:86px;z-index:2147483646;';
- const root=host.attachShadow({mode:'closed'}),style=document.createElement('style');style.textContent='button{border:0;border-radius:12px;background:#2563eb;color:white;padding:14px 20px;font:600 14px system-ui;cursor:pointer;box-shadow:0 4px 16px #0003}button:disabled{opacity:.65;cursor:wait}small{display:block;text-align:right;color:#172554;background:white;border-radius:6px;padding:2px 6px;margin-bottom:4px;font:12px system-ui}p{background:white;color:#172554;border:1px solid #cbd5e1;padding:10px;border-radius:8px;max-width:300px;font:13px/1.5 system-ui}';
- const badge=document.createElement('small'),button=document.createElement('button'),status=document.createElement('p');badge.textContent=`수집기 ${COLLECTOR_SCRIPT_VERSION}`;button.type='button';button.textContent='YOOFAM 스튜디오 상품 수집';button.title=`YOOFAM 상품 수집기 ${COLLECTOR_SCRIPT_VERSION}`;status.setAttribute('role','status');status.hidden=true;root.append(style,badge,button,status);document.documentElement.append(host);
- const showStatus=message=>{status.textContent=`수집기 ${COLLECTOR_SCRIPT_VERSION} · ${message}`;};
+ const root=host.attachShadow({mode:'closed'}),style=document.createElement('style');style.textContent=':host{display:flex;flex-direction:column;align-items:flex-end;gap:7px;font:13px/1.5 system-ui;color:#172554}*{box-sizing:border-box}[hidden]{display:none!important}button{font:600 14px system-ui;cursor:pointer;transition:transform .15s,box-shadow .15s}button:focus-visible{outline:3px solid #67e8f9;outline-offset:3px}.collect{order:2;min-width:112px;max-width:min(240px,calc(100vw - 44px));border:1px solid #ffffff70;border-radius:12px;background:linear-gradient(130deg,#13b8dc,#2865ed 76%);color:#fff;padding:11px 17px;box-shadow:0 5px 18px #1d4ed835}.collect::before{content:"↓";display:inline-block;margin-right:7px;font-size:16px;font-weight:800}.collect:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 7px 20px #1d4ed847}.collect:disabled{opacity:.72;cursor:wait}.launcher{order:3;position:relative;display:grid;place-items:center;width:66px;height:66px;padding:3px;border:2px solid #fff;border-radius:50%;background:#fff;box-shadow:0 4px 18px #17255433,0 0 0 1px #dce8ff}.launcher:hover{transform:translateY(-2px);box-shadow:0 6px 22px #1d4ed84d}.launcher img{display:block;width:56px;height:56px;border-radius:50%}.launcher span{position:absolute;bottom:6px;left:17px;right:17px;border-radius:5px;background:#fff;color:#2445be;font:800 10px/14px system-ui;letter-spacing:.8px;text-align:center;box-shadow:0 1px 3px #1e40af22}small{order:1;margin:0 1px 0 0;padding:2px 6px;border:1px solid #e4ebf9;border-radius:5px;color:#617292;background:#fff;font:10px/1.4 system-ui;white-space:nowrap}p{order:0;margin:0 0 3px;max-width:min(320px,calc(100vw - 44px));max-height:min(280px,45vh);overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #d9e5f8;border-radius:12px;background:#fff;padding:12px 14px;color:#172554;box-shadow:0 5px 22px #1725541a;font:12px/1.6 system-ui}@media(prefers-reduced-motion:reduce){button{transition:none}}';
+ const badge=document.createElement('small'),button=document.createElement('button'),status=document.createElement('p'),launcher=document.createElement('button'),icon=document.createElement('img'),wordmark=document.createElement('span');
+ badge.id='yoofam-collector-version';badge.textContent=`수집기 ${COLLECTOR_SCRIPT_VERSION}`;button.id='yoofam-collector-action';button.type='button';button.className='collect';button.textContent='상품 수집';button.title=`YOOFAM 상품 수집기 ${COLLECTOR_SCRIPT_VERSION}`;
+ status.id='yoofam-collector-status';status.setAttribute('role','status');status.setAttribute('aria-live','polite');status.hidden=true;
+ launcher.type='button';launcher.className='launcher';launcher.setAttribute('aria-label','YFS 상품 수집 메뉴 접기');launcher.setAttribute('aria-expanded','true');launcher.setAttribute('aria-controls','yoofam-collector-action yoofam-collector-version yoofam-collector-status');launcher.title='YOOFAM 스튜디오';icon.src=COLLECTOR_ICON;icon.alt='';icon.setAttribute('aria-hidden','true');wordmark.textContent='YFS';wordmark.setAttribute('aria-hidden','true');launcher.append(icon,wordmark);
+ root.append(style,badge,button,status,launcher);document.documentElement.append(host);
+ let expanded=true;
+ const syncWidget=()=>{button.hidden=!expanded;badge.hidden=!expanded;status.hidden=!expanded||!status.textContent;launcher.setAttribute('aria-expanded',String(expanded));launcher.setAttribute('aria-label',`YFS 상품 수집 메뉴 ${expanded?'접기':'펼치기'}`);};
+ const showStatus=message=>{status.textContent=`수집기 ${COLLECTOR_SCRIPT_VERSION} · ${message}`;status.hidden=!expanded;};
  const isCurrent=()=>host.isConnected&&document.getElementById(COLLECTOR_HOST_ID)===host;
+ launcher.addEventListener('click',event=>{if(!event.isTrusted||!isCurrent())return;expanded=!expanded;syncWidget();});
+ for(const control of [launcher,button])control.addEventListener('keydown',event=>{if(!event.isTrusted||!isCurrent()||event.key!=='Escape'||!expanded)return;expanded=false;syncWidget();event.preventDefault?.();event.stopPropagation?.();launcher.focus?.();});
  let pending=false,retrySnapshot=null,sequence=0,bulkAttempt=null;
  async function collect(bulk=null){
   if(pending||!isCurrent()){if(bulk)throw Error('현재 상품 수집기가 이미 작업 중이거나 교체됐습니다.');return;}
@@ -197,7 +208,7 @@ function installPageCollector(){
     if(!bulk)retrySnapshot=snapshot;showStatus((result.pendingSnapshotReplayed===true&&result.newCaptureStored===false?'이전에 보관한 수집본의 전송 확인을 다시 기다리고 있습니다. 방금 읽은 새 상품정보는 아직 저장하지 않았습니다. ':'확장에 보관했습니다. 앱 수집함의 저장을 확인하지 못했습니다. ')+deliveryMessage+' 같은 창의 YOOFAM 앱에서 상태를 확인한 뒤 이 버튼으로 다시 시도하거나 수집함에서 불러오세요.');button.textContent=bulk?'일괄 저장 결과 미확정':'앱 전송 다시 시도';
    }else throw Error('앱 수집함의 저장 결과를 확인하지 못했습니다. 다시 누르면 저장 결과를 확인합니다.');
    return result;
-  }catch(error){if(isCurrent()){showStatus(error?.message||'상품 수집 실패');button.textContent=retrySnapshot?'앱 전송 다시 시도':'YOOFAM 스튜디오 상품 수집';}if(bulk)throw error;}
+  }catch(error){if(isCurrent()){showStatus(error?.message||'상품 수집 실패');button.textContent=retrySnapshot?'앱 전송 다시 시도':'상품 수집';}if(bulk)throw error;}
   finally{if(bulk&&typeof window.removeEventListener==='function')window.removeEventListener('pagehide',onOwnedPageHide,{capture:true});if(leaseRoot.getAttribute(LEASE_ATTRIBUTE)===lease)leaseRoot.removeAttribute(LEASE_ATTRIBUTE);pending=false;if(isCurrent())button.disabled=false;}
  }
  button.addEventListener('click',async event=>{

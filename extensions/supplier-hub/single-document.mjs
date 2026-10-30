@@ -145,6 +145,19 @@ function savedTargetProofValid(proof,state,context,target){
     &&Number.isSafeInteger(proof.filesCount)&&proof.filesCount>=1&&proof.filesCount<=150&&proof.duplicateMatches===0&&proof.documentState==='UNFINISHED'
     &&proof.readOnly===true&&proof.remoteWrites===false&&proof.historicalAckRecovered===false&&Number.isSafeInteger(proof.observedAt)&&proof.observedAt>0;
 }
+function closedSavedTargetHistoryValid(recovery,state,context){
+  const history=recovery.closedTargetHistory;if(history===undefined)return true;
+  if(!Array.isArray(history)||history.length<1||history.length>64||Object.keys(history).length!==history.length)return false;
+  const tabs=new Set();let sequence=recovery.priorSequence,time=recovery.startedAt;
+  for(const entry of history){const proof=entry?.presence,target=entry?.target;
+    if(!object(entry)||Object.keys(entry).sort().join(',')!=='presence,priorSequence,target'||!targetValid(target,context,state.requestId)||target.tabId===recovery.previousTarget.tabId||tabs.has(target.tabId)
+      ||!Number.isSafeInteger(entry.priorSequence)||entry.priorSequence<=sequence||entry.priorSequence>=state.sequence
+      ||!object(proof)||Object.keys(proof).sort().join(',')!=='checkedAt,closed,packetDigest,requestId,tabId,windowId'||proof.requestId!==state.requestId||proof.packetDigest!==context.packetDigest
+      ||proof.tabId!==target.tabId||proof.windowId!==target.windowId||proof.closed!==true||!Number.isSafeInteger(proof.checkedAt)||proof.checkedAt<time||proof.checkedAt>state.updatedAt+5000)return false;
+    tabs.add(target.tabId);sequence=entry.priorSequence;time=proof.checkedAt;
+  }
+  return recovery.target===undefined||!tabs.has(recovery.target.tabId);
+}
 function checkpointValid(state,context){
   if(!object(state)||state.format!==context.packet.format||state.key!==context.key||state.laneKey!==context.laneKey||state.packetDigest!==context.packetDigest||state.identityDigest!==context.identityDigest||state.bodySha256!==context.bodySha256||state.originalBodySha256!==context.originalBodySha256
     ||!same(state.identity,context.identity)||!ID.test(state.requestId||'')||!STATES.has(state.state)||!revision(state.sequence)
@@ -181,12 +194,13 @@ function checkpointValid(state,context){
       ||recovery.phase==='created'&&(state.state!=='create-requested'||state.docId!==null||!same(state.ownedTarget,recovery.previousTarget))
       ||recovery.phase==='bound'&&!same(state.ownedTarget,recovery.target)&&!(state.savedDraftTargetRecovery?.phase==='bound'&&same(state.savedDraftTargetRecovery.previousTarget,recovery.target)&&same(state.ownedTarget,state.savedDraftTargetRecovery.target)))fail('CHECKPOINT','승인된 닫힌 검증 탭의 원래 요청 연결을 확인해주세요.');
   }
-  if(state.savedDraftTargetRecovery!==undefined){const recovery=state.savedDraftTargetRecovery,base=['format','phase','previousTarget','priorState','priorSequence','previousSessionId','startedAt','docId'],keys=[...base,...(recovery?.phase==='requested'?[]:['target']),...(recovery?.phase==='bound'?['proof','proofSha256']:[])];
+  if(state.savedDraftTargetRecovery!==undefined){const recovery=state.savedDraftTargetRecovery,base=['format','phase','previousTarget','priorState','priorSequence','previousSessionId','startedAt','docId'],keys=[...base,...(recovery?.phase==='requested'?[]:['target']),...(recovery?.phase==='bound'?['proof','proofSha256']:[]),...(recovery?.closedTargetHistory===undefined?[]:['closedTargetHistory'])];
     if(!object(recovery)||Object.keys(recovery).length!==keys.length||keys.some(key=>!Object.hasOwn(recovery,key))||recovery.format!=='yoofam-saved-draft-target-recovery-v1'
       ||!['requested','created','bound'].includes(recovery.phase)||state.draftOnly!==true||!Array.isArray(context.identity.members)||state.docId===null||!same(recovery.docId,state.docId)||state.baselineDocIds.some(docId=>String(docId)===String(state.docId))
       ||!['update-requested','updated'].includes(recovery.priorState)||!targetValid(recovery.previousTarget,context,state.requestId)
       ||!Number.isSafeInteger(recovery.priorSequence)||recovery.priorSequence<1||recovery.priorSequence>=state.sequence
       ||typeof recovery.previousSessionId!=='string'||!ID.test(recovery.previousSessionId)||!Number.isSafeInteger(recovery.startedAt)||recovery.startedAt<1||recovery.startedAt>state.updatedAt
+      ||!closedSavedTargetHistoryValid(recovery,state,context)
       ||recovery.phase!=='bound'&&(!savedDraftTargetScope(state,context)||state.state!==recovery.priorState||!same(state.ownedTarget,recovery.previousTarget)||state.sessionId!==recovery.previousSessionId)
       ||recovery.phase!=='requested'&&(!targetValid(recovery.target,context,state.requestId)||recovery.target.tabId===recovery.previousTarget.tabId)
       ||recovery.phase==='bound'&&(!same(state.ownedTarget,recovery.target)||!['updated','validation-requested','validation-rejected','validated',...PREPARED_LIFECYCLE_STATES].includes(state.state)
@@ -491,7 +505,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
     // Current app identity/body may outlive routine authentication refresh. No
     // old or replacement tab is selected, and no new session is committed yet.
     let source=await guard(context,{...state,ownedTarget:null,tab:null,sessionId:null});
-    const recovery=state.savedDraftTargetRecovery;
+    const recovery=state.savedDraftTargetRecovery;let createdReadTarget=false;
     if(recovery?.phase==='bound'){
       const presence=await targetPresence(context,state,state.ownedTarget);
       if(presence.closed)fail('SAVED_DRAFT_TARGET_LIMIT','복구한 같은 문서의 전용 탭이 다시 닫혔습니다. 추가 탭을 만들지 않았습니다.');
@@ -506,16 +520,31 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
       if(!targetValid(target,context,state.requestId)||target.tabId===state.ownedTarget.tabId)fail('TAB_CHANGED','같은 저장 문서의 새 전용 탭 연결을 확인하지 못했습니다.');
       // Reserve the single returned browser tab before login/company waits.
       state=await save(context,state,{savedDraftTargetRecovery:{...state.savedDraftTargetRecovery,phase:'created',target}});
+      createdReadTarget=true;
     }
     if(state.savedDraftTargetRecovery.phase==='requested')fail('SAVED_DRAFT_TARGET_PENDING','새 전용 탭 생성 결과가 미확정입니다. 원래 기록을 유지하며 추가 탭을 만들지 않았습니다.');
     if(action!=='recoverSavedDraftTarget')return result(state,{error:{code:'SAVED_DRAFT_TARGET_CLOSED',message:'예약한 같은 문서의 새 전용 탭에서 현재 본문·전체 파일의 읽기 확인을 계속해주세요.'}});
-    const target=state.savedDraftTargetRecovery.target,presenceOfRecoveryTarget=await targetPresence(context,state,target);
-    if(presenceOfRecoveryTarget.closed)fail('SAVED_DRAFT_RECOVERY_TARGET_CLOSED','같은 저장 문서의 현재 읽기를 위해 예약한 전용 복구 탭이 닫힌 것을 확인했습니다. 원래 요청·문서·복구 예약을 유지했으며 새 탭이나 문서를 만들지 않았습니다.');
+    let target=state.savedDraftTargetRecovery.target,presenceOfRecoveryTarget=await targetPresence(context,state,target);
+    if(presenceOfRecoveryTarget.closed){
+      const audit=state.savedDraftTargetRecovery,history=audit.closedTargetHistory??[];
+      if(audit.phase!=='created'||createdReadTarget||history.length>=64)fail('SAVED_DRAFT_RECOVERY_TARGET_CLOSED','같은 문서의 예약된 읽기 탭이 닫혔습니다. 이번 확인에서 추가 탭을 만들지 않았으며 원래 요청·문서·복구 기록을 유지했습니다.');
+      // Only this explicit read-target action may replace a positively closed
+      // reserved read tab. Persist its proof and the requested phase before a
+      // single browser creation; an unknown creation ACK is never replayed.
+      source=await guard(context,{...state,ownedTarget:null,tab:null,sessionId:null});
+      const {target:closedTarget,...prior}=audit;
+      state=await save(context,state,{savedDraftTargetRecovery:{...prior,phase:'requested',closedTargetHistory:[...history,{target:closedTarget,priorSequence:state.sequence,presence:presenceOfRecoveryTarget}]}});
+      target=await call('createTarget',{identity:context.identity,requestId:state.requestId,packetDigest:state.packetDigest});
+      if(!targetValid(target,context,state.requestId)||target.tabId===audit.previousTarget.tabId||state.savedDraftTargetRecovery.closedTargetHistory.some(entry=>entry.target.tabId===target.tabId))fail('TAB_CHANGED','같은 문서의 새 읽기 탭과 닫힌 예약 기록을 확인하지 못했습니다.');
+      state=await save(context,state,{savedDraftTargetRecovery:{...state.savedDraftTargetRecovery,phase:'created',target}});createdReadTarget=true;
+      presenceOfRecoveryTarget=await targetPresence(context,state,target);
+      if(presenceOfRecoveryTarget.closed)fail('SAVED_DRAFT_RECOVERY_TARGET_CLOSED','이번에 연결한 같은 문서의 읽기 탭이 닫혔습니다. 이 클릭에서 추가 탭은 만들지 않았습니다.');
+    }
     const tab=await call('readTab',{identity:context.identity,tab:target});
     if(!tabValid(tab,context.packet)||tab.tabId!==target.tabId||tab.requestId!==state.requestId||tab.packetDigest!==context.packetDigest)fail('TAB_CHANGED','같은 문서의 새 전용 탭·회사·로그인 연결을 확인해주세요.');
     // Browser creation keeps its independent source guard. Only the already
     // reserved read-only span may consume this exact start proof once.
-    if(!recovery)source=await guard(context,{...state,ownedTarget:target,tab,sessionId:null});
+    if(createdReadTarget)source=await guard(context,{...state,ownedTarget:target,tab,sessionId:null});
     const proof=await adapter.qualifySavedDraftTarget(safeValue({tab,identity:context.identity,sessionId:source.sessionId,requestId:state.requestId,docId:state.docId,baselineDocIds:state.baselineDocIds,expectedBody:withDoc(context.packet,state.docId),previousTarget:state.savedDraftTargetRecovery.previousTarget}),{sourceProof:source});
     if(!savedTargetProofValid(proof,state,context,target)||proof.baselineSha256!==await digest(state.baselineDocIds)||Math.abs(clock()-proof.observedAt)>60000||proof.observedAt<state.savedDraftTargetRecovery.startedAt)
       fail('SAVED_DRAFT_TARGET_UNCONFIRMED','같은 저장 문서의 현재 본문·전체 파일·바이트 증거를 확인하지 못했습니다. 파일과 본문을 다시 보내지 않았습니다.');

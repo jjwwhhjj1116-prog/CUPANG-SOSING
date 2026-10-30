@@ -8,6 +8,7 @@ import { requestWorkspaceClose, workspaceEditState, quotationSourceState, worksp
 import type { QuotationNavigationTarget } from '@/app/quotation-navigation';
 
 import { ChangeEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { StudioSidebar } from '@/app/components/studio-navigation';
 import { CategoryProfileEditor } from '@/app/components/category-profile-editor';
 import { IntakeQueuePanel, type IntakeSourceSeed, type IntakeCategoryEntry } from '@/app/components/intake-queue-panel';
 import { useIntakeDraft } from '@/app/components/use-intake-draft';
@@ -151,6 +152,13 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   const [products, setProducts] = useState<Product[]>([]);
   const receiptReadSequence=useRef(new Map<string,number>());
   const [view, setView] = useState<'work'|'archive'>('work');
+  const [navigationGroup,setNavigationGroup]=useState<string|null>('로켓배송');
+  const [mobileNavigationOpen,setMobileNavigationOpen]=useState(false);
+  useEffect(()=>{
+    let current=true;
+    void Promise.resolve().then(()=>{if(current&&new URLSearchParams(window.location?.search??'').get('view')==='archive')setView('archive');});
+    return()=>{current=false;};
+  },[]);
   const [loadError, setLoadError] = useState('');
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState(() => savedRegistrationSettings(null));
@@ -261,15 +269,19 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     optionBoardProduct&&product&&product.id===optionBoardProduct.id&&(!workspaceOwnerId||product.owner_id===workspaceOwnerId)&&Date.parse(product.updated_at)>Date.parse(version)
       ?product.updated_at:version,optionBoardProduct?.updated_at??'');
   function changeView(next:'work'|'archive') {
-    if(batchBusyRef.current)return;
+    if(batchBusyRef.current){setToast('진행 중인 상품 작업을 마친 뒤 메뉴를 이동해주세요.');return;}
     productNavigation.current++;
     optionWorkspaceReturn.current=null;optionBoardScope.current=null;optionNavigation.current?.abort();optionNavigation.current=null;setOptionNavigationBusy(false);setOptionBoardProduct(null);setOptionReturnFocus(undefined);
     setOptionNavigationFailure(null);
-    setView(next);
+    setView(next);setMobileNavigationOpen(false);
+    window.history?.replaceState(null,'',next==='archive'?'/?view=archive':'/');
   }
   function guardOperationsNavigation(event:{preventDefault:()=>void}){
-    if(busyRef.current||batchBusyRef.current||settingsBusyRef.current||sourceSupplementBusyRef.current||sourceWorkRef.current){
-      event.preventDefault();setToast('진행 중인 상품 작업을 마친 뒤 운영관리를 열어주세요.');
+    const state=workspaceEditState(detailBody.current);
+    if(busyRef.current||batchBusyRef.current||settingsBusyRef.current||sourceSupplementBusyRef.current||sourceWorkRef.current||submissionLock.current?.source||submissionLock.current?.close||state.busy){
+      event.preventDefault();setToast('진행 중인 상품 작업이나 전송 결과를 확인한 뒤 메뉴를 이동해주세요.');
+    }else if(state.dirty){
+      event.preventDefault();setToast('저장하지 않은 입력이 있습니다. 현재 상품 작업을 저장한 뒤 메뉴를 이동해주세요.');
     }
   }
   function closeWorkspace(manageCategories = false) {
@@ -859,19 +871,11 @@ useEffect(()=>{
     sourceReviewSession.current=null;setSourceReview(null);sourceRegistrations.reload();if(session.returnToIntake)setAddOpen(true);return true;
   }
   return (
-    <main className="app-shell">
-      <aside className="sidebar">
-        <div className="brand"><span className="brand-mark">Y</span><span>YOOFAM 스튜디오</span></div>
-        <nav aria-label="주 메뉴"><p className="nav-caption">로켓배송</p>
-          <button className={`nav-item ${view==='work'?'active':''}`} onClick={()=>changeView('work')}><span>✦</span>AI 상품등록</button>
-          <button className={`nav-item ${view==='archive'?'active':''}`} onClick={()=>changeView('archive')}><span>▦</span>상품관리(신규)</button>
-          <a className="nav-item" href="/operations" aria-label="상품소싱·판매관리·손익계산 운영관리" aria-disabled={busy||batchBusy||!!sourceWork} onClick={guardOperationsNavigation}><span aria-hidden="true">▥</span>운영관리</a>
-        </nav>
-        <div className="sidebar-status"><div><strong>YOOFAM 스튜디오</strong><small>로켓배송 상품 등록 · 관리</small></div></div>
-      </aside>
+    <main className="app-shell studio-shell">
+      <StudioSidebar active={view} expandedGroup={navigationGroup} mobileOpen={mobileNavigationOpen} onToggleGroup={group=>setNavigationGroup(current=>current===group?null:group)} onRocketView={changeView} onBeforeNavigate={guardOperationsNavigation} onClose={()=>setMobileNavigationOpen(false)}/>
 
       <section className="content">
-        <header className="topbar"><div><h1>{view==='work'?'로켓배송 AI상품등록':'로켓배송 상품관리(신규)'}</h1><p>{view==='work'?'상품별 등록 현황 및 관리':'등록 상품 · SKU · 가격 · 구매정보'}</p></div>
+        <header className="topbar"><div><button type="button" className="studio-mobile-menu" aria-label="메뉴 열기" aria-expanded={mobileNavigationOpen} aria-controls="studio-navigation" onClick={()=>setMobileNavigationOpen(value=>!value)}>☰</button><h1>{view==='work'?'로켓배송 AI상품등록':'로켓배송 상품관리(신규)'}</h1><p>{view==='work'?'상품별 등록 현황 및 관리':'등록 상품 · SKU · 가격 · 구매정보'}</p></div>
           <div className="topbar-tools"><nav className="workspace-utilities" aria-label="계정 및 연결 도구">
             <button type="button" className="workspace-utility utility-integrations" data-state={utilityConnectionState} aria-label={'연동 설정 · '+utilityConnectionLabel} title={utilityConnectionLabel} aria-haspopup="dialog" aria-expanded={connectionsOpen} disabled={checkingConnections} onClick={()=>void checkConnections()}><span aria-hidden="true">⌁</span>연동 설정<span className="utility-status-dot" aria-hidden="true"/></button>
             <button type="button" className="workspace-utility utility-history" aria-label="작업 이력" aria-haspopup="dialog" aria-expanded={historyOpen} onClick={()=>{setHistoryProductId(detail?.id??products[0]?.id??'');setHistoryOpen(true);}}><span aria-hidden="true">↻</span>작업 이력</button>

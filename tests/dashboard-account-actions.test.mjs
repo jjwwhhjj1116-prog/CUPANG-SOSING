@@ -26,7 +26,7 @@ for(const company of schemaCompanies)test(`${company.code}: native source/close 
  const h=harness({settingsBody:{settings:{brand:'합성 검수 브랜드',exchangeRate:350},scope:scope('test-owner',company.code)}});try{
   await h.settle();h.component('registration-board').onSelected(new Set([h.products[0].id]));await h.click('등록 전송');const first=h.component('submission-review-panel'),mount=h.componentMount('submission-review-panel');
   const backdrop=()=>nodes(h.render()).find(node=>node.props?.className==='modal-backdrop'),oldClose=backdrop().props.onMouseDown;
-  first.onLockChange(true,true);oldClose();first.onEdit(h.products[0].id);await h.click('등록 전송');assert.equal(h.componentMount('submission-review-panel'),mount);
+  first.onLockChange(true,true);let blocked=false;nodes(h.render()).find(node=>node.type==='a'&&node.props.href==='/operations?view=keyword').props.onClick({preventDefault(){blocked=true;}});assert.equal(blocked,true,'native cross-page navigation must retain the original submission lock');oldClose();first.onEdit(h.products[0].id);await h.click('등록 전송');assert.equal(h.componentMount('submission-review-panel'),mount);
   assert.equal(nodes(backdrop()).find(node=>node.type==='button'&&node.props.className==='icon-close').props.disabled,true);
   first.onLockChange(true,false);first.onEdit(h.products[0].id);await h.settle();assert.equal(h.componentMount('submission-review-panel'),mount);assert.equal(nodes(backdrop()).find(node=>node.type==='button'&&node.props.className==='icon-close').props.disabled,false);
   oldClose();await h.settle();assert.equal(h.component('submission-review-panel'),undefined,'a positively saved terminal receipt may close while its source reservation stays intact');
@@ -40,7 +40,7 @@ for(const company of schemaCompanies)test(`${company.code}: native source/close 
 /** Actual DashboardClient, its private DetailPanel and settings dialog. Child
  * renderers record their received props; every tested callback is the real
  * parent callback, and requests run through its real fetch/readJson code. */
-function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'계정의 저장 브랜드',exchangeRate:350},scope:scope()},deleteReply=async id=>Response.json({productId:id,removed:true}),realRegistrationBoard=false,realOptionBoard=false,confirmClose=false,profiles=[],officialFlow,registrationLayoutRequest,initialIntakeRows=[],sourceRegistrationsState,archiveSourceReply,seoConfigurationReply,passiveEffects=true}={}){
+function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'계정의 저장 브랜드',exchangeRate:350},scope:scope()},deleteReply=async id=>Response.json({productId:id,removed:true}),realRegistrationBoard=false,realOptionBoard=false,confirmClose=false,profiles=[],officialFlow,registrationLayoutRequest,initialIntakeRows=[],sourceRegistrationsState,archiveSourceReply,seoConfigurationReply,passiveEffects=true,initialSearch=''}={}){
  const instances=new Map(),cache=new Map(),components=new Map(),componentMounts=new Map(),componentCounts=new Map(),nativeDetails=new Map(),layoutEffects=[],effects=[],requests=[];let active,tree,closed=false,lateWrites=0;
  let currentSettings=settingsBody,replyDelete=deleteReply,nextDelete=null,nextSettings=null,replySettingsPut=null,nextProduct=null,replyProduct=null,replySeoConfiguration=seoConfigurationReply;
  let currentProfiles=profiles,nextProfiles;
@@ -103,7 +103,7 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'�
  }
  function load(file){
   if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
-  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,URL,URLSearchParams,Date,Intl,TextEncoder,TextDecoder,structuredClone,crypto,fetch:request,window:{addEventListener(){},removeEventListener(){},confirm:()=>typeof confirmClose==='function'?confirmClose():confirmClose,setTimeout:()=>0},require(name){
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,URL,URLSearchParams,Date,Intl,TextEncoder,TextDecoder,structuredClone,crypto,fetch:request,window:{location:{search:initialSearch},addEventListener(){},removeEventListener(){},confirm:()=>typeof confirmClose==='function'?confirmClose():confirmClose,setTimeout:()=>0},require(name){
    if(name==='react')return hooks;
    if(name==='react/jsx-runtime')return{jsx:(type,props,key)=>({type,props,key}),jsxs:(type,props,key)=>({type,props,key})};
    if(name.endsWith('.css'))return{};
@@ -121,6 +121,7 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'�
    if(name==='@/app/components/workspace-settings-dialog')return load('app/components/workspace-settings-dialog.tsx');
    if(realRegistrationBoard&&name==='@/app/components/registration-board')return load('app/components/registration-board.tsx');
    if(realOptionBoard&&name==='@/app/components/product-option-board')return load('app/components/product-option-board.tsx');
+   if(name==='@/app/components/studio-navigation')return load('app/components/studio-navigation.tsx');
    if(name.startsWith('@/app/components/'))return componentModule(name.split('/').at(-1));
    return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);
   }});return exports;
@@ -926,10 +927,10 @@ test('compact dashboard retains captured sources and existing collection without
  }finally{h.close();}
 });
 
-test('compact upper utilities retain the actual CLI, history and account entries while the sidebar keeps only the two workspaces',async()=>{
+test('compact upper utilities retain the actual CLI, history and account entries while the sidebar shares the five expandable category groups',async()=>{
  const h=harness();try{
   await h.settle();const menu=()=>nodes(h.render()).find(node=>node.type==='nav'&&node.props['aria-label']==='주 메뉴'),utility=()=>nodes(h.render()).find(node=>node.type==='nav'&&node.props['aria-label']==='계정 및 연결 도구'),action=label=>nodes(utility()).find(node=>node.type==='button'&&node.props['aria-label']===label);
-  assert.equal(nodes(menu()).filter(node=>node.type==='button').length,2);assert.doesNotMatch(text(menu()),/연동 설정|작업 이력|CLI/);assert.match(text(menu()),/AI 상품등록.*상품관리/s);assert.ok(nodes(utility()).some(node=>node.type==='a'&&node.props.href==='/account'&&node.props['aria-label']==='테스트 관리자 계정 관리'));
+  assert.equal(nodes(menu()).filter(node=>node.type==='button'&&node.props['aria-controls']).length,5);assert.equal(nodes(menu()).filter(node=>node.type==='button'&&!node.props['aria-controls']).length,2);assert.doesNotMatch(text(menu()),/연동 설정|작업 이력|CLI/);assert.match(text(menu()),/AI상품등록.*상품관리/s);assert.ok(nodes(utility()).some(node=>node.type==='a'&&node.props.href==='/account'&&node.props['aria-label']==='테스트 관리자 계정 관리'));
   const connection=nodes(utility()).find(node=>node.type==='button'&&node.props['aria-label']?.startsWith('연동 설정'));assert.equal(connection.props['data-state'],'unknown');assert.match(connection.props['aria-label'],/확인 전/);assert.doesNotMatch(text(utility()),/연결 완료|연결됨|MCP|GPT/);
   for(const label of ['⚙ 기본설정','＋ 상품 추가','작업 개시','등록 전송'])assert.ok(h.button(label));assert.ok(nodes(h.render()).some(node=>node.type==='summary'&&text(node)==='전체 작업 ▾'));assert.ok(nodes(h.render()).some(node=>node.type==='summary'&&text(node)==='상품 선택 ▾'));
   action('CLI 설치·연결').props.onClick();await h.settle();assert.ok(h.component('cli-install-guide'));h.component('cli-install-guide').onClose();await h.settle();assert.equal(h.component('cli-install-guide'),undefined);
@@ -979,5 +980,28 @@ test('acquisition page capture keeps recommendation-first inputs and never start
   assert.equal(queue.initialCategorySelection,undefined);assert.equal(queue.sourceSeed.sourceUrl,saved.snapshot.sourceUrl);assert.equal(queue.sourceSeed.title,saved.reviewed.title);
   assert.equal(queue.sourceSeed.sourceCapture.captureId,saved.id);assert.equal(queue.sourceSeed.sourceCapture.fingerprint,saved.fingerprint);assert.equal(queue.sourceSeed.sourceCapture.revision,saved.revision);assert.equal(queue.goal,'work');assert.equal(queue.rows.length,0);
   assert.match(text(h.render()),/선택한 수집본 → 추천 카테고리 확인/);assert.ok(h.requests.every(request=>request.method==='GET'));
+ }finally{h.close();}
+});
+
+
+test('product-management deep links use the common rocket menu without a product mutation',async()=>{
+ const h=harness({initialSearch:'?view=archive'});try{
+  await h.settle();assert.ok(h.component('product-management-workspace'));
+  const menu=nodes(h.render()).find(node=>node.type==='nav'&&node.props['aria-label']==='주 메뉴');
+  assert.equal(text(nodes(menu).find(node=>node.props?.['aria-current']==='page')),'상품관리');
+  await h.click('AI상품등록');assert.ok(h.component('registration-board'));
+  assert.ok(h.requests.every(request=>request.method==='GET'));
+ }finally{h.close();}
+});
+
+test('native sidebar links block dirty editors while leaving ordinary category navigation available',async()=>{
+ const h=harness();try{
+  await h.settle();const link=()=>nodes(h.render()).find(node=>node.type==='a'&&node.props.href==='/operations?view=keyword');
+  let blocked=false;link().props.onClick({preventDefault(){blocked=true;}});assert.equal(blocked,false);
+  h.component('registration-board').onOpen(h.products[0]);await h.settle();
+  h.setWorkspaceEdits({dirty:true});link().props.onClick({preventDefault(){blocked=true;}});assert.equal(blocked,true);assert.ok(h.component('product-content-editor'));
+  h.setWorkspaceEdits({dirty:false,busy:true});blocked=false;link().props.onClick({preventDefault(){blocked=true;}});assert.equal(blocked,true);
+  h.setWorkspaceEdits({busy:false});blocked=false;link().props.onClick({preventDefault(){blocked=true;}});assert.equal(blocked,false);
+  assert.ok(h.requests.every(request=>request.method==='GET'));
  }finally{h.close();}
 });
