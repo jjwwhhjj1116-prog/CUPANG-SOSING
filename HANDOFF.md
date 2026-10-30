@@ -6650,3 +6650,11 @@ REA로 Couplus의 localhost HTTP/SSE와 별도 상품조회 경계를 확인했�
 - 삭제 확인을 앱 내부창으로 바꾸고 등록번호/전체UUID·취소·실행중/오래된대상 검사를 추가했다. 보관 상품 native-assets는 파일읽기 전 정확한409 오류. 이미지/배치/API 7고유파일188/188 + UI2고유파일152/152 = 340/340, tsc/lint/분리빌드 통과. 최종 Worker571b866e-f44b-4c74-9a92-7a840dbc81d5. 확장/권한/모델/과금 변경0.
 - 원래 e2f8037c의 실제 등록번호는261024001001이다. 동명261029001001을 먼저 잘못복원한 오류를 사용자에게 알리고 정상UI로 재보관했다(2026-10-30T10:54:58.392Z). 원래261024만 승인대로복원, 두상품updated_at불변. 최종D1원래범위35테이블47행은 기준48행 대비product_removals만변경, 나머지hash동일. 증거 outputs/step868-restore-scope-state.json, step869-original-scoped-final.json, step869-restoration-corrected.png.
 - 원래요청f29491bd-1882-456a-8a63-eec8586db6c6/문서2347603 유지. 3옵션·가격3420/6220/8090·첨부대표1/추가4/라벨1/상세2·필수미입력0/오류0 읽기확인. 저장접수이력빈배열, 전체문서read연결CHECKPOINT_MODE(원래UUID/초안모드) 중단. 신규생성/파일·본문재전송/제출0, 실제접수미완료. Chrome실제2.1.59/준비2.1.61 새로고침응답대기. 상세 docs/step869-image-roles-and-reference-workflow.md.
+
+### Steps870–871 — 원래 웹 요청 유실 실확인·같은 문서 재연결 구현 (2026-10-30)
+
+- 운영UI의 정확한e2f/f294/doc2347603 조회에서 웹pending부재를 확인했다. 일반connect가새previewUUID를생성→기존checkpoint UUID와불일치할수있는실제원인을좁혔다. 구버전확장에도localpending 없음/읽기실패/동일/다른UUID만보이는읽기진단을배포했다. 앞뒤회원·회사재확인/취소/입력epoch 유지, 본문·hash·권한노출0.
+- 전송자료의 접힌 '원래 요청 연결 복구' 추가: 현재서버전체review→실제privatecheckpoint의원래UUID/doc/lane/updated또는validated·draftOnly/미제출→nativepreview→두번째동일checkpoint→recoverDraft읽기결과→기존WebLocks/CAS원래UUID예약만복원. 미확정/생성직후/반려/이미제출lifecycle은차단. inspector canResume:false 유지, metadatahash로session제조0. 정상신규/기존pending흐름유지.
+- helper는Hub생성/파일/본문/검증/동의/제출을호출하지않고복구후기존검증→전송흐름을명시클릭으로잇는다. native readback은기존로컬checkpoint를updated→validated승격가능. claim뒤마지막읽기실패에도원래예약보존; samewindow storageevent부재로잠금풀리던P2를catch동기화+회귀로수정, unreturned session채택0. 독립남은P1/P2없음.
+- 분리고유10파일최신196/196(초기195 중 UI86을최종87로교체), tsc/변경4TS ESLint/최종build/9파일SHA일치. 최초UIfixture f.messages오타1실패는f.sent로수정하고원본로그보관. 최종Worker4598d490-d71d-4619-9795-fe432af90be7. 이번단계확장버전/권한/hosts/모델/요금변경0, 실제Chrome2.1.59/준비2.1.61 적용응답대기.
+- 기존원래범위35테이블47행hash39f1f5b9ff48173e6d68b0e8d9689aac8eb587f2fb469a0ed6b2984913a3455d는869와일치. 실제상품/견적/옵션/파일참조변경0, Hub생성/파일·본문재전송/제출0. 운영재로그인시Cloudflare기존인증과승인된유앤채로그인을정상복구, Hub탭은보존. 실제재연결·단계검증·접수성공은미완료. docs/step871-original-request-reconnect.md 및 outputs/step870-original-local-link.png 참조.

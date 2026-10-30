@@ -606,7 +606,7 @@ async function fixture(company = SINGLE_COMPANIES[0], options = {}) {
   const exports = {}, component = 'app/components/supplier-hub-product-transport.tsx';
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../' + component, import.meta.url), 'utf8'), { fileName: component, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
     { exports, Error, Date: LocalDate, window:f.window, AbortController, fetch: f.fetch, setTimeout: (fn, delay) => { const id = ++sequence; f.timers.set(id, { fn, due: f.clock.now + delay }); return id; }, clearTimeout: id => f.timers.delete(id),
-      require: name => name === '@/app/components/supplier-hub-native-registration' ? {SupplierHubNativeRegistration:()=>null} : name === '@/app/components/supplier-hub-rejection-details' ? {SupplierHubRejectionDetails} : name === '@/app/supplier-hub-reserved-work.mjs' ? {runReservedSegments} : name === 'react' ? react : name === '@/app/supplier-hub-product-client' ? f.client : name.startsWith('@/') ? f.load(name.slice(2) + '.ts') : name.endsWith('product-document-source.mjs') ? {sourceReadError} : name.endsWith('product-document.mjs') ? {
+      require: name => name === '@/app/preserved-product-request-reconnect' && options.reconnect ? {reconnectPreservedProductDraft:input=>options.reconnect(input,f)} : name === '@/app/components/supplier-hub-native-registration' ? {SupplierHubNativeRegistration:()=>null} : name === '@/app/components/supplier-hub-rejection-details' ? {SupplierHubRejectionDetails} : name === '@/app/supplier-hub-reserved-work.mjs' ? {runReservedSegments} : name === 'react' ? react : name === '@/app/supplier-hub-product-client' ? f.client : name.startsWith('@/') ? f.load(name.slice(2) + '.ts') : name.endsWith('product-document-source.mjs') ? {sourceReadError} : name.endsWith('product-document.mjs') ? {
         // Each fresh preview gets a different real UUID. Recovery must supply
         // its original UUID explicitly; a constant test seed cannot mask loss.
         createProductDocumentPacket: (review,value={}) => createProductDocumentPacket(review, { ...value,createdAt:value.createdAt??f.clock.now,now:f.clock.now }),
@@ -622,6 +622,61 @@ async function fixture(company = SINGLE_COMPANIES[0], options = {}) {
     close() { for (const slot of slots) slot?.cleanup?.(); } };
   return h;
 }
+
+function reconnectInputs(h,requestId='f29491bd-1882-456a-8a63-eec8586db6c6',docId='2347603'){
+ for(const [label,value] of [['복구할 원래 요청번호',requestId],['복구할 원래 문서번호',docId]]){
+  const field=nodes(h.render()).find(node=>node.type==='input'&&node.props['aria-label']===label);assert.ok(field,label);field.props.onChange({target:{value}});h.flush();
+ }
+}
+test('explicit reconnect adopts only its verified original draft and never automatically starts or submits',async()=>{
+ const calls=[],h=await fixture(undefined,{reconnect:async(input,f)=>{
+  calls.push(input.target);assert.equal(input.isCurrent(),true);assert.equal(input.target.productId,f.review.identity.productId);
+  const packet=await createProductDocumentPacket(input.review,{requestId:input.target.requestId,createdAt:f.clock.now,now:f.clock.now});
+  const session=await f.client.previewProductDocument(packet,input.signal);
+  const local=f.load('app/supplier-hub-product-pending.ts'),pending=await local.claimProductDocumentPending(input.review,session,input.signal,async()=>{assert.equal(input.isCurrent(),true);});
+  return{session,pending,observation:draftResult(f,input.target.requestId,'validated',{docId:input.target.docId})};
+ }});try{
+  h.f.bridge=async payload=>{assert.equal(payload.action,'preview','no write or continuation from reconnect UI');return{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true};};
+  await h.idle();reconnectInputs(h);await h.click('원래 저장 문서 연결 복구');
+  assert.equal(calls.length,1);assert.equal(calls[0].requestId,'f29491bd-1882-456a-8a63-eec8586db6c6');assert.equal(calls[0].docId,'2347603');
+  assert.match(h.text(),/Supplier Hub 초안 문서 2347603/);assert.ok(h.button(reviewPrepared));assert.equal(h.button(prepareDraft),undefined);assert.equal(h.button(start),undefined);
+  assert.equal(h.stored.size,1);assert.deepEqual(h.lockPairs.at(-1),[true,false],'saved validated original can close, source stays protected');
+ }finally{h.close();}
+});
+test('reconnect result cannot cross a disabled scope or overwrite an existing local request',async()=>{
+ const gate=deferred();let inputs;
+ const h=await fixture(undefined,{reconnect:async(input)=>{inputs=input;await gate.promise;assert.equal(input.isCurrent(),false);throw Error('scope changed');}});try{
+  await h.idle();reconnectInputs(h);h.button('원래 저장 문서 연결 복구').props.onClick();h.flush();
+  assert.equal(inputs.isCurrent(),true);h.render({...h.props(),disabled:true});gate.resolve();await turn();h.flush();
+  assert.equal(h.stored.size,0);assert.equal(h.button(reviewPrepared),undefined);assert.equal(h.f.sent.length,0);
+ }finally{h.close();}
+ const reserved=await fixture();try{
+  allowDraft(reserved,async payload=>draftResult(reserved.f,payload.packet.requestId,'validated'));
+  await reserved.idle();await reserved.click(open);await reserved.click(prepareDraft);assert.equal(reserved.stored.size,1);
+  assert.equal(reserved.button('원래 저장 문서 연결 복구'),undefined,'existing pending uses its original flow');
+ }finally{reserved.close();}
+});
+test('reconnect input is cleared on a different review and invalid IDs never call the helper',async()=>{
+ let calls=0;const h=await fixture(undefined,{reconnect:async()=>{calls++;throw Error('unexpected');}});try{
+  await h.idle();reconnectInputs(h,'invalid','02347603');await h.click('원래 저장 문서 연결 복구');assert.equal(calls,0);assert.equal(h.stored.size,0);
+  const next=plain(h.props().review);next.reviewDigest='f'.repeat(64);h.render({...h.props(),review:next});h.flush();
+  for(const label of ['복구할 원래 요청번호','복구할 원래 문서번호'])assert.equal(nodes(h.render()).find(node=>node.type==='input'&&node.props['aria-label']===label)?.props.value,'');
+ }finally{h.close();}
+});
+test('post-claim reconnect failure retains original source and close locks without adopting a session',async()=>{
+ const h=await fixture(undefined,{reconnect:async(input,f)=>{
+  const packet=await createProductDocumentPacket(input.review,{requestId:input.target.requestId,createdAt:f.clock.now,now:f.clock.now});
+  const session=await f.client.previewProductDocument(packet,input.signal);
+  await f.load('app/supplier-hub-product-pending.ts').claimProductDocumentPending(input.review,session,input.signal);
+  throw Error('post-claim source read failed');
+ }});try{
+  h.f.bridge=async payload=>{assert.equal(payload.action,'preview');return{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true};};
+  await h.idle();reconnectInputs(h);await h.click('원래 저장 문서 연결 복구');
+  assert.equal(h.stored.size,1);assert.match(h.text(),/post-claim source read failed/);assert.match(h.text(),/이 상품의 이전 전송 요청이 보관되어 있습니다/);
+  assert.deepEqual(h.lockPairs.at(-1),[true,true]);assert.equal(h.button(reviewPrepared),undefined);assert.equal(h.button(prepareDraft),undefined);assert.equal(h.button('원래 저장 문서 연결 복구'),undefined);
+  assert.equal(JSON.parse([...h.stored.values()][0]).requestId,'f29491bd-1882-456a-8a63-eec8586db6c6');
+ }finally{h.close();}
+});
 
 for(const company of SINGLE_COMPANIES)for(const status of ['SUBMITTED','FINISHED','REJECTED'])test(`${company.code}: ${status} releases enclosing close/source guards only after its exact local receipt is positively saved`,async()=>{
  const gate=deferred(),h=await fixture(company,{verified:true,beforeSaveReply:()=>gate.promise});try{
