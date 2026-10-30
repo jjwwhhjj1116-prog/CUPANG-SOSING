@@ -6676,10 +6676,12 @@ REA로 Couplus의 localhost HTTP/SSE와 별도 상품조회 경계를 확인했�
 - 원래범위D1 35테이블47행hash39f1f5b9ff48173e6d68b0e8d9689aac8eb587f2fb469a0ed6b2984913a3455d로871과동일. ops workspace0건. Hub신규생성/파일/본문재전송/제출0. 실제다중수집/상세누락해결/접수성공 미검증.
 - 검수용qa872가 CloudflareAccess로이동해 origin승인gate가인증도메인읽기를거절. 사용자로그인완료뒤에도같은거절지속, 우회0. qa872보존표식완료; 이전hub861핸들은더이상없어검수중단(탭닫기실행0). 다음에는승인된YOOFAM앱의정상열린탭과Hub실제연결부터확인. 상세 docs/step873-dual-destination-listing-collection.md.
 
-### Step874 — 검색 카드 0개·공통 메뉴·YFS 수집 버튼·닫힌 원래 문서 읽기 복구 (2026-10-30)
+### Step874 — 검색 카드 0개·공통 메뉴·YFS 수집 버튼·닫힌 원래 문서 읽기 복구 (2026-10-30~31)
 
 - 실제 카드0 원인: 직접 detail 링크만 검사했으나 REA 설치 RS 카드의 href는 상품번호 없는 dj 추적주소였다. 카드 내부 complete/expose/renderkey/aplus/data-extra 번호의 일치와 bounded 상품영역을 확인한다. 형제영역 충돌 번호는 거절하고 추적주소는 따라가지 않는다. 카드 구조 재현60개 선택검사와 실제1688저장 성공은 구분한다.
 - 사용자 지정5그룹(로켓배송·상품소싱/분석·판매/분석·손익계산·물류)을 공통 사이드바로 통합, 정확한 하위명칭·컬러SVG·접기/펼치기·모바일 적용. 운영→AI링크가 URL도 화면도 안바뀌던 실제 오류 재현후 일반링크로 수정. 실제 루트AI화면, 상품관리/?view=archive, 모든그룹 하위항목 확인. 보호중/미저장/미확정 작업 이동검사 유지.
 - 상세 수집버튼은 둥근 YFS 아이콘 위 간결한 상품수집 버튼, 버전표시·접기·키보드 지원. 단일수집은 직접AI, 다중목적지는 양쪽선택 기존흐름 유지. 2.1.63 ZIP111파일1608609bytes/SHA5d7baf0424362c7a252c62094b3454709279e00e2d8c3be6bbf21d44ab7a2a46. 실제설치폴더백업후111파일일치, 권한/hosts62와동일. 사용자63적용·1688 F5완료 및 체크박스·로드된상품수·YFS버튼 모두표시 회신. 실제양쪽저장은별도미검증.
 - 원래 e2f8037c/261024001001/f29491bd/doc2347603만 3옵션·가격3420/6220/8090·첨부1/4/1/2 유지 읽기확인. 실제 recover는 예약읽기탭도닫힘(created)으로 끝났다. 웹pending부재 상태에서도 정확한typed closedhint 범위에만 새읽기탭 버튼을 노출한다. 명시복구는 fresh/dualcheckpoint/preview/원자예약·후속증거·보통recover검사를 모두 거친 뒤만 웹pending복원. 닫힌created예약도 증거history 보존·CAS requested→탭1개→전체본문/파일확인→bound, 불명확requested는 재생성불가. 새Hub문서/파일·본문재전송은 이 경로에 없다.
 - 고유15파일443검사중441pass/2이전UI 기대실패. 기대수정후해당20/20pass, tsc/변경ESLint/확장생성물/운영build통과. 34릴리스파일SHA일치, Worker1f245d2a-0c43-4bbf-bbd0-6fdb039138db 배포. 원래D1 35테이블47행 SHA39f1f5b9ff48173e6d68b0e8d9689aac8eb587f2fb469a0ed6b2984913a3455d는873과동일,ops0. 실제접수미완료,1688본문거절우회0. 상세 docs/step874-visible-collection-and-navigation.md.
+- 실제63 closedhint·명시복구버튼 확인→새Hub읽기탭727939971 생성, 첫시도TAB_CHANGED. 같은탭/dashboard/KR·유앤채 로그인 확인후 명시읽기재개(추가탭0)→legal-lists/legal-array-nonempty까지진행. certificate1개/fileName·s3Link문자열/이름은예정이미지1개와일치. 공식SR은LABEL이미지와certificate별도이며이름일치만으로역할·내용동일성증명불가. 원래서류없음 계획과다른저장상태이므로우회통과0. 다음은같은문서certificate목록과본문certificateFile연결을읽어역할대조. 삭제/첨부/본문/검증/제출0,webpending복원미완료. 검토탭727939940·Hub727939971 handoff,Hub경로유지. outputs/step874-original-legal-array-read.png.
+- read-only자동워크플로감사 후속과제: flat fill은복잡한배경인페인팅아님. lateVision결과GET완료에도inferencePending래치가소비되지않는경로와 packaging once가POST전preflight실패도미확정으로고정하는경로를확인. 아직수정아님; 다음에범위분리회귀로개선. 현재UI/수집표시완료를전체1~7/접수완료로확대보고금지.
