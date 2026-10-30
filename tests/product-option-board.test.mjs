@@ -161,7 +161,7 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   const unused=byLabel(shown.tree,`옵션 ${optionId} 사이즈표 편집`);assert.equal(text(unused),'미사용');unused.props.onClick();assert.deepEqual(shown.stages,[[optionId,'사이즈표']]);
   const content=(await json(await h.route(base+'/content'))).content;await json(await h.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.revision,patch:{assets:{size:[keys[0]]}}}}));
   const assigned=await read(),saved=tree('',h.sourceUrl,assigned,assigned.imageKeys,undefined,0,{stage:true}),active=byLabel(saved.tree,`옵션 ${optionId} 사이즈표 편집`);
-  assert.equal(text(active),'1장');active.props.onClick();assert.deepEqual(saved.stages,[[optionId,'사이즈표']]);assert.equal(h.sqlite.prepare('SELECT payload FROM product_options').get().payload,before);
+  assert.equal(text(active),'완료');active.props.onClick();assert.deepEqual(saved.stages,[[optionId,'사이즈표']]);assert.equal(h.sqlite.prepare('SELECT payload FROM product_options').get().payload,before);
   assert.deepEqual(plain(assigned.quotationContent),plain(initial.quotationContent));assert.deepEqual(plain(assigned.quotationPrices),plain(initial.quotationPrices));assert.ok(!h.network.includes('supplier.coupang.com'));
  }finally{h.close();}
 });
@@ -198,7 +198,7 @@ test('saved SEO title and separate size-image role load without substituting a d
  const fetcher=async url=>({headers:new Headers({'content-type':'application/json'}),status:200,ok:true,json:async()=>url.endsWith('/options')?data:url.endsWith('/quotation-fields')?quotation(2,undefined,content):{content}});
  const loaded=await model.readOptionBoard('p1',signal,fetcher);assert.equal(loaded.seoTitle,'저장한 SEO 제목');assert.deepEqual(Array.from(loaded.commonAssets.size),['owner/size.png']);
  content.seo.title.value='';const cleared=await model.readOptionBoard('p1',signal,fetcher);assert.equal(cleared.seoTitle,'');
- const result=tree('sku-red',undefined,cleared,['owner/size.png'],undefined,0,{stage:true});assert.equal(text(byLabel(result.tree,'옵션 red SEO설정 편집')),'미입력');assert.equal(text(byLabel(result.tree,'옵션 red 사이즈표 편집')),'1장');
+ const result=tree('sku-red',undefined,cleared,['owner/size.png'],undefined,0,{stage:true});assert.equal(text(byLabel(result.tree,'옵션 red SEO설정 편집')),'대기');assert.equal(text(byLabel(result.tree,'옵션 red 사이즈표 편집')),'대기');
  const changed={...cleared,commonAssets:{...cleared.commonAssets,size:[]},options:{...cleared.options,rows:cleared.options.rows.map(row=>({...row,size:'XL'}))}};
  assert.equal(text(byLabel(tree('sku-red',undefined,changed,[],undefined,0,{stage:true}).tree,'옵션 red 사이즈표 편집')),'미사용');
 });
@@ -206,8 +206,8 @@ test('saved SEO title and separate size-image role load without substituting a d
 test('image badges count only assigned product members and source previews never complete the representative stage',()=>{
  const shown={...data,seoTitle:'',commonImageKeys:[],commonAssets:{additional:['owner/a.png','foreign/x.png'],detail:['owner/detail.png'],size:['foreign/size.png'],label:[]},sourceImageKeys:{red:'owner/source.png'},options:{...data.options,rows:data.options.rows.map(row=>({...row,imageKey:null}))}};
  const before=JSON.stringify(shown),result=tree('sku-red',undefined,shown,['owner/source.png','owner/a.png','owner/detail.png'],undefined,0,{stage:true}),html=renderToStaticMarkup(result.tree);
- assert.match(html,/src="\/api\/files\/owner\/source.png"/);assert.equal(text(byLabel(result.tree,'옵션 red 대표이미지 편집')),'0장');assert.equal(text(byLabel(result.tree,'옵션 red 추가이미지 편집')),'1장');assert.equal(text(byLabel(result.tree,'옵션 red 상세이미지 편집')),'1장');assert.equal(text(byLabel(result.tree,'옵션 red 사이즈표 편집')),'연결 확인 필요');assert.equal(text(byLabel(result.tree,'옵션 red 한글표시사항 편집')),'0장');
- assert.doesNotMatch(html,/완료|\/api\/files\/foreign/);assert.equal(JSON.stringify(shown),before);
+ assert.match(html,/src="\/api\/files\/owner\/source.png"/);assert.equal(text(byLabel(result.tree,'옵션 red 대표이미지 편집')),'대기');assert.equal(text(byLabel(result.tree,'옵션 red 추가이미지 편집')),'대기');assert.equal(text(byLabel(result.tree,'옵션 red 상세이미지 편집')),'대기');assert.equal(text(byLabel(result.tree,'옵션 red 사이즈표 편집')),'대기');assert.equal(text(byLabel(result.tree,'옵션 red 한글표시사항 편집')),'대기');
+ assert.doesNotMatch(html,/>완료<|\/api\/files\/foreign/);assert.equal(JSON.stringify(shown),before);
  shown.sourceImageKeys.red='foreign/source.png';assert.doesNotMatch(renderToStaticMarkup(tree('sku-red',undefined,shown,[],undefined,0,{stage:true}).tree),/src=/);
 });
 
@@ -229,8 +229,8 @@ test('a refreshed board displays newly attached images using its quotation snaps
  const refreshed=await model.readOptionBoard('p1',new AbortController().signal,async url=>({headers:new Headers({'content-type':'application/json'}),status:200,ok:true,json:async()=>url.endsWith('/options')?options:url.endsWith('/content')?{content}:quotation(2,keys,content,options)}));
  assert.deepEqual(Array.from(refreshed.imageKeys),keys);
  const result=tree('',undefined,refreshed,['owner/old-parent.png'],{productId:'p1',attempt:1},1,{stage:true});
- assert.match(renderToStaticMarkup(result.tree),/src="\/api\/files\/owner\/new-main.png"/);assert.equal(text(byLabel(result.tree,'옵션 red 대표이미지 편집')),'1장');assert.equal(text(byLabel(result.tree,'옵션 red 추가이미지 편집')),'1장');assert.equal(text(byLabel(result.tree,'옵션 red 사이즈표 편집')),'1장');
- assert.match(renderToStaticMarkup(result.tree),/src="\/api\/files\/owner\/new-source.png"/);assert.equal(text(byLabel(result.tree,'옵션 blue 대표이미지 편집')),'0장');
+ assert.match(renderToStaticMarkup(result.tree),/src="\/api\/files\/owner\/new-main.png"/);assert.equal(text(byLabel(result.tree,'옵션 red 대표이미지 편집')),'대기');assert.equal(text(byLabel(result.tree,'옵션 red 추가이미지 편집')),'대기');assert.equal(text(byLabel(result.tree,'옵션 red 사이즈표 편집')),'대기');
+ assert.match(renderToStaticMarkup(result.tree),/src="\/api\/files\/owner\/new-source.png"/);assert.equal(text(byLabel(result.tree,'옵션 blue 대표이미지 편집')),'대기');
 });
 
 test('a refreshed board excludes removed assignments and source previews even when the parent still lists those keys',async()=>{
@@ -238,7 +238,7 @@ test('a refreshed board excludes removed assignments and source previews even wh
  const options={...data,sourceImageKeys:{red:'owner/removed.png',blue:'owner/removed.png'},options:{...data.options,rows:data.options.rows.map(row=>({...row,imageKey:row.id==='red'?'owner/removed.png':null}))}};
  const refreshed=await model.readOptionBoard('p1',new AbortController().signal,async url=>({headers:new Headers({'content-type':'application/json'}),status:200,ok:true,json:async()=>url.endsWith('/options')?options:url.endsWith('/content')?{content}:quotation(2,['owner/retained.png'],content,options)}));
  const result=tree('',undefined,refreshed,['owner/removed.png','owner/retained.png'],{productId:'p1',attempt:1},1,{stage:true}),html=renderToStaticMarkup(result.tree);
- assert.doesNotMatch(html,/src=/);assert.equal(text(byLabel(result.tree,'옵션 red 대표이미지 편집')),'연결 확인 필요');assert.equal(text(byLabel(result.tree,'옵션 blue 대표이미지 편집')),'0장');assert.equal(text(byLabel(result.tree,'옵션 red 추가이미지 편집')),'1장');assert.equal(text(byLabel(result.tree,'옵션 red 사이즈표 편집')),'연결 확인 필요');
+ assert.doesNotMatch(html,/src=/);assert.equal(text(byLabel(result.tree,'옵션 red 대표이미지 편집')),'대기');assert.equal(text(byLabel(result.tree,'옵션 blue 대표이미지 편집')),'대기');assert.equal(text(byLabel(result.tree,'옵션 red 추가이미지 편집')),'대기');assert.equal(text(byLabel(result.tree,'옵션 red 사이즈표 편집')),'대기');
 });
 
 test('option board shows saved quotation overrides and preserves intentional blank instead of calculated price',()=>{
@@ -329,10 +329,10 @@ test('final per-SKU titles/images and deliberate blanks replace shared columns w
  assert.deepEqual(plain(board.quotationContent.red),{title:'',main:[],additional:['owner/final-add.png'],detail:['owner/detail-2.png','owner/detail-1.png'],label:['owner/final-label.png'],imageIssues:{}});
  assert.deepEqual(plain(board.quotationContent.blue),{title:'옵션별 최종 SEO 제목',main:['owner/final-main.png'],additional:[],detail:[],label:[],imageIssues:{}});
  const result=tree('',undefined,board,f.keys,undefined,0,{stage:true}),html=renderToStaticMarkup(result.tree);
- assert.equal(text(byLabel(result.tree,'옵션 red SEO설정 편집')),'미입력');assert.equal(text(byLabel(result.tree,'옵션 blue SEO설정 편집')),'입력됨');
- assert.equal(text(byLabel(result.tree,'옵션 red 대표이미지 편집')),'0장');assert.equal(text(byLabel(result.tree,'옵션 blue 대표이미지 편집')),'1장');
- for(const [id,expected]of [['red',['1장','2장','1장']],['blue',['0장','0장','0장']]])for(const [index,label]of ['추가이미지','상세이미지','한글표시사항'].entries())assert.equal(text(byLabel(result.tree,`옵션 ${id} ${label} 편집`)),expected[index]);
- for(const id of ['red','blue'])assert.equal(text(byLabel(result.tree,`옵션 ${id} 사이즈표 편집`)),'1장','size stays a separate shared stage');
+ assert.equal(text(byLabel(result.tree,'옵션 red SEO설정 편집')),'대기');assert.equal(text(byLabel(result.tree,'옵션 blue SEO설정 편집')),'대기');
+ assert.equal(text(byLabel(result.tree,'옵션 red 대표이미지 편집')),'대기');assert.equal(text(byLabel(result.tree,'옵션 blue 대표이미지 편집')),'대기');
+ for(const [id,expected]of [['red',['대기','대기','대기']],['blue',['대기','대기','대기']]])for(const [index,label]of ['추가이미지','상세이미지','한글표시사항'].entries())assert.equal(text(byLabel(result.tree,`옵션 ${id} ${label} 편집`)),expected[index]);
+ for(const id of ['red','blue'])assert.equal(text(byLabel(result.tree,`옵션 ${id} 사이즈표 편집`)),'대기','size stays a separate shared stage');
  assert.match(html,/src="\/api\/files\/owner\/final-main.png"/);assert.doesNotMatch(html,/src="\/api\/files\/owner\/(?:red|shared).png"|연결 확인 필요/);
  assert.equal(nodes(tree('최종 SEO',undefined,board,f.keys,undefined,0,{stage:true}).tree).filter(node=>node.props['data-option-id']).length,1,'search uses the final saved per-option title');
  assert.equal(JSON.stringify({data,content:f.content,quote:f.quote}),before);
@@ -349,8 +349,8 @@ test('exact live title/image wires drive board cells instead of same-named legac
  assert.equal(board.quotationContent.red.title,'');assert.deepEqual(plain(board.quotationContent.red.main),[]);
  assert.deepEqual(plain(board.quotationContent.red.additional),['owner/final-add.png']);assert.deepEqual(plain(board.quotationContent.red.detail),['owner/detail-2.png','owner/detail-1.png']);
  const result=tree('',undefined,board,f.keys,undefined,0,{stage:true});
- assert.equal(text(byLabel(result.tree,'옵션 red SEO설정 편집')),'미입력');assert.equal(text(byLabel(result.tree,'옵션 red 대표이미지 편집')),'0장');
- assert.equal(text(byLabel(result.tree,'옵션 blue 대표이미지 편집')),'1장');assert.doesNotMatch(renderToStaticMarkup(result.tree),/src="\/api\/files\/owner\/shared.png"/);
+ assert.equal(text(byLabel(result.tree,'옵션 red SEO설정 편집')),'대기');assert.equal(text(byLabel(result.tree,'옵션 red 대표이미지 편집')),'대기');
+ assert.equal(text(byLabel(result.tree,'옵션 blue 대표이미지 편집')),'대기');assert.doesNotMatch(renderToStaticMarkup(result.tree),/src="\/api\/files\/owner\/shared.png"/);
 });
 
 const priceAliases=['supplyPrice','salePrice'].map((input,index)=>({id:'live_80719_price_'+input,label:'공식 가격',type:'text',numericText:true,required:false,
@@ -362,7 +362,7 @@ test('exact primary Hub prices and manual blanks drive badges and amounts withou
  const before=JSON.stringify(f.quote),board=await model.readOptionBoard('p1',new AbortController().signal,f.fetcher);
  assert.deepEqual(plain(board.quotationPrices),{red:{supplyPrice:'',salePrice:'7654'},blue:{supplyPrice:'1234',salePrice:''}});
  const result=tree('',undefined,board,f.keys,undefined,0,{stage:true}),html=renderToStaticMarkup(result.tree);
- for(const id of ['red','blue'])assert.equal(text(byLabel(result.tree,`옵션 ${id} 가격설정 편집`)),'미입력');
+ for(const id of ['red','blue'])assert.equal(text(byLabel(result.tree,`옵션 ${id} 가격설정 편집`)),'대기');
  assert.match(html,/미입력 \(견적 공급가\)/);assert.match(html,/7,654원 \(견적 판매가\)/);assert.match(html,/1,234원 \(견적 공급가\)/);assert.match(html,/미입력 \(견적 판매가\)/);
  assert.doesNotMatch(html,/4,100원|6,200원/);assert.equal(JSON.stringify(f.quote),before);
 });
@@ -393,8 +393,8 @@ test('real validation failures and missing/foreign final keys remain visible wit
  f.blue.fields.mainImage={value:'owner/missing.png',issues:['이미지 연결 실패']};
  const board=await model.readOptionBoard('p1',new AbortController().signal,f.fetcher),result=tree('',undefined,board,f.keys,undefined,0,{stage:true}),html=renderToStaticMarkup(result.tree);
  assert.equal(board.quotationContent.red.imageIssues.label,true);assert.equal(board.quotationContent.blue.imageIssues.main,true,'legacy undivided issues remain conservative');
- assert.equal(text(byLabel(result.tree,'옵션 red 대표이미지 편집')),'연결 확인 필요');assert.equal(text(byLabel(result.tree,'옵션 blue 대표이미지 편집')),'연결 확인 필요');
- assert.equal(text(byLabel(result.tree,'옵션 red 추가이미지 편집')),'1장');assert.equal(text(byLabel(result.tree,'옵션 red 한글표시사항 편집')),'연결 확인 필요');
+ assert.equal(text(byLabel(result.tree,'옵션 red 대표이미지 편집')),'대기');assert.equal(text(byLabel(result.tree,'옵션 blue 대표이미지 편집')),'대기');
+ assert.equal(text(byLabel(result.tree,'옵션 red 추가이미지 편집')),'대기');assert.equal(text(byLabel(result.tree,'옵션 red 한글표시사항 편집')),'대기');
  assert.match(html,/1장 · 연결 확인 필요/);assert.doesNotMatch(html,/src=|\/api\/files\/foreign|\/api\/files\/owner\/shared.png|\/api\/files\/owner\/red.png/);
  assert.deepEqual(plain(board.quotationContent.red.main),['foreign/private.png'],'a broken selection is retained for editing, not silently replaced');
  assert.deepEqual(plain(board.quotationContent.red.additional),['owner/final-add.png','owner/missing.png']);
@@ -455,8 +455,8 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   assert.deepEqual(plain(final.resolved.rows.find(row=>row.optionId===null).fields),plain(before.resolved.rows.find(row=>row.optionId===null).fields));
   assert.equal(h.sqlite.prepare('SELECT payload FROM product_content').get().payload,storedContent);assert.equal(h.sqlite.prepare('SELECT payload FROM product_options').get().payload,storedOptions);
   const shown=tree('',h.sourceUrl,board,keys,undefined,0,{stage:true}),html=renderToStaticMarkup(shown.tree);
-  assert.equal(text(byLabel(shown.tree,`옵션 ${first.optionId} SEO설정 편집`)),'미입력');assert.equal(text(byLabel(shown.tree,`옵션 ${first.optionId} 대표이미지 편집`)),'1장');
-  assert.equal(text(byLabel(shown.tree,`옵션 ${second.optionId} 대표이미지 편집`)),'0장');assert.equal(text(byLabel(shown.tree,`옵션 ${second.optionId} 한글표시사항 편집`)),'0장');
+  assert.equal(text(byLabel(shown.tree,`옵션 ${first.optionId} SEO설정 편집`)),'대기');assert.equal(text(byLabel(shown.tree,`옵션 ${first.optionId} 대표이미지 편집`)),'완료');
+  assert.equal(text(byLabel(shown.tree,`옵션 ${second.optionId} 대표이미지 편집`)),'대기');assert.equal(text(byLabel(shown.tree,`옵션 ${second.optionId} 한글표시사항 편집`)),'대기');
   assert.match(html,new RegExp('src="/api/files/'+keys[6].replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'"'));
   assert.ok(!html.includes('연결 확인 필요'),'ordinary final image review messages never mark valid saved attachments broken');
   assert.equal(h.network.filter(host=>host==='supplier.coupang.com').length,0);assert.equal(product.supplier_hub_status,'미전송');
@@ -494,7 +494,7 @@ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name
   for(const row of view.resolved.rows.filter(row=>row.optionId))assert.deepEqual(plain(board.quotationPrices[row.optionId]),{supplyPrice:row.fields[targets.supplyPrice.primary].value,salePrice:row.fields[targets.salePrice.primary].value});
   assert.deepEqual(plain(board.quotationPrices[first.optionId]),{supplyPrice:'12345',salePrice:'23456'});assert.deepEqual(plain(board.quotationPrices[second.optionId]),{supplyPrice:'',salePrice:'34567'});
   const shown=tree('',h.sourceUrl,board,board.imageKeys,undefined,0,{stage:true}),html=renderToStaticMarkup(shown.tree);
-  assert.equal(text(byLabel(shown.tree,`옵션 ${first.optionId} 가격설정 편집`)),'입력됨');assert.equal(text(byLabel(shown.tree,`옵션 ${second.optionId} 가격설정 편집`)),'미입력');assert.match(html,/12,345원 \(견적 공급가\)/);assert.match(html,/34,567원 \(견적 판매가\)/);
+  assert.equal(text(byLabel(shown.tree,`옵션 ${first.optionId} 가격설정 편집`)),'대기');assert.equal(text(byLabel(shown.tree,`옵션 ${second.optionId} 가격설정 편집`)),'대기');assert.match(html,/12,345원 \(견적 공급가\)/);assert.match(html,/34,567원 \(견적 판매가\)/);
   const preview=await json(await h.route(base+'/quotation',{method:'POST',body:{action:'preview',profileId:profile.id}}));
   assert.ok(preview.report.mappingCoverage.some(field=>field.fieldId==='supplyPrice'),'reading does not silently reconcile a divergent manual summary or declare it ready');
   assert.ok(preview.submissionReview.issues.some(issue=>issue.code==='EXCEL_FIELD_UNMAPPED'&&issue.fieldId==='supplyPrice'));assert.equal(preview.report.submissionReady,false);

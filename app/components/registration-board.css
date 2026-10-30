@@ -1,0 +1,10 @@
+.registration-board .registration-stage-badge,.option-board .registration-stage-badge,.registration-board .registration-state{display:inline-flex;align-items:center;justify-content:center;min-width:48px;min-height:25px;padding:3px 9px;border:0;border-radius:3px;font-size:12px;font-weight:500;line-height:1.4;white-space:nowrap;background:#ff8a3d;color:#fff}
+.registration-board .registration-stage-complete,.option-board .registration-stage-complete{background:#30b777;color:#fff}
+.registration-board .registration-stage-failed,.option-board .registration-stage-failed{background:#ef5b60;color:#fff}
+.registration-board .registration-stage-running,.option-board .registration-stage-running{background:#4195e8;color:#fff}
+.registration-board .registration-stage-unused,.option-board .registration-stage-unused{background:#939ba9;color:#fff}
+.registration-board .registration-stage-badge:hover,.option-board button.registration-stage-badge:hover{filter:brightness(.95)}
+.registration-board .registration-stage-badge:focus-visible,.option-board .registration-stage-badge:focus-visible{outline:2px solid #273951;outline-offset:2px}
+.registration-board .registration-state[data-state="failed"]{background:#ef5b60}
+.registration-board .registration-state[data-state="running"]{background:#4195e8}
+.registration-board .registration-state[data-state="complete"]{background:#30b777}

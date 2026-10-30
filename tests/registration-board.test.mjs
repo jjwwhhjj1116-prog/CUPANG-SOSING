@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
-function load(file,overrides={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,URL,Error,window:overrides.window,require:name=>name in overrides?overrides[name]:name.startsWith('@/')?load(name.slice(2)+(fs.existsSync(new URL('../'+name.slice(2)+'.ts',import.meta.url))?'.ts':'.tsx'),overrides):require(name)});return exports;}
+function load(file,overrides={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,URL,Error,window:overrides.window,require:name=>name.endsWith('.css')?{}:name in overrides?overrides[name]:name.startsWith('@/')?load(name.slice(2)+(fs.existsSync(new URL('../'+name.slice(2)+'.ts',import.meta.url))?'.ts':'.tsx'),overrides):require(name)});return exports;}
 const {registrationTitle,registrationNumber,registrationThumbnail,registrationStepLabel,registrationTransmissionLabel,RegistrationBoard,filterRegistrationProducts,sortRegistrationProducts}=load('app/components/registration-board.tsx');
 const columnLabels=['등록번호','상품이미지','상품명','구매링크','SEO설정','가격설정','대표이미지','추가이미지','상세이미지','사이즈표','한글표시사항','견적서','등록상태','관리'];
 function elements(tree,predicate){const found=[];function visit(node){if(!node||typeof node!=='object')return;if(Array.isArray(node)){node.forEach(visit);return;}if(predicate(node))found.push(node);visit(node.props?.children);}visit(tree);return found;}
@@ -49,7 +49,7 @@ test('source preview survives an unchosen or cleared main image without completi
  const product={image_keys:JSON.stringify(['owner/banner','owner/source','owner/chosen']),source_image_key:'owner/source',content_summary:{mainImageKey:null,main:0,additional:0,detail:0,missingImages:false}};
  const before=JSON.stringify(product);
  assert.equal(registrationThumbnail(product),'/api/files/owner/source');
- for(const step of ['대표 이미지','추가 이미지','상세 이미지'])assert.equal(registrationStepLabel(product,step),'0장');
+ for(const step of ['대표 이미지','추가 이미지','상세 이미지'])assert.equal(registrationStepLabel(product,step),'대기');
  assert.equal(JSON.stringify(product),before);
  product.content_summary.mainImageKey='owner/chosen';product.content_summary.main=1;
  assert.equal(registrationThumbnail(product),'/api/files/owner/chosen');
@@ -117,7 +117,7 @@ test('every stage and product option badge keeps its real connected handler',()=
 
 test('connected stage cells and product previews open the product option selector before editing',()=>{
  const h=boardHarness(),tree=h.render();
- const buttons=elements(tree,node=>node.type==='button'&&(node.props.className==='registration-cell-button'||node.props.className==='registration-thumbnail'||node.props.className==='registration-title'||node.props.className==='registration-options'));
+ const buttons=elements(tree,node=>node.type==='button'&&(node.props.className?.includes('registration-cell-button')||node.props.className==='registration-thumbnail'||node.props.className==='registration-title'||node.props.className==='registration-options'));
  assert.equal(buttons.length,11);
  for(const button of buttons){button.props.onClick();assert.equal(h.options.at(-1),h.product);}
  assert.equal(h.options.length,11);assert.equal(h.calls.length,0);assert.equal(h.confirmations.length,0);
@@ -330,7 +330,7 @@ test('real collected draft renders a product preview while quotation image field
   const {products}=await response.json(),product=products[0];assert.ok(product.source_image_key);
   const html=renderToStaticMarkup(createElement(RegistrationBoard,{products,selected:new Set(),onSelected:()=>{},onOpen:()=>{},loading:false,error:'',onArchive:()=>{}}));
   assert.ok(html.includes(`src="${registrationThumbnail(product)}"`));assert.ok(!html.includes('이미지<br/>없음'));
-  assert.match(html,/우드 패턴 다리 선글라스/);assert.equal((html.match(/>0장<\/button>/g)||[]).length,4);
+  assert.match(html,/우드 패턴 다리 선글라스/);assert.equal((html.match(/>대기<\/button>/g)||[]).length,7);
   const fields=await h.route('/api/products/'+product.id+'/quotation-fields');assert.equal(fields.status,200);
   for(const row of (await fields.json()).resolved.rows)for(const key of ['mainImage','additionalImages','detailImages'])assert.equal(row.fields[key].value,'');
  }finally{h.close();}
@@ -377,7 +377,7 @@ test('collected product appears in the same fourteen-column board and routes cat
  const prepared=[],reviewed=[];const h=boardHarness({sources:[sourceItem],onPrepareSource:item=>prepared.push(item),onReviewSource:item=>reviewed.push(item)});const before=JSON.stringify(h.product);
  const tree=h.render(),sourceRow=elements(tree,node=>node.type==='tr'&&elements(node,child=>child.type==='td'&&child.props['data-column']==='product'&&nodeText(child).includes('새 수집 상품')).length)[0];
  assert.ok(sourceRow);assert.equal(elements(sourceRow,node=>node.type==='td'&&node.props['data-column']).length,14);
- assert.match(nodeText(sourceRow),/카테고리 대기/);assert.doesNotMatch(nodeText(sourceRow),/공급 0원|전송완료|등록완료/);
+ assert.match(nodeText(sourceRow),/등록대기/);assert.doesNotMatch(nodeText(sourceRow),/공급 0원|전송완료|등록완료/);
  const checkbox=elements(sourceRow,node=>node.type==='input'&&node.props.type==='checkbox')[0];assert.equal(checkbox.props.disabled,false);
  elements(sourceRow,node=>node.type==='button'&&node.props['aria-label']==='새 수집 상품 SEO설정 열기')[0].props.onClick();
  elements(sourceRow,node=>node.type==='button'&&node.props.className==='registration-options')[0].props.onClick();

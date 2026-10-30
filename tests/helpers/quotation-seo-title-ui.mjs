@@ -19,6 +19,7 @@ export function quotationTitleLoader(overrides={}){
     require(name){
      if(name in overrides)return overrides[name];
      if(name.endsWith('.css'))return{};
+     if(name.startsWith('@/app/')&&name.endsWith('.mjs'))return native('../../'+name.slice(2));
      if(name.startsWith('@/app/')){const path=name.slice(2);return load(path+(fs.existsSync(new URL('../../'+path+'.ts',import.meta.url))?'.ts':'.tsx'));}
      if(name.startsWith('.')&&name.endsWith('.mjs'))return createRequire(new URL('../../'+file,import.meta.url))(name);
      return native(name);

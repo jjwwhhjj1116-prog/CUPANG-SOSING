@@ -171,7 +171,8 @@ function QuotationPanelContent({submissionActive=true,onPrepareSubmission,onProf
     editorRef.current?.scrollIntoView({behavior:'smooth',block:'start'});
   }
   if(contextError)return <section className="panel-stack"><p role="alert">{contextError}</p><button type="button" className="btn primary" disabled={sourceLocked} onClick={()=>{if(!sourceActionCurrent())return;setContextError('');setContextLoaded(false);setLoadAttempt(value=>value+1);}}>카테고리 연결 다시 확인</button><button type="button" className="btn ghost" disabled={sourceLocked} onClick={manageCategories}>카테고리·양식 설정 확인</button></section>;
-  return <section className="panel-stack" aria-busy={busy||closeLocked} data-workspace-saving={busy||closeLocked}>
+  return <section className="panel-stack couplus-quotation-stage" aria-busy={busy||closeLocked} data-workspace-saving={busy||closeLocked}>
+    <h2 className="couplus-quotation-heading">등록 세부정보</h2>
     {connectionWarning && <p role="status" className="panel-note">{connectionWarning}</p>}
     <div ref={editorRef}>{contextLoaded?<QuotationFieldsEditor key={`${navigationSequence}:${currentReviewTarget?.sequence??0}`} submissionActive={submissionActive} navigationTarget={currentReviewTarget?.target??navigationTarget} productId={productId} profileId={overrideProfileId} refreshToken={JSON.stringify([refreshToken,profileVersion])} onSubmissionLockChange={reportSubmissionLock} onEditSeo={onEditSeo?()=>{if(sourceActionCurrent())onEditSeo();}:undefined} onDirtyChange={value=>{
       if(!submissionCurrent.current.mounted||lockScope.current!==submissionScope)return;

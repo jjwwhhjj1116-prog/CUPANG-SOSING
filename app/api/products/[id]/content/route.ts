@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { env } from 'cloudflare:workers';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { findProduct } from '@/db/queries';
-import { readProductContent, saveProductContent } from '@/db/product-content';
+import { readProductContent, saveProductContent,readRegistrationSummaries } from '@/db/product-content';
 import { CONTENT_BODY_LIMIT, applyContentPatch, productImageKeys, validateContentInput } from '@/app/product-content';
 import { verifiedGeneratedImageReplacements } from '@/app/generated-image-adoption-proof';
 import {capturedSettingsBanners} from '@/app/captured-settings-banners';
@@ -36,7 +36,8 @@ export async function GET(_: Request, context: Context) {
     const product=await findProduct(owner,id);
     if(!product)return response({error:'상품을 찾을 수 없습니다.'},404);
     const content=await readProductContent(owner,id),banners=await bannerMetadata(owner,product,content);
-    return response({content,...(banners?{capturedSettingsBanners:banners}:{})});
+    const summary=await readRegistrationSummaries(owner,[product]).catch(()=>null);
+    return response({content,registrationStages:summary?.[id]?.stages??null,...(banners?{capturedSettingsBanners:banners}:{})});
   } catch { return response({ error: '저장한 콘텐츠를 불러오지 못했습니다.' }, 503); }
 }
 

@@ -375,7 +375,9 @@ export async function executeTranslation(review: TranslationReview, config: Tran
         messages: [{ role: 'system', content: request.instructions+(recoveryProof?' 모든 상품명·검색어·설명·옵션 번역은 한자가 전혀 없는 자연스러운 한국어로 작성하세요. 원문에 명시되지 않은 방수·방습·항균·살균·무독성·통증 완화 등의 성능 표현을 추가하지 마세요. 참고 메모나 카테고리는 이런 성능의 근거가 아닙니다. 추론 과정이나 설명, 코드 블록 없이 완전한 JSON 객체만 반환하세요.':'')+(Number(recoveryProof?.version)===5?' 각 입력 속성의 sourceIndex는 그대로 보존하세요. outputName이 있는 속성은 응답 name을 반드시 그 outputName(옵션명·색상·사이즈)으로 쓰고, 해당 원문 value만 한국어로 번역해 응답 value에 넣으세요. 원문 중국어 옵션명을 name에 복사하지 마세요. outputName은 화면 표시용 메타데이터이며 상품 성능이나 값의 근거가 아닙니다. 번역할 수 없는 항목은 생략하고 한국어 warnings에 설명하세요.':'') },
           { role: 'user', content: userAction+request.input[0].content[0].text+(qwen?'\n/no_think':'') }],
         max_tokens: review.maxOutputTokens, stream: false,
-        ...(qwen?{temperature:0}:{}),
+        // Candidate non-thinking recipe follows the Qwen model card. Keep
+        // historical recovery sampling and every other provider unchanged.
+        ...(genericQwen?{temperature:0.7,top_p:0.8,top_k:20}:qwen?{temperature:0}:{}),
         // Generic Qwen relies on the Korean JSON-only prompt and the strict
         // runtime contract. Keep schema transport for every historical path.
         ...(genericQwen?{}:{response_format:{type:'json_schema',json_schema:request.text.format.schema}}),

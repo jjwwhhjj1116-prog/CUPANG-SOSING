@@ -141,17 +141,19 @@ export function OptionQuotationPrices({productId,version,profileId,onSaved,refre
   // handlers, never evaluated while building the grid.
   // eslint-disable-next-line react-hooks/refs
   const grid=renderGrid?.(controller);
-  return <section aria-label="옵션별 견적 가격 편집" data-quotation-source-step="가격" data-workspace-dirty={edits.length>0} data-workspace-saving={busy}>
-    {!renderGrid&&<h4>옵션별 가격</h4>}
-    {view&&<p className={renderGrid?'stage-two-price-category':undefined}>{view.categoryContext.categoryPath.join(' > ')} · {view.categoryContext.categoryId||'카테고리 미지정'}</p>}
-    <details open={renderGrid?undefined:true} className={renderGrid?'stage-two-price-guide':undefined}><summary hidden={!renderGrid}>가격 입력·권장소비자가 안내</summary>
+  const guide=<details open={renderGrid?undefined:true} className={renderGrid?'stage-two-price-guide':undefined}><summary hidden={!renderGrid}>가격 입력·권장소비자가 안내</summary>
+      {view&&<p className={renderGrid?'stage-two-price-category':undefined}>{view.categoryContext.categoryPath.join(' > ')} · {view.categoryContext.categoryId||'카테고리 미지정'}</p>}
       <p>견적서의 Supplier Hub 가격입니다. 직접 입력하면 연결된 가격 항목에 함께 반영됩니다. 복원하면 각 항목의 공통 수정값 또는 자동 계산을 사용합니다. 공식 판매처 가격은 별도 항목으로 유지됩니다.</p>
       {renderGrid&&stageTwoPricingPolicy&&<p>판매가 저장 시 자동 권장소비자가도 다시 계산합니다. 직접 수정한 권장소비자가와 공란은 유지합니다.</p>}
-    </details>
+    </details>;
+  return <section aria-label="옵션별 견적 가격 편집" data-quotation-source-step="가격" data-workspace-dirty={edits.length>0} data-workspace-saving={busy}>
+    {!renderGrid&&<h4>옵션별 가격</h4>}
+    {!renderGrid&&guide}
     {busy&&<p role="status">가격 처리 중…</p>}{error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}
     {!!edits.length&&view&&!fresh&&<p role="status">상품 정보가 변경됐습니다. 입력을 유지한 채 최신 가격을 조회한 뒤 저장해주세요.</p>}
     {targetError&&<p role="alert">{targetError}</p>}{!!differences.length&&<p role="status">{differences.join(' ')}</p>}
     {renderGrid?grid:!!rows.length&&<div className="table-wrap"><table><thead><tr><th>옵션</th>{prices.map(([key,label])=><th key={key}>{label} (원)</th>)}</tr></thead><tbody>{rows.map(row=><tr key={row.optionId??'common'}><th scope="row">{optionRegistrationLabel(row.optionId,row.optionLabel||'상품 공통',view?.optionRegistrationNumbers)}</th>{prices.map(([key,label])=><td key={key}><input aria-label={`${row.optionLabel||'상품 공통'} ${label}`} type="number" min={1} step={1} value={value(row.optionId,targets?.[key].primary??key)} disabled={busy||disabled||!targets} onKeyDown={event=>{if(event.key==='Enter')event.preventDefault();}} onChange={event=>change(row.optionId,key,event.target.value)}/><button type="button" className="btn ghost" disabled={busy||disabled||!targets} onClick={()=>change(row.optionId,key,null)}>복원</button></td>)}</tr>)}</tbody></table></div>}
+    {renderGrid&&guide}
     {view&&!rows.length&&<p>견적서에 포함한 옵션이 없습니다.</p>}{!!issues.length&&<p role="alert">{[...new Set(issues)].join(' ')}</p>}
     {!renderGrid&&<button type="button" className="btn primary" disabled={busy||disabled||!targets||!!targetError||!edits.length||!!issues.length} onClick={()=>void save()}>옵션 가격 저장</button>}
     {renderGrid&&uncertain&&<p role="status">가격 저장 응답을 확인하지 못했습니다. 입력을 유지한 채 저장 결과를 조회해주세요.</p>}

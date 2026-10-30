@@ -9,7 +9,13 @@ import {companies,downloadFixture,downloadUI,json,text} from './helpers/image-do
 const native=createRequire(import.meta.url),plain=value=>JSON.parse(JSON.stringify(value));
 function entries(value,ancestors=[]){
  if(Array.isArray(value))return value.flatMap(child=>entries(child,ancestors));
- return value&&typeof value==='object'?[{node:value,ancestors},...entries(value.props?.children,[...ancestors,value])]:[];
+ if(!value||typeof value!=='object')return[];
+ const next=[...ancestors,value],label=value.type?.label;
+ // These child boundaries consume one upload slot in their real render.
+ // Follow those slots explicitly; unrelated ReactNode props are not children.
+ const upload=label?.endsWith(':OptionImageEditor')?value.props.uploadControl
+  :label?.endsWith(':ProductOptionsEditor')?value.props.mainImageUploadControl:undefined;
+ return[{node:value,ancestors},...entries(value.props?.children,next),...entries(upload,next)];
 }
 const initiallyVisible=entry=>!entry.ancestors.some(node=>node.props?.hidden===true||node.type==='details'&&node.props.open!==true);
 
@@ -57,7 +63,7 @@ test('selected Stage4 opens its existing gallery and instant tools while unscope
  const h=dashboard();try{
   h.render({tab:'추가 이미지'});const image=h.child('OptionImageEditor','additional'),batch=h.child('DetailImageBatchPanel','additional');
   assert.equal(initiallyVisible(image),true);assert.equal(initiallyVisible(batch),true);assert.equal(image.node.props.saveOnChange,true);assert.equal(initiallyVisible(h.child('ProductContentEditor')),false);
-  assert.equal(image.node.props.optionId,'red');assert.equal(batch.node.props.optionId,'red');assert.equal(batch.node.props.profileId,'cat');assert.notEqual(batch.node.props.autoPrepare,true);assert.notEqual(batch.node.props.compactToolbar,true);
+  assert.equal(image.node.props.optionId,'red');assert.equal(batch.node.props.optionId,'red');assert.equal(batch.node.props.profileId,'cat');assert.notEqual(batch.node.props.autoPrepare,true);assert.equal(batch.node.props.compactToolbar,true);
   const imageKey=image.node.key,batchKey=batch.node.key;
   for(const tab of ['견적서','SEO','상세 이미지','추가 이미지']){h.render({tab});const current=h.child('OptionImageEditor','additional'),currentBatch=h.child('DetailImageBatchPanel','additional');assert.equal(current.node.type,image.node.type);assert.equal(current.node.key,imageKey);assert.equal(currentBatch.node.key,batchKey);assert.equal(initiallyVisible(current),tab==='추가 이미지');assert.equal(current.node.props.active,tab==='추가 이미지');}
   h.render({tab:'추가 이미지',focusedOptionId:undefined});assert.equal(initiallyVisible(h.child('ProductContentEditor')),true);assert.equal(entries(h.render()).some(({node})=>node.type?.label?.endsWith(':OptionImageEditor')),false);

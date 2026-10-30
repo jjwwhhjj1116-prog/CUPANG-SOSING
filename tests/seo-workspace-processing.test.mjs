@@ -12,7 +12,7 @@ let fixture=fs.readFileSync(fixtureUrl,'utf8').split('\ntest(')[0];
 const parsed=ts.createSourceFile('fixture.mjs',fixture,ts.ScriptTarget.ESNext,true,ts.ScriptKind.JS);
 fixture=parsed.statements.filter(statement=>!ts.isImportDeclaration(statement)).map(statement=>statement.getFullText(parsed)).join('');
 fixture=fixture.replaceAll('import.meta.url',JSON.stringify(fixtureUrl.href))
- .replace('registrationBrand=brand}={})','registrationBrand=brand,onProcessingChange}={})')
+ .replace('registrationBrand=brand,','registrationBrand=brand,onProcessingChange,')
  .replace("onSaved(){throw Error('Unexpected product save');}})","onSaved(){throw Error('Unexpected product save');},onProcessingChange})")
  .replace('setRegistrationBrand(value){registrationBrand=value;}','setRegistrationBrand(value){registrationBrand=value;},setCallback(value){onProcessingChange=value;},setPending(value){pending=value;}');
 const context={fs,vm,ts,assert,URL,Response,AbortController,structuredClone,TextEncoder,crypto:globalThis.crypto,setImmediate};

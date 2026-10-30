@@ -44,6 +44,33 @@ test('native title and model descriptions remain visible with SEO/model helpers,
 function addField(view,field,value='기존 값'){
  for(const data of [view.resolved,view.automatic]){data.schema.fields.push(plain(field));for(const row of data.rows)row.fields[field.id]={value,source:'content',needsReview:false,issues:[],validationIssues:[],reviewMessages:[]};}
 }
+test('interleaved production Product Page fields form one ordered group each while retaining every visible ID, value and edit target',async()=>{
+ const view=quotationPresentationFixture(),grouping=load('app/quotation-field-groups.ts'),prices=load('app/quotation-price-edits.ts');
+ for(const [id,wire,role,value] of [['native-supply','purchasePrice','supplyPrice','2500'],['native-sale','coupangSalePrice','salePrice','4000'],['native-msrp','msrp','msrp','5200'],['native-barcode','productBarcode','barcode','ABC123']])addField(view,
+  {id,section:'product',label:id,type:role==='barcode'?'text':'number',required:true,visibility:'common',hubInput:role,hubWire:{path:['productPage','commonAttributes',wire]}},value);
+ for(const id of ['description','bullets'])addField(view,{id,section:'product',label:id,type:'textarea',required:false,visibility:'common'},id+' 수동 설명');
+ for(const data of [view.resolved,view.automatic]){
+  const product=data.schema.fields.filter(field=>field.section==='product'),byId=new Map(product.map(field=>[field.id,field]));
+  const first=['model','brand','manufacturer','tradeType','taxType','importType','barcodeMode','barcode','native-barcode','color','quantity','size','native-supply','native-sale','native-msrp','searchTags','description','bullets'];
+  const interleaved=[...first.map(id=>byId.get(id)),...product.filter(field=>!first.includes(field.id))];
+  data.schema.fields=[...data.schema.fields.filter(field=>field.section!=='product'),...interleaved];
+ }
+ const before=JSON.stringify(view),original=prices.quotationPriceVisibleFields(view.resolved.schema.fields).filter(field=>field.section==='product');
+ const ui=quotationTitleUI({view});try{
+  await ui.idle();const product=visibleNodes(ui.render()).find(node=>node.type==='fieldset'&&node.props['data-section']==='product'),visible=visibleNodes(product);
+  assert.deepEqual(visible.filter(node=>node.type==='h5').map(titleText),['기본 정보','가격 정보','노출 속성','비노출 속성']);
+  const prefix='seo-title-test-',ids=new Set(original.map(field=>prefix+field.id));
+  const controls=visible.filter(node=>ids.has(node.props?.id));
+  assert.equal(controls.length,original.length);assert.deepEqual(controls.map(node=>node.props.id).sort(),[...ids].sort(),'every previously visible field remains visible exactly once');
+  for(const control of controls){const id=control.props.id.slice(prefix.length),cell=view.resolved.rows.find(row=>row.optionId===null).fields[id];assert.equal(control.props.value??control.props.cell?.value,cell.value,id);}
+  const shown=controls.map(node=>node.props.id.slice(prefix.length)),priceIds=shown.filter(id=>grouping.quotationFieldGroup(original.find(field=>field.id===id),view.resolved.schema.fields)==='가격 정보');
+  assert.deepEqual(priceIds,['native-supply','native-sale','native-msrp','barcodeMode','barcode','native-barcode']);
+  assert.ok(shown.indexOf('searchTags')<shown.indexOf('description'));assert.ok(shown.indexOf('bullets')<shown.indexOf('native-supply'),'optional existing descriptions remain at the end of basic information');
+  ui.field('description').props.onChange({target:{value:'그룹 정리 후 작성한 설명'}});ui.render();assert.deepEqual(plain(ui.changes),[{fieldKey:'description',optionId:null,value:'그룹 정리 후 작성한 설명'}]);
+  assert.equal(JSON.stringify(view),before,'presentation leaves the original schema, cells and saved values untouched');assert.equal(mutations(ui).length,0);
+ }finally{ui.close();}
+});
+
 test('named original attribute, notice and certificate rows pair readonly names with unchanged editable values and optional native examples',async()=>{
  const view=quotationPresentationFixture();
  const fields=[

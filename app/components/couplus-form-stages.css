@@ -1,0 +1,91 @@
+/* Registration form stages share the reference's compact cards and controls.
+ * All rules are scoped to the wizard; field values and save handlers stay in
+ * their existing components. */
+.registration-workspace .couplus-price-stage{gap:16px}
+.registration-workspace .couplus-price-heading{margin:4px 0 4px;text-align:center;color:#343434;font-size:22px;font-weight:700;line-height:1.5}
+.registration-workspace .stage-two-pricing-workspace{grid-template-columns:250px minmax(0,1fr);gap:24px;align-items:stretch}
+.registration-workspace .stage-two-pricing-workspace>.pricing-policy-panel{height:580px;max-height:580px;border:1px solid #d9dce7;border-radius:6px;padding:15px;overflow:auto;scrollbar-width:thin}
+.registration-workspace .stage-two-pricing-workspace>.pricing-policy-panel>h3{min-height:52px;display:flex;align-items:center;margin:-15px -15px 18px;padding:16px 15px;background:#cacdd5;color:#17204b;font-size:13px;font-weight:600}
+.registration-workspace .stage-two-pricing-workspace>.pricing-policy-panel>fieldset{gap:14px}
+.registration-workspace .stage-two-pricing-workspace>.pricing-policy-panel .field{gap:9px;font-size:12px;margin:0}
+.registration-workspace .stage-two-pricing-workspace>.pricing-policy-panel :is(input:not([type=checkbox]):not([type=radio]),select){width:100%;height:34px;padding:8px 9px;border:1px solid #d9ddea;border-radius:6px;background:#fff;color:#62749a;font-size:11px}
+.registration-workspace .stage-two-pricing-workspace>.pricing-policy-panel .switch-row{justify-content:flex-start;gap:7px;font-size:12px;font-weight:400;flex-direction:row-reverse;border:0;padding:0}
+.registration-workspace .stage-two-pricing-workspace>.pricing-policy-panel .switch-row>span{margin-right:auto}
+.registration-workspace .stage-two-pricing-workspace>.pricing-policy-panel .switch-row i{width:21px;height:12px;flex:none}
+.registration-workspace .stage-two-pricing-workspace>.pricing-policy-panel .switch-row i:after{width:8px;height:8px;left:2px;top:2px}
+.registration-workspace .stage-two-pricing-workspace>.pricing-policy-panel .switch-row input:checked+i{background:#2bbcdf}
+.registration-workspace .stage-two-pricing-workspace>.pricing-policy-panel .switch-row input:checked+i:after{transform:translateX(9px)}
+.registration-workspace .stage-two-pricing-workspace>.pricing-policy-panel .switch-row input:focus-visible+i{outline:2px solid #299bb8;outline-offset:3px}
+.registration-workspace .stage-two-pricing-workspace>.pricing-policy-panel small{font-size:10px;line-height:1.8;color:#8b97ad}
+.registration-workspace .stage-two-pricing-workspace>.pricing-policy-panel details{font-size:11px;color:#758099}
+.registration-workspace .stage-two-pricing-workspace>.pricing-policy-panel details>summary{font-size:11px;cursor:pointer}
+.registration-workspace .stage-two-pricing-workspace>.pricing-options-panel{min-height:580px;border:1px solid #d9dce7;border-radius:6px;overflow:hidden}
+.registration-workspace .stage-two-pricing-workspace .step-visual-price-header{height:52px;padding:12px 15px;background:#cacdd5}
+.registration-workspace .stage-two-pricing-workspace .step-visual-price-header h3{font-size:13px}
+.registration-workspace .stage-two-pricing-workspace .step-visual-price-header .btn{border-radius:7px;font-size:10px;padding:4px 7px}
+.registration-workspace .stage-two-pricing-workspace .option-price-grid-tools{min-height:42px;padding:4px 8px;gap:8px;font-size:11px}
+.registration-workspace .stage-two-pricing-workspace .option-price-grid-tools :is(input:not([type=checkbox]):not([type=radio]),select){padding:6px 8px;height:31px;font-size:11px}
+.registration-workspace .stage-two-pricing-workspace .option-price-grid-fixed{height:450px}
+.registration-workspace .stage-two-pricing-workspace .option-price-grid-table{font-size:10px}
+.registration-workspace .stage-two-pricing-workspace .option-price-grid-table :is(th,td){padding:6px 8px}
+.registration-workspace .stage-two-pricing-workspace .option-price-grid-table th{height:48px;font-size:10px;background:#f8f8fa}
+.registration-workspace .stage-two-pricing-workspace .option-price-grid-table td small{margin-top:3px;font-size:9px}
+.registration-workspace .stage-two-pricing-workspace .option-price-grid-table input[type=number]{font-size:10px;height:25px;padding:4px 8px;border-radius:7px}
+.registration-workspace [data-price-layout=registration] .option-price-grid-pinned{left:36px}
+.registration-workspace .stage-two-price-guide{margin:16px 0 0;padding:9px 12px;border:1px solid #e6e9ef;border-radius:5px;color:#758099;font-size:11px}
+.registration-workspace .stage-two-price-guide>summary{cursor:pointer}
+.registration-workspace .stage-two-price-guide p{font-size:11px;line-height:1.7}
+.registration-workspace .stage-two-pricing-workspace .option-price-grid-table :is([data-price-column=supplyMargin],[data-price-column=coupangMargin]){color:#74bd92}
+.registration-workspace .stage-two-price-breakdown{margin-top:4px;gap:18px}
+.registration-workspace .stage-two-price-breakdown .price-policy-ratio{gap:18px;padding:0 15px 24px;min-height:155px}
+.registration-workspace .stage-two-price-breakdown .price-policy-ratio>h4,.registration-workspace .stage-two-price-breakdown .option-price-grid-summary>header{min-height:52px;display:flex;align-items:center;padding:16px 15px;background:#cacdd5;font-size:13px}
+.registration-workspace .stage-two-price-breakdown .price-policy-ratio-labels{margin:0;font-size:12px;color:#17204b}
+.registration-workspace .stage-two-price-breakdown .price-policy-ratio-bar{height:24px;min-height:24px}
+.registration-workspace .stage-two-price-breakdown .option-price-grid-summary>div{gap:22px}
+.registration-workspace .stage-two-price-breakdown .option-price-grid-summary article{border-radius:6px;background:#fff}
+.registration-workspace .couplus-price-stage .pricing-input-guide{margin-top:14px;font-size:11px;color:#758099}
+.registration-workspace .couplus-price-stage .pricing-input-guide>summary{cursor:pointer}
+
+.registration-workspace .couplus-quotation-stage{width:min(880px,100%);margin:2px auto 0;gap:10px}
+.registration-workspace .couplus-quotation-heading{margin:4px 0 0;font-size:18px;line-height:1.5;color:#151949;font-weight:700}
+.registration-workspace .detail-body[data-registration-stage="견적서"] .quotation-fields{width:100%;max-width:880px;margin:0;padding:15px;border:1px solid #d9dce7;border-radius:6px;gap:18px;background:#fff}
+.registration-workspace .detail-body[data-registration-stage="견적서"] .quotation-fields-heading{margin:-15px -15px 0;padding:14px 15px;min-height:52px;display:flex;align-items:center;flex-wrap:wrap;gap:10px;background:#cacdd5}
+.registration-workspace .detail-body[data-registration-stage="견적서"] .quotation-fields>.quotation-fields-notice[role=alert]+.quotation-fields-heading{margin-top:0}
+.registration-workspace .quotation-fields-heading h3{font-size:12px;font-weight:500;color:#17204b;margin-right:auto}
+.registration-workspace .quotation-fields-heading .quotation-fields-toolbar{margin:0;display:flex;align-items:center}
+.registration-workspace .quotation-fields-heading .quotation-fields-toolbar .field{display:flex;flex-direction:row;gap:6px;align-items:center;margin:0;font-size:10px;min-width:0}
+.registration-workspace .quotation-fields-heading .quotation-fields-toolbar select{max-width:200px;height:27px;padding:3px 6px;border:1px solid #b9c1cf;border-radius:5px;background:#fff;color:#61718c;font-size:10px}
+.registration-workspace .quotation-fields-heading>.btn{padding:5px 8px;border:0;border-radius:7px;background:#2bbcdf;color:#fff;font-size:10px}
+.registration-workspace .quotation-fields-section{margin:0;border:0;border-radius:3px;background:#f8f9fb;padding:10px!important}
+.registration-workspace .quotation-fields-section>header{padding:8px 6px;min-height:34px;border:0;border-radius:7px}
+.registration-workspace .quotation-fields-section>header h4{font-size:14px;line-height:1.3}
+.registration-workspace .quotation-fields-section>header>small{font-size:10px}
+.registration-workspace .quotation-fields-section[data-section=start]>header{background:#2fbadc;color:white}
+.registration-workspace .quotation-fields-section[data-section=product]>header{background:#7cddf2;color:white}
+.registration-workspace .quotation-fields-section .quotation-fields-grid{padding:16px 12px 24px;border:1px solid #d9ddea;border-top:0;border-radius:0 0 6px 6px;background:#f8f9fb;gap:34px}
+.registration-workspace .quotation-field{gap:6px}
+.registration-workspace .quotation-field-heading>label{font-size:11px;font-weight:500;color:#17204b}
+.registration-workspace .quotation-field-heading>label b{font-size:11px;color:#da6da5}
+.registration-workspace .quotation-field :is(input:not([type=checkbox]),textarea,select){min-height:34px;padding:8px 9px;border:1px solid #d9ddea;border-radius:7px;font-size:11px;color:#62749a;background:#fff}
+.registration-workspace .quotation-field :is(input:read-only,textarea:read-only){background:#f8f9fb}
+.registration-workspace .quotation-field .quotation-field-help{font-size:10px;line-height:1.5;color:#8998af}
+.registration-workspace .quotation-field .quotation-seo-guidance{padding:6px 8px;border:1px solid #d0f4fc;border-radius:6px;background:#e3f9ff;color:#598397;font-size:12px}
+.registration-workspace .quotation-field-group{margin:0;padding:0 0 10px;font-size:12px;border-color:#d9ddea}
+.registration-workspace .quotation-field-diagnostics{font-size:10px;color:#8a96aa}
+.registration-workspace .quotation-field-diagnostics>summary{color:#8a96aa}
+.registration-workspace :is(.quotation-fields-context,.quotation-fields-progress,.quotation-secondary-actions){font-size:11px;color:#758099;border:1px solid #e6e9ef;border-radius:5px;background:white;padding:9px 12px}
+.registration-workspace :is(.quotation-fields-context,.quotation-fields-progress,.quotation-secondary-actions)>summary{cursor:pointer;font-weight:400;color:#758099}
+.registration-workspace .quotation-fields-progress>summary strong{font-weight:400}
+.registration-workspace .quotation-secondary-actions .quote-actions{margin-top:10px}
+.registration-workspace .quotation-fields-actions{display:flex;flex-wrap:nowrap;gap:8px;align-items:center;padding:10px 12px;position:sticky;bottom:0;top:auto;border:1px solid #e0e4eb;background:#f1f3f5;border-radius:24px;box-shadow:0 2px 6px #14243c15;z-index:4}
+.registration-workspace .quotation-fields-actions>div{display:flex;flex-wrap:nowrap;margin-left:auto}
+.registration-workspace .quotation-fields-actions .quotation-apply-all{display:flex;flex-direction:row-reverse;align-items:center;gap:8px;margin:0;color:#5d6570;font-size:10px}
+.registration-workspace .quotation-fields-actions .quotation-apply-all input{appearance:none;width:38px;height:21px;border:0;border-radius:12px;background:#59616b;position:relative;margin:0;cursor:pointer;flex-shrink:0}
+.registration-workspace .quotation-fields-actions .quotation-apply-all input::after{content:"";position:absolute;width:15px;height:15px;left:3px;top:3px;border-radius:50%;background:#fff;transition:transform .15s}
+.registration-workspace .quotation-fields-actions .quotation-apply-all input:checked{background:#2bbcdf}
+.registration-workspace .quotation-fields-actions .quotation-apply-all input:checked::after{transform:translateX(17px)}
+.registration-workspace .quotation-fields-actions .quotation-apply-all input:focus-visible{outline:2px solid #299bb8;outline-offset:3px}
+.registration-workspace .quotation-fields-actions .btn{padding:5px 9px;font-size:10px;white-space:nowrap;background:#74bd92;border:0;border-radius:7px;color:#fff}
+@media(min-width:1400px){.registration-workspace .detail-body[data-registration-stage="견적서"] .quotation-fields-actions{position:fixed;right:22px;top:52%;bottom:auto;width:auto;max-width:calc((100vw - 920px)/2);display:flex;flex-wrap:nowrap;gap:7px;padding:11px 13px;border-radius:22px}.registration-workspace .quotation-fields-actions>div{display:flex}}
+@media(max-width:1050px){.registration-workspace .stage-two-pricing-workspace{grid-template-columns:220px minmax(0,1fr);gap:18px}}
+@media(max-width:720px){.registration-workspace .stage-two-pricing-workspace{grid-template-columns:minmax(0,1fr);gap:16px}.registration-workspace .stage-two-pricing-workspace>.pricing-policy-panel{height:auto;max-height:none}.registration-workspace .stage-two-price-breakdown .option-price-grid-summary>div{grid-template-columns:1fr}.registration-workspace .quotation-fields-heading .quotation-fields-toolbar{order:3;flex-basis:100%}.registration-workspace .quotation-fields-heading .quotation-fields-toolbar .field{width:100%;justify-content:space-between}.registration-workspace .quotation-fields-heading .quotation-fields-toolbar select{max-width:75%}.registration-workspace .quotation-fields-actions{position:sticky;max-width:100%;justify-content:flex-end}.registration-workspace .quotation-fields-section .quotation-fields-grid{padding:14px 8px;gap:26px}}

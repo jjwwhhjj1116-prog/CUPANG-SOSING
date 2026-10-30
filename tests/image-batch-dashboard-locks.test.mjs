@@ -5,7 +5,14 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import {createRequire} from 'node:module';
 const native=createRequire(import.meta.url);
-const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value==='object'?[value,...nodes(value.props?.children)]:[];
+function consumedUploadControl(node){
+ // Dashboard children are retained stubs. Follow only the slots rendered by
+ // these components, not every ReactNode-valued prop passed through a wrapper.
+ const label=node.type?.label??'';
+ if(label.endsWith(':OptionImageEditor'))return node.props?.uploadControl;
+ if(label.endsWith(':ProductOptionsEditor'))return node.props?.mainImageUploadControl;
+}
+const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value==='object'?[value,...nodes(value.props?.children),...nodes(consumedUploadControl(value))]:[];
 function harness(){
  const slots=[],cache=new Map(),components=new Map(),effects=[],layouts=[],sourceChecks=[];let cursor=0,allowed=true,checks=0;
  const sameDeps=(before,after)=>Array.isArray(before)&&Array.isArray(after)&&before.length===after.length&&after.every((value,index)=>Object.is(value,before[index]));
@@ -28,7 +35,7 @@ function harness(){
  const settings=load('app/workspace-settings.ts').defaultSettings;
  function render(tab='추가 이미지',overrides={}){cursor=0;const tree=Detail({tab,product,settings,focusedOptionId:'red',preferredProfileId:'cat',onUpload(){},onSaved(){},onManageCategories(){},onSavePrice:async()=>{},onBeforeFreeImageApply(){checks++;return allowed;},onBeforeSourceWrite(source){sourceChecks.push(source);return allowed;},...overrides});layouts.splice(0).forEach(callback=>callback());effects.splice(0).forEach(callback=>callback());return tree;}
  const aliases={FreeImageTranslationPanel:'free-image-translation-panel:default',ImageGenerationPanel:'image-generation-panel:default'};
- const component=(name,tab,stage)=>nodes(render(tab)).find(node=>node.type?.label?.endsWith(aliases[name]??':'+name)&&(stage===undefined||node.props.stage===stage));
+ const component=(name,tab,stage)=>{const found=nodes(render(tab)).filter(node=>node.type?.label?.endsWith(aliases[name]??':'+name)&&(stage===undefined||node.props.stage===stage));assert.equal(found.length,1,'Expected one '+name+(stage?' for '+stage:''));return found[0];};
  return{render,component,sourceChecks,get checks(){return checks;},permission(value){allowed=value;}};
 }
 test('stage-four and stage-five batch views target distinct roles and only the current stage is active',()=>{

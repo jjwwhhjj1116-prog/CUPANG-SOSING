@@ -14,6 +14,8 @@ import { archiveDateBounds, type ArchiveRange } from '@/app/product-archive';
 import {matchesRegistrationColumnFilter,registrationFilterChoices,type RegistrationColumnFilter} from '@/app/registration-column-filter';
 import {RegistrationFilterPopover} from '@/app/components/registration-filter-popover';
 import {registrationNumber} from '@/app/product-registration';
+import {pendingRegistrationStages,registrationStageLabel,registrationStepIds,type RegistrationStageStatus} from '@/app/registration-stage-status';
+import './registration-board.css';
 export {registrationNumber} from '@/app/product-registration';
 
 type BoardProduct = {registration_number?:string;removal_policy?:ProductRemovalDecision|null;hub_receipt?:SupplierHubReceiptSummary|null;hub_single_receipt?:NativeReceiptSummary|null;content_summary?:RegistrationContentSummary|null;source_image_key?:string|null;id:string;title:string;source_url:string;created_at:string;image_keys:string;options_count:number;registration_status:string;seo_status:string;quote_status:string;supply_price:number|null;sale_price:number|null;source_capture?:SourceInboxItem};
@@ -25,12 +27,20 @@ export function filterRegistrationProducts<T extends BoardProduct>(products:T[],
   });
 }
 export function registrationStepLabel(product: BoardProduct, step: string) {
-  if(product.source_capture)return step==='SEO'?'카테고리 선택':step==='옵션'?'수집정보 확인':'초안 대기';
+  return registrationStageLabel(registrationStepStatus(product,step).state);
+}
+export function registrationStepStatus(product:BoardProduct,step:string):RegistrationStageStatus {
+  const id=registrationStepIds[step];
+  return !product.source_capture&&id&&product.content_summary?.stages?.[id]||pendingRegistrationStages()[id??'seo'];
+}
+export function registrationStepDetail(product:BoardProduct,step:string):string {
+  const status=registrationStepStatus(product,step);
+  if(product.source_capture)return `${status.detail} 수집 원문 보관됨 · 클릭하여 카테고리를 선택하세요.`;
   const summary=product.content_summary;
-  if(step==='SEO')return summary?summary.seo?'입력됨':'미입력':'확인 필요';
+  if(step==='SEO')return `${status.detail} · 저장 상품명 ${summary?.seo?'입력됨':'미입력'}`;
   const roles:Record<string,'main'|'additional'|'detail'|'label'>={'대표 이미지':'main','추가 이미지':'additional','상세 이미지':'detail','표시사항':'label'};
-  if(roles[step])return summary?summary[roles[step]]+'장':'확인 필요';
-  return step==='견적서'?product.quote_status==='완료'?'저장값 확인':'대기':step==='가격'?'가격 보기':'편집';
+  if(roles[step])return `${status.detail} · ${summary?summary[roles[step]]+'장':'연결 개수 확인 필요'}`;
+  return status.detail;
 }
 const steps=[['SEO','SEO설정'],['가격','가격설정'],['대표 이미지','대표이미지'],['추가 이미지','추가이미지'],['상세 이미지','상세이미지'],['옵션','사이즈표'],['표시사항','한글표시사항'],['견적서','견적서']];
 type RegistrationColumn = {id:string;label:string;step?:string;width:number};
@@ -54,7 +64,8 @@ export function registrationThumbnail(product:BoardProduct) {
   }catch{return null;}
 }
 export function registrationTitle(product:BoardProduct) {return (product.content_summary?.seoTitle??product.title)||'상품명 미입력';}
-export function registrationTransmissionLabel(product:BoardProduct) {if(product.source_capture)return '카테고리 대기';return product.hub_receipt&&product.hub_single_receipt?'전송 이력 있음':product.hub_single_receipt?.label??product.hub_receipt?.label??'등록대기';}
+export function registrationTransmissionLabel(product:BoardProduct) {return product.hub_receipt&&product.hub_single_receipt?'전송 이력 있음':product.hub_single_receipt?.label??product.hub_receipt?.label??'등록대기';}
+function transmissionState(product:BoardProduct){const label=registrationTransmissionLabel(product);return /반려|오류|실패/.test(label)?'failed':label==='SKU ID 확인'?'complete':/검증 중/.test(label)?'running':'pending';}
 export function registrationColumnText(product:BoardProduct,columnId:string):string {
   if(columnId==='id')return product.source_capture?`수집 · ${product.source_capture.snapshot.offerId}`:registrationNumber(product);
   if(columnId==='product')return registrationTitle(product);
@@ -62,6 +73,8 @@ export function registrationColumnText(product:BoardProduct,columnId:string):str
   if(columnId==='image')return registrationThumbnail(product)??'';
   if(columnId==='status')return registrationTransmissionLabel(product);
   if(columnId==='management')return product.source_capture?'수집 목록에서 삭제':productRemovalDecision(product).blocked?'삭제 보호':'삭제';
+  const roles:Record<string,'main'|'additional'|'detail'|'label'>={'대표 이미지':'main','추가 이미지':'additional','상세 이미지':'detail','표시사항':'label'};
+  if(roles[columnId]&&product.content_summary)return product.content_summary[roles[columnId]]+'장';
   const column=columns.find(item=>item.id===columnId);return column?.step?registrationStepLabel(product,column.step):'';
 }
 
@@ -192,8 +205,8 @@ export function RegistrationBoard<T extends BoardProduct>({products,sources=[],s
         {column.id==='image'&&<button type="button" className="registration-thumbnail" onClick={()=>openEntry(product,'대표 이미지')} aria-label={`${title} 대표 이미지 열기`}>{image?<img src={image} width={56} height={56} alt="상품 이미지"/>:<span>이미지<br/>없음</span>}</button>}
         {column.id==='product'&&<><button type="button" className="registration-title" onClick={()=>openEntry(product)}>{title}</button><button type="button" className="registration-options" onClick={()=>openEntry(product,'옵션')}>옵션 {product.options_count}개</button>{product.source_capture&&<small>수집 완료 · 카테고리를 선택하세요</small>}{product.content_summary?.missingImages&&<small className="collection-error">이미지 연결 확인 필요</small>}</>}
         {column.id==='source'&&(sourceUrl(product.source_url)?<a className="registration-source-link" href={sourceUrl(product.source_url)} target="_blank" rel="noopener noreferrer" aria-label={`${title} 구매링크 새 창에서 열기`} title={product.source_url}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1 0l3-3a5 5 0 0 0-7.1-7.1l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.1 0l-3 3a5 5 0 0 0 7.1 7.1l1.7-1.7"/></svg></a>:<span className="registration-source-empty">{product.source_url?'링크 확인 필요':'미입력'}</span>)}
-        {column.step&&<button type="button" className="registration-cell-button" aria-label={`${title} ${column.label} 열기`} onClick={()=>openEntry(product,column.step)}>{registrationStepLabel(product,column.step)}</button>}
-        {column.id==='status'&&<><span className="registration-state" title={product.hub_receipt||product.hub_single_receipt?'보관된 Supplier Hub 전송 결과':'Supplier Hub 전송·접수 여부 검증 필요'}>{registrationTransmissionLabel(product)}</span>{product.hub_receipt&&<div aria-label="최근 전송 결과"><small>{product.hub_receipt.company.name} · SKU {product.hub_receipt.issuedSkus}/{product.hub_receipt.includedOptions}개</small>{product.hub_receipt.quotationId&&<small>견적서 ID: {product.hub_receipt.quotationId}</small>}<time dateTime={new Date(product.hub_receipt.observedAt).toISOString()}>{dateTime.format(new Date(product.hub_receipt.observedAt))}</time><small>{product.hub_single_receipt?`견적서 파일 전송 기준 · ${product.hub_receipt.label}`:'최근 전송한 견적서 기준'}</small></div>}
+        {column.step&&<button type="button" className={`registration-cell-button registration-stage-badge registration-stage-${registrationStepStatus(product,column.step).state}`} data-stage-state={registrationStepStatus(product,column.step).state} title={registrationStepDetail(product,column.step)} aria-label={`${title} ${column.label} 열기`} onClick={()=>openEntry(product,column.step)}>{registrationStepLabel(product,column.step)}</button>}
+        {column.id==='status'&&<><span className="registration-state" data-state={transmissionState(product)} title={product.hub_receipt||product.hub_single_receipt?'보관된 Supplier Hub 전송 결과':'Supplier Hub 전송·접수 여부 검증 필요'}>{registrationTransmissionLabel(product)}</span>{product.hub_receipt&&<div aria-label="최근 전송 결과"><small>{product.hub_receipt.company.name} · SKU {product.hub_receipt.issuedSkus}/{product.hub_receipt.includedOptions}개</small>{product.hub_receipt.quotationId&&<small>견적서 ID: {product.hub_receipt.quotationId}</small>}<time dateTime={new Date(product.hub_receipt.observedAt).toISOString()}>{dateTime.format(new Date(product.hub_receipt.observedAt))}</time><small>{product.hub_single_receipt?`견적서 파일 전송 기준 · ${product.hub_receipt.label}`:'최근 전송한 견적서 기준'}</small></div>}
           {product.hub_single_receipt&&<div aria-label={product.hub_single_receipt.format==='yoofam-product-document-receipt-summary-v1'?'전체 상품 문서 전송 결과':'개별 문서 전송 결과'}><small>{product.hub_single_receipt.company.name} · {product.hub_single_receipt.format==='yoofam-product-document-receipt-summary-v1'?`포함 옵션 ${product.hub_single_receipt.optionCount}개 · 문서 1개`:`개별 전송 기록 ${product.hub_single_receipt.optionCount}개`}</small><small>{product.hub_single_receipt.label}</small><small>문서 ID: {String(product.hub_single_receipt.docId)}</small><small>등록 파일 ID: {String(product.hub_single_receipt.qvtRequestId)}</small><time dateTime={new Date(product.hub_single_receipt.observedAt).toISOString()}>{dateTime.format(new Date(product.hub_single_receipt.observedAt))}</time><small>SKU 확인 전 · 해당 전송 초안 기준</small></div>}
         </>}
         {column.id==='management'&&<div className="registration-management">{(product.source_capture?onArchiveSource:onDelete)?<button type="button" className="registration-delete" aria-label={`${title} 삭제`} title={product.source_capture?'수집 목록에서 삭제 · 원문 보존':removal.blocked?removal.reason:deleting===product.id?'삭제 중':'삭제'} disabled={deleting!==null||(product.source_capture?sourceArchiveDisabled||!sourceReferences.has(product.id):removal.blocked)} onClick={()=>deleteProduct(product)}>삭제</button>:<button type="button" className="btn ghost" aria-label={`${title} 상세`} onClick={()=>product.source_capture?openEntry(product):onOpen(product as T)}>열기</button>}</div>}

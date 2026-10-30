@@ -25,7 +25,7 @@ for (const statement of fixtureAst.statements) {
 const { fixture } = vm.runInNewContext(declarations.join('\n').replaceAll('import.meta.url', JSON.stringify(fixtureUrl.href)) + '\n({fixture})',
   { assert, fs, path, vm, ts, sharp, createRequire, createHash, webcrypto, URL, Response, Headers, Buffer, AbortController, AbortSignal, DOMException, TextEncoder, TextDecoder, Uint8Array, structuredClone });
 
-function panel(f, transport = f.request) {
+function panel(f, transport = f.request, confirm = () => true) {
   const props = { productId: 'product', optionId: 'red', profileId: 'profile', version: f.view.productVersion, refreshToken: '0', stage: 'detail', active: true, disabled: false };
   const slots = [], layouts = [], effects = [], cache = new Map(), calls = [], listeners = new Map();
   let cursor = 0, epoch = 0, closed = false, lateWrites = 0, saved = 0;
@@ -61,7 +61,7 @@ function panel(f, transport = f.request) {
     vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../' + file, import.meta.url), 'utf8'), {
       compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
     { exports, Error, Date, URL, URLSearchParams, AbortController, AbortSignal, DOMException, Response, Headers, Blob, File, Uint8Array, DataView,
-      TextEncoder, TextDecoder, structuredClone, crypto: webcrypto, fetch: fetcher, document, setTimeout, clearTimeout,
+      TextEncoder, TextDecoder, structuredClone, crypto: webcrypto, fetch: fetcher, document, window: {confirm}, setTimeout, clearTimeout,
       require(name) {
         if (name === 'react') return react;
         if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
@@ -174,5 +174,27 @@ test('changing option/profile scope or unmounting during a read cannot populate 
       assert.equal(h.lateWrites, 0, kind); if (kind !== 'unmount') assert.equal(h.render().props['data-workspace-dirty'], false, kind);
       assert.ok(h.calls.every(call => call.method === 'GET'));
     } finally { gate.resolve(); if (kind !== 'unmount') h.close(); }
+  }
+});
+
+
+test('duplicate-position deletion respects cancellation and rechecks option/source identity after confirmation', async () => {
+  for (const mode of ['cancel', 'option', 'version']) {
+    const f = await fixture({ duplicate: true }); let h, confirmations = 0;
+    h = panel(f, f.request, () => {
+      confirmations++;
+      if (mode === 'option') h.set({optionId:'blue'});
+      if (mode === 'version') h.set({version:new Date(Date.parse(f.view.productVersion)+1).toISOString()});
+      return mode !== 'cancel';
+    });
+    try {
+      await h.settle(); await h.click(reopen); const before = plain(f.view);
+      const remove = h.button('상세 이미지 3 선택 제거').props.onClick;
+      remove(); await h.settle(); assert.equal(confirmations,1);
+      assert.equal(h.calls.some(call=>call.method==='PUT'||call.method==='POST'),false);
+      assert.deepEqual(plain(f.view),before,'confirmation cannot change saved source or another option');
+      if(mode==='cancel') assert.deepEqual(h.ordered(),['owner/one.png','owner/two.png','owner/one.png']);
+      else {remove();await h.settle();assert.equal(confirmations,1,'retained callback cannot regain the old scope');}
+    } finally {h.close();}
   }
 });

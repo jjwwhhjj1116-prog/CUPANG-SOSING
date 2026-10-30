@@ -9,7 +9,9 @@ import {validOptionRegistrationNumbers} from '@/app/product-registration';
 import {exactPrimaryQuotationTarget} from '@/app/quotation-seo-targets';
 import {quotationPriceTargets} from '@/app/quotation-price-targets';
 import {readCategoryJsonResponse} from '@/app/load-category-profiles';
+import {pendingRegistrationStages,registrationStageLabel,registrationStepIds,registrationStagesFromSavedContent,type RegistrationStageSummary,type RegistrationStageStatus} from '@/app/registration-stage-status';
 import './product-option-board.css';
+import './registration-board.css';
 
 type Props={productId:string;productRegistrationNumber?:string;sourceUrl:string;imageKeys:string;refreshToken?:string;returnFocus?:string;onReturnFocusHandled?:()=>void;onQuotation:(optionId:string)=>void;onEdit:(optionId?:string)=>void;onImage?:(optionId:string)=>void;onContent?:(step:CommonContentStep)=>void;onStage?:(optionId:string,step:CollectionEditorTab)=>void;onManage?:(optionId:string)=>void};
 type CommonContentStep='추가 이미지'|'상세 이미지'|'표시사항';
@@ -25,7 +27,7 @@ const columns=[
 ] as const;
 type ColumnId=typeof columns[number]['id'];
 export type OptionBoardQuotationContent={title:string;main:string[];additional:string[];detail:string[];label:string[];imageIssues:Partial<Record<'main'|'additional'|'detail'|'label',boolean>>};
-export type OptionBoardData=ProductOptionsResponse & {optionRegistrationNumbers?:Record<string,string>;imageKeys:string[];quotationPrices?:Record<string,{supplyPrice:string;salePrice:string}>;quotationContent?:Record<string,OptionBoardQuotationContent>;seoTitle?:string|null;commonImageKeys:string[];commonAssets?:Partial<Record<CommonRole,string[]>>};
+export type OptionBoardData=ProductOptionsResponse & {optionRegistrationNumbers?:Record<string,string>;imageKeys:string[];quotationPrices?:Record<string,{supplyPrice:string;salePrice:string}>;quotationContent?:Record<string,OptionBoardQuotationContent>;seoTitle?:string|null;commonImageKeys:string[];commonAssets?:Partial<Record<CommonRole,string[]>>;registrationStages?:RegistrationStageSummary;optionStages?:Record<string,RegistrationStageSummary>};
 function record(value:unknown):value is Record<string,unknown>{return !!value&&typeof value==='object'&&!Array.isArray(value);}
 function validOption(row:unknown):row is ProductOption {
   if(!record(row)||typeof row.id!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(row.id)
@@ -52,7 +54,7 @@ export async function readOptionBoard(productId:string,signal:AbortSignal,fetche
   if(body.sourceImageKeys!==undefined&&(!body.sourceImageKeys||typeof body.sourceImageKeys!=='object'||Array.isArray(body.sourceImageKeys)||Object.entries(body.sourceImageKeys).some(([id,key])=>typeof key!=='string'||!key||!body.options.rows.some(row=>row.id===id))))throw Error('상품의 원본 이미지 응답을 확인하지 못했습니다.');
   if(!validOptionRegistrationNumbers(body.optionRegistrationNumbers,body.options.rows,productRegistrationNumber))throw Error('상품의 옵션 등록번호 응답을 확인하지 못했습니다.');
   const contentResponse=await fetcher(`/api/products/${encodeURIComponent(productId)}/content`,{cache:'no-store',signal});
-  const saved=await readCategoryJsonResponse<{content?:ProductContent;error?:string}>(contentResponse,'공통 상품 자료 조회 [GET /api/products/:id/content]');
+  const saved=await readCategoryJsonResponse<{content?:ProductContent;registrationStages?:RegistrationStageSummary|null;error?:string}>(contentResponse,'공통 상품 자료 조회 [GET /api/products/:id/content]');
   if(!contentResponse.ok)throw Error(saved?.error||'공통 상품 자료를 불러오지 못했습니다.');
   const content=saved?.content;
   if(content?.productId!==productId||content.schemaVersion!==1||(content.revision!==undefined&&(!Number.isSafeInteger(content.revision)||content.revision<0))||!record(content.assets)||!Array.isArray(content.assets.main?.value)||content.assets.main.value.some((key:unknown)=>typeof key!=='string'))throw Error('상품의 공통 이미지 응답을 확인하지 못했습니다.');
@@ -69,7 +71,8 @@ export async function readOptionBoard(productId:string,signal:AbortSignal,fetche
   if(!Array.isArray(quote.imageKeys)||quote.imageKeys.some(key=>typeof key!=='string'||!key))throw Error('상품의 이미지 목록 응답을 확인하지 못했습니다.');
   if(quote.resolved.rows.some(row=>!record(row)||(row.optionId!==null&&typeof row.optionId!=='string')||!record(row.fields)))throw Error('옵션별 견적 가격 응답을 확인하지 못했습니다.');
   if(!Array.isArray(quote.resolved.schema?.fields)||quote.resolved.schema.fields.some(field=>!record(field)||typeof field.id!=='string'||typeof field.type!=='string'))throw Error('상품의 견적 항목 연결을 확인하지 못했습니다.');
-  const targets=Object.fromEntries((['title','mainImage','additionalImages','detailImages','labelImages'] as const).map(input=>[input,exactPrimaryQuotationTarget(quote.resolved!.schema!.fields,input).primary]));
+  const bindings=Object.fromEntries((['title','mainImage','additionalImages','detailImages','labelImages'] as const).map(input=>[input,exactPrimaryQuotationTarget(quote.resolved!.schema!.fields,input)]));
+  const targets=Object.fromEntries(Object.entries(bindings).map(([input,binding])=>[input,binding.primary]));
   const priceTargets=quotationPriceTargets(quote.resolved.schema.fields);
   const quotationPrices:NonNullable<OptionBoardData['quotationPrices']>=Object.create(null);
   const quotationContent:NonNullable<OptionBoardData['quotationContent']>=Object.create(null);
@@ -88,11 +91,24 @@ export async function readOptionBoard(productId:string,signal:AbortSignal,fetche
       // validation failures (or a legacy response without that split) mark a
       // saved reference as needing reconnection.
       if((field.validationIssues??field.issues)?.length)imageIssues[role]=true;
-      return [...new Set(field.value.split(/\r?\n/).map(key=>key.trim()).filter(Boolean))];
+      const selected=field.value.split(/\r?\n/).map(key=>key.trim()).filter(Boolean);
+      if(new Set(selected).size!==selected.length||bindings[id].primaryField.maxItems!==undefined&&selected.length>bindings[id].primaryField.maxItems!)imageIssues[role]=true;
+      return [...new Set(selected)];
     };
     quotationContent[option.id]={title:row.fields[targets.title].value,main:images('mainImage','main'),additional:images('additionalImages','additional'),detail:images('detailImages','detail'),label:images('labelImages','label'),imageIssues};
   }
-  return {...body,imageKeys:quote.imageKeys,quotationPrices,quotationContent,seoTitle:content.seo?.title.value??null,commonImageKeys:content.assets.main.value,commonAssets:{additional:readKeys('additional'),detail:[...readKeys('detailTop'),...readKeys('detail'),...readKeys('detailBottom')],size:readKeys('size'),label:readKeys('label')}};
+  const commonAssets={additional:readKeys('additional'),detail:[...readKeys('detailTop'),...readKeys('detail'),...readKeys('detailBottom')],size:readKeys('size'),label:readKeys('label')};
+  const stages=saved.registrationStages;
+  if(stages!==undefined&&stages!==null&&(!record(stages)||Object.values(registrationStepIds).some(id=>!record(stages[id])||!['pending','complete','failed','running','unused'].includes(stages[id].state)||typeof stages[id].detail!=='string')))throw Error('상품의 단계 상태 응답을 확인하지 못했습니다.');
+  const optionStages=Object.fromEntries(body.options.rows.map(row=>{
+    const fields=quote.resolved!.rows!.find(item=>item.optionId===row.id)!.fields;
+    const manual=(linked:readonly string[],primary:string)=>{const field=fields[primary] as {value:string;source?:string;validationIssues?:string[]}|undefined;return field&&['manual-option','manual-common'].includes(field.source??'')&&!field.validationIssues?.length&&linked.every(key=>fields[key]?.value===field.value)?field.value:undefined;};
+    const manualImages=Object.fromEntries(([['main','mainImage'],['additional','additionalImages'],['detail','detailImages'],['label','labelImages']] as const).map(([role,name])=>[role,manual(bindings[name].linked,bindings[name].primary)!==undefined]));
+    const supplyPrice=manual(priceTargets.supplyPrice.linked,priceTargets.supplyPrice.primary),salePrice=manual(priceTargets.salePrice.linked,priceTargets.salePrice.primary);
+    const manualPrices=supplyPrice!==undefined&&salePrice!==undefined?{supplyPrice,salePrice}:undefined;
+    return [row.id,registrationStagesFromSavedContent({id:productId,updated_at:body.productVersion,categoryId:(quote.resolved!.schema as {categoryId?:string}).categoryId},content,body.options,quote.imageKeys!,[{optionId:row.id,...quotationContent[row.id],manualImages,manualPrices}])];
+  }));
+  return {...body,imageKeys:quote.imageKeys,quotationPrices,quotationContent,registrationStages:stages??undefined,optionStages,seoTitle:content.seo?.title.value??null,commonImageKeys:content.assets.main.value,commonAssets};
 }
 export function ProductOptionBoard({productId,productRegistrationNumber,sourceUrl,refreshToken,returnFocus,onReturnFocusHandled,onQuotation,onEdit,onImage,onContent,onStage,onManage}:Props){
   const [loaded,setLoaded]=useState<{productId:string;attempt:number;refreshToken?:string;data:OptionBoardData|null;error:string}|null>(null);
@@ -146,9 +162,13 @@ export function ProductOptionBoard({productId,productRegistrationNumber,sourceUr
     if((step==='추가 이미지'||step==='상세 이미지'||step==='표시사항')&&onContent)return ()=>onContent(step);
     return undefined;
   };
-  const stageButton=(optionId:string,step:CollectionEditorTab,label:string,text:string)=>{
+  const stageButton=(optionId:string,step:CollectionEditorTab,label:string,detail:string,override?:RegistrationStageStatus)=>{
     const handler=stageHandler(optionId,step);
-    return handler?<button type="button" className="registration-cell-button" aria-label={`옵션 ${optionId} ${label} 편집`} onClick={handler}>{text}</button>:<small>{text}</small>;
+    const id=registrationStepIds[step],execution=data?.registrationStages?.[id],local=data?.optionStages?.[optionId]?.[id];
+    const unusedSize=id==='sizeChart'&&!data?.commonAssets?.size?.length&&local?.state!=='complete'&&(!execution||!['failed','running','complete'].includes(execution.state));
+    const status=override??(unusedSize?pendingRegistrationStages().sizeChart:execution&&['failed','running'].includes(execution.state)?execution:local?.state==='complete'?local:execution??local??pendingRegistrationStages(!!data?.commonAssets?.size?.length)[id]);
+    const text=registrationStageLabel(status.state),title=`${status.detail} · ${detail}`,className=`registration-cell-button registration-stage-badge registration-stage-${status.state}`;
+    return handler?<button type="button" className={className} data-stage-state={status.state} title={title} aria-label={`옵션 ${optionId} ${label} 편집`} onClick={handler}>{text}</button>:<small className={className} data-stage-state={status.state} title={title}>{text}</small>;
   };
   let url:string|undefined;try{const parsed=new URL(sourceUrl);if(parsed.protocol==='https:'&&parsed.hostname==='detail.1688.com')url=parsed.href;}catch{/* Display text only. */}
   return <section className="option-board" data-product-id={productId} aria-busy={!data&&!error}>
@@ -179,7 +199,7 @@ export function ProductOptionBoard({productId,productRegistrationNumber,sourceUr
         main:<>{imageKey?<img src={`/api/files/${imageKey.split('/').map(encodeURIComponent).join('/')}`} alt={effective?.title||optionQuotationName(row)||'옵션 이미지'} width={64} height={64}/>:<small>{mainIssue||!effective&&row.imageKey?'이미지 연결 확인 필요':'대표 이미지 미설정'}</small>}{imageKey&&<small>{original?'수집 원본 · 대표 이미지 미설정':effective?'견적서 대표 이미지':row.imageKey?'개별 이미지':'공통 대표 이미지'}</small>}{mainIssue&&mainCount>0&&<small>{mainCount}장 · 연결 확인 필요</small>}{stageButton(row.id,'대표 이미지','대표이미지',mainLabel)}</>,
         quotation:stageButton(row.id,'견적서','견적서','열기'),
         stock:<>{row.stock==null?'재고 미확인':`재고 ${row.stock.toLocaleString('ko-KR')}개`}<small>{row.unitCostCny===null?'원가 미입력':`¥${row.unitCostCny} / 원가 단위`}</small>{prices?<><small>{priceText(prices.supplyPrice)} (견적 공급가)</small><small>{priceText(prices.salePrice)} (견적 판매가)</small></>:calculation?.calculation?<><small>{calculation.calculation.supplyPrice.toLocaleString('ko-KR')}원 (공급가)</small><small>{calculation.calculation.salePrice.toLocaleString('ko-KR')}원 (판매가)</small></>:<small>{calculation?.error||'가격 미계산'}</small>}</>,
-        management:onManage?<button type="button" className="registration-delete" aria-label={`옵션 ${row.id} 삭제 검토`} title="옵션 삭제 검토" onClick={()=>onManage(row.id)}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6"/></svg></button>:<button type="button" className="btn ghost" aria-label={`옵션 ${row.id} 수정`} onClick={()=>onEdit(row.id)}>수정</button>,
+        management:onManage?<button type="button" className="registration-delete" aria-label={`옵션 ${row.id} 삭제 검토`} title="옵션 삭제 검토" onClick={()=>onManage(row.id)}>삭제</button>:<button type="button" className="btn ghost" aria-label={`옵션 ${row.id} 수정`} onClick={()=>onEdit(row.id)}>수정</button>,
       };
       return <tr key={row.id} data-option-id={row.id}><td><input type="checkbox" aria-label={`옵션 ${row.id} 선택`} checked={selected.has(row.id)} onChange={event=>toggle([row.id],event.target.checked)}/></td>{displayedColumns.map(column=>{
         const common=commonStages.find(([role])=>role===column.id);

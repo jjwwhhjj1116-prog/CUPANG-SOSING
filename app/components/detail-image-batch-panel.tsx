@@ -165,17 +165,17 @@ export function DetailImageBatchPanel(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.autoPrepare, saved, busy, disabled, active, prepareGeneration]);
   const locked = busy || disabled || !active;
-  const compactToolbar=stage==='detail'&&props.compactToolbar;
+  const compactToolbar=props.compactToolbar===true;
   const guidance=<><h4>모든 {label} 번역</h4><p>{eligibilityError ? '이미지 역할을 확인한 뒤 일괄 처리를 시작할 수 있습니다.' : stage === 'detail' ? `선택 옵션에 저장한 본문 이미지 ${count}장을 순서대로 번역합니다. 상단·하단 설정 배너 ${protectedCount}장은 원본을 유지합니다.` : `선택 옵션에 저장한 ${label} ${count}장을 순서대로 번역합니다.`} 원본과 결과를 확인한 뒤 선택한 항목만 견적서에 적용하세요.</p>
     {saved && !eligibilityError && <p>새 번역 이미지 저장 가능 {capacity}장 · 원본 파일은 유지합니다.</p>}
     <label className="field"><span>{label} 원문 언어</span><select aria-label={`일괄 ${label} 원문 언어`} value={language} disabled={locked || uncertain} onChange={event => { if (unlocked()) setLanguage(event.target.value as 'zh' | 'en'); }}><option value="zh">중국어 → 한국어</option><option value="en">영어 → 한국어</option></select></label></>;
   return <section className={`panel-stack${compactToolbar?' detail-batch-compact':''}`} aria-label={`모든 ${label} 번역`} data-free-image-editor data-quotation-source-step={label} data-workspace-saving={busy} data-workspace-dirty={dirty}>
-    {compactToolbar&&<h3 className="detail-stage-title">상세 페이지 이미지</h3>}
+    {compactToolbar&&stage==='detail'&&<h3 className="detail-stage-title">상세 페이지 이미지</h3>}
     {compactToolbar?<details className="detail-batch-guidance"><summary>번역 설정·안내</summary>{guidance}</details>:guidance}
     {stage === 'detail' ? <div className="quote-actions detail-batch-start-controls"><button type="button" className="btn ghost" disabled={locked || uncertain || !count || !capacity} onClick={() => void prepare('en')}>영어→한국어 번역</button>
       <button type="button" className="btn blue" disabled={locked || uncertain || !count || !capacity} onClick={() => void prepare('zh')}>모든 이미지 AI 처리</button></div>
       : <button type="button" className="btn blue" disabled={locked || uncertain || !count || !capacity} onClick={() => void prepare()}>{batch ? `현재 ${stage === 'main' ? '대표' : '추가'} 목록으로 번역 다시 준비` : '모든 이미지 일괄 처리'}</button>}
-    {compactToolbar&&saved&&!eligibilityError&&<small className="detail-batch-count">본문 {count}장 · 설정 배너 {protectedCount}장 유지</small>}
+    {compactToolbar&&saved&&!eligibilityError&&<small className="detail-batch-count">{stage==='detail'?`본문 ${count}장 · 설정 배너 ${protectedCount}장 유지`:`추가 이미지 ${count}장`}</small>}
     {busy && <button type="button" className="btn ghost" onClick={() => { const controller = operation.current; controller?.abort(); if (controller) finish(controller); setMessage('작업을 중단했습니다. 준비한 결과와 확인된 저장 결과는 보존했습니다.'); }}>일괄 이미지 작업 중단</button>}
     {error && <p role="alert">{error}</p>}{eligibilityError && <p role="alert">{eligibilityError}</p>}{message && <p role="status">{message}</p>}
     {error && !batch && <button type="button" className="btn ghost" disabled={locked} onClick={() => void loadSavedView(true)}>저장 이미지 다시 확인</button>}

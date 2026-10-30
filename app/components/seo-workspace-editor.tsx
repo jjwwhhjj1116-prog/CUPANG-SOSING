@@ -166,7 +166,7 @@ export function SeoWorkspaceEditor({ productId, version, focusedOptionId, active
         return <article key={row.id} className="seo-option-name" data-option-target={row.id === focusedOptionId}>
           {/* eslint-disable-next-line @next/next/no-img-element -- Only an exact owned saved option image is shown. */}
           {thumbnail && <img src={'/api/files/' + thumbnail.split('/').map(encodeURIComponent).join('/')} alt="" width={64} height={64} loading="lazy"/>}
-          <label><span>원본: {original}</span><input aria-label={`${index + 1}번째 한국어 옵션명`} placeholder="한글 옵션명 입력" value={Object.hasOwn(draft.optionNames, row.id) ? draft.optionNames[row.id] : row.translatedName} maxLength={500} disabled={locked} onChange={event => edit(previous => ({ ...previous, optionNames: { ...previous.optionNames, [row.id]: event.target.value } }))}/><small>{row.included ? '견적 포함' : '견적 제외'} · {row.provenance.translatedName === 'manual' ? '직접 수정' : row.provenance.translatedName === 'translated' ? '번역 결과' : '미작성'}</small></label>
+          <label><span>원본: {original}</span><input aria-label={`${index + 1}번째 한국어 옵션명`} placeholder="한글 옵션명 입력" value={Object.hasOwn(draft.optionNames, row.id) ? draft.optionNames[row.id] : row.translatedName} maxLength={500} disabled={locked} onChange={event => edit(previous => ({ ...previous, optionNames: { ...previous.optionNames, [row.id]: event.target.value } }))}/>{(!row.included||!row.translatedName)&&<small>{row.included ? '한국어 옵션명을 입력해주세요.' : '견적 제외'}</small>}</label>
         </article>;
       })}{!view.options.rows.length && <p>저장된 옵션이 없습니다.</p>}</div></section>
     </div>}

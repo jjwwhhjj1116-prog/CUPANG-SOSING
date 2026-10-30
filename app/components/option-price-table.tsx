@@ -15,11 +15,13 @@ const columns = [
   { id: 'coupangMargin', label: '쿠팡마진', width: 140 },
 ] as const;
 type ColumnId = typeof columns[number]['id'];
+const registrationColumnWidths:Record<ColumnId,number>={name:220,id:130,quantity:80,stock:80,cost:120,supply:120,supplyMargin:100,sale:120,coupangMargin:100};
 type Props = { rows: readonly OptionInput[]; calculations: readonly OptionCalculation[]; selected: ReadonlySet<string>;
   focusedOptionId?: string; optionRegistrationNumbers?: Readonly<Record<string,string>>; onSelect: (ids: string[]) => void;
   exchangeRate?:number;
   priceController?:OptionPriceController;priceBlocked?:boolean;
   showSummary?:boolean;
+  layout?:'standard'|'registration';
   onChange: <K extends OptionField>(id: string, key: K, value: OptionInput[K]) => void };
 const won = (value: number) => `${Math.round(value).toLocaleString('ko-KR')}원`;
 const rowWon = (value: number) => `${value.toLocaleString('ko-KR')}원`;
@@ -60,7 +62,7 @@ export function OptionPriceSummary({rows,calculations,priceController}:{rows:rea
 }
 
 /** Presentation state never replaces the editor's complete option draft. */
-export function OptionPriceTable({ rows, calculations, selected, focusedOptionId, optionRegistrationNumbers, onSelect, onChange,exchangeRate,priceController,priceBlocked=false,showSummary=true }: Props) {
+export function OptionPriceTable({ rows, calculations, selected, focusedOptionId, optionRegistrationNumbers, onSelect, onChange,exchangeRate,priceController,priceBlocked=false,showSummary=true,layout='standard' }: Props) {
   const [query, setQuery] = useState(''), [pageSize, setPageSize] = useState(defaultPageSize);
   const [page, setPage] = useState(() => Math.max(0, Math.floor(rows.findIndex(row => row.id === focusedOptionId) / defaultPageSize)));
   const [visibleColumns, setVisibleColumns] = useState<ColumnId[]>(() => columns.map(column => column.id));
@@ -80,6 +82,8 @@ export function OptionPriceTable({ rows, calculations, selected, focusedOptionId
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize)), currentPage = Math.min(page, pageCount - 1);
   const pageRows = filtered.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
   const shownColumns = columns.filter(column => visibleColumns.includes(column.id));
+  const selectionWidth=layout==='registration'?36:52;
+  const columnWidth=(column:typeof columns[number])=>layout==='registration'?registrationColumnWidths[column.id]:column.width;
   const allFilteredSelected = filtered.length > 0 && filtered.every(({ row }) => selected.has(row.id));
   const partiallyFilteredSelected = !allFilteredSelected && filtered.some(({ row }) => selected.has(row.id));
   useEffect(() => {
@@ -132,7 +136,7 @@ export function OptionPriceTable({ rows, calculations, selected, focusedOptionId
         return <>{rowWon(calculation.salePrice - calculation.supplyPrice)}<small>({percent(marginRate(calculation.supplyPrice, calculation.salePrice))})</small></>;
     }
   }
-  return <div ref={root} className="option-price-grid" aria-label="옵션별 가격 정보">
+  return <div ref={root} className="option-price-grid" aria-label="옵션별 가격 정보" data-price-layout={layout}>
     {priceError&&<p role="alert">{priceError}</p>}
     <div className="option-price-grid-tools">
       <label className="option-price-grid-search">Search<input aria-label="가격 옵션 검색" value={query} onChange={event => { setQuery(event.target.value); setPage(0); }} /></label>
@@ -142,9 +146,9 @@ export function OptionPriceTable({ rows, calculations, selected, focusedOptionId
       <fieldset><legend>높이고정</legend>{[true, false].map(value => <label key={String(value)}><input type="radio" name="option-price-height" aria-label={`가격표 높이 고정 ${value ? 'Y' : 'N'}`} checked={fixedHeight === value} onChange={() => setFixedHeight(value)} />{value ? 'Y' : 'N'}</label>)}</fieldset>
     </div>
     <div className={`option-price-grid-scroll${fixedHeight ? ' option-price-grid-fixed' : ''}`} tabIndex={0} aria-label="옵션 가격표 스크롤 영역">
-      <table className="option-price-grid-table" style={{ minWidth: 52 + shownColumns.reduce((sum, column) => sum + column.width, 0) }}>
+      <table className="option-price-grid-table" style={{ minWidth: selectionWidth + shownColumns.reduce((sum, column) => sum + columnWidth(column), 0) }}>
         <caption>옵션별 가격 정보 · 저장된 가격 정책 기준</caption>
-        <colgroup><col style={{ width: 52 }} />{shownColumns.map(column => <col key={column.id} style={{ width: column.width }} />)}</colgroup>
+        <colgroup><col style={{ width: selectionWidth }} />{shownColumns.map(column => <col key={column.id} style={{ width: columnWidth(column) }} />)}</colgroup>
         <thead><tr><th className="option-price-grid-selection"><input type="checkbox" aria-label="가격 검색 결과 전체 선택" aria-checked={partiallyFilteredSelected ? 'mixed' : allFilteredSelected} ref={input => { if(input) input.indeterminate = partiallyFilteredSelected; }} checked={allFilteredSelected} disabled={!filtered.length} onChange={event => onSelect(event.target.checked ? filtered.map(({ row }) => row.id) : [])} /></th>{shownColumns.map(column => <th key={column.id} data-price-column={column.id} className={pinned === column.id ? 'option-price-grid-pinned' : undefined}>{column.label}</th>)}</tr></thead>
         <tbody>{pageRows.map(({ row, index, result }) => <tr key={row.id} data-option-target={row.id === focusedOptionId} data-price-option-id={row.id}>
           <td className="option-price-grid-selection"><label><input type="checkbox" aria-label={`가격 옵션 ${index + 1} 선택`} checked={selected.has(row.id)} onChange={event => toggleSelection(row.id, event.target.checked)} /><span className="sr-only">선택</span></label><label><input type="checkbox" aria-label={`가격 옵션 ${index + 1} 견적 포함`} disabled={priceBlocked} checked={row.included} onChange={event => onChange(row.id, 'included', event.target.checked)} /><span className="sr-only">견적 포함</span></label></td>
