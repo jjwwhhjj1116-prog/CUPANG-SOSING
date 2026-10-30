@@ -106,6 +106,13 @@ test('full work skips server-confirmed board completion; explicit partial work a
  }
 });
 
+test('full work resolves a retained pricing save before relying on the current complete badge',async()=>{
+ const h=fixture();h.options.mode='full';h.keys.set('owner:product:pricing-save-v1','retained-original-price-attempt');
+ h.intercept(call=>call.url==='/api/products/product'?Response.json({product:{id:'product',owner_id:'owner',title:'검수 상품',updated_at:version,content_summary:savedSummary(['pricing'])}}):null);
+ h.deps['@/app/batch-selected-pricing-work'].runSelectedPricingWork=async(_id,options)=>{assert.equal(options.keys,h.keys);assert.equal(options.expectedOwnerId,'owner');return{status:'blocked',message:'원래 가격 요청 저장본 확인 필요',uncertain:true};};
+ const result=await h.run(['pricing','mainImage']);assert.equal(result.stages[0].status,'blocked');assert.match(result.stages[0].message,/원래 가격 요청/);assert.equal(h.calls.some(call=>call.adapter==='image'),false);
+});
+
 test('full work does not reuse another product or owner or invalid source version as completion proof',async()=>{
  for(const wrong of ['product','owner','version']){const h=fixture();h.options.mode='full';
   h.intercept(call=>call.url==='/api/products/product'?Response.json({product:{id:wrong==='product'?'other':'product',owner_id:wrong==='owner'?'other':'owner',updated_at:wrong==='version'?'invalid':version,content_summary:savedSummary(['pricing'])}}):null);

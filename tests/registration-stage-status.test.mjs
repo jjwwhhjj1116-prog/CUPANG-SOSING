@@ -19,7 +19,7 @@ test('a fresh source, unverified SEO and raw photo counts cannot complete any st
 test('explicit current Korean SEO and exact manual role assignments complete their saved stages without touching inputs',()=>{
  const content=applyContentPatch(emptyProductContent('p'),{seo:{title:'직접 저장한 상품',keywords:['상품']},assets:{main:['owner/main.png'],additional:['owner/add.png'],detail:['owner/detail.png'],size:['owner/size.png'],label:['owner/label.png']}},now);
  content.seoTitleDocument={policy:'couplus-seo-save-v1',sourceTitle:content.seo.title.value,sourceUpdatedAt:now,value:content.seo.title.value};
- const options={productId:'p',rows:[{id:'one',translatedName:'빨강',imageKey:null,provenance:{translatedName:'manual'}}]},keys=['main','add','detail','size','label'].map(name=>'owner/'+name+'.png');
+ const options={productId:'p',rows:[{id:'one',included:true,translatedName:'빨강',imageKey:null,provenance:{translatedName:'manual'}}]},keys=['main','add','detail','size','label'].map(name=>'owner/'+name+'.png');
  const final=[{optionId:'one',title:content.seo.title.value,main:[keys[0]],additional:[keys[1]],detail:[keys[2]],label:[keys[4]]}],before=JSON.stringify({content,options,keys,final});
  const result=status.registrationStagesFromSavedContent(product,content,options,keys,final);
  for(const id of ['seo','mainImage','additionalImages','detailImage','sizeChart','koreanLabel'])assert.equal(result[id].state,'complete',id);
@@ -42,7 +42,7 @@ test('exact saved final overrides work independently of legacy content, while du
 test('adopted generated or translated SEO documents complete independently of quotation legal-notice defaults',()=>{
  for(const provenance of ['generated','translated']){
   const content=applyContentPatch(emptyProductContent('p'),{seo:{title:'저장한 상품',keywords:['상품']}},now);content.seo.title.provenance=provenance;
-  const options={productId:'p',rows:[{id:'one',translatedName:'빨강',provenance:{translatedName:'translated'}}]},read=()=>status.registrationStagesFromSavedContent(product,content,options,[],null);
+  const options={productId:'p',rows:[{id:'one',included:true,translatedName:'빨강',provenance:{translatedName:'translated'}}]},read=()=>status.registrationStagesFromSavedContent(product,content,options,[],null);
   assert.equal(read().seo.state,'pending','a generated draft without an adoption document stays pending');
   content.seoTitleDocument={policy:'couplus-seo-save-v1',sourceTitle:content.seo.title.value,sourceUpdatedAt:now,value:content.seo.title.value};
   assert.equal(content.initialLegalNotices,undefined);assert.equal(content.explicitSeoQuotationDefaults,undefined);
@@ -62,10 +62,18 @@ test('saved generated SEO still requires the exact current document and complete
   c=>{c.seo.title.provenance='unverified';},c=>{c.seo.title.value=c.seoTitleDocument.value=c.seoTitleDocument.sourceTitle='商品';},
   c=>{c.seo.title.value=c.seoTitleDocument.value=c.seoTitleDocument.sourceTitle='가'.repeat(101);},c=>{c.seo.keywords.value=['商品'];}
  ]){const changed=structuredClone(content);change(changed);assert.equal(read(changed),'pending');}
- for(const change of [o=>{o.productId='other';},o=>{o.rows[0].translatedName='红色';},o=>{o.rows[0].provenance.translatedName='unverified';},o=>{o.rows.push({id:'excluded',included:false,translatedName:'蓝色',provenance:{translatedName:'translated'}});}]){
+ for(const change of [o=>{o.productId='other';},o=>{o.rows[0].translatedName='红色';},o=>{o.rows[0].provenance.translatedName='unverified';},o=>{o.rows[0].included=false;},o=>{o.rows=[];}]){
   const changed=structuredClone(options);change(changed);assert.equal(read(content,changed),'pending');
  }
  assert.equal(read(content,options,[{...final[0],title:'原文商品'}]),'pending');
+});
+test('SEO completion verifies included options only and preserves excluded untranslated rows',()=>{
+ const content=applyContentPatch(emptyProductContent('p'),{seo:{title:'저장한 상품',keywords:['상품']}},now);
+ content.seoTitleDocument={policy:'couplus-seo-save-v1',sourceTitle:content.seo.title.value,sourceUpdatedAt:now,value:content.seo.title.value};
+ const options={productId:'p',rows:[{id:'included',included:true,translatedName:'빨강',provenance:{translatedName:'translated'}},{id:'excluded',included:false,translatedName:'',originalName:'蓝色',provenance:{translatedName:'unverified'}}]};
+ const read=()=>status.registrationStagesFromSavedContent(product,content,options,[],null).seo.state,before=JSON.stringify(options);
+ assert.equal(read(),'complete');assert.equal(JSON.stringify(options),before);options.rows[0].translatedName='红色';assert.equal(read(),'pending');options.rows[0].translatedName='빨강';
+ options.rows[0].included=false;assert.equal(read(),'pending');options.rows[0].included=true;content.seoTitleDocument.sourceUpdatedAt='2026-10-19T01:00:00.000Z';assert.equal(read(),'pending');
 });
 test('stale versions, missing execution evidence and draft artifacts never become green',()=>{
  const workflow=base();pricing(workflow);

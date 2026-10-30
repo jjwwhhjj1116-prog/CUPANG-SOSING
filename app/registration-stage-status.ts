@@ -66,7 +66,7 @@ export function registrationStagesFromSavedContent(product:{id:string;owner_id?:
   const savedSeoTitle=saved(title)||['generated','translated'].includes(title?.provenance)&&time(title.updatedAt)
     &&(!product.updated_at||Date.parse(title.updatedAt!)<=Date.parse(product.updated_at));
   if(document?.policy==='couplus-seo-save-v1'&&document.sourceTitle===title?.value&&document.value===title.value&&document.sourceUpdatedAt===title.updatedAt
-    &&savedSeoTitle&&korean(title.value)&&title.value.length<=100&&options?.productId===product.id&&rows.every(row=>korean(row.translatedName)&&['manual','translated'].includes(row.provenance?.translatedName))
+    &&savedSeoTitle&&korean(title.value)&&title.value.length<=100&&options?.productId===product.id&&rows.some(row=>row.included)&&rows.filter(row=>row.included).every(row=>korean(row.translatedName)&&['manual','translated'].includes(row.provenance?.translatedName))
     &&content.seo.keywords.value.every(value=>! /\p{Script=Han}/u.test(value))&&(!finalRows||finalRows.every(row=>korean(row.title))))done('seo',saved(title)?'직접 저장한 현재 SEO 상품명과 한국어 옵션명 확인':'저장된 현재 SEO 상품명과 한국어 옵션명 확인');
   const exact=(left:readonly string[],right:readonly string[])=>JSON.stringify(left)===JSON.stringify(right);
   if(finalRows?.length){

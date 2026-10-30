@@ -235,7 +235,9 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     return{status:translated.status==='blocked'?'blocked':'draft',message:message+'Cloudflare Workers AI 생성 SEO '+saved.applied+'개 항목의 저장을 확인했습니다. 직접 수정값은 유지했습니다.'};
   }
   async function pricing():Promise<Outcome>{
-    return runSelectedPricingWork(productId,{fetcher,signal,assertCurrent});
+    return runSelectedPricingWork(productId,{fetcher,signal,assertCurrent,expectedOwnerId:controls.expectedOwnerId,keys,trackMutationDispatch:mark=>{
+      const previousDispatch=onMutationDispatch;onMutationDispatch=()=>{mark();previousDispatch?.();};return()=>{onMutationDispatch=previousDispatch;};
+    }});
   }
   async function image(id:'mainImage'|'additionalImages'|'detailImage'):Promise<Outcome>{
     const role=({mainImage:'main',additionalImages:'additional',detailImage:'detail'} as const)[id];
@@ -354,7 +356,7 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
           ||automationStages.some(stage=>{const value=(summary.stages as Record<string,unknown>)[stage];return!object(value)
             ||!['pending','complete','failed','running','unused'].includes(String(value.state))||typeof value.detail!=='string'||!value.detail.trim();}))))
           throw new ScopeChanged('전체 작업의 저장 단계 확인값이 현재 회원·상품과 다릅니다. 목록을 다시 확인해주세요.');
-        if(object(summary)&&object(summary.stages)&&object(summary.stages[id])&&summary.stages[id].state==='complete'){
+        if(object(summary)&&object(summary.stages)&&object(summary.stages[id])&&summary.stages[id].state==='complete'&&!(id==='pricing'&&keys.has(identity+':pricing-save-v1'))){
           publish(index,{status:'skipped',message:'현재 저장본에서 완료된 단계라 전체 작업에서 건너뛰었습니다. 다시 작업하려면 이 단계만 선택해주세요.'});continue;
         }
       }
