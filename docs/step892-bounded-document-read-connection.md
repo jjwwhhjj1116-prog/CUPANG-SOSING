@@ -51,4 +51,30 @@ The old wire fixture omitted the already-approved search-listing host and script
 from release 2.1.62. Its strict expected scope now includes that exact existing
 host/script. The real manifest's permissions were not expanded.
 
-Final release, tests and live outcome are appended after verification.
+## Final verification
+
+- Source commit `fffcee56`; isolated production build passed with 13 runtime
+  source hashes matched after text-only CRLF/LF normalization. Unrelated
+  `app/chatgpt-auth.ts` working-copy metadata was excluded and preserved.
+- Disjoint relevant suites: bridge/client 62 passed, worker/lifetime/wire 34
+  passed, recovery UI/stage validation 121 passed. The first UI run had two old
+  expectations for uncoded raw errors; updated expectations now assert fixed
+  guidance and non-disclosure while retaining the original lock/recovery checks.
+  TypeScript, targeted ESLint, diff and extension package checks passed.
+- Worker `e28d8f24-59bb-4da2-b4ca-47f6828a0260` deployed. No schema, model,
+  billing, host permission or application access changes.
+- Original D1 scope: 35 tables / 47 rows, SHA256
+  `39f1f5b9ff48173e6d68b0e8d9689aac8eb587f2fb469a0ed6b2984913a3455d`,
+  unchanged, changedTables empty (`outputs/step892-original-scoped-final.json`).
+  This is not a remote Hub body or receipt proof.
+- A fresh production tab confirms download 2.1.75 and actual Chrome execution
+  2.1.74. The requested 2.1.75 manual refresh is still pending. No retry of the
+  failed audit or any stored-stage POST was made on this partial application.
+
+After actual 2.1.75 is confirmed, reload only the original YOOFAM tab, reconnect
+the same request/document, run the independent full audit, and then the normal
+stored-stage check followed by the explicit single validation retry if eligible.
+Saved-target native recovery is not required merely to run the independent audit;
+do not repeatedly invoke it when its known legal-array guard remains blocked.
+No passed audit or validation result can clear the no-file/body-retransmit guard
+or stand in for actual Hub receipt evidence.
