@@ -6872,3 +6872,24 @@ REA로 Couplus의 localhost HTTP/SSE와 별도 상품조회 경계를 확인했�
 - 새공식읽기탭 finalRead894 id727940219(같은Chrome7/browser883). 기존Hubdashboard의관측link /sr/registration으로새탭열고history→뒤꿈치고유1행(동일명/category68183)→불러오기만. 현재 /sr/registration/step/startPage, 동일Koreantitle/category/마지막저장2026.10.31 03:24. 문서번호자체는이화면미표시이므로다음mutation전원래docId연결을재확인해야함. Save/Next/Preview0, 기존Hub145/148F5없이그대로. outputs/step894-official-original-start.png. qa940 +Hub145/148+official219 handoff유지, 임시무관탭없음.
 - 사용자에게기존‘본문재전송없이’범위를바꿔 ‘문서2347603 동일본문필요저장최대5회→공식최종접수, 새문서/파일재업로드없음’ 허용여부async질문발송, 답변PENDING. genericcontinue는동의로해석금지. 법적약관동의는실제product/image화면도달후actiontime별도확인필수, 지금선동의없음. 승인전nativeNext/Save/Submit/currentReadRecovery해제금지. 승인후에도fileupload/newdoc/서류삭제허용아님. 사용자가금지유지하면현범위서실제접수완료불가를정확히알릴것.
 - 최종원래D1고정SELECT35표47행/hash39f1f5b9ff48173e6d68b0e8d9689aac8eb587f2fb469a0ed6b2984913a3455d/unchangedtrue/changedTables[](outputs/step894-original-scoped-ui-final.json). 초기배포후동일값검사도있음. remoteHub의validation상태변화/receipt와혼동금지. 원래detail수집0/최종2장미해결그대로. 추가단계sourceclock11/collector32검사새결함없음,집계39와합산하지말것. app/chatgpt-auth.ts기존metadata보존/stage0. docs/step894-native-agreement-default-compatibility.md.
+
+### Step895 — 원래 886 문서 공식 접수 완료·미완료 이미지 상태 보존 (2026-10-31)
+
+- source6d9b6d03/4b31cab6. 선택된 free-image 편집기록의 미번역 오류/미확인을 목록·자동작업·native/legacy 준비에 유지. HEAD+bounded edit sidecar만 조회, PNG GET 없음. 새 명시적 견적 등록전송 의도는 같은 task/request/body와 4/4 단계 검사 후 기존 native lifecycle에 연결. 준비전용/읽기복구는 승격하지 않음.
+- Worker3d79156b-3ca5-4736-9f64-64ac35bf5da2 배포. Couplus REA 보존artifact 분석(outputs/step895-couplus-submit-rea.txt)에서 CLI→Hub create/update/validate→공식DOM next/submit 경로 확인. Couplus 전체 live실행 관찰과는 구분.
+- 사용자 동의: 원래doc2347603 동일본문 저장최대5회 + 실제가격/MSRP약관 + 실제업무연락처공개약관. 공식저장행의 고유title/category68183/date를 불러와 Start→Product→Image→Legal→Logistics→최종등록까지 총5저장 요청을 각각1회 실행. 새문서/파일업로드/다른상품변경0. 승인5회는 모두사용됐으므로 재저장 금지.
+- 공식 화면 상품 등록 완료, 등록요청목록 고유뒤꿈치행 등록완료 / QVT ae11c551-7bf0-49dd-81c9-1eb85400d6e2 / 2026.10.31 19:07. QVT는 기존이미지의제출namespace와일치. evidence outputs/step895-official-submit-complete.png + step895-official-receipt-row.txt. row PNG 캡처는 CDPtimeout으로없음. 공식form docId자체는 DOM미표시, 앞선원래복구+고유행연결에근거.
+- YOOFAM 로컬 receipt 동기화는 미완료. 새로고침뒤 원래요청복구가 현재 저장상품·카테고리·파일과 전송자료 불일치로, Hub조회전 native source scoped검사에서막힘. 새 free-image sourceIssues만으로generic오류가생기는가설은 로컬격리재현으로배제; stale quotationView.inputFingerprint는같은오류재현. 실제불일치field는미확정. 보호guard우회/receipt수동입력 금지. 같은profile의quotation-fields/native-assets 지문/category/clocks/includedmembers readonly대조가다음진단. 이미실접수됐으므로 create/upload/update/submit반복금지.
+- 원래 detail source 수집0/최종2장은 여전히미완료. 전반적 RS+Couplus 전체동등구현 완료로보고금지.
+
+### Step896 — 회원별 저장 약관 자동 적용·2.1.76 실제 실행 확인 (2026-10-31)
+
+- source7c8ecca02aceed7545089ae1b22d56d1d726a3b5. 회원/회사/SupplierHub 연결ID/revision/actorcredential/정확한약관전문SHA별 opt-in 정책. 계정관리 조회·중지/재활성, 실제challenge에서최초원문확인후저장. 기본미사용. 계정변경/철회/unknownterms는수동확인. stale정책도철회가능하지만재활성불가. 비밀번호/쿠키가정책에들어가지않음.
+- 격리content의 actual trusted 등록전송click→15분원래요청·본문의도, 단계별120초challenge. 원문+정책 독립GET 전후검증, 동일문서두약관stageproof가있어야final자동진행. generated humanConfirmedAt없음. 신규 capability만활성; 기존확장은불필요45초probe없음. recovered currentReadRecovery/미확정쓰기/no-duplicate 보호유지.
+- 독립review P2 connection snapshotrace를재현해API종료직전metadata재조회+scope검사추가. fixture disabled/revision/loginID변경 모두409. backend/모델/패널/계정/DB검사 최종54/54, UI·client·packet182/182, 확장독립85/85+최종checkpoint1/1. adapter/prepared46/46, source12/12. type/lint/diff/build/packagecheck통과. 기존database-readiness harness의 labels모듈/DDL11개와 HEAD에서이미실패하던receipt errorcode2assertion을실제계약에맞춤(생산receipt코드변경없음). 중복집계해단일검사총수로보고금지.
+- 기존두회사 A01526306/A01464742만검증. 신규회원임의회사/로그인ID와 Hubaccount의일반화는아직별도과제. 이번저장정책이10명모든회사자동연동을완성했다말하지말것. 계정관리현재본인SupplierHub 저장프로필0개, 정책0개를 실제확인; 아무정책도대신활성화하거나새비밀번호입력안함. 최초연동/원문확인저장이필요.
+- 빈 member_registration_consents 테이블만migration0039추가. 기존상품행변경없음. exactarchive outputs/step896-web-release의 runtime24파일hash일치/authmetadataworkingcopy제외. Worker cc27e95a-23d1-47e5-b98f-0f59f5c84091 운영배포성공.
+- 확장2.1.76 118파일 ZIP1738690B SHA62cdfc41be271bf7d3b43206cba3d4769d98a932bb90557d205e9362594e040b. 원래실설치폴더 백업 outputs/step896-installed-extension-backup 후갱신; 기존권한그대로. 사용자새로고침답변뒤 qa883연동설정에서 actual2.1.76 + D1읽기/서버설정응답확인(outputs/step896-live-extension76.txt). 이전75질문pending는이번76실행확인으로해소. 재수집불필요.
+- 실제account페이지에서회원별defaultoff카드/GET성공확인, screenshot outputs/step896-live-consent-settings.png. 이번자동정책전송검증은양사실코드를쓰는로컬대역통합으로, live자동등록완료와혼동금지. 886의공식실접수는Step895다.
+- 원래D1고정SELECT35표47행 SHA39f1f5b9ff48173e6d68b0e8d9689aac8eb587f2fb469a0ed6b2984913a3455d / unchangedtrue / changedTables[](outputs/step896-original-scoped-final.json). 공유정책신규표는이보호범위와별개다.
+- Browser7/browser883, qa883 id727939940 원래앱F5후목록(연동모달닫음), loginHub885145/reservedHub885148 그대로handoff. finalRead894219 등록요청목록은deliverable. consentSettings896 새account등록전송동의hash페이지deliverable. 원래Hub탭F5/닫기/재전송안함. app/chatgpt-auth.ts기존metadata는미stage유지.
