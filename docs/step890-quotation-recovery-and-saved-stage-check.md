@@ -75,6 +75,36 @@ The original transport checkpoint, body mismatch and current-read no-retransmit
 guard remain intact. Actual Supplier Hub receipt and complete collection/stage
 parity remain unconfirmed. Do not press native Next/Preview/Save/Submit, create a
 replacement document, delete the certificate, or retransmit files/body under the
-existing scope. The pending 2.1.74 release combines the collection fixes and the
-separate explicitly requested, single-use validation recheck; record its final
-tests, deployment and running-version observation below after release.
+existing scope.
+
+## Final 2.1.74 release
+
+The explicit validation-only recheck is separately routed and capability checked.
+It binds the same request/document/stage/checkpoint/source/body/file/legal hashes.
+A separate durable single-use reservation precedes the validation POST. It keeps
+the original uncertain entry byte-for-byte and does not qualify the original
+transport. Only explicit retry mode can reuse an exactly matching observed passed
+retry as a preceding-stage proof. Normal validation stays blocked at the legacy
+uncertain record. Lost acknowledgement/restart/double click cannot dispatch a
+second retry. The interface warns that an earlier validation might have run.
+
+Five affected shared/client/UI/core/native-adapter test suites, TypeScript,
+ESLint and diff checks passed. The dot reporter emitted no reliable aggregate
+count, so none is claimed. Independent review found and the worker corrected a
+retry-prefix case before the final freeze; remaining P1/P2 findings: none.
+
+Source commit fe2d7dbc; isolated production build passed with 18 runtime changed
+file hashes matched. Final Worker 70620c0d-62a3-4632-8546-fe14abe5be3f deployed.
+Extension 2.1.74: 116 files / 1,716,504 bytes / SHA256
+b5ff00d6bf2d897680edfed72948b052a7a9a2ff13067771e4642f7cba847cc3.
+The existing actual installation folder was backed up and all 116 installed
+hashes verified; permission arrays are unchanged. Evidence:
+`outputs/step890-installed-extension74.json` and
+`outputs/step890-final-release-sources.json`.
+
+The user's 2.1.73 refresh was verified live. The 2.1.74 refresh is pending; disk
+replacement alone is not proof of its running version. After application, reload
+YOOFAM only, use the original request/document, repeat the full audit, observe the
+legacy cached uncertainty, then explicitly request the bounded validation-only
+recheck. Do not recollect or resend files/body. A passed stage result still does
+not establish actual Supplier Hub receipt.
