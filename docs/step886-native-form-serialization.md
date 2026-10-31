@@ -54,8 +54,18 @@ or overwrite the original document, and it does not relax exact readback checks.
 - Exact captured schema + synthetic local three-option sample passes all model
   checks; no real product values or remote writes were used. This is a model
   test, not proof of actual Supplier Hub receipt.
-- TypeScript and targeted ESLint passed. Build/deployment and final source
-  preservation evidence are recorded in the handoff after completion.
+- Additional source/transport regression: 93 passed (overlaps exist between
+  runs; counts are not summed). TypeScript, targeted ESLint, production build
+  and independent REA review passed.
+- Deployed code 58f9b427, Worker d7e15341-95a7-4256-879e-f20a1d43a64b.
+  Original-scope D1 integrity: 35 tables / 47 rows unchanged,
+  SHA256 39f1f5b9ff48173e6d68b0e8d9689aac8eb587f2fb469a0ed6b2984913a3455d.
+  This integrity check does not observe remote Hub state.
+- Deployed authenticated UI was reloaded and the same original request/document
+  was reconnected read-only. The completed full audit displayed nine images,
+  one unlinked certificate, 34 known serialization patterns, zero unclassified
+  displayed leaves and the unchanged 11 coarse mismatches. No new extension
+  version was required. The registration block remains visible.
 
 ## Original document remains unresolved
 
