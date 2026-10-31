@@ -490,6 +490,92 @@ test('uncertain packaging write blocks another request rather than resending the
  const retry=await h.run(['quotation']);assert.equal(retry.stages[0].status,'blocked');assert.equal(count,1);
 });
 
+function pendingQuotationFixture(){
+ const h=fixture(),jobId='99999999-9999-4999-8999-999999999999';
+ const view={revision:1,inputFingerprint:hash,productVersion:version,contentRevision:3,optionRevision:1,overrides:{common:{},options:{}},
+  categoryContext:{profileId:null,categoryId:'68183',categoryPath:['합성']},resolved:{rows:[{optionId:'a',included:true,fields:{}}],schema:{fields:[],status:'observed',categoryId:'68183',categoryPath:['합성']}}};
+ const job={id:jobId,status:'running',fingerprint:hash,quotationRevision:1,profileId:null,scope:{optionId:null,applyToAllOptions:true},model:'fixture-model',result:null,error:null};
+ const state={configuration:{configured:true,model:'fixture-model'},fingerprint:hash,productId:'product',productVersion:version,contentRevision:3,optionRevision:1,quotationRevision:1,profileId:null,jobs:[]};
+ let returned=[job],lost=false;
+ h.intercept(call=>{
+  if(call.url==='/api/products/product/quotation-fields')return Response.json(view);
+  if(call.url==='/api/products/product/quotation-ai'){
+   if(call.method==='POST'){if(lost)throw Error('synthetic lost original generation ACK');return Response.json({job});}
+   return Response.json(state);
+  }
+  if(call.url==='/api/products/product/quotation-ai?jobId='+jobId)return Response.json({...state,jobs:returned});
+ });
+ return{...h,job,view,state,jobId,returned:value=>returned=value,loseAck:()=>lost=true,
+  complete(){job.status='completed';job.result={changes:[],warnings:[],model:'fixture-model',generatedAt:version};}};
+}
+
+test('explicit quotation retry reads only the acknowledged original job and resumes a delayed completed draft without another generation',async()=>{
+ const h=pendingQuotationFixture();assert.equal((await h.run(['quotation'])).stages[0].status,'blocked');
+ const before=h.calls.length;h.complete();const result=await h.run(['quotation']),retry=h.calls.slice(before);
+ assert.equal(result.stages[0].status,'draft',result.stages[0].message);
+ assert.deepEqual(retry.filter(call=>call.url?.includes('/quotation-ai')).map(call=>[call.method,call.url]),[['GET','/api/products/product/quotation-ai?jobId='+h.jobId]]);
+ assert.equal(retry.some(call=>call.method==='POST'||call.method==='PUT'),false);assert.equal(h.calls.filter(call=>call.adapter==='packaging').length,1);
+ assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
+});
+
+test('a delayed original quotation result uses the real proposal guards and saves its reviewed fields once while preserving manual blanks',async()=>{
+ const h=knownQuotationFixture({generateFirst:true}),jobId='99999999-9999-4999-8999-999999999999',completed=plain(h.job.result);
+ Object.assign(h.job,{id:jobId,status:'running',result:null,error:null});
+ h.prependIntercept(call=>{
+  if(call.url==='/api/products/product/quotation-ai'&&call.method==='POST')return Response.json({job:h.job,sourceCurrent:true});
+  if(call.url==='/api/products/product/quotation-ai?jobId='+jobId)return Response.json({configuration:{configured:true},fingerprint:hash,
+   productId:'product',productVersion:version,contentRevision:3,optionRevision:2,quotationRevision:1,profileId:null,jobs:[h.job],
+   knownChanges:providedOptionModule('app/quotation-known-notice-proposals.ts').quotationKnownNoticeProposals('product',h.view,h.content,{optionId:null,applyToAllOptions:true},h.savedOptions,h.savedLabels)});
+ });
+ assert.equal((await h.run(['quotation'])).stages[0].status,'blocked');assert.equal(h.writes.length,0);
+ Object.assign(h.job,{status:'completed',result:completed});const before=h.calls.length,result=await h.run(['quotation']),retry=h.calls.slice(before);
+ assert.equal(result.stages[0].status,'draft',result.stages[0].message);assert.equal(h.writes.length,1);
+ assert.deepEqual(h.writes[0].changes,[{optionId:'a',fieldKey:'notice3',value:'검토 재질'},{optionId:'a',fieldKey:'notice0',value:'제조자: 저장 제조사 / 수입자: 저장 수입사'},
+  {optionId:'a',fieldKey:'notice1',value:'02-1234-5678'},{optionId:'b',fieldKey:'notice1',value:'02-1234-5678'}]);
+ assert.equal(h.writes[0].expectedRevision,1);assert.equal(h.writes[0].expectedInputFingerprint,hash);assert.equal(h.view.resolved.rows[1].fields.notice0.value,'');
+ assert.equal(retry.some(call=>call.method==='POST'),false);assert.equal(retry.filter(call=>call.method==='PUT').length,1);
+ assert.equal(retry.filter(call=>call.url?.includes('/quotation-ai')).length,1);assert.equal(h.calls.filter(call=>call.adapter==='packaging').length,1);
+ assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
+});
+
+test('pending quotation running, missing, uncertain or mismatched job readback preserves its fence and never starts another generation',async()=>{
+ for(const mode of ['running','missing','uncertain','wrong-job','duplicate','wrong-fingerprint','wrong-revision','wrong-scope','wrong-model','wrong-policy','changed-source','changed-settings']){
+  const h=pendingQuotationFixture();await h.run(['quotation']);h.complete();
+  if(mode==='running'){h.job.status='running';h.job.result=null;}if(mode==='uncertain'){h.job.status='uncertain';h.job.result=null;}
+  if(mode==='missing')h.returned([]);if(mode==='wrong-job')h.returned([{...h.job,id:'88888888-8888-4888-8888-888888888888'}]);if(mode==='duplicate')h.returned([h.job,h.job]);
+  if(mode==='wrong-fingerprint')h.job.fingerprint='b'.repeat(64);if(mode==='wrong-revision')h.job.quotationRevision++;
+  if(mode==='wrong-scope')h.job.scope={optionId:'a',applyToAllOptions:false};if(mode==='wrong-model')h.job.model='changed-model';
+  if(mode==='wrong-policy')h.job.executionPolicy={unexpected:'changed-policy'};
+  if(mode==='changed-source'){h.state.productVersion='2026-10-24T00:00:00.000Z';h.view.productVersion=h.state.productVersion;}
+  if(mode==='changed-settings')h.state.fingerprint='b'.repeat(64);
+  const before=h.calls.length,result=await h.run(['quotation']),retry=h.calls.slice(before);
+  assert.equal(result.stages[0].status,'blocked',mode);assert.equal(retry.some(call=>call.method==='POST'||call.method==='PUT'),false,mode);
+  assert.equal(h.calls.some(call=>call.adapter==='packaging'),false,mode);assert.equal(h.keys.get('owner:product:pending:quotation'),'견적서 AI 실행 결과 확인 필요',mode);
+ }
+});
+
+test('lost quotation generation ACK, invalid retained request identity and unknown field-save fence cannot guess a job or reopen generation',async()=>{
+ for(const mode of ['lost-ack','wrong-owner','wrong-company','different-request-key','unknown-save']){
+  const h=pendingQuotationFixture();if(mode==='lost-ack')h.loseAck();await h.run(['quotation']);h.complete();
+  const key='owner:product:quotation-generation-readback-v1';
+  if(mode==='wrong-owner'||mode==='wrong-company'){const value=JSON.parse(h.keys.get(key));if(mode==='wrong-owner')value.ownerId='other';else value.company={code:'A01464742',name:'와이홉'};h.keys.set(key,JSON.stringify(value));}
+  if(mode==='different-request-key')h.keys.set('owner:product:quote:'+hash,'88888888-8888-4888-8888-888888888888');
+  if(mode==='unknown-save')h.keys.set('owner:product:pending:quotation','저장 결과 확인 필요');
+  const before=h.calls.length,result=await h.run(['quotation']),retry=h.calls.slice(before);
+  assert.equal(result.stages[0].status,'blocked',mode);assert.equal(retry.some(call=>call.url?.includes('/quotation-ai')||call.method==='POST'||call.method==='PUT'),false,mode);
+  assert.equal(h.calls.filter(call=>call.url==='/api/products/product/quotation-ai'&&call.method==='POST').length,1,mode);
+ }
+});
+
+test('a saved board completion cannot bypass pending original quotation readback, while account changes and abort still stop it',async()=>{
+ const h=pendingQuotationFixture();await h.run(['quotation']);h.complete();h.options.mode='full';
+ h.prependIntercept(call=>call.url==='/api/products/product'?Response.json({product:{id:'product',owner_id:'owner',title:'검증 상품',updated_at:version,content_summary:savedSummary(['quotation'])}}):null);
+ const before=h.calls.length;assert.equal((await h.run(['quotation'])).stages[0].status,'draft');assert.ok(h.calls.slice(before).some(call=>call.url?.includes('/quotation-ai?jobId=')));
+ const changed=pendingQuotationFixture();await changed.run(['quotation']);const count=changed.calls.length;changed.company({code:'A01464742',name:'와이홉'});
+ await assert.rejects(changed.run(['quotation']),/회사/);assert.equal(changed.calls.slice(count).some(call=>call.url?.includes('/quotation-ai')),false);
+ const stopped=pendingQuotationFixture();await stopped.run(['quotation']);const calls=stopped.calls.length;stopped.controller.abort();assert.equal(await stopped.run(['quotation']),null);assert.equal(stopped.calls.length,calls);
+});
+
 test('packaging preflight rejection releases only confirmed fences so an explicit later retry can run',async()=>{
  const h=fixture();let count=0;
  h.deps['@/app/batch-selected-packaging-work'].runSelectedPackagingWork=async(_id,options)=>{

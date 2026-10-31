@@ -22,6 +22,10 @@ export type SelectedBatchStageResult = { id: AutomationStageId; status: 'waiting
 type Controls = { stages: readonly AutomationStageId[]; mode?:'full'|'selected'; expectedOwnerId: string; signal: AbortSignal; fetcher: typeof fetch;
   keys: Map<string,string>; newKey:()=>string; onStage:(result:SelectedBatchStageResult)=>void;seoGenerationConsent?:SeoGenerationConfiguration;retryFailedQwen?:boolean };
 type Outcome = Pick<SelectedBatchStageResult,'status'|'message'> & {uncertain?:boolean;stop?:boolean};
+type QuotationGenerationRecovery={format:'selected-quotation-generation-v1';ownerId:string;productId:string;company:{code:string;name:string};requestKey:string;jobId:string;
+  fingerprint:string;productVersion:string;contentRevision:number;optionRevision:number;quotationRevision:number;profileId:string|null;model:string|null;executionPolicy:unknown};
+const quotationGenerationPending='견적서 AI 실행 결과 확인 필요';
+const uuid=(value:unknown):value is string=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(value);
 // The request owns keys across React remounts; keep binary image recovery state
 // with that same lifetime without persisting source images in localStorage.
 const imageRunStates=new WeakMap<Map<string,string>,Map<string,SelectedImageStageState>>();
@@ -278,20 +282,58 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
       :layout.sizeChartRequired?{status:'blocked',message:'이 카테고리는 사이즈표가 필수입니다. 사이즈표 편집에서 원본을 선택하거나 표를 작성해주세요.'}
       :{status:'skipped',message:'저장된 사이즈표 원본이 없어 생략했습니다. 필요하면 사이즈표 편집에서 원본을 선택해주세요.'};
   }
+  const quotationRecoveryKey=identity+':quotation-generation-readback-v1';
+  function retainedQuotationGeneration():QuotationGenerationRecovery|null{
+    const encoded=keys.get(quotationRecoveryKey);if(!encoded)return null;
+    try{
+      const value:unknown=JSON.parse(encoded),fields=['format','ownerId','productId','company','requestKey','jobId','fingerprint','productVersion','contentRevision','optionRevision','quotationRevision','profileId','model','executionPolicy'];
+      if(!object(value)||Object.keys(value).length!==fields.length||fields.some(key=>!Object.hasOwn(value,key))||value.format!=='selected-quotation-generation-v1'
+        ||value.ownerId!==controls.expectedOwnerId||value.productId!==productId||!same(value.company,expected.company)||!uuid(value.requestKey)||!uuid(value.jobId)||!hash(value.fingerprint)
+        ||keys.get(identity+':quote:'+value.fingerprint)!==value.requestKey||typeof value.productVersion!=='string'||!Number.isFinite(Date.parse(value.productVersion))
+        ||['contentRevision','optionRevision','quotationRevision'].some(key=>!Number.isSafeInteger(value[key])||Number(value[key])<0)
+        ||value.profileId!==null&&(typeof value.profileId!=='string'||!/^[A-Za-z0-9_-]{1,100}$/u.test(value.profileId))
+        ||value.model!==null&&(typeof value.model!=='string'||!value.model.trim()||value.model.length>200))return null;
+      return value as QuotationGenerationRecovery;
+    }catch{return null;}
+  }
+  const quotationGenerationCurrent=(attempt:QuotationGenerationRecovery,state:QuotationAiView,view:QuotationFieldsView)=>state.configuration.configured
+    &&attempt.fingerprint===state.fingerprint&&attempt.productVersion===state.productVersion&&attempt.contentRevision===state.contentRevision
+    &&attempt.optionRevision===state.optionRevision&&attempt.quotationRevision===state.quotationRevision&&attempt.profileId===state.profileId
+    &&attempt.productVersion===view.productVersion&&attempt.contentRevision===view.contentRevision&&attempt.optionRevision===view.optionRevision
+    &&attempt.quotationRevision===view.revision&&attempt.profileId===view.categoryContext.profileId;
+  const sameQuotationGenerationJob=(attempt:QuotationGenerationRecovery,job:QuotationAiJobView)=>job.id===attempt.jobId&&job.fingerprint===attempt.fingerprint
+    &&job.quotationRevision===attempt.quotationRevision&&job.profileId===attempt.profileId&&job.scope?.optionId===null&&job.scope.applyToAllOptions===true
+    &&(job.model??null)===attempt.model&&same(job.executionPolicy??null,attempt.executionPolicy);
   async function quotation():Promise<Outcome>{
+    const recovering=keys.get(identity+':pending:quotation')===quotationGenerationPending,attempt=recovering?retainedQuotationGeneration():null;
+    if(recovering&&!attempt)return{status:'blocked',message:'원래 견적 AI 실행의 정확한 작업번호를 확인하지 못했습니다. 같은 요청을 다시 생성하지 않았습니다.',uncertain:true};
     let view=await read<QuotationFieldsView>('/quotation-fields');
-    const state=await read<QuotationAiView>('/quotation-ai');
+    const state=await read<QuotationAiView>('/quotation-ai'+(attempt?'?jobId='+encodeURIComponent(attempt.jobId):''));
     if(!quotationAiViewCurrent(state,view,productId))throw Error('견적서와 AI 작성 원문이 다릅니다.');
     const aiConfigured=state.configuration.configured;
-    let job=aiConfigured?quotationAiJobForScope(state,view,productId,null,true):null;
+    if(attempt&&!quotationGenerationCurrent(attempt,state,view))return{status:'blocked',message:'원래 견적 AI 실행 이후 상품·옵션·카테고리 또는 설정이 변경됐습니다. 저장된 실행을 유지하고 새 생성·적용은 하지 않았습니다.',uncertain:true};
+    const retainedJobs=attempt&&Array.isArray(state.jobs)?state.jobs.filter(job=>job.id===attempt.jobId):[];
+    let job=attempt?retainedJobs.length===1&&sameQuotationGenerationJob(attempt,retainedJobs[0])?retainedJobs[0]:null:aiConfigured?quotationAiJobForScope(state,view,productId,null,true):null;
+    if(attempt&&!job)return{status:'blocked',message:'원래 견적 AI 작업의 현재 결과를 확인하지 못했습니다. 다른 작업으로 바꾸거나 새 생성 요청을 보내지 않았습니다.',uncertain:true};
     if(aiConfigured&&!job){
       const key=identity+':quote:'+state.fingerprint;
       if(!keys.has(key))keys.set(key,controls.newKey());
-      keys.set(identity+':pending:quotation','견적서 AI 실행 결과 확인 필요');
+      keys.set(identity+':pending:quotation',quotationGenerationPending);
       const result=await post<{job:QuotationAiJobView;sourceCurrent?:boolean}>('/quotation-ai',{action:'generate',profileId:null,
         expectedFingerprint:state.fingerprint,expectedQuotationRevision:view.revision,optionId:null,applyToAllOptions:true,idempotencyKey:keys.get(key)});
       if(result.sourceCurrent===false)throw Error('견적 작성 중 자료가 변경됐습니다.');
       job=result.job;
+      // The existing GET supports an exact job id, not idempotency lookup.
+      // Retain only the server-acknowledged original identity; a lost POST ACK
+      // without that id remains fenced instead of guessing from recent jobs.
+      if(job&&['prepared','running','uncertain','failed'].includes(job.status)&&job.result===null&&uuid(job.id)&&uuid(keys.get(key))&&job.fingerprint===state.fingerprint&&job.quotationRevision===view.revision
+        &&job.profileId===view.categoryContext.profileId&&job.scope?.optionId===null&&job.scope.applyToAllOptions===true
+        &&typeof state.productVersion==='string'&&Number.isFinite(Date.parse(state.productVersion))&&Number.isSafeInteger(state.contentRevision)&&Number.isSafeInteger(state.optionRevision)){
+        const retained:QuotationGenerationRecovery={format:'selected-quotation-generation-v1',ownerId:controls.expectedOwnerId,productId,company:{...expected.company},requestKey:keys.get(key)!,jobId:job.id,
+          fingerprint:state.fingerprint,productVersion:state.productVersion,contentRevision:state.contentRevision,optionRevision:state.optionRevision,quotationRevision:view.revision,
+          profileId:view.categoryContext.profileId,model:job.model??null,executionPolicy:job.executionPolicy??null};
+        keys.set(quotationRecoveryKey,JSON.stringify(retained));
+      }
     }
     const failed=aiConfigured&&job?.status==='failed'&&job.error?.uncertain===false
       &&job.fingerprint===state.fingerprint&&job.quotationRevision===view.revision&&job.profileId===view.categoryContext.profileId
@@ -332,7 +374,8 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     const id=result[index].id;activeStage=id;
     stageWrites.clear();
     const failedQwenRead=controls.retryFailedQwen===true&&id==='seo'&&keys.get(identity+':pending:seo')==='Qwen 번역 결과 확인 필요'&&!!parseSeoGenerationConfiguration(controls.seoGenerationConsent)?.translationConfig;
-    if(keys.has(identity+':pending:'+id)&&!imageStates.has(identity+':'+id)&&!failedQwenRead){
+    const pendingQuotationRead=id==='quotation'&&keys.get(identity+':pending:quotation')===quotationGenerationPending&&retainedQuotationGeneration()!==null;
+    if(keys.has(identity+':pending:'+id)&&!imageStates.has(identity+':'+id)&&!failedQwenRead&&!pendingQuotationRead){
       publish(index,{status:'blocked',message:'이전 저장 결과를 단계 편집에서 먼저 확인해주세요. 뒤의 작업은 시작하지 않았습니다.'});holdRemaining(index);break;
     }
     publish(index,{status:'running',message:'선택한 단계 작업 중…'});
@@ -356,7 +399,7 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
           ||automationStages.some(stage=>{const value=(summary.stages as Record<string,unknown>)[stage];return!object(value)
             ||!['pending','complete','failed','running','unused'].includes(String(value.state))||typeof value.detail!=='string'||!value.detail.trim();}))))
           throw new ScopeChanged('전체 작업의 저장 단계 확인값이 현재 회원·상품과 다릅니다. 목록을 다시 확인해주세요.');
-        if(object(summary)&&object(summary.stages)&&object(summary.stages[id])&&summary.stages[id].state==='complete'&&!(id==='pricing'&&keys.has(identity+':pricing-save-v1'))){
+        if(!pendingQuotationRead&&object(summary)&&object(summary.stages)&&object(summary.stages[id])&&summary.stages[id].state==='complete'&&!(id==='pricing'&&keys.has(identity+':pricing-save-v1'))){
           publish(index,{status:'skipped',message:'현재 저장본에서 완료된 단계라 전체 작업에서 건너뛰었습니다. 다시 작업하려면 이 단계만 선택해주세요.'});continue;
         }
       }
