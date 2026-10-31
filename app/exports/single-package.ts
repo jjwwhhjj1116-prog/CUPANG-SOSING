@@ -16,6 +16,7 @@ import { stableQuotationFieldsView, QuotationFieldsSnapshotError } from '@/app/q
 import { buildNativeAssetSourcePlan, nativeAssetSourceImageKeys } from '@/app/native-asset-source-plan';
 import {quotationDetailBodyIssues} from '@/app/quotation-detail-body-review';
 import {workspaceBannerAssignments} from '@/app/workspace-banners';
+import {readFreeImageEditReviews} from '@/app/free-image-edit-review';
 
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 
@@ -110,7 +111,22 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
         members:includedOptions.map((option,documentIndex)=>({...option,documentIndex}))};
     const nativeLegalAttachmentPlan = await buildNativeLegalAttachmentPlan({context:nativeLegal,applicability:documents.applicability,identity:nativeIdentity});
     const protectedDetailKeys=[...saved.content.assets.detailTop.value,...saved.content.assets.detailBottom.value,...workspaceBannerAssignments(saved.settings,owner,false).map(([,key])=>key)];
-    const sourceIssues = [...collectionSourceReview(saved.sourceGaps), ...quotationDetailBodyIssues(projection,protectedDetailKeys), ...(saved.generatedProductLabelIssues ?? []),
+    // Review only effective included image wires, never the stored image pool
+    // or a superseded result. Label images keep their independent label proof.
+    const selectedImageReferences=projection.review.unresolvedImages.filter(reference=>reference.wire?.name===undefined&&[
+      ['imagePage','images','mainImage'],['imagePage','images','additionalImage'],['imagePage','details','detailedImage'],
+    ].some(path=>JSON.stringify(reference.wire?.path)===JSON.stringify(path)));
+    const readableKeys=new Set(readKeys),selectedImageReviews=await readFreeImageEditReviews(env.FILES,owner,id,
+      selectedImageReferences.flatMap(reference=>reference.keys.filter(key=>readableKeys.has(key))),metadata);
+    const imageReviewsByKey=new Map(selectedImageReviews.map(review=>[review.key,review]));
+    const imageReviewIssues=selectedImageReferences.flatMap(reference=>{
+      const reviews=reference.keys.filter(key=>readableKeys.has(key)).map(key=>imageReviewsByKey.get(key)),issues=[];
+      const scope={kind:'error' as const,optionId:reference.optionId,optionLabel:resolved.rows.find(row=>row.optionId===reference.optionId)?.optionLabel??'상품 공통',fieldId:reference.fieldId};
+      if(reviews.some(review=>review?.status==='unresolved'))issues.push({...scope,code:'FREE_IMAGE_TRANSLATION_UNRESOLVED',message:'선택한 번역 이미지에 미처리 문구가 남아 있습니다. 해당 이미지에서 번역·직접 편집을 완료한 뒤 저장해주세요.'});
+      if(reviews.some(review=>review?.status==='unconfirmed'))issues.push({...scope,code:'FREE_IMAGE_TRANSLATION_UNCONFIRMED',message:'선택한 번역 이미지의 편집 기록을 확인하지 못했습니다. 해당 이미지를 다시 확인하고 저장해주세요.'});
+      return issues;
+    });
+    const sourceIssues = [...collectionSourceReview(saved.sourceGaps), ...quotationDetailBodyIssues(projection,protectedDetailKeys), ...imageReviewIssues, ...(saved.generatedProductLabelIssues ?? []),
       ...await inspectLegalDocumentStorage(documents, id, key => env.FILES.head(key))];
     // Native filename preparation has its own reviewed body. It must never
     // silently replace the legacy public-URL payload or its operation digest.

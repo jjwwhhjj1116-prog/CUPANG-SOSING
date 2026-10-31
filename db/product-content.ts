@@ -1,12 +1,13 @@
-import { registrationContentSummary, type RegistrationQuotationLabels } from '@/app/registration-content-summary';
+import { registrationContentObservation, type RegistrationQuotationLabels } from '@/app/registration-content-summary';
 import { validateCategoryProfile } from '@/app/category-profiles';
 import { validateCategoryIdentity } from '@/app/category-identity';
 import { parseCollectionRequest } from '@/app/sourcing';
 import { env } from 'cloudflare:workers';
 import { emptyProductContent, withCurrentLabelFields, type ProductContent } from '@/app/product-content';
 import {readRegistrationExecutionStages} from '@/db/registration-stage-status';
-import {mergeRegistrationStages} from '@/app/registration-stage-status';
+import {mergeRegistrationStages,registrationStagesWithImageReviews,type RegistrationFinalImageKeys} from '@/app/registration-stage-status';
 import {readImageNoTextReceipts} from '@/db/image-no-text-receipts';
+import {isFreeImageEditOutputKey,readFreeImageEditReviews,type FreeImageEditReview} from '@/app/free-image-edit-review';
 
 type ContentRow = { payload: string; revision: number };
 type ListingLabelRow={product_id:string;image_keys:string;source_url:string;content_revision:number|null;option_payload:string|null;option_revision:number|null;quotation_payload:string|null;quotation_revision:number|null;linked_job:string|null;valid_job:string|null;job_offer:string|null;context_payload:string|null};
@@ -109,7 +110,15 @@ export async function readRegistrationSummaries(ownerId: string, products: {id:s
         if(row&&content?.revision!==row.revision)throw Error('Invalid content revision');
         let labels:RegistrationQuotationLabels|null=null;
         if(labelRecords){const source=labelRecords.get(product.id);if(!source)throw Error('Unowned listing product');try{labels=listingLabels(ownerId,product,source,row?.revision??0);}catch{/* A corrupt source must not turn zero references into a verified count. */}}
-        const summary=registrationContentSummary(product,content,labels,noTextReceipts[product.id]);
+        const observed=registrationContentObservation(product,content,labels,noTextReceipts[product.id]),summary=observed.summary;
+        const selected=Object.fromEntries((['main','additional','detail']as const).map(role=>[role,observed.finalImageKeys[role].filter(key=>isFreeImageEditOutputKey(ownerId,key))]))as RegistrationFinalImageKeys;
+        const selectedKeys=[...new Set(Object.values(selected).flat())];
+        if(summary.stages&&selectedKeys.length){
+          let reviews:FreeImageEditReview[];
+          try{reviews=await readFreeImageEditReviews(env.FILES,ownerId,product.id,selectedKeys);}
+          catch{reviews=selectedKeys.map(key=>({format:'free-image-edit-review-v1',productId:product.id,key,status:'unconfirmed',unresolvedRegions:null}));}
+          summary.stages=registrationStagesWithImageReviews(product.id,summary.stages,selected,reviews);
+        }
         if(summary.stages&&executionStages[product.id])summary.stages=mergeRegistrationStages(summary.stages,executionStages[product.id]);
         summaries[product.id]=summary;
       } catch { summaries[product.id]=null; }

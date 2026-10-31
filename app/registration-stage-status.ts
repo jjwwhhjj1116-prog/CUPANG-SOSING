@@ -2,11 +2,13 @@ import type { AutomationStage, AutomationStageId, AutomationWorkflow } from '@/a
 import type { ProductContent } from '@/app/product-content';
 import type { ProductOptions } from '@/app/product-options';
 import {parseImageNoTextProof,type ImageNoTextProof} from '@/app/image-no-text-proof';
+import type {FreeImageEditReview} from '@/app/free-image-edit-review';
 
 export const registrationStageIds = ['seo','pricing','mainImage','additionalImages','detailImage','sizeChart','koreanLabel','quotation'] as const;
 export type RegistrationStageState = 'pending' | 'complete' | 'failed' | 'running' | 'unused';
-export type RegistrationStageStatus = { state: RegistrationStageState; detail: string;updatedAt?:string;sourceProofAt?:string };
+export type RegistrationStageStatus = { state: RegistrationStageState; detail: string;updatedAt?:string;sourceProofAt?:string;imageReview?:'unresolved'|'unconfirmed' };
 export type RegistrationStageSummary = Record<AutomationStageId, RegistrationStageStatus>;
+export type RegistrationFinalImageKeys=Record<'main'|'additional'|'detail',string[]>;
 export const registrationStepIds:Record<string,AutomationStageId> = { SEO:'seo',가격:'pricing','대표 이미지':'mainImage','추가 이미지':'additionalImages','상세 이미지':'detailImage',옵션:'sizeChart',사이즈표:'sizeChart',표시사항:'koreanLabel',견적서:'quotation' };
 export function registrationStageLabel(state:RegistrationStageState) {return {pending:'대기',complete:'완료',failed:'오류',running:'작업중',unused:'미사용'}[state];}
 export function pendingRegistrationStages(sizeUsed=false):RegistrationStageSummary {
@@ -104,9 +106,25 @@ export function registrationStagesFromSavedContent(product:{id:string;owner_id?:
   return result;
 }
 
+/** The caller supplies only current included generated edit outputs. This runs
+ * after ordinary manual/no-text completion so an attached partial translation
+ * cannot turn green merely because its PNG reference was manually saved. */
+export function registrationStagesWithImageReviews(productId:string,saved:RegistrationStageSummary,selected:RegistrationFinalImageKeys,reviews:readonly FreeImageEditReview[]):RegistrationStageSummary {
+ const result={...saved};
+ for(const [id,role]of [['mainImage','main'],['additionalImages','additional'],['detailImage','detail']]as const){
+  const keys=[...new Set(selected[role])];if(!keys.length)continue;
+  const states=keys.map(key=>{const found=reviews.filter(review=>review.productId===productId&&review.key===key&&review.format==='free-image-edit-review-v1');return found.length===1?found[0].status:'unconfirmed';});
+  if(states.includes('unresolved'))result[id]={state:'failed',detail:'현재 선택한 이미지에 번역·편집 오류가 남아 있습니다. 해당 단계에서 수정한 뒤 저장해주세요.',imageReview:'unresolved'};
+  else if(states.some(state=>state!=='clear'))result[id]={state:'pending',detail:'현재 선택한 이미지의 편집 검토 기록을 확인하지 못했습니다. 해당 단계에서 저장 결과를 확인해주세요.',imageReview:'unconfirmed'};
+ }
+ return result;
+}
+
 export function mergeRegistrationStages(saved:RegistrationStageSummary,execution:RegistrationStageSummary):RegistrationStageSummary {
   return Object.fromEntries(registrationStageIds.map(id=>{
     const latest=saved[id],previous=execution[id];
+    if(['mainImage','additionalImages','detailImage'].includes(id)
+      &&(latest.imageReview==='unresolved'&&latest.state==='failed'||latest.imageReview==='unconfirmed'&&latest.state==='pending'))return[id,latest];
     const resolvedFailure=previous.state==='failed'&&latest.state==='complete'&&time(latest.sourceProofAt)&&time(previous.updatedAt)&&Date.parse(latest.sourceProofAt!)>Date.parse(previous.updatedAt!);
     return[id,resolvedFailure?latest:['failed','running','complete'].includes(previous.state)?previous:latest];
   })) as RegistrationStageSummary;
