@@ -19,6 +19,8 @@ import {singleExistingDocumentRepairPage,existingRepairPageFailure} from './sing
 import {singleRecordMirrorPage} from './single-record-mirror-page.mjs';
 import {savedDraftCurrentReadPage} from './saved-draft-current-read-page.mjs';
 import {validateUnexpectedLegalAuditReport} from './unexpected-legal-audit.mjs';
+import {savedDocumentStepValidationPage} from './saved-document-step-validation-page.mjs';
+import {runSavedDocumentStepValidation,validateSavedDocumentStepValidationReport} from './saved-document-step-validation.mjs';
 
 const HASH=/^[a-f0-9]{64}$/;
 const ID=/^\w[\w-]{0,99}$/;
@@ -564,7 +566,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
       requireWatch(entry);const [guard]=await api.scripting.executeScript({target,func:singleDocumentWatchPage,args:[{...entry.page,action:'check'}]});
       if(guard?.documentId!==documentId||guard?.result?.current!==true)fail('TAB_CHANGED','현재 새 문서의 입력 관찰을 확인하지 못했습니다.');
     }
-    if(nativeSha&&!(func===savedDraftCurrentReadPage&&args[0]?.mode==='audit')){
+    if(nativeSha&&!(func===savedDraftCurrentReadPage&&args[0]?.mode==='audit')&&func!==savedDocumentStepValidationPage){
       const knownDocId=func===singleDocumentOwnedRecordPage?args[1]??null:null;
       const [mirror]=await api.scripting.executeScript({target,func:singleRecordMirrorPage,args:[JSON.stringify({binding,target:tab,knownDocId})]});
       const value=mirror?.result,writing=func===nativeAssetUploadPage||func===singleDocumentRetryCreatePage||func===singleDocumentSubmitPage||func===singleDocumentNavigatePage
@@ -578,7 +580,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     // Keep JSON null, zero and empty values across the browser argument
     // boundary. The page restores the exact envelope before its unchanged
     // source/body/owned-document checks; no default or ID is substituted.
-    const jsonPage=[singleDocumentHubRequestPage,singleDocumentRetryCreatePage,nativeAssetUploadPage,nativeAssetRecoveryPage,singleDocumentOwnedRecordPage,singleDocumentRestoreOwnedRecordPage,singleExistingDocumentRepairPage,savedDraftCurrentReadPage].includes(func);
+    const jsonPage=[singleDocumentHubRequestPage,singleDocumentRetryCreatePage,nativeAssetUploadPage,nativeAssetRecoveryPage,singleDocumentOwnedRecordPage,singleDocumentRestoreOwnedRecordPage,singleExistingDocumentRepairPage,savedDraftCurrentReadPage,savedDocumentStepValidationPage].includes(func);
     const wireArgs=jsonPage?[JSON.stringify(args[0]),...args.slice(1)]:args;
     const [execution]=await api.scripting.executeScript({target,func,args:wireArgs});
     if(execution?.error)fail('PAGE_EXECUTION_FAILED','원래 문서 기록의 페이지 실행 응답이 실패했습니다. 새 요청을 보내지 않고 같은 문서를 유지했습니다.');
@@ -865,6 +867,34 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     if(!equal(binding,after)||!equal(sourcePlan,sourceBindings.get(canonical(input.identity))?.nativeSourcePlan))fail('SOURCE_CHANGED','읽기 전용 감사 중 원래 회원·견적 연결이 변경되었습니다.');
     return result;
   }
+  async function validateSavedDocumentSteps(input,lease){
+    if(!nativeSha||!wholeProduct||typeof api.storage?.local?.get!=='function'||typeof api.storage?.local?.set!=='function'||typeof lease?.fresh!=='function')
+      fail('SAVED_DOCUMENT_STEP_VALIDATION_SCOPE','원래 문서와 별도 검사 기록을 확인한 뒤 단계 검사를 진행해주세요.');
+    await lease.fresh();
+    const audit=await auditUnexpectedLegal(input),snapshot=sourceBindings.get(canonical(input.identity)),binding=copy(snapshot?.binding),sourcePlan=copy(snapshot?.nativeSourcePlan);
+    mutable(input.identity);
+    const expectedBody=copy(input.expectedBody??savedReadBody(sourcePlan,input.docId));
+    const fresh=async()=>{
+      await lease.fresh();await appCurrent(input.identity);
+      const current=sourceBindings.get(canonical(input.identity));
+      if(!current||current.readOnlyReceipt||!equal(current.binding,binding)||!equal(current.nativeSourcePlan,sourcePlan))fail('SOURCE_CHANGED','검사 중 원래 회원·문서 연결이 변경되었습니다.');
+      const response=await api.tabs.sendMessage(sourceAppTabId??input.identity.appTabId,{type:sourceType,expected:copy(current.input)},{frameId:0});
+      await appCurrent(input.identity);
+      if(response?.ok!==true||response.current!==true||response.submissionReady!==true||response.priorDocumentClear!==true||!equal(response.identity,input.identity)
+        ||response.bodySha256!==binding.originalBodySha256||response.sessionId!==binding.sessionId||!Number.isSafeInteger(response.checkedAt)||Math.abs(now()-response.checkedAt)>60000)
+        fail('SOURCE_CHANGED','단계 검사 직전 원래 회원·회사·저장 견적을 확인하지 못했습니다.');
+      await lease.fresh();
+    };
+    const compactAudit=Object.fromEntries(['rawBodySha256','fileSetSha256','legalSetSha256','observedAt'].map(key=>[key,audit[key]]));
+    const report=await runSavedDocumentStepValidation({audit,storage:api.storage.local,fresh,now,sendStep:stage=>execute(input.tab,input.identity,savedDocumentStepValidationPage,[{
+      binding,target:{tabId:input.tab.tabId,windowId:input.tab.windowId},docId:input.docId,expectedBody,audit:compactAudit,stage}])});
+    await fresh();
+    const after=await auditUnexpectedLegal(input);
+    if(!equal(binding,sourceBindings.get(canonical(input.identity))?.binding)||!equal(sourcePlan,sourceBindings.get(canonical(input.identity))?.nativeSourcePlan)
+      ||['rawBodySha256','fileSetSha256','legalSetSha256','byteSetSha256'].some(key=>audit[key]!==after[key]))fail('SOURCE_CHANGED','단계 검사 전후 원래 문서·파일 대조 결과가 변경되었습니다.');
+    await fresh();
+    return validateSavedDocumentStepValidationReport({...report,observedAt:now()},{binding:{...audit},target:audit.target,actualRawBodySha256:audit.rawBodySha256,fileSetSha256:audit.fileSetSha256,legalSetSha256:audit.legalSetSha256},now());
+  }
   async function qualifySavedDraftTarget(input,readLease){
     const suppliedProof=readLease?.sourceProof;
     const snapshot=suppliedProof&&typeof suppliedProof==='object'?savedTargetReadReceipts.get(suppliedProof):undefined;
@@ -958,6 +988,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     return copy(proof);
   }
   return Object.freeze({readSource,
+    ...(nativeSha&&typeof api.storage?.local?.get==='function'&&typeof api.storage?.local?.set==='function'?{validateSavedDocumentSteps}:{}),
     qualifyPreparedDraft,...(nativeSha?{auditUnexpectedLegal,qualifySavedDraftTarget,continueReservedAssets,readNativeSourceSnapshot,inspectCreateRetry,inspectUnsentUpdate,inspectExistingDocument,inspectExistingRepairContinuation,bindExistingDocumentRepair:input=>inspectExistingDocument(input,'bind')}:{}),
     ...(nativeSha?{readOwnedTargetPresence:async input=>{
       const binding=sourceBindings.get(canonical(input.identity))?.binding;

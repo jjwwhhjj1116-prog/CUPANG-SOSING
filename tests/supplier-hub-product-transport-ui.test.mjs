@@ -680,11 +680,37 @@ test('post-claim reconnect failure retains original source and close locks witho
 
 const reconnectSavedTarget='원래 문서의 새 읽기 탭 연결 · 재전송 안 함';
 const auditOriginal='원래 문서 본문·첨부 전체 대조 · 읽기 전용';
+const validateStoredSteps='쿠팡 저장 문서 단계 검사 · 파일·본문 저장 안 함';
 function originalAuditFixtureReport(session,patch={}){
  return {requestId:session.packet.requestId,docId:'2347603',identityDigest:session.preview.identityDigest,packetDigest:session.packetDigest,
-  imageCount:24,legalCount:1,bodyMatchesExpected:false,legalEntries:[{index:0,kind:'certificate',association:'unlinked'}],
+  imageCount:24,legalCount:1,bodyMatchesExpected:false,legalEntries:[{index:0,kind:'certificate',association:'unlinked',schemaIndex:null,descriptorSha256:'a'.repeat(64),pairedImageDescriptorMatch:false,expectedLabelReferences:3}],
   differences:[{documentIndex:0,schemaIndex:0,path:'legalPage.certificates.value',expectedValueKind:'na',actualValueKind:'empty'}],differenceCount:1,...patch};
 }
+
+test('saved-document server step inspection requires the explicit audit, renders response rows without option inference and cannot adopt or submit',async()=>{
+ const checked=[],h=await fixture(undefined,{reconnect:async(_input,f)=>{throw reconnectClosedError(f,{savedDraftTargetClosed:false});}});try{
+  h.f.bridge=async payload=>({...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,unexpectedLegalAuditAvailable:true,savedDocumentStepValidationAvailable:true});
+  h.f.client.auditUnexpectedLegal=async session=>originalAuditFixtureReport(session);
+  h.f.client.validateSavedDocumentSteps=async(session,audit,signal)=>{checked.push({session,audit,signal});return{requestId:session.packet.requestId,docId:2347603,identityDigest:session.preview.identityDigest,packetDigest:session.packetDigest,
+   stages:[{stage:2,state:'passed',cached:false,requested:true,failureCode:null,errors:[],errorCount:0,errorsTruncated:false},{stage:3,state:'rejected',cached:false,requested:true,failureCode:null,errors:[{rowIndex:2,columnName:'한글 표시사항 동의',category:'consent'}],errorCount:1,errorsTruncated:false}]};};
+  await h.idle();reconnectInputs(h);await h.click('원래 저장 문서 연결 복구');assert.equal(h.button(validateStoredSteps).props.disabled,true);
+  await h.click(auditOriginal);assert.equal(h.button(validateStoredSteps).props.disabled,false);const click=h.button(validateStoredSteps).props.onClick;click();click();await h.idle();
+  assert.equal(checked.length,1);assert.equal(checked[0].audit.docId,'2347603');assert.equal(checked[0].signal.aborted,false);
+  assert.match(h.text(),/쿠팡 단계 검사/);assert.match(h.text(),/상품 정보\s+·\s+검사 통과/);assert.match(h.text(),/이미지\s+·\s+오류 확인/);assert.match(h.text(),/한글 표시사항 동의/);assert.match(h.text(),/응답 행은 상품 옵션 번호와 다릅니다/);assert.match(h.text(),/검사 통과는 실제 접수 완료를 뜻하지 않습니다/);
+  assert.match(h.text(),/원래 본문\s+불일치/);assert.equal(h.stored.size,0);assert.ok(h.f.calls.every(row=>row.method==='GET'));assert.ok(h.f.sent.every(row=>row.payload.action==='preview'));
+  for(const label of [start,prepareDraft,reviewPrepared,'현재 문서 동의 확인 · 계속'])assert.equal(h.button(label),undefined);
+ }finally{h.close();}
+});
+
+test('unknown saved-document stage results never expose a native error or enable draft registration',async()=>{
+ const h=await fixture(undefined,{reconnect:async(_input,f)=>{throw reconnectClosedError(f,{savedDraftTargetClosed:false});}});try{
+  h.f.bridge=async payload=>({...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,unexpectedLegalAuditAvailable:true,savedDocumentStepValidationAvailable:true});h.f.client.auditUnexpectedLegal=async session=>originalAuditFixtureReport(session);
+  h.f.client.validateSavedDocumentSteps=async()=>{throw Error('PRIVATE_HUB_VALIDATION_BODY');};
+  await h.idle();reconnectInputs(h);await h.click('원래 저장 문서 연결 복구');await h.click(auditOriginal);await h.click(validateStoredSteps);
+  assert.match(h.text(),/응답이 미확정일 수 있어 자동 재검사는 하지 않았습니다/);assert.doesNotMatch(h.text(),/PRIVATE_HUB_VALIDATION_BODY/);assert.equal(h.button(validateStoredSteps).props.disabled,true);assert.equal(h.stored.size,0);
+  for(const label of [start,prepareDraft,reviewPrepared])assert.equal(h.button(label),undefined);
+ }finally{h.close();}
+});
 test('original document full audit is explicit and cannot adopt a session, claim a reservation or submit',async()=>{
  const audited=[],h=await fixture(undefined,{reconnect:async(_input,f)=>{throw reconnectClosedError(f,{savedDraftTargetClosed:false});}});try{
   h.f.bridge=async payload=>{assert.equal(payload.action,'preview');return{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true};};
@@ -693,8 +719,26 @@ test('original document full audit is explicit and cannot adopt a session, claim
   assert.ok(h.button(auditOriginal));assert.equal(audited.length,0);const click=h.button(auditOriginal).props.onClick;click();click();await h.idle();
   assert.equal(audited.length,1);assert.equal(audited[0].packet.requestId,'f29491bd-1882-456a-8a63-eec8586db6c6');assert.match(h.text(),/문서\s+2347603/);assert.match(h.text(),/원래 본문\s+불일치/);
   assert.match(h.text(),/원래 견적과 다른 저장 항목/);assert.doesNotMatch(h.text(),/본문 세부 항목 대조/,'older reports keep their coarse comparison without inventing leaf details');
+  assert.match(h.text(),/인증서 파일명 규칙/);assert.match(h.text(),/certN- 규칙 연결 없음/);
+  assert.match(h.text(),/동일 이미지 객체로 확인되지 않음/);assert.match(h.text(),/한글표시사항 파일명 참조/);assert.match(h.text(),/3회/);assert.ok(h.text().includes('a'.repeat(64)));
+  assert.match(h.text(),/파일 내용의 동일 여부나 필요한 서류인지는 이 결과만으로 판단하지 않습니다/);
   assert.equal(h.stored.size,0);assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview']);assert.ok(h.f.calls.every(row=>row.method==='GET'));
   for(const label of [start,prepareDraft,reviewPrepared,'현재 문서 동의 확인 · 계속'])assert.equal(h.button(label),undefined);
+ }finally{h.close();}
+});
+
+test('original legal audit distinguishes matched descriptors, zero label references and unknown references without offering delete or submit',async()=>{
+ const h=await fixture(undefined,{reconnect:async(_input,f)=>{throw reconnectClosedError(f,{savedDraftTargetClosed:false});}});try{
+  h.f.bridge=async payload=>({...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,unexpectedLegalAuditAvailable:true});
+  h.f.client.auditUnexpectedLegal=async session=>originalAuditFixtureReport(session,{legalCount:2,legalEntries:[
+   {index:0,kind:'certificate',association:'linked',schemaIndex:1,descriptorSha256:'b'.repeat(64),pairedImageDescriptorMatch:true,expectedLabelReferences:0},
+   {index:1,kind:'other',association:'unknown',schemaIndex:null,descriptorSha256:'c'.repeat(64),pairedImageDescriptorMatch:false,expectedLabelReferences:null},
+  ]});
+  await h.idle();reconnectInputs(h);await h.click('원래 저장 문서 연결 복구');await h.click(auditOriginal);
+  assert.match(h.text(),/certN- 규칙 일치/);assert.match(h.text(),/파일명·저장 위치 일치/);assert.match(h.text(),/0회/);assert.match(h.text(),/규칙 확인 필요/);assert.match(h.text(),/확인되지 않음/);
+  assert.ok(h.text().includes('b'.repeat(64)));assert.ok(h.text().includes('c'.repeat(64)));assert.equal(h.stored.size,0);
+  assert.ok(h.f.calls.every(row=>row.method==='GET'));assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview']);
+  for(const label of [start,prepareDraft,reviewPrepared,'현재 문서 동의 확인 · 계속','첨부 삭제'])assert.equal(h.button(label),undefined);
  }finally{h.close();}
 });
 

@@ -36,11 +36,13 @@ async function fixture(options={}){
  };
  f.api.scripting.executeScript=async request=>{
   if(request.target.tabId===f.context.identity.appTabId){appScriptRequests.push(request);throw Error('Cannot access app origin: no scripting host permission');}
-  if(request.func.name!=='savedDraftCurrentReadPage')return baseExecute(request);
+  if(!['savedDraftCurrentReadPage','savedDocumentStepValidationPage'].includes(request.func.name))return baseExecute(request);
   if(options.auditExecutionError&&(typeof request.args[0]==='string'?JSON.parse(request.args[0]):request.args[0]).mode==='audit')throw Error('PRIVATE_HUB_EXECUTION_BODY');
   if(Object.hasOwn(options,'currentReadReply')){const frame=(await baseExecute({target:{tabId:request.target.tabId,frameIds:[0]},func:()=>true,args:[]}))[0];return[{frameId:0,documentId:frame.documentId,result:copy(options.currentReadReply)}];}
   const scope=vm.createContext({document:f.hubDocument,location:f.hubLocation,crypto:webcrypto,AbortController,TextEncoder,TextDecoder,Uint8Array,URL,Response,Date,setTimeout,clearTimeout,structuredClone,
    fetch:async(url,init)=>{requests.push({url,method:init.method,body:init.body});if(options.beforeCurrentReadFetch)await options.beforeCurrentReadFetch(url,init,f);const path=new URL(url).pathname;
+    if(path.startsWith('/sr/qvt/api/validate-step/')){assert.equal(init.method,'POST');assert.deepEqual(JSON.parse(init.body),{docId:f.createdDocId,version:f.documents.get(f.createdDocId).version});
+      if(options.validationNetworkFailure)throw Error('PRIVATE_VALIDATION_ACK_LOST');return response(url,options.validationReply?.(Number(path.split('/').at(-1)))??{code:200,data:[{success:true}]});}
     if(path==='/sr/draft/api/drafts')return response(url,[...f.documents.values()].map(row=>({...copy(row),status:'UNFINISHED'})));
     if(path==='/sr/draft/api/drafts/register-requested')return response(url,options.submitted?[{docId:f.createdDocId,productName:f.documents.get(f.createdDocId).productName}]:[]);
     if(path==='/sr/draft/api/get-by-id/'+f.createdDocId){const row={...copy(f.documents.get(f.createdDocId)),status:'UNFINISHED'};if(options.changedBody)row.productName+='changed';return response(url,row);}
@@ -51,11 +53,12 @@ async function fixture(options={}){
   const frame=(await baseExecute({target:{tabId:request.target.tabId,frameIds:[0]},func:()=>true,args:[]}))[0];
   scope.args=copy(request.args);const result=await vm.runInContext('('+request.func.toString()+')(...args)',scope);return[{frameId:0,documentId:frame.documentId,result:copy(result)}];
  };
+ const validationLedger=new Map();f.api.storage={local:{get:async key=>validationLedger.has(key)?{[key]:copy(validationLedger.get(key))}:{},set:async entries=>{for(const [key,value]of Object.entries(entries))validationLedger.set(key,copy(value));}}};
  const selected=await createVerifiedProductDocumentBrowserAdapter(f.context,{api:f.api}),adapter=selected.adapter;
  const source=await adapter.readSource({identity:f.context.identity,bodySha256:f.context.originalBodySha256,preparedBodySha256:f.context.bodySha256,packetDigest:f.context.packetDigest,requestId:f.packet.requestId,docId:f.createdDocId});
  const target=options.receiver?null:await adapter.createTarget({identity:f.context.identity,requestId:f.packet.requestId,packetDigest:f.context.packetDigest}),tab=target?await adapter.readTab({identity:f.context.identity,tab:target}):null;
  const input={tab,identity:f.context.identity,requestId:f.packet.requestId,docId:f.createdDocId,sessionId:source.sessionId,baselineDocIds,previousTarget,expectedBody:{...copy(f.context.packet.body),docId:f.createdDocId}};
- return{f,adapter,input,requests,appScriptRequests,receiver:createProductDocumentDraftReceiver({adapter,store:f.storage.store}),close:()=>{selected.adapter.dispose();f.close();}};
+ return{f,adapter,input,requests,appScriptRequests,validationLedger,receiver:createProductDocumentDraftReceiver({adapter,store:f.storage.store}),close:()=>{selected.adapter.dispose();f.close();}};
 }
 test('known document can bind current complete server proof in one new tab without replaying files/body',async()=>{
  const q=await fixture();try{
@@ -278,5 +281,61 @@ for(const scenario of ['schema-execution','schema-http','malformed-schema-failur
   });
   assert.equal(JSON.stringify({checkpoint:await q.f.storage.store.get(q.f.context.key),dataset:q.f.hubDocument.documentElement.dataset,uploads:q.f.state.uploads,body:[...q.f.documents]}),before);
   assert.equal(q.f.calls.filter(call=>call.name==='tabs-create').length,created);assert.equal(q.f.submitted,0);
+ }finally{q.close();}
+});
+
+test('real native saved-document validation sends four exact validate-only POSTs and never adopts the original failed recovery',async()=>{
+ const options={receiver:true,legalResponse:[{fileType:'certificate',fileName:'PRIVATE_UNEXPECTED_FILE.pdf',s3Link:'PRIVATE_UNEXPECTED_S3'}]},q=await fixture(options);
+ try{
+  assert.equal((await q.receiver.recoverSavedDraftTarget(q.f.packet,q.f.sender)).error.code,'SAVED_DRAFT_TARGET_UNCONFIRMED');
+  const before=JSON.stringify({checkpoint:await q.f.storage.store.get(q.f.context.key),dataset:q.f.hubDocument.documentElement.dataset,uploads:q.f.state.uploads,body:[...q.f.documents]}),created=q.f.calls.filter(call=>call.name==='tabs-create').length,start=q.requests.length;
+  const report=await q.receiver.validateSavedDocumentSteps(q.f.packet,q.f.sender);
+  assert.equal(report.format,'yoofam-saved-document-step-validation-v1');assert.deepEqual(report.stages.map(row=>[row.stage,row.state]),[[2,'passed'],[3,'passed'],[4,'passed'],[5,'passed']]);
+  assert.equal(report.canResume,false);assert.equal(report.registered,false);assert.equal(report.submitted,false);assert.equal(Object.hasOwn(report,'remoteWrites'),false);assert.equal(Object.hasOwn(report,'readOnly'),false);
+  const calls=q.requests.slice(start),validations=calls.filter(row=>new URL(row.url).pathname.includes('/validate-step/'));
+  assert.deepEqual(validations.map(row=>new URL(row.url).pathname),[2,3,4,5].map(stage=>'/sr/qvt/api/validate-step/'+stage));
+  assert.ok(calls.every(row=>row.method==='GET'||new URL(row.url).pathname.includes('/get-files-by-type/')&&row.body==='{}'||validations.includes(row)));
+  assert.equal(JSON.stringify({checkpoint:await q.f.storage.store.get(q.f.context.key),dataset:q.f.hubDocument.documentElement.dataset,uploads:q.f.state.uploads,body:[...q.f.documents]}),before);
+  assert.equal(q.f.calls.filter(call=>call.name==='tabs-create').length,created);assert.equal(q.f.submitted,0);assert.equal(q.f.nextClicks,0);assert.equal(q.f.loaderRequests.length,0);assert.equal(q.validationLedger.size,4);
+  assert.doesNotMatch(JSON.stringify([...q.validationLedger]),/PRIVATE|jsonDocument|fileName|s3Link|imageUrl|cookie|password/);
+  const repeatedStart=q.requests.length,repeated=await q.receiver.validateSavedDocumentSteps(q.f.packet,q.f.sender);assert.ok(repeated.stages.every(row=>row.cached&&!row.requested));assert.equal(q.requests.slice(repeatedStart).some(row=>row.url.includes('/validate-step/')),false);
+  assert.equal((await q.receiver.prepareDraft(q.f.packet,q.f.sender)).error.code,'SAVED_DRAFT_TARGET_PENDING','validation alone cannot adopt/bind or enter normal lifecycle');
+ }finally{q.close();}
+});
+test('native validation inspects a later response row, stops on rejection, and cannot mistake row position for option identity',async()=>{
+ const options={receiver:true,legalResponse:[{fileType:'certificate',fileName:'PRIVATE_UNEXPECTED_FILE.pdf',s3Link:'PRIVATE_UNEXPECTED_S3'}],validationReply:stage=>stage===3?{code:200,data:[{success:true},{success:true},{success:false,errors:[{columnName:'모델명',message:'PRIVATE_REQUIRED missing'}]}]}:{code:200,data:[{success:true}]}},q=await fixture(options);
+ try{
+  await q.receiver.recoverSavedDraftTarget(q.f.packet,q.f.sender);const before=await q.f.storage.store.get(q.f.context.key),start=q.requests.length;
+  const report=await q.receiver.validateSavedDocumentSteps(q.f.packet,q.f.sender);assert.deepEqual(report.stages.map(row=>row.state),['passed','rejected']);assert.equal(report.stages[1].responseRows,3);assert.deepEqual(report.stages[1].errors,[{rowIndex:2,columnName:'모델명',category:'required'}]);
+  assert.equal(q.f.context.identity.members.length,1);assert.doesNotMatch(JSON.stringify(report),/PRIVATE|optionId|jsonDocument|fileName|s3Link/);assert.equal(q.requests.slice(start).filter(row=>row.url.includes('/validate-step/')).length,2);assert.deepEqual(await q.f.storage.store.get(q.f.context.key),before);
+ }finally{q.close();}
+});
+test('native validation lost acknowledgement remains uncertain across repeated actions without a POST retry',async()=>{
+ const options={receiver:true,legalResponse:[{fileType:'certificate',fileName:'PRIVATE_FILE.pdf',s3Link:'PRIVATE_S3'}],validationNetworkFailure:true},q=await fixture(options);
+ try{
+  await q.receiver.recoverSavedDraftTarget(q.f.packet,q.f.sender);const before=await q.f.storage.store.get(q.f.context.key),report=await q.receiver.validateSavedDocumentSteps(q.f.packet,q.f.sender);
+  assert.equal(report.stages[0].state,'uncertain');assert.equal(report.stages[0].failureCode,'network');const start=q.requests.length;options.validationNetworkFailure=false;
+  const second=await q.receiver.validateSavedDocumentSteps(q.f.packet,q.f.sender);assert.equal(second.stages[0].failureCode,'prior-uncertain');assert.equal(q.requests.slice(start).some(row=>row.url.includes('/validate-step/')),false);assert.deepEqual(await q.f.storage.store.get(q.f.context.key),before);assert.equal(q.f.submitted,0);
+ }finally{q.close();}
+});
+test('native saved validation retains raw legal mismatch as a separate audit and never converts it to qualification',async()=>{
+ const options={receiver:true,legalResponse:[{fileType:'certificate',fileName:'PRIVATE_FILE.pdf',s3Link:'PRIVATE_S3'}]},q=await fixture(options);
+ try{
+  q.f.documents.get(q.f.createdDocId).jsonDocument[0].productPage.modelNumber='changed model';
+  await q.receiver.recoverSavedDraftTarget(q.f.packet,q.f.sender);const audit=await q.receiver.auditUnexpectedLegal(q.f.packet,q.f.sender);assert.equal(audit.bodyMatchesExpected,false);
+  const report=await q.receiver.validateSavedDocumentSteps(q.f.packet,q.f.sender);assert.equal(report.actualRawBodySha256,audit.rawBodySha256);assert.notEqual(report.actualRawBodySha256,report.preparedBodySha256);assert.equal(report.canResume,false);
+  assert.equal((await q.receiver.recoverSavedDraftTarget(q.f.packet,q.f.sender)).error.code,'SAVED_DRAFT_TARGET_UNCONFIRMED');
+ }finally{q.close();}
+});
+test('in-flight validation actor race blocks every following stage and result adoption while durable uncertainty suppresses a later retry',async()=>{
+ const options={receiver:true,legalResponse:[{fileType:'certificate',fileName:'PRIVATE_FILE.pdf',s3Link:'PRIVATE_S3'}]},q=await fixture(options);
+ try{
+  await q.receiver.recoverSavedDraftTarget(q.f.packet,q.f.sender);const before=JSON.stringify({checkpoint:await q.f.storage.store.get(q.f.context.key),dataset:q.f.hubDocument.documentElement.dataset,uploads:q.f.state.uploads,body:[...q.f.documents]}),start=q.requests.length;let raced=false;
+  options.beforeCurrentReadFetch=async url=>{if(!raced&&new URL(url).pathname==='/sr/qvt/api/validate-step/2'){raced=true;assert.equal([...q.validationLedger.values()][0]?.state,'requested');await q.f.reloadSourceSession();}};
+  await assert.rejects(q.receiver.validateSavedDocumentSteps(q.f.packet,q.f.sender),error=>error.code==='SOURCE_CHANGED');assert.equal(raced,true);
+  const posts=q.requests.slice(start).filter(row=>row.url.includes('/validate-step/'));assert.deepEqual(posts.map(row=>new URL(row.url).pathname),['/sr/qvt/api/validate-step/2']);
+  assert.equal(q.validationLedger.size,1);assert.ok(['requested','uncertain'].includes([...q.validationLedger.values()][0].state));assert.equal(q.f.submitted,0);assert.equal(q.f.loaderRequests.length,0);
+  assert.equal(JSON.stringify({checkpoint:await q.f.storage.store.get(q.f.context.key),dataset:q.f.hubDocument.documentElement.dataset,uploads:q.f.state.uploads,body:[...q.f.documents]}),before);
+  const later=q.requests.length,report=await q.receiver.validateSavedDocumentSteps(q.f.packet,q.f.sender);assert.equal(report.stages[0].state,'uncertain');assert.equal(report.stages[0].failureCode,'prior-uncertain');assert.equal(report.registered,false);assert.equal(report.canResume,false);assert.equal(q.requests.slice(later).some(row=>row.url.includes('/validate-step/')),false);
  }finally{q.close();}
 });

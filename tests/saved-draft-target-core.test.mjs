@@ -278,3 +278,35 @@ test('slow final source fence keeps the 60 second report freshness guard and rep
  await assert.rejects(f.receiver().auditUnexpectedLegal(f.packet,f.sender),error=>error instanceof SingleDocumentError&&error.code==='UNEXPECTED_LEGAL_AUDIT_REPORT'&&!error.message.includes('현재 전송 기록을 조회'));
  assert.deepEqual(f.saved(),before);assert.equal(f.calls.some(call=>['cas','createTarget','hubRequest'].includes(call.name)),false);assert.equal(f.created,1);f.assertReadOnly();
 });
+
+function validationReport(f,input){const audit=auditReport(f,input);return{format:'yoofam-saved-document-step-validation-v1',...Object.fromEntries(['requestId','docId','identityDigest','packetDigest','originalBodySha256','preparedBodySha256','sourcePlanSha256','checkpointSequence','target','observedAt'].map(key=>[key,audit[key]])),actualRawBodySha256:audit.rawBodySha256,fileSetSha256:audit.fileSetSha256,legalSetSha256:audit.legalSetSha256,
+ stages:[2,3,4,5].map(stage=>({stage,state:'passed',responseRows:3,errors:[],errorCount:0,errorsTruncated:false,cached:false,requested:true,failureCode:null})),bodyWrites:false,fileWrites:false,created:false,submitted:false,canResume:false,registered:false};}
+test('independent validation core leases preserve checkpoint and remain outside all original mutation, load and submit methods',async()=>{
+ const f=await auditFixture(),before=f.saved();f.adapter.validateSavedDocumentSteps=async(input,lease)=>{f.calls.push({name:'savedValidation',input:copy(input)});await lease.fresh();await lease.fresh();return validationReport(f,input);};
+ const report=await f.receiver().validateSavedDocumentSteps(f.packet,f.sender);assert.equal(report.format,'yoofam-saved-document-step-validation-v1');assert.equal(report.registered,false);assert.equal(report.canResume,false);assert.deepEqual(f.saved(),before);
+ assert.equal(f.calls.filter(call=>call.name==='readSource').length,2);assert.equal(f.calls.some(call=>['cas','createTarget','readTab','hubRequest','qualifySavedDraftTarget'].includes(call.name)),false);
+ assert.equal((await f.receiver().prepareDraft(f.packet,f.sender)).error.code,'SAVED_DRAFT_TARGET_PENDING');f.assertReadOnly();
+});
+test('validation leases reject checkpoint or reserved target races and final actor drift without checkpoint writes',async()=>{
+ for(const scenario of ['checkpoint','target','actor','malformed','no-recovery']){
+  const f=await auditFixture(),before=f.saved();if(scenario==='no-recovery')f.force(f.original);
+  f.adapter.validateSavedDocumentSteps=async(input,lease)=>{await lease.fresh();if(scenario==='checkpoint')f.force({...before,sequence:before.sequence+1});if(scenario==='target')f.newClosed=true;
+   if(scenario==='actor')f.currentSession='new-session';await lease.fresh();const value=validationReport(f,input);if(scenario==='malformed')value.docId++;return value;};
+  await assert.rejects(f.receiver().validateSavedDocumentSteps(f.packet,f.sender),error=>typeof error.code==='string');assert.equal(f.calls.some(call=>['cas','createTarget','readTab','hubRequest'].includes(call.name)),false);
+  if(scenario!=='checkpoint'&&scenario!=='no-recovery')assert.deepEqual(f.saved(),before);
+ }
+});
+test('validation cancellation before a leased action stops before any remote validation and permits no checkpoint adoption',async()=>{
+ const f=await auditFixture(),before=f.saved(),controller=new AbortController();controller.abort();let attempted=0;f.adapter.validateSavedDocumentSteps=async(input,lease)=>{await lease.fresh();attempted++;return validationReport(f,input);};
+ const receiver=createProductDocumentDraftReceiver({adapter:f.adapter,store:f.store,now:()=>f.now,observationSignal:controller.signal});
+ await assert.rejects(receiver.validateSavedDocumentSteps(f.packet,f.sender),error=>error.code==='OBSERVATION_ABORTED');assert.equal(attempted,0);assert.deepEqual(f.saved(),before);
+});
+test('dispatcher exposes validation capability only for the native audited adapter and selects a fresh disposed validation receiver',async()=>{
+ const source=fs.readFileSync(new URL('../extensions/supplier-hub/product-document-dispatch.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace(/export /g,'');
+ const f=await auditFixture();let disposed=0,selected=0;f.adapter.dispose=()=>{disposed++;};f.adapter.validateSavedDocumentSteps=async(input,lease)=>{await lease.fresh();return validationReport(f,input);};
+ const dispatch=vm.runInNewContext(source+'\ndispatchProductDocument',{productDocumentIdentity,SingleDocumentError,readPreparedDocumentPreviewCheckpoint,PRODUCT_DOCUMENT_PREFLIGHT_TIMEOUT,setTimeout,clearTimeout,Date,resolveProductSourceContext:async context=>context,
+  createVerifiedProductDocumentBrowserAdapter:async()=>{selected++;return{adapter:f.adapter,nativeAssets:true,sourcePlanSha256:f.context.identity.fingerprint};},createProductDocumentStore:()=>f.store,createProductDocumentDraftReceiver:options=>createProductDocumentDraftReceiver({...options,now:()=>f.now}),createProductDocumentReceiver:()=>assert.fail('No ordinary lifecycle')});
+ const preview=await dispatch({type:'YOOFAM_PRODUCT_DOCUMENT_REQUEST',action:'preview',packet:f.packet},f.sender);assert.equal(preview.savedDocumentStepValidationAvailable,true);
+ const before=f.saved(),report=await dispatch({type:'YOOFAM_PRODUCT_DOCUMENT_REQUEST',action:'validateSavedDocumentSteps',packet:f.packet},f.sender);assert.equal(report.canResume,false);assert.equal(selected,2);assert.equal(disposed,2);assert.deepEqual(f.saved(),before);
+ delete f.adapter.auditUnexpectedLegal;assert.equal((await dispatch({type:'YOOFAM_PRODUCT_DOCUMENT_REQUEST',action:'preview',packet:f.packet},f.sender)).savedDocumentStepValidationAvailable,false);
+});

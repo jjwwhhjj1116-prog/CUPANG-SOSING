@@ -3,8 +3,8 @@ import {useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
 import type {SupplierHubProductDocumentReview} from '@/app/supplier-hub-product-document';
 import {createProductDocumentPacket,PRODUCT_DOCUMENT_REQUEST_TTL} from '../../extensions/supplier-hub/product-document.mjs';
 import {sourceReadError} from '../../extensions/supplier-hub/product-document-source.mjs';
-import {previewProductDocument,auditUnexpectedLegal,unexpectedLegalAuditReadError,runProductDocument,runProductDocumentDraft,runPreparedProductDocument,preparedReceiptObservation,readNativeReceiptHistory,saveProductReceiptObservation,
-  type UnexpectedLegalAuditReport,
+import {previewProductDocument,auditUnexpectedLegal,validateSavedDocumentSteps,unexpectedLegalAuditReadError,runProductDocument,runProductDocumentDraft,runPreparedProductDocument,preparedReceiptObservation,readNativeReceiptHistory,saveProductReceiptObservation,
+  type UnexpectedLegalAuditReport,type SavedDocumentStepValidationReport,
   type ProductDocumentSession,type ProductDocumentState,type ProductDraftAction,type PreparedDocumentAction,type ProductValidationRejection,ProductDocumentBridgeError} from '@/app/supplier-hub-product-client';
 import {singleConsentConfirmation,verifySingleDocumentObservation,type SingleDocumentAction} from '@/app/supplier-hub-single-client';
 import type {NativeReceiptRecord} from '@/app/supplier-hub-product-receipt';
@@ -25,6 +25,9 @@ const auditPathLabels:Record<string,string>={'document-header':'문서 기본정
 const auditValueLabels={missing:'항목 없음',empty:'빈 값',na:'해당사항없음',present:'값 있음','not-applicable':'—'};
 const auditLeafTypeLabels:Record<string,string>={missing:'항목 없음',null:'null',array:'배열',object:'객체','string-empty':'빈 문자열',string:'문자열',number:'숫자',boolean:'참/거짓'};
 const nativeSerializationLabels:Record<NativeSerializationPattern,string>={'optional-form-key-omission':'공식 폼의 선택 항목 제외 패턴 · 값 누락 검토 필요','empty-detail-html-to-null':'빈 상세 HTML의 null 변환 패턴','empty-size-chart-slot':'빈 사이즈표 자리 생성 패턴','later-option-empty-sourcing':'후속 옵션 소싱 칸 초기화 패턴','empty-attribute-template-fallback':'공식 빈 속성 템플릿 적용 패턴'};
+const savedValidationStages={2:'상품 정보',3:'이미지',4:'서류',5:'물류'};
+const savedValidationCategories={required:'필수 입력',consent:'동의',price:'가격',image:'이미지',file:'서류 파일',invalid:'입력 형식',unclassified:'분류 미확인'};
+const savedValidationFailures={timeout:'응답 시간 초과',network:'연결 오류',http:'서버 응답 오류',response:'응답 형식 미확인','source-changed':'원문·첨부 변경 감지','prior-uncertain':'이전 검사 응답 미확정',cancelled:'검사 취소'};
 const auditLeafKeyLabels:Record<string,string>={docId:'문서번호',productName:'상품명',categoryId:'카테고리 번호',categoryPath:'카테고리 경로',displayCategoryCode:'노출 카테고리 번호',productNoticeNumber:'상품정보 제공고시 번호',version:'문서 버전',jsonDocument:'옵션 본문',
   startPage:'시작 정보',productPage:'상품 정보',imagePage:'이미지 연결',legalPage:'법적 서류 정보',logisticsPage:'물류 정보',sourcingPage:'소싱 정보',
   certificates:'인증 항목',notices:'상품정보 제공고시',noticeItemName:'고시 항목명',noticeItemValue:'고시 항목 값',noticeContent:'고시 내용',commonAttributes:'공통 속성',exposedAttributes:'노출 속성',unexposedAttributes:'비노출 속성',attributeName:'속성명',attributeValue:'속성 값',
@@ -79,6 +82,8 @@ export function SupplierHubProductTransport(props:Props){
   const [originalAuditReport,setOriginalAuditReport]=useState<{context:NonNullable<typeof originalAuditContext>;report:UnexpectedLegalAuditReport}|null>(null);
   const shownOriginalAudit=originalAuditCurrent&&originalAuditReport?.context===originalAuditContext?originalAuditReport.report:null;
   const originalSerializationDiagnostics=shownOriginalAudit?nativeSerializationDiagnostics(review.identity.schemaSha256,shownOriginalAudit.bodyLeafDifferences):null;
+  const [savedValidationReport,setSavedValidationReport]=useState<{context:NonNullable<typeof originalAuditContext>;report:SavedDocumentStepValidationReport}|null>(null);
+  const shownSavedValidation=originalAuditCurrent&&savedValidationReport?.context===originalAuditContext?savedValidationReport.report:null;
   const [releasedValidation,setReleasedValidation]=useState<{token:object;docId:string|number;rejection:ProductValidationRejection}|null>(null);
   const [draftReadHint,setDraftReadHint]=useState<{token:object;requestId:string;docId:string|number;state:string;identityDigest:string;packetDigest:string;originalBodySha256:string;preparedBodySha256:string;savedDraftTargetClosed?:boolean;continuationSnapshot?:boolean;resumeSnapshot?:boolean;nativeFileListObserved?:boolean}|null>(null);
   const [finishedReadError,setFinishedReadError]=useState<{token:object;session:ProductDocumentSession;intent:ProductDocumentPending;docId:string|number;message:string;reviewDigest:string;identityDigest:string;packetDigest:string;originalBodySha256:string;preparedBodySha256:string}|null>(null);
@@ -160,7 +165,7 @@ export function SupplierHubProductTransport(props:Props){
     },Math.max(0,challenge.expiresAt-Date.now()));return()=>clearTimeout(timer);
   },[state?.challenge]);
   const canEnter=()=>reviewEpoch.current===reviewToken&&current.current.mounted&&!current.current.props.disabled&&!pending.current&&current.current.props.review===review&&current.current.intentReady&&!current.current.intentError;
-  function begin(){const controller=new AbortController();pending.current=controller;setFinishedReadError(null);setFinishedPreviewReadError(null);setOriginalAuditReport(null);setBusy(true);setError('');current.current.props.onLockChange(true,true);
+  function begin(){const controller=new AbortController();pending.current=controller;setFinishedReadError(null);setFinishedPreviewReadError(null);setOriginalAuditReport(null);setSavedValidationReport(null);setBusy(true);setError('');current.current.props.onLockChange(true,true);
     return {controller,alive:()=>reviewEpoch.current===reviewToken&&current.current.mounted&&current.current.props.review===review&&!controller.signal.aborted&&pending.current===controller,
       active:()=>reviewEpoch.current===reviewToken&&current.current.mounted&&current.current.props.review===review&&!current.current.props.disabled&&!controller.signal.aborted&&pending.current===controller,
       finish:()=>{if(pending.current===controller){pending.current=null;if(current.current.mounted)setBusy(false);}}};}
@@ -258,6 +263,24 @@ export function SupplierHubProductTransport(props:Props){
       // claim the web reservation, delete files or enable registration.
       setOriginalAuditReport({context,report});
     }catch(cause){if(active()){const failure=unexpectedLegalAuditReadError(cause);setError(`읽기 전용 대조 중단 · ${auditPhaseLabels[auditPhase]} [${failure.code}] ${failure.message}`);}}
+    finally{task.finish();}
+  }
+  async function inspectOriginalSavedStages(){
+    if(!canEnter()||!originalAuditCurrent||!originalAuditContext||!shownOriginalAudit||reconnectInputRef.current!==originalAuditContext.input||current.current.session||current.current.intent||current.current.state||current.current.unsaved)return;
+    const context=originalAuditContext,input=context.input,audit=shownOriginalAudit,requestId=input.requestId.trim(),docId=input.docId.trim();
+    if(audit.requestId!==requestId||String(audit.docId)!==docId)return;
+    const task=begin(),active=()=>task.active()&&reconnectInputRef.current===input&&!current.current.session&&!current.current.intent&&!current.current.state&&!current.current.unsaved&&!current.current.intentError;
+    const freshValidation=async()=>{await fresh(task);if(!active()||readProductDocumentPending(review)!==null)throw Error('원래 문서의 단계 검사 범위가 변경되었습니다.');assertProductDocumentNotRejected(review);};
+    try{
+      await freshValidation();const now=draftOperationTime(),packet=await createProductDocumentPacket(review,{requestId,createdAt:now,now});
+      await freshValidation();const preview=await previewProductDocument(packet,task.controller.signal);await freshValidation();
+      if(preview.packet.requestId!==requestId||productReceiptCanonical(preview.packet.review)!==productReceiptCanonical(review))throw Error('원래 문서의 연결이 다릅니다.');
+      const report=await validateSavedDocumentSteps(preview,audit,task.controller.signal);await freshValidation();
+      if(report.requestId!==requestId||String(report.docId)!==docId||report.identityDigest!==preview.preview.identityDigest||report.packetDigest!==preview.packetDigest)throw Error('검사 결과의 원래 문서 연결이 다릅니다.');
+      // An observed validation result does not adopt the original draft or
+      // change its mismatch, consent, reservation or receipt state.
+      setOriginalAuditReport({context,report:audit});setSavedValidationReport({context,report});
+    }catch(cause){if(active())setError(cause instanceof ProductDocumentBridgeError&&cause.code==='SAVED_DOCUMENT_STEP_VALIDATION_UNAVAILABLE'?cause.message:'저장 문서 단계 검사 결과를 확인하지 못했습니다. 응답이 미확정일 수 있어 자동 재검사는 하지 않았습니다. 파일·본문 저장이나 최종 제출도 실행하지 않았습니다.');}
     finally{task.finish();}
   }
   async function persist(attempt:NonNullable<typeof unsaved>,task:ReturnType<typeof begin>){
@@ -546,12 +569,26 @@ export function SupplierHubProductTransport(props:Props){
       </section>}
       {originalAuditCurrent&&<section aria-label="원래 문서 저장 내용 대조">
         <button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void auditOriginalSavedDocument()}>원래 문서 본문·첨부 전체 대조 · 읽기 전용</button>
+        <button type="button" className="btn ghost" disabled={disabled||busy||!shownOriginalAudit} onClick={()=>void inspectOriginalSavedStages()}>쿠팡 저장 문서 단계 검사 · 파일·본문 저장 안 함</button>
+        {shownSavedValidation&&<section aria-label="쿠팡 저장 문서 단계 검사 결과">
+          <h4>문서 {String(shownSavedValidation.docId)} · 쿠팡 단계 검사</h4>
+          <p>쿠팡에 저장된 문서의 검사를 요청한 결과입니다. 파일·본문 저장, 새 문서 생성, 최종 제출은 하지 않았습니다. 검사 통과는 실제 접수 완료를 뜻하지 않습니다.</p>
+          {shownSavedValidation.stages.map(row=><section key={row.stage} aria-label={`쿠팡 ${row.stage}단계 ${savedValidationStages[row.stage]} 검사`}>
+            <strong>{savedValidationStages[row.stage]} · {{passed:'검사 통과',rejected:'오류 확인',uncertain:'결과 미확정'}[row.state]}</strong>
+            <p>{row.cached?'보관된 동일 문서 검사 결과 · 이번 검사 요청 없음':row.requested?'검사 요청 1회':'검사 요청 없음'}{row.failureCode?` · ${savedValidationFailures[row.failureCode]}`:''}</p>
+            {row.errors.length>0&&<table><caption>쿠팡 검증 오류 · 응답 행은 상품 옵션 번호와 다릅니다.</caption><thead><tr><th>서버 응답 행</th><th>항목</th><th>오류 분류 · 참고</th></tr></thead><tbody>{row.errors.map((item,index)=><tr key={index}><td>{item.rowIndex+1}</td><td>{item.columnName}</td><td>{savedValidationCategories[item.category]}</td></tr>)}</tbody></table>}
+            {row.errorsTruncated&&<p>오류 {row.errorCount}개 중 일부만 표시합니다. 표시되지 않은 오류도 확인이 필요합니다.</p>}
+          </section>)}
+        </section>}
         {shownOriginalAudit&&<div role="status">
           <p>문서 {String(shownOriginalAudit.docId)} · 이미지 {shownOriginalAudit.imageCount}개 대조 · 서류 첨부 {shownOriginalAudit.legalCount}개 · 원래 본문 {shownOriginalAudit.bodyMatchesExpected?'일치':'불일치'}</p>
           <p>조회 결과만 확인했습니다. 파일 삭제·본문 저장·등록전송은 실행하지 않았습니다.</p>
-          {shownOriginalAudit.legalEntries.length>0&&<table><caption>현재 서류 첨부 연결</caption><thead><tr><th>첨부</th><th>종류</th><th>인증 항목 연결</th></tr></thead><tbody>
-            {shownOriginalAudit.legalEntries.map(row=><tr key={row.index}><td>{row.index+1}</td><td>{row.kind==='certificate'?'인증서':'기타 서류'}</td><td>{{unlinked:'연결 없음',linked:'연결됨',ambiguous:'여러 항목 연결',unknown:'확인 필요'}[row.association]}</td></tr>)}
-          </tbody></table>}
+          {shownOriginalAudit.legalEntries.length>0&&<>
+            <p>종류는 쿠팡 서버의 분류이며, 인증 항목 연결은 파일명 규칙을 대조한 결과입니다. 파일 내용의 동일 여부나 필요한 서류인지는 이 결과만으로 판단하지 않습니다.</p>
+            <table><caption>현재 서류 첨부 연결</caption><thead><tr><th>첨부</th><th>서버 분류</th><th>인증서 파일명 규칙</th><th>이미지 저장 객체 대조</th><th>한글표시사항 파일명 참조</th><th>첨부 식별 지문</th></tr></thead><tbody>
+              {shownOriginalAudit.legalEntries.map(row=><tr key={row.index}><td>{row.index+1}</td><td>{row.kind==='certificate'?'인증서':'기타 서류'}</td><td>{{unlinked:'certN- 규칙 연결 없음',linked:'certN- 규칙 일치',ambiguous:'여러 인증 항목 규칙 일치',unknown:'규칙 확인 필요'}[row.association]}</td><td>{row.pairedImageDescriptorMatch?'파일명·저장 위치 일치':'동일 이미지 객체로 확인되지 않음'}</td><td>{row.expectedLabelReferences===null?'확인되지 않음':`${row.expectedLabelReferences}회`}</td><td><code style={{overflowWrap:'anywhere'}}>{row.descriptorSha256}</code></td></tr>)}
+            </tbody></table>
+          </>}
           {shownOriginalAudit.bodyLeafDifferences&&<details open><summary>본문 세부 항목 대조 · 표시 {shownOriginalAudit.bodyLeafDifferences.rows.length}개</summary>
             {originalSerializationDiagnostics&&<p>공식 저장 형식과 같은 패턴 {originalSerializationDiagnostics.patternCount}개 · 별도 확인 {originalSerializationDiagnostics.unclassifiedCount}개. 같은 패턴은 원래 값이 보존되었다는 뜻이 아닙니다. 본문 불일치와 등록 차단은 유지됩니다.</p>}
             <p>원문 값 대신 저장 경로·자료형·값 상태만 표시합니다.</p>
@@ -570,7 +607,7 @@ export function SupplierHubProductTransport(props:Props){
     </details>}
     {session&&<p>회사 {review.identity.company.name} · 포함 옵션 {session.packet.review.members.length}개 · 견적 문서 1개 · 전체 본문 대조 완료</p>}
     {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&!intent&&!state?.preparedLifecycle&&<p role="status">전체 문서의 실제 접수 연결을 검수 중입니다. 현재 상품은 전송하지 않았습니다.</p>}
-    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.71.zip" download>통합 확장 2.1.71 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
+    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.72.zip" download>통합 확장 2.1.72 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
     {session?.preview.draftPreparationAvailable===true&&!state?.preparedLifecycle&&<section aria-label="새 견적 초안 준비">
       <p>{intent?'원래 요청과 문서의 파일·본문 저장 및 단계 검증 결과를 확인합니다.':'로그인한 Supplier Hub에 새 견적 초안 한 개를 만들고 저장한 이미지·본문과 단계 검증을 확인합니다.'} 약관 동의와 최종 제출은 진행하지 않습니다.</p>
       {currentDraftHint&&<p role="status">원래 문서 {String(currentDraftHint.docId)} · {currentDraftHint.state==='update-requested'?'파일·본문 저장 결과 미확인':currentDraftHint.state==='validation-requested'?'단계 검증 결과 미확인':'초안 상태 확인 필요'} · 같은 요청 유지</p>}

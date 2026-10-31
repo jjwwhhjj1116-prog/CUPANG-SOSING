@@ -378,6 +378,45 @@ test('terminal transport metadata is copied away before strict local receipt sav
 
 
 function legalAuditReply(f){return{format:'yoofam-unexpected-legal-audit-v1',requestId:f.packet.requestId,docId:2347603,identityDigest:f.context.identityDigest,packetDigest:f.context.packetDigest,originalBodySha256:f.context.originalBodySha256,preparedBodySha256:f.context.bodySha256,sourcePlanSha256:f.context.identity.fingerprint,checkpointSequence:24,target:{tabId:90,windowId:f.context.identity.windowId},observedAt:f.clock.now,imageCount:4,legalCount:1,bodyMatchesExpected:true,schemaBindingComplete:false,rawBodySha256:'1'.repeat(64),normalizedBodySha256:f.context.bodySha256,fileSetSha256:'2'.repeat(64),byteSetSha256:'3'.repeat(64),legalSetSha256:'4'.repeat(64),legalEntries:[{index:0,kind:'certificate',descriptorSha256:'5'.repeat(64),association:'unknown',schemaIndex:null,pairedImageDescriptorMatch:false,expectedLabelReferences:0}],legalEntriesTruncated:false,differences:[],differenceCount:0,differencesTruncated:false,readOnly:true,remoteWrites:false,checkpointWrites:false,canResume:false,canDelete:false,registered:false,historicalAckRecovered:false};}
+
+function savedStepReply(f){const audit=legalAuditReply(f);return{format:'yoofam-saved-document-step-validation-v1',requestId:audit.requestId,docId:audit.docId,identityDigest:audit.identityDigest,packetDigest:audit.packetDigest,originalBodySha256:audit.originalBodySha256,preparedBodySha256:audit.preparedBodySha256,sourcePlanSha256:audit.sourcePlanSha256,checkpointSequence:audit.checkpointSequence,target:audit.target,observedAt:f.clock.now,actualRawBodySha256:audit.rawBodySha256,fileSetSha256:audit.fileSetSha256,legalSetSha256:audit.legalSetSha256,
+ stages:[{stage:2,state:'passed',responseRows:2,errors:[],errorCount:0,errorsTruncated:false,cached:false,requested:true,failureCode:null},{stage:3,state:'rejected',responseRows:3,errors:[{rowIndex:2,columnName:'한글 표시사항 동의',category:'consent'}],errorCount:1,errorsTruncated:false,cached:false,requested:true,failureCode:null}],bodyWrites:false,fileWrites:false,created:false,submitted:false,canResume:false,registered:false};}
+
+test('saved-document validation is a separate capability, correlates the prior audit and never submits or saves a receipt',async()=>{
+ const f=await fixture(),old=await f.session();await assert.rejects(f.client.validateSavedDocumentSteps(old,legalAuditReply(f),new AbortController().signal),error=>error.code==='SAVED_DOCUMENT_STEP_VALIDATION_UNAVAILABLE'&&!error.uncertain);assert.equal(f.sent.length,1);
+ f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,unexpectedLegalAuditAvailable:true,savedDocumentStepValidationAvailable:true});const session=await f.session(),before=canonical(session),audit=legalAuditReply(f),auditBefore=canonical(audit);
+ f.bridge=async payload=>{assert.equal(payload.action,'validateSavedDocumentSteps');assert.equal(Object.hasOwn(payload,'confirmation'),false);return savedStepReply(f);};
+ const report=await f.client.validateSavedDocumentSteps(session,audit,new AbortController().signal);assert.equal(report.stages[1].errors[0].rowIndex,2);assert.equal(report.canResume,false);assert.equal(report.registered,false);assert.ok(Object.isFrozen(report));
+ assert.equal(canonical(session),before);assert.equal(canonical(audit),auditBefore);assert.equal(f.calls.length,0);assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);assert.deepEqual(f.sent.map(row=>row.payload.action),['preview','preview','validateSavedDocumentSteps']);
+});
+
+test('saved-document validation refuses an unrelated audit before requesting and rejects changed target/body/file proof without retry',async()=>{
+ const f=await fixture();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,unexpectedLegalAuditAvailable:true,savedDocumentStepValidationAvailable:true});const session=await f.session();
+ for(const patch of [audit=>audit.identityDigest='f'.repeat(64),audit=>audit.sourcePlanSha256='e'.repeat(64)]){const audit=legalAuditReply(f);patch(audit);await assert.rejects(f.client.validateSavedDocumentSteps(session,audit,new AbortController().signal),error=>error.code==='SAVED_DOCUMENT_STEP_VALIDATION_SCOPE'&&!error.uncertain);}
+ assert.equal(f.sent.length,1);
+ for(const change of [row=>row.docId=999,row=>row.target.tabId++,row=>row.actualRawBodySha256='f'.repeat(64),row=>row.fileSetSha256='e'.repeat(64),row=>row.legalSetSha256='d'.repeat(64),row=>row.submitted=true,row=>row.bodyWrites=true,row=>row.readOnly=true]){
+  f.bridge=async()=>{const report=savedStepReply(f);change(report);return report;};const count=f.sent.length;
+  await assert.rejects(f.client.validateSavedDocumentSteps(session,legalAuditReply(f),new AbortController().signal),error=>error.code==='SAVED_DOCUMENT_STEP_VALIDATION_REPLY'&&error.uncertain);assert.equal(f.sent.length,count+1);
+ }
+ assert.ok(f.sent.every(row=>['preview','validateSavedDocumentSteps'].includes(row.payload.action)));assert.equal(f.calls.length,0);
+});
+
+test('saved-document validation missing response remains uncertain and sends one message at its independent deadline',async()=>{
+ const f=await fixture();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,unexpectedLegalAuditAvailable:true,savedDocumentStepValidationAvailable:true});const session=await f.session();f.bridge=()=>new Promise(()=>{});
+ const pending=f.client.validateSavedDocumentSteps(session,legalAuditReply(f),new AbortController().signal);await f.wait(()=>f.sent.length===2);f.advance(299999);await new Promise(resolve=>setImmediate(resolve));assert.equal(f.timers.size,1);f.advance(1);
+ await assert.rejects(pending,error=>error.code==='PRODUCT_DOCUMENT_ACK_MISSING'&&error.uncertain);f.advance(1_000_000);assert.deepEqual(f.sent.map(row=>row.payload.action),['preview','validateSavedDocumentSteps']);assert.equal(f.calls.length,0);assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);
+});
+
+test('saved-document validation uses a bounded historical audit only as correlation while requiring a fresh delivered result',async()=>{
+ const f=await fixture();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,unexpectedLegalAuditAvailable:true,savedDocumentStepValidationAvailable:true});const session=await f.session();
+ const prior=legalAuditReply(f);prior.observedAt-=90000;f.bridge=async()=>savedStepReply(f);
+ const report=await f.client.validateSavedDocumentSteps(session,prior,new AbortController().signal);assert.equal(report.stages[1].state,'rejected');assert.equal(f.sent.length,2);
+ for(const age of [f.client.SAVED_DOCUMENT_VALIDATION_BASELINE_MAX_AGE_MS+1,-60001]){
+  const stale=legalAuditReply(f);stale.observedAt-=age;await assert.rejects(f.client.validateSavedDocumentSteps(session,stale,new AbortController().signal),error=>error.code==='SAVED_DOCUMENT_STEP_VALIDATION_SCOPE'&&!error.uncertain);
+ }
+ assert.equal(f.sent.length,2);assert.equal(f.calls.length,0);
+ f.bridge=async()=>({...savedStepReply(f),observedAt:f.clock.now-60001});await assert.rejects(f.client.validateSavedDocumentSteps(session,prior,new AbortController().signal),error=>error.code==='SAVED_DOCUMENT_STEP_VALIDATION_REPLY'&&error.uncertain);assert.equal(f.sent.length,3);
+});
 test('audit client requires its explicit capability and returns a frozen correlated read-only report without adopting draft state',async()=>{
  const f=await fixture(),old=await f.session();await assert.rejects(f.client.auditUnexpectedLegal(old,new AbortController().signal),error=>error.code==='UNEXPECTED_LEGAL_AUDIT_UNAVAILABLE'&&!error.uncertain);assert.equal(f.sent.length,1);
  f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,unexpectedLegalAuditAvailable:true});const session=await f.session(),before=plain(session);f.bridge=async payload=>{assert.equal(payload.action,'auditUnexpectedLegal');return legalAuditReply(f);};
