@@ -3,9 +3,10 @@ import {readPageDomDetails,waitForPageDomDetails} from '../extensions/supplier-h
 import {hydratePageForCapture} from '../extensions/supplier-hub/page-hydration.mjs';
 import {createPageCaptureObservations} from '../extensions/supplier-hub/page-capture-observations.mjs';
 import {readProductSectionLinks,readProductSectionStructure} from '../extensions/supplier-hub/page-dom-sections.mjs';
+import {version as COLLECTOR_SCRIPT_VERSION} from '../extensions/supplier-hub/manifest.json';
 // This identifies the injected script itself, even when an older open page
-// outlives an extension update. The runtime manifest is not that proof.
-const COLLECTOR_SCRIPT_VERSION='2.1.70';
+// outlives an extension update. esbuild embeds this manifest version at build
+// time; querying the current runtime manifest would not identify an old script.
 const COLLECTOR_HOST_ID='yoofam-page-collector',COLLECTOR_OWNER='yoofam-studio';
 const OWNER_ATTRIBUTE='data-yoofam-collector-owner',VERSION_ATTRIBUTE='data-yoofam-collector-version',LEASE_ATTRIBUTE='data-yoofam-collector-capture';
 // Existing extensions/supplier-hub/icons/yoofam.svg, embedded to keep the
@@ -178,9 +179,11 @@ function installPageCollector(){
       assertActive();if(pageSourceUrl(location.href).sourceUrl!==before)throw Error('상품 페이지가 변경되었습니다. 다시 수집해주세요.');
       if(descriptionResult?.ok===true&&descriptionResult.available===true){
        if(descriptionResult.sourceUrl!==before||descriptionResult.offerId!==snapshot.offerId||!Array.isArray(descriptionResult.detailImages)||!descriptionResult.detailImages.length||descriptionResult.detailImages.length>80)throw Error('상세문서 응답이 현재 상품과 다릅니다.');
-       const images=snapshot.images.filter(image=>image.role!=='detail'),known=new Set(images.map(image=>image.url));
+       const images=snapshot.images.filter(image=>image.role!=='detail'),known=new Set();
        // The bound document supplies the body order. Preserve DOM-only detail
        // observations afterwards and retain every existing non-detail role.
+       // A URL explicitly observed in the description may also be a main or
+       // option image; deduplicate detail placements, not unrelated roles.
        for(const url of [...descriptionResult.detailImages,...snapshot.images.filter(image=>image.role==='detail').map(image=>image.url)]){if(typeof url!=='string')throw Error('상세문서 이미지 응답을 확인하지 못했습니다.');if(!known.has(url)){images.push({url,role:'detail'});known.add(url);}}
        snapshot=validatePageSourceForDelivery({...snapshot,images});
        captureDiagnostics.description='captured';

@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {build} from 'esbuild';
 import {fileURLToPath} from 'node:url';
+import {readFileSync} from 'node:fs';
 import {pageCollectorDom} from './helpers/page-collector-dom.mjs';
 
+const manifestVersion=JSON.parse(readFileSync(new URL('../extensions/supplier-hub/manifest.json',import.meta.url),'utf8')).version;
 const bundle=await build({entryPoints:[fileURLToPath(new URL('../deployment/extension-page-collector.mjs',import.meta.url))],bundle:true,write:false,format:'iife',platform:'browser',target:'chrome120',plugins:[{name:'inert-lifecycle-source',setup(build){
  build.onLoad({filter:/[/\\]page-source\.mjs$/},()=>({loader:'js',contents:`
   export const pageSourceUrl=value=>{const url=new URL(value);return {sourceUrl:url.origin+url.pathname};};
@@ -14,6 +16,8 @@ const bundle=await build({entryPoints:[fileURLToPath(new URL('../deployment/exte
  `}));
  build.onLoad({filter:/[/\\]page-dom-details\.mjs$/},()=>({loader:'js',contents:'export const readPageDomDetails=()=>({description:"",detailImages:[]});export const waitForPageDomDetails=()=>{globalThis.sourceReads++;return globalThis.readDetails();};'}));
 }}]});
+const compiledVersion=JSON.stringify(manifestVersion),compiledSource=bundle.outputFiles[0].text;
+assert.ok(compiledSource.split(compiledVersion).length-1>=1,'the build must embed the selected manifest version before synthetic version replacement');
 const HOST='yoofam-page-collector',OWNER='data-yoofam-collector-owner',VERSION='data-yoofam-collector-version',LEASE='data-yoofam-collector-capture';
 const sourceUrl='https://detail.1688.com/offer/886034098637.html',snapshot={format:'yoofam-page-source-v1',sourceUrl,offerId:'886034098637',collectedAt:'2026-10-23T01:00:00.000Z',title:'합성 상품',description:'',attributes:[],options:[{key:'black',name:'검정'}],images:[]};
 function harness(){
@@ -23,24 +27,33 @@ function harness(){
  const context={window,document:dom.document,location:{href:sourceUrl},URL,Date:ClockDate,Error,TextEncoder,captureFixture:snapshot,sourceReads:0,readDetails:()=>({description:'',detailImages:[]}),
   respond:()=>({ok:true,delivered:true}),chrome:{runtime:{getManifest(){assert.fail('no manifest identity shortcut');},sendMessage:async message=>{messages.push(structuredClone(message));return context.respond(message);}}},fetch(){assert.fail('lifecycle must not fetch');}};
  const makeHost=({owner,version,tag='div',open=false}={})=>{const host=dom.document.createElement(tag);host.id=HOST;host.style.cssText='position:fixed;right:22px;bottom:86px;z-index:2147483646;';host.attachShadow({mode:open?'open':'closed'});if(owner!==undefined)host.setAttribute(OWNER,owner);if(version!==undefined)host.setAttribute(VERSION,version);dom.document.documentElement.append(host);return host;};
- const install=(version='2.1.63')=>{vm.runInNewContext(bundle.outputFiles[0].text.replaceAll('"2.1.63"',JSON.stringify(version)),context);const host=dom.document.getElementById(HOST),children=host?.testShadow?.childNodes??[];return {host,button:children.find(node=>node.tag==='button'),launcher:children.find(node=>node.className==='launcher'),status:children.find(node=>node.tag==='p'),badge:children.find(node=>node.tag==='small'),style:children.find(node=>node.tag==='style')};};
+ const install=(version=manifestVersion)=>{vm.runInNewContext(compiledSource.replaceAll(compiledVersion,JSON.stringify(version)),context);const host=dom.document.getElementById(HOST),children=host?.testShadow?.childNodes??[];return {host,button:children.find(node=>node.tag==='button'),launcher:children.find(node=>node.className==='launcher'),status:children.find(node=>node.tag==='p'),badge:children.find(node=>node.tag==='small'),style:children.find(node=>node.tag==='style')};};
  return {...dom,context,messages,makeHost,install,advance:ms=>{now+=ms;},get now(){return now;}};
 }
 
 test('only the exact legacy closed-shadow host or an explicitly owned older/unversioned host is replaced without reading the product',()=>{
  for(const attributes of [{},{owner:'yoofam-studio'},{owner:'yoofam-studio',version:'2.1.23'}]){
   const h=harness(),old=h.makeHost(attributes),current=h.install();assert.notEqual(current.host,old);assert.equal(old.isConnected,false);
-  assert.equal(current.host.getAttribute(OWNER),'yoofam-studio');assert.equal(current.host.getAttribute(VERSION),'2.1.63');assert.equal(current.badge.textContent,'수집기 2.1.63');
+  assert.equal(current.host.getAttribute(OWNER),'yoofam-studio');assert.equal(current.host.getAttribute(VERSION),manifestVersion);assert.equal(current.badge.textContent,`수집기 ${manifestVersion}`);
   assert.equal(h.context.sourceReads,0);assert.equal(h.messages.length,0);
  }
 });
 
 test('same/newer versions are idempotent; foreign/open-shadow/unknown-version same-ID hosts fail closed',()=>{
- for(const attributes of [{owner:'yoofam-studio',version:'2.1.63'},{owner:'yoofam-studio',version:'2.1.64'},
+ const newer=manifestVersion.split('.').map((part,index)=>Number(part)+(index===2?1:0)).join('.');
+ for(const attributes of [{owner:'yoofam-studio',version:manifestVersion},{owner:'yoofam-studio',version:newer},
   {owner:'someone-else',version:'2.1.23'},{owner:'yoofam-studio',version:'unknown'},{tag:'span'},{open:true}]){
   const h=harness(),old=h.makeHost(attributes),count=h.elements.length,current=h.install();assert.equal(current.host,old);assert.equal(old.isConnected,true);assert.equal(h.elements.length,count);assert.equal(h.context.sourceReads,0);assert.equal(h.messages.length,0);
  }
  const h=harness(),first=h.install(),count=h.elements.length;assert.equal(h.install().host,first.host);assert.equal(h.elements.length,count);
+});
+
+test('the manifest-bound build replaces the former 2.1.70 script marker while the old closure retains its own identity',async()=>{
+ const h=harness(),old=h.install('2.1.70');
+ assert.equal(old.host.getAttribute(VERSION),'2.1.70');assert.equal(old.badge.textContent,'수집기 2.1.70');
+ const current=h.install();assert.notEqual(current.host,old.host);assert.equal(old.host.isConnected,false);
+ assert.equal(current.host.getAttribute(VERSION),manifestVersion);assert.equal(current.badge.textContent,`수집기 ${manifestVersion}`);
+ assert.equal(old.badge.textContent,'수집기 2.1.70');await old.button.click({isTrusted:true});assert.equal(h.messages.length,0);assert.equal(h.context.sourceReads,0);
 });
 
 test('a disconnected/replaced old handler cannot begin another capture or change either version status',async()=>{

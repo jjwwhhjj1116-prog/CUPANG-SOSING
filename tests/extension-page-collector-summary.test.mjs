@@ -5,7 +5,7 @@ import {build} from 'esbuild';
 import {fileURLToPath} from 'node:url';
 import {readFileSync} from 'node:fs';
 import {pageCollectorDom} from './helpers/page-collector-dom.mjs';
-const collectorVersion=readFileSync(new URL('../deployment/extension-page-collector.mjs',import.meta.url),'utf8').match(/const COLLECTOR_SCRIPT_VERSION='([\d.]+)'/u)[1];
+const collectorVersion=JSON.parse(readFileSync(new URL('../extensions/supplier-hub/manifest.json',import.meta.url),'utf8')).version;
 
 // Exercise the production button, delivery branches and status rendering. The
 // parser is separately tested against DOM fixtures; no page/network is opened.
