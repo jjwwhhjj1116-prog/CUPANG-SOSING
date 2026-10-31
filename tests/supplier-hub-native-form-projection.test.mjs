@@ -27,6 +27,28 @@ test('native projection retains required osrp/notice and rejects meaningful shar
   const next=fixture();edit(next);const before=JSON.stringify(next);assert.throws(()=>project(next.schema,next.payload));assert.equal(JSON.stringify(next),before);
  }
 });
+
+test('native agreement controls still reject nonboolean, missing and mixed per-option values without changing saved inputs',()=>{
+ for(const key of ['msrpAgree','labelContactAgreed']){
+  for(const value of [null,undefined,'true','false',0,1,{},[]]){
+   const f=fixture();for(const row of f.payload.jsonDocument){if(value===undefined)delete row.imagePage[key];else row.imagePage[key]=value;}
+   const before=JSON.stringify(f);assert.throws(()=>project(f.schema,f.payload));assert.equal(JSON.stringify(f),before);
+  }
+  const f=fixture();f.payload.jsonDocument[0].imagePage[key]=true;
+  const before=JSON.stringify(f);assert.throws(()=>project(f.schema,f.payload));assert.equal(JSON.stringify(f),before);
+ }
+});
+
+test('optional declared native agreement controls remain shared across options while preserving uniform saved true or false',()=>{
+ for(const key of ['msrpAgree','labelContactAgreed'])for(const value of [true,false]){
+  const f=fixture();f.schema.properties.imagePage.required=f.schema.properties.imagePage.required.filter(name=>name!==key);
+  for(const row of f.payload.jsonDocument)row.imagePage[key]=value;
+  const before=JSON.stringify(f),out=project(f.schema,f.payload);assert.equal(JSON.stringify(f),before);
+  assert.deepEqual(plain(out.jsonDocument.map(row=>row.imagePage[key])),[value,value,value]);
+  f.payload.jsonDocument[1].imagePage[key]=!value;const mixed=JSON.stringify(f);
+  assert.throws(()=>project(f.schema,f.payload));assert.equal(JSON.stringify(f),mixed);
+ }
+});
 function projectionInput(){
  const snapshot=syntheticSnapshot(),raw=JSON.parse(snapshot.schemaString);
  function fill(node){if(node.properties){node.required=Object.keys(node.properties);for(const child of Object.values(node.properties))fill(child);}else if(node.allOf){for(const entry of node.allOf)fill(entry.contains);const [nameKey,valueKey]=Object.keys(node.allOf[0].contains.properties);node.examples=[node.allOf.map(entry=>({[nameKey]:entry.contains.properties[nameKey].enum[0],[valueKey]:''}))];}else if(!node.enum)node.examples=[Object.hasOwn(node,'default')?node.default:node.type==='integer'?7:node.type==='boolean'?false:''];}
@@ -48,18 +70,30 @@ test('real saved-value projector keeps legacy output stable and binds only expli
  await assert.rejects(project({...f.input,nativeSerializationPolicy:'unknown'}),error=>error.code==='SINGLE_NATIVE_SERIALIZATION_POLICY');
 });
 
-test('new projection placeholders receive exact private bytes through the actual native source plan, compiled review and packet validator',async()=>{
+for(const agreementSource of ['compiled-default-true','manual-false'])test(`new projection placeholders and ${agreementSource} controls retain their original facts through private bytes, compiled review and deferred packet validation`,async()=>{
  const f=projectionInput(),keys=['owner/main.png','owner/add-1.png','owner/add-2.png','owner/detail-top.png','owner/detail-body.png','owner/detail-bottom.png','owner/label.png'];
  f.set(['imagePage','images','mainImage'],undefined,keys[0]);f.set(['imagePage','images','additionalImage'],undefined,keys.slice(1,3).join('\n'));f.set(['imagePage','details','detailedImage'],undefined,keys.slice(3,6).join('\n'));f.set(['imagePage','images','labelImages'],'제품 한글 표시사항 라벨 또는 도안 이미지',keys[6]);
+ const agreementFields=f.schema.fields.filter(field=>field.hubWire?.path[0]==='imagePage'&&['msrpAgree','labelContactAgreed'].includes(field.hubWire.path[1]));
+ assert.equal(agreementFields.length,2);const originalAgreement=agreementSource==='compiled-default-true';
+ for(const field of agreementFields){assert.equal(field.draftDefault,'true');f.set(field.hubWire.path,undefined,originalAgreement?field.draftDefault:'false',originalAgreement?'couplus-default':'manual-option');}
  const second=structuredClone(f.row);second.optionId='synthetic-two';second.optionLabel='흰색';f.resolved.rows.push(second);
- const before=JSON.stringify(f.input),projection=await module('app/supplier-hub-single-projection.ts').projectSupplierHubSingleDocument({...f.input,nativeSerializationPolicy:policy});
+ const projectSaved=module('app/supplier-hub-single-projection.ts').projectSupplierHubSingleDocument,before=JSON.stringify(f.input),legacyBefore=JSON.stringify(await projectSaved(f.input)),projection=await projectSaved({...f.input,nativeSerializationPolicy:policy});
  assert.equal(projection.review.unresolvedImages.length,8);assert.equal(projection.payload.jsonDocument[0].imagePage.images.mainImage,' ');
+ assert.equal(projection.humanAgreementsConfirmed,false);assert.equal(projection.remoteWrites,false);
+ for(const row of projection.payload.jsonDocument)for(const key of ['msrpAgree','labelContactAgreed'])assert.equal(row.imagePage[key],originalAgreement);
  const source={productVersion:'2026-10-31T00:00:00.000Z',contentRevision:1,optionRevision:2,quotationRevision:3,profileId:'captured-category',profileRevision:null},identity={ownerId:'owner',productId:'synthetic-native-policy',company:plain(f.input.company),categoryId:f.input.categoryId,categoryPath:[...f.input.categoryPath],schemaSha256:projection.schemaSha256,sourceFingerprint:'b'.repeat(64),inputFingerprint:'c'.repeat(64),source,members:f.resolved.rows.map((row,documentIndex)=>({optionId:row.optionId,optionLabel:row.optionLabel,documentIndex}))};
  const legal=await module('app/native-legal-attachment-plan.ts').buildNativeLegalAttachmentPlan({identity,applicability:'not-applicable',context:{schemaSha256:identity.schemaSha256,categoryId:identity.categoryId,company:identity.company,targets:[],issues:[],files:[],registered:false,remoteWrites:false,submissionReady:false}});
  const assets=keys.map((key,index)=>({key,name:'test.png',data:imageBytes(index),sha256:sha(imageBytes(index))})),metadata=new Map(assets.map(asset=>[asset.key,{size:asset.data.length,httpMetadata:{contentType:'image/png'},customMetadata:{sha256:asset.sha256}}]));
  const plan=await module('app/native-asset-source-plan.ts').buildNativeAssetSourcePlan({identity,projection,ownedKeys:keys,assets,metadata,nativeLegalAttachmentPlan:legal});assert.equal(plan.metadataValid,true,JSON.stringify(plan.issues));assert.equal(plan.images.length,7);
  const byKey=new Map(plan.images.map(file=>[file.key,file]));for(const row of plan.body.jsonDocument){assert.equal(row.imagePage.images.mainImage,byKey.get(keys[0]).transportName);assert.equal(row.imagePage.images.additionalImage,keys.slice(1,3).map(key=>byKey.get(key).transportName).join(','));assert.equal(row.imagePage.details.detailedImage,keys.slice(3,6).map(key=>byKey.get(key).transportName).join(','));assert.equal(row.imagePage.images.labelImages[0].labelImageFiles,byKey.get(keys[6]).transportName);}
  const quotationView={categoryContext:{categoryId:identity.categoryId,categoryPath:identity.categoryPath,profileId:source.profileId},productVersion:source.productVersion,contentRevision:source.contentRevision,optionRevision:source.optionRevision,revision:source.quotationRevision,inputFingerprint:identity.inputFingerprint,resolved:f.resolved,imageKeys:keys};
- const review=await module('app/supplier-hub-native-product-document.ts').compileNativeSupplierHubProductDocument({productId:identity.productId,profileId:source.profileId,quotationView,sourcePlan:plan,ownerId:'owner'}),packet=await createProductDocumentPacket(plain(review));await validateProductDocumentPacket(packet);
+ const review=await module('app/supplier-hub-native-product-document.ts').compileNativeSupplierHubProductDocument({productId:identity.productId,profileId:source.profileId,quotationView,sourcePlan:plan,ownerId:'owner'}),packet=await createProductDocumentPacket(plain(review)),validated=await validateProductDocumentPacket(packet);
  assert.equal(review.body.jsonDocument.length,2);assert.equal(review.originalBodySha256,plan.originalBodySha256);assert.equal(review.preparedBodySha256,plan.preparedBodySha256);assert.equal(JSON.stringify(f.input),before);assert.equal(plan.remoteWrites,false);assert.equal(review.remoteWrites,false);assert.equal(review.registered,false);
+ for(const body of [plan.body,review.body,packet.review.body])for(const row of body.jsonDocument)for(const key of ['msrpAgree','labelContactAgreed'])assert.equal(row.imagePage[key],originalAgreement);
+ for(const row of validated.preparedBody.jsonDocument)for(const key of ['msrpAgree','labelContactAgreed'])assert.equal(row.imagePage[key],false);
+ const canonical=module('app/supplier-hub-product-document.ts').productDocumentReviewCanonical;
+ assert.equal(plan.originalBodySha256,sha(canonical(plan.body)));assert.equal(plan.preparedBodySha256,sha(canonical(validated.preparedBody)));
+ assert.equal(plan.originalBodySha256===plan.preparedBodySha256,!originalAgreement);
+ for(const value of [plan,review,validated,validated.binding]){assert.equal(value.remoteWrites,false);assert.equal(value.registered,false);assert.equal(value.submissionReady,false);}
+ assert.equal(JSON.stringify(await projectSaved(f.input)),legacyBefore);assert.equal(JSON.stringify(f.input),before);
 });

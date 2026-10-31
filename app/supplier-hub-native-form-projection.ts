@@ -146,8 +146,13 @@ export function projectNativeRequiredForm(schema: Node, payload: Node): Node {
     for (const [key, value] of Object.entries(member.imagePage.details)) { if (!safeKey(key) || value !== null && typeof value !== 'string') return fail(); details[key] = typeof value === 'string' ? value.trim() || null : null; }
     (doc.imagePage as Node).images = merge((model.imagePage as Node).images, images);
     (doc.imagePage as Node).details = merge((model.imagePage as Node).details, details);
-    // Initial agreement flags are explicit false in the reviewed projection.
-    for (const key of ['msrpAgree', 'labelContactAgreed']) { if (member.imagePage[key] !== false) return fail(); (doc.imagePage as Node)[key] = false; }
+    // Preserve the exact saved boolean in the reviewed original. The separate
+    // prepared-body hash defers these flags to false; only the action-time
+    // challenge can confirm human agreement. A stored true is not consent.
+    for (const key of ['msrpAgree', 'labelContactAgreed']) {
+      if (typeof member.imagePage[key] !== 'boolean' || member.imagePage[key] !== (first.imagePage as Node)[key]) return fail();
+      (doc.imagePage as Node)[key] = member.imagePage[key];
+    }
     if (index > 0) doc.sourcingPage = {sourcingChannelId: '', sourcingChannelType: ''};
     return doc;
   });
