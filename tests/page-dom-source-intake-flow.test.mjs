@@ -90,7 +90,7 @@ for(const company of companies)test(`${company.code}: two-colour DOM capture bec
   assert.equal(seo.content.seo.title.value,company.name+' 합성 테스트 상품');
   const generated=h.sqlite.prepare("SELECT status,result FROM translation_jobs WHERE product_id=? AND idempotency_key='intake-auto-v1'").get(linked.product_id);
   assert.equal(generated.status,'completed');assert.equal(JSON.parse(generated.result).provenance,'generated');assert.equal(JSON.parse(generated.result).draft.title,'합성 테스트 상품');
-  assert.equal(seo.content.seo.title.provenance,'manual','the existing reviewed apply records the adopted text as a manual field');
+  assert.equal(seo.content.seo.title.provenance,'generated','source-bound automatic provider output retains generated provenance');
   assert.deepEqual(seo.options.rows.map(row=>[row.originalName,row.translatedName,row.unitCostCny,row.supplierSku,row.minimumOrderQuantity]),
    [['黑色 / 均码','검정 / 프리',5.3,'',null],['灰色 / 均码','회색 / 프리',6.1,'',null]]);
   assert.ok(seo.content.assets.main.value.length);assert.ok(seo.content.assets.detail.value.length);
@@ -104,7 +104,7 @@ for(const company of companies)test(`${company.code}: two-colour DOM capture bec
   // The imported draft remains freely editable without rewriting its source.
   seo=await json(await h.route(base+'/seo-workspace',{method:'PATCH',body:{expectedProductVersion:seo.productVersion,expectedContentRevision:seo.content.revision,
    expectedOptionRevision:seo.options.revision,seo:{title:'직접 검토한 합성 상품',keywordText:'검토 태그'},optionNames:[{optionId:seo.options.rows[0].id,value:'직접 검정 / 프리'}]}}));
-  assert.equal(seo.content.seo.title.value,'직접 검토한 합성 상품');assert.equal(seo.options.rows[0].translatedName,'직접 검정 / 프리');
+  assert.equal(seo.content.seo.title.value,'직접 검토한 합성 상품');assert.equal(seo.content.seo.title.provenance,'manual','an explicit owner edit stays manual');assert.equal(seo.options.rows[0].translatedName,'직접 검정 / 프리');
   const edited=h.sqlite.prepare('SELECT payload FROM product_options WHERE product_id=?').get(linked.product_id).payload,aiCount=aiSources.length,downloadCount=h.stats.downloads;
   assert.match(await run(),/기존 상품 열기/);assert.equal(aiSources.length,aiCount);assert.equal(h.stats.downloads,downloadCount);
   assert.equal(h.sqlite.prepare('SELECT payload FROM product_options WHERE product_id=?').get(linked.product_id).payload,edited);

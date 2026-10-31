@@ -4,7 +4,7 @@ import { supplierHubCompany } from '@/app/supplier-hub-company';
 import { collectedTranslationAttributes } from '@/app/collected-translation-attributes';
 import { optionTranslationBatch } from '@/app/option-translation';
 import { collectionSourceReference } from '@/app/sourcing';
-import { createSeoWorkspaceDraftState, parseSeoWorkspaceDraftState, runSeoWorkspaceDraft,refreshSeoWorkspaceDraft,
+import { createSeoWorkspaceDraftState, parseSeoWorkspaceDraftState, seoWorkspaceDraftMatches, runSeoWorkspaceDraft,refreshSeoWorkspaceDraft,
   readSeoGenerationContext,createSeoGenerationDraftState,parseSeoGenerationDraftState,runSeoGenerationDraft,parseSeoGenerationConfiguration,type SeoGenerationConfiguration,
   type SeoWorkspaceDraftState,type SeoGenerationDraftState } from '@/app/seo-workspace-draft';
 import { GOOGLE_TEXT_MODEL, WORKERS_QWEN_MODEL, type TranslationSource, type TranslationView } from '@/app/automation/translation';
@@ -193,7 +193,9 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     const stateKey=identity+':seo-qwen:'+current.updated_at+':'+view.contentRevision+':'+view.optionRevision,pointerKey=identity+':seo-qwen-current';
     const previousKey=controls.retryFailedQwen===true?keys.get(pointerKey)??stateKey:stateKey,stored=keys.get(previousKey);
     let state=stored?parseSeoWorkspaceDraftState(stored,productId):null;
-    const create=()=>createSeoWorkspaceDraftState({productId,productVersion:current.updated_at,contentRevision:view.contentRevision,source:input,configuration:history.configuration,memo:view.memo});
+    const currentInput=()=>({productId,productVersion:current.updated_at,contentRevision:view.contentRevision,source:input,configuration:history.configuration,memo:view.memo});
+    const create=()=>createSeoWorkspaceDraftState(currentInput());
+    let completedReadback:Awaited<ReturnType<typeof refreshSeoWorkspaceDraft>>|null=null;
     if(controls.retryFailedQwen===true){
       if(!state?.jobId)return{status:'blocked',message:'확인된 실패 Qwen 요청이 없어 새 요청을 만들지 않았습니다. 필요한 단계로 새 작업을 시작해주세요.',uncertain:hadPending};
       if([...keys.keys()].some(key=>key.startsWith(identity+':write:seo-qwen:'))||hadPending&&keys.get(pendingKey)!=='Qwen 번역 결과 확인 필요')
@@ -201,27 +203,49 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
       const previous=state;
       const recovered=await refreshSeoWorkspaceDraft(previous,{signal,fetcher,onState:value=>keys.set(previousKey,JSON.stringify(value))});
       await assertCurrent();
-      if(recovered.job?.status!=='failed'||!recovered.closed)return{status:recovered.job?.status==='completed'?'skipped':'blocked',message:'같은 Qwen 요청의 현재 상태만 확인했습니다. 실패로 확인된 요청만 새 초안으로 재시도할 수 있습니다.',uncertain:hadPending||!recovered.closed};
-      const facts=(value:TranslationSource)=>({title:value.title,description:value.description,attributes:value.attributes,reference:value.reference,category:value.category});
-      if(!same(facts(input),facts(previous.source))||!same(view.memo,previous.memo)||previous.configuration.model!==history.configuration.model||previous.configuration.maxOutputTokens!==history.configuration.maxOutputTokens)
-        throw new ScopeChanged('실패 요청 이후 Qwen 원문·참고 입력·설정이 변경됐습니다. 기존 이력을 유지하고 필요한 단계로 새 작업을 시작해주세요.');
-      const fresh=create();
-      if(!same(fresh.source,previous.source)||!same(fresh.memo,previous.memo)||!same(fresh.configuration,previous.configuration))
-        throw new ScopeChanged('실패 요청 이후 Qwen 원문·참고 입력·설정이 변경됐습니다. 기존 이력을 유지하고 필요한 단계로 새 작업을 시작해주세요.');
-      state=fresh;
-      if(previousKey!==stateKey)keys.delete(previousKey);
-      keys.delete(pendingKey);
+      if(!recovered.closed||recovered.job?.status!=='failed'&&(recovered.job?.status!=='completed'||!recovered.job.result||recovered.partial))return{status:recovered.job?.status==='completed'?'skipped':'blocked',message:'같은 Qwen 요청의 현재 상태만 확인했습니다. 실패로 확인된 요청만 새 초안으로 재시도할 수 있습니다.',uncertain:hadPending||!recovered.closed};
+      if(!seoWorkspaceDraftMatches(previous,currentInput())||recovered.job.status==='completed'&&previousKey!==stateKey)
+        throw new ScopeChanged('이전 Qwen 요청 이후 원문·참고 입력·설정이 변경됐습니다. 기존 이력을 유지하고 필요한 단계로 새 작업을 시작해주세요.');
+      if(recovered.job.status==='completed'){
+        // An old deployment could retain only the provider latch after a
+        // failed preview. Exact readback + current request equality authorize
+        // adoption of that same result, never a new UUID/provider execution.
+        completedReadback=recovered;state=previous;
+        if(!keys.has(pendingKey))keys.set(pendingKey,'Qwen 번역 결과 확인 필요');
+      }else{
+        state=create();
+        if(previousKey!==stateKey)keys.delete(previousKey);
+        keys.delete(pendingKey);
+      }
     }else if(!stored)state=create();
     if(!state)throw Error('이전 Qwen 실행 정보를 확인하지 못했습니다. 새 요청은 만들지 않았습니다.');
     keys.set(pointerKey,stateKey);
-    const generated=await seoDraftAttempt(stateKey,state,'Qwen 번역 결과 확인 필요',()=>
+    const ownProviderPending=completedReadback!==null||!keys.has(pendingKey);
+    const generated=completedReadback??await seoDraftAttempt(stateKey,state,'Qwen 번역 결과 확인 필요',()=>
       runSeoWorkspaceDraft(state,{signal,fetcher,confirmAi:true,onState:value=>keys.set(stateKey,JSON.stringify(value))}));
     await assertCurrent();
-    if(generated.job?.status!=='completed'||!generated.job.result)return{status:'blocked',message:generated.message,uncertain:!generated.closed};
+    if(generated.job?.status!=='completed'||!generated.job.result||generated.closed!==true)return{status:'blocked',message:generated.message,uncertain:!generated.closed};
+    // A validated terminal provider result is no longer an unknown execution.
+    // Its exact UUID/job remain in state. The next POST only reads an adoption
+    // preview; a failed read must not permanently fence that completed result.
+    // Never release a prior pending/write marker owned by another attempt.
+    if(!ownProviderPending||keys.get(pendingKey)!=='Qwen 번역 결과 확인 필요'
+      ||[...keys.entries()].some(([key,value])=>['seo:','seo-qwen:','seo-generation:'].some(prefix=>key.startsWith(identity+':write:'+prefix))&&value!=='confirmed'))
+      return{status:'blocked',message:'이전 Qwen 적용·저장 결과를 먼저 확인해주세요. 완료된 번역을 다시 실행하거나 저장하지 않았습니다.',uncertain:true};
+    keys.delete(pendingKey);
     const request={jobId:generated.job.id,expectedVersion:current.updated_at,scope:'all',linkQuotationSeoDefaults:true};
-    const plan=await post<{scope:string;productId:string;productVersion:string;contentRevision:number;optionRevision:number;fingerprint:string;preview:unknown[]}>('/translation-apply',{...request,action:'preview'});
-    if(plan.scope!=='all'||plan.productId!==productId||plan.productVersion!==current.updated_at||plan.contentRevision!==view.contentRevision||plan.optionRevision!==view.optionRevision||!hash(plan.fingerprint)||!Array.isArray(plan.preview))
-      throw Error('Qwen SEO·옵션·표시 속성 적용 범위가 현재 상품과 다릅니다.');
+    let plan:{scope:string;productId:string;productVersion:string;contentRevision:number;optionRevision:number;fingerprint:string;preview:unknown[]};
+    try{
+      plan=await post('/translation-apply',{...request,action:'preview'});
+      if(plan.scope!=='all'||plan.productId!==productId||plan.productVersion!==current.updated_at||plan.contentRevision!==view.contentRevision||plan.optionRevision!==view.optionRevision||!hash(plan.fingerprint)||!Array.isArray(plan.preview))
+        throw Error('Qwen SEO·옵션·표시 속성 적용 범위가 현재 상품과 다릅니다.');
+    }catch(cause){
+      if(signal.aborted||cause instanceof ScopeChanged)throw cause;
+      // Keep later writes from advancing the source under this unapplied job.
+      // A new explicit start can reread this job and its preview; no provider
+      // or application request is retried in the current run.
+      return{status:'failed',message:(cause instanceof Error?cause.message:'Qwen 적용 미리보기를 확인하지 못했습니다.')+' 완료된 Qwen 요청을 유지했습니다. 저장 없이 멈췄으며 다시 작업하면 같은 결과부터 확인합니다.',stop:true};
+    }
     const partial=generated.partial||batch.remaining>0;
     if(!plan.preview.length)return{status:partial?'blocked':'skipped',message:'Qwen 초안을 확인했으며 새로 적용할 값이 없어 직접 수정한 값과 공란을 유지했습니다.'+(partial?' 일부 원문·남은 옵션은 해당 단계에서 확인해주세요.':'')};
     const saved=await once('seo-qwen:'+plan.fingerprint,()=>post<{scope:string;productId:string;productVersion:string;contentRevision:number;optionRevision:number;applied:number}>('/translation-apply',{...request,action:'apply',fingerprint:plan.fingerprint}));

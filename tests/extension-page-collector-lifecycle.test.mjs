@@ -14,7 +14,7 @@ const bundle=await build({entryPoints:[fileURLToPath(new URL('../deployment/exte
   export const readPageSourceDomOptions=()=>[];export const readPageSourceDomFacts=()=>null;export const readPageSourceElementImage=()=>null;
   export const readPageSourceDescriptionReference=()=>null;export const validatePageSourceForDelivery=value=>value;
  `}));
- build.onLoad({filter:/[/\\]page-dom-details\.mjs$/},()=>({loader:'js',contents:'export const readPageDomDetails=()=>({description:"",detailImages:[]});export const waitForPageDomDetails=()=>{globalThis.sourceReads++;return globalThis.readDetails();};'}));
+ build.onLoad({filter:/[/\\]page-dom-details\.mjs$/},()=>({loader:'js',contents:'export const samePageDomDetailsScope=()=>false;export const readPageDomDetails=()=>({description:"",detailImages:[]});export const waitForPageDomDetails=()=>{globalThis.sourceReads++;return globalThis.readDetails();};'}));
 }}]});
 const compiledVersion=JSON.stringify(manifestVersion),compiledSource=bundle.outputFiles[0].text;
 assert.ok(compiledSource.split(compiledVersion).length-1>=1,'the build must embed the selected manifest version before synthetic version replacement');

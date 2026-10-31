@@ -50,12 +50,12 @@ export function seoWorkspaceDraftProvider(configuration: DraftConfiguration) {
     : { kind: 'ai' as const, label: config.model===WORKERS_QWEN_MODEL?'Cloudflare Qwen 번역 초안':'AI 초안', destination: config.model === WORKERS_TEXT_MODEL||config.model===WORKERS_QWEN_MODEL ? 'Cloudflare Workers AI' as const : 'OpenAI Responses API' as const };
 }
 
-/** Memo stays separate from supplier facts. Google translates saved text only;
- * brand/features/keywords do not replace the title, attributes or option names. */
-export function createSeoWorkspaceDraftState(input: {
+type SeoWorkspaceDraftInput={
   productId: string; productVersion: string; contentRevision: number; source: TranslationSource;
   memo: SeoWorkspaceDraftMemo; configuration: DraftConfiguration;
-}): SeoWorkspaceDraftState {
+};
+/** Keep the canonical request basis separate from allocating a new UUID. */
+function workspaceDraftInput(input:SeoWorkspaceDraftInput){
   const source = validateTranslationSource(input.source), memo = memoInput(input.memo);
   const features = [source.guidance?.features && `저장된 특징 참고 메모:\n${source.guidance.features}`,
     memo.brand && `사용자가 입력한 브랜드 참고 · 판매자 사실로 미확인:\n${memo.brand}`,
@@ -64,10 +64,21 @@ export function createSeoWorkspaceDraftState(input: {
   // Initial tags carry this exact canonical keyword list as their provenance.
   // Display headings and newly edited memo must not impersonate that list.
   const keywords = source.guidance?.keywords ?? '';
+  return{productId:input.productId,productVersion:input.productVersion,contentRevision:input.contentRevision,
+    source:validateTranslationSource({...source,guidance:{features,keywords}}),memo,configuration:configurationInput(input.configuration)};
+}
+/** Read-only comparison for adopting an independently confirmed old result.
+ * This never allocates a request or changes its submitted/recovery flags. */
+export function seoWorkspaceDraftMatches(state:SeoWorkspaceDraftState,input:SeoWorkspaceDraftInput):boolean{
+  try{return parseSeoWorkspaceDraftState(state,input.productId)!==null&&same(workspaceDraftInput(input),{
+    productId:state.productId,productVersion:state.productVersion,contentRevision:state.contentRevision,
+    source:state.source,memo:state.memo,configuration:state.configuration});}catch{return false;}
+}
+/** Memo stays separate from supplier facts. Google translates saved text only;
+ * brand/features/keywords do not replace the title, attributes or option names. */
+export function createSeoWorkspaceDraftState(input:SeoWorkspaceDraftInput):SeoWorkspaceDraftState {
   const state: SeoWorkspaceDraftState = {
-    schemaVersion: 1, productId: input.productId, productVersion: input.productVersion, contentRevision: input.contentRevision,
-    source: validateTranslationSource({ ...source, guidance: { features, keywords } }), memo,
-    configuration: configurationInput(input.configuration), idempotencyKey: crypto.randomUUID(),
+    schemaVersion: 1,...workspaceDraftInput(input),idempotencyKey: crypto.randomUUID(),
     jobId: null, reviewFingerprint: null, prepareSubmitted: false, approvalSubmitted: false, executeSubmitted: false,
   };
   if (!parseSeoWorkspaceDraftState(state, input.productId)) throw Error('SEO 상품·버전·참고 입력을 확인해주세요.');

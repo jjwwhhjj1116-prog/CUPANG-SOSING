@@ -1,11 +1,13 @@
 import {validatePageDomFacts} from './page-dom-facts.mjs';
 import {pageSourceUrl,readPageSourceElementImage} from './page-source.mjs';
+import {samePageDomDetailsScope} from './page-dom-details.mjs';
 
 /** Merge only bounded, already offer-bound readings from one click. Keep
  * conflicting facts for the existing exact-SKU merger to reject, rather than
  * choosing a value based on viewport or row order. */
 export function createPageCaptureObservations(sourceUrl){
  const identity=pageSourceUrl(sourceUrl),attributes=[],packaging=[],images=[],descriptions=[],attributeValues=new Map(),packageKeys=new Set();
+ let imageScope=null,mixedImageScopes=false;
  return {
   add(facts,detail){
    if(facts){
@@ -24,7 +26,20 @@ export function createPageCaptureObservations(sourceUrl){
     if(contained.length){const first=contained[0];for(let index=contained.length-1;index>=0;index--)descriptions.splice(contained[index],1);descriptions.splice(first,0,detail.description);}
     else descriptions.push(detail.description);
    }
-   for(const value of detail.detailImages){const verified=typeof value==='string'?readPageSourceElementImage({currentSrc:'',getAttribute:key=>key==='data-src'?value:null},{preferDataSource:true}):null;if(!verified||verified!==value)throw Error('상품 상세 이미지 주소를 확인하지 못했습니다.');if(!images.includes(value)){if(images.length>=200)throw Error('상품 상세 이미지가 200개를 초과했습니다.');images.push(value);}}
+   const observed=[];
+   for(const value of detail.detailImages){const verified=typeof value==='string'?readPageSourceElementImage({currentSrc:'',getAttribute:key=>key==='data-src'?value:null},{preferDataSource:true}):null;if(!verified||verified!==value)throw Error('상품 상세 이미지 주소를 확인하지 못했습니다.');if(!observed.includes(value))observed.push(value);}
+   const hadImages=images.length>0,sameScope=!mixedImageScopes&&samePageDomDetailsScope(imageScope,detail);
+   let cursor=0;for(const value of observed)if(value===images[cursor])cursor++;
+   // A fuller view of the exact same verified roots may reveal earlier lazy
+   // photos. Adopt that DOM order only when every previous photo remains an
+   // ordered subsequence. Contradictory/replaced/serialized scopes never reorder.
+   if(sameScope&&observed.length>images.length&&cursor===images.length)images.splice(0,images.length,...observed);
+   else for(const value of observed)if(!images.includes(value)){
+    if(images.length>=200)throw Error('상품 상세 이미지가 200개를 초과했습니다.');
+    if(hadImages&&!sameScope)mixedImageScopes=true;
+    if(!images.length)imageScope=detail;
+    images.push(value);
+   }
   },
   result(){return {facts:attributes.length||packaging.length?{format:'yoofam-page-dom-facts-v1',...identity,attributes:attributes.map(row=>({...row})),packaging:packaging.map(row=>({...row,packaging:{...row.packaging}}))}:null,detail:{description:descriptions.join('\n').slice(0,20000),detailImages:[...images]}};}
  };

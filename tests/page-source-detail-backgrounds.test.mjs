@@ -24,7 +24,7 @@ test('verified richtext roots retain CSS background images including multiple ur
   <div class="offer-description" id="nested"><img src="${cdn('same')}"><div id="last"></div></div></div>`,
  {root:css('root'),one:css('same'),layers:`${css('second')}, url('${cdn('third')}')`,last:`url(${cdn('last')})`});
  const result=readPageDomDetails(document,sourceUrl);
- assert.deepEqual(result.detailImages,['same','root','second','third','last'].map(cdn));
+ assert.deepEqual(result.detailImages,['root','same','second','third','last'].map(cdn));
  assert.equal(result.description,'현재 상품 설명');assert.equal(reads.filter(id=>id==='nested').length,1);
 });
 

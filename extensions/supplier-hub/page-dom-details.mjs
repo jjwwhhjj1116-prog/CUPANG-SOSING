@@ -1,13 +1,19 @@
 import {readPageSourceElementImage,pageSourceUrl} from './page-source.mjs';
 import {isUnrelatedProductElement,productSectionKind,readProductSectionLinks} from './page-dom-sections.mjs';
 
-const knownImages='#desc-lazyload-container img,.offer-description img';
 const knownContainers='#desc-lazyload-container,.offer-description,.detail-desc-decorate-richtext,[data-module-name="description"],[data-plg-name="description"]';
 const headings='h1,h2,h3,h4,h5,h6,[role="heading"]';
 const headingWrappers=headings+',div,span,font';
 const detailHeading=/^(?:商品详情|产品详情|图文详情|商品描述|产品描述|详细描述|详细说明|商品介绍|제품상세정보|상품상세정보|제품상세|상품상세|상품설명|제품설명|상세설명|상세정보)$/u;
 const unrelated=/(?:gallery|sku[-_ ]?(?:list|image))/iu;
 const ignoredTags=new Set(['ASIDE','NAV','HEADER','FOOTER','SCRIPT','STYLE','NOSCRIPT','IFRAME','SVG','BUTTON']);
+// This evidence stays inside this collector execution. Serialized URL lists do
+// not prove that two observations came from the same current-product roots.
+const observedScopes=new WeakMap();
+export function samePageDomDetailsScope(left,right){
+ const a=left&&typeof left==='object'?observedScopes.get(left):null,b=right&&typeof right==='object'?observedScopes.get(right):null;
+ return Boolean(a&&b&&a.roots.length&&a.document===b.document&&a.sourceUrl===b.sourceUrl&&a.roots.length===b.roots.length&&a.roots.every((root,index)=>root===b.roots[index]));
+}
 const select=(root,selector)=>{try{return [...(root?.querySelectorAll?.(selector)??[])];}catch{return [];}};
 const attr=(node,name)=>node?.getAttribute?.(name)??'';
 const headingText=node=>{const value=String(node?.textContent??'');return value.length<=120?value.replace(/[\s\p{P}\p{S}]/gu,'').trim():'';};
@@ -124,30 +130,28 @@ export function readPageDomDetails(document,sourceUrl){
  const add=node=>{if(!excluded(node)&&!otherOffer(node,sourceUrl))addUrl(imageUrl(node));};
  const readStyle=typeof document.defaultView?.getComputedStyle==='function'?node=>document.defaultView.getComputedStyle(node)
   :typeof globalThis.getComputedStyle==='function'?node=>globalThis.getComputedStyle(node):null;
- // Retain the original exact-container path, including old same-page layouts.
- const known=select(document,knownImages);if(known.length>2000)throw Error('상품 상세 이미지 영역이 너무 큽니다.');
- for(const node of known)add(node);
  for(const root of roots){
   if(excluded(root)||otherOffer(root,sourceUrl)||seenRoots.has(root)||[...seenRoots].some(parent=>parent.contains?.(root)))continue;
   seenRoots.add(root);
-  const nodes=select(root,'img');if(nodes.length>2000)throw Error('상품 상세 이미지 영역이 너무 큽니다.');
-  for(const node of nodes)add(node);
-  if(readStyle){
-   // The retained collector reads CSS backgrounds too. Restrict that feature
-   // to the same verified roots and exclusions as normal detail images; never
-   // inspect document-wide styles, pseudo-elements or another frame.
-   const pending=[root];let visited=0;
-   while(pending.length){
-    const node=pending.pop();if(++visited>6000)throw Error('상품 상세 배경 이미지 영역이 수집 크기를 초과했습니다.');
-    if(excluded(node)||otherOffer(node,sourceUrl))continue;
+  // Read ordinary/lazy images and computed backgrounds in one DOM traversal.
+  // Reading all <img>s before the background pass reordered mixed detail pages.
+  // The exact same verified roots/exclusions still bound every style read.
+  const pending=[root];let visited=0,imageNodes=0;
+  while(pending.length){
+   const node=pending.pop();if(++visited>6000)throw Error('상품 상세 배경 이미지 영역이 수집 크기를 초과했습니다.');
+   if(excluded(node)||otherOffer(node,sourceUrl))continue;
+   if(readStyle){
     let background;try{background=readStyle(node)?.backgroundImage;}catch{/* Unreadable styles provide no image evidence. */}
     for(const url of backgroundImageUrls(background))addUrl(url);
-    const children=Array.from(node.children??[]);for(let index=children.length-1;index>=0;index--)pending.push(children[index]);
    }
+   if(node.tagName==='IMG'){if(++imageNodes>2000)throw Error('상품 상세 이미지 영역이 너무 큽니다.');add(node);}
+   const children=Array.from(node.children??[]);for(let index=children.length-1;index>=0;index--)pending.push(children[index]);
   }
   const text=plainDescription(root,sourceUrl);if(text&&!texts.includes(text))texts.push(text);
  }
- return {description:texts.join('\n').slice(0,20000),detailImages:images};
+ const result={description:texts.join('\n').slice(0,20000),detailImages:images};
+ observedScopes.set(result,{document,sourceUrl,roots:[...seenRoots]});
+ return result;
 }
 
 /** At most 1.5 seconds of passive DOM settling after the user's click. No

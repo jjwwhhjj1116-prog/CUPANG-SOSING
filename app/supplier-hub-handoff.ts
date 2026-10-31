@@ -40,7 +40,7 @@ export async function checkSupplierHubExtension(signal:AbortSignal,direct=false)
   if(result.exactAgreementLabels!==true)throw new Error('동의 문구 확인을 지원하는 Chrome 확장 0.2.59로 업데이트하고 앱 페이지를 새로고침해주세요.');
   if(direct&&result.originalFileObservationCas!==true)throw new Error('파일 조회 중 최신 SKU 결과를 보존하는 Chrome 확장 0.2.64로 업데이트하고 앱 페이지를 새로고침해주세요.');
 }
-export type SupplierHubExtensionInfo={version:string;pendingReceiptRefreshRecovery:boolean;registrationObservationCas:boolean;originalFileObservationCas:boolean;productTransmissionHistory:boolean;historicalReceiptLookup:boolean;exactAgreementLabels:boolean;publicSingleSkuCapture:boolean;companyRegistrationStatus:boolean};
+export type SupplierHubExtensionInfo={version:string;pendingReceiptRefreshRecovery:boolean;registrationObservationCas:boolean;originalFileObservationCas:boolean;productTransmissionHistory:boolean;historicalReceiptLookup:boolean;exactAgreementLabels:boolean;publicSingleSkuCapture:boolean;companyRegistrationStatus:boolean;preservedProductReceiptReconciliation:boolean};
 /** Reports the installed manifest reply in this app tab. Does not inspect Hub,
  * create a browser tab, prepare files, or change any transmission record. */
 export async function readSupplierHubExtensionInfo(signal:AbortSignal):Promise<SupplierHubExtensionInfo>{
@@ -48,7 +48,7 @@ export async function readSupplierHubExtensionInfo(signal:AbortSignal):Promise<S
   if(typeof version!=='string'||version!==version.trim()||!/^(?:0|[1-9]\d{0,4})(?:\.(?:0|[1-9]\d{0,4})){1,3}$/.test(version)
     ||version.split('.').some(part=>Number(part)>65535))throw Error('설치된 Chrome 확장의 버전을 확인하지 못했습니다. 앱 페이지를 새로고침한 뒤 다시 확인해주세요.');
   return {version,pendingReceiptRefreshRecovery:result.pendingReceiptRefreshRecovery===true,registrationObservationCas:result.registrationObservationCas===true,originalFileObservationCas:result.originalFileObservationCas===true,
-    productTransmissionHistory:result.productTransmissionHistory===true,historicalReceiptLookup:result.historicalReceiptLookup===true,exactAgreementLabels:result.exactAgreementLabels===true,publicSingleSkuCapture:result.publicSingleSkuCapture===true,companyRegistrationStatus:result.companyRegistrationStatus===true};
+    productTransmissionHistory:result.productTransmissionHistory===true,historicalReceiptLookup:result.historicalReceiptLookup===true,exactAgreementLabels:result.exactAgreementLabels===true,publicSingleSkuCapture:result.publicSingleSkuCapture===true,companyRegistrationStatus:result.companyRegistrationStatus===true,preservedProductReceiptReconciliation:result.preservedProductReceiptReconciliation===true};
 }
 export async function getSupplierHubProductHistory(identity:PackageIdentity,signal:AbortSignal){
   const capability=await exchange('PING',null,signal);

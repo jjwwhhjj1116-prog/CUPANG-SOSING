@@ -167,11 +167,15 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
      progress('저장된 이미지 편집 상태 확인 중');const target=detailBatchSelection(batch.view,task.optionId,task.profileId,stage);
      image=await(deps.readSource??readFreeImageSource)(productId,batch.view.productVersion,entry.sourceKey,stage,controller.signal,fetcher,{kind:'quotation',profileId:task.profileId,optionId:task.optionId,input:stage==='main'?'mainImage':stage==='additional'?'additionalImages':'detailImages',fieldKey:target.target.primary,slotIndex,revision:batch.view.revision,inputFingerprint:batch.view.inputFingerprint,optionRevision:batch.view.optionRevision,value:target.value},{restoreEditor:true,anchorPolicy:'current-target-v1'});check();
      if(image.source.productId!==productId||!isOwnedImageKey(ownerId,image.source.sourceKey)||(image.source.editorSource?.resultKey??image.source.sourceKey)!==entry.sourceKey||image.source.productVersion!==batch.view.productVersion||image.source.role!==stage)throw changed();
+     // The editor reader may return the flattened PNG when its saved document
+     // is missing. Those pixels cannot establish a completed edit or recover
+     // its original source for another automatic conversion.
+     if(!image.editDocument)throw Error('저장된 이미지의 편집 검토 기록을 확인하지 못했습니다. 원본 수집 이미지를 다시 선택한 뒤 작업해주세요.');
      // Explicit manual retries may replace our prefix with a newer validation
      // error. Any retained region issue still requires review.
-     const unresolved=image.editDocument?.regions.filter(region=>region.issue?.trim())??[];
+     const unresolved=image.editDocument.regions.filter(region=>region.issue?.trim());
      if(unresolved.length){
-      const accepted=image.editDocument!.regions.filter(region=>region.translationProvenance==='generated'&&region.translated.trim()&&!region.issue).length;
+      const accepted=image.editDocument.regions.filter(region=>region.translationProvenance==='generated'&&region.translated.trim()&&!region.issue).length;
       const message=`이전 작업의 일부 번역 초안에 미완료 문구 ${unresolved.length}개가 남아 있습니다. 저장된 이미지를 수동 편집에서 열어 원문과 번역을 확인해주세요.`;
       remember({...batch,items:batch.items.map(item=>item.slotIndex===slotIndex?{...item,status:'failed',translationReview:{status:'partial',acceptedRegions:accepted,unresolvedRegions:unresolved.length,message},message}:item)});
       result.failed++;result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: ${message}`);break;

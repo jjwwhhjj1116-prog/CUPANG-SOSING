@@ -27,9 +27,10 @@ test('actual content PING reports the runtime manifest version while retaining i
   assert.equal(replies.length,1);assert.equal(replies[0].targetOrigin,origin);
   const {message}=replies[0];assert.equal(message.channel,'YOOFAM_HUB_HANDOFF_RESULT');assert.equal(message.requestId,'a'.repeat(36));
   assert.equal(message.result.version,manifest.version);assert.equal(manifestReads,1);assert.equal(commands,0);
-  const {version:reportedVersion,nativeRegistrationStatus,preservedProductCheckpointInspection,...current}=JSON.parse(JSON.stringify(message.result));assert.equal(reportedVersion,manifest.version);
+  const {version:reportedVersion,nativeRegistrationStatus,preservedProductCheckpointInspection,preservedProductReceiptReconciliation,...current}=JSON.parse(JSON.stringify(message.result));assert.equal(reportedVersion,manifest.version);
   const [major,minor,patch]=manifest.version.split('.').map(Number);assert.equal(nativeRegistrationStatus,major>2||major===2&&(minor>1||minor===1&&patch>=4));
   assert.equal(preservedProductCheckpointInspection,major>2||major===2&&(minor>1||minor===1&&patch>=60));
+  assert.equal(preservedProductReceiptReconciliation,major>2||major===2&&(minor>1||minor===1&&patch>=77));
   assert.equal(current.ok,true);assert.equal(current.popupWindowBinding,true);assert.equal(current.serverReceiptReplayProtection,true);
   assert.equal(current.pendingReceiptRefreshRecovery,true);assert.equal(current.registrationObservationCas,true);
   assert.equal(current.originalFileObservationCas,true);
@@ -74,12 +75,12 @@ test('missing atomic file observation capability blocks only new transmission an
 test('installed-extension info uses only a read-only PING and reports the actual version and exact capability booleans',async()=>{
  for(const version of ['0.2.54','0.2.56','9.8.7','65535.65535.65535.65535']){
   const h=harness((message,emit)=>emit(message,{ok:true,version,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,originalFileObservationCas:true,exactAgreementLabels:true,publicSingleSkuCapture:true,companyRegistrationStatus:true}));
-  assert.deepEqual(JSON.parse(JSON.stringify(await h.api.readSupplierHubExtensionInfo(new AbortController().signal))),{version,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,originalFileObservationCas:true,productTransmissionHistory:false,historicalReceiptLookup:false,exactAgreementLabels:true,publicSingleSkuCapture:true,companyRegistrationStatus:true});
+  assert.deepEqual(JSON.parse(JSON.stringify(await h.api.readSupplierHubExtensionInfo(new AbortController().signal))),{version,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,originalFileObservationCas:true,productTransmissionHistory:false,historicalReceiptLookup:false,exactAgreementLabels:true,publicSingleSkuCapture:true,companyRegistrationStatus:true,preservedProductReceiptReconciliation:false});
   assert.deepEqual(h.sent.map(message=>message.type),['PING']);assert.equal(h.sent[0].payload,null);assert.equal(h.listeners.size,0);assert.equal(h.timers.size,0);
  }
  for(const flag of [undefined,false,'true',1,null,{},[]]){
-  const h=harness((message,emit)=>emit(message,{ok:true,version:'0.2.54',pendingReceiptRefreshRecovery:flag,registrationObservationCas:flag,originalFileObservationCas:flag,exactAgreementLabels:flag,publicSingleSkuCapture:flag,companyRegistrationStatus:flag}));
-  assert.deepEqual(JSON.parse(JSON.stringify(await h.api.readSupplierHubExtensionInfo(new AbortController().signal))),{version:'0.2.54',pendingReceiptRefreshRecovery:false,registrationObservationCas:false,originalFileObservationCas:false,productTransmissionHistory:false,historicalReceiptLookup:false,exactAgreementLabels:false,publicSingleSkuCapture:false,companyRegistrationStatus:false});
+  const h=harness((message,emit)=>emit(message,{ok:true,version:'0.2.54',pendingReceiptRefreshRecovery:flag,registrationObservationCas:flag,originalFileObservationCas:flag,exactAgreementLabels:flag,publicSingleSkuCapture:flag,companyRegistrationStatus:flag,preservedProductReceiptReconciliation:flag}));
+  assert.deepEqual(JSON.parse(JSON.stringify(await h.api.readSupplierHubExtensionInfo(new AbortController().signal))),{version:'0.2.54',pendingReceiptRefreshRecovery:false,registrationObservationCas:false,originalFileObservationCas:false,productTransmissionHistory:false,historicalReceiptLookup:false,exactAgreementLabels:false,publicSingleSkuCapture:false,companyRegistrationStatus:false,preservedProductReceiptReconciliation:false});
   assert.deepEqual(h.sent.map(message=>message.type),['PING']);
  }
  for(const version of [undefined,null,56,'','latest','0.2.056','0.2.65536','0.2.56.1.2','0.2.56\n','0.2.56<script>']){
@@ -87,6 +88,12 @@ test('installed-extension info uses only a read-only PING and reports the actual
   await assert.rejects(h.api.readSupplierHubExtensionInfo(new AbortController().signal),/설치된 Chrome 확장의 버전/);
   assert.deepEqual(h.sent.map(message=>message.type),['PING']);assert.equal(h.listeners.size,0);assert.equal(h.timers.size,0);
  }
+});
+
+test('preserved receipt capability is reported only by an explicit boolean and never performs a receipt query',async()=>{
+ const h=harness((message,emit)=>emit(message,{ok:true,version:'2.1.77',preservedProductReceiptReconciliation:true}));
+ assert.equal((await h.api.readSupplierHubExtensionInfo(new AbortController().signal)).preservedProductReceiptReconciliation,true);
+ assert.deepEqual(h.sent.map(message=>message.type),['PING']);assert.equal(h.sent[0].payload,null);
 });
 
 test('older extensions cannot start new pending recovery or SKU observation but retain their cached receipts',async()=>{

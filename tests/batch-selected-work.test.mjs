@@ -704,6 +704,7 @@ function seoFixture(outcome={job:{id:'seo-job',status:'completed',result:{}},clo
  h.deps['@/app/option-translation'].optionTranslationBatch=()=>({total:2,remaining:0,attributes:[]});
  h.deps['@/app/sourcing'].collectionSourceReference=()=> 'saved-source';
  Object.assign(h.deps['@/app/seo-workspace-draft'],{createSeoWorkspaceDraftState:input=>input,parseSeoWorkspaceDraftState:JSON.parse,
+  seoWorkspaceDraftMatches:(state,input)=>['productId','productVersion','contentRevision','source','memo','configuration'].every(key=>JSON.stringify(state[key])===JSON.stringify(input[key])),
   runSeoWorkspaceDraft:async()=>outcome});
  const nextVersion='2026-10-23T00:00:01.000Z';
  h.intercept(call=>{
@@ -771,12 +772,14 @@ function actualSeoFixture(kind='qwen'){
  Object.assign(h.deps['@/app/seo-workspace-draft'],{
   parseSeoGenerationConfiguration:actual.parseSeoGenerationConfiguration,readSeoGenerationContext:actual.readSeoGenerationContext,
   parseSeoWorkspaceDraftState:actual.parseSeoWorkspaceDraftState,parseSeoGenerationDraftState:actual.parseSeoGenerationDraftState,
+  seoWorkspaceDraftMatches:actual.seoWorkspaceDraftMatches,
   createSeoWorkspaceDraftState:input=>{const state=actual.createSeoWorkspaceDraftState(input);created.push(plain(state));return state;},
   createSeoGenerationDraftState:view=>{const state=actual.createSeoGenerationDraftState(view);created.push(plain(state));return state;},
   runSeoWorkspaceDraft:(state,controls)=>actual.runSeoWorkspaceDraft(state,{...controls,onState:value=>{states.push(plain(value));controls.onState(value);}}),
+  refreshSeoWorkspaceDraft:(state,controls)=>actual.refreshSeoWorkspaceDraft(state,{...controls,onState:value=>{states.push(plain(value));controls.onState(value);}}),
   runSeoGenerationDraft:(state,controls)=>actual.runSeoGenerationDraft(state,{...controls,onState:value=>{states.push(plain(value));controls.onState(value);}}),
  });
- const stateEntry=()=>[...h.keys.entries()].find(([key])=>key.includes(stateFragment));
+ const stateEntry=()=>[...h.keys.entries()].find(([key])=>key.startsWith('owner:product'+stateFragment));
  h.prependIntercept(async call=>{
   const url=new URL(call.url,'https://local.test'),isTranslation=url.pathname.endsWith('/translation'),isSeo=url.pathname.endsWith('/seo-generation');
   if(!isTranslation&&!isSeo)return null;
@@ -824,6 +827,86 @@ test('real SEO dispatched prepare ACK loss and malformed ACKs remain fenced and 
   assert.equal(f.actions().length,1,kind+mode);assert.equal(f.state().prepareSubmitted,true,kind+mode);assert.equal(h.keys.has('owner:product:pending:seo'),true,kind+mode);
   const before=h.calls.length,state=plain(f.state());assert.equal((await h.run(['seo','pricing'])).stages[0].status,'blocked',kind+mode);
   assert.equal(h.calls.length,before+1,kind+mode);assert.deepEqual(f.state(),state,kind+mode);assert.equal(f.actions().length,1,kind+mode);
+ }
+});
+
+test('real completed Qwen survives a read-only preview error and explicit retry reuses its exact job without another provider call',async()=>{
+ for(const mode of ['http','lost','malformed','preflight']){
+  const f=actualSeoFixture('qwen'),{h}=f;let failed=false;
+  h.prependIntercept(call=>{
+   if(mode==='preflight'&&call.url==='/api/supplier-hub/catalog-context'&&!failed&&f.actions().filter(action=>action.body.action==='execute').length===1&&!h.keys.has('owner:product:pending:seo')){failed=true;return Response.json({error:'isolated preview account unavailable'},{status:503});}
+   if(call.url.endsWith('/translation-apply')&&call.body.action==='preview'&&!failed){failed=true;if(mode==='lost')throw Error('isolated lost preview response');return mode==='malformed'?Response.json(null):Response.json({error:'isolated preview unavailable'},{status:503});}
+  });
+  const first=await h.run(['seo','pricing']),state=plain(f.state());assert.equal(failed,true,mode);assert.equal(first.stages[0].status,'failed',mode);assert.equal(first.stages[1].status,'blocked',mode);
+  assert.deepEqual(f.actions().map(call=>call.body.action),['prepare','approve','execute'],mode);assert.equal(state.executeSubmitted,true,mode);assert.equal(f.created.length,1,mode);
+  assert.equal(h.keys.has('owner:product:pending:seo'),false,mode);assert.equal(h.calls.some(call=>call.url?.endsWith('/stage-two-pricing')),false,mode);
+  assert.equal(h.calls.some(call=>call.url?.endsWith('/translation-apply')&&call.body.action==='apply'),false,mode);
+  const before=h.calls.length,second=await h.run(['seo','pricing']);assert.deepEqual(plain(second.stages.map(row=>row.status)),['draft','draft'],mode);
+  assert.equal(f.created.length,1,mode);assert.deepEqual(f.state(),state,mode);assert.equal(f.actions().length,3,mode);
+  const later=h.calls.slice(before),adoption=later.filter(call=>call.url?.endsWith('/translation-apply'));
+  assert.deepEqual(adoption.map(call=>call.body.action),['preview','apply'],mode);assert.ok(adoption.every(call=>call.body.jobId===state.jobId),mode);
+  assert.equal(later.some(call=>call.url?.endsWith('/translation')&&call.method==='GET'),true,mode);assert.equal(later.some(call=>call.url?.endsWith('/stage-two-pricing')),true,mode);
+ }
+});
+
+test('completed Qwen preview recovery cannot release old uncertain writes or another stage pending marker',async()=>{
+ for(const marker of ['seo','seo-qwen','seo-generation']){
+  const f=actualSeoFixture('qwen'),{h}=f,key='owner:product:write:'+marker+':prior-unknown';h.keys.set(key,'submitted');
+  const first=await h.run(['seo','pricing']);assert.equal(first.stages[0].status,'blocked',marker);assert.equal(h.keys.get(key),'submitted',marker);assert.equal(h.keys.has('owner:product:pending:seo'),true,marker);
+  assert.equal(h.calls.some(call=>call.url?.endsWith('/translation-apply')||call.url?.endsWith('/stage-two-pricing')),false,marker);
+  const before=h.calls.length,state=plain(f.state());await h.run(['seo','pricing']);assert.equal(h.calls.length,before+1,marker);assert.deepEqual(f.state(),state,marker);assert.equal(h.keys.get(key),'submitted',marker);
+ }
+ const f=actualSeoFixture('qwen'),{h}=f;h.keys.set('owner:product:pending:quotation','prior quotation outcome unknown');
+ h.prependIntercept(call=>call.url.endsWith('/translation-apply')&&call.body.action==='preview'?Response.json({error:'isolated preview unavailable'},{status:503}):null);
+ await h.run(['seo','pricing']);assert.equal(h.keys.has('owner:product:pending:seo'),false);assert.equal(h.keys.get('owner:product:pending:quotation'),'prior quotation outcome unknown');
+});
+
+test('explicit legacy Qwen recovery reads its completed job and removes only the old provider latch before preview and one apply',async()=>{
+ const f=actualSeoFixture('qwen'),{h}=f;let fail=true;
+ h.prependIntercept(call=>{if(fail&&call.url.endsWith('/translation-apply')&&call.body.action==='preview'){fail=false;return Response.json({error:'isolated old-deployment preview unavailable'},{status:503});}});
+ await h.run(['seo','pricing']);const state=plain(f.state()),[stateKey]=f.stateEntry(),pointer=h.keys.get('owner:product:seo-qwen-current');
+ // Exact valid state left by the previous deployment: terminal job known,
+ // old provider pending still present, no content/apply write ever dispatched.
+ h.keys.set('owner:product:pending:seo','Qwen 번역 결과 확인 필요');h.options.retryFailedQwen=true;
+ const before=h.calls.length,result=await h.run(['seo','pricing']);assert.deepEqual(plain(result.stages.map(row=>row.status)),['draft','draft']);
+ assert.equal(f.created.length,1);assert.deepEqual(f.state(),state);assert.equal(f.stateEntry()[0],stateKey);assert.equal(h.keys.get('owner:product:seo-qwen-current'),pointer);assert.equal(f.actions().length,3);
+ const later=h.calls.slice(before);assert.equal(later.filter(call=>call.url?.endsWith('/translation')&&call.method==='GET').length,2,'history and exact read-only refresh');
+ assert.equal(later.some(call=>['prepare','approve','execute'].includes(call.body?.action)),false);
+ const adoption=later.filter(call=>call.url?.endsWith('/translation-apply'));assert.deepEqual(adoption.map(call=>call.body.action),['preview','apply']);assert.ok(adoption.every(call=>call.body.jobId===state.jobId));
+ assert.equal(h.keys.has('owner:product:pending:seo'),false);assert.equal([...h.keys.keys()].some(key=>key.startsWith('owner:product:write:')),false);
+});
+
+test('legacy Qwen adoption recovery preserves uncertainty and never replaces or reapplies changed, partial or cancelled requests',async()=>{
+ for(const mode of ['write','title','guidance','options','memo','config','partial','abort','company']){
+  const f=actualSeoFixture('qwen'),{h}=f;let fail=true;
+  h.prependIntercept(call=>{if(fail&&call.url.endsWith('/translation-apply')&&call.body.action==='preview'){fail=false;return Response.json({error:'isolated legacy preview unavailable'},{status:503});}});
+  await h.run(['seo','pricing']);const state=plain(f.state()),stateKey=f.stateEntry()[0];h.keys.set('owner:product:pending:seo','Qwen 번역 결과 확인 필요');h.options.retryFailedQwen=true;
+  const engine=h.deps['@/app/seo-workspace-draft'],refresh=engine.refreshSeoWorkspaceDraft;
+  if(mode==='write')h.keys.set('owner:product:write:seo-qwen:old-unknown','submitted');
+  if(mode==='title')f.generation.view.source.title+=' 改';if(mode==='guidance')f.generation.view.source.guidance={features:'새 특징',keywords:''};if(mode==='options')f.generation.view.optionRevision++;
+  if(mode==='memo')f.generation.view.memo.features+=' 변경';if(mode==='config')h.prependIntercept(call=>call.url.endsWith('/translation')?Response.json({configuration:{configured:true,model:f.state().configuration.model,maxOutputTokens:8000},jobs:[]}):null);
+  if(['partial','abort','company'].includes(mode))engine.refreshSeoWorkspaceDraft=async(state,controls)=>{const result=await refresh(state,controls);if(mode==='partial')return{...result,partial:true};if(mode==='abort')h.controller.abort();else h.company({code:'A01464742',name:'와이홉'});return result;};
+  const before=h.calls.length;await h.run(['seo','pricing']);assert.equal(f.created.length,1,mode);assert.deepEqual(JSON.parse(h.keys.get(stateKey)),state,mode);assert.equal(f.actions().length,3,mode);
+  assert.equal(h.keys.get('owner:product:pending:seo'),'Qwen 번역 결과 확인 필요',mode);assert.equal(h.calls.slice(before).some(call=>call.url?.endsWith('/translation-apply')||call.url?.endsWith('/stage-two-pricing')),false,mode);
+  if(mode==='write')assert.equal(h.keys.get('owner:product:write:seo-qwen:old-unknown'),'submitted');
+ }
+});
+
+test('completed Qwen preview cancellation/company change never applies, and a dispatched apply ACK loss stays fenced',async()=>{
+ for(const mode of ['abort','company','apply-lost']){
+  const f=actualSeoFixture('qwen'),{h}=f;
+  h.prependIntercept(call=>{
+   if(!call.url.endsWith('/translation-apply'))return null;
+   if(call.body.action==='preview'&&mode==='abort'){h.controller.abort();return Response.json({error:'isolated cancelled preview'},{status:503});}
+   if(call.body.action==='preview'&&mode==='company'){h.company({code:'A01464742',name:'와이홉'});return Response.json({error:'isolated changed actor preview'},{status:503});}
+   if(call.body.action==='apply'&&mode==='apply-lost')throw Error('isolated apply ACK lost');
+  });
+  const first=await h.run(['seo','pricing']);if(mode==='abort')assert.equal(first,null);else assert.equal(first.stages[0].status,'failed',mode);
+  assert.equal(h.calls.some(call=>call.url?.endsWith('/stage-two-pricing')),false,mode);assert.equal(f.actions().length,3,mode);
+  const writes=h.calls.filter(call=>call.url?.endsWith('/translation-apply')&&call.body.action==='apply');assert.equal(writes.length,mode==='apply-lost'?1:0,mode);
+  if(mode==='apply-lost'){
+   assert.equal(h.keys.get('owner:product:pending:seo'),'저장 결과 확인 필요');const before=h.calls.length,state=plain(f.state());await h.run(['seo','pricing']);assert.equal(h.calls.length,before+1);assert.deepEqual(f.state(),state);assert.equal(writes.length,1);
+  }
  }
 });
 

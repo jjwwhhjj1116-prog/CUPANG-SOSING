@@ -158,6 +158,22 @@ test('saved editor inspection fails closed on missing read or changed source sco
  }
 });
 
+for(const stage of ['main','additional','detail'])test(`${stage}: a flattened saved result without its edit document requires review and never starts another conversion`,async()=>{
+ for(const manual of [false,true]){
+  const key='owner/free-image-product-'+'a'.repeat(64)+'-'+'b'.repeat(64)+'.png',h=fixture(stage,[key]),field={main:'mainImage',additional:'additionalImages',detail:'detailImages'}[stage],read=h.deps.readSource;
+  if(manual){h.view.overrides.options.option={[field]:key};h.view.resolved.rows[0].fields[field].source='manual-option';}
+  h.deps.readSource=async(...args)=>{assert.deepEqual(plain(args[7]),{restoreEditor:true,anchorPolicy:'current-target-v1'});const image=await read(...args);assert.equal(image.editDocument,undefined);return image;};
+  h.deps.recognize=h.deps.translate=h.deps.render=h.deps.apply=async()=>assert.fail('a missing edit document cannot authorize OCR, translation, rendering or a save');
+  const before=plain([h.content,h.view]);
+  for(let attempt=0;attempt<2;attempt++){
+   const result=await h.run();assert.equal(result.status,'partial');assert.equal(result.applied,0);assert.equal(result.failed,1);assert.equal(result.skipped,0);
+   assert.equal(result.state.batches.option.items[0].status,'failed');assert.match(result.messages[0],/편집 검토 기록/);assert.match(result.messages[0],/원본 수집 이미지를 다시 선택한 뒤 작업/);
+   assert.ok(result.messages.every(message=>!message.includes('저장된 편집 결과를 유지했습니다.')));assert.deepEqual(plain([h.content,h.view]),before);
+  }
+  assert.equal(h.calls.filter(row=>row[0]==='read').length,2);assert.equal(h.calls.filter(row=>['translate','render','apply'].includes(row[0])).length,0);assert.ok(h.canvases.every(canvas=>canvas.width===0&&canvas.height===0));assert.equal(h.timers.size,0);
+ }
+});
+
 for(const stage of ['main','additional','detail'])test(`${stage}: explicit action saves generated drafts one slot at a time and leaves content/original roles intact`,async()=>{
  const h=fixture(stage,stage==='main'?['owner/source-a.png']:undefined),before=plain(h.content),result=await h.run();
  assert.equal(result.status,'completed');assert.equal(result.applied,stage==='main'?1:2);assert.equal(result.failed,0);assert.ok(result.productVersion);assert.equal(result.recoveryBatch,undefined);assert.deepEqual(h.content,before);assert.ok(h.view.imageKeys.includes('owner/source-a.png'));assert.ok(h.canvases.every(canvas=>canvas.width===0&&canvas.height===0));assert.equal(h.timers.size,0);assert.equal(h.calls.filter(row=>row[0]==='apply').length,result.applied);assert.match(result.messages.at(-1),/초안.*검토/);
@@ -168,6 +184,7 @@ for(const stage of ['main','additional','detail'])test(`${stage}: saved setting,
  for(const kind of ['disabled','role','quotation','edited']){
   const h=fixture(stage,kind==='edited'?['owner/free-image-product-old.png']:stage==='main'?['owner/source-a.png']:undefined),field={main:'mainImage',additional:'additionalImages',detail:'detailImages'}[stage];
   if(kind==='disabled')h.plan.enabled=false;if(kind==='role')h.content.assets[stage]={value:[],provenance:'manual',updatedAt:null};if(kind==='quotation')h.view.overrides.options.option={[field]:h.view.resolved.rows[0].fields[field].value};
+  if(kind==='edited'){const read=h.deps.readSource;h.deps.readSource=async(...args)=>{const image=await read(...args);return{...image,source:{...image.source,sourceKey:'owner/source-a.png',editorSource:{resultKey:args[2],anchorPolicy:'current-target-v1'}},editDocument:{format:'free-image-edit-v1',width:image.width,height:image.height,sourceLanguage:'zh',regions:[{...h.region('原文'),translated:'직접 검토한 문구',translationProvenance:'manual'}]}};};}
   const before=plain(h.view),result=await h.run();assert.equal(result.status,'skipped',kind);assert.equal(result.applied,0);assert.equal(h.calls.filter(row=>['render','apply'].includes(row[0])).length,0);assert.equal(h.calls.filter(row=>row[0]==='read').length,kind==='edited'?1:0);assert.deepEqual(h.view,before);
  }
 });

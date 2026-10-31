@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {webcrypto} from 'node:crypto';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
 
 const json=async(response,status=200)=>{assert.equal(response.status,status,await response.clone().text());return response.json();};
@@ -222,5 +223,25 @@ test('session state parsing is exact, bounded and order-independent without rela
   }
   assert.equal(f.api.parseSeoWorkspaceDraftState(JSON.stringify(f.state)+' '.repeat(96*1024),f.id),null);
   assert.throws(()=>f.api.createSeoWorkspaceDraftState({...f.input,memo:{...f.input.memo,features:'x'.repeat(2000)}}),/길이|메모|입력/u,'combined saved and current guidance must not be silently truncated');
+ }finally{f.h.close();}
+});
+
+test('read-only draft matching reuses the exact canonical request without changing its UUID or submitted flags',async()=>{
+ const f=await fixture();try{
+  const before=JSON.stringify(f.state),id=f.state.idempotencyKey;
+  const randomUUID=webcrypto.randomUUID;let allocations=0;
+  webcrypto.randomUUID=()=>{allocations++;throw Error('A read-only match must never allocate a new request UUID');};
+  try{
+  assert.equal(f.api.seoWorkspaceDraftMatches(f.state,f.input),true);
+  const reordered=plain(f.input);reordered.memo={keywords:reordered.memo.keywords,features:reordered.memo.features,brand:reordered.memo.brand};
+  assert.equal(f.api.seoWorkspaceDraftMatches(f.state,reordered),true);
+  for(const mutate of [input=>{input.productId='another-product';},input=>{input.productVersion='2026-10-28T00:00:00Z';},input=>{input.contentRevision++;},input=>{input.source.title+=' 变化';},input=>{input.source.reference+='-changed';},input=>{input.source.category.id='99999';},input=>{input.source.attributes[0].value+=' 变化';},input=>{input.source.guidance.features+=' 변경';},input=>{input.source.guidance.keywords+=' 변경';},input=>{input.memo.brand+=' 변경';},input=>{input.memo.features+=' 변경';},input=>{input.configuration.maxOutputTokens=4096;}]){
+   const input=plain(f.input);mutate(input);assert.equal(f.api.seoWorkspaceDraftMatches(f.state,input),false);
+  }
+  const completed=plain(f.state);Object.assign(completed,{jobId:'99999999-9999-4999-8999-999999999999',reviewFingerprint:'a'.repeat(64),prepareSubmitted:true,approvalSubmitted:true,executeSubmitted:true});
+  assert.equal(f.api.seoWorkspaceDraftMatches(completed,f.input),true);assert.equal(completed.idempotencyKey,id);assert.equal(completed.executeSubmitted,true);
+  assert.equal(JSON.stringify(f.state),before);assert.equal(f.actions.length,0);assert.equal(f.queries.length,0);assert.equal(f.h.aiSources.length,0);
+  assert.equal(allocations,0);
+  }finally{webcrypto.randomUUID=randomUUID;}
  }finally{f.h.close();}
 });

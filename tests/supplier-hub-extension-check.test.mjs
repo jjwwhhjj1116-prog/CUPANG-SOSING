@@ -65,10 +65,20 @@ test('old installations with other result features still need the atomic file ob
 
 test('an older installation with compatible feature flags still offers recovery fixes, while current and newer releases do not',async()=>{
  for(const version of ['0.2.72','0.2.100','0.3.0','2.1.4','2.1.17',releaseVersion,'2.1.100','2.2.0']){
-  const ui=fixture();ui.render();ui.calls[0].resolve({version,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,originalFileObservationCas:true,productTransmissionHistory:true,historicalReceiptLookup:true,exactAgreementLabels:true,publicSingleSkuCapture:true,companyRegistrationStatus:true});await settle();
+  const ui=fixture();ui.render();ui.calls[0].resolve({version,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,originalFileObservationCas:true,productTransmissionHistory:true,historicalReceiptLookup:true,exactAgreementLabels:true,publicSingleSkuCapture:true,companyRegistrationStatus:true,preservedProductReceiptReconciliation:true});await settle();
   assert.ok(ui.text().includes('설치된 버전 '+version));
   const download=nodes(ui.render()).find(node=>node.type==='a');
   if(version.localeCompare(releaseVersion,'en',{numeric:true})<0)assert.equal(download.props.href,releaseDownload);else assert.equal(download,undefined);
+  ui.unmount();
+ }
+});
+
+test('settings separates preserved-document receipt support from older file-result support',async()=>{
+ for(const [version,flag,supported]of [['2.1.76',true,false],[releaseVersion,false,false],[releaseVersion,'true',false],[releaseVersion,true,true]]){
+  const ui=fixture();ui.render();ui.calls[0].resolve({version,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,originalFileObservationCas:true,productTransmissionHistory:true,historicalReceiptLookup:true,exactAgreementLabels:true,publicSingleSkuCapture:true,companyRegistrationStatus:true,preservedProductReceiptReconciliation:flag});await settle();
+  assert.match(ui.text(),/검증 결과 복구·SKU 결과 보존 지원/);
+  if(supported){assert.match(ui.text(),/기존 문서 읽기·목록 반영 지원/);assert.equal(nodes(ui.render()).find(node=>node.type==='a'),undefined);}
+  else{assert.match(ui.text(),/원래 문서 접수 연결 확장 2\.1\.77 적용 필요/);assert.equal(nodes(ui.render()).find(node=>node.type==='a').props.href,releaseDownload);}
   ui.unmount();
  }
 });

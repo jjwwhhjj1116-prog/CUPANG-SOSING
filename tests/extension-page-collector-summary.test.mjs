@@ -19,7 +19,7 @@ const bundle=await build({entryPoints:[fileURLToPath(new URL('../deployment/exte
   export const readPageSourceDescriptionReference=()=>null;
   export const validatePageSourceForDelivery=value=>value;
  `}));
- build.onLoad({filter:/[/\\]page-dom-details\.mjs$/},()=>({loader:'js',contents:'export const readPageDomDetails=()=>({description:"",detailImages:[]});export const waitForPageDomDetails=()=>({description:"",detailImages:[]});'}));
+ build.onLoad({filter:/[/\\]page-dom-details\.mjs$/},()=>({loader:'js',contents:'export const samePageDomDetailsScope=()=>false;export const readPageDomDetails=()=>({description:"",detailImages:[]});export const waitForPageDomDetails=()=>({description:"",detailImages:[]});'}));
 }}]});
 const sourceUrl='https://detail.1688.com/offer/886034098637.html';
 const source=()=>({format:'yoofam-page-source-v1',sourceUrl,offerId:'886034098637',collectedAt:'2026-10-23T01:00:00.000Z',title:'합성 뒤꿈치 패드',description:'',
