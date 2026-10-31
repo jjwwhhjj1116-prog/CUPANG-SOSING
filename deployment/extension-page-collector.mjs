@@ -5,7 +5,7 @@ import {createPageCaptureObservations} from '../extensions/supplier-hub/page-cap
 import {readProductSectionLinks,readProductSectionStructure} from '../extensions/supplier-hub/page-dom-sections.mjs';
 // This identifies the injected script itself, even when an older open page
 // outlives an extension update. The runtime manifest is not that proof.
-const COLLECTOR_SCRIPT_VERSION='2.1.67';
+const COLLECTOR_SCRIPT_VERSION='2.1.68';
 const COLLECTOR_HOST_ID='yoofam-page-collector',COLLECTOR_OWNER='yoofam-studio';
 const OWNER_ATTRIBUTE='data-yoofam-collector-owner',VERSION_ATTRIBUTE='data-yoofam-collector-version',LEASE_ATTRIBUTE='data-yoofam-collector-capture';
 // Existing extensions/supplier-hub/icons/yoofam.svg, embedded to keep the
@@ -76,7 +76,7 @@ function captureDiagnosticSummary(snapshot){
  const diagnostics=snapshot.captureDiagnostics;if(!diagnostics)return '';
  const sections=diagnostics.sections,titles=diagnostics.bodyTitles;
  const note=`현재 문서 영역: 탭 ${sections.tabCount}개 · 상품정보 탭 ${sections.knownTabCount}개 · 본문 패널 ${sections.panelCount}개 · 연결 확인 ${sections.linkedKnownPanelCount}개 · 연결 미확인 ${sections.unlinkedKnownTabCount}개.`;
- const descriptions={'not-needed':'','reference-missing':'상세문서 연결: 현재 상품에 연결된 주소가 확인되지 않았습니다.','reference-invalid':'상세문서 연결: 현재 상품과 일치하는 원문을 확인하지 못했습니다.',unavailable:'상세문서 연결: 원문을 확인하지 못했습니다. 현재 본문에서 읽은 자료만 보관합니다.',captured:'상세문서 연결: 현재 상품의 상세사진을 확인했습니다.'};
+ const descriptions={'not-needed':'','reference-missing':'상세문서 연결: 현재 상품에 연결된 주소가 확인되지 않았습니다. 전체 상세사진 범위는 미확인입니다.','reference-invalid':'상세문서 연결: 현재 상품과 일치하는 원문을 확인하지 못했습니다. 전체 상세사진 범위는 미확인입니다.',unavailable:'상세문서 연결: 원문을 확인하지 못했습니다. 현재 본문에서 읽은 자료만 보관하며 전체 상세사진 범위는 미확인입니다.',captured:'상세문서 연결: 현재 상품의 상세사진을 확인했습니다.'};
  return note+(titles?` 일반 본문: 속성 제목 ${titles.attributes}개 · 포장 제목 ${titles.packaging}개 · 상세 제목 ${titles.detail}개.`:'')+' '+descriptions[diagnostics.description];
 }
 // An actual single-page click or an authenticated worker-owned bulk tab may
@@ -167,16 +167,21 @@ function installPageCollector(){
     }});
     snapshot=observed.snapshot;
     const {captureDiagnostics,descriptionScripts}=observed;
-    if(!snapshot.images.some(image=>image.role==='detail')){
+    // One visible/lazy detail image does not establish that the description
+    // document was fully loaded. Enrich any capture with a proven reference;
+    // never infer a description URL or promote a gallery image into detail.
+    {
      let reference=null;try{reference=readPageSourceDescriptionReference(before,descriptionScripts);}catch{captureDiagnostics.description='reference-invalid';}
      if(reference){
       assertActive();
-      const descriptionResult=await chrome.runtime.sendMessage({type:'YOOFAM_READ_PAGE_DESCRIPTION',sourceUrl:before});
+      let descriptionResult;try{descriptionResult=await chrome.runtime.sendMessage({type:'YOOFAM_READ_PAGE_DESCRIPTION',sourceUrl:before});}catch{captureDiagnostics.description='unavailable';}
       assertActive();if(pageSourceUrl(location.href).sourceUrl!==before)throw Error('상품 페이지가 변경되었습니다. 다시 수집해주세요.');
       if(descriptionResult?.ok===true&&descriptionResult.available===true){
        if(descriptionResult.sourceUrl!==before||descriptionResult.offerId!==snapshot.offerId||!Array.isArray(descriptionResult.detailImages)||!descriptionResult.detailImages.length||descriptionResult.detailImages.length>80)throw Error('상세문서 응답이 현재 상품과 다릅니다.');
-       const known=new Set(snapshot.images.map(image=>image.url)),images=[...snapshot.images];
-       for(const url of descriptionResult.detailImages){if(typeof url!=='string')throw Error('상세문서 이미지 응답을 확인하지 못했습니다.');if(!known.has(url)){images.push({url,role:'detail'});known.add(url);}}
+       const images=snapshot.images.filter(image=>image.role!=='detail'),known=new Set(images.map(image=>image.url));
+       // The bound document supplies the body order. Preserve DOM-only detail
+       // observations afterwards and retain every existing non-detail role.
+       for(const url of [...descriptionResult.detailImages,...snapshot.images.filter(image=>image.role==='detail').map(image=>image.url)]){if(typeof url!=='string')throw Error('상세문서 이미지 응답을 확인하지 못했습니다.');if(!known.has(url)){images.push({url,role:'detail'});known.add(url);}}
        snapshot=validatePageSourceForDelivery({...snapshot,images});
        captureDiagnostics.description='captured';
       }else captureDiagnostics.description='unavailable';

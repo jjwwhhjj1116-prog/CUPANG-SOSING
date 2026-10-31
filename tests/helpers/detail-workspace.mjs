@@ -32,6 +32,7 @@ export async function fixture(company = { code: 'A01464742', name: '와이홉' }
   const values = { additionalImages: '', detailImages: keys.slice(0, 4).join('\n'), detailHtml: ' <p>원래 수동 HTML</p> ' }, row = { optionId: 'red', included: true, optionLabel: '빨강', fields: Object.fromEntries(Object.entries(values).map(([key, value]) => [key, { value, source: 'manual-option', issues: [] }])) };
   const view = { revision: 7, productVersion: '2026-10-16T00:00:00.000Z', contentRevision: 3, optionRevision: 2, inputFingerprint: 'a'.repeat(64), categoryContext: { source: 'profile', profileId: 'profile', categoryId: '81221', categoryPath: ['보관'] },
     imageKeys: keys, protectedDetailImageKeys: [keys[0], keys[3]], overrides: { common: {}, options: { red: values } }, automatic: { schema: { fields }, rows: [plain(row)] }, resolved: { schema: { fields }, rows: [row] } };
+  for (const field of Object.values(view.automatic.rows[0].fields)) field.source = 'content';
   const calls = [], f = { keys, objects, view, company, calls, workspace: null, storage: new Map() };
   f.reply = () => ({ view: plain(f.view), workspace: plain(f.workspace), roles: { top: [keys[0]], bottom: [keys[3]] } });
   f.request = async (url, init = {}) => {

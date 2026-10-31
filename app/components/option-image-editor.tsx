@@ -442,7 +442,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
       <small>합치기 직전의 검증된 사진 순서를 불러옵니다. 저장하기 전까지 현재 통합 상세 이미지는 바뀌지 않습니다.</small>
       <small>사진·HTML 재편집은 HTML을 함께 보관한 저장 건에서 사용할 수 있습니다. 당시 HTML을 그대로 새 수동 초안에 넣으며 예전 공통·자동 상속 상태로 되돌리지는 않습니다.</small>
     </div></details>}
-    {stage === 'detail' && view && <details className="option-detail-advanced"><summary>상세 이미지 합치기·작업 구성</summary><DetailWorkspacePanel key={`workspace:${scope}`} productId={productId} optionId={optionId} profileId={profileId} view={view} stageActive={active}
+    {stage === 'detail' && view && <details className="option-detail-advanced" open={primaryDetailTools ? true : undefined}><summary hidden={primaryDetailTools}>상세 이미지 합치기·작업 구성</summary><DetailWorkspacePanel key={`workspace:${scope}`} productId={productId} optionId={optionId} profileId={profileId} view={view} stageActive={active} primaryDetailTools={primaryDetailTools}
       disabled={disabled || busy || merging || uncertain || dirty || !!bindingError || saved?.sourceKey !== sourceKey}
       onRefreshRequested={() => {
         if (!keyboardGeneration || keyboardEpoch.current !== keyboardGeneration || !active || !liveActive.current || !current() || currentStage.current !== 'detail'
@@ -498,7 +498,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
         clearDrag(); latestDraft.current = { scope, values: { detailImages: keys.join('\n') } }; setPending(latestDraft.current);
         setMessage('보관한 작업 사진을 선택 옵션의 수동 초안으로 불러왔습니다. 기존 견적 HTML은 유지했습니다. 확인 후 선택 옵션 이미지를 저장해주세요.');
       }} /></details>}
-    {stage === 'detail' && view && <details className={`option-detail-composite${primaryDetailTools?' option-detail-composite-primary':''}`} open={primaryDetailTools ? true : undefined}><summary hidden={primaryDetailTools}>통합 상세 이미지 미리보기·다운로드·저장</summary><DetailImageCompositePanel key={`composite:${scope}`} productId={productId} optionId={optionId} profileId={profileId} view={view} stageActive={active} compactToolbar={primaryDetailTools}
+    {stage === 'detail' && view && <details className="option-detail-composite"><summary>저장된 최종 이미지 합치기·다운로드</summary><DetailImageCompositePanel key={`composite:${scope}`} productId={productId} optionId={optionId} profileId={profileId} view={view} stageActive={active}
       disabled={disabled || busy || workspaceWorking || uncertain || dirty || !!bindingError || saved?.sourceKey !== sourceKey}
       beforeApply={() => !!keyboardGeneration && keyboardEpoch.current === keyboardGeneration && active && liveActive.current && current() && currentStage.current === 'detail' && !liveDisabled.current && !request.current && !pendingSave.current && !Object.keys(latestDraft.current.values).length}
       onBusyChange={value => { compositeBusy.current = value; setMerging(value); }}
@@ -506,6 +506,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     {stage==='detail'&&uploadControl&&<div className="option-detail-upload-toolbar">{uploadControl}</div>}
     {busy && <p role="status">옵션 이미지 처리 중…</p>}{error && <p role="alert">{error}</p>}{bindingError && <p role="alert">{bindingError}</p>}{message && <p role="status">{message}</p>}
     {dirty && saved?.sourceKey !== sourceKey && <p role="status">상품 저장 상태가 변경됐습니다. 입력은 유지했습니다. 최신 자료를 조회한 뒤 저장해주세요.</p>}
+    <details className={stage === 'detail' && primaryDetailTools ? 'option-detail-final-images' : undefined} open={stage !== 'detail' || !primaryDetailTools ? true : undefined}><summary hidden={stage !== 'detail' || !primaryDetailTools}>저장된 최종 상세 이미지 · {selected.length}장</summary>
     {view && <>{stage === 'additional' ? <div className="image-edit-workspace">
       <aside className="image-edit-library" aria-label="상품 저장 이미지 후보 목록"><h4>모든 이미지 {view.imageKeys.length}</h4>{uploadControl&&<div className="image-library-upload">{uploadControl}</div>}<div className="image-asset-grid">{candidateCards}</div>{!view.imageKeys.length && <p>상품에 저장한 이미지를 먼저 추가해주세요.</p>}</aside>
       <section className="image-edit-canvas" aria-label="선택 옵션 이미지 미리보기"><h4>현재 {label} · {selected.length}/{limit}개</h4>
@@ -545,5 +546,6 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     <div className="option-image-save-tools"><button type="button" className="btn primary" disabled={!view || busy || merging || workspaceWorking || disabled || !!bindingError || !dirty || !!issues.length} onClick={() => void save()}>{uncertain ? '이미지 저장 결과 확인' : '선택 옵션 이미지 저장'}</button>
     {dirty && <button type="button" className="btn ghost" disabled={busy || merging || workspaceWorking || disabled} onClick={() => void load(true)}>입력 유지·최신 이미지 조회</button>}
     <button type="button" className="btn ghost" disabled={busy || merging || workspaceWorking || disabled} onClick={() => void load()}>{dirty ? '입력 취소·저장 이미지 다시 조회' : '저장 이미지 다시 조회'}</button></div>
+    </details>
   </section>;
 }

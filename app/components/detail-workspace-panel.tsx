@@ -2,6 +2,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { generateDetailWorkspaceHtml, type DetailWorkspaceDocument, type DetailWorkspacePhoto, type DetailWorkspaceView } from '@/app/detail-workspace';
+import { initialDetailWorkspaceDocument } from '@/app/detail-workspace-seed';
 import { optionImageValue, quotationImageKeys } from '@/app/quotation-image-targets';
 import { createDetailWorkspaceSave, prepareDetailWorkspaceAdoption, prepareDetailWorkspaceRebase, readDetailWorkspace, recoverDetailWorkspace, restoredDetailWorkspaceAttempt, saveDetailWorkspace,
   validateDetailWorkspaceReply, type DetailWorkspaceAttempt, type DetailWorkspaceSaveInput, type DetailWorkspaceSelection } from '@/app/detail-workspace-client';
@@ -12,9 +13,9 @@ import { DetailWorkspaceCompositePanel } from '@/app/components/detail-workspace
 import { DetailWorkspaceRebasePanel } from '@/app/components/detail-workspace-rebase-panel';
 import { DetailImageEditDialog } from '@/app/components/detail-image-edit-dialog';
 
-type Props = { productId: string; optionId: string; profileId?: string; view: QuotationFieldsView; disabled?: boolean; stageActive?: boolean;
+type Props = { productId: string; optionId: string; profileId?: string; view: QuotationFieldsView; disabled?: boolean; stageActive?: boolean; primaryDetailTools?: boolean;
   beforeAdopt?: () => boolean; onAdopt: (keys: string[]) => void; onBusyChange?: (busy: boolean) => void; onFilesAttached?: (view: QuotationFieldsView) => void; onRefreshRequested?: () => void; onCompositeSaved?: (view: QuotationFieldsView) => void };
-type Work = { selection: DetailWorkspaceSelection; reply: DetailWorkspaceView; document: DetailWorkspaceDocument; marginText?: string };
+type Work = { selection: DetailWorkspaceSelection; reply: DetailWorkspaceView; document: DetailWorkspaceDocument; seedDocument?: DetailWorkspaceDocument; marginText?: string };
 type Pending = { input: DetailWorkspaceSaveInput; attempt: DetailWorkspaceAttempt };
 type PhotoEditor = { context: DetailWorkspaceEditorContext; target: FreeImageTranslationTarget; imageKeys: string[]; generation: object };
 type Attachment = { selection: DetailWorkspaceSelection; saved: DetailWorkspaceView; attempt: DetailWorkspaceAttachmentAttempt };
@@ -28,7 +29,7 @@ const marginIssue = '사진 간격은 0~200 사이의 정수로 입력해주세�
 /** Independent editable composition. Its generated HTML never replaces the
  * selected option's literal quotation HTML. */
 export function DetailWorkspacePanel(props: Props) { return <DetailWorkspaceForm key={JSON.stringify([props.productId, props.optionId, props.profileId ?? null])} {...props} />; }
-export function DetailWorkspaceForm({ productId, optionId, profileId, view, disabled = false, stageActive = true, beforeAdopt, onAdopt, onBusyChange, onFilesAttached, onRefreshRequested, onCompositeSaved }: Props) {
+export function DetailWorkspaceForm({ productId, optionId, profileId, view, disabled = false, stageActive = true, primaryDetailTools = false, beforeAdopt, onAdopt, onBusyChange, onFilesAttached, onRefreshRequested, onCompositeSaved }: Props) {
   const [work, setWork] = useState<Work | null>(null), [busy, setBusy] = useState(false), [uncertain, setUncertain] = useState(false);
   const [ready, setReady] = useState(false);
   const [canRecover, setCanRecover] = useState(false);
@@ -41,7 +42,7 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
   const liveEditor = useRef<PhotoEditor | null>(null), editorStatus = useRef({ busy: false, dirty: false }), attachment = useRef<Attachment | null>(null), editorSequence = useRef(0);
   const editorCloseGuard = useRef<(() => boolean) | null>(null);
   const [error, setError] = useState(''), [message, setMessage] = useState(''), [candidate, setCandidate] = useState('');
-  const mounted = useRef(true), operation = useRef<AbortController | null>(null), pending = useRef<Pending | null>(null), liveWork = useRef(work);
+  const mounted = useRef(true), operation = useRef<AbortController | null>(null), pending = useRef<Pending | null>(null), liveWork = useRef(work), autoOpened = useRef<object | null>(null);
   const source = JSON.stringify([productId, optionId, profileId ?? null, view, disabled, stageActive]);
   const [clock, setClock] = useState({ source, token: {} }); if (clock.source !== source) setClock({ source, token: {} });
   const generation = clock.source === source ? clock.token : null, epoch = useRef(generation);
@@ -69,6 +70,7 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
   const stale = !!work && (!same(work.selection.view, view) || work.selection.productId !== productId || work.selection.optionId !== optionId || (work.selection.profileId ?? '') !== (profileId ?? ''));
   const marginInvalid = !!work && !validMargin(work);
   const dirty = !!work && (marginInvalid || !work.reply.workspace || !same(work.document, work.reply.workspace.document));
+  const untouchedSeed = primaryDetailTools && !!work && !work.reply.workspace && !!work.seedDocument && !marginInvalid && same(work.document, work.seedDocument);
   const locked = !ready || busy || uncertain || attaching || editor !== null || compositeBusy || bannerBusy || disabled || !stageActive || stale;
   const outside = work?.document.photos.some(photo => !view.imageKeys.includes(photo.key)) ?? false;
   function valid(token: object | null) { return mounted.current && !!token && token === epoch.current && controls.current.stageActive && !controls.current.disabled; }
@@ -82,19 +84,28 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
   }
   function adoptWork(next: Work) { liveWork.current = next; setWork(next); }
   function openWork(selection: DetailWorkspaceSelection, reply: DetailWorkspaceView) {
-    const photos = quotationImageKeys(optionImageValue(selection.view, optionId, 'detailImages')).map(key => ({ id: crypto.randomUUID(), key, originKey: key,
-      role: (reply.roles.top.includes(key) ? 'top' : reply.roles.bottom.includes(key) ? 'bottom' : 'body') as DetailWorkspacePhoto['role'] }));
-    adoptWork({ selection, reply, document: reply.workspace?.document ?? documentFrom(photos) }); setCandidate('');
+    const document = initialDetailWorkspaceDocument(reply, optionId);
+    adoptWork({ selection, reply, document, ...(!reply.workspace ? { seedDocument: structuredClone(document) } : {}) }); setCandidate('');
   }
   async function open() {
     const token = generation, controller = begin(token); if (!controller || uncertain) { if (controller) finish(controller); return; }
     try {
       const selection = { productId, optionId, profileId, view }, reply = await readDetailWorkspace(selection, controller.signal);
       if (!valid(token) || controller.signal.aborted) return;
-      openWork(selection, reply); setMessage('구성만 편집합니다. 견적서와 기존 HTML은 아직 바뀌지 않습니다.');
+      openWork(selection, reply); setMessage(primaryDetailTools ? '' : '구성만 편집합니다. 견적서와 기존 HTML은 아직 바뀌지 않습니다.');
     } catch (cause) { if (mounted.current && !controller.signal.aborted) setError(issue(cause)); }
     finally { finish(controller); }
   }
+  useEffect(() => {
+    // One read per current opening. No saved workspace, local edit or unknown
+    // write receipt is replaced, and a failed read never loops automatically.
+    if (!primaryDetailTools || !ready || !stageActive || disabled || work || !generation || autoOpened.current === generation
+      || busy || uncertain || attaching || editor !== null || compositeBusy || bannerBusy || operation.current || pending.current || attachment.current) return;
+    autoOpened.current = generation; void open();
+    // The generation contains the complete product/view/control source. The
+    // inline action is intentionally not a trigger for another automatic read.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [primaryDetailTools, ready, stageActive, disabled, work, generation, busy, uncertain, attaching, editor, compositeBusy, bannerBusy]);
   function amend(token: object | null, change: (photos: DetailWorkspacePhoto[]) => DetailWorkspacePhoto[]) {
     const current = liveWork.current; if (!valid(token) || operation.current || compositeIO.current || bannerIO.current || pending.current || attachment.current || liveEditor.current || !current || current !== work || !same(current.selection.view, view)) return;
     adoptWork({ ...current, document: documentFrom(change(structuredClone(current.document.photos)), current.document.imageMargin) }); setMessage(''); setError('');
@@ -258,17 +269,18 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
     } catch (cause) { if (mounted.current && !controller.signal.aborted) setError(issue(cause)); }
     finally { finish(controller); }
   }
-  return <section className="panel-stack" aria-label="상세 편집 구성" aria-busy={busy || editorBusy || compositeBusy || bannerBusy} data-workspace-dirty={dirty || uncertain || editorDirty || attaching} data-workspace-saving={busy || uncertain || editorBusy || attaching || compositeBusy || bannerBusy}>
-    <header><h3>상세 편집 구성</h3><p>사진 순서·역할·원본 연결을 견적서와 별도로 보관합니다.</p></header>
-    <button type="button" className="btn ghost" disabled={!ready || busy || uncertain || attaching || editor !== null || compositeBusy || bannerBusy || disabled || !stageActive || dirty} onClick={() => void open()}>상세 편집 구성 열기</button>
+  return <section className={`panel-stack${primaryDetailTools ? ' detail-workspace-primary' : ''}`} aria-label="상세 편집 구성" aria-busy={busy || editorBusy || compositeBusy || bannerBusy} data-workspace-dirty={dirty && !untouchedSeed || uncertain || editorDirty || attaching} data-workspace-saving={busy || uncertain || editorBusy || attaching || compositeBusy || bannerBusy}>
+    <header><h3>{primaryDetailTools ? '상세 페이지 이미지' : '상세 편집 구성'}</h3>{!primaryDetailTools && <p>사진 순서·역할·원본 연결을 견적서와 별도로 보관합니다.</p>}</header>
+    {(!primaryDetailTools || !work) && <button type="button" className="btn ghost" disabled={!ready || busy || uncertain || attaching || editor !== null || compositeBusy || bannerBusy || disabled || !stageActive || dirty} onClick={() => void open()}>상세 편집 구성 열기</button>}
     {message && <p role="status">{message}</p>}{error && <p role="alert">{error}</p>}
     {stale && <p role="status">상품 저장 기준이 바뀌었습니다. 현재 구성은 유지했습니다. 작업 내용을 확인한 뒤 구성을 닫고 최신 저장본을 다시 열어주세요.</p>}
     {work && <><p>작업 사진 {work.document.photos.length}장 · {work.reply.workspace ? `보관 버전 ${work.reply.workspace.revision}` : '아직 보관하지 않은 구성'}</p>
-      <div style={{ maxHeight: 600, overflow: 'auto' }} aria-label="상세 작업 사진 순서">{work.document.photos.map((photo, index) => <figure key={photo.id} style={{ border: '1px solid #ddd', padding: 12 }}>
-        <figcaption>사진 {index + 1} · 원본 {photo.originKey}</figcaption>
+      {!work.document.photos.some(photo => photo.role === 'body') && <p role="status">수집된 상세 본문 사진이 없습니다. 원본 상세 사진을 다시 수집하거나 아래에서 사진을 직접 추가해주세요.</p>}
+      <div className={primaryDetailTools ? 'detail-workspace-photo-stack' : undefined} style={primaryDetailTools ? { background: '#f2f2f2', padding: '16px 0' } : { maxHeight: 600, overflow: 'auto' }} aria-label="상세 작업 사진 순서">{work.document.photos.map((photo, index) => <figure key={photo.id} style={primaryDetailTools ? { width: 'min(800px, 100%)', margin: '0 auto', padding: '0 20px', boxSizing: 'border-box' } : { border: '1px solid #ddd', padding: 12 }}>
+        <figcaption>{primaryDetailTools ? <span className="option-detail-image-badge">{photo.role === 'top' ? '상단 이미지' : photo.role === 'bottom' ? '하단 이미지' : '상세 이미지'} · {index + 1}</span> : <>사진 {index + 1} · 원본 {photo.originKey}</>}</figcaption>
         {/* eslint-disable-next-line @next/next/no-img-element -- Existing authenticated owned-image endpoint. */}
-        <img src={imageUrl(photo.key)} alt={`상세 작업 사진 ${index + 1}`} loading="lazy" style={{ maxWidth: '100%', maxHeight: 220, objectFit: 'contain' }} />
-        <p>{photo.role === 'top' ? '상단 사진' : photo.role === 'bottom' ? '하단 사진' : '본문 사진'}</p>
+        <img src={imageUrl(photo.key)} alt={`상세 작업 사진 ${index + 1}`} loading="lazy" style={primaryDetailTools ? { display: 'block', width: 760, maxWidth: '100%', height: 'auto', marginBottom: work.document.imageMargin } : { maxWidth: '100%', maxHeight: 220, objectFit: 'contain' }} />
+        {!primaryDetailTools && <p>{photo.role === 'top' ? '상단 사진' : photo.role === 'bottom' ? '하단 사진' : '본문 사진'}</p>}
         <button type="button" className="btn ghost" aria-label={`작업 사진 ${index + 1} 편집`} disabled={locked || dirty || photo.role !== 'body' || !work.reply.workspace?.document.photos.some(item => item.id === photo.id)} onClick={() => editPhoto(photo.id)}>현재 사진 편집</button>
         <label>사진 교체<select aria-label={`작업 사진 ${index + 1} 교체`} value={photo.key} disabled={locked || photo.role !== 'body' || !work.reply.workspace?.document.photos.some(item => item.id === photo.id)} onChange={event => { const key = event.target.value; if (!work.reply.workspace?.document.photos.some(item => item.id === photo.id) || !work.selection.view.imageKeys.includes(key) || key !== photo.key && key.split('/').at(-1)?.startsWith('free-image-workspace-') || work.reply.roles.top.includes(key) || work.reply.roles.bottom.includes(key)) return; amend(generation, photos => photos.map(item => item.id === photo.id && item.role === 'body' ? { ...item, key } : item)); }}>{[...new Set([...work.selection.view.imageKeys, photo.key])].filter(key => key === photo.key || !key.split('/').at(-1)?.startsWith('free-image-workspace-') && !work.reply.roles.top.includes(key) && !work.reply.roles.bottom.includes(key)).map(key => <option key={key} value={key}>{key}</option>)}</select>{photo.role === 'body' && !work.reply.workspace?.document.photos.some(item => item.id === photo.id) && <small>원본 연결을 먼저 보관한 뒤 사진을 교체할 수 있습니다.</small>}</label>
         <div className="button-row"><button type="button" disabled={locked || photo.role !== 'body' || index === 0 || work.document.photos[index - 1]?.role !== 'body'} aria-label={`작업 사진 ${index + 1} 위로`} onClick={() => amend(generation, photos => { if (photos[index]?.role === 'body' && photos[index - 1]?.role === 'body') [photos[index - 1], photos[index]] = [photos[index], photos[index - 1]]; return photos; })}>↑</button>

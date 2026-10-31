@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import {readFileSync} from 'node:fs';
 import {readPageSourceDescriptionReference} from '../extensions/supplier-hub/page-source.mjs';
 import {PAGE_DESCRIPTION_LIMIT,pageDescriptionUrl,parsePageDescriptionImages,readPageDescriptionDocument,readPageDescription} from '../extensions/supplier-hub/page-description.mjs';
 
@@ -58,6 +59,31 @@ test('the description destination accepts only exact, bounded, current-offer CDN
   'https://detail.1688.com/offer/description/offer_detail.htm?offerId='+offerId,
   'https://air.1688.com/pages/od/app-desc/index.html?url='+encodeURIComponent(detailUrl)+'&offerId='+offerId,
  ])assert.throws(()=>pageDescriptionUrl(url,offerId));
+});
+
+test('the recorded mobile wrapper resolves only its explicit CDN destination and exact outer offer',()=>{
+ const recorded=JSON.parse(readFileSync(new URL('./fixtures/1688-mobile-813724060928.json',import.meta.url),'utf8'));
+ const boundSource='https://detail.1688.com/offer/813724060928.html',reference=readPageSourceDescriptionReference(boundSource,['window.__INIT_DATA = '+JSON.stringify(recorded)+';']);
+ assert.equal(reference.offerId,'813724060928');assert.equal(reference.detailUrl,recorded.globalData.detailModel.detailUrl);
+ assert.equal(pageDescriptionUrl(reference.detailUrl,reference.offerId),new URL(reference.detailUrl).searchParams.get('url'));
+ const wrapper=(inner=detailUrl,extra='')=>'https://air.1688.com/pages/od/app-desc/d7p56fw2w/index.html?url='+encodeURIComponent(inner)+'&offerId='+offerId+extra;
+ assert.equal(pageDescriptionUrl(wrapper(),offerId),detailUrl);
+ for(const url of [
+  wrapper().replace('https:','http:'),wrapper().replace('air.1688.com','air.1688.com.evil.test'),wrapper().replace('air.1688.com','air.1688.com:443'),
+  wrapper().replace('air.1688.com','user:pass@air.1688.com'),wrapper()+'#fragment',wrapper().replace('/d7p56fw2w/','/unobserved/'),
+  wrapper().replace('offerId='+offerId,'offerId=700000000002'),wrapper(detailUrl,'&offerId='+offerId),wrapper(detailUrl,'&%6fferId='+offerId),wrapper(detailUrl,'&url='+encodeURIComponent(detailUrl)),wrapper(detailUrl,'&extra=1'),
+  wrapper(detailUrl.replace('itemcdn.tmall.com','evil.test')),wrapper(detailUrl.replace('itemcdn.tmall.com','user:pass@itemcdn.tmall.com')),wrapper(detailUrl.replace('itemcdn.tmall.com','itemcdn.tmall.com:443')),
+  wrapper(detailUrl+'#fragment'),wrapper(detailUrl+'?offerId=700000000002'),wrapper(detailUrl+'?offerId='+offerId+'&offerId='+offerId),wrapper(wrapper()),wrapper(encodeURIComponent(detailUrl)),
+ ])assert.throws(()=>pageDescriptionUrl(url,offerId));
+});
+
+test('the bound wrapper causes one inner CDN GET, never an outer wrapper request',async()=>{
+ const wrapper='https://air.1688.com/pages/od/app-desc/d7p56fw2w/index.html?url='+encodeURIComponent(detailUrl)+'&offerId='+offerId;
+ const h=harness({scripts:[literal(primary(wrapper))]});const result=await h.run();
+ assert.equal(result.available,true);assert.deepEqual(result.detailImages,[first,second]);assert.equal(h.calls.fetch.length,1);assert.equal(h.calls.fetch[0].url,detailUrl);
+ assert.equal(h.calls.scripts.length,2,'the original document and exact wrapper are rechecked after the response');
+ const wrong=harness({scripts:[literal(primary(wrapper.replace('offerId='+offerId,'offerId=700000000002')))]});
+ assert.equal((await wrong.run()).available,false);assert.equal(wrong.calls.fetch.length,0);
 });
 
 test('static HTML extraction skips executable strings, foreign subtrees, comments and invalid CDN sources',()=>{

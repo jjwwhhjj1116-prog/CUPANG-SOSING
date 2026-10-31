@@ -10,7 +10,18 @@ const source=value=>{try{return pageSourceUrl(value);}catch{return fail('source-
 /** Exact allowlist only. No general URL/proxy request, inferred path, auth,
  * fragments, ports, redirects or opaque tokens without a bound primary record. */
 export function pageDescriptionUrl(value,offerId){
+ if(typeof value!=='string'||value.length>2048||/[\u0000-\u0020\u007f]/u.test(value))fail('link-unavailable');
  let url;try{url=new URL(value);}catch{return fail('link-unavailable');}
+ // The retained mobile fixture carries this exact wrapper. It is a static
+ // reference, never a fetch destination: bind its outer offer and validate the
+ // existing inner CDN address without requesting the wrapper or inferring it.
+ if(url.hostname==='air.1688.com'){
+  if(!value.startsWith('https://air.1688.com/')||url.protocol!=='https:'||url.username||url.password||url.port||url.hash
+   ||url.pathname!=='/pages/od/app-desc/d7p56fw2w/index.html'||[...url.searchParams].length!==2
+   ||url.searchParams.getAll('offerId').length!==1||url.searchParams.get('offerId')!==offerId||url.searchParams.getAll('url').length!==1
+   ||[...url.searchParams.keys()].some(key=>!['offerId','url'].includes(key)))fail('link-unavailable');
+  value=url.searchParams.get('url');try{url=new URL(value);}catch{return fail('link-unavailable');}
+ }
  if(typeof value!=='string'||!value.startsWith('https://itemcdn.tmall.com/')||value.length>2048||/[\u0000-\u0020\u007f]/u.test(value)||url.protocol!=='https:'||url.hostname!=='itemcdn.tmall.com'
   ||url.username||url.password||url.port||url.hash||!/^\/1688offer\/[A-Za-z0-9]{1,200}$/u.test(url.pathname))fail('link-unavailable');
  for(const [key,id] of url.searchParams){if(!['offerId','productId'].includes(key)||id!==offerId||url.searchParams.getAll(key).length!==1)fail('link-unavailable');}

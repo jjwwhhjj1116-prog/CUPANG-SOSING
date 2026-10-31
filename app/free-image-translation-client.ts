@@ -207,7 +207,17 @@ export async function recognizeLocalFreeImage(image: FreeImageLoaded, sourceLang
     });
     const readyWorker = await abortable(starting, signal); signal.throwIfAborted();
     const result = await abortable(readyWorker.recognize(image.canvas, { rotateAuto: false }, { blocks: true, text: true }), signal);
-    signal.throwIfAborted(); return readOcrRegions(result.data, image.width, image.height);
+    signal.throwIfAborted();
+    const rows = readOcrRegions(result.data, image.width, image.height);
+    // Initialize only this new OCR observation. Keep saved/manual edit documents
+    // untouched; sampled flat fills are not background reconstruction.
+    const styled = initializeVisionRegions(rows.map(row => ({ id: row.id, text: row.text, translated: null, issue: null, box: row.box })), image.canvas, image.width, image.height);
+    signal.throwIfAborted(); image.visionStyleIssues = styled.issues;
+    return rows.map((row, index) => {
+      const style = styled.regions[index];
+      return { ...row, background: style.background, foreground: style.foreground, fontSize: style.fontSize, textAlign: style.textAlign,
+        selected: row.selected && style.selected, issue: style.issue };
+    });
   } finally {
     signal.removeEventListener('abort', abort);
     if (starting && !worker) {

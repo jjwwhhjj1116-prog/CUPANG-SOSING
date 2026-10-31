@@ -6744,3 +6744,14 @@ REA로 Couplus의 localhost HTTP/SSE와 별도 상품조회 경계를 확인했�
 - Source-proven safeheaderdraft-listopen on separateemptyStartPage legal881: onlyGET/draft/api/drafts. NEVERrowload/delete/preview. Matchingname+categoryone row modified10/31 03:24, alignedwithclickwindow, so actualbodysaveappears tohaveoccurred; tolduser. UIrowhasnodocId/seconds/timezone, HTTPpayload/ACKuncaptured so exactfieldchangesunconfirmed. outputs/step881-official-preview-row-observation.json. Row screenshotCDPtimeout, no nativefallback. consolemetadata gave no decisiveupdateproof.
 - ActualChrome still64/disk67. Newurgentasyncquestion explicitlydisclosespreviewattemptandasksmanual67reloadforreadonlyimpactaudit; unanswered. Stop Preview/Next/Save/Submit actions. Once67confirmed reconstructoriginalf294/doc2347603 readonlyfullaudit FIRST; preserveoldsourcepacket/checkpoint. Anyrepair/undoonlyafteractualdiffandrequiredapproval. Cannot completeactualreceiptuntilimpactresolved.
 - Preserveqa874727939940/readHub876727940016/official876727940002 (previewopen) + legal881727940052readlist; probe881727940049ephemeral. No source/limit/model/cost/deploychanges thisturn. docs/step881-ai-policy-gaps.md isunappliedrecommendationonly (legacyLlama/freeflag/globalUTC40vsunboundedordinaryQwen); actualquotaexhaustionnotmeasured andnotproven886cause. docs/step881-preview-save-incident.md hasexactproof/limitations. PublicsourcehandbookmustwarnPreviewiswrite, notjustNext.
+
+## 882. 2026-10-31 — 상세 원본 0장 확인, 편집 구성과 최종 파일 분리, 담기 패널 대비 수정
+
+- 최신 근거: docs/step882-detail-source-and-popup.md. 886 수집본 11개 모두 상세 0장, 최신 진단 reference-missing. 배너+기존 짧은 편집 사진을 원본 전체 상세로 보고하지 않는다.
+- 5단계는 저장된 수동 구성 우선/정확한 자동 상세 원본 순서로 열며, 최종 첨부 이미지와 편집 원본을 분리했다. 수집 누락을 갤러리로 자동 보충하지 않는다.
+- 부분 상세 발견 시 나머지 상세문서 조회를 건너뛰던 오류와 기록된 정확한 mobile wrapper 지원을 보완했다. 886 실제 재수집 성공은 미검증이다.
+- 사용자 새 요청의 다중 담기 패널은 남색·흰 글자·YFS 배지로 수정했다. AI Website Cloner Template과 영상 자막 검토: 화면 상태별 비교 검수에 유용하지만 업무 서버 복제 기능은 아니다. 별도 설치하지 않았다.
+- 확장 2.1.68 준비: 113파일, ZIP SHA f1c84c79596176b5754c17f019e6d600d841e1f4f4b8e9b86d75cef0f3d003ca. 실제 기존 설치 폴더는 백업 후 갱신한다. 웹 배포/실행 버전은 최신 로그로 확인한다.
+- 원래 D1 범위는 35테이블·47행 해시 이전과 동일. Supplier Hub 원격 본문 무변경/접수 증거가 아니다. doc2347603 전체 읽기 대조는 응답 미확정. Preview 사고의 영향 확인도 끝나지 않았다. 추가 파일·본문 전송/새 생성/삭제/Next/Preview/Save/Submit 금지 유지.
+- Chrome 재연결 후 선택 browser ID6. 원래 qa727939940, official727940002(Preview 열림), readHub727940016, legal-list727940052 보존. blocked886727940078은 다시 읽거나 우회하지 않는다. 새 probe727940074는 단계5 읽기 검수용.
+- Step882 최종 운영 배포: f31abf61-2b2e-4a67-acc3-29f85d92892e. 모델/요금/스키마 변경 없음. 확장 파일 113개 기존 설치 폴더 해시 일치; Chrome 실행2.1.68과 남색 박스는 사용자 새로고침 확인 대기.
