@@ -5,7 +5,7 @@ import {readSingleCatalogContext,validateSingleConsentChallenge,type SingleDocum
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 import {validateUnexpectedLegalAuditReport,type UnexpectedLegalAuditReport} from '../extensions/supplier-hub/unexpected-legal-audit.mjs';
 export type {UnexpectedLegalAuditReport} from '../extensions/supplier-hub/unexpected-legal-audit.mjs';
-import {validateSavedDocumentStepValidationReport,type SavedDocumentStepValidationReport} from '../extensions/supplier-hub/saved-document-step-validation.mjs';
+import {validateSavedDocumentStepValidationReport,validateSavedDocumentStepRetryRequest,type SavedDocumentStepValidationReport,type SavedDocumentStepRetryRequest} from '../extensions/supplier-hub/saved-document-step-validation.mjs';
 export type {SavedDocumentStepValidationReport} from '../extensions/supplier-hub/saved-document-step-validation.mjs';
 
 const FORMAT='yoofam-supplier-hub-product-document-v1',HASH=/^[a-f0-9]{64}$/,ID=/^\w[\w-]{0,99}$/;
@@ -35,7 +35,7 @@ export function unexpectedLegalAuditReadError(cause:unknown):ProductDocumentBrid
   return new ProductDocumentBridgeError('원래 문서의 읽기 전용 대조를 완료하지 못했습니다. 문서·파일·본문을 변경하거나 전송을 다시 시작하지 않았습니다.',false,'UNEXPECTED_LEGAL_AUDIT_READ_FAILED');
 }
 export type ProductDocumentPreview={format:string;requestId:string;identity:ProductReceiptIdentity;identityDigest:string;packetDigest:string;productId:string;fingerprint:string;
-  members:ProductReceiptIdentity['members'];reviewDigest:string;preparedBodySha256:string;originalBodySha256:string;liveVerified:boolean;remoteWrites:false;registered:false;draftPreparationAvailable?:boolean;preparedLifecycleAvailable?:boolean;savedDraftTargetRecoveryAvailable?:boolean;unexpectedLegalAuditAvailable?:boolean;savedDocumentStepValidationAvailable?:boolean;createRetryAvailable?:boolean;createRetryContinuationAvailable?:boolean;existingDocumentRepairAvailable?:boolean;existingDocumentRepairRetryAvailable?:boolean;existingDocumentRepairContinuationAvailable?:boolean;existingDocumentRepairSegmentedAvailable?:boolean;existingDocumentRepairReservedResumeAvailable?:boolean};
+  members:ProductReceiptIdentity['members'];reviewDigest:string;preparedBodySha256:string;originalBodySha256:string;liveVerified:boolean;remoteWrites:false;registered:false;draftPreparationAvailable?:boolean;preparedLifecycleAvailable?:boolean;savedDraftTargetRecoveryAvailable?:boolean;unexpectedLegalAuditAvailable?:boolean;savedDocumentStepValidationAvailable?:boolean;savedDocumentStepRetryAvailable?:boolean;createRetryAvailable?:boolean;createRetryContinuationAvailable?:boolean;existingDocumentRepairAvailable?:boolean;existingDocumentRepairRetryAvailable?:boolean;existingDocumentRepairContinuationAvailable?:boolean;existingDocumentRepairSegmentedAvailable?:boolean;existingDocumentRepairReservedResumeAvailable?:boolean};
 export type ProductDocumentSession={packet:ProductDocumentPacket;preview:ProductDocumentPreview;packetDigest:string;origin:string};
 export type ProductValidationError={columnName:string;message:string};
 export type ProductValidationRejection={evidence:'document-validation-rejection';operationId:string;step:number;validatedSteps:number[];checkpointSequence:number;rejectedAt:number;submitted:false;consented:false;errors?:ProductValidationError[]};
@@ -67,12 +67,12 @@ async function verifyIdentity(identity:unknown,expected:Awaited<ReturnType<typeo
 }
 
 /** One app click, one extension call. A missing ACK is never retried here. */
-export function productDocumentExchange(action:'preview'|'auditUnexpectedLegal'|'validateSavedDocumentSteps'|SingleDocumentAction|ProductDraftAction|PreparedDocumentAction,packet:ProductDocumentPacket,signal:AbortSignal,confirmation?:SingleConfirmation):Promise<unknown>{
+export function productDocumentExchange(action:'preview'|'auditUnexpectedLegal'|'validateSavedDocumentSteps'|'retrySavedDocumentStep'|SingleDocumentAction|ProductDraftAction|PreparedDocumentAction,packet:ProductDocumentPacket,signal:AbortSignal,confirmation?:SingleConfirmation|SavedDocumentStepRetryRequest):Promise<unknown>{
   return new Promise((resolve,reject)=>{
     if(signal.aborted){reject(new ProductDocumentBridgeError('전체 상품 견적 작업을 취소했습니다.',false));return;}
     productReceiptCanonical(packet);
-    const confirming=action==='confirm'||action==='confirmPreparedDraft';
-    if(!['preview','start','resume','recover','confirm','observe','prepareDraft','recoverDraft','recoverSavedDraftTarget','auditUnexpectedLegal','validateSavedDocumentSteps','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','repairExistingDraft','retryExistingDraftRepair','continueApprovedRepair','resumeReservedRepair','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(action)||confirming&&!confirmation||!confirming&&confirmation){reject(new ProductDocumentBridgeError('현재 전체 상품 문서의 동의 동작을 확인해주세요.',false));return;}
+    const confirming=action==='confirm'||action==='confirmPreparedDraft'||action==='retrySavedDocumentStep';
+    if(!['preview','start','resume','recover','confirm','observe','prepareDraft','recoverDraft','recoverSavedDraftTarget','auditUnexpectedLegal','validateSavedDocumentSteps','retrySavedDocumentStep','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','repairExistingDraft','retryExistingDraftRepair','continueApprovedRepair','resumeReservedRepair','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(action)||confirming&&!confirmation||!confirming&&confirmation){reject(new ProductDocumentBridgeError('현재 전체 상품 문서의 동의 동작을 확인해주세요.',false));return;}
     if(confirmation)productReceiptCanonical(confirmation);
     const requestId=crypto.randomUUID(),mutating=!['preview','observe','recover','recoverDraft','recoverSavedDraftTarget','auditUnexpectedLegal','recoverPreparedDraft','observePreparedDraft'].includes(action);
     const cleanup=()=>{clearTimeout(timer);window.removeEventListener('message',receive);signal.removeEventListener('abort',abort);};
@@ -102,7 +102,7 @@ export function productDocumentExchange(action:'preview'|'auditUnexpectedLegal'|
     // Continue the already-approved bounded work without timing out its UI
     // before the source/duplicate/file checks finish. This does not extend a
     // packet/consent TTL and never retries a message or remote request.
-    const timer=setTimeout(()=>{cleanup();reject(new ProductDocumentBridgeError(action==='validateSavedDocumentSteps'?'저장 문서 단계 검사 응답을 확인하지 못했습니다. 자동으로 다시 요청하지 않았습니다.':'전체 상품 문서 응답이 없습니다. 같은 요청을 다시 전송하지 말고 저장 결과를 조회해주세요.',mutating,'PRODUCT_DOCUMENT_ACK_MISSING'));},action==='validateSavedDocumentSteps'?300000:action==='resumeReservedRepair'?480000:action==='continueApprovedRepair'?240000:nativeReadback?180000:confirming||action==='prepareDraft'||action==='reviewPreparedDraft'?120000:action==='preview'?PRODUCT_DOCUMENT_PREVIEW_ACK_TIMEOUT:60000);
+    const timer=setTimeout(()=>{cleanup();reject(new ProductDocumentBridgeError(['validateSavedDocumentSteps','retrySavedDocumentStep'].includes(action)?'저장 문서 단계 검사 응답을 확인하지 못했습니다. 자동으로 다시 요청하지 않았습니다.':'전체 상품 문서 응답이 없습니다. 같은 요청을 다시 전송하지 말고 저장 결과를 조회해주세요.',mutating,'PRODUCT_DOCUMENT_ACK_MISSING'));},['validateSavedDocumentSteps','retrySavedDocumentStep'].includes(action)?300000:action==='resumeReservedRepair'?480000:action==='continueApprovedRepair'?240000:nativeReadback?180000:confirming||action==='prepareDraft'||action==='reviewPreparedDraft'?120000:action==='preview'?PRODUCT_DOCUMENT_PREVIEW_ACK_TIMEOUT:60000);
     window.addEventListener('message',receive);signal.addEventListener('abort',abort,{once:true});
     try{window.postMessage({channel:'YOOFAM_HUB_HANDOFF',requestId,type:'PRODUCT_DOCUMENT',payload:{action,packet,...(confirmation?{confirmation}:{})}},window.location.origin);}
     catch{cleanup();reject(new ProductDocumentBridgeError('확장 전달 응답을 확인하지 못했습니다. 원래 저장 결과를 조회해주세요.',mutating));}
@@ -113,13 +113,14 @@ export async function previewProductDocument(packet:ProductDocumentPacket,signal
   const expected=await proof(packet,origin);if(signal.aborted)throw new ProductDocumentBridgeError('전체 상품 견적 확인을 취소했습니다.',false);
   const result=await productDocumentExchange('preview',packet,signal);
   try{
-    if(signal.aborted||!exact(result,['format','requestId','identity','identityDigest','packetDigest','productId','fingerprint','members','reviewDigest','preparedBodySha256','originalBodySha256','liveVerified','remoteWrites','registered'],['unexpectedLegalAuditAvailable','savedDocumentStepValidationAvailable','draftPreparationAvailable','preparedLifecycleAvailable','savedDraftTargetRecoveryAvailable','createRetryAvailable','createRetryContinuationAvailable','existingDocumentRepairAvailable','existingDocumentRepairRetryAvailable','existingDocumentRepairContinuationAvailable','existingDocumentRepairReservedResumeAvailable','existingDocumentRepairSegmentedAvailable'])
+    if(signal.aborted||!exact(result,['format','requestId','identity','identityDigest','packetDigest','productId','fingerprint','members','reviewDigest','preparedBodySha256','originalBodySha256','liveVerified','remoteWrites','registered'],['unexpectedLegalAuditAvailable','savedDocumentStepValidationAvailable','savedDocumentStepRetryAvailable','draftPreparationAvailable','preparedLifecycleAvailable','savedDraftTargetRecoveryAvailable','createRetryAvailable','createRetryContinuationAvailable','existingDocumentRepairAvailable','existingDocumentRepairRetryAvailable','existingDocumentRepairContinuationAvailable','existingDocumentRepairReservedResumeAvailable','existingDocumentRepairSegmentedAvailable'])
       ||result.format!==FORMAT||result.requestId!==packet.requestId||result.productId!==packet.review.identity.productId||result.fingerprint!==packet.review.identity.fingerprint
       ||!same(result.members,packet.review.members)||result.reviewDigest!==packet.review.reviewDigest||result.originalBodySha256!==expected.originalBodySha256||result.preparedBodySha256!==expected.preparedBodySha256
       ||result.packetDigest!==expected.packetDigest||!HASH.test(String(result.identityDigest))||typeof result.liveVerified!=='boolean'||result.remoteWrites!==false||result.registered!==false
       ||result.draftPreparationAvailable!==undefined&&typeof result.draftPreparationAvailable!=='boolean'||result.preparedLifecycleAvailable!==undefined&&typeof result.preparedLifecycleAvailable!=='boolean'
       ||result.unexpectedLegalAuditAvailable!==undefined&&(typeof result.unexpectedLegalAuditAvailable!=='boolean'||result.unexpectedLegalAuditAvailable===true&&result.draftPreparationAvailable!==true)
       ||result.savedDocumentStepValidationAvailable!==undefined&&(typeof result.savedDocumentStepValidationAvailable!=='boolean'||result.savedDocumentStepValidationAvailable===true&&(result.draftPreparationAvailable!==true||result.unexpectedLegalAuditAvailable!==true))
+      ||result.savedDocumentStepRetryAvailable!==undefined&&(typeof result.savedDocumentStepRetryAvailable!=='boolean'||result.savedDocumentStepRetryAvailable===true&&result.savedDocumentStepValidationAvailable!==true)
       ||result.savedDraftTargetRecoveryAvailable!==undefined&&(typeof result.savedDraftTargetRecoveryAvailable!=='boolean'||result.savedDraftTargetRecoveryAvailable===true&&result.draftPreparationAvailable!==true)
       ||result.createRetryAvailable!==undefined&&typeof result.createRetryAvailable!=='boolean'||result.createRetryAvailable===true&&result.draftPreparationAvailable!==true
       ||result.createRetryContinuationAvailable!==undefined&&typeof result.createRetryContinuationAvailable!=='boolean'||result.createRetryContinuationAvailable===true&&result.createRetryAvailable!==true
@@ -194,6 +195,15 @@ export async function auditUnexpectedLegal(session:ProductDocumentSession,signal
  * validation POST itself may affect server validation state; do not call it a
  * read-only observation or replay it automatically after an unknown response. */
 export async function validateSavedDocumentSteps(session:ProductDocumentSession,audit:UnexpectedLegalAuditReport,signal:AbortSignal):Promise<SavedDocumentStepValidationReport>{
+  return inspectSavedDocumentSteps(session,audit,signal);
+}
+/** A separate explicit, bounded validation-only recheck. It never clears the
+ * original uncertain record or recovers permission to resend files or a body. */
+export async function retrySavedDocumentStep(session:ProductDocumentSession,audit:UnexpectedLegalAuditReport,prior:SavedDocumentStepValidationReport,signal:AbortSignal):Promise<SavedDocumentStepValidationReport>{
+  if(session.preview.savedDocumentStepRetryAvailable!==true)throw new ProductDocumentBridgeError('미확정 단계의 1회 재검사를 지원하는 YOOFAM 확장 2.1.74 이상으로 연결해주세요.',false,'SAVED_DOCUMENT_STEP_RETRY_UNAVAILABLE');
+  return inspectSavedDocumentSteps(session,audit,signal,prior);
+}
+async function inspectSavedDocumentSteps(session:ProductDocumentSession,audit:UnexpectedLegalAuditReport,signal:AbortSignal,retryReport?:SavedDocumentStepValidationReport):Promise<SavedDocumentStepValidationReport>{
   if(session.preview.savedDocumentStepValidationAvailable!==true)throw new ProductDocumentBridgeError('저장 문서 단계 검사를 지원하는 YOOFAM 확장 2.1.72 이상으로 연결해주세요.',false,'SAVED_DOCUMENT_STEP_VALIDATION_UNAVAILABLE');
   if(window.location.origin!==session.origin||!ORIGINS.includes(session.origin))throw new ProductDocumentBridgeError('원래 앱에서 저장 문서의 단계를 검사해주세요.',false,'SAVED_DOCUMENT_STEP_VALIDATION_SCOPE');
   const expected=await proof(session.packet,session.origin,true),baseline=copy(audit),original=productReceiptCanonical(audit);
@@ -209,7 +219,16 @@ export async function validateSavedDocumentSteps(session:ProductDocumentSession,
     if(Date.now()-baseline.observedAt>SAVED_DOCUMENT_VALIDATION_BASELINE_MAX_AGE_MS||baseline.observedAt>Date.now()+60000)throw Error();
     validateUnexpectedLegalAuditReport(baseline,{binding,target:baseline.target},baseline.observedAt);
   }catch{throw new ProductDocumentBridgeError('단계 검사 전에 원래 문서·회사·본문 대조의 연결을 확인하지 못했습니다. 검사 요청은 보내지 않았습니다.',false,'SAVED_DOCUMENT_STEP_VALIDATION_SCOPE');}
-  const value=await productDocumentExchange('validateSavedDocumentSteps',session.packet,signal);
+  let confirmation:SavedDocumentStepRetryRequest|undefined;
+  if(retryReport){
+    try{
+      if(Date.now()-retryReport.observedAt>SAVED_DOCUMENT_VALIDATION_BASELINE_MAX_AGE_MS||retryReport.observedAt>Date.now()+60000)throw Error();
+      const prior=validateSavedDocumentStepValidationReport(retryReport,{binding,target:baseline.target,actualRawBodySha256:baseline.rawBodySha256,fileSetSha256:baseline.fileSetSha256,legalSetSha256:baseline.legalSetSha256},retryReport.observedAt);
+      const last=prior.stages.at(-1);if(!last||last.state!=='uncertain')throw Error();
+      confirmation=validateSavedDocumentStepRetryRequest({format:'yoofam-saved-document-step-retry-v1',...binding,actualRawBodySha256:baseline.rawBodySha256,fileSetSha256:baseline.fileSetSha256,legalSetSha256:baseline.legalSetSha256,stage:last.stage,acknowledgeRepeatedValidation:true});
+    }catch{throw new ProductDocumentBridgeError('원래 미확정 단계와 현재 문서 대조가 다릅니다. 재검사를 요청하지 않았습니다.',false,'SAVED_DOCUMENT_STEP_RETRY_SCOPE');}
+  }
+  const value=await productDocumentExchange(retryReport?'retrySavedDocumentStep':'validateSavedDocumentSteps',session.packet,signal,confirmation);
   try{
     if(signal.aborted||productReceiptCanonical(audit)!==original)throw Error();
     return validateSavedDocumentStepValidationReport(value,{binding,target:baseline.target,actualRawBodySha256:baseline.rawBodySha256,fileSetSha256:baseline.fileSetSha256,legalSetSha256:baseline.legalSetSha256});

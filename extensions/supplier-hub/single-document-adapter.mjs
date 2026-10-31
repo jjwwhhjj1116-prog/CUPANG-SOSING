@@ -20,7 +20,7 @@ import {singleRecordMirrorPage} from './single-record-mirror-page.mjs';
 import {savedDraftCurrentReadPage} from './saved-draft-current-read-page.mjs';
 import {validateUnexpectedLegalAuditReport} from './unexpected-legal-audit.mjs';
 import {savedDocumentStepValidationPage} from './saved-document-step-validation-page.mjs';
-import {runSavedDocumentStepValidation,validateSavedDocumentStepValidationReport} from './saved-document-step-validation.mjs';
+import {runSavedDocumentStepValidation,validateSavedDocumentStepValidationReport,validateSavedDocumentStepRetryRequest} from './saved-document-step-validation.mjs';
 
 const HASH=/^[a-f0-9]{64}$/;
 const ID=/^\w[\w-]{0,99}$/;
@@ -886,7 +886,8 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
       await lease.fresh();
     };
     const compactAudit=Object.fromEntries(['rawBodySha256','fileSetSha256','legalSetSha256','observedAt'].map(key=>[key,audit[key]]));
-    const report=await runSavedDocumentStepValidation({audit,storage:api.storage.local,fresh,now,sendStep:stage=>execute(input.tab,input.identity,savedDocumentStepValidationPage,[{
+    const retryConfirmation=lease.retryConfirmation===undefined?undefined:validateSavedDocumentStepRetryRequest(lease.retryConfirmation,{...audit,actualRawBodySha256:audit.rawBodySha256});
+    const report=await runSavedDocumentStepValidation({audit,storage:api.storage.local,fresh,now,retryConfirmation,sendStep:stage=>execute(input.tab,input.identity,savedDocumentStepValidationPage,[{
       binding,target:{tabId:input.tab.tabId,windowId:input.tab.windowId},docId:input.docId,expectedBody,audit:compactAudit,stage}])});
     await fresh();
     const after=await auditUnexpectedLegal(input);
@@ -988,7 +989,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     return copy(proof);
   }
   return Object.freeze({readSource,
-    ...(nativeSha&&typeof api.storage?.local?.get==='function'&&typeof api.storage?.local?.set==='function'?{validateSavedDocumentSteps}:{}),
+    ...(nativeSha&&typeof api.storage?.local?.get==='function'&&typeof api.storage?.local?.set==='function'?{validateSavedDocumentSteps,retrySavedDocumentStep:(input,lease,confirmation)=>validateSavedDocumentSteps(input,{...lease,retryConfirmation:confirmation})}:{}),
     qualifyPreparedDraft,...(nativeSha?{auditUnexpectedLegal,qualifySavedDraftTarget,continueReservedAssets,readNativeSourceSnapshot,inspectCreateRetry,inspectUnsentUpdate,inspectExistingDocument,inspectExistingRepairContinuation,bindExistingDocumentRepair:input=>inspectExistingDocument(input,'bind')}:{}),
     ...(nativeSha?{readOwnedTargetPresence:async input=>{
       const binding=sourceBindings.get(canonical(input.identity))?.binding;

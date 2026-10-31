@@ -1,7 +1,7 @@
 import {HANDOFF_ORIGINS} from './handoff-store.mjs';
 import {receiptRejectionDetailsValid} from './rejection-details.mjs';
 import {validateUnexpectedLegalAuditReport} from './unexpected-legal-audit.mjs';
-import {validateSavedDocumentStepValidationReport} from './saved-document-step-validation.mjs';
+import {validateSavedDocumentStepValidationReport,validateSavedDocumentStepRetryRequest} from './saved-document-step-validation.mjs';
 
 // Clean-room reconstruction of the recorded Single protocol. The retained
 // artifact establishes these paths, not live response schemas or acceptance.
@@ -609,11 +609,12 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
     active.add(context.key);let state,auditPhase='checkpoint';
     try{
       state=await get(context);
-      if(action==='auditUnexpectedLegal'||action==='validateSavedDocumentSteps'){
-        const validating=action==='validateSavedDocumentSteps',method=validating?'validateSavedDocumentSteps':'auditUnexpectedLegal';
+      if(action==='auditUnexpectedLegal'||action==='validateSavedDocumentSteps'||action==='retrySavedDocumentStep'){
+        const retrying=action==='retrySavedDocumentStep',validating=action==='validateSavedDocumentSteps'||retrying,method=retrying?'retrySavedDocumentStep':validating?'validateSavedDocumentSteps':'auditUnexpectedLegal';
         const recovery=state?.savedDraftTargetRecovery;
         if(!state||!nativeLifecycle||!savedDraftTargetScope(state,context)||recovery?.phase!=='created'||typeof adapter[method]!=='function'||typeof adapter.readOwnedTargetPresence!=='function')
           fail(validating?'SAVED_DOCUMENT_STEP_VALIDATION_SCOPE':'UNEXPECTED_LEGAL_AUDIT_SCOPE',validating?'원래 문서의 예약된 전용 검증 탭에서만 저장 단계 검사를 수행할 수 있습니다.':'원래 문서의 예약된 읽기 전용 검증 탭에서만 인증서 감사를 수행할 수 있습니다.');
+        if(retrying)validateSavedDocumentStepRetryRequest(details,{requestId:state.requestId,docId:state.docId,identityDigest:context.identityDigest,packetDigest:context.packetDigest,originalBodySha256:context.originalBodySha256,preparedBodySha256:context.bodySha256,sourcePlanSha256:context.identity.fingerprint,checkpointSequence:state.sequence});
         const before=clone(state);auditPhase='source-before';const source=await guard(context,{...state,ownedTarget:null,tab:null,sessionId:null});
         auditPhase='previous-target';const priorPresence=await targetPresence(context,state,recovery.previousTarget);
         auditPhase='current-target';const presence=await targetPresence(context,state,recovery.target);
@@ -624,7 +625,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
         const fresh=async()=>{observationActive();if(!same(before,await get(context)))fail('CHECKPOINT_CONFLICT','단계 검사 중 원래 요청 기록이 변경되었습니다.');
           const previous=await targetPresence(context,state,recovery.previousTarget),current=await targetPresence(context,state,recovery.target);
           if(!previous.closed||current.closed)fail('TAB_CHANGED','단계 검사 중 원래 전용 탭 연결이 변경되었습니다.');};
-        const report=validating?await adapter.validateSavedDocumentSteps(safeValue(input),{fresh}):await call(method,input);
+        const report=retrying?await adapter.retrySavedDocumentStep(safeValue(input),{fresh},safeValue(details)):validating?await adapter.validateSavedDocumentSteps(safeValue(input),{fresh}):await call(method,input);
         auditPhase='source-after';
         const afterSource=await guard(context,{...state,ownedTarget:null,tab:null,sessionId:null});
         auditPhase='checkpoint-after';
@@ -919,7 +920,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
       // The saved requested state wins, including a write whose caller lost
       // its response or checkpoint CAS. Never replay/merge guessed ACKs.
       const failure={code:error instanceof SingleDocumentError?error.code:'ADAPTER_FAILURE',message:error instanceof SingleDocumentError?error.message:'요청 결과를 확정하지 못했습니다. 현재 전송 기록을 조회해주세요.'};
-      if(action==='validateSavedDocumentSteps')throw error instanceof SingleDocumentError?error:new SingleDocumentError('SAVED_DOCUMENT_STEP_VALIDATION_EXECUTION','저장 문서 단계 검사를 중단했습니다. 단계: '+auditPhase+'. 파일·본문 저장이나 등록전송은 하지 않았습니다.');
+      if(action==='validateSavedDocumentSteps'||action==='retrySavedDocumentStep')throw error instanceof SingleDocumentError?error:new SingleDocumentError('SAVED_DOCUMENT_STEP_VALIDATION_EXECUTION','저장 문서 단계 검사를 중단했습니다. 단계: '+auditPhase+'. 파일·본문 저장이나 등록전송은 하지 않았습니다.');
       if(action==='auditUnexpectedLegal')throw error instanceof SingleDocumentError?error:new SingleDocumentError('UNEXPECTED_LEGAL_AUDIT_EXECUTION','읽기 전용 인증서 감사를 중단했습니다. 단계: '+auditPhase+'. 문서·파일·본문을 변경하지 않았습니다.');
       if(['SOURCE_CHANGED','TAB_CHANGED'].includes(failure.code))return {format:context.packet.format,requestId:context.packet.requestId,state:'scope-blocked',registered:false,success:false,needsRecovery:false,error:failure};
       const latest=await get(context);if(latest)return result(latest,{error:failure});
@@ -949,6 +950,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
     recoverSavedDraftTarget:(packet,sender)=>operate(packet,sender,'recoverSavedDraftTarget'),
     auditUnexpectedLegal:(packet,sender)=>operate(packet,sender,'auditUnexpectedLegal'),
     validateSavedDocumentSteps:(packet,sender)=>operate(packet,sender,'validateSavedDocumentSteps'),
+    retrySavedDocumentStep:(packet,sender,confirmation)=>operate(packet,sender,'retrySavedDocumentStep',confirmation),
     recoverClosedTarget:(packet,sender)=>operate(packet,sender,'recoverClosedTarget'),
     repairExistingDraft:(packet,sender)=>operate(packet,sender,'repairExistingDraft'),
     retryExistingDraftRepair:(packet,sender)=>operate(packet,sender,'retryExistingDraftRepair'),

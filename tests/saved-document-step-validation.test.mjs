@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {createHash,webcrypto} from 'node:crypto';
-import {runSavedDocumentStepValidation,validateSavedDocumentStepValidationReport} from '../extensions/supplier-hub/saved-document-step-validation.mjs';
+import {runSavedDocumentStepValidation,validateSavedDocumentStepValidationReport,validateSavedDocumentStepRetryRequest} from '../extensions/supplier-hub/saved-document-step-validation.mjs';
 import {savedDocumentStepValidationPage} from '../extensions/supplier-hub/saved-document-step-validation-page.mjs';
 
 const copy=value=>structuredClone(value),plain=value=>JSON.parse(JSON.stringify(value));
@@ -17,6 +17,51 @@ function runnerFixture(){
  f.options={audit,storage,now:()=>f.now,fresh:async()=>{f.fences++;if(f.cancel)throw Error('cancelled');},sendStep:async stage=>{calls.push(stage);const entry=[...entries.values()].find(row=>row.stage===stage);assert.equal(entry?.state,'requested','durable intent precedes POST');return f.reply?f.reply(stage):passed(stage);}};
  f.run=()=>runSavedDocumentStepValidation(f.options);return f;
 }
+function explicitRetry(f,stage=2){
+ const {audit}=f;
+ return {format:'yoofam-saved-document-step-retry-v1',...Object.fromEntries(['requestId','docId','identityDigest','packetDigest','originalBodySha256','preparedBodySha256','sourcePlanSha256','checkpointSequence','fileSetSha256','legalSetSha256'].map(key=>[key,audit[key]])),actualRawBodySha256:audit.rawBodySha256,stage,acknowledgeRepeatedValidation:true};
+}
+async function uncertainFixture(){
+ const f=runnerFixture();f.reply=()=>{throw Error('synthetic lost acknowledgement');};await f.run();f.calls.length=0;return f;
+}
+
+test('explicit validation-only retry preserves the original uncertain journal, reserves once before POST and never changes normal recovery',async()=>{
+ const f=await uncertainFixture(),original=[...f.entries][0],before=copy(original[1]);f.options.retryConfirmation=explicitRetry(f);
+ f.options.sendStep=async stage=>{f.calls.push(stage);if(stage===2){assert.deepEqual(f.entries.get(original[0]),before);assert.equal([...f.entries].find(([key])=>key.startsWith('yoofamSavedStepValidationRetryV1:'))[1].state,'requested');}return passed(stage);};
+ const report=await f.run();assert.deepEqual(f.calls,[2,3,4,5]);assert.ok(report.stages.every(row=>row.state==='passed'));assert.equal(report.canResume,false);assert.equal(report.submitted,false);assert.deepEqual(f.entries.get(original[0]),before);
+ f.calls.length=0;const again=await f.run();assert.deepEqual(f.calls,[]);assert.ok(again.stages.every(row=>row.cached&&!row.requested));
+ delete f.options.retryConfirmation;const normal=await f.run();assert.equal(normal.stages[0].failureCode,'prior-uncertain');assert.deepEqual(f.calls,[]);assert.deepEqual(f.entries.get(original[0]),before);
+});
+
+test('explicit retry loss, restart and cancellation keep their separate one-time reservation and never repeat the validation',async()=>{
+ for(const mode of ['lost','cancel']){
+  const f=await uncertainFixture(),original=copy([...f.entries]);f.options.retryConfirmation=explicitRetry(f);
+  f.options.sendStep=async stage=>{f.calls.push(stage);throw Error('synthetic lost retry ACK');};
+  if(mode==='cancel'){const set=f.options.storage.set;f.options.storage.set=async rows=>{await set(rows);if(Object.keys(rows)[0].startsWith('yoofamSavedStepValidationRetryV1:'))f.cancel=true;};await assert.rejects(f.run());f.cancel=false;}
+  else{const first=await f.run();assert.equal(first.stages[0].state,'uncertain');assert.deepEqual(f.calls,[2]);}
+  f.calls.length=0;f.options.sendStep=()=>assert.fail('A restarted receiver must not repeat the reserved retry');
+  const again=await runSavedDocumentStepValidation({...f.options});assert.equal(again.stages[0].failureCode,'prior-uncertain');assert.deepEqual(f.calls,[]);assert.deepEqual(f.entries.get(original[0][0]),original[0][1]);
+ }
+});
+
+test('a later explicit uncertain-stage recheck can use only an observed passed retry prefix without replaying it or releasing normal recovery',async()=>{
+ const f=await uncertainFixture(),original2=copy([...f.entries][0]);f.options.retryConfirmation=explicitRetry(f);
+ f.options.sendStep=async stage=>{f.calls.push(stage);if(stage===3)throw Error('synthetic lost next-stage ACK');return passed(stage);};
+ const first=await f.run();assert.deepEqual(f.calls,[2,3]);assert.equal(first.stages.at(-1).state,'uncertain');const original3=copy([...f.entries].find(([key])=>key.endsWith(':3')));
+ f.calls.length=0;f.options.retryConfirmation=explicitRetry(f,3);f.options.sendStep=async stage=>{f.calls.push(stage);assert.notEqual(stage,2,'The observed retry prefix is not sent again');return passed(stage);};
+ const second=await f.run();assert.deepEqual(f.calls,[3,4,5]);assert.equal(second.stages[0].cached,true);assert.equal(second.stages[0].requested,false);assert.ok(second.stages.every(row=>row.state==='passed'));
+ assert.deepEqual(f.entries.get(original2[0]),original2[1]);assert.deepEqual(f.entries.get(original3[0]),original3[1]);
+ f.calls.length=0;delete f.options.retryConfirmation;assert.equal((await f.run()).stages[0].failureCode,'prior-uncertain');assert.deepEqual(f.calls,[]);
+ const invalid=await uncertainFixture();invalid.options.retryConfirmation=explicitRetry(invalid);invalid.options.sendStep=async stage=>stage===3?(()=>{throw Error('synthetic uncertain next');})():passed(stage);await invalid.run();
+ [...invalid.entries].find(([key])=>key.startsWith('yoofamSavedStepValidationRetryV1:'))[1].state='uncertain';invalid.options.retryConfirmation=explicitRetry(invalid,3);const prior=copy([...invalid.entries]);invalid.calls.length=0;await assert.rejects(invalid.run());assert.deepEqual([...invalid.entries],prior);assert.deepEqual(invalid.calls,[]);
+});
+
+test('explicit retry refuses altered source/document/stage/acknowledgement and missing or unobserved prefixes before any retry write',async()=>{
+ const edits=[r=>{r.actualRawBodySha256='f'.repeat(64);},r=>{r.fileSetSha256='f'.repeat(64);},r=>{r.legalSetSha256='f'.repeat(64);},r=>{r.requestId='different';},r=>{r.docId=2347604;},r=>{r.stage=3;},r=>{r.checkpointSequence++;},r=>{r.acknowledgeRepeatedValidation=false;},r=>{r.extra='forbidden';}];
+ for(const edit of edits){const f=await uncertainFixture(),before=copy([...f.entries]);f.options.retryConfirmation=explicitRetry(f);edit(f.options.retryConfirmation);await assert.rejects(f.run());assert.deepEqual([...f.entries],before);assert.deepEqual(f.calls,[]);}
+ const f=await uncertainFixture();f.options.retryConfirmation=explicitRetry(f);[...f.entries.values()][0].state='requested';const before=copy([...f.entries]);await assert.rejects(f.run());assert.deepEqual([...f.entries],before);assert.deepEqual(f.calls,[]);
+ assert.throws(()=>validateSavedDocumentStepRetryRequest({...explicitRetry(f),stage:6}));
+});
 test('independent durable ledger runs only steps 2..5 once and caches positive evidence for identical actual body and file sets',async()=>{
  const f=runnerFixture(),first=await f.run();assert.deepEqual(f.calls,[2,3,4,5]);assert.equal(first.stages.length,4);assert.equal(first.registered,false);assert.equal(first.canResume,false);assert.equal(Object.hasOwn(first,'readOnly'),false);assert.equal(Object.hasOwn(first,'remoteWrites'),false);
  assert.ok(first.stages.every(row=>row.requested&&!row.cached));f.calls.length=0;f.audit.checkpointSequence++;
@@ -34,6 +79,31 @@ test('lost POST acknowledgement, worker restart and malformed replies never auto
   if(mode==='pending'){const entry=[...f.entries.values()][0];entry.state='requested';}
   f.calls.length=0;f.options.sendStep=()=>assert.fail('Unknown validation is never replayed');
   const again=await f.run();assert.equal(again.stages[0].failureCode,'prior-uncertain');assert.deepEqual(f.calls,[]);
+ }
+});
+test('a verified pre-POST failure is retained and only a later explicit run may recheck it',async()=>{
+ const f=runnerFixture();f.reply=()=>({stage:2,state:'uncertain',responseRows:null,errors:[],errorCount:0,errorsTruncated:false,cached:false,requested:false,failureCode:'source-changed'});
+ const first=await f.run();assert.equal(first.stages[0].requested,false);assert.deepEqual(f.calls,[2]);
+ const saved=[...f.entries.values()][0];assert.equal(saved.state,'observed-not-sent');assert.equal(saved.result.failureCode,'source-changed');
+ f.calls.length=0;f.reply=undefined;
+ const second=await f.run();assert.deepEqual(f.calls,[2,3,4,5]);assert.equal(second.stages.length,4);
+});
+test('old uncertain, unconfirmed exceptions and pre-POST timeouts never become retryable',async()=>{
+ for(const mode of ['old','throw','malformed','timeout','cancelled','requested']){
+  const f=runnerFixture();
+  f.reply=()=>{if(mode==='throw')throw Error('failure');
+   if(mode==='malformed')return{stage:2,state:'uncertain',requested:false};
+   return{stage:2,state:'uncertain',responseRows:null,errors:[],errorCount:0,errorsTruncated:false,cached:false,requested:mode==='requested',failureCode:mode==='timeout'?'timeout':mode==='cancelled'?'cancelled':'source-changed'};};
+  await f.run();const saved=[...f.entries.values()][0];
+  if(mode==='old'){saved.state='uncertain';delete saved.result;}
+  assert.equal(saved.state,'uncertain',mode);f.calls.length=0;f.options.sendStep=()=>assert.fail('Uncertain stage cannot be replayed');
+  const report=await f.run();assert.equal(report.stages[0].failureCode,'prior-uncertain');assert.deepEqual(f.calls,[]);
+ }
+});
+test('pre-POST journal cannot be reused with a changed binding or malformed evidence',async()=>{
+ for(const mutate of [f=>{f.audit.rawBodySha256='a'.repeat(64);},f=>{[...f.entries.values()][0].result.requested=true;},f=>{[...f.entries.values()][0].result.failureCode='timeout';}]){
+  const f=runnerFixture();f.reply=()=>({stage:2,state:'uncertain',responseRows:null,errors:[],errorCount:0,errorsTruncated:false,cached:false,requested:false,failureCode:'source-changed'});
+  await f.run();mutate(f);f.calls.length=0;await assert.rejects(f.run());assert.deepEqual(f.calls,[]);
  }
 });
 test('hash drift or corrupt durable evidence blocks cache reuse and never overwrites the earlier attempt',async()=>{
@@ -95,6 +165,14 @@ test('body, file, legal, company, header and source drift stop before POST; post
  const edits=[f=>{f.body.jsonDocument[1].productPage.model='changed';},f=>{f.files[0].s3Link+='changed';},f=>{f.legal[0].s3Link+='changed';},f=>{f.document.body.innerText='Company Code: A01464742';},f=>{f.body.version=3;},f=>{f.location.pathname='/sr/registration/step/startPage';},f=>{f.input.binding.packetDigest='f'.repeat(64);}];
  for(const edit of edits){const f=pageFixture();edit(f);const result=await f.run();assert.equal(result.state,'uncertain');assert.equal(result.requested,false);assert.equal(f.calls.some(row=>row.path.includes('validate-step')),false);}
  const f=pageFixture();f.onValidation=()=>{f.files[0].s3Link+='changed';};const result=await f.run();assert.equal(result.state,'uncertain');assert.equal(result.failureCode,'source-changed');assert.equal(result.requested,true);
+});
+test('category numeric header is compared losslessly while the raw body remains hash-bound',async()=>{
+ const f=pageFixture();f.body.displayCategoryCode=12;f.input.audit.rawBodySha256=digest(f.body);
+ const result=await f.run();assert.equal(result.state,'rejected');assert.equal(result.requested,true);
+ for(const mutate of [x=>{x.body.displayCategoryCode=13;x.input.audit.rawBodySha256=digest(x.body);},x=>{x.body.jsonDocument[0].productPage.model='changed';}]){
+  const g=pageFixture();g.body.displayCategoryCode=12;g.input.audit.rawBodySha256=digest(g.body);mutate(g);
+  const value=await g.run();assert.equal(value.failureCode,'source-changed');assert.equal(value.requested,false);assert.equal(g.calls.some(row=>row.path.includes('validate-step')),false);
+ }
 });
 test('serialized page rejects final/sibling stages and times out the single validation POST without a retry',async()=>{
  for(const stage of [1,6,'2']){const f=pageFixture();f.input.stage=stage;const result=await f.run();assert.equal(result.state,'uncertain');assert.deepEqual(f.calls,[]);}

@@ -711,6 +711,21 @@ test('unknown saved-document stage results never expose a native error or enable
   for(const label of [start,prepareDraft,reviewPrepared])assert.equal(h.button(label),undefined);
  }finally{h.close();}
 });
+
+test('legacy uncertain validation exposes a separate deliberate recheck warning and sends only one explicitly clicked retry',async()=>{
+ const retried=[],h=await fixture(undefined,{reconnect:async(_input,f)=>{throw reconnectClosedError(f,{savedDraftTargetClosed:false});}});try{
+  h.f.bridge=async payload=>({...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,unexpectedLegalAuditAvailable:true,savedDocumentStepValidationAvailable:true,savedDocumentStepRetryAvailable:true});
+  h.f.client.auditUnexpectedLegal=async session=>originalAuditFixtureReport(session);
+  const makeReport=(session,state)=>({requestId:session.packet.requestId,docId:2347603,identityDigest:session.preview.identityDigest,packetDigest:session.packetDigest,
+   stages:[{stage:2,state,cached:state==='uncertain',requested:state!=='uncertain',failureCode:state==='uncertain'?'prior-uncertain':null,errors:[],errorCount:0,errorsTruncated:false}]});
+  h.f.client.validateSavedDocumentSteps=async session=>makeReport(session,'uncertain');
+  h.f.client.retrySavedDocumentStep=async(session,audit,prior,signal)=>{retried.push({session,audit,prior,signal});return makeReport(session,'rejected');};
+  await h.idle();reconnectInputs(h);await h.click('원래 저장 문서 연결 복구');await h.click(auditOriginal);await h.click(validateStoredSteps);
+  const label='미확정 단계 검사 1회 다시 요청 · 파일·본문 저장 안 함';assert.equal(retried.length,0);assert.match(h.text(),/이전 검사 요청이 쿠팡에서 처리됐을 수 있습니다/);assert.ok(h.button(label));
+  const click=h.button(label).props.onClick;click();click();await h.idle();assert.equal(retried.length,1);assert.equal(retried[0].prior.stages[0].failureCode,'prior-uncertain');assert.equal(retried[0].signal.aborted,false);assert.equal(h.stored.size,0);assert.equal(h.button(label),undefined);
+  assert.ok(h.f.calls.every(row=>row.method==='GET'));assert.ok(h.f.sent.every(row=>row.payload.action==='preview'));for(const action of [start,prepareDraft,reviewPrepared])assert.equal(h.button(action),undefined);
+ }finally{h.close();}
+});
 test('original document full audit is explicit and cannot adopt a session, claim a reservation or submit',async()=>{
  const audited=[],h=await fixture(undefined,{reconnect:async(_input,f)=>{throw reconnectClosedError(f,{savedDraftTargetClosed:false});}});try{
   h.f.bridge=async payload=>{assert.equal(payload.action,'preview');return{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true};};

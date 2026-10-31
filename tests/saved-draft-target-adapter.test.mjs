@@ -318,6 +318,20 @@ test('native validation lost acknowledgement remains uncertain across repeated a
   const second=await q.receiver.validateSavedDocumentSteps(q.f.packet,q.f.sender);assert.equal(second.stages[0].failureCode,'prior-uncertain');assert.equal(q.requests.slice(start).some(row=>row.url.includes('/validate-step/')),false);assert.deepEqual(await q.f.storage.store.get(q.f.context.key),before);assert.equal(q.f.submitted,0);
  }finally{q.close();}
 });
+test('native explicit one-time validation retry keeps the legacy record and all original files, body and transport checkpoint',async()=>{
+ const options={receiver:true,legalResponse:[{fileType:'certificate',fileName:'PRIVATE_FILE.pdf',s3Link:'PRIVATE_S3'}],validationNetworkFailure:true},q=await fixture(options);
+ try{
+  await q.receiver.recoverSavedDraftTarget(q.f.packet,q.f.sender);const prior=await q.receiver.validateSavedDocumentSteps(q.f.packet,q.f.sender);
+  assert.equal(prior.stages[0].state,'uncertain');const legacy=copy([...q.validationLedger][0]),before=JSON.stringify({checkpoint:await q.f.storage.store.get(q.f.context.key),dataset:q.f.hubDocument.documentElement.dataset,uploads:q.f.state.uploads,body:[...q.f.documents]});
+  const confirmation={format:'yoofam-saved-document-step-retry-v1',...Object.fromEntries(['requestId','docId','identityDigest','packetDigest','originalBodySha256','preparedBodySha256','sourcePlanSha256','checkpointSequence','actualRawBodySha256','fileSetSha256','legalSetSha256'].map(key=>[key,prior[key]])),stage:2,acknowledgeRepeatedValidation:true};
+  options.validationNetworkFailure=false;const start=q.requests.length,report=await q.receiver.retrySavedDocumentStep(q.f.packet,q.f.sender,confirmation);
+  assert.deepEqual(report.stages.map(row=>row.state),['passed','passed','passed','passed']);assert.deepEqual(q.requests.slice(start).filter(row=>row.url.includes('/validate-step/')).map(row=>new URL(row.url).pathname),[2,3,4,5].map(stage=>'/sr/qvt/api/validate-step/'+stage));
+  assert.deepEqual(q.validationLedger.get(legacy[0]),legacy[1]);assert.equal(JSON.stringify({checkpoint:await q.f.storage.store.get(q.f.context.key),dataset:q.f.hubDocument.documentElement.dataset,uploads:q.f.state.uploads,body:[...q.f.documents]}),before);assert.equal(q.f.submitted,0);assert.equal(q.f.nextClicks,0);assert.equal(q.f.loaderRequests.length,0);
+  const end=q.requests.length;await q.receiver.retrySavedDocumentStep(q.f.packet,q.f.sender,confirmation);assert.equal(q.requests.slice(end).some(row=>row.url.includes('/validate-step/')),false);
+  const normal=await q.receiver.validateSavedDocumentSteps(q.f.packet,q.f.sender);assert.equal(normal.stages[0].failureCode,'prior-uncertain');assert.deepEqual(q.validationLedger.get(legacy[0]),legacy[1]);assert.equal(report.canResume,false);assert.equal(report.bodyWrites,false);assert.equal(report.fileWrites,false);
+ }finally{q.close();}
+});
+
 test('native saved validation retains raw legal mismatch as a separate audit and never converts it to qualification',async()=>{
  const options={receiver:true,legalResponse:[{fileType:'certificate',fileName:'PRIVATE_FILE.pdf',s3Link:'PRIVATE_S3'}]},q=await fixture(options);
  try{

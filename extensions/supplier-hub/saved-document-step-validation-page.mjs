@@ -60,8 +60,15 @@ export async function savedDocumentStepValidationPage(input){
   const doc=encodeURIComponent(String(docId)),bodyKeys=['docId','productName','categoryPath','categoryId','displayCategoryCode','jsonDocument','scope','productNoticeNumber','version','remark'];
   const observation=async()=>{
    const body=await request('/sr/draft/api/get-by-id/'+doc);
+   // Match the audit's exact, lossless numeric category representation. The
+   // original response is still hashed below; no body value is rewritten.
+   const headerEqual=key=>{
+    const actual=body[key],wanted=expected[key];
+    return key==='displayCategoryCode'&&typeof wanted==='string'&&/^(0|[1-9]\d*)$/.test(wanted)
+      &&Number.isSafeInteger(actual)&&actual>=0&&String(actual)===wanted||same(actual,wanted);
+   };
    if(!object(body)||body.status!=='UNFINISHED'||bodyKeys.filter(key=>key!=='remark').some(key=>!Object.hasOwn(body,key))
-    ||['docId','productName','categoryPath','categoryId','displayCategoryCode','scope','productNoticeNumber','version'].some(key=>!same(body[key],expected[key]))
+    ||['docId','productName','categoryPath','categoryId','displayCategoryCode','scope','productNoticeNumber','version'].some(key=>!headerEqual(key))
     ||!Array.isArray(body.jsonDocument)||body.jsonDocument.length!==expected.jsonDocument.length)fail('source-changed');
    const bodyValue=Object.fromEntries(bodyKeys.filter(key=>Object.hasOwn(body,key)).map(key=>[key,body[key]]));
    const listed=await request('/sr/draft/api/get-images-by-id/'+doc);

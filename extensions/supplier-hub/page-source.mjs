@@ -27,6 +27,10 @@ export function readPageSourceElementImage(element,{preferDataSource=false}={}){
  const candidates=preferDataSource
   ?[attribute('data-src'),element.currentSrc,attribute('src'),attribute('data-lazyload-src'),attribute('data-ks-lazyload')]
   :[element.currentSrc,attribute('src'),attribute('data-lazyload-src'),attribute('data-src'),attribute('data-ks-lazyload')];
+ // These spellings are already read inside verified detail roots. They are
+ // fallback-only here so gallery/SKU images on this same element retain every
+ // existing valid-source priority and the identical CDN validation below.
+ candidates.push(...['data-original','data-original-src','data-lazy-src','data-lazyload'].map(attribute));
  for(const candidate of candidates){const url=image(candidate);if(url)return url;}
  return null;
 }

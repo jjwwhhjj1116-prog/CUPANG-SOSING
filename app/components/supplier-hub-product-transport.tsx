@@ -3,7 +3,7 @@ import {useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
 import type {SupplierHubProductDocumentReview} from '@/app/supplier-hub-product-document';
 import {createProductDocumentPacket,PRODUCT_DOCUMENT_REQUEST_TTL} from '../../extensions/supplier-hub/product-document.mjs';
 import {sourceReadError} from '../../extensions/supplier-hub/product-document-source.mjs';
-import {previewProductDocument,auditUnexpectedLegal,validateSavedDocumentSteps,unexpectedLegalAuditReadError,runProductDocument,runProductDocumentDraft,runPreparedProductDocument,preparedReceiptObservation,readNativeReceiptHistory,saveProductReceiptObservation,
+import {previewProductDocument,auditUnexpectedLegal,validateSavedDocumentSteps,retrySavedDocumentStep,unexpectedLegalAuditReadError,runProductDocument,runProductDocumentDraft,runPreparedProductDocument,preparedReceiptObservation,readNativeReceiptHistory,saveProductReceiptObservation,
   type UnexpectedLegalAuditReport,type SavedDocumentStepValidationReport,
   type ProductDocumentSession,type ProductDocumentState,type ProductDraftAction,type PreparedDocumentAction,type ProductValidationRejection,ProductDocumentBridgeError} from '@/app/supplier-hub-product-client';
 import {singleConsentConfirmation,verifySingleDocumentObservation,type SingleDocumentAction} from '@/app/supplier-hub-single-client';
@@ -265,22 +265,22 @@ export function SupplierHubProductTransport(props:Props){
     }catch(cause){if(active()){const failure=unexpectedLegalAuditReadError(cause);setError(`읽기 전용 대조 중단 · ${auditPhaseLabels[auditPhase]} [${failure.code}] ${failure.message}`);}}
     finally{task.finish();}
   }
-  async function inspectOriginalSavedStages(){
+  async function inspectOriginalSavedStages(retry=false){
     if(!canEnter()||!originalAuditCurrent||!originalAuditContext||!shownOriginalAudit||reconnectInputRef.current!==originalAuditContext.input||current.current.session||current.current.intent||current.current.state||current.current.unsaved)return;
     const context=originalAuditContext,input=context.input,audit=shownOriginalAudit,requestId=input.requestId.trim(),docId=input.docId.trim();
-    if(audit.requestId!==requestId||String(audit.docId)!==docId)return;
+    if(audit.requestId!==requestId||String(audit.docId)!==docId||retry&&shownSavedValidation?.stages.at(-1)?.state!=='uncertain')return;
     const task=begin(),active=()=>task.active()&&reconnectInputRef.current===input&&!current.current.session&&!current.current.intent&&!current.current.state&&!current.current.unsaved&&!current.current.intentError;
     const freshValidation=async()=>{await fresh(task);if(!active()||readProductDocumentPending(review)!==null)throw Error('원래 문서의 단계 검사 범위가 변경되었습니다.');assertProductDocumentNotRejected(review);};
     try{
       await freshValidation();const now=draftOperationTime(),packet=await createProductDocumentPacket(review,{requestId,createdAt:now,now});
       await freshValidation();const preview=await previewProductDocument(packet,task.controller.signal);await freshValidation();
       if(preview.packet.requestId!==requestId||productReceiptCanonical(preview.packet.review)!==productReceiptCanonical(review))throw Error('원래 문서의 연결이 다릅니다.');
-      const report=await validateSavedDocumentSteps(preview,audit,task.controller.signal);await freshValidation();
+      const report=retry?await retrySavedDocumentStep(preview,audit,shownSavedValidation!,task.controller.signal):await validateSavedDocumentSteps(preview,audit,task.controller.signal);await freshValidation();
       if(report.requestId!==requestId||String(report.docId)!==docId||report.identityDigest!==preview.preview.identityDigest||report.packetDigest!==preview.packetDigest)throw Error('검사 결과의 원래 문서 연결이 다릅니다.');
       // An observed validation result does not adopt the original draft or
       // change its mismatch, consent, reservation or receipt state.
       setOriginalAuditReport({context,report:audit});setSavedValidationReport({context,report});
-    }catch(cause){if(active())setError(cause instanceof ProductDocumentBridgeError&&cause.code==='SAVED_DOCUMENT_STEP_VALIDATION_UNAVAILABLE'?cause.message:'저장 문서 단계 검사 결과를 확인하지 못했습니다. 응답이 미확정일 수 있어 자동 재검사는 하지 않았습니다. 파일·본문 저장이나 최종 제출도 실행하지 않았습니다.');}
+    }catch(cause){if(active())setError(cause instanceof ProductDocumentBridgeError&&['SAVED_DOCUMENT_STEP_VALIDATION_UNAVAILABLE','SAVED_DOCUMENT_STEP_RETRY_UNAVAILABLE','SAVED_DOCUMENT_STEP_RETRY_SCOPE'].includes(cause.code)?cause.message:'저장 문서 단계 검사 결과를 확인하지 못했습니다. 응답이 미확정일 수 있어 자동 재검사는 하지 않았습니다. 파일·본문 저장이나 최종 제출도 실행하지 않았습니다.');}
     finally{task.finish();}
   }
   async function persist(attempt:NonNullable<typeof unsaved>,task:ReturnType<typeof begin>){
@@ -573,6 +573,10 @@ export function SupplierHubProductTransport(props:Props){
         {shownSavedValidation&&<section aria-label="쿠팡 저장 문서 단계 검사 결과">
           <h4>문서 {String(shownSavedValidation.docId)} · 쿠팡 단계 검사</h4>
           <p>쿠팡에 저장된 문서의 검사를 요청한 결과입니다. 파일·본문 저장, 새 문서 생성, 최종 제출은 하지 않았습니다. 검사 통과는 실제 접수 완료를 뜻하지 않습니다.</p>
+          {shownSavedValidation.stages.at(-1)?.state==='uncertain'&&<div role="group" aria-label="미확정 단계 1회 재검사">
+            <p>이전 검사 요청이 쿠팡에서 처리됐을 수 있습니다. 같은 문서·같은 내용의 미확정 단계만 1회 다시 검사합니다. 문서 생성·파일·본문 저장·최종 제출은 하지 않습니다.</p>
+            <button type="button" className="btn ghost" disabled={disabled||busy||!shownOriginalAudit} onClick={()=>void inspectOriginalSavedStages(true)}>미확정 단계 검사 1회 다시 요청 · 파일·본문 저장 안 함</button>
+          </div>}
           {shownSavedValidation.stages.map(row=><section key={row.stage} aria-label={`쿠팡 ${row.stage}단계 ${savedValidationStages[row.stage]} 검사`}>
             <strong>{savedValidationStages[row.stage]} · {{passed:'검사 통과',rejected:'오류 확인',uncertain:'결과 미확정'}[row.state]}</strong>
             <p>{row.cached?'보관된 동일 문서 검사 결과 · 이번 검사 요청 없음':row.requested?'검사 요청 1회':'검사 요청 없음'}{row.failureCode?` · ${savedValidationFailures[row.failureCode]}`:''}</p>
@@ -607,7 +611,7 @@ export function SupplierHubProductTransport(props:Props){
     </details>}
     {session&&<p>회사 {review.identity.company.name} · 포함 옵션 {session.packet.review.members.length}개 · 견적 문서 1개 · 전체 본문 대조 완료</p>}
     {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&!intent&&!state?.preparedLifecycle&&<p role="status">전체 문서의 실제 접수 연결을 검수 중입니다. 현재 상품은 전송하지 않았습니다.</p>}
-    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.73.zip" download>통합 확장 2.1.73 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
+    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.74.zip" download>통합 확장 2.1.74 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
     {session?.preview.draftPreparationAvailable===true&&!state?.preparedLifecycle&&<section aria-label="새 견적 초안 준비">
       <p>{intent?'원래 요청과 문서의 파일·본문 저장 및 단계 검증 결과를 확인합니다.':'로그인한 Supplier Hub에 새 견적 초안 한 개를 만들고 저장한 이미지·본문과 단계 검증을 확인합니다.'} 약관 동의와 최종 제출은 진행하지 않습니다.</p>
       {currentDraftHint&&<p role="status">원래 문서 {String(currentDraftHint.docId)} · {currentDraftHint.state==='update-requested'?'파일·본문 저장 결과 미확인':currentDraftHint.state==='validation-requested'?'단계 검증 결과 미확인':'초안 상태 확인 필요'} · 같은 요청 유지</p>}
