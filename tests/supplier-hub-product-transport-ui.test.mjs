@@ -41,6 +41,7 @@ const draftResult=(f,requestId,state='validated',extra={})=>f.state(state,{reque
 function allowDraft(h,run){h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,createRetryAvailable:true,createRetryContinuationAvailable:true}:run(payload);}
 
 const reviewPrepared='준비한 새 견적서 등록전송',confirmPrepared='현재 문서 동의 확인 · 계속',recoverPrepared='준비한 문서 단계 확인 · 읽기 전용';
+const registerDraft='견적서 등록전송 시작';
 function preparedResult(h,payload,state,sequence,extra={}){
  const submitted=['pending','accepted','rejected','submit-requested'].includes(state);
  h.qualifiedAt??=h.f.clock.now;
@@ -48,6 +49,86 @@ function preparedResult(h,payload,state,sequence,extra={}){
 }
 function allowPrepared(h,run){h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true}:payload.action==='prepareDraft'?draftResult(h.f,payload.packet.requestId):run(payload);}
 function checkTerms(h){for(const node of nodes(h.render()).filter(node=>node.type==='input'&&node.props.type==='checkbox')){assert.equal(Boolean(node.props.disabled),false);node.props.onChange({target:{checked:true}});}h.flush();}
+
+for(const company of SINGLE_COMPANIES)test(`${company.code}: explicit registration click prepares once and hands the exact validated document to consent without unlocking`,async()=>{
+ const h=await fixture(company);try{
+  allowPrepared(h,payload=>{assert.equal(payload.action,'reviewPreparedDraft');return preparedResult(h,payload,'awaiting-stage-consent',14,{challenge:h.f.challenge('productPage')});});
+  await h.idle();assert.equal(h.button(registerDraft),undefined);assert.equal(h.f.sent.length,0);await h.click(open);
+  assert.ok(h.button(prepareDraft));const click=h.button(registerDraft).props.onClick,lockStart=h.lockPairs.length,refreshStart=h.refreshCalls.length;
+  click();click();await h.idle();
+  assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','reviewPreparedDraft']);
+  const packets=h.f.sent.map(row=>row.payload.packet);assert.equal(new Set(packets.map(packet=>packet.requestId)).size,1);
+  assert.ok(packets.every(packet=>packet.review.reviewDigest===packets[0].review.reviewDigest&&packet.review.originalBodySha256===packets[0].review.originalBodySha256&&packet.review.preparedBodySha256===packets[0].review.preparedBodySha256));
+  assert.equal(new Set(h.refreshCalls.slice(refreshStart)).size,1,'one admitted controller spans preparation and handoff');
+  assert.ok(h.lockPairs.slice(lockStart).every(pair=>pair[0]===true&&pair[1]===true),'no intermediate close/source unlock');
+  assert.equal(h.button(registerDraft),undefined);assert.equal(h.button(confirmPrepared).props.disabled,true);assert.match(h.text(),/마지막 문단/);
+  assert.equal(h.f.sent.some(row=>row.payload.action==='confirmPreparedDraft'),false,'registration intent does not accept terms');assert.equal(h.f.history.length,0);assert.equal(h.stored.size,1);
+  click();await h.idle();assert.equal(h.f.sent.length,3);assert.ok(h.f.calls.every(row=>row.method==='GET'));
+ }finally{h.close();}
+});
+
+test('new preparation-only click and recovery never inherit the explicit registration intent',async()=>{
+ const h=await fixture();try{
+  allowPrepared(h,payload=>{assert.equal(payload.action,'recoverPreparedDraft');return draftResult(h.f,payload.packet.requestId,'validated',{recovered:true});});
+  await h.idle();await h.click(open);const oldRegister=h.button(registerDraft).props.onClick;await h.click(prepareDraft);
+  assert.ok(h.button(reviewPrepared));assert.equal(h.f.sent.length,2);oldRegister();await h.idle();assert.equal(h.f.sent.length,2);
+  await h.click(recoverDraft);assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','recoverPreparedDraft']);assert.equal(h.f.history.length,0);
+ }finally{h.close();}
+});
+
+test('registration does not hand off incomplete, rejected, errored, malformed or missing preparation acknowledgements',async()=>{
+ for(const mode of ['incomplete','rejected','error','malformed','lost-ACK']){const h=await fixture();try{
+  h.f.bridge=async payload=>{
+   if(payload.action==='preview')return {...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true};
+   assert.equal(payload.action,'prepareDraft');if(mode==='lost-ACK')return undefined;
+   const result=draftResult(h.f,payload.packet.requestId,mode==='incomplete'?'updated':mode==='rejected'?'validation-rejected':'validated');
+   if(mode==='error')result.error={code:'SOURCE_CHANGED',message:'저장한 원문·이미지 검토가 바뀌었습니다.'};
+   if(mode==='malformed')result.draftProof.validatedSteps=[2,3,4];return result;
+  };
+  await h.idle();await h.click(open);const old=h.button(registerDraft).props.onClick;
+  if(mode==='lost-ACK'){old();h.flush();await h.wait(()=>h.f.sent.length===2);h.f.advance(120001);await h.idle();}else await h.click(registerDraft);
+  old();await h.idle();assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft'],mode);assert.equal(h.stored.size,1);assert.equal(h.button(confirmPrepared),undefined);assert.equal(h.f.history.length,0);
+ }finally{h.close();}}
+});
+
+test('registration preflight authentication and reservation save failures cannot start preparation or handoff',async()=>{
+ for(const mode of ['auth','save']){const options={},h=await fixture(SINGLE_COMPANIES[0],options);try{
+  allowPrepared(h,()=>assert.fail('no registration action before admission'));
+  await h.idle();await h.click(open);if(mode==='auth')h.f.actor.ownerId='another-owner';else options.storageWriteError=true;
+  await h.click(registerDraft);assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview']);assert.equal(h.f.history.length,0);assert.equal(h.stored.size,0);
+ }finally{h.close();}}
+});
+
+test('combined registration lost handoff ACK retains its exact request and recovery never replays preparation or qualification',async()=>{
+ const h=await fixture();try{
+  allowPrepared(h,payload=>payload.action==='reviewPreparedDraft'?undefined:preparedResult(h,payload,'navigation-ready',14,{recovered:true}));
+  await h.idle();await h.click(open);const stale=h.button(registerDraft).props.onClick;stale();h.flush();await h.wait(()=>h.f.sent.length===3);h.f.advance(120001);await h.idle();
+  assert.ok(h.button(recoverDraft));assert.equal(h.button(registerDraft),undefined);assert.deepEqual(h.lockPairs.at(-1),[true,true]);
+  stale();await h.idle();assert.equal(h.f.sent.length,3);const reservation=[...h.stored.entries()];await h.click(recoverDraft);
+  assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','reviewPreparedDraft','recoverPreparedDraft']);
+  assert.equal(new Set(h.f.sent.map(row=>row.payload.packet.requestId)).size,1);assert.ok(h.button('같은 문서 다음 단계 계속'));assert.equal(h.button(confirmPrepared),undefined);
+  assert.deepEqual([...h.stored.entries()],reservation);assert.equal(h.f.history.length,0);assert.ok(h.f.calls.every(row=>row.method==='GET'));
+ }finally{h.close();}
+});
+
+test('registration handoff expires on cancellation, disabled view, owner/company/source changes, reservation replacement and review ABA',async()=>{
+ for(const mode of ['cancel','disabled','owner','company','source','reservation','review-ABA']){const h=await fixture(),reply=deferred();let closed=false;try{
+  allowPrepared(h,()=>assert.fail('stale preparation must not reach registration'));
+  const originalBridge=h.f.bridge;h.f.bridge=async payload=>payload.action==='prepareDraft'?reply.promise:originalBridge(payload);
+  await h.idle();await h.click(open);h.button(registerDraft).props.onClick();h.flush();await h.wait(()=>h.f.sent.length===2);
+  const payload=h.f.sent[1].payload,props=h.props(),reservation=[...h.stored.entries()];
+  if(mode==='cancel'){h.close();closed=true;}
+  if(mode==='disabled')h.render({...props,disabled:true});
+  if(mode==='owner')h.f.actor.ownerId='another-owner';
+  if(mode==='company')h.f.actor.company=SINGLE_COMPANIES[1];
+  if(mode==='source')h.f.refresh=async()=>({...h.f.review,preparedBodySha256:'f'.repeat(64)});
+  if(mode==='reservation'){const[key,raw]=reservation[0];h.stored.set(key,JSON.stringify({...JSON.parse(raw),requestId:'00000000-0000-4000-8000-000000000000'}));}
+  if(mode==='review-ABA'){h.render({...props,review:{...props.review,reviewDigest:'f'.repeat(64)}});h.render(props);}
+  reply.resolve(draftResult(h.f,payload.packet.requestId));
+  if(closed){for(let i=0;i<6;i++)await turn();}else await h.idle();
+  assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft'],mode);assert.equal(h.f.history.length,0);assert.equal(h.stored.size,1);
+ }finally{reply.resolve();if(!closed)h.close();}}
+});
 
 for(const company of SINGLE_COMPANIES)test(`${company.code}: prepared UI explicitly checks two complete terms stages, submits once and saves exact receipt without unqualified start`,async()=>{
  const h=await fixture(company);let confirmations=0;try{

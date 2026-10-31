@@ -355,8 +355,13 @@ export function SupplierHubProductTransport(props:Props){
       setError(cause instanceof Error?cause.message:'전체 상품 견적 응답 확인 실패');
     }}finally{task.finish();}
   }
-  async function operateDraft(action:ProductDraftAction,expected:ProductDocumentSession){
+  async function operateDraft(action:ProductDraftAction,expected:ProductDocumentSession,registrationIntent=false){
     if(!canEnter())return;const before=current.current;
+    // Only this explicit new-document intent may carry preparation into the
+    // existing registration flow. Preparation/recovery clicks stay prep-only.
+    if(registrationIntent&&(action!=='prepareDraft'||expected.preview.preparedLifecycleAvailable!==true||before.state||before.intent||before.draftMode||before.uncertain||before.unsaved||before.error
+      ||expected.packet.review.reviewDigest!==review.reviewDigest||expected.packet.review.originalBodySha256!==review.originalBodySha256||expected.packet.review.preparedBodySha256!==review.preparedBodySha256
+      ||productReceiptCanonical(expected.packet.review.identity)!==productReceiptCanonical(review.identity)||productReceiptCanonical(expected.packet.review.members)!==productReceiptCanonical(review.members)))return;
     const readHint=before.draftReadHint,fileListCurrent=draftHintCurrent(readHint,expected)&&readHint?.nativeFileListObserved===true;
     const savedTargetCurrent=draftHintCurrent(readHint,expected)&&readHint?.savedDraftTargetClosed===true
       &&knownDraftDocument.current?.requestId===expected.packet.requestId&&knownDraftDocument.current.docId===readHint.docId;
@@ -436,6 +441,16 @@ export function SupplierHubProductTransport(props:Props){
       if(result.draftProof?.existingDocumentRepairContinuationResumed===true){current.current.repairContinuationResumed=true;setRepairContinuationResumed(true);}
       if(result.draftProof?.existingDocumentRepairContinuationAttempted===true){current.current.repairContinuationAttempted=true;setRepairContinuationAttempted(true);}
       if(result.error)setError(result.error.message);
+      if(registrationIntent&&task.active()&&current.current.session===activeSession&&current.current.state===result&&current.current.intent===saved
+        &&!current.current.error&&!current.current.intentError&&!current.current.unsaved&&!current.current.uncertain&&!result.error&&!result.needsRecovery
+        &&result.state==='validated'&&result.draftOnly===true&&!result.preparedLifecycle&&result.draftProof?.validatedSteps.length===4
+        &&activeSession.packet.requestId===expected.packet.requestId&&activeSession.packetDigest===expected.packetDigest&&activeSession.preview.identityDigest===expected.preview.identityDigest
+        &&activeSession.packet.review.reviewDigest===expected.packet.review.reviewDigest&&activeSession.packet.review.originalBodySha256===expected.packet.review.originalBodySha256
+        &&activeSession.packet.review.preparedBodySha256===expected.packet.review.preparedBodySha256){
+        // Keep one controller and lock for this admitted click. The existing
+        // fresh-source, durable-request and action-time consent guards run next.
+        await operatePrepared('reviewPreparedDraft',activeSession,undefined,{task,validated:result,intent:saved});
+      }
     }catch(cause){if(task.alive()){
       if(cause instanceof ProductDocumentBridgeError&&cause.knownDocId!==undefined&&!rememberDraftDocument(activeSession,cause.knownDocId))cause=new ProductDocumentBridgeError('원래 요청에서 확인한 문서번호와 다른 조회 응답입니다. 저장 요청을 진행하지 않았습니다.',false,'PRODUCT_DOCUMENT_DRAFT_REPLY_IDENTITY');
       rememberDraftReadFailure(cause,activeSession,action==='recoverDraft');
@@ -479,8 +494,11 @@ export function SupplierHubProductTransport(props:Props){
     if(cause.existingDocumentRepairAttempted){current.current.existingRepairAttempted=true;setExistingRepairAttempted(true);}
     if(cause.existingDocumentRepairRetryAttempted){current.current.existingRepairRetryAttempted=true;setExistingRepairRetryAttempted(true);}
   }
-  async function operatePrepared(action:PreparedDocumentAction,expected:ProductDocumentSession,challengeId?:string){
-    if(!canEnter())return;const before=current.current;
+  async function operatePrepared(action:PreparedDocumentAction,expected:ProductDocumentSession,challengeId?:string,handoff?:{task:ReturnType<typeof begin>;validated:ProductDocumentState;intent:ProductDocumentPending}){
+    if(handoff){
+      if(action!=='reviewPreparedDraft'||!handoff.task.active()||current.current.session!==expected||current.current.state!==handoff.validated||current.current.intent!==handoff.intent
+        ||handoff.validated.state!=='validated'||handoff.validated.draftOnly!==true||handoff.validated.preparedLifecycle||handoff.validated.draftProof?.validatedSteps.length!==4)return;
+    }else if(!canEnter())return;const before=current.current;
     if(before.session!==expected||expected.preview.preparedLifecycleAvailable!==true||!before.intent||!before.draftMode||before.unsaved
       ||action==='reviewPreparedDraft'&&(before.uncertain||before.error||!before.state||before.state.error||!(before.state.state==='validated'&&!before.state.preparedLifecycle||before.state.state==='navigation-ready'&&before.state.preparedLifecycle))
       ||action==='confirmPreparedDraft'&&(before.error||before.uncertain||before.expired||!before.state?.preparedLifecycle||before.state.challenge?.id!==challengeId)
@@ -489,7 +507,7 @@ export function SupplierHubProductTransport(props:Props){
     if(action==='confirmPreparedDraft'){try{confirmation=singleConsentConfirmation(before.state!.challenge!,Object.entries(before.approved).filter(([,yes])=>yes).map(([key])=>key));}
       catch(cause){setError(cause instanceof Error?cause.message:'현재 문서의 필수 약관을 확인해주세요.');return;}}
     if(action==='recoverPreparedDraft'){const previous=current.current.draftReadHint,next=previous?{...previous,savedDraftTargetClosed:undefined,continuationSnapshot:undefined,resumeSnapshot:undefined,nativeFileListObserved:undefined}:previous;current.current.draftReadHint=next;setDraftReadHint(next);}
-    const task=begin();let dispatched=false,activeSession=expected;
+    const task=handoff?.task??begin();let dispatched=false,activeSession=expected;
     try{
       await fresh(task);if(!task.active()||current.current.session!==expected)return;
       const eventTime=draftOperationTime();
@@ -520,7 +538,7 @@ export function SupplierHubProductTransport(props:Props){
       if(dispatched&&(cause instanceof ProductDocumentBridgeError?cause.uncertain:true)){current.current.uncertain=true;setUncertain(true);}
       if(cause instanceof ProductDocumentBridgeError&&cause.draftState==='create-requested'){setMissingCreate(!cause.closedTargetRecovery);setApprovedRetryPending(cause.approvedCreateRetry===true);setClosedTargetNeeded(cause.closedTargetRecovery);setClosedTargetApproved(false);}
       current.current.approved={};setApproved({});setError(cause instanceof Error?cause.message:'준비한 새 문서의 등록 확인 실패');
-    }}finally{task.finish();}
+    }}finally{if(!handoff)task.finish();}
   }
   const challenge=state?.challenge,terminal=Boolean(state&&['pending','accepted','rejected','validation-rejected','scope-blocked'].includes(state.state));
   const preparedFlow=Boolean(session?.preview.preparedLifecycleAvailable&&draftMode&&state?.preparedLifecycle);
@@ -613,12 +631,13 @@ export function SupplierHubProductTransport(props:Props){
     {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&!intent&&!state?.preparedLifecycle&&<p role="status">전체 문서의 실제 접수 연결을 검수 중입니다. 현재 상품은 전송하지 않았습니다.</p>}
     {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.75.zip" download>통합 확장 2.1.75 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
     {session?.preview.draftPreparationAvailable===true&&!state?.preparedLifecycle&&<section aria-label="새 견적 초안 준비">
-      <p>{intent?'원래 요청과 문서의 파일·본문 저장 및 단계 검증 결과를 확인합니다.':'로그인한 Supplier Hub에 새 견적 초안 한 개를 만들고 저장한 이미지·본문과 단계 검증을 확인합니다.'} 약관 동의와 최종 제출은 진행하지 않습니다.</p>
+      <p>{intent?'원래 요청과 문서의 파일·본문 저장 및 단계 검증 결과를 확인합니다.':'로그인한 Supplier Hub에 새 견적 초안 한 개를 만들고 저장한 이미지·본문과 단계 검증을 확인합니다.'} {session.preview.preparedLifecycleAvailable&&!intent&&!state?'등록전송 시작은 검증 후 현재 문서의 동의 확인 단계로 이어집니다. 초안 만들기는 제출하지 않습니다.':'약관 동의와 최종 제출은 진행하지 않습니다.'}</p>
       {currentDraftHint&&<p role="status">원래 문서 {String(currentDraftHint.docId)} · {currentDraftHint.state==='update-requested'?'파일·본문 저장 결과 미확인':currentDraftHint.state==='validation-requested'?'단계 검증 결과 미확인':'초안 상태 확인 필요'} · 같은 요청 유지</p>}
       {currentDraftHint?.continuationSnapshot!==undefined&&<p role="status">{currentDraftHint.continuationSnapshot?'이번 읽기 시점에 이어 저장 예약 기록이 확인됐습니다. 저장 완료를 뜻하지 않습니다.':'이번 읽기 시점에는 이어 저장 예약 기록이 확인되지 않았습니다. 이전 작업이 아직 진행 중일 수 있으므로 이것만으로 종료 여부를 확정할 수 없습니다.'}</p>}
       {currentDraftHint?.resumeSnapshot!==undefined&&<p role="status">{currentDraftHint.resumeSnapshot?session?.preview.existingDocumentRepairSegmentedAvailable===true&&currentDraftHint.nativeFileListObserved===true?'원래 재개 예약을 유지합니다. 확인된 파일은 보존하고 아직 요청하지 않은 자료만 이어 저장할 수 있습니다.':'미요청 파일 재개 예약이 서버 기록에 있습니다. 저장 결과를 조회하고 요청을 반복하지 마세요.':'이번 읽기에서는 미요청 파일 재개 예약이 서버 기록에 없습니다. 파일 요청 여부는 같은 문서의 저장 기록으로 확인합니다.'}</p>}
       {currentDraftHint?.nativeFileListObserved===false&&<p role="status">원래 문서의 파일·본문 저장 결과가 아직 확인되지 않아 이어 저장을 보류했습니다. 위 오류를 확인한 뒤 같은 요청의 저장 결과를 다시 조회해주세요. 원래 요청과 저장 예약은 유지합니다.</p>}
       {!state&&!uncertain&&!intent&&<button type="button" className="btn primary" disabled={disabled||busy||Boolean(intentError)} onClick={()=>void operateDraft('prepareDraft',session)}>새 견적 초안 만들기 · 제출 안 함</button>}
+      {!state&&!uncertain&&!intent&&session.preview.preparedLifecycleAvailable&&<button type="button" className="btn primary" disabled={disabled||busy||Boolean(intentError)||Boolean(error)||Boolean(unsaved)} onClick={()=>void operateDraft('prepareDraft',session,true)}>견적서 등록전송 시작</button>}
       {draftMode&&uncertain&&!state?.preparedLifecycle&&<><p role="status">초안 준비 응답을 확인하지 못했습니다. 같은 초안을 다시 만들지 않고 저장 결과만 조회합니다.</p><button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void(session.preview.preparedLifecycleAvailable&&!currentDraftHint?operatePrepared('recoverPreparedDraft',session):operateDraft('recoverDraft',session))}>같은 초안 저장 결과 확인 · 읽기 전용</button></>}
       {draftMode&&uncertain&&intent&&!state?.preparedLifecycle&&currentDraftHint?.savedDraftTargetClosed===true&&session.preview.savedDraftTargetRecoveryAvailable===true&&<section aria-label="원래 저장 문서 검증 탭 복구">
         <p>원래 저장 문서 {String(currentDraftHint.docId)}의 전용 검증 탭이 닫혔습니다. 새 전용 탭에서 현재 저장된 파일·본문을 확인합니다.</p>
