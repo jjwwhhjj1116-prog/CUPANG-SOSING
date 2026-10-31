@@ -237,7 +237,7 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
     if(!translated.size)throw Error(incompleteMessage||'검증된 번역 문구가 없어 원본을 유지했습니다.');
     const unresolved=selectedRegions.filter(region=>!translated.has(region.id));
     for(const region of unresolved)if(!issues.has(region.id))issues.set(region.id,'앞선 문구의 일부 번역이 미완료여서 추가 번역 요청을 중단했습니다. 원문을 유지했습니다.');
-    prepared=regions.map(region=>translated.has(region.id)?{...region,translated:translated.get(region.id)!,issue:null,translationProvenance:'generated'}:{...region,selected:false,...(issues.has(region.id)?{translated:'',translationProvenance:'empty' as const,issue:(incompleteRegionIssue+issues.get(region.id)!).slice(0,2000)}:{})});
+    prepared=regions.map(region=>translated.has(region.id)?{...region,translated:translated.get(region.id)!,issue:null,translationProvenance:'generated',backgroundMode:'inpaint-telea-v1' as const}:{...region,selected:false,...(issues.has(region.id)?{translated:'',translationProvenance:'empty' as const,issue:(incompleteRegionIssue+issues.get(region.id)!).slice(0,2000)}:{})});
     translationReview=unresolved.length?{status:'partial' as const,acceptedRegions:translated.size,unresolvedRegions:unresolved.length,
      message:`검증된 ${translated.size}개 문구만 초안에 반영했습니다. ${unresolved.length}개 미완료 문구는 원문과 오류를 보존하고 선택 해제했습니다. ${incompleteMessage}`} : undefined;
     texts=selectedRegions.filter(region=>translated.has(region.id)).map(region=>({original:region.text,translated:translated.get(region.id)!}));

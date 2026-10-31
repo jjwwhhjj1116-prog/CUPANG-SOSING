@@ -20,6 +20,7 @@
     "test": "node --test --test-concurrency=4 tests/*.test.mjs"
   },
   "dependencies": {
+    "@techstark/opencv-js": "5.0.0-release.1",
     "drizzle-orm": "0.45.2",
     "jsbarcode": "3.12.3",
     "next": "16.2.6",

@@ -47,11 +47,17 @@ test('existing document ownership, baseline type aliases and missing ownership p
   }
 });
 
-test('stale empty arrays, wrappers, nulls, sparse arrays and duplicated document IDs never produce a receipt',()=>{
-  for(const rows of [[],null,{code:200,data:fixture().response.json},[null],Array(2),[fixture().response.json[1],fixture().response.json[1]],
-    [fixture().response.json[1],{...fixture().response.json[1],docId:'701'}],[{...fixture().response.json[1],docId:'foreign'}]]){
+test('wrappers, nulls, sparse arrays and duplicated document IDs never produce a receipt',()=>{
+  for(const rows of [null,{code:200,data:fixture().response.json},[null],Array(2),[fixture().response.json[1],fixture().response.json[1]],
+    [fixture().response.json[1],{...fixture().response.json[1],docId:'701'}]]){
     const input=fixture();input.response.json=rows;rejects(input);
   }
+});
+
+test('only a strict fresh list with no same document representation is temporarily not visible',()=>{
+  for(const rows of [[],[{...fixture().response.json[1],docId:'foreign'}]]){const input=fixture();input.response.json=rows;rejects(input,'RECEIPT_NOT_VISIBLE');}
+  for(const mutate of [input=>{input.provenance.status=403;},input=>{input.expected.ownedDocId=702;},input=>{input.previousReceipt={};},input=>{input.observedAt=899;}]){const input=fixture();input.response.json=[];mutate(input);rejects(input);}
+  const changed=fixture();changed.response.json[1].docId='701';rejects(changed);
 });
 
 test('unknown statuses, changed name/category and absent or truncated registration-file IDs fail closed',()=>{

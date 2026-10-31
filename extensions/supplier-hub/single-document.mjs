@@ -337,12 +337,16 @@ export function createSingleDocumentReceiver(options){
 /** The transport contract is supplied by trusted extension modules, never by
  * packet data. Legacy single-option validation remains its original wrapper.
  * Both wrappers share durable write/recovery/consent handling below. */
-export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,activeKeys},contract){
+export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,activeKeys,observationSignal,observationWait=(ms,signal)=>new Promise((resolve,reject)=>{
+  const abort=()=>{clearTimeout(timer);reject(new SingleDocumentError('OBSERVATION_ABORTED','등록 결과의 읽기 대기를 취소했습니다. 원래 요청을 다시 보내지 않았습니다.'));};
+  const timer=setTimeout(()=>{signal.removeEventListener('abort',abort);resolve();},ms);signal.addEventListener('abort',abort,{once:true});if(signal.aborted)abort();
+})},contract){
   if(!object(contract)||Object.keys(contract).some(key=>!['format','identity','draftOnly','nativeLifecycle'].includes(key))||typeof contract.format!=='string'||!contract.format||typeof contract.identity!=='function'
     ||Object.hasOwn(contract,'draftOnly')&&contract.draftOnly!==true||Object.hasOwn(contract,'nativeLifecycle')&&(contract.nativeLifecycle!==true||contract.draftOnly!==true))throw new TypeError('A trusted document transport contract is required.');
   const draftOnly=contract.draftOnly===true,nativeLifecycle=contract.nativeLifecycle===true;
   const required=['readSource','createTarget','readTab','hubRequest','readDocument','recoverWrite','readValidation','navigate','readAgreements','verifyHumanConfirmation','confirmAgreements','submit','observeReceipt'];
   if(!adapter||required.some(key=>typeof adapter[key]!=='function')||nativeLifecycle&&typeof adapter.qualifyPreparedDraft!=='function'||!store||['get','claim','compareAndSet'].some(key=>typeof store[key]!=='function')||typeof now!=='function')throw new TypeError('Single document adapter/store contract is required.');
+  if(typeof observationWait!=='function'||observationSignal!==undefined&&(!observationSignal||typeof observationSignal.aborted!=='boolean'||typeof observationSignal.addEventListener!=='function'||typeof observationSignal.removeEventListener!=='function'))throw new TypeError('A trusted observation cancellation contract is required.');
   // Receivers in the same extension service worker may use different adapter
   // instances for fresh reads. Share a trusted in-memory lock across them so a
   // read cannot race a write before that write's durable checkpoint is saved.
@@ -358,6 +362,19 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
     if(await store.compareAndSet(context.key,safeValue(previous),safeValue(next))!==true)fail('CHECKPOINT_CONFLICT','더 최신 전송 기록이 있습니다. 추가 요청하지 않고 조회해주세요.');return next;
   }
   const call=(name,input)=>adapter[name](safeValue(input));
+  const observationActive=()=>{if(observationSignal?.aborted)fail('OBSERVATION_ABORTED','등록 결과의 읽기 대기를 취소했습니다. 원래 요청을 다시 보내지 않았습니다.');};
+  async function observationCheckpoint(context,state){const current=await get(context);if(!current||!same(current,state))fail('CHECKPOINT_CONFLICT','대기 중 원래 전송 기록이 변경되었습니다. 요청을 다시 보내지 않았습니다.');}
+  // Each already-dispatched native Next/Submit gets its own bounded read-only
+  // window. A timeout/abort cannot replay that operation or become a rejection.
+  async function observationWindow(context,state,code,message,run,readOnlyReceipt=false){
+    const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),30000);let stopped;
+    const cancelled=new Promise((_,reject)=>{stopped=()=>reject(new SingleDocumentError(observationSignal?.aborted?'OBSERVATION_ABORTED':code,observationSignal?.aborted?'등록 결과의 읽기 대기를 취소했습니다. 원래 요청을 다시 보내지 않았습니다.':message));controller.signal.addEventListener('abort',stopped,{once:true});});
+    cancelled.catch(()=>{});
+    const abort=()=>controller.abort();observationSignal?.addEventListener('abort',abort,{once:true});if(observationSignal?.aborted)abort();
+    const step=async fn=>{if(controller.signal.aborted)throw new SingleDocumentError(observationSignal?.aborted?'OBSERVATION_ABORTED':code,message);const value=await Promise.race([Promise.resolve().then(()=>{if(controller.signal.aborted)throw new SingleDocumentError(code,message);return fn();}),cancelled]);if(controller.signal.aborted)throw new SingleDocumentError(code,message);return value;};
+    const fence=async()=>{await step(()=>observationCheckpoint(context,state));await step(()=>guard(context,state,readOnlyReceipt));};
+    try{return await run({step,fence,pause:()=>step(()=>observationWait(1000,controller.signal))});}finally{clearTimeout(timeout);controller.signal.removeEventListener('abort',stopped);observationSignal?.removeEventListener('abort',abort);}
+  }
   async function guard(context,state,readOnlyReceipt=false){
     if(readOnlyReceipt&&(!nativeLifecycle||state.preparedLifecycle!==true||state.submitRequestedAt===undefined))fail('CHECKPOINT_MODE','이미 제출한 원래 새 문서의 읽기 확인 범위를 확인해주세요.');
     const proof=await call('readSource',{identity:context.identity,bodySha256:context.originalBodySha256,preparedBodySha256:context.bodySha256,packetDigest:context.packetDigest,requestId:state.requestId,docId:state.docId,
@@ -431,10 +448,26 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
     return {id:await digest({packetDigest:context.packetDigest,docId:state.docId,sequence:state.sequence,items,issuedAt,...(stage?{stage}:{})}),docId:state.docId,packetDigest:context.packetDigest,items,issuedAt,expiresAt:issuedAt+120000,...(stage?{stage}:{})};
   }
   async function navigation(context,state){
-    await guard(context,state);
-    await readDocument(context,state);
-    const value=await call('navigate',{tab:state.tab,sessionId:state.sessionId,identity:context.identity,docId:state.docId,productName:context.packet.body.productName,version:context.packet.body.version,stageConsents:state.stageConsents??[]});
-    return pauseNavigation(context,state,value);
+    for(let advance=0;advance<5;advance++){
+      observationActive();await observationCheckpoint(context,state);await guard(context,state);await readDocument(context,state);await observationCheckpoint(context,state);observationActive();
+      const input={tab:state.tab,sessionId:state.sessionId,identity:context.identity,docId:state.docId,productName:context.packet.body.productName,version:context.packet.body.version,stageConsents:state.stageConsents??[]};
+      const value=await call('navigate',input);
+      if(value?.awaitingNext!==true)return pauseNavigation(context,state,value);
+      if(!object(value)||!same(value.docId,state.docId)||!same(value.company,context.packet.company)||value.productName!==context.packet.body.productName
+        ||!['startPage','productPage','imagePage','legalPage'].includes(value.stage)||value.next!==({startPage:'Product Page',productPage:'Image Page',imagePage:'Legal Page',legalPage:'Logistics Page'})[value.stage])fail('NAVIGATION','원래 다음 단계 요청의 연결을 확인하지 못했습니다.');
+      if(typeof adapter.readNavigation!=='function')fail('NATIVE_NEXT_RESULT_UNCONFIRMED','요청한 다음 단계의 읽기 연결을 확인해주세요. 다시 누르지 않았습니다.');
+      await observationWindow(context,state,'NATIVE_NEXT_RESULT_UNCONFIRMED','요청한 다음 단계가 아직 확인되지 않았습니다. Supplier Hub의 입력 오류를 확인한 뒤 원래 요청을 읽기로 확인해주세요. 다음 버튼을 다시 누르지 않았습니다.',async({step,fence,pause})=>{
+        for(let attempt=0;attempt<=30;attempt++){
+          await fence();const current=await step(()=>call('readNavigation',{...input,waitingNext:{stage:value.stage,next:value.next}}));await fence();
+          if(!object(current)||!same(current.docId,state.docId)||!same(current.company,context.packet.company)||current.productName!==context.packet.body.productName||current.stage!==value.stage||current.next!==value.next)fail('NAVIGATION','대기 중 원래 다음 단계의 연결이 변경되었습니다.');
+          if(current.nextObserved===true&&current.awaitingNext===false)return;
+          if(current.awaitingNext!==true||current.nextObserved!==false)fail('NAVIGATION','원래 다음 단계의 읽기 응답을 확인하지 못했습니다.');
+          if(attempt===30)fail('NATIVE_NEXT_RESULT_UNCONFIRMED','요청한 다음 단계가 아직 확인되지 않았습니다. Supplier Hub 입력 오류와 원래 요청 결과를 읽기로 확인해주세요. 다음 버튼을 다시 누르지 않았습니다.');
+          await pause();
+        }
+      });
+    }
+    fail('NAVIGATION','정해진 새 문서 단계 수를 초과했습니다. 다음 버튼을 다시 누르지 않았습니다.');
   }
   async function pauseNavigation(context,state,value){
     if(!object(value)||!same(value.docId,state.docId)||!same(value.company,context.packet.company)||value.productName!==context.packet.body.productName)fail('NAVIGATION','새 문서 등록 화면을 확인하지 못했습니다.');
@@ -867,11 +900,12 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
         const finalReview=await call('readAgreements',{tab:state.tab,identity:context.identity,docId:state.docId});
         if(!same(agreementDescriptor(finalReview,state,context),check.items)||finalReview.items.some(item=>item.required&&!item.checked))fail('CONSENT_UNCONFIRMED','제출 직전 동의 선택값이 변경되었습니다.');
         await readDocument(context,state,false,true);
-        state=await save(context,state,{state:'submit-requested',operationId:state.requestId+':submit',submitRequestedAt:clock()});
+         observationActive();state=await save(context,state,{state:'submit-requested',operationId:state.requestId+':submit',submitRequestedAt:clock()});
         await guard(context,state);
+         observationActive();
         // submit may lose its ACK; its durable checkpoint is never retried.
         await call('submit',{tab:state.tab,sessionId:state.sessionId,identity:context.identity,docId:state.docId,requestId:state.requestId,operationId:state.operationId,challenge:check,expectedBody:withDoc(context.packet,state.docId)});
-        return await observe(context,state);
+         return await observe(context,state,false,nativeLifecycle);
       }
       if(action==='observe')return await observe(context,state,readOnlyReceipt);
       fail('ACTION','개별 견적서 요청 동작을 확인해주세요.');
@@ -885,17 +919,24 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
       throw error;
     }finally{active.delete(context.key);}
   }
-  async function observe(context,state,readOnlyReceipt=false){
+  async function observe(context,state,readOnlyReceipt=false,waitForReceipt=false){
     if(!['submit-requested','pending','accepted','rejected','registered'].includes(state.state))return result(state);
     await guard(context,state,readOnlyReceipt);
-    const receipt=await call('observeReceipt',{tab:state.tab,sessionId:state.sessionId,identity:context.identity,identityDigest:context.identityDigest,preparedBodySha256:context.bodySha256,docId:state.docId,operationId:state.operationId,
+    const read=()=>call('observeReceipt',{tab:state.tab,sessionId:state.sessionId,identity:context.identity,identityDigest:context.identityDigest,preparedBodySha256:context.bodySha256,docId:state.docId,operationId:state.operationId,
       submitRequestedAt:state.submitRequestedAt??state.humanConfirmedAt,expectedBody:withDoc(context.packet,state.docId),baselineDocIds:state.baselineDocIds,previousReceipt:state.receipt});
+    const receipt=waitForReceipt?await observationWindow(context,state,'RECEIPT_UNCONFIRMED','원래 제출 요청의 접수가 아직 확인되지 않았습니다. 현재 문서의 제출 오류·접수 결과를 읽기로 확인해주세요. 다시 제출하지 않았습니다.',async({step,fence,pause})=>{
+      for(let attempt=0;attempt<=30;attempt++){
+        await fence();let value;
+        try{value=await step(read);}catch(error){if(!(error instanceof SingleDocumentError)||error.code!=='RECEIPT_NOT_VISIBLE')throw error;if(attempt===30)fail('RECEIPT_UNCONFIRMED','원래 제출 요청의 접수가 아직 목록에 나타나지 않았습니다. 현재 문서의 제출 오류·접수 결과를 읽기로 확인해주세요. 다시 제출하지 않았습니다.');await fence();await pause();continue;}
+        await fence();return value;
+      }
+    },readOnlyReceipt):await read();
     if(!receiptValid(receipt,state,context,clock()))fail('RECEIPT_UNCONFIRMED','새 문서와 연결된 실제 접수·SKU 증거를 확인하지 못했습니다.');
     if(state.receipt?.receiptId!==undefined&&(!same(receipt.receiptId,state.receipt.receiptId)||state.state==='accepted'&&receipt.state==='pending'))fail('RECEIPT_CHANGED','원래 확인한 접수 식별값을 다른 관찰로 바꿀 수 없습니다.');
     if(context.packet.format!==SINGLE_DOCUMENT_FORMAT&&state.state==='rejected'&&receipt.state!=='rejected')fail('RECEIPT_CHANGED','원래 전체 상품 문서의 반려 결과를 다른 상태로 바꿀 수 없습니다.');
     if(state.state==='registered'&&(receipt.state!=='registered'||!same(receipt.skuId,state.receipt.skuId)))fail('RECEIPT_CHANGED','원래 확인한 등록 식별값을 다른 관찰로 바꿀 수 없습니다.');
     if(state.receipt&&receipt.observedAt<state.receipt.observedAt)fail('RECEIPT_CHANGED','더 오래된 등록 결과를 반영하지 않습니다.');
-    await guard(context,state,readOnlyReceipt);state=await save(context,state,{state:receipt.state,receipt});return result(state);
+    await guard(context,state,readOnlyReceipt);if(waitForReceipt)observationActive();state=await save(context,state,{state:receipt.state,receipt});return result(state);
   }
   if(draftOnly)return Object.freeze({prepareDraft:(packet,sender)=>operate(packet,sender,'prepareDraft'),recoverDraft:(packet,sender)=>operate(packet,sender,'recoverDraft'),...(nativeLifecycle?{
     recoverSavedDraftTarget:(packet,sender)=>operate(packet,sender,'recoverSavedDraftTarget'),

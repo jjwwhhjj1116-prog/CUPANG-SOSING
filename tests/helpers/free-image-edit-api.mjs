@@ -16,7 +16,7 @@ export const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 export async function freeImageEditFixture(company) {
   const f = await fixture({ company, withMain: true });
   const now = new Date().toISOString(), email = company.code === 'A01526306' ? 'jwhj1116@kakao.com' : 'unari8484@gmail.com';
-  f.h.sqlite.prepare('INSERT INTO members VALUES(?,?,?,?,?,?,?,?,?,?)').run('owner', email, 'fixture-not-a-password', company.code === 'A01526306' ? 'admin' : 'member', 'approved', company.code, company.name, now, now, null);
+  f.h.sqlite.prepare('INSERT INTO members(id,email,password_hash,role,status,company_code,company_name,created_at,updated_at,reviewed_by) VALUES(?,?,?,?,?,?,?,?,?,?)').run('owner', email, 'fixture-not-a-password', company.code === 'A01526306' ? 'admin' : 'member', 'approved', company.code, company.name, now, now, null);
   const doc = () => ({ format: 'free-image-edit-v1', width: 3, height: 2, sourceLanguage: 'zh', regions: [
     { id: 'text-1', text: '原 文\n', translated: ' 직접 수정\n문구 ', box: { x: 0, y: 0, width: 3, height: 2 }, confidence: 80, selected: true,
       issue: null, translationProvenance: 'manual', background: '#ffffff', foreground: '#010203', fontSize: 1, fontFamily: 'mono', bold: true, italic: false, textAlign: 'center', lineHeight: 1.2 },

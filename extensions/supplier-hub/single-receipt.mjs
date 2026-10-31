@@ -75,13 +75,16 @@ export function normalizeSingleReceipt(input){
     fail('RECEIPT_UNCONFIRMED','등록 요청 목록의 원문 배열을 확인하지 못했습니다.');
   const keys=rows.map(row=>String(row.docId));
   if(new Set(keys).size!==keys.length)fail('RECEIPT_UNCONFIRMED','접수 목록의 문서 식별값이 중복되었습니다.');
+  if(previousReceipt!==undefined&&!previousValid(previousReceipt,expected,observedAt))fail('RECEIPT_UNCONFIRMED','원래 확인한 접수 기록과 현재 조회 범위가 다릅니다.');
   const matches=rows.filter(row=>row.docId===expected.docId);
+  // Only a well-formed, fresh list with no representation of this document is
+  // an asynchronously missing row. A changed ID type is still a mismatch.
+  if(matches.length===0&&!keys.includes(String(expected.docId)))fail('RECEIPT_NOT_VISIBLE','원래 새 문서의 접수가 아직 목록에 표시되지 않았습니다. 다시 제출하지 않았습니다.');
   if(matches.length!==1)fail('RECEIPT_UNCONFIRMED','원래 새 문서의 현재 등록 요청을 확인하지 못했습니다.');
   const row=matches[0];
   if(row.productName!==expected.productName||row.categoryPath!==expected.categoryPath||typeof row.status!=='string'||!Object.hasOwn(STATES,row.status)||!identifier(row.qvtRequestId))
     fail('RECEIPT_UNCONFIRMED','새 문서의 상품명·카테고리·등록 파일 ID·상태를 확인해주세요.');
   if(previousReceipt!==undefined){
-    if(!previousValid(previousReceipt,expected,observedAt))fail('RECEIPT_UNCONFIRMED','원래 확인한 접수 기록과 현재 조회 범위가 다릅니다.');
     if(previousReceipt.receiptId!==row.qvtRequestId||previousReceipt.state==='accepted'&&STATES[row.status]==='pending')
       fail('RECEIPT_CHANGED','원래 확인한 등록 파일 ID·완료 상태를 다른 조회로 바꿀 수 없습니다.');
   }

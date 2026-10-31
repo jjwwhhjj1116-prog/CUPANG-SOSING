@@ -9,11 +9,31 @@ const dense=(rows,max)=>Array.isArray(rows)&&rows.length<=max&&Object.keys(rows)
 const integer=(value,max=100000)=>Number.isSafeInteger(value)&&value>=0&&value<=max;
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const fail=()=>{throw Error('원래 문서의 읽기 전용 인증서 감사 결과를 확인하지 못했습니다. 문서·파일·본문을 변경하지 않았습니다.');};
+function validateBodyLeafDifferences(value){
+ const data=value=>object(value)&&Reflect.ownKeys(value).every(key=>typeof key==='string')&&Object.values(Object.getOwnPropertyDescriptors(value)).every(field=>Object.hasOwn(field,'value'));
+ const array=(value,max)=>dense(value,max)&&Reflect.ownKeys(value).length===value.length+1&&Object.values(Object.getOwnPropertyDescriptors(value)).every(field=>Object.hasOwn(field,'value'));
+ const safeKey=key=>typeof key==='string'&&/^[A-Za-z_][A-Za-z0-9_]{0,79}$/.test(key)&&!['__proto__','prototype','constructor'].includes(key)&&!/auth|cookie|password|passwd|secret|credential|session|token|api_?key|access_?key|refresh_?key|private_?key|schema_?title|certificate_?(title|number)|file_?name|s3|https?/i.test(key);
+ const headers=['docId','productName','categoryPath','categoryId','displayCategoryCode','scope','productNoticeNumber','version','remark'],pages=['startPage','productPage','imagePage','legalPage','logisticsPage','sourcingPage'];
+ const path=value=>array(value,10)&&value.length>0&&value.every((part,index)=>typeof part==='number'?integer(part,100000)&&index>0:safeKey(part))
+  &&(value[0]==='jsonDocument'?(value.length===1||typeof value[1]==='number'&&value[1]<200)&&(value.length<3||pages.includes(value[2])):headers.includes(value[0])&&value.length===1)
+  &&!(value.length>4&&value[0]==='jsonDocument'&&value[2]==='legalPage'&&value[3]==='certificates');
+ const kind=(type,value)=>type==='missing'?value==='missing':type==='string-empty'?value==='empty':type==='string'?['na','present'].includes(value):['object','array'].includes(type)?value==='not-applicable':value==='present';
+ if(!data(value)||!exact(value,['format','rows','visited','truncated'])||value.format!=='yoofam-saved-body-leaf-differences-v1'||!integer(value.visited,4096)||value.visited<1||typeof value.truncated!=='boolean'||!array(value.rows,80)||value.rows.length>value.visited)fail();
+ const seen=new Set();
+ for(const row of value.rows){
+  if(!data(row))fail();const keys=['path','expectedType','actualType','expectedValueKind','actualValueKind',...(row.expectedType==='boolean'?['expectedPrimitive']:[]),...(row.actualType==='boolean'?['actualPrimitive']:[])];
+  if(!exact(row,keys)||!path(row.path)||!TYPES.includes(row.expectedType)||!TYPES.includes(row.actualType)||!kind(row.expectedType,row.expectedValueKind)||!kind(row.actualType,row.actualValueKind)
+   ||row.expectedType==='boolean'&&typeof row.expectedPrimitive!=='boolean'||row.actualType==='boolean'&&typeof row.actualPrimitive!=='boolean'
+   ||row.expectedType===row.actualType&&(['missing','null','string-empty'].includes(row.expectedType)||row.expectedType==='boolean'&&row.expectedPrimitive===row.actualPrimitive))fail();
+  const key=JSON.stringify(row.path);if(seen.has(key))fail();seen.add(key);
+ }
+}
 /** This report is evidence for review only, never a cleanup/qualification
  * capability. It contains no filename, S3 key, schema title or raw value. */
 export function validateUnexpectedLegalAuditReport(value,expected={},now=Date.now()){
  const keys=['format','requestId','docId','identityDigest','packetDigest','originalBodySha256','preparedBodySha256','sourcePlanSha256','checkpointSequence','target','observedAt','imageCount','legalCount','bodyMatchesExpected','schemaBindingComplete','rawBodySha256','normalizedBodySha256','fileSetSha256','byteSetSha256','legalSetSha256','legalEntries','legalEntriesTruncated','differences','differenceCount','differencesTruncated','readOnly','remoteWrites','checkpointWrites','canResume','canDelete','registered','historicalAckRecovered'];
- if(!exact(value,keys)||value.format!==UNEXPECTED_LEGAL_AUDIT_FORMAT||!ID.test(value.requestId||'')||!(Number.isSafeInteger(value.docId)&&value.docId>0||typeof value.docId==='string'&&/^[1-9]\d{0,29}$/.test(value.docId))
+ const hasLeaf=object(value)&&Object.hasOwn(value,'bodyLeafDifferences');
+ if(!exact(value,hasLeaf?[...keys,'bodyLeafDifferences']:keys)||value.format!==UNEXPECTED_LEGAL_AUDIT_FORMAT||!ID.test(value.requestId||'')||!(Number.isSafeInteger(value.docId)&&value.docId>0||typeof value.docId==='string'&&/^[1-9]\d{0,29}$/.test(value.docId))
   ||!['identityDigest','packetDigest','originalBodySha256','preparedBodySha256','sourcePlanSha256','rawBodySha256','normalizedBodySha256','fileSetSha256','byteSetSha256','legalSetSha256'].every(key=>HASH.test(value[key]||''))
   ||!integer(value.checkpointSequence)||value.checkpointSequence<1||!exact(value.target,['tabId','windowId'])||!integer(value.target.tabId,Number.MAX_SAFE_INTEGER)||!integer(value.target.windowId,Number.MAX_SAFE_INTEGER)
   ||!Number.isSafeInteger(value.observedAt)||value.observedAt<1||Math.abs(now-value.observedAt)>60000||!integer(value.imageCount,150)||value.imageCount<1||!integer(value.legalCount,2000)
@@ -28,6 +48,7 @@ export function validateUnexpectedLegalAuditReport(value,expected={},now=Date.no
   ||!PATHS.includes(row.path)||!TYPES.includes(row.expectedType)||!TYPES.includes(row.actualType)||!KINDS.includes(row.expectedValueKind)||!KINDS.includes(row.actualValueKind)
   ||row.schemaIndex!==null&&(!value.schemaBindingComplete||!row.path.startsWith('legalPage.certificates.'))||row.path==='document-header'&&row.documentIndex!==null
   ||row.path!=='legalPage.certificates.value'&&(row.expectedValueKind!=='not-applicable'||row.actualValueKind!=='not-applicable'))fail();
+ if(hasLeaf){validateBodyLeafDifferences(value.bodyLeafDifferences);if(value.bodyMatchesExpected&&value.bodyLeafDifferences.rows.length||!value.bodyMatchesExpected&&!value.bodyLeafDifferences.rows.length&&!value.bodyLeafDifferences.truncated)fail();}
  const binding=expected.binding??expected;
  for(const key of ['requestId','docId','identityDigest','packetDigest','originalBodySha256','preparedBodySha256','sourcePlanSha256','checkpointSequence'])if(binding[key]!==undefined&&value[key]!==binding[key])fail();
  if(expected.target!==undefined&&!same(value.target,expected.target))fail();

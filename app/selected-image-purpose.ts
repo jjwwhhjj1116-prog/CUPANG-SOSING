@@ -10,9 +10,9 @@ const textFitIssue='VISION_TEXT_FIT: 한국어를 읽을 수 있는 크기로 �
 const withoutTextFit=(issue:string|null)=>issue===textFitIssue?null:issue?.endsWith(' '+textFitIssue)?issue.slice(0,-textFitIssue.length-1):issue;
 const review=(issues:readonly string[])=>Error(`문구 제거 전 영역·배경 검토가 필요합니다: ${issues.join(', ')}. 원본을 유지했습니다. 이미지 편집에서 문구와 영역을 확인해주세요.`);
 
-/** Erase only validated, selected OCR rectangles using the existing sampled
- * flat fill. This does not reconstruct texture or infer which text is printed
- * on a product. Keep every original row available in the editable document. */
+/** Restore only validated, selected OCR rectangles. The existing background,
+ * overlap and uncertainty gates still apply: OCR is not product segmentation.
+ * Keep every original row available in the editable document. */
 export function prepareSelectedImageCleanup(image:FreeImageLoaded,recognized:readonly FreeImageRegion[]):FreeImageRegion[]{
  const regions=validateFreeImageEditDocument({format:'free-image-edit-v1',width:image.width,height:image.height,sourceLanguage:'zh',regions:[...recognized]},image.source).regions;
  const blockers=image.visionStyleIssues?.filter(issue=>issue!=='VISION_TEXT_FIT')??[];
@@ -28,6 +28,6 @@ export function prepareSelectedImageCleanup(image:FreeImageLoaded,recognized:rea
  if(regions.some(region=>hasForeignImageText(region.text)&&!region.selected&&!fitOnly(region)))throw review(['인식 신뢰도를 확인할 미선택 외국어 문구가 남아 있습니다']);
  return regions.map((region,index)=>{
   const selected=hasForeignImageText(region.text)&&(region.selected||fitOnly(region));
-  return selected?{...region,selected:true,erase:true,translated:'',translationProvenance:'empty',issue:withoutTextFit(region.issue),background:sampled.regions[index].background}:{...region,selected:false};
+  return selected?{...region,selected:true,erase:true,translated:'',translationProvenance:'empty',issue:withoutTextFit(region.issue),background:sampled.regions[index].background,backgroundMode:'inpaint-telea-v1'}:{...region,selected:false};
  });
 }

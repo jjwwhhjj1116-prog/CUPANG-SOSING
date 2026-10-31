@@ -348,11 +348,19 @@ export async function singleDocumentNavigatePage(input){
     if(!record||canon(record.binding)!==canon(input.binding)||canon(record.docId)!==canon(input.docId))throw Error('이 요청이 생성한 정확한 문서가 아닙니다.');
     return record;
   };
-  const wait=async predicate=>{for(let count=0;count<80;count++){check();if(predicate())return;await new Promise(resolve=>setTimeout(resolve,100));}throw Error('개별 등록 화면이 준비되지 않았습니다. 읽기로 확인해주세요.');};
   const record=check();
+  if(record.currentReadRecovery!==undefined)throw Error('공식 다음 버튼은 본문 저장을 함께 실행하므로 현재 읽기로 복구한 문서는 진행하지 않았습니다. 원래 문서의 파일·본문을 재전송하지 않았습니다.');
   // Never advance an already open user form merely because its title matches.
   if(record.loadedDocId!==input.docId)throw Error('이 요청에서 불러온 새 문서 화면이 아니므로 기존 작성 단계를 유지했습니다.');
   const pages=['Product Page','Image Page','Legal Page','Logistics Page'];
+  const pageByStage={startPage:'Start Page',productPage:'Product Page',imagePage:'Image Page',legalPage:'Legal Page',logisticsPage:'Logistics Page'},currentStage=location.pathname.split('/').at(-1),currentTitle=(document.querySelector('#root__title')?.innerText||'').trim();
+  if(currentStage!=='startPage'&&pageByStage[currentStage]!==currentTitle)throw Error('원래 등록 단계의 경로와 제목이 다릅니다.');
+  // A previous operation may have completed after its caller lost the ACK.
+  // This local marker never dispatches another Next or acknowledges its body.
+  const previous={productPage:'startPage',imagePage:'productPage',legalPage:'imagePage',logisticsPage:'legalPage'}[currentStage],priorOperation=record.nextOperations?.[previous];
+  if(priorOperation?.next===currentTitle&&priorOperation.state==='requested'){
+    priorOperation.state='observed';document.documentElement.dataset.yoofamSingleDocumentRecords=JSON.stringify({...JSON.parse(document.documentElement.dataset.yoofamSingleDocumentRecords||'{}'),[input.binding.packetDigest]:record});
+  }
   for(const next of pages){
     const current=(document.querySelector('#root__title')?.innerText||'').trim();if(pages.indexOf(current)>=pages.indexOf(next))continue;
     check();
@@ -368,9 +376,8 @@ export async function singleDocumentNavigatePage(input){
     if(currentRecord.nextOperations?.[stage])throw Error('이 단계의 다음 요청은 이미 실행했습니다. 화면을 읽기로 확인하고 다시 누르지 않았습니다.');
     currentRecord.nextOperations??={};currentRecord.nextOperations[stage]={next,state:'requested'};
     document.documentElement.dataset.yoofamSingleDocumentRecords=JSON.stringify({...JSON.parse(document.documentElement.dataset.yoofamSingleDocumentRecords||'{}'),[input.binding.packetDigest]:currentRecord});
-    buttons[0].click();await wait(()=>(document.querySelector('#root__title')?.innerText||'').trim()===next);
-    const advanced=check();advanced.nextOperations[stage].state='observed';
-    document.documentElement.dataset.yoofamSingleDocumentRecords=JSON.stringify({...JSON.parse(document.documentElement.dataset.yoofamSingleDocumentRecords||'{}'),[input.binding.packetDigest]:advanced});
+    buttons[0].click();check();
+    return {docId:input.docId,company:input.binding.identity.company,productName:input.productName,awaitingNext:true,stage,next};
   }
   check();if(record.loadedDocId!==input.docId||(document.querySelector('#root__title')?.innerText||'').trim()!=='Logistics Page')throw Error('선택한 새 문서의 최종 단계를 확인하지 못했습니다.');
   return {docId:input.docId,company:input.binding.identity.company,productName:input.productName,readyForSubmit:true};
@@ -382,6 +389,17 @@ export function singleDocumentNavigationReadPage(input){
   const record=JSON.parse(document.documentElement.dataset.yoofamSingleDocumentRecords||'{}')[input.binding.packetDigest],codes=Array.from((document.body.innerText||'').matchAll(/Company Code:\s*(A\d+)\b/g),m=>m[1]),stage=location.pathname.split('/').at(-1);
   if(location.origin!=='https://supplier.coupang.com'||codes.length!==1||codes[0]!==input.binding.identity.company.code||!record||canon(record.binding)!==canon(input.binding)||record.docId!==input.docId||record.loadedDocId!==input.docId)throw Error('원래 새 문서의 현재 단계를 읽기로 확인해주세요.');
   const base={docId:input.docId,company:input.binding.identity.company,productName:input.productName};
+  if(record?.watchToken!==undefined&&(record.watchState!=='active'||Date.now()>=record.watchExpiresAt))throw Error('현재 새 문서의 입력 관찰이 중단됐습니다.');
+  const titles={startPage:'Start Page',productPage:'Product Page',imagePage:'Image Page',legalPage:'Legal Page',logisticsPage:'Logistics Page'},title=(document.querySelector('#root__title')?.innerText||'').trim();
+  if(stage!=='startPage'&&titles[stage]!==title)throw Error('원래 등록 단계의 경로와 제목이 다릅니다.');
+  if(input.waitingNext!==undefined){
+    const waiting=input.waitingNext,next={startPage:'Product Page',productPage:'Image Page',imagePage:'Legal Page',legalPage:'Logistics Page'}[waiting?.stage],operation=record.nextOperations?.[waiting?.stage];
+    if(!waiting||Object.keys(waiting).sort().join(',')!=='next,stage'||!next||waiting.next!==next||operation?.next!==next||!['requested','observed'].includes(operation.state))throw Error('원래 다음 단계의 요청 기록과 다릅니다.');
+    const targetStage={startPage:'productPage',productPage:'imagePage',imagePage:'legalPage',legalPage:'logisticsPage'}[waiting.stage];
+    if(stage===targetStage&&title===next)return {...base,stage:waiting.stage,next,awaitingNext:false,nextObserved:true};
+    if(stage===waiting.stage)return {...base,stage:waiting.stage,next,awaitingNext:true,nextObserved:false};
+    throw Error('요청한 다음 단계 이외의 화면으로 변경되었습니다.');
+  }
   if(stage==='logisticsPage'&&(document.querySelector('#root__title')?.innerText||'').trim()==='Logistics Page')return {...base,readyForSubmit:true};
   const known={productPage:'agreeMSRPTerm',imagePage:'agreeLabelContact'}[stage];
   if(known&&(input.stageConsents??[]).at(-1)?.stage===stage&&record.stageConsentOperations?.[stage]?.state==='observed'&&!record.nextOperations?.[stage]){
@@ -389,6 +407,9 @@ export function singleDocumentNavigationReadPage(input){
     if(checked.length===1)return {...base,stage,readyForSubmit:false,readyForConsent:false,readyForContinue:true};
   }
   if(known&&!(input.stageConsents??[]).some(entry=>entry.stage===stage)&&Array.from(document.querySelectorAll('input[type="checkbox"]')).filter(node=>node.getClientRects().length&&node.id===known).length===1)return {...base,readyForSubmit:false,readyForConsent:true,stage};
+  // Recovery observes a completed image->legal transition without clicking the
+  // next, still-unrequested legal stage. Only the explicit continue action can.
+  if(stage==='legalPage'&&(input.stageConsents??[]).at(-1)?.stage==='imagePage'&&record.stageConsentOperations?.imagePage?.state==='observed'&&record.nextOperations?.imagePage?.next==='Legal Page'&&['requested','observed'].includes(record.nextOperations.imagePage.state)&&!record.nextOperations?.legalPage)return {...base,stage:'imagePage',readyForSubmit:false,readyForConsent:false,readyForContinue:true};
   throw Error('이 단계의 요청 결과가 불명확합니다. 읽기로 확인했으며 다음 버튼을 다시 누르지 않았습니다.');
 }
 
@@ -998,7 +1019,7 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
       }
       await bindingFor(input.identity,input.sessionId);return execute(input.tab,input.identity,singleDocumentNavigatePage,[{binding,docId:input.docId,productName:input.productName,stageConsents:input.stageConsents??[]}]);
     },
-    readNavigation:async input=>{const {binding}=await owned(input);return execute(input.tab,input.identity,singleDocumentNavigationReadPage,[{binding,docId:input.docId,productName:input.productName,stageConsents:input.stageConsents??[]}]);},
+    readNavigation:async input=>{const {binding}=await owned(input);return execute(input.tab,input.identity,singleDocumentNavigationReadPage,[{binding,docId:input.docId,productName:input.productName,stageConsents:input.stageConsents??[],...(input.waitingNext?{waitingNext:input.waitingNext}:{})}]);},
     readStageAgreements:async input=>{const {binding}=await owned(input);return execute(input.tab,input.identity,singleDocumentStageAgreementPage,[{binding,docId:input.docId,stage:input.stage,action:'read'}]);},
     confirmStageAgreements:async input=>{const {binding}=await owned(input);mutable(input.identity);return execute(input.tab,input.identity,singleDocumentStageAgreementPage,[{binding,docId:input.docId,stage:input.stage,action:'confirm',challenge:input.challenge,confirmation:input.confirmation,operationId:input.operationId}]);},
     recoverStageConsent:async input=>{const {binding}=await owned(input);return execute(input.tab,input.identity,singleDocumentStageAgreementPage,[{binding,docId:input.docId,stage:input.stage,action:'recover',challenge:input.challenge,operationId:input.operationId}]);},

@@ -1,2 +1,4 @@
 # OCR runtime checksums require the exact upstream bytes on every platform.
 public/ocr/** -text
+# Pinned inpainting runtime, Worker, manifest and license are also byte checked.
+public/inpaint/** -text

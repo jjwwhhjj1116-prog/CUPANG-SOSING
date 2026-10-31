@@ -19,7 +19,7 @@ for(const company of SINGLE_COMPANIES){
       assert.equal(f.documents.get(f.createdDocId).jsonDocument[0].imagePage.msrpAgree,true);assert.equal(f.documents.get(f.createdDocId).jsonDocument[0].imagePage.labelContactAgreed,false);assert.equal(record(f).stageConsentOperations.productPage.state,'observed');assert.equal(f.submitted,0);
       const final=await f.receiver.confirm(f.packet,f.sender,f.action(image));assert.equal(final.state,'awaiting-consent',JSON.stringify(final));assert.equal(final.challenge.stage,'logisticsPage');assert.deepEqual(final.challenge.items,[]);assert.equal(f.hubLocation.pathname,'/sr/registration/step/logisticsPage');
       assert.equal(record(f).stageConsentOperations.imagePage.state,'observed');assert.deepEqual(f.stageApprovalClicks,{productPage:1,imagePage:1});assert.deepEqual(f.stagePersisted.map(row=>row.stage),['productPage','imagePage']);assert.equal(f.submitted,0);
-      const submitted=await f.receiver.confirm(f.packet,f.sender,f.action(final));assert.equal(submitted.state,'submit-requested',JSON.stringify(submitted));assert.equal(submitted.registered,false);assert.equal(submitted.error.code,'RECEIPT_UNCONFIRMED');assert.equal(f.submitted,1);
+      const submitted=await f.receiver.confirm(f.packet,f.sender,f.action(final));assert.equal(submitted.state,'submit-requested',JSON.stringify(submitted));assert.equal(submitted.registered,false);assert.equal(submitted.error.code,'RECEIPT_NOT_VISIBLE');assert.equal(f.submitted,1);
       assert.deepEqual(f.packet,source);assert.equal(writes(f).filter(call=>call.url.endsWith('/create')).length,1);assert.equal(writes(f).filter(call=>call.url.endsWith('/update')).length,1);assert.equal(f.ownDocumentReadsDuringLoad,0);preserved(f);
     }finally{f.close();}
   });
@@ -79,7 +79,7 @@ test('lost next-step acknowledgement is recovered by observing the current owned
   const f=await singleBrowserFixture(SINGLE_COMPANIES[0],{stageFlow:true,nextLostExecuteAck:'productPage'});
   try{
     const product=await f.receiver.start(f.packet,f.sender),pending=await f.receiver.confirm(f.packet,f.sender,f.action(product));assert.equal(pending.state,'navigation-requested',JSON.stringify(pending));assert.equal(f.hubLocation.pathname,'/sr/registration/step/imagePage');
-    assert.equal(record(f).nextOperations.productPage.state,'observed');const clicks=f.nextClicks,remote=writes(f).length;
+    assert.equal(record(f).nextOperations.productPage.state,'requested');const clicks=f.nextClicks,remote=writes(f).length;
     const recovered=await f.receiver.recover(f.packet,f.sender);assert.equal(recovered.state,'awaiting-stage-consent',JSON.stringify(recovered));assert.equal(recovered.challenge.stage,'imagePage');assert.equal(f.nextClicks,clicks);assert.equal(writes(f).length,remote);
     assert.deepEqual(f.stageApprovalClicks,{productPage:1,imagePage:0});assert.equal(f.submitted,0);preserved(f);
   }finally{f.close();}

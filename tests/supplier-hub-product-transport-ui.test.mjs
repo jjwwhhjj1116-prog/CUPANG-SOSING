@@ -692,7 +692,42 @@ test('original document full audit is explicit and cannot adopt a session, claim
   await h.idle();reconnectInputs(h);assert.equal(h.button(auditOriginal),undefined);await h.click('원래 저장 문서 연결 복구');
   assert.ok(h.button(auditOriginal));assert.equal(audited.length,0);const click=h.button(auditOriginal).props.onClick;click();click();await h.idle();
   assert.equal(audited.length,1);assert.equal(audited[0].packet.requestId,'f29491bd-1882-456a-8a63-eec8586db6c6');assert.match(h.text(),/문서\s+2347603/);assert.match(h.text(),/원래 본문\s+불일치/);
+  assert.match(h.text(),/원래 견적과 다른 저장 항목/);assert.doesNotMatch(h.text(),/본문 세부 항목 대조/,'older reports keep their coarse comparison without inventing leaf details');
   assert.equal(h.stored.size,0);assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview']);assert.ok(h.f.calls.every(row=>row.method==='GET'));
+  for(const label of [start,prepareDraft,reviewPrepared,'현재 문서 동의 확인 · 계속'])assert.equal(h.button(label),undefined);
+ }finally{h.close();}
+});
+
+test('versioned original audit leaf rows show structural paths, fixed types and boolean/null states without exposing values or enabling repairs',async()=>{
+ const h=await fixture(undefined,{reconnect:async(_input,f)=>{throw reconnectClosedError(f,{savedDraftTargetClosed:false});}});try{
+  h.f.bridge=async payload=>({...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,unexpectedLegalAuditAvailable:true});
+  h.f.client.auditUnexpectedLegal=async session=>originalAuditFixtureReport(session,{bodyLeafDifferences:{format:'yoofam-saved-body-leaf-differences-v1',visited:20,truncated:true,rows:[
+   {path:['jsonDocument',0,'imagePage','agreeLabelContact'],expectedType:'boolean',actualType:'boolean',expectedValueKind:'present',actualValueKind:'present',expectedPrimitive:true,actualPrimitive:false},
+   {path:['jsonDocument',1,'legalPage','adCert'],expectedType:'missing',actualType:'string-empty',expectedValueKind:'missing',actualValueKind:'empty'},
+   {path:['jsonDocument',2,'productPage','stock'],expectedType:'number',actualType:'null',expectedValueKind:'present',actualValueKind:'present'},
+   {path:['jsonDocument',2,'productPage','toString'],expectedType:'missing',actualType:'string-empty',expectedValueKind:'missing',actualValueKind:'empty'},
+  ]}});
+  await h.idle();reconnectInputs(h);await h.click('원래 저장 문서 연결 복구');await h.click(auditOriginal);
+  const table=nodes(h.render()).find(node=>node.type==='table'&&nodes(node).some(child=>child.type==='caption'&&text(child)==='원래 견적과 다른 세부 저장 항목'));
+  assert.ok(table);const rows=nodes(table).filter(node=>node.type==='tr').slice(1).map(row=>nodes(row).filter(node=>node.type==='td').map(text));
+  assert.match(rows[0][0],/jsonDocument\[0\]\.imagePage\.agreeLabelContact/);assert.deepEqual(rows[0].slice(1),['참/거짓','참','참/거짓','거짓']);
+  assert.match(rows[1][0],/광고 인증 정보/);assert.match(rows[1][0],/jsonDocument\[1\]\.legalPage\.adCert/);assert.deepEqual(rows[1].slice(1),['항목 없음','항목 없음','빈 문자열','빈 값']);
+  assert.match(rows[2][0],/jsonDocument\[2\]\.productPage\.stock/);assert.deepEqual(rows[2].slice(1),['숫자','값 있음','null','null']);
+  assert.match(rows[3][0],/^저장 항목/,'unknown structural keys do not inherit a dictionary prototype label');assert.match(rows[3][0],/jsonDocument\[2\]\.productPage\.toString/);
+  assert.match(h.text(),/일부 항목만 표시/);assert.match(h.text(),/원문 값 대신 저장 경로·자료형·값 상태만 표시/);assert.match(h.text(),/원래 견적과 다른 저장 항목/,'coarse schema-bound differences remain available');
+  assert.equal(h.stored.size,0);assert.ok(h.f.calls.every(row=>row.method==='GET'));assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview']);
+  for(const label of [start,prepareDraft,reviewPrepared,'현재 문서 동의 확인 · 계속'])assert.equal(h.button(label),undefined);
+  assert.doesNotMatch(h.text(),/s3:|\.jpe?g|비밀 원문|자동 복구 완료/u);
+ }finally{h.close();}
+});
+
+test('a filtered empty leaf projection does not imply the original body matches or was fully compared',async()=>{
+ const h=await fixture(undefined,{reconnect:async(_input,f)=>{throw reconnectClosedError(f,{savedDraftTargetClosed:false});}});try{
+  h.f.bridge=async payload=>({...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,unexpectedLegalAuditAvailable:true});
+  h.f.client.auditUnexpectedLegal=async session=>originalAuditFixtureReport(session,{bodyLeafDifferences:{format:'yoofam-saved-body-leaf-differences-v1',visited:20,truncated:true,rows:[]}});
+  await h.idle();reconnectInputs(h);await h.click('원래 저장 문서 연결 복구');await h.click(auditOriginal);
+  assert.match(h.text(),/원래 본문\s+불일치/);assert.match(h.text(),/대조 범위 또는 표시 한도로 일부 항목만 표시/);assert.match(h.text(),/원래 본문의 일치가 확인된 것은 아닙니다/);
+  assert.equal(h.stored.size,0);assert.ok(h.f.calls.every(row=>row.method==='GET'));assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview']);
   for(const label of [start,prepareDraft,reviewPrepared,'현재 문서 동의 확인 · 계속'])assert.equal(h.button(label),undefined);
  }finally{h.close();}
 });

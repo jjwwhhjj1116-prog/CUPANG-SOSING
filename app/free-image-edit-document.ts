@@ -16,7 +16,7 @@ export const MAX_FREE_IMAGE_EDIT_BYTES = 512 * 1024;
 
 const documentKeys = ['format', 'width', 'height', 'sourceLanguage', 'regions', 'crop'];
 const regionKeys = ['id', 'text', 'box', 'confidence', 'selected', 'translated', 'issue', 'translationProvenance',
-  'background', 'foreground', 'fontSize', 'erase', 'brush', 'fontFamily', 'bold', 'italic', 'textAlign', 'lineHeight'];
+  'background', 'foreground', 'fontSize', 'erase', 'brush', 'fontFamily', 'bold', 'italic', 'textAlign', 'lineHeight', 'backgroundMode'];
 const boxKeys = ['x', 'y', 'width', 'height'];
 // Line breaks and tabs are editable text; other control characters have no
 // corresponding image-editor action and cannot enter a saved document.
@@ -63,7 +63,9 @@ export function validateFreeImageEditDocument(value: unknown, source: Pick<FreeI
       || typeof item.background !== 'string' || !/^#[a-f0-9]{6}$/iu.test(item.background)
       || typeof item.foreground !== 'string' || !/^#[a-f0-9]{6}$/iu.test(item.foreground)
       || !Number.isSafeInteger(item.fontSize) || (item.fontSize as number) < 1 || (item.fontSize as number) > 200
-      || item.erase !== undefined && typeof item.erase !== 'boolean') return invalid();
+      || item.erase !== undefined && typeof item.erase !== 'boolean'
+      || item.backgroundMode !== undefined && item.backgroundMode !== 'inpaint-telea-v1'
+      || item.brush !== undefined && item.backgroundMode !== undefined) return invalid();
     ids.add(item.id); originals += item.text.length; translations += item.translated.length;
     if (originals > MAX_OCR_TEXT || translations > MAX_OCR_TEXT) return invalid();
     const bounds = box(item.box, width, height);
@@ -87,6 +89,8 @@ export function validateFreeImageEditDocument(value: unknown, source: Pick<FreeI
     if (item.italic !== undefined) region.italic = item.italic as boolean;
     if (item.textAlign !== undefined) region.textAlign = item.textAlign as FreeImageRegion['textAlign'];
     if (item.lineHeight !== undefined) region.lineHeight = item.lineHeight as number;
+    // Optional absence preserves byte-for-byte canonical legacy documents.
+    if (item.backgroundMode !== undefined) region.backgroundMode = item.backgroundMode as FreeImageRegion['backgroundMode'];
     return region;
   });
   const result: FreeImageEditDocument = { format: 'free-image-edit-v1', width, height, sourceLanguage: value.sourceLanguage, regions };

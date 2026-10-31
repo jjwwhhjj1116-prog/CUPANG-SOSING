@@ -383,6 +383,18 @@ test('audit client requires its explicit capability and returns a frozen correla
  f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,unexpectedLegalAuditAvailable:true});const session=await f.session(),before=plain(session);f.bridge=async payload=>{assert.equal(payload.action,'auditUnexpectedLegal');return legalAuditReply(f);};
  const report=await f.client.auditUnexpectedLegal(session,new AbortController().signal);assert.equal(report.docId,2347603);assert.equal(report.canResume,false);assert.equal(report.canDelete,false);assert.ok(Object.isFrozen(report));assert.ok(Object.isFrozen(report.legalEntries));assert.deepEqual(plain(session),before);assert.equal(f.calls.length,0);assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);assert.deepEqual(f.sent.map(row=>row.payload.action),['preview','preview','auditUnexpectedLegal']);
 });
+test('audit client accepts optional bounded leaf states and rejects raw values or malformed paths without granting mutation capabilities',async()=>{
+ const f=await fixture();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,unexpectedLegalAuditAvailable:true});const session=await f.session(),before=plain(session);
+ const leaf={format:'yoofam-saved-body-leaf-differences-v1',visited:8,truncated:false,rows:[{path:['jsonDocument',0,'imagePage','agreeLabelContact'],expectedType:'boolean',actualType:'boolean',expectedValueKind:'present',actualValueKind:'present',expectedPrimitive:true,actualPrimitive:false}]};
+ const report=()=>({...legalAuditReply(f),bodyMatchesExpected:false,normalizedBodySha256:'8'.repeat(64),differences:[{documentIndex:0,schemaIndex:null,path:'imagePage',expectedType:'object',actualType:'object',expectedValueKind:'not-applicable',actualValueKind:'not-applicable'}],differenceCount:1,bodyLeafDifferences:plain(leaf)});
+ f.bridge=async()=>report();const read=await f.client.auditUnexpectedLegal(session,new AbortController().signal);
+ assert.deepEqual(plain(read.bodyLeafDifferences),leaf);assert.ok(Object.isFrozen(read.bodyLeafDifferences.rows[0].path));assert.equal(read.canResume,false);assert.equal(read.canDelete,false);assert.equal(read.remoteWrites,false);assert.equal(read.checkpointWrites,false);
+ for(const change of [value=>{value.format='unknown';},value=>{value.rows[0].actualValue='PRIVATE_ORIGINAL';},value=>{value.rows[0].path=['https://private.invalid/file.jpg'];},value=>{value.rows[0].path=['jsonDocument',0,'imagePage','fileName'];},value=>{value.rows[0].actualPrimitive='PRIVATE_VALUE';},value=>{value.rows=Array.from({length:81},()=>value.rows[0]);},value=>{value.visited=4097;}]){
+  f.bridge=async()=>{const value=report();change(value.bodyLeafDifferences);return value;};
+  await assert.rejects(f.client.auditUnexpectedLegal(session,new AbortController().signal),error=>error.code==='UNEXPECTED_LEGAL_AUDIT_REPLY'&&!error.uncertain&&!error.message.includes('PRIVATE'));
+ }
+ assert.deepEqual(plain(session),before);assert.equal(f.calls.length,0);assert.ok(f.sent.every(row=>['preview','auditUnexpectedLegal'].includes(row.payload.action)));assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);
+});
 test('audit client rejects cross-source or mutation-capable reports while retaining exact bounded bridge failure phase',async()=>{
  const f=await fixture();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,unexpectedLegalAuditAvailable:true});const session=await f.session();
  for(const change of [report=>report.requestId='other-request',report=>report.packetDigest='9'.repeat(64),report=>report.canDelete=true,report=>report.checkpointWrites=true,report=>report.legalEntries[0].fileName='PRIVATE',report=>report.bodyMatchesExpected=false]){

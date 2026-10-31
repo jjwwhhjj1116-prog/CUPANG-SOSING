@@ -22,6 +22,19 @@ type Props={review:SupplierHubProductDocumentReview;disabled:boolean;refresh:(si
 const stageLabels={productPage:'상품 정보',imagePage:'이미지',logisticsPage:'최종 제출'};
 const auditPathLabels:Record<string,string>={'document-header':'문서 기본정보','member-shape':'옵션 구성',startPage:'시작 정보',productPage:'상품 정보',imagePage:'이미지 연결',logisticsPage:'물류 정보',sourcingPage:'소싱 정보',legalPage:'법적 서류 정보','legalPage.other':'기타 서류 정보','legalPage.certificates':'인증 항목','legalPage.certificates.name':'인증 항목명','legalPage.certificates.value':'인증 값','legalPage.certificates.row-shape':'인증 항목 구성','legalPage.certificates.order':'인증 항목 순서'};
 const auditValueLabels={missing:'항목 없음',empty:'빈 값',na:'해당사항없음',present:'값 있음','not-applicable':'—'};
+const auditLeafTypeLabels:Record<string,string>={missing:'항목 없음',null:'null',array:'배열',object:'객체','string-empty':'빈 문자열',string:'문자열',number:'숫자',boolean:'참/거짓'};
+const auditLeafKeyLabels:Record<string,string>={docId:'문서번호',productName:'상품명',categoryId:'카테고리 번호',categoryPath:'카테고리 경로',displayCategoryCode:'노출 카테고리 번호',productNoticeNumber:'상품정보 제공고시 번호',version:'문서 버전',jsonDocument:'옵션 본문',
+  startPage:'시작 정보',productPage:'상품 정보',imagePage:'이미지 연결',legalPage:'법적 서류 정보',logisticsPage:'물류 정보',sourcingPage:'소싱 정보',
+  certificates:'인증 항목',notices:'상품정보 제공고시',noticeItemName:'고시 항목명',noticeItemValue:'고시 항목 값',noticeContent:'고시 내용',commonAttributes:'공통 속성',exposedAttributes:'노출 속성',unexposedAttributes:'비노출 속성',attributeName:'속성명',attributeValue:'속성 값',
+  mainImages:'대표이미지',additionalImages:'추가이미지',detailImages:'상세이미지',labelImages:'한글표시사항',adCert:'광고 인증 정보',msds:'물질안전보건자료',importType:'수입 유형',agreeLabelContact:'표시사항 연락처 동의',agreeMSRPTerm:'권장소비자가 동의'};
+function auditLeafPathLabel(path:readonly(string|number)[]){
+  const last=[...path].reverse().find((part):part is string=>typeof part==='string');
+  const structured=path.map((part,index)=>typeof part==='number'?`[${part}]`:(index?'.':'')+part).join('');
+  return{label:last&&Object.hasOwn(auditLeafKeyLabels,last)?auditLeafKeyLabels[last]:'저장 항목',structured};
+}
+function auditLeafStateLabel(type:string,kind:keyof typeof auditValueLabels,primitive?:boolean){
+  return type==='null'?'null':type==='boolean'&&typeof primitive==='boolean'?(primitive?'참':'거짓'):auditValueLabels[kind];
+}
 const auditPhaseLabels={source:'원본 자료 확인',packet:'원래 요청 확인',preview:'확장 연결 확인','before-audit':'대조 전 원본 확인',audit:'문서·첨부 읽기','after-audit':'대조 후 원본 확인',report:'결과 연결 확인'};
 // Sample the envelope clock only from an explicit event operation.
 const draftOperationTime=()=>Date.now();
@@ -536,6 +549,13 @@ export function SupplierHubProductTransport(props:Props){
           {shownOriginalAudit.legalEntries.length>0&&<table><caption>현재 서류 첨부 연결</caption><thead><tr><th>첨부</th><th>종류</th><th>인증 항목 연결</th></tr></thead><tbody>
             {shownOriginalAudit.legalEntries.map(row=><tr key={row.index}><td>{row.index+1}</td><td>{row.kind==='certificate'?'인증서':'기타 서류'}</td><td>{{unlinked:'연결 없음',linked:'연결됨',ambiguous:'여러 항목 연결',unknown:'확인 필요'}[row.association]}</td></tr>)}
           </tbody></table>}
+          {shownOriginalAudit.bodyLeafDifferences&&<details open><summary>본문 세부 항목 대조 · 표시 {shownOriginalAudit.bodyLeafDifferences.rows.length}개</summary>
+            <p>원문 값 대신 저장 경로·자료형·값 상태만 표시합니다.</p>
+            {shownOriginalAudit.bodyLeafDifferences.truncated&&<p role="status">대조 범위 또는 표시 한도로 일부 항목만 표시합니다. 이 표만으로 전체 차이를 확인했다고 판단할 수 없습니다.</p>}
+            {shownOriginalAudit.bodyLeafDifferences.rows.length>0?<table><caption>원래 견적과 다른 세부 저장 항목</caption><thead><tr><th>항목 · 저장 경로</th><th>원래 자료형</th><th>원래 값 상태</th><th>현재 자료형</th><th>현재 값 상태</th></tr></thead><tbody>
+              {shownOriginalAudit.bodyLeafDifferences.rows.map((row,index)=>{const path=auditLeafPathLabel(row.path);return<tr key={index}><td>{path.label}<br/><code style={{overflowWrap:'anywhere'}}>{path.structured}</code></td><td>{Object.hasOwn(auditLeafTypeLabels,row.expectedType)?auditLeafTypeLabels[row.expectedType]:'형식 확인 필요'}</td><td>{auditLeafStateLabel(row.expectedType,row.expectedValueKind,row.expectedPrimitive)}</td><td>{Object.hasOwn(auditLeafTypeLabels,row.actualType)?auditLeafTypeLabels[row.actualType]:'형식 확인 필요'}</td><td>{auditLeafStateLabel(row.actualType,row.actualValueKind,row.actualPrimitive)}</td></tr>;})}
+            </tbody></table>:<p>{shownOriginalAudit.bodyLeafDifferences.truncated?'범위 안에서 표시할 세부 차이가 없습니다. 원래 본문의 일치가 확인된 것은 아닙니다.':'표시할 세부 항목 차이가 없습니다.'}</p>}
+          </details>}
           {shownOriginalAudit.differenceCount>0&&<details><summary>본문 차이 {shownOriginalAudit.differenceCount}개</summary>
             <table><caption>원래 견적과 다른 저장 항목</caption><thead><tr><th>옵션</th><th>항목</th><th>원래 값 상태</th><th>현재 값 상태</th></tr></thead><tbody>
               {shownOriginalAudit.differences.map((row,index)=><tr key={index}><td>{row.documentIndex===null?'공통':row.documentIndex+1}</td><td>{auditPathLabels[row.path]??'저장 항목'}{row.schemaIndex===null?'':` (${row.schemaIndex+1})`}</td><td>{auditValueLabels[row.expectedValueKind]}</td><td>{auditValueLabels[row.actualValueKind]}</td></tr>)}
@@ -546,7 +566,7 @@ export function SupplierHubProductTransport(props:Props){
     </details>}
     {session&&<p>회사 {review.identity.company.name} · 포함 옵션 {session.packet.review.members.length}개 · 견적 문서 1개 · 전체 본문 대조 완료</p>}
     {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&!intent&&!state?.preparedLifecycle&&<p role="status">전체 문서의 실제 접수 연결을 검수 중입니다. 현재 상품은 전송하지 않았습니다.</p>}
-    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.70.zip" download>통합 확장 2.1.70 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
+    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.71.zip" download>통합 확장 2.1.71 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
     {session?.preview.draftPreparationAvailable===true&&!state?.preparedLifecycle&&<section aria-label="새 견적 초안 준비">
       <p>{intent?'원래 요청과 문서의 파일·본문 저장 및 단계 검증 결과를 확인합니다.':'로그인한 Supplier Hub에 새 견적 초안 한 개를 만들고 저장한 이미지·본문과 단계 검증을 확인합니다.'} 약관 동의와 최종 제출은 진행하지 않습니다.</p>
       {currentDraftHint&&<p role="status">원래 문서 {String(currentDraftHint.docId)} · {currentDraftHint.state==='update-requested'?'파일·본문 저장 결과 미확인':currentDraftHint.state==='validation-requested'?'단계 검증 결과 미확인':'초안 상태 확인 필요'} · 같은 요청 유지</p>}

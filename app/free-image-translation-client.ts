@@ -14,6 +14,8 @@ import {initializeVisionRegions,type VisionStyleIssue} from '@/app/free-image-vi
 import {FreeImageVisionError} from '@/app/free-image-vision-error';
 import {parseImageNoTextProof,type ImageNoTextProof} from '@/app/image-no-text-proof';
 import type {FreeImageVisionAttempt} from '@/app/free-image-vision-error';
+import {createFreeImageInpaintSession} from '@/app/free-image-inpaint-client';
+import {FREE_IMAGE_INPAINT_MODE,freeImageInpaintRoi,MAX_FREE_IMAGE_INPAINT_REGIONS,MAX_FREE_IMAGE_INPAINT_TOTAL_PIXELS} from '@/app/free-image-inpaint';
 export {FreeImageVisionError,type FreeImageVisionAttempt} from '@/app/free-image-vision-error';
 
 export type OcrBox = { x: number; y: number; width: number; height: number };
@@ -23,6 +25,7 @@ export type FreeImageRegion = FreeImageTextStyle & {
   background: string; foreground: string; fontSize: number;
   erase?: boolean;
   brush?: FreeImageBrush;
+  backgroundMode?: 'inpaint-telea-v1';
 };
 export type FreeImageLoaded = { source: FreeImageSource; blob: Blob; canvas: HTMLCanvasElement; width: number; height: number; editDocument?: FreeImageEditDocument;noTextProof?:ImageNoTextProof;
  visionConfiguration?:ImageTextVisionConfiguration;visionRequestId?:string;visionPending?:FreeImageVisionError;visionResult?:ImageTextVisionResult;visionExecution?:{requests:0|1;cached:boolean};visionStyleIssues?:VisionStyleIssue[];visionFetcher?:typeof fetch };
@@ -350,8 +353,8 @@ function wrappedLines(context: CanvasRenderingContext2D, value: string, maximumW
   }
   return lines;
 }
-/** Paint only selected rectangles or brush paths, preserving outside pixels.
- * Flat fills and strokes are reviewed edits, not AI reconstruction. */
+/** Paint selected rectangles/brush paths. Only explicitly versioned restoration
+ * regions run local inpainting; absent mode retains legacy flat-fill semantics. */
 export async function renderFreeImageTranslation(image: FreeImageLoaded, regions: readonly FreeImageRegion[], signal: AbortSignal, optionImageIds: readonly string[] = [], cropRect?: FreeImageCropRect, sourceLanguage: 'zh' | 'en' = 'zh'): Promise<FreeImageRendered> {
   dimensions(image.width, image.height); signal.throwIfAborted();
   const crop = cropRect === undefined ? undefined : validateFreeImageCrop({ ...validateFreeImageCropRect(cropRect, image.width, image.height), sourceWidth: image.width, sourceHeight: image.height }, image.source);
@@ -369,6 +372,8 @@ export async function renderFreeImageTranslation(image: FreeImageLoaded, regions
     validateOcrBox(region.box, image.width, image.height);
     if (typeof region.id !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(region.id) || ids.has(region.id)
       || region.erase !== undefined && typeof region.erase !== 'boolean' || !/^#[a-f0-9]{6}$/iu.test(region.background)
+      || region.backgroundMode !== undefined && region.backgroundMode !== FREE_IMAGE_INPAINT_MODE
+      || region.brush !== undefined && region.backgroundMode !== undefined
       || region.erase !== true && (!/^#[a-f0-9]{6}$/iu.test(region.foreground)
         || !Number.isInteger(region.fontSize) || region.fontSize < 1 || region.fontSize > 200)) throw Error('선택한 번역 문구·색상·글자 크기를 확인해주세요.');
     ids.add(region.id);
@@ -381,6 +386,10 @@ export async function renderFreeImageTranslation(image: FreeImageLoaded, regions
     }
     if (region.erase !== true) styles.set(region.id, resolveFreeImageTextStyle(region));
   }
+  const restoredRegions=chosen.filter(region=>region.backgroundMode===FREE_IMAGE_INPAINT_MODE);
+  const restoredRois=new Map(restoredRegions.map(region=>[region.id,freeImageInpaintRoi(region.box,image.width,image.height)]));
+  if(restoredRegions.length>MAX_FREE_IMAGE_INPAINT_REGIONS||[...restoredRois.values()].reduce((sum,roi)=>sum+roi.width*roi.height,0)>MAX_FREE_IMAGE_INPAINT_TOTAL_PIXELS)
+    throw Error('한 번에 복원할 영역이 너무 많습니다. 일부 영역의 선택을 해제해주세요.');
   const loadedFonts = new Set<string>();
   for (const style of styles.values()) {
     const identity = JSON.stringify([style.fontFamily, style.bold, style.italic]);
@@ -389,6 +398,8 @@ export async function renderFreeImageTranslation(image: FreeImageLoaded, regions
   }
   signal.throwIfAborted();
   const output = canvas(image.width, image.height); output.context.drawImage(image.canvas, 0, 0);
+  const restoration=restoredRegions.length?createFreeImageInpaintSession(signal):undefined;
+  try {
   for (const region of chosen) {
     signal.throwIfAborted();
     const reviewedBrush = brushes.get(region.id);
@@ -407,7 +418,18 @@ export async function renderFreeImageTranslation(image: FreeImageLoaded, regions
       output.context.restore(); continue;
     }
     const { x, y, width, height } = region.box;
+    const restoreRoi=restoredRois.get(region.id);
+    if(restoreRoi){
+      const pixels=output.context.getImageData(restoreRoi.x,restoreRoi.y,restoreRoi.width,restoreRoi.height);
+      const restored=await restoration!.restore({width:restoreRoi.width,height:restoreRoi.height,data:pixels.data,
+        mask:{x:x-restoreRoi.x,y:y-restoreRoi.y,width,height}});
+      signal.throwIfAborted();pixels.data.set(restored);
+      // Commit only the dirty mask rectangle, so even a translucent context
+      // pixel cannot be altered by a canvas RGBA round trip outside the mask.
+      output.context.putImageData(pixels,restoreRoi.x,restoreRoi.y,x-restoreRoi.x,y-restoreRoi.y,width,height);
+    }
     if (region.erase === true) {
+      if(restoreRoi)continue;
       output.context.save(); output.context.beginPath(); output.context.rect(x, y, width, height); output.context.clip();
       output.context.fillStyle = region.background; output.context.fillRect(x, y, width, height); output.context.restore();
       continue;
@@ -423,12 +445,13 @@ export async function renderFreeImageTranslation(image: FreeImageLoaded, regions
     }
     if (fontSize < 1) throw Error('문구가 선택 영역에 들어가지 않습니다. 문구를 줄이거나 영역 크기를 조절해주세요.');
     output.context.save(); output.context.beginPath(); output.context.rect(x, y, width, height); output.context.clip();
-    output.context.fillStyle = region.background; output.context.fillRect(x, y, width, height);
+    if(!restoreRoi){output.context.fillStyle = region.background; output.context.fillRect(x, y, width, height);}
     output.context.fillStyle = region.foreground; output.context.textBaseline = 'top'; output.context.textAlign = style.textAlign;
     const textX = x + padding + (style.textAlign === 'center' ? maximumWidth / 2 : style.textAlign === 'right' ? maximumWidth : 0);
     lines.forEach((line, index) => output.context.fillText(line, textX, y + padding + index * lineHeight));
     output.context.restore();
   }
+  } finally {restoration?.close();}
   // Coordinates of every edit still refer to the original canvas. Crop only
   // the fully painted result, without resizing or moving an overlay first.
   let final = output;

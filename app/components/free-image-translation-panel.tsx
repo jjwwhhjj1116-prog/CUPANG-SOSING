@@ -330,6 +330,13 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     if (!canEditRegions() || !region || region.brush && Object.keys(patch).some(key => key !== 'background' && key !== 'selected')) return;
     recordRegions(liveRegions.current.map(row => row.id === id ? { ...row, ...patch } : row), group);
   }
+  function editBackgroundMode(id:string,restore:boolean){
+    if(!canEditRegions()||liveRegions.current.find(row=>row.id===id)?.brush)return;
+    recordRegions(liveRegions.current.map(row=>{
+      if(row.id!==id)return row;
+      const next={...row};if(restore)next.backgroundMode='inpaint-telea-v1';else delete next.backgroundMode;return next;
+    }));
+  }
   function endRegionEditGroup() {
     if (canEditRegions()) setRegionHistory(endFreeImageEditGroup(liveRegionHistory.current));
   }
@@ -484,7 +491,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       processingImage=image;setLoaded(image);
       const selectedOptions = focusedOptionId && image.source.optionImages?.optionIds.includes(focusedOptionId) ? [focusedOptionId] : [];
       setOptionImageIds(selectedOptions);
-      const rows = await recognizeFreeImage(image, language, work.controller.signal, message => { if (current(work)) setNotice(message); });
+      const rows = (await recognizeFreeImage(image, language, work.controller.signal, message => { if (current(work)) setNotice(message); })).map(row=>({...row,backgroundMode:'inpaint-telea-v1' as const}));
       if (!current(work)) return;
       resetRegions(rows);
       if(image.visionStyleIssues?.length){setError(`Vision 초기 스타일 검토가 필요합니다: ${image.visionStyleIssues.join(', ')}.`);setNotice('원문·한국어·영역을 보존했습니다. 선택 해제된 영역의 배경색·글자 크기·겹침을 직접 확인하고 수정한 뒤 미리보기를 만들어주세요. 자동 적용하지 않았습니다.');return;}
@@ -526,7 +533,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
         : await readFreeImageSource(productId, version, sourceKey, role, work.controller.signal, undefined, liveQuotationTarget.current ?? undefined);
       if (!current(work)) return;processingImage=image;setLoaded(image);
       setOptionImageIds(focusedOptionId && image.source.optionImages?.optionIds.includes(focusedOptionId) ? [focusedOptionId] : []);
-      const rows = await (local?recognizeLocalFreeImage:recognizeFreeImage)(image, language, work.controller.signal, message => { if (current(work)) setNotice(message); });
+      const rows = (await (local?recognizeLocalFreeImage:recognizeFreeImage)(image, language, work.controller.signal, message => { if (current(work)) setNotice(message); })).map(row=>({...row,backgroundMode:'inpaint-telea-v1' as const}));
       if (!current(work)) return; resetRegions(rows); setNotice(image.visionResult?`${image.visionExecution?.cached?'같은 원본의 Vision 번역을 재사용했습니다. 추가 AI 요청은 0회입니다.':`Vision으로 문구 ${rows.length}개와 한국어 초안을 읽었습니다.`} ${image.visionResult.notice}`:`문구 ${rows.length}개를 읽었습니다. 원문·영역을 확인하고 번역할 문구를 선택해주세요.`);
     } catch (cause) { if (current(work)) {
       if(processingImage?.visionResult?.blocks.length===0){setError('');setNotice('문구 확인을 완료했습니다. 번역할 문구가 없어 원본 이미지를 유지했습니다.');}
@@ -579,7 +586,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     try {
       const generation = liveCropGeneration.current;
       const result = await renderFreeImageTranslation(currentImage, liveRegions.current, work.controller.signal, liveOptionImageIds.current, liveCrop.current ?? undefined, language);
-      if (current(work) && generation === liveCropGeneration.current) { setRendered(result); setNotice(result.crop ? '문구·브러시 편집 후 선택 영역을 잘랐습니다. 결과와 적용 위치를 확인한 뒤 저장해주세요.' : '선택한 영역에 배경색을 적용하고, 지우기 영역을 제외한 문구만 덧씌웠습니다. 원본과 비교한 뒤 저장해주세요.'); }
+      if (current(work) && generation === liveCropGeneration.current) { setRendered(result); setNotice(result.crop ? '문구·브러시 편집 후 선택 영역을 잘랐습니다. 결과와 적용 위치를 확인한 뒤 저장해주세요.' : '선택한 배경 처리 방식으로 원문을 지우고 한국어를 덧씌웠습니다. 원본과 비교한 뒤 저장해주세요.'); }
     } catch (cause) { if (current(work)) setError(cause instanceof Error ? cause.message : '번역 이미지 미리보기를 만들지 못했습니다.'); }
     finally { finish(work); }
   }
@@ -719,17 +726,18 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       <p>선택 옵션 {optionImageIds.length}개 · 옵션 범위를 바꾸면 미리보기를 다시 만들어주세요.</p>
     </fieldset>}
     {regions.length > 0 && <>
-      <p>체크한 문구만 번역·미리보기에 사용합니다. 영역 지우기를 선택하면 문구 없이 배경색만 덮어씁니다. 브라우저 인식 정확도가 낮은 영역은 기본 선택하지 않습니다. 직접 수정한 번역 문구는 다시 번역해도 유지합니다. 목록에서 나중에 오는 영역이 위에 그려집니다. 앞으로·뒤로 버튼으로 겹치는 순서를 조정할 수 있습니다.</p>
+      <p>체크한 문구만 번역·미리보기에 사용합니다. 배경 복원은 주변 픽셀로 선택 영역을 복원하며, 영역 지우기는 한국어를 넣지 않습니다. 제품 위 문구·무늬와 겹친 영역은 직접 확인해주세요. 직접 수정한 문구는 다시 번역해도 유지하며, 목록의 나중 영역이 위에 그려집니다.</p>
       <div style={{ maxHeight: 480, overflowY: 'auto' }}>{regions.map((region, index) => <fieldset key={region.id} className="translation-field" disabled={locked || !currentImage}>
         <legend><label><input type="checkbox" aria-label={`문구 ${index + 1} 선택`} checked={region.selected} onChange={event => editRegion(region.id, { selected: event.target.checked })} />문구 {index + 1} · {region.brush ? '브러시 획' : /^vision-[1-9]\d*$/u.test(region.id) ? 'AI 문구 인식 · 신뢰도 미제공' : `인식 ${Math.round(region.confidence)}%`}</label></legend>
         {region.brush && <p>색상 브러시 획입니다. 경로와 지름은 고정되며 색상·선택·겹치는 순서를 수정할 수 있습니다. 문구와 겹치는 최종 모습은 PNG 미리보기에서 확인해주세요.</p>}
-        <label><input type="checkbox" aria-label={`문구 ${index + 1} 영역 지우기`} disabled={!!region.brush} checked={region.erase === true} onChange={event => editRegion(region.id, { erase: event.target.checked })} />영역 지우기 · 배경색만 적용</label>
+        <label><input type="checkbox" aria-label={`문구 ${index + 1} 영역 지우기`} disabled={!!region.brush} checked={region.erase === true} onChange={event => editRegion(region.id, { erase: event.target.checked })} />영역 지우기 · 한국어 없이 적용</label>
+        {!region.brush&&<label>배경 처리<select aria-label={`문구 ${index + 1} 배경 처리`} value={region.backgroundMode??'flat'} onChange={event=>editBackgroundMode(region.id,event.target.value==='inpaint-telea-v1')}><option value="inpaint-telea-v1">주변 배경 복원</option><option value="flat">단색 채움</option></select></label>}
         <label>원문<textarea aria-label={`문구 ${index + 1} 원문`} rows={2} maxLength={5000} disabled={region.erase === true || !!region.brush} value={region.text} onFocus={endRegionEditGroup} onBlur={endRegionEditGroup} onChange={event => editRegion(region.id, { text: event.target.value,
           ...(region.translationProvenance === 'manual' ? { issue: '원문을 수정했습니다. 직접 작성한 번역을 다시 확인해주세요.' } : { translated: '', issue: null, translationProvenance: 'empty' }) }, `${region.id}:text`)} /></label>
         <label>한국어<textarea aria-label={`문구 ${index + 1} 한국어`} rows={2} maxLength={5000} disabled={region.erase === true || !!region.brush} value={region.translated} onFocus={endRegionEditGroup} onBlur={endRegionEditGroup} onChange={event => editRegion(region.id, { translated: event.target.value, translationProvenance: 'manual', issue: null }, `${region.id}:translated`)} /></label>
         {region.issue && region.erase !== true && <p className="form-error">{region.issue}</p>}
         <div className="form-row">{(['x', 'y', 'width', 'height'] as const).map(field => <label key={field}>{({ x: '왼쪽', y: '위쪽', width: '영역 가로', height: '영역 세로' })[field]} px<input type="number" aria-label={`문구 ${index + 1} ${field}`} disabled={!!region.brush} min={field === 'x' || field === 'y' ? 0 : 1} max={field === 'x' || field === 'width' ? loaded?.width : loaded?.height} step={1} value={region.box[field]} onChange={event => editRegion(region.id, { box: { ...region.box, [field]: Number(event.target.value) } })} /></label>)}</div>
-        <div className="form-row"><label>배경색<input aria-label={`문구 ${index + 1} 배경색`} type="color" value={region.background} onChange={event => editRegion(region.id, { background: event.target.value })} /></label>
+        <div className="form-row"><label>배경색<input aria-label={`문구 ${index + 1} 배경색`} type="color" disabled={region.backgroundMode==='inpaint-telea-v1'} value={region.background} onChange={event => editRegion(region.id, { background: event.target.value })} /></label>
           <label>글자색<input aria-label={`문구 ${index + 1} 글자색`} type="color" disabled={region.erase === true} value={region.foreground} onChange={event => editRegion(region.id, { foreground: event.target.value })} /></label>
           <label>글자 크기<input aria-label={`문구 ${index + 1} 글자 크기`} type="number" disabled={region.erase === true} min={1} max={200} step={1} value={region.fontSize} onChange={event => editRegion(region.id, { fontSize: Number(event.target.value) })} /></label></div>
         <div className="form-row">

@@ -276,6 +276,19 @@ test('manual source preparation enables region and brush editing without OCR, tr
  }finally{h.close();}
 });
 
+test('background restoration is explicit for manual regions, undoable, and new automatic regions default to restoration',async()=>{
+ const h=fixture();try{
+  await h.click('원본 불러오기 · 수동 편집');await h.click('문구 영역 직접 추가');await h.change('문구 1 한국어','직접 문구');
+  assert.equal(h.field('문구 1 배경 처리').props.value,'flat');
+  await h.change('문구 1 배경 처리','inpaint-telea-v1');assert.equal(h.field('문구 1 배경색').props.disabled,true);
+  await h.click('번역 이미지 미리보기');assert.equal(h.calls.findLast(call=>call.action==='preview').rows[0].backgroundMode,'inpaint-telea-v1');
+  await h.change('문구 1 배경 처리','flat');await h.click('되돌리기');assert.equal(h.field('문구 1 배경 처리').props.value,'inpaint-telea-v1');
+  await h.click('다시 실행');assert.equal(h.field('문구 1 배경 처리').props.value,'flat');
+  await h.click('번역 이미지 미리보기');assert.equal(Object.hasOwn(h.calls.findLast(call=>call.action==='preview').rows[0],'backgroundMode'),false);
+ }finally{h.close();}
+ const automatic=fixture();try{await automatic.click('원본 문구 읽기');assert.equal(automatic.field('문구 1 배경 처리').props.value,'inpaint-telea-v1');assert.equal(automatic.saved,0);}finally{automatic.close();}
+});
+
 test('late manual source success/failure, cancellation and changed final option contexts cannot enable stale edits', async () => {
  for(const mode of ['option','version','cancel','close','failure']){
   const h=fixture(),wait=deferred();let arrived;

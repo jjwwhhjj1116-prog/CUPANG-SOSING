@@ -18,6 +18,9 @@ try {
   const ocr=spawnSync(process.execPath,[path.join(repositoryRoot,'scripts/package-free-ocr.mjs'),'--check'],{cwd:repositoryRoot,stdio:'inherit'});
   if(ocr.error)throw ocr.error;
   if(ocr.status!==0)throw Error('무료 OCR 자산과 고정 버전이 일치하는지 확인해주세요. node scripts/package-free-ocr.mjs');
+  const inpaint=spawnSync(process.execPath,[path.join(repositoryRoot,'scripts/package-free-inpaint.mjs'),'--check'],{cwd:repositoryRoot,stdio:'inherit'});
+  if(inpaint.error)throw inpaint.error;
+  if(inpaint.status!==0)throw Error('배경 복원 자산과 고정 버전이 일치하는지 확인해주세요. node scripts/package-free-inpaint.mjs');
   const build = spawnSync(process.execPath, [path.join(repositoryRoot, 'node_modules/vinext/dist/cli.js'), 'build'], {
     cwd: repositoryRoot, stdio: 'inherit', env: { ...process.env, SOURCEFLOW_DEPLOY_TARGET: 'cloudflare' },
   });

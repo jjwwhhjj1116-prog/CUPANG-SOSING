@@ -48,7 +48,10 @@ export async function runSelectedLabelWork(productId: string, controls: Controls
   if (response.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase() !== 'application/json') throw new LabelWorkError('표시사항 서버 응답을 확인하지 못했습니다. 저장 결과를 조회해주세요.', 'failed');
   const body = await response.json() as T & { error?: string; code?: string }; await current();
   if (!response.ok && url.endsWith('/product-label-draft') && ['PRODUCT_LABEL_DRAFT_REQUEST', 'PRODUCT_LABEL_DRAFT_SCOPE', 'PRODUCT_LABEL_DRAFT_SOURCE',
-   'PRODUCT_LABEL_DRAFT_NO_FIELDS', 'PRODUCT_LABEL_DRAFT_LIMIT', 'PRODUCT_LABEL_DRAFT_PLAN', 'PRODUCT_LABEL_DRAFT_NOT_CONFIGURED', 'PRODUCT_LABEL_DRAFT_EVIDENCE'].includes(body?.code ?? '')) pendingDraft = false;
+   'PRODUCT_LABEL_DRAFT_NO_FIELDS', 'PRODUCT_LABEL_DRAFT_LIMIT', 'PRODUCT_LABEL_DRAFT_PLAN', 'PRODUCT_LABEL_DRAFT_NOT_CONFIGURED', 'PRODUCT_LABEL_DRAFT_EVIDENCE',
+   // The server received and rejected this provider result before saving any
+   // proposal. Keep transport/provider/time-out failures fenced separately.
+   'PRODUCT_LABEL_DRAFT_RESPONSE'].includes(body?.code ?? '')) pendingDraft = false;
   if (!response.ok) throw new LabelWorkError(typeof body?.error === 'string' ? body.error : '표시사항 작업 요청을 처리하지 못했습니다.', [400, 401, 403, 404, 409].includes(response.status) ? 'blocked' : 'failed', body?.code);
   return body;
  }

@@ -360,3 +360,55 @@ test('audit preserves image-byte, duplicate and source fences and rejects forged
   const result=await f.run(input);expectFailure(result);assert.equal(f.writes(),0);assert.ok(f.calls.every(call=>call.method==='GET'||call.path==='/sr/draft/api/get-files-by-type/2347603'));
  }
 });
+
+test('serialized audit names the eleven coarse mismatches through bounded structural leaves without changing their evidence or authority',async()=>{
+ const {f,bindings}=certificateFixture();
+ for(const member of f.input.expectedBody.jsonDocument)member.sourcingPage={};
+ for(const [index,member]of f.state.body.jsonDocument.entries()){
+  member.productPage.commonAttributes.bundleCount=1;member.imagePage.msrpAgree=true;member.legalPage.notices=[{noticeCategory:'PRIVATE_SCHEMA_TITLE',noticeValue:'PRIVATE_NOTICE_VALUE'}];
+  member.sourcingPage={};
+  if(index>0)member.sourcingPage={purchaseLink:'https://PRIVATE_SUPPLIER_URL/'+index};
+ }
+ resealExpected(f);
+ f.state.legal=[{fileType:'certificate',fileName:'PRIVATE_UNLINKED_FILE.pdf',s3Link:'PRIVATE_S3'}];
+ const before=f.snapshot(),raw=await f.run(JSON.stringify(auditInput(f,bindings))),report=JSON.parse(raw);validateUnexpectedLegalAuditReport(report,{},f.clock.now);
+ assert.equal(report.differenceCount,11);assert.equal(report.differences.length,11);assert.equal(report.bodyMatchesExpected,false);assert.equal(report.legalEntries[0].association,'unlinked');
+ const leaf=report.bodyLeafDifferences;assert.equal(leaf.format,'yoofam-saved-body-leaf-differences-v1');assert.equal(leaf.truncated,false);assert.ok(leaf.visited<=4096);assert.ok(leaf.rows.length<=80);
+ const byPath=path=>leaf.rows.find(row=>JSON.stringify(row.path)===JSON.stringify(path));
+ assert.deepEqual(byPath(['jsonDocument',0,'imagePage','msrpAgree']),{path:['jsonDocument',0,'imagePage','msrpAgree'],expectedType:'boolean',actualType:'boolean',expectedValueKind:'present',actualValueKind:'present',expectedPrimitive:false,actualPrimitive:true});
+ assert.deepEqual([byPath(['jsonDocument',0,'productPage','commonAttributes','bundleCount']).expectedType,byPath(['jsonDocument',0,'productPage','commonAttributes','bundleCount']).actualType],['missing','number']);
+ assert.equal(byPath(['jsonDocument',1,'sourcingPage','purchaseLink']).actualType,'string');assert.equal(byPath(['jsonDocument',0,'legalPage','notices',0,'noticeValue']).actualType,'string');
+ assert.doesNotMatch(JSON.stringify(report),/PRIVATE_|https:|certificateTitle|certificateNumber/);assert.equal(f.writes(),0);assert.equal(f.snapshot(),before);assert.equal(f.calls.length,14);
+ for(const key of ['canResume','canDelete','remoteWrites','checkpointWrites','registered','historicalAckRecovered'])assert.equal(report[key],false);
+ const old=copy(report);delete old.bodyLeafDifferences;assert.deepEqual(validateUnexpectedLegalAuditReport(old,{},f.clock.now),old,'old exact v1 reports remain valid');
+});
+
+test('leaf metadata omits unsafe keys, credential-shaped names and all string/number values',async()=>{
+ const f=fixture(),page=f.state.body.jsonDocument[0].productPage;
+ Object.assign(page,{'PRIVATE unsafe.png':'PRIVATE_FILENAME','https://PRIVATE_URL':'PRIVATE_URL_VALUE',schemaTitle:'PRIVATE_SCHEMA_TITLE',certificateNumber:'PRIVATE_CERT_NUMBER',accessKey:'PRIVATE_CREDENTIAL',authPassword:'PRIVATE_PASSWORD','상품명':'PRIVATE_NON_ENGLISH',comment:'PRIVATE_COMMENT',amount:8675309});
+ const report=await f.run(auditInput(f));validateUnexpectedLegalAuditReport(report,{},f.clock.now);assert.equal(report.bodyLeafDifferences.truncated,true);
+ assert.doesNotMatch(JSON.stringify(report),/PRIVATE_|8675309|accessKey|authPassword|schemaTitle|certificateNumber|상품명/);
+ const rows=report.bodyLeafDifferences.rows;assert.ok(rows.some(row=>row.path.at(-1)==='comment'));assert.ok(rows.some(row=>row.path.at(-1)==='amount'&&row.actualType==='number'&&!Object.hasOwn(row,'actualPrimitive')));assert.equal(f.writes(),0);
+ const unchanged=fixture();unchanged.input.expectedBody.jsonDocument[0].productPage.authToken='PRIVATE_UNCHANGED';unchanged.state.body.jsonDocument[0].productPage.authToken='PRIVATE_UNCHANGED';resealExpected(unchanged);
+ const hidden=await unchanged.run(auditInput(unchanged));validateUnexpectedLegalAuditReport(hidden,{},unchanged.clock.now);assert.equal(hidden.bodyMatchesExpected,true);assert.equal(hidden.bodyLeafDifferences.rows.length,0);assert.equal(hidden.bodyLeafDifferences.truncated,true);assert.doesNotMatch(JSON.stringify(hidden),/authToken|PRIVATE_UNCHANGED/);assert.equal(unchanged.writes(),0);
+});
+
+test('leaf metadata caps eighty rows, ten path segments and 4096 visited nodes with explicit incomplete coverage',async()=>{
+ const rowBound=fixture();rowBound.state.body.jsonDocument[0].productPage.fields=Object.fromEntries(Array.from({length:100},(_,index)=>['field'+String(index).padStart(3,'0'),true]));
+ const capped=await rowBound.run(auditInput(rowBound));validateUnexpectedLegalAuditReport(capped,{},rowBound.clock.now);assert.equal(capped.bodyLeafDifferences.rows.length,80);assert.equal(capped.bodyLeafDifferences.truncated,true);assert.ok(capped.bodyLeafDifferences.rows.every(row=>row.path.length<=10));assert.equal(rowBound.writes(),0);
+ const visitBound=fixture(),sameArray=Array(5000).fill(0);visitBound.input.expectedBody.jsonDocument[0].productPage.extra=copy(sameArray);visitBound.state.body.jsonDocument[0].productPage.extra=copy(sameArray);visitBound.state.body.jsonDocument[0].productPage.zChanged=true;resealExpected(visitBound);
+ const visited=await visitBound.run(auditInput(visitBound));validateUnexpectedLegalAuditReport(visited,{},visitBound.clock.now);assert.equal(visited.bodyLeafDifferences.visited,4096);assert.equal(visited.bodyLeafDifferences.truncated,true);assert.equal(visited.bodyLeafDifferences.rows.length,0);assert.equal(visited.bodyMatchesExpected,false);assert.equal(visitBound.writes(),0);
+ const depthBound=fixture(),nested={};let node=nested;for(let index=0;index<12;index++){node.child={};node=node.child;}node.value='PRIVATE_DEEP';depthBound.state.body.jsonDocument[0].productPage.deep=nested;
+ const depth=await depthBound.run(auditInput(depthBound));validateUnexpectedLegalAuditReport(depth,{},depthBound.clock.now);assert.equal(depth.bodyLeafDifferences.truncated,true);assert.ok(depth.bodyLeafDifferences.rows.every(row=>row.path.length<=10));assert.doesNotMatch(JSON.stringify(depth),/PRIVATE_DEEP/);assert.equal(depthBound.writes(),0);
+});
+
+test('optional leaf envelope rejects partial, oversized, unsafe, accessor, contradictory and raw-value reports',async()=>{
+ const f=fixture();f.state.body.jsonDocument[0].imagePage.msrpAgree=true;const report=await f.run(auditInput(f));validateUnexpectedLegalAuditReport(report,{},f.clock.now);
+ const mutations=[value=>{delete value.bodyLeafDifferences.format;},value=>{value.bodyLeafDifferences.format='unknown';},value=>{value.bodyLeafDifferences.unexpected=true;},value=>{value.bodyLeafDifferences.visited=4097;},value=>{value.bodyLeafDifferences.rows=Array.from({length:81},()=>copy(value.bodyLeafDifferences.rows[0]));},
+  value=>{value.bodyLeafDifferences.rows[0].path=['jsonDocument',0,'imagePage','https://PRIVATE'];},value=>{value.bodyLeafDifferences.rows[0].path=['jsonDocument',0,'imagePage','password'];},value=>{value.bodyLeafDifferences.rows[0].path=['jsonDocument',0,'legalPage','certificates',0,'certificateNumber'];},
+  value=>{value.bodyLeafDifferences.rows[0].path=Array(11).fill('child');},value=>{value.bodyLeafDifferences.rows[0].actualPrimitive='PRIVATE_RAW';},value=>{value.bodyLeafDifferences.rows[0].expectedPrimitive=true;},value=>{value.bodyLeafDifferences.rows[0].expectedValueKind='na';},value=>{value.bodyLeafDifferences.rows[0].actualType='number';value.bodyLeafDifferences.rows[0].actualPrimitive=123;},
+  value=>{value.bodyLeafDifferences.rows.push(copy(value.bodyLeafDifferences.rows[0]));},value=>{value.bodyLeafDifferences.rows=[];value.bodyLeafDifferences.truncated=false;},value=>{delete value.bodyLeafDifferences;value.bodyLeafFormat='yoofam-saved-body-leaf-differences-v1';}];
+ for(const mutate of mutations){const changed=copy(report);mutate(changed);assert.throws(()=>validateUnexpectedLegalAuditReport(changed,{},f.clock.now));}
+ const accessor=copy(report);Object.defineProperty(accessor.bodyLeafDifferences.rows[0],'actualPrimitive',{get(){assert.fail('Accessor must never be read.');},enumerable:true});assert.throws(()=>validateUnexpectedLegalAuditReport(accessor,{},f.clock.now));
+ const sparse=copy(report);delete sparse.bodyLeafDifferences.rows[0].path[1];assert.throws(()=>validateUnexpectedLegalAuditReport(sparse,{},f.clock.now));assert.equal(f.writes(),0);
+});

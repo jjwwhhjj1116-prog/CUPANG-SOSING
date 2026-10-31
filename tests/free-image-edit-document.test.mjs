@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import {createHash} from 'node:crypto';
 
 const modules = new Map();
 function load(file) {
@@ -34,6 +35,16 @@ function frozen(value) {
   return Object.freeze(value);
 }
 function rejected(patch, sourceValue = source) { assert.throws(() => validate(document(patch), sourceValue)); }
+
+test('restoration mode is versioned, hashed and optional; canonical legacy bytes remain unchanged',()=>{
+  const legacy=document(),canonical=JSON.stringify(validate(legacy,source));
+  assert.equal(canonical,JSON.stringify(legacy));assert.equal(Object.hasOwn(validate(legacy,source).regions[0],'backgroundMode'),false);
+  const restored=document({regions:[region('manual-1',{backgroundMode:'inpaint-telea-v1'})]});
+  const result=validate(restored,source);assert.deepEqual(plain(result),restored);
+  const sha=text=>createHash('sha256').update(text).digest('hex');assert.notEqual(sha(JSON.stringify(result)),sha(canonical));
+  for(const backgroundMode of ['flat','inpaint',true,null,1])rejected({regions:[region('invalid',{backgroundMode})]});
+  rejected({regions:[region('brush',{erase:true,...brush(4,[{x:5,y:6}],800,600),backgroundMode:'inpaint-telea-v1'})]});
+});
 
 test('full editable document preserves paint order, manual blanks, unselected text, whitespace and optional absence in an independent clone', () => {
   const drawing = brush(4, [{ x: 5, y: 6 }, { x: 5, y: 6 }, { x: 20, y: 15 }], 800, 600);

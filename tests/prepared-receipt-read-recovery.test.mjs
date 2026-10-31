@@ -16,6 +16,8 @@ import {productValidationRejectionFixture} from './helpers/product-validation-re
 import {normalizeRejectionDetails} from '../extensions/supplier-hub/rejection-details.mjs';
 import {PRODUCT_DOCUMENT_LIVE_VERIFIED} from '../extensions/supplier-hub/product-document-dispatch.mjs';
 import {SINGLE_DOCUMENT_LIVE_VERIFIED} from '../extensions/supplier-hub/single-dispatch.mjs';
+import {sourceReadError} from '../extensions/supplier-hub/product-document-source.mjs';
+import {runReservedSegments} from '../app/supplier-hub-reserved-work.mjs';
 
 // Reuse declarations only: importing the test module would register unrelated
 // suites and run its historical proof-writing hook. All production transport,
@@ -28,7 +30,7 @@ const declarations=ast.statements.filter(node=>ts.isVariableStatement(node)||ts.
 const ui=vm.runInNewContext(declarations+'\n({fixture,allowPrepared,preparedResult,open,prepareDraft,reviewPrepared,confirmPrepared,nodes,text})',{
   fs,path,vm,assert,ts,createRequire,fileURLToPath,createHash,webcrypto,createProductDocumentPacket,PRODUCT_DOCUMENT_REQUEST_TTL,productDocumentIdentity,
   singleDocumentIdentity,singlePacket,singleDocumentFixture,SINGLE_COMPANIES,SINGLE_SENDER,SupplierHubRejectionDetails,productValidationRejectionFixture,
-  normalizeRejectionDetails,URL,Response,Request,TextEncoder,TextDecoder,Uint8Array,AbortController,Date,JSON,Array,Object,Error,Intl,structuredClone,setImmediate,
+  normalizeRejectionDetails,sourceReadError,runReservedSegments,URL,Response,Request,TextEncoder,TextDecoder,Uint8Array,AbortController,Date,JSON,Array,Object,Error,Intl,structuredClone,setImmediate,
 });
 const recover='준비한 문서 단계 확인 · 읽기 전용',observe='접수 결과 조회',plain=value=>JSON.parse(JSON.stringify(value));
 function reply(h,payload){

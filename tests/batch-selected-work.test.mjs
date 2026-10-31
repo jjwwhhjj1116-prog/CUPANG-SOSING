@@ -248,6 +248,52 @@ test('a real stage-six local render failure stays failed and retryable while sta
  await h.run(['koreanLabel']);assert.equal(renders,2,'A subsequent explicit action is not permanently blocked by an unsent save');
 });
 
+function labelDraftFailureFixture(reply){
+ const h=fixture(),model=providedOptionModule('app/product-label.ts'),runLabel=providedOptionModule('app/batch-selected-label-work.ts').runSelectedLabelWork;
+ const automatic=Object.fromEntries(model.productLabelFields.map(field=>[field.key,({productName:'보존할 제품명',netContents:'1개',material:'실리콘',productType:'생활용품'})[field.key]??'']));
+ const values={...automatic,netContents:''},view={productId:'product',revision:1,inputFingerprint:hash,productVersion:version,contentRevision:3,optionRevision:1,quotationRevision:1,quotationInputFingerprint:hash,
+  categoryContext:{source:'collection',profileId:null,categoryId:'80719',categoryPath:['합성 분류']},imageKeys:[],overrides:{common:{netContents:''},options:{}},updatedAt:version,
+  rows:[{optionId:null,optionLabel:'공통',included:false},{optionId:'a',optionLabel:'검정',included:true}].map(row=>({...row,values:{...values},automatic:{...automatic},sources:Object.fromEntries(model.productLabelFields.map(field=>[field.key,field.key==='netContents'?'manual-common':automatic[field.key]?'content':'empty']))}))};
+ const before=plain(view);let renders=0;
+ h.intercept(call=>{
+  if(call.url.endsWith('/product-labels'))return Response.json(view);
+  if(call.url.endsWith('/product-label-draft'))return reply(call);
+  return null;
+ });
+ h.deps['@/app/batch-selected-label-work'].runSelectedLabelWork=(id,controls)=>runLabel(id,{...controls,render:async()=>{renders++;throw Error('Rejected proposals must not render');}});
+ return{h,view,before,renders:()=>renders};
+}
+
+test('a real rejected label response releases only its confirmed failure and lets quotation run once without saving or painting',async()=>{
+ const f=labelDraftFailureFixture(()=>Response.json({code:'PRODUCT_LABEL_DRAFT_RESPONSE',error:'표시사항 AI의 완전한 JSON 응답을 확인하지 못했습니다. 입력은 유지됩니다.'},{status:503})),{h}=f;
+ const result=await h.run(['koreanLabel','quotation']);
+ assert.deepEqual(result.stages.map(row=>[row.id,row.status]),[['koreanLabel','failed'],['quotation','draft']]);
+ assert.match(result.stages[0].message,/완전한 JSON/);assert.doesNotMatch(result.stages[0].message,/AI 초안 생성 결과가 미확인/);
+ assert.equal(h.calls.filter(call=>call.url?.endsWith('/product-label-draft')).length,1,'No automatic label retry');
+ assert.equal(h.calls.filter(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST').length,1);
+ assert.equal(h.calls.filter(call=>call.adapter==='packaging').length,1);assert.equal(f.renders(),0);
+ assert.equal(h.calls.some(call=>call.method==='PUT'||call.url==='/api/files'),false);assert.deepEqual(f.view,f.before);
+ assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:koreanLabel')||key.includes(':write:label:')),false);
+ await h.run(['koreanLabel']);
+ assert.equal(h.calls.filter(call=>call.url?.endsWith('/product-label-draft')).length,2,'Only another explicit action may request another draft');
+ assert.equal(h.calls.filter(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST').length,1);
+ assert.equal(f.renders(),0);assert.deepEqual(f.view,f.before);
+});
+
+for(const failure of ['timeout','provider','transport'])test('real label '+failure+' remains uncertain and cannot dispatch quotation or replay the draft',async()=>{
+ const f=labelDraftFailureFixture(()=>{
+  if(failure==='transport')throw Error('Lost provider acknowledgment');
+  return Response.json({code:failure==='timeout'?'PRODUCT_LABEL_DRAFT_TIMEOUT':'PRODUCT_LABEL_DRAFT_PROVIDER',error:'원래 제공자 요청 결과를 확인해주세요.'},{status:failure==='timeout'?504:503});
+ }),{h}=f;
+ const result=await h.run(['koreanLabel','quotation']);
+ assert.deepEqual(result.stages.map(row=>row.status),['blocked','blocked']);assert.match(result.stages[0].message,/AI 초안 생성 결과가 미확인/);
+ assert.equal(h.calls.filter(call=>call.url?.endsWith('/product-label-draft')).length,1);
+ assert.equal(h.calls.some(call=>call.url?.endsWith('/quotation-ai')||call.adapter==='packaging'||call.method==='PUT'||call.url==='/api/files'),false);
+ await h.run(['koreanLabel','quotation']);
+ assert.equal(h.calls.filter(call=>call.url?.endsWith('/product-label-draft')).length,1,'An unknown request must not be replayed on another explicit action');
+ assert.equal(f.renders(),0);assert.deepEqual(f.view,f.before);
+});
+
 test('required chart without an original blocks instead of pretending the category is optional',async()=>{
  const h=fixture();h.intercept(call=>call.url.endsWith('/registration-layout')?Response.json({productId:'product',productVersion:version,sizeChartRequired:true}):null);
  const result=await h.run(['sizeChart']);assert.equal(result.stages[0].status,'blocked');assert.match(result.stages[0].message,/필수/);

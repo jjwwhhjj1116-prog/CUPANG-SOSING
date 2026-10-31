@@ -1,0 +1,25 @@
+{
+  "package": "@techstark/opencv-js",
+  "version": "5.0.0-release.1",
+  "license": "Apache-2.0",
+  "source": "https://registry.npmjs.org/@techstark/opencv-js/-/opencv-js-5.0.0-release.1.tgz",
+  "algorithm": "OpenCV photo.inpaint / INPAINT_TELEA / radius 3",
+  "runtimeExternalDownloads": false,
+  "files": [
+    {
+      "path": "opencv.js",
+      "bytes": 13298869,
+      "sha256": "b873c8211421da7b9bf41ae157a923f05a46a0b8d3e5904c44c6f3ad6d39a1bd"
+    },
+    {
+      "path": "licenses/LICENSE-opencv-js.txt",
+      "bytes": 11357,
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "path": "inpaint-worker.js",
+      "bytes": 2694,
+      "sha256": "b4c15c9dd41814c82dddad7e23787b4315338ce1eb081ccbe30a4d3afc3a4407"
+    }
+  ]
+}
