@@ -28,6 +28,15 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
   if(Object.keys(message).sort().join(',')!=='expected,type'){respond({ok:false,error:'기존 요청 확인 범위를 확인해주세요.'});return;}
   readPreservedProductInspectionScope(message.expected).then(scope=>respond({ok:true,scope}),()=>respond({ok:false,error:'현재 승인 회원·회사와 기존 요청의 연결을 확인하지 못했습니다.'}));return true;
 });
+function productDocumentConnectionFailure(cause){
+  // Only fixed Chrome connection messages select a category. Never forward a
+  // runtime/provider exception, URL or page text into the application.
+  let message='';try{if(cause&&typeof cause.message==='string'&&cause.message.length<=300)message=cause.message;}catch{}
+  if(/^Extension context invalidated\.?$/.test(message))return {ok:false,code:'PRODUCT_DOCUMENT_EXTENSION_CONTEXT_INVALIDATED',error:'확장이 갱신되어 이전 웹 연결이 종료됐습니다. YOOFAM 웹 탭을 새로고침한 뒤 원래 요청의 결과를 확인해주세요.'};
+  if(/^(?:The message port closed before a response was received\.|A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received\.?)$/.test(message))return {ok:false,code:'PRODUCT_DOCUMENT_CHANNEL_CLOSED',error:'확장 응답을 받기 전에 연결이 종료됐습니다. 원래 요청의 결과를 먼저 확인해주세요.'};
+  if(message==='Could not establish connection. Receiving end does not exist.')return {ok:false,code:'PRODUCT_DOCUMENT_RECEIVER_UNAVAILABLE',error:'현재 웹 탭과 확장의 수신 연결이 없습니다. 확장 상태를 확인하고 YOOFAM 웹 탭을 새로고침해주세요.'};
+  return {ok:false,code:'PRODUCT_DOCUMENT_BRIDGE_REJECTED',error:'확장 요청의 연결에 실패했습니다. 원래 요청의 결과를 먼저 확인해주세요.'};
+}
 window.addEventListener('message',async event=>{
   if(event.source!==window||event.origin!==location.origin||event.data?.channel!=='YOOFAM_HUB_HANDOFF'||!/^[a-f0-9-]{36}$/.test(event.data.requestId||''))return;
   const {requestId,type}=event.data;
@@ -47,7 +56,7 @@ window.addEventListener('message',async event=>{
     const nativeRegistrationStatus=major>2||major===2&&(minor>1||minor===1&&patch>=4);
     const preservedProductCheckpointInspection=major>2||major===2&&(minor>1||minor===1&&patch>=60);
     result=type==='PING'?{ok:true,version,categoryCatalog:true,categoryRecommendations,categorySchema:true,categoryTemplate:true,categoryExcelSchema:true,legalDocumentAttachments:true,validationResume:true,companyMenuRecovery:true,attachmentLifecycleRecovery:true,exactAgreementLabels:true,acceptedReceiptRefreshRecovery:true,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,originalFileObservationCas,productDocumentPreview,existingProductProbe,nativeRegistrationStatus,preservedProductCheckpointInspection,productTransmissionHistory:true,historicalReceiptLookup:true,resultTableRefreshObservation:true,popupWindowBinding:true,publicMobileCapture:true,publicSingleSkuCapture:true,companyRegistrationStatus:true,companyBinding:true,directTransmission:true,latestSourceBinding:true,savedSubmission:true,durableAttachmentRecovery:true,imageIntegrityBinding:true,registrationLookup:true,registrationPages:true,serverReceiptRecovery:true,serverReceiptReplayProtection:true}:await chrome.runtime.sendMessage({...event.data.payload,type:commands[type]});
-  }catch{result={ok:false,error:'확장 연결을 새로고침한 뒤 다시 준비해주세요.'};}
+  }catch(cause){result=type==='PRODUCT_DOCUMENT'?productDocumentConnectionFailure(cause):{ok:false,error:'확장 연결을 새로고침한 뒤 다시 준비해주세요.'};}
   window.postMessage({channel:'YOOFAM_HUB_HANDOFF_RESULT',requestId,result},location.origin);
 });
 async function verifyCurrentQuotationSource(expected){

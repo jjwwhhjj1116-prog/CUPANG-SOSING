@@ -124,3 +124,26 @@ test('actual content script answers bridge presence and forwards one source capt
  assert.equal(sent[1].data.result.version,manifest.version);assert.notEqual(sent[0].data.requestId,sent[2].data.requestId);
  assert.equal(sent[2].data.requestId,commands[0].requestId);assert.equal(handlers.size,3);assert.ok(sent.every(item=>item.origin===location.origin));
 });
+
+test('actual product content bridge classifies fixed Chrome connection failures without replay or raw exception disclosure',async()=>{
+ const failures=[
+  ['Extension context invalidated.','PRODUCT_DOCUMENT_EXTENSION_CONTEXT_INVALIDATED'],
+  ['The message port closed before a response was received.','PRODUCT_DOCUMENT_CHANNEL_CLOSED'],
+  ['A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received','PRODUCT_DOCUMENT_CHANNEL_CLOSED'],
+  ['Could not establish connection. Receiving end does not exist.','PRODUCT_DOCUMENT_RECEIVER_UNAVAILABLE'],
+  ['PRIVATE_PROVIDER_BODY https://private.test/?token=PRIVATE_TOKEN','PRODUCT_DOCUMENT_BRIDGE_REJECTED'],
+  ['Prefix Extension context invalidated. PRIVATE','PRODUCT_DOCUMENT_BRIDGE_REJECTED'],
+ ];
+ for(const [message,code] of failures){
+  const handlers=[],commands=[],responses=[],location={origin:'https://sourceflow.jjwwhhjj1116.workers.dev'};
+  const window={addEventListener:(_type,fn)=>handlers.push(fn),postMessage:(data,origin)=>responses.push({data,origin})};
+  const chrome={runtime:{onMessage:{addListener(){}},sendMessage:async command=>{commands.push(command);throw Error(message);}}};
+  vm.runInNewContext(fs.readFileSync(new URL('../extensions/supplier-hub/handoff-content.js',import.meta.url),'utf8'),{window,location,chrome});
+  const payload={action:'auditUnexpectedLegal',packet:{requestId:'original'}};
+  await handlers[0]({source:window,origin:location.origin,data:{channel:'YOOFAM_HUB_HANDOFF',requestId,type:'PRODUCT_DOCUMENT',payload}});
+  assert.equal(commands.length,1);assert.equal(commands[0].type,'YOOFAM_PRODUCT_DOCUMENT_REQUEST');assert.equal(commands[0].action,'auditUnexpectedLegal');
+  assert.equal(responses.length,1);assert.equal(responses[0].origin,location.origin);assert.equal(responses[0].data.requestId,requestId);
+  assert.equal(responses[0].data.result.ok,false);assert.equal(responses[0].data.result.code,code);
+  assert.doesNotMatch(JSON.stringify(responses),/PRIVATE|private\.test|listener indicated|port closed|context invalidated/);
+ }
+});

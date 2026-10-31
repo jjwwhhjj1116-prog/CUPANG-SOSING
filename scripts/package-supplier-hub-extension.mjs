@@ -14,6 +14,7 @@ function packageFiles(directory,prefix=''){
  });
 }
 const files=packageFiles(folder);
+if(!files.some(file=>file.name==='product-document-read-lifetime.mjs'))throw Error('전체 상품 문서의 읽기 작업 연결 모듈이 없습니다.');
 const manifest=JSON.parse(new TextDecoder().decode(files.find(file=>file.name==='manifest.json')?.data));
 if(manifest.manifest_version!==3||manifest.background.service_worker!=='handoff-worker.mjs'||!/^\d+\.\d+\.\d+$/.test(manifest.version))throw Error('Chrome 확장 배포 정보를 확인해주세요.');
 // Whole-product preview is a separate contract. Never ship an extension that

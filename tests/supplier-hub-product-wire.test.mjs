@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
+import { withProductDocumentReadLifetime } from '../extensions/supplier-hub/product-document-read-lifetime.mjs';
 
 const root = new URL('../', import.meta.url), read = file => fs.readFileSync(new URL(file, root), 'utf8');
 const content = read('extensions/supplier-hub/handoff-content.js'), worker = read('extensions/supplier-hub/handoff-worker.mjs').replace(/^import .*;\r?\n/gm, '');
@@ -58,7 +59,7 @@ test('legacy scalar and explicit agreement routing remain distinct from group pr
 });
 
 function workerFixture(error) {
-  let handler; const calls = [], context = { chrome: { runtime: { onMessage: { addListener(listener) { handler = listener; } } } },
+  let handler; const calls = [], context = { withProductDocumentReadLifetime, chrome: { runtime: { onMessage: { addListener(listener) { handler = listener; } } } },
     dispatchProductDocument: async (message, sender) => { calls.push({ message, sender }); if (error) throw error; return { format: 'group-preview', remoteWrites: false, registered: false }; },
     dispatchSingleDocument: () => assert.fail('The group request used the scalar lane') };
   vm.runInNewContext(worker, context);
@@ -82,13 +83,13 @@ test('worker preserves group failure identity without falling back or inferring 
 test('unified release unions sales permissions while retaining quotation app origins, and all app downloads target the prepared release', () => {
   const manifest = JSON.parse(read('extensions/supplier-hub/manifest.json')); assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
   assert.deepEqual(manifest.permissions, ['activeTab', 'scripting', 'tabs', 'webRequest', 'declarativeNetRequestWithHostAccess','cookies','storage']);
-  assert.deepEqual(manifest.host_permissions, ['https://detail.1688.com/*', 'https://m.1688.com/*', 'https://h5api.m.1688.com/*', 'https://itemcdn.tmall.com/1688offer/*', 'https://supplier.coupang.com/*','https://www.coupang.com/*','https://wing.coupang.com/*']);
-  assert.deepEqual(manifest.content_scripts.slice(0,2), [{matches:['https://detail.1688.com/offer/*.html*'],js:['page-collector.js'],run_at:'document_idle',all_frames:false},{ matches: ['https://sourceflow.jjwwhhjj1116.workers.dev/*', 'http://localhost:3000/*', 'http://127.0.0.1:3000/*'], js: ['handoff-content.js', 'single-confirmation.js', 'single-content.js','native-source-content.js'] }]);
+  assert.deepEqual(manifest.host_permissions, ['https://s.1688.com/*', 'https://detail.1688.com/*', 'https://m.1688.com/*', 'https://h5api.m.1688.com/*', 'https://itemcdn.tmall.com/1688offer/*', 'https://supplier.coupang.com/*','https://www.coupang.com/*','https://wing.coupang.com/*']);
+  assert.deepEqual(manifest.content_scripts.slice(0,3), [{matches:['https://s.1688.com/selloffer/offer_search.htm*'],js:['listing-picker.js'],run_at:'document_idle',all_frames:false},{matches:['https://detail.1688.com/offer/*.html*'],js:['page-collector.js'],run_at:'document_idle',all_frames:false},{ matches: ['https://sourceflow.jjwwhhjj1116.workers.dev/*', 'http://localhost:3000/*', 'http://127.0.0.1:3000/*'], js: ['handoff-content.js', 'single-confirmation.js', 'single-content.js','native-source-content.js'] }]);
   const download = '/downloads/yoofam-plus-supplier-hub-extension-' + manifest.version + '.zip';
   for (const file of ['app/components/intake-queue-panel.tsx', 'app/components/submission-package.tsx', 'app/components/supplier-hub-category-browser.tsx', 'app/components/supplier-hub-extension-check.tsx', 'app/components/source-inbox-panel.tsx']) {
     const code = read(file); assert.ok(code.includes(download), file); assert.equal(code.includes('0.2.78'), false, file);
   }
   const minimumCompatibleVersion=/info\.version\.localeCompare\('(\d+\.\d+\.\d+)'/.exec(read('app/components/supplier-hub-extension-check.tsx'))?.[1];
   assert.equal(minimumCompatibleVersion,manifest.version);assert.ok(manifest.version.localeCompare(minimumCompatibleVersion,'en',{numeric:true})>=0);
-  cases.push({ name: 'release and scope', version: manifest.version, minimumCompatibleVersion, newPermissions: 2, newHosts: 2, downloadComponents: 5 });
+  cases.push({ name: 'release and scope', version: manifest.version, minimumCompatibleVersion, permissionCount:manifest.permissions.length,hostCount:manifest.host_permissions.length,searchListingHost:true,downloadComponents: 5 });
 });

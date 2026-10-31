@@ -557,7 +557,7 @@ test('verified incomplete draft recovery offers only explicit same-operation con
 });
 test('a failed latest draft readback relocks closing and removes the completed label until exact read recovery succeeds',async()=>{
  const h=await fixture();try{allowDraft(h,payload=>draftResult(h.f,payload.packet.requestId,'validated',payload.action==='recoverDraft'?{recovered:true}:{}));await h.idle();await h.click(open);await h.click(prepareDraft);assert.deepEqual(h.lockPairs.at(-1),[true,false]);
-  h.f.bridge=async()=>{throw Error('원래 초안 본문을 확인하지 못했습니다.');};await h.click(recoverDraft);assert.deepEqual(h.lockPairs.at(-1),[true,true]);assert.match(h.text(),/원래 초안 본문/);assert.doesNotMatch(h.text(),/초안 저장·검증 완료/);assert.equal(h.stored.size,1);assert.equal(h.button(prepareDraft),undefined);
+  h.f.bridge=async()=>{throw Error('원래 초안 본문을 확인하지 못했습니다.');};await h.click(recoverDraft);assert.deepEqual(h.lockPairs.at(-1),[true,true]);assert.match(h.text(),/확장이 문서 요청을 완료하지 못했습니다/);assert.doesNotMatch(h.text(),/원래 초안 본문|초안 저장·검증 완료/);assert.equal(h.stored.size,1);assert.equal(h.button(prepareDraft),undefined);
   h.f.bridge=async payload=>draftResult(h.f,payload.packet.requestId,'validated',{recovered:true});await h.click(recoverDraft);assert.deepEqual(h.lockPairs.at(-1),[true,false]);assert.match(h.text(),/초안 저장·검증 완료/);assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','recoverDraft','recoverDraft']);assert.equal(h.f.calls.some(call=>call.method==='POST'),false);
   h.render({...h.props(),review:{...h.props().review,reviewDigest:'e'.repeat(64)}});assert.deepEqual(h.lockPairs.at(-1),[true,true],'a different review cannot inherit the previous draft close permission even before passive effects');assert.doesNotMatch(h.text(),/초안 저장·검증 완료/);
  }finally{h.close();}
@@ -823,7 +823,7 @@ test('original audit displays a fixed read phase/code, preserves typed schema fa
    await h.click(auditOriginal);const shown=h.text();assert.match(shown,/읽기 전용 대조 중단/u);assert.doesNotMatch(shown,/PRIVATE_|응답이 확정되지 않았습니다/u);
    if(mode==='typed-audit'){assert.match(shown,/문서·첨부 읽기 \[UNEXPECTED_LEGAL_AUDIT_SCHEMA_READ\]/u);assert.match(shown,/legal-documents \/ http-503/u);}
    if(mode==='unknown-audit')assert.match(shown,/문서·첨부 읽기 \[UNEXPECTED_LEGAL_AUDIT_READ_FAILED\]/u);
-   if(mode==='preview')assert.match(shown,/확장 연결 확인 \[PRODUCT_DOCUMENT_BRIDGE\]/u);
+   if(mode==='preview')assert.match(shown,/확장 연결 확인 \[PRODUCT_DOCUMENT_DISPATCH_FAILED\]/u);
    if(mode==='after-audit')assert.match(shown,/대조 후 원본 확인 \[UNEXPECTED_LEGAL_AUDIT_READ_FAILED\]/u);
    assert.equal(audits,mode==='preview'?0:1);assert.equal(h.stored.size,0);assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview']);assert.ok(h.f.calls.every(row=>row.method==='GET'));
    for(const label of [start,prepareDraft,reviewPrepared,'현재 문서 동의 확인 · 계속'])assert.equal(h.button(label),undefined);

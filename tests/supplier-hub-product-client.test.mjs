@@ -467,10 +467,22 @@ test('audit preserves typed schema/execution phases but replaces unknown bridge 
  }
  for(const code of ['ADAPTER_FAILURE',undefined,'PRIVATE_CODE_SHOULD_NOT_DISPLAY']){
   f.bridge=async()=>{throw Object.assign(Error('PRIVATE_RAW_BROWSER_FAILURE'),{code});};
-  await assert.rejects(f.client.auditUnexpectedLegal(session,new AbortController().signal),error=>error.uncertain===false&&!error.message.includes('PRIVATE')&&error.code===(code==='ADAPTER_FAILURE'?code:code===undefined?'PRODUCT_DOCUMENT_BRIDGE':'UNEXPECTED_LEGAL_AUDIT_READ_FAILED'));
+  await assert.rejects(f.client.auditUnexpectedLegal(session,new AbortController().signal),error=>error.uncertain===false&&!error.message.includes('PRIVATE')&&error.code===(code==='ADAPTER_FAILURE'?code:code===undefined?'PRODUCT_DOCUMENT_DISPATCH_FAILED':'UNEXPECTED_LEGAL_AUDIT_READ_FAILED'));
  }
  const hidden=f.client.unexpectedLegalAuditReadError(Error('PRIVATE_RUNTIME_EXCEPTION'));assert.equal(hidden.code,'UNEXPECTED_LEGAL_AUDIT_READ_FAILED');assert.doesNotMatch(hidden.message,/PRIVATE/);
  assert.deepEqual(plain(session),before);assert.equal(f.calls.length,0);assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);assert.ok(f.sent.every(row=>['preview','auditUnexpectedLegal'].includes(row.payload.action)));
+});
+
+test('fixed connection errors retain read-only audit semantics and uncertain mutation fences without retrying',async()=>{
+ for(const code of ['PRODUCT_DOCUMENT_EXTENSION_CONTEXT_INVALIDATED','PRODUCT_DOCUMENT_CHANNEL_CLOSED','PRODUCT_DOCUMENT_RECEIVER_UNAVAILABLE','PRODUCT_DOCUMENT_BRIDGE_REJECTED',undefined]){
+  const f=await fixture();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,unexpectedLegalAuditAvailable:true});const session=await f.session(),before=plain(session);
+  f.bridge=async()=>{throw Object.assign(Error('PRIVATE_RAW_MESSAGE'),{code});};
+  await assert.rejects(f.client.auditUnexpectedLegal(session,new AbortController().signal),error=>error.uncertain===false&&error.code===(code??'PRODUCT_DOCUMENT_DISPATCH_FAILED')&&!error.message.includes('PRIVATE'));
+  assert.deepEqual(f.sent.map(row=>row.payload.action),['preview','auditUnexpectedLegal']);
+  await assert.rejects(f.client.productDocumentExchange('prepareDraft',session.packet,new AbortController().signal),error=>error.uncertain===true&&error.code===(code??'PRODUCT_DOCUMENT_DISPATCH_FAILED'));
+  assert.deepEqual(f.sent.map(row=>row.payload.action),['preview','auditUnexpectedLegal','prepareDraft']);
+  assert.deepEqual(plain(session),before);assert.equal(f.calls.length,0);assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);
+ }
 });
 
 test('audit keeps its original 180-second deadline and cancellation remains a single read without retry or uncertain mutation state',async()=>{

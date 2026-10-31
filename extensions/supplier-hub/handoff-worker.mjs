@@ -15,6 +15,7 @@ import {readAppCompanyRegistrations} from './company-registration.mjs';
 import {readAppNativeRegistrations} from './native-registration.mjs';
 import {dispatchSingleDocument} from './single-dispatch.mjs';
 import {dispatchProductDocument} from './product-document-dispatch.mjs';
+import {withProductDocumentReadLifetime} from './product-document-read-lifetime.mjs';
 import {savePageSource,flushPageSources} from './source-inbox.mjs';
 import {dispatchListingBatch,authenticateListingBulkPage,saveListingBulkPage} from './listing-batch.mjs';
 import {readPageDescription} from './page-description.mjs';
@@ -50,7 +51,7 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
     run(message,sender).then(respond,error=>respond({ok:false,error:error.message}));return true;
   }
   if(message?.type==='YOOFAM_PRODUCT_DOCUMENT_REQUEST'){
-    dispatchProductDocument(message,sender).then(result=>respond({ok:true,result}),error=>respond({ok:false,error:error.message,code:error.code}));return true;
+    withProductDocumentReadLifetime(message.action,()=>dispatchProductDocument(message,sender),chrome.runtime).then(result=>respond({ok:true,result}),error=>respond({ok:false,error:error.message,code:error.code}));return true;
   }
   if(message?.type==='YOOFAM_SINGLE_DOCUMENT_REQUEST'){
     dispatchSingleDocument(message,sender).then(result=>respond({ok:true,result}),error=>respond({ok:false,error:error.message,code:error.code}));return true;

@@ -23,10 +23,18 @@ const auditFailureCodes=new Set(['UNEXPECTED_LEGAL_AUDIT_UNAVAILABLE','UNEXPECTE
   'UNEXPECTED_LEGAL_AUDIT_SCHEMA_READ','UNEXPECTED_LEGAL_AUDIT_SCHEMA_EXECUTION','UNEXPECTED_LEGAL_AUDIT_EXECUTION','UNEXPECTED_LEGAL_AUDIT_REPORT','UNEXPECTED_LEGAL_AUDIT_CANCELLED',
   'UNEXPECTED_LEGAL_AUDIT_SOURCE_CHANGED','UNEXPECTED_LEGAL_AUDIT_READ_FAILED']);
 const auditBridgeCodes=new Set(['ADAPTER_FAILURE','ACK_UNCERTAIN','PRODUCT_DOCUMENT_ACK_MISSING','PRODUCT_DOCUMENT_BRIDGE','SOURCE_CHANGED','TAB_CHANGED','SOURCE_READ_TIMEOUT','SOURCE_READ_NETWORK','SOURCE_READ_RESPONSE','SOURCE_READ_HTTP']);
+const auditConnectionFailures:Readonly<Record<string,string>>={
+  PRODUCT_DOCUMENT_EXTENSION_CONTEXT_INVALIDATED:'확장이 갱신되어 이전 읽기 연결이 종료됐습니다. YOOFAM 웹 탭을 새로고침한 뒤 원래 문서를 확인해주세요.',
+  PRODUCT_DOCUMENT_CHANNEL_CLOSED:'읽기 대조의 확장 응답이 도착하기 전에 연결이 종료됐습니다. 문서·파일·본문을 다시 보내지 않았습니다.',
+  PRODUCT_DOCUMENT_RECEIVER_UNAVAILABLE:'현재 웹 탭에 연결된 확장 수신기가 없습니다. 확장 상태를 확인하고 YOOFAM 웹 탭을 새로고침해주세요.',
+  PRODUCT_DOCUMENT_BRIDGE_REJECTED:'확장 연결 오류로 읽기 대조를 완료하지 못했습니다. 문서·파일·본문을 변경하지 않았습니다.',
+  PRODUCT_DOCUMENT_DISPATCH_FAILED:'확장의 문서 읽기 실행이 완료되지 않았습니다. 문서·파일·본문을 변경하지 않았습니다.',
+};
 /** Only audit failures use this presentation. Raw browser/provider exceptions
  * never become user-visible text, and a failed read grants no write recovery. */
 export function unexpectedLegalAuditReadError(cause:unknown):ProductDocumentBridgeError{
   if(cause instanceof ProductDocumentBridgeError&&cause.uncertain===false){
+    if(Object.hasOwn(auditConnectionFailures,cause.code))return new ProductDocumentBridgeError(auditConnectionFailures[cause.code],false,cause.code);
     if(auditFailureCodes.has(cause.code)&&cause.message.length>0&&cause.message.length<=2000)return cause;
     if(auditBridgeCodes.has(cause.code))return new ProductDocumentBridgeError(cause.code==='PRODUCT_DOCUMENT_ACK_MISSING'
       ?'읽기 전용 대조의 확장 응답 시간이 초과되었습니다. 대조 결과를 받지 못했으며 문서·파일·본문을 변경하지 않았습니다.'
@@ -80,7 +88,10 @@ export function productDocumentExchange(action:'preview'|'auditUnexpectedLegal'|
     const receive=(event:MessageEvent)=>{
       if(event.source!==window||event.origin!==window.location.origin||event.data?.channel!=='YOOFAM_HUB_HANDOFF_RESULT'||event.data.requestId!==requestId)return;
       cleanup();const envelope=event.data.result;
-      if(!object(envelope)||envelope.ok!==true||!Object.hasOwn(envelope,'result'))reject(new ProductDocumentBridgeError(typeof envelope?.error==='string'?envelope.error:'전체 상품 견적 응답을 확인하지 못했습니다.',mutating,typeof envelope?.code==='string'?envelope.code:'PRODUCT_DOCUMENT_BRIDGE'));
+      if(!object(envelope)||envelope.ok!==true||!Object.hasOwn(envelope,'result')){
+        const coded=typeof envelope?.code==='string';
+        reject(new ProductDocumentBridgeError(coded&&typeof envelope.error==='string'?envelope.error:'확장이 문서 요청을 완료하지 못했습니다. 원래 요청의 결과를 확인해주세요.',mutating,coded?envelope.code as string:'PRODUCT_DOCUMENT_DISPATCH_FAILED'));
+      }
       else{
         const value=envelope.result;
         // A correlated negative scope result cannot advance the operation or
