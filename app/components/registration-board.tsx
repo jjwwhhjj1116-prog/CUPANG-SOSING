@@ -71,7 +71,7 @@ export function registrationThumbnail(product:BoardProduct) {
 }
 export function registrationTitle(product:BoardProduct) {return (product.content_summary?.seoTitle??product.title)||'상품명 미입력';}
 export function registrationTransmissionLabel(product:BoardProduct) {return product.hub_receipt&&product.hub_single_receipt?'전송 이력 있음':product.hub_single_receipt?.label??product.hub_receipt?.label??'등록대기';}
-function transmissionState(product:BoardProduct){const label=registrationTransmissionLabel(product);return /반려|오류|실패/.test(label)?'failed':label==='SKU ID 확인'?'complete':/검증 중/.test(label)?'running':'pending';}
+function transmissionState(product:BoardProduct){const label=registrationTransmissionLabel(product);return /반려|오류|실패/.test(label)?'failed':label==='SKU ID 확인'||!product.hub_receipt&&product.hub_single_receipt?.state==='accepted'&&product.hub_single_receipt.sourceStatus==='FINISHED'?'complete':/검증 중/.test(label)?'running':'pending';}
 export function registrationColumnText(product:BoardProduct,columnId:string):string {
   if(columnId==='id')return product.source_capture?`수집 · ${product.source_capture.snapshot.offerId}`:registrationNumber(product);
   if(columnId==='product')return registrationTitle(product);
@@ -159,7 +159,7 @@ export function RegistrationBoard<T extends BoardProduct>({products,sources=[],s
   const pinned=(column:string)=>pinnedColumn===column?' registration-pinned':'';
   let bounds:{startUtc:string|null;endUtc:string|null}={startUtc:null,endUtc:null};let dateError='';
   try{bounds=archiveDateBounds(range,from,to);}catch(cause){dateError=cause instanceof Error?cause.message:'날짜를 확인해주세요.';}
-  const baseFiltered=dateError?[]:filterRegistrationProducts(entries,query,bounds.startUtc,bounds.endUtc).filter(product=>status==='전체'||(status==='작업 중'?!['전송 가능','전송완료'].includes(product.registration_status):['검토 대기','전송 가능'].includes(status)?product.registration_status===status:registrationTransmissionLabel(product)===status));
+  const baseFiltered=dateError?[]:filterRegistrationProducts(entries,query,bounds.startUtc,bounds.endUtc).filter(product=>status==='전체'||(status==='작업 중'?transmissionState(product)!=='complete'&&!['전송 가능','전송완료'].includes(product.registration_status):['검토 대기','전송 가능'].includes(status)?product.registration_status===status:registrationTransmissionLabel(product)===status));
   const imageCounts=['대표 이미지','추가 이미지','상세 이미지','표시사항'];
   const matches=(product:Entry,except?:string)=>columns.every(column=>column.id===except||matchesRegistrationColumnFilter(registrationColumnText(product,column.id),columnFilters[column.id],imageCounts.includes(column.id)));
   const filtered=sortRegistrationProducts(baseFiltered.filter(product=>matches(product)),sort);

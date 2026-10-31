@@ -90,6 +90,19 @@ test('native receipt row keeps document and registration file distinct, never cl
  filter.props.onChange({target:{value:nativeSummary.label}});assert.equal(elements(h.render(),node=>node.type==='tbody')[0].props.children.length,1);
 });
 
+test('FINISHED native receipt is green and leaves work-in-progress without inventing SKU evidence or changing source stages',()=>{
+ const h=boardHarness();h.product.hub_single_receipt=nativeSummary;
+ const before=JSON.stringify(h.product),tree=h.render(),cell=elements(tree,node=>node.type==='td'&&node.props['data-column']==='status')[0];
+ assert.equal(elements(cell,node=>node.props?.className==='registration-state')[0].props['data-state'],'complete');
+ assert.match(nodeText(cell),/등록 파일 완료 확인/);assert.match(nodeText(cell),/SKU 확인 전/);assert.doesNotMatch(nodeText(cell),/등록완료|SKU ID 확인/);
+ const filter=elements(tree,node=>node.type==='select'&&node.props['aria-label']==='등록 상태 필터')[0];
+ filter.props.onChange({target:{value:'작업 중'}});assert.equal(elements(h.render(),node=>node.type==='tbody')[0].props.children.length,0);
+ assert.equal(JSON.stringify(h.product),before);
+ for(const receipt of [{...nativeSummary,state:'pending',sourceStatus:'SUBMITTED',label:'개별 문서 접수 처리 중'},{...nativeSummary,state:'rejected',sourceStatus:'REJECTED',label:'개별 문서 등록 파일 반려'}]){
+  const other=boardHarness();other.product.hub_single_receipt=receipt;const status=elements(other.render(),node=>node.props?.className==='registration-state')[0];assert.notEqual(status.props['data-state'],'complete');
+ }
+});
+
 test('coexisting native and file receipts display both histories without claiming either is the latest',()=>{
  const h=boardHarness();h.product.hub_single_receipt=nativeSummary;h.product.hub_receipt={label:'견적서 접수',company:nativeSummary.company,quotationId:'bulk-401',fingerprint:'b'.repeat(64),categoryId:'80719',observedAt:Date.now()+1,includedOptions:3,issuedSkus:0};
  const value=nodeText(elements(h.render(),node=>node.type==='td'&&node.props['data-column']==='status')[0]);
