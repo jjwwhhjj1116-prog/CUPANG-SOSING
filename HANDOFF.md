@@ -6834,3 +6834,12 @@ REA로 Couplus의 localhost HTTP/SSE와 별도 상품조회 경계를 확인했�
 - 최종D1 SELECT35테이블47행 SHA39f1f5b9ff48173e6d68b0e8d9689aac8eb587f2fb469a0ed6b2984913a3455d unchanged/changedTables[]; outputs/step890-original-scoped-release.json. Hub actual receipt 미확인, 원래no-file/body-retransmit와cert삭제금지 유지.
 - 실제운영웹 새탭에서 download74/runtime73 확인, screenshot outputs/step890-deployed-extension74-pending.png. 사용자74새로고침 응답대기. 적용후 웹만F5→원래요청/doc복구→전체audit→normal검사로cachedlegacyuncertain확인→명시1회검사경로. 원래Hub탭F5·재수집·nativeNext/Preview/Save/Submit 금지. 검사통과는접수아님.
 - 브라우저7/provider ca7efe32-aefa-4487-a7f9-757ffea5472a: qa883727939940, loginHub885727940145, reservedHub885727940148 보존. Windowsnative는 이전URL확인실패guard를우회/재시도하지않음. 자세한내용 docs/step890-quotation-recovery-and-saved-stage-check.md.
+
+### Step891 — 자동 이미지 재시도·가격 완료 판정·6→7 표시사항 연결 (2026-10-31)
+
+- Source5c0c2130. 이미지/work-draft 계정사전검사에서 실제POST0이어도 pending이 영구남던 오류 수정: dispatch전 확정미전송만 key해제, 전송/ACK유실/잘못된ACK/전송뒤회사변경 fence유지. rootpricefix는 observed salePriceMustCoverSupply일때 최종primary가격의 판매가≥공급가 확인 후완료판정; 수동가격/DB수정0. 6단계의 명시활성저장override+정확한이전자동content proof로만 7단계 knownChanges반영, manual공란/제외옵션/타카테고리보존/AIallowlist확대0, savedLabel은실저장전제거/CAS유지. 브라우저OpenCV복원과외부생성설정안내분리.
+- 검사: workflow219, registration21, labelquote53(각그룹파일비중복; 이전81은219포함), tsc/targetlint/diffcheck/isolatedbuild통과. 각행동독립P1P2검수clean. docs/step891-automatic-stage-to-quotation-consistency.md. 보호실상품/AI/Hub쓰기0; 새확장버전없음.
+- Worker5a7aa965-6481-4a73-8d2b-f527d8b9b8eb 배포성공. 샌드박스DNS실패는동일승인배포네트워크범위에서성공. release outputs/step891-web-release, 6runtime텍스트CRLF/LF만정규화해commit소스일치; 원래unrelated app/chatgpt-auth.ts metadata는그대로제외/보존. env/model/요금/migration/permission변경0. 확장74ZIP SHA b5ff00d6bf2d897680edfed72948b052a7a9a2ff13067771e4642f7cba847cc3 동일.
+- 원래886/e2f8037c/f29491bd/doc2347603 D1 SELECT35표47행/hash39f1f5b9ff48173e6d68b0e8d9689aac8eb587f2fb469a0ed6b2984913a3455d 동일/changedTables[] (outputs/step891-original-scoped-final.json). 원격Hub본문무변경/접수증거와혼동금지. 파일본문재전송/생성/서류삭제/nativeNextPreviewSaveSubmit0.
+- live production새탭에서수정안내확인, Chrome실행73/다운로드74 유지. 원래qa883는이전stage2uncertain/audit9images1legal34leaf 그대로. 새검증POST0. 기존74수동새로고침질문pending; genericcontinue를적용완료/재전송허용으로해석금지. 적용후qa만F5→원래reg261024001001견적→collected-1→검토전송→첨부확인→원래f294/doc복구→fullaudit→normalcacheduncertain→명시singlevalidationretry. 실제접수아직미확인/상세원본0장미해결유지.
+- browser883 Chrome7/provider ca7efe32-aefa-4487-a7f9-757ffea5472a. qa883727939940/loginHub885727940145/reservedHub885727940148 handoff유지. 이전임시check891닫음; deployed891은새배포diag검수용이므로완료후닫는다. Windowsnative URLguard실패우회/재시도0.

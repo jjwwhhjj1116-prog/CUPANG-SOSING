@@ -36,4 +36,30 @@ Chrome execution remains 2.1.73, so the new same-document validation retry has
 not been executed. The original legacy uncertainty and raw-body mismatch remain
 blocked. Native Next/Preview/Save/Submit are not used under the no-retransmit scope.
 
-Release, test and production UI results are appended after final verification.
+## Release verification
+
+- Source commit: `5c0c2130`.
+- Workflow/image/dashboard suites: 219 passed. Registration status suites: 21
+  passed. Quotation known-source/client/API suites: 53 passed. These are disjoint
+  test-file groups; the earlier 81-test image review is included in the 219.
+- TypeScript, targeted ESLint, diff check and isolated production build passed.
+  Independent reviews of each behavioral change found no remaining P1/P2 issue.
+- Worker `5a7aa965-6481-4a73-8d2b-f527d8b9b8eb` deployed successfully. The first
+  sandbox DNS failure was resolved by the same authorized deployment with network
+  access. No schema, billing, AI model or extension-permission changes.
+- The isolated release came from the exact source commit and excludes the
+  unrelated working-copy auth metadata change. All six runtime source files match
+  after CRLF/LF normalization limited to those TypeScript files. The archive's
+  2.1.74 extension ZIP retains SHA256
+  `b5ff00d6bf2d897680edfed72948b052a7a9a2ff13067771e4642f7cba847cc3`.
+- Fixed original D1 SELECT: 35 tables / 47 rows, SHA256
+  `39f1f5b9ff48173e6d68b0e8d9689aac8eb587f2fb469a0ed6b2984913a3455d`,
+  unchanged, changedTables empty (`outputs/step891-original-scoped-final.json`).
+  This is not evidence of unchanged remote Hub contents.
+- A fresh production tab confirms the corrected image-processing descriptions
+  and actual running extension 2.1.73 versus prepared download 2.1.74. No new
+  document validation POST, file/body write, native action or receipt claim.
+
+The original three workflow tabs remain available. The 2.1.74 manual refresh
+question remains pending; no additional extension version or recollection is
+required for the next same-document validation check.
