@@ -572,21 +572,27 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
     const context=await contract.identity(packet,sender,action);
     if(!object(context)||context.packet?.format!==contract.format)fail('PACKET','요청한 문서 전송 형식과 검증한 자료가 다릅니다.');
     if(active.has(context.key))return {format:context.packet.format,requestId:packet.requestId,state:'busy',registered:false,success:false};
-    active.add(context.key);let state;
+    active.add(context.key);let state,auditPhase='checkpoint';
     try{
       state=await get(context);
       if(action==='auditUnexpectedLegal'){
         const recovery=state?.savedDraftTargetRecovery;
         if(!state||!nativeLifecycle||!savedDraftTargetScope(state,context)||recovery?.phase!=='created'||typeof adapter.auditUnexpectedLegal!=='function'||typeof adapter.readOwnedTargetPresence!=='function')
           fail('UNEXPECTED_LEGAL_AUDIT_SCOPE','원래 문서의 예약된 읽기 전용 검증 탭에서만 인증서 감사를 수행할 수 있습니다.');
-        const before=clone(state),source=await guard(context,{...state,ownedTarget:null,tab:null,sessionId:null});
-        const priorPresence=await targetPresence(context,state,recovery.previousTarget),presence=await targetPresence(context,state,recovery.target);
+        const before=clone(state);auditPhase='source-before';const source=await guard(context,{...state,ownedTarget:null,tab:null,sessionId:null});
+        auditPhase='previous-target';const priorPresence=await targetPresence(context,state,recovery.previousTarget);
+        auditPhase='current-target';const presence=await targetPresence(context,state,recovery.target);
         if(!priorPresence.closed||presence.closed)fail('UNEXPECTED_LEGAL_AUDIT_SCOPE','닫힌 원래 탭과 현재 예약된 읽기 탭의 연결을 확인하지 못했습니다. 추가 탭은 만들지 않았습니다.');
+        auditPhase='audit';
         const report=await call('auditUnexpectedLegal',{tab:recovery.target,previousTarget:recovery.previousTarget,identity:context.identity,sessionId:source.sessionId,requestId:state.requestId,docId:state.docId,
           baselineDocIds:state.baselineDocIds,expectedBody:withDoc(context.packet,state.docId),checkpointSequence:state.sequence});
+        auditPhase='source-after';
         const afterSource=await guard(context,{...state,ownedTarget:null,tab:null,sessionId:null});
+        auditPhase='checkpoint-after';
         if(afterSource.sessionId!==source.sessionId||!same(before,await get(context)))fail('SOURCE_CHANGED','읽기 전용 감사 중 원래 회원·문서 기록이 변경되었습니다.');
-        return validateUnexpectedLegalAuditReport(report,{binding:{requestId:state.requestId,docId:state.docId,identityDigest:context.identityDigest,packetDigest:context.packetDigest,originalBodySha256:context.originalBodySha256,preparedBodySha256:context.bodySha256,sourcePlanSha256:context.identity.fingerprint,checkpointSequence:state.sequence},target:{tabId:recovery.target.tabId,windowId:recovery.target.windowId}},clock());
+        auditPhase='report';
+        try{return validateUnexpectedLegalAuditReport(report,{binding:{requestId:state.requestId,docId:state.docId,identityDigest:context.identityDigest,packetDigest:context.packetDigest,originalBodySha256:context.originalBodySha256,preparedBodySha256:context.bodySha256,sourcePlanSha256:context.identity.fingerprint,checkpointSequence:state.sequence},target:{tabId:recovery.target.tabId,windowId:recovery.target.windowId}},clock());}
+        catch{fail('UNEXPECTED_LEGAL_AUDIT_REPORT','읽기 전용 인증서 감사 결과의 요청 연결·형식·유효 시각을 확인하지 못했습니다. 문서·파일·본문을 변경하지 않았습니다.');}
       }
       if(state?.preparedLifecycle&&['prepareDraft','recoverDraft'].includes(action))fail('CHECKPOINT_MODE','등록 단계 확인을 시작한 원래 새 초안의 결과를 조회해주세요.');
       if(state?.savedDraftTargetRecovery&&['repairExistingDraft','retryExistingDraftRepair','continueApprovedRepair','resumeReservedRepair','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget'].includes(action))
@@ -873,7 +879,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
       // The saved requested state wins, including a write whose caller lost
       // its response or checkpoint CAS. Never replay/merge guessed ACKs.
       const failure={code:error instanceof SingleDocumentError?error.code:'ADAPTER_FAILURE',message:error instanceof SingleDocumentError?error.message:'요청 결과를 확정하지 못했습니다. 현재 전송 기록을 조회해주세요.'};
-      if(action==='auditUnexpectedLegal')throw new SingleDocumentError(failure.code,failure.message);
+      if(action==='auditUnexpectedLegal')throw error instanceof SingleDocumentError?error:new SingleDocumentError('UNEXPECTED_LEGAL_AUDIT_EXECUTION','읽기 전용 인증서 감사를 중단했습니다. 단계: '+auditPhase+'. 문서·파일·본문을 변경하지 않았습니다.');
       if(['SOURCE_CHANGED','TAB_CHANGED'].includes(failure.code))return {format:context.packet.format,requestId:context.packet.requestId,state:'scope-blocked',registered:false,success:false,needsRecovery:false,error:failure};
       const latest=await get(context);if(latest)return result(latest,{error:failure});
       throw error;

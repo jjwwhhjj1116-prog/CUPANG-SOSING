@@ -1,10 +1,11 @@
 import type { AutomationStage, AutomationStageId, AutomationWorkflow } from '@/app/automation/model';
 import type { ProductContent } from '@/app/product-content';
 import type { ProductOptions } from '@/app/product-options';
+import {parseImageNoTextProof,type ImageNoTextProof} from '@/app/image-no-text-proof';
 
 export const registrationStageIds = ['seo','pricing','mainImage','additionalImages','detailImage','sizeChart','koreanLabel','quotation'] as const;
 export type RegistrationStageState = 'pending' | 'complete' | 'failed' | 'running' | 'unused';
-export type RegistrationStageStatus = { state: RegistrationStageState; detail: string };
+export type RegistrationStageStatus = { state: RegistrationStageState; detail: string;updatedAt?:string;sourceProofAt?:string };
 export type RegistrationStageSummary = Record<AutomationStageId, RegistrationStageStatus>;
 export const registrationStepIds:Record<string,AutomationStageId> = { SEO:'seo',가격:'pricing','대표 이미지':'mainImage','추가 이미지':'additionalImages','상세 이미지':'detailImage',옵션:'sizeChart',사이즈표:'sizeChart',표시사항:'koreanLabel',견적서:'quotation' };
 export function registrationStageLabel(state:RegistrationStageState) {return {pending:'대기',complete:'완료',failed:'오류',running:'작업중',unused:'미사용'}[state];}
@@ -37,8 +38,8 @@ export function registrationStagesFromWorkflow(product:{id:string;updated_at?:st
     const matches=workflow.stages.filter(stage=>stage.id===id);if(matches.length!==1)continue;
     const stage=matches[0];
     if(!time(stage.updatedAt)||!Number.isSafeInteger(stage.attempts)||stage.attempts<1)continue;
-    if(stage.status==='failed')result[id]={state:'failed',detail:stage.reason?.message||'단계 실행에 실패했습니다.'};
-    else if(stage.status==='running')result[id]={state:'running',detail:stage.reason?.message||'저장된 현재 단계 작업을 실행 중입니다.'};
+    if(stage.status==='failed')result[id]={state:'failed',detail:stage.reason?.message||'단계 실행에 실패했습니다.',updatedAt:stage.updatedAt};
+    else if(stage.status==='running')result[id]={state:'running',detail:stage.reason?.message||'저장된 현재 단계 작업을 실행 중입니다.',updatedAt:stage.updatedAt};
     else if(stage.status==='complete'&&completionEvidence(stage,product.id,workflow.productVersion))result[id]={state:'complete',detail:`현재 입력의 실행 결과 확인 · ${stage.updatedAt}`};
   }
   return result;
@@ -48,11 +49,13 @@ export type RegistrationFinalContent = {optionId:string|null;title:string;main:s
 const korean=(value:unknown)=>typeof value==='string'&&!!value.trim()&&/\p{Script=Hangul}/u.test(value)&&!/\p{Script=Han}|[\u0000-\u001f]/u.test(value);
 /** Explicit saved field intent or an exact adopted SEO document proves saved
  * work. Unassigned provider output and generated drafts cannot satisfy it. */
-export function registrationStagesFromSavedContent(product:{id:string;owner_id?:string;updated_at?:string;categoryId?:string|null},content:ProductContent|null,options:ProductOptions|null,keys:readonly string[],finalRows:RegistrationFinalContent[]|null):RegistrationStageSummary {
+export function registrationStagesFromSavedContent(product:{id:string;owner_id?:string;updated_at?:string;categoryId?:string|null},content:ProductContent|null,options:ProductOptions|null,keys:readonly string[],finalRows:RegistrationFinalContent[]|null,noTextProofs:readonly ImageNoTextProof[]=[]):RegistrationStageSummary {
   const size=content?.assets?.size,used=!!size?.value?.length||!!content?.manualSizeChart;
   const result=pendingRegistrationStages(used);
   const owned=(key:string)=>keys.includes(key)&&(!product.owner_id||key.startsWith(product.owner_id+'/'));
   const done=(id:AutomationStageId,detail:string)=>{result[id]={state:'complete',detail};};
+  const unchanged=new Set(noTextProofs.flatMap(value=>{const proof=parseImageNoTextProof(value);return proof?.productId===product.id&&proof.sourceLanguage==='zh'&&owned(proof.sourceKey)?[proof.sourceKey]:[];}));
+  const proofDates=new Map(noTextProofs.flatMap(value=>{const proof=parseImageNoTextProof(value);return proof?.productId===product.id&&unchanged.has(proof.sourceKey)?[[proof.sourceKey,proof.verifiedAt]as const]:[];}));
   if(finalRows?.length){
     for(const [id,role] of [['mainImage','main'],['additionalImages','additional'],['detailImage','detail'],['koreanLabel','label']] as const){
       if(finalRows.every(row=>row.manualImages?.[role]&&row[role].length>0&&(role!=='main'||row.main.length===1)&&new Set(row[role]).size===row[role].length&&!row.imageIssues?.[role]&&row[role].every(owned)))done(id,'직접 저장한 현재 카테고리의 최종 이미지 연결 확인');
@@ -84,6 +87,17 @@ export function registrationStagesFromSavedContent(product:{id:string;owner_id?:
       if(complete)done(id,`직접 저장한 현재 ${role==='main'?'대표 이미지':role==='additional'?'추가 이미지':role==='detail'?'상세 이미지':'한글표시사항 이미지'} 역할과 최종 연결 확인`);
       else if(finalRows.some(row=>row.imageIssues?.[role]&&(row.manualImages?.[role]||fields.some(saved))))result[id]={state:'failed',detail:'직접 저장한 이미지의 현재 연결을 확인해주세요.'};
     }
+    for(const [id,role]of [['mainImage','main'],['additionalImages','additional'],['detailImage','detail']]as const){
+      const roles=role==='detail'?['detailTop','detail','detailBottom']as const:[role];
+      const manualKeys=new Set(roles.flatMap(name=>saved(content.assets[name])?content.assets[name].value:[]));
+      if(result[id].state==='pending'&&finalRows.every(row=>row[role].length>0&&(role!=='main'||row[role].length===1)&&new Set(row[role]).size===row[role].length&&!row.imageIssues?.[role]
+        &&row[role].every(key=>owned(key)&&(unchanged.has(key)||manualKeys.has(key))))
+        &&(role!=='detail'||content.assets.detail.value.length>0||finalRows.every(row=>row.manualImages?.detail===true))){
+          const times=finalRows.flatMap(row=>row[role].filter(key=>!manualKeys.has(key)).map(key=>proofDates.get(key)!));
+          done(id,'현재 최종 이미지의 서버 외국어 없음 검증 확인 · 원본 유지');
+          if(times.length&&times.every(time))result[id].sourceProofAt=new Date(Math.min(...times.map(value=>Date.parse(value)))).toISOString();
+        }
+    }
   }
   if(size?.value?.length&&saved(size)&&size.value.every(owned))done('sizeChart','직접 저장한 현재 사이즈표 연결 확인');
   else if(size?.value?.length&&saved(size))result.sizeChart={state:'failed',detail:'저장한 사이즈표 이미지의 현재 연결을 확인해주세요.'};
@@ -91,5 +105,9 @@ export function registrationStagesFromSavedContent(product:{id:string;owner_id?:
 }
 
 export function mergeRegistrationStages(saved:RegistrationStageSummary,execution:RegistrationStageSummary):RegistrationStageSummary {
-  return Object.fromEntries(registrationStageIds.map(id=>[id,['failed','running','complete'].includes(execution[id].state)?execution[id]:saved[id]])) as RegistrationStageSummary;
+  return Object.fromEntries(registrationStageIds.map(id=>{
+    const latest=saved[id],previous=execution[id];
+    const resolvedFailure=previous.state==='failed'&&latest.state==='complete'&&time(latest.sourceProofAt)&&time(previous.updatedAt)&&Date.parse(latest.sourceProofAt!)>Date.parse(previous.updatedAt!);
+    return[id,resolvedFailure?latest:['failed','running','complete'].includes(previous.state)?previous:latest];
+  })) as RegistrationStageSummary;
 }

@@ -9,7 +9,7 @@ export const imageVisionRequestsSchema=`CREATE TABLE IF NOT EXISTS image_vision_
  PRIMARY KEY(owner_id,product_id,request_id)
 )`;
 const activeIndex="CREATE UNIQUE INDEX IF NOT EXISTS image_vision_requests_active ON image_vision_requests(owner_id,product_id,source_scope) WHERE status IN ('running','uncertain')";
-type Scope={owner:string;productId:string;requestId:string;company:{code:string;name:string};member:{email:string;role:string};model:string;fingerprint:string;sourceScope:string;productVersion:string;contentRevision:number};
+type Scope={owner:string;productId:string;requestId:string;company:{code:string;name:string};member:{email:string;role:string};model:string;fingerprint:string;sourceScope:string;legacySourceScope?:string;productVersion:string;contentRevision:number;inspection?:import('@/db/image-no-text-receipts').NoTextReceiptScope['inspection']};
 type Row={status:'running'|'completed'|'failed'|'uncertain';request_fingerprint:string;result:string|null;failure:string|null};
 const ready=new WeakSet<object>();
 async function database(){const db=env.DB;if(!db)throw Error('Image Vision store unavailable');if(!ready.has(db)){await db.batch([db.prepare(imageVisionRequestsSchema),db.prepare(activeIndex)]);ready.add(db);}return db;}
@@ -32,9 +32,9 @@ export async function claimImageVisionRequest(scope:Scope){
  const row=await db.prepare(`INSERT INTO image_vision_requests(owner_id,product_id,request_id,company_code,company_name,model,request_fingerprint,source_scope,status,created_at)
  SELECT ?,?,?,?,?,?,?,?,'running',? FROM products p WHERE p.id=? AND p.owner_id=? AND p.updated_at=?
  AND COALESCE((SELECT revision FROM product_content c WHERE c.product_id=p.id AND c.owner_id=p.owner_id),0)=? AND ${membership}
- AND NOT EXISTS(SELECT 1 FROM image_vision_requests r WHERE r.owner_id=p.owner_id AND r.product_id=p.id AND r.source_scope=? AND r.status IN ('running','uncertain'))
+ AND NOT EXISTS(SELECT 1 FROM image_vision_requests r WHERE r.owner_id=p.owner_id AND r.product_id=p.id AND r.source_scope IN (?,?) AND r.status IN ('running','uncertain'))
  ON CONFLICT(owner_id,product_id,request_id) DO NOTHING RETURNING status,request_fingerprint,result,failure`)
- .bind(scope.owner,scope.productId,scope.requestId,scope.company.code,scope.company.name,scope.model,scope.fingerprint,scope.sourceScope,new Date().toISOString(),scope.productId,scope.owner,scope.productVersion,scope.contentRevision,...memberArgs(scope),scope.sourceScope).first<Row>();
+ .bind(scope.owner,scope.productId,scope.requestId,scope.company.code,scope.company.name,scope.model,scope.fingerprint,scope.sourceScope,new Date().toISOString(),scope.productId,scope.owner,scope.productVersion,scope.contentRevision,...memberArgs(scope),scope.sourceScope,scope.legacySourceScope??scope.sourceScope).first<Row>();
  return{claimed:!!row,record:row??await record(db,scope)};
 }
 /** A new request owns its claim before inspecting a completed artifact. No
@@ -53,6 +53,7 @@ export async function finishImageVisionRequest(scope:Scope,value:({status:'compl
  const row=await db.prepare(`UPDATE image_vision_requests SET status=?,result=?,failure=?,provider_requests=?,finished_at=? WHERE owner_id=? AND product_id=? AND request_id=? AND company_code=? AND company_name=? AND model=? AND request_fingerprint=? AND source_scope=? AND status='running' AND ${membership} RETURNING status`)
  .bind(value.status,result,failure,value.requests,new Date().toISOString(),scope.owner,scope.productId,scope.requestId,scope.company.code,scope.company.name,scope.model,scope.fingerprint,scope.sourceScope,...memberArgs(scope)).first();
  if(!row)throw Error('Image Vision request changed');
+ if(value.status==='completed'&&scope.inspection){const {storeImageNoTextReceipt}=await import('@/db/image-no-text-receipts');await storeImageNoTextReceipt(scope,value.result);}
 }
 /** Only a retained promise from this original provider invocation may finish
  * its existing claim. Terminal rows and all source/product content stay put. */
@@ -68,5 +69,6 @@ export async function finishLateImageVisionRequest(scope:Scope,value:{status:'co
  AND ((status='running' AND provider_requests IS NULL) OR (status='uncertain' AND provider_requests=1)) AND ${membership}
  AND EXISTS(SELECT 1 FROM products p WHERE p.id=image_vision_requests.product_id AND p.owner_id=image_vision_requests.owner_id) RETURNING status`)
  .bind(value.status,result,failure,new Date().toISOString(),scope.owner,scope.productId,scope.requestId,scope.company.code,scope.company.name,scope.model,scope.fingerprint,scope.sourceScope,...memberArgs(scope)).first();
+ if(row&&value.status==='completed'&&scope.inspection){const {storeImageNoTextReceipt}=await import('@/db/image-no-text-receipts');await storeImageNoTextReceipt(scope,value.result);}
  return!!row;
 }

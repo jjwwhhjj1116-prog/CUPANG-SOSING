@@ -6,6 +6,7 @@ import { env } from 'cloudflare:workers';
 import { emptyProductContent, withCurrentLabelFields, type ProductContent } from '@/app/product-content';
 import {readRegistrationExecutionStages} from '@/db/registration-stage-status';
 import {mergeRegistrationStages} from '@/app/registration-stage-status';
+import {readImageNoTextReceipts} from '@/db/image-no-text-receipts';
 
 type ContentRow = { payload: string; revision: number };
 type ListingLabelRow={product_id:string;image_keys:string;source_url:string;content_revision:number|null;option_payload:string|null;option_revision:number|null;quotation_payload:string|null;quotation_revision:number|null;linked_job:string|null;valid_job:string|null;job_offer:string|null;context_payload:string|null};
@@ -81,6 +82,7 @@ export async function readRegistrationSummaries(ownerId: string, products: {id:s
   if (!products.length) return summaries;
   const db = await database();
   const executionStages=await readRegistrationExecutionStages(ownerId,products);
+  const noTextReceipts=await readImageNoTextReceipts(ownerId,products);
   for (let offset=0;offset<products.length;offset+=80) {
     const chunk=products.slice(offset,offset+80);
     const rows=await db.prepare(`SELECT product_id, payload, revision FROM product_content WHERE owner_id=? AND product_id IN (${chunk.map(()=>'?').join(',')})`).bind(ownerId,...chunk.map(product=>product.id)).all<{product_id:string;payload:string;revision:number}>();
@@ -107,7 +109,7 @@ export async function readRegistrationSummaries(ownerId: string, products: {id:s
         if(row&&content?.revision!==row.revision)throw Error('Invalid content revision');
         let labels:RegistrationQuotationLabels|null=null;
         if(labelRecords){const source=labelRecords.get(product.id);if(!source)throw Error('Unowned listing product');try{labels=listingLabels(ownerId,product,source,row?.revision??0);}catch{/* A corrupt source must not turn zero references into a verified count. */}}
-        const summary=registrationContentSummary(product,content,labels);
+        const summary=registrationContentSummary(product,content,labels,noTextReceipts[product.id]);
         if(summary.stages&&executionStages[product.id])summary.stages=mergeRegistrationStages(summary.stages,executionStages[product.id]);
         summaries[product.id]=summary;
       } catch { summaries[product.id]=null; }

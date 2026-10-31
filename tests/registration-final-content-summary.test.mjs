@@ -13,7 +13,7 @@ import {readPackageZip} from '../extensions/supplier-hub/package.mjs';
 const native=createRequire(import.meta.url),plain=value=>JSON.parse(JSON.stringify(value));
 const json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
 function ui(file,h){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
- {exports,Error,URL,Intl,require(name){if(name.startsWith('@/app/components/'))return ui(name.slice(2)+'.tsx',h);return name.startsWith('@/')?h.load(name.slice(2)+'.ts'):native(name);}});return exports;}
+ {exports,Error,URL,Intl,require(name){if(name.endsWith('.css'))return{};if(name.startsWith('@/app/components/')){const file=name.slice(2);return ui(file+(fs.existsSync(new URL('../'+file+'.tsx',import.meta.url))?'.tsx':'.ts'),h);}return name.startsWith('@/')?h.load(name.slice(2)+'.ts'):native(name);}});return exports;}
 const retain=h=>JSON.stringify(['products','product_content','product_options','product_quotation_fields','category_profiles','collection_context'].map(table=>h.sqlite.prepare('SELECT * FROM '+table).all()));
 async function fixture(company,live){
  const h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});try{
@@ -42,7 +42,7 @@ for(const company of schemaCompanies)for(const live of [false,true])test(`stage-
   const before=retain(f.h),listed=await f.list(),summary=listed.content_summary,board=ui('app/components/registration-board.tsx',f.h),optionBoard=await ui('app/components/product-option-board.tsx',f.h).readOptionBoard(f.product.id,new AbortController().signal,(path,init)=>f.h.route(path,{method:init?.method??'GET'}));
   assert.equal(summary.seoTitle,'첫 옵션 직접 검토 제목','the upper registration row must display the current final name, not the previous shared SEO title');assert.equal(board.registrationTitle(listed),'첫 옵션 직접 검토 제목');assert.equal(summary.mainImageKey,f.keys[8]);assert.equal(board.registrationThumbnail(listed),'/api/files/'+f.keys[8]);
   for(const [role,input]of [['main','mainImage'],['additional','additionalImages'],['detail','detailImages'],['label','labelImages']]){
-   const values=f.view.resolved.rows.filter(row=>row.included).flatMap(row=>row.fields[f.targets[input]].value.split('\n').filter(Boolean));assert.equal(summary[role],new Set(values).size);assert.equal(board.registrationStepLabel(listed,{main:'대표 이미지',additional:'추가 이미지',detail:'상세 이미지',label:'표시사항'}[role]),new Set(values).size+'장');
+   const values=f.view.resolved.rows.filter(row=>row.included).flatMap(row=>row.fields[f.targets[input]].value.split('\n').filter(Boolean));assert.equal(summary[role],new Set(values).size);assert.equal(board.registrationStepLabel(listed,{main:'대표 이미지',additional:'추가 이미지',detail:'상세 이미지',label:'표시사항'}[role]),'대기','an included blank final row keeps the stage pending even when other rows have images');
    for(const row of included)assert.deepEqual(plain(optionBoard.quotationContent[row.optionId][role]),f.view.resolved.rows.find(value=>value.optionId===row.optionId).fields[f.targets[input]].value.split('\n').filter(Boolean));
   }
   const preview=await json(await f.h.route(f.base+'/quotation',{method:'POST',body:{action:'preview',profileId:f.profile.id}}));assert.equal(preview.rows[0][f.profile.template.headers.indexOf(f.targets.title)],summary.seoTitle);

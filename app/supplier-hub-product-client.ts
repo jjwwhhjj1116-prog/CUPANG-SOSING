@@ -16,6 +16,21 @@ const copy=<T,>(value:T):T=>JSON.parse(productReceiptCanonical(value)) as T;
 const digest=async(value:unknown)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(productReceiptCanonical(value)))),byte=>byte.toString(16).padStart(2,'0')).join('');
 function freeze<T>(value:T):T{if(value&&typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value;}
 export class ProductDocumentBridgeError extends Error{constructor(message:string,public uncertain:boolean,public code='PRODUCT_DOCUMENT_BRIDGE',public draftState?:string,public approvedCreateRetry?:boolean,public closedTargetRecovery=false,public existingDocumentRepairEligible=false,public knownDocId?:string|number,public existingDocumentRepairAttempted=false,public existingDocumentRepairRetryAttempted=false,public existingDocumentRepairRetryEligible=false,public existingDocumentRepairContinuationAttempted=false,public existingDocumentRepairContinuationResumed=false,public nativeFileListObserved=false,public savedDraftTargetClosed=false){super(message);this.name='ProductDocumentBridgeError';}}
+const auditFailureCodes=new Set(['UNEXPECTED_LEGAL_AUDIT_UNAVAILABLE','UNEXPECTED_LEGAL_AUDIT_REPLY','UNEXPECTED_LEGAL_AUDIT_SCOPE','UNEXPECTED_LEGAL_AUDIT_SCHEMA','UNEXPECTED_LEGAL_AUDIT_READ',
+  'UNEXPECTED_LEGAL_AUDIT_SCHEMA_READ','UNEXPECTED_LEGAL_AUDIT_SCHEMA_EXECUTION','UNEXPECTED_LEGAL_AUDIT_EXECUTION','UNEXPECTED_LEGAL_AUDIT_REPORT','UNEXPECTED_LEGAL_AUDIT_CANCELLED',
+  'UNEXPECTED_LEGAL_AUDIT_SOURCE_CHANGED','UNEXPECTED_LEGAL_AUDIT_READ_FAILED']);
+const auditBridgeCodes=new Set(['ADAPTER_FAILURE','ACK_UNCERTAIN','PRODUCT_DOCUMENT_ACK_MISSING','PRODUCT_DOCUMENT_BRIDGE','SOURCE_CHANGED','TAB_CHANGED','SOURCE_READ_TIMEOUT','SOURCE_READ_NETWORK','SOURCE_READ_RESPONSE','SOURCE_READ_HTTP']);
+/** Only audit failures use this presentation. Raw browser/provider exceptions
+ * never become user-visible text, and a failed read grants no write recovery. */
+export function unexpectedLegalAuditReadError(cause:unknown):ProductDocumentBridgeError{
+  if(cause instanceof ProductDocumentBridgeError&&cause.uncertain===false){
+    if(auditFailureCodes.has(cause.code)&&cause.message.length>0&&cause.message.length<=2000)return cause;
+    if(auditBridgeCodes.has(cause.code))return new ProductDocumentBridgeError(cause.code==='PRODUCT_DOCUMENT_ACK_MISSING'
+      ?'읽기 전용 대조의 확장 응답 시간이 초과되었습니다. 대조 결과를 받지 못했으며 문서·파일·본문을 변경하지 않았습니다.'
+      :'원래 문서의 읽기 전용 대조를 완료하지 못했습니다. 문서·파일·본문을 변경하거나 전송을 다시 시작하지 않았습니다.',false,cause.code);
+  }
+  return new ProductDocumentBridgeError('원래 문서의 읽기 전용 대조를 완료하지 못했습니다. 문서·파일·본문을 변경하거나 전송을 다시 시작하지 않았습니다.',false,'UNEXPECTED_LEGAL_AUDIT_READ_FAILED');
+}
 export type ProductDocumentPreview={format:string;requestId:string;identity:ProductReceiptIdentity;identityDigest:string;packetDigest:string;productId:string;fingerprint:string;
   members:ProductReceiptIdentity['members'];reviewDigest:string;preparedBodySha256:string;originalBodySha256:string;liveVerified:boolean;remoteWrites:false;registered:false;draftPreparationAvailable?:boolean;preparedLifecycleAvailable?:boolean;savedDraftTargetRecoveryAvailable?:boolean;unexpectedLegalAuditAvailable?:boolean;createRetryAvailable?:boolean;createRetryContinuationAvailable?:boolean;existingDocumentRepairAvailable?:boolean;existingDocumentRepairRetryAvailable?:boolean;existingDocumentRepairContinuationAvailable?:boolean;existingDocumentRepairSegmentedAvailable?:boolean;existingDocumentRepairReservedResumeAvailable?:boolean};
 export type ProductDocumentSession={packet:ProductDocumentPacket;preview:ProductDocumentPreview;packetDigest:string;origin:string};
@@ -164,7 +179,9 @@ export async function auditUnexpectedLegal(session:ProductDocumentSession,signal
   const expected=await proof(session.packet,session.origin,true);
   const fail=():never=>{throw new ProductDocumentBridgeError('원래 문서의 읽기 전용 감사 결과 연결을 확인하지 못했습니다. 문서·파일·본문을 변경하지 않았습니다.',false,'UNEXPECTED_LEGAL_AUDIT_REPLY');};
   try{if(session.preview.packetDigest!==expected.packetDigest||session.packetDigest!==expected.packetDigest||session.preview.requestId!==session.packet.requestId||!same(session.preview.members,session.packet.review.members))fail();await verifyIdentity(session.preview.identity,expected,session.preview.identityDigest);}catch{fail();}
-  if(signal.aborted)fail();const value=await productDocumentExchange('auditUnexpectedLegal',session.packet,signal);
+  if(signal.aborted)fail();let value:unknown;
+  try{value=await productDocumentExchange('auditUnexpectedLegal',session.packet,signal);}
+  catch(cause){if(signal.aborted)throw new ProductDocumentBridgeError('원래 문서의 읽기 전용 대조를 취소했습니다. 문서·파일·본문을 변경하지 않았습니다.',false,'UNEXPECTED_LEGAL_AUDIT_CANCELLED');throw unexpectedLegalAuditReadError(cause);}
   try{if(signal.aborted)fail();return validateUnexpectedLegalAuditReport(value,{binding:{requestId:session.packet.requestId,identityDigest:session.preview.identityDigest,packetDigest:expected.packetDigest,originalBodySha256:expected.originalBodySha256,preparedBodySha256:expected.preparedBodySha256,sourcePlanSha256:session.packet.review.identity.fingerprint}});}catch{return fail();}
 }
 

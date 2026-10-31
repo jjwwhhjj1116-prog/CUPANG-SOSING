@@ -32,3 +32,19 @@ export async function readAppDocumentSource(api,identity,input,kind='native',sou
  if(sourceAppTabId!==undefined)await currentSourceAppTab(api,identity,sourceAppTabId);
  return response.result;
 }
+
+/** The app has a manifest-installed isolated reader, but deliberately has no
+ * scripting host permission. Reuse that reader instead of injecting a new
+ * function or requesting broader host access. The existing source binding
+ * selects the exact same top-level app tab before and after this read. */
+export async function readAppLegalAuditSchema(api,identity,expectedBody,sourceAppTabId){
+ await currentSourceAppTab(api,identity,sourceAppTabId);
+ let response;
+ try{response=await api.tabs.sendMessage(sourceAppTabId??identity.appTabId,{type:'YOOFAM_READ_UNEXPECTED_LEGAL_AUDIT_SCHEMA',expected:{identity:structuredClone(identity),expectedBody:structuredClone(expectedBody)}},{frameId:0});}
+ catch{throw sourceReadError({code:'SOURCE_BRIDGE_UNAVAILABLE'});}
+ await currentSourceAppTab(api,identity,sourceAppTabId);
+ if(response?.ok===false&&Object.keys(response).sort().join(',')==='ok,sourceFailure'&&normalizeSourceReadFailure(response.sourceFailure))throw sourceReadError(response.sourceFailure);
+ if(!response||typeof response!=='object'||Array.isArray(response)||Object.keys(response).sort().join(',')!=='ok,result'||response.ok!==true
+  ||!response.result||typeof response.result!=='object'||Array.isArray(response.result))throw sourceReadError({code:'SOURCE_READ_RESPONSE',resource:'legal-documents'});
+ return response.result;
+}

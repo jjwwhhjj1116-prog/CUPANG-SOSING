@@ -1,9 +1,11 @@
 /** Shared public contract. Provider output never carries URLs or storage keys. */
 export const IMAGE_TEXT_VISION_MODEL='@cf/qwen/qwen3.8-27b';
+export const IMAGE_TEXT_INSPECTION_POLICY='foreign-text-inspection-v1';
+export type ImageTextInspection={policy:typeof IMAGE_TEXT_INSPECTION_POLICY;decision:'no-foreign-text'|'foreign-text'|'unreadable'};
 export const IMAGE_TEXT_VISION_NOTICE='선택한 본인 소유 원본 이미지 한 장을 Cloudflare Workers AI Qwen3.8 Vision에 보내 문구와 한국어 번역을 읽습니다. Cloudflare 무료 사용량을 넘으면 사용료가 발생할 수 있습니다. 이미지 생성은 하지 않으며, 실패 후 자동 재요청하지 않습니다. 적용 전 문구와 영역을 확인해주세요.';
 export type ImageTextVisionConfiguration={provider:'workers-ai-vision';model:typeof IMAGE_TEXT_VISION_MODEL;configured:boolean;paidAllowed:boolean;notice:typeof IMAGE_TEXT_VISION_NOTICE};
 export type ImageTextVisionBlock={id:string;text:string;translated:string|null;issue:string|null;box:{x:number;y:number;width:number;height:number}};
-export type ImageTextVisionResult={provider:'workers-ai-vision';model:typeof IMAGE_TEXT_VISION_MODEL;requests:1;blocks:ImageTextVisionBlock[];notice:typeof IMAGE_TEXT_VISION_NOTICE};
+export type ImageTextVisionResult={provider:'workers-ai-vision';model:typeof IMAGE_TEXT_VISION_MODEL;requests:1;blocks:ImageTextVisionBlock[];notice:typeof IMAGE_TEXT_VISION_NOTICE;inspection?:ImageTextInspection};
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
 const exact=(value:Record<string,unknown>,keys:string)=>Object.keys(value).sort().join(',')===keys;
 export function parseImageTextVisionConfiguration(value:unknown):ImageTextVisionConfiguration|null{
@@ -12,7 +14,7 @@ export function parseImageTextVisionConfiguration(value:unknown):ImageTextVision
  return{provider:value.provider,model:value.model,configured:value.configured,paidAllowed:value.paidAllowed,notice:IMAGE_TEXT_VISION_NOTICE};
 }
 export function parseImageTextVisionResult(value:unknown,width:number,height:number):ImageTextVisionResult|null{
- if(!object(value)||!exact(value,'blocks,model,notice,provider,requests')||value.provider!=='workers-ai-vision'||value.model!==IMAGE_TEXT_VISION_MODEL||value.requests!==1
+ if(!object(value)||!['blocks,model,notice,provider,requests','blocks,inspection,model,notice,provider,requests'].includes(Object.keys(value).sort().join(','))||value.provider!=='workers-ai-vision'||value.model!==IMAGE_TEXT_VISION_MODEL||value.requests!==1
   ||value.notice!==IMAGE_TEXT_VISION_NOTICE||!Array.isArray(value.blocks)||value.blocks.length>30)return null;
  let total=0;const seen=new Set<string>(),blocks:ImageTextVisionBlock[]=[];
  for(const [index,raw]of value.blocks.entries()){
@@ -27,5 +29,10 @@ export function parseImageTextVisionResult(value:unknown,width:number,height:num
   const identity=JSON.stringify([box,raw.text]);if(seen.has(identity))return null;seen.add(identity);total+=raw.text.length;if(total>5000)return null;
   blocks.push({id:raw.id,text:raw.text,translated:raw.translated,issue:raw.issue,box:{...box}});
  }
- return{provider:'workers-ai-vision',model:IMAGE_TEXT_VISION_MODEL,requests:1,blocks,notice:IMAGE_TEXT_VISION_NOTICE};
+ let inspection:ImageTextInspection|undefined;
+ if(value.inspection!==undefined){const check=value.inspection;if(!object(check)||!exact(check,'decision,policy')||check.policy!==IMAGE_TEXT_INSPECTION_POLICY
+  ||!['no-foreign-text','foreign-text','unreadable'].includes(String(check.decision))||check.decision==='no-foreign-text'&&blocks.length!==0||check.decision==='foreign-text'&&!blocks.length)return null;
+  inspection={policy:IMAGE_TEXT_INSPECTION_POLICY,decision:check.decision as ImageTextInspection['decision']};}
+ return{provider:'workers-ai-vision',model:IMAGE_TEXT_VISION_MODEL,requests:1,blocks,notice:IMAGE_TEXT_VISION_NOTICE,...(inspection?{inspection}:{})};
 }
+export function isVerifiedNoForeignText(result:ImageTextVisionResult|undefined):boolean{return result?.inspection?.policy===IMAGE_TEXT_INSPECTION_POLICY&&result.inspection.decision==='no-foreign-text'&&result.blocks.length===0;}

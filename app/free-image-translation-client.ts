@@ -9,9 +9,10 @@ import { validateFreeImageBrush, MAX_FREE_IMAGE_BRUSH_TOTAL_POINTS, type FreeIma
 import { validateFreeImageCropRect, validateFreeImageCrop, type FreeImageCropRect, type FreeImageCrop } from '@/app/free-image-crop';
 import { validateFreeImageEditDocument, type FreeImageEditDocument } from '@/app/free-image-edit-document';
 import type { Worker, WorkerOptions, LoggerMessage } from 'tesseract.js';
-import {IMAGE_TEXT_VISION_MODEL,IMAGE_TEXT_VISION_NOTICE,parseImageTextVisionConfiguration,parseImageTextVisionResult,type ImageTextVisionConfiguration,type ImageTextVisionResult} from '@/app/image-text-vision';
+import {IMAGE_TEXT_VISION_MODEL,IMAGE_TEXT_VISION_NOTICE,IMAGE_TEXT_INSPECTION_POLICY,parseImageTextVisionConfiguration,parseImageTextVisionResult,type ImageTextVisionConfiguration,type ImageTextVisionResult} from '@/app/image-text-vision';
 import {initializeVisionRegions,type VisionStyleIssue} from '@/app/free-image-vision-style';
 import {FreeImageVisionError} from '@/app/free-image-vision-error';
+import {parseImageNoTextProof,type ImageNoTextProof} from '@/app/image-no-text-proof';
 import type {FreeImageVisionAttempt} from '@/app/free-image-vision-error';
 export {FreeImageVisionError,type FreeImageVisionAttempt} from '@/app/free-image-vision-error';
 
@@ -23,7 +24,7 @@ export type FreeImageRegion = FreeImageTextStyle & {
   erase?: boolean;
   brush?: FreeImageBrush;
 };
-export type FreeImageLoaded = { source: FreeImageSource; blob: Blob; canvas: HTMLCanvasElement; width: number; height: number; editDocument?: FreeImageEditDocument;
+export type FreeImageLoaded = { source: FreeImageSource; blob: Blob; canvas: HTMLCanvasElement; width: number; height: number; editDocument?: FreeImageEditDocument;noTextProof?:ImageNoTextProof;
  visionConfiguration?:ImageTextVisionConfiguration;visionRequestId?:string;visionPending?:FreeImageVisionError;visionResult?:ImageTextVisionResult;visionExecution?:{requests:0|1;cached:boolean};visionStyleIssues?:VisionStyleIssue[];visionFetcher?:typeof fetch };
 export type FreeImageRendered = { source: FreeImageSource; output: Blob; width: number; height: number; optionImageIds?: string[]; crop?: FreeImageCrop; editDocument?: FreeImageEditDocument };
 export type FreeImageQuotationRequest = Omit<NonNullable<FreeImageSource['quotationTarget']>, 'bindingSha256'>;
@@ -116,7 +117,7 @@ export async function readFreeImageSource(productId: string, version: string, so
   const editorMode = options?.anchorPolicy === 'current-target-v1' ? 'saved-current-target-v1' : 'saved';
   let restoring = savedEditor;
   let response = await fetcher(`/api/products/${encodeURIComponent(productId)}/image-text?${new URLSearchParams({ ...params, ...(savedEditor ? { editor: editorMode } : {}) })}`, { signal, cache: 'no-store' });
-  let body = await response.json() as { source?: unknown; error?: string; code?: string; editDocument?: unknown;visionConfiguration?:unknown }; signal.throwIfAborted();
+  let body = await response.json() as { source?: unknown; error?: string; code?: string; editDocument?: unknown;visionConfiguration?:unknown;noTextProof?:unknown }; signal.throwIfAborted();
   if (savedEditor && response.status === 404 && body.code === 'image-edit-document-missing') {
     restoring = false;
     response = await fetcher(`/api/products/${encodeURIComponent(productId)}/image-text?${new URLSearchParams(params)}`, { signal, cache: 'no-store' });
@@ -134,8 +135,11 @@ export async function readFreeImageSource(productId: string, version: string, so
   if (editDocument && await editDocumentDigest(editDocument) !== source.editorSource!.documentSha256) throw Error('저장한 편집 내용의 연결을 확인하지 못했습니다.');
   const configuration:ImageTextVisionConfiguration|null=body.visionConfiguration===undefined?{provider:'workers-ai-vision',model:IMAGE_TEXT_VISION_MODEL,configured:false,paidAllowed:false,notice:IMAGE_TEXT_VISION_NOTICE}:parseImageTextVisionConfiguration(body.visionConfiguration);
   if(configuration===null)throw Error('이미지 Vision 제공자 설정을 확인하지 못했습니다. 자동 요청하지 않았습니다.');
+  const noTextProof=body.noTextProof===undefined?null:parseImageNoTextProof(body.noTextProof);
+  if(body.noTextProof!==undefined&&(!noTextProof||noTextProof.productId!==source.productId||noTextProof.sourceKey!==source.sourceKey||noTextProof.sourceSha256!==source.sourceSha256
+   ||noTextProof.width!==source.width||noTextProof.height!==source.height||JSON.stringify(noTextProof.configuration)!==JSON.stringify(configuration)))throw Error('문구 없음 검증과 현재 원본의 연결이 다릅니다.');
   const loaded=await readFreeImageSourcePixels(source, signal, fetcher, editDocument);
-  return{...loaded,...(configuration?{visionConfiguration:configuration,visionFetcher:fetcher}:{})};
+  return{...loaded,...(noTextProof?{noTextProof}:{}),...(configuration?{visionConfiguration:configuration,visionFetcher:fetcher}:{})};
 }
 
 /** Shared authenticated pixel loader. Target authorization remains the caller's
@@ -238,11 +242,11 @@ export async function recognizeFreeImage(image:FreeImageLoaded,sourceLanguage:'z
  if(image.visionPending?.uncertain)throw image.visionPending;
  signal.throwIfAborted();onProgress('Cloudflare Qwen3.8 Vision으로 문구와 한국어 번역을 한 번 읽고 있습니다.');
  const requestId=image.visionRequestId??=crypto.randomUUID();
- const attempt={requestId,source:image.source,sourceLanguage,configuration};
+ const inspectionPolicy=IMAGE_TEXT_INSPECTION_POLICY,attempt:FreeImageVisionAttempt={requestId,source:image.source,sourceLanguage,configuration,inspectionPolicy};
  const failVision=(message:string,code:string,uncertain:boolean):never=>{const cause=new FreeImageVisionError(message,code,uncertain,attempt);if(uncertain)image.visionPending=cause;throw cause;};
  let response:Response,body:Record<string,unknown>;
  try{
-  response=await(image.visionFetcher??fetch)(`/api/products/${encodeURIComponent(image.source.productId)}/image-text`,{method:'POST',signal,cache:'no-store',headers:{'content-type':'application/json'},body:JSON.stringify({action:'vision',source:image.source,sourceLanguage,configuration,requestId})});
+  response=await(image.visionFetcher??fetch)(`/api/products/${encodeURIComponent(image.source.productId)}/image-text`,{method:'POST',signal,cache:'no-store',headers:{'content-type':'application/json'},body:JSON.stringify({action:'vision',source:image.source,sourceLanguage,configuration,requestId,inspectionPolicy})});
   body=await response.json() as Record<string,unknown>;signal.throwIfAborted();
  }catch{return failVision('이미지 Vision 응답을 확인하지 못했습니다. 원래 요청의 결과만 조회하고 자동 재요청하지 않습니다.','IMAGE_VISION_ACK_MISSING',true);}
  if(!body||typeof body!=='object'||Array.isArray(body))return failVision('이미지 Vision의 원본·제공자·영역 응답 연결이 다릅니다. 자동으로 다시 요청하지 않습니다.','IMAGE_VISION_REPLY_IDENTITY',true);
@@ -261,6 +265,7 @@ export async function recognizeFreeImage(image:FreeImageLoaded,sourceLanguage:'z
  image.visionResult=result;
  image.visionExecution={requests:execution.requests as 0|1,cached:execution.cached as boolean};
  if(execution.cached)onProgress('같은 원본의 검증된 Vision 번역을 재사용했습니다. 추가 AI 요청은 0회입니다.');
+ if(result.inspection?.decision==='unreadable')throw Error('원본의 외국어 문구를 끝까지 판독하지 못했습니다. 이미지 편집에서 원문을 확인해주세요. 완료로 처리하지 않았습니다.');
  if(!result.blocks.length)throw Error('읽을 수 있는 문구를 찾지 못했습니다. 필요한 영역과 원문을 직접 추가해주세요.');
  const styled=initializeVisionRegions(result.blocks,image.canvas,image.width,image.height);image.visionStyleIssues=styled.issues;
  return styled.regions;
@@ -272,7 +277,7 @@ export type FreeImageVisionStatus={format:'yoofam-image-vision-status-v1';source
  * returns not-found rather than executing the old POST with a reused UUID. */
 export async function readFreeImageVisionStatus(attempt:FreeImageVisionAttempt,signal:AbortSignal,fetcher:typeof fetch=fetch):Promise<FreeImageVisionStatus>{
  const validated=new FreeImageVisionError('원래 요청 상태 조회','IMAGE_VISION_STATUS',true,attempt).attempt;
- signal.throwIfAborted();const params=new URLSearchParams({visionRequestId:validated.requestId,sourceLanguage:validated.sourceLanguage,source:JSON.stringify(validated.source)});
+ signal.throwIfAborted();const params=new URLSearchParams({visionRequestId:validated.requestId,sourceLanguage:validated.sourceLanguage,source:JSON.stringify(validated.source),...(validated.inspectionPolicy?{inspectionPolicy:validated.inspectionPolicy}:{})});
  const path=`/api/products/${encodeURIComponent(validated.source.productId)}/image-text?${params}`;
  if(path.length>12000)throw Error('원래 이미지 Vision 상태 조회 주소가 너무 길어 요청하지 않았습니다. 원래 요청은 보존했으며 새 추론으로 대체하지 않습니다.');
  const response=await fetcher(path,{method:'GET',signal,cache:'no-store',credentials:'same-origin',redirect:'error'});

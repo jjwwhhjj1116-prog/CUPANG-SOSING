@@ -6756,3 +6756,15 @@ REA로 Couplus의 localhost HTTP/SSE와 별도 상품조회 경계를 확인했�
 - Chrome 재연결 후 선택 browser ID6. 원래 qa727939940, official727940002(Preview 열림), readHub727940016, legal-list727940052 보존. blocked886727940078은 다시 읽거나 우회하지 않는다. 새 probe727940074는 단계5 읽기 검수용.
 - Step882 최종 운영 배포: f31abf61-2b2e-4a67-acc3-29f85d92892e. 모델/요금/스키마 변경 없음. 확장 파일 113개 기존 설치 폴더 해시 일치; Chrome 실행2.1.68과 남색 박스는 사용자 새로고침 확인 대기.
 - Step882 추가 UI 검수: 사용자2.1.68 남색 박스 확인. 선택0개 때도 ‘선택 상품 담기’ 파란색을 유지하는 CSS 추가 반영; 실행 disabled 유지. 같은2.1.68 최종ZIP SHA9117e2cfff96c38c4a6b0c2b8e74b7b481e61f9feb491066d9a17791cc8124d2 (1,652,941B), 설치113파일일치. 파란버튼 추가적용 확인대기. 최종Worker2fed2844-046d-497d-a58d-7a6084dffe92. 상세UI 파일명은 이미지N으로 표시하고 보조 설정 접기, 기존연결값유지. 57관련검사와 독립검토통과. s.1688.com 화면읽기도사이트정책차단; 우회금지.
+
+## 883. 2026-10-31 — 감사 주입 권한 결함 수정, 외국어 없는 이미지의 자동 작업 완료
+
+- docs/step883-audit-read-and-image-noop.md 및 docs/step883-image-no-text-proof.md 참조. 원래 886/e2f8037c…/f29491bd…/doc2347603의 새 생성·파일·본문 재전송 금지 유지. Step881 Preview 사고의 영향은 아직 미확정이며 원격 본문 무변경을 주장하지 않는다.
+- 실제 오류는 웹 ACK 시간이 아닌 코어 ADAPTER_FAILURE였다. 스키마 GET3개의 공유30초도 요청별30초로 교정하고 일반 예외를 고정 단계/코드로 구분했다. 127확장·137웹 관련 검사 통과.
+- 사용자2.1.69 적용 확인 후 원래 웹 F5→저장 견적 읽기→원래 요청 복구→감사1회 결과가 SCHEMA_EXECUTION으로 좁혀졌다. manifest의 YOOFAM은 content_scripts.matches에만 있으며 host_permissions에는 없었다. 스키마 감사만 앱 executeScript를 호출해 권한 계약과 어긋난 것이 실제 원인이다.
+- 2.1.70은 기존 native-source 콘텐츠 스크립트의 자체 확장·strict envelope·topframe0 메시지로 동일 GET3개를 수행한다. 동일 탭/창/출처 전후 fence와 source binding 검증 유지. 새 호스트 권한·주입 우회·쓰기 없음. 실제 listener+schema와 주입이 거절되는 fixture의102검사·타입·린트·독립검토 통과.
+- 새 이미지 inspection policy는 no-foreign-text/foreign-text/unreadable을 구분한다. 기존 빈 결과를 완료로 승격하지 않는다. 신규 요청 identity는 정책 버전을 포함하고 기존 요청의 prompt/조회·미확정 중복 방지를 보존한다. 새 서버 증거는 현재 회원·회사·원본 SHA·모델·정책·원장 완료시각과 결속된다. 현재 final slots 전체가 검증될 때만 3~5 완료; 재개 시 source GET으로 다시 검증하며 추가 OCR/렌더/저장 없음. 더 오래된 실패만 해소하고 running/새 실패는 보존한다. 122 focused+전체1~7양회사 통합5검사 통과, 독립 검토 통과. 실제 접수 검증으로 보고하지 않는다.
+- migration0038은 image_no_text_receipts 표만 추가한다. 운영 빌드는 통과했으나 원격 적용은 기존 OAuth 오류10000으로 실패. 같은6권한(user/account read, background, Workers/Workers Scripts/D1 write) 갱신 화면에 privacy 동의가 있어 실행시점 확인을 요청했다. 아직 migration·새 Worker 배포 미확인. 새 요금·모델·한도 변경 없음.
+- 확장2.1.70:113파일/1,664,313B/SHA4299ca5d47edca26a09bc2bb4b7d321421689dd344986ca0bbfe52286aeecb29. 실제 폴더69를 백업하고113해시일치로 갱신, 권한목록동일. 사용자70새로고침 답변 대기. 웹 F5는 root가 하며 Supplier Hub는 그대로 둔다. 재수집 불필요.
+- 기존 browser6이 사라져 인벤토리로 같은provider ca7efe32…의 browser7을 확인했다. 원래4탭은동일:qa727939940/official727940002(Preview열림)/readHub727940016/legal-list727940052. qa883/official883/readHub883/legal883 핸들. 70적용되면 qa를F5하고원래요청복구후읽기감사를1회이어간다. Preview/Next/Save/Submit 금지 guard는 해제하지 않는다. 실제차이가확인되면 재전송금지 변경을 묻기 전에 구체적인 수정범위를 제시한다.
+- 1688 읽기 거절 상태는 그대로이며 다른 도구로 재접근하지 않았다. 기존886상세0장·인페인팅 미구현 등은 이번 no-op/감사 수정으로 해결됐다고 보고하지 않는다. 실제 접수 미확인.

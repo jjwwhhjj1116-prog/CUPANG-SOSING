@@ -5,6 +5,7 @@ import {webcrypto,createHash} from 'node:crypto';
 import {nativeRecoveryFixture} from './helpers/native-product-recovery.mjs';
 import {createVerifiedProductDocumentBrowserAdapter} from '../extensions/supplier-hub/product-document-adapter.mjs';
 import {createProductDocumentDraftReceiver} from '../extensions/supplier-hub/product-document-receiver.mjs';
+import {unexpectedLegalAuditSchemaPage} from '../extensions/supplier-hub/unexpected-legal-audit.mjs';
 const copy=value=>JSON.parse(JSON.stringify(value));
 const canon=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canon).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canon(value[key])).join(',')+'}';
 const digest=value=>createHash('sha256').update(canon(value)).digest('hex');
@@ -18,17 +19,25 @@ async function fixture(options={}){
  const baselineDocIds=[...f.documents.keys()].filter(id=>id!==f.createdDocId);
  f.closeOwnedTab();
  for(const [key,row]of f.state.registry){const s3Link=row.s3Link;f.state.registry.set(key,{...row,imageUrl:'/sr/api/image/get-by-key?key='+encodeURIComponent(s3Link),host:'supplier.coupang.com'});}
- const requests=[],baseExecute=f.api.scripting.executeScript;
- f.api.scripting.executeScript=async request=>{
-  if(request.func.name==='unexpectedLegalAuditSchemaPage'){
-   const identity=request.args[0].identity,appOrigin=identity.origin,scope=vm.createContext({location:new URL(appOrigin),AbortController,TextEncoder,URL,Date,setTimeout,clearTimeout,
+ const requests=[],appScriptRequests=[],baseExecute=f.api.scripting.executeScript,baseMessage=f.api.tabs.sendMessage;
+ f.api.tabs.sendMessage=async(tabId,message,optionsForFrame)=>{
+  if(message.type==='YOOFAM_READ_UNEXPECTED_LEGAL_AUDIT_SCHEMA'){
+   assert.equal(tabId,f.context.identity.appTabId);assert.deepEqual(optionsForFrame,{frameId:0});
+   if(options.schemaExecutionError)throw Error('PRIVATE_SCHEMA_EXECUTION_TOKEN');
+   if(Object.hasOwn(options,'schemaReply'))return{ok:true,result:copy(options.schemaReply)};
+   const identity=message.expected.identity,appOrigin=identity.origin,scope=vm.createContext({location:new URL(appOrigin),AbortController,TextEncoder,URL,Date,setTimeout,clearTimeout,
     fetch:async(url,init)=>{assert.equal(init.method,'GET');requests.push({url,method:init.method});const path=new URL(url).pathname;
      if(path==='/api/supplier-hub/catalog-context')return response(url,{ownerId:identity.ownerId,company:copy(f.state.company)});
      assert.equal(path,'/api/products/'+identity.productId+'/legal-documents');return response(url,{revision:identity.source.contentRevision,documents:{applicability:'not-applicable',files:[]},native:{schemaSha256:identity.schemaSha256,categoryId:identity.categoryId,company:copy(identity.company),targets:[],issues:[],files:[]}});
     }});
-   scope.args=copy(request.args);return[{frameId:0,documentId:'fixture-app-current',result:copy(await vm.runInContext('('+request.func.toString()+')(...args)',scope))}];
+   scope.args=[copy(message.expected)];return{ok:true,result:copy(await vm.runInContext('('+unexpectedLegalAuditSchemaPage.toString()+')(...args)',scope))};
   }
+  return baseMessage(tabId,message,optionsForFrame);
+ };
+ f.api.scripting.executeScript=async request=>{
+  if(request.target.tabId===f.context.identity.appTabId){appScriptRequests.push(request);throw Error('Cannot access app origin: no scripting host permission');}
   if(request.func.name!=='savedDraftCurrentReadPage')return baseExecute(request);
+  if(options.auditExecutionError&&(typeof request.args[0]==='string'?JSON.parse(request.args[0]):request.args[0]).mode==='audit')throw Error('PRIVATE_HUB_EXECUTION_BODY');
   if(Object.hasOwn(options,'currentReadReply')){const frame=(await baseExecute({target:{tabId:request.target.tabId,frameIds:[0]},func:()=>true,args:[]}))[0];return[{frameId:0,documentId:frame.documentId,result:copy(options.currentReadReply)}];}
   const scope=vm.createContext({document:f.hubDocument,location:f.hubLocation,crypto:webcrypto,AbortController,TextEncoder,TextDecoder,Uint8Array,URL,Response,Date,setTimeout,clearTimeout,structuredClone,
    fetch:async(url,init)=>{requests.push({url,method:init.method,body:init.body});if(options.beforeCurrentReadFetch)await options.beforeCurrentReadFetch(url,init,f);const path=new URL(url).pathname;
@@ -46,7 +55,7 @@ async function fixture(options={}){
  const source=await adapter.readSource({identity:f.context.identity,bodySha256:f.context.originalBodySha256,preparedBodySha256:f.context.bodySha256,packetDigest:f.context.packetDigest,requestId:f.packet.requestId,docId:f.createdDocId});
  const target=options.receiver?null:await adapter.createTarget({identity:f.context.identity,requestId:f.packet.requestId,packetDigest:f.context.packetDigest}),tab=target?await adapter.readTab({identity:f.context.identity,tab:target}):null;
  const input={tab,identity:f.context.identity,requestId:f.packet.requestId,docId:f.createdDocId,sessionId:source.sessionId,baselineDocIds,previousTarget,expectedBody:{...copy(f.context.packet.body),docId:f.createdDocId}};
- return{f,adapter,input,requests,receiver:createProductDocumentDraftReceiver({adapter,store:f.storage.store}),close:()=>{selected.adapter.dispose();f.close();}};
+ return{f,adapter,input,requests,appScriptRequests,receiver:createProductDocumentDraftReceiver({adapter,store:f.storage.store}),close:()=>{selected.adapter.dispose();f.close();}};
 }
 test('known document can bind current complete server proof in one new tab without replaying files/body',async()=>{
  const q=await fixture();try{
@@ -245,8 +254,29 @@ test('real native reserved-target audit keeps the original checkpoint, DOM, file
   assert.equal(result.error,undefined,JSON.stringify(result));assert.equal(result.format,'yoofam-unexpected-legal-audit-v1');assert.equal(result.docId,q.f.createdDocId);assert.equal(result.legalCount,1);assert.equal(result.imageCount,4);assert.equal(result.bodyMatchesExpected,true);assert.equal(result.canResume,false);assert.equal(result.canDelete,false);assert.equal(result.remoteWrites,false);assert.equal(result.checkpointWrites,false);assert.equal(result.legalEntries[0].association,'unknown');
   assert.equal(JSON.stringify({checkpoint:await q.f.storage.store.get(q.f.context.key),dataset:q.f.hubDocument.documentElement.dataset,uploads:q.f.state.uploads,body:[...q.f.documents]}),before);
   assert.equal(q.f.calls.filter(call=>call.name==='tabs-create').length,created);assert.equal(q.f.submitted,0);assert.doesNotMatch(JSON.stringify(result),/PRIVATE_|s3Link|fileName/);
+  assert.deepEqual(q.appScriptRequests,[],'a host-denied app executeScript must never be attempted; the manifest content reader owns these same three GETs');
   const current=q.requests.slice(start);assert.equal(current.filter(call=>new URL(call.url).pathname==='/sr/api/image/get-by-key').length,4);assert.equal(current.filter(call=>new URL(call.url).pathname==='/api/products/'+q.f.context.identity.productId+'/legal-documents').length,1);assert.equal(current.filter(call=>new URL(call.url).pathname.includes('/get-files-by-type/')).length,1);
   assert.ok(current.every(call=>call.method==='GET'||new URL(call.url).pathname.includes('/get-files-by-type/')&&call.body==='{}'));
   assert.equal((await q.receiver.recoverSavedDraftTarget(q.f.packet,q.f.sender)).error.code,'SAVED_DRAFT_TARGET_UNCONFIRMED','normal qualification is not weakened by the audit');
+ }finally{q.close();}
+});
+
+for(const scenario of ['schema-execution','schema-http','malformed-schema-failure','hub-execution','malformed-report','hub-http'])test('reserved audit classifies '+scenario+' without uncertain-write advice or leaking exceptions',async()=>{
+ const options={receiver:true,legalResponse:[{fileType:'certificate',fileName:'PRIVATE_UNEXPECTED_FILE.pdf',s3Link:'PRIVATE_UNEXPECTED_S3'}]},q=await fixture(options);
+ try{
+  assert.equal((await q.receiver.recoverSavedDraftTarget(q.f.packet,q.f.sender)).error.code,'SAVED_DRAFT_TARGET_UNCONFIRMED');
+  const before=JSON.stringify({checkpoint:await q.f.storage.store.get(q.f.context.key),dataset:q.f.hubDocument.documentElement.dataset,uploads:q.f.state.uploads,body:[...q.f.documents]}),created=q.f.calls.filter(call=>call.name==='tabs-create').length;
+  let code;
+  if(scenario==='schema-execution'){options.schemaExecutionError=true;code='UNEXPECTED_LEGAL_AUDIT_SCHEMA_EXECUTION';}
+  if(scenario==='schema-http'){options.schemaReply={schemaReadFailure:{format:'yoofam-unexpected-legal-schema-read-failure-v1',phase:'legal-documents',code:'http-503'}};code='UNEXPECTED_LEGAL_AUDIT_SCHEMA_READ';}
+  if(scenario==='malformed-schema-failure'){options.schemaReply={schemaReadFailure:{format:'yoofam-unexpected-legal-schema-read-failure-v1',phase:'PRIVATE_SECRET',code:'PRIVATE_ERROR'}};code='UNEXPECTED_LEGAL_AUDIT_SCHEMA';}
+  if(scenario==='hub-execution'){options.auditExecutionError=true;code='UNEXPECTED_LEGAL_AUDIT_EXECUTION';}
+  if(scenario==='malformed-report'){options.currentReadReply={untrusted:'PRIVATE_REPORT'};code='UNEXPECTED_LEGAL_AUDIT_REPORT';}
+  if(scenario==='hub-http'){options.currentReadReply={currentReadFailure:{format:'yoofam-current-saved-draft-read-failure-v1',phase:'image-bytes',code:'http-timeout'}};code='UNEXPECTED_LEGAL_AUDIT_READ';}
+  await assert.rejects(q.receiver.auditUnexpectedLegal(q.f.packet,q.f.sender),error=>{
+   assert.equal(error.code,code);assert.doesNotMatch(error.message,/PRIVATE|현재 전송 기록을 조회|요청 결과를 확정/);if(scenario==='schema-http')assert.match(error.message,/legal-documents \/ http-503/);return true;
+  });
+  assert.equal(JSON.stringify({checkpoint:await q.f.storage.store.get(q.f.context.key),dataset:q.f.hubDocument.documentElement.dataset,uploads:q.f.state.uploads,body:[...q.f.documents]}),before);
+  assert.equal(q.f.calls.filter(call=>call.name==='tabs-create').length,created);assert.equal(q.f.submitted,0);
  }finally{q.close();}
 });

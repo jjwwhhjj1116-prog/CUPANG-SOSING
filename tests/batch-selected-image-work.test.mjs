@@ -186,11 +186,43 @@ test('no foreign text keeps the original slot while a partial translation still 
  const before=plain(h.view),result=await h.run();assert.equal(result.status,'partial');assert.equal(result.failed,1);assert.equal(result.skipped,1);assert.equal(result.applied,0);assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);assert.deepEqual(h.view,before);assert.ok(h.canvases.every(canvas=>canvas.width===0));
 });
 
-test('plain photos with a completed empty OCR result skip accurately, while engine failure remains failed',async()=>{
+test('empty legacy/local OCR without a server no-foreign decision remains review-required, while engine failure remains failed',async()=>{
  for(const noText of [async()=>[],async()=>{throw Error('읽을 수 있는 문구를 찾지 못했습니다. 필요한 영역과 원문을 직접 추가해주세요.');}]){
-  const h=fixture('main',['owner/source-a.png']);h.deps.recognize=noText;const result=await h.run();assert.equal(result.status,'skipped');assert.equal(result.skipped,1);assert.equal(result.failed,0);assert.match(result.messages[0],/문구 인식을 완료/);assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);
+  const h=fixture('main',['owner/source-a.png']);h.deps.recognize=noText;const result=await h.run();assert.equal(result.status,'partial');assert.equal(result.skipped,1);assert.equal(result.failed,0);assert.match(result.messages[0],/문구 인식을 완료/);assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);
  }
  const failed=fixture('main',['owner/source-a.png']);failed.deps.recognize=async()=>{throw Error('OCR engine failed');};const result=await failed.run();assert.equal(result.status,'partial');assert.equal(result.failed,1);assert.equal(result.skipped,0);
+});
+
+for(const stage of ['main','additional','detail'])test(`${stage}: current server no-text proof completes unchanged slots with no OCR, render, upload or final-field change`,async()=>{
+ const h=fixture(stage,['owner/source-a.png']),read=h.deps.readSource,c=h.visionContract;
+ const configuration={provider:'workers-ai-vision',model:c.IMAGE_TEXT_VISION_MODEL,notice:c.IMAGE_TEXT_VISION_NOTICE,configured:true,paidAllowed:true};
+ h.deps.readSource=async(...args)=>{const image=await read(...args);image.visionConfiguration=configuration;image.noTextProof={policy:c.IMAGE_TEXT_INSPECTION_POLICY,productId:'product',sourceKey:image.source.sourceKey,sourceSha256:image.source.sourceSha256,width:image.width,height:image.height,requestId:'12345678-1234-4123-8123-123456789abc',verifiedAt:'2026-10-30T00:00:00.000Z',sourceLanguage:'zh',configuration};return image;};
+ h.deps.recognize=async()=>{throw Error('A verified no-op must not OCR again');};
+ const before=plain([h.view,h.content,h.plan.settings]),result=await h.run();assert.equal(result.status,'completed');assert.equal(result.applied,0);assert.equal(result.verifiedUnchanged,1);assert.equal(result.failed,0);assert.deepEqual(plain([h.view,h.content,h.plan.settings]),before);assert.equal(h.calls.filter(row=>['render','apply','translate'].includes(row[0])).length,0);
+ const again=await h.run();assert.equal(again.status,'completed');assert.equal(again.verifiedUnchanged,1);assert.equal(h.calls.filter(row=>row[0]==='read').length,2,'same session rechecks source SHA and current policy without OCR');
+ h.options.state=h.model.createSelectedImageStageState('owner','product',stage);assert.equal((await h.run()).status,'completed');assert.equal(h.calls.filter(row=>['render','apply','translate'].includes(row[0])).length,0,'fresh session uses server receipt without inference');
+});
+test('no-op proof with wrong source SHA, source key, model or policy fails closed without inference or writes',async()=>{
+ for(const change of [proof=>{proof.sourceSha256='0'.repeat(64);},proof=>{proof.sourceKey='owner/other.png';},proof=>{proof.configuration.model='other';},proof=>{proof.policy='legacy';}]){
+  const h=fixture('detail',['owner/source-a.png']),read=h.deps.readSource,c=h.visionContract,configuration={provider:'workers-ai-vision',model:c.IMAGE_TEXT_VISION_MODEL,notice:c.IMAGE_TEXT_VISION_NOTICE,configured:true,paidAllowed:true};
+  h.deps.readSource=async(...args)=>{const image=await read(...args);image.visionConfiguration=configuration;image.noTextProof={policy:c.IMAGE_TEXT_INSPECTION_POLICY,productId:'product',sourceKey:image.source.sourceKey,sourceSha256:image.source.sourceSha256,width:image.width,height:image.height,requestId:'12345678-1234-4123-8123-123456789abc',verifiedAt:'2026-10-30T00:00:00.000Z',sourceLanguage:'zh',configuration:plain(configuration)};change(image.noTextProof);return image;};
+  h.deps.recognize=async()=>{throw Error('No inference after invalid proof');};const result=await h.run();assert.equal(result.status,'partial');assert.equal(result.failed,1);assert.equal(result.applied,0);assert.equal(result.verifiedUnchanged??0,0);assert.equal(h.calls.filter(row=>['render','apply','translate'].includes(row[0])).length,0);
+ }
+});
+test('retained no-op rechecks current server policy instead of promoting an old session flag',async()=>{
+ const h=fixture('detail',['owner/source-a.png']),read=h.deps.readSource,c=h.visionContract;let enabled=true,recognitions=0;
+ h.deps.readSource=async(...args)=>{const image=await read(...args),configuration={provider:'workers-ai-vision',model:c.IMAGE_TEXT_VISION_MODEL,configured:enabled,paidAllowed:enabled,notice:c.IMAGE_TEXT_VISION_NOTICE};image.visionConfiguration=configuration;
+  if(enabled)image.noTextProof={policy:c.IMAGE_TEXT_INSPECTION_POLICY,productId:'product',sourceKey:image.source.sourceKey,sourceSha256:image.source.sourceSha256,width:image.width,height:image.height,requestId:'12345678-1234-4123-8123-123456789abc',verifiedAt:'2026-10-30T00:00:00.000Z',sourceLanguage:'zh',configuration};return image;};
+ h.deps.recognize=async image=>{recognitions++;assert.equal(image.visionConfiguration.configured,false);throw Error('현재 서버 Vision 설정이 꺼졌습니다.');};
+ assert.equal((await h.run()).status,'completed');enabled=false;const result=await h.run();assert.equal(result.status,'partial');assert.equal(result.verifiedUnchanged??0,0);assert.equal(h.calls.filter(row=>row[0]==='read').length,2);assert.equal(recognitions,1);assert.equal(h.calls.filter(row=>['apply','render'].includes(row[0])).length,0);
+});
+test('explicit normalized no-foreign result completes but legacy/uncertain empty output cannot complete mixed images',async()=>{
+ const h=fixture('detail',['owner/source-a.png']),c=h.visionContract;
+ h.deps.recognize=async image=>{image.visionResult={provider:'workers-ai-vision',model:c.IMAGE_TEXT_VISION_MODEL,notice:c.IMAGE_TEXT_VISION_NOTICE,requests:1,blocks:[],inspection:{policy:c.IMAGE_TEXT_INSPECTION_POLICY,decision:'no-foreign-text'}};throw Error('읽을 수 있는 문구를 찾지 못했습니다. 필요한 영역과 원문을 직접 추가해주세요.');};
+ const result=await h.run();assert.equal(result.status,'completed');assert.equal(result.applied,0);assert.equal(result.verifiedUnchanged,1);
+ const mixed=fixture('detail',['owner/source-a.png','owner/source-b.png']);mixed.deps.recognize=async image=>image.source.sourceKey.endsWith('a.png')?[]:[mixed.region('中文')];
+ mixed.deps.translate=async(source,_language,regions)=>({source,regions:regions.map(row=>({id:row.id,original:row.text,translated:'검증된 문구',issue:null})),warnings:[]});
+ const incomplete=await mixed.run();assert.equal(incomplete.applied,1);assert.equal(incomplete.status,'partial','an unverified empty image cannot be hidden by another successful save');assert.equal((await mixed.run()).status,'partial');
 });
 
 test('fallback rejection exposes the existing provider status and region issue without retrying or painting',async()=>{

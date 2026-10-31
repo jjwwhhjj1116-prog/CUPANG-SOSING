@@ -9,7 +9,7 @@ import {singleDocumentWatchPage} from './single-watch-page.mjs';
 import {normalizeSingleReceipt} from './single-receipt.mjs';
 import {assertSingleOwnedTarget,createSingleOwnedTarget,waitSingleOwnedTarget} from './single-owned-target.mjs';
 import {nativeProductAssetBytes,prepareAndUploadNativeProductAssets,NativeProductAssetsError} from './native-product-assets.mjs';
-import {readAppDocumentSource,sourceReadError,normalizeSourceReadFailure,currentSourceAppTab} from './product-document-source.mjs';
+import {readAppDocumentSource,readAppLegalAuditSchema,sourceReadError,normalizeSourceReadFailure,currentSourceAppTab} from './product-document-source.mjs';
 import {nativeAssetUploadPage,nativeUploadFailure} from './native-asset-upload-page.mjs';
 import {nativeAssetRecoveryPage,decodeNativeAssetRecoveryResult,nativeAssetRecoveryErrorCode} from './native-asset-recovery-page.mjs';
 import {singleDocumentRetryCreatePage} from './single-create-retry-page.mjs';
@@ -18,7 +18,7 @@ import {NativeLegalBytesError} from './native-legal-bytes.mjs';
 import {singleExistingDocumentRepairPage,existingRepairPageFailure} from './single-existing-document-repair.mjs';
 import {singleRecordMirrorPage} from './single-record-mirror-page.mjs';
 import {savedDraftCurrentReadPage} from './saved-draft-current-read-page.mjs';
-import {unexpectedLegalAuditSchemaPage,validateUnexpectedLegalAuditReport} from './unexpected-legal-audit.mjs';
+import {validateUnexpectedLegalAuditReport} from './unexpected-legal-audit.mjs';
 
 const HASH=/^[a-f0-9]{64}$/;
 const ID=/^\w[\w-]{0,99}$/;
@@ -816,18 +816,30 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     const expectedBody=input.expectedBody??savedReadBody(sourcePlan,input.docId),prepared=copy(expectedBody);prepared.docId=null;
     if(!equal(expectedBody.docId,input.docId)||await digest(prepared)!==binding.preparedBodySha256)fail('SOURCE_CHANGED','원래 검토한 견적 본문과 읽기 요청이 다릅니다.');
     await appCurrent(input.identity);
-    const [schemaExecution]=await api.scripting.executeScript({target:{tabId:sourceAppTabId??input.identity.appTabId,frameIds:[0]},func:unexpectedLegalAuditSchemaPage,args:[{identity:copy(input.identity),expectedBody:copy(expectedBody)}]});
+    let schema;
+    try{schema=await readAppLegalAuditSchema(api,input.identity,expectedBody,sourceAppTabId);}
+    catch(error){if(error?.sourceFailure?.code==='SOURCE_CHANGED')fail('SOURCE_CHANGED','원래 앱 탭·회원·회사의 읽기 연결이 변경되었습니다. 문서·파일·본문을 변경하지 않았습니다.');fail('UNEXPECTED_LEGAL_AUDIT_SCHEMA_EXECUTION','읽기 전용 인증서 스키마 조회의 앱 연결 결과를 확인하지 못했습니다. 문서·파일·본문을 변경하지 않았습니다.');}
     await appCurrent(input.identity);
-    const schema=schemaExecution?.result;
-    if(schemaExecution?.frameId!==undefined&&schemaExecution.frameId!==0||!schema||Object.keys(schema).sort().join(',')!=='bindings,complete'||typeof schema.complete!=='boolean'||!Array.isArray(schema.bindings)||schema.bindings.length>400||!schema.complete&&schema.bindings.length)
+    if(schema&&Object.keys(schema).length===1&&Object.hasOwn(schema,'schemaReadFailure')){
+      const failure=schema.schemaReadFailure;
+      if(failure&&Object.keys(failure).sort().join(',')==='code,format,phase'&&failure.format==='yoofam-unexpected-legal-schema-read-failure-v1'
+        &&['input','catalog-before','legal-documents','catalog-after','schema'].includes(failure.phase)
+        &&['input','source-origin','source-changed','schema-shape','http-timeout','http-network','http-redirect','http-response','http-status','http-type','http-size','http-json','http-401','http-403','http-404','http-429','http-500','http-502','http-503','http-504','unexpected'].includes(failure.code))
+        fail('UNEXPECTED_LEGAL_AUDIT_SCHEMA_READ','읽기 전용 인증서 스키마 조회를 중단했습니다. 단계: '+failure.phase+' / '+failure.code+'. 문서·파일·본문을 변경하지 않았습니다.');
+    }
+    if(!schema||Object.keys(schema).sort().join(',')!=='bindings,complete'||typeof schema.complete!=='boolean'||!Array.isArray(schema.bindings)||schema.bindings.length>400||!schema.complete&&schema.bindings.length)
       fail('UNEXPECTED_LEGAL_AUDIT_SCHEMA','원래 앱의 인증서 스키마 읽기 결과를 확인하지 못했습니다.');
     const expectedImages=sourcePlan.images.map(file=>Object.fromEntries(['transportName','contentType','byteLength','sha256'].map(key=>[key,file[key]])));
-    let value=await execute(input.tab,input.identity,savedDraftCurrentReadPage,[{binding,expectedTarget:{tabId:input.tab.tabId,windowId:input.tab.windowId},docId:input.docId,baselineDocIds:copy(input.baselineDocIds),expectedImages,expectedBody,
-      previousTarget:Object.fromEntries(['tabId','windowId','origin','requestId','packetDigest'].map(key=>[key,input.previousTarget[key]])),mode:'audit',audit:{checkpointSequence:input.checkpointSequence,schemaBindingComplete:schema.complete,certificateBindings:copy(schema.bindings)}}]);
+    let value;
+    try{value=await execute(input.tab,input.identity,savedDraftCurrentReadPage,[{binding,expectedTarget:{tabId:input.tab.tabId,windowId:input.tab.windowId},docId:input.docId,baselineDocIds:copy(input.baselineDocIds),expectedImages,expectedBody,
+      previousTarget:Object.fromEntries(['tabId','windowId','origin','requestId','packetDigest'].map(key=>[key,input.previousTarget[key]])),mode:'audit',audit:{checkpointSequence:input.checkpointSequence,schemaBindingComplete:schema.complete,certificateBindings:copy(schema.bindings)}}]);}
+    catch(error){if(error instanceof SingleDocumentError)throw error;fail('UNEXPECTED_LEGAL_AUDIT_EXECUTION','읽기 전용 문서·파일 대조의 브라우저 실행 결과를 확인하지 못했습니다. 문서·파일·본문을 변경하지 않았습니다.');}
     if(typeof value==='string'){if(value.length>100000)fail('UNEXPECTED_LEGAL_AUDIT_REPLY','읽기 전용 감사 결과의 크기를 확인하지 못했습니다.');try{value=JSON.parse(value);}catch{fail('UNEXPECTED_LEGAL_AUDIT_REPLY','읽기 전용 감사 결과의 형식을 확인하지 못했습니다.');}}
     if(value?.currentReadFailure){const phase=value.currentReadFailure.phase,code=value.currentReadFailure.code;
       fail('UNEXPECTED_LEGAL_AUDIT_READ','읽기 전용 감사를 중단했습니다. 단계: '+(/^[a-z0-9-]{1,40}$/.test(phase)?phase:'read')+' / '+(/^[a-z0-9-]{1,40}$/.test(code)?code:'comparison')+'. 문서·파일·본문을 변경하지 않았습니다.');}
-    const result=validateUnexpectedLegalAuditReport(value,{binding:{...binding,docId:input.docId,sourcePlanSha256:nativeSha,checkpointSequence:input.checkpointSequence},target:{tabId:input.tab.tabId,windowId:input.tab.windowId}},now());
+    let result;
+    try{result=validateUnexpectedLegalAuditReport(value,{binding:{...binding,docId:input.docId,sourcePlanSha256:nativeSha,checkpointSequence:input.checkpointSequence},target:{tabId:input.tab.tabId,windowId:input.tab.windowId}},now());}
+    catch{fail('UNEXPECTED_LEGAL_AUDIT_REPORT','읽기 전용 인증서 감사 결과의 요청 연결·형식·유효 시각을 확인하지 못했습니다. 문서·파일·본문을 변경하지 않았습니다.');}
     const after=await bindingFor(input.identity,input.sessionId);
     if(!equal(binding,after)||!equal(sourcePlan,sourceBindings.get(canonical(input.identity))?.nativeSourcePlan))fail('SOURCE_CHANGED','읽기 전용 감사 중 원래 회원·견적 연결이 변경되었습니다.');
     return result;

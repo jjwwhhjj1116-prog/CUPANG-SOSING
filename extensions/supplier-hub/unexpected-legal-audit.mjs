@@ -37,14 +37,36 @@ export function validateUnexpectedLegalAuditReport(value,expected={},now=Date.no
 /** Additional schema-bound read from the original authenticated app. No
  * credentials/storage are read; no request except these exact GETs exists. */
 export async function unexpectedLegalAuditSchemaPage(input){
- const {identity,expectedBody}=input,object=value=>!!value&&typeof value==='object'&&!Array.isArray(value),canon=value=>value===undefined?'undefined':value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canon).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canon(value[key])).join(',')+'}';
- if(location.origin!==identity.origin||!['https://sourceflow.jjwwhhjj1116.workers.dev','http://localhost:3000','http://127.0.0.1:3000'].includes(location.origin))throw Error('SOURCE_CHANGED');
- const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),30000);
- const read=async path=>{const url=location.origin+path,response=await fetch(url,{method:'GET',credentials:'same-origin',redirect:'error',cache:'no-store',signal:controller.signal,headers:{accept:'application/json'}});if(!response.ok||response.redirected||response.url!==url||!/^application\/json(?:;|$)/i.test(response.headers.get('content-type')||''))throw Error('SOURCE_CHANGED');const text=await response.text();if(controller.signal.aborted||new TextEncoder().encode(text).length>6*1024*1024)throw Error('SOURCE_CHANGED');return JSON.parse(text);};
+ const object=value=>!!value&&typeof value==='object'&&!Array.isArray(value),canon=value=>value===undefined?'undefined':value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canon).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canon(value[key])).join(',')+'}';
+ let phase='input';const controllers=new Set(),failure=code=>Object.assign(Error('UNEXPECTED_LEGAL_SCHEMA_READ'),{schemaReadCode:code}),fail=code=>{throw failure(code);};
  try{
-  const before=await read('/api/supplier-hub/catalog-context');if(before.ownerId!==identity.ownerId||canon(before.company)!==canon(identity.company))throw Error('SOURCE_CHANGED');
-  const view=await read('/api/products/'+encodeURIComponent(identity.productId)+'/legal-documents'),native=view.native;
-  const after=await read('/api/supplier-hub/catalog-context');if(canon(before)!==canon(after)||location.origin!==identity.origin||view.revision!==identity.source.contentRevision)throw Error('SOURCE_CHANGED');
+  if(!object(input)||!object(input.identity)||!object(input.expectedBody)||!Array.isArray(input.expectedBody.jsonDocument)||!object(input.identity.source))fail('input');
+  const {identity,expectedBody}=input,origin=location.origin;
+  const fence=()=>{if(location.origin!==origin||origin!==identity.origin||!['https://sourceflow.jjwwhhjj1116.workers.dev','http://localhost:3000','http://127.0.0.1:3000'].includes(origin))fail('source-origin');};
+  fence();
+  const read=async path=>{
+   fence();const controller=new AbortController();controllers.add(controller);let timer;
+   // Each authenticated GET owns its complete fetch/body deadline. A slow
+   // first catalog read must not consume the legal/closing catalog budget.
+   const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>{controller.abort();reject(failure('http-timeout'));},30000);});
+   const consume=async()=>{
+    const url=origin+path;let response;try{response=await fetch(url,{method:'GET',credentials:'same-origin',redirect:'error',cache:'no-store',signal:controller.signal,headers:{accept:'application/json'}});}catch{fail(controller.signal.aborted?'http-timeout':'http-network');}
+    fence();if(controller.signal.aborted)fail('http-timeout');
+    if(!response||response.redirected||response.type==='opaqueredirect'||response.status===0||response.status>=300&&response.status<400)fail('http-redirect');
+    if(response.url!==url)fail('http-response');
+    if(!response.ok||response.status!==200)fail([401,403,404,429,500,502,503,504].includes(response.status)?'http-'+response.status:'http-status');
+    if(!/^application\/json(?:;|$)/i.test(response.headers.get('content-type')||''))fail('http-type');
+    const size=response.headers.get('content-length');if(size!==null&&(!/^\d+$/.test(size)||Number(size)>6*1024*1024))fail('http-size');
+    let text;try{text=await response.text();}catch{fail(controller.signal.aborted?'http-timeout':'http-network');}
+    fence();if(controller.signal.aborted)fail('http-timeout');if(new TextEncoder().encode(text).length>6*1024*1024)fail('http-size');
+    try{return JSON.parse(text);}catch{fail('http-json');}
+   };
+   try{return await Promise.race([consume(),timeout]);}finally{clearTimeout(timer);controller.abort();controllers.delete(controller);}
+  };
+  phase='catalog-before';const before=await read('/api/supplier-hub/catalog-context');if(!object(before)||before.ownerId!==identity.ownerId||canon(before.company)!==canon(identity.company))fail('source-changed');
+  phase='legal-documents';const view=await read('/api/products/'+encodeURIComponent(identity.productId)+'/legal-documents');if(!object(view))fail('schema-shape');const native=view.native;
+  phase='catalog-after';const after=await read('/api/supplier-hub/catalog-context');if(canon(before)!==canon(after)||view.revision!==identity.source.contentRevision)fail('source-changed');
+  phase='schema';fence();
   // This endpoint compiles every allOf certificate row and records an issue
   // for any missing/ambiguous/shared-value failure. A nonempty issue list is
   // not full schema coverage, even if some targets are present.
@@ -58,5 +80,8 @@ export async function unexpectedLegalAuditSchemaPage(input){
   for(const member of expectedBody.jsonDocument){const rows=member?.legalPage?.certificates;if(bindings.length===0&&(rows===undefined||Array.isArray(rows)&&rows.length===0))continue;if(!Array.isArray(rows)||rows.length!==bindings.length)return{complete:false,bindings:[]};
    for(const binding of bindings){const hits=rows.filter(row=>object(row)&&row[binding.nameKey]===binding.name);if(hits.length!==1||Object.keys(hits[0]).length!==2||!Object.hasOwn(hits[0],binding.valueKey)||canon(hits[0][binding.valueKey])!==canon(binding.value))return{complete:false,bindings:[]};}}
   return{complete:true,bindings};
- }finally{clearTimeout(timer);}
+ }catch(error){
+  const codes=['input','source-origin','source-changed','schema-shape','http-timeout','http-network','http-redirect','http-response','http-status','http-type','http-size','http-json','http-401','http-403','http-404','http-429','http-500','http-502','http-503','http-504'];
+  return{schemaReadFailure:{format:'yoofam-unexpected-legal-schema-read-failure-v1',phase,code:codes.includes(error?.schemaReadCode)?error.schemaReadCode:'unexpected'}};
+ }finally{for(const controller of controllers)controller.abort();}
 }

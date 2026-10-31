@@ -391,3 +391,29 @@ test('audit client rejects cross-source or mutation-capable reports while retain
  f.bridge=async()=>{throw Object.assign(Error('읽기 전용 감사를 중단했습니다. 단계: image-bytes / byte-sha.'),{code:'UNEXPECTED_LEGAL_AUDIT_READ'});};await assert.rejects(f.client.auditUnexpectedLegal(session,new AbortController().signal),error=>error.code==='UNEXPECTED_LEGAL_AUDIT_READ'&&error.message.includes('image-bytes / byte-sha')&&!error.uncertain);
  assert.equal(f.calls.length,0);assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);
 });
+
+test('audit preserves typed schema/execution phases but replaces unknown bridge exceptions with read-only failures',async()=>{
+ const f=await fixture();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,unexpectedLegalAuditAvailable:true});const session=await f.session(),before=plain(session);
+ const message='읽기 전용 인증서 스키마 조회를 중단했습니다. 단계: legal-documents / http-503. 문서·파일·본문을 변경하지 않았습니다.';
+ for(const code of ['UNEXPECTED_LEGAL_AUDIT_SCHEMA_READ','UNEXPECTED_LEGAL_AUDIT_SCHEMA_EXECUTION','UNEXPECTED_LEGAL_AUDIT_EXECUTION','UNEXPECTED_LEGAL_AUDIT_REPORT']){
+  f.bridge=async()=>{throw Object.assign(Error(message),{code});};
+  await assert.rejects(f.client.auditUnexpectedLegal(session,new AbortController().signal),error=>error.code===code&&error.message===message&&error.uncertain===false);
+ }
+ for(const code of ['ADAPTER_FAILURE',undefined,'PRIVATE_CODE_SHOULD_NOT_DISPLAY']){
+  f.bridge=async()=>{throw Object.assign(Error('PRIVATE_RAW_BROWSER_FAILURE'),{code});};
+  await assert.rejects(f.client.auditUnexpectedLegal(session,new AbortController().signal),error=>error.uncertain===false&&!error.message.includes('PRIVATE')&&error.code===(code==='ADAPTER_FAILURE'?code:code===undefined?'PRODUCT_DOCUMENT_BRIDGE':'UNEXPECTED_LEGAL_AUDIT_READ_FAILED'));
+ }
+ const hidden=f.client.unexpectedLegalAuditReadError(Error('PRIVATE_RUNTIME_EXCEPTION'));assert.equal(hidden.code,'UNEXPECTED_LEGAL_AUDIT_READ_FAILED');assert.doesNotMatch(hidden.message,/PRIVATE/);
+ assert.deepEqual(plain(session),before);assert.equal(f.calls.length,0);assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);assert.ok(f.sent.every(row=>['preview','auditUnexpectedLegal'].includes(row.payload.action)));
+});
+
+test('audit keeps its original 180-second deadline and cancellation remains a single read without retry or uncertain mutation state',async()=>{
+ for(const mode of ['timeout','abort']){
+  const f=await fixture();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,unexpectedLegalAuditAvailable:true});const session=await f.session(),before=plain(session),controller=new AbortController();f.bridge=async()=>undefined;
+  const pending=f.client.auditUnexpectedLegal(session,controller.signal);await f.wait(()=>f.sent.length===2);
+  assert.equal([...f.timers.values()][0].due-f.clock.now,180000);f.advance(90000);assert.equal(f.sent.length,2);assert.equal(f.listeners.size,1);
+  if(mode==='abort')controller.abort();else f.advance(90001);
+  await assert.rejects(pending,error=>error.uncertain===false&&error.code===(mode==='abort'?'UNEXPECTED_LEGAL_AUDIT_CANCELLED':'PRODUCT_DOCUMENT_ACK_MISSING')&&error.message.includes('읽기 전용')&&!error.message.includes('저장 결과를 조회'));
+  f.advance(1000000);assert.deepEqual(f.sent.map(row=>row.payload.action),['preview','auditUnexpectedLegal']);assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);assert.equal(f.calls.length,0);assert.deepEqual(plain(session),before);
+ }
+});

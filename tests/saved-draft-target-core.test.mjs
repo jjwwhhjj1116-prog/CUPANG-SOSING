@@ -262,3 +262,19 @@ test('audit rejects scope/report/source drift without claiming a write or consum
   const initial=f.saved();await assert.rejects(f.receiver().auditUnexpectedLegal(f.packet,f.sender),error=>typeof error.code==='string',scenario);assert.equal(f.calls.some(call=>['cas','createTarget','hubRequest','readTab'].includes(call.name)),false);assert.equal(f.created,1);if(scenario!=='checkpoint-change')assert.deepEqual(f.saved(),initial);f.assertReadOnly();
  }
 });
+
+for(const phase of ['source-before','previous-target','current-target','audit','source-after'])test('audit raw '+phase+' failure has a bounded read-only phase and never writes a checkpoint',async()=>{
+ const f=await auditFixture(),before=f.saved(),privateError=()=>{throw Error('PRIVATE_SERVER_BODY_OR_TOKEN');};
+ if(phase==='audit')f.adapter.auditUnexpectedLegal=privateError;
+ if(phase.startsWith('source-')){const read=f.adapter.readSource;let count=0;f.adapter.readSource=async input=>{if(++count===(phase==='source-before'?1:2))privateError();return read(input);};}
+ if(phase.endsWith('target')){const read=f.adapter.readOwnedTargetPresence;f.adapter.readOwnedTargetPresence=async input=>{if(input.tab.tabId===(phase==='previous-target'?71:90))privateError();return read(input);};}
+ await assert.rejects(f.receiver().auditUnexpectedLegal(f.packet,f.sender),error=>error instanceof SingleDocumentError&&error.code==='UNEXPECTED_LEGAL_AUDIT_EXECUTION'&&error.message.includes('단계: '+phase)&&!error.message.includes('PRIVATE')&&!error.message.includes('현재 전송 기록을 조회'));
+ assert.deepEqual(f.saved(),before);assert.equal(f.created,1);assert.equal(f.calls.some(call=>['cas','createTarget','hubRequest'].includes(call.name)),false);f.assertReadOnly();
+});
+
+test('slow final source fence keeps the 60 second report freshness guard and reports a read-only contract failure',async()=>{
+ const f=await auditFixture(),before=f.saved(),read=f.adapter.readSource;let count=0;
+ f.adapter.readSource=async input=>{if(++count===2)f.now+=60001;return read(input);};
+ await assert.rejects(f.receiver().auditUnexpectedLegal(f.packet,f.sender),error=>error instanceof SingleDocumentError&&error.code==='UNEXPECTED_LEGAL_AUDIT_REPORT'&&!error.message.includes('현재 전송 기록을 조회'));
+ assert.deepEqual(f.saved(),before);assert.equal(f.calls.some(call=>['cas','createTarget','hubRequest'].includes(call.name)),false);assert.equal(f.created,1);f.assertReadOnly();
+});

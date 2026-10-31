@@ -696,6 +696,29 @@ test('original document full audit is explicit and cannot adopt a session, claim
   for(const label of [start,prepareDraft,reviewPrepared,'현재 문서 동의 확인 · 계속'])assert.equal(h.button(label),undefined);
  }finally{h.close();}
 });
+
+test('original audit displays a fixed read phase/code, preserves typed schema failures and hides raw errors without enabling transmission',async()=>{
+ for(const mode of ['typed-audit','unknown-audit','preview','after-audit']){
+  let audits=0;const h=await fixture(undefined,{reconnect:async(_input,f)=>{throw reconnectClosedError(f,{savedDraftTargetClosed:false});}});try{
+   await h.idle();reconnectInputs(h);await h.click('원래 저장 문서 연결 복구');
+   h.f.bridge=async payload=>{if(mode==='preview')throw Error('PRIVATE_PREVIEW_STACK');return{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,unexpectedLegalAuditAvailable:true};};
+   h.f.client.auditUnexpectedLegal=async session=>{audits++;
+    if(mode==='typed-audit')throw new h.f.client.ProductDocumentBridgeError('읽기 전용 인증서 스키마 조회를 중단했습니다. 단계: legal-documents / http-503. 문서·파일·본문을 변경하지 않았습니다.',false,'UNEXPECTED_LEGAL_AUDIT_SCHEMA_READ');
+    if(mode==='unknown-audit')throw Error('PRIVATE_NATIVE_STACK');
+    if(mode==='after-audit')h.f.refresh=async()=>{throw Error('PRIVATE_FINAL_SOURCE_READ');};
+    return originalAuditFixtureReport(session);
+   };
+   await h.click(auditOriginal);const shown=h.text();assert.match(shown,/읽기 전용 대조 중단/u);assert.doesNotMatch(shown,/PRIVATE_|응답이 확정되지 않았습니다/u);
+   if(mode==='typed-audit'){assert.match(shown,/문서·첨부 읽기 \[UNEXPECTED_LEGAL_AUDIT_SCHEMA_READ\]/u);assert.match(shown,/legal-documents \/ http-503/u);}
+   if(mode==='unknown-audit')assert.match(shown,/문서·첨부 읽기 \[UNEXPECTED_LEGAL_AUDIT_READ_FAILED\]/u);
+   if(mode==='preview')assert.match(shown,/확장 연결 확인 \[PRODUCT_DOCUMENT_BRIDGE\]/u);
+   if(mode==='after-audit')assert.match(shown,/대조 후 원본 확인 \[UNEXPECTED_LEGAL_AUDIT_READ_FAILED\]/u);
+   assert.equal(audits,mode==='preview'?0:1);assert.equal(h.stored.size,0);assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview']);assert.ok(h.f.calls.every(row=>row.method==='GET'));
+   for(const label of [start,prepareDraft,reviewPrepared,'현재 문서 동의 확인 · 계속'])assert.equal(h.button(label),undefined);
+   assert.doesNotMatch(shown,/원래 본문\s+불일치/);assert.ok(h.button(auditOriginal));
+  }finally{h.close();}
+ }
+});
 test('audit callback expires on original input, review ABA, disabled scope and unmount',async()=>{
  for(const mode of ['input-ABA','review-ABA','disabled','unmount']){
   let calls=0;const h=await fixture(undefined,{reconnect:async(_input,f)=>{throw reconnectClosedError(f,{savedDraftTargetClosed:false});}});try{

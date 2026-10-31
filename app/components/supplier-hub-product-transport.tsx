@@ -3,7 +3,7 @@ import {useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
 import type {SupplierHubProductDocumentReview} from '@/app/supplier-hub-product-document';
 import {createProductDocumentPacket,PRODUCT_DOCUMENT_REQUEST_TTL} from '../../extensions/supplier-hub/product-document.mjs';
 import {sourceReadError} from '../../extensions/supplier-hub/product-document-source.mjs';
-import {previewProductDocument,auditUnexpectedLegal,runProductDocument,runProductDocumentDraft,runPreparedProductDocument,preparedReceiptObservation,readNativeReceiptHistory,saveProductReceiptObservation,
+import {previewProductDocument,auditUnexpectedLegal,unexpectedLegalAuditReadError,runProductDocument,runProductDocumentDraft,runPreparedProductDocument,preparedReceiptObservation,readNativeReceiptHistory,saveProductReceiptObservation,
   type UnexpectedLegalAuditReport,
   type ProductDocumentSession,type ProductDocumentState,type ProductDraftAction,type PreparedDocumentAction,type ProductValidationRejection,ProductDocumentBridgeError} from '@/app/supplier-hub-product-client';
 import {singleConsentConfirmation,verifySingleDocumentObservation,type SingleDocumentAction} from '@/app/supplier-hub-single-client';
@@ -22,6 +22,7 @@ type Props={review:SupplierHubProductDocumentReview;disabled:boolean;refresh:(si
 const stageLabels={productPage:'상품 정보',imagePage:'이미지',logisticsPage:'최종 제출'};
 const auditPathLabels:Record<string,string>={'document-header':'문서 기본정보','member-shape':'옵션 구성',startPage:'시작 정보',productPage:'상품 정보',imagePage:'이미지 연결',logisticsPage:'물류 정보',sourcingPage:'소싱 정보',legalPage:'법적 서류 정보','legalPage.other':'기타 서류 정보','legalPage.certificates':'인증 항목','legalPage.certificates.name':'인증 항목명','legalPage.certificates.value':'인증 값','legalPage.certificates.row-shape':'인증 항목 구성','legalPage.certificates.order':'인증 항목 순서'};
 const auditValueLabels={missing:'항목 없음',empty:'빈 값',na:'해당사항없음',present:'값 있음','not-applicable':'—'};
+const auditPhaseLabels={source:'원본 자료 확인',packet:'원래 요청 확인',preview:'확장 연결 확인','before-audit':'대조 전 원본 확인',audit:'문서·첨부 읽기','after-audit':'대조 후 원본 확인',report:'결과 연결 확인'};
 // Sample the envelope clock only from an explicit event operation.
 const draftOperationTime=()=>Date.now();
 function completedPreviewSourceReadFailure(cause:unknown):cause is ProductDocumentBridgeError{
@@ -228,18 +229,19 @@ export function SupplierHubProductTransport(props:Props){
     const freshAudit=async()=>{await fresh(task);if(!active())throw Error('원래 문서 읽기 범위가 변경되었습니다.');
       if(readProductDocumentPending(review)!==null)throw Error('이 상품의 전송 요청이 이미 보관되어 있습니다. 원래 요청의 조회를 이용해주세요.');
       assertProductDocumentNotRejected(review);};
+    let auditPhase:keyof typeof auditPhaseLabels='source';
     try{
-      await freshAudit();const now=draftOperationTime(),packet=await createProductDocumentPacket(review,{requestId,createdAt:now,now});
-      await freshAudit();const preview=await previewProductDocument(packet,task.controller.signal);
-      await freshAudit();
+      await freshAudit();auditPhase='packet';const now=draftOperationTime(),packet=await createProductDocumentPacket(review,{requestId,createdAt:now,now});
+      await freshAudit();auditPhase='preview';const preview=await previewProductDocument(packet,task.controller.signal);
+      auditPhase='before-audit';await freshAudit();
       if(preview.packet.requestId!==requestId||productReceiptCanonical(preview.packet.review)!==productReceiptCanonical(review))throw Error('원래 견적의 읽기 연결이 다릅니다.');
-      const report=await auditUnexpectedLegal(preview,task.controller.signal);await freshAudit();
+      auditPhase='audit';const report=await auditUnexpectedLegal(preview,task.controller.signal);auditPhase='after-audit';await freshAudit();auditPhase='report';
       if(report.requestId!==requestId||String(report.docId)!==docId||report.identityDigest!==preview.preview.identityDigest||report.packetDigest!==preview.packetDigest)
         throw Error('현재 문서의 읽기 결과가 원래 요청과 다릅니다.');
       // A complete audit is still an observation. It cannot adopt a session,
       // claim the web reservation, delete files or enable registration.
       setOriginalAuditReport({context,report});
-    }catch(cause){if(active())setError(cause instanceof Error?cause.message:'원래 문서의 저장 내용 대조에 실패했습니다.');}
+    }catch(cause){if(active()){const failure=unexpectedLegalAuditReadError(cause);setError(`읽기 전용 대조 중단 · ${auditPhaseLabels[auditPhase]} [${failure.code}] ${failure.message}`);}}
     finally{task.finish();}
   }
   async function persist(attempt:NonNullable<typeof unsaved>,task:ReturnType<typeof begin>){
@@ -544,7 +546,7 @@ export function SupplierHubProductTransport(props:Props){
     </details>}
     {session&&<p>회사 {review.identity.company.name} · 포함 옵션 {session.packet.review.members.length}개 · 견적 문서 1개 · 전체 본문 대조 완료</p>}
     {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&!intent&&!state?.preparedLifecycle&&<p role="status">전체 문서의 실제 접수 연결을 검수 중입니다. 현재 상품은 전송하지 않았습니다.</p>}
-    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.68.zip" download>통합 확장 2.1.68 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
+    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.70.zip" download>통합 확장 2.1.70 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
     {session?.preview.draftPreparationAvailable===true&&!state?.preparedLifecycle&&<section aria-label="새 견적 초안 준비">
       <p>{intent?'원래 요청과 문서의 파일·본문 저장 및 단계 검증 결과를 확인합니다.':'로그인한 Supplier Hub에 새 견적 초안 한 개를 만들고 저장한 이미지·본문과 단계 검증을 확인합니다.'} 약관 동의와 최종 제출은 진행하지 않습니다.</p>
       {currentDraftHint&&<p role="status">원래 문서 {String(currentDraftHint.docId)} · {currentDraftHint.state==='update-requested'?'파일·본문 저장 결과 미확인':currentDraftHint.state==='validation-requested'?'단계 검증 결과 미확인':'초안 상태 확인 필요'} · 같은 요청 유지</p>}
