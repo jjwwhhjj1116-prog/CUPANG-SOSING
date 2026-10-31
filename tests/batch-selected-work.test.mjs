@@ -216,6 +216,41 @@ test('account or company change prevents provider and mutation calls',async()=>{
  const result=await p.run(['pricing','quotation']);assert.equal(result.stages[0].status,'failed');
  assert.equal(p.calls.some(call=>call.method==='POST'),false);
 });
+for(const failure of ['company-change','account-read-error'])test(`an image preparation ${failure} before dispatch permits a later explicit same-scope action`,async()=>{
+ const h=fixture();let accountReads=0;
+ h.intercept(call=>{
+  if(call.url==='/api/supplier-hub/catalog-context'&&++accountReads===3){
+   if(failure==='company-change')h.company({code:'A01464742',name:'와이홉'});
+   else return Response.json({error:'temporary account read failure'},{status:503});
+  }
+ });
+ const first=await h.run(['mainImage']);assert.equal(first.stages[0].status,'failed');
+ assert.equal(h.calls.filter(call=>call.url?.endsWith('/work-draft')).length,0);
+ assert.equal(h.calls.filter(call=>call.adapter==='image').length,0);
+ assert.equal(h.keys.has('owner:product:pending:mainImage'),false,'a preflight rejection cannot reserve an unsent preparation');
+ h.company({code:'A01526306',name:'유앤채'});
+ const second=await h.run(['mainImage']);assert.equal(second.stages[0].status,'draft');
+ assert.equal(h.calls.filter(call=>call.url?.endsWith('/work-draft')).length,1);
+ assert.equal(h.calls.filter(call=>call.adapter==='image').length,1);
+});
+for(const failure of ['lost-ack','changed-company-after-dispatch','invalid-ack'])test(`a dispatched image preparation with ${failure} stays fenced on explicit retry`,async()=>{
+ const h=fixture();
+ h.intercept(call=>{
+  if(call.url?.endsWith('/work-draft')){
+   if(failure==='lost-ack')throw Error('lost committed preparation response');
+   if(failure==='changed-company-after-dispatch')h.company({code:'A01464742',name:'와이홉'});
+   else return Response.json({productId:'other',productVersion:version});
+  }
+ });
+ const first=await h.run(['mainImage','additionalImages']);assert.equal(first.stages[0].status,'failed');
+ assert.equal(h.calls.filter(call=>call.url?.endsWith('/work-draft')).length,1);
+ assert.equal(h.calls.filter(call=>call.adapter==='image').length,0);
+ assert.equal(h.keys.has('owner:product:pending:mainImage'),true);
+ h.company({code:'A01526306',name:'유앤채'});
+ const second=await h.run(['mainImage']);assert.equal(second.stages[0].status,'blocked');
+ assert.equal(h.calls.filter(call=>call.url?.endsWith('/work-draft')).length,1,'an uncertain committed preparation is never resent');
+ assert.equal(h.calls.filter(call=>call.adapter==='image').length,0);
+});
 test('abort after product read cannot start a provider or mutation',async()=>{
  const h=fixture();h.intercept(call=>{if(call.url.endsWith('/stage-two-pricing'))h.controller.abort();});
  assert.equal(await h.run(['pricing']),null);assert.equal(h.calls.some(call=>call.method==='POST'),false);

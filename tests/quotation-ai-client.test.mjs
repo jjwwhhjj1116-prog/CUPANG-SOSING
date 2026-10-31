@@ -120,3 +120,62 @@ test('physical quantity proposal copies an exact saved unit only to an unedited 
  x.state.knownChanges[0].value='2쌍';assert.throws(()=>client.quotationSavedSourceChanges(x.state,x.view,x.f.product.id,null,true));
  x.state.knownChanges[0].value='1쌍';x.field.type='number';assert.throws(()=>client.quotationSavedSourceChanges(x.state,x.view,x.f.product.id,null,true));
 });
+
+async function stageSixSourceFixture(company=companies[0]){
+ const x=await fixture(company),field=x.view.resolved.schema.fields.find(field=>field.label==='소재'&&field.section==='legal');assert.ok(field);
+ const optionId=x.f.options.rows[0].id,labels={schemaVersion:1,productId:x.f.product.id,revision:1,updatedAt:x.f.product.updated_at,
+  overrides:{common:{},options:{[optionId]:{material:'면'}}}};
+ const propose=()=>providedOptionModule('app/quotation-known-notice-proposals.ts').quotationKnownNoticeProposals(x.f.product.id,x.view,x.f.content,x.f.scope,x.f.options,labels);
+ x.state.knownChanges=propose();return {...x,field,optionId,labels,propose};
+}
+for(const company of companies)test(company.name+': saved stage-six option material supersedes only its unchanged automatic quotation source',async()=>{
+ const x=await stageSixSourceFixture(company),before=JSON.stringify([x.f.content,x.f.options,x.labels,x.view]);
+ const stageSix=providedOptionModule('app/product-label.ts').resolveProductLabels({productId:x.f.product.id,state:x.labels,content:x.f.content,options:x.f.options,quotation:x.view,settings:x.f.saved.settings});
+ assert.equal(stageSix.find(row=>row.optionId===x.optionId).values.material,'면');
+ assert.equal(x.view.resolved.rows.find(row=>row.optionId===x.optionId).fields[x.field.id].value,'실리콘');
+ const proposal=x.state.knownChanges.find(change=>change.fieldKey===x.field.id);assert.deepEqual(JSON.parse(JSON.stringify(proposal)),{optionId:x.optionId,fieldKey:x.field.id,value:'면',savedLabel:{revision:1,previousValue:'실리콘'}});
+ const changes=client.quotationReviewedProposalChanges(x.state,x.view,x.f.product.id,null,null,true);
+ assert.deepEqual(JSON.parse(JSON.stringify(changes)),[{optionId:x.optionId,fieldKey:x.field.id,value:'면'}],'source proof never enters the ordinary quotation save payload');
+ const checked=schema.validateQuotationChanges(changes,{schema:x.view.resolved.schema,optionIds:x.f.options.rows.map(row=>row.id),overrides:x.view.overrides});
+ const overrides=schema.applyQuotationChanges(x.view.overrides,checked),resolved=schema.resolveQuotationFields({...x.f.saved,categoryId:x.f.snapshot.categoryId,categoryPath:x.f.snapshot.categoryPath,hubSchema:x.f.snapshot,overrides});
+ assert.equal(resolved.rows.find(row=>row.optionId===x.optionId).fields[x.field.id].value,'면');
+ assert.equal(resolved.rows.find(row=>row.optionId!==x.optionId).fields[x.field.id].value,'실리콘');
+ assert.equal(JSON.stringify([x.f.content,x.f.options,x.labels,x.view]),before,'review and proposal reads never alter their sources');
+});
+test('saved stage-six source proof rejects changed automatic cells, manual quotation blanks and malformed authority',async()=>{
+ for(const mutate of [
+  x=>{x.view.resolved.rows.find(row=>row.optionId===x.optionId).fields[x.field.id].value='변경된 자동 소재';},
+  x=>{x.view.resolved.rows.find(row=>row.optionId===x.optionId).fields[x.field.id].source='manual-option';},
+  x=>{x.view.overrides.common[x.field.id]='';},
+  x=>{x.view.overrides.options[x.optionId]={[x.field.id]:''};},
+  x=>{x.state.knownChanges[0].savedLabel.previousValue='다른 원본';},
+  x=>{x.state.knownChanges[0].savedLabel.revision=0;},
+  x=>{x.state.knownChanges[0].savedLabel.extra='unexpected';},
+  x=>{delete x.state.knownChanges[0].savedLabel;},
+  x=>{x.field.hubWire.path=['legalPage','certificates'];},
+  x=>{x.view.categoryContext.categoryId='other';},
+  x=>{x.view.categoryContext.categoryPath=['다른 카테고리'];},
+  x=>{x.view.contentRevision++;},
+  x=>{x.view.resolved.rows.find(row=>row.optionId===x.optionId).included=false;},
+ ]){
+  const x=await stageSixSourceFixture();mutate(x);assert.throws(()=>client.quotationSavedSourceChanges(x.state,x.view,x.f.product.id,null,true));
+ }
+});
+test('stage-six automatic-source replacement requires an explicit active saved label and exact verified lower content',async()=>{
+ for(const mutate of [
+  x=>{x.labels.overrides.options={};},
+  x=>{x.labels.revision=0;},
+  x=>{x.labels.overrides.options[x.optionId].material='';},
+  x=>{x.labels.overrides.options[x.optionId].material='해당사항없음';},
+  x=>{x.labels.structure=providedOptionModule('app/product-label.ts').productLabelStructure().filter(field=>field.id!=='material');},
+  x=>{x.f.content.label.material.provenance='generated';},
+  x=>{x.f.content.label.material.value='다른 하위 원문';},
+  x=>{x.view.overrides.common[x.field.id]='';},
+  x=>{x.view.resolved.rows.find(row=>row.optionId===x.optionId).included=false;x.f.options.rows[0].included=false;},
+ ]){
+  const x=await stageSixSourceFixture();mutate(x);assert.ok(x.propose().every(change=>change.optionId!==x.optionId||change.fieldKey!==x.field.id));
+ }
+ const x=await stageSixSourceFixture();x.labels.overrides={common:{material:'면'},options:{[x.optionId]:{material:''}}};
+ const proposals=x.propose();assert.ok(proposals.every(change=>change.optionId!==x.optionId||change.fieldKey!==x.field.id));
+ assert.ok(proposals.some(change=>change.optionId!==x.optionId&&change.fieldKey===x.field.id&&change.value==='면'));
+});

@@ -49,3 +49,36 @@ test('recalculation intent cannot hide invalid current option costs, inconsisten
   h.sqlite.prepare('UPDATE product_price_policy SET payload=? WHERE product_id=?').run(JSON.stringify({...JSON.parse(savedPolicy),exchangeRate:999}),product.id);assert.equal(await read(),'pending','policy must agree with the saved product totals');
  }finally{h.close();}
 });
+
+for(const company of companies)test(company.companyCode+': stage-two completion follows the final quotation price relationship without rewriting it',async()=>{
+ const h=mobileIntakeHarness(company);
+ try{
+  const category=h.load('app/quotation-schema.ts').getQuotationSchema('81452');
+  assert.equal(category.salePriceMustCoverSupply,true);
+  Object.assign(h.context.category,{categoryId:category.categoryId,categoryPath:category.categoryPath});
+  h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(h.context),'job');
+  await h.intake();
+  const product=h.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id;
+  const initial=await json(await h.route(base+'/stage-two-pricing'));
+  const policy=h.load('app/pricing.ts').pricePolicy({...initial.options.pricing.policy,recalculationMode:'couplus-stage-two-v1'});
+  const saved=await json(await h.route(base+'/stage-two-pricing',{method:'POST',body:{expectedProductVersion:initial.product.updated_at,expectedOptionRevision:initial.options.options.revision,expectedQuotationRevision:initial.quotation.revision,expectedInputFingerprint:initial.quotation.inputFingerprint,policy,rows:h.load('app/product-options.ts').optionInputs(initial.options.options),changes:[],recalculate:true}}));
+  const read=async()=>{const result=await json(await h.load('app/api/products/route.ts').GET());return result.products.find(row=>row.id===product.id);};
+  assert.equal((await read()).content_summary.stages.pricing.state,'complete');
+  for(const [sale,expected] of [['5000','pending'],['6000','complete'],['7000','complete']]){
+   const quote=await json(await h.route(base+'/quotation-fields'));
+   const optionId=quote.resolved.rows.find(row=>row.optionId).optionId;
+   const targets=h.load('app/quotation-price-targets.ts').quotationPriceTargets(quote.resolved.schema.fields);
+   const changes=[...targets.supplyPrice.linked.map(fieldKey=>({fieldKey,optionId,value:'6000'})),...targets.salePrice.linked.map(fieldKey=>({fieldKey,optionId,value:sale}))];
+   await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:quote.revision,expectedInputFingerprint:quote.inputFingerprint,changes}}));
+   const before=JSON.stringify(['products','product_options','product_quotation_fields','product_price_policy'].map(table=>h.sqlite.prepare('SELECT * FROM '+table).all()));
+   assert.equal((await read()).content_summary.stages.pricing.state,expected,'board must agree with final prices '+sale);
+   assert.equal((await json(await h.route(base+'/content'))).registrationStages.pricing.state,expected,'detail must agree with final prices '+sale);
+   assert.equal(JSON.stringify(['products','product_options','product_quotation_fields','product_price_policy'].map(table=>h.sqlite.prepare('SELECT * FROM '+table).all())),before,'status reads must preserve manual prices and source');
+   if(sale==='5000'){
+    const current=await h.load('db/queries.ts').findProduct('owner',product.id);
+    const state=await h.load('db/quotation-fields.ts').readQuotationFields('owner',product.id);
+    assert.equal(h.load('app/registration-pricing-status.ts').savedRecalculatedRegistrationPricing(current,saved.options.options,state,{...quote.resolved.schema,salePriceMustCoverSupply:false}),true,'do not impose a relation absent from this schema');
+   }
+  }
+ }finally{h.close();}
+});

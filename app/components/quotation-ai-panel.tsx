@@ -93,7 +93,7 @@ function QuotationAiPanelContent({ productId, profileId, view, optionId, disable
     {canClose && <div><label><input type="checkbox" checked={endConfirmed} disabled={busy||disabled} onChange={event=>setEndConfirmed(event.target.checked)}/> 이전 실행의 결과를 사용할 수 없음을 확인하고 종료합니다.</label><button type="button" className="btn ghost" disabled={busy||disabled||!endConfirmed} onClick={()=>void closeUncertain()}>불확실한 이전 실행 종료</button></div>}
     {error && <p role="alert">{error}</p>}{invalid && <p role="alert">{invalid}</p>}
     {(job?.status === 'completed' || proposals.length > 0) && <><p>검토 제안 {proposals.length}개 · 저장 정보와 AI 초안을 확인하고 입력란에 적용하세요.</p>
-      {state?.knownChanges?.length ? <p>‘저장 정보’는 표시사항·옵션에 직접 저장하거나 수집한 값을 그대로 복사합니다. 초기 ‘해당사항없음’과 구성 수량이 일치하는 단위 없는 수량을 채우며 직접 입력한 값·공란은 유지합니다.</p> : null}
+      {state?.knownChanges?.length ? <p>‘저장 정보’는 표시사항·옵션의 저장값을 적용합니다. 초기 ‘해당사항없음’과 수량 단위를 채우며, 6단계 수정은 견적서의 이전 자동값이 그대로일 때 반영합니다. 견적서에서 직접 입력한 값·공란은 유지합니다.</p> : null}
       {job?.result?.warnings.length ? <ul>{job.result.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul> : null}
       <div className="quotation-fields-bulk-table"><table><thead><tr><th>옵션 · 항목</th><th>현재 값</th><th>적용 제안</th><th>출처</th></tr></thead><tbody>{proposals.map(change => {
         const row = view.resolved.rows.find(item => item.optionId === change.optionId), field = view.resolved.schema.fields.find(item => item.id === change.fieldKey);

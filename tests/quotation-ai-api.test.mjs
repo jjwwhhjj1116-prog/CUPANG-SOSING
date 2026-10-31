@@ -34,6 +34,37 @@ test('actual separate stage-six label storage is used over generated/empty conte
   unchanged(f,original);assert.equal(f.provider.calls.length,0);
  }finally{f.close();}
 });
+for(const stale of [false,true])test(`actual stage-six GET source proof reaches a plain CAS quotation save and rejects stale label clocks (${stale?'stale':'current'})`,async()=>{
+ const f=await quotationAiApiFixture();try{
+  const contentStore=f.h.load('db/product-content.ts'),before=await contentStore.readProductContent('owner',f.id);
+  const content=f.h.load('app/product-content.ts').applyContentPatch(before,{label:{material:'실리콘'}},new Date().toISOString());
+  content.label.material.provenance='collected';delete content.initialLegalNotices;
+  assert.ok(await contentStore.saveProductContent('owner',content,before.revision));
+  const labels=f.h.load('db/product-labels.ts'),source=()=>f.h.load('app/exports/quotation-source.ts').readMappedQuotationSource('owner',f.id,f.profile.id);
+  let saved=await source(),previous=await labels.readProductLabels('owner',f.id);
+  assert.ok(await labels.saveProductLabels('owner',f.id,{common:{},options:{'synthetic-one':{material:'면'}}},previous.revision,{...saved.source,quotationRevision:saved.state.revision}));
+  const original=f.state(),out=await view(f),quote=await json(await f.h.route(f.base+'/quotation-fields'+f.query));
+  const field=quote.resolved.schema.fields.find(field=>field.label==='소재'&&field.section==='legal');assert.ok(field);
+  const proposal=out.knownChanges.find(change=>change.fieldKey===field.id);assert.deepEqual(proposal,{optionId:'synthetic-one',fieldKey:field.id,value:'면',savedLabel:{revision:previous.revision+1,previousValue:'실리콘'}});
+  assert.equal(quote.resolved.rows.find(row=>row.optionId==='synthetic-one').fields[field.id].value,'실리콘');unchanged(f,original);
+  const changes=f.h.load('app/quotation-ai-client.ts').quotationSavedSourceChanges(out,quote,f.id,null,true);
+  assert.deepEqual(plain(changes),[{optionId:'synthetic-one',fieldKey:field.id,value:'면'}]);
+  const body={expectedRevision:quote.revision,expectedInputFingerprint:quote.inputFingerprint,changes};
+  await json(await f.h.route(f.base+'/quotation-fields'+f.query,{method:'PUT',body:{...body,changes:out.knownChanges}}),400);
+  unchanged(f,original);
+  if(stale){
+   saved=await source();previous=await labels.readProductLabels('owner',f.id);
+   assert.ok(await labels.saveProductLabels('owner',f.id,{common:{},options:{'synthetic-one':{material:'다른 저장 소재'}}},previous.revision,{...saved.source,quotationRevision:saved.state.revision}));
+   const changed=f.state();await json(await f.h.route(f.base+'/quotation-fields'+f.query,{method:'PUT',body}),409);unchanged(f,changed);
+  }else{
+   const applied=await json(await f.h.route(f.base+'/quotation-fields'+f.query,{method:'PUT',body}));
+   assert.equal(applied.resolved.rows.find(row=>row.optionId==='synthetic-one').fields[field.id].value,'면');
+   assert.equal((await contentStore.readProductContent('owner',f.id)).label.material.value,'실리콘');
+   const changed=f.state();await json(await f.h.route(f.base+'/quotation-fields'+f.query,{method:'PUT',body}),409);unchanged(f,changed);
+  }
+  assert.equal(f.provider.calls.length,0);assert.equal(f.jobs().length,0);
+ }finally{f.close();}
+});
 test('default editor without profileId uses the captured category profile for one AI request', async () => {
   const f = await quotationAiApiFixture(); try {
     const offer = '700000000794', url = `https://detail.1688.com/offer/${offer}.html`;

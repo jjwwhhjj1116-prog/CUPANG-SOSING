@@ -6,6 +6,11 @@ import { productLabelFields, validateProductLabelOverrides, validateProductLabel
 
 type Scope = { optionId: string | null; applyToAllOptions: boolean };
 type View = Pick<QuotationFieldsView, 'contentRevision' | 'optionRevision' | 'categoryContext' | 'overrides' | 'resolved'>;
+export type QuotationSavedNoticeChange = QuotationChange & {
+  /** A saved stage-six edit may supersede this exact untouched content value.
+   * This is source-copy authority, never an AI permission or a save command. */
+  savedLabel?: { revision: number; previousValue: string };
+};
 const invalid = () => Error('저장된 표시사항과 현재 견적서의 상품·카테고리·옵션 범위를 다시 확인해주세요.');
 const safeId = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_-]{1,100}$/u.test(value);
 function knownText(field: ContentField<string> | undefined): string | undefined {
@@ -48,10 +53,11 @@ export function quotationKnownNoticeTarget(field: QuotationField, extended = fal
 }
 
 /** Explicit quotation work may copy known saved label sources into untouched
- * initial placeholders. The explicit editor may also supply revision-matched
- * options to copy verified label/option facts. No read-time defaults, AI
+ * initial placeholders, or a saved label edit over its exact earlier content
+ * source. The editor may also supply revision-matched options to copy verified
+ * label/option facts. No read-time defaults, AI
  * permissions or saved manual quotation layers (including blanks) are changed. */
-export function quotationKnownNoticeProposals(productId: string, view: View, content: ProductContent, scope: Scope, savedOptions?: ProductOptions, savedLabels?: ProductLabelsState): QuotationChange[] {
+export function quotationKnownNoticeProposals(productId: string, view: View, content: ProductContent, scope: Scope, savedOptions?: ProductOptions, savedLabels?: ProductLabelsState): QuotationSavedNoticeChange[] {
   const schema = view?.resolved?.schema, rows = view?.resolved?.rows;
   if (!safeId(productId) || content?.productId !== productId || content.schemaVersion !== 1
     || !Number.isSafeInteger(content.revision) || content.revision < 0 || content.revision !== view?.contentRevision
@@ -72,6 +78,10 @@ export function quotationKnownNoticeProposals(productId: string, view: View, con
   const labelOverrides = savedLabels && validateProductLabelOverrides(savedLabels.overrides);
   const labelKeys = new Set(productLabelFields.map(field => field.key));
   const activeLabels = savedLabels?.structure && new Set(validateProductLabelStructure(savedLabels.structure).map(field => field.id));
+  function explicitLabel(key: keyof ProductContent['label'], optionId: string | null) {
+    if (!labelOverrides || !labelKeys.has(key as typeof productLabelFields[number]['key']) || activeLabels && !activeLabels.has(key as ProductLabelKey)) return false;
+    return optionId !== null && Object.hasOwn(labelOverrides.options[optionId] ?? {}, key) || Object.hasOwn(labelOverrides.common, key);
+  }
   function labelValue(key: keyof ProductContent['label'], optionId: string | null) {
     if (labelOverrides && labelKeys.has(key as typeof productLabelFields[number]['key'])) {
       if (activeLabels && !activeLabels.has(key as ProductLabelKey)) return;
@@ -88,7 +98,7 @@ export function quotationKnownNoticeProposals(productId: string, view: View, con
     || scope.applyToAllOptions && scope.optionId !== null && !selected.some(row => row.optionId === scope.optionId)) throw invalid();
   const fields = schema.fields.filter(field => quotationKnownNoticeTarget(field, Boolean(savedOptions)));
   if (new Set(fields.map(field => field.label)).size !== fields.length) throw invalid();
-  const changes: QuotationChange[] = [];
+  const changes: QuotationSavedNoticeChange[] = [];
   for (const row of selected) for (const field of fields) {
     const source = quotationKnownNoticeTarget(field, Boolean(savedOptions))!, option = savedOptions?.rows.find(item => item.id === row.optionId);
     const manufacturer = labelValue('manufacturer', row.optionId), importer = labelValue('importer', row.optionId);
@@ -112,12 +122,25 @@ export function quotationKnownNoticeProposals(productId: string, view: View, con
         ? savedQuantity(quantityComposition, option.unitsPerPack) : undefined : values[source];
     const cell = row.fields[field.id];
     const optionOverrides = row.optionId === null ? undefined : view.overrides.options[row.optionId];
+    // Legacy quotations can still resolve an old content value instead of an
+    // initial N/A notice. Only an explicit active stage-six override can replace
+    // that value, and only while it exactly matches the independently saved
+    // content source. An unverified/generated fallback grants no authority.
+    const labelSources = source === 'manufacturer' ? ['manufacturer', 'importer'] as const
+      : source === 'quantity' || source === 'color' ? [] : [source];
+    const baseline = source === 'manufacturer'
+      ? [knownText(content.label.manufacturer) && `제조자: ${knownText(content.label.manufacturer)}`, knownText(content.label.importer) && `수입자: ${knownText(content.label.importer)}`].filter(Boolean).join(' / ')
+      : source === 'quantity' || source === 'color' ? undefined : knownText(content.label[source]);
+    const savedLabel = savedLabels && savedLabels.revision > 0 && cell?.source === 'content' && value !== cell.value
+      && baseline !== undefined && baseline !== '' && cell.value === baseline
+      && labelSources.some(key => explicitLabel(key, row.optionId) && labelValue(key, row.optionId) !== knownText(content.label[key]))
+      ? { revision: savedLabels.revision, previousValue: baseline } : undefined;
     const replaceable = cell && (source === 'quantity' ? cell.source === 'option' && cell.value === String(option?.unitsPerPack)
-      : cell.source === 'couplus-default' && isCouplusNotApplicableValue(cell.value));
+      : cell.source === 'couplus-default' && isCouplusNotApplicableValue(cell.value) || Boolean(savedLabel));
     if (!value || !replaceable
       || Object.hasOwn(view.overrides.common, field.id) || optionOverrides && Object.hasOwn(optionOverrides, field.id)
       || quotationValueIssues(field, value).length) continue;
-    changes.push({ optionId: row.optionId, fieldKey: field.id, value });
+    changes.push({ optionId: row.optionId, fieldKey: field.id, value, ...(savedLabel ? { savedLabel } : {}) });
   }
   return changes;
 }

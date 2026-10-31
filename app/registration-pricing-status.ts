@@ -1,7 +1,7 @@
 import {calculatePrice,pricePolicy} from '@/app/pricing';
 import {calculateOptionPrices,type ProductOptions} from '@/app/product-options';
 import {quotationPriceTargets} from '@/app/quotation-price-targets';
-import {quotationScalarValueIssues} from '@/app/quotation-scalar-constraints';
+import {quotationNumericValue,quotationScalarValueIssues} from '@/app/quotation-scalar-constraints';
 import {scopedQuotationOverrides} from '@/app/quotation-scopes';
 import type {QuotationSchema} from '@/app/quotation-schema';
 import type {QuotationFieldsState} from '@/db/quotation-fields';
@@ -36,12 +36,21 @@ export function savedRecalculatedRegistrationPricing(product:RegistrationPricing
   const targets=quotationPriceTargets(schema.fields),overrides=scopedQuotationOverrides(state,schema.categoryId);
   for(const row of calculated){
    const own=Object.hasOwn(overrides.options,row.optionId)?overrides.options[row.optionId]:undefined;
+   const effective={supplyPrice:0,salePrice:0};
    for(const input of ['supplyPrice','salePrice','msrp'] as const){
     const target=targets[input],fallback=String(row.calculation![input]);
     const values=target.linked.map(id=>({field:schema.fields.find(field=>field.id===id),value:own&&Object.hasOwn(own,id)?own[id]:Object.hasOwn(overrides.common,id)?overrides.common[id]:fallback}));
     if(values.some(({field,value})=>!field||typeof value!=='string'||!/^\d+(?:\.\d+)?$/.test(value.trim())||!Number.isFinite(Number(value))
       ||(input==='msrp'?Number(value)<0:Number(value)<=0)||quotationScalarValueIssues(field,value).length)||values.some(({value})=>value!==values[0].value))return false;
+    if(input!=='msrp'&&schema.salePriceMustCoverSupply){
+     const primary=values.find(({field})=>field?.id===target.primary);
+     if(!primary?.field||typeof primary.value!=='string')return false;
+     const numeric=quotationNumericValue(primary.field,primary.value);
+     if(numeric===undefined)return false;
+     effective[input]=numeric;
+    }
    }
+   if(schema.salePriceMustCoverSupply&&effective.salePrice<effective.supplyPrice)return false;
   }
   if(policy.recalculationMode==='couplus-stage-two-v1')return true;
   const review=state.stageTwoPricingReviews?.[schema.categoryId?quotationScope(schema.categoryId):'common'];

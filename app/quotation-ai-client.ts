@@ -1,5 +1,5 @@
 import { quotationValueIssues, type QuotationFieldsView } from '@/app/quotation-schema';
-import { quotationKnownNoticeTarget, quotationSavedQuantityText } from '@/app/quotation-known-notice-proposals';
+import { quotationKnownNoticeTarget, quotationSavedQuantityText, type QuotationSavedNoticeChange } from '@/app/quotation-known-notice-proposals';
 import { isCouplusNotApplicableValue } from '@/app/couplus-quotation-defaults';
 import {quotationTextModel,validQuotationTextExecution,type QuotationTextExecution} from '@/app/quotation-text-execution';
 
@@ -12,7 +12,7 @@ export type QuotationAiJobView = { id: string; status: 'prepared' | 'running' | 
   error: { code: string; message: string; uncertain: boolean } | null };
 export type QuotationAiView = { configuration: { configured: boolean; provider: string; model: string; freeOnly: boolean; notice: string };
   fingerprint: string; productId: string; productVersion: string; contentRevision: number; optionRevision: number;
-  quotationRevision: number; profileId: string | null; jobs: QuotationAiJobView[]; knownChanges?: QuotationAiProposal[] };
+  quotationRevision: number; profileId: string | null; jobs: QuotationAiJobView[]; knownChanges?: (QuotationAiProposal & Pick<QuotationSavedNoticeChange, 'savedLabel'>)[] };
 /** These are deterministic copies from saved manual/collected sources, returned
  * separately from model output. AI's sensitive-field allowlist remains closed. */
 export function quotationSavedSourceChanges(state: QuotationAiView, view: QuotationFieldsView, productId: string, optionId: string | null, all: boolean): QuotationAiProposal[] {
@@ -24,15 +24,27 @@ export function quotationSavedSourceChanges(state: QuotationAiView, view: Quotat
     const field = view.resolved.schema.fields.find(item => item.id === change?.fieldKey), row = view.resolved.rows.find(item => item.optionId === change?.optionId);
     const cell = field && row?.fields[field.id], key = JSON.stringify([change?.optionId, change?.fieldKey]);
     const target = field && quotationKnownNoticeTarget(field, true);
+    const savedLabel = change?.savedLabel;
+    const savedLabelMatches = savedLabel !== null && typeof savedLabel === 'object' && !Array.isArray(savedLabel)
+      && Object.keys(savedLabel).length === 2 && Object.hasOwn(savedLabel, 'revision') && Object.hasOwn(savedLabel, 'previousValue')
+      && Number.isSafeInteger(savedLabel.revision) && savedLabel.revision > 0 && typeof savedLabel.previousValue === 'string'
+      && savedLabel.previousValue.trim() !== '' && !isCouplusNotApplicableValue(savedLabel.previousValue)
+      && view.resolved.schema.status === 'observed' && Boolean(view.resolved.schema.categoryId)
+      && view.resolved.schema.categoryId === view.categoryContext.categoryId
+      && JSON.stringify(view.resolved.schema.categoryPath) === JSON.stringify(view.categoryContext.categoryPath)
+      && target !== 'quantity' && target !== 'color' && cell?.source === 'content' && cell.value === savedLabel.previousValue && change.value !== cell.value;
+    if (Object.hasOwn(change ?? {}, 'savedLabel') && !savedLabelMatches) throw Error('저장 표시사항의 이전 자동값을 다시 확인해주세요.');
     const replaceable = cell && (target === 'quantity' ? cell.source === 'option' && /^\d+$/u.test(cell.value)
       && typeof change?.value === 'string' && quotationSavedQuantityText(change.value, Number(cell.value))
-      : cell.source === 'couplus-default' && isCouplusNotApplicableValue(cell.value));
+      : cell.source === 'couplus-default' && isCouplusNotApplicableValue(cell.value) || savedLabelMatches);
     if (!field || !target || !row?.included || !replaceable || typeof change.value !== 'string' || !change.value.trim() || isCouplusNotApplicableValue(change.value)
       || Object.hasOwn(view.overrides.common, field.id) || row.optionId !== null && Object.hasOwn(view.overrides.options[row.optionId] ?? {}, field.id)
       || seen.has(key) || quotationValueIssues(field, change.value).length) throw Error('저장 정보의 카테고리·옵션·수동 입력을 다시 확인해주세요.');
     seen.add(key);
   }
-  return changes.filter(change => all || change.optionId === optionId).map(change => ({ ...change }));
+  // The prior-value proof is for review only. Ordinary quotation saves receive
+  // the same three-field changes as before, under their existing CAS guards.
+  return changes.filter(change => all || change.optionId === optionId).map(change => ({ optionId: change.optionId, fieldKey: change.fieldKey, value: change.value }));
 }
 export function quotationReviewedProposalChanges(state: QuotationAiView, view: QuotationFieldsView, productId: string, job: QuotationAiJobView | null, optionId: string | null, all: boolean) {
   const known = quotationSavedSourceChanges(state, view, productId, optionId, all);

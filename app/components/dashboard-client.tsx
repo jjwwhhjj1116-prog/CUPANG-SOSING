@@ -1019,7 +1019,8 @@ useEffect(()=>{
             <div><dt>R2 · 이미지 파일</dt><dd>{connections.files==='binding_present'?'바인딩 있음 · 읽기/쓰기 미검증':'바인딩 없음'}</dd></div>
             <div><dt>AI 번역·SEO</dt><dd>{connections.translation.configured?'서버 설정됨 · '+connections.translation.model+' · 실제 호출 별도 검증':'서버 모델·키 설정 필요'}</dd></div>
             <div><dt>이미지 문구 인식·번역</dt><dd>{connections.imageTextVision?.configured?'서버 설정됨 · '+connections.imageTextVision.model+' · 실제 호출 별도 검증':connections.imageTextVision?'이미지 문구 번역 설정 확인 필요':'서버 상태 다시 확인 필요'}</dd></div>
-            <div><dt>이미지 생성·배경 복원</dt><dd>{connections.imageProcessing.configured?'서버 설정됨 · '+connections.imageProcessing.model+' · 실제 호출 별도 검증':'별도 이미지 가공 모델·키 설정 필요'}</dd></div>
+            <div><dt>이미지 글자 지우기·배경 복원</dt><dd>브라우저 내 처리 · 별도 모델 키 불필요</dd></div>
+            <div><dt>이미지 생성</dt><dd>{connections.imageProcessing.configured?'서버 설정됨 · '+connections.imageProcessing.model+' · 실제 호출 별도 검증':'선택 기능 · 별도 이미지 생성 모델·키 설정 필요'}</dd></div>
           </dl><small>확인 시각: {new Date(connections.checkedAt).toLocaleString('ko-KR')}</small></>}
           <div className="modal-actions"><button className="btn ghost" onClick={()=>setConnectionsOpen(false)}>닫기</button><button className="btn primary" disabled={checkingConnections} onClick={()=>void checkConnections()}>다시 확인</button></div>
         </div>

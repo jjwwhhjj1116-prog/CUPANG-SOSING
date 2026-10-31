@@ -250,12 +250,22 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     if(pendingInference&&pendingInference!==stateKey)return{status:'blocked',message:'앞선 이미지 번역 응답이 확정되지 않아 추가 이미지 호출을 멈췄습니다. 표시사항·견적서 등 독립된 단계는 계속 진행합니다.'};
     const current=await product();
     let state=imageStates!.get(stateKey),expectedProductVersion:string|undefined;
-    keys.set(identity+':pending:'+id,'이미지 저장 결과 확인 필요');
+    const pendingKey=identity+':pending:'+id;
+    keys.set(pendingKey,'이미지 저장 결과 확인 필요');
     if(!state){
-      const prepared=await post<{productId:string;productVersion:string}>('/work-draft',{expectedVersion:current.updated_at,roles:[role]});
-      if(prepared.productId!==productId||!(Date.parse(prepared.productVersion)>=Date.parse(current.updated_at)))throw Error('수집 이미지 연결 결과를 확인하지 못했습니다.');
-      expectedProductVersion=prepared.productVersion;
-      state=createSelectedImageStageState(controls.expectedOwnerId,productId,role);imageStates!.set(stateKey,state);
+      const previousDispatch=onMutationDispatch;let dispatched=false;
+      onMutationDispatch=()=>{dispatched=true;previousDispatch?.();};
+      try{
+        const prepared=await post<{productId:string;productVersion:string}>('/work-draft',{expectedVersion:current.updated_at,roles:[role]});
+        if(prepared.productId!==productId||!(Date.parse(prepared.productVersion)>=Date.parse(current.updated_at)))throw Error('수집 이미지 연결 결과를 확인하지 못했습니다.');
+        expectedProductVersion=prepared.productVersion;
+        state=createSelectedImageStageState(controls.expectedOwnerId,productId,role);imageStates!.set(stateKey,state);
+      }catch(cause){
+        // A rejected account preflight never sent this preparation request.
+        // Once dispatched, a missing or invalid ACK remains fenced instead.
+        if(!dispatched)keys.delete(pendingKey);
+        throw cause;
+      }finally{onMutationDispatch=previousDispatch;}
     }
     const result=await processSelectedImageStage(productId,role,{state,ownerId:controls.expectedOwnerId,signal,fetcher,expectedProductVersion,isCurrent:()=>!signal.aborted,
       onProgress:message=>controls.onStage({id,status:'running',message})});
