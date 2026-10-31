@@ -88,6 +88,11 @@ three-option attachment summary. Screenshot:
 `outputs/step887-deployed-quotation.png`. Extension refresh to 2.1.72 was requested
 after deployment and installation; actual saved-stage execution is still pending
 that browser application at this writing. Do not call this a successful receipt.
+The deployed connection dialog was checked in a temporary tab and reported the
+running version as **2.1.71**, separately from the 2.1.72 download label. Evidence:
+`outputs/step887-running-extension.txt`. That temporary tab was closed. The
+original qa883 remains at the prepared quotation's original-request recovery
+disclosure; both Supplier Hub tabs were preserved without reload.
 
 ## Remaining work
 
