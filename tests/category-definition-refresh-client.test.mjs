@@ -55,6 +55,16 @@ test('actual definitions fork while observation time, metadata key order and rul
  assert.throws(()=>client.categoryDefinitionRequiresFork(f.source,{...f.current,company:schemaCompanies[1]}),/회사·코드·전체 경로/);
 });
 
+test('a native transport policy change forks the category definition and preserves the old product snapshot',()=>{
+ const f=fixture(),before=JSON.stringify(f.source),current={...f.source.hubSchema,draftInitialization:'couplus-required-v1',nativeSerializationPolicy:'supplier-hub-native-required-form-v1'};
+ assert.equal(client.sameCategoryHubDefinition(f.source.hubSchema,current),false);
+ assert.equal(client.categoryDefinitionRequiresFork(f.source,current),true);
+ const model=runtime().load('app/category-definition-refresh.ts');
+ assert.equal(model.sameCategoryFormDefinition(f.source.hubSchema,current),false);
+ assert.equal(model.sameCategoryFormDefinition(current,{...current,observedAt:current.observedAt+1}),true);
+ assert.equal(JSON.stringify(f.source),before);
+});
+
 for(const company of schemaCompanies)test(`verified fork ACK preserves original bytes, exact maps, constants and blank-code choices (${company.code})`,async()=>{
  const f=fixture(company),before=JSON.stringify(f),requests=[];freeze(f);
  const saved=await client.refreshCategoryDefinition(f.source,f.current,{current:null},{signal:signal(),fetcher:async(url,init)=>{requests.push({url,...init});return response(ack(f));}});

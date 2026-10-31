@@ -3,6 +3,7 @@ import { compileHubQuotationSchema, validateHubSchemaSnapshot, type HubSchemaSna
 import { SUPPLIER_HUB_COMPANIES, type SupplierHubCompany } from '@/app/supplier-hub-company';
 import { isQuotationDecimalMultiple, quotationScalarValueIssues } from '@/app/quotation-scalar-constraints';
 import { quotationPackagedWeightPeer } from '@/app/quotation-packaged-weight';
+import { NATIVE_FORM_SERIALIZATION_POLICY, projectNativeRequiredForm } from '@/app/supplier-hub-native-form-projection';
 
 export const SINGLE_PROJECTION_FORMAT = 'yoofam-supplier-hub-single-document-preview-v1';
 export const SINGLE_PROJECTION_OUTPUT_LIMIT = 6 * 1024 * 1024;
@@ -12,7 +13,8 @@ export class SingleProjectionError extends Error {
 type Node = Record<string, unknown>;
 type Primitive = string | number | boolean | null;
 export type SingleProjectionIssue = { code: string; level: 'error' | 'review'; message: string; optionId?: string | null; fieldId?: string; path?: string[] };
-export type SingleProjectionInput = { snapshot: HubSchemaSnapshot; company: SupplierHubCompany; categoryId: string; categoryPath: readonly string[]; resolved: ResolvedQuotation };
+export type SingleProjectionInput = { snapshot: HubSchemaSnapshot; company: SupplierHubCompany; categoryId: string; categoryPath: readonly string[]; resolved: ResolvedQuotation;
+  nativeSerializationPolicy?: typeof NATIVE_FORM_SERIALIZATION_POLICY };
 const object = (value: unknown): value is Node => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 const wireKey = (wire: HubWireField) => JSON.stringify([wire.path, wire.nameKey ?? null, wire.valueKey ?? null, wire.name ?? null]);
 function conflict(message: string, code: string): never { throw new SingleProjectionError(message, code); }
@@ -94,6 +96,11 @@ export async function projectSupplierHubSingleDocument(input: SingleProjectionIn
   let snapshot: HubSchemaSnapshot;
   try { snapshot = validateHubSchemaSnapshot(input.snapshot, input.categoryId, input.categoryPath); }
   catch { return conflict('선택한 카테고리의 검증된 Single 원문 양식이 필요합니다.', 'SINGLE_SCHEMA'); }
+  const capturedPolicy = snapshot.nativeSerializationPolicy;
+  if (input.nativeSerializationPolicy !== undefined && input.nativeSerializationPolicy !== NATIVE_FORM_SERIALIZATION_POLICY
+    || capturedPolicy !== undefined && input.nativeSerializationPolicy !== undefined && capturedPolicy !== input.nativeSerializationPolicy)
+    conflict('신규 등록 폼의 저장 정책과 수집한 원문 정책이 다릅니다.', 'SINGLE_NATIVE_SERIALIZATION_POLICY');
+  const nativePolicy = input.nativeSerializationPolicy ?? capturedPolicy;
   if (!SUPPLIER_HUB_COMPANIES.some(company => company.code === input.company?.code && company.name === input.company.name)
     || snapshot.company.code !== input.company.code || snapshot.company.name !== input.company.name)
     conflict('현재 회원 회사와 저장한 Single 양식 회사가 다릅니다.', 'SINGLE_COMPANY');
@@ -273,6 +280,31 @@ export async function projectSupplierHubSingleDocument(input: SingleProjectionIn
       displayCategoryCode: input.categoryId, jsonDocument, scope: meta.scope, productNoticeNumber: meta.notice, version: meta.version },
     review: { documentShapeComplete: !issues.some(item => item.level === 'error'), issues, fields, unresolvedImages,
       notice: '저장한 최종값으로 만든 내부 검토용 Single 문서입니다. 이미지 공개·동의 확인·Supplier Hub 문서 생성·등록 전송은 실행하지 않았습니다.' } };
-  if (new TextEncoder().encode(JSON.stringify(result)).length > SINGLE_PROJECTION_OUTPUT_LIMIT) throw new SingleProjectionError('Single 검토 문서가 6MB를 초과했습니다. 포함 옵션이나 저장 내용을 줄여주세요.', 'SINGLE_SIZE', 413);
-  return result;
+  // An older captured schema has no policy marker: do not even add a result
+  // field, so its existing body/packet identity remains byte-for-byte stable.
+  let output = result;
+  if (nativePolicy) {
+    let payload: typeof result.payload;
+    try { payload = projectNativeRequiredForm(raw, result.payload) as typeof result.payload; }
+    catch { return conflict('공식 등록 폼의 저장 구조를 정확히 결정할 수 없습니다. 저장한 견적값과 원문은 변경하지 않았습니다.', 'SINGLE_NATIVE_SERIALIZATION_UNCONFIRMED'); }
+    const nativeFields = result.review.fields.map(field => {
+      const index = included.findIndex(row => row.optionId === field.optionId);
+      let value: unknown = payload.jsonDocument[index];
+      for (const key of field.path) value = object(value) && Object.hasOwn(value, key) ? value[key] : undefined;
+      if (field.name !== undefined && Array.isArray(value)) {
+        const wire = expected.fields.find(item => item.id === field.fieldId)?.hubWire;
+        const named = wire?.nameKey ? value.find(row => object(row) && row[wire.nameKey!] === field.name) : undefined;
+        value = object(named) && wire?.valueKey ? named[wire.valueKey] : undefined;
+      }
+      if (field.projected && field.path.length && value === undefined) {
+        issues.push({code: 'NATIVE_FORM_FIELD_OMITTED', level: 'review', message: '공식 등록 폼의 저장 대상이 아닌 선택 항목입니다. 입력값은 로컬 견적서에 보존하며 이 등록 본문에는 전송하지 않습니다.', optionId: field.optionId, fieldId: field.fieldId, path: [...field.path]});
+        return {...field, projected: false};
+      }
+      return field;
+    });
+    output = {...result, payload, review: {...result.review, fields: nativeFields}};
+  }
+  const final = nativePolicy ? {...output, nativeSerializationPolicy: {format: nativePolicy, schemaSha256}} : output;
+  if (new TextEncoder().encode(JSON.stringify(final)).length > SINGLE_PROJECTION_OUTPUT_LIMIT) throw new SingleProjectionError('Single 검토 문서가 6MB를 초과했습니다. 포함 옵션이나 저장 내용을 줄여주세요.', 'SINGLE_SIZE', 413);
+  return final;
 }

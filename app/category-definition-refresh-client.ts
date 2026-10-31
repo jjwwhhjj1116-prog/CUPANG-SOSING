@@ -9,7 +9,7 @@ function canonical(value: unknown): string {
   return JSON.stringify(value) ?? 'undefined';
 }
 const identity = (schema: HubSchemaSnapshot) => [schema.format, schema.categoryId, schema.categoryPath, schema.company];
-const definition = (schema: HubSchemaSnapshot) => [identity(schema), schema.schemaString, schema.metadata, schema.draftInitialization, schema.inputBindings, schema.settingsInitialization];
+const definition = (schema: HubSchemaSnapshot) => [identity(schema), schema.schemaString, schema.metadata, schema.draftInitialization, schema.inputBindings, schema.settingsInitialization, schema.nativeSerializationPolicy];
 
 /** Observation time and object key order do not change a saved definition. */
 export function sameCategoryHubDefinition(from: HubSchemaSnapshot | undefined, to: HubSchemaSnapshot): boolean {
@@ -20,7 +20,7 @@ export function categoryDefinitionRequiresFork(profile: CategoryProfile, to: Hub
   const from = profile.hubSchema;
   if (!from) return false;
   if (canonical(identity(from)) !== canonical(identity(to))) throw Error('저장 설정과 새 상세 양식의 회사·코드·전체 경로가 다릅니다. 같은 회사의 카테고리를 다시 선택해주세요.');
-  return from.schemaString !== to.schemaString || canonical(from.metadata) !== canonical(to.metadata);
+  return from.schemaString !== to.schemaString || canonical(from.metadata) !== canonical(to.metadata) || from.nativeSerializationPolicy !== to.nativeSerializationPolicy;
 }
 
 export type CategoryDefinitionRefreshRequest = { signature: string; id: string; url: string; body: string };

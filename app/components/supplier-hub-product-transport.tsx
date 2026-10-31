@@ -13,6 +13,7 @@ import {reconnectPreservedProductDraft} from '@/app/preserved-product-request-re
 import {SupplierHubRejectionDetails} from '@/app/components/supplier-hub-rejection-details';
 import {runReservedSegments} from '@/app/supplier-hub-reserved-work.mjs';
 import {SupplierHubNativeRegistration} from '@/app/components/supplier-hub-native-registration';
+import {nativeSerializationDiagnostics, type NativeSerializationPattern} from '@/app/supplier-hub-native-serialization-diagnostics';
 import {readProductDocumentPending,productDocumentPendingKey,productDocumentPendingCurrent,assertProductDocumentPending,claimProductDocumentPending,
   readProductDocumentRejections,productDocumentRejectionKey,assertProductDocumentNotRejected,
   pendingProductRejection,clearRejectedProductDocumentPending,clearValidationRejectedProductDocumentPending,type ProductDocumentPending} from '@/app/supplier-hub-product-pending';
@@ -23,6 +24,7 @@ const stageLabels={productPage:'상품 정보',imagePage:'이미지',logisticsPa
 const auditPathLabels:Record<string,string>={'document-header':'문서 기본정보','member-shape':'옵션 구성',startPage:'시작 정보',productPage:'상품 정보',imagePage:'이미지 연결',logisticsPage:'물류 정보',sourcingPage:'소싱 정보',legalPage:'법적 서류 정보','legalPage.other':'기타 서류 정보','legalPage.certificates':'인증 항목','legalPage.certificates.name':'인증 항목명','legalPage.certificates.value':'인증 값','legalPage.certificates.row-shape':'인증 항목 구성','legalPage.certificates.order':'인증 항목 순서'};
 const auditValueLabels={missing:'항목 없음',empty:'빈 값',na:'해당사항없음',present:'값 있음','not-applicable':'—'};
 const auditLeafTypeLabels:Record<string,string>={missing:'항목 없음',null:'null',array:'배열',object:'객체','string-empty':'빈 문자열',string:'문자열',number:'숫자',boolean:'참/거짓'};
+const nativeSerializationLabels:Record<NativeSerializationPattern,string>={'optional-form-key-omission':'공식 폼의 선택 항목 제외 패턴 · 값 누락 검토 필요','empty-detail-html-to-null':'빈 상세 HTML의 null 변환 패턴','empty-size-chart-slot':'빈 사이즈표 자리 생성 패턴','later-option-empty-sourcing':'후속 옵션 소싱 칸 초기화 패턴','empty-attribute-template-fallback':'공식 빈 속성 템플릿 적용 패턴'};
 const auditLeafKeyLabels:Record<string,string>={docId:'문서번호',productName:'상품명',categoryId:'카테고리 번호',categoryPath:'카테고리 경로',displayCategoryCode:'노출 카테고리 번호',productNoticeNumber:'상품정보 제공고시 번호',version:'문서 버전',jsonDocument:'옵션 본문',
   startPage:'시작 정보',productPage:'상품 정보',imagePage:'이미지 연결',legalPage:'법적 서류 정보',logisticsPage:'물류 정보',sourcingPage:'소싱 정보',
   certificates:'인증 항목',notices:'상품정보 제공고시',noticeItemName:'고시 항목명',noticeItemValue:'고시 항목 값',noticeContent:'고시 내용',commonAttributes:'공통 속성',exposedAttributes:'노출 속성',unexposedAttributes:'비노출 속성',attributeName:'속성명',attributeValue:'속성 값',
@@ -76,6 +78,7 @@ export function SupplierHubProductTransport(props:Props){
   const originalAuditCurrent=Boolean(originalAuditContext?.token===reviewToken&&originalAuditContext.input===reconnectInput&&reconnectInput?.token===reviewToken);
   const [originalAuditReport,setOriginalAuditReport]=useState<{context:NonNullable<typeof originalAuditContext>;report:UnexpectedLegalAuditReport}|null>(null);
   const shownOriginalAudit=originalAuditCurrent&&originalAuditReport?.context===originalAuditContext?originalAuditReport.report:null;
+  const originalSerializationDiagnostics=shownOriginalAudit?nativeSerializationDiagnostics(review.identity.schemaSha256,shownOriginalAudit.bodyLeafDifferences):null;
   const [releasedValidation,setReleasedValidation]=useState<{token:object;docId:string|number;rejection:ProductValidationRejection}|null>(null);
   const [draftReadHint,setDraftReadHint]=useState<{token:object;requestId:string;docId:string|number;state:string;identityDigest:string;packetDigest:string;originalBodySha256:string;preparedBodySha256:string;savedDraftTargetClosed?:boolean;continuationSnapshot?:boolean;resumeSnapshot?:boolean;nativeFileListObserved?:boolean}|null>(null);
   const [finishedReadError,setFinishedReadError]=useState<{token:object;session:ProductDocumentSession;intent:ProductDocumentPending;docId:string|number;message:string;reviewDigest:string;identityDigest:string;packetDigest:string;originalBodySha256:string;preparedBodySha256:string}|null>(null);
@@ -550,10 +553,11 @@ export function SupplierHubProductTransport(props:Props){
             {shownOriginalAudit.legalEntries.map(row=><tr key={row.index}><td>{row.index+1}</td><td>{row.kind==='certificate'?'인증서':'기타 서류'}</td><td>{{unlinked:'연결 없음',linked:'연결됨',ambiguous:'여러 항목 연결',unknown:'확인 필요'}[row.association]}</td></tr>)}
           </tbody></table>}
           {shownOriginalAudit.bodyLeafDifferences&&<details open><summary>본문 세부 항목 대조 · 표시 {shownOriginalAudit.bodyLeafDifferences.rows.length}개</summary>
+            {originalSerializationDiagnostics&&<p>공식 저장 형식과 같은 패턴 {originalSerializationDiagnostics.patternCount}개 · 별도 확인 {originalSerializationDiagnostics.unclassifiedCount}개. 같은 패턴은 원래 값이 보존되었다는 뜻이 아닙니다. 본문 불일치와 등록 차단은 유지됩니다.</p>}
             <p>원문 값 대신 저장 경로·자료형·값 상태만 표시합니다.</p>
             {shownOriginalAudit.bodyLeafDifferences.truncated&&<p role="status">대조 범위 또는 표시 한도로 일부 항목만 표시합니다. 이 표만으로 전체 차이를 확인했다고 판단할 수 없습니다.</p>}
-            {shownOriginalAudit.bodyLeafDifferences.rows.length>0?<table><caption>원래 견적과 다른 세부 저장 항목</caption><thead><tr><th>항목 · 저장 경로</th><th>원래 자료형</th><th>원래 값 상태</th><th>현재 자료형</th><th>현재 값 상태</th></tr></thead><tbody>
-              {shownOriginalAudit.bodyLeafDifferences.rows.map((row,index)=>{const path=auditLeafPathLabel(row.path);return<tr key={index}><td>{path.label}<br/><code style={{overflowWrap:'anywhere'}}>{path.structured}</code></td><td>{Object.hasOwn(auditLeafTypeLabels,row.expectedType)?auditLeafTypeLabels[row.expectedType]:'형식 확인 필요'}</td><td>{auditLeafStateLabel(row.expectedType,row.expectedValueKind,row.expectedPrimitive)}</td><td>{Object.hasOwn(auditLeafTypeLabels,row.actualType)?auditLeafTypeLabels[row.actualType]:'형식 확인 필요'}</td><td>{auditLeafStateLabel(row.actualType,row.actualValueKind,row.actualPrimitive)}</td></tr>;})}
+            {shownOriginalAudit.bodyLeafDifferences.rows.length>0?<table><caption>원래 견적과 다른 세부 저장 항목</caption><thead><tr><th>항목 · 저장 경로</th><th>원래 자료형</th><th>원래 값 상태</th><th>현재 자료형</th><th>현재 값 상태</th>{originalSerializationDiagnostics&&<th>공식 저장 형식과 대조</th>}</tr></thead><tbody>
+              {shownOriginalAudit.bodyLeafDifferences.rows.map((row,index)=>{const path=auditLeafPathLabel(row.path),pattern=originalSerializationDiagnostics?.patterns[index];return<tr key={index}><td>{path.label}<br/><code style={{overflowWrap:'anywhere'}}>{path.structured}</code></td><td>{Object.hasOwn(auditLeafTypeLabels,row.expectedType)?auditLeafTypeLabels[row.expectedType]:'형식 확인 필요'}</td><td>{auditLeafStateLabel(row.expectedType,row.expectedValueKind,row.expectedPrimitive)}</td><td>{Object.hasOwn(auditLeafTypeLabels,row.actualType)?auditLeafTypeLabels[row.actualType]:'형식 확인 필요'}</td><td>{auditLeafStateLabel(row.actualType,row.actualValueKind,row.actualPrimitive)}</td>{originalSerializationDiagnostics&&<td>{pattern?nativeSerializationLabels[pattern]:'검증된 변환 규칙 없음 · 별도 확인'}</td>}</tr>;})}
             </tbody></table>:<p>{shownOriginalAudit.bodyLeafDifferences.truncated?'범위 안에서 표시할 세부 차이가 없습니다. 원래 본문의 일치가 확인된 것은 아닙니다.':'표시할 세부 항목 차이가 없습니다.'}</p>}
           </details>}
           {shownOriginalAudit.differenceCount>0&&<details><summary>본문 차이 {shownOriginalAudit.differenceCount}개</summary>

@@ -7,11 +7,12 @@ const wireKey=(field:QuotationField)=>field.hubWire?JSON.stringify([field.hubWir
 const inputKind=(field:QuotationField)=>JSON.stringify([field.type,field.unit??null,field.numericValue??false,field.numericText??false,field.integer??false]);
 const metadataKey=(schema:HubSchemaSnapshot)=>JSON.stringify(Object.entries(schema.metadata).sort(([left],[right])=>left.localeCompare(right)));
 
-/** Observation time and app draft rules do not change the underlying Hub form. */
+/** Observation time and draft defaults do not change the underlying Hub form.
+ * A transport policy change must fork so existing captured products stay pinned. */
 export function sameCategoryFormDefinition(saved:HubSchemaSnapshot|undefined,current:HubSchemaSnapshot):boolean{
  return Boolean(saved&&saved.format===current.format&&saved.categoryId===current.categoryId&&equal(saved.categoryPath,current.categoryPath)
   &&saved.company.code===current.company.code&&saved.company.name===current.company.name
-  &&saved.schemaString===current.schemaString&&metadataKey(saved)===metadataKey(current));
+  &&saved.schemaString===current.schemaString&&metadataKey(saved)===metadataKey(current)&&saved.nativeSerializationPolicy===current.nativeSerializationPolicy);
 }
 
 /** Preserve manual connections by exact input identity, never by a similar label.

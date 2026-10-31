@@ -732,6 +732,24 @@ test('a filtered empty leaf projection does not imply the original body matches 
  }finally{h.close();}
 });
 
+test('exact-schema native patterns explain discrepancies without changing original mismatch, unlinked certificate or registration locks',async()=>{
+ const schemaSha256='f675549f02d67d903a82e28ba4ba116ee1a96f7740558431b3a0ce4cbfd47e10';
+ const h=await fixture(undefined,{schemaSha256,reconnect:async(_input,f)=>{throw reconnectClosedError(f,{savedDraftTargetClosed:false});}});try{
+  h.f.bridge=async payload=>({...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,unexpectedLegalAuditAvailable:true});
+  h.f.client.auditUnexpectedLegal=async session=>originalAuditFixtureReport(session,{bodyLeafDifferences:{format:'yoofam-saved-body-leaf-differences-v1',visited:20,truncated:false,rows:[
+   {path:['jsonDocument',0,'productPage','commonAttributes','osrp'],expectedType:'string',actualType:'missing',expectedValueKind:'present',actualValueKind:'missing'},
+   {path:['jsonDocument',1,'imagePage','details','htmlProductDetailContent'],expectedType:'string-empty',actualType:'null',expectedValueKind:'empty',actualValueKind:'present'},
+   {path:['jsonDocument',1,'imagePage','msrpAgree'],expectedType:'boolean',actualType:'boolean',expectedValueKind:'present',actualValueKind:'present',expectedPrimitive:false,actualPrimitive:true},
+  ]}});
+  await h.idle();reconnectInputs(h);await h.click('원래 저장 문서 연결 복구');await h.click(auditOriginal);
+  assert.match(h.text(),/공식 저장 형식과 같은 패턴\s+2\s*개 · 별도 확인\s+1\s*개/);assert.match(h.text(),/선택 항목 제외 패턴 · 값 누락 검토 필요/);assert.match(h.text(),/빈 상세 HTML의 null 변환 패턴/);assert.match(h.text(),/검증된 변환 규칙 없음 · 별도 확인/);
+  assert.match(h.text(),/원래 본문\s+불일치/);assert.match(h.text(),/본문 불일치와 등록 차단은 유지/);assert.match(h.text(),/연결 없음/);assert.match(h.text(),/본문 차이\s+1\s*개/);
+  assert.equal(h.stored.size,0);assert.ok(h.f.calls.every(row=>row.method==='GET'));assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview']);
+  for(const label of [start,prepareDraft,reviewPrepared,'현재 문서 동의 확인 · 계속'])assert.equal(h.button(label),undefined);
+  assert.doesNotMatch(h.text(),/원래 본문 일치|자동 복구 완료|정상 변환 확정/);
+ }finally{h.close();}
+});
+
 test('original audit displays a fixed read phase/code, preserves typed schema failures and hides raw errors without enabling transmission',async()=>{
  for(const mode of ['typed-audit','unknown-audit','preview','after-audit']){
   let audits=0;const h=await fixture(undefined,{reconnect:async(_input,f)=>{throw reconnectClosedError(f,{savedDraftTargetClosed:false});}});try{

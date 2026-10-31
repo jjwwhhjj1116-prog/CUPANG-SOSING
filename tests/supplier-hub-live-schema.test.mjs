@@ -13,6 +13,18 @@ const plain=value=>JSON.parse(JSON.stringify(value));
 const h=mobileIntakeHarness(),model=h.load('app/supplier-hub-schema.ts'),quotes=h.load('app/quotation-schema.ts');
 test.after(()=>h.close());
 const modify=(snapshot,change)=>{const raw=JSON.parse(snapshot.schemaString);change(raw);return {...snapshot,schemaString:JSON.stringify(raw)};};
+
+test('native form transport policy is captured explicitly without upgrading legacy snapshots',()=>{
+ const legacy=hubSchemaSnapshot(),before=JSON.stringify(legacy);
+ const old=model.validateHubSchemaSnapshot(legacy,legacy.categoryId,schemaPath);
+ assert.equal(Object.hasOwn(old,'nativeSerializationPolicy'),false);
+ const current={...legacy,draftInitialization:'couplus-required-v1',nativeSerializationPolicy:'supplier-hub-native-required-form-v1'};
+ const next=model.validateHubSchemaSnapshot(current,current.categoryId,schemaPath);
+ assert.equal(next.nativeSerializationPolicy,'supplier-hub-native-required-form-v1');
+ assert.equal(next.schemaString,legacy.schemaString);assert.equal(JSON.stringify(legacy),before);
+ assert.throws(()=>model.validateHubSchemaSnapshot({...current,nativeSerializationPolicy:'unknown'},current.categoryId,schemaPath));
+ assert.throws(()=>model.validateHubSchemaSnapshot({...legacy,nativeSerializationPolicy:current.nativeSerializationPolicy},current.categoryId,schemaPath));
+});
 test('live schema compiles exact section/attribute identity, real enums/defaults and distinct kan/display IDs',()=>{
  for(const company of schemaCompanies){const snapshot=hubSchemaSnapshot(company),valid=model.validateHubSchemaSnapshot(snapshot,snapshot.categoryId,schemaPath);
   assert.equal(valid.metadata.kanCategoryId,3000);assert.equal(valid.categoryId,'991234');
@@ -237,6 +249,7 @@ test('app detailed schema loader verifies capability, owner, leaf, full path and
  const client={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/supplier-hub-catalog.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:client,Date,Error,require:name=>name==='@/app/supplier-hub-schema'?model:{exchange:async(type,payload,signal)=>{if(signal.aborted)throw Error('aborted');calls.push({type,payload:plain(payload)});return type==='PING'?{categorySchema:capability}:{branch};}}});
  const choice=client.hubCategoryChoice(branch,leaf),signal=new AbortController().signal;
  const captured=await client.loadLiveHubCategorySchema(choice,signal);assert.equal(captured.schemaString,snapshot.schemaString);assert.equal(captured.draftInitialization,'couplus-required-v1');assert.equal(captured.inputBindings,'couplus-paths-v1');assert.equal(captured.settingsInitialization,'couplus-options-v1');assert.equal(snapshot.draftInitialization,undefined);assert.equal(snapshot.inputBindings,undefined);assert.equal(snapshot.settingsInitialization,undefined);assert.deepEqual(calls.map(call=>call.type),['PING','SCHEMA']);assert.deepEqual(calls[1].payload,{trail:[parent],selection:{categoryId:leaf.categoryId,name:leaf.name}});
+ assert.equal(captured.nativeSerializationPolicy,'supplier-hub-native-required-form-v1');assert.equal(Object.hasOwn(snapshot,'nativeSerializationPolicy'),false);
  const original=branch;for(const change of [{ownerId:'other'},{children:[{...leaf,name:'other'}]},{schema:{...snapshot,company:schemaCompanies[1]}},{schema:{...snapshot,categoryPath:['other']}},{schema:{...snapshot,categoryId:'991235'}}]){branch={...original,...change};await assert.rejects(client.loadLiveHubCategorySchema(choice,signal));}
  branch=original;capability=false;calls.length=0;await assert.rejects(client.loadLiveHubCategorySchema(choice,signal));assert.deepEqual(calls.map(call=>call.type),['PING']);
  await assert.rejects(client.loadLiveHubCategorySchema(choice,AbortSignal.abort()));

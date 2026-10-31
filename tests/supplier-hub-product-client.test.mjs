@@ -25,7 +25,7 @@ async function fixture(company=SINGLE_COMPANIES[0],options={}){
   const clock={now:Date.now()},listeners=new Set(),timers=new Map(),sent=[],calls=[],modules=new Map();let sequence=0;
   const single=singlePacket(company),body=plain(single.body),second=plain(body.jsonDocument[0]);second.startPage.productName='두 번째 저장 옵션';second.productPage.modelNumber='';second.productPage.supplyPrice='';body.jsonDocument.push(second);
   const identity={ownerId:single.ownerId,company:plain(company),productId:single.productId,profileId:single.profileId,requestedProfileId:options.queryless?null:single.profileId,
-    categoryId:single.categoryId,fingerprint:single.fingerprint,inputFingerprint:'d'.repeat(64),schemaSha256:single.schemaSha256,source:{...single.source,profileId:single.profileId}};
+    categoryId:single.categoryId,fingerprint:single.fingerprint,inputFingerprint:'d'.repeat(64),schemaSha256:options.schemaSha256??single.schemaSha256,source:{...single.source,profileId:single.profileId}};
   const review={format:'yoofam-supplier-hub-product-document-v1',type:'YOOFAM_PRODUCT_DOCUMENT_REVIEW',identity,members:[{optionId:'first',optionLabel:'첫 옵션',documentIndex:0},{optionId:'second',optionLabel:'둘째 옵션',documentIndex:1}],body,registered:false,remoteWrites:false,submissionReady:false};
   const deferred=plain(body);for(const document of deferred.jsonDocument)for(const key of ['msrpAgree','labelContactAgreed'])document.imagePage[key]=false;
   review.originalBodySha256=digest(body);review.preparedBodySha256=digest(deferred);review.reviewDigest=digest({format:review.format,type:review.type,identity,members:review.members,originalBodySha256:review.originalBodySha256,preparedBodySha256:review.preparedBodySha256});
