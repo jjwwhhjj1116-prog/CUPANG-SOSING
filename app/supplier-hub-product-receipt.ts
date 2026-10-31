@@ -111,6 +111,23 @@ export async function validateProductReceiptObservation(observation:unknown,revi
     identity:copy(identity),identityDigest,packetDigest,preparedBodySha256,originalBodySha256,receipt:copy(observation.receipt),registered:false as const};
   if(!recordValid(record,false,now)||record.receipt.state!==observation.state)fail();return copy(record) as ProductReceiptObservation;
 }
+/** Refresh evidence for one already persisted original request. Current image
+ * readiness is unrelated to this historical receipt; no current-body equality
+ * or permission to create, save, resume or submit a document is established. */
+export function validateHistoricalProductReceiptObservation(observation:unknown,previous:ProductReceiptRecord,origin:string,now=Date.now()):ProductReceiptObservation{
+  const saved=parseStoredProductReceipt(previous);productReceiptCanonical(observation);
+  const keys=['format','requestId','identity','identityDigest','packetDigest','preparedBodySha256','originalBodySha256','state','docId','registered','success','needsRecovery','receipt'];
+  if(!exact(observation,keys)||!originValid(origin)||saved.identity.origin!==origin||!Number.isSafeInteger(now)||now<=0
+    ||observation.format!=='yoofam-supplier-hub-product-document-v1'||observation.requestId!==saved.requestId||observation.docId!==saved.docId
+    ||!same(observation.identity,saved.identity)||observation.identityDigest!==saved.identityDigest||observation.packetDigest!==saved.packetDigest
+    ||observation.preparedBodySha256!==saved.preparedBodySha256||observation.originalBodySha256!==saved.originalBodySha256
+    ||observation.registered!==false||observation.success!==false||observation.needsRecovery!==false)fail('원래 보관된 전체 상품 문서의 접수 연결이 다릅니다.');
+  const {recordedAt:omitted,...original}=saved;void omitted;
+  const record={...original,receipt:copy(observation.receipt)};
+  if(!recordValid(record,false,now)||record.receipt.state!==observation.state||record.receipt.qvtRequestId!==saved.receipt.qvtRequestId
+    ||record.receipt.receiptId!==saved.receipt.receiptId)fail('원래 문서·등록 파일의 새로운 접수 결과를 확인해주세요.');
+  return copy(record);
+}
 export function parseStoredProductReceipt(payload:string|unknown):ProductReceiptRecord{
   let value:unknown;try{if(typeof payload==='string'&&new TextEncoder().encode(payload).length>6*1024*1024)fail();value=typeof payload==='string'?JSON.parse(payload):payload;productReceiptCanonical(value);}catch{fail('보관된 전체 상품 문서 접수 자료를 확인해주세요.');}
   if(!recordValid(value,true,Date.now()))fail('보관된 전체 상품 문서 접수 연결값이 다릅니다.');return copy(value);

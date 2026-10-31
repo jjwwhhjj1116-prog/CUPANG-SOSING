@@ -51,9 +51,9 @@ export function projectionFixture(snapshot = syntheticSnapshot()) {
   set(['productPage', 'commonAttributes', 'msrp'], undefined, '25910');
   return { snapshot, schema, row, resolved, set, input: { snapshot, company: snapshot.company, categoryId: snapshot.categoryId, categoryPath: snapshot.categoryPath, resolved } };
 }
-export async function apiFixture(company = companies[0], snapshot = syntheticSnapshot(company)) {
+export async function apiFixture(company = companies[0], snapshot = syntheticSnapshot(company), { productId = 'synthetic-document-652' } = {}) {
   const h = mobileIntakeHarness({ companyCode: company.code, companyName: company.name });
-  const now = new Date().toISOString(), id = 'synthetic-document-652';
+  const now = new Date().toISOString(), id = productId;
   const policy = h.load('app/pricing.ts').pricePolicy(h.settings);
   await h.load('db/queries.ts').insertProduct({ id, owner_id: 'owner', source_url: 'synthetic://step652-single-document', title: '合成原文', source_price_cny: 7.1,
     exchange_rate: policy.exchangeRate, supply_margin: policy.supplyMargin, coupang_margin: policy.coupangMargin, supply_price: 11960, sale_price: 19930, msrp: 25910, options_count: 1,

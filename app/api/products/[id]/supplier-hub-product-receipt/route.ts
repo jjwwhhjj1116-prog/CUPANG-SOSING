@@ -3,13 +3,13 @@ import {getChatGPTUser,getWorkspaceOwnerId} from '@/app/chatgpt-auth';
 import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
 import {findProduct} from '@/db/queries';
 import {loadSinglePackage} from '@/app/exports/single-package';
-import {stableQuotationFieldsView} from '@/app/quotation-fields-snapshot';
+import {stableQuotationFieldsView,QuotationFieldsSnapshotError} from '@/app/quotation-fields-snapshot';
 import {compileSupplierHubProductDocument} from '@/app/supplier-hub-product-document';
 import {compileNativeSupplierHubProductDocument} from '@/app/supplier-hub-native-product-document';
-import {validateProductReceiptObservation} from '@/app/supplier-hub-product-receipt';
+import {validateProductReceiptObservation,validateHistoricalProductReceiptObservation} from '@/app/supplier-hub-product-receipt';
 import type {SinglePackageView} from '@/app/supplier-hub-single-client';
 import {SingleReceiptError} from '@/app/supplier-hub-single-receipt';
-import {readNativeReceiptHistory,saveProductReceipt} from '@/db/supplier-hub-single-receipts';
+import {readNativeReceiptHistory,saveProductReceipt,saveHistoricalProductReceipt} from '@/db/supplier-hub-single-receipts';
 import {readBoundedJson,RequestBodyError} from '@/app/request-body';
 import {SingleAssetError} from '@/app/supplier-hub-single-assets';
 import {SingleProjectionError} from '@/app/supplier-hub-single-projection';
@@ -30,7 +30,7 @@ async function authorization(){
 }
 function failure(error:unknown){
   if(error instanceof SingleReceiptError||error instanceof SingleAssetError||error instanceof SingleProjectionError)return json({error:error.message,code:error.code},error.status);
-  if(error instanceof QuotationExportError||error instanceof AttachmentError||error instanceof PublicDetailError||error instanceof RequestBodyError)return json({error:error.message},error.status);
+  if(error instanceof QuotationExportError||error instanceof QuotationFieldsSnapshotError||error instanceof AttachmentError||error instanceof PublicDetailError||error instanceof RequestBodyError)return json({error:error.message},error.status);
   return json({error:'전체 상품 문서 접수 결과 저장 여부를 확인하지 못했습니다. 다시 전송하지 말고 보관된 결과를 조회해주세요.'},503);
 }
 /** Mixed native history contains one record per document, never per member.
@@ -58,6 +58,25 @@ export async function POST(request:Request,context:Context){
     if(!idPattern.test(id)||url.searchParams.size)return json({error:'상품 식별값을 확인해주세요.'},400);
     if(request.headers.get('sec-fetch-site')==='cross-site'||request.headers.has('origin')&&request.headers.get('origin')!==url.origin)return json({error:'같은 앱에서 확인 결과를 저장해주세요.'},403);
     const value=await readBoundedJson(request,256*1024);
+    if(value&&typeof value==='object'&&!Array.isArray(value)&&Object.hasOwn(value,'action')&&(value as {action:unknown}).action==='observe-history'){
+      const body=value as {action:unknown;requestId:unknown;observation:unknown};
+      if(Object.keys(body).length!==3||!['action','requestId','observation'].every(key=>Object.hasOwn(body,key))||body.action!=='observe-history'
+        ||typeof body.requestId!=='string'||!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(body.requestId))return json({error:'원래 보관된 요청의 접수 조회 결과로 갱신해주세요.'},400);
+      const {owner,company,member}=await authorization();
+      const active=async()=>{const current=await authorization();
+        if(request.signal.aborted||current.owner!==owner||JSON.stringify(current.company)!==JSON.stringify(company)||JSON.stringify(current.member)!==JSON.stringify(member))
+          throw new SingleAssetError('원래 접수 이력을 확인하는 동안 승인 회원·회사가 변경됐습니다.','SINGLE_ACCOUNT_CHANGED',409);};
+      await active();const records=await readNativeReceiptHistory(owner,id),matches=records.filter(row=>row.requestId===body.requestId),previous=matches[0];
+      if(matches.length!==1||previous?.format!=='yoofam-product-document-receipt-v1'||previous.company.code!==company.code||previous.company.name!==company.name)
+        return json({error:'이 회원·상품에 보관된 원래 전체 문서 접수 기록이 필요합니다.'},409);
+      const receipt=validateHistoricalProductReceiptObservation(body.observation,previous,url.origin);
+      // Source clocks fence this read/write, but do not relabel the historical
+      // request or require today's images to be ready for a new transmission.
+      const current=await stableQuotationFieldsView(owner,id,previous.requestedProfileId);await active();
+      const stored=await saveHistoricalProductReceipt(owner,id,receipt,previous,current.source,current.view.revision,member);
+      await active();if(!stored)return json({error:'원래 접수 기록 또는 현재 상품·회원정보가 변경됐습니다. 새 전송 없이 이력을 다시 조회해주세요.'},409);
+      return json({receipt:stored});
+    }
     if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).length!==2||!['profileId','observation'].every(key=>Object.hasOwn(value,key)))return json({error:'검토한 전체 상품 문서의 확인 결과로 저장해주세요.'},400);
     const body=value as {profileId:unknown;observation:unknown};
     if(body.profileId!==null&&(typeof body.profileId!=='string'||!idPattern.test(body.profileId)))return json({error:'카테고리 요청 식별값을 확인해주세요.'},400);

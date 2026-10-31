@@ -28,6 +28,35 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
   if(Object.keys(message).sort().join(',')!=='expected,type'){respond({ok:false,error:'기존 요청 확인 범위를 확인해주세요.'});return;}
   readPreservedProductInspectionScope(message.expected).then(scope=>respond({ok:true,scope}),()=>respond({ok:false,error:'현재 승인 회원·회사와 기존 요청의 연결을 확인하지 못했습니다.'}));return true;
 });
+// This read-only source projection deliberately does not compile a new upload
+// plan or require its readiness. The background validates the identity hash,
+// original source clocks/category/members and its own private checkpoint.
+async function readHistoricalProductReceiptSource(expected){
+  const exact=(value,keys)=>Boolean(value&&typeof value==='object'&&!Array.isArray(value))&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
+  const target=expected?.target,profile=expected?.requestedProfileId;
+  if(!exact(expected,['origin','target','requestedProfileId'])||!exact(target,['requestId','productId','docId','company','qvtRequestId'])
+    ||!(profile===null||typeof profile==='string'&&/^\w[\w-]{0,99}$/.test(profile))||!(typeof target.qvtRequestId==='string'&&target.qvtRequestId.trim()===target.qvtRequestId&&target.qvtRequestId.length>0&&target.qvtRequestId.length<=200||Number.isSafeInteger(target.qvtRequestId)&&target.qvtRequestId>0))throw Error('원래 상품 접수의 읽기 범위를 확인해주세요.');
+  const inspectionTarget=Object.fromEntries(Object.entries(target).filter(([key])=>key!=='qvtRequestId'));
+  const before=await readPreservedProductInspectionScope({origin:expected.origin,target:inspectionTarget}),path='/api/products/'+encodeURIComponent(target.productId)+'/native-assets'+(profile===null?'':'?profileId='+encodeURIComponent(profile));
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);
+  try{
+    const response=await fetch(path,{method:'GET',cache:'no-store',credentials:'same-origin',redirect:'error',signal:controller.signal});
+    if(!response.ok||response.redirected||response.url!==location.origin+path||!/\bapplication\/json\b/i.test(response.headers.get('content-type')||''))throw Error('현재 상품의 읽기 전용 원본 식별값을 확인하지 못했습니다.');
+    const text=await response.text();if(controller.signal.aborted||text.length>6*1024*1024)throw Error('현재 상품의 원본 식별값 응답이 만료되었거나 너무 큽니다.');
+    const plan=JSON.parse(text),body=plan?.body;
+    if(plan?.format!=='yoofam-native-asset-source-plan-v1'||plan.registered!==false||plan.remoteWrites!==false||!plan.identity||!body||body.docId!==null||body.scope!=='Retail_Categorized_Single'
+      ||!Array.isArray(body.jsonDocument)||body.jsonDocument.length!==plan.identity.members?.length||typeof body.productName!=='string'||!body.productName.trim()||body.productName!==body.jsonDocument[0]?.startPage?.productName
+      ||typeof body.categoryPath!=='string'||body.displayCategoryCode!==plan.identity.categoryId)throw Error('현재 상품의 제목·카테고리·포함 옵션 식별값을 확인하지 못했습니다.');
+    const after=await readPreservedProductInspectionScope({origin:expected.origin,target:inspectionTarget});
+    if(controller.signal.aborted||before.ownerId!==after.ownerId||JSON.stringify(before.company)!==JSON.stringify(after.company))throw Error('접수 조회 중 승인 회원·회사가 변경되었습니다.');
+    return {scope:{origin:expected.origin,ownerId:after.ownerId,company:after.company},plan:{format:plan.format,registered:plan.registered,remoteWrites:plan.remoteWrites,metadataValid:plan.metadataValid,identity:plan.identity,identityDigest:plan.identityDigest},productName:body.productName,categoryPath:body.categoryPath};
+  }finally{clearTimeout(timer);}
+}
+chrome.runtime.onMessage.addListener((message,sender,respond)=>{
+  if(message?.type!=='YOOFAM_READ_HISTORICAL_PRODUCT_RECEIPT_SOURCE'||sender?.id!==chrome.runtime.id)return;
+  if(Object.keys(message).sort().join(',')!=='expected,type'){respond({ok:false,error:'과거 접수 원본 조회 범위를 확인해주세요.'});return;}
+  readHistoricalProductReceiptSource(message.expected).then(value=>respond({ok:true,...value}),()=>respond({ok:false,error:'현재 회원·회사·상품의 과거 접수 원본 연결을 확인하지 못했습니다.'}));return true;
+});
 function productDocumentConnectionFailure(cause){
   // Only fixed Chrome connection messages select a category. Never forward a
   // runtime/provider exception, URL or page text into the application.
@@ -40,10 +69,10 @@ function productDocumentConnectionFailure(cause){
 window.addEventListener('message',async event=>{
   if(event.source!==window||event.origin!==location.origin||event.data?.channel!=='YOOFAM_HUB_HANDOFF'||!/^[a-f0-9-]{36}$/.test(event.data.requestId||''))return;
   const {requestId,type}=event.data;
-  if(!['PING','PREPARE','RESULT','TRANSMIT','VALIDATE','REFRESH','REGISTRATION','COMPANY_REGISTRATIONS','NATIVE_REGISTRATIONS','PRESERVED_PRODUCT_DOCUMENT','HISTORY','RECOMMEND_CATEGORIES','CATEGORIES','SCHEMA','TEMPLATE','SINGLE_DOCUMENT','PRODUCT_DOCUMENT'].includes(type))return;
+  if(!['PING','PREPARE','RESULT','TRANSMIT','VALIDATE','REFRESH','REGISTRATION','COMPANY_REGISTRATIONS','NATIVE_REGISTRATIONS','PRESERVED_PRODUCT_DOCUMENT','PRESERVED_PRODUCT_RECEIPT','HISTORY','RECOMMEND_CATEGORIES','CATEGORIES','SCHEMA','TEMPLATE','SINGLE_DOCUMENT','PRODUCT_DOCUMENT'].includes(type))return;
   let result;
   try{
-    const commands={PREPARE:'YOOFAM_PREPARE_PACKAGE',RESULT:'YOOFAM_GET_RESULT',TRANSMIT:'YOOFAM_TRANSMIT_PACKAGE',VALIDATE:'YOOFAM_RESUME_VALIDATION',REFRESH:'YOOFAM_REFRESH_RESULT',REGISTRATION:'YOOFAM_REFRESH_REGISTRATION',COMPANY_REGISTRATIONS:'YOOFAM_QUERY_COMPANY_REGISTRATIONS',NATIVE_REGISTRATIONS:'YOOFAM_QUERY_NATIVE_REGISTRATIONS',PRESERVED_PRODUCT_DOCUMENT:'YOOFAM_INSPECT_PRESERVED_PRODUCT_DOCUMENT',HISTORY:'YOOFAM_GET_PRODUCT_TRANSMISSIONS',RECOMMEND_CATEGORIES:'YOOFAM_RECOMMEND_CATEGORIES',CATEGORIES:'YOOFAM_READ_CATEGORY_BRANCH',SCHEMA:'YOOFAM_READ_CATEGORY_SCHEMA',TEMPLATE:'YOOFAM_READ_CATEGORY_TEMPLATE',SINGLE_DOCUMENT:'YOOFAM_SINGLE_DOCUMENT_REQUEST',PRODUCT_DOCUMENT:'YOOFAM_PRODUCT_DOCUMENT_REQUEST'};
+    const commands={PREPARE:'YOOFAM_PREPARE_PACKAGE',RESULT:'YOOFAM_GET_RESULT',TRANSMIT:'YOOFAM_TRANSMIT_PACKAGE',VALIDATE:'YOOFAM_RESUME_VALIDATION',REFRESH:'YOOFAM_REFRESH_RESULT',REGISTRATION:'YOOFAM_REFRESH_REGISTRATION',COMPANY_REGISTRATIONS:'YOOFAM_QUERY_COMPANY_REGISTRATIONS',NATIVE_REGISTRATIONS:'YOOFAM_QUERY_NATIVE_REGISTRATIONS',PRESERVED_PRODUCT_DOCUMENT:'YOOFAM_INSPECT_PRESERVED_PRODUCT_DOCUMENT',PRESERVED_PRODUCT_RECEIPT:'YOOFAM_RECONCILE_PRESERVED_PRODUCT_RECEIPT',HISTORY:'YOOFAM_GET_PRODUCT_TRANSMISSIONS',RECOMMEND_CATEGORIES:'YOOFAM_RECOMMEND_CATEGORIES',CATEGORIES:'YOOFAM_READ_CATEGORY_BRANCH',SCHEMA:'YOOFAM_READ_CATEGORY_SCHEMA',TEMPLATE:'YOOFAM_READ_CATEGORY_TEMPLATE',SINGLE_DOCUMENT:'YOOFAM_SINGLE_DOCUMENT_REQUEST',PRODUCT_DOCUMENT:'YOOFAM_PRODUCT_DOCUMENT_REQUEST'};
     const version=type==='PING'?chrome.runtime.getManifest().version:'';
     const [major,minor,patch]=version.split('.').map(Number);
     // An app reload may inject updated disk content while the old unpacked
@@ -55,7 +84,8 @@ window.addEventListener('message',async event=>{
     const categoryRecommendations=major>2||major===2&&(minor>1||minor===1&&patch>=1);
     const nativeRegistrationStatus=major>2||major===2&&(minor>1||minor===1&&patch>=4);
     const preservedProductCheckpointInspection=major>2||major===2&&(minor>1||minor===1&&patch>=60);
-    result=type==='PING'?{ok:true,version,categoryCatalog:true,categoryRecommendations,categorySchema:true,categoryTemplate:true,categoryExcelSchema:true,legalDocumentAttachments:true,validationResume:true,companyMenuRecovery:true,attachmentLifecycleRecovery:true,exactAgreementLabels:true,acceptedReceiptRefreshRecovery:true,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,originalFileObservationCas,productDocumentPreview,existingProductProbe,nativeRegistrationStatus,preservedProductCheckpointInspection,productTransmissionHistory:true,historicalReceiptLookup:true,resultTableRefreshObservation:true,popupWindowBinding:true,publicMobileCapture:true,publicSingleSkuCapture:true,companyRegistrationStatus:true,companyBinding:true,directTransmission:true,latestSourceBinding:true,savedSubmission:true,durableAttachmentRecovery:true,imageIntegrityBinding:true,registrationLookup:true,registrationPages:true,serverReceiptRecovery:true,serverReceiptReplayProtection:true}:await chrome.runtime.sendMessage({...event.data.payload,type:commands[type]});
+    const preservedProductReceiptReconciliation=major>2||major===2&&(minor>1||minor===1&&patch>=77);
+    result=type==='PING'?{ok:true,version,categoryCatalog:true,categoryRecommendations,categorySchema:true,categoryTemplate:true,categoryExcelSchema:true,legalDocumentAttachments:true,validationResume:true,companyMenuRecovery:true,attachmentLifecycleRecovery:true,exactAgreementLabels:true,acceptedReceiptRefreshRecovery:true,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,originalFileObservationCas,productDocumentPreview,existingProductProbe,nativeRegistrationStatus,preservedProductCheckpointInspection,preservedProductReceiptReconciliation,productTransmissionHistory:true,historicalReceiptLookup:true,resultTableRefreshObservation:true,popupWindowBinding:true,publicMobileCapture:true,publicSingleSkuCapture:true,companyRegistrationStatus:true,companyBinding:true,directTransmission:true,latestSourceBinding:true,savedSubmission:true,durableAttachmentRecovery:true,imageIntegrityBinding:true,registrationLookup:true,registrationPages:true,serverReceiptRecovery:true,serverReceiptReplayProtection:true}:await chrome.runtime.sendMessage({...event.data.payload,type:commands[type]});
   }catch(cause){result=type==='PRODUCT_DOCUMENT'?productDocumentConnectionFailure(cause):{ok:false,error:'확장 연결을 새로고침한 뒤 다시 준비해주세요.'};}
   window.postMessage({channel:'YOOFAM_HUB_HANDOFF_RESULT',requestId,result},location.origin);
 });

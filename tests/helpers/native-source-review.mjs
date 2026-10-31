@@ -5,8 +5,8 @@ export {companies,plain};
 export const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canonical).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}';
 export const digest=value=>createHash('sha256').update(canonical(value)).digest('hex');
 export const json=async(response,status=200)=>{assert.equal(response.status,status,await response.clone().text());return response.json();};
-export async function nativeReviewFixture(company=companies[0]){
- const f=await assetApiFixture(company),context={params:Promise.resolve({id:f.id})},now=new Date().toISOString();
+export async function nativeReviewFixture(company=companies[0],{productId}={}){
+ const f=await assetApiFixture(company,undefined,{productId}),context={params:Promise.resolve({id:f.id})},now=new Date().toISOString();
  f.h.sqlite.prepare('INSERT INTO members(id,email,password_hash,role,status,company_code,company_name,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run('owner',company.code==='A01526306'?'jwhj1116@kakao.com':'unari8484@gmail.com','synthetic-no-password',company.code==='A01526306'?'admin':'member','approved',company.code,company.name,now,now);
  for(const [index,key]of f.keys.entries()){const bytes=imageBytes(index).slice(0,-1);await f.h.bindings.FILES.put(key,bytes,{httpMetadata:{contentType:'image/png'},customMetadata:{sha256:sha(bytes)}});}
  const legal=f.h.load('app/api/products/[id]/legal-documents/route.ts'),path='https://app.test'+f.base+'/legal-documents',listed=await json(await legal.GET(new Request(path),context));

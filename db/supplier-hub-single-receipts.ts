@@ -78,6 +78,32 @@ export async function saveProductReceipt(owner:string,productId:string,observati
   const result=await saveNativeReceipt(owner,productId,observation,source,quotationRevision,member);
   if(result&&result.format!=='yoofam-product-document-receipt-v1')throw new SingleReceiptError('전체 상품 접수 형식과 저장 결과가 다릅니다.');return result;
 }
+/** UPDATE only: preserve the original request's immutable source and insertion
+ * order while independently fencing the current editable product and member. */
+export async function saveHistoricalProductReceipt(owner:string,productId:string,observation:ProductReceiptObservation,previous:ProductReceiptRecord,currentSource:QuotationSourceGuard,quotationRevision:number,member?:SingleReceiptMember):Promise<ProductReceiptRecord|null>{
+  if(Object.hasOwn(observation,'recordedAt')||!Number.isSafeInteger(quotationRevision)||quotationRevision<0)return null;
+  const record=parseStoredNativeReceipt({...observation,recordedAt:new Date().toISOString()}),prior=parseStoredNativeReceipt(previous);
+  const immutableRecord=(value:NativeReceiptRecord)=>{const saved=JSON.parse(singleReceiptCanonical(value));delete saved.recordedAt;
+    for(const key of ['observedAt','state','sourceStatus','rejectionDetails'])delete saved.receipt[key];return singleReceiptCanonical(saved);};
+  if(record.format!=='yoofam-product-document-receipt-v1'||prior.format!=='yoofam-product-document-receipt-v1'||record.identity.ownerId!==owner||record.productId!==productId
+    ||immutableRecord(record)!==immutableRecord(prior))return null;
+  const db=await ensureSingleReceiptDatabase(),guard=sourceGuard(owner,productId,currentSource),authorization=memberGuard(owner,member,record),payload=singleReceiptCanonical(record),oldPayload=singleReceiptCanonical(prior);
+  const current=`EXISTS(SELECT 1 FROM products p WHERE ${guard.sql}
+    AND COALESCE((SELECT revision FROM product_quotation_fields WHERE product_id=p.id AND owner_id=p.owner_id),0)=? AND ${authorization.sql})`;
+  const saved=await db.prepare(`UPDATE supplier_hub_single_receipts SET observed_at=?,payload=? WHERE owner_id=? AND product_id=? AND request_id=? AND payload=?
+    AND ${current} AND ?>observed_at
+    AND NOT(json_extract(payload,'$.receipt.state')='accepted' AND json_extract(?,'$.receipt.state')='pending')
+    AND NOT(json_extract(payload,'$.receipt.state')='rejected' AND json_extract(?,'$.receipt.state')<>'rejected')
+    RETURNING owner_id,product_id,request_id,observed_at,payload,created_at`)
+    .bind(record.receipt.observedAt,payload,owner,productId,record.requestId,oldPayload,...guard.args,quotationRevision,...authorization.args,record.receipt.observedAt,payload,payload).first<Row>();
+  if(saved){const result=parsedRow(saved,owner,productId);return result.format==='yoofam-product-document-receipt-v1'?result:null;}
+  // A lost response may already have committed this exact request. Return its
+  // newer evidence only under the same fresh source/member and immutable IDs.
+  const existing=await db.prepare(`SELECT r.owner_id,r.product_id,r.request_id,r.observed_at,r.payload,r.created_at FROM supplier_hub_single_receipts r
+    WHERE r.owner_id=? AND r.product_id=? AND r.request_id=? AND ${current} AND r.observed_at>=? AND ${immutable('r.payload')}=${immutable('?')}`)
+    .bind(owner,productId,record.requestId,...guard.args,quotationRevision,...authorization.args,record.receipt.observedAt,payload).first<Row>();
+  if(!existing)return null;const result=parsedRow(existing,owner,productId);return result.format==='yoofam-product-document-receipt-v1'?result:null;
+}
 async function rowsFor(owner:string,productId:string,database?:Awaited<ReturnType<typeof ensureSingleReceiptDatabase>>){
   const db=database??await ensureSingleReceiptDatabase(),rows=await db.prepare(`SELECT owner_id,product_id,request_id,observed_at,payload,created_at FROM supplier_hub_single_receipts
     WHERE owner_id=? AND product_id=? ORDER BY rowid DESC LIMIT 201`).bind(owner,productId).all<Row>();

@@ -31,8 +31,8 @@ export function assetProjectionFixture(company = companies[0]) {
   return { ...f, assets, metadata, planInput: async () => ({ projection: await module('app/supplier-hub-single-projection.ts').projectSupplierHubSingleDocument(f.input),
     owner: 'owner', productId: 'synthetic-package-653', ownedKeys: keys, assets, metadata, config }) };
 }
-export async function assetApiFixture(company = companies[0], snapshot = assetSnapshot(company), { twoOptions = true, populate = true } = {}) {
-  const f = await apiFixture(company, snapshot), { h } = f;
+export async function assetApiFixture(company = companies[0], snapshot = assetSnapshot(company), { twoOptions = true, populate = true, productId } = {}) {
+  const f = await apiFixture(company, snapshot, { productId }), { h } = f;
   h.bindings.YOOFAM_DETAIL_IMAGE_SECRET = config.secret; h.bindings.YOOFAM_DETAIL_IMAGE_ORIGIN = config.origin;
   h.sqlite.prepare('UPDATE products SET image_keys=? WHERE id=?').run(JSON.stringify(keys), f.id);
   const now = new Date().toISOString(), contentModel = h.load('app/product-content.ts'), contentDB = h.load('db/product-content.ts');

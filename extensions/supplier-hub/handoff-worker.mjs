@@ -21,6 +21,7 @@ import {dispatchListingBatch,authenticateListingBulkPage,saveListingBulkPage} fr
 import {readPageDescription} from './page-description.mjs';
 import {readProductSourceSession} from './product-source-session.mjs';
 import {inspectPreservedProductDocument} from './preserved-product-checkpoint.mjs';
+import {dispatchHistoricalProductReceipt} from './preserved-product-receipt-runtime.mjs';
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
   if(['YOOFAM_LISTING_BATCH_START','YOOFAM_LISTING_BATCH_STATUS','YOOFAM_LISTING_BATCH_CANCEL','YOOFAM_LISTING_BATCH_RESUME'].includes(message?.type)){
     dispatchListingBatch(message,sender).then(respond,error=>respond({ok:false,error:error.message,code:error.code??'LISTING_BATCH_FAILED'}));return true;
@@ -33,6 +34,9 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
   }
   if(message?.type==='YOOFAM_INSPECT_PRESERVED_PRODUCT_DOCUMENT'){
     inspectPreservedProductDocument(message,sender).then(result=>respond({ok:true,result}),error=>respond({ok:false,error:error?.code?error.message:'보관된 요청을 읽지 못했습니다. 기존 기록은 변경하지 않았습니다.',code:error?.code??'PRESERVED_INSPECTION_FAILED'}));return true;
+  }
+  if(message?.type==='YOOFAM_RECONCILE_PRESERVED_PRODUCT_RECEIPT'){
+    dispatchHistoricalProductReceipt(message,sender).then(result=>respond({ok:true,result}),error=>respond({ok:false,error:error?.code?error.message:'과거 접수를 읽지 못했습니다. 문서·파일·보관 기록은 변경하지 않았습니다.',code:error?.code??'HISTORICAL_RECEIPT_FAILED'}));return true;
   }
   if(message?.type==='YOOFAM_READ_PRODUCT_SOURCE_SESSION'){
     readProductSourceSession(message,sender).then(result=>respond({ok:true,...result}),()=>respond({ok:false,error:'원래 전송 요청의 연결 기록을 확인하지 못했습니다.'}));return true;
