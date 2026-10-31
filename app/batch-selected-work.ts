@@ -5,7 +5,8 @@ import { collectedTranslationAttributes } from '@/app/collected-translation-attr
 import { optionTranslationBatch } from '@/app/option-translation';
 import { collectionSourceReference } from '@/app/sourcing';
 import { createSeoWorkspaceDraftState, parseSeoWorkspaceDraftState, runSeoWorkspaceDraft,refreshSeoWorkspaceDraft,
-  readSeoGenerationContext,createSeoGenerationDraftState,parseSeoGenerationDraftState,runSeoGenerationDraft,parseSeoGenerationConfiguration,type SeoGenerationConfiguration } from '@/app/seo-workspace-draft';
+  readSeoGenerationContext,createSeoGenerationDraftState,parseSeoGenerationDraftState,runSeoGenerationDraft,parseSeoGenerationConfiguration,type SeoGenerationConfiguration,
+  type SeoWorkspaceDraftState,type SeoGenerationDraftState } from '@/app/seo-workspace-draft';
 import { GOOGLE_TEXT_MODEL, WORKERS_QWEN_MODEL, type TranslationSource, type TranslationView } from '@/app/automation/translation';
 import type { ProductContent } from '@/app/product-content';
 import type { ProductOptionsResponse } from '@/app/product-options';
@@ -118,6 +119,24 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
       throw cause;
     }finally{if(trackDispatch)onMutationDispatch=previousDispatch;}
   };
+  const seoDraftAttempt=async<T>(stateKey:string,state:SeoWorkspaceDraftState|SeoGenerationDraftState,message:string,operation:()=>Promise<T>)=>{
+    const pendingKey=identity+':pending:seo',hadPending=keys.has(pendingKey),original=JSON.stringify(state);
+    const pristine=!hadPending&&uuid(state.idempotencyKey)&&state.jobId===null&&state.reviewFingerprint===null
+      &&state.prepareSubmitted===false&&state.approvalSubmitted===false&&state.executeSubmitted===false
+      &&![...keys.entries()].some(([key,value])=>['seo:','seo-qwen:','seo-generation:'].some(prefix=>key.startsWith(identity+':write:'+prefix))&&value!=='confirmed');
+    keys.set(stateKey,original);keys.set(pendingKey,message);
+    const previousDispatch=onMutationDispatch;let dispatched=false;
+    onMutationDispatch=()=>{dispatched=true;previousDispatch?.();};
+    try{return await operation();}
+    finally{
+      onMutationDispatch=previousDispatch;
+      // Both engines publish prepareSubmitted before the account preflight,
+      // and may return a readback outcome after that preflight fails. Restore
+      // only an untouched original attempt that never reached the transport.
+      // Preserve its UUID; prior or dispatched unknown writes stay fenced.
+      if(pristine&&!dispatched){keys.set(stateKey,original);keys.delete(pendingKey);}
+    }
+  };
   async function translateSeoOptions():Promise<Outcome>{
     const current=await product();
     const [history,contentBody,source,options,registration]=await Promise.all([
@@ -142,9 +161,8 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
       productId,productVersion:current.updated_at,contentRevision:content.revision,source:input,configuration:history.configuration,
       memo:{brand:registration.settings.brand,features:source.requestContext.features,keywords:source.requestContext.keywords}});
     if(!state)throw Error('이전 SEO 실행 정보를 확인하지 못했습니다. SEO 이력을 확인해주세요.');
-    keys.set(stateKey,JSON.stringify(state));
-    keys.set(identity+':pending:seo','SEO 실행 결과 확인 필요');
-    const generated=await runSeoWorkspaceDraft(state,{signal,fetcher,onState:value=>keys.set(stateKey,JSON.stringify(value))});
+    const generated=await seoDraftAttempt(stateKey,state,'SEO 실행 결과 확인 필요',()=>
+      runSeoWorkspaceDraft(state,{signal,fetcher,onState:value=>keys.set(stateKey,JSON.stringify(value))}));
     if(generated.job?.status!=='completed'||!generated.job.result)return{status:'blocked',message:generated.message,uncertain:!generated.closed};
     const request={jobId:generated.job.id,expectedVersion:current.updated_at,scope:'options'};
     const plan=await post<{productId:string;productVersion:string;contentRevision:number;optionRevision:number;fingerprint:string;preview:unknown[]}>('/translation-apply',{...request,action:'preview'});
@@ -195,8 +213,9 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
       keys.delete(pendingKey);
     }else if(!stored)state=create();
     if(!state)throw Error('이전 Qwen 실행 정보를 확인하지 못했습니다. 새 요청은 만들지 않았습니다.');
-    keys.set(pointerKey,stateKey);keys.set(stateKey,JSON.stringify(state));keys.set(pendingKey,'Qwen 번역 결과 확인 필요');
-    const generated=await runSeoWorkspaceDraft(state,{signal,fetcher,confirmAi:true,onState:value=>keys.set(stateKey,JSON.stringify(value))});
+    keys.set(pointerKey,stateKey);
+    const generated=await seoDraftAttempt(stateKey,state,'Qwen 번역 결과 확인 필요',()=>
+      runSeoWorkspaceDraft(state,{signal,fetcher,confirmAi:true,onState:value=>keys.set(stateKey,JSON.stringify(value))}));
     await assertCurrent();
     if(generated.job?.status!=='completed'||!generated.job.result)return{status:'blocked',message:generated.message,uncertain:!generated.closed};
     const request={jobId:generated.job.id,expectedVersion:current.updated_at,scope:'all',linkQuotationSeoDefaults:true};
@@ -226,8 +245,8 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     if((['title','keywords','description'] as const).every(key=>content.seo[key].provenance==='manual'))return{status:translated.status==='blocked'?'blocked':'skipped',message:message+'직접 저장한 SEO와 공란을 모두 유지했습니다. AI 생성은 실행하지 않았습니다.'};
     const stateKey=identity+':seo-generation:'+view.productVersion+':'+view.contentRevision,stored=keys.get(stateKey),state=stored?parseSeoGenerationDraftState(stored,productId):createSeoGenerationDraftState(view);
     if(!state)throw Error('이전 SEO 생성 요청을 확인하지 못했습니다. 새 요청은 만들지 않았습니다.');
-    keys.set(stateKey,JSON.stringify(state));keys.set(identity+':pending:seo','SEO 생성 결과 확인 필요');
-    const generated=await runSeoGenerationDraft(state,{signal,fetcher,confirmAi:true,onState:value=>keys.set(stateKey,JSON.stringify(value))});
+    const generated=await seoDraftAttempt(stateKey,state,'SEO 생성 결과 확인 필요',()=>
+      runSeoGenerationDraft(state,{signal,fetcher,confirmAi:true,onState:value=>keys.set(stateKey,JSON.stringify(value))}));
     await assertCurrent();
     if(generated.job?.status!=='completed'||!generated.job.result)return{status:'blocked',message:message+generated.message,uncertain:!generated.closed};
     const request={jobId:generated.job.id,expectedVersion:view.productVersion,linkQuotationSeoDefaults:true};
@@ -328,9 +347,15 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     if(aiConfigured&&!job){
       const key=identity+':quote:'+state.fingerprint;
       if(!keys.has(key))keys.set(key,controls.newKey());
-      keys.set(identity+':pending:quotation',quotationGenerationPending);
-      const result=await post<{job:QuotationAiJobView;sourceCurrent?:boolean}>('/quotation-ai',{action:'generate',profileId:null,
-        expectedFingerprint:state.fingerprint,expectedQuotationRevision:view.revision,optionId:null,applyToAllOptions:true,idempotencyKey:keys.get(key)});
+      const pendingKey=identity+':pending:quotation',hadPending=keys.has(pendingKey);
+      keys.set(pendingKey,quotationGenerationPending);
+      const previousDispatch=onMutationDispatch;let dispatched=false;
+      onMutationDispatch=()=>{dispatched=true;previousDispatch?.();};
+      let result:{job:QuotationAiJobView;sourceCurrent?:boolean};
+      try{result=await post('/quotation-ai',{action:'generate',profileId:null,
+        expectedFingerprint:state.fingerprint,expectedQuotationRevision:view.revision,optionId:null,applyToAllOptions:true,idempotencyKey:keys.get(key)});}
+      catch(cause){if(!hadPending&&!dispatched)keys.delete(pendingKey);throw cause;}
+      finally{onMutationDispatch=previousDispatch;}
       if(result.sourceCurrent===false)throw Error('견적 작성 중 자료가 변경됐습니다.');
       job=result.job;
       // The existing GET supports an exact job id, not idempotency lookup.

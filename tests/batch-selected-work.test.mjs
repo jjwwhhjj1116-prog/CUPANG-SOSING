@@ -544,6 +544,36 @@ function pendingQuotationFixture(){
   complete(){job.status='completed';job.result={changes:[],warnings:[],model:'fixture-model',generatedAt:version};}};
 }
 
+test('quotation generation rejected before dispatch keeps its original UUID and can explicitly resume once with real reviewed save guards',async()=>{
+ const h=knownQuotationFixture({generateFirst:true});let rejected=false,allocated=0;
+ h.options.newKey=()=>{allocated++;return '11111111-1111-4111-8111-111111111111';};
+ h.prependIntercept(call=>{
+  if(call.url==='/api/supplier-hub/catalog-context'&&!rejected&&h.keys.get('owner:product:pending:quotation')==='견적서 AI 실행 결과 확인 필요'){
+   rejected=true;return Response.json({error:'isolated quotation preflight unavailable'},{status:503});
+  }
+ });
+ const first=await h.run(['quotation']);assert.equal(first.stages[0].status,'failed');assert.equal(rejected,true);
+ assert.equal(h.calls.filter(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST').length,0);assert.equal(h.writes.length,0);
+ const requestKey=h.keys.get('owner:product:quote:'+hash);assert.equal(requestKey,'11111111-1111-4111-8111-111111111111');assert.equal(allocated,1);
+ assert.equal(h.keys.has('owner:product:pending:quotation'),false);assert.equal(h.keys.has('owner:product:quotation-generation-readback-v1'),false);
+ const result=await h.run(['quotation']);assert.equal(result.stages[0].status,'draft',result.stages[0].message);
+ const generated=h.calls.filter(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST');assert.equal(generated.length,1);assert.equal(generated[0].body.idempotencyKey,requestKey);assert.equal(allocated,1);
+ assert.equal(h.writes.length,1);assert.ok(h.writes[0].changes.some(change=>change.optionId==='a'&&change.fieldKey==='notice3'&&change.value==='검토 재질'));
+ assert.equal(h.writes[0].changes.some(change=>change.optionId==='b'&&change.fieldKey==='notice0'),false);assert.equal(h.view.resolved.rows[1].fields.notice0.value,'');
+ assert.equal(h.calls.filter(call=>call.adapter==='packaging').length,1);assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
+});
+
+test('quotation generation transport ACK loss or malformed ACK still fences the same request without field saving or regeneration',async()=>{
+ for(const mode of ['lost','malformed']){
+  const h=knownQuotationFixture({generateFirst:true});
+  h.prependIntercept(call=>{if(call.url.endsWith('/quotation-ai')&&call.method==='POST'){if(mode==='lost')throw Error('isolated generation ACK lost');return Response.json({job:null});}});
+  await h.run(['quotation']);const requestKey=h.keys.get('owner:product:quote:'+hash),before=h.calls.length;
+  assert.equal(h.keys.has('owner:product:pending:quotation'),true,mode);assert.equal((await h.run(['quotation'])).stages[0].status,'blocked',mode);
+  assert.equal(h.calls.length,before+1,mode);assert.equal(h.keys.get('owner:product:quote:'+hash),requestKey,mode);assert.equal(h.writes.length,0,mode);
+  assert.equal(h.calls.filter(call=>call.url.endsWith('/quotation-ai')&&call.method==='POST').length,1,mode);
+ }
+});
+
 test('explicit quotation retry reads only the acknowledged original job and resumes a delayed completed draft without another generation',async()=>{
  const h=pendingQuotationFixture();assert.equal((await h.run(['quotation'])).stages[0].status,'blocked');
  const before=h.calls.length;h.complete();const result=await h.run(['quotation']),retry=h.calls.slice(before);
@@ -725,6 +755,95 @@ function qwenRetryFixture(){
  provider.refreshSeoWorkspaceDraft=async(state,controls)=>{reads++;controls.onState(state);return{job:{id:state.jobId,status,result:null},closed:['failed','completed'].includes(status),partial:false,message:'같은 요청 조회'};};
  return{h,generation,status:value=>status=value,get creates(){return creates;},get providerCalls(){return providerCalls;},get reads(){return reads;}};
 }
+
+// Use both real SEO state engines, with only the local server transport faked.
+// No translation service, supplier product, DB or Hub endpoint is contacted.
+function actualSeoFixture(kind='qwen'){
+ const base=kind==='qwen'?qwenFixture():{h:seoFixture()},h=base.h,generation=base.generation??withSeoGeneration(h);
+ const actual=providedOptionModule('app/seo-workspace-draft.ts'),translation=providedOptionModule('app/automation/translation.ts'),server=providedOptionModule('app/seo-generation.ts');
+ const configuration=kind==='qwen'?{configured:true,model:translation.WORKERS_QWEN_MODEL,maxOutputTokens:4096}:{configured:true,model:translation.GOOGLE_TEXT_MODEL,maxOutputTokens:0};
+ Object.assign(h.deps['@/app/automation/translation'],{GOOGLE_TEXT_MODEL:translation.GOOGLE_TEXT_MODEL});
+ generation.view.source.category={id:'68183',path:['깔창','쿠션패드']};
+ if(kind!=='qwen')h.deps['@/app/option-translation'].optionTranslationBatch=()=>({total:kind==='llama'?0:1,remaining:0,attributes:kind==='llama'?[]:[{name:'option:sku-a',value:'白色'}]});
+ if(kind==='google')delete h.options.seoGenerationConsent;
+ const created=[],states=[];let job=null;
+ const isGeneration=kind==='llama',stateFragment=isGeneration?':seo-generation:':kind==='qwen'?':seo-qwen:':':seo-options:';
+ Object.assign(h.deps['@/app/seo-workspace-draft'],{
+  parseSeoGenerationConfiguration:actual.parseSeoGenerationConfiguration,readSeoGenerationContext:actual.readSeoGenerationContext,
+  parseSeoWorkspaceDraftState:actual.parseSeoWorkspaceDraftState,parseSeoGenerationDraftState:actual.parseSeoGenerationDraftState,
+  createSeoWorkspaceDraftState:input=>{const state=actual.createSeoWorkspaceDraftState(input);created.push(plain(state));return state;},
+  createSeoGenerationDraftState:view=>{const state=actual.createSeoGenerationDraftState(view);created.push(plain(state));return state;},
+  runSeoWorkspaceDraft:(state,controls)=>actual.runSeoWorkspaceDraft(state,{...controls,onState:value=>{states.push(plain(value));controls.onState(value);}}),
+  runSeoGenerationDraft:(state,controls)=>actual.runSeoGenerationDraft(state,{...controls,onState:value=>{states.push(plain(value));controls.onState(value);}}),
+ });
+ const stateEntry=()=>[...h.keys.entries()].find(([key])=>key.includes(stateFragment));
+ h.prependIntercept(async call=>{
+  const url=new URL(call.url,'https://local.test'),isTranslation=url.pathname.endsWith('/translation'),isSeo=url.pathname.endsWith('/seo-generation');
+  if(!isTranslation&&!isSeo)return null;
+  if(call.method==='GET'){
+   if(isTranslation)return Response.json({configuration,jobs:job&&!isGeneration?[job]:[]});
+   return Response.json({...plain(generation.view),jobs:job&&isGeneration?[job]:[],...(url.searchParams.has('idempotencyKey')?{idempotencyKey:url.searchParams.get('idempotencyKey')}:{})});
+  }
+  if(!['prepare','approve','execute'].includes(call.body.action))return null;
+  if(call.body.action==='prepare'){
+   const state=JSON.parse(stateEntry()[1]);
+   const review=isGeneration?await server.prepareSeoGenerationReview(state.source,{purpose:'seo-generation',version:1,sourceFingerprint:state.sourceFingerprint,
+    optionRevision:state.optionRevision,company:plain(state.company),memo:plain(state.memo)},state.configuration)
+    :await translation.prepareTranslationReview(state.source,{...configuration,provider:kind==='qwen'?'workers-ai':'google-free',apiKey:''});
+   job={id:'99999999-9999-4999-8999-999999999999',productId:'product',productVersion:version,contentRevision:3,status:'prepared',review,result:null,error:null};
+  }else if(call.body.action==='approve')job={...job,status:'approved'};
+  else job={...job,status:'completed',result:{model:isGeneration?generation.view.configuration.model:configuration.model,appliedToContent:false,provenance:'generated',
+   draft:{title:'검토 상품명',keywords:['상품'],description:'원문 설명',attributes:isGeneration?[]:job.review.source.attributes.map((item,sourceIndex)=>({sourceIndex,
+    name:item.name.startsWith('option-color:')?'색상':item.name.startsWith('option:')?'옵션명':'소재',value:item.name.startsWith('option')?'하양':'면'})),warnings:[]}}};
+  return Response.json(isGeneration?{purpose:'seo-generation',productId:'product',productVersion:version,company:generation.view.company,sourceCurrent:true,job}:{job});
+ });
+ return{h,generation,created,states,stateEntry,actions:()=>h.calls.filter(call=>['prepare','approve','execute'].includes(call.body?.action)),state:()=>JSON.parse(stateEntry()[1])};
+}
+
+test('real Qwen, Google and legacy SEO engines restore only a pristine unsent prepare and reuse its exact UUID on an explicit later start',async()=>{
+ for(const kind of ['qwen','google','llama']){
+  const f=actualSeoFixture(kind),{h}=f;let rejected=false;
+  h.prependIntercept(call=>{
+   if(call.url==='/api/supplier-hub/catalog-context'&&!rejected&&f.stateEntry()&&f.state().prepareSubmitted){rejected=true;return Response.json({error:'isolated account preflight unavailable'},{status:503});}
+  });
+  const first=await h.run(['seo','pricing']);assert.equal(rejected,true,kind);assert.equal(f.actions().length,0,kind);
+  assert.equal(first.stages[0].status,'blocked',kind);assert.equal(h.calls.some(call=>call.url.endsWith('/stage-two-pricing')),false,kind);
+  assert.equal(f.created.length,1,kind);assert.deepEqual(f.state(),f.created[0],kind);assert.equal(h.keys.has('owner:product:pending:seo'),false,kind);
+  const second=await h.run(['seo','pricing']);assert.equal(second.stages[0].status,kind==='google'?'blocked':'draft',kind+': '+second.stages[0].message);
+  assert.equal(second.stages[1].status,'draft',kind);assert.equal(f.created.length,1,kind);assert.equal(f.state().idempotencyKey,f.created[0].idempotencyKey,kind);
+  assert.deepEqual(f.actions().map(call=>call.body.action),['prepare','approve','execute'],kind);assert.equal(f.actions()[0].body.idempotencyKey,f.created[0].idempotencyKey,kind);
+  assert.equal(h.keys.has('owner:product:pending:seo'),false,kind);
+ }
+});
+
+test('real SEO dispatched prepare ACK loss and malformed ACKs remain fenced and cannot resend on a second start',async()=>{
+ for(const kind of ['qwen','google','llama'])for(const mode of ['lost','malformed']){
+  const f=actualSeoFixture(kind),{h}=f;
+  h.prependIntercept(call=>{if(call.body?.action==='prepare'){if(mode==='lost')throw Error('isolated lost prepare ACK');return Response.json({job:{id:'malformed'}});}});
+  const first=await h.run(['seo','pricing']);assert.ok(['blocked','failed'].includes(first.stages[0].status),kind+mode);
+  assert.equal(f.actions().length,1,kind+mode);assert.equal(f.state().prepareSubmitted,true,kind+mode);assert.equal(h.keys.has('owner:product:pending:seo'),true,kind+mode);
+  const before=h.calls.length,state=plain(f.state());assert.equal((await h.run(['seo','pricing'])).stages[0].status,'blocked',kind+mode);
+  assert.equal(h.calls.length,before+1,kind+mode);assert.deepEqual(f.state(),state,kind+mode);assert.equal(f.actions().length,1,kind+mode);
+ }
+});
+
+test('preexisting SEO prepare uncertainty, apply write or pending latch cannot be reset by a zero-dispatch run',async()=>{
+ for(const kind of ['qwen','google','llama'])for(const mode of ['state','write','pending']){
+  const f=actualSeoFixture(kind),{h}=f;let rejected=false;
+  h.prependIntercept(call=>{
+   if(call.url==='/api/supplier-hub/catalog-context'&&!rejected&&h.events.at(-1)?.status==='running'&&h.keys.has('owner:product:pending:seo')&&f.stateEntry()&&f.state().prepareSubmitted){rejected=true;return Response.json({error:'isolated preflight unavailable'},{status:503});}
+  });
+  await h.run(['seo']);assert.equal(f.actions().length,0,kind+mode);
+  const [key,initial]=f.stateEntry();if(mode==='state')h.keys.set(key,JSON.stringify({...JSON.parse(initial),prepareSubmitted:true}));
+  if(mode==='write')h.keys.set('owner:product:write:seo:prior-unknown','submitted');
+  if(mode==='pending')h.keys.set('owner:product:pending:seo','SEO 저장 결과 미확정');
+  // Force another preflight rejection only after the engine publishes its flag.
+  rejected=false;
+  await h.run(['seo','pricing']);assert.equal(f.actions().length,0,kind+mode);assert.equal(h.keys.has('owner:product:pending:seo'),true,kind+mode);
+  if(mode!=='pending')assert.equal(f.state().prepareSubmitted,true,kind+mode);else assert.equal(h.keys.get('owner:product:pending:seo'),'SEO 저장 결과 미확정',kind+mode);
+  const before=h.calls.length;await h.run(['seo','pricing']);assert.equal(h.calls.length,before+1,kind+mode);assert.equal(f.actions().length,0,kind+mode);
+ }
+});
 
 test('only an explicit retry and fresh failed Qwen proof replace the local request UUID without replaying history',async()=>{
  const f=qwenRetryFixture(),{h}=f;await h.run(['seo']);const old=[...h.keys.entries()].find(([key])=>key.includes(':seo-qwen:'))[1];assert.equal(f.creates,1);assert.equal(f.providerCalls,1);
