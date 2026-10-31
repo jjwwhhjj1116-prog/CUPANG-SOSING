@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers';
 import { sourceGuard, type QuotationSourceGuard } from '@/db/quotation-fields';
 import type { SupplierHubCompany } from '@/app/supplier-hub-company';
 import type { buildQuotationAiPlan, executeQuotationAi } from '@/app/quotation-ai';
+import type {QuotationTextExecution} from '@/app/quotation-text-execution';
 
 export type QuotationAiPlan = ReturnType<typeof buildQuotationAiPlan>;
 export type QuotationAiResult = Awaited<ReturnType<typeof executeQuotationAi>>;
@@ -10,6 +11,7 @@ export type QuotationAiReview = {
   source: QuotationSourceGuard; company: SupplierHubCompany;
   member: { id: string; email: string; role: string };
   scope: { optionId: string | null; applyToAllOptions: boolean }; plan: QuotationAiPlan;
+  executionPolicy?:QuotationTextExecution;
 };
 export type QuotationAiJob = {
   id: string; productId: string; status: 'prepared' | 'running' | 'completed' | 'failed' | 'uncertain';

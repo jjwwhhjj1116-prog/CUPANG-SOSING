@@ -65,7 +65,7 @@ export function BatchLabelDraftPanel(props: Props) {
     && selectionProducts.current === JSON.stringify(controls.current.products.map(product => [product.id, product.title]));
   return <section className="panel-stack" aria-label="선택 상품 표시사항 초안 작업" data-workspace-saving={busy} data-workspace-dirty={pending}>
     <h3>한글표시사항 초안 작성·검토</h3>
-    <p>포함 옵션의 상품 원문과 저장 설정으로 내용량·재질·상품 유형의 무료 AI 초안을 준비합니다. 직접 수정한 값과 공란은 유지하며, 초안은 검토 후 정보 저장하기를 눌러야 반영됩니다.</p>
+    <p>포함 옵션의 상품 원문과 저장 설정으로 내용량·재질·상품 유형의 AI 초안을 준비합니다. 직접 수정한 값과 공란은 유지하며, 초안은 검토 후 정보 저장하기를 눌러야 반영됩니다.</p>
     <p>나머지 표시 항목도 확인·수정한 뒤 PNG를 생성하고 견적서에 연결하세요. 등록전송은 최종 견적서에서 진행합니다.</p>
     {initial && <p role="status">현재 계정의 설정과 표시사항 목록을 읽고 있습니다…</p>}
     {plan?.messages.map((item, index) => <p role="status" key={`${item.productId}:${index}`}>{props.products.find(product => product.id === item.productId)?.title ?? item.productId} · {item.message}</p>)}

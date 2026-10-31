@@ -285,7 +285,7 @@ function knownQuotationFixture({configured=true,generateFirst=false}={}){
  const view={revision:1,inputFingerprint:hash,contentRevision:3,optionRevision:2,productVersion:version,updatedAt:version,imageKeys:[],overrides:{common:{},options:{b:{notice0:''}}},categoryContext:{profileId:null,categoryId:'68183',categoryPath:['합성']},automatic:{schema,rows:plain(rows)},resolved:{schema,rows}};
  view.resolved.rows[1].fields.notice0={value:'',source:'manual-option'};
  const content={schemaVersion:1,productId:'product',revision:3,label:Object.fromEntries(Object.entries({manufacturer:'저장 제조사',importer:'저장 수입사',contact:'02-1234-5678',countryOfOrigin:'중국'}).map(([key,value])=>[key,{value,provenance:key==='countryOfOrigin'?'generated':'manual'}]))};
- const job={id:'quote-known',status:'completed',fingerprint:hash,quotationRevision:1,profileId:null,scope:{optionId:null,applyToAllOptions:true},result:{changes:[{optionId:'a',fieldKey:'notice3',value:'검토 재질'}],warnings:[],model:'mock',generatedAt:version}};
+ const job={id:'quote-known',status:'completed',fingerprint:hash,quotationRevision:1,profileId:null,scope:{optionId:null,applyToAllOptions:true},result:{changes:[{optionId:'a',fieldKey:'notice3',value:'검토 재질'}],warnings:[],model:'@cf/meta/llama-3.3-70b-instruct-fp8-fast',generatedAt:version}};
  const savedOptions={schemaVersion:1,productId:'product',revision:2,rows:['a','b','excluded'].map((id,index)=>({id,included:id!=='excluded',color:index?'핑크':'베이지',unitsPerPack:1,provenance:{color:'manual',unitsPerPack:'manual'},updatedAt:version}))};
  const savedLabels={schemaVersion:1,productId:'product',revision:1,updatedAt:version,overrides:{common:{},options:{}}};
  let onContent,saveResponse,knownOverride,generated=!generateFirst;const writes=[];

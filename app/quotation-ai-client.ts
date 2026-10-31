@@ -1,10 +1,12 @@
 import { quotationValueIssues, type QuotationFieldsView } from '@/app/quotation-schema';
 import { quotationKnownNoticeTarget, quotationSavedQuantityText } from '@/app/quotation-known-notice-proposals';
 import { isCouplusNotApplicableValue } from '@/app/couplus-quotation-defaults';
+import {quotationTextModel,validQuotationTextExecution,type QuotationTextExecution} from '@/app/quotation-text-execution';
 
 export type QuotationAiProposal = { optionId: string | null; fieldKey: string; value: string };
 export type QuotationAiJobView = { id: string; status: 'prepared' | 'running' | 'completed' | 'failed' | 'uncertain'; startedAt?: string | null; canClose?: boolean;
   fingerprint: string; quotationRevision: number; profileId: string | null;
+  model?:string;executionPolicy?:QuotationTextExecution;
   scope: { optionId: string | null; applyToAllOptions: boolean };
   result: { changes: QuotationAiProposal[]; warnings: string[]; model: string; generatedAt: string } | null;
   error: { code: string; message: string; uncertain: boolean } | null };
@@ -64,6 +66,8 @@ export function quotationAiScopedProposalChanges(view: QuotationFieldsView, job:
 }
 /** Recheck every proposed target before placing anything in an unsaved editor. */
 export function quotationAiProposalChanges(view: QuotationFieldsView, job: QuotationAiJobView, fingerprint: string) {
+  if(job.executionPolicy!==undefined&&!validQuotationTextExecution(job.executionPolicy))throw Error('견적 AI 실행 정책을 확인해주세요.');
+  if(job.result&&job.result.model!==quotationTextModel(job.executionPolicy)||job.model!==undefined&&job.model!==quotationTextModel(job.executionPolicy))throw Error('견적 AI의 검토 모델과 결과 모델이 다릅니다.');
   if (job.status !== 'completed' || job.fingerprint !== fingerprint || job.quotationRevision !== view.revision
     || job.profileId !== view.categoryContext.profileId || !job.result || !Array.isArray(job.result.changes) || job.result.changes.length > 1000)
     throw Error('현재 견적서에 연결된 완료 초안을 확인해주세요.');

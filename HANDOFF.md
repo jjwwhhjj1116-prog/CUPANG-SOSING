@@ -6768,3 +6768,11 @@ REA로 Couplus의 localhost HTTP/SSE와 별도 상품조회 경계를 확인했�
 - 확장2.1.70:113파일/1,664,313B/SHA4299ca5d47edca26a09bc2bb4b7d321421689dd344986ca0bbfe52286aeecb29. 실제 폴더69를 백업하고113해시일치로 갱신, 권한목록동일. 사용자70새로고침 답변 대기. 웹 F5는 root가 하며 Supplier Hub는 그대로 둔다. 재수집 불필요.
 - 기존 browser6이 사라져 인벤토리로 같은provider ca7efe32…의 browser7을 확인했다. 원래4탭은동일:qa727939940/official727940002(Preview열림)/readHub727940016/legal-list727940052. qa883/official883/readHub883/legal883 핸들. 70적용되면 qa를F5하고원래요청복구후읽기감사를1회이어간다. Preview/Next/Save/Submit 금지 guard는 해제하지 않는다. 실제차이가확인되면 재전송금지 변경을 묻기 전에 구체적인 수정범위를 제시한다.
 - 1688 읽기 거절 상태는 그대로이며 다른 도구로 재접근하지 않았다. 기존886상세0장·인페인팅 미구현 등은 이번 no-op/감사 수정으로 해결됐다고 보고하지 않는다. 실제 접수 미확인.
+- Step883 적용 결과: 사용자70적용 및 동일6권한/privacy갱신승인. 첫OAuth2분만료후 새동일요청으로공식CLI인증성공. welcome.developers.workers.dev 안내화면읽기는auto-review거절, 읽기불필요해CLI성공으로확인하고탭닫음; 우회접근없음. migration0038성공, Worker58ad3706-231c-4e5f-a10a-310204c5d1e4 배포, 코드79ccc5a main업로드. protected35표47행/hash39f1f5b9…동일. 70웹F5후같은원래요청읽기복구진행중. 브라우저7의qa883/official883/readHub883/legal883만보존하며auth탭은종료했다.
+- 실제70감사는스키마권한결함을지나UNEXPECTED_LEGAL_AUDIT_READ draft-list/http-redirect로중단. 별도빈SR legal883의안전한헤더목록조회는2095빈행(로그인성공증거아님), 공식홈클릭후xauth로그인화면으로이동해현재세션만료직접확인. outputs/step883-hub-session-expired.png. 그탭로그인만사용자에게요청중,원래3탭과legal로그인탭handoff. 쿠키/인증헤더읽기·redirect자동추종·파일/본문/생성/Next/Submit0. 로그인뒤동일readonlyaudit재개. 일반redirect계약만으로AUTH_REQUIRED오분류패치없음. 6/7레거시AI정책은별도범위분석진행중이며현재본단락작성시코드변경없음.
+
+## 884. 2026-10-31 — 설정된 텍스트 Qwen을 표시사항·견적 AI에 연결
+
+- docs/step884-qwen-label-and-quotation.md 참조. 설정된 텍스트 모델은Qwen3-30B, 이미지Vision은Qwen3.8-27B로 구분. 기존6/7Llama고정을 신규유효Qwen설정에서교정했다. 새실행정책을source/request지문에결합하고 결과/client모델도검증한다. 구형Llama읽기유지·완료승격0·running/uncertain상품공유fence유지. 기존FREE_ONLY활성화조건과전역UTC40제한유지(무료보장아님). 정책·모델명만바꿔불확실요청을재호출하지않는다.
+- Qwen실제입력직렬화/JSON/추론문비사용/Editor→API포함4파일102/102, 이전core/API69/69, tsc/lint/독립검토/운영build통과. 새공급자호출은로컬mock이며운영AI/DB/Hub조작0. 생산8파일·테스트3파일, 확장변경0. 새integrationsGET필드추가0. 기존chatgpt-auth.ts메타변경은root/worker작업외로보존한다.
+- 현재Hub는공식로그인화면에서사용자갱신대기. 원래qa883/official883(Preview열림)/readHub883와로그인legal883를보존한다. 파일·본문·새생성·Next/Submit금지유지. 실제접수·원래본문의Preview사고영향은미확정,886상세원본0장·인페인팅미구현도해결완료로보고하지않는다. 배포커밋/Worker는최종검증뒤이어서기록한다.

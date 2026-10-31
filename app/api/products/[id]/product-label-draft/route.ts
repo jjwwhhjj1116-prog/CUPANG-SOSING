@@ -13,18 +13,16 @@ import { fingerprint } from '@/app/automation/model';
 import { verifyProductLabelsView, type ProductLabelsView } from '@/app/product-label';
 import { buildProductLabelDraftPlan, executeProductLabelDraft, parseProductLabelDraftRequest, verifyProductLabelDraftResult,
   ProductLabelDraftError, type ProductLabelDraftSource } from '@/app/product-label-draft';
+import {quotationTextConfiguration,sameQuotationTextExecution,type QuotationTextEnvironment} from '@/app/quotation-text-execution';
 
 type Context = { params: Promise<{ id: string }> };
-type AiEnvironment = { AI?: { run(model: string, input: Record<string, unknown>): Promise<unknown> };
-  SOURCEFLOW_QUOTATION_AI_PROVIDER?: string; SOURCEFLOW_QUOTATION_AI_FREE_ONLY?: string };
+type AiEnvironment = QuotationTextEnvironment;
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } });
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const safeId = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(value);
 const changed = () => new ProductLabelDraftError('PRODUCT_LABEL_DRAFT_SOURCE_CHANGED', '상품·옵션·회사·카테고리 또는 표시사항 저장값이 변경되었습니다. 현재 입력을 유지하고 새 저장값을 확인해주세요.');
 function configuration() {
-  const settings = env as AiEnvironment;
-  return settings.SOURCEFLOW_QUOTATION_AI_PROVIDER === 'workers-ai' && settings.SOURCEFLOW_QUOTATION_AI_FREE_ONLY === 'true'
-    && typeof settings.AI?.run === 'function';
+  return quotationTextConfiguration(env as AiEnvironment);
 }
 async function authorization() {
   const user = await getChatGPTUser(), owner = await getWorkspaceOwnerId(), company = approvedSupplierHubCompany(user?.membership);
@@ -85,17 +83,21 @@ export async function POST(request: Request, context: Context) {
     const body = parseProductLabelDraftRequest(await readBoundedJson(request, 4096)), profileId = selection(request);
     const auth = await authorization(), { id } = await context.params;
     if (!safeId(id)) return json({ error: '상품 식별값을 확인해주세요.' }, 400);
-    if (!configuration()) return json({ error: '무료 표시사항 AI 설정을 확인해주세요.', code: 'PRODUCT_LABEL_DRAFT_NOT_CONFIGURED' }, 503);
+    const selected=configuration();
+    if (!selected.configured) return json({ error: '표시사항 AI 설정을 확인해주세요.', code: 'PRODUCT_LABEL_DRAFT_NOT_CONFIGURED' }, 503);
     const before = await snapshot(auth, id, profileId, request, body.optionId);
     if (before.view.revision !== body.expectedRevision || before.view.inputFingerprint !== body.expectedInputFingerprint) throw changed();
     const plan = buildProductLabelDraftPlan(before.view, body.optionId, before.facts);
-    if (!configuration() || !await currentAuthorization(auth) || !await productLabelsSourcesCurrent(auth.owner, id, before.source, before.view.revision)) throw changed();
+    if (!configuration().configured||!sameQuotationTextExecution(configuration().executionPolicy,selected.executionPolicy) || !await currentAuthorization(auth) || !await productLabelsSourcesCurrent(auth.owner, id, before.source, before.view.revision)) throw changed();
     // This shared account-wide reservation is the only write: no product,
     // proposal, label, image or execution job is persisted by draft generation.
-    if (!await reserveQuotationAiRequest()) return json({ error: '오늘의 무료 AI 요청 한도에 도달했습니다. 현재 입력은 유지됩니다.', code: 'PRODUCT_LABEL_DRAFT_LIMIT' }, 429);
-    const result = await executeProductLabelDraft(plan, (env as AiEnvironment).AI!);
+    if (!await reserveQuotationAiRequest()) return json({ error: '오늘의 AI 공유 요청 한도에 도달했습니다. 현재 입력은 유지됩니다.', code: 'PRODUCT_LABEL_DRAFT_LIMIT' }, 429);
+    const result = await executeProductLabelDraft(plan, {async run(model,input){
+      if(model!==selected.model||!configuration().configured||!sameQuotationTextExecution(configuration().executionPolicy,selected.executionPolicy)||!await currentAuthorization(auth)||!await productLabelsSourcesCurrent(auth.owner,id,before.source,before.view.revision))throw changed();
+      return (env as AiEnvironment).AI!.run(model,input);
+    }},selected.executionPolicy);
     const after = await snapshot(auth, id, profileId, request, body.optionId);
-    if (after.signature !== before.signature || !await currentAuthorization(auth)) throw changed();
+    if (after.signature !== before.signature||!configuration().configured||!sameQuotationTextExecution(configuration().executionPolicy,selected.executionPolicy) || !await currentAuthorization(auth)) throw changed();
     return json(verifyProductLabelDraftResult(after.view, body.optionId, result));
   } catch (error) {
     if (error instanceof ProductLabelDraftError) return json({ error: error.message, code: error.code }, error.status);

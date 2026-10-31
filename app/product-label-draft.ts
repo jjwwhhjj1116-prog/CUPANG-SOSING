@@ -4,6 +4,7 @@ import { quotationAiProviderResponse } from '@/app/quotation-ai-provider';
 import { translationNumbers } from '@/app/translation-attribute-evidence';
 import { unsupportedTranslatedProductClaim } from '@/app/product-translation-quality';
 import { unsupportedProductMaterial } from '@/app/product-material-evidence';
+import {quotationTextModel,quotationTextProviderInput,quotationTextProviderResponse,validQuotationTextExecution,type QuotationTextExecution} from '@/app/quotation-text-execution';
 
 export const PRODUCT_LABEL_DRAFT_MODEL = QUOTATION_AI_MODEL;
 export const PRODUCT_LABEL_DRAFT_PROVIDER = 'Cloudflare Workers AI';
@@ -25,7 +26,7 @@ export type ProductLabelDraftRequest = { expectedRevision: number; expectedInput
 export type ProductLabelDraftResult = {
   productId: string; optionId: string | null; profileId: string | null; productVersion: string; labelRevision: number; inputFingerprint: string;
   values: Partial<Record<ProductLabelDraftKey, string>>; warnings: string[]; provider: typeof PRODUCT_LABEL_DRAFT_PROVIDER;
-  model: typeof PRODUCT_LABEL_DRAFT_MODEL; generatedAt: string;
+  model: string; generatedAt: string; executionPolicy?:QuotationTextExecution;
 };
 export type ProductLabelDraftSource = {
   originalTitle: string; productName: string; description: string; attributes: { name: string; value: string }[];
@@ -108,15 +109,16 @@ function labelEvidenceIssue(value:string,key:ProductLabelDraftKey,plan:ProductLa
  }
  return null;
 }
-export async function executeProductLabelDraft(plan: ProductLabelDraftPlan, ai: { run(model: string, input: Record<string, unknown>): Promise<unknown> }): Promise<ProductLabelDraftResult> {
+export async function executeProductLabelDraft(plan: ProductLabelDraftPlan, ai: { run(model: string, input: Record<string, unknown>): Promise<unknown> },executionPolicy?:QuotationTextExecution|null): Promise<ProductLabelDraftResult> {
   validatePlan(plan); plan = structuredClone(plan);
+  const model=quotationTextModel(executionPolicy);
   const content = JSON.stringify({ task: 'KOREAN_LABELS', facts: plan.facts, editableFields: plan.fields });
   if (new TextEncoder().encode(content).length > PROMPT_LIMIT) return fail('PRODUCT_LABEL_DRAFT_LIMIT', '표시사항 AI 요청 크기가 처리 한도를 초과했습니다.', 413);
   const properties = Object.fromEntries(['content', 'material', 'type'].map(key => [key, { type: 'string', maxLength: 2000 }]));
   let timer: ReturnType<typeof setTimeout> | undefined, raw: unknown;
   try {
-    raw = await Promise.race([ai.run(PRODUCT_LABEL_DRAFT_MODEL, { messages: [{ role: 'system', content: instructions }, { role: 'user', content }],
-      max_tokens: 4096, temperature: 0.1, response_format: { type: 'json_schema', json_schema: { type: 'object', properties, required: ['content', 'material', 'type'], additionalProperties: false } } }),
+    raw = await Promise.race([ai.run(model, quotationTextProviderInput({ messages: [{ role: 'system', content: instructions }, { role: 'user', content }],
+      max_tokens: 4096, temperature: 0.1, response_format: { type: 'json_schema', json_schema: { type: 'object', properties, required: ['content', 'material', 'type'], additionalProperties: false } } },executionPolicy)),
     new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new ProductLabelDraftError('PRODUCT_LABEL_DRAFT_TIMEOUT', '표시사항 AI 응답 시간이 초과됐습니다. 결과를 자동 저장하거나 재요청하지 않았습니다.', 504)), PRODUCT_LABEL_DRAFT_TIMEOUT_MS); })]);
   } catch (error) {
     if (error instanceof ProductLabelDraftError) throw error;
@@ -124,7 +126,7 @@ export async function executeProductLabelDraft(plan: ProductLabelDraftPlan, ai: 
   } finally { if (timer) clearTimeout(timer); }
   let response: unknown;
   try {
-    const body = quotationAiProviderResponse(raw).response;
+    const body = (executionPolicy?quotationTextProviderResponse(raw,executionPolicy):quotationAiProviderResponse(raw)).response;
     if (new TextEncoder().encode(body).length > RESPONSE_LIMIT) return fail('PRODUCT_LABEL_DRAFT_RESPONSE', '표시사항 AI 응답이 처리 한도를 초과했습니다.', 503);
     response = strictJson(body);
   } catch (error) {
@@ -134,21 +136,23 @@ export async function executeProductLabelDraft(plan: ProductLabelDraftPlan, ai: 
   if (!object(response) || !exact(response, ['content', 'material', 'type']) || Object.values(response).some(value => !text(value, 2000)))
     return fail('PRODUCT_LABEL_DRAFT_RESPONSE', '표시사항 AI의 세 항목과 일반 텍스트 형식을 확인해주세요.', 503);
   const values: ProductLabelDraftResult['values'] = {}, warnings = [...plan.warnings];
+  if(executionPolicy)warnings.push('설정된 Qwen 텍스트 모델을 사용했습니다. 기존 UTC 일일 공유 40회 호출 제한은 무료 과금 보장이 아니며 Cloudflare 사용량 과금이 발생할 수 있습니다.');
   for (const field of plan.fields) { const value = response[outputs[field.key]] as string,issue=labelEvidenceIssue(value,field.key,plan);
     if(issue)return fail('PRODUCT_LABEL_DRAFT_EVIDENCE',`${field.label}: ${issue}. 생성값을 저장하지 않았습니다. 원문·직접 수정값·빈칸을 유지하고 표시사항에서 확인해주세요.`);
     values[field.key] = value;
   }
   return { productId: plan.productId, optionId: plan.optionId, profileId: plan.profileId, productVersion: plan.productVersion,
     labelRevision: plan.labelRevision, inputFingerprint: plan.inputFingerprint, values, warnings,
-    provider: PRODUCT_LABEL_DRAFT_PROVIDER, model: PRODUCT_LABEL_DRAFT_MODEL, generatedAt: new Date().toISOString() };
+    provider: PRODUCT_LABEL_DRAFT_PROVIDER, model, generatedAt: new Date().toISOString(),...(executionPolicy?{executionPolicy:structuredClone(executionPolicy)}:{}) };
 }
 export function verifyProductLabelDraftResult(view: ProductLabelsView, optionId: string | null, value: unknown): ProductLabelDraftResult {
   verifyProductLabelsView(view, optionId);
   const row = view.rows.find(row => row.optionId === optionId)!, active = new Set(productLabelDefinitions(view).map(field => field.key));
-  if (!object(value) || !exact(value, ['productId', 'optionId', 'profileId', 'productVersion', 'labelRevision', 'inputFingerprint', 'values', 'warnings', 'provider', 'model', 'generatedAt'])
+  if (!object(value) || !exact(Object.fromEntries(Object.entries(value).filter(([key])=>key!=='executionPolicy')), ['productId', 'optionId', 'profileId', 'productVersion', 'labelRevision', 'inputFingerprint', 'values', 'warnings', 'provider', 'model', 'generatedAt'])
     || value.productId !== view.productId || value.optionId !== optionId || value.profileId !== view.categoryContext.profileId
     || value.productVersion !== view.productVersion || value.labelRevision !== view.revision || value.inputFingerprint !== view.inputFingerprint
-    || value.provider !== PRODUCT_LABEL_DRAFT_PROVIDER || value.model !== PRODUCT_LABEL_DRAFT_MODEL || typeof value.generatedAt !== 'string' || value.generatedAt.length > 30 || !Number.isFinite(Date.parse(value.generatedAt))
+    || value.executionPolicy!==undefined&&!validQuotationTextExecution(value.executionPolicy)
+    || value.provider !== PRODUCT_LABEL_DRAFT_PROVIDER || value.model !== quotationTextModel(value.executionPolicy as QuotationTextExecution|undefined) || typeof value.generatedAt !== 'string' || value.generatedAt.length > 30 || !Number.isFinite(Date.parse(value.generatedAt))
     || !object(value.values) || Object.keys(value.values).length > 3 || Object.entries(value.values).some(([key, item]) => !keys.includes(key as ProductLabelDraftKey) || !active.has(key as ProductLabelKey)
       || ['manual-common', 'manual-option'].includes(row.sources[key as ProductLabelDraftKey]) || !text(item, 2000) || item === '')
     || !Array.isArray(value.warnings) || value.warnings.length > 10 || value.warnings.some(item => !text(item, 1000)))

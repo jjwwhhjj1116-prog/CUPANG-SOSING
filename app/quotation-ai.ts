@@ -5,10 +5,11 @@ import { SUPPLIER_HUB_COMPANIES, type SupplierHubCompany } from '@/app/supplier-
 import { quotationScalarValueIssues } from '@/app/quotation-scalar-constraints';
 import { quotationNoticeInput } from '@/app/quotation-notice-inputs';
 import { scopedQuotationPackagingBasis } from '@/app/quotation-packaging-basis';
+import {LEGACY_QUOTATION_TEXT_MODEL,quotationTextModel,type QuotationTextExecution} from '@/app/quotation-text-execution';
 
 /** Own-provider reconstruction of Couplus's recorded classify/common/batch flow.
  * Every returned change is a review proposal; this module performs no writes. */
-export const QUOTATION_AI_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
+export const QUOTATION_AI_MODEL = LEGACY_QUOTATION_TEXT_MODEL;
 export const QUOTATION_AI_FORMAT = 'yoofam-quotation-ai-plan-v1';
 export const QUOTATION_AI_TIMEOUT_MS = 40_000;
 export const QUOTATION_AI_TOTAL_TIMEOUT_MS = 180_000;
@@ -239,8 +240,9 @@ const instructions = '당신은 YOOFAM 스튜디오의 견적서 검토 보조�
   + '확인되지 않은 정보는 제안에서 생략하세요. 인증·원산지·업체·가격·동의·실측 포장을 추정하지 마세요. '
   + 'protectedValues는 직접 저장한 값이며 공란도 수정하지 마세요. generated/unverified 참고값은 검증된 사실이 아닙니다. '
   + '상품 속성의 추론은 사용자 확인이 필요한 제안일 뿐이며 등록 완료를 의미하지 않습니다. 요구한 JSON 형식만 반환하세요.';
-export async function executeQuotationAi(plan: QuotationAiPlan, ai: QuotationAiProvider): Promise<QuotationAiResult> {
+export async function executeQuotationAi(plan: QuotationAiPlan, ai: QuotationAiProvider,executionPolicy?:QuotationTextExecution|null): Promise<QuotationAiResult> {
   validatePlan(plan);
+  const model=quotationTextModel(executionPolicy);
   plan = structuredClone(plan);
   if (!ai || typeof ai.run !== 'function') fail('AI_UNAVAILABLE', 'AI 생성 기능의 연결을 확인해주세요.');
   const steps: { task: string }[] = [], warnings = [...plan.warnings], started = Date.now();
@@ -251,7 +253,7 @@ export async function executeQuotationAi(plan: QuotationAiPlan, ai: QuotationAiP
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new QuotationAiError('AI_TIMEOUT', 'AI 응답 시간이 초과되었습니다. 같은 요청을 자동 재시도하지 않았습니다.', true)), Math.min(QUOTATION_AI_TIMEOUT_MS, remaining)); });
-      const result = await Promise.race([Promise.resolve().then(() => ai.run(QUOTATION_AI_MODEL, { messages: [{ role: 'system', content: instructions }, { role: 'user', content }], max_tokens: 4096, temperature: 0.1 })), timeout]);
+      const result = await Promise.race([Promise.resolve().then(() => ai.run(model, { messages: [{ role: 'system', content: instructions }, { role: 'user', content }], max_tokens: executionPolicy?.maxOutputTokens??4096, temperature: 0.1 })), timeout]);
       const parsed = responseObject(result); steps.push({ task }); return parsed;
     } catch (error) { if (error instanceof QuotationAiError) throw error; throw new QuotationAiError('AI_PROVIDER', 'AI 제공자가 응답하지 못했습니다. 입력은 유지하며 자동 재시도하지 않습니다.', true); }
     finally { if (timer !== undefined) clearTimeout(timer); }
@@ -312,5 +314,5 @@ export async function executeQuotationAi(plan: QuotationAiPlan, ai: QuotationAiP
   const omitted = plan.targets.reduce((sum, target) => sum + target.writableFieldIds.length, 0) - changes.length;
   if (omitted > 0) warnings.push(`근거가 부족하거나 생성되지 않은 ${omitted}개 항목은 기존 값을 유지했습니다.`);
   if (!active.length) warnings.push('직접 저장한 값과 보호 항목을 제외한 AI 제안 대상이 없습니다.');
-  return { changes, warnings: [...new Set(warnings)], steps, model: QUOTATION_AI_MODEL, generatedAt: new Date().toISOString() };
+  return { changes, warnings: [...new Set(warnings)], steps, model, generatedAt: new Date().toISOString() };
 }
