@@ -3,11 +3,15 @@
 let yoofamSingleSessionId=crypto.randomUUID(),yoofamSingleAccount=null;
 let yoofamSingleSessionBound=false,yoofamSingleAccountChanged=false;
 let yoofamSingleConfirmationAttempt=null;
+let yoofamConfiguredRegistrationIntent=null;
+const yoofamSingleVerifiedSourceModes=new Map();
+const SINGLE_CONFIGURED_TERMS_VERSION='supplier-hub-displayed-terms-v1';
+const singleConfiguredStages={productPage:{kind:'price-data',key:'msrpAgree',id:'agreeMSRPTerm'},imagePage:{kind:'label-contact',key:'labelContactAgreed',id:'agreeLabelContact'}};
 const singleCanonical=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(singleCanonical).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+singleCanonical(value[key])).join(',')+'}';
 async function singleDigest(value){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(singleCanonical(value)))),b=>b.toString(16).padStart(2,'0')).join('');}
 async function singleReadJson(path){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
-  const resource=path==='/api/supplier-hub/catalog-context'?'catalog-context':path.includes('/native-assets')?'native-assets':path.includes('/supplier-hub-product-receipt')?'product-receipt':path.includes('/supplier-hub-receipt')?'receipt-history':'single-package';
+  const resource=path==='/api/supplier-hub/catalog-context'?'catalog-context':path==='/api/supplier-hub/registration-consents'?'registration-consents':path.includes('/native-assets')?'native-assets':path.includes('/supplier-hub-product-receipt')?'product-receipt':path.includes('/supplier-hub-receipt')?'receipt-history':'single-package';
   const failure=(code,status)=>Object.assign(Error('현재 앱의 저장 자료 조회를 확인하지 못했습니다.'),{sourceFailure:{code,resource,...(status===undefined?{}:{status})}});
   try{let response;try{response=await fetch(path,{cache:'no-store',credentials:'same-origin',redirect:'error',signal:controller.signal});}catch{throw failure(controller.signal.aborted?'SOURCE_READ_TIMEOUT':'SOURCE_READ_NETWORK');}
     if(!response.ok)throw failure('SOURCE_READ_HTTP',response.status);
@@ -16,6 +20,104 @@ async function singleReadJson(path){
     if(controller.signal.aborted)throw failure('SOURCE_READ_TIMEOUT');if(text.length>6*1024*1024)throw failure('SOURCE_READ_RESPONSE');try{return JSON.parse(text);}catch{throw failure('SOURCE_READ_RESPONSE');}
   }finally{clearTimeout(timer);}
 }
+// Only this isolated-world listener can arm a registration. Page messages,
+// synthetic clicks, remembered terms and a configured-policy flag cannot.
+globalThis.document?.addEventListener?.('click',event=>{
+  if(event.isTrusted!==true||document.visibilityState!=='visible')return;
+  const button=event.target?.closest?.('button[data-supplier-hub-registration-start="v1"]');
+  if(!button||button.disabled||button.getAttribute('aria-disabled')==='true')return;
+  const get=name=>button.getAttribute('data-supplier-hub-'+name),hash=/^[a-f0-9]{64}$/,id=/^\w[\w-]{0,99}$/;
+  const binding={ownerId:get('owner-id'),productId:get('product-id'),companyCode:get('company-code'),packetDigest:get('packet-digest'),requestId:get('request-id'),identityDigest:get('identity-digest'),bodySha256:get('body-sha256'),preparedBodySha256:get('prepared-body-sha256')};
+  yoofamConfiguredRegistrationIntent=null;
+  if(!['ownerId','productId','requestId'].every(key=>id.test(binding[key]||''))||!Object.hasOwn({A01526306:1,A01464742:1},binding.companyCode)
+    ||!['packetDigest','identityDigest','bodySha256','preparedBodySha256'].every(key=>hash.test(binding[key]||'')))return;
+  const startedAt=Date.now();yoofamConfiguredRegistrationIntent={id:crypto.randomUUID(),startedAt,expiresAt:startedAt+900000,binding,docId:null,scope:null,stages:[],seen:new Set(),pending:null};
+},true);
+globalThis.window?.addEventListener?.('pagehide',()=>{yoofamConfiguredRegistrationIntent=null;});
+function singleConfiguredIntent(input){
+  const intent=yoofamConfiguredRegistrationIntent,source=input?.sourceExpected,identity=input?.identity,b=intent?.binding;
+  if(!intent||Date.now()>=intent.expiresAt||!source||!identity||identity.ownerId!==b.ownerId||identity.productId!==b.productId||identity.company?.code!==b.companyCode
+    ||input.identityDigest!==b.identityDigest||source.packetDigest!==b.packetDigest||source.requestId!==b.requestId||source.bodySha256!==b.bodySha256||source.preparedBodySha256!==b.preparedBodySha256
+    ||intent.docId!==null&&singleCanonical(intent.docId)!==singleCanonical(input.docId))return null;
+  return intent;
+}
+async function singleConfiguredPolicies(input,intent){
+  const value=await singleReadJson('/api/supplier-hub/registration-consents'),same=(a,b)=>singleCanonical(a)===singleCanonical(b),object=value=>Boolean(value&&typeof value==='object'&&!Array.isArray(value));
+  const exact=(value,keys)=>object(value)&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
+  if(!exact(value,['format','ownerId','company','actor','connections','policies'])||value.format!=='yoofam-member-registration-consents-v1'
+    ||value.ownerId!==input.identity.ownerId||!same(value.company,input.identity.company)||!exact(value.actor,['email','role','credentialVersion'])
+    ||typeof value.actor.email!=='string'||!value.actor.email||value.actor.email.length>254||!['admin','member'].includes(value.actor.role)
+    ||value.actor.credentialVersion!==null&&(!Number.isSafeInteger(value.actor.credentialVersion)||value.actor.credentialVersion<0)
+    ||!Array.isArray(value.connections)||value.connections.length>20||!Array.isArray(value.policies)||value.policies.length>40
+    ||value.policies.some(row=>!row||!['price-data','label-contact'].includes(row.kind))
+    ||new Set(value.policies.map(row=>row.connectionId+':'+row.kind)).size!==value.policies.length)return null;
+  // A former or disabled account must not hide the one configured account.
+  // Two complete active account policies are ambiguous and require review.
+  const candidates=value.connections.filter(connection=>connection?.service==='supplier-hub'&&connection.enabled===true&&connection.hasPassword===true
+    &&['price-data','label-contact'].every(kind=>value.policies.some(row=>row.kind===kind&&row.connectionId===connection.id&&row.connectionRevision===connection.revision&&row.enabled===true
+      &&row.termsVersion===SINGLE_CONFIGURED_TERMS_VERSION&&same(row.actor,value.actor))));
+  if(candidates.length!==1)return null;
+  const selectedPolicies=value.policies.filter(row=>row.connectionId===candidates[0].id);
+  const policies=[];
+  for(const [stage,descriptor]of Object.entries(singleConfiguredStages)){
+    const found=selectedPolicies.filter(row=>row?.kind===descriptor.kind);if(found.length!==1)return null;const policy=found[0],terms=policy.terms;
+    if(!exact(policy,['kind','connectionId','connectionRevision','revision','enabled','termsVersion','termsSha256','terms','acceptedAt','updatedAt','actor'])
+      ||policy.enabled!==true||policy.termsVersion!==SINGLE_CONFIGURED_TERMS_VERSION||!Number.isSafeInteger(policy.revision)||policy.revision<1
+      ||!Number.isSafeInteger(policy.connectionRevision)||policy.connectionRevision<1||!same(policy.actor,value.actor)
+      ||!exact(terms,['stage','key','id','title','text','termsText'])||terms.stage!==stage||terms.key!==descriptor.key||terms.id!==descriptor.id
+      ||!['title','text','termsText'].every(key=>typeof terms[key]==='string'&&terms[key].trim())||terms.title.length>500||terms.text.length>10000||terms.termsText.length>50000
+      ||policy.termsSha256!==await singleDigest({format:SINGLE_CONFIGURED_TERMS_VERSION,terms}))return null;
+    const connections=value.connections.filter(row=>row?.id===policy.connectionId),connection=connections[0];
+    if(connections.length!==1||!exact(connection,['id','service','alias','loginId','hasPassword','enabled','revision','createdAt','updatedAt'])
+      ||!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(connection.id||'')
+      ||connection.service!=='supplier-hub'||connection.enabled!==true||connection.hasPassword!==true||connection.revision!==policy.connectionRevision)return null;
+    policies.push(policy);
+  }
+  if(policies[0].connectionId!==policies[1].connectionId||policies[0].connectionRevision!==policies[1].connectionRevision)return null;
+  const scope={ownerId:value.ownerId,company:value.company,actor:value.actor,connectionId:policies[0].connectionId,connectionRevision:policies[0].connectionRevision};
+  if(intent.scope&&!same(intent.scope,scope))return null;
+  const stage=input.challenge.stage,descriptor=singleConfiguredStages[stage];
+  if(descriptor){
+    if(input.challenge.items.length!==1||input.challenge.items[0].required!==true||intent.stages.length!==Object.keys(singleConfiguredStages).indexOf(stage))return null;
+    const {required,...item}=input.challenge.items[0];void required;
+    if(!same({stage,...item},policies.find(row=>row.kind===descriptor.kind).terms))return null;
+  }else if(stage!=='logisticsPage'||input.challenge.items.length!==0||intent.stages.length!==2)return null;
+  for(const prior of intent.stages){const current=policies.find(row=>row.kind===prior.kind);if(current.revision!==prior.revision||current.termsSha256!==prior.termsSha256)return null;}
+  return {scope,policies:descriptor?policies.filter(row=>row.kind===descriptor.kind):policies};
+}
+async function singleConfiguredAuthorization(input,{wholeProduct=true,nativeAssets=false,consume=false,check=()=>{}}={}){
+  if(!wholeProduct||!nativeAssets)return null;
+  const intent=singleConfiguredIntent(input);if(!intent||intent.pending||intent.seen.has(input.challenge.id))return null;
+  const current=()=>{check();if(singleConfiguredIntent(input)!==intent||Date.now()>=input.challenge.expiresAt)throw Error('원래 등록전송 확인이 취소되었거나 만료됐습니다.');};
+  const marker={};intent.pending=marker;
+  try{
+    current();if(await singleDigest(input.identity)!==input.identityDigest)return null;
+    const before=await verifySingleDocumentSource(input.sourceExpected,wholeProduct,nativeAssets);current();
+    if(input.sessionId!==undefined&&before.sessionId!==input.sessionId)throw Error('현재 회원 세션이 변경되었습니다.');
+    const policy=await singleConfiguredPolicies(input,intent);current();if(!policy)return null;
+    const after=await verifySingleDocumentSource(input.sourceExpected,wholeProduct,nativeAssets);current();
+    if(after.sessionId!==before.sessionId||singleCanonical(after.identity)!==singleCanonical(input.identity))throw Error('등록전송 중 회원·회사·저장 자료가 변경되었습니다.');
+    const fresh=await singleConfiguredPolicies(input,intent);current();if(!fresh||singleCanonical(fresh)!==singleCanonical(policy))throw Error('저장된 동의 또는 연결 계정이 변경되었습니다.');
+    const checkedAt=Date.now(),proof={format:'yoofam-configured-registration-authorization-v1',kind:'configured-policy',intentId:intent.id,startedAt:intent.startedAt,expiresAt:intent.expiresAt,checkedAt,
+      ...policy.scope,identityDigest:input.identityDigest,packetDigest:input.sourceExpected.packetDigest,requestId:input.sourceExpected.requestId,docId:input.docId,challengeId:input.challenge.id,stage:input.challenge.stage,
+      policies:policy.policies.map(({kind,revision,termsSha256})=>({kind,revision,termsSha256}))};
+    if(consume){intent.docId=input.docId;intent.scope=policy.scope;intent.seen.add(input.challenge.id);if(input.challenge.stage==='logisticsPage')yoofamConfiguredRegistrationIntent=null;else intent.stages.push(proof.policies[0]);}
+    return proof;
+  }finally{if(intent.pending===marker)intent.pending=null;}
+}
+globalThis.window?.addEventListener?.('message',event=>{
+  const message=event.data;if(event.source!==window||event.origin!==location.origin||message?.channel!=='YOOFAM_CONFIGURED_REGISTRATION_CONSENT')return;
+  if(message.type==='cancel'){yoofamConfiguredRegistrationIntent=null;return;}
+  if(message.type!=='probe'||typeof message.requestId!=='string'||!/^\w[\w-]{0,99}$/.test(message.requestId))return;
+  const respond=result=>window.postMessage({channel:'YOOFAM_CONFIGURED_REGISTRATION_CONSENT_RESULT',requestId:message.requestId,result},location.origin);
+  let input;try{
+    const expected=message.expected,challenge=expected.challenge,stage=challenge.stage;
+    input=singleConfirmationInput({...expected,sessionId:yoofamSingleSessionId,confirmation:{action:singleConfiguredStages[stage]?'confirm-and-continue':'confirm-and-submit',...(stage?{stage}:{}),userInitiated:true,mode:'configured-policy',challengeId:challenge.id,confirmedAt:Date.now(),approvedKeys:challenge.items.filter(item=>item.required).map(item=>item.key)}},true);
+  }catch{respond({ok:false,error:'현재 등록전송 확인 요청이 다릅니다.'});return;}
+  const mode=yoofamSingleVerifiedSourceModes.get(input.sourceExpected.packetDigest);
+  if(!mode){respond({ok:true,confirmation:null});return;}
+  void singleConfiguredAuthorization(input,mode).then(proof=>respond({ok:true,confirmation:proof?input.confirmation:null}),()=>respond({ok:false,error:'현재 회원·회사·동의 설정을 확인하지 못했습니다.'}));
+});
 function singleSourceIdentity(identity,wholeProduct){
   const id=/^\w[\w-]{0,99}$/;
   if(!identity||!['ownerId','productId'].every(key=>id.test(identity[key]||'')))return false;
@@ -99,6 +201,8 @@ async function verifySingleDocumentSource(expected,wholeProduct=false,nativeAsse
     if(restored.sessionId!==null)yoofamSingleSessionId=restored.sessionId;
   }
   yoofamSingleSessionBound=true;
+  yoofamSingleVerifiedSourceModes.set(expected.packetDigest,{wholeProduct,nativeAssets});
+  if(yoofamSingleVerifiedSourceModes.size>64)yoofamSingleVerifiedSourceModes.delete(yoofamSingleVerifiedSourceModes.keys().next().value);
   return {ok:true,current:true,submissionReady:true,priorDocumentClear:true,identity,bodySha256:expected.bodySha256,sessionId:yoofamSingleSessionId,checkedAt:Date.now()};
 }
 function singleConfirmationInput(expected,wholeProduct=false){
@@ -125,7 +229,8 @@ function singleConfirmationInput(expected,wholeProduct=false){
     ||new Set(challenge.items.map(item=>item.key)).size!==challenge.items.length||new Set(challenge.items.map(item=>item.id)).size!==challenge.items.length
     ||(intermediate||stage===undefined)&&!challenge.items.some(item=>item.required)
     ||stage==='logisticsPage'&&challenge.items.length>0&&!challenge.items.some(item=>item.required)
-    ||!exact(details,['action','userInitiated','challengeId','confirmedAt','approvedKeys'],['stage'])||details.userInitiated!==true||details.challengeId!==challenge.id
+    ||!exact(details,['action','userInitiated','challengeId','confirmedAt','approvedKeys'],['stage','mode'])||details.userInitiated!==true||details.challengeId!==challenge.id
+    ||details.mode!==undefined&&details.mode!=='configured-policy'
     ||details.action!==(intermediate?'confirm-and-continue':'confirm-and-submit')
     ||(stage===undefined?details.stage!==undefined:details.stage!==stage)
     ||!Number.isSafeInteger(details.confirmedAt)||details.confirmedAt<challenge.issuedAt||details.confirmedAt>time+5000||details.confirmedAt>challenge.expiresAt
@@ -134,7 +239,13 @@ function singleConfirmationInput(expected,wholeProduct=false){
   return JSON.parse(singleCanonical(expected));
 }
 async function confirmSingleDocumentAction(expected,input,signal,current,wholeProduct=false,nativeAssets=false){
-  const check=()=>{if(signal.aborted||!current()||Date.now()>=input.challenge.expiresAt||document.visibilityState!=='visible')throw Error('현재 동의 확인이 취소되었거나 만료됐습니다.');};
+  const configured=input.confirmation.mode==='configured-policy';
+  const check=()=>{if(signal.aborted||!current()||Date.now()>=input.challenge.expiresAt||!configured&&document.visibilityState!=='visible')throw Error('현재 동의 확인이 취소되었거나 만료됐습니다.');};
+  if(configured){
+    const proof=await singleConfiguredAuthorization(input,{wholeProduct,nativeAssets,consume:true,check});check();
+    if(!proof)throw Error('현재 등록전송의 저장된 동의 설정을 다시 확인해주세요.');
+    return {ok:true,userInitiated:true,challengeId:input.challenge.id,identityDigest:input.identityDigest,checkedAt:proof.checkedAt,consentProof:proof};
+  }
   check();if(await singleDigest(input.identity)!==input.identityDigest)throw Error('현재 문서의 회원 연결을 확인해주세요.');
   const before=await verifySingleDocumentSource(input.sourceExpected,wholeProduct,nativeAssets);check();
   if(before.sessionId!==input.sessionId)throw Error('현재 회원 세션이 변경되었습니다.');
@@ -155,7 +266,7 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
     catch(error){respond({ok:false,error:error.message});return;}
     const controller=new AbortController(),snapshot=singleCanonical(message.expected);yoofamSingleConfirmationAttempt=controller;
     let timer;const cancelled=new Promise((resolve,reject)=>{controller.signal.addEventListener('abort',()=>reject(Error('동의 확인을 취소했거나 시간이 초과됐습니다.')),{once:true});});
-    const invalidate=()=>controller.abort(),visibility=()=>{if(document.visibilityState!=='visible')invalidate();};
+    const invalidate=()=>{yoofamConfiguredRegistrationIntent=null;controller.abort();},visibility=()=>{if(input.confirmation.mode!=='configured-policy'&&document.visibilityState!=='visible')invalidate();};
     window.addEventListener('pagehide',invalidate);document.addEventListener('visibilitychange',visibility);
     timer=setTimeout(invalidate,Math.max(0,input.challenge.expiresAt-Date.now()));
     const current=()=>yoofamSingleConfirmationAttempt===controller&&singleCanonical(message.expected)===snapshot;

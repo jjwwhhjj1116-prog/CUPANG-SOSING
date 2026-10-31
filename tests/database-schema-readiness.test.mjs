@@ -10,20 +10,22 @@ const output = ts.transpileModule(source, {
 }).outputText;
 
 function load(env) {
-  const exports = {};
-  const registration = {};
-  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../db/product-registration.ts', import.meta.url), 'utf8'), {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-  }).outputText, {exports:registration});
-  vm.runInNewContext(output, {
-    exports,
-    require: name => {
-      if (name === '@/db/product-registration') return registration;
-      assert.equal(name, 'cloudflare:workers');
-      return { env };
-    },
-  }, { filename: 'db/queries.ts' });
-  return exports;
+  const modules = new Map();
+  const loadModule = name => {
+    if (name === 'cloudflare:workers') return { env };
+    assert.ok(name.startsWith('@/'), `Unexpected external module: ${name}`);
+    if (modules.has(name)) return modules.get(name);
+    const exports = {};
+    modules.set(name, exports);
+    const filename = `${name.slice(2)}.ts`;
+    const code = name === '@/db/queries' ? output : ts.transpileModule(
+      fs.readFileSync(new URL(`../${filename}`, import.meta.url), 'utf8'), {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+      }).outputText;
+    vm.runInNewContext(code, { exports, require: loadModule }, { filename });
+    return exports;
+  };
+  return loadModule('@/db/queries');
 }
 
 const normalize = sql => sql.replace(/\s+/g, ' ').trim();
@@ -72,6 +74,10 @@ const expectedDDL = [
     option_id TEXT NOT NULL, sequence INTEGER NOT NULL CHECK(sequence BETWEEN 1 AND 999),
     PRIMARY KEY(product_id, option_id), UNIQUE(product_id, sequence)
   )`,
+  `CREATE TABLE IF NOT EXISTS product_labels (
+    product_id TEXT PRIMARY KEY REFERENCES products(id) ON DELETE CASCADE, owner_id TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK(revision > 0), payload TEXT NOT NULL, updated_at TEXT NOT NULL
+  )`,
 ].map(normalize);
 
 function mockDatabase(onBatch = async () => expectedDDL.map(() => ({ success: true }))) {
@@ -94,11 +100,11 @@ function mockDatabase(onBatch = async () => expectedDDL.map(() => ({ success: tr
   return { db, prepared, batches };
 }
 
-test('first bootstrap uses ten additive table/index statements without online optimize or product backfill', async () => {
+test('first bootstrap uses eleven additive table/index statements without online optimize or product backfill', async () => {
   const h = mockDatabase();
   await load({ DB: h.db }).ensureDatabase();
   assert.deepEqual(h.batches, [expectedDDL]);
-  assert.equal(h.prepared.length, 10);
+  assert.equal(h.prepared.length, 11);
 });
 
 test('a completed bootstrap skips DDL on subsequent calls for the same binding', async () => {
@@ -108,7 +114,7 @@ test('a completed bootstrap skips DDL on subsequent calls for the same binding',
   await store.ensureDatabase();
   await store.ensureDatabase();
   assert.equal(h.batches.length, 1);
-  assert.equal(h.prepared.length, 10);
+  assert.equal(h.prepared.length, 11);
 });
 
 test('a failed bootstrap propagates the error and retries before remembering success', async () => {
@@ -122,7 +128,7 @@ test('a failed bootstrap propagates the error and retries before remembering suc
   await store.ensureDatabase();
   await store.ensureDatabase();
   assert.deepEqual(h.batches, [expectedDDL, expectedDDL]);
-  assert.equal(h.prepared.length, 20);
+  assert.equal(h.prepared.length, 22);
 });
 
 test('different D1 binding objects bootstrap independently within an isolate', async () => {

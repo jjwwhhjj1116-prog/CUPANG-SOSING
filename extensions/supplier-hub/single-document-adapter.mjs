@@ -20,6 +20,7 @@ import {singleRecordMirrorPage} from './single-record-mirror-page.mjs';
 import {savedDraftCurrentReadPage} from './saved-draft-current-read-page.mjs';
 import {validateUnexpectedLegalAuditReport} from './unexpected-legal-audit.mjs';
 import {savedDocumentStepValidationPage} from './saved-document-step-validation-page.mjs';
+import {configuredConsentProofValid} from './configured-consent-proof.mjs';
 import {runSavedDocumentStepValidation,validateSavedDocumentStepValidationReport,validateSavedDocumentStepRetryRequest} from './saved-document-step-validation.mjs';
 
 const HASH=/^[a-f0-9]{64}$/;
@@ -1061,8 +1062,12 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
       mutable(input.identity);
       await appCurrent(input.identity);const response=await api.tabs.sendMessage(sourceAppTabId??input.identity.appTabId,{type:confirmationType,expected:{...copy(input),sourceExpected:copy(prior.input),sessionId:first.sessionId,identityDigest:first.identityDigest}},{frameId:0});await appCurrent(input.identity);
       const binding=await bindingFor(input.identity);
+      const configured=input.confirmation?.mode==='configured-policy',policyProof=response?.consentProof;
+      const policyValid=configured&&configuredConsentProofValid(policyProof,{identity:input.identity,identityDigest:binding.identityDigest,packetDigest:binding.packetDigest,requestId:binding.requestId,docId:input.docId,challenge:input.challenge})
+        &&policyProof.checkedAt===response.checkedAt;
       return {confirmed:response?.ok===true&&response.userInitiated===true&&response.challengeId===input.challenge.id&&response.identityDigest===binding.identityDigest
-        &&first.sessionId===binding.sessionId&&Number.isSafeInteger(response.checkedAt)&&Math.abs(now()-response.checkedAt)<=5000,challengeId:input.challenge.id,identityDigest:binding.identityDigest,confirmedAt:response.checkedAt};
+        &&first.sessionId===binding.sessionId&&Number.isSafeInteger(response.checkedAt)&&Math.abs(now()-response.checkedAt)<=5000&&(!configured?policyProof===undefined:policyValid),challengeId:input.challenge.id,identityDigest:binding.identityDigest,confirmedAt:response.checkedAt,
+        ...(policyValid?{consentProof:copy(policyProof)}:{})};
     },
     confirmAgreements:async input=>{const {binding}=await owned(input);mutable(input.identity);return execute(input.tab,input.identity,singleDocumentAgreementPage,[{binding,docId:input.docId,action:'confirm',challenge:input.challenge,confirmation:input.confirmation}]);},
     submit:async input=>{const {binding,record}=await owned(input);if(record.currentReadRecovery!==undefined)fail('SAVED_DRAFT_NATIVE_BUTTON_WRITE_BLOCKED','공식 등록 버튼은 본문 저장을 함께 실행하므로 현재 읽기로 복구한 문서는 제출하지 않았습니다. 원래 문서의 파일·본문을 재전송하지 않았습니다.');mutable(input.identity);return execute(input.tab,input.identity,singleDocumentSubmitPage,[{binding,docId:input.docId,operationId:input.operationId,challenge:input.challenge,expectedBody:input.expectedBody}]);},

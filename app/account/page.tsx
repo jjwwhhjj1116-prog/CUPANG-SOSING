@@ -4,6 +4,7 @@ import Link from 'next/link';
 import type {WorkspaceMember} from '@/app/workspace-members';
 import {LoginPreferencesPanel} from '@/app/components/login-preferences-panel';
 import {MemberConnectionsPanel} from '@/app/components/member-connections-panel';
+import {MemberRegistrationConsentsPanel} from '@/app/components/member-registration-consents-panel';
 import {AccountSecurityPanel} from '@/app/components/account-security-panel';
 import styles from './page.module.css';
 
@@ -78,7 +79,7 @@ export default function AccountPage(){
  useEffect(()=>{
   if(loading||!self?.id)return;
   const anchor=(window.location.hash??'').slice(1);
-  if(['multi-account-settings','password-change','account-session'].includes(anchor))document.getElementById(anchor)?.scrollIntoView({block:'start'});
+  if(['multi-account-settings','registration-consent-settings','password-change','account-session'].includes(anchor))document.getElementById(anchor)?.scrollIntoView({block:'start'});
  },[loading,self?.id]);
  const companyConfigured=!!self?.companyCode&&!!self?.companyName;
  return <main className="membership-page">
@@ -90,6 +91,7 @@ export default function AccountPage(){
    <AccountSecurityPanel key={self.id} ownerId={self.id} isAdmin={self.role==='admin'}/>
    <LoginPreferencesPanel key={'preferences:'+self.id} email={self.loginId||self.email}/>
    {self.status==='approved'&&companyConfigured&&<MemberConnectionsPanel key={JSON.stringify([self.id,self.companyCode,self.companyName])} ownerId={self.id} company={{code:self.companyCode,name:self.companyName}}/>}
+   {self.status==='approved'&&companyConfigured&&<MemberRegistrationConsentsPanel key={'registration-consents:'+JSON.stringify([self.id,self.companyCode,self.companyName])} ownerId={self.id} company={{code:self.companyCode,name:self.companyName}}/>}
    <section id="password-change" className="membership-card"><h2>비밀번호 변경</h2><p>비밀번호를 변경하면 모든 기기에서 로그아웃됩니다.</p><form ref={passwordForm} key={'password:'+self.id} onSubmit={event=>void changePassword(event,self)} aria-busy={busy} autoComplete="off">
     <label>현재 비밀번호<input name="currentPassword" type="password" required minLength={10} maxLength={128} autoComplete="current-password" disabled={busy}/></label>
     <label>새 비밀번호<input name="newPassword" type="password" required minLength={10} maxLength={128} autoComplete="new-password" placeholder="10자 이상 입력하세요" disabled={busy}/></label>

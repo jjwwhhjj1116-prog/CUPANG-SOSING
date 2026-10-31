@@ -14,7 +14,7 @@ function account({code='',name='',status='approved',role='admin',pending=[],read
  const hooks={useState(initial){const index=cursor++;if(!(index in slots))slots[index]={value:typeof initial==='function'?initial():initial};return[slots[index].value,value=>{if(closed){lateWrites++;return;}slots[index].value=typeof value==='function'?value(slots[index].value):value;}];},useRef(initial){const index=cursor++;return slots[index]??(slots[index]={current:initial});},useEffect(fn,deps){const index=cursor++,old=slots[index];if(!old||deps.some((value,i)=>!Object.is(value,old.deps[i]))){slots[index]={deps,cleanup:old?.cleanup};effects.push(()=>{old?.cleanup?.();slots[index].cleanup=fn();});}}};
  class FormValues{constructor(form){this.values=new Map([...form.controls.values()].filter(row=>!row.disabled).map(row=>[row.name,row.value]));}get(name){return this.values.get(name)??null;}}
  const window={location:{assign:path=>redirects.push(path),replace:path=>redirects.push(path)},addEventListener(type,fn){if(!events.has(type))events.set(type,new Set());events.get(type).add(fn);},removeEventListener:(type,fn)=>events.get(type)?.delete(fn),dispatchEvent(event){for(const fn of [...events.get(event.type)??[]])fn();}};
- const stubs={AccountSecurityPanel:function AccountSecurityPanel(){},LoginPreferencesPanel:function LoginPreferencesPanel(){},MemberConnectionsPanel:function MemberConnectionsPanel(){}};
+ const stubs={AccountSecurityPanel:function AccountSecurityPanel(){},LoginPreferencesPanel:function LoginPreferencesPanel(){},MemberConnectionsPanel:function MemberConnectionsPanel(){},MemberRegistrationConsentsPanel:function MemberRegistrationConsentsPanel(){}};
  const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/account/page.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,Event,Date,Intl,JSON,FormData:FormValues,window,fetch:async(url,init)=>{
   const body=init?.body?JSON.parse(init.body):null,call={url,body,signal:init?.signal};requests.push(call);
   if(body){if(post)return post(call);const row=rows.find(row=>row.id===body.memberId);if(row&&['approve','reject','suspend'].includes(body.action))row.status=body.action==='approve'?'approved':body.action==='reject'?'rejected':'suspended';return Response.json({ok:true,reauthenticate:body.action==='change-password'});}
@@ -40,6 +40,16 @@ test('connection settings mount only for the approved current member with an act
   const h=account({code:'A01526306',name:'유앤채',status});try{await h.start();const panel=nodes(h.render()).find(node=>node.type?.name==='MemberConnectionsPanel');if(status==='approved'){assert.ok(panel);assert.equal(panel.props.ownerId,'admin');assert.deepEqual(plain(panel.props.company),{code:'A01526306',name:'유앤채'});}else assert.equal(panel,undefined);assert.equal(h.requests.some(request=>request.body),false);}finally{h.close();}
  }
  const h=account({role:'member'});try{await h.start();assert.equal(nodes(h.render()).find(node=>node.type?.name==='MemberConnectionsPanel'),undefined);assert.match(h.text(),/회사 연동 미설정/);assert.doesNotMatch(h.text(),/유앤채|와이홉/);const profile=nodes(h.render()).find(node=>node.type?.name==='AccountSecurityPanel');assert.equal(profile.props.ownerId,'admin');assert.equal(profile.props.isAdmin,false);}finally{h.close();}
+});
+
+test('registration consent settings bind only the approved own-company account and never supply unseen terms',async()=>{
+ for(const status of ['approved','pending','suspended']){
+  const h=account({code:'A01526306',name:'유앤채',status});try{await h.start();const panel=nodes(h.render()).find(node=>node.type?.name==='MemberRegistrationConsentsPanel');
+   if(status==='approved'){assert.ok(panel);assert.equal(panel.props.ownerId,'admin');assert.deepEqual(plain(panel.props.company),{code:'A01526306',name:'유앤채'});assert.equal(panel.props.challenge,undefined);}
+   else assert.equal(panel,undefined);assert.equal(h.requests.some(row=>row.body),false);
+  }finally{h.close();}
+ }
+ const h=account({role:'member'});try{await h.start();assert.equal(nodes(h.render()).find(node=>node.type?.name==='MemberRegistrationConsentsPanel'),undefined);}finally{h.close();}
 });
 
 test('administrator retains suspend/resume controls and full status information without displaying secrets',async()=>{

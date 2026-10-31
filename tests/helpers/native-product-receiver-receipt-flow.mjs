@@ -37,13 +37,17 @@ export async function nativeReceiverReceiptFixture(company=companies[0],options=
    const absolute=new URL(url,origin),path=absolute.pathname;state.appReads.push({url:absolute.href,method:init.method??'GET'});assert.equal(init.method??'GET','GET');
    let response;
    if(path==='/api/supplier-hub/catalog-context')response=await source.h.load('app/api/supplier-hub/catalog-context/route.ts').GET();
+   else if(path==='/api/supplier-hub/registration-consents'&&options.configuredConsent)response=Response.json(state.registrationConsents);
    else if(path===source.base+'/native-assets')response=await native.GET(new Request(absolute,{...init}),source.context);
    else if(path===source.base+'/supplier-hub-product-receipt')response=await receipt.GET(new Request(absolute,{...init}),source.context);
    else if(path===source.base+'/supplier-hub-receipt')response=await source.h.route(path+absolute.search);
    else throw Error('Unexpected local app request '+absolute.href);
    return withUrl(response,absolute.href);
   };
-  const appListeners=[],appContext=vm.createContext({location:new URL(browser.sender.url),fetch:appFetch,crypto:webcrypto,AbortController,TextEncoder,TextDecoder,Uint8Array,URL,setTimeout,clearTimeout,Date,Response,structuredClone,btoa,atob,window:{},document:{visibilityState:'visible'},chrome:{runtime:{id:'synthetic-native-chain',sendMessage:async()=>({ok:true,sessionId:null}),onMessage:{addListener:listener=>appListeners.push(listener)}}}});
+  const eventSurface=()=>{const events=new Map();return{addEventListener:(name,fn)=>{const set=events.get(name)??new Set();set.add(fn);events.set(name,set);},removeEventListener:(name,fn)=>events.get(name)?.delete(fn),emit:(name,event)=>{for(const fn of [...events.get(name)??[]])fn(event);}};};
+  const appWindow=eventSurface(),appDocument={...eventSurface(),visibilityState:'visible'},appReplies=[];appWindow.postMessage=value=>appReplies.push(plain(value));
+  const appListeners=[],appContext=vm.createContext({location:new URL(browser.sender.url),fetch:appFetch,crypto:webcrypto,AbortController,TextEncoder,TextDecoder,Uint8Array,URL,setTimeout,clearTimeout,Date,Response,structuredClone,btoa,atob,window:appWindow,document:appDocument,
+    ...(options.configuredConsent?{yoofamSingleConfirmation:{prompt:()=>assert.fail('Configured policy cannot assert a fresh human prompt')}}:{}),chrome:{runtime:{id:'synthetic-native-chain',sendMessage:async()=>({ok:true,sessionId:null}),onMessage:{addListener:listener=>appListeners.push(listener)}}}});
   vm.runInContext(fs.readFileSync(new URL('../../extensions/supplier-hub/single-content.js',import.meta.url),'utf8'),appContext);
   vm.runInContext(fs.readFileSync(new URL('../../extensions/supplier-hub/native-source-content.js',import.meta.url),'utf8'),appContext);
   const uploadFetch=async(url,init)=>{
@@ -74,6 +78,9 @@ export async function nativeReceiverReceiptFixture(company=companies[0],options=
     assert.equal(id,browser.sender.tab.id);assert.equal(frame.frameId,0);for(const listener of appListeners){let pending;const reply=new Promise(resolve=>{pending=listener(plain(value),{id:'synthetic-native-chain'},resolve);});if(pending===true)return plain(await reply);}return undefined;
    }
    if(value.type==='YOOFAM_CONFIRM_NATIVE_PRODUCT_DOCUMENT_ACTION'){
+    if(options.configuredConsent&&value.expected.confirmation?.mode==='configured-policy'){
+     for(const listener of appListeners){let pending;const reply=new Promise(resolve=>{pending=listener(plain(value),{id:'synthetic-native-chain'},resolve);});if(pending===true)return plain(await reply);}return undefined;
+    }
     assert.equal(id,browser.sender.tab.id);assert.equal(frame.frameId,0);state.humanConfirmations.push(plain(value.expected));
     return{ok:true,userInitiated:true,challengeId:value.expected.challenge.id,identityDigest:context.identityDigest,checkedAt:Date.now()};
    }
@@ -84,6 +91,9 @@ export async function nativeReceiverReceiptFixture(company=companies[0],options=
   const post=value=>receipt.POST(new Request(origin+endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({profileId:source.profile.id,observation:value})}),source.context);
   const history=()=>receipt.GET(new Request(origin+endpoint+source.query),source.context).then(json);
   return{...source,...browser,source,browser,plan,review,packet,context,state,adapter:selected.adapter,receiver:receiver(),reloadReceiver:receiver,post,history,
+   armConfiguredRegistration:()=>{const values={'registration-start':'v1','owner-id':context.identity.ownerId,'product-id':context.identity.productId,'company-code':context.identity.company.code,'identity-digest':context.identityDigest,'packet-digest':context.packetDigest,'request-id':packet.requestId,'body-sha256':context.originalBodySha256,'prepared-body-sha256':context.bodySha256},button={disabled:false,getAttribute:key=>values[key.replace('data-supplier-hub-','')]??null,closest:()=>button};appDocument.emit('click',{isTrusted:true,target:button});},
+   configuredAppHidden:()=>{appDocument.visibilityState='hidden';appDocument.emit('visibilitychange',{});},
+   probeConfiguredRegistration:async challenge=>{const requestId=webcrypto.randomUUID();appWindow.emit('message',{source:appWindow,origin,data:{channel:'YOOFAM_CONFIGURED_REGISTRATION_CONSENT',type:'probe',requestId,expected:{identity:context.identity,identityDigest:context.identityDigest,sourceExpected:{identity:context.identity,bodySha256:context.originalBodySha256,preparedBodySha256:context.bodySha256,packetDigest:context.packetDigest,requestId:packet.requestId,docId:challenge.docId},docId:challenge.docId,challenge}}});for(let count=0;count<500;count++){const reply=appReplies.find(row=>row.requestId===requestId);if(reply)return reply.result;await new Promise(resolve=>setTimeout(resolve,2));}throw Error('Configured probe did not reply');},
    reloadSourceSession:async()=>vm.runInContext('yoofamSingleSessionId=crypto.randomUUID();yoofamSingleAccount=null;',appContext),
    get submitted(){return browser.submitted;},
    close:()=>{selected.adapter.dispose();browser.close();source.close();}};

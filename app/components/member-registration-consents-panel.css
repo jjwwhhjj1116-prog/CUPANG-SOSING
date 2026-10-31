@@ -1,0 +1,18 @@
+.member-registration-consents { display: grid; gap: 12px; }
+.member-registration-consents h3 { font-size: 15px; margin: 0 0 10px; }
+.member-registration-consents h4 { font-size: 14px; margin: 10px 0; }
+.member-registration-consent-policies { display: grid; gap: 14px; }
+.member-registration-consent-policies > article, .member-registration-consent-optin { padding: 16px; border: 1px solid #dbe3ef; border-radius: 8px; }
+.member-registration-consent-policy + .member-registration-consent-policy { margin-top: 12px; padding-top: 12px; border-top: 1px solid #e8edf4; }
+.member-registration-consent-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.member-registration-consent-heading span { color: #60708c; }
+.member-registration-consent-heading .btn { margin-left: auto; }
+.member-registration-consents details { margin-top: 10px; }
+.member-registration-consents summary { cursor: pointer; color: #37577c; }
+.member-registration-consents details p, .member-registration-consent-optin > p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.member-registration-consent-terms { max-height: 280px; overflow: auto; padding: 12px; background: #f5f8fc; border: 1px solid #dbe3ef; border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; }
+.member-registration-consent-optin { display: grid; gap: 12px; background: #fbfdff; }
+.member-registration-consent-choice { display: flex; align-items: flex-start; gap: 8px; line-height: 1.7; }
+.member-registration-consent-choice input { flex: none; margin-top: 5px; }
+.member-registration-consents select { display: block; width: 100%; margin-top: 6px; }
+.member-registration-consents small { display: block; color: #667a94; margin-top: 8px; }

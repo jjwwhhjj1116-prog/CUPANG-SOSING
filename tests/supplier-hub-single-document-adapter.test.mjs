@@ -58,7 +58,7 @@ for(const company of SINGLE_COMPANIES){
       const body=JSON.parse(remote[0].init.body);assert.equal(body.jsonDocument[0].imagePage.msrpAgree,false);assert.equal(f.packet.body.jsonDocument[0].imagePage.msrpAgree,true);
       assert.equal(f.calls.filter(call=>call.name==='tabs-update').length,1);assert.ok(f.calls.filter(call=>call.name==='execute').every(call=>JSON.stringify(call.target.frameIds)==='[0]'||call.target.documentIds?.length===1));
       assert.deepEqual(f.loaderRequests,[f.createdDocId]);assert.equal(f.ownDocumentReadsDuringLoad,0);assert.ok(Object.values(f.webRequest).every(event=>event.loadSize===0));
-      const submitted=await f.receiver.confirm(f.packet,f.sender,f.action(started));assert.equal(f.submitted,1);assert.equal(submitted.state,'submit-requested');assert.equal(submitted.registered,false);assert.equal(submitted.error.code,'RECEIPT_UNCONFIRMED');
+      const submitted=await f.receiver.confirm(f.packet,f.sender,f.action(started));assert.equal(f.submitted,1);assert.equal(submitted.state,'submit-requested');assert.equal(submitted.registered,false);assert.equal(submitted.error.code,'RECEIPT_NOT_VISIBLE');
       await f.receiver.observe(f.packet,f.sender);assert.equal(f.submitted,1);assert.deepEqual(f.documents.get('protected-previous'),f.prior);
     }finally{f.close();}
   });

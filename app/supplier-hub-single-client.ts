@@ -46,7 +46,7 @@ export type SingleDocumentPacket = Awaited<ReturnType<typeof singlePackagePacket
 export type SingleConsentStage = 'productPage'|'imagePage'|'logisticsPage';
 export type SingleConsentItem = {key:string;id:string;text:string;required:boolean;title?:string;termsText?:string};
 export type SingleConsentChallenge = {id:string;docId:string|number;packetDigest:string;issuedAt:number;expiresAt:number;stage?:SingleConsentStage;items:SingleConsentItem[]};
-export type SingleConfirmation = {action:'confirm-and-continue'|'confirm-and-submit';stage?:SingleConsentStage;userInitiated:true;challengeId:string;confirmedAt:number;approvedKeys:string[]};
+export type SingleConfirmation = {action:'confirm-and-continue'|'confirm-and-submit';stage?:SingleConsentStage;userInitiated:true;challengeId:string;confirmedAt:number;approvedKeys:string[];mode?:'configured-policy'};
 export type SingleDocumentPreview = {format:string;fingerprint:string;productId:string;optionId:string;identityDigest:string;preparedBodySha256:string;originalBodySha256:string;liveVerified:boolean;registered:false;remoteWrites:false};
 export type SingleDocumentReceipt = {state:'pending'|'accepted'|'rejected'|'registered';docId:string|number;company:SupplierHubCompany;identityDigest:string;preparedBodySha256:string;observedAt:number;
   evidence:'document-receipt'|'document-and-sku';receiptId?:string|number;skuId?:string|number;sourceStatus?:'SUBMITTED'|'REJECTED'|'FINISHED';qvtRequestId?:string|number;registered?:false;rejectionDetails?:import('../extensions/supplier-hub/rejection-details.mjs').RejectionDetails};

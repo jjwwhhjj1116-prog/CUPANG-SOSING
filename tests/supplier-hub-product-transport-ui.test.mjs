@@ -30,6 +30,7 @@ const declarations = parts.join('\n').replaceAll('import.meta.url', JSON.stringi
 const factory = vm.runInNewContext(declarations + '\n({fixture,groupRecord,legacyRecord})', { assert, fs, path, vm, ts, createRequire, fileURLToPath, createHash, webcrypto, createProductDocumentPacket, productDocumentIdentity, singleDocumentIdentity, singlePacket, SINGLE_COMPANIES, SINGLE_SENDER,
   URL, Response, Request, TextEncoder, TextDecoder, Uint8Array, AbortController, Date, JSON, Array, Object, Error, Intl, structuredClone, setImmediate });
 const native = createRequire(import.meta.url), plain = value => JSON.parse(JSON.stringify(value)), cases = [];
+const MemberRegistrationConsentsPanel=()=>null;
 const nodes = tree => Array.isArray(tree) ? tree.flatMap(nodes) : tree && typeof tree === 'object' ? tree.type === SupplierHubRejectionDetails ? nodes(tree.type(tree.props)) : [tree, ...nodes(tree.props?.children)] : [];
 const text = tree => Array.isArray(tree) ? tree.map(text).join(' ') : tree && typeof tree === 'object' ? tree.type === SupplierHubRejectionDetails ? text(tree.type(tree.props)) : text(tree.props?.children) : tree == null ? '' : String(tree);
 const turn = () => new Promise(resolve => setImmediate(resolve)), deferred = () => { let resolve; const promise = new Promise(done => resolve = done); return { promise, resolve }; };
@@ -63,6 +64,7 @@ for(const company of SINGLE_COMPANIES)test(`${company.code}: explicit registrati
   assert.ok(h.lockPairs.slice(lockStart).every(pair=>pair[0]===true&&pair[1]===true),'no intermediate close/source unlock');
   assert.equal(h.button(registerDraft),undefined);assert.equal(h.button(confirmPrepared).props.disabled,true);assert.match(h.text(),/마지막 문단/);
   assert.equal(h.f.sent.some(row=>row.payload.action==='confirmPreparedDraft'),false,'registration intent does not accept terms');assert.equal(h.f.history.length,0);assert.equal(h.stored.size,1);
+  assert.equal(h.f.configuredMessages.length,0,'older extensions never wait for a configured-policy probe');
   click();await h.idle();assert.equal(h.f.sent.length,3);assert.ok(h.f.calls.every(row=>row.method==='GET'));
  }finally{h.close();}
 });
@@ -128,6 +130,100 @@ test('registration handoff expires on cancellation, disabled view, owner/company
   if(closed){for(let i=0;i<6;i++)await turn();}else await h.idle();
   assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft'],mode);assert.equal(h.f.history.length,0);assert.equal(h.stored.size,1);
  }finally{reply.resolve();if(!closed)h.close();}}
+});
+
+const configuredReply=(challenge,time)=>({action:['productPage','imagePage'].includes(challenge.stage)?'confirm-and-continue':'confirm-and-submit',...(challenge.stage?{stage:challenge.stage}:{}),
+ userInitiated:true,mode:'configured-policy',challengeId:challenge.id,confirmedAt:time,approvedKeys:challenge.items.filter(item=>item.required).map(item=>item.key)});
+function configuredChallenge(h,stage){const challenge=h.f.challenge(stage);return {...challenge,id:({'productPage':'4','imagePage':'5','logisticsPage':'6'})[stage].repeat(64),
+ items:stage==='logisticsPage'?[]:[{key:stage==='productPage'?'msrpAgree':'labelContactAgreed',id:stage==='productPage'?'agreeMSRPTerm':'agreeLabelContact',text:'현재 표시된 안내',required:true,title:'현재 약관 제목',termsText:'현재 문서에 표시된 약관 전문'}]};}
+function allowConfiguredPrepared(h,run){h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true,configuredRegistrationConsentAvailable:true}
+ :payload.action==='prepareDraft'?draftResult(h.f,payload.packet.requestId):run(payload);}
+
+test('configured registration capability is strictly boolean and requires the complete native prepared flow',async()=>{
+ for(const mode of ['string','number','null','no-draft','no-lifecycle']){const h=await fixture();try{
+  h.f.bridge=async payload=>({...h.f.preview(),requestId:payload.packet.requestId,...(mode==='no-draft'?{}:{draftPreparationAvailable:true}),...(mode==='no-lifecycle'?{}:{preparedLifecycleAvailable:true}),
+   configuredRegistrationConsentAvailable:mode==='string'?'true':mode==='number'?1:mode==='null'?null:true});
+  await h.idle();await h.click(open);assert.equal(h.button(registerDraft),undefined);assert.equal(h.f.configuredMessages.length,0);assert.equal(h.f.sent.length,1);assert.equal(h.stored.size,0);
+ }finally{h.close();}}
+});
+
+for(const company of SINGLE_COMPANIES)test(`${company.code}: configured registration starts only from bound buttons and forwards isolated approvals through all three fresh challenges`,async()=>{
+ const h=await fixture(company,{configuredProbe:(message,f)=>configuredReply(message.expected.challenge,f.clock.now)});let confirmations=0;try{
+  allowConfiguredPrepared(h,payload=>{
+   if(payload.action==='reviewPreparedDraft')return preparedResult(h,payload,'awaiting-stage-consent',14,{challenge:configuredChallenge(h,'productPage')});
+   assert.equal(payload.action,'confirmPreparedDraft');assert.equal(payload.confirmation.mode,'configured-policy');confirmations++;
+   return confirmations===1?preparedResult(h,payload,'awaiting-stage-consent',17,{challenge:configuredChallenge(h,'imagePage')}):confirmations===2?preparedResult(h,payload,'awaiting-consent',20,{challenge:configuredChallenge(h,'logisticsPage')}):preparedResult(h,payload,'pending',23,{receipt:h.f.observation('SUBMITTED').receipt});
+  });
+  await h.idle();await h.click(open);const button=h.button(registerDraft),packet=h.f.sent[0].payload.packet,attrs=button.props;
+  assert.equal(attrs['data-supplier-hub-registration-start'],'v1');assert.equal(attrs['data-supplier-hub-owner-id'],h.f.review.identity.ownerId);assert.equal(attrs['data-supplier-hub-company-code'],company.code);
+  assert.equal(attrs['data-supplier-hub-product-id'],h.f.review.identity.productId);assert.equal(attrs['data-supplier-hub-request-id'],packet.requestId);assert.equal(attrs['data-supplier-hub-packet-digest'],h.f.context.packetDigest);
+  assert.equal(attrs['data-supplier-hub-identity-digest'],h.f.context.identityDigest);assert.equal(attrs['data-supplier-hub-body-sha256'],h.f.review.originalBodySha256);assert.equal(attrs['data-supplier-hub-prepared-body-sha256'],h.f.review.preparedBodySha256);
+  assert.equal(h.button(prepareDraft).props['data-supplier-hub-registration-start'],undefined);const refreshStart=h.refreshCalls.length;
+  await h.click(registerDraft);assert.equal(confirmations,3);assert.equal(h.f.history[0].receipt.sourceStatus,'SUBMITTED');assert.equal(h.button(confirmPrepared),undefined);
+  assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','reviewPreparedDraft','confirmPreparedDraft','confirmPreparedDraft','confirmPreparedDraft']);
+  const probes=h.f.configuredMessages.filter(message=>message.type==='probe');assert.equal(probes.length,3);
+  assert.ok(probes.every(message=>message.expected.identity.ownerId===h.f.review.identity.ownerId&&message.expected.identity.company.code===company.code&&message.expected.sourceExpected.requestId===packet.requestId
+   &&message.expected.sourceExpected.packetDigest===attrs['data-supplier-hub-packet-digest']&&message.expected.sourceExpected.bodySha256===h.f.review.originalBodySha256&&message.expected.sourceExpected.preparedBodySha256===h.f.review.preparedBodySha256&&message.expected.docId==='new-document-728'));
+  assert.equal(new Set(h.refreshCalls.slice(refreshStart)).size,1,'one explicit operation spans configured approvals');assert.equal(h.f.configuredMessages.at(-1).type,'cancel');assert.equal(h.stored.size,1);
+ }finally{h.close();}
+});
+
+test('configured policy opt-in panel receives only the current challenge and new or unavailable policies leave manual checkboxes unchecked',async()=>{
+ const h=await fixture(SINGLE_COMPANIES[0],{configuredProbe:()=>null});try{
+  allowConfiguredPrepared(h,payload=>payload.action==='reviewPreparedDraft'?preparedResult(h,payload,'awaiting-stage-consent',14,{challenge:configuredChallenge(h,'productPage')}):preparedResult(h,payload,'awaiting-stage-consent',17,{challenge:configuredChallenge(h,'imagePage')}));
+  await h.idle();await h.click(open);await h.click(prepareDraft);assert.equal(h.f.configuredMessages.length,0);assert.equal(h.button(reviewPrepared).props['data-supplier-hub-registration-start'],'v1');
+  await h.click(reviewPrepared);assert.equal(h.f.configuredMessages.filter(message=>message.type==='probe').length,1);assert.equal(h.f.sent.filter(row=>row.payload.action==='confirmPreparedDraft').length,0);
+  const panel=nodes(h.render()).find(node=>node.type===MemberRegistrationConsentsPanel);assert.ok(panel);assert.equal(panel.props.ownerId,h.f.review.identity.ownerId);assert.deepEqual(plain(panel.props.company),plain(h.f.review.identity.company));assert.equal(panel.props.challenge.id,configuredChallenge(h,'productPage').id);
+  assert.equal(h.button(confirmPrepared).props.disabled,true);checkTerms(h);await h.click(confirmPrepared);
+  assert.equal(h.f.sent.at(-1).payload.confirmation.mode,undefined,'manual confirmation keeps its original contract');assert.equal(h.button(confirmPrepared).props.disabled,true,'later terms never inherit a checked value');assert.equal(h.f.configuredMessages.filter(message=>message.type==='probe').length,2);
+ }finally{h.close();}
+});
+
+test('configured registration rejects malformed approvals and falls back without granting consent or retrying',async()=>{
+ for(const mode of ['mode','challenge','stage','keys','time','shape','error','timeout']){const h=await fixture(SINGLE_COMPANIES[0],{configuredProbe:(message,f)=>{
+  if(mode==='timeout')return undefined;if(mode==='error')throw Error('isolated policy unavailable');const value=configuredReply(message.expected.challenge,f.clock.now);
+  if(mode==='mode')delete value.mode;if(mode==='challenge')value.challengeId='f'.repeat(64);if(mode==='stage')value.stage='imagePage';if(mode==='keys')value.approvedKeys=['labelContactAgreed'];
+  if(mode==='time')value.confirmedAt=message.expected.challenge.expiresAt;if(mode==='shape')value.extra=true;return value;
+ }});try{
+  allowConfiguredPrepared(h,payload=>{assert.equal(payload.action,'reviewPreparedDraft');return preparedResult(h,payload,'awaiting-stage-consent',14,{challenge:configuredChallenge(h,'productPage')});});
+  await h.idle();await h.click(open);
+  if(mode==='timeout'){h.button(registerDraft).props.onClick();h.flush();await h.wait(()=>h.f.configuredMessages.some(message=>message.type==='probe'));h.f.advance(45001);await h.idle();}else await h.click(registerDraft);
+  assert.equal(h.f.sent.filter(row=>row.payload.action==='confirmPreparedDraft').length,0,mode);assert.equal(h.f.configuredMessages.filter(message=>message.type==='probe').length,1);assert.equal(h.button(confirmPrepared).props.disabled,true);assert.equal(h.stored.size,1);assert.equal(h.f.history.length,0);
+ }finally{h.close();}}
+});
+
+test('configured probe ignores forged origins, sources and correlation IDs before accepting one exact current response',async()=>{
+ let probes=0;const h=await fixture(SINGLE_COMPANIES[0],{configuredProbe:()=>++probes===1?undefined:null});try{
+  allowConfiguredPrepared(h,payload=>payload.action==='reviewPreparedDraft'?preparedResult(h,payload,'awaiting-stage-consent',14,{challenge:configuredChallenge(h,'productPage')}):preparedResult(h,payload,'awaiting-stage-consent',17,{challenge:configuredChallenge(h,'imagePage')}));
+  await h.idle();await h.click(open);h.button(registerDraft).props.onClick();h.flush();await h.wait(()=>h.f.configuredMessages.some(message=>message.type==='probe'));
+  const probe=h.f.configuredMessages.find(message=>message.type==='probe'),data={channel:'YOOFAM_CONFIGURED_REGISTRATION_CONSENT_RESULT',requestId:probe.requestId,result:{ok:true,confirmation:configuredReply(probe.expected.challenge,h.f.clock.now)}};
+  for(const overrides of [{origin:'https://unrelated.invalid'},{source:{}},{data:{...data,requestId:'00000000-0000-4000-8000-000000000000'}}])for(const listener of [...h.f.listeners])listener({source:h.f.window,origin:h.f.window.location.origin,data,...overrides});
+  for(let i=0;i<3;i++)await turn();assert.equal(h.f.sent.filter(row=>row.payload.action==='confirmPreparedDraft').length,0);
+  for(const listener of [...h.f.listeners])listener({source:h.f.window,origin:h.f.window.location.origin,data});await h.idle();
+  assert.equal(h.f.sent.filter(row=>row.payload.action==='confirmPreparedDraft').length,1);assert.equal(h.f.configuredMessages.filter(message=>message.type==='probe').length,2);assert.equal(h.button(confirmPrepared).props.disabled,true);
+ }finally{h.close();}
+});
+
+test('configured registration cannot confirm a pending probe after cancel, disabled view, changed source/account, replaced reservation or ABA',async()=>{
+ for(const mode of ['cancel','disabled','owner','company','source','reservation','review-ABA']){const gate=deferred(),h=await fixture(SINGLE_COMPANIES[0],{configuredProbe:()=>gate.promise});let closed=false;try{
+  allowConfiguredPrepared(h,payload=>{assert.equal(payload.action,'reviewPreparedDraft');return preparedResult(h,payload,'awaiting-stage-consent',14,{challenge:configuredChallenge(h,'productPage')});});
+  await h.idle();await h.click(open);h.button(registerDraft).props.onClick();h.flush();await h.wait(()=>h.f.configuredMessages.some(message=>message.type==='probe'));
+  const probe=h.f.configuredMessages.find(message=>message.type==='probe'),props=h.props();
+  if(mode==='cancel'){h.close();closed=true;}if(mode==='disabled')h.render({...props,disabled:true});if(mode==='owner')h.f.actor.ownerId='different-owner';if(mode==='company')h.f.actor.company=SINGLE_COMPANIES[1];
+  if(mode==='source')h.f.refresh=async()=>({...h.f.review,preparedBodySha256:'f'.repeat(64)});if(mode==='reservation'){const[key,raw]=[...h.stored][0];h.stored.set(key,JSON.stringify({...JSON.parse(raw),requestId:'00000000-0000-4000-8000-000000000000'}));}
+  if(mode==='review-ABA'){h.render({...props,review:{...props.review,reviewDigest:'f'.repeat(64)}});h.render(props);}
+  gate.resolve(configuredReply(probe.expected.challenge,h.f.clock.now));if(closed){for(let i=0;i<6;i++)await turn();}else await h.idle();
+  assert.equal(h.f.sent.filter(row=>row.payload.action==='confirmPreparedDraft').length,0,mode);assert.equal(h.f.history.length,0);assert.equal(h.stored.size,1);assert.equal(h.f.configuredMessages.at(-1).type,'cancel');
+ }finally{gate.resolve();if(!closed)h.close();}}
+});
+
+test('configured confirmation ACK loss stops automation and only explicit read recovery can continue the same document',async()=>{
+ const h=await fixture(SINGLE_COMPANIES[0],{configuredProbe:(message,f)=>configuredReply(message.expected.challenge,f.clock.now)});try{
+  allowConfiguredPrepared(h,payload=>payload.action==='reviewPreparedDraft'?preparedResult(h,payload,'awaiting-stage-consent',14,{challenge:configuredChallenge(h,'productPage')}):payload.action==='confirmPreparedDraft'?undefined:preparedResult(h,payload,'navigation-ready',17,{recovered:true}));
+  await h.idle();await h.click(open);h.button(registerDraft).props.onClick();h.flush();await h.wait(()=>h.f.sent.some(row=>row.payload.action==='confirmPreparedDraft'));h.f.advance(120001);await h.idle();
+  assert.equal(h.f.configuredMessages.at(-1).type,'cancel');assert.equal(h.f.sent.filter(row=>row.payload.action==='confirmPreparedDraft').length,1);assert.ok(h.button(recoverPrepared));await h.click(recoverPrepared);
+  assert.ok(h.button('같은 문서 다음 단계 계속'));assert.equal(h.f.configuredMessages.filter(message=>message.type==='probe').length,1);assert.equal(h.stored.size,1);assert.equal(h.f.history.length,0);
+ }finally{h.close();}
 });
 
 for(const company of SINGLE_COMPANIES)test(`${company.code}: prepared UI explicitly checks two complete terms stages, submits once and saves exact receipt without unqualified start`,async()=>{
@@ -680,6 +776,17 @@ async function fixture(company = SINGLE_COMPANIES[0], options = {}) {
   f.window.removeEventListener=(type,fn)=>type==='storage'?storageListeners.delete(fn):removeEvents(type,fn);
   const originalBridge=f.bridge;
   f.bridge=async payload=>{const result=await originalBridge(payload);return result&&{...result,requestId:payload.packet.requestId};};
+  const originalPost=f.window.postMessage;f.configuredMessages=[];
+  f.window.postMessage=(message,target)=>{
+    if(message.channel!=='YOOFAM_CONFIGURED_REGISTRATION_CONSENT')return originalPost(message,target);
+    assert.equal(target,f.window.location.origin);f.configuredMessages.push(plain(message));
+    if(message.type==='cancel')return;
+    assert.equal(message.type,'probe');
+    void Promise.resolve().then(async()=>{
+      const confirmation=options.configuredProbe?await options.configuredProbe(message,f):null;if(confirmation===undefined)return;
+      for(const listener of [...f.listeners])listener({source:f.window,origin:target,data:{channel:'YOOFAM_CONFIGURED_REGISTRATION_CONSENT_RESULT',requestId:message.requestId,result:{ok:true,confirmation}}});
+    }).catch(()=>{for(const listener of [...f.listeners])listener({source:f.window,origin:target,data:{channel:'YOOFAM_CONFIGURED_REGISTRATION_CONSENT_RESULT',requestId:message.requestId,result:{ok:false}}});});
+  };
   const hook = (effect, deps, layout) => { const index = cursor++, old = slots[index]; if (!old || !deps || deps.some((dep, i) => !Object.is(dep, old.deps[i]))) { old?.cleanup?.(); slots[index] = { deps, cleanup: null }; const run = () => slots[index].cleanup = effect(); if (layout) run(); else effects.push(run); } };
   const react = { useState(initial) { const index = cursor++; if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial; return [slots[index], value => slots[index] = typeof value === 'function' ? value(slots[index]) : value]; }, useRef(value) { const index = cursor++; if (!(index in slots)) slots[index] = { current: value }; return slots[index]; }, useEffect: (fn, deps) => hook(fn, deps, false), useLayoutEffect: (fn, deps) => hook(fn, deps, true) };
   react.useMemo=(fn,deps)=>{const index=cursor++,old=slots[index];if(!old||deps.some((value,i)=>!Object.is(value,old.deps[i])))slots[index]={deps,value:fn()};return slots[index].value;};
@@ -687,7 +794,7 @@ async function fixture(company = SINGLE_COMPANIES[0], options = {}) {
   const exports = {}, component = 'app/components/supplier-hub-product-transport.tsx';
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../' + component, import.meta.url), 'utf8'), { fileName: component, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
     { exports, Error, Date: LocalDate, window:f.window, AbortController, fetch: f.fetch, setTimeout: (fn, delay) => { const id = ++sequence; f.timers.set(id, { fn, due: f.clock.now + delay }); return id; }, clearTimeout: id => f.timers.delete(id),
-      require: name => name === '@/app/preserved-product-request-reconnect' && options.reconnect ? {reconnectPreservedProductDraft:input=>options.reconnect(input,f)} : name === '@/app/components/supplier-hub-native-registration' ? {SupplierHubNativeRegistration:()=>null} : name === '@/app/components/supplier-hub-rejection-details' ? {SupplierHubRejectionDetails} : name === '@/app/supplier-hub-reserved-work.mjs' ? {runReservedSegments} : name === 'react' ? react : name === '@/app/supplier-hub-product-client' ? f.client : name.startsWith('@/') ? f.load(name.slice(2) + '.ts') : name.endsWith('product-document-source.mjs') ? {sourceReadError} : name.endsWith('product-document.mjs') ? {
+      require: name => name === '@/app/preserved-product-request-reconnect' && options.reconnect ? {reconnectPreservedProductDraft:input=>options.reconnect(input,f)} : name === '@/app/components/member-registration-consents-panel' ? {MemberRegistrationConsentsPanel} : name === '@/app/components/supplier-hub-native-registration' ? {SupplierHubNativeRegistration:()=>null} : name === '@/app/components/supplier-hub-rejection-details' ? {SupplierHubRejectionDetails} : name === '@/app/supplier-hub-reserved-work.mjs' ? {runReservedSegments} : name === 'react' ? react : name === '@/app/supplier-hub-product-client' ? f.client : name.startsWith('@/') ? f.load(name.slice(2) + '.ts') : name.endsWith('product-document-source.mjs') ? {sourceReadError} : name.endsWith('product-document.mjs') ? {
         // Each fresh preview gets a different real UUID. Recovery must supply
         // its original UUID explicitly; a constant test seed cannot mask loss.
         createProductDocumentPacket: (review,value={}) => createProductDocumentPacket(review, { ...value,createdAt:value.createdAt??f.clock.now,now:f.clock.now }),

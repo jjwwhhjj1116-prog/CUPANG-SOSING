@@ -1,5 +1,6 @@
 import {HANDOFF_ORIGINS} from './handoff-store.mjs';
 import {receiptRejectionDetailsValid} from './rejection-details.mjs';
+import {configuredConsentProofValid,configuredFinalMatchesStages} from './configured-consent-proof.mjs';
 import {validateUnexpectedLegalAuditReport} from './unexpected-legal-audit.mjs';
 import {validateSavedDocumentStepValidationReport,validateSavedDocumentStepRetryRequest} from './saved-document-step-validation.mjs';
 
@@ -141,6 +142,13 @@ function responseJson(response){
   return response.json;
 }
 const withDoc=(packet,docId)=>({...clone(packet.body),docId});
+const consentTime=state=>state.consentProof?.kind==='configured-policy'?state.consentProof.checkedAt:state.humanConfirmedAt;
+const consentEvidence=(verified,details,context,state)=>{
+  if(details.mode===undefined){if(verified.consentProof!==undefined)fail('HUMAN_CONFIRMATION','직접 확인과 저장된 동의 증거가 다릅니다.');return {consentProof:null,humanConfirmedAt:verified.confirmedAt??details.confirmedAt};}
+  if(details.mode!=='configured-policy'||!configuredConsentProofValid(verified.consentProof,{identity:context.identity,identityDigest:context.identityDigest,packetDigest:context.packetDigest,requestId:state.requestId,docId:state.docId,challenge:state.challenge})
+    ||verified.consentProof.checkedAt!==verified.confirmedAt||state.challenge.stage==='logisticsPage'&&!configuredFinalMatchesStages(verified.consentProof,state.stageConsents))fail('CONFIGURED_CONSENT','원래 등록전송의 현재 동의 설정과 단계 증거를 확인해주세요.');
+  return {consentProof:clone(verified.consentProof)};
+};
 function tabValid(tab,packet){
   return object(tab)&&Number.isSafeInteger(tab.tabId)&&tab.tabId>=0&&tab.windowId===packet.windowId&&tab.origin===SINGLE_DOCUMENT_ORIGIN&&tab.authenticated===true&&same(tab.company,packet.company);
 }
@@ -182,6 +190,7 @@ function checkpointValid(state,context){
     ||!Array.isArray(state.validatedSteps)||!same(state.validatedSteps,[2,3,4,5].slice(0,state.validatedSteps.length))
     ||state.validatedSteps.length>4||!(state.docId===null||identifier(state.docId))||state.docId!==null&&state.baselineDocIds.some(id=>same(id,state.docId))
     ||state.tab!==null&&!tabValid(state.tab,context.packet)||state.sessionId!==null&&(typeof state.sessionId!=='string'||!ID.test(state.sessionId)))fail('CHECKPOINT','저장한 개별 전송 기록의 연결을 확인해주세요.');
+  if(state.consentProof!==undefined&&state.consentProof!==null&&(state.preparedLifecycle!==true||!state.challenge||!configuredConsentProofValid(state.consentProof,{identity:context.identity,identityDigest:context.identityDigest,packetDigest:context.packetDigest,requestId:state.requestId,docId:state.docId,challenge:state.challenge})))fail('CHECKPOINT','저장된 자동 동의의 원래 문서·단계 증거가 다릅니다.');
   if(state.draftOnly!==undefined&&(state.draftOnly!==true||state.preparedLifecycle!==true&&(!DRAFT_STATES.has(state.state)||state.stageConsents?.length||state.challenge!==null||state.receipt!==null
     ||state.humanConfirmedAt!==undefined||state.submitRequestedAt!==undefined))||state.draftOnly===true&&state.state==='validated'&&state.validatedSteps.length!==4)fail('CHECKPOINT','제출하지 않은 새 초안의 원래 준비 기록을 확인해주세요.');
   if(state.createRetry!==undefined){const retry=state.createRetry;
@@ -248,12 +257,15 @@ function checkpointValid(state,context){
   if(!['prepared','target-requested','target-created','create-requested'].includes(state.state)&&state.docId===null)fail('CHECKPOINT','새 문서 식별값이 저장되지 않았습니다.');
   if(['target-requested','target-created'].includes(state.state)&&(state.operationId!==state.requestId+':target'||state.docId!==null))fail('CHECKPOINT','새 전송 탭의 원래 생성 요청을 확인해주세요.');
   const stages=state.stageConsents??[];
+  if(state.consentProof?.stage==='logisticsPage'&&!configuredFinalMatchesStages(state.consentProof,stages))fail('CHECKPOINT','최종 자동 동의와 앞선 두 단계의 원래 설정 증거가 다릅니다.');
   if(state.state==='navigation-ready'&&(state.preparedLifecycle!==true||!stages.length||state.challenge!==null||state.receipt!==null||state.submitRequestedAt!==undefined))fail('CHECKPOINT','원래 새 문서의 아직 요청하지 않은 다음 단계를 확인해주세요.');
   if(!Array.isArray(stages)||stages.length>2||stages.some((entry,index)=>!object(entry)||entry.stage!==STAGES[index]||!object(entry.challenge)||entry.challenge.stage!==entry.stage
     ||!same(entry.challenge.docId,state.docId)||entry.challenge.packetDigest!==context.packetDigest||!HEX.test(entry.challenge.id||'')
     ||!Number.isSafeInteger(entry.challenge.issuedAt)||entry.challenge.issuedAt<=0||entry.challenge.expiresAt!==entry.challenge.issuedAt+120000
     ||!Number.isSafeInteger(entry.confirmedAt)||entry.confirmedAt<entry.challenge.issuedAt||entry.confirmedAt>entry.challenge.expiresAt
     ||!Array.isArray(entry.challenge.items)||entry.challenge.items.length!==1||entry.challenge.items[0].key!==STAGE_FLAGS[entry.stage].key||entry.challenge.items[0].id!==STAGE_FLAGS[entry.stage].id
+    ||entry.consentProof!==undefined&&(state.preparedLifecycle!==true||!configuredConsentProofValid(entry.consentProof,{identity:context.identity,identityDigest:context.identityDigest,packetDigest:context.packetDigest,requestId:state.requestId,docId:state.docId,challenge:entry.challenge}))
+    ||entry.consentProof!==undefined&&entry.consentProof.checkedAt!==entry.confirmedAt
     ||entry.challenge.items[0].required!==true||typeof entry.challenge.items[0].text!=='string'||!entry.challenge.items[0].text.trim()||entry.challenge.items[0].text.length>10000
     ||typeof entry.challenge.items[0].title!=='string'||!entry.challenge.items[0].title.trim()||entry.challenge.items[0].title.length>500||typeof entry.challenge.items[0].termsText!=='string'||!entry.challenge.items[0].termsText.trim()||entry.challenge.items[0].termsText.length>50000))fail('CHECKPOINT','개별 문서의 단계별 동의 기록을 확인해주세요.');
   if(['awaiting-stage-consent','stage-consent-requested','awaiting-consent','consent-requested','submit-requested','pending','accepted','rejected','registered'].includes(state.state)&&state.validatedSteps.length!==4)fail('CHECKPOINT','개별 문서의 단계 검증 기록이 없습니다.');
@@ -268,7 +280,7 @@ function checkpointValid(state,context){
     ||state.challenge.items.length!==1||state.challenge.items[0].key!==STAGE_FLAGS[state.challenge.stage].key||state.challenge.items[0].id!==STAGE_FLAGS[state.challenge.stage].id
     ||typeof state.challenge.items[0].title!=='string'||!state.challenge.items[0].title.trim()||typeof state.challenge.items[0].termsText!=='string'||!state.challenge.items[0].termsText.trim()))fail('CHECKPOINT','현재 단계의 정확한 약관 확인 기록이 없습니다.');
   if(['consent-requested','submit-requested','pending','accepted','rejected','registered'].includes(state.state)
-    &&(!state.challenge||!Number.isSafeInteger(state.humanConfirmedAt)||state.humanConfirmedAt<state.challenge.issuedAt||state.humanConfirmedAt>state.challenge.expiresAt))fail('CHECKPOINT','현재 사용자의 제출 확인 기록이 없습니다.');
+    &&(!state.challenge||!Number.isSafeInteger(consentTime(state))||consentTime(state)<state.challenge.issuedAt||consentTime(state)>state.challenge.expiresAt))fail('CHECKPOINT','현재 제출 확인 기록이 없습니다.');
   if(state.state==='validation-requested'&&(![2,3,4,5].includes(state.requestedStep)||state.requestedStep!==2+state.validatedSteps.length
     ||state.operationId!==state.requestId+':validate:'+state.requestedStep))fail('CHECKPOINT','단계 검증 요청 기록을 확인해주세요.');
   if(state.state==='validation-rejected'&&(![2,3,4,5].includes(state.requestedStep)||state.requestedStep!==2+state.validatedSteps.length
@@ -277,11 +289,11 @@ function checkpointValid(state,context){
     ||stages.length!==0||state.challenge!==null||state.receipt!==null||state.humanConfirmedAt!==undefined||state.submitRequestedAt!==undefined))fail('CHECKPOINT','제출 전 단계 검증 반려 기록을 확인해주세요.');
   for(const [phase,operation] of [['create-requested','create'],['update-requested','update'],['consent-requested','consent'],['submit-requested','submit']])
     if(state.state===phase&&state.operationId!==state.requestId+':'+operation)fail('CHECKPOINT','원래 문서 요청 기록을 확인해주세요.');
-  if(state.state==='stage-consent-requested'&&(state.operationId!==state.requestId+':stage-consent:'+state.challenge.stage||!Number.isSafeInteger(state.humanConfirmedAt)
-    ||state.humanConfirmedAt<state.challenge.issuedAt||state.humanConfirmedAt>state.challenge.expiresAt))fail('CHECKPOINT','원래 단계 동의 요청 기록을 확인해주세요.');
+  if(state.state==='stage-consent-requested'&&(state.operationId!==state.requestId+':stage-consent:'+state.challenge.stage||!Number.isSafeInteger(consentTime(state))
+    ||consentTime(state)<state.challenge.issuedAt||consentTime(state)>state.challenge.expiresAt))fail('CHECKPOINT','원래 단계 동의 요청 기록을 확인해주세요.');
   if(['pending','accepted','rejected','registered'].includes(state.state)&&(!receiptValid(state.receipt,state,context,state.updatedAt)||state.receipt.state!==state.state))fail('CHECKPOINT','저장한 접수·SKU 증거를 확인해주세요.');
-  if(state.submitRequestedAt!==undefined&&(!['submit-requested','pending','accepted','rejected','registered'].includes(state.state)||!Number.isSafeInteger(state.humanConfirmedAt)
-    ||!Number.isSafeInteger(state.submitRequestedAt)||state.submitRequestedAt<state.humanConfirmedAt||state.submitRequestedAt>state.updatedAt))fail('CHECKPOINT','원래 문서의 제출 요청 시각을 확인해주세요.');
+  if(state.submitRequestedAt!==undefined&&(!['submit-requested','pending','accepted','rejected','registered'].includes(state.state)||!Number.isSafeInteger(consentTime(state))
+    ||!Number.isSafeInteger(state.submitRequestedAt)||state.submitRequestedAt<consentTime(state)||state.submitRequestedAt>state.updatedAt))fail('CHECKPOINT','원래 문서의 제출 요청 시각을 확인해주세요.');
   return state;
 }
 function receiptValid(receipt,state,context,time){
@@ -291,11 +303,11 @@ function receiptValid(receipt,state,context,time){
   if(object(receipt)&&receipt.sourceStatus!==undefined){
     const nativeStates={SUBMITTED:'pending',REJECTED:'rejected',FINISHED:'accepted'};
     if(!Object.hasOwn(nativeStates,receipt.sourceStatus)||nativeStates[receipt.sourceStatus]!==receipt.state||receipt.evidence!=='document-receipt'||receipt.registered!==false
-      ||!identifier(receipt.qvtRequestId)||!same(receipt.receiptId,receipt.qvtRequestId)||Object.hasOwn(receipt,'skuId')||receipt.observedAt<(state.submitRequestedAt??state.humanConfirmedAt))return false;
+      ||!identifier(receipt.qvtRequestId)||!same(receipt.receiptId,receipt.qvtRequestId)||Object.hasOwn(receipt,'skuId')||receipt.observedAt<(state.submitRequestedAt??consentTime(state)))return false;
   }
   return object(receipt)&&receiptRejectionDetailsValid(receipt)&&['pending','accepted','rejected','registered'].includes(receipt.state)&&same(receipt.docId,state.docId)&&same(receipt.company,context.packet.company)
     &&receipt.identityDigest===context.identityDigest&&receipt.preparedBodySha256===context.bodySha256&&Number.isSafeInteger(receipt.observedAt)
-    &&receipt.observedAt>=state.humanConfirmedAt&&receipt.observedAt<=time+5000&&['document-receipt','document-and-sku'].includes(receipt.evidence)
+    &&receipt.observedAt>=consentTime(state)&&receipt.observedAt<=time+5000&&['document-receipt','document-and-sku'].includes(receipt.evidence)
     &&(receipt.receiptId===undefined||identifier(receipt.receiptId))&&(receipt.skuId===undefined||identifier(receipt.skuId))
     &&(!['accepted','registered'].includes(receipt.state)||identifier(receipt.receiptId))
     &&(receipt.state!=='registered'||receipt.evidence==='document-and-sku'&&identifier(receipt.skuId));
@@ -318,7 +330,7 @@ function result(state,extra={}){
       validatedSteps:clone(state.validatedSteps),checkpointSequence:state.sequence,rejectedAt:state.updatedAt,submitted:false,consented:false,
       errors:state.validationErrors.map(({columnName,message})=>({columnName,message}))}}:{}),
     ...(state.draftOnly===true?state.preparedLifecycle===true?{draftOnly:true,preparedLifecycle:true,lifecycleProof:{evidence:'native-prepared-draft-lifecycle',...clone(state.preparationOrigin),checkpointSequence:state.sequence,observedAt:state.updatedAt,validatedSteps:clone(state.validatedSteps),
-      consentRequested:Boolean(state.stageConsents?.length||state.humanConfirmedAt!==undefined),submitRequested:state.submitRequestedAt!==undefined}}:{draftOnly:true,draftProof:{evidence:'document-draft-preparation',validatedSteps:clone(state.validatedSteps),checkpointSequence:state.sequence,observedAt:state.updatedAt,submitted:false,consented:false,...(state.createRetry?{createRetryApproved:true}:{}),...(state.existingDocumentRepair?{existingDocumentRepairAttempted:true}:{}),...(state.existingDocumentRepairRetry?{existingDocumentRepairRetryAttempted:true}:{}),...(state.existingDocumentRepairContinuation?{existingDocumentRepairContinuationAttempted:true}:{}),...(state.existingDocumentRepairContinuationResume?{existingDocumentRepairContinuationResumed:true}:{})}}:{}),...extra};
+      consentRequested:Boolean(state.stageConsents?.length||consentTime(state)!==undefined),submitRequested:state.submitRequestedAt!==undefined}}:{draftOnly:true,draftProof:{evidence:'document-draft-preparation',validatedSteps:clone(state.validatedSteps),checkpointSequence:state.sequence,observedAt:state.updatedAt,submitted:false,consented:false,...(state.createRetry?{createRetryApproved:true}:{}),...(state.existingDocumentRepair?{existingDocumentRepairAttempted:true}:{}),...(state.existingDocumentRepairRetry?{existingDocumentRepairRetryAttempted:true}:{}),...(state.existingDocumentRepairContinuation?{existingDocumentRepairContinuationAttempted:true}:{}),...(state.existingDocumentRepairContinuationResume?{existingDocumentRepairContinuationResumed:true}:{})}}:{}),...extra};
 }
 
 /** Explicit adapters only; importing this module performs no browser/network
@@ -844,7 +856,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
           if(typeof adapter.recoverStageConsent!=='function')fail('CONSENT_UNCONFIRMED','원래 단계 동의를 읽기로 확인해주세요.');
           const check=state.challenge,proof=await call('recoverStageConsent',{tab:state.tab,sessionId:state.sessionId,identity:context.identity,docId:state.docId,stage:check.stage,challenge:check,operationId:state.operationId});
           if(proof?.readOnly!==true||proof.operationId!==state.operationId||!same(stageDescriptor(proof,state,context,check.stage),check.items)||proof.items.some(item=>!item.checked))fail('CONSENT_UNCONFIRMED','원래 단계의 동의 반영을 확인하지 못했습니다. 다시 선택하지 않았습니다.');
-          await guard(context,state);state=await save(context,state,{state:'navigation-requested',stageConsents:[...(state.stageConsents??[]),{stage:check.stage,challenge:check,confirmedAt:state.humanConfirmedAt}]});
+          await guard(context,state);state=await save(context,state,{state:'navigation-requested',consentProof:null,stageConsents:[...(state.stageConsents??[]),{stage:check.stage,challenge:check,confirmedAt:consentTime(state),...(state.consentProof?{consentProof:state.consentProof}:{})}]});
         }else if(state.state==='awaiting-stage-consent'){
           state=await save(context,state,{challenge:await challenge(context,state,state.challenge.stage)});
         }else if(state.state==='navigation-requested'||nativeLifecycle&&state.state==='navigation-ready'){
@@ -854,7 +866,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
             state=await pauseNavigation(context,state,value);
           }else state=await save(context,state,{state:'awaiting-consent',challenge:await challenge(context,state)});
         }else if(['consent-requested','awaiting-consent'].includes(state.state)){
-          state=await save(context,state,{state:'awaiting-consent',challenge:await challenge(context,state)});
+          state=await save(context,state,{state:'awaiting-consent',challenge:await challenge(context,state),consentProof:null});
         }else if(['submit-requested','pending','accepted','rejected','registered'].includes(state.state)){const observed=await observe(context,state,readOnlyReceipt);return nativeLifecycle?{...observed,recovered:true}:observed;}
         if(nativeLifecycle&&state.preparedLifecycle&&state.state==='navigation-requested'){
           await readDocument(context,state);state=await pauseNavigation(context,state,await call('readNavigation',{tab:state.tab,identity:context.identity,docId:state.docId,productName:context.packet.body.productName,stageConsents:state.stageConsents??[]}));
@@ -862,6 +874,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
         return result(state,{recovered:true});
       }
       if(action==='confirm'){
+        if(details?.mode==='configured-policy'&&(!nativeLifecycle||state.preparedLifecycle!==true))fail('CONFIGURED_CONSENT','준비한 새 상품 문서의 등록전송에서만 저장한 동의를 적용할 수 있습니다.');
         if(state.state==='awaiting-stage-consent'){
           const check=state.challenge,time=clock();
           if(!object(details)||details.action!=='confirm-and-continue'||details.stage!==check.stage||details.userInitiated!==true||details.challengeId!==check.id
@@ -872,17 +885,17 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
           if(!same(stageDescriptor(current,state,context,check.stage),check.items))fail('AGREEMENT_CHANGED','현재 단계 약관이 변경되었습니다. 다시 읽어주세요.');
           const verified=await call('verifyHumanConfirmation',{identity:context.identity,docId:state.docId,challenge:check,confirmation:details});
           if(verified?.confirmed!==true||verified.challengeId!==check.id||verified.identityDigest!==context.identityDigest||clock()>check.expiresAt)fail('HUMAN_CONFIRMATION','현재 단계의 사용자 확인을 검증하지 못했습니다.');
-          const confirmedAt=verified.confirmedAt??details.confirmedAt;
+          const evidence=consentEvidence(verified,details,context,state),confirmedAt=verified.confirmedAt??details.confirmedAt;
           if(!Number.isSafeInteger(confirmedAt)||confirmedAt<check.issuedAt||confirmedAt>check.expiresAt||confirmedAt>clock()+5000)fail('HUMAN_CONFIRMATION','현재 단계 사용자 확인 시각을 검증하지 못했습니다.');
           await guard(context,state);
           const final=await call('readStageAgreements',{tab:state.tab,identity:context.identity,docId:state.docId,stage:check.stage});
           if(!same(stageDescriptor(final,state,context,check.stage),check.items))fail('AGREEMENT_CHANGED','사용자 확인 중 현재 약관이 변경되었습니다.');
           await readDocument(context,state);
           if(clock()>check.expiresAt)fail('HUMAN_CONFIRMATION','현재 단계 약관 확인 시간이 만료됐습니다. 다시 읽어주세요.');
-          state=await save(context,state,{state:'stage-consent-requested',operationId:state.requestId+':stage-consent:'+check.stage,humanConfirmedAt:confirmedAt});
+          state=await save(context,state,{state:'stage-consent-requested',operationId:state.requestId+':stage-consent:'+check.stage,...evidence});
           const accepted=await call('confirmStageAgreements',{tab:state.tab,sessionId:state.sessionId,identity:context.identity,docId:state.docId,stage:check.stage,challenge:check,confirmation:details,operationId:state.operationId});
           if(!same(stageDescriptor(accepted,state,context,check.stage),check.items)||accepted.items.some(item=>!item.checked))fail('CONSENT_UNCONFIRMED','원래 단계의 동의 선택 반영을 확인하지 못했습니다.');
-          await guard(context,state);state=await save(context,state,{state:'navigation-requested',stageConsents:[...(state.stageConsents??[]),{stage:check.stage,challenge:check,confirmedAt:state.humanConfirmedAt}]});
+          await guard(context,state);state=await save(context,state,{state:'navigation-requested',consentProof:null,stageConsents:[...(state.stageConsents??[]),{stage:check.stage,challenge:check,confirmedAt:consentTime(state),...(state.consentProof?{consentProof:state.consentProof}:{})}]});
           state=await continuation(context,state);return result(state);
         }
         if(state.state!=='awaiting-consent')return result(state);
@@ -897,10 +910,10 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
         await readDocument(context,state);
         const verified=await call('verifyHumanConfirmation',{identity:context.identity,docId:state.docId,challenge:check,confirmation:details});
         if(!object(verified)||verified.confirmed!==true||verified.challengeId!==check.id||verified.identityDigest!==context.identityDigest||clock()>check.expiresAt)fail('HUMAN_CONFIRMATION','현재 사용자의 제출 확인을 검증하지 못했습니다.');
-        const confirmedAt=verified.confirmedAt??details.confirmedAt;
+        const evidence=consentEvidence(verified,details,context,state),confirmedAt=verified.confirmedAt??details.confirmedAt;
         if(!Number.isSafeInteger(confirmedAt)||confirmedAt<check.issuedAt||confirmedAt>check.expiresAt||confirmedAt>clock()+5000)fail('HUMAN_CONFIRMATION','현재 제출 확인 시각을 검증하지 못했습니다.');
         await guard(context,state);if(clock()>check.expiresAt)fail('HUMAN_CONFIRMATION','현재 제출 확인 시간이 만료됐습니다. 다시 읽어주세요.');
-        state=await save(context,state,{state:'consent-requested',operationId:state.requestId+':consent',humanConfirmedAt:confirmedAt});
+        state=await save(context,state,{state:'consent-requested',operationId:state.requestId+':consent',...evidence});
         const accepted=await call('confirmAgreements',{tab:state.tab,sessionId:state.sessionId,identity:context.identity,docId:state.docId,challenge:check,confirmation:details});
         if(!same(agreementDescriptor(accepted,state,context),check.items)||accepted.items.some(item=>item.required&&!item.checked))fail('CONSENT_UNCONFIRMED','동의 선택의 반영을 확인하지 못했습니다. 제출하지 않았습니다.');
         await guard(context,state);
@@ -931,7 +944,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
     if(!['submit-requested','pending','accepted','rejected','registered'].includes(state.state))return result(state);
     await guard(context,state,readOnlyReceipt);
     const read=()=>call('observeReceipt',{tab:state.tab,sessionId:state.sessionId,identity:context.identity,identityDigest:context.identityDigest,preparedBodySha256:context.bodySha256,docId:state.docId,operationId:state.operationId,
-      submitRequestedAt:state.submitRequestedAt??state.humanConfirmedAt,expectedBody:withDoc(context.packet,state.docId),baselineDocIds:state.baselineDocIds,previousReceipt:state.receipt});
+      submitRequestedAt:state.submitRequestedAt??consentTime(state),expectedBody:withDoc(context.packet,state.docId),baselineDocIds:state.baselineDocIds,previousReceipt:state.receipt});
     const receipt=waitForReceipt?await observationWindow(context,state,'RECEIPT_UNCONFIRMED','원래 제출 요청의 접수가 아직 확인되지 않았습니다. 현재 문서의 제출 오류·접수 결과를 읽기로 확인해주세요. 다시 제출하지 않았습니다.',async({step,fence,pause})=>{
       for(let attempt=0;attempt<=30;attempt++){
         await fence();let value;

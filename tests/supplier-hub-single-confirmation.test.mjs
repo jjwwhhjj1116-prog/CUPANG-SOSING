@@ -68,14 +68,14 @@ async function fixture(stage='productPage'){
   const h={scope,packet,context,expected,source,value,document,window,nodes,roots,timers,observers,requests,host,root,find,click,request,previousFocus,
     get now(){return now;},setActor(value){actor=clone(value);},setHook(value){hook=value;},
     advance(ms){now+=ms;for(const [id,timer] of [...timers])if(timer.due<=now){timers.delete(id);timer.fn();}},
-    cleaned(){assert.equal(host(),undefined);assert.equal(window.count(),0);assert.equal(document.count(),0);assert.equal(observers.size,0);assert.equal(timers.size,0);assert.equal(document.activeElement,previousFocus);for(const node of nodes)assert.equal(node.count(),0);},
+    cleaned(){assert.equal(host(),undefined);assert.equal(window.count(),2);assert.equal(document.count(),1);assert.equal(observers.size,0);assert.equal(timers.size,0);assert.equal(document.activeElement,previousFocus);for(const node of nodes)assert.equal(node.count(),0);},
     approve(){for(const node of nodes.filter(node=>node.isConnected&&node.tag==='input'))click(node);click(find('button',stage==='productPage'||stage==='imagePage'?'동의하고 다음 단계 계속':'확인하고 견적서 제출'));},
   };
   return h;
 }
 async function hash(text){return Buffer.from(await webcrypto.subtle.digest('SHA-256',new TextEncoder().encode(text))).toString('hex');}
 async function settleUntil(predicate){for(let count=0;count<100;count++){if(predicate())return;await new Promise(resolve=>setTimeout(resolve,2));}assert.ok(predicate(),'expected async UI state');}
-async function cleanupResult(h,operation){const result=await operation.promise;await settleUntil(()=>h.window.count()===0);h.cleaned();return result;}
+async function cleanupResult(h,operation){const result=await operation.promise;await settleUntil(()=>h.window.count()===2);h.cleaned();return result;}
 
 for(const stage of ['productPage','imagePage',null,'logisticsPage'])test(`${stage??'legacy final'} requires its own actual unchecked choice and trusted final click`,async()=>{
   const h=await fixture(stage),operation=h.request();assert.equal(operation.returned,true);await settleUntil(()=>h.host());

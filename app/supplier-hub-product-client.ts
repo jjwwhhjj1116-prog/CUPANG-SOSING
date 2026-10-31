@@ -1,7 +1,7 @@
 import {validateProductDocumentPacket,PRODUCT_DOCUMENT_PREVIEW_ACK_TIMEOUT,type ProductDocumentPacket} from '../extensions/supplier-hub/product-document.mjs';
 import {productReceiptCanonical,parseStoredNativeReceipt,parseStoredProductReceipt,validateProductReceiptObservation,
   type NativeReceiptRecord,type ProductReceiptRecord,type ProductReceiptIdentity} from '@/app/supplier-hub-product-receipt';
-import {readSingleCatalogContext,validateSingleConsentChallenge,type SingleDocumentState,type SingleDocumentAction,type SingleConfirmation} from '@/app/supplier-hub-single-client';
+import {readSingleCatalogContext,validateSingleConsentChallenge,type SingleDocumentState,type SingleDocumentAction,type SingleConfirmation,type SingleConsentChallenge} from '@/app/supplier-hub-single-client';
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 import {validateUnexpectedLegalAuditReport,type UnexpectedLegalAuditReport} from '../extensions/supplier-hub/unexpected-legal-audit.mjs';
 export type {UnexpectedLegalAuditReport} from '../extensions/supplier-hub/unexpected-legal-audit.mjs';
@@ -42,7 +42,7 @@ export function unexpectedLegalAuditReadError(cause:unknown):ProductDocumentBrid
   }
   return new ProductDocumentBridgeError('원래 문서의 읽기 전용 대조를 완료하지 못했습니다. 문서·파일·본문을 변경하거나 전송을 다시 시작하지 않았습니다.',false,'UNEXPECTED_LEGAL_AUDIT_READ_FAILED');
 }
-export type ProductDocumentPreview={format:string;requestId:string;identity:ProductReceiptIdentity;identityDigest:string;packetDigest:string;productId:string;fingerprint:string;
+export type ProductDocumentPreview={format:string;requestId:string;identity:ProductReceiptIdentity;identityDigest:string;packetDigest:string;productId:string;fingerprint:string;configuredRegistrationConsentAvailable?:boolean;
   members:ProductReceiptIdentity['members'];reviewDigest:string;preparedBodySha256:string;originalBodySha256:string;liveVerified:boolean;remoteWrites:false;registered:false;draftPreparationAvailable?:boolean;preparedLifecycleAvailable?:boolean;savedDraftTargetRecoveryAvailable?:boolean;unexpectedLegalAuditAvailable?:boolean;savedDocumentStepValidationAvailable?:boolean;savedDocumentStepRetryAvailable?:boolean;createRetryAvailable?:boolean;createRetryContinuationAvailable?:boolean;existingDocumentRepairAvailable?:boolean;existingDocumentRepairRetryAvailable?:boolean;existingDocumentRepairContinuationAvailable?:boolean;existingDocumentRepairSegmentedAvailable?:boolean;existingDocumentRepairReservedResumeAvailable?:boolean};
 export type ProductDocumentSession={packet:ProductDocumentPacket;preview:ProductDocumentPreview;packetDigest:string;origin:string};
 export type ProductValidationError={columnName:string;message:string};
@@ -124,11 +124,12 @@ export async function previewProductDocument(packet:ProductDocumentPacket,signal
   const expected=await proof(packet,origin);if(signal.aborted)throw new ProductDocumentBridgeError('전체 상품 견적 확인을 취소했습니다.',false);
   const result=await productDocumentExchange('preview',packet,signal);
   try{
-    if(signal.aborted||!exact(result,['format','requestId','identity','identityDigest','packetDigest','productId','fingerprint','members','reviewDigest','preparedBodySha256','originalBodySha256','liveVerified','remoteWrites','registered'],['unexpectedLegalAuditAvailable','savedDocumentStepValidationAvailable','savedDocumentStepRetryAvailable','draftPreparationAvailable','preparedLifecycleAvailable','savedDraftTargetRecoveryAvailable','createRetryAvailable','createRetryContinuationAvailable','existingDocumentRepairAvailable','existingDocumentRepairRetryAvailable','existingDocumentRepairContinuationAvailable','existingDocumentRepairReservedResumeAvailable','existingDocumentRepairSegmentedAvailable'])
+    if(signal.aborted||!exact(result,['format','requestId','identity','identityDigest','packetDigest','productId','fingerprint','members','reviewDigest','preparedBodySha256','originalBodySha256','liveVerified','remoteWrites','registered'],['configuredRegistrationConsentAvailable','unexpectedLegalAuditAvailable','savedDocumentStepValidationAvailable','savedDocumentStepRetryAvailable','draftPreparationAvailable','preparedLifecycleAvailable','savedDraftTargetRecoveryAvailable','createRetryAvailable','createRetryContinuationAvailable','existingDocumentRepairAvailable','existingDocumentRepairRetryAvailable','existingDocumentRepairContinuationAvailable','existingDocumentRepairReservedResumeAvailable','existingDocumentRepairSegmentedAvailable'])
       ||result.format!==FORMAT||result.requestId!==packet.requestId||result.productId!==packet.review.identity.productId||result.fingerprint!==packet.review.identity.fingerprint
       ||!same(result.members,packet.review.members)||result.reviewDigest!==packet.review.reviewDigest||result.originalBodySha256!==expected.originalBodySha256||result.preparedBodySha256!==expected.preparedBodySha256
       ||result.packetDigest!==expected.packetDigest||!HASH.test(String(result.identityDigest))||typeof result.liveVerified!=='boolean'||result.remoteWrites!==false||result.registered!==false
       ||result.draftPreparationAvailable!==undefined&&typeof result.draftPreparationAvailable!=='boolean'||result.preparedLifecycleAvailable!==undefined&&typeof result.preparedLifecycleAvailable!=='boolean'
+      ||result.configuredRegistrationConsentAvailable!==undefined&&(typeof result.configuredRegistrationConsentAvailable!=='boolean'||result.configuredRegistrationConsentAvailable===true&&(result.draftPreparationAvailable!==true||result.preparedLifecycleAvailable!==true))
       ||result.unexpectedLegalAuditAvailable!==undefined&&(typeof result.unexpectedLegalAuditAvailable!=='boolean'||result.unexpectedLegalAuditAvailable===true&&result.draftPreparationAvailable!==true)
       ||result.savedDocumentStepValidationAvailable!==undefined&&(typeof result.savedDocumentStepValidationAvailable!=='boolean'||result.savedDocumentStepValidationAvailable===true&&(result.draftPreparationAvailable!==true||result.unexpectedLegalAuditAvailable!==true))
       ||result.savedDocumentStepRetryAvailable!==undefined&&(typeof result.savedDocumentStepRetryAvailable!=='boolean'||result.savedDocumentStepRetryAvailable===true&&result.savedDocumentStepValidationAvailable!==true)
@@ -143,6 +144,47 @@ export async function previewProductDocument(packet:ProductDocumentPacket,signal
     await verifyIdentity(result.identity,expected,result.identityDigest);
     if(signal.aborted)throw Error();return freeze({packet:copy(packet),preview:copy(result) as unknown as ProductDocumentPreview,packetDigest:expected.packetDigest,origin});
   }catch{throw new ProductDocumentBridgeError('확장에 전달한 전체 옵션·회사·본문 식별값이 다릅니다.',false,'PRODUCT_DOCUMENT_REPLY_IDENTITY');}
+}
+/** Cancels only the current tab's ephemeral configured-registration intent. */
+export function cancelConfiguredProductConsent(){
+  try{window.postMessage({channel:'YOOFAM_CONFIGURED_REGISTRATION_CONSENT',type:'cancel'},window.location.origin);}catch{/* No intent is adopted after an unavailable bridge. */}
+}
+/** The app never fabricates configured approvals. The isolated extension must
+ * independently verify the trusted click, source and current member policy;
+ * the actual confirmation path rechecks that authority again before writes. */
+export async function configuredProductConsentConfirmation(session:ProductDocumentSession,state:ProductDocumentState,signal:AbortSignal):Promise<SingleConfirmation|null>{
+  if(session.preview.configuredRegistrationConsentAvailable!==true)return null;
+  if(signal.aborted||window.location.origin!==session.origin||!ORIGINS.includes(session.origin)||!state.preparedLifecycle||!state.challenge||state.docId===null||state.needsRecovery||state.error)
+    throw new ProductDocumentBridgeError('현재 문서의 자동 적용 동의를 확인하지 못했습니다.',false,'PRODUCT_CONFIGURED_CONSENT_SCOPE');
+  const challenge:SingleConsentChallenge=validateSingleConsentChallenge(state.challenge,session,state.state,state.docId),expected=await proof(session.packet,session.origin,true);
+  if(session.packet.requestId!==state.requestId||session.preview.packetDigest!==expected.packetDigest||session.packetDigest!==expected.packetDigest||state.packetDigest!==expected.packetDigest
+    ||state.identityDigest!==session.preview.identityDigest||state.originalBodySha256!==expected.originalBodySha256||state.preparedBodySha256!==expected.preparedBodySha256)
+    throw new ProductDocumentBridgeError('자동 적용 동의의 원래 요청·본문 연결이 다릅니다.',false,'PRODUCT_CONFIGURED_CONSENT_SCOPE');
+  await verifyIdentity(session.preview.identity,expected,session.preview.identityDigest);
+  if(signal.aborted)throw new ProductDocumentBridgeError('자동 적용 동의 확인을 취소했습니다.',false,'PRODUCT_CONFIGURED_CONSENT_CANCELLED');
+  return new Promise((resolve,reject)=>{
+    const requestId=crypto.randomUUID(),cleanup=()=>{clearTimeout(timer);window.removeEventListener('message',receive);signal.removeEventListener('abort',abort);};
+    const fail=()=>{cleanup();reject(new ProductDocumentBridgeError('자동 적용 동의 응답을 확인하지 못했습니다. 현재 약관을 직접 확인해주세요.',false,'PRODUCT_CONFIGURED_CONSENT_REPLY'));};
+    const abort=()=>{cleanup();cancelConfiguredProductConsent();reject(new ProductDocumentBridgeError('자동 적용 동의 확인을 취소했습니다.',false,'PRODUCT_CONFIGURED_CONSENT_CANCELLED'));};
+    const receive=(event:MessageEvent)=>{
+      if(event.source!==window||event.origin!==session.origin||event.data?.channel!=='YOOFAM_CONFIGURED_REGISTRATION_CONSENT_RESULT'||event.data.requestId!==requestId)return;
+      const result=event.data.result;if(!exact(result,['ok','confirmation'])||result.ok!==true){fail();return;}
+      const value=result.confirmation;if(value===null){cleanup();resolve(null);return;}
+      const time=Date.now(),intermediate=['productPage','imagePage'].includes(challenge.stage??'');
+      if(!exact(value,['action','userInitiated','mode','challengeId','confirmedAt','approvedKeys'],['stage'])||value.mode!=='configured-policy'||value.userInitiated!==true
+        ||value.action!==(intermediate?'confirm-and-continue':'confirm-and-submit')||value.stage!==challenge.stage||value.challengeId!==challenge.id
+        ||!Number.isSafeInteger(value.confirmedAt)||Number(value.confirmedAt)<challenge.issuedAt||Number(value.confirmedAt)>time+5000||Number(value.confirmedAt)>=challenge.expiresAt||time>=challenge.expiresAt
+        ||!Array.isArray(value.approvedKeys)||value.approvedKeys.some(key=>typeof key!=='string')||new Set(value.approvedKeys).size!==value.approvedKeys.length
+        ||!same([...value.approvedKeys].sort(),challenge.items.filter(item=>item.required).map(item=>item.key).sort())){fail();return;}
+      cleanup();resolve(freeze(copy(value)) as SingleConfirmation);
+    };
+    // A missing policy probe is only a manual fallback, never a submission ACK.
+    const timer=setTimeout(()=>{cleanup();cancelConfiguredProductConsent();resolve(null);},45000);
+    window.addEventListener('message',receive);signal.addEventListener('abort',abort,{once:true});
+    try{window.postMessage({channel:'YOOFAM_CONFIGURED_REGISTRATION_CONSENT',requestId,type:'probe',expected:{identity:session.preview.identity,identityDigest:session.preview.identityDigest,
+      sourceExpected:{identity:session.preview.identity,bodySha256:expected.originalBodySha256,preparedBodySha256:expected.preparedBodySha256,packetDigest:session.packetDigest,requestId:session.packet.requestId,docId:state.docId},docId:state.docId,challenge}},session.origin);}
+    catch{fail();}
+  });
 }
 export async function runProductDocument(session:ProductDocumentSession,action:SingleDocumentAction,signal:AbortSignal,confirmation?:SingleConfirmation):Promise<ProductDocumentState>{
   if(session.preview.liveVerified!==true)throw new ProductDocumentBridgeError('전체 상품 문서의 실제 접수 연결을 검수 중입니다. 현재 상품은 전송하지 않았습니다.',false,'PRODUCT_DOCUMENT_LIVE_CONTRACT_UNVERIFIED');

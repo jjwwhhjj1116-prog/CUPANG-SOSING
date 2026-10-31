@@ -3,16 +3,17 @@ import {useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
 import type {SupplierHubProductDocumentReview} from '@/app/supplier-hub-product-document';
 import {createProductDocumentPacket,PRODUCT_DOCUMENT_REQUEST_TTL} from '../../extensions/supplier-hub/product-document.mjs';
 import {sourceReadError} from '../../extensions/supplier-hub/product-document-source.mjs';
-import {previewProductDocument,auditUnexpectedLegal,validateSavedDocumentSteps,retrySavedDocumentStep,unexpectedLegalAuditReadError,runProductDocument,runProductDocumentDraft,runPreparedProductDocument,preparedReceiptObservation,readNativeReceiptHistory,saveProductReceiptObservation,
+import {previewProductDocument,auditUnexpectedLegal,validateSavedDocumentSteps,retrySavedDocumentStep,unexpectedLegalAuditReadError,runProductDocument,runProductDocumentDraft,runPreparedProductDocument,preparedReceiptObservation,readNativeReceiptHistory,saveProductReceiptObservation,configuredProductConsentConfirmation,cancelConfiguredProductConsent,
   type UnexpectedLegalAuditReport,type SavedDocumentStepValidationReport,
   type ProductDocumentSession,type ProductDocumentState,type ProductDraftAction,type PreparedDocumentAction,type ProductValidationRejection,ProductDocumentBridgeError} from '@/app/supplier-hub-product-client';
-import {singleConsentConfirmation,verifySingleDocumentObservation,type SingleDocumentAction} from '@/app/supplier-hub-single-client';
+import {singleConsentConfirmation,verifySingleDocumentObservation,type SingleDocumentAction,type SingleConfirmation} from '@/app/supplier-hub-single-client';
 import type {NativeReceiptRecord} from '@/app/supplier-hub-product-receipt';
 import {productReceiptCanonical} from '@/app/supplier-hub-product-receipt';
 import {reconnectPreservedProductDraft} from '@/app/preserved-product-request-reconnect';
 import {SupplierHubRejectionDetails} from '@/app/components/supplier-hub-rejection-details';
 import {runReservedSegments} from '@/app/supplier-hub-reserved-work.mjs';
 import {SupplierHubNativeRegistration} from '@/app/components/supplier-hub-native-registration';
+import {MemberRegistrationConsentsPanel} from '@/app/components/member-registration-consents-panel';
 import {nativeSerializationDiagnostics, type NativeSerializationPattern} from '@/app/supplier-hub-native-serialization-diagnostics';
 import {readProductDocumentPending,productDocumentPendingKey,productDocumentPendingCurrent,assertProductDocumentPending,claimProductDocumentPending,
   readProductDocumentRejections,productDocumentRejectionKey,assertProductDocumentNotRejected,
@@ -43,6 +44,8 @@ function auditLeafStateLabel(type:string,kind:keyof typeof auditValueLabels,prim
 const auditPhaseLabels={source:'원본 자료 확인',packet:'원래 요청 확인',preview:'확장 연결 확인','before-audit':'대조 전 원본 확인',audit:'문서·첨부 읽기','after-audit':'대조 후 원본 확인',report:'결과 연결 확인'};
 // Sample the envelope clock only from an explicit event operation.
 const draftOperationTime=()=>Date.now();
+type ConfiguredRegistrationIntent={token:object;requestId:string;packetDigest:string;identityDigest:string;originalBodySha256:string;preparedBodySha256:string;
+  expiresAt:number;docId:string|number|null;probed:Set<string>;confirmations:number};
 function completedPreviewSourceReadFailure(cause:unknown):cause is ProductDocumentBridgeError{
   if(!(cause instanceof ProductDocumentBridgeError)||cause.uncertain||!['SOURCE_READ_TIMEOUT','SOURCE_READ_NETWORK','SOURCE_READ_RESPONSE','SOURCE_READ_HTTP'].includes(cause.code))return false;
   const status=cause.code==='SOURCE_READ_HTTP'?Number(cause.message.match(/HTTP ([3-5]\d{2})\)/)?.[1]):undefined;
@@ -69,6 +72,11 @@ export function SupplierHubProductTransport(props:Props){
   const [repairContinuationResumed,setRepairContinuationResumed]=useState(false);
   const [savedFileGroups,setSavedFileGroups]=useState(0);
   const knownDraftDocument=useRef<{requestId:string;docId:string|number}|null>(null);
+  const configuredRegistration=useRef<ConfiguredRegistrationIntent|null>(null);
+  function stopConfiguredRegistration(expected?:ProductDocumentSession){
+    const active=configuredRegistration.current;if(!active||expected&&active.requestId!==expected.packet.requestId)return;
+    configuredRegistration.current=null;cancelConfiguredProductConsent();
+  }
   const reviewToken=useMemo(()=>({review}),[review]),reviewEpoch=useRef<typeof reviewToken|null>(reviewToken);
   const [reconnectInput,setReconnectInput]=useState<{token:object;requestId:string;docId:string}|null>(null);
   const reconnectRequest=reconnectInput?.token===reviewToken?reconnectInput.requestId:'';
@@ -126,7 +134,9 @@ export function SupplierHubProductTransport(props:Props){
   }
   const closeLocked=!intentReady||busy||Boolean(unsaved)||Boolean(intentError)||!(finishedReadDismissible||finishedPreviewReadDismissible)&&(uncertain||Boolean((session||intent)&&!storedTerminal&&!validatedDraft));
   useLayoutEffect(()=>{onLockChange(sourceLocked,closeLocked);},[sourceLocked,closeLocked,onLockChange]);
-  useLayoutEffect(()=>()=>{current.current.mounted=false;pending.current?.abort();historyPending.current?.abort();current.current.props.onLockChange(false,false);},[]);
+  useLayoutEffect(()=>()=>{stopConfiguredRegistration();current.current.mounted=false;pending.current?.abort();historyPending.current?.abort();current.current.props.onLockChange(false,false);},[]);
+  useLayoutEffect(()=>()=>stopConfiguredRegistration(),[reviewToken]);
+  useLayoutEffect(()=>{if(disabled)stopConfiguredRegistration();},[disabled]);
   useEffect(()=>{
     const load=(changed=false)=>{if(!current.current.mounted||current.current.props.review!==review)return;
       setFinishedReadError(null);
@@ -136,7 +146,7 @@ export function SupplierHubProductTransport(props:Props){
         current.current.intent=value;setIntent(value);
         if(value&&!productDocumentPendingCurrent(value,review))throw Error('이 상품에 이전 저장값의 미확정 전송이 있습니다. 원래 상품·견적서를 복원하여 같은 문서의 결과를 확인해주세요.');
         current.current.intentError='';setIntentError('');
-      }catch(cause){pending.current?.abort();pending.current=null;setBusy(false);current.current.intentError=cause instanceof Error?cause.message:'이전 전송 기록 확인 실패';setIntentError(current.current.intentError);}
+      }catch(cause){stopConfiguredRegistration();pending.current?.abort();pending.current=null;setBusy(false);current.current.intentError=cause instanceof Error?cause.message:'이전 전송 기록 확인 실패';setIntentError(current.current.intentError);}
       current.current.intentReady=true;setIntentReady(true);
     };
     load();const storage=(event:StorageEvent)=>{if(event.key===null||event.key===productDocumentPendingKey(review)||event.key===productDocumentRejectionKey(review))load(true);};
@@ -158,7 +168,7 @@ export function SupplierHubProductTransport(props:Props){
     const challenge=state?.challenge;if(!challenge)return;
     const timer=setTimeout(()=>{
       if(!current.current.mounted||current.current.state?.challenge?.id!==challenge.id)return;
-      const inFlight=Boolean(pending.current);pending.current?.abort();pending.current=null;
+      const inFlight=Boolean(pending.current);stopConfiguredRegistration();pending.current?.abort();pending.current=null;
       current.current.expired=true;current.current.approved={};current.current.uncertain=current.current.uncertain||inFlight;
       setExpired(true);setApproved({});setUncertain(value=>value||inFlight);setBusy(false);
       setError('동의 확인 시간이 만료됐습니다. 같은 문서의 현재 동의 내용을 다시 확인해주세요.');
@@ -378,6 +388,7 @@ export function SupplierHubProductTransport(props:Props){
       ||action==='continueApprovedRepair'&&(!before.draftMode||!before.intent||!before.uncertain||!before.existingRepairRetryAttempted||before.repairContinuationAttempted||!fileListCurrent||expected.preview.existingDocumentRepairContinuationAvailable!==true)
       ||action==='resumeReservedRepair'&&(!before.draftMode||!before.intent||!before.uncertain||!before.existingRepairRetryAttempted||!before.repairContinuationAttempted||!fileListCurrent||(before.repairContinuationResumed&&expected.preview.existingDocumentRepairSegmentedAvailable!==true)||readHint?.continuationSnapshot!==true||typeof readHint?.resumeSnapshot!=='boolean'||readHint.resumeSnapshot&&expected.preview.existingDocumentRepairSegmentedAvailable!==true||expected.preview.existingDocumentRepairReservedResumeAvailable!==true)
       ||action==='recoverDraft'&&(!before.draftMode||!before.intent||!before.uncertain&&before.state?.draftOnly!==true))return;
+    if(registrationIntent)armConfiguredRegistration(expected);else stopConfiguredRegistration(expected);
     if(action==='recoverDraft'||action==='recoverSavedDraftTarget'){const previous=current.current.draftReadHint,next=previous?{...previous,savedDraftTargetClosed:undefined,continuationSnapshot:undefined,resumeSnapshot:undefined,nativeFileListObserved:undefined}:previous;current.current.draftReadHint=next;setDraftReadHint(next);}
     const task=begin();let dispatched=false,activeSession=expected,terminalReadError:unknown;
     try{
@@ -450,8 +461,9 @@ export function SupplierHubProductTransport(props:Props){
         // Keep one controller and lock for this admitted click. The existing
         // fresh-source, durable-request and action-time consent guards run next.
         await operatePrepared('reviewPreparedDraft',activeSession,undefined,{task,validated:result,intent:saved});
-      }
+      }else if(registrationIntent)stopConfiguredRegistration(expected);
     }catch(cause){if(task.alive()){
+      if(registrationIntent)stopConfiguredRegistration(expected);
       if(cause instanceof ProductDocumentBridgeError&&cause.knownDocId!==undefined&&!rememberDraftDocument(activeSession,cause.knownDocId))cause=new ProductDocumentBridgeError('원래 요청에서 확인한 문서번호와 다른 조회 응답입니다. 저장 요청을 진행하지 않았습니다.',false,'PRODUCT_DOCUMENT_DRAFT_REPLY_IDENTITY');
       rememberDraftReadFailure(cause,activeSession,action==='recoverDraft');
       const eligible=cause instanceof ProductDocumentBridgeError&&(cause.existingDocumentRepairEligible===true&&!current.current.existingRepairAttempted||cause.existingDocumentRepairRetryEligible===true&&current.current.existingRepairAttempted&&!current.current.existingRepairRetryAttempted);
@@ -479,6 +491,44 @@ export function SupplierHubProductTransport(props:Props){
     return Boolean(hint&&hint.token===reviewToken&&hint.requestId===expected.packet.requestId&&hint.identityDigest===expected.preview.identityDigest
       &&hint.packetDigest===expected.packetDigest&&hint.originalBodySha256===expected.preview.originalBodySha256&&hint.preparedBodySha256===expected.preview.preparedBodySha256);
   }
+  function registrationStartAttributes(expected:ProductDocumentSession){
+    return {'data-supplier-hub-registration-start':'v1','data-supplier-hub-owner-id':review.identity.ownerId,'data-supplier-hub-product-id':review.identity.productId,
+      'data-supplier-hub-company-code':review.identity.company.code,'data-supplier-hub-request-id':expected.packet.requestId,'data-supplier-hub-packet-digest':expected.packetDigest,
+      'data-supplier-hub-identity-digest':expected.preview.identityDigest,'data-supplier-hub-body-sha256':review.originalBodySha256,'data-supplier-hub-prepared-body-sha256':review.preparedBodySha256};
+  }
+  function armConfiguredRegistration(expected:ProductDocumentSession){
+    // The isolated capture listener has already replaced its old intent for
+    // this native click. Cancelling here would cancel that newly armed click.
+    configuredRegistration.current=null;if(expected.preview.configuredRegistrationConsentAvailable!==true)return;
+    configuredRegistration.current={token:reviewToken,requestId:expected.packet.requestId,packetDigest:expected.packetDigest,identityDigest:expected.preview.identityDigest,
+      originalBodySha256:expected.packet.review.originalBodySha256,preparedBodySha256:expected.packet.review.preparedBodySha256,expiresAt:draftOperationTime()+15*60*1000,docId:null,probed:new Set(),confirmations:0};
+  }
+  function currentConfiguredRegistration(expected:ProductDocumentSession){
+    const active=configuredRegistration.current;
+    return active&&active.token===reviewToken&&reviewEpoch.current===reviewToken&&current.current.mounted&&!current.current.props.disabled&&current.current.props.review===review
+      &&draftOperationTime()<active.expiresAt&&active.requestId===expected.packet.requestId&&active.packetDigest===expected.packetDigest&&active.identityDigest===expected.preview.identityDigest
+      &&active.originalBodySha256===expected.packet.review.originalBodySha256&&active.preparedBodySha256===expected.packet.review.preparedBodySha256?active:null;
+  }
+  function startPreparedRegistration(expected:ProductDocumentSession){
+    if(!canEnter()||current.current.session!==expected||!current.current.intent||!current.current.draftMode||current.current.uncertain||current.current.unsaved||current.current.error
+      ||current.current.state?.state!=='validated'||current.current.state.preparedLifecycle||current.current.state.draftProof?.validatedSteps.length!==4)return;
+    armConfiguredRegistration(expected);void operatePrepared('reviewPreparedDraft',expected);
+  }
+  async function continueConfiguredRegistration(expected:ProductDocumentSession,observation:ProductDocumentState,task:ReturnType<typeof begin>){
+    const active=currentConfiguredRegistration(expected),challenge=observation.challenge,saved=current.current.intent;
+    if(!active||!challenge||!saved||!task.active()||current.current.session!==expected||current.current.state!==observation||current.current.uncertain||current.current.unsaved||current.current.error||current.current.intentError
+      ||observation.error||observation.needsRecovery||!observation.preparedLifecycle||observation.docId===null||!['awaiting-stage-consent','awaiting-consent'].includes(observation.state))return;
+    if(active.confirmations>=3||active.probed.has(challenge.id)||active.docId!==null&&active.docId!==observation.docId){stopConfiguredRegistration(expected);return;}
+    active.docId=observation.docId;active.probed.add(challenge.id);
+    try{
+      const confirmation=await configuredProductConsentConfirmation(expected,observation,task.controller.signal);
+      if(!confirmation)return; // New/unknown terms remain on the unchecked manual UI.
+      if(!task.active()||currentConfiguredRegistration(expected)!==active||current.current.session!==expected||current.current.state!==observation||current.current.intent!==saved
+        ||current.current.uncertain||current.current.unsaved||current.current.error||current.current.intentError||current.current.expired)return;
+      active.confirmations++;
+      await operatePrepared('confirmPreparedDraft',expected,challenge.id,{task,validated:observation,intent:saved,configured:{registration:active,confirmation}});
+    }catch{stopConfiguredRegistration(expected);/* A policy read failure never becomes consent or a failed submit. */}
+  }
   function rememberDraftReadFailure(cause:unknown,expected:ProductDocumentSession,isDraftRead=false){
     // Only the fully verified, pre-lifecycle reply supplies this hint. It is
     // presentation/read routing, never ownership proof or permission to write.
@@ -494,18 +544,20 @@ export function SupplierHubProductTransport(props:Props){
     if(cause.existingDocumentRepairAttempted){current.current.existingRepairAttempted=true;setExistingRepairAttempted(true);}
     if(cause.existingDocumentRepairRetryAttempted){current.current.existingRepairRetryAttempted=true;setExistingRepairRetryAttempted(true);}
   }
-  async function operatePrepared(action:PreparedDocumentAction,expected:ProductDocumentSession,challengeId?:string,handoff?:{task:ReturnType<typeof begin>;validated:ProductDocumentState;intent:ProductDocumentPending}){
+  async function operatePrepared(action:PreparedDocumentAction,expected:ProductDocumentSession,challengeId?:string,handoff?:{task:ReturnType<typeof begin>;validated:ProductDocumentState;intent:ProductDocumentPending;configured?:{registration:ConfiguredRegistrationIntent;confirmation:SingleConfirmation}}){
     if(handoff){
-      if(action!=='reviewPreparedDraft'||!handoff.task.active()||current.current.session!==expected||current.current.state!==handoff.validated||current.current.intent!==handoff.intent
-        ||handoff.validated.state!=='validated'||handoff.validated.draftOnly!==true||handoff.validated.preparedLifecycle||handoff.validated.draftProof?.validatedSteps.length!==4)return;
+      if(!handoff.task.active()||current.current.session!==expected||current.current.state!==handoff.validated||current.current.intent!==handoff.intent)return;
+      if(handoff.configured){if(action!=='confirmPreparedDraft'||currentConfiguredRegistration(expected)!==handoff.configured.registration||handoff.configured.confirmation.mode!=='configured-policy'||handoff.validated.challenge?.id!==challengeId)return;}
+      else if(action!=='reviewPreparedDraft'||handoff.validated.state!=='validated'||handoff.validated.draftOnly!==true||handoff.validated.preparedLifecycle||handoff.validated.draftProof?.validatedSteps.length!==4)return;
     }else if(!canEnter())return;const before=current.current;
     if(before.session!==expected||expected.preview.preparedLifecycleAvailable!==true||!before.intent||!before.draftMode||before.unsaved
       ||action==='reviewPreparedDraft'&&(before.uncertain||before.error||!before.state||before.state.error||!(before.state.state==='validated'&&!before.state.preparedLifecycle||before.state.state==='navigation-ready'&&before.state.preparedLifecycle))
       ||action==='confirmPreparedDraft'&&(before.error||before.uncertain||before.expired||!before.state?.preparedLifecycle||before.state.challenge?.id!==challengeId)
       ||action==='observePreparedDraft'&&(before.uncertain||!before.state?.preparedLifecycle||!['pending','accepted','rejected'].includes(before.state.state)))return;
     let confirmation;
-    if(action==='confirmPreparedDraft'){try{confirmation=singleConsentConfirmation(before.state!.challenge!,Object.entries(before.approved).filter(([,yes])=>yes).map(([key])=>key));}
+    if(action==='confirmPreparedDraft'){try{confirmation=handoff?.configured?.confirmation??singleConsentConfirmation(before.state!.challenge!,Object.entries(before.approved).filter(([,yes])=>yes).map(([key])=>key));}
       catch(cause){setError(cause instanceof Error?cause.message:'현재 문서의 필수 약관을 확인해주세요.');return;}}
+    if(action==='recoverPreparedDraft'||action==='observePreparedDraft')stopConfiguredRegistration(expected);
     if(action==='recoverPreparedDraft'){const previous=current.current.draftReadHint,next=previous?{...previous,savedDraftTargetClosed:undefined,continuationSnapshot:undefined,resumeSnapshot:undefined,nativeFileListObserved:undefined}:previous;current.current.draftReadHint=next;setDraftReadHint(next);}
     const task=handoff?.task??begin();let dispatched=false,activeSession=expected;
     try{
@@ -530,7 +582,10 @@ export function SupplierHubProductTransport(props:Props){
       current.current.state=result;current.current.uncertain=result.needsRecovery;current.current.approved={};current.current.expired=false;
       setState(result);setUncertain(result.needsRecovery);setApproved({});setExpired(false);if(result.error)setError(result.error.message);
       if(result.receipt?.evidence==='document-receipt'&&!result.needsRecovery){const attempt={packet:activeSession.packet,observation:preparedReceiptObservation(result)};current.current.unsaved=attempt;setUnsaved(attempt);await persist(attempt,task);}
+      if(result.error||result.needsRecovery||current.current.unsaved||['submit-requested','pending','accepted','rejected','validation-rejected','scope-blocked'].includes(result.state))stopConfiguredRegistration(activeSession);
+      else await continueConfiguredRegistration(activeSession,result,task);
     }catch(cause){if(task.alive()){
+      stopConfiguredRegistration(expected);
       if(cause instanceof ProductDocumentBridgeError&&cause.knownDocId!==undefined&&!rememberDraftDocument(activeSession,cause.knownDocId))cause=new ProductDocumentBridgeError('원래 요청에서 확인한 문서번호와 다른 조회 응답입니다. 저장 요청을 진행하지 않았습니다.',false,'PRODUCT_DOCUMENT_DRAFT_REPLY_IDENTITY');
       rememberDraftReadFailure(cause,activeSession,action==='recoverPreparedDraft');
       const eligible=cause instanceof ProductDocumentBridgeError&&(cause.existingDocumentRepairEligible===true&&!current.current.existingRepairAttempted||cause.existingDocumentRepairRetryEligible===true&&current.current.existingRepairAttempted&&!current.current.existingRepairRetryAttempted);
@@ -629,7 +684,7 @@ export function SupplierHubProductTransport(props:Props){
     </details>}
     {session&&<p>회사 {review.identity.company.name} · 포함 옵션 {session.packet.review.members.length}개 · 견적 문서 1개 · 전체 본문 대조 완료</p>}
     {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&!intent&&!state?.preparedLifecycle&&<p role="status">전체 문서의 실제 접수 연결을 검수 중입니다. 현재 상품은 전송하지 않았습니다.</p>}
-    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.75.zip" download>통합 확장 2.1.75 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
+    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.76.zip" download>통합 확장 2.1.76 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
     {session?.preview.draftPreparationAvailable===true&&!state?.preparedLifecycle&&<section aria-label="새 견적 초안 준비">
       <p>{intent?'원래 요청과 문서의 파일·본문 저장 및 단계 검증 결과를 확인합니다.':'로그인한 Supplier Hub에 새 견적 초안 한 개를 만들고 저장한 이미지·본문과 단계 검증을 확인합니다.'} {session.preview.preparedLifecycleAvailable&&!intent&&!state?'등록전송 시작은 검증 후 현재 문서의 동의 확인 단계로 이어집니다. 초안 만들기는 제출하지 않습니다.':'약관 동의와 최종 제출은 진행하지 않습니다.'}</p>
       {currentDraftHint&&<p role="status">원래 문서 {String(currentDraftHint.docId)} · {currentDraftHint.state==='update-requested'?'파일·본문 저장 결과 미확인':currentDraftHint.state==='validation-requested'?'단계 검증 결과 미확인':'초안 상태 확인 필요'} · 같은 요청 유지</p>}
@@ -637,7 +692,7 @@ export function SupplierHubProductTransport(props:Props){
       {currentDraftHint?.resumeSnapshot!==undefined&&<p role="status">{currentDraftHint.resumeSnapshot?session?.preview.existingDocumentRepairSegmentedAvailable===true&&currentDraftHint.nativeFileListObserved===true?'원래 재개 예약을 유지합니다. 확인된 파일은 보존하고 아직 요청하지 않은 자료만 이어 저장할 수 있습니다.':'미요청 파일 재개 예약이 서버 기록에 있습니다. 저장 결과를 조회하고 요청을 반복하지 마세요.':'이번 읽기에서는 미요청 파일 재개 예약이 서버 기록에 없습니다. 파일 요청 여부는 같은 문서의 저장 기록으로 확인합니다.'}</p>}
       {currentDraftHint?.nativeFileListObserved===false&&<p role="status">원래 문서의 파일·본문 저장 결과가 아직 확인되지 않아 이어 저장을 보류했습니다. 위 오류를 확인한 뒤 같은 요청의 저장 결과를 다시 조회해주세요. 원래 요청과 저장 예약은 유지합니다.</p>}
       {!state&&!uncertain&&!intent&&<button type="button" className="btn primary" disabled={disabled||busy||Boolean(intentError)} onClick={()=>void operateDraft('prepareDraft',session)}>새 견적 초안 만들기 · 제출 안 함</button>}
-      {!state&&!uncertain&&!intent&&session.preview.preparedLifecycleAvailable&&<button type="button" className="btn primary" disabled={disabled||busy||Boolean(intentError)||Boolean(error)||Boolean(unsaved)} onClick={()=>void operateDraft('prepareDraft',session,true)}>견적서 등록전송 시작</button>}
+      {!state&&!uncertain&&!intent&&session.preview.preparedLifecycleAvailable&&<button type="button" className="btn primary" {...registrationStartAttributes(session)} disabled={disabled||busy||Boolean(intentError)||Boolean(error)||Boolean(unsaved)} onClick={()=>void operateDraft('prepareDraft',session,true)}>견적서 등록전송 시작</button>}
       {draftMode&&uncertain&&!state?.preparedLifecycle&&<><p role="status">초안 준비 응답을 확인하지 못했습니다. 같은 초안을 다시 만들지 않고 저장 결과만 조회합니다.</p><button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void(session.preview.preparedLifecycleAvailable&&!currentDraftHint?operatePrepared('recoverPreparedDraft',session):operateDraft('recoverDraft',session))}>같은 초안 저장 결과 확인 · 읽기 전용</button></>}
       {draftMode&&uncertain&&intent&&!state?.preparedLifecycle&&currentDraftHint?.savedDraftTargetClosed===true&&session.preview.savedDraftTargetRecoveryAvailable===true&&<section aria-label="원래 저장 문서 검증 탭 복구">
         <p>원래 저장 문서 {String(currentDraftHint.docId)}의 전용 검증 탭이 닫혔습니다. 새 전용 탭에서 현재 저장된 파일·본문을 확인합니다.</p>
@@ -690,7 +745,7 @@ export function SupplierHubProductTransport(props:Props){
       {draftMode&&state?.draftOnly&&!state.preparedLifecycle&&!uncertain&&<><p role="status">{state.docId!==null?`Supplier Hub 초안 문서 ${String(state.docId)}`:'새 초안 준비 기록 확인'} · 단계 검증 {state.draftProof!.validatedSteps.length}/4 · {validatedDraft?'초안 저장·검증 완료 · 미제출':state.state==='validation-rejected'?'제출 전 검증 반려':'초안 준비 확인 중'}</p><button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void(session.preview.preparedLifecycleAvailable?operatePrepared('recoverPreparedDraft',session):operateDraft('recoverDraft',session))}>같은 초안 저장 결과 확인 · 읽기 전용</button></>}
       {draftMode&&state?.draftOnly&&!state.preparedLifecycle&&state.state==='validation-rejected'&&!uncertain&&<button type="button" className="btn ghost" disabled={disabled||busy||Boolean(unsaved)} onClick={()=>void releaseValidationRejection(session)}>검증 반려 확인 · 수정 허용</button>}
     </section>}
-    {session?.preview.preparedLifecycleAvailable&&validatedDraft&&<button type="button" className="btn primary" disabled={disabled||busy||Boolean(error)} onClick={()=>void operatePrepared('reviewPreparedDraft',session)}>준비한 새 견적서 등록전송</button>}
+    {session?.preview.preparedLifecycleAvailable&&validatedDraft&&<button type="button" className="btn primary" {...registrationStartAttributes(session)} disabled={disabled||busy||Boolean(error)} onClick={()=>startPreparedRegistration(session)}>준비한 새 견적서 등록전송</button>}
     {session&&preparedFlow&&<section aria-label="준비한 새 문서 등록전송">
       <p>현재 문서 {String(state!.docId)}의 원본 파일·저장값을 다시 확인했습니다.</p>
       {(uncertain||expired||Boolean(error))&&<p role="status">같은 문서의 저장 결과와 현재 단계를 먼저 확인해주세요. 새 문서를 만들거나 제출을 재시도하지 않습니다.</p>}
@@ -707,6 +762,7 @@ export function SupplierHubProductTransport(props:Props){
 
     </>}
       {challenge&&(preparedFlow||session?.preview.liveVerified&&!draftMode&&!state?.draftOnly)&&<section aria-label="전체 문서 단계별 동의"><h5>{challenge.stage?stageLabels[challenge.stage]:'최종 제출'} 동의 확인</h5>
+        {preparedFlow&&!expired&&!uncertain&&<MemberRegistrationConsentsPanel ownerId={review.identity.ownerId} company={review.identity.company} challenge={challenge}/>}
         {challenge.items.map(item=><article key={item.key}>{item.title&&<h6>{item.title}</h6>}<p style={{whiteSpace:'pre-wrap'}}>{item.text}</p>{item.termsText&&<div style={{whiteSpace:'pre-wrap'}}>{item.termsText}</div>}
           {item.required&&<label><input type="checkbox" checked={Boolean(approved[item.key])} disabled={disabled||busy||expired||uncertain} onChange={event=>{
             if(!canEnter()||current.current.expired||current.current.uncertain||current.current.state?.challenge?.id!==challenge.id)return;
