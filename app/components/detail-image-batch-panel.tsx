@@ -169,7 +169,7 @@ export function DetailImageBatchPanel(props: Props) {
   const guidance=<><h4>모든 {label} 번역</h4><p>{eligibilityError ? '이미지 역할을 확인한 뒤 일괄 처리를 시작할 수 있습니다.' : stage === 'detail' ? `선택 옵션에 저장한 본문 이미지 ${count}장을 순서대로 번역합니다. 상단·하단 설정 배너 ${protectedCount}장은 원본을 유지합니다.` : `선택 옵션에 저장한 ${label} ${count}장을 순서대로 번역합니다.`} 원본과 결과를 확인한 뒤 선택한 항목만 견적서에 적용하세요.</p>
     {saved && !eligibilityError && <p>새 번역 이미지 저장 가능 {capacity}장 · 원본 파일은 유지합니다.</p>}
     <label className="field"><span>{label} 원문 언어</span><select aria-label={`일괄 ${label} 원문 언어`} value={language} disabled={locked || uncertain} onChange={event => { if (unlocked()) setLanguage(event.target.value as 'zh' | 'en'); }}><option value="zh">중국어 → 한국어</option><option value="en">영어 → 한국어</option></select></label></>;
-  return <section className={`panel-stack${compactToolbar?' detail-batch-compact':''}`} aria-label={`모든 ${label} 번역`} data-free-image-editor data-quotation-source-step={label} data-workspace-saving={busy} data-workspace-dirty={dirty}>
+  return <section className={`panel-stack${compactToolbar?' detail-batch-compact':''}`} aria-label={`모든 ${label} 번역`} data-free-image-editor data-batch-prepared={Boolean(batch)} data-quotation-source-step={label} data-workspace-saving={busy} data-workspace-dirty={dirty}>
     {compactToolbar&&stage==='detail'&&<h3 className="detail-stage-title">상세 페이지 이미지</h3>}
     {compactToolbar?<details className="detail-batch-guidance"><summary>번역 설정·안내</summary>{guidance}</details>:guidance}
     {stage === 'detail' ? <div className="quote-actions detail-batch-start-controls"><button type="button" className="btn ghost" disabled={locked || uncertain || !count || !capacity} onClick={() => void prepare('en')}>영어→한국어 번역</button>

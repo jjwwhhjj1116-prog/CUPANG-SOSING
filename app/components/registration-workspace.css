@@ -194,10 +194,16 @@
 .registration-workspace .option-additional-sidebar-actions{flex:none;padding:15px;display:flex;flex-direction:column;gap:10px;border-top:1px solid #eceef2;max-height:45%;overflow:auto}
 .registration-workspace .option-additional-sidebar-actions[hidden]{display:none}
 .registration-workspace .option-additional-sidebar-actions .btn{display:block;width:100%;min-height:29px;padding:4px 8px;border:1px solid #32bdea;border-radius:10px;font-size:12px;line-height:18px;background:#32bdea;color:#fff}
-.registration-workspace .option-additional-sidebar-actions .option-image-save-tools{padding:0;gap:8px}
+.registration-workspace .option-additional-sidebar-actions .option-image-save-tools{display:contents;padding:0}
 .registration-workspace .option-additional-sidebar-actions .option-image-save-tools>.btn:first-child{background:#78c091;border-color:#78c091}
-.registration-workspace .option-additional-sidebar-actions .detail-batch-compact{gap:8px}
+.registration-workspace .option-additional-sidebar-actions .option-image-save-tools>.btn{order:1}
+.registration-workspace .option-additional-sidebar-actions .detail-batch-compact{display:contents}
+.registration-workspace .option-additional-sidebar-actions [data-batch-prepared=false]>.btn.primary{display:none}
+.registration-workspace .option-additional-sidebar-actions .detail-batch-count{display:none}
+.registration-workspace .option-additional-sidebar-actions .detail-batch-guidance,.registration-workspace .option-additional-refresh-tools{order:2}
 .registration-workspace .option-additional-sidebar-actions .detail-batch-guidance,.registration-workspace .option-additional-sidebar-actions .detail-batch-count{font-size:10px;line-height:16px}
+.registration-workspace .option-additional-refresh-tools{font-size:10px;line-height:16px;color:#758099}
+.registration-workspace .option-additional-refresh-tools>summary{cursor:pointer}
 .registration-workspace .option-additional-instant .image-edit-canvas{position:relative;display:flex;flex-direction:column;align-items:center;height:100%;min-height:0;max-height:none;padding:0 0 180px;overflow:hidden;background:#f5f5f5}
 .registration-workspace .option-additional-instant .image-large-preview{display:flex;align-items:center;justify-content:center;flex:1;width:100%;min-height:0;margin:0}
 .registration-workspace .option-additional-instant .image-large-preview img{width:auto;height:auto;max-width:100%;max-height:100%;object-fit:contain}
@@ -218,7 +224,7 @@
 .registration-workspace .option-additional-instant .image-selected-actions .btn{min-height:20px;min-width:20px;padding:2px 4px;border:1px solid #dfe5ef;border-radius:10px;background:#fff;font-size:10px;line-height:10px;color:#676e8a}
 .registration-workspace .option-additional-instant .image-selected-actions .btn:last-child{color:#dc4756;border-color:#edb6bd}
 .registration-workspace .option-additional-instant .option-image-reset-tools{font-size:10px}
-.registration-workspace .option-additional-drag-grip{position:absolute;bottom:3px;right:3px;font-size:12px;color:#fff;text-shadow:0 1px 3px #000;pointer-events:none}
+.registration-workspace .option-additional-drag-grip{position:absolute;top:auto;left:auto;bottom:3px;right:3px;padding:0;border-radius:0;background:transparent;font-size:12px;line-height:16px;color:#fff;text-shadow:0 1px 3px #000;pointer-events:none}
 .registration-workspace .option-image-reset-tools{font-size:10px;color:#8b94a5}
 .registration-workspace .option-image-reset-tools>summary{cursor:pointer;padding:4px 0}
 .registration-workspace .option-image-reset-tools[open] .btn{font-size:11px;margin:6px 6px 0 0}
