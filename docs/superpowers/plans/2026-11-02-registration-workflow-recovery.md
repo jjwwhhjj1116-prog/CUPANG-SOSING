@@ -62,3 +62,12 @@
 - Continue the user's existing, repeatedly authorized implementation; no new design/approval round or alternative product architecture is needed.
 - Work in the existing checkout with explicit file ownership; the unrelated authentication working copy remains excluded. Deployment uses a separate exact-commit archive.
 - The explicit original-image review/save gates are retained even where the reference has less protection. No known missing BODY data is fabricated.
+
+## Execution evidence
+
+- Implementation: `99a48bc9`. All six runtime files in the isolated release match the commit; unrelated authentication working copy excluded.
+- Final focused run: 137/137 passed (`outputs/step906-final-focused.txt`). TypeScript, changed-file ESLint and production build passed. Independent review cleared the quotation recovery and BODY pipeline; its crop/manual-edit finding was fixed before release.
+- Worker: `8713bec6-63a1-4caa-9953-f3d28e6fe754`. Browser proof: `outputs/step906-detail-final.png` and `outputs/step906-detail-browser.json`.
+- The broad repository run was stopped after 60 encountered failures. Five caused by new fixture/legacy presentation assumptions were fixed and rerun. All remaining 55 failure names independently reproduce in the previous `dd8b1909` release (185 tests: 130 pass, 55 fail). This is not a green whole-repository run. Exact classification: `outputs/step906-test-audit.json`.
+- No protected product saves, provider calls, Hub writes or resubmission were performed. Saved final quotation detail images remain two; editable raw seed remains top-banner-only and is not promoted to completed translation.
+- A direct read of the previously authorized 886 source URL was rejected by the browser's site-safety gate without an approval prompt. No alternate browser, raw request, CDP or indirect read was attempted. Fresh collection and a new actual end-to-end submission are not verified by this repair.
