@@ -9,9 +9,9 @@
 .registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-result-header .step-label-result-heading{margin:0;padding:0;background:transparent;color:#676e8a;font-size:16px;line-height:29px;font-weight:400}
 .registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-result-header>.quote-actions{gap:8px;margin:0}
 .registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-result-header .btn{min-height:29px;padding:4px 8px;border:1px solid #32bdea;border-radius:10px;background:transparent;color:#32bdea;font-size:12px;line-height:18px}
-.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-result-header button{color:#ff7e41;border-color:#ff7e41}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-result-header button.btn{color:#ff7e41;border-color:#ff7e41}
 .registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-result-first>.product-label-preview{min-height:0;max-height:none;padding:20px;display:block;border:0;background:#fff;box-shadow:none}
-.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-editor .product-label-result-first>.product-label-preview img{display:block;width:auto!important;max-width:100%;max-height:none;height:auto;margin:0;border-radius:8px;box-shadow:none;object-fit:contain;object-position:left top}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-editor .product-label-result-first>.product-label-preview img{display:block;width:auto!important;max-width:min(100%,500px);max-height:none;height:auto;margin:0;border-radius:8px;box-shadow:none;object-fit:contain;object-position:left top}
 .registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-guidance{order:3;margin:16px 0 0;font-size:12.8px;line-height:24px}
 .registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-top-actions{gap:8px;margin:12px 0 16px}
 .registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-top-actions .btn{min-height:29px;padding:4px 8px;font-size:12px;line-height:18px;border-radius:10px;border:1px solid #7ee2ff;color:#32bdea;background:#fff}
