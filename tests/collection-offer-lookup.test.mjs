@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAdditiveBootstrap, memoryDatabase, readMigrationFiles, runtimeDDL, schemaSnapshot, sqlTokens } from '../scripts/check-db-schema.mjs';
+import { applyMigrations, assertAdditiveBootstrap, memoryDatabase, readMigrationFiles, runtimeDDL, schemaSnapshot, sqlTokens } from '../scripts/check-db-schema.mjs';
 import { mobileIntakeHarness } from './helpers/mobile-intake.mjs';
 
 const indexName = 'idx_collection_owner_offer_status_created';
@@ -50,8 +50,8 @@ test('fresh/repeated migrations and runtime DDL agree while retaining the retire
   const runtime = memoryDatabase(), migrated = memoryDatabase();
   try {
     for (const statement of runtimeDDL()) runtime.exec(statement.sql);
-    migrated.exec(files.map(file => file.sql).join('\n'));
-    const before = schemaSnapshot(migrated); migrated.exec(files.map(file => file.sql).join('\n'));
+    applyMigrations(migrated);
+    const before = schemaSnapshot(migrated); applyMigrations(migrated);
     assert.deepEqual(schemaSnapshot(migrated), before); assert.deepEqual(before, schemaSnapshot(runtime));
     assert.equal(before.filter(item => item.type === 'index' && item.name === indexName).length, 1);
     assert.equal(before.some(item => item.name === 'idx_collection_active_offer'), false);

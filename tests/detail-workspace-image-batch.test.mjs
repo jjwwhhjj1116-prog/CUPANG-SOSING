@@ -5,7 +5,7 @@ import { detailWorkspaceFixture, json } from './helpers/detail-workspace-api.mjs
 import { cropClientFixture } from './helpers/free-image-crop.mjs';
 import { runtime, plain } from './helpers/detail-workspace.mjs';
 const signal = () => new AbortController().signal;
-async function fixture({ bodyCount } = {}) {
+async function fixture({ bodyCount,vision=false } = {}) {
   const f = await detailWorkspaceFixture({ companyCode: 'A01464742', companyName: '와이홉' });
   for (const key of f.selectedKeys) f.api.objects.set(key, await sharp({ create: { width: 320, height: 240, channels: 4, background: '#2468ac' } }).png().toBuffer());
   const photos = f.document().photos;
@@ -20,11 +20,92 @@ async function fixture({ bodyCount } = {}) {
     if (url.includes('/detail-workspace?')) return f.route[init.method ?? 'GET'](new Request('https://app.test' + url, init), f.context);
     return f.request(url, init);
   };
-  const r = runtime(request, { '@/app/free-image-translation-client': canvas.client }), batch = r.load('app/detail-workspace-image-batch.ts');
+  if(vision){Object.assign(f.api.bindings,{SOURCEFLOW_IMAGE_TEXT_PROVIDER:'workers-ai-vision',SOURCEFLOW_IMAGE_TEXT_MODEL:'@cf/qwen/qwen3.8-27b',SOURCEFLOW_IMAGE_TEXT_PAID_ALLOWED:'true'});
+   const create=canvas.document.createElement;canvas.document.createElement=tag=>{const output=create(tag);output.getContext('2d').getImageData=(_x,_y,width,height)=>({data:new Uint8ClampedArray(width*height*4).fill(255)});return output;};}
+  const transport=runtime(request,{'@/app/free-image-translation-client':canvas.client}).load('app/detail-workspace-image-client.ts');
+  const r = runtime(request, { '@/app/free-image-translation-client': canvas.client,'@/app/detail-workspace-image-client':{...transport,readDetailWorkspaceImage:async(...args)=>{
+   const image=await transport.readDetailWorkspaceImage(...args);if(!vision)delete image.visionConfiguration;return image;}} }), batch = r.load('app/detail-workspace-image-batch.ts');
   const deps = { fetcher: request, recognize: async (_image, language) => [canvas.region('line', { x: 2, y: 3, width: 100, height: 20 }, '', { text: language === 'zh' ? '中文' : 'English', selected: true })],
     translate: async (_source, _language, regions) => ({ regions: regions.map(region => ({ id: region.id, original: region.text, translated: '검토 문구', issue: null })), warnings: [] }) };
-  return { ...f, saved, selection, batch, deps, canvas, calls, prepare: () => batch.prepareDetailWorkspaceImageBatch({ selection, saved, language: 'zh' }, signal(), () => {}, deps), intercept(fn) { intercept = fn; } };
+  return { ...f, saved, selection, batch, deps, canvas, calls,r, prepare: () => batch.prepareDetailWorkspaceImageBatch({ selection, saved, language: 'zh' }, signal(), () => {}, deps), intercept(fn) { intercept = fn; } };
 }
+const visionValue=(f,decision='foreign-text')=>({provider:'workers-ai-vision',model:'@cf/qwen/qwen3.8-27b',requests:1,notice:f.r.load('app/image-text-vision.ts').IMAGE_TEXT_VISION_NOTICE,
+ inspection:{policy:'foreign-text-inspection-v1',decision},blocks:decision==='foreign-text'?[{id:'vision-1',text:'中文',translated:'검토 문구',issue:null,box:{x:20,y:20,width:100,height:25}}]:[]});
+function visionDeps(f,result=visionValue(f)){
+ const stages=[];return{stages,deps:{...f.deps,recognize:async image=>{stages.push('vision');image.visionResult=plain(result);const styled=f.r.load('app/free-image-vision-style.ts').initializeVisionRegions(result.blocks,image.canvas,image.width,image.height);image.visionStyleIssues=styled.issues;
+  if(!result.blocks.length)throw Error('empty image text');return styled.regions;},translate:async()=>assert.fail('Vision Korean must never go to Google'),render:async(image,regions,...args)=>{
+   stages.push('render');assert.ok(regions.filter(row=>row.selected).every(row=>row.backgroundMode==='inpaint-telea-v1'));return f.canvas.client.renderFreeImageTranslation(image,regions.map(({backgroundMode,...row})=>{void backgroundMode;return row;}),...args);}}};
+}
+
+test('configured workspace Vision renders validated Korean with inpainting and never requests a second translator',async()=>{
+ const f=await fixture({vision:true});try{
+  const before=f.tables(),v=visionDeps(f),prepared=await f.batch.prepareDetailWorkspaceImageBatch({selection:f.selection,saved:f.saved,language:'zh'},signal(),()=>{},v.deps);
+  assert.ok(prepared.items.every(item=>item.status==='ready'));assert.deepEqual(v.stages,['vision','render','vision','render']);assert.deepEqual(f.tables(),before);
+  f.api.bindings.SOURCEFLOW_IMAGE_TEXT_PAID_ALLOWED='false';const blocked=visionDeps(f),unconfigured=await f.batch.prepareDetailWorkspaceImageBatch({selection:f.selection,saved:f.saved,language:'zh'},signal(),()=>{},blocked.deps);
+  assert.ok(unconfigured.items.every(item=>item.status==='failed'));assert.deepEqual(blocked.stages,[]);
+ }finally{f.api.close();}
+});
+
+test('an exact zh no-text proof skips zh inference and permits explicit English Vision without another translator',async()=>{
+ const f=await fixture({vision:true});try{
+  const requested=[];f.intercept(async(url,init)=>{
+   if(url.endsWith('/image-text')&&init.method==='POST'){const input=JSON.parse(init.body);requested.push(input);assert.equal(input.action,'vision');assert.equal(input.sourceLanguage,'en');const result=visionValue(f);result.blocks[0].text='English';return Response.json({source:input.source,configuration:input.configuration,requestId:input.requestId,result,replayed:false,execution:{requests:1,cached:false}});}
+   if(!url.includes('/workspace-image-text?'))return;const route=f.api.load('app/api/products/[id]/workspace-image-text/route.ts'),response=await route.GET(new Request('https://app.test'+url,init),f.context),body=await response.json(),source=body.source;
+   body.noTextProof={policy:'foreign-text-inspection-v1',productId:source.productId,sourceKey:source.sourceKey,sourceSha256:source.sourceSha256,width:source.width,height:source.height,sourceLanguage:'zh',requestId:'90700000-0000-4000-8000-000000000008',verifiedAt:'2026-11-02T00:00:00.000Z',configuration:body.visionConfiguration};return Response.json(body);});
+  const v=visionDeps(f),deps={...v.deps,recognize:f.canvas.client.recognizeFreeImage};
+  const ready=await f.batch.prepareDetailWorkspaceImageBatch({selection:f.selection,saved:f.saved,language:'zh'},signal(),()=>{},deps);assert.ok(ready.items.every(item=>item.status==='unchanged'));
+  assert.equal(requested.length,0);const english=await f.batch.prepareDetailWorkspaceImageBatch({selection:f.selection,saved:f.saved,language:'en'},signal(),()=>{},deps);assert.ok(english.items.every(item=>item.status==='ready'));
+  assert.equal(requested.length,english.items.length);assert.deepEqual(v.stages,['render','render']);assert.ok(english.items.every(item=>item.texts[0].original==='English'));
+ }finally{f.api.close();}
+});
+
+test('verified no-foreign-text remains unchanged while unreadable and legacy empty results fail without rendering or translation',async()=>{
+ const f=await fixture({vision:true});try{
+  for(const decision of ['no-foreign-text','unreadable','legacy-empty']){
+   const result=visionValue(f,decision==='legacy-empty'?'no-foreign-text':decision);if(decision==='legacy-empty')delete result.inspection;
+   const v=visionDeps(f,result),before=f.tables(),prepared=await f.batch.prepareDetailWorkspaceImageBatch({selection:f.selection,saved:f.saved,language:'zh'},signal(),()=>{},v.deps);
+   assert.ok(prepared.items.every(item=>item.status===(decision==='no-foreign-text'?'unchanged':'failed')));assert.ok(prepared.items.every(item=>!item.rendered));assert.ok(v.stages.every(stage=>stage==='vision'));assert.deepEqual(f.tables(),before);
+  }
+ }finally{f.api.close();}
+});
+
+test('unknown Vision stops later BODY inference and original-status recovery prepares only that exact preview with zero new requests',async()=>{
+ const f=await fixture({vision:true});try{
+  let count=0,attempt;const v=visionDeps(f),deps={...v.deps,recognize:async(image,language)=>{count++;const error=new f.canvas.client.FreeImageVisionError('ACK lost','IMAGE_VISION_ACK_MISSING',true,{requestId:'90700000-0000-4000-8000-000000000005',source:image.source,sourceLanguage:language,configuration:image.visionConfiguration,inspectionPolicy:'foreign-text-inspection-v1'});attempt=error.attempt;throw error;}};
+  let prepared=await f.batch.prepareDetailWorkspaceImageBatch({selection:f.selection,saved:f.saved,language:'zh'},signal(),()=>{},deps);
+  assert.deepEqual(prepared.items.map(item=>item.status),['uncertain','pending']);assert.ok(prepared.items[0].visionAttempt);assert.equal(count,1);
+  await assert.rejects(f.batch.prepareDetailWorkspaceImageBatch(prepared,signal(),()=>{},deps));assert.equal(count,1);
+  const statuses=[];let state='uncertain';f.intercept((url,init)=>{if(!url.includes('visionRequestId='))return;statuses.push(init.method);return Response.json({format:'yoofam-image-vision-status-v1',source:attempt.source,configuration:attempt.configuration,sourceLanguage:attempt.sourceLanguage,requestId:attempt.requestId,
+   status:state,result:state==='completed'?visionValue(f):null,failure:state==='uncertain'?'TIMEOUT':null,execution:{requests:0},readOnly:true});});
+  const before=f.tables(),original=prepared;for(const pending of ['running','uncertain','not-found']){state=pending;prepared=await f.batch.recoverDetailWorkspaceBatchResult(prepared,signal(),()=>{},v.deps);assert.equal(prepared.items[0].status,'uncertain');}
+  state='completed';prepared=await f.batch.recoverDetailWorkspaceBatchResult(prepared,signal(),()=>{},v.deps);
+  assert.deepEqual(prepared.items.map(item=>item.status),['ready','pending']);assert.ok(prepared.items[0].rendered);assert.equal(prepared.items[0].visionAttempt,undefined);
+  state='failed';const failed=await f.batch.recoverDetailWorkspaceBatchResult(original,signal(),()=>{},v.deps);assert.equal(failed.items[0].status,'failed');assert.equal(failed.items[0].visionAttempt,undefined);
+  assert.deepEqual(statuses,Array(5).fill('GET'));assert.equal(count,1);assert.deepEqual(v.stages,['render']);assert.deepEqual(f.tables(),before);assert.equal(f.calls.filter(call=>call.init.body instanceof FormData).length,0);
+ }finally{f.api.close();}
+});
+
+test('an aborted unknown Vision response still publishes its original attempt and preserves already prepared rows',async()=>{
+ const f=await fixture({vision:true});try{
+  const controller=new AbortController(),v=visionDeps(f);let count=0,latest;
+  const prepared=await f.batch.prepareDetailWorkspaceImageBatch({selection:f.selection,saved:f.saved,language:'zh'},controller.signal,value=>{latest=value;},{...v.deps,recognize:async(image,language)=>{
+   if(++count===1)return v.deps.recognize(image,language);controller.abort();throw new f.canvas.client.FreeImageVisionError('aborted acknowledgement','IMAGE_VISION_ACK_MISSING',true,{requestId:'90700000-0000-4000-8000-000000000006',source:image.source,sourceLanguage:language,configuration:image.visionConfiguration,inspectionPolicy:'foreign-text-inspection-v1'});
+  }});
+  assert.deepEqual(prepared.items.map(item=>item.status),['ready','uncertain']);assert.ok(latest.items[0].rendered);assert.ok(latest.items[1].visionAttempt);assert.equal(count,2);
+ }finally{f.api.close();}
+});
+
+test('completed historical Vision cannot prepare a preview against a changed workspace and retains its original fence',async()=>{
+ const f=await fixture({vision:true});try{
+  const v=visionDeps(f);let attempt;
+  const prepared=await f.batch.prepareDetailWorkspaceImageBatch({selection:f.selection,saved:f.saved,language:'zh'},signal(),()=>{},{...v.deps,recognize:async(image,language)=>{
+   const error=new f.canvas.client.FreeImageVisionError('ACK lost','IMAGE_VISION_ACK_MISSING',true,{requestId:'90700000-0000-4000-8000-000000000009',source:image.source,sourceLanguage:language,configuration:image.visionConfiguration,inspectionPolicy:'foreign-text-inspection-v1'});attempt=error.attempt;throw error;
+  }});
+  const photos=plain(f.saved.workspace.document.photos);[photos[1],photos[2]]=[photos[2],photos[1]];await json(await f.put(await f.body(f.document(photos),f.saved)));
+  let reads=0;f.intercept((url,init)=>{if(!url.includes('visionRequestId='))return;reads++;assert.equal(init.method,'GET');return Response.json({format:'yoofam-image-vision-status-v1',source:attempt.source,configuration:attempt.configuration,sourceLanguage:'zh',requestId:attempt.requestId,status:'completed',result:visionValue(f),failure:null,execution:{requests:0},readOnly:true});});
+  await assert.rejects(f.batch.recoverDetailWorkspaceBatchResult(prepared,signal(),()=>{},v.deps));assert.equal(prepared.items[0].status,'uncertain');assert.ok(prepared.items[0].visionAttempt);assert.equal(reads,1);assert.deepEqual(v.stages,[]);
+ }finally{f.api.close();}
+});
  test('preparation reads only stored BODY photos without writing quotation or workspace', async () => {
   const f = await fixture(); try {
    const before = f.tables(), prepared = await f.prepare(), body = f.saved.workspace.document.photos.filter(photo => photo.role === 'body');

@@ -114,15 +114,18 @@ for(const company of companies)for(const phase of ['selected','cleared'])test(`$
   for(const key of selectedKeys)assert.equal(sha(archive.get(document.assets[key])),sha(h.objects.get(key)),key);
   assert.equal(document.rows.length,2);assert.ok(!plan.productImages.some(image=>image.key===f.keys[7]));
   const candidate=await json(await request(f.endpoint));assert.equal(candidate.inputFingerprint,view.inputFingerprint);assert.equal(candidate.options.length,2);
-  if(cleared){assert.equal(candidate.review.canPrepare,false);assert.ok(candidate.review.issues.some(issue=>issue.code==='TYPE_OR_CONSTRAINT'&&issue.fieldId==='title'));}
+  if(cleared){assert.equal(candidate.review.canPrepare,false);assert.deepEqual(candidate.review.issues.filter(issue=>issue.level==='error'&&issue.fieldId==='title').map(issue=>[issue.optionId,issue.code,issue.message]),included.map(row=>[row.optionId,'VALUE_INVALID','필수 값이 비어 있습니다.']));}
   else assert.equal(candidate.review.canPrepare,true,JSON.stringify(candidate.review.issues.filter(issue=>issue.level==='error')));
   const prepared=cleared?candidate:await json(await request(f.endpoint,{method:'POST',body:{action:'prepare',expectedFingerprint:candidate.fingerprint}}));
   assert.deepEqual(plain(prepared.company),company);assert.equal(prepared.fingerprint,candidate.fingerprint);
   assert.equal(prepared.inputFingerprint,view.inputFingerprint);assert.equal(prepared.prepared,!cleared);assert.equal(prepared.registered,false);assert.equal(prepared.remoteWrites,false);
   for(const[index,row]of prepared.payload.jsonDocument.entries()){
-   assert.equal(row.startPage.productName,expectedTitle);assert.equal(row.productPage.searchTags,expectedTags);
-   assert.equal(row.imagePage.details.htmlProductDetailContent,cleared?'':'<p>직접 검토한 설명 &lt;보존&gt;<br>두 번째 줄</p>');
-   assert.equal(row.imagePage.images.mainImage==='',cleared);assert.equal(row.imagePage.images.labelImages[0].labelImageFiles==='',cleared);
+   assert.equal(row.startPage.productName,expectedTitle);
+   if(cleared){
+    // Source-derived optional blanks are absent; required and named-array blanks remain explicit.
+    assert.equal(Object.hasOwn(row.productPage,'searchTags'),false);assert.equal(Object.hasOwn(row.imagePage.details,'htmlProductDetailContent'),false);assert.equal(Object.hasOwn(row.imagePage.images,'mainImage'),false);
+   }else{assert.equal(row.productPage.searchTags,expectedTags);assert.equal(row.imagePage.details.htmlProductDetailContent,'<p>직접 검토한 설명 &lt;보존&gt;<br>두 번째 줄</p>');assert.ok(row.imagePage.images.mainImage);}
+   assert.equal(row.imagePage.images.labelImages[0].labelImageFiles==='',cleared);
    if(!cleared)for(const[role,keys,value]of [['main',[f.keys[2]],row.imagePage.images.mainImage],['label',[f.keys[6]],row.imagePage.images.labelImages[0].labelImageFiles],['additional',[f.keys[1],f.keys[0]],row.imagePage.images.additionalImage],['detail',detailKeys,row.imagePage.details.detailedImage]]){
     const item=prepared.manifest.find(item=>item.optionId===prepared.options[index].optionId&&item.role===role);assert.ok(item,role);assert.deepEqual(item.files.map(file=>file.key),keys);
     assert.equal(value,item.files.map(file=>file.url).join(','));for(const file of item.files)assert.equal(file.sha256,sha(h.objects.get(file.key)));

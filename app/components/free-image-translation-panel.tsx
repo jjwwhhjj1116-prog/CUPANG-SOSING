@@ -23,6 +23,7 @@ import { applyDetailWorkspaceImage, readDetailWorkspaceImage, recoverDetailWorks
   type DetailWorkspaceEditorContext, type DetailWorkspaceImageReply, type FreeImageWorkspaceRequest } from '@/app/detail-workspace-image-client';
 import type { DetailWorkspaceView } from '@/app/detail-workspace';
 import { isSavedFreeImageResult, readSavedFreeImageQuotationTarget } from '@/app/free-image-editor-target';
+import { isVerifiedNoForeignText } from '@/app/image-text-vision';
 
 export type FreeImageTranslationTarget = { sourceKey: string; sequence: number; sourceLanguage?: 'zh' | 'en'; role?: FreeImageRole; quotationTarget?: FreeImageQuotationRequest; workspaceTarget?: FreeImageWorkspaceRequest; intent?: 'manual' };
 export type FreeImageEditorEntry = { role: 'main' | 'additional' | 'detail'; sequence: number };
@@ -517,7 +518,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       if (!current(work)) return;
       setRendered(output); setNotice(['한국어 이미지 초안을 준비했습니다. 원본과 번역 문구·영역을 확인하고 수정한 뒤 적용해주세요.',translationServiceNotice(result), ...result.warnings].filter(Boolean).join(' '));
     } catch (cause) { if (current(work)) {
-      if(processingImage?.visionResult?.blocks.length===0){setError('');setNotice('문구 확인을 완료했습니다. 번역할 문구가 없어 원본 이미지를 유지했습니다.');}
+      if(isVerifiedNoForeignText(processingImage?.visionResult)){setError('');setNotice('문구 확인을 완료했습니다. 번역할 문구가 없어 원본 이미지를 유지했습니다.');}
       else{setError(cause instanceof Error ? cause.message : '이미지 번역 초안을 만들지 못했습니다. 원문과 이전 저장 이미지는 유지됩니다.');setNotice('이미지 번역 처리를 중단했습니다. 원문과 기존 저장 이미지는 유지했습니다.');}
     } }
     finally { finish(work); }
@@ -536,7 +537,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       const rows = (await (local?recognizeLocalFreeImage:recognizeFreeImage)(image, language, work.controller.signal, message => { if (current(work)) setNotice(message); })).map(row=>({...row,backgroundMode:'inpaint-telea-v1' as const}));
       if (!current(work)) return; resetRegions(rows); setNotice(image.visionResult?`${image.visionExecution?.cached?'같은 원본의 Vision 번역을 재사용했습니다. 추가 AI 요청은 0회입니다.':`Vision으로 문구 ${rows.length}개와 한국어 초안을 읽었습니다.`} ${image.visionResult.notice}`:`문구 ${rows.length}개를 읽었습니다. 원문·영역을 확인하고 번역할 문구를 선택해주세요.`);
     } catch (cause) { if (current(work)) {
-      if(processingImage?.visionResult?.blocks.length===0){setError('');setNotice('문구 확인을 완료했습니다. 번역할 문구가 없어 원본 이미지를 유지했습니다.');}
+      if(isVerifiedNoForeignText(processingImage?.visionResult)){setError('');setNotice('문구 확인을 완료했습니다. 번역할 문구가 없어 원본 이미지를 유지했습니다.');}
       else{setError(cause instanceof Error ? cause.message : '문구 인식을 완료하지 못했습니다.');setNotice('문구 확인을 완료하지 못해 원본 이미지를 유지했습니다. 자동으로 다시 요청하지 않았습니다.');}
     } }
     finally { finish(work); }
@@ -662,7 +663,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     data-workspace-dirty={dirty ? 'true' : undefined} data-workspace-saving={busy || brushDrawing || cropDrawing ? 'true' : undefined}>
     <h4>{workspaceTarget ? '상세 작업 사진 편집' : translationTarget?.intent === 'manual' ? '이미지 편집' : '이미지 문구 번역'}</h4>
     <p>원본의 문구를 읽고 한국어로 수정합니다. 문구·영역·브러시 편집을 마친 뒤 원하는 부분을 잘라낼 수 있습니다. 상품 사진과 문구가 겹치는 영역은 미리보기에서 확인한 다음 적용해주세요.</p>
-    <details><summary>이미지 번역 방식·사용료 안내</summary><p>기본 작업은 설정된 Cloudflare Qwen3.8 Vision으로 본인 소유 원본 한 장의 문구와 한국어 번역을 한 번 읽습니다. Cloudflare 무료 사용량 초과 시 사용료가 발생할 수 있습니다. 이미지 생성은 하지 않으며 실패 후 자동 재요청하지 않습니다. 문구와 영역을 검토한 뒤 적용해주세요. 상세 작업공간의 보관 사진은 기존 브라우저 인식을 사용합니다.</p><p>브라우저 문구 읽기를 별도로 선택하면 이미지 파일을 번역 서비스에 보내지 않습니다. 선택 문구 번역은 Google을 사용하며, Google HTTP 429 확인 시에만 설정된 무료 AI에 남은 문구를 한 번 보냅니다. 직접 작성한 한국어와 기존 저장본은 유지합니다.</p></details>
+    <details><summary>이미지 번역 방식·사용료 안내</summary><p>기본 작업은 설정된 Cloudflare Qwen3.8 Vision으로 본인 소유 원본 한 장의 문구와 한국어 번역을 한 번 읽습니다. Cloudflare 무료 사용량 초과 시 사용료가 발생할 수 있습니다. 이미지 생성은 하지 않으며 실패 후 자동 재요청하지 않습니다. 문구와 영역을 검토한 뒤 적용해주세요.</p><p>브라우저 문구 읽기를 별도로 선택하면 이미지 파일을 번역 서비스에 보내지 않습니다. 선택 문구 번역은 Google을 사용하며, Google HTTP 429 확인 시에만 설정된 무료 AI에 남은 문구를 한 번 보냅니다. 직접 작성한 한국어와 기존 저장본은 유지합니다.</p></details>
     {error && <p className="form-error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     <div className="form-row">
       <label>이미지 역할<select aria-label="번역할 이미지 역할" value={role} disabled={locked || !!quotationTarget || !!workspaceTarget} onChange={event => { if (!liveQuotationTarget.current && !workspaceTarget) selectSource(restrictRoleSources ? '' : sourceKey, event.target.value as FreeImageRole); }}>

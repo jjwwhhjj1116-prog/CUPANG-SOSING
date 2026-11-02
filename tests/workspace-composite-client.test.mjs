@@ -104,3 +104,88 @@ test('latest-state escape reads the new parent and workspace without asserting a
     assert.deepEqual(f.tables(), before); assert.ok(f.calls.every(call => (call.init.method ?? 'GET') === 'GET'));
   } finally { f.api.close(); }
 });
+
+async function peerProof(f) {
+  const peers = [];
+  for (const optionId of f.selection.view.resolved.rows.flatMap(row => row.optionId ? [row.optionId] : [])) {
+    const saved = optionId === f.optionId ? f.saved : await f.runtime.load('app/detail-workspace-client.ts').readDetailWorkspace({ ...f.selection, optionId }, signal(), f.request);
+    peers.push({ optionId, workspace: saved.workspace ? { revision: saved.workspace.revision, digest: saved.workspace.digest } : null });
+  }
+  return peers;
+}
+
+test('automatic all-option composite binds excluded and absent peers through upload, receipt and uncertain-save recovery', async () => {
+  const f = await fixture();
+  try {
+    const peers = await peerProof(f), prepared = await f.client.prepareDetailWorkspaceComposite(f.selection, f.saved, signal(), f.request, peers), attempt = {};
+    assert.deepEqual(plain(prepared.peers), peers); assert.ok(f.selection.view.resolved.rows.some(row => row.included === false && peers.some(peer => peer.optionId === row.optionId)));
+    const legacy = await f.client.prepareDetailWorkspaceComposite(f.selection, f.saved, signal(), f.request); assert.notEqual(prepared.uploadId, legacy.uploadId);
+    const request = async (url, init = {}) => {
+      const response = await f.request(url, init);
+      if (url.includes('/detail-save') && init.method === 'POST' && response.ok) {
+        const body = await response.json(); assert.equal(body.receipt.peerDigest, sha(JSON.stringify(peers))); delete body.receipt.peerDigest; return Response.json(body);
+      }
+      return response;
+    };
+    await assert.rejects(f.client.applyDetailWorkspaceComposite(prepared, attempt, signal(), request)); assert.equal(attempt.pending, 'save');
+    const count = f.calls.length, altered = { ...prepared, peers: prepared.peers.map((peer, index) => index === 1 ? { ...peer, workspace: { revision: 1, digest: 'a'.repeat(64) } } : peer) };
+    await assert.rejects(f.client.recoverDetailWorkspaceComposite(altered, attempt, signal(), f.request)); assert.equal(f.calls.length, count);
+    assert.equal(await f.client.recoverDetailWorkspaceComposite(prepared, attempt, signal(), f.request), 'completed');
+    assert.ok(f.calls.slice(count).every(call => (call.init.method ?? 'GET') === 'GET'));
+    const post = f.calls.find(call => call.url.includes('/detail-save') && call.init.method === 'POST');
+    assert.equal(JSON.parse(post.init.body).peerDigest, sha(JSON.stringify(peers))); assert.ok(new TextEncoder().encode(post.init.body).length < 8192);
+  } finally { f.api.close(); }
+});
+
+test('peer proofs reject missing, duplicate, reordered, foreign and stale source entries before rendering or uploading', async () => {
+  const f = await fixture();
+  try {
+    const peers = await peerProof(f);
+    for (const proof of [peers.slice(1), peers.map((peer, index) => index === 1 ? peers[0] : peer), [...peers].reverse(),
+      peers.map((peer, index) => index === 1 ? { ...peer, optionId: 'foreign-option' } : peer), peers.map(peer => peer.optionId === f.optionId ? { ...peer, workspace: null } : peer)])
+      await assert.rejects(f.client.prepareDetailWorkspaceComposite(f.selection, f.saved, signal(), f.request, proof));
+    assert.equal(f.runtime.draws.length, 0); assert.ok(f.calls.every(call => (call.init.method ?? 'GET') === 'GET'));
+  } finally { f.api.close(); }
+});
+
+test('a peer created while pixels render or after preview prevents any composite upload', async () => {
+  for (const stage of ['render', 'preview']) {
+    const f = await fixture();
+    try {
+      const peers = await peerProof(f), peer = peers.find(value => value.optionId !== f.optionId), model = f.api.load('app/detail-workspace.ts'); let changed = false;
+      const change = async () => {
+        if (changed) return; changed = true;
+        const record = { ...plain(f.saved.workspace), optionId: peer.optionId }, { digest, ...body } = record; void digest; record.digest = await model.detailWorkspaceDigest(body);
+        f.api.sqlite.prepare('INSERT INTO product_detail_workspaces VALUES(?,?,?,?,?,?,?,?)').run('owner', f.product.id, await model.detailWorkspaceScope(record.context), peer.optionId, record.revision, record.requestId, JSON.stringify(record), record.updatedAt);
+      };
+      const request = async (url, init = {}) => { const response = await f.request(url, init); if (stage === 'render' && url.startsWith('/api/files/')) await change(); return response; };
+      if (stage === 'render') await assert.rejects(f.client.prepareDetailWorkspaceComposite(f.selection, f.saved, signal(), request, peers));
+      else { const prepared = await f.client.prepareDetailWorkspaceComposite(f.selection, f.saved, signal(), f.request, peers); await change(); await assert.rejects(f.client.applyDetailWorkspaceComposite(prepared, {}, signal(), f.request)); }
+      assert.equal(changed, true); assert.ok(f.calls.every(call => (call.init.method ?? 'GET') === 'GET'));
+    } finally { f.api.close(); }
+  }
+});
+
+test('client rejects a 200-option peer snapshot above2MiB before decoding pixels or allocating a file', async () => {
+  const f = await fixture();
+  try {
+    const ids = [f.optionId, ...Array.from({ length: 199 }, (_, index) => `peer-${index}`)], view = plain(f.selection.view), row = view.resolved.rows.find(row => row.optionId === f.optionId);
+    view.resolved.rows = ids.map(optionId => ({ ...plain(row), optionId }));
+    const model = f.api.load('app/detail-workspace.ts'), records = new Map([[f.optionId, plain(f.saved.workspace)]]), peers = [];
+    for (const optionId of ids) {
+      if (optionId !== f.optionId) {
+        const record = { ...plain(f.saved.workspace), optionId }, bodyPhoto = record.document.photos.find(photo => photo.role === 'body');
+        record.document.photos = [record.document.photos[0], ...Array.from({ length: 148 }, (_, index) => ({ ...bodyPhoto, id: `photo-${index}-` + 'x'.repeat(80) })), record.document.photos.at(-1)];
+        record.document.generatedHtml = model.generateDetailWorkspaceHtml(record.document.photos, record.document.imageMargin);
+        const { digest, ...body } = record; void digest; record.digest = await model.detailWorkspaceDigest(body); records.set(optionId, record);
+      }
+      const record = records.get(optionId); peers.push({ optionId, workspace: { revision: record.revision, digest: record.digest } });
+    }
+    const selection = { ...f.selection, view }, saved = { ...f.saved, view }, calls = [], request = async (url, init = {}) => {
+      calls.push({ url, init }); const optionId = new URL('https://app.test' + url).searchParams.get('optionId');
+      assert.ok(optionId && records.has(optionId)); return Response.json({ view, workspace: records.get(optionId), roles: f.saved.roles });
+    };
+    await assert.rejects(f.client.prepareDetailWorkspaceComposite(selection, saved, signal(), request, peers), /2MiB/);
+    assert.equal(f.runtime.draws.length, 0); assert.ok(calls.every(call => (call.init.method ?? 'GET') === 'GET'));
+  } finally { f.api.close(); }
+});

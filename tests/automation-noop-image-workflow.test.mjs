@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import {providedOptionModule} from './helpers/provided-option-quotation.mjs';
+import {fixture as rawWorkspaceFixture,runtime as rawWorkspaceRuntime} from './helpers/detail-workspace.mjs';
 
 const plain=value=>JSON.parse(JSON.stringify(value)),version='2026-10-23T00:00:00.000Z',hash='a'.repeat(64);
 const stageIds=['seo','pricing','mainImage','additionalImages','detailImage','sizeChart','koreanLabel','quotation'];
@@ -14,12 +15,13 @@ function functions(file,names,globals={}){
 }
 const orchestrator=functions('./batch-selected-work.test.mjs',['fixture'],{providedOptionModule});
 const image=functions('./batch-selected-image-work.test.mjs',['loadModel','fixture']);
+const detail=functions('./batch-selected-detail-work.test.mjs',['setup'],{fixture:rawWorkspaceFixture,runtime:rawWorkspaceRuntime,crypto,URLSearchParams,setTimeout,clearTimeout});
 
 /** Real toolbar orchestration and image-stage source/proof checks execute
  * together. Server/proposed SEO, pricing, label and quotation boundaries are
  * local fixtures. This is neither a provider-quality test nor a Hub receipt. */
 function fixture(company,decision='verified'){
- const h=orchestrator.fixture(),runners=new Map(),imageResults=[],trace=[];let productVersion=version,contentRevision=3,optionRevision=1;
+ const h=orchestrator.fixture(),runners=new Map(),imageResults=[],trace=[];let productVersion=version,contentRevision=3,optionRevision=1,rawDetail;
  h.company(company);h.options.mode='full';
  const configuration={freeOnly:true,destination:'Cloudflare Workers AI',configured:true,issues:[],translationConfig:{configured:true,model:'@cf/qwen/qwen3-30b-a3b-fp8',maxOutputTokens:4096,freeOnly:false,issues:[]}};
  h.options.seoGenerationConsent=configuration;
@@ -64,8 +66,20 @@ function fixture(company,decision='verified'){
   const result=await r.model.processSelectedImageStage(id,stage,{...r.options,...options,fetcher:r.options.fetcher},r.deps);
   imageResults.push({stage,result:plain(result)});return result;
  };
+ h.deps['@/app/batch-selected-detail-work'].processSelectedDetailWork=async(id,options)=>{
+  trace.push('detail');
+  if(!rawDetail){
+   rawDetail=await detail.setup({account:company});const r=rawDetail,read=r.deps.readImage,applyComposite=r.deps.applyComposite;
+   r.deps.readImage=async(...args)=>{const loaded=await read(...args);if(!['legacy-empty','unreadable'].includes(decision))loaded.noTextProof={policy:r.vision.IMAGE_TEXT_INSPECTION_POLICY,productId:id,sourceKey:loaded.source.sourceKey,sourceSha256:decision==='wrong-sha'?'c'.repeat(64):loaded.source.sourceSha256,width:loaded.width,height:loaded.height,requestId:'11111111-1111-4111-8111-111111111111',sourceLanguage:'zh',configuration:plain(r.configuration),verifiedAt:'2026-10-30T00:00:00.000Z'};return loaded;};
+   r.deps.recognize=async loaded=>{r.calls.push({operation:'recognize'});if(decision==='unreadable')loaded.visionResult={provider:'workers-ai-vision',model:r.vision.IMAGE_TEXT_VISION_MODEL,requests:1,blocks:[],notice:r.vision.IMAGE_TEXT_VISION_NOTICE,inspection:{policy:r.vision.IMAGE_TEXT_INSPECTION_POLICY,decision:'unreadable'}};else assert.equal(decision,'legacy-empty','a server-confirmed BODY must not call OCR again');return[];};
+   r.deps.render=r.deps.applyImage=async()=>assert.fail('A no-text BODY must not translate, render or write another BODY image');
+   r.deps.applyComposite=async(input,attempt,...args)=>{const next=new Date(Date.parse(productVersion)+1).toISOString();await applyComposite(input,attempt,...args);productVersion=next;r.f.view.productVersion=next;attempt.completed=plain(r.f.view);return plain(r.f.view);};
+  }
+  const r=rawDetail;r.f.view.productVersion=productVersion;r.f.view.contentRevision=contentRevision;r.f.view.optionRevision=optionRevision;r.content.revision=contentRevision;
+  const result=await r.model.processSelectedDetailWork(id,{...r.options,...options,fetcher:r.options.fetcher},r.deps);imageResults.push({stage:'detail',result:plain(result)});return result;
+ };
  const run=()=>h.run([...stageIds].reverse());
- return{h,runners,imageResults,trace,run};
+ return{h,runners,imageResults,trace,run,get detail(){return rawDetail;}};
 }
 
 for(const company of [{code:'A01526306',name:'유앤채'},{code:'A01464742',name:'와이홉'}])test(company.name+' fresh whole-work request completes verified unchanged image stages and reaches label/quotation',async()=>{
@@ -78,6 +92,7 @@ for(const company of [{code:'A01526306',name:'유앤채'},{code:'A01464742',name
  assert.equal(f.h.calls.filter(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST').length,1);
  assert.ok(!f.h.calls.some(call=>/supplier\.coupang|supplier-hub.*receipt|single-package|submission/.test(call.url??'')));
  for(const r of f.runners.values()){assert.equal(r.calls.filter(call=>['recognize','translate','render','apply'].includes(call[0])).length,0);assert.ok(r.canvases.every(canvas=>canvas.width===0));}
+ assert.equal(f.detail.calls.filter(call=>['recognize','vision','render','image-apply'].includes(call.operation)).length,0);assert.equal(f.detail.calls.filter(call=>call.operation==='composite-apply').length,1);
  assert.equal([...f.h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')||key.endsWith(':vision-inference-pending')),false);
  // A fresh toolbar request has no retained image-stage completion map. The
  // server proof must be verified again, not a client skipped->complete flag.
@@ -91,6 +106,7 @@ for(const decision of ['legacy-empty','unreadable'])test('fresh toolbar does not
  assert.ok(f.imageResults.every(row=>row.result.status==='partial'&&!row.result.verifiedUnchanged&&row.result.applied===0));
  assert.equal(result.stages.find(row=>row.id==='koreanLabel').status,'draft');assert.equal(result.stages.find(row=>row.id==='quotation').status,'draft');
  for(const r of f.runners.values())assert.equal(r.calls.some(call=>['translate','render','apply'].includes(call[0])),false);
+ assert.ok(!f.detail.calls.some(call=>['render','image-apply','composite-apply'].includes(call.operation)));
 });
 
 test('a server proof bound to different image bytes cannot complete a stage or run later stages',async()=>{

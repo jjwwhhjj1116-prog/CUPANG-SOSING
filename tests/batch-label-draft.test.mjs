@@ -126,7 +126,7 @@ for (const company of schemaCompanies) {
     const start = f.calls.length; await assert.rejects(model.planBatchLabelDraft(Array.from({ length: 101 }, (_, i) => ({ id: 'id' + i, title: '상품' })), signal(), f.fetcher), /100개/); assert.equal(f.calls.length, start);
     const aborted = new AbortController(); aborted.abort(reason); await assert.rejects(model.planBatchLabelDraft([], aborted.signal, f.fetcher), error => error === reason); assert.equal(f.calls.length, start);
   });
-  test(`actual work intake and content-only API edits review untouched revision-zero label state (${company.code})`, async () => {
+  test(`actual work intake and content-only API edits preserve initialized revision-one label state (${company.code})`, async () => {
     const h = mobileIntakeHarness({ companyCode: company.code, companyName: company.name });
     const read = async response => { assert.equal(response.status, 200, await response.clone().text()); return response.json(); };
     try {
@@ -144,15 +144,16 @@ for (const company of schemaCompanies) {
       const snapshot = () => JSON.stringify({ product: h.sqlite.prepare('SELECT * FROM products').all(), content: h.sqlite.prepare('SELECT * FROM product_content').all(),
         options: h.sqlite.prepare('SELECT * FROM product_options').all(), labels: h.sqlite.prepare('SELECT * FROM product_labels').all(), quotation: h.sqlite.prepare('SELECT * FROM product_quotation_fields').all(),
         images: [...h.objects].map(([key, bytes]) => [key, Buffer.from(bytes).toString('hex')]) });
-      const initial = await read(await h.route(base + '/product-labels')); assert.equal(initial.revision, 0); assert.equal(initial.updatedAt, null); assert.equal(initial.categoryContext.source, 'collection');
+      const initial = await read(await h.route(base + '/product-labels')); assert.equal(initial.revision, 1); assert.equal(initial.updatedAt, product.created_at); assert.equal(initial.categoryContext.source, 'collection');
+      assert.deepEqual(initial.structure.map(field => field.id), ['productName','importer','manufacturer','countryOfOrigin','netContents','material','productType','precautions','usageStandard']);
       const before = snapshot(), plan = await model.planBatchLabelDraft([{ id: product.id, title: product.title }], signal(), fetcher);
       assert.equal(plan.tasks.length, rows.length - 1, JSON.stringify(plan.messages)); assert.equal(plan.settings.translateImages, false);
       assert.ok(plan.tasks.every(task => task.profileId === null && task.categoryContext.profileId === 'cat' && task.optionId !== rows.at(-1).id));
-      for (const task of plan.tasks) { const current = await model.refreshBatchLabelDraftTask(task, plan, signal(), fetcher); assert.equal(current.updatedAt, null); }
+      for (const task of plan.tasks) { const current = await model.refreshBatchLabelDraftTask(task, plan, signal(), fetcher); assert.equal(current.updatedAt, initial.updatedAt); }
       assert.equal(snapshot(), before); assert.ok(calls.every(url => !url.includes('?profileId=')));
       const content = (await read(await h.route(base + '/content'))).content;
       await read(await h.route(base + '/content', { method: 'PATCH', body: { expectedRevision: content.revision, patch: { detail: { description: '검토자가 작성한 원문 기반 설명' } } } }));
-      const edited = await read(await h.route(base + '/product-labels')); assert.equal(edited.updatedAt, null); assert.equal(edited.revision, 0); assert.ok(Date.parse(edited.productVersion) > Date.parse(initial.productVersion));
+      const edited = await read(await h.route(base + '/product-labels')); assert.equal(edited.updatedAt, initial.updatedAt); assert.equal(edited.revision, initial.revision); assert.deepEqual(edited.structure, initial.structure); assert.ok(Date.parse(edited.productVersion) > Date.parse(initial.productVersion));
       const editedBefore = snapshot(), nextPlan = await model.planBatchLabelDraft([{ id: product.id, title: product.title }], signal(), fetcher); assert.equal(nextPlan.tasks.length, plan.tasks.length);
       for (const task of nextPlan.tasks) { const current = await model.refreshBatchLabelDraftTask(task, nextPlan, signal(), fetcher); assert.equal(current.contentRevision, edited.contentRevision); }
       assert.equal((await model.refreshBatchLabelDraftTask(plan.tasks[0], plan, signal(), fetcher)).productVersion, edited.productVersion);

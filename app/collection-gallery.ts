@@ -1,6 +1,6 @@
 import type {CollectionResult} from '@/app/collection-result';
 
-export type CollectionSourceGallery={format:'1688-openapi-gallery-v1'|'1688-public-mobile-gallery-v1';imageIndices:number[]};
+export type CollectionSourceGallery={format:'1688-openapi-gallery-v1'|'1688-public-mobile-gallery-v1'|'chrome-current-page-gallery-v1';imageIndices:number[]};
 
 /** New full-source results retain their original gallery before adding SKU files.
  * A source supplement appends files and preserves that original prefix. Older
@@ -10,14 +10,17 @@ export function validateCollectionSourceGallery(value:unknown,provider:string,im
   if(!value||typeof value!=='object'||Array.isArray(value))return fail();
   if(Reflect.ownKeys(value).length!==2||!['format','imageIndices'].every(key=>Object.hasOwn(value,key))
     ||Object.values(Object.getOwnPropertyDescriptors(value)).some(field=>!Object.hasOwn(field,'value')))return fail();
-  const gallery=value as Record<string,unknown>,indices=gallery.imageIndices;
+  const gallery=value as Record<string,unknown>,indices=gallery.imageIndices,currentPage=gallery.format==='chrome-current-page-gallery-v1';
   const compatible=gallery.format==='1688-openapi-gallery-v1'
     ?['1688-openapi-candidate-v1','chrome-public-mobile-supplement-v1'].includes(provider)
-    :gallery.format==='1688-public-mobile-gallery-v1'&&['1688-public-mobile-v1','1688-public-mobile-partial-v1','chrome-public-mobile-v1','chrome-public-mobile-partial-v1','chrome-public-mobile-supplement-v1'].includes(provider);
-  if(!compatible||!Array.isArray(indices)||indices.length<1||indices.length>200
+    :gallery.format==='1688-public-mobile-gallery-v1'?['1688-public-mobile-v1','1688-public-mobile-partial-v1','chrome-public-mobile-v1','chrome-public-mobile-partial-v1','chrome-public-mobile-supplement-v1'].includes(provider)
+    :currentPage&&['chrome-current-page-v1','chrome-reviewed-page-v1','chrome-public-mobile-supplement-v1'].includes(provider);
+  // A page with only option photos explicitly records an empty gallery.
+  if(!compatible||!Array.isArray(indices)||(!currentPage&&indices.length<1)||indices.length>200
     ||Reflect.ownKeys(indices).length!==indices.length+1||Object.keys(indices).length!==indices.length
     ||!Object.keys(indices).every((key,index)=>key===String(index))
     ||Object.values(Object.getOwnPropertyDescriptors(indices)).some(field=>!Object.hasOwn(field,'value'))
+    ||!indices.length&&images.some(image=>image.role==='main')
     ||!indices.every((index,position)=>Number.isInteger(index)&&index===position&&images[index]?.role===(position===0?'main':'additional')))return fail();
   return {format:gallery.format as CollectionSourceGallery['format'],imageIndices:[...indices]};
 }

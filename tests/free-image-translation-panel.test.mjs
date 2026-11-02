@@ -18,6 +18,9 @@ const regionStyle = row => Object.fromEntries(Object.keys(manualStyle).map(key =
 const styleModule = {};
 vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/free-image-text-style.ts', import.meta.url), 'utf8'),
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: styleModule });
+const visionModule = {};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/image-text-vision.ts', import.meta.url), 'utf8'),
+  { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: visionModule });
 const historyModule = {};
 const brushModule = {};
 const cropModule = {};
@@ -88,6 +91,7 @@ function fixture(initialProps = {}, clientOverrides = {}) {
       if (name === 'react') return hooks; if (name === 'react/jsx-runtime') return native(name);
       if (name === '@/app/free-image-translation') return { FREE_IMAGE_ROLES: ['main', 'additional', 'detailTop', 'detail', 'detailBottom'], MAX_OCR_REGIONS: 100 };
       if (name === '@/app/free-image-text-style') return styleModule;
+      if (name === '@/app/image-text-vision') return visionModule;
       if (name === '@/app/free-image-edit-history') return historyModule;
       if (name === '@/app/free-image-brush') return brushModule;
       if (name === '@/app/components/free-image-brush-canvas') return { FreeImageBrushCanvas: 'FreeImageBrushCanvas' };
@@ -322,11 +326,22 @@ test('image text translation discloses billed Vision and explicit local/text-onl
 test('explicit browser OCR never dispatches Vision or Google and keeps existing review/apply steps separate',async()=>{
   const h=fixture();try{await h.click('브라우저 문구 읽기 · 기존 방식');assert.deepEqual(plain(h.calls.map(row=>row.action)),['source','local-ocr']);assert.equal(h.saved,0);assert.equal(h.button('검토한 번역 이미지 적용'),undefined);}finally{h.close();}
 });
-test('completed zero-block Vision replaces progress with normal source-preserved notice and no error or save',async()=>{
+test('verified no-foreign-text Vision replaces progress with normal source-preserved notice and no error or save',async()=>{
  const h=fixture();try{
-  h.setOcr(image=>{image.visionResult={provider:'workers-ai-vision',blocks:[],notice:'Vision 완료'};throw Error('읽을 수 있는 문구를 찾지 못했습니다. 필요한 영역과 원문을 직접 추가해주세요.');});
+  h.setOcr(image=>{image.visionResult={provider:'workers-ai-vision',blocks:[],notice:'Vision 완료',inspection:{policy:'foreign-text-inspection-v1',decision:'no-foreign-text'}};throw Error('읽을 수 있는 문구를 찾지 못했습니다. 필요한 영역과 원문을 직접 추가해주세요.');});
   await h.click('원본 문구 읽기');assert.match(text(h.render()),/문구 확인을 완료했습니다. 번역할 문구가 없어 원본 이미지를 유지했습니다/);assert.doesNotMatch(text(h.render()),/인식 중|읽고 있습니다/);assert.equal(nodes(h.render()).filter(node=>node.props?.role==='alert').length,0);assert.equal(h.saved,0);assert.deepEqual(plain(h.calls.map(row=>row.action)),['source','ocr']);
  }finally{h.close();}
+});
+
+test('legacy empty and unreadable Vision keep their error instead of reporting no-text completion',async()=>{
+ for(const decision of ['legacy-empty','unreadable']){
+  const h=fixture();try{
+   h.setOcr(image=>{image.visionResult={provider:'workers-ai-vision',blocks:[],notice:'Vision 응답',...(decision==='unreadable'?{inspection:{policy:'foreign-text-inspection-v1',decision}}:{})};throw Error('외국어 문구를 끝까지 판독하지 못했습니다.');});
+   await h.click('원본 문구 읽기');assert.equal(nodes(h.render()).filter(node=>node.props?.role==='alert').length,1,decision);
+   assert.match(text(h.render()),/외국어 문구를 끝까지 판독하지 못했습니다/);assert.doesNotMatch(text(h.render()),/문구 확인을 완료했습니다/);
+   assert.equal(h.saved,0);assert.equal(h.button('검토한 번역 이미지 적용'),undefined);assert.deepEqual(plain(h.calls.map(row=>row.action)),['source','ocr']);
+  }finally{h.close();}
+ }
 });
 test('Vision region labels do not invent a zero confidence while browser OCR retains its percentage',async()=>{
  const h=fixture();try{

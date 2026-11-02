@@ -26,6 +26,8 @@ import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
 import {imageTextRecoveryConfigured,imageTextRecoveryWithinLimit,recoverImageTextRegions,unavailableImageTextRecovery,ImageTextRecoveryError,type ImageTextRecoveryEnvironment} from '@/app/automation/workers-image-text-recovery';
 import {imageVisionConfiguration,readImageVision,readStoredImageVisionResult,ImageVisionError,type ImageVisionEnvironment} from '@/app/automation/workers-image-vision';
 import {IMAGE_TEXT_INSPECTION_POLICY,parseImageTextVisionConfiguration} from '@/app/image-text-vision';
+import {DetailWorkspaceError} from '@/app/detail-workspace';
+import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 
 type Context = { params: Promise<{ id: string }> };
 class ImageTextError extends Error {
@@ -127,6 +129,7 @@ async function reopenedSource(owner: string, id: string, resultKey: string, role
   return { source, editDocument: record.document };
 }
 async function freshSource(owner: string, id: string, source: FreeImageSource, readOnlyRecovery = false) {
+  if (source.workspaceTarget) throw new ImageTextError(400, '작업 사진은 상세 작업공간의 번역·보관 동작을 사용해주세요.');
   if (source.productId !== id) throw new ImageTextError(400, '번역한 상품과 저장할 상품이 다릅니다.');
   const current = await state(owner, id);
   if (current.product.updated_at !== source.productVersion || current.content.revision !== source.contentRevision) throw changed();
@@ -135,6 +138,11 @@ async function freshSource(owner: string, id: string, source: FreeImageSource, r
     : await original(owner, id, source.sourceKey, source.role, current, true, source.optionImages !== undefined);
   if (freeImageSourceIdentity(observed) !== freeImageSourceIdentity(source)) throw changed();
   return current;
+}
+async function freshVisionSource(owner:string,id:string,source:FreeImageSource,company:SupplierHubCompany,member:{email:string;role:string},signal:AbortSignal){
+  if(!source.workspaceTarget){await freshSource(owner,id,source);return;}
+  const {confirmWorkspaceImageSource}=await import('@/db/detail-workspace-image-edits');
+  await confirmWorkspaceImageSource({owner,company,identity:member,id},source,signal);
 }
 async function storedOutput(key: string, source: FreeImageSource, optionImageIds: string[], sha256: string, size: number, crop?: FreeImageCrop, editDocument?: FreeImageEditDocument) {
   if (!env.FILES) throw new ImageTextError(503, '이미지 저장소가 연결되지 않았습니다.');
@@ -224,7 +232,7 @@ function fail(error: unknown) {
   if(error instanceof ImageVisionError)return response({error:error.message,code:`IMAGE_VISION_${error.reason}`,uncertain:error.uncertain},error.reason==='NOT_CONFIGURED'?503:error.reason==='CAPACITY'?429:409);
   if (error instanceof FreeImageEditRecordError) return response({ error: error.message, ...(error.code ? { code: error.code } : {}) }, error.status);
   if (error instanceof ImageTextError || error instanceof RequestBodyError) return response({ error: error.message }, error.status);
-  if (error instanceof QuotationFieldsSnapshotError || error instanceof PublicDetailError) return response({ error: error.message }, error.status);
+  if (error instanceof QuotationFieldsSnapshotError || error instanceof PublicDetailError || error instanceof DetailWorkspaceError) return response({ error: error.message }, error.status);
   return response({ error: '이미지 문구 처리 결과를 확인하지 못했습니다. 기존 이미지는 유지됩니다. 저장본을 확인한 뒤 다시 시도해주세요.' }, 503);
 }
 export async function GET(request: Request, context: Context) {
@@ -238,7 +246,8 @@ export async function GET(request: Request, context: Context) {
         ||!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(params.get('visionRequestId')??''))throw new ImageTextError(400,'조회할 원래 이미지 Vision 요청을 확인해주세요.');
       let raw:unknown;try{raw=JSON.parse(params.get('source')!);}catch{throw new ImageTextError(400,'원래 이미지 Vision 원본 정보를 확인해주세요.');}
       const source=validateFreeImageSource(raw),configuration=imageVisionConfiguration(env as ImageVisionEnvironment),sourceLanguage=params.get('sourceLanguage') as 'zh'|'en',company=await editorCompany(owner);
-      if(source.workspaceTarget||source.productId!==id||!isOwnedImageKey(owner,source.sourceKey))throw new ImageTextError(400,'이 상품의 본인 소유 Vision 기록만 조회할 수 있습니다.');
+      // Observe the original request even after its workspace revision changes.
+      if(source.productId!==id||!isOwnedImageKey(owner,source.sourceKey))throw new ImageTextError(400,'이 상품의 본인 소유 Vision 기록만 조회할 수 있습니다.');
       const memberNow=async()=>{const user=await getChatGPTUser(),member=user?.membership;if(!user?.verifiedAccess||user.userId!==owner||member?.id!==owner||member.status!=='approved'||member.email!==user.email||JSON.stringify(approvedSupplierHubCompany(member))!==JSON.stringify(company))throw changed();return{email:member.email.toLowerCase().trim(),role:member.role};};
       const member=await memberNow(),requestId=params.get('visionRequestId')!;
       const inspectionPolicy=params.has('inspectionPolicy')?IMAGE_TEXT_INSPECTION_POLICY:undefined;
@@ -316,11 +325,11 @@ export async function POST(request: Request, context: Context) {
         const source=validateFreeImageSource(input.source),settings=env as ImageVisionEnvironment,configuration=imageVisionConfiguration(settings),expected=parseImageTextVisionConfiguration(input.configuration);
         if(!expected||JSON.stringify(expected)!==JSON.stringify(configuration))throw changed();
         if(!configuration.configured)throw new ImageVisionError('NOT_CONFIGURED');
-        if(source.workspaceTarget||source.productId!==id||!isOwnedImageKey(owner,source.sourceKey))throw new ImageTextError(400,'이 상품의 본인 소유 원본만 Vision으로 읽을 수 있습니다.');
+        if(source.productId!==id||!isOwnedImageKey(owner,source.sourceKey))throw new ImageTextError(400,'이 상품의 본인 소유 원본만 Vision으로 읽을 수 있습니다.');
         const company=await editorCompany(owner);
         const currentMember=async()=>{const user=await getChatGPTUser(),member=user?.membership;if(!user?.verifiedAccess||user.userId!==owner||member?.id!==owner||member.status!=='approved'||member.email!==user.email||JSON.stringify(approvedSupplierHubCompany(member))!==JSON.stringify(company))throw changed();return{email:member.email.toLowerCase().trim(),role:member.role};};
         const member=await currentMember();
-        const assertCurrent=async()=>{request.signal.throwIfAborted();if(await ownerId()!==owner||JSON.stringify(await currentMember())!==JSON.stringify(member)||JSON.stringify(imageVisionConfiguration(settings))!==JSON.stringify(configuration))throw changed();await freshSource(owner,id,source);request.signal.throwIfAborted();if(await ownerId()!==owner||JSON.stringify(await currentMember())!==JSON.stringify(member))throw changed();};
+        const assertCurrent=async()=>{request.signal.throwIfAborted();if(await ownerId()!==owner||JSON.stringify(await currentMember())!==JSON.stringify(member)||JSON.stringify(imageVisionConfiguration(settings))!==JSON.stringify(configuration))throw changed();await freshVisionSource(owner,id,source,company,member,request.signal);request.signal.throwIfAborted();if(await ownerId()!==owner||JSON.stringify(await currentMember())!==JSON.stringify(member)||JSON.stringify(imageVisionConfiguration(settings))!==JSON.stringify(configuration))throw changed();};
         await assertCurrent();
         const image=await readImage(source.sourceKey);
         if(await digest(image.bytes)!==source.sourceSha256||image.dimensions.width!==source.width||image.dimensions.height!==source.height)throw changed();
@@ -386,7 +395,7 @@ export async function POST(request: Request, context: Context) {
           || !Number.isSafeInteger(input.outputBytes) || (input.outputBytes as number) < 1 || (input.outputBytes as number) > MAX_IMAGE_BYTES) throw new ImageTextError(400, '복구할 PNG 결과 번호와 크기를 확인해주세요.');
         let source: FreeImageSource;
         try { source = validateFreeImageSource(input.source); } catch { throw new ImageTextError(400, '복구할 원본 정보를 확인해주세요.'); }
-        if (!source.quotationTarget || source.productId !== id || !isOwnedImageKey(owner, source.sourceKey)) throw new ImageTextError(400, '이 상품의 최종 견적 이미지 복구 범위를 확인해주세요.');
+        if (source.workspaceTarget || !source.quotationTarget || source.productId !== id || !isOwnedImageKey(owner, source.sourceKey)) throw new ImageTextError(400, '이 상품의 최종 견적 이미지 복구 범위를 확인해주세요.');
         const crop = selectedCrop(input.crop, source);
         const editDocument = selectedEditDocument(input.editDocument, source, crop), editDocumentSha256 = editDocument ? await freeImageEditDigest(freeImageEditDocumentBytes(editDocument)) : undefined;
         const fingerprint = await digest(new TextEncoder().encode(freeImageApplyIdentity(source, [], crop, editDocumentSha256))), key = `${owner}/free-image-${id}-${fingerprint}-${input.outputSha256}.png`;
@@ -444,6 +453,7 @@ export async function POST(request: Request, context: Context) {
       if (value !== null && (typeof value !== 'string' || new TextEncoder().encode(value).length > MAX_FREE_IMAGE_EDIT_BYTES)) throw Error('편집 문서 크기를 확인해주세요.');
       editDocument = selectedEditDocument(value === null ? undefined : JSON.parse(value as string), source, crop);
     } catch (error) { if (error instanceof ImageTextError) throw error; throw new ImageTextError(400, '편집 문서 형식을 확인해주세요.'); }
+    if (source.workspaceTarget) throw changed();
     let optionImageIds: string[];
     try {
       const value = form.get('optionImageIds');

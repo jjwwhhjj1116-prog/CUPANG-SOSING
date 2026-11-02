@@ -13,6 +13,7 @@ import { readFreeImageEditRecord, FreeImageEditRecordError } from '@/app/free-im
 import type { FreeImageSource } from '@/app/free-image-translation';
 import { inspectImage } from '@/app/automation/image-edit';
 import { buildDetailWorkspaceBannerDocument, createDetailWorkspaceBannerPreview, detailWorkspaceBannerRebaseRequestId, type DetailWorkspaceBannerRebaseInput } from '@/app/detail-workspace-banner-rebase';
+import { detailSaveOptionIds, detailSavePeerDigest, DETAIL_SAVE_PEER_SNAPSHOT_LIMIT } from '@/app/detail-save-plan';
 
 export const detailWorkspacesSchema = `CREATE TABLE IF NOT EXISTS product_detail_workspaces (
  owner_id TEXT NOT NULL, product_id TEXT NOT NULL REFERENCES products(id), category_scope TEXT NOT NULL, option_id TEXT NOT NULL,
@@ -204,6 +205,30 @@ export async function readDetailWorkspaceImageSeal(owner: string, company: Suppl
   return { db, before, workspace, owner, company, identity, id, profileId, optionId };
 }
 export type DetailWorkspaceImageSeal = Awaited<ReturnType<typeof readDetailWorkspaceImageSeal>>;
+/** Reconstruct every affected option proof, then fence these exact rows and absences in the final quotation transaction. */
+export async function detailWorkspacePeersGuard(seal: DetailWorkspaceImageSeal, expectedDigest: string, signal: AbortSignal) {
+  signal.throwIfAborted();
+  const optionIds = detailSaveOptionIds(seal.before.view), args = [seal.owner, seal.id, seal.before.scope, JSON.stringify(optionIds)];
+  const rows = `SELECT option_id,revision,request_id,payload,updated_at FROM product_detail_workspaces WHERE owner_id=? AND product_id=? AND category_scope=?
+      AND option_id IN (SELECT value FROM json_each(?)) ORDER BY option_id`, encoded = `SELECT json_object('option_id',option_id,'revision',revision,'request_id',request_id,'payload',payload,'updated_at',updated_at) AS value FROM (${rows})`,
+    size = 'SELECT coalesce(sum(length(CAST(value AS BLOB))+1),1)+1 AS bytes FROM reviewed';
+  const bound = await seal.db.prepare(`WITH reviewed AS (${encoded}) ${size}`).bind(...args).first<{ bytes: number }>();
+  if (!bound || bound.bytes > DETAIL_SAVE_PEER_SNAPSHOT_LIMIT) throw new DetailWorkspaceError('모든 옵션의 상세 구성 확인 자료는2MiB 이내여야 합니다. 기존 자료는 보존했습니다.', 413);
+  // The same statement bounds a concurrent larger rowset before concatenating it.
+  const sql = `WITH reviewed AS (${encoded}) SELECT CASE WHEN (${size})<=${DETAIL_SAVE_PEER_SNAPSHOT_LIMIT}
+    THEN (SELECT json_group_array(json(value)) FROM reviewed) END`;
+  const snapshot = await seal.db.prepare(`SELECT (${sql}) AS payload`).bind(...args).first<{ payload: string }>();
+  if (!snapshot?.payload) throw conflict();
+  const captured = JSON.parse(snapshot.payload) as (Row & { option_id: string })[], peers = [];
+  for (const optionId of optionIds) {
+    const row = captured.find(row => row.option_id === optionId), record = stored(row ?? null, seal.owner, seal.id, optionId, seal.before, seal.company);
+    if (record) { const { digest, ...value } = record; if (await detailWorkspaceDigest(value) !== digest) throw conflict(); }
+    peers.push({ optionId, workspace: record ? { revision: record.revision, digest: record.digest } : null });
+  }
+  if (await detailSavePeerDigest(peers) !== expectedDigest) throw conflict();
+  signal.throwIfAborted();
+  return { sql: `(${sql})=?`, args: [...args, snapshot.payload] };
+}
 export async function confirmDetailWorkspaceImageSeal(seal: DetailWorkspaceImageSeal, signal: AbortSignal) {
   signal.throwIfAborted(); await verifyRecord(seal.workspace, seal.owner, seal.before.view.imageKeys, signal);
   await confirm(seal.db, seal.owner, seal.company, seal.identity, seal.id, seal.profileId, seal.optionId, seal.before);

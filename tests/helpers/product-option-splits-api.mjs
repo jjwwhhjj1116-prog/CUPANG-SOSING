@@ -6,7 +6,7 @@ export async function optionSplitFixture(company = companies[0]) {
   const f = await detailSaveFixture(company);
   try {
     const now = new Date().toISOString(), email = company.companyCode === 'A01526306' ? 'jwhj1116@kakao.com' : 'unari8484@gmail.com';
-    f.api.sqlite.prepare('INSERT INTO members VALUES(?,?,?,?,?,?,?,?,?,?)').run('owner', email, 'fixture-not-a-password', company.companyCode === 'A01526306' ? 'admin' : 'member', 'approved', company.companyCode, company.companyName, now, now, null);
+    f.api.sqlite.prepare('INSERT INTO members(id,email,password_hash,role,status,company_code,company_name,created_at,updated_at,reviewed_by) VALUES(?,?,?,?,?,?,?,?,?,?)').run('owner', email, 'fixture-not-a-password', company.companyCode === 'A01526306' ? 'admin' : 'member', 'approved', company.companyCode, company.companyName, now, now, null);
     const ids = f.view.resolved.rows.flatMap(row => row.optionId ? [row.optionId] : []);
     f.view = await json(await f.api.route(f.qurl, { method: 'PUT', body: { expectedRevision: f.view.revision, expectedInputFingerprint: f.view.inputFingerprint,
       changes: [{ fieldKey: 'title', optionId: null, value: '직접 작성한 공통 견적 제목' }, { fieldKey: 'title', optionId: ids[0], value: '' },

@@ -90,7 +90,7 @@ for(const company of schemaCompanies)test(`main enforces one editable slot and r
 for(const company of schemaCompanies)test(`partial main draft keeps its review marker and exact editable regions through real save, lost ACK and reopen (${company.code})`,async()=>{
  const f=await mainFixture(company);try{
   const now=new Date().toISOString(),email=company.code==='A01526306'?'jwhj1116@kakao.com':'unari8484@gmail.com';
-  f.h.sqlite.prepare('INSERT INTO members VALUES(?,?,?,?,?,?,?,?,?,?)').run('owner',email,'fixture-not-a-password',company.code==='A01526306'?'admin':'member','approved',company.code,company.name,now,now,null);
+    f.h.sqlite.prepare('INSERT INTO members(id,email,password_hash,role,status,company_code,company_name,created_at,updated_at,reviewed_by) VALUES(?,?,?,?,?,?,?,?,?,?)').run('owner',email,'fixture-not-a-password',company.code==='A01526306'?'admin':'member','approved',company.code,company.name,now,now,null);
   const original=Buffer.from(f.h.objects.get(f.order[0])),sourceRows=f.sourceRows();
   let batch=await prepare(f,{render:async(image,regions)=>{
    const rendered=await f.deps.render(image,regions),accepted={...regions[0],box:{x:0,y:0,width:3,height:1}},unresolved={...regions[0],id:'unresolved',text:'未确认',selected:false,translated:'',translationProvenance:'empty',issue:'영역 검증 실패: 원문에 없는 성능·주장.',box:{x:0,y:1,width:3,height:1}};

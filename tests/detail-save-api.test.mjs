@@ -146,7 +146,7 @@ for (const company of companies) test(`source and exact old quotation payload ra
     try {
       if (race === 'member') {
         f.api.bindings.YOOFAM_AUTH_ENABLED = 'true'; const email = company.companyCode === 'A01526306' ? 'jwhj1116@kakao.com' : 'unari8484@gmail.com';
-        const now = new Date().toISOString(); f.api.sqlite.prepare('INSERT INTO members VALUES(?,?,?,?,?,?,?,?,?,?)').run('owner', email, 'fixture', company.companyCode === 'A01526306' ? 'admin' : 'member', 'approved', company.companyCode, company.companyName, now, now, null);
+        const now = new Date().toISOString(); f.api.sqlite.prepare('INSERT INTO members(id,email,password_hash,role,status,company_code,company_name,created_at,updated_at,reviewed_by) VALUES(?,?,?,?,?,?,?,?,?,?)').run('owner', email, 'fixture', company.companyCode === 'A01526306' ? 'admin' : 'member', 'approved', company.companyCode, company.companyName, now, now, null);
       }
       const prepared = await f.prepare(), body = await f.upload(prepared), batch = f.api.db.batch; let raced = false, baseline;
       f.api.db.batch = async statements => {

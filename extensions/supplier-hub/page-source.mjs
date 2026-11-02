@@ -523,6 +523,8 @@ export function extractPageSource(input,now=Date.now()){
   const list=property(key);if(Array.isArray(list))for(const item of list)addImage(typeof item==='string'?item:firstImage(item?.originalImageURI,item?.imageURI,item?.imageUrl,item?.url,item?.fullPathImageURI,item?.fullPathImageUri,item?.image),images.some(item=>item.role==='main')?'additional':'main');
  }
  if(!images.length&&Array.isArray(input.gallery))for(const url of input.gallery)addImage(url,images.length?'additional':'main');
+  // Retain gallery membership before detail and SKU-only placements are added.
+  const sourceGallery={format:'chrome-current-page-gallery-v1',imageIndices:images.map((_,index)=>index)};
  const details=Array.isArray(input.detailImages)?input.detailImages:[];
  for(const url of details)addImage(url,'detail');
  const valueImages=new Map();
@@ -579,7 +581,7 @@ export function extractPageSource(input,now=Date.now()){
   if(facts.sourceUrl!==identity.sourceUrl||facts.offerId!==identity.offerId)throw domOptionsError();
   domFactsIdentity(scripts,identity.offerId);observed=mergePageDomFacts(observed.attributes,options,facts);
  }
- return validatePageSourceForDelivery({format:'yoofam-page-source-v1',...identity,collectedAt:new Date(now).toISOString(),title,description:plain(input.description,20000),options:observed.options,images,attributes:observed.attributes},now);
+ return validatePageSourceForDelivery({format:'yoofam-page-source-v1',...identity,collectedAt:new Date(now).toISOString(),title,description:plain(input.description,20000),options:observed.options,images,attributes:observed.attributes,sourceGallery},now);
 }
 /** Inert capture evidence only. Counts never authorize reading more of the
  * page or claim that missing product facts were collected. */
@@ -608,7 +610,7 @@ export function validatePageSourceCaptureDiagnostics(input){
  return JSON.parse(JSON.stringify(input));
 }
 export function validatePageSource(input,now=Date.now()){
- const keys=['format','sourceUrl','offerId','collectedAt','title','description','options','images','attributes','captureDiagnostics'];
+ const keys=['format','sourceUrl','offerId','collectedAt','title','description','options','images','attributes','captureDiagnostics','sourceGallery'];
  if(!object(input)||Object.keys(input).some(key=>!keys.includes(key))||input.format!=='yoofam-page-source-v1'||JSON.stringify(input).length>PAGE_SOURCE_LIMIT)throw Error('상품 수집 내용의 형식·크기를 확인해주세요.');
  if(Object.hasOwn(input,'captureDiagnostics'))validatePageSourceCaptureDiagnostics(input.captureDiagnostics);
  const identity=pageSourceUrl(input.sourceUrl);
@@ -632,6 +634,16 @@ export function validatePageSource(input,now=Date.now()){
  }
  const placements=new Set();let mains=0;
  for(const row of input.images){if(!object(row)||Object.keys(row).some(key=>!['url','role'].includes(key))||image(row.url)!==row.url||!['main','additional','detail'].includes(row.role)||placements.has(row.role+row.url)||row.role==='main'&&++mains>1)throw Error('수집 이미지 주소·역할이 올바르지 않습니다.');placements.add(row.role+row.url);}
+ if(Object.hasOwn(input,'sourceGallery')){
+  const gallery=input.sourceGallery,fail=()=>{throw Error('수집 원문의 갤러리 이미지 연결을 확인해주세요.');};
+  if(!object(gallery)||Reflect.ownKeys(gallery).length!==2||!['format','imageIndices'].every(key=>Object.hasOwn(gallery,key))
+   ||Object.values(Object.getOwnPropertyDescriptors(gallery)).some(field=>!Object.hasOwn(field,'value')))fail();
+  const indices=gallery.imageIndices;
+  if(gallery.format!=='chrome-current-page-gallery-v1'||!Array.isArray(indices)||indices.length>200
+   ||Reflect.ownKeys(indices).length!==indices.length+1||Object.keys(indices).length!==indices.length
+   ||!Object.keys(indices).every((key,index)=>key===String(index))||Object.values(Object.getOwnPropertyDescriptors(indices)).some(field=>!Object.hasOwn(field,'value'))
+   ||!indices.length&&mains>0||!indices.every((index,position)=>Number.isInteger(index)&&index===position&&input.images[index]?.role===(position===0?'main':'additional')))fail();
+ }
  for(const row of input.attributes)if(!object(row)||Object.keys(row).some(key=>!['name','value'].includes(key))||!plain(row.name,190)||row.name!==plain(row.name,190)||!plain(row.value,1000)||row.value!==plain(row.value,1000))throw Error('상품 속성을 확인해주세요.');
  return JSON.parse(JSON.stringify(input));
 }

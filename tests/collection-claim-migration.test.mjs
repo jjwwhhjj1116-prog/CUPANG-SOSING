@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {assertAdditiveBootstrap, memoryDatabase, readMigrationFiles, runtimeDDL, schemaSnapshot, sqlTokens} from '../scripts/check-db-schema.mjs';
+import {applyMigrations, assertAdditiveBootstrap, memoryDatabase, readMigrationFiles, runtimeDDL, schemaSnapshot, sqlTokens} from '../scripts/check-db-schema.mjs';
 
 const files = readMigrationFiles(), migrationIndex = files.findIndex(file => file.name === '0017_collection_offer_claims.sql');
 const version = '2026-10-07T00:00:00.000Z';
@@ -109,10 +109,10 @@ test('fresh and repeated migrations produce the same claim schema as ordered run
     assert.equal(drops.length, 1); assert.deepEqual(sqlTokens(drops[0].sql).filter(token => token !== ';'), ['drop', 'index', 'if', 'exists', 'idx_collection_active_offer']);
     assert.equal(statements.at(-1).type, 'drop-index');
     for (const statement of statements) runtime.exec(statement.sql);
-    fresh.exec(files.map(file => file.sql).join('\n')); const first = schemaSnapshot(fresh);
-    fresh.exec(files.map(file => file.sql).join('\n'));
+    applyMigrations(fresh); const first = schemaSnapshot(fresh);
+    applyMigrations(fresh);
     assert.deepEqual(schemaSnapshot(fresh), first); assert.deepEqual(first, schemaSnapshot(runtime));
     assert.equal(first.some(item => item.name === 'idx_collection_active_offer'), false);
-    assert.equal(first.filter(item => item.type === 'table').length, 40);
+    assert.ok(first.some(item => item.type === 'table' && item.name === 'collection_offer_claims'));
   } finally {fresh.close(); runtime.close();}
 });

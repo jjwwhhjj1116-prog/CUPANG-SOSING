@@ -21,6 +21,24 @@ async function fixture(company = companies[0]) {
 }
 function rendered(f, image) { return f.canvas.client.renderFreeImageTranslation(image, [f.canvas.region('manual-1', { x: 2, y: 3, width: 15, height: 8 }, '직접 검토한 작업 사진')], signal(), [], { x: 1, y: 2, width: 20, height: 12 }, 'en'); }
 
+test('workspace pixel loading propagates validated Vision settings, exact no-text proof and the same scoped fetcher',async()=>{
+ const f=await fixture();try{
+  const env=f.api.bindings;Object.assign(env,{SOURCEFLOW_IMAGE_TEXT_PROVIDER:'workers-ai-vision',SOURCEFLOW_IMAGE_TEXT_MODEL:'@cf/qwen/qwen3.8-27b',SOURCEFLOW_IMAGE_TEXT_PAID_ALLOWED:'true'});
+  const configuration=plain(f.api.load('app/automation/workers-image-vision.ts').imageVisionConfiguration(env));
+  const request=async(url,init)=>{const response=await f.request(url,init);if(!url.includes('/workspace-image-text?'))return response;
+   const body=await response.json();body.visionConfiguration=configuration;body.noTextProof={policy:'foreign-text-inspection-v1',productId:body.source.productId,sourceKey:body.source.sourceKey,sourceSha256:body.source.sourceSha256,
+    width:body.source.width,height:body.source.height,sourceLanguage:'zh',requestId:'90700000-0000-4000-8000-000000000001',verifiedAt:'2026-11-02T00:00:00.000Z',configuration};return Response.json(body);};
+  const image=await f.client.readDetailWorkspaceImage(f.editor,signal(),request);assert.deepEqual(plain(image.visionConfiguration),configuration);assert.equal(image.visionFetcher,request);
+  assert.equal(image.noTextProof.sourceSha256,image.source.sourceSha256);assert.equal(image.source.quotationTarget,undefined);
+  for(const kind of ['configuration','sha','dimensions','proof-configuration']){
+   const invalid=async(url,init)=>{const response=await request(url,init);if(!url.includes('/workspace-image-text?'))return response;const body=await response.json();
+    if(kind==='configuration')body.visionConfiguration.model='foreign';if(kind==='sha')body.noTextProof.sourceSha256='f'.repeat(64);if(kind==='dimensions')body.noTextProof.width++;if(kind==='proof-configuration')body.noTextProof.configuration.paidAllowed=false;
+    return Response.json(body);};
+   const count=f.calls.length;await assert.rejects(f.client.readDetailWorkspaceImage(f.editor,signal(),invalid));assert.equal(f.calls.length,count+1,'invalid metadata is rejected before source pixels');
+  }
+ }finally{f.api.close();}
+});
+
 for (const company of companies) test(`real workspace transport opens current pixels, stores editable PNG outside the product pool, and reopens sealed original/document (${company.companyCode})`, async () => {
   const f = await fixture(company);
   try {

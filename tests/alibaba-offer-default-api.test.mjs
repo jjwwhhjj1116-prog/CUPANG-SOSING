@@ -28,7 +28,7 @@ for(const company of schemaCompanies)test(`offer default survives actual receipt
   assert.equal(option.translatedName,'기본 보호대');assert.equal(option.unitCostCny,4.5);assert.equal(option.minimumOrderQuantity,2);assert.equal(option.stock,0);
   assert.equal(option.imageKey,null);assert.equal(option.provenance.imageKey,'unverified');assert.deepEqual(optionView.sourceImageKeys,{});
   const content=(await json(await h.route(base+'/content'))).content;
-  assert.equal(content.seo.title.value,'검토 브랜드 단일 수납 보호대');assert.equal(content.seo.title.provenance,'manual','canonical translation adoption uses the existing saved-content provenance contract');
+  assert.equal(content.seo.title.value,'검토 브랜드 단일 수납 보호대');assert.equal(content.seo.title.provenance,'generated','source-bound Workers AI adoption retains its provider provenance');
   assert.equal(content.label.material.value,'PP');assert.equal(content.label.importer.value,company.name);
   for(const role of ['main','additional','detail']){assert.equal(content.assets[role].value.length,1);assert.equal(content.assets[role].provenance,'collected');}
   assert.equal(h.objects.size,3);assert.equal(h.stats.downloads,3);assert.equal(h.aiSources.length,1);

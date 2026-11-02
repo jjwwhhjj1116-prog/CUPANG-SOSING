@@ -25,7 +25,9 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   assert.deepEqual(before.content.assets.main.value,[]);assert.deepEqual(before.content.assets.additional.value,[]);assert.deepEqual(before.content.assets.detail.value,[]);
   const run=runner(h),workflow=await run.run(),source=JSON.parse(h.sqlite.prepare('SELECT payload FROM collection_results').get().payload);
   const links=new Map(h.sqlite.prepare('SELECT image_index,object_key FROM collection_images ORDER BY image_index').all().map(row=>[row.image_index,row.object_key]));
-  for(const role of ['main','additional','detail'])assert.deepEqual(content(h).assets[role].value,source.images.flatMap((image,index)=>image.role===role?[links.get(index)]:[]),role);
+  for(const role of ['main','additional','detail'])assert.deepEqual(content(h).assets[role].value,source.images.flatMap((image,index)=>image.role===role&&(role!=='additional'||!source.sourceGallery||source.sourceGallery.imageIndices.includes(index))?[links.get(index)]:[]),role);
+  const skuOnly=source.images.flatMap((image,index)=>image.role==='additional'&&!source.sourceGallery.imageIndices.includes(index)?[links.get(index)]:[]);
+  assert.equal(content(h).assets.additional.value.length,4);assert.equal(skuOnly.length,3);assert.ok(skuOnly.every(key=>JSON.parse(product(h).image_keys).includes(key)&&h.objects.has(key)&&!content(h).assets.additional.value.includes(key)));
   for(const row of options(h).rows){const original=source.options.find(item=>item.sku===row.supplierSku);assert.equal(row.imageKey,links.get(original.imageIndex));}
   assert.ok(Date.parse(product(h).updated_at)>Date.parse(before.product.updated_at));
   assert.equal(workflow.productVersion,product(h).updated_at);

@@ -16,6 +16,7 @@ import { quotationTextModel, validQuotationTextExecution, type QuotationTextExec
 import { confirmQuotationFieldsSave } from '@/app/quotation-fields-confirmation';
 import { hasSelectedEmptyQuotationChoice } from '@/app/quotation-choice-state';
 import { processSelectedImageStage, createSelectedImageStageState, type SelectedImageStageState } from '@/app/batch-selected-image-work';
+import { processSelectedDetailWork, createSelectedDetailWorkState, type SelectedDetailWorkState } from '@/app/batch-selected-detail-work';
 import { runSelectedLabelWork } from '@/app/batch-selected-label-work';
 import { readRegistrationLayout } from '@/app/registration-layout';
 import { runSelectedPricingWork } from '@/app/batch-selected-pricing-work';
@@ -33,6 +34,7 @@ const uuid=(value:unknown):value is string=>typeof value==='string'&&/^[a-f0-9]{
 // The request owns keys across React remounts; keep binary image recovery state
 // with that same lifetime without persisting source images in localStorage.
 const imageRunStates=new WeakMap<Map<string,string>,Map<string,SelectedImageStageState>>();
+const detailRunStates=new WeakMap<Map<string,string>,Map<string,SelectedDetailWorkState>>();
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
 const hash=(value:unknown):value is string=>typeof value==='string'&&/^[a-f0-9]{64}$/u.test(value);
 const same=(left:unknown,right:unknown)=>JSON.stringify(left)===JSON.stringify(right);
@@ -44,6 +46,8 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
   const {signal,keys}=controls;
   let imageStates=imageRunStates.get(keys);
   if(!imageStates){imageStates=new Map();imageRunStates.set(keys,imageStates);}
+  let detailStates=detailRunStates.get(keys);
+  if(!detailStates){detailStates=new Map();detailRunStates.set(keys,detailStates);}
   if(signal.aborted)return null;
   if(!/^[\w-]{1,100}$/u.test(productId)||!/^[\w-]{1,100}$/u.test(controls.expectedOwnerId)
     ||controls.mode!==undefined&&!['full','selected'].includes(controls.mode)
@@ -292,7 +296,11 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
   async function image(id:'mainImage'|'additionalImages'|'detailImage'):Promise<Outcome>{
     const role=({mainImage:'main',additionalImages:'additional',detailImage:'detail'} as const)[id];
     const stateKey=identity+':'+id;
-    const inferenceLatch=identity+':vision-inference-pending',pendingInference=keys.get(inferenceLatch);
+    const inferenceLatch=identity+':vision-inference-pending',detailKey=identity+':detailImage';
+    // A remount may enter another image role after a cancelled detail call.
+    // Retained request state remains authoritative even if its queue key is absent.
+    if(!keys.has(inferenceLatch)&&detailStates!.get(detailKey)?.inference)keys.set(inferenceLatch,detailKey);
+    const pendingInference=keys.get(inferenceLatch);
     if(pendingInference&&pendingInference!==stateKey)return{status:'blocked',message:'앞선 이미지 번역 응답이 확정되지 않아 추가 이미지 호출을 멈췄습니다. 표시사항·견적서 등 독립된 단계는 계속 진행합니다.'};
     const current=await product();
     let state=imageStates!.get(stateKey),expectedProductVersion:string|undefined;
@@ -313,21 +321,34 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
         throw cause;
       }finally{onMutationDispatch=previousDispatch;}
     }
-    const result=await processSelectedImageStage(productId,role,{state,ownerId:controls.expectedOwnerId,signal,fetcher,expectedProductVersion,isCurrent:()=>!signal.aborted,
-      onProgress:message=>controls.onStage({id,status:'running',message})});
+    // Old in-flight quotation edits keep their original recovery proof. Fresh
+    // detail work always reads BODY photos from the raw saved workspace.
+    const legacyDetail=role==='detail'&&(!!state.inferencePending||!!state.detailWorkspacePending||Object.values(state.batches).some(batch=>batch.items.some(item=>item.status==='uncertain')));
+    let detailState=role==='detail'&&!legacyDetail?detailStates!.get(stateKey):undefined;
+    if(role==='detail'&&!legacyDetail&&!detailState){detailState=createSelectedDetailWorkState(controls.expectedOwnerId,productId);detailStates!.set(stateKey,detailState);}
+    let result:Awaited<ReturnType<typeof processSelectedDetailWork>>|Awaited<ReturnType<typeof processSelectedImageStage>>;
+    try{
+      result=detailState?await processSelectedDetailWork(productId,{state:detailState,ownerId:controls.expectedOwnerId,company:expected.company,signal,fetcher,assertCurrent,expectedProductVersion,
+        onProgress:message=>controls.onStage({id,status:'running',message})}):await processSelectedImageStage(productId,role,{state,ownerId:controls.expectedOwnerId,signal,fetcher,expectedProductVersion,isCurrent:()=>!signal.aborted,
+        onProgress:message=>controls.onStage({id,status:'running',message})});
+    }finally{
+      // The coordinator records an unknown UUID before propagating abort.
+      // Install its queue fence even when no result can return to this caller.
+      if(detailState?.inference&&(!keys.has(inferenceLatch)||keys.get(inferenceLatch)===stateKey))keys.set(inferenceLatch,stateKey);
+    }
     if(result.sourceChanged)boardSourceLost=true;
-    if(result.inferencePending)keys.set(inferenceLatch,stateKey);
-    else if(pendingInference===stateKey)keys.delete(inferenceLatch);
+    if(result.inferencePending||detailState?.inference){if(!keys.has(inferenceLatch)||keys.get(inferenceLatch)===stateKey)keys.set(inferenceLatch,stateKey);}
+    else if(pendingInference===stateKey&&keys.get(inferenceLatch)===stateKey)keys.delete(inferenceLatch);
     if(result.status!=='uncertain'&&!result.sourceChanged){
       const savedVersion=result.productVersion??state.view?.productVersion??expectedProductVersion??current.updated_at;
       if((await product()).updated_at!==savedVersion)throw new ScopeChanged('이미지 작업 중 상품·원본 또는 저장값이 변경되어 뒤의 작업을 멈췄습니다. 확인된 저장본은 유지했습니다.');
     }
-    if(['completed','skipped'].includes(result.status))imageStates!.delete(stateKey);
+    if(['completed','skipped'].includes(result.status)){imageStates!.delete(stateKey);detailStates!.delete(stateKey);}
     // A confirmed partial needs correction in this stage, but is not an
     // ambiguous write. Other selected stages can use the current saved source.
     // Recovery stays read-only. Pending workspace reconciliation must retain
     // its exact product clock before later label/quotation writes advance it.
-    return{status:result.status==='completed'?'draft':result.status==='skipped'?'skipped':'blocked',message:result.messages.join(' '),uncertain:result.status==='uncertain',stop:result.recovered||result.sourceChanged||!!state.detailWorkspacePending};
+    return{status:result.status==='completed'?'draft':result.status==='skipped'?'skipped':'blocked',message:result.messages.join(' '),uncertain:result.status==='uncertain',stop:result.recovered||result.sourceChanged||!!state.detailWorkspacePending||!!detailState?.seed||!!detailState?.image||!!detailState?.composite};
   }
   async function sizeChart():Promise<Outcome>{
     const current=await product();

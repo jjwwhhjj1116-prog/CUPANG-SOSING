@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { fixture, panel, runtime, nodes, text, deferred, plain } from './helpers/detail-workspace.mjs';
 import { companies, downloadFixture, json } from './helpers/image-download-ui.mjs';
 
@@ -134,8 +135,11 @@ test('primary opening reads once and displays the full source sequence without s
     await h.idle(); assert.equal(f.calls.length, 1); assert.equal(f.calls[0].method, 'GET');
     assert.equal(h.render().props['data-workspace-dirty'], false, 'read-only initialization must not require a save to leave the stage');
     assert.deepEqual(photos(h).map(node => node.props.src), f.keys.slice(0, 4).map(key => '/api/files/' + key));
-    assert.ok(photos(h).every(node => node.props.style.width === 760 && node.props.style.maxHeight === undefined));
-    const stack = h.control('상세 작업 사진 순서'); assert.equal(stack.props.style.maxHeight, undefined); assert.equal(stack.props.style.overflow, undefined);
+    assert.ok(photos(h).every(node => node.props.style.width === undefined && node.props.style.maxHeight === undefined));
+    const css = fs.readFileSync(new URL('../app/components/couplus-detail-stage.css', import.meta.url), 'utf8');
+    assert.match(css, /\.detail-workspace-photo\{[^}]*width:min\(800px,100%\)!important/u);
+    assert.match(css, /\.detail-workspace-photo>img\{[^}]*width:100%!important[^}]*height:auto/u);
+    const stack = h.control('상세 작업 사진 순서'); assert.equal(stack.props.style, undefined); assert.equal(stack.props.className, 'detail-workspace-photo-stack');
     for (let index = 0; index < 10; index++) { h.render(); await h.tick(); }
     assert.equal(f.calls.length, 1); assert.equal(f.workspace, null); assert.equal(f.storage.size, 0); assert.equal(h.adopted.length, 0); assert.equal(JSON.stringify(f.view), before);
     await h.click('작업 사진 2 제거'); assert.equal(h.render().props['data-workspace-dirty'], true, 'a real photo edit retains the existing unsaved-change guard');

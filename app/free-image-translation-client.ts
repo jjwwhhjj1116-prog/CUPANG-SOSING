@@ -241,7 +241,7 @@ export async function recognizeFreeImage(image:FreeImageLoaded,sourceLanguage:'z
  if(factory||image.visionConfiguration===undefined)return recognizeLocalFreeImage(image,sourceLanguage,signal,onProgress,factory);
  const configuration=parseImageTextVisionConfiguration(image.visionConfiguration);
  if(!configuration?.configured)throw Error('이미지 Vision이 설정되지 않았습니다. 브라우저 문구 읽기를 별도로 선택할 수 있습니다. 자동 대체 요청하지 않았습니다.');
- if(image.source.workspaceTarget||image.width!==image.source.width||image.height!==image.source.height)throw Error('이 원본 방향·작업공간은 Vision 영역 적용을 지원하지 않습니다. 브라우저 문구 읽기를 선택해주세요.');
+ if(image.width!==image.source.width||image.height!==image.source.height)throw Error('이 원본 방향은 Vision 영역 적용을 지원하지 않습니다. 브라우저 문구 읽기를 선택해주세요.');
  if(image.visionPending?.uncertain)throw image.visionPending;
  signal.throwIfAborted();onProgress('Cloudflare Qwen3.8 Vision으로 문구와 한국어 번역을 한 번 읽고 있습니다.');
  const requestId=image.visionRequestId??=crypto.randomUUID();

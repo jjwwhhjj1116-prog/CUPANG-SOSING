@@ -18,6 +18,7 @@ function load(file, overrides = {}, mode = 'development') {
       if (name === '@/app/workspace-settings') return load('app/workspace-settings.ts');
       if (name === '@/app/automation/model') return load('app/automation/model.ts');
       if (name === '@/db/product-registration') return load('db/product-registration.ts');
+      if (name === '@/db/product-label-initialization') return load('db/product-label-initialization.ts', overrides, mode);
       if (name === '@/app/automation/translation') return load('app/automation/translation.ts');
       if (name === '@/app/automation/image-edit') return load('app/automation/image-edit.ts');
       if (name === '@/app/product-content') return load('app/product-content.ts');

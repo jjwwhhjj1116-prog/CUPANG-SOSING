@@ -5,12 +5,29 @@ import { MAX_IMAGE_BYTES } from '@/app/image-files';
 import { exactPrimaryQuotationTarget } from '@/app/quotation-seo-targets';
 import type { DetailSaveEditorSnapshot } from '@/app/detail-editor-composition';
 import type { DetailWorkspaceRecord } from '@/app/detail-workspace';
+import { labelUploadDigest } from '@/app/label-upload-key';
 
 export const DETAIL_SAVE_TEXT_POLICY = 'couplus-detail-alt-v1' as const;
 export type DetailSaveTextPolicy = typeof DETAIL_SAVE_TEXT_POLICY;
 export const DETAIL_SAVE_EDITOR_POLICY = 'ordered-inputs-html-v1' as const;
 export type DetailSaveEditorPolicy = typeof DETAIL_SAVE_EDITOR_POLICY;
 export type DetailSaveWorkspaceProof = { revision: number; digest: string };
+/** Keep the all-option raw-row predicate within the existing 2MiB snapshot bound. */
+export const DETAIL_SAVE_PEER_SNAPSHOT_LIMIT = 2 * 1024 * 1024;
+export type DetailSavePeers = { optionId: string; workspace: DetailSaveWorkspaceProof | null }[];
+export function validateDetailSavePeers(value: unknown, optionIds: readonly string[]): DetailSavePeers {
+  if (!Array.isArray(value) || value.length !== optionIds.length || !value.length || value.length > OPTION_LIMIT) throw Error('모든 실제 옵션의 상세 구성 연결을 확인해주세요.');
+  return value.map((row, index) => {
+    const workspace = row?.workspace;
+    if (!row || typeof row !== 'object' || Array.isArray(row) || Object.keys(row).length !== 2 || !Object.hasOwn(row, 'optionId') || !Object.hasOwn(row, 'workspace')
+      || row.optionId !== optionIds[index] || workspace !== null && (!workspace || typeof workspace !== 'object' || Array.isArray(workspace)
+        || Object.keys(workspace).length !== 2 || !Object.hasOwn(workspace, 'revision') || !Object.hasOwn(workspace, 'digest')
+        || !Number.isSafeInteger(workspace.revision) || workspace.revision < 1 || typeof workspace.digest !== 'string' || !/^[a-f0-9]{64}$/u.test(workspace.digest)))
+      throw Error('모든 실제 옵션의 상세 구성 연결을 확인해주세요.');
+    return { optionId: row.optionId, workspace: workspace === null ? null : { revision: workspace.revision, digest: workspace.digest } };
+  });
+}
+export const detailSavePeerDigest = (peers: DetailSavePeers) => labelUploadDigest(new TextEncoder().encode(JSON.stringify(peers)));
 
 export type DetailSaveReceipt = {
   uploadId: string; key: string; sha256: string; bytes: number; revision: number; beforeRevision: number;
@@ -18,6 +35,7 @@ export type DetailSaveReceipt = {
   textPolicy?: DetailSaveTextPolicy; textCommonFilled?: boolean;
   editorPolicy?: DetailSaveEditorPolicy; editorSha256?: string;
   workspace?: DetailSaveWorkspaceProof;
+  peerDigest?: string;
 };
 export type DetailSaveSource = { key: string; sha256: string; width: number; height: number };
 export type DetailSaveBackup = {
@@ -93,6 +111,7 @@ export function detailSaveReceiptMatches(view: QuotationFieldsView, receipt: Det
       || Object.keys(receipt.workspace).length !== 2 || !Number.isSafeInteger(receipt.workspace.revision) || receipt.workspace.revision < 1
       || typeof receipt.workspace.digest !== 'string' || !/^[a-f0-9]{64}$/.test(receipt.workspace.digest)
       || receipt.textPolicy !== DETAIL_SAVE_TEXT_POLICY || receipt.editorPolicy !== DETAIL_SAVE_EDITOR_POLICY)) return false;
+    if (receipt.peerDigest !== undefined && (!receipt.workspace || typeof receipt.peerDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(receipt.peerDigest))) return false;
     const changes = detailSaveChanges(view, receipt.key, receipt.textPolicy, receipt.textCommonFilled), expected = applyQuotationChanges(view.overrides, changes);
     if (JSON.stringify(expected) !== JSON.stringify(view.overrides)) return false;
     return view.resolved.rows.every(row => changes.filter(change => change.optionId === row.optionId

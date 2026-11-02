@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import assert from 'node:assert/strict';
 import { optionSplitFixture } from './product-option-splits-api.mjs';
 import { companies, json } from './image-download-ui.mjs';
 
@@ -12,11 +13,16 @@ export async function detailFamilyFixture(company = companies[0], { groups = 3, 
       f.api.sqlite.prepare('UPDATE product_options SET payload=?').run(JSON.stringify(options)); await f.refresh(); ids = options.rows.map(row => row.id);
     }
     if (leanCapture) {
-      // A valid historical capture can predate its later mapped workbook.
+      // Model a historical capture before mapped workbooks and optional initial-notice seeds.
       // Keep the current official profile/template and exact live schema intact.
       const context = JSON.parse(f.api.sqlite.prepare('SELECT payload FROM collection_context').get().payload);
       context.category.template = null; context.category.mappings = [];
-      f.api.sqlite.prepare('UPDATE collection_context SET payload=?').run(JSON.stringify(context)); await f.refresh();
+      f.api.sqlite.prepare('UPDATE collection_context SET payload=?').run(JSON.stringify(context));
+      const content = JSON.parse(f.api.sqlite.prepare('SELECT payload FROM product_content WHERE product_id=?').get(f.product.id).payload);
+      delete content.initialLegalNotices;
+      f.api.sqlite.prepare('UPDATE product_content SET payload=? WHERE product_id=?').run(JSON.stringify(content), f.product.id);
+      assert.equal(Object.hasOwn((await json(await f.api.route(f.base + '/content'))).content, 'initialLegalNotices'), false);
+      await f.refresh();
     }
     const buckets = Array.from({ length: groups }, (_, i) => ids.filter((_, index) => Math.min(groups - 1, Math.floor(index * groups / ids.length)) === i));
     const splitInput = f.makeInput(f.splitGroups(buckets)), split = await json(await f.commit(splitInput, await f.preview(splitInput)));

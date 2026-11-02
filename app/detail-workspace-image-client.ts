@@ -6,6 +6,8 @@ import { validateDetailWorkspaceReply, type DetailWorkspaceSelection } from '@/a
 import { detailWorkspaceExpectedView, detailWorkspaceRequestId, generateDetailWorkspaceHtml, type DetailWorkspaceView } from '@/app/detail-workspace';
 import { isOwnedImageKey, MAX_IMAGE_BYTES } from '@/app/image-files';
 import { labelUploadDigest } from '@/app/label-upload-key';
+import {IMAGE_TEXT_VISION_MODEL,IMAGE_TEXT_VISION_NOTICE,parseImageTextVisionConfiguration,type ImageTextVisionConfiguration} from '@/app/image-text-vision';
+import {parseImageNoTextProof} from '@/app/image-no-text-proof';
 
 export type FreeImageWorkspaceRequest = Omit<FreeImageWorkspaceTarget, 'bindingSha256'>;
 export type DetailWorkspaceEditorContext = { selection: DetailWorkspaceSelection; saved: DetailWorkspaceView; target: FreeImageWorkspaceRequest };
@@ -37,13 +39,19 @@ export async function readDetailWorkspaceImage(value: DetailWorkspaceEditorConte
   const query = new URLSearchParams({ optionId: value.target.optionId, photoId: value.target.photoId, ...(value.target.profileId ? { profileId: value.target.profileId } : {}) });
   const response = await fetcher(`${endpoint(value.selection.productId)}?${query}`, { signal, cache: 'no-store' }), body: unknown = await response.json(); signal.throwIfAborted();
   if (!response.ok) throw Error(object(body) && typeof body.error === 'string' ? body.error : '작업 사진 편집 원본을 읽지 못했습니다.');
-  if (!object(body) || Object.keys(body).some(key => !['source', 'editDocument'].includes(key))) return invalid();
+  if (!object(body) || Object.keys(body).some(key => !['source', 'editDocument','visionConfiguration','noTextProof'].includes(key))) return invalid();
   const source = validateFreeImageSource(body.source);
   const owner = value.selection.view.imageKeys[0]?.split('/')[0], proof = value.saved.workspace!.files.find(file => file.key === photo.key);
   if (!owner || !isOwnedImageKey(owner, source.sourceKey) || !proof || !sourceMatches(source, value, photo.key) || !!source.editorSource !== (body.editDocument !== undefined)
     || source.editorSource?.anchorPolicy !== undefined || (source.editorSource?.resultSha256 ?? source.sourceSha256) !== proof.sha256) return invalid();
   const document = body.editDocument === undefined ? undefined : validateFreeImageEditDocument(body.editDocument, source);
-  return readFreeImageSourcePixels(source, signal, fetcher, document);
+  const configuration:ImageTextVisionConfiguration|null=body.visionConfiguration===undefined?{provider:'workers-ai-vision',model:IMAGE_TEXT_VISION_MODEL,configured:false,paidAllowed:false,notice:IMAGE_TEXT_VISION_NOTICE}:parseImageTextVisionConfiguration(body.visionConfiguration);
+  if(!configuration)return invalid();
+  const noTextProof=body.noTextProof===undefined?null:parseImageNoTextProof(body.noTextProof);
+  if(body.noTextProof!==undefined&&(!noTextProof||noTextProof.productId!==source.productId||noTextProof.sourceKey!==source.sourceKey||noTextProof.sourceSha256!==source.sourceSha256
+    ||noTextProof.width!==source.width||noTextProof.height!==source.height||!same(noTextProof.configuration,configuration)))return invalid();
+  const loaded=await readFreeImageSourcePixels(source, signal, fetcher, document);
+  return {...loaded,visionConfiguration:configuration,visionFetcher:fetcher,...(noTextProof?{noTextProof}:{})};
 }
 async function rendered(image: FreeImageRendered, value: DetailWorkspaceEditorContext) {
   const { saved, record, photo } = await context(value), source = validateFreeImageSource(image.source), owner = source.sourceKey.split('/')[0];

@@ -1,7 +1,7 @@
 import type { DetailComposite } from '@/app/detail-image-composite';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { applyQuotationChanges } from '@/app/quotation-schema';
-import { DETAIL_SAVE_TEXT_POLICY, DETAIL_SAVE_EDITOR_POLICY, detailSaveCommonAltText, detailSaveChanges, type DetailSaveReceipt } from '@/app/detail-save-plan';
+import { DETAIL_SAVE_TEXT_POLICY, DETAIL_SAVE_EDITOR_POLICY, detailSaveCommonAltText, detailSaveChanges, detailSaveOptionIds, validateDetailSavePeers, detailSavePeerDigest, type DetailSavePeers, type DetailSaveReceipt } from '@/app/detail-save-plan';
 import { MAX_IMAGE_BYTES, imageFileType } from '@/app/image-files';
 import { readBoundedStream } from '@/app/request-body';
 import { labelUploadDigest } from '@/app/label-upload-key';
@@ -10,21 +10,25 @@ import { detailSaveEditorHtml, validateDetailSaveEditorSnapshot, detailSaveEdito
 import { detailWorkspaceDigest, validateDetailWorkspaceRecord, type DetailWorkspaceRecord } from '@/app/detail-workspace';
 
 export type DetailSaveAttempt = { pending?: 'upload' | 'save'; key?: string; completed?: QuotationFieldsView; identity?: string };
-export type DetailSaveOptions = { editorPolicy: typeof DETAIL_SAVE_EDITOR_POLICY; workspace?: DetailWorkspaceRecord };
+export type DetailSaveOptions = { editorPolicy: typeof DETAIL_SAVE_EDITOR_POLICY; workspace?: DetailWorkspaceRecord; peers?: DetailSavePeers };
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const changed = () => Error('상세 이미지·옵션·견적서가 변경됐습니다. 미리보기를 보관한 채 최신 저장본을 확인해주세요.');
 const path = (input: DetailComposite, action: 'quotation-fields' | 'detail-save') => `/api/products/${encodeURIComponent(input.productId)}/${action}${input.profileId ? `?profileId=${encodeURIComponent(input.profileId)}` : ''}`;
 function selectedEditorPolicy(options?: DetailSaveOptions) {
   if (options !== undefined && (!options || typeof options !== 'object' || Array.isArray(options)
-    || ![1, 2].includes(Object.keys(options).length) || Object.keys(options).some(key => !['editorPolicy', 'workspace'].includes(key))
+    || ![1, 2, 3].includes(Object.keys(options).length) || Object.keys(options).some(key => !['editorPolicy', 'workspace', 'peers'].includes(key))
     || !Object.hasOwn(options, 'editorPolicy') || options.editorPolicy !== DETAIL_SAVE_EDITOR_POLICY
-    || Object.hasOwn(options, 'workspace') && (!options.workspace || typeof options.workspace !== 'object'))) throw changed();
+    || Object.hasOwn(options, 'workspace') && (!options.workspace || typeof options.workspace !== 'object') || Object.hasOwn(options, 'peers') && !options.workspace)) throw changed();
   return options?.editorPolicy;
 }
-async function bindAttempt(input: DetailComposite, attempt: DetailSaveAttempt, editorPolicy?: typeof DETAIL_SAVE_EDITOR_POLICY, workspace?: DetailWorkspaceRecord) {
+async function bindAttempt(input: DetailComposite, attempt: DetailSaveAttempt, editorPolicy?: typeof DETAIL_SAVE_EDITOR_POLICY, workspace?: DetailWorkspaceRecord, peers?: DetailSavePeers) {
   if (editorPolicy) {
     if (!input.view.categoryContext.categoryId) throw changed();
     detailSaveEditorHtml(input.view, input.optionId);
+  }
+  if (peers !== undefined) {
+    peers = validateDetailSavePeers(peers, detailSaveOptionIds(input.view));
+    if (!workspace || !same(peers.find(peer => peer.optionId === input.optionId)?.workspace, { revision: workspace.revision, digest: workspace.digest })) throw changed();
   }
   if (workspace) {
     const owner = input.view.imageKeys[0]?.split('/')[0];
@@ -37,7 +41,7 @@ async function bindAttempt(input: DetailComposite, attempt: DetailSaveAttempt, e
       })) throw changed();
   }
   const identity = JSON.stringify([DETAIL_SAVE_TEXT_POLICY, input.productId, input.optionId, input.profileId ?? null, input.view, input.keys, input.sources, input.uploadId, input.sha256, input.width, input.height, input.output.size,
-    ...(editorPolicy ? [{ editorPolicy }] : []), ...(workspace ? [{ workspace }] : [])]);
+    ...(editorPolicy ? [{ editorPolicy }] : []), ...(workspace ? [{ workspace }] : []), ...(peers ? [{ peers }] : [])]);
   if (attempt.identity !== undefined && attempt.identity !== identity) throw changed();
   if (attempt.identity === undefined && (attempt.pending || attempt.completed || attempt.key)) throw changed();
   attempt.identity = identity;
@@ -64,10 +68,11 @@ async function uploadReceipt(input: DetailComposite, signal: AbortSignal, fetche
   if (actual.sha256 !== input.sha256 || actual.type !== 'image/png') throw changed(); return body.key;
 }
 async function verifySaved(input: DetailComposite, key: string, saved: QuotationFieldsView, receipt: DetailSaveReceipt,
-  editorPolicy?: typeof DETAIL_SAVE_EDITOR_POLICY, editorValue?: unknown, workspace?: DetailWorkspaceRecord, workspaceValue?: unknown) {
+  editorPolicy?: typeof DETAIL_SAVE_EDITOR_POLICY, editorValue?: unknown, workspace?: DetailWorkspaceRecord, workspaceValue?: unknown, peers?: DetailSavePeers) {
   const before = input.view, changes = detailSaveChanges(before, key, DETAIL_SAVE_TEXT_POLICY);
   if (workspace ? !same(workspaceValue, workspace) || !same(receipt.workspace, { revision: workspace.revision, digest: workspace.digest })
     : receipt.workspace !== undefined || workspaceValue !== undefined) throw changed();
+  if (receipt.peerDigest !== (peers ? await detailSavePeerDigest(validateDetailSavePeers(peers, detailSaveOptionIds(before))) : undefined)) throw changed();
   if (receipt.editorPolicy !== editorPolicy || (editorPolicy === undefined ? receipt.editorSha256 !== undefined || editorValue !== undefined
     : typeof receipt.editorSha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(receipt.editorSha256))) throw changed();
   if (editorPolicy) {
@@ -107,7 +112,7 @@ async function verifySaved(input: DetailComposite, key: string, saved: Quotation
 }
 /** A save whose ACK is missing is checked by reads only; this never retries a write. */
 export async function recoverDetailSave(input: DetailComposite, attempt: DetailSaveAttempt, signal: AbortSignal, fetcher: typeof fetch = fetch, options?: DetailSaveOptions): Promise<'ready' | 'completed'> {
-  signal.throwIfAborted(); const editorPolicy = selectedEditorPolicy(options); await bindAttempt(input, attempt, editorPolicy, options?.workspace); signal.throwIfAborted();
+  signal.throwIfAborted(); const editorPolicy = selectedEditorPolicy(options); await bindAttempt(input, attempt, editorPolicy, options?.workspace, options?.peers); signal.throwIfAborted();
   if (!attempt.pending && !attempt.completed) return 'ready';
   if (attempt.pending === 'upload') {
     const key = await uploadReceipt(input, signal, fetcher);
@@ -119,7 +124,7 @@ export async function recoverDetailSave(input: DetailComposite, attempt: DetailS
   const body = await response.json() as { applied?: boolean; quotation?: QuotationFieldsView; receipt?: DetailSaveReceipt; editor?: unknown; workspace?: unknown; error?: string }; signal.throwIfAborted();
   if (!response.ok) throw Error(body.error || '상세 저장 결과를 확인하지 못했습니다. 다시 저장하지 않고 확인을 유지합니다.');
   if (body.applied === true && body.quotation && body.receipt && attempt.key) {
-    await verifySaved(input, attempt.key, body.quotation, body.receipt, editorPolicy, body.editor, options?.workspace, body.workspace); signal.throwIfAborted();
+    await verifySaved(input, attempt.key, body.quotation, body.receipt, editorPolicy, body.editor, options?.workspace, body.workspace, options?.peers); signal.throwIfAborted();
     if (!same(await readView(input, signal, fetcher), body.quotation)) throw changed();
     attempt.completed = body.quotation; attempt.pending = undefined; return 'completed';
   }
@@ -128,7 +133,7 @@ export async function recoverDetailSave(input: DetailComposite, attempt: DetailS
 }
 /** The reviewed PNG and all quotation scopes commit atomically on the server. */
 export async function applyDetailSave(input: DetailComposite, attempt: DetailSaveAttempt, signal: AbortSignal, fetcher: typeof fetch = fetch, options?: DetailSaveOptions): Promise<QuotationFieldsView> {
-  signal.throwIfAborted(); const editorPolicy = selectedEditorPolicy(options); await bindAttempt(input, attempt, editorPolicy, options?.workspace); signal.throwIfAborted();
+  signal.throwIfAborted(); const editorPolicy = selectedEditorPolicy(options); await bindAttempt(input, attempt, editorPolicy, options?.workspace, options?.peers); signal.throwIfAborted();
   if (attempt.completed) {
     if (!same(await readView(input, signal, fetcher), attempt.completed)) throw changed(); return attempt.completed;
   }
@@ -152,10 +157,11 @@ export async function applyDetailSave(input: DetailComposite, attempt: DetailSav
   signal.throwIfAborted(); attempt.pending = 'save';
   const response = await fetcher(path(input, 'detail-save'), { method: 'POST', signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: input.view.revision,
     expectedInputFingerprint: input.view.inputFingerprint, sourceOptionId: input.optionId, uploadId: input.uploadId, sha256: input.sha256, bytes: input.output.size, textPolicy: DETAIL_SAVE_TEXT_POLICY,
-    ...(editorPolicy ? { editorPolicy } : {}), ...(options?.workspace ? { workspace: { revision: options.workspace.revision, digest: options.workspace.digest } } : {}) }) });
+    ...(editorPolicy ? { editorPolicy } : {}), ...(options?.workspace ? { workspace: { revision: options.workspace.revision, digest: options.workspace.digest } } : {}),
+    ...(options?.peers ? { peerDigest: await detailSavePeerDigest(validateDetailSavePeers(options.peers, detailSaveOptionIds(input.view))) } : {}) }) });
   if (!response.ok) { if (response.status < 500 && response.status !== 429) attempt.pending = undefined; const body = await response.json() as { error?: string }; throw Error(body.error || '공통·모든 옵션 상세 저장 결과를 확인해주세요.'); }
   const body = await response.json() as { quotation: QuotationFieldsView; receipt: DetailSaveReceipt; editor?: unknown; workspace?: unknown }; signal.throwIfAborted();
-  await verifySaved(input, key, body.quotation, body.receipt, editorPolicy, body.editor, options?.workspace, body.workspace); signal.throwIfAborted();
+  await verifySaved(input, key, body.quotation, body.receipt, editorPolicy, body.editor, options?.workspace, body.workspace, options?.peers); signal.throwIfAborted();
   const confirmed = await readView(input, signal, fetcher); if (!same(confirmed, body.quotation)) throw changed();
   attempt.completed = confirmed; attempt.pending = undefined; return confirmed;
 }

@@ -2,24 +2,40 @@ import { renderDetailImageSequence, type DetailComposite } from '@/app/detail-im
 import { readDetailWorkspace, validateDetailWorkspaceReply, type DetailWorkspaceSelection } from '@/app/detail-workspace-client';
 import type { DetailWorkspaceRecord, DetailWorkspaceView } from '@/app/detail-workspace';
 import { applyDetailSave, recoverDetailSave, type DetailSaveAttempt } from '@/app/detail-save-client';
-import { DETAIL_SAVE_EDITOR_POLICY } from '@/app/detail-save-plan';
+import { DETAIL_SAVE_EDITOR_POLICY, DETAIL_SAVE_PEER_SNAPSHOT_LIMIT, detailSaveOptionIds, validateDetailSavePeers, detailSavePeerDigest, type DetailSavePeers } from '@/app/detail-save-plan';
 import { labelUploadDigest } from '@/app/label-upload-key';
 import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 
-export type DetailWorkspaceComposite = DetailComposite & { workspace: DetailWorkspaceRecord };
+export type DetailWorkspaceComposite = DetailComposite & { workspace: DetailWorkspaceRecord; peers?: DetailSavePeers };
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const changed = () => Error('보관한 상세 구성이나 견적 저장 기준이 변경되었습니다. 미리보기와 작업 구성을 유지하고 최신 상태를 확인해주세요.');
 const endpoint = (input: DetailWorkspaceSelection) => `/api/products/${encodeURIComponent(input.productId)}/quotation-fields${input.profileId ? `?profileId=${encodeURIComponent(input.profileId)}` : ''}`;
-const options = (input: DetailWorkspaceComposite) => ({ editorPolicy: DETAIL_SAVE_EDITOR_POLICY, workspace: input.workspace });
+const options = (input: DetailWorkspaceComposite) => ({ editorPolicy: DETAIL_SAVE_EDITOR_POLICY, workspace: input.workspace, ...(input.peers ? { peers: input.peers } : {}) });
+async function verifyPeers(selection: DetailWorkspaceSelection, saved: DetailWorkspaceView, peers: DetailSavePeers, signal: AbortSignal, fetcher: typeof fetch) {
+  const proof = validateDetailSavePeers(peers, detailSaveOptionIds(selection.view));
+  if (!saved.workspace) throw changed();
+  let bytes = 1; // Source is present: brackets plus N-1 commas are N+1 bytes.
+  for (const peer of proof) {
+    const current = peer.optionId === selection.optionId ? saved : await readDetailWorkspace({ ...selection, optionId: peer.optionId }, signal, fetcher), record = current.workspace;
+    if (!same(peer.workspace, record ? { revision: record.revision, digest: record.digest } : null) || record && !same(record.company, saved.workspace.company)) throw changed();
+    if (record) {
+      bytes += new TextEncoder().encode(JSON.stringify({ option_id: peer.optionId, revision: record.revision, request_id: record.requestId,
+        payload: JSON.stringify(record), updated_at: record.updatedAt })).length + 1;
+      if (bytes > DETAIL_SAVE_PEER_SNAPSHOT_LIMIT) throw Error('모든 옵션의 상세 구성 확인 자료는2MiB 이내여야 합니다. 기존 자료는 보존했습니다.');
+    }
+  }
+  return proof;
+}
 
 /** Real current workspace pixels, read twice and rendered using the final
  * 800px full-bleed convention. Editor-only generated HTML/margins are retained. */
 export async function prepareDetailWorkspaceComposite(selection: DetailWorkspaceSelection, saved: DetailWorkspaceView,
-  signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<DetailWorkspaceComposite> {
+  signal: AbortSignal, fetcher: typeof fetch = fetch, peers?: DetailSavePeers): Promise<DetailWorkspaceComposite> {
   signal.throwIfAborted(); const before = await validateDetailWorkspaceReply(selection, saved), record = before.workspace;
   if (!record || !record.document.photos.length) throw Error('사진이 있는 상세 편집 구성을 먼저 보관해주세요.');
   if (!same(await readDetailWorkspace(selection, signal, fetcher), before)) throw changed();
+  const reviewedPeers = peers === undefined ? undefined : await verifyPeers(selection, before, peers, signal, fetcher);
   const keys = record.document.photos.map(photo => photo.key);
   const missing = [...new Set(keys.filter(key => !selection.view.imageKeys.includes(key)))];
   if (selection.view.imageKeys.length + missing.length + 1 > PRODUCT_IMAGE_POOL_LIMIT)
@@ -30,16 +46,19 @@ export async function prepareDetailWorkspaceComposite(selection: DetailWorkspace
     if (!proof || proof.sha256 !== source.sha256 || proof.width !== source.width || proof.height !== source.height) throw changed();
   }
   if (!same(await readDetailWorkspace(selection, signal, fetcher), before)) throw changed();
+  if (reviewedPeers) await verifyPeers(selection, before, reviewedPeers, signal, fetcher);
   const sha256 = await labelUploadDigest(rendered.bytes), workspace = { revision: record.revision, digest: record.digest };
   const uploadId = await labelUploadDigest(new TextEncoder().encode(JSON.stringify({ kind: 'workspace-detail-composite-v1',
     productId: selection.productId, optionId: selection.optionId, category: selection.view.categoryContext,
-    fingerprint: selection.view.inputFingerprint, workspace, sources: rendered.sources, width: 800, height: rendered.height, sha256 })));
+    fingerprint: selection.view.inputFingerprint, workspace, sources: rendered.sources, width: 800, height: rendered.height, sha256,
+    ...(reviewedPeers ? { peerDigest: await detailSavePeerDigest(reviewedPeers) } : {}) })));
   signal.throwIfAborted();
   return { ...selection, keys, sources: rendered.sources, output: rendered.output, width: 800, height: rendered.height,
-    sha256, uploadId, workspace: structuredClone(record) };
+    sha256, uploadId, workspace: structuredClone(record), ...(reviewedPeers ? { peers: reviewedPeers } : {}) };
 }
 async function verifyPrepared(input: DetailWorkspaceComposite, signal: AbortSignal, fetcher: typeof fetch) {
   const saved = await readDetailWorkspace(input, signal, fetcher);
+  if (input.peers) await verifyPeers(input, saved, input.peers, signal, fetcher);
   if (!same(saved.workspace, input.workspace) || !same(input.keys, input.workspace.document.photos.map(photo => photo.key))
     || input.sources.length !== input.keys.length || input.sources.some((source, index) => source.key !== input.keys[index])) throw changed();
   for (const source of input.sources) {

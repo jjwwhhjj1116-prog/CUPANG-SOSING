@@ -65,7 +65,7 @@ export function DetailWorkspaceImageBatchPanel(props: Props) {
     const controller = begin('prepare', token); if (!controller || !token) return;
     liveLanguage.current = sourceLanguage; setLanguage(sourceLanguage); select([]); batchEpoch.current = token; setPreparedAt(token); setMessage('보관한 본문 사진을 확인하고 있습니다…');
     try {
-      const result = await prepareDetailWorkspaceImageBatch({ selection, saved, language: sourceLanguage }, controller.signal, (value, progress) => { if (valid(controller, token)) { store(value); setMessage(progress); } });
+      const result = await prepareDetailWorkspaceImageBatch({ selection, saved, language: sourceLanguage }, controller.signal, (value, progress) => { if (mounted.current&&operation.current?.controller===controller&&(valid(controller,token)||value.items.some(item=>item.status==='uncertain'))) { store(value); setMessage(progress); } });
       if (!valid(controller, token)) return; store(result);
       setMessage(`${result.items.filter(item => item.status === 'ready').length}개 미리보기 준비 · 원본과 한국어 결과를 검토한 항목만 적용하세요.`);
     } catch (cause) { if (valid(controller, token)) setError(note(cause)); }
@@ -97,7 +97,7 @@ export function DetailWorkspaceImageBatchPanel(props: Props) {
       const next = await recoverDetailWorkspaceBatchResult(value, controller.signal);
       if (!valid(controller, token)) return; store(next); select([]);
       if (next.lastReply && next.lastReply !== value.lastReply) deliver(next);
-      setMessage('같은 작업 사진의 보관 결과를 확인했습니다. 다음 사진은 적용하지 않았습니다.');
+      setMessage('같은 작업 사진의 처리 결과를 확인했습니다. 새 추론이나 다음 사진 적용은 요청하지 않았습니다.');
     } catch (cause) { if (valid(controller, token)) setError(note(cause)); }
     finally { finish(controller); }
   }
@@ -128,7 +128,7 @@ export function DetailWorkspaceImageBatchPanel(props: Props) {
     {error && <p role="alert">{error}</p>}{message && <p role="status">{message}</p>}
     {stale && <p role="status">저장 구성 또는 단계가 변경됐습니다. 준비한 결과는 유지됩니다. 최신 구성으로 다시 준비해주세요.</p>}
     {batch && batch.items.map(item => <article key={item.photoId} className="panel-stack" aria-label={`작업 본문 사진 ${item.photoId}`}>
-      <h5>본문 사진 {item.position + 1} · {({ pending: '준비 중', ready: '검토 대기', failed: '원본 유지', applied: '적용 완료', uncertain: '저장 확인 필요' })[item.status]}</h5>
+      <h5>본문 사진 {item.position + 1} · {({ pending: '준비 중', ready: '검토 대기', failed: '원본 유지', applied: '적용 완료', uncertain: item.visionAttempt?'번역 확인 필요':'저장 확인 필요',unchanged:'외국어 없음 확인' })[item.status]}</h5>
       {/* eslint-disable-next-line @next/next/no-img-element -- Existing owned source route. */}
       <img src={imageUrl(item.sourceKey)} alt={`본문 사진 원본 ${item.position + 1}`} style={{ maxWidth: '100%', maxHeight: 360, objectFit: 'contain' }} />
       {item.rendered && <Preview output={item.rendered.output} />}

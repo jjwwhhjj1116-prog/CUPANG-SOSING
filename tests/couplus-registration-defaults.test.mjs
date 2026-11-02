@@ -39,6 +39,9 @@ for (const company of [{ companyCode: 'A01464742', companyName: '와이홉' }, {
     assert.equal(content.label.washingPrecautions.value, '세탁방법: 손세탁, 취급시 주의사항: 화기 주의');
     assert.equal(content.label.washingPrecautions.provenance, 'generated');
     assert.equal(content.label.releaseDate.value, '2026.09');
+    // Initial quotation notices use creation time; stage-six labels retain captured time.
+    const expectedNoticeDate = h.load('app/couplus-registration-defaults.ts').previousRegistrationMonth(product.created_at);
+    assert.equal(content.initialLegalNotices.fields.find(row => row.fieldId === 'noticeReleaseDate').value, expectedNoticeDate);
     const plan = h.load('app/document-image.ts').documentImagePlan('label', content, { productId: product.id });
     assert.equal(plan.rows.find(row => row[0] === '세탁방법 및 취급시 주의사항')[1], content.label.washingPrecautions.value);
     const registration = await read('registration-settings');
@@ -47,7 +50,7 @@ for (const company of [{ companyCode: 'A01464742', companyName: '와이홉' }, {
     await h.load('db/queries.ts').saveSettings('owner', JSON.stringify({ ...h.settings, washingMethod: '다른 설정', manufactureDatePreviousMonth: false, shelfLifeDays: 10, handlingReason: '해당사항없음' }));
     const path = `/api/products/${product.id}/quotation-fields`, view = await read('quotation-fields');
     for (const row of view.resolved.rows) {
-      assert.equal(row.fields.noticeReleaseDate.value, '2026.09'); assert.ok(row.fields.noticeReleaseDate.needsReview);
+      assert.equal(row.fields.noticeReleaseDate.value, expectedNoticeDate); assert.ok(row.fields.noticeReleaseDate.needsReview);
       assert.equal(row.fields.shelfLifeDays.value, '180'); assert.equal(row.fields.handlingReason.value, '유리');
     }
     const option = view.resolved.rows.find(row => row.optionId);
@@ -58,7 +61,7 @@ for (const company of [{ companyCode: 'A01464742', companyName: '와이홉' }, {
     const rows = h.load('app/exports/quotation-fields.ts').resolvedQuotationRows(source, resolved, assets);
     const edited = rows.find(row => row.skuId === source.options.rows.find(row => row.id === option.optionId).supplierSku);
     assert.equal(edited.noticeReleaseDate, ''); assert.equal(edited.shelfLifeDays, 0); assert.equal(edited.handlingReason, '해당사항없음');
-    assert.equal(rows.find(row => row !== edited).noticeReleaseDate, '2026.09');
+    assert.equal(rows.find(row => row !== edited).noticeReleaseDate, expectedNoticeDate);
     // Stage-six explicit blanks must also survive the settings defaults.
     const model = h.load('app/product-content.ts'), changed = model.applyContentPatch(content, { label: { releaseDate: '', washingPrecautions: '' }, labelClears: ['releaseDate', 'washingPrecautions'] }, '2026-11-01T00:00:00Z');
     const draft = Object.fromEntries(Object.entries(changed.label).map(([key, field]) => [key, field.value]));

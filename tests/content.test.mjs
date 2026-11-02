@@ -137,7 +137,7 @@ test('real SQLite preserves durable content and prevents stale/foreign writers f
 function routeWith({ find = async () => product, read = async () => model.emptyProductContent('test'), save = async (_owner, content) => content, head = async () => ({ httpMetadata: { contentType: 'image/jpeg' } }), mode } = {}) {
   return load('app/api/products/[id]/content/route.ts', {
     '@/db/queries': { findProduct: find },
-    '@/db/product-content': { readProductContent: read, saveProductContent: save },
+    '@/db/product-content': { readProductContent: read, saveProductContent: save, readRegistrationSummaries: async () => ({}) },
     'cloudflare:workers': { env: { FILES: { head } } },
   }, mode);
 }

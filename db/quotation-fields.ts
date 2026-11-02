@@ -117,7 +117,7 @@ type DetailSaveCommit = { backup: Omit<DetailSaveBackup, 'updatedAt'>; expectedO
   member: { email: string; role: string; companyCode: string; companyName: string };
   /** Generated only by the authenticated saved-workspace reader, never JSON input. */
   workspaceFence?: { sourcePredicate: { sql: string; args: (string | number | null)[] }; scope: string;
-    row: { revision: number; payload: string; requestId: string; updatedAt: string } } };
+    row: { revision: number; payload: string; requestId: string; updatedAt: string }; peers?: { sql: string; args: (string | number | null)[] } } };
 /** The appended PNG, all common/option edits, before-values and receipt share
  * one guarded quotation payload and one product clock in the D1 transaction. */
 export async function attachQuotationDetailSave(owner: string, productId: string, overrides: QuotationOverrides, expectedRevision: number,
@@ -129,6 +129,7 @@ export async function attachQuotationDetailSave(owner: string, productId: string
       || detail.backup.receipt.workspace.revision !== workspace.revision || detail.backup.receipt.workspace.digest !== workspace.digest
       || detail.workspaceFence.row.revision !== workspace.revision || detail.workspaceFence.row.payload !== JSON.stringify(workspace)
       || detail.workspaceFence.row.requestId !== workspace.requestId || detail.workspaceFence.row.updatedAt !== workspace.updatedAt
+      || (detail.backup.receipt.peerDigest === undefined) !== (detail.workspaceFence.peers === undefined)
       : detail.workspaceFence !== undefined || detail.backup.receipt.workspace !== undefined || imageKeys.length !== previous.length + 1 || JSON.stringify(imageKeys.slice(0, -1)) !== JSON.stringify(previous))
     || imageKeys.length > PRODUCT_IMAGE_POOL_LIMIT || new Set(imageKeys).size !== imageKeys.length
     || detail.backup.receipt.key !== imageKeys.at(-1) || detail.backup.receipt.beforeRevision !== expectedRevision
@@ -187,8 +188,8 @@ async function commitQuotationFields(owner: string, productId: string, overrides
     ? { sql: ` AND EXISTS(SELECT 1 FROM members m WHERE m.id=p.owner_id AND m.status='approved' AND lower(trim(m.email))=? AND m.role=? AND m.company_code=? AND m.company_name=?)`,
       args: [guarded.member.email.trim().toLowerCase(), guarded.member.role, guarded.member.companyCode, guarded.member.companyName] } : { sql: '', args: [] as string[] };
   const workspaceFence = detail?.workspaceFence, workspaceGuard = workspaceFence ? {
-    sql: ` AND ${workspaceFence.sourcePredicate.sql} AND EXISTS(SELECT 1 FROM product_detail_workspaces w WHERE w.owner_id=p.owner_id AND w.product_id=p.id AND w.category_scope=? AND w.option_id=? AND w.revision=? AND w.payload=? AND w.request_id=? AND w.updated_at=?)`,
-    args: [...workspaceFence.sourcePredicate.args, workspaceFence.scope, detail!.backup.receipt.sourceOptionId, workspaceFence.row.revision, workspaceFence.row.payload, workspaceFence.row.requestId, workspaceFence.row.updatedAt],
+    sql: ` AND ${workspaceFence.sourcePredicate.sql} AND EXISTS(SELECT 1 FROM product_detail_workspaces w WHERE w.owner_id=p.owner_id AND w.product_id=p.id AND w.category_scope=? AND w.option_id=? AND w.revision=? AND w.payload=? AND w.request_id=? AND w.updated_at=?)${workspaceFence.peers ? ` AND ${workspaceFence.peers.sql}` : ''}`,
+    args: [...workspaceFence.sourcePredicate.args, workspaceFence.scope, detail!.backup.receipt.sourceOptionId, workspaceFence.row.revision, workspaceFence.row.payload, workspaceFence.row.requestId, workspaceFence.row.updatedAt,...(workspaceFence.peers?.args ?? [])],
   } : { sql: '', args: [] };
   const result = await db.batch<Row>([
     db.prepare(`INSERT INTO product_quotation_fields(product_id,owner_id,revision,payload,updated_at)
