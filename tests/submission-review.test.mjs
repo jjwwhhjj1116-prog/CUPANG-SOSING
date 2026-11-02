@@ -182,8 +182,11 @@ function renderPanel(products,results=[]) {
   let index=0;const states=['',0,{key:JSON.stringify([JSON.stringify(products.map(product=>product.id)),JSON.stringify(products.map(product=>[product.id,product.updated_at])),'','[]',0]),results,finished:true}];
   const {SubmissionReviewPanel}=load('app/components/submission-review-panel.tsx',{
     '@/app/components/submission-package':{SubmissionPackage:()=>null},
+    // This fixture exercises the parent's review state and markup. Native
+    // submission and its transport guards have their own component fixtures.
+    '@/app/components/supplier-hub-product-submission':{SupplierHubProductSubmission:()=>null},
     '@/app/components/quotation-review-issues':load('app/components/quotation-review-issues.tsx',{react:nativeRequire('react')}),
-    react:{useState:()=>[states[index++],()=>{}],useEffect:()=>{},useMemo:fn=>fn(),useRef:initial=>({current:initial}),useLayoutEffect:fn=>fn()},
+    react:{useState:initial=>[index<states.length?states[index++]:initial,()=>{}],useEffect:()=>{},useMemo:fn=>fn(),useRef:initial=>({current:initial}),useLayoutEffect:fn=>fn()},
   });
   return renderToStaticMarkup(createElement(SubmissionReviewPanel,{products,profiles:[],onEdit:()=>{}}));
 }
@@ -195,6 +198,7 @@ test('review panel keeps successful but wrong-product responses out of its repor
   const report={...inspectSubmission(resolved(),[]),productId:valid?'p':'other',requestedProfileId:null,title:'상품',sourceUrl:'https://example.com/item',checkedAt:'2026-09-25T00:00:00.000Z',fingerprint:'a'.repeat(64)};
   const {SubmissionReviewPanel}=load('app/components/submission-review-panel.tsx',{
    '@/app/components/submission-package':{SubmissionPackage:()=>null},
+   '@/app/components/supplier-hub-product-submission':{SupplierHubProductSubmission:()=>null},
    react:hooks,fetch:async()=>Response.json(report),
    '@/app/components/quotation-review-issues':{QuotationReviewIssues:()=>null},
   });

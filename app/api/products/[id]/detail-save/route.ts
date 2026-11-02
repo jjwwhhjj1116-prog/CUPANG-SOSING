@@ -5,7 +5,7 @@ import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
 import { stableQuotationFieldsView, QuotationFieldsSnapshotError } from '@/app/quotation-fields-snapshot';
 import { attachQuotationDetailSave, detailSaveHistoryScope, readQuotationFields, QuotationDetailSaveLimitError } from '@/db/quotation-fields';
 import { applyQuotationChanges } from '@/app/quotation-schema';
-import { DETAIL_SAVE_TEXT_POLICY, DETAIL_SAVE_EDITOR_POLICY, detailSaveCommonAltText, detailSaveChanges, detailSaveManualBackup, detailSaveOptionIds, detailSaveReceiptMatches, type DetailSaveReceipt, type DetailSaveSource, type DetailSaveBackup } from '@/app/detail-save-plan';
+import { DETAIL_SAVE_TEXT_POLICY, DETAIL_SAVE_EDITOR_POLICY, DETAIL_SAVE_PUBLICATION_POLICY, detailSavePublishedBodyImages, detailSavePeerDigest, validateDetailSavePeers, detailSaveCommonAltText, detailSaveChanges, detailSaveManualBackup, detailSaveOptionIds, detailSaveReceiptMatches, type DetailSaveReceipt, type DetailSaveSource, type DetailSaveBackup } from '@/app/detail-save-plan';
 import { createDetailSaveEditorSnapshot, detailSaveEditorSha256, detailSaveEditorBackup, savedDetailEditorComposition, DetailEditorCompositionError, type DetailCompositionReply } from '@/app/detail-editor-composition';
 import type { QuotationFieldsState } from '@/db/quotation-fields';
 import { optionImageTargets, quotationImageKeys } from '@/app/quotation-image-targets';
@@ -15,7 +15,7 @@ import { imageDisplayDimensions } from '@/app/image-dimensions';
 import { inspectImage } from '@/app/automation/image-edit';
 import { readBoundedJson, readBoundedStream, RequestBodyError } from '@/app/request-body';
 import { PublicDetailError } from '@/app/quotation-public-detail';
-import { readDetailWorkspaceImageSeal, confirmDetailWorkspaceImageSeal, detailWorkspacePeersGuard } from '@/db/detail-workspaces';
+import { readDetailWorkspaceImageSeal, confirmDetailWorkspaceImageSeal, detailWorkspacePeersGuard,prepareDetailWorkspacePeerPublication,storeDetailWorkspacePublishedImages,verifyDetailWorkspacePublishedImages } from '@/db/detail-workspaces';
 import { splitSnapshotPredicate } from '@/db/product-option-splits';
 import { DetailWorkspaceError, detailWorkspaceDigest, validateDetailWorkspaceRecord } from '@/app/detail-workspace';
 
@@ -93,7 +93,14 @@ async function workspaceBackup(auth: Auth, profileId: string | null, backup: Det
     const file = files.get(photo.key); if (!file) throw conflict(); return { key: photo.key, sha256: file.sha256, width: file.width, height: file.height };
   });
   if (JSON.stringify(sources) !== JSON.stringify(backup.sources)) throw conflict();
-  if (backup.receipt.peerDigest) await detailWorkspacePeersGuard(seal, backup.receipt.peerDigest, signal);
+  if(backup.receipt.publicationPolicy){
+    if(backup.receipt.publicationPolicy!==DETAIL_SAVE_PUBLICATION_POLICY||!backup.peerPublication||!backup.receipt.peerAfterDigest
+      ||await detailSavePeerDigest(validateDetailSavePeers(backup.peerPublication.before,backup.receipt.optionIds))!==backup.receipt.peerDigest
+      ||await detailSavePeerDigest(validateDetailSavePeers(backup.peerPublication.after,backup.receipt.optionIds))!==backup.receipt.peerAfterDigest
+      ||JSON.stringify(detailSavePublishedBodyImages(workspace,auth.owner))!==JSON.stringify(backup.receipt.publishedBodyImages))throw conflict();
+    await verifyDetailWorkspacePublishedImages(auth.owner,backup.receipt.publishedBodyImages!,signal);
+  }else if(backup.peerPublication||backup.receipt.publishedBodyImages||backup.receipt.peerAfterDigest)throw conflict();
+  if (backup.receipt.peerDigest) await detailWorkspacePeersGuard(seal, backup.receipt.peerAfterDigest??backup.receipt.peerDigest, signal);
   return seal;
 }
 async function compositionGet(request: Request, context: Context) {
@@ -143,7 +150,7 @@ export async function GET(request: Request, context: Context) {
     if (JSON.stringify(confirmed.view) !== JSON.stringify(saved.view)) throw conflict();
     if (editor && (beforePayload !== await quotationPayload(owner, id, await readQuotationFields(owner, id))
       || JSON.stringify((await identity(context)).member) !== JSON.stringify(member))) throw conflict();
-    if (workspace) { await confirmDetailWorkspaceImageSeal(workspace, request.signal); if (backup.receipt.peerDigest) await detailWorkspacePeersGuard(workspace, backup.receipt.peerDigest, request.signal); }
+    if (workspace) { await confirmDetailWorkspaceImageSeal(workspace, request.signal); if (backup.receipt.peerDigest) await detailWorkspacePeersGuard(workspace, backup.receipt.peerAfterDigest??backup.receipt.peerDigest, request.signal); }
     return json({ applied: true, quotation: confirmed.view, receipt: backup.receipt, ...(editor ? { editor } : {}), ...(workspace ? { workspace: workspace.workspace } : {}) });
   } catch (error) { return failure(error); }
 }
@@ -153,12 +160,13 @@ export async function POST(request: Request, context: Context) {
     if (origin && origin !== new URL(request.url).origin || request.headers.get('sec-fetch-site') === 'cross-site') throw new QuotationFieldsSnapshotError('같은 사이트에서 상세 이미지를 저장해주세요.', 400);
     const { profileId } = selection(request, false), { owner, id, member, company } = await identity(context);
     const body = await readBoundedJson(request, 8192) as Record<string, unknown>;
-    if (!body || typeof body !== 'object' || Array.isArray(body) || ![6, 7, 8, 9, 10].includes(Object.keys(body).length)
-      || Object.keys(body).some(key => !['expectedRevision', 'expectedInputFingerprint', 'sourceOptionId', 'uploadId', 'sha256', 'bytes', 'textPolicy', 'editorPolicy', 'workspace', 'peerDigest'].includes(key))
+    if (!body || typeof body !== 'object' || Array.isArray(body) || ![6, 7, 8, 9, 10,11].includes(Object.keys(body).length)
+      || Object.keys(body).some(key => !['expectedRevision', 'expectedInputFingerprint', 'sourceOptionId', 'uploadId', 'sha256', 'bytes', 'textPolicy', 'editorPolicy', 'workspace', 'peerDigest','publicationPolicy'].includes(key))
       || Object.hasOwn(body, 'textPolicy') && body.textPolicy !== DETAIL_SAVE_TEXT_POLICY
       || Object.hasOwn(body, 'editorPolicy') && body.editorPolicy !== DETAIL_SAVE_EDITOR_POLICY
       || Object.hasOwn(body, 'workspace') && (!workspaceProof(body.workspace) || body.textPolicy !== DETAIL_SAVE_TEXT_POLICY || body.editorPolicy !== DETAIL_SAVE_EDITOR_POLICY)
       || Object.hasOwn(body, 'peerDigest') && (!body.workspace || typeof body.peerDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(body.peerDigest))
+      ||Object.hasOwn(body,'publicationPolicy')&&(body.publicationPolicy!==DETAIL_SAVE_PUBLICATION_POLICY||!body.workspace||!body.peerDigest)
       || !Number.isSafeInteger(body.expectedRevision) || (body.expectedRevision as number) < 0
       || typeof body.expectedInputFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(body.expectedInputFingerprint)
       || typeof body.sourceOptionId !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(body.sourceOptionId)
@@ -173,7 +181,7 @@ export async function POST(request: Request, context: Context) {
     if (existing) {
       const receipt = existing.receipt;
       if (receipt.textPolicy !== body.textPolicy || receipt.editorPolicy !== body.editorPolicy || existing.beforeInputFingerprint !== body.expectedInputFingerprint || receipt.beforeRevision !== body.expectedRevision
-        || receipt.sourceOptionId !== body.sourceOptionId || receipt.sha256 !== body.sha256 || receipt.bytes !== body.bytes || receipt.peerDigest !== body.peerDigest
+        || receipt.sourceOptionId !== body.sourceOptionId || receipt.sha256 !== body.sha256 || receipt.bytes !== body.bytes || receipt.peerDigest !== body.peerDigest||receipt.publicationPolicy!==body.publicationPolicy
         || (receipt.workspace === undefined ? body.workspace !== undefined : !workspaceProof(body.workspace)
           || receipt.workspace.revision !== body.workspace.revision || receipt.workspace.digest !== body.workspace.digest)
         || !detailSaveReceiptMatches(view, receipt)) throw conflict();
@@ -185,7 +193,7 @@ export async function POST(request: Request, context: Context) {
       if (JSON.stringify(quotation) !== JSON.stringify(view)) throw conflict();
       if (editor && (beforePayload !== await quotationPayload(owner, id, await readQuotationFields(owner, id))
         || JSON.stringify((await identity(context)).member) !== JSON.stringify(member))) throw conflict();
-      if (workspace) { await confirmDetailWorkspaceImageSeal(workspace, request.signal); if (receipt.peerDigest) await detailWorkspacePeersGuard(workspace, receipt.peerDigest, request.signal); }
+      if (workspace) { await confirmDetailWorkspaceImageSeal(workspace, request.signal); if (receipt.peerDigest) await detailWorkspacePeersGuard(workspace, receipt.peerAfterDigest??receipt.peerDigest, request.signal); }
       return json({ quotation, receipt, ...(editor ? { editor } : {}), ...(workspace ? { workspace: workspace.workspace } : {}) });
     }
     if (Object.values(previous.detailSaveBackups ?? {}).some(entries => entries.some(entry => entry.receipt.uploadId === body.uploadId))) throw conflict();
@@ -197,6 +205,7 @@ export async function POST(request: Request, context: Context) {
     if (workspace && (JSON.stringify(workspace.before.view) !== JSON.stringify(view) || workspace.workspace.revision !== (body.workspace as { revision: number }).revision
       || workspace.workspace.digest !== (body.workspace as { digest: string }).digest)) throw conflict();
     const peers = workspace && typeof body.peerDigest === 'string' ? await detailWorkspacePeersGuard(workspace, body.peerDigest, request.signal) : undefined;
+    const publication=workspace&&body.publicationPolicy===DETAIL_SAVE_PUBLICATION_POLICY?await prepareDetailWorkspacePeerPublication(workspace,body.peerDigest as string,request.signal):undefined;
     if (view.imageKeys.includes(key)) throw new QuotationFieldsSnapshotError('새 상세 PNG의 저장 번호를 확인해주세요.', 409);
     const editor = body.editorPolicy === DETAIL_SAVE_EDITOR_POLICY ? createDetailSaveEditorSnapshot(view, body.sourceOptionId, company) : undefined;
     const receipt: DetailSaveReceipt = { uploadId: body.uploadId, key, sha256: body.sha256, bytes: body.bytes as number,
@@ -204,13 +213,14 @@ export async function POST(request: Request, context: Context) {
       ...(body.textPolicy === DETAIL_SAVE_TEXT_POLICY ? { textPolicy: DETAIL_SAVE_TEXT_POLICY, textCommonFilled: !detailSaveCommonAltText(view) } : {}),
       ...(workspace ? { workspace: { revision: workspace.workspace.revision, digest: workspace.workspace.digest } } : {}),
       ...(peers ? { peerDigest: body.peerDigest as string } : {}),
+      ...(publication?{publicationPolicy:DETAIL_SAVE_PUBLICATION_POLICY,publishedBodyImages:publication.images,peerAfterDigest:await detailSavePeerDigest(publication.after)}:{}),
       ...(editor ? { editorPolicy: DETAIL_SAVE_EDITOR_POLICY, editorSha256: await detailSaveEditorSha256(editor) } : {}) };
     const output = await uploadedPng(owner, receipt), target = optionImageTargets(view.resolved.schema.fields).detailImages;
     const row = view.resolved.rows.find(row => row.optionId === body.sourceOptionId), value = row?.fields[target.primary]?.value;
     if (target.fields.some(field => field.readOnly) || !workspace && (typeof value !== 'string' || target.linked.some(field => row?.fields[field]?.value !== value))) throw conflict();
     const keys = workspace ? workspace.workspace.document.photos.map(photo => photo.key) : quotationImageKeys(value as string);
     if (!keys.length || keys.length > PRODUCT_IMAGE_POOL_LIMIT || !workspace && keys.some(key => !view.imageKeys.includes(key))) throw conflict();
-    const imageKeys = [...new Set([...view.imageKeys, ...keys, key])];
+    const imageKeys = [...new Set([...view.imageKeys, ...keys,...(publication?.images.map(image=>image.key)??[]), key])];
     if (imageKeys.length > PRODUCT_IMAGE_POOL_LIMIT) throw new QuotationFieldsSnapshotError('검토한 원본과 새 상세 PNG를 보존할 이미지 공간을 확인해주세요.', 409);
     const sources: DetailSaveSource[] = []; let totalBytes = 0, height = 0;
     for (const sourceKey of keys) {
@@ -225,18 +235,19 @@ export async function POST(request: Request, context: Context) {
     }
     if (height !== output.height || await labelUploadDigest(new TextEncoder().encode(JSON.stringify({ kind: workspace ? 'workspace-detail-composite-v1' : 'detail-composite-v1', productId: id,
       optionId: body.sourceOptionId, category: view.categoryContext, fingerprint: view.inputFingerprint, ...(workspace ? { workspace: receipt.workspace } : {}), sources, width: 800, height, sha256: body.sha256,
-      ...(peers ? { peerDigest: receipt.peerDigest } : {}) }))) !== body.uploadId) throw conflict();
+      ...(peers ? { peerDigest: receipt.peerDigest } : {}),...(publication?{publicationPolicy:DETAIL_SAVE_PUBLICATION_POLICY,publishedBodyImages:publication.images}:{}) }))) !== body.uploadId) throw conflict();
     let changes;
     try { changes = detailSaveChanges(view, key, receipt.textPolicy, receipt.textCommonFilled); }
     catch (error) { throw new QuotationFieldsSnapshotError(error instanceof Error ? error.message : '상세 저장 항목을 확인해주세요.', 400); }
     const overrides = applyQuotationChanges(view.overrides, changes);
     request.signal.throwIfAborted();
     if (workspace) await confirmDetailWorkspaceImageSeal(workspace, request.signal);
+    if(publication&&workspace)await storeDetailWorkspacePublishedImages(workspace,publication.images,request.signal);
     const stored = await attachQuotationDetailSave(owner, id, overrides, view.revision, saved.source, view.categoryContext.categoryId, imageKeys, {
       expectedOverrides: view.overrides, member,
       ...(workspace ? { workspaceFence: { sourcePredicate: splitSnapshotPredicate(owner, id, view.categoryContext.profileId, workspace.before.saved.payload), scope: workspace.before.scope,
-        row: { revision: workspace.before.previous!.revision, payload: workspace.before.previous!.payload, requestId: workspace.before.previous!.request_id, updatedAt: workspace.before.previous!.updated_at }, ...(peers ? { peers } : {}) } } : {}),
-      backup: { receipt, before: detailSaveManualBackup(view, changes), sources, beforeProductVersion: view.productVersion, beforeInputFingerprint: view.inputFingerprint, ...(editor ? { editor } : {}), ...(workspace ? { workspace: workspace.workspace } : {}) },
+        row: { revision: workspace.before.previous!.revision, payload: workspace.before.previous!.payload, requestId: workspace.before.previous!.request_id, updatedAt: workspace.before.previous!.updated_at }, ...(peers ? { peers } : {}),...(publication?{publication}:{}) } } : {}),
+      backup: { receipt, before: detailSaveManualBackup(view, changes), sources, beforeProductVersion: view.productVersion, beforeInputFingerprint: view.inputFingerprint, ...(editor ? { editor } : {}), ...(workspace ? { workspace: workspace.workspace } : {}),...(publication?{peerPublication:{before:publication.before,after:publication.after}}:{}) },
     });
     if (!stored) throw conflict();
     try {

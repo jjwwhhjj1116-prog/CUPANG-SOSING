@@ -12,7 +12,7 @@ import { applyDetailWorkspaceImage, readDetailWorkspaceImage, recoverDetailWorks
 import { prepareDetailWorkspaceComposite, applyDetailWorkspaceComposite, recoverDetailWorkspaceComposite,
   type DetailWorkspaceComposite } from '@/app/detail-workspace-composite-client';
 import type { DetailSaveAttempt } from '@/app/detail-save-client';
-import type { DetailSavePeers } from '@/app/detail-save-plan';
+import { DETAIL_SAVE_PUBLICATION_POLICY, type DetailSavePeers } from '@/app/detail-save-plan';
 import { FreeImageApplyError, recognizeFreeImage, renderFreeImageTranslation, readFreeImageVisionStatus,
   type FreeImageLoaded, type FreeImageRendered, type FreeImageVisionStatus, type FreeImageRegion } from '@/app/free-image-translation-client';
 import { FreeImageVisionError, type FreeImageVisionAttempt } from '@/app/free-image-vision-error';
@@ -266,7 +266,7 @@ export async function processSelectedDetailWork(productId: string, options: Opti
     await exact();
     const peers: DetailSavePeers = state.peers!.map(peer => ({ optionId: peer.selection.optionId,
       workspace: peer.saved.workspace ? { revision: peer.saved.workspace.revision, digest: peer.saved.workspace.digest } : null }));
-    const input = await (deps.prepareComposite ?? prepareDetailWorkspaceComposite)(current.selection,current.saved,signal,fetcher,peers); await exact();
+    const input = await (deps.prepareComposite ?? prepareDetailWorkspaceComposite)(current.selection,current.saved,signal,fetcher,peers,DETAIL_SAVE_PUBLICATION_POLICY); await exact();
     state.composite = { input, attempt: {} };
     const next = await (deps.applyComposite ?? applyDetailWorkspaceComposite)(input,state.composite.attempt,signal,fetcher); await guard();
     state.view = next; delete state.composite;

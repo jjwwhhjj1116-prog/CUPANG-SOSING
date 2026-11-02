@@ -2,16 +2,16 @@ import { renderDetailImageSequence, type DetailComposite } from '@/app/detail-im
 import { readDetailWorkspace, validateDetailWorkspaceReply, type DetailWorkspaceSelection } from '@/app/detail-workspace-client';
 import type { DetailWorkspaceRecord, DetailWorkspaceView } from '@/app/detail-workspace';
 import { applyDetailSave, recoverDetailSave, type DetailSaveAttempt } from '@/app/detail-save-client';
-import { DETAIL_SAVE_EDITOR_POLICY, DETAIL_SAVE_PEER_SNAPSHOT_LIMIT, detailSaveOptionIds, validateDetailSavePeers, detailSavePeerDigest, type DetailSavePeers } from '@/app/detail-save-plan';
+import { DETAIL_SAVE_EDITOR_POLICY, DETAIL_SAVE_PUBLICATION_POLICY, detailSavePublishedBodyImages, DETAIL_SAVE_PEER_SNAPSHOT_LIMIT, detailSaveOptionIds, validateDetailSavePeers, detailSavePeerDigest, type DetailSavePeers } from '@/app/detail-save-plan';
 import { labelUploadDigest } from '@/app/label-upload-key';
 import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 
-export type DetailWorkspaceComposite = DetailComposite & { workspace: DetailWorkspaceRecord; peers?: DetailSavePeers };
+export type DetailWorkspaceComposite = DetailComposite & { workspace: DetailWorkspaceRecord; peers?: DetailSavePeers;publicationPolicy?:typeof DETAIL_SAVE_PUBLICATION_POLICY };
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const changed = () => Error('보관한 상세 구성이나 견적 저장 기준이 변경되었습니다. 미리보기와 작업 구성을 유지하고 최신 상태를 확인해주세요.');
 const endpoint = (input: DetailWorkspaceSelection) => `/api/products/${encodeURIComponent(input.productId)}/quotation-fields${input.profileId ? `?profileId=${encodeURIComponent(input.profileId)}` : ''}`;
-const options = (input: DetailWorkspaceComposite) => ({ editorPolicy: DETAIL_SAVE_EDITOR_POLICY, workspace: input.workspace, ...(input.peers ? { peers: input.peers } : {}) });
+const options = (input: DetailWorkspaceComposite) => ({ editorPolicy: DETAIL_SAVE_EDITOR_POLICY, workspace: input.workspace, ...(input.peers ? { peers: input.peers } : {}),...(input.publicationPolicy?{publicationPolicy:input.publicationPolicy}:{}) });
 async function verifyPeers(selection: DetailWorkspaceSelection, saved: DetailWorkspaceView, peers: DetailSavePeers, signal: AbortSignal, fetcher: typeof fetch) {
   const proof = validateDetailSavePeers(peers, detailSaveOptionIds(selection.view));
   if (!saved.workspace) throw changed();
@@ -31,13 +31,15 @@ async function verifyPeers(selection: DetailWorkspaceSelection, saved: DetailWor
 /** Real current workspace pixels, read twice and rendered using the final
  * 800px full-bleed convention. Editor-only generated HTML/margins are retained. */
 export async function prepareDetailWorkspaceComposite(selection: DetailWorkspaceSelection, saved: DetailWorkspaceView,
-  signal: AbortSignal, fetcher: typeof fetch = fetch, peers?: DetailSavePeers): Promise<DetailWorkspaceComposite> {
+  signal: AbortSignal, fetcher: typeof fetch = fetch, peers?: DetailSavePeers,publicationPolicy?:typeof DETAIL_SAVE_PUBLICATION_POLICY): Promise<DetailWorkspaceComposite> {
+  if(publicationPolicy!==undefined&&(publicationPolicy!==DETAIL_SAVE_PUBLICATION_POLICY||peers===undefined))throw changed();
   signal.throwIfAborted(); const before = await validateDetailWorkspaceReply(selection, saved), record = before.workspace;
   if (!record || !record.document.photos.length) throw Error('사진이 있는 상세 편집 구성을 먼저 보관해주세요.');
   if (!same(await readDetailWorkspace(selection, signal, fetcher), before)) throw changed();
   const reviewedPeers = peers === undefined ? undefined : await verifyPeers(selection, before, peers, signal, fetcher);
   const keys = record.document.photos.map(photo => photo.key);
-  const missing = [...new Set(keys.filter(key => !selection.view.imageKeys.includes(key)))];
+  const published = publicationPolicy ? detailSavePublishedBodyImages(record, selection.view.imageKeys[0].split('/')[0]).map(image => image.key) : [];
+  const missing = [...new Set([...keys, ...published].filter(key => !selection.view.imageKeys.includes(key)))];
   if (selection.view.imageKeys.length + missing.length + 1 > PRODUCT_IMAGE_POOL_LIMIT)
     throw Error('현재 사진과 최종 이미지를 함께 보존할 상품 이미지 공간이 부족합니다. 기존 파일은 유지됩니다.');
   const rendered = await renderDetailImageSequence(selection, keys, signal, fetcher, 'png', true);
@@ -51,10 +53,10 @@ export async function prepareDetailWorkspaceComposite(selection: DetailWorkspace
   const uploadId = await labelUploadDigest(new TextEncoder().encode(JSON.stringify({ kind: 'workspace-detail-composite-v1',
     productId: selection.productId, optionId: selection.optionId, category: selection.view.categoryContext,
     fingerprint: selection.view.inputFingerprint, workspace, sources: rendered.sources, width: 800, height: rendered.height, sha256,
-    ...(reviewedPeers ? { peerDigest: await detailSavePeerDigest(reviewedPeers) } : {}) })));
+    ...(reviewedPeers ? { peerDigest: await detailSavePeerDigest(reviewedPeers) } : {}),...(publicationPolicy?{publicationPolicy,publishedBodyImages:detailSavePublishedBodyImages(record,selection.view.imageKeys[0].split('/')[0])}:{}) })));
   signal.throwIfAborted();
   return { ...selection, keys, sources: rendered.sources, output: rendered.output, width: 800, height: rendered.height,
-    sha256, uploadId, workspace: structuredClone(record), ...(reviewedPeers ? { peers: reviewedPeers } : {}) };
+    sha256, uploadId, workspace: structuredClone(record), ...(reviewedPeers ? { peers: reviewedPeers } : {}),...(publicationPolicy?{publicationPolicy}:{}) };
 }
 async function verifyPrepared(input: DetailWorkspaceComposite, signal: AbortSignal, fetcher: typeof fetch) {
   const saved = await readDetailWorkspace(input, signal, fetcher);

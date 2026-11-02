@@ -447,13 +447,19 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     const packaging=await once('packaging:'+view.inputFingerprint,()=>runSelectedPackagingWork(productId,{view,signal,fetcher,assertCurrent}),true);
     view=packaging.view;
     const missing=view.resolved.rows.filter(row=>row.included).flatMap(row=>view.resolved.schema.fields.filter(field=>field.required
-      &&(!row.fields[field.id]?.value.trim()&&!hasSelectedEmptyQuotationChoice(field,row.fields[field.id])||row.fields[field.id]?.validationIssues?.length)).map(field=>field.label));
-    const incomplete=missing.length>0||packaging.status==='incomplete'||packaging.remaining>0;
+      &&(!row.fields[field.id]?.value.trim()&&!hasSelectedEmptyQuotationChoice(field,row.fields[field.id])||(row.fields[field.id]?.validationIssues??row.fields[field.id]?.issues??[]).length)).map(field=>field.label));
+    const invalid=view.resolved.rows.filter(row=>row.included).flatMap(row=>view.resolved.schema.fields.filter(field=>!field.required
+      &&(row.fields[field.id]?.validationIssues??row.fields[field.id]?.issues??[]).length).map(field=>field.label));
+    const constraints=view.resolved.validationIssues??view.resolved.issues??[];
+    const checks=[missing.length?'필수 입력 확인: '+[...new Set(missing)].slice(0,8).join(', ')+'.':'',
+      invalid.length?'입력값 확인: '+[...new Set(invalid)].slice(0,8).join(', ')+'.':'',
+      constraints.length?'견적 조건 확인: '+[...new Set(constraints)].slice(0,8).join(', ')+'.':''].filter(Boolean).join(' ');
+    const incomplete=!!checks||packaging.status==='incomplete'||packaging.remaining>0;
     const knownMessage=knownChanges.length?'저장된 표시·옵션 정보 '+knownChanges.length+'개를 적용했습니다. ':'저장된 표시·옵션 정보는 기존 값을 유지했습니다. ';
     const message=(failed?'견적서 AI 실패: '+job!.error!.message+' '+knownMessage
       :aiConfigured?'견적서 AI 항목 '+aiCount+'개'+(knownChanges.length?' · 저장된 표시·옵션 정보 '+knownChanges.length+'개':'')+'를 저장했습니다. '
       :'견적서 AI가 설정되지 않아 AI 작성은 실행하지 않았습니다. '+knownMessage)+packaging.message;
-    return{status:!aiConfigured||failed||incomplete?'blocked':'draft',message:message+(missing.length?' 필수 입력 확인: '+[...new Set(missing)].slice(0,8).join(', ')+'.':incomplete?' 남은 포장값은 7단계에서 확인해주세요.':!aiConfigured||failed?' AI 설정·실행 이력과 견적 내용을 확인해주세요.':' 견적서에서 최종 검토 후 등록전송할 수 있습니다.')};
+    return{status:!aiConfigured||failed||incomplete?'blocked':'draft',message:message+(checks?' '+checks:incomplete?' 남은 포장값은 7단계에서 확인해주세요.':!aiConfigured||failed?' AI 설정·실행 이력과 견적 내용을 확인해주세요.':' 견적서에서 최종 검토 후 등록전송할 수 있습니다.')};
   }
   const result:SelectedBatchStageResult[]=automationStages.filter(id=>controls.stages.includes(id)).map(id=>({id,status:'waiting',message:'실행 대기'}));
   const publish=(index:number,outcome:Outcome)=>{result[index]={id:result[index].id,status:outcome.status,message:outcome.message,...(boardObservation.current?{boardSource:{...boardObservation.current}}:{})};controls.onStage({...result[index]});};

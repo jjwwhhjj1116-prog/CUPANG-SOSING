@@ -1,7 +1,7 @@
 import { applyQuotationChanges, validateQuotationChanges, type QuotationChange, type QuotationFieldsView } from '@/app/quotation-schema';
 import { optionImageTargets } from '@/app/quotation-image-targets';
 import { OPTION_LIMIT } from '@/app/product-options';
-import { MAX_IMAGE_BYTES } from '@/app/image-files';
+import { MAX_IMAGE_BYTES, isOwnedImageKey, PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-files';
 import { exactPrimaryQuotationTarget } from '@/app/quotation-seo-targets';
 import type { DetailSaveEditorSnapshot } from '@/app/detail-editor-composition';
 import type { DetailWorkspaceRecord } from '@/app/detail-workspace';
@@ -10,6 +10,15 @@ import { labelUploadDigest } from '@/app/label-upload-key';
 export const DETAIL_SAVE_TEXT_POLICY = 'couplus-detail-alt-v1' as const;
 export type DetailSaveTextPolicy = typeof DETAIL_SAVE_TEXT_POLICY;
 export const DETAIL_SAVE_EDITOR_POLICY = 'ordered-inputs-html-v1' as const;
+export const DETAIL_SAVE_PUBLICATION_POLICY = 'shared-body-pixels-v1' as const;
+export type DetailSavePublishedBodyImage={sourceKey:string;key:string;sha256:string;width:number;height:number};
+export function detailSavePublishedBodyImages(workspace:DetailWorkspaceRecord,owner:string):DetailSavePublishedBodyImage[]{
+  const seen=new Set<string>();return workspace.document.photos.flatMap(photo=>{
+    if(photo.role!=='body'||seen.has(photo.key))return[];seen.add(photo.key);const file=workspace.files.find(file=>file.key===photo.key);
+    if(!file||!isOwnedImageKey(owner,photo.key))throw Error('발행할 본문 사진의 원본 증거를 확인해주세요.');
+    return[{sourceKey:photo.key,key:photo.key.startsWith(`${owner}/free-image-`)?`${owner}/published-detail-${file.sha256}.png`:photo.key,sha256:file.sha256,width:file.width,height:file.height}];
+  });
+}
 export type DetailSaveEditorPolicy = typeof DETAIL_SAVE_EDITOR_POLICY;
 export type DetailSaveWorkspaceProof = { revision: number; digest: string };
 /** Keep the all-option raw-row predicate within the existing 2MiB snapshot bound. */
@@ -36,6 +45,7 @@ export type DetailSaveReceipt = {
   editorPolicy?: DetailSaveEditorPolicy; editorSha256?: string;
   workspace?: DetailSaveWorkspaceProof;
   peerDigest?: string;
+  publicationPolicy?:typeof DETAIL_SAVE_PUBLICATION_POLICY;publishedBodyImages?:DetailSavePublishedBodyImage[];peerAfterDigest?:string;
 };
 export type DetailSaveSource = { key: string; sha256: string; width: number; height: number };
 export type DetailSaveBackup = {
@@ -43,6 +53,7 @@ export type DetailSaveBackup = {
   beforeProductVersion: string; beforeInputFingerprint: string; updatedAt: string;
   editor?: DetailSaveEditorSnapshot;
   workspace?: DetailWorkspaceRecord;
+  peerPublication?:{before:DetailSavePeers;after:DetailSavePeers};
 };
 
 export function detailSaveOptionIds(view: QuotationFieldsView): string[] {
@@ -112,6 +123,14 @@ export function detailSaveReceiptMatches(view: QuotationFieldsView, receipt: Det
       || typeof receipt.workspace.digest !== 'string' || !/^[a-f0-9]{64}$/.test(receipt.workspace.digest)
       || receipt.textPolicy !== DETAIL_SAVE_TEXT_POLICY || receipt.editorPolicy !== DETAIL_SAVE_EDITOR_POLICY)) return false;
     if (receipt.peerDigest !== undefined && (!receipt.workspace || typeof receipt.peerDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(receipt.peerDigest))) return false;
+    if(receipt.publicationPolicy!==undefined||receipt.publishedBodyImages!==undefined||receipt.peerAfterDigest!==undefined){
+      const images=receipt.publishedBodyImages,owner=receipt.key.split('/')[0];
+      if(receipt.publicationPolicy!==DETAIL_SAVE_PUBLICATION_POLICY||!receipt.workspace||!receipt.peerDigest||typeof receipt.peerAfterDigest!=='string'||!/^[a-f0-9]{64}$/u.test(receipt.peerAfterDigest)
+        ||!Array.isArray(images)||!images.length||images.length>PRODUCT_IMAGE_POOL_LIMIT||new Set(images.map(image=>image.sourceKey)).size!==images.length
+        ||images.some(image=>!image||Object.keys(image).sort().join(',')!=='height,key,sha256,sourceKey,width'||!isOwnedImageKey(owner,image.sourceKey)||!isOwnedImageKey(owner,image.key)||!/^[a-f0-9]{64}$/u.test(image.sha256)
+          ||!Number.isSafeInteger(image.width)||!Number.isSafeInteger(image.height)||image.width<1||image.height<1||!view.imageKeys.includes(image.key)
+          ||image.key!==(image.sourceKey.startsWith(`${owner}/free-image-`)?`${owner}/published-detail-${image.sha256}.png`:image.sourceKey)))return false;
+    }
     const changes = detailSaveChanges(view, receipt.key, receipt.textPolicy, receipt.textCommonFilled), expected = applyQuotationChanges(view.overrides, changes);
     if (JSON.stringify(expected) !== JSON.stringify(view.overrides)) return false;
     return view.resolved.rows.every(row => changes.filter(change => change.optionId === row.optionId

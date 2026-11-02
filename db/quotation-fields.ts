@@ -8,6 +8,7 @@ import type { DetailSaveBackup } from '@/app/detail-save-plan';
 import type { DetailEditorInputs } from '@/app/detail-editor-inputs';
 import type { StageTwoMsrp } from '@/app/stage-two-msrp';
 import type { StageTwoPricingReview } from '@/app/stage-two-pricing-review';
+import type {DetailWorkspacePeerPublication} from '@/db/detail-workspaces';
 
 export const quotationFieldsSchema = `CREATE TABLE IF NOT EXISTS product_quotation_fields (
   product_id TEXT PRIMARY KEY REFERENCES products(id), owner_id TEXT NOT NULL,
@@ -117,19 +118,20 @@ type DetailSaveCommit = { backup: Omit<DetailSaveBackup, 'updatedAt'>; expectedO
   member: { email: string; role: string; companyCode: string; companyName: string };
   /** Generated only by the authenticated saved-workspace reader, never JSON input. */
   workspaceFence?: { sourcePredicate: { sql: string; args: (string | number | null)[] }; scope: string;
-    row: { revision: number; payload: string; requestId: string; updatedAt: string }; peers?: { sql: string; args: (string | number | null)[] } } };
+    row: { revision: number; payload: string; requestId: string; updatedAt: string }; peers?: { sql: string; args: (string | number | null)[] };publication?:DetailWorkspacePeerPublication } };
 /** The appended PNG, all common/option edits, before-values and receipt share
  * one guarded quotation payload and one product clock in the D1 transaction. */
 export async function attachQuotationDetailSave(owner: string, productId: string, overrides: QuotationOverrides, expectedRevision: number,
   source: QuotationSourceGuard, categoryId: string | null, imageKeys: string[], detail: DetailSaveCommit) {
   const previous = JSON.parse(source.imageKeys) as unknown;
   const workspace = detail.backup.workspace, expected = Array.isArray(previous) && workspace
-    ? [...new Set([...previous, ...workspace.document.photos.map(photo => photo.key), detail.backup.receipt.key])] : null;
+    ? [...new Set([...previous, ...workspace.document.photos.map(photo => photo.key),...(detail.backup.receipt.publishedBodyImages?.map(image=>image.key)??[]), detail.backup.receipt.key])] : null;
   if (!Array.isArray(previous) || (workspace ? !detail.workspaceFence || !detail.backup.receipt.workspace || JSON.stringify(imageKeys) !== JSON.stringify(expected)
       || detail.backup.receipt.workspace.revision !== workspace.revision || detail.backup.receipt.workspace.digest !== workspace.digest
       || detail.workspaceFence.row.revision !== workspace.revision || detail.workspaceFence.row.payload !== JSON.stringify(workspace)
       || detail.workspaceFence.row.requestId !== workspace.requestId || detail.workspaceFence.row.updatedAt !== workspace.updatedAt
       || (detail.backup.receipt.peerDigest === undefined) !== (detail.workspaceFence.peers === undefined)
+      || (detail.backup.receipt.publicationPolicy===undefined)!==(detail.workspaceFence.publication===undefined)
       : detail.workspaceFence !== undefined || detail.backup.receipt.workspace !== undefined || imageKeys.length !== previous.length + 1 || JSON.stringify(imageKeys.slice(0, -1)) !== JSON.stringify(previous))
     || imageKeys.length > PRODUCT_IMAGE_POOL_LIMIT || new Set(imageKeys).size !== imageKeys.length
     || detail.backup.receipt.key !== imageKeys.at(-1) || detail.backup.receipt.beforeRevision !== expectedRevision
@@ -202,6 +204,16 @@ async function commitQuotationFields(owner: string, productId: string, overrides
       WHERE id=? AND owner_id=? AND updated_at=? AND image_keys=? AND changes()=1
       AND EXISTS(SELECT 1 FROM product_quotation_fields WHERE product_id=? AND owner_id=? AND revision=?) RETURNING updated_at`)
       .bind(...(imageKeys ? [JSON.stringify(imageKeys)] : []), updatedAt, productId, owner, source.productVersion, source.imageKeys, productId, owner, state.revision),
+    ...(workspaceFence?.publication?.rows.map(row=>db.prepare(`INSERT INTO product_detail_workspaces(owner_id,product_id,category_scope,option_id,revision,request_id,payload,updated_at)
+      SELECT ?,?,?,?,?,?,?,? WHERE changes()=1 AND ((?=0 AND NOT EXISTS(SELECT 1 FROM product_detail_workspaces WHERE owner_id=? AND product_id=? AND category_scope=? AND option_id=?))
+        OR EXISTS(SELECT 1 FROM product_detail_workspaces WHERE owner_id=? AND product_id=? AND category_scope=? AND option_id=? AND revision=? AND payload=? AND request_id=? AND updated_at=?))
+      ON CONFLICT(owner_id,product_id,category_scope,option_id) DO UPDATE SET revision=excluded.revision,request_id=excluded.request_id,payload=excluded.payload,updated_at=excluded.updated_at
+      WHERE product_detail_workspaces.revision=? AND product_detail_workspaces.payload=? RETURNING revision`)
+      .bind(owner,productId,workspaceFence.scope,row.optionId,row.workspace.revision,row.workspace.requestId,JSON.stringify(row.workspace),row.workspace.updatedAt,
+        row.previous?.revision??0,owner,productId,workspaceFence.scope,row.optionId,owner,productId,workspaceFence.scope,row.optionId,row.previous?.revision??0,row.previous?.payload??'',row.previous?.request_id??'',row.previous?.updated_at??'',row.previous?.revision??0,row.previous?.payload??''))??[]),
+    ...(workspaceFence?.publication?[db.prepare(`UPDATE product_quotation_fields SET revision=CASE WHEN changes()=1 AND ${workspaceFence.publication.afterGuard.sql} THEN revision ELSE 0 END
+      WHERE product_id=? AND owner_id=? AND revision=? AND payload=? RETURNING revision`)
+      .bind(...workspaceFence.publication.afterGuard.args,productId,owner,state.revision,payload)]:[]),
     ...(guarded ? [db.prepare(`UPDATE product_quotation_fields SET revision=CASE WHEN EXISTS(SELECT 1 FROM products p
       WHERE p.id=? AND p.owner_id=? AND p.updated_at=? AND p.image_keys=?) THEN revision ELSE 0 END
       WHERE product_id=? AND owner_id=? AND revision=? AND payload=? RETURNING payload,revision`)

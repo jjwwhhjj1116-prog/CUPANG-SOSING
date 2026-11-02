@@ -20,6 +20,20 @@ function boardHarness(props={}){
  return {product:base.products[0],calls,options,selections,confirmations,update(value){Object.assign(base,value);return this.render();},close(){for(const value of values)value?.cleanup?.();},render(){cursor=0;const tree=Board(base);props.attach?.(tree);layouts.splice(0).forEach(fn=>fn());return tree;}};
 }
 const removalDialog=h=>elements(h.render(),node=>node.props?.role==='dialog'&&/삭제 확인/.test(node.props['aria-label']))[0];
+
+test('page/query stores with the same UUID retain independent controlled and standalone checkbox selections',()=>{
+ for(const controlled of [false,true]){
+  const query={id:sourceItem.id,ownerId:'owner',company:sourceItem.company,fingerprint:'c'.repeat(64),revision:1,captureVersion:1,receivedAt:sourceItem.receivedAt,archivedAt:null,
+   sourceUrl:'https://detail.1688.com/offer/700000000799.html',offerId:'700000000799',title:'같은 UUID 서버 수집본',optionCount:1,thumbnailUrl:null};
+  const published=[];let h;
+  h=boardHarness({products:[],sources:[sourceItem],querySources:[query],...(controlled?{selectedSourceReferences:[]}:{}),onSourceSelectionChange:refs=>{published.push(refs);if(controlled)h.update({selectedSourceReferences:refs});}});
+  const checkbox=title=>elements(h.render(),node=>node.type==='input'&&node.props['aria-label']===title+' 선택')[0];
+  checkbox(query.title).props.onChange({target:{checked:true}});h.render();checkbox('새 수집 상품').props.onChange({target:{checked:true}});h.render();
+  assert.equal(published.at(-1).length,2);assert.equal(checkbox(query.title).props.checked,true);assert.equal(checkbox('새 수집 상품').props.checked,true);
+  checkbox(query.title).props.onChange({target:{checked:false}});h.render();assert.equal(checkbox(query.title).props.checked,false);assert.equal(checkbox('새 수집 상품').props.checked,true);
+  assert.equal(published.at(-1).length,1);assert.equal('kind' in published.at(-1)[0],false);h.close();
+ }
+});
 const removalConfirm=h=>elements(removalDialog(h),node=>node.type==='button'&&node.props['aria-label']==='삭제 확인')[0];
 const approveRemoval=h=>{assert.ok(removalDialog(h),'app confirmation must be visible');return removalConfirm(h).props.onClick();};
 

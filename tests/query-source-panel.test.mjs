@@ -28,6 +28,21 @@ function harness({handler,scope=owner,disabled=false}={}){
 test('mounting the URL collector performs no network work and leaves the source input empty',()=>{
  const h=harness();try{assert.equal(h.calls.length,0);assert.equal(h.find(node=>node.type==='input').props.value,'');assert.equal(h.added.length,0);}finally{h.unmount();}
 });
+
+test('verified URL save and archive notify the unified list while an uncertain acknowledgement cannot publish a refresh',async()=>{
+ for(const verified of [true,false]){
+  let notifications=0,stored;
+  const h=harness({handler:async(call,h)=>{
+   if(!verified)return Response.json({code:'QUERY_CAPTURE_UNCERTAIN'},{status:503});
+   if(call.method==='POST'){stored=await h.item(call.body.id);return Response.json({...owner,item:stored,duplicate:false,sourceStored:true,draftCreated:false});}
+   assert.equal(call.method,'PATCH');return Response.json({...owner,item:h.summary({...stored,revision:2,archivedAt:new Date().toISOString()}),sourceStored:true,draftCreated:false});
+  }});try{
+   h.render({onChanged:()=>notifications++});h.input(sourceUrl);h.capture();await until(()=>!h.busy);h.render();assert.equal(notifications,verified?1:0);
+   if(verified){h.find(node=>node.type==='button'&&text(node)==='보관').props.onClick();await until(()=>!h.busy);h.render();assert.equal(notifications,2);}
+   assert.equal(h.added.length,0);
+  }finally{h.unmount();}
+ }
+});
 test('explicit source capture stores a validated full server source without making a product or category selection',async()=>{
  const h=harness();try{h.input(sourceUrl+'?spm=synthetic');h.capture();await until(()=>h.calls.length===1);await until(()=>h.busy===false);h.render();assert.equal(h.calls[0].path,'/api/query-captures');assert.equal(h.calls[0].method,'POST');assert.deepEqual(h.calls[0].body.expectedCompany,owner.company);assert.equal(h.calls[0].body.sourceUrl,sourceUrl);assert.equal(h.calls[0].redirect,'manual');assert.match(h.message(),/서버 수집함에 저장/);assert.match(h.text(),/합성 서버 원문 상품/);assert.equal(h.added.length,0);assert.ok(h.calls.every(call=>!call.path.includes('1688.com')));}finally{h.unmount();}
 });

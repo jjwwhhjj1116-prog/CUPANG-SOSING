@@ -27,7 +27,7 @@ async function boundedJson(response:Response){
 }
 
 /** User-triggered server collection stays independent of extension PageSource. */
-export function QuerySourcePanel({ownerId,company,disabled,onAdd}:{ownerId?:string;company:WorkspaceSettingsScope['company'];disabled:boolean;onAdd:(item:QuerySourceCaptureSummary)=>void}){
+export function QuerySourcePanel({ownerId,company,disabled,onAdd,onChanged}:{ownerId?:string;company:WorkspaceSettingsScope['company'];disabled:boolean;onAdd:(item:QuerySourceCaptureSummary)=>void;onChanged?:()=>void}){
  const companyCode=company?.code,companyName=company?.name;
  const scope=useMemo(()=>({ownerId,company:companyCode&&companyName?{code:companyCode,name:companyName}:null}),[ownerId,companyCode,companyName]);
  const valid=ownerId&&company?{ownerId,company}:null;
@@ -49,7 +49,7 @@ export function QuerySourcePanel({ownerId,company,disabled,onAdd}:{ownerId?:stri
     if(!active(controller))return;
     if(!response.ok||!object(body)||!sameScope(body,valid)||body.sourceStored!==true||body.draftCreated!==false)throw new QuerySourcePanelError('보관 변경 결과를 확인하지 못했습니다. 목록을 다시 불러온 뒤 확인해주세요.');
     const item=summary(body.item,valid,mode==='archive'?'archived':'active');if(item.id!==selected.id||item.revision!==selected.revision+1||item.fingerprint!==selected.fingerprint||item.sourceUrl!==selected.sourceUrl||item.captureVersion!==selected.captureVersion)throw new QuerySourcePanelError('수집 원문의 보관 버전을 확인하지 못했습니다. 목록을 다시 불러와주세요.');
-    update({items:shown.items.filter(previous=>previous.id!==item.id),message:mode==='archive'?'수집본을 보관했습니다. 원문과 기존 작업 상품은 유지됩니다.':'보관을 해제했습니다. 서버 수집함에서 카테고리를 선택할 수 있습니다.'});return;
+    update({items:shown.items.filter(previous=>previous.id!==item.id),message:mode==='archive'?'수집본을 보관했습니다. 원문과 기존 작업 상품은 유지됩니다.':'보관을 해제했습니다. 서버 수집함에서 카테고리를 선택할 수 있습니다.'});onChanged?.();return;
    }
    if(mode==='select'){
     if(!selected||!shown.items.some(item=>item.id===selected.id&&item.fingerprint===selected.fingerprint&&item.revision===selected.revision))throw new QuerySourcePanelError('현재 수집함에서 사용할 수집본을 다시 선택해주세요.');
@@ -75,7 +75,7 @@ export function QuerySourcePanel({ownerId,company,disabled,onAdd}:{ownerId?:stri
     const source=normalizeQuerySourceCapture(body.item.snapshot,parseCollectionRequest({urls:[pending.sourceUrl]})[0].offerId);if(source.sourceUrl!==pending.sourceUrl)throw new QuerySourcePanelError('요청 URL과 수집 원문이 다릅니다.');
     if(await querySourceFingerprint(source)!==body.item.fingerprint)throw new QuerySourcePanelError('저장 원문의 지문을 확인하지 못했습니다. 같은 요청으로 다시 확인해주세요.');if(!active(controller))return;
     const item=summary(querySourceCaptureSummary({...body.item,snapshot:source} as QuerySourceCapture),valid);
-    update({items:[item,...(shown.view==='active'?shown.items.filter(previous=>previous.id!==item.id):[])],view:'active',loaded:true,message:'상품 원문을 서버 수집함에 저장했습니다. 카테고리를 선택하면 초안 작성을 시작합니다.'});attempt.current=null;
+    update({items:[item,...(shown.view==='active'?shown.items.filter(previous=>previous.id!==item.id):[])],view:'active',loaded:true,message:'상품 원문을 서버 수집함에 저장했습니다. 카테고리를 선택하면 초안 작성을 시작합니다.'});attempt.current=null;onChanged?.();
    }
   }catch(error){if(alive.current&&current.current===scope&&(!controller.signal.aborted||timedOut))update({message:timedOut?'응답 시간을 초과해 저장 여부를 확인하지 못했습니다. 입력을 유지했습니다. 같은 요청으로 다시 확인해주세요.':error instanceof QuerySourcePanelError?error.message:'수집 결과를 확인하지 못했습니다. 입력을 유지했습니다. 같은 요청으로 다시 확인해주세요.'});}
   finally{clearTimeout(timeout);if(running.current===operation)running.current=null;if(alive.current&&current.current===scope)update({busy:false});}

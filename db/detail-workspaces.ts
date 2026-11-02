@@ -3,8 +3,8 @@ import { readOwnedSplitSnapshot, splitSnapshotPredicate } from '@/db/product-opt
 import { stableQuotationFieldsView } from '@/app/quotation-fields-snapshot';
 import { DetailWorkspaceError, DETAIL_WORKSPACE_BODY_LIMIT, detailWorkspaceDigest, detailWorkspaceExpectedView, detailWorkspaceFileKeys, detailWorkspaceRequestId, detailWorkspaceScope, generateDetailWorkspaceHtml,
   validateDetailWorkspaceDocument, validateDetailWorkspaceRecord, validateDetailWorkspaceRoles,
-  type DetailWorkspaceFile, type DetailWorkspaceInput, type DetailWorkspaceRecord, type DetailWorkspaceView } from '@/app/detail-workspace';
-import { isOwnedImageKey, imageFileType, MAX_IMAGE_BYTES } from '@/app/image-files';
+  type DetailWorkspaceDocument, type DetailWorkspaceFile, type DetailWorkspaceInput, type DetailWorkspaceRecord, type DetailWorkspaceView } from '@/app/detail-workspace';
+import { isOwnedImageKey, imageFileType, MAX_IMAGE_BYTES, PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-files';
 import { imageDisplayDimensions } from '@/app/image-dimensions';
 import { labelUploadDigest } from '@/app/label-upload-key';
 import { readBoundedStream } from '@/app/request-body';
@@ -13,7 +13,8 @@ import { readFreeImageEditRecord, FreeImageEditRecordError } from '@/app/free-im
 import type { FreeImageSource } from '@/app/free-image-translation';
 import { inspectImage } from '@/app/automation/image-edit';
 import { buildDetailWorkspaceBannerDocument, createDetailWorkspaceBannerPreview, detailWorkspaceBannerRebaseRequestId, type DetailWorkspaceBannerRebaseInput } from '@/app/detail-workspace-banner-rebase';
-import { detailSaveOptionIds, detailSavePeerDigest, DETAIL_SAVE_PEER_SNAPSHOT_LIMIT } from '@/app/detail-save-plan';
+import { detailSaveOptionIds, detailSavePeerDigest, detailSavePublishedBodyImages, DETAIL_SAVE_PEER_SNAPSHOT_LIMIT, type DetailSavePeers, type DetailSavePublishedBodyImage } from '@/app/detail-save-plan';
+import {initialDetailWorkspaceDocument} from '@/app/detail-workspace-seed';
 
 export const detailWorkspacesSchema = `CREATE TABLE IF NOT EXISTS product_detail_workspaces (
  owner_id TEXT NOT NULL, product_id TEXT NOT NULL REFERENCES products(id), category_scope TEXT NOT NULL, option_id TEXT NOT NULL,
@@ -227,7 +228,60 @@ export async function detailWorkspacePeersGuard(seal: DetailWorkspaceImageSeal, 
   }
   if (await detailSavePeerDigest(peers) !== expectedDigest) throw conflict();
   signal.throwIfAborted();
-  return { sql: `(${sql})=?`, args: [...args, snapshot.payload] };
+  return { sql: `(${sql})=?`, args: [...args, snapshot.payload],proof:peers as DetailSavePeers,captured };
+}
+export type DetailWorkspacePeerPublication={images:DetailSavePublishedBodyImage[];before:DetailSavePeers;after:DetailSavePeers;
+  rows:{optionId:string;previous:(Row&{option_id:string})|null;workspace:DetailWorkspaceRecord}[];afterGuard:{sql:string;args:(string|number|null)[]}};
+/** Publish pixels as ordinary owned photos. The source keeps its option-bound edit layers. */
+export async function prepareDetailWorkspacePeerPublication(seal:DetailWorkspaceImageSeal,expectedDigest:string,signal:AbortSignal):Promise<DetailWorkspacePeerPublication>{
+  const guard=await detailWorkspacePeersGuard(seal,expectedDigest,signal),images=detailSavePublishedBodyImages(seal.workspace,seal.owner),baseline=structuredClone(seal.workspace.document);
+  if(!images.length)throw conflict();
+  for(const photo of baseline.photos.filter(photo=>photo.role==='body'&&photo.key.startsWith(`${seal.owner}/free-image-`))){
+    if(!env.FILES)throw conflict();const saved=await readFreeImageEditRecord(env.FILES,seal.owner,seal.id,photo.key),source=saved.record.source,target=source.workspaceTarget??source.quotationTarget;
+    const proof=seal.workspace.files.find(file=>file.key===photo.key);
+    if(!target||source.productId!==seal.id||target.optionId!==seal.optionId||target.profileId!==seal.profileId||!same(saved.record.context,seal.before.view.categoryContext)||!same(saved.record.company,seal.company)
+      ||saved.record.result.sha256!==proof?.sha256||!seal.before.view.imageKeys.includes(source.sourceKey))throw conflict();
+    photo.key=source.sourceKey;
+  }
+  const semantic=(document:DetailWorkspaceDocument)=>({imageMargin:document.imageMargin,photos:document.photos.map(({role,originKey,key})=>({role,originKey,key}))});
+  const aliases=new Map(images.map(image=>[image.sourceKey,image.key])),pool=[...new Set([...seal.before.view.imageKeys,...seal.workspace.document.photos.map(photo=>photo.key),...images.map(image=>image.key)])],rows:DetailWorkspacePeerPublication['rows']=[];
+  if(pool.length+1>PRODUCT_IMAGE_POOL_LIMIT)throw new DetailWorkspaceError('발행한 본문과 최종 이미지를 보존할 상품 이미지 공간이 부족합니다.',413);
+  const records=new Map<string,DetailWorkspaceRecord>();
+  for(const optionId of detailSaveOptionIds(seal.before.view)){
+    signal.throwIfAborted();const previous=guard.captured.find(row=>row.option_id===optionId)??null,old=stored(previous,seal.owner,seal.id,optionId,seal.before,seal.company);
+    if(old)records.set(optionId,old);
+    if(optionId===seal.optionId||!seal.before.view.resolved.rows.find(row=>row.optionId===optionId)?.included)continue;
+    if(old)await verifyRecord(old,seal.owner,seal.before.view.imageKeys,signal);
+    let serial=0;const original=old?.document??initialDetailWorkspaceDocument({view:seal.before.view,workspace:null,roles:seal.before.roles},optionId,()=>`published-photo-${++serial}`);
+    if(!same(semantic(original),semantic(baseline)))throw conflict('다른 옵션의 직접 편집한 상세 구성을 유지했습니다. 공통 발행 범위를 다시 확인해주세요.');
+    const photos=original.photos.map((photo,index)=>({...photo,key:photo.role==='body'?aliases.get(seal.workspace.document.photos[index].key)!:photo.key})),document={...original,photos,generatedHtml:generateDetailWorkspaceHtml(photos,original.imageMargin)};
+    if(old&&same(document,old.document))continue;
+    validateDetailWorkspaceDocument(document,seal.owner,pool,original,seal.before.roles,photos);
+    const metadata=new Map([...(old?.files??[]),...seal.workspace.files,...images.map(image=>({...seal.workspace.files.find(file=>file.key===image.sourceKey)!,key:image.key}))].map(file=>[file.key,file]));
+    const files=detailWorkspaceFileKeys(document).map(key=>{const file=metadata.get(key);if(!file)throw conflict();return file;}),value={format:'detail-workspace-record-v1' as const,productId:seal.id,optionId,context:seal.before.view.categoryContext,company:seal.company,
+      revision:(old?.revision??0)+1,updatedAt:new Date(Math.max(Date.now(),old?Date.parse(old.updatedAt)+1:0)).toISOString(),requestId:await detailWorkspaceRequestId(seal.id,optionId,old?.revision??0,detailWorkspaceExpectedView(seal.before.view),document),document,files};
+    const workspace={...value,digest:await detailWorkspaceDigest(value)};validateDetailWorkspaceRecord(workspace,seal.owner,seal.id,optionId,seal.before.view.categoryContext,seal.company);
+    records.set(optionId,workspace);rows.push({optionId,previous,workspace});
+  }
+  const captured=guard.captured.map(row=>({...row}));for(const row of rows){const next={option_id:row.optionId,revision:row.workspace.revision,request_id:row.workspace.requestId,payload:JSON.stringify(row.workspace),updated_at:row.workspace.updatedAt},index=captured.findIndex(value=>value.option_id===row.optionId);if(index<0)captured.push(next);else captured[index]=next;}
+  captured.sort((a,b)=>a.option_id<b.option_id?-1:a.option_id>b.option_id?1:0);const payload=JSON.stringify(captured);
+  if(new TextEncoder().encode(payload).length>DETAIL_SAVE_PEER_SNAPSHOT_LIMIT)throw new DetailWorkspaceError('모든 옵션의 상세 구성 확인 자료는2MiB 이내여야 합니다.',413);
+  const after=detailSaveOptionIds(seal.before.view).map(optionId=>{const record=records.get(optionId);return{optionId,workspace:record?{revision:record.revision,digest:record.digest}:null};});
+  return{images,before:guard.proof,after,rows,afterGuard:{sql:guard.sql,args:[...guard.args.slice(0,-1),payload]}};
+}
+export async function verifyDetailWorkspacePublishedImages(owner:string,images:DetailSavePublishedBodyImage[],signal:AbortSignal){
+  let total=0;const seen=new Set<string>();for(const image of images){if(seen.has(image.key))continue;seen.add(image.key);signal.throwIfAborted();if(!isOwnedImageKey(owner,image.key)||!env.FILES)throw conflict();
+    const object=await env.FILES.get(image.key);if(!object||object.size<1||object.size>MAX_IMAGE_BYTES||(total+=object.size)>30*1024*1024)throw conflict();
+    const bytes=await readBoundedStream(object.body,MAX_IMAGE_BYTES),size=imageDisplayDimensions(bytes);if(bytes.length!==object.size||await labelUploadDigest(bytes)!==image.sha256||size?.width!==image.width||size?.height!==image.height)throw conflict();
+  }
+}
+export async function storeDetailWorkspacePublishedImages(seal:DetailWorkspaceImageSeal,images:DetailSavePublishedBodyImage[],signal:AbortSignal){
+  const seen=new Set<string>();for(const image of images){if(image.key===image.sourceKey||seen.has(image.key))continue;seen.add(image.key);signal.throwIfAborted();if(!env.FILES||!isOwnedImageKey(seal.owner,image.sourceKey)||!isOwnedImageKey(seal.owner,image.key))throw conflict();
+    const object=await env.FILES.get(image.sourceKey);if(!object||object.size<1||object.size>MAX_IMAGE_BYTES)throw conflict();const bytes=await readBoundedStream(object.body,MAX_IMAGE_BYTES),size=inspectImage(bytes);
+    if(bytes.length!==object.size||size.mime!=='image/png'||size.width!==image.width||size.height!==image.height||await labelUploadDigest(bytes)!==image.sha256)throw conflict();
+    if(!await env.FILES.get(image.key))await env.FILES.put(image.key,bytes,{onlyIf:new Headers({'if-none-match':'*'}),httpMetadata:{contentType:'image/png'}});
+  }
+  await verifyDetailWorkspacePublishedImages(seal.owner,images,signal);await confirmDetailWorkspaceImageSeal(seal,signal);
 }
 export async function confirmDetailWorkspaceImageSeal(seal: DetailWorkspaceImageSeal, signal: AbortSignal) {
   signal.throwIfAborted(); await verifyRecord(seal.workspace, seal.owner, seal.before.view.imageKeys, signal);

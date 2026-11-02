@@ -25,15 +25,15 @@ export function reviewSourceFixture(ownerId='owner',company={code:'A01464742',na
  const saved={...structuredClone(before),revision:2,reviewed:{...structuredClone(snapshot),title:'검토한 상품명',options:snapshot.options.map(row=>({...row,unitPriceCny:2.99,currency:'CNY'}))},issues:[]};
  return {before,saved};
 }
-export function sourceReviewHookFixture(fetcher){
- const slots=[],effects=[],layouts=[],calls=[],events=new Map(),timers=new Map();let cursor=0,owner='owner',timer=0;
+export function sourceReviewHookFixture(fetcher,includeQueryCaptures=false,initialCompany){
+ const slots=[],effects=[],layouts=[],calls=[],events=new Map(),timers=new Map();let cursor=0,owner='owner',company=initialCompany,timer=0;
  const effect=(queue,fn,deps)=>{const index=cursor++,previous=slots[index];if(!previous||deps.some((value,i)=>!Object.is(value,previous.deps[i]))){slots[index]={deps,cleanup:previous?.cleanup};queue.push(()=>{slots[index].cleanup?.();slots[index].cleanup=fn();});}};
  const hooks={useState(value){const index=cursor++;if(!(index in slots))slots[index]=typeof value==='function'?value():value;return[slots[index],next=>{slots[index]=typeof next==='function'?next(slots[index]):next;}];},useRef(value){const index=cursor++;return slots[index]??(slots[index]={current:value});},useMemo(fn,deps){const index=cursor++,previous=slots[index];if(!previous||deps.some((value,i)=>!Object.is(value,previous.deps[i])))slots[index]={deps,value:fn()};return slots[index].value;},useCallback:fn=>fn,useLayoutEffect(fn,deps){effect(layouts,fn,deps);},useEffect(fn,deps){effect(effects,fn,deps);}};
  const window={addEventListener:(name,fn)=>events.set(name,fn),removeEventListener:(name,fn)=>{if(events.get(name)===fn)events.delete(name);},postMessage(){}},document={visibilityState:'visible',addEventListener(){},removeEventListener(){}};
  const {useSourceRegistrations}=sourceReviewModule('app/components/use-source-registrations.ts',{hooks,window,document,location:{origin:'https://app.test'},
   setTimeout:(fn,ms)=>{timers.set(++timer,{fn,ms});return timer;},clearTimeout:id=>timers.delete(id),setInterval:()=>999,clearInterval(){},fetch:(url,init)=>{calls.push({url,init});return fetcher(url,init);}});
- function FixtureRender(passive=true){cursor=0;const result=useSourceRegistrations(owner);layouts.splice(0).forEach(fn=>fn());if(passive)effects.splice(0).forEach(fn=>fn());return result;}
- return {render:FixtureRender,calls,expire(ms){for(const [id,timer] of [...timers])if(timer.ms===ms){timers.delete(id);timer.fn();}},event(){events.get('focus')?.();},owner(value,{passive=true}={}){owner=value;return FixtureRender(passive);},close(){for(const slot of slots)slot?.cleanup?.();}};
+ function FixtureRender(passive=true){cursor=0;const result=useSourceRegistrations(owner,includeQueryCaptures,company);layouts.splice(0).forEach(fn=>fn());if(passive)effects.splice(0).forEach(fn=>fn());return result;}
+ return {render:FixtureRender,calls,expire(ms){for(const [id,timer] of [...timers])if(timer.ms===ms){timers.delete(id);timer.fn();}},event(){events.get('focus')?.();},owner(value,{passive=true}={}){owner=value;return FixtureRender(passive);},company(value){company=value;return FixtureRender();},close(){for(const slot of slots)slot?.cleanup?.();}};
 }
 export const sourceReviewNodes=tree=>Array.isArray(tree)?tree.flatMap(sourceReviewNodes):tree&&typeof tree==='object'?[tree,...sourceReviewNodes(tree.props?.children)]:[];
 export const sourceReviewText=tree=>Array.isArray(tree)?tree.map(sourceReviewText).join(''):tree&&typeof tree==='object'?sourceReviewText(tree.props?.children):tree==null?'':String(tree);

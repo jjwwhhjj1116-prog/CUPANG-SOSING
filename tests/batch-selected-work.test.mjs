@@ -468,6 +468,44 @@ test('quotation completion accepts sourced empty choices while retaining unknown
  }
 });
 
+test('quotation readiness blocks the actual optional empty-wire choice error while retaining valid blanks and excluded edits',async()=>{
+ const schema=providedOptionModule('app/quotation-schema.ts'),review=providedOptionModule('app/submission-review.ts');
+ const field=plain(schema.getQuotationSchema('77442').fields.find(field=>field.id==='board_magnetic'));
+ assert.equal(field.required,false);assert.ok(field.choices.some(choice=>choice.value===''&&choice.label==='해당사항없음'));
+ for(const mode of ['invalid saved label','legacy invalid saved label','modern review only','optional empty','selected empty','excluded invalid']){
+  const h=knownQuotationFixture(),blocked=mode.endsWith('invalid saved label');h.fields.push(field);
+  for(const row of [...h.view.resolved.rows,...h.view.automatic.rows]){
+   const invalid=blocked&&row.optionId==='a'||mode==='excluded invalid'&&!row.included;
+   const value=invalid?'해당사항없음':'',source=invalid||mode==='selected empty'?'manual-option':'empty';
+   const validationIssues=schema.quotationValueIssues(field,value);
+   row.fields[field.id]={value,source,validationIssues,issues:mode==='modern review only'?['실제 상품과 대조할 검토 근거입니다.']:validationIssues,needsReview:false};
+   if(mode==='legacy invalid saved label')delete row.fields[field.id].validationIssues;
+  }
+  const before=plain(h.view.resolved.rows.map(row=>row.fields[field.id])),manualBlank=plain(h.view.resolved.rows[1].fields.notice0);
+  const result=await h.run(['quotation']),quotation=result.stages[0],report=review.inspectSubmission(h.view.resolved,[]);
+  assert.equal(quotation.status,blocked?'blocked':'draft',mode+': '+quotation.message);
+  assert.equal(report.issues.some(issue=>issue.code==='FIELD_INVALID'&&issue.fieldId===field.id),blocked,mode);
+  if(blocked){assert.match(quotation.message,/입력값 확인:.*자석 부착가능 여부/);assert.doesNotMatch(quotation.message,/최종 검토 후 등록전송/);}
+  else assert.doesNotMatch(quotation.message,/입력값 확인|필수 입력 확인/);
+  assert.equal(h.writes.length,1);assert.ok(h.writes[0].changes.every(change=>change.fieldKey!==field.id));
+  assert.deepEqual(plain(h.view.resolved.rows.map(row=>row.fields[field.id])),before);assert.deepEqual(h.view.resolved.rows[1].fields.notice0,manualBlank);
+ }
+});
+
+test('quotation readiness blocks current aggregate constraints after confirmed saves without treating review evidence as an error',async()=>{
+ for(const mode of ['current error','legacy error','modern review only']){
+  const h=knownQuotationFixture(),blocked=mode!=='modern review only',message='현재 카테고리의 옵션 개수 한도를 초과했습니다.';
+  h.view.resolved.validationIssues=blocked?[message]:[];h.view.resolved.reviewMessages=['실제 상품과 대조할 검토 근거입니다.'];
+  h.view.resolved.issues=blocked?[message]:h.view.resolved.reviewMessages;
+  if(mode==='legacy error')delete h.view.resolved.validationIssues;
+  const before=plain(h.view.resolved.rows[1].fields.notice0),quotation=(await h.run(['quotation'])).stages[0];
+  assert.equal(quotation.status,blocked?'blocked':'draft',quotation.message);
+  if(blocked){assert.match(quotation.message,/견적 조건 확인:.*옵션 개수 한도/);assert.doesNotMatch(quotation.message,/최종 검토 후 등록전송/);}
+  else assert.match(quotation.message,/최종 검토 후 등록전송/);
+  assert.equal(h.writes.length,1);assert.deepEqual(h.view.resolved.rows[1].fields.notice0,before);
+ }
+});
+
 test('quotation PUT rejected by its final protected account preflight releases only the unsent fence and reuses the confirmed AI job',async()=>{
  const h=knownQuotationFixture({generateFirst:true});let armed=true,rejectAccount=false;
  h.onContent(()=>{if(armed){armed=false;rejectAccount=true;}});
