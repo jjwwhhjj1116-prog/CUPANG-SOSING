@@ -17,7 +17,7 @@ export function quotationTitleLoader(overrides={}){
    {exports,Error,TextEncoder,URLSearchParams,URL,structuredClone,AbortController,fetch:overrides.fetch??fetch,
     window:{addEventListener(){},removeEventListener(){}},document:{getElementById:()=>null},
     require(name){
-     if(name in overrides)return overrides[name];
+     if(name in overrides)return name==='react'&&!overrides[name].useLayoutEffect?{...overrides[name],useLayoutEffect:overrides[name].useEffect}:overrides[name];
      if(name.endsWith('.css'))return{};
      if(name.startsWith('@/app/')&&name.endsWith('.mjs'))return native('../../'+name.slice(2));
      if(name.startsWith('@/app/')){const path=name.slice(2);return load(path+(fs.existsSync(new URL('../../'+path+'.ts',import.meta.url))?'.ts':'.tsx'));}
@@ -32,24 +32,26 @@ export function quotationTitleLoader(overrides={}){
 /** Run the real quotation form and its event handlers with persistent React
  * hooks. Child tools stay mounted as boundaries; network requests are captured. */
 export function quotationTitleUI({view,request,props={}}){
- const slots=[],effects=[],calls=[];let cursor=0,tree,currentProps={productId:'p1',refreshToken:'v1',...props},renderNeeded=true;
+ const slots=[],effects=[],layouts=[],calls=[];let cursor=0,tree,currentProps={productId:'p1',refreshToken:'v1',...props},renderNeeded=true;
+ const effect=(queue,fn,deps,layout)=>{const index=cursor++,previous=slots[index];if(!previous||!same(previous.deps,deps)){slots[index]={deps,cleanup:previous?.cleanup,setup:fn,layout};queue.push(()=>{previous?.cleanup?.();slots[index].cleanup=fn();});}};
  const hooks={
   useState(initial){const index=cursor++;if(!(index in slots))slots[index]=typeof initial==='function'?initial():initial;return[slots[index],value=>{slots[index]=typeof value==='function'?value(slots[index]):value;renderNeeded=true;}];},
   useRef(initial){const index=cursor++;return slots[index]??(slots[index]={current:initial});},
   useCallback(fn,deps){const index=cursor++,previous=slots[index];if(!previous||!same(previous.deps,deps))slots[index]={deps,value:fn};return slots[index].value;},
   useId(){const index=cursor++;return slots[index]??(slots[index]='seo-title-test');},
-  useEffect(fn,deps){const index=cursor++,previous=slots[index];if(!previous||!same(previous.deps,deps)){slots[index]={deps,cleanup:previous?.cleanup};effects.push(()=>{previous?.cleanup?.();slots[index].cleanup=fn();});}},
+  useEffect:(fn,deps)=>effect(effects,fn,deps,false),useLayoutEffect:(fn,deps)=>effect(layouts,fn,deps,true),
  };
  const load=quotationTitleLoader({react:hooks,fetch:async(url,init)=>{calls.push({url,init});return request?request(url,init):Response.json(view);}});
  const Form=load('app/components/quotation-fields-editor.tsx').QuotationFieldsEditor;
- function render(updates){if(updates)currentProps={...currentProps,...updates};cursor=0;renderNeeded=false;const wrapper=Form(currentProps);tree=wrapper.type(wrapper.props);effects.splice(0).forEach(fn=>fn());return tree;}
+ function render(updates){if(updates)currentProps={...currentProps,...updates};cursor=0;renderNeeded=false;const wrapper=Form(currentProps);tree=wrapper.type(wrapper.props);layouts.splice(0).forEach(fn=>fn());effects.splice(0).forEach(fn=>fn());return tree;}
  async function idle(){for(let i=0;i<12;i++){if(renderNeeded)render();await new Promise(resolve=>setImmediate(resolve));}if(renderNeeded)render();}
  render();
  return{load,calls,render,idle,nodes:()=>titleNodes(renderNeeded?render():tree),
   field(id){return this.nodes().find(node=>['input','textarea'].includes(node.type)&&node.props.id==='seo-title-test-'+id);},
-  button(label){return this.nodes().find(node=>node.type==='button'&&titleText(node.props.children).startsWith(label));},
+  button(label){return this.nodes().find(node=>node.type==='button'&&(node.props['aria-label']===label||titleText(node.props.children).startsWith(label)));},
   select(optionId){const value=optionId??'';this.nodes().find(node=>node.type==='select'&&titleNodes(node).some(item=>item.type==='option'&&item.props.value===value)).props.onChange({target:{value}});render();},
   replaceView(value){slots[0]=value;render();},
+  replayEffects(childSetup){const mounted=slots.filter(slot=>typeof slot?.setup==='function');mounted.forEach(slot=>slot.cleanup?.());mounted.filter(slot=>slot.layout).forEach(slot=>{slot.cleanup=slot.setup();});childSetup?.();mounted.filter(slot=>!slot.layout).forEach(slot=>{slot.cleanup=slot.setup();});},
   get changes(){return slots[1];},
   close(){slots.forEach(slot=>slot?.cleanup?.());},
  };

@@ -18,6 +18,7 @@ export function quotationLabelFormUI({productId,load,request,renderDocument}){
   useCallback(fn,deps){const target=current,i=target.cursor++,previous=target.slots[i];if(!previous||!same(previous.deps,deps))target.slots[i]={value:fn,deps};return target.slots[i].value;},
   useId(){const target=current,i=target.cursor++;return target.slots[i]??(target.slots[i]='test-label');},
   useEffect(fn,deps){const target=current,i=target.cursor++,previous=target.slots[i];if(!previous||!same(previous.deps,deps)){target.slots[i]={deps,cleanup:previous?.cleanup};target.pending.push(()=>{previous?.cleanup?.();target.slots[i].cleanup=fn();});}},
+  useLayoutEffect(fn,deps){hooks.useEffect(fn,deps);},
  };
  function component(file){
   if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);
@@ -52,7 +53,7 @@ export function quotationLabelFormUI({productId,load,request,renderDocument}){
   rendered={tree,panel,boundary};return rendered;
  }
  const all=()=>{const value=render();return[...nodes(value.tree),...nodes(value.panel)];};
- const button=label=>all().find(node=>node.type==='button'&&text(node.props.children).startsWith(label));
+ const button=label=>all().find(node=>node.type==='button'&&(node.props['aria-label']===label||text(node.props.children).startsWith(label)));
  async function idle(){
   const deadline=Date.now()+20000;
   for(;;){const value=render();if(!value.tree.props['aria-busy']&&!value.panel?.props['aria-busy'])break;if(Date.now()>deadline)throw Error('Quotation label UI timeout');await new Promise(resolve=>setTimeout(resolve,1));}

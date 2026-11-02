@@ -12,7 +12,7 @@ test('quotation opens as five continuous input sections with advanced context co
   assert.ok(context);assert.ok(!context.props.open);assert.equal(visible.some(node=>node.type==='nav'),false);assert.equal(titleNodes(context).some(node=>node.type==='nav'),true);
   assert.deepEqual(visible.filter(node=>node.type==='fieldset').map(node=>node.props['data-section']),['start','product','image','legal','logistics']);
   assert.match(visibleText(tree),/쿠팡 등록 정보/);assert.doesNotMatch(visibleText(tree),/현재 옵션 필수 미입력|미저장 수정|공통 수정은 별도로/);
-  assert.ok(visible.some(node=>node.type==='select'&&titleText(node).includes('상품 공통값')));
+  assert.equal(visible.some(node=>node.type==='select'&&titleText(node).includes('상품 공통값')),false);assert.ok(titleNodes(context).some(node=>node.type==='select'&&titleText(node).includes('상품 공통값')));
   ui.field('model').props.onChange({target:{value:'작성 중 모델'}});ui.render();
   const drafted=plain(ui.changes),expandedContext=ui.nodes().find(node=>node.type==='details'&&node.props.className==='quotation-fields-context');
   assert.match(visibleText(expandedContext,new Set([expandedContext])),/미저장 수정/);assert.deepEqual(plain(ui.changes),drafted);assert.equal(ui.field('model').props.value,'작성 중 모델');assert.equal(mutations(ui).length,0);
@@ -106,14 +106,59 @@ test('expanded field diagnostics retain manual reset and selected-field copy as 
  }finally{ui.close();}
 });
 
-test('prominent AI action only opens the mounted review tool and does not generate, apply or save; stale draft/busy actions stay blocked',async()=>{
+test('prominent AI action requests the mounted tool once and reveals review; stale draft/busy and retired actions stay blocked',async()=>{
  const view=quotationPresentationFixture(),ui=quotationTitleUI({view});
  try{await ui.idle();const tools=ui.nodes().find(node=>node.type==='details'&&node.props.className==='quotation-supplemental-tools'),anchor=ui.nodes().find(node=>node.props?.className==='quotation-ai-tools');let scrolls=0;const nativeDetails={open:false};tools.props.ref.current=nativeDetails;anchor.props.ref.current={scrollIntoView(){scrolls++;}};
-  const originalCalls=ui.calls.length,open=ui.button('AI 처리').props.onClick;assert.equal(ui.button('AI 처리').props.disabled,false);open();assert.equal(nativeDetails.open,true);assert.equal(scrolls,1);assert.equal(ui.calls.length,originalCalls);assert.equal(ui.changes.length,0);assert.equal(mutations(ui).length,0);
-  nativeDetails.open=false;ui.field('model').props.onChange({target:{value:'먼저 저장할 입력'}});open();assert.equal(nativeDetails.open,false,'already captured action cannot open against a new same-tick draft');ui.render();assert.equal(ui.button('AI 처리').props.disabled,true);
+  const ai=ui.nodes().find(node=>typeof node.type==='function'&&node.type.name==='QuotationAiPanel');let requests=0;assert.equal(ui.button('AI 처리').props.disabled,true);
+  const sourceKey=JSON.stringify([ai.props.productId,ai.props.profileId??null,view.productVersion,view.contentRevision,view.optionRevision,view.revision,view.inputFingerprint,ai.props.optionId]);
+  const first={requestDraft(){requests++;ai.props.onBusyChange(true);},disabled:false,applyToAllOptions:true,sourceKey};ai.props.onRequestActionChange(first);ui.render();
+  const originalCalls=ui.calls.length,open=ui.button('AI 처리').props.onClick;assert.equal(ui.button('AI 처리').props.disabled,false);open();open();assert.equal(requests,1);assert.equal(nativeDetails.open,true);assert.equal(scrolls,1);assert.equal(ui.calls.length,originalCalls);assert.equal(ui.changes.length,0);assert.equal(mutations(ui).length,0);
+  ai.props.onBusyChange(false);ui.render();const next={requestDraft(){requests++;},disabled:false,applyToAllOptions:true,sourceKey};ai.props.onRequestActionChange(next);ai.props.onRequestActionChange(null,first);ui.render();assert.equal(ui.button('AI 처리').props.disabled,false);
+  nativeDetails.open=false;const retained=ui.button('AI 처리').props.onClick;ui.field('model').props.onChange({target:{value:'먼저 저장할 입력'}});retained();assert.equal(nativeDetails.open,false,'already captured action cannot request against a new same-tick draft');assert.equal(requests,1);ui.render();assert.equal(ui.button('AI 처리').props.disabled,true);
   assert.equal(ui.nodes().filter(node=>typeof node.type==='function'&&node.type.name==='QuotationAiPanel').length,1,'native details does not unmount the tool');
  }finally{ui.close();}
  const busyUI=quotationTitleUI({view});try{await busyUI.idle();const tools=busyUI.nodes().find(node=>node.type==='details'&&node.props.className==='quotation-supplemental-tools'),nativeDetails={open:false};tools.props.ref.current=nativeDetails;
   const action=busyUI.button('AI 처리').props.onClick,ai=busyUI.nodes().find(node=>typeof node.type==='function'&&node.type.name==='QuotationAiPanel');ai.props.onBusyChange(true);action();assert.equal(nativeDetails.open,false);busyUI.render();assert.equal(busyUI.button('AI 처리').props.disabled,true);assert.equal(mutations(busyUI).length,0);
  }finally{busyUI.close();}
+});
+
+test('quotation primary actions show only apply-all and accessible Save; option selector and submission entry remain mounted supplementary tools',async()=>{
+ const ui=quotationTitleUI({view:quotationPresentationFixture()});try{await ui.idle();const tree=ui.render(),heading=ui.nodes().find(node=>node.props?.className==='quotation-fields-heading'),context=ui.nodes().find(node=>node.props?.className==='quotation-fields-context');
+  assert.equal(titleNodes(heading).some(node=>node.type==='select'),false);assert.equal(titleNodes(context).filter(node=>node.type==='select').length,1);
+  const actions=ui.nodes().find(node=>node.props?.className==='quotation-fields-actions'),buttons=titleNodes(actions).filter(node=>node.type==='button');assert.equal(buttons.length,1);assert.equal(titleText(buttons[0]),'저장');assert.equal(buttons[0].props['aria-label'],'견적 입력 저장');
+  const review=ui.button('견적 검토·전송'),submission=ui.nodes().find(node=>node.props?.className==='quotation-submission-tools');assert.ok(review);assert.ok(submission);assert.equal(titleNodes(actions).includes(review),false);assert.equal(ui.nodes().filter(node=>node.type?.name==='SupplierHubSingleReview').length,1);assert.equal(mutations(ui).length,0);
+  assert.ok(visibleNodes(tree).some(node=>node===review));
+ }finally{ui.close();}
+});
+
+test('retained header AI requests cannot bypass split, submission, refresh or unmount guards',async()=>{
+ for(const blocker of ['split','split-draft','submission','refresh','unmount']) {
+  const view=quotationPresentationFixture(),ui=quotationTitleUI({view});try{await ui.idle();const ai=ui.nodes().find(node=>node.type?.name==='QuotationAiPanel');let requested=0;
+   const sourceKey=JSON.stringify([ai.props.productId,ai.props.profileId??null,view.productVersion,view.contentRevision,view.optionRevision,view.revision,view.inputFingerprint,ai.props.optionId]);
+   ai.props.onRequestActionChange({disabled:false,applyToAllOptions:true,sourceKey,requestDraft(){requested++;}});ui.render();const retained=ui.button('AI 처리').props.onClick;
+   if(blocker==='split'||blocker==='split-draft'){const split=ui.nodes().find(node=>node.type?.name==='ProductOptionSplitPanel');split.props[blocker==='split'?'onBusyChange':'onDraftChange'](true);}
+   if(blocker==='submission')ui.nodes().find(node=>node.type?.name==='SupplierHubSingleReview').props.onLockChange(true,true);
+   if(blocker==='refresh')ui.render({refreshToken:'changed-source'});if(blocker==='unmount')ui.close();
+   retained();assert.equal(requested,0,blocker);assert.equal(mutations(ui).length,0,blocker);
+  }finally{ui.close();}
+ }
+});
+
+test('parent layout readiness accepts the child passive request publication after effect cleanup and replay',async()=>{
+ const view=quotationPresentationFixture(),ui=quotationTitleUI({view});try{await ui.idle();const ai=ui.nodes().find(node=>node.type?.name==='QuotationAiPanel');let requests=0;
+  const sourceKey=JSON.stringify([ai.props.productId,ai.props.profileId??null,view.productVersion,view.contentRevision,view.optionRevision,view.revision,view.inputFingerprint,ai.props.optionId]);
+  const old={disabled:false,applyToAllOptions:true,sourceKey,requestDraft(){requests++;}},fresh={...old};ai.props.onRequestActionChange(old);ui.render();
+  ui.replayEffects(()=>{ai.props.onRequestActionChange(null,old);ai.props.onRequestActionChange(fresh);});await ui.idle();assert.equal(ui.button('AI 처리').props.disabled,false);ui.button('AI 처리').props.onClick();assert.equal(requests,1);assert.equal(mutations(ui).length,0);
+ }finally{ui.close();}
+});
+
+test('image raw keys and candidate editing are collapsed while final selected thumbnails stay visible without changing drafts',async()=>{
+ const view=quotationPresentationFixture(),field=view.resolved.schema.fields.find(item=>item.type==='images');assert.ok(field);view.imageKeys=['owner/first.png','owner/second.png'];
+ for(const data of [view.resolved,view.automatic])for(const row of data.rows)row.fields[field.id].value=view.imageKeys.join('\n');
+ const before=JSON.stringify(view),ui=quotationTitleUI({view});try{await ui.idle();const container=fieldContainer(ui,field.id),details=titleNodes(container).find(node=>node.props?.className==='quotation-image-tools'),visible=visibleNodes(container);
+  assert.ok(details);assert.ok(!details.props.open);assert.ok(titleNodes(details).some(node=>node.props?.id==='seo-title-test-'+field.id));assert.equal(visible.some(node=>node.type==='textarea'),false);
+  assert.equal(visible.filter(node=>node.type==='img').length,2);assert.equal(ui.render().props['data-field-tools'],false);
+  const toggle=ui.nodes().find(node=>node.props?.className==='quotation-field-tools-toggle');titleNodes(toggle).find(node=>node.type==='input').props.onChange({target:{checked:true}});assert.equal(ui.render().props['data-field-tools'],true);
+  const reorder=titleNodes(details).find(node=>node.props?.['aria-label']==='2번 이미지 앞으로');reorder.props.onClick();ui.render();assert.equal(ui.changes[0].value,'owner/second.png\nowner/first.png');assert.equal(JSON.stringify(view),before);assert.equal(mutations(ui).length,0);
+ }finally{ui.close();}
 });

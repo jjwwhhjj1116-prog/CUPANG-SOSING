@@ -63,14 +63,16 @@ async function readSource(auth: Awaited<ReturnType<typeof authorization>>, id: s
 export async function GET(request: Request, context: Context) {
   try {
     const query = new URL(request.url).searchParams;
-    if ([...query.keys()].some(key => !['profileId', 'jobId'].includes(key)) || query.getAll('profileId').length > 1 || query.getAll('jobId').length > 1)
+    if ([...query.keys()].some(key => !['profileId', 'jobId', 'idempotencyKey'].includes(key)) || query.getAll('profileId').length > 1 || query.getAll('jobId').length > 1
+      || query.getAll('idempotencyKey').length > 1 || query.has('jobId') && query.has('idempotencyKey'))
       return json({ error: 'AI 초안 조회 범위를 확인해주세요.' }, 400);
     const auth = await authorization(), { id } = await context.params, profileId = profile(query.get('profileId'));
-    if (!safeId(id) || query.has('jobId') && !uuid(query.get('jobId'))) return json({ error: '상품·실행 식별값을 확인해주세요.' }, 400);
+    if (!safeId(id) || query.has('jobId') && !uuid(query.get('jobId')) || query.has('idempotencyKey') && !uuid(query.get('idempotencyKey'))) return json({ error: '상품·실행 식별값을 확인해주세요.' }, 400);
     const selected=configuration(),saved = await readSource(auth, id, profileId), currentFingerprint = await executionFingerprint(saved,selected.executionPolicy);
     const labels = await readProductLabels(auth.owner, id);
     const jobs = query.has('jobId') ? [await findQuotationAiJob(auth.owner, id, query.get('jobId')!, true)].filter((job): job is QuotationAiJob => Boolean(job))
-      : await listQuotationAiJobs(auth.owner, id);
+      : query.has('idempotencyKey') ? [await findQuotationAiJob(auth.owner, id, query.get('idempotencyKey')!)].filter((job): job is QuotationAiJob => Boolean(job))
+        : await listQuotationAiJobs(auth.owner, id);
     if (!await quotationSourcesCurrent(auth.owner, id, saved.source) || (await readQuotationFields(auth.owner, id)).revision !== saved.state.revision
       || !await productLabelsSourcesCurrent(auth.owner, id, { ...saved.source, quotationRevision: saved.state.revision }, labels.revision)
       || !await currentAuthorization(auth)) return sourceChanged();
@@ -83,6 +85,7 @@ export async function GET(request: Request, context: Context) {
     return json({ configuration: selected, fingerprint: currentFingerprint, productId: id, productVersion: saved.product.updated_at,
       contentRevision: saved.content.revision, optionRevision: saved.options.revision, quotationRevision: saved.state.revision,
       profileId: saved.categoryContext.profileId,
+      ...(query.has('idempotencyKey') ? { idempotencyKey: query.get('idempotencyKey')! } : {}),
       knownChanges,
       jobs: jobs.filter(job => JSON.stringify(job.review.company) === JSON.stringify(auth.company) && job.review.profileId === saved.categoryContext.profileId).map(publicJob) });
   } catch (error) { return errorResponse(error); }

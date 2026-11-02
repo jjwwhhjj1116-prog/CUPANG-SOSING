@@ -13,8 +13,9 @@ function load(file,replacements={}){
  const cached=!Object.keys(replacements).length;if(cached&&cache.has(file))return cache.get(file);const exports={};if(cached)cache.set(file,exports);
  const output=ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
  vm.runInNewContext(output,{exports,Error,TextEncoder,URLSearchParams,structuredClone,AbortController,fetch,document:replacements.document,require(name){
-  if(Object.hasOwn(replacements,name))return replacements[name];
+  if(Object.hasOwn(replacements,name))return name==='react'&&!replacements[name].useLayoutEffect?{...replacements[name],useLayoutEffect:replacements[name].useEffect}:replacements[name];
   if(name.endsWith('.css'))return{};
+  if(name.startsWith('@/')&&name.endsWith('.mjs'))return createRequire(import.meta.url)('../'+name.slice(2));
   if(name.startsWith('@/')){const base=name.slice(2);return load(base+(fs.existsSync(new URL('../'+base+'.ts',import.meta.url))?'.ts':'.tsx'));}
   return native(name);
  }});return exports;
@@ -70,7 +71,7 @@ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name
  assert.doesNotMatch(JSON.stringify(ui.render()),/이전 요약 가격/);
  ui.control('wire-msrp').props.onChange({target:{value:''}});assert.equal(editor.resolveQuotationEditorCell(view,ui.changes,'red','msrp').value,'');
  ui.control('wire-salePrice').props.onChange({target:{value:'90'}});assert.match(editor.resolveQuotationEditorCell(view,ui.changes,'red','wire-salePrice').validationIssues.join(' '),/공급가보다/);
- const errorButton=nodes(ui.render()).find(node=>node.type==='button'&&node.props.children==='salePrice');assert.ok(errorButton);errorButton.props.onClick();assert.equal(ui.focused.at(-1),'stage7-price-wire-salePrice');
+ const errorButton=nodes(ui.render()).find(node=>node.type==='button'&&node.props.children==='salePrice 확인하기');assert.ok(errorButton);errorButton.props.onClick();assert.equal(ui.focused.at(-1),'stage7-price-wire-salePrice');
  assert.equal(JSON.stringify(view),before);
 });
 

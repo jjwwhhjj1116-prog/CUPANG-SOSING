@@ -110,4 +110,4 @@
 .quotation-named-pair-name .quotation-field-example { flex: 0 0 15px; margin: 0; }
 @media (max-width: 420px) { .quotation-named-pair { grid-template-columns: minmax(0, 1fr); gap: 7px; } }
 
-/* Keep the registration form centered within the wide seven-stage editor. */
+/* Wizard-specific dimensions live in couplus-quotation-stage.css. */

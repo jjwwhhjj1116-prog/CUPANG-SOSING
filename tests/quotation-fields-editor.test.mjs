@@ -20,7 +20,7 @@ function load(file, overrides = {}) {
   const exports = {};
   const compiled = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   vm.runInNewContext(compiled, { exports, Error, TextEncoder, URLSearchParams, structuredClone, AbortController, fetch: overrides.fetch ?? fetch, require(name) {
-    if (name in overrides) return overrides[name];
+    if (name in overrides) return name==='react'&&!overrides[name].useLayoutEffect?{...overrides[name],useLayoutEffect:overrides[name].useEffect}:overrides[name];
     if (name.endsWith('.css')) return {};
     if (name.startsWith('@/') && name.endsWith('.mjs')) return requireNative(fileURLToPath(new URL(`../${name.slice(2)}`, import.meta.url)));
     if (name.startsWith('.') && name.endsWith('.mjs')) return createRequire(new URL(`../${file}`, import.meta.url))(name);
@@ -300,7 +300,7 @@ test('stage-seven overview and selector show saved numbers while opening, select
  assert.equal(choices.find(node=>node.props.value==='blue').props.children,'261015123002 · 파랑');
  assert.equal(choices.find(node=>node.props.value==='excluded').props.children,'excluded · 견적 제외');
  selector.props.onChange({target:{value:'blue'}});assert.equal(states[8],'blue');
- const save=render().find(node=>node.type==='button'&&String(node.props.children).startsWith('견적 입력 저장'));
+ const save=render().find(node=>node.type==='button'&&node.props['aria-label']==='견적 입력 저장');
  assert.equal(save.props.disabled,false);save.props.onClick();await new Promise(resolve=>setTimeout(resolve,20));
  assert.equal(calls.length,1);assert.deepEqual(calls[0].changes,[{fieldKey:'brand',value:'파랑 검토 브랜드',optionId:'blue'}]);
  assert.equal(calls[0].expectedInputFingerprint,view.inputFingerprint);assert.equal(notices,1);assert.equal(states[1].length,0);
@@ -317,7 +317,7 @@ test('malformed display maps in refreshed or saved quotation responses preserve 
   const wrapper=loaded.QuotationFieldsEditor({productId:'p1',onSaved(){notices++;}}),tree=wrapper.type(wrapper.props);
   effects.splice(0).forEach(effect=>effect());
   const walk=value=>Array.isArray(value)?value.flatMap(walk):value&&typeof value==='object'?[value,...walk(value.props?.children)]:[];
-  const button=walk(tree).find(node=>node.type==='button'&&(operation==='refresh'?node.props.children==='기본값 다시 반영':String(node.props.children).startsWith('견적 입력 저장')));
+  const button=walk(tree).find(node=>node.type==='button'&&(operation==='refresh'?node.props.children==='기본값 다시 반영':node.props['aria-label']==='견적 입력 저장'));
   assert.ok(button);assert.equal(button.props.disabled,false);button.props.onClick();await new Promise(resolve=>setTimeout(resolve,20));
   assert.equal(calls,1,operation);assert.equal(notices,0,operation);assert.equal(states[0],view,operation);
   assert.deepEqual(states[1],edits,operation);assert.match(states[5],/옵션 등록번호.*입력은 유지/,operation);
@@ -332,7 +332,7 @@ test('non-JSON save ACK preserves drafts and confirms an already completed save 
  }});
  const walk=value=>Array.isArray(value)?value.flatMap(walk):value&&typeof value==='object'?[value,...walk(value.props?.children)]:[];
  const render=()=>{slot=0;const wrapper=loaded.QuotationFieldsEditor({productId:'p1',onSaved(){notices++;}});return walk(wrapper.type(wrapper.props));};
- const save=render().find(node=>node.type==='button'&&String(node.props.children).startsWith('견적 입력 저장'));assert.equal(save.props.disabled,false);save.props.onClick();
+ const save=render().find(node=>node.type==='button'&&node.props['aria-label']==='견적 입력 저장');assert.equal(save.props.disabled,false);save.props.onClick();
  for(let i=0;i<8;i++)await new Promise(resolve=>setImmediate(resolve));
  assert.equal(calls.length,1);assert.equal(calls[0].init.method,'PUT');assert.equal(notices,0);assert.equal(states[0],view);assert.deepEqual(states[1],edits);assert.equal(states[4],false);
  assert.match(states[5],/저장 완료 여부를 확인하지 못했습니다/);assert.match(states[5],/중복 저장 전에.*입력 버리고 저장본 불러오기/);assert.doesNotMatch(states[5],/Unexpected|<html>|Temporary/);assert.equal(states[6],'');
@@ -1055,7 +1055,7 @@ test('all-option save sends expanded edits in one revision-checked request',asyn
  const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async(url,init)=>{const body=JSON.parse(init.body);calls.push({url,...body});return Response.json(acknowledgedView(view,body.changes));}});
  const wrapper=loaded.QuotationFieldsEditor({productId:'p1'});const tree=wrapper.type(wrapper.props);
  function nodes(value){if(!value||typeof value!=='object')return[];if(Array.isArray(value))return value.flatMap(nodes);return[value,...nodes(value.props?.children)];}
- const button=nodes(tree).find(n=>n.type==='button'&&typeof n.props.children==='string'&&n.props.children.startsWith('견적 입력 저장'));
+ const button=nodes(tree).find(n=>n.type==='button'&&typeof n.props.children==='string'&&n.props['aria-label']==='견적 입력 저장');
  assert.ok(button);assert.equal(button.props.disabled,false);button.props.onClick();await new Promise(resolve=>setTimeout(resolve,20));
  assert.equal(calls.length,1);assert.equal(calls[0].expectedRevision,view.revision);assert.equal(calls[0].expectedInputFingerprint,view.inputFingerprint);
  assert.equal(calls[0].changes.length,3);assert.deepEqual(calls[0].changes.map(item=>item.optionId),['red','blue','excluded']);assert.ok(calls[0].changes.every(item=>item.value==='전체 적용 브랜드'));
@@ -1125,7 +1125,7 @@ function allOptionForm(view,edits,sourceOptionId,formProps={}){
  const text=value=>Array.isArray(value)?value.map(text).join(''):value&&typeof value==='object'?text(value.props?.children):value==null?'':String(value);
  const render=(updates={})=>{formProps={...formProps,...updates};stateIndex=0;refIndex=0;const wrapper=loaded.QuotationFieldsEditor({productId:'p1',onSaved(){saved++;},...formProps}),tree=wrapper.type(wrapper.props);effects.splice(0).forEach(effect=>effect());return tree;};
  const primarySwitch=()=>nodes(render()).find(node=>node.type==='input'&&node.props.role==='switch');
- const saveButton=()=>nodes(render()).find(node=>node.type==='button'&&typeof node.props.children==='string'&&node.props.children.startsWith('견적 입력 저장'));
+ const saveButton=()=>nodes(render()).find(node=>node.type==='button'&&typeof node.props.children==='string'&&node.props['aria-label']==='견적 입력 저장');
  const settle=async()=>{const deadline=Date.now()+5000;while(states[4]){assert.ok(Date.now()<deadline,'all-option form save did not settle');await new Promise(resolve=>setImmediate(resolve));}render();};
  render();return{calls,states,render,nodes,text,primarySwitch,saveButton,settle,get saved(){return saved;},get server(){return server;}};
 }
@@ -1225,7 +1225,7 @@ test('deleting the active option on refresh keeps its identity and draft instead
  assert.equal(reads,1);assert.equal(states[8],'red');assert.equal(states[1][0].value,'미저장 값');
  let tree=render();assert.ok(tree.some(n=>n.props?.role==='alert'&&String(n.props.children).includes('공통값으로 자동 전환하지')));
  assert.equal(tree.filter(n=>n.type==='fieldset').length,0);
- const save=tree.find(n=>n.type==='button'&&String(n.props.children).startsWith('견적 입력 저장'));assert.equal(save.props.disabled,true);save.props.onClick();await new Promise(r=>setTimeout(r,10));assert.equal(writes,0);
+ const save=tree.find(n=>n.type==='button'&&n.props['aria-label']==='견적 입력 저장');assert.equal(save.props.disabled,true);save.props.onClick();await new Promise(r=>setTimeout(r,10));assert.equal(writes,0);
  tree.find(n=>n.type==='select'&&n.props.value==='red').props.onChange({target:{value:'blue'}});
  tree=render();assert.equal(states[8],'blue');assert.ok(tree.some(n=>n.type==='fieldset'));assert.equal(states[1][0].optionId,'red');
 });
@@ -1238,7 +1238,7 @@ test('all-option save ignores duplicate clicks and aborted late responses withou
   const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async(_url,init)=>{if(init?.method!=='PUT')return Response.json(view);calls++;signal=init.signal;await pending;return Response.json(acknowledgedView(view,JSON.parse(init.body).changes));}});
   const root=loaded.QuotationFieldsEditor({productId:'p1',onSaved(){notices++;}});const tree=root.type(root.props);
   const nodes=v=>Array.isArray(v)?v.flatMap(nodes):v&&typeof v==='object'?[v,...nodes(v.props?.children)]:[];
-  const click=nodes(tree).find(n=>n.type==='button'&&String(n.props.children).startsWith('견적 입력 저장')).props.onClick;
+  const click=nodes(tree).find(n=>n.type==='button'&&n.props['aria-label']==='견적 입력 저장').props.onClick;
   const refresh=nodes(tree).find(n=>n.type==='button'&&n.props.children==='기본값 다시 반영').props.onClick;
   click();click();refresh();assert.equal(calls,1);
   if(abort){signal.throwIfAborted();const initial=effects.find(fn=>String(fn).includes('fetchView(endpoint'));assert.ok(initial);const cleanup=initial();cleanup();assert.equal(signal.aborted,true);}
@@ -1255,7 +1255,7 @@ test('a successful stale quotation reply cannot discard direct edits and deliber
  const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async()=>{calls++;return Response.json({...view,revision:view.revision+1});}});
  const wrapper=loaded.QuotationFieldsEditor({productId:'p1',onSaved(){notices++;}}),tree=wrapper.type(wrapper.props);
  const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value==='object'?[value,...nodes(value.props?.children)]:[];
- const save=nodes(tree).find(node=>node.type==='button'&&String(node.props.children).startsWith('견적 입력 저장'));
+ const save=nodes(tree).find(node=>node.type==='button'&&node.props['aria-label']==='견적 입력 저장');
  assert.equal(save.props.disabled,false);save.props.onClick();await new Promise(resolve=>setTimeout(resolve,20));
  assert.equal(calls,1);assert.equal(notices,0,'unconfirmed direct values must never announce a save');
  assert.equal(JSON.stringify(states[1]),JSON.stringify(edits),'preserve every local edit, including its explicit empty-string intent');
@@ -1339,7 +1339,7 @@ for(const failed of [false,true])test(`quotation form ${failed?'preserves HTML r
  const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async(url,init={})=>{calls.push({url,init});if(init.method==='PUT')return Response.json(saved);if(failed)throw Error('readback interrupted');return Response.json(saved);}});
  const wrapper=loaded.QuotationFieldsEditor({productId:'p1',onSaved(){notices++;}}),tree=wrapper.type(wrapper.props);
  const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value==='object'?[value,...nodes(value.props?.children)]:[];
- const save=nodes(tree).find(node=>node.type==='button'&&String(node.props.children).startsWith('견적 입력 저장'));assert.equal(save.props.disabled,false);save.props.onClick();await new Promise(resolve=>setTimeout(resolve,30));
+ const save=nodes(tree).find(node=>node.type==='button'&&node.props['aria-label']==='견적 입력 저장');assert.equal(save.props.disabled,false);save.props.onClick();await new Promise(resolve=>setTimeout(resolve,30));
  assert.equal(calls.length,2);assert.equal(calls[0].init.method,'PUT');assert.equal(calls[1].init.method,undefined);assert.equal(calls[0].init.signal,calls[1].init.signal);
  assert.equal(notices,failed?0:1);assert.equal(states[1].length,failed?1:0);assert.equal(states[4],false);
  if(failed){assert.equal(states[0],view);assert.match(states[5],/interrupted/);}else assert.equal(JSON.stringify(states[0]),JSON.stringify(saved));

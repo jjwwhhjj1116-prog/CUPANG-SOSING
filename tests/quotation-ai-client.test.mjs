@@ -12,6 +12,114 @@ async function fixture(company=companies[0]){
   const state={configuration:{configured:true,provider:'fixture',model:result.model,freeOnly:true,notice:''},fingerprint:job.fingerprint,productId:f.product.id,productVersion:view.productVersion,contentRevision:view.contentRevision,optionRevision:view.optionRevision,quotationRevision:0,profileId:f.profile.id,jobs:[]};
   return {f,view,job,state};
 }
+function requestBridge() {
+  let current = null;
+  return { change(next, retired) { if (next !== null || current === retired) current = next; }, get current() { return current; } };
+}
+async function settleBridge(ui) { await ui.idle(); ui.flush(); }
+
+test('published AI request defaults to all included options and requests exactly once without applying or saving', async () => {
+  const x = await fixture(), bridge = requestBridge(), applied = [], balances = [];
+  const ui = quotationAiUI({ productId:x.f.product.id, profileId:x.f.profile.id, view:x.view, optionId:null, disabled:false, onApply:value=>applied.push(value), onBusyChange:value=>balances.push(value), onRequestActionChange:bridge.change },
+    async (_url, init) => Response.json(init?.method==='POST'?{job:x.job,sourceCurrent:true}:x.state));
+  try {
+    await settleBridge(ui); assert.ok(bridge.current); assert.equal(bridge.current.disabled,false); assert.equal(bridge.current.applyToAllOptions,true); assert.equal(ui.calls.filter(call=>call.method==='POST').length,0);
+    const action=bridge.current; action.requestDraft(); action.requestDraft(); await settleBridge(ui);
+    assert.equal(ui.calls.filter(call=>call.method==='POST').length,1); assert.equal(ui.calls.at(-1).body.applyToAllOptions,true); assert.equal(applied.length,0); assert.deepEqual(balances,[true,false]);
+    await ui.click('검토한 초안 입력란에 적용'); assert.ok(applied[0].length); assert.equal(ui.calls.filter(call=>call.method==='POST').length,1);
+  } finally { ui.unmount(); }
+});
+
+test('request actions retire across disabled and option-scope ABA and cannot run after unmount', async () => {
+  const x=await fixture(),bridge=requestBridge(),props={productId:x.f.product.id,profileId:x.f.profile.id,view:x.view,optionId:x.f.options.rows[0].id,disabled:false,onApply:()=>assert.fail('No implicit apply'),onRequestActionChange:bridge.change};
+  const ui=quotationAiUI(props,async()=>Response.json(x.state));
+  await settleBridge(ui); const original=bridge.current;
+  ui.render({...props,disabled:true});ui.flush();assert.equal(bridge.current.disabled,true);original.requestDraft();bridge.current.requestDraft();
+  ui.render(props);ui.flush();original.requestDraft();assert.equal(ui.calls.filter(call=>call.method==='POST').length,0);
+  const scoped=bridge.current;ui.checkbox().props.onChange({target:{checked:false}});ui.flush();ui.checkbox().props.onChange({target:{checked:true}});ui.flush();scoped.requestDraft();
+  const optionAction=bridge.current;ui.render({...props,optionId:x.f.options.rows[1].id});await settleBridge(ui);ui.render(props);await settleBridge(ui);optionAction.requestDraft();
+  const sourceAction=bridge.current;ui.render({...props,view:{...x.view,revision:1}});await settleBridge(ui);ui.render(props);await settleBridge(ui);sourceAction.requestDraft();
+  assert.equal(ui.calls.filter(call=>call.method==='POST').length,0);const latest=bridge.current;ui.unmount();assert.equal(bridge.current,null);latest.requestDraft();assert.equal(ui.calls.filter(call=>call.method==='POST').length,0);
+});
+
+test('unreadable AI POST acknowledgement remains request-locked until an exact read receipt exists', async () => {
+  const x=await fixture(),bridge=requestBridge();let key;
+  const ui=quotationAiUI({productId:x.f.product.id,profileId:x.f.profile.id,view:x.view,optionId:null,disabled:false,onApply:()=>assert.fail('No malformed-response apply'),onRequestActionChange:bridge.change},
+    async(_url,init)=>{if(init?.method==='POST'){key=JSON.parse(init.body).idempotencyKey;return new Response('unreadable JSON',{status:200});}return Response.json(key?{...x.state,idempotencyKey:key,jobs:[]}:x.state);});
+  try {await settleBridge(ui);bridge.current.requestDraft();await settleBridge(ui);assert.equal(bridge.current.disabled,true);await ui.click('실행 결과 조회');ui.flush();bridge.current.requestDraft();assert.equal(bridge.current.disabled,true);assert.equal(ui.calls.filter(call=>call.method==='POST').length,1);}
+  finally {ui.unmount();}
+});
+
+test('a non-success AI POST with a matching terminal job still requires exact GET acknowledgement recovery', async () => {
+  const x=await fixture(),bridge=requestBridge();let key,recover=false;
+  const ui=quotationAiUI({productId:x.f.product.id,profileId:x.f.profile.id,view:x.view,optionId:null,disabled:false,onApply:()=>assert.fail('No automatic apply'),onRequestActionChange:bridge.change},
+    async(_url,init)=>{if(init?.method==='POST'){key=JSON.parse(init.body).idempotencyKey;return Response.json({job:x.job,error:'uncertain server response'},{status:503});}return Response.json(recover?{...x.state,idempotencyKey:key,jobs:[x.job]}:x.state);});
+  try {await settleBridge(ui);bridge.current.requestDraft();await settleBridge(ui);assert.equal(bridge.current.disabled,true);bridge.current.requestDraft();assert.equal(ui.calls.filter(call=>call.method==='POST').length,1);
+    recover=true;await ui.click('실행 결과 조회');ui.flush();assert.equal(bridge.current.disabled,false);assert.equal(ui.calls.filter(call=>call.method==='POST').length,1);
+  }finally{ui.unmount();}
+});
+
+test('lost AI POST acknowledgement blocks fresh requests through GET inspection and option/source remounts', async () => {
+  const x=await fixture(),bridge=requestBridge();x.state.jobs=[x.job];const props={productId:x.f.product.id,profileId:x.f.profile.id,view:x.view,optionId:x.f.options.rows[0].id,disabled:false,onApply:()=>assert.fail('No apply while unknown'),onRequestActionChange:bridge.change};
+  const ui=quotationAiUI(props,async(_url,init)=>{if(init?.method==='POST')throw new TypeError('lost response');return Response.json(x.state);});
+  try {
+    await settleBridge(ui);const first=bridge.current;first.requestDraft();await settleBridge(ui);assert.equal(bridge.current.disabled,true);assert.ok(ui.alerts().some(value=>String(value).includes('결과')));
+    bridge.current.requestDraft();first.requestDraft();ui.button('AI 처리').props.onClick();await ui.click('실행 결과 조회');ui.flush();assert.equal(bridge.current.disabled,true);
+    ui.render({...props,optionId:x.f.options.rows[1].id});await settleBridge(ui);assert.equal(bridge.current.disabled,true);bridge.current.requestDraft();
+    ui.render({...props,view:{...x.view,revision:1}});await settleBridge(ui);bridge.current.requestDraft();assert.equal(ui.calls.filter(call=>call.method==='POST').length,1);
+    assert.ok(!ui.button('검토한 초안 입력란에 적용')||ui.button('검토한 초안 입력란에 적용').props.disabled);
+  } finally {ui.unmount();}
+});
+
+test('only an exact dispatch-key GET receipt can recover an unknown AI request without another POST or auto-apply', async () => {
+  const x=await fixture(),bridge=requestBridge(),applied=[];let dispatched,reply;
+  const props={productId:x.f.product.id,profileId:x.f.profile.id,view:x.view,optionId:null,disabled:false,onApply:value=>applied.push(value),onRequestActionChange:bridge.change};
+  const ui=quotationAiUI(props,async(_url,init)=>{if(init?.method==='POST'){dispatched=JSON.parse(init.body);throw new TypeError('lost acknowledgement');}return Response.json(reply??x.state);});
+  try {
+    await settleBridge(ui);bridge.current.requestDraft();await settleBridge(ui);assert.equal(bridge.current.disabled,true);
+    const valid={...x.state,idempotencyKey:dispatched.idempotencyKey,jobs:[x.job]};
+    for(const change of [value=>delete value.idempotencyKey,value=>value.idempotencyKey='wrong',value=>value.jobs=[],value=>value.jobs.push({...x.job}),
+      value=>value.jobs[0].profileId='foreign',value=>value.jobs[0].fingerprint='c'.repeat(64),value=>value.jobs[0].quotationRevision++,value=>value.jobs[0].scope={optionId:null,applyToAllOptions:false},value=>value.jobs[0].status='prepared']) {
+      reply=structuredClone(valid);change(reply);await ui.click('실행 결과 조회');ui.flush();assert.equal(bridge.current.disabled,true);bridge.current.requestDraft();
+    }
+    reply=valid;await ui.click('실행 결과 조회');ui.flush();assert.equal(bridge.current.disabled,false);assert.equal(applied.length,0);
+    assert.equal(ui.calls.filter(call=>call.method==='POST').length,1);assert.ok(ui.calls.filter(call=>call.method==='GET').slice(1).every(call=>call.url.includes('idempotencyKey='+dispatched.idempotencyKey)));
+    await ui.click('검토한 초안 입력란에 적용');assert.ok(applied[0].length);assert.equal(ui.calls.filter(call=>call.method==='POST').length,1);
+  } finally {ui.unmount();}
+});
+
+test('a header request accepts its valid result after the parent echoes its own busy state as disabled', async () => {
+  const x=await fixture(),bridge=requestBridge(),balances=[];let release;const held=new Promise(resolve=>{release=resolve;});
+  const props={productId:x.f.product.id,profileId:x.f.profile.id,view:x.view,optionId:null,disabled:false,onApply:()=>assert.fail('No automatic apply'),onBusyChange:value=>balances.push(value),onRequestActionChange:bridge.change};
+  const ui=quotationAiUI(props,async(_url,init)=>{if(init?.method==='POST'){await held;return Response.json({job:x.job,sourceCurrent:true});}return Response.json(x.state);});
+  try {
+    await settleBridge(ui);bridge.current.requestDraft();ui.render({...props,disabled:true});ui.flush();release();await settleBridge(ui);
+    ui.render(props);ui.flush();assert.equal(ui.button('검토한 초안 입력란에 적용').props.disabled,false);assert.deepEqual(balances,[true,false]);assert.equal(ui.calls.filter(call=>call.method==='POST').length,1);
+  } finally {ui.unmount();}
+});
+
+test('running and uncertain jobs block the request method itself and an older owner cannot retire a later toolbar action', async () => {
+  for(const status of ['running','uncertain']) {
+    const x=await fixture(),bridge=requestBridge();x.state.jobs=[{...x.job,status,result:null}];const props={productId:x.f.product.id,profileId:x.f.profile.id,view:x.view,optionId:null,disabled:false,onApply:()=>assert.fail('No unresolved apply'),onRequestActionChange:bridge.change};
+    const first=quotationAiUI(props,async()=>Response.json(x.state)),second=quotationAiUI(props,async()=>Response.json(x.state));
+    try {await settleBridge(first);const old=bridge.current;await settleBridge(second);const latest=bridge.current;assert.notEqual(latest,old);first.unmount();assert.equal(bridge.current,latest);
+      assert.equal(latest.disabled,true);old.requestDraft();latest.requestDraft();second.button('AI 처리').props.onClick();await settleBridge(second);assert.equal(second.calls.filter(call=>call.method==='POST').length,0);
+    } finally {first.unmount();second.unmount();}
+  }
+});
+
+test('retained scope checkbox handlers cannot clear running/uncertain jobs or survive scope ABA', async () => {
+  for(const status of ['running','uncertain']) {
+    const x=await fixture(),bridge=requestBridge();const props={productId:x.f.product.id,profileId:x.f.profile.id,view:x.view,optionId:null,disabled:false,onApply:()=>assert.fail('No apply'),onRequestActionChange:bridge.change};
+    const ui=quotationAiUI(props,async(_url,init)=>Response.json(init?.method==='POST'?{job:{...x.job,status,result:null},sourceCurrent:true}:x.state));
+    try {await settleBridge(ui);const stale=ui.checkbox().props.onChange;bridge.current.requestDraft();await settleBridge(ui);assert.equal(bridge.current.disabled,true);
+      stale({target:{checked:false}});ui.flush();bridge.current.requestDraft();ui.button('AI 처리').props.onClick();await settleBridge(ui);assert.equal(ui.checkbox().props.checked,true);assert.equal(ui.calls.filter(call=>call.method==='POST').length,1);
+    }finally{ui.unmount();}
+  }
+  const x=await fixture(),ui=quotationAiUI({productId:x.f.product.id,profileId:x.f.profile.id,view:x.view,optionId:null,disabled:false,onApply:()=>assert.fail('No apply')},async()=>Response.json(x.state));
+  try {await settleBridge(ui);const stale=ui.checkbox().props.onChange;ui.checkbox().props.onChange({target:{checked:false}});ui.flush();ui.checkbox().props.onChange({target:{checked:true}});ui.flush();stale({target:{checked:false}});ui.flush();assert.equal(ui.checkbox().props.checked,true);}
+  finally{ui.unmount();}
+});
 for(const company of companies)test(company.name+': reviewed proposals reach only unsaved permitted targets; manual blank stays protected',async()=>{
   const x=await fixture(company),before=JSON.stringify(x.view),changes=client.quotationAiProposalChanges(x.view,x.job,x.state.fingerprint);assert.ok(changes.length);assert.equal(JSON.stringify(x.view),before);
   const first=changes[0],row=x.view.resolved.rows.find(r=>r.optionId===first.optionId);row.fields[first.fieldKey].source='manual-option';row.fields[first.fieldKey].value='';assert.throws(()=>client.quotationAiProposalChanges(x.view,x.job,x.state.fingerprint));
@@ -62,7 +170,7 @@ test('a current-profile unresolved request remains visible across source edits a
   assert.ok(!ui.button('검토한 초안 입력란에 적용'));assert.deepEqual(ui.calls.map(call=>call.method),['GET']);ui.unmount();
 });
 test('AI result after saved source changed is neither applied nor reused',async()=>{
-  const x=await fixture(),applied=[];const ui=quotationAiUI({productId:x.f.product.id,profileId:x.f.profile.id,view:x.view,optionId:x.f.options.rows[0].id,disabled:false,onApply:v=>applied.push(v)},async(_url,init)=>Response.json(init?.method==='POST'?{job:{...x.job,scope:{optionId:x.f.options.rows[0].id,applyToAllOptions:false}},sourceCurrent:false}:x.state));
+  const x=await fixture(),applied=[];const ui=quotationAiUI({productId:x.f.product.id,profileId:x.f.profile.id,view:x.view,optionId:x.f.options.rows[0].id,disabled:false,onApply:v=>applied.push(v)},async(_url,init)=>Response.json(init?.method==='POST'?{job:{...x.job,scope:{optionId:x.f.options.rows[0].id,applyToAllOptions:true}},sourceCurrent:false}:x.state));
   await ui.idle();await ui.click('AI 처리');assert.equal(applied.length,0);assert.equal(ui.button('AI 처리').props.disabled,true);assert.ok(ui.alerts().some(a=>a.includes('바뀌었습니다')));ui.unmount();
 });
 test('uncertain job is recovered by GET and cannot implicitly execute again; close requires explicit confirmation',async()=>{

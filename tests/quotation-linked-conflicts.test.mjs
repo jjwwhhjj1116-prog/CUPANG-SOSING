@@ -11,8 +11,10 @@ function load(file,replacements={}){
  const exports={};if(cached)cache.set(file,exports);
  const output=ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
  vm.runInNewContext(output,{exports,Error,TextEncoder,URLSearchParams,structuredClone,AbortController,fetch:replacements.fetch??fetch,document:replacements.document,require(name){
-  if(Object.hasOwn(replacements,name))return replacements[name];
+  if(Object.hasOwn(replacements,name))return name==='react'&&!replacements[name].useLayoutEffect?{...replacements[name],useLayoutEffect:replacements[name].useEffect}:replacements[name];
   if(name.endsWith('.css'))return{};
+  if(name.startsWith('.')&&name.endsWith('.mjs'))return createRequire(new URL('../'+file,import.meta.url))(name);
+  if(name.startsWith('@/')&&name.endsWith('.mjs'))return native('../'+name.slice(2));
   if(name.startsWith('@/')){const base=name.slice(2);return load(base+(fs.existsSync(new URL('../'+base+'.ts',import.meta.url))?'.ts':'.tsx'));}
   return native(name);
  }});return exports;

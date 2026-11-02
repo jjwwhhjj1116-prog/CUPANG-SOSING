@@ -13,8 +13,9 @@ function load(file,replacements={}){
  const exports={};
  const source=ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
  vm.runInNewContext(source,{exports,Error,TextEncoder,URLSearchParams,structuredClone,AbortController,fetch:replacements.fetch,document:replacements.document,window:replacements.window,require(name){
-  if(Object.hasOwn(replacements,name))return replacements[name];
+  if(Object.hasOwn(replacements,name))return name==='react'&&!replacements[name].useLayoutEffect?{...replacements[name],useLayoutEffect:replacements[name].useEffect}:replacements[name];
   if(name.endsWith('.css'))return{};
+  if(name.startsWith('@/app/')&&name.endsWith('.mjs'))return requireNative(fileURLToPath(new URL('../'+name.slice(2),import.meta.url)));
   if(name.startsWith('@/app/')){const path=name.slice(2);return load(path+(fs.existsSync(new URL('../'+path+'.ts',import.meta.url))?'.ts':'.tsx'));}
   if(name.endsWith('.mjs')&&(name.startsWith('../')||name.startsWith('./')))return requireNative(fileURLToPath(new URL(name,new URL('../'+file,import.meta.url))));
   if(name==='react'||name==='react/jsx-runtime')return requireNative(name);
@@ -152,7 +153,7 @@ test('missing-field navigation focuses the remaining SKU after a removed selecti
   assert.deepEqual(focuses,[{id:'required-navigation-live_weight',option:'remaining',value:''}],'focus follows the new option render');
   assert.deepEqual(clone(states[1]),[{fieldKey:'brand',optionId:'removed',value:'retained removed-SKU draft'}]);
   assert.ok(states[2].some(conflict=>conflict.unavailable));
-  assert.equal(committed.find(node=>node.type==='button'&&String(node.props.children).startsWith('견적 입력 저장')).props.disabled,true,'navigation cannot bypass the retained conflict');
+  assert.equal(committed.find(node=>node.type==='button'&&node.props['aria-label']==='견적 입력 저장').props.disabled,true,'navigation cannot bypass the retained conflict');
   editBrand('remaining draft');render();
   select('');render();
   assert.equal(focuses.length,1,'the pending target is consumed rather than repeated on later renders');

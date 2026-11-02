@@ -12,7 +12,7 @@ export type QuotationAiJobView = { id: string; status: 'prepared' | 'running' | 
   error: { code: string; message: string; uncertain: boolean } | null };
 export type QuotationAiView = { configuration: { configured: boolean; provider: string; model: string; freeOnly: boolean; notice: string };
   fingerprint: string; productId: string; productVersion: string; contentRevision: number; optionRevision: number;
-  quotationRevision: number; profileId: string | null; jobs: QuotationAiJobView[]; knownChanges?: (QuotationAiProposal & Pick<QuotationSavedNoticeChange, 'savedLabel'>)[] };
+  quotationRevision: number; profileId: string | null; jobs: QuotationAiJobView[]; idempotencyKey?: string; knownChanges?: (QuotationAiProposal & Pick<QuotationSavedNoticeChange, 'savedLabel'>)[] };
 /** These are deterministic copies from saved manual/collected sources, returned
  * separately from model output. AI's sensitive-field allowlist remains closed. */
 export function quotationSavedSourceChanges(state: QuotationAiView, view: QuotationFieldsView, productId: string, optionId: string | null, all: boolean): QuotationAiProposal[] {

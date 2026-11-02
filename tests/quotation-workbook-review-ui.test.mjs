@@ -121,7 +121,7 @@ function parentHarness(initial,company='local-yun'){
   server=next;
  }return Response.json(server);});
  const Editor=r.load('app/components/quotation-fields-editor.tsx').QuotationFieldsEditor,wrapper=Editor({productId:company+'-product',onSaved(){saved++;}}),form=r.mount(wrapper.type,wrapper.props);
- const render=()=>form.render(),panel=()=>nodes(render()).find(node=>node.type?.name==='QuotationWorkbookReview'),primary=()=>nodes(render()).find(node=>node.type==='input'&&node.props.role==='switch'),save=()=>nodes(render()).find(node=>node.type==='button'&&text(node).startsWith('견적 입력 저장'));
+ const render=()=>form.render(),panel=()=>nodes(render()).find(node=>node.type?.name==='QuotationWorkbookReview'),primary=()=>nodes(render()).find(node=>node.type==='input'&&node.props.role==='switch'),save=()=>nodes(render()).find(node=>node.type==='button'&&node.props['aria-label']==='견적 입력 저장');
  return{r,calls,render,panel,primary,save,form,get server(){return server;},get saved(){return saved;},async ready(){render();await settle();render();assert.ok(panel());},unmount:()=>form.unmount()};
 }
 
