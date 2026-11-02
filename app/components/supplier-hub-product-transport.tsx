@@ -15,6 +15,7 @@ import {runReservedSegments} from '@/app/supplier-hub-reserved-work.mjs';
 import {SupplierHubNativeRegistration} from '@/app/components/supplier-hub-native-registration';
 import {MemberRegistrationConsentsPanel} from '@/app/components/member-registration-consents-panel';
 import {nativeSerializationDiagnostics, type NativeSerializationPattern} from '@/app/supplier-hub-native-serialization-diagnostics';
+import {waitForNextLookup} from '@/app/supplier-hub-tracking';
 import {readProductDocumentPending,productDocumentPendingKey,productDocumentPendingCurrent,assertProductDocumentPending,claimProductDocumentPending,
   readProductDocumentRejections,productDocumentRejectionKey,assertProductDocumentNotRejected,
   pendingProductRejection,clearRejectedProductDocumentPending,clearValidationRejectedProductDocumentPending,type ProductDocumentPending} from '@/app/supplier-hub-product-pending';
@@ -96,18 +97,20 @@ export function SupplierHubProductTransport(props:Props){
   const [draftReadHint,setDraftReadHint]=useState<{token:object;requestId:string;docId:string|number;state:string;identityDigest:string;packetDigest:string;originalBodySha256:string;preparedBodySha256:string;savedDraftTargetClosed?:boolean;continuationSnapshot?:boolean;resumeSnapshot?:boolean;nativeFileListObserved?:boolean}|null>(null);
   const [finishedReadError,setFinishedReadError]=useState<{token:object;session:ProductDocumentSession;intent:ProductDocumentPending;docId:string|number;message:string;reviewDigest:string;identityDigest:string;packetDigest:string;originalBodySha256:string;preparedBodySha256:string}|null>(null);
   const [finishedPreviewReadError,setFinishedPreviewReadError]=useState<{token:object;intent:ProductDocumentPending;packet:ProductDocumentSession['packet'];message:string}|null>(null);
+  const [finishedPendingRead,setFinishedPendingRead]=useState<{token:object;session:ProductDocumentSession;intent:ProductDocumentPending;observation:ProductDocumentState}|null>(null);
   useLayoutEffect(()=>{reviewEpoch.current=reviewToken;return()=>{if(reviewEpoch.current===reviewToken)reviewEpoch.current=null;};},[reviewToken]);
   const current=useRef({props,mounted:true,session,state,uncertain,expired,approved,unsaved,intent,intentReady,intentError,draftMode,error,closedTargetNeeded,closedTargetApproved,existingRepairNeeded,existingRepairApproved,existingRepairAttempted,existingRepairRetryAttempted,repairContinuationAttempted,repairContinuationResumed,draftReadHint}),pending=useRef<AbortController|null>(null),historyPending=useRef<AbortController|null>(null);
   useLayoutEffect(()=>{current.current={props,mounted:true,session,state,uncertain,expired,approved,unsaved,intent,intentReady,intentError,draftMode,error,closedTargetNeeded,closedTargetApproved,existingRepairNeeded,existingRepairApproved,existingRepairAttempted,existingRepairRetryAttempted,repairContinuationAttempted,repairContinuationResumed,draftReadHint};});
   // A terminal label alone cannot release the enclosing source/close guard.
   // Keep the accepted reservation for duplicate prevention, but allow closing
   // only after this exact observation is positively stored by the app API.
-  const storedTerminal=Boolean(session&&state?.receipt&&!uncertain&&!unsaved&&['accepted','rejected'].includes(state.state)&&history.some(row=>
+  const storedReceipt=Boolean(session&&state?.receipt&&!uncertain&&!unsaved&&history.some(row=>
     'recordType' in row&&row.recordType==='product-document'&&row.requestId===session.packet.requestId&&row.docId===state.docId
     &&row.identityDigest===session.preview.identityDigest&&row.packetDigest===session.packetDigest
     &&row.originalBodySha256===review.originalBodySha256&&row.preparedBodySha256===review.preparedBodySha256
     &&row.receipt.state===state.state&&row.receipt.sourceStatus===state.receipt!.sourceStatus
     &&row.receipt.qvtRequestId===state.receipt!.qvtRequestId&&row.receipt.observedAt>=state.receipt!.observedAt));
+  const storedTerminal=storedReceipt&&Boolean(state&&['accepted','rejected'].includes(state.state));
   const sourceLocked=!intentReady||busy||uncertain||Boolean(unsaved)||Boolean(intent)||Boolean(intentError)||Boolean(session&&!(storedTerminal&&state?.state==='rejected'));
   const validatedDraft=Boolean(session&&intent&&draftMode&&state?.draftOnly===true&&state.state==='validated'&&state.draftProof?.validatedSteps.length===4
     &&session.packet.review.reviewDigest===review.reviewDigest&&session.packet.review.originalBodySha256===review.originalBodySha256&&session.packet.review.preparedBodySha256===review.preparedBodySha256
@@ -132,7 +135,12 @@ export function SupplierHubProductTransport(props:Props){
     &&productReceiptCanonical(finishedPreviewReadError.packet.review.identity)===productReceiptCanonical(review.identity)&&productReceiptCanonical(finishedPreviewReadError.packet.review.members)===productReceiptCanonical(review.members)){
     try{assertProductDocumentPending(review,finishedPreviewReadError.intent);finishedPreviewReadDismissible=true;}catch{/* Preserve the original request when storage cannot be verified. */}
   }
-  const closeLocked=!intentReady||busy||Boolean(unsaved)||Boolean(intentError)||!(finishedReadDismissible||finishedPreviewReadDismissible)&&(uncertain||Boolean((session||intent)&&!storedTerminal&&!validatedDraft));
+  let pendingReadDismissible=false;
+  if(finishedPendingRead?.token===reviewToken&&finishedPendingRead.session===session&&finishedPendingRead.intent===intent&&finishedPendingRead.observation===state
+    &&storedReceipt&&state?.state==='pending'&&state.preparedLifecycle&&!state.error&&!state.needsRecovery&&!error&&!disabled){
+    try{assertProductDocumentPending(review,finishedPendingRead.intent,finishedPendingRead.session);pendingReadDismissible=true;}catch{/* Keep the original request reserved when ownership changed. */}
+  }
+  const closeLocked=!intentReady||busy||Boolean(unsaved)||Boolean(intentError)||!(finishedReadDismissible||finishedPreviewReadDismissible||pendingReadDismissible)&&(uncertain||Boolean((session||intent)&&!storedTerminal&&!validatedDraft));
   useLayoutEffect(()=>{onLockChange(sourceLocked,closeLocked);},[sourceLocked,closeLocked,onLockChange]);
   useLayoutEffect(()=>()=>{stopConfiguredRegistration();current.current.mounted=false;pending.current?.abort();historyPending.current?.abort();current.current.props.onLockChange(false,false);},[]);
   useLayoutEffect(()=>()=>stopConfiguredRegistration(),[reviewToken]);
@@ -175,7 +183,7 @@ export function SupplierHubProductTransport(props:Props){
     },Math.max(0,challenge.expiresAt-Date.now()));return()=>clearTimeout(timer);
   },[state?.challenge]);
   const canEnter=()=>reviewEpoch.current===reviewToken&&current.current.mounted&&!current.current.props.disabled&&!pending.current&&current.current.props.review===review&&current.current.intentReady&&!current.current.intentError;
-  function begin(){const controller=new AbortController();pending.current=controller;setFinishedReadError(null);setFinishedPreviewReadError(null);setOriginalAuditReport(null);setSavedValidationReport(null);setBusy(true);setError('');current.current.props.onLockChange(true,true);
+  function begin(){const controller=new AbortController();pending.current=controller;setFinishedReadError(null);setFinishedPreviewReadError(null);setFinishedPendingRead(null);setOriginalAuditReport(null);setSavedValidationReport(null);setBusy(true);setError('');current.current.props.onLockChange(true,true);
     return {controller,alive:()=>reviewEpoch.current===reviewToken&&current.current.mounted&&current.current.props.review===review&&!controller.signal.aborted&&pending.current===controller,
       active:()=>reviewEpoch.current===reviewToken&&current.current.mounted&&current.current.props.review===review&&!current.current.props.disabled&&!controller.signal.aborted&&pending.current===controller,
       finish:()=>{if(pending.current===controller){pending.current=null;if(current.current.mounted)setBusy(false);}}};}
@@ -529,6 +537,28 @@ export function SupplierHubProductTransport(props:Props){
       await operatePrepared('confirmPreparedDraft',expected,challenge.id,{task,validated:observation,intent:saved,configured:{registration:active,confirmation}});
     }catch{stopConfiguredRegistration(expected);/* A policy read failure never becomes consent or a failed submit. */}
   }
+  async function observeConfiguredReceipt(expected:ProductDocumentSession,task:ReturnType<typeof begin>){
+    const registration=currentConfiguredRegistration(expected),saved=current.current.intent;let observation=current.current.state;
+    const active=()=>Boolean(registration&&saved&&task.active()&&currentConfiguredRegistration(expected)===registration
+      &&current.current.session===expected&&current.current.intent===saved&&current.current.state===observation
+      &&observation?.state==='pending'&&observation.preparedLifecycle&&observation.receipt?.evidence==='document-receipt'
+      &&registration.docId===observation.docId&&!observation.error&&!observation.needsRecovery
+      &&!current.current.uncertain&&!current.current.unsaved&&!current.current.error&&!current.current.intentError);
+    const finishPending=()=>{if(!active())return;try{assertProductDocumentPending(review,saved!,expected);
+      setFinishedPendingRead({token:reviewToken,session:expected,intent:saved!,observation:observation!});}catch{/* A changed reservation never releases this view. */}};
+    if(!active())return;
+    // Three reads spaced two seconds apart share the existing request-envelope budget.
+    // A slow read can end this follow-up, never replay a submit or clear its reservation.
+    const timer=setTimeout(()=>{if(!task.active())return;finishPending();stopConfiguredRegistration(expected);task.controller.abort();task.finish();},PRODUCT_DOCUMENT_REQUEST_TTL);
+    try{
+      for(let attempt=0;attempt<3&&active();attempt++){
+        await waitForNextLookup(2000,task.controller.signal);if(!active())break;
+        await operatePrepared('observePreparedDraft',expected,undefined,{task,validated:observation!,intent:saved!,configuredObservation:registration!});
+        observation=current.current.state;
+      }
+      finishPending();
+    }finally{clearTimeout(timer);stopConfiguredRegistration(expected);}
+  }
   function rememberDraftReadFailure(cause:unknown,expected:ProductDocumentSession,isDraftRead=false){
     // Only the fully verified, pre-lifecycle reply supplies this hint. It is
     // presentation/read routing, never ownership proof or permission to write.
@@ -544,10 +574,11 @@ export function SupplierHubProductTransport(props:Props){
     if(cause.existingDocumentRepairAttempted){current.current.existingRepairAttempted=true;setExistingRepairAttempted(true);}
     if(cause.existingDocumentRepairRetryAttempted){current.current.existingRepairRetryAttempted=true;setExistingRepairRetryAttempted(true);}
   }
-  async function operatePrepared(action:PreparedDocumentAction,expected:ProductDocumentSession,challengeId?:string,handoff?:{task:ReturnType<typeof begin>;validated:ProductDocumentState;intent:ProductDocumentPending;configured?:{registration:ConfiguredRegistrationIntent;confirmation:SingleConfirmation}}){
+  async function operatePrepared(action:PreparedDocumentAction,expected:ProductDocumentSession,challengeId?:string,handoff?:{task:ReturnType<typeof begin>;validated:ProductDocumentState;intent:ProductDocumentPending;configured?:{registration:ConfiguredRegistrationIntent;confirmation:SingleConfirmation};configuredObservation?:ConfiguredRegistrationIntent}){
     if(handoff){
       if(!handoff.task.active()||current.current.session!==expected||current.current.state!==handoff.validated||current.current.intent!==handoff.intent)return;
-      if(handoff.configured){if(action!=='confirmPreparedDraft'||currentConfiguredRegistration(expected)!==handoff.configured.registration||handoff.configured.confirmation.mode!=='configured-policy'||handoff.validated.challenge?.id!==challengeId)return;}
+      if(handoff.configuredObservation){if(action!=='observePreparedDraft'||currentConfiguredRegistration(expected)!==handoff.configuredObservation||handoff.validated.state!=='pending')return;}
+      else if(handoff.configured){if(action!=='confirmPreparedDraft'||currentConfiguredRegistration(expected)!==handoff.configured.registration||handoff.configured.confirmation.mode!=='configured-policy'||handoff.validated.challenge?.id!==challengeId)return;}
       else if(action!=='reviewPreparedDraft'||handoff.validated.state!=='validated'||handoff.validated.draftOnly!==true||handoff.validated.preparedLifecycle||handoff.validated.draftProof?.validatedSteps.length!==4)return;
     }else if(!canEnter())return;const before=current.current;
     if(before.session!==expected||expected.preview.preparedLifecycleAvailable!==true||!before.intent||!before.draftMode||before.unsaved
@@ -557,7 +588,7 @@ export function SupplierHubProductTransport(props:Props){
     let confirmation;
     if(action==='confirmPreparedDraft'){try{confirmation=handoff?.configured?.confirmation??singleConsentConfirmation(before.state!.challenge!,Object.entries(before.approved).filter(([,yes])=>yes).map(([key])=>key));}
       catch(cause){setError(cause instanceof Error?cause.message:'현재 문서의 필수 약관을 확인해주세요.');return;}}
-    if(action==='recoverPreparedDraft'||action==='observePreparedDraft')stopConfiguredRegistration(expected);
+    if(action==='recoverPreparedDraft'||action==='observePreparedDraft'&&!handoff?.configuredObservation)stopConfiguredRegistration(expected);
     if(action==='recoverPreparedDraft'){const previous=current.current.draftReadHint,next=previous?{...previous,savedDraftTargetClosed:undefined,continuationSnapshot:undefined,resumeSnapshot:undefined,nativeFileListObserved:undefined}:previous;current.current.draftReadHint=next;setDraftReadHint(next);}
     const task=handoff?.task??begin();let dispatched=false,activeSession=expected;
     try{
@@ -582,7 +613,9 @@ export function SupplierHubProductTransport(props:Props){
       current.current.state=result;current.current.uncertain=result.needsRecovery;current.current.approved={};current.current.expired=false;
       setState(result);setUncertain(result.needsRecovery);setApproved({});setExpired(false);if(result.error)setError(result.error.message);
       if(result.receipt?.evidence==='document-receipt'&&!result.needsRecovery){const attempt={packet:activeSession.packet,observation:preparedReceiptObservation(result)};current.current.unsaved=attempt;setUnsaved(attempt);await persist(attempt,task);}
-      if(result.error||result.needsRecovery||current.current.unsaved||['submit-requested','pending','accepted','rejected','validation-rejected','scope-blocked'].includes(result.state))stopConfiguredRegistration(activeSession);
+      if(!result.error&&!result.needsRecovery&&!current.current.unsaved&&current.current.state?.state==='pending'&&action==='confirmPreparedDraft'&&handoff?.configured)await observeConfiguredReceipt(activeSession,task);
+      else if(!result.error&&!result.needsRecovery&&!current.current.unsaved&&current.current.state?.state==='pending'&&handoff?.configuredObservation){/* The bounded original run owns the next read. */}
+      else if(result.error||result.needsRecovery||current.current.unsaved||['submit-requested','pending','accepted','rejected','validation-rejected','scope-blocked'].includes(result.state))stopConfiguredRegistration(activeSession);
       else await continueConfiguredRegistration(activeSession,result,task);
     }catch(cause){if(task.alive()){
       stopConfiguredRegistration(expected);
@@ -752,6 +785,7 @@ export function SupplierHubProductTransport(props:Props){
       {state?.state==='navigation-ready'&&!uncertain&&!error&&<button type="button" className="btn primary" disabled={disabled||busy} onClick={()=>void operatePrepared('reviewPreparedDraft',session)}>같은 문서 다음 단계 계속</button>}
       {(!state?.receipt||uncertain)&&<button type="button" className="btn ghost" disabled={disabled||busy||Boolean(unsaved)} onClick={()=>void operatePrepared('recoverPreparedDraft',session)}>준비한 문서 단계 확인 · 읽기 전용</button>}
       {state&&['pending','accepted'].includes(state.state)&&!uncertain&&<button type="button" className="btn ghost" disabled={disabled||busy||Boolean(unsaved)} onClick={()=>void operatePrepared('observePreparedDraft',session)}>접수 결과 조회</button>}
+      {pendingReadDismissible&&<p role="status">접수 처리 중인 결과를 보관했습니다. 이 창을 닫아도 원래 문서의 접수 기록은 유지됩니다.</p>}
     </section>}
     {session?.preview.liveVerified&&!draftMode&&!state?.draftOnly&&<>
       {!state&&!uncertain&&!intent&&<button type="button" className="btn primary" disabled={disabled||busy||Boolean(intentError)} onClick={()=>void operate('start',session)}>전체 상품 견적 등록 시작</button>}

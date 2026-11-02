@@ -23,6 +23,7 @@ function fixture({intercept,complete,prepare,afterWrite,currentCheck,renderImage
  const render=async plan=>{plans.push(clone(plan));if(renderImage)return renderImage(plan);return{blob:new Blob([png],{type:'image/png'}),width:800,height:500};};
  const dependencies={
   '@/app/product-label':labels,'@/app/product-label-draft':draftModule,'@/app/document-image-render':{renderDocument:render},
+  '@/app/product-label-result':{readCurrentProductLabelResult:async()=>{throw Error('This isolated fixture has no generated PNG candidate.');}},
   '@/app/product-label-save':{completeProductLabelSave:async(input,request)=>{input.assertCurrent();attachments.push(input.optionId);if(complete)return complete(input,request,{get view(){return view;},controller});await input.render(labels.productLabelPlan(input.view,input.optionId));await request(input.quotationEndpoint,{cache:'no-store'});return{view:clone(view),key:'owner/synthetic.png',quotation:{}};}},
  };
  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/batch-selected-label-work.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,Date,URL,Blob,require:name=>{assert.ok(dependencies[name],name);return dependencies[name];}});

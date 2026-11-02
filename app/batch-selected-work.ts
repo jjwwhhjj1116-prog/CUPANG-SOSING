@@ -24,7 +24,7 @@ import { runSelectedPackagingWork } from '@/app/batch-selected-packaging-work';
 
 export type SelectedBatchStageResult = { id: AutomationStageId; status: 'waiting'|'running'|'draft'|'complete'|'blocked'|'failed'|'skipped'; message: string;boardSource?:BatchBoardSource };
 type Controls = { stages: readonly AutomationStageId[]; mode?:'full'|'selected'; expectedOwnerId: string; signal: AbortSignal; fetcher: typeof fetch;
-  keys: Map<string,string>; newKey:()=>string; onStage:(result:SelectedBatchStageResult)=>void;seoGenerationConsent?:SeoGenerationConfiguration;retryFailedQwen?:boolean };
+  keys: Map<string,string>; newKey:()=>string; onStage:(result:SelectedBatchStageResult)=>void;seoGenerationConsent?:SeoGenerationConfiguration;retryFailedQwen?:boolean;retryFailedQuotation?:boolean };
 type Outcome = Pick<SelectedBatchStageResult,'status'|'message'> & {uncertain?:boolean;stop?:boolean};
 type QuotationGenerationRecovery={ownerId:string;productId:string;company:{code:string;name:string};requestKey:string;
   fingerprint:string;productVersion:string;contentRevision:number;optionRevision:number;quotationRevision:number;profileId:string|null;model:string|null;executionPolicy:unknown}
@@ -400,8 +400,24 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     const retainedJobs=attempt&&Array.isArray(state.jobs)?attempt.jobId?state.jobs.filter(job=>job?.id===attempt.jobId):state.idempotencyKey===attempt.requestKey?state.jobs:[]:[];
     let job=attempt?retainedJobs.length===1&&sameQuotationGenerationJob(attempt,retainedJobs[0])?retainedJobs[0]:null:aiConfigured?quotationAiJobForScope(state,view,productId,null,true):null;
     if(attempt&&!job)return{status:'blocked',message:'원래 견적 AI 작업의 현재 결과를 확인하지 못했습니다. 다른 작업으로 바꾸거나 새 생성 요청을 보내지 않았습니다.',uncertain:true};
-    if(aiConfigured&&!job){
+    const retryFailed=controls.retryFailedQuotation===true&&aiConfigured&&job?.status==='failed'&&job.error?.uncertain===false&&uuid(job.id)
+      &&job.fingerprint===state.fingerprint&&job.quotationRevision===view.revision&&job.profileId===view.categoryContext.profileId
+      &&job.scope?.optionId===null&&job.scope.applyToAllOptions===true&&job.model===state.configuration.model
+      &&same(job.executionPolicy??null,quotationConfiguration(state).executionPolicy??null);
+    if(aiConfigured&&(!job||retryFailed)){
       const key=identity+':quote:'+state.fingerprint;
+      if(retryFailed){
+        // An explicit retry may replace only the terminal failure just read.
+        // A retry rejected before dispatch keeps its already prepared UUID.
+        const prepared=retainedQuotationGeneration(),reusePrepared=!recovering&&prepared?.format==='selected-quotation-generation-v2'&&prepared.jobId===null
+          &&quotationGenerationCurrent(prepared,state,view)&&keys.get(key)===prepared.requestKey;
+        if(!reusePrepared){
+          const nextKey=controls.newKey();
+          if(!uuid(nextKey)||nextKey===keys.get(key)||nextKey===attempt?.requestKey)return{status:'blocked',message:'새 견적 AI 재시도 요청번호를 확인하지 못해 실행하지 않았습니다.'};
+          keys.set(key,nextKey);
+        }
+        keys.delete(identity+':pending:quotation');
+      }
       if(!keys.has(key))keys.set(key,controls.newKey());
       const policy=quotationConfiguration(state).executionPolicy??null;
       if(!uuid(keys.get(key))||policy!==null&&!validQuotationTextExecution(policy)||state.configuration.model!==quotationTextModel(policy))

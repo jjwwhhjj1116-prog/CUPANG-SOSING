@@ -12,7 +12,7 @@ const stages=['seo','pricing','mainImage','additionalImages','detailImage','size
 const product=id=>({id,title:'상품 '+id,updated_at:'2026-10-23T00:00:00.000Z'});
 test('the frozen full mode reaches each product runner without expanding selected stages',async()=>{
  const h=harness(async id=>({productId:id,stages:[]}),{products:[product('a')],runRequest:{id:'full-mode',ownerId:'owner',mode:'full',stages:['pricing'],keys:new Map()}});
- try{h.render();await tick();assert.equal(h.calls.length,1);assert.equal(h.calls[0].options.mode,'full');assert.deepEqual([...h.calls[0].options.stages],['pricing']);assert.equal(h.calls[0].options.retryFailedQwen,false);}finally{h.close();}
+ try{h.render();await tick();assert.equal(h.calls.length,1);assert.equal(h.calls[0].options.mode,'full');assert.deepEqual([...h.calls[0].options.stages],['pricing']);assert.equal(h.calls[0].options.retryFailedQwen,false);assert.equal(h.calls[0].options.retryFailedQuotation,false);h.button('선택 작업 다시 시도').props.onClick();await tick();assert.equal(h.calls.length,2);assert.equal(h.calls[1].options.retryFailedQuotation,true);}finally{h.close();}
 });
 function harness(runner,{selected=stages,products=[product('a'),product('b')],runRequest={id:'run-one',ownerId:'owner',stages:selected,keys:new Map()}}={}){
  const slots=[],effects=[],layouts=[],calls=[],locks=[],opened=[],activity=[];let cursor=0,closed=false,lateWrites=0,props={products,runRequest,onOpen:(...values)=>opened.push(values),onBusyChange:value=>locks.push(value),onActivity:event=>activity.push(event)};

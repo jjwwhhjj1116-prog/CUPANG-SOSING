@@ -24,7 +24,7 @@ export function SelectedBatchWorkPanel({products,onOpen,onBusyChange,onActivity,
  const [busy,setBusy]=useState(true),[stopping,setStopping]=useState(false),[results,setResults]=useState<Record<string,Partial<Record<AutomationStageId,SelectedBatchStageResult>>>>({}),[errors,setErrors]=useState<Record<string,string>>({});
  const context=useRef<{request:SelectedBatchRequest;products:Item[];active:AbortController|null;stop:boolean;generation:number}|null>(null),callbacks=useRef({onOpen,onBusyChange,onActivity});
  useLayoutEffect(()=>{callbacks.current={onOpen,onBusyChange,onActivity};},[onOpen,onBusyChange,onActivity]);
- async function execute(scope:NonNullable<typeof context.current>,retryFailedQwen=false){
+ async function execute(scope:NonNullable<typeof context.current>,retryFailedAi=false){
   if(context.current!==scope||scope.active)return;
   const active=new AbortController(),generation=++scope.generation;scope.active=active;scope.stop=false;setStopping(false);setBusy(true);setResults({});setErrors({});callbacks.current.onBusyChange?.(true);
   callbacks.current.onActivity?.({kind:'start',runId:scope.request.id,attempt:generation});
@@ -36,7 +36,7 @@ export function SelectedBatchWorkPanel({products,onOpen,onBusyChange,onActivity,
     if(!current()||scope.stop)break;
     setErrors(previous=>({...previous,[product.id]:''}));
     try{
-     const result=await runSelectedBatchProduct(product.id,{stages:[...scope.request.stages],mode:scope.request.mode,seoGenerationConsent:scope.request.seoGenerationConsent,retryFailedQwen,expectedOwnerId:scope.request.ownerId,signal:active.signal,fetcher:(input,init)=>fetch(input,init),keys:scope.request.keys,newKey:()=>crypto.randomUUID(),onStage:stage=>publish(product.id,stage)});
+     const result=await runSelectedBatchProduct(product.id,{stages:[...scope.request.stages],mode:scope.request.mode,seoGenerationConsent:scope.request.seoGenerationConsent,retryFailedQwen:retryFailedAi,retryFailedQuotation:retryFailedAi,expectedOwnerId:scope.request.ownerId,signal:active.signal,fetcher:(input,init)=>fetch(input,init),keys:scope.request.keys,newKey:()=>crypto.randomUUID(),onStage:stage=>publish(product.id,stage)});
      if(!current())break;
      if(!result||result.productId!==product.id)throw Error('선택한 상품의 작업 결과를 확인하지 못했습니다.');
      for(const stage of result.stages)publish(product.id,stage);

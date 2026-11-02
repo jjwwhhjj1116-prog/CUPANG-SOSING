@@ -3,6 +3,7 @@ import { verifyProductLabelDraftResult } from '@/app/product-label-draft';
 import { completeProductLabelSave } from '@/app/product-label-save';
 import { renderDocument } from '@/app/document-image-render';
 import type { ProductLabelUploadCache } from '@/app/product-label-upload';
+import { readCurrentProductLabelResult } from '@/app/product-label-result';
 
 export type SelectedLabelWorkResult = { status: 'draft' | 'blocked' | 'failed' | 'complete'; message: string; completedOptions: number; totalOptions: number; uncertain: boolean };
 type Controls = { fetcher?: typeof fetch; signal: AbortSignal; assertCurrent?: () => void | Promise<void>; render?: typeof renderDocument;trackMutationDispatch?:(onDispatch:()=>void)=>()=>void };
@@ -16,7 +17,7 @@ const changed = () => new LabelWorkError('표시사항 작업 중 상품·옵션
  * A saved PNG proves delivery, not a person's factual/legal review: the
  * existing label override schema has no durable review/AI distinction. */
 export async function runSelectedLabelWork(productId: string, controls: Controls): Promise<SelectedLabelWorkResult> {
- let completedOptions = 0, totalOptions = 0, savedTexts = 0, pendingSave = false, pendingDraft = false;
+ let completedOptions = 0, totalOptions = 0, savedTexts = 0, reusedOptions = 0, pendingSave = false, pendingDraft = false;
  const result = (status: SelectedLabelWorkResult['status'], message: string): SelectedLabelWorkResult => ({ status, message, completedOptions, totalOptions, uncertain: pendingSave || pendingDraft });
  const checkSignal = () => {
   if (controls.signal.aborted) throw new LabelWorkError('표시사항 작업을 중지했습니다. 확인된 저장본은 보존했습니다.', 'blocked');
@@ -73,6 +74,12 @@ export async function runSelectedLabelWork(productId: string, controls: Controls
   for (const optionId of selected) {
    const fresh = await read(); if (!same(fresh, view)) throw changed(); view = fresh;
    const row = view.rows.find(row => row.optionId === optionId)!;
+   // A filename only locates a candidate; the existing reader proves its exact saved plan and current reference.
+   if (view.imageKeys.some(key => /\/quotation-label-[a-f0-9]{64}\.png$/.test(key))) {
+    const existing = await readCurrentProductLabelResult({ productId, endpoint, quotationEndpoint, optionId }, request); await current();
+    if (!same(existing.references.view, view)) throw changed();
+    if (existing.result) { completedOptions++; reusedOptions++; continue; }
+   }
    const eligible = productLabelDefinitions(view).some(field => draftKeys.has(field.key) && !['manual-common', 'manual-option'].includes(row.sources[field.key]));
    let draft: ProductLabelDraft = {};
    if (eligible) {
@@ -111,7 +118,9 @@ export async function runSelectedLabelWork(productId: string, controls: Controls
     assertCurrent: checkSignal }, request);
    await current(); view = saved.view; completedOptions++; pendingSave = false;
   }
-  return result('draft', `${completedOptions}개 포함 옵션의 표시사항 내용과 PNG를 저장하고 견적서에 연결했습니다. 상품과 대조해 내용을 검토해주세요.`);
+  return result('draft', reusedOptions
+   ? `${completedOptions}개 포함 옵션의 표시사항 내용과 PNG 연결을 확인했습니다. 기존 PNG ${reusedOptions}개를 재사용했습니다. 상품과 대조해 내용을 검토해주세요.`
+   : `${completedOptions}개 포함 옵션의 표시사항 내용과 PNG를 저장하고 견적서에 연결했습니다. 상품과 대조해 내용을 검토해주세요.`);
  } catch (cause) {
   const prefix = savedTexts || completedOptions || pendingSave ? `초안 내용 저장 ${savedTexts}개 · PNG 연결 ${completedOptions}/${totalOptions}개를 확인했습니다. ` : '';
   const detail = cause instanceof Error ? cause.message : '표시사항 작업을 완료하지 못했습니다. 저장 결과를 확인해주세요.';

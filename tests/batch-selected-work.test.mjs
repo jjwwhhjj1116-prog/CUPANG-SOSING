@@ -583,6 +583,65 @@ test('confirmed failed quotation AI still copies verified saved sources and chec
  assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
 });
 
+test('only explicit quotation retry replaces an exact confirmed failure and saves the reviewed draft without losing manual or excluded fields',async()=>{
+ const h=knownQuotationFixture(),completed=plain(h.job),before=plain(h.view);h.job.status='failed';h.job.result=null;h.job.error={code:'PROVIDER_FAILED',message:'확인된 모델 오류',uncertain:false};h.overrideKnownChanges([]);
+ const originalKey='11111111-1111-4111-8111-111111111111',freshKey='22222222-2222-4222-8222-222222222222';let allocated=0;
+ h.keys.set('owner:product:quote:'+hash,originalKey);h.options.newKey=()=>{allocated++;return freshKey;};
+ const first=await h.run(['quotation']);assert.equal(first.stages[0].status,'blocked');assert.equal(allocated,0);assert.equal(h.writes.length,0);
+ assert.equal(h.calls.filter(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST').length,0);
+ h.overrideKnownChanges(undefined);h.options.retryFailedQuotation=true;h.prependIntercept(call=>{if(call.url.endsWith('/quotation-ai')&&call.method==='POST'){Object.assign(h.job,completed);return Response.json({job:completed,sourceCurrent:true});}});
+ const retry=await h.run(['quotation']);assert.equal(retry.stages[0].status,'draft',retry.stages[0].message);assert.equal(allocated,1);
+ const generated=h.calls.filter(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST');assert.equal(generated.length,1);assert.equal(generated[0].body.idempotencyKey,freshKey);assert.equal(generated[0].body.expectedFingerprint,hash);assert.equal(generated[0].body.expectedQuotationRevision,1);assert.equal(generated[0].body.optionId,null);assert.equal(generated[0].body.applyToAllOptions,true);
+ assert.equal(h.writes.length,1);assert.deepEqual(h.writes[0].changes,[{optionId:'a',fieldKey:'notice3',value:'검토 재질'},{optionId:'a',fieldKey:'notice0',value:'제조자: 저장 제조사 / 수입자: 저장 수입사'},{optionId:'a',fieldKey:'notice1',value:'02-1234-5678'},{optionId:'b',fieldKey:'notice1',value:'02-1234-5678'}]);
+ assert.deepEqual(h.view,before);assert.equal(h.writes[0].changes.some(change=>change.optionId==='excluded'||change.optionId==='b'&&change.fieldKey==='notice0'||change.fieldKey==='notice2'),false);
+ assert.equal(h.calls.filter(call=>call.adapter==='packaging').length,2);assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
+});
+
+test('explicit quotation retry never replaces unresolved, completed, foreign-scope or foreign-policy history',async()=>{
+ for(const mode of ['prepared','running','uncertain','failed-uncertain','completed','profile','scope','model','policy','revision','fingerprint']){
+  const h=knownQuotationFixture();h.options.retryFailedQuotation=true;h.overrideKnownChanges([]);h.job.status='failed';h.job.result=null;h.job.error={code:'FAILED',message:'확인할 실행',uncertain:false};let allocated=0;h.options.newKey=()=>{allocated++;return '22222222-2222-4222-8222-222222222222';};
+  if(['prepared','running','uncertain'].includes(mode))h.job.status=mode;
+  if(mode==='failed-uncertain')h.job.error.uncertain=true;
+  if(mode==='completed'){h.job.status='completed';h.job.result={changes:[],warnings:[],model:quotationModel,generatedAt:version};}
+  if(mode==='profile')h.job.profileId='foreign';if(mode==='scope')h.job.scope={optionId:'a',applyToAllOptions:false};if(mode==='model')h.job.model='foreign';if(mode==='policy')h.job.executionPolicy={version:999};if(mode==='revision')h.job.quotationRevision=2;if(mode==='fingerprint')h.job.fingerprint='b'.repeat(64);
+  // Invalid history that is outside this scope is not itself a terminal failure
+  // proof. Keep it visible here so the retry decision cannot bypass validation.
+  if(['profile','scope','revision','fingerprint'].includes(mode))h.deps['@/app/quotation-ai-client'].quotationAiJobForScope=()=>h.job;
+  await h.run(['quotation']);assert.equal(h.calls.filter(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST').length,0,mode);assert.equal(allocated,0,mode);
+ }
+});
+
+for(const mode of ['lost ACK','pre-dispatch rejection','another confirmed failure'])test(`one explicit failed quotation retry retains its new request through ${mode}`,async()=>{
+ const h=knownQuotationFixture(),completed=plain(h.job),originalKey='11111111-1111-4111-8111-111111111111',freshKey='22222222-2222-4222-8222-222222222222';let allocated=0,rejected=false,posts=0;
+ h.job.status='failed';h.job.result=null;h.job.error={code:'PROVIDER_FAILED',message:'확인된 모델 오류',uncertain:false};h.overrideKnownChanges([]);h.keys.set('owner:product:quote:'+hash,originalKey);h.options.newKey=()=>{allocated++;return freshKey;};
+ // Also cover an original request whose lost ACK is now proved terminal failed.
+ h.keys.set('owner:product:pending:quotation','견적서 AI 실행 결과 확인 필요');h.keys.set('owner:product:quotation-generation-readback-v1',JSON.stringify({format:'selected-quotation-generation-v2',ownerId:'owner',productId:'product',company:{code:'A01526306',name:'유앤채'},requestKey:originalKey,jobId:h.job.id,fingerprint:hash,productVersion:version,contentRevision:3,optionRevision:2,quotationRevision:1,profileId:null,model:quotationModel,executionPolicy:null,scope:{optionId:null,applyToAllOptions:true}}));
+ const current=()=>({configuration:plain(quotationConfiguration),fingerprint:hash,productId:'product',productVersion:version,contentRevision:3,optionRevision:2,quotationRevision:1,profileId:null,knownChanges:[],jobs:[h.job]});
+ h.prependIntercept(call=>{
+  if(mode==='pre-dispatch rejection'&&!rejected&&call.url==='/api/supplier-hub/catalog-context'&&h.keys.get('owner:product:quote:'+hash)===freshKey&&h.keys.has('owner:product:pending:quotation')){rejected=true;return Response.json({error:'isolated retry preflight unavailable'},{status:503});}
+  if(call.url.includes('/quotation-ai?jobId='))return Response.json(current());
+  if(call.url.includes('/quotation-ai?idempotencyKey='))return Response.json({...current(),idempotencyKey:freshKey});
+  if(call.url.endsWith('/quotation-ai')&&call.method==='POST'){
+   posts++;h.job.id='88888888-8888-4888-8888-888888888888';if(mode!=='another confirmed failure')Object.assign(h.job,completed,{id:h.job.id});
+   if(mode==='lost ACK'){h.job.status='running';h.job.result=null;throw Error('isolated new retry ACK lost');}
+   return Response.json({job:h.job,sourceCurrent:true});
+  }
+ });
+ h.options.retryFailedQuotation=true;const first=await h.run(['quotation']);assert.equal(allocated,1);assert.equal(posts,mode==='pre-dispatch rejection'?0:1);assert.equal(first.stages[0].status,mode==='another confirmed failure'?'blocked':'failed');
+ const proof=JSON.parse(h.keys.get('owner:product:quotation-generation-readback-v1'));assert.equal(proof.requestKey,freshKey);assert.equal(h.keys.get('owner:product:quote:'+hash),freshKey);
+ if(mode==='another confirmed failure'){
+  h.options.retryFailedQuotation=false;await h.run(['quotation']);assert.equal(posts,1);assert.equal(allocated,1);assert.equal(h.writes.length,0);return;
+ }
+ if(mode==='pre-dispatch rejection'){assert.equal(h.keys.has('owner:product:pending:quotation'),false);assert.equal(proof.jobId,null);}
+ const before=h.calls.length,next=await h.run(['quotation']);assert.equal(allocated,1);assert.equal(posts,1);
+ if(mode==='lost ACK'){
+  assert.equal(next.stages[0].status,'blocked');assert.equal(h.writes.length,0);assert.deepEqual(h.calls.slice(before).filter(call=>call.url?.includes('/quotation-ai')).map(call=>call.url),['/api/products/product/quotation-ai?idempotencyKey='+freshKey]);
+  Object.assign(h.job,completed,{id:'88888888-8888-4888-8888-888888888888'});const recovered=await h.run(['quotation']);assert.equal(recovered.stages[0].status,'draft',recovered.stages[0].message);
+ }else assert.equal(next.stages[0].status,'draft',next.stages[0].message);
+ assert.equal(posts,1);assert.equal(allocated,1);assert.equal(h.writes.length,1);assert.ok(h.writes[0].changes.every(change=>change.optionId!=='excluded'&&(change.optionId!=='b'||change.fieldKey!=='notice0')));
+ assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
+});
+
 test('unresolved quotation AI and uncertain failed proof never copy sources or start packaging',async()=>{
  for(const status of ['prepared','running','uncertain','failed']){
   const h=extendedKnownQuotationFixture();h.job.status=status;h.job.result=null;h.job.error={code:'UNCONFIRMED',message:'현재 결과 미확정',uncertain:true};
@@ -707,7 +766,7 @@ test('exact-key quotation recovery retains and checks the configured Qwen execut
 
 test('unconfirmed exact-key quotation readbacks retain the original fence and never generate, save or package',async()=>{
  for(const mode of ['missing','duplicate','extra-job','wrong-key','missing-key','non2xx','malformed','prepared','running','uncertain','fingerprint','revision','profile','scope','model','policy','source','content','options','settings-model','settings-policy','settings-disabled']){
-  const h=lostQuotationAckFixture();await h.run(['quotation']);const retained=h.keys.get('owner:product:quotation-generation-readback-v1');
+  const h=lostQuotationAckFixture();await h.run(['quotation']);h.options.retryFailedQuotation=true;const retained=h.keys.get('owner:product:quotation-generation-readback-v1');
   const result={...plain(h.state),idempotencyKey:'11111111-1111-4111-8111-111111111111'};
   if(mode==='missing')result.jobs=[];if(mode==='duplicate')result.jobs.push(result.jobs[0]);if(mode==='extra-job')result.jobs.push({...result.jobs[0],id:'88888888-8888-4888-8888-888888888888'});
   if(mode==='wrong-key')result.idempotencyKey='88888888-8888-4888-8888-888888888888';if(mode==='missing-key')delete result.idempotencyKey;

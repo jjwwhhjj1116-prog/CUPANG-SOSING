@@ -138,6 +138,13 @@ function configuredChallenge(h,stage){const challenge=h.f.challenge(stage);retur
  items:stage==='logisticsPage'?[]:[{key:stage==='productPage'?'msrpAgree':'labelContactAgreed',id:stage==='productPage'?'agreeMSRPTerm':'agreeLabelContact',text:'현재 표시된 안내',required:true,title:'현재 약관 제목',termsText:'현재 문서에 표시된 약관 전문'}]};}
 function allowConfiguredPrepared(h,run){h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true,configuredRegistrationConsentAvailable:true}
  :payload.action==='prepareDraft'?draftResult(h.f,payload.packet.requestId):run(payload);}
+async function advanceConfiguredReceipt(h,until=()=>!h.render().props['aria-busy']){
+ for(let attempt=0;attempt<4;attempt++){
+  await h.wait(()=>until()||[...h.f.timers.values()].some(timer=>timer.due===h.f.clock.now+2000));if(until())return;
+  h.f.advance(2000);
+ }
+ await h.wait(until);
+}
 
 test('configured registration capability is strictly boolean and requires the complete native prepared flow',async()=>{
  for(const mode of ['string','number','null','no-draft','no-lifecycle']){const h=await fixture();try{
@@ -151,6 +158,7 @@ for(const company of SINGLE_COMPANIES)test(`${company.code}: configured registra
  const h=await fixture(company,{configuredProbe:(message,f)=>configuredReply(message.expected.challenge,f.clock.now)});let confirmations=0;try{
   allowConfiguredPrepared(h,payload=>{
    if(payload.action==='reviewPreparedDraft')return preparedResult(h,payload,'awaiting-stage-consent',14,{challenge:configuredChallenge(h,'productPage')});
+   if(payload.action==='observePreparedDraft')return preparedResult(h,payload,'accepted',24,{receipt:h.f.observation('FINISHED').receipt});
    assert.equal(payload.action,'confirmPreparedDraft');assert.equal(payload.confirmation.mode,'configured-policy');confirmations++;
    return confirmations===1?preparedResult(h,payload,'awaiting-stage-consent',17,{challenge:configuredChallenge(h,'imagePage')}):confirmations===2?preparedResult(h,payload,'awaiting-consent',20,{challenge:configuredChallenge(h,'logisticsPage')}):preparedResult(h,payload,'pending',23,{receipt:h.f.observation('SUBMITTED').receipt});
   });
@@ -159,13 +167,120 @@ for(const company of SINGLE_COMPANIES)test(`${company.code}: configured registra
   assert.equal(attrs['data-supplier-hub-product-id'],h.f.review.identity.productId);assert.equal(attrs['data-supplier-hub-request-id'],packet.requestId);assert.equal(attrs['data-supplier-hub-packet-digest'],h.f.context.packetDigest);
   assert.equal(attrs['data-supplier-hub-identity-digest'],h.f.context.identityDigest);assert.equal(attrs['data-supplier-hub-body-sha256'],h.f.review.originalBodySha256);assert.equal(attrs['data-supplier-hub-prepared-body-sha256'],h.f.review.preparedBodySha256);
   assert.equal(h.button(prepareDraft).props['data-supplier-hub-registration-start'],undefined);const refreshStart=h.refreshCalls.length;
-  await h.click(registerDraft);assert.equal(confirmations,3);assert.equal(h.f.history[0].receipt.sourceStatus,'SUBMITTED');assert.equal(h.button(confirmPrepared),undefined);
-  assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','reviewPreparedDraft','confirmPreparedDraft','confirmPreparedDraft','confirmPreparedDraft']);
+  h.button(registerDraft).props.onClick();await advanceConfiguredReceipt(h);assert.equal(confirmations,3);assert.equal(h.f.history[0].receipt.sourceStatus,'FINISHED');assert.equal(h.button(confirmPrepared),undefined);
+  assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','reviewPreparedDraft','confirmPreparedDraft','confirmPreparedDraft','confirmPreparedDraft','observePreparedDraft']);
+  assert.equal(new Set(h.f.sent.map(row=>row.payload.packet.requestId)).size,1);assert.deepEqual(h.lockPairs.at(-1),[true,false]);
   const probes=h.f.configuredMessages.filter(message=>message.type==='probe');assert.equal(probes.length,3);
   assert.ok(probes.every(message=>message.expected.identity.ownerId===h.f.review.identity.ownerId&&message.expected.identity.company.code===company.code&&message.expected.sourceExpected.requestId===packet.requestId
    &&message.expected.sourceExpected.packetDigest===attrs['data-supplier-hub-packet-digest']&&message.expected.sourceExpected.bodySha256===h.f.review.originalBodySha256&&message.expected.sourceExpected.preparedBodySha256===h.f.review.preparedBodySha256&&message.expected.docId==='new-document-728'));
   assert.equal(new Set(h.refreshCalls.slice(refreshStart)).size,1,'one explicit operation spans configured approvals');assert.equal(h.f.configuredMessages.at(-1).type,'cancel');assert.equal(h.stored.size,1);
  }finally{h.close();}
+});
+
+function configuredPendingFlow(h,observe){
+ let confirmations=0,reads=0;
+ allowConfiguredPrepared(h,payload=>{
+  if(payload.action==='reviewPreparedDraft')return preparedResult(h,payload,'awaiting-stage-consent',14,{challenge:configuredChallenge(h,'productPage')});
+  if(payload.action==='observePreparedDraft')return observe(payload,++reads);
+  assert.equal(payload.action,'confirmPreparedDraft');confirmations++;
+  return confirmations===1?preparedResult(h,payload,'awaiting-stage-consent',17,{challenge:configuredChallenge(h,'imagePage')})
+   :confirmations===2?preparedResult(h,payload,'awaiting-consent',20,{challenge:configuredChallenge(h,'logisticsPage')})
+   :preparedResult(h,payload,'pending',23,{receipt:h.f.observation('SUBMITTED').receipt});
+ });
+ return{confirmations:()=>confirmations,reads:()=>reads};
+}
+
+test('configured receipt follow-up starts only after the exact pending receipt save ACK',async()=>{
+ const gate=deferred();let saves=0;const h=await fixture(SINGLE_COMPANIES[0],{configuredProbe:(message,f)=>configuredReply(message.expected.challenge,f.clock.now),beforeSaveReply:()=>++saves===1?gate.promise:undefined});try{
+  const flow=configuredPendingFlow(h,payload=>preparedResult(h,payload,'accepted',24,{receipt:h.f.observation('FINISHED').receipt}));
+  await h.idle();await h.click(open);h.button(registerDraft).props.onClick();await h.wait(()=>saves===1);
+  assert.equal(flow.reads(),0);assert.deepEqual(h.lockPairs.at(-1),[true,true]);assert.equal(h.f.history.length,0);
+  gate.resolve();await advanceConfiguredReceipt(h);assert.equal(flow.reads(),1);assert.equal(flow.confirmations(),3);assert.equal(h.f.history[0].receipt.sourceStatus,'FINISHED');assert.deepEqual(h.lockPairs.at(-1),[true,false]);
+ }finally{gate.resolve();h.close();}
+});
+
+for(const company of SINGLE_COMPANIES)test(`${company.code}: paced configured reads finish a delayed asynchronous receipt without a manual query or post-terminal read`,async()=>{
+ const h=await fixture(company,{configuredProbe:(message,f)=>configuredReply(message.expected.challenge,f.clock.now)});try{
+  const started=h.f.clock.now,observed=[];
+  const flow=configuredPendingFlow(h,(payload,read)=>{observed.push(h.f.clock.now-started);const accepted=h.f.clock.now-started>=4000;
+   return preparedResult(h,payload,accepted?'accepted':'pending',23+read,{receipt:h.f.observation(accepted?'FINISHED':'SUBMITTED').receipt});
+  });
+  await h.idle();await h.click(open);h.button(registerDraft).props.onClick();await h.wait(()=>h.f.history.length===1&&[...h.f.timers.values()].some(timer=>timer.due===h.f.clock.now+2000));
+  assert.equal(flow.reads(),0);h.f.advance(1999);await turn();h.flush();assert.equal(flow.reads(),0);
+  h.f.advance(1);await h.wait(()=>flow.reads()===1&&[...h.f.timers.values()].some(timer=>timer.due===h.f.clock.now+2000));assert.equal(h.f.history[0].receipt.sourceStatus,'SUBMITTED');
+  h.f.advance(1999);await turn();h.flush();assert.equal(flow.reads(),1);h.f.advance(1);await h.idle();
+  assert.deepEqual(observed,[2000,4000]);assert.equal(h.f.history[0].receipt.sourceStatus,'FINISHED');assert.deepEqual(h.lockPairs.at(-1),[true,false]);assert.equal(flow.confirmations(),3);
+  h.f.advance(1_000_000);await h.idle();assert.equal(flow.reads(),2);assert.equal(new Set(h.f.sent.map(row=>row.payload.packet.requestId)).size,1);
+ }finally{h.close();}
+});
+
+test('unmount during the configured receipt pacing interval cancels the wait without dispatching another observation',async()=>{
+ const h=await fixture(SINGLE_COMPANIES[0],{configuredProbe:(message,f)=>configuredReply(message.expected.challenge,f.clock.now)});let closed=false;try{
+  const flow=configuredPendingFlow(h,()=>assert.fail('no read after unmount'));await h.idle();await h.click(open);h.button(registerDraft).props.onClick();
+  await h.wait(()=>h.f.history.length===1&&[...h.f.timers.values()].some(timer=>timer.due===h.f.clock.now+2000));h.close();closed=true;
+  h.f.advance(1_000_000);for(let i=0;i<6;i++)await turn();assert.equal(flow.reads(),0);assert.equal(flow.confirmations(),3);assert.equal(h.f.timers.size,0);assert.equal(h.stored.size,1);
+ }finally{if(!closed)h.close();}
+});
+
+test('configured receipt follow-up never dismisses a failed pending save or an unacknowledged newer receipt save',async()=>{
+ for(const mode of ['pending-save-failed','newer-save-unacknowledged']){const gate=deferred();let saves=0;
+  const h=await fixture(SINGLE_COMPANIES[0],{configuredProbe:(message,f)=>configuredReply(message.expected.challenge,f.clock.now),beforeSaveReply:()=>{
+   saves++;if(mode==='pending-save-failed')throw Error('isolated receipt save failed');if(saves===2)return gate.promise;
+  }});try{
+   const flow=configuredPendingFlow(h,payload=>preparedResult(h,payload,'accepted',24,{receipt:h.f.observation('FINISHED').receipt}));
+   await h.idle();await h.click(open);h.button(registerDraft).props.onClick();
+   if(mode==='pending-save-failed')await h.idle();else{await advanceConfiguredReceipt(h,()=>saves===2);h.f.advance(PRODUCT_DOCUMENT_REQUEST_TTL);await h.idle();}
+   assert.equal(flow.reads(),mode==='pending-save-failed'?0:1);assert.equal(flow.confirmations(),3);assert.deepEqual(h.lockPairs.at(-1),[true,true]);assert.ok(h.button('확인 결과 저장 다시 시도'));
+   assert.equal(h.f.history.length,mode==='pending-save-failed'?0:1);if(h.f.history.length)assert.equal(h.f.history[0].receipt.sourceStatus,'SUBMITTED');
+   gate.resolve();await h.idle();assert.deepEqual(h.lockPairs.at(-1),[true,true]);assert.equal(h.stored.size,1);
+  }finally{gate.resolve();h.close();}}
+});
+
+for(const company of SINGLE_COMPANIES)test(`${company.code}: configured pending receipt reads are bounded and the durable original request may close after the budget`,async()=>{
+ const h=await fixture(company,{configuredProbe:(message,f)=>configuredReply(message.expected.challenge,f.clock.now)});try{
+  const flow=configuredPendingFlow(h,(payload,read)=>preparedResult(h,payload,'pending',23+read,{receipt:h.f.observation('SUBMITTED').receipt}));
+  await h.idle();await h.click(open);h.button(registerDraft).props.onClick();await advanceConfiguredReceipt(h);
+  assert.equal(flow.reads(),3);assert.equal(flow.confirmations(),3);assert.deepEqual(h.lockPairs.at(-1),[true,false]);assert.match(h.text(),/접수 처리 중인 결과를 보관했습니다/);
+  assert.equal(h.f.history[0].receipt.sourceStatus,'SUBMITTED');assert.equal(h.stored.size,1);assert.equal(new Set(h.f.sent.map(row=>row.payload.packet.requestId)).size,1);
+  h.f.advance(1_000_000);await h.idle();assert.equal(flow.reads(),3);assert.equal(h.f.sent.filter(row=>row.payload.action==='prepareDraft').length,1);assert.equal(flow.confirmations(),3);
+  const[key,raw]=[...h.stored][0];h.stored.set(key,JSON.stringify({...JSON.parse(raw),requestId:'00000000-0000-4000-8000-000000000000'}));h.storageChanged(key);
+  assert.deepEqual(h.lockPairs.at(-1),[true,true],'changed durable ownership revokes pending dismissal');
+ }finally{h.close();}
+});
+
+test('configured pending follow-up stops an unanswered read at the existing envelope budget without another submission',async()=>{
+ const h=await fixture(SINGLE_COMPANIES[0],{configuredProbe:(message,f)=>configuredReply(message.expected.challenge,f.clock.now)});try{
+  const flow=configuredPendingFlow(h,()=>undefined);await h.idle();await h.click(open);h.button(registerDraft).props.onClick();await advanceConfiguredReceipt(h,()=>flow.reads()===1);
+  assert.deepEqual(h.lockPairs.at(-1),[true,true]);h.f.advance(PRODUCT_DOCUMENT_REQUEST_TTL);await h.idle();
+  assert.equal(flow.reads(),1);assert.equal(flow.confirmations(),3);assert.equal(h.f.history[0].receipt.sourceStatus,'SUBMITTED');assert.deepEqual(h.lockPairs.at(-1),[true,false]);
+  h.f.advance(1_000_000);await h.idle();assert.equal(flow.reads(),1);assert.equal(h.f.timers.size,0);assert.equal(h.f.listeners.size,0);assert.equal(h.stored.size,1);
+ }finally{h.close();}
+});
+
+test('configured receipt follow-up stops on unknown status, authentication failure and changed document identity without accepting another receipt',async()=>{
+ for(const mode of ['unknown','auth','doc','qvt','source','owner','company']){const h=await fixture(SINGLE_COMPANIES[0],{configuredProbe:(message,f)=>configuredReply(message.expected.challenge,f.clock.now)});try{
+  const flow=configuredPendingFlow(h,payload=>{
+   if(mode==='auth'){const error=Error('현재 Supplier Hub 인증을 확인해주세요.');error.code='AUTH_REQUIRED';throw error;}
+   const result=preparedResult(h,payload,'accepted',24,{receipt:h.f.observation('FINISHED').receipt});
+   if(mode==='unknown')result.receipt.sourceStatus='UNKNOWN';if(mode==='doc')result.docId='different-document';if(mode==='qvt')result.receipt.qvtRequestId='different-qvt';
+   if(mode==='source')h.f.refresh=async()=>({...h.f.review,preparedBodySha256:'f'.repeat(64)});if(mode==='owner')h.f.actor.ownerId='another-owner';if(mode==='company')h.f.actor.company=SINGLE_COMPANIES[1];return result;
+  });
+  await h.idle();await h.click(open);h.button(registerDraft).props.onClick();await advanceConfiguredReceipt(h);assert.equal(flow.reads(),1,mode);assert.equal(flow.confirmations(),3);
+  assert.equal(h.f.history[0].receipt.sourceStatus,'SUBMITTED');assert.equal(h.f.calls.filter(row=>row.method==='POST').length,1);assert.deepEqual(h.lockPairs.at(-1),[true,true]);
+  h.f.advance(1_000_000);await h.idle();assert.equal(flow.reads(),1);assert.equal(h.stored.size,1);
+ }finally{h.close();}}
+});
+
+test('configured receipt follow-up cannot publish or continue after unmount, disabled view, reservation replacement or review ABA',async()=>{
+ for(const mode of ['unmount','disabled','reservation','review-ABA']){const gate=deferred(),h=await fixture(SINGLE_COMPANIES[0],{configuredProbe:(message,f)=>configuredReply(message.expected.challenge,f.clock.now)});let closed=false;try{
+  let payload;const flow=configuredPendingFlow(h,value=>{payload=value;return gate.promise;});await h.idle();await h.click(open);h.button(registerDraft).props.onClick();await advanceConfiguredReceipt(h,()=>flow.reads()===1);
+  const props=h.props();if(mode==='unmount'){h.close();closed=true;}if(mode==='disabled')h.render({...props,disabled:true});
+  if(mode==='review-ABA'){h.render({...props,review:{...props.review,reviewDigest:'f'.repeat(64)}});h.render(props);}
+  if(mode==='reservation'){const[key,raw]=[...h.stored][0];h.stored.set(key,JSON.stringify({...JSON.parse(raw),requestId:'00000000-0000-4000-8000-000000000000'}));h.storageChanged(key);}
+  gate.resolve(preparedResult(h,payload,'accepted',24,{receipt:h.f.observation('FINISHED').receipt}));
+  if(closed){for(let i=0;i<6;i++)await turn();}else await h.idle();
+  assert.equal(flow.reads(),1,mode);assert.equal(flow.confirmations(),3);assert.equal(h.f.history[0].receipt.sourceStatus,'SUBMITTED');assert.equal(h.f.calls.filter(row=>row.method==='POST').length,1);assert.equal(h.stored.size,1);
+ }finally{gate.resolve();if(!closed)h.close();}}
 });
 
 test('configured policy opt-in panel receives only the current challenge and new or unavailable policies leave manual checkboxes unchecked',async()=>{
