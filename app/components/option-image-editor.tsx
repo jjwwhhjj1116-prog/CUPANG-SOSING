@@ -14,15 +14,17 @@ import { startDetailBodyFromSavedPhoto } from '@/app/detail-source-draft';
 import { mainImageLibraryCurrent, readMainImageLibrary, type MainImageLibrary } from '@/app/main-image-library';
 import { verifyMainImageView } from '@/app/quotation-main-image';
 import type { DetailWorkspaceCompositeToolbarActions } from '@/app/components/detail-workspace-composite-panel';
+import type { WorkspaceImageBatchToolbarActions } from '@/app/components/detail-workspace-image-batch-panel';
 
 type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; stage: OptionImageStage; active?: boolean; saveOnChange?: boolean; primaryDetailTools?: boolean; uploadControl?: ReactNode; sidebarActions?: ReactNode; detailToolbarActions?: ReactNode;
+  onDetailWorkBusyChange?: (busy: boolean) => void;
   disabled?: boolean; processingConfigured?: boolean | null; onSaved?: () => void; onTranslate?: (sourceKey: string, role: OptionImageStage, sourceLanguage: 'zh' | 'en', quotationTarget: FreeImageQuotationRequest) => void;
   onEdit?: (sourceKey: string, role: OptionImageStage, quotationTarget: FreeImageQuotationRequest) => void;
   onProcess?: (sourceKey: string, role: 'additional', quotationTarget: FreeImageQuotationRequest, quotationView: QuotationFieldsView) => void };
 const imageUrl = (key: string) => `/api/files/${key.split('/').map(encodeURIComponent).join('/')}`;
 const dragMime = 'application/x-yoofam-option-image-order';
 type ImageDrag = { scope: string; sourceKey: string; stage: OptionImageStage; view: QuotationFieldsView; keys: string[]; key: string; token: string; element: HTMLElement };
-export function OptionImageEditor({ productId, optionId, version, profileId, refreshToken, stage, active = true, saveOnChange = false, primaryDetailTools = false, uploadControl, sidebarActions, detailToolbarActions, disabled = false, processingConfigured = null, onSaved, onTranslate, onEdit, onProcess }: Props) {
+export function OptionImageEditor({ productId, optionId, version, profileId, refreshToken, stage, active = true, saveOnChange = false, primaryDetailTools = false, uploadControl, sidebarActions, detailToolbarActions, disabled = false, processingConfigured = null, onSaved, onTranslate, onEdit, onProcess, onDetailWorkBusyChange }: Props) {
   const instant = stage === 'additional' && saveOnChange;
   const endpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId ? `?profileId=${encodeURIComponent(profileId)}` : ''}`;
   const scope = JSON.stringify([endpoint, optionId]), sourceKey = JSON.stringify([scope, version, refreshToken]);
@@ -58,6 +60,12 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     if (!mounted.current || next === null && liveCompositeToolbar.current !== retired) return;
     liveCompositeToolbar.current = next; setCompositeToolbar(next);
   }, []);
+  const [imageBatchToolbar, setImageBatchToolbar] = useState<WorkspaceImageBatchToolbarActions | null>(null), liveImageBatchToolbar = useRef<WorkspaceImageBatchToolbarActions | null>(null);
+  const receiveImageBatchToolbar = useCallback((next: WorkspaceImageBatchToolbarActions | null, retired?: WorkspaceImageBatchToolbarActions) => {
+    if (!mounted.current || next === null && liveImageBatchToolbar.current !== retired) return;
+    liveImageBatchToolbar.current = next; setImageBatchToolbar(next);
+  }, []);
+  useEffect(() => () => onDetailWorkBusyChange?.(false), [sourceKey, onDetailWorkBusyChange]);
   useEffect(() => {
     if (!instant || !active || disabled || !view || saved?.sourceKey !== sourceKey) return;
     try { verifyMainImageView(view); } catch { return; }
@@ -466,6 +474,8 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     <header className="option-detail-primary-header" hidden={stage!=='detail'}><h3 hidden={!primaryDetailTools}>상세 페이지 이미지</h3><div className="option-detail-primary-actions">{stage==='detail'&&uploadControl}
       <button type="button" className="btn ghost" aria-label="상세 이미지 다운로드" hidden={!primaryDetailTools} disabled={!compositeToolbar||compositeToolbar.downloadDisabled||!view||locked||dirty||!active||saved?.sourceKey!==sourceKey} onClick={()=>{if(compositeToolbar&&liveCompositeToolbar.current===compositeToolbar&&interactive()&&!request.current&&!pendingSave.current&&!Object.keys(latestDraft.current.values).length&&saved?.sourceKey===sourceKey)compositeToolbar.download();}}>다운로드</button>
       {detailToolbarActions}
+      {primaryDetailTools && <button type="button" className="btn ghost" aria-label="상세 본문 영어를 한국어로 번역" disabled={!imageBatchToolbar||imageBatchToolbar.disabled||!view||locked||dirty||!active||saved?.sourceKey!==sourceKey} onClick={()=>{if(imageBatchToolbar&&liveImageBatchToolbar.current===imageBatchToolbar&&interactive()&&!request.current&&!pendingSave.current&&!Object.keys(latestDraft.current.values).length&&saved?.sourceKey===sourceKey)imageBatchToolbar.prepare('en');}}>영어→한국어 번역</button>}
+      {primaryDetailTools && <button type="button" className="btn ghost" aria-label="상세 본문 모든 이미지 AI 처리" disabled={!imageBatchToolbar||imageBatchToolbar.disabled||!view||locked||dirty||!active||saved?.sourceKey!==sourceKey} onClick={()=>{if(imageBatchToolbar&&liveImageBatchToolbar.current===imageBatchToolbar&&interactive()&&!request.current&&!pendingSave.current&&!Object.keys(latestDraft.current.values).length&&saved?.sourceKey===sourceKey)imageBatchToolbar.prepare('zh');}}>모든 이미지 AI 처리</button>}
       <button type="button" className="btn primary detail-toolbar-save" aria-label="상세 이미지 저장 검토" hidden={!primaryDetailTools} disabled={!compositeToolbar||compositeToolbar.saveDisabled||!view||locked||dirty||!active||saved?.sourceKey!==sourceKey} onClick={()=>{if(compositeToolbar&&liveCompositeToolbar.current===compositeToolbar&&interactive()&&!request.current&&!pendingSave.current&&!Object.keys(latestDraft.current.values).length&&saved?.sourceKey===sourceKey)compositeToolbar.prepareSave();}}>저장</button>
     </div></header>
     {!(stage==='detail'&&primaryDetailTools)&&<h3>{stage === 'detail' ? '상세 페이지 이미지' : '선택 옵션 추가 이미지'}</h3>}<p className="option-image-context">{row?.optionLabel || optionId} · {row?.included === false ? '견적 제외 옵션' : '선택한 옵션'}</p>
@@ -477,7 +487,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
       <small>합치기 직전의 검증된 사진 순서를 불러옵니다. 저장하기 전까지 현재 통합 상세 이미지는 바뀌지 않습니다.</small>
       <small>사진·HTML 재편집은 HTML을 함께 보관한 저장 건에서 사용할 수 있습니다. 당시 HTML을 그대로 새 수동 초안에 넣으며 예전 공통·자동 상속 상태로 되돌리지는 않습니다.</small>
     </div></details>}
-    {stage === 'detail' && view && <details className="option-detail-advanced" open={primaryDetailTools ? true : undefined}><summary hidden={primaryDetailTools}>상세 이미지 합치기·작업 구성</summary><DetailWorkspacePanel key={`workspace:${scope}`} productId={productId} optionId={optionId} profileId={profileId} view={view} stageActive={active} primaryDetailTools={primaryDetailTools} onCompositeToolbarActionsChange={receiveCompositeToolbar}
+    {stage === 'detail' && view && <details className="option-detail-advanced" open={primaryDetailTools ? true : undefined}><summary hidden={primaryDetailTools}>상세 이미지 합치기·작업 구성</summary><DetailWorkspacePanel key={`workspace:${scope}`} productId={productId} optionId={optionId} profileId={profileId} view={view} stageActive={active} primaryDetailTools={primaryDetailTools} onCompositeToolbarActionsChange={receiveCompositeToolbar} onImageBatchToolbarActionsChange={receiveImageBatchToolbar}
       disabled={disabled || busy || merging || uncertain || dirty || !!bindingError || saved?.sourceKey !== sourceKey}
       onRefreshRequested={() => {
         if (!keyboardGeneration || keyboardEpoch.current !== keyboardGeneration || !active || !liveActive.current || !current() || currentStage.current !== 'detail'
@@ -523,6 +533,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
           || !keyboardGeneration || keyboardEpoch.current !== keyboardGeneration)) return;
         if (workspaceBusy.current.key === sourceKey && workspaceBusy.current.busy === value) return;
         workspaceBusy.current = { key: sourceKey, busy: value }; setWorkspaceWork(workspaceBusy.current);
+        onDetailWorkBusyChange?.(value);
       }}
       onAdopt={keys => {
         if (!keyboardGeneration || keyboardEpoch.current !== keyboardGeneration || !active || !liveActive.current || !current() || currentStage.current !== 'detail'

@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { generateDetailWorkspaceHtml, type DetailWorkspaceDocument, type DetailWorkspacePhoto, type DetailWorkspaceView } from '@/app/detail-workspace';
 import { initialDetailWorkspaceDocument } from '@/app/detail-workspace-seed';
@@ -12,8 +12,10 @@ import { attachDetailWorkspaceFiles, readLatestDetailWorkspaceAfterAttachment, r
 import { DetailWorkspaceCompositePanel, type DetailWorkspaceCompositeToolbarActions } from '@/app/components/detail-workspace-composite-panel';
 import { DetailWorkspaceRebasePanel } from '@/app/components/detail-workspace-rebase-panel';
 import { DetailImageEditDialog } from '@/app/components/detail-image-edit-dialog';
+import { DetailWorkspaceImageBatchPanel, type WorkspaceImageBatchToolbarActions } from '@/app/components/detail-workspace-image-batch-panel';
 
 type Props = { productId: string; optionId: string; profileId?: string; view: QuotationFieldsView; disabled?: boolean; stageActive?: boolean; primaryDetailTools?: boolean; onCompositeToolbarActionsChange?: (next: DetailWorkspaceCompositeToolbarActions | null, retired?: DetailWorkspaceCompositeToolbarActions) => void;
+  onImageBatchToolbarActionsChange?: (next: WorkspaceImageBatchToolbarActions | null, retired?: WorkspaceImageBatchToolbarActions) => void;
   beforeAdopt?: () => boolean; onAdopt: (keys: string[]) => void; onBusyChange?: (busy: boolean) => void; onFilesAttached?: (view: QuotationFieldsView) => void; onRefreshRequested?: () => void; onCompositeSaved?: (view: QuotationFieldsView) => void };
 type Work = { selection: DetailWorkspaceSelection; reply: DetailWorkspaceView; document: DetailWorkspaceDocument; seedDocument?: DetailWorkspaceDocument; marginText?: string };
 type Pending = { input: DetailWorkspaceSaveInput; attempt: DetailWorkspaceAttempt };
@@ -29,7 +31,7 @@ const marginIssue = '사진 간격은 0~200 사이의 정수로 입력해주세�
 /** Independent editable composition. Its generated HTML never replaces the
  * selected option's literal quotation HTML. */
 export function DetailWorkspacePanel(props: Props) { return <DetailWorkspaceForm key={JSON.stringify([props.productId, props.optionId, props.profileId ?? null])} {...props} />; }
-export function DetailWorkspaceForm({ productId, optionId, profileId, view, disabled = false, stageActive = true, primaryDetailTools = false, beforeAdopt, onAdopt, onBusyChange, onFilesAttached, onRefreshRequested, onCompositeSaved, onCompositeToolbarActionsChange }: Props) {
+export function DetailWorkspaceForm({ productId, optionId, profileId, view, disabled = false, stageActive = true, primaryDetailTools = false, beforeAdopt, onAdopt, onBusyChange, onFilesAttached, onRefreshRequested, onCompositeSaved, onCompositeToolbarActionsChange, onImageBatchToolbarActionsChange }: Props) {
   const [work, setWork] = useState<Work | null>(null), [busy, setBusy] = useState(false), [uncertain, setUncertain] = useState(false);
   const [ready, setReady] = useState(false);
   const [canRecover, setCanRecover] = useState(false);
@@ -38,6 +40,11 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
   const [editor, setEditor] = useState<PhotoEditor | null>(null), [editorBusy, setEditorBusy] = useState(false), [editorDirty, setEditorDirty] = useState(false);
   const [attaching, setAttaching] = useState(false), [attachmentRetry, setAttachmentRetry] = useState(false);
   const [compositeBusy, setCompositeBusy] = useState(false), compositeIO = useRef(false);
+  const compositeToolbar = useRef<{ actions: DetailWorkspaceCompositeToolbarActions; record: DetailWorkspaceView['workspace']; token: object | null } | null>(null);
+  const toolbarIntent = useRef<{ token: object; work: Work; kind: 'save' | 'translate'; language?: 'zh' | 'en' } | null>(null), publishedToolbar = useRef<DetailWorkspaceCompositeToolbarActions | null>(null);
+  const batchToolbar = useRef<{ actions: WorkspaceImageBatchToolbarActions; record: DetailWorkspaceView['workspace']; token: object | null } | null>(null), publishedBatchToolbar = useRef<WorkspaceImageBatchToolbarActions | null>(null);
+  const [batchBusy, setBatchBusy] = useState(false), batchIO = useRef(false), batchStatus = useRef({ busy: false, pending: false });
+  const [toolbarClock, setToolbarClock] = useState(0);
   const [bannerBusy, setBannerBusy] = useState(false), bannerIO = useRef(false);
   const liveEditor = useRef<PhotoEditor | null>(null), editorStatus = useRef({ busy: false, dirty: false }), attachment = useRef<Attachment | null>(null), editorSequence = useRef(0);
   const editorCloseGuard = useRef<(() => boolean) | null>(null);
@@ -48,6 +55,7 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
   const generation = clock.source === source ? clock.token : null, epoch = useRef(generation);
   const controls = useRef({ disabled, stageActive, beforeAdopt, onAdopt, onBusyChange, onFilesAttached, onRefreshRequested, onCompositeSaved });
   const storage = `yoofam-detail-workspace-v1:${productId}:${optionId}:${profileId ?? ''}`;
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useLayoutEffect(() => { controls.current = { disabled, stageActive, beforeAdopt, onAdopt, onBusyChange, onFilesAttached, onRefreshRequested, onCompositeSaved }; }, [disabled, stageActive, beforeAdopt, onAdopt, onBusyChange, onFilesAttached, onRefreshRequested, onCompositeSaved]);
   useLayoutEffect(() => { epoch.current = generation; if (!pending.current && !attachment.current) operation.current?.abort(); }, [generation]);
   useEffect(() => {
@@ -64,24 +72,84 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
       } catch (cause) { if (!disposed) { setError(issue(cause)); setUncertain(true); setBrokenReceipt(true); } }
       finally { if (!disposed) setReady(true); }
     });
-    return () => { disposed = true; mounted.current = false; if (!pending.current && !attachment.current) operation.current?.abort(); controls.current.onBusyChange?.(false); };
+    return () => { disposed = true; if (!pending.current && !attachment.current) operation.current?.abort(); controls.current.onBusyChange?.(false); };
   }, [storage, productId, optionId, profileId]);
-  useEffect(() => { onBusyChange?.(busy || uncertain || attaching || editor !== null || compositeBusy || bannerBusy); }, [busy, uncertain, attaching, editor, compositeBusy, bannerBusy, onBusyChange]);
+  useEffect(() => { onBusyChange?.(busy || uncertain || attaching || editor !== null || compositeBusy || bannerBusy || batchBusy); }, [busy, uncertain, attaching, editor, compositeBusy, bannerBusy, batchBusy, onBusyChange]);
   const stale = !!work && (!same(work.selection.view, view) || work.selection.productId !== productId || work.selection.optionId !== optionId || (work.selection.profileId ?? '') !== (profileId ?? ''));
   const marginInvalid = !!work && !validMargin(work);
   const dirty = !!work && (marginInvalid || !work.reply.workspace || !same(work.document, work.reply.workspace.document));
   const untouchedSeed = primaryDetailTools && !!work && !work.reply.workspace && !!work.seedDocument && !marginInvalid && same(work.document, work.seedDocument);
-  const locked = !ready || busy || uncertain || attaching || editor !== null || compositeBusy || bannerBusy || disabled || !stageActive || stale;
+  const locked = !ready || busy || uncertain || attaching || editor !== null || compositeBusy || bannerBusy || batchBusy || disabled || !stageActive || stale;
   const outside = work?.document.photos.some(photo => !view.imageKeys.includes(photo.key)) ?? false;
   const imageLabels = new Map([...new Set([...view.imageKeys, ...(work?.document.photos.map(photo => photo.key) ?? [])])].map((key, index) => [key, `이미지 ${index + 1}`]));
+  const toolbarRecord = work?.reply.workspace ?? null;
+  const receiveCompositeToolbar = useCallback((next: DetailWorkspaceCompositeToolbarActions | null, retired?: DetailWorkspaceCompositeToolbarActions) => {
+    if (!mounted.current || next === null && compositeToolbar.current?.actions !== retired) return;
+    compositeToolbar.current = next ? { actions: next, record: toolbarRecord, token: generation } : null; setToolbarClock(value => value + 1);
+  }, [toolbarRecord, generation]);
+  const receiveBatchToolbar = useCallback((next: WorkspaceImageBatchToolbarActions | null, retired?: WorkspaceImageBatchToolbarActions) => {
+    if (!mounted.current || next === null && batchToolbar.current?.actions !== retired) return;
+    batchToolbar.current = next ? { actions: next, record: toolbarRecord, token: generation } : null; setToolbarClock(value => value + 1);
+  }, [toolbarRecord, generation]);
+  useEffect(() => {
+    if (!primaryDetailTools || !onCompositeToolbarActionsChange) return;
+    const token = generation, basis = work;
+    const available = () => publishedToolbar.current === actions && valid(token) && liveWork.current === basis && !operation.current && !pending.current && !attachment.current && !liveEditor.current && !compositeIO.current && !bannerIO.current && !batchIO.current;
+    const child = compositeToolbar.current;
+    const currentChild = child?.token === token && child.record === basis?.reply.workspace ? child.actions : null;
+    const actions: DetailWorkspaceCompositeToolbarActions = {
+      prepareSave: () => { if (available()) void prepareToolbar('save'); },
+      saveDisabled: locked || marginInvalid || !basis?.document.photos.some(photo => photo.role === 'body') || !dirty && !!currentChild?.saveDisabled,
+      download: () => { if (available() && !dirty && currentChild && compositeToolbar.current?.actions === currentChild) currentChild.download(); },
+      downloadDisabled: locked || dirty || !currentChild || currentChild.downloadDisabled,
+    };
+    publishedToolbar.current = actions; onCompositeToolbarActionsChange(actions);
+    return () => { if (publishedToolbar.current === actions) publishedToolbar.current = null; onCompositeToolbarActionsChange(null, actions); };
+    // The capabilities capture this exact work/source; their callbacks recheck live locks.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [primaryDetailTools, onCompositeToolbarActionsChange, generation, work, locked, dirty, marginInvalid, toolbarClock]);
+  useEffect(() => {
+    if (!primaryDetailTools || !onImageBatchToolbarActionsChange) return;
+    const token = generation, basis = work, child = batchToolbar.current;
+    const currentChild = child?.token === token && child.record === basis?.reply.workspace ? child.actions : null;
+    const actions: WorkspaceImageBatchToolbarActions = {
+      prepare: language => { if (publishedBatchToolbar.current === actions && valid(token) && liveWork.current === basis && !operation.current && !pending.current && !attachment.current && !liveEditor.current && !compositeIO.current && !bannerIO.current && !batchIO.current) void prepareToolbar('translate', language); },
+      disabled: locked || marginInvalid || !basis?.document.photos.some(photo => photo.role === 'body') || !dirty && !!currentChild?.disabled,
+    };
+    publishedBatchToolbar.current = actions; onImageBatchToolbarActionsChange(actions);
+    return () => { if (publishedBatchToolbar.current === actions) publishedBatchToolbar.current = null; onImageBatchToolbarActionsChange(null, actions); };
+    // The capability is bound to the exact source and live operation locks.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [primaryDetailTools, onImageBatchToolbarActionsChange, generation, work, locked, dirty, marginInvalid, toolbarClock]);
+  useEffect(() => {
+    const intent = toolbarIntent.current;
+    if (!intent) return;
+    if (!valid(intent.token) || liveWork.current !== intent.work) { toolbarIntent.current = null; return; }
+    if (operation.current || pending.current || attachment.current || compositeIO.current || bannerIO.current || batchIO.current || liveEditor.current) return;
+    if (intent.kind === 'save') {
+      const child = compositeToolbar.current;
+      if (!child || child.token !== intent.token || child.record !== intent.work.reply.workspace || child.actions.saveDisabled) return;
+      toolbarIntent.current = null; child.actions.prepareSave();
+    } else {
+      const child = batchToolbar.current;
+      if (!child || child.token !== intent.token || child.record !== intent.work.reply.workspace || child.actions.disabled) return;
+      toolbarIntent.current = null; child.actions.prepare(intent.language);
+    }
+    // Store completion and passive child publication both wake this one-shot intent.
+  }, [toolbarClock, work, generation, busy, uncertain, compositeBusy, bannerBusy, batchBusy]);
   function valid(token: object | null) { return mounted.current && !!token && token === epoch.current && controls.current.stageActive && !controls.current.disabled; }
+  function batchLock(kind: 'busy' | 'pending', value: boolean) {
+    batchStatus.current[kind] = value; const locked = batchStatus.current.busy || batchStatus.current.pending;
+    if (batchIO.current === locked) return;
+    batchIO.current = locked; setBatchBusy(locked); controls.current.onBusyChange?.(locked || compositeIO.current || bannerIO.current || !!pending.current || !!attachment.current || !!liveEditor.current);
+  }
   function begin(token: object | null, allowPending = false, allowEditor = false) {
-    if (!ready || !valid(token) || operation.current || compositeIO.current || bannerIO.current || liveEditor.current && !allowEditor || (pending.current || attachment.current) && !allowPending) return null;
+    if (!ready || !valid(token) || operation.current || compositeIO.current || bannerIO.current || batchIO.current || liveEditor.current && !allowEditor || (pending.current || attachment.current) && !allowPending) return null;
     const controller = new AbortController(); operation.current = controller; setBusy(true); setError(''); controls.current.onBusyChange?.(true); return controller;
   }
   function finish(controller: AbortController) {
     if (operation.current !== controller) return; operation.current = null;
-    if (mounted.current) { setBusy(false); controls.current.onBusyChange?.(!!pending.current || !!attachment.current || !!liveEditor.current || compositeIO.current || bannerIO.current); }
+    if (mounted.current) { setBusy(false); controls.current.onBusyChange?.(!!pending.current || !!attachment.current || !!liveEditor.current || compositeIO.current || bannerIO.current || batchIO.current); }
   }
   function adoptWork(next: Work) { liveWork.current = next; setWork(next); }
   function openWork(selection: DetailWorkspaceSelection, reply: DetailWorkspaceView) {
@@ -108,17 +176,25 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [primaryDetailTools, ready, stageActive, disabled, work, generation, busy, uncertain, attaching, editor, compositeBusy, bannerBusy]);
   function amend(token: object | null, change: (photos: DetailWorkspacePhoto[]) => DetailWorkspacePhoto[]) {
-    const current = liveWork.current; if (!valid(token) || operation.current || compositeIO.current || bannerIO.current || pending.current || attachment.current || liveEditor.current || !current || current !== work || !same(current.selection.view, view)) return;
+    const current = liveWork.current; if (!valid(token) || operation.current || compositeIO.current || bannerIO.current || batchIO.current || pending.current || attachment.current || liveEditor.current || !current || current !== work || !same(current.selection.view, view)) return;
     adoptWork({ ...current, document: documentFrom(change(structuredClone(current.document.photos)), current.document.imageMargin) }); setMessage(''); setError('');
   }
   function changeMargin(token: object | null, value: string) {
     const current = liveWork.current;
-    if (!valid(token) || operation.current || compositeIO.current || bannerIO.current || pending.current || attachment.current || liveEditor.current || !current || current !== work || !same(current.selection.view, view)) return;
+    if (!valid(token) || operation.current || compositeIO.current || bannerIO.current || batchIO.current || pending.current || attachment.current || liveEditor.current || !current || current !== work || !same(current.selection.view, view)) return;
     const next = { ...current, marginText: value };
     if (validMargin(next)) next.document = documentFrom(current.document.photos, Number(value));
     adoptWork(next); setMessage(''); setError('');
   }
-  async function store() {
+  async function prepareToolbar(kind: 'save' | 'translate', language?: 'zh' | 'en') {
+    const token = generation, current = liveWork.current;
+    if (!valid(token) || !current || current !== work || locked || !validMargin(current) || !current.document.photos.some(photo => photo.role === 'body')) return;
+    toolbarIntent.current = null;
+    const confirmed = !current.reply.workspace || !same(current.document, current.reply.workspace.document) ? await store() : current;
+    if (!confirmed || !token || !valid(token) || liveWork.current !== confirmed || pending.current || attachment.current) return;
+    toolbarIntent.current = { token, work: confirmed, kind, language }; setToolbarClock(value => value + 1);
+  }
+  async function store(): Promise<Work | undefined> {
     const token = generation, current = liveWork.current;
     if (!valid(token) || current !== work) return;
     if (current && !validMargin(current)) { setError(marginIssue); return; }
@@ -131,8 +207,9 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
       const reply = await saveDetailWorkspace(input, attempt, controller.signal);
       if (!mounted.current || controller.signal.aborted) return;
       if (!valid(token) || liveWork.current !== current) return;
-      adoptWork({ ...current, reply, document: reply.workspace!.document }); setMessage('편집 구성을 보관했습니다. 견적서는 유지됩니다.');
+      const next = { ...current, reply, document: reply.workspace!.document }; adoptWork(next); setMessage('편집 구성을 보관했습니다. 견적서는 유지됩니다.');
       sessionStorage.removeItem(storage); pending.current = null; setUncertain(false); setCanRecover(false);
+      return next;
     } catch (cause) {
       if (pending.current && !pending.current.attempt.pending && !pending.current.attempt.completed) { pending.current = null; setCanRecover(false); try { sessionStorage.removeItem(storage); } catch { /* The server response already rejected this write. */ } }
       if (mounted.current && !controller.signal.aborted) { setUncertain(!!pending.current); setError(issue(cause)); }
@@ -201,7 +278,7 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
   }
   function editPhoto(photoId: string) {
     const current = liveWork.current, record = current?.reply.workspace;
-    if (!valid(generation) || !generation || operation.current || compositeIO.current || bannerIO.current || pending.current || attachment.current || liveEditor.current || !current || !record
+    if (!valid(generation) || !generation || operation.current || compositeIO.current || bannerIO.current || batchIO.current || pending.current || attachment.current || liveEditor.current || !current || !record
       || !validMargin(current) || !same(current.document, record.document) || !same(current.selection.view, view)) return;
     const photo = record.document.photos.find(photo => photo.id === photoId); if (!photo || photo.role !== 'body') return;
     const target = { kind: 'detail-workspace' as const, profileId: profileId ?? null, optionId, photoId, revision: record.revision, digest: record.digest };
@@ -270,7 +347,7 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
     } catch (cause) { if (mounted.current && !controller.signal.aborted) setError(issue(cause)); }
     finally { finish(controller); }
   }
-  return <section className={`panel-stack${primaryDetailTools ? ' detail-workspace-primary' : ''}`} aria-label="상세 편집 구성" aria-busy={busy || editorBusy || compositeBusy || bannerBusy} data-workspace-dirty={dirty && !untouchedSeed || uncertain || editorDirty || attaching} data-workspace-saving={busy || uncertain || editorBusy || attaching || compositeBusy || bannerBusy}>
+  return <section className={`panel-stack${primaryDetailTools ? ' detail-workspace-primary' : ''}`} aria-label="상세 편집 구성" aria-busy={busy || editorBusy || compositeBusy || bannerBusy} data-workspace-dirty={dirty && !untouchedSeed || uncertain || editorDirty || attaching} data-workspace-saving={busy || uncertain || editorBusy || attaching || compositeBusy || bannerBusy || batchBusy}>
     <header className={primaryDetailTools ? 'button-row detail-workspace-toolbar' : undefined}><h3>{primaryDetailTools ? '상세 페이지 이미지' : '상세 편집 구성'}</h3>{!primaryDetailTools && <p>사진 순서·역할·원본 연결을 견적서와 별도로 보관합니다.</p>}</header>
     {(!primaryDetailTools || !work) && <button type="button" className="btn ghost" disabled={!ready || busy || uncertain || attaching || editor !== null || compositeBusy || bannerBusy || disabled || !stageActive || dirty} onClick={() => void open()}>상세 편집 구성 열기</button>}
     {message && <p role="status">{message}</p>}{error && <p role="alert">{error}</p>}
@@ -302,11 +379,19 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
       <div className="button-row">{!primaryDetailTools && <button type="button" className="btn primary" disabled={locked || !dirty || marginInvalid} onClick={() => void store()}>편집 구성 보관</button>}
         {outside && <button type="button" className="btn ghost" disabled={locked || dirty || !work.reply.workspace} onClick={() => void attachFiles()}>편집 결과를 상품 이미지에 추가</button>}
         <button type="button" className="btn ghost" disabled={locked || dirty || outside || !work.reply.workspace} onClick={() => void adoptPhotos()}>작업 사진을 선택 옵션 초안으로</button>
-        <button type="button" className="btn ghost" disabled={busy || uncertain || attaching || editor !== null || compositeBusy || bannerBusy || disabled || !stageActive} onClick={() => { if (operation.current || compositeIO.current || bannerIO.current || pending.current || attachment.current || liveEditor.current) return; liveWork.current = null; setWork(null); setMessage('현재 작업 구성을 닫았습니다. 보관한 구성과 견적서는 유지됩니다.'); setError(''); }}>현재 구성 닫기</button></div></details>
-      {work.reply.workspace && <DetailWorkspaceCompositePanel key={`workspace-composite:${productId}:${optionId}:${profileId ?? ''}`} selection={{ ...work.selection, view }} saved={work.reply} onToolbarActionsChange={onCompositeToolbarActionsChange}
-        disabled={disabled || busy || uncertain || attaching || editor !== null || bannerBusy} stageActive={stageActive} sourceCurrent={!dirty && !stale}
-        beforeApply={() => !operation.current && !bannerIO.current && !pending.current && !attachment.current && !liveEditor.current && !!liveWork.current && validMargin(liveWork.current) && same(liveWork.current.document, work.reply.workspace?.document) && same(liveWork.current.selection.view, view)}
-        onBusyChange={value => { if (compositeIO.current === value) return; compositeIO.current = value; setCompositeBusy(value); controls.current.onBusyChange?.(value || bannerIO.current || !!pending.current || !!attachment.current || !!liveEditor.current); }}
+        <button type="button" className="btn ghost" disabled={busy || uncertain || attaching || editor !== null || compositeBusy || bannerBusy || batchBusy || disabled || !stageActive} onClick={() => { if (operation.current || compositeIO.current || bannerIO.current || batchIO.current || pending.current || attachment.current || liveEditor.current) return; liveWork.current = null; setWork(null); setMessage('현재 작업 구성을 닫았습니다. 보관한 구성과 견적서는 유지됩니다.'); setError(''); }}>현재 구성 닫기</button></div></details>
+      {work.reply.workspace && <DetailWorkspaceImageBatchPanel selection={work.selection} saved={work.reply} active={stageActive} disabled={disabled || busy || uncertain || attaching || editor !== null || bannerBusy || compositeBusy || dirty || stale}
+        onToolbarActionsChange={receiveBatchToolbar}
+        beforeApply={() => valid(generation) && !operation.current && !compositeIO.current && !bannerIO.current && !pending.current && !attachment.current && !liveEditor.current && !!liveWork.current && validMargin(liveWork.current) && same(liveWork.current.document, liveWork.current.reply.workspace?.document) && same(liveWork.current.selection.view, view) && controls.current.beforeAdopt?.() !== false}
+        onBusyChange={value => batchLock('busy', value)} onPendingChange={value => batchLock('pending', value)}
+        onSaved={reply => { const latest = liveWork.current, target = reply.source.workspaceTarget;
+          if (!valid(generation) || !latest || !target || latest.reply.workspace?.revision !== target.revision || latest.reply.workspace.digest !== target.digest || !same(latest.document, latest.reply.workspace.document)) return;
+          adoptWork({ ...latest, reply: { view: reply.view, workspace: reply.workspace, roles: reply.roles }, document: reply.workspace!.document });
+        }} />}
+      {work.reply.workspace && <DetailWorkspaceCompositePanel key={`workspace-composite:${productId}:${optionId}:${profileId ?? ''}`} selection={{ ...work.selection, view }} saved={work.reply} onToolbarActionsChange={primaryDetailTools ? receiveCompositeToolbar : onCompositeToolbarActionsChange}
+        disabled={disabled || busy || uncertain || attaching || editor !== null || bannerBusy || batchBusy} stageActive={stageActive} sourceCurrent={!dirty && !stale}
+        beforeApply={() => !operation.current && !bannerIO.current && !batchIO.current && !pending.current && !attachment.current && !liveEditor.current && !!liveWork.current && validMargin(liveWork.current) && same(liveWork.current.document, work.reply.workspace?.document) && same(liveWork.current.selection.view, view)}
+        onBusyChange={value => { if (compositeIO.current === value) return; compositeIO.current = value; setCompositeBusy(value); controls.current.onBusyChange?.(value || bannerIO.current || batchIO.current || !!pending.current || !!attachment.current || !!liveEditor.current); }}
         onSaved={next => {
           const latest = liveWork.current; if (!valid(generation) || !latest || !validMargin(latest) || !same(latest.document, work.reply.workspace?.document)) return;
           adoptWork({ selection: { ...latest.selection, view: next }, reply: { ...latest.reply, view: next }, document: latest.document }); controls.current.onCompositeSaved?.(next);
@@ -314,10 +399,10 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
         onLatestRead={reply => { if (!valid(generation)) return; openWork({ productId, optionId, profileId, view: reply.view }, reply); controls.current.onRefreshRequested?.(); }} />}
     </>}
     <details className={primaryDetailTools ? 'detail-workspace-banner-settings' : undefined} open={!primaryDetailTools ? true : undefined}><summary hidden={!primaryDetailTools}>상단·하단 배너 설정</summary><DetailWorkspaceRebasePanel key={`workspace-banners:${productId}:${optionId}:${profileId ?? ''}`} selection={{ productId, optionId, profileId, view }} stageActive={stageActive}
-      disabled={!ready || disabled || busy || uncertain || attaching || editor !== null || compositeBusy || dirty}
-      beforeApply={() => !operation.current && !compositeIO.current && !pending.current && !attachment.current && !liveEditor.current
+      disabled={!ready || disabled || busy || uncertain || attaching || editor !== null || compositeBusy || batchBusy || dirty}
+      beforeApply={() => !operation.current && !compositeIO.current && !batchIO.current && !pending.current && !attachment.current && !liveEditor.current
         && (!liveWork.current || validMargin(liveWork.current) && !!liveWork.current.reply.workspace && same(liveWork.current.document, liveWork.current.reply.workspace.document)) && controls.current.beforeAdopt?.() !== false}
-      onBusyChange={value => { if (bannerIO.current === value) return; bannerIO.current = value; setBannerBusy(value); controls.current.onBusyChange?.(value || compositeIO.current || !!pending.current || !!attachment.current || !!liveEditor.current); }}
+      onBusyChange={value => { if (bannerIO.current === value) return; bannerIO.current = value; setBannerBusy(value); controls.current.onBusyChange?.(value || compositeIO.current || batchIO.current || !!pending.current || !!attachment.current || !!liveEditor.current); }}
       onSaved={reply => {
         const latest = liveWork.current; if (!valid(generation) || latest !== work || latest && (!validMargin(latest) || !latest.reply.workspace || !same(latest.document, latest.reply.workspace.document))) return;
         openWork({ productId, optionId, profileId, view: reply.view }, reply); setMessage('현재 배너 설정을 편집 구성에 반영했습니다. 본문 사진·간격과 견적서는 유지했습니다.'); controls.current.onRefreshRequested?.();
