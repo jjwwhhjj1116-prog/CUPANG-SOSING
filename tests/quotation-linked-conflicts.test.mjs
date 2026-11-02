@@ -125,14 +125,14 @@ test('ambiguous, readonly and removed peers remain reviewable and accepting save
 });
 
 function renderedEditor(view){
- const states=[],refs=[];let cursor=0,refCursor=0,responseView=view;
- const react={useState(initial){const index=cursor++;if(!(index in states))states[index]=index===0?view:index===3?false:typeof initial==='function'?initial():initial;return[states[index],value=>states[index]=typeof value==='function'?value(states[index]):value];},useRef(initial){const index=refCursor++;return refs[index]??={current:initial};},useEffect(){},useCallback:fn=>fn,useId:()=> 'linked-conflict'};
+ const states=[],refs=[],effects=[];let cursor=0,refCursor=0,responseView=view;
+ const react={useState(initial){const index=cursor++;if(!(index in states))states[index]=index===0?view:index===3?false:typeof initial==='function'?initial():initial;return[states[index],value=>states[index]=typeof value==='function'?value(states[index]):value];},useRef(initial){const index=refCursor++;return refs[index]??={current:initial};},useEffect(fn){if(String(fn).includes('modelActionState.current =')||String(fn).includes('explicitRefreshAction.current ='))effects.push(fn);},useCallback:fn=>fn,useId:()=> 'linked-conflict'};
  const form=load('app/components/quotation-fields-editor.tsx',{react,fetch:async()=>Response.json(responseView),document:{getElementById:()=>null}});
- const render=()=>{cursor=0;refCursor=0;const root=form.QuotationFieldsEditor({productId:'p'});return root.type(root.props);};
+ const render=()=>{cursor=0;refCursor=0;const root=form.QuotationFieldsEditor({productId:'p'}),tree=root.type(root.props);effects.splice(0).forEach(effect=>effect());return tree;};
  const button=(tree,label)=>nodes(tree).find(node=>node.type==='button'&&text(node.props.children)===label);
  render();return{render,get changes(){return states[1];},get conflicts(){return states[2];},
   select(){nodes(render()).find(node=>node.type==='select').props.onChange({target:{value:'red'}});},
-  field(id){return nodes(render()).find(node=>node.type==='input'&&node.props.id==='linked-conflict-'+id);},
+  field(id){return nodes(render()).find(node=>(node.type==='input'||node.type?.name==='QuotationBrandInput')&&node.props.id==='linked-conflict-'+id);},
   async refresh(next){responseView=next;button(render(),'기본값 다시 반영').props.onClick();await new Promise(resolve=>setImmediate(resolve));assert.equal(states[3],false);},
   choose(field,label){const conflict=nodes(render()).find(node=>node.type==='li'&&text(node.props.children).startsWith(field+' · '));assert.ok(conflict);const action=button(conflict,label);assert.ok(action);assert.equal(action.props.disabled,false);action.props.onClick();},
  };
@@ -141,7 +141,7 @@ function renderedEditor(view){
 for(const pair of [['supplyPrice','wire-supplyPrice'],weight])for(const changedIndex of [0,1])for(const choice of ['저장된 값 사용','내 입력 유지'])test(`rendered ${pair[0]} ${choice} resolves both peer conflicts when peer ${changedIndex} changes`,async()=>{
  const before=savedPair(pair),after=savedPair(pair);after.overrides.options.red[pair[changedIndex]]='130';
  const ui=renderedEditor(before);ui.select();ui.field(pair[1]).props.onChange({target:{value:'120'}});
- ui.field('brand').props.onChange({target:{value:'수정 보존'}});await ui.refresh(after);
+ ui.field('brand').props.onChange('수정 보존');await ui.refresh(after);
  assert.equal(ui.conflicts.length,2);assert.match(text(ui.render()),/연결된 항목에도 같은 선택/);
  ui.choose(pair[1-changedIndex],choice);assert.equal(ui.conflicts.length,0);
  if(choice==='저장된 값 사용'){
@@ -154,7 +154,7 @@ for(const pair of [['supplyPrice','wire-supplyPrice'],weight])for(const changedI
 
 test('rendered exclusion removes a deleted exact pair together while retaining another field draft',async()=>{
  const before=savedPair(weight),after=fixture(before.overrides,fields=>fields.filter(field=>field.id!==weight[1]));
- const ui=renderedEditor(before);ui.select();ui.field(weight[1]).props.onChange({target:{value:'120'}});ui.field('brand').props.onChange({target:{value:'수정 보존'}});
+ const ui=renderedEditor(before);ui.select();ui.field(weight[1]).props.onChange({target:{value:'120'}});ui.field('brand').props.onChange('수정 보존');
  await ui.refresh(after);ui.choose(weight[1],'이 입력 제외');
  assert.equal(ui.conflicts.length,0);assert.deepEqual(plain(ui.changes),[edit('brand','수정 보존')]);
 });

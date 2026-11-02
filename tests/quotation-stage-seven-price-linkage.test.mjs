@@ -24,6 +24,7 @@ const editor=load('app/components/quotation-fields-editor.tsx'),price=load('app/
 const plain=value=>JSON.parse(JSON.stringify(value));
 const edit=(fieldKey,value,optionId='red')=>({fieldKey,value,optionId});
 const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value==='object'?[value,...nodes(value.props?.children)]:[];
+const text=value=>Array.isArray(value)?value.map(text).join(''):value&&typeof value==='object'?text(value.props?.children):value==null?'':String(value);
 const inputs=['supplyPrice','salePrice','msrp'],wireNames=['purchasePrice','coupangSalePrice','msrp'];
 const path=['패션의류잡화','유니섹스/남녀공용 패션','공용 잡화','선글라스','남녀공용패션선글라스'];
 function fixture(overrides={common:{},options:{}}){
@@ -71,7 +72,7 @@ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name
  assert.doesNotMatch(JSON.stringify(ui.render()),/이전 요약 가격/);
  ui.control('wire-msrp').props.onChange({target:{value:''}});assert.equal(editor.resolveQuotationEditorCell(view,ui.changes,'red','msrp').value,'');
  ui.control('wire-salePrice').props.onChange({target:{value:'90'}});assert.match(editor.resolveQuotationEditorCell(view,ui.changes,'red','wire-salePrice').validationIssues.join(' '),/공급가보다/);
- const errorButton=nodes(ui.render()).find(node=>node.type==='button'&&node.props.children==='salePrice 확인하기');assert.ok(errorButton);errorButton.props.onClick();assert.equal(ui.focused.at(-1),'stage7-price-wire-salePrice');
+ const errorButton=nodes(ui.render()).find(node=>node.type==='button'&&text(node)==='salePrice 확인하기');assert.ok(errorButton);errorButton.props.onClick();assert.equal(ui.focused.at(-1),'stage7-price-wire-salePrice');
  assert.equal(JSON.stringify(view),before);
 });
 
