@@ -33,8 +33,7 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
   const endpoint = `/api/products/${encodeURIComponent(productId)}/product-labels${query}`, quotationEndpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${query}`;
   const scope = JSON.stringify([endpoint, optionId]), sourceKey = JSON.stringify([scope, version, refreshToken]);
   const currentScope = useRef(scope), currentSource = useRef(sourceKey), mounted = useRef(true), request = useRef<AbortController | null>(null);
-  const [resultEditing,setResultEditing]=useState<{scope:string;open:boolean}>({scope,open:false});
-  const editorOpen=!resultFirst||resultEditing.scope===scope&&resultEditing.open;
+  const [resultEditing,setResultEditing]=useState<{scope:string;open:boolean;hold?:ProductLabelsView}>({scope,open:false});
   const [saved, setSaved] = useState<{ scope: string; sourceKey: string; view: ProductLabelsView } | null>(null), latestSaved = useRef<typeof saved>(null);
   const [pending, setPending] = useState<LabelDraft>({ scope, values: {} }), latestDraft = useRef<LabelDraft>({ scope, values: {} });
   const [multilineFields, setMultilineFields] = useState<{ scope: string; keys: ProductLabelKey[] }>({ scope, keys: [] });
@@ -130,6 +129,11 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
   useLayoutEffect(()=>{liveResultToken.current=resultToken;return()=>{liveResultToken.current=null;};},[resultToken]);
   const completed=canCheckResult&&resultToken&&savedResult?.token===resultToken&&savedResult.value.result
     &&JSON.stringify(savedResult.value.references.view)===JSON.stringify(view)?savedResult.value.result:null;
+  // A result card requires the current PNG receipt. A failed rewrite does not
+  // authorize opening its input form; keep its exact source closed until read
+  // recovery confirms the rewrite or an explicit fresh read replaces it.
+  const editorOpen=!resultFirst||resultEditing.scope===scope&&resultEditing.open
+    ||!completed&&!rewriteUncertain&&!(resultEditing.scope===scope&&resultEditing.hold===view);
   useEffect(()=>{
     if(!canCheckResult||!resultToken||!view)return;
     const token=resultToken,snapshot=view,controller=new AbortController();let listening=true;
@@ -400,7 +404,7 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
       const result=await completeProductLabelSave({productId,endpoint,quotationEndpoint,optionId,view:body,cache:uploads.current,render:renderDocument,
         assertCurrent:()=>{if(!valid())throw Error('표시사항 저장 대상이 변경되었습니다.');}},scopedFetch);
       if(!valid())return;
-      verify(result.view);store(result.view);setSaveRetryScope(null);clearPreview();setMessage(`${caption} 표시사항 정보와 PNG를 저장하고 견적서에 연결했습니다.`,result.view);savedView(result.view);onSaved?.();
+      verify(result.view);store(result.view);setSaveRetryScope(null);clearPreview();setResultEditing({scope,open:false});setMessage(`${caption} 표시사항 정보와 PNG를 저장하고 견적서에 연결했습니다.`,result.view);savedView(result.view);onSaved?.();
     } catch (cause) { if (valid()) {
       if(confirmed){
         // Pool/reference writes can advance the clock before a later failure.
@@ -480,7 +484,7 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
       if (controller.signal.aborted || !stageCurrent()) return;
       verify(result.view);
       if (productLabelPreviewSignature({ productId, endpoint, view: result.view, optionId }) !== chosen.signature || !result.key || !result.view.imageKeys.includes(result.key)) throw Error('연결한 PNG와 현재 제품 표시사항 저장값을 확인하지 못했습니다.');
-      store(result.view); clearPreview();setSaveRetryScope(null); setMessage(`${caption} 표시사항 PNG를 견적서에 연결했습니다. 같은 범위의 이전 생성 라벨 참조는 교체하고 원본 파일은 보관했습니다.`, result.view); savedView(result.view);onSaved?.();
+      store(result.view); clearPreview();setSaveRetryScope(null);setResultEditing({scope,open:false}); setMessage(`${caption} 표시사항 PNG를 견적서에 연결했습니다. 같은 범위의 이전 생성 라벨 참조는 교체하고 원본 파일은 보관했습니다.`, result.view); savedView(result.view);onSaved?.();
     } catch (cause) { if (!controller.signal.aborted && stageCurrent()) setError(`${cause instanceof Error ? cause.message : '제품 표시사항 PNG 연결 실패'}${cache.uploadedKey ? ' 업로드한 파일은 보존됩니다. 같은 저장값으로 다시 연결하면 기존 파일을 확인해 사용합니다.' : ''}`); }
     finally { finish(controller); }
   }
@@ -496,12 +500,13 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
     const base=latestSaved.current;if(!canRewrite(base))return;
     if(!window.confirm('상품 공통과 모든 옵션의 생성 표시사항을 재작성 상태로 바꾸시겠습니까? 입력 내용·항목 순서·파일·견적 연결은 보관되며, 이전 생성 PNG는 다시 생성·연결해야 합니다.'))return;
     if(!canRewrite(base))return;
+    if(resultFirst&&completed)setResultEditing({scope,open:false,hold:base!.view});
     const input:ProductLabelRewriteInput={productId,optionId,endpoint,before:base!.view};
     invalidateDrag();const controller=new AbortController();request.current=controller;setBusy(true);setError('');setMessage('');clearPreview();uploads.current.clear();setGeneratedReview(null);
     liveRewrite.current={scope,input};setRewritePending(liveRewrite.current);
     try{
       const next=await rewriteProductLabels(input,rewriteFetch(controller));if(controller.signal.aborted||!stageCurrent())return;
-      verify(next);store(next);clearRewrite();setMessage('재작성 준비를 마쳤습니다. 공통·모든 옵션의 입력 내용은 유지했습니다. 필요한 옵션의 표시사항 PNG를 다시 생성하고 견적서에 연결해주세요.',next);savedView(next);onSaved?.();
+      verify(next);store(next);clearRewrite();setResultEditing({scope,open:true});setMessage('재작성 준비를 마쳤습니다. 공통·모든 옵션의 입력 내용은 유지했습니다. 필요한 옵션의 표시사항 PNG를 다시 생성하고 견적서에 연결해주세요.',next);savedView(next);onSaved?.();
     }catch(cause){if(!controller.signal.aborted&&stageCurrent()){
       if(cause instanceof ProductLabelRewriteError&&cause.uncertain){liveRewrite.current={scope,input};setRewritePending(liveRewrite.current);}
       else clearRewrite();
@@ -514,13 +519,14 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
     try{
       const result=await readProductLabelRewrite(pending.input,rewriteFetch(controller));if(controller.signal.aborted||!stageCurrent()||liveRewrite.current!==pending)return;
       verify(result.view);store(result.view);clearRewrite();
-      if(result.status==='rewritten'){setMessage('저장된 재작성 상태를 확인했습니다. 표시사항 PNG를 다시 생성·연결해주세요.',result.view);savedView(result.view);onSaved?.();}
-      else setMessage('재작성 요청은 저장되지 않았습니다. 입력과 연결은 유지했습니다. 필요한 경우 다시 재작성을 선택해주세요.');
+      if(result.status==='rewritten'){setResultEditing({scope,open:true});setMessage('저장된 재작성 상태를 확인했습니다. 표시사항 PNG를 다시 생성·연결해주세요.',result.view);savedView(result.view);onSaved?.();}
+      else {setResultEditing(previous=>previous.scope===scope&&previous.hold?{scope,open:false,hold:result.view}:previous);setMessage('재작성 요청은 저장되지 않았습니다. 입력과 연결은 유지했습니다. 필요한 경우 다시 재작성을 선택해주세요.');}
     }catch(cause){if(!controller.signal.aborted&&stageCurrent())setError(cause instanceof Error?cause.message:'표시사항 재작성 결과 조회 실패');}
     finally{finish(controller);}
   }
   return <section className="panel-stack product-label-editor step-image-visual step-image-visual--label" aria-label={`${caption} 제품 표시사항`} data-quotation-source-step="표시사항" data-source-step="표시사항" data-workspace-dirty={dirty||namePending||referencesDirty||rewriteUncertain||incompleteSave||allBlocked} data-workspace-saving={busy||referencesBusy}>
-    <h3>제품 한글 표시사항</h3><p>{row?.optionLabel || (optionId === null ? '상품 공통' : optionId)}{optionId !== null && row?.included === false ? ' · 견적 제외 옵션' : ''}</p>
+    <h3>한글 표시사항 작업</h3><p>{row?.optionLabel || (optionId === null ? '상품 공통' : optionId)}{optionId !== null && row?.included === false ? ' · 견적 제외 옵션' : ''}</p>
+    <h4 className="product-label-stage-subtitle">한글 표시사항 정보</h4>
     <details className="product-label-guidance"><summary>표시사항 편집 안내</summary><p>{optionId === null ? '공통 내용은 개별 표시사항을 수정하지 않은 옵션에 적용합니다. 각 옵션의 직접 수정값은 유지됩니다.' : '이 옵션의 제품 표시사항 내용을 편집합니다. 다른 옵션과 상품 공통 내용은 유지됩니다.'} 항목명·순서·추가·삭제는 상품의 모든 옵션에 공통 적용됩니다. 카테고리별 상품고시는 견적서에서 따로 확인합니다.</p></details>
     {busy && <p role="status">제품 표시사항 처리 중…</p>}{error && <p role="alert">{error}</p>}{message && <p role="status">{message}</p>}
     {(dirty||namePending) && !fresh && <p role="status">상품 저장 상태가 변경됐습니다. 입력은 유지했습니다. 최신 자료를 조회한 뒤 저장해주세요.</p>}
@@ -541,25 +547,24 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
     {resultError?.token===resultToken&&<p role="status">저장된 생성 라벨을 확인하지 못했습니다. {resultError.message}</p>}
     <fieldset disabled={allBlocked} style={{border:0,padding:0,margin:0,minWidth:0}}>
     {completed&&!resultFirst&&<section className="product-label-completed" aria-label={`${caption} 표시사항 생성 완료`}>
-      <h4 className="step-label-result-heading">표시 정보 결과</h4><div className="product-label-preview" style={{maxHeight:600,overflow:'auto'}}>
+      <h4 className="step-label-result-heading">표시 정보 결과 ({row?.optionLabel||caption})</h4><div className="product-label-preview" style={{maxHeight:600,overflow:'auto'}}>
         {/* eslint-disable-next-line @next/next/no-img-element -- Use the authenticated saved PNG, not an unsaved canvas preview. */}
         <img src={`/api/files/${completed.key.split('/').map(encodeURIComponent).join('/')}`} alt={`${caption} 생성 완료 표시사항`} data-current-label-result style={{width:'100%',height:'auto'}}/>
       </div><div className="quote-actions"><a className="btn ghost" href={`/api/files/${completed.key.split('/').map(encodeURIComponent).join('/')}`} download={completed.key.split('/').at(-1)}>이미지 다운로드</a>
         <button type="button" className="btn ghost" disabled={!active||disabled} onClick={()=>void rewrite()}>재작성</button></div>
     </section>}
-    {resultFirst&&!editorOpen&&<section className="product-label-completed product-label-result-first" aria-label={`${caption} 표시사항 결과`}>
-      <header className="product-label-result-header"><h4 className="step-label-result-heading">표시 정보 결과</h4><div className="quote-actions">
-        {completed?<a className="btn ghost" href={`/api/files/${completed.key.split('/').map(encodeURIComponent).join('/')}`} download={completed.key.split('/').at(-1)}>이미지 다운로드</a>:<button type="button" className="btn ghost" disabled title="정보를 저장하고 PNG를 연결하면 다운로드할 수 있습니다.">이미지 다운로드</button>}
-        <button type="button" className="btn ghost" aria-label="표시사항 입력 재작성" aria-expanded={false} disabled={!view||!active||disabled||busy||referencesBusy||referencesDirty||rewriteUncertain||allBlocked} onClick={()=>{if(stageCurrent()&&!liveDisabled.current&&!request.current&&!referenceBusy.current&&!referenceDirty.current&&!rewriteWaiting())setResultEditing({scope,open:true});}}>재작성</button>
+    {resultFirst&&!editorOpen&&completed&&<section className="product-label-completed product-label-result-first" aria-label={`${caption} 표시사항 결과`}>
+      <header className="product-label-result-header"><h4 className="step-label-result-heading">표시 정보 결과 ({row?.optionLabel||caption})</h4><div className="quote-actions">
+        <a className="btn ghost" href={`/api/files/${completed.key.split('/').map(encodeURIComponent).join('/')}`} download={completed.key.split('/').at(-1)}>이미지 다운로드</a>
+        <button type="button" className="btn ghost" aria-label="표시사항 재작성" disabled={!view||!active||disabled||busy||referencesBusy||referencesDirty||rewriteUncertain||namePending||dirty||!fresh||allBlocked||incompleteSave||pendingImage} onClick={()=>{if(resultToken&&liveResultToken.current===resultToken)void rewrite();}}>재작성</button>
       </div></header>
       <div className="product-label-preview">
         {/* eslint-disable-next-line @next/next/no-img-element -- Verified private result PNG keeps its authenticated URL. */}
-        {completed?<img src={`/api/files/${completed.key.split('/').map(encodeURIComponent).join('/')}`} alt={`${caption} 생성 완료 표시사항`} data-current-label-result style={{width:'100%',height:'auto'}}/>:view?<div className="product-label-text-preview" role="img" aria-label={`${caption} 표시사항 저장 전 미리보기`}><h4>제품 한글 표시사항</h4><dl>{definitions.map(field=><div key={field.key}><dt>{field.label}</dt><dd>{productLabelValue(view,optionId,field.key,draft)||'—'}</dd></div>)}</dl></div>:<p role="status">{busy?'표시사항을 불러오는 중…':'표시사항을 불러오지 못했습니다.'}</p>}
-        {(error||resultError?.token===resultToken)&&<button type="button" className="btn ghost" disabled={!active||disabled||busy||referencesBusy||referencesDirty||allBlocked} onClick={()=>{if(stageCurrent()&&!liveDisabled.current&&!referenceBusy.current&&!referenceDirty.current)void load();}}>표시사항 다시 불러오기</button>}
-        {!completed&&view&&<small className="product-label-preview-state">저장 전 미리보기 · 재작성에서 내용을 확인하고 정보를 저장하세요.</small>}
+        <img src={`/api/files/${completed.key.split('/').map(encodeURIComponent).join('/')}`} alt={`${caption} 생성 완료 표시사항`} data-current-label-result style={{width:'100%',height:'auto'}}/>
       </div>
     </section>}
-    {resultFirst&&editorOpen&&<div className="product-label-edit-heading"><h4>표시사항 재작성</h4><button type="button" className="btn ghost" disabled={!active||disabled||dirty||namePending||referencesDirty||rewriteUncertain||busy||referencesBusy||incompleteSave||allBlocked} onClick={()=>{if(stageCurrent()&&!liveDisabled.current&&!request.current&&!referenceBusy.current&&!referenceDirty.current&&!rewriteWaiting()&&!nameWaiting()&&!(latestDraft.current.scope===scope&&hasDraft(latestDraft.current)))setResultEditing({scope,open:false});}}>결과 보기</button></div>}
+    {rewriteUncertain&&<button type="button" className="btn ghost" disabled={!active||disabled||busy} onClick={()=>void recoverRewrite()}>재작성 결과 확인</button>}
+    {resultFirst&&(error||resultError?.token===resultToken)&&!rewriteUncertain&&!dirty&&!namePending&&!incompleteSave&&!pendingImage&&!referencesDirty&&!allBlocked&&<button type="button" className="btn ghost" disabled={!active||disabled||busy||referencesBusy} onClick={()=>{if(stageCurrent()&&!liveDisabled.current&&!referenceBusy.current&&!referenceDirty.current&&!rewriteWaiting()&&!nameWaiting()&&!(latestDraft.current.scope===scope&&hasDraft(latestDraft.current))&&latestPreview.current?.scope!==scope&&liveSaveRetryScope.current!==scope)void load();}}>표시사항 다시 불러오기</button>}
     {!busy&&editorOpen&&(!completed||resultFirst)&&<>
     {view && <><div className="quote-actions product-label-top-actions"><button type="button" className="btn ghost" disabled={!active||!fresh||disabled||busy||referencesBusy||referencesDirty||rewriteUncertain||namePending} onClick={restoreSavedDefaults}>기본값 복원</button><button type="button" className="btn ghost" disabled={destructiveLocked} onClick={clearAll}>전체 삭제</button></div><div className="product-label-rows">{definitions.map((field, index) => {
       const value = productLabelValue(view, optionId, field.key, draft) ?? '', hasLineBreaks = /[\r\n]/.test(value);
@@ -576,7 +581,7 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
     </div><label className="product-label-value">{multiline
       ? <textarea {...valueProps} rows={3} onChange={event => { multilineMode(field.key, true); edit(field.key, event.target.value); }} />
       : <input {...valueProps} type="text" onChange={event => edit(field.key, event.target.value)} />}</label>
-      <button type="button" className="btn ghost product-label-delete" title="항목 삭제" aria-label={`${caption} 표시사항 항목 ${index + 1} 삭제`} disabled={destructiveLocked||field.required} onClick={() => removeField(field.key)}>삭제</button>
+      <button type="button" className="btn ghost product-label-delete" title="항목 삭제" aria-label={`${caption} 표시사항 항목 ${index + 1} 삭제`} disabled={destructiveLocked||field.required} onClick={() => removeField(field.key)}>×</button>
       <details className="product-label-row-tools"><summary>{field.label} 추가 편집</summary><div className="quote-actions"><button type="button" className="btn ghost" aria-label={`${caption} 표시사항 항목 ${index + 1} 위로`} disabled={!active||disabled||busy||referencesBusy||referencesDirty||rewriteUncertain||namePending||index === 0} onClick={() => moveField(field.key, -1)}>↑</button><button type="button" className="btn ghost" aria-label={`${caption} 표시사항 항목 ${index + 1} 아래로`} disabled={!active||disabled||busy||referencesBusy||referencesDirty||rewriteUncertain||namePending||index === definitions.length - 1} onClick={() => moveField(field.key, 1)}>↓</button>
       <button type="button" className="btn ghost" disabled={destructiveLocked} onClick={() => editValueWithConfirmation(field.key, '')}>{field.label} 비우기</button><button type="button" className="btn ghost" disabled={destructiveLocked} onClick={() => editValueWithConfirmation(field.key, null)}>{field.label} {optionId === null ? '자동값' : '공통·자동값'} 복원</button>
       <button type="button" className="btn ghost" aria-label={`${caption} ${field.label} ${multiline ? '한 줄로 편집' : '여러 줄로 편집'}`} disabled={destructiveLocked||multiline&&hasLineBreaks} onClick={() => multilineMode(field.key, !multiline)}>{multiline ? '한 줄로 편집' : '여러 줄로 편집'}</button>{multiline&&hasLineBreaks&&<small>줄바꿈이 있는 내용은 여러 줄로 유지합니다.</small>}</div></details>
@@ -591,7 +596,6 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
     <small>생성 시작은 상품명·수집 속성·묶음 정보로 내용량, 재질, 상품 유형의 초안을 요청합니다. 직접 수정한 값·공란은 유지합니다. 정보 저장하기는 검토한 내용과 PNG를 저장하고 견적서에 연결합니다.</small>
     {dirty && generatedReview?.scope === scope && generatedReview.sourceKey === sourceKey && <section aria-label="생성한 표시사항 초안 검토" className="panel-stack"><h4>표시사항 초안 검토</h4><table><thead><tr><th>항목</th><th>저장된 내용</th><th>AI 초안</th></tr></thead><tbody>{Object.entries(generatedReview.values).map(([key, value]) => <tr key={key}><th>{definitions.find(field => field.key === key)?.label}</th><td style={{ whiteSpace: 'pre-wrap' }}>{generatedReview.before[key as ProductLabelKey] || '(공란)'}</td><td style={{ whiteSpace: 'pre-wrap' }}>{value}</td></tr>)}</tbody></table>{generatedReview.warnings.map((warning, index) => <p key={index}>{warning}</p>)}<p>아직 저장하지 않은 제안입니다. 위 입력란에서 수정할 수 있습니다. 제조원·수입원·제조국·인증·법적 적합성 확인은 포함하지 않습니다.</p></section>}
     {dirty && <button type="button" className="btn ghost" disabled={!active||busy||namePending} onClick={() => {if(stageCurrent())void load(true);}}>입력 유지·최신 표시사항 조회</button>}
-    {rewriteUncertain&&<button type="button" className="btn ghost" disabled={!active||disabled||busy} onClick={()=>void recoverRewrite()}>재작성 결과 확인</button>}
     <button type="button" className="btn ghost" disabled={!active||busy||namePending} onClick={() => {if(stageCurrent())void load(false, true);}}>{dirty ? '입력 취소·저장 표시사항 다시 조회' : '저장 표시사항 다시 조회'}</button>
     {reviewed && <><div className="product-label-preview" style={{ maxHeight: 600, overflow: 'auto' }}>
       {/* eslint-disable-next-line @next/next/no-img-element */}

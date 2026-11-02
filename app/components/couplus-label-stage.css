@@ -1,0 +1,36 @@
+/* Stage 6 dimensions come from the original result card; image size stays natural. */
+.registration-workspace .detail-body[data-registration-stage="표시사항"]{padding:20px;font-family:Lato,sans-serif;font-size:16px;line-height:29px}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-editor{width:100%;max-width:none;margin:0;gap:0}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-editor>h3{display:block;margin:0;font-size:27.648px;line-height:41.472px;font-weight:700;color:#110a57}
+.registration-workspace .product-label-editor .product-label-stage-subtitle{margin:0;font-size:23.04px;line-height:23.04px;font-weight:600;color:#110a57}
+.registration-workspace .product-label-editor .product-label-stage-intro{margin:12px 0 16px;font-size:16px;line-height:29px}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-result-first{min-height:0;border:1px solid #dcdfe8;border-radius:10px;background:#fff;overflow:hidden}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-result-header{min-height:70px;padding:20px;gap:12px;background:#c7cbd3}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-result-header .step-label-result-heading{margin:0;padding:0;background:transparent;color:#676e8a;font-size:16px;line-height:29px;font-weight:400}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-result-header>.quote-actions{gap:8px;margin:0}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-result-header .btn{min-height:29px;padding:4px 8px;border:1px solid #32bdea;border-radius:10px;background:transparent;color:#32bdea;font-size:12px;line-height:18px}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-result-header button{color:#ff7e41;border-color:#ff7e41}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-result-first>.product-label-preview{min-height:0;max-height:none;padding:20px;display:block;border:0;background:#fff;box-shadow:none}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-editor .product-label-result-first>.product-label-preview img{display:block;width:auto!important;max-width:100%;max-height:none;height:auto;margin:0;border-radius:8px;box-shadow:none;object-fit:contain;object-position:left top}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-guidance{order:3;margin:16px 0 0;font-size:12.8px;line-height:24px}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-top-actions{gap:8px;margin:12px 0 16px}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-top-actions .btn{min-height:29px;padding:4px 8px;font-size:12px;line-height:18px;border-radius:10px;border:1px solid #7ee2ff;color:#32bdea;background:#fff}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-top-actions .btn:last-child{border-color:#ff7e41;color:#ff7e41}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-rows{gap:16px;padding:24px}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-compact-row.product-label-sortable{grid-template-columns:24px minmax(150px,190px) minmax(0,1fr) 32px;gap:8px 16px;padding:0;background:#fff;border:0;border-radius:0}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-value-input{height:45px;min-height:45px;padding:6px 12px;border:1px solid #dcdfe8;border-radius:10px;background:#fff;font-size:14px;line-height:29px;color:#676e8a}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] textarea.product-label-value-input{height:auto;min-height:98.667px;white-space:pre-wrap;resize:vertical}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-name-caption{font-size:16px;line-height:29px;padding:0;gap:0}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-name-caption small{font-size:12.8px;line-height:20px}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-compact-row>.product-label-delete{min-height:29px;padding:3px 8px;font-size:18px;line-height:21px;border:1px solid #e08db4;color:#e08db4;border-radius:10px;background:#fff}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-add-field{min-height:39px;margin:0 24px 16px;width:calc(100% - 48px);padding:6px 12px;border:1px dashed #78c091;border-radius:10px;color:#78c091;background:#fff;font-size:16px;line-height:24px}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-primary-actions{justify-content:center;gap:8px;margin:16px 0}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-primary-actions .btn{min-height:39px;padding:6px 12px;border-radius:10px;font-size:16px;line-height:24px}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-primary-actions .btn.primary{border:1px solid #78c091;background:#78c091;color:#fff}
+.registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-primary-actions .btn.blue{border:1px solid #32bdea;background:#32bdea;color:#fff}
+@media(max-width:760px){
+ .registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-result-header{flex-wrap:wrap;padding:16px}
+ .registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-rows{padding:16px}
+ .registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-compact-row.product-label-sortable{grid-template-columns:24px minmax(0,1fr) 32px;gap:8px}
+ .registration-workspace .detail-body[data-registration-stage="표시사항"] .product-label-add-field{margin-left:16px;margin-right:16px;width:calc(100% - 32px)}
+}

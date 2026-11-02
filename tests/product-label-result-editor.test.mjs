@@ -109,7 +109,7 @@ test('verified current saved PNG replaces the primary form with a readonly resul
   try {
     const before = plain(f.view); await h.idle();
     assert.ok(reads.length > 0); assert.ok(resultImage(h)); assert.equal(resultImage(h).props.src, '/api/files/' + key);
-    assert.ok(nodes(h.render()).some(node => node.type === 'h4' && text(node) === '표시 정보 결과'));
+    assert.ok(nodes(h.render()).some(node => node.type === 'h4' && text(node) === '표시 정보 결과 (red)'));
     assert.equal(h.input('선택 옵션 제품명'), undefined); assert.equal(h.button('정보 저장하기'), undefined); assert.equal(h.button('저장한 표시사항 PNG 미리보기'), undefined);
     const download = nodes(h.render()).find(node => node.type === 'a' && text(node) === '이미지 다운로드');
     assert.equal(download.props.href, '/api/files/' + key); assert.ok(download.props.download);

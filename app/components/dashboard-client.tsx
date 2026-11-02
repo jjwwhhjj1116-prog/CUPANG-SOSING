@@ -2,6 +2,7 @@
 import '@/app/components/registration-workspace.css';
 import '@/app/components/detail-image-edit-dialog.css';
 import '@/app/components/couplus-detail-stage.css';
+import '@/app/components/couplus-label-stage.css';
 import '@/app/components/dashboard-utility-tools.css';
 import { loadCategoryProfiles, readCategoryJsonResponse } from '@/app/load-category-profiles';
 
