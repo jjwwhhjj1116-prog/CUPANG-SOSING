@@ -103,7 +103,7 @@ function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = fals
   useEffect(()=>{
     if(loading || !focusedOptionId)return;
     const target=editorRoot.current?.querySelector<HTMLElement>('[data-option-target="true"]');
-    target?.scrollIntoView({block:'center'});
+    if(!pricingView)target?.scrollIntoView({block:'center'});
     target?.querySelector<HTMLElement>(pricingView?'input[type="number"]':'select')?.focus({preventScroll:true});
   },[loading,pricingView,focusedOptionId]);
   const currentPolicy=policyDraft??saved?.pricing.policy;

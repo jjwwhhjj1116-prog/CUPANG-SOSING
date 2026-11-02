@@ -11,6 +11,7 @@
 .registration-workspace .pricing-policy-panel>h3,.registration-workspace .step-visual-price-header{display:flex;align-items:center;min-height:70px;margin:0;padding:20px;background:#c7cbd3;color:#212529;font-size:16px;font-weight:700;line-height:29px}
 .registration-workspace .pricing-policy-panel>.pricing-policy-body{display:flex;flex-direction:column;gap:0;height:600px;padding:20px;overflow:auto;scrollbar-width:thin}
 .registration-workspace .pricing-policy-panel .field{gap:8px;font-size:16px;line-height:29px;margin:0 0 16px}
+.registration-workspace .pricing-policy-panel .field>span{font-weight:400}
 .registration-workspace .pricing-policy-panel :is(input:not([type=checkbox]):not([type=radio]),select){width:100%;height:45px;padding:6px 12px;border:1px solid #dcdfe8;border-radius:10px;background:#fff;color:#676e8a;font-family:inherit;font-size:14px;line-height:45px}
 .registration-workspace .pricing-policy-panel .switch-row{justify-content:flex-start;gap:8px;font-size:16px;font-weight:400;flex-direction:row-reverse;border:0;padding:0;margin-bottom:8px}
 .registration-workspace .pricing-policy-panel .switch-row>span{margin-right:auto}
@@ -38,11 +39,14 @@
 .registration-workspace .option-price-grid-tools fieldset{margin-left:auto}
 .registration-workspace .pricing-options-panel .option-price-grid-scroll{border:1px solid #dcdfe8;border-radius:10px}
 .registration-workspace .pricing-options-panel .option-price-grid-fixed{height:600px}
-.registration-workspace .option-price-grid-table{font-size:14px;line-height:24px}
+.registration-workspace .option-price-grid-table{table-layout:auto;font-size:14px;line-height:24px}
 .registration-workspace .option-price-grid-table :is(th,td){padding:8px 12px}
 .registration-workspace .option-price-grid-table th{height:64px;font-size:12.8px;background:#f8f8fa;color:#676e8a}
 .registration-workspace .option-price-grid-table td small{margin-top:4px;font-size:12.8px;line-height:20px}
-.registration-workspace .option-price-grid-table input[type=number]{font-family:inherit;font-size:14px;height:30px;padding:4px 10px;border-radius:10px}
+.registration-workspace .option-price-grid-table input[type=number]{font-family:inherit;font-size:12px;height:30px;padding:4px 10px;border-radius:10px}
+.registration-workspace .option-price-money-input{display:flex;align-items:center;gap:8px;min-width:112px}
+.registration-workspace .option-price-money-input input{min-width:88px;flex:1;width:0}
+.registration-workspace .option-price-money-input>span{flex:none;font-size:12px;color:#676e8a}
 .registration-workspace .option-price-grid-table :is([data-price-column=supplyMargin],[data-price-column=coupangMargin]){color:#74bd92}
 .registration-workspace .pricing-options-panel .option-price-grid-table caption{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .registration-workspace .pricing-options-panel .option-price-grid-pagination,.registration-workspace .pricing-options-panel .option-price-grid>p,.registration-workspace .pricing-options-panel .option-price-grid>details{margin:0;padding:10px 14px;font-size:12.8px;line-height:24px}

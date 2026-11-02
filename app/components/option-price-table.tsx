@@ -117,10 +117,19 @@ export function OptionPriceTable({ rows, calculations, selected, focusedOptionId
     if (!focusedOptionId || focused.current === focusedOptionId) return;
     const target = root.current?.querySelector<HTMLElement>(`[data-price-option-id="${focusedOptionId}"]`);
     if (!target) return;
-    target.scrollIntoView({ block: 'center' });
+    if(layout==='registration'){
+      // Keep the policy and heading visible when opening a stage. Only scroll
+      // the inner price grid to the focused option, never the whole wizard.
+      const container=target.closest?.<HTMLElement>('.option-price-grid-scroll');
+      if(container){
+        const row=target.getBoundingClientRect(),box=container.getBoundingClientRect(),header=container.querySelector('thead')?.getBoundingClientRect().height??0;
+        if(row.top<box.top+header)container.scrollTop-=box.top+header-row.top;
+        else if(row.bottom>box.bottom)container.scrollTop+=row.bottom-box.bottom;
+      }
+    }else target.scrollIntoView({ block: 'center' });
     target.querySelector<HTMLElement>('input[type="number"]')?.focus({ preventScroll: true });
     focused.current = focusedOptionId;
-  }, [focusedOptionId, currentPage, query, pageSize, visibleColumns, rows]);
+  }, [focusedOptionId, currentPage, query, pageSize, visibleColumns, rows, layout]);
   function toggleSelection(id: string, checked: boolean) {
     const next = new Set(selected); if (checked) next.add(id); else next.delete(id); onSelect([...next]);
   }
@@ -148,7 +157,8 @@ export function OptionPriceTable({ rows, calculations, selected, focusedOptionId
   function editable(row:OptionInput){return !priceBlocked&&!priceController?.busy&&!priceController?.uncertain&&!!priceController?.targets&&row.included&&priceController.view?.resolved.rows.some(value=>value.optionId===row.id&&value.included);}
   function restoreButton(row:OptionInput,index:number,input:'supplyPrice'|'salePrice'|'msrp',label:string){return <button type="button" className="btn ghost" aria-label={`가격 옵션 ${index+1} ${label} 복원`} disabled={!editable(row)} onClick={()=>priceController?.change(row.id,input,null)}>{label} 복원</button>;}
   function priceInput(row:OptionInput,index:number,input:'supplyPrice'|'salePrice'|'msrp',label:string){const values=effective?.get(row.id),value=input==='supplyPrice'?values?.supply:input==='salePrice'?values?.sale:values?.msrp;
-    return <><input type="number" min={1} step={1} aria-label={`가격 옵션 ${index+1} ${label}`} value={value??''} disabled={!editable(row)} onKeyDown={event=>{if(event.key==='Enter')event.preventDefault();}} onChange={event=>priceController?.change(row.id,input,event.target.value)}/>{(layout!=='registration'||input==='msrp')&&restoreButton(row,index,input,label)}</>;}
+    const field=<input type="number" min={1} step={1} aria-label={`가격 옵션 ${index+1} ${label}`} value={value??''} disabled={!editable(row)} onKeyDown={event=>{if(event.key==='Enter')event.preventDefault();}} onChange={event=>priceController?.change(row.id,input,event.target.value)}/>;
+    return <>{layout==='registration'&&input!=='msrp'?<div className="option-price-money-input">{field}<span aria-hidden="true">원</span></div>:field}{(layout!=='registration'||input==='msrp')&&restoreButton(row,index,input,label)}</>;}
   function cell(id: ColumnId, row: OptionInput, index: number, result: typeof displayed[number] | undefined) {
     const calculation = result?.calculation;
     switch (id) {
@@ -167,8 +177,9 @@ export function OptionPriceTable({ rows, calculations, selected, focusedOptionId
         const validTotal = totalCny !== null && Number.isFinite(totalCny) && totalCny > 0;
         const generalKrw = validTotal && typeof exchangeRate === 'number' && Number.isFinite(exchangeRate) && exchangeRate > 0
           ? totalCny * exchangeRate : null;
+        const field=<input aria-label={`가격 옵션 ${index + 1} 개당 원가`} type="number" min="0" step="any" disabled={priceBlocked} value={row.unitCostCny === null || !Number.isFinite(row.unitCostCny) ? '' : row.unitCostCny} onChange={event => onChange(row.id, 'unitCostCny', event.target.value === '' ? null : event.target.valueAsNumber)} />;
         return <>
-          <input aria-label={`가격 옵션 ${index + 1} 개당 원가`} type="number" min="0" step="any" disabled={priceBlocked} value={row.unitCostCny === null || !Number.isFinite(row.unitCostCny) ? '' : row.unitCostCny} onChange={event => onChange(row.id, 'unitCostCny', event.target.value === '' ? null : event.target.valueAsNumber)} />
+          {layout==='registration'?<div className="option-price-money-input"><span aria-hidden="true">¥</span>{field}</div>:field}
           {generalKrw !== null && Number.isFinite(generalKrw) && generalKrw > 0 && <small className="option-price-source-cost" aria-label={`가격 옵션 ${index + 1} 일반 환율 환산 원가`} title="개당 위안 원가 × 현재 구성 수량 × 일반 적용환율. 통합통관 매입가는 별도로 계산합니다.">{generalKrw.toLocaleString('ko-KR')}원{layout==='registration'?'':' · 일반 환율 환산'}</small>}
           {validTotal && row.unitsPerPack > 1 && <small className="option-price-source-cost" aria-label={`가격 옵션 ${index + 1} 구성 합계 위안 원가`}>(¥{totalCny.toLocaleString('ko-KR')} · {row.unitsPerPack.toLocaleString('ko-KR')}개 합계)</small>}
         </>;

@@ -22,7 +22,7 @@ const version = '2026-10-14T02:00:00.000Z';
 export async function optionPriceTableUI(company = priceTableCompanies[0], { count = 73, focusedOptionId, integrated=false,detail=false,fileStorage,imageKeys=[],sourceImageKeys={},rowImages={},prompt } = {}) {
   const sqlite = memoryDatabase(); for (const statement of runtimeDDL()) sqlite.exec(statement.sql);
   const owner = 'price-owner-' + company.code, productId = 'price-product-' + company.code;
-  const apiCalls = [], writes = [], cache = new Map(), instances = new Map(), effects = [], layouts=[], focused = [],controls={};
+  const apiCalls = [], writes = [], cache = new Map(), instances = new Map(), effects = [], layouts=[], focused = [],scrollEvents=[],controls={};
   let currentInstance, cursor = 0, tree, saveCount = 0, closed = false, heldSave = null;
   const db = { prepare(sql) { let args = []; const statement = { bind(...values) { args = values; return statement; },
     execute() { return sqlite.prepare(sql).all(...args); }, async all() { return { results: statement.execute() }; },
@@ -109,11 +109,11 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
     for (const node of priceTableNodes(tree)) if (node.props?.ref && typeof node.props.ref === 'object') node.props.ref.current = {
       querySelector(selector) { const match = /data-price-option-id="([^"]+)"/.exec(selector), row = priceTableNodes(node).find(item => match && item.props?.['data-price-option-id'] === match[1]
         || !match && selector.includes('data-option-target') && item.props?.['data-option-target'] === true);
-      return row ? { scrollIntoView() {}, querySelector() { const input = priceTableNodes(row).find(item => item.type === 'input' && item.props.type === 'number'); return input ? { focus() { focused.push(input.props['aria-label']); } } : null; } } : null; },
+      return row ? { scrollIntoView(options) {scrollEvents.push(options);}, querySelector() { const input = priceTableNodes(row).find(item => item.type === 'input' && item.props.type === 'number'); return input ? { focus(options) { focused.push(input.props['aria-label']); scrollEvents.push({focus:true,...options}); } } : null; } } : null; },
     };layouts.splice(0).forEach(effect=>effect());return tree; };
   const settle = async () => { for (let iteration = 0; iteration < 12; iteration++) { render(); effects.splice(0).forEach(effect => effect()); await new Promise(done => setImmediate(done)); } return render(); };
   await settle();
-  return { sqlite, load, render, settle, apiCalls, writes, focused, product, policy, before, protectedSnapshot,controls,request,
+  return { sqlite, load, render, settle, apiCalls, writes, focused, scrollEvents, product, policy, before, protectedSnapshot,controls,request,
     node(label) { const node = priceTableNodes(render()).find(node => node.props?.['aria-label'] === label); assert.ok(node, label); return node; },
     button(label) { const node = priceTableNodes(render()).find(node => node.type === 'button' && (priceTableText(node) === label || node.props['aria-label'] === label)); assert.ok(node, label); return node; },
     rows() { return load('db/product-options.ts').readProductOptions(owner, productId); },

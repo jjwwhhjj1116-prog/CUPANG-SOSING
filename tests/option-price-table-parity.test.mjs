@@ -7,6 +7,15 @@ const ids = h => dataRows(h).map(node => node.props['data-price-option-id']);
 const change = (h, label, value) => h.node(label).props.onChange({ target: { value, valueAsNumber: Number(value) } });
 const header = (h, column) => nodes(h.render()).find(node => node.type === 'th' && node.props['data-price-column'] === column);
 
+test('opening a later focused price option retains the wizard heading and policy while focusing without page scroll',async()=>{
+ const h=await optionPriceTableUI(undefined,{count:25,integrated:true,focusedOptionId:'price-024'});
+ try{
+  assert.ok(ids(h).includes('price-024'));assert.ok(h.focused.includes('가격 옵션 24 개당 원가'));
+  assert.ok(h.scrollEvents.length);assert.ok(h.scrollEvents.every(event=>event.focus&&event.preventScroll===true));
+  assert.equal(h.writes.length,0);assert.equal(h.protectedSnapshot(),h.before);
+ }finally{h.close();}
+});
+
 test('price search ANDs tokens across columns while selection and complete source stay attached to UUIDs', async () => {
   const h = await optionPriceTableUI(undefined, { count: 23 });
   try {
