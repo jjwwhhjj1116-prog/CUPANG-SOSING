@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import cvReady from '@techstark/opencv-js';
+import sharp from 'sharp';
+import {freeImageEditFixture} from './helpers/free-image-edit-api.mjs';
 const cv=await cvReady;
 
 const plain=value=>JSON.parse(JSON.stringify(value));
@@ -23,13 +25,13 @@ function fixture(color=()=>[220,225,230,255]){
  }};
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
-   {exports,Error,Date,URL,TextEncoder,Blob,Uint8ClampedArray,Uint8Array,AbortController,AbortSignal,structuredClone,document,setTimeout,clearTimeout,
+   {exports,Error,Date,URL,TextEncoder,Blob,Uint8ClampedArray,Uint8Array,DataView,btoa,AbortController,AbortSignal,structuredClone,document,setTimeout,clearTimeout,
     Worker:class{postMessage(request){queueMicrotask(()=>{try{const data=load('app/free-image-inpaint.ts').inpaintFreeImagePixels(cv,request);this.onmessage?.({data:{id:request.id,width:request.width,height:request.height,data}});}catch(error){this.onerror?.(error);}});}terminate(){}},
     fetch:()=>assert.fail('cleanup must not make a translation request'),require:name=>{assert.ok(name.startsWith('@/'));return load(name.slice(2)+'.ts');}});return exports;
  }
  const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;canvas.pixels=new Uint8ClampedArray(width*height*4);
  for(let y=0;y<height;y++)for(let x=0;x<width;x++)canvas.pixels.set(color(x,y),(y*width+x)*4);
- return{...load('app/selected-image-purpose.ts'),...load('app/free-image-vision-style.ts'),render:load('app/free-image-translation-client.ts').renderFreeImageTranslation,
+ return{...load('app/selected-image-purpose.ts'),...load('app/free-image-vision-style.ts'),vision:load('app/automation/workers-image-vision.ts'),contract:load('app/image-text-vision.ts'),render:load('app/free-image-translation-client.ts').renderFreeImageTranslation,
   image:{source,canvas,width,height,blob:new Blob(['original'])},operations};
 }
 const region=(id,text='中文文句',box={x:20,y:20,width:40,height:16})=>({id,text,box,confidence:95,selected:true,translated:'',translationProvenance:'empty',issue:null,background:'#ffffff',foreground:'#111111',fontSize:10});
@@ -69,4 +71,60 @@ test('uniform-fill cleanup rejects complex, transparent, unavailable and overlap
  const invalid=fixture();assert.throws(()=>invalid.prepareSelectedImageCleanup(invalid.image,[region('outside','中文',{x:90,y:20,width:20,height:10})]),/원본 크기/);
  const uncertain=fixture(),rows=[region('certain'),{...region('uncertain','English caption',{x:70,y:20,width:20,height:16}),selected:false,confidence:20}];
  assert.throws(()=>uncertain.prepareSelectedImageCleanup(uncertain.image,rows),/미선택 외국어/);assert.equal(uncertain.operations.length,0);assert.equal(rows[1].selected,false);
+});
+
+for(const stage of ['main','additional'])test(`${stage}: configured Qwen model-code OCR reaches actual OpenCV cleanup without needing Korean replacement text`,async()=>{
+ const h=fixture(),box={x:20,y:20,width:60,height:16};h.image.source.role=stage;h.image.source.quotationTarget.input=stage==='main'?'mainImage':'additionalImages';h.image.source.quotationTarget.fieldKey=h.image.source.quotationTarget.input;
+ h.image.canvas.pixels.set([0,0,0,255],(25*h.image.width+25)*4);const original=h.image.canvas.pixels.slice(),bytes=new Uint8Array(await sharp(original,{raw:{width:h.image.width,height:h.image.height,channels:4}}).png().toBuffer());let providerCalls=0;
+ const env={SOURCEFLOW_IMAGE_TEXT_PROVIDER:'workers-ai-vision',SOURCEFLOW_IMAGE_TEXT_MODEL:h.contract.IMAGE_TEXT_VISION_MODEL,SOURCEFLOW_IMAGE_TEXT_PAID_ALLOWED:'true',AI:{run:async(model,input)=>{
+  providerCalls++;assert.equal(model,h.contract.IMAGE_TEXT_VISION_MODEL);assert.equal(input.messages[1].content[1].type,'image_url');return{response:{decision:'foreign-text',blocks:[{original:'UV400',translated:'UV400',box}]}};
+ }}};
+ assert.equal(h.vision.imageVisionConfiguration(env).configured,true);
+ const result=await h.vision.readImageVision(bytes,{width:h.image.width,height:h.image.height},'zh',env,new AbortController().signal,h.contract.IMAGE_TEXT_INSPECTION_POLICY),styled=h.initializeVisionRegions(result.blocks,h.image.canvas,h.image.width,h.image.height);
+ assert.equal(result.blocks[0].translated,null);assert.match(result.blocks[0].issue,/번역 검증/);assert.deepEqual(plain(styled.issues),[]);
+ h.image.visionResult=result;h.image.visionStyleIssues=styled.issues;const before=plain(styled.regions),prepared=h.prepareSelectedImageCleanup(h.image,styled.regions),rendered=await h.render(h.image,prepared,new AbortController().signal),output=new Uint8Array(await rendered.output.arrayBuffer());
+ assert.equal(providerCalls,1);assert.equal(h.operations.filter(row=>row[0]==='restore').length,1);assert.ok(!h.operations.some(row=>row[0]==='fill'));
+ assert.deepEqual(plain(styled.regions),before);assert.deepEqual(plain(rendered.editDocument.regions.map(row=>({text:row.text,box:row.box,erase:row.erase,translated:row.translated,translationProvenance:row.translationProvenance,issue:row.issue}))),[{text:'UV400',box,erase:true,translated:'',translationProvenance:'empty',issue:null}]);
+ for(let y=0;y<h.image.height;y++)for(let x=0;x<h.image.width;x++){const index=(y*h.image.width+x)*4;if(x>=box.x&&x<box.x+box.width&&y>=box.y&&y<box.y+box.height){for(let c=0;c<3;c++)assert.ok(Math.abs(output[index+c]-[220,225,230][c])<8);}else assert.deepEqual(Array.from(output.slice(index,index+4)),Array.from(original.slice(index,index+4)));}
+});
+
+test('a translation-only exception requires matching validated foreign-text Vision blocks and never removes geometry/background or unknown review issues',()=>{
+ const h=fixture(),box={x:20,y:20,width:60,height:16},result=h.vision.parseImageVisionResponse({response:{decision:'foreign-text',blocks:[{original:'UV400',translated:'UV400',box}]}},100,60),styled=h.initializeVisionRegions(result.blocks,h.image.canvas,100,60);
+ h.image.visionResult=result;h.image.visionStyleIssues=styled.issues;
+ for(const change of [value=>{delete value.visionResult.inspection;},value=>{value.visionResult.inspection.decision='unreadable';},value=>{value.visionResult.blocks[0].text='other';},value=>{value.visionResult.blocks[0].box.x++;},value=>{value.source.role='detail';}]){
+  const image={...h.image,source:plain(h.image.source),visionResult:plain(result)};change(image);assert.throws(()=>h.prepareSelectedImageCleanup(image,styled.regions),/검토가 필요/);
+ }
+ for(const rows of [[{...styled.regions[0],selected:false}],[{...styled.regions[0],issue:'알 수 없는 검토 '+styled.regions[0].issue}]])assert.throws(()=>h.prepareSelectedImageCleanup(h.image,rows),/검토가 필요/);
+ const omitted={...h.image,visionResult:{...plain(result),blocks:[...plain(result.blocks),{...plain(result.blocks[0]),id:'vision-2',text:'AB123',box:{x:5,y:45,width:30,height:10}}]}};assert.throws(()=>h.prepareSelectedImageCleanup(omitted,styled.regions),/검토가 필요/);
+ const complex=fixture((x,y)=>(x+y)%2?[0,0,0,255]:[255,255,255,255]);complex.image.visionResult=plain(result);complex.image.visionStyleIssues=['VISION_BACKGROUND_COMPLEX'];assert.throws(()=>complex.prepareSelectedImageCleanup(complex.image,styled.regions),/VISION_BACKGROUND_COMPLEX/);
+ const overlap=fixture(),rows=[...result.blocks,{...result.blocks[0],id:'vision-2',text:'AB123',box:{x:30,y:25,width:30,height:10}}],overlapResult={...plain(result),blocks:rows},overlapStyled=overlap.initializeVisionRegions(rows,overlap.image.canvas,100,60);overlap.image.visionResult=overlapResult;overlap.image.visionStyleIssues=overlapStyled.issues;assert.throws(()=>overlap.prepareSelectedImageCleanup(overlap.image,overlapStyled.regions),/VISION_REGION_OVERLAP/);
+});
+
+test('a matching code with the exact translation and text-fit diagnostics is erase-only while original diagnostics remain untouched',()=>{
+ const h=fixture(),result=h.vision.parseImageVisionResponse({response:{decision:'foreign-text',blocks:[{original:'UV400',translated:'UV400',box:{x:20,y:20,width:40,height:16}}]}},100,60),styled=h.initializeVisionRegions(result.blocks,h.image.canvas,100,60),before=plain(styled);
+ assert.deepEqual(plain(styled.issues),['VISION_TEXT_FIT']);assert.equal(styled.regions[0].selected,false);h.image.visionResult=result;h.image.visionStyleIssues=styled.issues;
+ const prepared=h.prepareSelectedImageCleanup(h.image,styled.regions);assert.equal(prepared[0].selected,true);assert.equal(prepared[0].erase,true);assert.equal(prepared[0].issue,null);assert.deepEqual(plain(styled),before);
+});
+
+for(const stage of ['main','additional'])test(`${stage}: one actual Vision API result restores pixels and saves only the exact final quotation image slot with its editable OCR source`,async()=>{
+ const f=await freeImageEditFixture({code:'A01464742',name:'와이홉'}),h=fixture();try{
+  h.image.canvas.pixels.set([0,0,0,255],(25*h.image.width+25)*4);const original=h.image.canvas.pixels.slice(),bytes=new Uint8Array(await sharp(original,{raw:{width:h.image.width,height:h.image.height,channels:4}}).png().toBuffer());
+  f.h.objects.set(f.keys[0],bytes);const contract=f.h.load('app/image-text-vision.ts'),input=stage==='main'?'mainImage':'additionalImages';let providerCalls=0;
+  Object.assign(f.h.bindings,{SOURCEFLOW_IMAGE_TEXT_PROVIDER:'workers-ai-vision',SOURCEFLOW_IMAGE_TEXT_MODEL:contract.IMAGE_TEXT_VISION_MODEL,SOURCEFLOW_IMAGE_TEXT_PAID_ALLOWED:'true'});
+  f.h.bindings.AI.run=async(model)=>{providerCalls++;assert.equal(model,contract.IMAGE_TEXT_VISION_MODEL);return{response:{decision:'foreign-text',blocks:[{original:'UV400',translated:'UV400',box:{x:20,y:20,width:60,height:16}}]}};};
+  const openedResponse=await f.source(input);assert.equal(openedResponse.status,200,await openedResponse.clone().text());const opened=await openedResponse.json(),source=opened.source;
+  assert.equal(opened.visionConfiguration.configured,true);const response=await f.h.load('app/api/products/[id]/image-text/route.ts').POST(new Request('https://app.test'+f.base+'/image-text',{method:'POST',headers:{'content-type':'application/json',origin:'https://app.test','sec-fetch-site':'same-origin'},body:JSON.stringify({action:'vision',source,sourceLanguage:'zh',configuration:opened.visionConfiguration,requestId:crypto.randomUUID(),inspectionPolicy:contract.IMAGE_TEXT_INSPECTION_POLICY})}),{params:Promise.resolve({id:f.id})});assert.equal(response.status,200,await response.clone().text());const read=await response.json();
+  const styled=h.initializeVisionRegions(read.result.blocks,h.image.canvas,h.image.width,h.image.height);Object.assign(h.image,{source,visionResult:read.result,visionStyleIssues:styled.issues});
+  const prepared=h.prepareSelectedImageCleanup(h.image,styled.regions),rendered=await h.render(h.image,prepared,new AbortController().signal),pixels=new Uint8Array(await rendered.output.arrayBuffer()),png=new Uint8Array(await sharp(pixels,{raw:{width:h.image.width,height:h.image.height,channels:4}}).png().toBuffer()),before=await f.read(),raw=f.sourceRows();
+  const saved=await f.applyEdit(source,rendered.editDocument,png);assert.equal(saved.status,200,await saved.clone().text());const body=await saved.json(),after=await f.read(),target=f.h.load('app/quotation-seo-targets.ts').exactPrimaryQuotationTarget(before.resolved.schema.fields,input),slot=source.quotationTarget.slotIndex;
+  assert.equal(providerCalls,1);assert.equal(f.sourceRows(),raw);assert.deepEqual(f.h.objects.get(f.keys[0]),bytes);assert.deepEqual(f.h.objects.get(body.key),png);
+  const expectedOverrides=plain(before.overrides);for(const key of target.linked){const selected=before.resolved.rows.find(row=>row.optionId===f.selected).fields[key].value.split('\n');selected[slot]=body.key;expectedOverrides.options[f.selected][key]=selected.join('\n');}assert.deepEqual(after.overrides,expectedOverrides);
+  if(stage==='main'){const issue=f.h.load('app/quotation-schema.ts').duplicateQuotationImageIssue;assert.ok(before.resolved.rows.find(row=>row.optionId===f.selected).fields.detailImages.issues.includes(issue));assert.equal(after.resolved.rows.find(row=>row.optionId===f.selected).fields.detailImages.issues.includes(issue),false);}
+  for(const row of after.resolved.rows){const prior=before.resolved.rows.find(prior=>prior.optionId===row.optionId);for(const [key,cell]of Object.entries(prior.fields)){
+   if(row.optionId===f.selected&&target.linked.includes(key)){const expected=cell.value.split('\n');expected[slot]=body.key;assert.equal(row.fields[key].value,expected.join('\n'));}
+   else{assert.equal(row.fields[key].value,cell.value);assert.equal(row.fields[key].source,cell.source);}
+  }}
+  const reopened=await f.source(input,{sourceKey:body.key,editor:'saved'});assert.equal(reopened.status,200,await reopened.clone().text());const editable=await reopened.json();
+  assert.equal(editable.source.editorSource.resultKey,body.key);assert.equal(editable.editDocument.regions[0].text,'UV400');assert.equal(editable.editDocument.regions[0].erase,true);assert.equal(editable.editDocument.regions[0].translated,'');assert.equal(editable.editDocument.regions[0].issue,null);
+ }finally{f.close();}
 });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { apiFixture, companies } from './helpers/supplier-hub-single-projection.mjs';
+import { apiFixture, companies, plain } from './helpers/supplier-hub-single-projection.mjs';
 import { aiFixture } from './helpers/quotation-ai.mjs';
 import { providedOptionModule as load } from './helpers/provided-option-quotation.mjs';
 
@@ -27,6 +27,93 @@ async function fixture(company = companies[0], count = 3) {
     assertCurrent: () => { checks++; if (!current) throw Error('synthetic account/company changed'); }, ...extra });
   return { ...f, requests, models, read, controls, fetcher, store, optionsBefore, get checks() { return checks; }, setCurrent(value) { current = value; } };
 }
+
+function savedDimensions(f, count) {
+  const stored = f.h.sqlite.prepare('SELECT payload FROM product_options WHERE product_id=?').get(f.id), options = JSON.parse(stored.payload);
+  for (const option of options.rows.slice(0, count)) {
+    Object.assign(option, { packagedWidthMm: 60, packagedLengthMm: 80, packagedHeightMm: 15 });
+    for (const key of ['packagedWidthMm', 'packagedLengthMm', 'packagedHeightMm']) option.provenance[key] = 'collected';
+  }
+  f.h.sqlite.prepare('UPDATE product_options SET payload=? WHERE product_id=?').run(JSON.stringify(options), f.id);
+  return options;
+}
+
+for (const company of companies) test(`${company.code}: twenty saved packages do not block the one missing package in a twenty-one-option quotation`, async () => {
+  const f = await fixture(company, 21); try {
+    const options = savedDimensions(f, 20), before = await f.read(), result = await run(f.id, await f.controls()), after = await f.read();
+    assert.equal(result.status, 'draft', result.message); assert.equal(result.changed, 1); assert.equal(result.estimated, 1); assert.equal(result.remaining, 0); assert.equal(f.models.length, 1);
+    const provider = JSON.parse(f.models[0].input.messages[1].content.slice(0, -'\n/no_think'.length)); assert.equal(provider.packages.length, 1); assert.equal(provider.packages[0].originalName, options.rows[20].originalName);
+    assert.deepEqual(f.requests.map(call => call.method), ['POST', 'PUT']); assert.deepEqual(f.requests[1].body.changes, [{ optionId: options.rows[20].id, fieldKey: before.resolved.schema.fields.find(field => f.h.load('app/quotation-packaged-dimensions.ts').isPackagedDimensionsMmField(field)).id, value: '60*80*15' }]);
+    assert.equal(JSON.stringify(await f.store.readProductOptions('owner', f.id)), JSON.stringify(options));
+    for (const row of after.resolved.rows.filter(row => row.included)) {
+      assert.equal(row.fields.packagedWeightG.value, '10'); assert.equal(row.fields.packagedDimensionsMm.value, '60*80*15');
+      if (row.optionId !== options.rows[20].id) assert.deepEqual(plain(row.fields), plain(before.resolved.rows.find(old => old.optionId === row.optionId).fields));
+    }
+    const compiled = await f.h.load('app/supplier-hub-single-projection.ts').projectSupplierHubSingleDocument({ snapshot: f.snapshot, company, categoryId: f.snapshot.categoryId, categoryPath: f.snapshot.categoryPath, resolved: after.resolved });
+    assert.equal(compiled.payload.jsonDocument.length, 21); assert.ok(compiled.payload.jsonDocument.every(document => document.logisticsPage.skuUnitBoxDimension === '60*80*15' && document.logisticsPage.skuUnitBoxWeight === '10'));
+    assert.equal(compiled.review.issues.filter(issue => issue.level === 'error' && issue.path?.[0] === 'logisticsPage' && ['skuUnitBoxDimension', 'skuUnitBoxWeight'].includes(issue.path.at(-1))).length, 0);
+    assert.deepEqual(f.h.network, []);
+  } finally { f.close(); }
+});
+
+test('more than twenty missing package targets remain bounded before provider or quotation writes', async () => {
+  const f = await fixture(companies[0], 21); try {
+    const before = f.state(); await assert.rejects(run(f.id, await f.controls()), /1~20/);
+    assert.deepEqual(f.requests.map(call => call.method), ['POST']); assert.equal(f.models.length, 0); assert.equal(f.state(), before);
+  } finally { f.close(); }
+});
+
+for (const company of companies) test(`${company.code}: actual Stage7 finishes one missing package after twenty saved packages and compiles the same native values`, async () => {
+  const f = await fixture(company, 21); try {
+    const options = savedDimensions(f, 20);
+    // Bind the synthetic product to a captured category just as intake does.
+    // The fixture never collects or reads the supplier URL.
+    f.h.context.category = f.profile;
+    f.h.context.settings = { ...f.h.context.settings, taxType: '과세', shelfLifeDays: 0, handlingReason: '해당사항없음' };
+    f.h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(f.h.context), 'job');
+    f.h.sqlite.prepare('INSERT INTO collection_products(job_id,owner_id,product_id,created_at) VALUES(?,?,?,?)').run('job', 'owner', f.id, new Date().toISOString());
+    f.h.sqlite.prepare('UPDATE products SET source_url=? WHERE id=?').run(f.h.sourceUrl, f.id);
+    const endpoint = f.base + '/quotation-fields', view = await json(await f.h.route(endpoint)), source = await f.h.load('app/exports/quotation-source.ts').readMappedQuotationSource('owner', f.id, null),
+      plan = f.h.load('app/quotation-ai.ts').buildQuotationAiPlan(source, { optionId: null, applyToAllOptions: true }), values = new Map();
+    const reviewedValue = field => field.choices?.find(choice => choice.value)?.value ?? (field.type === 'number' ? String(Math.max(field.min ?? 0, 1)) : '합성 검토값');
+    for (const field of plan.fields) values.set(field.id, reviewedValue(field));
+    for (const field of view.resolved.schema.fields) if (field.visibility === 'hidden' && field.choices && !field.readOnly) values.set(field.id, reviewedValue(field));
+    for (const field of view.resolved.schema.fields) if (field.required && !field.readOnly && !f.h.load('app/quotation-packaging-basis.ts').isQuotationPackagingField(view.resolved.schema.fields, field.id)
+      && !view.resolved.rows.find(row => row.included).fields[field.id].value.trim()) values.set(field.id, reviewedValue(field));
+    await json(await f.h.route(endpoint, { method: 'PUT', body: { expectedRevision: view.revision, expectedInputFingerprint: view.inputFingerprint,
+      changes: [...values].map(([fieldKey, value]) => ({ optionId: null, fieldKey, value })) } }));
+    const before = await json(await f.h.route(endpoint)), keys = new Map(), events = [], fetcher = (url, init = {}) => {
+      if (url === '/api/supplier-hub/catalog-context') return f.h.load('app/api/supplier-hub/catalog-context/route.ts').GET();
+      if (url === f.base) return f.h.load('app/api/products/[id]/route.ts').GET(new Request('https://app.test' + url), { params: Promise.resolve({ id: f.id }) });
+      return f.fetcher(url, init);
+    };
+    const result = await f.h.load('app/batch-selected-work.ts').runSelectedBatchProduct(f.id, { stages: ['quotation'], expectedOwnerId: 'owner', signal: new AbortController().signal,
+      fetcher, keys, newKey: () => crypto.randomUUID(), onStage: stage => events.push(stage) }), after = await json(await f.h.route(endpoint));
+    assert.equal(result.stages[0].status, 'draft', result.stages[0].message); assert.match(result.stages[0].message, /포장 규격 1개/); assert.deepEqual(events.map(stage => stage.status), ['running', 'draft']);
+    assert.equal(f.models.length, 1); assert.deepEqual(f.h.sqlite.prepare('SELECT status FROM quotation_ai_jobs').all().map(row => row.status), ['completed']);
+    assert.equal(f.requests.filter(call => call.url.endsWith('/quotation-packaging-draft')).length, 1); assert.equal(f.requests.filter(call => call.method === 'PUT').length, 1);
+    assert.deepEqual(after.overrides.common, before.overrides.common); assert.equal(JSON.stringify(await f.store.readProductOptions('owner', f.id)), JSON.stringify(options));
+    assert.equal([...keys].some(([key]) => key.includes(':pending:') || key.includes(':write:')), false);
+    const compiled = await f.h.load('app/supplier-hub-single-projection.ts').projectSupplierHubSingleDocument({ snapshot: f.snapshot, company, categoryId: f.snapshot.categoryId, categoryPath: f.snapshot.categoryPath, resolved: after.resolved });
+    assert.equal(compiled.payload.jsonDocument.length, 21); assert.ok(compiled.payload.jsonDocument.every(document => document.logisticsPage.skuUnitBoxDimension === '60*80*15' && document.logisticsPage.skuUnitBoxWeight === '10'));
+    const typeIssues = compiled.review.issues.filter(issue => issue.level === 'error' && issue.code === 'TYPE_OR_CONSTRAINT'); assert.equal(typeIssues.length, 0, JSON.stringify(typeIssues)); assert.deepEqual(f.h.network, []);
+  } finally { f.close(); }
+});
+
+test('complete packages and protected manual blanks do not count as provider targets or change an excluded package', async () => {
+  const f = await fixture(companies[0], 31); try {
+    const options = savedDimensions(f, 28); options.rows[30].included = false;
+    f.h.sqlite.prepare('UPDATE product_options SET payload=? WHERE product_id=?').run(JSON.stringify(options), f.id);
+    const view = await f.read(), dimension = view.resolved.schema.fields.find(field => f.h.load('app/quotation-packaged-dimensions.ts').isPackagedDimensionsMmField(field));
+    await json(await f.h.route(f.base + '/quotation-fields' + f.query, { method: 'PUT', body: { expectedRevision: view.revision, expectedInputFingerprint: view.inputFingerprint,
+      changes: [{ optionId: options.rows[28].id, fieldKey: dimension.id, value: '' }] } }));
+    const before = await f.read(), result = await run(f.id, await f.controls()), after = await f.read();
+    assert.equal(result.status, 'incomplete'); assert.equal(result.changed, 1); assert.equal(result.remaining, 1); assert.equal(f.models.length, 1);
+    assert.deepEqual(f.requests[1].body.changes, [{ optionId: options.rows[29].id, fieldKey: dimension.id, value: '60*80*15' }]);
+    for (const id of [options.rows[28].id, options.rows[30].id]) assert.deepEqual(after.resolved.rows.find(row => row.optionId === id), before.resolved.rows.find(row => row.optionId === id));
+    assert.equal(JSON.stringify(await f.store.readProductOptions('owner', f.id)), JSON.stringify(options));
+  } finally { f.close(); }
+});
 
 for (const company of companies) test(`${company.code}: explicit automatic work saves three dimension drafts with non-measured provenance and preserves collected10g/options`, async () => {
   const f = await fixture(company);

@@ -1,12 +1,14 @@
 import type {FreeImageLoaded,FreeImageRegion} from '@/app/free-image-translation-client';
 import {validateFreeImageEditDocument} from '@/app/free-image-edit-document';
 import {initializeVisionRegions} from '@/app/free-image-vision-style';
+import {parseImageTextVisionResult} from '@/app/image-text-vision';
 
 export const selectedImagePurpose=(stage:'main'|'additional'|'detail')=>stage==='detail'?'translation':'cleanup';
 export const hasForeignImageText=(text:string)=>/\p{Script=Han}/u.test(text)||/[a-z]{2}/iu.test(text);
 // This exact diagnostic is emitted by the shared initial style builder. Only
 // its complete marker is translation-specific; any other issue still blocks.
 const textFitIssue='VISION_TEXT_FIT: 한국어를 읽을 수 있는 크기로 넣기 어렵습니다. 문구와 영역을 직접 조정한 뒤 선택해주세요.';
+const translationIssue='번역 검증을 통과하지 못했습니다. 원문과 영역을 확인해주세요.';
 const withoutTextFit=(issue:string|null)=>issue===textFitIssue?null:issue?.endsWith(' '+textFitIssue)?issue.slice(0,-textFitIssue.length-1):issue;
 const review=(issues:readonly string[])=>Error(`문구 제거 전 영역·배경 검토가 필요합니다: ${issues.join(', ')}. 원본을 유지했습니다. 이미지 편집에서 문구와 영역을 확인해주세요.`);
 
@@ -14,7 +16,18 @@ const review=(issues:readonly string[])=>Error(`문구 제거 전 영역·배경
  * overlap and uncertainty gates still apply: OCR is not product segmentation.
  * Keep every original row available in the editable document. */
 export function prepareSelectedImageCleanup(image:FreeImageLoaded,recognized:readonly FreeImageRegion[]):FreeImageRegion[]{
- const regions=validateFreeImageEditDocument({format:'free-image-edit-v1',width:image.width,height:image.height,sourceLanguage:'zh',regions:[...recognized]},image.source).regions;
+ let regions=validateFreeImageEditDocument({format:'free-image-edit-v1',width:image.width,height:image.height,sourceLanguage:'zh',regions:[...recognized]},image.source).regions;
+ const vision=['main','additional'].includes(image.source.role)?parseImageTextVisionResult(image.visionResult,image.width,image.height):null;
+ if(vision?.inspection?.decision==='foreign-text'&&vision.blocks.length===regions.length&&regions.every((region,index)=>{
+  const block=vision.blocks[index];return block.id===region.id&&block.text===region.text&&(['x','y','width','height'] as const).every(key=>block.box[key]===region.box[key]);
+ })){
+  // Erasing a validated OCR block needs no Korean replacement (for example an unchanged model code).
+  regions=regions.map((region,index)=>{
+   if(vision.blocks[index].translated!==null||vision.blocks[index].issue!==translationIssue)return region;
+   if(region.issue===translationIssue)return{...region,issue:null};
+   return region.issue===translationIssue+' '+textFitIssue?{...region,issue:textFitIssue}:region;
+  });
+ }
  const blockers=image.visionStyleIssues?.filter(issue=>issue!=='VISION_TEXT_FIT')??[];
  if(blockers.length)throw review(blockers);
  // Local OCR defaults to white; that default is not evidence of a safe fill.

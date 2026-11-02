@@ -92,10 +92,10 @@ function reviewedPackageValue(view:QuotationFieldsView,row:ResolvedQuotationRow,
 /** No defaults are written by reads. The plan can only propose missing fields
  * on this exact option/pack basis; intentional blanks are protected values. */
 export function buildQuotationPackagingDraftPlan(view:QuotationFieldsView,options:ProductOptions,facts:PackagingDraftFacts,scope:PackagingDraftScope):PackagingDraftPlan{
- if(options.revision!==view.optionRevision||!view.categoryContext.categoryId||!view.categoryContext.profileId
+ if(options.revision!==view.optionRevision||options.rows.length>200||!view.categoryContext.categoryId||!view.categoryContext.profileId
   ||!scope.applyToAllOptions&&scope.optionId===null||typeof scope.applyToAllOptions!=='boolean'||scope.optionId!==null&&!safeId(scope.optionId))throw fail('현재 상품·카테고리·옵션 저장값을 먼저 확인해주세요.');
  const included=view.resolved.rows.filter(row=>row.optionId!==null&&row.included&&(scope.applyToAllOptions||row.optionId===scope.optionId));
- if(!included.length||included.length>PACKAGING_DRAFT_MAX_OPTIONS||!scope.applyToAllOptions&&!included.some(row=>row.optionId===scope.optionId))throw fail('포장 초안은 견적에 포함된 옵션 1~20개씩 작성해주세요.');
+ if(!included.length||included.length>200||!scope.applyToAllOptions&&!included.some(row=>row.optionId===scope.optionId))throw fail('포장 초안을 작성할 포함 옵션 범위를 확인해주세요.');
  if(scope.optionId!==null&&!options.rows.some(row=>row.id===scope.optionId&&row.included))throw fail('선택한 옵션의 현재 포함 상태를 확인해주세요.');
  const fields=view.resolved.schema.fields,weight=weightField(fields),dimensions=dimensionsField(fields),targets:Target[]=[],preserved:PackagingDraftPreserved[]=[];
  for(const row of included){
@@ -123,6 +123,7 @@ export function buildQuotationPackagingDraftPlan(view:QuotationFieldsView,option
     saleUnitWeight:saleUnitWeightG===null?null:{weightG:saleUnitWeightG,source:option.provenance.weightKg,measured:false}});
   }
  }
+ if(targets.length>PACKAGING_DRAFT_MAX_OPTIONS)throw fail('포장 초안은 작성할 옵션 1~20개씩 요청해주세요.');
  const safeText=(value:string,max:number)=>typeof value==='string'&&value.length<=max&&!/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(value);
  if(!safeText(facts.title,2000)||!safeText(facts.description,6000)||!Array.isArray(facts.attributes)||facts.attributes.length>50
   ||facts.attributes.some(pair=>!safeText(pair.name,200)||!safeText(pair.value,1000))||JSON.stringify(facts).length>12000)throw fail('포장 추정에 사용할 상품 원문은 12,000자 이하로 나누어 확인해주세요.');

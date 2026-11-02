@@ -20,6 +20,17 @@ test('collected ten grams always wins over AI/default weight while only missing 
  assert.ok(result.proposals.every(item=>item.value!=='999'&&!/무게/.test(item.label)));assert.equal(result.proposals.length,2);assert.ok(result.preserved.every(item=>item.value==='10'));
  assert.ok(result.proposals.every(item=>item.value==='80*50*12'&&item.origin==='ai-estimate'));
 });
+
+test('the twenty-target provider bound excludes preserved packages and retains the two-hundred-option source bound',()=>{
+ for(const [count,saved,expected] of [[21,1,20],[200,199,1]]){
+  const f=fixture({count});for(const [index,row]of f.options.rows.entries()){
+   row.packagedWeightG=10;row.packagingUnitsPerPack=1;row.provenance.packagedWeightG='collected';
+   if(index<saved){Object.assign(row,{packagedWidthMm:60,packagedLengthMm:80,packagedHeightMm:15});for(const key of ['packagedWidthMm','packagedLengthMm','packagedHeightMm'])row.provenance[key]='collected';}
+  }
+  const before=JSON.stringify(f.options),plan=f.plan();assert.equal(plan.targets.length,expected);assert.ok(plan.targets.every(target=>target.weightField===null&&target.dimensionsField!==null));assert.equal(JSON.stringify(f.options),before);
+  if(count===200){f.options.rows.push({...f.options.rows[0],id:'overflow-201'});assert.throws(()=>f.plan(),/상품·카테고리·옵션/);}
+ }
+});
 test('explicit common/option blanks and underlying option manual blank are preserved independently',()=>{
  const f=fixture(),fields=f.view().resolved.schema.fields,weight=fields.find(field=>field.id==='packagedWeightG'),dimensions=fields.find(field=>field.id==='packagedDimensionsMm');
  f.state.overrides.common[weight.id]='';f.state.overrides.options[f.options.rows[0].id]={[dimensions.id]:''};

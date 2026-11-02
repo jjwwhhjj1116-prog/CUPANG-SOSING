@@ -62,6 +62,17 @@ function partialFixture(stage='detail',keys=['owner/source-a.png']){
  return{...h,documents,get view(){return h.view;},set view(value){h.view=value;}};
 }
 
+for(const stage of ['main','additional','detail'])test(`${stage}: a validated untranslated model code follows cleanup purpose while detail translation remains review-blocked`,async()=>{
+ const h=fixture(stage,['owner/source-a.png']),contract=h.visionContract,result={provider:'workers-ai-vision',model:contract.IMAGE_TEXT_VISION_MODEL,notice:contract.IMAGE_TEXT_VISION_NOTICE,requests:1,
+  blocks:[{id:'vision-1',text:'UV400',translated:null,issue:'번역 검증을 통과하지 못했습니다. 원문과 영역을 확인해주세요.',box:{x:20,y:20,width:40,height:20}}],inspection:{policy:contract.IMAGE_TEXT_INSPECTION_POLICY,decision:'foreign-text'}};
+ h.deps.recognize=async image=>{h.calls.push(['vision',image.source.sourceKey]);image.visionResult=plain(result);image.visionStyleIssues=[];return[{...h.region('UV400','vision-1'),issue:result.blocks[0].issue}];};
+ h.deps.translate=async()=>assert.fail('no second translator for a code preserved by Qwen');const rendered=h.deps.render,documents=[];
+ h.deps.render=async(...args)=>{const value=await rendered(...args);documents.push(value.editDocument);return value;};
+ const before=plain(h.content),outcome=await h.run();assert.equal(outcome.status,stage==='detail'?'partial':'completed');assert.equal(outcome.applied,stage==='detail'?0:1);assert.deepEqual(plain(h.content),before);
+ assert.equal(h.calls.filter(call=>call[0]==='vision').length,1);
+ if(stage==='detail'){assert.equal(documents.length,0);assert.equal(h.calls.filter(call=>call[0]==='apply').length,0);}else{assert.equal(documents[0].regions[0].text,'UV400');assert.equal(documents[0].regions[0].erase,true);assert.equal(documents[0].regions[0].translated,'');assert.equal(documents[0].regions[0].issue,null);}
+});
+
 for(const stage of ['main','additional'])test(`${stage}: cleanup ignores a partial translation service, retains editable originals and saves no Korean replacement`,async()=>{
  const h=partialFixture(stage,stage==='main'?['owner/source-a.png']:['owner/source-a.png','owner/source-b.png']),recognize=h.deps.recognize,before=plain([h.content,h.plan.settings]);
  h.deps.recognize=async()=>{const rows=await recognize();return rows.map((row,index)=>({...row,box:{x:20,y:5+index*18,width:40,height:10}}));};
