@@ -22,6 +22,8 @@ Configured Registration Send previously stopped after positively storing the fir
 - Four runtime files only; unrelated `app/chatgpt-auth.ts` working copy excluded from the release.
 - Independent reviews covered label current-result authority, quotation retry and unknown request behavior, and exact pending receipt persistence/close guards.
 - Existing live popup stages SEO, pricing, main, additional, detail, Korean label and quotation were opened and navigated without saving, running AI, uploading or transmitting. This is read-only interaction coverage, not proof of all controls or pixel parity.
+- Runtime commit `7f26d4bce9c7f0969b0b5327a7917f39512d1b18` deployed to the existing Worker as version `227ad1bf-9e56-42dc-9717-642c750ac457`. All four runtime files match the isolated production build. GitHub main received the change.
+- After reloading the live QA tab, registration 261024001001 still displayed `접수확인`; the second existing product remained waiting. Screenshot: `outputs/step910-live-list.png`. No AI, save, upload or registration-send control was activated against either live product.
 
 ## Preserved data and remaining limit
 

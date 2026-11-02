@@ -33,7 +33,7 @@
 - [x] Stage 7: reproduce explicit retry dead end; allow exact confirmed terminal failed quotation job through the existing explicit retry; verify unknown/running/lost-ACK behavior. Ownership: `app/batch-selected-work.ts`, `app/components/batch-work-panel.tsx` and focused tests.
 - [x] Registration Send: reproduce acknowledged SUBMITTED stop; bounded same-request/document read follow-up; verify pending budget, identity drift, auth failure and cancellation. Ownership: `app/components/supplier-hub-product-transport.tsx` and focused tests.
 - [x] Independent review and focused integration tests; type check and changed-file lint.
-- [ ] Production build and deploy exact committed runtime files; preserve live existing data; inspect live UI and report actual verification limits.
+- [x] Production build and deploy exact committed runtime files; preserve live existing data; inspect live UI and report actual verification limits.
 
 ## Evidence scope
 
