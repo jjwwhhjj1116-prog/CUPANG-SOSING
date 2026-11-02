@@ -63,6 +63,7 @@ import ImageGenerationPanel, {type SelectedMainImageProcessingTarget,type ImageG
 import FreeImageTranslationPanel, {type FreeImageTranslationTarget} from '@/app/components/free-image-translation-panel';
 import { DetailImageEditDialog } from '@/app/components/detail-image-edit-dialog';
 import type {FreeImageQuotationRequest} from '@/app/free-image-translation-client';
+import {parseSelectedImageReview,type SelectedImageReview} from '@/app/selected-image-review';
 import {validFreeImageRole} from '@/app/free-image-translation';
 import { DocumentImagePanel } from '@/app/components/document-image-panel';
 import { SizeChartWorkspace } from '@/app/components/size-chart-workspace';
@@ -274,6 +275,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   const busyRef=useRef(false);
   const setBusy=useCallback((value:boolean)=>{busyRef.current=value;setBusyState(value);},[]);
   const [focusedOptionId, setFocusedOptionId] = useState<string|undefined>();
+  const [batchImageReview,setBatchImageReview]=useState<SelectedImageReview|undefined>();
   const [initialOptionAction,setInitialOptionAction]=useState<'remove'|undefined>();
   const [optionBoardProduct, setOptionBoardProduct] = useState<Product|null>(null);
   const optionBoardScope=useRef<{productId:string;generation:number;ownerId:string|undefined}|null>(null);
@@ -435,7 +437,8 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   }
   function openProduct(product: Product, initialTab = 'SEO', preferredProfileId?:string, target?:QuotationNavigationTarget, optionId?:string,returnToOptions=false,focusLabel?:string) {
     const operation=settingsOperationRef.current;
-    if(batchBusyRef.current||!operation.mounted||operation.ownerId!==workspaceOwnerId||(workspaceOwnerId&&product.owner_id!==workspaceOwnerId))return;
+    if(batchBusyRef.current||!operation.mounted||operation.ownerId!==workspaceOwnerId||(workspaceOwnerId&&product.owner_id!==workspaceOwnerId))return false;
+    setBatchImageReview(undefined);
     setCloseNotice('');
     optionBoardScope.current=null;optionNavigation.current?.abort();optionNavigation.current=null;setOptionNavigationBusy(false);setOptionReturnFocus(undefined);
     setOptionNavigationFailure(null);
@@ -446,6 +449,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     optionWorkspaceReturn.current=returnToOptions?{productId:product.id,generation,ownerId:workspaceOwnerId,focusLabel}:null;
     setQuotationTarget(target);setQuotationNavigationSequence(0);setDetailProfileId(preferredProfileId);
     setDetail(product); setTab(initialTab); setLastRegistrationStep(initialRegistrationStep(initialTab));
+    return true;
   }
   function openOptionBoard(product:Product){
     const operation=settingsOperationRef.current;
@@ -507,8 +511,8 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     batchNavigation.current?.abort();batchNavigation.current=null;
     batchRunRef.current=null;setBatchRun(null);setBatchOpen(false);setBatchOpenError('');
   }
-  async function openBatchProduct(productId:string,initialTab='작업') {
-    const operation=settingsOperationRef.current,ownerId=workspaceOwnerId;
+  async function openBatchProduct(productId:string,initialTab='작업',review?:SelectedImageReview) {
+    const operation=settingsOperationRef.current,ownerId=workspaceOwnerId,requestedRun=batchRunRef.current;
     if(!operation.mounted||operation.ownerId!==ownerId)return;
     if(batchBusyRef.current){setBatchOpenError('진행 중인 일괄 작업을 중지하거나 현재 저장 결과를 확인한 뒤 상품을 열어주세요.');return;}
     batchNavigation.current?.abort();
@@ -516,10 +520,14 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     const request=++productNavigation.current;setBatchOpenError('');
     try {
       const result=await readJson<{product:Product}>(`/api/products/${encodeURIComponent(productId)}`,{cache:'no-store',signal:controller.signal});
-      if(controller.signal.aborted||request!==productNavigation.current||!operation.mounted||operation.ownerId!==ownerId)return;
+      if(controller.signal.aborted||request!==productNavigation.current||batchRunRef.current!==requestedRun||!operation.mounted||operation.ownerId!==ownerId)return;
       if(!result.product||result.product.id!==productId||ownerId&&result.product.owner_id!==ownerId||!Number.isFinite(Date.parse(result.product.updated_at)))throw new Error('상품 최신 상태를 확인하지 못했습니다. 다시 열어주세요.');
+      const retained=review?parseSelectedImageReview(review):null;
+      if(review&&(!retained||retained.ownerId!==ownerId||retained.source.productId!==productId||initialTab!==(retained.source.role==='main'?'대표 이미지':'추가 이미지')||JSON.stringify(retained.company)!==JSON.stringify(sourceWorkspace.current?.company)))throw Error('계정 또는 검토 이미지가 변경됐습니다. 최신 저장본을 확인해주세요.');
+      if(retained){const state=workspaceEditState(detailBody.current);if(state.busy||state.dirty)throw Error('열린 편집기의 문구와 저장 결과를 먼저 확인해주세요. 현재 초안을 유지했습니다.');}
       setProducts(current=>current.map(product=>product.id===productId?result.product:product));
-      openProduct(result.product,initialTab);batchRunRef.current=null;setBatchRun(null);setBatchOpen(false);
+      if(!openProduct(result.product,initialTab,retained?.source.quotationTarget?.profileId??undefined,undefined,retained?.source.quotationTarget?.optionId))return;
+      setBatchImageReview(retained??undefined);batchRunRef.current=null;setBatchRun(null);setBatchOpen(false);
     } catch(error) {
       if(!controller.signal.aborted&&request===productNavigation.current&&operation.mounted&&operation.ownerId===ownerId)setBatchOpenError(error instanceof Error?error.message:'상품 최신 상태를 읽지 못했습니다. 다시 열어주세요.');
     } finally {
@@ -982,7 +990,7 @@ useEffect(()=>{
           {batchSeoConfiguration?<BatchAiNotice configuration={batchSeoConfiguration}/>:<p role="status">{seoConfigurationError||'현재 계정·회사의 SEO 실행 안내를 확인하는 중입니다. 안내 확인 전에는 SEO 작업을 시작하지 않습니다.'}</p>}
           <button type="button" className="btn ghost" disabled={batchBusy||settingsBusy} onClick={()=>{if(batchScopeRef.current===batchScope&&!batchBusyRef.current&&!settingsBusyRef.current)setSeoConfigurationReload(value=>value+1);}}>SEO 실행 안내 다시 확인</button>
         </details>}
-        <BatchWorkPanel key={batchRun?.request.id??'review'} products={(batchRun?.products??products.filter(product=>selected.has(product.id))).map(product=>({...product,title:registrationTitle(product),boardSource:batchBoardSource(product)}))} runRequest={batchRun?.request} onActivity={event=>{if(batchRun)recordBatchBoardActivity(batchRun,event);}} onOpen={(id,step)=>{if(batchRunRef.current===batchRun)void openBatchProduct(id,step);}} onBusyChange={value=>{const operation=settingsOperationRef.current;if(operation.mounted&&operation.ownerId===workspaceOwnerId&&batchRunRef.current===batchRun){const finished=batchBusyRef.current&&!value;changeBatchBusy(value);if(finished&&batchRun)void loadWorkspace();}}}/>
+        <BatchWorkPanel key={batchRun?.request.id??'review'} products={(batchRun?.products??products.filter(product=>selected.has(product.id))).map(product=>({...product,title:registrationTitle(product),boardSource:batchBoardSource(product)}))} runRequest={batchRun?.request} onActivity={event=>{if(batchRun)recordBatchBoardActivity(batchRun,event);}} onOpen={(id,step,review)=>{if(batchRunRef.current===batchRun)void openBatchProduct(id,step,review);}} onBusyChange={value=>{const operation=settingsOperationRef.current;if(operation.mounted&&operation.ownerId===workspaceOwnerId&&batchRunRef.current===batchRun){const finished=batchBusyRef.current&&!value;changeBatchBusy(value);if(finished&&batchRun)void loadWorkspace();}}}/>
       </Modal>}
       {historyOpen&&<Modal wide title="상품별 작업 이력" subtitle="각 상품에 저장된 단계별 산출물과 실행 이력을 확인합니다." onClose={()=>setHistoryOpen(false)}><div className="modal-form"><label>상품 선택<select aria-label="작업 이력 상품 선택" value={historyProductId} onChange={event=>setHistoryProductId(event.target.value)}>{!products.length&&<option value="">저장된 상품 없음</option>}{products.map(product=><option key={product.id} value={product.id}>{product.title}</option>)}</select></label>{products.filter(product=>product.id===historyProductId).map(product=><AutomationPanel key={product.id} productId={product.id} version={product.updated_at}/>)}</div><PreservedProductRequestInspector ownerId={workspaceOwnerId} onReceiptSaved={id=>{const product=products.find(item=>item.id===id);if(product)void refreshReceiptStatus(id,product.updated_at);}}/></Modal>}
 
@@ -992,7 +1000,7 @@ useEffect(()=>{
         <nav className="registration-steps" aria-label={`상품 등록 ${registrationSteps.length}단계`} aria-busy={registrationLayout.loading}>{registrationSteps.map((value,index)=><button type="button" key={value} disabled={!registrationLayoutReady} onClick={()=>selectDetailTab(value)} aria-current={tab===value?'step':undefined} className={[tab===value?'active':'',index<=progressStepIndex?'reached':''].filter(Boolean).join(' ')}><span>{index+1}</span><strong>{({SEO:'SEO 설정',가격:'가격 설정',표시사항:'한글 표시사항',견적서:'견적서 작업'} as Record<string,string>)[value]??value}</strong></button>)}</nav>
         {registrationLayout.error&&<div className="registration-layout-error" role="alert"><p>{registrationLayout.error} 입력은 유지했습니다. 카테고리의 필수 단계를 다시 확인해주세요.</p><button type="button" className="btn ghost" onClick={()=>{if(registrationLayout.retry())setCloseNotice('');}}>등록 단계 다시 확인</button></div>}
         {tab==='상세 이미지'&&!focusedOptionId&&<div className="panel-note"><div><strong>수집 사진으로 옵션별 상세 구성</strong><p>편집할 옵션을 선택하면 저장된 상품 사진으로 상세 본문을 구성하고 번역·순서·삭제를 편집할 수 있습니다. 대표·추가 사진 배치는 유지됩니다.</p></div><button type="button" className="btn primary" disabled={busy||sourceSupplementBusy} onClick={()=>openOptionBoard(detail)}>옵션별 상세 편집</button></div>}
-        <div className="detail-body" data-registration-stage={tab} ref={detailBody} inert={sourceSupplementBusy}><DetailPanel workspaceOwnerId={workspaceOwnerId} onEditSeo={()=>{if(detailNavigation===productNavigation.current&&settingsOperationRef.current.ownerId===workspaceOwnerId)selectDetailTab('SEO');}} onReceiptSaved={()=>void refreshReceiptStatus(detail.id,detail.updated_at)} key={detail.id} onBeforeSeoGenerate={()=>{
+        <div className="detail-body" data-registration-stage={tab} ref={detailBody} inert={sourceSupplementBusy}><DetailPanel imageReview={batchImageReview} workspaceOwnerId={workspaceOwnerId} onEditSeo={()=>{if(detailNavigation===productNavigation.current&&settingsOperationRef.current.ownerId===workspaceOwnerId)selectDetailTab('SEO');}} onReceiptSaved={()=>void refreshReceiptStatus(detail.id,detail.updated_at)} key={detail.id} onBeforeSeoGenerate={()=>{
           if(sourceSupplementBusyRef.current||busyRef.current||detailNavigation!==productNavigation.current)return false;
           const pending=workspaceEditState(detailBody.current,false,true);
           if(pending.busy||pending.dirty){setCloseNotice('저장하지 않은 수정이나 진행 중인 작업이 있습니다. 먼저 저장한 뒤 SEO 초안을 작성해주세요.');return false;}
@@ -1047,7 +1055,7 @@ useEffect(()=>{
 function Modal({ title, subtitle, onClose, children, wide=false,closeDisabled=false }: { title:string; subtitle:string; onClose:()=>void; children:React.ReactNode; wide?:boolean;closeDisabled?:boolean }) {
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className={`modal ${wide?'wide':''}`} role="dialog" aria-modal="true" aria-label={title} onMouseDown={e=>e.stopPropagation()}><header><div><h2>{title}</h2><p>{subtitle}</p></div><button className="icon-close" disabled={closeDisabled} onClick={onClose}>×</button></header>{children}</section></div>;
 }
-function DetailPanel({ workspaceOwnerId, onEditSeo, onReceiptSaved, onBeforeSeoGenerate, onBeforeFreeImageApply, onBeforeSourceWrite, onPrepareSubmission, onProfilePrepared, onProfileSelected, onReviewPackaging, tab, product, settings, onUpload, onSaved, onManageCategories, preferredProfileId, quotationTarget, quotationNavigationSequence, focusedOptionId, initialOptionAction }: { workspaceOwnerId?:string;onEditSeo?:()=>void;onReceiptSaved:()=>void; onBeforeSeoGenerate:()=>boolean; onBeforeFreeImageApply:()=>boolean; onBeforeSourceWrite?:(source:WorkspaceSourceWrite)=>boolean; onPrepareSubmission:(profileId?:string)=>void; onProfilePrepared:(profile:CategoryProfile,source:CategoryProfile)=>void; onProfileSelected:(id?:string)=>void; onReviewPackaging:(optionId:string|null)=>void; focusedOptionId?:string; initialOptionAction?:'remove'; quotationTarget?:QuotationNavigationTarget; quotationNavigationSequence?:number; preferredProfileId?:string; onSavePrice:(policy:PricePolicy, options?:PriceSaveOptions)=>Promise<void>; tab:string; product:Product; settings:Settings; onSaved:()=>void; onManageCategories:()=>void; onUpload:(e:ChangeEvent<HTMLInputElement>)=>void }) {
+function DetailPanel({ imageReview, workspaceOwnerId, onEditSeo, onReceiptSaved, onBeforeSeoGenerate, onBeforeFreeImageApply, onBeforeSourceWrite, onPrepareSubmission, onProfilePrepared, onProfileSelected, onReviewPackaging, tab, product, settings, onUpload, onSaved, onManageCategories, preferredProfileId, quotationTarget, quotationNavigationSequence, focusedOptionId, initialOptionAction }: { imageReview?:SelectedImageReview; workspaceOwnerId?:string;onEditSeo?:()=>void;onReceiptSaved:()=>void; onBeforeSeoGenerate:()=>boolean; onBeforeFreeImageApply:()=>boolean; onBeforeSourceWrite?:(source:WorkspaceSourceWrite)=>boolean; onPrepareSubmission:(profileId?:string)=>void; onProfilePrepared:(profile:CategoryProfile,source:CategoryProfile)=>void; onProfileSelected:(id?:string)=>void; onReviewPackaging:(optionId:string|null)=>void; focusedOptionId?:string; initialOptionAction?:'remove'; quotationTarget?:QuotationNavigationTarget; quotationNavigationSequence?:number; preferredProfileId?:string; onSavePrice:(policy:PricePolicy, options?:PriceSaveOptions)=>Promise<void>; tab:string; product:Product; settings:Settings; onSaved:()=>void; onManageCategories:()=>void; onUpload:(e:ChangeEvent<HTMLInputElement>)=>void }) {
   const [quotationRefresh, setQuotationRefresh] = useState(0);
   const seoReviewScope=JSON.stringify([workspaceOwnerId??product.owner_id??null,product.id,tab==='SEO']);
   const [seoReviewClock,setSeoReviewClock]=useState({scope:seoReviewScope,token:{}});
@@ -1108,11 +1116,11 @@ function DetailPanel({ workspaceOwnerId, onEditSeo, onReceiptSaved, onBeforeSeoG
   const changeAdditionalUploadBusy=useCallback((busy:boolean)=>{imageProcessingRefs.current.additionalUpload=busy;setAdditionalUploadBusy(busy);},[]);
   const changeDetailUploadBusy=useCallback((busy:boolean)=>{imageProcessingRefs.current.detailUpload=busy;setDetailUploadBusy(busy);},[]);
   const changeSizeChartBusy=useCallback((busy:boolean)=>{imageProcessingRefs.current.sizeChart=busy;setSizeChartBusy(busy);},[]);
-  const [imageTranslation,setImageTranslation]=useState<(FreeImageTranslationTarget&{productId:string})|null>(null);
+  const [imageTranslation,setImageTranslation]=useState<(FreeImageTranslationTarget&{productId:string})|null>(()=>imageReview?{productId:product.id,sourceKey:imageReview.source.sourceKey,role:imageReview.source.role,sourceLanguage:imageReview.sourceLanguage,sequence:1,intent:'manual',quotationTarget:imageReview.source.quotationTarget,review:imageReview}:null);
   const [imageEditorEntry,setImageEditorEntry]=useState<{role:'main'|'additional'|'detail';sequence:number}|undefined>();
   const imageEditorEntrySequence=useRef(0);
-  const [detailImageEditOpen,setDetailImageEditOpen]=useState(false),[freeImageDirty,setFreeImageDirty]=useState(false);
-  const freeImageEditState=useRef({dirty:false}),freeImageCloseGuard=useRef<(() => boolean)|null>(null),detailImageEditOpenRef=useRef(false);
+  const [detailImageEditOpen,setDetailImageEditOpen]=useState(!!imageReview),[freeImageDirty,setFreeImageDirty]=useState(false);
+  const freeImageEditState=useRef({dirty:false}),freeImageCloseGuard=useRef<(() => boolean)|null>(null),detailImageEditOpenRef=useRef(!!imageReview);
   const changeFreeImageEditing=useCallback((dirty:boolean)=>{freeImageEditState.current.dirty=dirty;setFreeImageDirty(dirty);},[]);
   const changeFreeImageCloseGuard=useCallback((guard:(() => boolean)|null)=>{freeImageCloseGuard.current=guard;},[]);
   const [labelTranslationOpen,setLabelTranslationOpen]=useState(false);
@@ -1184,6 +1192,16 @@ function DetailPanel({ workspaceOwnerId, onEditSeo, onReceiptSaved, onBeforeSeoG
   function canCloseDetailImageEdit(){return !imageProcessingRefs.current.free&&!imageProcessingRefs.current.paid&&!imageProcessingRefs.current.additionalBatch&&!imageProcessingRefs.current.detailBatch&&!imageProcessingRefs.current.detailFamily&&!imageProcessingRefs.current.mainUpload&&!imageProcessingRefs.current.additionalUpload&&!imageProcessingRefs.current.detailUpload&&!imageProcessingRefs.current.sizeChart&&!freeImageEditState.current.dirty&&freeImageCloseGuard.current?.()===true;}
   function closeDetailImageEdit(){if(canCloseDetailImageEdit()){detailImageEditOpenRef.current=false;setDetailImageEditOpen(false);}}
   function editFinalImage(sourceKey:string,role:'main'|'additional'|'detail',quotationTarget:FreeImageQuotationRequest){translateFinalImage(sourceKey,role,'zh',quotationTarget,'manual');}
+  const handledImageReview=useRef(imageReview);
+  useEffect(()=>{
+    if(!imageReview||handledImageReview.current===imageReview||!priceFilesFree()||freeImageEditState.current.dirty||detailImageEditOpenRef.current||!quotationImageContext
+      ||imageReview.ownerId!==workspaceOwnerId||imageReview.source.productId!==product.id||imageReview.source.quotationTarget?.optionId!==quotationImageContext.optionId
+      ||imageReview.source.quotationTarget.profileId!==quotationImageContext.profileId||imageReview.source.quotationTarget.input!==quotationImageContext.input)return;
+    handledImageReview.current=imageReview;detailImageEditOpenRef.current=true;setDetailImageEditOpen(true);
+    setImageTranslation(previous=>({productId:product.id,sourceKey:imageReview.source.sourceKey,role:imageReview.source.role,sourceLanguage:imageReview.sourceLanguage,sequence:(previous?.sequence??0)+1,intent:'manual',quotationTarget:imageReview.source.quotationTarget,review:imageReview}));
+    // A new explicit batch-review payload may enter an already mounted pristine product.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[imageReview,workspaceOwnerId,product.id,focusedOptionId,pricingProfileId,tab]);
   const contentEditor=<ProductContentEditor product={product} section={contentSection} autoFillLabel={false} seoLayout={tab==='SEO'} focusedAssetRole={focusedAssetRole} onSaved={sourceSaved} imageProcessingBusy={imageProcessingBusy||isImageStep&&detailImageEditOpen} onTranslateImage={(sourceKey,sourceLanguage,role)=>{
     if(imageProcessingRefs.current.paid||imageProcessingRefs.current.free||imageProcessingRefs.current.additionalBatch||imageProcessingRefs.current.detailBatch||imageProcessingRefs.current.detailFamily||imageProcessingRefs.current.mainUpload||imageProcessingRefs.current.additionalUpload||imageProcessingRefs.current.detailUpload||imageProcessingRefs.current.sizeChart||!imageKeys.includes(sourceKey)||(role!==undefined&&!validFreeImageRole(role)))return;
     if(imageSteps.includes(tab)){if(detailImageEditOpenRef.current)return;detailImageEditOpenRef.current=true;setDetailImageEditOpen(true);}
@@ -1218,7 +1236,7 @@ function DetailPanel({ workspaceOwnerId, onEditSeo, onReceiptSaved, onBeforeSeoG
           <FreeImageTranslationPanel productId={product.id} version={product.updated_at} imageKeys={imageKeys} focusedOptionId={focusedOptionId} quotationContext={quotationImageContext} editorEntry={imageEditorEntry} editorProfileId={pricingProfileId??null}
             active={isImageStep?detailImageEditOpen:showLabelImageEditing} onProductChanged={sourceSaved} onBusyChange={changeFreeImageBusy} onEditingChange={changeFreeImageEditing} onCloseGuard={changeFreeImageCloseGuard}
             beforeApply={()=>!imageProcessingRefs.current.paid&&!imageProcessingRefs.current.additionalBatch&&!imageProcessingRefs.current.detailBatch&&!imageProcessingRefs.current.detailFamily&&!imageProcessingRefs.current.mainUpload&&!imageProcessingRefs.current.additionalUpload&&!imageProcessingRefs.current.detailUpload&&!imageProcessingRefs.current.sizeChart&&onBeforeFreeImageApply()}
-            translationTarget={imageTranslation?.productId===product.id?{sourceKey:imageTranslation.sourceKey,sequence:imageTranslation.sequence,sourceLanguage:imageTranslation.sourceLanguage,...(imageTranslation.role?{role:imageTranslation.role}:{}),...(imageTranslation.quotationTarget?{quotationTarget:imageTranslation.quotationTarget}:{}),...(imageTranslation.intent?{intent:imageTranslation.intent}:{})}:undefined}/>
+            translationTarget={imageTranslation?.productId===product.id?{sourceKey:imageTranslation.sourceKey,sequence:imageTranslation.sequence,sourceLanguage:imageTranslation.sourceLanguage,...(imageTranslation.role?{role:imageTranslation.role}:{}),...(imageTranslation.quotationTarget?{quotationTarget:imageTranslation.quotationTarget}:{}),...(imageTranslation.intent?{intent:imageTranslation.intent}:{}),...(imageTranslation.review?{review:imageTranslation.review}:{})}:undefined}/>
         </details>
       </DetailImageEditDialog>
       <details hidden={!isImageStep} open={mainProcessingActive||mainResultActive||undefined}><summary>{mainProcessing?`선택 옵션 ${mainProcessing.target.quotationTarget.input==='additionalImages'?'추가이미지':'대표이미지'} AI 처리`:'추가 AI 이미지 가공'}</summary><ImageGenerationPanel key={`${workspaceOwnerId??product.owner_id??''}:${product.id}`} productId={product.id} version={product.updated_at} imageKeys={imageKeys} onProductChanged={sourceSaved} onBusyChange={changeImageProcessingBusy} onAvailabilityChange={changeImageAvailability} processingTarget={mainProcessing?.target} processingTargetActive={mainProcessingActive} processingResultActive={mainResultActive} beforeSelectedImageApply={beforeSelectedMainApply} onCloseProcessingTarget={closeMainImageProcessing}/></details>

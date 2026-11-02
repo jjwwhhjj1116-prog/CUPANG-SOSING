@@ -21,11 +21,12 @@ import { runSelectedLabelWork } from '@/app/batch-selected-label-work';
 import { readRegistrationLayout } from '@/app/registration-layout';
 import { runSelectedPricingWork } from '@/app/batch-selected-pricing-work';
 import { runSelectedPackagingWork } from '@/app/batch-selected-packaging-work';
+import type {SelectedImageReview} from '@/app/selected-image-review';
 
-export type SelectedBatchStageResult = { id: AutomationStageId; status: 'waiting'|'running'|'draft'|'complete'|'blocked'|'failed'|'skipped'; message: string;boardSource?:BatchBoardSource };
+export type SelectedBatchStageResult = { id: AutomationStageId; status: 'waiting'|'running'|'draft'|'complete'|'blocked'|'failed'|'skipped'; message: string;boardSource?:BatchBoardSource;review?:SelectedImageReview };
 type Controls = { stages: readonly AutomationStageId[]; mode?:'full'|'selected'; expectedOwnerId: string; signal: AbortSignal; fetcher: typeof fetch;
   keys: Map<string,string>; newKey:()=>string; onStage:(result:SelectedBatchStageResult)=>void;seoGenerationConsent?:SeoGenerationConfiguration;retryFailedQwen?:boolean;retryFailedQuotation?:boolean };
-type Outcome = Pick<SelectedBatchStageResult,'status'|'message'> & {uncertain?:boolean;stop?:boolean};
+type Outcome = Pick<SelectedBatchStageResult,'status'|'message'|'review'> & {uncertain?:boolean;stop?:boolean};
 type QuotationGenerationRecovery={ownerId:string;productId:string;company:{code:string;name:string};requestKey:string;
   fingerprint:string;productVersion:string;contentRevision:number;optionRevision:number;quotationRevision:number;profileId:string|null;model:string|null;executionPolicy:unknown}
   &({format:'selected-quotation-generation-v1';jobId:string}|{format:'selected-quotation-generation-v2';jobId:string|null;scope:{optionId:null;applyToAllOptions:true}});
@@ -348,7 +349,7 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     // ambiguous write. Other selected stages can use the current saved source.
     // Recovery stays read-only. Pending workspace reconciliation must retain
     // its exact product clock before later label/quotation writes advance it.
-    return{status:result.status==='completed'?'draft':result.status==='skipped'?'skipped':'blocked',message:result.messages.join(' '),uncertain:result.status==='uncertain',stop:result.recovered||result.sourceChanged||!!state.detailWorkspacePending||!!detailState?.seed||!!detailState?.image||!!detailState?.composite};
+    return{status:result.status==='completed'?'draft':result.status==='skipped'?'skipped':'blocked',message:result.messages.join(' '),...('review'in result&&result.review&&!result.inferencePending&&result.status!=='uncertain'&&!result.recoveryBatch&&!state.detailWorkspacePending?{review:result.review}:{}),uncertain:result.status==='uncertain',stop:result.recovered||result.sourceChanged||!!state.detailWorkspacePending||!!detailState?.seed||!!detailState?.image||!!detailState?.composite};
   }
   async function sizeChart():Promise<Outcome>{
     const current=await product();
@@ -479,7 +480,7 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     return{status:!aiConfigured||failed||incomplete?'blocked':'draft',message:message+(checks?' '+checks:incomplete?' 남은 포장값은 7단계에서 확인해주세요.':!aiConfigured||failed?' AI 설정·실행 이력과 견적 내용을 확인해주세요.':' 견적서에서 최종 검토 후 등록전송할 수 있습니다.')};
   }
   const result:SelectedBatchStageResult[]=automationStages.filter(id=>controls.stages.includes(id)).map(id=>({id,status:'waiting',message:'실행 대기'}));
-  const publish=(index:number,outcome:Outcome)=>{result[index]={id:result[index].id,status:outcome.status,message:outcome.message,...(boardObservation.current?{boardSource:{...boardObservation.current}}:{})};controls.onStage({...result[index]});};
+  const publish=(index:number,outcome:Outcome)=>{result[index]={id:result[index].id,status:outcome.status,message:outcome.message,...(outcome.review?{review:outcome.review}:{}),...(boardObservation.current?{boardSource:{...boardObservation.current}}:{})};controls.onStage({...result[index]});};
   const holdRemaining=(index:number)=>{
     for(let next=index+1;next<result.length;next++)publish(next,{status:'blocked',message:'앞 단계의 처리·저장 결과를 확인해야 하므로 이 단계는 아직 시작하지 않았습니다. 해당 단계만 선택해 별도로 작업할 수 있습니다.'});
   };

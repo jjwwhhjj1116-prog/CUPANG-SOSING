@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import {createRequire} from 'node:module';
+import {reviewFixture} from './helpers/selected-image-review.mjs';
 const fixtureUrl=new URL('./dashboard-account-actions.test.mjs',import.meta.url),source=fs.readFileSync(fixtureUrl,'utf8'),ast=ts.createSourceFile(fixtureUrl.pathname,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
 const declarations=ast.statements.filter(statement=>ts.isVariableStatement(statement)||ts.isFunctionDeclaration(statement)).map(statement=>statement.getText(ast)).join('\n').replaceAll('import.meta.url',JSON.stringify(fixtureUrl.href));
 const {harness}=vm.runInNewContext(declarations+'\n({harness})',{assert,fs,vm,ts,createRequire,URL,Response,Request,File,Blob,FormData,URLSearchParams,TextEncoder,TextDecoder,AbortController,AbortSignal,crypto,structuredClone,setImmediate,setTimeout,clearTimeout});
@@ -13,6 +14,15 @@ function fixture(){const h=harness();for(const p of h.products)p.content_summary
 async function begin(h){h.component('registration-board').onSelected(new Set([h.products[0].id]));await h.click('작업 개시');const panel=h.component('batch-work-panel');panel.onActivity({kind:'start',runId:panel.runRequest.id,attempt:1});return panel;}
 function emit(h,panel,status='failed',attempt=1,metadata=feedback.batchBoardSource(h.products[0])){panel.onActivity({kind:'stage',runId:panel.runRequest.id,attempt,productId:h.products[0].id,result:{id:'mainImage',status,message:'원래 이미지 Vision 응답 미확정',boardSource:metadata}});}
 const current=h=>h.component('registration-board').products[0].content_summary.stages.mainImage;
+test('real batch review opens exact second option and nonzero image slot in the existing manual editor without mutations',async()=>{
+ const h=fixture();try{await h.settle();const r=reviewFixture(),product=h.products[0];r.scope.ownerId='test-owner';r.image.source.productId=product.id;r.image.source.sourceKey='test-owner/original.png';r.image.source.quotationTarget.value='test-owner/second.png\ntest-owner/original.png';r.view.imageKeys=['test-owner/second.png','test-owner/original.png'];for(const row of r.view.resolved.rows)row.fields.additionalImages.value=r.image.source.quotationTarget.value;
+ const review=r.model.createSelectedImageReview(r.scope,r.view,r.image,'zh','배경 검토');assert.ok(review);product.image_keys=JSON.stringify(r.view.imageKeys);
+ const panel=await begin(h);panel.onBusyChange(false);await h.settle();h.component('registration-board').onOpen(product,'추가 이미지');await h.settle();const oldMount=h.componentMount('free-image-translation-panel');
+ h.setWorkspaceEdits({freeDirty:true});panel.onOpen(product.id,'추가 이미지',review);await h.settle();assert.equal(h.component('free-image-translation-panel').translationTarget,undefined);assert.ok(h.component('batch-work-panel'));
+ h.setWorkspaceEdits({freeDirty:false});panel.onOpen(product.id,'추가 이미지',review);await h.settle();assert.equal(h.componentMount('free-image-translation-panel'),oldMount,'the same mounted product accepts the new explicit review');
+ const editor=h.component('free-image-translation-panel');assert.ok(editor);assert.equal(editor.focusedOptionId,'second');assert.equal(editor.translationTarget.intent,'manual');assert.equal(editor.translationTarget.quotationTarget.slotIndex,1);assert.equal(editor.translationTarget.review.requestId,review.requestId);assert.equal(h.component('detail-image-edit-dialog').open,true);assert.ok(h.requests.every(call=>call.method==='GET'));
+ }finally{h.close();}
+});
 
 test('real Dashboard shows current selected-stage errors after modal close and rejects retained late-success callbacks',async()=>{
  const h=fixture();try{await h.settle();const panel=await begin(h);emit(h,panel);assert.equal(current(h).state,'failed');assert.match(current(h).detail,/미확정/);

@@ -4,9 +4,20 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import {createRequire} from 'node:module';
+import {reviewFixture} from './helpers/selected-image-review.mjs';
 const native=createRequire(import.meta.url),nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
 const settle=async()=>{for(let i=0;i<10;i++)await new Promise(resolve=>setImmediate(resolve));};
 const version='2026-10-05T00:00:00.000Z',next='2026-10-05T00:00:00.001Z';
+test('selected review button forwards the exact completed Vision option and nonzero slot without another run',async()=>{
+ const url=new URL('./batch-selected-work-panel.test.mjs',import.meta.url),source=fs.readFileSync(url,'utf8'),ast=ts.createSourceFile(url.pathname,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
+ const declarations=ast.statements.filter(node=>ts.isVariableStatement(node)||ts.isFunctionDeclaration(node)).map(node=>node.getText(ast)).join('\n').replaceAll('import.meta.url',JSON.stringify(url.href));
+ const selected=vm.runInNewContext(declarations+'\n({harness})',{assert,fs,vm,ts,URL,AbortController,crypto,setImmediate}),review=reviewFixture().review;
+ const h=selected.harness(async(id,options,count)=>{if(count>1)options.keys.set('owner:a:vision-inference-pending','unknown');return{productId:id,stages:[{id:'additionalImages',status:'blocked',message:'배경 검토',...(count===1?{review}:{})}]};},{selected:['additionalImages'],products:[{id:'a',title:'합성',updated_at:version}]});
+ try{h.render();await settle();const old=h.button('추가 이미지 검토 열기').props.onClick;old();assert.deepEqual(JSON.parse(JSON.stringify(h.opened)),JSON.parse(JSON.stringify([['a','추가 이미지',review]])));assert.equal(h.calls.length,1);
+  h.calls[0].options.keys.set('owner:a:pending:detailImage','unknown save');old();assert.equal(h.opened.length,1);h.calls[0].options.keys.delete('owner:a:pending:detailImage');
+  h.button('선택 작업 다시 시도').props.onClick();await settle();old();assert.equal(h.opened.length,1,'a previous attempt callback cannot bypass the latest unknown inference');
+ }finally{h.close();}
+});
 function harness(prepare,onBusyChange){
  const state=[],refs=[],effects=[],cleanups=[],requests=[],opened=[],cache=new Map();let si=0,ri=0,first=true;
  const hooks={useState(initial){const i=si++;if(!(i in state))state[i]=typeof initial==='function'?initial():initial;return[state[i],value=>{state[i]=typeof value==='function'?value(state[i]):value;}];},useRef(initial){const i=ri++;return refs[i]??(refs[i]={current:initial});},useEffect(fn){if(first)effects.push(fn);},useLayoutEffect(fn){fn();}};

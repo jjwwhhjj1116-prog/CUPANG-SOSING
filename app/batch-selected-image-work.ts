@@ -13,12 +13,13 @@ import {initializeVisionRegions} from '@/app/free-image-vision-style';
 import {parseImageTextVisionResult,parseImageTextVisionConfiguration,isVerifiedNoForeignText} from '@/app/image-text-vision';
 import {parseImageNoTextProof} from '@/app/image-no-text-proof';
 import {reconcileSelectedDetailWorkspace,type SelectedDetailWorkspacePending} from '@/app/selected-detail-workspace';
+import {createSelectedImageReview,type SelectedImageReview} from '@/app/selected-image-review';
 
 export type SelectedImageStage='main'|'additional'|'detail';
 export type SelectedImageInferencePending={optionId:string;slotIndex:number;attempt:FreeImageVisionAttempt;code:string;message:string;observation?:FreeImageVisionStatus};
 export type SelectedImageStageState={ownerId:string;productId:string;stage:SelectedImageStage;scope?:WorkspaceSettingsScope;settings?:WorkspaceSettings;content?:ProductContent;view?:QuotationFieldsView;batches:Record<string,DetailImageBatch>;verifiedOriginals?:Record<string,string>;unverifiedOriginals?:Record<string,string>;inferencePending?:SelectedImageInferencePending;detailWorkspacePending?:SelectedDetailWorkspacePending;detailWorkspaceLinked?:Record<string,string>};
 export function createSelectedImageStageState(ownerId:string,productId:string,stage:SelectedImageStage):SelectedImageStageState{return{ownerId,productId,stage,batches:{}};}
-export type SelectedImageStageResult={status:'completed'|'partial'|'skipped'|'uncertain';applied:number;failed:number;skipped:number;verifiedUnchanged?:number;messages:string[];productVersion?:string;recoveryBatch?:DetailImageBatch;state:SelectedImageStageState;recovered?:boolean;sourceChanged?:true;inferencePending?:true};
+export type SelectedImageStageResult={status:'completed'|'partial'|'skipped'|'uncertain';applied:number;failed:number;skipped:number;verifiedUnchanged?:number;messages:string[];productVersion?:string;recoveryBatch?:DetailImageBatch;state:SelectedImageStageState;recovered?:boolean;sourceChanged?:true;inferencePending?:true;review?:SelectedImageReview};
 export type SelectedImageStageOptions={ownerId:string;signal:AbortSignal;fetcher:typeof fetch;isCurrent?:()=>boolean;onProgress?:(message:string)=>void;expectedProductVersion?:string;state?:SelectedImageStageState};
 type Dependencies={plan?:typeof planBatchImageWork;refresh?:typeof refreshBatchImageTask;readSource?:typeof readFreeImageSource;recognize?:typeof recognizeFreeImage;translate?:typeof translateFreeImageRegions;render?:typeof renderFreeImageTranslation;apply?:typeof applyDetailBatchResult;recover?:typeof recoverDetailBatchResult;observe?:typeof readFreeImageVisionStatus;reconcileDetail?:typeof reconcileSelectedDetailWorkspace};
 const label={main:'대표 이미지',additional:'추가 이미지',detail:'상세 이미지'};
@@ -244,7 +245,7 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
     if(image.visionResult?.inspection?.decision==='unreadable')throw Error('원본의 외국어 문구를 끝까지 판독하지 못했습니다. 원본을 유지하며 이미지 편집에서 확인해주세요.');
     let prepared:FreeImageRegion[],translationReview:DetailImageBatch['items'][number]['translationReview'],texts:{original:string;translated:string}[];
     if(purpose==='cleanup'){
-     prepared=prepareSelectedImageCleanup(image,regions);
+     try{prepared=prepareSelectedImageCleanup(image,regions);}catch(cause){result.review??=createSelectedImageReview(plan.scope,batch.view,image,'zh',note(cause))??undefined;throw cause;}
      const chosen=prepared.filter(region=>region.selected);if(!chosen.length)throw new NoForeignText();
      texts=chosen.map(region=>({original:region.text,translated:''}));
     }else{
@@ -328,6 +329,7 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
      result.skipped++;result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: ${message}`);remember({...batch,items:batch.items.map(item=>item.slotIndex===slotIndex?{...item,status:'skipped',message,rendered:undefined}:item)});}
     else{result.failed++;result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: ${controller.signal.aborted?note(controller.signal.reason):note(cause)}`);remember({...batch,items:batch.items.map(item=>item.slotIndex===slotIndex?{...item,status:'failed',message:note(cause),rendered:undefined}:item)});}
    }finally{clearTimeout(timer);signal.removeEventListener('abort',abort);release(image);}
+   if(result.review)break;
   }
   latest=batch.view;result.productVersion=batch.view.productVersion;
   if(result.failed)break;

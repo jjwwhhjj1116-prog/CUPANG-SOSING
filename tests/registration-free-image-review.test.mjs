@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { freeImageEditFixture } from './helpers/free-image-edit-api.mjs';
 import { schemaCompanies } from './helpers/hub-schema.mjs';
+import { providedOptionModule } from './helpers/provided-option-quotation.mjs';
 
 const plain = value => JSON.parse(JSON.stringify(value));
 const json = async response => { assert.equal(response.status, 200, await response.clone().text()); return response.json(); };
@@ -21,7 +22,7 @@ function batchFixture() {
     else break;
   }
   return vm.runInNewContext(declarations.join('\n').replaceAll('import.meta.url', JSON.stringify(url.href)) + '\nfixture()',
-    { assert, fs, vm, ts, Response, AbortController, AbortSignal, Date, URL, TextEncoder, structuredClone, Blob, Error });
+    { assert, fs, vm, ts, Response, AbortController, AbortSignal, Date, URL, TextEncoder, structuredClone, Blob, Error, providedOptionModule });
 }
 async function selectedOnly(f) {
   const before = await json(await f.h.route(f.base + '/options')), rows = f.h.load('app/product-options.ts').optionInputs(before.options);

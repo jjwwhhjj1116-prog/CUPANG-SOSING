@@ -15,7 +15,7 @@ function loadModel(){
     assert.ok(name.startsWith('@/'),name);return load(name.slice(2)+'.ts');
    }},{filename:file});return exports;
  }
- return{model:load('app/batch-selected-image-work.ts'),vision:load('app/free-image-vision-error.ts'),visionContract:load('app/image-text-vision.ts'),expire(){for(const timer of [...timers.values()])timer.fn();},timers};
+ return{model:load('app/batch-selected-image-work.ts'),style:load('app/free-image-vision-style.ts'),vision:load('app/free-image-vision-error.ts'),visionContract:load('app/image-text-vision.ts'),expire(){for(const timer of [...timers.values()])timer.fn();},timers};
 }
 function fixture(stage='detail',keys=['owner/source-a.png','owner/source-b.png']){
  const runtime=loadModel(),calls=[],canvases=[],controller=new AbortController();let current=true;
@@ -61,6 +61,15 @@ function partialFixture(stage='detail',keys=['owner/source-a.png']){
  };
  return{...h,documents,get view(){return h.view;},set view(value){h.view=value;}};
 }
+
+test('completed complex-background Vision is retained as bounded exact manual-review metadata before releasing pixels',async()=>{
+ const h=fixture('additional',['owner/source-a.png','owner/source-b.png']),c=h.visionContract,read=h.deps.readSource;
+ h.deps.readSource=async(...args)=>{const image=await read(...args);image.source.quotationTarget.bindingSha256='c'.repeat(64);image.visionConfiguration={provider:'workers-ai-vision',model:c.IMAGE_TEXT_VISION_MODEL,notice:c.IMAGE_TEXT_VISION_NOTICE,configured:true,paidAllowed:true};image.canvas.getContext=()=>({font:'',measureText:()=>({width:10}),getImageData:(x,y,w,height)=>({data:new Uint8ClampedArray(Array.from({length:w*height},(_,i)=>{const color=(x+i%w+y+Math.floor(i/w))%2?0:255;return[color,color,color,255];}).flat())})});return image;};
+ h.deps.recognize=async image=>{h.calls.push(['vision']);image.visionRequestId='11111111-1111-4111-8111-111111111111';image.visionResult={provider:'workers-ai-vision',model:c.IMAGE_TEXT_VISION_MODEL,notice:c.IMAGE_TEXT_VISION_NOTICE,requests:1,blocks:[{id:'vision-1',text:'中文',translated:'한국어',issue:null,box:{x:20,y:20,width:40,height:20}}],inspection:{policy:c.IMAGE_TEXT_INSPECTION_POLICY,decision:'foreign-text'}};const styled=h.style.initializeVisionRegions(image.visionResult.blocks,image.canvas,image.width,image.height);image.visionStyleIssues=styled.issues;assert.ok(styled.issues.includes('VISION_BACKGROUND_COMPLEX'));return styled.regions;};
+ const result=await h.run();assert.equal(result.status,'partial');assert.equal(result.applied,0);assert.ok(result.review,'the completed result survives the known review failure');
+ assert.equal(result.review.source.sourceKey,'owner/source-a.png');assert.equal(result.review.source.quotationTarget.slotIndex,0);assert.equal(result.review.result.blocks[0].text,'中文');assert.equal(result.review.requestId,'11111111-1111-4111-8111-111111111111');
+ assert.ok(h.canvases.every(canvas=>canvas.width===0));assert.equal(h.calls.filter(row=>['render','apply','translate'].includes(row[0])).length,0);assert.equal(h.calls.filter(row=>row[0]==='vision').length,1);assert.doesNotMatch(JSON.stringify(result.review),/canvas|blob:|synthetic/);
+});
 
 for(const stage of ['main','additional','detail'])test(`${stage}: a validated untranslated model code follows cleanup purpose while detail translation remains review-blocked`,async()=>{
  const h=fixture(stage,['owner/source-a.png']),contract=h.visionContract,result={provider:'workers-ai-vision',model:contract.IMAGE_TEXT_VISION_MODEL,notice:contract.IMAGE_TEXT_VISION_NOTICE,requests:1,

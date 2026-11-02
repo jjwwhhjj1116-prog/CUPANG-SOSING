@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { createRequire } from 'node:module';
+import {reviewFixture} from './helpers/selected-image-review.mjs';
 
 const native = createRequire(import.meta.url), version = '2026-10-06T00:00:00.000Z';
 const plain = value => JSON.parse(JSON.stringify(value));
@@ -35,6 +36,7 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/free-image
 class ApplyError extends Error { constructor(message, uncertain) { super(message); this.uncertain = uncertain; } }
 
 function fixture(initialProps = {}, clientOverrides = {}) {
+  const reviewRuntime=reviewFixture();
   const calls = [], busy = [], states = [], effects = [], urls = [], revoked = []; let cursor = 0, closed = false, late = 0, saved = 0, allowApply = true;
   let props = { productId: 'product', version, imageKeys: ['owner/original.png', 'owner/second.png'],
     translationTarget: undefined,
@@ -87,11 +89,14 @@ function fixture(initialProps = {}, clientOverrides = {}) {
   const exports = {};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/free-image-translation-panel.tsx', import.meta.url), 'utf8'),
     { fileName: 'panel.tsx', compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
-    { exports, Error, Date, URL: ObjectURL, Blob, AbortController, console, require(name) {
+    { exports, Error, Date, URL: ObjectURL, Blob, AbortController, console,fetch:async(url,init={})=>{calls.push({action:'review-get',url,method:init.method??'GET'});if(!clientOverrides.reviewFetch)throw Error('Unexpected review GET');return clientOverrides.reviewFetch(url,init);}, require(name) {
       if (name === 'react') return hooks; if (name === 'react/jsx-runtime') return native(name);
       if (name === '@/app/free-image-translation') return { FREE_IMAGE_ROLES: ['main', 'additional', 'detailTop', 'detail', 'detailBottom'], MAX_OCR_REGIONS: 100 };
       if (name === '@/app/free-image-text-style') return styleModule;
       if (name === '@/app/image-text-vision') return visionModule;
+      if(name==='@/app/selected-image-review')return reviewRuntime.model;
+      if(name==='@/app/free-image-vision-style')return reviewRuntime.style;
+      if(name==='@/app/load-category-profiles')return{readCategoryJsonResponse:response=>response.json()};
       if (name === '@/app/free-image-edit-history') return historyModule;
       if (name === '@/app/free-image-brush') return brushModule;
       if (name === '@/app/components/free-image-brush-canvas') return { FreeImageBrushCanvas: 'FreeImageBrushCanvas' };
@@ -130,6 +135,31 @@ function workspaceProps(overrides = {}) {
     workspaceContext: { target, selection: { productId: 'product', optionId: 'red', profileId: 'profile', view: { productVersion: version } },
       saved: { view: {}, roles: { top: [], bottom: [] }, workspace: { document: { photos: [{ id: 'body-photo', key: 'owner/original.png', originKey: 'owner/second.png', role: 'body' }] } } } }, ...overrides };
 }
+
+test('completed background review opens exact second option and nonzero slot after label/quote clocks with zero inference/render/save',async()=>{
+ const r=reviewFixture(),view=plain(r.view);view.productVersion='2026-10-06T00:00:02.000Z';view.contentRevision=6;view.revision=8;view.inputFingerprint='d'.repeat(64);
+ const target=r.review.source.quotationTarget,props={version:view.productVersion,imageKeys:view.imageKeys,focusedOptionId:'second',quotationContext:{profileId:null,optionId:'second',input:'additionalImages'},translationTarget:{sourceKey:r.image.source.sourceKey,role:'additional',sourceLanguage:'zh',sequence:501,quotationTarget:target,intent:'manual',review:r.review}};
+ const h=fixture(props,{reviewFetch:async url=>Response.json(url==='/api/settings'?{scope:r.scope}:view)});
+ h.setSource(image=>({...image,canvas:r.image.canvas,visionConfiguration:r.image.visionConfiguration}));try{
+  await h.settle();assert.equal(h.calls.filter(call=>call.action==='source').length,1);assert.ok(h.calls.every(call=>['review-get','source'].includes(call.action)));assert.ok(h.calls.filter(call=>call.action==='review-get').every(call=>call.method==='GET'));assert.equal(h.saved,0);
+  const source=h.calls.find(call=>call.action==='source');assert.equal(source.quotationTarget.revision,8);assert.equal(source.quotationTarget.slotIndex,1);assert.equal(source.quotationTarget.optionId,'second');assert.equal(source.quotationTarget.bindingSha256,undefined);
+  const checkboxes=nodes(h.render()).filter(node=>node.type==='input'&&node.props.type==='checkbox');assert.ok(checkboxes.length);assert.equal(checkboxes[0].props.checked,false);assert.match(text(h.render()),/완료된 문구 인식을 복원/);assert.equal(h.field('문구 1 원문').props.value,'中文');
+  await h.change('문구 1 선택',undefined,true);await h.click('번역 이미지 미리보기');const preview=h.calls.find(call=>call.action==='preview');assert.ok(preview);assert.equal(preview.image.source.quotationTarget.revision,8);assert.equal(preview.image.source.quotationTarget.bindingSha256,'b'.repeat(64));assert.equal(preview.rows[0].erase,true);
+ }finally{h.close();}
+});
+
+test('review opening rejects stale siblings, actor drift during source read and changed source bytes without inference or writes',async()=>{
+ for(const change of ['sibling','company','sha']){const r=reviewFixture(),view=plain(r.view);let actorReads=0;
+  const h=fixture({imageKeys:view.imageKeys,focusedOptionId:'second',quotationContext:{profileId:null,optionId:'second',input:'additionalImages'},translationTarget:{sourceKey:r.image.source.sourceKey,role:'additional',sequence:601,quotationTarget:r.image.source.quotationTarget,intent:'manual',review:r.review}},
+   {reviewFetch:async url=>{if(url==='/api/settings'){actorReads++;return Response.json({scope:change==='company'&&actorReads>1?{...r.scope,company:{code:'A01464742',name:'와이홉'}}:r.scope});}const value=plain(view);if(change==='sibling')value.resolved.rows[1].fields.additionalImages.value='owner/original.png\nowner/second.png';return Response.json(value);}});
+  h.setSource(image=>({...image,canvas:r.image.canvas,visionConfiguration:r.image.visionConfiguration,source:{...image.source,...(change==='sha'?{sourceSha256:'f'.repeat(64)}:{})}}));try{await h.settle();assert.equal(h.field('문구 1 원문'),undefined);assert.ok(h.calls.every(call=>['source','review-get'].includes(call.action)));assert.equal(h.saved,0);assert.match(text(h.render()),/변경/);if(change!=='sibling')assert.equal(r.image.canvas.width,0);}finally{h.close();}
+ }
+});
+
+test('late review source completion after unmount releases its pixels and cannot restore rows or save',async()=>{
+ const r=reviewFixture(),pending=deferred(),h=fixture({imageKeys:r.view.imageKeys,focusedOptionId:'second',quotationContext:{profileId:null,optionId:'second',input:'additionalImages'},translationTarget:{sourceKey:r.image.source.sourceKey,role:'additional',sequence:701,quotationTarget:r.image.source.quotationTarget,intent:'manual',review:r.review}},{reviewFetch:async url=>Response.json(url==='/api/settings'?{scope:r.scope}:r.view)});
+ h.setSource(async image=>{await pending.promise;return{...image,canvas:r.image.canvas,visionConfiguration:r.image.visionConfiguration};});await h.settle();assert.equal(h.calls.filter(call=>call.action==='source').length,1);h.close();pending.resolve();await h.settle();assert.equal(r.image.canvas.width,0);assert.equal(h.late,0);assert.equal(h.saved,0);assert.equal(h.calls.filter(call=>!['source','review-get'].includes(call.action)).length,0);
+});
 
 test('each explicit generic open sets its stage and leaves source unselected without source reads or stale hidden-editor warnings',async()=>{
  for(const role of ['main','additional','detail']){

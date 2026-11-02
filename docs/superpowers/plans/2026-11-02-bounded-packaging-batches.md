@@ -27,5 +27,5 @@
 - [x] Finite client batching, fresh read/CAS, aggregate results and failure tests: `app/batch-selected-packaging-work.ts` and focused tests. Owner: quotation_bridge907.
 - [x] Root: connect optional progress to existing Stage 7 feedback and verify the public coordinator path.
 - [x] Independent review: 21 missing → 20+1, more than two chunks, abstention, manual/excluded values, unexpected scope/duplicates, quota, cancellation, account/source drift and lost acknowledgements.
-- [ ] Focused tests, types, lint, isolated build, exact runtime/source comparison, deployment and GitHub main push. Checks/build/deployment passed; commit/push pending.
+- [x] Focused tests, types, lint, isolated build, exact runtime/source comparison, deployment and GitHub main push. Commit `0d8053ec`; four committed runtime files matched the isolated build.
 - [x] Live read-only state/screenshot verification and honest statement of remaining real-world/UI coverage.

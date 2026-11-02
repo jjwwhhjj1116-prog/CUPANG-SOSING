@@ -24,8 +24,13 @@ import { applyDetailWorkspaceImage, readDetailWorkspaceImage, recoverDetailWorks
 import type { DetailWorkspaceView } from '@/app/detail-workspace';
 import { isSavedFreeImageResult, readSavedFreeImageQuotationTarget } from '@/app/free-image-editor-target';
 import { isVerifiedNoForeignText } from '@/app/image-text-vision';
+import {rebindSelectedImageReview,matchSelectedImageReview,type SelectedImageReview} from '@/app/selected-image-review';
+import {initializeVisionRegions} from '@/app/free-image-vision-style';
+import {readCategoryJsonResponse} from '@/app/load-category-profiles';
+import type {QuotationFieldsView} from '@/app/quotation-schema';
+import type {WorkspaceSettingsScope} from '@/app/workspace-settings-scope';
 
-export type FreeImageTranslationTarget = { sourceKey: string; sequence: number; sourceLanguage?: 'zh' | 'en'; role?: FreeImageRole; quotationTarget?: FreeImageQuotationRequest; workspaceTarget?: FreeImageWorkspaceRequest; intent?: 'manual' };
+export type FreeImageTranslationTarget = { sourceKey: string; sequence: number; sourceLanguage?: 'zh' | 'en'; role?: FreeImageRole; quotationTarget?: FreeImageQuotationRequest; workspaceTarget?: FreeImageWorkspaceRequest; intent?: 'manual';review?:SelectedImageReview };
 export type FreeImageEditorEntry = { role: 'main' | 'additional' | 'detail'; sequence: number };
 export type FreeImageQuotationContext = Pick<FreeImageQuotationRequest, 'profileId' | 'optionId' | 'input'>;
 type Props = { productId: string; version: string; imageKeys: string[]; translationTarget?: FreeImageTranslationTarget;
@@ -431,8 +436,19 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     if (liveRegions.current.length || liveCrop.current || liveRenderedRef.current || liveOptionImageIds.current.length || pendingSave.current) { setNotice('작성한 문구와 잘라내기·옵션 선택을 유지했습니다. 다른 원본을 불러오려면 먼저 편집 초안을 지워주세요.'); return; }
     const work = begin('manual'); if (!work) return;
     discardDraft();
+    let uncommittedReview:FreeImageLoaded|undefined;
     try {
       let requestedTarget = liveQuotationTarget.current;
+      const review=cardPreparation?.review;
+      if(review){
+        if(workspaceContext||review.source.productId!==productId||review.source.sourceKey!==sourceKey||review.source.role!==role)throw Error('검토 이미지의 현재 옵션을 확인해주세요.');
+        const accountResponse=await fetch('/api/settings',{signal:work.controller.signal,cache:'no-store'}),account=await readCategoryJsonResponse<{scope:WorkspaceSettingsScope}>(accountResponse,'검토 계정 조회');
+        if(!current(work))return;if(!accountResponse.ok||!account.scope)throw Error('검토 계정을 확인하지 못했습니다.');
+        const profileId=review.source.quotationTarget!.profileId,response=await fetch(`/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId?`?profileId=${encodeURIComponent(profileId)}`:''}`,{signal:work.controller.signal,cache:'no-store'});
+        const view=await readCategoryJsonResponse<QuotationFieldsView>(response,'검토 이미지 연결 조회');if(!current(work))return;
+        if(!response.ok||view.productVersion!==version)throw Error('상품 저장본이 변경됐습니다. 최신 원본을 다시 열어주세요.');
+        requestedTarget=rebindSelectedImageReview(review,account.scope,view);
+      }
       if (!workspaceContext && !requestedTarget && isSavedFreeImageResult(productId, sourceKey)) {
         requestedTarget = await readSavedFreeImageQuotationTarget({ productId, productVersion: version, sourceKey, role, profileId: editorProfileId, context: quotationContext }, work.controller.signal);
         if (!current(work)) return;
@@ -440,7 +456,20 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       const image = workspaceContext ? await readDetailWorkspaceImage(workspaceContext, work.controller.signal)
         : await readFreeImageSource(productId, version, sourceKey, role, work.controller.signal, undefined, requestedTarget ?? undefined,
           { restoreEditor: true, ...(requestedTarget ? { anchorPolicy: 'current-target-v1' as const } : {}) });
+      if(review)uncommittedReview=image;
       if (!current(work)) return;
+      if(review){
+        const profileId=review.source.quotationTarget!.profileId,reply=await fetch(`/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId?`?profileId=${encodeURIComponent(profileId)}`:''}`,{signal:work.controller.signal,cache:'no-store'}),view=await readCategoryJsonResponse<QuotationFieldsView>(reply,'검토 이미지 최종 연결 조회');
+        const actorReply=await fetch('/api/settings',{signal:work.controller.signal,cache:'no-store'}),actor=await readCategoryJsonResponse<{scope:WorkspaceSettingsScope}>(actorReply,'검토 계정 최종 조회');
+        if(!current(work))return;
+        if(!reply.ok||!actorReply.ok||!actor.scope||view.productVersion!==version||!sameFreeImageQuotationRequest(rebindSelectedImageReview(review,actor.scope,view),requestedTarget))throw Error('계정 또는 검토 이미지가 변경됐습니다. 최신 원본을 다시 열어주세요.');
+        const retained=matchSelectedImageReview(review,image,requestedTarget!),styled=initializeVisionRegions(retained.result.blocks,image.canvas,image.width,image.height);
+        image.visionResult=retained.result;image.visionRequestId=retained.requestId;image.visionExecution={requests:0,cached:true};
+        image.visionStyleIssues=[...new Set([...retained.styleIssues,...styled.issues])] as NonNullable<FreeImageLoaded['visionStyleIssues']>;
+        setQuotationTarget(requestedTarget);setLoaded(image);setLanguage(retained.sourceLanguage);setOptionImageIds([]);
+        resetRegions(styled.regions.map(region=>({...region,selected:false,erase:true,backgroundMode:'inpaint-telea-v1' as const})));
+        setNotice(`${retained.message} 완료된 문구 인식을 복원했습니다. 원본과 영역을 확인하고 필요한 문구만 선택한 뒤 미리보기·적용해주세요.`);uncommittedReview=undefined;return;
+      }
       if (requestedTarget && !liveQuotationTarget.current) {
         discoveredQuotationContext.current = { selectionKey, context: { profileId: requestedTarget.profileId, optionId: requestedTarget.optionId, input: requestedTarget.input } };
         setQuotationTarget(requestedTarget);
@@ -459,7 +488,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
         setNotice('저장한 문구·서식·브러시·잘라내기를 원본 사진에서 다시 열었습니다. 수정 후 미리보기를 확인하고 적용해주세요. 되돌리기는 이번 편집부터 기록합니다.');
       } else setNotice('원본을 불러왔습니다. 문구·브러시·잘라내기로 편집한 뒤 미리보기를 확인해주세요.');
     } catch (cause) { if (current(work)) setError(cause instanceof Error ? cause.message : '수동 편집 원본을 불러오지 못했습니다.'); }
-    finally { finish(work); }
+    finally { if(uncommittedReview?.canvas){uncommittedReview.canvas.width=0;uncommittedReview.canvas.height=0;}finish(work); }
   }
   useEffect(() => {
     const target = cardPreparation;

@@ -6,6 +6,7 @@ import ts from 'typescript';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
 import {providedOptionModule} from './helpers/provided-option-quotation.mjs';
 import {fixture as rawWorkspaceFixture,runtime as rawWorkspaceRuntime} from './helpers/detail-workspace.mjs';
+import {reviewFixture} from './helpers/selected-image-review.mjs';
 
 const stageIds=['seo','pricing','mainImage','additionalImages','detailImage','sizeChart','koreanLabel','quotation'];
 const version='2026-10-23T00:00:00.000Z',hash='a'.repeat(64),plain=value=>JSON.parse(JSON.stringify(value));
@@ -58,6 +59,10 @@ function fixture(){
 }
 
 // Reuse the isolated actual raw BODY coordinator fixture without loading its tests.
+test('completed image review metadata reaches stage review but never bypasses an unknown inference',async()=>{
+ for(const pending of [false,true]){const h=fixture(),review=reviewFixture().review;h.image({status:'partial',messages:['배경 검토'],review,...(pending?{inferencePending:true}:{})});h.options.stages=['additionalImages'];
+ const result=await h.run(['additionalImages']);assert.equal(result.stages[0].status,'blocked');if(!pending)assert.ok(result.stages[0].review,JSON.stringify(result));assert.deepEqual(result.stages[0].review?plain(result.stages[0].review):undefined,pending?undefined:plain(review));}
+});
 // OCR/provider/render/upload effects remain local dependency fakes.
 async function actualDetailFixture(){
  const sourceUrl=new URL('./batch-selected-detail-work.test.mjs',import.meta.url),source=fs.readFileSync(sourceUrl,'utf8'),ast=ts.createSourceFile(sourceUrl.pathname,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
