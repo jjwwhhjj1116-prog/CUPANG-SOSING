@@ -1,0 +1,57 @@
+/* Stage 7: one continuous five-page form, measured from the reference. */
+.registration-workspace .detail-body[data-registration-stage="견적서"]{padding:0 20px 20px;font-family:Lato,sans-serif;font-size:16px;line-height:29px}
+.registration-workspace .couplus-quotation-stage{box-sizing:border-box;width:min(1200px,100%);max-width:none;margin:0 auto;padding:15px;gap:16px;color:#676e8a}
+.registration-workspace .couplus-quotation-heading{margin:0;font-size:23.04px;line-height:23.04px;font-weight:600;color:#110a57}
+.registration-workspace .detail-body[data-registration-stage="견적서"] .quotation-fields{box-sizing:border-box;width:100%;max-width:none;margin:0;padding:20px;border:1px solid #dcdfe8;border-radius:10px;background:#fff;gap:0}
+.registration-workspace .detail-body[data-registration-stage="견적서"] .quotation-fields-heading{display:flex;align-items:center;flex-wrap:wrap;min-height:70px;margin:-20px -20px 20px;padding:20px;gap:12px;border-radius:9px 9px 0 0;background:#c7cbd3}
+.registration-workspace .quotation-fields>.quotation-fields-notice[role=alert]+.quotation-fields-heading{margin-top:0}
+.registration-workspace .quotation-fields-heading h3{margin:0 auto 0 0;font-size:16px;line-height:29px;font-weight:400;color:#000}
+.registration-workspace .quotation-fields-heading .quotation-fields-toolbar{margin:0;display:flex;align-items:center}
+.registration-workspace .quotation-fields-heading .quotation-fields-toolbar .field{display:flex;flex-direction:row;gap:8px;align-items:center;margin:0;font-size:12.8px;min-width:0}
+.registration-workspace .quotation-fields-heading .quotation-fields-toolbar select{max-width:240px;height:29px;padding:3px 8px;border:1px solid #dcdfe8;border-radius:10px;background:#fff;color:#676e8a;font-size:12px}
+.registration-workspace .quotation-fields-heading>.btn{padding:4px 8px;min-height:29px;border:1px solid #32bdea;border-radius:10px;background:#32bdea;color:#fff;font-size:12px;line-height:18px}
+.registration-workspace .quotation-fields-section{width:100%;max-width:none;margin:0 0 24px!important;padding:15px!important;border:0;border-radius:4px;background:#f8f9fa;overflow:visible}
+.registration-workspace .quotation-fields-section>header{min-height:44.8px;margin:0;padding:8px;border:0;border-radius:10px;gap:8px;color:#fff}
+.registration-workspace .quotation-fields-section>header h4{margin:0;font-size:19.2px;line-height:28.8px;font-weight:600;color:inherit}
+.registration-workspace .quotation-fields-section>header>small{display:none}
+.registration-workspace .quotation-fields-section[data-section=start]>header{background:#32bdea}
+.registration-workspace .quotation-fields-section[data-section=product]>header{background:#7ee2ff}
+.registration-workspace .quotation-fields-section[data-section=image]>header{background:#78c091}
+.registration-workspace .quotation-fields-section[data-section=legal]>header{background:#e08db4}
+.registration-workspace .quotation-fields-section[data-section=logistics]>header{background:#01041b}
+.registration-workspace .quotation-fields-section .quotation-fields-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:24px;padding:16px;border:1px solid #dcdfe8;border-radius:10px;background:#f8f9fa}
+.registration-workspace .quotation-field{gap:8px;font-size:16px;line-height:29px}
+.registration-workspace .quotation-field-heading>label{font-size:16px;line-height:29px;font-weight:600;color:#110a57}
+.registration-workspace .quotation-field-heading>label b{font-size:16px;color:#e08db4}
+.registration-workspace .quotation-field :is(input:not([type=checkbox]):not([type=radio]),select){height:45px;min-height:45px;padding:6px 8px;border:1px solid #dcdfe8;border-radius:10px;background:#fff;color:#676e8a;font-family:inherit;font-size:14.4px;line-height:29px}
+.registration-workspace .quotation-field textarea{min-height:98.667px;padding:6px 8px;border:1px solid #dcdfe8;border-radius:10px;background:#fff;color:#676e8a;font-family:inherit;font-size:14.4px;line-height:28px;resize:vertical}
+.registration-workspace .quotation-field :is(input:read-only,textarea:read-only){background:#f9f9f9}
+.registration-workspace .quotation-field .quotation-field-help{font-size:12.8px;line-height:19.2px;color:#676e8a}
+.registration-workspace .quotation-field .quotation-seo-guidance{padding:4px 8px;border:1px solid #dbf7ff;border-radius:10px;background:#e5f9ff;font-size:16px;line-height:29px}
+.registration-workspace .quotation-field-group{margin:0;padding:0 0 12px;border-bottom:1px solid #dcdfe8;color:#110a57;font-size:16px;line-height:29px;font-weight:600}
+.registration-workspace .quotation-field-input-guidance small,.registration-workspace .quotation-field-diagnostics{font-size:12.8px;line-height:24px}
+.registration-workspace .quotation-named-pair{grid-template-columns:minmax(0,2fr) minmax(0,3fr);gap:10px}
+.registration-workspace :is(.quotation-fields-context,.quotation-fields-progress,.quotation-secondary-actions,.quotation-submission-tools){margin:12px 0 0;padding:10px 14px;border:1px solid #e6e9ef;border-radius:10px;background:#fff;font-size:12.8px;line-height:24px;color:#676e8a}
+.registration-workspace :is(.quotation-fields-context,.quotation-fields-progress,.quotation-secondary-actions,.quotation-submission-tools)>summary{cursor:pointer;font-weight:400}
+.registration-workspace .quotation-fields-actions{position:sticky;top:auto;bottom:0;z-index:4;display:flex;justify-content:flex-end;align-items:center;flex-wrap:wrap;gap:8px;margin:16px 0 0;padding:12px 16px;border:1px solid #dcdfe8;border-radius:28px;background:#f1f3f5;box-shadow:0 2px 6px #14243c15}
+.registration-workspace .quotation-fields-actions>div{display:flex;justify-content:flex-end;gap:8px;width:auto}
+.registration-workspace .quotation-fields-actions .quotation-apply-all{display:flex;flex-direction:row-reverse;align-items:center;gap:8px;margin:0;color:#495057;font-size:12px;line-height:18px}
+.registration-workspace .quotation-fields-actions .quotation-apply-all input{appearance:none;position:relative;flex:none;width:50px;height:26px;margin:0;border:0;border-radius:14px;background:#59616b;cursor:pointer}
+.registration-workspace .quotation-fields-actions .quotation-apply-all input::after{content:"";position:absolute;left:3px;top:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform .15s}
+.registration-workspace .quotation-fields-actions .quotation-apply-all input:checked{background:#32bdea}
+.registration-workspace .quotation-fields-actions .quotation-apply-all input:checked::after{transform:translateX(24px)}
+.registration-workspace .quotation-fields-actions .quotation-apply-all input:focus-visible{outline:2px solid #299bb8;outline-offset:3px}
+.registration-workspace .quotation-fields-actions .btn{min-height:29px;padding:4px 8px;border:1px solid #78c091;border-radius:10px;background:#78c091;color:#fff;font-size:12px;line-height:18px;white-space:nowrap}
+@media(min-width:1800px){.registration-workspace .detail-body[data-registration-stage="견적서"] .quotation-fields-actions{position:fixed;right:30px;top:50%;bottom:auto;margin:0;flex-wrap:nowrap;width:auto;max-width:calc((100vw - 1260px)/2)}}
+@media(max-width:760px){
+ .registration-workspace .couplus-quotation-stage{padding:10px 0}
+ .registration-workspace .detail-body[data-registration-stage="견적서"] .quotation-fields{padding:14px}
+ .registration-workspace .detail-body[data-registration-stage="견적서"] .quotation-fields-heading{margin:-14px -14px 16px;padding:14px;gap:8px}
+ .registration-workspace .quotation-fields-heading .quotation-fields-toolbar{order:3;flex-basis:100%}
+ .registration-workspace .quotation-fields-heading .quotation-fields-toolbar .field{width:100%;justify-content:space-between}
+ .registration-workspace .quotation-fields-heading .quotation-fields-toolbar select{max-width:75%}
+ .registration-workspace .quotation-fields-section{padding:8px!important}
+ .registration-workspace .quotation-fields-section .quotation-fields-grid{padding:12px 8px}
+ .registration-workspace .quotation-fields-actions{justify-content:flex-end}
+}
+@media(max-width:420px){.registration-workspace .quotation-named-pair{grid-template-columns:minmax(0,1fr)}}

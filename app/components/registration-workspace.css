@@ -39,7 +39,6 @@
 .registration-workspace .image-selected-strip{justify-content:center;gap:9px;border-top:1px solid #e9ebef;padding:14px;background:#fff}
 .registration-workspace .pricing-extra-options,.registration-workspace .quotation-supplemental-tools,.registration-workspace .quotation-source-evidence,.registration-workspace .quotation-workbook-tools{border:1px solid #e6e9ef;border-radius:5px;padding:10px 14px;margin:14px 0;background:#fff}
 .registration-workspace .pricing-extra-options>summary,.registration-workspace .quotation-supplemental-tools>summary,.registration-workspace .quotation-source-evidence>summary,.registration-workspace .quotation-workbook-tools>summary{font-size:12px;font-weight:500;color:#758099;cursor:pointer}
-.registration-workspace .detail-body[data-registration-stage="견적서"] .quotation-fields{max-width:940px;margin-left:auto;margin-right:auto}
 .registration-workspace .main-image-library-grid>button{display:flex;flex-direction:column;align-items:center;gap:6px;border:1px solid #e3e7ee;background:#fff;border-radius:4px;padding:7px;font-size:11px;color:#7a8292}
 .registration-workspace .main-image-library-grid>button[aria-pressed="true"]{outline:2px solid #2bbcdf;outline-offset:-2px}
 .registration-workspace .main-image-library-grid>button img{width:100%;height:150px;object-fit:contain}
