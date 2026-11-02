@@ -93,7 +93,9 @@ test('native receipt row keeps document and registration file distinct, never cl
 test('FINISHED native receipt is green and leaves work-in-progress without inventing SKU evidence or changing source stages',()=>{
  const h=boardHarness();h.product.hub_single_receipt=nativeSummary;
  const before=JSON.stringify(h.product),tree=h.render(),cell=elements(tree,node=>node.type==='td'&&node.props['data-column']==='status')[0];
- assert.equal(elements(cell,node=>node.props?.className==='registration-state')[0].props['data-state'],'complete');
+ const badge=elements(cell,node=>node.props?.className==='registration-state')[0];
+ assert.equal(badge.props['data-state'],'complete');assert.equal(nodeText(badge),'접수확인');assert.equal(badge.props.title,nativeSummary.label);
+ const details=elements(cell,node=>node.type==='details')[0];assert.ok(details);assert.notEqual(details.props.open,true);assert.equal(nodeText(elements(details,node=>node.type==='summary')[0]),'전송 결과');
  assert.match(nodeText(cell),/등록 파일 완료 확인/);assert.match(nodeText(cell),/SKU 확인 전/);assert.doesNotMatch(nodeText(cell),/등록완료|SKU ID 확인/);
  const filter=elements(tree,node=>node.type==='select'&&node.props['aria-label']==='등록 상태 필터')[0];
  filter.props.onChange({target:{value:'작업 중'}});assert.equal(elements(h.render(),node=>node.type==='tbody')[0].props.children.length,0);

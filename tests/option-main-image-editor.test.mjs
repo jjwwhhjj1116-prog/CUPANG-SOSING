@@ -11,6 +11,7 @@ import {readPackageZip} from '../extensions/supplier-hub/package.mjs';
 const native=createRequire(import.meta.url),plain=value=>JSON.parse(JSON.stringify(value));
 const visible=value=>Array.isArray(value)?value.flatMap(visible):value&&typeof value==='object'&&!value.props?.hidden?[value,...visible(value.props?.children)]:[];
 const text=value=>Array.isArray(value)?value.map(text).join(''):value&&typeof value==='object'?text(value.props?.children):typeof value==='boolean'?'':String(value??'');
+const exposed=value=>Array.isArray(value)?value.flatMap(exposed):value&&typeof value==='object'&&!value.props?.hidden?[value,...exposed(value.type==='details'&&!value.props.open?(Array.isArray(value.props.children)?value.props.children:[value.props.children]).filter(child=>child?.type==='summary'):value.props?.children)]:[];
 const sameDeps=(a,b)=>Array.isArray(a)&&Array.isArray(b)&&a.length===b.length&&a.every((value,i)=>Object.is(value,b[i]));
 const json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
 async function fixture(company=schemaCompanies[0],withTemplate=false){
@@ -54,13 +55,16 @@ test('unknown or absent image provider gates only AI processing, keeps exact fre
   onProcess:(...args)=>processed.push(args),onTranslate:(...args)=>translated.push(args),onEdit:(...args)=>edited.push(args)});
  try{
   await h.idle();const ai=()=>h.button('최종 대표이미지 AI 처리');
-  assert.equal(ai().props.disabled,true);assert.equal(text(ai()),'AI 설정 확인 중');ai().props.onClick();assert.equal(processed.length,0);
+  assert.equal(ai().props.disabled,true);assert.equal(text(ai()),'이미지 생성 설정 확인 중');ai().props.onClick();assert.equal(processed.length,0);
+  assert.equal(translated.length,0);assert.equal(edited.length,0);
+  assert.ok(exposed(h.render()).some(node=>node.type==='button'&&node.props['aria-label']==='최종 대표이미지 중국어 한국어 번역'));
+  assert.equal(exposed(h.render()).some(node=>node.type==='button'&&node.props['aria-label']==='최종 대표이미지 영어 한국어 번역'),false,'English stays optional under closed details');
   assert.equal(h.button('최종 대표이미지 중국어 한국어 번역').props.disabled,false);assert.equal(h.button('최종 대표이미지 편집하기').props.disabled,false);
   await h.click('최종 대표이미지 중국어 한국어 번역');await h.click('최종 대표이미지 편집하기');
   assert.equal(translated[0][0],f.key);assert.equal(edited[0][0],f.key);assert.equal(translated[0][3].optionId,f.id);assert.equal(edited[0][2].value,f.key);
-  h.props.processingConfigured=false;await h.idle();assert.equal(ai().props.disabled,true);assert.equal(text(ai()),'AI 서버 설정 필요');ai().props.onClick();assert.equal(processed.length,0);
+  h.props.processingConfigured=false;await h.idle();assert.equal(ai().props.disabled,true);assert.equal(text(ai()),'이미지 생성 설정 필요');ai().props.onClick();assert.equal(processed.length,0);
   assert.equal(h.button('최종 대표이미지 영어 한국어 번역').props.disabled,false);assert.equal(h.button('최종 대표이미지 편집하기').props.disabled,false);
-  h.props.processingConfigured=true;await h.idle();const before=ai().props.onClick;await h.click('최종 대표이미지 AI 처리');assert.equal(processed.length,1);
+  h.props.processingConfigured=true;await h.idle();assert.equal(text(ai()),'AI 이미지 생성');const before=ai().props.onClick;await h.click('최종 대표이미지 AI 처리');assert.equal(processed.length,1);
   h.props.processingConfigured=false;await h.idle();before();assert.equal(processed.length,1);
   h.props.processingConfigured=true;await h.idle();before();assert.equal(processed.length,1,'availability ABA cannot revive a retained source callback');
   await h.click('최종 대표이미지 AI 처리');assert.equal(processed.length,2);assert.equal(processed[1][0],f.key);assert.equal(processed[1][2].optionId,f.id);

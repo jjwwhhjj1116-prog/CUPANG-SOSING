@@ -12,14 +12,15 @@ import {selectedImagePurpose,hasForeignImageText,prepareSelectedImageCleanup} fr
 import {initializeVisionRegions} from '@/app/free-image-vision-style';
 import {parseImageTextVisionResult,parseImageTextVisionConfiguration,isVerifiedNoForeignText} from '@/app/image-text-vision';
 import {parseImageNoTextProof} from '@/app/image-no-text-proof';
+import {reconcileSelectedDetailWorkspace,type SelectedDetailWorkspacePending} from '@/app/selected-detail-workspace';
 
 export type SelectedImageStage='main'|'additional'|'detail';
 export type SelectedImageInferencePending={optionId:string;slotIndex:number;attempt:FreeImageVisionAttempt;code:string;message:string;observation?:FreeImageVisionStatus};
-export type SelectedImageStageState={ownerId:string;productId:string;stage:SelectedImageStage;scope?:WorkspaceSettingsScope;settings?:WorkspaceSettings;content?:ProductContent;view?:QuotationFieldsView;batches:Record<string,DetailImageBatch>;verifiedOriginals?:Record<string,string>;unverifiedOriginals?:Record<string,string>;inferencePending?:SelectedImageInferencePending};
+export type SelectedImageStageState={ownerId:string;productId:string;stage:SelectedImageStage;scope?:WorkspaceSettingsScope;settings?:WorkspaceSettings;content?:ProductContent;view?:QuotationFieldsView;batches:Record<string,DetailImageBatch>;verifiedOriginals?:Record<string,string>;unverifiedOriginals?:Record<string,string>;inferencePending?:SelectedImageInferencePending;detailWorkspacePending?:SelectedDetailWorkspacePending;detailWorkspaceLinked?:Record<string,string>};
 export function createSelectedImageStageState(ownerId:string,productId:string,stage:SelectedImageStage):SelectedImageStageState{return{ownerId,productId,stage,batches:{}};}
 export type SelectedImageStageResult={status:'completed'|'partial'|'skipped'|'uncertain';applied:number;failed:number;skipped:number;verifiedUnchanged?:number;messages:string[];productVersion?:string;recoveryBatch?:DetailImageBatch;state:SelectedImageStageState;recovered?:boolean;sourceChanged?:true;inferencePending?:true};
 export type SelectedImageStageOptions={ownerId:string;signal:AbortSignal;fetcher:typeof fetch;isCurrent?:()=>boolean;onProgress?:(message:string)=>void;expectedProductVersion?:string;state?:SelectedImageStageState};
-type Dependencies={plan?:typeof planBatchImageWork;refresh?:typeof refreshBatchImageTask;readSource?:typeof readFreeImageSource;recognize?:typeof recognizeFreeImage;translate?:typeof translateFreeImageRegions;render?:typeof renderFreeImageTranslation;apply?:typeof applyDetailBatchResult;recover?:typeof recoverDetailBatchResult;observe?:typeof readFreeImageVisionStatus};
+type Dependencies={plan?:typeof planBatchImageWork;refresh?:typeof refreshBatchImageTask;readSource?:typeof readFreeImageSource;recognize?:typeof recognizeFreeImage;translate?:typeof translateFreeImageRegions;render?:typeof renderFreeImageTranslation;apply?:typeof applyDetailBatchResult;recover?:typeof recoverDetailBatchResult;observe?:typeof readFreeImageVisionStatus;reconcileDetail?:typeof reconcileSelectedDetailWorkspace};
 const label={main:'대표 이미지',additional:'추가 이미지',detail:'상세 이미지'};
 export const SELECTED_IMAGE_SLOT_TIMEOUT_MS=90000;
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
@@ -50,6 +51,40 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
  const plan=await(deps.plan??planBatchImageWork)([{id:productId,title:productId}],signal,fetcher,[stage]);active();
  if(plan.scope.ownerId!==ownerId||!plan.scope.company||state.scope&&!same(state.scope,plan.scope))throw changed();
  state.scope??=structuredClone(plan.scope);
+ function queueDetailWorkspace(batch:DetailImageBatch,slotIndex:number){
+  const entry=batch.items.find(item=>item.slotIndex===slotIndex),identity=`${batch.optionId}/${slotIndex}`;
+  if(!entry?.appliedKey||entry.status!=='applied')throw changed();
+  if(state.detailWorkspaceLinked?.[identity]===entry.appliedKey)return null;
+  if(!state.detailWorkspacePending){
+   if(!entry.rendered)throw changed();
+   state.detailWorkspacePending={selection:{productId,optionId:batch.optionId,...(batch.profileId?{profileId:batch.profileId}:{}),view:batch.view},slotIndex,source:entry.rendered.source,resultKey:entry.appliedKey};
+  }
+  const pending=state.detailWorkspacePending;
+  if(pending.selection.optionId!==batch.optionId||pending.slotIndex!==slotIndex||pending.resultKey!==entry.appliedKey)throw changed();
+  return {pending,identity,key:entry.appliedKey};
+ }
+ async function linkDetailWorkspace(batch:DetailImageBatch,slotIndex:number){
+  const queued=queueDetailWorkspace(batch,slotIndex);if(!queued)return;
+  const {pending,identity,key}=queued;
+  const outcome=await(deps.reconcileDetail??reconcileSelectedDetailWorkspace)(pending,signal,fetcher);active();
+  if(outcome==='retry')throw Error('상세 구성의 저장 상태를 확인했습니다. 명시적인 작업 다시 시도로 확인된 번역의 구성 연결을 이어갈 수 있습니다.');
+  (state.detailWorkspaceLinked??={})[identity]=key;delete state.detailWorkspacePending;
+ }
+ // Once the quote was acknowledged, a lost workspace ACK is recovered by
+ // reads before any new inference or quotation write can be dispatched.
+ if(state.detailWorkspacePending){
+  const pending=state.detailWorkspacePending,batch=state.batches[pending.selection.optionId];result.recovered=true;
+  try{
+   if(!batch)throw changed();await linkDetailWorkspace(batch,pending.slotIndex);
+   state.batches[batch.optionId]={...batch,items:batch.items.map(item=>item.slotIndex===pending.slotIndex?{...item,rendered:undefined,attempt:undefined}:item)};
+   result.applied=Object.values(state.batches).flatMap(batch=>batch.items).filter(item=>item.status==='applied').length;
+   result.failed=Object.values(state.batches).flatMap(batch=>batch.items).filter(item=>item.translationReview?.status==='partial').length;
+   const remaining=Object.values(state.batches).flatMap(batch=>batch.items).some(item=>['pending','ready','failed','uncertain'].includes(item.status)||item.translationReview?.status==='partial')
+    ||plan.tasks.some(task=>task.stage==='detail'&&!state.batches[task.optionId]);
+   result.status=remaining?'partial':result.applied?'completed':'skipped';result.productVersion=batch.view.productVersion;
+   result.messages.push('확인된 상세 번역과 사진 구성의 저장 연결을 확인했습니다. 새 추론이나 견적서 이미지 저장은 하지 않았습니다.'+(result.failed?' 일부 문구가 미완료인 초안은 상세 사진 편집에서 원문과 번역을 확인해주세요.':''));return result;
+  }catch(cause){active();result.status=state.detailWorkspacePending?.save?.attempt.pending?'uncertain':'partial';result.failed=1;result.messages.push(note(cause)+' 확인된 번역과 원본을 보존하고 다음 이미지 처리를 멈췄습니다.');return result;}
+ }
  let recoveredInference:SelectedImageInferencePending|undefined;
  if(state.inferencePending){
   const pending=state.inferencePending;
@@ -84,11 +119,13 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
   try{
    const recovered=await(deps.recover??recoverDetailBatchResult)(uncertain,signal,next=>{state.batches[next.optionId]=next;state.view=next.view;},{fetcher});active();
    if(recovered.items.some(item=>item.status==='uncertain'))throw Error('이전 이미지의 저장 상태를 아직 확인하지 못했습니다.');
-   state.batches[recovered.optionId]={...recovered,items:recovered.items.map(item=>item.status==='applied'?{...item,rendered:undefined,attempt:undefined}:item)};state.view=recovered.view;
+   state.batches[recovered.optionId]=recovered;state.view=recovered.view;
+   if(stage==='detail')for(const item of recovered.items.filter(item=>item.status==='applied'))if(queueDetailWorkspace(recovered,item.slotIndex))break;
+   state.batches[recovered.optionId]={...recovered,items:recovered.items.map(item=>item.status==='applied'?{...item,rendered:undefined,attempt:undefined}:item)};
    result.applied=Object.values(state.batches).flatMap(batch=>batch.items).filter(item=>item.status==='applied').length;
    const partialDrafts=Object.values(state.batches).flatMap(batch=>batch.items).filter(item=>item.translationReview?.status==='partial');
    result.failed=partialDrafts.length;
-   const pending=partialDrafts.length>0||Object.values(state.batches).flatMap(batch=>batch.items).some(item=>['pending','ready','failed','uncertain'].includes(item.status))
+   const pending=!!state.detailWorkspacePending||partialDrafts.length>0||Object.values(state.batches).flatMap(batch=>batch.items).some(item=>['pending','ready','failed','uncertain'].includes(item.status))
     ||plan.tasks.some(task=>task.productId===productId&&task.stage===stage&&!state.batches[task.optionId]);
    result.status=pending?'partial':result.applied?'completed':'skipped';result.recovered=true;result.productVersion=recovered.view.productVersion;result.recoveryBatch=undefined;
    result.messages.push('이전 이미지의 저장 상태만 확인했습니다. 새 업로드는 하지 않았습니다.'+(partialDrafts.length?' 일부 문구가 미완료인 초안입니다. 저장된 이미지를 수동 편집에서 열어 원문과 번역을 확인해주세요.':pending?' 남은 이미지는 작업 다시 시도로 이어갈 수 있습니다.':''));return result;
@@ -258,11 +295,13 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
     remember(await(deps.apply??applyDetailBatchResult)(batch,slotIndex,controller.signal,remember,{fetcher,readSource:async(...args)=>{const loaded=await(deps.readSource??readFreeImageSource)(...args);release(loaded);return loaded;}}));
     if(batch.items.find(item=>item.slotIndex===slotIndex)?.status!=='applied')throw Error(`${action} 이미지 저장 확인을 받지 못했습니다.`);
     result.applied++;latest=batch.view;result.productVersion=batch.view.productVersion;
+    if(stage==='detail')await linkDetailWorkspace(batch,slotIndex);
     // Keep only verified keys after a save, freeing the prior PNG immediately.
     remember({...batch,items:batch.items.map(item=>item.slotIndex===slotIndex?{...item,rendered:undefined,attempt:undefined}:item)});check();
     const partial=batch.items.find(item=>item.slotIndex===slotIndex)?.translationReview;
     if(partial?.status==='partial'){result.failed++;result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: ${partial.message} 저장된 이미지를 수동 편집에서 열어 확인해주세요.`);break;}
    }catch(cause){
+    if(state.detailWorkspacePending){result.status=state.detailWorkspacePending.save?.attempt.pending?'uncertain':'partial';result.failed++;result.messages.push(note(cause)+' 확인된 상세 번역을 보존하고 사진 구성 연결을 확인하기 전에는 다음 이미지로 진행하지 않습니다.');return result;}
     if(cause instanceof FreeImageVisionError&&cause.code==='IMAGE_VISION_CAPACITY'&&!cause.uncertain){
      active();
      if(!image||!same(cause.attempt.source,image.source))throw changed();

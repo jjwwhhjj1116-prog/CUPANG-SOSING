@@ -21,6 +21,7 @@ replaceOnce('close(){closed=true;','configured(value){processingConfigured=value
 source+='\nexport {fixture,imageUI,nodes,text,deferred,plain};';
 const {fixture,imageUI,nodes,text,deferred,plain}=await import('data:text/javascript,'+encodeURIComponent(source));
 const writes=h=>h.calls.filter(call=>call.init?.method&&call.init.method!=='GET');
+const exposed=value=>Array.isArray(value)?value.flatMap(exposed):value&&typeof value==='object'&&!value.props?.hidden?[value,...exposed(value.type==='details'&&!value.props.open?(Array.isArray(value.props.children)?value.props.children:[value.props.children]).filter(child=>child?.type==='summary'):value.props?.children)]:[];
 function seed(f,keys=f.keys.slice(0,3)){
  f.reply('',{method:'PUT',body:JSON.stringify({expectedRevision:f.view.revision,changes:['additionalImages','wire-additionalImages'].map(fieldKey=>({optionId:'red',fieldKey,value:keys.join('\n')}))})});
  return f;
@@ -33,7 +34,7 @@ test('selected additional AI entry pins one saved middle slot and cloned quote v
  const h=imageUI((url,init)=>f.reply(url,init),{version:f.view.productVersion,profileId:'selected-profile',saveOnChange:true,processingConfigured:true,onProcess:(...args)=>processed.push(args)});
  try{
   await h.idle();await chooseMiddle(h);const before=plain(f.view);
-  assert.equal(processed.length,0);assert.equal(writes(h).length,0);assert.equal(ai(h).props.disabled,false);assert.equal(text(ai(h)),'AI 처리');
+  assert.equal(processed.length,0);assert.equal(writes(h).length,0);assert.equal(ai(h).props.disabled,false);assert.equal(text(ai(h)),'AI 이미지 생성');
   await h.click('추가 이미지 2 AI 처리');assert.equal(processed.length,1);
   assert.deepEqual(plain(processed[0].slice(0,3)),[f.keys[1],'additional',{kind:'quotation',profileId:'selected-profile',optionId:'red',input:'additionalImages',fieldKey:'wire-additionalImages',slotIndex:1,revision:before.revision,inputFingerprint:before.inputFingerprint,optionRevision:before.optionRevision,value:f.keys.slice(0,3).join('\n')}]);
   assert.deepEqual(plain(processed[0][3]),before);
@@ -48,12 +49,16 @@ test('unknown or missing provider disables only additional AI; free edit and bot
  for(const configured of [null,false]){
   const f=seed(fixture()),processed=[],edited=[],translated=[],h=imageUI((url,init)=>f.reply(url,init),{version:f.view.productVersion,saveOnChange:true,processingConfigured:configured,onProcess:(...args)=>processed.push(args),onEdit:(...args)=>edited.push(args),onTranslate:(...args)=>translated.push(args)});
   try{
-   await h.idle();await chooseMiddle(h);assert.equal(ai(h).props.disabled,true);assert.equal(text(ai(h)),configured===false?'AI 서버 설정 필요':'AI 설정 확인 중');ai(h).props.onClick();
+   await h.idle();await chooseMiddle(h);assert.equal(ai(h).props.disabled,true);assert.equal(text(ai(h)),configured===false?'이미지 생성 설정 필요':'이미지 생성 설정 확인 중');ai(h).props.onClick();
+   assert.equal(translated.length,0);assert.equal(edited.length,0);
+   assert.ok(exposed(h.render()).some(node=>node.type==='button'&&node.props['aria-label']==='추가 이미지 2 중국어 한국어 번역'));
+   assert.equal(exposed(h.render()).some(node=>node.type==='button'&&node.props['aria-label']==='추가 이미지 2 영어 한국어 번역'),false,'English stays optional under closed details');
    await h.click('추가 이미지 2 편집하기');await h.click('추가 이미지 2 중국어 한국어 번역');await h.click('추가 이미지 2 영어 한국어 번역');
    assert.equal(processed.length,0);assert.equal(edited.length,1);assert.equal(translated.length,2);
    assert.equal(edited[0][0],f.keys[1]);assert.equal(edited[0][2].slotIndex,1);assert.equal(edited[0][2].input,'additionalImages');
    for(const entry of translated){assert.equal(entry[0],f.keys[1]);assert.equal(entry[3].slotIndex,1);assert.equal(entry[3].value,f.keys.slice(0,3).join('\n'));}
    assert.deepEqual(translated.map(entry=>entry[2]),['zh','en']);assert.equal(writes(h).length,0);
+   assert.deepEqual(plain(translated[0]),[f.keys[1],'additional','zh',{kind:'quotation',profileId:null,optionId:'red',input:'additionalImages',fieldKey:'wire-additionalImages',slotIndex:1,revision:f.view.revision,inputFingerprint:f.view.inputFingerprint,optionRevision:f.view.optionRevision,value:f.keys.slice(0,3).join('\n')}]);
   }finally{h.close();}
  }
 });

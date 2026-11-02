@@ -82,7 +82,7 @@ test('additional dashboard rejects retained owner, product, version, option, cat
  try{
   const product={...f.product,owner_id:'owner'},base={workspaceOwnerId:'owner',product,tab:'추가 이미지',focusedOptionId:f.id,preferredProfileId:f.profile.id};d.render(base);
   await availability(d,f);assert.equal(card(d).processingConfigured,false);let translated=0,edited=0;
-  o=editor(f,d,{onTranslate(){translated++;},onEdit(){edited++;}});await o.idle();await o.click('추가 이미지 2 크게 보기');assert.equal(button(o,ai).props.disabled,true);assert.equal(cardFixture.text(button(o,ai)),'AI 서버 설정 필요');button(o,ai).props.onClick();assert.equal(paid(d).processingTarget,undefined);
+  o=editor(f,d,{onTranslate(){translated++;},onEdit(){edited++;}});await o.idle();await o.click('추가 이미지 2 크게 보기');assert.equal(button(o,ai).props.disabled,true);assert.equal(cardFixture.text(button(o,ai)),'이미지 생성 설정 필요');button(o,ai).props.onClick();assert.equal(paid(d).processingTarget,undefined);
   await o.click('추가 이미지 2 중국어 한국어 번역');await o.click('추가 이미지 2 편집하기');assert.equal(translated,1);assert.equal(edited,1);
   f.backend.bindings.OPENAI_API_KEY='TEST-ONLY-NOT-A-REAL-KEY';f.backend.bindings.SOURCEFLOW_IMAGE_MODEL='gpt-image-1.5';await availability(d,f);o.configured(true);await o.idle();
   const view=await f.read(),model=f.backend.load('app/quotation-image-targets.ts'),target={kind:'quotation',profileId:f.profile.id,optionId:f.id,input:'additionalImages',fieldKey:model.optionImageTargets(view.resolved.schema.fields).additionalImages.primary,slotIndex:1,revision:view.revision,inputFingerprint:view.inputFingerprint,optionRevision:view.optionRevision,value:f.list.join('\n')};

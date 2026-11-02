@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import {providedOptionModule} from './helpers/provided-option-quotation.mjs';
 
 const plain=value=>JSON.parse(JSON.stringify(value)),version='2026-10-23T00:00:00.000Z',hash='a'.repeat(64);
 const stageIds=['seo','pricing','mainImage','additionalImages','detailImage','sizeChart','koreanLabel','quotation'];
@@ -11,7 +12,7 @@ function functions(file,names,globals={}){
  const declarations=ast.statements.filter(row=>ts.isFunctionDeclaration(row)&&names.includes(row.name?.text)).map(row=>row.getText(ast)).join('\n').replaceAll('import.meta.url',JSON.stringify(url.href));
  return vm.runInNewContext(declarations+'\n({'+names.join(',')+'})',{assert,fs,vm,ts,plain,version,hash,stageIds,Error,Date,URL,TextEncoder,AbortController,AbortSignal,structuredClone,Blob,Response,...globals});
 }
-const orchestrator=functions('./batch-selected-work.test.mjs',['fixture']);
+const orchestrator=functions('./batch-selected-work.test.mjs',['fixture'],{providedOptionModule});
 const image=functions('./batch-selected-image-work.test.mjs',['loadModel','fixture']);
 
 /** Real toolbar orchestration and image-stage source/proof checks execute

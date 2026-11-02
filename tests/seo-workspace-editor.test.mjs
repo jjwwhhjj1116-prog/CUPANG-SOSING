@@ -379,6 +379,10 @@ test('focused option and exact owned thumbnails include source-owned fallback wh
     await h.idle(); const tree = h.render(), articles = nodes(tree).filter(node => node.type === 'article'), images = nodes(tree).filter(node => node.type === 'img');
     assert.deepEqual(articles.map(node => node.props['data-option-target']), [false, true, false]);
     assert.deepEqual(images.map(node => node.props.src), ['/api/files/owner/seed.png', '/api/files/owner/source%20image.png']);
+    assert.ok(images.every(node => node.props.width === 60 && node.props.height === 60));
+    const placeholders = nodes(tree).filter(node => node.props.className === 'seo-option-name-placeholder');
+    assert.equal(placeholders.length, 1); assert.equal(placeholders[0].props['aria-hidden'], 'true');
+    assert.ok(nodes(articles[2]).includes(placeholders[0])); assert.equal(nodes(articles[2]).some(node => node.type === 'img'), false, 'missing exact associations reserve space without borrowing a product image');
     assert.ok(images.every(node => !node.props.src.includes('foreign'))); assert.equal(patches(h).length, 0); assert.equal(api.mutations.length, 0);
   } finally { h.close(); api.close(); }
 });

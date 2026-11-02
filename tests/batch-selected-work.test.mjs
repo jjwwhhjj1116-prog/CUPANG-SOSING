@@ -18,6 +18,7 @@ function fixture(){
   '@/app/automation/translation':{GOOGLE_TEXT_MODEL:'google',WORKERS_QWEN_MODEL:'@cf/qwen/qwen3-30b-a3b-fp8'},
   '@/app/quotation-ai-client':{quotationAiViewCurrent:()=>true,quotationAiJobForScope:()=>null,quotationReviewedProposalChanges:()=>[],quotationSavedSourceChanges:()=>[]},
   '@/app/quotation-fields-confirmation':{},
+  '@/app/quotation-choice-state':providedOptionModule('app/quotation-choice-state.ts'),
   '@/app/batch-selected-packaging-work':{async runSelectedPackagingWork(id,options){await options.assertCurrent();calls.push({adapter:'packaging',id,revision:options.view.revision,fingerprint:options.view.inputFingerprint});return {view:options.view,status:'unchanged',changed:0,estimated:0,fallback:0,remaining:0,recovered:false,message:'저장한 포장값을 유지했습니다.'};}},
   '@/app/registration-layout':{readRegistrationLayout:(raw,id,clock)=>{assert.equal(raw.productId,id);assert.equal(raw.productVersion,clock);return raw;}},
   '@/app/batch-selected-image-work':{createSelectedImageStageState:(ownerId,productId,stage)=>({ownerId,productId,stage,batches:{}}),async processSelectedImageStage(id,stage,options){calls.push({adapter:'image',id,stage,version:options.expectedProductVersion});return imageResult;}},
@@ -167,6 +168,27 @@ test('confirmed partial main, additional and detail image stages stay blocked wh
  assert.deepEqual(plain(result.stages.map(row=>[row.id,row.status])),[['mainImage','blocked'],['additionalImages','blocked'],['detailImage','blocked'],['koreanLabel','draft'],['quotation','draft']]);
  assert.deepEqual(h.calls.filter(call=>call.adapter==='image').map(call=>call.stage),['main','additional','detail']);assert.equal(h.calls.filter(call=>call.adapter==='label').length,1);assert.equal(h.calls.filter(call=>call.adapter==='packaging').length,1);
  assert.equal(h.calls.filter(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST').length,1);assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
+});
+
+test('pending detail workspace reconciliation holds later label and quotation writes at the acknowledged image version',async()=>{
+ for(const pending of [false,true]){
+  const h=fixture(),acknowledged='2026-10-23T00:00:01.000Z';let currentVersion=version,state;
+  h.intercept(call=>call.url==='/api/products/product'?Response.json({product:{id:'product',title:'검증 상품',updated_at:currentVersion}}):null);
+  h.deps['@/app/batch-selected-image-work'].processSelectedImageStage=async(productId,stage,options)=>{
+   assert.equal(stage,'detail');currentVersion=acknowledged;state=options.state;
+   // The quotation image save was acknowledged, but its metadata read failed
+   // before the exact workspace reconciliation could finish.
+   if(pending)state.detailWorkspacePending={selection:{productId,optionId:'a',view:{productVersion:acknowledged}},slotIndex:0,
+    source:{productId,role:'detail',sourceKey:'owner/detail-source.png'},resultKey:'owner/detail-translated.png'};
+   return{status:'partial',messages:['저장한 상세 번역의 편집 기록 조회 필요'],productVersion:acknowledged,state};
+  };
+  const result=await h.run(['detailImage','koreanLabel','quotation']);
+  assert.equal(result.stages[0].status,'blocked');
+  assert.deepEqual(result.stages.slice(1).map(stage=>stage.status),pending?['blocked','blocked']:['draft','draft']);
+  assert.equal(h.calls.some(call=>call.adapter==='label'),!pending);
+  assert.equal(h.calls.some(call=>call.adapter==='packaging'||call.url?.endsWith('/quotation-ai')),!pending);
+  if(pending){assert.ok(result.stages.slice(1).every(stage=>stage.message.includes('아직 시작하지 않았습니다')));assert.equal(state.detailWorkspacePending.selection.view.productVersion,acknowledged);}
+ }
 });
 
 test('confirmed image failure reasons do not leave stale pending fences or hold later selected stages',async()=>{
@@ -409,6 +431,30 @@ test('explicit quotation work saves verified AI plus saved notice sources in one
  assert.equal(JSON.stringify({view:h.view,content:h.content}),before);assert.equal(h.calls.some(call=>call.method==='POST'),false);
  assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
  assert.deepEqual(h.calls.find(call=>call.adapter==='packaging'),{adapter:'packaging',id:'product',revision:2,fingerprint:'b'.repeat(64)});
+});
+
+test('quotation completion accepts sourced empty choices while retaining unknown, manual text blanks and validation errors',async()=>{
+ for(const [name,source,type,choices,value,validationIssues,expected] of [
+  ['schema default','couplus-default','select',[{value:'',label:'해당사항없음'},{value:'UV',label:'UV'}],'',[],'draft'],
+  ['explicit selected N/A','manual-option','select',[{value:'',label:'해당사항없음'}],'',[],'draft'],
+  ['unknown selection','empty','select',[{value:'',label:'해당사항없음'}],'',[],'blocked'],
+  ['manual text blank','manual-option','text',undefined,'',[],'blocked'],
+  ['manual unselected choice','manual-option','select',[{value:'UV',label:'UV'}],'',[],'blocked'],
+  ['whitespace','manual-option','select',[{value:'',label:'해당사항없음'}],' ',[],'blocked'],
+  ['invalid selected choice','couplus-default','select',[{value:'',label:'해당사항없음'}],'',['저장값 검토 필요'],'blocked'],
+ ]){
+  const h=knownQuotationFixture(),field={id:'requiredChoice',label:'렌즈 유형',section:'product',visibility:'common',type,required:true,...(choices?{choices}:{})};
+  h.fields.push(field);
+  for(const row of [...h.view.resolved.rows,...h.view.automatic.rows])row.fields[field.id]={value,source,validationIssues};
+  const before=plain(h.view.resolved.rows.map(row=>row.fields[field.id]));
+  const result=await h.run(['koreanLabel','quotation']),quotation=result.stages.find(stage=>stage.id==='quotation');
+  assert.equal(quotation.status,expected,name+': '+quotation.message);
+  if(expected==='draft')assert.doesNotMatch(quotation.message,/필수 입력 확인:.*렌즈 유형/,name);
+  else assert.match(quotation.message,/필수 입력 확인:.*렌즈 유형/,name);
+  assert.equal(result.stages[0].status,'draft');assert.equal(h.writes.length,1);assert.equal(h.calls.filter(call=>call.adapter==='packaging').length,1);
+  assert.ok(h.writes[0].changes.every(change=>change.fieldKey!==field.id),name);
+  assert.deepEqual(h.view.resolved.rows.map(row=>row.fields[field.id]),before,name);
+ }
 });
 
 test('quotation PUT rejected by its final protected account preflight releases only the unsent fence and reuses the confirmed AI job',async()=>{

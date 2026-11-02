@@ -4,6 +4,7 @@ import { fixture, panel, runtime, nodes, text, deferred, plain } from './helpers
 import { companies, downloadFixture, json } from './helpers/image-download-ui.mjs';
 
 const photos = h => nodes(h.render()).filter(node => node.type === 'img' && /^상세 작업 사진 /u.test(node.props.alt ?? ''));
+const attachmentImageIssue = '이 상품에 저장된 이미지 참조만 중복 없이 선택해주세요.';
 
 for (const company of companies) test(`${company.companyCode} real quotation resolver review notes do not block the source-photo composition`, async () => {
   const f = await downloadFixture(company);
@@ -16,6 +17,70 @@ for (const company of companies) test(`${company.companyCode} real quotation res
     assert.deepEqual(plain(document.photos.map(photo => photo.key)), f.keys.slice(2, 7));
     assert.equal(f.retained(), before); assert.equal(f.originals(), files);
   } finally { f.api.close(); }
+});
+
+for (const company of companies) test(`${company.companyCode} 29 original body photos and both banners open without inheriting the 30 quotation attachment limit`, async () => {
+  const f = await downloadFixture(company);
+  try {
+    const body = [...f.keys.slice(3, 6), ...Array.from({ length: 26 }, (_, index) => `owner/workspace-detail-${index}.png`)];
+    const pool = [...new Set([...f.keys, ...body])], bytes = f.api.objects.get(f.keys[3]);
+    for (const key of body) if (!f.api.objects.has(key)) f.api.objects.set(key, bytes.slice());
+    f.api.sqlite.prepare('UPDATE products SET image_keys=? WHERE id=?').run(JSON.stringify(pool), f.product.id);
+    const current = await json(await f.api.route(f.base + '/content'));
+    await json(await f.api.route(f.base + '/content', { method: 'PATCH', body: { expectedRevision: current.content.revision,
+      patch: { assets: { detailTop: [f.keys[2]], detail: body, detailBottom: [f.keys[6]] } } } }));
+    const view = await json(await f.api.route(f.base + '/quotation-fields?profileId=cat'));
+    const row = view.automatic.rows.find(row => row.optionId && row.included !== false), cell = row.fields.detailImages;
+    const sequence = [f.keys[2], ...body, f.keys[6]];
+    assert.deepEqual(cell.value.split('\n'), sequence); assert.deepEqual(plain(cell.validationIssues), [attachmentImageIssue]);
+    const before = f.retained(), files = f.originals(), seed = f.api.load('app/detail-workspace-seed.ts').initialDetailWorkspaceDocument;
+    let serial = 0; const document = seed({ view, workspace: null, roles: { top: [f.keys[2]], bottom: [f.keys[6]] } }, row.optionId, () => `source-${serial++}`);
+    assert.equal(document.photos.length, 31); assert.equal(document.generatedHtml.match(/<img /gu).length, 31);
+    assert.deepEqual(plain(document.photos.map(photo => [photo.originKey, photo.key])), sequence.map(key => [key, key]));
+    assert.deepEqual(plain(document.photos.map(photo => photo.role)), ['top', ...body.map(() => 'body'), 'bottom']);
+    const quotation = f.api.load('app/quotation-schema.ts');
+    assert.equal(view.resolved.schema.fields.find(field => field.id === 'detailImages').maxItems, 30);
+    assert.throws(() => quotation.validateQuotationChanges([{ optionId: row.optionId, fieldKey: 'detailImages', value: cell.value }], {
+      schema: view.resolved.schema, optionIds: view.resolved.rows.flatMap(item => item.optionId ? [item.optionId] : []), ownedImageKeys: view.imageKeys, overrides: view.overrides,
+    }));
+    assert.equal(f.retained(), before); assert.equal(f.originals(), files);
+  } finally { f.api.close(); }
+});
+
+test('source composition accepts 150 ordered owned photos while 151 and non-count validation failures remain rejected', async () => {
+  for (const count of [150, 151]) {
+    const f = await fixture(), sequence = [f.keys[0], ...Array.from({ length: count - 2 }, (_, index) => `owner/body-${index}.png`), f.keys[3]];
+    f.view.imageKeys = [...sequence];
+    const cell = f.view.automatic.rows[0].fields.detailImages;
+    Object.assign(cell, { value: sequence.join('\n'), validationIssues: [attachmentImageIssue], issues: [attachmentImageIssue] });
+    const immutable = JSON.stringify(f.view), { initialDetailWorkspaceDocument: seed } = runtime(f.request).load('app/detail-workspace-seed.ts');
+    let serial = 0;
+    if (count === 150) {
+      const document = seed(f.reply(), 'red', () => `source-${serial++}`);
+      assert.deepEqual(plain(document.photos.map(photo => photo.key)), sequence); assert.equal(serial, 150);
+    } else { assert.throws(() => seed(f.reply(), 'red', () => `source-${serial++}`)); assert.equal(serial, 0); }
+    assert.equal(JSON.stringify(f.view), immutable); assert.equal(f.calls.length, 0);
+  }
+  for (const change of [
+    (f, cell, sequence) => { cell.value = [...sequence.slice(0, -2), sequence.at(-1)].join('\n'); },
+    (f, cell, sequence) => { cell.value = [...sequence.slice(0, -2), sequence[1], sequence.at(-1)].join('\n'); },
+    (f, cell) => { cell.value += '\n'; },
+    (f, cell) => { cell.value = cell.value.replace('owner/body-0.png', ' owner/body-0.png'); },
+    (f, cell) => { cell.value = cell.value.replace('owner/body-0.png', 'owner/missing.png'); },
+    (f, cell) => { f.view.imageKeys.push('other/source.png'); cell.value = cell.value.replace('owner/body-0.png', 'other/source.png'); },
+    (f, cell) => { const key = `owner/${'x'.repeat(512)}.png`; f.view.imageKeys.push(key); cell.value = cell.value.replace('owner/body-0.png', key); },
+    (f, cell) => { cell.validationIssues.push('상품에 저장되지 않은 이미지 참조를 제외했습니다. 연결을 다시 확인해주세요.'); },
+    (f, cell) => { cell.validationIssues.push('16000자 제한을 초과했습니다.'); },
+    (f, cell) => { cell.validationIssues.push('알 수 없는 원본 연결 오류'); },
+  ]) {
+    const f = await fixture(), sequence = [f.keys[0], ...Array.from({ length: 29 }, (_, index) => `owner/body-${index}.png`), f.keys[3]];
+    f.view.imageKeys = [...sequence];
+    const cell = f.view.automatic.rows[0].fields.detailImages;
+    Object.assign(cell, { value: sequence.join('\n'), validationIssues: [attachmentImageIssue], issues: [attachmentImageIssue] });
+    change(f, cell, sequence);
+    const immutable = JSON.stringify(f.view), { initialDetailWorkspaceDocument: seed } = runtime(f.request).load('app/detail-workspace-seed.ts');
+    assert.throws(() => seed(f.reply(), 'red')); assert.equal(JSON.stringify(f.view), immutable); assert.equal(f.calls.length, 0);
+  }
 });
 
 test('the new composition uses every exact automatic detail-role photo in order rather than final quotation composites or gallery images', async () => {

@@ -24,10 +24,9 @@
 .seo-option-names-body{padding:20px;display:grid;gap:16px}
 .seo-option-name{display:flex;gap:14px;padding:8px 0 16px;border-bottom:1px solid #e8e9ec;align-items:flex-start}
 .seo-option-name:last-of-type{border-bottom:0}
-.seo-option-name img{object-fit:contain;border:1px solid #e0e3e9;border-radius:8px;flex-shrink:0;background:#fff}
+.seo-option-name img,.seo-option-name-placeholder{width:60px;height:60px;object-fit:contain;border:1px solid #e0e3e9;border-radius:8px;flex-shrink:0;background:#fff}
 .seo-option-name label{display:grid;gap:9px;min-width:0;flex:1;font-size:13px}
 .seo-option-name label>span{color:#858b96;overflow-wrap:anywhere}
-.seo-option-name[data-option-target=true]{outline:2px solid #75c9e3;outline-offset:6px;border-radius:4px}
 .seo-option-name-actions{display:flex;gap:8px;flex-wrap:wrap}
 .seo-generated-result{display:grid;gap:12px;border-top:1px solid #e8e9ec;padding-top:12px}
 .seo-generated-result dl{display:grid;grid-template-columns:72px 1fr;gap:10px;font-size:13px;margin:0}
@@ -45,58 +44,57 @@
 .seo-workspace-tools>.panel-stack{padding-top:12px}
 .seo-generation-provider{font-size:12px;color:#8a909d}
 .seo-generation-provider small{display:block;margin-top:8px}
-.registration-workspace .registration-seo-heading,.registration-workspace .seo-content-columns{width:min(840px,100%)}
-.registration-workspace .registration-seo-heading>h2{font-size:18px;margin:10px 0 24px}
-.registration-workspace .seo-generation-card{margin-bottom:20px}
-.registration-workspace .seo-generation-card>h3,.registration-workspace .seo-common-editor>h3,.registration-workspace .seo-option-names>h3{padding:17px 16px;font-size:15px}
-.registration-workspace .seo-generation-body{padding:18px 16px;gap:16px}
-.registration-workspace .seo-generation-body>p{font-size:13px}
-.registration-workspace .seo-generation-inputs{gap:22px}
-.registration-workspace .seo-generation-inputs label{gap:8px;font-size:13px}
-.registration-workspace .seo-generation-inputs input,.registration-workspace .seo-option-name input{border-radius:6px;padding:9px 10px;font-size:12px}
-.registration-workspace .seo-generation-body small,.registration-workspace .seo-option-name small{font-size:11px}
-.registration-workspace .seo-title-example{border-radius:6px;padding:13px 16px;font-size:12px;line-height:1.8}
-.registration-workspace .seo-content-columns{gap:22px}
-.registration-workspace .seo-common-editor>fieldset{padding:18px 16px!important}
-.registration-workspace .seo-common-editor .field{font-size:13px;gap:8px}
-.registration-workspace .seo-common-editor .field input,.registration-workspace .seo-common-editor .field textarea{border-radius:6px;padding:9px 10px;font-size:12px}
-.registration-workspace .seo-common-editor .field textarea{min-height:96px;line-height:1.8}
-.registration-workspace .seo-common-editor .seo-input-count{font-size:11px}
-.registration-workspace .seo-option-names-body{padding:18px 16px;gap:10px}
-.registration-workspace .seo-option-name{gap:12px;padding:2px 0 12px}
-.registration-workspace .seo-option-name img{width:48px;height:48px;border-radius:6px}
-.registration-workspace .seo-option-name label{gap:7px;font-size:11px;line-height:1.6}
-.registration-workspace .seo-workspace-save .btn{background:#2bbcdf;border:1px solid #2bbcdf;color:#fff;padding:10px 16px;font-size:12px}
-.registration-workspace .seo-workspace-save .btn:disabled{opacity:.55}
-/* Dimensions taken from the seven-step registration reference. */
-.registration-workspace .registration-seo-heading{padding-top:6px}
-.registration-workspace .registration-seo-heading>h2{font-size:16px;margin:8px -15px 26px;font-weight:700}
-.registration-workspace .seo-generation-card>h3,.registration-workspace .seo-common-editor>h3,.registration-workspace .seo-option-names>h3{min-height:52px;display:flex;align-items:center;padding:16px;font-size:14px;background:#cacdd5}
-.registration-workspace .seo-generation-body{gap:14px;padding:16px 15px}
-.registration-workspace .seo-generation-body>p{font-size:12px;line-height:1.6;margin:0 0 2px}
-.registration-workspace .seo-generation-inputs{gap:23px}
-.registration-workspace .seo-generation-inputs label{font-size:12px;gap:9px}
-.registration-workspace .seo-generation-inputs input{height:34px;font-size:11px;padding:8px 10px}
-.registration-workspace .seo-generation-inputs small{font-size:10px;line-height:1.7}
-.registration-workspace .seo-title-example{margin-top:10px;padding:12px 15px;background:#e3f9ff;border:1px solid #d0f4fc;font-size:12px;line-height:1.6}
-.registration-workspace .seo-generation-actions .btn{border-color:#2bbcdf;border-radius:6px;color:#2bbcdf;font-size:11px;padding:7px 11px;font-weight:500}
-.registration-workspace .seo-generation-provider{font-size:10px;line-height:1.5}
+/* Stage 1 uses the measured Couplus SEO canvas. Standalone editors retain
+ * their defaults above; keep all registration dimensions together here. */
+.registration-workspace .detail-body[data-registration-stage="SEO"]{padding:20px;font-family:Lato,sans-serif;font-size:16px;line-height:29px;color:#676e8a}
+.registration-workspace .registration-seo-heading{display:flex;flex-direction:column;width:min(1160px,100%);padding:0}
+.registration-workspace .registration-seo-heading>h2{margin:0 0 16px;padding:0;font-size:23.04px;line-height:23.04px;font-weight:700;color:#110a57}
+.registration-workspace .seo-generation-card{width:calc(100% - 40px);max-width:1120px;margin:20px auto 24px}
+.registration-workspace .seo-content-columns{width:min(1120px,100%);gap:30px}
+.registration-workspace .seo-workspace-editor{font-family:Lato,sans-serif;font-size:16px;line-height:29px;color:#676e8a}
+.registration-workspace .seo-generation-card>h3,.registration-workspace .seo-common-editor>h3,.registration-workspace .seo-option-names>h3{display:flex;align-items:center;min-height:70px;margin:0;padding:20px;font-size:19.2px;line-height:28.8px;font-weight:700;color:#110a57;background:#c7cbd3}
+.registration-workspace .seo-generation-body{padding:20px;gap:16px}
+.registration-workspace .seo-generation-body>p{margin:0;font-size:16px;line-height:29px}
+.registration-workspace .seo-generation-inputs{gap:30px}
+.registration-workspace .seo-generation-inputs label{gap:8px;font-size:16px;line-height:29px}
+.registration-workspace .seo-generation-inputs input,.registration-workspace .seo-option-name input,.registration-workspace .seo-common-editor .field input,.registration-workspace .seo-common-editor .field textarea{width:100%;border:1px solid #dfe1e8;border-radius:10px;padding:6px 12px;font-family:inherit;font-size:14px;color:#676e8a;background:#fff}
+.registration-workspace .seo-generation-inputs input,.registration-workspace .seo-option-name input,.registration-workspace .seo-common-editor .field input{height:45px;line-height:45px}
+.registration-workspace .seo-generation-body small,.registration-workspace .seo-option-name small,.registration-workspace .seo-common-editor .seo-input-count,.registration-workspace .seo-keyword-caption small{font-size:12.8px;line-height:29px}
+.registration-workspace .seo-title-example{display:flex;flex-wrap:wrap;padding:12px 20px;border:1px solid #d0f4fc;border-radius:10px;background:#e5f9ff;font-size:16px;line-height:29px}
+.registration-workspace .seo-title-example p{margin:0}
+.registration-workspace .seo-title-example p:first-child{margin-bottom:4px}
+.registration-workspace .seo-generation-actions{gap:9px}
+.registration-workspace .seo-generation-actions .btn{border:1px solid #32bdea;border-radius:10px;padding:6px 12px;font-family:inherit;font-size:16px;font-weight:400;line-height:24px;color:#32bdea;background:transparent}
+.registration-workspace .seo-generation-provider{font-size:12.8px;line-height:29px}
 .registration-workspace .seo-generation-provider-tools>section{padding:12px 0 0}
-.registration-workspace .seo-generation-provider-tools h4{font-size:12px;margin:0 0 8px}
-.registration-workspace .seo-common-editor>fieldset{padding:18px 15px 30px!important;display:grid;gap:9px}
-.registration-workspace .seo-common-editor .field{font-size:12px;gap:9px;margin:0}
-.registration-workspace .seo-common-editor .field input{height:34px;font-size:11px}
-.registration-workspace .seo-common-editor .field textarea{min-height:75px;font-size:11px;line-height:1.8}
-.registration-workspace .seo-common-editor .field:has(textarea){margin-top:10px}
-.registration-workspace .seo-keyword-caption{margin:0;font-size:10px;gap:8px}
-.registration-workspace .seo-keyword-caption small{font-size:10px}
-.registration-workspace .seo-option-names-body{padding:20px 15px 16px;gap:16px}
-.registration-workspace .seo-option-name{padding:0 0 6px;gap:12px;align-items:flex-start}
-.registration-workspace .seo-option-name img{width:45px;height:45px;margin-left:6px}
-.registration-workspace .seo-option-name label{gap:7px;font-size:10px;line-height:1.5}
-.registration-workspace .seo-option-name input{height:34px;font-size:11px}
-.registration-workspace .seo-workspace-save{margin:46px 0 8px}
-.registration-workspace .seo-workspace-save .btn{min-height:37px;padding:9px 14px;border-radius:6px;font-size:12px;font-weight:600}
-.registration-workspace .seo-workspace-tools{width:min(840px,100%);margin:12px auto 0;font-size:11px}
-@media(max-width:760px){.seo-generation-inputs,.seo-content-columns{grid-template-columns:1fr;gap:20px}.seo-generation-body{padding:18px 15px}.registration-seo-heading>h2{margin:8px 0 20px}.seo-generation-card>h3,.seo-common-editor>h3,.seo-option-names>h3{padding:17px 15px;font-size:16px}.seo-option-names-body{padding:15px}}
+.registration-workspace .seo-generation-provider-tools h4{font-size:16px;margin:0 0 8px}
+.registration-workspace .seo-common-editor>fieldset{display:grid;gap:4px;padding:20px!important}
+.registration-workspace .seo-common-editor .field{margin:0;gap:8px;font-size:16px;line-height:29px}
+.registration-workspace .seo-common-editor .field>span{font-size:16px;font-weight:400;line-height:29px;color:#676e8a}
+.registration-workspace .seo-common-editor .field:has(textarea){margin-top:16px}
+.registration-workspace .seo-common-editor .field textarea{height:98.667px;min-height:98.667px;line-height:28px}
+.registration-workspace .seo-keyword-caption{margin:0;gap:8px;font-size:12.8px;line-height:29px}
+.registration-workspace .seo-option-names-body{padding:20px;gap:16px}
+.registration-workspace .seo-option-name{padding:8px 0 16px;gap:24px;align-items:flex-start}
+.registration-workspace .seo-option-name img,.registration-workspace .seo-option-name-placeholder{width:60px;height:60px;margin:0;border-radius:4px}
+.registration-workspace .seo-option-name label{gap:4px;font-size:12.8px;line-height:29px}
+.registration-workspace .seo-workspace-save{margin:24px 0 0}
+.registration-workspace .seo-workspace-save .btn{min-height:49.04px;border:1px solid #32bdea;border-radius:10px;padding:11.2px 16px;font-family:inherit;font-size:16px;font-weight:400;line-height:24px;color:#fff;background:#32bdea}
+.registration-workspace .seo-workspace-save .btn:disabled{opacity:.55}
+.registration-workspace .seo-workspace-tools{width:min(1120px,100%);margin:12px auto 0;font-size:12.8px;line-height:29px}
+.registration-workspace .seo-button-icon{width:16px;height:16px;vertical-align:-2px;margin-right:4px}
+@media(max-width:760px){
+  .seo-generation-inputs,.seo-content-columns{grid-template-columns:1fr;gap:20px}
+  .seo-generation-body{padding:18px 15px}
+  .registration-seo-heading>h2{margin:8px 0 20px}
+  .seo-generation-card>h3,.seo-common-editor>h3,.seo-option-names>h3{padding:17px 15px;font-size:16px}
+  .seo-option-names-body{padding:15px}
+  .registration-workspace .detail-body[data-registration-stage="SEO"]{padding:20px 14px}
+  .registration-workspace .registration-seo-heading,.registration-workspace .seo-generation-card,.registration-workspace .seo-content-columns{width:100%}
+  .registration-workspace .seo-generation-inputs,.registration-workspace .seo-content-columns{grid-template-columns:1fr;gap:20px}
+  .registration-workspace .seo-generation-card>h3,.registration-workspace .seo-common-editor>h3,.registration-workspace .seo-option-names>h3{min-height:0;padding:16px 15px}
+  .registration-workspace .seo-generation-body,.registration-workspace .seo-option-names-body{padding:18px 15px}
+  .registration-workspace .seo-common-editor>fieldset{padding:18px 15px!important}
+  .registration-workspace .seo-option-name{gap:16px}
+}
 .seo-button-icon{display:inline-block;flex:none;vertical-align:-1px;margin-right:5px}

@@ -37,10 +37,14 @@ export async function readWorkspaceImageSource(auth: WorkspaceImageIdentity, pro
     photo = seal.workspace.document.photos.find(photo => photo.id === photoId);
   if (!photo || photo.role !== 'body') throw changed();
   let sourceKey = photo.key, editorSource: FreeImageSource['editorSource'], editDocument: FreeImageEditDocument | undefined;
-  if (photo.key.startsWith(`${auth.owner}/free-image-workspace-`)) {
+  if (photo.key.startsWith(`${auth.owner}/free-image-`)) {
     if (!env.FILES) throw changed();
-    const saved = await readFreeImageEditRecord(env.FILES, auth.owner, auth.id, photo.key), prior = saved.record.source.workspaceTarget;
-    if (!prior || prior.optionId !== optionId || prior.photoId !== photoId || prior.profileId !== profileId
+    const saved = await readFreeImageEditRecord(env.FILES, auth.owner, auth.id, photo.key), prior = saved.record.source.workspaceTarget,
+      quotation = saved.record.source.quotationTarget;
+    const workspace = photo.key.startsWith(`${auth.owner}/free-image-workspace-`);
+    if ((workspace ? !prior || prior.optionId !== optionId || prior.photoId !== photoId || prior.profileId !== profileId
+      : !quotation || quotation.optionId !== optionId || quotation.profileId !== profileId || quotation.input !== 'detailImages'
+        || saved.record.source.role !== 'detail' || photo.originKey !== saved.record.source.sourceKey)
       || !same(saved.record.context, seal.before.view.categoryContext) || !same(saved.record.company, auth.company)) throw changed();
     sourceKey = saved.record.source.sourceKey; editDocument = saved.record.document;
     editorSource = { resultKey: photo.key, resultSha256: saved.record.result.sha256, documentSha256: saved.documentSha256 };

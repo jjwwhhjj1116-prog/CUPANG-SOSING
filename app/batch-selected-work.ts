@@ -13,6 +13,7 @@ import type { ProductOptionsResponse } from '@/app/product-options';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { quotationAiJobForScope, quotationReviewedProposalChanges, quotationSavedSourceChanges, quotationAiViewCurrent, type QuotationAiView, type QuotationAiJobView } from '@/app/quotation-ai-client';
 import { confirmQuotationFieldsSave } from '@/app/quotation-fields-confirmation';
+import { hasSelectedEmptyQuotationChoice } from '@/app/quotation-choice-state';
 import { processSelectedImageStage, createSelectedImageStageState, type SelectedImageStageState } from '@/app/batch-selected-image-work';
 import { runSelectedLabelWork } from '@/app/batch-selected-label-work';
 import { readRegistrationLayout } from '@/app/registration-layout';
@@ -322,8 +323,9 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     if(['completed','skipped'].includes(result.status))imageStates!.delete(stateKey);
     // A confirmed partial needs correction in this stage, but is not an
     // ambiguous write. Other selected stages can use the current saved source.
-    // Recovery stays a read-only action; scope changes still stop the run.
-    return{status:result.status==='completed'?'draft':result.status==='skipped'?'skipped':'blocked',message:result.messages.join(' '),uncertain:result.status==='uncertain',stop:result.recovered||result.sourceChanged};
+    // Recovery stays read-only. Pending workspace reconciliation must retain
+    // its exact product clock before later label/quotation writes advance it.
+    return{status:result.status==='completed'?'draft':result.status==='skipped'?'skipped':'blocked',message:result.messages.join(' '),uncertain:result.status==='uncertain',stop:result.recovered||result.sourceChanged||!!state.detailWorkspacePending};
   }
   async function sizeChart():Promise<Outcome>{
     const current=await product();
@@ -415,7 +417,7 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     const packaging=await once('packaging:'+view.inputFingerprint,()=>runSelectedPackagingWork(productId,{view,signal,fetcher,assertCurrent}),true);
     view=packaging.view;
     const missing=view.resolved.rows.filter(row=>row.included).flatMap(row=>view.resolved.schema.fields.filter(field=>field.required
-      &&(!row.fields[field.id]?.value.trim()||row.fields[field.id]?.validationIssues?.length)).map(field=>field.label));
+      &&(!row.fields[field.id]?.value.trim()&&!hasSelectedEmptyQuotationChoice(field,row.fields[field.id])||row.fields[field.id]?.validationIssues?.length)).map(field=>field.label));
     const incomplete=missing.length>0||packaging.status==='incomplete'||packaging.remaining>0;
     const knownMessage=knownChanges.length?'저장된 표시·옵션 정보 '+knownChanges.length+'개를 적용했습니다. ':'저장된 표시·옵션 정보는 기존 값을 유지했습니다. ';
     const message=(failed?'견적서 AI 실패: '+job!.error!.message+' '+knownMessage

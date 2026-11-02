@@ -40,6 +40,7 @@ function fixture(stage='detail',keys=['owner/source-a.png','owner/source-b.png']
   next.revision++;next.productVersion=new Date(Date.parse(view.productVersion)+1).toISOString();next.updatedAt=next.productVersion;next.imageKeys.push(key);next.overrides.options.option={...(next.overrides.options.option??{}),[stageField]:value};next.resolved.rows[0].fields[stageField]=field(value,'manual-option');if(stage==='main')next.resolved.rows[0].fields.wireMain=field(value,'manual-option');view=next;
   const result={...batch,view:plain(next),items:batch.items.map(row=>row.slotIndex===index?{...row,status:'applied',appliedKey:key}:row)};progress(result);return result;
  }};
+ deps.reconcileDetail=async()=> 'saved'; // Workspace CAS/sidecars are exercised by the real downstream fixture suite.
  return{...runtime,calls,canvases,controller,content,productOptions,plan,options,deps,region,get view(){return view;},set view(value){view=value;},scope(value){current=value;},run:()=>runtime.model.processSelectedImageStage('product',stage,options,deps)};
 }
 

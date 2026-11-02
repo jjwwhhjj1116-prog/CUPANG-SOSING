@@ -8,3 +8,8 @@
 .registration-board .registration-state[data-state="failed"]{background:#ef5b60}
 .registration-board .registration-state[data-state="running"]{background:#4195e8}
 .registration-board .registration-state[data-state="complete"]{background:#30b777}
+.registration-receipt-details{margin-top:5px;font-size:11px;white-space:normal;overflow-wrap:anywhere}
+.registration-receipt-details summary{cursor:pointer;color:#6c7890;font-size:10px}
+.registration-receipt-details summary:focus-visible{outline:2px solid #273951;outline-offset:2px}
+.registration-receipt-details>div{max-width:180px;text-align:left;padding-top:6px}
+.registration-receipt-details small,.registration-receipt-details time{display:block;white-space:normal;overflow-wrap:anywhere}
