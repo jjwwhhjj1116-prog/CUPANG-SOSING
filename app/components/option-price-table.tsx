@@ -109,7 +109,9 @@ export function OptionPriceTable({ rows, calculations, selected, focusedOptionId
       }
       setMeasuredWidths(previous => JSON.stringify(previous) === JSON.stringify(measured) ? previous : measured);
     };
-    const observer = new ResizeObserver(measure); observer.observe(table); measure();
+    const observer = new ResizeObserver(measure); observer.observe(table);
+    for(const header of table.querySelectorAll('thead th'))observer.observe(header);
+    measure();
     return () => observer.disconnect();
   }, [visibleColumns, layout]);
   useEffect(() => { if (columnMenu) menuRoot.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus(); }, [columnMenu]);

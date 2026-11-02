@@ -56,6 +56,9 @@ export function mainImageLibraryCurrent(library:MainImageLibrary,productId:strin
 export function mainImageLibraryKeys(tab:MainImageLibraryTab,view:QuotationFieldsView,library:MainImageLibrary|null):string[]{
  return library&&mainImageLibraryCurrent(library,library.productId,view)?[...library[tab]]:[];
 }
+export function initialMainImageLibraryTab(library:MainImageLibrary):MainImageLibraryTab{
+ return library.work.length?'work':library.options.length?'options':'main';
+}
 /** Two existing read-only endpoints. The content revision and the options
  * product clock both have to match the already verified quotation snapshot. */
 export async function readMainImageLibrary(productId:string,view:QuotationFieldsView,request:typeof fetch=fetch):Promise<MainImageLibrary>{

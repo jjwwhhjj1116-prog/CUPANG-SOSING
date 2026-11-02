@@ -14,6 +14,16 @@ const gallery=h=>visible(h.render()).find(node=>node.type==='div'&&typeof node.p
 const candidates=h=>visible(gallery(h)).filter(node=>node.type==='button').map(node=>node.props['aria-label']);
 const snapshot=f=>JSON.stringify({rows:['products','product_content','product_options','product_price_policy','product_quotation_fields','collection_context','collection_results'].map(table=>f.backend.sqlite.prepare('SELECT * FROM '+table).all()),objects:[...f.backend.objects].map(([key,data])=>[key,Buffer.from(data).toString('base64')])});
 
+test('untouched gallery preference is proven work, then options, then main without changing candidate metadata',async()=>{
+ const f=await fixture();try{
+  const helper=f.backend.load('app/main-image-library.ts');
+  for(const [work,options,main,expected]of [[['work'],['option'],['main'],'work'],[[],['option'],['main'],'options'],[[],[],['main'],'main'],[[],[],[],'main']]){
+   const library={work,options,main,detail:['detail']},before=JSON.stringify(library);
+   assert.equal(helper.initialMainImageLibraryTab(library),expected);assert.equal(JSON.stringify(library),before);
+  }
+ }finally{f.close();}
+});
+
 for(const company of companies)test(`client library separates immutable source roles, actual option/final choices and proven results (${company.code})`,async()=>{
  const f=await fixture(company);try{
   const helper=f.backend.load('app/main-image-library.ts'),view=await f.read(),base='/api/products/'+f.product.id,content=await json(await f.backend.route(base+'/content')),options=await json(await f.backend.route(base+'/options')),before=JSON.stringify({view,content,options}),group=helper.classifyMainImageLibrary(f.product.id,view,content,options);
@@ -37,7 +47,8 @@ test('missing, foreign, stale or malformed provenance is not reclassified as raw
 for(const company of companies)test(`source galleries can be browsed without writes; exact chosen SKU final image reaches XLSX (${company.code})`,async()=>{
  const f=await fixture(company,true),h=editor(f);try{
   await h.idle();const before=await f.read(),base='/api/products/'+f.product.id,body=await json(await f.backend.route(base+'/options')),frozen=snapshot(f);
-  assert.equal(h.button('메인 이미지 보기').props['aria-pressed'],true);assert.deepEqual(candidates(h),body.imageLibrary.main.map(key=>candidateLabel(before,key)));
+  assert.equal(h.button('옵션 이미지 보기').props['aria-pressed'],true);
+  await h.click('메인 이미지 보기');assert.deepEqual(candidates(h),body.imageLibrary.main.map(key=>candidateLabel(before,key)));
   await h.click('옵션 이미지 보기');assert.ok(candidates(h).includes(candidateLabel(before,f.source)));
   await h.click('작업 이미지 보기');assert.deepEqual(candidates(h),[]);assert.ok(visible(h.render()).some(node=>node.type==='img'&&node.props.alt==='최종 견적 대표이미지'&&node.props.src==='/api/files/'+f.key));
   await h.click('메인 이미지 보기');assert.deepEqual(candidates(h),body.imageLibrary.main.map(key=>candidateLabel(before,key)));assert.equal(snapshot(f),frozen);
@@ -48,25 +59,27 @@ for(const company of companies)test(`source galleries can be browsed without wri
  }finally{h.close();f.close();}
 });
 
-for(const company of companies)for(const emptyMain of [false,true])test(`main is the initial candidate tab even with work and option candidates${emptyMain?' and no original main images':''} (${company.code})`,async()=>{
+for(const company of companies)for(const emptyMain of [false,true])test(`proven work is the initial candidate tab ahead of option and main candidates${emptyMain?' even without original main images':''} (${company.code})`,async()=>{
  const f=await fixture(company),request=f.request;
  // Only the read-only synthetic gallery response differs. No source/product
  // row is changed to create an empty original gallery or processed result.
  f.request=async(url,init)=>{const response=await request(url,init);if(!url.endsWith('/options'))return response;const body=await response.json();body.imageLibrary.work=[f.nextKey];if(emptyMain)body.imageLibrary.main=[];return Response.json(body);};
  const h=editor(f);try{
   const frozen=snapshot(f);await h.idle();const before=await f.read(),expectedMain=emptyMain?[]:(await json(await f.backend.route('/api/products/'+f.product.id+'/options'))).imageLibrary.main;
-  assert.equal(h.button('메인 이미지 보기').props['aria-pressed'],true);assert.deepEqual(candidates(h),expectedMain.map(key=>candidateLabel(before,key)));
+  assert.equal(h.button('작업 이미지 보기').props['aria-pressed'],true);assert.deepEqual(candidates(h),[candidateLabel(before,f.nextKey)]);
+  assert.match(text(h.button('작업 이미지 보기')),/작업이미지/);assert.equal(text(visible(gallery(h)).find(node=>node.type==='span')),'작업됨');
   const preview=()=>visible(h.render()).find(node=>node.type==='img'&&node.props.alt==='최종 견적 대표이미지')?.props.src;
   const savedPreview=preview();assert.equal(savedPreview,'/api/files/'+f.key);
   await h.click('작업 이미지 보기');assert.deepEqual(candidates(h),[candidateLabel(before,f.nextKey)]);
   await h.click('옵션 이미지 보기');assert.ok(candidates(h).includes(candidateLabel(before,f.source)));
   await h.click('상세 이미지 보기');assert.equal(h.button('상세 이미지 보기').props['aria-pressed'],true);
   await h.click('메인 이미지 보기');assert.deepEqual(candidates(h),expectedMain.map(key=>candidateLabel(before,key)));
+  assert.ok(visible(gallery(h)).filter(node=>node.type==='span').every(node=>text(node)==='메인'));
   assert.equal(preview(),savedPreview);assert.equal(h.render().props['data-workspace-dirty'],false);assert.equal(snapshot(f),frozen);assert.equal(f.calls.filter(call=>call.method!=='GET').length,0);
  }finally{h.close();f.close();}
 });
 
-for(const focused of [false,true])test(`${focused?'focused':'global'} option changes reset gallery to main without reviving an earlier option tab or changing saved images`,async()=>{
+for(const focused of [false,true])test(`${focused?'focused':'global'} option changes derive a fresh default without reviving an earlier option tab or changing saved images`,async()=>{
  const f=await fixture(),h=editor(f);try{
   await h.idle();if(!focused){h.props.focusedOptionId=undefined;await h.idle();}
   const view=await f.read(),other=view.resolved.rows.find(row=>row.optionId&&row.optionId!==f.id).optionId,frozen=snapshot(f);
@@ -77,13 +90,25 @@ for(const focused of [false,true])test(`${focused?'focused':'global'} option cha
    for(let pass=0;pass<20&&h.button('메인 이미지 보기').props.disabled;pass++)await h.idle();
    assert.equal(h.button('메인 이미지 보기').props.disabled,false,'current source gallery metadata has completed');};
   await h.click('옵션 이미지 보기');const oldWork=h.button('작업 이미지 보기').props.onClick;
-  await select(other);assert.equal(h.button('메인 이미지 보기').props['aria-pressed'],true);oldWork();await h.idle();assert.equal(h.button('메인 이미지 보기').props['aria-pressed'],true);
-  await h.click('상세 이미지 보기');await select(f.id);assert.equal(h.button('메인 이미지 보기').props['aria-pressed'],true,'returning to an earlier option starts a new main-tab session');
-  oldWork();await h.idle();assert.equal(h.button('메인 이미지 보기').props['aria-pressed'],true,'retained callbacks from the earlier visit cannot restore its tab');
+  await select(other);assert.equal(h.button('옵션 이미지 보기').props['aria-pressed'],true);oldWork();await h.idle();assert.equal(h.button('옵션 이미지 보기').props['aria-pressed'],true);
+  await h.click('상세 이미지 보기');await select(f.id);assert.equal(h.button('옵션 이미지 보기').props['aria-pressed'],true,'returning to an earlier option starts a new untouched-tab session');
+  oldWork();await h.idle();assert.equal(h.button('옵션 이미지 보기').props['aria-pressed'],true,'retained callbacks from the earlier visit cannot restore its tab');
   await h.click('작업 이미지 보기');assert.equal(h.button('작업 이미지 보기').props['aria-pressed'],true,'the current option still allows explicit tab browsing');
   assert.ok(visible(h.render()).some(node=>node.type==='img'&&node.props.alt==='최종 견적 대표이미지'&&node.props.src==='/api/files/'+f.key));
   assert.equal(h.render().props['data-workspace-dirty'],false);assert.equal(snapshot(f),frozen);assert.equal(f.calls.filter(call=>call.method!=='GET').length,0);
  }finally{h.close();f.close();}
+});
+
+test('an explicit tab chosen before metadata arrives survives its completion and later read-only refresh',async()=>{
+ const f=await fixture(),request=f.request;let release,held=true;
+ const pending=new Promise(resolve=>{release=resolve;});
+ f.request=async(url,init)=>{const response=await request(url,init);if(held&&url.endsWith('/content'))await pending;return response;};
+ const h=editor(f);try{
+  await h.idle();const before=snapshot(f);await h.click('작업 이미지 보기');held=false;release();await h.idle();
+  assert.equal(h.button('작업 이미지 보기').props['aria-pressed'],true);
+  h.props.refreshToken='refresh';await h.idle();assert.equal(h.button('작업 이미지 보기').props['aria-pressed'],true);
+  assert.equal(snapshot(f),before);assert.equal(f.calls.some(call=>call.method!=='GET'),false);
+ }finally{release();h.close();f.close();}
 });
 
 for(const failure of ['network','clock'])test(`optional ${failure} metadata leaves images unclassified and preserves explicit final-image edits`,async()=>{

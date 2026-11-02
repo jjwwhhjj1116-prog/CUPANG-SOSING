@@ -1,11 +1,11 @@
 'use client';
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
-type Props = { children: ReactNode; open: boolean; identity: string; onClose: () => void; canClose: () => boolean; blocked?: boolean; modal?: boolean };
+type Props = { children: ReactNode; open: boolean; identity: string; onClose: () => void; canClose: () => boolean; blocked?: boolean; modal?: boolean; embedded?: boolean };
 
 /** Keep the editor at the same React/DOM position when changing its presentation.
  * The existing editor owns drafts, pending writes, recovery and source identity. */
-export function DetailImageEditDialog({ children, open, identity, onClose, canClose, blocked = false, modal = true }: Props) {
+export function DetailImageEditDialog({ children, open, identity, onClose, canClose, blocked = false, modal = true, embedded = false }: Props) {
   const visible = modal && open;
   const [clock, setClock] = useState(() => ({ identity, visible, token: {} }));
   if (clock.identity !== identity || clock.visible !== visible) setClock({ identity, visible, token: {} });
@@ -66,12 +66,37 @@ export function DetailImageEditDialog({ children, open, identity, onClose, canCl
     // focusin event. Repair that transition without stealing usable editor focus.
     if (!dialog.contains(focused) || focused instanceof HTMLElement && focused.hasAttribute('disabled')) dialog.focus({ preventScroll: true });
   }, [visible, token, blocked]);
+  useLayoutEffect(() => {
+    if (!embedded || !visible || !token || typeof window === 'undefined' || !layer.current) return;
+    const root = layer.current, workspace = root.closest<HTMLElement>('.registration-workspace'), canvas = workspace?.querySelector<HTMLElement>('.main-image-current'), body = root.closest<HTMLElement>('.detail-body');
+    if (!workspace || !canvas) return;
+    const properties = ['left', 'top', 'width', 'height'] as const;
+    const update = () => {
+      if (live.current.token !== token || !live.current.visible) return;
+      const rectangle = canvas.getBoundingClientRect(), clip = body?.getBoundingClientRect() ?? workspace.getBoundingClientRect();
+      const left = Math.max(0, rectangle.left, clip.left), top = Math.max(0, rectangle.top, clip.top),
+        right = Math.min(window.innerWidth, rectangle.right, clip.right), bottom = Math.min(window.innerHeight, rectangle.bottom, clip.bottom);
+      if (window.innerWidth <= 760 || right <= left || bottom <= top) { root.removeAttribute('data-detail-image-edit-embedded'); return; }
+      const bounds = { left, top, width: right - left, height: bottom - top };
+      for (const name of properties) root.style.setProperty(`--detail-image-edit-${name}`, `${bounds[name]}px`);
+      root.setAttribute('data-detail-image-edit-embedded', 'true');
+    };
+    update();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
+    observer?.observe(workspace); observer?.observe(canvas); if (body) observer?.observe(body);
+    window.addEventListener('resize', update); document.addEventListener('scroll', update, true);
+    return () => {
+      observer?.disconnect(); window.removeEventListener('resize', update); document.removeEventListener('scroll', update, true);
+      root.removeAttribute('data-detail-image-edit-embedded');
+      for (const name of properties) root.style.removeProperty(`--detail-image-edit-${name}`);
+    };
+  }, [embedded, visible, token]);
   return <div ref={layer} hidden={modal && !open} data-detail-image-edit-layer={visible ? 'true' : undefined}
     data-free-image-editor="true" data-workspace-saving={visible ? 'true' : undefined}
     onMouseDown={visible ? event => { event.stopPropagation(); if (event.target === event.currentTarget) requestClose(); } : undefined}
     onClick={visible ? event => event.stopPropagation() : undefined}
     style={visible ? { position: 'fixed', inset: 0, zIndex: 1700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, background: 'rgba(15,23,42,.65)' } : undefined}>
-    <div ref={surface} role={visible ? 'dialog' : undefined} aria-modal={visible ? true : undefined} aria-label={visible ? '이미지 편집' : undefined} tabIndex={visible ? -1 : undefined}
+    <div ref={surface} className="detail-image-edit-surface" role={visible ? 'dialog' : undefined} aria-modal={visible ? true : undefined} aria-label={visible ? '이미지 편집' : undefined} tabIndex={visible ? -1 : undefined}
       style={visible ? { width: 'min(1140px,100%)', maxHeight: 'calc(100dvh - 40px)', overflowY: 'auto', overscrollBehavior: 'contain', borderRadius: 8, background: '#fff', boxShadow: '0 18px 60px #0f172a44' } : undefined}>
       <header hidden={!visible} style={{ position: 'sticky', top: 0, zIndex: 2, display: visible ? 'flex' : 'none', justifyContent: 'space-between', alignItems: 'center', padding: '14px 20px', borderBottom: '1px solid #e5e7eb', background: '#fff' }}>
         <h3 style={{ margin: 0 }}>이미지 편집</h3><button ref={closeButton} type="button" className="icon-close" aria-label="이미지 편집 닫기" disabled={blocked} onClick={requestClose}>×</button>

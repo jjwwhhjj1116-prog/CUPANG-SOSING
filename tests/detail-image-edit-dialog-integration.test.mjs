@@ -29,6 +29,18 @@ function dashboard() {
 }
 const target = { kind: 'quotation', profileId: 'profile', optionId: 'red', input: 'detailImages', fieldKey: 'detail', slotIndex: 0, revision: 3, inputFingerprint: 'a'.repeat(64), optionRevision: 2, value: 'owner/a.png' };
 
+test('only focused main-image editing embeds the same retained editor and hides its redundant generic entry',()=>{
+ const h=dashboard();try{
+  const editorType=h.editor().type;
+  h.render({tab:'대표 이미지'});assert.equal(h.dialog().props.embedded,true);
+  assert.equal(nodes(h.render()).find(node=>node.props?.className==='image-stage-editor-entry').props.hidden,true);
+  h.render({tab:'추가 이미지'});assert.equal(h.dialog().props.embedded,false);assert.equal(h.editor().type,editorType);
+  h.render({tab:'상세 이미지'});assert.equal(h.dialog().props.embedded,false);assert.equal(h.editor().type,editorType);
+  h.render({tab:'대표 이미지',focusedOptionId:undefined});assert.equal(h.dialog().props.embedded,false);assert.equal(nodes(h.render()).find(node=>Object.hasOwn(node.props??{},'onCloseGuard')).type,editorType);
+  assert.equal(nodes(h.render()).find(node=>node.props?.className==='image-stage-editor-entry').props.hidden,false);assert.equal(h.requests,0);
+ }finally{h.close();}
+});
+
 for (const [tab,role] of [['대표 이미지','main'],['추가 이미지','additional'],['상세 이미지','detail']]) test(`${tab}: generic entry explicitly carries its stage role without choosing an original or quotation slot`, () => {
   const h=dashboard();try{
     h.render({tab});h.editor().props.onCloseGuard(()=>true);h.genericEntry().props.onClick();h.render();

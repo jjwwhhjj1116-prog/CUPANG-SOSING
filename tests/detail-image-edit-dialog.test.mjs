@@ -4,15 +4,19 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 const nodes = tree => Array.isArray(tree) ? tree.flatMap(nodes) : tree && typeof tree === 'object' ? [tree, ...nodes(tree.props?.children)] : [];
-function fixture() {
+function fixture({ geometry = false } = {}) {
   const listeners = new Map(), doc = { activeElement: null, addEventListener(name, fn) { const list = listeners.get(name) ?? new Set(); list.add(fn); listeners.set(name, list); }, removeEventListener(name, fn) { listeners.get(name)?.delete(fn); } };
   class Element {
-    constructor(tag = 'div', props = {}) { this.tag = tag; this.props = props; this.children = []; this.parentElement = null; this.inert = false; this.style = {}; this.isConnected = true; }
+    constructor(tag = 'div', props = {}) { this.tag = tag; this.props = props; this.children = []; this.parentElement = null; this.inert = false; this.style = { setProperty(name,value){this[name]=value;},removeProperty(name){delete this[name];} }; this.isConnected = true; this.attributes = {}; }
     append(...children) { for (const child of children) { child.parentElement = this; this.children.push(child); } }
     get tabIndex() { return this.props.tabIndex ?? (['button', 'input', 'select', 'textarea', 'summary', 'a'].includes(this.tag) ? 0 : -1); }
     get disabled() { return !!this.props.disabled; }
     hasAttribute(name) { return name === 'disabled' ? this.disabled : name === 'hidden' ? !!this.props.hidden : name === 'inert' ? this.inert : this.props[name] !== undefined; }
-    closest() { return this.inert || this.props.hidden ? this : this.parentElement?.closest() ?? null; }
+    closest(selector) { if(selector?.startsWith('.'))return this.props.className?.split(' ').includes(selector.slice(1))?this:this.parentElement?.closest(selector)??null;return this.inert || this.props.hidden ? this : this.parentElement?.closest(selector) ?? null; }
+    querySelector(selector) { return this.children.flatMap(child=>[child,...child.descendants()]).find(child=>child.props.className?.split(' ').includes(selector.slice(1)))??null; }
+    descendants(){return this.children.flatMap(child=>[child,...child.descendants()]);}
+    getBoundingClientRect(){return this.bounds;}
+    setAttribute(name,value){this.attributes[name]=value;}removeAttribute(name){delete this.attributes[name];}
     getClientRects() { return this.closest() ? [] : [{}]; }
     contains(target) { return this === target || this.children.some(child => child.contains(target)); }
     querySelectorAll() { return this.children.flatMap(child => [child, ...child.querySelectorAll()]).filter(child => ['button', 'a', 'input', 'select', 'textarea', 'summary'].includes(child.tag) || child.props.tabIndex !== undefined || child.props.contentEditable === 'true'); }
@@ -20,12 +24,15 @@ function fixture() {
   }
   const body = new Element('body'), nav = new Element('nav'), holder = new Element(), sibling = new Element(), oldInert = new Element(), trigger = new Element('button');
   doc.body = body; oldInert.inert = true; nav.append(trigger); body.append(nav, holder, oldInert); holder.append(sibling); trigger.focus();
+  const workspace=new Element('aside',{className:'registration-workspace'}),canvas=new Element('section',{className:'main-image-current'}),windowListeners=new Map();let resize;
+  const window={innerWidth:1280,innerHeight:900,addEventListener(name,fn){windowListeners.set(name,fn);},removeEventListener(name){windowListeners.delete(name);}};
+  if(geometry){body.children=[];body.append(workspace);workspace.append(nav,holder,oldInert);holder.props.className='detail-body';workspace.bounds={left:18,top:18,right:1218,bottom:882};holder.bounds={left:18,top:140,right:1218,bottom:820};canvas.bounds={left:318,top:152,right:1198,bottom:912};holder.append(canvas);}
   const slots = [], layouts = [], dom = new Map(); let cursor = 0, changed = false, count = 0, allowed = true;
   const hooks = { useState(initial) { const i = cursor++; if (!(i in slots)) slots[i] = { value: typeof initial === 'function' ? initial() : initial }; return [slots[i].value, value => { slots[i].value = typeof value === 'function' ? value(slots[i].value) : value; changed = true; }]; },
     useRef(value) { const i = cursor++; return slots[i] ?? (slots[i] = { current: value }); }, useLayoutEffect(fn, deps) { const i = cursor++, before = slots[i]; if (!before || deps.some((value, index) => !Object.is(value, before.deps[index]))) { const next = { deps }; slots[i] = next; layouts.push(() => { before?.cleanup?.(); next.cleanup = fn(); }); } } };
   const exports = {}, jsx = (type, props) => ({ type, props });
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/detail-image-edit-dialog.tsx', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
-    { exports, document: doc, HTMLElement: Element, require(name) { if (name === 'react') return hooks; if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx }; throw Error(name); } });
+    { exports, document: doc, HTMLElement: Element,...(geometry?{window,ResizeObserver:class{constructor(fn){resize=fn;}observe(){}disconnect(){resize=undefined;}}}:{}), require(name) { if (name === 'react') return hooks; if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx }; throw Error(name); } });
   const child = { type: 'input', props: { 'aria-label': 'retained editor', value: 'draft' } }, tail = { type: 'button', props: { children: 'last control' } };
   let props = { children: [child, tail], open: false, modal: true, identity: 'product:option:version1', canClose: () => allowed, onClose: () => count++ }, tree;
   function build(node, at = 'root') {
@@ -39,14 +46,32 @@ function fixture() {
   }
   function render(patch = {}) {
     props = { ...props, ...patch }; let turns = 0;
-    do { changed = false; cursor = 0; tree = exports.DetailImageEditDialog(props); const root = build(tree); holder.children = [sibling]; holder.append(root); layouts.splice(0).forEach(fn => fn()); if (++turns > 5) throw Error('render loop'); } while (changed);
+    do { changed = false; cursor = 0; tree = exports.DetailImageEditDialog(props); const root = build(tree); holder.children = geometry?[sibling,canvas]:[sibling]; holder.append(root); layouts.splice(0).forEach(fn => fn()); if (++turns > 5) throw Error('render loop'); } while (changed);
     return tree;
   }
   const control = label => nodes(tree).find(node => node.props?.['aria-label'] === label), element = label => [...dom.values()].find(item => item.props?.['aria-label'] === label);
   function event(name, extra = {}) { const value = { key: '', target: doc.activeElement, prevented: false, stopped: false, preventDefault() { this.prevented = true; }, stopPropagation() { this.stopped = true; }, ...extra }; for (const fn of listeners.get(name) ?? []) fn(value); return value; }
   render();
-  return { render, control, element, event, doc, nav, sibling, oldInert, trigger, child, get tree() { return tree; }, get closes() { return count; }, setAllowed(value) { allowed = value; }, close() { for (const slot of slots) slot?.cleanup?.(); }, listenerCount: () => [...listeners.values()].reduce((sum, list) => sum + list.size, 0) };
+  return { render, control, element, event, doc, nav, sibling, oldInert, trigger, child,canvas,window,resize:()=>resize?.(),windowListeners,layer:()=>dom.get('root'),get tree() { return tree; }, get closes() { return count; }, setAllowed(value) { allowed = value; }, close() { for (const slot of slots) slot?.cleanup?.(); }, listenerCount: () => [...listeners.values()].reduce((sum, list) => sum + list.size, 0) };
 }
+
+test('embedded main editor follows the visible right canvas while retaining its editor, focus and close guards',()=>{
+ const h=fixture({geometry:true}),input=h.element('retained editor');
+ try{
+  h.render({open:true,embedded:true});const root=h.layer();
+  assert.equal(root.attributes['data-detail-image-edit-embedded'],'true');
+  assert.equal(root.style['--detail-image-edit-left'],'318px');assert.equal(root.style['--detail-image-edit-top'],'152px');
+  assert.equal(root.style['--detail-image-edit-width'],'880px');assert.equal(root.style['--detail-image-edit-height'],'668px');
+  assert.equal(h.element('retained editor'),input);assert.equal(h.nav.inert,true);assert.equal(h.control('이미지 편집').props['aria-modal'],true);
+  const oldClose=h.control('이미지 편집 닫기').props.onClick;h.render({identity:'product:option:version2'});oldClose();assert.equal(h.closes,0);assert.equal(h.element('retained editor'),input);
+  input.focus();h.canvas.bounds.right=1098;h.resize();assert.equal(root.style['--detail-image-edit-width'],'780px');assert.equal(h.doc.activeElement,input);
+  h.render({blocked:true});h.event('keydown',{key:'Escape'});assert.equal(h.closes,0);assert.equal(h.element('retained editor'),input);
+  h.render({blocked:false,embedded:false});assert.equal(root.attributes['data-detail-image-edit-embedded'],undefined);assert.equal(h.element('retained editor'),input);assert.equal(h.nav.inert,true);
+  h.render({embedded:true});h.window.innerWidth=760;h.windowListeners.get('resize')?.();assert.equal(root.attributes['data-detail-image-edit-embedded'],undefined);assert.equal(h.element('retained editor'),input);
+  h.window.innerWidth=1280;h.windowListeners.get('resize')?.();assert.equal(root.attributes['data-detail-image-edit-embedded'],'true');
+  h.render({open:false});assert.equal(h.element('retained editor'),input);assert.equal(h.listenerCount(),0);assert.equal(h.windowListeners.size,0);assert.equal(h.nav.inert,false);assert.equal(h.doc.activeElement,h.trigger);
+ }finally{h.close();}
+});
 
 test('Stage5 presentation retains the same editor node, traps focus and restores navigation and the exact trigger', () => {
   const h = fixture(), input = h.element('retained editor');

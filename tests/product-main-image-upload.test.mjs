@@ -44,6 +44,28 @@ function assertPreserved(f,after){
  assert.deepEqual(plain(after.automatic),f.before.quote.automatic);
  for(const[key,value]of f.before.files)assert.equal(Buffer.from(f.objects.get(key)).toString('base64'),value,key);
 }
+
+test('Stage3 compact upload keeps one accessible trigger and exposes uncertain connection recovery',async()=>{
+ const f=await fixture(),ui=f.mainUi();try{
+  const before=ui.render(),inputs=nodes(before).filter(node=>node.type==='input'&&node.props.type==='file'),trigger=nodes(before).find(node=>node.type==='label'&&node.props.title==='이미지 업로드');
+  assert.match(before.props.className,/product-image-upload-queue--compact/);assert.equal(inputs.length,1);assert.ok(trigger);assert.equal(trigger.props['aria-label'],'이미지 업로드');
+  assert.equal(inputs[0].props['aria-label'],'대표 이미지 파일 선택');assert.equal(inputs[0].props.multiple,false);assert.equal(inputs[0].props.disabled,false);
+  assert.ok(nodes(trigger).some(node=>node.type==='svg'&&node.props['aria-hidden']==='true'));assert.doesNotMatch(text(before),/＋ 이미지 업로드|업로드하면 바로 저장됩니다/);assert.equal(f.calls.length,0);
+  let lose=true;f.controls.response=(call,response)=>{if(lose&&call.url.includes('/image-upload-link')){lose=false;return Response.json({error:'lost compact main ACK'},{status:503});}return response;};
+  await ui.select([imageFile('compact-main.png')]);assert.equal(ui.saved,0);assert.equal(writes(f).length,2);assert.match(text(ui.render()),/연결 결과 확인 필요/);
+  const recovery=ui.button('compact-main.png 저장 결과 확인');assert.equal(Boolean(recovery.props.hidden),false);assert.equal(Boolean(recovery.props.disabled),false);
+  const count=f.calls.length;await ui.click('compact-main.png 저장 결과 확인');assert.equal(ui.saved,1);assert.ok(f.calls.slice(count).every(call=>call.method==='GET'));assert.equal(writes(f).length,2);assertPreserved(f,await f.quote());
+ }finally{ui.close();f.close();}
+});
+
+test('regular upload presentation remains available outside the immediate main header',async()=>{
+ const f=await fixture();try{
+  for(const props of [{stage:'additional'},{stage:'main',immediate:false,target:{optionId:f.first,profileId:f.profile.id}},{stage:'main',immediate:true,compact:false,target:{optionId:f.first,profileId:f.profile.id}}]){
+   const ui=f.ui(props);try{const tree=ui.render(),input=nodes(tree).find(node=>node.type==='input'&&node.props.type==='file');assert.doesNotMatch(tree.props.className,/--compact/);assert.match(text(tree),/＋ 이미지 업로드/);assert.equal(input.props.multiple,props.stage!=='main');assert.equal(f.calls.length,0);}finally{ui.close();}
+  }
+ }finally{f.close();}
+});
+
 for(const company of priceTableCompanies){
  test(`Stage3 single upload replaces exact selected canonical/wire main reference once (${company.code})`,async()=>{
   const f=await fixture(company),ui=f.mainUi();try{

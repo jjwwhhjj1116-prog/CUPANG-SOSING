@@ -4,7 +4,7 @@ import {useEffect,useLayoutEffect,useRef,useState,type ReactNode} from 'react';
 import {mainImageValue,readMainImageView,saveMainImageView,verifyMainImageRefresh,verifyMainImageSave,verifyMainImageView,MainImageSaveError} from '@/app/quotation-main-image';
 import type {QuotationFieldsView} from '@/app/quotation-schema';
 import type {FreeImageQuotationRequest} from '@/app/free-image-translation-client';
-import {readMainImageLibrary,mainImageLibraryCurrent,mainImageLibraryKeys,type MainImageLibrary,type MainImageLibraryTab} from '@/app/main-image-library';
+import {readMainImageLibrary,mainImageLibraryCurrent,mainImageLibraryKeys,initialMainImageLibraryTab,type MainImageLibrary,type MainImageLibraryTab} from '@/app/main-image-library';
 import {ImageFullscreenPreview} from '@/app/components/image-fullscreen-preview';
 type Props={productId:string;version?:string;profileId?:string;refreshToken?:string;focusedOptionId?:string;onSaved?:()=>void;translationEnabled?:boolean;disabled?:boolean;saveOnSelect?:boolean;processingConfigured?:boolean|null;uploadControl?:ReactNode;
  onTranslate?:(sourceKey:string,role:'main',sourceLanguage:'zh'|'en',quotationTarget:FreeImageQuotationRequest)=>void;
@@ -22,8 +22,8 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
  useLayoutEffect(()=>{mounted.current=true;liveScope.current=scope;liveSource.current=sourceKey;if(liveDraft.current.scope!==scope)liveDraft.current={scope,optionId:'',value:undefined};return()=>{mounted.current=false;request.current?.abort();request.current=null;libraryRequest.current?.abort();libraryRequest.current=null;};},[scope,sourceKey]);
  const base=saved?.scope===scope?saved:null,rows=base?.view.resolved.rows.filter(row=>row.optionId!==null)??[],chosen=selection.scope===scope?selection.id:'',id=focusedOptionId!==undefined?focusedOptionId:chosen||(rows.find(row=>row.included)?.optionId??rows[0]?.optionId??'');
  const tabScope=JSON.stringify([scope,id]);
- const [libraryTab,setLibraryTab]=useState(()=>({scope:tabScope,tab:'main' as MainImageLibraryTab,token:{}}));
- if(libraryTab.scope!==tabScope)setLibraryTab({scope:tabScope,tab:'main',token:{}});
+ const [libraryTab,setLibraryTab]=useState(()=>({scope:tabScope,tab:null as MainImageLibraryTab|null,token:{}}));
+ if(libraryTab.scope!==tabScope)setLibraryTab({scope:tabScope,tab:null,token:{}});
  const tabGeneration=libraryTab.scope===tabScope?libraryTab.token:null,liveTabGeneration=useRef(tabGeneration);
  useLayoutEffect(()=>{liveTabGeneration.current=tabGeneration;},[tabGeneration]);
  const liveOption=useRef(id),liveTranslationEnabled=useRef(translationEnabled),liveDisabled=useRef(disabled),liveSaveOnSelect=useRef(saveOnSelect),liveProcessingConfigured=useRef(processingConfigured);
@@ -83,7 +83,7 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
  function closePreview(target:Preview){if(previewEpoch.current!==previewGeneration||livePreview.current!==target)return;livePreview.current=null;setPreview(null);}
  const libraryState=library?.scope===scope&&library.sourceKey===sourceKey?library:null;
  const groups=base&&libraryState?.value&&mainImageLibraryCurrent(libraryState.value,productId,base.view)?libraryState.value:null;
- const tab=groups?(libraryTab.scope===tabScope?libraryTab.tab:'main'):'work';
+ const tab=groups?(libraryTab.scope===tabScope?libraryTab.tab:null)??initialMainImageLibraryTab(groups):'work';
  const visiblePool=base?mainImageLibraryKeys(tab,base.view,groups):[];
  const libraryTabs=[['work','작업 이미지'],['main','메인 이미지'],['options','옵션 이미지'],['detail','상세 이미지']] as const;
  function translateSelected(key:string,sourceLanguage:'zh'|'en',manual=false,process=false){
@@ -98,30 +98,34 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
    if(process)onProcess?.(key,'main',quotationTarget,before.view);else if(manual)onEdit?.(key,'main',quotationTarget);else onTranslate?.(key,'main',sourceLanguage,quotationTarget);
   }catch(cause){setError(cause instanceof Error?cause.message:'번역할 최종 대표이미지 연결을 확인해주세요.');}
  }
- function candidate(key:string){const index=pool.indexOf(key);return <button type="button" key={key} aria-label={`최종 대표이미지 ${index+1} 선택`} aria-pressed={selected.length===1&&selected[0]===key} disabled={disabled||!valid||busy||uncertain||saveOnSelect&&dirty} onClick={()=>edit(key)}><img src={url(key)} alt={`저장 이미지 ${index+1}`} width={100} height={100} loading="lazy"/><span>이미지 {index+1}</span></button>;}
+ function candidate(key:string,kind?:MainImageLibraryTab){const index=pool.indexOf(key),label=kind?{work:'작업됨',main:'메인',options:'옵션',detail:'상세'}[kind]:`이미지 ${index+1}`;return <button type="button" key={key} aria-label={`최종 대표이미지 ${index+1} 선택`} aria-pressed={selected.length===1&&selected[0]===key} disabled={disabled||!valid||busy||uncertain||saveOnSelect&&dirty} onClick={()=>edit(key)}><img src={url(key)} alt={`저장 이미지 ${index+1}`} width={100} height={100} loading="lazy"/><span>{label}</span></button>;}
  return <section className="panel-stack option-main-image-editor" aria-label="옵션 최종 견적 대표이미지 편집" data-quotation-source-step="대표 이미지" data-workspace-dirty={dirty} data-workspace-saving={busy}>
   <h3>최종 견적 대표이미지</h3><p>이 옵션의 견적서와 상품 표에 표시할 대표이미지를 선택합니다.{saveOnSelect&&' 선택·비우기·복원하면 바로 저장됩니다.'}</p>{error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}{dirty&&!fresh&&<p role="status">다른 저장값이 변경되었습니다. 이미지 선택은 유지했습니다.</p>}
   <label className="field" data-focused-option={focusedOptionId!==undefined}><span>편집할 옵션</span><select aria-label="최종 대표이미지 옵션" value={id} disabled={disabled||busy||dirty||focusedOptionId!==undefined} onChange={event=>{if(focusedOptionId===undefined&&currentOption()&&!liveDisabled.current&&!request.current&&!(liveDraft.current.scope===scope&&liveDraft.current.value!==undefined))setSelection({scope,id:event.target.value});}}><option value="">옵션 선택</option>{rows.filter(row=>focusedOptionId===undefined||row.optionId===focusedOptionId).map(row=><option key={row.optionId} value={row.optionId!}>{row.optionLabel}{row.included?'':' · 견적 제외'}</option>)}</select></label>
   {!base&&!error&&<p role="status">대표이미지를 불러오는 중…</p>}{base&&!valid&&<p role="alert">선택한 옵션이 현재 견적서에 없습니다.</p>}
   <div className="image-edit-workspace main-image-editor-workspace">
    <aside className="image-edit-library main-image-library" aria-label="대표이미지 후보">
-    <h4>이미지 선택</h4>
-    <nav aria-label="대표이미지 후보 종류" className="main-image-library-tabs">{libraryTabs.map(([name,label])=><button type="button" className={`btn ${tab===name?'primary':'ghost'}`} key={name} aria-label={`${label} 보기`} aria-pressed={tab===name} disabled={disabled||busy||name!=='work'&&!groups} onClick={()=>{if(tabGeneration&&liveTabGeneration.current===tabGeneration&&currentOption()&&!liveDisabled.current&&!request.current&&(name==='work'||groups))setLibraryTab(previous=>previous.scope===tabScope&&previous.token===tabGeneration?{...previous,tab:name}:previous);}}>{label.replace(' 이미지','')} <small>{groups?.[name].length??'미확인'}</small></button>)}</nav>
-    {uploadControl&&<div className="image-library-upload">{uploadControl}</div>}
+    <div className="main-image-library-header"><h4>이미지 선택</h4>{uploadControl&&<div className="main-image-header-upload">{uploadControl}</div>}</div>
+    <nav aria-label="대표이미지 후보 종류" className="main-image-library-tabs">{libraryTabs.map(([name,label])=><button type="button" className={`btn ${tab===name?'primary':'ghost'}`} key={name} aria-label={`${label} 보기`} aria-pressed={tab===name} disabled={disabled||busy||name!=='work'&&!groups} onClick={()=>{if(tabGeneration&&liveTabGeneration.current===tabGeneration&&currentOption()&&!liveDisabled.current&&!request.current&&(name==='work'||groups))setLibraryTab(previous=>previous.scope===tabScope&&previous.token===tabGeneration?{...previous,tab:name}:previous);}}>{label.replace(' ','')} <small>{groups?.[name].length??'미확인'}</small></button>)}</nav>
     <div className="main-image-library-candidates">
     {libraryState?.error&&<p role="status">{libraryState.error}</p>}
-    <div className="image-asset-grid main-image-library-grid" aria-label={`${libraryTabs.find(([name])=>name===tab)?.[1]} 후보`}>{visiblePool.map(candidate)}</div>
+    <div className="image-asset-grid main-image-library-grid" aria-label={`${libraryTabs.find(([name])=>name===tab)?.[1]} 후보`}>{visiblePool.map(key=>candidate(key,tab))}</div>
     {base&&!visiblePool.length&&<p>이 종류에 연결된 이미지가 없습니다.</p>}
     <small>탭을 바꿔도 현재 선택은 유지됩니다. 직접 올린 사진은 아래 전체 저장 이미지에서 선택하세요.</small>
-    <details className="main-image-all-saved"><summary>전체 저장 이미지 · {pool.length}개</summary><p>직접 업로드한 사진을 포함한 저장 목록입니다.</p><div className="image-asset-grid main-image-library-grid">{pool.map(candidate)}</div></details>
+    <details className="main-image-all-saved"><summary>전체 저장 이미지 · {pool.length}개</summary><p>직접 업로드한 사진을 포함한 저장 목록입니다.</p><div className="image-asset-grid main-image-library-grid">{pool.map(key=>candidate(key))}</div></details>
     </div>
     <section className="main-image-current-summary" aria-label="현재 메인 이미지">
-     <h4>현재 메인 이미지</h4>
-     {selected.length===1&&pool.includes(selected[0])?<>
+     <div className="main-image-current-preview-card"><h4>현재 메인 이미지</h4>
+     {selected.length===1&&pool.includes(selected[0])?
       <button type="button" className="main-image-current-thumbnail" aria-label="현재 메인 이미지 크게 보기" aria-haspopup="dialog" disabled={!valid||!fresh||disabled} onClick={()=>openPreview(selected[0])}><img src={url(selected[0])} alt="현재 메인 이미지 작은 미리보기" width={160} height={160}/></button>
-      {onProcess&&<button type="button" className="btn primary" aria-label="최종 대표이미지 AI 처리" disabled={processingConfigured!==true||disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh} onClick={()=>translateSelected(selected[0],'zh',false,true)}>{processingConfigured===true?'AI 이미지 생성':processingConfigured===false?'이미지 생성 설정 필요':'이미지 생성 설정 확인 중'}</button>}
-      {onTranslate&&<div role="group" className="main-image-current-translation" aria-label="최종 견적 대표이미지 번역"><button type="button" className="btn ghost" aria-label="최종 대표이미지 중국어 한국어 번역" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh} onClick={()=>translateSelected(selected[0],'zh')}>중국어 → 한국어</button><details className="main-image-translation-tools"><summary>영어 번역</summary><button type="button" className="btn ghost" aria-label="최종 대표이미지 영어 한국어 번역" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh} onClick={()=>translateSelected(selected[0],'en')}>영어 → 한국어</button></details></div>}
-     </>:<small>{selected.length?'대표 이미지 연결을 확인해주세요.':'대표 이미지를 선택해주세요.'}</small>}
+      :<small>{selected.length?'대표 이미지 연결을 확인해주세요.':'대표 이미지를 선택해주세요.'}</small>}</div>
+     {selected.length===1&&pool.includes(selected[0])&&<>
+      {onTranslate&&<button type="button" className="btn primary" aria-label="최종 대표이미지 중국어 한국어 번역" title="중국어 → 한국어 번역" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh} onClick={()=>translateSelected(selected[0],'zh')}>AI 처리</button>}
+      {(onProcess||onTranslate)&&<details className="main-image-translation-tools"><summary>추가 도구</summary><div role="group" className="main-image-current-translation" aria-label="최종 견적 대표이미지 추가 도구">
+       {onProcess&&<button type="button" className="btn ghost" aria-label="최종 대표이미지 AI 처리" disabled={processingConfigured!==true||disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh} onClick={()=>translateSelected(selected[0],'zh',false,true)}>{processingConfigured===true?'AI 이미지 생성':processingConfigured===false?'이미지 생성 설정 필요':'이미지 생성 설정 확인 중'}</button>}
+       {onTranslate&&<button type="button" className="btn ghost" aria-label="최종 대표이미지 영어 한국어 번역" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh} onClick={()=>translateSelected(selected[0],'en')}>영어 → 한국어</button>}
+      </div></details>}
+     </>}
     </section>
    </aside>
    <section className="image-edit-canvas main-image-current" aria-label="현재 대표이미지 미리보기">
