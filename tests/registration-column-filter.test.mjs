@@ -25,6 +25,17 @@ test('text and registration numbers support natural bounds and exact equality wi
  assert.equal(match('YP-10',condition('lte','YP-2')),false);assert.equal(match('가',condition('eq',' 가 ')),true);
  assert.equal(match('상품 (A)',condition('eq','상품 (A)')),true);assert.equal(match('상품 (A)',condition('eq','상품.*')),false);
 });
+
+test('price text filters support literal commerce names and two AND conditions without changing saved values',()=>{
+ const title='유앤채 4D 뒤꿈치 패드 핑크',before=title;
+ assert.equal(match(title,condition('contains','4d')),true);
+ assert.equal(match(title,condition('notContains','블랙')),true);
+ assert.equal(match(title,condition('startsWith','유앤채')),true);
+ assert.equal(match(title,condition('contains','패드.*')),false,'a filter term is literal text, not a regular expression');
+ assert.equal(match(title,{mode:'conditions',conditions:[{operator:'contains',value:'패드'},{operator:'notContains',value:'핑크'}]}),false);
+ for(const operator of ['contains','notContains','startsWith'])assert.equal(match(title,condition(operator,'')),false);
+ assert.equal(title,before);
+});
 function popupHarness(input={}){
  const values=[],effects=[],listeners=new Map(),removed=[],calls={apply:[],sort:[],close:0};let cursor=0;
  class Node{}
@@ -39,6 +50,26 @@ function nodes(tree,predicate){const found=[];function visit(node){if(Array.isAr
 const control=(tree,label)=>nodes(tree,node=>node.props?.['aria-label']===label)[0];
 const text=node=>Array.isArray(node)?node.map(text).join(''):node&&typeof node==='object'?text(node.props?.children):typeof node==='string'?node:'';
 const button=(tree,label)=>nodes(tree,node=>node.type==='button'&&text(node)===label)[0];
+
+test('price text column condition controls use reference operators and require explicit apply',()=>{
+ const h=popupHarness({conditionKind:'text'});button(h.render(),'조건').props.onClick();
+ let tree=h.render();const selector=control(tree,'조건 1');
+ assert.deepEqual(nodes(selector,node=>node.type==='option').map(node=>node.props.value),['','contains','notContains','eq','startsWith']);
+ selector.props.onChange({target:{value:'contains'}});button(h.render(),'적용').props.onClick();
+ assert.equal(h.calls.apply.length,0);assert.match(text(h.render()),/조건의 값을 입력/);
+ control(h.render(),'조건 1 값').props.onChange({target:{value:' 패드 '}});
+ assert.equal(h.calls.apply.length,0);button(h.render(),'적용').props.onClick();
+ assert.deepEqual(h.calls.apply,[{mode:'conditions',conditions:[{operator:'contains',value:'패드'},{operator:'',value:''}]}]);
+ const legacy=popupHarness();button(legacy.render(),'조건').props.onClick();
+ assert.deepEqual(nodes(control(legacy.render(),'조건 1'),node=>node.type==='option').map(node=>node.props.value),['','gte','lte','eq','ne']);
+});
+
+test('a nonsortable price identifier keeps filters without offering an ineffective sort action',()=>{
+ const h=popupHarness({label:'옵션번호',sortable:false}),tree=h.render();
+ assert.equal(button(tree,'↑ 오름차순'),undefined);assert.equal(button(tree,'↓ 내림차순'),undefined);
+ assert.ok(button(tree,'값 목록'));assert.ok(button(tree,'조건'));assert.ok(button(tree,'적용'));
+ assert.deepEqual(h.calls.sort,[]);assert.deepEqual(h.calls.apply,[]);
+});
 test('searched value selection preserves invisible selected values and can exclude all visible values',()=>{
  const h=popupHarness();let tree=h.render();control(tree,'값 검색').props.onChange({target:{value:'가'}});tree=h.render();
  control(tree,'전체 2').props.onChange({target:{checked:false}});tree=h.render();button(tree,'적용').props.onClick();

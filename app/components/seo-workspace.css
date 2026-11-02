@@ -49,21 +49,24 @@
 .registration-workspace .detail-body[data-registration-stage="SEO"]{padding:20px;font-family:Lato,sans-serif;font-size:16px;line-height:29px;color:#676e8a}
 .registration-workspace .registration-seo-heading{display:flex;flex-direction:column;width:min(1160px,100%);padding:0}
 .registration-workspace .registration-seo-heading>h2{margin:0 0 16px;padding:0;font-size:23.04px;line-height:23.04px;font-weight:700;color:#110a57}
+.registration-workspace .seo-generation-card,.registration-workspace .seo-common-editor,.registration-workspace .seo-option-names{border-radius:10px}
 .registration-workspace .seo-generation-card{width:calc(100% - 40px);max-width:1120px;margin:20px auto 24px}
 .registration-workspace .seo-content-columns{width:min(1120px,100%);gap:30px}
 .registration-workspace .seo-workspace-editor{font-family:Lato,sans-serif;font-size:16px;line-height:29px;color:#676e8a}
 .registration-workspace .seo-generation-card>h3,.registration-workspace .seo-common-editor>h3,.registration-workspace .seo-option-names>h3{display:flex;align-items:center;min-height:70px;margin:0;padding:20px;font-size:19.2px;line-height:28.8px;font-weight:700;color:#110a57;background:#c7cbd3}
-.registration-workspace .seo-generation-body{padding:20px;gap:16px}
-.registration-workspace .seo-generation-body>p{margin:0;font-size:16px;line-height:29px}
-.registration-workspace .seo-generation-inputs{gap:30px}
-.registration-workspace .seo-generation-inputs label{gap:8px;font-size:16px;line-height:29px}
+.registration-workspace .seo-generation-body{display:block;padding:20px}
+.registration-workspace .seo-generation-body>p{margin:0 0 16px;font-size:16px;line-height:29px}
+.registration-workspace .seo-generation-inputs{gap:0;margin:-12px -15px}
+.registration-workspace .seo-generation-inputs label{display:flex;flex-direction:column;gap:0;margin-bottom:16px;padding:12px 15px;font-size:16px;line-height:29px}
+.registration-workspace .seo-generation-inputs input{margin-top:8px}
+.registration-workspace .seo-generation-inputs small{margin-top:4px}
 .registration-workspace .seo-generation-inputs input,.registration-workspace .seo-option-name input,.registration-workspace .seo-common-editor .field input,.registration-workspace .seo-common-editor .field textarea{width:100%;border:1px solid #dfe1e8;border-radius:10px;padding:6px 12px;font-family:inherit;font-size:14px;color:#676e8a;background:#fff}
 .registration-workspace .seo-generation-inputs input,.registration-workspace .seo-option-name input,.registration-workspace .seo-common-editor .field input{height:45px;line-height:45px}
 .registration-workspace .seo-generation-body small,.registration-workspace .seo-option-name small,.registration-workspace .seo-common-editor .seo-input-count,.registration-workspace .seo-keyword-caption small{font-size:12.8px;line-height:29px}
-.registration-workspace .seo-title-example{display:flex;flex-wrap:wrap;padding:12px 20px;border:1px solid #d0f4fc;border-radius:10px;background:#e5f9ff;font-size:16px;line-height:29px}
+.registration-workspace .seo-title-example{display:flex;flex-wrap:wrap;margin:16px 0;padding:12px 20px;border:1px solid #d0f4fc;border-radius:10px;background:#e5f9ff;font-size:16px;line-height:29px}
 .registration-workspace .seo-title-example p{margin:0}
 .registration-workspace .seo-title-example p:first-child{margin-bottom:4px}
-.registration-workspace .seo-generation-actions{gap:9px}
+.registration-workspace .seo-generation-actions{gap:9px;margin-top:16px}
 .registration-workspace .seo-generation-actions .btn{border:1px solid #32bdea;border-radius:10px;padding:6px 12px;font-family:inherit;font-size:16px;font-weight:400;line-height:24px;color:#32bdea;background:transparent}
 .registration-workspace .seo-generation-provider{font-size:12.8px;line-height:29px}
 .registration-workspace .seo-generation-provider-tools>section{padding:12px 0 0}
@@ -74,10 +77,11 @@
 .registration-workspace .seo-common-editor .field:has(textarea){margin-top:16px}
 .registration-workspace .seo-common-editor .field textarea{height:98.667px;min-height:98.667px;line-height:28px}
 .registration-workspace .seo-keyword-caption{margin:0;gap:8px;font-size:12.8px;line-height:29px}
-.registration-workspace .seo-option-names-body{padding:20px;gap:16px}
-.registration-workspace .seo-option-name{padding:8px 0 16px;gap:24px;align-items:flex-start}
-.registration-workspace .seo-option-name img,.registration-workspace .seo-option-name-placeholder{width:60px;height:60px;margin:0;border-radius:4px}
-.registration-workspace .seo-option-name label{gap:4px;font-size:12.8px;line-height:29px}
+.registration-workspace .seo-option-names-body{display:block;padding:20px}
+.registration-workspace .seo-option-name{margin-bottom:16px;padding:8px;gap:16px;align-items:flex-start;border-bottom:1px solid #e8e9ec}
+.registration-workspace .seo-option-name img,.registration-workspace .seo-option-name-placeholder{width:60px;height:60px;margin:0;padding:4px;border:1px solid #ccced2;border-radius:10px}
+.registration-workspace .seo-option-name label{display:block;font-size:16px;line-height:29px}
+.registration-workspace .seo-option-name label>span{display:block;margin-bottom:4px}
 .registration-workspace .seo-workspace-save{margin:24px 0 0}
 .registration-workspace .seo-workspace-save .btn{min-height:49.04px;border:1px solid #32bdea;border-radius:10px;padding:11.2px 16px;font-family:inherit;font-size:16px;font-weight:400;line-height:24px;color:#fff;background:#32bdea}
 .registration-workspace .seo-workspace-save .btn:disabled{opacity:.55}

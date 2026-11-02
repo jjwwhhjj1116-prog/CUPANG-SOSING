@@ -4,6 +4,10 @@
 .option-price-grid-tools input:not([type=checkbox]):not([type=radio]),.option-price-grid-tools select{padding:8px;border:1px solid #dfe4ed;border-radius:4px;background:#fff;min-width:100px}
 .option-price-grid-search{flex:1;min-width:180px}
 .option-price-grid-search input{width:100%}
+.option-price-grid-search svg{flex:none;color:#8b96aa}
+.option-price-favorite-add{display:grid;place-items:center;flex:none;border:0;padding:5px;background:transparent;color:#758099;cursor:pointer}.option-price-favorite-add:disabled{opacity:.35;cursor:default}
+.option-price-favorite-add:focus-visible,.option-price-favorites button:focus-visible{outline:2px solid #25b9df;outline-offset:2px}
+.option-price-favorites{display:flex;flex-wrap:wrap;gap:6px}.option-price-favorites>span{display:inline-flex;border:1px solid #dfe5ed;border-radius:5px;overflow:hidden}.option-price-favorites button{border:0;padding:4px 7px;background:#f4f7fa;color:#5b6880;cursor:pointer;font:inherit;font-size:12px}
 .option-price-grid-tools fieldset{display:flex;align-items:center;gap:8px;border:0;padding:0;margin:0}
 .option-price-grid-tools legend{float:left;margin-right:8px}
 .option-price-grid-tools fieldset label{display:flex;align-items:center;gap:4px}
@@ -25,7 +29,7 @@
 .option-price-grid-table th.option-price-grid-selection{z-index:4;background:#f7f7f9}
 .option-price-grid-selection label{display:block;line-height:1.8}
 .option-price-grid-selection .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-.option-price-grid-table .option-price-grid-pinned{position:sticky;left:52px;z-index:1;background:#fff;box-shadow:3px 0 5px #15254712}
+.option-price-grid-table .option-price-grid-pinned{position:sticky;z-index:1;background:#fff;box-shadow:3px 0 5px #15254712}
 .option-price-grid-table th.option-price-grid-pinned{z-index:3;background:#f7f7f9}
 .option-price-grid-table tr[data-option-target=true] td{background:#f1fbfe}
 .option-price-grid-pagination{display:flex;align-items:center;justify-content:flex-end;gap:10px;font-size:12px;color:#606b83}
@@ -38,42 +42,15 @@
 .option-price-grid-summary p,.option-price-grid>p{font-size:12px;color:#68728a}
 @media(max-width:640px){.option-price-grid-summary>div{grid-template-columns:1fr}.option-price-grid-tools>label{width:100%}.option-price-grid-tools input:not([type=checkbox]):not([type=radio]),.option-price-grid-tools select{flex:1;min-width:0}.option-price-grid-tools fieldset{margin-left:auto}}
 .option-price-grid-table .option-price-source-cost{text-align:right;font-size:11px;line-height:1.5}
-.option-price-name-with-image{display:flex;align-items:center;gap:10px;min-width:0}
-.option-price-name-with-image>div{min-width:0}
-.option-price-thumbnail{display:block;flex:0 0 48px;object-fit:contain;background:#f7f8fa;border:1px solid #e5e8ef;border-radius:3px}
-.option-price-no-thumbnail{display:flex;flex:0 0 48px;min-height:48px;align-items:center;justify-content:center;font-size:10px;color:#7d879b;background:#f7f8fa;text-align:center}
+.option-price-bundle-badge{display:inline-block;margin-left:6px;padding:1px 5px;background:#32bdea;color:#fff;border-radius:3px;font-size:.8em}
+.option-price-bundle-quantity{color:#149fc9;font-weight:700}
 .option-price-advanced-row{display:grid;gap:10px;padding:12px 0;border-bottom:1px solid #e5e8ef;font-size:12px}
 .option-price-restore-actions{display:flex;gap:8px;flex-wrap:wrap}
-
-/* Stage two presentation shares the existing policy and exact price grid. */
-.registration-workspace .stage-two-pricing-workspace{grid-template-columns:250px minmax(0,1fr);gap:24px}
-.registration-workspace .stage-two-pricing-workspace>.pricing-policy-panel{max-height:580px;overflow:auto;padding:15px;border-radius:6px}
-.registration-workspace .stage-two-pricing-workspace>.pricing-policy-panel h3{margin:-15px -15px 18px;padding:18px 15px;background:#cacdd5;color:#17204b;font-size:13px}
-.registration-workspace .stage-two-pricing-workspace>.pricing-policy-panel .field{font-size:12px;gap:9px}
-.registration-workspace .stage-two-pricing-workspace>.pricing-options-panel{border:1px solid #dfe4ed;border-radius:6px;overflow:hidden}
-.step-visual-price-header{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px;background:#cacdd5;color:#17204b}
-.step-visual-price-header h3{font-size:13px;margin:0;font-weight:600}
-.step-visual-price-header>div{margin-bottom:0!important;flex-wrap:wrap;justify-content:flex-end}
-.step-visual-price-header .btn{font-size:10px;padding:5px 8px;border:0;color:#fff;background:#dd87af}
-.step-visual-price-header .btn:nth-child(2){background:#7bbf96}.step-visual-price-header .btn:nth-child(3){background:#eea787}
-.registration-workspace .pricing-options-panel .option-price-grid{gap:0}
-.registration-workspace .pricing-options-panel .option-price-grid-tools{padding:8px 10px;gap:9px;border-bottom:1px solid #dfe4ed}
-.registration-workspace .pricing-options-panel .option-price-grid-scroll{border:0;border-radius:0}
-.registration-workspace .pricing-options-panel .option-price-grid-fixed{height:450px}
-.registration-workspace .pricing-options-panel .option-price-grid-table caption{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
-.registration-workspace .pricing-options-panel .option-price-grid-pagination,.registration-workspace .pricing-options-panel .option-price-grid>p,.registration-workspace .pricing-options-panel .option-price-grid>details{margin:0;padding:10px 14px}
-.registration-workspace .stage-two-price-breakdown{grid-column:1/-1;display:grid;gap:18px;min-width:0}
-.registration-workspace .price-policy-ratio{display:grid;gap:18px;padding:0 15px 24px;border:1px solid #dfe4ed;border-radius:6px;overflow:hidden}
-.registration-workspace .price-policy-ratio>h4,.registration-workspace .stage-two-price-breakdown .option-price-grid-summary>header{margin:0 -15px;padding:18px 15px;background:#cacdd5;color:#17204b;font-size:13px;font-weight:500}
-.registration-workspace .price-policy-ratio-labels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));text-align:center;font-size:12px}
-.registration-workspace .price-policy-ratio-bar{display:flex;min-height:24px;border-radius:4px;overflow:hidden;color:#fff;font-size:10px;text-align:center}
-.registration-workspace .price-policy-ratio-bar>span{display:flex;justify-content:center;align-items:center;min-width:0}
-.registration-workspace .price-policy-ratio-bar>[data-price-ratio=cost]{background:#ff9572}.registration-workspace .price-policy-ratio-bar>[data-price-ratio=supply]{background:#74bf92}.registration-workspace .price-policy-ratio-bar>[data-price-ratio=coupang]{background:#2bbcdf}
-.registration-workspace .price-policy-ratio>small{font-size:11px;color:#7d879b;line-height:1.6}
-.registration-workspace .stage-two-price-breakdown .option-price-grid-summary{padding:0 15px 18px;overflow:hidden;border-radius:6px}
-.registration-workspace .stage-two-price-breakdown .option-price-grid-summary>div{margin-top:16px;gap:22px}
-.registration-workspace .stage-two-price-breakdown .option-price-grid-summary article{border:1px solid #ccd3df;border-radius:6px;overflow:hidden;padding-bottom:14px}
-.registration-workspace .stage-two-price-breakdown .option-price-grid-summary h5{padding:16px;text-align:left;border-bottom:1px solid #dfe4ed;font-size:12px}
-.registration-workspace .stage-two-pricing-save{grid-column:1/-1;display:flex;justify-content:center;gap:10px;flex-wrap:wrap;padding:4px 0 16px}
-@media(max-width:1050px){.registration-workspace .stage-two-pricing-workspace{grid-template-columns:220px minmax(0,1fr);gap:18px}}
-@media(max-width:720px){.registration-workspace .stage-two-pricing-workspace{grid-template-columns:minmax(0,1fr)}.registration-workspace .stage-two-pricing-workspace>.pricing-policy-panel{max-height:none}.registration-workspace .stage-two-price-breakdown .option-price-grid-summary>div{grid-template-columns:1fr}.step-visual-price-header{flex-wrap:wrap}.registration-workspace .pricing-options-panel .option-price-grid-fixed{height:400px}}
+.option-price-header-tools{display:flex;align-items:center;justify-content:center;gap:5px;min-width:0}
+.option-price-sort{display:inline-flex;align-items:center;justify-content:center;gap:4px;min-width:0;border:0;padding:0;background:transparent;color:inherit;font:inherit;font-weight:inherit;text-align:inherit;cursor:pointer}
+.option-price-sort>span{min-width:0;overflow-wrap:anywhere}
+.option-price-sort svg{flex:none;color:#a7afbd}.option-price-sort svg .active{color:#119fc9;stroke-width:2}
+.option-price-sort-priority{font-size:9px;color:#119fc9}
+.option-price-sort:focus-visible,.option-price-column-menu button:focus-visible{outline:2px solid #25b9df;outline-offset:3px}
+.option-price-column-menu{position:fixed;z-index:1250;display:grid;gap:4px;width:220px;max-width:calc(100vw - 16px);padding:7px;border:1px solid #dfe5ed;border-radius:6px;background:#fff;box-shadow:0 8px 25px #15254724;color:#536078;font-size:12px}
+.option-price-column-menu button{padding:8px;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer}.option-price-column-menu button:hover{background:#f2f6fa}.option-price-column-menu button:disabled{opacity:.45;cursor:default}

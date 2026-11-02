@@ -1,4 +1,4 @@
-export type RegistrationFilterCondition={operator:''|'gte'|'lte'|'eq'|'ne';value:string};
+export type RegistrationFilterCondition={operator:''|'gte'|'lte'|'eq'|'ne'|'contains'|'notContains'|'startsWith';value:string};
 export type RegistrationColumnFilter={mode:'values';values:string[]}|{mode:'conditions';conditions:RegistrationFilterCondition[]};
 export type RegistrationFilterChoice={value:string;count:number};
 const collator=new Intl.Collator('ko-KR',{numeric:true,sensitivity:'base'});
@@ -17,6 +17,11 @@ export function matchesRegistrationColumnFilter(value:string,filter:Registration
   const numbers=numeric&&Number.isFinite(actual)&&Number.isFinite(limit);
   if(condition.operator==='eq')return numbers?actual===limit:value===expected;
   if(condition.operator==='ne')return numbers?actual!==limit:value!==expected;
+  if(['contains','notContains','startsWith'].includes(condition.operator)){
+   if(!expected)return false;
+   const text=value.toLocaleLowerCase('ko-KR'),term=expected.toLocaleLowerCase('ko-KR');
+   return condition.operator==='contains'?text.includes(term):condition.operator==='notContains'?!text.includes(term):text.startsWith(term);
+  }
   if(!expected||numeric&&!numbers)return false;
   const comparison=numbers?actual-limit:collator.compare(value,expected);
   return condition.operator==='gte'?comparison>=0:condition.operator==='lte'?comparison<=0:false;

@@ -20,7 +20,7 @@ export function StageTwoPricePolicyFields({policy,onChange,onRecalculate,onSave,
     bundleMinimumSupplyMargin:policy.bundleMinimumSupplyMargin??3000,bundleMinimumCoupangMargin:policy.bundleMinimumCoupangMargin??3000};
   return <section className="pricing-policy-panel" aria-label="가격 정책 설정" data-quotation-source-step="가격" data-workspace-dirty={sourceDirty} data-workspace-saving={busy}>
     <h3>가격 정책 설정</h3>
-    <fieldset disabled={blocked} className="panel-stack" style={{border:0,padding:0,margin:0,minWidth:0}}>
+    <fieldset disabled={blocked} className="panel-stack pricing-policy-body" style={{border:0,margin:0,minWidth:0}}>
       <label className="field"><span>적용 환율 (CNY → KRW)</span><input aria-label="적용 환율 (CNY → KRW)" type="number" min="150" max="400" step="any" value={numeric(policy.exchangeRate)} onChange={event=>number('exchangeRate',event.target.value)}/></label>
       <label className="field"><span>공급 마진율 (%)</span><input aria-label="공급 마진율 (%)" type="number" min="0" max="90" step="any" value={numeric(policy.supplyMargin)} onChange={event=>number('supplyMargin',event.target.value)}/></label>
       <label className="field"><span>쿠팡 마진율 (%)</span><input aria-label="쿠팡 마진율 (%)" type="number" min="0" max="90" step="any" value={numeric(policy.coupangMargin)} onChange={event=>number('coupangMargin',event.target.value)}/></label>
@@ -36,6 +36,7 @@ export function StageTwoPricePolicyFields({policy,onChange,onRecalculate,onSave,
         if(blocked)return;const value=event.target.value===''?NaN:Number(event.target.value);if(Number.isFinite(value)&&value>=0)lastMinimum.current=value;
         change({...policy,minimumMargin:value,recalculationMinimumEnabled:true});
       }}/></label>}
+      {minimum&&<small>공급가 = 원가 + 이 금액, 판매가 = 공급가 ÷ (1 - 쿠팡마진율)로 계산됩니다.</small>}
       <label className="switch-row"><span>번들링 활성화</span><input aria-label="번들링 활성화" type="checkbox" checked={bundle.bundleEnabled} onChange={event=>change({...policy,...bundle,bundleEnabled:event.target.checked})}/><i/></label>
       <small>낮은 마진 상품을 자동으로 묶어서 판매합니다.</small>
       {bundle.bundleEnabled&&<div className="panel-stack" role="group" aria-label="번들링 기준">
@@ -53,8 +54,10 @@ export function StageTwoPricePolicyFields({policy,onChange,onRecalculate,onSave,
       </div></details>
       <details className="pricing-policy-save-guide"><summary>계산·저장 안내</summary><p>공급가 = 원가 + 최소 공급 마진액, 판매가 = 공급가 ÷ (1 - 쿠팡마진율)로 계산됩니다.</p><p>입력한 설정과 옵션 가격은 아래 저장하기를 누를 때 함께 저장됩니다.</p></details>
       {error&&<p role="alert">{error}</p>}
+    </fieldset>
+    <div className="pricing-policy-actions">
       <button type="button" className="btn ghost" disabled={blocked} onClick={()=>{if(!blocked)onRecalculate();}}>일괄 재계산</button>
       <button type="button" className="btn primary" aria-label="가격 설정 저장하기" disabled={blocked||(!dirty&&!allowUnchangedSave)||Boolean(error)} onClick={()=>{if(!blocked&&(dirty||allowUnchangedSave)&&!error)onSave();}}>{busy?'저장 중…':'저장하기'}</button>
-    </fieldset>
+    </div>
   </section>;
 }

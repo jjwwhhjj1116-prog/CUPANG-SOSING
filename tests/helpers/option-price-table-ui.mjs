@@ -19,7 +19,7 @@ const version = '2026-10-14T02:00:00.000Z';
 
 /** Actual OptionsEditor + price table and options API/SQLite. The source URL is
  * inert synthetic data; all external requests and unrelated components fail shut. */
-export async function optionPriceTableUI(company = priceTableCompanies[0], { count = 73, focusedOptionId, integrated=false,detail=false,fileStorage,imageKeys=[],sourceImageKeys={},rowImages={} } = {}) {
+export async function optionPriceTableUI(company = priceTableCompanies[0], { count = 73, focusedOptionId, integrated=false,detail=false,fileStorage,imageKeys=[],sourceImageKeys={},rowImages={},prompt } = {}) {
   const sqlite = memoryDatabase(); for (const statement of runtimeDDL()) sqlite.exec(statement.sql);
   const owner = 'price-owner-' + company.code, productId = 'price-product-' + company.code;
   const apiCalls = [], writes = [], cache = new Map(), instances = new Map(), effects = [], layouts=[], focused = [],controls={};
@@ -31,6 +31,7 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
       catch (error) { sqlite.exec('ROLLBACK'); throw error; } } };
   const objects = new Map(), bindings = { DB: db, FILES: fileStorage ?? { head: async key => objects.has(key) ? { size: objects.get(key).length, httpMetadata: { contentType: 'image/png' } } : null } };
   const deps = { 'cloudflare:workers': { env: bindings }, 'next/server': { NextResponse: Response },
+    '@/app/components/registration-filter-popover': { RegistrationFilterPopover: props => ({ type: 'price-filter-popup', props }) },
     '@/extensions/supplier-hub/page-source.mjs':pageSource,'../extensions/supplier-hub/page-source.mjs':pageSource,
     '@/app/chatgpt-auth': { getWorkspaceOwnerId: async () => owner, getChatGPTUser: async () => ({ verifiedAccess: true, userId: owner,
       membership: { status: 'approved', companyCode: company.code, companyName: company.name } }) },
@@ -62,7 +63,7 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
       target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText,
     { exports, Error, RangeError, Date, URL, URLSearchParams, Response, Request, Headers, Blob, TextEncoder, TextDecoder,
       Uint8Array, DataView, AbortController, structuredClone, crypto: webcrypto, process: { env: { NODE_ENV: 'production' } },...(fileStorage?{File,FormData,CompressionStream,DecompressionStream}:{}),
-      fetch: request, require(name) {
+      window:{innerWidth:1280,innerHeight:900,...(prompt?{prompt}:{})},fetch: request, require(name) {
         if(name==='../extensions/supplier-hub/rejection-details.mjs'||name==='@/extensions/supplier-hub/rejection-details.mjs')return rejectionDetails;
         if (name in deps) return deps[name]; if (name === 'react') return hooks;
         if (name === 'react/jsx-runtime') return { jsx: (type, props, key) => ({ type, props, key }), jsxs: (type, props, key) => ({ type, props, key }) };

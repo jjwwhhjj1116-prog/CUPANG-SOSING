@@ -72,7 +72,9 @@ for (const company of priceTableCompanies) test(`actual option editor shows curr
   const h = await optionPriceTableUI(company, { count: 2 });
   try {
     const before = JSON.stringify(await h.rows()), sourceBefore = h.protectedSnapshot();
-    h.node('가격 옵션 1 구성 수량').props.onChange({ target: { value: '3', valueAsNumber: 3 } });
+    h.setPricingView(false); await h.settle();
+    h.node('옵션 1 판매 단위당 구성 수량').props.onChange({ target: { value: '3', valueAsNumber: 3 } });
+    h.setPricingView(true); await h.settle();
     const rendered = h.render();
     const total = priceTableNodes(rendered).find(node => node.props?.['aria-label'] === '가격 옵션 1 구성 합계 위안 원가');
     const general = priceTableNodes(rendered).find(node => node.props?.['aria-label'] === '가격 옵션 1 일반 환율 환산 원가');

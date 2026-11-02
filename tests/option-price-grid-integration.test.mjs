@@ -17,14 +17,15 @@ for(const company of priceTableCompanies){
    assert.equal(h.button('저장하기').props.disabled,false);h.button('저장하기').props.onClick();await h.settle();
    assert.equal(alerts(h),'');assert.equal(h.saved,1);assert.deepEqual(h.writes.map(write=>write.kind),['stage-two-pricing']);assert.equal(h.writes[0].policy.exchangeRate,400);assert.equal(h.writes[0].recalculate,true);
    const quote=await quotation(h),options=await h.rows();assert.equal(options.rows[0].unitCostCny,5.99);assert.equal(quote.overrides.options['price-001'].supplyPrice,'10000');assert.equal(quote.overrides.options['price-001'].salePrice,'16000');assert.equal(quote.overrides.options['price-001'].msrp,'');assert.equal(quote.optionRevision,options.revision);
-   assert.equal(stable(h),before);assert.equal(nodes(h.render()).filter(node=>node.props?.['aria-label']==='가격 옵션 1 공급가').length,1);assert.equal(h.button('저장하기').props.disabled,true);
+   assert.equal(stable(h),before);assert.equal(nodes(h.render()).filter(node=>node.props?.['aria-label']==='가격 옵션 1 공급가').length,1);assert.equal(h.button('저장하기').props.disabled,false);
   }finally{h.close();}
  });
- test(`automatic bundle policy picks final quantity locally and a later manual count wins the same save (${company.code})`,async()=>{
+ test(`automatic bundle policy picks a quantity locally and the explicit bundle action saves the chosen count (${company.code})`,async()=>{
   const h=await optionPriceTableUI(company,{count:2,integrated:true,detail:true});try{
    h.node('번들링 활성화').props.onChange({target:{checked:true}});await h.settle();change(h,'번들 최소 공급 마진액 (원)','10000');await h.settle();
-   const selected=h.node('가격 옵션 1 구성 수량').props.value;assert.ok(selected>1);assert.equal(h.writes.length,0);
-   change(h,'가격 옵션 1 구성 수량','2');h.button('저장하기').props.onClick();await h.settle();assert.equal(alerts(h),'');assert.equal(h.writes.length,1);assert.equal(h.writes[0].rows[0].unitsPerPack,2);assert.equal((await h.rows()).rows[0].unitsPerPack,2);
+   const first=nodes(h.render()).find(node=>node.type==='tr'&&node.props['data-price-option-id']==='price-001'),quantity=text(nodes(first).find(node=>node.props?.['data-price-column']==='quantity'));assert.ok(Number.parseInt(quantity,10)>1);assert.equal(h.writes.length,0);
+   h.node('가격 옵션 1 선택').props.onChange({target:{checked:true}});h.button('번들 적용').props.onClick();change(h,'적용할 번들 수량','2');
+   const dialog=nodes(h.render()).find(node=>node.props?.role==='dialog');nodes(dialog).find(node=>node.type==='form').props.onSubmit({preventDefault(){}});await h.settle();assert.equal(alerts(h),'');assert.equal(h.writes.length,1);assert.equal(h.writes[0].rows[0].unitsPerPack,2);assert.equal((await h.rows()).rows[0].unitsPerPack,2);
    const quote=await quotation(h),price=h.load('app/product-options.ts').calculateOptionPrices((await h.rows()).rows,h.writes[0].policy)[0].calculation;assert.equal(quote.resolved.rows.find(row=>row.optionId==='price-001').fields.salePrice.value,String(price.salePrice));
   }finally{h.close();}
  });
@@ -37,7 +38,7 @@ for(const company of priceTableCompanies){
  });
  test(`filtered original row commits all ordered rows and the latest same-tick manual intent together (${company.code})`,async()=>{
   const h=await optionPriceTableUI(company,{count:73,integrated:true});try{
-   const before=plain((await h.rows()).rows);change(h,'가격 옵션 검색','fixture-sku-62');await h.settle();change(h,'가격 옵션 62 개당 원가','5.99');change(h,'가격 옵션 62 구성 수량','3');change(h,'가격 옵션 62 공급가','10000');const save=h.button('옵션 가격 저장하기').props.onClick;change(h,'가격 옵션 62 판매가','16000');change(h,'가격 옵션 62 권장소비자가','');save();save();await h.settle();
+   const before=plain((await h.rows()).rows);h.setPricingView(false);await h.settle();change(h,'옵션 62 판매 단위당 구성 수량','3');h.setPricingView(true);await h.settle();change(h,'가격 옵션 검색','fixture-sku-62');await h.settle();change(h,'가격 옵션 62 개당 원가','5.99');change(h,'가격 옵션 62 공급가','10000');const save=h.button('옵션 가격 저장하기').props.onClick;change(h,'가격 옵션 62 판매가','16000');change(h,'가격 옵션 62 권장소비자가','');save();save();await h.settle();
    assert.equal(alerts(h),'');assert.equal(h.saved,1);assert.equal(h.writes.length,1);assert.equal(h.writes[0].kind,'stage-two-pricing');assert.equal(h.writes[0].rows.length,73);
    const after=plain((await h.rows()).rows);assert.equal(after[61].unitCostCny,5.99);assert.equal(after[61].unitsPerPack,3);for(let i=0;i<73;i++)if(i!==61)assert.deepEqual(after[i],before[i]);assert.deepEqual(plain((await quotation(h)).overrides.options['price-062']),{supplyPrice:'10000',salePrice:'16000',msrp:''});
   }finally{h.close();}
@@ -46,7 +47,7 @@ for(const company of priceTableCompanies){
   const h=await optionPriceTableUI(company,{count:2,integrated:true,detail:true});try{
    let lost=true;h.controls.response=(url,init,response)=>{if(lost&&init.method==='POST'&&url.includes('/stage-two-pricing')){lost=false;return Response.json({error:'atomic ACK lost'},{status:503});}return response;};
    change(h,'적용 환율 (CNY → KRW)','400');await h.settle();changes(h);const save=h.button('옵션 가격 저장하기').props.onClick;save();await h.settle();save();await h.settle();assert.equal(h.writes.length,1);assert.equal(h.saved,0);assert.equal(h.node('가격 옵션 1 개당 원가').props.value,5.99);assert.equal(h.node('가격 옵션 1 공급가').props.value,'10000');assert.equal(h.node('가격 옵션 1 권장소비자가').props.value,'');assert.equal(h.node('가격 옵션 1 공급가').props.disabled,true);
-   h.button('입력 유지 · 저장 결과 확인').props.onClick();await h.settle();assert.equal(alerts(h),'');assert.equal(h.saved,1);assert.equal(h.writes.length,1);assert.equal(h.node('적용 환율 (CNY → KRW)').props.value,400);assert.equal(h.node('가격 옵션 1 공급가').props.disabled,false);assert.equal(h.button('저장하기').props.disabled,true);assert.ok(h.apiCalls.some(call=>call.url.endsWith('/stage-two-pricing')&&call.method==='GET'));
+   h.button('입력 유지 · 저장 결과 확인').props.onClick();await h.settle();assert.equal(alerts(h),'');assert.equal(h.saved,1);assert.equal(h.writes.length,1);assert.equal(h.node('적용 환율 (CNY → KRW)').props.value,400);assert.equal(h.node('가격 옵션 1 공급가').props.disabled,false);assert.equal(h.button('저장하기').props.disabled,false);assert.ok(h.apiCalls.some(call=>call.url.endsWith('/stage-two-pricing')&&call.method==='GET'));
   }finally{h.close();}
  });
  test(`uncommitted unknown save only releases after exact unchanged GET and never automatically replays (${company.code})`,async()=>{

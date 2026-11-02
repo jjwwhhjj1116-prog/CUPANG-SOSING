@@ -41,11 +41,15 @@ for(const [index,company]of priceTableCompanies.entries())test(`${company.code} 
  }finally{h.close();}
 });
 
-test('price name thumbnails use only current owned option/source bindings and keep the nine price columns',async()=>{
+test('registration pricing omits thumbnails and inline quantity edits while standalone options retain owned images',async()=>{
  const company=priceTableCompanies[0],prefix='price-owner-'+company.code+'/',manual=prefix+'manual.png',source=prefix+'source.png';
  const h=await optionPriceTableUI(company,{count:3,imageKeys:[manual,source],sourceImageKeys:{'price-001':source,'price-002':source,'price-003':'unowned/source.png'},rowImages:{'price-001':manual}});try{
-  const tree=nodes(h.render()),images=tree.filter(node=>node.type==='img'&&node.props.alt?.startsWith('가격 옵션 '));assert.equal(images.length,2);
-  assert.equal(images[0].props.src,'/api/files/'+manual);assert.equal(images[1].props.src,'/api/files/'+source);assert.equal(tree.filter(node=>node.type==='th'&&node.props['data-price-column']).length,9);
+  const tree=nodes(h.render()),images=tree.filter(node=>node.type==='img'&&node.props.alt?.startsWith('가격 옵션 '));assert.equal(images.length,0);
+  assert.equal(tree.filter(node=>node.type==='th'&&node.props['data-price-column']).length,9);
+  assert.equal(tree.some(node=>node.type==='input'&&node.props['aria-label']==='가격 옵션 1 구성 수량'),false);
+  const firstRow=tree.find(node=>node.type==='tr'&&node.props['data-price-option-id']==='price-001');assert.equal(text(nodes(firstRow).find(node=>node.props?.['data-price-column']==='quantity')),'1개');
+  h.setPricingView(false);await h.settle();const standaloneImages=nodes(h.render()).filter(node=>node.type==='img'&&/옵션 \d+ 연결 이미지/u.test(node.props.alt??''));
+  assert.equal(standaloneImages.length,1);assert.equal(standaloneImages[0].props.src,'/api/files/'+manual);assert.equal(standaloneImages.some(node=>node.props.src.includes('unowned')),false);
   assert.equal(h.writes.length,0);assert.equal(h.protectedSnapshot(),h.before);
  }finally{h.close();}
 });

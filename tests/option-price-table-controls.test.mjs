@@ -116,7 +116,7 @@ test('focused option page boundaries use the initial 20-row page without changin
  for(const [focusedOptionId,first,page]of[['price-020','price-001',1],['price-021','price-021',2]]){
   const h=await optionPriceTableUI(priceTableCompanies[0],{focusedOptionId});try{
    assert.equal(h.node('가격표 페이지당 옵션 수').props.value,20);assert.equal(ids(h)[0],first);assert.equal(h.node('가격표 현재 페이지').props.children[0],page);
-   assert.ok(ids(h).includes(focusedOptionId));assert.ok(h.focused.includes('가격 옵션 '+Number(focusedOptionId.slice(6))+' 구성 수량'));
+   assert.ok(ids(h).includes(focusedOptionId));assert.ok(h.focused.includes('가격 옵션 '+Number(focusedOptionId.slice(6))+' 개당 원가'));
    assert.equal(h.writes.length,0);assert.equal(h.protectedSnapshot(),h.before);
   }finally{h.close();}
  }
@@ -125,12 +125,12 @@ test('focused option page boundaries use the initial 20-row page without changin
 for (const company of priceTableCompanies) test(`filtered row edits save the exact original option ID with the complete draft and retain every other source row (${company.code})`, async () => {
   const h = await optionPriceTableUI(company); try {
     const before = await h.rows(); change(h, '가격 옵션 검색', 'fixture-sku-62'); await h.settle(); assert.deepEqual(ids(h), ['price-062']);
-    change(h, '가격 옵션 62 개당 원가', '5.99'); change(h, '가격 옵션 62 구성 수량', '3');
+    change(h, '가격 옵션 62 개당 원가', '5.99');
     assert.equal(h.button('옵션 저장·가격 계산').props.disabled, false); h.button('옵션 저장·가격 계산').props.onClick(); await h.settle();
     assert.equal(h.writes.length, 1); assert.equal(h.writes[0].rows.length, 73);
     assert.equal(h.writes[0].expectedRevision, before.revision);
-    assert.equal(h.writes[0].rows[61].id, 'price-062'); assert.equal(h.writes[0].rows[61].unitCostCny, 5.99); assert.equal(h.writes[0].rows[61].unitsPerPack, 3);
-    const after = await h.rows(); assert.equal(after.rows[61].unitCostCny, 5.99); assert.equal(after.rows[61].unitsPerPack, 3);
+    assert.equal(h.writes[0].rows[61].id, 'price-062'); assert.equal(h.writes[0].rows[61].unitCostCny, 5.99); assert.equal(h.writes[0].rows[61].unitsPerPack, 1);
+    const after = await h.rows(); assert.equal(after.rows[61].unitCostCny, 5.99); assert.equal(after.rows[61].unitsPerPack, 1);
     for (let index = 0; index < before.rows.length; index++) if (index !== 61) assert.deepEqual(JSON.parse(JSON.stringify(after.rows[index])), JSON.parse(JSON.stringify(before.rows[index])), 'original option ' + index);
     assert.equal(after.revision, before.revision + 1); assert.equal(h.saved, 1); assert.equal(h.protectedSnapshot(), h.before);
     assert.equal(h.node('가격 옵션 62 개당 원가').props.value, 5.99);
@@ -140,7 +140,7 @@ for (const company of priceTableCompanies) test(`filtered row edits save the exa
 test('focused later option initially opens its own price page and filtering preserves null/invalid/excluded distinctions', async () => {
   const h = await optionPriceTableUI(priceTableCompanies[0], { focusedOptionId: 'price-052' }); try {
     assert.equal(ids(h)[0], 'price-041'); assert.equal(h.node('가격표 현재 페이지').props.children[0], 3);
-    assert.ok(h.focused.includes('가격 옵션 52 구성 수량'));
+    assert.ok(h.focused.includes('가격 옵션 52 개당 원가'));
     change(h, '가격 옵션 검색', 'fixture-sku-52'); await h.settle(); assert.deepEqual(ids(h), ['price-052']);
     change(h, '가격 옵션 52 개당 원가', ''); await h.settle(); assert.equal(h.node('가격 옵션 52 개당 원가').props.value, '');
     assert.match(text(dataRows(h)[0]), /원가와 구성 수량을 입력해주세요/);

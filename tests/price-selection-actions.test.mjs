@@ -15,6 +15,7 @@ const alerts=h=>nodes(h.render()).filter(node=>node.props?.role==='alert').map(t
 const quote=async h=>(await h.request(`/api/products/${h.product.id}/quotation-fields`)).json();
 const metadata=async h=>(await h.request(`/api/products/${h.product.id}/options`)).json();
 const plain=value=>JSON.parse(JSON.stringify(value));
+const quantityCell=(h,index)=>nodes(nodes(h.render()).find(node=>node.props?.['data-price-option-id']===`price-${String(index).padStart(3,'0')}`)).find(node=>node.props?.['data-price-column']==='quantity');
 
 test('actual controlled dialog focuses safe controls, traps both Tab directions, ignores busy Escape and restores connected focus',()=>{
  for(const kind of ['bundle','remove']){
@@ -41,7 +42,7 @@ for(const company of priceTableCompanies){
  test(`bundle/delete cancel and Escape preserve full source, prices and exact selected identity (${company.code})`,async()=>{
   const h=await optionPriceTableUI(company,{count:3,integrated:true});try{
    const before=JSON.stringify(await h.rows());select(h,2);h.button('번들 적용').props.onClick();assert.equal(h.node('적용할 번들 수량').props.value,'2');
-   change(h,'적용할 번들 수량','5');cancel(h);assert.equal(dialog(h),undefined);assert.equal(h.node('가격 옵션 2 구성 수량').props.value,1);assert.equal(h.writes.length,0);
+   change(h,'적용할 번들 수량','5');cancel(h);assert.equal(dialog(h),undefined);assert.equal(text(quantityCell(h,2)),'1개');assert.equal(h.writes.length,0);
    h.button('선택 삭제 (1)').props.onClick();assert.match(text(dialog(h)),/선택한 1개 옵션/);cancel(h);assert.equal(h.node('가격 옵션 2 선택').props.checked,true);
    h.button('번들 적용').props.onClick();let prevented=false;dialog(h).props.onKeyDown({key:'Escape',preventDefault(){prevented=true;}});assert.equal(prevented,true);assert.equal(dialog(h),undefined);
    assert.equal(JSON.stringify(await h.rows()),before);assert.equal(h.protectedSnapshot(),h.before);assert.equal(h.writes.length,0);
@@ -100,15 +101,15 @@ for(const company of priceTableCompanies){
    let lost=true;h.controls.response=(url,init,response)=>{if(lost&&init.method==='POST'&&url.includes('/stage-two-pricing')){lost=false;return Response.json({error:'atomic bundle ACK lost'},{status:503});}return response;};
    if(withPriorManual){change(h,'가격 옵션 2 공급가','9300');change(h,'가격 옵션 2 판매가','16100');change(h,'가격 옵션 2 권장소비자가','');}
    select(h,1);h.button('번들 적용').props.onClick();change(h,'적용할 번들 수량','3');const send=submit(h);send({preventDefault(){}});await h.settle();send({preventDefault(){}});await h.settle();
-   assert.equal(h.node('적용할 번들 수량').props.value,'3');assert.deepEqual(h.writes.map(value=>value.kind),['stage-two-pricing']);assert.equal((await h.rows()).rows[0].unitsPerPack,3);assert.equal(h.node('가격 옵션 1 구성 수량').props.disabled,true);
-   cancel(h);h.button('입력 유지 · 저장 결과 확인').props.onClick();await h.settle();assert.equal(alerts(h),'');assert.equal(h.saved,1);assert.deepEqual(h.writes.map(value=>value.kind),['stage-two-pricing']);assert.equal(h.button('옵션 가격 저장하기').props.disabled,true);assert.equal((await quote(h)).overrides.options['price-001'].salePrice,h.node('가격 옵션 1 판매가').props.value);if(withPriorManual)assert.equal((await quote(h)).overrides.options['price-002'].msrp,'');assert.equal(h.protectedSnapshot(),h.before);
+   assert.equal(h.node('적용할 번들 수량').props.value,'3');assert.deepEqual(h.writes.map(value=>value.kind),['stage-two-pricing']);assert.equal((await h.rows()).rows[0].unitsPerPack,3);assert.equal(text(quantityCell(h,1)),'3개');assert.equal(nodes(quantityCell(h,1)).some(node=>node.type==='input'),false);
+   cancel(h);h.button('입력 유지 · 저장 결과 확인').props.onClick();await h.settle();assert.equal(alerts(h),'');assert.equal(h.saved,1);assert.deepEqual(h.writes.map(value=>value.kind),['stage-two-pricing']);assert.equal(h.button('옵션 가격 저장하기').props.disabled,false);assert.equal((await quote(h)).overrides.options['price-001'].salePrice,h.node('가격 옵션 1 판매가').props.value);if(withPriorManual)assert.equal((await quote(h)).overrides.options['price-002'].msrp,'');assert.equal(h.protectedSnapshot(),h.before);
   }finally{h.close();}
  });
  test(`retained confirmation respects policy/file/source locks and profile ABA resets its identity (${company.code})`,async()=>{
   const h=await optionPriceTableUI(company,{count:3,integrated:true});try{
    select(h,1);h.button('번들 적용').props.onClick();change(h,'적용할 번들 수량','4');const send=submit(h);
-   for(const locks of [{policy:true},{policy:false,files:true},{files:false,allowed:false}]){h.locks(locks);send({preventDefault(){}});await h.settle();assert.equal(h.writes.length,0);assert.equal(h.node('적용할 번들 수량').props.value,'4');assert.equal(h.node('가격 옵션 1 구성 수량').props.value,1);}
-   h.locks({policy:false,files:false,allowed:true});h.selectProfile('missing');await h.settle();assert.equal(dialog(h),undefined);h.selectProfile(undefined);await h.settle();send({preventDefault(){}});await h.settle();assert.equal(h.writes.length,0);assert.equal(h.node('가격 옵션 1 구성 수량').props.value,1);assert.equal(h.protectedSnapshot(),h.before);
+   for(const locks of [{policy:true},{policy:false,files:true},{files:false,allowed:false}]){h.locks(locks);send({preventDefault(){}});await h.settle();assert.equal(h.writes.length,0);assert.equal(h.node('적용할 번들 수량').props.value,'4');assert.equal(text(quantityCell(h,1)),'1개');}
+   h.locks({policy:false,files:false,allowed:true});h.selectProfile('missing');await h.settle();assert.equal(dialog(h),undefined);h.selectProfile(undefined);await h.settle();send({preventDefault(){}});await h.settle();assert.equal(h.writes.length,0);assert.equal(text(quantityCell(h,1)),'1개');assert.equal(h.protectedSnapshot(),h.before);
   }finally{h.close();}
  });
  test(`bundle save acquires a synchronous duplicate lock before network and no retained delete applies in flight (${company.code})`,async()=>{
@@ -127,10 +128,10 @@ for(const company of priceTableCompanies){
  test(`generic bulk preview and undo are retained when the parent's current lock rejects apply (${company.code})`,async()=>{
   const h=await optionPriceTableUI(company,{count:3,integrated:true});try{
    select(h,1);change(h,'일괄 편집 변경값','4');h.button('변경 미리보기').props.onClick();const apply=h.button('편집 내용에 적용').props.onClick;
-   h.locks({policy:true});apply();await h.settle();assert.equal(h.node('가격 옵션 1 구성 수량').props.value,1);assert.ok(h.button('편집 내용에 적용'));assert.match(alerts(h),/미리보기와 입력을 유지/);
-   h.locks({policy:false});h.button('편집 내용에 적용').props.onClick();await h.settle();assert.equal(h.node('가격 옵션 1 구성 수량').props.value,4);const undo=h.button('최근 일괄 변경 되돌리기').props.onClick;
-   h.locks({files:true});undo();await h.settle();assert.equal(h.node('가격 옵션 1 구성 수량').props.value,4);assert.ok(h.button('최근 일괄 변경 되돌리기'));
-   h.locks({files:false});h.button('최근 일괄 변경 되돌리기').props.onClick();await h.settle();assert.equal(h.node('가격 옵션 1 구성 수량').props.value,1);assert.equal(h.writes.length,0);assert.equal(h.protectedSnapshot(),h.before);
+   h.locks({policy:true});apply();await h.settle();assert.equal(text(quantityCell(h,1)),'1개');assert.ok(h.button('편집 내용에 적용'));assert.match(alerts(h),/미리보기와 입력을 유지/);
+   h.locks({policy:false});h.button('편집 내용에 적용').props.onClick();await h.settle();assert.equal(text(quantityCell(h,1)),'4개');const undo=h.button('최근 일괄 변경 되돌리기').props.onClick;
+   h.locks({files:true});undo();await h.settle();assert.equal(text(quantityCell(h,1)),'4개');assert.ok(h.button('최근 일괄 변경 되돌리기'));
+   h.locks({files:false});h.button('최근 일괄 변경 되돌리기').props.onClick();await h.settle();assert.equal(text(quantityCell(h,1)),'1개');assert.equal(h.writes.length,0);assert.equal(h.protectedSnapshot(),h.before);
   }finally{h.close();}
  });
  test(`source-only selected deletion commits immediately from live draft without a preceding price edit (${company.code})`,async()=>{
