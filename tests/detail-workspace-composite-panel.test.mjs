@@ -6,6 +6,100 @@ import { deferred, panel as workspacePanel } from './helpers/detail-workspace.mj
 const prepare = '보관 구성 합치기', download = '보관 구성 PNG 다운로드', save = '보관 구성으로 상세 저장', recover = '보관 구성 상세 저장 결과 확인';
 const child = h => nodes(h.render()).find(node => node.type?.name === 'DetailWorkspaceCompositePanel');
 
+function toolbar(h) {
+  let current = null;
+  const change = (next, retired) => { if (next !== null || current === retired) current = next; };
+  h.set({ onToolbarActionsChange: change });
+  return { change, get current() { return current; } };
+}
+
+test('toolbar publishes read-only actions without I/O and save only opens the existing explicit review', async () => {
+  const f = await compositeFixture(), h = compositePanel(f), t = toolbar(h), before = JSON.stringify(f.view);
+  try {
+    assert.ok(t.current); assert.equal(t.current.saveDisabled, false); assert.equal(t.current.downloadDisabled, false); assert.equal(h.calls.length, 0);
+    t.current.prepareSave(); await h.idle();
+    assert.deepEqual(h.calls.map(call => call.action), ['prepare']); assert.equal(h.button(save).props.disabled, true); assert.equal(h.checkbox().props.checked, false);
+    assert.equal(JSON.stringify(f.view), before); assert.equal(h.saved.length, 0);
+    t.current.download(); await h.idle(); assert.equal(h.downloads.length, 1); assert.equal(h.calls.filter(call => call.action === 'apply').length, 0);
+  } finally { h.close(); }
+});
+
+test('toolbar publishes after the parent layout lifecycle is ready and keeps old generations inert before publication', async () => {
+  const f = await compositeFixture(); let parentReady = true, current = null, rejected = 0;
+  const h = compositePanel(f, { afterLayout: () => { parentReady = true; } });
+  const change = (next, retired) => { if (!parentReady) { rejected++; return; } if (next !== null || current === retired) current = next; };
+  try {
+    parentReady = false; h.set({ onToolbarActionsChange: change }); assert.ok(current); assert.equal(rejected, 0);
+    const stale = current, selection = f.selection(); selection.view.productVersion = '2026-10-16T00:00:04.000Z';
+    parentReady = false; h.set({ selection }); assert.notEqual(current, stale); assert.equal(rejected, 0);
+    stale.prepareSave(); stale.download(); await h.idle(); assert.equal(h.calls.length, 0);
+    current.prepareSave(); await h.idle(); assert.deepEqual(h.calls.map(call => call.action), ['prepare']);
+  } finally { h.close(); }
+});
+
+test('toolbar callbacks retire across disabled, source and active ABA and only fresh actions can prepare or download', async () => {
+  for (const flag of ['sourceCurrent', 'disabled', 'stageActive', 'selection']) {
+    const f = await compositeFixture(), h = compositePanel(f), t = toolbar(h);
+    try {
+      const original = t.current, selection = f.selection(), changed = f.selection(); changed.view.productVersion = '2026-10-16T00:00:04.000Z';
+      h.set(flag === 'selection' ? { selection: changed } : { [flag]: flag === 'disabled' });
+      if (flag !== 'selection') { assert.equal(t.current.saveDisabled, true); assert.equal(t.current.downloadDisabled, true); t.current.prepareSave(); t.current.download(); }
+      original.prepareSave(); original.download(); await h.idle(); assert.equal(h.calls.length, 0, flag);
+      h.set(flag === 'selection' ? { selection } : { [flag]: flag !== 'disabled' });
+      original.prepareSave(); original.download(); await h.idle(); assert.equal(h.calls.length, 0, flag + ' restored');
+      t.current.prepareSave(); await h.idle(); assert.equal(h.calls.filter(call => call.action === 'prepare').length, 1, flag);
+    } finally { h.close(); }
+  }
+});
+
+test('toolbar disables pending save actions and cannot bypass lost-ack recovery or repeat a request', async () => {
+  const f = await compositeFixture(), h = compositePanel(f, { apply: async () => { throw Error('unknown ACK'); } }), t = toolbar(h);
+  try {
+    t.current.prepareSave(); await h.idle(); h.review(); const enabled = t.current; await h.click(save);
+    assert.equal(t.current.saveDisabled, true); assert.equal(t.current.downloadDisabled, true);
+    enabled.prepareSave(); enabled.download(); t.current.prepareSave(); t.current.download(); await h.idle();
+    assert.deepEqual(h.calls.map(call => call.action), ['prepare', 'apply']); assert.equal(h.saved.length, 0);
+    await h.click(recover); assert.equal(h.saved.length, 1); assert.equal(h.calls.filter(call => call.action === 'apply').length, 1);
+  } finally { h.close(); }
+});
+
+test('retiring an older toolbar owner cannot clear a later published owner and unmounted actions do nothing', async () => {
+  const f = await compositeFixture(), first = compositePanel(f), second = compositePanel(f), t = toolbar(first);
+  try {
+    const old = t.current; second.set({ onToolbarActionsChange: t.change }); const latest = t.current; assert.notEqual(latest, old);
+    first.close(); assert.equal(t.current, latest); old.prepareSave(); old.download(); await second.idle(); assert.equal(first.calls.length, 0); assert.equal(second.calls.length, 0);
+    second.close(); assert.equal(t.current, null); latest.prepareSave(); latest.download(); assert.equal(second.calls.length, 0);
+  } finally { first.close(); second.close(); }
+});
+
+test('only explicit toolbar save reveals the existing review or preparation error after completion', async () => {
+  for (const failed of [false, true]) {
+    const f = await compositeFixture(), h = compositePanel(f, failed ? { prepare: async () => { throw Error('prepare failed'); } } : {}), t = toolbar(h), scrolls = [];
+    try {
+      assert.ok(h.render().props.ref); h.render().props.ref.current = { scrollIntoView: options => scrolls.push(plain(options)) };
+      assert.equal(scrolls.length, 0); await h.click(prepare); assert.equal(scrolls.length, 0);
+      t.current.prepareSave(); await h.idle(); assert.deepEqual(scrolls, [{ block: 'start' }]);
+      assert.equal(h.calls.filter(call => call.action === 'apply').length, 0);
+      if (failed) assert.match(text(h.render()), /prepare failed/); else assert.equal(h.button(save).props.disabled, true);
+    } finally { h.close(); }
+  }
+});
+
+test('toolbar preparation never reveals or updates after stage ABA or unmount', async () => {
+  for (const unmount of [false, true]) {
+    const f = await compositeFixture(), held = deferred(); let input;
+    const h = compositePanel(f, { prepare: async (selection, saved) => { input = { selection, saved }; return held.promise; } }), t = toolbar(h), scrolls = [];
+    try {
+      assert.ok(h.render().props.ref); h.render().props.ref.current = { scrollIntoView: options => scrolls.push(options) };
+      t.current.prepareSave(); h.render();
+      if (unmount) h.close(); else { h.set({ stageActive: false }); h.set({ stageActive: true }); }
+      held.resolve(f.prepared(input.selection, input.saved));
+      if (unmount) await new Promise(resolve => setImmediate(resolve)); else await h.idle();
+      assert.equal(scrolls.length, 0); assert.equal(h.lateWrites, 0); assert.equal(h.saved.length, 0);
+    } finally { h.close(); }
+  }
+});
+
 test('saved-workspace preview and PNG download only read; explicit review gates the one common/all-option save including excluded rows', async () => {
   const f = await compositeFixture(), h = compositePanel(f), before = JSON.stringify(f.view);
   try {

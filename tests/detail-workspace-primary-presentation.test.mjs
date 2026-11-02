@@ -11,13 +11,17 @@ test('primary photos keep protected banners clean and body actions visible while
   const f = await fixture(), before = JSON.stringify(f.view), h = panel(f); h.set({ primaryDetailTools: true });
   try {
     await h.idle(); const figures = nodes(h.render()).filter(node => node.type === 'figure'); assert.equal(figures.length, 4);
+    assert.deepEqual(figures.map(photo=>photo.props['data-photo-role']),['top','body','body','bottom']);
+    assert.deepEqual(figures.map(photo=>photo.props['data-photo-state']),['setting','original','original','setting']);
+    assert.deepEqual(figures.map(photo=>text(nodes(photo).find(node=>node.props?.className==='option-detail-image-badge'))),['상단 이미지','원본 이미지','원본 이미지','하단 이미지']);
+    for(const index of [1,2])assert.equal(nodes(figures[index]).filter(node=>node.props?.className==='detail-workspace-photo-overlay').length,1);
     for (const index of [0, 3]) assert.equal(nodes(figures[index]).some(node => ['button', 'select', 'input'].includes(node.type)), false, 'protected banners contain no disabled body controls');
     for (const index of [2, 3]) for (const action of ['편집', '위로', '아래로', '제거']) assert.equal(visible(entryFor(h, `작업 사진 ${index} ${action}`)), true);
     for (const label of ['작업 사진 2 교체', '작업 사진 추가 선택', '편집 HTML 사진 간격 (px)', '편집용 생성 HTML', '작업 사진을 선택 옵션 초안으로', '현재 구성 닫기']) {
       const entry = entryFor(h, label); assert.ok(entry, label); assert.equal(visible(entry), false, label);
     }
     const rebase = entries(h.render()).find(({ node }) => node.type?.name === 'DetailWorkspaceRebasePanel'); assert.ok(rebase); assert.equal(visible(rebase), false);
-    assert.equal(visible(entryFor(h, '상세 구성 저장')), true); assert.equal(h.button('상세 구성 저장').props.disabled, false);
+    assert.equal(visible(entryFor(h, '상세 구성 저장')), false,'independent composition storage stays named and accessible in advanced settings, separate from final toolbar Save'); assert.equal(h.button('상세 구성 저장').props.disabled, false);
     assert.equal(h.button('편집 구성 보관'), undefined); assert.equal(text(h.render()).includes('owner/'), false, 'raw storage keys are not option labels or captions');
     const add = h.control('작업 사진 추가 선택'), replace = h.control('작업 사진 2 교체');
     for (const control of [add, replace]) for (const option of nodes(control).filter(node => node.type === 'option' && node.props.value)) {
@@ -36,6 +40,7 @@ test('friendly labels retain exact photo keys and all explicit save, replacement
     const replacement = h.control('작업 사진 2 교체'); assert.equal(replacement.props.disabled, false);
     const chosen = nodes(replacement).find(node => node.type === 'option' && text(node) === '이미지 5'); assert.equal(chosen.props.value, f.keys[4]);
     replacement.props.onChange({ target: { value: chosen.props.value } }); h.render();
+    const changed=nodes(h.render()).filter(node=>node.type==='figure')[1];assert.equal(changed.props['data-photo-state'],'edited');assert.equal(text(nodes(changed).find(node=>node.props?.className==='option-detail-image-badge')),'편집된 이미지');
     assert.equal(h.render().props['data-workspace-dirty'], true); assert.equal(h.button('상세 구성 저장').props.disabled, false);
     await h.click('작업 사진 2 아래로'); await h.click('작업 사진 2 제거'); await h.click('상세 구성 저장');
     assert.deepEqual(plain(f.workspace.document.photos.map(photo => photo.key)), [f.keys[0], f.keys[4], f.keys[3]]);

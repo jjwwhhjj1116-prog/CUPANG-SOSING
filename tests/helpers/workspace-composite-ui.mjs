@@ -68,7 +68,7 @@ export function compositePanel(f, behavior = {}, mode = 'composite') {
         } }); return exports;
   }
   const Component = mode === 'rebase' ? load('app/components/detail-workspace-rebase-panel.tsx').DetailWorkspaceRebasePanel : load('app/components/detail-workspace-composite-panel.tsx').DetailWorkspaceCompositePanel;
-  function render() { cursor = 0; const tree = Component({ ...props, onSaved: view => saved.push(plain(view)), onLatestRead: reply => latest.push(plain(reply)), onBusyChange: value => locks.push(value) }); layouts.splice(0).forEach(fn => fn()); effects.splice(0).forEach(fn => fn()); return tree; }
+  function render() { cursor = 0; const tree = Component({ ...props, onSaved: view => saved.push(plain(view)), onLatestRead: reply => latest.push(plain(reply)), onBusyChange: value => locks.push(value) }); layouts.splice(0).forEach(fn => fn()); behavior.afterLayout?.(); effects.splice(0).forEach(fn => fn()); return tree; }
   const button = label => nodes(render()).find(node => node.type === 'button' && text(node) === label);
   const checkbox = () => nodes(render()).find(node => node.type === 'input' && node.props.type === 'checkbox');
   async function tick() { render(); await new Promise(resolve => setImmediate(resolve)); render(); }

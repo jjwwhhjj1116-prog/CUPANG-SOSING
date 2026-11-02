@@ -10,15 +10,19 @@ import { detailSaveAltChanges, detailSaveCommonAltText } from '@/app/detail-save
 import { detailSaveEditorHtml } from '@/app/detail-editor-composition';
 import { exactPrimaryQuotationTarget } from '@/app/quotation-seo-targets';
 
+export type DetailWorkspaceCompositeToolbarActions = {
+  prepareSave: () => void; saveDisabled: boolean; download: () => void; downloadDisabled: boolean;
+};
 type Props = { selection: DetailWorkspaceSelection; saved: DetailWorkspaceView; disabled?: boolean; stageActive?: boolean; sourceCurrent?: boolean;
-  beforeApply?: () => boolean; onSaved?: (view: QuotationFieldsView) => void; onLatestRead?: (reply: DetailWorkspaceView) => void; onBusyChange?: (busy: boolean) => void };
+  beforeApply?: () => boolean; onSaved?: (view: QuotationFieldsView) => void; onLatestRead?: (reply: DetailWorkspaceView) => void; onBusyChange?: (busy: boolean) => void;
+  onToolbarActionsChange?: (next: DetailWorkspaceCompositeToolbarActions | null, retired?: DetailWorkspaceCompositeToolbarActions) => void };
 type Review = { prepared: DetailWorkspaceComposite; generation: object };
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const issue = (cause: unknown) => cause instanceof Error ? cause.message : '보관한 상세 구성의 합치기·저장 결과를 확인하지 못했습니다.';
 
 /** Composes the exact saved workspace. Preview/download are read-only; the only
  * save operation is the explicitly reviewed atomic common/all-option save. */
-export function DetailWorkspaceCompositePanel({ selection, saved, disabled = false, stageActive = true, sourceCurrent = true, beforeApply, onSaved, onLatestRead, onBusyChange }: Props) {
+export function DetailWorkspaceCompositePanel({ selection, saved, disabled = false, stageActive = true, sourceCurrent = true, beforeApply, onSaved, onLatestRead, onBusyChange, onToolbarActionsChange }: Props) {
   const identity = JSON.stringify([selection.productId, selection.optionId, selection.profileId ?? null]);
   const scope = JSON.stringify([identity, selection.view, saved, disabled, stageActive, sourceCurrent]);
   const [clock, setClock] = useState({ scope, view: selection.view, token: {} });
@@ -26,6 +30,8 @@ export function DetailWorkspaceCompositePanel({ selection, saved, disabled = fal
   const generation = clock.scope === scope && clock.view === selection.view ? clock.token : null;
   const epoch = useRef(generation), mounted = useRef(true), operation = useRef<AbortController | null>(null), kind = useRef<'prepare' | 'download' | 'save' | 'recover' | 'latest' | null>(null);
   const attempt = useRef<DetailSaveAttempt>({}), resultRef = useRef<DetailWorkspaceComposite | null>(null), delivered = useRef(false), liveReview = useRef<Review | null>(null);
+  const publishedToolbar = useRef<DetailWorkspaceCompositeToolbarActions | null>(null);
+  const section = useRef<HTMLElement | null>(null), toolbarReveal = useRef<object | null>(null);
   const current = useRef({ identity, selection, saved, disabled, stageActive, sourceCurrent, beforeApply, onSaved, onLatestRead, onBusyChange });
   const [result, setResult] = useState<DetailWorkspaceComposite | null>(null), [review, setReview] = useState<Review | null>(null);
   const [preparedAt, setPreparedAt] = useState<object | null>(null), preparedEpoch = useRef<object | null>(null);
@@ -61,7 +67,7 @@ export function DetailWorkspaceCompositePanel({ selection, saved, disabled = fal
     if (operation.current !== controller) return; operation.current = null; kind.current = null;
     if (mounted.current) { const locked = waiting(); setBusy(false); setPending(locked); current.current.onBusyChange?.(locked); }
   }
-  async function prepare() {
+  async function prepare(reveal = false) {
     if (waiting()) return; const token = generation, controller = begin('prepare', true); if (!controller) return;
     liveReview.current = null; setReview(null);
     try {
@@ -69,7 +75,10 @@ export function DetailWorkspaceCompositePanel({ selection, saved, disabled = fal
       if (!valid(token, true) || controller.signal.aborted || !same(prepared.workspace, current.current.saved.workspace) || !same(prepared.view, current.current.selection.view)) return;
       resultRef.current = prepared; preparedEpoch.current = token; setPreparedAt(token); attempt.current = {}; delivered.current = false; setResult(prepared); setDone(false); setPending(false); setMessage('보관한 작업 사진으로 합친 PNG를 확인한 뒤 전체 저장 범위를 검토해주세요. 아직 저장하지 않았습니다.');
     } catch (cause) { if (mounted.current && !controller.signal.aborted) setError(issue(cause)); }
-    finally { finish(controller); }
+    finally {
+      finish(controller);
+      if (reveal && valid(token, true) && !controller.signal.aborted) toolbarReveal.current = token;
+    }
   }
   async function download() {
     if (waiting()) return; const token = generation, controller = begin('download', true); if (!controller) return;
@@ -116,6 +125,26 @@ export function DetailWorkspaceCompositePanel({ selection, saved, disabled = fal
     } catch (cause) { if (mounted.current && !controller.signal.aborted) setError(issue(cause)); }
     finally { finish(controller); }
   }
+  useEffect(() => {
+    if (!onToolbarActionsChange) return;
+    const token = generation, blocked = !token || busy || pending || disabled || !stageActive || !sourceCurrent;
+    const available = () => publishedToolbar.current === actions && !blocked && valid(token, true) && !operation.current && !waiting();
+    const actions: DetailWorkspaceCompositeToolbarActions = {
+      prepareSave: () => { if (available()) void prepare(true); }, saveDisabled: blocked,
+      download: () => { if (available()) void download(); }, downloadDisabled: blocked,
+    };
+    publishedToolbar.current = actions; onToolbarActionsChange(actions);
+    return () => {
+      if (publishedToolbar.current === actions) publishedToolbar.current = null;
+      onToolbarActionsChange(null, actions);
+    };
+    // Publish after parent layout setup; retain this exact generation's guarded actions.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [generation, busy, pending, disabled, stageActive, sourceCurrent, onToolbarActionsChange]);
+  useLayoutEffect(() => {
+    const token = toolbarReveal.current; toolbarReveal.current = null;
+    if (token && valid(token, true)) section.current?.scrollIntoView?.({ block: 'start' });
+  });
   const currentResult = !!result && preparedAt === generation && sourceCurrent && !disabled && stageActive && same(result.view, selection.view) && same(result.workspace, saved.workspace);
   const reviewed = !!result && review?.prepared === result && review.generation === generation;
   const optionCount = result ? new Set(result.view.resolved.rows.flatMap(row => row.optionId ? [row.optionId] : [])).size : 0;
@@ -125,7 +154,7 @@ export function DetailWorkspaceCompositePanel({ selection, saved, disabled = fal
     preview = { common: changes.find(change => change.optionId === null && change.fieldKey === field)?.value ?? detailSaveCommonAltText(result.view),
       selected: changes.find(change => change.optionId === result.optionId && change.fieldKey === field)?.value ?? '', htmlLength: detailSaveEditorHtml(result.view, result.optionId).effective.length };
   } catch (cause) { previewError = issue(cause); }
-  return <section className="panel-stack" aria-label="보관 구성 상세 합치기" aria-busy={busy} data-workspace-saving={busy || pending}>
+  return <section ref={section} className="panel-stack" aria-label="보관 구성 상세 합치기" aria-busy={busy} data-workspace-saving={busy || pending} data-composite-toolbar={!!onToolbarActionsChange}>
     <h4>보관 구성으로 상세 이미지 만들기</h4><p>편집용 여백을 제외하고 사진을 800px 폭으로 이어 붙입니다. 준비와 다운로드는 저장하지 않습니다.</p>
     <div className="button-row"><button type="button" className="btn ghost" disabled={busy || pending || disabled || !stageActive || !sourceCurrent} onClick={() => void prepare()}>보관 구성 합치기</button>
       <button type="button" className="btn ghost" disabled={busy || pending || disabled || !stageActive || !sourceCurrent} onClick={() => void download()}>보관 구성 PNG 다운로드</button></div>

@@ -38,6 +38,7 @@ function panel(f, transport = f.request, confirm = () => true) {
     useState(initial) { const i = cursor++; if (!(i in slots)) slots[i] = typeof initial === 'function' ? initial() : initial;
       return [slots[i], value => { if (closed) { lateWrites++; return; } const next = typeof value === 'function' ? value(slots[i]) : value; if (!Object.is(next, slots[i])) { slots[i] = next; epoch++; } }]; },
     useRef(initial) { const i = cursor++; return slots[i] ?? (slots[i] = { current: initial }); },
+    useCallback(fn, deps) { const i = cursor++, before = slots[i]; if (!before || changed(before.deps, deps)) slots[i] = { fn, deps }; return slots[i].fn; },
     useEffect(fn, deps) { effect(effects, fn, deps); }, useLayoutEffect(fn, deps) { effect(layouts, fn, deps); },
   };
   const document = { activeElement: null, addEventListener(name, callback) { const set = listeners.get(name) ?? new Set(); set.add(callback); listeners.set(name, set); },

@@ -1,0 +1,47 @@
+.registration-workspace .detail-body[data-registration-stage="상세 이미지"]{padding:12px 20px 20px}
+.registration-workspace .option-detail-primary{display:flex;flex-direction:column;gap:0}
+.registration-workspace .option-detail-primary>:is(.option-detail-guidance,.option-detail-photo-tools,.option-detail-reopen-tools){order:3}
+.registration-workspace .option-detail-primary>.option-detail-advanced{order:1;margin:0;padding:0;border:0;background:transparent}
+.registration-workspace .option-detail-primary .detail-workspace-primary{gap:0}
+.registration-workspace .option-detail-primary-header{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:50px;padding:10px 15px;background:#fff}
+.registration-workspace .option-detail-primary-header[hidden]{display:none}
+.registration-workspace .option-detail-primary-header h3{margin:0;font-size:19.2px;line-height:28.8px;font-weight:700;color:#110a57}
+.registration-workspace .option-detail-primary-actions{position:relative;display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px}
+.registration-workspace .option-detail-primary-actions .btn{min-height:29px;padding:4px 8px;border:1px solid #32bdea;border-radius:10px;font-size:12px;line-height:18px;color:#32bdea;background:#fff}
+.registration-workspace .option-detail-primary-actions .product-image-upload-queue{margin:0;padding:0;border:0;box-shadow:none;background:transparent;position:relative;z-index:4}
+.registration-workspace .option-detail-primary-actions .product-image-upload-queue>.quote-actions{margin:0;gap:0}
+.registration-workspace .option-detail-primary-actions .upload-trigger-icon{display:flex;align-items:center;gap:5px;width:auto;color:#ff7e41;border-color:#ff7e41}
+.registration-workspace .option-detail-primary-actions .upload-trigger-icon::after{content:'업로드'}
+.registration-workspace .option-detail-primary-actions .product-image-upload-queue:is(:has(.product-image-upload-files),[aria-busy=true],:has([role=alert]),:has([role=status])){position:absolute;right:0;top:0;width:280px;max-height:60dvh;overflow:auto;padding:10px;background:#fff;border:1px solid #dcdfe8;border-radius:10px;box-shadow:0 6px 18px #15254724}
+.registration-workspace .option-detail-primary-actions .detail-batch-compact{display:contents}
+.registration-workspace .option-detail-primary-actions .detail-batch-compact>.detail-stage-title{display:none}
+.registration-workspace .option-detail-primary-actions .detail-batch-start-controls{display:contents!important}
+.registration-workspace .option-detail-primary-actions .detail-batch-start-controls>.btn:first-child{color:#ff9770;border-color:#ff9770}
+.registration-workspace .option-detail-primary-actions .detail-batch-start-controls>.btn:last-child{color:#78c091;border-color:#78c091}
+.registration-workspace .option-detail-primary-actions [data-batch-prepared=false]>.btn.primary{display:none}
+.registration-workspace .option-detail-primary-actions .detail-batch-guidance,.registration-workspace .option-detail-primary-actions .detail-batch-count{font-size:10px;line-height:16px}
+.registration-workspace .option-detail-primary-actions .detail-batch-guidance{order:4}
+.registration-workspace .option-detail-primary-actions .detail-batch-count{display:none}
+.registration-workspace .option-detail-primary-actions .detail-batch-compact>.panel-stack{flex-basis:100%;max-height:50dvh;overflow:auto}
+.registration-workspace .option-detail-primary-actions .detail-toolbar-save{background:#78c091;border-color:#78c091;color:#fff}
+.registration-workspace .option-detail-primary .detail-workspace-primary>.detail-workspace-toolbar{display:none}
+.registration-workspace .option-detail-primary [data-composite-toolbar=true]>h4,.registration-workspace .option-detail-primary [data-composite-toolbar=true]>h4+p,.registration-workspace .option-detail-primary [data-composite-toolbar=true]>.button-row:first-of-type{display:none}
+.registration-workspace .option-detail-primary .detail-workspace-photo-stack{height:calc(100dvh - 322px);min-height:420px;padding:0!important;overflow:auto;overscroll-behavior:contain;background:#f0f0f0!important;scrollbar-width:thin}
+.registration-workspace .detail-workspace-photo{position:relative;width:min(800px,100%)!important;margin:0 auto!important;padding:0!important;box-sizing:border-box;background:#fff}
+.registration-workspace .detail-workspace-photo>img{display:block;width:100%!important;max-width:100%;height:auto}
+.registration-workspace .detail-workspace-photo>figcaption{position:absolute;top:10px;left:10px;z-index:1}
+.registration-workspace .detail-workspace-photo .option-detail-image-badge{display:inline-block;padding:4px 8px;border:0;border-radius:4px;font-size:12px;line-height:29px;background:#28a745;color:#fff}
+.registration-workspace .detail-workspace-photo[data-photo-state=original] .option-detail-image-badge{background:#6c757d}
+.registration-workspace .detail-workspace-photo:is([data-photo-role=top],[data-photo-role=bottom]) .option-detail-image-badge{background:#007bff}
+.registration-workspace .detail-workspace-photo-overlay{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:10px;background:#0008;opacity:0;pointer-events:none;transition:opacity .15s}
+.registration-workspace .detail-workspace-photo:is(:hover,:focus-within) .detail-workspace-photo-overlay{opacity:1;pointer-events:auto}
+.registration-workspace .detail-workspace-photo-actions,.registration-workspace .detail-workspace-photo-order{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:10px;max-width:300px;padding:10px}
+.registration-workspace .detail-workspace-photo-overlay .btn,.registration-workspace .detail-workspace-photo-order>button{min-height:30px;padding:5px 12px;border:1px solid #fff;border-radius:10px;font-size:12px;line-height:18px;background:#32bdea;color:#fff}
+.registration-workspace .detail-workspace-photo-order>button:last-child{background:#e15763;border-color:#e15763}
+.registration-workspace .detail-workspace-photo-overlay details{padding:8px;background:#fff;border-radius:6px;font-size:12px}
+.registration-workspace .option-detail-primary>.option-detail-guidance{font-size:10px}
+@media(max-width:760px){
+ .registration-workspace .option-detail-primary-header{align-items:flex-start;flex-direction:column;gap:8px;padding:10px}
+ .registration-workspace .option-detail-primary-actions{justify-content:flex-start;gap:6px}
+ .registration-workspace .option-detail-primary .detail-workspace-photo-stack{height:calc(100dvh - 380px);min-height:320px}
+}

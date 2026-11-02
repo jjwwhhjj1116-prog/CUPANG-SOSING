@@ -1,7 +1,7 @@
 'use client';
 import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 import { isOwnedImageKey } from '@/app/image-files';
-import { useEffect, useLayoutEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
 import type { QuotationChange, QuotationFieldsView } from '@/app/quotation-schema';
 import type { FreeImageQuotationRequest } from '@/app/free-image-translation-client';
 import { optionImageChanges, optionImageDraftIssues, optionImageTargets, optionImageValue, quotationImageKeys, reorderOptionImageKeys, verifyOptionImageRefresh, verifyOptionImageRestored, verifyOptionImageSave, verifyOptionImageRecovery, type OptionImageDraft, type OptionImageInput, type OptionImageStage } from '@/app/quotation-image-targets';
@@ -13,15 +13,16 @@ import { readDetailWorkspace } from '@/app/detail-workspace-client';
 import { startDetailBodyFromSavedPhoto } from '@/app/detail-source-draft';
 import { mainImageLibraryCurrent, readMainImageLibrary, type MainImageLibrary } from '@/app/main-image-library';
 import { verifyMainImageView } from '@/app/quotation-main-image';
+import type { DetailWorkspaceCompositeToolbarActions } from '@/app/components/detail-workspace-composite-panel';
 
-type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; stage: OptionImageStage; active?: boolean; saveOnChange?: boolean; primaryDetailTools?: boolean; uploadControl?: ReactNode; sidebarActions?: ReactNode;
+type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; stage: OptionImageStage; active?: boolean; saveOnChange?: boolean; primaryDetailTools?: boolean; uploadControl?: ReactNode; sidebarActions?: ReactNode; detailToolbarActions?: ReactNode;
   disabled?: boolean; processingConfigured?: boolean | null; onSaved?: () => void; onTranslate?: (sourceKey: string, role: OptionImageStage, sourceLanguage: 'zh' | 'en', quotationTarget: FreeImageQuotationRequest) => void;
   onEdit?: (sourceKey: string, role: OptionImageStage, quotationTarget: FreeImageQuotationRequest) => void;
   onProcess?: (sourceKey: string, role: 'additional', quotationTarget: FreeImageQuotationRequest, quotationView: QuotationFieldsView) => void };
 const imageUrl = (key: string) => `/api/files/${key.split('/').map(encodeURIComponent).join('/')}`;
 const dragMime = 'application/x-yoofam-option-image-order';
 type ImageDrag = { scope: string; sourceKey: string; stage: OptionImageStage; view: QuotationFieldsView; keys: string[]; key: string; token: string; element: HTMLElement };
-export function OptionImageEditor({ productId, optionId, version, profileId, refreshToken, stage, active = true, saveOnChange = false, primaryDetailTools = false, uploadControl, sidebarActions, disabled = false, processingConfigured = null, onSaved, onTranslate, onEdit, onProcess }: Props) {
+export function OptionImageEditor({ productId, optionId, version, profileId, refreshToken, stage, active = true, saveOnChange = false, primaryDetailTools = false, uploadControl, sidebarActions, detailToolbarActions, disabled = false, processingConfigured = null, onSaved, onTranslate, onEdit, onProcess }: Props) {
   const instant = stage === 'additional' && saveOnChange;
   const endpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId ? `?profileId=${encodeURIComponent(profileId)}` : ''}`;
   const scope = JSON.stringify([endpoint, optionId]), sourceKey = JSON.stringify([scope, version, refreshToken]);
@@ -52,6 +53,11 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
   const workspaceWorking = workspaceWork.key === sourceKey && workspaceWork.busy;
   const view = saved?.scope === scope ? saved.view : null, draft = pending.scope === scope ? pending.values : {};
   const [library, setLibrary] = useState<{ sourceKey: string; view: QuotationFieldsView; value: MainImageLibrary } | null>(null);
+  const [compositeToolbar, setCompositeToolbar] = useState<DetailWorkspaceCompositeToolbarActions | null>(null), liveCompositeToolbar = useRef<DetailWorkspaceCompositeToolbarActions | null>(null);
+  const receiveCompositeToolbar = useCallback((next: DetailWorkspaceCompositeToolbarActions | null, retired?: DetailWorkspaceCompositeToolbarActions) => {
+    if (!mounted.current || next === null && liveCompositeToolbar.current !== retired) return;
+    liveCompositeToolbar.current = next; setCompositeToolbar(next);
+  }, []);
   useEffect(() => {
     if (!instant || !active || disabled || !view || saved?.sourceKey !== sourceKey) return;
     try { verifyMainImageView(view); } catch { return; }
@@ -456,7 +462,12 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
   const saveTools = <div className="option-image-save-tools"><button type="button" className="btn primary" aria-label={instant ? '선택 옵션 이미지 저장' : undefined} disabled={!view || busy || merging || workspaceWorking || disabled || !!bindingError || !dirty || !!issues.length} onClick={() => void save()}>{uncertain ? '이미지 저장 결과 확인' : instant ? '저장' : '선택 옵션 이미지 저장'}</button>
     {dirty && <button type="button" className="btn ghost" disabled={busy || merging || workspaceWorking || disabled} onClick={() => void load(true)}>입력 유지·최신 이미지 조회</button>}
     {instant?<details className="option-additional-refresh-tools"><summary>저장·복구 도구</summary>{reloadControl}</details>:reloadControl}</div>;
-  return <section className={`panel-stack option-image-editor option-image-editor--${stage}${instant ? ' option-additional-instant' : ''}`} aria-label="선택 옵션 이미지 편집" data-quotation-source-step={stage === 'additional' ? '추가 이미지' : '상세 이미지'} data-workspace-dirty={dirty} data-workspace-saving={busy || merging || workspaceWorking}>
+  return <section className={`panel-stack option-image-editor option-image-editor--${stage}${instant ? ' option-additional-instant' : ''}${stage==='detail'&&primaryDetailTools?' option-detail-primary':''}`} aria-label="선택 옵션 이미지 편집" data-quotation-source-step={stage === 'additional' ? '추가 이미지' : '상세 이미지'} data-workspace-dirty={dirty} data-workspace-saving={busy || merging || workspaceWorking}>
+    <header className="option-detail-primary-header" hidden={stage!=='detail'}><h3 hidden={!primaryDetailTools}>상세 페이지 이미지</h3><div className="option-detail-primary-actions">{stage==='detail'&&uploadControl}
+      <button type="button" className="btn ghost" aria-label="상세 이미지 다운로드" hidden={!primaryDetailTools} disabled={!compositeToolbar||compositeToolbar.downloadDisabled||!view||locked||dirty||!active||saved?.sourceKey!==sourceKey} onClick={()=>{if(compositeToolbar&&liveCompositeToolbar.current===compositeToolbar&&interactive()&&!request.current&&!pendingSave.current&&!Object.keys(latestDraft.current.values).length&&saved?.sourceKey===sourceKey)compositeToolbar.download();}}>다운로드</button>
+      {detailToolbarActions}
+      <button type="button" className="btn primary" aria-label="상세 이미지 저장 검토" hidden={!primaryDetailTools} disabled={!compositeToolbar||compositeToolbar.saveDisabled||!view||locked||dirty||!active||saved?.sourceKey!==sourceKey} onClick={()=>{if(compositeToolbar&&liveCompositeToolbar.current===compositeToolbar&&interactive()&&!request.current&&!pendingSave.current&&!Object.keys(latestDraft.current.values).length&&saved?.sourceKey===sourceKey)compositeToolbar.prepareSave();}}>저장</button>
+    </div></header>
     {!(stage==='detail'&&primaryDetailTools)&&<h3>{stage === 'detail' ? '상세 페이지 이미지' : '선택 옵션 추가 이미지'}</h3>}<p className="option-image-context">{row?.optionLabel || optionId} · {row?.included === false ? '견적 제외 옵션' : '선택한 옵션'}</p>
     {(stage==='detail'&&primaryDetailTools)||instant?<details className="option-detail-guidance"><summary>사진 편집 안내·원본 ZIP</summary>{editGuidance}</details>:editGuidance}
     {stage === 'detail' && view && <details className="option-detail-photo-tools"><summary>수집 사진으로 상세 구성</summary><div className="panel-note"><div><strong>수집 사진으로 상세 구성</strong><p>저장된 상품 사진을 직접 골라 상세 본문으로 배치할 수 있습니다. 대표·추가 이미지와 직접 작성한 HTML은 유지됩니다.</p><button type="button" className="btn ghost" disabled={locked || !active} onClick={() => setSourceCandidatesOpen(true)}>수집 사진 선택하기</button></div></div></details>}
@@ -466,7 +477,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
       <small>합치기 직전의 검증된 사진 순서를 불러옵니다. 저장하기 전까지 현재 통합 상세 이미지는 바뀌지 않습니다.</small>
       <small>사진·HTML 재편집은 HTML을 함께 보관한 저장 건에서 사용할 수 있습니다. 당시 HTML을 그대로 새 수동 초안에 넣으며 예전 공통·자동 상속 상태로 되돌리지는 않습니다.</small>
     </div></details>}
-    {stage === 'detail' && view && <details className="option-detail-advanced" open={primaryDetailTools ? true : undefined}><summary hidden={primaryDetailTools}>상세 이미지 합치기·작업 구성</summary><DetailWorkspacePanel key={`workspace:${scope}`} productId={productId} optionId={optionId} profileId={profileId} view={view} stageActive={active} primaryDetailTools={primaryDetailTools}
+    {stage === 'detail' && view && <details className="option-detail-advanced" open={primaryDetailTools ? true : undefined}><summary hidden={primaryDetailTools}>상세 이미지 합치기·작업 구성</summary><DetailWorkspacePanel key={`workspace:${scope}`} productId={productId} optionId={optionId} profileId={profileId} view={view} stageActive={active} primaryDetailTools={primaryDetailTools} onCompositeToolbarActionsChange={receiveCompositeToolbar}
       disabled={disabled || busy || merging || uncertain || dirty || !!bindingError || saved?.sourceKey !== sourceKey}
       onRefreshRequested={() => {
         if (!keyboardGeneration || keyboardEpoch.current !== keyboardGeneration || !active || !liveActive.current || !current() || currentStage.current !== 'detail'
@@ -527,7 +538,6 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
       beforeApply={() => !!keyboardGeneration && keyboardEpoch.current === keyboardGeneration && active && liveActive.current && current() && currentStage.current === 'detail' && !liveDisabled.current && !request.current && !pendingSave.current && !Object.keys(latestDraft.current.values).length}
       onBusyChange={value => { compositeBusy.current = value; setMerging(value); }}
       onSaved={body => { if (!current()) return; latestSaved.current = { scope, sourceKey, view: body }; setSaved(latestSaved.current); onSaved?.(); }} /></details>}
-    {stage==='detail'&&uploadControl&&<div className="option-detail-upload-toolbar">{uploadControl}</div>}
     {busy && <p role="status">옵션 이미지 처리 중…</p>}{error && <p role="alert">{error}</p>}{bindingError && <p role="alert">{bindingError}</p>}{message && <p role="status">{message}</p>}
     {dirty && saved?.sourceKey !== sourceKey && <p role="status">상품 저장 상태가 변경됐습니다. 입력은 유지했습니다. 최신 자료를 조회한 뒤 저장해주세요.</p>}
     <details className={stage === 'detail' && primaryDetailTools ? 'option-detail-final-images' : undefined} open={stage !== 'detail' || !primaryDetailTools ? true : undefined}><summary hidden={stage !== 'detail' || !primaryDetailTools}>저장된 최종 상세 이미지 · {selected.length}장</summary>
