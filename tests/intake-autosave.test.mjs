@@ -17,8 +17,15 @@ function fixture(initialOwner='alice') {
   };
   react.useLayoutEffect=react.useEffect;
   const exports={};
-  const draftModule={};
-  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/intake-draft.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:draftModule,Error,Date});
+  const draftModules=new Map();
+  function loadDraftModule(file){
+    if(draftModules.has(file))return draftModules.get(file);
+    const exports={};draftModules.set(file,exports);
+    vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file+'.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
+      exports,Error,Date,URL,require(name){assert.ok(name.startsWith('@/'));return loadDraftModule(name.slice(2));},
+    });return exports;
+  }
+  const draftModule=loadDraftModule('app/intake-draft');
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/use-intake-draft.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
     exports,AbortController,Error,Date,Promise,
     require(name){if(name==='react')return react;assert.equal(name,'@/app/intake-draft');return draftModule;},
@@ -126,7 +133,7 @@ function draftApiFixture(companyCode,companyName){
   function load(file){
     if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
     vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file+'.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
-      exports,Error,Response,TextDecoder,TextEncoder,Uint8Array,Date,process:{env:{NODE_ENV:'production'}},require(name){
+      exports,Error,Response,TextDecoder,TextEncoder,Uint8Array,Date,URL,process:{env:{NODE_ENV:'production'}},require(name){
         if(name==='cloudflare:workers')return{env:{DB}};
         if(name==='@/app/chatgpt-auth')return{getWorkspaceOwnerId:async()=>state.owner,getChatGPTUser:async()=>({verifiedAccess:true,membership:{companyCode,companyName}})};
         if(name==='@/db/category-profiles')return{getCategoryProfile:async(requestedOwner,id)=>requestedOwner===state.owner&&id===profile.id?{...profile,hubSchema:{company:{code:requestedOwner,name:requestedOwner==='A01526306'?'유앤채':'와이홉'}}}:null};

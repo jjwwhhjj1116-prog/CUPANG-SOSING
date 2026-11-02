@@ -837,6 +837,9 @@ useEffect(()=>{
     const plan=sourceWorkRef.current;
     if(!plan||plan!==sourceWork||busy||batchBusy)return;
     if(!sourceWorkCurrent(plan)){setSourceWork(null);setSourceNotice('회원·회사 또는 기본설정이 변경되어 자동 작업 연결을 중단했습니다. 저장한 초안은 유지됩니다.');return;}
+    // Queue autosave is independent of collection. Keep this exact plan while
+    // its save is pending, or paused for the user's explicit save recovery.
+    if(!intakeDraft.ready||intakeDraft.loading||intakeDraft.saving||intakeDraft.autoPaused)return;
     if(plan.phase==='ready'){
       const run={request:plan.request,products:plan.products};
       setSourceWork(null);setIntakeSourceSeed(undefined);setAddOpen(false);setSelected(new Set(run.products.map(product=>product.id)));

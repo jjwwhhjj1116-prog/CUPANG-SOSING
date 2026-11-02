@@ -89,13 +89,18 @@ export async function POST(request:Request,context:Context){
     await active();
     // Explicit null is the original queryless scope. Never replace it with the
     // captured profile ID supplied by an untrusted observation or saved source.
-    let loaded=await loadSinglePackage(owner,id,body.profileId,company,active);
     const candidate=body.observation&&typeof body.observation==='object'&&!Array.isArray(body.observation)?body.observation as Record<string,unknown>:null;
     const observedIdentity=candidate?.identity&&typeof candidate.identity==='object'&&!Array.isArray(candidate.identity)?candidate.identity as Record<string,unknown>:null;
-    const native=typeof observedIdentity?.fingerprint==='string'&&/^[a-f0-9]{64}$/.test(observedIdentity.fingerprint)&&observedIdentity.fingerprint!==loaded.view.fingerprint;
-    // The observation only selects an additional strict verifier. It cannot
-    // supply a plan, body, actor, source hash or broader permission.
-    if(native)loaded=await loadSinglePackage(owner,id,body.profileId,company,active,false,undefined,true);
+    // Build both trusted identities once with bounded private reads. A native
+    // receipt never needs to verify the unrelated legacy public capabilities.
+    let loaded=await loadSinglePackage(owner,id,body.profileId,company,active,false,undefined,true,{nativeReadOnly:true});
+    const native=loaded.view.nativeAssetSourcePlan?.sourcePlanSha256===observedIdentity?.fingerprint&&typeof observedIdentity?.fingerprint==='string';
+    if(!native){
+      // Only an exact legacy identity may enter its original verifier. A bad
+      // native identity/body cannot silently fall back to a legacy save.
+      if(observedIdentity?.fingerprint!==loaded.view.fingerprint)return json({error:'검토한 전체 상품 문서의 원문 확인값이 변경됐습니다. 다시 전송하지 말고 보관된 결과를 확인해주세요.'},409);
+      loaded=await loadSinglePackage(owner,id,body.profileId,company,active);
+    }
     const {view,saved,guard,nativeAssetSourceGuard}=loaded,plan='nativeAssetSourcePlan' in view?view.nativeAssetSourcePlan:null;
     if(native?(!plan?.metadataValid||plan.sourcePlanSha256!==observedIdentity?.fingerprint):(!view.prepared||!view.review.canPrepare))return json({error:'준비된 전체 상품의 이미지·견적 자료가 변경됐습니다. 기존 결과를 다시 전송하지 말고 확인해주세요.'},409);
     const current=await stableQuotationFieldsView(owner,id,body.profileId);

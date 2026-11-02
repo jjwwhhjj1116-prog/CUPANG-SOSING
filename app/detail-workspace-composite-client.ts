@@ -2,16 +2,40 @@ import { renderDetailImageSequence, type DetailComposite } from '@/app/detail-im
 import { readDetailWorkspace, validateDetailWorkspaceReply, type DetailWorkspaceSelection } from '@/app/detail-workspace-client';
 import type { DetailWorkspaceRecord, DetailWorkspaceView } from '@/app/detail-workspace';
 import { applyDetailSave, recoverDetailSave, type DetailSaveAttempt } from '@/app/detail-save-client';
-import { DETAIL_SAVE_EDITOR_POLICY, DETAIL_SAVE_PUBLICATION_POLICY, detailSavePublishedBodyImages, DETAIL_SAVE_PEER_SNAPSHOT_LIMIT, detailSaveOptionIds, validateDetailSavePeers, detailSavePeerDigest, type DetailSavePeers } from '@/app/detail-save-plan';
+import { DETAIL_SAVE_EDITOR_POLICY, DETAIL_SAVE_PUBLICATION_POLICY, DETAIL_PUBLICATION_CURRENT_POLICY, detailSavePublishedBodyImages, DETAIL_SAVE_PEER_SNAPSHOT_LIMIT, detailSaveOptionIds, validateDetailSavePeers, detailSavePeerDigest, type DetailSavePeers } from '@/app/detail-save-plan';
 import { labelUploadDigest } from '@/app/label-upload-key';
 import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 
 export type DetailWorkspaceComposite = DetailComposite & { workspace: DetailWorkspaceRecord; peers?: DetailSavePeers;publicationPolicy?:typeof DETAIL_SAVE_PUBLICATION_POLICY };
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const changed = () => Error('보관한 상세 구성이나 견적 저장 기준이 변경되었습니다. 미리보기와 작업 구성을 유지하고 최신 상태를 확인해주세요.');
 const endpoint = (input: DetailWorkspaceSelection) => `/api/products/${encodeURIComponent(input.productId)}/quotation-fields${input.profileId ? `?profileId=${encodeURIComponent(input.profileId)}` : ''}`;
 const options = (input: DetailWorkspaceComposite) => ({ editorPolicy: DETAIL_SAVE_EDITOR_POLICY, workspace: input.workspace, ...(input.peers ? { peers: input.peers } : {}),...(input.publicationPolicy?{publicationPolicy:input.publicationPolicy}:{}) });
+export type DetailPublicationCurrentObservation = { status: 'current' | 'unpublished' | 'review-required' };
+/** A new job may reuse authority only after a versioned read bound to its current view. */
+export async function readCurrentDetailPublication(selection: Omit<DetailWorkspaceSelection, 'optionId'>, signal: AbortSignal,
+  fetcher: typeof fetch = fetch): Promise<DetailPublicationCurrentObservation> {
+  const params = new URLSearchParams({ ...(selection.profileId ? { profileId: selection.profileId } : {}), current: DETAIL_PUBLICATION_CURRENT_POLICY });
+  signal.throwIfAborted(); const response = await fetcher(`/api/products/${encodeURIComponent(selection.productId)}/detail-save?${params}`, { signal, cache: 'no-store', credentials: 'same-origin', redirect: 'error' }),
+    body = await response.json(), view = selection.view, source = { productId: selection.productId, profileId: selection.profileId ?? null, productVersion: view.productVersion,
+      contentRevision: view.contentRevision, optionRevision: view.optionRevision, revision: view.revision, inputFingerprint: view.inputFingerprint, categoryContext: view.categoryContext };
+  signal.throwIfAborted();
+  if (!response.ok || response.redirected || !object(body) || Object.keys(body).some(key => !['policy', 'readOnly', 'status', 'source', 'execution', 'publication'].includes(key))
+    || body.policy !== DETAIL_PUBLICATION_CURRENT_POLICY || body.readOnly !== true
+    || !['current', 'unpublished', 'review-required'].includes(body.status as string) || !same(body.source, source)
+    || !same(body.execution, { requests: 0, writes: 0 })) throw changed();
+  if (body.status === 'current') {
+    const proof = body.publication, hash = (value: unknown) => typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value);
+    if (!object(proof) || Object.keys(proof).sort().join(',') !== 'basisSha256,bodyPhotos,fieldsSha256,peerAfterDigest,policy,sourceOptionId,uploadId,workspace'
+      || proof.policy !== DETAIL_PUBLICATION_CURRENT_POLICY || !hash(proof.uploadId) || !hash(proof.peerAfterDigest) || !hash(proof.basisSha256) || !hash(proof.fieldsSha256)
+      || typeof proof.sourceOptionId !== 'string' || !detailSaveOptionIds(view).includes(proof.sourceOptionId) || !object(proof.workspace)
+      || Object.keys(proof.workspace).sort().join(',') !== 'digest,revision' || !Number.isSafeInteger(proof.workspace.revision) || (proof.workspace.revision as number) < 1 || !hash(proof.workspace.digest)
+      || !Number.isSafeInteger(proof.bodyPhotos) || (proof.bodyPhotos as number) < 1 || (proof.bodyPhotos as number) > PRODUCT_IMAGE_POOL_LIMIT) throw changed();
+  } else if (body.publication !== undefined) throw changed();
+  return { status: body.status as DetailPublicationCurrentObservation['status'] };
+}
 async function verifyPeers(selection: DetailWorkspaceSelection, saved: DetailWorkspaceView, peers: DetailSavePeers, signal: AbortSignal, fetcher: typeof fetch) {
   const proof = validateDetailSavePeers(peers, detailSaveOptionIds(selection.view));
   if (!saved.workspace) throw changed();

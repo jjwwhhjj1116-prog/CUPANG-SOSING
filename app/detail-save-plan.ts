@@ -11,6 +11,8 @@ export const DETAIL_SAVE_TEXT_POLICY = 'couplus-detail-alt-v1' as const;
 export type DetailSaveTextPolicy = typeof DETAIL_SAVE_TEXT_POLICY;
 export const DETAIL_SAVE_EDITOR_POLICY = 'ordered-inputs-html-v1' as const;
 export const DETAIL_SAVE_PUBLICATION_POLICY = 'shared-body-pixels-v1' as const;
+export const DETAIL_PUBLICATION_CURRENT_POLICY = 'automatic-stage5-v1' as const;
+export type DetailPublicationCurrentProof = { policy: typeof DETAIL_PUBLICATION_CURRENT_POLICY; basisSha256: string; fieldsSha256: string };
 export type DetailSavePublishedBodyImage={sourceKey:string;key:string;sha256:string;width:number;height:number};
 export function detailSavePublishedBodyImages(workspace:DetailWorkspaceRecord,owner:string):DetailSavePublishedBodyImage[]{
   const seen=new Set<string>();return workspace.document.photos.flatMap(photo=>{
@@ -46,6 +48,7 @@ export type DetailSaveReceipt = {
   workspace?: DetailSaveWorkspaceProof;
   peerDigest?: string;
   publicationPolicy?:typeof DETAIL_SAVE_PUBLICATION_POLICY;publishedBodyImages?:DetailSavePublishedBodyImage[];peerAfterDigest?:string;
+  currentStage5?: DetailPublicationCurrentProof;
 };
 export type DetailSaveSource = { key: string; sha256: string; width: number; height: number };
 export type DetailSaveBackup = {
@@ -61,6 +64,14 @@ export function detailSaveOptionIds(view: QuotationFieldsView): string[] {
   if (!ids.length || ids.length > OPTION_LIMIT || new Set(ids).size !== ids.length || ids.some(id => !/^[A-Za-z0-9_-]{1,80}$/.test(id)))
     throw Error('상세 이미지를 저장할 실제 옵션 목록을 확인해주세요.');
   return ids;
+}
+/** Preserve raw absence/blank and every option's own detail fields across later unrelated saves. */
+export async function detailPublicationFieldsDigest(view: QuotationFieldsView, overrides = view.overrides): Promise<string> {
+  const targets = optionImageTargets(view.resolved.schema.fields), alt = exactPrimaryQuotationTarget(view.resolved.schema.fields, 'altText'),
+    keys = [...targets.detailImages.linked, ...targets.detailHtml.linked, ...alt.linked],
+    layer = (value: Record<string, string>) => keys.map(key => [key, Object.hasOwn(value, key) ? value[key] : null]);
+  return labelUploadDigest(new TextEncoder().encode(JSON.stringify({ policy: DETAIL_PUBLICATION_CURRENT_POLICY, keys,
+    common: layer(overrides.common), options: detailSaveOptionIds(view).map(optionId => [optionId, layer(overrides.options[optionId] ?? {})]) })));
 }
 /** An explicit stage-five save replaces the two final fields in the common
  * layer and every real option, including options currently excluded from export. */
@@ -123,6 +134,9 @@ export function detailSaveReceiptMatches(view: QuotationFieldsView, receipt: Det
       || typeof receipt.workspace.digest !== 'string' || !/^[a-f0-9]{64}$/.test(receipt.workspace.digest)
       || receipt.textPolicy !== DETAIL_SAVE_TEXT_POLICY || receipt.editorPolicy !== DETAIL_SAVE_EDITOR_POLICY)) return false;
     if (receipt.peerDigest !== undefined && (!receipt.workspace || typeof receipt.peerDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(receipt.peerDigest))) return false;
+    if (receipt.currentStage5 !== undefined && (!receipt.currentStage5 || Object.keys(receipt.currentStage5).sort().join(',') !== 'basisSha256,fieldsSha256,policy'
+      || receipt.publicationPolicy !== DETAIL_SAVE_PUBLICATION_POLICY || receipt.currentStage5.policy !== DETAIL_PUBLICATION_CURRENT_POLICY
+      || !/^[a-f0-9]{64}$/u.test(receipt.currentStage5.basisSha256) || !/^[a-f0-9]{64}$/u.test(receipt.currentStage5.fieldsSha256))) return false;
     if(receipt.publicationPolicy!==undefined||receipt.publishedBodyImages!==undefined||receipt.peerAfterDigest!==undefined){
       const images=receipt.publishedBodyImages,owner=receipt.key.split('/')[0];
       if(receipt.publicationPolicy!==DETAIL_SAVE_PUBLICATION_POLICY||!receipt.workspace||!receipt.peerDigest||typeof receipt.peerAfterDigest!=='string'||!/^[a-f0-9]{64}$/u.test(receipt.peerAfterDigest)

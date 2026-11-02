@@ -13,8 +13,9 @@ import { readFreeImageEditRecord, FreeImageEditRecordError } from '@/app/free-im
 import type { FreeImageSource } from '@/app/free-image-translation';
 import { inspectImage } from '@/app/automation/image-edit';
 import { buildDetailWorkspaceBannerDocument, createDetailWorkspaceBannerPreview, detailWorkspaceBannerRebaseRequestId, type DetailWorkspaceBannerRebaseInput } from '@/app/detail-workspace-banner-rebase';
-import { detailSaveOptionIds, detailSavePeerDigest, detailSavePublishedBodyImages, DETAIL_SAVE_PEER_SNAPSHOT_LIMIT, type DetailSavePeers, type DetailSavePublishedBodyImage } from '@/app/detail-save-plan';
+import { detailSaveOptionIds, detailSavePeerDigest, detailSavePublishedBodyImages, DETAIL_SAVE_PEER_SNAPSHOT_LIMIT, DETAIL_PUBLICATION_CURRENT_POLICY, type DetailSavePeers, type DetailSavePublishedBodyImage } from '@/app/detail-save-plan';
 import {initialDetailWorkspaceDocument} from '@/app/detail-workspace-seed';
+import { savedRegistrationSettings } from '@/app/workspace-settings';
 
 export const detailWorkspacesSchema = `CREATE TABLE IF NOT EXISTS product_detail_workspaces (
  owner_id TEXT NOT NULL, product_id TEXT NOT NULL REFERENCES products(id), category_scope TEXT NOT NULL, option_id TEXT NOT NULL,
@@ -206,6 +207,19 @@ export async function readDetailWorkspaceImageSeal(owner: string, company: Suppl
   return { db, before, workspace, owner, company, identity, id, profileId, optionId };
 }
 export type DetailWorkspaceImageSeal = Awaited<ReturnType<typeof readDetailWorkspaceImageSeal>>;
+/** Stage six/quote clocks and label assets are outputs, not a new Stage five source. */
+export async function detailWorkspacePublicationBasis(seal: DetailWorkspaceImageSeal): Promise<string> {
+  const raw = seal.before.saved.raw, product = raw.products[0], content = JSON.parse(raw.content[0].payload as string),
+    settings = savedRegistrationSettings(raw.settings[0] ? JSON.parse(raw.settings[0].payload as string) : null),
+    imageSettings = Object.fromEntries((['translateImages', 'topImageEnabled', 'bottomImageEnabled', 'topImageKey', 'bottomImageKey', 'translationPrompt'] as const).map(key => [key, settings[key]]));
+  return labelUploadDigest(new TextEncoder().encode(JSON.stringify({ policy: DETAIL_PUBLICATION_CURRENT_POLICY, ownerId: seal.owner, productId: seal.id,
+    company: seal.company, member: seal.identity, context: seal.before.view.categoryContext,
+    sourceUrl: product.source_url, productTitle: product.title,
+    assets: ['detailTop', 'detail', 'detailBottom'].map(role => [role, content.assets[role]]),
+    seo: content.seo, detail: content.detail, detailDescriptionLinked: content.detailDescriptionLinked,
+    options: raw.options.map(row => row.payload), profile: raw.profile.map(row => row.payload), settings: imageSettings,
+    collection: { links: raw.links, context: raw.context, result: raw.result, supplements: raw.supplements, images: raw.images, family: raw.family } })));
+}
 /** Reconstruct every affected option proof, then fence these exact rows and absences in the final quotation transaction. */
 export async function detailWorkspacePeersGuard(seal: DetailWorkspaceImageSeal, expectedDigest: string, signal: AbortSignal) {
   signal.throwIfAborted();

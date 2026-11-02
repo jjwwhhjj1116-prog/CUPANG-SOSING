@@ -10,7 +10,7 @@ import { createDetailWorkspaceSave, readDetailWorkspace, recoverDetailWorkspace,
 import { applyDetailWorkspaceImage, readDetailWorkspaceImage, recoverDetailWorkspaceImage,
   type DetailWorkspaceEditorContext, type DetailWorkspaceImageReply } from '@/app/detail-workspace-image-client';
 import { prepareDetailWorkspaceComposite, applyDetailWorkspaceComposite, recoverDetailWorkspaceComposite,
-  type DetailWorkspaceComposite } from '@/app/detail-workspace-composite-client';
+  readCurrentDetailPublication, type DetailWorkspaceComposite } from '@/app/detail-workspace-composite-client';
 import type { DetailSaveAttempt } from '@/app/detail-save-client';
 import { DETAIL_SAVE_PUBLICATION_POLICY, type DetailSavePeers } from '@/app/detail-save-plan';
 import { FreeImageApplyError, recognizeFreeImage, renderFreeImageTranslation, readFreeImageVisionStatus,
@@ -35,7 +35,7 @@ export type SelectedDetailWorkState = {
   composite?: { input: DetailWorkspaceComposite; attempt: DetailSaveAttempt; retryReady?: true };
 };
 export type SelectedDetailWorkResult = { status: 'completed'|'partial'|'skipped'|'uncertain'; applied: number; failed: number; skipped: number;
-  messages: string[]; productVersion?: string; recovered?: boolean; sourceChanged?: true; inferencePending?: true; verifiedUnchanged?: number };
+  messages: string[]; productVersion?: string; recovered?: boolean; reused?: true; sourceChanged?: true; inferencePending?: true; verifiedUnchanged?: number };
 type Options = { ownerId: string; company: SupplierHubCompany; signal: AbortSignal; fetcher: typeof fetch;
   state: SelectedDetailWorkState; assertCurrent: () => Promise<void>; expectedProductVersion?: string; onProgress?: (message: string) => void };
 type Dependencies = { readImage?: typeof readDetailWorkspaceImage; recognize?: typeof recognizeFreeImage; render?: typeof renderFreeImageTranslation;
@@ -156,6 +156,14 @@ export async function processSelectedDetailWork(productId: string, options: Opti
     if (!content || content.productId !== productId || content.schemaVersion !== 1 || content.revision !== view.contentRevision || !content.assets?.detail
       || !['manual','collected','translated','generated','unverified'].includes(content.assets.detail.provenance)) throw changed();
     if (state.content && !same(content,state.content)) throw changed(); state.content ??= structuredClone(content);
+    if (!state.inference && !state.peers && !Object.keys(state.photos).length) {
+      const profileId = view.categoryContext.source === 'profile' ? view.categoryContext.profileId : null;
+      const publication = await readCurrentDetailPublication({ productId, ...(profileId ? { profileId } : {}), view }, signal, fetcher);
+      await guard();
+      if (!same(await currentView(), view) || !same((await json(`/api/products/${encodeURIComponent(productId)}/content`)).content, content)) throw changed();
+      if (publication.status === 'current') { result.reused = true; return finish('completed','현재 원본·설정·모든 옵션과 일치하는 기존 상세 발행본을 조회로 확인했습니다. 새 추론·업로드·저장은 하지 않았습니다.'); }
+      if (publication.status === 'review-required') return finish('partial','기존 상세 발행본의 원본·설정·옵션·직접 편집 내용을 확인해야 합니다. 새 추론·업로드·저장 없이 개별 검토를 유지했습니다.');
+    }
     if (content.assets.detail.provenance === 'manual') return finish('skipped','직접 저장한 상세 원본 역할과 공란을 유지했습니다. 자동 구성·추론·저장은 실행하지 않았습니다.');
     if (!state.peers) {
       const profileId = view.categoryContext.source === 'profile' ? view.categoryContext.profileId : null;

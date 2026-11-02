@@ -19,6 +19,9 @@ async function setup({saved=false,excluded=false,account}={}){
  const fetcher=async(url,init={})=>{
   calls.push({url,method:init.method??'GET'});const response=await intercept?.(url,init);if(response!==undefined)return response;
   if(url==='/api/settings')return Response.json({scope:{ownerId:'owner',company},settings});
+  if(url.includes('/detail-save?')&&new URL(url,'https://fixture.test').searchParams.has('current'))return Response.json({policy:'automatic-stage5-v1',readOnly:true,status:'unpublished',
+   source:{productId:'product',profileId:new URL(url,'https://fixture.test').searchParams.get('profileId'),productVersion:f.view.productVersion,contentRevision:f.view.contentRevision,
+    optionRevision:f.view.optionRevision,revision:f.view.revision,inputFingerprint:f.view.inputFingerprint,categoryContext:f.view.categoryContext},execution:{requests:0,writes:0}});
   if(url.includes('/quotation-fields'))return Response.json(f.view);
   if(url.endsWith('/content'))return Response.json({content});
   if(url.includes('/detail-workspace?')&&(init.method??'GET')==='GET'&&new URL(url,'https://fixture.test').searchParams.get('optionId')!=='red')return Response.json({...f.reply(),workspace:null});

@@ -5,7 +5,7 @@ import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
 import { stableQuotationFieldsView, QuotationFieldsSnapshotError } from '@/app/quotation-fields-snapshot';
 import { attachQuotationDetailSave, detailSaveHistoryScope, readQuotationFields, QuotationDetailSaveLimitError } from '@/db/quotation-fields';
 import { applyQuotationChanges } from '@/app/quotation-schema';
-import { DETAIL_SAVE_TEXT_POLICY, DETAIL_SAVE_EDITOR_POLICY, DETAIL_SAVE_PUBLICATION_POLICY, detailSavePublishedBodyImages, detailSavePeerDigest, validateDetailSavePeers, detailSaveCommonAltText, detailSaveChanges, detailSaveManualBackup, detailSaveOptionIds, detailSaveReceiptMatches, type DetailSaveReceipt, type DetailSaveSource, type DetailSaveBackup } from '@/app/detail-save-plan';
+import { DETAIL_SAVE_TEXT_POLICY, DETAIL_SAVE_EDITOR_POLICY, DETAIL_SAVE_PUBLICATION_POLICY, DETAIL_PUBLICATION_CURRENT_POLICY, detailPublicationFieldsDigest, detailSavePublishedBodyImages, detailSavePeerDigest, validateDetailSavePeers, detailSaveCommonAltText, detailSaveChanges, detailSaveManualBackup, detailSaveOptionIds, detailSaveReceiptMatches, type DetailSaveReceipt, type DetailSaveSource, type DetailSaveBackup } from '@/app/detail-save-plan';
 import { createDetailSaveEditorSnapshot, detailSaveEditorSha256, detailSaveEditorBackup, savedDetailEditorComposition, DetailEditorCompositionError, type DetailCompositionReply } from '@/app/detail-editor-composition';
 import type { QuotationFieldsState } from '@/db/quotation-fields';
 import { optionImageTargets, quotationImageKeys } from '@/app/quotation-image-targets';
@@ -15,7 +15,7 @@ import { imageDisplayDimensions } from '@/app/image-dimensions';
 import { inspectImage } from '@/app/automation/image-edit';
 import { readBoundedJson, readBoundedStream, RequestBodyError } from '@/app/request-body';
 import { PublicDetailError } from '@/app/quotation-public-detail';
-import { readDetailWorkspaceImageSeal, confirmDetailWorkspaceImageSeal, detailWorkspacePeersGuard,prepareDetailWorkspacePeerPublication,storeDetailWorkspacePublishedImages,verifyDetailWorkspacePublishedImages } from '@/db/detail-workspaces';
+import { readDetailWorkspaceImageSeal, confirmDetailWorkspaceImageSeal, detailWorkspacePeersGuard,prepareDetailWorkspacePeerPublication,storeDetailWorkspacePublishedImages,verifyDetailWorkspacePublishedImages,detailWorkspacePublicationBasis } from '@/db/detail-workspaces';
 import { splitSnapshotPredicate } from '@/db/product-option-splits';
 import { DetailWorkspaceError, detailWorkspaceDigest, validateDetailWorkspaceRecord } from '@/app/detail-workspace';
 
@@ -129,8 +129,56 @@ async function compositionGet(request: Request, context: Context) {
     contentRevision: view.contentRevision, optionRevision: view.optionRevision, revision: view.revision, inputFingerprint: view.inputFingerprint, categoryContext: view.categoryContext }, composition };
   return json(reply);
 }
+/** Current Stage five authority is separate from replaying an old command. */
+async function currentPublicationGet(request: Request, context: Context) {
+  const params = new URL(request.url).searchParams;
+  if ([...params.keys()].some(key => !['profileId', 'current'].includes(key) || params.getAll(key).length !== 1)
+    || params.get('current') !== DETAIL_PUBLICATION_CURRENT_POLICY
+    || params.has('profileId') && !/^[A-Za-z0-9_-]{1,100}$/.test(params.get('profileId')!)) throw new QuotationFieldsSnapshotError('현재 상세 발행본의 조회 범위를 확인해주세요.', 400);
+  const auth = await identity(context), { owner, id, company, member } = auth, profileId = params.get('profileId'),
+    saved = await stableQuotationFieldsView(owner, id, profileId), view = saved.view, state = await readQuotationFields(owner, id);
+  if (state.revision !== view.revision) throw conflict();
+  const source = { productId: id, profileId, productVersion: view.productVersion, contentRevision: view.contentRevision, optionRevision: view.optionRevision,
+    revision: view.revision, inputFingerprint: view.inputFingerprint, categoryContext: view.categoryContext },
+    reply = (status: 'current' | 'unpublished' | 'review-required', publication?: object) => json({ policy: DETAIL_PUBLICATION_CURRENT_POLICY, readOnly: true, status, source,
+      execution: { requests: 0, writes: 0 }, ...(publication ? { publication } : {}) });
+  const history = state.detailSaveBackups?.[detailSaveHistoryScope(view.categoryContext.categoryId)] ?? [];
+  if (!Array.isArray(history) || history.length > 5) throw conflict();
+  const publications = history.filter(backup => backup?.receipt?.publicationPolicy === DETAIL_SAVE_PUBLICATION_POLICY);
+  if (!publications.length) return reply(history.length ? 'review-required' : 'unpublished');
+  try {
+    const target = optionImageTargets(view.resolved.schema.fields), common = view.resolved.rows.filter(row => row.optionId === null), key = common[0]?.fields[target.detailImages.primary]?.value,
+      backup = [...publications].reverse().find(backup => backup.receipt.key === key), receipt = backup?.receipt, proof = receipt?.currentStage5;
+    if (!backup || !receipt || !proof || Object.keys(proof).sort().join(',') !== 'basisSha256,fieldsSha256,policy' || proof.policy !== DETAIL_PUBLICATION_CURRENT_POLICY
+      || !/^[a-f0-9]{64}$/.test(proof.basisSha256) || !/^[a-f0-9]{64}$/.test(proof.fieldsSha256)
+      || !Number.isSafeInteger(receipt.revision) || receipt.revision < 1 || !Number.isSafeInteger(receipt.beforeRevision) || receipt.beforeRevision < 0
+      || receipt.revision > view.revision || receipt.revision !== receipt.beforeRevision + 1
+      || receipt.categoryId !== view.categoryContext.categoryId || JSON.stringify(receipt.optionIds) !== JSON.stringify(detailSaveOptionIds(view))
+      || !receipt.workspace || !receipt.peerAfterDigest || common.length !== 1 || !view.imageKeys.includes(receipt.key)
+      || target.detailImages.fields.some(field => field.readOnly) || target.detailHtml.fields.some(field => field.readOnly)
+      || view.resolved.rows.some(row => target.detailImages.linked.some(field => row.fields[field]?.value !== receipt.key)
+        || target.detailHtml.linked.some(field => row.fields[field]?.value !== ''))
+      || await detailPublicationFieldsDigest(view) !== proof.fieldsSha256) throw conflict();
+    const beforePayload = await quotationPayload(owner, id, state), editor = await detailSaveEditorBackup(backup, view, company), seal = await workspaceBackup(auth, profileId, backup, request.signal);
+    if (!editor || !seal || await detailWorkspacePublicationBasis(seal) !== proof.basisSha256) throw conflict();
+    await uploadedPng(owner, receipt);
+    await verifyDetailWorkspacePublishedImages(owner, receipt.publishedBodyImages!, request.signal);
+    const confirmed = await stableQuotationFieldsView(owner, id, profileId), confirmedState = await readQuotationFields(owner, id);
+    if (JSON.stringify(confirmed.view) !== JSON.stringify(view) || beforePayload !== await quotationPayload(owner, id, confirmedState)
+      || JSON.stringify((await identity(context)).member) !== JSON.stringify(member)) throw conflict();
+    await confirmDetailWorkspaceImageSeal(seal, request.signal);
+    await detailWorkspacePeersGuard(seal, receipt.peerAfterDigest, request.signal);
+    return reply('current', { uploadId: receipt.uploadId, sourceOptionId: receipt.sourceOptionId, workspace: receipt.workspace, peerAfterDigest: receipt.peerAfterDigest,
+      ...proof, bodyPhotos: seal.workspace.document.photos.filter(photo => photo.role === 'body').length });
+  } catch (error) {
+    if (error instanceof DetailWorkspaceError && error.status === 409 || error instanceof QuotationFieldsSnapshotError && error.status === 409
+      || error instanceof DetailEditorCompositionError && error.status === 409) return reply('review-required');
+    throw error;
+  }
+}
 export async function GET(request: Request, context: Context) {
   try {
+    if (new URL(request.url).searchParams.has('current')) return await currentPublicationGet(request, context);
     if (new URL(request.url).searchParams.has('editor')) return await compositionGet(request, context);
     const { profileId, uploadId } = selection(request, true), { owner, id, company, member } = await identity(context);
     const saved = await stableQuotationFieldsView(owner, id, profileId), state = await readQuotationFields(owner, id);
@@ -240,6 +288,8 @@ export async function POST(request: Request, context: Context) {
     try { changes = detailSaveChanges(view, key, receipt.textPolicy, receipt.textCommonFilled); }
     catch (error) { throw new QuotationFieldsSnapshotError(error instanceof Error ? error.message : '상세 저장 항목을 확인해주세요.', 400); }
     const overrides = applyQuotationChanges(view.overrides, changes);
+    if (publication && workspace) receipt.currentStage5 = { policy: DETAIL_PUBLICATION_CURRENT_POLICY,
+      basisSha256: await detailWorkspacePublicationBasis(workspace), fieldsSha256: await detailPublicationFieldsDigest(view, overrides) };
     request.signal.throwIfAborted();
     if (workspace) await confirmDetailWorkspaceImageSeal(workspace, request.signal);
     if(publication&&workspace)await storeDetailWorkspacePublishedImages(workspace,publication.images,request.signal);

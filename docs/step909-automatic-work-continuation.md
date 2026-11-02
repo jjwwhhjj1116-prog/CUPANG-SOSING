@@ -1,0 +1,25 @@
+# Automatic intake, detail reuse and receipt persistence
+
+## Workflow corrections
+
+One Work Start action could lose the remaining selected captures when the first collection finished during a pending intake autosave. The actual Dashboard, draft hook, intake panel and collection queue reproduced the failure. Continuation now retains the exact plan until the existing draft save or explicit recovery finishes. Page, URL and mixed capture selections continue to the next category and then launch one batch with fresh product IDs. Member/company/settings/capture changes still cancel. Lost collection or draft acknowledgements do not trigger another collection or blind write.
+
+Automatic Stage 5 can now re-read a versioned current-publication proof before opening images. The server binds current final detail image/HTML/ALT overrides, raw source and asset provenance, SEO/detail data, options/profile, relevant image settings, member/company/category, the original workspace and the exact all-peer after-state. Output, alias and source bytes are verified. Unrelated label and quotation edits may advance their clocks without invalidating an otherwise identical detail publication. A current proof finishes this stage with no new image read, inference, rendering, upload or write. It does not authorize any other stage or Supplier Hub action.
+
+Pending original seed/image/inference/composite requests retain priority over this discovery. Missing legacy authority, manual edits, changed source/settings/options/peers or malformed responses require review. Existing strict old-command recovery remains strict. Final alias reads precede final actor/source/peer checks so a late change cannot receive a current result. Publications from older no-publication-mode commands are not guessed or upgraded.
+
+Native Supplier Hub receipt persistence was verifying an unrelated legacy public package before building and rechecking the native source. It now builds the two trusted identities once through the existing bounded native reader. Only an exact native plan fingerprint uses the strict native path; only an exact legacy fingerprint enters the original legacy verifier. Malformed native evidence cannot fall through. The full final native source/file/member guard and receipt CAS remain in place; the client deadline remains 15 seconds.
+
+## Evidence and limits
+
+The controlled native receipt fixture uses the actual client, receipt route, SQLite, R2 ports and seven valid private images, with injected 70ms database and 150ms storage delays. Before the fix it aborted at about 15.1 seconds without a receipt row. Both company fixtures now save in about 5.5 seconds. D1 preparations fall from 220 to 77, R2 GETs from 32 to 21 and HEADs from 42 to 24. These measurements are synthetic latency tests, not a production timing guarantee or a fresh Supplier Hub submission. Source/member/bytes/metadata drift still rejects without a receipt row, and valid legacy receipts retain their original verifier.
+
+The intake autosave test harness had an unrelated old missing `require` failure after its real source-selection dependency was added. Only its module loader and URL runtime were repaired; all existing assertions remain. It passes 28 tests.
+
+Final root verification: 22 focused files, **388/388** tests passed with zero skips/cancellations (`outputs/step909-focused-tests.txt`, manifest alongside). TypeScript passed (`outputs/step909-types.txt`); all 13 changed source/test files passed lint (`outputs/step909-lint.txt`). Independent reviews covered continuation identity invalidation, strict native/legacy verifier routing, source/member/file drift, pending original requests, historical authority and the final alias-read races. The isolated production build passed (`outputs/step909-build.txt`) and all seven runtime files match the frozen release manifest.
+
+Deployed existing Worker version `172307d6-2b6e-4dd6-8089-fc50ade3b5f8` (`outputs/step909-deploy.txt`). After reloading the live QA tab, the original 886 row still displayed `접수확인`, while the other existing product remained untouched in its waiting state. No Work Start, upload, save or Registration Send action was pressed. Screenshot: `outputs/step909-live-list.png`. Extension code is unchanged at 2.1.79; no extension reload is required for this web release.
+
+Protected offer 886034098637 / request f29491bd-1882-456a-8a63-eec8586db6c6 / document 2347603 remains already submitted. No new product, file upload, body save or resubmission is performed against that document for this release. Unrelated existing products and the `app/chatgpt-auth.ts` working copy are preserved.
+
+The browser site-safety denial on the 1688 source remains in force and was not bypassed. A fresh actual collection through all seven stages and a new real Supplier Hub receipt is still unverified. The release adds workflow and validation behavior; it does not establish complete visual equivalence for every COUPLUS control or upgrade unverified historical data to complete.
