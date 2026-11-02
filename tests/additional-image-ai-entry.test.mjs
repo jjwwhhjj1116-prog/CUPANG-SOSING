@@ -52,6 +52,9 @@ test('unknown or missing provider disables only additional AI; free edit and bot
    await h.idle();await chooseMiddle(h);assert.equal(ai(h).props.disabled,true);assert.equal(text(ai(h)),configured===false?'이미지 생성 설정 필요':'이미지 생성 설정 확인 중');ai(h).props.onClick();
    assert.equal(translated.length,0);assert.equal(edited.length,0);
    assert.ok(exposed(h.render()).some(node=>node.type==='button'&&node.props['aria-label']==='추가 이미지 2 중국어 한국어 번역'));
+   const primary=exposed(h.render()).filter(node=>node.type==='button'&&node.props.className==='btn primary'&&['추가 이미지 2 중국어 한국어 번역','추가 이미지 2 AI 처리'].includes(node.props['aria-label']));
+   assert.equal(primary.length,1);assert.equal(text(primary[0]),'AI 처리');assert.equal(primary[0].props['aria-label'],'추가 이미지 2 중국어 한국어 번역');
+   assert.equal(exposed(h.render()).some(node=>node.type==='button'&&node.props['aria-label']==='추가 이미지 2 AI 처리'),false,'image generation is supplementary, separate from the main translation action');
    assert.equal(exposed(h.render()).some(node=>node.type==='button'&&node.props['aria-label']==='추가 이미지 2 영어 한국어 번역'),false,'English stays optional under closed details');
    await h.click('추가 이미지 2 편집하기');await h.click('추가 이미지 2 중국어 한국어 번역');await h.click('추가 이미지 2 영어 한국어 번역');
    assert.equal(processed.length,0);assert.equal(edited.length,1);assert.equal(translated.length,2);

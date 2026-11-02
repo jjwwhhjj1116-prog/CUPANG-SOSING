@@ -68,7 +68,8 @@ export function DetailImageEditDialog({ children, open, identity, onClose, canCl
   }, [visible, token, blocked]);
   useLayoutEffect(() => {
     if (!embedded || !visible || !token || typeof window === 'undefined' || !layer.current) return;
-    const root = layer.current, workspace = root.closest<HTMLElement>('.registration-workspace'), canvas = workspace?.querySelector<HTMLElement>('.main-image-current'), body = root.closest<HTMLElement>('.detail-body');
+    const root = layer.current, workspace = root.closest<HTMLElement>('.registration-workspace'), body = root.closest<HTMLElement>('.detail-body');
+    const canvas = workspace?.querySelector<HTMLElement>(body?.dataset?.registrationStage === '추가 이미지' ? '.option-additional-instant .image-edit-canvas' : '.main-image-current');
     if (!workspace || !canvas) return;
     const properties = ['left', 'top', 'width', 'height'] as const;
     const update = () => {

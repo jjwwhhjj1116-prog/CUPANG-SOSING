@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 const nodes = tree => Array.isArray(tree) ? tree.flatMap(nodes) : tree && typeof tree === 'object' ? [tree, ...nodes(tree.props?.children)] : [];
-function fixture({ geometry = false } = {}) {
+function fixture({ geometry = false, stage = '대표 이미지' } = {}) {
   const listeners = new Map(), doc = { activeElement: null, addEventListener(name, fn) { const list = listeners.get(name) ?? new Set(); list.add(fn); listeners.set(name, list); }, removeEventListener(name, fn) { listeners.get(name)?.delete(fn); } };
   class Element {
     constructor(tag = 'div', props = {}) { this.tag = tag; this.props = props; this.children = []; this.parentElement = null; this.inert = false; this.style = { setProperty(name,value){this[name]=value;},removeProperty(name){delete this[name];} }; this.isConnected = true; this.attributes = {}; }
@@ -13,7 +13,7 @@ function fixture({ geometry = false } = {}) {
     get disabled() { return !!this.props.disabled; }
     hasAttribute(name) { return name === 'disabled' ? this.disabled : name === 'hidden' ? !!this.props.hidden : name === 'inert' ? this.inert : this.props[name] !== undefined; }
     closest(selector) { if(selector?.startsWith('.'))return this.props.className?.split(' ').includes(selector.slice(1))?this:this.parentElement?.closest(selector)??null;return this.inert || this.props.hidden ? this : this.parentElement?.closest(selector) ?? null; }
-    querySelector(selector) { return this.children.flatMap(child=>[child,...child.descendants()]).find(child=>child.props.className?.split(' ').includes(selector.slice(1)))??null; }
+    querySelector(selector) { return this.children.flatMap(child=>[child,...child.descendants()]).find(child=>child.props.className?.split(' ').includes(selector.split(' ').at(-1).slice(1)))??null; }
     descendants(){return this.children.flatMap(child=>[child,...child.descendants()]);}
     getBoundingClientRect(){return this.bounds;}
     setAttribute(name,value){this.attributes[name]=value;}removeAttribute(name){delete this.attributes[name];}
@@ -24,7 +24,8 @@ function fixture({ geometry = false } = {}) {
   }
   const body = new Element('body'), nav = new Element('nav'), holder = new Element(), sibling = new Element(), oldInert = new Element(), trigger = new Element('button');
   doc.body = body; oldInert.inert = true; nav.append(trigger); body.append(nav, holder, oldInert); holder.append(sibling); trigger.focus();
-  const workspace=new Element('aside',{className:'registration-workspace'}),canvas=new Element('section',{className:'main-image-current'}),windowListeners=new Map();let resize;
+  const workspace=new Element('aside',{className:'registration-workspace'}),canvas=new Element('section',{className:stage==='추가 이미지'?'image-edit-canvas':'main-image-current'}),windowListeners=new Map();let resize;
+  holder.dataset={registrationStage:stage};
   const window={innerWidth:1280,innerHeight:900,addEventListener(name,fn){windowListeners.set(name,fn);},removeEventListener(name){windowListeners.delete(name);}};
   if(geometry){body.children=[];body.append(workspace);workspace.append(nav,holder,oldInert);holder.props.className='detail-body';workspace.bounds={left:18,top:18,right:1218,bottom:882};holder.bounds={left:18,top:140,right:1218,bottom:820};canvas.bounds={left:318,top:152,right:1198,bottom:912};holder.append(canvas);}
   const slots = [], layouts = [], dom = new Map(); let cursor = 0, changed = false, count = 0, allowed = true;
@@ -70,6 +71,19 @@ test('embedded main editor follows the visible right canvas while retaining its 
   h.render({embedded:true});h.window.innerWidth=760;h.windowListeners.get('resize')?.();assert.equal(root.attributes['data-detail-image-edit-embedded'],undefined);assert.equal(h.element('retained editor'),input);
   h.window.innerWidth=1280;h.windowListeners.get('resize')?.();assert.equal(root.attributes['data-detail-image-edit-embedded'],'true');
   h.render({open:false});assert.equal(h.element('retained editor'),input);assert.equal(h.listenerCount(),0);assert.equal(h.windowListeners.size,0);assert.equal(h.nav.inert,false);assert.equal(h.doc.activeElement,h.trigger);
+ }finally{h.close();}
+});
+
+test('embedded additional editor follows its own canvas and restores the same mounted controls without saving',()=>{
+ const h=fixture({geometry:true,stage:'추가 이미지'}),input=h.element('retained editor');
+ try{
+  h.canvas.bounds={left:310,top:165,right:1110,bottom:805};
+  h.render({open:true,embedded:true});const root=h.layer();
+  assert.equal(root.attributes['data-detail-image-edit-embedded'],'true');
+  assert.equal(root.style['--detail-image-edit-left'],'310px');assert.equal(root.style['--detail-image-edit-width'],'800px');
+  assert.equal(root.style['--detail-image-edit-top'],'165px');assert.equal(root.style['--detail-image-edit-height'],'640px');
+  assert.equal(h.element('retained editor'),input);assert.equal(h.nav.inert,true);
+  h.render({open:false});assert.equal(h.element('retained editor'),input);assert.equal(h.nav.inert,false);assert.equal(h.listenerCount(),0);
  }finally{h.close();}
 });
 

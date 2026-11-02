@@ -29,12 +29,13 @@ function dashboard() {
 }
 const target = { kind: 'quotation', profileId: 'profile', optionId: 'red', input: 'detailImages', fieldKey: 'detail', slotIndex: 0, revision: 3, inputFingerprint: 'a'.repeat(64), optionRevision: 2, value: 'owner/a.png' };
 
-test('only focused main-image editing embeds the same retained editor and hides its redundant generic entry',()=>{
+test('focused main and additional editing embed the same retained editor and hide their redundant generic entries',()=>{
  const h=dashboard();try{
   const editorType=h.editor().type;
   h.render({tab:'대표 이미지'});assert.equal(h.dialog().props.embedded,true);
   assert.equal(nodes(h.render()).find(node=>node.props?.className==='image-stage-editor-entry').props.hidden,true);
-  h.render({tab:'추가 이미지'});assert.equal(h.dialog().props.embedded,false);assert.equal(h.editor().type,editorType);
+  h.render({tab:'추가 이미지'});assert.equal(h.dialog().props.embedded,true);assert.equal(h.editor().type,editorType);
+  assert.equal(nodes(h.render()).find(node=>node.props?.className==='image-stage-editor-entry').props.hidden,true);
   h.render({tab:'상세 이미지'});assert.equal(h.dialog().props.embedded,false);assert.equal(h.editor().type,editorType);
   h.render({tab:'대표 이미지',focusedOptionId:undefined});assert.equal(h.dialog().props.embedded,false);assert.equal(nodes(h.render()).find(node=>Object.hasOwn(node.props??{},'onCloseGuard')).type,editorType);
   assert.equal(nodes(h.render()).find(node=>node.props?.className==='image-stage-editor-entry').props.hidden,false);assert.equal(h.requests,0);
@@ -47,6 +48,20 @@ for (const [tab,role] of [['대표 이미지','main'],['추가 이미지','addit
     assert.equal(h.dialog().props.open,true);assert.equal(h.editor().props.active,true);assert.equal(h.editor().props.editorEntry.role,role);
     assert.equal(h.editor().props.editorEntry.sequence,1);assert.equal(h.editor().props.translationTarget,undefined);assert.equal(h.requests,0);
   }finally{h.close();}
+});
+
+test('additional batch has one sidebar mount and its processing lock blocks the image cards without blocking its own recovery',()=>{
+ const h=dashboard();try{
+  h.render({tab:'추가 이미지'});
+  const editor=nodes(h.render()).find(node=>node.type?.name?.endsWith(':OptionImageEditor')&&node.props.stage==='additional');
+  const batch=editor.props.sidebarActions;
+  assert.equal(batch.props.stage,'additional');assert.equal(batch.props.active,true);assert.equal(batch.props.disabled,false);
+  assert.equal(nodes(h.render()).filter(node=>node.type?.name?.endsWith(':DetailImageBatchPanel')&&node.props.stage==='additional').length,0,'there is no second batch mounted after the editor');
+  batch.props.onBusyChange(true);h.render();
+  const busyEditor=nodes(h.render()).find(node=>node.type?.name?.endsWith(':OptionImageEditor')&&node.props.stage==='additional');
+  assert.equal(busyEditor.props.disabled,true);assert.equal(busyEditor.props.sidebarActions.props.disabled,false);
+  batch.props.onBusyChange(false);h.render();assert.equal(h.requests,0);
+ }finally{h.close();}
 });
 
 test('a later generic stage entry retires a completed card selection while the next exact card still retains its original quotation target', () => {

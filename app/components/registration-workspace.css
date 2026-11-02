@@ -55,15 +55,6 @@
 .registration-workspace .product-label-name-caption:focus-visible{outline:2px solid #37b7d7;outline-offset:3px;border-radius:3px}
 .registration-workspace .product-label-name-caption:disabled{cursor:default;opacity:.65}
 .registration-workspace .product-label-name-cancel{border:0;background:transparent;padding:4px;color:#65718b;font-size:11px;cursor:pointer}
-/* Stage4: view-only candidate previews, explicit add, and a compact saved strip. */
-.registration-workspace .option-additional-instant .option-additional-add{width:100%;padding:4px 7px;font-size:11px}
-.registration-workspace .option-additional-instant .option-additional-preview-actions{display:flex;justify-content:flex-end;align-items:center;flex-wrap:wrap;gap:6px;margin:10px 0 14px;min-height:30px}
-.registration-workspace .option-additional-instant .option-additional-preview-actions small{font-size:11px;color:#758099}
-.registration-workspace .option-additional-instant .image-selected-item{flex:0 0 94px;width:94px;padding:6px;border:1px solid #e4e8ee;border-radius:4px;background:#fff}
-.registration-workspace .option-additional-instant .image-selected-item>button{display:flex;flex-direction:column;align-items:center;gap:3px;width:100%;padding:0;border:0;background:transparent}
-.registration-workspace .option-additional-instant .image-selected-item>figcaption{display:none}
-.registration-workspace .option-additional-instant .image-selected-actions{display:flex;flex-wrap:nowrap;justify-content:center;gap:3px;margin-top:6px}
-.registration-workspace .option-additional-instant .image-selected-actions .btn{min-width:0;padding:3px 5px;font-size:10px}
 /* Stage6 keeps the default form to caption, value and delete. Optional editing
  * stays mounted behind disclosures; saved line breaks always use a textarea. */
 .registration-workspace .product-label-editor .product-label-compact-row.product-label-sortable{grid-template-columns:24px minmax(130px,190px) minmax(0,1fr) 48px;gap:5px 10px;padding:9px 12px;align-items:center}
@@ -172,6 +163,62 @@
 .registration-workspace .option-additional-instant .image-selected-item>button>span{left:0;top:0;font-size:10px;border-radius:3px;padding:2px 5px;background:#29b9d7}
 .registration-workspace .option-image-save-tools{display:flex;align-items:center;flex-wrap:wrap;gap:7px;padding:10px 0}
 .registration-workspace .option-image-save-tools>.btn{width:auto;flex:none;font-size:11px;padding:7px 13px}
+/* Stage4 uses the same full-height canvas as the main-image stage. */
+.registration-workspace .detail-body[data-registration-stage="추가 이미지"]{padding:12px 20px 20px}
+.registration-workspace .option-additional-instant{display:flex;flex-direction:column;gap:0}
+.registration-workspace .option-additional-instant>.option-detail-guidance{order:2;margin-top:8px}
+.registration-workspace .option-additional-instant .image-edit-workspace{grid-template-columns:280px minmax(0,1fr);height:calc(100dvh - 272px);min-height:560px;align-items:stretch;background:#f9f9f9}
+.registration-workspace .option-additional-instant .image-edit-library{display:flex;flex-direction:column;gap:0;height:100%;min-height:0;max-height:none;padding:0;overflow:visible}
+.registration-workspace .option-additional-library-header{flex:none;min-height:55px;padding:15px;border-bottom:1px solid #eceef2}
+.registration-workspace .option-additional-library-header h4{margin:0;font-size:16px;line-height:24px;font-weight:700;color:#110a57}
+.registration-workspace .option-additional-library-tabs{display:flex;align-items:center;justify-content:space-between;flex:none;min-height:54px;padding:0 8px 12px 0;border-bottom:1px solid #eceef2}
+.registration-workspace .option-additional-library-tabs>span{display:flex;align-items:center;gap:5px;align-self:flex-start;padding:5px 10px;line-height:29px;font-size:12px;border-bottom:2px solid #32bdea;color:#32bdea}
+.registration-workspace .option-additional-library-tabs>span[hidden]{display:none}
+.registration-workspace .option-additional-library-tabs>span small{padding:1px 5px;border-radius:10px;font-size:10px;line-height:15px;background:#32bdea;color:#fff}
+.registration-workspace .option-additional-library-tabs .image-library-upload{padding:0;position:relative;z-index:5}
+.registration-workspace .option-additional-library-tabs .product-image-upload-queue{padding:0;margin:0;border:0;box-shadow:none;background:transparent}
+.registration-workspace .option-additional-library-tabs .quote-actions{margin:0;gap:0}
+.registration-workspace .option-additional-library-tabs .upload-trigger-icon{display:flex;align-items:center;gap:5px;width:auto;padding:4px 8px;min-height:29px;border:1px solid #32bdea;border-radius:10px;background:#fff;color:#32bdea;font-size:12px;line-height:18px}
+.registration-workspace .option-additional-library-tabs .upload-trigger-icon::after{content:'업로드'}
+.registration-workspace .option-additional-library-tabs .product-image-upload-queue:not(:has(.product-image-upload-files)):not([aria-busy=true]):not(:has([role=alert])):not(:has([role=status]))>.quote-actions>button{display:none}
+.registration-workspace .option-additional-library-tabs .product-image-upload-queue:is(:has(.product-image-upload-files),[aria-busy=true],:has([role=alert]),:has([role=status])){position:absolute;right:0;top:0;width:260px;max-height:60dvh;overflow:auto;padding:10px;background:#fff;border:1px solid #dcdfe8;border-radius:10px;box-shadow:0 6px 18px #15254724}
+.registration-workspace .option-additional-gallery{flex:1;min-height:80px;overflow:auto;overscroll-behavior:contain;padding:25px;scrollbar-width:thin}
+.registration-workspace .option-additional-instant .image-asset-grid{display:flex;flex-direction:column;gap:10px}
+.registration-workspace .option-additional-instant .image-asset-card{position:relative;display:block;width:100%;aspect-ratio:1;flex:none;padding:0;border:1px solid transparent;border-radius:8px;overflow:hidden;box-shadow:none}
+.registration-workspace .option-additional-instant .image-asset-preview{display:block;width:100%;height:100%;border-radius:0;background:#fff}
+.registration-workspace .option-additional-instant .image-asset-preview img{display:block;width:100%;height:100%;object-fit:contain}
+.registration-workspace .option-additional-instant .image-asset-preview>span{right:0;bottom:0;left:0;padding:3px;background:#000b;color:#fff;border-radius:0;font-size:10px;line-height:29px}
+.registration-workspace .option-additional-instant .image-asset-card>figcaption{position:absolute;inset:0;pointer-events:none}
+.registration-workspace .option-additional-instant .option-additional-add{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:auto;min-width:38px;min-height:38px;padding:6px 9px;border:0;border-radius:50%;font-size:15px;background:#32bdea;color:#fff;opacity:0;pointer-events:auto}
+.registration-workspace .option-additional-instant .image-asset-card:is(:hover,:focus-within) .option-additional-add{opacity:1}
+.registration-workspace .option-additional-sidebar-actions{flex:none;padding:15px;display:flex;flex-direction:column;gap:10px;border-top:1px solid #eceef2;max-height:45%;overflow:auto}
+.registration-workspace .option-additional-sidebar-actions[hidden]{display:none}
+.registration-workspace .option-additional-sidebar-actions .btn{display:block;width:100%;min-height:29px;padding:4px 8px;border:1px solid #32bdea;border-radius:10px;font-size:12px;line-height:18px;background:#32bdea;color:#fff}
+.registration-workspace .option-additional-sidebar-actions .option-image-save-tools{padding:0;gap:8px}
+.registration-workspace .option-additional-sidebar-actions .option-image-save-tools>.btn:first-child{background:#78c091;border-color:#78c091}
+.registration-workspace .option-additional-sidebar-actions .detail-batch-compact{gap:8px}
+.registration-workspace .option-additional-sidebar-actions .detail-batch-guidance,.registration-workspace .option-additional-sidebar-actions .detail-batch-count{font-size:10px;line-height:16px}
+.registration-workspace .option-additional-instant .image-edit-canvas{position:relative;display:flex;flex-direction:column;align-items:center;height:100%;min-height:0;max-height:none;padding:0 0 180px;overflow:hidden;background:#f5f5f5}
+.registration-workspace .option-additional-instant .image-large-preview{display:flex;align-items:center;justify-content:center;flex:1;width:100%;min-height:0;margin:0}
+.registration-workspace .option-additional-instant .image-large-preview img{width:auto;height:auto;max-width:100%;max-height:100%;object-fit:contain}
+.registration-workspace .option-additional-instant .image-edit-canvas>h4{position:absolute;left:0;right:0;bottom:140px;height:30px;order:initial;margin:0;padding:0 15px;font-size:14px;line-height:21px;font-weight:500;text-align:center;background:#fff;border:0}
+.registration-workspace .option-additional-instant .image-edit-canvas>h4:not(.option-additional-strip-heading){display:none}
+.registration-workspace .option-additional-instant .option-additional-preview-actions{position:absolute;right:0;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;align-items:stretch;gap:10px;margin:0;padding:10px;z-index:1;background:#ffffff80;border-radius:8px;max-width:180px}
+.registration-workspace .option-additional-instant .option-additional-preview-actions>.btn{min-height:29px;padding:4px 8px;border:1px solid #32bdea;border-radius:10px;font-size:12px;line-height:18px;background:#32bdea;color:#fff}
+.registration-workspace .option-additional-instant .option-additional-preview-actions>.btn:nth-of-type(2){background:#78c091;border-color:#78c091}
+.registration-workspace .option-additional-translation-tools{font-size:10px;line-height:16px}
+.registration-workspace .option-additional-instant .option-additional-image-strip{position:absolute;bottom:10px;left:0;right:0;order:initial;display:flex;justify-content:safe center;gap:10px;height:130px;min-height:0;margin:0;padding:10px 15px 20px;align-items:flex-start;border:0;background:#fff;overflow:auto}
+.registration-workspace .option-additional-instant .image-selected-item{position:relative;flex:0 0 100px;width:100px;height:100px;min-width:0;gap:0;margin:0;padding:0;border:1px solid transparent;border-radius:4px;background:#fff}
+.registration-workspace .option-additional-instant .image-selected-item>figcaption{display:none}
+.registration-workspace .option-additional-instant .image-selected-item>button{height:100%;width:100%;padding:0;border-radius:0}
+.registration-workspace .option-additional-instant .image-selected-item img{display:block;width:100%;height:100%;object-fit:contain}
+.registration-workspace .option-additional-instant .image-selected-item>button>span{top:3px;left:3px;padding:0 4px;border-radius:10px;font-size:10px;line-height:15px;background:#555;color:#fff}
+.registration-workspace .option-additional-instant .image-selected-actions{position:absolute;left:0;right:0;top:5px;justify-content:flex-end;gap:2px;margin:0;opacity:0;pointer-events:none}
+.registration-workspace .option-additional-instant .image-selected-item:is(:hover,:focus-within) .image-selected-actions{opacity:1;pointer-events:auto}
+.registration-workspace .option-additional-instant .image-selected-actions .btn{min-height:20px;min-width:20px;padding:2px 4px;border:1px solid #dfe5ef;border-radius:10px;background:#fff;font-size:10px;line-height:10px;color:#676e8a}
+.registration-workspace .option-additional-instant .image-selected-actions .btn:last-child{color:#dc4756;border-color:#edb6bd}
+.registration-workspace .option-additional-instant .option-image-reset-tools{font-size:10px}
+.registration-workspace .option-additional-drag-grip{position:absolute;bottom:3px;right:3px;font-size:12px;color:#fff;text-shadow:0 1px 3px #000;pointer-events:none}
 .registration-workspace .option-image-reset-tools{font-size:10px;color:#8b94a5}
 .registration-workspace .option-image-reset-tools>summary{cursor:pointer;padding:4px 0}
 .registration-workspace .option-image-reset-tools[open] .btn{font-size:11px;margin:6px 6px 0 0}
@@ -225,6 +272,13 @@
 .registration-workspace .option-image-editor--additional .image-large-preview{min-height:220px}
 .registration-workspace .option-image-editor--additional .image-large-preview img{max-height:300px}
 .registration-workspace .option-image-editor--additional .image-edit-canvas>h4,.registration-workspace .option-additional-image-strip{margin-left:-12px;margin-right:-12px}
+.registration-workspace .option-additional-instant .image-edit-workspace{height:auto;min-height:0}
+.registration-workspace .option-additional-instant .image-edit-library{height:540px;max-height:none;padding:0}
+.registration-workspace .option-additional-instant .image-edit-canvas{height:550px;min-height:0;padding:0 0 180px}
+.registration-workspace .option-additional-instant .image-large-preview{min-height:0}
+.registration-workspace .option-additional-instant .image-large-preview img{max-height:100%}
+.registration-workspace .option-additional-instant .image-edit-canvas>h4,.registration-workspace .option-additional-instant .option-additional-image-strip{margin:0}
+.registration-workspace .option-additional-instant .option-additional-preview-actions{max-width:120px}
 .registration-workspace .option-detail-image-stack{padding:12px 6px}
 .registration-workspace .product-label-result-header{padding:10px;gap:8px;flex-wrap:wrap}
 .registration-workspace .product-label-result-first>.product-label-preview{padding:16px 12px;min-height:360px}
