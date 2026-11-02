@@ -12,7 +12,7 @@ export const PACKAGING_DRAFT_PROMPT_REVISION='packaging-estimate-v4';
 export const PACKAGING_DRAFT_PROVIDER_VERSION=2;
 export const PACKAGING_DRAFT_TIMEOUT_MS=20_000;
 export const PACKAGING_DRAFT_MAX_OPTIONS=20;
-export type PackagingDraftScope={optionId:string|null;applyToAllOptions:boolean};
+export type PackagingDraftScope={optionId:string|null;applyToAllOptions:boolean;batchOptionIds?:string[]};
 export type PackagingDraftRequest=PackagingDraftScope&{action:'generate';profileId:string|null;expectedRevision:number;expectedInputFingerprint:string};
 export type PackagingDraftFacts={title:string;description:string;attributes:{name:string;value:string}[]};
 export type PackagingDraftOrigin='collected'|'ai-estimate'|'couplus-fallback';
@@ -43,10 +43,13 @@ const fail=(message:string)=>new PackagingDraftError('PACKAGING_DRAFT_INVALID',m
 const safeId=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,100}$/u.test(value);
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
 const positive=(value:unknown,max:number):value is number=>Number.isSafeInteger(value)&&(value as number)>0&&(value as number)<=max;
+const validBatchScope=(value:unknown)=>object(value)&&(!Object.hasOwn(value,'batchOptionIds')
+ ||value.optionId===null&&value.applyToAllOptions===true&&Array.isArray(value.batchOptionIds)&&value.batchOptionIds.length>0
+ &&value.batchOptionIds.length<=PACKAGING_DRAFT_MAX_OPTIONS&&Array.from(value.batchOptionIds).every(safeId)&&new Set(value.batchOptionIds).size===value.batchOptionIds.length);
 export function parsePackagingDraftRequest(value:unknown):PackagingDraftRequest{
- if(!object(value)||Object.keys(value).sort().join(',')!=='action,applyToAllOptions,expectedInputFingerprint,expectedRevision,optionId,profileId'
+ if(!object(value)||!['action,applyToAllOptions,expectedInputFingerprint,expectedRevision,optionId,profileId','action,applyToAllOptions,batchOptionIds,expectedInputFingerprint,expectedRevision,optionId,profileId'].includes(Object.keys(value).sort().join(','))
   ||value.action!=='generate'||value.profileId!==null&&!safeId(value.profileId)||value.optionId!==null&&!safeId(value.optionId)
-  ||typeof value.applyToAllOptions!=='boolean'||!value.applyToAllOptions&&value.optionId===null||!Number.isSafeInteger(value.expectedRevision)||(value.expectedRevision as number)<0
+  ||typeof value.applyToAllOptions!=='boolean'||!value.applyToAllOptions&&value.optionId===null||!validBatchScope(value)||!Number.isSafeInteger(value.expectedRevision)||(value.expectedRevision as number)<0
   ||typeof value.expectedInputFingerprint!=='string'||!/^[a-f0-9]{64}$/u.test(value.expectedInputFingerprint))throw fail('포장 초안을 작성할 현재 옵션과 견적 저장값을 확인해주세요.');
  return value as PackagingDraftRequest;
 }
@@ -92,13 +95,15 @@ function reviewedPackageValue(view:QuotationFieldsView,row:ResolvedQuotationRow,
 /** No defaults are written by reads. The plan can only propose missing fields
  * on this exact option/pack basis; intentional blanks are protected values. */
 export function buildQuotationPackagingDraftPlan(view:QuotationFieldsView,options:ProductOptions,facts:PackagingDraftFacts,scope:PackagingDraftScope):PackagingDraftPlan{
- if(options.revision!==view.optionRevision||options.rows.length>200||!view.categoryContext.categoryId||!view.categoryContext.profileId
+ if(options.revision!==view.optionRevision||options.rows.length>200||!view.categoryContext.categoryId||!view.categoryContext.profileId||!validBatchScope(scope)
   ||!scope.applyToAllOptions&&scope.optionId===null||typeof scope.applyToAllOptions!=='boolean'||scope.optionId!==null&&!safeId(scope.optionId))throw fail('현재 상품·카테고리·옵션 저장값을 먼저 확인해주세요.');
  const included=view.resolved.rows.filter(row=>row.optionId!==null&&row.included&&(scope.applyToAllOptions||row.optionId===scope.optionId));
  if(!included.length||included.length>200||!scope.applyToAllOptions&&!included.some(row=>row.optionId===scope.optionId))throw fail('포장 초안을 작성할 포함 옵션 범위를 확인해주세요.');
+ const batch=scope.batchOptionIds;
+ if(batch?.some(id=>!included.some(row=>row.optionId===id)||!options.rows.some(option=>option.id===id&&option.included)))throw fail('포장 초안 묶음에 현재 포함되지 않은 옵션이 있습니다.');
  if(scope.optionId!==null&&!options.rows.some(row=>row.id===scope.optionId&&row.included))throw fail('선택한 옵션의 현재 포함 상태를 확인해주세요.');
  const fields=view.resolved.schema.fields,weight=weightField(fields),dimensions=dimensionsField(fields),targets:Target[]=[],preserved:PackagingDraftPreserved[]=[];
- for(const row of included){
+ for(const row of batch?included.filter(row=>batch.includes(row.optionId!)):included){
   const option=options.rows.find(item=>item.id===row.optionId);
   if(!option||!positive(option.unitsPerPack,1e6)||view.optionPackQuantities?.[option.id]!==option.unitsPerPack)throw fail('옵션 판매 구성 수량의 기준을 다시 확인해주세요.');
   const fixed=fixedOption(option),basis=option.packagingUnitsPerPack??null,saleUnitWeightG=quotationSaleUnitWeightG(option.weightKg);
@@ -128,7 +133,7 @@ export function buildQuotationPackagingDraftPlan(view:QuotationFieldsView,option
  if(!safeText(facts.title,2000)||!safeText(facts.description,6000)||!Array.isArray(facts.attributes)||facts.attributes.length>50
   ||facts.attributes.some(pair=>!safeText(pair.name,200)||!safeText(pair.value,1000))||JSON.stringify(facts).length>12000)throw fail('포장 추정에 사용할 상품 원문은 12,000자 이하로 나누어 확인해주세요.');
  return{format:PACKAGING_DRAFT_FORMAT,productId:options.productId,productVersion:view.productVersion,contentRevision:view.contentRevision,optionRevision:view.optionRevision,
-  quotationRevision:view.revision,inputFingerprint:view.inputFingerprint,profileId:view.categoryContext.profileId,scope:{...scope},targets,preserved,facts:structuredClone(facts)};
+  quotationRevision:view.revision,inputFingerprint:view.inputFingerprint,profileId:view.categoryContext.profileId,scope:{...scope,...(batch?{batchOptionIds:[...batch]}:{})},targets,preserved,facts:structuredClone(facts)};
 }
 type Estimate=PackageValues&Outcome;
 class ProviderContractError extends Error{constructor(public code:ResponseCode){super(code);}}
@@ -262,14 +267,15 @@ export async function executeQuotationPackagingDraft(plan:PackagingDraftPlan,ai:
 /** Recheck exact clocks, option quantity, physical-field identity and protected
  * current cells before proposing any unsaved editor change. */
 export function quotationPackagingDraftChanges(view:QuotationFieldsView,result:PackagingDraftResult,productId:string,scope:PackagingDraftScope):QuotationChange[]{
- if(result.format!==PACKAGING_DRAFT_FORMAT||result.productId!==productId||result.productVersion!==view.productVersion||result.contentRevision!==view.contentRevision
+ if(!validBatchScope(scope)||scope.batchOptionIds?.some(id=>!view.resolved.rows.some(row=>row.optionId===id&&row.included))
+  ||result.format!==PACKAGING_DRAFT_FORMAT||result.productId!==productId||result.productVersion!==view.productVersion||result.contentRevision!==view.contentRevision
   ||result.optionRevision!==view.optionRevision||result.quotationRevision!==view.revision||result.inputFingerprint!==view.inputFingerprint||result.profileId!==view.categoryContext.profileId
   ||JSON.stringify(result.scope)!==JSON.stringify(scope)||!Array.isArray(result.proposals)||result.proposals.length>40)throw fail('현재 옵션·판매 구성·견적 입력과 같은 포장 초안을 확인해주세요.');
  if(result.diagnostics!==undefined&&(result.proposals.length!==0||!validateResponseDiagnostics(result.diagnostics)
   ||result.aiRequests!==1&&!(result.aiRequests===0&&result.diagnostics.promptRevision!=='packaging-estimate-v2'&&result.diagnostics.response==='unavailable')))throw fail('포장 초안의 응답 진단 형식을 확인하지 못했습니다.');
  const seen=new Set<string>();return result.proposals.map(item=>{
   const field=view.resolved.schema.fields.find(field=>field.id===item.fieldKey),row=view.resolved.rows.find(row=>row.optionId===item.optionId),key=JSON.stringify([item.optionId,item.fieldKey]);
-  if(!field||!isQuotationPackagingField(view.resolved.schema.fields,field.id)||!row?.included||seen.has(key)||!safeId(item.optionId)||!scope.applyToAllOptions&&scope.optionId!==item.optionId
+  if(!field||!isQuotationPackagingField(view.resolved.schema.fields,field.id)||!row?.included||seen.has(key)||!safeId(item.optionId)||!scope.applyToAllOptions&&scope.optionId!==item.optionId||scope.batchOptionIds&&!scope.batchOptionIds.includes(item.optionId)
    ||!positive(item.unitsPerPack,1e6)||view.optionPackQuantities?.[item.optionId]!==item.unitsPerPack||!['collected','ai-estimate','couplus-fallback'].includes(item.origin)||item.measured!==false
    ||typeof item.value!=='string'||row.fields[field.id]?.value.trim()||row.fields[field.id]?.source.startsWith('manual-')||quotationValueIssues(field,item.value).length
    ||isPackagedDimensionsMmField(field)&&!isCanonicalPackagedDimensionsMm(item.value))throw fail('기존 포장값·빈칸·옵션 구성이 바뀌었습니다. 포장 초안을 다시 확인해주세요.');

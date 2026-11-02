@@ -151,6 +151,33 @@ test('plan scope excludes nonincluded options and validates exact current pack q
  assert.throws(()=>helper.buildQuotationPackagingDraftPlan(f.view(),f.options,facts,{optionId:f.options.rows[1].id,applyToAllOptions:false}));
  const view=f.view();view.optionPackQuantities[f.options.rows[0].id]=4;assert.throws(()=>helper.buildQuotationPackagingDraftPlan(view,f.options,facts,f.scope));
 });
+
+test('bounded batch scopes retain exact requested identity while provider targets stay in current option order',()=>{
+ const f=fixture({count:3}),ids=f.options.rows.map(row=>row.id),scope={optionId:null,applyToAllOptions:true,batchOptionIds:[ids[2],ids[0]]},request={action:'generate',profileId:f.profile.id,expectedRevision:0,expectedInputFingerprint:'a'.repeat(64),...scope};
+ assert.equal(helper.parsePackagingDraftRequest(request),request);
+ const plan=helper.buildQuotationPackagingDraftPlan(f.view(),f.options,facts,scope);assert.deepEqual(plain(plan.targets.map(target=>target.optionId)),[ids[0],ids[2]]);assert.deepEqual(plain(plan.scope),scope);
+ const before=plain(scope);scope.batchOptionIds.reverse();assert.deepEqual(plain(plan.scope),before,'the plan owns an immutable copy of the requested batch list');
+ const result=helper.completeQuotationPackagingDraft(plan,answerPackagingPlan(plan),1),changes=helper.quotationPackagingDraftChanges(f.view(),result,f.product.id,before);
+ assert.equal(changes.length,4);assert.ok(changes.every(change=>before.batchOptionIds.includes(change.optionId)));assert.equal(helper.quotationPackagingDraftInputs(f.view(),result,f.product.id,before).length,4);
+ for(const mutate of [value=>delete value.scope.batchOptionIds,value=>value.scope.batchOptionIds.reverse(),value=>value.scope.batchOptionIds=[ids[1]],value=>value.proposals.push({...value.proposals[0],optionId:ids[1]})]){
+  const forged=plain(result);mutate(forged);assert.throws(()=>helper.quotationPackagingDraftChanges(f.view(),forged,f.product.id,before));
+ }
+ const noProposals=helper.completeQuotationPackagingDraft(plan),changed=f.view();changed.resolved.rows.find(row=>row.optionId===ids[0]).included=false;
+ assert.throws(()=>helper.quotationPackagingDraftChanges(changed,noProposals,f.product.id,before),'empty proposals cannot excuse a batch whose included membership changed');
+});
+
+test('batch scope parsing rejects malformed or ambiguous lists and old all/single requests keep their exact scope format',()=>{
+ const f=fixture({count:3}),ids=f.options.rows.map(row=>row.id),body={action:'generate',profileId:f.profile.id,expectedRevision:0,expectedInputFingerprint:'a'.repeat(64),optionId:null,applyToAllOptions:true};
+ for(const extra of [{batchOptionIds:[]},{batchOptionIds:[ids[0],ids[0]]},{batchOptionIds:Array.from({length:21},(_,index)=>'over-'+index)},{batchOptionIds:undefined},{batchOptionIds:new Array(1)},{batchOptionIds:[null]},{batchOptionIds:['bad/id']},{batchOptionIds:[ids[0]],optionId:ids[0]},{batchOptionIds:[ids[0]],applyToAllOptions:false}]){
+  assert.throws(()=>helper.parsePackagingDraftRequest({...body,...extra}));assert.throws(()=>helper.buildQuotationPackagingDraftPlan(f.view(),f.options,facts,{optionId:null,applyToAllOptions:true,...extra}));
+ }
+ for(const scope of [{optionId:null,applyToAllOptions:true},{optionId:ids[0],applyToAllOptions:false}]){
+  const request={...body,...scope};assert.equal(helper.parsePackagingDraftRequest(request),request);const plan=helper.buildQuotationPackagingDraftPlan(f.view(),f.options,facts,scope),result=helper.completeQuotationPackagingDraft(plan,answerPackagingPlan(plan),1);
+  assert.equal(JSON.stringify(result.scope),JSON.stringify(scope));assert.equal(Object.hasOwn(result.scope,'batchOptionIds'),false);assert.ok(helper.quotationPackagingDraftChanges(f.view(),result,f.product.id,scope).length>0);
+ }
+ f.options.rows[0].included=false;const stale=f.view();stale.resolved.rows.find(row=>row.optionId===ids[0]).included=true;
+ assert.throws(()=>helper.buildQuotationPackagingDraftPlan(stale,f.options,facts,{optionId:null,applyToAllOptions:true,batchOptionIds:[ids[0]]}));
+});
 test('stale option quantity/category/schema/manual edits cannot stage a previously generated proposal',()=>{
  const f=fixture(),result=legacyPackagingDraft(helper,f.plan()),before=f.view();
  for(const mutate of [view=>view.optionRevision++,view=>view.revision++,view=>view.inputFingerprint='b'.repeat(64),view=>view.categoryContext.profileId='other',view=>view.optionPackQuantities[f.options.rows[0].id]=2,

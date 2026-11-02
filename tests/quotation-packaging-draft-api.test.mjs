@@ -4,7 +4,12 @@ import {apiFixture,companies} from './helpers/supplier-hub-single-projection.mjs
 import {aiFixture} from './helpers/quotation-ai.mjs';
 const json=async(response,status=200)=>{const body=await response.json();assert.equal(response.status,status,JSON.stringify(body));return body;};
 import {packagingResponse as qwen,packagingItem} from './helpers/quotation-packaging-provider.mjs';
-async function fixture(company=companies[0]){const f=await apiFixture(company,aiFixture({company}).snapshot),calls=[];
+async function fixture(company=companies[0],count=1){const f=await apiFixture(company,aiFixture({company}).snapshot),calls=[];
+ if(count!==1){const store=f.h.load('db/product-options.ts'),model=f.h.load('app/product-options.ts'),current=await store.readProductOptions('owner',f.id),product=await f.h.load('db/queries.ts').findProduct('owner',f.id);
+  const options=model.applyOptionRows(current,Array.from({length:count},(_,index)=>({...model.optionInputs(current)[0],id:'batch-'+index,originalName:'合成选项'+index,translatedName:'합성 옵션 '+index})),new Date(Date.parse(product.updated_at)+1).toISOString());
+  for(const option of options.rows){option.packagedWeightG=10;option.packagingUnitsPerPack=option.unitsPerPack;option.provenance.packagedWeightG='collected';}
+  assert.ok(await store.saveProductOptions('owner',options,current.revision,product.updated_at));
+ }
  f.h.bindings.SOURCEFLOW_QUOTATION_AI_PROVIDER='workers-ai';f.h.bindings.SOURCEFLOW_QUOTATION_AI_FREE_ONLY='true';
  f.h.bindings.AI.run=async(model,input)=>{calls.push({model,input});const source=JSON.parse(input.messages[1].content.slice(0,-'\n/no_think'.length));return qwen(source.packages.map(item=>packagingItem(item,{weightG:40,widthMm:60,lengthMm:80,heightMm:15})));};
  const read=()=>f.h.route(f.base+'/quotation-fields'+f.query),view=await json(await read());
@@ -12,6 +17,58 @@ async function fixture(company=companies[0]){const f=await apiFixture(company,ai
  const request=input=>f.h.route(f.base+'/quotation-packaging-draft',{method:'POST',body:input??body});
  const mutateOptions=mutate=>{const row=f.h.sqlite.prepare('SELECT payload FROM product_options WHERE product_id=?').get(f.id),value=JSON.parse(row.payload);mutate(value);f.h.sqlite.prepare('UPDATE product_options SET payload=? WHERE product_id=?').run(JSON.stringify(value),f.id);};
  return{...f,calls,view,body,read,request,mutateOptions};}
+
+for(const company of companies)for(const abstainFirst of [false,true])test(`${company.code}: exact twenty-plus-one API batch scopes ${abstainFirst?'continue past an abstained first option':'save every missing package'} with fresh CAS proofs`,async()=>{
+ const f=await fixture(company,21);try{
+  const helper=f.h.load('app/quotation-packaging-draft.ts'),weight=f.h.load('app/quotation-packaged-weight.ts'),basis=f.h.load('app/quotation-packaging-basis.ts'),confirmation=f.h.load('app/quotation-fields-confirmation.ts'),options=await f.h.load('db/product-options.ts').readProductOptions('owner',f.id),initialOptions=JSON.stringify(options),ids=Array.from(options.rows,row=>row.id),seen=[];
+  if(abstainFirst)f.h.bindings.AI.run=async(model,input)=>{f.calls.push({model,input});const source=JSON.parse(input.messages[1].content.slice(0,-'\n/no_think'.length));return qwen(source.packages.map(item=>packagingItem(item,f.calls.length===1&&item.index===0?{}:{widthMm:60,lengthMm:80,heightMm:15})));};
+  let view=await json(await f.read());const initialRevision=view.revision;
+  for(const batchOptionIds of [ids.slice(0,20),ids.slice(20)]){
+   const scope={optionId:null,applyToAllOptions:true,batchOptionIds},result=await json(await f.request({...f.body,expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,...scope}));
+   assert.deepEqual(result.scope,scope);assert.equal(result.aiRequests,1);assert.ok(result.proposals.every(item=>batchOptionIds.includes(item.optionId)));seen.push(...batchOptionIds);
+   const fields=view.resolved.schema.fields,changes=weight.quotationPackagedWeightEditChanges(fields,helper.quotationPackagingDraftChanges(view,result,f.id,scope)),drafts=basis.quotationPackagingDraftInputsForChanges(helper.quotationPackagingDraftInputs(view,result,f.id,scope),fields,changes);
+   const saved=await json(await f.h.route(f.base+'/quotation-fields'+f.query,{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes,packagingDrafts:drafts}}));
+   confirmation.confirmQuotationFieldsSave(view,saved,changes,undefined,drafts);view=await json(await f.read());assert.equal(view.revision,saved.revision);assert.equal(view.inputFingerprint,saved.inputFingerprint);
+  }
+  assert.equal(new Set(seen).size,21);assert.equal(f.calls.length,2);assert.equal(view.revision,initialRevision+2);assert.equal(f.h.sqlite.prepare('SELECT requests FROM quotation_ai_daily').get().requests,2);assert.equal(JSON.stringify(await f.h.load('db/product-options.ts').readProductOptions('owner',f.id)),initialOptions);
+  assert.deepEqual(f.calls.map(call=>JSON.parse(call.input.messages[1].content.slice(0,-'\n/no_think'.length)).packages.length),[20,1]);
+  for(const [index,id]of ids.entries())assert.equal(view.resolved.rows.find(row=>row.optionId===id).fields.packagedDimensionsMm.value,abstainFirst&&index===0?'':'60*80*15');
+  if(abstainFirst)assert.equal(view.resolved.rows.find(row=>row.optionId===ids[0]).fields.packagedDimensionsMm.source,'empty');
+  assert.deepEqual(f.h.network,[]);
+ }finally{f.close();}
+});
+
+test('malformed, duplicate, over-limit, excluded and foreign batch scopes fail before quota or provider calls',async()=>{
+ const f=await fixture(companies[0],21);try{
+  const ids=Array.from((await f.h.load('db/product-options.ts').readProductOptions('owner',f.id)).rows,row=>row.id),before=f.state();
+  for(const extra of [{batchOptionIds:[]},{batchOptionIds:[ids[0],ids[0]]},{batchOptionIds:ids},{batchOptionIds:null},{batchOptionIds:[null]},{batchOptionIds:['foreign']},{batchOptionIds:[ids[0]],applyToAllOptions:false},{batchOptionIds:[ids[0]],optionId:ids[0]}]){
+   const response=await f.request({...f.body,...extra});assert.equal(response.status,400,JSON.stringify(extra));assert.equal(f.calls.length,0);assert.equal(f.state(),before);
+  }
+  f.mutateOptions(options=>options.rows[20].included=false);const view=await json(await f.read()),state=f.state();
+  await json(await f.request({...f.body,expectedInputFingerprint:view.inputFingerprint,batchOptionIds:[ids[20]]}),400);assert.equal(f.calls.length,0);assert.equal(f.state(),state);assert.equal(f.h.sqlite.prepare('SELECT requests FROM quotation_ai_daily').get(),undefined);
+ }finally{f.close();}
+});
+
+test('a bounded batch preserves manual blanks, stale sale-pack basis and collected packages without touching outside options',async()=>{
+ const f=await fixture(companies[0],21);try{
+  f.mutateOptions(options=>{
+   options.rows[0].provenance.packagedHeightMm='manual';options.rows[0].packagedHeightMm=null;options.rows[1].packagingUnitsPerPack=3;
+   Object.assign(options.rows[2],{packagedWidthMm:60,packagedLengthMm:80,packagedHeightMm:15});for(const key of ['packagedWidthMm','packagedLengthMm','packagedHeightMm'])options.rows[2].provenance[key]='collected';options.rows[20].included=false;
+  });
+  const view=await json(await f.read()),before=f.state(),batchOptionIds=['batch-0','batch-1','batch-2'],scope={optionId:null,applyToAllOptions:true,batchOptionIds},result=await json(await f.request({...f.body,expectedInputFingerprint:view.inputFingerprint,...scope}));
+  assert.deepEqual(result.scope,scope);assert.equal(result.proposals.length,0);assert.equal(result.aiRequests,0);assert.equal(f.calls.length,0);assert.ok(result.preserved.every(item=>batchOptionIds.includes(item.optionId)));assert.ok(result.preserved.some(item=>/직접 수정/.test(item.reason)));assert.ok(result.preserved.some(item=>/3개입/.test(item.reason)));
+  assert.equal(f.state(),before);assert.equal(f.h.sqlite.prepare('SELECT requests FROM quotation_ai_daily').get(),undefined);assert.deepEqual(f.h.network,[]);
+ }finally{f.close();}
+});
+
+for(const change of ['excluded','quantity','company','abort'])test(`a batch ${change} change during provider delivery cannot return or save an obsolete proposal`,async()=>{
+ const f=await fixture(companies[0],21),controller=new AbortController();try{
+  const provider=f.h.bindings.AI.run;let actorState;
+  f.h.bindings.AI.run=async(...args)=>{const result=await provider(...args);if(change==='excluded')f.mutateOptions(options=>options.rows[0].included=false);else if(change==='quantity')f.mutateOptions(options=>options.rows[0].unitsPerPack=3);else if(change==='company')f.h.setCompany(companies[1]);else controller.abort();actorState=f.state();return result;};
+  const response=await f.h.load('app/api/products/[id]/quotation-packaging-draft/route.ts').POST(new Request('https://app.test'+f.base+'/quotation-packaging-draft',{method:'POST',headers:{'content-type':'application/json'},signal:controller.signal,body:JSON.stringify({...f.body,batchOptionIds:['batch-0']})}),{params:Promise.resolve({id:f.id})});
+  assert.ok([400,409,503].includes(response.status));const result=await response.json();assert.equal(result.proposals,undefined);assert.equal(f.calls.length,1);assert.equal(f.state(),actorState);assert.equal(f.h.sqlite.prepare('SELECT requests FROM quotation_ai_daily').get().requests,1);assert.deepEqual(f.h.network,[]);
+ }finally{f.close();}
+});
 test('actual packaging POST returns a reviewable Qwen draft without saving product/quote/options or weakening GET',async()=>{
  const f=await fixture();try{const state=f.state(),before=JSON.stringify(await json(await f.read())),result=await json(await f.request());
   assert.equal(result.proposals.length,2);assert.equal(result.aiRequests,1);assert.equal(result.model,'@cf/qwen/qwen3-30b-a3b-fp8');assert.ok(result.proposals.every(item=>item.origin==='ai-estimate'&&item.measured===false));

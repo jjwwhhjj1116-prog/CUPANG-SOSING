@@ -460,7 +460,8 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
       view=await once('quotation:'+(job?.id??'saved-notice:'+view.inputFingerprint),()=>post<QuotationFieldsView>('/quotation-fields',{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes},'PUT'),true);
       confirmQuotationFieldsSave(previous,view,changes);
     }
-    const packaging=await once('packaging:'+view.inputFingerprint,()=>runSelectedPackagingWork(productId,{view,signal,fetcher,assertCurrent}),true);
+    const packaging=await once('packaging:'+view.inputFingerprint,()=>runSelectedPackagingWork(productId,{view,signal,fetcher,assertCurrent,
+      onProgress:message=>controls.onStage({id:'quotation',status:'running',message})}),true);
     view=packaging.view;
     const missing=view.resolved.rows.filter(row=>row.included).flatMap(row=>view.resolved.schema.fields.filter(field=>field.required
       &&(!row.fields[field.id]?.value.trim()&&!hasSelectedEmptyQuotationChoice(field,row.fields[field.id])||(row.fields[field.id]?.validationIssues??row.fields[field.id]?.issues??[]).length)).map(field=>field.label));

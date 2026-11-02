@@ -43,7 +43,7 @@ for (const company of companies) test(`${company.code}: twenty saved packages do
     const options = savedDimensions(f, 20), before = await f.read(), result = await run(f.id, await f.controls()), after = await f.read();
     assert.equal(result.status, 'draft', result.message); assert.equal(result.changed, 1); assert.equal(result.estimated, 1); assert.equal(result.remaining, 0); assert.equal(f.models.length, 1);
     const provider = JSON.parse(f.models[0].input.messages[1].content.slice(0, -'\n/no_think'.length)); assert.equal(provider.packages.length, 1); assert.equal(provider.packages[0].originalName, options.rows[20].originalName);
-    assert.deepEqual(f.requests.map(call => call.method), ['POST', 'PUT']); assert.deepEqual(f.requests[1].body.changes, [{ optionId: options.rows[20].id, fieldKey: before.resolved.schema.fields.find(field => f.h.load('app/quotation-packaged-dimensions.ts').isPackagedDimensionsMmField(field)).id, value: '60*80*15' }]);
+    assert.deepEqual(f.requests.map(call => call.method), ['GET', 'POST', 'PUT']); assert.deepEqual(f.requests.find(call => call.method === 'PUT').body.changes, [{ optionId: options.rows[20].id, fieldKey: before.resolved.schema.fields.find(field => f.h.load('app/quotation-packaged-dimensions.ts').isPackagedDimensionsMmField(field)).id, value: '60*80*15' }]);
     assert.equal(JSON.stringify(await f.store.readProductOptions('owner', f.id)), JSON.stringify(options));
     for (const row of after.resolved.rows.filter(row => row.included)) {
       assert.equal(row.fields.packagedWeightG.value, '10'); assert.equal(row.fields.packagedDimensionsMm.value, '60*80*15');
@@ -56,16 +56,118 @@ for (const company of companies) test(`${company.code}: twenty saved packages do
   } finally { f.close(); }
 });
 
-test('more than twenty missing package targets remain bounded before provider or quotation writes', async () => {
+for (const company of companies) test(`${company.code}: all twenty-one missing packages use two disjoint bounded batches and exact saves`, async () => {
+  const f = await fixture(company, 21); try {
+    const before = await f.read(), result = await run(f.id, await f.controls()), after = await f.read();
+    assert.equal(result.status, 'draft', result.message); assert.equal(result.changed, 21); assert.equal(result.estimated, 21); assert.equal(result.remaining, 0);
+    assert.equal(f.models.length, 2); assert.equal(f.requests.filter(call => call.method === 'PUT').length, 2);
+    const batches = f.requests.filter(call => call.method === 'POST').map(call => call.body.batchOptionIds);
+    assert.deepEqual(batches.map(ids => ids.length), [20, 1]); assert.deepEqual(batches.flat(), before.resolved.rows.filter(row => row.included).map(row => row.optionId));
+    assert.equal(new Set(batches.flat()).size, 21); assert.deepEqual(f.requests.map(call => call.method), ['GET', 'POST', 'PUT', 'GET', 'POST', 'PUT']);
+    assert.equal(after.revision, before.revision + 2); assert.equal(JSON.stringify(await f.store.readProductOptions('owner', f.id)), f.optionsBefore);
+    assert.ok(after.resolved.rows.filter(row => row.included).every(row => row.fields.packagedWeightG.value === '10' && row.fields.packagedDimensionsMm.value === '60*80*15'));
+    assert.deepEqual(f.h.network, []);
+  } finally { f.close(); }
+});
+
+test('forty-one targets use three finite disjoint batches with confirmed-save progress', async () => {
+  const f = await fixture(companies[0], 41); try {
+    const progress = [], result = await run(f.id, await f.controls({ onProgress: message => progress.push(message) }));
+    assert.equal(result.status, 'draft'); assert.equal(result.changed, 41); assert.equal(result.estimated, 41); assert.equal(result.remaining, 0);
+    const posts = f.requests.filter(call => call.method === 'POST'); assert.deepEqual(posts.map(call => call.body.batchOptionIds.length), [20, 20, 1]);
+    assert.equal(new Set(posts.flatMap(call => call.body.batchOptionIds)).size, 41); assert.equal(f.models.length, 3); assert.equal(f.requests.filter(call => call.method === 'PUT').length, 3);
+    assert.deepEqual(progress, ['포장 규격 초안 1/3묶음 준비 중', '포장 규격 초안 1/3묶음 저장 확인 · 누적 20개', '포장 규격 초안 2/3묶음 준비 중', '포장 규격 초안 2/3묶음 저장 확인 · 누적 40개', '포장 규격 초안 3/3묶음 준비 중', '포장 규격 초안 3/3묶음 저장 확인 · 누적 41개']);
+    assert.equal(JSON.stringify(await f.store.readProductOptions('owner', f.id)), f.optionsBefore); assert.deepEqual(f.h.network, []);
+  } finally { f.close(); }
+});
+
+for (const abstainedBatch of [1, 2]) test(`abstained chunk ${abstainedBatch} is visited once while later chunks save and remaining counts stay incomplete`, async () => {
+  const f = await fixture(companies[0], 41); try {
+    f.h.bindings.AI.run = async (_model, input) => { f.models.push({ input }); const source = JSON.parse(input.messages[1].content.slice(0, -'\n/no_think'.length));
+      return qwen(source.packages.map(item => packagingItem(item, f.models.length === abstainedBatch ? {} : { widthMm: 60, lengthMm: 80, heightMm: 15 }))); };
+    const result = await run(f.id, await f.controls()); assert.equal(result.status, 'incomplete'); assert.equal(result.changed, 21); assert.equal(result.remaining, 20); assert.equal(result.estimated, 21);
+    const batches = f.requests.filter(call => call.method === 'POST').map(call => call.body.batchOptionIds); assert.deepEqual(batches.map(ids => ids.length), [20, 20, 1]); assert.equal(new Set(batches.flat()).size, 41);
+    assert.equal(f.models.length, 3); assert.equal(f.requests.filter(call => call.method === 'PUT').length, 2); assert.match(result.message, /20개.*완료되지 않았습니다/);
+    for (const row of result.view.resolved.rows.filter(row => batches[abstainedBatch - 1].includes(row.optionId))) assert.equal(row.fields.packagedDimensionsMm.value, '');
+    assert.equal(JSON.stringify(await f.store.readProductOptions('owner', f.id)), f.optionsBefore);
+  } finally { f.close(); }
+});
+
+test('an unknown provider result after a confirmed chunk stops later inference without relabeling prior saves', async () => {
+  const f = await fixture(companies[0], 41); try {
+    const provider = f.h.bindings.AI.run; let attempts = 0;
+    f.h.bindings.AI.run = async (...args) => { if (++attempts === 2) { f.models.push({ unknown: true }); throw Error('synthetic provider outcome unknown'); } return provider(...args); };
+    const result = await run(f.id, await f.controls()); assert.equal(result.status, 'incomplete'); assert.equal(result.changed, 20); assert.equal(result.estimated, 20); assert.equal(result.remaining, 21);
+    assert.equal(attempts, 2); assert.equal(f.requests.filter(call => call.method === 'POST').length, 2); assert.equal(f.requests.filter(call => call.method === 'PUT').length, 1);
+    assert.equal(JSON.stringify(await f.store.readProductOptions('owner', f.id)), f.optionsBefore);
+  } finally { f.close(); }
+});
+
+test('a lost confirmed chunk save ACK is read exactly before continuing disjoint later chunks', async () => {
+  const f = await fixture(companies[0], 41); try {
+    let lost = false; const fetcher = async (url, init) => { const response = await f.fetcher(url, init); if (init.method === 'PUT' && !lost) { lost = true; throw Error('synthetic first chunk save ACK lost'); } return response; };
+    const result = await run(f.id, await f.controls({ fetcher })); assert.equal(result.status, 'draft'); assert.equal(result.recovered, true); assert.equal(result.changed, 41); assert.equal(result.remaining, 0);
+    assert.deepEqual(f.requests.map(call => call.method), ['GET', 'POST', 'PUT', 'GET', 'GET', 'POST', 'PUT', 'GET', 'POST', 'PUT']); assert.equal(f.models.length, 3);
+    assert.equal(new Set(f.requests.filter(call => call.method === 'POST').flatMap(call => call.body.batchOptionIds)).size, 41);
+  } finally { f.close(); }
+});
+
+test('unapplied chunk saves and lost later generation ACKs never repeat or start another chunk', async () => {
+  for (const mode of ['save-not-applied', 'later-generation-ACK']) {
+    const f = await fixture(companies[0], 41); try {
+      let posts = 0; const fetcher = async (url, init) => {
+        if (init.method === 'POST') posts++;
+        if (mode === 'save-not-applied' && init.method === 'PUT') { f.requests.push({ url, method: 'PUT' }); throw Error('synthetic save not applied'); }
+        const response = await f.fetcher(url, init); if (mode === 'later-generation-ACK' && init.method === 'POST' && posts === 2) throw Error('synthetic later generation ACK lost'); return response;
+      };
+      await assert.rejects(run(f.id, await f.controls({ fetcher })), /synthetic/); assert.equal(posts, mode === 'save-not-applied' ? 1 : 2); assert.equal(f.models.length, posts);
+      const after = await f.read(); assert.equal(after.resolved.rows.filter(row => row.included && row.fields.packagedDimensionsMm.value).length, mode === 'save-not-applied' ? 0 : 20);
+      assert.equal(f.requests.filter(call => call.method === 'PUT').length, 1);
+    } finally { f.close(); }
+  }
+});
+
+test('cancellation, company drift and a new manual edit between chunks stop before the next provider call', async () => {
+  for (const mode of ['cancel', 'company', 'manual-edit']) {
+    const f = await fixture(companies[0], 41); try {
+      const controller = new AbortController(); let reads = 0, manual;
+      const fetcher = async (url, init) => {
+        if (init.method === 'GET' && ++reads === 2) {
+          if (mode === 'cancel') controller.abort();
+          else if (mode === 'company') { f.setCurrent(false); f.h.setCompany(companies[1]); }
+          else { const view = await f.read(), field = view.resolved.schema.fields.find(field => f.h.load('app/quotation-packaged-dimensions.ts').isPackagedDimensionsMmField(field));
+            manual = { optionId: 'synthetic-20', fieldKey: field.id, value: '' }; await json(await f.h.route(f.base + '/quotation-fields' + f.query, { method: 'PUT', body: { expectedRevision: view.revision, expectedInputFingerprint: view.inputFingerprint, changes: [manual] } })); }
+        }
+        return f.fetcher(url, init);
+      };
+      await assert.rejects(run(f.id, await f.controls({ fetcher, signal: controller.signal }))); assert.equal(f.models.length, 1); assert.equal(f.requests.filter(call => call.method === 'POST').length, 1); assert.equal(f.requests.filter(call => call.method === 'PUT').length, 1);
+      if (manual) { const after = await f.read(); assert.equal(after.overrides.options[manual.optionId][manual.fieldKey], ''); }
+    } finally { f.close(); }
+  }
+});
+
+test('batch scope and proposal membership cannot be swapped to later untouched options', async () => {
+  for (const mode of ['scope-order', 'proposal-member']) {
+    const f = await fixture(companies[0], 41); try {
+      const fetcher = async (url, init) => { const response = await f.fetcher(url, init); if (init.method !== 'POST' || !response.ok) return response;
+        const body = await response.json(); if (mode === 'scope-order') body.scope.batchOptionIds.reverse(); else body.proposals[0].optionId = 'synthetic-20'; return Response.json(body); };
+      const before = f.state(); await assert.rejects(run(f.id, await f.controls({ fetcher }))); assert.equal(f.models.length, 1); assert.equal(f.requests.filter(call => call.method === 'PUT').length, 0); assert.equal(f.state(), before);
+    } finally { f.close(); }
+  }
+});
+
+test('one unbatched server request with more than twenty missing targets stays bounded before provider or quotation writes', async () => {
   const f = await fixture(companies[0], 21); try {
-    const before = f.state(); await assert.rejects(run(f.id, await f.controls()), /1~20/);
+    const before = f.state(), view = await f.read(), response = await f.fetcher(f.base + '/quotation-packaging-draft', { method: 'POST', body: JSON.stringify({ action: 'generate', profileId: f.profile.id,
+      expectedRevision: view.revision, expectedInputFingerprint: view.inputFingerprint, optionId: null, applyToAllOptions: true }) });
+    assert.equal(response.status, 400);
     assert.deepEqual(f.requests.map(call => call.method), ['POST']); assert.equal(f.models.length, 0); assert.equal(f.state(), before);
   } finally { f.close(); }
 });
 
-for (const company of companies) test(`${company.code}: actual Stage7 finishes one missing package after twenty saved packages and compiles the same native values`, async () => {
+for (const company of companies) for (const complete of [20, 0]) test(`${company.code}: actual Stage7 finishes ${21 - complete} missing packages after ${complete} saved packages and compiles the same native values`, async () => {
   const f = await fixture(company, 21); try {
-    const options = savedDimensions(f, 20);
+    const options = savedDimensions(f, complete), batches = Math.ceil((21 - complete) / 20);
     // Bind the synthetic product to a captured category just as intake does.
     // The fixture never collects or reads the supplier URL.
     f.h.context.category = f.profile;
@@ -89,9 +191,9 @@ for (const company of companies) test(`${company.code}: actual Stage7 finishes o
     };
     const result = await f.h.load('app/batch-selected-work.ts').runSelectedBatchProduct(f.id, { stages: ['quotation'], expectedOwnerId: 'owner', signal: new AbortController().signal,
       fetcher, keys, newKey: () => crypto.randomUUID(), onStage: stage => events.push(stage) }), after = await json(await f.h.route(endpoint));
-    assert.equal(result.stages[0].status, 'draft', result.stages[0].message); assert.match(result.stages[0].message, /포장 규격 1개/); assert.deepEqual(events.map(stage => stage.status), ['running', 'draft']);
-    assert.equal(f.models.length, 1); assert.deepEqual(f.h.sqlite.prepare('SELECT status FROM quotation_ai_jobs').all().map(row => row.status), ['completed']);
-    assert.equal(f.requests.filter(call => call.url.endsWith('/quotation-packaging-draft')).length, 1); assert.equal(f.requests.filter(call => call.method === 'PUT').length, 1);
+    assert.equal(result.stages[0].status, 'draft', result.stages[0].message); assert.match(result.stages[0].message, new RegExp(`포장 규격 ${21 - complete}개`)); assert.equal(events[0].status, 'running'); assert.equal(events.at(-1).status, 'draft');
+    assert.equal(f.models.length, batches); assert.deepEqual(f.h.sqlite.prepare('SELECT status FROM quotation_ai_jobs').all().map(row => row.status), ['completed']);
+    assert.equal(f.requests.filter(call => call.url.endsWith('/quotation-packaging-draft')).length, batches); assert.equal(f.requests.filter(call => call.method === 'PUT').length, batches);
     assert.deepEqual(after.overrides.common, before.overrides.common); assert.equal(JSON.stringify(await f.store.readProductOptions('owner', f.id)), JSON.stringify(options));
     assert.equal([...keys].some(([key]) => key.includes(':pending:') || key.includes(':write:')), false);
     const compiled = await f.h.load('app/supplier-hub-single-projection.ts').projectSupplierHubSingleDocument({ snapshot: f.snapshot, company, categoryId: f.snapshot.categoryId, categoryPath: f.snapshot.categoryPath, resolved: after.resolved });
@@ -109,7 +211,7 @@ test('complete packages and protected manual blanks do not count as provider tar
       changes: [{ optionId: options.rows[28].id, fieldKey: dimension.id, value: '' }] } }));
     const before = await f.read(), result = await run(f.id, await f.controls()), after = await f.read();
     assert.equal(result.status, 'incomplete'); assert.equal(result.changed, 1); assert.equal(result.remaining, 1); assert.equal(f.models.length, 1);
-    assert.deepEqual(f.requests[1].body.changes, [{ optionId: options.rows[29].id, fieldKey: dimension.id, value: '60*80*15' }]);
+    assert.deepEqual(f.requests.find(call => call.method === 'PUT').body.changes, [{ optionId: options.rows[29].id, fieldKey: dimension.id, value: '60*80*15' }]);
     for (const id of [options.rows[28].id, options.rows[30].id]) assert.deepEqual(after.resolved.rows.find(row => row.optionId === id), before.resolved.rows.find(row => row.optionId === id));
     assert.equal(JSON.stringify(await f.store.readProductOptions('owner', f.id)), JSON.stringify(options));
   } finally { f.close(); }
@@ -122,8 +224,8 @@ for (const company of companies) test(`${company.code}: explicit automatic work 
     assert.equal(result.status, 'draft'); assert.equal(result.changed, 3); assert.equal(result.estimated, 3); assert.equal(result.fallback, 0); assert.equal(result.remaining, 0);
     assert.doesNotMatch(result.message, /입력란에 적용하고 저장해주세요/); assert.match(result.message, /실측값이 아닙니다/);
     assert.equal(result.recovered, false); assert.equal(result.view.inputFingerprint, after.inputFingerprint); assert.ok(after.revision > before.revision);
-    assert.deepEqual(f.requests.map(call => call.method), ['POST', 'PUT']); assert.equal(f.models.length, 1); assert.ok(f.checks >= 7);
-    for (const change of f.requests[1].body.changes) {
+    assert.deepEqual(f.requests.map(call => call.method), ['GET', 'POST', 'PUT']); assert.equal(f.models.length, 1); assert.ok(f.checks >= 7);
+    for (const change of f.requests.find(call => call.method === 'PUT').body.changes) {
       assert.equal(change.value, '60*80*15'); const cell = after.resolved.rows.find(row => row.optionId === change.optionId).fields[change.fieldKey];
       assert.equal(cell.value, change.value); assert.ok(cell.reviewMessages.some(message => /AI 추정값.*실측값이 아닙니다/.test(message)));
       assert.deepEqual(after.packagingBasis.options[change.optionId][change.fieldKey].nonMeasuredDraft, { origin: 'ai-estimate', measured: false });
@@ -154,7 +256,7 @@ test('V2 provider failure leaves work incomplete without defaults, save or provi
   const f = await fixture(); try {
     f.h.bindings.AI.run = async () => { f.models.push({ attempted: true }); throw Error('synthetic provider delivery unknown'); };
     const before=f.state(),result = await run(f.id, await f.controls()); assert.equal(result.status, 'incomplete'); assert.equal(result.estimated, 0); assert.equal(result.fallback, 0);assert.equal(result.remaining,3);
-    assert.equal(result.changed,0);assert.equal(f.models.length,1);assert.deepEqual(f.requests.map(call=>call.method),['POST']);assert.equal(f.state(),before);
+    assert.equal(result.changed,0);assert.equal(f.models.length,1);assert.deepEqual(f.requests.map(call=>call.method),['GET','POST']);assert.equal(f.state(),before);
     assert.doesNotMatch(result.message,/기본 초안 3개/);
   } finally { f.close(); }
 });
@@ -182,7 +284,7 @@ test('missing weight seals both exact g fields with the same AI provenance witho
 test('collection-selected requests keep profileId null instead of changing the captured source/fingerprint selection', async () => {
   const f = await fixture(); try {
     const controls = await f.controls(); controls.view.categoryContext.source = 'collection';
-    controls.fetcher = async (_url, init) => { assert.equal(init.method, 'POST'); assert.equal(JSON.parse(init.body).profileId, null); throw Error('synthetic request inspected'); };
+    controls.fetcher = async (_url, init) => { if (init.method === 'GET') return Response.json(controls.view); assert.equal(init.method, 'POST'); assert.equal(JSON.parse(init.body).profileId, null); throw Error('synthetic request inspected'); };
     await assert.rejects(run(f.id, controls), /synthetic request inspected/); assert.equal(f.models.length, 0);
   } finally { f.close(); }
 });
@@ -202,7 +304,7 @@ test('lost PUT acknowledgement recovers the exact values and provenance with one
     const fetcher = async (url, init) => { const response = await f.fetcher(url, init); if (init.method === 'PUT') throw Error('synthetic lost save acknowledgement'); return response; };
     const result = await run(f.id, await f.controls({ fetcher }));
     assert.equal(result.status, 'draft'); assert.equal(result.recovered, true); assert.equal(result.changed, 3); assert.equal(result.remaining, 0);
-    assert.deepEqual(f.requests.map(call => call.method), ['POST', 'PUT', 'GET']); assert.equal(f.models.length, 1);
+    assert.deepEqual(f.requests.map(call => call.method), ['GET', 'POST', 'PUT', 'GET']); assert.equal(f.models.length, 1);
   } finally { f.close(); }
 });
 
@@ -214,7 +316,7 @@ test('uncertain generation or unapplied save never becomes success and is never 
         return f.fetcher(url, init);
       };
       await assert.rejects(run(f.id, await f.controls({ fetcher })), new RegExp('synthetic uncertain ' + failure));
-      assert.deepEqual(f.requests.map(call => call.method), failure === 'POST' ? ['POST'] : ['POST', 'PUT', 'GET']);
+      assert.deepEqual(f.requests.map(call => call.method), failure === 'POST' ? ['GET', 'POST'] : ['GET', 'POST', 'PUT', 'GET']);
       assert.equal(f.state(), before); assert.equal(f.models.length, failure === 'POST' ? 0 : 1);
     } finally { f.close(); }
   }
@@ -247,7 +349,7 @@ test('malformed draft metadata, another product and unverified save provenance c
         const response = await f.fetcher(url, init); if (!response.ok) return response; const body = await response.json();
         if (init.method === 'POST' && boundary === 'product') body.productId = 'another-product';
         if (init.method === 'POST' && boundary === 'model') body.aiRequests = 0;
-        if (boundary === 'provenance' && ['GET', 'PUT'].includes(init.method)) delete body.packagingBasis;
+        if (boundary === 'provenance' && (init.method === 'PUT' || init.method === 'GET' && f.requests.some(call => call.method === 'PUT'))) delete body.packagingBasis;
         return Response.json(body);
       };
       await assert.rejects(run(f.id, await f.controls({ fetcher })));

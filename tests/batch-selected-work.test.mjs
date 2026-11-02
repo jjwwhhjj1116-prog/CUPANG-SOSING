@@ -72,6 +72,18 @@ test('price-only run checks calculated option prices without unrelated writes',a
  assert.deepEqual(h.events.map(row=>row.status),['running','draft']);
 });
 
+test('quotation packaging batches publish progress through the existing Stage7 activity without another AI job',async()=>{
+ const h=fixture(),packaging=h.deps['@/app/batch-selected-packaging-work'].runSelectedPackagingWork;
+ h.deps['@/app/batch-selected-packaging-work'].runSelectedPackagingWork=async(id,options)=>{
+  await options.assertCurrent();options.onProgress?.('포장정보 초안 1/2 묶음 처리 중…');options.onProgress?.('포장정보 초안 2/2 묶음 저장 확인');
+  return packaging(id,options);
+ };
+ const result=await h.run(['quotation']);assert.equal(result.stages[0].status,'draft');
+ assert.deepEqual(h.events.filter(row=>row.id==='quotation'&&row.status==='running'&&row.message.startsWith('포장정보 초안')).map(row=>row.message),
+  ['포장정보 초안 1/2 묶음 처리 중…','포장정보 초안 2/2 묶음 저장 확인']);
+ assert.equal(h.calls.filter(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST').length,1);
+});
+
 test('an uncertain Vision inference stops later image calls while independent labels and quotation still run',async()=>{
  const h=fixture();h.image({status:'partial',inferencePending:true,messages:['원래 Vision 요청 결과 미확정']});
  const result=await h.run(['mainImage','additionalImages','detailImage','koreanLabel','quotation']);
