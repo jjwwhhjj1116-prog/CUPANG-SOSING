@@ -70,6 +70,67 @@ async function actualDetailFixture(){
  const setup=vm.runInNewContext(declaration+'\nsetup',{assert,fs,vm,ts,fixture:rawWorkspaceFixture,runtime:rawWorkspaceRuntime,plain,crypto,Error,Date,URL,URLSearchParams,TextEncoder,AbortController,AbortSignal,setTimeout,clearTimeout,structuredClone,Blob,Response,Uint8ClampedArray});
  return setup();
 }
+
+function actualSelectedImageFixture(stage='additional'){
+ const url=new URL('./batch-selected-image-work.test.mjs',import.meta.url),source=fs.readFileSync(url,'utf8'),ast=ts.createSourceFile(url.pathname,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
+ const declarations=ast.statements.filter(statement=>ts.isFunctionDeclaration(statement)&&['loadModel','fixture'].includes(statement.name?.text)).map(statement=>statement.getText(ast)).join('\n').replaceAll('import.meta.url',JSON.stringify(url.href));
+ return vm.runInNewContext(declarations+'\nfixture',{assert,fs,vm,ts,plain,Error,Date,URL,TextEncoder,AbortController,AbortSignal,structuredClone,Blob,Response,Uint8ClampedArray})(stage);
+}
+
+for(const external of [null,'before-stage','inside-helper','after-ack'])test(`a confirmed sibling label save ${external??'alone'} ${external?'cannot adopt an outside edit':'lets the partial image resume only its remaining slot'}`,async()=>{
+ const h=fixture(),images=actualSelectedImageFixture(),recognize=images.deps.recognize;h.company({code:'A01464742',name:'와이홉'});
+ Object.assign(h.deps['@/app/batch-selected-image-work'],images.model,{processSelectedImageStage:(id,stage,options)=>images.model.processSelectedImageStage(id,stage,{...images.options,...options,fetcher:images.options.fetcher},images.deps)});
+ images.deps.recognize=async image=>{if(image.source.sourceKey.endsWith('b.png'))throw Error('confirmed OCR failure');return recognize(image);};
+ h.intercept(call=>{
+  if(call.url==='/api/products/product')return Response.json({product:{id:'product',title:'검증 상품',updated_at:images.view.productVersion}});
+  if(call.url.endsWith('/work-draft'))return Response.json({productId:'product',productVersion:images.view.productVersion});
+  if(call.url.endsWith('/content'))return Response.json({content:images.content});
+  if(call.url.includes('/quotation-fields')){
+   if(call.method==='PUT'){
+    assert.equal(call.body.expectedRevision,images.view.revision);images.view.revision++;images.view.productVersion=new Date(Date.parse(images.view.productVersion)+1).toISOString();images.view.updatedAt=images.view.productVersion;
+    images.view.resolved.rows[0].fields.brand={value:'정상 후속 저장',source:'manual-option',issues:[],needsReview:false};
+   }
+   return Response.json(images.view);
+  }
+  return null;
+ });
+ let labelCalls=0;h.deps['@/app/batch-selected-label-work'].runSelectedLabelWork=async(id,options)=>{
+  labelCalls++;
+  if(external==='inside-helper'){images.view.revision++;images.view.productVersion=new Date(Date.parse(images.view.productVersion)+1).toISOString();images.view.resolved.rows[0].fields.external={value:'outside edit'};}
+  await options.fetcher('/api/products/'+id+'/quotation-fields');
+  await options.fetcher('/api/products/'+id+'/quotation-fields',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:images.view.revision,changes:[{fieldKey:'brand',optionId:'option',value:'정상 후속 저장'}]})});
+  if(external==='after-ack'){images.view.revision++;images.view.productVersion=new Date(Date.parse(images.view.productVersion)+1).toISOString();images.view.resolved.rows[0].fields.external={value:'outside edit'};await options.fetcher('/api/products/'+id+'/quotation-fields');}
+  return{status:'draft',message:'확인한 표시 저장',uncertain:false};
+ };
+ assert.equal((await h.run(['additionalImages'])).stages[0].status,'blocked');assert.equal(images.calls.filter(row=>row[0]==='apply').length,1);
+ if(external==='before-stage'){images.view.revision++;images.view.resolved.rows[0].fields.external={value:'outside edit'};}
+ assert.equal((await h.run(['koreanLabel'])).stages[0].status,'draft');assert.equal(labelCalls,1);
+ images.deps.recognize=recognize;const resumed=await h.run(['additionalImages']);
+ assert.equal(resumed.stages[0].status,external?'failed':'draft',JSON.stringify(resumed));
+ assert.equal(images.calls.filter(row=>row[0]==='apply').length,external?1:2);assert.equal(labelCalls,1);
+});
+
+test('a full action retains settled raw BODY work across its acknowledged later label save',async()=>{
+ const h=fixture(),detail=await actualDetailFixture(),recognize=detail.deps.recognize;detail.f.view.productVersion=version;h.company(detail.f.company);
+ Object.assign(h.deps['@/app/batch-selected-detail-work'],detail.model,{processSelectedDetailWork:(id,options)=>detail.model.processSelectedDetailWork(id,{...detail.options,...options},detail.deps)});
+ detail.deps.recognize=async(image,...args)=>{if(image.source.sourceKey==='owner/two.png')throw Error('confirmed BODY OCR failure');return recognize(image,...args);};
+ h.intercept(async(call,init)=>{
+  if(call.url==='/api/products/product')return Response.json({product:{id:'product',title:'검증 상품',updated_at:detail.f.view.productVersion}});
+  if(call.url.endsWith('/work-draft'))return Response.json({productId:'product',productVersion:detail.f.view.productVersion});
+  if(call.url.includes('/quotation-fields')&&call.method==='PUT'){
+   detail.f.view.revision++;detail.f.view.productVersion=new Date(Date.parse(detail.f.view.productVersion)+1).toISOString();detail.f.view.inputFingerprint='9'.repeat(64);
+   detail.f.view.resolved.rows[0].fields.brand={value:'정상 표시 저장',source:'manual-option',issues:[]};return Response.json(detail.f.view);
+  }
+  if(call.url.startsWith('/api/products/product/')||call.url==='/api/settings')return detail.options.fetcher(call.url,init);
+  return null;
+ });
+ let labels=0;h.deps['@/app/batch-selected-label-work'].runSelectedLabelWork=async(id,options)=>{labels++;
+  await options.fetcher('/api/products/'+id+'/quotation-fields',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:detail.f.view.revision,changes:[]})});
+  return{status:'draft',message:'정상 표시 저장 확인',uncertain:false};
+ };
+ const initial=await h.run(['detailImage','koreanLabel']);assert.deepEqual(initial.stages.map(stage=>stage.status),['blocked','draft']);assert.equal(detail.calls.filter(row=>row.operation==='image-apply').length,1);assert.equal(labels,1);
+ detail.deps.recognize=recognize;const resumed=await h.run(['detailImage']);assert.equal(resumed.stages[0].status,'draft',JSON.stringify(resumed));assert.equal(detail.calls.filter(row=>row.operation==='image-apply').length,2);assert.equal(labels,1);
+});
 test('price-only run checks calculated option prices without unrelated writes',async()=>{
  const h=fixture(),result=await h.run(['pricing']);assert.equal(result.stages[0].status,'draft');
  const writes=h.calls.filter(call=>call.method==='POST');assert.equal(writes.length,0);assert.equal(h.calls.filter(call=>call.url?.endsWith('/stage-two-pricing')).length,1);
@@ -1056,7 +1117,7 @@ function actualSeoFixture(kind='qwen'){
   }else if(call.body.action==='approve')job={...job,status:'approved'};
   else job={...job,status:'completed',result:{model:isGeneration?generation.view.configuration.model:configuration.model,appliedToContent:false,provenance:'generated',
    draft:{title:'검토 상품명',keywords:['상품'],description:'원문 설명',attributes:isGeneration?[]:job.review.source.attributes.map((item,sourceIndex)=>({sourceIndex,
-    name:item.name.startsWith('option-color:')?'색상':item.name.startsWith('option:')?'옵션명':'소재',value:item.name.startsWith('option')?'하양':'면'})),warnings:[]}}};
+    name:item.name.startsWith('option-color:')?'색상':item.name.startsWith('option:')?'옵션명':'소재',value:item.name.startsWith('option')?(item.value==='白色'?'흰색':'하양'):'면'})),warnings:[]}}};
   return Response.json(isGeneration?{purpose:'seo-generation',productId:'product',productVersion:version,company:generation.view.company,sourceCurrent:true,job}:{job});
  });
  return{h,generation,created,states,stateEntry,actions:()=>h.calls.filter(call=>['prepare','approve','execute'].includes(call.body?.action)),state:()=>JSON.parse(stateEntry()[1])};

@@ -60,6 +60,64 @@ test('automatic detail translates raw BODY once and composites its ordered banne
  assert.equal(h.calls.filter(row=>row.operation==='composite-apply').length,1);assert.ok(h.f.workspace.document.photos.filter(row=>row.role==='body').every(row=>row.originKey!==row.key));
 });
 
+test('a settled BODY checkpoint follows a proved sibling save and resumes only the unprocessed photo',async()=>{
+ const h=await setup(),recognize=h.deps.recognize;
+ h.deps.recognize=async(image,...args)=>{if(image.source.sourceKey==='owner/two.png')throw Error('confirmed OCR failure');return recognize(image,...args);};
+ assert.equal((await h.run()).status,'partial');assert.equal(h.calls.filter(row=>row.operation==='image-apply').length,1);
+ const before={view:plain(h.f.view),content:plain(h.content)},after=plain(before);after.view.revision++;after.view.productVersion=new Date(Date.parse(after.view.productVersion)+1).toISOString();after.view.inputFingerprint='9'.repeat(64);
+ after.view.resolved.rows[0].fields.brand={value:'검토한 브랜드',source:'manual-option',issues:[]};h.f.view=after.view;
+ assert.equal(await h.model.advanceSelectedDetailWorkCheckpoint(h.state,before,after,h.controller.signal,h.options.fetcher),true);
+ h.deps.recognize=recognize;const result=await h.run();assert.equal(result.status,'completed',result.messages.join(' '));assert.equal(h.calls.filter(row=>row.operation==='image-apply').length,2);
+ assert.deepEqual(h.calls.filter(row=>row.operation==='vision').map(row=>row.key),['owner/one.png','owner/two.png']);
+});
+
+for(const count of [35,38])test(`a settled raw ${count}-BODY sequence and banners can rebase without treating it as final attachment slots`,async()=>{
+ const h=await setup(),recognize=h.deps.recognize,raw=Array.from({length:count},(_,index)=>`owner/raw-${count}-${index}.png`),bytes=h.f.objects.get('owner/one.png');
+ for(const key of raw)h.f.objects.set(key,bytes);
+ h.f.view.imageKeys.push(...raw);h.content.assets.detail.value=raw;
+ const value=['owner/top.png',...raw,'owner/bottom.png'].join('\n');
+ for(const group of ['automatic','resolved'])Object.assign(h.f.view[group].rows[0].fields.detailImages,{value,source:'content',validationIssues:['이 상품에 저장된 이미지 참조만 중복 없이 선택해주세요.']});
+ h.deps.recognize=async(image,...args)=>{if(image.source.sourceKey===raw[1])throw Error('confirmed OCR failure');return recognize(image,...args);};
+ assert.equal((await h.run()).status,'partial');assert.equal(h.calls.filter(row=>row.operation==='image-apply').length,1);
+ assert.equal(h.f.workspace.document.photos.filter(photo=>photo.role==='body').length,count);assert.equal(h.f.workspace.document.photos.length,count+2);
+ const before={view:plain(h.f.view),content:plain(h.content)},after=plain(before);after.view.revision++;after.view.productVersion=new Date(Date.parse(after.view.productVersion)+1).toISOString();after.view.inputFingerprint='9'.repeat(64);
+ after.view.resolved.rows[0].fields.brand={value:'검토한 브랜드',source:'manual-option',issues:[]};h.f.view=after.view;
+ const workspace=plain(h.f.workspace);assert.equal(await h.model.advanceSelectedDetailWorkCheckpoint(h.state,before,after,h.controller.signal,h.options.fetcher),true);assert.deepEqual(plain(h.f.workspace),workspace);
+ h.deps.recognize=async(image,...args)=>{if(image.source.sourceKey===raw[2])throw Error('confirmed next photo failure');return recognize(image,...args);};
+ assert.equal((await h.run()).status,'partial');assert.equal(h.calls.filter(row=>row.operation==='image-apply').length,2,'only the next raw BODY is applied');
+ assert.equal(h.f.view.resolved.rows[0].fields.detailImages.value,value);assert.equal(h.calls.filter(row=>row.operation==='composite-apply').length,0,'raw checkpoint never uploads the oversized final list');
+ assert.throws(()=>h.base.load('app/detail-image-batch.ts').detailBatchSelection(h.f.view,'red','profile','detail'),/변경/,'the legacy final attachment limit is unchanged');
+});
+
+test('BODY rebase never adopts changed raw cells, manual blank intent or banner roles',async()=>{
+ const h=await setup(),recognize=h.deps.recognize;h.deps.recognize=async(image,...args)=>{if(image.source.sourceKey==='owner/two.png')throw Error('confirmed');return recognize(image,...args);};await h.run();
+ const before={view:plain(h.f.view),content:plain(h.content)},retained=plain(h.state);
+ for(const change of ['resolved-images','automatic-images','html','alt','manual-html-blank','manual-alt-blank','protected','top','bottom']){
+  const after=plain(before);after.view.revision++;after.view.productVersion=new Date(Date.parse(after.view.productVersion)+1).toISOString();after.view.inputFingerprint='9'.repeat(64);
+  if(change==='resolved-images')after.view.resolved.rows[0].fields.detailImages.value='owner/one.png';
+  if(change==='automatic-images')after.view.automatic.rows[0].fields.detailImages.value='owner/one.png';
+  if(change==='html')after.view.resolved.rows[0].fields.detailHtml.value='';
+  if(change==='alt')after.view.resolved.rows[0].fields.altText.value='';
+  if(change==='manual-html-blank')after.view.overrides.options.red={detailHtml:''};
+  if(change==='manual-alt-blank')after.view.overrides.common.altText='';
+  if(change==='protected')after.view.protectedDetailImageKeys=['owner/top.png'];
+  if(change==='top'||change==='bottom')after.content.assets[change==='top'?'detailTop':'detailBottom']={value:['owner/replacement.png'],provenance:'manual',updatedAt:after.view.productVersion};
+  h.f.view=after.view;assert.equal(await h.model.advanceSelectedDetailWorkCheckpoint(h.state,before,after,h.controller.signal,h.options.fetcher),false,change);assert.deepEqual(plain(h.state),retained,change);
+ }
+});
+
+test('BODY checkpoint advance keeps unknown work and changed workspace records exactly intact',async()=>{
+ for(const change of ['inference','seed','image','composite','workspace','outside-view','settings']){
+  const h=await setup(),recognize=h.deps.recognize;h.deps.recognize=async(image,...args)=>{if(image.source.sourceKey==='owner/two.png')throw Error('confirmed');return recognize(image,...args);};await h.run();
+  const before={view:plain(h.f.view),content:plain(h.content)},after=plain(before);after.view.revision++;after.view.productVersion=new Date(Date.parse(after.view.productVersion)+1).toISOString();after.view.inputFingerprint='9'.repeat(64);h.f.view=after.view;
+  if(['inference','seed','image','composite'].includes(change))h.state[change]={original:true};
+  if(change==='workspace')h.f.workspace={...h.f.workspace,revision:h.f.workspace.revision+1};
+  if(change==='outside-view')before.view.revision++;
+  if(change==='settings')h.settings.translateImages=false;
+  const retained=plain(h.state);assert.equal(await h.model.advanceSelectedDetailWorkCheckpoint(h.state,before,after,h.controller.signal,h.options.fetcher),false,change);assert.deepEqual(plain(h.state),retained,change);
+ }
+});
+
 test('missing configured workspace Vision blocks explicitly before local OCR, translation, render or final save',async()=>{
  const h=await setup();const read=h.deps.readImage;h.deps.readImage=async(...args)=>{const value=await read(...args);delete value.visionConfiguration;return value;};
  const result=await h.run();assert.equal(result.status,'partial');assert.match(result.messages.join(' '),/Vision/);assert.ok(!h.calls.some(row=>['vision','render','image-apply','composite-apply'].includes(row.operation)));

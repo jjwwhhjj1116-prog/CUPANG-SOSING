@@ -300,6 +300,39 @@ test('changed views/settings and unrelated manual edits reject retained partial 
  }
 });
 
+test('an exact acknowledged sibling transition advances only a settled image checkpoint and resumes its remaining slot',async()=>{
+ const h=fixture('additional'),recognize=h.deps.recognize;
+ h.deps.recognize=async image=>{if(image.source.sourceKey.endsWith('b.png'))throw Error('confirmed OCR failure');return recognize(image);};
+ await h.run();const before={view:plain(h.view),content:plain(h.content)},next=plain(before);
+ next.view.revision++;next.view.productVersion=new Date(Date.parse(next.view.productVersion)+1).toISOString();next.view.updatedAt=next.view.productVersion;
+ next.view.resolved.rows[0].fields.brand={value:'검토한 브랜드',source:'manual-option',issues:[],needsReview:false};
+ assert.equal(h.model.advanceSelectedImageStageCheckpoint(h.options.state,before,next),true);
+ h.view=next.view;h.deps.recognize=recognize;const result=await h.run();
+ assert.equal(result.status,'completed');assert.equal(result.applied,2);assert.deepEqual(h.calls.filter(row=>row[0]==='apply').map(row=>row[1]),[0,1]);
+});
+
+test('checkpoint advance rejects outside edits, changed source choices and every unresolved write or inference',async()=>{
+ for(const change of ['outside-view','outside-content','category','schema','options','rows','selection','role','removed-image','inference','workspace','uncertain','rendered']){
+  const h=fixture('additional'),recognize=h.deps.recognize;h.deps.recognize=async image=>{if(image.source.sourceKey.endsWith('b.png'))throw Error('confirmed');return recognize(image);};await h.run();
+  const before={view:plain(h.view),content:plain(h.content)},next=plain(before),state=h.options.state;
+  next.view.revision++;next.view.productVersion=new Date(Date.parse(next.view.productVersion)+1).toISOString();next.view.updatedAt=next.view.productVersion;
+  if(change==='outside-view')before.view.resolved.rows[0].fields.brand={value:'external'};
+  if(change==='outside-content')before.content.sentinelManualOther.keep=false;
+  if(change==='category')next.view.categoryContext.categoryId='other';
+  if(change==='schema')next.view.resolved.schema.fields[0].required=true;
+  if(change==='options')next.view.optionRevision++;
+  if(change==='rows')next.view.resolved.rows[0].included=false;
+  if(change==='selection')next.view.resolved.rows[0].fields.additionalImages.value='owner/other.png';
+  if(change==='role')next.content.assets.additional.provenance='manual';
+  if(change==='removed-image')next.view.imageKeys=next.view.imageKeys.slice(1);
+  if(change==='inference')state.inferencePending={attempt:{requestId:'original'}};
+  if(change==='workspace')state.detailWorkspacePending={original:true};
+  if(change==='uncertain')state.batches.option.items[1].status='uncertain';
+  if(change==='rendered')state.batches.option.items[1].rendered={output:new Blob(['pending'])};
+  const retained=plain(state);assert.equal(h.model.advanceSelectedImageStageCheckpoint(state,before,next),false,change);assert.deepEqual(plain(state),retained,change);
+ }
+});
+
 test('lost ACK state is read-only recovered before a separate explicit retry can save the next slot',async()=>{
  const h=fixture(),apply=h.deps.apply;let captured;
  h.deps.apply=async(batch,index,_signal,progress)=>{h.calls.push(['attempt',index]);captured={...batch,items:batch.items.map(row=>row.slotIndex===index?{...row,status:'uncertain',attempt:{image:row.rendered,before:batch.view}}:row)};progress(captured);throw Error('lost ACK');};

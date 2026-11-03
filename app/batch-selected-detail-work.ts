@@ -22,6 +22,7 @@ import { hasForeignImageText } from '@/app/selected-image-purpose';
 import { optionImageTargets } from '@/app/quotation-image-targets';
 import { exactPrimaryQuotationTarget } from '@/app/quotation-seo-targets';
 import { isOwnedImageKey } from '@/app/image-files';
+import { selectedImageCheckpointSourceUnchanged } from '@/app/batch-selected-image-work';
 
 type PhotoState = { status: 'applied'|'verified'|'preserved'; key: string; partial?: boolean };
 type Peer = { selection: DetailWorkspaceSelection; saved: DetailWorkspaceView; document: DetailWorkspaceDocument };
@@ -49,6 +50,36 @@ const changed = () => new DetailSourceChanged('계정·설정·상세 원본 또
 const semantic = (document: DetailWorkspaceDocument) => ({ imageMargin: document.imageMargin,
   photos: document.photos.map(({ role, originKey, key }) => ({ role, originKey, key })) });
 export function createSelectedDetailWorkState(ownerId: string, productId: string): SelectedDetailWorkState { return { ownerId, productId, photos: {} }; }
+
+/** Called only after the coordinator proves its complete own-write clock chain.
+ * Workspace records are independently reread; pending operations never rebase. */
+export async function advanceSelectedDetailWorkCheckpoint(state:SelectedDetailWorkState,before:{view:QuotationFieldsView;content:ProductContent},after:{view:QuotationFieldsView;content:ProductContent},signal:AbortSignal,fetcher:typeof fetch):Promise<boolean>{
+  try{
+    if(!state.view||!state.content||!state.scope||!state.settings||!state.peers?.length||!state.current||state.seed||state.image||state.inference||state.composite)return false;
+    if(!selectedImageCheckpointSourceUnchanged({...state,stage:'detail'},before,after)
+      ||!same(before.view.protectedDetailImageKeys,after.view.protectedDetailImageKeys)
+      ||!same(before.content.assets.detailTop,after.content.assets.detailTop)||!same(before.content.assets.detailBottom,after.content.assets.detailBottom))return false;
+    const targets=optionImageTargets(before.view.resolved.schema.fields),alt=exactPrimaryQuotationTarget(before.view.resolved.schema.fields,'altText'),fields=[...new Set([...targets.detailImages.linked,...targets.detailHtml.linked,...alt.linked])];
+    // BODY sources may exceed the final attachment count. Compare every linked
+    // value and override intent exactly; final wire limits remain elsewhere.
+    const bodySource=(view:QuotationFieldsView)=>({rows:[view.resolved,view.automatic].map(part=>part.rows.map(({optionId,optionLabel,included,fields:cells})=>({optionId,optionLabel,included,cells:fields.map(key=>[key,cells[key]])}))),
+      common:fields.map(key=>[key,Object.hasOwn(view.overrides.common,key),view.overrides.common[key]]),
+      options:[...new Set([...Object.keys(before.view.overrides.options),...Object.keys(after.view.overrides.options)])].sort().map(id=>[id,fields.map(key=>[key,Object.hasOwn(view.overrides.options[id]??{},key),view.overrides.options[id]?.[key]])])});
+    if(!same(before.view.automatic.schema,after.view.automatic.schema)||!same(bodySource(before.view),bodySource(after.view)))return false;
+    const response=await fetcher('/api/settings',{signal,cache:'no-store',credentials:'same-origin',redirect:'error'}),settings=await response.json();signal.throwIfAborted();
+    if(!response.ok||!object(settings)||!same(parseWorkspaceSettingsScope(settings.scope),state.scope)||!object(settings.settings)||!same(savedRegistrationSettings(settings.settings),state.settings))return false;
+    const next:DetailWorkspaceView[]=[];
+    for(const peer of state.peers){
+      if(!same(peer.selection.view,before.view)||!same(peer.saved.view,before.view))return false;
+      const saved=await readDetailWorkspace({...peer.selection,view:after.view},signal,fetcher);signal.throwIfAborted();
+      if(!same(saved.workspace,peer.saved.workspace)||!same(saved.roles,peer.saved.roles))return false;
+      next.push(saved);
+    }
+    state.view=structuredClone(after.view);state.content=structuredClone(after.content);
+    state.peers.forEach((peer,index)=>{peer.selection={...peer.selection,view:after.view};peer.saved=next[index];});
+    return true;
+  }catch{return false;}
+}
 
 /** Automatic stage five reads exact saved BODY photos. The final quote is an
  * output only; unknown writes retain their original source and are read back. */

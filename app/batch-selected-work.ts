@@ -15,8 +15,8 @@ import { quotationAiJobForScope, quotationReviewedProposalChanges, quotationSave
 import { quotationTextModel, validQuotationTextExecution, type QuotationTextExecution } from '@/app/quotation-text-execution';
 import { confirmQuotationFieldsSave } from '@/app/quotation-fields-confirmation';
 import { hasSelectedEmptyQuotationChoice } from '@/app/quotation-choice-state';
-import { processSelectedImageStage, createSelectedImageStageState, type SelectedImageStageState } from '@/app/batch-selected-image-work';
-import { processSelectedDetailWork, createSelectedDetailWorkState, type SelectedDetailWorkState } from '@/app/batch-selected-detail-work';
+import { processSelectedImageStage, createSelectedImageStageState, advanceSelectedImageStageCheckpoint, type SelectedImageStageState } from '@/app/batch-selected-image-work';
+import { processSelectedDetailWork, createSelectedDetailWorkState, advanceSelectedDetailWorkCheckpoint, type SelectedDetailWorkState } from '@/app/batch-selected-detail-work';
 import { runSelectedLabelWork } from '@/app/batch-selected-label-work';
 import { readRegistrationLayout } from '@/app/registration-layout';
 import { runSelectedPricingWork } from '@/app/batch-selected-pricing-work';
@@ -80,16 +80,37 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
   keys.set(scopeKey,JSON.stringify(expected));
   const assertCurrent=async()=>{if(!same(await account(),expected))throw new ScopeChanged('로그인 회사가 변경되어 작업을 멈췄습니다.');};
   let onMutationDispatch:(()=>void)|undefined;
+  type ImageCheckpointObservation={mutated:boolean;valid:boolean;productVersion:string;current?:QuotationFieldsView;view?:QuotationFieldsView};
+  let imageCheckpointObservation:ImageCheckpointObservation|null=null;
   const fetcher:typeof fetch=async(input,init)=>{
     signal.throwIfAborted();
     if(init?.method&&!['GET','HEAD'].includes(init.method.toUpperCase()))await assertCurrent();
     const requestSignal=init?.signal?AbortSignal.any([signal,init.signal]):signal;
     // Mark dispatch after the account preflight, immediately before handing
     // the mutation to the transport. A rejected preflight sent nothing.
-    if(init?.method&&!['GET','HEAD'].includes(init.method.toUpperCase()))onMutationDispatch?.();
+    const mutation=!!init?.method&&!['GET','HEAD'].includes(init.method.toUpperCase()),observation=imageCheckpointObservation;
+    if(mutation){onMutationDispatch?.();if(observation){observation.mutated=true;delete observation.view;}}
     const response=await controls.fetcher(input,{...init,signal:requestSignal});
     signal.throwIfAborted();
     if(init?.method&&!['GET','HEAD'].includes(init.method.toUpperCase()))await assertCurrent();
+    if(observation&&observation===imageCheckpointObservation&&typeof input==='string'&&(input===base||input.startsWith(base+'/'))&&response.ok
+      &&response.headers.get('content-type')?.split(';',1)[0].trim().toLowerCase()==='application/json'){
+      try{const body:unknown=await response.clone().json(),candidate=object(body)?object(body.resolved)?body:object(body.quotation)?body.quotation:body.view:null;
+        const source=object(body)?[body,body.product,body.view,body.quotation,body.source].find(value=>object(value)&&(typeof value.productVersion==='string'||typeof value.updated_at==='string')):null;
+        const clock=object(source)?typeof source.productVersion==='string'?source.productVersion:source.updated_at:null;
+        // A fresh helper read cannot import an outside edit into this run.
+        // Only an acknowledged own mutation may advance the product clock.
+        if(typeof clock==='string'&&clock!==observation.productVersion){
+          if(!mutation||!Number.isFinite(Date.parse(clock))||Date.parse(clock)<=Date.parse(observation.productVersion))observation.valid=false;
+          else{observation.productVersion=clock;delete observation.current;}
+        }
+        if(object(candidate)&&object(candidate.resolved)&&object(candidate.resolved.schema)&&Array.isArray(candidate.resolved.rows)
+          &&typeof candidate.productVersion==='string'&&typeof candidate.inputFingerprint==='string'&&Number.isSafeInteger(candidate.revision)){
+          if(candidate.productVersion!==observation.productVersion||observation.current&&!same(candidate,observation.current))observation.valid=false;
+          observation.current=candidate as QuotationFieldsView;if(observation.mutated)observation.view=observation.current;
+        }
+      }catch{observation.valid=false;}
+    }
     return response;
   };
   const read=async<T>(suffix:string)=>await responseJson(await fetcher(base+suffix,{cache:'no-store',credentials:'same-origin',redirect:'error'}),`상품 ${suffix||'/'} 조회`) as T;
@@ -484,6 +505,23 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
   const holdRemaining=(index:number)=>{
     for(let next=index+1;next<result.length;next++)publish(next,{status:'blocked',message:'앞 단계의 처리·저장 결과를 확인해야 하므로 이 단계는 아직 시작하지 않았습니다. 해당 단계만 선택해 별도로 작업할 수 있습니다.'});
   };
+  async function imageCheckpointBefore(){
+    const states=[...imageStates!.values()].filter(state=>state.productId===productId&&state.ownerId===controls.expectedOwnerId&&state.view&&state.content);
+    const details=[...detailStates!.values()].filter(state=>state.productId===productId&&state.ownerId===controls.expectedOwnerId&&state.view&&state.content);
+    if(!states.length&&!details.length)return null;
+    const profileId=(states[0]??details[0]).view!.categoryContext.profileId,suffix='/quotation-fields'+(profileId?'?profileId='+encodeURIComponent(profileId):'');
+    try{const view=await read<QuotationFieldsView>(suffix),{content}=await read<{content:ProductContent}>('/content');return{states,details,suffix,view,content};}catch{return null;}
+  }
+  async function advanceImageCheckpoints(before:Awaited<ReturnType<typeof imageCheckpointBefore>>,observation:ImageCheckpointObservation|null){
+    if(!before||!observation?.valid||!observation.mutated||!observation.view)return;
+    // The stage's normal helpers already verified this ACK/readback. A second
+    // exact read prevents an outside edit from being adopted as our own save.
+    try{const view=await read<QuotationFieldsView>(before.suffix),{content}=await read<{content:ProductContent}>('/content');await assertCurrent();
+      if(!same(view,observation.view)||content?.revision!==view.contentRevision||(await product()).updated_at!==view.productVersion)return;
+      for(const state of before.states)advanceSelectedImageStageCheckpoint(state,before,{view,content});
+      for(const state of before.details)await advanceSelectedDetailWorkCheckpoint(state,before,{view,content},signal,fetcher);
+    }catch{/* Preserve the old checkpoint when this transition cannot be proved. */}
+  }
   for(let index=0;index<result.length;index++){
     if(signal.aborted)return null;
     const id=result[index].id;activeStage=id;
@@ -518,17 +556,20 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
           publish(index,{status:'skipped',message:'현재 저장본에서 완료된 단계라 전체 작업에서 건너뛰었습니다. 다시 작업하려면 이 단계만 선택해주세요.'});continue;
         }
       }
+      const checkpoint=await imageCheckpointBefore();imageCheckpointObservation=checkpoint?{mutated:false,valid:true,productVersion:checkpoint.view.productVersion,current:checkpoint.view}:null;
       const outcome:Outcome=id==='seo'?await seo():id==='pricing'?await pricing():id==='mainImage'||id==='additionalImages'||id==='detailImage'?await image(id)
         :id==='sizeChart'?await sizeChart():id==='koreanLabel'?await once('label:'+(await product()).updated_at,()=>runSelectedLabelWork(productId,{signal,fetcher,assertCurrent,trackMutationDispatch:mark=>{
           const previousDispatch=onMutationDispatch;onMutationDispatch=()=>{mark();previousDispatch?.();};return()=>{onMutationDispatch=previousDispatch;};
         }}))
         :await quotation();
-      await assertCurrent();publish(index,outcome);
+      const observation=imageCheckpointObservation;imageCheckpointObservation=null;
+      await assertCurrent();if(!outcome.uncertain&&!outcome.stop&&outcome.status!=='failed')await advanceImageCheckpoints(checkpoint,observation);publish(index,outcome);
       if(outcome.uncertain){holdRemaining(index);break;}
       keys.delete(identity+':pending:'+id);
       for(const key of stageWrites)keys.delete(key);
       if(outcome.stop){holdRemaining(index);break;}
     }catch(cause){
+      imageCheckpointObservation=null;
       if(signal.aborted)return null;
       if(cause instanceof ScopeChanged)boardSourceLost=true;
       publish(index,{status:'failed',message:cause instanceof Error?cause.message:'작업 결과를 확인하지 못했습니다.'});

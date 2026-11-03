@@ -18,6 +18,35 @@ export type SelectedImageStage='main'|'additional'|'detail';
 export type SelectedImageInferencePending={optionId:string;slotIndex:number;attempt:FreeImageVisionAttempt;code:string;message:string;observation?:FreeImageVisionStatus};
 export type SelectedImageStageState={ownerId:string;productId:string;stage:SelectedImageStage;scope?:WorkspaceSettingsScope;settings?:WorkspaceSettings;content?:ProductContent;view?:QuotationFieldsView;batches:Record<string,DetailImageBatch>;verifiedOriginals?:Record<string,string>;unverifiedOriginals?:Record<string,string>;inferencePending?:SelectedImageInferencePending;detailWorkspacePending?:SelectedDetailWorkspacePending;detailWorkspaceLinked?:Record<string,string>};
 export function createSelectedImageStageState(ownerId:string,productId:string,stage:SelectedImageStage):SelectedImageStageState{return{ownerId,productId,stage,batches:{}};}
+type ImageCheckpoint={view:QuotationFieldsView;content:ProductContent};
+export function selectedImageCheckpointSourceUnchanged(state:Pick<SelectedImageStageState,'productId'|'stage'|'view'|'content'>,before:ImageCheckpoint,after:ImageCheckpoint):boolean{
+ try{return!!state.view&&!!state.content&&same(state.view,before.view)&&same(state.content,before.content)
+  &&before.content.productId===state.productId&&after.content.productId===state.productId&&after.content.revision===after.view.contentRevision
+  &&before.content.revision===before.view.contentRevision&&after.view.optionRevision===before.view.optionRevision
+  &&after.view.revision>=before.view.revision&&Number.isFinite(Date.parse(after.view.productVersion))&&Date.parse(after.view.productVersion)>=Date.parse(before.view.productVersion)
+  &&same(before.view.categoryContext,after.view.categoryContext)&&same(before.view.resolved.schema,after.view.resolved.schema)
+  &&same(before.content.assets[state.stage],after.content.assets[state.stage])
+  &&same(before.view.resolved.rows.map(({optionId,optionLabel,included})=>({optionId,optionLabel,included})),after.view.resolved.rows.map(({optionId,optionLabel,included})=>({optionId,optionLabel,included})))
+  &&before.view.imageKeys.every(key=>after.view.imageKeys.includes(key));
+ }catch{return false;}
+}
+/** Only the coordinator's verified before/after transition may move a settled
+ * checkpoint. Unknown inference, PNGs and writes retain their exact old clock. */
+export function advanceSelectedImageStageCheckpoint(state:SelectedImageStageState,before:ImageCheckpoint,after:ImageCheckpoint):boolean{
+ try{
+  if(state.inferencePending||state.detailWorkspacePending||!selectedImageCheckpointSourceUnchanged(state,before,after)
+   ||Object.values(state.batches).some(batch=>batch.items.some(item=>['ready','uncertain'].includes(item.status)||item.rendered||item.attempt))
+  )return false;
+  for(const row of before.view.resolved.rows.filter(row=>row.optionId!==null&&row.included)){
+   const previous=detailBatchSelection(before.view,row.optionId!,before.view.categoryContext.profileId,state.stage),next=detailBatchSelection(after.view,row.optionId!,after.view.categoryContext.profileId,state.stage);
+   if(!same(previous,next)||!same(detailBatchTranslationSlots(before.view,row.optionId!,before.view.categoryContext.profileId,state.stage),detailBatchTranslationSlots(after.view,row.optionId!,after.view.categoryContext.profileId,state.stage))
+    ||previous.target.linked.some(key=>!same(row.fields[key],after.view.resolved.rows.find(next=>next.optionId===row.optionId)?.fields[key])))return false;
+  }
+  state.view=structuredClone(after.view);state.content=structuredClone(after.content);
+  for(const batch of Object.values(state.batches))batch.view=structuredClone(after.view);
+  return true;
+ }catch{return false;}
+}
 export type SelectedImageStageResult={status:'completed'|'partial'|'skipped'|'uncertain';applied:number;failed:number;skipped:number;verifiedUnchanged?:number;messages:string[];productVersion?:string;recoveryBatch?:DetailImageBatch;state:SelectedImageStageState;recovered?:boolean;sourceChanged?:true;inferencePending?:true;review?:SelectedImageReview};
 export type SelectedImageStageOptions={ownerId:string;signal:AbortSignal;fetcher:typeof fetch;isCurrent?:()=>boolean;onProgress?:(message:string)=>void;expectedProductVersion?:string;state?:SelectedImageStageState};
 type Dependencies={plan?:typeof planBatchImageWork;refresh?:typeof refreshBatchImageTask;readSource?:typeof readFreeImageSource;recognize?:typeof recognizeFreeImage;translate?:typeof translateFreeImageRegions;render?:typeof renderFreeImageTranslation;apply?:typeof applyDetailBatchResult;recover?:typeof recoverDetailBatchResult;observe?:typeof readFreeImageVisionStatus;reconcileDetail?:typeof reconcileSelectedDetailWorkspace};
