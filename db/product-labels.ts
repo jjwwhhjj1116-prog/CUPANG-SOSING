@@ -6,10 +6,15 @@ import { productLabelsSchema } from '@/db/product-label-initialization';
 export { productLabelsSchema } from '@/db/product-label-initialization';
 export type ProductLabelSourceGuard = QuotationSourceGuard & { quotationRevision: number };
 type Row = { revision: number; payload: string; updated_at: string };
+const schemaReadyBindings = new WeakSet<D1Database>();
 async function database() {
-  if (!env.DB) throw Error('D1 unavailable');
-  await env.DB.batch([env.DB.prepare(productLabelsSchema), env.DB.prepare('CREATE INDEX IF NOT EXISTS product_labels_owner ON product_labels(owner_id,product_id)')]);
-  return env.DB;
+  const db = env.DB;
+  if (!db) throw Error('D1 unavailable');
+  if (!schemaReadyBindings.has(db)) {
+    await db.batch([db.prepare(productLabelsSchema), db.prepare('CREATE INDEX IF NOT EXISTS product_labels_owner ON product_labels(owner_id,product_id)')]);
+    schemaReadyBindings.add(db);
+  }
+  return db;
 }
 export async function readProductLabels(owner: string, productId: string): Promise<ProductLabelsState> {
   const db = await database();

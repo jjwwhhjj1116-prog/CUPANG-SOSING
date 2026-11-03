@@ -25,13 +25,18 @@ function listingLabels(ownerId:string,product:{id:string;image_keys:string},row:
  }
  return {ownerId,profileId,categoryId,categoryPath,...(hubSchema?{hubSchema}:{}),...(template?{template}:{}),options,state};
 }
+const schemaReadyBindings = new WeakSet<D1Database>();
 async function database() {
-  if (!env.DB) throw new Error('D1 binding DB is unavailable.');
-  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS product_content (
+  const db = env.DB;
+  if (!db) throw new Error('D1 binding DB is unavailable.');
+  if (!schemaReadyBindings.has(db)) {
+    await db.prepare(`CREATE TABLE IF NOT EXISTS product_content (
     product_id TEXT PRIMARY KEY REFERENCES products(id), owner_id TEXT NOT NULL,
     revision INTEGER NOT NULL CHECK(revision > 0), payload TEXT NOT NULL, updated_at TEXT NOT NULL
   )`).run();
-  return env.DB;
+    schemaReadyBindings.add(db);
+  }
+  return db;
 }
 
 export async function readProductContent(ownerId: string, productId: string): Promise<ProductContent> {

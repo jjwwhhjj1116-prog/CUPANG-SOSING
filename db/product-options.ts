@@ -4,13 +4,18 @@ import {prepareProductRegistrationOptions} from '@/db/product-registration';
 import { validatedBundleSources } from '@/app/option-bundles';
 
 type Row = { payload: string; revision: number };
+const schemaReadyBindings = new WeakSet<D1Database>();
 async function database() {
-  if (!env.DB) throw new Error('D1 binding DB is unavailable.');
-  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS product_options (
+  const db = env.DB;
+  if (!db) throw new Error('D1 binding DB is unavailable.');
+  if (!schemaReadyBindings.has(db)) {
+    await db.prepare(`CREATE TABLE IF NOT EXISTS product_options (
     product_id TEXT PRIMARY KEY REFERENCES products(id), owner_id TEXT NOT NULL,
     revision INTEGER NOT NULL CHECK(revision > 0), payload TEXT NOT NULL, updated_at TEXT NOT NULL
   )`).run();
-  return env.DB;
+    schemaReadyBindings.add(db);
+  }
+  return db;
 }
 export async function readProductOptions(ownerId: string, productId: string): Promise<ProductOptions> {
   const db = await database();

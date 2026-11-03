@@ -7,10 +7,15 @@ export const categoryProfileSchema = `CREATE TABLE IF NOT EXISTS category_profil
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 )`;
 type Row = { id: string; payload: string; revision: number; created_at: string; updated_at: string };
+const schemaReadyBindings = new WeakSet<D1Database>();
 async function database() {
-  if (!env.DB) throw new Error('D1 unavailable');
-  await env.DB.batch([env.DB.prepare(categoryProfileSchema), env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_category_profiles_owner ON category_profiles(owner_id, updated_at)'), env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_category_profiles_owner_id ON category_profiles(owner_id, id)')]);
-  return env.DB;
+  const db = env.DB;
+  if (!db) throw new Error('D1 unavailable');
+  if (!schemaReadyBindings.has(db)) {
+    await db.batch([db.prepare(categoryProfileSchema), db.prepare('CREATE INDEX IF NOT EXISTS idx_category_profiles_owner ON category_profiles(owner_id, updated_at)'), db.prepare('CREATE INDEX IF NOT EXISTS idx_category_profiles_owner_id ON category_profiles(owner_id, id)')]);
+    schemaReadyBindings.add(db);
+  }
+  return db;
 }
 function profile(row: Row): CategoryProfile {
   return { ...validateCategoryProfile(JSON.parse(row.payload)), id: row.id, revision: row.revision, verification: 'draft', createdAt: row.created_at, updatedAt: row.updated_at };
