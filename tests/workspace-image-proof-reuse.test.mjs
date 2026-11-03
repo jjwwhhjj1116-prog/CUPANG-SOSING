@@ -179,3 +179,85 @@ test('cancellation during a repeated version HEAD cannot release a workspace sou
     assert.equal(fired, true); assert.notEqual(response.status, 200);
   } finally { f.api.close(); }
 });
+
+async function eightFileWorkspace(f) {
+  const product = f.api.sqlite.prepare('SELECT image_keys FROM products WHERE id=?').get(f.product.id);
+  const extra = Array.from({ length: 4 }, (_, index) => 'owner/head-concurrency-' + index + '.png');
+  for (const key of extra) await f.api.bindings.FILES.put(key, f.api.objects.get(f.selectedKeys[1]).slice(), { httpMetadata: { contentType: 'image/png' } });
+  f.api.sqlite.prepare('UPDATE products SET image_keys=? WHERE id=?').run(JSON.stringify([...JSON.parse(product.image_keys), ...extra]), f.product.id);
+  const before = await json(await f.read()), photos = before.workspace.document.photos;
+  const document = f.document([...photos.slice(0, -1), ...extra.map((key, index) => ({ id: 'head-concurrency-' + index, originKey: key, key, role: 'body' })), photos.at(-1)]);
+  return (await json(await f.put(await f.body(document, before)))).workspace.files.map(file => file.key);
+}
+
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+function delayedStorage(f) {
+  const store = f.api.bindings.FILES, get = store.get, head = store.head;
+  const active = { body: 0, head: 0, maxBody: 0, maxHead: 0 };
+  store.get = async (...args) => {
+    active.body++; active.maxBody = Math.max(active.maxBody, active.body);
+    await delay(5); const value = await get(...args);
+    if (!value) { active.body--; return null; }
+    const reader = value.body.getReader(); let finished = false;
+    const finish = () => { if (!finished) { finished = true; active.body--; } };
+    return { ...value, body: new ReadableStream({
+      async pull(controller) {
+        try { await delay(5); const next = await reader.read(); if (next.done) { finish(); controller.close(); } else controller.enqueue(next.value); }
+        catch (error) { finish(); controller.error(error); }
+      },
+      async cancel(reason) { try { await reader.cancel(reason); } finally { finish(); } },
+    }) };
+  };
+  store.head = async key => {
+    active.head++; active.maxHead = Math.max(active.maxHead, active.head);
+    try { await delay(10); return await head(key); } finally { active.head--; }
+  };
+  return active;
+}
+
+test('fully proven HEAD-only scans reach six concurrent requests while initial image bodies stay bounded to two', async () => {
+  const f = await workspaceImageEditFixture(companies[0]);
+  try {
+    await eightFileWorkspace(f); versionedStorage(f); const active = delayedStorage(f), before = f.tables();
+    await json(await f.openImage());
+    assert.equal(active.maxBody, 2); assert.equal(active.maxHead, 6);
+    assert.equal(active.body, 0); assert.equal(active.head, 0); assert.deepEqual(f.tables(), before);
+  } finally { f.api.close(); }
+});
+
+test('a mixed scan with even its last file unversioned keeps every batch bounded to two', async () => {
+  const f = await workspaceImageEditFixture(companies[0]);
+  try {
+    const keys = await eightFileWorkspace(f), storage = versionedStorage(f);
+    storage.versions.set(keys.at(-1), undefined); const active = delayedStorage(f);
+    await json(await f.openImage());
+    assert.equal(active.maxBody, 2); assert.equal(active.maxHead, 2);
+    assert.equal(active.body, 0); assert.equal(active.head, 0);
+    assert.equal(storage.reads.get(keys.at(-1)), 4, 'the unversioned file is independently hashed at each check');
+  } finally { f.api.close(); }
+});
+
+test('six-way HEAD metadata errors and cancellation wait for every started request to settle', async () => {
+  for (const failure of ['metadata', 'abort']) {
+    const f = await workspaceImageEditFixture(companies[0]);
+    try {
+      await eightFileWorkspace(f); versionedStorage(f);
+      const controller = new AbortController(), store = f.api.bindings.FILES, head = store.head; let started = 0, settled = 0, active = 0;
+      store.head = async key => {
+        const index = ++started; active++;
+        try {
+          await delay(index === 1 ? 1 : 30); const value = await head(key);
+          if (index === 1) {
+            if (failure === 'abort') controller.abort();
+            else return { ...value, customMetadata: { ...value.customMetadata, imageWidth: '999' } };
+          }
+          return value;
+        } finally { active--; settled++; }
+      };
+      const params = new URLSearchParams({ profileId: f.initialView.categoryContext.profileId, optionId: f.optionId, photoId: f.photoId });
+      const response = await f.imageRoute.GET(new Request('https://app.test' + f.imageBase + '?' + params, { signal: controller.signal }), f.context);
+      assert.notEqual(response.status, 200, failure); assert.equal(started, 6, failure);
+      assert.equal(settled, 6, failure); assert.equal(active, 0, failure);
+    } finally { f.api.close(); }
+  }
+});

@@ -75,8 +75,10 @@ function stored(value: Row | null, owner: string, id: string, optionId: string, 
 async function fileProofs(owner: string, document: DetailWorkspaceRecord['document'], signal: AbortSignal, proofs?: DetailWorkspaceImageProofs): Promise<DetailWorkspaceFile[]> {
   if (!env.FILES) throw new DetailWorkspaceError('이미지 저장소를 확인해주세요.', 503);
   const result: DetailWorkspaceFile[] = [], keys = detailWorkspaceFileKeys(document); let total = 0;
-  for (let offset = 0; offset < keys.length; offset += 2) {
-    const batch = keys.slice(offset, offset + 2);
+  // Only fully proven scans can widen: HEADs allocate no image buffers.
+  const concurrency = proofs && keys.every(key => proofs.files.has(key)) ? 6 : 2;
+  for (let offset = 0; offset < keys.length; offset += concurrency) {
+    const batch = keys.slice(offset, offset + concurrency);
     const fetched = await Promise.allSettled(batch.map(async (key): Promise<{ file: DetailWorkspaceFile } | { object: R2ObjectBody | null }> => {
       signal.throwIfAborted(); if (!isOwnedImageKey(owner, key)) throw conflict();
       const verified = proofs?.files.get(key);
@@ -96,7 +98,7 @@ async function fileProofs(owner: string, document: DetailWorkspaceRecord['docume
         if (!value.value.object || value.value.object.size < 1 || value.value.object.size > MAX_IMAGE_BYTES) throw conflict('작업공간 사진과 원본의 저장 파일을 확인해주세요.');
         return value.value;
       });
-      // Reserve the whole bounded pair before either body can allocate bytes.
+      // Reserve the whole batch before any body can allocate bytes.
       for (const value of objects) {
         total += 'file' in value ? value.file.bytes : value.object!.size; if (total > 30 * 1024 * 1024) throw new DetailWorkspaceError('작업공간 원본과 현재 사진의 전체 크기는30MiB 이내여야 합니다.', 413);
       }
