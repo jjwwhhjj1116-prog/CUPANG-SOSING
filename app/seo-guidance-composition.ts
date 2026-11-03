@@ -121,8 +121,8 @@ export function applyInitialIntakeSeoGuidance(plan: ReturnType<typeof integrated
   const pendingFields=pendingGuidanceFields(content,job), values: {title?:string;keywords?:ReturnType<typeof seoGuidanceTags>} = {};
   const eligibleTitle = content.seo.title.provenance !== 'manual';
   const eligibleTags = content.seo.keywords.provenance !== 'manual' || untouchedIntakeKeywords(content,job);
-  let targetsValid = true;
-  try { targetKeywords(memo.keywords); }
+  let targetsValid = true,targetCount = 0;
+  try { targetCount=targetKeywords(memo.keywords).length; }
   catch {
     targetsValid=false;
     if(eligibleTags)pendingFields.keywords='입력한 타겟 검색태그가 태그별 20자 또는 전체 150자 한도를 초과했습니다. 타겟을 자르지 않고 저장 원문에 보존했으며 정상 번역 검색어를 유지했습니다. 1단계에서 검색태그와 구성 상품명을 확인·수정해주세요.';
@@ -133,7 +133,12 @@ export function applyInitialIntakeSeoGuidance(plan: ReturnType<typeof integrated
     if(!title||title.length>100)pendingFields.title='입력한 특징 또는 구성 상품명이 한 줄 100자 한도를 초과했습니다. 입력을 자르지 않고 저장 원문에 보존했으며 정상 번역 상품명을 유지했습니다. 1단계에서 짧은 특징과 상품명을 확인·수정해주세요.';
     else values.title=title;
   }
-  return {plan:applyGuidanceCandidates(plan,content,job,values),warnings:[...new Set(Object.values(pendingFields).filter((value):value is string=>typeof value==='string'))],pendingFields};
+  const composed=applyGuidanceCandidates(plan,content,job,values),adoptedFields:('title'|'keywords')[]=[];
+  // Only valid owner input actually adopted into this patch is manual. A blank
+  // memo, rejected candidate or provider-only fallback keeps its provider stamp.
+  if(eligibleTitle&&values.title!==undefined&&composed.patch?.seo?.title!==undefined&&(memo.brand.trim()||memo.features.trim()||targetCount))adoptedFields.push('title');
+  if(eligibleTags&&values.keywords!==undefined&&composed.patch?.seo?.keywords!==undefined&&targetCount)adoptedFields.push('keywords');
+  return {plan:composed,adoptedFields,warnings:[...new Set(Object.values(pendingFields).filter((value):value is string=>typeof value==='string'))],pendingFields};
 }
 
 function applyGuidanceCandidates(plan: ReturnType<typeof integratedTranslationPlan>, content: ProductContent,

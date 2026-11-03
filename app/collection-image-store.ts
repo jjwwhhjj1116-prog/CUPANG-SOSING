@@ -78,7 +78,9 @@ export async function storeCollectedImage(owner:string,id:string,index:number,as
   const latestJob=await findCollectionJob(owner,id);
   if(!latestJob || latestJob.status==='cancelled')return reply({code:'COLLECTION_CANCELLED',error:'취소된 수집 요청입니다. 내려받은 이미지를 상품에 반영하지 않았습니다.'},409);
   await assertCollectedImageScope(owner,id,scope);
-  const stored=await env.FILES.put(downloaded.key,downloaded.bytes,{httpMetadata:{contentType:downloaded.contentType},customMetadata:{imageValidation:'header-v1',provenance:'collected',...imageDimensionMetadata(downloaded.bytes)}});
+  const resolution=downloaded.sourceResolution;
+  const stored=await env.FILES.put(downloaded.key,downloaded.bytes,{httpMetadata:{contentType:downloaded.contentType},customMetadata:{imageValidation:'header-v1',provenance:'collected',...imageDimensionMetadata(downloaded.bytes),
+   ...(resolution?{collectionImageResolution:resolution.policy+':'+resolution.mode,observedImageUrlSha256:resolution.observedUrlSha256,downloadImageUrlSha256:resolution.downloadUrlSha256}:{})}});
   if(!stored)throw new Error('이미지 저장 확인 실패');
   await assertCollectedImageScope(owner,id,scope);
   const saved=await saveCollectionImage(owner,id,index,downloaded.key,image.role,product,current,skus,assignToStage,commonStageAllowed,scope);

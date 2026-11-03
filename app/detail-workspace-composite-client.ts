@@ -1,4 +1,5 @@
-import { renderDetailImageSequence, type DetailComposite } from '@/app/detail-image-composite';
+import { renderDetailImageParts, type DetailComposite } from '@/app/detail-image-composite';
+import { DETAIL_COMPOSITE_PARTS_POLICY, detailCompositePartsUploadId, detailCompositePartUploadId } from '@/app/detail-composite-parts';
 import { readDetailWorkspace, validateDetailWorkspaceReply, type DetailWorkspaceSelection } from '@/app/detail-workspace-client';
 import type { DetailWorkspaceRecord, DetailWorkspaceView } from '@/app/detail-workspace';
 import { applyDetailSave, recoverDetailSave, type DetailSaveAttempt } from '@/app/detail-save-client';
@@ -66,20 +67,28 @@ export async function prepareDetailWorkspaceComposite(selection: DetailWorkspace
   const missing = [...new Set([...keys, ...published].filter(key => !selection.view.imageKeys.includes(key)))];
   if (selection.view.imageKeys.length + missing.length + 1 > PRODUCT_IMAGE_POOL_LIMIT)
     throw Error('현재 사진과 최종 이미지를 함께 보존할 상품 이미지 공간이 부족합니다. 기존 파일은 유지됩니다.');
-  const rendered = await renderDetailImageSequence(selection, keys, signal, fetcher, 'png', true);
+  const rendered = await renderDetailImageParts(selection, keys, signal, fetcher, 'png', true);
+  if(selection.view.imageKeys.length+missing.length+rendered.parts.length>PRODUCT_IMAGE_POOL_LIMIT)throw Error('분할 상세 이미지와 원본을 보존할 공간이 부족합니다.');
   for (const source of rendered.sources) {
     const proof = record.files.find(file => file.key === source.key);
     if (!proof || proof.sha256 !== source.sha256 || proof.width !== source.width || proof.height !== source.height) throw changed();
   }
   if (!same(await readDetailWorkspace(selection, signal, fetcher), before)) throw changed();
   if (reviewedPeers) await verifyPeers(selection, before, reviewedPeers, signal, fetcher);
-  const sha256 = await labelUploadDigest(rendered.bytes), workspace = { revision: record.revision, digest: record.digest };
+  const first=rendered.parts[0],sha256=first.sha256,workspace = { revision: record.revision, digest: record.digest };
+  if(rendered.parts.length>1){
+    const metadata=rendered.parts.map(({start,end,width,height,sha256,bytes})=>({start,end,width,height,sha256,bytes}));
+    const uploadId=await detailCompositePartsUploadId({productId:selection.productId,optionId:selection.optionId,category:selection.view.categoryContext,fingerprint:selection.view.inputFingerprint,sources:rendered.sources,workspace,
+      ...(reviewedPeers?{peerDigest:await detailSavePeerDigest(reviewedPeers)}:{}),...(publicationPolicy?{publicationPolicy,publishedBodyImages:detailSavePublishedBodyImages(record,selection.view.imageKeys[0].split('/')[0])}:{})},metadata);
+    const parts=await Promise.all(rendered.parts.map(async(part,index)=>({...metadata[index],output:part.output,uploadId:await detailCompositePartUploadId(uploadId,index,metadata[index])})));
+    return{...selection,keys,sources:rendered.sources,output:first.output,width:800,height:first.height,sha256,uploadId,partsPolicy:DETAIL_COMPOSITE_PARTS_POLICY,parts,workspace:structuredClone(record),...(reviewedPeers?{peers:reviewedPeers}:{}),...(publicationPolicy?{publicationPolicy}:{})};
+  }
   const uploadId = await labelUploadDigest(new TextEncoder().encode(JSON.stringify({ kind: 'workspace-detail-composite-v1',
     productId: selection.productId, optionId: selection.optionId, category: selection.view.categoryContext,
-    fingerprint: selection.view.inputFingerprint, workspace, sources: rendered.sources, width: 800, height: rendered.height, sha256,
+    fingerprint: selection.view.inputFingerprint, workspace, sources: rendered.sources, width: 800, height:first.height, sha256,
     ...(reviewedPeers ? { peerDigest: await detailSavePeerDigest(reviewedPeers) } : {}),...(publicationPolicy?{publicationPolicy,publishedBodyImages:detailSavePublishedBodyImages(record,selection.view.imageKeys[0].split('/')[0])}:{}) })));
   signal.throwIfAborted();
-  return { ...selection, keys, sources: rendered.sources, output: rendered.output, width: 800, height: rendered.height,
+  return { ...selection, keys, sources: rendered.sources, output:first.output, width:800, height:first.height,
     sha256, uploadId, workspace: structuredClone(record), ...(reviewedPeers ? { peers: reviewedPeers } : {}),...(publicationPolicy?{publicationPolicy}:{}) };
 }
 async function verifyPrepared(input: DetailWorkspaceComposite, signal: AbortSignal, fetcher: typeof fetch) {

@@ -261,7 +261,7 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
         &&!result.job.startedAt&&!result.job.result&&!result.job.error;
       setJob(result.job);setClosed(result.closed||preparedOnly);setMessage(result.message);
       if(!readOnly&&result.job?.status==='completed'&&result.job.result&&statusCallbacks.current.onDraft){
-        const seed=createSeoGeneratedDraft({ownerId:workspaceOwnerId,productVersion:version,content:basis.content,options:basis.options,job:result.job,brand:basis.registrationBrand,replaceSaved:executionIntent});
+        const seed=createSeoGeneratedDraft({ownerId:workspaceOwnerId,productVersion:version,content:basis.content,options:basis.options,job:result.job,brand:basis.registrationBrand,memo:state.memo,replaceSaved:executionIntent});
         if(result.partial&&!seed.warnings.includes(result.message))seed.warnings.push(result.message);
         statusCallbacks.current.onDraft(seed);
         draftState.current=null;setHasRequest(false);setClosed(false);setBasis(previous=>previous?{...previous,initialMemo:input}:previous);

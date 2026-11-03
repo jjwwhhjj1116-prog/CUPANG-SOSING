@@ -148,7 +148,7 @@ async function advance(state: SeoWorkspaceDraftState, controls: SeoWorkspaceDraf
     if (job.status === 'completed') {
       if (!job.result || job.result.model !== job.review.model || job.result.appliedToContent !== false || job.result.provenance !== 'generated')
         throw Error('SEO 결과의 서비스·저장 범위를 확인하지 못했습니다.');
-      if(job.review.model===WORKERS_QWEN_MODEL&&!Object.hasOwn(job.review,'workersRecovery'))validateQwenTranslationDraft(job.result.draft,state.source);
+      if(job.review.model===WORKERS_QWEN_MODEL&&!Object.hasOwn(job.review,'workersRecovery'))validateQwenTranslationDraft(job.result.draft,state.source,job.review.qwenTranslationPolicy);
       else validateTranslationDraft(job.result.draft, state.source, job.review.instructionsVersion);
     } else if (job.result !== null || ['prepared', 'approved', 'running'].includes(job.status) && job.error !== null)
       throw Error('SEO 작업의 결과 상태를 확인하지 못했습니다.');
@@ -174,7 +174,7 @@ async function advance(state: SeoWorkspaceDraftState, controls: SeoWorkspaceDraf
     // Historical legal-name exceptions stay in the stored record, while only
     // usable returned fields count toward translation coverage.
     const draft = rawDraft&&job?.review.model===WORKERS_QWEN_MODEL&&!Object.hasOwn(job.review,'workersRecovery')
-      ?validateQwenTranslationDraft(rawDraft,state.source):rawDraft;
+      ?validateQwenTranslationDraft(rawDraft,state.source,job.review.qwenTranslationPolicy):rawDraft;
     const missing = draft ? state.source.attributes.filter((_, index) => !draft.attributes.some(item => item.sourceIndex === index)).length : 0;
     const stopped = provider.kind === 'google' ? job?.result?.googleStoppedHttpStatus : undefined;
     const partial = Boolean(draft && (missing || state.source.title && !draft.title.trim() || state.source.description && !draft.description.trim()

@@ -3,7 +3,7 @@ import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { quotationValueLength } from '@/app/quotation-scalar-constraints';
 import { optionImageTargets } from '@/app/quotation-image-targets';
 import { detailEditorInputs, validateDetailEditorInputs, type DetailEditorInputs } from '@/app/detail-editor-inputs';
-import { DETAIL_SAVE_EDITOR_POLICY, DETAIL_SAVE_TEXT_POLICY, type DetailSaveBackup } from '@/app/detail-save-plan';
+import { DETAIL_SAVE_EDITOR_POLICY, DETAIL_SAVE_TEXT_POLICY, detailSaveOutputValue, type DetailSaveBackup } from '@/app/detail-save-plan';
 import { detailWorkspaceDigest, validateDetailWorkspaceRecord } from '@/app/detail-workspace';
 import { quotationScope } from '@/app/quotation-scopes';
 import { supplierHubCompany, type SupplierHubCompany } from '@/app/supplier-hub-company';
@@ -111,12 +111,12 @@ export async function savedDetailEditorComposition(view: QuotationFieldsView, st
     || targets.detailImages.linked.some(field => rows[0].fields[field]?.value !== key) || targets.detailHtml.linked.some(field => rows[0].fields[field]?.value !== '')) return invalid();
   const scope = quotationScope(view.categoryContext.categoryId), history = state.detailSaveBackups?.[scope];
   if (history !== undefined && !Array.isArray(history)) return invalid();
-  const backup = [...(history ?? [])].reverse().find(item => item?.receipt?.key === key);
+  const backup = [...(history ?? [])].reverse().find(item => item?.receipt&&detailSaveOutputValue(item.receipt) === key);
   if (!backup) {
     if (Object.hasOwn(state.detailEditorInputs ?? {}, scope)) {
       const copied = detailEditorInputs(view, state, productId);
       if (!copied) return invalid();
-      if (copied.origin.productId !== productId && copied.output.key === key) return missing();
+      if (copied.origin.productId !== productId && (copied.parts?.map(part=>part.key).join('\n')??copied.output.key) === key) return missing();
     }
     if (history?.some(item => item?.editor !== undefined || item?.receipt?.editorPolicy !== undefined || item?.receipt?.editorSha256 !== undefined)) return invalid();
     return missing();
@@ -126,7 +126,7 @@ export async function savedDetailEditorComposition(view: QuotationFieldsView, st
   if (backup.workspace && backup.workspace.productId !== productId) return invalid();
   const inputs = detailEditorInputs(view, state, productId), receipt = backup.receipt;
   if (!inputs || inputs.origin.productId !== productId || inputs.origin.uploadId !== receipt.uploadId || inputs.origin.revision !== receipt.revision
-    || inputs.origin.sourceOptionId !== receipt.sourceOptionId || inputs.output.key !== key || !same(inputs.images, backup.sources)) return invalid();
+    || inputs.origin.sourceOptionId !== receipt.sourceOptionId || (inputs.parts?.map(part=>part.key).join('\n')??inputs.output.key) !== key || !same(inputs.images, backup.sources)) return invalid();
   const raw = (selected: string | null) => Object.fromEntries(targets.detailHtml.linked.map(fieldKey => {
     const matches = backup.before.filter(change => change.optionId === selected && change.fieldKey === fieldKey), value = matches[0]?.value;
     if (matches.length !== 1 || value !== null && !text(value) || value !== null && quotationValueLength(targets.detailHtml.fields.find(field => field.id === fieldKey)!, value) > (targets.detailHtml.fields.find(field => field.id === fieldKey)!.maxLength ?? 150000)) return invalid();

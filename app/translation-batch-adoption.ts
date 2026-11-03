@@ -42,7 +42,7 @@ export function translationBatchAdoption(content: ProductContent, job: Translati
   if (job.productId !== content.productId || job.productVersion !== version || job.status !== 'completed' || !job.result) {
     throw Error('현재 상품의 완료된 번역 결과를 선택해주세요.');
   }
-  if(job.review.model===WORKERS_QWEN_MODEL&&job.review.instructionsVersion==='sourceflow-translation-v6'&&!Object.hasOwn(job.review,'workersRecovery'))validateQwenTranslationDraft(job.result.draft,job.review.source);
+  if(job.review.model===WORKERS_QWEN_MODEL&&job.review.instructionsVersion==='sourceflow-translation-v6'&&!Object.hasOwn(job.review,'workersRecovery'))validateQwenTranslationDraft(job.result.draft,job.review.source,job.review.qwenTranslationPolicy);
   const patch: ContentPatch = {};
   const preview: { name: string; before: string; after: string }[] = [];
   const skipped: string[] = [];

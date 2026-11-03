@@ -1,7 +1,9 @@
-import type { DetailComposite } from '@/app/detail-image-composite';
+import {detailCompositeOutputs, type DetailComposite} from '@/app/detail-image-composite';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { applyQuotationChanges } from '@/app/quotation-schema';
-import { DETAIL_SAVE_TEXT_POLICY, DETAIL_SAVE_EDITOR_POLICY, DETAIL_SAVE_PUBLICATION_POLICY, detailSavePublishedBodyImages, detailSaveCommonAltText, detailSaveChanges, detailSaveOptionIds, validateDetailSavePeers, detailSavePeerDigest, type DetailSavePeers, type DetailSaveReceipt } from '@/app/detail-save-plan';
+import { DETAIL_SAVE_TEXT_POLICY, DETAIL_SAVE_EDITOR_POLICY, DETAIL_SAVE_PUBLICATION_POLICY, detailSaveOutputKeys, detailSavePublishedBodyImages, detailSaveCommonAltText, detailSaveChanges, detailSaveOptionIds, validateDetailSavePeers, detailSavePeerDigest, type DetailSavePeers, type DetailSaveReceipt } from '@/app/detail-save-plan';
+import { detailCompositePartDescriptor, detailCompositePartMetadata, detailCompositePartsUploadId, detailCompositePartUploadId } from '@/app/detail-composite-parts';
+import {imageDimensions} from '@/app/image-dimensions';
 import { MAX_IMAGE_BYTES, imageFileType } from '@/app/image-files';
 import { readBoundedStream } from '@/app/request-body';
 import { labelUploadDigest } from '@/app/label-upload-key';
@@ -9,7 +11,7 @@ import { validateDetailEditorInputs } from '@/app/detail-editor-inputs';
 import { detailSaveEditorHtml, validateDetailSaveEditorSnapshot, detailSaveEditorSha256 } from '@/app/detail-editor-composition';
 import { detailWorkspaceDigest, validateDetailWorkspaceRecord, type DetailWorkspaceRecord } from '@/app/detail-workspace';
 
-export type DetailSaveAttempt = { pending?: 'upload' | 'save'; key?: string; completed?: QuotationFieldsView; identity?: string };
+export type DetailSaveAttempt = { pending?: 'upload' | 'save'; key?: string; keys?:(string|null)[]; completed?: QuotationFieldsView; identity?: string };
 export type DetailSaveOptions = { editorPolicy: typeof DETAIL_SAVE_EDITOR_POLICY; workspace?: DetailWorkspaceRecord; peers?: DetailSavePeers;publicationPolicy?:typeof DETAIL_SAVE_PUBLICATION_POLICY };
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const changed = () => Error('상세 이미지·옵션·견적서가 변경됐습니다. 미리보기를 보관한 채 최신 저장본을 확인해주세요.');
@@ -41,10 +43,18 @@ async function bindAttempt(input: DetailComposite, attempt: DetailSaveAttempt, e
         return source.key !== input.keys[index] || !file || file.sha256 !== source.sha256 || file.width !== source.width || file.height !== source.height;
       })) throw changed();
   }
+  const pieces=detailCompositeOutputs(input);
+  if(input.parts){
+    const metadata=input.parts.map(detailCompositePartMetadata),root=await detailCompositePartsUploadId({productId:input.productId,optionId:input.optionId,category:input.view.categoryContext,fingerprint:input.view.inputFingerprint,sources:input.sources,
+      ...(workspace?{workspace:{revision:workspace.revision,digest:workspace.digest}}:{}),...(peers?{peerDigest:await detailSavePeerDigest(peers)}:{}),...(publicationPolicy?{publicationPolicy,publishedBodyImages:detailSavePublishedBodyImages(workspace!,input.keys[0].split('/')[0])}:{})},metadata);
+    if(root!==input.uploadId)throw changed();
+    for(let index=0;index<pieces.length;index++)if(pieces[index].uploadId!==await detailCompositePartUploadId(root,index,metadata[index]))throw changed();
+  }
   const identity = JSON.stringify([DETAIL_SAVE_TEXT_POLICY, input.productId, input.optionId, input.profileId ?? null, input.view, input.keys, input.sources, input.uploadId, input.sha256, input.width, input.height, input.output.size,
+    ...(input.parts?[{partsPolicy:input.partsPolicy,parts:input.parts.map(detailCompositePartDescriptor)}]:[]),
     ...(editorPolicy ? [{ editorPolicy }] : []), ...(workspace ? [{ workspace }] : []), ...(peers ? [{ peers }] : []),...(publicationPolicy?[{publicationPolicy,publishedBodyImages:detailSavePublishedBodyImages(workspace!,input.keys[0].split('/')[0])}]:[])]);
   if (attempt.identity !== undefined && attempt.identity !== identity) throw changed();
-  if (attempt.identity === undefined && (attempt.pending || attempt.completed || attempt.key)) throw changed();
+  if (attempt.identity === undefined && (attempt.pending || attempt.completed || attempt.key || attempt.keys)) throw changed();
   attempt.identity = identity;
 }
 async function readView(input: DetailComposite, signal: AbortSignal, fetcher: typeof fetch) {
@@ -70,7 +80,9 @@ async function uploadReceipt(input: DetailComposite, signal: AbortSignal, fetche
 }
 async function verifySaved(input: DetailComposite, key: string, saved: QuotationFieldsView, receipt: DetailSaveReceipt,
   editorPolicy?: typeof DETAIL_SAVE_EDITOR_POLICY, editorValue?: unknown, workspace?: DetailWorkspaceRecord, workspaceValue?: unknown, peers?: DetailSavePeers,publicationPolicy?:typeof DETAIL_SAVE_PUBLICATION_POLICY) {
-  const before = input.view, changes = detailSaveChanges(before, key, DETAIL_SAVE_TEXT_POLICY);
+  const before = input.view, keys=detailSaveOutputKeys(receipt),pieces=detailCompositeOutputs(input),changes = detailSaveChanges(before, keys, DETAIL_SAVE_TEXT_POLICY);
+  if(receipt.partsPolicy!==input.partsPolicy||!same(receipt.parts,input.parts?.map((part,index)=>({...detailCompositePartDescriptor(part),key:keys[index]}))))throw changed();
+  if(keys.length!==pieces.length||keys.some((value,index)=>value!==`${key.split('/')[0]}/quotation-label-${pieces[index].uploadId}.png`))throw changed();
   if (workspace ? !same(workspaceValue, workspace) || !same(receipt.workspace, { revision: workspace.revision, digest: workspace.digest })
     : receipt.workspace !== undefined || workspaceValue !== undefined) throw changed();
   if (receipt.peerDigest !== (peers ? await detailSavePeerDigest(validateDetailSavePeers(peers, detailSaveOptionIds(before))) : undefined)) throw changed();
@@ -87,6 +99,7 @@ async function verifySaved(input: DetailComposite, key: string, saved: Quotation
     let editor; try { editor = validateDetailEditorInputs(saved.detailEditorInputs, key.split('/')[0], receipt.categoryId ?? ''); } catch { throw changed(); }
     if (editor.origin.productId !== input.productId || editor.origin.sourceOptionId !== input.optionId || editor.origin.uploadId !== input.uploadId || editor.origin.revision !== receipt.revision
       || editor.output.key !== key || editor.output.sha256 !== input.sha256 || editor.output.bytes !== input.output.size || editor.images.length !== input.sources.length
+      || !same(editor.parts,receipt.parts)||editor.partsPolicy!==receipt.partsPolicy
       || editor.images.some((image, index) => { const source = input.sources[index]; return image.key !== source.key || image.sha256 !== source.sha256 || image.width !== source.width || image.height !== source.height; })) throw changed();
   }
   if (receipt.uploadId !== input.uploadId || receipt.key !== key || receipt.sha256 !== input.sha256 || receipt.bytes !== input.output.size
@@ -97,7 +110,7 @@ async function verifySaved(input: DetailComposite, key: string, saved: Quotation
     || !Number.isFinite(Date.parse(saved.productVersion)) || !/^[a-f0-9]{64}$/.test(saved.inputFingerprint) || saved.inputFingerprint === before.inputFingerprint
     || saved.contentRevision !== before.contentRevision || saved.optionRevision !== before.optionRevision
     || !same(saved.categoryContext, before.categoryContext) || !same(saved.resolved.schema, before.resolved.schema)
-    || !same(saved.imageKeys, [...new Set([...before.imageKeys, ...(workspace ? input.keys : []),...(publishedBodyImages?.map(image=>image.key)??[]), key])]) || !same(saved.protectedDetailImageKeys, before.protectedDetailImageKeys)
+    || !same(saved.imageKeys, [...new Set([...before.imageKeys, ...(workspace ? input.keys : []),...(publishedBodyImages?.map(image=>image.key)??[]), ...keys])]) || !same(saved.protectedDetailImageKeys, before.protectedDetailImageKeys)
     || !same(saved.optionRegistrationNumbers, before.optionRegistrationNumbers) || !same(saved.packagingBasis, before.packagingBasis)
     || !same(saved.optionPackQuantities, before.optionPackQuantities) || !same(saved.legacyOverrides, before.legacyOverrides)
     || !same(saved.detailSaveTextBasis, before.detailSaveTextBasis)
@@ -118,9 +131,9 @@ export async function recoverDetailSave(input: DetailComposite, attempt: DetailS
   signal.throwIfAborted(); const editorPolicy = selectedEditorPolicy(options); await bindAttempt(input, attempt, editorPolicy, options?.workspace, options?.peers,options?.publicationPolicy); signal.throwIfAborted();
   if (!attempt.pending && !attempt.completed) return 'ready';
   if (attempt.pending === 'upload') {
-    const key = await uploadReceipt(input, signal, fetcher);
+    const keys=[];for(const part of detailCompositeOutputs(input))keys.push(await uploadReceipt(part,signal,fetcher));
     if (!same(await readView(input, signal, fetcher), input.view)) throw changed();
-    if (key) attempt.key = key; attempt.pending = undefined; return 'ready';
+    if(keys[0])attempt.key=keys[0];if(input.parts)attempt.keys=keys;attempt.pending=undefined;return 'ready';
   }
   attempt.pending = 'save';
   const endpoint = path(input, 'detail-save'), response = await fetcher(`${endpoint}${endpoint.includes('?') ? '&' : '?'}uploadId=${input.uploadId}`, { signal, cache: 'no-store' });
@@ -149,24 +162,29 @@ export async function applyDetailSave(input: DetailComposite, attempt: DetailSav
   if (attempt.pending) throw Error('이전 상세 저장 결과를 먼저 확인해주세요.');
   if (!same(await readView(input, signal, fetcher), input.view)) throw changed();
   // Validate targets and all option IDs before allocating a file.
-  detailSaveChanges(input.view, `${input.view.imageKeys[0]?.split('/')[0]}/quotation-label-${input.uploadId}.png`, DETAIL_SAVE_TEXT_POLICY);
-  if (input.output.type !== 'image/png' || input.output.size < 1 || input.output.size > MAX_IMAGE_BYTES
-    || await labelUploadDigest(new Uint8Array(await input.output.arrayBuffer())) !== input.sha256) throw changed();
+  const pieces=detailCompositeOutputs(input);
+  detailSaveChanges(input.view,pieces.map(part=>`${input.view.imageKeys[0]?.split('/')[0]}/quotation-label-${part.uploadId}.png`), DETAIL_SAVE_TEXT_POLICY);
+  for(const part of pieces){const bytes=new Uint8Array(await part.output.arrayBuffer()),dimensions=imageDimensions(bytes);
+    if (part.output.type !== 'image/png' || part.output.size < 1 || part.output.size > MAX_IMAGE_BYTES
+      || await labelUploadDigest(bytes) !== part.sha256 || input.parts&&(!dimensions||dimensions.width!==800||dimensions.height!==part.height))throw changed();}
   signal.throwIfAborted();
   for (const source of input.sources) if ((await digestFile(source.key, signal, fetcher)).sha256 !== source.sha256) throw changed();
-  signal.throwIfAborted(); let key = await uploadReceipt(input, signal, fetcher);
+  signal.throwIfAborted();const keys:string[]=[];
+  for(const part of pieces){let key=await uploadReceipt(part,signal,fetcher);
   if (!key) {
-    const form = new FormData(); form.set('file', new File([input.output], 'sourceflow-quotation-label.png', { type: 'image/png' })); form.set('labelUploadId', input.uploadId);
+    const form = new FormData(); form.set('file', new File([part.output], 'sourceflow-quotation-label.png', { type: 'image/png' })); form.set('labelUploadId', part.uploadId);
     attempt.pending = 'upload'; const response = await fetcher('/api/files', { method: 'POST', signal, body: form });
     if (!response.ok) { if (response.status < 500 && response.status !== 429) attempt.pending = undefined; throw Error('상세 이미지 업로드 결과를 확인해주세요. 원본은 유지했습니다.'); }
-    key = await uploadReceipt(input, signal, fetcher); if (!key) throw changed(); attempt.pending = undefined;
+    key = await uploadReceipt(part, signal, fetcher); if (!key) throw changed(); attempt.pending = undefined;
   }
-  attempt.key = key;
+  keys.push(key);if(keys.length===1)attempt.key=key;if(input.parts)attempt.keys=[...keys];}
+  const key=keys[0];
   if (!same(await readView(input, signal, fetcher), input.view)) throw changed();
   signal.throwIfAborted(); attempt.pending = 'save';
   const response = await fetcher(path(input, 'detail-save'), { method: 'POST', signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: input.view.revision,
     expectedInputFingerprint: input.view.inputFingerprint, sourceOptionId: input.optionId, uploadId: input.uploadId, sha256: input.sha256, bytes: input.output.size, textPolicy: DETAIL_SAVE_TEXT_POLICY,
     ...(editorPolicy ? { editorPolicy } : {}), ...(options?.workspace ? { workspace: { revision: options.workspace.revision, digest: options.workspace.digest } } : {}),
+    ...(input.parts?{partsPolicy:input.partsPolicy,parts:input.parts.map(detailCompositePartDescriptor)}:{}),
     ...(options?.peers ? { peerDigest: await detailSavePeerDigest(validateDetailSavePeers(options.peers, detailSaveOptionIds(input.view))) } : {}),...(options?.publicationPolicy?{publicationPolicy:options.publicationPolicy}:{}) }) });
   if (!response.ok) { if (response.status < 500 && response.status !== 429) attempt.pending = undefined; const body = await response.json() as { error?: string }; throw Error(body.error || '공통·모든 옵션 상세 저장 결과를 확인해주세요.'); }
   const body = await response.json() as { quotation: QuotationFieldsView; receipt: DetailSaveReceipt; editor?: unknown; workspace?: unknown }; signal.throwIfAborted();

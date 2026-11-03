@@ -11,7 +11,7 @@ const noNetwork=()=>assert.fail('partial attribute tests must never call a real 
 for(const issue of ['number','language','claim'])test(`one unsafe ordinary ${issue} is omitted with indexed coverage while strict Korean SEO and options remain usable`,async()=>{
  const output=draft();output.attributes[2].value=issue==='number'?'청년18-40/중년40-65/청소년13-18':issue==='language'?'青年18-40/中年40-60/少年13-18':'방수 청년18-40/중년40-60/청소년13-18';
  const f=fixture(output),review=await api.prepareTranslationReview(plain(source),f.config),before=JSON.stringify(review),responseBefore=JSON.stringify(output);
- assert.equal(review.qwenTranslationPolicy,'commerce-partial-attributes-v5');
+ assert.equal(review.qwenTranslationPolicy,'commerce-exact-option-colors-v6');
  const result=await api.executeTranslation(review,f.config,noNetwork);
  assert.equal(f.calls.length,1);assert.equal(result.draft.title,'면 양말 A1');assert.equal(result.draft.attributes.find(row=>row.sourceIndex===0).value,'빨강 2 pcs');assert.equal(result.draft.attributes.some(row=>row.sourceIndex===2),false);
  assert.ok(result.draft.warnings.some(value=>value.includes('sourceIndex 2')&&value.includes('일반 상품속성')));assert.ok(result.draft.warnings.some(value=>value.includes('누락 2개')));

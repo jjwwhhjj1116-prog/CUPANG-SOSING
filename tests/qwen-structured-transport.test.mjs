@@ -14,7 +14,7 @@ const noNetwork=()=>assert.fail('structured transport tests must not call a real
 
 test('new Qwen approval binds a structured transport policy and sends its exact generated schema once',async()=>{
  const f=fixture(),review=await api.prepareTranslationReview(plain(source),f.config),before=JSON.stringify(review),request=api.buildTranslationRequest(review);
- assert.equal(review.qwenTranslationPolicy,'commerce-partial-attributes-v5');
+ assert.equal(review.qwenTranslationPolicy,'commerce-exact-option-colors-v6');
  const {fingerprint}=providedOptionModule('app/automation/model.ts'),{fingerprint:stored,...signed}=review;
  assert.equal(await fingerprint(signed),stored);signed.qwenTranslationPolicy='commerce-literal-v2';assert.notEqual(await fingerprint(signed),stored);
  const result=await api.executeTranslation(review,f.config,noNetwork);
@@ -66,7 +66,7 @@ test('new literal-value policy fixes only whole numeric values and unambiguous A
   {name:'상품속성: 季节',value:'Fall2026'},
  ];
  const bound={...plain(source),attributes},f=fixture(),review=await api.prepareTranslationReview(bound,f.config),before=JSON.stringify(review);
- assert.equal(review.qwenTranslationPolicy,'commerce-partial-attributes-v5');
+ assert.equal(review.qwenTranslationPolicy,'commerce-exact-option-colors-v6');
  const request=api.buildTranslationRequest(review),rows=request.text.format.schema.properties.attributes.items.anyOf;
  for(const index of [0,1,2,3]){assert.deepEqual(plain(rows[index].properties.sourceIndex.enum),[index]);assert.deepEqual(plain(rows[index].properties.value),{type:'string',enum:[attributes[index].value]});}
  for(const index of [4,5,6,7,8,9,10])assert.equal(Object.hasOwn(rows[index].properties.value,'enum'),false,'text/option values must still be translated: '+index);

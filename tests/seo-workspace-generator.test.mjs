@@ -43,10 +43,10 @@ test('fresh category leaf supplies an editable missing target while an explicitl
  }finally{h.close();}
 });
 
-function failedQwenRetryUi({model='@cf/qwen/qwen3-30b-a3b-fp8',recovery=false,onDraft}={}){
+function failedQwenRetryUi({model='@cf/qwen/qwen3-30b-a3b-fp8',recovery=false,onDraft,memo={brand:'와이홉',features:'보온',keywords:'면장갑'}}={}){
  const api=providedOptionModule('app/seo-workspace-draft.ts'),maxOutputTokens=model==='google-translate-gtx'?0:4096,configuration={configured:true,model,maxOutputTokens,issues:[]};
  const raw={productId:'p',productVersion:version,jobId:'source-job',sourceUrl:'https://detail.1688.com/offer/123456789012.html',title:'黑色手套',description:'棉',attributes:[{name:'材质',value:'棉'}],requestContext:{categoryId:'82533',categoryPath:['장갑'],features:'보온',keywords:'면장갑'}};
- const state=api.createSeoWorkspaceDraftState({productId:'p',productVersion:version,contentRevision:2,source:{title:raw.title,description:raw.description,attributes:[{name:'상품속성: 材质',value:'棉'}],provenance:'manual',reference:raw.jobId+' '+raw.sourceUrl,category:{id:'82533',path:['장갑']},guidance:{features:'보온',keywords:'면장갑'}},memo:{brand:'와이홉',features:'보온',keywords:'면장갑'},configuration});
+ const state=api.createSeoWorkspaceDraftState({productId:'p',productVersion:version,contentRevision:2,source:{title:raw.title,description:raw.description,attributes:[{name:'상품속성: 材质',value:'棉'}],provenance:'manual',reference:raw.jobId+' '+raw.sourceUrl,category:{id:'82533',path:['장갑']},guidance:{features:'보온',keywords:'면장갑'}},memo,configuration});
  Object.assign(state,{jobId:'00000000-0000-4000-8000-000000000001',reviewFingerprint:'a'.repeat(64),prepareSubmitted:true,approvalSubmitted:true,executeSubmitted:true});
  const old={id:state.jobId,productId:'p',productVersion:version,contentRevision:2,status:'failed',startedAt:version,finishedAt:version,result:null,error:{code:'QWEN_UNTRANSLATED_TEXT',message:'합성 이전 Qwen 실패',mayHaveBeenCharged:true},review:{model,maxOutputTokens,destination:model==='google-translate-gtx'?'Google 번역':'Cloudflare Workers AI',instructionsVersion:'sourceflow-translation-v6',source:plain(state.source),fingerprint:state.reviewFingerprint,paidNotice:'합성 Qwen 사용량 비용 안내',expiresAt:'2099-01-01',...(recovery?{workersRecovery:{version:5}}:{})}};
  const requests=[];let latest=plain(old),currentConfiguration=plain(configuration),gate=null,newJob=null;
@@ -74,7 +74,15 @@ test('the primary draft-mode AI click keeps prepare approval execution, emits ed
  const emitted=[],f=failedQwenRetryUi({onDraft:value=>emitted.push(value)}),{h}=f;try{
   await h.idle();assert.equal(h.consent(),undefined);assert.equal(f.posts().length,0);assert.equal(emitted.length,0);
   h.button('초안 상태 조회').props.onClick();await h.idle();assert.equal(f.posts().length,0);assert.equal(emitted.length,0,'a status read does not seed or execute');const click=h.button('실패한 Qwen 새 초안').props.onClick;assert.equal(h.button('실패한 Qwen 새 초안').props.disabled,false);click();click();await h.idle();
-  assert.deepEqual(f.posts().map(request=>request.body.action),['prepare','approve','execute']);assert.equal(f.posts()[1].body.confirmPaid,true);assert.equal(emitted.length,1);assert.equal(emitted[0].ownerId,'owner-a');assert.equal(emitted[0].productVersion,version);assert.equal(emitted[0].values.seo.title,'와이홉 검정 면장갑');assert.equal(h.integrated(),undefined,'no intermediate apply/save preview in the primary flow');assert.equal(h.storage.size,0);assert.equal(h.input('SEO 상품 특징').props.disabled,false);assert.ok(f.requests.every(request=>!request.target.includes('translation-apply')&&!request.target.includes('seo-workspace')));
+  assert.deepEqual(f.posts().map(request=>request.body.action),['prepare','approve','execute']);assert.equal(f.posts()[1].body.confirmPaid,true);assert.equal(emitted.length,1);assert.equal(emitted[0].ownerId,'owner-a');assert.equal(emitted[0].productVersion,version);assert.equal(emitted[0].values.seo.title,'와이홉 보온 검정 면장갑');assert.equal(h.integrated(),undefined,'no intermediate apply/save preview in the primary flow');assert.equal(h.storage.size,0);assert.equal(h.input('SEO 상품 특징').props.disabled,false);assert.ok(f.requests.every(request=>!request.target.includes('translation-apply')&&!request.target.includes('seo-workspace')));
+ }finally{h.close();}
+});
+
+test('draft-mode generation composes the captured edited memo instead of the registration brand and never changes provider output',async()=>{
+ const emitted=[],f=failedQwenRetryUi({onDraft:value=>emitted.push(value),memo:{brand:'새 브랜드',features:'보온',keywords:'바라클라바'}}),{h}=f;try{
+  await h.idle();h.button('초안 상태 조회').props.onClick();await h.idle();const before=JSON.stringify(f.old);h.button('실패한 Qwen 새 초안').props.onClick();await h.idle();
+  assert.equal(emitted.length,1);assert.equal(emitted[0].values.seo.title,'새 브랜드 보온 검정 면장갑 바라클라바');assert.equal(emitted[0].values.seo.keywords,'바라클라바, 면장갑');assert.equal(JSON.stringify(f.old),before);
+  const raw=f.posts().at(-1);assert.equal(raw.body.action,'execute');assert.equal(f.posts().filter(request=>request.body.action==='execute').length,1);assert.ok(f.requests.every(request=>!request.target.includes('translation-apply')&&!request.target.includes('seo-workspace')));
  }finally{h.close();}
 });
 

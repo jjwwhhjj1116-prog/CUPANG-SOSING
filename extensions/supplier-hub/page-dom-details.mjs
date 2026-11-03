@@ -64,7 +64,40 @@ function otherOffer(node,sourceUrl){
  }
  return false;
 }
+function srcsetImage(value){
+ if(typeof value!=='string'||value.length>16384||/[\u0000-\u0008\u000b\u000e-\u001f\u007f]/u.test(value)||value.trim().endsWith(','))return null;
+ const whitespace=/[\t\n\f\r ]/u;let cursor=0,count=0,kind='',best=null;
+ while(cursor<value.length){
+  while(cursor<value.length&&whitespace.test(value[cursor]))cursor++;
+  if(cursor===value.length)break;
+  if(value[cursor]===','||++count>64)return null;
+  const start=cursor;while(cursor<value.length&&!whitespace.test(value[cursor]))cursor++;
+  let raw=value.slice(start,cursor),descriptor='';
+  // Srcset URLs end at whitespace, not every comma: CDN paths/queries may contain commas.
+  if(raw.endsWith(',')){if(raw.endsWith(',,'))return null;raw=raw.slice(0,-1);}
+  else{
+   const start=cursor;while(cursor<value.length&&value[cursor]!==',')cursor++;
+   descriptor=value.slice(start,cursor).replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/gu,'');
+   if(value[cursor]===',')cursor++;
+  }
+  const width=/^(\d+)w$/u.exec(descriptor),density=/^((?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?)x$/u.exec(descriptor);
+  if(descriptor&&!width&&!density)return null;
+  const unit=width?'w':'x',size=width?Number(width[1]):density?Number(density[1]):1;
+  if(!Number.isFinite(size)||size<=0||width&&!Number.isSafeInteger(size)||kind&&kind!==unit)return null;
+  kind=unit;
+  const url=readPageSourceElementImage({currentSrc:'',getAttribute:key=>key==='data-src'?raw:null},{preferDataSource:true});
+  if(url&&(!best||size>best.size))best={url,size,unit};
+ }
+ return best;
+}
 function imageUrl(node){
+ let best=null;
+ for(const name of ['data-srcset','srcset']){
+  const candidate=srcsetImage(attr(node,name));
+  // Width and density require different layout evidence; never compare their numbers.
+  if(candidate&&(!best||candidate.unit===best.unit&&candidate.size>best.size))best=candidate;
+ }
+ if(best)return best.url;
  for(const name of ['data-src','data-lazyload-src','data-ks-lazyload','data-original','data-original-src','data-lazy-src','data-lazyload']){
   const value=attr(node,name);if(!value)continue;
   const allowed=readPageSourceElementImage({currentSrc:'',getAttribute:key=>key==='data-src'?value:null},{preferDataSource:true});

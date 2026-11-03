@@ -42,6 +42,28 @@ test('saving an explicit option image removal survives later collection and repe
  assert.equal(assigned.rows[0].imageKey,'owner/raw.png');
 });
 const png=new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2RkcAAAAASUVORK5CYII=','base64'));
+test('known unsigned Alibaba thumbnail variants download a verified original without rewriting the receipt URL',async()=>{
+ const original='https://cbu01.alicdn.com/img/ibank/O1CN-test.jpg',sources=[original+'_300x300q90.jpg_.webp',original+'_80x80.jpg',original+'_.webp',original+'_q75.jpg'];
+ for(const source of sources){const calls=[];const result=await model.downloadCollectionImage(source,'owner',async(url,init)=>{calls.push({url,init});return new Response(png);},'detail');
+  assert.deepEqual(calls.map(call=>call.url),[original]);assert.equal(calls[0].init.credentials,'omit');assert.equal(calls[0].init.redirect,'manual');assert.match(result.key,/^owner\/collected-detail-[a-f0-9]{64}\.png$/u);
+  const hash=async value=>Buffer.from(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value))).toString('hex');
+  assert.deepEqual(JSON.parse(JSON.stringify(result.sourceResolution)),{policy:'ali-cdn-original-v1',mode:'original',observedUrlSha256:await hash(source),downloadUrlSha256:await hash(original)});
+ }
+});
+
+test('only an absent original falls back once to the exact observed image under one deadline',async()=>{
+ const source='https://cbu01.alicdn.com/img/ibank/O1CN-fallback.png_400x400.png',original='https://cbu01.alicdn.com/img/ibank/O1CN-fallback.png',calls=[];
+ const result=await model.downloadCollectionImage(source,'owner',async(url,init)=>{calls.push({url,init});return calls.length===1?new Response(null,{status:404}):new Response(png);});
+ assert.deepEqual(calls.map(call=>call.url),[original,source]);assert.equal(calls[0].init.signal,calls[1].init.signal);assert.equal(result.sourceResolution.mode,'observed-fallback');
+ for(const status of [302,403,429,500]){let count=0;await assert.rejects(()=>model.downloadCollectionImage(source,'owner',async()=>{count++;return new Response(null,{status});}));assert.equal(count,1);}
+ let count=0;await assert.rejects(()=>model.downloadCollectionImage(source,'owner',async()=>{count++;return new Response('<html>not an image</html>');}));assert.equal(count,1);
+});
+
+test('signed/query, unknown CDN paths, malformed dimensions and native originals are never guessed or stripped',async()=>{
+ const sources=['https://cbu01.alicdn.com/img/ibank/O1CN.jpg_300x300.jpg?signature=kept','https://cbu01.alicdn.com/private/O1CN.jpg_300x300.jpg','https://cbu01.alicdn.com/img/ibank/O1CN.jpg_0x80.jpg','https://cbu01.alicdn.com/img/ibank/O1CN.jpg_300x300q999.jpg','https://cbu01.alicdn.com/img/ibank/O1CN.jpg','https://cbu01.alicdn.com/img/ibank/O1CN.webp'];
+ for(const source of sources){const calls=[];const result=await model.downloadCollectionImage(source,'owner',async url=>{calls.push(url);return new Response(png);});assert.deepEqual(calls,[source]);assert.equal(result.sourceResolution,undefined);}
+});
+
 test('download bounds its trust to receipt CDN and rejects redirects and non-images',async()=>{
  let calls=0;const fetcher=async(url,init)=>{calls++;assert.equal(init.redirect,'manual');assert.equal(init.credentials,'omit');return new Response(png);};
  for(const url of ['http://cbu01.alicdn.com/a.png','https://alicdn.com.evil.test/a','https://127.0.0.1/a','https://user:pass@alicdn.com/a'])await assert.rejects(()=>model.downloadCollectionImage(url,'owner',fetcher));
@@ -144,6 +166,20 @@ test('API imports a receipt image once and retry skips download and object write
   const content=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload);assert.equal(content.assets.main.value.length,1);assert.equal(content.assets.main.provenance,'collected');
   const options=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_options').get().payload);
   assert.equal(options.rows[0].imageKey,content.assets.main.value[0]);assert.equal(options.rows[1].imageKey,null);assert.equal(options.revision,2);
+ }finally{h.sqlite.close();}
+});
+
+test('image import retains the observed receipt and stores the original resolution proof only once',async()=>{
+ const h=storage();try{
+  const source='https://cbu01.alicdn.com/img/ibank/O1CN-proof.jpg_80x80.jpg',original='https://cbu01.alicdn.com/img/ibank/O1CN-proof.jpg',receipt=JSON.stringify({options:[],images:[{url:source,role:'detail'}]});
+  h.sqlite.prepare('INSERT INTO collection_results VALUES(?,?,?,?)').run('job','owner',receipt,'now');
+  const calls=[],writes=[];const api=load('app/api/collection-jobs/[id]/images/route.ts',{'cloudflare:workers':{env:{DB:h.db,FILES:{head:async()=>({size:png.length}),put:async(key,bytes,options)=>{writes.push({key,bytes,options});return {};}}}},'@/app/chatgpt-auth':{getWorkspaceOwnerId:async()=>'owner'},fetch:async url=>{calls.push(url);return new Response(png);}});
+  const send=()=>api.POST(new Request('http://localhost/api/collection-jobs/job/images',{method:'POST',headers:{'content-type':'application/json'},body:'{"index":0}'}),{params:Promise.resolve({id:'job'})});
+  const first=await send();assert.equal(first.status,200,await first.clone().text());assert.equal((await (await send()).json()).reused,true);
+  assert.deepEqual(calls,[original]);assert.equal(writes.length,1);assert.deepEqual(new Uint8Array(writes[0].bytes),png);
+  const metadata=writes[0].options.customMetadata,hash=async value=>Buffer.from(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value))).toString('hex');
+  assert.equal(metadata.collectionImageResolution,'ali-cdn-original-v1:original');assert.equal(metadata.observedImageUrlSha256,await hash(source));assert.equal(metadata.downloadImageUrlSha256,await hash(original));
+  assert.equal(h.sqlite.prepare('SELECT payload FROM collection_results').get().payload,receipt);
  }finally{h.sqlite.close();}
 });
 

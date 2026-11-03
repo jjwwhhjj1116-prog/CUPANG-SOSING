@@ -24,22 +24,43 @@ export function attachCollectedOptionImage(current:ProductOptions,skus:readonly 
  return next;
 }
 
+/** Only recognized, unsigned ibank raster variants produce an original candidate.
+ * The immutable receipt keeps the observed URL; unknown/signed URLs stay exact. */
+function collectionOriginalImageUrl(url:URL):string|null{
+ if(url.search||!url.pathname.startsWith('/img/ibank/'))return null;
+ const unwrapped=url.pathname.replace(/_?\.webp$/iu,''),size=unwrapped.match(/^(\/img\/ibank\/.+\.(?:jpe?g|png))_(\d{1,5})x(\d{1,5})(?:q(\d{1,3}))?(?:\.(?:jpe?g|png))?$/iu),
+  quality=unwrapped.match(/^(\/img\/ibank\/.+\.(?:jpe?g|png))_q(\d{1,3})(?:\.(?:jpe?g|png))?$/iu);
+ let pathname:string|null=null;
+ if(size){if([size[2],size[3]].some(value=>Number(value)<1||Number(value)>16000)||size[4]!==undefined&&(Number(size[4])<1||Number(size[4])>100))return null;pathname=size[1];}
+ else if(quality){if(Number(quality[2])<1||Number(quality[2])>100)return null;pathname=quality[1];}
+ else if(unwrapped!==url.pathname&&/\.(?:jpe?g|png)$/iu.test(unwrapped))pathname=unwrapped;
+ if(!pathname||pathname===url.pathname)return null;
+ const candidate=new URL(url.href);candidate.pathname=pathname;return candidate.href;
+}
+const collectionImageDigest=async(bytes:Uint8Array)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes.buffer as ArrayBuffer))).map(b=>b.toString(16).padStart(2,'0')).join('');
+
 export async function downloadCollectionImage(source:string,owner:string,fetcher:typeof fetch=fetch,role?:'main'|'additional'|'detail'){
  if(role!==undefined&&!['main','additional','detail'].includes(role))throw new Error('이미지 배치를 확인해주세요.');
  const url=new URL(source);
  if(url.protocol!=='https:'||url.username||url.password||url.port||url.hash||!(url.hostname==='alicdn.com'||url.hostname.endsWith('.alicdn.com')))throw new Error('허용된 Alibaba 이미지 주소가 아닙니다.');
  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),15000);
  try{
-  const response=await fetcher(url.href,{redirect:'manual',credentials:'omit',signal:controller.signal});
+  const original=collectionOriginalImageUrl(url);let downloadUrl=original??url.href;
+  let response=await fetcher(downloadUrl,{redirect:'manual',credentials:'omit',signal:controller.signal});
+  if(original&&[404,410].includes(response.status)){
+   await response.body?.cancel();downloadUrl=url.href;
+   response=await fetcher(downloadUrl,{redirect:'manual',credentials:'omit',signal:controller.signal});
+  }
   if(!response.ok){await response.body?.cancel();throw new Error('이미지 응답 오류 또는 이동 응답입니다.');}
   if(Number(response.headers.get('content-length'))>MAX_IMAGE_BYTES){await response.body?.cancel();throw new Error('이미지는 10MB 이하여야 합니다.');}
   const bytes=await readBoundedStream(response.body,MAX_IMAGE_BYTES);const actual=imageFileType(bytes);
-  const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes.buffer as ArrayBuffer))).map(b=>b.toString(16).padStart(2,'0')).join('');
+  const digest=await collectionImageDigest(bytes);
   // Separate role copies preserve the existing one-file/one-role editor model.
   // Receipts saved before role namespacing still reuse their original keys.
   const key=`${owner}/collected-${role?`${role}-`:''}${digest}.${actual.extension}`;
   if(!isOwnedImageKey(owner,key))throw new Error('이미지 소유자를 확인해주세요.');
-  return {bytes,key,...actual};
+  return {bytes,key,...actual,...(original?{sourceResolution:{policy:'ali-cdn-original-v1',mode:downloadUrl===original?'original':'observed-fallback',
+   observedUrlSha256:await collectionImageDigest(new TextEncoder().encode(url.href)),downloadUrlSha256:await collectionImageDigest(new TextEncoder().encode(downloadUrl))}}:{})};
  }finally{clearTimeout(timer);}
 }
 

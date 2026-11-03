@@ -22,9 +22,10 @@ function selection(input: Selection): DetailEditorInputs {
     || !/^[a-f0-9]{64}$/u.test(view.inputFingerprint) || !Number.isFinite(Date.parse(view.productVersion))) throw changed();
   const owner = raw.output?.key?.split('/')[0]; if (!owner) throw changed();
   const saved = validateDetailEditorInputs(raw, owner, view.categoryContext.categoryId);
+  const keys=saved.parts?.map(part=>part.key)??[saved.output.key],value=keys.join('\n');
   const rows = view.resolved.rows.filter(row => row.optionId === optionId), target = optionImageTargets(view.resolved.schema.fields).detailImages;
-  if (rows.length !== 1 || target.fields.some(field => field.readOnly) || !view.imageKeys.includes(saved.output.key)
-    || target.linked.some(id => rows[0].fields[id]?.value !== saved.output.key) || saved.images.some(image => !view.imageKeys.includes(image.key))) throw changed();
+  if (rows.length !== 1 || target.fields.some(field => field.readOnly) || keys.some(key=>!view.imageKeys.includes(key))
+    || target.linked.some(id => rows[0].fields[id]?.value !== value) || saved.images.some(image => !view.imageKeys.includes(image.key))) throw changed();
   return saved;
 }
 export function canEditSavedDetailInputs(input: Selection): boolean { try { selection(input); return true; } catch { return false; } }
@@ -46,8 +47,9 @@ export async function prepareSavedDetailInputs(input: Selection, signal: AbortSi
     if (!size) throw changed(); return { ...size, sha256: await labelUploadDigest(bytes), bytes: bytes.length, type: type.contentType };
   }
   await current();
-  const result = await read(saved.output.key), height = saved.images.reduce((sum, image) => sum + Math.max(1, Math.round(image.height * 800 / image.width)), 0);
-  if (result.type !== 'image/png' || result.width !== 800 || result.height !== height || result.sha256 !== saved.output.sha256 || result.bytes !== saved.output.bytes) throw changed();
+  const height = saved.images.reduce((sum, image) => sum + Math.max(1, Math.round(image.height * 800 / image.width)), 0);
+  for(const output of saved.parts??[{...saved.output,height}]){const result=await read(output.key);
+    if (result.type !== 'image/png' || result.width !== 800 || result.height !== output.height || result.sha256 !== output.sha256 || result.bytes !== output.bytes) throw changed();}
   let total = 0; const files = new Map<string, Awaited<ReturnType<typeof read>>>();
   for (const image of saved.images) {
     signal.throwIfAborted(); const file = files.get(image.key) ?? await read(image.key); files.set(image.key, file); total += file.bytes;

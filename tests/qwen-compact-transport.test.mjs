@@ -15,14 +15,14 @@ const noNetwork=()=>assert.fail('compact transport tests must never contact a pr
 
 test('new Qwen reviews bind the commerce terminology policy into their approval fingerprint without changing the source payload',async()=>{
  const f=configuration(),review=await api.prepareTranslationReview(plain(source),f.config),before=JSON.stringify(review),request=api.buildTranslationRequest(review);
- assert.equal(review.qwenTranslationPolicy,'commerce-partial-attributes-v5');
+ assert.equal(review.qwenTranslationPolicy,'commerce-exact-option-colors-v6');
  const {fingerprint}=providedOptionModule('app/automation/model.ts'),{fingerprint:stored,...signed}=review;
  assert.equal(await fingerprint(signed),stored);delete signed.qwenTranslationPolicy;assert.notEqual(await fingerprint(signed),stored,'The approved identity includes the terminology policy');
  for(const rule of ['防滑=미끄럼 방지','防磨=마찰 방지','防掉跟=뒤꿈치 벗겨짐 방지','防水만 방수','防潮만 방습'])assert.ok(request.instructions.includes(rule),rule);
  const legacy={...review};delete legacy.qwenTranslationPolicy;
  assert.equal(hash(api.buildTranslationRequest(legacy).instructions),'195f77acdccf9afad263b457546e001b33674821e78c27d98b038f6c7f7e83db','Historical v6 reviews retain their exact approved system');
  assert.deepEqual(JSON.parse(request.input[0].content[0].text),JSON.parse(api.buildTranslationRequest(legacy).input[0].content[0].text));
- assert.deepEqual(request.text.format.schema,api.buildTranslationRequest(legacy).text.format.schema);
+ assert.deepEqual(api.buildTranslationRequest({...review,qwenTranslationPolicy:'commerce-partial-attributes-v5'}).text.format.schema,api.buildTranslationRequest(legacy).text.format.schema);
  await api.executeTranslation(review,f.config,noNetwork);assert.equal(f.calls.length,1);assert.equal(f.calls[0].messages[0].content,request.instructions);assert.equal(JSON.stringify(review),before);
  const llama=await api.prepareTranslationReview(plain(source),configuration(api.WORKERS_TEXT_MODEL).config);assert.equal(Object.hasOwn(llama,'qwenTranslationPolicy'),false);
 });

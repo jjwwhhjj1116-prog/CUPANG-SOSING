@@ -16,7 +16,7 @@ export function DetailImageCompositePanel({ productId, optionId, profileId, view
   const active = useRef(true), request = useRef<AbortController | null>(null), attempt = useRef<DetailCompositeAttempt>({});
   const detailAttempt = useRef<DetailSaveAttempt>({}), mutationMode = useRef<'selected' | 'all' | null>(null), savedResult = useRef(false);
   const downloadRequest = useRef<AbortController | null>(null), downloadGeneration = useRef(0);
-  const resultRef = useRef<DetailComposite | null>(null), [result, setResult] = useState<DetailComposite | null>(null), [url, setUrl] = useState<{ output: Blob; url: string } | null>(null);
+  const resultRef = useRef<DetailComposite | null>(null), [result, setResult] = useState<DetailComposite | null>(null), [previewUrls, setPreviewUrls] = useState<{ result: DetailComposite; parts: { url: string; height: number }[] } | null>(null);
   const [busy, setBusy] = useState(false), [pending, setPending] = useState(false), [done, setDone] = useState(false), [message, setMessage] = useState(''), [error, setError] = useState('');
   const [mode, setMode] = useState<'selected' | 'all' | null>(null);
   const sourceScope = JSON.stringify([identity, view.productVersion, view.revision, view.inputFingerprint, view.contentRevision, view.optionRevision, disabled, stageActive]);
@@ -31,9 +31,10 @@ export function DetailImageCompositePanel({ productId, optionId, profileId, view
   useLayoutEffect(() => { downloadGeneration.current++; downloadRequest.current?.abort(); }, [identity, view, disabled, stageActive]);
   useEffect(() => { active.current = true; return () => { active.current = false; if (!attempt.current.pending && !detailAttempt.current.pending) request.current?.abort(); current.current.onBusyChange?.(false); }; }, []);
   useEffect(() => {
-    if (!result) return; let live = true; const objectUrl = URL.createObjectURL(result.output);
-    void Promise.resolve().then(() => { if (live) setUrl({ output: result.output, url: objectUrl }); });
-    return () => { live = false; URL.revokeObjectURL(objectUrl); };
+    if (!result) return; let live = true;
+    const parts = (result.parts ?? [{ output: result.output, height: result.height }]).map(part => ({ url: URL.createObjectURL(part.output), height: part.height }));
+    void Promise.resolve().then(() => { if (live) setPreviewUrls({ result, parts }); });
+    return () => { live = false; parts.forEach(part => URL.revokeObjectURL(part.url)); };
   }, [result]);
   const valid = () => !!generation && sourceEpoch.current === generation && active.current && current.current.identity === identity && current.current.stageActive && !current.current.disabled && current.current.beforeApply?.() !== false;
   const waiting = () => !!attempt.current.pending || !!detailAttempt.current.pending || mutationMode.current === 'all' && !!detailAttempt.current.completed && !savedResult.current;
@@ -99,9 +100,9 @@ export function DetailImageCompositePanel({ productId, optionId, profileId, view
       const objectUrl = URL.createObjectURL(prepared.output);
       try {
         const anchor = document.createElement('a'); anchor.href = objectUrl;
-        anchor.download = `YOOFAM-${productId}-${optionId}-detail.jpg`; anchor.click();
+        anchor.download = `YOOFAM-${productId}-${optionId}-detail.${prepared.extension}`; anchor.click();
       } finally { setTimeout(() => URL.revokeObjectURL(objectUrl), 1000); }
-      setMessage('현재 저장한 상세 이미지를 JPG로 내려받았습니다. 견적서와 원본은 유지됩니다.');
+      setMessage(prepared.extension === 'zip' ? '현재 저장한 상세 이미지의 모든 JPG를 ZIP으로 내려받았습니다. 견적서와 원본은 유지됩니다.' : '현재 저장한 상세 이미지를 JPG로 내려받았습니다. 견적서와 원본은 유지됩니다.');
     } catch (cause) { if (active.current && !controller.signal.aborted && current.current.identity === identity) setError(cause instanceof Error ? cause.message : '상세 이미지 다운로드 실패'); }
     finally { if (downloadRequest.current === controller) downloadRequest.current = null; finish(controller); }
   }
@@ -118,7 +119,7 @@ export function DetailImageCompositePanel({ productId, optionId, profileId, view
     textPreview = { common: textChanges.find(change => change.optionId === null && change.fieldKey === primary)?.value ?? detailSaveCommonAltText(result.view),
       selected: textChanges.find(change => change.optionId === result.optionId && change.fieldKey === primary)?.value ?? '' };
   } catch (cause) { textError = cause instanceof Error ? cause.message : '대체 텍스트 미리보기를 확인해주세요.'; }
-  const guidance=<small>저장한 상단·본문·하단 사진을 현재 순서대로 한 장으로 만듭니다. 사진을 합칠 때는 원본과 HTML이 바뀌지 않습니다. 선택 옵션에 적용하면 수동 HTML을 유지하고, 상세 저장은 아래에서 확인한 전체 범위에 적용하며 HTML을 비웁니다.</small>;
+  const guidance=<small>저장한 상단·본문·하단 사진을 현재 순서대로 합칩니다. 긴 상세페이지는 사진 경계에서 여러 장으로 나눕니다. 원본과 HTML은 바뀌지 않습니다. 선택 옵션에 적용하면 수동 HTML을 유지하고, 상세 저장은 아래에서 확인한 전체 범위에 적용하며 HTML을 비웁니다.</small>;
   return <section className={`panel-stack${compactToolbar?' detail-composite-compact':''}`} aria-label="상세 이미지 합치기" data-workspace-saving={busy}>
     <div className="detail-composite-actions" role="group" aria-label="상세 이미지 통합 작업">
     <button type="button" className="btn ghost" title="통합 이미지 다운로드" disabled={!stageActive || disabled || busy || pending} onClick={() => void download()}>통합 이미지 다운로드</button>
@@ -126,9 +127,12 @@ export function DetailImageCompositePanel({ productId, optionId, profileId, view
     </div>
     {compactToolbar?<details className="detail-composite-guidance"><summary>통합·저장 안내</summary>{guidance}</details>:guidance}
     {busy && <p role="status">상세 이미지 처리 중…</p>}{error && <p role="alert">{error}</p>}{message && <p role="status">{message}</p>}
-    {result && <><p>{result.keys.length}개 → 한 장 · {result.width} × {result.height}px</p>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      {url?.output === result.output && <img className="image-large-preview" src={url.url} alt="합친 상세 이미지 미리보기" />}
+    {result && <><p>원본 {result.keys.length}장 → 출력 {result.parts?.length ?? 1}장 · 너비 {result.width}px</p>
+      {previewUrls?.result === result && previewUrls.parts.map((part, index) => <figure key={part.url}>
+        <figcaption>상세 이미지 {index + 1}/{previewUrls.parts.length} · {result.width} × {part.height.toLocaleString()}px</figcaption>
+        {/* eslint-disable-next-line @next/next/no-img-element -- Local read-only composite Blob previews. */}
+        <img className="image-large-preview" src={part.url} alt={previewUrls.parts.length === 1 ? '합친 상세 이미지 미리보기' : `합친 상세 이미지 미리보기 ${index + 1}/${previewUrls.parts.length}`} />
+      </figure>)}
       {(currentResult || allRecovery) && <section className="panel-stack" aria-label="전체 옵션 상세 저장">
         <p>공통 항목과 저장된 모든 옵션 {optionCount}개에 합친 이미지를 적용합니다. 견적 제외 옵션도 포함합니다. 이전 수동값을 백업한 뒤 HTML 입력을 비웁니다.</p>
         {editorHtmlLength !== undefined && <p>개별 사진 {result.keys.length}장의 순서와 선택 옵션의 저장 전 HTML {editorHtmlLength.toLocaleString()}자를 별도로 보관합니다. 최종 PNG와 견적서 HTML 공란은 그대로 저장됩니다.</p>}

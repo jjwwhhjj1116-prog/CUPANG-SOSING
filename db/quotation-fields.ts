@@ -4,7 +4,7 @@ import { env } from 'cloudflare:workers';
 import { emptyQuotationOverrides, type QuotationOverrides } from '@/app/quotation-schema';
 import { collectionSchema, collectionProductSchema } from '@/db/collection-jobs';
 import type { QuotationPackagingBasis } from '@/app/quotation-packaging-basis';
-import type { DetailSaveBackup } from '@/app/detail-save-plan';
+import { detailSaveOutputKeys, type DetailSaveBackup } from '@/app/detail-save-plan';
 import type { DetailEditorInputs } from '@/app/detail-editor-inputs';
 import type { StageTwoMsrp } from '@/app/stage-two-msrp';
 import type { StageTwoPricingReview } from '@/app/stage-two-pricing-review';
@@ -124,17 +124,18 @@ type DetailSaveCommit = { backup: Omit<DetailSaveBackup, 'updatedAt'>; expectedO
 export async function attachQuotationDetailSave(owner: string, productId: string, overrides: QuotationOverrides, expectedRevision: number,
   source: QuotationSourceGuard, categoryId: string | null, imageKeys: string[], detail: DetailSaveCommit) {
   const previous = JSON.parse(source.imageKeys) as unknown;
+  const outputs = detailSaveOutputKeys(detail.backup.receipt);
   const workspace = detail.backup.workspace, expected = Array.isArray(previous) && workspace
-    ? [...new Set([...previous, ...workspace.document.photos.map(photo => photo.key),...(detail.backup.receipt.publishedBodyImages?.map(image=>image.key)??[]), detail.backup.receipt.key])] : null;
+    ? [...new Set([...previous, ...workspace.document.photos.map(photo => photo.key),...(detail.backup.receipt.publishedBodyImages?.map(image=>image.key)??[]), ...outputs])] : null;
   if (!Array.isArray(previous) || (workspace ? !detail.workspaceFence || !detail.backup.receipt.workspace || JSON.stringify(imageKeys) !== JSON.stringify(expected)
       || detail.backup.receipt.workspace.revision !== workspace.revision || detail.backup.receipt.workspace.digest !== workspace.digest
       || detail.workspaceFence.row.revision !== workspace.revision || detail.workspaceFence.row.payload !== JSON.stringify(workspace)
       || detail.workspaceFence.row.requestId !== workspace.requestId || detail.workspaceFence.row.updatedAt !== workspace.updatedAt
       || (detail.backup.receipt.peerDigest === undefined) !== (detail.workspaceFence.peers === undefined)
       || (detail.backup.receipt.publicationPolicy===undefined)!==(detail.workspaceFence.publication===undefined)
-      : detail.workspaceFence !== undefined || detail.backup.receipt.workspace !== undefined || imageKeys.length !== previous.length + 1 || JSON.stringify(imageKeys.slice(0, -1)) !== JSON.stringify(previous))
+      : detail.workspaceFence !== undefined || detail.backup.receipt.workspace !== undefined || JSON.stringify(imageKeys) !== JSON.stringify([...previous, ...outputs]))
     || imageKeys.length > PRODUCT_IMAGE_POOL_LIMIT || new Set(imageKeys).size !== imageKeys.length
-    || detail.backup.receipt.key !== imageKeys.at(-1) || detail.backup.receipt.beforeRevision !== expectedRevision
+    || JSON.stringify(imageKeys.slice(-outputs.length)) !== JSON.stringify(outputs) || detail.backup.receipt.beforeRevision !== expectedRevision
     || detail.backup.receipt.revision !== expectedRevision + 1 || detail.backup.receipt.categoryId !== categoryId)
     throw Error('Invalid detail save attachment.');
   return commitQuotationFields(owner, productId, overrides, expectedRevision, source, categoryId, imageKeys, undefined, detail);

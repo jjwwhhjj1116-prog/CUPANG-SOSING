@@ -9,6 +9,7 @@ import { applyDetailWorkspaceComposite, prepareDetailWorkspaceComposite, readLat
 import { detailSaveAltChanges, detailSaveCommonAltText } from '@/app/detail-save-plan';
 import { detailSaveEditorHtml } from '@/app/detail-editor-composition';
 import { exactPrimaryQuotationTarget } from '@/app/quotation-seo-targets';
+import { detailCompositeDownload } from '@/app/detail-image-composite';
 
 export type DetailWorkspaceCompositeToolbarActions = {
   prepareSave: () => void; saveDisabled: boolean; download: () => void; downloadDisabled: boolean;
@@ -36,14 +37,15 @@ export function DetailWorkspaceCompositePanel({ selection, saved, disabled = fal
   const [result, setResult] = useState<DetailWorkspaceComposite | null>(null), [review, setReview] = useState<Review | null>(null);
   const [preparedAt, setPreparedAt] = useState<object | null>(null), preparedEpoch = useRef<object | null>(null);
   const [busy, setBusy] = useState(false), [pending, setPending] = useState(false), [done, setDone] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState('');
-  const [url, setUrl] = useState<{ output: Blob; url: string } | null>(null);
+  const [previewUrls, setPreviewUrls] = useState<{ result: DetailWorkspaceComposite; parts: { url: string; height: number }[] } | null>(null);
   useLayoutEffect(() => { current.current = { identity, selection, saved, disabled, stageActive, sourceCurrent, beforeApply, onSaved, onLatestRead, onBusyChange }; }, [identity, selection, saved, disabled, stageActive, sourceCurrent, beforeApply, onSaved, onLatestRead, onBusyChange]);
   useLayoutEffect(() => { epoch.current = generation; liveReview.current = null; if (kind.current !== 'save') operation.current?.abort(); }, [generation]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; if (kind.current !== 'save') operation.current?.abort(); current.current.onBusyChange?.(false); }; }, []);
   useEffect(() => {
-    if (!result) return; let active = true; const objectUrl = URL.createObjectURL(result.output);
-    void Promise.resolve().then(() => { if (active) setUrl({ output: result.output, url: objectUrl }); });
-    return () => { active = false; URL.revokeObjectURL(objectUrl); };
+    if (!result) return; let active = true;
+    const parts = (result.parts ?? [{ output: result.output, height: result.height }]).map(part => ({ url: URL.createObjectURL(part.output), height: part.height }));
+    void Promise.resolve().then(() => { if (active) setPreviewUrls({ result, parts }); });
+    return () => { active = false; parts.forEach(part => URL.revokeObjectURL(part.url)); };
   }, [result]);
   const waiting = () => !!attempt.current.pending || !!attempt.current.completed && !delivered.current;
   function valid(token: object | null, write = false) {
@@ -85,10 +87,12 @@ export function DetailWorkspaceCompositePanel({ selection, saved, disabled = fal
     try {
       const prepared = await prepareDetailWorkspaceComposite(selection, saved, controller.signal);
       if (!valid(token, true) || controller.signal.aborted || !same(prepared.workspace, current.current.saved.workspace) || !same(prepared.view, current.current.selection.view)) return;
-      const objectUrl = URL.createObjectURL(prepared.output);
-      try { const anchor = document.createElement('a'); anchor.href = objectUrl; anchor.download = `YOOFAM-${selection.productId}-${selection.optionId}-workspace-detail.png`; anchor.click(); }
+      const outputs = prepared.parts?.map(part => part.output) ?? [prepared.output], output = await detailCompositeDownload(outputs);
+      if (!valid(token, true) || controller.signal.aborted || !same(prepared.workspace, current.current.saved.workspace) || !same(prepared.view, current.current.selection.view)) return;
+      const objectUrl = URL.createObjectURL(output);
+      try { const anchor = document.createElement('a'); anchor.href = objectUrl; anchor.download = `YOOFAM-${selection.productId}-${selection.optionId}-workspace-detail.${outputs.length > 1 ? 'zip' : 'png'}`; anchor.click(); }
       finally { setTimeout(() => URL.revokeObjectURL(objectUrl), 1000); }
-      setMessage('보관한 작업 구성의 PNG를 내려받았습니다. 상품·견적서·작업 구성은 유지됩니다.');
+      setMessage(outputs.length > 1 ? `보관한 작업 구성의 PNG ${outputs.length}장을 ZIP으로 내려받았습니다. 상품·견적서·작업 구성은 유지됩니다.` : '보관한 작업 구성의 PNG를 내려받았습니다. 상품·견적서·작업 구성은 유지됩니다.');
     } catch (cause) { if (mounted.current && !controller.signal.aborted) setError(issue(cause)); }
     finally { finish(controller); }
   }
@@ -159,9 +163,12 @@ export function DetailWorkspaceCompositePanel({ selection, saved, disabled = fal
     <div className="button-row"><button type="button" className="btn ghost" disabled={busy || pending || disabled || !stageActive || !sourceCurrent} onClick={() => void prepare()}>보관 구성 합치기</button>
       <button type="button" className="btn ghost" disabled={busy || pending || disabled || !stageActive || !sourceCurrent} onClick={() => void download()}>보관 구성 PNG 다운로드</button></div>
     {error && <p role="alert">{error}</p>}{message && <p role="status">{message}</p>}
-    {result && <><p>보관 사진 {result.keys.length}장 → PNG 한 장 · {result.width} × {result.height}px</p>
-      {/* eslint-disable-next-line @next/next/no-img-element -- Local read-only composite Blob preview. */}
-      {url?.output === result.output && <img className="image-large-preview" src={url.url} alt="보관 구성 합친 상세 이미지 미리보기" />}
+    {result && <><p>원본 {result.keys.length}장 → 출력 {result.parts?.length ?? 1}장 · 너비 {result.width}px</p>
+      {previewUrls?.result === result && previewUrls.parts.map((part, index) => <figure key={part.url}>
+        <figcaption>상세 이미지 {index + 1}/{previewUrls.parts.length} · {result.width} × {part.height.toLocaleString()}px</figcaption>
+        {/* eslint-disable-next-line @next/next/no-img-element -- Local read-only composite Blob previews. */}
+        <img className="image-large-preview" src={part.url} alt={previewUrls.parts.length === 1 ? '보관 구성 합친 상세 이미지 미리보기' : `보관 구성 합친 상세 이미지 미리보기 ${index + 1}/${previewUrls.parts.length}`} />
+      </figure>)}
       {!currentResult && !pending && !done && <p role="status">사진 구성이나 저장 기준이 바뀌었습니다. 현재 입력을 유지하고 보관한 구성으로 미리보기를 다시 준비해주세요.</p>}
       <p>공통 항목과 저장된 모든 옵션 {optionCount}개에 합친 상세 이미지를 저장합니다. 견적 제외 옵션도 포함합니다. 기존 수동값을 백업한 뒤 견적서 HTML 입력은 비웁니다.</p>
       <p>공통 대체 텍스트는 값이 있으면 유지하고, 모든 옵션의 대체 텍스트는 SEO 설명과 한국어 옵션명으로 다시 작성합니다. SEO 설명이 없으면 원본 상품명에 ‘상세 설명’을 붙입니다.</p>

@@ -61,7 +61,7 @@ export async function POST(request: Request, context: Context) {
     if(Object.hasOwn(job.review,'seoGeneration'))return json({error:'SEO 생성 결과는 SEO 생성 전용 검토에서 적용해주세요.'},409);
     try{assertWorkersRecoveryJobQuality(job);}catch(error){return json({error:error instanceof Error?error.message:'별도 초안 품질을 확인하지 못했습니다.'},409);}
     if(job.status==='completed'&&job.result&&job.review.model===WORKERS_QWEN_MODEL&&job.review.instructionsVersion==='sourceflow-translation-v6'&&!Object.hasOwn(job.review,'workersRecovery')){
-      try{if(job.result.model!==job.review.model)throw Error('검토한 Qwen 모델과 저장 결과의 모델이 다릅니다.');validateQwenTranslationDraft(job.result.draft,job.review.source);}
+      try{if(job.result.model!==job.review.model)throw Error('검토한 Qwen 모델과 저장 결과의 모델이 다릅니다.');validateQwenTranslationDraft(job.result.draft,job.review.source,job.review.qwenTranslationPolicy);}
       catch(error){return json({error:error instanceof Error?error.message:'Qwen 한국어 번역 결과를 확인하지 못했습니다.'},409);}
     }
     const scope = body.scope === 'options' ? 'options' : 'all';
@@ -108,6 +108,7 @@ export async function POST(request: Request, context: Context) {
     let canonicalIntake=false;
     let intakeSeoGuidance: {jobId:string;contentRevision:number;needsReview:boolean;warnings:string[]} | undefined;
     let pendingGuidance: ReturnType<typeof applyInitialIntakeSeoGuidance>['pendingFields'] | undefined;
+    let initialGuidanceFields: ReturnType<typeof applyInitialIntakeSeoGuidance>['adoptedFields'] = [];
     try {
       if(seoComposition){
         // An ordinary/manual review may omit category metadata; an existing
@@ -180,6 +181,7 @@ export async function POST(request: Request, context: Context) {
         const composed=applyInitialIntakeSeoGuidance(plan,planningContent,applicationJob,{brand:intakeBrand??'',...job.review.source.guidance});
         plan=composed.plan;plan.skipped.push(...composed.warnings);
         pendingGuidance=composed.pendingFields;
+        initialGuidanceFields=composed.adoptedFields;
         intakeSeoGuidance={jobId:job.id,contentRevision:content.revision,needsReview:composed.warnings.length>0,warnings:composed.warnings};
       }
     }
@@ -229,7 +231,7 @@ export async function POST(request: Request, context: Context) {
     const qwenDraft=job.review.model===WORKERS_QWEN_MODEL&&job.review.destination==='Cloudflare Workers AI'&&job.review.instructionsVersion==='sourceflow-translation-v6'&&!Object.hasOwn(job.review,'workersRecovery');
     if((canonicalIntake||qwenDraft)&&!seoComposition&&scope==='all'&&job.status==='completed'&&job.result&&job.result.model===job.review.model){
       const provenance=job.review.model===GOOGLE_TEXT_MODEL?'translated':[WORKERS_TEXT_MODEL,WORKERS_QWEN_MODEL].includes(job.review.model)?'generated':null;
-      if(provenance)for(const key of ['title','keywords','description'] as const)if(plan.patch?.seo?.[key]!==undefined)nextContent.seo[key].provenance=provenance;
+      if(provenance)for(const key of ['title','keywords','description'] as const)if(plan.patch?.seo?.[key]!==undefined&&(key==='description'||!initialGuidanceFields.includes(key)))nextContent.seo[key].provenance=provenance;
     }
     // Reviewed stage-one composition and the exact source-bound first intake
     // share the SEO writer. Other translation and unchanged SEO keep their basis.

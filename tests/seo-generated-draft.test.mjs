@@ -18,6 +18,39 @@ function fixture(){
  return{api,module:generated,content,options,job,seed};
 }
 
+test('captured memo composes the first brand, short feature and target noun without rewriting the provider base or raw job',()=>{
+ const f=fixture();try{
+  const memo={brand:'수정 브랜드, 보조 브랜드',features:'보온',keywords:'바라클라바, 방한 모자'},before=JSON.stringify({content:f.content,options:f.options,job:f.job,memo}),stored=f.api.stored();
+  const seed=f.module.createSeoGeneratedDraft({ownerId:'owner',productVersion:f.api.version,content:f.content,options:f.options,job:f.job,brand:'예전 브랜드',memo});
+  assert.equal(seed.values.seo.title,'수정 브랜드 보온 검토할 상품 바라클라바 방한 모자');assert.equal(seed.values.seo.keywords,'바라클라바, 방한 모자, 검토 태그');assert.equal(seed.values.seo.description,'검토할 상품 설명');
+  assert.equal(JSON.stringify({content:f.content,options:f.options,job:f.job,memo}),before);assert.deepEqual(f.api.stored(),stored);
+ }finally{f.api.close();}
+});
+
+test('long or multiline features and a composed title above 100 keep the provider title instead of inserting invalid memo text',()=>{
+ const f=fixture();try{for(const memo of [{brand:'수정 브랜드',features:'긴'.repeat(101),keywords:'바라클라바'},{brand:'수정 브랜드',features:'짧은 특징\n둘째 줄',keywords:'바라클라바'},{brand:'수정 브랜드',features:'긴'.repeat(80),keywords:'바라클라바, 방한 모자'}]){
+  const seed=f.module.createSeoGeneratedDraft({ownerId:'owner',productVersion:f.api.version,content:f.content,options:f.options,job:f.job,brand:'예전 브랜드',memo});
+  assert.equal(seed.values.seo.title,'수정 브랜드 검토할 상품');assert.ok(!seed.values.seo.title.includes(memo.features));assert.ok(seed.values.seo.keywords.startsWith('바라클라바'));assert.ok(seed.warnings.some(value=>value.includes('상품명')&&value.includes('유지')));
+ }}finally{f.api.close();}
+});
+
+test('oversized target tags preserve provider tags and do not leak a partial target into the composed title',()=>{
+ const f=fixture();try{for(const keywords of ['큰'.repeat(21),Array.from({length:10},(_,index)=>'검색어'+index+'가'.repeat(13)).join(', ')]){
+  const seed=f.module.createSeoGeneratedDraft({ownerId:'owner',productVersion:f.api.version,content:f.content,options:f.options,job:f.job,brand:'예전 브랜드',memo:{brand:'수정 브랜드',features:'보온',keywords}});
+  assert.equal(seed.values.seo.title,'수정 브랜드 보온 검토할 상품');assert.equal(seed.values.seo.keywords,'검토 태그');assert.ok(seed.warnings.some(value=>value.includes('검색태그')&&value.includes('유지')));
+ }}finally{f.api.close();}
+});
+
+test('memo composition preserves saved manual fields unless explicit regeneration is requested, and arriving seeds keep dirty edits',()=>{
+ const f=fixture();try{
+  f.content.seo.title={value:'직접 저장한 제목',provenance:'manual',updatedAt:f.api.version};f.content.seo.keywords={value:[],provenance:'manual',updatedAt:f.api.version};
+  const input={ownerId:'owner',productVersion:f.api.version,content:f.content,options:f.options,job:f.job,brand:'예전 브랜드',memo:{brand:'수정 브랜드',features:'보온',keywords:'바라클라바'}};
+  const preserved=f.module.createSeoGeneratedDraft(input);assert.equal(preserved.values.seo.title,undefined);assert.equal(preserved.values.seo.keywords,undefined);
+  const seed=f.module.createSeoGeneratedDraft({...input,replaceSaved:true});assert.equal(seed.values.seo.title,'수정 브랜드 보온 검토할 상품 바라클라바');assert.equal(seed.values.seo.keywords,'바라클라바, 검토 태그');
+  const merged=f.module.mergeSeoGeneratedDraft(seed,{productId:f.content.productId,productVersion:f.api.version,content:f.content,options:f.options},'owner',{seo:{title:'입력 중 제목',keywords:''},optionNames:{}});assert.equal(merged.seo.title,'입력 중 제목');assert.equal(merged.seo.keywords,'');
+ }finally{f.api.close();}
+});
+
 test('a completed exact-source job seeds editable SEO and names without mutations, then one explicit SEO save adopts the reviewed values',async()=>{
  const f=fixture(),{api}=f,h=seoWorkspaceEditor(api,{props:{workspaceOwnerId:'owner'}});try{
   await h.idle();const before=api.stored(),seed=f.seed();assert.deepEqual(JSON.parse(JSON.stringify(seed.values.optionNames)),{[f.options.rows[0].id]:'생성한 한국어 옵션'});h.patch({generatedDraft:seed});await h.idle();

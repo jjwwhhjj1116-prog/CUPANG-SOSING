@@ -6,6 +6,7 @@ import { exactPrimaryQuotationTarget } from '@/app/quotation-seo-targets';
 import type { DetailSaveEditorSnapshot } from '@/app/detail-editor-composition';
 import type { DetailWorkspaceRecord } from '@/app/detail-workspace';
 import { labelUploadDigest } from '@/app/label-upload-key';
+import { DETAIL_COMPOSITE_PARTS_POLICY, validateDetailCompositeParts, type DetailSavedCompositePart } from '@/app/detail-composite-parts';
 
 export const DETAIL_SAVE_TEXT_POLICY = 'couplus-detail-alt-v1' as const;
 export type DetailSaveTextPolicy = typeof DETAIL_SAVE_TEXT_POLICY;
@@ -49,7 +50,16 @@ export type DetailSaveReceipt = {
   peerDigest?: string;
   publicationPolicy?:typeof DETAIL_SAVE_PUBLICATION_POLICY;publishedBodyImages?:DetailSavePublishedBodyImage[];peerAfterDigest?:string;
   currentStage5?: DetailPublicationCurrentProof;
+  partsPolicy?: typeof DETAIL_COMPOSITE_PARTS_POLICY; parts?: DetailSavedCompositePart[];
 };
+export function detailSaveOutputKeys(receipt: Pick<DetailSaveReceipt, 'key'|'uploadId'|'sha256'|'bytes'|'partsPolicy'|'parts'>): string[] {
+  if (receipt.partsPolicy === undefined && receipt.parts === undefined) return [receipt.key];
+  if (receipt.partsPolicy !== DETAIL_COMPOSITE_PARTS_POLICY) throw Error('상세 분할 저장 규칙을 확인해주세요.');
+  const parts=validateDetailCompositeParts(receipt.parts,undefined,true), first=parts[0], keys=receipt.parts!.map(part=>part.key);
+  if(first.uploadId!==receipt.uploadId||first.sha256!==receipt.sha256||first.bytes!==receipt.bytes||keys[0]!==receipt.key||new Set(keys).size!==keys.length) throw Error('상세 분할 저장 결과가 일치하지 않습니다.');
+  return keys;
+}
+export const detailSaveOutputValue=(receipt: Pick<DetailSaveReceipt, 'key'|'uploadId'|'sha256'|'bytes'|'partsPolicy'|'parts'>)=>detailSaveOutputKeys(receipt).join('\n');
 export type DetailSaveSource = { key: string; sha256: string; width: number; height: number };
 export type DetailSaveBackup = {
   receipt: DetailSaveReceipt; before: QuotationChange[]; sources: DetailSaveSource[];
@@ -96,16 +106,18 @@ export function detailSaveAltChanges(view: QuotationFieldsView, fillCommon = !de
   return [...(fillCommon ? [null] : []), ...ids].flatMap(optionId => target.linked.map(fieldKey => ({ fieldKey, optionId,
     value: optionId !== null && basis.optionNames[optionId] ? `${base} - ${basis.optionNames[optionId]}` : base })));
 }
-export function detailSaveChanges(view: QuotationFieldsView, key: string, textPolicy?: DetailSaveTextPolicy, fillCommon?: boolean): QuotationChange[] {
+export function detailSaveChanges(view: QuotationFieldsView, key: string|string[], textPolicy?: DetailSaveTextPolicy, fillCommon?: boolean): QuotationChange[] {
   if (textPolicy !== undefined && textPolicy !== DETAIL_SAVE_TEXT_POLICY || fillCommon !== undefined && (textPolicy === undefined || typeof fillCommon !== 'boolean'))
     throw Error('상세 저장의 대체 텍스트 적용 규칙을 확인해주세요.');
   const optionIds = detailSaveOptionIds(view), targets = optionImageTargets(view.resolved.schema.fields);
+  const keys=typeof key==='string'?[key]:key, value=keys.join('\n');
+  if(!keys.length||keys.length>30||new Set(keys).size!==keys.length)throw Error('상세 출력 이미지의 순서와 개수를 확인해주세요.');
   const changes: QuotationChange[] = [null, ...optionIds].flatMap(optionId => [
-    ...targets.detailImages.linked.map(fieldKey => ({ optionId, fieldKey, value: key })),
+    ...targets.detailImages.linked.map(fieldKey => ({ optionId, fieldKey, value })),
     ...targets.detailHtml.linked.map(fieldKey => ({ optionId, fieldKey, value: '' })),
   ]);
   if (textPolicy) changes.push(...detailSaveAltChanges(view, fillCommon));
-  const context = { schema: view.resolved.schema, optionIds, ownedImageKeys: [...new Set([...view.imageKeys, key])], overrides: view.overrides };
+  const context = { schema: view.resolved.schema, optionIds, ownedImageKeys: [...new Set([...view.imageKeys, ...keys])], overrides: view.overrides };
   return validateQuotationChanges(changes, context);
 }
 /** Preserve only fields this command overwrites; null records an absent own
@@ -142,7 +154,8 @@ export function detailSaveReceiptMatches(view: QuotationFieldsView, receipt: Det
           ||!Number.isSafeInteger(image.width)||!Number.isSafeInteger(image.height)||image.width<1||image.height<1||!view.imageKeys.includes(image.key)
           ||image.key!==(image.sourceKey.startsWith(`${owner}/free-image-`)?`${owner}/published-detail-${image.sha256}.png`:image.sourceKey)))return false;
     }
-    const changes = detailSaveChanges(view, receipt.key, receipt.textPolicy, receipt.textCommonFilled), expected = applyQuotationChanges(view.overrides, changes);
+    const keys=detailSaveOutputKeys(receipt); if(keys.some(key=>!view.imageKeys.includes(key)))return false;
+    const changes = detailSaveChanges(view, keys, receipt.textPolicy, receipt.textCommonFilled), expected = applyQuotationChanges(view.overrides, changes);
     if (JSON.stringify(expected) !== JSON.stringify(view.overrides)) return false;
     return view.resolved.rows.every(row => changes.filter(change => change.optionId === row.optionId
       || change.optionId === null && !changes.some(specific => specific.optionId === row.optionId && specific.fieldKey === change.fieldKey))

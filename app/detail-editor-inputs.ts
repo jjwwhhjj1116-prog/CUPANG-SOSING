@@ -1,6 +1,7 @@
 import type { QuotationFieldsState } from '@/db/quotation-fields';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
-import { DETAIL_SAVE_TEXT_POLICY, detailSaveOptionIds, type DetailSaveSource } from '@/app/detail-save-plan';
+import { DETAIL_SAVE_TEXT_POLICY, detailSaveOptionIds, detailSaveOutputKeys, detailSaveOutputValue, type DetailSaveSource } from '@/app/detail-save-plan';
+import { DETAIL_COMPOSITE_PARTS_POLICY, detailCompositePartDescriptor, validateDetailCompositeParts, validateDetailCompositePartSources, type DetailSavedCompositePart } from '@/app/detail-composite-parts';
 import { optionImageTargets } from '@/app/quotation-image-targets';
 import { quotationScope, scopedQuotationOverrides } from '@/app/quotation-scopes';
 import { isOwnedImageKey, MAX_IMAGE_BYTES } from '@/app/image-files';
@@ -9,10 +10,11 @@ import { labelUploadKey } from '@/app/label-upload-key';
 
 /** The sealed, ordered inputs of one saved composite, without OCR/editor claims. */
 export type DetailEditorInputs = {
-  format: 'saved-detail-inputs-v1'; categoryId: string;
+  format: 'saved-detail-inputs-v1'|'saved-detail-inputs-v2'; categoryId: string;
   origin: { productId: string; sourceOptionId: string; uploadId: string; revision: number };
   output: { key: string; sha256: string; bytes: number };
   images: DetailSaveSource[];
+  partsPolicy?:typeof DETAIL_COMPOSITE_PARTS_POLICY;parts?:DetailSavedCompositePart[];
 };
 
 type InputsState = QuotationFieldsState & { detailEditorInputs?: Record<string, unknown> };
@@ -30,7 +32,8 @@ const invalid = (): never => { throw Error('저장된 상세 입력 이미지의
 export function validateDetailEditorInputs(value: unknown, ownerId: string, categoryId: string): DetailEditorInputs {
   if (typeof ownerId !== 'string' || typeof categoryId !== 'string') return invalid();
   quotationScope(categoryId);
-  if (!exact(value, ['format', 'categoryId', 'origin', 'output', 'images']) || value.format !== 'saved-detail-inputs-v1' || value.categoryId !== categoryId
+  const multipart=record(value)&&value.format==='saved-detail-inputs-v2';
+  if (!exact(value, ['format', 'categoryId', 'origin', 'output', 'images',...(multipart?['partsPolicy','parts']:[])]) || (!multipart&&value.format !== 'saved-detail-inputs-v1') || value.categoryId !== categoryId
     || !exact(value.origin, ['productId', 'sourceOptionId', 'uploadId', 'revision']) || !id(value.origin.productId) || !id(value.origin.sourceOptionId)
     || !hash(value.origin.uploadId) || !integer(value.origin.revision, 1)
     || !exact(value.output, ['key', 'sha256', 'bytes']) || !isOwnedImageKey(ownerId, value.output.key) || !hash(value.output.sha256)
@@ -39,21 +42,29 @@ export function validateDetailEditorInputs(value: unknown, ownerId: string, cate
   const origin: DetailEditorInputs['origin'] = { productId: value.origin.productId, sourceOptionId: value.origin.sourceOptionId,
     uploadId: value.origin.uploadId, revision: value.origin.revision };
   const output: DetailEditorInputs['output'] = { key: value.output.key, sha256: value.output.sha256, bytes: value.output.bytes };
+  let parts:DetailSavedCompositePart[]|undefined;
+  if(multipart){
+    if(value.partsPolicy!==DETAIL_COMPOSITE_PARTS_POLICY)return invalid();
+    try{validateDetailCompositeParts(value.parts,value.images.length,true);}catch{return invalid();}
+    parts=(value.parts as DetailSavedCompositePart[]).map(part=>({...part}));
+    if(parts.some(part=>part.key!==labelUploadKey(ownerId,part.uploadId))||parts[0].key!==output.key||parts[0].sha256!==output.sha256||parts[0].bytes!==output.bytes||parts[0].uploadId!==origin.uploadId)return invalid();
+  }
   let height = 0;
   const metadata = new Map<string, string>();
   const images = value.images.map((image: unknown): DetailSaveSource => {
-    if (!exact(image, ['key', 'sha256', 'width', 'height']) || !isOwnedImageKey(ownerId, image.key) || image.key === output.key
+    if (!exact(image, ['key', 'sha256', 'width', 'height']) || !isOwnedImageKey(ownerId, image.key) || image.key === output.key || parts?.some(part=>part.key===image.key)
       || !hash(image.sha256) || !integer(image.width, 1, 16000) || !integer(image.height, 1, 16000) || image.width * image.height > 40000000) return invalid();
     height += Math.max(1, Math.round(image.height * 800 / image.width));
-    if (height > 16000) return invalid();
+    if (!multipart&&height > 16000) return invalid();
     const proof = JSON.stringify([image.sha256, image.width, image.height]);
     if (metadata.has(image.key) && metadata.get(image.key) !== proof) return invalid();
     metadata.set(image.key, proof);
     return { key: image.key, sha256: image.sha256, width: image.width, height: image.height };
   });
-  return { format: 'saved-detail-inputs-v1', categoryId,
+  if(parts)try{validateDetailCompositePartSources(parts.map(detailCompositePartDescriptor),images);}catch{return invalid();}
+  return { format: multipart?'saved-detail-inputs-v2':'saved-detail-inputs-v1', categoryId,
     origin: { productId: origin.productId, sourceOptionId: origin.sourceOptionId, uploadId: origin.uploadId, revision: origin.revision },
-    output: { key: output.key, sha256: output.sha256, bytes: output.bytes }, images };
+    output: { key: output.key, sha256: output.sha256, bytes: output.bytes }, images,...(parts?{partsPolicy:DETAIL_COMPOSITE_PARTS_POLICY,parts}:{}) };
 }
 
 /** Scoped family metadata keeps its original source identity. An ordinary
@@ -71,7 +82,7 @@ export function detailEditorInputs(view: QuotationFieldsView, state: QuotationFi
     const common = view.resolved.rows.filter(row => row.optionId === null), targets = optionImageTargets(view.resolved.schema.fields);
     if (common.length !== 1) return null;
     const key = common[0].fields[targets.detailImages.primary]?.value;
-    if (typeof key !== 'string' || !key || !view.imageKeys.includes(key)
+    if (typeof key !== 'string' || !key || key.split('\n').some(part=>!view.imageKeys.includes(part))
       || targets.detailImages.linked.some(field => common[0].fields[field]?.value !== key)
       || targets.detailHtml.linked.some(field => common[0].fields[field]?.value !== '')) return null;
     const ownerId = key.split('/')[0];
@@ -83,13 +94,13 @@ export function detailEditorInputs(view: QuotationFieldsView, state: QuotationFi
       if (Object.hasOwn(persisted, scope)) result = validateDetailEditorInputs(persisted[scope], ownerId, categoryId);
       else result = ordinaryInputs();
     } else result = ordinaryInputs();
-    if (result.output.key !== key || result.images.some(image => !view.imageKeys.includes(image.key))) return null;
+    if ((result.parts?.map(part=>part.key).join('\n')??result.output.key) !== key || result.images.some(image => !view.imageKeys.includes(image.key))) return null;
     return result;
 
     function ordinaryInputs(): DetailEditorInputs {
       const history = state.detailSaveBackups?.[scope];
       if (!Array.isArray(history)) return invalid();
-      const backup = [...history].reverse().find(entry => entry?.receipt?.key === key), receipt = backup?.receipt;
+      const backup = [...history].reverse().find(entry => entry?.receipt&&detailSaveOutputValue(entry.receipt) === key), receipt = backup?.receipt;
       if (!receipt || receipt.categoryId !== categoryId || !integer(receipt.beforeRevision, 0)
         || receipt.revision !== receipt.beforeRevision + 1 || !integer(receipt.revision, 1, state.revision)
         || !Array.isArray(receipt.optionIds) || !receipt.optionIds.length || receipt.optionIds.length > 200
@@ -97,9 +108,10 @@ export function detailEditorInputs(view: QuotationFieldsView, state: QuotationFi
         || !id(receipt.sourceOptionId) || !receipt.optionIds.includes(receipt.sourceOptionId) || optionIds.some(optionId => !receipt.optionIds.includes(optionId))
         || (receipt.textPolicy === undefined ? receipt.textCommonFilled !== undefined
           : receipt.textPolicy !== DETAIL_SAVE_TEXT_POLICY || typeof receipt.textCommonFilled !== 'boolean')) return invalid();
-      return validateDetailEditorInputs({ format: 'saved-detail-inputs-v1', categoryId,
+      detailSaveOutputKeys(receipt);
+      return validateDetailEditorInputs({ format:receipt.parts?'saved-detail-inputs-v2':'saved-detail-inputs-v1', categoryId,
         origin: { productId, sourceOptionId: receipt.sourceOptionId, uploadId: receipt.uploadId, revision: receipt.revision },
-        output: { key: receipt.key, sha256: receipt.sha256, bytes: receipt.bytes }, images: backup.sources }, ownerId, categoryId);
+        output: { key: receipt.key, sha256: receipt.sha256, bytes: receipt.bytes }, images: backup.sources,...(receipt.parts?{partsPolicy:receipt.partsPolicy,parts:receipt.parts}:{}) }, ownerId, categoryId);
     }
   } catch { return null; }
 }

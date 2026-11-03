@@ -5,6 +5,7 @@ import type {SeoWorkspaceView} from '@/app/seo-workspace';
 import type {SeoWorkspaceDraft} from '@/app/seo-workspace-client';
 import {untouchedIntakeKeywords} from '@/app/translation-batch-adoption';
 import {translationAttributeIssue} from '@/app/translation-attribute-evidence';
+import {seoGuidanceTitle,seoGuidanceTags,validateSeoGuidanceComposition,type SeoGuidanceComposition} from '@/app/seo-guidance-composition';
 
 type NameSource={id:string;originalName:string;supplierSku:string;translatedName:string;provenance:string;included:boolean};
 export type SeoGeneratedDraft={
@@ -27,18 +28,32 @@ export function seoRegenerationOptionBatch(options:ProductOptions,limit:number,a
 
 /** A completed provider job becomes editable input only. No content, option or
  * provenance is changed until the member uses the ordinary explicit SEO save. */
-export function createSeoGeneratedDraft(input:{ownerId?:string;productVersion:string;content:ProductContent;options:ProductOptions;job:TranslationJob;brand:string;replaceSaved?:boolean}):SeoGeneratedDraft{
+export function createSeoGeneratedDraft(input:{ownerId?:string;productVersion:string;content:ProductContent;options:ProductOptions;job:TranslationJob;brand:string;memo?:Pick<SeoGuidanceComposition,'brand'|'features'|'keywords'>;replaceSaved?:boolean}):SeoGeneratedDraft{
  const {content,options,job,productVersion}=input;
  if(content.productId!==options.productId||job.productId!==content.productId||job.productVersion!==productVersion||job.contentRevision!==content.revision
   ||job.status!=='completed'||!job.result||job.error||job.result.model!==job.review.model||!/^[a-f0-9]{64}$/u.test(job.review.fingerprint)
   ||!Number.isSafeInteger(content.revision)||!Number.isSafeInteger(options.revision))throw Error('현재 상품·원문·옵션에 연결된 완료 SEO 초안을 확인해주세요.');
- const values:SeoWorkspaceDraft={seo:{},optionNames:{}},draft=job.result.draft;
+ const values:SeoWorkspaceDraft={seo:{},optionNames:{}},draft=job.result.draft,warnings=[...draft.warnings];
+ const eligible=(field:'title'|'keywords'|'description')=>input.replaceSaved||content.seo[field].provenance!=='manual'||field==='keywords'&&untouchedIntakeKeywords(content,job);
+ const memo=input.memo?{...input.memo,brand:input.memo.brand.split(',')[0].trim()}:null;
+ const composed:Partial<Pick<typeof draft,'title'|'keywords'>>={};
+ if(memo){
+  let targetsValid=true;
+  try{const tags=seoGuidanceTags(draft,{...memo,title:''});if(eligible('keywords')){composed.keywords=tags.tags;if(tags.omitted.length)warnings.push('검색태그 한도에 맞지 않는 추가 번역 태그는 넣지 않았습니다. 타겟과 원문을 확인해주세요.');}}
+  catch{targetsValid=false;if(eligible('title')||eligible('keywords'))warnings.push('타겟 검색태그가 20자·전체 150자 기준에 맞지 않아 원래 번역 검색태그를 유지했습니다.');}
+  if(eligible('title'))try{
+   // Target nouns append to the provider base; its product wording is not rewritten.
+   const keywords=targetsValid?memo.keywords:'',title=seoGuidanceTitle(draft,{...memo,keywords});
+   composed.title=validateSeoGuidanceComposition({...memo,keywords,title}).title.trim();
+  }catch{warnings.push('특징·구성 상품명이 한 줄 100자 기준에 맞지 않아 원래 번역 상품명을 유지했습니다.');}
+ }
  for(const field of ['title','keywords','description'] as const){
-  if(!input.replaceSaved&&content.seo[field].provenance==='manual'&&!(field==='keywords'&&untouchedIntakeKeywords(content,job)))continue;
-  const value=draft[field];if(field==='keywords'){
+  if(!eligible(field))continue;
+  const value=field==='description'?draft[field]:composed[field]??draft[field];if(field==='keywords'){
    if(value.length&&(input.replaceSaved||!same(value,content.seo.keywords.value)))values.seo.keywords=(value as string[]).join(', ');
   }else if(typeof value==='string'&&value.trim()){
-   const prefix=input.brand.split(',')[0].trim(),name=field==='title'&&prefix&&value!==prefix&&!value.startsWith(prefix)?prefix+' '+value:value;
+   const prefix=(memo?.brand??input.brand).split(',')[0].trim();let name=field==='title'&&composed.title===undefined&&prefix&&value!==prefix&&!value.startsWith(prefix)?prefix+' '+value:value;
+   if(memo&&field==='title'&&(name.length>100||/[\r\n]/u.test(name))){name=draft.title;if(name.length>100||/[\r\n]/u.test(name))continue;}
    if(input.replaceSaved||name!==content.seo[field].value)values.seo[field]=name;
   }
  }
@@ -52,7 +67,7 @@ export function createSeoGeneratedDraft(input:{ownerId?:string;productVersion:st
  }
  return {format:'yoofam-seo-generated-draft-v1',ownerId:input.ownerId??null,productId:content.productId,productVersion,contentRevision:content.revision,optionRevision:options.revision,
   jobId:job.id,model:job.review.model,reviewFingerprint:job.review.fingerprint,sourceReference:job.review.source.reference,intent:input.replaceSaved?'explicit-regeneration':'preserve-reviewed',
-  source:{seo:structuredClone(content.seo),options:nameSources(options)},values,warnings:[...draft.warnings]};
+  source:{seo:structuredClone(content.seo),options:nameSources(options)},values,warnings};
 }
 
 /** Exact saved clocks and field bindings must still match. Existing explicit

@@ -8,11 +8,13 @@ const plain=value=>JSON.parse(JSON.stringify(value));
 const json=async(response,status=200)=>{assert.equal(response.status,status,await response.clone().text());return response.json();};
 const helper=fs.readFileSync(new URL('./helpers/mobile-intake.mjs',import.meta.url),'utf8');
 const dictionary=vm.runInNewContext(helper.match(/const genericTranslation=(new Map\(Object\.entries\(\{[\s\S]+?\}\)\));/u)[1]);
+const recordedTitle=JSON.parse(fs.readFileSync(new URL('./fixtures/1688-mobile-813724060928.json',import.meta.url),'utf8')).globalData.tempModel.offerTitle;
 const companies=[{code:'A01526306',name:'유앤채'},{code:'A01464742',name:'와이홉'}];
 const memo={brand:'현재 브랜드',features:'원형테',keywords:'휴대용 안경, 선글라스'};
 const composition={...memo,title:'현재 브랜드 원형테 우드 패턴 다리 선글라스 휴대용 안경'};
-async function fixture(company,{manualSeo,automatic=false,linkedName=false}={}){
+async function fixture(company,{manualSeo,automatic=false,linkedName=false,intakeGuidance={features:'수집 특징',keywords:'기존 타겟, 선글라스'},intakeBrand}={}){
  const queries=[],translations=new Map(dictionary),colors=new Map([['亮黑','유광 검정'],['砂黑','무광 검정'],['砂灰','무광 회색']]),sizes=new Map([['太阳镜','선글라스'],['太阳镜 加005 盒子','선글라스 + 005 케이스']]);
+ translations.set(recordedTitle,'우드 패턴 다리 선글라스');
  for(const pair of [...colors,...sizes])translations.set(...pair);
  for(const [color,colorText]of colors)for(const [size,sizeText]of sizes)translations.set(color+' / '+size,colorText+' / '+sizeText);
  const h=mobileIntakeHarness({companyCode:company.code,companyName:company.name,translationFetcher:async target=>{
@@ -21,7 +23,9 @@ async function fixture(company,{manualSeo,automatic=false,linkedName=false}={}){
   return Response.json([[[q.startsWith('[[YFTR')?q.split('\n').map(line=>{const match=/^(\[\[YFTR\d{6}\]\]) (.+)$/u.exec(line);assert.ok(match);return match[1]+' '+translate(match[2]);}).join('\n'):translate(q),q]],null,'zh-CN']);
  }});
  try{
-  h.sqlite.prepare('UPDATE collection_jobs SET goal=?').run(automatic?'work':'collect');h.context.features='수집 특징';h.context.keywords='기존 타겟, 선글라스';h.sqlite.prepare('UPDATE collection_context SET payload=?').run(JSON.stringify(h.context));
+  // Initial guidance composition is a Google intake contract, not the helper's default Llama generation.
+  h.bindings.SOURCEFLOW_TEXT_PROVIDER='google-free';delete h.bindings.AI;
+  h.sqlite.prepare('UPDATE collection_jobs SET goal=?').run(automatic?'work':'collect');Object.assign(h.context,intakeGuidance);if(intakeBrand!==undefined)h.context.settings.brand=intakeBrand;h.sqlite.prepare('UPDATE collection_context SET payload=?').run(JSON.stringify(h.context));
   await h.intake();const product=h.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id,initial=(await json(await h.route(base+'/content'))).content;
   const label=Object.fromEntries(Object.keys(initial.label).filter(key=>!linkedName||key!=='productName').map(key=>[key,key==='productName'?'검토한 라벨 품명':key==='countryOfOrigin'||key==='certification'?'':'직접 검토 '+key]));
   await json(await h.route(base+'/content',{method:'PATCH',body:{expectedRevision:initial.revision,patch:{label,...(linkedName?{labelProductNameLinked:true}:{}),...(manualSeo?{seo:manualSeo}:{})}}}));
@@ -30,7 +34,6 @@ async function fixture(company,{manualSeo,automatic=false,linkedName=false}={}){
   const receipt=(await h.load('db/collection-results.ts').readCollectionResult('owner','job')).result,collection=await h.load('db/collection-jobs.ts').findCollectionJob('owner','job');
   const currentOptions=(await json(await h.route(base+'/options'))).options,source=h.load('app/collected-seo-source.ts').collectedSeoSource(receipt,collection,currentOptions).source;
   translations.set(source.title,'우드 패턴 다리 선글라스');if(source.description)translations.set(source.description,'판매자 설명');
-  h.bindings.SOURCEFLOW_TEXT_PROVIDER='google-free';delete h.bindings.AI;
   const content=(await json(await h.route(base+'/content'))).content,version=h.sqlite.prepare('SELECT updated_at FROM products').get().updated_at,api=h.load('app/seo-workspace-draft.ts');
   const state=api.createSeoWorkspaceDraftState({productId:product.id,productVersion:version,contentRevision:content.revision,source,memo,configuration:h.load('app/automation/translation.ts').translationConfiguration(h.bindings)});
   const fetcher=(target,init={})=>h.route(String(target),{method:init.method??'GET',body:init.body});
@@ -39,6 +42,18 @@ async function fixture(company,{manualSeo,automatic=false,linkedName=false}={}){
   return {h,base,content,currentOptions,job:outcome.job,body:{jobId:outcome.job.id,expectedVersion:version,seoComposition:composition},queries,retained};
  }catch(error){h.close();throw error;}
 }
+
+test('plain Google provider fields retain translated provenance while only a contributed owner title becomes manual',async()=>{
+ for(const intakeBrand of ['', '직접 브랜드']){
+  const f=await fixture(companies[0],{automatic:true,intakeBrand,intakeGuidance:{features:intakeBrand?'둥근':'',keywords:''}});try{
+   assert.equal(f.content.seo.title.value,(intakeBrand?intakeBrand+' 둥근 ':'')+'우드 패턴 다리 선글라스');
+   assert.equal(f.content.seo.title.provenance,intakeBrand?'manual':'translated');assert.equal(f.content.seo.keywords.provenance,'translated');
+   assert.equal(f.currentOptions.rows[0].provenance.translatedName,'manual');assert.equal(f.currentOptions.rows[1].provenance.translatedName,'translated');
+   const canonical=await f.h.load('db/translation-jobs.ts').findIntakeTranslation('owner',f.content.productId);
+   assert.equal(canonical.review.destination,'Google 번역');assert.equal(canonical.result.draft.title,'우드 패턴 다리 선글라스');assert.equal(f.h.aiSources.length,0);
+  }finally{f.h.close();}
+ }
+});
 
 for(const company of companies)test(`current brand, feature and targets compose the reviewed title and quotation tags (${company.code})`,async()=>{
  const f=await fixture(company);try{
@@ -62,6 +77,7 @@ for(const company of companies){
  test(`completed intake SEO remains protected until title/tags replacement is explicitly reviewed (${company.code})`,async()=>{
   const f=await fixture(company,{automatic:true,linkedName:true});try{
    assert.equal(f.content.seo.title.provenance,'manual');assert.equal(f.content.seo.keywords.provenance,'manual');assert.equal(f.content.labelProductNameLinked,true);
+   const providerCalls=f.queries.length;assert.ok(providerCalls>0);
    const preserved=await json(await f.h.route(f.base+'/translation-apply',{method:'POST',body:{...f.body,action:'preview'}}));
    assert.ok(!preserved.preview.some(row=>row.name.startsWith('상품명')));assert.ok(!preserved.preview.some(row=>row.name.startsWith('검색어')));
    const body={...f.body,seoComposition:{...composition,replaceTitle:true,replaceKeywords:true}},before=f.retained();
@@ -71,7 +87,7 @@ for(const company of companies){
    await json(await f.h.route(f.base+'/translation-apply',{method:'POST',body:{...body,action:'apply',fingerprint:preview.fingerprint}}));
    const saved=(await json(await f.h.route(f.base+'/content'))).content;assert.equal(saved.seo.title.value,composition.title);assert.equal(saved.label.productName.value,composition.title);assert.equal(saved.labelProductNameLinked,true);
    for(const key of Object.keys(f.content.label).filter(key=>key!=='productName'))assert.deepEqual(saved.label[key],f.content.label[key]);
-   assert.deepEqual(saved.seo.keywords.value.slice(0,2),['휴대용 안경','선글라스']);assert.equal(f.h.aiSources.length,1,'only the initial fixture provider was used, composition invokes no provider');
+   assert.deepEqual(saved.seo.keywords.value.slice(0,2),['휴대용 안경','선글라스']);assert.equal(f.queries.length,providerCalls,'composition invokes no additional provider');assert.equal(f.h.aiSources.length,0,'the fixture uses Google intake, never Llama generation');
   }finally{f.h.close();}
  });
  test(`direct saved title, same-value tags and explicit blank remain protected without replacement flags (${company.code})`,async()=>{
