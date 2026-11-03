@@ -105,10 +105,9 @@ function canvas(width: number, height: number) {
   return { canvas: value, context };
 }
 
-/** Read only authenticated app files, and bind the decoded visible orientation
- * to the exact SHA-256 source proof returned by the current role's endpoint. */
-export async function readFreeImageSource(productId: string, version: string, sourceKey: string, role: FreeImageRole,
-  signal: AbortSignal, fetcher: typeof fetch = fetch, quotationTarget?: FreeImageQuotationRequest, options?: FreeImageEditorReadOptions): Promise<FreeImageLoaded> {
+/** Revalidate the server's current byte identity and target without loading pixels. */
+export async function readFreeImageSourceProof(productId: string, version: string, sourceKey: string, role: FreeImageRole,
+  signal: AbortSignal, fetcher: typeof fetch = fetch, quotationTarget?: FreeImageQuotationRequest, options?: FreeImageEditorReadOptions): Promise<Pick<FreeImageLoaded, 'source' | 'editDocument' | 'noTextProof' | 'visionConfiguration' | 'visionFetcher'>> {
   signal.throwIfAborted();
   if (options?.anchorPolicy !== undefined && (options.anchorPolicy !== 'current-target-v1' || options.restoreEditor !== true || !quotationTarget)) throw Error('다시 편집할 현재 견적 이미지 연결을 확인해주세요.');
   if (role === 'label' && !quotationTarget) throw Error('선택 옵션에 저장된 최종 라벨 이미지를 선택해주세요.');
@@ -142,8 +141,17 @@ export async function readFreeImageSource(productId: string, version: string, so
   if(body.noTextProof!==undefined&&body.preservationProof!==undefined||body.preservationProof!==undefined&&noTextProof?.reason!=='product-markings-only'||body.noTextProof!==undefined&&noTextProof?.reason==='product-markings-only')throw Error('원본 보존 검증의 종류가 다릅니다.');
   if(proofValue!==undefined&&(!noTextProof||noTextProof.productId!==source.productId||noTextProof.sourceKey!==source.sourceKey||noTextProof.sourceSha256!==source.sourceSha256
    ||noTextProof.width!==source.width||noTextProof.height!==source.height||JSON.stringify(noTextProof.configuration)!==JSON.stringify(configuration)))throw Error('원본 보존 검증과 현재 원본의 연결이 다릅니다.');
-  const loaded=await readFreeImageSourcePixels(source, signal, fetcher, editDocument);
-  return{...loaded,...(noTextProof?{noTextProof}:{}),...(configuration?{visionConfiguration:configuration,visionFetcher:fetcher}:{})};
+  signal.throwIfAborted();
+  return{source,...(editDocument?{editDocument}:{}),...(noTextProof?{noTextProof}:{}),...(configuration?{visionConfiguration:configuration,visionFetcher:fetcher}:{})};
+}
+
+/** Read only authenticated app files, and bind the decoded visible orientation
+ * to the exact SHA-256 source proof returned by the current role's endpoint. */
+export async function readFreeImageSource(productId: string, version: string, sourceKey: string, role: FreeImageRole,
+  signal: AbortSignal, fetcher: typeof fetch = fetch, quotationTarget?: FreeImageQuotationRequest, options?: FreeImageEditorReadOptions): Promise<FreeImageLoaded> {
+  const proof = await readFreeImageSourceProof(productId, version, sourceKey, role, signal, fetcher, quotationTarget, options);
+  const loaded = await readFreeImageSourcePixels(proof.source, signal, fetcher, proof.editDocument);
+  return { ...loaded, ...proof };
 }
 
 /** Shared authenticated pixel loader. Target authorization remains the caller's

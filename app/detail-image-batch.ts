@@ -3,7 +3,7 @@ import { exactDetailHtmlTarget, optionImageTargets, quotationImageKeys } from '@
 import { exactPrimaryQuotationTarget } from '@/app/quotation-seo-targets';
 import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 import {
-  applyFreeImageTranslation, FreeImageApplyError, readFreeImageSource, recognizeFreeImage,
+  applyFreeImageTranslation, FreeImageApplyError, readFreeImageSource, readFreeImageSourceProof, recognizeFreeImage,
   recoverFreeImageTranslation, renderFreeImageTranslation, sameFreeImageSource, translateFreeImageRegions,
   type FreeImageApplyReply, type FreeImageRegion, type FreeImageRendered,
 } from '@/app/free-image-translation-client';
@@ -24,6 +24,7 @@ export type DetailImageBatch = {
 type Dependencies = {
   fetcher?: typeof fetch;
   readSource?: typeof readFreeImageSource;
+  readSourceProof?: typeof readFreeImageSourceProof;
   recognize?: typeof recognizeFreeImage;
   translate?: typeof translateFreeImageRegions;
   render?: typeof renderFreeImageTranslation;
@@ -184,7 +185,7 @@ export async function applyDetailBatchResult(batch: DetailImageBatch, slotIndex:
   if (!detailBatchCapacity(current)) throw Error('새 번역 결과를 저장할 이미지 공간이 없습니다. 원본을 유지했으며 업로드하지 않았습니다.');
   const selected = detailBatchSelection(current, batch.optionId, batch.profileId, batch.stage);
   if (selected.keys[slotIndex] !== entry.sourceKey) throw changed();
-  const refreshed = await (deps.readSource ?? readFreeImageSource)(batch.productId, current.productVersion, entry.sourceKey, batch.stage === 'main' ? 'main' : batch.stage === 'additional' ? 'additional' : 'detail', signal, deps.fetcher, targetFor(batch, slotIndex));
+  const refreshed = await (deps.readSourceProof ?? deps.readSource ?? readFreeImageSourceProof)(batch.productId, current.productVersion, entry.sourceKey, batch.stage === 'main' ? 'main' : batch.stage === 'additional' ? 'additional' : 'detail', signal, deps.fetcher, targetFor(batch, slotIndex));
   const old = entry.rendered.source, fresh = refreshed.source;
   const oldTarget = old.quotationTarget, freshTarget = fresh.quotationTarget;
   if (old.productId !== fresh.productId || old.role !== fresh.role || old.sourceKey !== fresh.sourceKey || old.sourceSha256 !== fresh.sourceSha256 || old.width !== fresh.width || old.height !== fresh.height

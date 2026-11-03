@@ -65,6 +65,35 @@ async function fixture(company, { stage = 'detail', poolSize } = {}) {
 }
 
 for (const company of schemaCompanies) {
+ test(`pre-save uses a fresh source proof and no second pixel download (${company.code})`,async()=>{
+  const f=await fixture(company);try{
+   let batch=await f.prepare();const before=f.calls.length;
+   f.intercept(async(url)=>{assert.ok(!url.startsWith('/api/files/'),'pre-save must not download source pixels');});
+   batch=await f.model.applyDetailBatchResult(batch,0,new AbortController().signal,()=>{},{fetcher:f.deps.fetcher});
+   const calls=f.calls.slice(before),proofs=calls.filter(row=>row.url.includes('/image-text?'));
+   assert.equal(batch.items[0].status,'applied');assert.equal(proofs.length,1);assert.equal(proofs[0].init.cache,'no-store');
+   assert.equal(calls.filter(row=>row.url.startsWith('/api/files/')).length,0);
+   assert.equal(calls.filter(row=>row.init.body instanceof FormData).length,1);
+  }finally{f.close();}
+ });
+ test(`fresh source bytes, role, target and clocks reject before upload; proof cancellation stays read-only (${company.code})`,async()=>{
+  const f=await fixture(company);try{
+   const batch=await f.prepare(),original=Buffer.from(f.h.objects.get(f.order[0])),before=f.sourceRows(),objects=[...f.h.objects.keys()];
+   const route=f.h.load('app/api/products/[id]/image-text/route.ts'),context={params:Promise.resolve({id:f.id})};
+   for(const patch of [null,{role:'main'},{quotationTarget:{...batch.items[0].rendered.source.quotationTarget,slotIndex:1}},
+    {productVersion:'2026-10-06T00:00:01.000Z'},{contentRevision:batch.view.contentRevision+1},
+    {quotationTarget:{...batch.items[0].rendered.source.quotationTarget,optionRevision:batch.view.optionRevision+1}}]){
+    f.h.objects.set(f.order[0],patch===null?new Uint8Array(png(231)):original);
+    f.intercept(async(url,init)=>{if(url.includes('/image-text?')){assert.equal(init.cache,'no-store');const body=await json(await route.GET(new Request('https://app.test'+url,init),context));return Response.json({...body,source:{...body.source,...patch}});}});
+    await assert.rejects(f.model.applyDetailBatchResult(batch,0,new AbortController().signal,()=>{},{fetcher:f.deps.fetcher}));
+   }
+   f.h.objects.set(f.order[0],original);const controller=new AbortController();
+   f.intercept(async(url,init)=>{if(url.includes('/image-text?')){const response=await route.GET(new Request('https://app.test'+url,init),context);controller.abort();return response;}});
+   await assert.rejects(f.model.applyDetailBatchResult(batch,0,controller.signal,()=>{},{fetcher:f.deps.fetcher}));
+   assert.ok(!f.calls.some(row=>row.init.body instanceof FormData));assert.ok(!f.calls.some(row=>row.url.startsWith('/api/files/')));
+   assert.deepEqual([...f.h.objects.keys()],objects);assert.equal(f.sourceRows(),before);assert.equal(batch.items[0].status,'ready');
+  }finally{f.close();}
+ });
  test(`English image batch keeps its language when its editable result is saved and reopened (${company.code})`,async()=>{
   const f=await fixture(company);try{
    const now=new Date().toISOString(),email=company.code==='A01526306'?'jwhj1116@kakao.com':'unari8484@gmail.com';
@@ -193,7 +222,8 @@ for (const company of schemaCompanies) {
 test('selected detailed photos use the real stage planner and verified image CAS even when an unrelated main-image field is invalid',async()=>{
  const company=schemaCompanies[0],f=await fixture(company);
  try{
-  const now=new Date().toISOString();f.h.sqlite.prepare('INSERT INTO members(id,email,password_hash,role,status,company_code,company_name,created_at,updated_at,reviewed_by) VALUES(?,?,?,?,?,?,?,?,?,?)').run('owner','jwhj1116@kakao.com','fixture-not-a-password','admin','approved',company.code,company.name,now,now,null);
+  const now=new Date().toISOString(),email=company.code==='A01526306'?'jwhj1116@kakao.com':'unari8484@gmail.com',role=company.code==='A01526306'?'admin':'member';
+  f.h.sqlite.prepare('INSERT INTO members(id,email,password_hash,role,status,company_code,company_name,created_at,updated_at,reviewed_by) VALUES(?,?,?,?,?,?,?,?,?,?)').run('owner',email,'fixture-not-a-password',role,'approved',company.code,company.name,now,now,null);
   await f.h.load('db/queries.ts').saveSettings('owner',JSON.stringify({...f.h.load('app/workspace-settings.ts').newWorkspaceSettings,...f.h.settings,translateImages:true}));
   const stored=f.h.sqlite.prepare('SELECT payload FROM product_options WHERE product_id=?').get(f.id),options=JSON.parse(stored.payload);options.rows.forEach(row=>row.included=row.id===f.selected);f.h.sqlite.prepare('UPDATE product_options SET payload=? WHERE product_id=?').run(JSON.stringify(options),f.id);
   await json(await f.h.route(f.base+'/work-draft',{method:'POST',body:{expectedVersion:f.product().updated_at,roles:['detail']}}));
@@ -213,7 +243,8 @@ test('selected detailed photos use the real stage planner and verified image CAS
    readSource:async(productId,version,key,role,signal,_fetch,target)=>{const query=new URLSearchParams({sourceKey:key,role,target:'quotation',optionId:target.optionId,fieldKey:target.fieldKey,slotIndex:String(target.slotIndex)});if(target.profileId)query.set('profileId',target.profileId);const {source}=await json(await fetcher(f.base+'/image-text?'+query,{signal}));assert.equal(source.productVersion,version);return{source,blob:new Blob([f.h.objects.get(key)],{type:'image/png'}),canvas:{},width:source.width,height:source.height};},
    recognize:async()=>{events.push('ocr');return[{id:'line',text:'中文',confidence:95,selected:true,box:{x:0,y:0,width:3,height:2},translated:'',issue:null,translationProvenance:'empty',background:'#ffffff',foreground:'#000000',fontSize:1}];},
    translate:async(source,_language,regions)=>{events.push('translation');return{source,regions:regions.map(row=>({id:row.id,original:row.text,translated:'한국어',issue:null})),requests:1,warnings:[],stoppedHttpStatus:null};},
-   render:async(image,regions)=>{events.push('render');assert.equal(regions[0].translated,'한국어');return{source:image.source,output:new Blob([png(90+image.source.quotationTarget.slotIndex)],{type:'image/png'}),width:image.width,height:image.height};},
+   render:async(image,regions)=>{events.push('render');assert.equal(regions[0].translated,'한국어');return{source:image.source,output:new Blob([png(90+image.source.quotationTarget.slotIndex)],{type:'image/png'}),width:image.width,height:image.height,
+    editDocument:f.h.load('app/free-image-edit-document.ts').validateFreeImageEditDocument({format:'free-image-edit-v1',width:image.width,height:image.height,sourceLanguage:'zh',regions},image.source)};},
   });
   assert.equal(result.status,'completed',JSON.stringify(result.messages));assert.equal(result.applied,selected.slots.length);assert.deepEqual(events,plain(selected.slots.flatMap(()=>['ocr','translation','render','cas-save'])));
   const after=await f.read(),row=after.resolved.rows.find(row=>row.optionId===f.selected);assert.deepEqual(main.linked.map(key=>row.fields[key]),before.main);assert.equal(f.sourceRows(),before.source);for(const [key,bytes]of before.objects)assert.deepEqual(f.h.objects.get(key),bytes);assert.equal(f.product().supplier_hub_status,'미전송');

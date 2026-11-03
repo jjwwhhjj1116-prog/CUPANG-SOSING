@@ -151,6 +151,36 @@ test('final-slot recovery submits only the identical PNG digest, verifies scope 
   }
 });
 
+test('source proof revalidates uncached metadata without downloading or decoding pixels', async () => {
+  const h = fixture(), target = quotationRequest(), calls = [];
+  const finalSource = { ...source, quotationTarget: { ...target, bindingSha256: 'b'.repeat(64) } };
+  const read = (body, signal = new AbortController().signal) => h.client.readFreeImageSourceProof('product', version, source.sourceKey, 'detail', signal, async (url, init) => {
+    calls.push({ url, init }); assert.match(url, /^\/api\/products\/product\/image-text\?/);
+    assert.equal(init.cache, 'no-store'); signal.throwIfAborted(); return Response.json(body);
+  }, target);
+  assert.equal(typeof h.client.readFreeImageSourceProof, 'function', 'proof-only reader is available');
+  const proof = await read({ source: finalSource });
+  assert.deepEqual(plain(proof.source), finalSource); assert.equal(proof.visionConfiguration.configured, false);
+  assert.equal(proof.canvas, undefined); assert.equal(proof.blob, undefined);
+  const changed = await read({ source: { ...finalSource, sourceSha256: 'c'.repeat(64) } });
+  assert.equal(changed.source.sourceSha256, 'c'.repeat(64), 'each proof observes fresh server bytes');
+  for (const patch of [{ productId: 'other' }, { productVersion: '2026-10-06T00:00:01Z' }, { role: 'main' },
+    { quotationTarget: { ...finalSource.quotationTarget, revision: 8 } }, { workspaceTarget: {} }]) {
+    await assert.rejects(read({ source: { ...finalSource, ...patch } }));
+  }
+  await assert.rejects(read({ source: finalSource, visionConfiguration: {} }));
+  await assert.rejects(read({ source: finalSource, noTextProof: {} }));
+  await assert.rejects(read({ source: finalSource, editDocument: {} }));
+  const configuration = { ...plain(proof.visionConfiguration), configured: true, paidAllowed: true };
+  const noTextProof = { policy: 'foreign-text-inspection-v1', productId: 'product', sourceKey: source.sourceKey, sourceSha256: source.sourceSha256,
+    width: 20, height: 12, sourceLanguage: 'zh', requestId: '12345678-1234-4123-8123-123456789abc', verifiedAt: version, configuration };
+  assert.deepEqual(plain((await read({ source: finalSource, visionConfiguration: configuration, noTextProof })).noTextProof), noTextProof);
+  await assert.rejects(read({ source: finalSource, visionConfiguration: configuration, noTextProof: { ...noTextProof, sourceSha256: 'd'.repeat(64) } }));
+  const cancelled = new AbortController(); cancelled.abort(); const before = calls.length;
+  await assert.rejects(read({ source: finalSource }, cancelled.signal)); assert.equal(calls.length, before);
+  assert.equal(h.canvases.length, 0); assert.equal(h.revoked.length, 0); assert.equal(h.objects.size, 0);
+});
+
 test('owned source reads verify exact version, role, SHA-256 and raw/swapped visible dimensions before OCR', async () => {
   const bytes = new TextEncoder().encode('authenticated original bytes'), sha256 = await hash(bytes);
   for (const [width, height] of [[20, 12], [12, 20]]) {
@@ -160,7 +190,7 @@ test('owned source reads verify exact version, role, SHA-256 and raw/swapped vis
       return calls.length === 1 ? Response.json({ source: { ...source, sourceSha256: sha256 } }) : new Response(bytes);
     });
     assert.equal(calls.length, 2); assert.match(calls[0], /sourceKey=owner%2Foriginal.png&role=detail/); assert.equal(calls[1], '/api/files/owner/original.png');
-    assert.equal(loaded.width, width); assert.equal(loaded.height, height); assert.deepEqual(loaded.canvas.pixels, pixels(width, height)); assert.equal(h.revoked.length, 1);
+    assert.equal(loaded.width, width); assert.equal(loaded.height, height); assert.deepEqual(loaded.canvas.pixels, pixels(width, height)); assert.equal(h.revoked.length, 1); assert.equal(h.canvases.length, 1);
     assert.equal(loaded.visionConfiguration.configured,false,'a legacy server without Vision metadata never silently authorizes local/Google fallback');
     await assert.rejects(h.client.recognizeFreeImage(loaded,'zh',new AbortController().signal),/Vision이 설정되지/);
   }

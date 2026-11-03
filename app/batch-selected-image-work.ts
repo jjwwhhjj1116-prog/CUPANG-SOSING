@@ -48,7 +48,7 @@ export function advanceSelectedImageStageCheckpoint(state:SelectedImageStageStat
  }catch{return false;}
 }
 export type SelectedImageStageResult={status:'completed'|'partial'|'skipped'|'uncertain';applied:number;failed:number;skipped:number;verifiedUnchanged?:number;messages:string[];productVersion?:string;recoveryBatch?:DetailImageBatch;state:SelectedImageStageState;recovered?:boolean;sourceChanged?:true;inferencePending?:true;review?:SelectedImageReview};
-export type SelectedImageStageOptions={ownerId:string;signal:AbortSignal;fetcher:typeof fetch;isCurrent?:()=>boolean;onProgress?:(message:string)=>void;expectedProductVersion?:string;state?:SelectedImageStageState};
+export type SelectedImageStageOptions={ownerId:string;signal:AbortSignal;fetcher:typeof fetch;isCurrent?:()=>boolean;onProgress?:(message:string)=>void;expectedProductVersion?:string;state?:SelectedImageStageState;reworkCurrentSelection?:boolean};
 type Dependencies={plan?:typeof planBatchImageWork;refresh?:typeof refreshBatchImageTask;readSource?:typeof readFreeImageSource;recognize?:typeof recognizeFreeImage;translate?:typeof translateFreeImageRegions;render?:typeof renderFreeImageTranslation;apply?:typeof applyDetailBatchResult;recover?:typeof recoverDetailBatchResult;observe?:typeof readFreeImageVisionStatus;reconcileDetail?:typeof reconcileSelectedDetailWorkspace};
 const label={main:'대표 이미지',additional:'추가 이미지',detail:'상세 이미지'};
 export const SELECTED_IMAGE_SLOT_TIMEOUT_MS=90000;
@@ -172,7 +172,7 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
  }
  const originalContent=await content();
  if(state.content&&!same(state.content,originalContent))throw changed();state.content??=structuredClone(originalContent);
- if(originalContent.assets[stage].provenance==='manual'){result.status='skipped';result.skipped=originalContent.assets[stage].value.length||1;result.messages.push(`직접 저장한 ${label[stage]} 역할과 빈 값을 유지했습니다.`);return result;}
+ if(options.reworkCurrentSelection!==true&&originalContent.assets[stage].provenance==='manual'){result.status='skipped';result.skipped=originalContent.assets[stage].value.length||1;result.messages.push(`직접 저장한 ${label[stage]} 역할과 빈 값을 유지했습니다.`);return result;}
  const tasks=plan.tasks.filter(task=>task.productId===productId&&task.stage===stage);
  const recoveryTarget=recoveredInference;
  if(recoveryTarget&&!tasks.some(task=>task.optionId===recoveryTarget.optionId
@@ -191,14 +191,14 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
    const rows=body.options?.rows?.filter(row=>row.id===task.optionId),option=rows?.[0];
    if(!response.ok||body.productVersion!==view.productVersion||body.options?.productId!==productId||body.options.revision!==view.optionRevision||rows?.length!==1||!option
     ||!['unverified','manual','collected','translated'].includes(option.provenance?.imageKey))throw changed();
-   if(option.provenance.imageKey==='manual'){result.skipped+=selected.keys.length||1;result.messages.push(`${task.optionLabel} · 직접 저장한 옵션 대표 이미지 선택을 유지했습니다.`);latest=view;continue;}
+   if(options.reworkCurrentSelection!==true&&option.provenance.imageKey==='manual'){result.skipped+=selected.keys.length||1;result.messages.push(`${task.optionLabel} · 직접 저장한 옵션 대표 이미지 선택을 유지했습니다.`);latest=view;continue;}
   }
   const retained=state.batches[task.optionId];
   if(retained&&(retained.productId!==productId||retained.optionId!==task.optionId||retained.profileId!==task.profileId||retained.stage!==stage
    ||!same(selected.keys,retained.items.map(item=>item.status==='applied'?item.appliedKey:item.sourceKey))))throw changed();
-  // Only this session's exact last verified view permits our own generated
-  // override to resume. A genuinely manual field has no retained batch.
-  const manualSelection=!retained&&manualTarget(view,task);
+  // Explicit rework uses current selected keys; ordinary runs preserve manual
+  // choices unless this session retains its exact last verified batch.
+  const manualSelection=options.reworkCurrentSelection!==true&&!retained&&manualTarget(view,task);
   if(manualSelection&&!selected.keys.some(savedEditKey)){result.skipped+=selected.keys.length||1;result.messages.push(`${task.optionLabel} · 직접 저장한 ${label[stage]} 선택을 유지했습니다.`);latest=view;continue;}
   let batch:DetailImageBatch=retained?{...retained,view}:{productId,optionId:task.optionId,profileId:task.profileId,stage,language:'zh',view,
    items:selected.keys.map((sourceKey,slotIndex)=>({slotIndex,sourceKey,status:selected.protectedSlots.includes(slotIndex)||manualSelection&&!savedEditKey(sourceKey)?'skipped':'pending',message:'',texts:[]}))};
@@ -321,7 +321,8 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
     }
     await content(batch.view,controller.signal);check();
     progress(`${action} 이미지 초안 저장 중`);
-    remember(await(deps.apply??applyDetailBatchResult)(batch,slotIndex,controller.signal,remember,{fetcher,readSource:async(...args)=>{const loaded=await(deps.readSource??readFreeImageSource)(...args);release(loaded);return loaded;}}));
+    const readSource=deps.readSource;
+    remember(await(deps.apply??applyDetailBatchResult)(batch,slotIndex,controller.signal,remember,{fetcher,...(readSource?{readSource:async(...args:Parameters<typeof readFreeImageSource>)=>{const loaded=await readSource(...args);release(loaded);return loaded;}}:{})}));
     if(batch.items.find(item=>item.slotIndex===slotIndex)?.status!=='applied')throw Error(`${action} 이미지 저장 확인을 받지 못했습니다.`);
     result.applied++;latest=batch.view;result.productVersion=batch.view.productVersion;
     if(stage==='detail')await linkDetailWorkspace(batch,slotIndex);

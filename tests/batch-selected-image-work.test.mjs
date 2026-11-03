@@ -15,7 +15,7 @@ function loadModel(){
     assert.ok(name.startsWith('@/'),name);return load(name.slice(2)+'.ts');
    }},{filename:file});return exports;
  }
- return{model:load('app/batch-selected-image-work.ts'),style:load('app/free-image-vision-style.ts'),vision:load('app/free-image-vision-error.ts'),visionContract:load('app/image-text-vision.ts'),expire(){for(const timer of [...timers.values()])timer.fn();},timers};
+ return{model:load('app/batch-selected-image-work.ts'),settingsModel:load('app/workspace-settings.ts'),style:load('app/free-image-vision-style.ts'),vision:load('app/free-image-vision-error.ts'),visionContract:load('app/image-text-vision.ts'),expire(){for(const timer of [...timers.values()])timer.fn();},timers};
 }
 function fixture(stage='detail',keys=['owner/source-a.png','owner/source-b.png']){
  const runtime=loadModel(),calls=[],canvases=[],controller=new AbortController();let current=true;
@@ -225,6 +225,56 @@ for(const stage of ['main','additional','detail'])test(`${stage}: saved setting,
  }
 });
 
+for(const stage of ['main','additional','detail'])test(`${stage}: only explicit current-image rework processes manually selected raw keys`,async()=>{
+ for(const reworkCurrentSelection of [undefined,false,true])for(const manual of ['quotation','role',...(stage==='main'?['option']:[])]){
+  const h=fixture(stage,['owner/source-b.png']),field={main:'mainImage',additional:'additionalImages',detail:'detailImages'}[stage];
+  h.options.reworkCurrentSelection=reworkCurrentSelection;
+  if(manual==='quotation'){h.view.overrides.options.option={[field]:'owner/source-b.png'};h.view.resolved.rows[0].fields[field].source='manual-option';}
+  if(manual==='role')h.content.assets[stage]={value:[],provenance:'manual',updatedAt:null};
+  if(manual==='option')h.productOptions.rows[0].provenance.imageKey='manual';
+  const contentBefore=plain(h.content),otherFields=plain(h.view.resolved.rows[0].fields),result=await h.run(),expected=reworkCurrentSelection?1:0;
+  assert.equal(result.applied,expected,`${manual}/${reworkCurrentSelection}`);assert.equal(result.status,expected?'completed':'skipped');
+  assert.deepEqual(h.calls.filter(row=>row[0]==='read').map(row=>row[1]),expected?['owner/source-b.png']:[]);assert.equal(h.calls.filter(row=>row[0]==='apply').length,expected);
+  assert.deepEqual(h.content,contentBefore);for(const [key,value]of Object.entries(otherFields))if(key!==field&&!(stage==='main'&&key==='wireMain'))assert.deepEqual(h.view.resolved.rows[0].fields[key],value);
+ }
+});
+
+for(const stage of ['additional','detail'])test(`${stage}: current-image rework skips completed edits and processes only current raw slots in order`,async()=>{
+ const saved='owner/free-image-product-old.png',keys=stage==='detail'?['owner/top.png',saved,'owner/source-b.png','owner/source-a.png','owner/bottom.png']:[saved,'owner/source-b.png','owner/source-a.png'];
+ const h=fixture(stage,keys),field=stage==='detail'?'detailImages':'additionalImages',read=h.deps.readSource,recognized=[];
+ h.options.reworkCurrentSelection=true;h.view.overrides.options.option={[field]:keys.join('\n')};h.view.resolved.rows[0].fields[field].source='manual-option';
+ if(stage==='detail')h.view.protectedDetailImageKeys=['owner/top.png','owner/bottom.png'];
+ h.deps.readSource=async(...args)=>{const image=await read(...args);if(args[2]===saved){assert.deepEqual(plain(args[7]),{restoreEditor:true,anchorPolicy:'current-target-v1'});return{...image,source:{...image.source,sourceKey:'owner/old-source.png',editorSource:{resultKey:saved,anchorPolicy:'current-target-v1'}},editDocument:{format:'free-image-edit-v1',width:100,height:60,sourceLanguage:'zh',regions:[{...h.region('旧文'),translated:'검토 완료',translationProvenance:'manual'}]}};}return image;};
+ const recognize=h.deps.recognize;h.deps.recognize=async image=>{recognized.push(image.source.sourceKey);return recognize(image);};
+ const contentBefore=plain(h.content),result=await h.run(),slots=stage==='detail'?[2,3]:[1,2];
+ assert.equal(result.status,'completed');assert.equal(result.applied,2);assert.equal(result.skipped,stage==='detail'?3:1);
+ assert.deepEqual(h.calls.filter(row=>row[0]==='read').map(row=>row[1]),[saved,'owner/source-b.png','owner/source-a.png']);assert.deepEqual(recognized,['owner/source-b.png','owner/source-a.png']);
+ assert.deepEqual(h.calls.filter(row=>row[0]==='apply').map(row=>row[1]),slots);assert.deepEqual(h.calls.filter(row=>row[0]==='translate').map(row=>row[1]),stage==='detail'?['en','zh']:[]);
+ assert.equal(h.view.resolved.rows[0].fields[field].value,stage==='detail'?'owner/top.png\n'+saved+'\nowner/free-image-product-result-2.png\nowner/free-image-product-result-3.png\nowner/bottom.png':saved+'\nowner/free-image-product-result-1.png\nowner/free-image-product-result-2.png');assert.deepEqual(h.content,contentBefore);
+});
+
+test('current-image rework uses the real planner and preserves manual blanks, excluded options and unselected roles',async()=>{
+ const h=fixture('additional',['owner/source-b.png','owner/source-a.png']),field='additionalImages';h.options.reworkCurrentSelection=true;
+ h.view.resolved.schema.categoryId='991';h.view.resolved.schema.categoryPath=['합성'];
+ h.view.overrides.options.option={[field]:'owner/source-b.png\nowner/source-a.png'};h.view.resolved.rows[0].fields[field].source='manual-option';
+ const blank=plain(h.view.resolved.rows[0]);blank.optionId='blank';blank.fields[field]={value:'',source:'manual-option',issues:[],needsReview:false};h.view.overrides.options.blank={[field]:''};
+ const excluded=plain(h.view.resolved.rows[0]);excluded.optionId='excluded';excluded.included=false;
+ h.view.resolved.rows.push(blank,excluded);h.view.automatic.rows.push(plain(blank),plain(excluded));
+ const untouched=plain([h.view.resolved.rows.slice(1),h.content,h.view.resolved.rows[0].fields.mainImage,h.view.resolved.rows[0].fields.detailImages]);
+ const fetcher=h.options.fetcher,settings={...h.settingsModel.newWorkspaceSettings,translateImages:true};
+ h.options.fetcher=async(url,init)=>url==='/api/settings'?Response.json({settings,scope:h.plan.scope}):url.includes('/quotation-fields')?Response.json(h.view):fetcher(url,init);
+ delete h.deps.plan;delete h.deps.refresh;
+ const result=await h.run();assert.equal(result.status,'completed',JSON.stringify(result));assert.equal(result.applied,2);assert.deepEqual(Object.keys(result.state.batches),['option']);
+ assert.deepEqual(h.calls.filter(row=>row[0]==='read').map(row=>row[1]),['owner/source-b.png','owner/source-a.png']);assert.deepEqual(h.calls.filter(row=>row[0]==='apply').map(row=>row[1]),[0,1]);
+ assert.deepEqual(plain([h.view.resolved.rows.slice(1),h.content,h.view.resolved.rows[0].fields.mainImage,h.view.resolved.rows[0].fields.detailImages]),untouched);
+});
+
+test('current-image rework stops at a saved partial edit before processing a later raw image',async()=>{
+ const h=partialFixture('detail',['owner/source-a.png','owner/source-b.png']);await h.run();h.options.state=h.model.createSelectedImageStageState('owner','product','detail');h.options.reworkCurrentSelection=true;
+ const before=h.calls.filter(row=>['translate','render','apply'].includes(row[0])).length,result=await h.run();
+ assert.equal(result.status,'partial');assert.equal(result.failed,1);assert.equal(result.applied,0);assert.equal(h.calls.filter(row=>['translate','render','apply'].includes(row[0])).length,before);assert.equal(result.state.batches.option.items[1].status,'pending');
+});
+
 test('detail banner slots retain exact positions and only ordinary source slots are processed',async()=>{
  const h=fixture('detail',['owner/top.png','owner/source-a.png','owner/bottom.png']);h.view.protectedDetailImageKeys=['owner/top.png','owner/bottom.png'];
  const result=await h.run();assert.equal(result.applied,1);assert.equal(result.skipped,2);assert.deepEqual(h.calls.filter(row=>row[0]==='read').map(row=>row[1]),['owner/source-a.png']);assert.equal(h.view.resolved.rows[0].fields.detailImages.value,'owner/top.png\nowner/free-image-product-result-1.png\nowner/bottom.png');
@@ -252,7 +302,7 @@ for(const stage of ['main','additional','detail'])test(`${stage}: current server
  h.deps.readSource=async(...args)=>{const image=await read(...args);image.visionConfiguration=configuration;image.noTextProof={policy:c.IMAGE_TEXT_INSPECTION_POLICY,productId:'product',sourceKey:image.source.sourceKey,sourceSha256:image.source.sourceSha256,width:image.width,height:image.height,requestId:'12345678-1234-4123-8123-123456789abc',verifiedAt:'2026-10-30T00:00:00.000Z',sourceLanguage:'zh',configuration};return image;};
  h.deps.recognize=async()=>{throw Error('A verified no-op must not OCR again');};
  const before=plain([h.view,h.content,h.plan.settings]),result=await h.run();assert.equal(result.status,'completed');assert.equal(result.applied,0);assert.equal(result.verifiedUnchanged,1);assert.equal(result.failed,0);assert.deepEqual(plain([h.view,h.content,h.plan.settings]),before);assert.equal(h.calls.filter(row=>['render','apply','translate'].includes(row[0])).length,0);
- const again=await h.run();assert.equal(again.status,'completed');assert.equal(again.verifiedUnchanged,1);assert.equal(h.calls.filter(row=>row[0]==='read').length,2,'same session rechecks source SHA and current policy without OCR');
+ h.options.reworkCurrentSelection=true;const again=await h.run();assert.equal(again.status,'completed');assert.equal(again.verifiedUnchanged,1);assert.equal(h.calls.filter(row=>row[0]==='read').length,2,'same session rechecks source SHA and current policy without OCR');
  h.options.state=h.model.createSelectedImageStageState('owner','product',stage);assert.equal((await h.run()).status,'completed');assert.equal(h.calls.filter(row=>['render','apply','translate'].includes(row[0])).length,0,'fresh session uses server receipt without inference');
 });
 test('no-op proof with wrong source SHA, source key, model or policy fails closed without inference or writes',async()=>{
@@ -336,7 +386,7 @@ test('checkpoint advance rejects outside edits, changed source choices and every
 test('lost ACK state is read-only recovered before a separate explicit retry can save the next slot',async()=>{
  const h=fixture(),apply=h.deps.apply;let captured;
  h.deps.apply=async(batch,index,_signal,progress)=>{h.calls.push(['attempt',index]);captured={...batch,items:batch.items.map(row=>row.slotIndex===index?{...row,status:'uncertain',attempt:{image:row.rendered,before:batch.view}}:row)};progress(captured);throw Error('lost ACK');};
- const uncertain=await h.run();assert.equal(uncertain.status,'uncertain');assert.equal(h.options.state.batches.option,captured);
+ const uncertain=await h.run();assert.equal(uncertain.status,'uncertain');assert.equal(h.options.state.batches.option,captured);h.options.reworkCurrentSelection=true;
  h.deps.recover=async(batch,_signal,progress)=>{h.calls.push(['recover']);assert.equal(batch.items[0].attempt.image,captured.items[0].attempt.image);const recovered={...batch,items:batch.items.map(row=>row.status==='uncertain'?{...row,status:'ready',attempt:undefined}:row)};progress(recovered);return recovered;};
  const reads=h.calls.filter(row=>row[0]==='read').length,recovered=await h.run();assert.equal(recovered.status,'partial');assert.equal(recovered.recovered,true);assert.equal(h.calls.filter(row=>row[0]==='read').length,reads);assert.equal(h.calls.filter(row=>row[0]==='attempt').length,1);assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);
  h.deps.apply=apply;const completed=await h.run();assert.equal(completed.status,'completed');assert.equal(completed.applied,2);assert.equal(h.calls.filter(row=>row[0]==='read').length,reads+1,'unapplied recovery reuses exact first PNG and prepares only remaining image');
@@ -344,7 +394,7 @@ test('lost ACK state is read-only recovered before a separate explicit retry can
 
 test('failed read-only recovery retains its PNG and cannot fall through to a new upload',async()=>{
  const h=fixture('main',['owner/source-a.png']);h.deps.apply=async(batch,index,_signal,progress)=>{progress({...batch,items:batch.items.map(row=>({...row,status:'uncertain',attempt:{image:row.rendered,before:batch.view}}))});throw Error('lost');};await h.run();const source=h.options.state.batches.option.items[0].attempt.image;
- h.deps.recover=async()=>{throw Error('still unknown');};const result=await h.run();assert.equal(result.status,'uncertain');assert.equal(result.recovered,undefined);assert.equal(h.options.state.batches.option.items[0].attempt.image,source);assert.equal(h.calls.filter(row=>row[0]==='read').length,1);
+ h.options.reworkCurrentSelection=true;h.deps.recover=async()=>{throw Error('still unknown');};const result=await h.run();assert.equal(result.status,'uncertain');assert.equal(result.recovered,undefined);assert.equal(h.options.state.batches.option.items[0].attempt.image,source);assert.equal(h.calls.filter(row=>row[0]==='read').length,1);
 });
 
 test('recovering the first option cannot complete a stage whose later options have not started',async()=>{
@@ -414,7 +464,7 @@ for(const stage of ['main','additional','detail'])test(`${stage}: uncertain Visi
  const result=await h.run();assert.equal(result.status,'partial');assert.equal(result.inferencePending,true);assert.equal(result.recoveryBatch,undefined);assert.equal(result.applied,0);assert.equal(result.failed,1);
  assert.equal(h.calls.filter(row=>row[0]==='read').length,1);assert.equal(h.calls.filter(row=>row[0]==='vision').length,1);assert.equal(h.calls.some(row=>['translate','render','apply'].includes(row[0])),false);assert.ok(h.canvases.every(canvas=>canvas.width===0));
  const pending=plain(result.state.inferencePending);assert.equal(pending.attempt.requestId,requestId);assert.equal(pending.optionId,'option');assert.equal(pending.slotIndex,0);assert.equal(pending.attempt.source.sourceKey,'owner/source-a.png');assert.equal(result.state.batches['later-option'],undefined);
- const calls=h.calls.length,resumed=await h.run();assert.equal(resumed.inferencePending,true);assert.equal(h.calls.length,calls+1,'only the retained request status is read');assert.equal(h.calls.at(-1)[0],'vision-status');assert.deepEqual(plain(resumed.state.inferencePending),{...pending,observation:{status:'uncertain'}});
+ h.options.reworkCurrentSelection=true;const calls=h.calls.length,resumed=await h.run();assert.equal(resumed.inferencePending,true);assert.equal(h.calls.length,calls+1,'only the retained request status is read');assert.equal(h.calls.at(-1)[0],'vision-status');assert.deepEqual(plain(resumed.state.inferencePending),{...pending,observation:{status:'uncertain'}});
  h.plan.scope.company={code:'A01526306',name:'유앤채'};await assert.rejects(h.run(),/변경/);assert.equal(h.calls.length,calls+1);
 });
 

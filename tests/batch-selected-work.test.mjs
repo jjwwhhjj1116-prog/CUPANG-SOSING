@@ -77,6 +77,20 @@ function actualSelectedImageFixture(stage='additional'){
  return vm.runInNewContext(declarations+'\nfixture',{assert,fs,vm,ts,plain,Error,Date,URL,TextEncoder,AbortController,AbortSignal,structuredClone,Blob,Response,Uint8ClampedArray})(stage);
 }
 
+for(const mode of [undefined,'full','selected'])test(`coordinator ${mode??'default'} mode reworks current manual photos only for selected work`,async()=>{
+ const h=fixture(),images=actualSelectedImageFixture(),field='additionalImages';h.company({code:'A01464742',name:'와이홉'});h.options.mode=mode;
+ images.view.overrides.options.option={[field]:'owner/source-b.png\nowner/source-a.png'};images.view.resolved.rows[0].fields[field].value='owner/source-b.png\nowner/source-a.png';images.view.resolved.rows[0].fields[field].source='manual-option';
+ Object.assign(h.deps['@/app/batch-selected-image-work'],images.model,{processSelectedImageStage:(id,stage,options)=>images.model.processSelectedImageStage(id,stage,{...images.options,...options,fetcher:images.options.fetcher},images.deps)});
+ h.intercept(call=>{
+  if(call.url==='/api/products/product')return Response.json({product:{id:'product',title:'검증 상품',updated_at:images.view.productVersion}});
+  if(call.url.endsWith('/work-draft'))return Response.json({productId:'product',productVersion:images.view.productVersion});
+  if(call.url.endsWith('/content'))return Response.json({content:images.content});
+  if(call.url.includes('/quotation-fields'))return Response.json(images.view);return null;
+ });
+ const result=await h.run(['additionalImages']),selected=mode==='selected';assert.equal(result.stages[0].status,selected?'draft':'skipped',JSON.stringify(result));
+ assert.deepEqual(plain(images.calls.filter(row=>row[0]==='read').map(row=>row[1])),selected?['owner/source-b.png','owner/source-a.png']:[]);assert.deepEqual(plain(images.calls.filter(row=>row[0]==='apply').map(row=>row[1])),selected?[0,1]:[]);
+});
+
 for(const external of [null,'before-stage','inside-helper','after-ack'])test(`a confirmed sibling label save ${external??'alone'} ${external?'cannot adopt an outside edit':'lets the partial image resume only its remaining slot'}`,async()=>{
  const h=fixture(),images=actualSelectedImageFixture(),recognize=images.deps.recognize;h.company({code:'A01464742',name:'와이홉'});
  Object.assign(h.deps['@/app/batch-selected-image-work'],images.model,{processSelectedImageStage:(id,stage,options)=>images.model.processSelectedImageStage(id,stage,{...images.options,...options,fetcher:images.options.fetcher},images.deps)});
