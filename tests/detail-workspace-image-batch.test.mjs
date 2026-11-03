@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
+import {createHash} from 'node:crypto';
 import { detailWorkspaceFixture, json } from './helpers/detail-workspace-api.mjs';
 import { cropClientFixture } from './helpers/free-image-crop.mjs';
 import { runtime, plain } from './helpers/detail-workspace.mjs';
@@ -94,6 +95,23 @@ test('unknown Vision stops later BODY inference and original-status recovery pre
   assert.deepEqual(prepared.items.map(item=>item.status),['ready','pending']);assert.ok(prepared.items[0].rendered);assert.equal(prepared.items[0].visionAttempt,undefined);
   state='failed';const failed=await f.batch.recoverDetailWorkspaceBatchResult(original,signal(),()=>{},v.deps);assert.equal(failed.items[0].status,'failed');assert.equal(failed.items[0].visionAttempt,undefined);
   assert.deepEqual(statuses,Array(5).fill('GET'));assert.equal(count,1);assert.deepEqual(v.stages,['render']);assert.deepEqual(f.tables(),before);assert.equal(f.calls.filter(call=>call.init.body instanceof FormData).length,0);
+ }finally{f.api.close();}
+});
+
+test('a rejected v1 old-source collision stays failed while the real v2 route and client prepare the next distinct BODY without retry or final publication',async()=>{
+ const f=await fixture({vision:true});try{
+  const route=f.api.load('app/api/products/[id]/image-text/route.ts'),ledger=f.api.load('db/image-vision-requests.ts'),claim=ledger.claimImageVisionRequest,oldId='90700000-0000-4000-8000-000000000009',posts=[],responses=[],provider=[];let oldRow;
+  ledger.claimImageVisionRequest=async scope=>{if(!oldRow){const source=posts[0].source,sourceScope=createHash('sha256').update(JSON.stringify([source.sourceKey,source.sourceSha256,scope.company,scope.model,'zh','foreign-text-inspection-v1'])).digest('hex');assert.notEqual(sourceScope,scope.sourceScope);
+   assert.equal((await claim({...scope,requestId:oldId,sourceScope,fingerprint:'9'.repeat(64)})).claimed,true);oldRow=JSON.stringify(f.api.sqlite.prepare('SELECT * FROM image_vision_requests WHERE request_id=?').get(oldId));}return claim(scope);};
+  f.api.bindings.AI.run=async(model,input)=>{provider.push({model,input});return{response:{decision:'foreign-text',blocks:[{original:'中文',translated:'한국어',kind:'overlay',box:{x:20,y:20,width:100,height:25}}]}};};
+  f.intercept(async(url,init)=>{if(!url.endsWith('/image-text')||init.method!=='POST')return;posts.push(JSON.parse(init.body));const response=await route.POST(new Request('https://app.test'+url,{...init,headers:{...init.headers,origin:'https://app.test'}}),f.context);responses.push(await response.clone().json());return response;});
+  const before=plain(f.tables()),v=visionDeps(f),prepared=await f.batch.prepareDetailWorkspaceImageBatch({selection:f.selection,saved:f.saved,language:'zh'},signal(),()=>{},{...v.deps,recognize:f.canvas.client.recognizeFreeImage});
+  assert.deepEqual(prepared.items.map(item=>item.status),['failed','ready']);assert.equal(prepared.items[0].visionAttempt,undefined);assert.equal(prepared.items[0].rendered,undefined);assert.ok(prepared.items[1].rendered);assert.equal(responses[0].code,'IMAGE_VISION_NOT_ADMITTED');assert.equal(responses[0].uncertain,false);
+  assert.equal(posts.length,2);assert.equal(posts[0].inspectionPolicy,'product-text-preservation-v2');assert.notEqual(posts[0].source.sourceKey,posts[1].source.sourceKey);assert.notEqual(posts[0].requestId,posts[1].requestId);assert.equal(provider.length,1);assert.equal(JSON.stringify(f.api.sqlite.prepare('SELECT * FROM image_vision_requests WHERE request_id=?').get(oldId)),oldRow);
+  assert.deepEqual(plain(f.api.sqlite.prepare('SELECT status,provider_requests FROM image_vision_requests WHERE request_id=?').get(oldId)),{status:'running',provider_requests:null});assert.deepEqual(plain(f.api.sqlite.prepare('SELECT status,provider_requests FROM image_vision_requests WHERE request_id=?').get(posts[1].requestId)),{status:'completed',provider_requests:1});
+  assert.equal(f.api.sqlite.prepare('SELECT count(*) AS n FROM image_vision_requests WHERE request_id=?').get(posts[0].requestId).n,0);assert.equal(f.api.sqlite.prepare('SELECT count(*) AS n FROM image_vision_requests').get().n,2);
+  const after=plain(f.tables());for(const table of ['products','product_content','product_options','product_quotation_fields','product_detail_workspaces'])assert.deepEqual(after[table],before[table],table);
+  assert.equal(f.calls.filter(call=>call.init.body instanceof FormData).length,0);assert.deepEqual(v.stages,['render']);
  }finally{f.api.close();}
 });
 

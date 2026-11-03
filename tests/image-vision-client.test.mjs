@@ -54,6 +54,13 @@ test('confirmed provider rejection keeps its typed false uncertainty without fab
  assert.equal(h.image.visionPending,undefined);assert.equal(h.calls.length,1);
 });
 
+test('non-admitted current requests never become pending inference while an original running request remains uncertain',async()=>{
+ for(const admitted of [false,true]){const h=fixture();h.image.visionFetcher=async(_url,init)=>{h.calls.push(JSON.parse(init.body));return Response.json(admitted?{error:'이 이미지 Vision 요청은 이미 실행됐거나 응답이 불명확합니다.'}:{error:'같은 원본의 이미지 Vision 요청이 진행 중입니다.',code:'IMAGE_VISION_NOT_ADMITTED',uncertain:false},{status:409});};
+ let observed;await assert.rejects(h.client.recognizeFreeImage(h.image,'zh',new AbortController().signal),cause=>{observed=cause;return cause instanceof h.client.FreeImageVisionError&&cause.uncertain===admitted;});
+ assert.equal(observed.code,admitted?'IMAGE_VISION_RESPONSE_UNCONFIRMED':'IMAGE_VISION_NOT_ADMITTED');assert.equal(h.calls.length,1);assert.equal(h.image.visionRequestId,h.calls[0].requestId);assert.equal(!!h.image.visionPending,admitted);
+ }
+});
+
 test('exact non-admitted capacity keeps its original error attempt and allows a new UUID only on a later explicit call',async()=>{
  const h=fixture(),succeed=h.image.visionFetcher;h.image.visionFetcher=async(_url,init)=>{h.calls.push({body:JSON.parse(init.body)});return Response.json({error:'이미지 번역 서버가 혼잡합니다.',code:'IMAGE_VISION_CAPACITY',uncertain:false},{status:429});};
  let rejected;await assert.rejects(h.client.recognizeFreeImage(h.image,'zh',new AbortController().signal),cause=>{rejected=cause;return cause instanceof h.client.FreeImageVisionError&&cause.code==='IMAGE_VISION_CAPACITY'&&!cause.uncertain;});

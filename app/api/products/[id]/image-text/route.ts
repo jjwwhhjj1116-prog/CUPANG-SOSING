@@ -353,7 +353,7 @@ export async function POST(request: Request, context: Context) {
         const {claimImageVisionRequest,finishImageVisionRequest,completedImageVisionResult,finishLateImageVisionRequest}=await import('@/db/image-vision-requests');
         const claimed=await claimImageVisionRequest(scope);
         if(!claimed.claimed){
-          if(claimed.record?.request_fingerprint!==scope.fingerprint)throw new ImageTextError(409,'같은 원본의 이미지 Vision 요청이 진행 중이거나 응답을 확인하지 못했습니다. 자동 재요청하지 않습니다.');
+          if(claimed.record?.request_fingerprint!==scope.fingerprint)return response({error:'같은 원본의 이미지 Vision 요청이 진행 중이거나 응답을 확인하지 못했습니다. 자동 재요청하지 않습니다.',code:'IMAGE_VISION_NOT_ADMITTED',uncertain:false},409);
           if(claimed.record.status!=='completed')throw new ImageTextError(409,'이 이미지 Vision 요청은 이미 실행됐거나 응답이 불명확합니다. 자동 재요청하지 않습니다.');
           let saved:unknown;try{saved=JSON.parse(claimed.record.result??'null');}catch{throw new ImageVisionError('BLOCKS');}
           const result=readStoredImageVisionResult(saved,source.width,source.height);

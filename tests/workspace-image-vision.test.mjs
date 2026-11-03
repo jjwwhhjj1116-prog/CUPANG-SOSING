@@ -16,6 +16,27 @@ async function fixture(company=companies[0]){
  return {...f,route,configuration,policy,calls,controls,post,status,networkBefore:[...f.api.network]};
 }
 const originalRows=f=>JSON.stringify(['products','product_content','product_options','product_quotation_fields','product_detail_workspaces'].map(table=>f.api.sqlite.prepare('SELECT * FROM '+table).all()));
+test('an unadmitted new UUID is a confirmed rejection while the original running UUID stays ambiguous and untouched',async()=>{
+ const f=await fixture();try{
+  const source=(await json(await f.openImage())).source,ledger=f.api.load('db/image-vision-requests.ts'),claim=ledger.claimImageVisionRequest,oldId='90700000-0000-4000-8000-000000000009';let seeded;
+  ledger.claimImageVisionRequest=async scope=>{if(!seeded){assert.equal((await claim({...scope,requestId:oldId})).claimed,true);seeded=JSON.stringify(f.api.sqlite.prepare('SELECT * FROM image_vision_requests').all());}return claim(scope);};
+  const before=originalRows(f),rejected=await f.post(source),body=await rejected.json();assert.equal(rejected.status,409);assert.equal(body.code,'IMAGE_VISION_NOT_ADMITTED');assert.equal(body.uncertain,false);
+  assert.equal(f.calls.length,0);assert.equal(JSON.stringify(f.api.sqlite.prepare('SELECT * FROM image_vision_requests').all()),seeded);assert.equal(f.api.sqlite.prepare('SELECT count(*) AS n FROM image_vision_requests WHERE request_id=?').get(requestId).n,0);
+  assert.deepEqual(plain(f.api.sqlite.prepare('SELECT status,provider_requests FROM image_vision_requests WHERE request_id=?').get(oldId)),{status:'running',provider_requests:null});
+  const original=await f.post(source,{requestId:oldId}),pending=await original.json();assert.equal(original.status,409);assert.notEqual(pending.uncertain,false);assert.equal(pending.code,undefined);assert.equal(f.calls.length,0);
+  assert.equal(JSON.stringify(f.api.sqlite.prepare('SELECT * FROM image_vision_requests').all()),seeded);assert.equal(originalRows(f),before);
+ }finally{f.api.close();}
+});
+
+test('a source clock race that prevents the atomic claim reports only non-admission without creating or finishing a request',async()=>{
+ const f=await fixture();try{
+  const source=(await json(await f.openImage())).source,ledger=f.api.load('db/image-vision-requests.ts'),claim=ledger.claimImageVisionRequest,later='2099-01-01T00:00:00.000Z';
+  ledger.claimImageVisionRequest=async scope=>{f.api.sqlite.prepare('UPDATE products SET updated_at=? WHERE id=?').run(later,f.product.id);return claim(scope);};
+  const rejected=await f.post(source),body=await rejected.json();assert.equal(rejected.status,409);assert.equal(body.code,'IMAGE_VISION_NOT_ADMITTED');assert.equal(body.uncertain,false);assert.equal(f.calls.length,0);
+  assert.equal(f.api.sqlite.prepare('SELECT count(*) AS n FROM image_vision_requests').get().n,0);assert.equal(f.api.sqlite.prepare('SELECT updated_at FROM products WHERE id=?').get(f.product.id).updated_at,later);
+ }finally{f.api.close();}
+});
+
 for(const company of companies)test(`${company.companyCode}: exact saved BODY uses the Vision ledger/cache and historical GET without altering source or workspace`,async()=>{
  const f=await fixture(company);try{
   const opened=await json(await f.openImage()),source=opened.source,before=originalRows(f),files=[...f.api.objects].map(([key,bytes])=>[key,sha(bytes)]);
