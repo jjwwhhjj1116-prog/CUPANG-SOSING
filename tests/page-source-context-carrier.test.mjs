@@ -23,6 +23,11 @@ const wrap=literal=>prefix+literal+');';
 const original=readPageContextLiteral(scripts[0]).value;
 const changed=mutate=>{const value=structuredClone(original);mutate(value);return [wrap(JSON.stringify(value))];};
 const nodes=value=>({json:value.result.data.Root.fields.dataJson,global:value.result.global.globalData,detail:value.result.global.globalData.model.offerDetail,pack:value.result.data.productPackInfo.fields.pieceWeightScale,description:value.result.data.description.fields});
+function tradeFacts(value){
+ const trade=nodes(value).global.model.tradeModel={offerId:965495834905,beginAmount:1,offerPriceModel:{currentPrices:[{beginAmount:1,price:'1.18'}]}};
+ const main=value.result.data.mainPrice={fields:{uiType:'od_main_price',finalPriceModel:{tradeWithoutPromotion:{offerBeginAmount:1}},priceModel:{currentPrices:[{beginAmount:1,price:'1.18'}]}}};
+ return {trade,main:main.fields};
+}
 
 test('context literal decimal keys are normalized only in object key positions; strings/array values retain bytes',()=>{
  const result=readPageContextLiteral(wrap('{"map":{5908770696567:0.05},"text":"5908770696567: 0.05","array":[98,0.05]}'));
@@ -50,6 +55,39 @@ test('recorded context carrier preserves all23 attributes and8 declared SKU weig
  for(const row of result.options)assert.deepEqual(row.packaging,{source:'package-table',weightG:50});
  assert.equal(result.images.filter(row=>row.role==='detail').length,0,'A reference is not downloaded BODY content');
  assert.equal(result.description,'');
+});
+
+test('live Korean color display header preserves the same machine-keyed SKU weights and detail reference',()=>{
+ const input=changed(value=>nodes(value).pack.columnList.find(row=>row.name==='sku1').label='색상');
+ const result=capture(input);
+ assert.equal(result.attributes.length,23);assert.equal(result.options.length,8);
+ assert.ok(result.options.every(row=>row.packaging?.weightG===50));
+ assert.deepEqual(readPageSourceDescriptionReference(sourceUrl,input),readPageSourceDescriptionReference(sourceUrl,scripts));
+ for(const label of ['사이즈','重量(g)',''])assert.throws(()=>capture(changed(value=>nodes(value).pack.columnList.find(row=>row.name==='sku1').label=label)));
+});
+
+test('context retains explicit supplier MOQ and per-SKU available stock without inferring currency or retail pack size',()=>{
+ const input=changed(value=>{tradeFacts(value);for(const row of Object.values(nodes(value).json.skuModel.skuInfoMap))row.priceAmount=12;});
+ const result=extractPageSource({sourceUrl,scripts:input});
+ assert.ok(result.options.every(row=>row.minimumOrder===1&&row.currency===null));
+ const expected=original.result.data.Root.fields.dataJson.skuModel.skuInfoMap;
+ assert.ok(result.options.every(row=>row.stock===expected[row.name].canBookCount));
+ assert.ok(result.options.every(row=>!Object.hasOwn(row,'quantity')&&!Object.hasOwn(row,'packQuantity')));
+ const zero=capture(changed(value=>Object.values(nodes(value).json.skuModel.skuInfoMap)[0].canBookCount=0));
+ assert.equal(zero.options[0].stock,0);
+});
+
+test('context stock and minimum declarations reject invalid or conflicting supplied facts but leave absent facts unknown',()=>{
+ for(const bad of [-1,0.5,Number.MAX_SAFE_INTEGER+1,'100',false])assert.throws(()=>capture(changed(value=>Object.values(nodes(value).json.skuModel.skuInfoMap)[0].canBookCount=bad)));
+ assert.throws(()=>capture(changed(value=>Object.values(nodes(value).json.skuModel.skuInfoMap)[0].stock=1)));
+ for(const mutate of [
+  ({trade})=>trade.offerId=1,({trade})=>trade.beginAmount=0,({trade})=>trade.beginAmount=1.5,
+  ({trade})=>trade.beginAmount=false,({main})=>main.finalPriceModel.tradeWithoutPromotion.offerBeginAmount=2,
+  ({trade})=>trade.offerPriceModel.currentPrices[0].beginAmount=2,
+  ({main})=>main.priceModel.currentPrices[0].beginAmount=2,
+ ])assert.throws(()=>capture(changed(value=>mutate(tradeFacts(value)))));
+ const unknown=capture(changed(value=>{for(const row of Object.values(nodes(value).json.skuModel.skuInfoMap))delete row.canBookCount;}));
+ assert.ok(unknown.options.every(row=>row.minimumOrder===null&&row.stock===null));
 });
 
 test('recorded current offer identity authorizes the exact matching primary detail reference only',()=>{

@@ -345,11 +345,21 @@ function sourceContextProduct(scripts,offerId){
  for(const key of ['offerId','productId']){const optionalId=literalChild(model,key);if(optionalId&&!sameId(optionalId.value))fail();}
  const title=literalChild(detail,'subject',true).value;if(!plain(title,500)||plain(title,500)!==title||literalChild(path(json,'tempModel'),'offerTitle',true).value!==title)fail();
  const map=literalChild(model,'skuInfoMap',true);if(!object(map.value)||!Object.keys(map.value).length||Object.keys(map.value).length>200)fail();
- const skus=new Map();for(const [name,rows] of ownLiteralFields(map)){
+ const skus=new Map(),stocks=new Map();for(const [name,rows] of ownLiteralFields(map)){
   if(rows.length!==1)fail();const row=rows[0],sku=literalChild(row,'skuId',true).value,label=literalChild(row,'specAttrs',true).value;
   const id=typeof sku==='number'&&Number.isSafeInteger(sku)&&sku>0?String(sku):typeof sku==='string'&&/^\d{1,30}$/u.test(sku)?sku:null;
   if(!id||skus.has(id)||label!==name||!plain(name,500))fail();skus.set(id,name);
+  const stock=literalChild(row,'canBookCount')?.value,legacy=literalChild(row,'stock')?.value;
+  if(stock!=null&&(!Number.isSafeInteger(stock)||stock<0||legacy!=null&&legacy!==stock))fail();stocks.set(id,stock??null);
  }
+ // Supplier order minima are not the number of pieces in a retail pack.
+ const trade=literalChild(path(global,'model'),'tradeModel'),main=literalChild(data,'mainPrice'),minima=[];
+ const addMinimum=value=>{if(value==null)return;if(!Number.isSafeInteger(value)||value<1)fail();minima.push(value);};
+ const addTiers=value=>{if(value==null)return;if(!Array.isArray(value)||value.length>200)fail();for(const row of value)if(!object(row)||!Number.isSafeInteger(row.beginAmount)||row.beginAmount<1)fail();if(value.length)addMinimum(Math.min(...value.map(row=>row.beginAmount)));};
+ if(trade){identity(trade);addMinimum(trade.value.beginAmount);addTiers(trade.value.offerPriceModel?.currentPrices);}
+ if(main){const fields=literalChild(main,'fields',true);if(fields.value.uiType!=='od_main_price')fail();addMinimum(fields.value.finalPriceModel?.tradeWithoutPromotion?.offerBeginAmount);addTiers(fields.value.priceModel?.currentPrices);}
+ for(const value of [model.value.beginAmount,model.value.minOrderQuantity])addMinimum(value);
+ if(new Set(minima).size>1)fail();const minimumOrder=minima[0]??null;
  const attributes=[],known=new Map();for(const pair of literalArrayItems(path(detail,'featureAttributes'))){
   const field=(key,max)=>{const value=literalChild(pair,key,true).value;if(typeof value!=='string'||!value.trim()||value.length>max||/[\u0000-\u001f]/u.test(value))fail();return value.trim();};
   const name=field('name',190),value=field('value',1000),key=name.toLowerCase();if(known.has(key)){if(known.get(key)!==value)fail();continue;}known.set(key,value);attributes.push({name,value});
@@ -358,7 +368,8 @@ function sourceContextProduct(scripts,offerId){
  if(literalChild(pack,'uiType',true).value!=='od_product_pack_info'||literalChild(pack,'label',true).value!=='商品件重尺')fail();
  const scale=path(pack,'pieceWeightScale');if(literalChild(scale,'skuDimensionCount',true).value!==1)fail();
  const expected={sku1:'颜色',length:'长(cm)',width:'宽(cm)',height:'高(cm)',volume:'体积(cm³)',weight:'重量(g)'},columns=new Set();
- for(const column of literalArrayItems(path(scale,'columnList'))){const name=literalChild(column,'name',true).value;if(!Object.hasOwn(expected,name)||columns.has(name)||literalChild(column,'label',true).value!==expected[name])fail();columns.add(name);}
+ // The live Korean page localizes sku1's display header; measurement units remain exact.
+ for(const column of literalArrayItems(path(scale,'columnList'))){const name=literalChild(column,'name',true).value,label=literalChild(column,'label',true).value;if(!Object.hasOwn(expected,name)||columns.has(name)||!(label===expected[name]||name==='sku1'&&label==='색상'))fail();columns.add(name);}
  if(columns.size!==Object.keys(expected).length)fail();
  const rows=literalArrayItems(path(scale,'pieceWeightScaleInfo'),200);if(rows.length!==skus.size)fail();
  for(const row of rows){
@@ -372,7 +383,7 @@ function sourceContextProduct(scripts,offerId){
  }
  const description=path(data,'description','fields'),detailUrl=literalChild(description,'detailUrl',true).value;
  if(literalChild(description,'uiType',true).value!=='od_product_description'||typeof detailUrl!=='string'||detailUrl!==literalChild(detail,'detailUrl',true).value||!detailUrl||detailUrl.length>2048||/[\u0000-\u0020\u007f]/u.test(detailUrl))fail();
- return {attributes,packaging,detailUrl,title,model:model.value};
+ return {attributes,packaging,detailUrl,title,model:model.value,stocks,minimumOrder};
 }
 const DOM_OPTION_LABELS=['规格','颜色','尺寸','颜色分类','类型','款式','型号','套餐','配置','版本','容量','尺码','花色','口味','颜色规格','材质','风格','图案'];
 const DOM_OPTION_ROOT='[class*="sku" i],[class*="prop" i],[class*="spec" i]';
@@ -631,7 +642,7 @@ export function extractPageSource(input,now=Date.now()){
  if(object(sm)&&Array.isArray(sm.skuProps))for(const prop of sm.skuProps)for(const value of Array.isArray(prop.value)?prop.value:[]){const url=firstImage(value.imageUrl,value.image,value.picUrl,value.imageURI);if(url)valueImages.set(plain(value.name,500),url);}
  const currency=/(?:CNY|人民币|[¥￥])/.test(plain(input.priceText,2000))?'CNY':null;
  const order=plain(input.minimumOrderText,1000).match(/(?:^|\s)(\d+)\s*(?:件|顶|个|双|套)?\s*起批/u);
- const minimumOrder=object(sm)?integer(sm.beginAmount??sm.minOrderQuantity)??(order?integer(order[1]):null):order?integer(order[1]):null;
+ const minimumOrder=context?.minimumOrder??(object(sm)?integer(sm.beginAmount??sm.minOrderQuantity)??(order?integer(order[1]):null):order?integer(order[1]):null);
  const map=object(sm)?sm.skuInfoMap??sm.skuInfoMapOriginal:null;
  const options=[];
  if(object(map)&&Object.keys(map).length>200)throw Error('옵션이 200개를 초과했습니다. 원문을 일부만 담지 않았습니다.');
@@ -642,7 +653,7 @@ export function extractPageSource(input,now=Date.now()){
   const unitPriceCny=price(row.discountPrice??row.price??row.skuPrice??row.consignPrice);
   const imageUrl=firstImage(row.imageUrl,row.image)??valueImages.get(name)??[...valueImages].find(([label])=>optionParts(name).includes(label))?.[1]??null;
   if(imageUrl)addImage(imageUrl,'additional');
-  options.push({key:plain(key,200),name,supplierSku,unitPriceCny,currency,minimumOrder,stock:Number.isSafeInteger(row.stock)&&row.stock>=0?row.stock:null,imageUrl});
+  options.push({key:plain(key,200),name,supplierSku,unitPriceCny,currency,minimumOrder,stock:context?.stocks.get(supplierSku)??(Number.isSafeInteger(row.stock)&&row.stock>=0?row.stock:null),imageUrl});
  }
  if(object(sm)&&input.domOptions?.format==='yoofam-page-dom-option-images-v1'){
   // An invalid/ambiguous optional observation never erases valid script facts.
