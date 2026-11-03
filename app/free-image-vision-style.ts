@@ -9,6 +9,18 @@ const messages:Record<VisionStyleIssue,string>={
  VISION_BACKGROUND_UNAVAILABLE:'주변 배경색을 확인하지 못했습니다. 원본을 보며 색상과 영역을 직접 설정한 뒤 선택해주세요.',
  VISION_TEXT_FIT:'한국어를 읽을 수 있는 크기로 넣기 어렵습니다. 문구와 영역을 직접 조정한 뒤 선택해주세요.',
 };
+/** Only complete diagnostics emitted below qualify; unknown/provider text stays unresolved. */
+export function isOnlyVisionStyleIssue(value:string|null):boolean{
+ if(!value)return false;
+ let remaining=value;const seen=new Set<string>();
+ while(remaining){
+  const match=Object.entries(messages).find(([code,message])=>!seen.has(code)&&(remaining===`${code}: ${message}`||remaining.startsWith(`${code}: ${message} `)));
+  if(!match)return false;
+  const [code,message]=match;seen.add(code);remaining=remaining.slice(`${code}: ${message}`.length);
+  if(remaining){if(!remaining.startsWith(' '))return false;remaining=remaining.slice(1);if(!remaining)return false;}
+ }
+ return true;
+}
 type PixelContext=Pick<CanvasRenderingContext2D,'getImageData'|'measureText'|'font'>;
 type Box=ImageTextVisionBlock['box'];
 const inside=(x:number,y:number,box:Box)=>x>=box.x&&x<box.x+box.width&&y>=box.y&&y<box.y+box.height;

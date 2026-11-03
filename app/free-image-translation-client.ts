@@ -10,7 +10,7 @@ import { validateFreeImageCropRect, validateFreeImageCrop, type FreeImageCropRec
 import { validateFreeImageEditDocument, type FreeImageEditDocument } from '@/app/free-image-edit-document';
 import type { Worker, WorkerOptions, LoggerMessage } from 'tesseract.js';
 import {IMAGE_TEXT_VISION_MODEL,IMAGE_TEXT_VISION_NOTICE,IMAGE_TEXT_INSPECTION_POLICY,parseImageTextVisionConfiguration,parseImageTextVisionResult,type ImageTextVisionConfiguration,type ImageTextVisionResult} from '@/app/image-text-vision';
-import {initializeVisionRegions,type VisionStyleIssue} from '@/app/free-image-vision-style';
+import {initializeVisionRegions,isOnlyVisionStyleIssue,type VisionStyleIssue} from '@/app/free-image-vision-style';
 import {FreeImageVisionError} from '@/app/free-image-vision-error';
 import {parseImageNoTextProof,type ImageNoTextProof} from '@/app/image-no-text-proof';
 import type {FreeImageVisionAttempt} from '@/app/free-image-vision-error';
@@ -462,7 +462,11 @@ export async function renderFreeImageTranslation(image: FreeImageLoaded, regions
   const blob = await abortable(new Promise<Blob>((resolve, reject) => final.canvas.toBlob(value => value ? resolve(value) : reject(Error('번역 이미지 미리보기를 만들지 못했습니다.')), 'image/png')), signal);
   signal.throwIfAborted();
   if (!blob.size || blob.size > MAX_IMAGE_BYTES) throw Error('번역 이미지가 10MB를 초과합니다. 원본 크기를 줄여주세요.');
-  return { source: image.source, output: blob, width: final.canvas.width, height: final.canvas.height, ...(selectedOptions.length ? { optionImageIds: selectedOptions } : {}), ...(crop ? { crop } : {}), ...(editDocument ? { editDocument } : {}) };
+  // A completed, explicitly selected erase has handled its initial style warning.
+  // Keep the caller/history, untouched rows and translation failures unchanged.
+  const reviewedDocument=editDocument&&image.source.quotationTarget&&['main','additional'].includes(image.source.role)
+    ?{...editDocument,regions:editDocument.regions.map(region=>region.selected&&region.erase===true&&isOnlyVisionStyleIssue(region.issue)?{...region,issue:null}:region)}:editDocument;
+  return { source: image.source, output: blob, width: final.canvas.width, height: final.canvas.height, ...(selectedOptions.length ? { optionImageIds: selectedOptions } : {}), ...(crop ? { crop } : {}), ...(reviewedDocument ? { editDocument:reviewedDocument } : {}) };
 }
 
 export class FreeImageApplyError extends Error { constructor(message: string, public uncertain: boolean) { super(message); } }
