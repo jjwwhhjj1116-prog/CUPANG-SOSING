@@ -11,6 +11,8 @@ import type {FreeImageLoaded,FreeImageQuotationRequest} from '@/app/free-image-t
 export type SelectedImageReview={format:'selected-image-review-v1';ownerId:string;company:NonNullable<WorkspaceSettingsScope['company']>;source:FreeImageSource;
  requestId:string;sourceLanguage:'zh'|'en';configuration:ImageTextVisionConfiguration;inspectionPolicy:ImageTextInspectionPolicy;result:ImageTextVisionResult;
  category:string;schema:string;options:string;sources:string;styleIssues:string[];message:string};
+/** Navigation to an unchanged failed source; carries no completed inference. */
+export type SelectedImageReviewTarget=Pick<SelectedImageReview,'ownerId'|'company'|'source'>;
 const canonical=(value:unknown):string=>JSON.stringify(value,(_key,item)=>item&&typeof item==='object'&&!Array.isArray(item)?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
 const changed=()=>Error('계정·카테고리·옵션 또는 검토 이미지가 변경됐습니다. 최신 원본에서 다시 확인해주세요.');
 function selection(view:QuotationFieldsView,source:FreeImageSource){
@@ -21,6 +23,20 @@ function selection(view:QuotationFieldsView,source:FreeImageSource){
  if(rows.length!==1||!row.included||fields.primary!==target.fieldKey||fields.fields.some(field=>field.readOnly)||fields.linked.some(key=>row.fields[key]?.value!==target.value)
   ||quotationImageKeys(target.value)[target.slotIndex]!==source.sourceKey||!view.imageKeys.includes(source.sourceKey))throw changed();
  return{category:canonical(view.categoryContext),schema:canonical(fields.fields),options:canonical(view.resolved.rows.map(row=>[row.optionId,row.included])),sources:canonical(fields.linked.map(key=>[key,row.fields[key]?.source]))};
+}
+export function parseSelectedImageReviewTarget(value:unknown):SelectedImageReviewTarget|null{
+ try{
+  if(!value||typeof value!=='object'||Array.isArray(value)||JSON.stringify(value).length>32768||Object.keys(value).sort().join(',')!=='company,ownerId,source')return null;
+  const row=value as SelectedImageReviewTarget,scope=parseWorkspaceSettingsScope({ownerId:row.ownerId,company:row.company}),source=validateFreeImageSource(row.source),target=source.quotationTarget;
+  if(!scope?.company||canonical(scope.company)!==canonical(row.company)||!isOwnedImageKey(scope.ownerId,source.sourceKey)||!['main','additional'].includes(source.role)
+   ||!target||source.editorSource||source.workspaceTarget||source.optionImages||quotationImageKeys(target.value)[target.slotIndex]!==source.sourceKey)return null;
+  return JSON.parse(JSON.stringify({ownerId:scope.ownerId,company:scope.company,source}));
+ }catch{return null;}
+}
+export function createSelectedImageReviewTarget(scope:WorkspaceSettingsScope,view:QuotationFieldsView,source:FreeImageSource):SelectedImageReviewTarget|null{
+ try{selection(view,source);const target=source.quotationTarget!;
+  if(source.productVersion!==view.productVersion||source.contentRevision!==view.contentRevision||target.revision!==view.revision||target.optionRevision!==view.optionRevision||target.inputFingerprint!==view.inputFingerprint)return null;
+  return parseSelectedImageReviewTarget({ownerId:scope.ownerId,company:scope.company,source});}catch{return null;}
 }
 export function parseSelectedImageReview(value:unknown):SelectedImageReview|null{
  try{

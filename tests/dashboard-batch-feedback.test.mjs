@@ -24,6 +24,24 @@ test('real batch review opens exact second option and nonzero image slot in the 
  }finally{h.close();}
 });
 
+test('real batch failure review opens the exact fifth option and additional image slot with manual intent and no recognition result',async()=>{
+ const h=fixture();try{await h.settle();const r=reviewFixture(),product=h.products[0],source=JSON.parse(JSON.stringify(r.image.source));
+ source.productId=product.id;source.productVersion=product.updated_at;source.sourceKey='test-owner/fifth.png';source.quotationTarget.optionId='collected-5';source.quotationTarget.value='test-owner/first.png\ntest-owner/fifth.png';product.image_keys=JSON.stringify(['test-owner/first.png','test-owner/fifth.png']);
+ const reviewTarget={ownerId:'test-owner',company:{code:'A01526306',name:'유앤채'},source};
+ const panel=await begin(h);panel.onBusyChange(false);await h.settle();h.component('registration-board').onOpen(product,'추가 이미지');await h.settle();const mount=h.componentMount('free-image-translation-panel');
+ h.setWorkspaceEdits({freeDirty:true});panel.onOpen(product.id,'추가 이미지',undefined,reviewTarget);await h.settle();assert.equal(h.component('free-image-translation-panel').translationTarget,undefined);assert.ok(h.component('batch-work-panel'));
+ h.setWorkspaceEdits({freeDirty:false});panel.onOpen(product.id,'추가 이미지',undefined,reviewTarget);await h.settle();assert.equal(h.componentMount('free-image-translation-panel'),mount);
+ const editor=h.component('free-image-translation-panel');assert.equal(editor.focusedOptionId,'collected-5');assert.equal(editor.translationTarget.sourceKey,'test-owner/fifth.png');assert.equal(editor.translationTarget.quotationTarget.slotIndex,1);assert.equal(editor.translationTarget.intent,'manual');assert.equal(editor.translationTarget.review,undefined);assert.equal(h.component('detail-image-edit-dialog').open,true);assert.ok(h.requests.every(call=>call.method==='GET'));
+ }finally{h.close();}
+});
+
+test('batch failure review refuses stale clocks, removed sources, foreign company and mismatched slots before entering an editor',async()=>{
+ for(const mode of ['clock','source','company','slot']){const h=fixture();try{await h.settle();const r=reviewFixture(),product=h.products[0],source=JSON.parse(JSON.stringify(r.image.source));source.productId=product.id;source.productVersion=product.updated_at;source.sourceKey='test-owner/fifth.png';source.quotationTarget.optionId='collected-5';source.quotationTarget.value='test-owner/first.png\ntest-owner/fifth.png';product.image_keys=JSON.stringify(['test-owner/first.png','test-owner/fifth.png']);const target={ownerId:'test-owner',company:{code:'A01526306',name:'유앤채'},source};
+ const panel=await begin(h);panel.onBusyChange(false);await h.settle();if(mode==='clock')source.productVersion='2026-01-01T00:00:00.000Z';if(mode==='source')product.image_keys='["test-owner/first.png"]';if(mode==='company')target.company={code:'A01464742',name:'와이홉'};if(mode==='slot')source.quotationTarget.slotIndex=0;
+ panel.onOpen(product.id,'추가 이미지',undefined,target);await h.settle();assert.ok(h.component('batch-work-panel'),mode);assert.equal(h.component('free-image-translation-panel'),undefined,mode);assert.ok(h.requests.every(call=>call.method==='GET'));
+ }finally{h.close();}}
+});
+
 test('real Dashboard shows current selected-stage errors after modal close and rejects retained late-success callbacks',async()=>{
  const h=fixture();try{await h.settle();const panel=await begin(h);emit(h,panel);assert.equal(current(h).state,'failed');assert.match(current(h).detail,/미확정/);
   panel.onActivity({kind:'finish',runId:panel.runRequest.id,attempt:1});panel.onBusyChange(false);await h.settle();assert.equal(current(h).state,'failed');await h.click('×');assert.equal(h.component('batch-work-panel'),undefined);assert.equal(current(h).state,'failed');

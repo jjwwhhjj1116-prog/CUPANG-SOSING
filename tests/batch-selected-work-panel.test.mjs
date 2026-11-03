@@ -10,6 +10,13 @@ const tick=()=>new Promise(resolve=>setImmediate(resolve));
 const defer=()=>{let resolve;return{promise:new Promise(done=>{resolve=done;}),resolve:value=>resolve(value)};};
 const stages=['seo','pricing','mainImage','additionalImages','detailImage','sizeChart','koreanLabel','quotation'];
 const product=id=>({id,title:'상품 '+id,updated_at:'2026-10-23T00:00:00.000Z'});
+test('a confirmed image failure opens its exact target while detailed review takes precedence and pending inference stays fenced',async()=>{
+ for(const mode of ['target','detailed','pending']){const reviewTarget={source:{sourceKey:'owner/fifth.png',quotationTarget:{optionId:'collected-5',slotIndex:1}}},review={requestId:'completed-review'},keys=new Map(),request={id:'failure-'+mode,ownerId:'owner',stages:['additionalImages'],keys};
+ const h=harness(async id=>({productId:id,stages:[{id:'additionalImages',status:'blocked',message:'판독 실패',reviewTarget,...(mode==='detailed'?{review}:{})}]}),{products:[product('a')],runRequest:request});
+ try{h.render();await tick();if(mode==='pending')keys.set('owner:a:vision-inference-pending','retained');h.button('추가 이미지 검토 열기').props.onClick();assert.deepEqual(h.opened,mode==='pending'?[]:mode==='detailed'?[['a','추가 이미지',review]]:[['a','추가 이미지',undefined,reviewTarget]]);}finally{h.close();}
+ }
+});
+
 test('the frozen full mode reaches each product runner without expanding selected stages',async()=>{
  const h=harness(async id=>({productId:id,stages:[]}),{products:[product('a')],runRequest:{id:'full-mode',ownerId:'owner',mode:'full',stages:['pricing'],keys:new Map()}});
  try{h.render();await tick();assert.equal(h.calls.length,1);assert.equal(h.calls[0].options.mode,'full');assert.deepEqual([...h.calls[0].options.stages],['pricing']);assert.equal(h.calls[0].options.retryFailedQwen,false);assert.equal(h.calls[0].options.retryFailedQuotation,false);h.button('선택 작업 다시 시도').props.onClick();await tick();assert.equal(h.calls.length,2);assert.equal(h.calls[1].options.retryFailedQuotation,true);}finally{h.close();}

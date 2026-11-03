@@ -12,11 +12,11 @@ import type {AutomationStageId} from '@/app/automation/model';
 import type {CollectionEditorTab} from '@/app/registration-navigation';
 import type {SeoGenerationConfiguration} from '@/app/seo-workspace-draft';
 import {batchBoardSource,type BatchBoardActivity,type BatchBoardSource} from '@/app/batch-board-feedback';
-import type {SelectedImageReview} from '@/app/selected-image-review';
+import type {SelectedImageReview,SelectedImageReviewTarget} from '@/app/selected-image-review';
 type Item = {id:string;title:string;updated_at:string;source_url?:string;image_keys?:string;content_summary?:unknown;boardSource?:BatchBoardSource|null};
 type Result = {status:'waiting'|'running'|'done'|'failed';message:string};
 export type SelectedBatchRequest={id:string;ownerId:string;mode?:'full'|'selected';stages:AutomationStageId[];keys:Map<string,string>;seoGenerationConsent?:SeoGenerationConfiguration};
-type BatchPanelProps={products:Item[];onOpen:(id:string,step?:CollectionEditorTab|'작업',review?:SelectedImageReview)=>void;onBusyChange?:(busy:boolean)=>void;onActivity?:(event:BatchBoardActivity)=>void;runRequest?:SelectedBatchRequest};
+type BatchPanelProps={products:Item[];onOpen:(id:string,step?:CollectionEditorTab|'작업',review?:SelectedImageReview,reviewTarget?:SelectedImageReviewTarget)=>void;onBusyChange?:(busy:boolean)=>void;onActivity?:(event:BatchBoardActivity)=>void;runRequest?:SelectedBatchRequest};
 const stageNames:Record<AutomationStageId,CollectionEditorTab>={seo:'SEO',pricing:'가격',mainImage:'대표 이미지',additionalImages:'추가 이미지',detailImage:'상세 이미지',sizeChart:'사이즈표',koreanLabel:'표시사항',quotation:'견적서'};
 const statusNames:Record<SelectedBatchStageResult['status'],string>={waiting:'대기',running:'처리 중',draft:'초안 검토',complete:'저장 완료',blocked:'자료·검토 필요',failed:'실패',skipped:'건너뜀'};
 
@@ -59,7 +59,7 @@ export function SelectedBatchWorkPanel({products,onOpen,onBusyChange,onActivity,
  // eslint-disable-next-line react-hooks/exhaustive-deps -- A run ID owns its frozen products and stages; prop refreshes must not restart writes.
  },[runRequest.id]);
  const reviewScope=context.current,reviewGeneration=reviewScope?.generation;
- const review=(id:string,stage:AutomationStageId)=>{const scope=context.current;if(!scope||scope!==reviewScope||scope.generation!==reviewGeneration||scope.active||scope.request.id!==runRequest.id)return;const retained=results[id]?.[stage]?.review;if(retained){const identity=`${scope.request.ownerId}:${id}`;if(scope.request.keys.has(identity+':vision-inference-pending')||['mainImage','additionalImages','detailImage'].some(role=>scope.request.keys.has(identity+':pending:'+role)))return;callbacks.current.onOpen(id,stageNames[stage],retained);}else callbacks.current.onOpen(id,stageNames[stage]);};
+ const review=(id:string,stage:AutomationStageId)=>{const scope=context.current;if(!scope||scope!==reviewScope||scope.generation!==reviewGeneration||scope.active||scope.request.id!==runRequest.id)return;const result=results[id]?.[stage],retained=result?.review,target=result?.reviewTarget;if(retained||target){const identity=`${scope.request.ownerId}:${id}`;if(scope.request.keys.has(identity+':vision-inference-pending')||['mainImage','additionalImages','detailImage'].some(role=>scope.request.keys.has(identity+':pending:'+role)))return;if(retained)callbacks.current.onOpen(id,stageNames[stage],retained);else callbacks.current.onOpen(id,stageNames[stage],undefined,target);}else callbacks.current.onOpen(id,stageNames[stage]);};
  return <section className="modal-form" data-workspace-saving={busy} aria-label="선택 작업 진행">
   <p>선택한 {products.length}개 상품 · {runRequest.stages.map(stage=>stageNames[stage]).join(' → ')}</p>
   <p>{runRequest.mode==='full'?'전체 작업은 현재 저장본에서 완료된 단계를 건너뜁니다. ':'선택한 단계만 작업합니다. '}저장 완료와 검토할 초안을 구분해 표시합니다. 이미 저장한 수동 수정값은 유지합니다.</p>

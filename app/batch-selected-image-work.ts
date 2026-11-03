@@ -12,7 +12,7 @@ import {selectedImagePurpose,hasForeignImageText,prepareSelectedImageCleanup} fr
 import {parseImageTextVisionResult,parseImageTextVisionConfiguration,isVerifiedOriginalPreservation} from '@/app/image-text-vision';
 import {parseImageOriginalPreservationProof} from '@/app/image-no-text-proof';
 import {reconcileSelectedDetailWorkspace,type SelectedDetailWorkspacePending} from '@/app/selected-detail-workspace';
-import {createSelectedImageReview,type SelectedImageReview} from '@/app/selected-image-review';
+import {createSelectedImageReview,createSelectedImageReviewTarget,type SelectedImageReview,type SelectedImageReviewTarget} from '@/app/selected-image-review';
 
 export type SelectedImageStage='main'|'additional'|'detail';
 export type SelectedImageInferencePending={optionId:string;slotIndex:number;attempt:FreeImageVisionAttempt;code:string;message:string;observation?:FreeImageVisionStatus};
@@ -47,7 +47,7 @@ export function advanceSelectedImageStageCheckpoint(state:SelectedImageStageStat
   return true;
  }catch{return false;}
 }
-export type SelectedImageStageResult={status:'completed'|'partial'|'skipped'|'uncertain';applied:number;failed:number;skipped:number;verifiedUnchanged?:number;messages:string[];productVersion?:string;recoveryBatch?:DetailImageBatch;state:SelectedImageStageState;recovered?:boolean;sourceChanged?:true;inferencePending?:true;review?:SelectedImageReview};
+export type SelectedImageStageResult={status:'completed'|'partial'|'skipped'|'uncertain';applied:number;failed:number;skipped:number;verifiedUnchanged?:number;messages:string[];productVersion?:string;recoveryBatch?:DetailImageBatch;state:SelectedImageStageState;recovered?:boolean;sourceChanged?:true;inferencePending?:true;review?:SelectedImageReview;reviewTarget?:SelectedImageReviewTarget};
 export type SelectedImageStageOptions={ownerId:string;signal:AbortSignal;fetcher:typeof fetch;isCurrent?:()=>boolean;onProgress?:(message:string)=>void;expectedProductVersion?:string;state?:SelectedImageStageState;reworkCurrentSelection?:boolean};
 type Dependencies={plan?:typeof planBatchImageWork;refresh?:typeof refreshBatchImageTask;readSource?:typeof readFreeImageSource;recognize?:typeof recognizeFreeImage;translate?:typeof translateFreeImageRegions;render?:typeof renderFreeImageTranslation;apply?:typeof applyDetailBatchResult;recover?:typeof recoverDetailBatchResult;observe?:typeof readFreeImageVisionStatus;reconcileDetail?:typeof reconcileSelectedDetailWorkspace};
 const label={main:'대표 이미지',additional:'추가 이미지',detail:'상세 이미지'};
@@ -356,9 +356,10 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
      if(verified){(state.verifiedOriginals??={})[`${task.optionId}/${slotIndex}`]=entry.sourceKey;result.verifiedUnchanged=(result.verifiedUnchanged??0)+1;}
      else{unverifiedOriginal=true;(state.unverifiedOriginals??={})[`${task.optionId}/${slotIndex}`]=entry.sourceKey;}
      result.skipped++;result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: ${message}`);remember({...batch,items:batch.items.map(item=>item.slotIndex===slotIndex?{...item,status:'skipped',message,rendered:undefined}:item)});}
-    else{result.failed++;result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: ${controller.signal.aborted?note(controller.signal.reason):note(cause)}`);remember({...batch,items:batch.items.map(item=>item.slotIndex===slotIndex?{...item,status:'failed',message:note(cause),rendered:undefined}:item)});}
+    else{if(image&&!result.review&&!state.inferencePending&&!controller.signal.aborted)result.reviewTarget=createSelectedImageReviewTarget(plan.scope,batch.view,image.source)??undefined;
+     result.failed++;result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: ${controller.signal.aborted?note(controller.signal.reason):note(cause)}`);remember({...batch,items:batch.items.map(item=>item.slotIndex===slotIndex?{...item,status:'failed',message:note(cause),rendered:undefined}:item)});}
    }finally{clearTimeout(timer);signal.removeEventListener('abort',abort);release(image);}
-   if(result.review)break;
+   if(result.review||result.reviewTarget)break;
   }
   latest=batch.view;result.productVersion=batch.view.productVersion;
   if(result.failed)break;

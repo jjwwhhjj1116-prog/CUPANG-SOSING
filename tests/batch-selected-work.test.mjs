@@ -63,6 +63,12 @@ test('completed image review metadata reaches stage review but never bypasses an
  for(const pending of [false,true]){const h=fixture(),review=reviewFixture().review;h.image({status:'partial',messages:['배경 검토'],review,...(pending?{inferencePending:true}:{})});h.options.stages=['additionalImages'];
  const result=await h.run(['additionalImages']);assert.equal(result.stages[0].status,'blocked');if(!pending)assert.ok(result.stages[0].review,JSON.stringify(result));assert.deepEqual(result.stages[0].review?plain(result.stages[0].review):undefined,pending?undefined:plain(review));}
 });
+test('confirmed image failure targets reach stage review only outside inference and save recovery fences',async()=>{
+ for(const guard of ['none','inference','uncertain','recovery','changed']){const h=fixture(),r=reviewFixture(),reviewTarget={ownerId:r.scope.ownerId,company:r.scope.company,source:r.image.source};
+ h.image({status:guard==='uncertain'?'uncertain':'partial',messages:['판독 실패'],reviewTarget,...(guard==='inference'?{inferencePending:true}:guard==='recovery'?{recoveryBatch:{}}:guard==='changed'?{sourceChanged:true}:{})});
+ const result=await h.run(['mainImage']);assert.deepEqual(result.stages[0].reviewTarget?plain(result.stages[0].reviewTarget):undefined,guard==='none'?plain(reviewTarget):undefined,guard);
+ }
+});
 // OCR/provider/render/upload effects remain local dependency fakes.
 async function actualDetailFixture(){
  const sourceUrl=new URL('./batch-selected-detail-work.test.mjs',import.meta.url),source=fs.readFileSync(sourceUrl,'utf8'),ast=ts.createSourceFile(sourceUrl.pathname,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);

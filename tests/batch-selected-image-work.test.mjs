@@ -77,6 +77,26 @@ for(const stage of ['main','additional','detail'])test(`${stage}: v2 mixed image
  }
 });
 
+for(const stage of ['main','additional'])test(`${stage}: unreadable fifth-option image retains its exact manual review target without inventing a completed recognition`,async()=>{
+ const h=fixture(stage,['owner/source-a.png']),read=h.deps.readSource,first=plain(h.view.resolved.rows[0]),field=stage==='main'?'mainImage':'additionalImages';
+ h.view.resolved.rows=Array.from({length:5},(_,index)=>{const row={...plain(first),optionId:`collected-${index+1}`,optionLabel:`옵션 ${index+1}`},key=`owner/source-${index+1}.png`;row.fields[field].value=key;if(stage==='main')row.fields.wireMain.value=key;h.view.imageKeys.push(key);return row;});
+ h.plan.tasks=h.view.resolved.rows.map(row=>({...h.plan.tasks[0],optionId:row.optionId,optionLabel:row.optionLabel}));
+ h.productOptions.rows=h.view.resolved.rows.map(row=>({id:row.optionId,provenance:{imageKey:'collected'}}));
+ h.deps.readSource=async(...args)=>{const image=await read(...args);image.source.quotationTarget.bindingSha256='c'.repeat(64);return image;};
+ h.deps.recognize=async image=>{h.calls.push(['vision',image.source.quotationTarget.optionId]);const unreadable=image.source.quotationTarget.optionId==='collected-5',c=h.visionContract;image.visionResult=c.parseImageTextVisionResult({provider:'workers-ai-vision',model:c.IMAGE_TEXT_VISION_MODEL,notice:c.IMAGE_TEXT_VISION_NOTICE,requests:1,inspection:{policy:'product-text-preservation-v2',decision:unreadable?'unreadable':'product-markings-only'},blocks:unreadable?[]:[{id:'vision-1',text:'YOGA SPORTS',translated:null,issue:null,kind:'product-marking',box:{x:20,y:20,width:40,height:20}}]},100,60);assert.ok(image.visionResult);return h.style.initializeVisionRegions(image.visionResult.blocks,image.canvas,100,60).regions;};
+ const before=plain([h.content,h.view]),result=await h.run();assert.equal(result.status,'partial');assert.equal(result.failed,1);assert.equal(result.skipped,4);assert.equal(result.verifiedUnchanged,4);assert.equal(result.review,undefined);
+ assert.ok(result.reviewTarget);assert.equal(result.reviewTarget.source.quotationTarget.optionId,'collected-5');assert.equal(result.reviewTarget.source.quotationTarget.slotIndex,0);assert.equal(result.reviewTarget.source.sourceKey,'owner/source-5.png');
+ assert.deepEqual(plain([h.content,h.view]),before);assert.equal(h.calls.filter(row=>['render','apply','translate'].includes(row[0])).length,0);assert.ok(h.canvases.every(canvas=>canvas.width===0));
+});
+
+test('an unreadable additional slot stops before later slots can advance its retained manual target clock',async()=>{
+ const h=fixture('additional'),read=h.deps.readSource,recognize=h.deps.recognize;
+ h.deps.readSource=async(...args)=>{const image=await read(...args);image.source.quotationTarget.bindingSha256='c'.repeat(64);return image;};
+ h.deps.recognize=async image=>{h.calls.push(['vision',image.source.sourceKey]);if(image.source.sourceKey==='owner/source-a.png'){image.visionResult={inspection:{decision:'unreadable'}};return[];}return recognize(image);};
+ const before=plain(h.view),result=await h.run();assert.equal(result.reviewTarget.source.sourceKey,'owner/source-a.png');assert.equal(result.reviewTarget.source.productVersion,h.view.productVersion);assert.deepEqual(plain(h.view),before);
+ assert.deepEqual(h.calls.filter(row=>row[0]==='vision'),[['vision','owner/source-a.png']]);assert.equal(h.calls.filter(row=>['render','apply'].includes(row[0])).length,0);assert.equal(result.state.batches.option.items[1].status,'pending');
+});
+
 test('completed complex-background Vision is retained as bounded exact manual-review metadata before releasing pixels',async()=>{
  const h=fixture('additional',['owner/source-a.png','owner/source-b.png']),c=h.visionContract,read=h.deps.readSource;
  h.deps.readSource=async(...args)=>{const image=await read(...args);image.source.quotationTarget.bindingSha256='c'.repeat(64);image.visionConfiguration={provider:'workers-ai-vision',model:c.IMAGE_TEXT_VISION_MODEL,notice:c.IMAGE_TEXT_VISION_NOTICE,configured:true,paidAllowed:true};image.canvas.getContext=()=>({font:'',measureText:()=>({width:10}),getImageData:(x,y,w,height)=>({data:new Uint8ClampedArray(Array.from({length:w*height},(_,i)=>{const color=(x+i%w+y+Math.floor(i/w))%2?0:255;return[color,color,color,255];}).flat())})});return image;};

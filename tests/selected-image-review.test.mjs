@@ -7,6 +7,14 @@ import {cropClientFixture} from './helpers/free-image-crop.mjs';
 const copy=value=>JSON.parse(JSON.stringify(value));
 const model=providedOptionModule('app/selected-image-review.ts');
 function reviewFixture(){const h=dataFixture();return{...h,model,review:model.createSelectedImageReview(h.scope,h.view,h.image,'zh','배경 검토 필요')};}
+test('confirmed failure review targets carry only bounded exact source context and reject foreign or mismatched slots',()=>{
+ const h=reviewFixture(),target=h.model.createSelectedImageReviewTarget(h.scope,h.view,h.image.source);assert.ok(target);
+ assert.deepEqual(copy(target),{ownerId:'owner',company:{code:'A01526306',name:'유앤채'},source:copy(h.image.source)});
+ for(const change of [row=>{row.result={};},row=>{row.ownerId='other';},row=>{row.source.quotationTarget.slotIndex=0;},row=>{row.source.role='detail';},row=>{row.source.sourceKey='other/private.png';}]){const row=copy(target);change(row);assert.equal(h.model.parseSelectedImageReviewTarget(row),null);}
+ for(const change of [source=>{source.productVersion='2026-10-06T00:00:01.000Z';},source=>{source.contentRevision++;},source=>{source.quotationTarget.revision++;},source=>{source.quotationTarget.optionRevision++;},source=>{source.quotationTarget.inputFingerprint='f'.repeat(64);}]){const source=copy(h.image.source);change(source);assert.equal(h.model.createSelectedImageReviewTarget(h.scope,h.view,source),null);}
+ h.view.resolved.rows[1].included=false;assert.equal(h.model.createSelectedImageReviewTarget(h.scope,h.view,h.image.source),null);
+});
+
 test('bounded completed-review parser retains exact metadata and rejects image objects, unknown fields and malformed authority',()=>{
  const h=reviewFixture();assert.ok(h.review);assert.deepEqual(copy(h.model.parseSelectedImageReview(h.review)),copy(h.review));
  for(const mutate of [r=>r.canvas={},r=>r.source.editorSource={resultKey:r.source.sourceKey,resultSha256:'a'.repeat(64),documentSha256:'b'.repeat(64)},r=>r.configuration.model='other',r=>r.result.blocks[0].box.width=999,r=>r.message='x'.repeat(131073),r=>r.requestId='bad',r=>r.sourceLanguage='ko',r=>r.company.name='다른회사']){const row=copy(h.review);mutate(row);assert.equal(h.model.parseSelectedImageReview(row),null);}
