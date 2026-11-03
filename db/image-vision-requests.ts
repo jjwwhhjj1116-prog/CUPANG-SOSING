@@ -9,7 +9,7 @@ export const imageVisionRequestsSchema=`CREATE TABLE IF NOT EXISTS image_vision_
  PRIMARY KEY(owner_id,product_id,request_id)
 )`;
 const activeIndex="CREATE UNIQUE INDEX IF NOT EXISTS image_vision_requests_active ON image_vision_requests(owner_id,product_id,source_scope) WHERE status IN ('running','uncertain')";
-type Scope={owner:string;productId:string;requestId:string;company:{code:string;name:string};member:{email:string;role:string};model:string;fingerprint:string;sourceScope:string;legacySourceScope?:string;sourceScopes?:readonly string[];productVersion:string;contentRevision:number;inspection?:import('@/db/image-no-text-receipts').NoTextReceiptScope['inspection']};
+type Scope={owner:string;productId:string;requestId:string;company:{code:string;name:string};member:{email:string;role:string};model:string;fingerprint:string;sourceScope:string;legacySourceScope?:string;sourceScopes?:readonly string[];completedSourceScopes?:readonly string[];productVersion:string;contentRevision:number;inspection?:import('@/db/image-no-text-receipts').NoTextReceiptScope['inspection']};
 type Row={status:'running'|'completed'|'failed'|'uncertain';request_fingerprint:string;result:string|null;failure:string|null};
 const ready=new WeakSet<object>();
 async function database(){const db=env.DB;if(!db)throw Error('Image Vision store unavailable');if(!ready.has(db)){await db.batch([db.prepare(imageVisionRequestsSchema),db.prepare(activeIndex)]);ready.add(db);}return db;}
@@ -29,7 +29,7 @@ export async function readImageVisionRequest(scope:Scope):Promise<Row|null>{
 /** Claim precedes inference. Source bytes stay in R2; only bounded proposals live here. */
 export async function claimImageVisionRequest(scope:Scope){
  const db=await database(),sourceScopes=[...new Set(scope.sourceScopes??[scope.sourceScope,scope.legacySourceScope??scope.sourceScope])];
- if(sourceScopes.length<1||sourceScopes.length>3||sourceScopes.some(value=>!/^([a-f0-9]{64})$/.test(value))||!sourceScopes.includes(scope.sourceScope))throw Error('Invalid Image Vision source scopes');
+ if(sourceScopes.length<1||sourceScopes.length>12||sourceScopes.some(value=>!/^([a-f0-9]{64})$/.test(value))||!sourceScopes.includes(scope.sourceScope))throw Error('Invalid Image Vision source scopes');
  const row=await db.prepare(`INSERT INTO image_vision_requests(owner_id,product_id,request_id,company_code,company_name,model,request_fingerprint,source_scope,status,created_at)
  SELECT ?,?,?,?,?,?,?,?,'running',? FROM products p WHERE p.id=? AND p.owner_id=? AND p.updated_at=?
  AND COALESCE((SELECT revision FROM product_content c WHERE c.product_id=p.id AND c.owner_id=p.owner_id),0)=? AND ${membership}
@@ -41,9 +41,10 @@ export async function claimImageVisionRequest(scope:Scope){
 /** A new request owns its claim before inspecting a completed artifact. No
  * running/uncertain operation can be bypassed by borrowing an earlier result. */
 export async function completedImageVisionResult(scope:Scope){
- const db=await database();
- return db.prepare(`SELECT request_id,request_fingerprint,result FROM image_vision_requests WHERE owner_id=? AND product_id=? AND company_code=? AND company_name=? AND model=? AND source_scope=? AND status='completed' AND request_id<>? AND ${membership} ORDER BY finished_at DESC,created_at DESC,request_id DESC LIMIT 1`)
-  .bind(scope.owner,scope.productId,scope.company.code,scope.company.name,scope.model,scope.sourceScope,scope.requestId,...memberArgs(scope)).first<{request_id:string;request_fingerprint:string;result:string|null}>();
+ const db=await database(),sourceScopes=[...new Set(scope.completedSourceScopes??[scope.sourceScope])],fenced=scope.sourceScopes??[scope.sourceScope,scope.legacySourceScope??scope.sourceScope];
+ if(sourceScopes.length<1||sourceScopes.length>4||!sourceScopes.includes(scope.sourceScope)||sourceScopes.some(value=>!/^([a-f0-9]{64})$/.test(value)||!fenced.includes(value)))throw Error('Invalid Image Vision completed source scopes');
+ return db.prepare(`SELECT request_id,request_fingerprint,result FROM image_vision_requests WHERE owner_id=? AND product_id=? AND company_code=? AND company_name=? AND model=? AND source_scope IN (${sourceScopes.map(()=>'?').join(',')}) AND status='completed' AND request_id<>? AND ${membership} ORDER BY finished_at DESC,created_at DESC,request_id DESC LIMIT 1`)
+  .bind(scope.owner,scope.productId,scope.company.code,scope.company.name,scope.model,...sourceScopes,scope.requestId,...memberArgs(scope)).first<{request_id:string;request_fingerprint:string;result:string|null}>();
 }
 export async function finishImageVisionRequest(scope:Scope,value:({status:'completed';result:ImageTextVisionResult}|{status:'failed'|'uncertain';failure:string})&{requests:0|1}){
  const db=await database(),result='result'in value?JSON.stringify(value.result):null;

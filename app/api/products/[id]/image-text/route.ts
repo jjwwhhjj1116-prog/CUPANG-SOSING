@@ -38,6 +38,13 @@ const changed = () => new ImageTextError(409, '번역 중 원본 이미지나 �
 async function digest(bytes: Uint8Array) {
   return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as BufferSource)), byte => byte.toString(16).padStart(2, '0')).join('');
 }
+function collectedVisionAliases(owner: string, source: FreeImageSource, mime: string) {
+  const extension = ({'image/png':'png','image/jpeg':'jpg','image/webp':'webp'} as Record<string,string>)[mime];
+  if (!extension) return [source.sourceKey];
+  const aliases = ['', 'main-', 'additional-', 'detail-'].map(role => `${owner}/collected-${role}${source.sourceSha256}.${extension}`);
+  // Include historical aliases even when their role copy has since been removed.
+  return aliases.includes(source.sourceKey) ? aliases : [source.sourceKey];
+}
 async function ownerId() {
   const user = await getChatGPTUser();
   if ((process.env.NODE_ENV === 'production' || (env as { YOOFAM_AUTH_ENABLED?: string }).YOOFAM_AUTH_ENABLED === 'true') && !user?.verifiedAccess) throw new ImageTextError(503, '로그인 후 이미지 문구를 번역할 수 있습니다.');
@@ -335,11 +342,13 @@ export async function POST(request: Request, context: Context) {
         const image=await readImage(source.sourceKey);
         if(await digest(image.bytes)!==source.sourceSha256||image.dimensions.width!==source.width||image.dimensions.height!==source.height)throw changed();
         await assertCurrent();
+        const sourceKeys=collectedVisionAliases(owner,source,image.dimensions.mime);
         const scope={owner,productId:id,requestId:input.requestId,company,member,model:configuration.model,productVersion:source.productVersion,contentRevision:source.contentRevision,
           fingerprint:await digest(new TextEncoder().encode(JSON.stringify({source:freeImageSourceIdentity(source),company,member,configuration,language:input.sourceLanguage,...(inspectionPolicy?{inspectionPolicy}:{})}))),
           sourceScope:await digest(new TextEncoder().encode(JSON.stringify([source.sourceKey,source.sourceSha256,company,configuration.model,input.sourceLanguage,...(inspectionPolicy?[inspectionPolicy]:[])]))),
           legacySourceScope:await digest(new TextEncoder().encode(JSON.stringify([source.sourceKey,source.sourceSha256,company,configuration.model,input.sourceLanguage,...(inspectionPolicy?[]:[IMAGE_TEXT_INSPECTION_POLICY])]))),
-          sourceScopes:await Promise.all([undefined,IMAGE_TEXT_INSPECTION_POLICY,IMAGE_TEXT_PRESERVATION_POLICY].map(policy=>digest(new TextEncoder().encode(JSON.stringify([source.sourceKey,source.sourceSha256,company,configuration.model,input.sourceLanguage,...(policy?[policy]:[])]))))),
+          sourceScopes:await Promise.all(sourceKeys.flatMap(key=>[undefined,IMAGE_TEXT_INSPECTION_POLICY,IMAGE_TEXT_PRESERVATION_POLICY].map(policy=>digest(new TextEncoder().encode(JSON.stringify([key,source.sourceSha256,company,configuration.model,input.sourceLanguage,...(policy?[policy]:[])])))))),
+          completedSourceScopes:await Promise.all(sourceKeys.map(key=>digest(new TextEncoder().encode(JSON.stringify([key,source.sourceSha256,company,configuration.model,input.sourceLanguage,...(inspectionPolicy?[inspectionPolicy]:[])]))))),
           ...(inspectionPolicy?{inspection:{sourceKey:source.sourceKey,sourceSha256:source.sourceSha256,width:source.width,height:source.height,sourceLanguage:input.sourceLanguage as 'zh'|'en',configuration}}:{})};
         const {claimImageVisionRequest,finishImageVisionRequest,completedImageVisionResult,finishLateImageVisionRequest}=await import('@/db/image-vision-requests');
         const claimed=await claimImageVisionRequest(scope);

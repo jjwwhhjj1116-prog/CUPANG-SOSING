@@ -21,7 +21,7 @@ function fixture(options={}){
   '@/app/chatgpt-auth':{getChatGPTUser:async()=>({userId:controls.owner,email:'fixture@example.test',verifiedAccess:controls.verified,membership:{id:controls.owner,email:'fixture@example.test',role:'admin',status:'approved',companyCode:controls.company.code,companyName:controls.company.name}}),getWorkspaceOwnerId:async()=>controls.owner},
   '@/db/queries':{findProduct:async(owner,id)=>owner==='owner'&&id==='new-product'?product:null},'@/db/product-content':{readProductContent:async()=>content},'@/db/product-options':{},'@/db/product-attachments':{},'@/db/product-image-translation':{},'@/db/quotation-fields':{},
   '@/app/quotation-fields-snapshot':{QuotationFieldsSnapshotError:notUsed},'@/app/quotation-seo-targets':{},'@/app/quotation-image-targets':{},'@/app/quotation-schema':{},'@/app/quotation-public-detail':{PublicDetailError:notUsed},
-  '@/app/product-content':{productImageKeys:JSON.parse},'@/app/automation/image-edit':{inspectImage:()=>({width:100,height:80,mime:'image/png'})},
+  '@/app/product-content':{productImageKeys:JSON.parse},'@/app/automation/image-edit':{inspectImage:()=>({width:100,height:80,mime:options.mime??'image/png'})},
   '@/app/image-files':{MAX_IMAGE_BYTES:10*1024*1024,MAX_IMAGE_MULTIPART_BYTES:11*1024*1024,PRODUCT_IMAGE_POOL_LIMIT:200,isOwnedImageKey:(owner,key)=>key.startsWith(owner+'/')},
   '@/app/free-image-edit-document':{MAX_FREE_IMAGE_EDIT_BYTES:65536},'@/app/free-image-edit-record':{FreeImageEditRecordError:notUsed},
   '@/db/image-vision-requests':{
@@ -29,7 +29,7 @@ function fixture(options={}){
    async claimImageVisionRequest(scope){claims++;let row=ledger.get(scope.requestId);if(row)return{claimed:false,record:row};if([...ledger.values()].some(row=>(scope.sourceScopes??[scope.sourceScope,scope.legacySourceScope]).includes(row.scope.sourceScope)&&['running','uncertain'].includes(row.status)))return{claimed:false,record:null};row={scope:plain(scope),status:'running',request_fingerprint:scope.fingerprint,result:null,failure:null};ledger.set(scope.requestId,row);await controls.afterClaim?.();if(controls.claimAckLost)throw Error('lost claim acknowledgement');return{claimed:true,record:row};},
    async finishImageVisionRequest(scope,value){const row=ledger.get(scope.requestId);if(row.status!=='running')throw Error('CAS');if(controls.finishBeforeCommitFailure)throw Error('before commit');Object.assign(row,value,{result:value.result?JSON.stringify(value.result):null,provider_requests:value.requests});events.push('finish:'+value.status);await controls.afterFinish?.();if(controls.finishAckLost)throw Error('lost finish acknowledgement');},
    async finishLateImageVisionRequest(scope,value){const row=ledger.get(scope.requestId);if(!row||!['running','uncertain'].includes(row.status)||row.scope.fingerprint!==scope.fingerprint||row.scope.sourceScope!==scope.sourceScope||scope.owner!==controls.owner||JSON.stringify(scope.company)!==JSON.stringify(controls.company)||!controls.verified)return false;Object.assign(row,value,{result:value.result?JSON.stringify(value.result):null,provider_requests:1});events.push('late:'+value.status);return true;},
-   async completedImageVisionResult(scope){return[...ledger.values()].find(row=>row.status==='completed'&&row.scope.requestId!==scope.requestId&&row.scope.owner===scope.owner&&row.scope.productId===scope.productId&&row.scope.model===scope.model&&row.scope.sourceScope===scope.sourceScope&&JSON.stringify(row.scope.company)===JSON.stringify(scope.company))??null;},
+   async completedImageVisionResult(scope){return[...ledger.values()].find(row=>row.status==='completed'&&row.scope.requestId!==scope.requestId&&row.scope.owner===scope.owner&&row.scope.productId===scope.productId&&row.scope.model===scope.model&&(scope.completedSourceScopes??[scope.sourceScope]).includes(row.scope.sourceScope)&&JSON.stringify(row.scope.company)===JSON.stringify(scope.company))??null;},
   },'@/db/image-no-text-receipts':{async readImageNoTextReceipts(owner,products){const output={};for(const row of ledger.values()){const result=row.result&&JSON.parse(row.result),s=row.scope;if(row.status==='completed'&&s.inspection&&result.inspection?.decision==='no-foreign-text'&&owner===s.owner&&products.some(product=>product.id===s.productId))output[s.productId]=[{policy:'foreign-text-inspection-v1',productId:s.productId,requestId:s.requestId,verifiedAt:'2026-10-30T00:00:00.000Z',...s.inspection}];}return output;}}};
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
   {exports,Error,URL,URLSearchParams,Request,Response,File,Blob,FormData,Headers,TextEncoder,TextDecoder,ReadableStream,Uint8Array,DataView,AbortController,AbortSignal,Date,crypto:webcrypto,btoa:value=>Buffer.from(value,'binary').toString('base64'),process:{env:{NODE_ENV:'production'}},
@@ -226,4 +226,95 @@ test('legacy and versioned running or uncertain inference fence each other; new 
   const next=await h.post({requestId:'12345678-1234-4123-8123-123456789abd',...(versioned?{}:{inspectionPolicy})});assert.equal(next.status,409);assert.equal(h.calls.length,1);assert.equal(h.ledger.size,1);
  }
  const h=fixture();h.controls.provider=()=>chat({blocks:[]});const failed=await h.post({inspectionPolicy:h.contract.IMAGE_TEXT_INSPECTION_POLICY});assert.equal(failed.status,409);assert.equal(failed.body.code,'IMAGE_VISION_DECISION');assert.equal([...h.ledger.values()][0].status,'failed');assert.equal(h.calls.length,1);
+});
+
+const copyIds=Array.from({length:4},(_,index)=>'12345678-1234-4123-8123-123456789ab'+['c','d','e','f'][index]);
+function collectedCopies(h,extension='png'){
+ const keys=['','main-','additional-','detail-'].map(role=>'owner/collected-'+role+h.source.sourceSha256+'.'+extension);
+ h.product.image_keys=JSON.stringify(keys);
+ const roles=['detail','main','additional','detail'];
+ for(const role of ['main','additional','detail'])h.content.assets[role].value=keys.filter((_,index)=>roles[index]===role);
+ return keys.map((sourceKey,index)=>({...h.source,sourceKey,role:roles[index]}));
+}
+const sourceHash=(source,policy,language='zh',model='@cf/qwen/qwen3.8-27b')=>createHash('sha256').update(JSON.stringify([source.sourceKey,source.sourceSha256,company,model,language,...(policy?[policy]:[])])).digest('hex');
+
+test('four canonical collected aliases reuse one result while preserving every exact request/source identity',async()=>{
+ for(const [extension,mime] of [['png','image/png'],['jpg','image/jpeg'],['webp','image/webp']]){
+  const h=fixture({mime}),sources=collectedCopies(h,extension),before=JSON.stringify([h.product,h.content]);
+  for(let index=0;index<4;index++){
+   const result=await h.post({source:sources[index],requestId:copyIds[index]});assert.equal(result.status,200,JSON.stringify(result.body));
+   assert.equal(result.body.result.requests,1);assert.deepEqual(result.body.source,sources[index]);
+   const row=h.ledger.get(copyIds[index]);assert.equal(row.scope.sourceScope,sourceHash(sources[index]));
+   assert.equal((await h.status({source:JSON.stringify(sources[index]),visionRequestId:copyIds[index]})).status,200);
+  }
+  assert.equal(h.calls.length,1);for(const [index,row] of [...h.ledger.values()].entries()){assert.equal(row.provider_requests,index===0?1:0);assert.equal(row.scope.sourceScopes.length,12);assert.equal(row.scope.completedSourceScopes?.length,4);}
+  assert.equal(new Set([...h.ledger.values()].map(row=>row.scope.fingerprint)).size,4);assert.equal(JSON.stringify([h.product,h.content]),before);
+ }
+});
+
+test('a simultaneous collected alias cannot infer beside the original running request',async()=>{
+ const h=fixture(),sources=collectedCopies(h),pending=deferred();h.controls.provider=()=>h.calls.length===1?pending.promise:chat({blocks:[block()]});
+ const first=h.post({source:sources[1],requestId:copyIds[1]});while(!h.calls.length)await tick();
+ const blocked=await h.post({source:sources[2],requestId:copyIds[2]});pending.resolve(chat({blocks:[block()]}));assert.equal((await first).status,200);
+ assert.equal(blocked.status,409);assert.equal(h.ledger.size,1);assert.equal(h.calls.length,1);
+});
+
+test('all policies fence running and uncertain historical aliases even after their image key is removed',async()=>{
+ for(const originalIndex of [0,1,2,3])for(const policy of [undefined,'foreign-text-inspection-v1','product-text-preservation-v2'])for(const status of ['running','uncertain']){
+  const h=fixture(),sources=collectedCopies(h),first=sources[originalIndex],next=sources[(originalIndex+1)%4];
+  const old={scope:{sourceScope:sourceHash(first,policy)},status,result:null,request_fingerprint:'old'};h.ledger.set('historical',old);
+  h.product.image_keys=JSON.stringify([next.sourceKey]);for(const role of ['main','additional','detail'])h.content.assets[role].value=role===next.role?[next.sourceKey]:[];
+  const before=JSON.stringify(old),result=await h.post({source:next,requestId:copyIds[1],inspectionPolicy:'product-text-preservation-v2'});
+  assert.equal(result.status,409);assert.equal(h.calls.length,0);assert.equal(h.ledger.size,1);assert.equal(JSON.stringify(old),before);
+ }
+});
+
+test('a completed alias cannot be borrowed past an active different alias claim',async()=>{
+ const h=fixture(),sources=collectedCopies(h);assert.equal((await h.post({source:sources[0]})).status,200);
+ const pending=deferred();let entered=false;h.controls.afterClaim=()=>{if(entered)return;entered=true;return pending.promise;};
+ const second=h.post({source:sources[1],requestId:copyIds[1]});while(!entered)await tick();
+ const third=await h.post({source:sources[2],requestId:copyIds[2]});pending.resolve();const finished=await second;
+ assert.equal(third.status,409);assert.equal(h.calls.length,1);assert.equal(finished.body.execution.requests,0);assert.equal(h.ledger.size,2);
+});
+
+test('completed canonical aliases are isolated by policy and source language',async()=>{
+ const h=fixture(),sources=collectedCopies(h);assert.equal((await h.post({source:sources[0]})).status,200);
+ h.controls.provider=()=>chat({decision:'no-foreign-text',blocks:[]});
+ for(const [index,inspectionPolicy] of [[1,'foreign-text-inspection-v1'],[2,'product-text-preservation-v2']])assert.equal((await h.post({source:sources[index],requestId:copyIds[index],inspectionPolicy})).body.execution.requests,1);
+ assert.equal((await h.post({source:sources[3],requestId:copyIds[3],sourceLanguage:'en',inspectionPolicy:'product-text-preservation-v2'})).body.execution.requests,1);assert.equal(h.calls.length,4);
+});
+
+test('current canonical key keeps a new inspection receipt scope for no-text and markings-only cached proposals',async()=>{
+ for(const decision of ['no-foreign-text','product-markings-only']){
+  const h=fixture(),sources=collectedCopies(h),inspectionPolicy='product-text-preservation-v2';h.controls.provider=()=>chat({decision,blocks:decision==='no-foreign-text'?[]:[{original:'YOGA',translated:'YOGA',kind:'product-marking',box:{x:5,y:10,width:40,height:10}}]});
+  for(let index=0;index<2;index++){
+   const result=await h.post({source:sources[index],requestId:copyIds[index],inspectionPolicy});assert.equal(result.status,200,JSON.stringify(result.body));assert.equal(result.body.result.inspection.decision,decision);
+   const row=h.ledger.get(copyIds[index]);assert.equal(row.scope.inspection.sourceKey,sources[index].sourceKey);assert.equal(row.scope.sourceScope,sourceHash(sources[index],inspectionPolicy));assert.equal(row.provider_requests,index===0?1:0);assert.equal(JSON.parse(row.result).requests,1);
+  }
+  assert.equal(h.calls.length,1);
+ }
+});
+
+test('unverified collected filenames and arbitrary equal-byte names retain singleton cache behavior',async()=>{
+ const cases=[sha=>['collected-main-'+sha+'.jpeg','collected-detail-'+sha+'.jpeg'],sha=>['collected-main-'+sha+'.jpg','collected-detail-'+sha+'.jpg'],()=>['collected-main-'+ 'a'.repeat(64)+'.png','collected-detail-'+ 'a'.repeat(64)+'.png'],sha=>['collected-main-'+sha.toUpperCase()+'.png','collected-detail-'+sha.toUpperCase()+'.png'],sha=>['collected-main-'+sha+'.png.extra','collected-detail-'+sha+'.png.extra'],sha=>['nested/collected-main-'+sha+'.png','nested/collected-detail-'+sha+'.png'],()=>['random-one.png','random-two.png']];
+ for(const names of cases){const h=fixture(),keys=names(h.source.sourceSha256).map(name=>'owner/'+name);h.product.image_keys=JSON.stringify(keys);h.content.assets.main.value=[keys[0]];h.content.assets.detail.value=[keys[1]];
+  for(let index=0;index<2;index++)assert.equal((await h.post({source:{...h.source,sourceKey:keys[index],role:index?'detail':'main'},requestId:copyIds[index]})).status,200);
+  assert.equal(h.calls.length,2);for(const row of h.ledger.values()){assert.equal(row.scope.sourceScopes.length,3);assert.equal(row.scope.completedSourceScopes?.length,1);}
+ }
+ const h=fixture(),sources=collectedCopies(h);assert.equal((await h.post({source:{...sources[0],sourceKey:sources[0].sourceKey.replace('owner/','foreign/')}})).status,400);assert.equal(h.calls.length,0);
+});
+
+test('canonical reuse still rejects changed source, product, membership and configuration before borrowing',async()=>{
+ for(const drift of ['sha','dimensions','product','pool','member','company','configuration']){
+  const h=fixture(),sources=collectedCopies(h);assert.equal((await h.post({source:sources[0]})).status,200);
+  const source={...sources[1]},input={source,requestId:copyIds[1]};
+  if(drift==='sha')source.sourceSha256='f'.repeat(64);
+  if(drift==='dimensions')source.width=99;
+  if(drift==='product')source.productId='other';
+  if(drift==='pool')h.product.image_keys=JSON.stringify([sources[0].sourceKey]);
+  if(drift==='member')h.controls.verified=false;
+  if(drift==='company')h.controls.company.name='different';
+  if(drift==='configuration')input.configuration={...h.helper.imageVisionConfiguration(h.env),model:'other-model'};
+  assert.notEqual((await h.post(input)).status,200,drift);assert.equal(h.calls.length,1,drift);assert.equal(h.ledger.size,1,drift);
+ }
 });
