@@ -340,8 +340,11 @@ export function quotationValueIssues(field: QuotationField, value: string, owned
   return issues;
 }
 
+export function quotationChangeTargetLimit(schema: Pick<QuotationSchema, 'fields'>, optionIds: readonly string[]): number {
+  return new Set(schema.fields.filter(field => !field.readOnly).map(field => field.id)).size * (new Set(optionIds).size + 1);
+}
 export function validateQuotationChanges(input: unknown, context: { schema: QuotationSchema; optionIds: readonly string[]; ownedImageKeys?: readonly string[]; overrides?: QuotationOverrides }): QuotationChange[] {
-  if (!Array.isArray(input) || !input.length || input.length > 1000) throw new Error('변경 항목은 1~1,000개여야 합니다.');
+  if (!Array.isArray(input) || !input.length || input.length > quotationChangeTargetLimit(context.schema, context.optionIds)) throw new Error('변경 항목은 현재 양식의 편집 가능한 상품·옵션 범위 안에서 선택해주세요.');
   const known = new Map(context.schema.fields.map(item => [item.id, item])); const seen = new Set<string>();
   const changes: QuotationChange[] = input.map(item => {
     if (!item || typeof item !== 'object' || Array.isArray(item) || Object.keys(item).some(key => !['fieldKey', 'optionId', 'value'].includes(key))) throw new Error('견적 편집 형식을 확인해주세요.');

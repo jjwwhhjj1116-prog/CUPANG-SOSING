@@ -106,10 +106,7 @@ export function detailSaveChanges(view: QuotationFieldsView, key: string, textPo
   ]);
   if (textPolicy) changes.push(...detailSaveAltChanges(view, fillCommon));
   const context = { schema: view.resolved.schema, optionIds, ownedImageKeys: [...new Set([...view.imageKeys, key])], overrides: view.overrides };
-  // This server-generated plan can contain 1,206 cells (201 scopes × 6 exact
-  // fields). Validate bounded per-scope groups; external PUT retains its 1,000-cell limit.
-  return changes.length <= 1000 ? validateQuotationChanges(changes, context)
-    : [null, ...optionIds].flatMap(optionId => validateQuotationChanges(changes.filter(change => change.optionId === optionId), context));
+  return validateQuotationChanges(changes, context);
 }
 /** Preserve only fields this command overwrites; null records an absent own
  * property, which is different from an intentionally saved empty string. */

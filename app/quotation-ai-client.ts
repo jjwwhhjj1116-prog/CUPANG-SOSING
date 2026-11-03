@@ -1,4 +1,4 @@
-import { quotationValueIssues, type QuotationFieldsView } from '@/app/quotation-schema';
+import { quotationValueIssues, type QuotationField, type QuotationFieldsView } from '@/app/quotation-schema';
 import { quotationKnownNoticeTarget, quotationSavedQuantityText, type QuotationSavedNoticeChange } from '@/app/quotation-known-notice-proposals';
 import { isCouplusNotApplicableValue } from '@/app/couplus-quotation-defaults';
 import {quotationTextModel,validQuotationTextExecution,type QuotationTextExecution} from '@/app/quotation-text-execution';
@@ -76,29 +76,37 @@ export function quotationAiScopedProposalChanges(view: QuotationFieldsView, job:
   const changes = quotationAiProposalChanges(view, job, fingerprint);
   return all ? changes : changes.filter(change => change.optionId === optionId);
 }
+function writableAiField(field: QuotationField) {
+  const wire = field.hubWire;
+  return !field.readOnly && wire?.name && wire.nameKey && wire.valueKey && !field.hubInput
+    && !/인증|허가|신고|제조국|원산지|제조자|제조사|수입자|수입신고|책임자|전화번호|품질보증|출시|제조년|유통|소비기한|바코드|GTIN|Global Trade|Manufacturer Part Number|모델명|품번|포장|가격|원가|단가|판매가|공급가|MSRP|OSRP|Price|동의|약관/iu.test(wire.name)
+    && (['productPage.commonAttributes.exposedAttributes', 'productPage.unexposedAttributes'].includes(wire.path.join('.'))
+      && wire.nameKey === 'attributeName' && wire.valueKey === 'attributeValue'
+      || wire.path.join('.') === 'legalPage.notices' && wire.nameKey === 'noticeItemName' && ['noticeItemValue', 'noticeContent'].includes(wire.valueKey))
+    && field.type !== 'images' && !['image', 'logistics'].includes(field.section)
+    && !/cert|agree|barcode/i.test(field.id) && !/cert|agree|barcode/i.test(JSON.stringify(wire.path))
+    && !['supplyPrice', 'salePrice', 'msrp', 'osrp'].includes(field.hubInput ?? '');
+}
 /** Recheck every proposed target before placing anything in an unsaved editor. */
 export function quotationAiProposalChanges(view: QuotationFieldsView, job: QuotationAiJobView, fingerprint: string) {
   if(job.executionPolicy!==undefined&&!validQuotationTextExecution(job.executionPolicy))throw Error('견적 AI 실행 정책을 확인해주세요.');
   if(job.result&&job.result.model!==quotationTextModel(job.executionPolicy)||job.model!==undefined&&job.model!==quotationTextModel(job.executionPolicy))throw Error('견적 AI의 검토 모델과 결과 모델이 다릅니다.');
   if (job.status !== 'completed' || job.fingerprint !== fingerprint || job.quotationRevision !== view.revision
-    || job.profileId !== view.categoryContext.profileId || !job.result || !Array.isArray(job.result.changes) || job.result.changes.length > 1000)
+    || job.profileId !== view.categoryContext.profileId || !job.result || !Array.isArray(job.result.changes))
     throw Error('현재 견적서에 연결된 완료 초안을 확인해주세요.');
-  const seen = new Set<string>();
+  // Match the persisted result's byte bound and the generator's 300-field bound.
+  const fields = new Set(view.resolved.schema.fields.filter(writableAiField).map(field => field.id));
+  const rows = new Set(view.resolved.rows.filter(row => row.included && (job.scope.applyToAllOptions || row.optionId === job.scope.optionId)).map(row => row.optionId));
+  if (job.result.changes.length > Math.min(fields.size, 300) * rows.size || new TextEncoder().encode(JSON.stringify(job.result)).length > 256 * 1024)
+    throw Error('AI 초안의 항목 수 또는 응답 크기가 현재 양식·옵션 처리 범위를 초과했습니다.');
+  const seen = new Set<string>(), proposedFields = new Set<string>();
   return job.result.changes.map(change => {
     if (!change || typeof change.fieldKey !== 'string' || typeof change.value !== 'string') throw Error('AI 초안의 입력 자료형을 확인해주세요.');
     const field = view.resolved.schema.fields.find(item => item.id === change.fieldKey), row = view.resolved.rows.find(item => item.optionId === change.optionId);
-    const wire = field?.hubWire;
-    const writable = wire?.name && wire.nameKey && wire.valueKey && !field?.hubInput
-      && !/인증|허가|신고|제조국|원산지|제조자|제조사|수입자|수입신고|책임자|전화번호|품질보증|출시|제조년|유통|소비기한|바코드|GTIN|Global Trade|Manufacturer Part Number|모델명|품번|포장|가격|원가|단가|판매가|공급가|MSRP|OSRP|Price|동의|약관/iu.test(wire.name)
-      && (['productPage.commonAttributes.exposedAttributes', 'productPage.unexposedAttributes'].includes(wire.path.join('.'))
-        && wire.nameKey === 'attributeName' && wire.valueKey === 'attributeValue'
-        || wire.path.join('.') === 'legalPage.notices' && wire.nameKey === 'noticeItemName' && ['noticeItemValue', 'noticeContent'].includes(wire.valueKey));
     const key = JSON.stringify([change.optionId, change.fieldKey]);
-    if (seen.has(key) || !field || !writable || field.readOnly || !row || !row.included || row.fields[field.id]?.source.startsWith('manual-')
+    proposedFields.add(change.fieldKey);
+    if (seen.has(key) || proposedFields.size > 300 || !field || !writableAiField(field) || !row || !row.included || row.fields[field.id]?.source.startsWith('manual-')
       || !job.scope.applyToAllOptions && change.optionId !== job.scope.optionId
-      || field.type === 'images' || ['image', 'logistics'].includes(field.section)
-      || /cert|agree|barcode/i.test(field.id) || /cert|agree|barcode/i.test(JSON.stringify(field.hubWire?.path ?? []))
-      || ['supplyPrice', 'salePrice', 'msrp', 'osrp'].includes(field.hubInput ?? '')
       || quotationValueIssues(field, change.value).length)
       throw Error('AI 초안의 카테고리·옵션·수동 입력 또는 허용값을 다시 확인해주세요.');
     seen.add(key); return { optionId: change.optionId, fieldKey: change.fieldKey, value: change.value };

@@ -203,7 +203,7 @@ for (const company of companies) test(`saved SEO, raw option-name and same-revis
   }
 });
 
-test('200-option internal detail+HTML+ALT plan covers 1206 exact cells without relaxing the external 1000-cell guard', async () => {
+test('200-option detail+HTML+ALT plan validates 1206 exact targets in one shared pass', async () => {
   const f = await detailSaveFixture(companies[0]);
   try {
     await configure(f); const view = plain(f.view), ids = Array.from({ length: 200 }, (_, i) => `boundary-${i}`);
@@ -223,7 +223,11 @@ test('200-option internal detail+HTML+ALT plan covers 1206 exact cells without r
     assert.equal(plan.length, 1206); assert.equal(new Set(plan.map(row => JSON.stringify([row.optionId, row.fieldKey]))).size, 1206);
     assert.equal(plan.find(row => row.optionId === ids[199] && row.fieldKey === 'wire_altText').value, `${view.detailSaveTextBasis.metaDescription} -   마지막 원문  `);
     assert.equal(plan.filter(row => row.optionId === null).length, 6); assert.equal(JSON.stringify(view), snapshot);
-    assert.throws(() => f.api.load('app/quotation-schema.ts').validateQuotationChanges(plan, { schema: view.resolved.schema, optionIds: ids, ownedImageKeys: view.imageKeys, overrides: view.overrides }), /1,000/);
+    const validate = changes => f.api.load('app/quotation-schema.ts').validateQuotationChanges(changes,
+      { schema: view.resolved.schema, optionIds: ids, ownedImageKeys: view.imageKeys, overrides: view.overrides });
+    assert.deepEqual(plain(validate(plan)), plain(plan));
+    assert.throws(() => validate([...plan, plan[0]]), /중복/);
+    assert.throws(() => validate([{ ...plan[0], optionId: 'foreign-option' }, ...plan.slice(1)]), /옵션/);
     // Truthiness belongs to the exact primary path even when a distinct
     // canonical alias disagrees; preserving common means preserving both.
     common.fields.altText.value = '';
