@@ -13,6 +13,7 @@ export function categoryPickerUI(request,{catalog,profiles=[],selectedId='',work
  const hooks={useMemo:fn=>fn(),useState(initial){const index=cursor++;if(!(index in slots))slots[index]=initial;return [slots[index],value=>{const next=typeof value==='function'?value(slots[index]):value;if(!Object.is(next,slots[index])){slots[index]=next;changed=true;}}];},
   useRef(initial){const index=cursor++;return slots[index]??(slots[index]={current:initial});},useEffect(effect,deps){const index=cursor++,previous=slots[index];if(!previous||!deps||deps.some((value,i)=>!Object.is(value,previous.deps?.[i]))){slots[index]={deps,effect,cleanup:previous?.cleanup};effects.push(()=>{previous?.cleanup?.();slots[index].cleanup=effect();});}}};
  hooks.useLayoutEffect=hooks.useEffect;
+ hooks.useId=()=>{const index=cursor++;return slots[index]??(slots[index]=`category-picker-${index}`);};
  function load(file){
   if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText,
@@ -33,13 +34,16 @@ export function categoryPickerUI(request,{catalog,profiles=[],selectedId='',work
   if(Date.now()>deadline)throw Error('Category lookup timeout');await new Promise(resolve=>setTimeout(resolve,1));
  }};
  const chooseConnection=enabled=>{const control=nodes(render()).find(node=>node.type==='input'&&node.props['aria-label']==='상품 추가 전에 공식 Excel 양식도 연결');if(!control)throw Error('Category Excel choice unavailable');control.props.onChange({target:{checked:enabled}});render();};
+ const direct=()=>{nodes(render()).find(node=>node.props?.role==='tab'&&node.props.children==='직접 선택').props.onClick();render();};
  if(connectExcel)chooseConnection(true);
- return {render,selected,calls,close,chooseConnection,replayEffects(){for(const slot of slots)if(slot?.effect){slot.cleanup?.();slot.cleanup=slot.effect();}return render();},reopen(){close();slots.length=0;if(connectExcel)chooseConnection(true);},setProps(patch){props={...props,...patch};render();},alerts:()=>nodes(render()).filter(node=>node.props?.role==='alert').map(node=>node.props.children),async confirm(){nodes(render()).find(node=>node.type==='button'&&node.props.children==='선택 완료 · URL 입력').props.onClick();await settle();},async chooseRecommendation(item,result){
+ return {render,selected,calls,close,chooseConnection,openDirect:direct,replayEffects(){for(const slot of slots)if(slot?.effect){slot.cleanup?.();slot.cleanup=slot.effect();}return render();},reopen(){close();slots.length=0;if(connectExcel)chooseConnection(true);},setProps(patch){props={...props,...patch};render();},alerts:()=>nodes(render()).filter(node=>node.props?.role==='alert').map(node=>node.props.children),async confirm(){nodes(render()).find(node=>node.type==='button'&&node.props.children==='선택 완료 · URL 입력').props.onClick();await settle();},async chooseRecommendation(item,result){
   await nodes(render()).find(node=>node.type?.name==='CategoryRecommendationsPanel').props.onChoose(item,result);await settle();
  },async chooseLive(choice){
+  direct();
   nodes(render()).find(node=>node.type?.name==='SupplierHubCategoryBrowser').props.onChoice(choice);
   await settle();
  },async chooseCode(code){
+  direct();
   nodes(render()).find(node=>node.type==='input'&&node.props.type==='search').props.onChange({target:{value:code}});
   const results=nodes(render()).find(node=>node.props?.className==='category-search-results');
   const button=nodes(results).find(node=>node.type==='button'&&nodes(node).some(child=>child.type==='small'&&child.props.children===code));

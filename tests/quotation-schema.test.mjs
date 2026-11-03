@@ -43,7 +43,7 @@ function fixture() {
 const context = (input = fixture()) => ({ schema: model.getQuotationSchema(input.categoryId), optionIds: input.options.rows.map(row => row.id), ownedImageKeys: JSON.parse(input.product.image_keys), overrides: input.overrides });
 const change = (fieldKey, value, optionId = null) => ({ fieldKey, value, optionId });
 
-test('completed translation flows through saved SEO, labels and options into the category quotation',()=>{
+test('completed translation flows through saved SEO, initial ALT, labels and options without creating detail HTML',()=>{
  const input=fixture(),time='2026-09-25T00:00:00.000Z';
  input.content=contentModel.emptyProductContent('p1');
  input.options.rows[0].translatedName='';input.options.rows[0].color='红';
@@ -57,13 +57,13 @@ test('completed translation flows through saved SEO, labels and options into the
  assert.equal(fields.noticeMaterial.value,'면');assert.equal(fields.color.value,'빨강');
  assert.equal(input.options.rows[0].translatedName,'빨강 세트');assert.equal(fields.supplyPrice.value,'2000');
  assert.match(fields.searchTags.value,/수납/);assert.equal(input.content.seo.description.value,'한국어 상세 설명');
- assert.equal(fields.detailHtml.value,'');assert.equal(fields.altText.value,'');
+ assert.equal(fields.detailHtml.value,'','SEO description alone does not create detail HTML');assert.equal(fields.altText.value,'번역 수납바구니');
  assert.equal(fields.kcCertificationNumber.value,'해당사항없음');
  const assets=JSON.parse(input.product.image_keys).map((key,index)=>({key,name:`assets/${index}.png`}));
  const exported=load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,assets)[0];
  assert.equal(exported.title,'번역 수납바구니, 빨강 세트');assert.equal(exported.skuName,'빨강 세트');
  assert.equal(exported.noticeMaterial,'면');assert.equal(exported.color,'빨강');assert.equal(exported.supplyPrice,2000);
- assert.equal(exported.detailHtml,'');assert.equal(exported.altText,'');
+ assert.equal(exported.detailHtml,'');assert.equal(exported.altText,'번역 수납바구니');
  const label=load('app/quotation-label-plan.ts').quotationLabelPlan(resolved,'red');
  assert.equal(label.rows.find(row=>row[0]==='재질')[1],'면');
  assert.equal(label.rows.find(row=>row[0]==='색상')[1],'빨강');
@@ -1710,18 +1710,18 @@ test('detail fragments join final banner/image order with escaped saved descript
  assert.match(files.find(file=>file.name==='quotation-detail.html').data,/설명·상세 이미지 통합 HTML 원문/);
 });
 
-test('fresh SEO-only drafts have empty detail text; selected banners and stage-five text reach exports independently across defined categories',()=>{
+test('fresh SEO-only drafts use title ALT with empty detail HTML; selected banners and explicit stage-five text export independently across categories',()=>{
  const ids=[...new Set([...Object.keys(load('app/hub-product-schemas.ts').hubProductSchemas),'80719','81452','64497','103495','77442'])];
  for(const categoryId of ids){
   const input=fixture();input.categoryId=categoryId;input.content=contentModel.emptyProductContent('p1');
   input.content=contentModel.applyContentPatch(input.content,{seo:{title:'SEO 상품명',description:'SEO 설명은 상세페이지에 넣지 않음'},assets:{detailTop:['owner/detail.png']}},'now');
   const assets=JSON.parse(input.product.image_keys).map((key,index)=>({key,name:key==='owner/detail.png'?'assets/banner.png':`assets/other-${index}.png`}));
   let resolved=model.resolveQuotationFields(input),row=resolved.rows.find(row=>row.optionId==='red');
-  assert.equal(row.fields.detailHtml.value,'',categoryId);assert.equal(row.fields.altText.value,'',categoryId);assert.equal(row.fields.detailImages.value,'owner/detail.png',categoryId);
+  assert.equal(row.fields.detailHtml.value,'',categoryId);assert.equal(row.fields.altText.value,'SEO 상품명',categoryId);assert.equal(row.fields.detailImages.value,'owner/detail.png',categoryId);
   const saved=()=>({...input,state:{revision:0,overrides:input.overrides??{common:{},options:{}}},categoryContext:{categoryId}});
   let files=load('app/exports/quotation-fields.ts').quotationFieldFiles(saved(),resolved,assets,'version').files;
   const initial=JSON.parse(files.find(file=>file.name==='quotation-detail-content.json').data).rows[0];
-  assert.match(initial.html,/src="assets\/banner.png"/);assert.match(initial.html,/alt=""/);assert.doesNotMatch(initial.html,/SEO 설명/);
+  assert.match(initial.html,/src="assets\/banner.png"/);assert.match(initial.html,/alt="SEO 상품명 1"/);assert.doesNotMatch(initial.html,/SEO 설명/);
   assert.doesNotMatch(files.find(file=>file.name==='quotation-detail.html').data,/SEO 설명/);
   input.content=contentModel.applyContentPatch(input.content,{detail:{description:'5단계 <script>실행 금지</script>\n다음 줄',altText:'상세 설명 & 이미지'}},'later');
   input.content=contentModel.applyContentPatch(input.content,{seo:{description:'새 SEO 설명'}},'latest');

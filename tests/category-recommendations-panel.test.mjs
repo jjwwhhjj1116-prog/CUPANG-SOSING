@@ -44,6 +44,26 @@ function fixture(loader=async name=>response(name)){
  };
 }
 
+test('direct official category search waits for explicit search and never predicts while typing or reopening',async()=>{
+ const h=fixture();try{
+  h.set({initialTitle:'',purpose:'search'});assert.match(text(h.render()),/공식 카테고리 후보 검색/);assert.equal(h.button('검색').props.disabled,true);
+  h.type('수납 바구니');await h.advance(2000);assert.equal(h.requests.length,0);
+  h.set({disabled:true});h.set({disabled:false});await h.advance(2000);assert.equal(h.input().props.value,'수납 바구니');assert.equal(h.requests.length,0);
+  h.click('검색');await h.settle();assert.equal(h.requests.length,1);assert.equal(h.requests[0].name,'수납 바구니');assert.equal(h.radios().length,1);
+  h.select('hat');await h.settle();assert.equal(h.choices.length,1);assert.equal(h.choices[0].result.productName,'수납 바구니');
+ }finally{h.close();}
+});
+
+test('direct search Enter is explicit and query/source changes abort stale results without a replacement request',async()=>{
+ const pending=deferred(),h=fixture(()=>pending.promise);try{
+  h.set({initialTitle:'',purpose:'search',sourceScope:'first'});h.type('첫 검색');let prevented=false;
+  h.input().props.onKeyDown({key:'Enter',preventDefault(){prevented=true;}});await h.settle();assert.equal(prevented,true);assert.equal(h.requests.length,1);
+  h.type('다음 검색');assert.equal(h.requests[0].options.signal.aborted,true);await h.advance(2000);assert.equal(h.requests.length,1);
+  pending.resolve(response('첫 검색'));await h.settle();assert.equal(h.radios().length,0);assert.equal(h.choices.length,0);
+  h.set({sourceScope:'second'});assert.equal(h.input().props.value,'');await h.advance(2000);assert.equal(h.requests.length,1);
+ }finally{h.close();}
+});
+
 test('initial title waits 600ms, displays at most three real paths, and only an explicit radio choice applies',async()=>{
  const h=fixture(async name=>response(name,'owner',[option('남성'),option('공용'),option('여성'),option('기타')]));try{
   await h.advance(599);assert.equal(h.requests.length,0);await h.advance(1);assert.equal(h.requests.length,1);assert.equal(h.requests[0].options.force,false);

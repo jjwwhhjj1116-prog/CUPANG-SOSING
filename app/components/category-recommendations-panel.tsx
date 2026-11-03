@@ -5,17 +5,18 @@ import './category-recommendations-panel.css';
 
 type Props={
  initialTitle:string;
+ purpose?:'recommend'|'search';
  workspaceOwnerId?:string;
  sourceScope?:string;
  selectionScope?:string;
  disabled:boolean;
  onChoose:(candidate:HubCategoryRecommendation,result:HubCategoryRecommendations)=>Promise<void>|void;
 };
-type Context={initialTitle:string;ownerId?:string;sourceScope?:string;selectionScope?:string;name:string;disabled:boolean};
-const sameContext=(left:Context,right:Context)=>left.initialTitle===right.initialTitle&&left.ownerId===right.ownerId&&left.sourceScope===right.sourceScope&&left.selectionScope===right.selectionScope&&left.name===right.name;
+type Context={initialTitle:string;purpose:'recommend'|'search';ownerId?:string;sourceScope?:string;selectionScope?:string;name:string;disabled:boolean};
+const sameContext=(left:Context,right:Context)=>left.initialTitle===right.initialTitle&&left.purpose===right.purpose&&left.ownerId===right.ownerId&&left.sourceScope===right.sourceScope&&left.selectionScope===right.selectionScope&&left.name===right.name;
 
 /** Only the member's radio selection resolves a recommendation into a category. */
-export function CategoryRecommendationsPanel({initialTitle,workspaceOwnerId,sourceScope,selectionScope,disabled,onChoose}:Props){
+export function CategoryRecommendationsPanel({initialTitle,purpose='recommend',workspaceOwnerId,sourceScope,selectionScope,disabled,onChoose}:Props){
  const id=useId(),[name,setName]=useState(initialTitle.trim()),[result,setResult]=useState<HubCategoryRecommendations|null>(null);
  const [chosen,setChosen]=useState<string|null>(null),[pending,setPending]=useState(false),[applying,setApplying]=useState(false),[error,setError]=useState('');
  const mounted=useRef(false),generation=useRef(0),applyGeneration=useRef(0),applyingRef=useRef(false);
@@ -24,8 +25,8 @@ export function CategoryRecommendationsPanel({initialTitle,workspaceOwnerId,sour
  const selfBusyCycle=useRef(false);
  const previousSelectionScope=useRef(selectionScope),scopeInvalidated=useRef(false);
  const nameEdited=useRef(false),nameSource=useRef({initialTitle,ownerId:workspaceOwnerId,sourceScope});
- const context=useRef<Context>({initialTitle,ownerId:workspaceOwnerId,sourceScope,selectionScope,name,disabled}),choose=useRef(onChoose);
- useLayoutEffect(()=>{context.current={initialTitle,ownerId:workspaceOwnerId,sourceScope,selectionScope,name,disabled};choose.current=onChoose;});
+ const context=useRef<Context>({initialTitle,purpose,ownerId:workspaceOwnerId,sourceScope,selectionScope,name,disabled}),choose=useRef(onChoose);
+ useLayoutEffect(()=>{context.current={initialTitle,purpose,ownerId:workspaceOwnerId,sourceScope,selectionScope,name,disabled};choose.current=onChoose;});
 
  function cancel(){
   generation.current++;controller.current?.abort();controller.current=null;
@@ -73,11 +74,11 @@ export function CategoryRecommendationsPanel({initialTitle,workspaceOwnerId,sour
   // Member/source changes invalidate recommendations before a debounced read.
   // eslint-disable-next-line react-hooks/set-state-in-effect
   scopeInvalidated.current=false;reset();
-  if(!context.current.disabled&&workspaceOwnerId&&name.trim())timer.current=setTimeout(()=>{timer.current=null;void requestRef.current(false);},600);
+  if(purpose==='recommend'&&!context.current.disabled&&workspaceOwnerId&&name.trim())timer.current=setTimeout(()=>{timer.current=null;void requestRef.current(false);},600);
   return cancel;
   // Reset is intentionally scoped to the source and query, not its own parent selection busy state.
   // eslint-disable-next-line react-hooks/exhaustive-deps
- },[initialTitle,workspaceOwnerId,sourceScope,name]);
+ },[initialTitle,purpose,workspaceOwnerId,sourceScope,name]);
  useEffect(()=>{
   if(applyingRef.current){if(disabled)selfBusyCycle.current=true;return;}
   if(!disabled&&selfBusyCycle.current){selfBusyCycle.current=false;return;}
@@ -86,13 +87,13 @@ export function CategoryRecommendationsPanel({initialTitle,workspaceOwnerId,sour
    // eslint-disable-next-line react-hooks/set-state-in-effect
    reset();return;
   }
-  if(scopeInvalidated.current||!context.current.ownerId||!context.current.name.trim())return;
+  if(purpose==='search'||scopeInvalidated.current||!context.current.ownerId||!context.current.name.trim())return;
   if(timer.current===null&&!controller.current&&!resultContext)timer.current=setTimeout(()=>{timer.current=null;void requestRef.current(false);},600);
   // Only the disabled transition is observed here; query changes have their own cancellation effect.
   // eslint-disable-next-line react-hooks/exhaustive-deps
- },[disabled]);
+ },[disabled,purpose]);
 
- const activeResult=result&&resultContext&&sameContext(resultContext,{initialTitle,ownerId:workspaceOwnerId,sourceScope,selectionScope,name,disabled})&&!disabled?result:null;
+ const activeResult=result&&resultContext&&sameContext(resultContext,{initialTitle,purpose,ownerId:workspaceOwnerId,sourceScope,selectionScope,name,disabled})&&!disabled?result:null;
  const visible=activeResult?.items.slice(0,3)??[];
  const candidate=visible.find(item=>item.id===chosen),blocked=disabled||pending||applying||!workspaceOwnerId;
  async function apply(selection:HubCategoryRecommendation){
@@ -108,18 +109,18 @@ export function CategoryRecommendationsPanel({initialTitle,workspaceOwnerId,sour
  }
  const queryProductName=activeResult&&'queryProductName' in activeResult?activeResult.queryProductName:undefined;
  return <section className="category-recommendations-card" aria-labelledby={`${id}-heading`}>
-  <h3 id={`${id}-heading`}>기본정보</h3>
-  <label className="category-recommendations-title" htmlFor={`${id}-title`}>추천 검색용 상품명</label>
-  <input id={`${id}-title`} className="category-recommendations-input" value={name} maxLength={500} placeholder="추천 카테고리를 검색할 상품명을 입력하세요" aria-describedby={`${id}-title-help`} disabled={disabled||applying} onChange={event=>{nameEdited.current=true;reset();context.current={...context.current,name:event.target.value};setName(event.target.value);}}/>
-  <p id={`${id}-title-help`} className="category-recommendations-help">카테고리 추천에만 사용합니다. 판매 상품명은 초안 작성 후 SEO 설정에서 수정하세요.</p>
-  <div className="category-recommendations-heading"><label htmlFor={`${id}-choices`}>카테고리</label><button type="button" className="category-recommendations-refresh" disabled={blocked||!name.trim()} onClick={()=>void request(true)}>{pending?'추천 불러오는 중…':'↻ 추천 새로고침'}</button></div>
-  <p id={`${id}-help`} className="category-recommendations-help">상품명을 기준으로 추천 카테고리 최대 3개를 표시합니다. 경로를 확인하고 하나를 선택하세요.</p>
-  {pending&&<p className="category-recommendations-status" role="status">카테고리 추천을 불러오는 중입니다. 잠시 기다려주세요.</p>}
+  <h3 id={`${id}-heading`}>{purpose==='search'?'공식 카테고리 후보 검색':'기본정보'}</h3>
+  <label className="category-recommendations-title" htmlFor={`${id}-title`}>{purpose==='search'?'카테고리 검색어':'추천 검색용 상품명'}</label>
+  <input id={`${id}-title`} className="category-recommendations-input" value={name} maxLength={500} placeholder={purpose==='search'?'상품명 또는 카테고리 이름을 입력하세요':'추천 카테고리를 검색할 상품명을 입력하세요'} aria-describedby={`${id}-title-help`} disabled={disabled||applying} onKeyDown={event=>{if(purpose==='search'&&event.key==='Enter'){event.preventDefault();if(!blocked&&name.trim())void request(true);}}} onChange={event=>{nameEdited.current=true;reset();context.current={...context.current,name:event.target.value};setName(event.target.value);}}/>
+  <p id={`${id}-title-help`} className="category-recommendations-help">{purpose==='search'?'입력한 검색어로 공식 카테고리 후보를 찾습니다. 판매 상품명과 저장한 설정은 바뀌지 않습니다.':'카테고리 추천에만 사용합니다. 판매 상품명은 초안 작성 후 SEO 설정에서 수정하세요.'}</p>
+  <div className="category-recommendations-heading"><label htmlFor={`${id}-choices`}>카테고리</label><button type="button" className="category-recommendations-refresh" disabled={blocked||!name.trim()} onClick={()=>void request(true)}>{purpose==='search'?(pending?'검색 중…':'검색'):(pending?'추천 불러오는 중…':'↻ 추천 새로고침')}</button></div>
+  <p id={`${id}-help`} className="category-recommendations-help">{purpose==='search'?'공식 후보 최대 3개를 표시합니다. 전체 경로를 확인하고 선택하거나 아래 단계별 목록에서 직접 찾으세요.':'상품명을 기준으로 추천 카테고리 최대 3개를 표시합니다. 경로를 확인하고 하나를 선택하세요.'}</p>
+  {pending&&<p className="category-recommendations-status" role="status">{purpose==='search'?'공식 카테고리 후보를 검색하는 중입니다.':'카테고리 추천을 불러오는 중입니다. 잠시 기다려주세요.'}</p>}
   {error&&<p className="category-recommendations-error" role="alert">{error}</p>}
   {typeof queryProductName==='string'&&queryProductName!==activeResult?.productName&&<p className="category-recommendations-query">추천에 사용한 상품명: {queryProductName}</p>}
-  {!pending&&activeResult&&visible.length===0&&!error&&<p className="category-recommendations-status" role="status">추천 카테고리가 없습니다. 상품명을 수정하거나 직접 카테고리를 찾아주세요.</p>}
+  {!pending&&activeResult&&visible.length===0&&!error&&<p className="category-recommendations-status" role="status">{purpose==='search'?'검색 후보가 없습니다. 검색어를 바꾸거나 단계별 목록에서 직접 찾아주세요.':'추천 카테고리가 없습니다. 상품명을 수정하거나 직접 카테고리를 찾아주세요.'}</p>}
   {visible.length>0&&<fieldset id={`${id}-choices`} className="category-recommendations-choices" aria-describedby={`${id}-help`} disabled={blocked}>
-   <legend className="category-recommendations-sr-only">추천 카테고리 선택</legend>
+   <legend className="category-recommendations-sr-only">{purpose==='search'?'검색 카테고리 선택':'추천 카테고리 선택'}</legend>
    {visible.map(item=><label key={item.id} className={`category-recommendations-choice${chosen===item.id?' is-selected':''}`}><input type="radio" name={`${id}-category`} value={item.id} checked={chosen===item.id} onChange={()=>void apply(item)}/><span>{item.path.join(' > ')}</span></label>)}
   </fieldset>}
   {applying&&<p className="category-recommendations-status" role="status">선택한 카테고리를 확인하고 있습니다.</p>}

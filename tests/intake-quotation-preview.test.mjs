@@ -16,6 +16,16 @@ function load(file,overrides={}){
  }});if(!Object.keys(overrides).length)cache.set(file,exports);return exports;
 }
 const profile={id:'saved',name:'주방 설정',categoryId:'80719',categoryPath:['주방용품','바스켓'],revision:2,template:null,mappings:[]};
+test('category ALT guidance explains the unwritten SEO fallback while retaining explicitly cleared text',()=>{
+ const model=load('app/quotation-schema.ts'),schema=model.getQuotationSchema('80719'),canonical=schema.fields.find(field=>field.id==='altText');
+ const nativeAlt={...canonical,id:'nativeAlt',hubInput:'altText',hubWire:{path:['imagePage','details','altText']}};
+ const preview={...schema,fields:[canonical,nativeAlt]},before=JSON.stringify(preview);
+ const {CategoryQuotationPreview}=load('app/components/category-quotation-preview.tsx');
+ const html=renderToStaticMarkup(React.createElement(CategoryQuotationPreview,{schema:preview}));
+ assert.equal((html.match(/미입력 초안은 저장된 SEO 상품명/g)??[]).length,2,'canonical and exact native ALT fields describe the same fallback');
+ assert.match(html,/SEO 상품명 → 수집 상품명/);assert.match(html,/직접 비운 값은 유지/);assert.doesNotMatch(html,/신규 초안은 공란/);
+ assert.equal(JSON.stringify(preview),before);
+});
 test('queue mapping condition preserves conditional workbook requirements without making blanks mandatory',()=>{
  const field={id:'workbook_991234_'+'a'.repeat(64)+'_0',label:'설치지원방식',type:'select',required:false,workbookWire:{sha256:'a'.repeat(64),sheetName:'입력',column:0,requirement:'conditional'},choices:[{value:'고객직접설치',label:'고객직접설치'}]};
  const {IntakeQuotationPreview}=load('app/components/intake-quotation-preview.tsx',{'@/app/quotation-schema':{getQuotationSchema:()=>({fields:[field]})},'@/app/components/category-quotation-preview':{CategoryQuotationPreview:()=>null}});
@@ -51,7 +61,7 @@ test('quotation preview filters required and observed defaults, searches choice 
 });
 test('opening preview and changing category preserves row URL and notes and displays the newly selected profile',()=>{
  let rows=[{id:'row',profile,url:'https://detail.1688.com/offer/1.html',features:'특징',keywords:'검색어',status:'error',message:'이전 오류'}];
- const slots=[],layouts=[];let cursor=0;const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return[slots[i],next=>{slots[i]=typeof next==='function'?next(slots[i]):next;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useLayoutEffect(fn){layouts.push(fn);},useEffect(){}};
+ const slots=[],layouts=[];let cursor=0;const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],next=>{slots[i]=typeof next==='function'?next(slots[i]):next;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useLayoutEffect(fn){layouts.push(fn);},useEffect(){}};
  function Picker(){}function Preview(){}
  const {IntakeQueuePanel}=load('app/components/intake-queue-panel.tsx',{'react':hooks,'@/app/components/category-picker':{CategoryPicker:Picker},'@/app/components/intake-quotation-preview':{IntakeQuotationPreview:Preview}});
  const render=()=>{cursor=0;const tree=IntakeQueuePanel({rows,onRows:update=>{rows=update(rows);},profiles:[profile],onProfile(){},onJobs(){},onBusy(){},goal:'price',onGoal(){}});layouts.splice(0).forEach(fn=>fn());return tree;};
@@ -62,7 +72,7 @@ test('opening preview and changing category preserves row URL and notes and disp
 
 test('queue starts with add button and retains selection while filtering rows',()=>{
  let rows=[];const slots=[],layouts=[];let cursor=0;
- const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return[slots[i],next=>{slots[i]=typeof next==='function'?next(slots[i]):next;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useLayoutEffect(fn){layouts.push(fn);},useEffect(){}};
+ const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],next=>{slots[i]=typeof next==='function'?next(slots[i]):next;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useLayoutEffect(fn){layouts.push(fn);},useEffect(){}};
  function Picker(){}function Preview(){}
  const {IntakeQueuePanel}=load('app/components/intake-queue-panel.tsx',{'react':hooks,'@/app/components/category-picker':{CategoryPicker:Picker},'@/app/components/intake-quotation-preview':{IntakeQuotationPreview:Preview}});
  const render=()=>{cursor=0;const tree=IntakeQueuePanel({rows,onRows:update=>{rows=update(rows);},profiles:[profile],onProfile(){},onJobs(){},onBusy(){},goal:'price',onGoal(){}});layouts.splice(0).forEach(fn=>fn());return tree;};
@@ -80,7 +90,7 @@ test('queue starts with add button and retains selection while filtering rows',(
 
 test('image-draft goal is explicit, restores as work and carries unchanged URL/category into the intake request',()=>{
  const slots=[],layouts=[];let cursor=0,goal='work';
- const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return[slots[i],next=>{slots[i]=typeof next==='function'?next(slots[i]):next;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useLayoutEffect(fn){layouts.push(fn);},useEffect(){}};
+ const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],next=>{slots[i]=typeof next==='function'?next(slots[i]):next;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useLayoutEffect(fn){layouts.push(fn);},useEffect(){}};
  const {IntakeQueuePanel}=load('app/components/intake-queue-panel.tsx',{react:hooks,'@/app/components/category-picker':{CategoryPicker:()=>null},'@/app/components/intake-quotation-preview':{IntakeQuotationPreview:()=>null}});
  const rows=[{id:'input',profile:{...profile,id:'00000000-0000-4000-8000-000000000001'},url:'https://detail.1688.com/offer/813724060928.html',features:'수동 특징',keywords:'',status:'draft',message:''}],before=JSON.stringify(rows);
  const render=()=>{cursor=0;const tree=IntakeQueuePanel({rows,onRows(){},profiles:[rows[0].profile],onProfile(){},onJobs(){},onBusy(){},goal,onGoal:value=>{goal=value;}});layouts.splice(0).forEach(fn=>fn());return tree;};

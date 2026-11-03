@@ -126,13 +126,10 @@ export async function attachProductLabel(input: Input, request: typeof fetch = f
     }
     if (uploaded) {
       if (typeof uploaded.key !== 'string' || !uploaded.key || uploaded.key.length > 512 || uploaded.contentType !== 'image/png' || uploaded.size !== input.blob.size) throw Error('제품 표시사항 PNG 업로드 응답을 확인하지 못했습니다.');
-      // A successful POST acknowledgement must name this exact owner's
-      // durable recipe object before any pool/reference write is allowed.
-      const receipt = await findProductLabelUpload({ ...input, view: input.renderedView }, request);
-      if (receipt.key !== uploaded.key) throw Error('제품 표시사항 PNG 업로드 응답과 저장된 파일 번호가 다릅니다. 저장본을 다시 확인해주세요.');
-      key = receipt.key;
+      key = uploaded.key;
     }
     if (!key) throw Error('제품 표시사항 PNG 업로드 저장본을 확인하지 못했습니다.');
+    // One fresh owner-scoped receipt proves both the ACK key and its exact plan.
     await verifyUpload(key);
     input.onUploaded(key);
   }

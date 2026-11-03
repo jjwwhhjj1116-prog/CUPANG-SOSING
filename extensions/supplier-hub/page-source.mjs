@@ -2,6 +2,7 @@
 // code, requests, cookies, globals, eval or executable script injection.
 import {readPageDomFacts,validatePageDomFacts,mergePageDomFacts,validatePagePackaging} from './page-dom-facts.mjs';
 import {isUnrelatedProductElement} from './page-dom-sections.mjs';
+import {parseAlibabaDescription} from './alibaba-description.mjs';
 export const PAGE_SOURCE_LIMIT=512*1024;
 const object=value=>!!value&&typeof value==='object'&&!Array.isArray(value);
 const plain=(value,max)=>typeof value==='string'?value.replace(/[\u0000-\u001f]/g,' ').trim().slice(0,max):'';
@@ -234,7 +235,7 @@ export function readPageSourceDescriptionReference(sourceUrl,scripts){
 /** Accept direct current-offer propsList containers, and the exact recorded
  * product-attributes component of a fully bound __INIT_DATA envelope. Arbitrary
  * ancestors never authorize nested shop/recommendation attributes. */
-function sourceAttributes(scripts,offerId){
+function sourceAttributes(scripts,offerId,structuredAttributes=[]){
  const attributes=[],known=new Map(),fail=attributeSourceError;
  const sameId=value=>typeof value==='string'&&value===offerId||typeof value==='number'&&Number.isSafeInteger(value)&&String(value)===offerId;
  const hasCurrentIdentity=node=>object(node?.value)&&['offerId','productId'].some(key=>(ownLiteralFields(node).get(key)??[]).some(entry=>sameId(entry.value)));
@@ -276,7 +277,54 @@ function sourceAttributes(scripts,offerId){
    const component=literalChild(data,'590893002003',true),body=literalChild(component,'data',true);verifyIdentity(body);append(body);
   }
  }
+ for(const {name,value} of structuredAttributes){
+  const key=name.toLowerCase();if(known.has(key)){if(known.get(key)!==value)fail();continue;}
+  if(attributes.length>=50)fail();known.set(key,value);attributes.push({name,value});
+ }
  return attributes;
+}
+/** The candidate API-shaped fields are accepted only on the literal primary
+ * record beside its own current SKU model. No recursive descendant search or
+ * shipping-to-measured-packaging mapping is implied by this carrier. */
+function sourceStructuredProduct(scripts,offerId){
+ let observed=null;
+ const fail=attributeSourceError,sameId=value=>typeof value==='string'&&value===offerId||typeof value==='number'&&Number.isSafeInteger(value)&&String(value)===offerId;
+ const identity=node=>{
+  const fields=ownLiteralFields(node);let found=false;
+  for(const key of ['offerId','productId'])if(fields.has(key)){found=true;if(!sameId(literalChild(node,key,true).value))fail();}
+  if(!found)fail();
+ };
+ const publicRecord=node=>{
+  for(const key of ['isPicPrivate','isPricePrivate','isDetailForbidden']){const field=literalChild(node,key);if(field&&field.value!==false)fail();}
+  const signs=literalChild(node,'offerSigns');if(signs){if(!object(signs.value))fail();const flag=literalChild(signs,'isDetailForbidden');if(flag&&flag.value!==false)fail();}
+ };
+ for(const text of scripts){
+  const trimmed=text.trim(),roots=[];
+  if(trimmed.startsWith('{')){try{const value=JSON.parse(trimmed);if(object(value))roots.push({value,literal:trimmed});}catch{continue;}}
+  else roots.push(...initialDataLiterals(text));
+  for(const root of roots){
+   const fields=ownLiteralFields(root);
+   if(!fields.has('productAttribute')&&!fields.has('description'))continue;
+   if(!fields.has('skuModel')||!['offerId','productId'].some(key=>fields.has(key)))continue;
+   identity(root);publicRecord(root);
+   const model=literalChild(root,'skuModel',true);identity(model);publicRecord(model);
+   if(!object(model.value.skuInfoMap)&&!object(model.value.skuInfoMapOriginal))fail();
+   if(observed)fail();
+   const attributes=[],known=new Map(),list=literalChild(root,'productAttribute');
+   if(list)for(const pair of literalArrayItems(list)){
+    const field=(key,max)=>{const value=literalChild(pair,key,true).value;if(typeof value!=='string'||value.length>max||/[\u0000-\u001f]/u.test(value)||!value.trim())fail();return value.trim();};
+    const name=field('attributeName',190),value=field('value',1000),key=name.toLowerCase();
+    if(known.has(key)){if(known.get(key)!==value)fail();continue;}
+    known.set(key,value);attributes.push({name,value});
+   }
+   const description=literalChild(root,'description');
+   if(description&&typeof description.value!=='string')fail();
+   const details=description?parseAlibabaDescription(description.value):{text:'',images:[]};
+   if(details.images.some(value=>image(value)!==value))fail();
+   observed={attributes,...details};
+  }
+ }
+ return observed;
 }
 const DOM_OPTION_LABELS=['规格','颜色','尺寸','颜色分类','类型','款式','型号','套餐','配置','版本','容量','尺码','花色','口味','颜色规格','材质','风格','图案'];
 const DOM_OPTION_ROOT='[class*="sku" i],[class*="prop" i],[class*="spec" i]';
@@ -516,6 +564,7 @@ export function extractPageSource(input,now=Date.now()){
  if(new Set(models.map(({entry})=>JSON.stringify(entry.value))).size>1)throw Error('상품 옵션 원문이 여러 개입니다. 현재 상품 본문을 다시 확인해주세요.');
  const sm=models[0]?.entry.value;
  for(const {entry} of models)assertProductIdentity(entry.value,identity.offerId);
+ const structured=sourceStructuredProduct(scripts,identity.offerId);
  const title=sourceTitle(scripts,models,identity.offerId)||plain(input.title,500);
  if(!title)throw Error('상품명이 보이는 상품 본문에서 다시 수집해주세요.');
  const images=[],addImage=(value,role)=>{const url=image(value);if(url&&!images.some(item=>item.url===url&&item.role===role)){if(images.length>=200)throw Error('상품 이미지가 200개를 초과했습니다. 옵션 이미지·상세 이미지를 일부만 담지 않았습니다. 이미지 수를 확인한 뒤 다시 수집해주세요.');images.push({url,role});}};
@@ -525,7 +574,7 @@ export function extractPageSource(input,now=Date.now()){
  if(!images.length&&Array.isArray(input.gallery))for(const url of input.gallery)addImage(url,images.length?'additional':'main');
   // Retain gallery membership before detail and SKU-only placements are added.
   const sourceGallery={format:'chrome-current-page-gallery-v1',imageIndices:images.map((_,index)=>index)};
- const details=Array.isArray(input.detailImages)?input.detailImages:[];
+ const details=[...(structured?.images??[]),...(Array.isArray(input.detailImages)?input.detailImages:[])];
  for(const url of details)addImage(url,'detail');
  const valueImages=new Map();
  if(object(sm)&&Array.isArray(sm.skuProps))for(const prop of sm.skuProps)for(const value of Array.isArray(prop.value)?prop.value:[]){const url=firstImage(value.imageUrl,value.image,value.picUrl,value.imageURI);if(url)valueImages.set(plain(value.name,500),url);}
@@ -575,13 +624,13 @@ export function extractPageSource(input,now=Date.now()){
    options.push({...row});if(row.imageUrl)addImage(row.imageUrl,'additional');
   }
  }
- let observed={attributes:sourceAttributes(scripts,identity.offerId),options};
+ let observed={attributes:sourceAttributes(scripts,identity.offerId,structured?.attributes),options};
  if(input.domFacts!=null){
   const facts=validatePageDomFacts(input.domFacts);
   if(facts.sourceUrl!==identity.sourceUrl||facts.offerId!==identity.offerId)throw domOptionsError();
   domFactsIdentity(scripts,identity.offerId);observed=mergePageDomFacts(observed.attributes,options,facts);
  }
- return validatePageSourceForDelivery({format:'yoofam-page-source-v1',...identity,collectedAt:new Date(now).toISOString(),title,description:plain(input.description,20000),options:observed.options,images,attributes:observed.attributes,sourceGallery},now);
+ return validatePageSourceForDelivery({format:'yoofam-page-source-v1',...identity,collectedAt:new Date(now).toISOString(),title,description:structured?.text||plain(input.description,20000),options:observed.options,images,attributes:observed.attributes,sourceGallery},now);
 }
 /** Inert capture evidence only. Counts never authorize reading more of the
  * page or claim that missing product facts were collected. */

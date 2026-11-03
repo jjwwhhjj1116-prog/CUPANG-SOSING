@@ -29,6 +29,19 @@ function coupled(company, options) {
   return { parent, child, sync() { child.set(props()); }, close() { child.close(); parent.close(); } };
 }
 
+test('switching actual picker tabs retains edited recommendation and explicit-search names without a hidden search call',async()=>{
+ const f=coupled(schemaCompanies[0]);let search;
+ const tab=label=>{nodes(f.parent.picker.render()).find(node=>node.props?.role==='tab'&&node.props.children===label).props.onClick();f.sync();};
+ const searchProps=()=>nodes(f.parent.picker.render()).find(node=>node.type?.name==='CategoryRecommendationsPanel'&&node.props.purpose==='search').props;
+ try{
+  f.child.type('직접 다듬은 추천 상품명');tab('직접 선택');assert.equal(f.child.input().props.value,'직접 다듬은 추천 상품명');assert.equal(f.child.input().props.disabled,true);
+  search=fixture();search.set(searchProps());search.type('직접 입력한 분류 검색어');await search.advance(2000);assert.equal(search.requests.length,0);
+  tab('추천 선택');search.set(searchProps());assert.equal(f.child.input().props.value,'직접 다듬은 추천 상품명');assert.equal(search.input().props.value,'직접 입력한 분류 검색어');assert.equal(search.input().props.disabled,true);
+  tab('직접 선택');search.set(searchProps());await search.advance(2000);assert.equal(search.input().props.value,'직접 입력한 분류 검색어');assert.equal(search.requests.length,0);
+  assert.equal(f.parent.resolutions.length,0);assert.equal(f.parent.profileCount(),0);
+ }finally{search?.close();f.close();}
+});
+
 for (const company of schemaCompanies) test(`${company.code}: real parent lookup failure offers exact candidate retry without predicting again or changing existing work`, async () => {
   let retrying = false;
   const f = coupled(company, { resolve: ({ choice }) => { if (!retrying) throw Error('합성 일시적 카테고리 목록 조회 실패'); return choice; } });

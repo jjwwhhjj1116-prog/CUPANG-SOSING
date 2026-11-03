@@ -17,6 +17,7 @@ function harness(request,existing=false,{initialProfiles,connectExcel=true,readP
  const choice={key:'saved',profileId:existing?'saved':null,path:['test'],categoryId:'80719',isLeaf:true};
  const fetcher=(url,init)=>{calls.push({...init,url});return !existing&&!init?.method?readProfiles(url,init):request(url,init);};
  const hooks={useMemo:fn=>fn(),useState(initial){const i=index++;if(!(i in slots))slots[i]=initial;return[slots[i],v=>{if(closed)late++;slots[i]=typeof v==='function'?v(slots[i]):v;}];},useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useEffect(fn){if(first)cleanup.push(fn());}};
+ hooks.useId=()=>{const i=index++;return slots[i]??(slots[i]=`category-picker-${i}`);};
  const exports={};const file='app/components/category-picker.tsx';
  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,crypto,AbortController,fetch:fetcher,require(name){
   if(name==='@/app/load-category-profiles'){const loaded={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/load-category-profiles.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:loaded,Error,fetch:fetcher});return loaded;}
@@ -45,7 +46,8 @@ function harness(request,existing=false,{initialProfiles,connectExcel=true,readP
  // These retained cases exercise the explicit Excel preparation/recovery path.
  // Normal Single-only intake is covered by category-picker-single-intake.
  if(connectExcel)nodes(render()).find(node=>node.type==='input'&&node.props['aria-label']==='상품 추가 전에 공식 Excel 양식도 연결').props.onChange({target:{checked:true}});
- return{calls,selected,render,confirm,chooseLive(){nodes(render()).find(node=>node.type?.name==='SupplierHubCategoryBrowser').props.onChoice({...choice,key:'live',supplierHub:{trail:[],ownerId:'owner',company:{code:'A01464742',name:'와이홉'}}});},close(){closed=true;cleanup.forEach(fn=>fn?.());},get late(){return late;}};
+ nodes(render()).find(node=>node.props?.role==='tab'&&node.props.children==='직접 선택').props.onClick();
+ return{calls,selected,render,confirm,chooseLive(){nodes(render()).find(node=>node.props?.role==='tab'&&node.props.children==='직접 선택').props.onClick();nodes(render()).find(node=>node.type?.name==='SupplierHubCategoryBrowser').props.onChoice({...choice,key:'live',supplierHub:{trail:[],ownerId:'owner',company:{code:'A01464742',name:'와이홉'}}});},close(){closed=true;cleanup.forEach(fn=>fn?.());},get late(){return late;}};
 }
 
 test('live leaf selection opens URL entry with one click only after the exact schema and saved profile acknowledge',async()=>{

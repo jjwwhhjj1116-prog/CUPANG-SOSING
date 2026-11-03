@@ -7,7 +7,7 @@ const eslintConfig = defineConfig([
   ...nextTs,
   // Pinned upstream OCR/inpaint bundles are checked by the artifact/hash verifier;
   // application lint rules must not rewrite their generated Wasm loaders.
-  globalIgnores(['.next/**', 'out/**', 'build/**', 'dist/**', '.wrangler/**', 'outputs/**', 'next-env.d.ts', 'extensions/supplier-hub/mobile-public.mjs', 'public/ocr/**', 'public/inpaint/**']),
+  globalIgnores(['.next/**', 'out/**', 'build/**', 'dist/**', '.wrangler/**', 'outputs/**', 'next-env.d.ts', 'extensions/supplier-hub/mobile-public.mjs', 'extensions/supplier-hub/alibaba-description.mjs', 'public/ocr/**', 'public/inpaint/**']),
 ]);
 
 export default eslintConfig;

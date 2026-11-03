@@ -201,7 +201,7 @@ for(const company of schemaCompanies)test(`an owner prop change aborts the previ
    if(path==='/api/settings'){const result=await api.settings.GET();if(pause){pause=false;oldSignal=init.signal;return new Promise(resolve=>{held=()=>resolve(result);});}return result;}
    return api.profiles[init?.method??'GET'](new Request('https://app.test'+path,init));
   },{workspaceOwnerId:'first-owner',profiles:[first],selectedId:first.id,catalog:{loadLiveHubCategorySchema:async value=>value.supplierHub.company.code===company.code?first.hubSchema:second.hubSchema}});
-  const oldTree=nodes(picker.render()),oldConfirm=oldTree.find(node=>node.type==='button'&&node.props.children==='선택 완료 · URL 입력').props.onClick,oldChoose=oldTree.find(node=>node.type?.name==='SupplierHubCategoryBrowser').props.onChoice;
+  picker.openDirect();const oldTree=nodes(picker.render()),oldConfirm=oldTree.find(node=>node.type==='button'&&node.props.children==='선택 완료 · URL 입력').props.onClick,oldChoose=oldTree.find(node=>node.type?.name==='SupplierHubCategoryBrowser').props.onChoice;
   const pending=picker.chooseLive(choice('first-owner',company));await waitFor(()=>Boolean(held));state.owner='second-owner';state.company=other;picker.setProps({workspaceOwnerId:'second-owner',profiles:[second],selectedId:second.id});
   assert.equal(oldSignal.aborted,true);held();await pending;assert.equal(picker.selected.length,0);
   const count=picker.calls.length;oldConfirm();oldChoose(choice('first-owner',company));await new Promise(resolve=>setImmediate(resolve));assert.equal(picker.calls.length,count);

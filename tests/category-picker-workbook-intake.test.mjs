@@ -121,7 +121,7 @@ for(const company of companies)test(`empty working profile is retained and a sta
  const f=await workbookIntakeFixture(company);try{
   const schema=await f.catalog.loadLiveHubCategorySchema(f.choice,new AbortController().signal),store=f.h.load('db/category-profiles.ts'),old=await store.createCategoryProfile('owner',{name:'기존 작업 중 빈 양식',categoryId:'69900',categoryPath:f.choice.path,hubSchema:schema,template:null,mappings:[]});
   const before=JSON.stringify(f.h.sqlite.prepare('SELECT * FROM category_profiles WHERE id=?').get(old.id));f.picker.setProps({profiles:[old],selectedId:old.id});
-  nodes(f.picker.render()).find(node=>node.type==='select'&&nodes(node).some(child=>child.type==='option'&&child.props.value===old.id)).props.onChange({target:{value:old.id}});
+  f.picker.openDirect();nodes(f.picker.render()).find(node=>node.type==='select'&&nodes(node).some(child=>child.type==='option'&&child.props.value===old.id)).props.onChange({target:{value:old.id}});
   await f.picker.confirm();assert.ok(f.button());
   await store.updateCategoryProfile('owner',old.id,old.revision,{...old,name:'다른 화면에서 확인한 이름'});const actor=f.retained();await f.invoke();assert.equal(f.picker.selected.length,0);assert.equal(f.retained(),actor);assert.ok(f.picker.alerts().some(value=>String(value).includes('설정이 변경')));
   // A fresh explicit selection reviews the current revision; never overwrite
@@ -138,7 +138,7 @@ test('captured explicit callbacks are inert after changing the leaf, closing, or
 test('pending failure/explicit responses cannot reactivate a closed selection',{skip:!available},async()=>{
  for(const stage of ['failure','explicit']){const f=await workbookIntakeFixture();try{
   if(stage==='explicit')await f.picker.chooseLive(f.choice);let release,heldSignal;f.setPause(async(type,payload,signal)=>{if(stage==='failure'?type==='SCHEMA'&&payload.excelIdentity:type==='TEMPLATE'){heldSignal=signal;await new Promise(resolve=>{release=resolve;});}});
-  const callback=stage==='failure'?nodes(f.picker.render()).find(node=>node.type?.name==='SupplierHubCategoryBrowser').props.onChoice:f.button().props.onClick;callback(f.choice);await waitFor(()=>Boolean(release));f.picker.close();assert.equal(heldSignal.aborted,true);release();await new Promise(resolve=>setTimeout(resolve,20));
+  f.picker.openDirect();const callback=stage==='failure'?nodes(f.picker.render()).find(node=>node.type?.name==='SupplierHubCategoryBrowser').props.onChoice:f.button().props.onClick;callback(f.choice);await waitFor(()=>Boolean(release));f.picker.close();assert.equal(heldSignal.aborted,true);release();await new Promise(resolve=>setTimeout(resolve,20));
   assert.equal(f.picker.selected.length,0);assert.equal(f.h.sqlite.prepare('SELECT COUNT(*) n FROM category_profiles').get().n,0);assert.equal(f.calls.filter(c=>c.path==='/api/category-profiles'&&c.method==='POST').length,0);
  }finally{f.close();}}
 });

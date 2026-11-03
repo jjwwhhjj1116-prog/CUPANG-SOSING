@@ -75,6 +75,19 @@ for(const company of schemaCompanies)test(`explicit recommendation selection ver
  }finally{f.close();}
 });
 
+for(const company of schemaCompanies)test(`direct searched candidate uses the exact Single schema and one checked profile ACK (${company.code})`,async()=>{
+ const f=setup(company);try{
+  const before=f.retained();nodes(f.picker.render()).find(node=>node.props?.role==='tab'&&node.props.children==='직접 선택').props.onClick();
+  const search=nodes(f.picker.render()).find(node=>node.type?.name==='CategoryRecommendationsPanel'&&node.props.purpose==='search');
+  assert.equal(search.props.initialTitle,'');assert.equal(search.props.disabled,false);
+  await search.props.onChoose(f.recommendation,f.result);
+  assert.equal(f.resolutions.length,1);assert.equal(f.schemaReads,1);assert.equal(f.excelReads,0);assert.equal(f.picker.selected.length,1);assert.equal(f.profileCount(),1);
+  assert.equal(f.picker.selected[0].categoryId,f.recommendation.code);assert.deepEqual(f.picker.selected[0].categoryPath,schemaPath);
+  assert.deepEqual(f.picker.selected[0].hubSchema.company,company);assert.equal(f.picker.calls.filter(call=>call.method==='POST').length,1);
+  assert.equal(f.retained(),before);assert.deepEqual(f.h.network,[]);assert.equal(f.h.sqlite.prepare('SELECT COUNT(*) n FROM supplier_hub_receipts').get().n,0);
+ }finally{f.close();}
+});
+
 test('double-clicking a recommendation while it resolves creates only one verified profile and one intake callback',async()=>{
  let release;const f=setup(schemaCompanies[0],{resolve:({choice})=>new Promise(resolve=>{release=()=>resolve(choice);})});
  try{

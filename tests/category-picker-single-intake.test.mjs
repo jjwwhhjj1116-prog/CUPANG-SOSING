@@ -182,7 +182,7 @@ test('a committed Single profile reply arriving after picker close never opens U
       if (init?.method === 'POST' && response.ok) { signal = init.signal; await new Promise(resolve => { release = resolve; }); } return response;
     }, { workspaceOwnerId: 'owner', catalog: { loadLiveHubCategorySchema: async () => f.snapshot,
       loadLiveHubCategoryTemplate: async () => assert.fail('late Single creation must never request Excel') } });
-    nodes(ui.render()).find(node => node.type?.name === 'SupplierHubCategoryBrowser').props.onChoice(f.choice);
+    ui.openDirect();nodes(ui.render()).find(node => node.type?.name === 'SupplierHubCategoryBrowser').props.onChoice(f.choice);
     await waitFor(() => Boolean(release)); ui.close(); assert.equal(signal.aborted, true); release();
     await new Promise(resolve => setTimeout(resolve, 20));
     assert.equal(ui.selected.length, 0); assert.equal(f.h.sqlite.prepare('SELECT COUNT(*) n FROM category_profiles').get().n, 1);

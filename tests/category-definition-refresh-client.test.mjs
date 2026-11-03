@@ -111,10 +111,11 @@ const settle=h=>waitFor(()=>!h.inFlight);
 function picker(f,{profiles=[f.source],write,observe=()=>f.current}={}){
  const slots=[],cleanup=[],requests=[],selected=[],row={url:'https://detail.1688.com/offer/813724060928.html',features:'직접 특징',keywords:'직접 키워드',profile:f.source};let cursor=0,first=true;
  const hooks={useMemo:fn=>fn(),useState(initial){const index=cursor++;if(!(index in slots))slots[index]=typeof initial==='function'?initial():initial;return[slots[index],value=>{slots[index]=typeof value==='function'?value(slots[index]):value;}];},useRef(initial){const index=cursor++;return slots[index]??(slots[index]={current:initial});},useEffect(fn){if(first)cleanup.push(fn());}};
+ hooks.useId=()=>{const index=cursor++;return slots[index]??(slots[index]=`category-picker-${index}`);};
  const fetcher=async(url,init)=>{requests.push({url,...init});return !init?.method?Response.json({profiles}):write(url,init);};
  const component=runtime({fetcher,react:hooks,catalog:{loadLiveHubCategorySchema:async()=>observe()}}).load('app/components/category-picker.tsx').CategoryPicker;
  const render=()=>{cursor=0;const tree=component({profiles:[],selectedId:'',onSelected:profile=>{selected.push(profile);row.profile=profile;},onAdvanced(){}});first=false;return tree;};
- const choose=()=>nodes(render()).find(node=>node.type?.name==='SupplierHubCategoryBrowser').props.onChoice({key:'live',categoryId:f.current.categoryId,path:f.current.categoryPath,isLeaf:true,evidence:'observed',codeEvidence:'supplier-hub',supplierHub:{trail:[],ownerId:'owner',company:f.current.company}});
+ const choose=()=>{nodes(render()).find(node=>node.props?.role==='tab'&&node.props.children==='직접 선택').props.onClick();return nodes(render()).find(node=>node.type?.name==='SupplierHubCategoryBrowser').props.onChoice({key:'live',categoryId:f.current.categoryId,path:f.current.categoryPath,isLeaf:true,evidence:'observed',codeEvidence:'supplier-hub',supplierHub:{trail:[],ownerId:'owner',company:f.current.company}});};
  return{render,choose,requests,selected,row,get inFlight(){return slots.some(slot=>slot?.current instanceof AbortController);},close:()=>cleanup.forEach(fn=>fn?.()),confirm:()=>nodes(render()).find(node=>node.type==='button'&&node.props.children==='선택 완료 · URL 입력').props.onClick()};
 }
 

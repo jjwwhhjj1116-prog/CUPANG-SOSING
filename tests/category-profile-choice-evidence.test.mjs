@@ -49,6 +49,7 @@ const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='o
 function ui(profiles,{choicePatch,readProfiles,preventLiveConfirm=false}={}){
  const slots=[],calls=[],selected=[],catalog=load('app/category-catalog.ts');let cursor=0;
  hooks={useState(initial){const index=cursor++;if(!(index in slots))slots[index]=typeof initial==='function'?initial():initial;return[slots[index],value=>{slots[index]=typeof value==='function'?value(slots[index]):value;}];},useRef(initial){const index=cursor++;return slots[index]??(slots[index]={current:initial});},useMemo:fn=>fn(),useEffect(){},useCallback:fn=>fn};
+ hooks.useId=()=>{const index=cursor++;return slots[index]??(slots[index]=`category-picker-${index}`);};
  const fetcher=async(url,init)=>{calls.push({url,method:init?.method??'GET'});assert.equal(init?.method,undefined,'saved selection reads profiles without writing');return Response.json({profiles:readProfiles??profiles});};
  const component=load('app/components/category-picker.tsx',{
   '@/app/load-category-profiles':load('app/load-category-profiles.ts',{fetch:fetcher}),
@@ -62,6 +63,7 @@ function ui(profiles,{choicePatch,readProfiles,preventLiveConfirm=false}={}){
   fetch:fetcher,
  }).CategoryPicker;
  const render=(selectedId=profiles[0]?.id??'')=>{cursor=0;return component({profiles,selectedId,onSelected:value=>selected.push(value),onAdvanced(){}});};
+ nodes(render()).find(node=>node.props?.role==='tab'&&node.props.children==='직접 선택').props.onClick();
  return{render,markup:()=>renderToStaticMarkup(render()),calls,selected};
 }
 
