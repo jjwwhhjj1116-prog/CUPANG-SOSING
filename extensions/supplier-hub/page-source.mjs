@@ -3,6 +3,7 @@
 import {readPageDomFacts,validatePageDomFacts,mergePageDomFacts,validatePagePackaging} from './page-dom-facts.mjs';
 import {isUnrelatedProductElement} from './page-dom-sections.mjs';
 import {parseAlibabaDescription} from './alibaba-description.mjs';
+import {readPageContextLiteral} from './page-context-literal.mjs';
 export const PAGE_SOURCE_LIMIT=512*1024;
 const object=value=>!!value&&typeof value==='object'&&!Array.isArray(value);
 const plain=(value,max)=>typeof value==='string'?value.replace(/[\u0000-\u001f]/g,' ').trim().slice(0,max):'';
@@ -141,8 +142,8 @@ function literalChild(node,key,required=false){
  if(entries.length>1||required&&!entries.length)return attributeSourceError();
  return entries[0]??null;
 }
-function literalArrayItems(node){
- if(!Array.isArray(node?.value)||node.value.length>50)return attributeSourceError();
+function literalArrayItems(node,maximum=50){
+ if(!Array.isArray(node?.value)||node.value.length>maximum)return attributeSourceError();
  const items=[],text=node.literal;let cursor=1;
  while(cursor<text.length){
   while(/[\s,]/.test(text[cursor]??'')&&cursor<text.length)cursor++;
@@ -190,6 +191,7 @@ export function readPageSourceDescriptionReference(sourceUrl,scripts){
  const {offerId}=pageSourceUrl(sourceUrl);
  if(!Array.isArray(scripts)||scripts.length>100||scripts.some(text=>typeof text!=='string')||scripts.reduce((size,text)=>size+text.length,0)>4*1024*1024)throw Error('상세 원문 연결의 크기를 확인하지 못했습니다.');
  const references=[];
+ const context=sourceContextProduct(scripts,offerId);if(context?.detailUrl)references.push(context.detailUrl);
  const fail=()=>{throw Error('현재 상품의 상세 원문 연결을 확인하지 못했습니다.');};
  const identity=(node,required=true)=>{
   if(!object(node?.value))return fail();
@@ -326,6 +328,52 @@ function sourceStructuredProduct(scripts,offerId){
  }
  return observed;
 }
+/** Exact recorded primary paths only. The declared per-piece g/cm columns are
+ * supplier data, not independently measured or verified gross packaging. */
+function sourceContextProduct(scripts,offerId){
+ const roots=scripts.map(readPageContextLiteral).filter(Boolean);if(!roots.length)return null;if(roots.length!==1)attributeSourceError();
+ const fail=attributeSourceError,path=(node,...keys)=>keys.reduce((current,key)=>literalChild(current,key,true),node);
+ const root=roots[0],result=path(root,'result'),data=path(result,'data'),json=path(data,'Root','fields','dataJson');
+ const global=path(result,'global','globalData'),detail=path(global,'model','offerDetail'),model=path(json,'skuModel');
+ const sameId=value=>typeof value==='string'&&value===offerId||typeof value==='number'&&Number.isSafeInteger(value)&&String(value)===offerId;
+ const identity=node=>{if(!sameId(literalChild(node,'offerId',true).value))fail();const extra=literalChild(node,'productId');if(extra&&!sameId(extra.value))fail();};
+ for(const node of [path(json,'tempModel'),path(json,'offerBaseInfo'),path(global,'parametersMap'),detail])identity(node);
+ for(const node of [json,global,detail,model]){
+  for(const key of ['isPicPrivate','isPricePrivate','isDetailForbidden']){const field=literalChild(node,key);if(field&&field.value!==false)fail();}
+  const signs=literalChild(node,'offerSigns');if(signs){const flag=literalChild(signs,'isDetailForbidden');if(flag&&flag.value!==false)fail();}
+ }
+ for(const key of ['offerId','productId']){const optionalId=literalChild(model,key);if(optionalId&&!sameId(optionalId.value))fail();}
+ const title=literalChild(detail,'subject',true).value;if(!plain(title,500)||plain(title,500)!==title||literalChild(path(json,'tempModel'),'offerTitle',true).value!==title)fail();
+ const map=literalChild(model,'skuInfoMap',true);if(!object(map.value)||!Object.keys(map.value).length||Object.keys(map.value).length>200)fail();
+ const skus=new Map();for(const [name,rows] of ownLiteralFields(map)){
+  if(rows.length!==1)fail();const row=rows[0],sku=literalChild(row,'skuId',true).value,label=literalChild(row,'specAttrs',true).value;
+  const id=typeof sku==='number'&&Number.isSafeInteger(sku)&&sku>0?String(sku):typeof sku==='string'&&/^\d{1,30}$/u.test(sku)?sku:null;
+  if(!id||skus.has(id)||label!==name||!plain(name,500))fail();skus.set(id,name);
+ }
+ const attributes=[],known=new Map();for(const pair of literalArrayItems(path(detail,'featureAttributes'))){
+  const field=(key,max)=>{const value=literalChild(pair,key,true).value;if(typeof value!=='string'||!value.trim()||value.length>max||/[\u0000-\u001f]/u.test(value))fail();return value.trim();};
+  const name=field('name',190),value=field('value',1000),key=name.toLowerCase();if(known.has(key)){if(known.get(key)!==value)fail();continue;}known.set(key,value);attributes.push({name,value});
+ }
+ const packaging=new Map(),pack=path(data,'productPackInfo','fields');
+ if(literalChild(pack,'uiType',true).value!=='od_product_pack_info'||literalChild(pack,'label',true).value!=='商品件重尺')fail();
+ const scale=path(pack,'pieceWeightScale');if(literalChild(scale,'skuDimensionCount',true).value!==1)fail();
+ const expected={sku1:'颜色',length:'长(cm)',width:'宽(cm)',height:'高(cm)',volume:'体积(cm³)',weight:'重量(g)'},columns=new Set();
+ for(const column of literalArrayItems(path(scale,'columnList'))){const name=literalChild(column,'name',true).value;if(!Object.hasOwn(expected,name)||columns.has(name)||literalChild(column,'label',true).value!==expected[name])fail();columns.add(name);}
+ if(columns.size!==Object.keys(expected).length)fail();
+ const rows=literalArrayItems(path(scale,'pieceWeightScaleInfo'),200);if(rows.length!==skus.size)fail();
+ for(const row of rows){
+  const raw=literalChild(row,'skuId',true).value,sku=typeof raw==='number'&&Number.isSafeInteger(raw)&&raw>0?String(raw):raw;
+  if(typeof sku!=='string'||!skus.has(sku)||packaging.has(sku)||literalChild(row,'sku1',true).value!==skus.get(sku))fail();
+  const value={source:'package-table'};
+  for(const [from,to,multiplier] of [['weight','weightG',1],['length','lengthMm',10],['width','widthMm',10],['height','heightMm',10]]){
+   const amount=literalChild(row,from,true).value;if(typeof amount!=='number'||!Number.isFinite(amount)||amount<0)fail();if(amount!==0)value[to]=amount*multiplier;
+  }
+  packaging.set(sku,Object.keys(value).length>1?validatePagePackaging(value):null);
+ }
+ const description=path(data,'description','fields'),detailUrl=literalChild(description,'detailUrl',true).value;
+ if(literalChild(description,'uiType',true).value!=='od_product_description'||typeof detailUrl!=='string'||detailUrl!==literalChild(detail,'detailUrl',true).value||!detailUrl||detailUrl.length>2048||/[\u0000-\u0020\u007f]/u.test(detailUrl))fail();
+ return {attributes,packaging,detailUrl,title,model:model.value};
+}
 const DOM_OPTION_LABELS=['规格','颜色','尺寸','颜色分类','类型','款式','型号','套餐','配置','版本','容量','尺码','花色','口味','颜色规格','材质','风格','图案'];
 const DOM_OPTION_ROOT='[class*="sku" i],[class*="prop" i],[class*="spec" i]';
 const DOM_OPTION_EXCLUDED='[class*="review" i],[class*="comment" i],[class*="rate" i],[class*="rating" i],[class*="feedback" i],[class*="evaluate" i],[class*="评价"],[class*="评论"],[id*="review" i],[id*="comment" i],[id*="evaluate" i],[id*="rate" i],[class*="recommend" i],[id*="recommend" i]';
@@ -351,6 +399,7 @@ function domSourceIdentity(scripts,offerId){
  if(!bound)throw domOptionsError();
 }
 function domFactsIdentity(scripts,offerId){
+ if(sourceContextProduct(scripts,offerId))return;
  if(scripts.some(text=>pageJsonProperties(text,'globalData').length)){domSourceIdentity(scripts,offerId);return;}
  let bound=false;
  for(const text of scripts)for(const entry of pageJsonProperties(text,'skuModel')){
@@ -564,6 +613,8 @@ export function extractPageSource(input,now=Date.now()){
  if(new Set(models.map(({entry})=>JSON.stringify(entry.value))).size>1)throw Error('상품 옵션 원문이 여러 개입니다. 현재 상품 본문을 다시 확인해주세요.');
  const sm=models[0]?.entry.value;
  for(const {entry} of models)assertProductIdentity(entry.value,identity.offerId);
+ const context=sourceContextProduct(scripts,identity.offerId);
+ if(context&&JSON.stringify(context.model)!==JSON.stringify(sm))attributeSourceError();
  const structured=sourceStructuredProduct(scripts,identity.offerId);
  const title=sourceTitle(scripts,models,identity.offerId)||plain(input.title,500);
  if(!title)throw Error('상품명이 보이는 상품 본문에서 다시 수집해주세요.');
@@ -624,12 +675,13 @@ export function extractPageSource(input,now=Date.now()){
    options.push({...row});if(row.imageUrl)addImage(row.imageUrl,'additional');
   }
  }
- let observed={attributes:sourceAttributes(scripts,identity.offerId,structured?.attributes),options};
+ const contextPackaging=context?[...context.packaging].flatMap(([supplierSku,packaging])=>packaging?[{supplierSku,packaging}]:[]):[];
+ let observed={attributes:sourceAttributes(scripts,identity.offerId,[...(structured?.attributes??[]),...(context?.attributes??[])]),options};
  if(input.domFacts!=null){
   const facts=validatePageDomFacts(input.domFacts);
   if(facts.sourceUrl!==identity.sourceUrl||facts.offerId!==identity.offerId)throw domOptionsError();
-  domFactsIdentity(scripts,identity.offerId);observed=mergePageDomFacts(observed.attributes,options,facts);
- }
+  domFactsIdentity(scripts,identity.offerId);observed=mergePageDomFacts(observed.attributes,options,{...facts,packaging:[...contextPackaging,...facts.packaging]});
+ }else if(contextPackaging.length)observed=mergePageDomFacts(observed.attributes,options,{attributes:[],packaging:contextPackaging});
  return validatePageSourceForDelivery({format:'yoofam-page-source-v1',...identity,collectedAt:new Date(now).toISOString(),title,description:structured?.text||plain(input.description,20000),options:observed.options,images,attributes:observed.attributes,sourceGallery},now);
 }
 /** Inert capture evidence only. Counts never authorize reading more of the

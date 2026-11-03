@@ -16,7 +16,7 @@ const translations=[['合成硅胶保护带','합성 실리콘 보호대'],['硅
 
 /** Actual local API/SQLite/client modules. Supplier/model replies and browser
  * Canvas/Worker primitives are inert; no stage adapter or result is replaced. */
-export async function selectedWorkflowFixture(company=companies[0],{completeInputs=false,foreignTextImages=false,qwenSeo=false}={}){
+export async function selectedWorkflowFixture(company=companies[0],{completeInputs=false,foreignTextImages=false,qwenSeo=false,initialSnapshot}={}){
  const boundaries=[],requests=[],events=[],keys=new Map(),initialInputs=[];let stage='setup';
  const imageUrls=Array.from({length:3},(_,index)=>`https://cbu01.alicdn.com/step920-synthetic-${index}.png`);
  const imageBytes=await Promise.all(imageUrls.map((_,index)=>{const height=index<2?800:600,image=sharp({create:{width:800,height,channels:4,background:{r:180+index*20,g:200,b:220,alpha:1}}});return(foreignTextImages?image.composite([{input:Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="800" height="${height}"><text x="24" y="39" font-size="20" fill="black">中文</text></svg>`)}]):image).png().toBuffer();}));
@@ -35,7 +35,7 @@ export async function selectedWorkflowFixture(company=companies[0],{completeInpu
   h.bindings.FILES.put=async(...args)=>{const result=await put(...args);return result===null?null:h.bindings.FILES.head(args[0]);};
   const now=new Date().toISOString(),email=company.code==='A01526306'?'jwhj1116@kakao.com':'unari8484@gmail.com',role=company.code==='A01526306'?'admin':'member';
   h.sqlite.prepare('INSERT INTO members(id,email,password_hash,role,status,company_code,company_name,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run('owner',email,'synthetic-unused',role,'approved',company.code,company.name,now,now);
-  const snapshot=aiFixture({company}).snapshot,profile=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'STEP920 SYNTHETIC NATIVE PROFILE',categoryId:snapshot.categoryId,categoryPath:snapshot.categoryPath,hubSchema:snapshot,template:null,mappings:[]});
+  const snapshot=initialSnapshot??aiFixture({company}).snapshot,profile=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'STEP920 SYNTHETIC NATIVE PROFILE',categoryId:snapshot.categoryId,categoryPath:snapshot.categoryPath,hubSchema:snapshot,template:null,mappings:[]});
   const context={...h.context,category:{...profile},company:{...company}};
   h.sqlite.prepare('UPDATE collection_jobs SET goal=? WHERE id=?').run('work','job');h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(context),'job');
   const quotationProvider=mockProvider();
