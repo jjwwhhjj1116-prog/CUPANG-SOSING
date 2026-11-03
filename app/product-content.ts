@@ -196,7 +196,7 @@ export function validateContentInput(input: unknown, ownedKeys: readonly string[
     patch.assets = {};
     for (const key of Object.keys(assets) as AssetRole[]) {
       const values = assets[key];
-      if (!Array.isArray(values) || values.length > (['main', 'detailTop', 'detailBottom'].includes(key) ? 1 : 30)) throw new Error(`${assetRoles[key]} 개수를 확인해주세요.`);
+      if (!Array.isArray(values) || values.length > (['main', 'detailTop', 'detailBottom'].includes(key) ? 1 : key === 'detail' ? PRODUCT_IMAGE_POOL_LIMIT : 30)) throw new Error(`${assetRoles[key]} 개수를 확인해주세요.`);
       patch.assets[key] = values.map(value => {
         if (typeof value !== 'string' || value.length > 512 || !value.startsWith(`${ownerId}/`) || !ownedKeys.includes(value)) throw new Error('이 상품에 업로드한 본인 소유 이미지만 지정할 수 있습니다.');
         return value;

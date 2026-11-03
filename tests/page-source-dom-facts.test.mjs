@@ -201,13 +201,13 @@ test('trusted collection button reads visible package facts and preserves click-
 });
 
 test('trusted button keeps virtualized attributes, package table and later detail images across one viewport sweep',async()=>{
- const early=documentFromHtml(attributes),middle=documentFromHtml(table()),late=documentFromHtml(''),hostDom=pageCollectorDom(),messages=[];
+ const imageUrl='https://cbu01.alicdn.com/synthetic-virtual-detail.png';
+ const early=documentFromHtml(attributes),middle=documentFromHtml(table()),late=documentFromHtml(`<section><h2>商品详情</h2><img src="${imageUrl}"></section>`),hostDom=pageCollectorDom(),messages=[];
  const document=hostDom.document,view={scrollX:0,scrollY:0,innerHeight:800,addEventListener(){},removeEventListener(){}};view.top=view;view.scrollTo=position=>{view.scrollX=position.left;view.scrollY=position.top;};
  document.scrollingElement={scrollHeight:6000};document.visibilityState='visible';document.addEventListener=()=>{};document.removeEventListener=()=>{};document.defaultView=view;
  document.title='合成后跟贴';document.scripts=scripts.map(textContent=>({textContent}));
- const imageUrl='https://cbu01.alicdn.com/synthetic-virtual-detail.png',virtualImage={tagName:'IMG',currentSrc:imageUrl,getAttribute:name=>name==='src'?imageUrl:null};
  document.querySelectorAll=selector=>{
-  if(selector==='#desc-lazyload-container img,.offer-description img')return view.scrollY>=1600?[virtualImage]:[];
+  if(selector.includes(' img'))return[]; // Gallery lookup cannot supply BODY evidence.
   if(selector==='#desc-lazyload-container,.offer-description,.detail-desc-decorate-richtext,[data-module-name="description"],[data-plg-name="description"]')return[];
   return (view.scrollY<600?early:view.scrollY<1400?middle:late).querySelectorAll(selector);
  };

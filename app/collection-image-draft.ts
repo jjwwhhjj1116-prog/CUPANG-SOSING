@@ -1,7 +1,7 @@
 import type { CollectionResult } from '@/app/collection-result';
 import type { ProductContent } from '@/app/product-content';
 import type { ProductOptions } from '@/app/product-options';
-import { isOwnedImageKey } from '@/app/image-files';
+import { isOwnedImageKey, PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-files';
 import {collectionCommonImageCandidate} from '@/app/collection-gallery';
 
 export type CollectedImageLink = { imageIndex: number; key: string };
@@ -25,7 +25,7 @@ export function collectedImageDraft(owner: string, receipt: CollectionResult, li
     // invitation to replace the entire field with these source images.
     if (current.value.some(key => !candidates.includes(key))) continue;
     const elsewhere = new Set(Object.entries(nextContent.assets).flatMap(([name, field]) => name === role ? [] : field.value));
-    const value = candidates.filter(key => !elsewhere.has(key)).slice(0, role === 'main' ? 1 : 30);
+    const value = candidates.filter(key => !elsewhere.has(key)).slice(0, role === 'main' ? 1 : role === 'detail' ? PRODUCT_IMAGE_POOL_LIMIT : 30);
     if (JSON.stringify(value) === JSON.stringify(current.value)) continue;
     nextContent.assets[role] = { value, provenance: 'collected', updatedAt: now };
     changedRoles++;

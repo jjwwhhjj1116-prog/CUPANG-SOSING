@@ -3,7 +3,7 @@ import {isUnrelatedProductElement,productSectionKind,readProductSectionLinks} fr
 
 const knownContainers='#desc-lazyload-container,.offer-description,.detail-desc-decorate-richtext,[data-module-name="description"],[data-plg-name="description"]';
 const headings='h1,h2,h3,h4,h5,h6,[role="heading"]';
-const headingWrappers=headings+',div,span,font';
+const headingWrappers=headings+',div,span,font,p,strong';
 const detailHeading=/^(?:商品详情|产品详情|图文详情|商品描述|产品描述|详细描述|详细说明|商品介绍|제품상세정보|상품상세정보|제품상세|상품상세|상품설명|제품설명|상세설명|상세정보)$/u;
 const unrelated=/(?:gallery|sku[-_ ]?(?:list|image))/iu;
 const ignoredTags=new Set(['ASIDE','NAV','HEADER','FOOTER','SCRIPT','STYLE','NOSCRIPT','IFRAME','SVG','BUTTON']);
@@ -48,7 +48,7 @@ function semanticDetailRoot(heading,sourceUrl){
  // every wrapper must still contain only this same exact section label.
  while(anchor.parentElement&&depth++<12){
   const parent=anchor.parentElement;
-  if(!['SPAN','FONT','DIV','H1','H2','H3','H4','H5','H6'].includes(parent.tagName)&&attr(parent,'role')!=='heading')break;
+  if(!['SPAN','FONT','DIV','P','STRONG','H1','H2','H3','H4','H5','H6'].includes(parent.tagName)&&attr(parent,'role')!=='heading')break;
   if(parent.children?.length!==1||headingText(parent)!==label)break;
   anchor=parent;
  }

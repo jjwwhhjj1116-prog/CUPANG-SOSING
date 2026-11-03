@@ -70,7 +70,7 @@ test('scoped background traversal retains hard element/image bounds and unavaila
  Object.fromEntries(Array.from({length:201},(_,index)=>['image-'+index,css('image-'+index)])));
  assert.throws(()=>readPageDomDetails(tooMany.document,sourceUrl),/상세 이미지가 200개/);
  const manyElements=styled('<div class="offer-description">'+'<p></p>'.repeat(6000)+'</div>',{});
- assert.throws(()=>readPageDomDetails(manyElements.document,sourceUrl),/배경 이미지 영역.*크기/);
+ assert.throws(()=>readPageDomDetails(manyElements.document,sourceUrl),/(?:배경 이미지|제목) 영역.*크기/);
  const missing=productDocument(`<div class="offer-description" style='background-image:${css('unread')}'></div>`);
  assert.deepEqual(readPageDomDetails(missing,sourceUrl).detailImages,[]);
  missing.defaultView={getComputedStyle(){throw Error('unavailable');}};
