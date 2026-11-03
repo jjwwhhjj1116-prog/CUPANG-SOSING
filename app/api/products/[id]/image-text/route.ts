@@ -28,6 +28,7 @@ import {imageVisionConfiguration,readImageVision,readStoredImageVisionResult,Ima
 import {IMAGE_TEXT_INSPECTION_POLICY,IMAGE_TEXT_PRESERVATION_POLICY,isImageTextInspectionPolicy,type ImageTextInspectionPolicy,parseImageTextVisionConfiguration} from '@/app/image-text-vision';
 import {DetailWorkspaceError} from '@/app/detail-workspace';
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
+import type {DetailWorkspaceImageProofs} from '@/db/detail-workspaces';
 
 type Context = { params: Promise<{ id: string }> };
 class ImageTextError extends Error {
@@ -146,10 +147,10 @@ async function freshSource(owner: string, id: string, source: FreeImageSource, r
   if (freeImageSourceIdentity(observed) !== freeImageSourceIdentity(source)) throw changed();
   return current;
 }
-async function freshVisionSource(owner:string,id:string,source:FreeImageSource,company:SupplierHubCompany,member:{email:string;role:string},signal:AbortSignal){
+async function freshVisionSource(owner:string,id:string,source:FreeImageSource,company:SupplierHubCompany,member:{email:string;role:string},signal:AbortSignal,proofs?:DetailWorkspaceImageProofs){
   if(!source.workspaceTarget){await freshSource(owner,id,source);return;}
   const {confirmWorkspaceImageSource}=await import('@/db/detail-workspace-image-edits');
-  await confirmWorkspaceImageSource({owner,company,identity:member,id},source,signal);
+  await confirmWorkspaceImageSource({owner,company,identity:member,id},source,signal,proofs);
 }
 async function storedOutput(key: string, source: FreeImageSource, optionImageIds: string[], sha256: string, size: number, crop?: FreeImageCrop, editDocument?: FreeImageEditDocument) {
   if (!env.FILES) throw new ImageTextError(503, '이미지 저장소가 연결되지 않았습니다.');
@@ -336,8 +337,8 @@ export async function POST(request: Request, context: Context) {
         if(source.productId!==id||!isOwnedImageKey(owner,source.sourceKey))throw new ImageTextError(400,'이 상품의 본인 소유 원본만 Vision으로 읽을 수 있습니다.');
         const company=await editorCompany(owner);
         const currentMember=async()=>{const user=await getChatGPTUser(),member=user?.membership;if(!user?.verifiedAccess||user.userId!==owner||member?.id!==owner||member.status!=='approved'||member.email!==user.email||JSON.stringify(approvedSupplierHubCompany(member))!==JSON.stringify(company))throw changed();return{email:member.email.toLowerCase().trim(),role:member.role};};
-        const member=await currentMember();
-        const assertCurrent=async()=>{request.signal.throwIfAborted();if(await ownerId()!==owner||JSON.stringify(await currentMember())!==JSON.stringify(member)||JSON.stringify(imageVisionConfiguration(settings))!==JSON.stringify(configuration))throw changed();await freshVisionSource(owner,id,source,company,member,request.signal);request.signal.throwIfAborted();if(await ownerId()!==owner||JSON.stringify(await currentMember())!==JSON.stringify(member)||JSON.stringify(imageVisionConfiguration(settings))!==JSON.stringify(configuration))throw changed();};
+        const member=await currentMember(),proofs=source.workspaceTarget?(await import('@/db/detail-workspaces')).createDetailWorkspaceImageProofs():undefined;
+        const assertCurrent=async()=>{request.signal.throwIfAborted();if(await ownerId()!==owner||JSON.stringify(await currentMember())!==JSON.stringify(member)||JSON.stringify(imageVisionConfiguration(settings))!==JSON.stringify(configuration))throw changed();await freshVisionSource(owner,id,source,company,member,request.signal,proofs);request.signal.throwIfAborted();if(await ownerId()!==owner||JSON.stringify(await currentMember())!==JSON.stringify(member)||JSON.stringify(imageVisionConfiguration(settings))!==JSON.stringify(configuration))throw changed();};
         await assertCurrent();
         const image=await readImage(source.sourceKey);
         if(await digest(image.bytes)!==source.sourceSha256||image.dimensions.width!==source.width||image.dimensions.height!==source.height)throw changed();

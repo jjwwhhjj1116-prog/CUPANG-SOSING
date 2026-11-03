@@ -24,6 +24,14 @@ export const detailWorkspacesSchema = `CREATE TABLE IF NOT EXISTS product_detail
 )`;
 type Identity = { email: string; role: string };
 type Row = { revision: number; request_id: string; payload: string; updated_at: string };
+export type DetailWorkspaceImageProofs = { files: Map<string, { metadata: string; file: DetailWorkspaceFile }> };
+/** One operation only: actual bytes establish trust; later checks still inspect every upload version. */
+export function createDetailWorkspaceImageProofs(): DetailWorkspaceImageProofs { return { files: new Map() }; }
+function imageObjectProof(object: R2Object) {
+  if (typeof object.version !== 'string' || !object.version.length || object.version.length > 512 || /[\u0000-\u0020\u007f]/u.test(object.version)) return null;
+  return JSON.stringify({ key: object.key, version: object.version, size: object.size, etag: object.etag, uploaded: object.uploaded,
+    httpMetadata: object.httpMetadata, customMetadata: object.customMetadata, checksums: object.checksums, storageClass: object.storageClass, ssecKeyMd5: object.ssecKeyMd5 });
+}
 const conflict = (message = '상세 작업공간이나 상품·옵션·카테고리·회원 기준이 변경되었습니다. 현재 입력을 보존하고 다시 확인해주세요.') => new DetailWorkspaceError(message);
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 async function database(owner: string, id: string, profileId: string | null) {
@@ -64,33 +72,44 @@ function stored(value: Row | null, owner: string, id: string, optionId: string, 
   if (result.revision !== value.revision || result.requestId !== value.request_id || result.updatedAt !== value.updated_at) throw conflict();
   return result;
 }
-async function fileProofs(owner: string, document: DetailWorkspaceRecord['document'], signal: AbortSignal): Promise<DetailWorkspaceFile[]> {
+async function fileProofs(owner: string, document: DetailWorkspaceRecord['document'], signal: AbortSignal, proofs?: DetailWorkspaceImageProofs): Promise<DetailWorkspaceFile[]> {
   if (!env.FILES) throw new DetailWorkspaceError('이미지 저장소를 확인해주세요.', 503);
   const result: DetailWorkspaceFile[] = [], keys = detailWorkspaceFileKeys(document); let total = 0;
   for (let offset = 0; offset < keys.length; offset += 2) {
     const batch = keys.slice(offset, offset + 2);
-    const fetched = await Promise.allSettled(batch.map(async key => {
+    const fetched = await Promise.allSettled(batch.map(async (key): Promise<{ file: DetailWorkspaceFile } | { object: R2ObjectBody | null }> => {
       signal.throwIfAborted(); if (!isOwnedImageKey(owner, key)) throw conflict();
-      return env.FILES.get(key);
+      const verified = proofs?.files.get(key);
+      if (verified) {
+        const current = await env.FILES.head(key);
+        if (!current || imageObjectProof(current) !== verified.metadata) throw conflict('작업공간 원본·현재 사진이나 저장 증거가 변경되었습니다.');
+        return { file: verified.file };
+      }
+      return { object: await env.FILES.get(key) };
     }));
     let bodiesRead = false;
     try {
       signal.throwIfAborted();
       const objects = fetched.map(value => {
         if (value.status === 'rejected') throw value.reason;
-        if (!value.value || value.value.size < 1 || value.value.size > MAX_IMAGE_BYTES) throw conflict('작업공간 사진과 원본의 저장 파일을 확인해주세요.');
+        if ('file' in value.value) return value.value;
+        if (!value.value.object || value.value.object.size < 1 || value.value.object.size > MAX_IMAGE_BYTES) throw conflict('작업공간 사진과 원본의 저장 파일을 확인해주세요.');
         return value.value;
       });
       // Reserve the whole bounded pair before either body can allocate bytes.
-      for (const object of objects) {
-        total += object.size; if (total > 30 * 1024 * 1024) throw new DetailWorkspaceError('작업공간 원본과 현재 사진의 전체 크기는30MiB 이내여야 합니다.', 413);
+      for (const value of objects) {
+        total += 'file' in value ? value.file.bytes : value.object!.size; if (total > 30 * 1024 * 1024) throw new DetailWorkspaceError('작업공간 원본과 현재 사진의 전체 크기는30MiB 이내여야 합니다.', 413);
       }
-      const loaded = await Promise.allSettled(objects.map(async (object, index) => {
+      const loaded = await Promise.allSettled(objects.map(async (value, index) => {
+        if ('file' in value) return value.file;
+        const object = value.object!;
         const bytes = await readBoundedStream(object.body, MAX_IMAGE_BYTES);
         if (bytes.length !== object.size) throw new DetailWorkspaceError('작업공간 사진을 끝까지 읽지 못했습니다.', 503);
         let dimensions; try { imageFileType(bytes); dimensions = imageDisplayDimensions(bytes); } catch { throw conflict('작업공간 사진의 실제 파일과 크기를 확인해주세요.'); }
         if (!dimensions || dimensions.width < 1 || dimensions.height < 1 || dimensions.width > 16000 || dimensions.height > 16000 || dimensions.width * dimensions.height > 40000000) throw new DetailWorkspaceError('작업공간 사진 크기를 확인해주세요.', 415);
-        return { key: batch[index], sha256: await labelUploadDigest(bytes), bytes: bytes.length, width: dimensions.width, height: dimensions.height };
+        const file = { key: batch[index], sha256: await labelUploadDigest(bytes), bytes: bytes.length, width: dimensions.width, height: dimensions.height }, metadata = imageObjectProof(object);
+        if (metadata && proofs) proofs.files.set(file.key, { metadata, file });
+        return file;
       }));
       bodiesRead = true;
       for (const value of loaded) {
@@ -99,15 +118,15 @@ async function fileProofs(owner: string, document: DetailWorkspaceRecord['docume
       }
     } finally {
       if (!bodiesRead) await Promise.allSettled(fetched.map(async value => {
-        if (value.status === 'fulfilled') await value.value?.body.cancel();
+        if (value.status === 'fulfilled' && 'object' in value.value) await value.value.object?.body.cancel();
       }));
     }
   }
   return result;
 }
-async function verifyRecord(record: DetailWorkspaceRecord, owner: string, imageKeys: readonly string[], signal: AbortSignal, historicalBanners = false) {
+async function verifyRecord(record: DetailWorkspaceRecord, owner: string, imageKeys: readonly string[], signal: AbortSignal, historicalBanners = false, proofs?: DetailWorkspaceImageProofs) {
   const { digest, ...value } = record;
-  if (await detailWorkspaceDigest(value) !== digest || !same(await fileProofs(owner, record.document, signal), record.files)) throw conflict('작업공간 원본·현재 사진이나 저장 증거가 변경되었습니다.');
+  if (await detailWorkspaceDigest(value) !== digest || !same(await fileProofs(owner, record.document, signal, proofs), record.files)) throw conflict('작업공간 원본·현재 사진이나 저장 증거가 변경되었습니다.');
   const checked = new Set<string>(); let total = record.files.reduce((sum, file) => sum + file.bytes, 0);
   for (const photo of record.document.photos.filter(photo => !imageKeys.includes(photo.key) || photo.key.startsWith(`${owner}/free-image-workspace-`))) {
     // An explicit rebase may inspect a removed old banner, never grant that
@@ -225,11 +244,11 @@ export async function saveDetailWorkspaceBannerRebase(owner: string, company: Su
   return commitWorkspace(state.db, owner, company, identity, id, profileId, input.optionId, state.before, workspace, signal);
 }
 /** Server-only captured source/raw-row seal. Never an HTTP response. */
-export async function readDetailWorkspaceImageSeal(owner: string, company: SupplierHubCompany, identity: Identity, id: string, profileId: string | null, optionId: string, signal: AbortSignal) {
+export async function readDetailWorkspaceImageSeal(owner: string, company: SupplierHubCompany, identity: Identity, id: string, profileId: string | null, optionId: string, signal: AbortSignal, proofs?: DetailWorkspaceImageProofs) {
   const db = await database(owner, id, profileId), before = await snapshot(db, owner, company, identity, id, profileId, optionId), workspace = stored(before.previous, owner, id, optionId, before, company);
   if (!workspace) throw new DetailWorkspaceError('편집할 상세 구성을 먼저 보관해주세요.', 409);
-  await verifyRecord(workspace, owner, before.view.imageKeys, signal); await confirm(db, owner, company, identity, id, profileId, optionId, before);
-  return { db, before, workspace, owner, company, identity, id, profileId, optionId };
+  await verifyRecord(workspace, owner, before.view.imageKeys, signal, false, proofs); await confirm(db, owner, company, identity, id, profileId, optionId, before);
+  return { db, before, workspace, owner, company, identity, id, profileId, optionId, proofs };
 }
 export type DetailWorkspaceImageSeal = Awaited<ReturnType<typeof readDetailWorkspaceImageSeal>>;
 /** Stage six/quote clocks and label assets are outputs, not a new Stage five source. */
@@ -323,7 +342,7 @@ export async function storeDetailWorkspacePublishedImages(seal:DetailWorkspaceIm
   await verifyDetailWorkspacePublishedImages(seal.owner,images,signal);await confirmDetailWorkspaceImageSeal(seal,signal);
 }
 export async function confirmDetailWorkspaceImageSeal(seal: DetailWorkspaceImageSeal, signal: AbortSignal) {
-  signal.throwIfAborted(); await verifyRecord(seal.workspace, seal.owner, seal.before.view.imageKeys, signal);
+  signal.throwIfAborted(); await verifyRecord(seal.workspace, seal.owner, seal.before.view.imageKeys, signal, false, seal.proofs);
   await confirm(seal.db, seal.owner, seal.company, seal.identity, seal.id, seal.profileId, seal.optionId, seal.before);
 }
 /** Only a verified owned image result can replace one saved body position. */

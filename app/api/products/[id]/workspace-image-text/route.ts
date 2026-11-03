@@ -3,6 +3,7 @@ import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
 import { DetailWorkspaceError } from '@/app/detail-workspace';
 import { readWorkspaceImageSource, applyWorkspaceImage, recoverWorkspaceImage, confirmWorkspaceImageSource, workspaceImageDocument, type WorkspaceImageIdentity } from '@/db/detail-workspace-image-edits';
+import { createDetailWorkspaceImageProofs } from '@/db/detail-workspaces';
 import { validateFreeImageSource, validateImageTextRegions } from '@/app/free-image-translation';
 import { MAX_FREE_IMAGE_EDIT_BYTES } from '@/app/free-image-edit-document';
 import { MAX_IMAGE_BYTES } from '@/app/image-files';
@@ -34,12 +35,12 @@ export async function GET(request: Request, context: Context) {
     const params = new URL(request.url).searchParams;
     if ([...params.keys()].some(key => !['profileId', 'optionId', 'photoId'].includes(key) || params.getAll(key).length !== 1)
       || params.has('profileId') && !id(params.get('profileId'), 100) || !id(params.get('optionId')) || !id(params.get('photoId'), 100)) throw new DetailWorkspaceError('보관한 본문 사진의 범위를 확인해주세요.', 400);
-    const identity=await auth(context),result = await readWorkspaceImageSource(identity, params.get('profileId'), params.get('optionId')!, params.get('photoId')!, request.signal), { seal, ...reply } = result;
+    const identity=await auth(context),proofs=createDetailWorkspaceImageProofs(),result = await readWorkspaceImageSource(identity, params.get('profileId'), params.get('optionId')!, params.get('photoId')!, request.signal,proofs), { seal, ...reply } = result;
     const configuration=imageVisionConfiguration(env as ImageVisionEnvironment),{readImageNoTextReceipts}=await import('@/db/image-no-text-receipts');
     const source=result.source,noTextProof=(await readImageNoTextReceipts(identity.owner,[{id:identity.id,image_keys:JSON.stringify(seal.before.view.imageKeys)}]))[identity.id]?.find(proof=>
       proof.sourceKey===source.sourceKey&&proof.sourceSha256===source.sourceSha256&&proof.width===source.width&&proof.height===source.height&&proof.sourceLanguage==='zh'
       &&JSON.stringify(proof.configuration)===JSON.stringify(configuration));
-    await confirmWorkspaceImageSource(identity,source,request.signal);request.signal.throwIfAborted();
+    await confirmWorkspaceImageSource(identity,source,request.signal,proofs);request.signal.throwIfAborted();
     if(JSON.stringify(await auth(context))!==JSON.stringify(identity)||JSON.stringify(imageVisionConfiguration(env as ImageVisionEnvironment))!==JSON.stringify(configuration))throw new DetailWorkspaceError('이미지 Vision의 회원·회사·설정이 변경되었습니다. 원본을 다시 확인해주세요.');
     return json({...reply,visionConfiguration:configuration,...(noTextProof?noTextProof.reason==='product-markings-only'?{preservationProof:noTextProof}:{noTextProof}:{})});
   } catch (error) { return fail(error); }

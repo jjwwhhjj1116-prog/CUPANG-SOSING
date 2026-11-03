@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers';
-import { readDetailWorkspaceImageSeal, confirmDetailWorkspaceImageSeal, applyDetailWorkspaceImageSeal, type DetailWorkspaceImageSeal } from '@/db/detail-workspaces';
+import { readDetailWorkspaceImageSeal, confirmDetailWorkspaceImageSeal, applyDetailWorkspaceImageSeal, createDetailWorkspaceImageProofs, type DetailWorkspaceImageProofs, type DetailWorkspaceImageSeal } from '@/db/detail-workspaces';
 import { DetailWorkspaceError, detailWorkspaceExpectedView, detailWorkspaceRequestId } from '@/app/detail-workspace';
 import { freeImageSourceIdentity, validateFreeImageSource, type FreeImageSource } from '@/app/free-image-translation';
 import { validateFreeImageEditDocument, type FreeImageEditDocument } from '@/app/free-image-edit-document';
@@ -32,8 +32,8 @@ function target(source: FreeImageSource, auth: WorkspaceImageIdentity) {
   if (!value || source.productId !== auth.id || source.quotationTarget || source.optionImages || source.role !== 'detail' || !isOwnedImageKey(auth.owner, source.sourceKey)) throw changed();
   return value;
 }
-export async function readWorkspaceImageSource(auth: WorkspaceImageIdentity, profileId: string | null, optionId: string, photoId: string, signal: AbortSignal) {
-  const seal = await readDetailWorkspaceImageSeal(auth.owner, auth.company, auth.identity, auth.id, profileId, optionId, signal),
+export async function readWorkspaceImageSource(auth: WorkspaceImageIdentity, profileId: string | null, optionId: string, photoId: string, signal: AbortSignal, proofs = createDetailWorkspaceImageProofs()) {
+  const seal = await readDetailWorkspaceImageSeal(auth.owner, auth.company, auth.identity, auth.id, profileId, optionId, signal, proofs),
     photo = seal.workspace.document.photos.find(photo => photo.id === photoId);
   if (!photo || photo.role !== 'body') throw changed();
   let sourceKey = photo.key, editorSource: FreeImageSource['editorSource'], editDocument: FreeImageEditDocument | undefined;
@@ -61,8 +61,8 @@ export async function readWorkspaceImageSource(auth: WorkspaceImageIdentity, pro
   await confirmDetailWorkspaceImageSeal(seal, signal);
   return { seal, source, ...(editDocument ? { editDocument } : {}) };
 }
-async function fresh(auth: WorkspaceImageIdentity, source: FreeImageSource, signal: AbortSignal) {
-  const selected = target(source, auth), current = await readWorkspaceImageSource(auth, selected.profileId, selected.optionId, selected.photoId, signal);
+async function fresh(auth: WorkspaceImageIdentity, source: FreeImageSource, signal: AbortSignal, proofs?: DetailWorkspaceImageProofs) {
+  const selected = target(source, auth), current = await readWorkspaceImageSource(auth, selected.profileId, selected.optionId, selected.photoId, signal, proofs);
   if (freeImageSourceIdentity(current.source) !== freeImageSourceIdentity(source)) throw changed(); return current;
 }
 export function workspaceImageDocument(source: FreeImageSource, value: unknown, cropValue?: unknown) {
@@ -135,4 +135,4 @@ export async function applyWorkspaceImage(auth: WorkspaceImageIdentity, source: 
   if (!saved) throw new DetailWorkspaceError('보관 결과를 확인하지 못했습니다. 같은 미리보기로 조회해주세요.', 503);
   const { replayed: omitted, ...reply } = saved; void omitted; return reply;
 }
-export async function confirmWorkspaceImageSource(auth: WorkspaceImageIdentity, source: FreeImageSource, signal: AbortSignal) { return fresh(auth, source, signal); }
+export async function confirmWorkspaceImageSource(auth: WorkspaceImageIdentity, source: FreeImageSource, signal: AbortSignal, proofs?: DetailWorkspaceImageProofs) { return fresh(auth, source, signal, proofs); }
