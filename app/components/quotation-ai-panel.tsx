@@ -1,9 +1,9 @@
 'use client';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { quotationReviewedProposalChanges, quotationAiJobForScope, quotationAiViewCurrent, type QuotationAiView, type QuotationAiJobView, type QuotationAiProposal } from '@/app/quotation-ai-client';
 
-export type QuotationAiRequestAction = { requestDraft: () => void; disabled: boolean; applyToAllOptions: boolean; sourceKey: string };
+export type QuotationAiRequestAction = { requestDraft: () => void; disabled: boolean; applyToAllOptions: boolean; sourceKey: string; readonly scopeLocked?: boolean };
 type RequestProof = { sourceKey: string; body: string; profileId: string | null };
 function matchingReceipt(job: QuotationAiJobView | undefined, proof: RequestProof): job is QuotationAiJobView {
   const input = JSON.parse(proof.body) as { expectedFingerprint: string; expectedQuotationRevision: number; optionId: string | null; applyToAllOptions: boolean };
@@ -12,6 +12,7 @@ function matchingReceipt(job: QuotationAiJobView | undefined, proof: RequestProo
     && job.scope?.optionId === input.optionId && job.scope?.applyToAllOptions === input.applyToAllOptions;
 }
 type Props = { productId: string; profileId?: string; view: QuotationFieldsView; optionId: string | null; disabled: boolean;
+  applyToAllOptions?: boolean; onApplyToAllOptionsChange?: (next: boolean) => void;
   onBusyChange?: (busy: boolean) => void; onApply: (changes: QuotationAiProposal[], fingerprint: string) => void;
   onRequestActionChange?: (next: QuotationAiRequestAction | null, retired?: QuotationAiRequestAction) => void };
 export function QuotationAiPanel(props:Props){
@@ -20,20 +21,29 @@ export function QuotationAiPanel(props:Props){
   const requestProofRef = useRef<RequestProof | null>(null);
   return <QuotationAiPanelContent key={JSON.stringify([productId,profileId,view.productVersion,view.contentRevision,view.optionRevision,view.revision,view.inputFingerprint,optionId])} {...props} requestProofRef={requestProofRef}/>;
 }
-function QuotationAiPanelContent({ productId, profileId, view, optionId, disabled, onBusyChange, onApply, onRequestActionChange, requestProofRef }: Props & { requestProofRef: { current: RequestProof | null } }) {
+function QuotationAiPanelContent({ productId, profileId, view, optionId, disabled, applyToAllOptions, onApplyToAllOptionsChange, onBusyChange, onApply, onRequestActionChange, requestProofRef }: Props & { requestProofRef: { current: RequestProof | null } }) {
   const sourceKey = JSON.stringify([productId, profileId ?? null, view.productVersion, view.contentRevision, view.optionRevision, view.revision,
     view.inputFingerprint, optionId]);
   const endpoint = `/api/products/${encodeURIComponent(productId)}/quotation-ai`, query = profileId ? `?profileId=${encodeURIComponent(profileId)}` : '';
   const [state, setState] = useState<QuotationAiView | null>(null), [job, setJob] = useState<QuotationAiJobView | null>(null);
-  const [all, setAll] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [localAll, setAll] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const all = applyToAllOptions ?? localAll;
   const [endConfirmed, setEndConfirmed] = useState(false);
   const [scopeToken, setScopeToken] = useState<object>({});
   const liveScopeToken = useRef(scopeToken);
+  const scopeTicket = useCallback(() => all, [all]);
+  const scopeBasis = useRef(scopeTicket);
+  useLayoutEffect(() => { scopeBasis.current = scopeTicket; }, [scopeTicket]);
   const [unknownRequest, setUnknownRequest] = useState(false);
   const sequence = useRef(0), running = useRef<AbortController | null>(null), pending = useRef(false), source = useRef({ sourceKey, view, disabled, onApply, all });
   const callbacks = useRef(onBusyChange), ownedAi = useRef<AbortController | null>(null);
   const currentJob = useRef<QuotationAiJobView | null>(null), publishedRequest = useRef<QuotationAiRequestAction | null>(null);
   function changeJob(next: QuotationAiJobView | null) { currentJob.current = next; setJob(next); }
+  useLayoutEffect(() => {
+    if (pending.current || requestProofRef.current || currentJob.current?.status === 'running' || currentJob.current?.status === 'uncertain') return;
+    const next = state ? quotationAiJobForScope(state, view, productId, optionId, all) : null;
+    currentJob.current = next; setJob(next);
+  }, [all, state, view, productId, optionId, requestProofRef]);
   useLayoutEffect(() => { liveScopeToken.current = scopeToken; }, [scopeToken]);
   useLayoutEffect(() => { callbacks.current = onBusyChange; }, [onBusyChange]);
   useLayoutEffect(() => {
@@ -69,7 +79,7 @@ function QuotationAiPanelContent({ productId, profileId, view, optionId, disable
   }
   useEffect(() => {let cancelled=false;queueMicrotask(()=>{if(!cancelled)void load();});return()=>{cancelled=true;}; /* One read per source; provider is called only by the button. */ }, [sourceKey]); // eslint-disable-line react-hooks/exhaustive-deps
   function canGenerate() {
-    return !pending.current && !requestProofRef.current && !source.current.disabled && source.current.sourceKey === sourceKey && source.current.view === view && source.current.all === all
+    return !pending.current && !requestProofRef.current && !source.current.disabled && source.current.sourceKey === sourceKey && source.current.view === view && source.current.all === all && scopeBasis.current === scopeTicket
       && currentJob.current?.status !== 'running' && currentJob.current?.status !== 'uncertain'
       && (all || optionId !== null && view.resolved.rows.some(row => row.optionId === optionId && row.included))
       && !!state?.configuration.configured && quotationAiViewCurrent(state, source.current.view, productId);
@@ -114,6 +124,7 @@ function QuotationAiPanelContent({ productId, profileId, view, optionId, disable
   useEffect(() => {
     if (!onRequestActionChange) return;
     const action: QuotationAiRequestAction = { disabled: requestDisabled || !canGenerate(), applyToAllOptions: all, sourceKey,
+      get scopeLocked() { return pending.current || Boolean(requestProofRef.current) || currentJob.current?.status === 'running' || currentJob.current?.status === 'uncertain'; },
       requestDraft: () => { if (publishedRequest.current === action && !action.disabled && canGenerate()) void generate(); } };
     publishedRequest.current = action; onRequestActionChange(action);
     return () => { if (publishedRequest.current === action) publishedRequest.current = null; onRequestActionChange(null, action); };
@@ -129,7 +140,9 @@ function QuotationAiPanelContent({ productId, profileId, view, optionId, disable
       <label><input type="checkbox" checked={all} disabled={disabled || busy || unsettled} onChange={event => {
         if(pending.current||requestProofRef.current||source.current.disabled||unsettled||currentJob.current?.status==='running'||currentJob.current?.status==='uncertain'
           ||source.current.sourceKey!==sourceKey||source.current.view!==view||source.current.all!==all||liveScopeToken.current!==scopeToken)return;
-        const next=event.target.checked;if(next===all)return;const token={};liveScopeToken.current=token;setScopeToken(token);setAll(next);setEndConfirmed(false);setError('');
+        const next=event.target.checked;if(next===all)return;const token={};liveScopeToken.current=token;setScopeToken(token);
+        if(applyToAllOptions===undefined)setAll(next);else onApplyToAllOptionsChange?.(next);
+        setEndConfirmed(false);setError('');
         source.current = { ...source.current, all: next }; changeJob(state?quotationAiJobForScope(state,source.current.view,productId,optionId,next):null);
       }}/> 모든 포함 옵션 작성</label>
       <button type="button" className="btn ghost" disabled={busy} onClick={() => void load()}>실행 결과 조회</button></div>
@@ -148,7 +161,8 @@ function QuotationAiPanelContent({ productId, profileId, view, optionId, disable
         const known = state?.knownChanges?.some(item => item.optionId === change.optionId && item.fieldKey === change.fieldKey);
         return <tr key={JSON.stringify([change.optionId, change.fieldKey])}><td>{row?.optionLabel} · {field?.label}</td><td>{row?.fields[change.fieldKey]?.value || '(공란)'}</td><td>{change.value || '(공란)'}</td><td>{known ? '저장 정보' : 'AI 초안'}</td></tr>;
       })}</tbody></table></div><button type="button" className="btn primary" disabled={disabled || busy || !proposals.length || Boolean(invalid)} onClick={() => {
-        if (pending.current || requestProofRef.current || currentJob.current?.status === 'running' || currentJob.current?.status === 'uncertain' || source.current.disabled || !state || source.current.sourceKey !== sourceKey) return;
+        if (pending.current || requestProofRef.current || currentJob.current?.status === 'running' || currentJob.current?.status === 'uncertain' || currentJob.current !== job || source.current.disabled || !state || source.current.sourceKey !== sourceKey
+          || source.current.view !== view || source.current.all !== all || liveScopeToken.current !== scopeToken || scopeBasis.current !== scopeTicket) return;
         try { source.current.onApply(quotationReviewedProposalChanges(state, source.current.view, productId, job?.status === 'completed' ? job : null, optionId, all), state.fingerprint); }
         catch (cause) { setError(cause instanceof Error ? cause.message : '초안을 다시 확인해주세요.'); }
       }}>검토한 초안 입력란에 적용</button></>}

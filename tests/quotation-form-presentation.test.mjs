@@ -111,9 +111,9 @@ test('prominent AI action requests the mounted tool once and reveals review; sta
  try{await ui.idle();const tools=ui.nodes().find(node=>node.type==='details'&&node.props.className==='quotation-supplemental-tools'),anchor=ui.nodes().find(node=>node.props?.className==='quotation-ai-tools');let scrolls=0;const nativeDetails={open:false};tools.props.ref.current=nativeDetails;anchor.props.ref.current={scrollIntoView(){scrolls++;}};
   const ai=ui.nodes().find(node=>typeof node.type==='function'&&node.type.name==='QuotationAiPanel');let requests=0;assert.equal(ui.button('AI 처리').props.disabled,true);
   const sourceKey=JSON.stringify([ai.props.productId,ai.props.profileId??null,view.productVersion,view.contentRevision,view.optionRevision,view.revision,view.inputFingerprint,ai.props.optionId]);
-  const first={requestDraft(){requests++;ai.props.onBusyChange(true);},disabled:false,applyToAllOptions:true,sourceKey};ai.props.onRequestActionChange(first);ui.render();
+  const first={requestDraft(){requests++;ai.props.onBusyChange(true);},disabled:false,applyToAllOptions:false,sourceKey};ai.props.onRequestActionChange(first);ui.render();
   const originalCalls=ui.calls.length,open=ui.button('AI 처리').props.onClick;assert.equal(ui.button('AI 처리').props.disabled,false);open();open();assert.equal(requests,1);assert.equal(nativeDetails.open,true);assert.equal(scrolls,1);assert.equal(ui.calls.length,originalCalls);assert.equal(ui.changes.length,0);assert.equal(mutations(ui).length,0);
-  ai.props.onBusyChange(false);ui.render();const next={requestDraft(){requests++;},disabled:false,applyToAllOptions:true,sourceKey};ai.props.onRequestActionChange(next);ai.props.onRequestActionChange(null,first);ui.render();assert.equal(ui.button('AI 처리').props.disabled,false);
+  ai.props.onBusyChange(false);ui.render();const next={requestDraft(){requests++;},disabled:false,applyToAllOptions:false,sourceKey};ai.props.onRequestActionChange(next);ai.props.onRequestActionChange(null,first);ui.render();assert.equal(ui.button('AI 처리').props.disabled,false);
   nativeDetails.open=false;const retained=ui.button('AI 처리').props.onClick;ui.field('model').props.onChange({target:{value:'먼저 저장할 입력'}});retained();assert.equal(nativeDetails.open,false,'already captured action cannot request against a new same-tick draft');assert.equal(requests,1);ui.render();assert.equal(ui.button('AI 처리').props.disabled,true);
   assert.equal(ui.nodes().filter(node=>typeof node.type==='function'&&node.type.name==='QuotationAiPanel').length,1,'native details does not unmount the tool');
  }finally{ui.close();}
@@ -147,7 +147,7 @@ test('retained header AI requests cannot bypass split, submission, refresh or un
 test('parent layout readiness accepts the child passive request publication after effect cleanup and replay',async()=>{
  const view=quotationPresentationFixture(),ui=quotationTitleUI({view});try{await ui.idle();const ai=ui.nodes().find(node=>node.type?.name==='QuotationAiPanel');let requests=0;
   const sourceKey=JSON.stringify([ai.props.productId,ai.props.profileId??null,view.productVersion,view.contentRevision,view.optionRevision,view.revision,view.inputFingerprint,ai.props.optionId]);
-  const old={disabled:false,applyToAllOptions:true,sourceKey,requestDraft(){requests++;}},fresh={...old};ai.props.onRequestActionChange(old);ui.render();
+  const old={disabled:false,applyToAllOptions:false,sourceKey,requestDraft(){requests++;}},fresh={...old};ai.props.onRequestActionChange(old);ui.render();
   ui.replayEffects(()=>{ai.props.onRequestActionChange(null,old);ai.props.onRequestActionChange(fresh);});await ui.idle();assert.equal(ui.button('AI 처리').props.disabled,false);ui.button('AI 처리').props.onClick();assert.equal(requests,1);assert.equal(mutations(ui).length,0);
  }finally{ui.close();}
 });

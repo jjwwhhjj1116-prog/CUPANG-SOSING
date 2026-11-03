@@ -16,7 +16,7 @@ const product = id => ({ id, title: '상품 ' + id, updated_at: version, image_k
 /** Execute the real private DetailPanel with stateful child editors. React-like
  * path/key reconciliation makes an accidental conditional remount observable:
  * the child loses its pending text and its workspace draft marker. */
-function harness(initial = {}) {
+function harness(initial = {}, boundaries = {}) {
   const instances = new Map(), modules = new Map(), stubs = new Map(), effects = [], records = [];
   let active, tree, nextIdentity = 0;
   const calls = { saved: 0, reads: 0, uploads: 0, submission: 0 };
@@ -43,6 +43,7 @@ function harness(initial = {}) {
     },
   };
   function componentModule(name) {
+    if (boundaries.components?.[name]) return load(boundaries.components[name]);
     // Keep this wrapper transparent; retain the stateful editor mocks and all
     // scope/mount assertions below instead of turning the child into null.
     if (name === 'detail-image-edit-dialog') return { DetailImageEditDialog: received => received.children };
@@ -67,7 +68,7 @@ function harness(initial = {}) {
     const source = fs.readFileSync(new URL('../' + file, import.meta.url), 'utf8') + (file.endsWith('dashboard-client.tsx') ? '\nexport { DetailPanel };' : '');
     vm.runInNewContext(ts.transpileModule(source, { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
       { exports, AbortController, URL, URLSearchParams, TextEncoder, TextDecoder, Date, Intl, crypto, structuredClone,
-        fetch: async () => { calls.reads++; throw Error('Stage navigation must not send a request through DetailPanel.'); },
+        fetch: async (...args) => { calls.reads++; if(boundaries.fetch)return boundaries.fetch(...args);throw Error('Stage navigation must not send a request through DetailPanel.'); },
         window: { print() {}, setTimeout() {} }, require(name) {
           if (name === 'react') return hooks;
           if (name === 'react/jsx-runtime') return { jsx: (type, received, key) => ({ type, props: received, key }), jsxs: (type, received, key) => ({ type, props: received, key }), Fragment: 'fragment' };
