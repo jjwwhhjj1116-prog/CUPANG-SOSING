@@ -66,17 +66,42 @@ function stored(value: Row | null, owner: string, id: string, optionId: string, 
 }
 async function fileProofs(owner: string, document: DetailWorkspaceRecord['document'], signal: AbortSignal): Promise<DetailWorkspaceFile[]> {
   if (!env.FILES) throw new DetailWorkspaceError('이미지 저장소를 확인해주세요.', 503);
-  const result: DetailWorkspaceFile[] = []; let total = 0;
-  for (const key of detailWorkspaceFileKeys(document)) {
-    signal.throwIfAborted(); if (!isOwnedImageKey(owner, key)) throw conflict();
-    const object = await env.FILES.get(key);
-    if (!object || object.size < 1 || object.size > MAX_IMAGE_BYTES) throw conflict('작업공간 사진과 원본의 저장 파일을 확인해주세요.');
-    total += object.size; if (total > 30 * 1024 * 1024) throw new DetailWorkspaceError('작업공간 원본과 현재 사진의 전체 크기는30MiB 이내여야 합니다.', 413);
-    const bytes = await readBoundedStream(object.body, MAX_IMAGE_BYTES);
-    if (bytes.length !== object.size) throw new DetailWorkspaceError('작업공간 사진을 끝까지 읽지 못했습니다.', 503);
-    let dimensions; try { imageFileType(bytes); dimensions = imageDisplayDimensions(bytes); } catch { throw conflict('작업공간 사진의 실제 파일과 크기를 확인해주세요.'); }
-    if (!dimensions || dimensions.width < 1 || dimensions.height < 1 || dimensions.width > 16000 || dimensions.height > 16000 || dimensions.width * dimensions.height > 40000000) throw new DetailWorkspaceError('작업공간 사진 크기를 확인해주세요.', 415);
-    result.push({ key, sha256: await labelUploadDigest(bytes), bytes: bytes.length, width: dimensions.width, height: dimensions.height });
+  const result: DetailWorkspaceFile[] = [], keys = detailWorkspaceFileKeys(document); let total = 0;
+  for (let offset = 0; offset < keys.length; offset += 2) {
+    const batch = keys.slice(offset, offset + 2);
+    const fetched = await Promise.allSettled(batch.map(async key => {
+      signal.throwIfAborted(); if (!isOwnedImageKey(owner, key)) throw conflict();
+      return env.FILES.get(key);
+    }));
+    let bodiesRead = false;
+    try {
+      signal.throwIfAborted();
+      const objects = fetched.map(value => {
+        if (value.status === 'rejected') throw value.reason;
+        if (!value.value || value.value.size < 1 || value.value.size > MAX_IMAGE_BYTES) throw conflict('작업공간 사진과 원본의 저장 파일을 확인해주세요.');
+        return value.value;
+      });
+      // Reserve the whole bounded pair before either body can allocate bytes.
+      for (const object of objects) {
+        total += object.size; if (total > 30 * 1024 * 1024) throw new DetailWorkspaceError('작업공간 원본과 현재 사진의 전체 크기는30MiB 이내여야 합니다.', 413);
+      }
+      const loaded = await Promise.allSettled(objects.map(async (object, index) => {
+        const bytes = await readBoundedStream(object.body, MAX_IMAGE_BYTES);
+        if (bytes.length !== object.size) throw new DetailWorkspaceError('작업공간 사진을 끝까지 읽지 못했습니다.', 503);
+        let dimensions; try { imageFileType(bytes); dimensions = imageDisplayDimensions(bytes); } catch { throw conflict('작업공간 사진의 실제 파일과 크기를 확인해주세요.'); }
+        if (!dimensions || dimensions.width < 1 || dimensions.height < 1 || dimensions.width > 16000 || dimensions.height > 16000 || dimensions.width * dimensions.height > 40000000) throw new DetailWorkspaceError('작업공간 사진 크기를 확인해주세요.', 415);
+        return { key: batch[index], sha256: await labelUploadDigest(bytes), bytes: bytes.length, width: dimensions.width, height: dimensions.height };
+      }));
+      bodiesRead = true;
+      for (const value of loaded) {
+        if (value.status === 'rejected') throw value.reason;
+        result.push(value.value);
+      }
+    } finally {
+      if (!bodiesRead) await Promise.allSettled(fetched.map(async value => {
+        if (value.status === 'fulfilled') await value.value?.body.cancel();
+      }));
+    }
   }
   return result;
 }
