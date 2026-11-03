@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {assetApiFixture,companies,imageBytes,plain,sha} from './helpers/supplier-hub-single-assets.mjs';
 import {prepareNativeAssetMultipart,nativeAssetMultipartCanonical,nativeAssetUploadPlanSha256} from '../extensions/supplier-hub/native-asset-multipart.mjs';
+import {largeNativePng} from './helpers/native-large-image.mjs';
 
 const read=async(response,status=200)=>{assert.equal(response.status,status,await response.clone().text());return response.json();};
 const jsonSha=value=>sha(nativeAssetMultipartCanonical(value));
@@ -37,6 +38,14 @@ function bodyValue(document,wire){
  let node=document;for(const key of wire.path)node=node[key];
  return wire.name===undefined?node:node.find(row=>row[wire.nameKey]===wire.name)[wire.valueKey];
 }
+test('private native source permits bounded multipart details above 20MiB while legacy public export retains 20MiB',async()=>{
+ const f=await fixture();try{
+  for(const [index,key]of f.keys.slice(3,6).entries()){const bytes=largeNativePng(7*1024*1024,97+index);await f.h.bindings.FILES.put(key,bytes,{httpMetadata:{contentType:'image/png'},customMetadata:{sha256:sha(bytes)}});}
+  const source=await read(await f.source());assert.equal(source.metadataValid,true,JSON.stringify(source.issues));
+  assert.ok(source.images.reduce((sum,file)=>sum+file.byteLength,0)>20*1024*1024);assert.ok(source.images.every(file=>file.byteLength<=10*1024*1024));
+  assert.equal((await f.h.route(f.endpoint)).status,413);assert.equal([...f.h.objects.keys()].some(key=>key.startsWith('quotation-public-detail/')),false);assert.deepEqual(f.h.network,[]);
+ }finally{f.close();}
+});
 for(const company of companies)test(`${company.code}: actual private source API feeds multipart bytes and exact filename-native body while legacy reviewed data stays unchanged`,async()=>{
  const f=await fixture(company);try{
   const legacy=await read(await f.h.route(f.endpoint)),before=f.objectState(),state=f.state(),u=await uploadFixture(f);

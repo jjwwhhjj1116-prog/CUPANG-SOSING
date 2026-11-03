@@ -4,7 +4,7 @@ type Options = { workerFactory?: () => InpaintWorker; timeoutMs?: number };
 /** One lazy engine per render. Cancellation/timeouts terminate WASM execution;
  * errors never report a flat-color fallback as successful reconstruction. */
 export function createFreeImageInpaintSession(signal: AbortSignal, options: Options = {}) {
-  let worker: InpaintWorker | undefined, closed = false, sequence = 0, pixels = 0;
+  let worker: InpaintWorker | undefined, closed = false, sequence = 0, regions = 0, pixels = 0;
   let pending: ((reason: unknown) => void) | undefined;
   const close = () => { closed = true; worker?.terminate(); worker = undefined; signal.removeEventListener('abort', abort); };
   const fail = (reason: unknown) => { const reject = pending; pending = undefined; close(); reject?.(reason); };
@@ -14,13 +14,13 @@ export function createFreeImageInpaintSession(signal: AbortSignal, options: Opti
     async restore(input: InpaintPixels): Promise<Uint8ClampedArray> {
       signal.throwIfAborted(); validateFreeImageInpaintPixels(input);
       if (closed || pending) throw Error('배경 복원 작업을 다시 시작해주세요.');
-      const width=input.width,height=input.height,mask={...input.mask},original=input.data.slice();
-      if (++sequence > MAX_FREE_IMAGE_INPAINT_REGIONS || (pixels += width * height) > MAX_FREE_IMAGE_INPAINT_TOTAL_PIXELS) {
+      const width=input.width,height=input.height,masks=(input.masks ?? [input.mask]).map(mask=>({...mask})),multiple='masks' in input,original=input.data.slice();
+      if ((regions += masks.length) > MAX_FREE_IMAGE_INPAINT_REGIONS || (pixels += width * height) > MAX_FREE_IMAGE_INPAINT_TOTAL_PIXELS) {
         close(); throw Error('한 번에 복원할 영역이 너무 많습니다. 일부 영역의 선택을 해제해주세요.');
       }
       // Own both geometry and original RGBA before yielding. Caller buffers may
       // be edited or detached while the Worker runs; transfer a separate copy.
-      const data = original.slice(), id = sequence;
+      const data = original.slice(), id = ++sequence;
       try { worker ??= (options.workerFactory ?? (() => new Worker(FREE_IMAGE_INPAINT_ASSET)))(); }
       catch { close(); throw Error('배경 복원 엔진을 열지 못했습니다. 브라우저에서 다시 시도해주세요.'); }
       const active = worker;
@@ -35,12 +35,13 @@ export function createFreeImageInpaintSession(signal: AbortSignal, options: Opti
             || !(result.data instanceof Uint8ClampedArray) || result.data.length !== original.length) { fail(Error(result?.error || '배경 복원 결과를 확인하지 못했습니다.')); return; }
           // Worker output is untrusted. Retain every original outside pixel and alpha.
           const output = original.slice();
-          for (let y = mask.y; y < mask.y + mask.height; y++) for (let x = mask.x; x < mask.x + mask.width; x++) {
+          for (const mask of masks) for (let y = mask.y; y < mask.y + mask.height; y++) for (let x = mask.x; x < mask.x + mask.width; x++) {
             const index = (y * width + x) * 4; output.set(result.data.subarray(index, index + 3), index);
           }
           finish(); resolve(output);
         };
-        try { active.postMessage({ width,height,mask:{...mask},data,id }, [data.buffer]); } catch { fail(Error('배경 복원 요청을 전달하지 못했습니다.')); }
+        const geometry = multiple ? {masks:masks.map(mask=>({...mask}))} : {mask:{...masks[0]}};
+        try { active.postMessage({ width,height,...geometry,data,id }, [data.buffer]); } catch { fail(Error('배경 복원 요청을 전달하지 못했습니다.')); }
       });
     },
     close() { if (pending) fail(Error('배경 복원을 종료했습니다.')); else close(); },

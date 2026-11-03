@@ -1,4 +1,5 @@
 import {renderFreeImageTranslation,type FreeImageLoaded,type FreeImageRegion} from '../../app/free-image-translation-client';
+import {FREE_IMAGE_INPAINT_ASSET} from '../../app/free-image-inpaint';
 const status=document.querySelector<HTMLElement>('#status')!,run=document.querySelector<HTMLButtonElement>('#run')!;
 function canvas(id:string){const value=document.querySelector<HTMLCanvasElement>(id)!;value.width=320;value.height=160;return value;}
 async function paint(blob:Blob,target:HTMLCanvasElement){const bitmap=await createImageBitmap(blob);try{target.getContext('2d')!.drawImage(bitmap,0,0);}finally{bitmap.close();}}
@@ -21,5 +22,5 @@ run.onclick=()=>{run.disabled=true;status.textContent='Running local production 
   if(current.subarray(i,i+4).some((value,c)=>value!==sourcePixels[i+c]))sourceChanges++;
  }
  if(outsideChanges||sourceChanges||koreanChanges<20||colors.size<30)throw Error(JSON.stringify({outsideChanges,sourceChanges,koreanChanges,restoredColors:colors.size}));
- status.textContent='PASS '+JSON.stringify({outsideChanges,sourceChanges,koreanChanges,restoredColors:colors.size,worker:'/inpaint/5.0.0-release.1/inpaint-worker.js',runtimeExternalDownloads:false});
+ status.textContent='PASS '+JSON.stringify({outsideChanges,sourceChanges,koreanChanges,restoredColors:colors.size,worker:FREE_IMAGE_INPAINT_ASSET,runtimeExternalDownloads:false});
 })().catch(error=>{status.textContent='FAIL '+String(error);}).finally(()=>{run.disabled=false;});};

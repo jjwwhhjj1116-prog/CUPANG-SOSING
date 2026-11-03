@@ -22,6 +22,19 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/free-image
 const visionModule = {};
 vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/image-text-vision.ts', import.meta.url), 'utf8'),
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: visionModule });
+const actualClientModules = new Map();
+function loadActualClientModule(file) {
+  if (actualClientModules.has(file)) return actualClientModules.get(file);
+  const exports = {}; actualClientModules.set(file, exports);
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../' + file, import.meta.url), 'utf8'),
+    { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
+    { exports, Error, Date, URL, TextEncoder, AbortController, require(name) {
+      if (name === '@/app/image-files') return {}; // The initializer performs no file/storage operations.
+      assert.ok(name.startsWith('@/'), name); return loadActualClientModule(name.slice(2) + '.ts');
+    } }, { filename: file });
+  return exports;
+}
+const actualVisionInitializer = loadActualClientModule('app/free-image-translation-client.ts').initializeFreeImageVisionRegions;
 const historyModule = {};
 const brushModule = {};
 const cropModule = {};
@@ -56,6 +69,7 @@ function fixture(initialProps = {}, clientOverrides = {}) {
   const sourceFor = (id, productVersion, sourceKey, role) => ({ productId: id, productVersion, contentRevision: 2, sourceKey, sourceSha256: 'a'.repeat(64), role, width: 20, height: 12 });
   const client = {
     FreeImageApplyError: ApplyError,
+    initializeFreeImageVisionRegions: actualVisionInitializer,
     async readFreeImageRoleSources() { return [...props.imageKeys]; },
     sameFreeImageQuotationRequest(actual, expected) { const clean = target => target ? Object.fromEntries(Object.entries(target).filter(([key]) => key !== 'bindingSha256')) : null; return JSON.stringify(clean(actual)) === JSON.stringify(clean(expected)); },
     async readFreeImageSource(id, productVersion, key, role, signal, _fetcher, quotationTarget, options) { calls.push({ action: 'source', id, productVersion, key, role, signal, quotationTarget, ...(options ? { options } : {}) });
@@ -145,6 +159,25 @@ test('completed background review opens exact second option and nonzero slot aft
   const source=h.calls.find(call=>call.action==='source');assert.equal(source.quotationTarget.revision,8);assert.equal(source.quotationTarget.slotIndex,1);assert.equal(source.quotationTarget.optionId,'second');assert.equal(source.quotationTarget.bindingSha256,undefined);
   const checkboxes=nodes(h.render()).filter(node=>node.type==='input'&&node.props.type==='checkbox');assert.ok(checkboxes.length);assert.equal(checkboxes[0].props.checked,false);assert.match(text(h.render()),/완료된 문구 인식을 복원/);assert.equal(h.field('문구 1 원문').props.value,'中文');
   await h.change('문구 1 선택',undefined,true);await h.click('번역 이미지 미리보기');const preview=h.calls.find(call=>call.action==='preview');assert.ok(preview);assert.equal(preview.image.source.quotationTarget.revision,8);assert.equal(preview.image.source.quotationTarget.bindingSha256,'b'.repeat(64));assert.equal(preview.rows[0].erase,true);
+ }finally{h.close();}
+});
+
+test('same-byte source refresh retains versioned Vision paint order, raw result and manual draft before a new preview without another inference',async()=>{
+ const result=visionModule.parseImageTextVisionResult({provider:'workers-ai-vision',model:visionModule.IMAGE_TEXT_VISION_MODEL,requests:1,notice:visionModule.IMAGE_TEXT_VISION_NOTICE,
+  inspection:{policy:visionModule.IMAGE_TEXT_PRESERVATION_POLICY,decision:'foreign-text'},blocks:[
+   {id:'vision-1',text:'中文文句',translated:'문구 하나',issue:null,kind:'overlay',box:{x:20,y:15,width:60,height:20}},
+   {id:'vision-2',text:'別的文句',translated:'문구 둘',issue:null,kind:'overlay',box:{x:20,y:33,width:60,height:20}},
+  ]},100,60),before=plain(result),h=fixture();
+ h.setSource(image=>({...image,width:100,height:60,source:{...image.source,width:100,height:60},canvas:{getContext:()=>({font:'',measureText:()=>({width:10}),getImageData:(_x,_y,width,height)=>({data:new Uint8ClampedArray(width*height*4).fill(255)})})}}));
+ h.setOcr(image=>{image.visionResult=result;return actualVisionInitializer(image,result).regions;});
+ try{
+  await h.click('원본 문구 읽기');await h.change('문구 1 한국어','직접 확인한 문구');await h.click('번역 이미지 미리보기');
+  const first=h.calls.find(call=>call.action==='preview');assert.equal(first.image.visionPaintOrder,'backgrounds-first-v1');assert.deepEqual(plain(first.image.visionStyleIssues),[]);
+  h.setProps({version:'2026-10-06T00:00:02.000Z'});await h.settle();assert.equal(h.button('번역 이미지 미리보기').props.disabled,true);
+  await h.click('원본 저장 상태 다시 확인');assert.equal(h.field('문구 1 한국어').props.value,'직접 확인한 문구');await h.click('번역 이미지 미리보기');
+  const previews=h.calls.filter(call=>call.action==='preview'),fresh=previews[1];assert.equal(previews.length,2);assert.notEqual(fresh.image,first.image);assert.equal(fresh.image.source.sourceSha256,first.image.source.sourceSha256);assert.equal(fresh.image.source.productVersion,'2026-10-06T00:00:02.000Z');
+  assert.equal(fresh.image.visionPaintOrder,'backgrounds-first-v1');assert.deepEqual(plain(fresh.image.visionStyleIssues),[]);assert.deepEqual(plain(fresh.image.visionResult),before);assert.deepEqual(plain(result),before);
+  assert.equal(fresh.rows[0].translated,'직접 확인한 문구');assert.equal(fresh.rows[0].translationProvenance,'manual');assert.equal(h.calls.filter(call=>call.action==='source').length,2);assert.equal(h.calls.filter(call=>call.action==='ocr').length,1);assert.equal(h.calls.filter(call=>['translate','apply','recover','review-get'].includes(call.action)).length,0);assert.equal(h.saved,0);
  }finally{h.close();}
 });
 

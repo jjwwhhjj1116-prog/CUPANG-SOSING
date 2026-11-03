@@ -28,6 +28,27 @@ test('v2 unknown text placement blocks cleanup instead of guessing that a produc
  assert.throws(()=>h.prepareSelectedImageCleanup(h.image,styled.regions),/검토/);assert.equal(h.operations.length,0);
 });
 
+const smallOverlayPair=h=>h.vision.parseImageVisionResponse({response:{decision:'foreign-text',blocks:[
+ {original:'中文文句',translated:'문구 하나',kind:'overlay',box:{x:20,y:15,width:60,height:20}},
+ {original:'別的文句',translated:'문구 둘',kind:'overlay',box:{x:20,y:33,width:60,height:20}},
+]}},100,60,'product-text-preservation-v2');
+test('versioned cleanup resamples exact v2 overlay kinds and preserves OCR coordinates for the two-pass renderer',()=>{
+ const h=fixture(),result=smallOverlayPair(h),before=plain(result),styled=h.initializeVisionRegions(result.blocks,h.image.canvas,100,60,{allowSafeOverlayOverlap:true});
+ assert.equal(styled.paintOrder,'backgrounds-first-v1');Object.assign(h.image,{visionResult:result,visionStyleIssues:styled.issues,visionPaintOrder:styled.paintOrder});
+ const prepared=h.prepareSelectedImageCleanup(h.image,styled.regions);
+ assert.ok(prepared.every(row=>row.selected&&row.erase&&row.translated===''&&row.issue===null));assert.deepEqual(plain(prepared.map(row=>[row.id,row.text,row.box])),before.blocks.map(row=>[row.id,row.text,row.box]));assert.deepEqual(plain(result),before);assert.equal(h.operations.length,0);
+});
+test('cleanup rejects absent, forged or stale two-pass candidates instead of bypassing exact raw classification and geometry',()=>{
+ const h=fixture(),result=smallOverlayPair(h),styled=h.initializeVisionRegions(result.blocks,h.image.canvas,100,60,{allowSafeOverlayOverlap:true});
+ const base={...h.image,visionResult:result,visionStyleIssues:styled.issues,visionPaintOrder:'backgrounds-first-v1'};
+ for(const change of [image=>{delete image.visionPaintOrder;},image=>{delete image.visionResult.inspection;},image=>{image.visionResult.inspection.policy='product-text-preservation-v1';},image=>{image.visionResult.blocks[0].text='其他';},image=>{image.visionResult.blocks[0].box.x++;},image=>{image.source.role='detail';},image=>{image.visionResult.blocks[0].kind='product-marking';}]){
+  const image={...base,source:plain(base.source),visionResult:plain(result)};change(image);assert.throws(()=>h.prepareSelectedImageCleanup(image,styled.regions),/검토/);
+ }
+ const deep=plain(result);deep.blocks[1].box.y=30;const deepStyled=h.initializeVisionRegions(deep.blocks,h.image.canvas,100,60);assert.throws(()=>h.prepareSelectedImageCleanup({...base,visionResult:deep,visionStyleIssues:[]},deepStyled.regions),/검토/);
+ const noOverlap=plain(result);noOverlap.blocks[1].box.y=35;const ordinary=h.initializeVisionRegions(noOverlap.blocks,h.image.canvas,100,60);assert.throws(()=>h.prepareSelectedImageCleanup({...base,visionResult:noOverlap},ordinary.regions),/검토/);
+ assert.equal(h.operations.length,0);
+});
+
 test('v2 intrinsic-only Vision route returns a distinct server preservation proof on exact source GET with no PNG or quotation write',async()=>{
  const f=await freeImageEditFixture({code:'A01464742',name:'와이홉'}),h=fixture();try{
   const bytes=new Uint8Array(await sharp(h.image.canvas.pixels,{raw:{width:100,height:60,channels:4}}).png().toBuffer());f.h.objects.set(f.keys[0],bytes);

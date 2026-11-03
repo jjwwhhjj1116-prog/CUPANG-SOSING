@@ -30,6 +30,47 @@ function unchangedOutside(input,output){
   if(!inside(x,y,input.mask))assert.deepEqual(output.slice(i,i+4),input.data.slice(i,i+4),`outside ${x},${y}`);
  }
 }
+function adjacentPicture(){
+ const width=80,height=56,masks=[{x:25,y:20,width:10,height:16},{x:35,y:20,width:10,height:16}],data=new Uint8ClampedArray(width*height*4);
+ for(let y=0;y<height;y++)for(let x=0;x<width;x++){
+  const i=(y*width+x)*4,value=masks.some(mask=>inside(x,y,mask))?0:220;
+  data.set([value,value,value,40+(x*7+y*3)%216],i);
+ }
+ return{width,height,masks,data};
+}
+function unchangedOutsideMasks(input,output){
+ for(let y=0;y<input.height;y++)for(let x=0;x<input.width;x++){
+  const i=(y*input.width+x)*4;assert.equal(output[i+3],input.data[i+3],`alpha ${x},${y}`);
+  if(!input.masks.some(mask=>inside(x,y,mask)))assert.deepEqual(output.slice(i,i+4),input.data.slice(i,i+4),`outside ${x},${y}`);
+ }
+}
+test('joint explicit masks erase adjacent glyphs without sampling either glyph as background',()=>{
+ const input=adjacentPicture(),before=input.data.slice(),output=core.inpaintFreeImagePixels(cv,input);
+ let sequential=input.data,jointError=0,sequentialError=0;
+ for(const mask of input.masks)sequential=core.inpaintFreeImagePixels(cv,{width:input.width,height:input.height,data:sequential,mask});
+ for(let y=0;y<input.height;y++)for(let x=0;x<input.width;x++)if(input.masks.some(mask=>inside(x,y,mask))){
+  const i=(y*input.width+x)*4;for(let c=0;c<3;c++){jointError+=Math.abs(output[i+c]-220);sequentialError+=Math.abs(sequential[i+c]-220);}
+ }
+ assert.ok(jointError<sequentialError/5,JSON.stringify({jointError,sequentialError}));
+ unchangedOutsideMasks(input,output);assert.deepEqual(input.data,before);
+});
+test('multi-mask protocol rejects ambiguous, empty, oversized, out-of-bounds, and collectively full masks',()=>{
+ const input=adjacentPicture();
+ for(const patch of [{mask:input.masks[0]},{mask:undefined},{masks:[]},{masks:Array(33).fill(input.masks[0])},{masks:[{x:-1,y:0,width:1,height:1}]},{masks:[{x:0,y:0,width:40,height:56},{x:40,y:0,width:40,height:56}]}])
+  assert.throws(()=>core.validateFreeImageInpaintPixels({...input,...patch}));
+ assert.doesNotThrow(()=>core.validateFreeImageInpaintPixels({...input,masks:[input.masks[0],input.masks[0]]}));
+});
+test('overlapping context ROIs group transitively with local masks, source indexes, and final allocation caps',()=>{
+ const groups=core.groupFreeImageInpaintRois([{x:20,y:20,width:6,height:6},{x:100,y:20,width:6,height:6},{x:44,y:20,width:6,height:6}],140,60);
+ assert.deepEqual(JSON.parse(JSON.stringify(groups)),[
+  {roi:{x:8,y:8,width:54,height:30},masks:[{x:12,y:12,width:6,height:6},{x:36,y:12,width:6,height:6}],indexes:[0,2]},
+  {roi:{x:88,y:8,width:30,height:30},masks:[{x:12,y:12,width:6,height:6}],indexes:[1]},
+ ]);
+ assert.equal(core.groupFreeImageInpaintRois([{x:20,y:20,width:6,height:6},{x:68,y:20,width:6,height:6},{x:44,y:20,width:6,height:6}],100,60).length,1);
+ assert.throws(()=>core.groupFreeImageInpaintRois([{x:20,y:20,width:800,height:900},{x:830,y:20,width:800,height:900}],1700,1000));
+ assert.throws(()=>core.groupFreeImageInpaintRois(Array.from({length:5},(_,i)=>({x:12+i*1000,y:12,width:900,height:900})),5000,1000));
+ assert.throws(()=>core.groupFreeImageInpaintRois(Array(33).fill({x:20,y:20,width:6,height:6}),100,60));
+});
 test('published pinned OpenCV restores synthetic text on a gradient, differs from a flat fill, and preserves exact outside RGBA/source/alpha',()=>{
  const input=picture(),before=input.data.slice(),output=core.inpaintFreeImagePixels(cv,input),colors=new Set();let sourceError=0,restoredError=0;
  for(let y=input.mask.y;y<input.mask.y+input.mask.height;y++)for(let x=input.mask.x;x<input.mask.x+input.mask.width;x++){
@@ -38,6 +79,7 @@ test('published pinned OpenCV restores synthetic text on a gradient, differs fro
  }
  assert.ok(colors.size>30,'restored mask retains a varying background');assert.ok(restoredError<sourceError/3,{sourceError,restoredError});
  unchangedOutside(input,output);assert.deepEqual(input.data,before);assert.notEqual(output.buffer,input.data.buffer);
+ const {mask,...pixels}=input;assert.deepEqual(core.inpaintFreeImagePixels(cv,{...pixels,masks:[mask]}),output);
 });
 test('ROI context clips at image edges and refuses full-image masks or oversized allocations',()=>{
  assert.deepEqual(JSON.parse(JSON.stringify(core.freeImageInpaintRoi({x:0,y:0,width:10,height:10},100,60))),{x:0,y:0,width:22,height:22});
@@ -54,6 +96,19 @@ test('every allocated Mat is deleted after OpenCV throws; invalid output cannot 
 function workerFixture(behavior){
  const made=[];return{made,factory(){const worker={terminateCount:0,requests:[],postMessage(request){this.requests.push(request);behavior?.(this,request);},terminate(){this.terminateCount++;}};made.push(worker);return worker;}};
 }
+test('session snapshots every explicit mask, trusts only their RGB union, and counts masks toward the region cap',async()=>{
+ const fixture=workerFixture(),work=session(new AbortController().signal,{workerFactory:()=>fixture.factory()}),input=adjacentPicture();
+ const snapshot={width:input.width,height:input.height,masks:input.masks.map(mask=>({...mask})),data:input.data.slice()},pending=work.restore(input),worker=fixture.made[0],request=worker.requests[0];
+ assert.notEqual(request.masks,input.masks);assert.notEqual(request.masks[0],input.masks[0]);
+ input.masks[0].x=0;input.masks.pop();input.data.fill(9);
+ worker.onmessage({data:{id:request.id,width:snapshot.width,height:snapshot.height,data:new Uint8ClampedArray(snapshot.data.length).fill(247)}});
+ const output=await pending;unchangedOutsideMasks(snapshot,output);
+ for(const mask of snapshot.masks)assert.deepEqual(Array.from(output.subarray((mask.y*snapshot.width+mask.x)*4,(mask.y*snapshot.width+mask.x)*4+3)),[247,247,247]);
+ work.close();
+ const fast=workerFixture((worker,request)=>queueMicrotask(()=>worker.onmessage({data:{...request}}))),bounded=session(new AbortController().signal,{workerFactory:()=>fast.factory()});
+ const many={...adjacentPicture(),masks:Array(32).fill({x:25,y:20,width:10,height:16})};
+ await bounded.restore(many);await assert.rejects(bounded.restore(adjacentPicture()),/너무 많/);assert.equal(fast.made[0].requests.length,1);
+});
 test('lazy session reuses one worker sequentially, independently owns buffers, and defends outside pixels/alpha against worker output',async()=>{
  const fixture=workerFixture((worker,request)=>queueMicrotask(()=>worker.onmessage({data:{id:request.id,width:request.width,height:request.height,data:new Uint8ClampedArray(request.data.length).fill(247)}})));
  const controller=new AbortController(),work=session(controller.signal,{workerFactory:()=>fixture.factory()}),input=picture(),before=input.data.slice();assert.equal(fixture.made.length,0);
@@ -104,4 +159,20 @@ test('self-hosted assets match the pinned npm runtime, checksum manifest, embedd
  for(const file of manifest.files){const bytes=fs.readFileSync(new URL(file.path,root));assert.equal(bytes.length,file.bytes);assert.ok(bytes.length<25*1024*1024);assert.equal(createHash('sha256').update(bytes).digest('hex'),file.sha256);}
  assert.deepEqual(fs.readFileSync(new URL('opencv.js',root)),fs.readFileSync(new URL('../node_modules/@techstark/opencv-js/dist/opencv.js',import.meta.url)));
  assert.match(fs.readFileSync(new URL('licenses/LICENSE-opencv-js.txt',root),'utf8'),/Apache License/);
+});
+test('current self-hosted worker accepts joint masks and exactly preserves archived single-mask output',async()=>{
+ async function restore(asset,request){
+  const imports=[];
+  return new Promise(resolve=>{
+   const scope={cv,Uint8ClampedArray,Uint8Array,Error,Number,Promise,importScripts(url){imports.push(url);},postMessage(result){resolve({result,imports});}};
+   vm.runInNewContext(fs.readFileSync(new URL('../public'+asset,import.meta.url),'utf8'),scope);
+   scope.onmessage({data:{...request,id:1}});
+  });
+ }
+ const legacy=await restore('/inpaint/5.0.0-release.1/inpaint-worker.js',picture()),current=await restore(core.FREE_IMAGE_INPAINT_ASSET,picture());
+ assert.equal(current.result.error,undefined);assert.deepEqual(current.result.data,legacy.result.data);
+ const input=adjacentPicture(),joint=await restore(core.FREE_IMAGE_INPAINT_ASSET,input);
+ assert.equal(joint.result.error,undefined);assert.deepEqual(joint.result.data,core.inpaintFreeImagePixels(cv,input));
+ assert.deepEqual(joint.imports,['/inpaint/5.0.0-release.1/opencv.js']);
+ const invalid=await restore(core.FREE_IMAGE_INPAINT_ASSET,{...input,mask:input.masks[0]});assert.ok(invalid.result.error);assert.deepEqual(invalid.imports,[]);
 });

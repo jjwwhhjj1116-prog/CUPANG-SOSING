@@ -1,6 +1,6 @@
 import {planBatchImageWork,refreshBatchImageTask,type BatchImageTask} from '@/app/batch-image-work';
 import {applyDetailBatchResult,recoverDetailBatchResult,detailBatchCapacity,detailBatchSelection,detailBatchTranslationSlots,type DetailImageBatch} from '@/app/detail-image-batch';
-import {readFreeImageSource,recognizeFreeImage,translateFreeImageRegions,renderFreeImageTranslation,readFreeImageVisionStatus,type FreeImageVisionStatus,type FreeImageLoaded,type FreeImageRegion} from '@/app/free-image-translation-client';
+import {readFreeImageSource,recognizeFreeImage,translateFreeImageRegions,renderFreeImageTranslation,readFreeImageVisionStatus,initializeFreeImageVisionRegions,type FreeImageVisionStatus,type FreeImageLoaded,type FreeImageRegion} from '@/app/free-image-translation-client';
 import {FreeImageVisionError,type FreeImageVisionAttempt} from '@/app/free-image-vision-error';
 import {isOwnedImageKey} from '@/app/image-files';
 import type {ProductContent} from '@/app/product-content';
@@ -9,7 +9,6 @@ import type {ProductOptionsResponse} from '@/app/product-options';
 import type {WorkspaceSettingsScope} from '@/app/workspace-settings-scope';
 import type {WorkspaceSettings} from '@/app/workspace-settings';
 import {selectedImagePurpose,hasForeignImageText,prepareSelectedImageCleanup} from '@/app/selected-image-purpose';
-import {initializeVisionRegions} from '@/app/free-image-vision-style';
 import {parseImageTextVisionResult,parseImageTextVisionConfiguration,isVerifiedOriginalPreservation} from '@/app/image-text-vision';
 import {parseImageOriginalPreservationProof} from '@/app/image-no-text-proof';
 import {reconcileSelectedDetailWorkspace,type SelectedDetailWorkspacePending} from '@/app/selected-detail-workspace';
@@ -235,7 +234,7 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
      const vision=parseImageTextVisionResult(observation.result,image.width,image.height);if(!vision)throw changed();
      image.visionRequestId=pending.attempt.requestId;image.visionResult=vision;image.visionExecution={requests:0,cached:true};
      if(!vision.blocks.length){delete state.inferencePending;recoveredInference=undefined;throw new UnchangedOriginal();}
-     const styled=initializeVisionRegions(vision.blocks,image.canvas,image.width,image.height);image.visionStyleIssues=styled.issues;regions=styled.regions;
+     const styled=initializeFreeImageVisionRegions(image,vision);regions=styled.regions;
     }else{
      // No other slot may bypass a retained, completed-but-not-yet-consumed
      // result through a fresh provider call.

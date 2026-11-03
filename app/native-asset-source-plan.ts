@@ -48,7 +48,8 @@ export function nativeAssetSourceCanonical(value:unknown):string{
 }
 const copy=<T,>(value:T):T=>JSON.parse(nativeAssetSourceCanonical(value)) as T;
 const same=(left:unknown,right:unknown)=>nativeAssetSourceCanonical(left)===nativeAssetSourceCanonical(right);
-const sha=async(bytes:Uint8Array)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new Uint8Array(bytes))),byte=>byte.toString(16).padStart(2,'0')).join('');
+const byteView=(bytes:Uint8Array)=>{if(Object.prototype.toString.call(bytes.buffer)!=='[object ArrayBuffer]')throw Error('원본 바이트 버퍼 형식을 확인해주세요.');return new Uint8Array(bytes.buffer as ArrayBuffer,bytes.byteOffset,bytes.byteLength);};
+const sha=async(bytes:Uint8Array)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',byteView(bytes))),byte=>byte.toString(16).padStart(2,'0')).join('');
 const digest=(value:unknown)=>sha(new TextEncoder().encode(nativeAssetSourceCanonical(value)));
 export async function nativeAssetSourcePlanSha256(plan:NativeAssetSourcePlan){const {sourcePlanSha256:omitted,...value}=plan;void omitted;return digest(value);}
 function identityValid(value:unknown):value is NativeLegalAttachmentIdentity{
@@ -141,12 +142,13 @@ export async function buildNativeAssetSourcePlan(input:{identity:unknown;project
     let proof=byteProofs.get(key);const asset=byKey.get(key),metadata=input.metadata.get(key);
     if(!proof){
      if(!asset||!metadata||!Number.isSafeInteger(metadata.size)||metadata.size!==asset.data.byteLength||!asset.data.byteLength||asset.data.byteLength>MAX_IMAGE_BYTES)throw Error('선택한 실제 이미지 파일·크기를 확인해주세요.');
-     const bytes=new Uint8Array(asset.data),actual=imageFileType(bytes);
+     // These request-local originals are already owned; retain views rather than a second 64MiB batch. The final SHA fence still rejects mutations.
+     const bytes=byteView(asset.data),actual=imageFileType(bytes);
      if(actual.contentType!=='image/png'&&actual.contentType!=='image/jpeg'){add('NATIVE_ASSET_IMAGE_FORMAT','네이티브 업로드는 현재 PNG·JPEG 원본만 확인했습니다. 원본 파일을 자동 변환하지 않았습니다.',key);continue;}
      if(metadata.httpMetadata?.contentType!==undefined&&metadata.httpMetadata.contentType!==actual.contentType)throw Error('저장 이미지 형식과 실제 원본 형식이 다릅니다.');
      const sha256=await sha(bytes);
      if(asset.sha256!==sha256||['sha256','labelBlobSha256','freeImageOutputSha256'].some(name=>metadata.customMetadata?.[name]!==undefined&&metadata.customMetadata[name]!==sha256))throw Error('이미지 원본의 저장 해시가 다릅니다.');
-     total+=bytes.length;if(total>20*1024*1024)throw Error('원본 이미지 합계는 20MB 이하여야 합니다.');
+     total+=bytes.length;if(total>64*1024*1024)throw Error('원본 이미지 합계는 64MB 이하여야 합니다.');
      proof={bytes,sha256,contentType:actual.contentType};byteProofs.set(key,proof);
     }
     const fileId=type+'\0'+key;let file=files.get(fileId);
@@ -190,7 +192,7 @@ export async function buildNativeAssetSourcePlan(input:{identity:unknown;project
   plan.identityDigest=await digest(identity);plan.originalBodySha256=await digest(body);plan.preparedBodySha256=await digest(prepared);plan.metadataValid=true;plan.sourcePlanSha256=await nativeAssetSourcePlanSha256(plan);
   // Byte reads may yield between hashing. Never label changed caller buffers as
   // the immutable byte identity already used to derive these filenames.
-  for(const [key,proof]of byteProofs){const asset=byKey.get(key)!;if(asset.data.byteLength!==proof.bytes.length||await sha(new Uint8Array(asset.data))!==proof.sha256)throw Error('준비 중 이미지 원본이 변경되었습니다.');}
+  for(const [key,proof]of byteProofs){const asset=byKey.get(key)!;if(asset.data.byteLength!==proof.bytes.length||await sha(asset.data)!==proof.sha256)throw Error('준비 중 이미지 원본이 변경되었습니다.');}
   if(!same(input.identity,identity)||!same(input.projection,projection)||!same(input.nativeLegalAttachmentPlan,legal)||!same([...input.ownedKeys],owned))throw Error('준비 중 상품·원문·서류 연결이 변경되었습니다.');
   return plan;
  }catch(error){

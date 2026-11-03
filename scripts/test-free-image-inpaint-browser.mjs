@@ -10,7 +10,7 @@ const files=new Map([
  ['/fixture.js',{type:'text/javascript; charset=utf-8',bytes:built.outputFiles[0].contents}],
  ['/fixture.css',{type:'text/css',bytes:Buffer.from('body{font:16px sans-serif;margin:28px}main{display:flex;gap:20px;flex-wrap:wrap}figure{margin:0}canvas{border:1px solid #aaa}pre{white-space:pre-wrap;max-width:1040px}button{padding:12px}')}],
 ]);
-for(const name of ['inpaint-worker.js','opencv.js'])files.set('/inpaint/5.0.0-release.1/'+name,{type:'text/javascript; charset=utf-8',bytes:fs.readFileSync(path.join(root,'public/inpaint/5.0.0-release.1',name))});
+for(const name of ['inpaint-worker-masks-v1.js','opencv.js'])files.set('/inpaint/5.0.0-release.1/'+name,{type:'text/javascript; charset=utf-8',bytes:fs.readFileSync(path.join(root,'public/inpaint/5.0.0-release.1',name))});
 createServer((request,response)=>{
  const file=files.get(request.url);if(request.method!=='GET'||!file){response.writeHead(404);response.end();return;}
  response.writeHead(200,{'content-type':file.type,'cache-control':'no-store','x-content-type-options':'nosniff'});response.end(file.bytes);

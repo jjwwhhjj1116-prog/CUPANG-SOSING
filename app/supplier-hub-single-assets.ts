@@ -64,7 +64,7 @@ export function singleAssetSelection(projection: Projection, owner: string, owne
 /** Reads only supplied bytes/metadata. Public candidates are never called
  * published until the explicit publisher verifies the actual stored body. */
 export async function buildSingleAssetPlan(input: { projection: Projection; owner: string; productId: string; ownedKeys: readonly string[];
-  assets: readonly BundleAsset[]; metadata: ReadonlyMap<string, StorageMetadata | null>; config: PublicDetailConfig | null; sourceIssues?: readonly SubmissionIssue[] }): Promise<SingleAssetPlan> {
+  assets: readonly BundleAsset[]; metadata: ReadonlyMap<string, StorageMetadata | null>; config: PublicDetailConfig | null; sourceIssues?: readonly SubmissionIssue[]; nativeReadOnly?: true }): Promise<SingleAssetPlan> {
   const selection = singleAssetSelection(input.projection, input.owner, input.ownedKeys);
   const issues: Issue[] = [...selection.issues, ...(input.sourceIssues ?? []).map(issue => ({ code: issue.code, level: issue.kind,
     message: issue.message, optionId: issue.optionId, ...(issue.fieldId ? { fieldId: issue.fieldId } : {}) }))];
@@ -100,7 +100,7 @@ export async function buildSingleAssetPlan(input: { projection: Projection; owne
     const asset = byKey.get(key), metadata = input.metadata.get(key);
     const fail = (code: string, message: string) => issues.push({ code, level: 'error', message });
     if (!asset || !asset.data.byteLength || asset.data.byteLength > MAX_IMAGE_BYTES || !metadata || metadata.size !== asset.data.byteLength) { fail('SINGLE_IMAGE_MISSING', '선택한 이미지 원본의 저장 파일·크기를 확인해주세요.'); continue; }
-    total += asset.data.byteLength; if (total > 20 * 1024 * 1024) throw new SingleAssetError('Single 이미지 합계는 20MB 이하여야 합니다.', 'SINGLE_IMAGE_SIZE', 413);
+    total += asset.data.byteLength; if (total > (input.nativeReadOnly?64:20) * 1024 * 1024) throw new SingleAssetError('Single 이미지 합계는 '+(input.nativeReadOnly?'64':'20')+'MB 이하여야 합니다.', 'SINGLE_IMAGE_SIZE', 413);
     let actual;
     try { actual = imageFileType(asset.data); } catch { fail('SINGLE_IMAGE_TYPE', '선택한 이미지 파일 형식을 확인해주세요.'); continue; }
     if (actual.extension === 'gif') { fail('SINGLE_PUBLIC_MEDIA_UNSUPPORTED', '기존 공개 이미지 경로는 GIF를 지원하지 않습니다. 저장한 원본은 유지됩니다.'); continue; }
@@ -122,6 +122,8 @@ export async function buildSingleAssetPlan(input: { projection: Projection; owne
     }
   }
   const fileMap = new Map(files.map(file => [file.key, file]));
+  // A native read may inspect larger multipart sources, never publish them through the legacy public export.
+  if(input.nativeReadOnly&&total>20*1024*1024)issues.push({code:'SINGLE_NATIVE_READ_ONLY_SIZE',level:'error',message:'20MB를 초과한 원본은 비공개 원본 전송으로만 준비할 수 있습니다.'});
   const manifest = selection.selections.map(item => ({ ...item, files: item.keys.flatMap(key => fileMap.has(key) ? [fileMap.get(key)!] : []) }));
   if (manifest.some(item => item.files.length !== item.keys.length)) issues.push({ code: 'SINGLE_IMAGE_INCOMPLETE', level: 'error', message: '준비할 이미지 파일이 모두 확인되지 않았습니다.' });
   const sourceAssetFingerprint = await fingerprint(selection.keys.map(key => ({ key, sha256: fileMap.get(key)?.sha256 ?? null, metadata: input.metadata.get(key) ?? null })));

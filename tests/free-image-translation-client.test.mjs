@@ -11,7 +11,7 @@ const plain = value => JSON.parse(JSON.stringify(value));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const hash = async bytes => Buffer.from(await webcrypto.subtle.digest('SHA-256', bytes)).toString('hex');
 const pixels = (width, height) => Uint8Array.from({ length: width * height * 4 }, (_, index) => index % 4 === 3 ? 255 : (index * 13) % 200);
-function fixture({ imageWidth = 20, imageHeight = 12, decodeWait, fonts } = {}) {
+function fixture({ imageWidth = 20, imageHeight = 12, decodeWait, fonts, inpaint } = {}) {
   const objects = new Map(), revoked = [], canvases = [], operations = [], measurements = []; let sequence = 0;
   class ObjectURL extends URL { static createObjectURL(blob) { const url = 'blob:fixture-' + ++sequence; objects.set(url, blob); return url; } static revokeObjectURL(url) { revoked.push(url); objects.delete(url); } }
   class Image { set src(url) { if (!url) return; Promise.resolve(decodeWait).then(() => { if (!objects.has(url)) return; this.naturalWidth = imageWidth; this.naturalHeight = imageHeight; this.pixels = pixels(imageWidth, imageHeight); this.onload?.(); }); } }
@@ -21,6 +21,7 @@ function fixture({ imageWidth = 20, imageHeight = 12, decodeWait, fonts } = {}) 
     const paint = (x, y, width, height, color) => {
       for (let py = Math.floor(y); py < y + height; py++) for (let px = Math.floor(x); px < x + width; px++) {
         if (px < 0 || py < 0 || px >= output.width || py >= output.height || clip && (px < clip.x || py < clip.y || px >= clip.x + clip.width || py >= clip.y + clip.height)) continue;
+        output.pixels ??= new Uint8Array(output.width * output.height * 4);
         output.pixels.set(color, (py * output.width + px) * 4);
       }
     };
@@ -41,7 +42,17 @@ function fixture({ imageWidth = 20, imageHeight = 12, decodeWait, fonts } = {}) 
       }
     };
     const context = { font: '10px Arial', fillStyle: '#000000', textBaseline: 'top', textAlign: 'left',
-      drawImage(image, x, y) { assert.equal(x, 0); assert.equal(y, 0); output.pixels = image.pixels.slice(); operations.push(['draw', output.width, output.height]); },
+      drawImage(image, x, y) {
+        const width=image.width??image.naturalWidth,height=image.height??image.naturalHeight;
+        output.pixels ??= new Uint8Array(output.width*output.height*4);
+        for(let row=0;row<height;row++)for(let col=0;col<width;col++){
+          const offset=(row*width+col)*4,rgba=image.pixels?.slice(offset,offset+4);
+          if(rgba?.[3])paint(x+col,y+row,1,1,rgba);
+        }
+        operations.push(['draw', output.width, output.height]);
+      },
+      getImageData(x,y,width,height){const data=new Uint8Array(width*height*4);for(let row=0;row<height;row++)for(let col=0;col<width;col++)data.set(output.pixels?.slice(((y+row)*output.width+x+col)*4,((y+row)*output.width+x+col+1)*4)??[0,0,0,0],(row*width+col)*4);return{data,width,height};},
+      putImageData(image,x,y,dirtyX=0,dirtyY=0,dirtyWidth=image.width,dirtyHeight=image.height){for(let row=dirtyY;row<dirtyY+dirtyHeight;row++)for(let col=dirtyX;col<dirtyX+dirtyWidth;col++)paint(x+col,y+row,1,1,image.data.slice((row*image.width+col)*4,(row*image.width+col+1)*4));},
       measureText(text) { const width = textWidth(this.font, text); measurements.push({ text, font: this.font, width }); return { width }; },
       save() { clips.push(clip); }, restore() { clip = clips.pop(); }, beginPath() { path = []; dot = null; }, rect(x, y, width, height) { clip = { x, y, width, height }; }, clip() {},
       moveTo(x, y) { path.push({ x, y }); }, lineTo(x, y) { path.push({ x, y }); },
@@ -65,7 +76,7 @@ function fixture({ imageWidth = 20, imageHeight = 12, decodeWait, fonts } = {}) 
       { exports, Error, Date, URL: ObjectURL, URLSearchParams, Blob, File, FormData, Response, Request, Headers, Image, document,
         AbortController, AbortSignal, TextEncoder, TextDecoder, Uint8Array, DataView, CompressionStream, DecompressionStream, structuredClone,
         crypto: webcrypto, setTimeout, clearTimeout, fetch: () => { throw Error('Live network is forbidden'); },
-        require(name) { assert.ok(name.startsWith('@/'), name); return load(name.slice(2) + '.ts'); } });
+        require(name) { if(inpaint&&name==='@/app/free-image-inpaint-client')return{createFreeImageInpaintSession:()=>inpaint};assert.ok(name.startsWith('@/'), name); return load(name.slice(2) + '.ts'); } });
     return exports;
   }
   const client = load('app/free-image-translation-client.ts');
@@ -313,6 +324,38 @@ test('overlapping erase and text layers clear or restore the same wording accord
   const created = h.canvases.length;
   await assert.rejects(h.client.renderFreeImageTranslation(original, [text, { ...erase, id: text.id }], new AbortController().signal));
   assert.equal(h.canvases.length, created); assert.deepEqual(original.canvas.pixels, before); assert.equal(text.translated, 'A'); assert.equal(erase.translated, '');
+});
+
+test('explicit backgrounds-first documents preserve disjoint glyphs inside overlapping source boxes and survive reopening',async()=>{
+ const h=fixture(),original=image(h),target={...quotationRequest(),bindingSha256:'b'.repeat(64)};
+ original.source={...source,quotationTarget:target};original.visionPaintOrder='backgrounds-first-v1';
+ const back={...region('back',{x:1,y:1,width:10,height:8},'A'),fontSize:2,textAlign:'left',foreground:'#112233'},
+  front={...region('front',{x:1,y:1,width:4,height:4},'B'),fontSize:2,textAlign:'right',foreground:'#334455'};
+ const result=await h.client.renderFreeImageTranslation(original,[back,front],new AbortController().signal),bytes=new Uint8Array(await result.output.arrayBuffer());
+ const pixel=(x,y)=>Array.from(bytes.slice((y*20+x)*4,(y*20+x+1)*4));
+ assert.deepEqual(pixel(1,1),[0x11,0x22,0x33,255],'later background must not erase the earlier text');
+ assert.deepEqual(pixel(4,1),[0x33,0x44,0x55,255]);assert.equal(result.editDocument.paintOrder,'backgrounds-first-v1');
+ const reopened={...original,visionPaintOrder:undefined,editDocument:result.editDocument};
+ const again=await h.client.renderFreeImageTranslation(reopened,[back,front],new AbortController().signal);
+ assert.deepEqual(new Uint8Array(await again.output.arrayBuffer()),bytes);assert.equal(again.editDocument.paintOrder,'backgrounds-first-v1');
+});
+
+test('backgrounds-first refuses any intersecting glyph alpha and unknown paint policy before output',async()=>{
+ const h=fixture(),original=image(h),back={...region('back',{x:1,y:1,width:10,height:8},'A'),fontSize:2,textAlign:'left'},front={...region('front',{x:1,y:1,width:4,height:4},'B'),fontSize:2,textAlign:'left'};
+ original.visionPaintOrder='backgrounds-first-v1';
+ await assert.rejects(h.client.renderFreeImageTranslation(original,[back,front],new AbortController().signal),/겹|충돌/u);
+ original.visionPaintOrder='unknown';await assert.rejects(h.client.renderFreeImageTranslation(original,[back],new AbortController().signal),/순서|정책/u);
+});
+
+test('backgrounds-first restores neighboring original masks together before any Korean layer and keeps outside pixels unchanged',async()=>{
+ const calls=[],inpaint={async restore(input){calls.push(input);assert.equal(input.mask,undefined);assert.equal(input.masks.length,2);return input.data.slice();},close(){calls.push('closed');}};
+ const h=fixture({inpaint}),original=image(h);original.visionPaintOrder='backgrounds-first-v1';
+ const rows=[region('one',{x:3,y:1,width:10,height:3},'가'),region('two',{x:3,y:3,width:10,height:3},'나')].map(row=>({...row,backgroundMode:'inpaint-telea-v1'}));
+ const before=original.canvas.pixels.slice(),result=await h.client.renderFreeImageTranslation(original,rows,new AbortController().signal),after=new Uint8Array(await result.output.arrayBuffer());
+ assert.equal(calls.length,2);assert.equal(calls[1],'closed');assert.equal(h.operations.filter(op=>op[0]==='text').length,2);
+ for(let y=0;y<source.height;y++)for(let x=0;x<source.width;x++)if(!rows.some(row=>x>=row.box.x&&x<row.box.x+row.box.width&&y>=row.box.y&&y<row.box.y+row.box.height)){
+  const index=(y*source.width+x)*4;assert.deepEqual(after.slice(index,index+4),before.slice(index,index+4));
+ }
 });
 
 test('brush strokes draw only round paths and dots, preserve source/off-path pixels and never load retained text fonts', async () => {

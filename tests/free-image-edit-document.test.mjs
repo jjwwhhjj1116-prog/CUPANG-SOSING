@@ -46,6 +46,17 @@ test('restoration mode is versioned, hashed and optional; canonical legacy bytes
   rejected({regions:[region('brush',{erase:true,...brush(4,[{x:5,y:6}],800,600),backgroundMode:'inpaint-telea-v1'})]});
 });
 
+test('backgrounds-first paint policy is explicit, canonical and preserved while legacy bytes stay unchanged',()=>{
+  const legacy=document(),before=JSON.stringify(legacy);
+  assert.equal(JSON.stringify(validate(legacy,source)),before);
+  assert.equal(Object.hasOwn(validate(legacy,source),'paintOrder'),false);
+  const input=document({paintOrder:'backgrounds-first-v1'}),result=validate(input,source);
+  assert.deepEqual(plain(result),input);
+  assert.equal(validate(JSON.parse(JSON.stringify(result)),source).paintOrder,'backgrounds-first-v1');
+  assert.notEqual(createHash('sha256').update(JSON.stringify(result)).digest('hex'),createHash('sha256').update(before).digest('hex'));
+  for(const paintOrder of ['backgrounds-first','sequential',null,true,1])rejected({paintOrder});
+});
+
 test('full editable document preserves paint order, manual blanks, unselected text, whitespace and optional absence in an independent clone', () => {
   const drawing = brush(4, [{ x: 5, y: 6 }, { x: 5, y: 6 }, { x: 20, y: 15 }], 800, 600);
   drawing.brush.points.splice(1, 0, { x: 5, y: 6 });

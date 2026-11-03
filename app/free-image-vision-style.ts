@@ -60,7 +60,7 @@ function fittedFont(context:PixelContext|undefined,text:string,box:Box):{fontSiz
 /** Initial styles for newly received Vision blocks only. Existing regions and
  * saved documents never enter this function. A sampled flat fill is not image
  * reconstruction; uncertain geometry/background stays available for review. */
-export function initializeVisionRegions(blocks:readonly ImageTextVisionBlock[],canvas:Pick<HTMLCanvasElement,'getContext'>,width:number,height:number):{regions:FreeImageRegion[];issues:VisionStyleIssue[]}{
+export function initializeVisionRegions(blocks:readonly ImageTextVisionBlock[],canvas:Pick<HTMLCanvasElement,'getContext'>,width:number,height:number,options:{allowSafeOverlayOverlap?:boolean}={}):{regions:FreeImageRegion[];issues:VisionStyleIssue[];paintOrder?:'backgrounds-first-v1'}{
  let context:PixelContext|undefined;try{context=canvas.getContext('2d')??undefined;}catch{/* Keep all blocks available for manual correction. */}
  const issues=new Set<VisionStyleIssue>();
  const regions=blocks.map((row,index):FreeImageRegion=>{
@@ -79,5 +79,17 @@ export function initializeVisionRegions(blocks:readonly ImageTextVisionBlock[],c
    issue:[row.issue,...rowIssues.map(issue=>`${issue}: ${messages[issue]}`)].filter(Boolean).join(' ')||null,
    translationProvenance:row.translated===null?'empty':'generated',background:background.background,foreground:background.foreground,fontSize:fit.fontSize,textAlign:'center'};
  });
+ // This is only a two-pass rendering candidate, not proof that replacement
+ // glyphs are disjoint. The versioned renderer must prove that separately.
+ // Do not relax legacy/manual defaults or hide any other review diagnostic.
+ if(options.allowSafeOverlayOverlap===true&&issues.size===1&&issues.has('VISION_REGION_OVERLAP')&&blocks.every(row=>row.kind==='overlay'&&row.issue===null)){
+  let safe=true;
+  for(let i=0;i<blocks.length&&safe;i++)for(let j=i+1;j<blocks.length;j++){
+   const a=blocks[i].box,b=blocks[j].box;if(!overlaps(a,b))continue;
+   const height=Math.min(a.y+a.height,b.y+b.height)-Math.max(a.y,b.y);
+   if(height>3||height>Math.min(a.height,b.height)*0.1){safe=false;break;}
+  }
+  if(safe)return{regions:regions.map(row=>({...row,selected:true,issue:null})),issues:[],paintOrder:'backgrounds-first-v1'};
+ }
  return{regions,issues:[...issues]};
 }

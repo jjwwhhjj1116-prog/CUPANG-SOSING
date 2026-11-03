@@ -21,7 +21,13 @@ async function fixture(company=SINGLE_COMPANIES[0],options={}){
  const body=copy(p.body),types=['MAIN','ADDITIONAL','LABEL','DETAIL'],paths={MAIN:['imagePage','images','mainImage'],ADDITIONAL:['imagePage','images','additionalImage'],DETAIL:['imagePage','details','detailedImage'],LABEL:['imagePage','images','labelImages']};
  const images=types.map((imageType,index)=>({key:owner+'/native-'+index+'.png',originalName:'native-'+index+'.png',transportName:imageType.toLowerCase()+'-'+sha(imageBytes)+'.png',imageType,contentType:'image/png',byteLength:imageBytes.length,sha256:sha(imageBytes),references:[{optionId:member.optionId,documentIndex:0,wire:imageType==='LABEL'?{path:paths.LABEL,nameKey:'labelImageType',valueKey:'labelImageFiles',name:'제품 한글 표시사항 라벨 또는 도안 이미지'}:{path:paths[imageType]},slotIndex:0}]}));
  if(options.sharedImages)for(const image of images){image.key=owner+'/shared-original.png';image.originalName='shared-original.png';}
+ const fileBytes=new Map(images.map(image=>[image.key,imageBytes]));
+ if(options.largeDetail){
+  images.pop();
+  for(let index=0;index<3;index++){const bytes=largeNativePng(7*1024*1024,97+index),key=owner+'/detail-part-'+index+'.png';fileBytes.set(key,bytes);images.push({key,originalName:'detail-part-'+index+'.png',transportName:'detail-'+sha(bytes)+'.png',imageType:'DETAIL',contentType:'image/png',byteLength:bytes.length,sha256:sha(bytes),references:[{optionId:member.optionId,documentIndex:0,wire:{path:paths.DETAIL},slotIndex:index}]});}
+ }
  body.imagePage=undefined;delete body.imagePage;body.jsonDocument[0].imagePage.images={mainImage:images[0].transportName,additionalImage:images[1].transportName,labelImages:[{labelImageType:'제품 한글 표시사항 라벨 또는 도안 이미지',labelImageFiles:images[2].transportName}]};body.jsonDocument[0].imagePage.details.detailedImage=images[3].transportName;
+ if(options.largeDetail)body.jsonDocument[0].imagePage.details.detailedImage=images.filter(image=>image.imageType==='DETAIL').map(image=>image.transportName).join(',');
  let legalPlan=null;
  if(options.pdf){
   body.jsonDocument[0].legalPage.certificates=[{certificateName:'기존 합성 인증',certificateValue:'기존 값'},{certificateName:'KC 합성 인증',certificateValue:'검토한 인증값'}];
@@ -40,7 +46,7 @@ async function fixture(company=SINGLE_COMPANIES[0],options={}){
   if(path.endsWith('/supplier-hub-product-receipt'))return jsonResponse(absolute.href,{format:'yoofam-native-receipt-history-v1',productId:p.productId,receipts:[]});
   if(path.endsWith('/legal-documents')){assert.equal(absolute.searchParams.get('key'),legalPlan.files[0].key);const response=new Response(pdf,{headers:{'content-type':'application/pdf'}});Object.defineProperty(response,'url',{value:absolute.href});return response;}
   assert.ok(path.endsWith('/native-assets'),path);
-  if(absolute.searchParams.has('key')){const file=source.images.find(file=>file.key===absolute.searchParams.get('key'));assert.ok(file);assert.equal(absolute.searchParams.get('sourcePlanSha256'),source.sourcePlanSha256);const bytes=options.badPrivateBytes?imageBytes.subarray(1):imageBytes,response=new Response(bytes,{headers:{'content-type':'image/png','x-yoofam-source-plan-sha256':source.sourcePlanSha256,'x-yoofam-file-sha256':file.sha256}});Object.defineProperty(response,'url',{value:absolute.href});return response;}
+  if(absolute.searchParams.has('key')){const file=source.images.find(file=>file.key===absolute.searchParams.get('key'));assert.ok(file);assert.equal(absolute.searchParams.get('sourcePlanSha256'),source.sourcePlanSha256);const original=fileBytes.get(file.key),bytes=options.badPrivateBytes?original.subarray(1):original,response=new Response(bytes,{headers:{'content-type':'image/png','x-yoofam-source-plan-sha256':source.sourcePlanSha256,'x-yoofam-file-sha256':file.sha256}});Object.defineProperty(response,'url',{value:absolute.href});return response;}
   return jsonResponse(absolute.href,state.source);
  };
  const appListeners=[],appContext=vm.createContext({location:new URL(f.sender.url),fetch:appFetch,crypto:webcrypto,AbortController,TextEncoder,TextDecoder,Uint8Array,URL,setTimeout,clearTimeout,Date,Response,structuredClone,btoa,atob,window:{},document:{visibilityState:'visible'},chrome:{runtime:{id:'fixture',sendMessage:async()=>({ok:true,sessionId:null}),onMessage:{addListener:listener=>appListeners.push(listener)}}}});
@@ -52,20 +58,24 @@ async function fixture(company=SINGLE_COMPANIES[0],options={}){
   assert.ok(parsed.pathname.includes(image?'/upload-images/':'/upload-files-by-type/'));assert.equal(init.method,'POST');assert.equal(Object.hasOwn(init.headers,'content-type'),false,'multipart boundary belongs to the browser');const metadata=[];
   for(const [field,file]of init.body){assert.equal(field,image?'additionalImageFiles':'uploadFiles');const expected=(image?images:legalPlan.files).find(image=>image.transportName===file.name);assert.ok(expected);assert.equal(sha(new Uint8Array(await file.arrayBuffer())),expected.sha256);metadata.push(image?{imageName:file.name,imageUrl:'/stored/'+file.name,s3Link:'stored/'+file.name,mainImage:false}:{fileName:file.name,fileType:group,s3Link:'stored/'+file.name});}
   const record=JSON.parse(f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords)[context.packetDigest];assert.equal(record.nativeAssets.groups[(image?'image:':'legal:')+group].state,'requested','write checkpoint precedes every multipart request');
-  state.uploads.push(group);for(const row of metadata)state.registry.set(row.imageName??row.fileName,row);if(options.loseUploadAck)throw Error('synthetic lost upload ACK');return jsonResponse(url,options.badEnvelope?{data:metadata}:metadata);
+  state.uploads.push(group);for(const row of metadata)state.registry.set(row.imageName??row.fileName,row);if(options.loseUploadAck||options.loseDetailAck&&group==='DETAIL')throw Error('synthetic lost upload ACK');return jsonResponse(url,options.badEnvelope?{data:metadata}:metadata);
  };
- const hubContext=vm.createContext({location:f.hubLocation,document:f.hubDocument,fetch:hubFetch,crypto:webcrypto,AbortController,TextEncoder,TextDecoder,Uint8Array,URL,setTimeout,clearTimeout,Date,Response,structuredClone,FormData,Blob,btoa,atob});
+ const hubContext=vm.createContext({location:f.hubLocation,document:f.hubDocument,fetch:hubFetch,crypto:webcrypto,AbortController,TextEncoder,TextDecoder,Uint8Array,URL,setTimeout,clearTimeout,Date:class extends Date{static now(){return state.now??Date.now();}},Response,structuredClone,FormData,Blob,btoa,atob});
+ state.frameCalls=[];
  const execute=f.api.scripting.executeScript;f.api.scripting.executeScript=async request=>{
   if(request.target.tabId===f.sender.tab.id)throw Error('Cannot access contents of the app URL. Extension manifest must request permission to access this host.');
   if(!['nativeProductDocumentAppSourcePage','nativeAssetUploadPage'].includes(request.func.name))return execute(request);
   const target=request.func.name==='nativeAssetUploadPage'?hubContext:appContext;target.args=copy(request.args);if(options.corruptFrameBytes&&request.func.name==='nativeAssetUploadPage')target.args[0].group.parts[0].base64=Buffer.from('corrupt').toString('base64');
-  const result=await vm.runInContext('('+request.func.toString()+')(...args)',target);return[{frameId:0,documentId:request.func.name==='nativeAssetUploadPage'?f.hubDocumentId:'app-doc',result:copy(result)}];
+  if(request.func.name==='nativeAssetUploadPage'){const arg=typeof target.args[0]==='string'?JSON.parse(target.args[0]):target.args[0];state.frameCalls.push(copy(arg));if(options.corruptStage&&arg.action==='stage-v2'&&arg.partIndex===1){arg.group.parts[0].base64=Buffer.alloc(arg.group.parts[0].byteLength,1).toString('base64');target.args[0]=JSON.stringify(arg);}if(options.stageFault&&arg.action==='commit-v2'){if(options.stageFault==='expiry')state.now=Date.now()+6*60*1000;if(options.stageFault==='frame')arg.frameNonce='00000000-0000-4000-8000-000000000000';if(options.stageFault==='plan')arg.plan.planSha256='f'.repeat(64);target.args[0]=JSON.stringify(arg);}}
+  const result=await vm.runInContext('('+request.func.toString()+')(...args)',target);
+  if(options.sourceChangedAfterStage&&result?.format==='yoofam-native-asset-stage-ack-v2')state.source={...copy(state.source),sourcePlanSha256:'f'.repeat(64)};
+  return[{frameId:0,documentId:request.func.name==='nativeAssetUploadPage'?f.hubDocumentId:'app-doc',result:copy(result)}];
  };
  const message=f.api.tabs.sendMessage;f.api.tabs.sendMessage=async(id,value,frame)=>{if(!['YOOFAM_VERIFY_NATIVE_PRODUCT_DOCUMENT_SOURCE','YOOFAM_READ_NATIVE_PRODUCT_DOCUMENT_SOURCE','YOOFAM_READ_LEGACY_PRODUCT_DOCUMENT_SOURCE'].includes(value.type))return message(id,value,frame);assert.equal(id,f.sender.tab.id);assert.equal(frame.frameId,0);for(const listener of appListeners){let pending;const reply=new Promise(resolve=>{pending=listener(copy(value),{id:'fixture'},resolve);});if(pending===true)return copy(await reply);}return undefined;};
  const selected=await createVerifiedProductDocumentBrowserAdapter(context,{api:f.api}),adapter=selected.adapter,proof={identity:context.identity,bodySha256:context.originalBodySha256,preparedBodySha256:context.bodySha256,packetDigest:context.packetDigest,requestId:packet.requestId,docId:null};
  const start=async()=>{const source=await adapter.readSource(proof);assert.equal(source.current,true);const target=await adapter.createTarget({identity:context.identity,requestId:packet.requestId,packetDigest:context.packetDigest}),tab=await adapter.readTab({tab:target,identity:context.identity});const common={tab,identity:context.identity,sessionId:source.sessionId,requestId:packet.requestId};await adapter.hubRequest({...common,method:'GET',path:'/sr/draft/api/drafts'});const created=await adapter.hubRequest({...common,method:'POST',path:'/sr/draft/api/create',operationId:packet.requestId+':create',body:copy(context.packet.body)});assert.equal(created.json.docId,f.createdDocId);return common;};
  const update=common=>adapter.hubRequest({...common,method:'POST',path:'/sr/draft/api/update',operationId:packet.requestId+':update',body:{...copy(context.packet.body),docId:f.createdDocId}});
- return{...f,packet,context,state,selected,adapter,start,update,close:()=>{adapter.dispose();f.close();}};
+ return{...f,packet,context,state,selected,adapter,start,update,stagedBytes:()=>vm.runInContext("[...(globalThis[Symbol.for('yoofam.native-asset-stage.v2')]?.stages?.values()??[])].reduce((sum,stage)=>sum+stage.parts.reduce((size,part)=>size+part.bytes.length,0),0)",hubContext),close:()=>{adapter.dispose();f.close();}};
 }
 for(const company of SINGLE_COMPANIES)test(`${company.code}: actual whole-product adapter uploads verified private bytes and lists exact filenames before its unchanged native update`,async()=>{
  const f=await fixture(company);try{assert.equal(f.selected.nativeAssets,true);const before=JSON.stringify(f.documents.get(f.prior.docId)),common=await f.start();assert.equal(f.state.uploads.length,0);const result=await f.update(common);assert.equal(result.ok,true);assert.deepEqual(f.state.uploads,['MAIN','ADDITIONAL','LABEL','DETAIL']);assert.ok(f.state.lists>=8);
@@ -94,6 +104,45 @@ test('megabyte PNG ACKs validate only metadata and continue every native group w
 });
 test('the same original used across four roles is privately read once per guarded operation and independently copied into each native upload',async()=>{
  const f=await fixture(SINGLE_COMPANIES[0],{sharedImages:true});try{const common=await f.start();await f.update(common);assert.equal(f.state.appReads.filter(url=>new URL(url).searchParams.has('key')).length,1);assert.deepEqual(f.state.uploads,['MAIN','ADDITIONAL','LABEL','DETAIL']);assert.equal(f.state.registry.size,4);assert.equal(f.submitted,0);}finally{f.close();}
+});
+test('three detail PNGs above 20MiB cross bounded frame calls but remain one ordered native multipart POST',async()=>{
+ const f=await fixture(SINGLE_COMPANIES[0],{largeDetail:true});try{
+  const common=await f.start();await f.update(common);
+  assert.deepEqual(f.state.uploads,['MAIN','ADDITIONAL','LABEL','DETAIL']);
+  const stages=f.state.frameCalls.filter(call=>call.action==='stage-v2'),commits=f.state.frameCalls.filter(call=>call.action==='commit-v2');
+  assert.equal(stages.length,3);assert.equal(commits.length,1);
+  for(const call of f.state.frameCalls)assert.ok(call.group.parts.reduce((sum,part)=>sum+(part.base64?part.byteLength:0),0)<=20*1024*1024);
+  assert.deepEqual(stages.map(call=>call.partIndex),[0,1,2]);assert.equal(new Set(stages.map(call=>call.stageId)).size,1);
+  const ledger=JSON.parse(f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords)[f.context.packetDigest].nativeAssets;
+  assert.equal(ledger.state,'complete');assert.equal(ledger.groups['image:DETAIL'].localParts.length,3);assert.equal(Object.keys(ledger.groups).length,4);
+  assert.deepEqual(ledger.groups['image:DETAIL'].localParts.map(part=>part.transportName),f.state.source.images.filter(file=>file.imageType==='DETAIL').map(file=>file.transportName));
+  assert.equal(f.submitted,0);
+ }finally{f.close();}
+});
+test('a changed staged detail part sends no detail upload and reserves no detail write',async()=>{
+ const f=await fixture(SINGLE_COMPANIES[0],{largeDetail:true,corruptStage:true});try{
+  const common=await f.start();await assert.rejects(f.update(common));assert.deepEqual(f.state.uploads,['MAIN','ADDITIONAL','LABEL']);
+  const ledger=JSON.parse(f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords)[f.context.packetDigest].nativeAssets;
+  assert.equal(ledger.groups['image:DETAIL'],undefined);assert.equal(f.calls.filter(call=>call.name==='hub-fetch'&&call.url.endsWith('/update')).length,0);assert.equal(f.stagedBytes(),0);
+ }finally{f.close();}
+});
+test('expired, foreign-frame and changed-plan staged bytes are discarded before any detail write',async()=>{
+ for(const stageFault of ['expiry','frame','plan']){const f=await fixture(SINGLE_COMPANIES[0],{largeDetail:true,stageFault});try{
+  const common=await f.start();await assert.rejects(f.update(common));assert.equal(f.state.uploads.includes('DETAIL'),false);assert.equal(f.stagedBytes(),0,stageFault);
+  const ledger=JSON.parse(f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords)[f.context.packetDigest].nativeAssets;assert.equal(ledger.groups['image:DETAIL'],undefined);
+ }finally{f.close();}}
+});
+test('a lost large-role ACK never repeats its role POST or changes the original ledger shape',async()=>{
+ const f=await fixture(SINGLE_COMPANIES[0],{largeDetail:true,loseDetailAck:true});try{
+  const common=await f.start();await assert.rejects(f.update(common));assert.deepEqual(f.state.uploads,['MAIN','ADDITIONAL','LABEL','DETAIL']);assert.equal(f.stagedBytes(),0);
+  await assert.rejects(f.update(common));assert.deepEqual(f.state.uploads,['MAIN','ADDITIONAL','LABEL','DETAIL']);
+  const ledger=JSON.parse(f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords)[f.context.packetDigest].nativeAssets;assert.equal(ledger.groups['image:DETAIL'].state,'requested');assert.equal(ledger.groups['image:DETAIL'].operationId,f.packet.requestId+':assets:image:DETAIL');
+ }finally{f.close();}
+});
+test('a changed app source between staging calls discards prepared bytes without reserving a detail write',async()=>{
+ const f=await fixture(SINGLE_COMPANIES[0],{largeDetail:true,sourceChangedAfterStage:true});try{
+  const common=await f.start();await assert.rejects(f.update(common));assert.equal(f.state.uploads.includes('DETAIL'),false);assert.equal(f.stagedBytes(),0);
+ }finally{f.close();}
 });
 test('missing upload ACK, changed list or unknown envelope never cause update or a blind duplicate upload',async()=>{
  for(const options of [{loseUploadAck:true},{badList:true},{badEnvelope:true}]){const f=await fixture(SINGLE_COMPANIES[0],options);try{const common=await f.start();await assert.rejects(f.update(common));assert.equal(f.state.uploads.length,1);assert.equal(f.calls.filter(call=>call.name==='hub-fetch'&&call.url.endsWith('/update')).length,0);await assert.rejects(f.update(common));assert.equal(f.state.uploads.length,1);assert.equal(f.submitted,0);}finally{f.close();}}

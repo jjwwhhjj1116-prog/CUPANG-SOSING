@@ -555,6 +555,13 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     return sourceBindings.get(canonical(identity)).binding;
   }
   async function execute(tab,identity,func,args,documentId){
+    // Source revocation must still be able to erase transient bytes in the exact previously pinned frame. This action cannot issue Hub requests.
+    if(func===nativeAssetUploadPage&&args[0]?.action==='discard-v2'){
+      const pinned=frameDocuments.get(tab.tabId),current=await api.tabs.get(tab.tabId);if(!pinned||!validHubTab(current,identity.windowId))fail('TAB_CHANGED','원래 원본 준비 프레임이 변경됐습니다.');
+      assertSingleOwnedTarget(tab,args[0].binding);
+      const [result]=await api.scripting.executeScript({target:{tabId:tab.tabId,documentIds:[pinned]},func,args:[JSON.stringify(args[0])]});
+      if(result?.documentId!==pinned||result?.frameId!==0)fail('TAB_CHANGED','원래 원본 준비 프레임이 변경됐습니다.');return result.result;
+    }
     const binding=sourceBindings.get(canonical(identity))?.binding;if(!binding)fail('SOURCE_CHANGED','원래 앱의 전송 연결을 확인해주세요.');
     assertSingleOwnedTarget(tab,binding);
     const entry=liveWatches.get(tab.tabId);if(entry){requireWatch(entry);documentId=entry.expected.documentId;}

@@ -2,14 +2,13 @@ import { readDetailWorkspace, validateDetailWorkspaceReply, type DetailWorkspace
 import type { DetailWorkspaceView } from '@/app/detail-workspace';
 import { applyDetailWorkspaceImage, readDetailWorkspaceImage, recoverDetailWorkspaceImage, translateDetailWorkspaceImage,
   type DetailWorkspaceEditorContext, type DetailWorkspaceImageReply } from '@/app/detail-workspace-image-client';
-import { FreeImageApplyError, FreeImageVisionError, readFreeImageVisionStatus, recognizeFreeImage, renderFreeImageTranslation, sameFreeImageSource,
+import { FreeImageApplyError, FreeImageVisionError, readFreeImageVisionStatus, recognizeFreeImage, renderFreeImageTranslation, sameFreeImageSource,initializeFreeImageVisionRegions,
   type FreeImageVisionAttempt,
   type FreeImageLoaded, type FreeImageRegion, type FreeImageRendered } from '@/app/free-image-translation-client';
 import type { FreeImageEditDocument } from '@/app/free-image-edit-document';
 import type { FreeImageSource } from '@/app/free-image-translation';
 import {isVerifiedOriginalPreservation,parseImageTextVisionConfiguration,parseImageTextVisionResult} from '@/app/image-text-vision';
 import {parseImageOriginalPreservationProof} from '@/app/image-no-text-proof';
-import {initializeVisionRegions} from '@/app/free-image-vision-style';
 
 export const WORKSPACE_BATCH_BYTES = 30 * 1024 * 1024;
 export type DetailWorkspaceBatchItem = {
@@ -150,7 +149,7 @@ export async function recoverDetailWorkspaceBatchResult(batch: DetailWorkspaceIm
     try{
       const result=visionResult(image);
       if(isVerifiedOriginalPreservation(result))item=unchanged(entry);
-      else{const styled=initializeVisionRegions(result.blocks,image.canvas,image.width,image.height);image.visionStyleIssues=styled.issues;item=await preview(batch,entry,image,styled.regions,signal,deps);}
+      else{const styled=initializeFreeImageVisionRegions(image,result);item=await preview(batch,entry,image,styled.regions,signal,deps);}
     }catch(cause){signal.throwIfAborted();item={...entry,status:'failed',visionAttempt:undefined,message:note(cause)};}
     const next=replace(batch,item);onProgress(next);return next;
   }

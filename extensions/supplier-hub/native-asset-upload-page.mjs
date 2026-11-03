@@ -2,13 +2,19 @@
  * frame. Static SR upload/list contract SHA6fc9c0fa... [2875870,2879318).
  * Does not inspect credentials or claim remote binary persistence/acceptance. */
 export async function nativeAssetUploadPage(input){
- let phase='input',writeRequested=false;
+ let phase='input',writeRequested=false,discardStage=()=>{},committedParts;
  try{
  if(typeof input==='string'){if(input.length>100*1024*1024)throw Error('원본 업로드 자료가 너무 큽니다.');input=JSON.parse(input);}
+ discardStage=()=>{const cache=globalThis[Symbol.for('yoofam.native-asset-stage.v2')],stage=cache?.stages.get(input?.stageId);if(stage){clearTimeout(stage.timer);for(const part of stage.parts)part.bytes.fill(0);cache.stages.delete(input.stageId);}};
  const origin='https://supplier.coupang.com',data=document.documentElement.dataset,HASH=/^[a-f0-9]{64}$/;
  const canon=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canon).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canon(value[key])).join(',')+'}',same=(a,b)=>canon(a)===canon(b);
  const sha=async bytes=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),byte=>byte.toString(16).padStart(2,'0')).join(''),digest=value=>sha(new TextEncoder().encode(canon(value))),fail=message=>{throw Error(message||'현재 새 문서의 원본 업로드 확인이 필요합니다.');};
  const binding=input?.binding,target=input?.expectedTarget,plan=input?.plan,group=input?.group;let records,record,ledger;
+ if(input?.action==='discard-v2'){
+  const cache=globalThis[Symbol.for('yoofam.native-asset-stage.v2')],entry=cache?.stages.get(input.stageId),owner=canon({binding,target,sourcePlanSha256:input.sourcePlanSha256,planSha256:plan?.planSha256});
+  if(location.origin===origin&&cache?.document===document&&entry?.owner===owner&&(input.frameNonce===undefined||input.frameNonce===cache.frameNonce))discardStage();
+  return{format:'yoofam-native-asset-stage-discard-v2',stageId:input.stageId};
+ }
  const check=()=>{
   if(location.origin!==origin||!(['/dashboard/KR','/qvt/registration','/qvt/wims','/sr/registration'].includes(location.pathname)||/^\/sr\/registration\/step\/(startPage|productPage|imagePage|legalPage|logisticsPage)$/.test(location.pathname)))fail();
   const codes=Array.from((document.body.innerText||'').matchAll(/Company Code:\s*(A\d+)\b/g),match=>match[1]);
@@ -31,17 +37,47 @@ export async function nativeAssetUploadPage(input){
  if(isImage?!imageTypes.includes(kindKey):group?.kind!=='legal'||!legalTypes.includes(kindKey))fail();
  const expected=isImage?plan.images.filter(file=>file.imageType===kindKey):plan.nativeLegalAttachmentPlan?.files.filter(file=>file.nativeType===kindKey);
  const uploadPath=isImage?`/sr/draft/api/upload-images/${doc}?imageType=${kindKey}`:`/sr/draft/api/upload-files-by-type/${doc}?fileType=${kindKey}`;
- if(!expected?.length||!Array.isArray(group.parts)||group.parts.length!==expected.length||group.path!==uploadPath)fail();
+ const staging=input.action==='stage-v2',committing=input.action==='commit-v2',v2=staging||committing;
+ if(input.action!==undefined&&!v2)fail();
+ if(!expected?.length||!Array.isArray(group.parts)||group.parts.length!==(staging?1:expected.length)||group.path!==uploadPath)fail();
  if(plan.images.reduce((sum,file)=>sum+file.byteLength,0)>64*1024*1024)fail('역할별 원본 파일의 전송 용량이 초과됐습니다.');
- phase='file-bytes';const parts=[];let total=0;
- for(let index=0;index<expected.length;index++){
-  const file=expected[index],part=group.parts[index],limit=isImage?10*1024*1024:5*1024*1024,field=isImage?'additionalImageFiles':'uploadFiles';
-  if(part.fieldName!==field||part.transportName!==file.transportName||part.contentType!==file.contentType||part.byteLength!==file.byteLength||part.sha256!==file.sha256||!HASH.test(part.sha256||'')||!Number.isSafeInteger(part.byteLength)||part.byteLength<1||part.byteLength>limit
-   ||typeof part.base64!=='string'||part.base64.length!==4*Math.ceil(part.byteLength/3)||!/^[A-Za-z0-9+/]*={0,2}$/.test(part.base64))fail('원본 파일명·길이·해시 연결이 다릅니다.');
-  const binary=atob(part.base64),bytes=Uint8Array.from(binary,character=>character.charCodeAt(0));if(bytes.length!==file.byteLength||await sha(bytes)!==file.sha256)fail('전송 직전 실제 원본 바이트가 다릅니다.');check();total+=bytes.length;
-  if(total>20*1024*1024)fail('브라우저 프레임 전송 범위를 초과했습니다.');parts.push({field,file,bytes});
+ const groupKey=group.kind+':'+kindKey,groupBytes=expected.reduce((sum,file)=>sum+file.byteLength,0);
+ let cache,entry,stageContext;
+ if(v2){
+  phase='stage';
+  if(!/^[a-f0-9-]{36}$/.test(input.stageId??'')||!Number.isSafeInteger(groupBytes)||groupBytes<=20*1024*1024||groupBytes>64*1024*1024)fail('원본 메모리 준비 상태가 다릅니다.');
+  // Isolated-world memory only: no bytes or stage identifiers enter page DOM/storage or a network request.
+  const key=Symbol.for('yoofam.native-asset-stage.v2');cache=globalThis[key];
+  if(!cache){cache={document,frameNonce:crypto.randomUUID(),stages:new Map()};Object.defineProperty(globalThis,key,{value:cache});}
+  const drop=id=>{const stage=cache.stages.get(id);if(stage){clearTimeout(stage.timer);for(const part of stage.parts)part.bytes.fill(0);cache.stages.delete(id);}};
+  for(const [id,stage]of cache.stages)if(stage.expiresAt<=Date.now())drop(id);
+  discardStage=()=>drop(input.stageId);
+  if(cache.document!==document||input.frameNonce!==undefined&&input.frameNonce!==cache.frameNonce||committing&&input.frameNonce!==cache.frameNonce)fail('원본 메모리 준비 상태가 다릅니다.');
+  stageContext=canon({binding,target,sourcePlanSha256:input.sourcePlanSha256,planSha256:plan.planSha256,groupKey,expected});entry=cache.stages.get(input.stageId);
+  if(entry&&(entry.context!==stageContext||entry.expiresAt<=Date.now()))fail('원본 메모리 준비 상태가 다릅니다.');
+  if(staging&&(!Number.isSafeInteger(input.partIndex)||input.partIndex<0||input.partIndex>=expected.length||input.partIndex!==(entry?.parts.length??0)||input.partIndex>0&&!entry||input.partIndex===0&&entry))fail('원본 메모리 준비 상태가 다릅니다.');
+  if(committing&&(!entry||entry.parts.length!==expected.length))fail('원본 메모리 준비 상태가 다릅니다.');
  }
- const groupKey=group.kind+':'+kindKey,allKeys=[...imageTypes.filter(type=>plan.images.some(file=>file.imageType===type)).map(type=>'image:'+type),...(plan.nativeLegalAttachmentPlan?.groups??[]).map(item=>'legal:'+item.nativeType)],operationId=binding.requestId+':assets:'+groupKey;
+ phase='file-bytes';const parts=[];let total=0;
+ for(let position=0;position<group.parts.length;position++){
+  const index=staging?input.partIndex:position,file=expected[index],part=group.parts[position],limit=isImage?10*1024*1024:5*1024*1024,field=isImage?'additionalImageFiles':'uploadFiles';
+  if(part.fieldName!==field||part.transportName!==file.transportName||part.contentType!==file.contentType||part.byteLength!==file.byteLength||part.sha256!==file.sha256||!HASH.test(part.sha256||'')||!Number.isSafeInteger(part.byteLength)||part.byteLength<1||part.byteLength>limit
+   ||(committing?part.base64!==undefined:typeof part.base64!=='string'||part.base64.length!==4*Math.ceil(part.byteLength/3)||!/^[A-Za-z0-9+/]*={0,2}$/.test(part.base64)))fail('원본 파일명·길이·해시 연결이 다릅니다.');
+  let bytes;
+  if(committing)bytes=entry.parts[index]?.bytes;else{const binary=atob(part.base64);bytes=Uint8Array.from(binary,character=>character.charCodeAt(0));}
+  if(!bytes||bytes.length!==file.byteLength||await sha(bytes)!==file.sha256)fail('전송 직전 실제 원본 바이트가 다릅니다.');check();total+=bytes.length;
+  if(total>(committing?64:20)*1024*1024)fail('브라우저 프레임 전송 범위를 초과했습니다.');parts.push({field,file,bytes});
+ }
+ if(staging){
+  phase='stage';
+  if(entry&&(cache.stages.get(input.stageId)!==entry||entry.expiresAt<=Date.now()||entry.parts.length!==input.partIndex))fail('원본 메모리 준비 상태가 다릅니다.');
+  if(!entry){if(cache.stages.has(input.stageId))fail('원본 메모리 준비 상태가 다릅니다.');entry={context:stageContext,owner:canon({binding,target,sourcePlanSha256:input.sourcePlanSha256,planSha256:plan.planSha256}),expiresAt:Date.now()+5*60*1000,parts:[]};const stageId=input.stageId;entry.timer=setTimeout(()=>{const stage=cache.stages.get(stageId);if(stage===entry){for(const part of stage.parts)part.bytes.fill(0);cache.stages.delete(stageId);}},5*60*1000);entry.timer?.unref?.();cache.stages.set(input.stageId,entry);}
+  const retained=[...cache.stages.values()].reduce((sum,stage)=>sum+stage.parts.reduce((size,part)=>size+part.bytes.length,0),0);
+  if(retained+total>64*1024*1024)fail('원본 메모리 준비 상태가 다릅니다.');entry.parts.push(parts[0]);
+  return{format:'yoofam-native-asset-stage-ack-v2',stageId:input.stageId,frameNonce:cache.frameNonce,planSha256:plan.planSha256,groupKey,partIndex:input.partIndex,ready:entry.parts.length===expected.length};
+ }
+ if(committing){if(cache.stages.get(input.stageId)!==entry||entry.expiresAt<=Date.now())fail('원본 메모리 준비 상태가 다릅니다.');clearTimeout(entry.timer);cache.stages.delete(input.stageId);committedParts=parts;}
+ const allKeys=[...imageTypes.filter(type=>plan.images.some(file=>file.imageType===type)).map(type=>'image:'+type),...(plan.nativeLegalAttachmentPlan?.groups??[]).map(item=>'legal:'+item.nativeType)],operationId=binding.requestId+':assets:'+groupKey;
  let ledgerSnapshot=canon(record.nativeAssets??null);
  const save=()=>{check();if(canon(record.nativeAssets??null)!==ledgerSnapshot)fail('다른 원본 업로드 기록이 먼저 변경되어 중복 요청하지 않았습니다.');record.nativeAssets=ledger;records[binding.packetDigest]=record;data.yoofamSingleDocumentRecords=JSON.stringify(records);ledgerSnapshot=canon(ledger);};
  ledger=record.nativeAssets??{sourcePlanSha256:input.sourcePlanSha256,planSha256:plan.planSha256,groups:{},state:'preparing',remoteBytesVerified:false,actualUploadVerified:false,registered:false};
@@ -78,6 +114,7 @@ export async function nativeAssetUploadPage(input){
  }
  return{docId:target.docId,planSha256:plan.planSha256,descriptors:ledger.groups[groupKey].ack,metadataObserved:true,remoteBytesVerified:false,actualUploadVerified:false,registered:false,ownedRecord:record};
  }catch(error){
+  discardStage();
   const known=new Map([
    ['현재 Supplier Hub 회사가 다릅니다.','company'],['이 요청에서 생성한 정확한 새 문서만 업로드할 수 있습니다.','owned-document'],
    ['원래 업로드 계획이 변경됐습니다.','plan-changed'],['원래 원본 파일 계획의 해시가 다릅니다.','plan-hash'],
@@ -86,14 +123,14 @@ export async function nativeAssetUploadPage(input){
    ['저장된 원본 파일 목록이 원래 업로드 응답과 다릅니다.','file-list-changed'],
    ['새 문서에 같은 이름의 파일이 이미 있어 덮어쓰지 않았습니다.','existing-file'],
    ['새 문서에 원래 계획 밖의 파일 또는 중복 파일이 있습니다.','unexpected-file'],
-   ['다른 원본 업로드 기록이 먼저 변경되어 중복 요청하지 않았습니다.','ledger-race']
+   ['다른 원본 업로드 기록이 먼저 변경되어 중복 요청하지 않았습니다.','ledger-race'],['원본 메모리 준비 상태가 다릅니다.','stage-state']
   ]);
   const code=known.get(error?.message)??(error?.name==='AbortError'?'timeout':error?.name==='TypeError'?'network':error?.name==='RangeError'?'runtime-range':'unrecognized');
   return{format:'yoofam-native-upload-error-v1',phase,code,writeRequested};
- }
+ }finally{if(committedParts)for(const part of committedParts)part.bytes.fill(0);}
 }
 
 export function nativeUploadFailure(value){
- const phases=['input','plan','file-bytes','before-upload','upload','save-observation'],codes=['company','owned-document','plan-changed','plan-hash','file-metadata','file-bytes','unknown-ack','file-list-changed','existing-file','unexpected-file','ledger-race','timeout','network','runtime-range','unrecognized'];
+ const phases=['input','plan','stage','file-bytes','before-upload','upload','save-observation'],codes=['company','owned-document','plan-changed','plan-hash','file-metadata','file-bytes','unknown-ack','file-list-changed','existing-file','unexpected-file','ledger-race','stage-state','timeout','network','runtime-range','unrecognized'];
  return value&&Object.keys(value).sort().join(',')==='code,format,phase,writeRequested'&&value.format==='yoofam-native-upload-error-v1'&&phases.includes(value.phase)&&codes.includes(value.code)&&typeof value.writeRequested==='boolean'?{phase:value.phase,code:value.code,writeRequested:value.writeRequested}:null;
 }

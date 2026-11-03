@@ -29,3 +29,30 @@ test('complex/transparent/unreadable backgrounds and tiny fits remain editable w
  }
  const h=fixture(),result=h.initializeVisionRegions([block(1,{x:20,y:20,width:10,height:10},'한국어'.repeat(40))],h.canvas,400,160);assert.ok(result.issues.includes('VISION_TEXT_FIT'));assert.equal(result.regions[0].selected,false);assert.equal(result.regions[0].translated,'한국어'.repeat(40));
 });
+
+const sockBoxes=[{x:415,y:55,width:330,height:50},{x:458,y:105,width:295,height:30},{x:415,y:150,width:290,height:48},{x:458,y:195,width:305,height:30},{x:40,y:565,width:195,height:48},{x:40,y:620,width:195,height:48}];
+const overlayBlocks=boxes=>boxes.map((box,index)=>({...block(index+1,box,'한국어 문구'),kind:'overlay'}));
+test('the observed six-box geometry is only a versioned two-pass candidate when explicitly enabled; raw OCR coordinates and text remain exact',()=>{
+ const h=fixture(),blocks=overlayBlocks(sockBoxes),before=JSON.stringify(blocks),legacy=h.initializeVisionRegions(blocks,h.canvas,800,800);
+ assert.equal(legacy.paintOrder,undefined);assert.ok(legacy.issues.includes('VISION_REGION_OVERLAP'));assert.equal(legacy.regions[2].selected,false);assert.equal(legacy.regions[3].selected,false);
+ const result=h.initializeVisionRegions(blocks,h.canvas,800,800,{allowSafeOverlayOverlap:true});
+ assert.equal(result.paintOrder,'backgrounds-first-v1');assert.deepEqual(plain(result.issues),[]);assert.ok(result.regions.every(row=>row.selected&&row.issue===null));
+ assert.deepEqual(plain(result.regions.map(row=>row.box)),sockBoxes);assert.deepEqual(plain(result.regions.map(row=>[row.text,row.translated])),blocks.map(row=>[row.text,row.translated]));assert.equal(JSON.stringify(blocks),before);
+});
+test('two-pass candidates still reject deep or proportionally excessive overlaps, unknown classification, raw issues and non-overlap style failures',()=>{
+ const h=fixture(),pair=[{x:20,y:20,width:80,height:30},{x:30,y:47,width:80,height:30}];
+ const cases=[
+  overlayBlocks([{...pair[0]},{...pair[1],y:46}]),
+  overlayBlocks([{...pair[0],height:20},{...pair[1],y:37,height:20}]),
+  overlayBlocks([{...pair[0]},{...pair[1],x:99,y:20}]),
+  ...['product-marking','uncertain',undefined].map(kind=>{const blocks=overlayBlocks(pair);if(kind)blocks[1].kind=kind;else delete blocks[1].kind;return blocks;}),
+  overlayBlocks(pair).map((row,index)=>index?{...row,issue:'원문 번역 검토'}:row),
+  overlayBlocks(pair).map((row,index)=>index?{...row,translated:'한국어'.repeat(100)}:row),
+ ];
+ for(const blocks of cases){const before=JSON.stringify(blocks),result=h.initializeVisionRegions(blocks,h.canvas,160,100,{allowSafeOverlayOverlap:true});assert.equal(result.paintOrder,undefined);assert.ok(result.issues.includes('VISION_REGION_OVERLAP'));assert.equal(JSON.stringify(blocks),before);}
+ for(const color of [(x,y)=>(x+y)%2?[0,0,0,255]:[255,255,255,255],()=>[0,0,0,0]]){
+  const bad=fixture(color),result=bad.initializeVisionRegions(overlayBlocks(pair),bad.canvas,160,100,{allowSafeOverlayOverlap:true});assert.equal(result.paintOrder,undefined);assert.ok(result.issues.includes('VISION_REGION_OVERLAP'));assert.ok(result.regions.every(row=>!row.selected));
+ }
+ const noContext=h.initializeVisionRegions(overlayBlocks(pair),{getContext:()=>null},160,100,{allowSafeOverlayOverlap:true});assert.equal(noContext.paintOrder,undefined);assert.ok(noContext.issues.includes('VISION_BACKGROUND_UNAVAILABLE'));
+ const touching=h.initializeVisionRegions(overlayBlocks([{...pair[0]},{...pair[1],y:50}]),h.canvas,160,100,{allowSafeOverlayOverlap:true});assert.equal(touching.paintOrder,undefined);assert.deepEqual(plain(touching.issues),[]);
+});

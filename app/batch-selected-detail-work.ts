@@ -13,10 +13,9 @@ import { prepareDetailWorkspaceComposite, applyDetailWorkspaceComposite, recover
   readCurrentDetailPublication, type DetailWorkspaceComposite } from '@/app/detail-workspace-composite-client';
 import type { DetailSaveAttempt } from '@/app/detail-save-client';
 import { DETAIL_SAVE_PUBLICATION_POLICY, type DetailSavePeers } from '@/app/detail-save-plan';
-import { FreeImageApplyError, recognizeFreeImage, renderFreeImageTranslation, readFreeImageVisionStatus,
+import { FreeImageApplyError, recognizeFreeImage, renderFreeImageTranslation, readFreeImageVisionStatus,initializeFreeImageVisionRegions,
   type FreeImageLoaded, type FreeImageRendered, type FreeImageVisionStatus, type FreeImageRegion } from '@/app/free-image-translation-client';
 import { FreeImageVisionError, type FreeImageVisionAttempt } from '@/app/free-image-vision-error';
-import { initializeVisionRegions } from '@/app/free-image-vision-style';
 import { isVerifiedOriginalPreservation, parseImageTextVisionConfiguration, parseImageTextVisionResult } from '@/app/image-text-vision';
 import { parseImageOriginalPreservationProof } from '@/app/image-no-text-proof';
 import { hasForeignImageText } from '@/app/selected-image-purpose';
@@ -242,7 +241,7 @@ export async function processSelectedDetailWork(productId: string, options: Opti
           if (pending.photoId !== photo.id || !same(pending.attempt.source,image.source) || !same(pending.attempt.configuration,configuration)) throw changed();
           const observed = parseImageTextVisionResult(pending.observation?.result,image.width,image.height); if (!observed) throw changed();
           image.visionResult = observed; image.visionRequestId = pending.attempt.requestId;
-          const styled = initializeVisionRegions(observed.blocks,image.canvas,image.width,image.height); regions = styled.regions; image.visionStyleIssues = styled.issues;
+          const styled = initializeFreeImageVisionRegions(image,observed); regions = styled.regions;
         } else {
           await guard(); controller.signal.throwIfAborted();
           try { regions = await (deps.recognize ?? recognizeFreeImage)(image,'zh',controller.signal,options.onProgress); }

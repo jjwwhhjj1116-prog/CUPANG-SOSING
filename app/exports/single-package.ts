@@ -90,7 +90,7 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
       // oversized selection to loadAttachments before starting any extra I/O.
       if (nativeReadOnly && readKeys.length <= PRODUCT_IMAGE_POOL_LIMIT) {
         const [bytes,heads] = await Promise.allSettled([
-          loadAttachments(owner,saved.product.image_keys,readKeys,{concurrency:3,onVerifiedObject:(key,object)=>{if(versioned(object))verifiedVersions.set(key,{version:object.version,size:object.size});}}),readMetadata(),
+          loadAttachments(owner,saved.product.image_keys,readKeys,{concurrency:3,nativeReadOnly:true,onVerifiedObject:(key,object)=>{if(versioned(object))verifiedVersions.set(key,{version:object.version,size:object.size});}}),readMetadata(),
         ]);
         if (bytes.status === 'rejected') throw bytes.reason;
         if (heads.status === 'rejected') throw heads.reason;
@@ -140,7 +140,7 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
       optionLabel: '법적 필수서류', fieldId: null, message: '필수 원본 서류의 Single 파일 연결 형식은 별도 확인이 필요합니다. 저장한 서류는 변경하지 않습니다.' });
     if (documents.applicability === 'unconfirmed') sourceIssues.push({ kind: 'review', code: 'SINGLE_LEGAL_APPLICABILITY_UNCONFIRMED', optionId: null,
       optionLabel: '법적 필수서류', fieldId: null, message: '실제 상품의 법적 서류 해당 여부를 확인해주세요. 미확인을 해당없음으로 바꾸지 않았습니다.' });
-    const plan = await buildSingleAssetPlan({ projection, owner, productId: id, ownedKeys, assets, metadata, config, sourceIssues });
+    const plan = await buildSingleAssetPlan({ projection, owner, productId: id, ownedKeys, assets, metadata, config, sourceIssues, ...(nativeReadOnly?{nativeReadOnly:true as const}:{}) });
     const packageFingerprint = await fingerprint({ format: 'yoofam-supplier-hub-single-package-v1', sourceFingerprint, configVersion,
       sourceAssetFingerprint: plan.sourceAssetFingerprint, payload: plan.payload, manifest: plan.manifest, issues: plan.issues,
       nativeLegalAttachmentPlanSha256:nativeLegalAttachmentPlan.planSha256 });

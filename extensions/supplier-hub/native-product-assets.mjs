@@ -84,20 +84,32 @@ export async function prepareAndUploadNativeProductAssets({sourcePlan,binding,ta
  plan.planSha256=await nativeAssetUploadPlanSha256(plan);
  const prepared=await prepareNativeAssetMultipart(plan,{expectedIdentity:expected,expectedTarget,expectedPlanSha256:plan.planSha256,readImage,...(legalPreparation?{legalPreparation}:{})});
  const groups=[];
- for(const request of prepared.requests){const parts=[],entries=[...request.body.entries()];if(entries.length!==request.files.length)fail('NATIVE_ASSET_PARTS');let length=0;
-  for(let index=0;index<entries.length;index++){const [name,file]=entries[index],metadata=request.files[index],bytes=new Uint8Array(await Blob.prototype.arrayBuffer.call(file));length+=bytes.length;
+ for(const request of prepared.requests){const parts=[],entries=[...request.body.entries()];if(entries.length!==request.files.length)fail('NATIVE_ASSET_PARTS');
+  for(let index=0;index<entries.length;index++){const [name,file]=entries[index],metadata=request.files[index],bytes=new Uint8Array(await Blob.prototype.arrayBuffer.call(file));
    if(name!==(request.kind==='image'?'additionalImageFiles':'uploadFiles')||file.name!==metadata.transportName||file.type!==metadata.contentType||bytes.length!==metadata.byteLength||await hash(bytes)!==metadata.sha256)fail('NATIVE_ASSET_PARTS');
    parts.push({...copy(metadata),fieldName:name,base64:base64(bytes)});
   }
-  // One Chrome frame call carries one upload group, never the entire 64MiB plan.
-  if(length>20*1024*1024)fail('NATIVE_ASSET_FRAME_LIMIT');groups.push({kind:request.kind,...(request.kind==='image'?{imageType:request.imageType}:{nativeType:request.nativeType}),path:request.path,parts});
+  groups.push({kind:request.kind,...(request.kind==='image'?{imageType:request.imageType}:{nativeType:request.nativeType}),path:request.path,parts});
  }
  const observations=[];await current();
  if(onlyGroup!==undefined&&(!groups.some(group=>group.kind+':'+(group.imageType??group.nativeType)===onlyGroup)))fail('NATIVE_ASSET_GROUP');
  // The post-write source fence also precedes the next group; between them only
  // synchronous descriptor validation runs. Keep a fresh fence around each write.
  for(const group of groups){if(onlyGroup!==undefined&&group.kind+':'+(group.imageType??group.nativeType)!==onlyGroup)continue;
-  const value=await executeGroup({binding:copy(binding),sourcePlanSha256:sourcePlan.sourcePlanSha256,plan:copy(plan),expectedTarget:copy(expectedTarget),group});await current();
+  const args={binding:copy(binding),sourcePlanSha256:sourcePlan.sourcePlanSha256,plan:copy(plan),expectedTarget:copy(expectedTarget)};let value;
+  if(group.parts.reduce((sum,part)=>sum+part.byteLength,0)>20*1024*1024){
+   // Stage bytes only across frame calls; Hub still receives exactly one original role POST.
+   const stageId=crypto.randomUUID(),groupKey=group.kind+':'+(group.imageType??group.nativeType);let frameNonce;
+   const metadataGroup={...group,parts:group.parts.map(({base64:omitted,...part})=>{void omitted;return part;})};
+   try{
+   for(let partIndex=0;partIndex<group.parts.length;partIndex++){
+    await current();const staged=await executeGroup({...args,action:'stage-v2',stageId,...(frameNonce?{frameNonce}:{}),partIndex,group:{...group,parts:[group.parts[partIndex]]}});await current();
+    if(staged?.format!=='yoofam-native-asset-stage-ack-v2'||staged.stageId!==stageId||staged.planSha256!==plan.planSha256||staged.groupKey!==groupKey||staged.partIndex!==partIndex||staged.ready!==(partIndex===group.parts.length-1)||typeof staged.frameNonce!=='string'||!/^[a-f0-9-]{36}$/.test(staged.frameNonce)||frameNonce&&frameNonce!==staged.frameNonce)fail('NATIVE_ASSET_STAGE_UNCONFIRMED');
+    frameNonce=staged.frameNonce;
+   }
+   value=await executeGroup({...args,action:'commit-v2',stageId,frameNonce,group:metadataGroup});
+   }catch(error){await executeGroup({...args,action:'discard-v2',stageId,...(frameNonce?{frameNonce}:{}),group:metadataGroup}).catch(()=>{});throw error;}
+  }else value=await executeGroup({...args,group});await current();
   if(value?.metadataObserved!==true||value.remoteBytesVerified!==false||value.actualUploadVerified!==false||value.registered!==false||!same(value.docId,target.docId)||value.planSha256!==plan.planSha256)fail('NATIVE_ASSET_UPLOAD_UNCONFIRMED');
   // This validator compares remote names/types only. Multipart bytes were
   // independently hashed above and by the Hub frame before dispatch. Keeping

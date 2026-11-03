@@ -11,10 +11,11 @@ export type FreeImageEditDocument = {
   sourceLanguage: 'zh' | 'en';
   regions: FreeImageRegion[];
   crop?: FreeImageCrop;
+  paintOrder?: 'backgrounds-first-v1';
 };
 export const MAX_FREE_IMAGE_EDIT_BYTES = 512 * 1024;
 
-const documentKeys = ['format', 'width', 'height', 'sourceLanguage', 'regions', 'crop'];
+const documentKeys = ['format', 'width', 'height', 'sourceLanguage', 'regions', 'crop', 'paintOrder'];
 const regionKeys = ['id', 'text', 'box', 'confidence', 'selected', 'translated', 'issue', 'translationProvenance',
   'background', 'foreground', 'fontSize', 'erase', 'brush', 'fontFamily', 'bold', 'italic', 'textAlign', 'lineHeight', 'backgroundMode'];
 const boxKeys = ['x', 'y', 'width', 'height'];
@@ -52,6 +53,7 @@ export function validateFreeImageEditDocument(value: unknown, source: Pick<FreeI
     || !dimensions(value.width, value.height) || !(value.width === source.width && value.height === source.height
       || value.width === source.height && value.height === source.width)
     || value.sourceLanguage !== 'zh' && value.sourceLanguage !== 'en'
+    || value.paintOrder !== undefined && value.paintOrder !== 'backgrounds-first-v1'
     || !array(value.regions) || value.regions.length > MAX_OCR_REGIONS) return invalid();
   const width = value.width as number, height = value.height as number, ids = new Set<string>();
   let originals = 0, translations = 0, brushPoints = 0;
@@ -100,6 +102,7 @@ export function validateFreeImageEditDocument(value: unknown, source: Pick<FreeI
     if (crop.sourceWidth !== width || crop.sourceHeight !== height) return invalid();
     result.crop = crop;
   }
+  if (value.paintOrder !== undefined) result.paintOrder = 'backgrounds-first-v1';
   if (new TextEncoder().encode(JSON.stringify(result)).byteLength > MAX_FREE_IMAGE_EDIT_BYTES) {
     throw Error('저장할 이미지 편집 문서는 512KB 이내로 줄여주세요.');
   }

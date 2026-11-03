@@ -21,7 +21,7 @@ if(sha(runtime)!=='b873c8211421da7b9bf41ae157a923f05a46a0b8d3e5904c44c6f3ad6d39a
 write('opencv.js',runtime);
 write('licenses/LICENSE-opencv-js.txt',fs.readFileSync(path.join(packageRoot,'LICENSE')));
 const worker=await build({entryPoints:[path.join(root,'app/free-image-inpaint-worker.ts')],bundle:true,write:false,format:'iife',platform:'browser',target:'es2022',minify:true,legalComments:'none'});
-write('inpaint-worker.js',worker.outputFiles[0].contents);
+write('inpaint-worker-masks-v1.js',worker.outputFiles[0].contents);
 const manifest={package:pkg.name,version,license:pkg.license,source:`https://registry.npmjs.org/@techstark/opencv-js/-/opencv-js-${version}.tgz`,algorithm:'OpenCV photo.inpaint / INPAINT_TELEA / radius 3',runtimeExternalDownloads:false,files};
 const manifestPath=path.join(target,'manifest.json'),serialized=JSON.stringify(manifest,null,2)+'\n';
 if(checking){if(fs.readFileSync(manifestPath,'utf8')!==serialized)throw Error('Inpaint manifest differs.');}else fs.writeFileSync(manifestPath,serialized);

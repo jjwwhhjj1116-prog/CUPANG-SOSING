@@ -15,7 +15,7 @@ import {FreeImageVisionError} from '@/app/free-image-vision-error';
 import {parseImageOriginalPreservationProof,type ImageOriginalPreservationProof} from '@/app/image-no-text-proof';
 import type {FreeImageVisionAttempt} from '@/app/free-image-vision-error';
 import {createFreeImageInpaintSession} from '@/app/free-image-inpaint-client';
-import {FREE_IMAGE_INPAINT_MODE,freeImageInpaintRoi,MAX_FREE_IMAGE_INPAINT_REGIONS,MAX_FREE_IMAGE_INPAINT_TOTAL_PIXELS} from '@/app/free-image-inpaint';
+import {FREE_IMAGE_INPAINT_MODE,freeImageInpaintRoi,groupFreeImageInpaintRois,MAX_FREE_IMAGE_INPAINT_REGIONS,MAX_FREE_IMAGE_INPAINT_TOTAL_PIXELS} from '@/app/free-image-inpaint';
 export {FreeImageVisionError,type FreeImageVisionAttempt} from '@/app/free-image-vision-error';
 
 export type OcrBox = { x: number; y: number; width: number; height: number };
@@ -27,7 +27,7 @@ export type FreeImageRegion = FreeImageTextStyle & {
   brush?: FreeImageBrush;
   backgroundMode?: 'inpaint-telea-v1';
 };
-export type FreeImageLoaded = { source: FreeImageSource; blob: Blob; canvas: HTMLCanvasElement; width: number; height: number; editDocument?: FreeImageEditDocument;noTextProof?:ImageOriginalPreservationProof;
+export type FreeImageLoaded = { source: FreeImageSource; blob: Blob; canvas: HTMLCanvasElement; width: number; height: number; editDocument?: FreeImageEditDocument;visionPaintOrder?:'backgrounds-first-v1';noTextProof?:ImageOriginalPreservationProof;
  visionConfiguration?:ImageTextVisionConfiguration;visionRequestId?:string;visionPending?:FreeImageVisionError;visionResult?:ImageTextVisionResult;visionExecution?:{requests:0|1;cached:boolean};visionStyleIssues?:VisionStyleIssue[];visionFetcher?:typeof fetch };
 export type FreeImageRendered = { source: FreeImageSource; output: Blob; width: number; height: number; optionImageIds?: string[]; crop?: FreeImageCrop; editDocument?: FreeImageEditDocument };
 export type FreeImageQuotationRequest = Omit<NonNullable<FreeImageSource['quotationTarget']>, 'bindingSha256'>;
@@ -238,6 +238,10 @@ export async function recognizeLocalFreeImage(image: FreeImageLoaded, sourceLang
 
 /** A configured Vision operation sends only the server-bound original, once.
  * The legacy local OCR remains an explicit choice, never an error fallback. */
+export function initializeFreeImageVisionRegions(image:FreeImageLoaded,result:ImageTextVisionResult){
+ const styled=initializeVisionRegions(result.blocks,image.canvas,image.width,image.height,{allowSafeOverlayOverlap:result.inspection?.policy===IMAGE_TEXT_PRESERVATION_POLICY});
+ image.visionStyleIssues=styled.issues;image.visionPaintOrder=styled.paintOrder;return styled;
+}
 export async function recognizeFreeImage(image:FreeImageLoaded,sourceLanguage:'zh'|'en',signal:AbortSignal,onProgress:(message:string)=>void=()=>{},factory?:OcrWorkerFactory):Promise<FreeImageRegion[]>{
  if(factory||image.visionConfiguration===undefined)return recognizeLocalFreeImage(image,sourceLanguage,signal,onProgress,factory);
  const configuration=parseImageTextVisionConfiguration(image.visionConfiguration);
@@ -271,7 +275,7 @@ export async function recognizeFreeImage(image:FreeImageLoaded,sourceLanguage:'z
  if(execution.cached)onProgress('같은 원본의 검증된 Vision 번역을 재사용했습니다. 추가 AI 요청은 0회입니다.');
  if(result.inspection?.decision==='unreadable')throw Error('원본의 외국어 문구를 끝까지 판독하지 못했습니다. 이미지 편집에서 원문을 확인해주세요. 완료로 처리하지 않았습니다.');
  if(!result.blocks.length)throw Error('읽을 수 있는 문구를 찾지 못했습니다. 필요한 영역과 원문을 직접 추가해주세요.');
- const styled=initializeVisionRegions(result.blocks,image.canvas,image.width,image.height);image.visionStyleIssues=styled.issues;
+ const styled=initializeFreeImageVisionRegions(image,result);
  return styled.regions;
 }
 
@@ -359,10 +363,12 @@ function wrappedLines(context: CanvasRenderingContext2D, value: string, maximumW
  * regions run local inpainting; absent mode retains legacy flat-fill semantics. */
 export async function renderFreeImageTranslation(image: FreeImageLoaded, regions: readonly FreeImageRegion[], signal: AbortSignal, optionImageIds: readonly string[] = [], cropRect?: FreeImageCropRect, sourceLanguage: 'zh' | 'en' = 'zh'): Promise<FreeImageRendered> {
   dimensions(image.width, image.height); signal.throwIfAborted();
+  const paintOrder=image.editDocument?.paintOrder??image.visionPaintOrder;
+  if(paintOrder!==undefined&&paintOrder!=='backgrounds-first-v1'||image.visionPaintOrder!==undefined&&image.visionPaintOrder!=='backgrounds-first-v1')throw Error('이미지 배경·글자 처리 순서 정책을 확인해주세요.');
   const crop = cropRect === undefined ? undefined : validateFreeImageCrop({ ...validateFreeImageCropRect(cropRect, image.width, image.height), sourceWidth: image.width, sourceHeight: image.height }, image.source);
   const selectedOptions = validateFreeImageOptionIds(image.source, [...optionImageIds]);
   const editDocument = image.source.quotationTarget || image.source.workspaceTarget ? validateFreeImageEditDocument({ format: 'free-image-edit-v1', width: image.width, height: image.height,
-    sourceLanguage, regions: [...regions], ...(crop ? { crop } : {}) }, image.source) : undefined;
+    sourceLanguage, regions: [...regions], ...(crop ? { crop } : {}),...(paintOrder?{paintOrder}:{}) }, image.source) : undefined;
   if (image.source.optionImages?.commonAssigned === false && !selectedOptions.length) throw Error('이 개별 사진을 반영할 옵션을 한 개 이상 선택해주세요. 공통 대표 이미지는 변경하지 않습니다.');
   const chosen = regions.filter(row => row.selected).map(row => ({ ...row, box: { ...row.box } }));
   if (!chosen.length && !crop || chosen.length > MAX_OCR_REGIONS) throw Error('이미지에 적용할 문구 영역을 선택해주세요.');
@@ -392,6 +398,7 @@ export async function renderFreeImageTranslation(image: FreeImageLoaded, regions
   const restoredRois=new Map(restoredRegions.map(region=>[region.id,freeImageInpaintRoi(region.box,image.width,image.height)]));
   if(restoredRegions.length>MAX_FREE_IMAGE_INPAINT_REGIONS||[...restoredRois.values()].reduce((sum,roi)=>sum+roi.width*roi.height,0)>MAX_FREE_IMAGE_INPAINT_TOTAL_PIXELS)
     throw Error('한 번에 복원할 영역이 너무 많습니다. 일부 영역의 선택을 해제해주세요.');
+  const restoredGroups=paintOrder?groupFreeImageInpaintRois(restoredRegions.map(region=>region.box),image.width,image.height):[];
   const loadedFonts = new Set<string>();
   for (const style of styles.values()) {
     const identity = JSON.stringify([style.fontFamily, style.bold, style.italic]);
@@ -399,9 +406,50 @@ export async function renderFreeImageTranslation(image: FreeImageLoaded, regions
     await ensureFreeImageTextFont(style, signal); loadedFonts.add(identity);
   }
   signal.throwIfAborted();
-  const output = canvas(image.width, image.height); output.context.drawImage(image.canvas, 0, 0);
-  const restoration=restoredRegions.length?createFreeImageInpaintSession(signal):undefined;
+  const paintText=(context:CanvasRenderingContext2D,region:FreeImageRegion,fillBackground:boolean)=>{
+    const {x,y,width,height}=region.box,style=styles.get(region.id)!;
+    const padding=Math.min(3,Math.floor(Math.min(width,height)/10)),maximumWidth=Math.max(1,width-padding*2),maximumHeight=Math.max(1,height-padding*2);
+    let fontSize=region.fontSize,lines:string[]=[],lineHeight=0;
+    for(;fontSize>=1;fontSize--){
+      context.font=`${style.italic?'italic ':''}${style.bold?'bold ':''}${fontSize}px ${style.fontFamily}`;
+      lines=wrappedLines(context,region.translated,maximumWidth);lineHeight=fontSize*style.lineHeight;
+      if(lines.length*lineHeight+Math.max(0,fontSize-lineHeight)<=maximumHeight&&lines.every(line=>context.measureText(line).width<=maximumWidth))break;
+    }
+    if(fontSize<1)throw Error('문구가 선택 영역에 들어가지 않습니다. 문구를 줄이거나 영역 크기를 조절해주세요.');
+    context.save();context.beginPath();context.rect(x,y,width,height);context.clip();
+    if(fillBackground){context.fillStyle=region.background;context.fillRect(x,y,width,height);}
+    context.fillStyle=region.foreground;context.textBaseline='top';context.textAlign=style.textAlign;
+    const textX=x+padding+(style.textAlign==='center'?maximumWidth/2:style.textAlign==='right'?maximumWidth:0);
+    lines.forEach((line,index)=>context.fillText(line,textX,y+padding+index*lineHeight));context.restore();
+  };
+  const textLayers:{region:FreeImageRegion;canvas:HTMLCanvasElement;context:CanvasRenderingContext2D}[]=[];
+  if(paintOrder){
+    if(textRegions.reduce((sum,region)=>sum+region.box.width*region.box.height,0)>MAX_FREE_IMAGE_INPAINT_TOTAL_PIXELS)throw Error('동시에 확인할 번역 글자 영역이 너무 큽니다. 일부 문구를 나누어 처리해주세요.');
+    try{
+      for(const region of textRegions){signal.throwIfAborted();const layer=canvas(region.box.width,region.box.height);textLayers.push({region,...layer});paintText(layer.context,{...region,box:{...region.box,x:0,y:0}},false);}
+      let checkedPixels=0;
+      for(let a=0;a<textLayers.length;a++)for(let b=a+1;b<textLayers.length;b++){
+        signal.throwIfAborted();const first=textLayers[a],second=textLayers[b],left=Math.max(first.region.box.x,second.region.box.x),top=Math.max(first.region.box.y,second.region.box.y),
+          width=Math.min(first.region.box.x+first.region.box.width,second.region.box.x+second.region.box.width)-left,height=Math.min(first.region.box.y+first.region.box.height,second.region.box.y+second.region.box.height)-top;
+        if(width<=0||height<=0)continue;
+        checkedPixels+=width*height;if(checkedPixels>MAX_FREE_IMAGE_INPAINT_TOTAL_PIXELS)throw Error('번역 글자 겹침 확인 범위를 초과했습니다. 문구 영역을 직접 확인해주세요.');
+        const one=first.context.getImageData(left-first.region.box.x,top-first.region.box.y,width,height).data,two=second.context.getImageData(left-second.region.box.x,top-second.region.box.y,width,height).data;
+        if(one.length!==width*height*4||two.length!==one.length)throw Error('번역 글자의 실제 겹침 픽셀을 확인하지 못했습니다.');
+        for(let index=3;index<one.length;index+=4)if(one[index]>0&&two[index]>0)throw Error('번역된 글자가 서로 겹칩니다. 문구와 영역을 조정한 뒤 미리보기를 다시 확인해주세요.');
+      }
+    }catch(error){for(const layer of textLayers){layer.canvas.width=0;layer.canvas.height=0;}throw error;}
+  }
+  let output:ReturnType<typeof canvas>;
+  let restoration:ReturnType<typeof createFreeImageInpaintSession>|undefined;
   try {
+  output=canvas(image.width,image.height);output.context.drawImage(image.canvas,0,0);
+  restoration=restoredRegions.length?createFreeImageInpaintSession(signal):undefined;
+  // Adjacent text must be masked in one pass so its old strokes cannot become another region's background.
+  for(const group of restoredGroups){
+    signal.throwIfAborted();const {roi,masks}=group,pixels=output.context.getImageData(roi.x,roi.y,roi.width,roi.height);
+    const restored=await restoration!.restore({width:roi.width,height:roi.height,data:pixels.data,masks});signal.throwIfAborted();pixels.data.set(restored);
+    for(const mask of masks)output.context.putImageData(pixels,roi.x,roi.y,mask.x,mask.y,mask.width,mask.height);
+  }
   for (const region of chosen) {
     signal.throwIfAborted();
     const reviewedBrush = brushes.get(region.id);
@@ -421,7 +469,7 @@ export async function renderFreeImageTranslation(image: FreeImageLoaded, regions
     }
     const { x, y, width, height } = region.box;
     const restoreRoi=restoredRois.get(region.id);
-    if(restoreRoi){
+    if(restoreRoi&&!paintOrder){
       const pixels=output.context.getImageData(restoreRoi.x,restoreRoi.y,restoreRoi.width,restoreRoi.height);
       const restored=await restoration!.restore({width:restoreRoi.width,height:restoreRoi.height,data:pixels.data,
         mask:{x:x-restoreRoi.x,y:y-restoreRoi.y,width,height}});
@@ -436,24 +484,13 @@ export async function renderFreeImageTranslation(image: FreeImageLoaded, regions
       output.context.fillStyle = region.background; output.context.fillRect(x, y, width, height); output.context.restore();
       continue;
     }
-    const style = styles.get(region.id)!;
-    const padding = Math.min(3, Math.floor(Math.min(width, height) / 10)), maximumWidth = Math.max(1, width - padding * 2), maximumHeight = Math.max(1, height - padding * 2);
-    let fontSize = region.fontSize, lines: string[] = [], lineHeight = 0;
-    for (; fontSize >= 1; fontSize--) {
-      output.context.font = `${style.italic ? 'italic ' : ''}${style.bold ? 'bold ' : ''}${fontSize}px ${style.fontFamily}`;
-      lines = wrappedLines(output.context, region.translated, maximumWidth); lineHeight = fontSize * style.lineHeight;
-      const fittedHeight = lines.length * lineHeight + Math.max(0, fontSize - lineHeight);
-      if (fittedHeight <= maximumHeight && lines.every(line => output.context.measureText(line).width <= maximumWidth)) break;
-    }
-    if (fontSize < 1) throw Error('문구가 선택 영역에 들어가지 않습니다. 문구를 줄이거나 영역 크기를 조절해주세요.');
-    output.context.save(); output.context.beginPath(); output.context.rect(x, y, width, height); output.context.clip();
-    if(!restoreRoi){output.context.fillStyle = region.background; output.context.fillRect(x, y, width, height);}
-    output.context.fillStyle = region.foreground; output.context.textBaseline = 'top'; output.context.textAlign = style.textAlign;
-    const textX = x + padding + (style.textAlign === 'center' ? maximumWidth / 2 : style.textAlign === 'right' ? maximumWidth : 0);
-    lines.forEach((line, index) => output.context.fillText(line, textX, y + padding + index * lineHeight));
-    output.context.restore();
+    if(paintOrder){
+      if(!restoreRoi){output.context.save();output.context.beginPath();output.context.rect(x,y,width,height);output.context.clip();output.context.fillStyle=region.background;output.context.fillRect(x,y,width,height);output.context.restore();}
+    }else paintText(output.context,region,!restoreRoi);
   }
-  } finally {restoration?.close();}
+  // Paint the exact alpha-checked layers, never a second layout calculation.
+  for(const layer of textLayers)output.context.drawImage(layer.canvas,layer.region.box.x,layer.region.box.y);
+  } finally {restoration?.close();for(const layer of textLayers){layer.canvas.width=0;layer.canvas.height=0;}}
   // Coordinates of every edit still refer to the original canvas. Crop only
   // the fully painted result, without resizing or moving an overlay first.
   let final = output;

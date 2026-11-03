@@ -10,7 +10,7 @@ function loadModel(){
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
    {exports,Error,Date,URL,TextEncoder,AbortController,AbortSignal,structuredClone,setTimeout:(fn,ms)=>{timers.set(++clock,{fn,ms});return clock;},clearTimeout:id=>timers.delete(id),require(name){
-    if(name==='@/app/free-image-translation-client')return{};
+    if(name==='@/app/free-image-translation-client')return{initializeFreeImageVisionRegions:load('app/free-image-translation-client.ts').initializeFreeImageVisionRegions};
     if(name==='@/app/image-files')return{isOwnedImageKey:(owner,key)=>typeof key==='string'&&new RegExp('^'+owner+'/[a-zA-Z0-9][a-zA-Z0-9._-]*$').test(key)};
     assert.ok(name.startsWith('@/'),name);return load(name.slice(2)+'.ts');
    }},{filename:file});return exports;

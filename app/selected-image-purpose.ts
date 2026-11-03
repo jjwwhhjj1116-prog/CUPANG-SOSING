@@ -20,6 +20,8 @@ export function prepareSelectedImageCleanup(image:FreeImageLoaded,recognized:rea
  const vision=['main','additional'].includes(image.source.role)?parseImageTextVisionResult(image.visionResult,image.width,image.height):null;
  const classified=vision?.inspection?.policy===IMAGE_TEXT_PRESERVATION_POLICY;
  const exactBlocks=!!vision&&vision.blocks.length===regions.length&&regions.every((region,index)=>{const block=vision.blocks[index];return block.id===region.id&&block.text===region.text&&(['x','y','width','height'] as const).every(key=>block.box[key]===region.box[key]);});
+ const twoPass=image.visionPaintOrder==='backgrounds-first-v1';
+ if(twoPass&&(!classified||!exactBlocks||vision.blocks.some(row=>row.kind!=='overlay'||row.issue!==null)))throw review(['실물 인쇄·별도 문구 분류를 확인해주세요']);
  if(classified&&(!exactBlocks||vision.inspection?.decision==='unreadable'||vision.blocks.some(row=>row.kind==='uncertain')))throw review(['실물 인쇄·별도 문구 분류를 확인해주세요']);
  const preserved=new Set(classified?vision.blocks.filter(row=>row.kind==='product-marking').map(row=>row.id):[]);
  if(vision?.inspection?.decision==='foreign-text'&&vision.blocks.length===regions.length&&regions.every((region,index)=>{
@@ -36,7 +38,8 @@ export function prepareSelectedImageCleanup(image:FreeImageLoaded,recognized:rea
  if(blockers.length)throw review(blockers);
  // Local OCR defaults to white; that default is not evidence of a safe fill.
  // Reuse the same surrounding-pixel and overlap checks as Vision, for both.
- const sampled=initializeVisionRegions(regions.map(({id,text,box})=>({id,text,box,translated:null,issue:null,...(preserved.has(id)?{kind:'product-marking' as const}:{})})),image.canvas,image.width,image.height);
+ const sampled=initializeVisionRegions(regions.map(({id,text,box},index)=>({id,text,box,translated:null,issue:null,...(twoPass?{kind:vision!.blocks[index].kind}:preserved.has(id)?{kind:'product-marking' as const}:{})})),image.canvas,image.width,image.height,{allowSafeOverlayOverlap:twoPass});
+ if(twoPass&&sampled.paintOrder!==image.visionPaintOrder)throw review(['배경·문구 처리 순서를 다시 확인해주세요']);
  const unsafe=sampled.issues.filter(issue=>issue!=='VISION_TEXT_FIT');
  if(unsafe.length)throw review(unsafe);
  const issues=regions.filter(region=>hasForeignImageText(region.text)&&!preserved.has(region.id)).map(region=>withoutTextFit(region.issue)).filter((issue):issue is string=>!!issue?.trim());

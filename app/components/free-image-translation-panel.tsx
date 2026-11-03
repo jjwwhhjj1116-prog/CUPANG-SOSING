@@ -9,7 +9,7 @@ import { FreeImageBrushCanvas } from '@/app/components/free-image-brush-canvas';
 import { FreeImageCropCanvas } from '@/app/components/free-image-crop-canvas';
 import { validateFreeImageCropRect, type FreeImageCropRect } from '@/app/free-image-crop';
 import {
-  applyFreeImageTranslation, FreeImageApplyError, readFreeImageSource, readFreeImageRoleSources, recognizeFreeImage, recognizeLocalFreeImage, recoverFreeImageTranslation, renderFreeImageTranslation, sameFreeImageQuotationRequest, translateFreeImageRegions,
+  applyFreeImageTranslation, FreeImageApplyError, readFreeImageSource, readFreeImageRoleSources, recognizeFreeImage, recognizeLocalFreeImage, recoverFreeImageTranslation, renderFreeImageTranslation, sameFreeImageQuotationRequest, translateFreeImageRegions,initializeFreeImageVisionRegions,
   type FreeImageApplyReply, type FreeImageLoaded, type FreeImageQuotationRequest, type FreeImageRegion, type FreeImageRendered,type FreeImageTranslationReply,
 } from '@/app/free-image-translation-client';
 function translationServiceNotice(reply:FreeImageTranslationReply){
@@ -25,7 +25,6 @@ import type { DetailWorkspaceView } from '@/app/detail-workspace';
 import { isSavedFreeImageResult, readSavedFreeImageQuotationTarget } from '@/app/free-image-editor-target';
 import { isVerifiedOriginalPreservation,isVerifiedProductMarkingsOnly } from '@/app/image-text-vision';
 import {rebindSelectedImageReview,matchSelectedImageReview,type SelectedImageReview} from '@/app/selected-image-review';
-import {initializeVisionRegions} from '@/app/free-image-vision-style';
 import {readCategoryJsonResponse} from '@/app/load-category-profiles';
 import type {QuotationFieldsView} from '@/app/quotation-schema';
 import type {WorkspaceSettingsScope} from '@/app/workspace-settings-scope';
@@ -75,7 +74,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
   const [roleSources, setRoleSources] = useState<{ scope: string; keys: string[]; error: string } | null>(null);
   const [language, setLanguage, liveLanguage] = useLiveDraft<'zh' | 'en'>('zh');
   const [quotationTarget, setQuotationTarget, liveQuotationTarget] = useLiveDraft<FreeImageQuotationRequest | null>(null);
-  const [loaded, setLoaded] = useState<FreeImageLoaded | null>(null);
+  const [loaded, setLoaded, liveLoaded] = useLiveDraft<FreeImageLoaded | null>(null);
   const [regions, setRegions, liveRegions] = useLiveDraft<FreeImageRegion[]>([]);
   const [crop, setCrop, liveCrop] = useLiveDraft<FreeImageCropRect | null>(null);
   const [cropMode, setCropMode, liveCropMode] = useLiveDraft(false);
@@ -88,8 +87,8 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
   const [brushDrawing, setBrushDrawing, liveBrushDrawingRef] = useLiveDraft(false);
   const [optionImageIds, setOptionImageIds, liveOptionImageIds] = useLiveDraft<string[]>([]);
   const restoredDraft = useRef<string | null>(null);
-  const draftSignature = useCallback(() => JSON.stringify([liveRegions.current, liveCrop.current, liveOptionImageIds.current, liveLanguage.current]),
-    [liveRegions, liveCrop, liveOptionImageIds, liveLanguage]);
+  const draftSignature = useCallback(() => JSON.stringify([liveRegions.current, liveCrop.current, liveOptionImageIds.current, liveLanguage.current,liveLoaded.current?.editDocument?.paintOrder??liveLoaded.current?.visionPaintOrder??null]),
+    [liveRegions, liveCrop, liveOptionImageIds, liveLanguage,liveLoaded]);
   const hasUnsavedDraft = useCallback(() => restoredDraft.current !== null ? restoredDraft.current !== draftSignature()
     : liveRegions.current.length > 0 || liveCrop.current !== null || liveOptionImageIds.current.length > 0,
   [draftSignature, liveRegions, liveCrop, liveOptionImageIds]);
@@ -463,7 +462,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
         const actorReply=await fetch('/api/settings',{signal:work.controller.signal,cache:'no-store'}),actor=await readCategoryJsonResponse<{scope:WorkspaceSettingsScope}>(actorReply,'검토 계정 최종 조회');
         if(!current(work))return;
         if(!reply.ok||!actorReply.ok||!actor.scope||view.productVersion!==version||!sameFreeImageQuotationRequest(rebindSelectedImageReview(review,actor.scope,view),requestedTarget))throw Error('계정 또는 검토 이미지가 변경됐습니다. 최신 원본을 다시 열어주세요.');
-        const retained=matchSelectedImageReview(review,image,requestedTarget!),styled=initializeVisionRegions(retained.result.blocks,image.canvas,image.width,image.height);
+        const retained=matchSelectedImageReview(review,image,requestedTarget!),styled=initializeFreeImageVisionRegions(image,retained.result);
         image.visionResult=retained.result;image.visionRequestId=retained.requestId;image.visionExecution={requests:0,cached:true};
         image.visionStyleIssues=[...new Set([...retained.styleIssues,...styled.issues])] as NonNullable<FreeImageLoaded['visionStyleIssues']>;
         setQuotationTarget(requestedTarget);setLoaded(image);setLanguage(retained.sourceLanguage);setOptionImageIds([]);
@@ -588,6 +587,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
         || image.source.role !== previous.source.role || image.width !== previous.width || image.height !== previous.height) {
         throw Error('원본 이미지 파일이나 표시 크기가 변경됐습니다. 작성한 문구는 유지했으며 새 원본에 자동 적용하지 않았습니다. 원본을 비교한 뒤 다시 인식하거나 편집 초안을 지워주세요.');
       }
+      image.visionResult=previous.visionResult;image.visionStyleIssues=previous.visionStyleIssues;image.visionPaintOrder=previous.visionPaintOrder;
       setLoaded(image); setRendered(null); setNotice('같은 원본의 최신 저장 상태를 확인했습니다. 작성한 문구와 영역은 유지했으며 새 미리보기에서 다시 검토할 수 있습니다.');
     } catch (cause) { if (current(work)) setError(cause instanceof Error ? cause.message : '원본 저장 상태를 확인하지 못했습니다. 작성한 문구는 유지합니다.'); }
     finally { finish(work); }

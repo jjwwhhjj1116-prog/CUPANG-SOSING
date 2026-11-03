@@ -5,11 +5,11 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import {webcrypto} from 'node:crypto';
 
-function load(get) {
+function load(get,head) {
   const source=ts.transpileModule(fs.readFileSync(new URL('../app/exports/attachments.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
   const exports={};
   vm.runInNewContext(source,{exports,Uint8Array,crypto:webcrypto,require(name){
-    if(name==='cloudflare:workers')return{env:{FILES:{get}}};
+    if(name==='cloudflare:workers')return{env:{FILES:{get,head}}};
     if(name==='@/app/image-files')return{PRODUCT_IMAGE_POOL_LIMIT:200,isOwnedImageKey:(owner,key)=>typeof key==='string'&&key.startsWith(owner+'/')};
     if(name==='@/app/exports/review-bundle')return{imageExtension:data=>{if(data[0]!==137)throw Error('image');return'png';}};
     throw Error(name);
@@ -50,6 +50,22 @@ test('aggregate 20MB limit is reserved before opening any body in an oversized b
   let bodies=0;const api=load(async()=>({size:8*1024*1024,arrayBuffer:async()=>{bodies++;return new Uint8Array([137,1]).buffer;}}));
   await assert.rejects(api.loadAttachments('owner','["owner/a","owner/b","owner/c"]',['owner/a','owner/b','owner/c'],{concurrency:3}),error=>error.status===413);
   assert.equal(bodies,0);
+});
+test('native readonly preflight rejects excessive aggregate or individual sizes before any GET',async()=>{
+ for(const sizes of [Array(7).fill(10*1024*1024),[10*1024*1024+1],[NaN],[-1]]){
+  let gets=0,bodies=0;const keys=sizes.map((_,i)=>'owner/'+i),api=load(async()=>{gets++;return{size:2,arrayBuffer:async()=>{bodies++;return new Uint8Array([137,1]).buffer;}};},async key=>({size:sizes[Number(key.split('/')[1])]}));
+  await assert.rejects(api.loadAttachments('owner',JSON.stringify(keys),keys,{nativeReadOnly:true,concurrency:3}),error=>error.status===413);assert.equal(gets,0);assert.equal(bodies,0);
+ }
+});
+test('native readonly rejects HEAD/GET and declared/actual body size changes',async()=>{
+ for(const kind of ['object','body']){
+  let bodies=0;const api=load(async()=>({size:kind==='object'?3:2,arrayBuffer:async()=>{bodies++;return new Uint8Array([137,1,2]).buffer;}}),async()=>({size:2}));
+  await assert.rejects(api.loadAttachments('owner','["owner/a"]',['owner/a'],{nativeReadOnly:true}),error=>error.status===409);assert.equal(bodies,kind==='object'?0:1);
+ }
+});
+test('native readonly preflight retains the missing-file conflict status without opening a body',async()=>{
+ let reads=0;const api=load(async()=>{reads++;return object();},async()=>null);
+ await assert.rejects(api.loadAttachments('owner','["owner/a"]',['owner/a'],{nativeReadOnly:true}),error=>error.status===409);assert.equal(reads,0);
 });
 
 test('failed reads settle their batch and do not start later files or return partial attachments',async()=>{

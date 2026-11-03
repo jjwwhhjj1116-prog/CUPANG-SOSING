@@ -1,5 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import ts from 'typescript';
+import {webcrypto} from 'node:crypto';
+import {largeNativePng} from './helpers/native-large-image.mjs';
 import {assetProjectionFixture,assetSnapshot,companies,module,plain,sha} from './helpers/supplier-hub-single-assets.mjs';
 import {projectionFixture} from './helpers/supplier-hub-single-projection.mjs';
 const source=module('app/native-asset-source-plan.ts'),legalModule=module('app/native-legal-attachment-plan.ts');
@@ -42,6 +47,20 @@ test('generated image leaves longer than 180 characters retain exact owned bytes
   assert.equal(image.originalName,leaf);assert.ok(image.transportName.length<=100);assert.equal(image.sha256,sha(f.input.assets[0].data));
   assert.equal(plan.body.jsonDocument[0].imagePage.images.mainImage,image.transportName);assert.equal(plan.registered,false);
  }
+});
+test('a 63MiB private source reuses exact nonzero-offset byte views without allocating image proof or SHA copies',async()=>{
+ const f=await fixture();
+ f.input.assets=f.input.assets.map((asset,index)=>{const bytes=largeNativePng(9*1024*1024-88,97+index),padded=Buffer.alloc(bytes.length+32,0xa5);padded.set(bytes,13);const data=new Uint8Array(padded.buffer,padded.byteOffset+13,bytes.length);return{...asset,data,sha256:sha(data)};});
+ f.input.metadata=new Map(f.input.assets.map(asset=>[asset.key,{size:asset.data.length,httpMetadata:{contentType:'image/png'},customMetadata:{sha256:asset.sha256}}]));
+ let copiedImageBytes=0;const boundedArray=new Proxy(Uint8Array,{construct(target,args){if(ArrayBuffer.isView(args[0])&&args[0].byteLength>1024*1024)copiedImageBytes+=args[0].byteLength;return Reflect.construct(target,args);}});
+ const exports={},file='app/native-asset-source-plan.ts',code=ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+ vm.runInNewContext(code,{exports,Uint8Array:boundedArray,TextEncoder,crypto:webcrypto,require:name=>module(name.slice(2)+'.ts')});
+ const plan=await exports.buildNativeAssetSourcePlan(f.input);assert.equal(plan.metadataValid,true,JSON.stringify(plan.issues));assert.equal(plan.images.reduce((sum,file)=>sum+file.byteLength,0),63*1024*1024);
+ assert.equal(copiedImageBytes,0,'retaining or hashing another image copy can exceed the Worker memory budget');
+ for(const image of plan.images)assert.equal(image.sha256,sha(f.input.assets.find(asset=>asset.key===image.key).data));
+ const mutable=f.input.assets[0],originalSha=mutable.sha256;let changed=false;
+ vm.runInNewContext(code,{exports,Uint8Array:boundedArray,TextEncoder,crypto:{subtle:{digest:async(...args)=>{const result=await webcrypto.subtle.digest(...args);if(!changed&&args[1].byteLength>1024*1024){changed=true;mutable.data[100]^=1;}return result;}}},require:name=>module(name.slice(2)+'.ts')});
+ const rejected=await exports.buildNativeAssetSourcePlan(f.input);assert.equal(rejected.metadataValid,false);assert.equal(rejected.sourcePlanSha256,null);assert.notEqual(sha(mutable.data),originalSha,'final source-byte fence still rejects an original changed across an await');
 });
 test('source clocks, selected bytes and native filename body each affect the independent source-plan hash',async()=>{
  const f=await fixture(),old=await source.buildNativeAssetSourcePlan(f.input);
