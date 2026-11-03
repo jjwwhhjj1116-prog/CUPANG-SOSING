@@ -276,13 +276,13 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
     } catch (cause) { if (mounted.current && !controller.signal.aborted) setError(issue(cause)); }
     finally { finish(controller); }
   }
-  function editPhoto(photoId: string) {
+  function editPhoto(photoId: string, sourceLanguage?: 'zh' | 'en') {
     const current = liveWork.current, record = current?.reply.workspace;
     if (!valid(generation) || !generation || operation.current || compositeIO.current || bannerIO.current || batchIO.current || pending.current || attachment.current || liveEditor.current || !current || !record
       || !validMargin(current) || !same(current.document, record.document) || !same(current.selection.view, view)) return;
     const photo = record.document.photos.find(photo => photo.id === photoId); if (!photo || photo.role !== 'body') return;
     const target = { kind: 'detail-workspace' as const, profileId: profileId ?? null, optionId, photoId, revision: record.revision, digest: record.digest };
-    const next = { context: { selection: current.selection, saved: current.reply, target }, target: { sourceKey: photo.key, sequence: ++editorSequence.current, role: 'detail' as const, intent: 'manual' as const, workspaceTarget: target },
+    const next = { context: { selection: current.selection, saved: current.reply, target }, target: { sourceKey: photo.key, sequence: ++editorSequence.current, role: 'detail' as const, intent: 'manual' as const, workspaceTarget: target, ...(sourceLanguage ? { sourceLanguage } : {}) },
       imageKeys: [...new Set([...view.imageKeys, ...record.files.map(file => file.key)])], generation };
     liveEditor.current = next; editorStatus.current = { busy: false, dirty: false }; editorCloseGuard.current = null; setEditor(next); setEditorBusy(false); setEditorDirty(false); setError(''); controls.current.onBusyChange?.(true);
   }
@@ -381,6 +381,7 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
         <button type="button" className="btn ghost" disabled={locked || dirty || outside || !work.reply.workspace} onClick={() => void adoptPhotos()}>작업 사진을 선택 옵션 초안으로</button>
         <button type="button" className="btn ghost" disabled={busy || uncertain || attaching || editor !== null || compositeBusy || bannerBusy || batchBusy || disabled || !stageActive} onClick={() => { if (operation.current || compositeIO.current || bannerIO.current || batchIO.current || pending.current || attachment.current || liveEditor.current) return; liveWork.current = null; setWork(null); setMessage('현재 작업 구성을 닫았습니다. 보관한 구성과 견적서는 유지됩니다.'); setError(''); }}>현재 구성 닫기</button></div></details>
       {work.reply.workspace && <DetailWorkspaceImageBatchPanel selection={work.selection} saved={work.reply} active={stageActive} disabled={disabled || busy || uncertain || attaching || editor !== null || bannerBusy || compositeBusy || dirty || stale}
+        onReviewPhoto={editPhoto}
         onToolbarActionsChange={receiveBatchToolbar}
         beforeApply={() => valid(generation) && !operation.current && !compositeIO.current && !bannerIO.current && !pending.current && !attachment.current && !liveEditor.current && !!liveWork.current && validMargin(liveWork.current) && same(liveWork.current.document, liveWork.current.reply.workspace?.document) && same(liveWork.current.selection.view, view) && controls.current.beforeAdopt?.() !== false}
         onBusyChange={value => batchLock('busy', value)} onPendingChange={value => batchLock('pending', value)}

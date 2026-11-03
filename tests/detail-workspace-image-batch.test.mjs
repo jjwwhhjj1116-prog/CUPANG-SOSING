@@ -6,13 +6,13 @@ import { detailWorkspaceFixture, json } from './helpers/detail-workspace-api.mjs
 import { cropClientFixture } from './helpers/free-image-crop.mjs';
 import { runtime, plain } from './helpers/detail-workspace.mjs';
 const signal = () => new AbortController().signal;
-async function fixture({ bodyCount,vision=false } = {}) {
+async function fixture({ bodyCount,vision=false,imageWidth=320,imageHeight=240 } = {}) {
   const f = await detailWorkspaceFixture({ companyCode: 'A01464742', companyName: '와이홉' });
-  for (const key of f.selectedKeys) f.api.objects.set(key, await sharp({ create: { width: 320, height: 240, channels: 4, background: '#2468ac' } }).png().toBuffer());
+  for (const key of f.selectedKeys) f.api.objects.set(key, await sharp({ create: { width: imageWidth, height: imageHeight, channels: 4, background: '#2468ac' } }).png().toBuffer());
   const photos = f.document().photos;
   const document = bodyCount ? f.document([photos[0], ...Array.from({ length: bodyCount }, (_, index) => ({ ...photos[1], id: 'body-' + index })), photos.at(-1)]) : f.document();
   const saved = await json(await f.put(await f.body(document))), selection = { productId: f.product.id, optionId: f.optionId, profileId: saved.view.categoryContext.profileId, view: saved.view };
-  const route = f.api.load('app/api/products/[id]/workspace-image-text/route.ts'), calls = [], canvas = cropClientFixture({ imageWidth: 320, imageHeight: 240 });
+  const route = f.api.load('app/api/products/[id]/workspace-image-text/route.ts'), calls = [], canvas = cropClientFixture({ imageWidth, imageHeight });
   let intercept = null;
   const request = async (url, init = {}) => {
     calls.push({ url, init });
@@ -44,6 +44,48 @@ test('configured workspace Vision renders validated Korean with inpainting and n
   assert.ok(prepared.items.every(item=>item.status==='ready'));assert.deepEqual(v.stages,['vision','render','vision','render']);assert.deepEqual(f.tables(),before);
   f.api.bindings.SOURCEFLOW_IMAGE_TEXT_PAID_ALLOWED='false';const blocked=visionDeps(f),unconfigured=await f.batch.prepareDetailWorkspaceImageBatch({selection:f.selection,saved:f.saved,language:'zh'},signal(),()=>{},blocked.deps);
   assert.ok(unconfigured.items.every(item=>item.status==='failed'));assert.deepEqual(blocked.stages,[]);
+ }finally{f.api.close();}
+});
+
+for(const recovered of [false,true])test(`${recovered?'completed-request recovery':'automatic preparation'} exposes the exact rejected BODY region while retaining all six original/Korean texts`,async()=>{
+ const f=await fixture({vision:true,bodyCount:1,imageWidth:750,imageHeight:590});try{
+  // Exact six overlay blocks from the 750x590 BODY result in step935-third-body-vision.json.
+  const result={...visionValue(f),inspection:{policy:'product-text-preservation-v2',decision:'foreign-text'},blocks:[
+   {id:'vision-1',text:'High cotton content',translated:'고함량 면',issue:null,box:{x:95,y:112,width:225,height:28},kind:'overlay'},
+   {id:'vision-2',text:'高含棉量',translated:'고함량 면',issue:null,box:{x:115,y:158,width:195,height:42},kind:'overlay'},
+   {id:'vision-3',text:'85% 棉，10% 氨纶，5% 锦纶',translated:'면 85%, 스판덱스 10%, 나일론 5%',issue:null,box:{x:45,y:222,width:320,height:28},kind:'overlay'},
+   {id:'vision-4',text:'Boneless suture head',translated:'무봉제 헤더',issue:null,box:{x:90,y:472,width:225,height:28},kind:'overlay'},
+   {id:'vision-5',text:'一体机无骨缝头',translated:'일체형 무봉제 헤더',issue:null,box:{x:40,y:518,width:320,height:42},kind:'overlay'},
+   {id:'vision-6',text:'平整无棱  穿着舒适',translated:'매끄럽고 날카롭지 않아 착용 시 편안함',issue:null,box:{x:95,y:580,width:230,height:10},kind:'overlay'},
+  ]},expectedResult=plain(result),before=f.tables(),saved=plain(f.saved),objects=new Map([...f.api.objects].map(([key,bytes])=>[key,Buffer.from(bytes)]));
+  let request,posts=0,reads=0,renders=0,translations=0;
+  f.intercept((url,init)=>{
+   if(url.endsWith('/image-text')&&init.method==='POST'){
+    posts++;request=JSON.parse(init.body);
+    return recovered?Response.json({error:'ACK lost'},{status:503}):Response.json({source:request.source,configuration:request.configuration,requestId:request.requestId,result,replayed:false,execution:{requests:1,cached:false}});
+   }
+   if(url.includes('visionRequestId=')){
+    reads++;assert.equal(init.method,'GET');
+    return Response.json({format:'yoofam-image-vision-status-v1',source:request.source,configuration:request.configuration,sourceLanguage:'zh',requestId:request.requestId,status:'completed',result,failure:null,execution:{requests:0},readOnly:true});
+   }
+  });
+  const deps={...f.deps,recognize:f.canvas.client.recognizeFreeImage,translate:async()=>{translations++;assert.fail('rejected Vision must not translate');},render:async()=>{renders++;assert.fail('rejected Vision must not render');}};
+  let prepared=await f.batch.prepareDetailWorkspaceImageBatch({selection:f.selection,saved:f.saved,language:'zh'},signal(),()=>{},deps);
+  if(recovered){assert.equal(prepared.items[0].status,'uncertain');prepared=await f.batch.recoverDetailWorkspaceBatchResult(prepared,signal(),()=>{},deps);}
+  const entry=prepared.items[0];
+  assert.equal(entry.status,'failed');assert.equal(entry.rendered,undefined);assert.equal(entry.visionAttempt,undefined);
+  assert.match(entry.message,/VISION_TEXT_FIT/u);assert.match(entry.message,/vision-6/u);
+  assert.match(entry.message,/x=95, y=580, width=230, height=10/u);assert.match(entry.message,/6px/u);
+  assert.deepEqual(plain(entry.texts),[
+   {original:'High cotton content',translated:'고함량 면'},{original:'高含棉量',translated:'고함량 면'},
+   {original:'85% 棉，10% 氨纶，5% 锦纶',translated:'면 85%, 스판덱스 10%, 나일론 5%'},
+   {original:'Boneless suture head',translated:'무봉제 헤더'},{original:'一体机无骨缝头',translated:'일체형 무봉제 헤더'},
+   {original:'平整无棱  穿着舒适',translated:'매끄럽고 날카롭지 않아 착용 시 편안함'},
+  ]);
+  assert.equal(posts,1);assert.equal(reads,recovered?1:0);assert.equal(renders,0);assert.equal(translations,0);
+  assert.equal(f.calls.filter(call=>call.init.body instanceof FormData).length,0);assert.deepEqual(f.tables(),before);
+  assert.deepEqual(plain(prepared.saved),saved);assert.deepEqual(result,expectedResult);
+  assert.deepEqual([...f.api.objects.keys()],[...objects.keys()]);for(const [key,bytes]of objects)assert.deepEqual(Buffer.from(f.api.objects.get(key)),bytes,key);
  }finally{f.api.close();}
 });
 test('v2 workspace keeps physical inscriptions out of Korean rendering and preserves intrinsic-only photos without a save',async()=>{

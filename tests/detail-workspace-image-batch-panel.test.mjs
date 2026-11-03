@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runtime, nodes, text, deferred } from './helpers/detail-workspace.mjs';
 const settle = async () => { for (let index = 0; index < 15; index++) await new Promise(resolve => setImmediate(resolve)); };
-function panel({ heldPrepare, lost = false, echoBusy = false,visionUnknown=false } = {}) {
+function panel({ heldPrepare, lost = false, echoBusy = false,visionUnknown=false,failed=false,mixed=false } = {}) {
  let cursor = 0, closed = false, props, published, busy = [], saved = [], pending = [], calls = [], slots = [], effects = [], layouts = [];
  const view = { revision: 3, productVersion: '2026-11-01T00:00:00Z', categoryContext: { profileId: 'profile' } };
  const stored = { view, roles: { top: ['owner/top'], bottom: ['owner/bottom'] }, workspace: { revision: 1, digest: 'a'.repeat(64), document: { photos: [{ id: 'top', role: 'top' }, { id: 'one', role: 'body', key: 'owner/one' }, { id: 'two', role: 'body', key: 'owner/two' }, { id: 'bottom', role: 'bottom' }] } } };
@@ -13,7 +13,7 @@ function panel({ heldPrepare, lost = false, echoBusy = false,visionUnknown=false
  const helpers = {
   prepareDetailWorkspaceImageBatch: async (input, signal, progress) => { calls.push(['prepare', input.language]); const batch = { ...input, items: input.saved.workspace.document.photos.flatMap((photo, position) => photo.role === 'body' ? [{ photoId: photo.id, position, sourceKey: photo.key, status: 'ready', message: '', texts: [], rendered: { output: new Blob(['preview']) } }] : []) }; progress(batch, '준비 중'); await heldPrepare?.promise;
    if(visionUnknown){const retained={...batch,items:batch.items.map((item,index)=>index===0?{...item,status:'uncertain',visionAttempt:{request:{requestId:'original-vision'}},message:'원래 Vision 요청 확인 필요'}:{...item,status:'pending',rendered:undefined})};progress(retained,'원래 요청 확인 필요');return retained;}
-   signal.throwIfAborted(); return batch; },
+   signal.throwIfAborted(); return failed ? {...batch,items:batch.items.map((row,index)=>mixed&&index===1?row:{...row,status:'failed',message:'VISION_TEXT_FIT',rendered:undefined})} : batch; },
   applyDetailWorkspaceBatchResult: async (batch, id, signal, progress) => { calls.push(['apply', id]); signal.throwIfAborted(); const item = batch.items.find(row => row.photoId === id); if (lost) { const next = { ...batch, items: batch.items.map(row => row === item ? { ...row, status: 'uncertain', attempt: {} } : row) }; progress(next); throw Error('ACK lost'); }
    const reply = { ...batch.saved, source: {}, key: 'owner/result-' + id, applied: true, workspace: { ...batch.saved.workspace, revision: batch.saved.workspace.revision + 1, digest: String(batch.saved.workspace.revision + 1), document: { ...batch.saved.workspace.document, photos: batch.saved.workspace.document.photos.map(photo => photo.id === id ? { ...photo, key: 'owner/result-' + id } : photo) } } };
    const next = { ...batch, saved: { view: reply.view, workspace: reply.workspace, roles: reply.roles }, lastReply: reply, items: batch.items.map(row => row === item ? { ...row, status: 'applied' } : row) }; progress(next); return next; },
@@ -63,4 +63,20 @@ test('unknown Vision arriving after preparation abort retains the fence across s
   assert.equal(h.toolbar.disabled,true);assert.equal(h.button('번역 미리보기 닫기').props.disabled,true);
   const before=h.calls.length;h.toolbar.prepare();await settle();assert.equal(h.calls.length,before);await h.click('같은 작업 사진 저장 상태 확인');assert.deepEqual(h.calls,[['prepare','zh'],['recover']]);
  }finally{h.close();}
+});
+
+test('a failed BODY row opens that exact photo for manual review without re-running preparation or losing results',async()=>{
+ const h=panel({failed:true}),opened=[];try{
+  h.update({onReviewPhoto:(id,language)=>opened.push([id,language])});await h.prepare('en');
+  const review=h.control('작업 본문 사진 one 개별 편집');assert.ok(review&&!review.props.disabled);review.props.onClick();await settle();
+  assert.deepEqual(opened,[['one','en']]);assert.deepEqual(h.calls,[['prepare','en']]);assert.equal(h.pending.at(-1),false);
+  const retired=h.control('작업 본문 사진 two 개별 편집');h.update({active:false});h.update({active:true});retired.props.onClick();assert.equal(opened.length,1);
+ }finally{h.close();}
+});
+
+test('manual failed-photo navigation stays blocked while another BODY preview awaits review or an unknown request remains',async()=>{
+ for(const mode of [{failed:true,mixed:true},{visionUnknown:true}]){const h=panel(mode),opened=[];try{
+  h.update({onReviewPhoto:id=>opened.push(id)});await h.prepare();
+  const review=h.control('작업 본문 사진 one 개별 편집');assert.ok(!review||review.props.disabled);review?.props.onClick();assert.deepEqual(opened,[]);
+ }finally{h.close();}}
 });

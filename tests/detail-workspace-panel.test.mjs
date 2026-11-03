@@ -2,6 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fixture, panel, runtime, nodes, text, deferred, plain } from './helpers/detail-workspace.mjs';
 
+test('failed BODY review callback reuses the exact saved photo editor and cannot cross a changed selection',async()=>{
+ const f=await fixture(),h=panel(f);try{
+  await h.idle();await h.click('상세 편집 구성 열기');await h.click('편집 구성 보관');
+  const batch=nodes(h.render()).find(node=>node.type?.name==='DetailWorkspaceImageBatchPanel');assert.equal(typeof batch?.props.onReviewPhoto,'function');
+  const photoId=f.workspace.document.photos[2].id,before=f.calls.length;batch.props.onReviewPhoto(photoId,'en');await h.tick();
+  const editor=nodes(h.render()).find(node=>node.props?.workspaceContext);assert.ok(editor);
+  assert.equal(editor.props.translationTarget.workspaceTarget.photoId,photoId);assert.equal(editor.props.translationTarget.sourceKey,f.keys[2]);assert.equal(editor.props.translationTarget.sourceLanguage,'en');assert.equal(f.calls.length,before);
+ }finally{h.close();}
+ const g=await fixture(),stale=panel(g);try{
+  await stale.idle();await stale.click('상세 편집 구성 열기');await stale.click('편집 구성 보관');
+  const callback=nodes(stale.render()).find(node=>node.type?.name==='DetailWorkspaceImageBatchPanel').props.onReviewPhoto,photoId=g.workspace.document.photos[2].id;
+  stale.set({optionId:'blue'});await stale.tick();callback(photoId,'zh');await stale.tick();assert.ok(!nodes(stale.render()).some(node=>node.props?.workspaceContext));
+ }finally{stale.close();}
+});
+
 test('opening is explicit and previews actual ordered roles without writes, role or spacing controls, or executable HTML', async () => {
   const f = await fixture(), h = panel(f);
   try {

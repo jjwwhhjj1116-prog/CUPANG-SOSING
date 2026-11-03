@@ -7,6 +7,7 @@ import type { DetailWorkspaceImageReply } from '@/app/detail-workspace-image-cli
 
 export type WorkspaceImageBatchToolbarActions = { prepare: (sourceLanguage?: 'zh' | 'en') => void; disabled: boolean };
 type Props = { selection: DetailWorkspaceSelection; saved: DetailWorkspaceView; active: boolean; disabled?: boolean; beforeApply?: () => boolean;
+  onReviewPhoto?: (photoId: string, language: 'zh' | 'en') => void;
   onSaved?: (reply: DetailWorkspaceImageReply) => void; onBusyChange?: (busy: boolean) => void; onPendingChange?: (pending: boolean) => void;
   onToolbarActionsChange?: (next: WorkspaceImageBatchToolbarActions | null, retired?: WorkspaceImageBatchToolbarActions) => void };
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -134,6 +135,13 @@ export function DetailWorkspaceImageBatchPanel(props: Props) {
       {item.rendered && <Preview output={item.rendered.output} />}
       {item.texts.map((row, index) => <p key={index}>{row.original} → {row.translated}</p>)}
       {item.message && <p role={item.status === 'failed' || item.status === 'uncertain' ? 'alert' : 'status'}>{item.message}</p>}
+      {item.status === 'failed' && props.onReviewPhoto && <button type="button" className="btn ghost" aria-label={`작업 본문 사진 ${item.photoId} 개별 편집`} disabled={locked || stale || pending}
+        title={pending ? '미리보기와 미확정 작업을 먼저 확인해주세요.' : undefined} onClick={() => {
+          const value = latestBatch.current;
+          if (!current(generation) || operation.current || batchEpoch.current !== generation || value !== batch || value?.language !== liveLanguage.current
+            || value.items.some(row => row.status === 'ready' || row.status === 'uncertain') || !value.items.some(row => row === item && row.status === 'failed') || !permission()) return;
+          controls.current.onReviewPhoto?.(item.photoId, value.language);
+        }}>개별 편집</button>}
       {item.status === 'ready' && <label><input type="checkbox" aria-label={`작업 본문 사진 ${item.photoId} 번역 결과 검토 완료`} checked={reviewed.includes(item.photoId)} disabled={locked || stale || uncertain} onChange={event => {
         if (current(generation) && batchEpoch.current === generation && batch.language === liveLanguage.current && latestBatch.current === batch && !operation.current && !uncertain) select(event.target.checked ? [...liveReviewed.current.filter(id => id !== item.photoId), item.photoId] : liveReviewed.current.filter(id => id !== item.photoId));
       }} />원본·한국어 결과를 확인했습니다.</label>}

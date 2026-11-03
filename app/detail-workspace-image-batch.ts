@@ -58,7 +58,11 @@ async function preview(batch:DetailWorkspaceImageBatch,entry:DetailWorkspaceBatc
     const result=visionResult(image),chosen=regions.filter(region=>region.selected),editable=result.blocks.filter(block=>block.kind===undefined||block.kind==='overlay');
     if(result.inspection?.decision==='unreadable'||!editable.length||image.visionStyleIssues?.length||chosen.length!==editable.length
       ||chosen.some(region=>region.translationProvenance!=='generated'||!region.translated.trim()||region.issue)
-      ||editable.some(block=>!chosen.some(region=>region.id===block.id&&region.text===block.text&&region.translated===block.translated&&same(region.box,block.box))))throw Error('Vision의 문구·한국어·영역을 끝까지 검증하지 못했습니다. 원본을 유지하며 개별 이미지 편집에서 확인해주세요.');
+      ||editable.some(block=>!chosen.some(region=>region.id===block.id&&region.text===block.text&&region.translated===block.translated&&same(region.box,block.box))))return{
+        ...entry,status:'failed',visionAttempt:undefined,texts:editable.map(block=>({original:block.text,translated:block.translated??''})),
+        message:['Vision의 문구·한국어·영역을 끝까지 검증하지 못했습니다. 원본을 유지하며 개별 이미지 편집에서 확인해주세요.',
+          ...regions.filter(region=>region.issue).map(region=>`${region.id} (x=${region.box.x}, y=${region.box.y}, width=${region.box.width}, height=${region.box.height}; ${region.fontSize}px): ${region.issue}`)].join(' '),
+      };
     prepared=regions.map(region=>region.selected?{...region,backgroundMode:'inpaint-telea-v1'}:region);
     texts=chosen.map(region=>({original:region.text,translated:region.translated}));
   }else{
