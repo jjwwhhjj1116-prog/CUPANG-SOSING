@@ -61,6 +61,21 @@ function partialFixture(stage='detail',keys=['owner/source-a.png']){
  };
  return{...h,documents,get view(){return h.view;},set view(value){h.view=value;}};
 }
+for(const stage of ['main','additional','detail'])test(`${stage}: v2 mixed images process the overlay and retain product markings, while intrinsic-only originals need no pixel save`,async()=>{
+ for(const onlyMarkings of [false,true]){
+  const h=fixture(stage,['owner/source-a.png']),policy='product-text-preservation-v2';let renderedRows=null;
+  h.deps.recognize=async(image)=>{
+   const blocks=[...(!onlyMarkings?[{id:'vision-1',text:'中文',translated:'중국어',issue:null,kind:'overlay',box:{x:10,y:10,width:25,height:12}}]:[]),
+    {id:onlyMarkings?'vision-1':'vision-2',text:'NON-SLIP',translated:null,issue:null,kind:'product-marking',box:{x:65,y:30,width:25,height:12}}];
+   image.visionResult=h.visionContract.parseImageTextVisionResult({provider:'workers-ai-vision',model:h.visionContract.IMAGE_TEXT_VISION_MODEL,requests:1,notice:h.visionContract.IMAGE_TEXT_VISION_NOTICE,inspection:{policy,decision:onlyMarkings?'product-markings-only':'foreign-text'},blocks},100,60);
+   const styled=h.style.initializeVisionRegions(image.visionResult.blocks,image.canvas,100,60);image.visionStyleIssues=styled.issues;return styled.regions;
+  };
+  const render=h.deps.render;h.deps.render=async(image,rows,...args)=>{renderedRows=plain(rows);return render(image,rows,...args);};
+  const result=await h.run();assert.equal(result.status,'completed',JSON.stringify(result));assert.equal(h.calls.filter(row=>row[0]==='translate').length,0);
+  if(onlyMarkings){assert.equal(result.verifiedUnchanged,1);assert.equal(renderedRows,null);assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);}
+  else{assert.equal(result.applied,1);assert.equal(renderedRows[0].selected,true);assert.equal(renderedRows[1].selected,false);assert.equal(renderedRows[1].erase,undefined);assert.equal(renderedRows[1].translated,'');}
+ }
+});
 
 test('completed complex-background Vision is retained as bounded exact manual-review metadata before releasing pixels',async()=>{
  const h=fixture('additional',['owner/source-a.png','owner/source-b.png']),c=h.visionContract,read=h.deps.readSource;

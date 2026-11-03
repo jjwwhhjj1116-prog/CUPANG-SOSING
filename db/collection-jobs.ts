@@ -44,20 +44,25 @@ function withContext(row: JobRow): CollectionJob {
   return { ...job, context: context_json ? JSON.parse(context_json) : null };
 }
 
+// Cache completed schema setup only; job, source and actor reads stay fresh.
+const schemaReadyBindings = new WeakSet<D1Database>();
 export async function ensureCollectionDatabase() {
-  if (!env.DB) throw new Error('D1 unavailable');
-  await env.DB.batch([
-    env.DB.prepare(collectionSchema), env.DB.prepare(collectionOfferClaimSchema), env.DB.prepare(collectionProductSchema), env.DB.prepare(collectionResultSchema),
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS product_removals (
+  const db=env.DB;
+  if (!db) throw new Error('D1 unavailable');
+  if(schemaReadyBindings.has(db))return db;
+  await db.batch([
+    db.prepare(collectionSchema), db.prepare(collectionOfferClaimSchema), db.prepare(collectionProductSchema), db.prepare(collectionResultSchema),
+    db.prepare(`CREATE TABLE IF NOT EXISTS product_removals (
       product_id TEXT PRIMARY KEY REFERENCES products(id), owner_id TEXT NOT NULL,
       removed_at TEXT NOT NULL, product_version TEXT NOT NULL
     )`),
-    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_collection_owner_time ON collection_jobs(owner_id, created_at)'),
-    env.DB.prepare(collectionOfferLookupIndex),
-    env.DB.prepare('CREATE TABLE IF NOT EXISTS collection_context (job_id TEXT PRIMARY KEY REFERENCES collection_jobs(id), payload TEXT NOT NULL)'),
-    env.DB.prepare(retireLegacyOfferIndex),
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_collection_owner_time ON collection_jobs(owner_id, created_at)'),
+    db.prepare(collectionOfferLookupIndex),
+    db.prepare('CREATE TABLE IF NOT EXISTS collection_context (job_id TEXT PRIMARY KEY REFERENCES collection_jobs(id), payload TEXT NOT NULL)'),
+    db.prepare(retireLegacyOfferIndex),
   ]);
-  return env.DB;
+  schemaReadyBindings.add(db);
+  return db;
 }
 
 export async function listCollectionJobs(owner: string) {

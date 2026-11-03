@@ -23,7 +23,7 @@ import { applyDetailWorkspaceImage, readDetailWorkspaceImage, recoverDetailWorks
   type DetailWorkspaceEditorContext, type DetailWorkspaceImageReply, type FreeImageWorkspaceRequest } from '@/app/detail-workspace-image-client';
 import type { DetailWorkspaceView } from '@/app/detail-workspace';
 import { isSavedFreeImageResult, readSavedFreeImageQuotationTarget } from '@/app/free-image-editor-target';
-import { isVerifiedNoForeignText } from '@/app/image-text-vision';
+import { isVerifiedOriginalPreservation,isVerifiedProductMarkingsOnly } from '@/app/image-text-vision';
 import {rebindSelectedImageReview,matchSelectedImageReview,type SelectedImageReview} from '@/app/selected-image-review';
 import {initializeVisionRegions} from '@/app/free-image-vision-style';
 import {readCategoryJsonResponse} from '@/app/load-category-profiles';
@@ -524,9 +524,12 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       const rows = (await recognizeFreeImage(image, language, work.controller.signal, message => { if (current(work)) setNotice(message); })).map(row=>({...row,backgroundMode:'inpaint-telea-v1' as const}));
       if (!current(work)) return;
       resetRegions(rows);
+      // Confirmed unchanged pixels are an observation baseline, not a draft.
+      // Keep every OCR row; the live signature still catches immediate edits.
+      if(isVerifiedOriginalPreservation(image.visionResult))restoredDraft.current=draftSignature();
       if(image.visionStyleIssues?.length){setError(`Vision 초기 스타일 검토가 필요합니다: ${image.visionStyleIssues.join(', ')}.`);setNotice('원문·한국어·영역을 보존했습니다. 선택 해제된 영역의 배경색·글자 크기·겹침을 직접 확인하고 수정한 뒤 미리보기를 만들어주세요. 자동 적용하지 않았습니다.');return;}
       const requested = rows.filter(row => row.selected && row.erase !== true && row.translationProvenance !== 'manual' && row.text.trim()).map(({ id, text }) => ({ id, text }));
-      if (!requested.length) { setNotice('자동 번역할 문구를 찾지 못했습니다. 원본과 인식 영역을 확인하거나 문구 영역을 직접 추가해주세요.'); return; }
+      if (!requested.length) { setNotice(isVerifiedProductMarkingsOnly(image.visionResult)?'실물·포장 인쇄만 있는 원본입니다. 인쇄를 번역하거나 지우지 않고 원본 이미지를 유지했습니다.':'자동 번역할 문구를 찾지 못했습니다. 원본과 인식 영역을 확인하거나 문구 영역을 직접 추가해주세요.'); return; }
       setNotice('인식한 문구를 한국어로 번역하고 있습니다.');
       const result:FreeImageTranslationReply = image.visionResult?{source:image.source,regions:rows.map(row=>({id:row.id,original:row.text,translated:row.translated||null,issue:row.issue})),requests:image.visionExecution?.requests??1,stoppedHttpStatus:null,warnings:[image.visionExecution?.cached?'같은 원본의 검증된 번역을 재사용했습니다. 추가 AI 요청은 0회입니다.':image.visionResult.notice]}
         : workspaceContext ? await translateDetailWorkspaceImage(image.source, language, requested, work.controller.signal)
@@ -547,7 +550,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       if (!current(work)) return;
       setRendered(output); setNotice(['한국어 이미지 초안을 준비했습니다. 원본과 번역 문구·영역을 확인하고 수정한 뒤 적용해주세요.',translationServiceNotice(result), ...result.warnings].filter(Boolean).join(' '));
     } catch (cause) { if (current(work)) {
-      if(isVerifiedNoForeignText(processingImage?.visionResult)){setError('');setNotice('문구 확인을 완료했습니다. 번역할 문구가 없어 원본 이미지를 유지했습니다.');}
+      if(isVerifiedOriginalPreservation(processingImage?.visionResult)){restoredDraft.current=draftSignature();setError('');setNotice(isVerifiedProductMarkingsOnly(processingImage?.visionResult)?'실물·포장 인쇄만 있는 원본입니다. 인쇄를 번역하거나 지우지 않고 원본 이미지를 유지했습니다.':'문구 확인을 완료했습니다. 번역할 문구가 없어 원본 이미지를 유지했습니다.');}
       else{setError(cause instanceof Error ? cause.message : '이미지 번역 초안을 만들지 못했습니다. 원문과 이전 저장 이미지는 유지됩니다.');setNotice('이미지 번역 처리를 중단했습니다. 원문과 기존 저장 이미지는 유지했습니다.');}
     } }
     finally { finish(work); }
@@ -564,9 +567,11 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       if (!current(work)) return;processingImage=image;setLoaded(image);
       setOptionImageIds(focusedOptionId && image.source.optionImages?.optionIds.includes(focusedOptionId) ? [focusedOptionId] : []);
       const rows = (await (local?recognizeLocalFreeImage:recognizeFreeImage)(image, language, work.controller.signal, message => { if (current(work)) setNotice(message); })).map(row=>({...row,backgroundMode:'inpaint-telea-v1' as const}));
-      if (!current(work)) return; resetRegions(rows); setNotice(image.visionResult?`${image.visionExecution?.cached?'같은 원본의 Vision 번역을 재사용했습니다. 추가 AI 요청은 0회입니다.':`Vision으로 문구 ${rows.length}개와 한국어 초안을 읽었습니다.`} ${image.visionResult.notice}`:`문구 ${rows.length}개를 읽었습니다. 원문·영역을 확인하고 번역할 문구를 선택해주세요.`);
+      if (!current(work)) return; resetRegions(rows);
+      if(isVerifiedOriginalPreservation(image.visionResult))restoredDraft.current=draftSignature();
+      setNotice(isVerifiedProductMarkingsOnly(image.visionResult)?'실물·포장 인쇄만 있는 원본입니다. 인쇄를 번역하거나 지우지 않고 원본 이미지를 유지했습니다.':image.visionResult?`${image.visionExecution?.cached?'같은 원본의 Vision 번역을 재사용했습니다. 추가 AI 요청은 0회입니다.':`Vision으로 문구 ${rows.length}개와 한국어 초안을 읽었습니다.`} ${image.visionResult.notice}`:`문구 ${rows.length}개를 읽었습니다. 원문·영역을 확인하고 번역할 문구를 선택해주세요.`);
     } catch (cause) { if (current(work)) {
-      if(isVerifiedNoForeignText(processingImage?.visionResult)){setError('');setNotice('문구 확인을 완료했습니다. 번역할 문구가 없어 원본 이미지를 유지했습니다.');}
+      if(isVerifiedOriginalPreservation(processingImage?.visionResult)){restoredDraft.current=draftSignature();setError('');setNotice(isVerifiedProductMarkingsOnly(processingImage?.visionResult)?'실물·포장 인쇄만 있는 원본입니다. 인쇄를 번역하거나 지우지 않고 원본 이미지를 유지했습니다.':'문구 확인을 완료했습니다. 번역할 문구가 없어 원본 이미지를 유지했습니다.');}
       else{setError(cause instanceof Error ? cause.message : '문구 인식을 완료하지 못했습니다.');setNotice('문구 확인을 완료하지 못해 원본 이미지를 유지했습니다. 자동으로 다시 요청하지 않았습니다.');}
     } }
     finally { finish(work); }

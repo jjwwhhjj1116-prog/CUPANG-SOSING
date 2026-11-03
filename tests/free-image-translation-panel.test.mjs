@@ -362,6 +362,20 @@ test('verified no-foreign-text Vision replaces progress with normal source-prese
   await h.click('원본 문구 읽기');assert.match(text(h.render()),/문구 확인을 완료했습니다. 번역할 문구가 없어 원본 이미지를 유지했습니다/);assert.doesNotMatch(text(h.render()),/인식 중|읽고 있습니다/);assert.equal(nodes(h.render()).filter(node=>node.props?.role==='alert').length,0);assert.equal(h.saved,0);assert.deepEqual(plain(h.calls.map(row=>row.action)),['source','ocr']);
  }finally{h.close();}
 });
+for(const entry of ['card','read'])test(`confirmed physical-print observation is a clean ${entry} baseline, while any immediate region edit still blocks closing`,async()=>{
+ let guard;const editing=[],h=fixture({onCloseGuard:value=>{guard=value;},onEditingChange:value=>editing.push(value)});
+ try{
+  h.setOcr(image=>{image.visionResult={provider:'workers-ai-vision',blocks:[{id:'vision-1',text:'YOGA SPORTS',kind:'product-marking'}],notice:'Vision 완료',inspection:{policy:'product-text-preservation-v2',decision:'product-markings-only'}};
+   return[{...region('vision-1',''),text:'YOGA SPORTS',selected:false,translated:'',issue:null,translationProvenance:'empty'}];});
+  if(entry==='card'){h.setProps({translationTarget:{sourceKey:'owner/original.png',sequence:801,role:'main',sourceLanguage:'zh'}});await h.settle();}
+  else await h.click('원본 문구 읽기');
+  const retainedGuard=guard;assert.equal(h.busy.at(-1),false);assert.equal(h.render().props['data-workspace-dirty'],undefined);assert.equal(editing.at(-1),false);
+  assert.equal(retainedGuard(),true,'a verified no-op observation is not an unsaved pixel edit');assert.equal(h.field('문구 1 원문').props.value,'YOGA SPORTS');assert.equal(h.field('문구 1 한국어').props.value,'');
+  assert.equal(h.calls.filter(call=>['preview','apply','translate'].includes(call.action)).length,0);assert.equal(h.saved,0);
+  h.field('문구 1 한국어').props.onChange({target:{value:'사용자 직접 수정'}});assert.equal(retainedGuard(),false,'same-tick edits remain protected');await h.settle();assert.equal(editing.at(-1),true);
+  assert.equal(h.field('문구 1 원문').props.value,'YOGA SPORTS');assert.equal(h.field('문구 1 한국어').props.value,'사용자 직접 수정');assert.equal(h.saved,0);
+ }finally{h.close();}
+});
 
 test('legacy empty and unreadable Vision keep their error instead of reporting no-text completion',async()=>{
  for(const decision of ['legacy-empty','unreadable']){

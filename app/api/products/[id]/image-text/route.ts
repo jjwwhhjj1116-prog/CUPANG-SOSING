@@ -25,7 +25,7 @@ import { FreeImageEditRecordError, freeImageEditDigest, freeImageEditDocumentByt
 import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
 import {imageTextRecoveryConfigured,imageTextRecoveryWithinLimit,recoverImageTextRegions,unavailableImageTextRecovery,ImageTextRecoveryError,type ImageTextRecoveryEnvironment} from '@/app/automation/workers-image-text-recovery';
 import {imageVisionConfiguration,readImageVision,readStoredImageVisionResult,ImageVisionError,type ImageVisionEnvironment} from '@/app/automation/workers-image-vision';
-import {IMAGE_TEXT_INSPECTION_POLICY,parseImageTextVisionConfiguration} from '@/app/image-text-vision';
+import {IMAGE_TEXT_INSPECTION_POLICY,IMAGE_TEXT_PRESERVATION_POLICY,isImageTextInspectionPolicy,type ImageTextInspectionPolicy,parseImageTextVisionConfiguration} from '@/app/image-text-vision';
 import {DetailWorkspaceError} from '@/app/detail-workspace';
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 
@@ -241,7 +241,7 @@ export async function GET(request: Request, context: Context) {
     if(params.has('visionRequestId')){
       sameOrigin(request);
       if(request.url.length>65536||[...params.keys()].some(key=>!['visionRequestId','source','sourceLanguage','inspectionPolicy'].includes(key)||params.getAll(key).length!==1)
-        ||params.has('inspectionPolicy')&&params.get('inspectionPolicy')!==IMAGE_TEXT_INSPECTION_POLICY
+        ||params.has('inspectionPolicy')&&!isImageTextInspectionPolicy(params.get('inspectionPolicy'))
         ||!['zh','en'].includes(params.get('sourceLanguage')??'')||!params.has('source')
         ||!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(params.get('visionRequestId')??''))throw new ImageTextError(400,'조회할 원래 이미지 Vision 요청을 확인해주세요.');
       let raw:unknown;try{raw=JSON.parse(params.get('source')!);}catch{throw new ImageTextError(400,'원래 이미지 Vision 원본 정보를 확인해주세요.');}
@@ -250,7 +250,7 @@ export async function GET(request: Request, context: Context) {
       if(source.productId!==id||!isOwnedImageKey(owner,source.sourceKey))throw new ImageTextError(400,'이 상품의 본인 소유 Vision 기록만 조회할 수 있습니다.');
       const memberNow=async()=>{const user=await getChatGPTUser(),member=user?.membership;if(!user?.verifiedAccess||user.userId!==owner||member?.id!==owner||member.status!=='approved'||member.email!==user.email||JSON.stringify(approvedSupplierHubCompany(member))!==JSON.stringify(company))throw changed();return{email:member.email.toLowerCase().trim(),role:member.role};};
       const member=await memberNow(),requestId=params.get('visionRequestId')!;
-      const inspectionPolicy=params.has('inspectionPolicy')?IMAGE_TEXT_INSPECTION_POLICY:undefined;
+      const inspectionPolicy=params.has('inspectionPolicy')?params.get('inspectionPolicy') as ImageTextInspectionPolicy:undefined;
       const scope={owner,productId:id,requestId,company,member,model:configuration.model,productVersion:source.productVersion,contentRevision:source.contentRevision,
         fingerprint:await digest(new TextEncoder().encode(JSON.stringify({source:freeImageSourceIdentity(source),company,member,configuration,language:sourceLanguage,...(inspectionPolicy?{inspectionPolicy}:{})}))),
         sourceScope:await digest(new TextEncoder().encode(JSON.stringify([source.sourceKey,source.sourceSha256,company,configuration.model,sourceLanguage,...(inspectionPolicy?[inspectionPolicy]:[])])))};
@@ -262,6 +262,7 @@ export async function GET(request: Request, context: Context) {
       if(record?.status==='completed'){
         let stored:unknown;try{stored=JSON.parse(record.result??'null');}catch{throw new ImageVisionError('BLOCKS');}
         result=readStoredImageVisionResult(stored,source.width,source.height);
+        if(inspectionPolicy&&result.inspection?.policy!==inspectionPolicy)throw new ImageVisionError('DECISION');
       }
       return response({format:'yoofam-image-vision-status-v1',source,configuration,sourceLanguage,requestId,status:record?.status??'not-found',result,failure:record?.failure??null,execution:{requests:0},readOnly:true});
     }
@@ -300,7 +301,7 @@ export async function GET(request: Request, context: Context) {
     const {readImageNoTextReceipts}=await import('@/db/image-no-text-receipts');
     const noTextProof=(await readImageNoTextReceipts(owner,[current.product]))[id]?.find(proof=>proof.sourceKey===source.sourceKey&&proof.sourceSha256===source.sourceSha256&&proof.width===source.width&&proof.height===source.height&&proof.sourceLanguage==='zh');
     await freshSource(owner,id,source);
-    return response({ source, visionConfiguration:configuration, ...(noTextProof?{noTextProof}:{}), ...(editor ? { editDocument: editor.editDocument } : {}) });
+    return response({ source, visionConfiguration:configuration, ...(noTextProof?noTextProof.reason==='product-markings-only'?{preservationProof:noTextProof}:{noTextProof}:{}), ...(editor ? { editDocument: editor.editDocument } : {}) });
   } catch (error) { return fail(error); }
 }
 export async function POST(request: Request, context: Context) {
@@ -320,8 +321,8 @@ export async function POST(request: Request, context: Context) {
       if(input.action==='vision'){
         if(request.headers.get('origin')!==new URL(request.url).origin)throw new ImageTextError(400,'현재 서비스 화면에서 이미지 Vision을 실행해주세요.');
         if(!['action,configuration,requestId,source,sourceLanguage','action,configuration,inspectionPolicy,requestId,source,sourceLanguage'].includes(Object.keys(input).sort().join(','))
-          ||input.inspectionPolicy!==undefined&&input.inspectionPolicy!==IMAGE_TEXT_INSPECTION_POLICY||typeof input.requestId!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.requestId)||!['zh','en'].includes(String(input.sourceLanguage)))throw new ImageTextError(400,'이미지 Vision 요청과 중복 방지 번호를 확인해주세요.');
-        const inspectionPolicy=input.inspectionPolicy as typeof IMAGE_TEXT_INSPECTION_POLICY|undefined;
+          ||input.inspectionPolicy!==undefined&&!isImageTextInspectionPolicy(input.inspectionPolicy)||typeof input.requestId!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.requestId)||!['zh','en'].includes(String(input.sourceLanguage)))throw new ImageTextError(400,'이미지 Vision 요청과 중복 방지 번호를 확인해주세요.');
+        const inspectionPolicy=input.inspectionPolicy as ImageTextInspectionPolicy|undefined;
         const source=validateFreeImageSource(input.source),settings=env as ImageVisionEnvironment,configuration=imageVisionConfiguration(settings),expected=parseImageTextVisionConfiguration(input.configuration);
         if(!expected||JSON.stringify(expected)!==JSON.stringify(configuration))throw changed();
         if(!configuration.configured)throw new ImageVisionError('NOT_CONFIGURED');
@@ -338,6 +339,7 @@ export async function POST(request: Request, context: Context) {
           fingerprint:await digest(new TextEncoder().encode(JSON.stringify({source:freeImageSourceIdentity(source),company,member,configuration,language:input.sourceLanguage,...(inspectionPolicy?{inspectionPolicy}:{})}))),
           sourceScope:await digest(new TextEncoder().encode(JSON.stringify([source.sourceKey,source.sourceSha256,company,configuration.model,input.sourceLanguage,...(inspectionPolicy?[inspectionPolicy]:[])]))),
           legacySourceScope:await digest(new TextEncoder().encode(JSON.stringify([source.sourceKey,source.sourceSha256,company,configuration.model,input.sourceLanguage,...(inspectionPolicy?[]:[IMAGE_TEXT_INSPECTION_POLICY])]))),
+          sourceScopes:await Promise.all([undefined,IMAGE_TEXT_INSPECTION_POLICY,IMAGE_TEXT_PRESERVATION_POLICY].map(policy=>digest(new TextEncoder().encode(JSON.stringify([source.sourceKey,source.sourceSha256,company,configuration.model,input.sourceLanguage,...(policy?[policy]:[])]))))),
           ...(inspectionPolicy?{inspection:{sourceKey:source.sourceKey,sourceSha256:source.sourceSha256,width:source.width,height:source.height,sourceLanguage:input.sourceLanguage as 'zh'|'en',configuration}}:{})};
         const {claimImageVisionRequest,finishImageVisionRequest,completedImageVisionResult,finishLateImageVisionRequest}=await import('@/db/image-vision-requests');
         const claimed=await claimImageVisionRequest(scope);
@@ -346,6 +348,7 @@ export async function POST(request: Request, context: Context) {
           if(claimed.record.status!=='completed')throw new ImageTextError(409,'이 이미지 Vision 요청은 이미 실행됐거나 응답이 불명확합니다. 자동 재요청하지 않습니다.');
           let saved:unknown;try{saved=JSON.parse(claimed.record.result??'null');}catch{throw new ImageVisionError('BLOCKS');}
           const result=readStoredImageVisionResult(saved,source.width,source.height);
+          if(inspectionPolicy&&result.inspection?.policy!==inspectionPolicy)throw new ImageVisionError('DECISION');
           await assertCurrent();return response({source,configuration,requestId:scope.requestId,result,replayed:true,execution:{requests:0,cached:true}});
         }
         let invoked=false;
@@ -354,6 +357,7 @@ export async function POST(request: Request, context: Context) {
           if(completed){
             let saved:unknown;try{saved=JSON.parse(completed.result??'null');}catch{throw new ImageVisionError('BLOCKS');}
             const result=readStoredImageVisionResult(saved,source.width,source.height);
+          if(inspectionPolicy&&result.inspection?.policy!==inspectionPolicy)throw new ImageVisionError('DECISION');
             // Legacy empty output also meant unreadable text. It cannot prove
             // a no-op under the explicit inspection contract.
             if(!inspectionPolicy||result.blocks.length||result.inspection){

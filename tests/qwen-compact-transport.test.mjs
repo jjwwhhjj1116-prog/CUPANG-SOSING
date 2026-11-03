@@ -13,8 +13,27 @@ function configuration(model=api.WORKERS_QWEN_MODEL,maxOutputTokens=4096,reply=d
 }
 const noNetwork=()=>assert.fail('compact transport tests must never contact a provider, app or database');
 
-test('generic Qwen uses one compact Korean system and five-key fact transport without altering the persisted review or schema',async()=>{
- const f=configuration(),review=await api.prepareTranslationReview(plain(source),f.config),before=JSON.stringify(review),request=api.buildTranslationRequest(review),wire=JSON.parse(request.input[0].content[0].text);
+test('new Qwen reviews bind the commerce terminology policy into their approval fingerprint without changing the source payload',async()=>{
+ const f=configuration(),review=await api.prepareTranslationReview(plain(source),f.config),before=JSON.stringify(review),request=api.buildTranslationRequest(review);
+ assert.equal(review.qwenTranslationPolicy,'commerce-partial-attributes-v5');
+ const {fingerprint}=providedOptionModule('app/automation/model.ts'),{fingerprint:stored,...signed}=review;
+ assert.equal(await fingerprint(signed),stored);delete signed.qwenTranslationPolicy;assert.notEqual(await fingerprint(signed),stored,'The approved identity includes the terminology policy');
+ for(const rule of ['防滑=미끄럼 방지','防磨=마찰 방지','防掉跟=뒤꿈치 벗겨짐 방지','防水만 방수','防潮만 방습'])assert.ok(request.instructions.includes(rule),rule);
+ const legacy={...review};delete legacy.qwenTranslationPolicy;
+ assert.equal(hash(api.buildTranslationRequest(legacy).instructions),'195f77acdccf9afad263b457546e001b33674821e78c27d98b038f6c7f7e83db','Historical v6 reviews retain their exact approved system');
+ assert.deepEqual(JSON.parse(request.input[0].content[0].text),JSON.parse(api.buildTranslationRequest(legacy).input[0].content[0].text));
+ assert.deepEqual(request.text.format.schema,api.buildTranslationRequest(legacy).text.format.schema);
+ await api.executeTranslation(review,f.config,noNetwork);assert.equal(f.calls.length,1);assert.equal(f.calls[0].messages[0].content,request.instructions);assert.equal(JSON.stringify(review),before);
+ const llama=await api.prepareTranslationReview(plain(source),configuration(api.WORKERS_TEXT_MODEL).config);assert.equal(Object.hasOwn(llama,'qwenTranslationPolicy'),false);
+});
+
+test('an unknown reviewed Qwen terminology policy cannot silently execute with another prompt',async()=>{
+ const f=configuration(),review={...await api.prepareTranslationReview(plain(source),f.config),qwenTranslationPolicy:'unreviewed-policy'};
+ await assert.rejects(api.executeTranslation(review,f.config,noNetwork),error=>error.code==='UNSUPPORTED_INSTRUCTIONS');assert.equal(f.calls.length,0);
+});
+
+test('historical commerce-v2 Qwen retains its compact Korean system and five-key fact transport without altering the persisted review or schema',async()=>{
+ const f=configuration(),review={...await api.prepareTranslationReview(plain(source),f.config),qwenTranslationPolicy:'commerce-literal-v2'},before=JSON.stringify(review),request=api.buildTranslationRequest(review),wire=JSON.parse(request.input[0].content[0].text);
  assert.ok(request.instructions.length<=1500);assert.match(request.instructions,/한국어/u);for(const rule of ['sourceIndex','outputName','20','150'])assert.ok(request.instructions.includes(rule),rule);assert.match(request.instructions,/추측|추정|만들지/u);assert.match(request.instructions,/숫자|단위/u);assert.match(request.instructions,/상호/u);assert.match(request.instructions,/예/u);assert.doesNotMatch(request.instructions,/886034098637|4D翅膀|유앤채/u);
  assert.deepEqual(Object.keys(wire).sort(),['attributes','category','description','guidance','title']);for(const field of ['title','description','category','guidance'])assert.deepEqual(wire[field],source[field]);assert.deepEqual(wire.attributes.map(row=>row.sourceIndex),[0,1,2]);assert.deepEqual(wire.attributes.map(row=>row.outputName),['옵션명','색상','사이즈']);assert.deepEqual(wire.attributes.map(row=>({name:row.name,value:row.value})),source.attributes);assert.equal(Object.hasOwn(wire,'reference'),false);assert.equal(Object.hasOwn(wire,'provenance'),false);
  assert.equal(hash(JSON.stringify(request.text.format.schema)),'c5ddb0c82cf57cc38d0d0e486479874cb888b59c9884c9d30a5798b19169c1ad','the compact prompt must not loosen the existing generic Qwen schema');
@@ -49,7 +68,7 @@ test('schema-free generic Qwen still rejects malformed JSON, source index drift 
  const responses=[{choices:[{finish_reason:'stop',message:{role:'assistant',content:'prefix '+JSON.stringify(draft())}}]},
   chat({...draft(),attributes:draft().attributes.slice(1)}),chat({...draft(),attributes:draft().attributes.map(row=>row.sourceIndex===2?{...row,value:'12 cm'}:row)}),
   chat({...draft(),attributes:draft().attributes.map(row=>row.sourceIndex===0?{...row,sourceIndex:99}:row)}),chat({...draft(),extra:'untrusted extra field'})];
- for(const response of responses){const f=configuration(),review=await api.prepareTranslationReview(plain(source),f.config),before=JSON.stringify(review);f.config.ai.run=async(_model,input)=>{f.calls.push(plain(input));return response;};await assert.rejects(api.executeTranslation(review,f.config,noNetwork),error=>{assert.equal(error.mayHaveBeenCharged,true);return true;});assert.equal(f.calls.length,1);assert.equal(Object.hasOwn(f.calls[0],'response_format'),false);assert.equal(JSON.stringify(review),before);}
+ for(const response of responses){const f=configuration(),review={...await api.prepareTranslationReview(plain(source),f.config),qwenTranslationPolicy:'commerce-literal-v2'},before=JSON.stringify(review);f.config.ai.run=async(_model,input)=>{f.calls.push(plain(input));return response;};await assert.rejects(api.executeTranslation(review,f.config,noNetwork),error=>{assert.equal(error.mayHaveBeenCharged,true);return true;});assert.equal(f.calls.length,1);assert.equal(Object.hasOwn(f.calls[0],'response_format'),false);assert.equal(JSON.stringify(review),before);}
 });
 
 
@@ -66,7 +85,7 @@ test('generic Qwen rejects source-free performance claims in every translated fi
   const bound=plain(source);bound.category.path=['방수'];bound.guidance={features:'방수',keywords:'waterproof'};
   // A routing identifier carries no evidence, even when it contains a claim.
   bound.attributes[0].name=scenario.location.endsWith('.name')?'颜色':'option:waterproof';
-  const f=configuration(undefined,4096,output),review=await api.prepareTranslationReview(bound,f.config),before=JSON.stringify(review);
+  const f=configuration(undefined,4096,output),review={...await api.prepareTranslationReview(bound,f.config),qwenTranslationPolicy:'commerce-literal-schema-v4'},before=JSON.stringify(review);
   await assert.rejects(api.executeTranslation(review,f.config,noNetwork),error=>{assert.equal(error.code,'QWEN_UNSUPPORTED_CLAIM');assert.ok(error.message.includes('위치 '+scenario.location));assert.equal(error.mayHaveBeenCharged,true);return true;});
   assert.equal(f.calls.length,1);assert.equal(JSON.stringify(review),before);
  }

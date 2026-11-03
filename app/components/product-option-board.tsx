@@ -165,7 +165,7 @@ export function ProductOptionBoard({productId,productRegistrationNumber,sourceUr
   const stageButton=(optionId:string,step:CollectionEditorTab,label:string,detail:string,override?:RegistrationStageStatus)=>{
     const handler=stageHandler(optionId,step);
     const id=registrationStepIds[step],execution=data?.registrationStages?.[id],local=data?.optionStages?.[optionId]?.[id];
-    const unusedSize=id==='sizeChart'&&!data?.commonAssets?.size?.length&&local?.state!=='complete'&&(!execution||!['failed','running','complete'].includes(execution.state));
+    const unusedSize=id==='sizeChart'&&!data?.commonAssets?.size?.length&&local?.state!=='complete'&&(!execution||execution.state==='unused');
     const status=override??(unusedSize?pendingRegistrationStages().sizeChart:execution&&['failed','running'].includes(execution.state)?execution:local?.state==='complete'?local:execution??local??pendingRegistrationStages(!!data?.commonAssets?.size?.length)[id]);
     const text=registrationStageLabel(status.state),title=`${status.detail} · ${detail}`,className=`registration-cell-button registration-stage-badge registration-stage-${status.state}`;
     return handler?<button type="button" className={className} data-stage-state={status.state} title={title} aria-label={`옵션 ${optionId} ${label} 편집`} onClick={handler}>{text}</button>:<small className={className} data-stage-state={status.state} title={title}>{text}</small>;

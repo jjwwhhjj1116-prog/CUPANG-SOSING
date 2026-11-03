@@ -98,7 +98,23 @@ test('configured Qwen rejects unsupported facts and never silently falls back to
  }finally{x.close();}
 });
 
-test('literal-title-v2 retries a confirmed v1 failure for the exact public heel-pad title with unchanged fact guards',async()=>{
+test('a newly collected title uses the current commerce translation policy instead of an older completed cache',async()=>{
+ const original='专业瑜伽袜子女中筒袜防滑硅胶室内健身长筒袜普拉提女士运动棉袜',snapshot={...source,title:original},x=await fixture(companies[1],()=>assert.fail('Workers title never falls back to Google'),snapshot);
+ const oldTitle='전문 요가 여성 운동 플라티 속삭',faithful='여성용 미끄럼 방지 실리콘 요가 양말 실내 운동 필라테스 면 양말',oldSignature='workers-ai:'+QWEN+':literal-title-v2',stamp=new Date().toISOString();let calls=0;
+ try{
+  x.h.sqlite.prepare(`INSERT INTO source_inbox_titles VALUES(?,?,?,?,?,?,?,'completed',?,NULL,1,0,?)`).run(x.item.ownerId,x.item.id,x.item.company.code,x.item.company.name,x.item.fingerprint,x.item.revision,original,oldTitle,stamp);
+  x.h.sqlite.prepare(`INSERT INTO source_inbox_title_runs VALUES(?,?,?,?,?,?,?,1,'completed',0,?)`).run(x.item.ownerId,x.item.id,x.item.fingerprint,x.item.revision,oldSignature,'workers-ai',QWEN,stamp);
+  x.h.bindings.SOURCEFLOW_TEXT_PROVIDER='workers-ai';x.h.bindings.SOURCEFLOW_TEXT_MODEL=QWEN;x.h.bindings.AI.run=async()=>{calls++;return qwen(faithful);};
+  await json(await x.title.POST(x.request(x.item)));assert.equal(calls,0,'An existing completion is preserved, not silently charged again');
+  const captured={...snapshot,collectedAt:'2026-10-20T00:00:01.000Z'},fingerprint=await x.h.load('app/source-inbox.ts').pageSourceFingerprint(captured);
+  await json(await x.api.POST(new Request('https://app.test/api/source-inbox',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({expectedOwnerId:'owner',expectedCompany:x.item.company,id:'76400000-0000-4000-8000-000000000012',fingerprint,snapshot:captured})})));
+  const fresh=(await json(await x.api.GET())).items.find(item=>item.id!==x.item.id),before=x.raw(),prepared=await json(await x.title.POST(x.request(fresh)));
+  assert.equal(calls,1,'A new policy must not reuse the completed v2 result for a fresh capture');assert.equal(prepared.displayTitle,'회원 브랜드 '+faithful);assert.notEqual(prepared.titlePreparation.providerSignature,oldSignature);assert.equal(x.raw(),before);
+  const previous=(await json(await x.api.GET())).items.find(item=>item.id===x.item.id);assert.equal(previous.titlePreparation.translatedTitle,oldTitle);assert.equal(previous.titlePreparation.providerSignature,oldSignature);
+ }finally{x.close();}
+});
+
+test('the current literal title policy retries a confirmed v1 failure for the exact public heel-pad title with unchanged fact guards',async()=>{
  const original='隐形海绵后跟贴4D翅膀后跟足贴加厚防滑防磨脚贴高跟鞋防掉跟鞋贴',snapshot={...source,title:original},x=await fixture(companies[1],()=>assert.fail('Workers title never falls back to Google'),snapshot);let calls=0;
  const faithful='티 나지 않는 스펀지 뒤꿈치 패드 4D 날개형 두꺼운 미끄럼 방지 마찰 방지 하이힐 뒤꿈치 벗겨짐 방지 신발 패드';
  try{
@@ -106,7 +122,7 @@ test('literal-title-v2 retries a confirmed v1 failure for the exact public heel-
   x.h.sqlite.prepare(`INSERT INTO source_inbox_titles VALUES(?,?,?,?,?,?,?,'failed',NULL,?,1,0,?)`).run(x.item.ownerId,x.item.id,x.item.company.code,x.item.company.name,x.item.fingerprint,x.item.revision,original,'상품명 번역의 원문·숫자·성능 표현을 확인하지 못했습니다. 원문은 보존됩니다.',stamp);
   x.h.sqlite.prepare(`INSERT INTO source_inbox_title_runs VALUES(?,?,?,?,?,?,?,1,'failed',0,?)`).run(x.item.ownerId,x.item.id,x.item.fingerprint,x.item.revision,oldSignature,'workers-ai',QWEN,stamp);
   x.h.bindings.SOURCEFLOW_TEXT_PROVIDER='workers-ai';x.h.bindings.SOURCEFLOW_TEXT_MODEL=QWEN;x.h.bindings.AI.run=async(_model,input)=>{calls++;const publicInput=JSON.parse(input.messages[1].content.replace(/\n\/no_think$/u,''));assert.deepEqual(publicInput,{sourceProductName:original,requiredNumberTokens:['4']});assert.match(input.messages[0].content,/防滑=미끄럼 방지/);assert.match(input.messages[0].content,/防磨=마찰 방지/);assert.match(input.messages[0].content,/防掉跟=뒤꿈치 벗겨짐 방지/);assert.match(input.messages[0].content,/한자를 한 글자도 남기지/);return qwen(calls===1?'스펀지 뒤꿈치 패드 4D 방수':faithful);};
-  const before=x.raw(),pending=(await json(await x.api.GET())).items[0];assert.equal(pending.titlePreparation.state,'pending');assert.match(pending.titlePreparation.providerSignature,/literal-title-v2$/);
+  const before=x.raw(),pending=(await json(await x.api.GET())).items[0];assert.equal(pending.titlePreparation.state,'pending');assert.match(pending.titlePreparation.providerSignature,/literal-title-v3$/);
   const first=await json(await x.title.POST(x.request(pending)));assert.equal(first.titlePreparation.state,'failed');assert.equal(first.titlePreparation.retryable,true);assert.equal(JSON.parse(x.h.sqlite.prepare('SELECT error FROM source_inbox_titles').get().error).diagnostic.unsupportedClaim,'방수');
   const final=await json(await x.title.POST(x.request(pending)));assert.equal(final.displayTitle,'회원 브랜드 '+faithful);assert.equal(final.titlePreparation.attempts,2);assert.equal(final.titlePreparation.state,'completed');assert.equal(calls,2);assert.equal(x.raw(),before);
   const provider=sourceReviewModule('app/source-inbox-title-provider.ts');assert.throws(()=>provider.verifyLiteralSourceTitle(original,{translatedText:'뒤꿈치 패드'}),error=>error.diagnostic.missingNumbers.includes('4'));assert.throws(()=>provider.verifyLiteralSourceTitle(original,{translatedText:'后跟 스펀지 패드 4D'}),error=>error.diagnostic.han===true);

@@ -1,5 +1,5 @@
 import {validateFreeImageSource,type FreeImageSource} from '@/app/free-image-translation';
-import {IMAGE_TEXT_INSPECTION_POLICY,parseImageTextVisionConfiguration,parseImageTextVisionResult,type ImageTextVisionConfiguration,type ImageTextVisionResult} from '@/app/image-text-vision';
+import {IMAGE_TEXT_INSPECTION_POLICY,isImageTextInspectionPolicy,type ImageTextInspectionPolicy,parseImageTextVisionConfiguration,parseImageTextVisionResult,type ImageTextVisionConfiguration,type ImageTextVisionResult} from '@/app/image-text-vision';
 import {parseWorkspaceSettingsScope,type WorkspaceSettingsScope} from '@/app/workspace-settings-scope';
 import {exactPrimaryQuotationTarget} from '@/app/quotation-seo-targets';
 import {quotationImageKeys} from '@/app/quotation-image-targets';
@@ -9,7 +9,7 @@ import type {FreeImageLoaded,FreeImageQuotationRequest} from '@/app/free-image-t
 
 /** In-memory completed recognition, never an image save or automatic-apply authority. */
 export type SelectedImageReview={format:'selected-image-review-v1';ownerId:string;company:NonNullable<WorkspaceSettingsScope['company']>;source:FreeImageSource;
- requestId:string;sourceLanguage:'zh'|'en';configuration:ImageTextVisionConfiguration;inspectionPolicy:typeof IMAGE_TEXT_INSPECTION_POLICY;result:ImageTextVisionResult;
+ requestId:string;sourceLanguage:'zh'|'en';configuration:ImageTextVisionConfiguration;inspectionPolicy:ImageTextInspectionPolicy;result:ImageTextVisionResult;
  category:string;schema:string;options:string;sources:string;styleIssues:string[];message:string};
 const canonical=(value:unknown):string=>JSON.stringify(value,(_key,item)=>item&&typeof item==='object'&&!Array.isArray(item)?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
 const changed=()=>Error('계정·카테고리·옵션 또는 검토 이미지가 변경됐습니다. 최신 원본에서 다시 확인해주세요.');
@@ -27,7 +27,7 @@ export function parseSelectedImageReview(value:unknown):SelectedImageReview|null
   if(!value||typeof value!=='object'||Array.isArray(value)||JSON.stringify(value).length>131072)return null;
   const row=value as SelectedImageReview;
   if(Object.keys(row).sort().join(',')!=='category,company,configuration,format,inspectionPolicy,message,options,ownerId,requestId,result,schema,source,sourceLanguage,sources,styleIssues'
-   ||row.format!=='selected-image-review-v1'||!['zh','en'].includes(row.sourceLanguage)||row.inspectionPolicy!==IMAGE_TEXT_INSPECTION_POLICY
+   ||row.format!=='selected-image-review-v1'||!['zh','en'].includes(row.sourceLanguage)||!isImageTextInspectionPolicy(row.inspectionPolicy)
    ||!/^\w[\w-]{0,199}$/.test(row.ownerId)||!isOwnedImageKey(row.ownerId,row.source?.sourceKey)
    ||!/^([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})$/i.test(row.requestId))return null;
   const scope=parseWorkspaceSettingsScope({ownerId:row.ownerId,company:row.company}),source=validateFreeImageSource(row.source),configuration=parseImageTextVisionConfiguration(row.configuration),result=parseImageTextVisionResult(row.result,source.width,source.height);
@@ -35,14 +35,14 @@ export function parseSelectedImageReview(value:unknown):SelectedImageReview|null
    ||!['main','additional'].includes(source.role)||!source.quotationTarget||source.editorSource||source.workspaceTarget||source.optionImages
    ||source.quotationTarget.input!==(source.role==='main'?'mainImage':'additionalImages')
    ||![row.category,row.schema,row.options,row.sources].every(text=>typeof text==='string'&&text.length>0&&text.length<=32768)
-   ||typeof row.message!=='string'||row.message.length>2000||!Array.isArray(row.styleIssues)||row.styleIssues.length>4
-   ||new Set(row.styleIssues).size!==row.styleIssues.length||row.styleIssues.some(issue=>!['VISION_REGION_OVERLAP','VISION_BACKGROUND_COMPLEX','VISION_BACKGROUND_UNAVAILABLE','VISION_TEXT_FIT'].includes(issue)))return null;
+   ||typeof row.message!=='string'||row.message.length>2000||!Array.isArray(row.styleIssues)||row.styleIssues.length>5
+   ||new Set(row.styleIssues).size!==row.styleIssues.length||row.styleIssues.some(issue=>!['VISION_REGION_OVERLAP','VISION_BACKGROUND_COMPLEX','VISION_BACKGROUND_UNAVAILABLE','VISION_TEXT_FIT','VISION_TEXT_CLASSIFICATION'].includes(issue)))return null;
   return JSON.parse(JSON.stringify({...row,source,configuration,result}));
  }catch{return null;}
 }
 export function createSelectedImageReview(scope:WorkspaceSettingsScope,view:QuotationFieldsView,image:FreeImageLoaded,sourceLanguage:'zh'|'en',message:string):SelectedImageReview|null{
  try{return parseSelectedImageReview({format:'selected-image-review-v1',ownerId:scope.ownerId,company:scope.company,source:image.source,requestId:image.visionRequestId,
-  sourceLanguage,configuration:image.visionConfiguration,inspectionPolicy:IMAGE_TEXT_INSPECTION_POLICY,result:image.visionResult,...selection(view,image.source),styleIssues:image.visionStyleIssues??[],message:message.slice(0,2000)});}catch{return null;}
+  sourceLanguage,configuration:image.visionConfiguration,inspectionPolicy:image.visionResult?.inspection?.policy??IMAGE_TEXT_INSPECTION_POLICY,result:image.visionResult,...selection(view,image.source),styleIssues:image.visionStyleIssues??[],message:message.slice(0,2000)});}catch{return null;}
 }
 /** Only clocks may advance. The existing source GET must issue the fresh binding. */
 export function rebindSelectedImageReview(value:unknown,scope:WorkspaceSettingsScope,view:QuotationFieldsView):FreeImageQuotationRequest{

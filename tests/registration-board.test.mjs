@@ -464,6 +464,47 @@ test('the open filter trigger toggles closed and popup sorting preserves existin
 });
 
 const sourceItem={id:'00000000-0000-4000-8000-000000000001',ownerId:'owner',company:{code:'A01464742',name:'와이홉'},fingerprint:'a'.repeat(64),revision:1,snapshot:{offerId:'700000000001',sourceUrl:'https://detail.1688.com/offer/700000000001.html',title:'새 수집 상품',options:[{key:'a'}],images:[{url:'https://cbu01.alicdn.com/test.jpg',role:'main'}]},reviewed:null,receivedAt:'2026-10-19T00:00:00Z',archivedAt:null,issues:['공급자 SKU']};
+function convertedCaptureFixture(company=sourceItem.company){
+ const item=structuredClone({...sourceItem,company}),sourceUrl=item.snapshot.sourceUrl;
+ const product={id:'working-exact-capture',owner_id:'owner',title:'편집한 작업 상품',source_url:sourceUrl,created_at:item.receivedAt,image_keys:'[]',options_count:1,registration_status:'작업 중',seo_status:'대기',quote_status:'대기',supply_price:null,sale_price:null};
+ const job={id:'11111111-1111-4111-8111-111111111111',product_id:product.id,source_url:sourceUrl,status:'awaiting_connector',context:{company:{...company},forkedFrom:{kind:'stored-source-new-draft-v1',requestId:'11111111-1111-4111-8111-111111111111',sourceCapture:{format:'yoofam-saved-page-capture-v1',captureId:item.id,fingerprint:item.fingerprint,revision:item.revision,sourceUrl}}}};
+ return{item,product,job};
+}
+const boardTitles=h=>elements(h.render(),node=>node.type==='button'&&node.props.className==='registration-title').map(nodeText);
+test('exact converted capture is represented only by its current product, preserving other versions and page/query stores',()=>{
+ for(const company of [{code:'A01526306',name:'유앤채'},sourceItem.company]){
+  const {item,product,job}=convertedCaptureFixture(company),older={...item,id:'22222222-2222-4222-8222-222222222222',captureVersion:2,snapshot:{...item.snapshot,title:'같은 URL 이전 수집본'}};
+  const query={id:item.id,ownerId:'owner',company,fingerprint:item.fingerprint,revision:item.revision,captureVersion:1,receivedAt:item.receivedAt,archivedAt:null,sourceUrl:item.snapshot.sourceUrl,offerId:item.snapshot.offerId,title:'독립 서버 수집본',optionCount:1,thumbnailUrl:null};
+  const before=JSON.stringify({item,older,query,product,job}),h=boardHarness({products:[product],sources:[item,older],querySources:[query],sourceJobs:[job],sourceCompany:company});
+  assert.deepEqual(boardTitles(h),['같은 URL 이전 수집본','독립 서버 수집본','편집한 작업 상품']);
+  elements(h.render(),node=>node.type==='button'&&node.props.className==='registration-title'&&nodeText(node)==='편집한 작업 상품')[0].props.onClick();assert.deepEqual(h.options,[product]);
+  assert.equal(JSON.stringify({item,older,query,product,job}),before);h.close();
+ }
+});
+test('capture remains visible if any exact identity, member, company or current product link differs',()=>{
+ const changes={format:({job})=>job.context.forkedFrom.sourceCapture.format='yoofam-saved-query-capture-v1',captureId:({job})=>job.context.forkedFrom.sourceCapture.captureId='22222222-2222-4222-8222-222222222222',fingerprint:({job})=>job.context.forkedFrom.sourceCapture.fingerprint='b'.repeat(64),revision:({job})=>job.context.forkedFrom.sourceCapture.revision++,sourceUrl:({job})=>job.context.forkedFrom.sourceCapture.sourceUrl='https://detail.1688.com/offer/700000000002.html',malformed:({job})=>job.context.forkedFrom.sourceCapture.extra=true,unlinked:({job})=>delete job.context.forkedFrom,productId:({job})=>job.product_id='other-product',requestId:({job})=>job.context.forkedFrom.requestId='other-request',cancelled:({job})=>job.status='cancelled',companyCode:({job})=>job.context.company={code:'A01526306',name:'유앤채'},companyName:({job})=>job.context.company.name='다른 회사',captureOwner:({item})=>item.ownerId='other',captureCompany:({item})=>item.company={code:'A01526306',name:'유앤채'},productOwner:({product})=>product.owner_id='other',missingProductOwner:({product})=>delete product.owner_id,productUrl:({product})=>product.source_url='https://detail.1688.com/offer/700000000002.html',jobUrl:({job})=>job.source_url='https://detail.1688.com/offer/700000000002.html'};
+ for(const [name,change] of Object.entries(changes)){
+  const fixture=convertedCaptureFixture();change(fixture);const h=boardHarness({products:[fixture.product],sources:[fixture.item],sourceJobs:[fixture.job]});
+  assert.deepEqual(boardTitles(h),['새 수집 상품','편집한 작업 상품'],name);h.close();
+ }
+});
+test('missing or removed products and changing member/company restore the original capture without writes',()=>{
+ const {item,product,job}=convertedCaptureFixture(),before=JSON.stringify({item,product,job}),h=boardHarness({products:[],sources:[item],sourceJobs:[job]});
+ assert.deepEqual(boardTitles(h),['새 수집 상품'],'initial product read has no matching active product');
+ h.update({products:[product]});assert.deepEqual(boardTitles(h),['편집한 작업 상품']);
+ h.update({products:[]});assert.deepEqual(boardTitles(h),['새 수집 상품'],'removed product no longer represents the capture');
+ h.update({products:[product],sourceOwnerId:'other'});assert.deepEqual(boardTitles(h),['새 수집 상품','편집한 작업 상품']);
+ h.update({sourceOwnerId:'owner',sourceCompany:null});assert.deepEqual(boardTitles(h),['새 수집 상품','편집한 작업 상품']);
+ h.update({sourceCompany:{code:'A01526306',name:'유앤채'}});assert.deepEqual(boardTitles(h),['새 수집 상품','편집한 작업 상품']);
+ assert.equal(JSON.stringify({item,product,job}),before);assert.equal(h.calls.length,0);assert.equal(h.options.length,0);h.close();
+});
+test('only the exact converted query capture is hidden and a hidden capture loses its stale selection',()=>{
+ const {item,product,job}=convertedCaptureFixture(),query={id:item.id,ownerId:'owner',company:item.company,fingerprint:item.fingerprint,revision:item.revision,captureVersion:1,receivedAt:item.receivedAt,archivedAt:null,sourceUrl:item.snapshot.sourceUrl,offerId:item.snapshot.offerId,title:'독립 서버 수집본',optionCount:1,thumbnailUrl:null},published=[];
+ const h=boardHarness({products:[product],sources:[item],querySources:[query],sourceJobs:[],onSourceSelectionChange:refs=>published.push(refs)});
+ elements(h.render(),node=>node.type==='input'&&node.props['aria-label']==='새 수집 상품 선택')[0].props.onChange({target:{checked:true}});h.render();assert.equal(published.at(-1).length,1);
+ h.update({sourceJobs:[job]});assert.deepEqual(boardTitles(h),['독립 서버 수집본','편집한 작업 상품']);assert.equal(published.at(-1).length,0);
+ job.context.forkedFrom.sourceCapture.format='yoofam-saved-query-capture-v1';h.render();assert.deepEqual(boardTitles(h),['새 수집 상품','편집한 작업 상품']);h.close();
+});
 test('collected product appears in the same fourteen-column board and routes category/review without existing-product handlers',()=>{
  const prepared=[],reviewed=[];const h=boardHarness({sources:[sourceItem],onPrepareSource:item=>prepared.push(item),onReviewSource:item=>reviewed.push(item)});const before=JSON.stringify(h.product);
  const tree=h.render(),sourceRow=elements(tree,node=>node.type==='tr'&&elements(node,child=>child.type==='td'&&child.props['data-column']==='product'&&nodeText(child).includes('새 수집 상품')).length)[0];

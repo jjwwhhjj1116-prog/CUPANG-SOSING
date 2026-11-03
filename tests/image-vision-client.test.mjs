@@ -8,7 +8,7 @@ const plain=value=>JSON.parse(JSON.stringify(value));
 function fixture(){const cache=new Map();function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,Date,URL,URLSearchParams,Blob,File,FormData,Response,Request,Headers,AbortController,AbortSignal,TextEncoder,TextDecoder,Uint8Array,DataView,structuredClone,crypto:webcrypto,setTimeout,clearTimeout,fetch:()=>{throw Error('No live network');},require:name=>load(name.slice(2)+'.ts')});return exports;}const client=load('app/free-image-translation-client.ts'),contract=load('app/image-text-vision.ts'),calls=[];
  const config={provider:'workers-ai-vision',model:contract.IMAGE_TEXT_VISION_MODEL,configured:true,paidAllowed:true,notice:contract.IMAGE_TEXT_VISION_NOTICE};
  const source={productId:'product',productVersion:'2026-10-29T00:00:00.000Z',contentRevision:2,sourceKey:'owner/source.png',sourceSha256:'a'.repeat(64),role:'detail',width:100,height:80};
- const result={provider:config.provider,model:config.model,requests:1,notice:config.notice,blocks:[{id:'vision-1',text:'黑色',translated:'검정',issue:null,box:{x:5,y:10,width:20,height:10}}]};
+ const result={provider:config.provider,model:config.model,requests:1,notice:config.notice,inspection:{policy:contract.IMAGE_TEXT_PRESERVATION_POLICY,decision:'foreign-text'},blocks:[{id:'vision-1',kind:'overlay',text:'黑色',translated:'검정',issue:null,box:{x:5,y:10,width:20,height:10}}]};
  const image={source,blob:new Blob(['owned']),canvas:{width:100,height:80},width:100,height:80,visionConfiguration:config,visionFetcher:async(url,init)=>{const body=JSON.parse(init.body);calls.push({url,body});return Response.json({source,configuration:config,requestId:body.requestId,result,replayed:false,execution:{requests:1,cached:false}});}};
  return{client,image,result,config,calls};}
 test('Vision client uses owned-source request once and retains exact generated Korean/box for existing renderer',async()=>{
@@ -31,7 +31,7 @@ test('cache metadata records zero new inference while preserving original genera
 });
 test('partial Vision translations remain visible issues, not fabricated or repaired text; empty result is no foreign text',async()=>{
  const h=fixture();h.result.blocks[0].translated=null;h.result.blocks[0].issue='번역 검증을 통과하지 못했습니다. 원문과 영역을 확인해주세요.';const rows=await h.client.recognizeFreeImage(h.image,'zh',new AbortController().signal);assert.equal(rows[0].translated,'');assert.equal(rows[0].translationProvenance,'empty');assert.ok(rows[0].issue);assert.equal(h.calls.length,1);
- const a=fixture();a.result.blocks=[];await assert.rejects(a.client.recognizeFreeImage(a.image,'zh',new AbortController().signal),/읽을 수 있는 문구/);assert.equal(a.calls.length,1);
+ const a=fixture();a.result.blocks=[];a.result.inspection.decision='no-foreign-text';await assert.rejects(a.client.recognizeFreeImage(a.image,'zh',new AbortController().signal),/읽을 수 있는 문구/);assert.equal(a.calls.length,1);
 });
 
 test('uncertain Vision errors retain original request/source and repeated recognition cannot POST again',async()=>{
@@ -71,7 +71,7 @@ test('other failures and mismatched capacity envelopes cannot free the original 
 });
 
 test('original Vision request observations use only GET and preserve exact pending source without another inference',async()=>{
- const h=fixture(),attempt={requestId:'0fa1748b-fd6e-4b16-8120-754071c7a73f',source:h.image.source,sourceLanguage:'zh',configuration:h.config};
+ const h=fixture(),attempt={requestId:'0fa1748b-fd6e-4b16-8120-754071c7a73f',source:h.image.source,sourceLanguage:'zh',configuration:h.config,inspectionPolicy:h.result.inspection.policy};
  for(const status of ['running','uncertain','failed','completed','not-found']){
   const calls=[];const body={format:'yoofam-image-vision-status-v1',source:attempt.source,configuration:attempt.configuration,sourceLanguage:'zh',requestId:attempt.requestId,status,result:status==='completed'?h.result:null,failure:status==='uncertain'?'TIMEOUT':null,execution:{requests:0},readOnly:true};
   const observed=await h.client.readFreeImageVisionStatus(attempt,new AbortController().signal,async(url,init)=>{calls.push({url,init});return Response.json(body);});
@@ -80,7 +80,7 @@ test('original Vision request observations use only GET and preserve exact pendi
 });
 
 test('Vision observation rejects widened writes, wrong request/source/configuration and invented completed results',async()=>{
- const h=fixture(),attempt={requestId:'0fa1748b-fd6e-4b16-8120-754071c7a73f',source:h.image.source,sourceLanguage:'zh',configuration:h.config};
+ const h=fixture(),attempt={requestId:'0fa1748b-fd6e-4b16-8120-754071c7a73f',source:h.image.source,sourceLanguage:'zh',configuration:h.config,inspectionPolicy:h.result.inspection.policy};
  const original={format:'yoofam-image-vision-status-v1',source:attempt.source,configuration:attempt.configuration,sourceLanguage:'zh',requestId:attempt.requestId,status:'completed',result:h.result,failure:null,execution:{requests:0},readOnly:true};
  for(const patch of [{readOnly:false},{requestId:'another'},{source:{...attempt.source,sourceSha256:'b'.repeat(64)}},{configuration:{...h.config,model:'other'}},{execution:{requests:1}},{result:null},{status:'uncertain'},{extra:'write'}]){
   await assert.rejects(h.client.readFreeImageVisionStatus(attempt,new AbortController().signal,async()=>Response.json({...original,...patch})),/상태 응답/);

@@ -9,7 +9,7 @@ export const imageVisionRequestsSchema=`CREATE TABLE IF NOT EXISTS image_vision_
  PRIMARY KEY(owner_id,product_id,request_id)
 )`;
 const activeIndex="CREATE UNIQUE INDEX IF NOT EXISTS image_vision_requests_active ON image_vision_requests(owner_id,product_id,source_scope) WHERE status IN ('running','uncertain')";
-type Scope={owner:string;productId:string;requestId:string;company:{code:string;name:string};member:{email:string;role:string};model:string;fingerprint:string;sourceScope:string;legacySourceScope?:string;productVersion:string;contentRevision:number;inspection?:import('@/db/image-no-text-receipts').NoTextReceiptScope['inspection']};
+type Scope={owner:string;productId:string;requestId:string;company:{code:string;name:string};member:{email:string;role:string};model:string;fingerprint:string;sourceScope:string;legacySourceScope?:string;sourceScopes?:readonly string[];productVersion:string;contentRevision:number;inspection?:import('@/db/image-no-text-receipts').NoTextReceiptScope['inspection']};
 type Row={status:'running'|'completed'|'failed'|'uncertain';request_fingerprint:string;result:string|null;failure:string|null};
 const ready=new WeakSet<object>();
 async function database(){const db=env.DB;if(!db)throw Error('Image Vision store unavailable');if(!ready.has(db)){await db.batch([db.prepare(imageVisionRequestsSchema),db.prepare(activeIndex)]);ready.add(db);}return db;}
@@ -28,13 +28,14 @@ export async function readImageVisionRequest(scope:Scope):Promise<Row|null>{
 }
 /** Claim precedes inference. Source bytes stay in R2; only bounded proposals live here. */
 export async function claimImageVisionRequest(scope:Scope){
- const db=await database();
+ const db=await database(),sourceScopes=[...new Set(scope.sourceScopes??[scope.sourceScope,scope.legacySourceScope??scope.sourceScope])];
+ if(sourceScopes.length<1||sourceScopes.length>3||sourceScopes.some(value=>!/^([a-f0-9]{64})$/.test(value))||!sourceScopes.includes(scope.sourceScope))throw Error('Invalid Image Vision source scopes');
  const row=await db.prepare(`INSERT INTO image_vision_requests(owner_id,product_id,request_id,company_code,company_name,model,request_fingerprint,source_scope,status,created_at)
  SELECT ?,?,?,?,?,?,?,?,'running',? FROM products p WHERE p.id=? AND p.owner_id=? AND p.updated_at=?
  AND COALESCE((SELECT revision FROM product_content c WHERE c.product_id=p.id AND c.owner_id=p.owner_id),0)=? AND ${membership}
- AND NOT EXISTS(SELECT 1 FROM image_vision_requests r WHERE r.owner_id=p.owner_id AND r.product_id=p.id AND r.source_scope IN (?,?) AND r.status IN ('running','uncertain'))
+ AND NOT EXISTS(SELECT 1 FROM image_vision_requests r WHERE r.owner_id=p.owner_id AND r.product_id=p.id AND r.source_scope IN (${sourceScopes.map(()=>'?').join(',')}) AND r.status IN ('running','uncertain'))
  ON CONFLICT(owner_id,product_id,request_id) DO NOTHING RETURNING status,request_fingerprint,result,failure`)
- .bind(scope.owner,scope.productId,scope.requestId,scope.company.code,scope.company.name,scope.model,scope.fingerprint,scope.sourceScope,new Date().toISOString(),scope.productId,scope.owner,scope.productVersion,scope.contentRevision,...memberArgs(scope),scope.sourceScope,scope.legacySourceScope??scope.sourceScope).first<Row>();
+ .bind(scope.owner,scope.productId,scope.requestId,scope.company.code,scope.company.name,scope.model,scope.fingerprint,scope.sourceScope,new Date().toISOString(),scope.productId,scope.owner,scope.productVersion,scope.contentRevision,...memberArgs(scope),...sourceScopes).first<Row>();
  return{claimed:!!row,record:row??await record(db,scope)};
 }
 /** A new request owns its claim before inspecting a completed artifact. No

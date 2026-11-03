@@ -32,6 +32,16 @@ test('a new inspection-policy source scope cannot bypass a retained legacy uncer
   const next={...scope,requestId:'new-policy',sourceScope:'c'.repeat(64),legacySourceScope:scope.sourceScope,fingerprint:'d'.repeat(64)};assert.equal((await h.claimImageVisionRequest(next)).claimed,false);assert.equal(h.sqlite.prepare('SELECT count(*) AS n FROM image_vision_requests').get().n,1);
  }finally{h.close();}
 });
+test('atomic three-policy claim fences every original running or uncertain scope without changing its ledger',async()=>{
+ const scopes=['b','c','d'].map(value=>value.repeat(64));
+ for(const original of scopes)for(const target of scopes){const h=fixture();try{
+  const first={...scope,sourceScope:original};assert.equal((await h.claimImageVisionRequest(first)).claimed,true);
+  await h.finishImageVisionRequest(first,{status:'uncertain',failure:'TIMEOUT',requests:1});
+  const before=JSON.stringify(h.sqlite.prepare('SELECT * FROM image_vision_requests').all());
+  assert.equal((await h.claimImageVisionRequest({...scope,requestId:'preservation-v2',sourceScope:target,sourceScopes:scopes})).claimed,false);
+  assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM image_vision_requests').all()),before);
+ }finally{h.close();}}
+});
 test('member/company/email/role/source version/content CAS stop claim and completion, existing product remains unchanged',async()=>{
  for(const patch of [{owner:'other'},{company:{code:'other',name:'name'}},{member:{email:'other@example.test',role:'admin'}},{member:{email:scope.member.email,role:'member'}},{productVersion:'old'},{contentRevision:3}]){
   const h=fixture();try{const before=JSON.stringify(h.sqlite.prepare('SELECT * FROM products').all());assert.equal((await h.claimImageVisionRequest({...scope,...patch})).claimed,false);assert.equal(h.sqlite.prepare('SELECT count(*) AS n FROM image_vision_requests').get().n,0);assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM products').all()),before);}finally{h.close();}

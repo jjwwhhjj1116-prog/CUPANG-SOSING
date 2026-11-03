@@ -26,7 +26,7 @@ function fixture(options={}){
   '@/app/free-image-edit-document':{MAX_FREE_IMAGE_EDIT_BYTES:65536},'@/app/free-image-edit-record':{FreeImageEditRecordError:notUsed},
   '@/db/image-vision-requests':{
    async readImageVisionRequest(scope){reads++;const row=ledger.get(scope.requestId),matched=row&&row.scope.owner===scope.owner&&row.scope.productId===scope.productId&&row.scope.fingerprint===scope.fingerprint&&row.scope.sourceScope===scope.sourceScope&&row.scope.model===scope.model&&JSON.stringify(row.scope.company)===JSON.stringify(scope.company);await controls.afterRead?.();return matched?row:null;},
-   async claimImageVisionRequest(scope){claims++;let row=ledger.get(scope.requestId);if(row)return{claimed:false,record:row};if([...ledger.values()].some(row=>[scope.sourceScope,scope.legacySourceScope].includes(row.scope.sourceScope)&&['running','uncertain'].includes(row.status)))return{claimed:false,record:null};row={scope:plain(scope),status:'running',request_fingerprint:scope.fingerprint,result:null,failure:null};ledger.set(scope.requestId,row);await controls.afterClaim?.();if(controls.claimAckLost)throw Error('lost claim acknowledgement');return{claimed:true,record:row};},
+   async claimImageVisionRequest(scope){claims++;let row=ledger.get(scope.requestId);if(row)return{claimed:false,record:row};if([...ledger.values()].some(row=>(scope.sourceScopes??[scope.sourceScope,scope.legacySourceScope]).includes(row.scope.sourceScope)&&['running','uncertain'].includes(row.status)))return{claimed:false,record:null};row={scope:plain(scope),status:'running',request_fingerprint:scope.fingerprint,result:null,failure:null};ledger.set(scope.requestId,row);await controls.afterClaim?.();if(controls.claimAckLost)throw Error('lost claim acknowledgement');return{claimed:true,record:row};},
    async finishImageVisionRequest(scope,value){const row=ledger.get(scope.requestId);if(row.status!=='running')throw Error('CAS');if(controls.finishBeforeCommitFailure)throw Error('before commit');Object.assign(row,value,{result:value.result?JSON.stringify(value.result):null,provider_requests:value.requests});events.push('finish:'+value.status);await controls.afterFinish?.();if(controls.finishAckLost)throw Error('lost finish acknowledgement');},
    async finishLateImageVisionRequest(scope,value){const row=ledger.get(scope.requestId);if(!row||!['running','uncertain'].includes(row.status)||row.scope.fingerprint!==scope.fingerprint||row.scope.sourceScope!==scope.sourceScope||scope.owner!==controls.owner||JSON.stringify(scope.company)!==JSON.stringify(controls.company)||!controls.verified)return false;Object.assign(row,value,{result:value.result?JSON.stringify(value.result):null,provider_requests:1});events.push('late:'+value.status);return true;},
    async completedImageVisionResult(scope){return[...ledger.values()].find(row=>row.status==='completed'&&row.scope.requestId!==scope.requestId&&row.scope.owner===scope.owner&&row.scope.productId===scope.productId&&row.scope.model===scope.model&&row.scope.sourceScope===scope.sourceScope&&JSON.stringify(row.scope.company)===JSON.stringify(scope.company))??null;},
@@ -47,6 +47,23 @@ test('owned bytes use exact Vision model, low reasoning, schema and one request,
  assert.deepEqual(call.options,{rejectIfBusy:true});assert.equal(Object.hasOwn(call.input,'rejectIfBusy'),false);
  assert.equal(call.input.messages[1].content[1].image_url.url,'data:image/png;base64,AQID');assert.ok(!JSON.stringify(call.input).includes('owner/source.png'));assert.equal(JSON.stringify([h.source,h.product,h.content]),before);
   assert.equal((await h.post()).body.replayed,true);assert.equal(h.calls.length,1);
+});
+test('v2 product markings are preserved proposals, isolated from v1 cache, and original request GET never infers again',async()=>{
+ const h=fixture(),policy=h.contract.IMAGE_TEXT_PRESERVATION_POLICY,before=JSON.stringify([h.product,h.content]);
+ await h.post();assert.equal(h.calls.length,1);
+ h.controls.provider=()=>chat({decision:'product-markings-only',blocks:[{original:'YOGA SPORTS',translated:'YOGA SPORTS',kind:'product-marking',box:{x:5,y:10,width:40,height:10}}]});
+ const requestId='12345678-1234-4123-8123-123456789abd',fresh=await h.post({requestId,inspectionPolicy:policy});assert.equal(fresh.status,200,JSON.stringify(fresh.body));assert.equal(h.calls.length,2);
+ assert.equal(fresh.body.result.inspection.policy,policy);assert.equal(fresh.body.result.blocks[0].kind,'product-marking');assert.equal(fresh.body.result.blocks[0].translated,null);assert.equal(h.contract.isVerifiedNoForeignText(fresh.body.result),false);
+ assert.match(h.calls[1].input.messages[0].content,/physically printed/);assert.ok(h.calls[1].input.response_format.json_schema.properties.blocks.items.required.includes('kind'));
+ const observed=await h.status({visionRequestId:requestId,inspectionPolicy:policy});assert.equal(observed.status,200);assert.equal(observed.body.readOnly,true);assert.equal(observed.body.execution.requests,0);
+ const cached=await h.post({requestId:'12345678-1234-4123-8123-123456789abe',inspectionPolicy:policy});assert.equal(cached.status,200);assert.equal(cached.body.execution.requests,0);assert.equal(h.calls.length,2);assert.equal(JSON.stringify([h.product,h.content]),before);
+ assert.equal((await h.status()).status,200,'legacy GET remains readable');assert.equal((await h.status({visionRequestId:requestId})).body.status,'not-found');
+});
+test('all inspection policies fence a running or uncertain original request without silently reclassifying or retrying',async()=>{
+ for(const first of [undefined,'foreign-text-inspection-v1','product-text-preservation-v2'])for(const second of [undefined,'foreign-text-inspection-v1','product-text-preservation-v2']){
+  const h=fixture({timeout:true});h.controls.provider=()=>new Promise(()=>{});assert.equal((await h.post(first?{inspectionPolicy:first}:{})).body.uncertain,true);
+  const next=await h.post({requestId:'12345678-1234-4123-8123-123456789abd',...(second?{inspectionPolicy:second}:{})});assert.equal(next.status,409);assert.equal(h.calls.length,1);assert.equal(h.ledger.size,1);
+ }
 });
 
 test('only exact documented capacity rejections return 429 with a confirmed failure and one binding attempt',async()=>{
@@ -102,6 +119,42 @@ test('schema/model/truncation/coordinates/malformed text fail closed; no raw pro
  }
  assert.throws(()=>h.helper.parseImageVisionResponse(chat({blocks:[block('private https://secret.test','검정')]}),100,80));
  const truncated=chat({blocks:[block()]});truncated.choices[0].finish_reason='length';assert.throws(()=>h.helper.parseImageVisionResponse(truncated,100,80),error=>error.reason==='TRUNCATED');
+});
+
+test('Vision rejection preserves its exact validation category without raw text, another inference or image writes',async()=>{
+ const cases=[
+  ['BLOCKS',{blocks:{}}],
+  ['BLOCK_SHAPE',{blocks:[{...block(),private:'do-not-expose'}]}],
+  ['TEXT',{blocks:[block('private https://secret.test','검정')]}],
+  ['TEXT',{blocks:[block('黑色',null)]}],
+  ['BOX_SHAPE',{blocks:[block('黑色','검정',{x:1,y:1,width:20,height:10,extra:1})]}],
+  ['COORDINATES',{blocks:[block('黑色','검정',{x:99,y:0,width:2,height:1})]}],
+  ['COORDINATES',{blocks:[block('黑色','검정',{x:1.5,y:0,width:2,height:1})]}],
+  ['OVERLAP',{blocks:[block(),block('白色','흰색')]}],
+  ['TEXT_LIMIT',{blocks:Array.from({length:11},(_,i)=>block('字'.repeat(500),'한국어',{x:i,y:0,width:1,height:1}))}],
+  ['DECISION',{decision:'foreign-text',blocks:[]}],
+  ['DECISION',{decision:'no-foreign-text',blocks:[block()]}],
+  ['DECISION',{decision:'unknown',blocks:[]}],
+  ['DECISION',{blocks:[block()]}],
+ ];
+ for(const [reason,value]of cases){
+  const h=fixture();h.controls.provider=()=>chat(value);const before=JSON.stringify([h.product,h.content]);
+  const result=await h.post({inspectionPolicy:h.contract.IMAGE_TEXT_INSPECTION_POLICY});
+  assert.equal(result.status,409,reason);assert.equal(result.body.code,'IMAGE_VISION_'+reason,reason);assert.equal(result.body.uncertain,false,reason);
+  assert.doesNotMatch(JSON.stringify(result.body),/secret\.test|do-not-expose/,reason);
+  const row=[...h.ledger.values()][0];assert.equal(row.status,'failed',reason);assert.equal(row.failure,reason,reason);assert.equal(row.result,null,reason);
+  const observed=await h.status({inspectionPolicy:h.contract.IMAGE_TEXT_INSPECTION_POLICY});assert.equal(observed.body.failure,reason,reason);assert.equal(observed.body.readOnly,true,reason);assert.equal(observed.body.execution.requests,0,reason);
+  await h.post({inspectionPolicy:h.contract.IMAGE_TEXT_INSPECTION_POLICY});assert.equal(h.calls.length,1,reason);assert.equal(JSON.stringify([h.product,h.content]),before,reason);
+ }
+});
+
+test('shared Vision parser keeps its null contract and reports only the validation boundary to an optional observer',()=>{
+ const h=fixture(),valid=plain(h.helper.parseImageVisionResponse(chat({blocks:[block()]}),100,80)),reasons=[];
+ assert.ok(h.contract.parseImageTextVisionResult(valid,100,80,reason=>reasons.push(reason)));assert.deepEqual(reasons,[]);
+ const bad=plain(valid);bad.blocks[0].box.width=1000;
+ assert.equal(h.contract.parseImageTextVisionResult(bad,100,80),null);
+ assert.equal(h.contract.parseImageTextVisionResult(bad,100,80,reason=>reasons.push(reason)),null);assert.deepEqual(reasons,['COORDINATES']);
+ assert.throws(()=>h.helper.readStoredImageVisionResult(bad,100,80),error=>error.reason==='COORDINATES');
 });
 test('documented JSON Mode object envelope works without weakening malformed choices or accepting response strings',()=>{
  const h=fixture(),value={blocks:[block()]};assert.equal(h.helper.parseImageVisionResponse({response:value},100,80).blocks[0].translated,'검정');
@@ -172,5 +225,5 @@ test('legacy and versioned running or uncertain inference fence each other; new 
  for(const versioned of [false,true]){const h=fixture({timeout:true}),inspectionPolicy=h.contract.IMAGE_TEXT_INSPECTION_POLICY;h.controls.provider=()=>new Promise(()=>{});assert.equal((await h.post(versioned?{inspectionPolicy}:{})).body.uncertain,true);
   const next=await h.post({requestId:'12345678-1234-4123-8123-123456789abd',...(versioned?{}:{inspectionPolicy})});assert.equal(next.status,409);assert.equal(h.calls.length,1);assert.equal(h.ledger.size,1);
  }
- const h=fixture();h.controls.provider=()=>chat({blocks:[]});const failed=await h.post({inspectionPolicy:h.contract.IMAGE_TEXT_INSPECTION_POLICY});assert.equal(failed.status,409);assert.equal(failed.body.code,'IMAGE_VISION_BLOCKS');assert.equal([...h.ledger.values()][0].status,'failed');assert.equal(h.calls.length,1);
+ const h=fixture();h.controls.provider=()=>chat({blocks:[]});const failed=await h.post({inspectionPolicy:h.contract.IMAGE_TEXT_INSPECTION_POLICY});assert.equal(failed.status,409);assert.equal(failed.body.code,'IMAGE_VISION_DECISION');assert.equal([...h.ledger.values()][0].status,'failed');assert.equal(h.calls.length,1);
 });

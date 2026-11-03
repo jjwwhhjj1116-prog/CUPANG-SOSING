@@ -8,6 +8,39 @@ import sharp from 'sharp';
 import {freeImageEditFixture} from './helpers/free-image-edit-api.mjs';
 const cv=await cvReady;
 
+test('v2 preserves physical product markings while editing only the separate overlay, including textured product pixels',async()=>{
+ const h=fixture((x,y)=>x>=70?((x+y)%2?[0,0,0,255]:[255,255,255,255]):[220,225,230,255]),policy='product-text-preservation-v2';
+ const result=h.vision.parseImageVisionResponse({response:{decision:'foreign-text',blocks:[
+  {original:'中文',translated:'중국어',kind:'overlay',box:{x:20,y:20,width:30,height:16}},
+  {original:'YOGA SPORTS',translated:'요가 스포츠',kind:'product-marking',box:{x:72,y:20,width:20,height:16}}
+ ]}},100,60,policy),styled=h.initializeVisionRegions(result.blocks,h.image.canvas,100,60);
+ assert.equal(h.contract.isVerifiedNoForeignText(result),false);assert.deepEqual(plain(styled.issues),[]);
+ Object.assign(h.image,{visionResult:result,visionStyleIssues:styled.issues});const before=h.image.canvas.pixels.slice(),prepared=h.prepareSelectedImageCleanup(h.image,styled.regions);
+ assert.equal(prepared[0].selected,true);assert.equal(prepared[1].selected,false);assert.equal(prepared[1].erase,undefined);
+ const rendered=await h.render(h.image,prepared,new AbortController().signal),after=new Uint8Array(await rendered.output.arrayBuffer());
+ for(let y=0;y<60;y++)for(let x=70;x<100;x++){const i=(y*100+x)*4;assert.deepEqual(Array.from(after.slice(i,i+4)),Array.from(before.slice(i,i+4)));}
+ assert.deepEqual(plain(result.blocks.map(row=>[row.text,row.kind])),[['中文','overlay'],['YOGA SPORTS','product-marking']]);
+});
+
+test('v2 unknown text placement blocks cleanup instead of guessing that a product inscription is an overlay',()=>{
+ const h=fixture(),result=h.vision.parseImageVisionResponse({response:{decision:'unreadable',blocks:[{original:'NON-SLIP',translated:'미끄럼 방지',kind:'uncertain',box:{x:20,y:20,width:40,height:16}}]}},100,60,'product-text-preservation-v2');
+ const styled=h.initializeVisionRegions(result.blocks,h.image.canvas,100,60);Object.assign(h.image,{visionResult:result,visionStyleIssues:styled.issues});
+ assert.throws(()=>h.prepareSelectedImageCleanup(h.image,styled.regions),/검토/);assert.equal(h.operations.length,0);
+});
+
+test('v2 intrinsic-only Vision route returns a distinct server preservation proof on exact source GET with no PNG or quotation write',async()=>{
+ const f=await freeImageEditFixture({code:'A01464742',name:'와이홉'}),h=fixture();try{
+  const bytes=new Uint8Array(await sharp(h.image.canvas.pixels,{raw:{width:100,height:60,channels:4}}).png().toBuffer());f.h.objects.set(f.keys[0],bytes);
+  const contract=f.h.load('app/image-text-vision.ts');let requests=0;Object.assign(f.h.bindings,{SOURCEFLOW_IMAGE_TEXT_PROVIDER:'workers-ai-vision',SOURCEFLOW_IMAGE_TEXT_MODEL:contract.IMAGE_TEXT_VISION_MODEL,SOURCEFLOW_IMAGE_TEXT_PAID_ALLOWED:'true'});
+  f.h.bindings.AI.run=async()=>{requests++;return{response:{decision:'product-markings-only',blocks:[{original:'YOGA SPORTS',translated:'YOGA SPORTS',kind:'product-marking',box:{x:20,y:20,width:40,height:16}}]}};};
+  const before=plain(await f.read()),keys=[...f.h.objects.keys()],opened=await(await f.source('mainImage')).json();
+  const response=await f.h.load('app/api/products/[id]/image-text/route.ts').POST(new Request('https://app.test'+f.base+'/image-text',{method:'POST',headers:{'content-type':'application/json',origin:'https://app.test'},body:JSON.stringify({action:'vision',source:opened.source,sourceLanguage:'zh',configuration:opened.visionConfiguration,requestId:crypto.randomUUID(),inspectionPolicy:contract.IMAGE_TEXT_PRESERVATION_POLICY})}),{params:Promise.resolve({id:f.id})});
+  assert.equal(response.status,200,await response.clone().text());assert.equal(requests,1);const source=await(await f.source('mainImage')).json();
+  assert.equal(source.noTextProof,undefined);assert.equal(source.preservationProof.reason,'product-markings-only');assert.equal(source.preservationProof.sourceSha256,opened.source.sourceSha256);
+  assert.deepEqual(plain(await f.read()),before);assert.deepEqual([...f.h.objects.keys()],keys);assert.deepEqual(f.h.objects.get(f.keys[0]),bytes);
+ }finally{f.close();}
+});
+
 const plain=value=>JSON.parse(JSON.stringify(value));
 function fixture(color=()=>[220,225,230,255]){
  const operations=[],cache=new Map(),width=100,height=60;

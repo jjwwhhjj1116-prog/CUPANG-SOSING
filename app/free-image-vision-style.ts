@@ -2,12 +2,13 @@ import {resolveFreeImageTextStyle} from '@/app/free-image-text-style';
 import type {ImageTextVisionBlock} from '@/app/image-text-vision';
 import type {FreeImageRegion} from '@/app/free-image-translation-client';
 
-export type VisionStyleIssue='VISION_REGION_OVERLAP'|'VISION_BACKGROUND_COMPLEX'|'VISION_BACKGROUND_UNAVAILABLE'|'VISION_TEXT_FIT';
+export type VisionStyleIssue='VISION_REGION_OVERLAP'|'VISION_BACKGROUND_COMPLEX'|'VISION_BACKGROUND_UNAVAILABLE'|'VISION_TEXT_FIT'|'VISION_TEXT_CLASSIFICATION';
 const messages:Record<VisionStyleIssue,string>={
  VISION_REGION_OVERLAP:'Vision 영역이 서로 겹칩니다. 원문과 번역을 보존했으며 영역을 직접 조정한 뒤 선택해주세요.',
  VISION_BACKGROUND_COMPLEX:'주변 배경색이 일정하지 않아 단색 채움이 어울리지 않을 수 있습니다. 배경색과 영역을 직접 확인한 뒤 선택해주세요.',
  VISION_BACKGROUND_UNAVAILABLE:'주변 배경색을 확인하지 못했습니다. 원본을 보며 색상과 영역을 직접 설정한 뒤 선택해주세요.',
  VISION_TEXT_FIT:'한국어를 읽을 수 있는 크기로 넣기 어렵습니다. 문구와 영역을 직접 조정한 뒤 선택해주세요.',
+ VISION_TEXT_CLASSIFICATION:'실물 인쇄와 별도 문구를 구분하지 못했습니다. 원본을 유지하며 해당 영역을 직접 확인해주세요.',
 };
 /** Only complete diagnostics emitted below qualify; unknown/provider text stays unresolved. */
 export function isOnlyVisionStyleIssue(value:string|null):boolean{
@@ -63,6 +64,13 @@ export function initializeVisionRegions(blocks:readonly ImageTextVisionBlock[],c
  let context:PixelContext|undefined;try{context=canvas.getContext('2d')??undefined;}catch{/* Keep all blocks available for manual correction. */}
  const issues=new Set<VisionStyleIssue>();
  const regions=blocks.map((row,index):FreeImageRegion=>{
+  // Product inscriptions are source facts, not a background for inpainting.
+  // Keep their exact OCR rows for review without sampling, selecting or typing.
+  if(row.kind==='product-marking'||row.kind==='uncertain'){
+   if(row.kind==='uncertain')issues.add('VISION_TEXT_CLASSIFICATION');
+   return{id:row.id,text:row.text,box:{...row.box},confidence:0,selected:false,translated:'',translationProvenance:'empty',background:'#ffffff',foreground:'#111111',fontSize:12,textAlign:'center',
+    issue:row.kind==='uncertain'?`VISION_TEXT_CLASSIFICATION: ${messages.VISION_TEXT_CLASSIFICATION}`:null};
+  }
   const background=backdrop(context,row.box,blocks,width,height),fit=fittedFont(context,row.translated??row.text,row.box);
   const rowIssues:VisionStyleIssue[]=[];
   if(blocks.some((other,otherIndex)=>otherIndex!==index&&overlaps(row.box,other.box)))rowIssues.push('VISION_REGION_OVERLAP');

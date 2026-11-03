@@ -14,6 +14,7 @@ export type TranslationReview = {
   instructionsVersion: 'sourceflow-translation-v1' | 'sourceflow-translation-v2' | 'sourceflow-translation-v3' | 'sourceflow-translation-v4' | 'sourceflow-translation-v5' | 'sourceflow-translation-v6'; destination: 'OpenAI Responses API' | 'Cloudflare Workers AI' | 'Google 번역';
   paidNotice: string; pricingUrl: string; expiresAt: string; fingerprint: string;
   reviewId?: string; // Older persisted reviews remain valid without this field.
+  qwenTranslationPolicy?: 'commerce-literal-v2' | 'commerce-json-schema-v3' | 'commerce-literal-schema-v4' | 'commerce-partial-attributes-v5'; // Preserve historical approved prompts and transport.
   optionsRetry?: { retryKey: string; optionRevision: number; scope: 'options' }; // Server-created, option-only free retry proof.
   intakeOptions?: { initialJobId: string; optionRevision: number; scope: 'options' }; // Server-created automatic continuation, distinct from an explicit retry.
   seoRetry?: {retryKey:string;scope:'seo';optionRevision:number;sourceFingerprint:string;company:{code:string;name:string}};
@@ -39,6 +40,11 @@ export const translationDestination = (config: TranslationConfig): TranslationRe
 
 export class TranslationError extends Error {
   constructor(public code: string, message: string, public mayHaveBeenCharged = false) { super(message); }
+}
+/** Internal quality location, added only after the whole response shape and
+ * every source index have passed validation. Never persisted as model output. */
+class QwenAttributeTranslationError extends TranslationError{
+  constructor(error:TranslationError,public sourceIndex:number){super(error.code,error.message,error.mayHaveBeenCharged);}
 }
 
 export function translationConfiguration(secrets: TranslationSecrets): TranslationConfiguration {
@@ -105,6 +111,7 @@ export async function prepareTranslationReview(source: TranslationSource, config
   // source/config and millisecond. Request idempotency is stored separately.
   const details = { reviewId:crypto.randomUUID(),model: config.model, maxOutputTokens: config.maxOutputTokens, source,
     instructionsVersion: 'sourceflow-translation-v6' as const, destination: translationDestination(config),
+    ...(config.provider==='workers-ai'&&config.model===WORKERS_QWEN_MODEL?{qwenTranslationPolicy:'commerce-partial-attributes-v5' as const}:{}),
     inputCharacters: JSON.stringify(source).length,
     paidNotice: '승인 후 실행 버튼을 누르면 이 원문을 OpenAI에 보내는 유료 API 요청 1회가 발생합니다. 입력 및 출력 토큰 사용량에 따라 청구되며 정확한 금액은 현재 확정하지 않았습니다. 실패·시간초과도 비용이 발생했을 수 있으며 자동 재시도하지 않습니다.',
     pricingUrl: 'https://developers.openai.com/api/docs/pricing', expiresAt: new Date(now.getTime() + 15 * 60 * 1000).toISOString() };
@@ -134,8 +141,19 @@ title은 자연스러운 한국어 상품명 100자 이내로 작성하세요. �
 숫자·단위·ASCII SKU·모델 코드를 원문 그대로 보존하세요. 상품명·검색어·설명·옵션의 표시 이름과 값에 중국어 한자를 남기지 마세요. 각 attributes의 sourceIndex는 불변 식별자입니다. outputName이 있으면 필수 옵션이므로 모두 정확히 한 번, 원래 순서로 반환하세요. name은 그 outputName 그대로이고 value는 해당 원문 값의 한국어 번역입니다. 다른 sourceIndex의 값을 섞거나 옵션을 생략하지 마세요. 일반 상품 속성도 같은 sourceIndex로 번역하되 모호한 일반 속성만 생략하고 warnings에 위치를 알리세요.
 제조사·수입자의 법정 상호만은 value의 원문을 정확히 보존하고 name은 한국어로 쓰며 warnings에 원문 보존을 알리세요. 이 예외를 상품명·검색어·옵션에 적용하지 마세요. HTML·Markdown·추론·설명 없이 title,keywords,description,attributes,warnings 키의 JSON 객체 하나만 반환하세요. warnings도 한국어입니다.
 형식 예시(다른 상품): 입력 title="棉袜 A1", 옵션 {sourceIndex:0,outputName:"옵션명",value:"红色 2 pcs"} → {"title":"면 양말 A1","keywords":["면 양말"],"description":"","attributes":[{"sourceIndex":0,"name":"옵션명","value":"빨강 2 pcs"}],"warnings":[]}`;
+const qwenTerminologyInstructions='\n防 계열은 구분하세요: 防滑=미끄럼 방지, 防磨=마찰 방지, 防掉跟=뒤꿈치 벗겨짐 방지입니다. 防水만 방수, 防潮만 방습이며 앞의 세 기능과 바꾸거나 함께 추정하지 마세요.';
+
+/** Literal-only supplier attributes need no translated value. Never treat a
+ * full option, ordinary English word or mixed unit/description as a code. */
+function qwenLiteralAttributeValue(attribute:{name:string;value:string}):boolean{
+  if(workersRecoveryOptionMetadataLabel(attribute.name))return false;
+  const numbers=translationNumbers(attribute.value);
+  return numbers.length===1&&numbers[0]===attribute.value
+    ||/^(?=[A-Z0-9_-]*[A-Z])(?=[A-Z0-9_-]*[0-9])[A-Z0-9]+(?:[-_][A-Z0-9]+)*$/u.test(attribute.value);
+}
 
 export function buildTranslationRequest(review: TranslationReview) {
+  if(review.qwenTranslationPolicy!==undefined&&review.qwenTranslationPolicy!=='commerce-literal-v2'&&review.qwenTranslationPolicy!=='commerce-json-schema-v3'&&review.qwenTranslationPolicy!=='commerce-literal-schema-v4'&&review.qwenTranslationPolicy!=='commerce-partial-attributes-v5')throw new TranslationError('UNSUPPORTED_INSTRUCTIONS','지원하지 않는 상품 번역 지시입니다. 새 요청을 검토해주세요.');
   const completeAttributes=review.instructionsVersion==='sourceflow-translation-v5';
   const partialAttributes=review.instructionsVersion==='sourceflow-translation-v6';
   const indexedAttributes=completeAttributes||partialAttributes;
@@ -157,13 +175,13 @@ export function buildTranslationRequest(review: TranslationReview) {
         sourceIndex:{type:'integer',minimum:0,maximum:Math.max(0,attributeCount-1)}}}}}}:translationSchema;
   // Portable BMP Han ranges constrain the model. Runtime quality below still
   // checks every Unicode Script=Han character, including supplementary planes.
-  const schema=strictRecovery?{...baseSchema,properties:{...baseSchema.properties,title:{...translatedString,maxLength:500},description:{...translatedString,maxLength:20000},keywords:{type:'array',maxItems:30,items:{...translatedString,maxLength:QUOTATION_TAG_ITEM_LIMIT}},warnings:{type:'array',maxItems:50,items:{...translatedString,maxLength:2000}},attributes:{type:'array',minItems:requiredQwenOptions,maxItems:attributeCount,items:attributeCount?{anyOf:review.source.attributes.map((attribute,sourceIndex)=>({type:'object',additionalProperties:false,properties:{sourceIndex:{type:'integer',enum:[sourceIndex]},name:workersRecoveryOptionMetadataLabel(attribute.name)?{type:'string',enum:[workersRecoveryOptionMetadataLabel(attribute.name)]}:{...translatedString,minLength:1,maxLength:200},value:!review.workersRecovery&&preservedQwenLegalName(attribute,attribute.value)?{type:'string',enum:[attribute.value]}:{...translatedString,minLength:1,maxLength:/^option-(?:color|size):/u.test(attribute.name)?200:/^option:/u.test(attribute.name)?500:2000}},required:['sourceIndex','name','value']}))}:baseSchema.properties.attributes.items}}}:baseSchema;
+  const schema=strictRecovery?{...baseSchema,properties:{...baseSchema.properties,title:{...translatedString,maxLength:500},description:{...translatedString,maxLength:20000},keywords:{type:'array',maxItems:30,items:{...translatedString,maxLength:QUOTATION_TAG_ITEM_LIMIT}},warnings:{type:'array',maxItems:50,items:{...translatedString,maxLength:2000}},attributes:{type:'array',minItems:requiredQwenOptions,maxItems:attributeCount,items:attributeCount?{anyOf:review.source.attributes.map((attribute,sourceIndex)=>({type:'object',additionalProperties:false,properties:{sourceIndex:{type:'integer',enum:[sourceIndex]},name:workersRecoveryOptionMetadataLabel(attribute.name)?{type:'string',enum:[workersRecoveryOptionMetadataLabel(attribute.name)]}:{...translatedString,minLength:1,maxLength:200},value:!review.workersRecovery&&(preservedQwenLegalName(attribute,attribute.value)||(review.qwenTranslationPolicy==='commerce-literal-schema-v4'||review.qwenTranslationPolicy==='commerce-partial-attributes-v5')&&qwenLiteralAttributeValue(attribute))?{type:'string',enum:[attribute.value]}:{...translatedString,minLength:1,maxLength:/^option-(?:color|size):/u.test(attribute.name)?200:/^option:/u.test(attribute.name)?500:2000}},required:['sourceIndex','name','value']}))}:baseSchema.properties.attributes.items}}}:baseSchema;
   // Number only the transport copy. Persisted source facts and review identity
   // stay unchanged; both provider adapters consume this exact same payload.
   const indexedSource=indexedAttributes?{...review.source,attributes:review.source.attributes.map((attribute,sourceIndex)=>({sourceIndex,...attribute,...(strictRecovery&&workersRecoveryOptionMetadataLabel(attribute.name)?{outputName:workersRecoveryOptionMetadataLabel(attribute.name)}:{})}))}:review.source;
   const source=genericQwen?{title:indexedSource.title,description:indexedSource.description,attributes:indexedSource.attributes,category:indexedSource.category??null,guidance:indexedSource.guidance??null}:indexedSource;
   return { model: review.model, store: false, max_output_tokens: review.maxOutputTokens,
-    instructions:genericQwen?qwenKoreanInstructions:(partialAttributes?koreanDraftInstructions:'')+instructions+guidanceInstructions+keywordInstructions+categoryInstructions+(completeAttributes?` Return exactly one attribute for every input attribute, preserving its sourceIndex. The attributes array must contain exactly ${attributeCount} entries. ${attributeCount?`Return the explicit input sourceIndex values 0 through ${attributeCount-1}, each exactly once, in that order. sourceIndex is an identifier, never a product fact.`:'Return an empty attributes array.'} Never omit an attribute or merge separate attributes, including repeated names/values and option fields. If the meaning cannot be translated reliably, preserve its original name/value verbatim and explain the uncertainty in warnings. Do not invent a replacement fact.`:'' )+(partialAttributes?` Prepare a concise Korean title, factual Korean keywords and a short Korean description when supported, then translate as many of the ${attributeCount} source attributes as can be supported. Preserve each explicit sourceIndex exactly; it is an identifier, never a product fact. Return at most one entry per sourceIndex, in source order. Never merge repeated names/values or redirect option fields. If an attribute cannot be translated reliably, omit that entry and explain the uncertainty in Korean warnings. Missing entries remain untranslated originals for human review; do not copy an original merely to claim completion or invent a replacement fact. Never claim all attributes are translated when entries were omitted. Return a complete JSON object within the output budget.`:''), input: [{ role: 'user', content: [{ type: 'input_text', text: JSON.stringify(source) }] }],
+    instructions:genericQwen?qwenKoreanInstructions+(review.qwenTranslationPolicy?qwenTerminologyInstructions:''):(partialAttributes?koreanDraftInstructions:'')+instructions+guidanceInstructions+keywordInstructions+categoryInstructions+(completeAttributes?` Return exactly one attribute for every input attribute, preserving its sourceIndex. The attributes array must contain exactly ${attributeCount} entries. ${attributeCount?`Return the explicit input sourceIndex values 0 through ${attributeCount-1}, each exactly once, in that order. sourceIndex is an identifier, never a product fact.`:'Return an empty attributes array.'} Never omit an attribute or merge separate attributes, including repeated names/values and option fields. If the meaning cannot be translated reliably, preserve its original name/value verbatim and explain the uncertainty in warnings. Do not invent a replacement fact.`:'' )+(partialAttributes?` Prepare a concise Korean title, factual Korean keywords and a short Korean description when supported, then translate as many of the ${attributeCount} source attributes as can be supported. Preserve each explicit sourceIndex exactly; it is an identifier, never a product fact. Return at most one entry per sourceIndex, in source order. Never merge repeated names/values or redirect option fields. If an attribute cannot be translated reliably, omit that entry and explain the uncertainty in Korean warnings. Missing entries remain untranslated originals for human review; do not copy an original merely to claim completion or invent a replacement fact. Never claim all attributes are translated when entries were omitted. Return a complete JSON object within the output budget.`:''), input: [{ role: 'user', content: [{ type: 'input_text', text: JSON.stringify(source) }] }],
     text: { format: { type: 'json_schema', name: 'korean_product_draft', strict: true, schema } } };
 }
 
@@ -207,6 +225,7 @@ function assertQwenKoreanText(draft:TranslationDraft,source:TranslationSource){
   draft.keywords.forEach((value,index)=>{if(han(value)||!/[가-힣]/u.test(value)&&!factualText.includes(value))fail(`keywords[${index}]`);supportedClaim(value,factualText,`keywords[${index}]`);});
   for(const [index,attribute]of draft.attributes.entries()){
     const original=source.attributes[attribute.sourceIndex],location=`attributes[${index}] · sourceIndex ${attribute.sourceIndex}`;
+    try{
     const optionLabel=workersRecoveryOptionMetadataLabel(original.name),legal=preservedQwenLegalName(original,attribute.value);
     if(preservedQwenLegalName(original,original.value.trim())&&!legal)throw new TranslationError('QWEN_LEGAL_NAME_CHANGED',`Qwen이 제조사·수입자 상호 원문을 변경했습니다. 위치 ${location}.value. 법정 상호를 추정하지 않고 원문과 기존 값을 유지했습니다. 결과를 적용하지 않았습니다.`,true);
     if(han(attribute.name)||optionLabel&&attribute.name!==optionLabel||han(original.name)&&!/[가-힣]/u.test(attribute.name))fail(location+'.name');
@@ -219,6 +238,7 @@ function assertQwenKoreanText(draft:TranslationDraft,source:TranslationSource){
     const codes=(value:string)=>value.match(/\b[A-Za-z]+[-_]?[0-9][A-Za-z0-9._/-]*\b/gu)??[];
     if([...beforeNumbers].some(value=>!afterNumbers.has(value))||[...afterNumbers].some(value=>!beforeNumbers.has(value))||units(original.value).some(value=>!units(attribute.value).includes(value))||codes(original.value).some(value=>!attribute.value.includes(value)))
       throw new TranslationError('QWEN_UNSUPPORTED_FACT',`Qwen 번역의 숫자·단위·모델 코드가 원문과 다릅니다. 위치 ${location}.value. 원문과 기존 값을 유지하며 결과를 적용하지 않았습니다.`,true);
+    }catch(error){if(error instanceof TranslationError)throw new QwenAttributeTranslationError(error,attribute.sourceIndex);throw error;}
   }
   for(const [sourceIndex,attribute]of source.attributes.entries())if(workersRecoveryOptionMetadataLabel(attribute.name)&&!draft.attributes.some(value=>value.sourceIndex===sourceIndex))fail(`attributes · sourceIndex ${sourceIndex}`,true);
 }
@@ -226,6 +246,29 @@ function assertQwenKoreanText(draft:TranslationDraft,source:TranslationSource){
  * Legacy Google/Llama/recovery contracts continue using validateTranslationDraft. */
 export function validateQwenTranslationDraft(value:unknown,source:TranslationSource):TranslationDraft{
   return validateTranslationDraft(value,source,'sourceflow-translation-v6','all',WORKERS_QWEN_MODEL);
+}
+/** A new execution may isolate a nonessential ordinary attribute only after
+ * the unchanged strict validator has checked all syntax and source identities.
+ * Required options, legal names and every SEO field remain hard failures. */
+function validatePartialQwenTranslationDraft(value:unknown,source:TranslationSource):TranslationDraft{
+  const reasons:Record<string,string>={QWEN_UNTRANSLATED_TEXT:'한국어 번역 미확인',QWEN_UNSUPPORTED_FACT:'숫자·단위·모델 코드 불일치',QWEN_UNSUPPORTED_CLAIM:'원문에 없는 성능 표현'};
+  let candidate=value;const omitted=new Map<number,string>();
+  while(true){
+    try{
+      const draft=validateQwenTranslationDraft(candidate,source);
+      const details=Object.entries(reasons).flatMap(([code,label])=>{const indices=[...omitted].filter(([,reason])=>reason===code).map(([index])=>index);return indices.length?[`sourceIndex ${indices.join(', ')} (${label})`]:[];});
+      const warnings=details.length?[`일반 상품속성 ${omitted.size}개의 번역값을 보류했습니다. ${details.join(' · ')}. 해당 원문은 보존했으며 이 값들을 적용하거나 번역 완료로 처리하지 않았습니다.`,...draft.warnings]:draft.warnings;
+      return {...draft,warnings:warnings.length>50?[...warnings.slice(0,49),`추가 검토 안내 ${warnings.length-49}개는 표시 한도로 생략했습니다. 원문과 미번역 속성을 확인해주세요.`]:warnings};
+    }catch(error){
+      if(!(error instanceof QwenAttributeTranslationError)||!Object.hasOwn(reasons,error.code)||omitted.has(error.sourceIndex)||omitted.size>=source.attributes.length)throw error;
+      const original=source.attributes[error.sourceIndex];
+      if(!original||workersRecoveryOptionMetadataLabel(original.name)||preservedQwenLegalName(original,original.value.trim()))throw error;
+      // This location exists only after full shape/index validation above;
+      // preserve the response and source, filtering a fresh transport copy.
+      const parsed=candidate as TranslationDraft;candidate={...parsed,attributes:parsed.attributes.filter(attribute=>attribute.sourceIndex!==error.sourceIndex)};
+      omitted.set(error.sourceIndex,error.code);
+    }
+  }
 }
 export function validateTranslationDraft(value: unknown, source: TranslationSource, instructionsVersion: TranslationReview['instructionsVersion'] = 'sourceflow-translation-v1', scope:'all'|'options'='all',providerModel?:string): TranslationDraft {
   const draft = object(value, ['title', 'keywords', 'description', 'attributes', 'warnings']);
@@ -385,9 +428,9 @@ export async function executeTranslation(review: TranslationReview, config: Tran
         // Candidate non-thinking recipe follows the Qwen model card. Keep
         // historical recovery sampling and every other provider unchanged.
         ...(genericQwen?{temperature:0.7,top_p:0.8,top_k:20}:qwen?{temperature:0}:{}),
-        // Generic Qwen relies on the Korean JSON-only prompt and the strict
-        // runtime contract. Keep schema transport for every historical path.
-        ...(genericQwen?{}:{response_format:{type:'json_schema',json_schema:request.text.format.schema}}),
+        // New reviews send the generated language/option schema to the model.
+        // Historical generic approvals keep their exact schema-free request.
+        ...(!genericQwen||review.qwenTranslationPolicy==='commerce-json-schema-v3'||review.qwenTranslationPolicy==='commerce-literal-schema-v4'||review.qwenTranslationPolicy==='commerce-partial-attributes-v5'?{response_format:{type:'json_schema',json_schema:request.text.format.schema}}:{}),
       });
       payload = await Promise.race([pending, new Promise<never>((_resolve, reject) => {
         timeout = setTimeout(() => reject(new Error('Workers AI response deadline exceeded')), 60000);
@@ -400,7 +443,7 @@ export async function executeTranslation(review: TranslationReview, config: Tran
       if(!qwen&&Object.hasOwn(envelope,'choices'))throw Error('Unexpected Llama chat envelope');
       const parsed=qwen?(genericQwen?parseWorkersQwenTranslationJson(payload):parseWorkersQwenJson(payload)):null;
       const output = canonicalizeWorkersRecoveryOptionMetadata(review,parsed?parsed.value:typeof envelope.response === 'string' ? JSON.parse(envelope.response) : envelope.response);
-      const draft = genericQwen?validateQwenTranslationDraft(output,review.source):validateTranslationDraft(output, review.source, review.instructionsVersion);
+      const draft = genericQwen?(review.qwenTranslationPolicy==='commerce-partial-attributes-v5'?validatePartialQwenTranslationDraft(output,review.source):validateQwenTranslationDraft(output,review.source)):validateTranslationDraft(output, review.source, review.instructionsVersion);
       // Inspect the complete, shape-validated raw response before the generic
       // v6 adapter can omit an unusable original-language attribute.
       if(recoveryProof)assertWorkersRecoveryDraftQuality(review,output as TranslationDraft);

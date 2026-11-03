@@ -45,11 +45,23 @@ test('configured workspace Vision renders validated Korean with inpainting and n
   assert.ok(unconfigured.items.every(item=>item.status==='failed'));assert.deepEqual(blocked.stages,[]);
  }finally{f.api.close();}
 });
+test('v2 workspace keeps physical inscriptions out of Korean rendering and preserves intrinsic-only photos without a save',async()=>{
+ const f=await fixture({vision:true});try{
+  for(const onlyMarkings of [false,true]){
+   const value=visionValue(f),overlay=value.blocks[0];overlay.kind='overlay';value.inspection={policy:'product-text-preservation-v2',decision:onlyMarkings?'product-markings-only':'foreign-text'};
+   value.blocks=[...(!onlyMarkings?[overlay]:[]),{id:onlyMarkings?'vision-1':'vision-2',text:'YOGA SPORTS',translated:null,issue:null,kind:'product-marking',box:{x:200,y:180,width:80,height:20}}];
+   const before=f.tables(),v=visionDeps(f,value),prepared=await f.batch.prepareDetailWorkspaceImageBatch({selection:f.selection,saved:f.saved,language:'zh'},signal(),()=>{},v.deps);
+   assert.ok(prepared.items.every(item=>item.status===(onlyMarkings?'unchanged':'ready')),JSON.stringify(prepared.items.map(item=>item.message)));assert.deepEqual(f.tables(),before);
+   if(onlyMarkings)assert.ok(!v.stages.includes('render'));
+   else for(const item of prepared.items){const row=item.rendered.editDocument.regions.find(region=>region.text==='YOGA SPORTS');assert.equal(row.selected,false);assert.equal(row.translated,'');}
+  }
+ }finally{f.api.close();}
+});
 
 test('an exact zh no-text proof skips zh inference and permits explicit English Vision without another translator',async()=>{
  const f=await fixture({vision:true});try{
   const requested=[];f.intercept(async(url,init)=>{
-   if(url.endsWith('/image-text')&&init.method==='POST'){const input=JSON.parse(init.body);requested.push(input);assert.equal(input.action,'vision');assert.equal(input.sourceLanguage,'en');const result=visionValue(f);result.blocks[0].text='English';return Response.json({source:input.source,configuration:input.configuration,requestId:input.requestId,result,replayed:false,execution:{requests:1,cached:false}});}
+   if(url.endsWith('/image-text')&&init.method==='POST'){const input=JSON.parse(init.body);requested.push(input);assert.equal(input.action,'vision');assert.equal(input.sourceLanguage,'en');const result=visionValue(f);result.blocks[0].text='English';result.blocks[0].kind='overlay';result.inspection={policy:input.inspectionPolicy,decision:'foreign-text'};return Response.json({source:input.source,configuration:input.configuration,requestId:input.requestId,result,replayed:false,execution:{requests:1,cached:false}});}
    if(!url.includes('/workspace-image-text?'))return;const route=f.api.load('app/api/products/[id]/workspace-image-text/route.ts'),response=await route.GET(new Request('https://app.test'+url,init),f.context),body=await response.json(),source=body.source;
    body.noTextProof={policy:'foreign-text-inspection-v1',productId:source.productId,sourceKey:source.sourceKey,sourceSha256:source.sourceSha256,width:source.width,height:source.height,sourceLanguage:'zh',requestId:'90700000-0000-4000-8000-000000000008',verifiedAt:'2026-11-02T00:00:00.000Z',configuration:body.visionConfiguration};return Response.json(body);});
   const v=visionDeps(f),deps={...v.deps,recognize:f.canvas.client.recognizeFreeImage};

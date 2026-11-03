@@ -26,7 +26,7 @@ function dashboard(company,initialMode='history'){
   if(url==='/api/settings')return mode==='settings'?Response.json({error:'설정 조회 실패'},{status:503}):Response.json({settings:{brand:currentCompany.name},scope:{ownerId:mode==='wrong-owner'?'foreign-owner':owner,company:mode==='no-company'?null:currentCompany}});
   assert.fail('Unexpected synthetic dashboard request '+url);
  };
- function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,URL,URLSearchParams,Date,AbortController,AbortSignal,crypto,structuredClone,fetch:fetcher,window:{addEventListener(){},removeEventListener(){},setTimeout:()=>0,confirm:()=>false},require(name){
+ function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,URL,URLSearchParams,Date,AbortController,AbortSignal,TextEncoder,TextDecoder,crypto,structuredClone,fetch:fetcher,window:{addEventListener(){},removeEventListener(){},setTimeout:()=>0,confirm:()=>false},require(name){
   if(name==='react')return hooks;if(name.endsWith('.css'))return{};
   if(name==='@/app/components/use-intake-draft')return{useIntakeDraft:()=>draft};
   if(name==='@/app/components/use-source-registrations')return{useSourceRegistrations:()=>({items:[saved],error:'',reload(){},acceptReviewed:()=>false})};
@@ -43,6 +43,19 @@ function dashboard(company,initialMode='history'){
 }
 
 for(const company of companies){
+ test(`${company.code}: handing an inbox capture to intake closes the inbox instead of reopening it over the next workspace`,async()=>{
+  const h=dashboard(company,'ready');try{
+   await h.settle();h.button('수집함').props.onClick();await h.settle();
+   const inbox=()=>nodes(h.render()).find(node=>node.props?.id==='capture-tools-dialog');
+   assert.equal(inbox().props.role,'dialog');
+   h.component('source-inbox-panel').onAdd(h.saved);await h.settle();
+   const intake=nodes(h.render()).find(node=>node.props?.title==='상품 대기열'&&typeof node.props.onClose==='function');assert.ok(intake);
+   intake.props.onClose();await h.settle();
+   assert.equal(inbox().props.hidden,undefined);assert.equal(inbox().props.role,undefined);
+   assert.equal(nodes(h.render()).find(node=>node.props?.className==='modal-backdrop intake-tools-backdrop').props.hidden,true);
+  }finally{h.close();}
+ });
+
  test(`${company.code}: a distinct immutable capture opens only a new local fork seed while five same-URL pending rows stay exact`,async()=>{
   const h=dashboard(company,'ready');try{
    const sourceUrl=h.saved.snapshot.sourceUrl,jobId='11111111-1111-4111-8111-111111111111';h.products[0].source_url=sourceUrl;

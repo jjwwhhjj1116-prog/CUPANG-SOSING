@@ -3,7 +3,8 @@ import {sourceInboxDisplayTitle} from '@/app/source-inbox-title';
 import type {QuerySourceCaptureSummary} from '@/app/query-source-capture';
 import {supplierHubCompany,type SupplierHubCompany} from '@/app/supplier-hub-company';
 import {sameSourceArchiveReference,type SourceArchiveReference} from '@/app/source-inbox-archive-client';
-import {querySourceCaptureSelection} from '@/app/source-capture-selection';
+import {querySourceCaptureSelection,sourceCaptureSelection,sameSourceCaptureSelection} from '@/app/source-capture-selection';
+import type {CollectionJob} from '@/app/sourcing';
 
 export type QuerySourceRegistrationReference=SourceArchiveReference&{kind:'query'};
 export type RegistrationSourceReference=SourceArchiveReference|QuerySourceRegistrationReference;
@@ -29,11 +30,22 @@ export function validateQueryRegistrationSummary(value:unknown,ownerId:string,co
 export function sameSourceUrl(first:string,second:string){
  try{const a=new URL(first),b=new URL(second);return a.origin===b.origin&&a.pathname===b.pathname;}catch{return false;}
 }
+/** Hide only the immutable capture already represented by a currently listed product. */
+export function sourceRegistrationHasProduct(item:SourceInboxItem|QuerySourceCaptureSummary,products:readonly {id:string;owner_id?:string;source_url:string}[],jobs:readonly CollectionJob[],ownerId?:string,company?:SupplierHubCompany|null):boolean{
+ if(!ownerId||!company||!supplierHubCompany(company.code,company.name)||item.ownerId!==ownerId||item.company?.code!==company.code||item.company.name!==company.name||item.archivedAt!==null)return false;
+ let selected;
+ try{selected='snapshot' in item?sourceCaptureSelection(item):querySourceCaptureSelection(item);}catch{return false;}
+ return jobs.some(job=>{
+  const origin=job.context?.forkedFrom,capture=origin?.sourceCapture;
+  if(job.status!=='awaiting_connector'||!job.product_id||origin?.kind!=='stored-source-new-draft-v1'||origin.requestId!==job.id
+   ||job.context?.company?.code!==company.code||job.context.company.name!==company.name||job.source_url!==selected.sourceUrl
+   ||capture?.captureId!==selected.captureId||capture.format!==selected.format||!sameSourceCaptureSelection(capture,selected))return false;
+  return products.some(product=>product.id===job.product_id&&product.owner_id===ownerId&&product.source_url===selected.sourceUrl);
+ });
+}
 /** A captured page is a list entry, not a priced/registered product. */
 export function sourceRegistrationRows(items:SourceInboxItem[]){
- // A URL identifies an offer, not a capture version. A new capture must remain
- // visible even when an older version has already become a working product.
- // Only the explicit, recoverable archive action removes a capture row.
+ // A URL alone never identifies a consumed capture; archive remains explicit.
  return items.filter(item=>!item.archivedAt).map(item=>({
   id:`source:${item.id}`,source_capture:item,title:sourceInboxDisplayTitle(item),
   source_url:item.snapshot.sourceUrl,created_at:item.receivedAt,image_keys:'[]',

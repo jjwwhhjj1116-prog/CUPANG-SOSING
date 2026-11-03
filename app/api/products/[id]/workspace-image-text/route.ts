@@ -41,7 +41,7 @@ export async function GET(request: Request, context: Context) {
       &&JSON.stringify(proof.configuration)===JSON.stringify(configuration));
     await confirmWorkspaceImageSource(identity,source,request.signal);request.signal.throwIfAborted();
     if(JSON.stringify(await auth(context))!==JSON.stringify(identity)||JSON.stringify(imageVisionConfiguration(env as ImageVisionEnvironment))!==JSON.stringify(configuration))throw new DetailWorkspaceError('이미지 Vision의 회원·회사·설정이 변경되었습니다. 원본을 다시 확인해주세요.');
-    return json({...reply,visionConfiguration:configuration,...(noTextProof?{noTextProof}:{})});
+    return json({...reply,visionConfiguration:configuration,...(noTextProof?noTextProof.reason==='product-markings-only'?{preservationProof:noTextProof}:{noTextProof}:{})});
   } catch (error) { return fail(error); }
 }
 export async function POST(request: Request, context: Context) {

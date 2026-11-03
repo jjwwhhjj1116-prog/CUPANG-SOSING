@@ -1,7 +1,7 @@
 import type { AutomationStage, AutomationStageId, AutomationWorkflow } from '@/app/automation/model';
 import type { ProductContent } from '@/app/product-content';
 import type { ProductOptions } from '@/app/product-options';
-import {parseImageNoTextProof,type ImageNoTextProof} from '@/app/image-no-text-proof';
+import {parseImageOriginalPreservationProof,type ImageOriginalPreservationProof} from '@/app/image-no-text-proof';
 import type {FreeImageEditReview} from '@/app/free-image-edit-review';
 
 export const registrationStageIds = ['seo','pricing','mainImage','additionalImages','detailImage','sizeChart','koreanLabel','quotation'] as const;
@@ -51,13 +51,14 @@ export type RegistrationFinalContent = {optionId:string|null;title:string;main:s
 const korean=(value:unknown)=>typeof value==='string'&&!!value.trim()&&/\p{Script=Hangul}/u.test(value)&&!/\p{Script=Han}|[\u0000-\u001f]/u.test(value);
 /** Explicit saved field intent or an exact adopted SEO document proves saved
  * work. Unassigned provider output and generated drafts cannot satisfy it. */
-export function registrationStagesFromSavedContent(product:{id:string;owner_id?:string;updated_at?:string;categoryId?:string|null},content:ProductContent|null,options:ProductOptions|null,keys:readonly string[],finalRows:RegistrationFinalContent[]|null,noTextProofs:readonly ImageNoTextProof[]=[]):RegistrationStageSummary {
+export function registrationStagesFromSavedContent(product:{id:string;owner_id?:string;updated_at?:string;categoryId?:string|null},content:ProductContent|null,options:ProductOptions|null,keys:readonly string[],finalRows:RegistrationFinalContent[]|null,noTextProofs:readonly ImageOriginalPreservationProof[]=[],sizeChartRequired=false):RegistrationStageSummary {
   const size=content?.assets?.size,used=!!size?.value?.length||!!content?.manualSizeChart;
-  const result=pendingRegistrationStages(used);
+  const result=pendingRegistrationStages(used||sizeChartRequired);
+  if(sizeChartRequired&&!used)result.sizeChart.detail='이 카테고리는 사이즈표가 필요합니다. 사이즈표 편집에서 원본을 선택하거나 표를 작성해주세요.';
   const owned=(key:string)=>keys.includes(key)&&(!product.owner_id||key.startsWith(product.owner_id+'/'));
   const done=(id:AutomationStageId,detail:string)=>{result[id]={state:'complete',detail};};
-  const unchanged=new Set(noTextProofs.flatMap(value=>{const proof=parseImageNoTextProof(value);return proof?.productId===product.id&&proof.sourceLanguage==='zh'&&owned(proof.sourceKey)?[proof.sourceKey]:[];}));
-  const proofDates=new Map(noTextProofs.flatMap(value=>{const proof=parseImageNoTextProof(value);return proof?.productId===product.id&&unchanged.has(proof.sourceKey)?[[proof.sourceKey,proof.verifiedAt]as const]:[];}));
+  const unchanged=new Set(noTextProofs.flatMap(value=>{const proof=parseImageOriginalPreservationProof(value);return proof?.productId===product.id&&proof.sourceLanguage==='zh'&&owned(proof.sourceKey)?[proof.sourceKey]:[];}));
+  const proofDates=new Map(noTextProofs.flatMap(value=>{const proof=parseImageOriginalPreservationProof(value);return proof?.productId===product.id&&unchanged.has(proof.sourceKey)?[[proof.sourceKey,proof.verifiedAt]as const]:[];}));
   if(finalRows?.length){
     for(const [id,role] of [['mainImage','main'],['additionalImages','additional'],['detailImage','detail'],['koreanLabel','label']] as const){
       if(finalRows.every(row=>row.manualImages?.[role]&&row[role].length>0&&(role!=='main'||row.main.length===1)&&new Set(row[role]).size===row[role].length&&!row.imageIssues?.[role]&&row[role].every(owned)))done(id,'직접 저장한 현재 카테고리의 최종 이미지 연결 확인');
@@ -96,7 +97,7 @@ export function registrationStagesFromSavedContent(product:{id:string;owner_id?:
         &&row[role].every(key=>owned(key)&&(unchanged.has(key)||manualKeys.has(key))))
         &&(role!=='detail'||content.assets.detail.value.length>0||finalRows.every(row=>row.manualImages?.detail===true))){
           const times=finalRows.flatMap(row=>row[role].filter(key=>!manualKeys.has(key)).map(key=>proofDates.get(key)!));
-          done(id,'현재 최종 이미지의 서버 외국어 없음 검증 확인 · 원본 유지');
+          done(id,noTextProofs.some(proof=>proof.reason==='product-markings-only'&&finalRows.some(row=>row[role].includes(proof.sourceKey)))?'현재 최종 이미지의 서버 원본 보존 검증 확인 · 실물 인쇄 유지':'현재 최종 이미지의 서버 외국어 없음 검증 확인 · 원본 유지');
           if(times.length&&times.every(time))result[id].sourceProofAt=new Date(Math.min(...times.map(value=>Date.parse(value)))).toISOString();
         }
     }

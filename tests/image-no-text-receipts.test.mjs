@@ -20,12 +20,25 @@ function fixture(){
  const row={optionId:'one',title:'상품',main:['owner/photo.png'],additional:['owner/photo.png'],detail:['owner/photo.png'],label:[],imageIssues:{}};
  return{sqlite,queries,scope,product,env,contract,vision,ledger,receipts,status,content,row,result,configuration,load,async finish(value=result){await ledger.claimImageVisionRequest(scope);await ledger.finishImageVisionRequest(scope,{status:'completed',result:value,requests:1});},read:()=>receipts.readImageNoTextReceipts('owner',[product]),close:()=>sqlite.close()};
 }
+test('v2 physical markings produce a distinct exact-source preservation receipt and complete without changing image or product bytes',async()=>{
+ const h=fixture();try{
+  const result=h.vision.parseImageVisionResponse({response:{decision:'product-markings-only',blocks:[{original:'YOGA SPORTS',translated:'요가 스포츠',kind:'product-marking',box:{x:1,y:1,width:40,height:15}}]}},100,80,'product-text-preservation-v2');
+  assert.equal(h.contract.isVerifiedNoForeignText(result),false);assert.equal(h.contract.isVerifiedProductMarkingsOnly(result),true);
+  const before=JSON.stringify(h.sqlite.prepare('SELECT * FROM products').all());await h.finish(result);h.queries.length=0;
+  const proof=(await h.read()).fresh;assert.equal(proof.length,1);assert.equal(proof[0].reason,'product-markings-only');assert.equal(proof[0].policy,'product-text-preservation-v2');
+  assert.equal(h.load('app/image-no-text-proof.ts').parseImageNoTextProof(proof[0]),null);
+  const stages=h.status.registrationStagesFromSavedContent(h.product,h.content,null,['owner/photo.png'],[h.row],proof);
+  for(const id of ['mainImage','additionalImages','detailImage']){assert.equal(stages[id].state,'complete');assert.match(stages[id].detail,/실물 인쇄/);}
+  assert.ok(h.queries.every(sql=>/^SELECT /u.test(sql)));assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM products').all()),before);
+  const forged={...proof[0],reason:'no-foreign-text'};h.sqlite.prepare('UPDATE image_no_text_receipts SET proof=?').run(JSON.stringify(forged));assert.equal((await h.read()).fresh,undefined,'markings-only cannot be relabeled as no foreign text');
+ }finally{h.close();}
+});
 test('explicit provider no-foreign decision is required; legacy empty, unreadable and contradictory decisions never qualify',async()=>{
  const h=fixture();try{
   for(const value of [{blocks:[]},{decision:'unreadable',blocks:[]},{blocks:[{original:'中文',translated:'중국어',box:{x:1,y:1,width:20,height:10}}]}]){
    const result=h.vision.parseImageVisionResponse({response:value},100,80);assert.equal(h.contract.isVerifiedNoForeignText(result),false);
   }
-  for(const value of [{decision:'foreign-text',blocks:[]},{decision:'no-foreign-text',blocks:[{original:'中文',translated:'중국어',box:{x:1,y:1,width:20,height:10}}]},{decision:'guessed',blocks:[]}])assert.throws(()=>h.vision.parseImageVisionResponse({response:value},100,80),/BLOCKS/);
+  for(const value of [{decision:'foreign-text',blocks:[]},{decision:'no-foreign-text',blocks:[{original:'中文',translated:'중국어',box:{x:1,y:1,width:20,height:10}}]},{decision:'guessed',blocks:[]}])assert.throws(()=>h.vision.parseImageVisionResponse({response:value},100,80),/DECISION/);
   assert.equal(h.contract.isVerifiedNoForeignText(h.result),true);
  }finally{h.close();}
 });

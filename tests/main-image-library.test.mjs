@@ -13,6 +13,60 @@ const candidateLabel=(view,key)=>`최종 대표이미지 ${view.imageKeys.indexO
 const gallery=h=>visible(h.render()).find(node=>node.type==='div'&&typeof node.props['aria-label']==='string'&&node.props['aria-label'].endsWith(' 후보'));
 const candidates=h=>visible(gallery(h)).filter(node=>node.type==='button').map(node=>node.props['aria-label']);
 const snapshot=f=>JSON.stringify({rows:['products','product_content','product_options','product_price_policy','product_quotation_fields','collection_context','collection_results'].map(table=>f.backend.sqlite.prepare('SELECT * FROM '+table).all()),objects:[...f.backend.objects].map(([key,data])=>[key,Buffer.from(data).toString('base64')])});
+const advanceMetadata=(f,table)=>{const row=f.backend.sqlite.prepare(`SELECT payload FROM ${table} WHERE product_id=?`).get(f.product.id),value=JSON.parse(row.payload);value.revision++;f.backend.sqlite.prepare(`UPDATE ${table} SET revision=?,payload=? WHERE product_id=?`).run(value.revision,JSON.stringify(value),f.product.id);};
+
+for(const [company,table]of [[companies[0],'product_content'],[companies[1],'product_options']])test(`a concurrent ${table} revision refreshes the clean quotation and galleries with reads only (${company.code})`,async()=>{
+ const f=await fixture(company),request=f.request;let quotations=0,frozen;
+ f.request=async(url,init)=>{const response=await request(url,init);if(url.includes('/quotation-fields')&&++quotations===1){advanceMetadata(f,table);frozen=snapshot(f);}return response;};
+ const h=editor(f);try{
+  await h.idle();for(let pass=0;pass<20&&h.button('메인 이미지 보기').props.disabled;pass++)await h.idle();
+  assert.equal(h.button('메인 이미지 보기').props.disabled,false,'the newer saved source classification must recover without reopening the popup');
+  await h.click('메인 이미지 보기');assert.ok(candidates(h).length>0);assert.equal(quotations,2,'only one automatic quotation refresh');
+  assert.equal(f.calls.filter(call=>call.url.endsWith('/content')).length,2);assert.equal(f.calls.filter(call=>call.url.endsWith('/options')).length,2);
+  assert.equal(h.render().props['data-workspace-dirty'],false);assert.equal(h.saved.length,0);assert.equal(snapshot(f),frozen);assert.ok(f.calls.every(call=>call.method==='GET'));
+ }finally{h.close();f.close();}
+});
+
+test('a second metadata race stops after one read-only refresh instead of looping',async()=>{
+ const f=await fixture(),request=f.request;let quotations=0,contents=0;
+ f.request=async(url,init)=>{if(url.endsWith('/content')&&++contents===2)advanceMetadata(f,'product_content');const response=await request(url,init);if(url.includes('/quotation-fields')&&++quotations===1)advanceMetadata(f,'product_content');return response;};
+ const h=editor(f);try{
+  await h.idle();for(let pass=0;pass<10;pass++)await h.idle();
+  assert.equal(quotations,2);assert.equal(contents,2);assert.equal(h.button('메인 이미지 보기').props.disabled,true);assert.match(text(h.render()),/이미지 종류를 확인하지 못했습니다/);assert.ok(f.calls.every(call=>call.method==='GET'));
+ }finally{h.close();f.close();}
+});
+
+test('a pending explicit image choice prevents an automatic metadata refresh from replacing its quotation base',async()=>{
+ const f=await fixture(),request=f.request;let quotations=0,release,held=true;const pending=new Promise(resolve=>{release=resolve;});
+ f.request=async(url,init)=>{const response=await request(url,init);if(url.includes('/quotation-fields')&&++quotations===1)advanceMetadata(f,'product_content');if(url.endsWith('/content')&&held)await pending;return response;};
+ const h=editor(f);try{
+  await h.idle();const view=await f.read(),frozen=snapshot(f);await h.click(candidateLabel(view,f.nextKey));held=false;release();await h.idle();
+  assert.equal(quotations,1);assert.equal(h.render().props['data-workspace-dirty'],true);assert.equal(h.button('메인 이미지 보기').props.disabled,true);
+  assert.ok(visible(h.render()).some(node=>node.type==='img'&&node.props.alt==='최종 견적 대표이미지'&&node.props.src==='/api/files/'+f.nextKey));assert.equal(snapshot(f),frozen);assert.ok(f.calls.every(call=>call.method==='GET'));
+ }finally{release();h.close();f.close();}
+});
+
+for(const change of ['draft','focus'])test(`an in-flight gallery recovery cannot replace a newer ${change} session`,async()=>{
+ const f=await fixture(),request=f.request;let quotations=0,release;const pending=new Promise(resolve=>{release=resolve;});
+ f.request=async(url,init)=>{const response=await request(url,init);if(url.includes('/quotation-fields')){quotations++;if(quotations===1)advanceMetadata(f,'product_content');else if(quotations===2)await pending;}return response;};
+ const h=editor(f);try{
+  await h.idle();assert.equal(quotations,2);const view=await f.read(),frozen=snapshot(f),old=h.button(candidateLabel(view,f.nextKey)).props.onClick;
+  if(change==='draft'){assert.equal(h.button(candidateLabel(view,f.nextKey)).props.disabled,false);old();await h.idle();}else{h.props.focusedOptionId=view.resolved.rows.find(row=>row.optionId&&row.optionId!==f.id).optionId;await h.idle();old();}
+  release();await h.idle();
+  assert.equal(h.render().props['data-workspace-dirty'],change==='draft');assert.equal(h.saved.length,0);assert.equal(snapshot(f),frozen);assert.ok(f.calls.every(call=>call.method==='GET'));
+  if(change==='draft'){assert.equal(quotations,2);assert.equal(f.calls.filter(call=>call.url.endsWith('/content')).length,1);assert.ok(visible(h.render()).some(node=>node.type==='img'&&node.props.alt==='최종 견적 대표이미지'&&node.props.src==='/api/files/'+f.nextKey));}
+  else{assert.equal(h.input('최종 대표이미지 옵션').props.value,h.props.focusedOptionId);assert.equal(h.button('메인 이미지 보기').props.disabled,false);}
+ }finally{release();h.close();f.close();}
+});
+
+test('gallery recovery does not adopt a concurrently edited final representative image',async()=>{
+ const f=await fixture(),request=f.request;let quotations=0,frozen;
+ f.request=async(url,init)=>{const response=await request(url,init);if(url.includes('/quotation-fields')&&++quotations===1){advanceMetadata(f,'product_content');const latest=await f.read();await json(await f.backend.route(f.endpoint,{method:'PUT',body:{expectedRevision:latest.revision,expectedInputFingerprint:latest.inputFingerprint,changes:[{optionId:f.id,fieldKey:'mainImage',value:f.nextKey}]}}));frozen=snapshot(f);}return response;};
+ const h=editor(f);try{
+  await h.idle();assert.equal(quotations,2);assert.equal(f.calls.filter(call=>call.url.endsWith('/content')).length,1);assert.equal(h.button('메인 이미지 보기').props.disabled,true);
+  assert.ok(visible(h.render()).some(node=>node.type==='img'&&node.props.alt==='최종 견적 대표이미지'&&node.props.src==='/api/files/'+f.key));assert.equal(snapshot(f),frozen);assert.ok(f.calls.every(call=>call.method==='GET'));
+ }finally{h.close();f.close();}
+});
 
 test('untouched gallery preference is proven work, then options, then main without changing candidate metadata',async()=>{
  const f=await fixture();try{

@@ -799,6 +799,11 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   const sourceArchiveLive=useRef({ownerId:workspaceOwnerId,scope:sourceReviewScope,items:sourceRegistrations.items,disabled:sourceArchiveDisabled});
   useLayoutEffect(()=>{sourceArchiveLive.current={ownerId:workspaceOwnerId,scope:sourceReviewScope,items:sourceRegistrations.items,disabled:sourceArchiveDisabled};});
   useEffect(()=>()=>{sourceArchiveRequest.current?.abort();sourceArchiveRequest.current=null;},[sourceReviewScope]);
+  function closeCaptureTools(){
+    if(sourceWorkspace.current?.scope!==sourceReviewScope)return;
+    captureToolsSession.current=null;
+    setCaptureToolsScope(null);captureToolsTrigger.current?.focus?.({preventScroll:true});
+  }
   function prepareSource(item:SourceInboxItem,continuing=false){
     const operation=settingsOperationRef.current,availability=sourceWorkspace.current;
     if(!operation.mounted||operation.ownerId!==workspaceOwnerId||availability!==sourceWorkspaceSnapshot||availability?.scope!==sourceReviewScope)return false;
@@ -815,12 +820,12 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
       setSourceNotice('');
       const sameUrlRows=intakeRows.filter(row=>row.status!=='saved'&&sameSourceUrl(row.url,item.snapshot.sourceUrl));
       const queued=sameUrlRows.find(row=>sameSourceCaptureSelection(row.sourceCapture,sourceCapture));
-      if(queued){if(queued.forkJobId!==forkJob?.id)throw Error('대기열에 선택한 수집본의 다른 요청 연결이 있습니다. 기존 행과 원래 요청의 결과를 확인해주세요.');setIntakeCategoryEntry(undefined);if(continuing)setIntakeSourceSeed({id:crypto.randomUUID(),sourceUrl:item.snapshot.sourceUrl,title:sourceInboxDisplayTitle(item),sourceCapture,targetRowId:queued.id,...(forkJob?{forkJobId:forkJob.id}:{})});setView('work');setAddOpen(true);return true;}
+      if(queued){if(queued.forkJobId!==forkJob?.id)throw Error('대기열에 선택한 수집본의 다른 요청 연결이 있습니다. 기존 행과 원래 요청의 결과를 확인해주세요.');setIntakeCategoryEntry(undefined);if(continuing)setIntakeSourceSeed({id:crypto.randomUUID(),sourceUrl:item.snapshot.sourceUrl,title:sourceInboxDisplayTitle(item),sourceCapture,targetRowId:queued.id,...(forkJob?{forkJobId:forkJob.id}:{})});closeCaptureTools();setView('work');setAddOpen(true);return true;}
       // A different immutable capture may review its own fork without editing
       // the existing URL rows. Normal enqueue deduplication stays unchanged.
       if(sameUrlRows.length&&forkJob?.status!=='awaiting_connector')throw Error('대기열에 같은 상품의 다른 수집본이나 URL 입력이 있습니다. 기존 행을 확인한 뒤 사용할 수집본을 다시 추가해주세요.');
       if(intakeRows.length>=50)throw Error('상품 대기열은 최대 50행입니다. 기존 입력은 유지했습니다.');
-      setIntakeCategoryEntry(undefined);setIntakeSourceSeed({id:crypto.randomUUID(),sourceUrl:item.snapshot.sourceUrl,title:sourceInboxDisplayTitle(item),sourceCapture,...(forkJob?{forkJobId:forkJob.id}:{})});setView('work');setAddOpen(true);
+      setIntakeCategoryEntry(undefined);setIntakeSourceSeed({id:crypto.randomUUID(),sourceUrl:item.snapshot.sourceUrl,title:sourceInboxDisplayTitle(item),sourceCapture,...(forkJob?{forkJobId:forkJob.id}:{})});closeCaptureTools();setView('work');setAddOpen(true);
       return true;
     }catch(error){setSourceNotice(error instanceof Error?error.message:'상품 추가 실패');return false;}
   }
@@ -833,9 +838,9 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
       if(!availability.company||item.company.code!==availability.company.code||item.company.name!==availability.company.name)throw Error('수집 당시 회사와 현재 로그인 계정의 승인 회사가 다릅니다. 현재 회사의 수집본을 선택해주세요.');
       if(item.archivedAt!==null||products.some(product=>sameSourceUrl(product.source_url,item.sourceUrl)))throw Error('이미 작업 중이거나 사용할 수 없는 수집본입니다. 기존 작업 상품은 변경하지 않았습니다.');
       const sourceCapture=querySourceCaptureSelection(item),queued=intakeRows.find(row=>sameSourceUrl(row.url,item.sourceUrl));
-      if(queued){if(!sameSourceCaptureSelection(queued.sourceCapture,sourceCapture))throw Error('대기열에 같은 상품의 다른 수집본이나 URL 입력이 있습니다. 기존 행을 확인한 뒤 사용할 수집본을 다시 추가해주세요.');setSourceNotice('');setIntakeCategoryEntry(undefined);if(continuing)setIntakeSourceSeed({id:crypto.randomUUID(),sourceUrl:item.sourceUrl,title:item.title,sourceCapture,targetRowId:queued.id});setView('work');setAddOpen(true);return true;}
+      if(queued){if(!sameSourceCaptureSelection(queued.sourceCapture,sourceCapture))throw Error('대기열에 같은 상품의 다른 수집본이나 URL 입력이 있습니다. 기존 행을 확인한 뒤 사용할 수집본을 다시 추가해주세요.');setSourceNotice('');setIntakeCategoryEntry(undefined);if(continuing)setIntakeSourceSeed({id:crypto.randomUUID(),sourceUrl:item.sourceUrl,title:item.title,sourceCapture,targetRowId:queued.id});closeCaptureTools();setView('work');setAddOpen(true);return true;}
       if(intakeRows.length>=50)throw Error('상품 대기열은 최대 50행입니다. 기존 입력은 유지했습니다.');
-      setSourceNotice('');setIntakeCategoryEntry(undefined);setIntakeSourceSeed({id:crypto.randomUUID(),sourceUrl:item.sourceUrl,title:item.title,sourceCapture});setView('work');setAddOpen(true);
+      setSourceNotice('');setIntakeCategoryEntry(undefined);setIntakeSourceSeed({id:crypto.randomUUID(),sourceUrl:item.sourceUrl,title:item.title,sourceCapture});closeCaptureTools();setView('work');setAddOpen(true);
       return true;
     }catch(error){setSourceNotice(error instanceof Error?error.message:'상품 추가 실패');return false;}
   }
@@ -910,12 +915,7 @@ useEffect(()=>{
     if(sourceReviewSession.current!==session||session.scope!==sourceReviewScope||!operation.mounted||operation.ownerId!==workspaceOwnerId)return false;
     sourceReviewSession.current=null;setSourceReview(null);sourceRegistrations.reload();if(session.returnToIntake)setAddOpen(true);return true;
   }
-  function closeCaptureTools(){
-    if(sourceWorkspace.current?.scope!==sourceReviewScope)return;
-    captureToolsSession.current=null;
-    setCaptureToolsScope(null);captureToolsTrigger.current?.focus?.({preventScroll:true});
-  }
-  const captureToolsVisible=captureToolsOpen&&!addOpen&&!sourceReview&&!detail&&!categoryOpen;
+  const captureToolsVisible=captureToolsOpen&&!addOpen&&!sourceReview&&!detail&&!categoryOpen&&!batchOpen&&!currentSubmission;
   return (
     <main className="app-shell studio-shell">
       <StudioSidebar active={view} expandedGroup={navigationGroup} mobileOpen={mobileNavigationOpen} onToggleGroup={group=>setNavigationGroup(current=>current===group?null:group)} onRocketView={changeView} onBeforeNavigate={guardOperationsNavigation} onClose={()=>setMobileNavigationOpen(false)}/>
@@ -943,7 +943,7 @@ useEffect(()=>{
 
         {view==='archive'?<><ProductManagementWorkspace/><details className="collection-panel"><summary>YOOFAM 스튜디오 작업 상품 보관함</summary><ProductArchive onOpenProduct={openArchivedProduct} refreshToken={`${collectionJobs[0]?.updated_at}:${products[0]?.updated_at}`}/></details></>:<>
         {(sourceNotice||sourceRegistrations.error||sourceRegistrations.queryError)&&<p role="status" className="panel-note">{sourceNotice||sourceRegistrations.error||sourceRegistrations.queryError}</p>}
-        <RegistrationBoard products={projectBatchBoardFeedback(products,workspaceOwnerId,batchBoardScope,batchBoardFeedback)} sources={sourceRegistrations.items} querySources={sourceRegistrations.queryItems??[]} onPrepareQuerySource={item=>prepareQuerySource(item)} sourceOwnerId={workspaceOwnerId} sourceCompany={querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null} sourceArchiveDisabled={sourceArchiveDisabled} onPrepareSource={item=>prepareSource(item)} selectedSourceReferences={selectedSources} onSourceSelectionChange={sourceSelectionChanged} onReviewSource={item=>reviewSource(item)} onArchiveSource={archiveSource} selected={selected} onSelected={setSelected} onOpen={openProduct} onOptions={openOptionBoard} onDelete={removeWorkspaceProduct} loading={loading} error={loadError} onArchive={()=>changeView('archive')}/>
+        <RegistrationBoard products={projectBatchBoardFeedback(products,workspaceOwnerId,batchBoardScope,batchBoardFeedback)} sources={sourceRegistrations.items} querySources={sourceRegistrations.queryItems??[]} sourceJobs={querySourceCompany.scope===sourceReviewScope?collectionJobs:[]} onPrepareQuerySource={item=>prepareQuerySource(item)} sourceOwnerId={workspaceOwnerId} sourceCompany={querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null} sourceArchiveDisabled={sourceArchiveDisabled} onPrepareSource={item=>prepareSource(item)} selectedSourceReferences={selectedSources} onSourceSelectionChange={sourceSelectionChanged} onReviewSource={item=>reviewSource(item)} onArchiveSource={archiveSource} selected={selected} onSelected={setSelected} onOpen={openProduct} onOptions={openOptionBoard} onDelete={removeWorkspaceProduct} loading={loading} error={loadError} onArchive={()=>changeView('archive')}/>
         <button type="button" className="btn ghost" onClick={()=>setRemovedOpen(true)}>삭제된 상품</button>
         <div className="modal-backdrop intake-tools-backdrop" hidden={!captureToolsVisible} role="presentation" onMouseDown={closeCaptureTools}>
         <section id="capture-tools-dialog" className="modal wide capture-tools-dialog" role={captureToolsVisible?'dialog':undefined} aria-modal={captureToolsVisible?true:undefined} aria-label="수집함·수집 대기열" onMouseDown={event=>event.stopPropagation()} onKeyDown={event=>{

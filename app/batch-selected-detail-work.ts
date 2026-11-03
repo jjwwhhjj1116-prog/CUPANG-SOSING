@@ -17,8 +17,8 @@ import { FreeImageApplyError, recognizeFreeImage, renderFreeImageTranslation, re
   type FreeImageLoaded, type FreeImageRendered, type FreeImageVisionStatus, type FreeImageRegion } from '@/app/free-image-translation-client';
 import { FreeImageVisionError, type FreeImageVisionAttempt } from '@/app/free-image-vision-error';
 import { initializeVisionRegions } from '@/app/free-image-vision-style';
-import { isVerifiedNoForeignText, parseImageTextVisionConfiguration, parseImageTextVisionResult } from '@/app/image-text-vision';
-import { parseImageNoTextProof } from '@/app/image-no-text-proof';
+import { isVerifiedOriginalPreservation, parseImageTextVisionConfiguration, parseImageTextVisionResult } from '@/app/image-text-vision';
+import { parseImageOriginalPreservationProof } from '@/app/image-no-text-proof';
 import { hasForeignImageText } from '@/app/selected-image-purpose';
 import { optionImageTargets } from '@/app/quotation-image-targets';
 import { exactPrimaryQuotationTarget } from '@/app/quotation-seo-targets';
@@ -228,12 +228,12 @@ export async function processSelectedDetailWork(productId: string, options: Opti
         // source immediately before the potentially paid recognition request.
         await exact(); controller.signal.throwIfAborted();
         if (image.noTextProof) {
-          const proof = parseImageNoTextProof(image.noTextProof);
+          const proof = parseImageOriginalPreservationProof(image.noTextProof);
           if (!proof || proof.productId !== productId || proof.sourceKey !== image.source.sourceKey || proof.sourceSha256 !== image.source.sourceSha256
             || proof.width !== image.width || proof.height !== image.height || proof.sourceLanguage !== 'zh' || !same(proof.configuration,configuration)) throw changed();
           if (state.inference && (state.inference.photoId !== photo.id || !same(state.inference.attempt.source,image.source))) throw changed();
           const recovered = !!state.inference; state.photos[photo.id] = { status: 'verified', key: photo.key }; delete state.inference;
-          if (recovered) { result.recovered = true; return finish('partial','원래 Vision 요청의 외국어 없음 검증을 확인했습니다. 다음 사진은 실행하지 않았습니다.'); }
+          if (recovered) { result.recovered = true; return finish('partial','원래 Vision 요청의 원본 보존 검사 결과를 확인했습니다. 다음 사진은 실행하지 않았습니다.'); }
           continue;
         }
         let regions: FreeImageRegion[];
@@ -246,11 +246,11 @@ export async function processSelectedDetailWork(productId: string, options: Opti
         } else {
           await guard(); controller.signal.throwIfAborted();
           try { regions = await (deps.recognize ?? recognizeFreeImage)(image,'zh',controller.signal,options.onProgress); }
-          catch (cause) { if (!isVerifiedNoForeignText(image.visionResult)) throw cause; regions = []; }
+          catch (cause) { if (!isVerifiedOriginalPreservation(image.visionResult)) throw cause; regions = []; }
         }
         controller.signal.throwIfAborted();
-        if (isVerifiedNoForeignText(image.visionResult)) { const recovered = !!state.inference; state.photos[photo.id] = { status: 'verified', key: photo.key }; delete state.inference;
-          if (recovered) { result.recovered = true; return finish('partial','원래 Vision 요청의 외국어 없음 검증을 확인했습니다. 다음 사진은 실행하지 않았습니다.'); } continue; }
+        if (isVerifiedOriginalPreservation(image.visionResult)) { const recovered = !!state.inference; state.photos[photo.id] = { status: 'verified', key: photo.key }; delete state.inference;
+          if (recovered) { result.recovered = true; return finish('partial','원래 Vision 요청의 원본 보존 검사 결과를 확인했습니다. 다음 사진은 실행하지 않았습니다.'); } continue; }
         if (!image.visionResult || image.visionResult.inspection?.decision === 'unreadable' || image.visionStyleIssues?.length) throw Error('상세 본문 문구·영역·스타일을 끝까지 검증하지 못했습니다. 원본을 유지했습니다.');
         const selected = regions.filter(region => region.selected && hasForeignImageText(region.text));
         const accepted = selected.filter(region => region.translationProvenance === 'generated' && region.translated.trim() && !region.issue);

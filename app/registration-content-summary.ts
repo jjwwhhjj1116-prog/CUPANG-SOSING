@@ -11,12 +11,13 @@ import {registrationStagesFromSavedContent,type RegistrationFinalContent,type Re
 import {quotationPriceTargets} from '@/app/quotation-price-targets';
 import {savedRecalculatedRegistrationPricing,type RegistrationPricingProduct} from '@/app/registration-pricing-status';
 import type {QuotationFieldsState} from '@/db/quotation-fields';
-import type {ImageNoTextProof} from '@/app/image-no-text-proof';
+import type {ImageOriginalPreservationProof} from '@/app/image-no-text-proof';
+import {sizeChartRequiredFromSchemaString} from '@/app/registration-layout';
 export type RegistrationContentSummary = { seo: boolean; seoTitle: string | null; mainImageKey: string | null; main: number; additional: number; detail: number; label: number; missingImages: boolean; stages?:RegistrationStageSummary };
 type RegistrationContentObservation={summary:RegistrationContentSummary;finalImageKeys:RegistrationFinalImageKeys};
 export type RegistrationQuotationLabels = { ownerId:string;profileId?:string|null;categoryId:string|null;categoryPath:string[];hubSchema?:HubSchemaSnapshot;template?:TemplateDefinition|null;
   options:{revision:number;rows:{id:string;included:boolean;imageKey?:string|null}[]};state:{overrides:QuotationOverrides;categoryOverrides?:Record<string,QuotationOverrides>} };
-function finalContentSummary(product:RegistrationPricingProduct&{image_keys:string},content:ProductContent|null,input:RegistrationQuotationLabels,summary:RegistrationContentSummary,noTextProofs:readonly ImageNoTextProof[]){
+function finalContentSummary(product:RegistrationPricingProduct&{image_keys:string},content:ProductContent|null,input:RegistrationQuotationLabels,summary:RegistrationContentSummary,noTextProofs:readonly ImageOriginalPreservationProof[]){
  const keys=JSON.parse(product.image_keys) as string[],schema=getQuotationSchema(input.categoryId,input.categoryPath,input.hubSchema,input.template);
  const targets:Partial<Record<PrimaryQuotationInput,PrimaryQuotationTarget>>={};let unconfirmedTarget=false;
  for(const id of ['title','mainImage','additionalImages','detailImages','labelImages'] as const){try{targets[id]=exactPrimaryQuotationTarget(schema.fields,id);}catch{unconfirmedTarget=true;}}
@@ -47,7 +48,7 @@ function finalContentSummary(product:RegistrationPricingProduct&{image_keys:stri
   try{const prices=quotationPriceTargets(schema.fields),supplyPrice=exactManual(prices.supplyPrice.linked),salePrice=exactManual(prices.salePrice.linked);if(supplyPrice!==undefined&&salePrice!==undefined)finalRow.manualPrices={supplyPrice,salePrice};}catch{/* Unconfirmed prices remain pending. */}
   finalRows.push(finalRow);
  }
- const stages=registrationStagesFromSavedContent({...product,owner_id:input.ownerId,categoryId:input.categoryId},content,{...input.options,productId:product.id} as ProductOptions,keys,schema.status==='observed'&&!schema.unsupportedFields?.length?finalRows:null,noTextProofs);
+ const stages=registrationStagesFromSavedContent({...product,owner_id:input.ownerId,categoryId:input.categoryId},content,{...input.options,productId:product.id} as ProductOptions,keys,schema.status==='observed'&&!schema.unsupportedFields?.length?finalRows:null,noTextProofs,sizeChartRequiredFromSchemaString(input.hubSchema?.schemaString));
  if(savedRecalculatedRegistrationPricing(product,input.options as ProductOptions,input.state as QuotationFieldsState,schema,{ownerId:input.ownerId,...(Object.hasOwn(input,'profileId')?{profileId:input.profileId}:{})}))stages.pricing={state:'complete',detail:'직접 저장한 가격 설정과 현재 상품·포함 옵션·견적 가격의 연결 확인'};
  // These are the effective included references resolved above, not the raw
  // upload pool or superseded global assignments. Keep this internal evidence
@@ -57,7 +58,7 @@ function finalContentSummary(product:RegistrationPricingProduct&{image_keys:stri
 }
 /** Reads final included title/image references only. A reference count is never an
  * image-byte check, generated-plan freshness proof or Hub registration status. */
-export function registrationContentObservation(product: RegistrationPricingProduct&{image_keys:string}, content: ProductContent | null, finalLabels?:RegistrationQuotationLabels|null,noTextProofs:readonly ImageNoTextProof[]=[]): RegistrationContentObservation {
+export function registrationContentObservation(product: RegistrationPricingProduct&{image_keys:string}, content: ProductContent | null, finalLabels?:RegistrationQuotationLabels|null,noTextProofs:readonly ImageOriginalPreservationProof[]=[]): RegistrationContentObservation {
   const keys:unknown=JSON.parse(product.image_keys);
   if(!Array.isArray(keys)||keys.some(key=>typeof key!=='string'))throw Error('Invalid product images');
   if(content&&(content.productId!==product.id||content.schemaVersion!==1))throw Error('Invalid product content');
@@ -72,13 +73,13 @@ export function registrationContentObservation(product: RegistrationPricingProdu
   const main=count(['main']);
   const mainImageKey=content?.assets?.main?.value?.find(key=>keys.includes(key))??null;
   const additional=count(['additional']),detail=count(['detailTop','detail','detailBottom']);
-  const summary={seoTitle,mainImageKey,seo:typeof content?.seo?.title?.value==='string'&&!!content.seo.title.value.trim(),main,additional,detail,label:count(['label']),missingImages,stages:registrationStagesFromSavedContent(product,content,null,keys,null)};
+  const summary={seoTitle,mainImageKey,seo:typeof content?.seo?.title?.value==='string'&&!!content.seo.title.value.trim(),main,additional,detail,label:count(['label']),missingImages,stages:registrationStagesFromSavedContent(product,content,null,keys,null,noTextProofs,sizeChartRequiredFromSchemaString(finalLabels?.hubSchema?.schemaString))};
   const finalImageKeys={main:[],additional:[],detail:[]};
   if(finalLabels===undefined)return {summary,finalImageKeys};
   if(finalLabels===null)return {summary:{...summary,missingImages:true},finalImageKeys};
   try{return finalContentSummary(product,content,finalLabels,summary,noTextProofs);}
   catch{return {summary:{...summary,missingImages:true},finalImageKeys};}
 }
-export function registrationContentSummary(product: RegistrationPricingProduct&{image_keys:string}, content: ProductContent | null, finalLabels?:RegistrationQuotationLabels|null,noTextProofs:readonly ImageNoTextProof[]=[]): RegistrationContentSummary {
+export function registrationContentSummary(product: RegistrationPricingProduct&{image_keys:string}, content: ProductContent | null, finalLabels?:RegistrationQuotationLabels|null,noTextProofs:readonly ImageOriginalPreservationProof[]=[]): RegistrationContentSummary {
  return registrationContentObservation(product,content,finalLabels,noTextProofs).summary;
 }

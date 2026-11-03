@@ -40,8 +40,21 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
  async function groupLibrary(view:QuotationFieldsView){
   libraryRequest.current?.abort();const c=new AbortController();libraryRequest.current=c;
   const valid=()=>current()&&libraryRequest.current===c&&!c.signal.aborted&&liveSaved.current?.view===view;
+  const canRefresh=()=>valid()&&!liveDisabled.current&&!request.current&&!liveUncertain.current&&(liveDraft.current.scope!==scope||liveDraft.current.value===undefined);
   try{const value=await readMainImageLibrary(productId,view,scoped(c));if(valid())setLibrary({scope,sourceKey,value,error:''});}
-  catch{if(valid())setLibrary({scope,sourceKey,value:null,error:'이미지 종류를 확인하지 못했습니다. 전체 저장 이미지에서 선택할 수 있습니다.'});}
+  catch{
+   // A label/option save can finish between the quotation and gallery reads.
+   try{if(canRefresh()){
+    const latest=await readMainImageView(endpoint,scoped(c));
+    if(canRefresh()&&latest.productVersion===view.productVersion&&(!version||latest.productVersion===version)
+     &&(latest.contentRevision!==view.contentRevision||latest.optionRevision!==view.optionRevision)){
+     verifyMainImageRefresh(view,latest,liveOption.current||view.resolved.rows.find(row=>row.optionId&&row.included)?.optionId||view.resolved.rows.find(row=>row.optionId)?.optionId||'');
+     const value=await readMainImageLibrary(productId,latest,scoped(c));
+     if(canRefresh()){store(latest);setLibrary({scope,sourceKey,value,error:''});return;}
+    }
+   }}catch{/* Retry display reads once; never replace an edited or uncertain image. */}
+   if(valid())setLibrary({scope,sourceKey,value:null,error:'이미지 종류를 확인하지 못했습니다. 전체 저장 이미지에서 선택할 수 있습니다.'});
+  }
   finally{if(libraryRequest.current===c)libraryRequest.current=null;}
  }
  async function load(keep=false){const c=begin();if(!c)return;try{const view=await readMainImageView(endpoint,scoped(c));if(!current()||c.signal.aborted)return;const previous=liveSaved.current?.scope===scope?liveSaved.current.view:null,draft=liveDraft.current;let recovered=false;
