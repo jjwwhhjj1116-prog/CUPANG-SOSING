@@ -255,6 +255,41 @@ test('workspace manual editor opens current photo pixels and uses only workspace
   } finally { h.close(); }
 });
 
+for (const language of ['zh', 'en']) test(`explicit workspace ${language} translation prepares one preview and only saves after review`, async () => {
+  const props = workspaceProps(), completed = [];
+  props.translationTarget = { ...props.translationTarget, sourceLanguage: language };
+  delete props.translationTarget.intent;
+  props.workspaceContext.saved.workspace.document.photos[0].originKey = 'owner/original.png';
+  const h = fixture({ ...props, onWorkspaceSaved: reply => completed.push(reply) });
+  try {
+    await h.settle();
+    assert.deepEqual(h.calls.map(call => call.action), ['workspace-source', 'ocr', 'workspace-translate', 'preview']);
+    assert.equal(h.calls.find(call => call.action === 'ocr').language, language);
+    assert.equal(h.calls.find(call => call.action === 'workspace-translate').language, language);
+    assert.equal(h.calls.at(-1).sourceLanguage, language);
+    assert.equal(h.field('문구 1 한국어').props.value, '작업 한국어 r1');
+    assert.equal(h.saved, 0); assert.equal(completed.length, 0);
+    await h.settle(); assert.equal(h.calls.length, 4, 'rerenders do not repeat recognition or translation');
+    await h.click('검토한 작업 사진 보관');
+    assert.equal(h.calls.filter(call => call.action === 'workspace-apply').length, 1);
+    assert.equal(h.saved, 0); assert.equal(completed.length, 1);
+    assert.ok(h.calls.every(call => !['source', 'apply', 'translate', 'recover'].includes(call.action)));
+  } finally { h.close(); }
+});
+
+test('direct workspace translation preserves a verified text-free original without preview or writes', async () => {
+  const props = workspaceProps(); delete props.translationTarget.intent;
+  props.workspaceContext.saved.workspace.document.photos[0].originKey = 'owner/original.png';
+  const h = fixture(props);
+  h.setOcr(image => { image.visionResult = { provider: 'workers-ai-vision', blocks: [], notice: 'Vision 완료', inspection: { policy: 'foreign-text-inspection-v1', decision: 'no-foreign-text' } }; throw Error('문구 없음'); });
+  try {
+    await h.settle();
+    assert.deepEqual(h.calls.map(call => call.action), ['workspace-source', 'ocr']);
+    assert.match(text(h.render()), /번역할 문구가 없어 원본 이미지를 유지/);
+    assert.equal(h.saved, 0); assert.equal(h.button('검토한 작업 사진 보관'), undefined);
+  } finally { h.close(); }
+});
+
 test('workspace reopened edit document restores editable base, language, styling and crop without automatic preview or writes', async () => {
   const h = fixture(workspaceProps());
   h.setSource(image => ({ ...image, source: { ...image.source, sourceKey: 'owner/base.png', editorSource: { resultKey: 'owner/original.png', resultSha256: 'b'.repeat(64), documentSha256: 'c'.repeat(64) } },

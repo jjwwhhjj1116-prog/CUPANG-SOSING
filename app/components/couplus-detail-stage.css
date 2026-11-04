@@ -37,8 +37,15 @@
 .registration-workspace .detail-workspace-photo:is(:hover,:focus-within) .detail-workspace-photo-overlay{opacity:1;pointer-events:auto}
 .registration-workspace .detail-workspace-photo-actions,.registration-workspace .detail-workspace-photo-order{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:10px;max-width:300px;padding:10px}
 .registration-workspace .detail-workspace-photo-overlay .btn,.registration-workspace .detail-workspace-photo-order>button{min-height:30px;padding:5px 12px;border:1px solid #fff;border-radius:10px;font-size:12px;line-height:18px;background:#32bdea;color:#fff}
-.registration-workspace .detail-workspace-photo-order>button:last-child{background:#e15763;border-color:#e15763}
+.registration-workspace .detail-workspace-photo-actions{flex-direction:column;width:min(270px,calc(100% - 24px));max-width:270px;padding:0;gap:18px}
+.registration-workspace .detail-workspace-photo-actions>.btn{width:100%;height:38px;padding:6px 12px;border:0;font-size:16px;line-height:24px}
+.registration-workspace .detail-workspace-photo-actions .detail-workspace-photo-translate{background:#78c091}
+.registration-workspace .detail-workspace-photo-actions .detail-workspace-photo-translate[data-source-language=en]{background:#ff7b4a}
+.registration-workspace .detail-workspace-photo-order{gap:24px;padding:0}
+.registration-workspace .detail-workspace-photo-order>button{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;min-height:36px;padding:0;border:0;border-radius:50%;background:#ffffffe6;color:#007bff;font-size:18px}
+.registration-workspace .detail-workspace-photo-order>button:last-child{background:#ffffffe6;border:0;color:#dc3545}
 .registration-workspace .detail-workspace-photo-overlay details{padding:8px;background:#fff;border-radius:6px;font-size:12px}
+.registration-workspace .detail-workspace-photo-replace{position:absolute;right:10px;bottom:10px;max-width:calc(100% - 20px)}
 .registration-workspace .option-detail-primary>.option-detail-guidance{font-size:10px}
 @media(max-width:760px){
  .registration-workspace .option-detail-primary-header{align-items:flex-start;flex-direction:column;gap:8px;padding:10px}
