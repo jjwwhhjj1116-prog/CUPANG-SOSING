@@ -180,7 +180,7 @@ export function SeoWorkspaceEditor({ productId, version,workspaceOwnerId,generat
           <button type="button" className="btn ghost" disabled={locked} onClick={clearKeywords}>검색태그·견적서 태그 함께 비우기</button>
         </div></section></details>
       </fieldset></section>
-      <section className="seo-option-names"><h3>옵션명</h3><div className="seo-option-names-body">{view.options.rows.map((row, index) => {
+      <section className="seo-option-names"><h3>옵션명</h3><div className="seo-option-names-body"><div className="seo-option-name-list">{view.options.rows.map((row, index) => {
         const key = row.imageKey ?? view.sourceImageKeys?.[row.id], thumbnail = key && view.imageKeys.includes(key) ? key : null;
         const optionName=Object.hasOwn(draft.optionNames,row.id)?draft.optionNames[row.id]:row.translatedName;
         const reference = view.optionOriginalReferences && Object.hasOwn(view.optionOriginalReferences, row.id) ? view.optionOriginalReferences[row.id] : undefined, original = reference
@@ -190,7 +190,7 @@ export function SeoWorkspaceEditor({ productId, version,workspaceOwnerId,generat
           {thumbnail ? <img src={'/api/files/' + thumbnail.split('/').map(encodeURIComponent).join('/')} alt="" width={60} height={60} loading="lazy"/> : <span className="seo-option-name-placeholder" aria-hidden="true"/>}
           <label><span><small>원본: {original}</small></span><input aria-label={`${index + 1}번째 한국어 옵션명`} placeholder="한글 옵션명 입력" value={optionName} maxLength={500} disabled={locked} onChange={event => edit(previous => ({ ...previous, optionNames: { ...previous.optionNames, [row.id]: event.target.value } }))}/>{(!row.included||!optionName.trim())&&<small>{row.included ? '한국어 옵션명을 입력해주세요.' : '견적 제외'}</small>}</label>
         </article>;
-      })}{!view.options.rows.length && <p>저장된 옵션이 없습니다.</p>}</div></section>
+      })}{!view.options.rows.length && <p>저장된 옵션이 없습니다.</p>}</div></div></section>
     </div>}
     {!!issues.length && <p role="alert">{issues.join(' ')}</p>}
     {shownComparison && <section className="panel-stack" aria-label="다른 SEO 저장값 비교"><p>다른 저장값: {shownComparison.fields.join(', ')}</p><table><thead><tr><th>항목</th><th>최신 저장값</th><th>현재 입력</th></tr></thead><tbody>

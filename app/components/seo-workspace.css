@@ -78,6 +78,7 @@
 .registration-workspace .seo-common-editor .field textarea{height:98.667px;min-height:98.667px;line-height:28px}
 .registration-workspace .seo-keyword-caption{margin:0;gap:8px;font-size:12.8px;line-height:29px}
 .registration-workspace .seo-option-names-body{display:block;padding:20px}
+.registration-workspace .seo-option-name-list{max-height:400px;overflow:auto;padding-right:10px}
 .registration-workspace .seo-option-name{margin-bottom:16px;padding:8px;gap:16px;align-items:flex-start;border-bottom:1px solid #e8e9ec}
 .registration-workspace .seo-option-name img,.registration-workspace .seo-option-name-placeholder{width:60px;height:60px;margin:0;padding:4px;border:1px solid #ccced2;border-radius:10px}
 .registration-workspace .seo-option-name label{display:block;font-size:16px;line-height:29px}

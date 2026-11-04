@@ -289,7 +289,7 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
     finally{if(request.current===controller){request.current=null;if(mounted.current)setBusy(false);}}
   }
   const google=basis?.configuration.model==='google-translate-gtx';
-  const titleExample=[memo.brand.trim(),memo.features.trim()||'인조가죽',memo.keywords.trim()||'타겟 키워드'].filter(Boolean).join(' ');
+  const titleExample=[memo.brand||basis?.registrationBrand||brand||'YOOFAM',memo.features||'인조가죽',memo.keywords||'크로스백'].join(' ');
   const currentJob=job?.productVersion===version&&job.productId===productId;
   const failedQwenRetry=hasRequest&&closed&&currentJob&&job.status==='failed'&&job.review?.model===WORKERS_QWEN_MODEL
     &&!Object.hasOwn(job.review,'workersRecovery')&&basis?.configuration.model===WORKERS_QWEN_MODEL;
