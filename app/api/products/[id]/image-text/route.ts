@@ -24,11 +24,13 @@ import { validateFreeImageEditDocument, MAX_FREE_IMAGE_EDIT_BYTES, type FreeImag
 import { FreeImageEditRecordError, freeImageEditDigest, freeImageEditDocumentBytes, prepareFreeImageEditRecord, readFreeImageEditRecord, storeFreeImageEditRecord } from '@/app/free-image-edit-record';
 import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
 import {imageTextRecoveryConfigured,imageTextRecoveryWithinLimit,recoverImageTextRegions,unavailableImageTextRecovery,ImageTextRecoveryError,type ImageTextRecoveryEnvironment} from '@/app/automation/workers-image-text-recovery';
-import {imageVisionConfiguration,readImageVision,readStoredImageVisionResult,ImageVisionError,type ImageVisionEnvironment} from '@/app/automation/workers-image-vision';
+import {imageVisionConfiguration,readImageVision,readStoredImageVisionResult,submitImageVisionBatch,pollImageVisionBatch,ImageVisionError,type ImageVisionEnvironment} from '@/app/automation/workers-image-vision';
 import {IMAGE_TEXT_INSPECTION_POLICY,IMAGE_TEXT_PRESERVATION_POLICY,isImageTextInspectionPolicy,type ImageTextInspectionPolicy,parseImageTextVisionConfiguration} from '@/app/image-text-vision';
 import {DetailWorkspaceError} from '@/app/detail-workspace';
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 import type {DetailWorkspaceImageProofs} from '@/db/detail-workspaces';
+import type {FreeImageVisionAttempt} from '@/app/free-image-vision-error';
+import type {ImageVisionBatchActor,ImageVisionBatchScope,ImageVisionBatchRow} from '@/db/image-vision-batches';
 
 type Context = { params: Promise<{ id: string }> };
 class ImageTextError extends Error {
@@ -236,6 +238,97 @@ function sameOrigin(request: Request) {
   const origin = request.headers.get('origin');
   if ((origin && origin !== new URL(request.url).origin) || request.headers.get('sec-fetch-site') === 'cross-site') throw new ImageTextError(400, '같은 사이트의 이미지 편집 화면에서 요청해주세요.');
 }
+const visionRequestId=(value:unknown):value is string=>typeof value==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+type BatchAttempt=FreeImageVisionAttempt&{transport:'workers-ai-batch-v1'};
+async function batchActor(owner:string,productId:string,request:Request){
+ const company=await editorCompany(owner),configuration=imageVisionConfiguration(env as ImageVisionEnvironment);
+ const memberNow=async()=>{const user=await getChatGPTUser(),member=user?.membership;if(!user?.verifiedAccess||user.userId!==owner||member?.id!==owner||member.status!=='approved'||member.email!==user.email||JSON.stringify(approvedSupplierHubCompany(member))!==JSON.stringify(company))throw changed();return{email:member.email.toLowerCase().trim(),role:member.role};};
+ const member=await memberNow(),actor={owner,productId,company,member,model:configuration.model};
+ const assertActor=async()=>{request.signal.throwIfAborted();if(await ownerId()!==owner||JSON.stringify(await memberNow())!==JSON.stringify(member)||JSON.stringify(imageVisionConfiguration(env as ImageVisionEnvironment))!==JSON.stringify(configuration))throw changed();};
+ return{actor,configuration,assertActor};
+}
+async function batchScope(attempt:BatchAttempt,actor:ImageVisionBatchActor):Promise<ImageVisionBatchScope>{
+ const {source,configuration,sourceLanguage,inspectionPolicy}=attempt;
+ return{...actor,requestId:attempt.requestId,productVersion:source.productVersion,contentRevision:source.contentRevision,
+  fingerprint:await digest(new TextEncoder().encode(JSON.stringify({source:freeImageSourceIdentity(source),company:actor.company,member:actor.member,configuration,language:sourceLanguage,...(inspectionPolicy?{inspectionPolicy}:{})}))),
+  sourceScope:await digest(new TextEncoder().encode(JSON.stringify([source.sourceKey,source.sourceSha256,actor.company,configuration.model,sourceLanguage,...(inspectionPolicy?[inspectionPolicy]:[])]))),
+  ...(inspectionPolicy?{inspection:{sourceKey:source.sourceKey,sourceSha256:source.sourceSha256,width:source.width,height:source.height,sourceLanguage,configuration}}:{})};
+}
+async function parsedBatch(row:ImageVisionBatchRow|null,actor:ImageVisionBatchActor,configuration:ReturnType<typeof imageVisionConfiguration>){
+ if(!row)return null;
+ if(typeof row.attempt!=='string'||new TextEncoder().encode(row.attempt).length>48*1024)throw changed();
+ let raw:unknown;try{raw=JSON.parse(row.attempt);}catch{throw changed();}
+ if(!raw||typeof raw!=='object'||Array.isArray(raw))throw changed();
+ const value=raw as Record<string,unknown>;
+ if(!['configuration,requestId,source,sourceLanguage,transport','configuration,inspectionPolicy,requestId,source,sourceLanguage,transport'].includes(Object.keys(value).sort().join(','))
+  ||value.transport!=='workers-ai-batch-v1'||!visionRequestId(value.requestId)||value.requestId!==row.request_id||!['zh','en'].includes(String(value.sourceLanguage))
+  ||value.inspectionPolicy!==undefined&&!isImageTextInspectionPolicy(value.inspectionPolicy))throw changed();
+ const source=validateFreeImageSource(value.source),storedConfiguration=parseImageTextVisionConfiguration(value.configuration);
+ if(!storedConfiguration||source.productId!==actor.productId||!isOwnedImageKey(actor.owner,source.sourceKey))throw changed();
+ if(JSON.stringify(storedConfiguration)!==JSON.stringify(configuration))return null;
+ const attempt={...value,source,configuration:storedConfiguration} as BatchAttempt,scope=await batchScope(attempt,actor);
+ if(row.request_fingerprint!==scope.fingerprint||row.source_scope!==scope.sourceScope||!['running','completed','failed','uncertain'].includes(row.status)
+  ||row.failure!==null&&!/^[A-Z_]{1,32}$/.test(row.failure)||row.provider_request_id!==null&&!/^[A-Za-z0-9_-]{1,200}$/.test(row.provider_request_id))throw changed();
+ let result=null;
+ if(row.status==='completed'){
+  let stored:unknown;try{stored=JSON.parse(row.result??'null');}catch{throw new ImageVisionError('BLOCKS');}
+  result=readStoredImageVisionResult(stored,source.width,source.height);
+  if(attempt.inspectionPolicy&&result.inspection?.policy!==attempt.inspectionPolicy)throw new ImageVisionError('DECISION');
+ }
+ return{row,attempt,scope,result};
+}
+function batchReply(value:Awaited<ReturnType<typeof parsedBatch>>,requests:0|1,readOnly:boolean){
+ return{format:'yoofam-image-vision-batch-v1',attempt:value?.attempt??null,status:value?.row.status??'not-found',result:value?.result??null,failure:value?.row.failure??null,execution:{requests},readOnly};
+}
+async function createVisionBatch(scope:ImageVisionBatchScope,attempt:BatchAttempt,image:{bytes:Uint8Array},request:Request,assertCurrent:()=>Promise<void>){
+ const ledger=await import('@/db/image-vision-requests'),batches=await import('@/db/image-vision-batches'),configuration=attempt.configuration;
+ const read=async()=>parsedBatch(await batches.readImageVisionBatch(scope,scope.requestId),scope,configuration);
+ const {assertActor}=await batchActor(scope.owner,scope.productId,request),claimed=await ledger.claimImageVisionRequest(scope);
+ if(!claimed.claimed){const existing=await read();await assertActor();if(existing&&existing.scope.fingerprint===scope.fingerprint)return response(batchReply(existing,0,false),existing.row.status==='running'?202:200);
+  if(claimed.record?.request_fingerprint===scope.fingerprint)return response({error:'원래 이미지 Vision 요청은 접수됐지만 보관 응답을 아직 확인하지 못했습니다. 원래 요청만 조회하고 새 추론을 보내지 않습니다.',code:'IMAGE_VISION_ACK_MISSING',uncertain:true},409);
+  return response({error:'같은 원본의 이미지 Vision 요청이 진행 중이거나 응답을 확인하지 못했습니다. 자동 재요청하지 않습니다.',code:'IMAGE_VISION_NOT_ADMITTED',uncertain:false},409);}
+ let invoked=false;
+ try{
+  await batches.storeImageVisionBatch(scope,attempt);
+  const completed=await ledger.completedImageVisionResult(scope);
+  if(completed){let saved:unknown;try{saved=JSON.parse(completed.result??'null');}catch{throw new ImageVisionError('BLOCKS');}
+   const result=readStoredImageVisionResult(saved,attempt.source.width,attempt.source.height);
+   if(attempt.inspectionPolicy&&result.inspection?.policy!==attempt.inspectionPolicy)throw new ImageVisionError('DECISION');
+   if(!attempt.inspectionPolicy||result.blocks.length||result.inspection){await assertCurrent();await ledger.finishImageVisionRequest(scope,{status:'completed',result,requests:0});await assertActor();return response(batchReply(await read(),0,false));}
+  }
+  await assertCurrent();invoked=true;
+  const job=await submitImageVisionBatch(image.bytes,attempt.source,attempt.sourceLanguage,env as ImageVisionEnvironment,request.signal,attempt.inspectionPolicy);
+  await batches.saveImageVisionBatchProvider(scope,job.providerRequestId);
+  await assertActor();return response(batchReply(await read(),1,false),202);
+ }catch(error){
+  const uncertain=invoked&&(!(error instanceof ImageVisionError)||error.uncertain),failure=error instanceof ImageVisionError?error.reason:invoked?'PROVIDER':'BEFORE_CALL';
+  const beforeDispatch=error instanceof ImageVisionError&&!error.uncertain&&['INPUT','NOT_CONFIGURED','ABORTED'].includes(error.reason),requests=invoked&&!beforeDispatch?1:0;
+  await ledger.finishImageVisionRequest(scope,{status:uncertain?'uncertain':'failed',failure,requests}).catch(()=>{/* The original claim continues fencing retries. */});
+  if(uncertain)await batches.markImageVisionBatchUncertain(scope,failure).catch(()=>{/* Never submit again after a lost acknowledgement. */});
+  await assertActor();const observed=await read();if(observed)return response(batchReply(observed,requests,false),uncertain?202:200);throw error;
+ }
+}
+async function pollVisionBatch(owner:string,productId:string,request:Request,requestId:string){
+ const {actor,configuration,assertActor}=await batchActor(owner,productId,request),batches=await import('@/db/image-vision-batches');
+ const read=async()=>parsedBatch(await batches.readImageVisionBatch(actor,requestId),actor,configuration);
+ let current=await read();await assertActor();
+ if(!current||['completed','failed'].includes(current.row.status)||!current.row.provider_request_id)return response(batchReply(current,0,false));
+ const ledger=await import('@/db/image-vision-requests'),{scope,attempt}=current;
+ try{
+  const observed=await pollImageVisionBatch(current.row.provider_request_id,attempt.source,env as ImageVisionEnvironment,request.signal,attempt.inspectionPolicy);
+  await assertActor();
+  if(observed.status==='completed'){
+   const result=readStoredImageVisionResult(observed.result,attempt.source.width,attempt.source.height);
+   if(attempt.inspectionPolicy&&result.inspection?.policy!==attempt.inspectionPolicy)throw new ImageVisionError('DECISION');
+   await ledger.finishLateImageVisionRequest(scope,{status:'completed',result});
+  }else if(observed.status==='failed')await ledger.finishLateImageVisionRequest(scope,{status:'failed',failure:observed.failure});
+ }catch(error){
+  const failure=error instanceof ImageVisionError?error.reason:'PROVIDER';
+  await ledger.finishImageVisionRequest(scope,{status:'uncertain',failure,requests:1}).catch(()=>{/* An uncertain original is settled only by its saved provider job. */});
+  await batches.markImageVisionBatchUncertain(scope,failure).catch(()=>{/* Preserve its provider ID and admission fence. */});
+ }
+ await assertActor();current=await read();await assertActor();return response(batchReply(current,0,false));
+}
 function fail(error: unknown) {
   if(error instanceof ImageVisionError)return response({error:error.message,code:`IMAGE_VISION_${error.reason}`,uncertain:error.uncertain},error.reason==='NOT_CONFIGURED'?503:error.reason==='CAPACITY'?429:409);
   if (error instanceof FreeImageEditRecordError) return response({ error: error.message, ...(error.code ? { code: error.code } : {}) }, error.status);
@@ -246,6 +339,24 @@ function fail(error: unknown) {
 export async function GET(request: Request, context: Context) {
   try {
     const owner = await ownerId(), { id } = await context.params, params = new URL(request.url).searchParams;
+    if(params.has('visionBatchRequestId')||params.has('visionBatchSource')){
+      sameOrigin(request);
+      const discovery=params.has('visionBatchSource'),allowed=discovery?['visionBatchSource','sourceLanguage','inspectionPolicy']:['visionBatchRequestId'];
+      if(request.url.length>65536||[...params.keys()].some(key=>!allowed.includes(key)||params.getAll(key).length!==1)
+        ||discovery&&(!['zh','en'].includes(params.get('sourceLanguage')??'')||params.has('inspectionPolicy')&&!isImageTextInspectionPolicy(params.get('inspectionPolicy')))
+        ||!discovery&&!visionRequestId(params.get('visionBatchRequestId')))throw new ImageTextError(400,'조회할 원래 이미지 Vision 배치 요청을 확인해주세요.');
+      const {actor,configuration,assertActor}=await batchActor(owner,id,request),batches=await import('@/db/image-vision-batches');
+      let row:ImageVisionBatchRow|null;
+      let selected:FreeImageSource|undefined;
+      if(discovery){let raw:unknown;try{raw=JSON.parse(params.get('visionBatchSource')!);}catch{throw new ImageTextError(400,'원래 이미지 Vision 원본 정보를 확인해주세요.');}
+        selected=validateFreeImageSource(raw);if(selected.productId!==id||!isOwnedImageKey(owner,selected.sourceKey))throw new ImageTextError(400,'이 상품의 본인 소유 Vision 기록만 조회할 수 있습니다.');
+        const sourceScope=await digest(new TextEncoder().encode(JSON.stringify([selected.sourceKey,selected.sourceSha256,actor.company,configuration.model,params.get('sourceLanguage'),...(params.has('inspectionPolicy')?[params.get('inspectionPolicy')]:[])])));
+        row=await batches.findPendingImageVisionBatch(actor,sourceScope);
+      }else row=await batches.readImageVisionBatch(actor,params.get('visionBatchRequestId')!);
+      const observed=await parsedBatch(row,actor,configuration);await assertActor();
+      const matches=!selected||observed?.attempt.source.sourceKey===selected.sourceKey&&observed.attempt.source.sourceSha256===selected.sourceSha256&&observed.attempt.source.width===selected.width&&observed.attempt.source.height===selected.height;
+      return response(batchReply(matches?observed:null,0,true));
+    }
     if(params.has('visionRequestId')){
       sameOrigin(request);
       if(request.url.length>65536||[...params.keys()].some(key=>!['visionRequestId','source','sourceLanguage','inspectionPolicy'].includes(key)||params.getAll(key).length!==1)
@@ -309,7 +420,7 @@ export async function GET(request: Request, context: Context) {
     const {readImageNoTextReceipts}=await import('@/db/image-no-text-receipts');
     const noTextProof=(await readImageNoTextReceipts(owner,[current.product]))[id]?.find(proof=>proof.sourceKey===source.sourceKey&&proof.sourceSha256===source.sourceSha256&&proof.width===source.width&&proof.height===source.height&&proof.sourceLanguage==='zh');
     await freshSource(owner,id,source);
-    return response({ source, visionConfiguration:configuration, ...(noTextProof?noTextProof.reason==='product-markings-only'?{preservationProof:noTextProof}:{noTextProof}:{}), ...(editor ? { editDocument: editor.editDocument } : {}) });
+    return response({ source, visionConfiguration:configuration, visionTransport:'workers-ai-batch-v1', ...(noTextProof?noTextProof.reason==='product-markings-only'?{preservationProof:noTextProof}:{noTextProof}:{}), ...(editor ? { editDocument: editor.editDocument } : {}) });
   } catch (error) { return fail(error); }
 }
 export async function POST(request: Request, context: Context) {
@@ -326,9 +437,14 @@ export async function POST(request: Request, context: Context) {
         || (body as Record<string, unknown>).action !== 'recover' || (body as Record<string, unknown>).editDocument === undefined)) throw new RequestBodyError(413, '편집 문서가 없는 요청은 96KiB 이하이어야 합니다.');
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new ImageTextError(400, '번역할 문구를 확인해주세요.');
       const input = body as Record<string, unknown>;
-      if(input.action==='vision'){
+      if(input.action==='vision-batch-poll'){
+        if(request.headers.get('origin')!==new URL(request.url).origin||Object.keys(input).sort().join(',')!=='action,requestId'||!visionRequestId(input.requestId))throw new ImageTextError(400,'조회할 원래 이미지 Vision 배치 요청을 확인해주세요.');
+        return await pollVisionBatch(owner,id,request,input.requestId);
+      }
+      if(input.action==='vision'||input.action==='vision-batch'){
         if(request.headers.get('origin')!==new URL(request.url).origin)throw new ImageTextError(400,'현재 서비스 화면에서 이미지 Vision을 실행해주세요.');
-        if(!['action,configuration,requestId,source,sourceLanguage','action,configuration,inspectionPolicy,requestId,source,sourceLanguage'].includes(Object.keys(input).sort().join(','))
+        const visionKeys=input.action==='vision-batch'?['action,configuration,requestId,source,sourceLanguage,transport','action,configuration,inspectionPolicy,requestId,source,sourceLanguage,transport']:['action,configuration,requestId,source,sourceLanguage','action,configuration,inspectionPolicy,requestId,source,sourceLanguage'];
+        if(!visionKeys.includes(Object.keys(input).sort().join(','))||input.action==='vision-batch'&&input.transport!=='workers-ai-batch-v1'
           ||input.inspectionPolicy!==undefined&&!isImageTextInspectionPolicy(input.inspectionPolicy)||typeof input.requestId!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.requestId)||!['zh','en'].includes(String(input.sourceLanguage)))throw new ImageTextError(400,'이미지 Vision 요청과 중복 방지 번호를 확인해주세요.');
         const inspectionPolicy=input.inspectionPolicy as ImageTextInspectionPolicy|undefined;
         const source=validateFreeImageSource(input.source),settings=env as ImageVisionEnvironment,configuration=imageVisionConfiguration(settings),expected=parseImageTextVisionConfiguration(input.configuration);
@@ -351,6 +467,7 @@ export async function POST(request: Request, context: Context) {
           sourceScopes:await Promise.all(sourceKeys.flatMap(key=>[undefined,IMAGE_TEXT_INSPECTION_POLICY,IMAGE_TEXT_PRESERVATION_POLICY].map(policy=>digest(new TextEncoder().encode(JSON.stringify([key,source.sourceSha256,company,configuration.model,input.sourceLanguage,...(policy?[policy]:[])])))))),
           completedSourceScopes:await Promise.all(sourceKeys.map(key=>digest(new TextEncoder().encode(JSON.stringify([key,source.sourceSha256,company,configuration.model,input.sourceLanguage,...(inspectionPolicy?[inspectionPolicy]:[])]))))),
           ...(inspectionPolicy?{inspection:{sourceKey:source.sourceKey,sourceSha256:source.sourceSha256,width:source.width,height:source.height,sourceLanguage:input.sourceLanguage as 'zh'|'en',configuration}}:{})};
+        if(input.action==='vision-batch')return await createVisionBatch(scope,{requestId:scope.requestId,source,sourceLanguage:input.sourceLanguage as 'zh'|'en',configuration,...(inspectionPolicy?{inspectionPolicy}:{}),transport:'workers-ai-batch-v1'},image,request,assertCurrent);
         const {claimImageVisionRequest,finishImageVisionRequest,completedImageVisionResult,finishLateImageVisionRequest}=await import('@/db/image-vision-requests');
         const claimed=await claimImageVisionRequest(scope);
         if(!claimed.claimed){

@@ -2,7 +2,7 @@ import { readDetailWorkspace, validateDetailWorkspaceReply, type DetailWorkspace
 import type { DetailWorkspaceView } from '@/app/detail-workspace';
 import { applyDetailWorkspaceImage, readDetailWorkspaceImage, recoverDetailWorkspaceImage, translateDetailWorkspaceImage,
   type DetailWorkspaceEditorContext, type DetailWorkspaceImageReply } from '@/app/detail-workspace-image-client';
-import { FreeImageApplyError, FreeImageVisionError, readFreeImageVisionStatus, recognizeFreeImage, renderFreeImageTranslation, sameFreeImageSource,initializeFreeImageVisionRegions,
+import { FreeImageApplyError, FreeImageVisionError, observeFreeImageVisionStatus, recognizeFreeImage, renderFreeImageTranslation, sameFreeImageSource,initializeFreeImageVisionRegions,
   type FreeImageVisionAttempt,
   type FreeImageLoaded, type FreeImageRegion, type FreeImageRendered } from '@/app/free-image-translation-client';
 import type { FreeImageEditDocument } from '@/app/free-image-edit-document';
@@ -142,7 +142,7 @@ export async function recoverDetailWorkspaceBatchResult(batch: DetailWorkspaceIm
   onProgress: (batch: DetailWorkspaceImageBatch) => void = () => {}, deps: Dependencies = {}): Promise<DetailWorkspaceImageBatch> {
   const entry = batch.items.find(row => row.status === 'uncertain'); if(!entry)throw changed();
   if(entry.visionAttempt){
-    const pending=entry.visionAttempt,observed=await readFreeImageVisionStatus(pending.request,signal,deps.fetcher);signal.throwIfAborted();
+    const pending=entry.visionAttempt,observed=await observeFreeImageVisionStatus(pending.request,signal,deps.fetcher);signal.throwIfAborted();
     if(observed.status!=='completed'){
       const failed=observed.status==='failed',next=replace(batch,{...entry,status:failed?'failed':'uncertain',visionAttempt:failed?undefined:pending,message:failed?'원래 Vision 요청이 실패했습니다. 원본을 유지했습니다.':'원래 Vision 요청의 완료를 확인하지 못했습니다. 새 추론과 다음 사진은 요청하지 않았습니다.'});onProgress(next);return next;
     }

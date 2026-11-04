@@ -12,7 +12,7 @@ function loadModel(){
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
    {exports,Error,Date,URL,TextEncoder,AbortController,AbortSignal,structuredClone,setTimeout:(fn,ms)=>{timers.set(++clock,{fn,ms});return clock;},clearTimeout:id=>timers.delete(id),require(name){
     if(name==='parse5')return parse5;
-    if(name==='@/app/free-image-translation-client')return{initializeFreeImageVisionRegions:load('app/free-image-translation-client.ts').initializeFreeImageVisionRegions};
+    if(name==='@/app/free-image-translation-client'){const real=load('app/free-image-translation-client.ts');return{initializeFreeImageVisionRegions:real.initializeFreeImageVisionRegions,isImageVisionObservation:real.isImageVisionObservation};}
     if(name==='@/app/image-files')return{isOwnedImageKey:(owner,key)=>typeof key==='string'&&new RegExp('^'+owner+'/[a-zA-Z0-9][a-zA-Z0-9._-]*$').test(key)};
     assert.ok(name.startsWith('@/'),name);return load(name.slice(2)+'.ts');
    }},{filename:file});return exports;
@@ -488,7 +488,7 @@ test('owner, initial version and foreground scope changes cannot start or publis
 
 test('a new manual role/content revision before save blocks upload and a slot timeout releases canvas',async()=>{
  const h=fixture('main',['owner/source-a.png']);const render=h.deps.render;h.deps.render=async(...args)=>{const result=await render(...args);h.content.revision++;h.content.assets.main.provenance='manual';return result;};const result=await h.run();assert.equal(result.status,'partial');assert.equal(result.sourceChanged,true);assert.equal(result.applied,0);assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);
- const timeout=fixture('main',['owner/source-a.png']);timeout.deps.recognize=async(_image,_language,signal)=>{timeout.expire();signal.throwIfAborted();};const stopped=await timeout.run();assert.equal(stopped.status,'partial');assert.equal(stopped.applied,0);assert.match(stopped.messages[0],/90초/);assert.ok(timeout.canvases.every(canvas=>canvas.width===0));assert.equal(timeout.timers.size,0);
+ const timeout=fixture('main',['owner/source-a.png']);timeout.deps.recognize=async(_image,_language,signal)=>{timeout.expire();signal.throwIfAborted();};const stopped=await timeout.run();assert.equal(stopped.status,'partial');assert.equal(stopped.applied,0);assert.match(stopped.messages[0],/4분/);assert.ok(timeout.canvases.every(canvas=>canvas.width===0));assert.equal(timeout.timers.size,0);
 });
 
 test('a caught typed source mismatch stops before another image and is distinguishable from confirmed OCR failure',async()=>{
@@ -573,6 +573,15 @@ test('late Vision completion cannot cross a changed saved view or malformed requ
  const stale=lateVisionFixture();await stale.run();stale.view.revision++;await assert.rejects(stale.run(),/변경/);assert.equal(stale.calls.filter(row=>row[0]==='vision').length,1);assert.equal(stale.calls.filter(row=>row[0]==='apply').length,0);assert.ok(stale.options.state.inferencePending);
  const malformed=lateVisionFixture();await malformed.run();const observe=malformed.deps.observe;malformed.deps.observe=async(...args)=>({...await observe(...args),requestId:'da1dd761-dfa4-4267-b76f-a6068cd1ec6c'});
  const held=await malformed.run();assert.equal(held.inferencePending,true);assert.equal(held.applied,0);assert.equal(malformed.calls.filter(row=>['render','apply'].includes(row[0])).length,0);
+});
+
+test('provider-job observation may settle its ledger and resume exact pixels without another inference',async()=>{
+ const h=lateVisionFixture('additional');await h.run();const observe=h.deps.observe;
+ h.deps.observe=async(...args)=>({...await observe(...args),readOnly:false,ledgerOnly:true});
+ const resumed=await h.run();assert.equal(resumed.status,'completed');assert.equal(resumed.applied,1);assert.equal(h.calls.filter(row=>row[0]==='vision').length,1);assert.equal(h.calls.filter(row=>row[0]==='apply').length,1);
+ const invalid=lateVisionFixture('additional');await invalid.run();const original=invalid.deps.observe;
+ invalid.deps.observe=async(...args)=>({...await original(...args),readOnly:false});
+ const held=await invalid.run();assert.equal(held.inferencePending,true);assert.equal(held.applied,0);assert.equal(invalid.calls.filter(row=>row[0]==='apply').length,0);
 });
 
 test('completed Vision rendering failures retain the result for read-only recovery, while confirmed failure releases the inference latch without a new call',async()=>{

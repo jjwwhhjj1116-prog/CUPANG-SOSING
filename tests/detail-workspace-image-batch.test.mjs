@@ -32,6 +32,8 @@ async function fixture({ bodyCount,vision=false,imageWidth=320,imageHeight=240 }
 }
 const visionValue=(f,decision='foreign-text')=>({provider:'workers-ai-vision',model:'@cf/qwen/qwen3.8-27b',requests:1,notice:f.r.load('app/image-text-vision.ts').IMAGE_TEXT_VISION_NOTICE,
  inspection:{policy:'foreign-text-inspection-v1',decision},blocks:decision==='foreign-text'?[{id:'vision-1',text:'中文',translated:'검토 문구',issue:null,box:{x:20,y:20,width:100,height:25}}]:[]});
+const visionBatchReply=(input,result=null)=>({format:'yoofam-image-vision-batch-v1',attempt:{requestId:input.requestId,source:input.source,sourceLanguage:input.sourceLanguage,configuration:input.configuration,inspectionPolicy:input.inspectionPolicy,transport:input.transport},
+ status:result?'completed':'running',result,failure:null,execution:{requests:result?0:1},readOnly:false});
 function visionDeps(f,result=visionValue(f)){
  const stages=[];return{stages,deps:{...f.deps,recognize:async image=>{stages.push('vision');image.visionResult=plain(result);const styled=f.r.load('app/free-image-vision-style.ts').initializeVisionRegions(result.blocks,image.canvas,image.width,image.height);image.visionStyleIssues=styled.issues;
   if(!result.blocks.length)throw Error('empty image text');return styled.regions;},translate:async()=>assert.fail('Vision Korean must never go to Google'),render:async(image,regions,...args)=>{
@@ -60,14 +62,14 @@ for(const recovered of [false,true])test(`${recovered?'completed-request recover
   ]},expectedResult=plain(result),before=f.tables(),saved=plain(f.saved),objects=new Map([...f.api.objects].map(([key,bytes])=>[key,Buffer.from(bytes)]));
   let request,posts=0,reads=0,renders=0,translations=0;
   f.intercept((url,init)=>{
-   if(url.endsWith('/image-text')&&init.method==='POST'){
-    posts++;request=JSON.parse(init.body);
-    return recovered?Response.json({error:'ACK lost'},{status:503}):Response.json({source:request.source,configuration:request.configuration,requestId:request.requestId,result,replayed:false,execution:{requests:1,cached:false}});
+   if(!url.endsWith('/image-text')||init.method!=='POST')return;
+   const input=JSON.parse(init.body);
+   if(input.action==='vision-batch'){
+    posts++;request=input;assert.equal(input.transport,'workers-ai-batch-v1');
+    return recovered?Response.json({error:'ACK lost'},{status:503}):Response.json(visionBatchReply(request),{status:202});
    }
-   if(url.includes('visionRequestId=')){
-    reads++;assert.equal(init.method,'GET');
-    return Response.json({format:'yoofam-image-vision-status-v1',source:request.source,configuration:request.configuration,sourceLanguage:'zh',requestId:request.requestId,status:'completed',result,failure:null,execution:{requests:0},readOnly:true});
-   }
+   reads++;assert.deepEqual(input,{action:'vision-batch-poll',requestId:request.requestId});
+   return Response.json(visionBatchReply(request,result));
   });
   const deps={...f.deps,recognize:f.canvas.client.recognizeFreeImage,translate:async()=>{translations++;assert.fail('rejected Vision must not translate');},render:async()=>{renders++;assert.fail('rejected Vision must not render');}};
   let prepared=await f.batch.prepareDetailWorkspaceImageBatch({selection:f.selection,saved:f.saved,language:'zh'},signal(),()=>{},deps);
@@ -82,7 +84,7 @@ for(const recovered of [false,true])test(`${recovered?'completed-request recover
    {original:'Boneless suture head',translated:'무봉제 헤더'},{original:'一体机无骨缝头',translated:'일체형 무봉제 헤더'},
    {original:'平整无棱  穿着舒适',translated:'매끄럽고 날카롭지 않아 착용 시 편안함'},
   ]);
-  assert.equal(posts,1);assert.equal(reads,recovered?1:0);assert.equal(renders,0);assert.equal(translations,0);
+  assert.equal(posts,1);assert.equal(reads,1);assert.equal(renders,0);assert.equal(translations,0);
   assert.equal(f.calls.filter(call=>call.init.body instanceof FormData).length,0);assert.deepEqual(f.tables(),before);
   assert.deepEqual(plain(prepared.saved),saved);assert.deepEqual(result,expectedResult);
   assert.deepEqual([...f.api.objects.keys()],[...objects.keys()]);for(const [key,bytes]of objects)assert.deepEqual(Buffer.from(f.api.objects.get(key)),bytes,key);
@@ -103,14 +105,17 @@ test('v2 workspace keeps physical inscriptions out of Korean rendering and prese
 
 test('an exact zh no-text proof skips zh inference and permits explicit English Vision without another translator',async()=>{
  const f=await fixture({vision:true});try{
-  const requested=[];f.intercept(async(url,init)=>{
-   if(url.endsWith('/image-text')&&init.method==='POST'){const input=JSON.parse(init.body);requested.push(input);assert.equal(input.action,'vision');assert.equal(input.sourceLanguage,'en');const result=visionValue(f);result.blocks[0].text='English';result.blocks[0].kind='overlay';result.inspection={policy:input.inspectionPolicy,decision:'foreign-text'};return Response.json({source:input.source,configuration:input.configuration,requestId:input.requestId,result,replayed:false,execution:{requests:1,cached:false}});}
+  const requested=[],pending=new Map();f.intercept(async(url,init)=>{
+   if(url.endsWith('/image-text')&&init.method==='POST'){
+    const input=JSON.parse(init.body);if(input.action==='vision-batch-poll'){const job=pending.get(input.requestId);assert.ok(job);assert.deepEqual(input,{action:'vision-batch-poll',requestId:job.input.requestId});return Response.json(visionBatchReply(job.input,job.result));}
+    requested.push(input);assert.equal(input.action,'vision-batch');assert.equal(input.sourceLanguage,'en');const result=visionValue(f);result.blocks[0].text='English';result.blocks[0].kind='overlay';result.inspection={policy:input.inspectionPolicy,decision:'foreign-text'};pending.set(input.requestId,{input,result});return Response.json(visionBatchReply(input),{status:202});
+   }
    if(!url.includes('/workspace-image-text?'))return;const route=f.api.load('app/api/products/[id]/workspace-image-text/route.ts'),response=await route.GET(new Request('https://app.test'+url,init),f.context),body=await response.json(),source=body.source;
    body.noTextProof={policy:'foreign-text-inspection-v1',productId:source.productId,sourceKey:source.sourceKey,sourceSha256:source.sourceSha256,width:source.width,height:source.height,sourceLanguage:'zh',requestId:'90700000-0000-4000-8000-000000000008',verifiedAt:'2026-11-02T00:00:00.000Z',configuration:body.visionConfiguration};return Response.json(body);});
   const v=visionDeps(f),deps={...v.deps,recognize:f.canvas.client.recognizeFreeImage};
   const ready=await f.batch.prepareDetailWorkspaceImageBatch({selection:f.selection,saved:f.saved,language:'zh'},signal(),()=>{},deps);assert.ok(ready.items.every(item=>item.status==='unchanged'));
   assert.equal(requested.length,0);const english=await f.batch.prepareDetailWorkspaceImageBatch({selection:f.selection,saved:f.saved,language:'en'},signal(),()=>{},deps);assert.ok(english.items.every(item=>item.status==='ready'));
-  assert.equal(requested.length,english.items.length);assert.deepEqual(v.stages,['render','render']);assert.ok(english.items.every(item=>item.texts[0].original==='English'));
+  assert.equal(requested.length,english.items.length);assert.equal(f.calls.filter(call=>typeof call.init.body==='string'&&JSON.parse(call.init.body).action==='vision-batch-poll').length,english.items.length);assert.deepEqual(v.stages,['render','render']);assert.ok(english.items.every(item=>item.texts[0].original==='English'));
  }finally{f.api.close();}
 });
 
@@ -142,14 +147,17 @@ test('unknown Vision stops later BODY inference and original-status recovery pre
 
 test('a rejected v1 old-source collision stays failed while the real v2 route and client prepare the next distinct BODY without retry or final publication',async()=>{
  const f=await fixture({vision:true});try{
-  const route=f.api.load('app/api/products/[id]/image-text/route.ts'),ledger=f.api.load('db/image-vision-requests.ts'),claim=ledger.claimImageVisionRequest,oldId='90700000-0000-4000-8000-000000000009',posts=[],responses=[],provider=[];let oldRow;
+  const route=f.api.load('app/api/products/[id]/image-text/route.ts'),ledger=f.api.load('db/image-vision-requests.ts'),claim=ledger.claimImageVisionRequest,oldId='90700000-0000-4000-8000-000000000009',providerRequestId='768f15b7-4fd6-4498-906e-ad94ffc7f8d2',posts=[],responses=[],provider=[],providerReads=[];let oldRow;
   ledger.claimImageVisionRequest=async scope=>{if(!oldRow){const source=posts[0].source,sourceScope=createHash('sha256').update(JSON.stringify([source.sourceKey,source.sourceSha256,scope.company,scope.model,'zh','foreign-text-inspection-v1'])).digest('hex');assert.notEqual(sourceScope,scope.sourceScope);
    assert.equal((await claim({...scope,requestId:oldId,sourceScope,fingerprint:'9'.repeat(64)})).claimed,true);oldRow=JSON.stringify(f.api.sqlite.prepare('SELECT * FROM image_vision_requests WHERE request_id=?').get(oldId));}return claim(scope);};
-  f.api.bindings.AI.run=async(model,input)=>{provider.push({model,input});return{response:{decision:'foreign-text',blocks:[{original:'中文',translated:'한국어',kind:'overlay',box:{x:20,y:20,width:100,height:25}}]}};};
-  f.intercept(async(url,init)=>{if(!url.endsWith('/image-text')||init.method!=='POST')return;posts.push(JSON.parse(init.body));const response=await route.POST(new Request('https://app.test'+url,{...init,headers:{...init.headers,origin:'https://app.test'}}),f.context);responses.push(await response.clone().json());return response;});
+  f.api.bindings.AI.run=async(model,input,options)=>{
+   if(input.request_id){providerReads.push({model,input,options});assert.deepEqual(plain(input),{request_id:providerRequestId});assert.equal(options,undefined);return{responses:[{id:0,success:true,result:{response:{decision:'foreign-text',blocks:[{original:'中文',translated:'한국어',kind:'overlay',box:{x:20,y:20,width:100,height:25}}]}}}]};}
+   provider.push({model,input,options});assert.deepEqual(plain(options),{queueRequest:true});assert.equal(input.requests.length,1);return{model,status:'queued',request_id:providerRequestId};
+  };
+  f.intercept(async(url,init)=>{if(!url.endsWith('/image-text')||init.method!=='POST')return;const input=JSON.parse(init.body);if(input.action==='vision-batch')posts.push(input);else assert.deepEqual(input,{action:'vision-batch-poll',requestId:posts[1].requestId});const response=await route.POST(new Request('https://app.test'+url,{...init,headers:{...init.headers,origin:'https://app.test'}}),f.context);if(input.action==='vision-batch')responses.push(await response.clone().json());return response;});
   const before=plain(f.tables()),v=visionDeps(f),prepared=await f.batch.prepareDetailWorkspaceImageBatch({selection:f.selection,saved:f.saved,language:'zh'},signal(),()=>{},{...v.deps,recognize:f.canvas.client.recognizeFreeImage});
   assert.deepEqual(prepared.items.map(item=>item.status),['failed','ready']);assert.equal(prepared.items[0].visionAttempt,undefined);assert.equal(prepared.items[0].rendered,undefined);assert.ok(prepared.items[1].rendered);assert.equal(responses[0].code,'IMAGE_VISION_NOT_ADMITTED');assert.equal(responses[0].uncertain,false);
-  assert.equal(posts.length,2);assert.equal(posts[0].inspectionPolicy,'product-text-preservation-v2');assert.notEqual(posts[0].source.sourceKey,posts[1].source.sourceKey);assert.notEqual(posts[0].requestId,posts[1].requestId);assert.equal(provider.length,1);assert.equal(JSON.stringify(f.api.sqlite.prepare('SELECT * FROM image_vision_requests WHERE request_id=?').get(oldId)),oldRow);
+  assert.equal(posts.length,2);assert.equal(posts[0].inspectionPolicy,'product-text-preservation-v2');assert.notEqual(posts[0].source.sourceKey,posts[1].source.sourceKey);assert.notEqual(posts[0].requestId,posts[1].requestId);assert.equal(provider.length,1);assert.equal(providerReads.length,1);assert.equal(JSON.stringify(f.api.sqlite.prepare('SELECT * FROM image_vision_requests WHERE request_id=?').get(oldId)),oldRow);
   assert.deepEqual(plain(f.api.sqlite.prepare('SELECT status,provider_requests FROM image_vision_requests WHERE request_id=?').get(oldId)),{status:'running',provider_requests:null});assert.deepEqual(plain(f.api.sqlite.prepare('SELECT status,provider_requests FROM image_vision_requests WHERE request_id=?').get(posts[1].requestId)),{status:'completed',provider_requests:1});
   assert.equal(f.api.sqlite.prepare('SELECT count(*) AS n FROM image_vision_requests WHERE request_id=?').get(posts[0].requestId).n,0);assert.equal(f.api.sqlite.prepare('SELECT count(*) AS n FROM image_vision_requests').get().n,2);
   const after=plain(f.tables());for(const table of ['products','product_content','product_options','product_quotation_fields','product_detail_workspaces'])assert.deepEqual(after[table],before[table],table);

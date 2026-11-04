@@ -1,6 +1,6 @@
 import {planBatchImageWork,refreshBatchImageTask,type BatchImageTask} from '@/app/batch-image-work';
 import {applyDetailBatchResult,recoverDetailBatchResult,detailBatchCapacity,detailBatchSelection,detailBatchTranslationSlots,type DetailImageBatch} from '@/app/detail-image-batch';
-import {readFreeImageSource,recognizeFreeImage,translateFreeImageRegions,renderFreeImageTranslation,readFreeImageVisionStatus,initializeFreeImageVisionRegions,type FreeImageVisionStatus,type FreeImageLoaded,type FreeImageRegion} from '@/app/free-image-translation-client';
+import {readFreeImageSource,recognizeFreeImage,translateFreeImageRegions,renderFreeImageTranslation,observeFreeImageVisionStatus,isImageVisionObservation,initializeFreeImageVisionRegions,type FreeImageVisionStatus,type FreeImageLoaded,type FreeImageRegion} from '@/app/free-image-translation-client';
 import {FreeImageVisionError,type FreeImageVisionAttempt} from '@/app/free-image-vision-error';
 import {isOwnedImageKey} from '@/app/image-files';
 import type {ProductContent} from '@/app/product-content';
@@ -50,9 +50,9 @@ export function advanceSelectedImageStageCheckpoint(state:SelectedImageStageStat
 }
 export type SelectedImageStageResult={status:'completed'|'partial'|'skipped'|'uncertain';applied:number;failed:number;skipped:number;verifiedUnchanged?:number;messages:string[];productVersion?:string;recoveryBatch?:DetailImageBatch;state:SelectedImageStageState;recovered?:boolean;sourceChanged?:true;inferencePending?:true;review?:SelectedImageReview;reviewTarget?:SelectedImageReviewTarget};
 export type SelectedImageStageOptions={ownerId:string;signal:AbortSignal;fetcher:typeof fetch;isCurrent?:()=>boolean;onProgress?:(message:string)=>void;expectedProductVersion?:string;state?:SelectedImageStageState;reworkCurrentSelection?:boolean};
-type Dependencies={plan?:typeof planBatchImageWork;refresh?:typeof refreshBatchImageTask;readSource?:typeof readFreeImageSource;recognize?:typeof recognizeFreeImage;translate?:typeof translateFreeImageRegions;render?:typeof renderFreeImageTranslation;apply?:typeof applyDetailBatchResult;recover?:typeof recoverDetailBatchResult;observe?:typeof readFreeImageVisionStatus;reconcileDetail?:typeof reconcileSelectedDetailWorkspace};
+type Dependencies={plan?:typeof planBatchImageWork;refresh?:typeof refreshBatchImageTask;readSource?:typeof readFreeImageSource;recognize?:typeof recognizeFreeImage;translate?:typeof translateFreeImageRegions;render?:typeof renderFreeImageTranslation;apply?:typeof applyDetailBatchResult;recover?:typeof recoverDetailBatchResult;observe?:typeof observeFreeImageVisionStatus;reconcileDetail?:typeof reconcileSelectedDetailWorkspace};
 const label={main:'대표 이미지',additional:'추가 이미지',detail:'상세 이미지'};
-export const SELECTED_IMAGE_SLOT_TIMEOUT_MS=90000;
+export const SELECTED_IMAGE_SLOT_TIMEOUT_MS=240000;
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
 const same=(first:unknown,second:unknown)=>JSON.stringify(first)===JSON.stringify(second);
 const note=(cause:unknown)=>cause instanceof Error?cause.message:'이미지 초안을 저장하지 못했습니다.';
@@ -119,16 +119,16 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
  if(state.inferencePending){
   const pending=state.inferencePending;
   try{
-   const observation=await(deps.observe??readFreeImageVisionStatus)(pending.attempt,signal,fetcher);active();pending.observation=observation;
+   const observation=await(deps.observe??observeFreeImageVisionStatus)(pending.attempt,signal,fetcher);active();pending.observation=observation;
    if(observation.status==='completed'){
     if(observation.format!=='yoofam-image-vision-status-v1'||observation.requestId!==pending.attempt.requestId||observation.sourceLanguage!==pending.attempt.sourceLanguage
-      ||!same(observation.source,pending.attempt.source)||!same(observation.configuration,pending.attempt.configuration)||observation.readOnly!==true||observation.execution?.requests!==0
+      ||!same(observation.source,pending.attempt.source)||!same(observation.configuration,pending.attempt.configuration)||!isImageVisionObservation(observation)
       ||observation.failure!==null||!parseImageTextVisionResult(observation.result,pending.attempt.source.width,pending.attempt.source.height))throw changed();
     recoveredInference=pending;
     result.messages.push('원래 Vision 요청의 완료된 번역을 읽었습니다. 현재 원본과 저장 버전을 다시 대조한 뒤 이어 적용하며 새 추론은 요청하지 않습니다.');
    }else if(observation.status==='failed'){
     if(observation.format!=='yoofam-image-vision-status-v1'||observation.requestId!==pending.attempt.requestId||observation.sourceLanguage!==pending.attempt.sourceLanguage
-      ||!same(observation.source,pending.attempt.source)||!same(observation.configuration,pending.attempt.configuration)||observation.readOnly!==true||observation.execution?.requests!==0||observation.result!==null)throw changed();
+      ||!same(observation.source,pending.attempt.source)||!same(observation.configuration,pending.attempt.configuration)||!isImageVisionObservation(observation)||observation.result!==null)throw changed();
     // A terminal failure is no longer an unknown inference. A later explicit
     // selected-work action may retry, but this observation never starts it.
     delete state.inferencePending;result.failed=1;
@@ -231,7 +231,7 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
    if(entry.status==='skipped'){result.skipped++;continue;}
    const savedEdit=savedEditKey(entry.sourceKey);
    const controller=new AbortController(),abort=()=>controller.abort(signal.reason);signal.addEventListener('abort',abort,{once:true});
-   const timer=setTimeout(()=>controller.abort(Error('이 이미지의 처리 시간이 90초를 초과했습니다. 원본과 확인된 저장 결과를 유지했습니다.')),SELECTED_IMAGE_SLOT_TIMEOUT_MS);
+   const timer=setTimeout(()=>controller.abort(Error('이 이미지의 처리 시간이 4분을 초과했습니다. 서버 번역 작업과 원본을 보존했습니다.')),SELECTED_IMAGE_SLOT_TIMEOUT_MS);
    let image:FreeImageLoaded|undefined;
    const check=()=>{active();controller.signal.throwIfAborted();};
    const progress=(message:string)=>{check();options.onProgress?.(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}/${selected.keys.length}: ${message}`);};

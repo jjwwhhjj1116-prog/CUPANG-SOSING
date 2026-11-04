@@ -16,6 +16,7 @@ import {parseImageOriginalPreservationProof,type ImageOriginalPreservationProof}
 import type {FreeImageVisionAttempt} from '@/app/free-image-vision-error';
 import {createFreeImageInpaintSession} from '@/app/free-image-inpaint-client';
 import {FREE_IMAGE_INPAINT_MODE,freeImageInpaintRoi,groupFreeImageInpaintRois,MAX_FREE_IMAGE_INPAINT_REGIONS,MAX_FREE_IMAGE_INPAINT_TOTAL_PIXELS} from '@/app/free-image-inpaint';
+import {runImageVisionBatch,readImageVisionBatch,pollImageVisionBatch,type ImageVisionBatchStatus} from '@/app/image-vision-batch-client';
 export {FreeImageVisionError,type FreeImageVisionAttempt} from '@/app/free-image-vision-error';
 
 export type OcrBox = { x: number; y: number; width: number; height: number };
@@ -28,7 +29,7 @@ export type FreeImageRegion = FreeImageTextStyle & {
   backgroundMode?: 'inpaint-telea-v1';
 };
 export type FreeImageLoaded = { source: FreeImageSource; blob: Blob; canvas: HTMLCanvasElement; width: number; height: number; editDocument?: FreeImageEditDocument;visionPaintOrder?:'backgrounds-first-v1';noTextProof?:ImageOriginalPreservationProof;
- visionConfiguration?:ImageTextVisionConfiguration;visionRequestId?:string;visionPending?:FreeImageVisionError;visionResult?:ImageTextVisionResult;visionExecution?:{requests:0|1;cached:boolean};visionStyleIssues?:VisionStyleIssue[];visionFetcher?:typeof fetch };
+ visionConfiguration?:ImageTextVisionConfiguration;visionTransport?:'workers-ai-batch-v1';visionRequestId?:string;visionPending?:FreeImageVisionError;visionResult?:ImageTextVisionResult;visionExecution?:{requests:0|1;cached:boolean};visionStyleIssues?:VisionStyleIssue[];visionFetcher?:typeof fetch };
 export type FreeImageRendered = { source: FreeImageSource; output: Blob; width: number; height: number; optionImageIds?: string[]; crop?: FreeImageCrop; editDocument?: FreeImageEditDocument };
 export type FreeImageQuotationRequest = Omit<NonNullable<FreeImageSource['quotationTarget']>, 'bindingSha256'>;
 export type FreeImageEditorReadOptions = { restoreEditor: true; anchorPolicy?: 'current-target-v1' };
@@ -107,7 +108,7 @@ function canvas(width: number, height: number) {
 
 /** Revalidate the server's current byte identity and target without loading pixels. */
 export async function readFreeImageSourceProof(productId: string, version: string, sourceKey: string, role: FreeImageRole,
-  signal: AbortSignal, fetcher: typeof fetch = fetch, quotationTarget?: FreeImageQuotationRequest, options?: FreeImageEditorReadOptions): Promise<Pick<FreeImageLoaded, 'source' | 'editDocument' | 'noTextProof' | 'visionConfiguration' | 'visionFetcher'>> {
+  signal: AbortSignal, fetcher: typeof fetch = fetch, quotationTarget?: FreeImageQuotationRequest, options?: FreeImageEditorReadOptions): Promise<Pick<FreeImageLoaded, 'source' | 'editDocument' | 'noTextProof' | 'visionConfiguration' | 'visionTransport' | 'visionFetcher'>> {
   signal.throwIfAborted();
   if (options?.anchorPolicy !== undefined && (options.anchorPolicy !== 'current-target-v1' || options.restoreEditor !== true || !quotationTarget)) throw Error('다시 편집할 현재 견적 이미지 연결을 확인해주세요.');
   if (role === 'label' && !quotationTarget) throw Error('선택 옵션에 저장된 최종 라벨 이미지를 선택해주세요.');
@@ -119,7 +120,7 @@ export async function readFreeImageSourceProof(productId: string, version: strin
   const editorMode = options?.anchorPolicy === 'current-target-v1' ? 'saved-current-target-v1' : 'saved';
   let restoring = savedEditor;
   let response = await fetcher(`/api/products/${encodeURIComponent(productId)}/image-text?${new URLSearchParams({ ...params, ...(savedEditor ? { editor: editorMode } : {}) })}`, { signal, cache: 'no-store' });
-  let body = await response.json() as { source?: unknown; error?: string; code?: string; editDocument?: unknown;visionConfiguration?:unknown;noTextProof?:unknown;preservationProof?:unknown }; signal.throwIfAborted();
+  let body = await response.json() as { source?: unknown; error?: string; code?: string; editDocument?: unknown;visionConfiguration?:unknown;visionTransport?:unknown;noTextProof?:unknown;preservationProof?:unknown }; signal.throwIfAborted();
   if (savedEditor && response.status === 404 && body.code === 'image-edit-document-missing') {
     restoring = false;
     response = await fetcher(`/api/products/${encodeURIComponent(productId)}/image-text?${new URLSearchParams(params)}`, { signal, cache: 'no-store' });
@@ -136,13 +137,13 @@ export async function readFreeImageSourceProof(productId: string, version: strin
   const editDocument = body.editDocument === undefined ? undefined : validateFreeImageEditDocument(body.editDocument, source);
   if (editDocument && await editDocumentDigest(editDocument) !== source.editorSource!.documentSha256) throw Error('저장한 편집 내용의 연결을 확인하지 못했습니다.');
   const configuration:ImageTextVisionConfiguration|null=body.visionConfiguration===undefined?{provider:'workers-ai-vision',model:IMAGE_TEXT_VISION_MODEL,configured:false,paidAllowed:false,notice:IMAGE_TEXT_VISION_NOTICE}:parseImageTextVisionConfiguration(body.visionConfiguration);
-  if(configuration===null)throw Error('이미지 Vision 제공자 설정을 확인하지 못했습니다. 자동 요청하지 않았습니다.');
+  if(configuration===null||body.visionTransport!==undefined&&body.visionTransport!=='workers-ai-batch-v1')throw Error('이미지 Vision 제공자 설정을 확인하지 못했습니다. 자동 요청하지 않았습니다.');
   const proofValue=body.preservationProof??body.noTextProof,noTextProof=proofValue===undefined?null:parseImageOriginalPreservationProof(proofValue);
   if(body.noTextProof!==undefined&&body.preservationProof!==undefined||body.preservationProof!==undefined&&noTextProof?.reason!=='product-markings-only'||body.noTextProof!==undefined&&noTextProof?.reason==='product-markings-only')throw Error('원본 보존 검증의 종류가 다릅니다.');
   if(proofValue!==undefined&&(!noTextProof||noTextProof.productId!==source.productId||noTextProof.sourceKey!==source.sourceKey||noTextProof.sourceSha256!==source.sourceSha256
    ||noTextProof.width!==source.width||noTextProof.height!==source.height||JSON.stringify(noTextProof.configuration)!==JSON.stringify(configuration)))throw Error('원본 보존 검증과 현재 원본의 연결이 다릅니다.');
   signal.throwIfAborted();
-  return{source,...(editDocument?{editDocument}:{}),...(noTextProof?{noTextProof}:{}),...(configuration?{visionConfiguration:configuration,visionFetcher:fetcher}:{})};
+  return{source,...(editDocument?{editDocument}:{}),...(noTextProof?{noTextProof}:{}),...(body.visionTransport==='workers-ai-batch-v1'?{visionTransport:body.visionTransport}:{}),...(configuration?{visionConfiguration:configuration,visionFetcher:fetcher}:{})};
 }
 
 /** Read only authenticated app files, and bind the decoded visible orientation
@@ -255,6 +256,14 @@ export async function recognizeFreeImage(image:FreeImageLoaded,sourceLanguage:'z
  const configuration=parseImageTextVisionConfiguration(image.visionConfiguration);
  if(!configuration?.configured)throw Error('이미지 Vision이 설정되지 않았습니다. 브라우저 문구 읽기를 별도로 선택할 수 있습니다. 자동 대체 요청하지 않았습니다.');
  if(image.width!==image.source.width||image.height!==image.source.height)throw Error('이 원본 방향은 Vision 영역 적용을 지원하지 않습니다. 브라우저 문구 읽기를 선택해주세요.');
+ if(image.visionPending?.uncertain&&image.visionPending.attempt.transport!=='workers-ai-batch-v1')throw image.visionPending;
+ if(image.visionTransport==='workers-ai-batch-v1'){
+  const observed=await runImageVisionBatch(image,sourceLanguage,signal,onProgress);image.visionResult=observed.result;image.visionExecution={requests:observed.requests,cached:observed.cached};
+  if(observed.cached)onProgress('같은 원본의 검증된 Vision 번역을 재사용했습니다. 추가 AI 요청은 0회입니다.');
+  if(observed.result.inspection?.decision==='unreadable')throw Error('원본의 외국어 문구를 끝까지 판독하지 못했습니다. 이미지 편집에서 원문을 확인해주세요. 완료로 처리하지 않았습니다.');
+  if(!observed.result.blocks.length)throw Error('읽을 수 있는 문구를 찾지 못했습니다. 필요한 영역과 원문을 직접 추가해주세요.');
+  return initializeFreeImageVisionRegions(image,observed.result).regions;
+ }
  if(image.visionPending?.uncertain)throw image.visionPending;
  signal.throwIfAborted();onProgress('Cloudflare Qwen3.8 Vision으로 문구와 한국어 번역을 한 번 읽고 있습니다.');
  const requestId=image.visionRequestId??=crypto.randomUUID();
@@ -288,10 +297,21 @@ export async function recognizeFreeImage(image:FreeImageLoaded,sourceLanguage:'z
 }
 
 export type FreeImageVisionStatus={format:'yoofam-image-vision-status-v1';source:FreeImageSource;configuration:ImageTextVisionConfiguration;sourceLanguage:'zh'|'en';requestId:string;
- status:'running'|'completed'|'failed'|'uncertain'|'not-found';result:ImageTextVisionResult|null;failure:string|null;execution:{requests:0};readOnly:true};
+ status:'running'|'completed'|'failed'|'uncertain'|'not-found';result:ImageTextVisionResult|null;failure:string|null;execution:{requests:0}}&({readOnly:true;ledgerOnly?:never}|{readOnly:false;ledgerOnly:true});
+function batchVisionObservation(attempt:FreeImageVisionAttempt,observed:ImageVisionBatchStatus):FreeImageVisionStatus{
+ return{format:'yoofam-image-vision-status-v1',source:structuredClone(attempt.source),configuration:attempt.configuration,sourceLanguage:attempt.sourceLanguage,requestId:attempt.requestId,status:observed.status,result:observed.result,failure:observed.failure,execution:{requests:0},...(observed.readOnly?{readOnly:true as const}:{readOnly:false as const,ledgerOnly:true as const})};
+}
+/** Provider retrieval settles only its request ledger. It never creates
+ * inference or applies a product/image/quotation change. */
+export async function observeFreeImageVisionStatus(attempt:FreeImageVisionAttempt,signal:AbortSignal,fetcher:typeof fetch=fetch):Promise<FreeImageVisionStatus>{
+ if(attempt.transport!=='workers-ai-batch-v1')return readFreeImageVisionStatus(attempt,signal,fetcher);
+ return batchVisionObservation(attempt,await pollImageVisionBatch(attempt,signal,fetcher));
+}
+export function isImageVisionObservation(value:FreeImageVisionStatus):boolean{return value.execution?.requests===0&&(value.readOnly===true&&value.ledgerOnly===undefined||value.readOnly===false&&value.ledgerOnly===true);}
 /** The status route has no inference/claim branch. Reading an absent request
  * returns not-found rather than executing the old POST with a reused UUID. */
 export async function readFreeImageVisionStatus(attempt:FreeImageVisionAttempt,signal:AbortSignal,fetcher:typeof fetch=fetch):Promise<FreeImageVisionStatus>{
+ if(attempt.transport==='workers-ai-batch-v1')return batchVisionObservation(attempt,await readImageVisionBatch(attempt,signal,fetcher));
  const validated=new FreeImageVisionError('원래 요청 상태 조회','IMAGE_VISION_STATUS',true,attempt).attempt;
  signal.throwIfAborted();const params=new URLSearchParams({visionRequestId:validated.requestId,sourceLanguage:validated.sourceLanguage,source:JSON.stringify(validated.source),...(validated.inspectionPolicy?{inspectionPolicy:validated.inspectionPolicy}:{})});
  const path=`/api/products/${encodeURIComponent(validated.source.productId)}/image-text?${params}`;

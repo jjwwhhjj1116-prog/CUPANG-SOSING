@@ -39,20 +39,20 @@ export async function readDetailWorkspaceImage(value: DetailWorkspaceEditorConte
   const query = new URLSearchParams({ optionId: value.target.optionId, photoId: value.target.photoId, ...(value.target.profileId ? { profileId: value.target.profileId } : {}) });
   const response = await fetcher(`${endpoint(value.selection.productId)}?${query}`, { signal, cache: 'no-store' }), body: unknown = await response.json(); signal.throwIfAborted();
   if (!response.ok) throw Error(object(body) && typeof body.error === 'string' ? body.error : '작업 사진 편집 원본을 읽지 못했습니다.');
-  if (!object(body) || Object.keys(body).some(key => !['source', 'editDocument','visionConfiguration','noTextProof','preservationProof'].includes(key))) return invalid();
+  if (!object(body) || Object.keys(body).some(key => !['source', 'editDocument','visionConfiguration','visionTransport','noTextProof','preservationProof'].includes(key))) return invalid();
   const source = validateFreeImageSource(body.source);
   const owner = value.selection.view.imageKeys[0]?.split('/')[0], proof = value.saved.workspace!.files.find(file => file.key === photo.key);
   if (!owner || !isOwnedImageKey(owner, source.sourceKey) || !proof || !sourceMatches(source, value, photo.key) || !!source.editorSource !== (body.editDocument !== undefined)
     || source.editorSource?.anchorPolicy !== undefined || (source.editorSource?.resultSha256 ?? source.sourceSha256) !== proof.sha256) return invalid();
   const document = body.editDocument === undefined ? undefined : validateFreeImageEditDocument(body.editDocument, source);
   const configuration:ImageTextVisionConfiguration|null=body.visionConfiguration===undefined?{provider:'workers-ai-vision',model:IMAGE_TEXT_VISION_MODEL,configured:false,paidAllowed:false,notice:IMAGE_TEXT_VISION_NOTICE}:parseImageTextVisionConfiguration(body.visionConfiguration);
-  if(!configuration)return invalid();
+  if(!configuration||body.visionTransport!==undefined&&body.visionTransport!=='workers-ai-batch-v1')return invalid();
   const proofValue=body.preservationProof??body.noTextProof,noTextProof=proofValue===undefined?null:parseImageOriginalPreservationProof(proofValue);
   if(body.noTextProof!==undefined&&body.preservationProof!==undefined||body.preservationProof!==undefined&&noTextProof?.reason!=='product-markings-only'||body.noTextProof!==undefined&&noTextProof?.reason==='product-markings-only')throw Error('원본 보존 검증의 종류가 다릅니다.');
   if(proofValue!==undefined&&(!noTextProof||noTextProof.productId!==source.productId||noTextProof.sourceKey!==source.sourceKey||noTextProof.sourceSha256!==source.sourceSha256
     ||noTextProof.width!==source.width||noTextProof.height!==source.height||!same(noTextProof.configuration,configuration)))return invalid();
   const loaded=await readFreeImageSourcePixels(source, signal, fetcher, document);
-  return {...loaded,visionConfiguration:configuration,visionFetcher:fetcher,...(noTextProof?{noTextProof}:{})};
+  return {...loaded,visionConfiguration:configuration,visionFetcher:fetcher,...(body.visionTransport==='workers-ai-batch-v1'?{visionTransport:body.visionTransport}:{}),...(noTextProof?{noTextProof}:{})};
 }
 async function rendered(image: FreeImageRendered, value: DetailWorkspaceEditorContext) {
   const { saved, record, photo } = await context(value), source = validateFreeImageSource(image.source), owner = source.sourceKey.split('/')[0];

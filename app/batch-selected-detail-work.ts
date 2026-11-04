@@ -13,7 +13,7 @@ import { prepareDetailWorkspaceComposite, applyDetailWorkspaceComposite, recover
   readCurrentDetailPublication, type DetailWorkspaceComposite } from '@/app/detail-workspace-composite-client';
 import type { DetailSaveAttempt } from '@/app/detail-save-client';
 import { DETAIL_SAVE_PUBLICATION_POLICY, type DetailSavePeers } from '@/app/detail-save-plan';
-import { FreeImageApplyError, recognizeFreeImage, renderFreeImageTranslation, readFreeImageVisionStatus,initializeFreeImageVisionRegions,
+import { FreeImageApplyError, recognizeFreeImage, renderFreeImageTranslation, observeFreeImageVisionStatus,isImageVisionObservation,initializeFreeImageVisionRegions,
   type FreeImageLoaded, type FreeImageRendered, type FreeImageVisionStatus, type FreeImageRegion } from '@/app/free-image-translation-client';
 import { FreeImageVisionError, type FreeImageVisionAttempt } from '@/app/free-image-vision-error';
 import { isVerifiedOriginalPreservation, parseImageTextVisionConfiguration, parseImageTextVisionResult } from '@/app/image-text-vision';
@@ -41,7 +41,7 @@ export type SelectedDetailWorkResult = { status: 'completed'|'partial'|'skipped'
 type Options = { ownerId: string; company: SupplierHubCompany; signal: AbortSignal; fetcher: typeof fetch;
   state: SelectedDetailWorkState; assertCurrent: () => Promise<void>; expectedProductVersion?: string; onProgress?: (message: string) => void };
 type Dependencies = { readImage?: typeof readDetailWorkspaceImage; recognize?: typeof recognizeFreeImage; render?: typeof renderFreeImageTranslation;
-  applyImage?: typeof applyDetailWorkspaceImage; recoverImage?: typeof recoverDetailWorkspaceImage; observe?: typeof readFreeImageVisionStatus;
+  applyImage?: typeof applyDetailWorkspaceImage; recoverImage?: typeof recoverDetailWorkspaceImage; observe?: typeof observeFreeImageVisionStatus;
   prepareComposite?: typeof prepareDetailWorkspaceComposite; applyComposite?: typeof applyDetailWorkspaceComposite; recoverComposite?: typeof recoverDetailWorkspaceComposite };
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -257,9 +257,9 @@ export async function processSelectedDetailWork(productId: string, options: Opti
     }
     if (state.inference) {
       const pending = state.inference;
-      const observation = await (deps.observe ?? readFreeImageVisionStatus)(pending.attempt, signal, fetcher); await guard();
+      const observation = await (deps.observe ?? observeFreeImageVisionStatus)(pending.attempt, signal, fetcher); await guard();
       if (observation.requestId !== pending.attempt.requestId || !same(observation.source,pending.attempt.source)
-        || !same(observation.configuration,pending.attempt.configuration) || observation.readOnly !== true || observation.execution?.requests !== 0) throw changed();
+        || !same(observation.configuration,pending.attempt.configuration) || !isImageVisionObservation(observation)) throw changed();
       if (observation.status !== 'completed') {
         if (observation.status === 'failed') { delete state.inference; result.recovered = true; return finish('partial','원래 Vision 요청의 확정 실패를 확인했습니다. 새 추론은 실행하지 않았습니다.'); }
         result.inferencePending = true; return finish('partial','원래 상세 Vision 요청의 결과가 미확정입니다. 같은 요청만 조회하며 새 추론은 실행하지 않았습니다.');
@@ -273,7 +273,7 @@ export async function processSelectedDetailWork(productId: string, options: Opti
       }
       await exact(); const bound = context(photo.id); let image: FreeImageLoaded | undefined;
       const controller = new AbortController(), abort = () => controller.abort(signal.reason); signal.addEventListener('abort',abort,{once:true});
-      const timer = setTimeout(() => controller.abort(Error('상세 본문 사진의 처리 시간이 90초를 초과했습니다.')),90000);
+      const timer = setTimeout(() => controller.abort(Error('상세 본문 사진의 처리 시간이 4분을 초과했습니다. 서버 번역 작업과 원본을 보존했습니다.')),240000);
       try {
         options.onProgress?.(`상세 본문 사진 ${photoIndex + 1} 원문·번역 확인 중`);
         image = await (deps.readImage ?? readDetailWorkspaceImage)(bound,controller.signal,fetcher); controller.signal.throwIfAborted();
