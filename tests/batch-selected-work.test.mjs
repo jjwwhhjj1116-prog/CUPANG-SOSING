@@ -27,6 +27,7 @@ function fixture(){
   '@/app/quotation-fields-confirmation':{},
   '@/app/quotation-text-execution':providedOptionModule('app/quotation-text-execution.ts'),
   '@/app/quotation-choice-state':providedOptionModule('app/quotation-choice-state.ts'),
+  '@/app/detail-workspace-composite-client':providedOptionModule('app/detail-workspace-composite-client.ts'),
   '@/app/batch-selected-packaging-work':{async runSelectedPackagingWork(id,options){await options.assertCurrent();calls.push({adapter:'packaging',id,revision:options.view.revision,fingerprint:options.view.inputFingerprint});return {view:options.view,status:'unchanged',changed:0,estimated:0,fallback:0,remaining:0,recovered:false,message:'저장한 포장값을 유지했습니다.'};}},
   '@/app/registration-layout':{readRegistrationLayout:(raw,id,clock)=>{assert.equal(raw.productId,id);assert.equal(raw.productVersion,clock);return raw;}},
   '@/app/batch-selected-image-work':{createSelectedImageStageState:(ownerId,productId,stage)=>({ownerId,productId,stage,batches:{}}),async processSelectedImageStage(id,stage,options){calls.push({adapter:'image',id,stage,version:options.expectedProductVersion});return imageResult;}},
@@ -279,6 +280,85 @@ test('full work with a complete detail badge keeps a sibling Vision request fenc
  h.intercept(call=>call.url==='/api/products/product'?Response.json({product:{id:'product',owner_id:'owner',updated_at:version,content_summary:savedSummary(['detailImage'])}}):null);
  const result=await h.run(['detailImage']);assert.equal(result.stages[0].status,'blocked');assert.match(result.stages[0].message,/응답이 확정되지 않아/);
  assert.equal(h.keys.get('owner:product:vision-inference-pending'),'owner:product:additionalImages');assert.ok(!h.calls.some(call=>call.adapter||call.method==='POST'||call.method==='PUT'));
+});
+
+async function pendingImagePublicationFixture(sibling='additionalImages'){
+ const h=fixture(),detail=await actualDetailFixture();h.options.mode='full';h.company(detail.f.company);let pendingState;
+ const pending={optionId:'original-option',slotIndex:0,code:'IMAGE_VISION_ACK_MISSING',message:'원래 응답 확인 필요',attempt:{requestId:'0fa1748b-fd6e-4b16-8120-754071c7a73f',source:{sourceKey:'owner/pending-original.png'},sourceLanguage:'zh',configuration:{provider:'workers-ai-vision'}}};
+ h.deps['@/app/batch-selected-image-work'].processSelectedImageStage=async(_id,_role,options)=>{pendingState=options.state;pendingState.inferencePending=pending;return{status:'partial',messages:['원래 응답 확인 필요'],inferencePending:true};};
+ Object.assign(h.deps['@/app/batch-selected-detail-work'],detail.model,{processSelectedDetailWork:(id,options)=>detail.model.processSelectedDetailWork(id,{...detail.options,...options},detail.deps)});
+ const publication=()=>{const view=detail.f.view;return{policy:'automatic-stage5-v1',readOnly:true,status:'current',source:{productId:'product',profileId:'profile',productVersion:view.productVersion,contentRevision:view.contentRevision,optionRevision:view.optionRevision,revision:view.revision,inputFingerprint:view.inputFingerprint,categoryContext:plain(view.categoryContext)},execution:{requests:0,writes:0},publication:{policy:'automatic-stage5-v1',uploadId:'1'.repeat(64),peerAfterDigest:'2'.repeat(64),basisSha256:'3'.repeat(64),fieldsSha256:'4'.repeat(64),sourceOptionId:'red',workspace:{revision:1,digest:'5'.repeat(64)},bodyPhotos:2}};};
+ h.intercept((call,init)=>{
+  if(call.url==='/api/products/product')return Response.json({product:{id:'product',owner_id:'owner',title:'검증 상품',updated_at:detail.f.view.productVersion,content_summary:savedSummary(['detailImage'])}});
+  if(call.url.endsWith('/work-draft'))return Response.json({productId:'product',productVersion:detail.f.view.productVersion});
+  if(call.url.includes('/detail-save?'))return Response.json(publication());
+  if(call.url.startsWith('/api/products/product/')||call.url==='/api/settings')return detail.options.fetcher(call.url,init);return null;
+ });
+ assert.equal((await h.run([sibling])).stages[0].status,'blocked');const latch='owner:product:vision-inference-pending';assert.equal(h.keys.get(latch),'owner:product:'+sibling);
+ h.calls.length=0;detail.calls.length=0;return{h,detail,pendingState,pending,publication,latch,beforeKeys:plain([...h.keys])};
+}
+
+for(const sibling of ['mainImage','additionalImages'])test(`current BODY publication reuses only GET proof while the exact ${sibling} inference remains pending`,async()=>{
+ const {h,detail,pendingState,pending,latch,beforeKeys}=await pendingImagePublicationFixture(sibling),before=plain([detail.f.view,detail.f.workspace,detail.settings,detail.content]);
+ const result=await h.run(['detailImage']);assert.equal(result.stages[0].status,'draft',JSON.stringify(result));assert.match(result.stages[0].message,/기존 상세 발행본/);
+ assert.equal(h.calls.filter(call=>call.url.includes('/detail-save?')).length,1);assert.ok(h.calls.every(call=>call.method==='GET'));assert.ok(!detail.calls.some(call=>call.operation));
+ assert.equal(h.keys.get(latch),'owner:product:'+sibling);assert.deepEqual(plain([...h.keys]),beforeKeys);assert.equal(pendingState.inferencePending,pending);assert.deepEqual(plain([detail.f.view,detail.f.workspace,detail.settings,detail.content]),before);
+});
+
+for(const change of ['output','settings','proof','read failure','unpublished','source','content','member','company','cancelled'])test(`sibling inference stays fenced with zero writes when current BODY publication has changed ${change}`,async()=>{
+ const {h,detail,pendingState,pending,publication,latch,beforeKeys}=await pendingImagePublicationFixture();
+ h.prependIntercept(call=>{
+  if(!call.url.includes('/detail-save?'))return null;const body=publication();
+  if(change==='output'||change==='unpublished'){body.status=change==='output'?'review-required':'unpublished';delete body.publication;}
+  if(change==='settings')detail.settings.translateImages=false;
+  if(change==='proof')body.publication.fieldsSha256='malformed';
+  if(change==='read failure')return Response.json({error:'current publication unavailable'},{status:503});
+  if(change==='source')detail.f.view.revision++;
+  if(change==='content')detail.content.assets.detail.value=['owner/changed-source.png'];
+  if(change==='member')h.owner('other-owner');
+  if(change==='company')h.company({code:'A01526306',name:'유앤채'});
+  if(change==='cancelled')h.controller.abort();
+  return Response.json(body);
+ });
+ const result=await h.run(['detailImage']);assert.equal(change==='cancelled'?result===null:['blocked','failed'].includes(result.stages[0].status),true,JSON.stringify(result));
+ assert.equal(h.calls.filter(call=>call.url.includes('/detail-save?')).length,1);assert.ok(h.calls.every(call=>call.method==='GET'));assert.ok(!detail.calls.some(call=>call.operation));
+ assert.equal(h.keys.get(latch),'owner:product:additionalImages');assert.deepEqual(plain([...h.keys]),beforeKeys);assert.equal(pendingState.inferencePending,pending);
+});
+
+for(const change of ['member','company'])test(`a transient ${change} change during current BODY proof stops every later selected stage`,async()=>{
+ const {h,detail,pendingState,pending,latch,beforeKeys}=await pendingImagePublicationFixture();let proofRead=false,mismatchRead=false;
+ h.prependIntercept(call=>{
+  if(call.url.includes('/detail-save?'))proofRead=true;
+  if(call.url==='/api/supplier-hub/catalog-context'&&proofRead&&!mismatchRead){mismatchRead=true;return Response.json({ownerId:change==='member'?'other-owner':'owner',company:change==='company'?{code:'A01526306',name:'유앤채'}:detail.f.company});}
+  return null;
+ });
+ const result=await h.run(['detailImage','koreanLabel','quotation']);assert.equal(mismatchRead,true);assert.deepEqual(result.stages.map(stage=>stage.status),['failed','blocked','blocked']);
+ assert.match(result.stages[0].message,/계정|회사/);assert.ok(!h.calls.some(call=>call.adapter));assert.ok(h.calls.every(call=>call.method==='GET'));assert.ok(!detail.calls.some(call=>call.operation));
+ assert.equal(h.keys.get(latch),'owner:product:additionalImages');assert.deepEqual(plain([...h.keys]),beforeKeys);assert.equal(pendingState.inferencePending,pending);
+});
+
+for(const timing of ['initial','latest'])for(const change of ['member','company'])test(`a transient ${change} mismatch in ${timing} settings during current BODY proof stops every later selected stage`,async()=>{
+ const {h,detail,pendingState,pending,latch,beforeKeys}=await pendingImagePublicationFixture();let settingsReads=0,mismatchRead=false;
+ h.prependIntercept(call=>{
+  if(call.url==='/api/settings'&&++settingsReads===(timing==='initial'?1:2)){mismatchRead=true;return Response.json({scope:{ownerId:change==='member'?'other-owner':'owner',company:change==='company'?{code:'A01526306',name:'유앤채'}:detail.f.company},settings:detail.settings});}
+  return null;
+ });
+ const result=await h.run(['detailImage','koreanLabel','quotation']);assert.equal(mismatchRead,true);assert.deepEqual(result.stages.map(stage=>stage.status),['failed','blocked','blocked']);
+ assert.match(result.stages[0].message,/계정|회사/);assert.ok(!h.calls.some(call=>call.adapter));assert.ok(h.calls.every(call=>call.method==='GET'));assert.ok(!detail.calls.some(call=>call.operation));
+ assert.equal(h.keys.get(latch),'owner:product:additionalImages');assert.deepEqual(plain([...h.keys]),beforeKeys);assert.equal(pendingState.inferencePending,pending);
+});
+
+for(const kind of ['inference','seed','image','composite','legacy'])test(`a sibling inference cannot use current BODY publication to bypass retained own detail ${kind} state`,async()=>{
+ const {h,detail,pendingState,pending,latch}=await pendingImagePublicationFixture(),marker={retained:'exact original '+kind};let owned;
+ h.keys.delete(latch);
+ if(kind==='legacy'){
+  h.deps['@/app/batch-selected-image-work'].createSelectedImageStageState=(ownerId,productId,stage)=>owned={ownerId,productId,stage,batches:{},inferencePending:marker};
+  h.deps['@/app/batch-selected-image-work'].processSelectedImageStage=async()=>({status:'partial',messages:['기존 상세 추론 유지'],inferencePending:true});
+ }else h.deps['@/app/batch-selected-detail-work'].processSelectedDetailWork=async(_id,options)=>{owned=options.state;owned[kind]=marker;return{status:'partial',messages:['기존 상세 요청 유지']};};
+ await h.run(['detailImage']);h.keys.set(latch,'owner:product:additionalImages');const beforeKeys=plain([...h.keys]);h.calls.length=0;detail.calls.length=0;
+ const result=await h.run(['detailImage']);assert.equal(result.stages[0].status,'blocked');assert.match(result.stages[0].message,/응답이 확정되지 않아/);
+ assert.ok(!h.calls.some(call=>call.url.includes('/detail-save?')));assert.ok(h.calls.every(call=>call.method==='GET'));assert.ok(!detail.calls.some(call=>call.operation));
+ assert.equal(kind==='legacy'?owned.inferencePending:owned[kind],marker);assert.equal(pendingState.inferencePending,pending);assert.deepEqual(plain([...h.keys]),beforeKeys);
 });
 
 test('malformed board completion cannot skip or automatically replace a saved stage',async()=>{

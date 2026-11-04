@@ -17,6 +17,7 @@ import { confirmQuotationFieldsSave } from '@/app/quotation-fields-confirmation'
 import { hasSelectedEmptyQuotationChoice } from '@/app/quotation-choice-state';
 import { processSelectedImageStage, createSelectedImageStageState, advanceSelectedImageStageCheckpoint, type SelectedImageStageState } from '@/app/batch-selected-image-work';
 import { processSelectedDetailWork, createSelectedDetailWorkState, advanceSelectedDetailWorkCheckpoint, type SelectedDetailWorkState } from '@/app/batch-selected-detail-work';
+import { readCurrentDetailPublication } from '@/app/detail-workspace-composite-client';
 import { runSelectedLabelWork } from '@/app/batch-selected-label-work';
 import { readRegistrationLayout } from '@/app/registration-layout';
 import { runSelectedPricingWork } from '@/app/batch-selected-pricing-work';
@@ -323,7 +324,28 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     // Retained request state remains authoritative even if its queue key is absent.
     if(!keys.has(inferenceLatch)&&detailStates!.get(detailKey)?.inference)keys.set(inferenceLatch,detailKey);
     const pendingInference=keys.get(inferenceLatch);
-    if(pendingInference&&pendingInference!==stateKey)return{status:'blocked',message:'앞선 이미지 번역 응답이 확정되지 않아 추가 이미지 호출을 멈췄습니다. 표시사항·견적서 등 독립된 단계는 계속 진행합니다.'};
+    if(pendingInference&&pendingInference!==stateKey){
+      // Reusing an already-published detail needs no provider work; retained
+      // detail requests must still recover through their own exact state.
+      if(role==='detail'&&!imageStates!.has(stateKey)&&!detailStates!.has(stateKey))try{
+        const readSettings=async()=>{
+          const body=await responseJson(await fetcher('/api/settings',{cache:'no-store',credentials:'same-origin',redirect:'error'}),'작업 설정 확인');
+          if(!object(body)||!same(body.scope,expected))throw new ScopeChanged('로그인 계정·회사가 변경되어 작업을 멈췄습니다.');
+          return body;
+        };
+        const current=await product(),[view,{content},settings]=await Promise.all([read<QuotationFieldsView>('/quotation-fields'),read<{content:ProductContent}>('/content'),readSettings()]);
+        if(view.productVersion===current.updated_at&&content?.productId===productId&&content.schemaVersion===1&&content.revision===view.contentRevision
+          &&object(settings.settings)&&settings.settings.translateImages===true){
+          const profileId=view.categoryContext.source==='profile'?view.categoryContext.profileId:null;
+          const publication=await readCurrentDetailPublication({productId,...(profileId?{profileId}:{}),view},signal,fetcher);
+          await assertCurrent();
+          const [latestView,latestContent,latestSettings]=await Promise.all([read<QuotationFieldsView>('/quotation-fields'),read<{content:ProductContent}>('/content'),readSettings()]);
+          if(publication.status==='current'&&same(view,latestView)&&same(content,latestContent.content)&&same(settings,latestSettings)&&(await product()).updated_at===current.updated_at)
+            return{status:'draft',message:'현재 원본·설정·모든 옵션과 일치하는 기존 상세 발행본을 조회로 확인했습니다. 새 추론·업로드·저장은 하지 않았습니다.'};
+        }
+      }catch(cause){signal.throwIfAborted();if(cause instanceof ScopeChanged)throw cause;}
+      return{status:'blocked',message:'앞선 이미지 번역 응답이 확정되지 않아 추가 이미지 호출을 멈췄습니다. 표시사항·견적서 등 독립된 단계는 계속 진행합니다.'};
+    }
     const current=await product();
     let state=imageStates!.get(stateKey),expectedProductVersion:string|undefined;
     const pendingKey=identity+':pending:'+id;
