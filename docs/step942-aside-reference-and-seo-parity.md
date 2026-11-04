@@ -37,3 +37,11 @@ Owned socks product865ff938-1f6e-42cd-bcfe-863cba84eb09 remained content revisio
 - The broad run also reported picker/category-guided/CLI/dashboard/detail-related failures outside that repair and was stopped. It is not an all-tests-green claim; preserve `outputs/step942-tests.log` for follow-up rather than attributing every failure to the same cause.
 
 Accepted historical offer886034098637/document2347603 was not created, uploaded, resaved or submitted. No new Supplier Hub receipt was produced in this UI pass. Full automatic image completion and the new socks product's required factual size evidence remain separate open work.
+
+## Bounded live source follow-up
+
+Ask Aside also opened the specified socks offer965495834905 successfully in the same browser without a new login or a site-policy denial. Its expanded packaging table declares50g for each of the eight colors. The same-offer detail photo at DOM image position21 explicitly shows cotton85%, SPANDEX10%, NYLON5%; the parent independently viewed the unchanged original JPEG. These agree with the owned draft's already reviewed composition. Generic product attributes still conflict (polyester/80/male); the existing explicit-detail priority is retained without new data writes.
+
+No FREE/均码/foot-size range or foot length was found within the inspected evidence. This remains a bounded negative observation, not proof that every small character of every source image is absent. The declarations do not establish an actual measurement or the packaging table's gross/net definition.
+
+Evidence is in `outputs/step942-source-size.json`, `step942-source-page.png`, and the unchanged `step942-source-composition.jpg`. An unnecessary JPEG-to-PNG conversion attempted by the source agent paused for a Windows administrator-setup question. That setup was not approved or run; the owned task was interrupted to cancel it, and original bytes were preserved without conversion. No collection, purchase, data update or new receipt followed.
