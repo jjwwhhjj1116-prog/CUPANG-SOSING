@@ -30,6 +30,7 @@ import { quotationSeoDocumentTitle } from '@/app/seo-title-document';
 import type { DetailEditorInputs } from '@/app/detail-editor-inputs';
 import type { StageTwoMsrp } from '@/app/stage-two-msrp';
 import { readInitialLegalNotices } from '@/app/initial-legal-notices';
+import {prioritizedContentLabelFields,prioritizedProductAttributes,productFactDetailDescription,productFactKey} from '@/app/product-fact-priority';
 
 // Base fields come from Couplus screenshots 15–23. Product attributes and preview
 // notice names for 22 kitchen-storage categories were observed in Supplier Hub
@@ -415,7 +416,11 @@ export function resolveQuotationFieldsPair(input: QuotationResolverInput): { aut
 }
 
 function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema: QuotationSchema): ResolvedQuotation {
-  const { product, content, settings } = input;
+  const { product, settings } = input;
+  const content={...input.content,label:prioritizedContentLabelFields(input.content)};
+  const detail=productFactDetailDescription(content);
+  const detailAttributes=prioritizedProductAttributes(['generated','unverified'].includes(detail.provenance)?'':detail.value,
+    schema.fields.filter(field=>field.section==='product'&&field.visibility!=='common').map(field=>({name:field.label,value:''})));
   const options: readonly ProductOption[] = Array.isArray(input.options) ? input.options : (input.options as ProductOptions).rows;
   const untouchedOptions = Array.isArray(input.options) || (input.options as ProductOptions).revision === 0;
   const includeCommonRow = options.length === 0 && untouchedOptions;
@@ -619,6 +624,14 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
       // values and manual overrides keep priority. Never infer legal defaults.
       // Invalid input is unresolved, not absent. Do not erase its diagnostics
       // by substituting a shared attribute or a reference default.
+      const explicitDetail=definition.section==='product'&&definition.visibility!=='common'&&!definition.readOnly
+        ?detailAttributes.find(pair=>pair.name===definition.label&&pair.provenance?.startsWith('detail-')):undefined;
+      const labelKey=definition.contentField??productFactKey(definition.label);
+      const manualLabel=Object.hasOwn(input.content.label,labelKey)&&input.content.label[labelKey as keyof ProductContent['label']].provenance==='manual';
+      const optionKey=definition.optionDimension??({'색상':'color','사이즈':'size','수량':'unitsPerPack'} as const)[definition.label as '색상'|'사이즈'|'수량'];
+      const manualOptionFact=optionKey&&option?.provenance[optionKey]==='manual';
+      if(explicitDetail&&!manualLabel&&!manualOptionFact&&['text','textarea','select'].includes(definition.type))automatic={value:explicitDetail.value,source:'content',
+        ...(explicitDetail.provenance==='detail-conflict'?{issues:['상세페이지의 명시된 값이 서로 상충합니다. 직접 확인해주세요.']}:{})};
       if (automatic.source === 'empty' && !automatic.issues?.length && content.categoryAttributes?.categoryId === schema.categoryId
         && !(definition.visibility === 'hidden' && content.categoryAttributes.hiddenAttributes === false)
         && definition.section === 'product' && definition.visibility !== 'common' && !definition.readOnly

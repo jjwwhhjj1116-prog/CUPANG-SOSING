@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import * as parse5 from 'parse5';
 import { schemaCompanies } from './helpers/hub-schema.mjs';
 import { mobileIntakeHarness } from './helpers/mobile-intake.mjs';
 
@@ -15,6 +16,7 @@ function load(file) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText, { exports, Error, Date, URL, URLSearchParams, AbortController, AbortSignal, structuredClone,
     fetch() { throw Error('External network forbidden'); }, require(name) {
+      if (name === 'parse5') return parse5;
       if (name === '@/app/quotation-schema') return {};
       assert.ok(name.startsWith('@/'), name); return load(name.slice(2) + '.ts');
     } }); return exports;

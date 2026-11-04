@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import ts from 'typescript';
+import * as parse5 from 'parse5';
 
 const nodes = value => Array.isArray(value) ? value.flatMap(nodes) : value && typeof value === 'object' ? [value, ...nodes(value.props?.children)] : [];
 const text = value => Array.isArray(value) ? value.map(text).join('') : value && typeof value === 'object' ? text(value.props?.children) : value == null ? '' : String(value);
@@ -71,7 +72,7 @@ function harness({ productId = 'source-product', profileId = 'profile-one', coun
       TextEncoder, TextDecoder, Uint8Array, DataView, crypto: { randomUUID: () => uuid(++allocated) }, fetch: fetcher,
       sessionStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
       window: { addEventListener: (kind, listener) => { if (!listeners.has(kind)) listeners.set(kind, new Set()); listeners.get(kind).add(listener); }, removeEventListener: (kind, listener) => listeners.get(kind)?.delete(listener) },
-      require(name) { if (name === 'react') return hooks; if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx, Fragment: Symbol.for('fragment') };
+      require(name) { if (name === 'parse5') return parse5; if (name === 'react') return hooks; if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx, Fragment: Symbol.for('fragment') };
         if (name.startsWith('@/')) return load(name.slice(2) + (name.includes('/components/') ? '.tsx' : '.ts'));
         if (name.startsWith('./') || name.startsWith('../')) return load(path.posix.join(path.posix.dirname(file), name) + '.ts'); throw Error('Unexpected dependency: ' + name); } });
     return exports;

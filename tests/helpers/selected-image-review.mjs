@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import * as parse5 from 'parse5';
 export function reviewFixture(){
- const cache=new Map();function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,Date,URL,TextEncoder,structuredClone,require(name){if(name==='@/app/free-image-translation-client')return{};if(name==='@/app/image-files')return{isOwnedImageKey:(owner,key)=>typeof key==='string'&&key.startsWith(owner+'/')&&!key.includes('..')};if(!name.startsWith('@/'))throw Error(name);return load(name.slice(2)+'.ts');}});return exports;}
+ const cache=new Map();function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,Date,URL,TextEncoder,structuredClone,require(name){if(name==='parse5')return parse5;if(name==='@/app/free-image-translation-client')return{};if(name==='@/app/image-files')return{isOwnedImageKey:(owner,key)=>typeof key==='string'&&key.startsWith(owner+'/')&&!key.includes('..')};if(!name.startsWith('@/'))throw Error(name);return load(name.slice(2)+'.ts');}});return exports;}
  const model=load('app/selected-image-review.ts'),vision=load('app/image-text-vision.ts'),style=load('app/free-image-vision-style.ts');
  const scope={ownerId:'owner',company:{code:'A01526306',name:'유앤채'}},version='2026-10-06T00:00:00.000Z';
  const keys=['owner/second.png','owner/original.png'],fields=[{id:'additionalImages',type:'images',section:'image',label:'추가',required:false,visibility:'common',maxItems:30}],cell={value:keys.join('\n'),source:'content',issues:[],needsReview:false};

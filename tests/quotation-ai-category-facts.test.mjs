@@ -38,6 +38,34 @@ test('foreign-category metadata cannot enter a current plan, while legacy source
  proofs.push({kind:'category and legacy',foreignCategoryOmitted:true,legacyFactsUnchanged:true});
 });
 
+test('explicit saved detail material has priority in every AI request and conflicting material proposals are blocked',async()=>{
+ const m=aiModule(),f=aiFixture();source(f,[attribute('재질','폴리에스테르 80–90%','主面料成分')]);
+ f.content.label.material={value:'폴리에스테르 80–90%',provenance:'collected',updatedAt:f.product.updated_at};
+ f.content.detail.description={value:'면 85%, 스판덱스 10%, 나일론 5%',provenance:'translated',updatedAt:f.product.updated_at};
+ const before=JSON.stringify(f.saved),plan=m.buildQuotationAiPlan(f.saved,f.scope),material=plan.fields.find(field=>field.hubWire.name==='소재');
+ assert.ok(plan.facts.preferredAttributes.some(pair=>pair.name==='material'&&pair.value===f.content.detail.description.value&&pair.provenance==='detail-explicit'));
+ const provider=mockProvider({mutate(result,request){
+  if(request.task!=='ANALYZE_SCHEMA_ATTRIBUTES'&&Array.isArray(result.changes))for(const change of result.changes)if(change.fieldKey===material.id)change.value='폴리에스테르 80%';
+  return {response:JSON.stringify(result)};
+ }});
+ await assert.rejects(m.executeQuotationAi(plan,provider),error=>error.code==='AI_RESPONSE_EVIDENCE'&&/상세페이지/.test(error.message));
+ assert.equal(JSON.stringify(f.saved),before);assert.ok(provider.calls.every(call=>call.request.facts.preferredAttributes.some(pair=>pair.name==='material'&&pair.value===f.content.detail.description.value)));
+});
+
+test('exact legal notice meanings share detail numeric/unit checks and protect manual product-type blanks',async()=>{
+ const m=aiModule(),f=aiFixture();
+ for(const name of ['치수','종류'])f.raw.properties.legalPage.properties.notices.allOf.push({contains:{type:'object',required:['noticeItemName','noticeItemValue'],properties:{noticeItemName:{type:'string',enum:[name],requirement:'필수'},noticeItemValue:{type:'string',maxLength:2000}}}});
+ f.syncSchema();f.content.detail.description={value:'제품 치수: 25 cm\n상품 유형: 3종 세트',provenance:'translated',updatedAt:f.product.updated_at};
+ let plan=m.buildQuotationAiPlan(f.saved,f.scope);const dimensions=plan.fields.find(field=>field.label==='치수'),kind=plan.fields.find(field=>field.label==='종류');assert.ok(dimensions&&kind);
+ for(const [target,value]of [[dimensions,'25 mm'],[kind,'2종']]){
+  const provider=mockProvider({mutate(result,request){if(request.task!=='ANALYZE_SCHEMA_ATTRIBUTES'&&Array.isArray(result.changes))for(const change of result.changes)if(change.fieldKey===target.id)change.value=value;return {response:JSON.stringify(result)};}});
+  await assert.rejects(m.executeQuotationAi(plan,provider),error=>error.code==='AI_RESPONSE_EVIDENCE'&&/상세페이지/.test(error.message));
+ }
+ f.content.label.productType={value:'',provenance:'manual',updatedAt:f.product.updated_at};plan=m.buildQuotationAiPlan(f.saved,f.scope);
+ assert.ok(plan.targets.every(target=>target.protectedValues.some(value=>value.fieldKey===kind.id&&value.value==='')));
+ assert.ok(plan.targets.every(target=>!target.writableFieldIds.includes(kind.id)));
+});
+
 test('same-name source facts retain their provenance and never replace manual blanks or current label facts',async()=>{
  const m=aiModule(),f=aiFixture();source(f,[attribute('material','다른 참고 재질','상품속성: 材质'),attribute('material','두번째 참고 재질')]);
  f.content.label.material={value:'직접 검토 재질',provenance:'manual',updatedAt:f.product.updated_at};

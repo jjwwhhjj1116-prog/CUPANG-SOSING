@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import {fileURLToPath} from 'node:url';
 import ts from 'typescript';
+import * as parse5 from 'parse5';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { webcrypto } from 'node:crypto';
@@ -20,6 +21,7 @@ function load(file, overrides = {}) {
   const exports = {};
   const compiled = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   vm.runInNewContext(compiled, { exports, Error, TextEncoder, URLSearchParams, structuredClone, AbortController, fetch: overrides.fetch ?? fetch, require(name) {
+    if (name === 'parse5') return parse5;
     if (name in overrides) return name==='react'&&!overrides[name].useLayoutEffect?{...overrides[name],useLayoutEffect:overrides[name].useEffect}:overrides[name];
     if (name.endsWith('.css')) return {};
     if (name.startsWith('@/') && name.endsWith('.mjs')) return requireNative(fileURLToPath(new URL(`../${name.slice(2)}`, import.meta.url)));

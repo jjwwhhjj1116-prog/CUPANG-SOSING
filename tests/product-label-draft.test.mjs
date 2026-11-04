@@ -81,6 +81,31 @@ test('sponge is not cotton, actual cotton is permitted, and Korean surface text 
  f.source.originalTitle='纯棉清洁块';f.source.attributes[0].value='纯棉';const cotton=await draft.executeProductLabelDraft(f.plan(),provider({...response,material:'순면 소재'}));assert.equal(cotton.values.material,'순면 소재');assert.equal(JSON.stringify(f.view),before);
 });
 
+test('detail composition overrides conflicting source attributes for label AI without deleting the originals',async()=>{
+ const f=fixture();f.source.description='85% 棉，10% 氨纶，5% 锦纶';f.source.attributes=[{name:'主面料成分',value:'聚酯纤维 80–90%'},{name:'数量',value:'2个'}];
+ const before=JSON.stringify(f.source),plan=f.plan(),calls=[];
+ await assert.rejects(draft.executeProductLabelDraft(plan,provider({...response,material:'폴리에스테르 80%'})),error=>code('PRODUCT_LABEL_DRAFT_EVIDENCE',409)(error)&&/상세페이지/.test(error.message));
+ const result=await draft.executeProductLabelDraft(plan,{async run(model,input){calls.push(input);return {response:JSON.stringify({...response,material:'면 85%, 스판덱스 10%, 나일론 5%'})};}});
+ assert.equal(result.values.material,'면 85%, 스판덱스 10%, 나일론 5%');
+ assert.equal(JSON.parse(calls[0].messages[1].content).facts.preferredAttributes[0].value,f.source.description);
+ assert.deepEqual(plain(plan.facts.attributes),f.source.attributes);assert.equal(JSON.stringify(f.source),before);
+});
+
+test('explicit detail facts beyond the prompt excerpt still override conflicting attributes',async()=>{
+ const f=fixture();f.source.description='중립 설명\n'.repeat(1200)+'\n85% 棉，10% 氨纶，5% 锦纶';f.source.attributes=[{name:'材质',value:'聚酯纤维 80%'},{name:'数量',value:'2个'}];
+ const plan=f.plan();assert.equal(plan.facts.description.length,6000);
+ await assert.rejects(draft.executeProductLabelDraft(plan,provider({...response,material:'폴리에스테르 80%'})),error=>code('PRODUCT_LABEL_DRAFT_EVIDENCE',409)(error)&&/상세페이지/.test(error.message));
+ const result=await draft.executeProductLabelDraft(plan,provider({...response,material:'면 85%, 스판덱스 10%, 나일론 5%'}));assert.equal(result.values.material,'면 85%, 스판덱스 10%, 나일론 5%');
+});
+
+test('explicit detail quantity rejects conflicting attributes and preserves the stated sale unit',async()=>{
+ const f=fixture();f.source.originalTitle='2色硅胶清洁块';f.source.description='净含量: 3个';f.source.attributes=[{name:'材质',value:'硅胶'},{name:'净含量',value:'2个'}];
+ await assert.rejects(draft.executeProductLabelDraft(f.plan(),provider()),error=>code('PRODUCT_LABEL_DRAFT_EVIDENCE',409)(error)&&/상세페이지/.test(error.message));
+ f.source.originalTitle+=' 3双';
+ await assert.rejects(draft.executeProductLabelDraft(f.plan(),provider({...response,content:'3쌍'})),code('PRODUCT_LABEL_DRAFT_EVIDENCE',409));
+ assert.equal((await draft.executeProductLabelDraft(f.plan(),provider({...response,content:'3개'}))).values.netContents,'3개');
+});
+
 test('cost units and generated names cannot prove physical quantity; real sale units and performance evidence are checked',async()=>{
  const f=fixture();f.source.attributes=[{name:'材质',value:'硅胶'},{name:'上市年份',value:'2024'}];f.source.productName='검토 2개';f.source.option.unitsPerPack=2;
  await assert.rejects(draft.executeProductLabelDraft(f.plan(),provider()),error=>code('PRODUCT_LABEL_DRAFT_EVIDENCE',409)(error)&&/숫자/.test(error.message));

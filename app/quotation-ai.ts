@@ -6,6 +6,7 @@ import { quotationScalarValueIssues } from '@/app/quotation-scalar-constraints';
 import { quotationNoticeInput } from '@/app/quotation-notice-inputs';
 import { scopedQuotationPackagingBasis } from '@/app/quotation-packaging-basis';
 import {LEGACY_QUOTATION_TEXT_MODEL,quotationTextModel,type QuotationTextExecution} from '@/app/quotation-text-execution';
+import {prioritizedProductAttributes,productFactKey,productFactPriorityIssue,productFactDetailDescription} from '@/app/product-fact-priority';
 
 /** Own-provider reconstruction of Couplus's recorded classify/common/batch flow.
  * Every returned change is a review proposal; this module performs no writes. */
@@ -32,12 +33,17 @@ export type QuotationAiPlan = {
   scope: { optionId: string | null; applyToAllOptions: boolean };
   clocks: { ownerId: string; productVersion: string; contentRevision: number; optionRevision: number; quotationRevision: number; profileId: string; profileRevision: number };
   facts: { title: string; seoTitle: string; description: string; attributes: { name: string; value: string; provenance: string; sourceName?: string }[];
+    preferredAttributes?: {name:string;value:string;provenance?:string;sourceName?:string}[];
     options: { optionId: string | null; originalName: string; translatedName: string; color: string; size: string; unitsPerPack: number | null }[] };
   fields: QuotationAiField[]; targets: QuotationAiTarget[]; warnings: string[]; createdAt: string;
 };
 export type QuotationAiResult = { changes: { optionId: string | null; fieldKey: string; value: string }[];
   warnings: string[]; steps: { task: string }[]; model: string; generatedAt: string };
 export type QuotationAiProvider = { run(model: string, input: { messages: { role: 'system' | 'user'; content: string }[]; max_tokens: number; temperature: number }): Promise<unknown> };
+const noticeLabels:Readonly<Record<string,keyof QuotationExportSource['content']['label']>>={
+  noticeMaterial:'material',noticeComponents:'components',noticeDimensions:'dimensions',noticeSizeWeight:'dimensions',noticeKind:'productType',
+  noticeCaution:'precautions',noticeSpecifications:'specifications',
+};
 
 function snapshotIdentity(snapshot: HubSchemaSnapshot, company: SupplierHubCompany) {
   if (!SUPPLIER_HUB_COMPANIES.some(item => same(item, company)) || !same(snapshot.company, company))
@@ -92,7 +98,6 @@ function supportedFields(snapshot: HubSchemaSnapshot, hiddenEnabled: boolean): Q
 function protectedSource(saved: QuotationExportSource, field: QuotationField, optionId: string | null, source: string): boolean {
   if (source === 'manual-common' || source === 'manual-option') return true;
   const notice = quotationNoticeInput(field), name = field.hubWire?.name;
-  const noticeLabels: Readonly<Record<string, keyof QuotationExportSource['content']['label']>> = { noticeMaterial: 'material', noticeComponents: 'components', noticeDimensions: 'dimensions', noticeCaution: 'precautions', noticeSpecifications: 'specifications' };
   const label = field.contentField ?? (notice ? noticeLabels[notice] : undefined);
   if (label && saved.content.label[label]?.provenance === 'manual') return true;
   const option = saved.options.rows.find(row => row.id === optionId);
@@ -158,12 +163,15 @@ export function buildQuotationAiPlan(saved: QuotationExportSource, scope: { opti
     return value.slice(0, limit);
   };
   const facts: QuotationAiPlan['facts'] = { title: excerpt(saved.product.title, 2000, '원문 상품명'), seoTitle: excerpt(saved.content.seo.title.value, 2000, '저장 상품명'),
-    description: excerpt(saved.content.detail?.description?.value || saved.content.seo.description.value, 6000, '저장 상품 설명'),
+    description: excerpt(productFactDetailDescription(saved.content).value, 6000, '저장 상품 설명'),
     attributes: [...(['material', 'components', 'dimensions', 'precautions', 'washingPrecautions', 'specifications', 'productType'] as const)
       .filter(key => saved.content.label[key]?.value).map(key => ({ name: key, value: excerpt(saved.content.label[key].value, 2000, '저장 상품 속성'), provenance: saved.content.label[key].provenance })), ...categoryFacts],
     options: targets.map(row => { const option = saved.options.rows.find(item => item.id === row.optionId); return { optionId: row.optionId,
       originalName: excerpt(option?.originalName ?? '', 1000, '옵션 원문명'), translatedName: excerpt(option?.translatedName ?? row.optionLabel, 1000, '옵션 번역명'),
       color: excerpt(option?.color ?? '', 200, '옵션 색상'), size: excerpt(option?.size ?? '', 200, '옵션 사이즈'), unitsPerPack: option?.unitsPerPack ?? null }; }) };
+  const detail=productFactDetailDescription(saved.content);
+  const preferred=prioritizedProductAttributes(['generated','unverified'].includes(detail.provenance)?'':detail.value,facts.attributes);
+  if(preferred.some(pair=>pair.provenance?.startsWith('detail-')))facts.preferredAttributes=preferred;
   const plan: QuotationAiPlan = { format: QUOTATION_AI_FORMAT, productId: saved.product.id, company: { ...saved.company }, snapshot,
     category: { id: snapshot.categoryId, path: [...snapshot.categoryPath] }, hiddenEnabled, scope: { ...scope },
     clocks: { ownerId: saved.product.owner_id, productVersion: saved.product.updated_at, contentRevision: saved.content.revision, optionRevision: saved.options.revision,
@@ -239,6 +247,7 @@ const instructions = '당신은 YOOFAM 스튜디오의 견적서 검토 보조�
   + '다른 옵션의 값이나 이름을 합치지 마세요. fieldKey와 optionId는 입력의 정확한 고유번호만 사용하세요. 선택 항목은 choices.value 안에서만 고르세요. '
   + '확인되지 않은 정보는 제안에서 생략하세요. 인증·원산지·업체·가격·동의·실측 포장을 추정하지 마세요. '
   + 'protectedValues는 직접 저장한 값이며 공란도 수정하지 마세요. generated/unverified 참고값은 검증된 사실이 아닙니다. '
+  + '속성 충돌은 직접 저장한 값, 상세페이지의 명시된 값, 일반 상품 속성 순으로 우선하세요. preferredAttributes가 있으면 attributes보다 우선하며 detail-conflict 항목은 생략하세요. 마케팅 문구로 성분이나 재질을 추측하지 마세요. '
   + '상품 속성의 추론은 사용자 확인이 필요한 제안일 뿐이며 등록 완료를 의미하지 않습니다. 요구한 JSON 형식만 반환하세요.';
 export async function executeQuotationAi(plan: QuotationAiPlan, ai: QuotationAiProvider,executionPolicy?:QuotationTextExecution|null): Promise<QuotationAiResult> {
   validatePlan(plan);
@@ -278,6 +287,10 @@ export async function executeQuotationAi(plan: QuotationAiPlan, ai: QuotationAiP
       if (!textSafe(change.value) || /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/u.test(change.value)) fail('AI_RESPONSE_VALUE', 'AI 제안값의 문자를 확인해주세요.');
       if (field.choices && !field.choices.some(choice => choice.value === change.value) || quotationScalarValueIssues(field, change.value).length
         || field.required && !change.value.trim() && !field.choices?.some(choice => choice.value === '')) fail('AI_RESPONSE_VALUE', 'AI 제안값이 원문 양식의 선택값·자료형·길이 규칙과 다릅니다.');
+      if(plan.facts.preferredAttributes){
+        const notice=quotationNoticeInput(field),key=field.contentField??(notice?noticeLabels[notice]:undefined)??productFactKey(field.hubWire?.name??field.label);
+        const issue=productFactPriorityIssue(change.value,key,plan.facts.description,plan.facts.preferredAttributes);if(issue)fail('AI_RESPONSE_EVIDENCE',`${field.label}: ${issue}. 기존 값은 유지했습니다.`);
+      }
       result.set(field.id, change.value);
     }
     return result;

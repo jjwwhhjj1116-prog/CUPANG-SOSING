@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import ts from 'typescript';
+import * as parse5 from 'parse5';
 
 const cache = new Map();
 function load(file) {
@@ -11,6 +12,7 @@ function load(file) {
   const exports = {};
   const compiled = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   vm.runInNewContext(compiled, { exports, structuredClone, require(name) {
+    if (name === 'parse5') return parse5;
     if (name.startsWith('@/')) return load(name.slice(2) + '.ts');
     if (name.startsWith('./')) return load(path.posix.join(path.posix.dirname(file), name) + '.ts');
     throw Error(name);

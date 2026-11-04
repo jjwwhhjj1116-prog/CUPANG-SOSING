@@ -4,6 +4,7 @@ import type { ProductOptions } from '@/app/product-options';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { exactPrimaryQuotationTarget } from '@/app/quotation-seo-targets';
 import type { DocumentImagePlan } from '@/app/document-image';
+import {prioritizedContentLabelFields} from '@/app/product-fact-priority';
 
 export const productLabelFields = [
   { key: 'productName', label: '제품명' }, { key: 'manufacturer', label: '제조원' },
@@ -128,11 +129,12 @@ export function resolveProductLabels(input: { productId: string; state: ProductL
   if (input.content.productId !== input.productId || input.options.productId !== input.productId || input.state.productId !== input.productId) throw Error('표시사항의 상품 자료가 일치하지 않습니다.');
   if (Object.hasOwn(input.state, 'renderEpoch') && validateProductLabelRenderEpoch(input.state.renderEpoch) === undefined) throw Error('표시사항 재작성 버전을 확인해주세요.');
   const definitions = productLabelDefinitions({ structure: input.state.structure === undefined ? undefined : validateProductLabelStructure(input.state.structure) });
+  const label=prioritizedContentLabelFields(input.content);
   return input.quotation.resolved.rows.map(row => {
     if (row.optionId !== null && !input.options.rows.some(option => option.id === row.optionId)) throw Error('표시사항에 연결된 옵션이 삭제되었습니다.');
     const automatic = {} as ProductLabelValues, sources = {} as Record<ProductLabelKey, ProductLabelSource>;
     for (const { key } of definitions) {
-      const field = keySet.has(key) ? input.content.label[key as ProductLabelFixedKey] : undefined, stored = field?.value ?? '';
+      const field = keySet.has(key) ? label[key as ProductLabelFixedKey] : undefined, stored = field?.value ?? '';
       if (key === 'productName' && (input.content.labelProductNameLinked === true || field?.provenance !== 'manual')) {
         const title = row.fields[target.primary]?.value;
         if (typeof title !== 'string') throw Error('선택 옵션의 저장된 SEO 상품명을 확인하지 못했습니다.');

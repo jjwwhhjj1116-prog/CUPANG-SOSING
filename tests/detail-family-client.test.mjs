@@ -5,6 +5,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
 import ts from 'typescript';
+import * as parse5 from 'parse5';
 
 const modules = new Map();
 function load(file) {
@@ -13,6 +14,7 @@ function load(file) {
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../' + file, import.meta.url), 'utf8'), {
     fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText, { exports, structuredClone, AbortController, DOMException, TextEncoder, TextDecoder, crypto: webcrypto, require(name) {
+    if (name === 'parse5') return parse5;
     if (name.startsWith('@/')) return load(name.slice(2) + '.ts');
     if (name.startsWith('./')) return load(path.posix.join(path.posix.dirname(file), name) + '.ts');
     throw Error('Unexpected dependency: ' + name);

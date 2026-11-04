@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import * as parse5 from 'parse5';
 const cache=new Map();
-function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,Date,Set,Map,Error,require:name=>{assert(name.startsWith('@/'));return load(name.slice(2)+'.ts');}});return exports;}
+function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,Date,Set,Map,Error,require:name=>{if(name==='parse5')return parse5;assert(name.startsWith('@/'));return load(name.slice(2)+'.ts');}});return exports;}
 const model=load('app/product-label.ts'),plain=value=>JSON.parse(JSON.stringify(value));
 test('new Couplus structure freezes importer before manufacturer with unchanged semantic keys',()=>{
  const structure=plain(model.couplusProductLabelStructure());

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import * as parse5 from 'parse5';
 import {createRequire} from 'node:module';
 import {fileURLToPath} from 'node:url';
 
@@ -13,6 +14,7 @@ function load(file,replacements={}){
  const exports={};
  const source=ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
  vm.runInNewContext(source,{exports,Error,TextEncoder,URLSearchParams,structuredClone,AbortController,fetch:replacements.fetch,document:replacements.document,window:replacements.window,require(name){
+  if(name==='parse5')return parse5;
   if(Object.hasOwn(replacements,name))return name==='react'&&!replacements[name].useLayoutEffect?{...replacements[name],useLayoutEffect:replacements[name].useEffect}:replacements[name];
   if(name.endsWith('.css'))return{};
   if(name.startsWith('@/app/')&&name.endsWith('.mjs'))return requireNative(fileURLToPath(new URL('../'+name.slice(2),import.meta.url)));
