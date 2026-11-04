@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import * as parse5 from 'parse5';
 import {providedOptionModule} from './helpers/provided-option-quotation.mjs';
 import {fixture as rawWorkspaceFixture,runtime as rawWorkspaceRuntime} from './helpers/detail-workspace.mjs';
 
@@ -11,7 +12,7 @@ const stageIds=['seo','pricing','mainImage','additionalImages','detailImage','si
 function functions(file,names,globals={}){
  const url=new URL(file,import.meta.url),source=fs.readFileSync(url,'utf8'),ast=ts.createSourceFile(url.pathname,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
  const declarations=ast.statements.filter(row=>ts.isFunctionDeclaration(row)&&names.includes(row.name?.text)).map(row=>row.getText(ast)).join('\n').replaceAll('import.meta.url',JSON.stringify(url.href));
- return vm.runInNewContext(declarations+'\n({'+names.join(',')+'})',{assert,fs,vm,ts,plain,version,hash,stageIds,Error,Date,URL,TextEncoder,AbortController,AbortSignal,structuredClone,Blob,Response,...globals});
+ return vm.runInNewContext(declarations+'\n({'+names.join(',')+'})',{assert,fs,vm,ts,parse5,plain,version,hash,stageIds,Error,Date,URL,TextEncoder,AbortController,AbortSignal,structuredClone,Blob,Response,...globals});
 }
 const orchestrator=functions('./batch-selected-work.test.mjs',['fixture'],{providedOptionModule});
 const image=functions('./batch-selected-image-work.test.mjs',['loadModel','fixture']);

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import * as parse5 from 'parse5';
 import { DatabaseSync } from 'node:sqlite';
 import { deflateRawSync } from 'node:zlib';
 
@@ -11,6 +12,7 @@ function load(file, overrides = {}, mode = 'development') {
   const exports = {};
   vm.runInNewContext(output, { exports, Error, SyntaxError, structuredClone, Response, Request, File, Blob, FormData, TextDecoder, DecompressionStream, crypto, URL, process: { env: { NODE_ENV: mode } }, require: name => {
     if (name in overrides) return overrides[name];
+    if (name === 'parse5') return parse5;
     if (name === 'next/server') return { NextResponse: Response };
     if (name === '@/app/category-profiles') return load('app/category-profiles.ts');
     if (name === '@/app/request-body') return load('app/request-body.ts');

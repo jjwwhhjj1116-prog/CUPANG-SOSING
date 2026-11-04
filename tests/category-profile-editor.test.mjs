@@ -13,7 +13,7 @@ function load(file,dependencies={},cache=new Map()){
   if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
   const output=ts.transpileModule(fs.readFileSync(new URL(`../${file}`,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
   vm.runInNewContext(output,{exports,Error,AbortController,structuredClone,TextEncoder,TextDecoder,FormData,crypto:webcrypto,fetch:dependencies.fetch,require(name){
-    if(name in dependencies)return dependencies[name];if(name==='react/jsx-runtime')return nativeRequire(name);
+    if(name in dependencies)return dependencies[name];if(name==='react/jsx-runtime'||name==='parse5')return nativeRequire(name);
     if(name.startsWith('@/'))return load(name.slice(2)+'.ts',dependencies,cache);if(name.startsWith('./'))return load(path.posix.join(path.posix.dirname(file),name)+'.ts',dependencies,cache);throw Error(name);
   }});return exports;
 }

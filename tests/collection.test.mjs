@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { DatabaseSync } from 'node:sqlite';
 import ts from 'typescript';
+import * as parse5 from 'parse5';
 import path from 'node:path';
 
 const fixtureCompany = { code: 'A01464742', name: '와이홉' };
@@ -13,6 +14,7 @@ function load(file, dependencies = {}, mode = 'development') {
   const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {};
   vm.runInNewContext(output, { exports, Error, structuredClone, crypto, URL, Response, process: { env: { NODE_ENV: mode } }, require: name => {
+    if (name === 'parse5') return parse5;
     if (name in dependencies) {
       const value=dependencies[name];
       if(name==='@/db/category-profiles'&&value.getCategoryProfile&&!value.getCategoryProfileSnapshot)return {...value,getCategoryProfileSnapshot:async(...args)=>{const category=await value.getCategoryProfile(...args);return category?{category,payload:JSON.stringify(category)}:null;}};

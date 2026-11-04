@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import * as parse5 from 'parse5';
 import {memoryDatabase,runtimeDDL} from '../scripts/check-db-schema.mjs';
 function load(file,deps={},mode='development'){
  const exports={};const code=ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
- vm.runInNewContext(code,{exports,fetch:deps.fetch,crypto,URL,Date,Response,Request,Uint8Array,TextEncoder,TextDecoder,structuredClone,AbortController,setTimeout,clearTimeout,process:{env:{NODE_ENV:mode}},require(name){if(name in deps)return deps[name];if(name==='next/server')return {NextResponse:Response};if(name.startsWith('@/'))return load(name.slice(2)+'.ts',deps,mode);throw Error(name);}});return exports;
+ vm.runInNewContext(code,{exports,fetch:deps.fetch,crypto,URL,Date,Response,Request,Uint8Array,TextEncoder,TextDecoder,structuredClone,AbortController,setTimeout,clearTimeout,process:{env:{NODE_ENV:mode}},require(name){if(name in deps)return deps[name];if(name==='parse5')return parse5;if(name==='next/server')return {NextResponse:Response};if(name.startsWith('@/'))return load(name.slice(2)+'.ts',deps,mode);throw Error(name);}});return exports;
 }
 const model=load('app/collection-image.ts');const empty=load('app/product-content.ts').emptyProductContent;
 const optionsModel=load('app/product-options.ts');

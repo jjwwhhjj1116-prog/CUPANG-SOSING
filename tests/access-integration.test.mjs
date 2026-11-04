@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import * as parse5 from 'parse5';
 
 function summaryStorage(calls = []) {
   const read = name => async (owner, products) => { calls.push({ name, owner, products }); return {}; };
@@ -26,6 +27,7 @@ function load(file, dependencies = {}, mode = 'production') {
   const output = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   vm.runInNewContext(output, { exports, crypto, TextEncoder, TextDecoder, URL, Response, atob, btoa, AbortController, setTimeout, clearTimeout, process: { env: { NODE_ENV: mode } }, require: name => {
     if (name in dependencies) return dependencies[name];
+    if (name === 'parse5') return parse5;
     if (name === 'cloudflare:workers') return {env:{}};
     if (name === '@/db/workspace-banners') return load('db/workspace-banners.ts', dependencies, mode);
     if (name in emptyStorage) return emptyStorage[name];

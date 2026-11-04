@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import * as parse5 from 'parse5';
 
 const source = fs.readFileSync(new URL('../db/queries.ts', import.meta.url), 'utf8');
 const output = ts.transpileModule(source, {
@@ -12,6 +13,7 @@ const output = ts.transpileModule(source, {
 function load(env) {
   const modules = new Map();
   const loadModule = name => {
+    if (name === 'parse5') return parse5;
     if (name === 'cloudflare:workers') return { env };
     assert.ok(name.startsWith('@/'), `Unexpected external module: ${name}`);
     if (modules.has(name)) return modules.get(name);

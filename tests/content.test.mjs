@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import * as parse5 from 'parse5';
 import { DatabaseSync } from 'node:sqlite';
 
 function load(file, overrides = {}, mode = 'development', cache = new Map()) {
@@ -12,6 +13,7 @@ function load(file, overrides = {}, mode = 'development', cache = new Map()) {
   cache.set(file, exports);
   vm.runInNewContext(source, { exports, Response, TextDecoder, TextEncoder, Uint8Array, structuredClone, process: { env: { NODE_ENV: mode } }, require(name) {
     if (name in overrides) return overrides[name];
+    if (name === 'parse5') return parse5;
     if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ userId: 'owner' }), getWorkspaceOwnerId: async () => 'owner' };
     if (name.startsWith('@/app/') || name.startsWith('@/db/')) return load(name.slice(2) + '.ts', overrides, mode, cache);
     if (name === 'next/server') return { NextResponse: Response };

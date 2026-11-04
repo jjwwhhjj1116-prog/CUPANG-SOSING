@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import * as parse5 from 'parse5';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
 import {providedOptionModule} from './helpers/provided-option-quotation.mjs';
 import {fixture as rawWorkspaceFixture,runtime as rawWorkspaceRuntime} from './helpers/detail-workspace.mjs';
@@ -80,7 +81,7 @@ async function actualDetailFixture(){
 function actualSelectedImageFixture(stage='additional'){
  const url=new URL('./batch-selected-image-work.test.mjs',import.meta.url),source=fs.readFileSync(url,'utf8'),ast=ts.createSourceFile(url.pathname,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
  const declarations=ast.statements.filter(statement=>ts.isFunctionDeclaration(statement)&&['loadModel','fixture'].includes(statement.name?.text)).map(statement=>statement.getText(ast)).join('\n').replaceAll('import.meta.url',JSON.stringify(url.href));
- return vm.runInNewContext(declarations+'\nfixture',{assert,fs,vm,ts,plain,Error,Date,URL,TextEncoder,AbortController,AbortSignal,structuredClone,Blob,Response,Uint8ClampedArray})(stage);
+ return vm.runInNewContext(declarations+'\nfixture',{assert,fs,vm,ts,parse5,plain,Error,Date,URL,TextEncoder,AbortController,AbortSignal,structuredClone,Blob,Response,Uint8ClampedArray})(stage);
 }
 
 for(const mode of [undefined,'full','selected'])test(`coordinator ${mode??'default'} mode reworks current manual photos only for selected work`,async()=>{
