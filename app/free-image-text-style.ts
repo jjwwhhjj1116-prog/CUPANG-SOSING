@@ -28,6 +28,18 @@ export function resolveFreeImageTextStyle(style: FreeImageTextStyle) {
   return { fontFamily: freeImageFontFamilies[family].css, bold: style.bold ?? false, italic: style.italic ?? false, textAlign: align, lineHeight };
 }
 
+export function wrappedLines(context: Pick<CanvasRenderingContext2D, 'measureText'>, value: string, maximumWidth: number) {
+  const lines: string[] = [];
+  for (const paragraph of value.split(/\r\n|[\r\n]/u)) {
+    let line = '';
+    for (const character of Array.from(paragraph)) {
+      if (line && context.measureText(line + character).width > maximumWidth) { lines.push(line); line = character; } else line += character;
+    }
+    lines.push(line);
+  }
+  return lines;
+}
+
 /** Wait for the selected bundled face before measuring/drawing. Falling back
  * silently would save different text geometry from the user's chosen font. */
 export async function ensureFreeImageTextFont(style: ReturnType<typeof resolveFreeImageTextStyle>, signal: AbortSignal): Promise<void> {

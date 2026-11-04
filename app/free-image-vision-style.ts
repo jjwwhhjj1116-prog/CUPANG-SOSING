@@ -1,4 +1,4 @@
-import {resolveFreeImageTextStyle} from '@/app/free-image-text-style';
+import {resolveFreeImageTextStyle,wrappedLines} from '@/app/free-image-text-style';
 import type {ImageTextVisionBlock} from '@/app/image-text-vision';
 import type {FreeImageRegion} from '@/app/free-image-translation-client';
 
@@ -53,7 +53,11 @@ function fittedFont(context:PixelContext|undefined,text:string,box:Box):{fontSiz
  if(!context?.measureText)return{fontSize:Math.max(1,size),issue:'VISION_TEXT_FIT'};
  const previous=context.font;
  try{
-  for(;size>=1;size--){context.font=`${size}px ${style.fontFamily}`;const measured=context.measureText(text).width;if(Number.isFinite(measured)&&measured<=width)break;}
+  for(;size>=1;size--){
+   context.font=`${size}px ${style.fontFamily}`;
+   const lines=wrappedLines(context,text,width),lineHeight=size*style.lineHeight;
+   if(lines.length*lineHeight+Math.max(0,size-lineHeight)<=height&&lines.every(line=>{const measured=context!.measureText(line).width;return Number.isFinite(measured)&&measured>=0&&measured<=width;}))break;
+  }
  }catch{return{fontSize:1,issue:'VISION_TEXT_FIT'};}finally{context.font=previous;}
  return{fontSize:Math.max(1,size),...(size<8?{issue:'VISION_TEXT_FIT' as const}:{})};
 }

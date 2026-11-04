@@ -11,7 +11,7 @@ const plain = value => JSON.parse(JSON.stringify(value));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const hash = async bytes => Buffer.from(await webcrypto.subtle.digest('SHA-256', bytes)).toString('hex');
 const pixels = (width, height) => Uint8Array.from({ length: width * height * 4 }, (_, index) => index % 4 === 3 ? 255 : (index * 13) % 200);
-function fixture({ imageWidth = 20, imageHeight = 12, decodeWait, fonts, inpaint } = {}) {
+function fixture({ imageWidth = 20, imageHeight = 12, decodeWait, fonts, inpaint, widthPerEm = 0.5 } = {}) {
   const objects = new Map(), revoked = [], canvases = [], operations = [], measurements = []; let sequence = 0;
   class ObjectURL extends URL { static createObjectURL(blob) { const url = 'blob:fixture-' + ++sequence; objects.set(url, blob); return url; } static revokeObjectURL(url) { revoked.push(url); objects.delete(url); } }
   class Image { set src(url) { if (!url) return; Promise.resolve(decodeWait).then(() => { if (!objects.has(url)) return; this.naturalWidth = imageWidth; this.naturalHeight = imageHeight; this.pixels = pixels(imageWidth, imageHeight); this.onload?.(); }); } }
@@ -27,7 +27,7 @@ function fixture({ imageWidth = 20, imageHeight = 12, decodeWait, fonts, inpaint
     };
     const textWidth = (font, text) => {
       const size = Number(/([0-9.]+)px/u.exec(font)?.[1]);
-      return Array.from(text).length * size / 2 * (/\bbold\b/u.test(font) ? 1.25 : 1) * (/\bitalic\b/u.test(font) ? 1.1 : 1);
+      return Array.from(text).length * size * widthPerEm * (/\bbold\b/u.test(font) ? 1.25 : 1) * (/\bitalic\b/u.test(font) ? 1.1 : 1);
     };
     const paintPath = (points, radius, color) => {
       for (let y = 0; y < output.height; y++) for (let x = 0; x < output.width; x++) {
@@ -80,7 +80,7 @@ function fixture({ imageWidth = 20, imageHeight = 12, decodeWait, fonts, inpaint
     return exports;
   }
   const client = load('app/free-image-translation-client.ts');
-  return { client, brush: load('app/free-image-brush.ts'), canvases, operations, measurements, revoked, objects, document };
+  return { client, vision:load('app/free-image-vision-style.ts'), brush: load('app/free-image-brush.ts'), canvases, operations, measurements, revoked, objects, document };
 }
 function image(h) { const value = h.document.createElement('canvas'); value.width = source.width; value.height = source.height; value.pixels = pixels(source.width, source.height); return { source, canvas: value, blob: new Blob(['original']), width: source.width, height: source.height }; }
 const region = (id, box, translated = '한국어') => ({ id, text: '中文', box, confidence: 90, selected: true, translated, issue: null, translationProvenance: 'generated', background: '#ffffff', foreground: '#000000', fontSize: 3 });
@@ -495,6 +495,18 @@ test('text style validation rejects malformed selected styles before creating an
   await assert.rejects(fontFixture.client.renderFreeImageTranslation(fontImage,
     [{ ...chosen, fontFamily: 'gmarket' }, { ...chosen, id: 'invalid-after-font', bold: 'true' }], new AbortController().signal));
   assert.equal(fontLoads, 0, 'every selected style is validated before starting font loading'); assert.equal(fontFixture.canvases.length, 1);
+});
+
+test('Vision chosen font and renderer use the same Korean wrapping and explicit newline layout',async()=>{
+ for(const [translated,fontSize,expectedLines]of [['한국어'.repeat(10),12,['한국어'.repeat(10).slice(0,16),'한국어'.repeat(10).slice(16)]],['한국어\n번역',14,['한국어','번역']],['한국어\n\n번역',9,['한국어','','번역']]]){
+  const h=fixture({widthPerEm:1}),canvas=h.document.createElement('canvas');canvas.width=400;canvas.height=160;canvas.pixels=new Uint8Array(400*160*4).fill(255);
+  const original={source:{...source,width:400,height:160},canvas,blob:new Blob(['original']),width:400,height:160};
+  const styled=h.vision.initializeVisionRegions([{id:'wrapped',text:'中文',translated,issue:null,box:{x:20,y:20,width:200,height:40}}],canvas,400,160);
+  assert.deepEqual(plain(styled.issues),[]);assert.equal(styled.regions[0].fontSize,fontSize);assert.equal(styled.regions[0].selected,true);
+  await h.client.renderFreeImageTranslation(original,styled.regions,new AbortController().signal);
+  const written=h.operations.filter(operation=>operation[0]==='text');assert.deepEqual(written.map(operation=>operation[1]),expectedLines);
+  assert.ok(written.every(operation=>operation[4]===`${fontSize}px Arial, "Noto Sans KR", sans-serif`));assert.ok(written.at(-1)[3]+fontSize<=57);
+ }
 });
 
 test('styled text fits using bold/italic widths and line spacing, and tight spacing leaves room for the last glyph', async () => {

@@ -7,13 +7,33 @@ const plain=value=>JSON.parse(JSON.stringify(value));
 function fixture(color=()=>[240,202,172,255]){
  const cache=new Map();function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,require:name=>load(name.slice(2)+'.ts')});return exports;}
  const context={font:'original font',measureText(text){return{width:Array.from(text).length*Number(/([0-9.]+)px/u.exec(this.font)?.[1]??10)};},getImageData(x,y,width,height){const data=new Uint8ClampedArray(width*height*4);for(let py=0;py<height;py++)for(let px=0;px<width;px++)data.set(color(x+px,y+py),(py*width+px)*4);return{data};}};
- return{...load('app/free-image-vision-style.ts'),context,canvas:{getContext:()=>context}};
+ return{...load('app/free-image-vision-style.ts'),textStyle:load('app/free-image-text-style.ts'),context,canvas:{getContext:()=>context}};
 }
 const block=(id,box,translated='신발 사이즈 조절 뒤꿈치 패드')=>({id:`vision-${id}`,text:'调鞋码后跟贴',translated,issue:null,box});
-test('new Vision defaults sample peach/dark backgrounds, choose contrast and fit Korean on one line without changing source blocks',()=>{
+test('Vision font fitting uses rendered Korean wrapping and explicit newline heights',()=>{
+ for(const [text,fontSize]of [['한국어'.repeat(10),12],['한국어\n번역',14],['한국어\n\n번역',9]]){
+  const h=fixture(()=>[255,255,255,255]),blocks=[block(1,{x:20,y:20,width:200,height:40},text)],before=JSON.stringify(blocks);
+  const result=h.initializeVisionRegions(blocks,h.canvas,400,160);
+  assert.equal(result.regions[0].fontSize,fontSize,text);assert.equal(result.regions[0].selected,true);assert.deepEqual(plain(result.issues),[]);
+  assert.equal(JSON.stringify(blocks),before);assert.equal(h.context.font,'original font');
+ }
+});
+
+test('invalid measured line widths remain unresolved instead of selecting an automatic font',()=>{
+ for(const width of [-Infinity,NaN,Infinity,-1]){
+  const h=fixture(()=>[255,255,255,255]);h.context.measureText=()=>({width});
+  const result=h.initializeVisionRegions([block(1,{x:20,y:20,width:200,height:40},'한국어')],h.canvas,400,160);
+  assert.equal(result.regions[0].selected,false);assert.ok(result.issues.includes('VISION_TEXT_FIT'));assert.equal(h.context.font,'original font');
+ }
+ const h=fixture(()=>[255,255,255,255]);h.context.measureText=()=>({width:0});
+ assert.equal(h.initializeVisionRegions([block(1,{x:20,y:20,width:200,height:40},'한국어')],h.canvas,400,160).regions[0].selected,true);
+});
+
+test('new Vision defaults sample peach/dark backgrounds, choose contrast and fit Korean with renderer wrapping without changing source blocks',()=>{
  for(const [color,background,foreground]of [[()=>[240,202,172,255],'#f0caac','#111111'],[()=>[25,30,35,255],'#191e23','#ffffff']]){
   const h=fixture(color),blocks=[block(1,{x:20,y:20,width:260,height:80})],before=JSON.stringify(blocks),result=h.initializeVisionRegions(blocks,h.canvas,400,160),row=result.regions[0];
-  assert.deepEqual(plain(result.issues),[]);assert.equal(row.background,background);assert.equal(row.foreground,foreground);assert.equal(row.textAlign,'center');assert.equal(row.selected,true);assert.ok(row.fontSize<64,'Korean width reduces the old height-only default');assert.ok(Array.from(row.translated).length*row.fontSize<=254);assert.ok(row.fontSize*1.2<=74);assert.equal(JSON.stringify(blocks),before);assert.equal(h.context.font,'original font');
+  assert.deepEqual(plain(result.issues),[]);assert.equal(row.background,background);assert.equal(row.foreground,foreground);assert.equal(row.textAlign,'center');assert.equal(row.selected,true);assert.ok(row.fontSize<64,'Korean wrapping reduces the old height-only default');assert.equal(h.context.font,'original font');
+  h.context.font=`${row.fontSize}px Arial`;const lines=h.textStyle.wrappedLines(h.context,row.translated,254);assert.ok(lines.every(line=>h.context.measureText(line).width<=254));assert.ok(lines.length*row.fontSize*1.2<=74);assert.equal(JSON.stringify(blocks),before);
  }
 });
 test('actual five-box geometry preserves all text/coordinates but deselects overlaps and classifies automatic preview unsafe',()=>{

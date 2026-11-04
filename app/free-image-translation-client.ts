@@ -4,7 +4,7 @@ import {
   type FreeImageRole, type FreeImageSource, type ImageTextRegion, type ImageTextTranslation,
 } from '@/app/free-image-translation';
 import { isOwnedImageKey, MAX_IMAGE_BYTES, PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-files';
-import { resolveFreeImageTextStyle, ensureFreeImageTextFont, type FreeImageTextStyle } from '@/app/free-image-text-style';
+import { resolveFreeImageTextStyle, ensureFreeImageTextFont, wrappedLines, type FreeImageTextStyle } from '@/app/free-image-text-style';
 import { validateFreeImageBrush, MAX_FREE_IMAGE_BRUSH_TOTAL_POINTS, type FreeImageBrush } from '@/app/free-image-brush';
 import { validateFreeImageCropRect, validateFreeImageCrop, type FreeImageCropRect, type FreeImageCrop } from '@/app/free-image-crop';
 import { validateFreeImageEditDocument, type FreeImageEditDocument } from '@/app/free-image-edit-document';
@@ -356,17 +356,6 @@ export async function translateFreeImageRegions(source: FreeImageSource, sourceL
   return readFreeImageTranslationReply(body, source, requested);
 }
 
-function wrappedLines(context: CanvasRenderingContext2D, value: string, maximumWidth: number) {
-  const lines: string[] = [];
-  for (const paragraph of value.split(/\r\n|[\r\n]/u)) {
-    let line = '';
-    for (const character of Array.from(paragraph)) {
-      if (line && context.measureText(line + character).width > maximumWidth) { lines.push(line); line = character; } else line += character;
-    }
-    lines.push(line);
-  }
-  return lines;
-}
 /** Paint selected rectangles/brush paths. Only explicitly versioned restoration
  * regions run local inpainting; absent mode retains legacy flat-fill semantics. */
 export async function renderFreeImageTranslation(image: FreeImageLoaded, regions: readonly FreeImageRegion[], signal: AbortSignal, optionImageIds: readonly string[] = [], cropRect?: FreeImageCropRect, sourceLanguage: 'zh' | 'en' = 'zh'): Promise<FreeImageRendered> {
