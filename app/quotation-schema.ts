@@ -30,7 +30,7 @@ import { quotationSeoDocumentTitle } from '@/app/seo-title-document';
 import type { DetailEditorInputs } from '@/app/detail-editor-inputs';
 import type { StageTwoMsrp } from '@/app/stage-two-msrp';
 import { readInitialLegalNotices } from '@/app/initial-legal-notices';
-import {prioritizedContentLabelFields,prioritizedProductAttributes,productFactDetailDescription,productFactKey} from '@/app/product-fact-priority';
+import {prioritizedContentLabelFields,prioritizedProductAttributes,productFactDetailDescription,productFactKey,productMaterialChoice} from '@/app/product-fact-priority';
 
 // Base fields come from Couplus screenshots 15–23. Product attributes and preview
 // notice names for 22 kitchen-storage categories were observed in Supplier Hub
@@ -502,8 +502,8 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
       const saved = contentValue(content.label[linkedContent] ?? { value: '', provenance: 'unverified', updatedAt: null });
       if (saved.source === 'empty') return saved;
       // A single exact observed choice can be translated to its wire value.
-      // Composite descriptions stay intact and receive normal select validation;
-      // do not reduce them to one material/component or silently replace with N/A.
+      // Complete composition remains in the text notice; fixed main-material
+      // choices are resolved separately after explicit detail facts are applied.
       const matches = definition.choices?.filter(choice => choice.value === saved.value || choice.label === saved.value) ?? [];
       return matches.length === 1 ? { ...saved, value: matches[0].value } : saved;
     }
@@ -632,6 +632,10 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
       const manualOptionFact=optionKey&&option?.provenance[optionKey]==='manual';
       if(explicitDetail&&!manualLabel&&!manualOptionFact&&['text','textarea','select'].includes(definition.type))automatic={value:explicitDetail.value,source:'content',
         ...(explicitDetail.provenance==='detail-conflict'?{issues:['상세페이지의 명시된 값이 서로 상충합니다. 직접 확인해주세요.']}:{})};
+      if(definition.type==='select'&&(definition.contentField==='material'||definition.id==='storageMaterial')&&automatic.value&&definition.choices?.length){
+        const material=productMaterialChoice(automatic.value,definition.choices);
+        automatic=material===null?{...automatic,issues:[...(automatic.issues??[]),'성분비를 단일 재질 선택값에 연결하지 못했습니다. 재질을 직접 선택해주세요.']}:{...automatic,value:material};
+      }
       if (automatic.source === 'empty' && !automatic.issues?.length && content.categoryAttributes?.categoryId === schema.categoryId
         && !(definition.visibility === 'hidden' && content.categoryAttributes.hiddenAttributes === false)
         && definition.section === 'product' && definition.visibility !== 'common' && !definition.readOnly

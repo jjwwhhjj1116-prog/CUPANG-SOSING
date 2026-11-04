@@ -36,12 +36,28 @@ const fibers='cotton|棉|면|코튼|spandex|elastane|氨纶|스판덱스|엘라�
 const quantityUnits=[['개','个|個|件|支|片|枚|粒|张|本|只|台|pcs?|pieces?|개'],['쌍','双|對|对|pairs?|쌍'],['세트','套|sets?|세트'],['팩','包|袋|packs?|팩|봉지|봉'],['g','克|grams?|그램|g'],['kg','千克|公斤|kilograms?|킬로그램|kg'],['ml','毫升|밀리리터|ml'],['l','升|리터|l'],['cm','厘米|센티미터|cm'],['mm','毫米|밀리미터|mm'],['m','米|미터|m']];
 export const productFactQuantityTokens=(value:string)=>quantityUnits.flatMap(([kind,aliases])=>[...value.matchAll(new RegExp(`(\\d+(?:[.,]\\d+)*)\\s*(?:${aliases})(?![a-z가-힣])`,'giu'))].map(match=>kind+':'+match[1]));
 function composition(value:string):string[]|null{
+ if(/(?:^|[^\d])\.\s*\d/u.test(value))return null;
  const atom=new RegExp(`(?:(\\d+(?:\\.\\d+)?)\\s*[%％]\\s*(${fibers})|(${fibers})\\s*(\\d+(?:\\.\\d+)?)\\s*[%％])`,'giu'),parts:string[]=[];
  const rest=value.replace(atom,(_match,before:string,left:string,right:string,after:string)=>{
   const fiber=(left??right).toLowerCase(),key=/^(?:cotton|棉|면|코튼)$/u.test(fiber)?'cotton':/^(?:spandex|elastane|氨纶|스판덱스|엘라스테인)$/u.test(fiber)?'spandex':/^(?:nylon|尼龙|锦纶|나일론)$/u.test(fiber)?'nylon':'polyester';
   parts.push(`${key}:${Number(before??after)}`);return '';
  });
- return parts.length&&!rest.replace(/[\s,，、/·+()（）:：;；.。-]/gu,'')?parts.sort():null;
+ return parts.length&&!rest.replace(/[\s,，、/·()（）:：;；.。]/gu,'')?parts.sort():null;
+}
+/** A fixed main-material choice is separate from the complete composition text. */
+export function productMaterialChoice(value:string,choices:readonly{value:string;label:string}[]):string|null{
+ const exact=new Set(choices.filter(choice=>choice.value===value||choice.label===value).map(choice=>choice.value));
+ if(exact.size)return exact.size===1?[...exact][0]:null;
+ const parts=composition(value)?.map(part=>{const [fiber,percent]=part.split(':');return{fiber,percent:Number(percent)};});
+ if(!parts?.length||new Set(parts.map(part=>part.fiber)).size!==parts.length
+  ||parts.some(part=>!Number.isFinite(part.percent)||part.percent<=0||part.percent>100)
+  ||Math.abs(parts.reduce((total,part)=>total+part.percent,0)-100)>0.000001)return null;
+ const majority=parts.filter(part=>part.percent>50);if(majority.length!==1)return null;
+ const name=majority[0].fiber+':100';
+ const matches=new Set(choices.filter(choice=>[choice.value,choice.label].some(label=>{
+  const parsed=composition('100% '+label);return parsed?.length===1&&parsed[0]===name;
+ })).map(choice=>choice.value));
+ return matches.size===1?[...matches][0]:null;
 }
 /** Only exact headings or complete literal composition statements establish a
  * detail fact. Marketing copy and inferred material never do. */
