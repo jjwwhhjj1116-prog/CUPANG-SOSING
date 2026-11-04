@@ -8,9 +8,9 @@
 
 **Constraints:** Preserve branding, manual values, blank-target execution guard, provider requests, and stored products. Never resend accepted document 2347603. Exclude unrelated dirty `app/chatgpt-auth.ts` from commits and deployment. Compare equal CSS viewports: the current YOOFAM browser zoom is 80%, COUPLUS 100%.
 
-- [ ] Update the display-only example in `app/components/seo-workspace-generator.tsx`.
-- [ ] Add an inner list in `app/components/seo-workspace-editor.tsx` and bound `.registration-workspace .seo-option-name-list` in `app/components/seo-workspace.css` to 400px with internal overflow and right padding 10px. Preserve the outer card padding.
-- [ ] Run existing SEO lifecycle tests, type check, lint, and project tests; no new tests for these reversible presentation changes.
-- [ ] Build and deploy a frozen release without unrelated auth changes. Verify the eight-option editor at a 1600×1000 CSS viewport: last option reachable internally, save outside the list, blank target stays blank and generation disabled, close/reopen restores stored values.
+- [x] Update the display-only example in `app/components/seo-workspace-generator.tsx`.
+- [x] Add an inner list in `app/components/seo-workspace-editor.tsx` and bound `.registration-workspace .seo-option-name-list` in `app/components/seo-workspace.css` to 400px with internal overflow and right padding 10px. Preserve the outer card padding.
+- [x] Existing SEO lifecycle tests 125/125, type check and lint pass. A broad project run exposed independent test loader errors and other unresolved failures, then was stopped; it is not a green full-suite result. Repairing the real parse5 dependency in ten existing test loaders restores 266/266 affected tests. No assertions were weakened and no new presentation tests added.
+- [x] Build and frozen deployment pass (Worker `3ef842e9-ae84-4eea-ae0a-e3b30fa855d0`). Browser verification at 1600×1000 CSS: list400px/body440px, eight options, last option focus scrollTop500, save outside the list. Blank brand/target show only example fallbacks; generation stays disabled. Original inputs restored, close/reopen checked. At390×900 CSS the single column and option list have no horizontal overflow. Product content55/options4/quotation11 responses are byte-for-byte JSON-equivalent before and after verification.
 
 The existing first-stage Previous button is already hidden in the actual browser; do not alter navigation based on JSX alone. The conditional size-chart stage remains unchanged pending a matching reference category.
