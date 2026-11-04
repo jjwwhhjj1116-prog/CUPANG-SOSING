@@ -264,7 +264,12 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
     image=await(deps.readSource??readFreeImageSource)(productId,batch.view.productVersion,entry.sourceKey,stage,controller.signal,fetcher,{kind:'quotation',profileId:task.profileId,optionId:task.optionId,input:stage==='main'?'mainImage':stage==='additional'?'additionalImages':'detailImages',fieldKey:target.target.primary,slotIndex,revision:batch.view.revision,inputFingerprint:batch.view.inputFingerprint,optionRevision:batch.view.optionRevision,value:target.value});check();
     if(image.source.productId!==productId||!isOwnedImageKey(ownerId,image.source.sourceKey)||image.source.sourceKey!==entry.sourceKey||image.source.productVersion!==batch.view.productVersion||image.source.role!==stage)throw changed();
     if(image.noTextProof){const proof=parseImageOriginalPreservationProof(image.noTextProof);if(!proof||proof.productId!==productId||proof.sourceKey!==entry.sourceKey||proof.sourceSha256!==image.source.sourceSha256
-     ||proof.width!==image.width||proof.height!==image.height||proof.sourceLanguage!=='zh'||!same(proof.configuration,parseImageTextVisionConfiguration(image.visionConfiguration)))throw changed();throw new UnchangedOriginal();}
+     ||proof.width!==image.width||proof.height!==image.height||proof.sourceLanguage!=='zh'||!same(proof.configuration,parseImageTextVisionConfiguration(image.visionConfiguration)))throw changed();
+     if(recoveredInference?.optionId===task.optionId&&recoveredInference.slotIndex===slotIndex){
+      if(!same(image.source,recoveredInference.attempt.source)||!same(proof.configuration,recoveredInference.attempt.configuration)||proof.requestId!==recoveredInference.attempt.requestId)throw changed();
+      delete state.inferencePending;recoveredInference=undefined;
+     }
+     throw new UnchangedOriginal();}
     if(!detailBatchCapacity(batch.view))throw Error(`새 ${action} 이미지를 저장할 공간이 없습니다. 원본을 유지했습니다.`);
     let regions:FreeImageRegion[];
     if(recoveredInference&&recoveredInference.optionId===task.optionId&&recoveredInference.slotIndex===slotIndex){

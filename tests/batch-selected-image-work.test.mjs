@@ -569,6 +569,35 @@ for(const stage of ['main','additional','detail'])test(`${stage}: late completed
  const again=await h.run();assert.equal(again.status,'completed');assert.equal(h.calls.filter(row=>row[0]==='vision'||row[0]==='apply'||row[0]==='vision-status').length,3);
 });
 
+function lateNoTextReceiptFixture(){
+ const h=fixture('additional'),c=h.visionContract,requestId='0fa1748b-fd6e-4b16-8120-754071c7a73f',configuration={provider:'workers-ai-vision',model:c.IMAGE_TEXT_VISION_MODEL,configured:true,paidAllowed:true,notice:c.IMAGE_TEXT_VISION_NOTICE};
+ const read=h.deps.readSource,recognize=h.deps.recognize;let completed=false;
+ h.deps.readSource=async(...args)=>{
+  const image=await read(...args);image.source.quotationTarget.bindingSha256='c'.repeat(64);image.visionConfiguration=plain(configuration);
+  if(completed&&image.source.sourceKey==='owner/source-a.png')image.noTextProof={policy:c.IMAGE_TEXT_INSPECTION_POLICY,productId:'product',sourceKey:image.source.sourceKey,sourceSha256:image.source.sourceSha256,width:image.width,height:image.height,requestId,verifiedAt:'2026-11-04T00:00:00.000Z',sourceLanguage:'zh',configuration:plain(configuration)};
+  return image;
+ };
+ h.deps.recognize=async image=>{h.calls.push(['vision',image.source.sourceKey]);image.visionRequestId=requestId;throw new h.vision.FreeImageVisionError('lost acknowledgement','IMAGE_VISION_ACK_MISSING',true,{requestId,source:image.source,sourceLanguage:'zh',configuration});};
+ h.deps.observe=async attempt=>{h.calls.push(['vision-status',attempt.requestId]);return{format:'yoofam-image-vision-status-v1',source:plain(attempt.source),configuration:plain(configuration),sourceLanguage:'zh',requestId,status:'completed',result:{provider:'workers-ai-vision',model:c.IMAGE_TEXT_VISION_MODEL,requests:1,notice:c.IMAGE_TEXT_VISION_NOTICE,blocks:[],inspection:{policy:c.IMAGE_TEXT_INSPECTION_POLICY,decision:'no-foreign-text'}},failure:null,execution:{requests:0},readOnly:true};};
+ h.complete=()=>{completed=true;h.deps.recognize=async image=>{h.calls.push(['vision',image.source.sourceKey]);return recognize(image);};};
+ return h;
+}
+
+test('additional: a late no-text receipt consumes the exact retained inference before processing the next slot',async()=>{
+ const h=lateNoTextReceiptFixture(),first=await h.run();assert.equal(first.inferencePending,true);assert.equal(first.state.batches.option.items[1].status,'pending');h.complete();
+ const resumed=await h.run();assert.equal(resumed.status,'completed');assert.equal(resumed.sourceChanged,undefined);assert.equal(resumed.verifiedUnchanged,1);assert.equal(resumed.applied,1);assert.equal(resumed.inferencePending,undefined);assert.equal(resumed.state.inferencePending,undefined);
+ assert.equal(resumed.state.batches.option.items[0].status,'skipped');assert.equal(resumed.state.batches.option.items[1].status,'applied');
+ assert.deepEqual(h.calls.filter(row=>row[0]==='vision'),[['vision','owner/source-a.png'],['vision','owner/source-b.png']]);assert.equal(h.calls.filter(row=>row[0]==='vision-status').length,1);
+ assert.deepEqual(h.calls.filter(row=>row[0]==='render'),[['render','owner/source-b.png']]);assert.deepEqual(h.calls.filter(row=>row[0]==='apply'),[['apply',1]]);assert.ok(h.canvases.every(canvas=>canvas.width===0));
+});
+
+for(const change of ['receipt request','source binding'])test(`a late no-text receipt with a different ${change} cannot release the retained inference`,async()=>{
+ const h=lateNoTextReceiptFixture();await h.run();h.complete();const read=h.deps.readSource;
+ h.deps.readSource=async(...args)=>{const image=await read(...args);if(image.noTextProof){if(change==='receipt request')image.noTextProof.requestId='da1dd761-dfa4-4267-b76f-a6068cd1ec6c';else image.source.quotationTarget.bindingSha256='d'.repeat(64);}return image;};
+ const resumed=await h.run();assert.equal(resumed.status,'partial');assert.equal(resumed.sourceChanged,true);assert.equal(resumed.applied,0);assert.equal(resumed.verifiedUnchanged,undefined);assert.equal(resumed.state.inferencePending.attempt.requestId,'0fa1748b-fd6e-4b16-8120-754071c7a73f');
+ assert.equal(resumed.state.batches.option.items[1].status,'pending');assert.deepEqual(h.calls.filter(row=>row[0]==='vision'),[['vision','owner/source-a.png']]);assert.equal(h.calls.filter(row=>['render','apply'].includes(row[0])).length,0);assert.ok(h.canvases.every(canvas=>canvas.width===0));
+});
+
 test('late Vision completion cannot cross a changed saved view or malformed request identity',async()=>{
  const stale=lateVisionFixture();await stale.run();stale.view.revision++;await assert.rejects(stale.run(),/변경/);assert.equal(stale.calls.filter(row=>row[0]==='vision').length,1);assert.equal(stale.calls.filter(row=>row[0]==='apply').length,0);assert.ok(stale.options.state.inferencePending);
  const malformed=lateVisionFixture();await malformed.run();const observe=malformed.deps.observe;malformed.deps.observe=async(...args)=>({...await observe(...args),requestId:'da1dd761-dfa4-4267-b76f-a6068cd1ec6c'});
