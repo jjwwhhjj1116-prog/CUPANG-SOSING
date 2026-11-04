@@ -17,7 +17,7 @@ function loadModel(){
     assert.ok(name.startsWith('@/'),name);return load(name.slice(2)+'.ts');
    }},{filename:file});return exports;
  }
- return{model:load('app/batch-selected-image-work.ts'),settingsModel:load('app/workspace-settings.ts'),style:load('app/free-image-vision-style.ts'),vision:load('app/free-image-vision-error.ts'),visionContract:load('app/image-text-vision.ts'),expire(){for(const timer of [...timers.values()])timer.fn();},timers};
+ return{model:load('app/batch-selected-image-work.ts'),library:load('app/main-image-library.ts'),settingsModel:load('app/workspace-settings.ts'),style:load('app/free-image-vision-style.ts'),vision:load('app/free-image-vision-error.ts'),visionContract:load('app/image-text-vision.ts'),expire(){for(const timer of [...timers.values()])timer.fn();},timers};
 }
 function fixture(stage='detail',keys=['owner/source-a.png','owner/source-b.png']){
  const runtime=loadModel(),calls=[],canvases=[],controller=new AbortController();let current=true;
@@ -258,6 +258,55 @@ for(const stage of ['main','additional','detail'])test(`${stage}: only explicit 
   assert.equal(result.applied,expected,`${manual}/${reworkCurrentSelection}`);assert.equal(result.status,expected?'completed':'skipped');
   assert.deepEqual(h.calls.filter(row=>row[0]==='read').map(row=>row[1]),expected?['owner/source-b.png']:[]);assert.equal(h.calls.filter(row=>row[0]==='apply').length,expected);
   assert.deepEqual(h.content,contentBefore);for(const [key,value]of Object.entries(otherFields))if(key!==field&&!(stage==='main'&&key==='wireMain'))assert.deepEqual(h.view.resolved.rows[0].fields[key],value);
+ }
+});
+
+function originalEvidence(h,keys){
+ return{format:'main-image-library-evidence-v1',productId:'product',productVersion:h.view.productVersion,optionRevision:h.view.optionRevision,company:plain(h.plan.scope.company),
+  source:{jobId:'collection-job',receivedAt:'2026-10-23T00:00:00.000Z',fingerprint:'c'.repeat(64)},work:[],main:[],options:[...keys],detail:[]};
+}
+function withOriginalEvidence(h,keys,change=()=>{}){
+ const fetcher=h.options.fetcher;
+ h.options.fetcher=async(url,init)=>{
+  if(url!=='/api/products/product/options')return fetcher(url,init);
+  h.calls.push(['fetch',url,init.method??'GET']);const imageLibrary=originalEvidence(h,keys);change(imageLibrary);
+  return Response.json({options:h.productOptions,productVersion:h.view.productVersion,imageLibrary});
+ };
+}
+
+for(const stage of ['main','additional'])for(const manual of ['quotation','role',...(stage==='main'?['option']:[])])test(`${stage}: ordinary work processes a selected immutable original despite manual ${manual} provenance`,async()=>{
+ const h=fixture(stage,['owner/source-b.png']),field=stage==='main'?'mainImage':'additionalImages';
+ if(manual==='quotation'){h.view.overrides.options.option={[field]:'owner/source-b.png'};h.view.resolved.rows[0].fields[field].source='manual-option';}
+ if(manual==='role')h.content.assets[stage]={value:['owner/source-b.png'],provenance:'manual',updatedAt:null};
+ if(manual==='option')h.productOptions.rows[0].provenance.imageKey='manual';
+ withOriginalEvidence(h,['owner/source-b.png']);const before=plain(h.content),result=await h.run();
+ assert.equal(result.status,'completed',result.messages.join(' '));assert.equal(result.applied,1);assert.equal(h.calls.filter(row=>row[0]==='render').length,1);
+ assert.deepEqual(h.calls.filter(row=>row[0]==='read').map(row=>row[1]),['owner/source-b.png']);assert.deepEqual(h.content,before);
+});
+
+test('ordinary work inspects a saved manual edit and processes only immutable originals among mixed manual choices',async()=>{
+ const saved='owner/free-image-product-reviewed.png',raw='owner/source-b.png',upload='owner/manual-upload.png',generated='owner/ai-result.png',keys=[saved,raw,upload,generated],h=fixture('additional',keys),read=h.deps.readSource,recognized=[];
+ h.view.overrides.options.option={additionalImages:keys.join('\n')};h.view.resolved.rows[0].fields.additionalImages.source='manual-option';h.productOptions.rows[0].imageKey=upload;
+ withOriginalEvidence(h,[raw],evidence=>{evidence.work=[generated];});
+ h.deps.readSource=async(...args)=>{const image=await read(...args);if(args[2]!==saved)return image;assert.deepEqual(plain(args[7]),{restoreEditor:true,anchorPolicy:'current-target-v1'});return{...image,source:{...image.source,sourceKey:'owner/original-edited.png',editorSource:{resultKey:saved,anchorPolicy:'current-target-v1'}},editDocument:{format:'free-image-edit-v1',width:100,height:60,sourceLanguage:'zh',regions:[{...h.region('旧文'),translated:'직접 검토한 문구',translationProvenance:'manual'}]}};};
+ const recognize=h.deps.recognize;h.deps.recognize=async image=>{recognized.push(image.source.sourceKey);return recognize(image);};
+ const result=await h.run();assert.equal(result.status,'completed',result.messages.join(' '));assert.equal(result.applied,1);assert.deepEqual(recognized,[raw]);
+ assert.deepEqual(h.calls.filter(row=>row[0]==='read').map(row=>row[1]),[saved,raw]);assert.deepEqual(h.calls.filter(row=>row[0]==='apply').map(row=>row[1]),[1]);
+ assert.equal(h.view.resolved.rows[0].fields.additionalImages.value,[saved,'owner/free-image-product-result-1.png',upload,generated].join('\n'));
+});
+
+for(const stage of ['main','additional'])test(`${stage}: ordinary work preserves a manually cleared role when its exact saved selection has no tasks`,async()=>{
+ const h=fixture(stage,[]);h.content.assets[stage]={value:[],provenance:'manual',updatedAt:null};h.plan.tasks=[];h.plan.messages=[{productId:'product',message:'저장한 이미지가 없어 원래 빈 값을 유지합니다.'}];
+ const before=plain([h.content,h.view]),result=await h.run();assert.equal(result.status,'skipped');assert.equal(result.failed,0);assert.deepEqual(plain([h.content,h.view]),before);
+ assert.equal(h.calls.filter(row=>['read','render','apply','translate'].includes(row[0])).length,0);
+});
+
+test('immutable original evidence excludes selected manual candidates, proven outputs, removed files and foreign company clocks',()=>{
+ const h=fixture('additional',['owner/source-a.png','owner/source-b.png','owner/manual-upload.png','owner/ai-result.png']),evidence=originalEvidence(h,['owner/source-b.png']);
+ evidence.main=['owner/source-a.png','owner/removed.png','other/foreign.png'];evidence.detail=['owner/source-b.png','owner/ai-result.png'];evidence.work=['owner/ai-result.png'];
+ assert.deepEqual([...h.library.originalImageLibraryKeys('product',h.view,evidence,h.plan.scope.company)],['owner/source-a.png','owner/source-b.png']);
+ for(const change of [value=>{value.productVersion='2020-01-01T00:00:00.000Z';},value=>{value.optionRevision++;},value=>{value.company={code:'A01526306',name:'유앤채'};},value=>{value.source=null;}]){
+  const altered=plain(evidence);change(altered);assert.throws(()=>h.library.originalImageLibraryKeys('product',h.view,altered,h.plan.scope.company),/이미지 종류/);
  }
 });
 

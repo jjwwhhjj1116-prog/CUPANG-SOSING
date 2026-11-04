@@ -13,6 +13,24 @@ function keys(value:unknown,limit=PRODUCT_IMAGE_POOL_LIMIT):string[]{
  if(!Array.isArray(value)||value.length>limit||value.some(key=>typeof key!=='string'||!key||key.length>4096))throw invalid();
  return value as string[];
 }
+function libraryEvidence(productId:string,view:QuotationFieldsView,evidence:unknown){
+ if(!record(evidence)||evidence.format!=='main-image-library-evidence-v1'||evidence.productId!==productId||evidence.productVersion!==view.productVersion||evidence.optionRevision!==view.optionRevision
+  ||!record(evidence.company)||!supplierHubCompany(evidence.company.code,evidence.company.name))throw invalid();
+ if(evidence.source!==null&&(!record(evidence.source)||typeof evidence.source.jobId!=='string'||!/^\w[\w-]{0,99}$/.test(evidence.source.jobId)
+  ||typeof evidence.source.receivedAt!=='string'||!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(evidence.source.receivedAt)||!Number.isFinite(Date.parse(evidence.source.receivedAt))
+  ||typeof evidence.source.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(evidence.source.fingerprint)))throw invalid();
+ const work=keys(evidence.work),main=keys(evidence.main),detail=keys(evidence.detail),originalOptions=keys(evidence.options);
+ if(evidence.source===null&&(main.length||detail.length||originalOptions.length))throw invalid();
+ return{company:evidence.company,work,main,detail,originalOptions};
+}
+/** Only immutable receipt roles prove an original. The UI's option candidates
+ * also include manual/final choices and must never grant automatic processing. */
+export function originalImageLibraryKeys(productId:string,view:QuotationFieldsView,evidence:unknown,company:SupplierHubCompany):string[]{
+ const source=libraryEvidence(productId,view,evidence);
+ if(source.company.code!==company.code||source.company.name!==company.name)throw invalid();
+ const pool=new Set(view.imageKeys),work=new Set(source.work);
+ return [...new Set([...source.main,...source.originalOptions,...source.detail])].filter(key=>pool.has(key)&&!work.has(key));
+}
 /** Source galleries and completed processing results are response-only evidence.
  * Editable stage assignments never redefine the immutable original gallery.
  * Missing provenance stays unclassified; no file outside the owned pool returns. */
@@ -23,14 +41,7 @@ export function classifyMainImageLibrary(productId:string,view:QuotationFieldsVi
  if(content.productId!==productId||content.schemaVersion!==1||content.revision!==view.contentRevision||!record(content.assets)
   ||options.productId!==productId||options.schemaVersion!==1||options.revision!==view.optionRevision||optionsBody.productVersion!==view.productVersion
   ||!Array.isArray(options.rows)||options.rows.length>200)throw invalid();
- const evidence=optionsBody.imageLibrary;
- if(!record(evidence)||evidence.format!=='main-image-library-evidence-v1'||evidence.productId!==productId||evidence.productVersion!==view.productVersion||evidence.optionRevision!==view.optionRevision
-  ||!record(evidence.company)||!supplierHubCompany(evidence.company.code,evidence.company.name))throw invalid();
- if(evidence.source!==null&&(!record(evidence.source)||typeof evidence.source.jobId!=='string'||!/^\w[\w-]{0,99}$/.test(evidence.source.jobId)
-  ||typeof evidence.source.receivedAt!=='string'||!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(evidence.source.receivedAt)||!Number.isFinite(Date.parse(evidence.source.receivedAt))
-  ||typeof evidence.source.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(evidence.source.fingerprint)))throw invalid();
- const work=keys(evidence.work),main=keys(evidence.main),detail=keys(evidence.detail),originalOptions=keys(evidence.options);
- if(evidence.source===null&&(main.length||detail.length||originalOptions.length))throw invalid();
+ const {work,main,detail,originalOptions}=libraryEvidence(productId,view,optionsBody.imageLibrary);
  const optionIds=new Set<string>(),optionImages:string[]=[...originalOptions];
  for(const value of options.rows){
   if(!record(value)||typeof value.id!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(value.id)||optionIds.has(value.id)

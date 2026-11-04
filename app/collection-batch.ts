@@ -1,7 +1,8 @@
 import type { CollectionJob } from '@/app/sourcing';
 import { validateCollectionReceiptResponse } from '@/app/collection-receipt-response';
-import { recommendCollectionImages, validateCollectionCapacity } from '@/app/collection-capacity';
+import { recommendCollectionImages, recommendPendingCollectionImages, validateCollectionCapacity, type CollectionCapacity } from '@/app/collection-capacity';
 import { runCollectionImport, type CollectionImportOutcome } from '@/app/collection-import';
+import { importCollectionImageBatches } from '@/app/collection-import-batch';
 import { collectionRequestWithRetry } from '@/app/collection-retry';
 import { collectionSourceWarnings } from '@/app/collection-result';
 import { fetchCollectionCapacity } from '@/app/collection-capacity-client';
@@ -50,6 +51,7 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
       const sourceWarnings = collectionSourceWarnings(source);
       if (shouldStop()) break;
       let indices: number[] = [];
+      let capacity: CollectionCapacity | undefined;
       if (source.images.length) {
         let capacityResponse: Response | undefined;
         try { capacityResponse = await capacityRequest(); }
@@ -82,7 +84,9 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
           try { capacityBody = await capacityResponse.json(); } catch { /* Keep HTTP failures terminal. */ }
           throw Error(capacityBody?.error || '이미지 저장 여유 조회 실패');
         }
-        indices = recommendCollectionImages(source, validateCollectionCapacity(capacityBody?.capacity, source.images.length), 'all', options.reservedImageSlots);
+        capacity = validateCollectionCapacity(capacityBody?.capacity, source.images.length);
+        indices = options.assignToStage === false ? recommendPendingCollectionImages(source, capacity, options.reservedImageSlots)
+          : recommendCollectionImages(source, capacity, 'all', options.reservedImageSlots);
       }
       if (shouldStop()) break;
       let result = await runCollectionImport(job.id, source.images.length, {
@@ -114,8 +118,43 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
           warnings: ['원본 이미지 주소는 보존되어 있습니다. 저장된 상품을 열어 내용을 수정할 수 있습니다.'],
         } : draft;
       }
-      const omitted = source.images.length - indices.length;
-      options.onResult(job.id, { ...result, warnings: [...sourceWarnings, ...(result.warnings ?? []), ...(omitted ? [`이미지 ${omitted}개는 저장 여유·제외 설정에 따라 건너뛰었습니다. 원본 주소는 보존됩니다.`] : [])] });
+      let confirmedSinceCapacity = result.completedImages;
+      if (options.assignToStage === false && result.status === 'completed' && result.productId && capacity) {
+        const productId = result.productId, attempted = new Set(indices);
+        // Each successful round adds new receipt indices. Reusable originals
+        // never consume the next selection, and no round repeats promotion.
+        try {
+          while (source.images.some((_, index) => !attempted.has(index) && !capacity!.reusableIndices.includes(index) && !capacity!.blockedIndices?.includes(index))) {
+            if (shouldStop()) { result = { ...result, status: 'stopped' }; break; }
+            const response = await capacityRequest(), body = await response.json() as { capacity?: unknown; error?: string };
+            if (shouldStop()) { result = { ...result, status: 'stopped' }; break; }
+            if (!response.ok) throw Error(body.error || '남은 원본 이미지의 저장 상태를 확인하지 못했습니다.');
+            const current = validateCollectionCapacity(body.capacity, source.images.length);
+            if ([...attempted].some(index => !current.reusableIndices.includes(index))) throw Error('확인된 원본 이미지의 현재 저장 연결이 달라졌습니다. 추가 반영을 멈췄습니다.');
+            capacity = current; confirmedSinceCapacity = 0;
+            const pending = recommendPendingCollectionImages(source, current, options.reservedImageSlots);
+            if (!pending.length) break;
+            if (pending.some(index => attempted.has(index))) throw Error('같은 원본 이미지가 다시 선택되어 추가 반영을 멈췄습니다.');
+            pending.forEach(index => attempted.add(index));
+            const previous = result, next = await importCollectionImageBatches(path, productId, pending, { request, shouldStop,
+              onProgress: progress => options.onProgress(job.id, `남은 원본 이미지 ${progress.completedImages}/${progress.totalImages}개 저장 중`),
+            });
+            confirmedSinceCapacity += next.completedImages;
+            result = { ...next, completedImages: previous.completedImages + next.completedImages,
+              warnings: [...(previous.warnings ?? []), ...(next.warnings ?? [])],
+              ...((previous.failedImageIndices?.length || next.failedImageIndices?.length) ? { failedImageIndices: [...(previous.failedImageIndices ?? []), ...(next.failedImageIndices ?? [])] } : {}) };
+            if (result.status !== 'completed') break;
+          }
+        } catch (cause) {
+          result = { ...result, status: shouldStop() ? 'stopped' : 'failed', error: cause instanceof Error ? cause.message : '남은 원본 이미지의 저장 상태를 확인하지 못했습니다.' };
+        }
+      }
+      const omitted = options.assignToStage === false ? Math.max(0, source.images.length - (capacity?.reusableIndices.length ?? 0) - confirmedSinceCapacity)
+        : source.images.length - indices.length;
+      const omittedMessage = options.assignToStage === false && result.status !== 'completed'
+        ? `이미지 ${omitted}개는 아직 저장을 확인하지 못했습니다. 기존 저장본과 원본 주소는 보존됩니다.`
+        : `이미지 ${omitted}개는 저장 여유·제외 설정에 따라 건너뛰었습니다. 원본 주소는 보존됩니다.`;
+      options.onResult(job.id, { ...result, warnings: [...sourceWarnings, ...(result.warnings ?? []), ...(omitted ? [omittedMessage] : [])] });
       if (result.status === 'stopped') break;
     } catch (cause) {
       if (shouldStop()) break;

@@ -21,6 +21,25 @@ const patchOptions = (h, edit) => {
   const saved = options(h), rows = h.load('app/product-options.ts').optionInputs(saved); edit(rows);
   return h.route('/api/products/' + product(h).id + '/options', { method: 'PATCH', body: { expectedRevision: saved.revision, expectedProductVersion: product(h).updated_at, rows } });
 };
+
+for(const savedCount of [0,49,50])test(`actual library-only SQLite import completes a fifty-two-original receipt after ${savedCount} saved originals`,async()=>{
+ const images=Array.from({length:52},(_,index)=>({url:`https://cbu01.alicdn.com/synthetic-pending-${index}.jpg`,role:index===0?'main':index<14?'additional':'detail'})),h=mobileIntakeHarness({fixtureImageUrls:images.map(image=>image.url)});
+ try{
+  h.sqlite.prepare("UPDATE collection_jobs SET goal='collect'").run();
+  await json(await h.route('/api/collection-jobs/job/result',{method:'POST',body:{schemaVersion:1,sourceUrl:h.sourceUrl,provider:'chrome-current-page-v1',collectedAt:'2026-11-04T00:00:00.000Z',title:'合成商品',description:'',images,options:[{sku:'synthetic-original',name:'原始选项',unitPriceCny:2,minimumOrder:1,stock:null,imageIndex:0}]}}));
+  if(savedCount){
+   const created=await json(await h.route('/api/collection-jobs/job/product',{method:'POST',body:{action:'promote'}}));
+   await h.load('app/collection-import-batch.ts').importCollectionImageBatches('/api/collection-jobs/job',created.productId,Array.from({length:savedCount},(_,index)=>index),{shouldStop:()=>false,request:(path,init)=>h.route(path,{method:init.method,body:init.body})});
+   await json(await patchContent(h,{assets:{main:[],additional:[originals(h).get(2)]},seo:{title:'직접 저장한 상품명'},label:{material:'직접 확인한 재질'}}));
+  }
+  const withoutClock=value=>{const next=JSON.parse(JSON.stringify(value));delete next.revision;delete next.updatedAt;return next;},before=savedCount?withoutClock(content(h)):null,beforeOptions=savedCount?options(h):null,sourceBefore=receipt(h),start=h.calls.length,downloads=h.stats.downloads,results=[],prepared=[];
+  await h.load('app/collection-batch.ts').importReceivedJobs([await h.load('db/collection-jobs.ts').findCollectionJob('owner','job')],{assignToStage:false,reservedImageSlots:1,shouldStop:()=>false,onProgress(){},onProductSaved:async(id,productId)=>prepared.push([id,productId]),onResult:(_id,result)=>results.push(result),fetcher:(path,init)=>h.route(path,{method:init?.method??'GET',body:init?.body})});
+  assert.equal(results[0].status,'completed',JSON.stringify(results[0]));assert.equal(results[0].completedImages,52-savedCount);assert.equal(originals(h).size,52);assert.equal(h.stats.downloads-downloads,52-savedCount);assert.equal(h.stats.maxDownloads,3);
+  assert.equal(h.calls.slice(start).filter(path=>path.endsWith('/product')).length,1);assert.equal(prepared.length,1);assert.equal(h.aiSources.length,0);assert.deepEqual(receipt(h),sourceBefore);
+  if(before){assert.deepEqual(withoutClock(content(h)),before);assert.deepEqual(options(h),beforeOptions);}else for(const role of ['main','additional','detail'])assert.deepEqual(content(h).assets[role].value,[]);
+ }finally{h.close();}
+});
+
 async function library(h) {
   h.sqlite.prepare("UPDATE collection_jobs SET goal='collect'").run();
   await h.intake();

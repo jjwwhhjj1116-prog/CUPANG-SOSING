@@ -51,3 +51,11 @@ export function recommendCollectionImages(result: Pick<CollectionResult, 'images
   }
   return selected.sort((a, b) => a - b);
 }
+
+/** Automatic continuation spends its bounded selection on missing originals.
+ * Keep the real occupied slots and validate exclusions before merging them. */
+export function recommendPendingCollectionImages(result: Pick<CollectionResult, 'images' | 'options'>, capacity: CollectionCapacity, reservedSlots = 0): number[] {
+  validateCollectionCapacity(capacity, result.images.length);
+  return recommendCollectionImages(result, { ...capacity, reusableIndices: [],
+    blockedIndices: [...new Set([...(capacity.blockedIndices ?? []), ...capacity.reusableIndices])] }, 'all', reservedSlots);
+}

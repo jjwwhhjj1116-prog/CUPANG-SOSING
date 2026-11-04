@@ -69,10 +69,59 @@ test('library intake uses bounded batches regardless of server or Chrome source 
     const {indices}=JSON.parse(init.body);assert.ok(indices.length<=3);selected.push(...indices);
     return Response.json({results:indices.map(index=>({index,status:200,key:`owner/${index}.png`}))});
    }});
-  assert.equal(results[0].status,'completed',JSON.stringify({provider,result:results[0]}));assert.equal(results[0].completedImages,7);
-  assert.deepEqual(selected,[0,2,3,4,5,6,7]);assert.equal(selected.includes(1),false);
+  assert.equal(results[0].status,'completed',JSON.stringify({provider,result:results[0]}));assert.equal(results[0].completedImages,6);
+  assert.deepEqual(selected,[2,3,4,5,6,7]);assert.equal(selected.includes(1),false);
   assert.equal(43+selected.filter(index=>index!==0).length+1,50);
  }
+});
+
+function pendingLibraryFixture({count=52,savedCount=0,blocked=[],otherSlots=1,failure}={}){
+ const images=Array.from({length:count},(_,index)=>({url:`https://cbu01.alicdn.com/pending-${index}.jpg`,role:index===0?'main':index<14?'additional':'detail'})),saved=new Set(Array.from({length:savedCount},(_,index)=>index));
+ const requests=[],results=[],prepared=[],controller=new AbortController();let capacities=0;
+ const run=()=>importReceivedJobs([{...job('a'),product_id:savedCount?'p':null}],{assignToStage:false,reservedImageSlots:1,signal:controller.signal,shouldStop:()=>false,retryWait:async()=>{},onProgress:()=>{},onProductSaved:async(id,productId)=>prepared.push([id,productId]),onResult:(_id,value)=>results.push(value),fetcher:async(url,init)=>{
+  if(url.endsWith('/result'))return Response.json({jobId:'a',offerId:'123',receipt:{result:{...source,images}}});
+  if(url.endsWith('/capacity')){
+   capacities++;if(failure==='capacity'&&saved.size>=49)return Response.json({error:'later source proof unavailable'},{status:403});
+   return Response.json({capacity:{usedSlots:otherSlots+saved.size,totalImages:count,reusableIndices:failure==='stale'&&saved.size>=49?[]:[...saved].sort((a,b)=>a-b),blockedIndices:blocked}});
+  }
+  if(url.endsWith('/product')){requests.push({kind:'product'});return Response.json({productId:'p',reused:savedCount>0});}
+  assert.ok(url.endsWith('/images-batch'),'library continuation never assigns source roles or repeats product preparation');
+  const {indices}=JSON.parse(init.body);assert.ok(indices.length>0&&indices.length<=3);assert.ok(indices.every(index=>!saved.has(index)&&!blocked.includes(index)),'never request a reused or excluded original');requests.push({kind:'images',indices});
+  for(const index of indices)saved.add(index);
+  if(failure==='lost-ack'&&indices.includes(49))return{ok:true,json:async()=>{throw Error('committed batch ACK lost');}};
+  if(failure==='abort'&&indices.includes(49))controller.abort(Error('closed after confirmed batch'));
+  return Response.json({results:indices.map(index=>({index,status:200,key:`owner/${index}.jpg`}))});
+ }});
+ return{run,requests,results,prepared,saved,get capacities(){return capacities;}};
+}
+
+for(const savedCount of [0,49,50])test(`library intake imports every pending original from a fifty-two-image receipt after ${savedCount} saved rows`,async()=>{
+ const f=pendingLibraryFixture({savedCount});await f.run();assert.equal(f.results[0].status,'completed',JSON.stringify(f.results));assert.equal(f.results[0].completedImages,52-savedCount);
+ assert.equal(f.saved.size,52);assert.equal(f.requests.filter(row=>row.kind==='product').length,1);assert.deepEqual(f.prepared,[['a','p']]);
+ assert.deepEqual(f.requests.flatMap(row=>row.indices??[]),Array.from({length:52-savedCount},(_,index)=>savedCount+index));assert.ok(!f.results[0].warnings.some(warning=>/건너뛰/.test(warning)));
+});
+
+test('pending library continuation preserves exclusions and reports only genuinely omitted originals',async()=>{
+ const f=pendingLibraryFixture({blocked:[50]});await f.run();assert.equal(f.results[0].status,'completed');assert.equal(f.results[0].completedImages,51);assert.equal(f.saved.has(50),false);
+ assert.match(f.results[0].warnings.at(-1),/1개/);assert.equal(f.requests.filter(row=>row.kind==='product').length,1);
+});
+
+test('a full library preserves saved originals without image requests or invented completion counts',async()=>{
+ const f=pendingLibraryFixture({savedCount:49,otherSlots:101});await f.run();assert.equal(f.results[0].completedImages,0);assert.equal(f.saved.size,49);
+ assert.equal(f.requests.some(row=>row.kind==='images'),false);assert.match(f.results[0].warnings.at(-1),/3개/);
+});
+
+test('multiple pending rounds stop at the real library reservation and report the remaining source count',async()=>{
+ const f=pendingLibraryFixture({count:160});await f.run();assert.equal(f.results[0].status,'completed');assert.equal(f.results[0].completedImages,148);assert.equal(f.saved.size,148);
+ assert.equal(f.requests.filter(row=>row.kind==='product').length,1);assert.match(f.results[0].warnings.at(-1),/12개/);
+});
+
+for(const failure of ['capacity','stale','lost-ack','abort'])test(`pending library ${failure} stops without another promotion and retains confirmed image counts`,async()=>{
+ const f=pendingLibraryFixture({count:60,failure});await f.run();assert.equal(f.requests.filter(row=>row.kind==='product').length,1);assert.equal(f.results[0].productId,'p');
+ assert.equal(f.results[0].status,failure==='abort'?'stopped':'failed');assert.equal(f.results[0].completedImages,failure==='abort'?52:49);
+ const afterInitial=f.requests.filter(row=>row.kind==='images').flatMap(row=>row.indices).filter(index=>index>=49);
+ assert.deepEqual(afterInitial,['lost-ack','abort'].includes(failure)?[49,50,51]:[]);assert.deepEqual(f.prepared,[['a','p']]);
+ assert.match(f.results[0].warnings.at(-1),/저장을 확인하지 못/);assert.doesNotMatch(f.results[0].warnings.at(-1),/저장 여유·제외 설정/);
 });
 
 test('explicit stage image assignment retains its serial assignment requests',async()=>{

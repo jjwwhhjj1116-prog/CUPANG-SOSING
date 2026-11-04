@@ -2,7 +2,7 @@
 import { CollectionPriceBasisPanel } from '@/app/components/collection-price-basis-panel';
 import { useEffect, useRef, useState } from 'react';
 import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
-import { validateCollectionCapacity, collectionSelectionFits, recommendCollectionImages, type CollectionImageGroup, type CollectionCapacity } from '@/app/collection-capacity';
+import { validateCollectionCapacity, collectionSelectionFits, recommendCollectionImages, recommendPendingCollectionImages, type CollectionImageGroup, type CollectionCapacity } from '@/app/collection-capacity';
 import { runCollectionImport, type CollectionImportOutcome } from '@/app/collection-import';
 import { registrationSteps, type CollectionEditorTab } from '@/app/registration-navigation';
 import { collectionSourceWarnings, type CollectionResult } from '@/app/collection-result';
@@ -54,7 +54,7 @@ function CollectionResultContent({jobId,offerId,productId,expectedProductId,assi
    setCapacity(current);setCapacityMessage('');
    const available=received.images.map((_,index)=>index).filter(index=>!current.blockedIndices?.includes(index));
    setSelectedImages(previous=>{
-    const selected=initial?recommendCollectionImages(received,current):previous.filter(index=>available.includes(index));
+    const selected=initial?(missingOnly?recommendPendingCollectionImages(received,current):recommendCollectionImages(received,current)):previous.filter(index=>available.includes(index));
     const next=missingOnly?selected.filter(index=>!current.reusableIndices.includes(index)):selected;
     return next.length<=50&&collectionSelectionFits(current,next)?next:[];
    });

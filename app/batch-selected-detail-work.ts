@@ -19,6 +19,8 @@ import { FreeImageVisionError, type FreeImageVisionAttempt } from '@/app/free-im
 import { isVerifiedOriginalPreservation, parseImageTextVisionConfiguration, parseImageTextVisionResult } from '@/app/image-text-vision';
 import { parseImageOriginalPreservationProof } from '@/app/image-no-text-proof';
 import { hasForeignImageText } from '@/app/selected-image-purpose';
+import { validateFreeImageEditDocument } from '@/app/free-image-edit-document';
+import { isOnlyVisionStyleIssue } from '@/app/free-image-vision-style';
 import { optionImageTargets } from '@/app/quotation-image-targets';
 import { exactPrimaryQuotationTarget } from '@/app/quotation-seo-targets';
 import { isOwnedImageKey } from '@/app/image-files';
@@ -49,6 +51,42 @@ class DetailSourceChanged extends Error {}
 const changed = () => new DetailSourceChanged('계정·설정·상세 원본 또는 저장 구성이 변경됐습니다. 확인된 결과를 유지하고 현재 구성을 검토해주세요.');
 const semantic = (document: DetailWorkspaceDocument) => ({ imageMargin: document.imageMargin,
   photos: document.photos.map(({ role, originKey, key }) => ({ role, originKey, key })) });
+function prepareDetailBodyTranslation(image:FreeImageLoaded,recognized:readonly FreeImageRegion[]){
+  const invalid=()=>Error('상세 본문 문구·영역·스타일을 끝까지 검증하지 못했습니다. 원본을 유지했습니다.');
+  const vision=parseImageTextVisionResult(image.visionResult,image.width,image.height);
+  if(!vision||vision.inspection?.decision==='unreadable'||vision.blocks.some(block=>block.kind==='uncertain'))throw invalid();
+  const regions=validateFreeImageEditDocument({format:'free-image-edit-v1',width:image.width,height:image.height,sourceLanguage:'zh',regions:[...recognized]},image.source).regions;
+  const allowed=new Set(['VISION_REGION_OVERLAP','VISION_BACKGROUND_COMPLEX','VISION_BACKGROUND_UNAVAILABLE','VISION_TEXT_FIT']);
+  const reported=image.visionStyleIssues??[],tracked=new Set<string>();
+  if(!Array.isArray(reported)||new Set(reported).size!==reported.length||reported.some(code=>!allowed.has(code))||regions.length!==vision.blocks.length)throw invalid();
+  for(const [index,region]of regions.entries()){
+    const block=vision.blocks[index];
+    if(region.id!==block.id||region.text!==block.text||!(['x','y','width','height']as const).every(key=>region.box[key]===block.box[key])
+      ||region.translated!==(block.translated??'')||region.translationProvenance!==(block.translated===null?'empty':'generated')
+      ||block.kind==='product-marking'&&region.selected||region.erase!==undefined||region.brush!==undefined||region.backgroundMode!==undefined)throw invalid();
+    let issue=region.issue;
+    if(block.issue!==null){
+      if(issue===block.issue)issue=null;
+      else if(issue?.startsWith(block.issue+' '))issue=issue.slice(block.issue.length+1);
+      else throw invalid();
+    }
+    if(issue!==null){
+      if(!isOnlyVisionStyleIssue(issue))throw invalid();
+      for(const match of issue.matchAll(/(VISION_[A-Z_]+): /g)){if(!allowed.has(match[1]))throw invalid();tracked.add(match[1]);}
+    }
+  }
+  if(reported.length!==tracked.size||reported.some(code=>!tracked.has(code)))throw invalid();
+  const foreign=new Set(vision.blocks.filter(block=>block.kind!=='product-marking'&&hasForeignImageText(block.text)).map(block=>block.id));
+  const accepted=regions.filter(region=>foreign.has(region.id)&&region.selected&&region.translationProvenance==='generated'&&region.translated.trim()&&region.issue===null);
+  if(!accepted.length)throw Error('검증된 한국어 본문 번역이 없습니다. 원본을 유지하며 다른 번역 제공자를 요청하지 않았습니다.');
+  const chosen=new Set(accepted.map(region=>region.id));
+  // Unselected foreign overlays still need review after this editable draft is reloaded.
+  const partial=regions.some(region=>!chosen.has(region.id)&&(foreign.has(region.id)||region.issue!==null));
+  const prepared=regions.map(region=>chosen.has(region.id)?{...region,backgroundMode:'inpaint-telea-v1' as const}
+    :{...region,selected:false,translated:'',translationProvenance:'empty' as const,
+      issue:region.issue??(foreign.has(region.id)?'자동 번역 미완료: 원문과 번역을 개별 편집에서 확인해주세요.':null)});
+  return{prepared,partial};
+}
 export function createSelectedDetailWorkState(ownerId: string, productId: string): SelectedDetailWorkState { return { ownerId, productId, photos: {} }; }
 
 /** Called only after the coordinator proves its complete own-write clock chain.
@@ -281,13 +319,7 @@ export async function processSelectedDetailWork(productId: string, options: Opti
         controller.signal.throwIfAborted();
         if (isVerifiedOriginalPreservation(image.visionResult)) { const recovered = !!state.inference; state.photos[photo.id] = { status: 'verified', key: photo.key }; delete state.inference;
           if (recovered) { result.recovered = true; return finish('partial','원래 Vision 요청의 원본 보존 검사 결과를 확인했습니다. 다음 사진은 실행하지 않았습니다.'); } continue; }
-        if (!image.visionResult || image.visionResult.inspection?.decision === 'unreadable' || image.visionStyleIssues?.length) throw Error('상세 본문 문구·영역·스타일을 끝까지 검증하지 못했습니다. 원본을 유지했습니다.');
-        const selected = regions.filter(region => region.selected && hasForeignImageText(region.text));
-        const accepted = selected.filter(region => region.translationProvenance === 'generated' && region.translated.trim() && !region.issue);
-        if (!accepted.length) throw Error('검증된 한국어 본문 번역이 없습니다. 원본을 유지하며 다른 번역 제공자를 요청하지 않았습니다.');
-        const chosen = new Set(accepted.map(region => region.id)), partial = accepted.length !== selected.length;
-        const prepared = regions.map(region => chosen.has(region.id) ? { ...region, backgroundMode: 'inpaint-telea-v1' as const }
-          : { ...region, selected: false, ...(selected.includes(region) ? { translated: '', translationProvenance: 'empty' as const, issue: '자동 번역 미완료: 원문과 번역을 개별 편집에서 확인해주세요.' } : {}) });
+        const {prepared,partial}=prepareDetailBodyTranslation(image,regions);
         const rendered = await (deps.render ?? renderFreeImageTranslation)(image,prepared,controller.signal,[],undefined,'zh'); controller.signal.throwIfAborted();
         await exact(); const recovered = !!state.inference; state.image = { photoId: photo.id, image: rendered, context: bound, partial };
         try { const reply = await (deps.applyImage ?? applyDetailWorkspaceImage)(rendered,bound,controller.signal,fetcher); await guard(); adopt(reply);

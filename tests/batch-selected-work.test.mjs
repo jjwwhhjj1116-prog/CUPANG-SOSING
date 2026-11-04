@@ -98,6 +98,22 @@ for(const mode of [undefined,'full','selected'])test(`coordinator ${mode??'defau
  assert.deepEqual(plain(images.calls.filter(row=>row[0]==='read').map(row=>row[1])),selected?['owner/source-b.png','owner/source-a.png']:[]);assert.deepEqual(plain(images.calls.filter(row=>row[0]==='apply').map(row=>row[1])),selected?[0,1]:[]);
 });
 
+for(const mode of [undefined,'full','selected'])test(`coordinator ${mode??'default'} mode processes manually selected immutable original photos`,async()=>{
+ const h=fixture(),images=actualSelectedImageFixture(),field='additionalImages';h.company({code:'A01464742',name:'와이홉'});h.options.mode=mode;
+ images.view.overrides.options.option={[field]:'owner/source-b.png\nowner/source-a.png'};images.view.resolved.rows[0].fields[field].value='owner/source-b.png\nowner/source-a.png';images.view.resolved.rows[0].fields[field].source='manual-option';
+ const fetcher=images.options.fetcher;images.options.fetcher=async(url,init)=>url==='/api/products/product/options'?Response.json({options:images.productOptions,productVersion:images.view.productVersion,imageLibrary:{
+  format:'main-image-library-evidence-v1',productId:'product',productVersion:images.view.productVersion,optionRevision:images.view.optionRevision,company:images.plan.scope.company,
+  source:{jobId:'collection-job',receivedAt:version,fingerprint:hash},work:[],main:[],options:['owner/source-b.png','owner/source-a.png'],detail:[]}}):fetcher(url,init);
+ Object.assign(h.deps['@/app/batch-selected-image-work'],images.model,{processSelectedImageStage:(id,stage,options)=>images.model.processSelectedImageStage(id,stage,{...images.options,...options,fetcher:images.options.fetcher},images.deps)});
+ h.intercept(call=>{
+  if(call.url==='/api/products/product')return Response.json({product:{id:'product',title:'검증 상품',updated_at:images.view.productVersion}});
+  if(call.url.endsWith('/work-draft'))return Response.json({productId:'product',productVersion:images.view.productVersion});
+  if(call.url.endsWith('/content'))return Response.json({content:images.content});if(call.url.includes('/quotation-fields'))return Response.json(images.view);return null;
+ });
+ const result=await h.run(['additionalImages']);assert.equal(result.stages[0].status,'draft',JSON.stringify(result));
+ assert.deepEqual(plain(images.calls.filter(row=>row[0]==='read').map(row=>row[1])),['owner/source-b.png','owner/source-a.png']);assert.deepEqual(plain(images.calls.filter(row=>row[0]==='apply').map(row=>row[1])),[0,1]);
+});
+
 for(const external of [null,'before-stage','inside-helper','after-ack'])test(`a confirmed sibling label save ${external??'alone'} ${external?'cannot adopt an outside edit':'lets the partial image resume only its remaining slot'}`,async()=>{
  const h=fixture(),images=actualSelectedImageFixture(),recognize=images.deps.recognize;h.company({code:'A01464742',name:'와이홉'});
  Object.assign(h.deps['@/app/batch-selected-image-work'],images.model,{processSelectedImageStage:(id,stage,options)=>images.model.processSelectedImageStage(id,stage,{...images.options,...options,fetcher:images.options.fetcher},images.deps)});
@@ -228,14 +244,41 @@ test('full work does not reuse another product or owner or invalid source versio
  }
 });
 
-test('full mode preserves current saved SEO and images while ignoring weaker legacy automation completion',async()=>{
- const h=fixture();h.options.mode='full';h.intercept(call=>call.url==='/api/products/product'?Response.json({product:{id:'product',owner_id:'owner',updated_at:version,content_summary:savedSummary(['seo','mainImage','additionalImages','detailImage','koreanLabel'])}}):null);
- const result=await h.run(['seo','mainImage','additionalImages','detailImage','koreanLabel']);assert.ok(result.stages.every(row=>row.status==='skipped'));
+test('full mode preserves current saved SEO, main/additional images and labels while ignoring weaker legacy automation completion',async()=>{
+ const h=fixture();h.options.mode='full';h.intercept(call=>call.url==='/api/products/product'?Response.json({product:{id:'product',owner_id:'owner',updated_at:version,content_summary:savedSummary(['seo','mainImage','additionalImages','koreanLabel'])}}):null);
+ const result=await h.run(['seo','mainImage','additionalImages','koreanLabel']);assert.ok(result.stages.every(row=>row.status==='skipped'));
  assert.equal(h.calls.some(call=>call.adapter||call.method==='POST'||call.url?.endsWith('/automation')),false);
  for(const summary of [undefined,null,{seo:true}]){
   const f=fixture();f.options.mode='full';f.intercept(call=>call.url==='/api/products/product'?Response.json({product:{id:'product',owner_id:'owner',updated_at:version,...(summary===undefined?{}:{content_summary:summary})}}):null);
   assert.equal((await f.run(['pricing'])).stages[0].status,'draft');assert.equal(f.calls.some(call=>call.url?.endsWith('/automation')),false);
  }
+});
+
+for(const publication of ['unpublished','current','review-required'])test(`full work checks the actual ${publication} BODY publication despite a complete detail badge`,async()=>{
+ const h=fixture(),detail=await actualDetailFixture();h.options.mode='full';h.company(detail.f.company);
+ Object.assign(h.deps['@/app/batch-selected-detail-work'],detail.model,{processSelectedDetailWork:(id,options)=>detail.model.processSelectedDetailWork(id,{...detail.options,...options},detail.deps)});
+ h.intercept((call,init)=>{
+  const view=detail.f.view;
+  if(call.url==='/api/products/product')return Response.json({product:{id:'product',owner_id:'owner',title:'검증 상품',updated_at:view.productVersion,content_summary:{...savedSummary(['detailImage']),detail:3}}});
+  if(call.url.endsWith('/work-draft'))return Response.json({productId:'product',productVersion:view.productVersion});
+  if(call.url.includes('/detail-save?'))return Response.json({policy:'automatic-stage5-v1',readOnly:true,status:publication,
+   source:{productId:'product',profileId:'profile',productVersion:view.productVersion,contentRevision:view.contentRevision,optionRevision:view.optionRevision,revision:view.revision,inputFingerprint:view.inputFingerprint,categoryContext:view.categoryContext},execution:{requests:0,writes:0},
+   ...(publication==='current'?{publication:{policy:'automatic-stage5-v1',uploadId:'1'.repeat(64),peerAfterDigest:'2'.repeat(64),basisSha256:'3'.repeat(64),fieldsSha256:'4'.repeat(64),sourceOptionId:'red',workspace:{revision:1,digest:'5'.repeat(64)},bodyPhotos:2}}:{})});
+  if(call.url.startsWith('/api/products/product/')||call.url==='/api/settings')return detail.options.fetcher(call.url,init);
+  return null;
+ });
+ const before=plain(detail.f.view),result=await h.run(['detailImage']);assert.equal(result.stages[0].status,publication==='review-required'?'blocked':'draft',JSON.stringify(result));
+ assert.equal(h.calls.filter(call=>call.url.includes('/detail-save?')&&call.method==='GET').length,1);
+ assert.equal(detail.calls.filter(call=>call.operation==='vision').length,publication==='unpublished'?2:0);
+ assert.equal(detail.calls.filter(call=>call.operation==='composite-apply').length,publication==='unpublished'?1:0);
+ if(publication!=='unpublished'){assert.deepEqual(plain(detail.f.view),before);assert.ok(!detail.calls.some(call=>['render','image-apply'].includes(call.operation)));assert.ok(!h.calls.some(call=>call.method==='PUT'));}
+});
+
+test('full work with a complete detail badge keeps a sibling Vision request fenced before preparation',async()=>{
+ const h=fixture();h.options.mode='full';h.keys.set('owner:product:vision-inference-pending','owner:product:additionalImages');
+ h.intercept(call=>call.url==='/api/products/product'?Response.json({product:{id:'product',owner_id:'owner',updated_at:version,content_summary:savedSummary(['detailImage'])}}):null);
+ const result=await h.run(['detailImage']);assert.equal(result.stages[0].status,'blocked');assert.match(result.stages[0].message,/응답이 확정되지 않아/);
+ assert.equal(h.keys.get('owner:product:vision-inference-pending'),'owner:product:additionalImages');assert.ok(!h.calls.some(call=>call.adapter||call.method==='POST'||call.method==='PUT'));
 });
 
 test('malformed board completion cannot skip or automatically replace a saved stage',async()=>{
@@ -530,7 +573,7 @@ test('an actual raw BODY partial draft continues to label and verified quotation
  const imageAdapter=h.deps['@/app/batch-selected-detail-work'];imageAdapter.createSelectedDetailWorkState=image.model.createSelectedDetailWorkState;imageAdapter.processSelectedDetailWork=(id,options)=>image.model.processSelectedDetailWork(id,{...image.options,...options,fetcher:image.options.fetcher},image.deps);
  const labelAdapter=h.deps['@/app/batch-selected-label-work'],label=labelAdapter.runSelectedLabelWork;labelAdapter.runSelectedLabelWork=async(...args)=>{labelStarted=true;return label(...args);};
  const result=await h.run(['detailImage','koreanLabel','quotation']);assert.deepEqual(plain(result.stages.map(row=>row.status)),['blocked','draft','draft']);assert.match(result.stages[0].message,/미완료|일부 번역/);
- assert.equal(image.calls.filter(row=>row.operation==='image-apply').length,1);assert.equal(image.calls.filter(row=>row.operation==='vision').length,1);assert.equal(documents[0].regions.find(row=>row.id==='vision-2').selected,false);assert.equal(documents[0].regions.find(row=>row.id==='vision-2').translated,'');assert.match(documents[0].regions.find(row=>row.id==='vision-2').issue,/자동 번역 미완료/);
+ assert.equal(image.calls.filter(row=>row.operation==='image-apply').length,1);assert.equal(image.calls.filter(row=>row.operation==='vision').length,1);assert.equal(documents[0].regions.find(row=>row.id==='vision-2').selected,false);assert.equal(documents[0].regions.find(row=>row.id==='vision-2').translated,'');assert.equal(documents[0].regions.find(row=>row.id==='vision-2').issue,'번역 검증을 통과하지 못했습니다. 원문과 영역을 확인해주세요.');
  assert.equal(h.calls.filter(call=>call.adapter==='label').length,1);assert.equal(h.writes.length,1);assert.ok(h.writes[0].changes.every(change=>change.optionId!=='b'||change.fieldKey!=='notice0'));assert.deepEqual(h.view.resolved.rows[1].fields.notice0,manualBlank);assert.deepEqual(plain(image.f.view.resolved.rows[0].fields.detailHtml),plain(manualHtml));assert.deepEqual(h.content,contentBefore);assert.deepEqual(plain(image.content),imageContentBefore);assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
 });
 test('explicit quotation work saves verified AI plus saved notice sources in one CAS request and confirms their exact receipt',async()=>{

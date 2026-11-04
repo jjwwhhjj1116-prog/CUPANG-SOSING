@@ -60,6 +60,78 @@ test('automatic detail translates raw BODY once and composites its ordered banne
  assert.equal(h.calls.filter(row=>row.operation==='composite-apply').length,1);assert.ok(h.f.workspace.document.photos.filter(row=>row.role==='body').every(row=>row.originKey!==row.key));
 });
 
+const fitIssue='VISION_TEXT_FIT: 한국어를 읽을 수 있는 크기로 넣기 어렵습니다. 문구와 영역을 직접 조정한 뒤 선택해주세요.';
+const safeBlock={id:'vision-1',text:'舒适袜子',translated:'편안한 양말',issue:null,kind:'overlay',box:{x:10,y:10,width:100,height:30}};
+const tinyBlock={id:'vision-2',text:'柔软面料',translated:'부드러운 소재',issue:null,kind:'overlay',box:{x:140,y:70,width:5,height:5}};
+async function bodyVision(h,blocks,mutate=()=>{}){
+ for(const key of h.f.objects.keys())h.f.objects.set(key,await sharp({create:{width:160,height:100,channels:4,background:'#ffffff'}}).png().toBuffer());
+ const seen={},render=h.deps.render,initialize=h.base.load('app/free-image-translation-client.ts').initializeFreeImageVisionRegions;
+ h.deps.recognize=async image=>{h.calls.push({operation:'vision',key:image.source.sourceKey});image.visionResult={provider:'workers-ai-vision',model:h.vision.IMAGE_TEXT_VISION_MODEL,requests:1,notice:h.vision.IMAGE_TEXT_VISION_NOTICE,
+  blocks:plain(blocks),inspection:{policy:h.vision.IMAGE_TEXT_PRESERVATION_POLICY,decision:'foreign-text'}};
+  const regions=initialize(image,image.visionResult).regions;mutate(image,regions);seen.source=plain(image.source);seen.original=plain(regions);return regions;};
+ h.deps.render=async(image,regions,...args)=>{seen.rendered=plain(regions);seen.renderedSource=plain(image.source);return render(image,regions,...args);};
+ return seen;
+}
+
+test('one unsafe unselected BODY block does not discard safe translations or publish an incomplete composite',async()=>{
+ const h=await setup(),seen=await bodyVision(h,[safeBlock,tinyBlock]),before=plain(h.f.view),result=await h.run();
+ assert.equal(result.status,'partial',result.messages.join(' '));assert.equal(result.applied,1);
+ assert.deepEqual(seen.rendered.filter(row=>row.selected).map(row=>row.id),['vision-1']);
+ assert.equal(seen.rendered[0].translated,'편안한 양말');assert.equal(seen.rendered[0].backgroundMode,'inpaint-telea-v1');
+ assert.deepEqual(seen.rendered[1],{...seen.original[1],selected:false,translated:'',translationProvenance:'empty',issue:fitIssue});
+ assert.deepEqual(seen.renderedSource,seen.source);assert.equal(seen.rendered[1].text,'柔软面料');assert.deepEqual(seen.rendered[1].box,tinyBlock.box);
+ assert.deepEqual(h.f.view,before);assert.equal(Object.values(h.state.photos)[0].partial,true);
+ assert.equal(h.calls.filter(row=>row.operation==='image-apply').length,1);assert.ok(!h.calls.some(row=>row.operation==='composite-prepare'||row.operation==='composite-apply'));
+ const calls=h.calls.length;assert.equal((await h.run()).status,'partial');assert.ok(!h.calls.slice(calls).some(row=>['vision','render','image-apply','composite-apply'].includes(row.operation)));
+});
+
+test('an unselected foreign overlay without a style issue remains an unresolved saved BODY draft',async()=>{
+ const h=await setup(),seen=await bodyVision(h,[safeBlock,{...tinyBlock,box:{x:10,y:60,width:100,height:30}}],(_image,regions)=>{regions[1].selected=false;});
+ assert.equal((await h.run()).status,'partial');assert.equal(h.calls.filter(row=>row.operation==='image-apply').length,1);
+ assert.equal(seen.rendered[1].selected,false);assert.equal(seen.rendered[1].translated,'');assert.equal(seen.rendered[1].translationProvenance,'empty');assert.match(seen.rendered[1].issue,/자동 번역 미완료/);
+ assert.ok(!h.calls.some(row=>row.operation==='composite-apply'));
+});
+
+test('a rejected BODY translation retains its provider and localized style diagnostics in the partial draft',async()=>{
+ const rejected={...tinyBlock,translated:null,issue:'번역 검증을 통과하지 못했습니다. 원문과 영역을 확인해주세요.'},h=await setup(),seen=await bodyVision(h,[safeBlock,rejected]);
+ assert.equal((await h.run()).status,'partial');assert.equal(h.calls.filter(row=>row.operation==='image-apply').length,1);
+ assert.equal(seen.rendered[1].issue,rejected.issue+' '+fitIssue);assert.equal(seen.rendered[1].selected,false);assert.equal(seen.rendered[1].translated,'');assert.equal(seen.rendered[1].translationProvenance,'empty');
+ assert.ok(!h.calls.some(row=>row.operation==='composite-apply'));
+});
+
+test('preserved foreign product markings do not make a fully translated BODY partial',async()=>{
+ const marking={...tinyBlock,text:'COTTON',translated:null,kind:'product-marking',box:{x:10,y:60,width:100,height:30}},h=await setup(),seen=await bodyVision(h,[safeBlock,marking]);
+ assert.equal((await h.run()).status,'completed');assert.equal(seen.rendered[1].selected,false);assert.equal(seen.rendered[1].translated,'');assert.equal(seen.rendered[1].issue,null);
+ assert.equal(h.calls.filter(row=>row.operation==='composite-apply').length,1);
+});
+
+test('an uncertain source classification cannot render when its recognized region loses the diagnostic',async()=>{
+ const h=await setup();await bodyVision(h,[safeBlock,{...tinyBlock,translated:null,kind:'uncertain'}],(image,regions)=>{
+  image.visionResult.inspection.decision='unreadable';image.visionStyleIssues=[];regions[1].issue=null;
+ });
+ const result=await h.run();assert.equal(result.status,'partial');assert.equal(result.applied,0);
+ assert.ok(!h.calls.some(row=>['render','image-apply','composite-prepare','composite-apply'].includes(row.operation)));
+});
+
+for(const mode of ['unreadable','uncertain','missing-region','extra-region','order','id','text','box','translation','provenance','font','background','erase','unknown-aggregate','unlocalized-aggregate','unreported-local','unknown-local','source-issue'])test(`BODY partial progress rejects ${mode} without rendering or applying`,async()=>{
+ const h=await setup(),styleCase=['unknown-aggregate','unlocalized-aggregate','unreported-local'].includes(mode);
+ await bodyVision(h,[safeBlock,styleCase?tinyBlock:{...tinyBlock,box:{x:10,y:60,width:100,height:30}}],(image,regions)=>{
+  if(mode==='unreadable')image.visionResult.inspection.decision='unreadable';
+  if(mode==='uncertain'){image.visionResult.inspection.decision='unreadable';Object.assign(image.visionResult.blocks[1],{kind:'uncertain',translated:null});}
+  if(mode==='missing-region')regions.pop();if(mode==='extra-region')regions.push({...plain(regions[0]),id:'vision-3'});if(mode==='order')regions.reverse();
+  if(mode==='id')regions[0].id='other';if(mode==='text')regions[0].text='别的原文';if(mode==='box')regions[0].box.x++;
+  if(mode==='translation')regions[0].translated='다른 번역';if(mode==='provenance')regions[0].translationProvenance='manual';
+  if(mode==='font')regions[0].fontSize=0;if(mode==='background')regions[0].background='white';if(mode==='erase')regions[0].erase=true;
+  if(mode==='unknown-aggregate')image.visionStyleIssues.push('VISION_UNKNOWN');
+  if(mode==='unlocalized-aggregate')image.visionStyleIssues.push('VISION_REGION_OVERLAP');
+  if(mode==='unreported-local')image.visionStyleIssues=[];
+  if(mode==='unknown-local')regions[1].issue='VISION_TEXT_FIT: unknown diagnostic';
+  if(mode==='source-issue')Object.assign(image.visionResult.blocks[0],{translated:null,issue:'번역 검증을 통과하지 못했습니다. 원문과 영역을 확인해주세요.'});
+ });
+ const result=await h.run();assert.equal(result.status,'partial');assert.equal(result.applied,0);
+ assert.ok(!h.calls.some(row=>['render','image-apply','composite-prepare','composite-apply'].includes(row.operation)));
+});
+
 test('a settled BODY checkpoint follows a proved sibling save and resumes only the unprocessed photo',async()=>{
  const h=await setup(),recognize=h.deps.recognize;
  h.deps.recognize=async(image,...args)=>{if(image.source.sourceKey==='owner/two.png')throw Error('confirmed OCR failure');return recognize(image,...args);};

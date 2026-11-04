@@ -13,6 +13,7 @@ import {parseImageTextVisionResult,parseImageTextVisionConfiguration,isVerifiedO
 import {parseImageOriginalPreservationProof} from '@/app/image-no-text-proof';
 import {reconcileSelectedDetailWorkspace,type SelectedDetailWorkspacePending} from '@/app/selected-detail-workspace';
 import {createSelectedImageReview,createSelectedImageReviewTarget,type SelectedImageReview,type SelectedImageReviewTarget} from '@/app/selected-image-review';
+import {originalImageLibraryKeys} from '@/app/main-image-library';
 
 export type SelectedImageStage='main'|'additional'|'detail';
 export type SelectedImageInferencePending={optionId:string;slotIndex:number;attempt:FreeImageVisionAttempt;code:string;message:string;observation?:FreeImageVisionStatus};
@@ -172,8 +173,9 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
  }
  const originalContent=await content();
  if(state.content&&!same(state.content,originalContent))throw changed();state.content??=structuredClone(originalContent);
- if(options.reworkCurrentSelection!==true&&originalContent.assets[stage].provenance==='manual'){result.status='skipped';result.skipped=originalContent.assets[stage].value.length||1;result.messages.push(`직접 저장한 ${label[stage]} 역할과 빈 값을 유지했습니다.`);return result;}
+ const manualRole=options.reworkCurrentSelection!==true&&originalContent.assets[stage].provenance==='manual';
  const tasks=plan.tasks.filter(task=>task.productId===productId&&task.stage===stage);
+ if(manualRole&&(stage==='detail'||!tasks.length)){result.status='skipped';result.skipped=originalContent.assets[stage].value.length||1;result.messages.push(`직접 저장한 ${label[stage]} 역할과 빈 값을 유지했습니다.`);return result;}
  const recoveryTarget=recoveredInference;
  if(recoveryTarget&&!tasks.some(task=>task.optionId===recoveryTarget.optionId
    &&state.batches[task.optionId]?.items.some(item=>item.slotIndex===recoveryTarget.slotIndex&&item.sourceKey===recoveryTarget.attempt.source.sourceKey)))throw changed();
@@ -186,22 +188,30 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
   const currentContent=await content(view);if(!same(currentContent,originalContent))throw changed();
   const selected=detailBatchTranslationSlots(view,task.optionId,task.profileId,stage);
   if(selected.keys.some(key=>!isOwnedImageKey(ownerId,key)))throw changed();
+  let optionsBody:(ProductOptionsResponse&{imageLibrary?:unknown})|undefined,manualOption=false;
   if(stage==='main'){
    const response=await fetcher(`/api/products/${encodeURIComponent(productId)}/options`,{signal,cache:'no-store',redirect:'error'}),body=await response.json() as ProductOptionsResponse;active();
    const rows=body.options?.rows?.filter(row=>row.id===task.optionId),option=rows?.[0];
    if(!response.ok||body.productVersion!==view.productVersion||body.options?.productId!==productId||body.options.revision!==view.optionRevision||rows?.length!==1||!option
     ||!['unverified','manual','collected','translated'].includes(option.provenance?.imageKey))throw changed();
-   if(options.reworkCurrentSelection!==true&&option.provenance.imageKey==='manual'){result.skipped+=selected.keys.length||1;result.messages.push(`${task.optionLabel} · 직접 저장한 옵션 대표 이미지 선택을 유지했습니다.`);latest=view;continue;}
+   optionsBody=body;manualOption=options.reworkCurrentSelection!==true&&option.provenance.imageKey==='manual';
   }
   const retained=state.batches[task.optionId];
   if(retained&&(retained.productId!==productId||retained.optionId!==task.optionId||retained.profileId!==task.profileId||retained.stage!==stage
    ||!same(selected.keys,retained.items.map(item=>item.status==='applied'?item.appliedKey:item.sourceKey))))throw changed();
-  // Explicit rework uses current selected keys; ordinary runs preserve manual
-  // choices unless this session retains its exact last verified batch.
-  const manualSelection=options.reworkCurrentSelection!==true&&!retained&&manualTarget(view,task);
-  if(manualSelection&&!selected.keys.some(savedEditKey)){result.skipped+=selected.keys.length||1;result.messages.push(`${task.optionLabel} · 직접 저장한 ${label[stage]} 선택을 유지했습니다.`);latest=view;continue;}
+  // Selecting an immutable collected photo is not a pixel edit. Unknown manual
+  // uploads and saved outputs retain their existing protection.
+  const manualSelection=options.reworkCurrentSelection!==true&&!retained&&(manualRole||manualOption||manualTarget(view,task));
+  let originals=new Set<string>();
+  if(manualSelection&&stage!=='detail')try{
+   if(!optionsBody){const response=await fetcher(`/api/products/${encodeURIComponent(productId)}/options`,{signal,cache:'no-store',redirect:'error'});optionsBody=await response.json() as ProductOptionsResponse;active();if(!response.ok)throw changed();}
+   if(optionsBody.productVersion!==view.productVersion||optionsBody.options?.productId!==productId||optionsBody.options.revision!==view.optionRevision)throw changed();
+   originals=new Set(originalImageLibraryKeys(productId,view,optionsBody.imageLibrary,plan.scope.company));
+  }catch{active();/* Missing current source proof never grants permission to edit a manual asset. */}
+  const preserve=(key:string)=>manualSelection&&!savedEditKey(key)&&!originals.has(key);
+  if(manualSelection&&selected.keys.every(preserve)){result.skipped+=selected.keys.length||1;result.messages.push(`${task.optionLabel} · 직접 저장한 ${manualOption?'옵션 대표 이미지':label[stage]} 선택을 유지했습니다.`);latest=view;continue;}
   let batch:DetailImageBatch=retained?{...retained,view}:{productId,optionId:task.optionId,profileId:task.profileId,stage,language:'zh',view,
-   items:selected.keys.map((sourceKey,slotIndex)=>({slotIndex,sourceKey,status:selected.protectedSlots.includes(slotIndex)||manualSelection&&!savedEditKey(sourceKey)?'skipped':'pending',message:'',texts:[]}))};
+   items:selected.keys.map((sourceKey,slotIndex)=>({slotIndex,sourceKey,status:selected.protectedSlots.includes(slotIndex)||preserve(sourceKey)?'skipped':'pending',message:'',texts:[]}))};
   const remember=(next:DetailImageBatch)=>{batch=next;state.batches[task.optionId]=next;state.view=next.view;};remember(batch);
   result.skipped+=selected.protectedSlots.length;
   for(const slotIndex of selected.slots){

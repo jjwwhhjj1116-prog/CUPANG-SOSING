@@ -8,7 +8,7 @@ import { canSupplementCollection } from '@/app/collection-source-supplement';
 import { captureCollectionSupplement } from '@/app/collection-supplement-client';
 import { requestIntakeCollectionReceipt } from '@/app/intake-collection-recovery';
 import {validateSourceCaptureSelection,type SourceCaptureSelection} from '@/app/source-capture-selection';
-import {validateCollectionCapacity,recommendCollectionImages} from '@/app/collection-capacity';
+import {validateCollectionCapacity,recommendPendingCollectionImages} from '@/app/collection-capacity';
 import {fetchCollectionCapacity} from '@/app/collection-capacity-client';
 import {selectedPageReceiptMatches} from '@/app/selected-page-receipt';
 
@@ -80,8 +80,7 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
   if(options.signal.aborted)return false;
   if(!response.ok)throw Error(body.error||'저장된 이미지 반영 상태를 확인하지 못했습니다. 기존 작업은 유지됩니다.');
   const capacity=validateCollectionCapacity(body.capacity,source.images.length);
-  const indices=recommendCollectionImages(source,capacity,'all',1);
-  return indices.some(index=>!capacity.reusableIndices.includes(index));
+  return recommendPendingCollectionImages(source,capacity,1).length>0;
  };
  if(resumeExistingImages&&!await hasPendingImages()){
   if(options.signal.aborted)return;

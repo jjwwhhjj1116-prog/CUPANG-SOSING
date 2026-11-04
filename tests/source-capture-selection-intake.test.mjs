@@ -177,6 +177,12 @@ test('linked partial images resume only after exact source validation and do not
   assert.match(await f.run(),/누락된 원본 이미지를 반영/);assert.equal(f.imports.length,1);assert.equal(f.browsers,0);
   assert.deepEqual(f.calls.map(call=>[call.path.split('/').at(-1),call.init.method??'GET']),[['collect','POST'],['capacity','GET'],['result','GET']]);
 });
+
+test('linked fifty-two-image receipt still resumes when its first fifty originals are already saved',async()=>{
+ const job={...originalJob,goal:'work',product_id:'synthetic-product',received_at:'2026-10-20T00:00:01.000Z'},body=receipt();body.receipt.result.images=Array.from({length:52},(_,index)=>({url:`https://cbu01.alicdn.com/synthetic-large-${index}.png`,role:index===0?'main':'detail'}));
+ const f=collectionFixture({job,verifyImportResult:true,fetcher:async(path)=>path.endsWith('/capacity')?Response.json({capacity:{usedSlots:51,totalImages:52,reusableIndices:Array.from({length:50},(_,index)=>index),blockedIndices:[]}}):Response.json(body)});
+ assert.match(await f.run(),/누락된 원본 이미지를 반영/);assert.equal(f.imports.length,1);assert.equal(f.browsers,0);assert.equal(f.probes,0);
+});
 test('a different source returned by import after the exact ACK cannot reach product/image writes',async()=>{
   const job={...originalJob,product_id:'synthetic-product',received_at:'2026-10-20T00:00:01.000Z'};
   const f=collectionFixture({job,verifyImportResult:true,fetcher:async(path)=>{

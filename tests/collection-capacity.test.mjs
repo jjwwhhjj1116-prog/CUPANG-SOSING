@@ -84,3 +84,16 @@ test('automatic image selection leaves label capacity while preserving existing 
  assert.equal(Array.from(select(source,{usedSlots:0,totalImages:60,reusableIndices:[]})).length,50);
  for(const reserved of [-1,0.5,50])assert.throws(()=>select(source,cap,'all',reserved),/예약 공간/);
 });
+
+test('pending recommendations exclude saved originals before the fifty-selection bound without changing manual recommendations',()=>{
+ const {recommendPendingCollectionImages:pending,recommendCollectionImages:manual}=load('app/collection-capacity.ts');
+ const source={images:Array.from({length:52},(_,index)=>({role:index===0?'main':index<14?'additional':'detail'})),options:[{imageIndex:12}]};
+ for(const saved of [49,50]){
+  const capacity={usedSlots:saved+1,totalImages:52,reusableIndices:Array.from({length:saved},(_,index)=>index),blockedIndices:[]},before=JSON.stringify(capacity);
+  assert.deepEqual(Array.from(pending(source,capacity,1)),Array.from({length:52-saved},(_,index)=>saved+index));
+  assert.equal(Array.from(manual(source,capacity,'all',1)).length,50);assert.equal(JSON.stringify(capacity),before);
+ }
+ const capacity={usedSlots:50,totalImages:52,reusableIndices:Array.from({length:49},(_,index)=>index),blockedIndices:[50]};
+ assert.deepEqual(Array.from(pending(source,capacity,1)),[49,51]);assert.deepEqual(Array.from(pending(source,{...capacity,usedSlots:149},1)),[]);
+ assert.throws(()=>pending(source,{...capacity,blockedIndices:[0]},1),/제외/,'validate the original contradictory proof before merging saved rows into exclusions');
+});

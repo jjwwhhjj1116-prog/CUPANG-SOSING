@@ -160,6 +160,37 @@ test('large receipts recommend main and option images, preserve manual choice on
  assert.deepEqual(applied,[0,30,55,59]);assert.equal(h.saved,1);assert.equal(nodes(h.render()).filter(n=>n.type==='input').length,60);
 });
 
+test('linked recovery recommends all three missing originals before the selection cap and sends raw-library-only requests',async()=>{
+ const source={...result,provider:'chrome-page-capture-v1',images:Array.from({length:52},(_,index)=>({url:`https://cbu01.alicdn.com/${index}.png`,role:index===0?'main':'detail'}))};
+ const cap={usedSlots:49,totalImages:52,reusableIndices:Array.from({length:49},(_,index)=>index)},writes=[];
+ const h=harness(async(url,init={})=>{
+  if(url.endsWith('/result'))return Response.json({jobId:'job',offerId:'123',receipt:{result:source},message:'수신됨'});
+  if(url.endsWith('/capacity'))return Response.json({capacity:cap});
+  const body=JSON.parse(init.body);writes.push([url,body]);assert.equal(init.method,'POST');
+  if(url.endsWith('/product'))return Response.json({productId:'linked-product'});
+  assert.equal(url,'/api/collection-jobs/job/images');assert.equal(body.assignToStage,false);return Response.json({key:`owner/raw-${body.index}.png`});
+ },null,{productId:'linked-product',expectedProductId:'linked-product',assignToStage:false});
+ const selected=()=>nodes(h.render()).filter(node=>node.type==='input').flatMap((node,index)=>node.props.checked?[index]:[]);
+ await h.click('수신 결과 조회');assert.deepEqual(selected(),[49,50,51]);assert.equal(writes.length,0);
+ nodes(h.render()).filter(node=>node.type==='input')[50].props.onChange({target:{checked:false}});
+ await h.click('이미지 저장 상태 다시 조회');assert.deepEqual(selected(),[49,51]);
+ nodes(h.render()).filter(node=>node.type==='input')[50].props.onChange({target:{checked:true}});
+ h.find(node=>node.type==='button'&&Array.isArray(node.props.children)&&node.props.children[0]==='상품·선택 이미지 ').props.onClick();await settle();
+ assert.deepEqual(writes,[['/api/collection-jobs/job/product',{action:'promote'}],...[49,50,51].map(index=>['/api/collection-jobs/job/images',{index,assignToStage:false}])]);
+ assert.equal(h.saved,1);
+});
+
+test('linked recovery rejects a different promoted product before downloading any image',async()=>{
+ const writes=[];
+ const h=harness(async(url,init={})=>{
+  if(url.endsWith('/result'))return Response.json({jobId:'job',offerId:'123',receipt:{result},message:'수신됨'});
+  if(url.endsWith('/capacity'))return Response.json({capacity});
+  writes.push(url);assert.equal(init.method,'POST');assert.equal(url,'/api/collection-jobs/job/product');return Response.json({productId:'other-product'});
+ },null,{productId:'linked-product',expectedProductId:'linked-product',assignToStage:false});
+ await h.click('수신 결과 조회');h.find(node=>node.type==='button'&&Array.isArray(node.props.children)&&node.props.children[0]==='상품·선택 이미지 ').props.onClick();await settle();
+ assert.deepEqual(writes,['/api/collection-jobs/job/product']);assert.equal(h.saved,0);assert.match(JSON.stringify(h.render()),/서버의 상품 연결이 현재 초안과 다릅니다/);
+});
+
 test('import displays image assignment warnings alongside confirmed file storage',async()=>{
  const h=harness(async url=>url.endsWith('/result')?Response.json({jobId:'job',offerId:'123',receipt:{result},message:'수신됨'}):Response.json({capacity}),async()=>({status:'completed',productId:'p',completedImages:2,warnings:['원본 2번: 상세 배치에 연결되지 않았습니다.']}));
  await h.click('수신 결과 조회');h.find(n=>n.type==='button'&&Array.isArray(n.props.children)&&n.props.children[0]==='상품·선택 이미지 ').props.onClick();
