@@ -18,10 +18,10 @@ export function documentImagePlan(section: DocumentImageSection, content: Produc
       footer: '카테고리별 법정 표시사항의 완결성과 상품 일치 여부를 검토해주세요. AI 생성·번역을 실행하지 않았습니다.' };
   }
   if (content.manualSizeChart !== undefined) {
-    const chart = validateManualSizeChart(content.manualSizeChart), columnWidths = [280, ...chart.sizes.map(() => 160)];
-    return { format: 'manual-size-chart', title: chart.sizeType || '일반 사이즈', subtitle: `단위: ${chart.sizeUnits}`,
-      width: 80 + columnWidths.reduce((sum, width) => sum + width, 0), columnWidths, headers: ['측정 부위', ...chart.sizes],
-      rows: chart.measurements.map(row => [row.name, ...row.values.map(value => value || '-')]), footer: '직접 저장한 사이즈표입니다. 실제 측정값과 단위를 확인해주세요.' };
+    const chart = validateManualSizeChart(content.manualSizeChart), columnWidths = [280, ...chart.sizes.map(() => 160)], descriptive = chart.sizeUnits === 'none';
+    return { format: 'manual-size-chart', title: chart.sizeType || '일반 사이즈', subtitle: descriptive ? '' : `단위: ${chart.sizeUnits}`,
+      width: 80 + columnWidths.reduce((sum, width) => sum + width, 0), columnWidths, headers: [descriptive ? '항목' : '측정 부위', ...chart.sizes],
+      rows: chart.measurements.map(row => [row.name, ...row.values.map(value => value || '-')]), footer: descriptive ? '직접 저장한 사이즈표입니다. 원문의 항목과 내용을 확인해주세요.' : '직접 저장한 사이즈표입니다. 실제 측정값과 단위를 확인해주세요.' };
   }
   const selected = options.rows.filter(row => row.included);
   if (!selected.length) throw new Error('견적에 포함할 옵션을 저장한 후 사이즈표를 만들어주세요.');

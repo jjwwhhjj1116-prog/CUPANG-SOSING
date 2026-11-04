@@ -1,7 +1,7 @@
 export const MANUAL_SIZE_CHART_COLUMNS = 20;
 export const MANUAL_SIZE_CHART_ROWS = 60;
 export const MANUAL_SIZE_CHART_BYTES = 64 * 1024;
-export const manualSizeUnits = ['cm', 'mm', 'inch', '㎡'] as const;
+export const manualSizeUnits = ['cm', 'mm', 'inch', '㎡', 'none'] as const;
 export type ManualSizeChart = {
   sizeType: string; sizeUnits: typeof manualSizeUnits[number]; sizes: string[];
   measurements: { name: string; values: string[] }[];
@@ -17,7 +17,7 @@ function text(value: unknown, maximum: number) {
 /** Local rendering limits, not supplier facts or original service quotas. */
 export function validateManualSizeChart(input: unknown): ManualSizeChart {
   const value = object(input, ['sizeType', 'sizeUnits', 'sizes', 'measurements']);
-  if (!manualSizeUnits.includes(value.sizeUnits as ManualSizeChart['sizeUnits'])) throw new Error('사이즈표 단위는 cm, mm, inch, ㎡ 중에서 선택해주세요.');
+  if (!manualSizeUnits.includes(value.sizeUnits as ManualSizeChart['sizeUnits'])) throw new Error('사이즈표 단위는 cm, mm, inch, ㎡ 또는 단위 없음 중에서 선택해주세요.');
   if (!Array.isArray(value.sizes) || value.sizes.length > MANUAL_SIZE_CHART_COLUMNS) throw new Error(`사이즈는 최대 ${MANUAL_SIZE_CHART_COLUMNS}열입니다.`);
   const sizes = value.sizes.map(item => text(item, 80).trim()).filter(Boolean);
   if (!sizes.length) throw new Error('사이즈를 한 개 이상 입력해주세요.');

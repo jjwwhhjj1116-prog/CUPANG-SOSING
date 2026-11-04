@@ -4,6 +4,16 @@ import {module,plain} from './helpers/supplier-hub-single-size-chart.mjs';
 const model=module('app/manual-size-chart.ts'),contentModel=module('app/product-content.ts'),optionsModel=module('app/product-options.ts'),documents=module('app/document-image.ts');
 const chart=()=>({sizeType:'직접 작성한 상의',sizeUnits:'cm',sizes:[' S ','M','L'],measurements:[{name:'총장',values:['61','63','']},{name:' ',values:[' ','0','—']},{name:'',values:['','','']}]});
 const now='2026-10-18T00:00:00.000Z';
+
+test('explicit descriptive charts preserve source text without claiming a physical unit or measured values',()=>{
+ const input={sizeType:'공급자 표시 규격',sizeUnits:'none',sizes:['FREE'],measurements:[{name:'착용 기준',values:['원문 상세페이지 참조']}]},before=JSON.stringify(input);
+ const value=model.validateManualSizeChart(input),current=contentModel.emptyProductContent('manual'),options=optionsModel.emptyProductOptions('manual');
+ const saved=contentModel.applyContentPatch(current,{manualSizeChart:value},now),plan=documents.documentImagePlan('size',saved,options);
+ assert.equal(JSON.stringify(input),before);assert.deepEqual(plain(saved.manualSizeChart),input);
+ assert.equal(plan.subtitle,'');assert.deepEqual(plain(plan.headers),['항목','FREE']);assert.deepEqual(plain(plan.rows),[['착용 기준','원문 상세페이지 참조']]);
+ assert.doesNotMatch(plan.footer,/측정|실측|단위/);assert.match(plan.footer,/원문/);assert.equal(saved.label.dimensions.value,'');assert.deepEqual(plain(options.rows),[]);
+ for(const unit of [null,undefined,''])assert.throws(()=>model.validateManualSizeChart({...input,sizeUnits:unit}));
+});
 test('manual grid preserves original text/order and blanks without changing product or packaging facts',()=>{
  const input=chart(),before=JSON.stringify(input),value=model.validateManualSizeChart(input);assert.equal(JSON.stringify(input),before);assert.deepEqual(plain(value.sizes),['S','M','L']);assert.equal(value.measurements.length,2);assert.equal(value.measurements[1].name,' ');
  const current=contentModel.emptyProductContent('manual'),options=optionsModel.emptyProductOptions('manual'),source=JSON.stringify({current,options});

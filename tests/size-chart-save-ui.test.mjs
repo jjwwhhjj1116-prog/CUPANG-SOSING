@@ -5,6 +5,18 @@ import {sizeChartSaveFixture,sizeChartSaveUi,companies,json,nodes,text} from './
 const traces=[],sleep=()=>new Promise(resolve=>setTimeout(resolve,1));
 test.after(()=>fs.writeFileSync(new URL('../outputs/step763-size-chart-save-ui-proof.json',import.meta.url),JSON.stringify({format:'step763-size-chart-save-ui-v1',traces,LIVE_VERIFIED:false,boundary:'Actual React callbacks + client coordinator + local APIs + temporary SQLite. PNG encoder is synthetic, no real browser pixel or Hub claim.'},null,2)+'\n'));
 async function edit(ui){await ui.idle();await ui.click('재작성');await ui.click('사이즈표 직접 작성');ui.edit('사이즈 목록','S, M');ui.edit('측정 항목 1 이름','총장');ui.edit('측정 항목 1 사이즈 1 값','61');ui.edit('측정 항목 1 사이즈 2 값','65');}
+test('an explicitly selected descriptive unit saves source labels and PNG without inventing measurement units',async()=>{
+ const f=await sizeChartSaveFixture(),ui=sizeChartSaveUi(f);try{
+  await ui.idle();await ui.click('재작성');await ui.click('사이즈표 직접 작성');
+  const unit=ui.input('사이즈표 단위');assert(nodes(unit).some(node=>node.type==='option'&&node.props.value==='none'&&text(node).includes('단위 없음')));
+  ui.edit('사이즈표 단위','none');ui.edit('사이즈 유형','공급자 표시 규격');ui.edit('사이즈 목록','FREE');ui.edit('측정 항목 1 이름','착용 기준');ui.edit('측정 항목 1 사이즈 1 값','원문 상세페이지 참조');
+  const preview=nodes(ui.render()).find(node=>node.props?.['aria-label']==='사이즈표 미리보기');assert.doesNotMatch(text(preview),/none|단위|측정 부위/);
+  const cellLabel=nodes(ui.render()).find(node=>node.type==='label'&&nodes(node).some(child=>child.props?.['aria-label']==='측정 항목 1 사이즈 1 값'));assert.doesNotMatch(text(cellLabel),/none|\(cm\)/);
+  const beforeOptions=f.h.sqlite.prepare('SELECT payload FROM product_options WHERE product_id=?').get(f.id).payload;
+  await ui.click('사이즈표 저장');assert.deepEqual(ui.alerts(),[]);assert.equal(ui.saves,1);assert.equal(ui.plans[0].subtitle,'');assert.deepEqual(ui.plans[0].headers,['항목','FREE']);assert.doesNotMatch(ui.plans[0].footer,/측정|실측|단위/);
+  const saved=await json(await f.get());assert.equal(saved.content.manualSizeChart.sizeUnits,'none');assert.equal(saved.content.assets.size.value.length,1);assert.equal(f.h.sqlite.prepare('SELECT payload FROM product_options WHERE product_id=?').get(f.id).payload,beforeOptions);assert.deepEqual(f.h.network,[]);
+ }finally{ui.close();f.close();}
+});
 for(const company of companies)test(`card inputs, live table, one button produce linked size PNG and saved result (${company.code})`,async()=>{
  const f=await sizeChartSaveFixture(company),ui=sizeChartSaveUi(f);try{await edit(ui);assert(nodes(ui.render()).some(node=>node.type==='fieldset'));const preview=nodes(ui.render()).find(node=>node.props?.['aria-label']==='사이즈표 미리보기');assert(text(preview).includes('61'));assert.equal(ui.calls.filter(call=>call.method!=='GET').length,0);await ui.click('사이즈표 저장');assert.deepEqual(ui.alerts(),[]);assert.equal(ui.saves,1);assert.equal(ui.plans.length,1);assert.deepEqual(ui.plans[0].rows,[['총장','61','65']]);assert.deepEqual(ui.calls.filter(call=>call.method!=='GET').map(call=>call.method),['POST']);assert.equal(ui.render().props['data-workspace-dirty'],false);assert(nodes(ui.render()).some(node=>node.props?.['data-saved-size-chart']));const snapshot=await json(await f.get());assert.equal(snapshot.content.assets.size.value.length,1);traces.push({kind:'cards-preview-one-save',company,posts:1,gridAndPngLinked:true,saves:1});}finally{ui.close();f.close();}
 });
