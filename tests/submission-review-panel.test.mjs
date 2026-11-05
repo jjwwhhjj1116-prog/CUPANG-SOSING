@@ -26,6 +26,16 @@ const packages=tree=>nodes(tree).filter(node=>node.type==='package');
 const heading=tree=>nodes(tree).find(node=>node.type==='h3').props.children;
 const json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
 
+test('native error editing forwards the selected scope and rejects source locks or an older profile context',()=>{
+ const h=harness(),opened=[],target={optionId:'option-a',fieldId:'model',categoryId:'80719'};
+ try{
+  let tree=h.render({onEdit:(...args)=>opened.push(args)}),child=nodes(tree).find(node=>node.type==='native');assert.equal(typeof child.props.onInspect,'function');
+  child.props.onInspect(target);assert.deepEqual(opened,[['p1',undefined,target]]);child.props.onLockChange(true,false);child.props.onInspect(target);assert.equal(opened.length,1);
+  child.props.onLockChange(false,false);tree=h.select('a');const selected=nodes(tree).find(node=>node.type==='native');selected.props.onInspect(target);assert.deepEqual(opened.at(-1),['p1','a',target]);
+  child.props.onInspect(target);assert.equal(opened.length,2);h.unmount();selected.props.onInspect(target);assert.equal(opened.length,2);assert.equal(h.calls.length,0);
+ }finally{h.unmount();}
+});
+
 test('native preparation makes no Excel review requests until explicit opening, then close and reopen retain the same request',async()=>{
  const h=harness();
  try{

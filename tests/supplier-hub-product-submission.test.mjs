@@ -95,6 +95,19 @@ function ui(initial,fetcher,timers,options={}){
  function render(next={}){props={...props,...next};cursor=0;const outer=Component(props);if(mountedKey!==null&&outer.key!==mountedKey){slots.forEach(slot=>slot?.cleanup?.());slots.length=0;effects.length=0;layouts.length=0;}mountedKey=outer.key;cursor=0;const tree=outer.type(outer.props);options.beforeLayout?.(tree);layouts.splice(0).forEach(run=>run());effects.splice(0).forEach(run=>run());return tree;}
  return{render,unmount(){slots.forEach(slot=>slot?.cleanup?.());}};
 }
+test('native preflight edit navigation preserves queryless capture and rejects locked, foreign and retired callbacks',async()=>{
+ const value=await sample(),fake=responder(value),opened=[],h=ui({productId:value.productId,onInspect:target=>opened.push(plain(target))},fake.request);
+ try{
+  h.render();await settle();let tree=h.render();const child=nodes(tree).find(node=>node.type==='native-review');assert.ok(child);assert.equal(child.props.profileId,undefined);
+  const row=value.view.resolved.rows.find(row=>row.optionId&&row.included),field=value.view.resolved.schema.fields.find(field=>!field.readOnly),target={optionId:row.optionId,fieldId:field.id,categoryId:value.view.resolved.schema.categoryId};
+  assert.equal(typeof child.props.onInspect,'function');child.props.onInspect(target);assert.deepEqual(opened,[target]);
+  child.props.onLockChange(true,false);child.props.onInspect(target);assert.equal(opened.length,1);child.props.onLockChange(false,false);
+  for(const patch of [{categoryId:'foreign'},{fieldId:'unknown'},{optionId:'foreign'}])child.props.onInspect({...target,...patch});assert.equal(opened.length,1);
+  const legal=nodes(h.render()).find(node=>node.type==='legal-editor');legal.props.onBusyChange(true);h.render();legal.props.onBusyChange(false);h.render();child.props.onInspect(target);assert.equal(opened.length,1,'a retired legal/native scope cannot regain navigation authority');
+  h.unmount();child.props.onInspect(target);assert.equal(opened.length,1);assert.ok(fake.calls.every(call=>(call.init.method??'GET')==='GET'));
+ }finally{h.unmount();}
+});
+
 test('primary native UI receives the real view, queryless scope and current callback only after stable reads',async()=>{
  const value=await sample(),fake=responder(value);let saved=0;
  const h=ui({productId:value.productId,onReceiptSaved(){saved++;}},fake.request);let tree=h.render();assert.equal(nodes(tree).filter(node=>node.type==='native-review').length,0);await settle();tree=h.render();

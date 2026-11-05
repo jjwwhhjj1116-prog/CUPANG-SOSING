@@ -1,12 +1,13 @@
 import type {NativeAssetSourceIssue,NativeAssetSourcePlan} from '@/app/native-asset-source-plan';
 import type {QuotationFieldsView} from '@/app/quotation-schema';
+import type {QuotationNavigationTarget} from '@/app/quotation-navigation';
 
-export type NativeSourceIssueGroup={key:string;level:NativeAssetSourceIssue['level'];message:string;context:string;count:number};
+export type NativeSourceIssueGroup={key:string;level:NativeAssetSourceIssue['level'];message:string;context:string;count:number;targets:{label:string;target:QuotationNavigationTarget}[]};
 const label=(value:unknown)=>typeof value==='string'&&value.trim()?value.trim():null;
 /** Presentation only: retain every occurrence and its severity. Never use a
  * grouped count or a display label to decide whether transmission is allowed. */
 export function nativeSourceIssueGroups(issues:readonly NativeAssetSourceIssue[],view:QuotationFieldsView,identity:NativeAssetSourcePlan['identity']):NativeSourceIssueGroup[]{
- const fields=Array.isArray(view.resolved?.schema?.fields)?view.resolved.schema.fields:[],members=Array.isArray(identity?.members)?identity.members:[];
+ const fields=Array.isArray(view.resolved?.schema?.fields)?view.resolved.schema.fields:[],members=Array.isArray(identity?.members)?identity.members:[],rows=Array.isArray(view.resolved?.rows)?view.resolved.rows:[],categoryId=view.resolved?.schema?.categoryId;
  const fieldLabels=new Map<string,string|null>(),optionLabels=new Map<string,string|null>();
  for(const field of fields)fieldLabels.set(field.id,fieldLabels.has(field.id)?null:label(field.label));
  for(const member of members)optionLabels.set(member.optionId,optionLabels.has(member.optionId)?null:label(member.optionLabel));
@@ -21,8 +22,15 @@ export function nativeSourceIssueGroups(issues:readonly NativeAssetSourceIssue[]
   const optionLabel=optionId?(optionLabels.get(optionId)??'옵션 확인 필요'):issue.optionId===null?'상품 공통':'전송 자료 전체';
   const key=JSON.stringify([issue.level,issue.code,fieldId,issue.key??null,issue.message]);
   let saved=groups.get(key);
-  if(!saved){saved={group:{key,level:issue.level,message:issue.message,context:'',count:0},options:new Map(),fieldLabel};groups.set(key,saved);}
-  saved.group.count++;saved.options.set(optionKey,optionLabel);
+  if(!saved){saved={group:{key,level:issue.level,message:issue.message,context:'',count:0,targets:[]},options:new Map(),fieldLabel};groups.set(key,saved);}
+  saved.group.count++;
+  if(!saved.options.has(optionKey)){
+   saved.options.set(optionKey,optionLabel);
+   const matching=rows.filter(row=>row.optionId===issue.optionId);
+   if(fieldId&&fieldLabels.get(fieldId)&&typeof categoryId==='string'&&categoryId&&identity?.categoryId===categoryId
+    &&matching.length===1&&(issue.optionId===null||optionId&&optionLabels.get(optionId)&&matching[0].included))
+    saved.group.targets.push({label:`${optionLabel} · ${fieldLabel} 항목 확인`,target:{optionId:issue.optionId as string|null,fieldId,categoryId}});
+  }
  }
  return [...groups.values()].map(({group,options,fieldLabel})=>({...group,context:[...options.values()].join(', ')+(fieldLabel?' · '+fieldLabel:'')}));
 }

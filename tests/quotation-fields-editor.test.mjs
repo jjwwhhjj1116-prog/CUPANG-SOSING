@@ -20,7 +20,7 @@ function load(file, overrides = {}) {
   if (!Object.keys(overrides).length && cache.has(file)) return cache.get(file);
   const exports = {};
   const compiled = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
-  vm.runInNewContext(compiled, { exports, Error, TextEncoder, URLSearchParams, structuredClone, AbortController, fetch: overrides.fetch ?? fetch, require(name) {
+  vm.runInNewContext(compiled, { exports, Error, TextEncoder, URLSearchParams, structuredClone, AbortController, document: overrides.document, fetch: overrides.fetch ?? fetch, require(name) {
     if (name === 'parse5') return parse5;
     if (name in overrides) return name==='react'&&!overrides[name].useLayoutEffect?{...overrides[name],useLayoutEffect:overrides[name].useEffect}:overrides[name];
     if (name.endsWith('.css')) return {};
@@ -1115,11 +1115,11 @@ test('price validation also checks an excluded option receiving an all-option ed
 
 /** Actual form callbacks with retained hook refs and the current action-state
  * effect. Passive initial loading is replaced by the supplied saved fixture. */
-function allOptionForm(view,edits,sourceOptionId,formProps={}){
+function allOptionForm(view,edits,sourceOptionId,formProps={},dom={getElementById:()=>null}){
  const states=[view,edits,[],false,false,'','','start',sourceOptionId,[],true,null,false],refs=[],effects=[],calls=[];
  let stateIndex=0,refIndex=0,saved=0,server=clone(view);
  const hooks={useState(initial){const index=stateIndex++;if(!(index in states))states[index]=typeof initial==='function'?initial():initial;return[states[index],value=>{states[index]=typeof value==='function'?value(states[index]):value;}];},useRef(value){const index=refIndex++;return refs[index]??(refs[index]={current:value});},useEffect(fn){if(String(fn).includes('modelActionState.current ='))effects.push(fn);},useCallback:fn=>fn,useId:()=> 'all-options-form'};
- const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async(url,init={})=>{
+ const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,document:dom,fetch:async(url,init={})=>{
   calls.push({url,method:init.method??'GET',...(init.body?{body:JSON.parse(init.body)}:{})});
   if(init.method==='PUT'){server=acknowledgedView(server,JSON.parse(init.body).changes);return Response.json(server);}
   return Response.json(server);
@@ -1189,6 +1189,50 @@ test('inline quotation transport locks source edits immediately without disablin
  assert(h.nodes(tree).filter(node=>node.type==='fieldset').every(node=>node.props.disabled));
  review.props.onLockChange(false,false);tree=h.render();assert(h.nodes(tree).filter(node=>node.type==='fieldset').every(node=>!node.props.disabled));
  assert.deepEqual(reports,[[true,true],[true,false],[false,false]]);assert.equal(h.calls.length,0);
+});
+
+test('native preflight navigation selects the exact input scope without applying or saving any values',()=>{
+ const view=fixture(),before=JSON.stringify(view),h=allOptionForm(view,[],'red');h.states[12]=true;
+ const entry=submissionEntry(h),review=h.nodes(entry.details).find(node=>node.props?.primaryProduct===true),target={optionId:'blue',fieldId:'model',categoryId:view.resolved.schema.categoryId};
+ assert.equal(typeof review.props.onInspect,'function');review.props.onInspect(target);h.render();
+ assert.equal(h.states[8],'blue');assert.equal(h.states[7],'product');assert.equal(h.states[12],false);assert.equal(h.states[1].length,0);assert.equal(h.calls.length,0);assert.equal(JSON.stringify(view),before);
+});
+
+test('native input navigation rejects dirty, locked, inactive, stale and foreign destinations',()=>{
+ for(const mode of ['dirty','source-lock','inactive','view','category','field','option','excluded']){
+  const view=fixture(),h=allOptionForm(view,[],'red'),entry=submissionEntry(h),review=h.nodes(entry.details).find(node=>node.props?.primaryProduct===true),target={optionId:'blue',fieldId:'model',categoryId:view.resolved.schema.categoryId};
+  assert.equal(typeof review.props.onInspect,'function');
+  if(mode==='dirty')h.nodes(entry.tree).find(node=>node.type==='input'&&node.props.id?.endsWith('-model')).props.onChange({target:{value:'미저장 모델'}});
+  if(mode==='source-lock')review.props.onLockChange(true,false);
+  if(mode==='inactive')h.render({submissionActive:false});if(mode==='view'){h.states[0]=fixture();h.render();}
+  if(mode==='category')target.categoryId='other';if(mode==='field')target.fieldId='unknown';if(mode==='option')target.optionId='foreign';if(mode==='excluded')target.optionId='excluded';
+  review.props.onInspect(target);assert.equal(h.states[8],'red',mode);assert.equal(h.calls.length,0,mode);
+ }
+});
+
+test('native preflight navigation recovers a removed selected option by opening a remaining valid target',()=>{
+ const view=fixture(),h=allOptionForm(view,[],'removed-option'),entry=submissionEntry(h),review=h.nodes(entry.details).find(node=>node.props?.primaryProduct===true);
+ review.props.onInspect({optionId:'blue',fieldId:'model',categoryId:view.resolved.schema.categoryId});
+ assert.equal(h.states[8],'blue');assert.equal(h.states[1].length,0);assert.equal(h.calls.length,0);
+});
+
+test('native input navigation immediately retires the old option edit, all-option and repeated navigation callbacks',()=>{
+ const view=fixture(),h=allOptionForm(view,[],'red'),entry=submissionEntry(h),review=h.nodes(entry.details).find(node=>node.props?.primaryProduct===true);
+ const edit=h.nodes(entry.tree).find(node=>node.type==='input'&&node.props.id?.endsWith('-model')).props.onChange,all=h.primarySwitch().props.onChange,save=h.saveButton().props.onClick;
+ review.props.onInspect({optionId:'blue',fieldId:'model',categoryId:view.resolved.schema.categoryId});
+ edit({target:{value:'이전 빨강 입력'}});all({target:{checked:true}});save();review.props.onInspect({optionId:'red',fieldId:'model',categoryId:view.resolved.schema.categoryId});
+ assert.equal(h.states[8],'blue');assert.equal(h.states[1].length,0);assert.equal(h.states[12],false);assert.equal(h.calls.length,0);
+});
+
+test('native input focus resolves a folded weight field using the destination option values',()=>{
+ const snapshot=hubSchemaSnapshot();snapshot.inputBindings='couplus-paths-v1';const raw=JSON.parse(snapshot.schemaString);raw.properties.logisticsPage.properties.skuUnitBoxWeight={type:'string',title:'한 개 단품 포장 무게',minLength:1};snapshot.schemaString=JSON.stringify(raw);
+ const wire=model.getQuotationSchema(snapshot.categoryId,snapshot.categoryPath,snapshot).fields.find(field=>field.numericText&&field.hubInput==='packagedWeightG');assert.ok(wire);
+ for(const destinationFolded of [true,false]){
+  const view=fixture({common:{},options:{red:{packagedWeightG:'420',[wire.id]:destinationFolded?'500':'420'},blue:{packagedWeightG:'600',[wire.id]:destinationFolded?'600':'610'}}},undefined,source=>{source.categoryId=snapshot.categoryId;source.categoryPath=snapshot.categoryPath;source.hubSchema=snapshot;});
+  const focused=[],h=allOptionForm(view,[],'red',{}, {getElementById:id=>{focused.push(id);return null;}}),entry=submissionEntry(h),review=h.nodes(entry.details).find(node=>node.props?.primaryProduct===true);
+  review.props.onInspect({optionId:'blue',fieldId:'packagedWeightG',categoryId:view.resolved.schema.categoryId});
+  assert.ok(focused.at(-1).endsWith('-'+(destinationFolded?wire.id:'packagedWeightG')));assert.equal(h.states[8],'blue');assert.equal(h.calls.length,0);
+ }
 });
 
 test('native source locks reach the workspace DOM synchronously and a retired view cannot release the current lock',()=>{

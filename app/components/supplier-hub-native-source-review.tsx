@@ -8,8 +8,9 @@ import {SupplierHubProductTransport} from '@/app/components/supplier-hub-product
 import {nativeSourceIssueGroups} from '@/app/supplier-hub-native-source-issues';
 import {SupplierHubLegalReview} from '@/app/components/supplier-hub-legal-review';
 import {nativeSavedQuotationPreview} from '@/app/native-saved-quotation-preview';
+import type {QuotationNavigationTarget} from '@/app/quotation-navigation';
 
-type Props={productId:string;profileId?:string;view:QuotationFieldsView;disabled:boolean;onReceiptSaved?:()=>void;onSourceChanged?:(error?:string)=>void;onReviewLegal?:()=>void;onLockChange?:(locked:boolean,closeLocked?:boolean)=>void};
+type Props={productId:string;profileId?:string;view:QuotationFieldsView;disabled:boolean;onReceiptSaved?:()=>void;onSourceChanged?:(error?:string)=>void;onReviewLegal?:()=>void;onInspect?:(target:QuotationNavigationTarget)=>void;onLockChange?:(locked:boolean,closeLocked?:boolean)=>void};
 const roles={MAIN:'대표',ADDITIONAL:'추가',SIZECHART:'사이즈표',LABEL:'표시사항',DETAIL:'상세'};
 const text=(value:unknown)=>typeof value==='string'||typeof value==='number'?String(value):'';
 const node=(value:unknown):Record<string,unknown>=>value&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:{};
@@ -62,15 +63,18 @@ function NativeSourceScope(props:Props){
  }
  const errors=plan?.issues.filter(issue=>issue.level==='error')??[],notices=plan?.issues.filter(issue=>issue.level==='review')??[];
  const errorGroups=nativeSourceIssueGroups(errors,props.view,plan?.identity??null),noticeGroups=nativeSourceIssueGroups(notices,props.view,plan?.identity??null);
+ const issueLinks=(group:ReturnType<typeof nativeSourceIssueGroups>[number])=>props.onInspect&&group.targets.map(({label,target})=><button key={JSON.stringify(target)} type="button" className="quotation-field-text-button" disabled={disabled||busy||locked||legalBusy} onClick={()=>{
+  if(allowed()&&plan&&planRef.current===plan&&current.current.props.view===props.view)current.current.props.onInspect?.(target);
+ }}>{label}</button>);
  const savedPreview=!disabled&&!busy&&plan?nativeSavedQuotationPreview(plan,props.view):[];
  return <section className="quotation-fields-notice" aria-label="상품 견적서 전송 자료" aria-busy={busy}>
   <div className="quote-actions"><button type="button" className="btn ghost" disabled={disabled||busy||locked||legalBusy} onClick={()=>void load()}>저장한 견적 자료 다시 확인</button>
    {!review&&<button type="button" className="btn primary" disabled={disabled||busy||locked||legalBusy||!plan?.metadataValid||errors.length>0} onClick={()=>void prepare()}>견적서·첨부 파일 확인</button>}</div>
   {busy&&<p role="status">현재 저장한 견적서와 첨부 파일을 확인하고 있습니다…</p>}{error&&<p role="alert">{error}</p>}
-  {errors.length>0&&<div role="alert"><p>전송 전 확인 필요 {errors.length}건{errorGroups.length<errors.length?` · 같은 안내 ${errorGroups.length}개로 묶음`:''}</p><ul>{errorGroups.map(issue=><li key={issue.key}><strong>{issue.context}</strong>: {issue.message}{issue.count>1?` (${issue.count}건)`:''}</li>)}</ul></div>}
+  {errors.length>0&&<div role="alert"><p>전송 전 확인 필요 {errors.length}건{errorGroups.length<errors.length?` · 같은 안내 ${errorGroups.length}개로 묶음`:''}</p><ul>{errorGroups.map(issue=><li key={issue.key}><strong>{issue.context}</strong>: {issue.message}{issue.count>1?` (${issue.count}건)`:''}{issueLinks(issue)}</li>)}</ul></div>}
   {errors.some(issue=>issue.code==='NATIVE_ASSET_LEGAL_UNCONFIRMED')&&props.onSourceChanged&&<button type="button" className="btn ghost" disabled={disabled||busy||locked||legalBusy} onClick={()=>{if(!allowed())return;if(current.current.props.onReviewLegal)current.current.props.onReviewLegal();else setLegalOpen(true);}}>서류 해당 여부 확인</button>}
   {legalOpen&&<SupplierHubLegalReview productId={productId} profileId={profileId} view={props.view} disabled={disabled||busy||locked} onBusyChange={legalLock} onMutationSettled={legalSettled}/>}
-  {notices.length>0&&<details><summary>견적서 검토 안내 {notices.length}건{noticeGroups.length<notices.length?` · 같은 안내 ${noticeGroups.length}개로 묶음`:''}</summary><ul>{noticeGroups.map(issue=><li key={issue.key}><strong>{issue.context}</strong>: {issue.message}{issue.count>1?` (${issue.count}건)`:''}</li>)}</ul></details>}
+  {notices.length>0&&<details><summary>견적서 검토 안내 {notices.length}건{noticeGroups.length<notices.length?` · 같은 안내 ${noticeGroups.length}개로 묶음`:''}</summary><ul>{noticeGroups.map(issue=><li key={issue.key}><strong>{issue.context}</strong>: {issue.message}{issue.count>1?` (${issue.count}건)`:''}{issueLinks(issue)}</li>)}</ul></details>}
   {savedPreview.length>0&&<details aria-label="저장된 견적 미리보기"><summary>저장된 견적 미리보기 · {savedPreview.length}개 옵션</summary>
    <p>현재 저장한 상품값과 첨부 이미지입니다. 미입력 항목과 위의 확인 사항을 검토한 뒤 등록전송을 준비하세요.</p>
    {savedPreview.map(option=><details key={option.optionId} aria-label={`${option.optionLabel} 저장된 견적`}>

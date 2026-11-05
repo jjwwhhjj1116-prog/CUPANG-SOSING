@@ -5,9 +5,10 @@ import type {QuotationFieldsView} from '@/app/quotation-schema';
 import {SupplierHubSingleReview} from '@/app/components/supplier-hub-single-review';
 import {LegalDocumentsEditor} from '@/app/components/legal-documents-editor';
 import {guardSupplierHubLegalWrite,readSupplierHubLegalEditScope,readSupplierHubProductSubmissionView} from '@/app/supplier-hub-legal-edit-scope';
+import {resolveQuotationNavigation,type QuotationNavigationTarget} from '@/app/quotation-navigation';
 export {readSupplierHubLegalEditScope,readSupplierHubProductSubmissionView} from '@/app/supplier-hub-legal-edit-scope';
 
-type Props={productId:string;profileId?:string;expectedCategoryId?:string;onReceiptSaved?:()=>void;onLockChange?:(locked:boolean,closeLocked?:boolean)=>void;disabled?:boolean};
+type Props={productId:string;profileId?:string;expectedCategoryId?:string;onReceiptSaved?:()=>void;onInspect?:(target:QuotationNavigationTarget)=>void;onLockChange?:(locked:boolean,closeLocked?:boolean)=>void;disabled?:boolean};
 export function SupplierHubProductSubmission(props:Props){
   return <ProductSubmissionContent key={JSON.stringify([props.productId,props.profileId??null,props.expectedCategoryId??null,props.disabled===true])} {...props}/>;
 }
@@ -55,6 +56,13 @@ function ProductSubmissionContent(props:Props){
     if(!current.current.mounted||current.current.props.disabled)return;
     current.current.view=null;setView(null);setLegalPolicy(null);setLegalNotice(message||'서류를 저장했습니다. 최신 서류와 견적 자료를 다시 확인합니다.');setAttempt(value=>value+1);
   }
+  function inspectIssue(target:QuotationNavigationTarget){
+    const before=current.current;
+    if(!before.mounted||before.props.disabled||before.legalBusy||before.nativeLocked||!view||before.view!==view||liveNativeToken.current!==nativeToken
+      ||retiredNativeTokens.current.has(nativeToken)||target.categoryId!==view.resolved.schema.categoryId||!resolveQuotationNavigation(view.resolved,target).ok
+      ||target.optionId!==null&&!view.resolved.rows.some(row=>row.optionId===target.optionId&&row.included))return;
+    before.props.onInspect?.(target);
+  }
   const ready=Boolean(view&&!props.disabled);
   return <section className="panel-stack" aria-label="전체 상품 견적 등록 준비" aria-busy={!props.disabled&&!view&&!error}>
     <h4>전체 상품 견적 등록</h4>
@@ -68,7 +76,7 @@ function ProductSubmissionContent(props:Props){
       <LegalDocumentsEditor productId={productId} open={legalOpen} disabled={Boolean(props.disabled||nativeLocked||legalPolicy?.view!==view||legalPolicy.blocked)} onSaved={()=>{}} onBusyChange={legalLock} guardWrite={guardLegalWrite} onMutationSettled={legalSettled}/>
       {legalPolicy?.view===view&&legalPolicy.message&&<p role="status">{legalPolicy.message}</p>}
       <small>필수 원본 서류는 여기서 확인·수정할 수 있습니다. 필수 서류가 있는 상품의 개별 문서 전송은 아직 검수 중이며, 서류 저장만으로 전송되지 않습니다.</small>
-      <SupplierHubSingleReview primaryProduct productId={props.productId} profileId={props.profileId} view={view} disabled={legalBusy} onReviewLegal={()=>{if(current.current.mounted&&!current.current.props.disabled&&!current.current.nativeLocked&&current.current.view===view)setLegalOpen(true);}} onSourceChanged={legalSettled} onLockChange={nativeLock} onReceiptSaved={()=>{if(current.current.mounted&&!current.current.props.disabled&&current.current.view===view)current.current.props.onReceiptSaved?.();}}/>
+      <SupplierHubSingleReview primaryProduct productId={props.productId} profileId={props.profileId} view={view} disabled={legalBusy} onInspect={props.onInspect?inspectIssue:undefined} onReviewLegal={()=>{if(current.current.mounted&&!current.current.props.disabled&&!current.current.nativeLocked&&current.current.view===view)setLegalOpen(true);}} onSourceChanged={legalSettled} onLockChange={nativeLock} onReceiptSaved={()=>{if(current.current.mounted&&!current.current.props.disabled&&current.current.view===view)current.current.props.onReceiptSaved?.();}}/>
     </>}
   </section>;
 }

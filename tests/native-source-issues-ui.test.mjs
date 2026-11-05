@@ -19,3 +19,17 @@ test('native source review shows grouped option/field context and original count
   assert.ok(items.every(value=>members.every(member=>!value.includes(member.optionId))));assert.ok(ui.calls.every(call=>call.method==='GET'));assert.equal(f.state(),before);assert.equal(f.objectState(),files);assert.deepEqual(f.h.network,[]);
  }finally{ui?.unmount();f.close();}
 });
+
+test('native preflight errors open only their current input and never dispatch preparation or writes',async()=>{
+ const f=await nativeReviewFixture(),opened=[];let ui;
+ try{
+  const plan=plain(f.sourcePlan),member=plan.identity.members[0],field=f.quotationView.resolved.schema.fields.find(row=>row.id==='model');assert.ok(field);
+  plan.metadataValid=false;plan.sourcePlanSha256=null;plan.issues=[{code:'MISSING',level:'error',message:'모델명을 확인해주세요.',optionId:member.optionId,fieldId:field.id}];
+  const props={productId:f.id,profileId:f.profile.id,view:f.quotationView,disabled:false,onInspect:target=>opened.push(plain(target))};
+  ui=quotationAiUI(props,async(path,init)=>path===f.sourcePath?Response.json(plan):f.request(path,init),'app/components/supplier-hub-native-source-review.tsx','SupplierHubNativeSourceReview');await ui.idle();
+  const name=`${member.optionLabel} · ${field.label} 항목 확인`,before=ui.calls.length;
+  assert.equal(ui.button('견적서·첨부 파일 확인').props.disabled,true);const click=ui.button(name)?.props.onClick;assert.ok(click,'a native error must expose its exact input');click();
+  assert.deepEqual(opened,[{optionId:member.optionId,fieldId:field.id,categoryId:f.quotationView.resolved.schema.categoryId}]);assert.equal(ui.calls.length,before);
+  ui.render({...props,disabled:true});click();assert.equal(opened.length,1);ui.unmount();click();assert.equal(opened.length,1);assert.ok(ui.calls.every(row=>row.method==='GET'));assert.deepEqual(f.h.network,[]);
+ }finally{ui?.unmount();f.close();}
+});

@@ -23,3 +23,22 @@ test('the same visible option label keeps distinct identities and literal messag
  const message='<strong>문구</strong> & 원문',groups=nativeSourceIssueGroups([issue({message}),issue({message,optionId:'second-raw-id'})],view,{members:identity.members.map(row=>({...row,optionLabel:'같은 이름'}))});
  assert.equal(groups[0].context,'같은 이름, 같은 이름 · 색상');assert.equal(groups[0].count,2);assert.equal(groups[0].message,message);
 });
+
+test('native issue navigation retains each exact current option and category without merging repeated labels',()=>{
+ const current={resolved:{schema:{categoryId:'103689',fields:view.resolved.schema.fields},rows:[{optionId:null,optionLabel:'공통',included:false},...identity.members.map(row=>({optionId:row.optionId,optionLabel:'같은 이름',included:true}))]}},source={...identity,categoryId:'103689'};
+ const groups=plain(nativeSourceIssueGroups([issue(),issue({optionId:'second-raw-id'}),issue(),issue({optionId:null})],current,source));
+ assert.deepEqual(groups[0].targets,[{label:'베이지 · 색상 항목 확인',target:{optionId:'first-raw-id',fieldId:'color',categoryId:'103689'}},{label:'핑크 · 색상 항목 확인',target:{optionId:'second-raw-id',fieldId:'color',categoryId:'103689'}},{label:'상품 공통 · 색상 항목 확인',target:{optionId:null,fieldId:'color',categoryId:'103689'}}]);
+ assert.equal(groups[0].count,4);
+});
+
+test('unknown, duplicate, excluded or mismatched native issue metadata never produces an edit destination',()=>{
+ const current={resolved:{schema:{categoryId:'103689',fields:view.resolved.schema.fields},rows:[{optionId:'first-raw-id',included:true}]}},source={...identity,categoryId:'103689'};
+ for(const [candidate,origin,problem]of [
+  [current,source,issue({fieldId:'unknown'})],[current,source,issue({optionId:'unknown'})],[current,source,issue({optionId:undefined})],
+  [current,null,issue()],[current,{...source,categoryId:'another'},issue()],
+  [{resolved:{...current.resolved,rows:[{optionId:'first-raw-id',included:false}]}},source,issue()],
+  [{resolved:{...current.resolved,rows:[...current.resolved.rows,...current.resolved.rows]}},source,issue()],
+  [{resolved:{...current.resolved,schema:{...current.resolved.schema,fields:[...view.resolved.schema.fields,{id:'color',label:'other'}]}}},source,issue()],
+  [current,{...source,members:[...identity.members,identity.members[0]]},issue()],
+ ])assert.deepEqual(plain(nativeSourceIssueGroups([problem],candidate,origin))[0].targets,[]);
+});

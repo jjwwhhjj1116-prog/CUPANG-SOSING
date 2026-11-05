@@ -89,6 +89,7 @@ export function SubmissionReviewPanel({products,profiles,onEdit,onReceiptSaved,o
         <h3>{report ? report.title.trim() ? report.title : '상품명 미입력' : product.title}</h3><a href={safeUrl(product.source_url)} target="_blank" rel="noreferrer" style={{overflowWrap:'anywhere'}}>{product.source_url}</a>
         <SupplierHubProductSubmission key={JSON.stringify([requestKey,product.id])} productId={product.id} profileId={profileId||undefined}
           expectedCategoryId={profileId?profiles.find(profile=>profile.id===profileId)?.categoryId||undefined:undefined}
+          onInspect={target=>editCurrent(product.id,profileId||undefined,target)}
           onLockChange={(locked,close)=>productLock(product.id,locked,close)}
           onReceiptSaved={()=>{if(currentContext.current===context)onReceiptSaved?.();}}/>
         <details aria-label="Excel 파일 전송 · 별도 방식" inert={sourceLocked} open={legacyOpen.context===context&&legacyOpen.ids.includes(product.id)} onToggle={event=>{

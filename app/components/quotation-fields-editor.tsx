@@ -661,6 +661,20 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
     submissionSummary.current.scrollIntoView({ block: 'start' });
     submissionSummary.current.focus({ preventScroll: true });
   }
+  function inspectNativeIssue(target: QuotationNavigationTarget) {
+    const current = modelActionState.current;
+    if (!mounted.current || !view || current.view !== view || current.selectedOption !== selectedOption || current.changes !== changes || current.applyAll !== applyAll
+      || titleActionEpoch.current !== titleActionTicket || !submissionActive || !current.submissionActive || changes.length || aiDraftApplied.current
+      || current.busy || current.loading || current.conflicts.length || activeWrite.current || observedRefresh.current !== refreshToken
+      || submissionLockRef.current.source || target.categoryId !== view.resolved.schema.categoryId) return;
+    const destination = resolveQuotationEditorNavigation(view.resolved, target);
+    if (!destination.ok || target.optionId !== null && !view.resolved.rows.some(row => row.optionId === target.optionId && row.included)) return;
+    explicitRefreshAction.current = null;
+    titleActionEpoch.current++; brandInputEpoch.current++;
+    modelActionState.current = { ...current, selectedOption: destination.optionId, applyAll: false };
+    setSelectedOption(destination.optionId); setApplyAll(false); setBulk(null); setMessage(destination.message);
+    openSection(destination.section, destination.fieldId, destination.optionId !== selectedOption, destination.optionId);
+  }
   function changeSubmissionLock(source: boolean, close = source) {
     const current = modelActionState.current;
     if (!mounted.current || !view || current.view !== view || current.submissionActive !== submissionActive) return;
@@ -713,9 +727,9 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   }
   const schema = view?.resolved.schema;
   const row = view?.resolved.rows.find(item => item.optionId === selectedOption);
-  function openSection(section: (typeof sections)[number]['id'], fieldId?: string, deferFocus = false) {
+  function openSection(section: (typeof sections)[number]['id'], fieldId?: string, deferFocus = false, optionId = selectedOption) {
     setActive(section);
-    const visibleField = fieldId && schema && view ? quotationPackagedWeightDisplayField(schema.fields, quotationPriceDisplayField(schema.fields, fieldId), key => resolveQuotationEditorCell(view, changes, selectedOption, key).value) : fieldId;
+    const visibleField = fieldId && schema && view ? quotationPackagedWeightDisplayField(schema.fields, quotationPriceDisplayField(schema.fields, fieldId), key => resolveQuotationEditorCell(view, changes, optionId, key).value) : fieldId;
     const target = document.getElementById(visibleField ? `${prefix}-${visibleField}` : `${prefix}-section-${section}`);
     const tools = target?.closest?.<HTMLDetailsElement>('.quotation-image-tools'); if (tools) tools.open = true;
     pendingFocus.current = fieldId && (deferFocus || !target) ? visibleField ?? null : null;
@@ -924,7 +938,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
       {schema && <details className="quotation-source-evidence"><summary>견적 양식 확인 정보</summary><p>{schema.evidence}</p></details>}
       <div className="quotation-submission-entry"><button type="button" className="btn ghost" aria-controls={`${prefix}-submission-tools`} disabled={!submissionActive || dirty || busy || loading || conflicts.length > 0} title={dirty ? '견적 입력을 먼저 저장해주세요.' : '저장한 상품의 견적서와 첨부 파일을 검토합니다.'} onClick={openSubmissionReview}>견적 검토·전송</button></div>
       <details className="quotation-submission-tools" id={`${prefix}-submission-tools`} ref={submissionTools}><summary ref={submissionSummary}>저장한 견적 검토·전송</summary><p>견적 입력을 저장한 뒤 자료를 검토하고 전송을 준비하세요.</p>
-      <SupplierHubSingleReview productId={productId} profileId={profileId} view={view} disabled={!submissionActive || dirty || formBusy || loading || conflicts.length > 0} onLockChange={changeSubmissionLock} onReceiptSaved={onReceiptSaved} onSourceChanged={message=>{const current=modelActionState.current;if(current.view!==view||current.changes.length||current.formBusy||current.loading||current.conflicts.length||!current.submissionActive)return;onSaved?.();void refresh(false,false,message);}} primaryProduct={true}/>
+      <SupplierHubSingleReview productId={productId} profileId={profileId} view={view} disabled={!submissionActive || dirty || formBusy || loading || conflicts.length > 0} onInspect={inspectNativeIssue} onLockChange={changeSubmissionLock} onReceiptSaved={onReceiptSaved} onSourceChanged={message=>{const current=modelActionState.current;if(current.view!==view||current.changes.length||current.formBusy||current.loading||current.conflicts.length||!current.submissionActive)return;onSaved?.();void refresh(false,false,message);}} primaryProduct={true}/>
       </details>
     </>}
   </section>;
