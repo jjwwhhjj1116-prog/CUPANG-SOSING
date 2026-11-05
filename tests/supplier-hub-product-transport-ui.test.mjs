@@ -599,6 +599,32 @@ test('saved original document recovers only its verification tab after remount, 
  }finally{seed.close();h?.close();}
 });
 
+test('locally validated four-step draft recovers only its typed closed read target without replaying preparation',async()=>{
+ const h=await fixture();try{
+  h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,...savedTargetCapabilities}
+   :draftResult(h.f,payload.packet.requestId,'validated',{docId:2362997,...(payload.action==='recoverPreparedDraft'?{error:{code:'SAVED_DRAFT_TARGET_CLOSED',message:'원래 검증 탭 닫힘'}}:{}),...(payload.action==='recoverSavedDraftTarget'?{recovered:true,draftProof:{...repairProof(h),validatedSteps:[2,3,4,5],checkpointSequence:15}}:{})});
+  await h.idle();await h.click(open);await h.click(prepareDraft);const original=h.f.sent[1].payload.packet.requestId,reservation=[...h.stored];assert.equal(h.button(recoverSavedTarget),undefined);
+  await h.click(recoverDraft);assert.ok(h.button(recoverSavedTarget));assert.equal(h.button(prepareDraft),undefined);assert.equal(h.button(reviewPrepared),undefined);
+  const stale=h.button(recoverSavedTarget).props.onClick;stale();stale();await h.idle();assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','recoverPreparedDraft','recoverSavedDraftTarget']);assert.equal(h.button(recoverSavedTarget),undefined);assert.ok(h.button(reviewPrepared),h.text());assert.deepEqual(h.lockPairs.at(-1),[true,false]);
+  stale();await h.idle();assert.equal(h.f.sent.length,4);assert.deepEqual([...h.stored],reservation);assert.ok(h.f.sent.every(row=>row.payload.packet.requestId===original));assert.equal(h.f.history.length,0);assert.ok(h.f.calls.every(row=>row.method==='GET'));
+ }finally{h.close();}
+});
+
+test('validated closed-target recovery keeps capability scope source and stale callback guards',async()=>{
+ for(const mode of ['open','unrelated','no-capability','different-document','source','intent','disabled','review-ABA']){const h=await fixture();try{
+  h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,...savedTargetCapabilities,...(mode==='no-capability'?{savedDraftTargetRecoveryAvailable:false}:{})}
+   :draftResult(h.f,payload.packet.requestId,'validated',{docId:mode==='different-document'&&payload.action==='recoverPreparedDraft'?2362998:2362997,...(payload.action==='recoverPreparedDraft'&&mode!=='open'?{error:{code:mode==='unrelated'?'UNRELATED_READ_FAILURE':'SAVED_DRAFT_TARGET_CLOSED',message:'검증 탭 읽기 중단'}}:{}),...(payload.action==='recoverPreparedDraft'&&mode==='open'?{recovered:true}:{})});
+  await h.idle();await h.click(open);await h.click(prepareDraft);assert.equal(h.button(recoverSavedTarget),undefined);await h.click(recoverDraft);
+  if(['open','unrelated','no-capability','different-document'].includes(mode)){assert.equal(h.button(recoverSavedTarget),undefined,mode);continue;}
+  const stale=h.button(recoverSavedTarget)?.props.onClick;assert.ok(stale,mode);const reservation=[...h.stored];
+  if(mode==='source')h.f.refresh=async()=>({...h.f.review,preparedBodySha256:'f'.repeat(64)});
+  if(mode==='intent'){const[key,raw]=reservation[0];h.stored.set(key,JSON.stringify({...JSON.parse(raw),requestId:'33333333-3333-4333-8333-333333333333'}));}
+  if(mode==='disabled')h.render({...h.props(),disabled:true});
+  if(mode==='review-ABA'){const props=h.props();h.render({...props,review:{...props.review,reviewDigest:'f'.repeat(64)}});h.render(props);}
+  stale();await h.idle();assert.equal(h.f.sent.some(row=>row.payload.action==='recoverSavedDraftTarget'),false,mode);assert.equal(h.f.history.length,0);assert.equal(h.f.sent.filter(row=>row.payload.action==='prepareDraft').length,1);
+ }finally{h.close();}}
+});
+
 test('saved-target button requires its exact closed response and native flag, and unrelated or stale reads revoke old callbacks',async()=>{
  for(const mode of ['no-flag','unrelated','identity','document','stale-read','source-ABA']){const h=await fixture();let code='SAVED_DRAFT_TARGET_CLOSED';try{
   h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,...savedTargetCapabilities,...(mode==='no-flag'?{savedDraftTargetRecoveryAvailable:false}:{})}

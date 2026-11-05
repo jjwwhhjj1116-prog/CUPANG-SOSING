@@ -158,7 +158,8 @@ function targetValid(target,context,requestId){
 }
 function savedDraftTargetScope(state,context){
   return state.draftOnly===true&&state.preparedLifecycle!==true&&Array.isArray(context.identity.members)&&state.docId!==null
-    &&['update-requested','updated'].includes(state.state)&&state.operationId===state.requestId+':update'&&state.validatedSteps.length===0
+    &&(['update-requested','updated'].includes(state.state)&&state.operationId===state.requestId+':update'&&state.validatedSteps.length===0
+      ||state.state==='validated'&&state.operationId===state.requestId+':validate:5'&&same(state.validatedSteps,[2,3,4,5]))
     &&(state.stageConsents??[]).length===0&&state.challenge===null&&state.receipt===null&&state.humanConfirmedAt===undefined&&state.submitRequestedAt===undefined
     &&!state.baselineDocIds.some(docId=>String(docId)===String(state.docId));
 }
@@ -223,7 +224,7 @@ function checkpointValid(state,context){
   if(state.savedDraftTargetRecovery!==undefined){const recovery=state.savedDraftTargetRecovery,base=['format','phase','previousTarget','priorState','priorSequence','previousSessionId','startedAt','docId'],keys=[...base,...(recovery?.phase==='requested'?[]:['target']),...(recovery?.phase==='bound'?['proof','proofSha256']:[]),...(recovery?.closedTargetHistory===undefined?[]:['closedTargetHistory'])];
     if(!object(recovery)||Object.keys(recovery).length!==keys.length||keys.some(key=>!Object.hasOwn(recovery,key))||recovery.format!=='yoofam-saved-draft-target-recovery-v1'
       ||!['requested','created','bound'].includes(recovery.phase)||state.draftOnly!==true||!Array.isArray(context.identity.members)||state.docId===null||!same(recovery.docId,state.docId)||state.baselineDocIds.some(docId=>String(docId)===String(state.docId))
-      ||!['update-requested','updated'].includes(recovery.priorState)||!targetValid(recovery.previousTarget,context,state.requestId)
+      ||!['update-requested','updated','validated'].includes(recovery.priorState)||recovery.priorState==='validated'&&!same(state.validatedSteps,[2,3,4,5])||!targetValid(recovery.previousTarget,context,state.requestId)
       ||!Number.isSafeInteger(recovery.priorSequence)||recovery.priorSequence<1||recovery.priorSequence>=state.sequence
       ||typeof recovery.previousSessionId!=='string'||!ID.test(recovery.previousSessionId)||!Number.isSafeInteger(recovery.startedAt)||recovery.startedAt<1||recovery.startedAt>state.updatedAt
       ||!closedSavedTargetHistoryValid(recovery,state,context)
@@ -564,7 +565,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
   }
   async function recoverSavedTarget(context,state,action){
     if(!nativeLifecycle||!savedDraftTargetScope(state,context)||typeof adapter.readOwnedTargetPresence!=='function'||typeof adapter.qualifySavedDraftTarget!=='function')
-      fail('SAVED_DRAFT_TARGET_SCOPE','같은 저장 문서의 검증 전 원래 요청에서만 현재 읽기 탭을 복구할 수 있습니다.');
+      fail('SAVED_DRAFT_TARGET_SCOPE','같은 저장 문서의 원래 검증 기록에서만 현재 읽기 탭을 복구할 수 있습니다.');
     // Current app identity/body may outlive routine authentication refresh. No
     // old or replacement tab is selected, and no new session is committed yet.
     let source=await guard(context,{...state,ownedTarget:null,tab:null,sessionId:null});
@@ -612,7 +613,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
     if(!savedTargetProofValid(proof,state,context,target)||proof.baselineSha256!==await digest(state.baselineDocIds)||Math.abs(clock()-proof.observedAt)>60000||proof.observedAt<state.savedDraftTargetRecovery.startedAt)
       fail('SAVED_DRAFT_TARGET_UNCONFIRMED','같은 저장 문서의 현재 본문·전체 파일·바이트 증거를 확인하지 못했습니다. 파일과 본문을 다시 보내지 않았습니다.');
     await guard(context,{...state,ownedTarget:target,tab,sessionId:source.sessionId});
-    state=await save(context,state,{state:'updated',ownedTarget:target,tab,sessionId:source.sessionId,savedDraftTargetRecovery:{...state.savedDraftTargetRecovery,phase:'bound',proof,proofSha256:await digest(proof)}});
+    state=await save(context,state,{state:state.savedDraftTargetRecovery.priorState==='validated'?'validated':'updated',ownedTarget:target,tab,sessionId:source.sessionId,savedDraftTargetRecovery:{...state.savedDraftTargetRecovery,phase:'bound',proof,proofSha256:await digest(proof)}});
     return result(state,{recovered:true});
   }
   async function operate(packet,sender,action,details){

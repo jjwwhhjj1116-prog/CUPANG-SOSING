@@ -3,7 +3,7 @@ import type { DetailWorkspaceView } from '@/app/detail-workspace';
 import { applyDetailWorkspaceImage, readDetailWorkspaceImage, recoverDetailWorkspaceImage, translateDetailWorkspaceImage,
   type DetailWorkspaceEditorContext, type DetailWorkspaceImageReply } from '@/app/detail-workspace-image-client';
 import { FreeImageApplyError, FreeImageVisionError, observeFreeImageVisionStatus, recognizeFreeImage, renderFreeImageTranslation, sameFreeImageSource,initializeFreeImageVisionRegions,
-  type FreeImageVisionAttempt,
+  type FreeImageVisionAttempt, type FreeImageVisionStatus,
   type FreeImageLoaded, type FreeImageRegion, type FreeImageRendered } from '@/app/free-image-translation-client';
 import type { FreeImageEditDocument } from '@/app/free-image-edit-document';
 import type { FreeImageSource } from '@/app/free-image-translation';
@@ -13,10 +13,11 @@ import {parseImageOriginalPreservationProof} from '@/app/image-no-text-proof';
 export const WORKSPACE_BATCH_BYTES = 30 * 1024 * 1024;
 export type DetailWorkspaceBatchItem = {
   photoId: string; position: number; sourceKey: string; originKey: string;
-  status: 'pending' | 'ready' | 'failed' | 'applied' | 'uncertain' | 'unchanged'; message: string;
+  status: 'pending' | 'ready' | 'failed' | 'applied' | 'uncertain' | 'unchanged' | 'deferred'; message: string;
   texts: { original: string; translated: string }[]; rendered?: FreeImageRendered; originalEditDocument?: FreeImageEditDocument;
   attempt?: { image: FreeImageRendered; context: DetailWorkspaceEditorContext; reply?: DetailWorkspaceImageReply };
-  visionAttempt?: { image: FreeImageLoaded; request: FreeImageVisionAttempt };
+  visionAttempt?: { image: FreeImageLoaded; request: FreeImageVisionAttempt; observation?: FreeImageVisionStatus };
+  deferredByPhotoId?: string;
   appliedKey?: string;
 };
 export type DetailWorkspaceImageBatch = { selection: DetailWorkspaceSelection; saved: DetailWorkspaceView; language: 'zh' | 'en'; items: DetailWorkspaceBatchItem[]; lastReply?: DetailWorkspaceImageReply };
@@ -84,20 +85,28 @@ async function preview(batch:DetailWorkspaceImageBatch,entry:DetailWorkspaceBatc
 /** Stored BODY rows only. Preparation never saves an image or quotation. */
 export async function prepareDetailWorkspaceImageBatch(input: Omit<DetailWorkspaceImageBatch, 'items'>, signal: AbortSignal,
   onProgress: (batch: DetailWorkspaceImageBatch, message: string) => void = () => {}, deps: Dependencies = {}): Promise<DetailWorkspaceImageBatch> {
-  if((input as Partial<DetailWorkspaceImageBatch>).items?.some(item=>item.status==='uncertain'))throw changed();
+  if((input as Partial<DetailWorkspaceImageBatch>).items?.some(item=>item.status==='uncertain'||item.status==='deferred'))throw changed();
   const saved = await validateDetailWorkspaceReply(input.selection, input.saved); signal.throwIfAborted();
   if (!saved.workspace || !['zh', 'en'].includes(input.language)) throw changed();
-  let batch: DetailWorkspaceImageBatch = { ...structuredClone({ ...input, saved }), items: saved.workspace.document.photos.flatMap((photo, position) => photo.role === 'body'
+  const batch: DetailWorkspaceImageBatch = { ...structuredClone({ ...input, saved }), items: saved.workspace.document.photos.flatMap((photo, position) => photo.role === 'body'
     ? [{ photoId: photo.id, position, sourceKey: photo.key, originKey: photo.originKey, status: 'pending' as const, message: '', texts: [] }] : []) };
   if (!batch.items.length) throw Error('보관한 구성에 번역할 본문 사진이 없습니다.');
-  await exact(batch, signal, deps); let position = 0;
-  for (const entry of batch.items) {
-    signal.throwIfAborted(); position++; onProgress(batch, `${position}/${batch.items.length} 본문 사진 번역 준비 중…`);
+  return preparePending(batch,signal,onProgress,deps);
+}
+async function preparePending(batch:DetailWorkspaceImageBatch,signal:AbortSignal,onProgress:(batch:DetailWorkspaceImageBatch,message:string)=>void,deps:Dependencies){
+  await exact(batch, signal, deps);
+  for (const entry of batch.items.filter(row=>row.status==='pending')) {
+    const position=batch.items.findIndex(row=>row.photoId===entry.photoId)+1;
+    signal.throwIfAborted(); onProgress(batch, `${position}/${batch.items.length} 본문 사진 번역 준비 중…`);
     let image:FreeImageLoaded|undefined;
     try {
       image = await readDetailWorkspaceImage(editor(batch, entry.photoId), signal, deps.fetcher); signal.throwIfAborted(); matchesPhoto(image, batch, entry);
       if (image.editDocument) throw Error('보관한 편집 문서가 있는 사진은 일괄 번역하지 않습니다. 자르기·수동 문구·브러시·스타일을 유지하며 개별 이미지 편집에서 확인해주세요.');
       if(image.visionConfiguration!==undefined&&!parseImageTextVisionConfiguration(image.visionConfiguration)?.configured)throw Error('이미지 Vision이 설정되지 않았습니다. 다른 문구 인식·번역 서비스로 자동 전환하지 않았습니다.');
+      const held=batch.items.find(row=>row.status==='deferred'&&row.visionAttempt&&(row.visionAttempt.request.source.sourceKey===image!.source.sourceKey
+        ||row.visionAttempt.request.source.sourceSha256===image!.source.sourceSha256&&row.visionAttempt.request.source.width===image!.source.width&&row.visionAttempt.request.source.height===image!.source.height));
+      if(held){batch=replace(batch,{...entry,status:'deferred',visionAttempt:held.visionAttempt,deferredByPhotoId:held.deferredByPhotoId??held.photoId,
+        message:'같은 원본의 보류된 번역 요청을 유지했습니다. 이 사진의 새 추론은 요청하지 않았습니다.'});onProgress(batch,'같은 원본의 보류 요청을 보존하고 다음 사진을 확인합니다.');continue;}
       let verifiedNoText=false;
       if(image.noTextProof){const proof=parseImageOriginalPreservationProof(image.noTextProof);if(!proof||proof.productId!==image.source.productId||proof.sourceKey!==image.source.sourceKey||proof.sourceSha256!==image.source.sourceSha256||proof.width!==image.width||proof.height!==image.height||!same(proof.configuration,image.visionConfiguration))throw changed();verifiedNoText=proof.sourceLanguage===batch.language;}
       if(verifiedNoText)batch=replace(batch,unchanged(entry));
@@ -115,6 +124,19 @@ export async function prepareDetailWorkspaceImageBatch(input: Omit<DetailWorkspa
     onProgress(batch, `${position}/${batch.items.length} 본문 사진 준비 완료`);
   }
   return batch;
+}
+
+/** Explicitly set aside one inference, never an unknown image save. Retain
+ * its original request so neither this photo nor a pixel alias is retried. */
+export async function deferDetailWorkspaceBatchInference(batch:DetailWorkspaceImageBatch,photoId:string,signal:AbortSignal,
+  onProgress:(batch:DetailWorkspaceImageBatch,message:string)=>void=()=>{},deps:Dependencies={}):Promise<DetailWorkspaceImageBatch>{
+  const entry=batch.items.find(row=>row.photoId===photoId),pending=entry?.visionAttempt;
+  if(!entry||entry.status!=='uncertain'||!pending||entry.attempt||entry.rendered||batch.items.some(row=>row!==entry&&row.status==='uncertain')
+    ||pending.request.sourceLanguage!==batch.language||!sameFreeImageSource(pending.request.source,pending.image.source)
+    ||pending.request.source.productId!==batch.selection.productId||pending.request.source.workspaceTarget?.photoId!==photoId)throw changed();
+  matchesPhoto(pending.image,batch,entry);await exact(batch,signal,deps);
+  const next=replace(batch,{...entry,status:'deferred',message:'원래 번역 요청 '+pending.request.requestId+'을 보류했습니다. 결과는 유지하며 새 추론이나 자동 적용은 하지 않습니다.'});
+  onProgress(next,'이 사진의 원래 요청을 보류하고 남은 사진만 준비합니다.');return preparePending(next,signal,onProgress,deps);
 }
 
 /** Only our own exactly confirmed prior save can advance the source binding of an untouched row. */
@@ -139,15 +161,22 @@ export async function applyDetailWorkspaceBatchResult(batch: DetailWorkspaceImag
 
 /** Recovery classifies this exact retained attempt and never replays an image write or starts the next row. */
 export async function recoverDetailWorkspaceBatchResult(batch: DetailWorkspaceImageBatch, signal: AbortSignal,
-  onProgress: (batch: DetailWorkspaceImageBatch) => void = () => {}, deps: Dependencies = {}): Promise<DetailWorkspaceImageBatch> {
-  const entry = batch.items.find(row => row.status === 'uncertain'); if(!entry)throw changed();
+  onProgress: (batch: DetailWorkspaceImageBatch) => void = () => {}, deps: Dependencies = {},photoId?:string): Promise<DetailWorkspaceImageBatch> {
+  const entry = batch.items.find(row => photoId===undefined?row.status==='uncertain':row.photoId===photoId&&row.status==='deferred'); if(!entry||entry.deferredByPhotoId)throw changed();
   if(entry.visionAttempt){
     const pending=entry.visionAttempt,observed=await observeFreeImageVisionStatus(pending.request,signal,deps.fetcher);signal.throwIfAborted();
+    const deferred=entry.status==='deferred',recorded={...pending,observation:observed};
+    if(deferred){batch=replace(batch,{...entry,visionAttempt:recorded});onProgress(batch);}
+    const finish=(item:DetailWorkspaceBatchItem)=>{const next={...replace(batch,item),items:replace(batch,item).items.map(row=>row.deferredByPhotoId===entry.photoId
+      ?{...row,status:'failed' as const,visionAttempt:recorded,message:'같은 원본의 원래 요청 결과를 보관했습니다. 자동 적용하지 않았으며 개별 검토가 필요합니다.'}:row)};onProgress(next);return next;};
     if(observed.status!=='completed'){
-      const failed=observed.status==='failed',next=replace(batch,{...entry,status:failed?'failed':'uncertain',visionAttempt:failed?undefined:pending,message:failed?'원래 Vision 요청이 실패했습니다. 원본을 유지했습니다.':'원래 Vision 요청의 완료를 확인하지 못했습니다. 새 추론과 다음 사진은 요청하지 않았습니다.'});onProgress(next);return next;
+      const failed=observed.status==='failed',item={...entry,status:failed?'failed' as const:deferred?'deferred' as const:'uncertain' as const,visionAttempt:deferred?recorded:failed?undefined:pending,message:failed?'원래 Vision 요청이 실패했습니다. 원본을 유지했습니다.':'원래 Vision 요청의 완료를 확인하지 못했습니다. 새 추론과 다음 사진은 요청하지 않았습니다.'};
+      if(failed&&deferred)return finish(item);const next=replace(batch,item);onProgress(next);return next;
     }
-    await exact(batch,signal,deps);const image=await readDetailWorkspaceImage(editor(batch,entry.photoId),signal,deps.fetcher);matchesPhoto(image,batch,entry);
-    if(image.editDocument||!sameFreeImageSource(image.source,pending.request.source)||!same(image.visionConfiguration,pending.request.configuration))throw changed();
+    let image:FreeImageLoaded;
+    try{await exact(batch,signal,deps);image=await readDetailWorkspaceImage(editor(batch,entry.photoId),signal,deps.fetcher);matchesPhoto(image,batch,entry);
+      if(image.editDocument||!sameFreeImageSource(image.source,pending.request.source)||!same(image.visionConfiguration,pending.request.configuration))throw changed();
+    }catch(cause){signal.throwIfAborted();if(!deferred)throw cause;const next=replace(batch,{...entry,status:'deferred',visionAttempt:recorded,message:note(cause)+' 원래 완료 응답은 보관했으며 현재 사진에 적용하지 않았습니다.'});onProgress(next);return next;}
     image.visionResult=observed.result!;image.visionRequestId=pending.request.requestId;image.visionExecution={requests:0,cached:true};
     let item:DetailWorkspaceBatchItem;
     try{
@@ -155,7 +184,7 @@ export async function recoverDetailWorkspaceBatchResult(batch: DetailWorkspaceIm
       if(isVerifiedOriginalPreservation(result))item=unchanged(entry);
       else{const styled=initializeFreeImageVisionRegions(image,result);item=await preview(batch,entry,image,styled.regions,signal,deps);}
     }catch(cause){signal.throwIfAborted();item={...entry,status:'failed',visionAttempt:undefined,message:note(cause)};}
-    const next=replace(batch,item);onProgress(next);return next;
+    if(deferred)return finish({...item,visionAttempt:recorded});const next=replace(batch,item);onProgress(next);return next;
   }
   if (!entry.attempt) throw changed();
   const attempt = entry.attempt, reply = await recoverDetailWorkspaceImage(attempt.image, attempt.context, signal, deps.fetcher); signal.throwIfAborted();

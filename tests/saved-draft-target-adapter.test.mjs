@@ -12,9 +12,9 @@ const digest=value=>createHash('sha256').update(canon(value)).digest('hex');
 const bytes=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2RkcAAAAASUVORK5CYII=','base64');
 const response=(url,value,type='application/json')=>{const reply=new Response(type==='application/json'?JSON.stringify(value):value,{headers:{'content-type':type}});Object.defineProperty(reply,'url',{value:url});return reply;};
 async function fixture(options={}){
- let loseRead=options.receiver===true;
+ let loseRead=options.receiver===true&&options.validated!==true;
  const f=await nativeRecoveryFixture(undefined,{browser:{documentRead:row=>loseRead?null:row}});let previousTarget;
- if(options.receiver){const receiver=createProductDocumentDraftReceiver({adapter:f.adapter,store:f.storage.store}),started=await receiver.prepareDraft(f.packet,f.sender);assert.equal(started.state,'update-requested');assert.equal(started.docId,f.createdDocId);previousTarget=(await f.storage.store.get(f.context.key)).ownedTarget;loseRead=false;}
+ if(options.receiver){const receiver=createProductDocumentDraftReceiver({adapter:f.adapter,store:f.storage.store}),started=await receiver.prepareDraft(f.packet,f.sender);assert.equal(started.state,options.validated?'validated':'update-requested');assert.equal(started.docId,f.createdDocId);previousTarget=(await f.storage.store.get(f.context.key)).ownedTarget;loseRead=false;}
  else{const common=await f.start();await f.update(common);previousTarget=common.tab;}
  const baselineDocIds=[...f.documents.keys()].filter(id=>id!==f.createdDocId);
  f.closeOwnedTab();
@@ -105,6 +105,24 @@ test('real native receiver preserves original requested update and completes onl
   assert.deepEqual(q.f.state.uploads,before.uploads);assert.deepEqual([...q.f.documents],before.body);assert.equal(q.f.submitted,0);
  }finally{q.close();}
 });
+test('real validated draft rebind verifies all bytes/body/inventory with zero new Hub mutations',async()=>{
+ const q=await fixture({receiver:true,validated:true});try{
+  const prior=await q.f.storage.store.get(q.f.context.key),before={uploads:copy(q.f.state.uploads),body:copy([...q.f.documents]),writes:q.f.calls.filter(call=>call.name==='hub-fetch'&&call.init.method==='POST').length};
+  const read=await q.receiver.recoverPreparedDraft(q.f.packet,q.f.sender);assert.equal(read.error?.code,'SAVED_DRAFT_TARGET_CLOSED');
+  const result=await q.receiver.recoverSavedDraftTarget(q.f.packet,q.f.sender);assert.equal(result.error,undefined);assert.equal(result.state,'validated');assert.deepEqual(result.draftProof.validatedSteps,[2,3,4,5]);
+  const checkpoint=await q.f.storage.store.get(q.f.context.key);for(const key of ['requestId','docId','identity','identityDigest','packetDigest','bodySha256','originalBodySha256','validatedSteps','operationId','requestedStep'])assert.deepEqual(checkpoint[key],prior[key],key);
+  assert.deepEqual(checkpoint.savedDraftTargetRecovery.previousTarget,prior.ownedTarget);assert.equal(checkpoint.savedDraftTargetRecovery.priorState,'validated');
+  assert.equal((await q.receiver.recoverPreparedDraft(q.f.packet,q.f.sender)).error,undefined);assert.deepEqual(q.f.state.uploads,before.uploads);assert.deepEqual([...q.f.documents],before.body);assert.equal(q.f.calls.filter(call=>call.name==='hub-fetch'&&call.init.method==='POST').length,before.writes);assert.equal(q.f.submitted,0);
+  assert.ok(q.requests.some(row=>new URL(row.url).pathname==='/sr/draft/api/get-images-by-id/'+q.f.createdDocId));assert.ok(q.requests.some(row=>new URL(row.url).pathname==='/sr/draft/api/get-files-by-type/'+q.f.createdDocId));assert.ok(q.requests.some(row=>new URL(row.url).pathname==='/sr/api/image/get-by-key'));
+ }finally{q.close();}
+});
+for(const mode of ['changedBody','missingFile','changedBytes','submitted'])test('validated read-target rebind rejects '+mode+' without replaying any Hub mutation',async()=>{
+ const q=await fixture({receiver:true,validated:true,[mode]:true});try{
+  const prior=await q.f.storage.store.get(q.f.context.key),before={uploads:copy(q.f.state.uploads),body:copy([...q.f.documents]),writes:q.f.calls.filter(call=>call.name==='hub-fetch'&&call.init.method==='POST').length};
+  const result=await q.receiver.recoverSavedDraftTarget(q.f.packet,q.f.sender);assert.equal(result.error?.code,'SAVED_DRAFT_TARGET_UNCONFIRMED');const saved=await q.f.storage.store.get(q.f.context.key);
+  assert.equal(saved.state,'validated');assert.deepEqual(saved.validatedSteps,[2,3,4,5]);assert.deepEqual(saved.ownedTarget,prior.ownedTarget);assert.equal(saved.savedDraftTargetRecovery.phase,'created');assert.deepEqual(q.f.state.uploads,before.uploads);assert.deepEqual([...q.f.documents],before.body);assert.equal(q.f.calls.filter(call=>call.name==='hub-fetch'&&call.init.method==='POST').length,before.writes);assert.equal(q.f.submitted,0);
+ }finally{q.close();}
+});
 
 test('a reserved-target recovery retains full start/final source checks with seven native plan GETs including fresh adapter selection',async()=>{
  const options={receiver:true,missingFile:true},q=await fixture(options);let selected;
@@ -144,7 +162,7 @@ test('a saved-target read receipt cannot bypass the independent source and owner
  const q=await fixture();try{
   const input={identity:q.input.identity,bodySha256:q.f.context.originalBodySha256,preparedBodySha256:q.f.context.bodySha256,packetDigest:q.f.context.packetDigest,requestId:q.input.requestId,docId:q.input.docId},proof=await q.adapter.readSource(input),start=q.f.state.appReads.length,writes=q.f.calls.filter(call=>call.name==='hub-fetch'&&call.init.method==='POST').length;
   await assert.rejects(q.adapter.hubRequest({...q.input,method:'POST',path:'/sr/draft/api/update',operationId:q.input.requestId+':update',body:q.input.expectedBody},{sourceProof:proof}),error=>error.code==='OWNED_RECORD_MISSING');
-  assert.equal(q.f.state.appReads.slice(start).filter(url=>new URL(url).pathname.endsWith('/native-assets')).length,3,'body-write guards always perform their own complete source verification');
+  assert.equal(q.f.state.appReads.slice(start).filter(url=>new URL(url).pathname.endsWith('/native-assets')).length,1,'the once-use nested proof retains a fresh source boundary before the independent ownership guard');
   assert.equal(q.f.calls.filter(call=>call.name==='hub-fetch'&&call.init.method==='POST').length,writes);await assert.rejects(q.adapter.qualifySavedDraftTarget(q.input,{sourceProof:proof}),error=>error.code==='SOURCE_CHANGED');
  }finally{q.close();}
 });

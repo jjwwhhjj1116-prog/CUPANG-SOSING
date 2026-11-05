@@ -40,6 +40,7 @@ export function createNativeDraftDetailAmendmentBrowserAdapter({api=globalThis.c
   const context=await parentContext(request.packet);await readPreparedDocumentPreviewCheckpoint(context,parentStore);const checkpoint=await parentStore.get(context.key);
   if(checkpoint?.state!=='validated'||checkpoint.preparedLifecycle||checkpoint.draftOnly!==true||String(checkpoint.docId)!==String(request.docId)||!same(checkpoint.validatedSteps,[2,3,4,5]))fail('DRAFT_DETAIL_AMENDMENT_PARENT_CHANGED');
   const current=await source(request.packet,context),temporary={checkpoint,packet:request.packet,amendmentId:request.amendmentId},remote=await page(temporary,'read'),expected=copy(context.packet.body);expected.docId=checkpoint.docId;
+  if(remote.parentRecord.state==='updated'&&(checkpoint.savedDraftTargetRecovery?.phase!=='bound'||!same(remote.parentRecord.currentReadRecovery?.proof,checkpoint.savedDraftTargetRecovery.proof)||remote.parentRecord.currentReadRecovery.proofSha256!==checkpoint.savedDraftTargetRecovery.proofSha256))fail('DRAFT_DETAIL_AMENDMENT_PARENT_CHANGED');
   if(!same(normalizeNativeDocumentReadback(remote.remote.body,expected),expected))fail('DRAFT_DETAIL_AMENDMENT_BODY_CHANGED');
   const anchor={origin:context.identity.origin,ownerId:context.identity.ownerId,company:copy(context.identity.company),productId:context.identity.productId,requestId:request.packet.requestId,docId:checkpoint.docId,parentIdentityDigest:context.identityDigest,parentPacketDigest:context.packetDigest,parentReviewDigest:request.packet.review.reviewDigest,parentSourcePlanSha256:context.identity.fingerprint,parentOriginalBodySha256:context.originalBodySha256,parentPreparedBodySha256:context.bodySha256,parentCheckpointSequence:checkpoint.sequence,parentCheckpointSha256:await digest(checkpoint)};
   return{anchor,checkpoint,source:current,remote};
@@ -70,7 +71,7 @@ export function createNativeDraftDetailAmendmentBrowserAdapter({api=globalThis.c
   const derivedRecord={binding:nextBinding,docId:record.anchor.docId,baselineDocIds:copy(record.parentSnapshot.baselineDocIds),createOperationId:record.anchor.requestId+':create',state:'validated',updateOperationId:record.anchor.requestId+':amend:'+record.amendmentId+':update',validation:copy(current.ledger.validation),amendmentOrigin:origin};
   await page(record,'bind',{derivedRecord,expectedRemote:record.updatedRemote});
   const checkpoint={...copy(record.parentSnapshot),key:context.key,identity:copy(context.identity),identityDigest:context.identityDigest,packetDigest:context.packetDigest,bodySha256:context.bodySha256,originalBodySha256:context.originalBodySha256,ownedTarget:target,tab:{...copy(record.parentSnapshot.tab),packetDigest:context.packetDigest},sessionId:proof.sessionId,state:'validated',sequence:1,updatedAt:now(),validatedSteps:[2,3,4,5],stageConsents:[],challenge:null,receipt:null,amendmentOrigin:origin};
-  delete checkpoint.operationId;delete checkpoint.requestedStep;
+  delete checkpoint.operationId;delete checkpoint.requestedStep;delete checkpoint.savedDraftTargetRecovery;
   return{checkpoint,latest:{reviewDigest:record.nextPacket.review.reviewDigest,sourcePlanSha256:context.identity.fingerprint,originalBodySha256:context.originalBodySha256,preparedBodySha256:context.bodySha256,identityDigest:context.identityDigest,packetDigest:context.packetDigest}};
  }
  async function recover(record){

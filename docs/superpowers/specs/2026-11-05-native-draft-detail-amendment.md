@@ -113,6 +113,8 @@ This proves the shipped client's append expectation, **not an observed server ap
 
 ## Owners and acceptance
 
+Before begin, a closed owned target may be rebound using the existing read-only saved-target action when the immutable parent is exactly `validated` with steps `[2,3,4,5]` and its original `:validate:5` operation. Preserve those historical validations and all request/body/source identities; retain the previous target/sequence in the existing recovery audit. A newly reserved dedicated tab must independently prove the same `UNFINISHED` document, full body, image/legal inventory and image bytes. This action sends no create/upload/update/validate/submit. Its page record remains an explicit current-read record with `historicalAckRecovered:false`; amendment begin accepts it only when its proof/hash exactly match the bound parent recovery audit. The pre-validation partial-update scope and its validation behavior remain unchanged.
+
 - **945:** pure extension contract/declarations, durable child store, receiver, native amendment adapter/page boundary, extension handoff dispatch and extension tests.
 - **949:** app client, small descriptor storage, transport/native-source-review integration and amendment UI; preserve descriptor across the Stage5 save/remount; app/bridge/UI tests. Do not edit extension runtime owned by945.
 - **Root:** independent integration review, frozen build/deploy, real image-quality QA and same-doc acceptance. No live mutation until all source/body/file checks and append evidence qualify.

@@ -350,9 +350,10 @@ async function verifyDraftState(value:unknown,session:ProductDocumentSession,exp
         action==='recoverDraft'&&!beforeCreate&&session.preview.savedDraftTargetRecoveryAvailable===true&&value.error.code==='SAVED_DRAFT_TARGET_CLOSED');
       fail();
     }
-    // Tab recovery only qualifies the original current server state. It does
-    // not claim validation ACKs, a new document or a successful upload/update.
-    if(action==='recoverSavedDraftTarget'&&(value.state!=='updated'||value.recovered!==true||draft.validatedSteps.length!==0||value.error!==undefined))fail();
+    // A read rebind preserves either the original unvalidated update or its
+    // already completed four validations; it never creates validation facts.
+    if(action==='recoverSavedDraftTarget'&&(value.recovered!==true||value.error!==undefined
+      ||!(value.state==='updated'&&draft.validatedSteps.length===0||value.state==='validated'&&same(draft.validatedSteps,[2,3,4,5]))))fail();
     if(signal.aborted)fail();return freeze(copy(value) as unknown as ProductDocumentState);
   }catch(cause){if(cause instanceof ProductDocumentBridgeError&&cause.code==='PRODUCT_DOCUMENT_DRAFT_SOURCE_FAILURE')throw cause;return fail();}
 }

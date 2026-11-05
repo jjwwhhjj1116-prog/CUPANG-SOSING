@@ -12,12 +12,13 @@ function panel({ heldPrepare, lost = false, echoBusy = false,visionUnknown=false
  const react = { useRef(value) { const index = cursor++; return slots[index] ?? (slots[index] = { current: value }); }, useState(value) { const index = cursor++; if (!(index in slots)) slots[index] = { value: typeof value === 'function' ? value() : value }; return [slots[index].value, next => { assert.equal(closed, false, 'no late state write'); slots[index].value = typeof next === 'function' ? next(slots[index].value) : next; }]; }, useEffect(fn, deps) { enqueue(effects, fn, deps); }, useLayoutEffect(fn, deps) { enqueue(layouts, fn, deps); } };
  const helpers = {
   prepareDetailWorkspaceImageBatch: async (input, signal, progress) => { calls.push(['prepare', input.language]); const batch = { ...input, items: input.saved.workspace.document.photos.flatMap((photo, position) => photo.role === 'body' ? [{ photoId: photo.id, position, sourceKey: photo.key, status: 'ready', message: '', texts: [], rendered: { output: new Blob(['preview']) } }] : []) }; progress(batch, '준비 중'); await heldPrepare?.promise;
-   if(visionUnknown){const retained={...batch,items:batch.items.map((item,index)=>index===0?{...item,status:'uncertain',visionAttempt:{request:{requestId:'original-vision'}},message:'원래 Vision 요청 확인 필요'}:{...item,status:'pending',rendered:undefined})};progress(retained,'원래 요청 확인 필요');return retained;}
+   if(visionUnknown){const retained={...batch,items:batch.items.map((item,index)=>index===0?{...item,status:'uncertain',rendered:undefined,visionAttempt:{request:{requestId:'original-vision'}},message:'원래 Vision 요청 확인 필요'}:{...item,status:'pending',rendered:undefined})};progress(retained,'원래 요청 확인 필요');return retained;}
    signal.throwIfAborted(); return failed ? {...batch,items:batch.items.map((row,index)=>mixed&&index===1?row:{...row,status:'failed',message:'VISION_TEXT_FIT',rendered:undefined})} : batch; },
   applyDetailWorkspaceBatchResult: async (batch, id, signal, progress) => { calls.push(['apply', id]); signal.throwIfAborted(); const item = batch.items.find(row => row.photoId === id); if (lost) { const next = { ...batch, items: batch.items.map(row => row === item ? { ...row, status: 'uncertain', attempt: {} } : row) }; progress(next); throw Error('ACK lost'); }
    const reply = { ...batch.saved, source: {}, key: 'owner/result-' + id, applied: true, workspace: { ...batch.saved.workspace, revision: batch.saved.workspace.revision + 1, digest: String(batch.saved.workspace.revision + 1), document: { ...batch.saved.workspace.document, photos: batch.saved.workspace.document.photos.map(photo => photo.id === id ? { ...photo, key: 'owner/result-' + id } : photo) } } };
    const next = { ...batch, saved: { view: reply.view, workspace: reply.workspace, roles: reply.roles }, lastReply: reply, items: batch.items.map(row => row === item ? { ...row, status: 'applied' } : row) }; progress(next); return next; },
-  recoverDetailWorkspaceBatchResult: async batch => { calls.push(['recover']); return { ...batch, items: batch.items.map(row => row.status === 'uncertain' ? { ...row, status: 'ready', attempt: undefined } : row) }; }
+  deferDetailWorkspaceBatchInference:async(batch,id,signal,progress)=>{calls.push(['defer',id]);signal.throwIfAborted();const next={...batch,items:batch.items.map(row=>row.photoId===id?{...row,status:'deferred'}:row.status==='pending'?{...row,status:'ready',rendered:{output:new Blob(['next-preview'])}}:row)};progress(next,'원래 요청 보류 · 다음 사진만 준비');return next;},
+  recoverDetailWorkspaceBatchResult: async (batch,_signal,_progress,_deps,photoId) => { calls.push(photoId?['recover',photoId]:['recover']); return { ...batch, items: batch.items.map(row => (photoId?row.photoId===photoId&&row.status==='deferred':row.status === 'uncertain') ? { ...row, status: 'ready', attempt: undefined } : row) }; }
  };
  const r = runtime(async () => { throw Error('no fetch'); }, { react, 'react/jsx-runtime': { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) }, '@/app/detail-workspace-image-batch': helpers }), Component = r.load('app/components/detail-workspace-image-batch-panel.tsx').DetailWorkspaceImageBatchPanel;
  function render() { cursor = 0; const tree = Component(props); layouts.splice(0).forEach(fn => fn()); effects.splice(0).forEach(fn => fn()); return tree; }
@@ -79,4 +80,19 @@ test('manual failed-photo navigation stays blocked while another BODY preview aw
   h.update({onReviewPhoto:id=>opened.push(id)});await h.prepare();
   const review=h.control('작업 본문 사진 one 개별 편집');assert.ok(!review||review.props.disabled);review?.props.onClick();assert.deepEqual(opened,[]);
  }finally{h.close();}}
+});
+
+test('explicit unknown-Vision deferral prepares the next photo while retaining the request, and never applies without review',async()=>{
+ const h=panel({visionUnknown:true});try{
+  await h.prepare();const defer=h.control('작업 본문 사진 one 보류하고 다음 사진 준비');assert.ok(defer&&!defer.props.disabled);
+  await h.click('이 사진 보류하고 다음 사진 준비');assert.deepEqual(h.calls,[['prepare','zh'],['defer','one']]);
+  assert.match(text(h.render()),/번역 보류/);assert.equal(h.toolbar.disabled,true);assert.equal(h.pending.at(-1),true);
+  assert.equal(h.button('번역 미리보기 닫기').props.disabled,true);assert.equal(h.control('작업 본문 사진 one 번역 결과 검토 완료'),undefined);
+  assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);h.review('two');await h.click('검토한 본문 사진 1개 적용');assert.deepEqual(h.calls.at(-1),['apply','two']);
+  await h.click('보류 사진 결과 확인');assert.deepEqual(h.calls.at(-1),['recover','one']);assert.equal(h.calls.filter(row=>row[0]==='defer').length,1);
+ }finally{h.close();}
+});
+test('unknown saves have no deferral escape, and retired deferral buttons cannot start work',async()=>{
+ const save=panel({lost:true});try{await save.prepare();save.review('one');await save.click('검토한 본문 사진 1개 적용');assert.equal(save.button('이 사진 보류하고 다음 사진 준비'),undefined);}finally{save.close();}
+ const h=panel({visionUnknown:true});try{await h.prepare();const old=h.control('작업 본문 사진 one 보류하고 다음 사진 준비');assert.ok(old);h.update({active:false});h.update({active:true});old.props.onClick();await settle();assert.deepEqual(h.calls,[['prepare','zh']]);}finally{h.close();}
 });

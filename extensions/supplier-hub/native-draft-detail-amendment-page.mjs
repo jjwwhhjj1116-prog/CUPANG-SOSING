@@ -18,7 +18,8 @@ export async function nativeDraftDetailAmendmentPage(input){
    if(saved?.format!=='yoofam-owned-document-mirror-v1'||!same(saved.binding,binding)||!same(saved.record,input.parentRecord))fail('AMENDMENT_PARENT_RECORD');
    const all=originalRecords();all[binding.packetDigest]=copy(saved.record);root.dataset.yoofamSingleDocumentRecords=JSON.stringify(all);record=all[binding.packetDigest];
   }
-  if(!record||!same(record.binding,binding)||!same(record.docId,doc)||record.createOperationId!==binding.requestId+':create'||record.state!=='validated'||record.submitOperationId||record.baselineDocIds?.some(id=>String(id)===String(doc))
+  const recovered=record?.state==='updated'&&record.updateOperationId===undefined&&record.nativeAssets===undefined&&record.validation===undefined&&record.currentReadRecovery?.fileBodyWritesAllowed===false&&record.currentReadRecovery.historicalAckRecovered===false&&record.currentReadRecovery.proof?.readOnly===true&&record.currentReadRecovery.proof.remoteWrites===false;
+  if(!record||!same(record.binding,binding)||!same(record.docId,doc)||record.createOperationId!==binding.requestId+':create'||record.state!=='validated'&&!recovered||record.submitOperationId||record.baselineDocIds?.some(id=>String(id)===String(doc))
     ||input.parentRecord&&!same(input.parentRecord,record)||parentRecord&&!same(parentRecord,record))fail('AMENDMENT_PARENT_RECORD');
   parentRecord=copy(record);
   const stored=sessionStorage.getItem(key),shown=root.dataset.yoofamDetailAmendments?JSON.parse(root.dataset.yoofamDetailAmendments)[input.amendmentId]:undefined;

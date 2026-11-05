@@ -51,6 +51,8 @@ const auditPhaseLabels={source:'원본 자료 확인',packet:'원래 요청 확�
 const draftOperationTime=()=>Date.now();
 type ConfiguredRegistrationIntent={token:object;requestId:string;packetDigest:string;identityDigest:string;originalBodySha256:string;preparedBodySha256:string;
   expiresAt:number;docId:string|number|null;probed:Set<string>;confirmations:number};
+const validatedReadTarget=(value:ProductDocumentState|null,hint:{state:string;docId:string|number}|null|undefined)=>Boolean(value?.draftOnly===true&&!value.preparedLifecycle&&value.state==='validated'&&!value.needsRecovery&&!value.error
+  &&productReceiptCanonical(value.draftProof?.validatedSteps??[])==='[2,3,4,5]'&&hint?.state==='validated'&&hint.docId===value.docId);
 function completedPreviewSourceReadFailure(cause:unknown):cause is ProductDocumentBridgeError{
   if(!(cause instanceof ProductDocumentBridgeError)||cause.uncertain||!['SOURCE_READ_TIMEOUT','SOURCE_READ_NETWORK','SOURCE_READ_RESPONSE','SOURCE_READ_HTTP'].includes(cause.code))return false;
   const status=cause.code==='SOURCE_READ_HTTP'?Number(cause.message.match(/HTTP ([3-5]\d{2})\)/)?.[1]):undefined;
@@ -413,7 +415,7 @@ export function SupplierHubProductTransport(props:Props){
       ||action==='retryCreateDraft'&&(!before.draftMode||!before.intent||!before.uncertain||!missingCreate||!retryApproved||retryAttempted||approvedRetryPending)
       ||action==='resumeCreateRetryDraft'&&(!before.draftMode||!before.intent||!before.uncertain||!missingCreate||!approvedRetryPending||retryAttempted||expected.preview.createRetryContinuationAvailable!==true)
       ||action==='recoverClosedTarget'&&(!before.draftMode||!before.intent||!before.uncertain||!before.closedTargetNeeded||!before.closedTargetApproved)
-      ||action==='recoverSavedDraftTarget'&&(!before.draftMode||!before.intent||!before.uncertain||before.state?.preparedLifecycle||!savedTargetCurrent||expected.preview.savedDraftTargetRecoveryAvailable!==true)
+      ||action==='recoverSavedDraftTarget'&&(!before.draftMode||!before.intent||!before.uncertain&&!validatedReadTarget(before.state,readHint)||before.state?.preparedLifecycle||!savedTargetCurrent||expected.preview.savedDraftTargetRecoveryAvailable!==true)
       ||action==='repairExistingDraft'&&(!before.draftMode||!before.intent||!before.uncertain||!before.existingRepairNeeded||!before.existingRepairApproved||before.existingRepairAttempted||expected.preview.existingDocumentRepairAvailable!==true)
       ||action==='retryExistingDraftRepair'&&(!before.draftMode||!before.intent||!before.uncertain||!before.existingRepairNeeded||!before.existingRepairApproved||!before.existingRepairAttempted||before.existingRepairRetryAttempted||expected.preview.existingDocumentRepairRetryAvailable!==true)
       ||action==='continueApprovedRepair'&&(!before.draftMode||!before.intent||!before.uncertain||!before.existingRepairRetryAttempted||before.repairContinuationAttempted||!fileListCurrent||expected.preview.existingDocumentRepairContinuationAvailable!==true)
@@ -741,7 +743,7 @@ export function SupplierHubProductTransport(props:Props){
     </details>}
     {session&&<p>회사 {review.identity.company.name} · 포함 옵션 {session.packet.review.members.length}개 · 견적 문서 1개 · 전체 본문 대조 완료</p>}
     {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&!intent&&!state?.preparedLifecycle&&<p role="status">전체 문서의 실제 접수 연결을 검수 중입니다. 현재 상품은 전송하지 않았습니다.</p>}
-    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.88.zip" download>통합 확장 2.1.88 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
+    {session&&!session.preview.liveVerified&&session.preview.draftPreparationAvailable!==true&&<p><a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.89.zip" download>통합 확장 2.1.89 다운로드</a> · 새 견적 초안 준비에는 업데이트한 통합 확장이 필요합니다.</p>}
     {session?.preview.draftPreparationAvailable===true&&!state?.preparedLifecycle&&<section aria-label="새 견적 초안 준비">
       <p>{intent?'원래 요청과 문서의 파일·본문 저장 및 단계 검증 결과를 확인합니다.':'로그인한 Supplier Hub에 새 견적 초안 한 개를 만들고 저장한 이미지·본문과 단계 검증을 확인합니다.'} {session.preview.preparedLifecycleAvailable&&!intent&&!state?'등록전송 시작은 검증 후 현재 문서의 동의 확인 단계로 이어집니다. 초안 만들기는 제출하지 않습니다.':'약관 동의와 최종 제출은 진행하지 않습니다.'}</p>
       {currentDraftHint&&<p role="status">원래 문서 {String(currentDraftHint.docId)} · {currentDraftHint.state==='update-requested'?'파일·본문 저장 결과 미확인':currentDraftHint.state==='validation-requested'?'단계 검증 결과 미확인':'초안 상태 확인 필요'} · 같은 요청 유지</p>}
@@ -751,7 +753,7 @@ export function SupplierHubProductTransport(props:Props){
       {!state&&!uncertain&&!intent&&<button type="button" className="btn primary" disabled={disabled||busy||Boolean(intentError)} onClick={()=>void operateDraft('prepareDraft',session)}>새 견적 초안 만들기 · 제출 안 함</button>}
       {!state&&!uncertain&&!intent&&session.preview.preparedLifecycleAvailable&&<button type="button" className="btn primary" {...registrationStartAttributes(session)} disabled={disabled||busy||Boolean(intentError)||Boolean(error)||Boolean(unsaved)} onClick={()=>void operateDraft('prepareDraft',session,true)}>견적서 등록전송 시작</button>}
       {draftMode&&uncertain&&!state?.preparedLifecycle&&<><p role="status">초안 준비 응답을 확인하지 못했습니다. 같은 초안을 다시 만들지 않고 저장 결과만 조회합니다.</p><button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void(session.preview.preparedLifecycleAvailable&&!currentDraftHint?operatePrepared('recoverPreparedDraft',session):operateDraft('recoverDraft',session))}>같은 초안 저장 결과 확인 · 읽기 전용</button></>}
-      {draftMode&&uncertain&&intent&&!state?.preparedLifecycle&&currentDraftHint?.savedDraftTargetClosed===true&&session.preview.savedDraftTargetRecoveryAvailable===true&&<section aria-label="원래 저장 문서 검증 탭 복구">
+      {draftMode&&(uncertain||validatedReadTarget(state,currentDraftHint))&&intent&&!state?.preparedLifecycle&&currentDraftHint?.savedDraftTargetClosed===true&&session.preview.savedDraftTargetRecoveryAvailable===true&&<section aria-label="원래 저장 문서 검증 탭 복구">
         <p>원래 저장 문서 {String(currentDraftHint.docId)}의 전용 검증 탭이 닫혔습니다. 새 전용 탭에서 현재 저장된 파일·본문을 확인합니다.</p>
         <button type="button" className="btn ghost" disabled={busy||disabled} onClick={()=>void operateDraft('recoverSavedDraftTarget',session)}>원래 저장 문서 검증 탭 복구 · 파일·본문 재전송 안 함</button>
       </section>}

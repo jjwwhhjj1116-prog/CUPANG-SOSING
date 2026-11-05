@@ -57,6 +57,15 @@ for(const action of ['recoverDraft','recoverPreparedDraft'])test(`closed known d
   assert.equal(reply.error.code,'SAVED_DRAFT_TARGET_CLOSED');assert.equal(reply.docId,before.docId);assert.equal(reply.draftOnly,true);assert.deepEqual(f.saved(),before);assert.equal(f.created,0);
   assert.equal(f.calls.some(call=>call.name==='readTab'),false);assert.equal((await readPreparedDocumentPreviewCheckpoint(f.context,f.store)).savedDraftTargetRecoveryAvailableScope,true);f.assertReadOnly();
 });
+test('validated four-step draft detects a closed target and rebinds current reads without replaying validation',async()=>{
+ const f=await fixture(),prior=f.saved();prior.state='validated';prior.validatedSteps=[2,3,4,5];prior.operationId=prior.requestId+':validate:5';prior.requestedStep=5;f.force(prior);
+ for(const action of ['recoverDraft','recoverPreparedDraft']){const read=await f.receiver()[action](f.packet,f.sender);assert.equal(read.error?.code,'SAVED_DRAFT_TARGET_CLOSED');assert.deepEqual(f.saved(),prior);}
+ assert.equal((await readPreparedDocumentPreviewCheckpoint(f.context,f.store)).savedDraftTargetRecoveryAvailableScope,true);
+ const rebound=await f.receiver().recoverSavedDraftTarget(f.packet,f.sender);assert.equal(rebound.error,undefined);assert.equal(rebound.state,'validated');assert.deepEqual(rebound.draftProof.validatedSteps,[2,3,4,5]);
+ const saved=f.saved();for(const key of ['requestId','docId','identity','identityDigest','bodySha256','originalBodySha256','packetDigest','baselineDocIds','validatedSteps','operationId','requestedStep'])assert.deepEqual(saved[key],prior[key],key);
+ assert.equal(saved.savedDraftTargetRecovery.priorState,'validated');assert.equal(saved.savedDraftTargetRecovery.priorSequence,prior.sequence);assert.deepEqual(saved.savedDraftTargetRecovery.previousTarget,prior.ownedTarget);assert.equal(saved.ownedTarget.tabId,90);assert.equal(f.created,1);assert.equal(f.qualified,1);
+ assert.equal((await f.receiver().recoverPreparedDraft(f.packet,f.sender)).error,undefined);assert.equal(f.calls.some(call=>call.name==='hubRequest'&&call.input.method==='POST'),false);f.assertReadOnly();
+});
 
 for(const state of ['update-requested','updated'])test(`saved draft recovery binds exact current read evidence without inventing historic ACKs (${state})`,async()=>{
   const f=await fixture({state}),reply=await f.receiver().recoverSavedDraftTarget(f.packet,f.sender),saved=f.saved(),audit=saved.savedDraftTargetRecovery;

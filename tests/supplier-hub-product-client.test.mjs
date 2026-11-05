@@ -8,7 +8,7 @@ import {createRequire} from 'node:module';
 import {fileURLToPath} from 'node:url';
 import {createHash,webcrypto} from 'node:crypto';
 import {createProductDocumentPacket,PRODUCT_DOCUMENT_PREFLIGHT_TIMEOUT,PRODUCT_DOCUMENT_PREVIEW_ACK_TIMEOUT} from '../extensions/supplier-hub/product-document.mjs';
-import {productDocumentIdentity} from '../extensions/supplier-hub/product-document-receiver.mjs';
+import {productDocumentIdentity,createProductDocumentDraftReceiver} from '../extensions/supplier-hub/product-document-receiver.mjs';
 import {singleDocumentIdentity} from '../extensions/supplier-hub/single-document.mjs';
 import {singlePacket,SINGLE_COMPANIES,SINGLE_SENDER} from './helpers/supplier-hub-single-document.mjs';
 import {normalizeRejectionDetails} from '../extensions/supplier-hub/rejection-details.mjs';
@@ -198,11 +198,24 @@ test('saved-document target recovery accepts only an independently read updated 
  assert.equal([...f.timers.values()][0].due-f.clock.now,180000);f.advance(90000);assert.equal(f.listeners.size,1);assert.equal(f.sent.length,2);
  f.emit(f.sent[1],draftState(f,'updated',{docId:'2347603',recovered:true}));const recovered=await pending;
  assert.equal(recovered.state,'updated');assert.equal(recovered.docId,'2347603');assert.deepEqual(plain(recovered.draftProof.validatedSteps),[]);assert.equal(recovered.receipt,undefined);assert.equal(recovered.challenge,undefined);
- for(const mode of ['created','validated','missing-recovered','error']){f.bridge=async()=>draftState(f,['created','validated'].includes(mode)?mode:'updated',{docId:'2347603',...(mode==='missing-recovered'?{}:{recovered:true}),...(mode==='error'?{error:{code:'UNQUALIFIED',message:'미확인'}}:{})});
+ for(const mode of ['created','validated-incomplete','missing-recovered','error']){f.bridge=async()=>draftState(f,mode==='created'?'created':mode==='validated-incomplete'?'validated':'updated',{docId:'2347603',...(mode==='missing-recovered'?{}:{recovered:true}),...(mode==='validated-incomplete'?{draftProof:{evidence:'document-draft-preparation',validatedSteps:[2,3,4],checkpointSequence:12,observedAt:f.clock.now,submitted:false,consented:false}}:{}),...(mode==='error'?{error:{code:'UNQUALIFIED',message:'미확인'}}:{})});
   await assert.rejects(f.client.runProductDocumentDraft(session,'recoverSavedDraftTarget',new AbortController().signal),error=>error.code==='PRODUCT_DOCUMENT_DRAFT_REPLY_IDENTITY'&&!error.uncertain);
  }
  f.bridge=async()=>undefined;const missing=f.client.runProductDocumentDraft(session,'recoverSavedDraftTarget',new AbortController().signal);await f.wait(()=>f.sent.length===7);f.advance(180001);
  await assert.rejects(missing,error=>error.code==='PRODUCT_DOCUMENT_ACK_MISSING'&&!error.uncertain&&!error.savedDraftTargetClosed);assert.equal(f.calls.length,0);assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);
+});
+
+test('actual native receiver validated read-target reply passes the app parser with all original four-step facts intact',async()=>{
+ const f=await fixture();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,savedDraftTargetRecoveryAvailable:true});const session=await f.session(),c=f.context,oldTarget={tabId:71,windowId:c.identity.windowId,origin:'https://supplier.coupang.com',requestId:f.packet.requestId,packetDigest:c.packetDigest};
+ let saved={format:c.packet.format,key:c.key,laneKey:c.laneKey,identity:c.identity,identityDigest:c.identityDigest,bodySha256:c.bodySha256,originalBodySha256:c.originalBodySha256,packetDigest:c.packetDigest,requestId:f.packet.requestId,state:'validated',sequence:12,updatedAt:f.clock.now,docId:2362997,tab:{...oldTarget,authenticated:true,company:c.identity.company},ownedTarget:oldTarget,sessionId:'old-session',baselineDocIds:[],validatedSteps:[2,3,4,5],stageConsents:[],challenge:null,receipt:null,draftOnly:true,operationId:f.packet.requestId+':validate:5',requestedStep:5};
+ const unused=async()=>assert.fail('read-target recovery never creates, writes or consents a document'),before=plain(saved),store={get:async()=>plain(saved),claim:unused,compareAndSet:async(_key,previous,next)=>{assert.deepEqual(saved,previous);saved=plain(next);return true;}};
+ const adapter={readSource:async()=>({current:true,submissionReady:true,priorDocumentClear:true,identity:c.identity,bodySha256:c.originalBodySha256,sessionId:'fresh-session'}),readOwnedTargetPresence:async input=>({requestId:f.packet.requestId,packetDigest:c.packetDigest,tabId:input.tab.tabId,windowId:c.identity.windowId,closed:input.tab.tabId===71,checkedAt:f.clock.now}),createTarget:async()=>({...oldTarget,tabId:90}),readTab:async input=>({...input.tab,authenticated:true,company:c.identity.company}),
+  qualifySavedDraftTarget:async input=>({format:'yoofam-current-saved-draft-target-v1',requestId:f.packet.requestId,docId:saved.docId,tabId:input.tab.tabId,windowId:c.identity.windowId,identityDigest:c.identityDigest,packetDigest:c.packetDigest,preparedBodySha256:c.bodySha256,sourcePlanSha256:c.identity.fingerprint,baselineSha256:digest([]),bodySha256:c.bodySha256,fileSetSha256:'1'.repeat(64),byteSetSha256:'2'.repeat(64),filesCount:1,duplicateMatches:0,documentState:'UNFINISHED',readOnly:true,remoteWrites:false,historicalAckRecovered:false,observedAt:f.clock.now}),hubRequest:async()=>assert.fail('no Hub mutation or validation replay')};
+ for(const name of ['readDocument','recoverWrite','readValidation','navigate','readAgreements','verifyHumanConfirmation','confirmAgreements','submit','observeReceipt','qualifyPreparedDraft'])adapter[name]=unused;
+ const receiver=createProductDocumentDraftReceiver({adapter,store,now:()=>f.clock.now});let actual;f.bridge=async payload=>{assert.equal(payload.action,'recoverSavedDraftTarget');actual=await receiver.recoverSavedDraftTarget(payload.packet,SINGLE_SENDER);return actual;};
+ const result=await f.client.runProductDocumentDraft(session,'recoverSavedDraftTarget',new AbortController().signal);assert.equal(result.state,'validated');assert.equal(result.recovered,true);assert.deepEqual(plain(result.draftProof.validatedSteps),[2,3,4,5]);assert.equal(result.registered,false);assert.equal(result.receipt,undefined);assert.equal(result.challenge,undefined);
+ for(const key of ['requestId','docId','identity','identityDigest','packetDigest','bodySha256','originalBodySha256','validatedSteps','operationId','requestedStep'])assert.deepEqual(saved[key],before[key],key);
+ for(const change of [v=>{v.preparedBodySha256='f'.repeat(64);},v=>{v.draftProof.validatedSteps=[2,3,4];},v=>{v.draftProof.validatedSteps=[2,3,5,4];},v=>{delete v.recovered;},v=>{v.error={code:'UNCONFIRMED',message:'미확인'};}]){const reply=plain(actual);change(reply);f.bridge=async()=>reply;await assert.rejects(f.client.runProductDocumentDraft(session,'recoverSavedDraftTarget',new AbortController().signal));}
 });
 
 test('same-document repair validates its new capability and only authenticated missing-record evidence enables approval',async()=>{

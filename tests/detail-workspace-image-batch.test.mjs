@@ -6,9 +6,9 @@ import { detailWorkspaceFixture, json } from './helpers/detail-workspace-api.mjs
 import { cropClientFixture } from './helpers/free-image-crop.mjs';
 import { runtime, plain } from './helpers/detail-workspace.mjs';
 const signal = () => new AbortController().signal;
-async function fixture({ bodyCount,vision=false,imageWidth=320,imageHeight=240 } = {}) {
+async function fixture({ bodyCount,vision=false,imageWidth=320,imageHeight=240,distinct=false } = {}) {
   const f = await detailWorkspaceFixture({ companyCode: 'A01464742', companyName: '와이홉' });
-  for (const key of f.selectedKeys) f.api.objects.set(key, await sharp({ create: { width: imageWidth, height: imageHeight, channels: 4, background: '#2468ac' } }).png().toBuffer());
+  for (const [index,key] of f.selectedKeys.entries()) f.api.objects.set(key, await sharp({ create: { width: imageWidth, height: imageHeight, channels: 4, background: distinct?`#2468a${index}`:'#2468ac' } }).png().toBuffer());
   const photos = f.document().photos;
   const document = bodyCount ? f.document([photos[0], ...Array.from({ length: bodyCount }, (_, index) => ({ ...photos[1], id: 'body-' + index })), photos.at(-1)]) : f.document();
   const saved = await json(await f.put(await f.body(document))), selection = { productId: f.product.id, optionId: f.optionId, profileId: saved.view.categoryContext.profileId, view: saved.view };
@@ -142,6 +142,60 @@ test('unknown Vision stops later BODY inference and original-status recovery pre
   assert.deepEqual(prepared.items.map(item=>item.status),['ready','pending']);assert.ok(prepared.items[0].rendered);assert.equal(prepared.items[0].visionAttempt,undefined);
   state='failed';const failed=await f.batch.recoverDetailWorkspaceBatchResult(original,signal(),()=>{},v.deps);assert.equal(failed.items[0].status,'failed');assert.equal(failed.items[0].visionAttempt,undefined);
   assert.deepEqual(statuses,Array(5).fill('GET'));assert.equal(count,1);assert.deepEqual(v.stages,['render']);assert.deepEqual(f.tables(),before);assert.equal(f.calls.filter(call=>call.init.body instanceof FormData).length,0);
+ }finally{f.api.close();}
+});
+
+async function retainedVision(f,{afterReady=false}={}){
+ const v=visionDeps(f),recognized=[];let request;
+ const deps={...v.deps,recognize:async(image,language)=>{recognized.push(image.source.sourceKey);
+  if(afterReady&&recognized.length===1)return v.deps.recognize(image,language);
+  const error=new f.canvas.client.FreeImageVisionError('queued provider','IMAGE_VISION_RESPONSE_UNCONFIRMED',true,{requestId:'90700000-0000-4000-8000-000000000015',source:image.source,sourceLanguage:language,configuration:image.visionConfiguration,inspectionPolicy:'foreign-text-inspection-v1'});request=error.attempt;throw error;
+ }};
+ const batch=await f.batch.prepareDetailWorkspaceImageBatch({selection:f.selection,saved:f.saved,language:'zh'},signal(),()=>{},deps);
+ return{batch,request,recognized,v,deps};
+}
+test('explicitly deferring one unknown inference keeps its exact request and prepares only remaining distinct BODY photos without applying',async()=>{
+ const f=await fixture({vision:true,distinct:true});try{
+  const p=await retainedVision(f),before=f.tables(),held=p.batch.items[0],updates=[];
+  const next=await f.batch.deferDetailWorkspaceBatchInference(p.batch,held.photoId,signal(),(batch)=>updates.push(batch),p.v.deps);
+  assert.deepEqual(next.items.map(row=>row.status),['deferred','ready']);assert.equal(next.items[0].visionAttempt,held.visionAttempt);
+  assert.deepEqual(next.items[0].visionAttempt.request,p.request);assert.equal(updates[0].items[0].status,'deferred');
+  assert.deepEqual(p.v.stages,['vision','render']);assert.equal(next.items[1].sourceKey,p.batch.items[1].sourceKey);assert.ok(next.items[1].rendered);
+  assert.deepEqual(f.tables(),before);assert.equal(f.calls.filter(call=>call.init.body instanceof FormData).length,0);
+  await assert.rejects(f.batch.prepareDetailWorkspaceImageBatch(next,signal(),()=>{},p.v.deps));
+  await assert.rejects(f.batch.deferDetailWorkspaceBatchInference(next,held.photoId,signal(),()=>{},p.v.deps));assert.deepEqual(p.v.stages,['vision','render']);
+ }finally{f.api.close();}
+});
+test('deferral never recognizes a later alias of the same pixels and original-result polling resolves it without inference or apply',async()=>{
+ const f=await fixture({vision:true});try{
+  const p=await retainedVision(f),held=p.batch.items[0],next=await f.batch.deferDetailWorkspaceBatchInference(p.batch,held.photoId,signal(),()=>{},p.v.deps);
+  assert.deepEqual(next.items.map(row=>row.status),['deferred','deferred']);assert.equal(next.items[1].deferredByPhotoId,held.photoId);assert.deepEqual(p.v.stages,[]);
+  const reads=[];let status='running';f.intercept((url,init)=>{if(!url.includes('visionRequestId='))return;reads.push(init.method);return Response.json({format:'yoofam-image-vision-status-v1',source:p.request.source,configuration:p.request.configuration,sourceLanguage:'zh',requestId:p.request.requestId,status,result:status==='completed'?visionValue(f):null,failure:null,execution:{requests:0},readOnly:true});});
+  const pending=await f.batch.recoverDetailWorkspaceBatchResult(next,signal(),()=>{},p.v.deps,held.photoId);assert.deepEqual(pending.items.map(row=>row.status),['deferred','deferred']);
+  status='completed';const recovered=await f.batch.recoverDetailWorkspaceBatchResult(pending,signal(),()=>{},p.v.deps,held.photoId);
+  assert.deepEqual(recovered.items.map(row=>row.status),['ready','failed']);assert.equal(recovered.items[0].visionAttempt.request.requestId,p.request.requestId);
+  assert.equal(recovered.items[0].visionAttempt.observation.status,'completed');assert.equal(recovered.items[1].visionAttempt.request.requestId,p.request.requestId);
+  assert.deepEqual(reads,['GET','GET']);assert.deepEqual(p.v.stages,['render']);assert.equal(f.calls.filter(call=>call.init.body instanceof FormData).length,0);
+ }finally{f.api.close();}
+});
+for(const kind of ['workspace','pixels','configuration'])test(`late deferred completion is retained but never rendered or applied after ${kind} changes`,async()=>{
+ const f=await fixture({vision:true,distinct:true});try{
+  const p=await retainedVision(f),held=p.batch.items[0],next=await f.batch.deferDetailWorkspaceBatchInference(p.batch,held.photoId,signal(),()=>{},p.v.deps);p.v.stages.length=0;
+  if(kind==='workspace'){const document=plain(f.saved.workspace.document);document.imageMargin=4;document.generatedHtml=f.model.generateDetailWorkspaceHtml(document.photos,4);await json(await f.put(await f.body(document,f.saved)));}
+  if(kind==='pixels')f.api.objects.set(held.sourceKey,await sharp({create:{width:320,height:240,channels:4,background:'#ffffff'}}).png().toBuffer());
+  if(kind==='configuration')f.api.bindings.SOURCEFLOW_IMAGE_TEXT_PAID_ALLOWED='false';
+  f.intercept((url,init)=>{if(!url.includes('visionRequestId='))return;assert.equal(init.method,'GET');return Response.json({format:'yoofam-image-vision-status-v1',source:p.request.source,configuration:p.request.configuration,sourceLanguage:'zh',requestId:p.request.requestId,status:'completed',result:visionValue(f),failure:null,execution:{requests:0},readOnly:true});});
+  const recovered=await f.batch.recoverDetailWorkspaceBatchResult(next,signal(),()=>{},p.v.deps,held.photoId);
+  assert.equal(recovered.items[0].status,'deferred');assert.equal(recovered.items[0].visionAttempt.observation.status,'completed');assert.deepEqual(recovered.items[0].visionAttempt.request,p.request);
+  assert.deepEqual(p.v.stages,[]);assert.equal(f.calls.filter(call=>call.init.body instanceof FormData).length,0);
+ }finally{f.api.close();}
+});
+test('a ready preview survives deferring a later inference and unknown image saves cannot use the inference-only escape',async()=>{
+ const f=await fixture({vision:true,distinct:true});try{
+  const p=await retainedVision(f,{afterReady:true}),first=p.batch.items[0],next=await f.batch.deferDetailWorkspaceBatchInference(p.batch,p.batch.items[1].photoId,signal(),()=>{},p.v.deps);
+  assert.equal(next.items[0],first);assert.deepEqual(next.items.map(row=>row.status),['ready','deferred']);assert.deepEqual(p.v.stages,['vision','render']);
+  const fake={...next,items:next.items.map((row,index)=>index===0?{...row,status:'uncertain',attempt:{image:row.rendered,context:{}},visionAttempt:undefined}:row)};
+  await assert.rejects(f.batch.deferDetailWorkspaceBatchInference(fake,first.photoId,signal(),()=>{},p.v.deps));
  }finally{f.api.close();}
 });
 
