@@ -28,6 +28,8 @@ function memberGuard(owner:string,member:SingleReceiptMember|undefined,record:Na
 // The remaining canonical JSON includes exact native number/string ID types,
 // request/option/source/body/identity digests and immutable company binding.
 const immutable=(column:string)=>`json_remove(${column},'$.recordedAt','$.receipt.observedAt','$.receipt.state','$.receipt.sourceStatus','$.receipt.rejectionDetails')`;
+// A repeated observation time cannot hide terminal progress or a rejection.
+const stateOrder=(column:string)=>`(CASE json_extract(${column},'$.receipt.state') WHEN 'pending' THEN 0 WHEN 'accepted' THEN 1 WHEN 'rejected' THEN 2 END)`;
 /** Atomically retain a Chrome receipt without mutating any product/input.
  * A current approved member, exact source and quotation revision are required
  * inside BOTH the write and the idempotent fallback read. */
@@ -50,7 +52,8 @@ async function saveNativeReceipt(owner:string,productId:string,observation:Singl
           AND (json_extract(other.payload,'$.docId') IS json_extract(?,'$.docId') AND json_type(other.payload,'$.docId')=json_type(?,'$.docId')
             OR json_extract(other.payload,'$.receipt.qvtRequestId') IS json_extract(?,'$.receipt.qvtRequestId') AND json_type(other.payload,'$.receipt.qvtRequestId')=json_type(?,'$.receipt.qvtRequestId'))))
     ON CONFLICT(owner_id,product_id,request_id) DO UPDATE SET observed_at=excluded.observed_at,payload=excluded.payload
-      WHERE excluded.observed_at>supplier_hub_single_receipts.observed_at
+      WHERE (excluded.observed_at>supplier_hub_single_receipts.observed_at
+        OR excluded.observed_at=supplier_hub_single_receipts.observed_at AND ${stateOrder('excluded.payload')}>${stateOrder('supplier_hub_single_receipts.payload')})
         AND ${immutable('supplier_hub_single_receipts.payload')}=${immutable('excluded.payload')}
         AND NOT(json_extract(supplier_hub_single_receipts.payload,'$.receipt.state')='accepted' AND json_extract(excluded.payload,'$.receipt.state')='pending')
         AND NOT(json_extract(supplier_hub_single_receipts.payload,'$.receipt.state')='rejected' AND json_extract(excluded.payload,'$.receipt.state')<>'rejected')
@@ -58,13 +61,13 @@ async function saveNativeReceipt(owner:string,productId:string,observation:Singl
   const saved=await db.prepare(sql).bind(record.requestId,record.receipt.observedAt,payload,now,...guard.args,quotationRevision,...authorization.args,
     record.requestId,record.requestId,payload,payload,payload,payload).first<Row>();
   if(saved)return parsedRow(saved,owner,productId);
-  // Older/equal same-identity observations return the newer stored record;
-  // neither a changed immutable value nor a later state regression is a save.
+  // A retained ACK must be at least as recent and advanced as the observation;
+  // a lower state after a competing write is not a confirmed save.
   const previous=await db.prepare(`SELECT r.owner_id,r.product_id,r.request_id,r.observed_at,r.payload,r.created_at FROM products p
     JOIN supplier_hub_single_receipts r ON r.owner_id=p.owner_id AND r.product_id=p.id WHERE ${guard.sql}
       AND COALESCE((SELECT revision FROM product_quotation_fields WHERE product_id=p.id AND owner_id=p.owner_id),0)=? AND ${authorization.sql}
-      AND r.request_id=? AND r.observed_at>=? AND ${immutable('r.payload')}=${immutable('?')}`)
-    .bind(...guard.args,quotationRevision,...authorization.args,record.requestId,record.receipt.observedAt,payload).first<Row>();
+      AND r.request_id=? AND r.observed_at>=? AND ${immutable('r.payload')}=${immutable('?')} AND ${stateOrder('r.payload')}>=${stateOrder('?')}`)
+    .bind(...guard.args,quotationRevision,...authorization.args,record.requestId,record.receipt.observedAt,payload,payload).first<Row>();
   return previous?parsedRow(previous,owner,productId):null;
 }
 export async function saveSingleReceipt(owner:string,productId:string,observation:SingleReceiptObservation,source:QuotationSourceGuard,quotationRevision:number,member?:SingleReceiptMember):Promise<SingleReceiptRecord|null>{
@@ -91,17 +94,17 @@ export async function saveHistoricalProductReceipt(owner:string,productId:string
   const current=`EXISTS(SELECT 1 FROM products p WHERE ${guard.sql}
     AND COALESCE((SELECT revision FROM product_quotation_fields WHERE product_id=p.id AND owner_id=p.owner_id),0)=? AND ${authorization.sql})`;
   const saved=await db.prepare(`UPDATE supplier_hub_single_receipts SET observed_at=?,payload=? WHERE owner_id=? AND product_id=? AND request_id=? AND payload=?
-    AND ${current} AND ?>observed_at
+    AND ${current} AND (?>observed_at OR ?=observed_at AND ${stateOrder('?')}>${stateOrder('payload')})
     AND NOT(json_extract(payload,'$.receipt.state')='accepted' AND json_extract(?,'$.receipt.state')='pending')
     AND NOT(json_extract(payload,'$.receipt.state')='rejected' AND json_extract(?,'$.receipt.state')<>'rejected')
     RETURNING owner_id,product_id,request_id,observed_at,payload,created_at`)
-    .bind(record.receipt.observedAt,payload,owner,productId,record.requestId,oldPayload,...guard.args,quotationRevision,...authorization.args,record.receipt.observedAt,payload,payload).first<Row>();
+    .bind(record.receipt.observedAt,payload,owner,productId,record.requestId,oldPayload,...guard.args,quotationRevision,...authorization.args,record.receipt.observedAt,record.receipt.observedAt,payload,payload,payload).first<Row>();
   if(saved){const result=parsedRow(saved,owner,productId);return result.format==='yoofam-product-document-receipt-v1'?result:null;}
   // A lost response may already have committed this exact request. Return its
   // newer evidence only under the same fresh source/member and immutable IDs.
   const existing=await db.prepare(`SELECT r.owner_id,r.product_id,r.request_id,r.observed_at,r.payload,r.created_at FROM supplier_hub_single_receipts r
-    WHERE r.owner_id=? AND r.product_id=? AND r.request_id=? AND ${current} AND r.observed_at>=? AND ${immutable('r.payload')}=${immutable('?')}`)
-    .bind(owner,productId,record.requestId,...guard.args,quotationRevision,...authorization.args,record.receipt.observedAt,payload).first<Row>();
+    WHERE r.owner_id=? AND r.product_id=? AND r.request_id=? AND ${current} AND r.observed_at>=? AND ${immutable('r.payload')}=${immutable('?')} AND ${stateOrder('r.payload')}>=${stateOrder('?')}`)
+    .bind(owner,productId,record.requestId,...guard.args,quotationRevision,...authorization.args,record.receipt.observedAt,payload,payload).first<Row>();
   if(!existing)return null;const result=parsedRow(existing,owner,productId);return result.format==='yoofam-product-document-receipt-v1'?result:null;
 }
 async function rowsFor(owner:string,productId:string,database?:Awaited<ReturnType<typeof ensureSingleReceiptDatabase>>){

@@ -1452,6 +1452,15 @@ for(const initial of ['SUBMITTED','FINISHED'])test(`a newer stored rejection sup
  }finally{h.close();}
 });
 
+for(const company of SINGLE_COMPANIES)for(const [initial,status]of [['SUBMITTED','FINISHED'],['SUBMITTED','REJECTED'],['FINISHED','REJECTED']])test(company.code+`: equal-time prepared ${initial} save ACK advances to ${status} without replaying its request`,async()=>{
+ const h=await fixture(company,{beforeSaveReply(record){record.receipt.state=status==='FINISHED'?'accepted':'rejected';record.receipt.sourceStatus=status;}});try{
+  allowPrepared(h,payload=>payload.action==='reviewPreparedDraft'?preparedResult(h,payload,'awaiting-consent',14,{challenge:h.f.challenge('logisticsPage')}):preparedResult(h,payload,initial==='SUBMITTED'?'pending':'accepted',17,{receipt:h.f.observation(initial).receipt}));
+  await h.idle();await h.click(open);await h.click(prepareDraft);await h.click(reviewPrepared);await h.click(confirmPrepared);
+  assert.equal(h.f.history[0].receipt.sourceStatus,status);assert.deepEqual(h.lockPairs.at(-1),[status==='FINISHED',false]);assert.match(h.text(),status==='FINISHED'?/파일 처리 완료/:/반려/);assert.equal(h.button('확인 결과 저장 다시 시도'),undefined);
+  assert.equal(h.stored.size,1);assert.equal([...h.stored.keys()].some(key=>key.startsWith('yoofam-product-document-pending:')),status==='FINISHED');assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','reviewPreparedDraft','confirmPreparedDraft']);assert.equal(h.f.calls.filter(row=>row.method==='POST').length,1);
+ }finally{h.close();}
+});
+
 test('a newer stored acceptance releases closing while retaining its exact original request and document',async()=>{
  const h=await fixture(SINGLE_COMPANIES[0],{verified:true,beforeSaveReply(record,f){record.receipt.observedAt=f.clock.now+1;record.receipt.state='accepted';record.receipt.sourceStatus='FINISHED';}});try{
   await h.idle();await h.click(open);h.f.bridge=async payload=>({...h.f.observation('SUBMITTED'),requestId:payload.packet.requestId});await h.click(start);

@@ -48,6 +48,16 @@ export async function singleReceiptStorageFixture(company=SINGLE_COMPANIES[0]){
 }
 const changeReceipt=(record,status,time=record.receipt.observedAt+10)=>({...plain(record),receipt:{...plain(record.receipt),state:{SUBMITTED:'pending',FINISHED:'accepted',REJECTED:'rejected'}[status],sourceStatus:status,observedAt:time}});
 
+for(const company of SINGLE_COMPANIES)test(company.code+': equal-time receipt progress is retained while equal/reversed states preserve stored bytes',async()=>{
+ const f=await singleReceiptStorageFixture(company);try{
+  const at=f.record.receipt.observedAt;await f.save();
+  for(const status of ['FINISHED','REJECTED']){const result=await f.save(changeReceipt(f.record,status,at));assert.equal(result.receipt.sourceStatus,status);assert.equal(result.receipt.observedAt,at);}
+  const before=f.sqlite.prepare('SELECT * FROM supplier_hub_single_receipts').get();
+  for(const [status,time]of [['REJECTED',at],['SUBMITTED',at],['FINISHED',at],['SUBMITTED',at+10],['FINISHED',at+10]]){const saved=await f.save(changeReceipt(f.record,status,time));if(saved)assert.equal(saved.receipt.sourceStatus,'REJECTED');assert.deepEqual(f.sqlite.prepare('SELECT * FROM supplier_hub_single_receipts').get(),before);}
+  assert.equal(f.sqlite.prepare('SELECT count(*) AS n FROM supplier_hub_single_receipts').get().n,1);
+ }finally{f.close();}
+});
+
 for(const company of SINGLE_COMPANIES)test(company.name+' rejection diagnostics persist, refresh and ACK retry idempotently without mutating product input',async()=>{
   const f=await singleReceiptStorageFixture(company);try{
     const before=f.retained(),first=changeReceipt(f.record,'REJECTED');first.receipt.rejectionDetails=rejectionDetails.normalizeRejectionDetails(JSON.stringify({errors:[{columnName:'무게',message:'양수를 입력해주세요.'}]}));

@@ -255,7 +255,6 @@ export async function saveSingleReceiptObservation(attempt:SingleReceiptSaveAtte
     const record=parseStoredSingleReceipt(value.receipt);await receiptActor(record,scope,before);
     const expected=observation.receipt!,immutableReceipt=(value:SingleDocumentReceipt)=>Object.fromEntries(Object.entries(value).filter(([key])=>!['observedAt','state','sourceStatus','rejectionDetails'].includes(key)));
     const receiptMatches=record.receipt.observedAt>=expected.observedAt&&singleCanonical(immutableReceipt(record.receipt))===singleCanonical(immutableReceipt(expected))
-      &&(record.receipt.observedAt!==expected.observedAt||record.receipt.state===expected.state&&record.receipt.sourceStatus===expected.sourceStatus)
       &&(expected.state!=='accepted'||record.receipt.state!=='pending')&&(expected.state!=='rejected'||record.receipt.state==='rejected');
     if(record.optionId!==optionId||record.requestId!==packet.requestId||record.docId!==observation.docId||record.identityDigest!==observation.identityDigest
       ||record.packetDigest!==observation.packetDigest||record.preparedBodySha256!==observation.preparedBodySha256||record.originalBodySha256!==observation.originalBodySha256

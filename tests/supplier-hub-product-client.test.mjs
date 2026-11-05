@@ -355,6 +355,18 @@ async function legacyRecord(f){const packet=singlePacket(f.actor.company);packet
   receipt:{state:'pending',sourceStatus:'SUBMITTED',docId:'legacy-doc-728',company:f.actor.company,identityDigest:context.identityDigest,preparedBodySha256:context.bodySha256,observedAt:f.clock.now,receiptId:'legacy-qvt-728',qvtRequestId:'legacy-qvt-728',evidence:'document-receipt',registered:false}};
   return {...plain(await f.load('app/supplier-hub-single-receipt.ts').validateSingleReceiptObservation(state,packet,origin,f.clock.now)),recordedAt:new Date(f.clock.now).toISOString()};}
 
+for(const company of SINGLE_COMPANIES)test(company.code+': Single save accepts only monotone equal-time acknowledgements with immutable IDs',async()=>{
+ for(const [before,after]of [['SUBMITTED','FINISHED'],['SUBMITTED','REJECTED'],['FINISHED','REJECTED'],['FINISHED','SUBMITTED'],['REJECTED','SUBMITTED'],['REJECTED','FINISHED']]){
+  const f=await fixture(company),record=await legacyRecord(f),packet=singlePacket(company);packet.accountContext=record.identity.accountContext;
+  const state={SUBMITTED:'pending',FINISHED:'accepted',REJECTED:'rejected'};
+  record.receipt.state=state[before];record.receipt.sourceStatus=before;
+  const observation={format:packet.format,requestId:record.requestId,identity:record.identity,identityDigest:record.identityDigest,packetDigest:record.packetDigest,preparedBodySha256:record.preparedBodySha256,originalBodySha256:record.originalBodySha256,state:state[before],docId:record.docId,registered:false,success:false,needsRecovery:false,receipt:plain(record.receipt)},attempt={packet,profileId:packet.profileId,optionId:packet.optionId,observation},saved=plain(record);
+  saved.receipt.state=state[after];saved.receipt.sourceStatus=after;const posts=[],request=async(url,init)=>{if(init?.method==='POST')posts.push(init);return Response.json(String(url).includes('catalog-context')?f.actor:{receipt:saved});},client=f.load('app/supplier-hub-single-client.ts');
+  const saving=()=>client.saveSingleReceiptObservation(attempt,new AbortController().signal,request);
+  if(state[before]==='pending'||state[before]==='accepted'&&state[after]==='rejected'){assert.equal((await saving()).receipt.sourceStatus,after);saved.docId='different-document';await assert.rejects(saving());}else await assert.rejects(saving());assert.equal(f.sent.length,0);assert.ok(posts.length<=2);
+ }
+});
+
 for(const company of SINGLE_COMPANIES)test(company.name+' mixed native history reads once per document with company before/after and queryless scope preserved',async()=>{
   const f=await fixture(company,{queryless:true});f.history=[await groupRecord(f),await legacyRecord(f)];const before=canonical(f.history),records=await f.client.readNativeReceiptHistory({productId:f.packet.review.identity.productId},new AbortController().signal,f.fetch);
   assert.equal(records.length,2);assert.equal(records[0].members.length,2);assert.equal(records[0].requestedProfileId,null);assert.equal(records[1].optionId,'synthetic-option');assert.equal(canonical(f.history),before);assert.ok(f.calls.every(call=>call.method==='GET'));assert.equal(f.calls.filter(call=>call.url.includes('product-receipt')).length,1);assert.equal(f.calls.some(call=>call.url.includes('?profileId=')),false);assert.equal(f.sent.length,0);
@@ -480,6 +492,17 @@ test('audit client accepts optional bounded leaf states and rejects raw values o
  }
  assert.deepEqual(plain(session),before);assert.equal(f.calls.length,0);assert.ok(f.sent.every(row=>['preview','auditUnexpectedLegal'].includes(row.payload.action)));assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);
 });
+for(const company of SINGLE_COMPANIES)test(company.code+': local product receipt save accepts only monotone equal-time acknowledgements without another Hub action',async()=>{
+ for(const [before,after]of [['SUBMITTED','FINISHED'],['SUBMITTED','REJECTED'],['FINISHED','REJECTED']]){
+  const f=await fixture(company,{beforeSaveReply:async(record)=>{record.receipt.sourceStatus=after;record.receipt.state={SUBMITTED:'pending',FINISHED:'accepted',REJECTED:'rejected'}[after];}}),observation=f.observation(before),attempt={packet:f.packet,observation},original=canonical(attempt);
+  const saved=await f.client.saveProductReceiptObservation(attempt,new AbortController().signal,f.fetch);assert.equal(saved.receipt.sourceStatus,after);assert.equal(saved.receipt.observedAt,observation.receipt.observedAt);assert.equal(canonical(attempt),original);assert.equal(f.calls.filter(call=>call.method==='POST').length,1);assert.equal(f.sent.length,0);
+ }
+ for(const [before,after]of [['FINISHED','SUBMITTED'],['REJECTED','SUBMITTED'],['REJECTED','FINISHED']]){
+  const f=await fixture(company,{beforeSaveReply:async(record)=>{record.receipt.sourceStatus=after;record.receipt.state={SUBMITTED:'pending',FINISHED:'accepted',REJECTED:'rejected'}[after];}});
+  await assert.rejects(f.client.saveProductReceiptObservation({packet:f.packet,observation:f.observation(before)},new AbortController().signal,f.fetch));assert.equal(f.sent.length,0);
+ }
+});
+
 test('audit client rejects cross-source or mutation-capable reports while retaining exact bounded bridge failure phase',async()=>{
  const f=await fixture();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,unexpectedLegalAuditAvailable:true});const session=await f.session();
  for(const change of [report=>report.requestId='other-request',report=>report.packetDigest='9'.repeat(64),report=>report.canDelete=true,report=>report.checkpointWrites=true,report=>report.legalEntries[0].fileName='PRIVATE',report=>report.bodyMatchesExpected=false]){

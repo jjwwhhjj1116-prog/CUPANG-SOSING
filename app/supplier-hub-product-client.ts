@@ -460,7 +460,7 @@ export async function saveProductReceiptObservation(attempt:ProductReceiptSaveAt
     const expected=observation.receipt!,immutable=(value:unknown)=>Object.fromEntries(Object.entries(value as Record<string,unknown>).filter(([key])=>!['observedAt','state','sourceStatus','rejectionDetails'].includes(key)));
     if(record.requestId!==packet.requestId||record.docId!==observation.docId||!same(record.identity,observation.identity)||record.identityDigest!==observation.identityDigest||record.packetDigest!==observation.packetDigest
       ||record.preparedBodySha256!==observation.preparedBodySha256||record.originalBodySha256!==observation.originalBodySha256||!same(record.members,packet.review.members)||record.receipt.observedAt<expected.observedAt
-      ||!same(immutable(record.receipt),immutable(expected))||record.receipt.observedAt===expected.observedAt&&(record.receipt.state!==expected.state||record.receipt.sourceStatus!==expected.sourceStatus)
+      ||!same(immutable(record.receipt),immutable(expected))
       ||expected.state==='accepted'&&record.receipt.state==='pending'||expected.state==='rejected'&&record.receipt.state!=='rejected')throw Error('보관한 접수 결과와 원래 전체 상품 문서가 다릅니다.');
     sameActor(before,await readSingleCatalogContext(active,request));if(active.aborted)throw Error('문서 접수 저장 확인이 취소됐습니다.');return freeze(copy(record));
   });

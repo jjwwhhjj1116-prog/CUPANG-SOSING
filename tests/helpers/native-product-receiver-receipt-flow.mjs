@@ -16,7 +16,7 @@ const withUrl=(response,url)=>{Object.defineProperty(response,'url',{value:url})
  * Chrome surface and Supplier Hub transport replaced by in-memory fixtures.
  * No returned receiver observation is authored by this helper. */
 export async function nativeReceiverReceiptFixture(company=companies[0],options={}){
- const source=await nativeReviewFixture(company),state={status:'SUBMITTED',qvtRequestId:'000769-QVT-raw',rowChanges:{},uploads:[],appReads:[],uploadReads:[],registry:new Map(),humanConfirmations:[]};
+ const source=options.source??await nativeReviewFixture(company),state={status:'SUBMITTED',qvtRequestId:'000769-QVT-raw',rowChanges:{},uploads:[],appReads:[],uploadReads:[],registry:new Map(),humanConfirmations:[]};
  let browser,selected;
  try{
   const fields=await source.fields(),changes=[
