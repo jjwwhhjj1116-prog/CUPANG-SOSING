@@ -79,6 +79,7 @@ function harness({submission=false,batch,integration,packaging=false,captureLabe
     if(batch&&name==='@/app/components/batch-seo-work-panel')return{BatchSeoWorkPanel:props=>{seoBatch=props;return null;}};
     if(submission&&name==='@/app/components/quotation-fields-editor')return{QuotationFieldsEditor:props=>{quotationEditor={...props,mount:active,onDirtyChange(value){quotationDirty=value;props.onDirtyChange(value);}};return {type:'div',props:{'data-workspace-dirty':quotationDirty,'data-workspace-saving':quotationBusy}};}};
     if(packaging&&name==='@/app/components/product-options-editor')return{ProductOptionsEditor:props=>{packagingEditor=props;return null;}};
+    if(submission&&name==='@/app/components/supplier-hub-product-submission')return{SupplierHubProductSubmission:props=>({type:'native-product',props})};
     if(name.startsWith('@/app/components/')&&!implemented.has(name.split('/').at(-1)))return new Proxy({},{get:()=>()=>null});
     if(name.startsWith('@/'))return load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts'));
     return native(name);
@@ -120,6 +121,8 @@ function harness({submission=false,batch,integration,packaging=false,captureLabe
   title:()=>nodes(render()).find(node=>node.type==='input'&&(node.props['aria-label']==='SEO 상품명'||node.props.maxLength===500)),
   workspace:()=>nodes(render()).find(node=>node.props?.['aria-label']==='상품 등록 작업 공간'),
   async click(label){const target=button(label);assert.ok(target&&!target.props.disabled,'available button: '+label);target.props.onClick();await settle();},
+  nativeSubmission(id){return nodes(render()).find(node=>node.type==='native-product'&&node.props.productId===id);},
+  async openLegacyReview(){const legacy=nodes(render()).find(node=>node.type==='details'&&node.props['aria-label']==='Excel 파일 전송 · 별도 방식');assert.ok(legacy);legacy.props.onToggle({currentTarget:{open:true}});await settle();},
   async openBoardStage(label,step='SEO',optionId='sku-2'){
    const target=button(label);assert.ok(target&&!target.props.disabled,'available board button: '+label);target.props.onClick();await settle();
    assert.equal(nodes(render()).some(node=>node.props?.['aria-label']==='상품 등록 작업 공간'),false,'the primary product cell opens option selection before editing');
@@ -148,7 +151,7 @@ test('common detail shortcut preserves unsaved description and opens the current
 
 test('packaging review retains unsaved source and quotation fields before opening the exact saved option',async()=>{
  const h=harness({submission:true,packaging:true});try{
-  await h.settle();await h.openBoardStage('상품 b');
+  await h.settle();await h.openBoardStage('상품 b');await h.click('2가격 설정');await h.click('7견적서 작업');await h.click('1SEO 설정');
   const initialTarget=JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget));assert.deepEqual(initialTarget,{optionId:'sku-2',fieldId:'title'});
   h.title().props.onChange({target:{value:'보존할 미저장 상품명'}});await h.settle();
   h.packagingEditor.onReviewPackaging('sku-2');await h.settle();assert.equal(h.title().props.value,'보존할 미저장 상품명');assert.deepEqual(JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget)),initialTarget);
@@ -164,8 +167,8 @@ test('packaging review retains unsaved source and quotation fields before openin
 
 test('retained packaging callback cannot replace a newly opened workspace target',async()=>{
  const h=harness({submission:true,packaging:true});try{
-  await h.settle();await h.openBoardStage('상품 b');const old=h.packagingEditor.onReviewPackaging;
-  await h.openBoardStage('상품 b','SEO','sku-3');const requestCount=h.requests.length;
+  await h.settle();await h.openBoardStage('상품 b');await h.click('2가격 설정');const old=h.packagingEditor.onReviewPackaging;
+  await h.openBoardStage('상품 b','SEO','sku-3');await h.click('7견적서 작업');await h.click('1SEO 설정');const requestCount=h.requests.length;
   assert.deepEqual(JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget)),{optionId:'sku-3',fieldId:'title'});
   old('previous-option');await h.settle();assert.deepEqual(JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget)),{optionId:'sku-3',fieldId:'title'});assert.equal(h.button('1SEO 설정').props['aria-current'],'step');assert.equal(h.requests.length,requestCount,'retained callback cannot refresh or navigate the newly selected option');
   assert.ok(h.requests.every(request=>request.method==='GET'));
@@ -174,7 +177,8 @@ test('retained packaging callback cannot replace a newly opened workspace target
 
 test('packaging review from a category-bound submission target keeps the quotation panel and manual start row',async()=>{
  const h=harness({submission:true,packaging:true});try{
-  await h.settle();await h.openBoardStage('상품 b');await h.click('7견적서 작업');await h.click('저장한 견적 전송 준비');await h.click('견적서 수정하기');
+  await h.settle();await h.openBoardStage('상품 b');await h.click('7견적서 작업');await h.click('저장한 견적 전송 준비');
+  h.nativeSubmission('b').props.onInspect({optionId:'sku-2',fieldId:'title',categoryId:'80719'});await h.settle();
   assert.equal(h.quotationEditor.navigationTarget.categoryId,'80719');assert.equal(h.quotationEditor.profileId,undefined,'the captured profile is resolved by immutable product context, without an override');
   const automaticRow=()=>nodes(h.workspace()).find(node=>node.type==='label'&&text(node)==='카테고리에 저장한 입력 시작 행 자동 사용');
   const rowInput=()=>nodes(nodes(h.workspace()).find(node=>node.type==='label'&&text(node).startsWith('상품 데이터 입력 시작 행'))).find(node=>node.type==='input');
@@ -196,7 +200,7 @@ test('connection dialog displays returned server states without static collectio
  const h=harness({integration});try{
   await h.settle();const utility=()=>nodes(h.render()).find(node=>node.type==='nav'&&node.props['aria-label']==='계정 및 연결 도구'),connection=()=>nodes(utility()).find(node=>node.type==='button'&&node.props['aria-label']?.startsWith('연동 설정'));assert.equal(connection().props['data-state'],'unknown');await h.click('연동 설정');assert.equal(connection().props['data-state'],'read');assert.match(connection().props['aria-label'],/실제 AI 호출은 별도 확인/);
   const dialog=()=>nodes(h.render()).find(node=>node.props?.['aria-label']==='연동 상태');
-  assert.match(text(dialog()),/Cloudflare Access 검증됨/);assert.match(text(dialog()),/읽기 쿼리 성공/);assert.match(text(dialog()),/fixture-text/);assert.match(text(dialog()),/별도 이미지 가공 모델·키 설정 필요/);
+  assert.match(text(dialog()),/Cloudflare Access 검증됨/);assert.match(text(dialog()),/읽기 쿼리 성공/);assert.match(text(dialog()),/fixture-text/);assert.match(text(dialog()),/별도 이미지 생성 모델·키 설정 필요/);assert.match(text(dialog()),/브라우저 내 처리 · 별도 모델 키 불필요/);
   assert.doesNotMatch(text(dialog()),/공급원 연결 필요|쿠플러스 확장|역할 분석 필요|전달받았|제안 전송은 차단/);
   integration.database='unavailable';integration.translation.configured=false;await h.click('다시 확인');
   assert.match(text(dialog()),/연결 확인 실패/);assert.doesNotMatch(text(dialog()),/fixture-text/);
@@ -211,12 +215,14 @@ test('reviewed archive product enters transmission preparation with its own prof
   const step=nodes(h.render()).find(node=>node.type==='button'&&text(node)==='7견적서 작업');assert.ok(step);step.props.onClick();await h.settle();
   await h.click('저장한 견적 전송 준비');
   assert.equal(h.workspace(),undefined);assert.match(text(h.render()),/선택한 상품 1건/);
-  let reads=h.requests.filter(request=>request.url.includes('/submission-review'));assert.equal(reads.length,1);assert.equal(reads[0].url,'/api/products/a/submission-review');
+  assert.equal(h.nativeSubmission('a').props.profileId,undefined);assert.equal(h.nativeSubmission('b'),undefined);
+  let reads=h.requests.filter(request=>request.url.includes('/submission-review'));assert.equal(reads.length,0,'native preparation does not start an Excel review');
+  await h.openLegacyReview();reads=h.requests.filter(request=>request.url.includes('/submission-review'));assert.equal(reads.length,1);assert.equal(reads[0].url,'/api/products/a/submission-review');
   await h.click('견적서 수정하기');assert.match(text(h.workspace()),/상품 a/);assert.equal(h.quotationEditor.profileId,undefined,'the captured profile is resolved by immutable product context, without an override');
-  await h.click('저장한 견적 전송 준비');reads=h.requests.filter(request=>request.url.includes('/submission-review'));assert.equal(reads.length,2);assert.equal(reads[1].url,reads[0].url);
+  await h.click('저장한 견적 전송 준비');assert.ok(h.nativeSubmission('a'));await h.openLegacyReview();reads=h.requests.filter(request=>request.url.includes('/submission-review'));assert.equal(reads.length,2);assert.equal(reads[1].url,reads[0].url);
   await h.click('×');await h.click('AI상품등록');
   assert.equal(nodes(h.render()).find(node=>node.props?.['aria-label']==='상품 b 선택').props.checked,true);
-  await h.click('등록 전송');reads=h.requests.filter(request=>request.url.includes('/submission-review'));assert.equal(reads.at(-1).url,'/api/products/b/submission-review');
+  await h.click('등록 전송');assert.ok(h.nativeSubmission('b'));assert.equal(h.nativeSubmission('a'),undefined);await h.openLegacyReview();reads=h.requests.filter(request=>request.url.includes('/submission-review'));assert.equal(reads.at(-1).url,'/api/products/b/submission-review');
   assert.ok(h.requests.every(request=>request.method==='GET'),'preparation navigation never writes, exports or sends files');
  }finally{h.close();}
 });
