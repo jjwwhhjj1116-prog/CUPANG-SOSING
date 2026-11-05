@@ -4,6 +4,19 @@ import {nativeReviewFixture,companies,plain} from './helpers/native-source-revie
 import {quotationAiUI,nodes} from './helpers/quotation-ai-ui.mjs';
 const file='app/components/supplier-hub-native-source-review.tsx',name='SupplierHubNativeSourceReview';
 const text=value=>Array.isArray(value)?value.map(text).join(''):value&&typeof value==='object'?text(value.props?.children):value==null?'':String(value);
+for(const company of companies)test(`${company.code}: opening the quotation defers native file scans until the existing review action`,async()=>{
+ const f=await nativeReviewFixture(company);let ui;try{
+  const before=f.state(),images=f.objectState();
+  ui=quotationAiUI({productId:f.id,profileId:f.profile.id,view:f.quotationView,disabled:false,autoRead:false},f.request,file,name);
+  await ui.idle();assert.equal(ui.calls.length,0,'opening a form must not start a full transmission scan');
+  assert.equal(ui.button('견적서·첨부 파일 확인').props.disabled,false);
+  await ui.click('견적서·첨부 파일 확인');
+  const transport=nodes(ui.render()).find(node=>node.props?.review&&typeof node.props.refresh==='function');
+  assert.ok(transport);assert.equal(transport.props.review.identity.fingerprint,f.sourcePlan.sourcePlanSha256);
+  assert.ok(ui.calls.some(call=>call.url===f.sourcePath));assert.ok(ui.calls.every(call=>call.method==='GET'));
+  assert.equal(f.state(),before);assert.equal(f.objectState(),images);assert.deepEqual(f.h.network,[]);
+ }finally{ui?.unmount();f.close();}
+});
 for(const company of companies)test(`${company.code}: primary file-native review reads current originals and exposes exact whole-product transport without public preparation or source collection`,async()=>{
  const f=await nativeReviewFixture(company);let ui;try{
   const before=f.state(),images=f.objectState();ui=quotationAiUI({productId:f.id,profileId:f.profile.id,view:f.quotationView,disabled:false},f.request,file,name);await ui.idle();

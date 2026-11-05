@@ -10,7 +10,7 @@ import {SupplierHubLegalReview} from '@/app/components/supplier-hub-legal-review
 import {nativeSavedQuotationPreview} from '@/app/native-saved-quotation-preview';
 import type {QuotationNavigationTarget} from '@/app/quotation-navigation';
 
-type Props={productId:string;profileId?:string;view:QuotationFieldsView;disabled:boolean;onReceiptSaved?:()=>void;onSourceChanged?:(error?:string)=>void;onReviewLegal?:()=>void;onInspect?:(target:QuotationNavigationTarget)=>void;onLockChange?:(locked:boolean,closeLocked?:boolean)=>void};
+type Props={productId:string;profileId?:string;view:QuotationFieldsView;disabled:boolean;autoRead?:boolean;onReceiptSaved?:()=>void;onSourceChanged?:(error?:string)=>void;onReviewLegal?:()=>void;onInspect?:(target:QuotationNavigationTarget)=>void;onLockChange?:(locked:boolean,closeLocked?:boolean)=>void};
 const roles={MAIN:'대표',ADDITIONAL:'추가',SIZECHART:'사이즈표',LABEL:'표시사항',DETAIL:'상세'};
 const text=(value:unknown)=>typeof value==='string'||typeof value==='number'?String(value):'';
 const node=(value:unknown):Record<string,unknown>=>value&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:{};
@@ -21,7 +21,7 @@ export function SupplierHubNativeSourceReview(props:Props){
 /** A file-native review has its own immutable body and source fingerprint. No
  * public-URL prepare POST or source collection is triggered by entering it. */
 function NativeSourceScope(props:Props){
- const {productId,profileId,disabled,onReceiptSaved,onLockChange}=props;
+ const {productId,profileId,disabled,autoRead=true,onReceiptSaved,onLockChange}=props;
  const [plan,setPlan]=useState<NativeAssetSourcePlan|null>(null),planRef=useRef<NativeAssetSourcePlan|null>(null);
  const [review,setReview]=useState<SupplierHubProductDocumentReview|null>(null),reviewRef=useRef<SupplierHubProductDocumentReview|null>(null);
  const [busy,setBusy]=useState(false),[locked,setLocked]=useState(false),lockRef=useRef(false),closeLockRef=useRef(false),[error,setError]=useState('');
@@ -46,15 +46,17 @@ function NativeSourceScope(props:Props){
   // A background GET may hash many saved files. It owns this panel's pending
   // slot, but never freezes editing or closing the surrounding quotation.
   // Changed view/disabled keys unmount this scope and abort/discard the read.
-  if(!allowed())return;const task=begin(false);reviewRef.current=null;setReview(null);
-  try{const value=await readCurrentNativeAssetSource({productId,profileId,quotationView:current.current.props.view,signal:task.controller.signal,fetcher:fetch});if(task.active()){planRef.current=value;setPlan(value);}}
-  catch(cause){if(task.active()){planRef.current=null;setPlan(null);setError(cause instanceof Error?cause.message:'현재 견적서 파일을 확인하지 못했습니다.');}}
+  if(!allowed())return null;const task=begin(false);reviewRef.current=null;setReview(null);
+  try{const value=await readCurrentNativeAssetSource({productId,profileId,quotationView:current.current.props.view,signal:task.controller.signal,fetcher:fetch});if(task.active()){planRef.current=value;setPlan(value);return value;}return null;}
+  catch(cause){if(task.active()){planRef.current=null;setPlan(null);setError(cause instanceof Error?cause.message:'현재 견적서 파일을 확인하지 못했습니다.');}return null;}
   finally{task.finish();}
  }
  const readRef=useRef(load);useLayoutEffect(()=>{readRef.current=load;});
- useEffect(()=>{if(!disabled)void readRef.current();},[disabled]);
+ useEffect(()=>{if(autoRead&&!disabled)void readRef.current();},[autoRead,disabled]);
  async function prepare(){
-  const selected=planRef.current;if(!allowed()||!selected?.metadataValid||!selected.sourcePlanSha256||selected.issues.some(issue=>issue.level==='error'))return;
+  if(!allowed())return;
+  const selected=planRef.current??await load();
+  if(!allowed()||!selected?.metadataValid||!selected.sourcePlanSha256||selected.issues.some(issue=>issue.level==='error'))return;
   const task=begin();reviewRef.current=null;setReview(null);
   try{const value=await reviewCurrentNativeSupplierHubProductDocument({productId,profileId,quotationView:current.current.props.view,sourcePlan:selected,signal:task.controller.signal,fetcher:fetch});
    if(task.active()&&planRef.current===selected){reviewRef.current=value;setReview(value);}}
@@ -69,7 +71,7 @@ function NativeSourceScope(props:Props){
  const savedPreview=!disabled&&!busy&&plan?nativeSavedQuotationPreview(plan,props.view):[];
  return <section className="quotation-fields-notice" aria-label="상품 견적서 전송 자료" aria-busy={busy}>
   <div className="quote-actions"><button type="button" className="btn ghost" disabled={disabled||busy||locked||legalBusy} onClick={()=>void load()}>저장한 견적 자료 다시 확인</button>
-   {!review&&<button type="button" className="btn primary" disabled={disabled||busy||locked||legalBusy||!plan?.metadataValid||errors.length>0} onClick={()=>void prepare()}>견적서·첨부 파일 확인</button>}</div>
+   {!review&&<button type="button" className="btn primary" disabled={disabled||busy||locked||legalBusy||(plan?!plan.metadataValid:autoRead)||errors.length>0} onClick={()=>void prepare()}>견적서·첨부 파일 확인</button>}</div>
   {busy&&<p role="status">현재 저장한 견적서와 첨부 파일을 확인하고 있습니다…</p>}{error&&<p role="alert">{error}</p>}
   {errors.length>0&&<div role="alert"><p>전송 전 확인 필요 {errors.length}건{errorGroups.length<errors.length?` · 같은 안내 ${errorGroups.length}개로 묶음`:''}</p><ul>{errorGroups.map(issue=><li key={issue.key}><strong>{issue.context}</strong>: {issue.message}{issue.count>1?` (${issue.count}건)`:''}{issueLinks(issue)}</li>)}</ul></div>}
   {errors.some(issue=>issue.code==='NATIVE_ASSET_LEGAL_UNCONFIRMED')&&props.onSourceChanged&&<button type="button" className="btn ghost" disabled={disabled||busy||locked||legalBusy} onClick={()=>{if(!allowed())return;if(current.current.props.onReviewLegal)current.current.props.onReviewLegal();else setLegalOpen(true);}}>서류 해당 여부 확인</button>}

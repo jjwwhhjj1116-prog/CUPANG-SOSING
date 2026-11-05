@@ -5,6 +5,12 @@ import {hubSchemaSnapshot} from './helpers/hub-schema.mjs';
 
 const load=quotationTitleLoader(),model=load('app/quotation-schema.ts'),policy=load('app/quotation-seo-title.ts');
 const plain=value=>JSON.parse(JSON.stringify(value));
+test('the quotation form defers expensive native transmission reads while preserving its primary review action',async()=>{
+ const ui=quotationTitleUI({view:fixture({native:true})});try{
+  await ui.idle();const review=titleNodes(ui.render()).find(node=>node.props?.primaryProduct===true);
+  assert.ok(review);assert.equal(review.props.autoRead,false);assert.equal(review.props.disabled,false);
+ }finally{ui.close();}
+});
 function fixture({native=false,alias=false,overrides=model.emptyQuotationOverrides()}={}){
  const content=load('app/product-content.ts').emptyProductContent('p1');content.seo.title.value='저장한 SEO 상품명';
  const options=load('app/product-options.ts'),snapshot=native?hubSchemaSnapshot():null;

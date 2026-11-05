@@ -14,13 +14,13 @@ const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);re
  * list child records the real dashboard callbacks so navigation follows the
  * primary cell -> option -> stage flow. HTTP is held at the response boundary;
  * no browser, remote product or operating storage is used. */
-function harness({submission=false,batch,integration,packaging=false,captureLabelBatch=false,confirm}={}){
+function harness({submission=false,batch,integration,packaging=false,captureLabelBatch=false,captureFamily=false,confirm}={}){
  const instances=new Map(),cache=new Map(),effects=[],layoutEffects=[],requests=[],archiveReads=[],settingsReads=[],settingsWrites=[],bannerUploads=[],productReads=[];let active,tree,closed=false,lateDashboardWrites=0,storedSettings=null,holdSettings=false,holdSettingsWrite=false,holdProductRead=false,intakeSettings;
  const now='2026-10-05T00:00:00.000Z';
  const product=id=>({id,owner_id:'test-owner',title:'상품 '+id,source_url:'https://detail.1688.com/offer/'+(id==='a'?'813724060928':'813724060929')+'.html',created_at:now,updated_at:now,image_keys:'[]',options_count:1,source_price_cny:1,exchange_rate:200,supply_margin:50,coupang_margin:40,supply_price:400,sale_price:700,msrp:1000,seo_status:'대기',image_status:'대기',quote_status:'대기',registration_status:'검토 대기',supplier_hub_status:'미전송',goal_stage:'work'});
  const products=[batch?.product??product('b')];
  const profiles=['a','b'].map(id=>({id:'profile-'+id,name:'양식 '+id,revision:1,categoryId:'80719',categoryPath:['바스켓'],mappings:[],template:{name:id+'.xlsx',format:'xlsx',headerRow:1,headers:['상품명'],sheetName:'견적서'}}));
- let quotationEditor,packagingEditor,optionBoard,labelBatch,seoBatch,quotationDirty=false,quotationBusy=false;
+ let quotationEditor,packagingEditor,optionBoard,labelBatch,seoBatch,familyEditor,quotationDirty=false,quotationBusy=false;
  const hooks={
   useState(initial){const instance=active,index=instance.index++;if(!(index in instance.slots))instance.slots[index]=typeof initial==='function'?initial():initial;return[instance.slots[index],value=>{if(!instance.mounted){if(instance.name==='DashboardClient')lateDashboardWrites++;return;}instance.slots[index]=typeof value==='function'?value(instance.slots[index]):value;}];},
   useRef(initial){const index=active.index++;return active.slots[index]??(active.slots[index]={current:initial});},
@@ -79,6 +79,7 @@ function harness({submission=false,batch,integration,packaging=false,captureLabe
     if(batch&&name==='@/app/components/batch-seo-work-panel')return{BatchSeoWorkPanel:props=>{seoBatch=props;return null;}};
     if(submission&&name==='@/app/components/quotation-fields-editor')return{QuotationFieldsEditor:props=>{quotationEditor={...props,mount:active,onDirtyChange(value){quotationDirty=value;props.onDirtyChange(value);}};return {type:'div',props:{'data-workspace-dirty':quotationDirty,'data-workspace-saving':quotationBusy}};}};
     if(packaging&&name==='@/app/components/product-options-editor')return{ProductOptionsEditor:props=>{packagingEditor=props;return null;}};
+    if(captureFamily&&name==='@/app/components/detail-family-apply-panel')return{DetailFamilyApplyPanel:props=>{familyEditor=props;return null;}};
     if(submission&&name==='@/app/components/supplier-hub-product-submission')return{SupplierHubProductSubmission:props=>({type:'native-product',props})};
     if(name.startsWith('@/app/components/')&&!implemented.has(name.split('/').at(-1)))return new Proxy({},{get:()=>()=>null});
     if(name.startsWith('@/'))return load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts'));
@@ -113,7 +114,7 @@ function harness({submission=false,batch,integration,packaging=false,captureLabe
  const settle=async()=>{for(let i=0;i<12;i++){render();await new Promise(resolve=>setImmediate(resolve));}};
  const button=label=>nodes(render()).find(node=>node.type==='button'&&text(node)===label);
  return{requests,archiveReads,settingsReads,settingsWrites,bannerUploads,productReads,product,render,settle,button,get lateDashboardWrites(){return lateDashboardWrites;},get intakeSettings(){return intakeSettings;},get quotationEditor(){return quotationEditor;},
-  get packagingEditor(){return packagingEditor;},get optionBoard(){return optionBoard;},get labelBatch(){return labelBatch;},get seoBatch(){return seoBatch;},setQuotationBusy(value){quotationBusy=value;},
+  get packagingEditor(){return packagingEditor;},get optionBoard(){return optionBoard;},get labelBatch(){return labelBatch;},get seoBatch(){return seoBatch;},get familyEditor(){return familyEditor;},setQuotationBusy(value){quotationBusy=value;},
   setStoredSettings(value){storedSettings=value;},deferSettings(){holdSettings=true;},deferSettingsWrite(){holdSettingsWrite=true;},
   deferProduct(){holdProductRead=true;},
   settingsPanel:()=>nodes(render()).find(node=>node.props?.id==='workspace-settings-panel'),
@@ -162,6 +163,18 @@ test('packaging review retains unsaved source and quotation fields before openin
   assert.deepEqual(JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget)),{optionId:'sku-2',fieldId:'packagedWeightG'});assert.equal(h.quotationEditor.profileId,undefined,'the captured profile is resolved by immutable product context, without an override');assert.equal(h.button('7견적서 작업').props['aria-current'],'step');
   const before=h.quotationEditor.mount;h.packagingEditor.onReviewPackaging('sku-2');await h.settle();assert.notEqual(h.quotationEditor.mount,before);
   assert.ok(h.requests.every(request=>request.method==='GET'),'navigation does not overwrite saved values or transmit a package');
+ }finally{h.close();}
+});
+
+test('a closed optional family tool stays inactive during stage navigation and opens only on disclosure',async()=>{
+ const h=harness({captureFamily:true});try{
+  await h.settle();await h.openBoardStage('상품 b','상세 이미지');
+  assert.equal(h.familyEditor.active,false,'entering step5 must not read an unopened family catalog');
+  const disclosure=()=>nodes(h.workspace()).find(node=>node.type==='details'&&nodes(node.props.children).some(child=>child.type==='summary'&&text(child)==='분할 상품에 상세 이미지 적용'));
+  disclosure().props.onToggle({currentTarget:{open:true}});await h.settle();assert.equal(h.familyEditor.active,true);
+  disclosure().props.onToggle({currentTarget:{open:false}});await h.settle();assert.equal(h.familyEditor.active,false);
+  await h.click('1SEO 설정');await h.click('5상세 이미지');assert.equal(h.familyEditor.active,false);
+  assert.ok(h.requests.every(request=>request.method==='GET'));
  }finally{h.close();}
 });
 
