@@ -13,9 +13,44 @@ import {PRODUCT_DOCUMENT_REQUEST_TTL} from '../extensions/supplier-hub/product-d
 const writes=f=>f.calls.filter(call=>call.name==='hub-fetch'&&call.init.method==='POST').map(call=>new URL(call.url).pathname);
 const coreWrites=f=>f.calls.filter(call=>call.name==='hubRequest'&&call.input.method==='POST').map(call=>call.input.path);
 const forbidden=['navigate','readAgreements','readStageAgreements','verifyHumanConfirmation','confirmAgreements','confirmStageAgreements','submit','observeReceipt'];
+const nativePlanReads=reads=>reads.filter(row=>{const url=new URL(row.url);return url.pathname.endsWith('/native-assets')&&!url.searchParams.has('key')&&!url.searchParams.has('bundle');}).length;
 function draftCore(f){return createSupplierHubDocumentReceiver({adapter:f.adapter,store:f.storage.store,now:()=>f.now},{format:SINGLE_DOCUMENT_FORMAT,identity:singleDocumentIdentity,draftOnly:true});}
 function proof(result){assert.equal(result.draftOnly,true);assert.equal(result.registered,false);assert.equal(result.success,false);assert.equal(result.receipt,undefined);assert.equal(result.challenge,undefined);
  assert.equal(result.draftProof.evidence,'document-draft-preparation');assert.equal(result.draftProof.submitted,false);assert.equal(result.draftProof.consented,false);assert.ok(Number.isSafeInteger(result.draftProof.checkpointSequence));assert.ok(result.draftProof.observedAt>0);}
+
+test('initial native preparation reuses only its nested source proof and retains fresh final write checks',async()=>{
+ const f=await nativeReceiverReceiptFixture();try{
+  let firstWrite;const adapter={...f.adapter,hubRequest:(input,lease)=>{if(!firstWrite&&input.method==='POST')firstWrite={input,lease};return f.adapter.hubRequest(input,lease);}};
+  const start=f.state.appReads.length,result=await createProductDocumentDraftReceiver({adapter,store:f.storage.store}).prepareDraft(f.packet,f.sender);
+  assert.equal(result.state,'validated',JSON.stringify(result));assert.equal(result.draftProof.checkpointSequence,15);
+  assert.equal(nativePlanReads(f.state.appReads.slice(start)),97,'a guard-owned proof avoids two redundant plan reads in each of eight nested Hub requests');
+  assert.ok(firstWrite.lease?.sourceProof);const reads=f.state.appReads.length;
+  for(const lease of [firstWrite.lease,{sourceProof:{}},{}])await assert.rejects(f.adapter.hubRequest(firstWrite.input,lease),{code:'SOURCE_CHANGED'});
+  assert.equal(f.state.appReads.length,reads,'used or fabricated proofs cannot trigger another source read or Hub write');
+  assert.equal(writes(f).length,6);assert.equal(f.state.uploads.length,4);assert.equal(f.submitted,0);
+ }finally{f.close();}
+});
+
+for(const mode of ['saved-source','body','file','account','company','tab','outdated-proof'])test(`nested source proof cannot authorize a write after ${mode} changes`,async()=>{
+ const f=await nativeReceiverReceiptFixture();try{
+  let changed=false;
+  const adapter={...f.adapter,hubRequest:async(input,lease)=>{
+   if(!changed&&input.method==='POST'&&input.path.endsWith('/create')){
+    changed=true;
+    if(mode==='saved-source')f.source.h.sqlite.prepare('UPDATE products SET updated_at=? WHERE id=?').run('2099-01-01T00:00:00.000Z',f.source.id);
+    if(mode==='body')f.source.h.sqlite.prepare('UPDATE product_quotation_fields SET payload=replace(payload,?,?) WHERE product_id=?').run('합성 전체 첫째','변경된 상품명',f.source.id);
+    if(mode==='file'){const bytes=f.source.h.objects.get(f.plan.images[0].key).slice();bytes[bytes.length-1]^=1;f.source.h.objects.set(f.plan.images[0].key,bytes);}
+    if(mode==='account')f.source.h.auth.getChatGPTUser=async()=>null;
+    if(mode==='company')f.source.h.setCompany(companies.find(company=>company.code!==f.context.identity.company.code));
+    if(mode==='tab'){const get=f.browser.api.tabs.get;f.browser.api.tabs.get=async id=>id===f.sender.tab.id?{...await get(id),url:'https://untrusted.example/'}:get(id);}
+    if(mode==='outdated-proof')await f.adapter.readSource({identity:f.context.identity,bodySha256:f.context.originalBodySha256,preparedBodySha256:f.context.bodySha256,packetDigest:f.context.packetDigest,requestId:f.packet.requestId,docId:null});
+   }
+   return f.adapter.hubRequest(input,lease);
+  }};
+  const result=await createProductDocumentDraftReceiver({adapter,store:f.storage.store}).prepareDraft(f.packet,f.sender);
+  assert.equal(changed,true);assert.notEqual(result.state,'validated');assert.equal(writes(f).length,0);assert.equal(f.state.uploads.length,0);assert.equal(f.submitted,0);
+ }finally{f.close();}
+});
 
 for(const company of companies)test(`${company.code}: actual native preparation creates only one new draft, uploads current originals, validates all steps and stops before navigation or terms`,async t=>{
  t.mock.timers.enable({apis:['Date'],now:Date.now()});let f;

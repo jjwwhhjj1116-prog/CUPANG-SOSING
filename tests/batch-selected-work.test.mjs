@@ -297,9 +297,9 @@ test('full mode preserves current saved SEO, main/additional images and labels w
  }
 });
 
-for(const publication of ['unpublished','current','review-required'])test(`full work checks the actual ${publication} BODY publication despite a complete detail badge`,async()=>{
- const h=fixture(),detail=await actualDetailFixture();h.options.mode='full';h.company(detail.f.company);
- Object.assign(h.deps['@/app/batch-selected-detail-work'],detail.model,{processSelectedDetailWork:(id,options)=>detail.model.processSelectedDetailWork(id,{...detail.options,...options},detail.deps)});
+for(const [mode,publication]of [['full','unpublished'],['full','current'],['full','review-required'],['selected','review-required']])test(`${mode} work checks the actual ${publication} BODY publication despite a complete detail badge`,async()=>{
+ const h=fixture(),detail=await actualDetailFixture();h.options.mode=mode;h.company(detail.f.company);
+ Object.assign(h.deps['@/app/batch-selected-detail-work'],detail.model,{processSelectedDetailWork:(id,options)=>{assert.ok(options.currentBodyTranslation,'explicit full/selected detail work carries its current BODY translation intent');assert.deepEqual(plain(options.currentBodyTranslation),{policy:'translate-current-body-v1',productId:id,productVersion:detail.f.view.productVersion});return detail.model.processSelectedDetailWork(id,{...detail.options,...options},detail.deps);}});
  h.intercept((call,init)=>{
   const view=detail.f.view;
   if(call.url==='/api/products/product')return Response.json({product:{id:'product',owner_id:'owner',title:'검증 상품',updated_at:view.productVersion,content_summary:{...savedSummary(['detailImage']),detail:3}}});
@@ -312,9 +312,9 @@ for(const publication of ['unpublished','current','review-required'])test(`full 
  });
  const before=plain(detail.f.view),result=await h.run(['detailImage']);assert.equal(result.stages[0].status,publication==='review-required'?'blocked':'draft',JSON.stringify(result));
  assert.equal(h.calls.filter(call=>call.url.includes('/detail-save?')&&call.method==='GET').length,1);
- assert.equal(detail.calls.filter(call=>call.operation==='vision').length,publication==='unpublished'?2:0);
+ assert.equal(detail.calls.filter(call=>call.operation==='vision').length,publication==='current'?0:2);
  assert.equal(detail.calls.filter(call=>call.operation==='composite-apply').length,publication==='unpublished'?1:0);
- if(publication!=='unpublished'){assert.deepEqual(plain(detail.f.view),before);assert.ok(!detail.calls.some(call=>['render','image-apply'].includes(call.operation)));assert.ok(!h.calls.some(call=>call.method==='PUT'));}
+ if(publication!=='unpublished'){assert.deepEqual(plain(detail.f.view),before);assert.equal(detail.calls.filter(call=>call.operation==='image-apply').length,publication==='current'?0:2);if(publication==='current')assert.ok(!h.calls.some(call=>call.method==='PUT'));}
 });
 
 test('full work with a complete detail badge keeps a sibling Vision request fenced before preparation',async()=>{

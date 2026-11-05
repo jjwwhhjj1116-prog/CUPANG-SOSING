@@ -77,6 +77,15 @@ async function fixture({issue='번역 미완료: 원문 확인',role='detail',se
 }
 const reviewed=body=>body.issues.filter(issue=>issue.code.startsWith('FREE_IMAGE_TRANSLATION_'));
 
+test('warm immutable PNG facts never cache the selected image edit review sidecar',async()=>{
+ const f=await fixture({issue:null}),first=await (await f.get()).json();assert.equal(first.metadataValid,true,JSON.stringify(first.issues));
+ f.calls.length=0;const warm=await (await f.get()).json();assert.equal(warm.sourcePlanSha256,first.sourcePlanSha256);
+ assert.equal(f.calls.some(([method,key])=>method==='get'&&key===f.key),false,'the versioned PNG body is reused');
+ f.objects.set(f.key+'.edit.json',new TextEncoder().encode('{bad'));f.calls.length=0;
+ const changed=await (await f.get()).json();assert.equal(changed.metadataValid,false);assert.equal(reviewed(changed)[0].code,'FREE_IMAGE_TRANSLATION_UNCONFIRMED');
+ assert.equal(f.calls.some(([method,key])=>method==='get'&&key===f.key+'.edit.json'),true,'the review record remains an independent current read');
+});
+
 test('actual native package GET blocks selected unresolved main, additional and detail outputs at their exact current option and field',async()=>{
  for(const role of ['main','additional','detail']){
   const f=await fixture({role}),before=f.state(),response=await f.get();assert.equal(response.status,200,await response.clone().text());const plan=await response.json();

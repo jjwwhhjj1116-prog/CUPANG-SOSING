@@ -41,10 +41,11 @@ export async function GET(request:Request,context:Context){
   await active();
   if(archived)return reply({error:'삭제 보관된 상품이라 전송 원본 검증을 중단했습니다. 삭제된 상품 목록에서 이 초안의 복원 여부를 확인해주세요. 기존 문서를 새로 만들거나 파일·본문을 다시 전송하지 않았습니다.',code:'NATIVE_ASSET_PRODUCT_ARCHIVED'},409);
   trace('initial-scope');
-  const loaded=await loadSinglePackage(owner,id,profileId,company,active,false,undefined,true,{nativeReadOnly:true,trace}),plan=loaded.view.nativeAssetSourcePlan;
+  const loaded=await loadSinglePackage(owner,id,profileId,company,active,false,undefined,true,{nativeReadOnly:true,nativePlanMetadataOnly:key===null&&bundle===null,trace}),plan=loaded.view.nativeAssetSourcePlan;
   if(!plan||plan.format!=='yoofam-native-asset-source-plan-v1'||plan.registered!==false||plan.remoteWrites!==false||plan.submissionReady!==false||plan.transportReady!==false)throw new SingleAssetError('현재 네이티브 원본 파일 계획을 확인하지 못했습니다.','NATIVE_ASSET_PLAN',503);
-  // The loader just finished one complete byte batch and final source fence.
-  // No asynchronous file work has happened since; do not repeat that batch.
+  // The loader finished current private-file proofs and the final source fence.
+  // Plan-only reads may reuse verified immutable-upload facts. No asynchronous
+  // file work has happened since; do not repeat those proofs here.
   if(key===null&&bundle===null){await active();result='plan';const response=reply(plan);response.headers.set('x-yoofam-native-image-batch','v1');return response;}
   if(!plan.metadataValid||!plan.sourcePlanSha256||plan.sourcePlanSha256!==expected||!plan.identity||plan.identity.ownerId!==owner||plan.identity.productId!==id||plan.identity.company.code!==company.code||plan.identity.company.name!==company.name)
    return reply({error:'검토한 원본 계획이 현재 상품·회사·저장값과 다릅니다.',code:'NATIVE_ASSET_PLAN_CHANGED'},409);

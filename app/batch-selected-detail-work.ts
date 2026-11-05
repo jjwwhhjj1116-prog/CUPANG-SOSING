@@ -30,7 +30,7 @@ type PhotoState = { status: 'applied'|'verified'|'preserved'; key: string; parti
 type Peer = { selection: DetailWorkspaceSelection; saved: DetailWorkspaceView; document: DetailWorkspaceDocument };
 export type SelectedDetailWorkState = {
   ownerId: string; productId: string; scope?: WorkspaceSettingsScope; settings?: WorkspaceSettings; view?: QuotationFieldsView; content?: ProductContent;
-  peers?: Peer[]; current?: Peer; shared?: boolean; photos: Record<string, PhotoState>;
+  peers?: Peer[]; current?: Peer; shared?: boolean; reviewRequired?: true; photos: Record<string, PhotoState>;
   seed?: { input: DetailWorkspaceSaveInput; attempt: DetailWorkspaceAttempt };
   image?: { photoId: string; image: FreeImageRendered; context: DetailWorkspaceEditorContext; partial: boolean; retryReady?: true };
   inference?: { photoId: string; attempt: FreeImageVisionAttempt; observation?: FreeImageVisionStatus };
@@ -39,7 +39,8 @@ export type SelectedDetailWorkState = {
 export type SelectedDetailWorkResult = { status: 'completed'|'partial'|'skipped'|'uncertain'; applied: number; failed: number; skipped: number;
   messages: string[]; productVersion?: string; recovered?: boolean; reused?: true; sourceChanged?: true; inferencePending?: true; verifiedUnchanged?: number };
 type Options = { ownerId: string; company: SupplierHubCompany; signal: AbortSignal; fetcher: typeof fetch;
-  state: SelectedDetailWorkState; assertCurrent: () => Promise<void>; expectedProductVersion?: string; onProgress?: (message: string) => void };
+  state: SelectedDetailWorkState; assertCurrent: () => Promise<void>; expectedProductVersion?: string; onProgress?: (message: string) => void;
+  currentBodyTranslation?: { policy: 'translate-current-body-v1'; productId: string; productVersion: string } };
 type Dependencies = { readImage?: typeof readDetailWorkspaceImage; recognize?: typeof recognizeFreeImage; render?: typeof renderFreeImageTranslation;
   applyImage?: typeof applyDetailWorkspaceImage; recoverImage?: typeof recoverDetailWorkspaceImage; observe?: typeof observeFreeImageVisionStatus;
   prepareComposite?: typeof prepareDetailWorkspaceComposite; applyComposite?: typeof applyDetailWorkspaceComposite; recoverComposite?: typeof recoverDetailWorkspaceComposite };
@@ -198,6 +199,9 @@ export async function processSelectedDetailWork(productId: string, options: Opti
     }
     const view = await currentView();
     if (state.view && !same(state.view, view) || !state.view && options.expectedProductVersion !== undefined && view.productVersion !== options.expectedProductVersion) throw changed();
+    const intent = options.currentBodyTranslation;
+    if (intent && (Object.keys(intent).sort().join(',') !== 'policy,productId,productVersion' || intent.policy !== 'translate-current-body-v1'
+      || intent.productId !== productId || intent.productVersion !== view.productVersion)) throw changed();
     state.view ??= structuredClone(view);
     if (state.seed) {
       result.recovered = true; const pending = state.seed;
@@ -230,9 +234,16 @@ export async function processSelectedDetailWork(productId: string, options: Opti
       await guard();
       if (!same(await currentView(), view) || !same((await json(`/api/products/${encodeURIComponent(productId)}/content`)).content, content)) throw changed();
       if (publication.status === 'current') { result.reused = true; return finish('completed','현재 원본·설정·모든 옵션과 일치하는 기존 상세 발행본을 조회로 확인했습니다. 새 추론·업로드·저장은 하지 않았습니다.'); }
-      if (publication.status === 'review-required') return finish('partial','기존 상세 발행본의 원본·설정·옵션·직접 편집 내용을 확인해야 합니다. 새 추론·업로드·저장 없이 개별 검토를 유지했습니다.');
+      if (publication.status === 'review-required') {
+        if (!intent) return finish('partial','기존 상세 발행본의 원본·설정·옵션·직접 편집 내용을 확인해야 합니다. 새 추론·업로드·저장 없이 개별 검토를 유지했습니다.');
+        // Partial resumes retain this publication fence after BODY work starts.
+        state.reviewRequired = true;
+      }
     }
-    if (content.assets.detail.provenance === 'manual') return finish('skipped','직접 저장한 상세 원본 역할과 공란을 유지했습니다. 자동 구성·추론·저장은 실행하지 않았습니다.');
+    if (content.assets.detail.provenance === 'manual') {
+      if (!intent || !content.assets.detail.value.length) return finish('skipped','직접 저장한 상세 원본 역할과 공란을 유지했습니다. 자동 구성·추론·저장은 실행하지 않았습니다.');
+      state.reviewRequired = true;
+    }
     if (!state.peers) {
       const profileId = view.categoryContext.source === 'profile' ? view.categoryContext.profileId : null;
       const peers: Peer[] = [];
@@ -331,7 +342,7 @@ export async function processSelectedDetailWork(productId: string, options: Opti
       } finally { clearTimeout(timer); signal.removeEventListener('abort',abort); if (image?.canvas) { image.canvas.width = 0; image.canvas.height = 0; } }
     }
     await exact();
-    if (!state.shared || manualOutput(view) || content.detail?.altText?.provenance === 'manual' || content.detail?.description?.provenance === 'manual')
+    if (state.reviewRequired || !state.shared || manualOutput(view) || content.detail?.altText?.provenance === 'manual' || content.detail?.description?.provenance === 'manual')
       return finish('partial','본문 번역은 보관했습니다. 옵션별 구성 또는 직접 저장한 상세 이미지·HTML·대체 설명·공란을 보존하기 위해 전체 옵션 통합 저장은 하지 않았습니다. 상세 편집에서 적용 범위를 검토해주세요.');
     for (const peer of state.peers!) if (peer !== current && !same(await readDetailWorkspace(peer.selection,signal,fetcher),peer.saved)) throw changed();
     await exact();

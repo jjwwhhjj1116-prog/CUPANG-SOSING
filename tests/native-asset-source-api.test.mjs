@@ -189,6 +189,88 @@ function versionedStorage(f){
  return{reads,versions};
 }
 
+test('versioned plan GET reuses only verified image facts while file and bundle reads still load fresh bytes',async()=>{
+ const f=await fixture();try{
+  const storage=versionedStorage(f),before=f.objectState(),plan=await read(await f.send()),selected=[...new Set(plan.images.map(file=>file.key))];
+  for(const key of selected)assert.equal(storage.reads.get(key),1);
+  storage.reads.clear();assert.deepEqual(await read(await f.send()),plan);
+  for(const key of selected)assert.equal(storage.reads.get(key)??0,0,'a warm exact upload proof does not download image bodies');
+  const raw=await f.raw(plan,selected[0]);assert.equal(raw.status,200);assert.equal(sha(new Uint8Array(await raw.arrayBuffer())),plan.images.find(file=>file.key===selected[0]).sha256);
+  for(const key of selected)assert.equal(storage.reads.get(key),1,'file endpoint retains fresh private body reads');
+  storage.reads.clear();const batch=await read(await f.send(f.query+'&sourcePlanSha256='+plan.sourcePlanSha256+'&bundle=images'));assert.equal(batch.files.length,selected.length);
+  for(const key of selected)assert.equal(storage.reads.get(key),1,'bundle endpoint retains fresh private body reads');
+  assert.equal(f.objectState(),before);assert.deepEqual(f.h.network,[]);
+ }finally{f.close();}
+});
+
+test('cold fact verification bounds concurrent image hashing before its final source fence',async()=>{
+ const f=await fixture();try{
+  versionedStorage(f);const facts=f.h.load('app/exports/verified-image-facts.ts'),prepare=facts.prepareImageFacts;let active=0,maximum=0;
+  facts.prepareImageFacts=async(...args)=>{active++;maximum=Math.max(maximum,active);try{await new Promise(resolve=>setTimeout(resolve,1));return await prepare(...args);}finally{active--;}};
+  assert.equal((await read(await f.send())).metadataValid,true);assert.equal(maximum,1,'do not retain another entire 64MiB hashing batch in parallel');
+ }finally{f.close();}
+});
+
+test('verified facts are opaque and isolated by bucket, owner and complete current metadata',async()=>{
+ const f=await fixture();try{
+  const storage=versionedStorage(f),plan=await read(await f.send()),key=plan.images[0].key,bucket=f.h.bindings.FILES,head=await bucket.head(key),model=f.h.load('app/exports/verified-image-facts.ts');
+  const facts=model.cachedImageFacts(bucket,'owner',key,head);assert.ok(facts);assert.ok(Object.isFrozen(facts));
+  assert.equal(model.verifiedImageFacts({...facts},'owner',key,head),undefined);assert.equal(model.cachedImageFacts(bucket,'other-owner',key,head),undefined);
+  assert.equal(model.cachedImageFacts({},'owner',key,head),undefined);assert.equal(model.cachedImageFacts(bucket,'owner',key,{...head,customMetadata:{...head.customMetadata,extra:'changed'}}),undefined);
+  storage.reads.clear();f.h.bindings.FILES={...bucket};await read(await f.send());for(const file of plan.images)assert.equal(storage.reads.get(file.key),1,'a different bucket binding cannot inherit a proof');
+  const auth=f.h.auth.getWorkspaceOwnerId;f.h.auth.getWorkspaceOwnerId=async()=>'other-owner';assert.equal((await f.send()).status,409);f.h.auth.getWorkspaceOwnerId=auth;
+ }finally{f.close();}
+});
+
+for(const kind of ['profile','settings','schema'])test(`warm image facts do not cache the current ${kind} source plan`,async()=>{
+ const f=await fixture();try{
+  const storage=versionedStorage(f),before=await read(await f.send());storage.reads.clear();
+  if(kind==='profile')f.h.sqlite.prepare('UPDATE category_profiles SET revision=revision+1 WHERE id=?').run(f.profile.id);
+  if(kind==='settings')await f.h.load('db/queries.ts').saveSettings('owner',JSON.stringify({...f.h.settings,brand:'새 설정 브랜드'}));
+  if(kind==='schema'){const row=f.h.sqlite.prepare('SELECT payload FROM category_profiles WHERE id=?').get(f.profile.id),value=JSON.parse(row.payload),schema=JSON.parse(value.hubSchema.schemaString);schema.title='현재 스키마 수정';value.hubSchema.schemaString=JSON.stringify(schema);f.h.sqlite.prepare('UPDATE category_profiles SET payload=? WHERE id=?').run(JSON.stringify(value),f.profile.id);}
+  const current=await read(await f.send());assert.notEqual(current.sourcePlanSha256,before.sourcePlanSha256);for(const file of before.images)assert.equal(storage.reads.get(file.key)??0,0,'only immutable byte facts are reusable');
+ }finally{f.close();}
+});
+
+test('warm plan metadata edits and same-key replacements miss only the changed immutable file proof',async()=>{
+ for(const kind of ['metadata','replacement','unversioned','missing','oversized']){const f=await fixture();try{
+  const storage=versionedStorage(f),plan=await read(await f.send()),key=plan.images[0].key,head=f.h.bindings.FILES.head;storage.reads.clear();
+  if(kind==='metadata')f.h.bindings.FILES.head=async selected=>{const value=await head(selected);return selected===key&&value?{...value,customMetadata:{...value.customMetadata,note:'new metadata'}}:value;};
+  if(kind==='replacement'){const bytes=f.h.objects.get(key).slice();bytes[bytes.length-1]^=1;await f.h.bindings.FILES.put(key,bytes,{httpMetadata:{contentType:'image/png'},customMetadata:{sha256:sha(bytes)}});}
+  if(kind==='unversioned')storage.versions.set(key,undefined);
+  if(kind==='missing')f.h.objects.delete(key);
+  if(kind==='oversized')f.h.bindings.FILES.head=async selected=>{const value=await head(selected);return selected===key&&value?{...value,size:11*1024*1024}:value;};
+  const response=await f.send();if(['missing','oversized'].includes(kind)){assert.equal(response.status,kind==='missing'?409:413);assert.equal(storage.reads.size,0,'full size/membership preflight precedes body reads');}
+  else{const current=await read(response);assert.equal(current.metadataValid,true,JSON.stringify(current.issues));assert.equal(storage.reads.get(key),kind==='unversioned'?2:1);for(const file of plan.images.filter(file=>file.key!==key))assert.equal(storage.reads.get(file.key)??0,0);if(kind==='replacement')assert.notEqual(current.sourcePlanSha256,plan.sourcePlanSha256);}
+ }finally{f.close();}}
+});
+
+test('warm facts retain the final independent HEAD, complete source and actor fences',async()=>{
+ for(const kind of ['replacement','metadata','missing','product','settings','profile','schema','company','membership','cancel']){const f=await fixture();try{
+  const storage=versionedStorage(f),plan=await read(await f.send()),key=plan.images[0].key,head=f.h.bindings.FILES.head,heads=new Map(),controller=new AbortController();storage.reads.clear();let fired=false;
+  f.h.bindings.FILES.head=async selected=>{heads.set(selected,(heads.get(selected)??0)+1);if(!fired&&selected===key&&heads.get(selected)===2){fired=true;
+   if(kind==='replacement')storage.versions.set(key,'new-upload-during-proof');
+   if(kind==='metadata'){const value=await head(selected);return{...value,customMetadata:{...value.customMetadata,note:'concurrent edit'}};}
+   if(kind==='missing')return null;
+   if(kind==='product')f.h.sqlite.prepare('UPDATE products SET updated_at=? WHERE id=?').run('2026-11-01T12:00:00.000Z',f.id);
+   if(kind==='settings')await f.h.load('db/queries.ts').saveSettings('owner',JSON.stringify({...f.h.settings,brand:'조회 중 설정 변경'}));
+   if(kind==='profile')f.h.sqlite.prepare('UPDATE category_profiles SET revision=revision+1 WHERE id=?').run(f.profile.id);
+   if(kind==='schema'){const row=f.h.sqlite.prepare('SELECT payload FROM category_profiles WHERE id=?').get(f.profile.id),value=JSON.parse(row.payload),schema=JSON.parse(value.hubSchema.schemaString);schema.title='조회 중 스키마 변경';value.hubSchema.schemaString=JSON.stringify(schema);f.h.sqlite.prepare('UPDATE category_profiles SET payload=? WHERE id=?').run(JSON.stringify(value),f.profile.id);}
+   if(kind==='company')f.h.setCompany(companies[1]);if(kind==='membership')f.h.setMembershipStatus('suspended');if(kind==='cancel')controller.abort();
+  }return head(selected);};
+  const response=await f.send(f.query,controller.signal);assert.equal(fired,true,kind);assert.equal(response.status,409,kind);assert.equal((await response.json()).images,undefined);for(const file of plan.images)assert.equal(storage.reads.get(file.key)??0,0);
+ }finally{f.close();}}
+});
+
+test('a failed cold final HEAD cannot seed a fact for a later plan request',async()=>{
+ const f=await fixture();try{
+  const storage=versionedStorage(f),head=f.h.bindings.FILES.head,key=f.keys[0];let count=0;
+  f.h.bindings.FILES.head=async selected=>selected===key&&++count===2?null:head(selected);
+  assert.equal((await f.send()).status,409);f.h.bindings.FILES.head=head;storage.reads.clear();const plan=await read(await f.send());
+  for(const file of plan.images)assert.equal(storage.reads.get(file.key),1,'failed final proof must leave every candidate uncommitted');
+ }finally{f.close();}
+});
+
 test('native readonly shares one initial HEAD per selected key while retaining a fresh final HEAD',async()=>{
  const f=await fixture();try{
   const storage=versionedStorage(f),loader=f.h.load('app/exports/single-package.ts'),load=loader.loadSinglePackage,head=f.h.bindings.FILES.head,get=f.h.bindings.FILES.get;

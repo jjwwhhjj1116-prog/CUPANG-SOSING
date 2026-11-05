@@ -374,7 +374,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
     const next={...clone(previous),...clone(changes),sequence:previous.sequence+1,updatedAt:clock()};checkpointValid(next,context);await savedTargetAudit(context,next);
     if(await store.compareAndSet(context.key,safeValue(previous),safeValue(next))!==true)fail('CHECKPOINT_CONFLICT','더 최신 전송 기록이 있습니다. 추가 요청하지 않고 조회해주세요.');return next;
   }
-  const call=(name,input)=>adapter[name](safeValue(input));
+  const call=(name,input,lease)=>adapter[name](safeValue(input),lease);
   const observationActive=()=>{if(observationSignal?.aborted)fail('OBSERVATION_ABORTED','등록 결과의 읽기 대기를 취소했습니다. 원래 요청을 다시 보내지 않았습니다.');};
   async function observationCheckpoint(context,state){const current=await get(context);if(!current||!same(current,state))fail('CHECKPOINT_CONFLICT','대기 중 원래 전송 기록이 변경되었습니다. 요청을 다시 보내지 않았습니다.');}
   // Each already-dispatched native Next/Submit gets its own bounded read-only
@@ -399,7 +399,8 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
   }
   async function request(context,state,method,path,body){
     if(state.savedDraftTargetRecovery&&method==='POST'&&[SINGLE_DOCUMENT_PATHS.create,SINGLE_DOCUMENT_PATHS.update].includes(path))fail('SAVED_DRAFT_TARGET_READ_ONLY','현재 읽기로 복구한 같은 문서는 파일·본문을 다시 전송할 수 없습니다.');
-    try{await guard(context,state);}catch(error){
+    let sourceProof;
+    try{sourceProof=await guard(context,state);}catch(error){
       // The adapter has not been called here: a failed final source/tab guard
       // is positive local proof that create was never dispatched. Preserve
       // the operation and owned target, but do not leave a false uncertain
@@ -410,7 +411,7 @@ export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now,ac
     }
     try{return responseJson(await call('hubRequest',{tab:state.tab,sessionId:state.sessionId,identity:context.identity,requestId:state.requestId,...(state.operationId===undefined?{}:{operationId:state.operationId}),method,path,...(body===undefined?{}:{body}),
       ...(method==='POST'&&path===SINGLE_DOCUMENT_PATHS.create?{baselineDocIds:clone(state.baselineDocIds)}:{}),
-      ...(state.createRetry&&method==='POST'&&path===SINGLE_DOCUMENT_PATHS.create?{retryCreateApproval:clone(state.createRetry)}:{})}));}
+      ...(state.createRetry&&method==='POST'&&path===SINGLE_DOCUMENT_PATHS.create?{retryCreateApproval:clone(state.createRetry)}:{})},draftOnly&&nativeLifecycle&&!state.preparedLifecycle?{sourceProof}:undefined));}
     catch(error){
       if(error instanceof SingleDocumentError&&error.code==='CREATE_RETRY_PRECHECK_NOT_SENT'&&state.createRetry&&method==='POST'&&path===SINGLE_DOCUMENT_PATHS.create&&state.state==='create-requested'&&state.docId===null)
         await save(context,state,{state:'target-created',tab:null,operationId:state.requestId+':target'});

@@ -2,7 +2,8 @@ import { env } from 'cloudflare:workers';
 import { readQuotationExportSource, resolveQuotationExport, quotationExportFingerprint, QuotationExportError } from '@/app/exports/quotation-source';
 import { readQuotationFields, quotationSourcesCurrent } from '@/db/quotation-fields';
 import { productImageKeys } from '@/app/product-content';
-import { loadAttachments } from '@/app/exports/attachments';
+import { loadAttachments,AttachmentError } from '@/app/exports/attachments';
+import {cachedImageFacts,prepareImageFacts,type VerifiedImageFacts} from '@/app/exports/verified-image-facts';
 import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-files';
 import { publicDetailConfig, publicDetailVersion } from '@/app/quotation-public-detail';
 import { projectSupplierHubSingleDocument } from '@/app/supplier-hub-single-projection';
@@ -53,7 +54,7 @@ function packageSourceValueKey(value:unknown):string|null{
 }
 
 /** Shared current-source proof. A read never publishes assets or contacts Hub. */
-export async function loadSinglePackage(owner:string,id:string,profileId:string|null,company:SupplierHubCompany,active:()=>Promise<void>,prepare=false,expectedFingerprint?:string,includeNativeAssets=false,options:{nativeReadOnly?:boolean;trace?:(phase:string)=>void}={}){
+export async function loadSinglePackage(owner:string,id:string,profileId:string|null,company:SupplierHubCompany,active:()=>Promise<void>,prepare=false,expectedFingerprint?:string,includeNativeAssets=false,options:{nativeReadOnly?:boolean;nativePlanMetadataOnly?:boolean;trace?:(phase:string)=>void}={}){
     const nativeReadOnly=options.nativeReadOnly===true;
     if(nativeReadOnly&&(!includeNativeAssets||prepare))throw new SingleAssetError('원본 조회 전용 준비 범위를 확인해주세요.','NATIVE_ASSET_READ_ONLY',400);
     const saved = await readQuotationExportSource(owner, id, profileId);
@@ -81,9 +82,10 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
     const readKeys = includeNativeAssets ? [...new Set([...selection.keys, ...nativeAssetSourceImageKeys({projection,owner,ownedKeys})])] : selection.keys;
     const readMetadata = async () => new Map(await Promise.all(readKeys.map(async key => [key, await env.FILES.head(key)] as const)));
     // R2's version identifies one immutable upload, unlike an uploader-supplied
-    // SHA or an ETag. This proof lives only in this request and is recorded only
-    // after the exact private bytes have passed format and digest validation.
+    // SHA or an ETag. Bind verified byte facts to this request's fresh initial
+    // and final HEADs, including facts retained from the same immutable upload.
     const verifiedVersions=new Map<string,{version:string;size:number}>();
+    const verifiedFacts=new Map<string,VerifiedImageFacts>();
     const versioned=(object:{version?:unknown}):object is {version:string}=>typeof object.version==='string'&&object.version.length>0&&object.version.length<=512&&!/[\u0000-\u0020\u007f]/.test(object.version);
     const [assets,metadata] = await (async () => {
       // Both selectors already restrict keys to this owner's product. Leave an
@@ -92,8 +94,16 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
         // Share only this request's initial HEADs with the size preflight. The
         // independent final upload/version and metadata HEADs stay fresh below.
         const initialMetadata=readMetadata();
+        if(options.nativePlanMetadataOnly){
+          const heads=await initialMetadata;let total=0;
+          for(const key of readKeys){const head=heads.get(key);
+            if(!head)throw new AttachmentError('첨부 이미지가 저장소에 없습니다.',409);
+            if(!Number.isSafeInteger(head.size)||head.size<1||head.size>10*1024*1024||(total+=head.size)>64*1024*1024)throw new AttachmentError('원본 이미지 크기·합계를 확인해주세요.',413);
+            const facts=cachedImageFacts(env.FILES,owner,key,head);if(facts&&versioned(head)){verifiedFacts.set(key,facts);verifiedVersions.set(key,{version:head.version,size:head.size});}
+          }
+        }
         const [bytes,heads] = await Promise.allSettled([
-          loadAttachments(owner,saved.product.image_keys,readKeys,{concurrency:3,nativeReadOnly:true,initialMetadata,onVerifiedObject:(key,object)=>{if(versioned(object))verifiedVersions.set(key,{version:object.version,size:object.size});}}),initialMetadata,
+          loadAttachments(owner,saved.product.image_keys,readKeys.filter(key=>!verifiedFacts.has(key)),{concurrency:3,nativeReadOnly:true,initialMetadata,onVerifiedObject:(key,object)=>{if(versioned(object))verifiedVersions.set(key,{version:object.version,size:object.size});}}),initialMetadata,
         ]);
         if (bytes.status === 'rejected') throw bytes.reason;
         if (heads.status === 'rejected') throw heads.reason;
@@ -133,7 +143,7 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
       ...await inspectLegalDocumentStorage(documents, id, key => env.FILES.head(key))];
     // Native filename preparation has its own reviewed body. It must never
     // silently replace the legacy public-URL payload or its operation digest.
-    const nativeAssetSourcePlan = includeNativeAssets ? await buildNativeAssetSourcePlan({identity:nativeIdentity,projection,ownedKeys,assets,metadata,
+    const nativeAssetSourcePlan = includeNativeAssets ? await buildNativeAssetSourcePlan({identity:nativeIdentity,projection,ownedKeys,assets,metadata,verifiedFacts,
       nativeLegalAttachmentPlan,sourceIssues:[...sourceIssues]}) : null;
     if (documents.applicability === 'required') sourceIssues.push(...nativeLegal.issues.map(issue=>({kind:'error' as const,code:issue.code,optionId:null,
       optionLabel:'법적 필수서류',fieldId:issue.fieldId??null,message:issue.message})));
@@ -143,7 +153,7 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
       optionLabel: '법적 필수서류', fieldId: null, message: '필수 원본 서류의 Single 파일 연결 형식은 별도 확인이 필요합니다. 저장한 서류는 변경하지 않습니다.' });
     if (documents.applicability === 'unconfirmed') sourceIssues.push({ kind: 'review', code: 'SINGLE_LEGAL_APPLICABILITY_UNCONFIRMED', optionId: null,
       optionLabel: '법적 필수서류', fieldId: null, message: '실제 상품의 법적 서류 해당 여부를 확인해주세요. 미확인을 해당없음으로 바꾸지 않았습니다.' });
-    const plan = await buildSingleAssetPlan({ projection, owner, productId: id, ownedKeys, assets, metadata, config, sourceIssues, ...(nativeReadOnly?{nativeReadOnly:true as const}:{}) });
+    const plan = await buildSingleAssetPlan({ projection, owner, productId: id, ownedKeys, assets, metadata, config, sourceIssues, verifiedFacts, ...(nativeReadOnly?{nativeReadOnly:true as const}:{}) });
     const packageFingerprint = await fingerprint({ format: 'yoofam-supplier-hub-single-package-v1', sourceFingerprint, configVersion,
       sourceAssetFingerprint: plan.sourceAssetFingerprint, payload: plan.payload, manifest: plan.manifest, issues: plan.issues,
       nativeLegalAttachmentPlanSha256:nativeLegalAttachmentPlan.planSha256 });
@@ -241,7 +251,12 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
       }
       await guard();
     };
+    const rememberFacts:(()=>void)[]=[];
+    if(options.nativePlanMetadataOnly&&nativeReadOnly&&nativeAssetSourcePlan?.metadataValid)for(const asset of assets){
+      const object=verifiedVersions.get(asset.key);if(object)rememberFacts.push(await prepareImageFacts(env.FILES,owner,asset.key,metadata.get(asset.key),object,asset));
+    }
     if (includeNativeAssets) await nativeAssetSourceGuard();
+    rememberFacts.forEach(remember=>remember());
     options.trace?.('source-fence');
     const view = { ...singleAssetPackageView(plan, published), productId: id, requestedProfileId: profileId, fingerprint: packageFingerprint,
       // A reviewed metadata mapping is not an uploaded native file or receipt.

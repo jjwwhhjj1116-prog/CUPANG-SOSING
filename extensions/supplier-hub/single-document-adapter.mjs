@@ -554,6 +554,25 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     const proof=await readSource(prior.input),current=sourceBindings.get(canonical(identity));if(!proof.current||sessionId!==undefined&&(current?.readOnlyReceipt?current.binding.sessionId:proof.sessionId)!==sessionId)fail('SOURCE_CHANGED','현재 회원 세션·준비한 개별 견적서가 변경되었습니다.');
     return sourceBindings.get(canonical(identity)).binding;
   }
+  async function requestBinding(input,lease){
+    if(!nativeSha||lease===undefined)return bindingFor(input.identity,input.sessionId);
+    const proof=lease?.sourceProof,snapshot=proof&&typeof proof==='object'?savedTargetReadReceipts.get(proof):undefined;
+    if(proof&&typeof proof==='object')savedTargetReadReceipts.delete(proof);
+    if(!lease||Object.keys(lease).join(',')!=='sourceProof'||!snapshot||sourceBindings.get(canonical(input.identity))!==snapshot||snapshot.readOnlyReceipt
+      ||snapshot.input.requestId!==input.requestId||snapshot.binding.sessionId!==input.sessionId||!equal(snapshot.binding.identity,input.identity))
+      fail('SOURCE_CHANGED','요청 직전 원본 검증의 현재 연결을 확인하지 못했습니다.');
+    // The core's immediately preceding guard already independently hashed the
+    // native plan. Consume that proof once; still re-read actor/source/history
+    // at this actual request boundary instead of repeating the entire trio.
+    await appCurrent(input.identity);
+    const response=await api.tabs.sendMessage(sourceAppTabId??input.identity.appTabId,{type:sourceType,expected:copy(snapshot.input)},{frameId:0});
+    await appCurrent(input.identity);
+    if(response?.ok!==true&&normalizeSourceReadFailure(response?.sourceFailure)){const failure=sourceReadError(response.sourceFailure);throw new SingleDocumentError(failure.code,failure.message);}
+    if(sourceBindings.get(canonical(input.identity))!==snapshot||response?.ok!==true||response.current!==true||response.submissionReady!==true||response.priorDocumentClear!==true
+      ||!equal(response.identity,input.identity)||response.bodySha256!==snapshot.binding.originalBodySha256||response.sessionId!==snapshot.binding.sessionId
+      ||!Number.isSafeInteger(response.checkedAt)||Math.abs(now()-response.checkedAt)>60000)fail('SOURCE_CHANGED','요청 직전 회원·회사·저장 자료가 변경되었습니다.');
+    return snapshot.binding;
+  }
   async function execute(tab,identity,func,args,documentId){
     // Source revocation must still be able to erase transient bytes in the exact previously pinned frame. This action cannot issue Hub requests.
     if(func===nativeAssetUploadPage&&args[0]?.action==='discard-v2'){
@@ -673,8 +692,8 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
       throw error;
     }
   }
-  async function hubRequest(input){
-    const binding=await bindingFor(input.identity,input.sessionId);
+  async function hubRequest(input,lease){
+    const binding=await requestBinding(input,lease);
     if(input.method==='POST')mutable(input.identity);
     if(input.method==='POST'&&!input.path.endsWith('/create'))await owned({...input,docId:input.body?.docId},binding);
     if(nativeSha&&input.method==='POST'&&input.path==='/sr/draft/api/update')await uploadNativeAssets(input,binding);

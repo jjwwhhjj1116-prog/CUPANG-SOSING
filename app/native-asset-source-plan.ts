@@ -5,6 +5,7 @@ import type {projectSupplierHubSingleDocument} from '@/app/supplier-hub-single-p
 import type {NativeLegalAttachmentIdentity,NativeLegalAttachmentPlan} from '@/app/native-legal-attachment-plan';
 import type {HubWireField} from '@/app/supplier-hub-schema';
 import type {SubmissionIssue} from '@/app/submission-review';
+import {verifiedImageFacts,type VerifiedImageFacts} from '@/app/exports/verified-image-facts';
 
 export const NATIVE_ASSET_SOURCE_PLAN_FORMAT='yoofam-native-asset-source-plan-v1';
 type Projection=Awaited<ReturnType<typeof projectSupplierHubSingleDocument>>;
@@ -106,7 +107,7 @@ const filename=(value:string,max=180)=>text(value,max)&&!/[\\/<>:"|?*%,#\u202a-\
  * SR SHA6fc9c0fa... uses File.name on these exact wires, and comma joins the
  * additional/size/label/detail names. This plan does not replace legacy payload. */
 export async function buildNativeAssetSourcePlan(input:{identity:unknown;projection:Projection;ownedKeys:readonly string[];assets:readonly BundleAsset[];
- metadata:ReadonlyMap<string,StorageMetadata|null>;nativeLegalAttachmentPlan:NativeLegalAttachmentPlan;sourceIssues?:readonly SubmissionIssue[]}):Promise<NativeAssetSourcePlan>{
+ metadata:ReadonlyMap<string,StorageMetadata|null>;nativeLegalAttachmentPlan:NativeLegalAttachmentPlan;sourceIssues?:readonly SubmissionIssue[];verifiedFacts?:ReadonlyMap<string,VerifiedImageFacts>}):Promise<NativeAssetSourcePlan>{
  const plan:NativeAssetSourcePlan={format:NATIVE_ASSET_SOURCE_PLAN_FORMAT,storageNameSemantics:'private-key-leaf',identity:null,identityDigest:null,images:[],nativeLegalAttachmentPlan:null,body:null,
   originalBodySha256:null,preparedBodySha256:null,sourcePlanSha256:null,issues:[],metadataValid:false,registered:false,remoteWrites:false,submissionReady:false,transportReady:false,bytesVerified:false};
  const add=(code:string,message:string,key?:string)=>plan.issues.push({code,level:'error',message,...(key?{key}:{})});
@@ -128,7 +129,7 @@ export async function buildNativeAssetSourcePlan(input:{identity:unknown;project
    if(legal.applicability==='required'&&legal.files.length)plan.nativeLegalAttachmentPlan=legal;
    else if(legal.applicability!=='not-applicable'||legal.files.length)throw Error('현재 서류 해당 여부와 원본 구성이 다릅니다.');
   }
-  const body=copy(projection.payload),byKey=new Map(input.assets.map(asset=>[asset.key,asset])),files=new Map<string,NativeAssetSourceImage>(),byteProofs=new Map<string,{bytes:Uint8Array;sha256:string;contentType:'image/png'|'image/jpeg'}>();
+  const body=copy(projection.payload),byKey=new Map(input.assets.map(asset=>[asset.key,asset])),files=new Map<string,NativeAssetSourceImage>(),byteProofs=new Map<string,{bytes?:Uint8Array;byteLength:number;sha256:string;contentType:'image/png'|'image/jpeg'}>();
   for(const document of body.jsonDocument){const page=document.imagePage as Node|undefined,details=page?.details as Node|undefined;if(typeof details?.htmlProductDetailContent==='string'&&/<img\b/i.test(details.htmlProductDetailContent))add('NATIVE_ASSET_HTML_IMAGES_UNVERIFIED','HTML 안 이미지의 원본 업로드·참조 계약은 아직 확인되지 않았습니다. 저장 HTML은 변경하지 않았습니다.');}
   const resolved=new Set<string>(),usedWires=new Set<string>(),transportNames=new Set<string>();let total=0;
   for(const reference of projection.review.unresolvedImages){
@@ -141,6 +142,9 @@ export async function buildNativeAssetSourcePlan(input:{identity:unknown;project
    for(const [slotIndex,key]of reference.keys.entries()){
     let proof=byteProofs.get(key);const asset=byKey.get(key),metadata=input.metadata.get(key);
     if(!proof){
+     const facts=verifiedImageFacts(input.verifiedFacts?.get(key),identity.ownerId,key,metadata);
+     if(facts&&(facts.fileType.contentType==='image/png'||facts.fileType.contentType==='image/jpeg'))proof={byteLength:facts.byteLength,sha256:facts.sha256,contentType:facts.fileType.contentType};
+     else{
      if(!asset||!metadata||!Number.isSafeInteger(metadata.size)||metadata.size!==asset.data.byteLength||!asset.data.byteLength||asset.data.byteLength>MAX_IMAGE_BYTES)throw Error('선택한 실제 이미지 파일·크기를 확인해주세요.');
      // These request-local originals are already owned; retain views rather than a second 64MiB batch. The final SHA fence still rejects mutations.
      const bytes=byteView(asset.data),actual=imageFileType(bytes);
@@ -148,8 +152,9 @@ export async function buildNativeAssetSourcePlan(input:{identity:unknown;project
      if(metadata.httpMetadata?.contentType!==undefined&&metadata.httpMetadata.contentType!==actual.contentType)throw Error('저장 이미지 형식과 실제 원본 형식이 다릅니다.');
      const sha256=await sha(bytes);
      if(asset.sha256!==sha256||['sha256','labelBlobSha256','freeImageOutputSha256'].some(name=>metadata.customMetadata?.[name]!==undefined&&metadata.customMetadata[name]!==sha256))throw Error('이미지 원본의 저장 해시가 다릅니다.');
-     total+=bytes.length;if(total>64*1024*1024)throw Error('원본 이미지 합계는 64MB 이하여야 합니다.');
-     proof={bytes,sha256,contentType:actual.contentType};byteProofs.set(key,proof);
+     proof={bytes,byteLength:bytes.length,sha256,contentType:actual.contentType};
+     }
+     total+=proof.byteLength;if(total>64*1024*1024)throw Error('원본 이미지 합계는 64MB 이하여야 합니다.');byteProofs.set(key,proof);
     }
     const fileId=type+'\0'+key;let file=files.get(fileId);
     if(!file){
@@ -158,7 +163,7 @@ export async function buildNativeAssetSourcePlan(input:{identity:unknown;project
      // the owned-key bound; only the separate short alias is sent to the Hub.
      if(!filename(originalName,512)||!filename(transportName)||transportName.length>100||!new RegExp(proof.contentType==='image/png'?'\\.png$':'\\.jpe?g$','i').test(originalName))throw Error('원본의 실제 저장 파일명·형식을 확인해주세요.');
      if(transportNames.has(transportName))throw Error('전송 이미지 파일명이 중복되어 있습니다.');transportNames.add(transportName);
-     file={key,originalName,transportName,imageType:type,contentType:proof.contentType,byteLength:proof.bytes.length,sha256:proof.sha256,references:[]};files.set(fileId,file);
+     file={key,originalName,transportName,imageType:type,contentType:proof.contentType,byteLength:proof.byteLength,sha256:proof.sha256,references:[]};files.set(fileId,file);
      if(files.size>150)throw Error('전송 이미지 파일 계획은 최대 150개입니다.');
     }
     file.references.push({optionId:member.optionId,documentIndex:member.documentIndex,wire:copy(wire),slotIndex});names.push(file.transportName);
@@ -192,7 +197,7 @@ export async function buildNativeAssetSourcePlan(input:{identity:unknown;project
   plan.identityDigest=await digest(identity);plan.originalBodySha256=await digest(body);plan.preparedBodySha256=await digest(prepared);plan.metadataValid=true;plan.sourcePlanSha256=await nativeAssetSourcePlanSha256(plan);
   // Byte reads may yield between hashing. Never label changed caller buffers as
   // the immutable byte identity already used to derive these filenames.
-  for(const [key,proof]of byteProofs){const asset=byKey.get(key)!;if(asset.data.byteLength!==proof.bytes.length||await sha(asset.data)!==proof.sha256)throw Error('준비 중 이미지 원본이 변경되었습니다.');}
+  for(const [key,proof]of byteProofs)if(proof.bytes){const asset=byKey.get(key)!;if(asset.data.byteLength!==proof.byteLength||await sha(asset.data)!==proof.sha256)throw Error('준비 중 이미지 원본이 변경되었습니다.');}
   if(!same(input.identity,identity)||!same(input.projection,projection)||!same(input.nativeLegalAttachmentPlan,legal)||!same([...input.ownedKeys],owned))throw Error('준비 중 상품·원문·서류 연결이 변경되었습니다.');
   return plan;
  }catch(error){

@@ -7,6 +7,7 @@ import { SINGLE_PROJECTION_OUTPUT_LIMIT, type projectSupplierHubSingleDocument }
 import type { BundleAsset } from '@/app/exports/review-bundle';
 import type { SubmissionIssue } from '@/app/submission-review';
 import type { HubWireField } from '@/app/supplier-hub-schema';
+import {verifiedImageFacts,type VerifiedImageFacts} from '@/app/exports/verified-image-facts';
 
 export const SINGLE_ASSET_PACKAGE_FORMAT = 'yoofam-supplier-hub-single-package-v1';
 export class SingleAssetError extends Error { constructor(message: string, public code: string, public status = 409) { super(message); } }
@@ -64,7 +65,7 @@ export function singleAssetSelection(projection: Projection, owner: string, owne
 /** Reads only supplied bytes/metadata. Public candidates are never called
  * published until the explicit publisher verifies the actual stored body. */
 export async function buildSingleAssetPlan(input: { projection: Projection; owner: string; productId: string; ownedKeys: readonly string[];
-  assets: readonly BundleAsset[]; metadata: ReadonlyMap<string, StorageMetadata | null>; config: PublicDetailConfig | null; sourceIssues?: readonly SubmissionIssue[]; nativeReadOnly?: true }): Promise<SingleAssetPlan> {
+  assets: readonly BundleAsset[]; metadata: ReadonlyMap<string, StorageMetadata | null>; config: PublicDetailConfig | null; sourceIssues?: readonly SubmissionIssue[]; nativeReadOnly?: true;verifiedFacts?:ReadonlyMap<string,VerifiedImageFacts> }): Promise<SingleAssetPlan> {
   const selection = singleAssetSelection(input.projection, input.owner, input.ownedKeys);
   const issues: Issue[] = [...selection.issues, ...(input.sourceIssues ?? []).map(issue => ({ code: issue.code, level: issue.kind,
     message: issue.message, optionId: issue.optionId, ...(issue.fieldId ? { fieldId: issue.fieldId } : {}) }))];
@@ -98,14 +99,15 @@ export async function buildSingleAssetPlan(input: { projection: Projection; owne
   const signingKey = input.config ? await crypto.subtle.importKey('raw', Uint8Array.from(input.config.secret.match(/../g)!, part => parseInt(part, 16)), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']) : null;
   for (const key of selection.keys) {
     const asset = byKey.get(key), metadata = input.metadata.get(key);
+    const facts=input.nativeReadOnly?verifiedImageFacts(input.verifiedFacts?.get(key),input.owner,key,metadata):undefined,byteLength=facts?.byteLength??asset?.data.byteLength??0;
     const fail = (code: string, message: string) => issues.push({ code, level: 'error', message });
-    if (!asset || !asset.data.byteLength || asset.data.byteLength > MAX_IMAGE_BYTES || !metadata || metadata.size !== asset.data.byteLength) { fail('SINGLE_IMAGE_MISSING', '선택한 이미지 원본의 저장 파일·크기를 확인해주세요.'); continue; }
-    total += asset.data.byteLength; if (total > (input.nativeReadOnly?64:20) * 1024 * 1024) throw new SingleAssetError('Single 이미지 합계는 '+(input.nativeReadOnly?'64':'20')+'MB 이하여야 합니다.', 'SINGLE_IMAGE_SIZE', 413);
+    if (!byteLength || byteLength > MAX_IMAGE_BYTES || !metadata || metadata.size !== byteLength) { fail('SINGLE_IMAGE_MISSING', '선택한 이미지 원본의 저장 파일·크기를 확인해주세요.'); continue; }
+    total += byteLength; if (total > (input.nativeReadOnly?64:20) * 1024 * 1024) throw new SingleAssetError('Single 이미지 합계는 '+(input.nativeReadOnly?'64':'20')+'MB 이하여야 합니다.', 'SINGLE_IMAGE_SIZE', 413);
     let actual;
-    try { actual = imageFileType(asset.data); } catch { fail('SINGLE_IMAGE_TYPE', '선택한 이미지 파일 형식을 확인해주세요.'); continue; }
+    try { actual = facts?.fileType??imageFileType(asset!.data); } catch { fail('SINGLE_IMAGE_TYPE', '선택한 이미지 파일 형식을 확인해주세요.'); continue; }
     if (actual.extension === 'gif') { fail('SINGLE_PUBLIC_MEDIA_UNSUPPORTED', '기존 공개 이미지 경로는 GIF를 지원하지 않습니다. 저장한 원본은 유지됩니다.'); continue; }
     if (metadata.httpMetadata?.contentType !== undefined && metadata.httpMetadata.contentType !== actual.contentType) { fail('SINGLE_IMAGE_METADATA', '저장 이미지 형식과 실제 파일이 다릅니다.'); continue; }
-    const sha256 = await digest(asset.data);
+    const sha256 = facts?.sha256??await digest(asset!.data);
     if (['sha256', 'labelBlobSha256', 'freeImageOutputSha256'].some(name => metadata.customMetadata?.[name] !== undefined && metadata.customMetadata[name] !== sha256)) {
       fail('SINGLE_IMAGE_DIGEST', '저장 이미지의 원천 확인 기록과 실제 파일이 다릅니다.'); continue;
     }
@@ -113,8 +115,8 @@ export async function buildSingleAssetPlan(input: { projection: Projection; owne
     // Exactly the existing public-detail capability recipe and serving route.
     // A changed file under the same key cannot overwrite its immutable copy.
     const token = hex(await crypto.subtle.sign('HMAC', signingKey, new TextEncoder().encode(`${PUBLIC_DETAIL_FORMAT}\0${input.owner}\0${key}`)));
-    const dimensions = imageDimensions(asset.data);
-    files.push({ key, filename: `single-${sha256}.${actual.extension}`, byteLength: asset.data.byteLength, sha256, contentType: actual.contentType,
+    const dimensions = facts?facts.dimensions:imageDimensions(asset!.data);
+    files.push({ key, filename: `single-${sha256}.${actual.extension}`, byteLength, sha256, contentType: actual.contentType,
       width: dimensions?.width ?? null, height: dimensions?.height ?? null, token, url: `${input.config.origin}/media/quotation/${token}` });
     for (const use of selection.selections.filter(item => item.keys.includes(key))) {
       const guidance = dimensions ? imageSizeGuidance(use.role, dimensions.width, dimensions.height) : ['이미지 픽셀 크기를 읽지 못했습니다.'];

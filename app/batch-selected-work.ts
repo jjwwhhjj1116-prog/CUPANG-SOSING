@@ -374,6 +374,7 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     let result:Awaited<ReturnType<typeof processSelectedDetailWork>>|Awaited<ReturnType<typeof processSelectedImageStage>>;
     try{
       result=detailState?await processSelectedDetailWork(productId,{state:detailState,ownerId:controls.expectedOwnerId,company:expected.company,signal,fetcher,assertCurrent,expectedProductVersion,
+        ...(['full','selected'].includes(controls.mode??'')?{currentBodyTranslation:{policy:'translate-current-body-v1' as const,productId,productVersion:expectedProductVersion??current.updated_at}}:{}),
         onProgress:message=>controls.onStage({id,status:'running',message})}):await processSelectedImageStage(productId,role,{state,ownerId:controls.expectedOwnerId,signal,fetcher,expectedProductVersion,reworkCurrentSelection:controls.mode==='selected',isCurrent:()=>!signal.aborted,
         onProgress:message=>controls.onStage({id,status:'running',message})});
     }finally{

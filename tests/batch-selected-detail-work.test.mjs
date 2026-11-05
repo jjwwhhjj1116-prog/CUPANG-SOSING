@@ -208,6 +208,53 @@ test('manual/cropped BODY editors are preserved and never inferred again',async(
  const before=plain(h.f.workspace.document),result=await h.run();assert.equal(result.status,'completed');assert.deepEqual(h.f.workspace.document,before);assert.ok(!h.calls.some(row=>['vision','render','image-apply'].includes(row.operation)));
 });
 
+function currentBodyTranslation(h){
+ h.options.currentBodyTranslation={policy:'translate-current-body-v1',productId:'product',productVersion:h.f.view.productVersion};
+ h.intercept(url=>{if(!url.includes('/detail-save?'))return;const view=h.f.view;return Response.json({policy:'automatic-stage5-v1',readOnly:true,status:'review-required',
+  source:{productId:'product',profileId:new URL(url,'https://fixture.test').searchParams.get('profileId'),productVersion:view.productVersion,contentRevision:view.contentRevision,
+   optionRevision:view.optionRevision,revision:view.revision,inputFingerprint:view.inputFingerprint,categoryContext:view.categoryContext},execution:{requests:0,writes:0}});});
+}
+
+for(const kind of ['no-intent','manual-blank'])test(`current BODY translation retains the existing ${kind} protection`,async()=>{
+ const h=await setup({saved:true});currentBodyTranslation(h);
+ if(kind==='no-intent')delete h.options.currentBodyTranslation;else{h.content.assets.detail.provenance='manual';h.content.assets.detail.value=[];}
+ const before=plain(h.f.workspace),result=await h.run();assert.equal(result.status,kind==='manual-blank'?'skipped':'partial');assert.deepEqual(h.f.workspace,before);
+ assert.ok(!h.calls.some(row=>['vision','render','image-apply','composite-apply'].includes(row.operation)));
+});
+
+test('explicit current BODY intent translates a saved manual composition while preserving edited photos and all published fields',async()=>{
+ const h=await setup({saved:true}),read=h.deps.readImage;currentBodyTranslation(h);h.content.assets.detail.provenance='manual';
+ h.content.detail={description:{value:'직접 쓴 설명',provenance:'manual'},altText:{value:'직접 쓴 대체 설명',provenance:'manual'}};
+ h.f.view.overrides={common:{detailImages:'owner/replacement.png',detailHtml:'<p>직접 작성</p>',altText:''},options:{red:{detailHtml:''}}};
+ const manual={crop:{x:1},regions:[{selected:true,text:'原文',translated:'직접 수정한 문구',translationProvenance:'manual',issue:null}]},manualBefore=JSON.stringify(manual);
+ h.deps.readImage=async(...args)=>{const image=await read(...args);if(image.source.sourceKey==='owner/one.png')image.editDocument=manual;return image;};
+ const contentBefore=plain(h.content),viewBefore=plain(h.f.view),photos=plain(h.f.workspace.document.photos),result=await h.run();
+ assert.equal(result.status,'partial');assert.equal(result.applied,1);assert.equal(h.state.reviewRequired,true);assert.match(result.messages.join(' '),/본문 번역.*보관|상세 편집/);
+ assert.deepEqual(h.calls.filter(row=>row.operation==='vision').map(row=>row.key),['owner/two.png']);
+ assert.deepEqual(h.f.workspace.document.photos.map(({id,originKey,role})=>({id,originKey,role})),photos.map(({id,originKey,role})=>({id,originKey,role})));
+ assert.equal(h.f.workspace.document.photos.find(photo=>photo.originKey==='owner/one.png').key,'owner/one.png');
+ assert.equal(JSON.stringify(manual),manualBefore);assert.deepEqual(h.content,contentBefore);assert.deepEqual(h.f.view,viewBefore);
+ assert.ok(!h.calls.some(row=>['composite-prepare','composite-apply'].includes(row.operation)));
+ const before=h.calls.length,again=await h.run();assert.equal(again.status,'partial');assert.ok(!h.calls.slice(before).some(row=>['vision','render','image-apply','composite-apply'].includes(row.operation)),'retained review cannot republish or infer again');
+});
+
+for(const change of ['intent-product','intent-version','intent-policy','source','workspace','settings','content','company'])test(`current BODY intent cannot bypass changed ${change}`,async()=>{
+ const h=await setup({saved:true}),read=h.deps.readImage;currentBodyTranslation(h);
+ if(change==='intent-product')h.options.currentBodyTranslation.productId='other';if(change==='intent-version')h.options.currentBodyTranslation.productVersion='2026-10-17T00:00:00.000Z';if(change==='intent-policy')h.options.currentBodyTranslation.policy='unknown';
+ h.deps.readImage=async(...args)=>{const image=await read(...args);if(change==='source')image.source.sourceSha256='9'.repeat(64);if(change==='workspace'){const record={...h.f.workspace,revision:h.f.workspace.revision+1};delete record.digest;h.f.workspace={...record,digest:await h.base.model.detailWorkspaceDigest(record)};}
+  if(change==='settings')h.settings.brand='변경 설정';if(change==='content')h.content.revision++;if(change==='company')h.company({code:'A01526306',name:'유앤채'});return image;};
+ const before=plain(h.f.view),result=await h.run();assert.equal(result.status,'partial');assert.equal(result.sourceChanged,true,JSON.stringify(result));
+ assert.deepEqual(h.f.view,before);assert.ok(!h.calls.some(row=>['vision','render','image-apply','composite-apply'].includes(row.operation)));
+});
+
+for(const kind of ['inference','save'])test(`explicit current BODY translation keeps an unknown ${kind} attempt ahead of every next photo`,async()=>{
+ const h=await setup({saved:true});currentBodyTranslation(h);
+ if(kind==='inference')h.deps.recognize=async image=>{image.visionRequestId='0fa1748b-fd6e-4b16-8120-754071c7a73f';h.calls.push({operation:'vision'});throw new (h.base.load('app/free-image-vision-error.ts').FreeImageVisionError)('unknown','IMAGE_VISION_ACK_MISSING',true,{requestId:image.visionRequestId,source:image.source,sourceLanguage:'zh',configuration:h.configuration,inspectionPolicy:h.vision.IMAGE_TEXT_PRESERVATION_POLICY,transport:'workers-ai-batch-v1'});};
+ else{const apply=h.deps.applyImage;h.deps.applyImage=async(...args)=>{await apply(...args);throw Error('lost BODY save ACK');};}
+ const result=await h.run();assert.equal(result.status,kind==='save'?'uncertain':'partial');assert.ok(h.state[kind==='save'?'image':'inference']);
+ assert.equal(h.calls.filter(row=>row.operation==='vision').length,1);assert.equal(h.calls.filter(row=>row.operation==='image-apply').length,kind==='save'?1:0);assert.ok(!h.calls.some(row=>row.operation==='composite-apply'));
+});
+
 test('distinct excluded workspace/automatic sources block the whole-product compositor and preserve translated raw results',async()=>{
  const h=await setup({excluded:true});h.f.view.automatic.rows.find(row=>row.optionId==='excluded').fields.detailImages.value='owner/top.png\nowner/replacement.png\nowner/bottom.png';
  const result=await h.run();assert.equal(result.status,'partial');assert.ok(h.calls.some(row=>row.operation==='image-apply'));assert.ok(!h.calls.some(row=>row.operation==='composite-apply'));assert.match(result.messages.join(' '),/옵션|구성/);
