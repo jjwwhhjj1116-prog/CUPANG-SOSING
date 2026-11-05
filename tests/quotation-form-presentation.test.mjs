@@ -46,7 +46,7 @@ function addField(view,field,value='기존 값'){
 }
 test('interleaved production Product Page fields form one ordered group each while retaining every visible ID, value and edit target',async()=>{
  const view=quotationPresentationFixture(),grouping=load('app/quotation-field-groups.ts'),prices=load('app/quotation-price-edits.ts');
- for(const [id,wire,role,value] of [['native-supply','purchasePrice','supplyPrice','2500'],['native-sale','coupangSalePrice','salePrice','4000'],['native-msrp','msrp','msrp','5200'],['native-barcode','productBarcode','barcode','ABC123']])addField(view,
+ for(const [id,wire,role,value] of [['native-supply','purchasePrice','supplyPrice','2500'],['native-sale','coupangSalePrice','salePrice','4000'],['native-msrp','msrp','msrp','5200'],['native-osrp','osrp','msrp',''],['native-barcode','productBarcode','barcode','ABC123']])addField(view,
   {id,section:'product',label:id,type:role==='barcode'?'text':'number',required:true,visibility:'common',hubInput:role,hubWire:{path:['productPage','commonAttributes',wire]}},value);
  for(const id of ['description','bullets'])addField(view,{id,section:'product',label:id,type:'textarea',required:false,visibility:'common'},id+' 수동 설명');
  for(const data of [view.resolved,view.automatic]){
@@ -64,11 +64,55 @@ test('interleaved production Product Page fields form one ordered group each whi
   assert.equal(controls.length,original.length);assert.deepEqual(controls.map(node=>node.props.id).sort(),[...ids].sort(),'every previously visible field remains visible exactly once');
   for(const control of controls){const id=control.props.id.slice(prefix.length),cell=view.resolved.rows.find(row=>row.optionId===null).fields[id];assert.equal(control.props.value??control.props.cell?.value,cell.value,id);}
   const shown=controls.map(node=>node.props.id.slice(prefix.length)),priceIds=shown.filter(id=>grouping.quotationFieldGroup(original.find(field=>field.id===id),view.resolved.schema.fields)==='가격 정보');
-  assert.deepEqual(priceIds,['native-supply','native-sale','native-msrp','barcodeMode','barcode','native-barcode']);
+  assert.deepEqual(priceIds,['native-supply','native-sale','barcodeMode','barcode','native-barcode','native-msrp','native-osrp']);
+  assert.deepEqual(shown.filter(id=>['brand','manufacturer','tradeType','taxType','importType','searchTags','model'].includes(id)),['brand','manufacturer','tradeType','taxType','importType','searchTags','model']);
   assert.ok(shown.indexOf('searchTags')<shown.indexOf('description'));assert.ok(shown.indexOf('bullets')<shown.indexOf('native-supply'),'optional existing descriptions remain at the end of basic information');
-  ui.field('description').props.onChange({target:{value:'그룹 정리 후 작성한 설명'}});ui.render();assert.deepEqual(plain(ui.changes),[{fieldKey:'description',optionId:null,value:'그룹 정리 후 작성한 설명'}]);
+  ui.field('native-osrp').props.onChange({target:{value:'6100'}});ui.render();assert.deepEqual(plain(ui.changes),[{fieldKey:'native-osrp',optionId:null,value:'6100'}]);assert.equal(ui.field('native-msrp').props.value,'5200','independent OSRP edits do not change MSRP');
+  ui.field('description').props.onChange({target:{value:'그룹 정리 후 작성한 설명'}});ui.render();assert.deepEqual(plain(ui.changes),[{fieldKey:'native-osrp',optionId:null,value:'6100'},{fieldKey:'description',optionId:null,value:'그룹 정리 후 작성한 설명'}]);
   assert.equal(JSON.stringify(view),before,'presentation leaves the original schema, cells and saved values untouched');assert.equal(mutations(ui).length,0);
  }finally{ui.close();}
+});
+
+test('OSRP-only native price stays after barcode with its explicit blank and original linked save targets',async()=>{
+ const view=quotationPresentationFixture();addField(view,{id:'native-osrp',section:'product',label:'공식 판매처 가격',type:'number',required:false,visibility:'common',hubInput:'msrp',hubWire:{path:['productPage','commonAttributes','osrp']}},'');
+ const before=JSON.stringify(view),ui=quotationTitleUI({view});try{await ui.idle();
+  assert.equal(ui.field('msrp'),undefined);assert.equal(ui.field('native-osrp').props.value,'');
+  const product=visibleNodes(ui.render()).find(node=>node.type==='fieldset'&&node.props['data-section']==='product'),controls=visibleNodes(product).filter(node=>['input','textarea'].includes(node.type)).map(node=>node.props.id);
+  assert.deepEqual(controls.filter(id=>['seo-title-test-barcode','seo-title-test-native-osrp'].includes(id)),['seo-title-test-barcode','seo-title-test-native-osrp']);
+  ui.field('native-osrp').props.onChange({target:{value:'6300'}});ui.render();assert.deepEqual(plain(ui.changes).sort((a,b)=>a.fieldKey.localeCompare(b.fieldKey)),[{fieldKey:'msrp',optionId:null,value:'6300'},{fieldKey:'native-osrp',optionId:null,value:'6300'}]);assert.equal(JSON.stringify(view),before);assert.equal(mutations(ui).length,0);
+ }finally{ui.close();}
+});
+
+test('late native size-chart and label fields stay in their Couplus image groups with unchanged values and exact edit targets',async()=>{
+ const view=quotationPresentationFixture();
+ for(const [id,wire,name] of [['native-size','sizeChartImage'],['native-label-two','labelImages','다른 제품 표시사항']])addField(view,
+  {id,section:'image',label:id,type:'images',required:false,visibility:'common',...(wire==='sizeChartImage'?{hubInput:'sizeImages'}:{}),hubWire:{path:['imagePage','images',wire],...(name?{name,nameKey:'labelImageType',valueKey:'labelImageFiles'}:{})}},'owner/'+id+'.png');
+ addField(view,{id:'unknown-image','section':'image',label:'사이즈표 이미지처럼 보이는 추가 필드',type:'images',required:false,visibility:'common',hubWire:{path:['imagePage','images','unknown']}},'owner/unknown.png');
+ addField(view,{id:'workbook-image',section:'image',label:'원본 Excel 추가 이미지',type:'images',required:false,visibility:'common',workbookWire:{sha256:'a'.repeat(64),sheetName:'견적',column:20,requirement:'optional'}},'owner/workbook.png');
+ const before=JSON.stringify(view),original=view.resolved.schema.fields.filter(field=>field.section==='image'),ui=quotationTitleUI({view});
+ try{await ui.idle();const section=visibleNodes(ui.render()).find(node=>node.type==='fieldset'&&node.props['data-section']==='image'),visible=visibleNodes(section);
+  assert.deepEqual(visible.filter(node=>node.type==='h5').map(titleText),['기본 이미지','라벨 이미지','상세 정보','원본 Excel 추가 항목']);
+  const shown=visible.filter(node=>node.props?.className?.split?.(' ').includes('quotation-field')).map(node=>original.find(field=>titleNodes(node).some(child=>child.props?.id==='seo-title-test-'+field.id))?.id);
+  assert.deepEqual(shown,['mainImage','additionalImages','native-size','labelImages','native-label-two','detailImages','detailHtml','altText','unknown-image','workbook-image']);
+  assert.deepEqual([...shown].sort(),original.map(field=>field.id).sort(),'no field is lost, duplicated or fabricated');
+  for(const field of original)assert.equal(ui.field(field.id).props.value,view.resolved.rows[0].fields[field.id].value,field.id);
+  ui.field('native-size').props.onChange({target:{value:'owner/replacement-size.png'}});ui.render();assert.deepEqual(plain(ui.changes),[{fieldKey:'native-size',optionId:null,value:'owner/replacement-size.png'}]);
+  assert.equal(ui.field('detailHtml').props.value,view.resolved.rows[0].fields.detailHtml.value);assert.equal(JSON.stringify(view),before);assert.equal(mutations(ui).length,0);
+ }finally{ui.close();}
+});
+
+test('unbound native image names cannot masquerade as known size charts or label rows, and unknown fields remain stable',()=>{
+ const grouping=load('app/quotation-field-groups.ts'),base={section:'image',type:'images',required:false,visibility:'common'};
+ const fields=[
+  {...base,id:'unknown-one',label:'사이즈표 이미지',hubInput:'sizeImages',hubWire:{path:['imagePage','images','otherSizeChartImage']}},
+  {...base,id:'unknown-two',label:'라벨 이미지',hubWire:{path:['imagePage','images','labelImages','extra']}},
+  {...base,id:'size',label:'정확한 크기 이미지',hubInput:'sizeImages',hubWire:{path:['imagePage','images','sizeChartImage']}},
+  {...base,id:'native-label',label:'다른 라벨',hubWire:{path:['imagePage','images','labelImages'],name:'다른 라벨',nameKey:'labelImageType',valueKey:'labelImageFiles'}},
+ ];
+ const before=JSON.stringify(fields),display=grouping.quotationSectionDisplayFields(fields,'image');
+ assert.deepEqual(plain(display.map(field=>field.id)),['size','native-label','unknown-one','unknown-two']);
+ assert.equal(grouping.quotationFieldGroup(fields[0]),'상세 정보');assert.equal(grouping.quotationFieldGroup(fields[1]),'상세 정보');assert.equal(grouping.quotationFieldGroup(fields[3]),'라벨 이미지');
+ assert.equal(JSON.stringify(fields),before);for(const field of display)assert.equal(field,fields.find(source=>source.id===field.id),'presentation returns the existing field objects');
 });
 
 test('named original attribute, notice and certificate rows pair readonly names with unchanged editable values and optional native examples',async()=>{
