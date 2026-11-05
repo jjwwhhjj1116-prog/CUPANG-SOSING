@@ -1,5 +1,5 @@
 import type { QuotationChange, QuotationFieldsView } from '@/app/quotation-schema';
-import { optionImageChanges, optionImageTargets, optionImageValue, quotationImageKeys, verifyOptionImageRecovery } from '@/app/quotation-image-targets';
+import { optionImageChanges, optionImageTargets, optionImageValue, quotationImageKeys, verifyOptionImageRecovery, verifyQuotationImagePoolChange } from '@/app/quotation-image-targets';
 import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 import { MAX_IMAGE_BYTES, imageFileType } from '@/app/image-files';
 import { inspectImage } from '@/app/automation/image-edit';
@@ -152,10 +152,10 @@ async function receipt(input: DetailComposite, signal: AbortSignal, fetcher: typ
   if (typeof body.key !== 'string' || !body.key.endsWith(`/quotation-label-${input.uploadId}.png`) || body.contentType !== 'image/png' || body.size !== input.output.size || body.sha256 !== input.sha256) throw Error('저장한 합친 이미지가 미리보기 파일과 다릅니다.');
   if ((await readImage(body.key, signal, fetcher)).sha256 !== input.sha256) throw Error('합친 이미지의 저장 파일을 확인하지 못했습니다.'); return body.key;
 }
-function poolCommit(before: QuotationFieldsView, after: QuotationFieldsView, key: string) {
-  const omitClock = (view: QuotationFieldsView) => { const rest: Partial<QuotationFieldsView> = { ...view }; delete rest.productVersion; delete rest.inputFingerprint; delete rest.imageKeys; return rest; };
-  if (before.imageKeys.includes(key) || !same(after.imageKeys, [...before.imageKeys, key]) || Date.parse(after.productVersion) <= Date.parse(before.productVersion)
-    || !same(omitClock(before), omitClock(after))) throw changed();
+function poolCommit(before: QuotationFieldsView, after: QuotationFieldsView, key: string, productId: string) {
+  if (before.imageKeys.includes(key)) throw changed();
+  try { verifyQuotationImagePoolChange(before, after, productId, [...before.imageKeys, key]); }
+  catch { throw changed(); }
 }
 /** Uncertain writes are reconciled by reads only. A subsequent explicit click
  * can resume the next step; a completed quote is never written twice. */
@@ -165,7 +165,7 @@ export async function recoverDetailComposite(input: DetailComposite, attempt: De
   const current = await readView(input, signal, fetcher);
   if (attempt.pending === 'pool' && attempt.poolBefore && attempt.key) {
     if (same(current, attempt.poolBefore)) { attempt.pending = undefined; return 'ready' as const; }
-    poolCommit(attempt.poolBefore, current, attempt.poolKey??attempt.key); attempt.quoteBefore = current; attempt.pending = undefined; return 'ready' as const;
+    poolCommit(attempt.poolBefore, current, attempt.poolKey??attempt.key, input.productId); attempt.quoteBefore = current; attempt.pending = undefined; return 'ready' as const;
   }
   if (attempt.pending === 'quote' && attempt.quoteBefore && attempt.changes) {
     if (same(current, attempt.quoteBefore)) { attempt.pending = undefined; return 'ready' as const; }
@@ -199,7 +199,7 @@ export async function applyDetailComposite(input: DetailComposite, attempt: Deta
     attempt.poolBefore = current; attempt.pending = 'pool';
     const response = await fetcher(`/api/products/${encodeURIComponent(input.productId)}/attachments`, { method: 'POST', signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key, role: null, expectedVersion: current.productVersion, expectedContentRevision: current.contentRevision }) });
     if (!response.ok) { if (response.status < 500 && response.status !== 429) attempt.pending = undefined; throw Error('합친 이미지 연결 결과를 확인해주세요. 원본은 유지됩니다.'); }
-    const saved = await readView(input, signal, fetcher); poolCommit(current, saved, key); current = saved; attempt.quoteBefore = current; attempt.pending = undefined;
+    const saved = await readView(input, signal, fetcher); poolCommit(current, saved, key, input.productId); current = saved; attempt.quoteBefore = current; attempt.pending = undefined;
   }
   await verifySources(input, signal, fetcher);
   if (!same(await readView(input, signal, fetcher), current)) throw changed();

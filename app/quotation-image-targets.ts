@@ -1,5 +1,6 @@
 import { applyQuotationChanges, quotationValueIssues, validateQuotationChanges, type QuotationChange, type QuotationField, type QuotationFieldsView } from '@/app/quotation-schema';
 import { exactPrimaryQuotationTarget, type PrimaryQuotationTarget } from '@/app/quotation-seo-targets';
+import { currentSavedQuotationValidation } from '@/app/quotation-save-validation';
 
 export type OptionImageStage = 'additional' | 'detail';
 export type OptionImageInput = 'additionalImages' | 'detailImages' | 'detailHtml';
@@ -23,6 +24,17 @@ export function optionImageTargets(fields: readonly QuotationField[]) {
   return { additionalImages: exactPrimaryQuotationTarget(fields, 'additionalImages'), detailImages: exactPrimaryQuotationTarget(fields, 'detailImages'), detailHtml: exactDetailHtmlTarget(fields) };
 }
 export const quotationImageKeys = (value: string) => value.split('\n').map(key => key.trim()).filter(Boolean);
+/** Pool-only writes can invalidate derived validation, never replace its evidence. */
+export function verifyQuotationImagePoolChange(before: QuotationFieldsView, after: QuotationFieldsView, productId: string, expectedKeys: readonly string[]): void {
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+  const unchanged = (view: QuotationFieldsView) => Object.fromEntries(Object.entries(view).filter(([key]) => !['productVersion', 'imageKeys', 'inputFingerprint', 'savedValidation'].includes(key)));
+  if (!same(unchanged(before), unchanged(after)) || !same(after.imageKeys, expectedKeys)
+    || !/^[a-f0-9]{64}$/u.test(after.inputFingerprint) || !Number.isFinite(Date.parse(before.productVersion)) || !Number.isFinite(Date.parse(after.productVersion))
+    || Date.parse(after.productVersion) < Date.parse(before.productVersion)
+    || !same(before.imageKeys, expectedKeys) && Date.parse(after.productVersion) <= Date.parse(before.productVersion)
+    || after.savedValidation !== undefined && (!same(after.savedValidation, before.savedValidation) || !currentSavedQuotationValidation(after, productId)))
+    throw Error('상품 이미지 연결 후 견적서 저장 기준이 변경되었습니다. 최신 저장본을 확인해주세요.');
+}
 /** Move one selected image to another selected position; never add or remove
  * references or reinterpret an ambiguous duplicate list. */
 export function reorderOptionImageKeys(keys: readonly string[], from: string, to: string): string[] {

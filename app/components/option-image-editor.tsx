@@ -4,7 +4,7 @@ import { isOwnedImageKey } from '@/app/image-files';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
 import type { QuotationChange, QuotationFieldsView } from '@/app/quotation-schema';
 import type { FreeImageQuotationRequest } from '@/app/free-image-translation-client';
-import { optionImageChanges, optionImageDraftIssues, optionImageTargets, optionImageValue, quotationImageKeys, reorderOptionImageKeys, verifyOptionImageRefresh, verifyOptionImageRestored, verifyOptionImageSave, verifyOptionImageRecovery, type OptionImageDraft, type OptionImageInput, type OptionImageStage } from '@/app/quotation-image-targets';
+import { optionImageChanges, optionImageDraftIssues, optionImageTargets, optionImageValue, quotationImageKeys, reorderOptionImageKeys, verifyOptionImageRefresh, verifyOptionImageRestored, verifyOptionImageSave, verifyOptionImageRecovery, verifyQuotationImagePoolChange, type OptionImageDraft, type OptionImageInput, type OptionImageStage } from '@/app/quotation-image-targets';
 import { downloadImageSelection } from '@/app/image-selection-download';
 import { DetailImageCompositePanel } from '@/app/components/detail-image-composite-panel';
 import { DetailWorkspacePanel } from '@/app/components/detail-workspace-panel';
@@ -500,10 +500,9 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
           || latestSaved.current.sourceKey !== sourceKey || Object.keys(latestDraft.current.values).length) return;
         try {
           verify(next, true);
-          const stable = (value: QuotationFieldsView) => Object.fromEntries(Object.entries(value).filter(([key]) => !['productVersion', 'imageKeys', 'inputFingerprint'].includes(key)));
-          if (JSON.stringify(stable(next)) !== JSON.stringify(stable(view)) || Date.parse(next.productVersion) <= Date.parse(view.productVersion)
-            || next.imageKeys.length <= view.imageKeys.length || !view.imageKeys.every((key, index) => next.imageKeys[index] === key)
+          if (next.imageKeys.length <= view.imageKeys.length || !view.imageKeys.every((key, index) => next.imageKeys[index] === key)
             || next.imageKeys.some(key => !isOwnedImageKey(view.imageKeys[0]?.split('/')[0] ?? '', key))) return;
+          verifyQuotationImagePoolChange(view, next, productId, next.imageKeys);
           clearDrag(); latestSaved.current = { scope, sourceKey, view: next }; setSaved(latestSaved.current);
           setMessage('편집 결과를 상품의 이미지 후보에 추가했습니다. 견적서는 유지했습니다. 최신 편집 구성을 열어 사진을 확인한 뒤 옵션 초안에 적용해주세요.');
           onSaved?.();
