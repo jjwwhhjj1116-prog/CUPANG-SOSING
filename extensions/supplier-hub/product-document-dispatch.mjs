@@ -3,6 +3,7 @@ import {createVerifiedProductDocumentBrowserAdapter} from './product-document-ad
 import {SingleDocumentError,readPreparedDocumentPreviewCheckpoint} from './single-document.mjs';
 import {PRODUCT_DOCUMENT_PREFLIGHT_TIMEOUT} from './product-document.mjs';
 import {resolveProductSourceContext} from './product-source-context.mjs';
+import {createNativeDraftDetailAmendmentStore} from './native-draft-detail-amendment-store.mjs';
 
 // Enable only after the owned full document, staged terms, readback and native
 // receipt have been verified live. A page cannot override this release gate.
@@ -10,13 +11,14 @@ export const PRODUCT_DOCUMENT_LIVE_VERIFIED=false;
 const receivers=new Map();
 // Service-worker-local only. Durable checkpoints remain the sole authority
 // across worker restarts; an empty set never proves an earlier action stopped.
-const activeDocumentKeys=new Set();
+export const activeDocumentKeys=new Set();
 const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canonical).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}';
 export async function dispatchProductDocument(message,sender){
   if(!message||message.type!=='YOOFAM_PRODUCT_DOCUMENT_REQUEST'||!['preview','prepareDraft','recoverDraft','recoverSavedDraftTarget','auditUnexpectedLegal','validateSavedDocumentSteps','retrySavedDocumentStep','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','repairExistingDraft','retryExistingDraftRepair','continueApprovedRepair','resumeReservedRepair','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft','start','resume','recover','confirm','observe'].includes(message.action)
     ||Object.keys(message).some(key=>!['type','action','packet','confirmation'].includes(key))
     ||(['confirm','confirmPreparedDraft','retrySavedDocumentStep'].includes(message.action))!==Object.hasOwn(message,'confirmation'))throw new SingleDocumentError('PRODUCT_ACTION','전체 상품 견적 작업을 확인해주세요.');
   let context=await productDocumentIdentity(message.packet,sender,{allowExpired:!['preview','start','prepareDraft','reviewPreparedDraft','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','repairExistingDraft','retryExistingDraftRepair','continueApprovedRepair','resumeReservedRepair'].includes(message.action)});
+  if(globalThis.indexedDB&&await createNativeDraftDetailAmendmentStore().activeFor(context.laneKey))throw new SingleDocumentError('DRAFT_DETAIL_AMENDMENT_ACTIVE','상세 수정 요청의 최신 문서에서 결과를 확인해주세요. 원래 문서는 다시 전송하지 않았습니다.');
   if(['prepareDraft','recoverDraft','recoverSavedDraftTarget','auditUnexpectedLegal','validateSavedDocumentSteps','retrySavedDocumentStep','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','repairExistingDraft','retryExistingDraftRepair','continueApprovedRepair','resumeReservedRepair','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(message.action))context=await resolveProductSourceContext(context);
   if(message.action==='preview'){
     const reviewDigest=message.packet.review.reviewDigest,deadlineAt=Date.now()+PRODUCT_DOCUMENT_PREFLIGHT_TIMEOUT,timeoutError=()=>new SingleDocumentError('PRODUCT_SOURCE_PREFLIGHT_TIMEOUT','현재 회원·회사·견적 원본 확인 시간이 초과됐습니다. 상품은 전송하지 않았습니다.');

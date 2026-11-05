@@ -18,7 +18,7 @@ export async function nativeProductDocumentAppSourcePage(input){
  const canonical=value=>{nodes=0;return canon(value);},same=(a,b)=>canonical(a)===canonical(b),sha=async bytes=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),byte=>byte.toString(16).padStart(2,'0')).join(''),digest=value=>sha(new TextEncoder().encode(canonical(value)));
  const requested=expected.requestedProfileId,query=requested===null?'':'?profileId='+encodeURIComponent(requested),path='/api/products/'+encodeURIComponent(expected.productId)+'/native-assets';
  const readError=(code,resource,status)=>Object.assign(Error('현재 전송 원본 조회를 확인하지 못했습니다.'),{sourceFailure:{code,resource,...(status===undefined?{}:{status})}});
- const resource=path=>path==='/api/supplier-hub/catalog-context'?'catalog-context':path.includes('/legal-documents?')?'legal-documents':'native-assets';
+ const resource=path=>path==='/api/supplier-hub/catalog-context'?'catalog-context':path==='/api/settings'?'settings':path.includes('/quotation-fields')?'quotation-fields':path.includes('/legal-documents?')?'legal-documents':'native-assets';
  async function read(path,limit,type){const url=origin+path,kind=resource(path),controller=new AbortController(),timer=setTimeout(()=>controller.abort(),30000);let response;try{try{response=await fetch(url,{method:'GET',credentials:'same-origin',redirect:'error',cache:'no-store',signal:controller.signal,headers:{accept:type||'application/json'}});}catch{throw readError(controller.signal.aborted?'SOURCE_READ_TIMEOUT':'SOURCE_READ_NETWORK',kind);}
   if(!response.ok)throw readError('SOURCE_READ_HTTP',kind,response.status);
   if(response.redirected||response.url!==url||type&&response.headers.get('content-type')?.split(';')[0]!==type||!type&&!/\bapplication\/json\b/i.test(response.headers.get('content-type')||''))throw readError('SOURCE_READ_RESPONSE',kind);
@@ -40,6 +40,10 @@ export async function nativeProductDocumentAppSourcePage(input){
  {
   const before=await json('/api/supplier-hub/catalog-context');if(before.ownerId!==expected.ownerId||!same(before.company,expected.company))throw Error('현재 승인 회원 회사가 다릅니다.');
   const account=await sha(new TextEncoder().encode(JSON.stringify(['sourceflow-managed-product-account-v1',before.ownerId,before.company.code,before.company.name])));if(account!==expected.accountContext)throw Error('현재 회원 연결이 변경됐습니다.');
+  const settings=input.action==='amendment'?await json('/api/settings'):null;
+  if(settings&&(settings.scope?.ownerId!==expected.ownerId||!same(settings.scope?.company,expected.company)))throw Error('상세 수정의 현재 설정 소유자·회사가 다릅니다.');
+  const fieldsPath='/api/products/'+encodeURIComponent(expected.productId)+'/quotation-fields'+query;
+  const quotationView=input.action==='amendment'?await json(fieldsPath):null;
   const plan=await json(path+query);scope(plan);const {sourcePlanSha256:omitted,...manifest}=plan;void omitted;
   if(await digest(manifest)!==expected.fingerprint||await digest(plan.identity)!==plan.identityDigest||await digest(plan.body)!==input.bodySha256)throw Error('현재 원본 계획의 독립 해시가 다릅니다.');
   const deferred=JSON.parse(JSON.stringify(plan.body));for(const document of deferred.jsonDocument)for(const key of ['msrpAgree','labelContactAgreed'])if(document.imagePage&&Object.hasOwn(document.imagePage,key))document.imagePage[key]=false;
@@ -65,9 +69,13 @@ export async function nativeProductDocumentAppSourcePage(input){
    if(input.action==='image'&&(original.response.headers.get('x-yoofam-source-plan-sha256')!==expected.fingerprint||original.response.headers.get('x-yoofam-file-sha256')!==file.sha256))throw Error('현재 상품 원본의 서버 확인값이 다릅니다.');
    const latest=await json(path+query);scope(latest);if(!same(plan,latest))throw Error('원본 조회 중 상품·견적·파일이 변경됐습니다.');
    let binary='';for(let offset=0;offset<original.bytes.length;offset+=16384)binary+=String.fromCharCode(...original.bytes.subarray(offset,offset+16384));fileReply={base64:btoa(binary),byteLength:file.byteLength,sha256:file.sha256,contentType:file.contentType};
+  }else if(input.action==='amendment'){
+   if(quotationView.inputFingerprint!==expected.inputFingerprint||quotationView.productVersion!==expected.source.productVersion||quotationView.contentRevision!==expected.source.contentRevision||quotationView.optionRevision!==expected.source.optionRevision||quotationView.revision!==expected.source.quotationRevision)throw Error('상세 수정의 저장 견적서 버전이 다릅니다.');
+   const latest=await json(path+query);scope(latest);
+   if(!same(plan,latest)||!same(quotationView,await json(fieldsPath))||!same(settings,await json('/api/settings')))throw Error('상세 수정 자료 조회 중 상품·설정·견적이 변경됐습니다.');
   }else if(input.action!==undefined&&input.action!=='plan')throw Error('원본 조회 동작을 확인해주세요.');
   const after=await json('/api/supplier-hub/catalog-context');if(!same(before,after))throw Error('조회 중 회원 회사가 변경됐습니다.');
-  return{current:true,identity:expected,bodySha256:input.bodySha256,preparedBodySha256:input.preparedBodySha256,checkedAt:Date.now(),sourcePlan:plan,...(imageBatchAvailable?{imageBatchAvailable:true}:{}),...(imageFiles?{files:imageFiles}:{}),...(fileReply?{file:fileReply}:{})};
+  return{current:true,identity:expected,bodySha256:input.bodySha256,preparedBodySha256:input.preparedBodySha256,checkedAt:Date.now(),sourcePlan:plan,...(quotationView?{amendmentSource:{settings,quotationView}}:{}),...(imageBatchAvailable?{imageBatchAvailable:true}:{}),...(imageFiles?{files:imageFiles}:{}),...(fileReply?{file:fileReply}:{})};
  }
 }
 

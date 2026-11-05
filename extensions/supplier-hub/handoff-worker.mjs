@@ -15,6 +15,7 @@ import {readAppCompanyRegistrations} from './company-registration.mjs';
 import {readAppNativeRegistrations} from './native-registration.mjs';
 import {dispatchSingleDocument} from './single-dispatch.mjs';
 import {dispatchProductDocument} from './product-document-dispatch.mjs';
+import {dispatchNativeDraftDetailAmendment} from './native-draft-detail-amendment-dispatch.mjs';
 import {withProductDocumentReadLifetime} from './product-document-read-lifetime.mjs';
 import {savePageSource,flushPageSources} from './source-inbox.mjs';
 import {dispatchListingBatch,authenticateListingBulkPage,saveListingBulkPage} from './listing-batch.mjs';
@@ -23,6 +24,9 @@ import {readProductSourceSession} from './product-source-session.mjs';
 import {inspectPreservedProductDocument} from './preserved-product-checkpoint.mjs';
 import {dispatchHistoricalProductReceipt} from './preserved-product-receipt-runtime.mjs';
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
+  if(message?.type==='YOOFAM_PRODUCT_DOCUMENT_DETAIL_AMENDMENT_REQUEST'){
+    withProductDocumentReadLifetime(message.action==='apply'?'validateSavedDocumentSteps':'recoverSavedDraftTarget',()=>dispatchNativeDraftDetailAmendment(message,sender),chrome.runtime).then(result=>respond({ok:true,result}),error=>respond({ok:false,error:error?.code?error.message:'같은 문서의 상세 수정 결과를 먼저 확인해주세요.',code:error?.code??'DRAFT_DETAIL_AMENDMENT_FAILED'}));return true;
+  }
   if(['YOOFAM_LISTING_BATCH_START','YOOFAM_LISTING_BATCH_STATUS','YOOFAM_LISTING_BATCH_CANCEL','YOOFAM_LISTING_BATCH_RESUME'].includes(message?.type)){
     dispatchListingBatch(message,sender).then(respond,error=>respond({ok:false,error:error.message,code:error.code??'LISTING_BATCH_FAILED'}));return true;
   }

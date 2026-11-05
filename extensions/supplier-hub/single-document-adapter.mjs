@@ -22,6 +22,7 @@ import {validateUnexpectedLegalAuditReport} from './unexpected-legal-audit.mjs';
 import {savedDocumentStepValidationPage} from './saved-document-step-validation-page.mjs';
 import {configuredConsentProofValid} from './configured-consent-proof.mjs';
 import {runSavedDocumentStepValidation,validateSavedDocumentStepValidationReport,validateSavedDocumentStepRetryRequest} from './saved-document-step-validation.mjs';
+import {createNativeDraftDetailAmendmentStore} from './native-draft-detail-amendment-store.mjs';
 
 const HASH=/^[a-f0-9]{64}$/;
 const ID=/^\w[\w-]{0,99}$/;
@@ -483,7 +484,7 @@ export function singleDocumentReceiptPage(input){
 export function createSingleDocumentBrowserAdapter(options={}){
   return createSupplierHubDocumentBrowserAdapter(options,{wholeProduct:false});
 }
-export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,now=Date.now,nativeAssets,sourceAppTabId}={},contract){
+export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,now=Date.now,nativeAssets,sourceAppTabId,nativeDraftDetailAmendmentId}={},contract){
   if(!contract||Object.keys(contract).length!==1||typeof contract.wholeProduct!=='boolean')throw new TypeError('A trusted browser source contract is required.');
   const wholeProduct=contract.wholeProduct,nativeSha=nativeAssets?.sourcePlanSha256;
   if(nativeAssets!==undefined&&(!wholeProduct||!nativeAssets||Object.keys(nativeAssets).length!==1||typeof nativeSha!=='string'||!HASH.test(nativeSha)))throw new TypeError('An independently verified native source-plan constructor is required.');
@@ -502,6 +503,10 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
   }
   async function readSourceUnchecked(input){
     await appCurrent(input.identity);
+    if(wholeProduct&&nativeSha&&globalThis.indexedDB){
+      const lane=Object.fromEntries(['origin','ownerId','accountContext','company','productId'].map(key=>[key,input.identity[key]])),child=await createNativeDraftDetailAmendmentStore().activeFor('product-document-lane:'+await digest(lane));
+      if(child&&(nativeDraftDetailAmendmentId!==child.amendmentId||!equal(child.nextContext?.identity,input.identity)||child.nextContext?.packetDigest!==input.packetDigest||child.anchor.requestId!==input.requestId))fail('DRAFT_DETAIL_AMENDMENT_ACTIVE','상세 수정 중인 같은 문서는 최신 수정 요청에서만 진행할 수 있습니다.');
+    }
     if(nativeSha&&input.identity.fingerprint!==nativeSha)fail('SOURCE_CHANGED','별도로 검토한 파일명 원본 계획이 다릅니다.');
     if(wholeProduct?Object.hasOwn(input.identity,'optionId')||!Array.isArray(input.identity.members):Object.hasOwn(input.identity,'members'))fail('SOURCE_CHANGED','문서 전송 방식이 다릅니다.');
     const observations=await Promise.allSettled([

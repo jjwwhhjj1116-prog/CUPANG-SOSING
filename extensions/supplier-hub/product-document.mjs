@@ -51,6 +51,8 @@ function canonical(value) {
   };
   const result = visit(value, 0); if (new TextEncoder().encode(result).byteLength > LIMIT) fail('JSON_LIMIT'); return result;
 }
+// Shared bounded, descriptor-safe JSON for the separate amendment ledger.
+export const productDocumentCanonical = canonical;
 const copy = value => JSON.parse(canonical(value));
 const digest = async value => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical(value)))), byte => byte.toString(16).padStart(2, '0')).join('');
 function freeze(value) { if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value; }

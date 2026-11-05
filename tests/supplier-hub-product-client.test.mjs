@@ -58,6 +58,24 @@ async function fixture(company=SINGLE_COMPANIES[0],options={}){
   f.wait=async predicate=>{for(let i=0;i<300;i++){if(predicate())return;await new Promise(resolve=>setImmediate(resolve));}assert.fail('Client fixture did not reach requested boundary.');};
   f.session=()=>f.client.previewProductDocument(packet,new AbortController().signal);return f;
 }
+test('independent amended lifecycle verification reuses strict prepared parsing without dispatching a parent action',async()=>{
+ const f=await fixture();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,preparedLifecycleAvailable:true});
+ const session=await f.session(),value=f.state('navigation-ready',{draftOnly:true,preparedLifecycle:true,lifecycleProof:{evidence:'native-prepared-draft-lifecycle',preparedCheckpointSequence:12,qualifiedCheckpointSequence:13,checkpointSequence:14,qualifiedAt:f.clock.now,observedAt:f.clock.now,validatedSteps:[2,3,4,5],consentRequested:false,submitRequested:false}}),before=f.sent.length;
+ assert.equal((await f.client.validatePreparedProductDocumentState(value,session,'reviewPreparedDraft',new AbortController().signal)).state,'navigation-ready');
+ await assert.rejects(f.client.validatePreparedProductDocumentState({...value,preparedBodySha256:'f'.repeat(64)},session,'reviewPreparedDraft',new AbortController().signal));assert.equal(f.sent.length,before);
+});
+
+test('amended child lifecycle verifies the rich current review, original browser and exact receipt without parent dispatch',async()=>{
+ const f=await fixture(),stored=new Map();f.window.localStorage={getItem:key=>stored.get(key)??null,setItem:(key,value)=>stored.set(key,value),removeItem:()=>assert.fail('retain parent')};f.window.navigator={locks:{request:async(_key,_options,run)=>run()}};
+ const session=await f.session(),signal=new AbortController().signal,parent=f.load('app/supplier-hub-product-pending.ts'),pending=f.load('app/native-draft-detail-amendment-pending.ts'),client=f.load('app/native-draft-detail-amendment-client.ts');await parent.claimProductDocumentPending(f.review,session,signal);
+ const anchor={origin:session.origin,ownerId:f.review.identity.ownerId,company:f.review.identity.company,productId:f.review.identity.productId,requestId:session.packet.requestId,docId:2362997,parentIdentityDigest:session.preview.identityDigest,parentPacketDigest:session.packetDigest,parentReviewDigest:f.review.reviewDigest,parentSourcePlanSha256:f.review.identity.fingerprint,parentOriginalBodySha256:f.review.originalBodySha256,parentPreparedBodySha256:f.review.preparedBodySha256,parentCheckpointSequence:12,parentCheckpointSha256:'a'.repeat(64)},descriptor={format:'yoofam-native-draft-detail-amendment-descriptor-v1',amendmentId:'22222222-2222-4222-8222-222222222222',anchor};
+ await pending.claimNativeDraftDetailAmendmentPending(descriptor,signal);const before=[...stored],sent=f.sent.length;
+ const lifecycle=f.state('navigation-ready',{docId:2362997,draftOnly:true,preparedLifecycle:true,lifecycleProof:{evidence:'native-prepared-draft-lifecycle',preparedCheckpointSequence:12,qualifiedCheckpointSequence:13,checkpointSequence:14,qualifiedAt:f.clock.now,observedAt:f.clock.now,validatedSteps:[2,3,4,5],consentRequested:false,submitRequested:false}});
+ const observation={format:'yoofam-native-draft-detail-amendment-v1',amendmentId:descriptor.amendmentId,anchor,state:'submission',sequence:15,observedAt:f.clock.now,previewDigest:'a'.repeat(64),latest:{reviewDigest:f.review.reviewDigest,sourcePlanSha256:f.review.identity.fingerprint,originalBodySha256:f.review.originalBodySha256,preparedBodySha256:f.review.preparedBodySha256,identityDigest:session.preview.identityDigest,packetDigest:session.packetDigest},validatedSteps:[2,3,4,5],needsRecovery:false,capabilities:{appendDetail:true},execution:{create:0,upload:0,update:0,validate:0,submit:0},readOnly:true,registered:false,lifecycle};
+ assert.equal((await client.nativeDraftDetailAmendmentLifecycle(f.review,descriptor,observation,'reviewPreparedDraft',signal)).state.state,'navigation-ready');
+ for(const change of [value=>{value.lifecycle.identity.appTabId++;},value=>{value.lifecycle.preparedBodySha256='f'.repeat(64);},value=>{value.lifecycle.lifecycleProof.validatedSteps=[2,3];},value=>{value.latest.reviewDigest='f'.repeat(64);},value=>{value.lifecycle.docId=2347603;}]){const changed=plain(observation);change(changed);await assert.rejects(client.nativeDraftDetailAmendmentLifecycle(f.review,descriptor,changed,'reviewPreparedDraft',signal));}
+ assert.deepEqual([...stored],before);assert.equal(f.sent.length,sent);
+});
 function draftState(f,state='validated',extra={}){
  const steps=state==='validated'?[2,3,4,5]:state==='validation-rejected'?[2]:[];
  return f.state(state,{draftOnly:true,draftProof:{evidence:'document-draft-preparation',validatedSteps:steps,checkpointSequence:10,observedAt:f.clock.now,submitted:false,consented:false},...extra});

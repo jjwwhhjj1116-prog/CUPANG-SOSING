@@ -5,6 +5,7 @@ export const PRODUCT_DOCUMENT_REQUEST_VERSION: 1;
 export const PRODUCT_DOCUMENT_REQUEST_TTL: 120000;
 export const PRODUCT_DOCUMENT_PREFLIGHT_TIMEOUT: 90000;
 export const PRODUCT_DOCUMENT_PREVIEW_ACK_TIMEOUT: 95000;
+export function productDocumentCanonical(value: unknown): string;
 export class ProductDocumentTransportError extends Error { code: string; constructor(code: string, message?: string); }
 export type ProductDocumentPacket = Readonly<{ type: typeof PRODUCT_DOCUMENT_REQUEST_TYPE; version: typeof PRODUCT_DOCUMENT_REQUEST_VERSION; requestId: string; createdAt: number; review: SupplierHubProductDocumentReview }>;
 export type ProductDocumentBinding = Readonly<{ format: SupplierHubProductDocumentReview['format']; identity: SupplierHubProductDocumentReview['identity']; members: SupplierHubProductDocumentReview['members']; identityDigest: string;

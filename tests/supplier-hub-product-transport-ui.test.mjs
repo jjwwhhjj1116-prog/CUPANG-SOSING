@@ -31,6 +31,7 @@ const factory = vm.runInNewContext(declarations + '\n({fixture,groupRecord,legac
   URL, Response, Request, TextEncoder, TextDecoder, Uint8Array, AbortController, Date, JSON, Array, Object, Error, Intl, structuredClone, setImmediate });
 const native = createRequire(import.meta.url), plain = value => JSON.parse(JSON.stringify(value)), cases = [];
 const MemberRegistrationConsentsPanel=()=>null;
+const NativeDraftDetailAmendmentPanel=()=>null;
 const nodes = tree => Array.isArray(tree) ? tree.flatMap(nodes) : tree && typeof tree === 'object' ? tree.type === SupplierHubRejectionDetails ? nodes(tree.type(tree.props)) : [tree, ...nodes(tree.props?.children)] : [];
 const text = tree => Array.isArray(tree) ? tree.map(text).join(' ') : tree && typeof tree === 'object' ? tree.type === SupplierHubRejectionDetails ? text(tree.type(tree.props)) : text(tree.props?.children) : tree == null ? '' : String(tree);
 const turn = () => new Promise(resolve => setImmediate(resolve)), deferred = () => { let resolve; const promise = new Promise(done => resolve = done); return { promise, resolve }; };
@@ -49,7 +50,37 @@ function preparedResult(h,payload,state,sequence,extra={}){
  return h.f.state(state,{requestId:payload.packet.requestId,draftOnly:true,preparedLifecycle:true,lifecycleProof:{evidence:'native-prepared-draft-lifecycle',preparedCheckpointSequence:12,qualifiedCheckpointSequence:13,checkpointSequence:sequence,qualifiedAt:h.qualifiedAt,observedAt:h.f.clock.now,validatedSteps:[2,3,4,5],consentRequested:sequence>14,submitRequested:submitted},...extra});
 }
 function allowPrepared(h,run){h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true}:payload.action==='prepareDraft'?draftResult(h.f,payload.packet.requestId):run(payload);}
+test('validated draft amendment reserves its own UUID only after capability and retains the immutable original request',async()=>{
+ const h=await fixture(undefined,{amendment:async(message,f)=>{
+  const packet=message.payload.packet,identity=await productDocumentIdentity(packet,{...SINGLE_SENDER,origin:f.window.location.origin});
+  return{format:'yoofam-native-draft-detail-amendment-v1',amendmentId:message.payload.amendmentId,anchor:{origin:f.window.location.origin,ownerId:packet.review.identity.ownerId,company:packet.review.identity.company,productId:packet.review.identity.productId,requestId:packet.requestId,docId:message.payload.docId,parentIdentityDigest:identity.identityDigest,parentPacketDigest:identity.packetDigest,parentReviewDigest:packet.review.reviewDigest,parentSourcePlanSha256:packet.review.identity.fingerprint,parentOriginalBodySha256:packet.review.originalBodySha256,parentPreparedBodySha256:packet.review.preparedBodySha256,parentCheckpointSequence:12,parentCheckpointSha256:'a'.repeat(64)},state:'editing',sequence:1,observedAt:f.clock.now,previewDigest:null,latest:null,validatedSteps:[],needsRecovery:false,capabilities:{appendDetail:true},execution:{create:0,upload:0,update:0,validate:0,submit:0},readOnly:true,registered:false};
+ }});try{
+  h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true}:payload.action==='prepareDraft'?draftResult(h.f,payload.packet.requestId,'validated',{docId:2362997}):assert.fail('no prepared submission');await h.idle();await h.click(open);await h.click(prepareDraft);
+  const [key,original]=[...h.stored][0],stale=h.button(reviewPrepared)?.props.onClick;await h.click('저장된 문서 수정');
+  assert.equal(h.stored.get(key),original);assert.equal(h.stored.size,2,h.text());assert.equal(h.f.amendmentMessages.length,1);assert.equal(h.f.amendmentMessages[0].payload.action,'begin');
+  const child=nodes(h.render()).find(node=>node.type===NativeDraftDetailAmendmentPanel);assert.ok(child);assert.equal(child.props.pending.format,'yoofam-native-draft-detail-amendment-descriptor-v1');assert.equal(child.props.initialObservation.state,'editing');
+  assert.equal(h.button(reviewPrepared),undefined);assert.equal(h.button(prepareDraft),undefined);stale?.();await turn();assert.equal(h.f.sent.filter(row=>row.payload.action==='reviewPreparedDraft').length,0);
+ }finally{h.close();}
+});
 function checkTerms(h){for(const node of nodes(h.render()).filter(node=>node.type==='input'&&node.props.type==='checkbox')){assert.equal(Boolean(node.props.disabled),false);node.props.onChange({target:{checked:true}});}h.flush();}
+
+test('actual amendment panel confirms only latest child staged terms then saves its exact receipt under the unchanged parent UUID',async()=>{
+ let sequence=1;const h=await fixture(undefined,{panel:true,amendment:async(message,f)=>{
+  const action=message.payload.action,descriptor=f.amendmentDescriptor,view=f.review,preview=f.preview();
+  let lifecycle;
+  if(action==='review'||action==='confirm'){
+   const stage=action==='review'?'productPage':message.payload.confirmation.stage==='productPage'?'imagePage':message.payload.confirmation.stage==='imagePage'?'logisticsPage':null;
+   const state=stage==='logisticsPage'?'awaiting-consent':stage?'awaiting-stage-consent':'pending',challenge=stage?{...f.challenge(stage),id:String(sequence%9+1).repeat(64),docId:2362997}:undefined;
+   const receipt=stage?undefined:{...f.observation().receipt,docId:2362997};
+   lifecycle=f.state(state,{docId:2362997,draftOnly:true,preparedLifecycle:true,lifecycleProof:{evidence:'native-prepared-draft-lifecycle',preparedCheckpointSequence:12,qualifiedCheckpointSequence:13,checkpointSequence:20+sequence,qualifiedAt:f.clock.now,observedAt:f.clock.now,validatedSteps:[2,3,4,5],consentRequested:action==='confirm',submitRequested:!stage},...(challenge?{challenge}:{}),...(receipt?{receipt}:{})});
+  }
+  return{format:'yoofam-native-draft-detail-amendment-v1',amendmentId:descriptor.amendmentId,anchor:descriptor.anchor,state:lifecycle?lifecycle.receipt?'pending':'submission':action==='preview'?'previewed':action==='apply'?'validated':'editing',sequence:sequence++,observedAt:f.clock.now,previewDigest:action==='inspect'?null:'a'.repeat(64),latest:action==='inspect'?null:{reviewDigest:view.reviewDigest,sourcePlanSha256:view.identity.fingerprint,originalBodySha256:view.originalBodySha256,preparedBodySha256:view.preparedBodySha256,identityDigest:preview.identityDigest,packetDigest:preview.packetDigest},validatedSteps:action==='apply'||lifecycle?[2,3,4,5]:[],needsRecovery:false,capabilities:{appendDetail:true},execution:{create:0,upload:action==='apply'?1:0,update:action==='apply'?1:0,validate:action==='apply'?4:0,submit:lifecycle?.receipt?1:0},readOnly:['inspect','preview','observe','recover'].includes(action),registered:false,...(lifecycle?{lifecycle}:{})};
+ }});try{
+  await h.idle();const parent=[...h.stored].find(([key])=>key.startsWith('yoofam-product-document-pending:'));await h.click('수정 자료 확인');await h.click('같은 문서에 수정 반영');await h.click('최신 수정 문서 등록전송');
+  for(const stage of ['상품 정보','이미지','최종 제출']){assert.match(h.text(),new RegExp(stage));assert.equal(h.f.calls.filter(row=>row.method==='POST').length,0);checkTerms(h);await h.click('현재 수정 문서 동의 확인 · 계속');}
+  assert.equal(h.f.history.length,1);assert.equal(h.f.history[0].docId,2362997);assert.equal(h.f.history[0].requestId,h.f.packet.requestId);assert.equal(h.stored.get(parent[0]),parent[1]);assert.equal(h.stored.size,2);assert.equal(h.f.sent.some(row=>row.payload.action!=='preview'),false);assert.equal(h.f.amendmentMessages.filter(row=>row.payload.action==='apply').length,1);assert.match(h.text(),/접수 처리 중/);assert.deepEqual(h.lockPairs.at(-1),[true,false]);
+ }finally{h.close();}
+});
 
 for(const company of SINGLE_COMPANIES)test(`${company.code}: explicit registration click prepares once and hands the exact validated document to consent without unlocking`,async()=>{
  const h=await fixture(company);try{
@@ -893,6 +924,10 @@ async function fixture(company = SINGLE_COMPANIES[0], options = {}) {
   f.bridge=async payload=>{const result=await originalBridge(payload);return result&&{...result,requestId:payload.packet.requestId};};
   const originalPost=f.window.postMessage;f.configuredMessages=[];
   f.window.postMessage=(message,target)=>{
+    if(message.type==='PING'||message.type==='PRODUCT_DOCUMENT_DETAIL_AMENDMENT'){
+      f.amendmentMessages??=[];if(message.type!=='PING')f.amendmentMessages.push(plain(message));
+      void Promise.resolve().then(async()=>{const result=message.type==='PING'?{ok:true,version:'2.1.88',nativeDraftDetailAmendment:true}:{ok:true,result:await options.amendment?.(message,f)};for(const listener of [...f.listeners])listener({source:f.window,origin:target,data:{channel:'YOOFAM_HUB_HANDOFF_RESULT',requestId:message.requestId,result}});});return;
+    }
     if(message.channel!=='YOOFAM_CONFIGURED_REGISTRATION_CONSENT')return originalPost(message,target);
     assert.equal(target,f.window.location.origin);f.configuredMessages.push(plain(message));
     if(message.type==='cancel')return;
@@ -906,18 +941,19 @@ async function fixture(company = SINGLE_COMPANIES[0], options = {}) {
   const react = { useState(initial) { const index = cursor++; if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial; return [slots[index], value => slots[index] = typeof value === 'function' ? value(slots[index]) : value]; }, useRef(value) { const index = cursor++; if (!(index in slots)) slots[index] = { current: value }; return slots[index]; }, useEffect: (fn, deps) => hook(fn, deps, false), useLayoutEffect: (fn, deps) => hook(fn, deps, true) };
   react.useMemo=(fn,deps)=>{const index=cursor++,old=slots[index];if(!old||deps.some((value,i)=>!Object.is(value,old.deps[i])))slots[index]={deps,value:fn()};return slots[index].value;};
   class LocalDate extends Date { static now() { return f.clock.now; } }
-  const exports = {}, component = 'app/components/supplier-hub-product-transport.tsx';
+  const exports = {}, component = options.panel?'app/components/native-draft-detail-amendment-panel.tsx':'app/components/supplier-hub-product-transport.tsx';
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../' + component, import.meta.url), 'utf8'), { fileName: component, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
-    { exports, Error, Date: LocalDate, window:f.window, AbortController, fetch: f.fetch, setTimeout: (fn, delay) => { const id = ++sequence; f.timers.set(id, { fn, due: f.clock.now + delay }); return id; }, clearTimeout: id => f.timers.delete(id),
-      require: name => name === '@/app/preserved-product-request-reconnect' && options.reconnect ? {reconnectPreservedProductDraft:input=>options.reconnect(input,f)} : name === '@/app/components/member-registration-consents-panel' ? {MemberRegistrationConsentsPanel} : name === '@/app/components/supplier-hub-native-registration' ? {SupplierHubNativeRegistration:()=>null} : name === '@/app/components/supplier-hub-rejection-details' ? {SupplierHubRejectionDetails} : name === '@/app/supplier-hub-reserved-work.mjs' ? {runReservedSegments} : name === 'react' ? react : name === '@/app/supplier-hub-product-client' ? f.client : name.startsWith('@/') ? f.load(name.slice(2) + '.ts') : name.endsWith('product-document-source.mjs') ? {sourceReadError} : name.endsWith('product-document.mjs') ? {
+    { exports, Error, Date: LocalDate, crypto:webcrypto, window:f.window, AbortController, fetch: f.fetch, setTimeout: (fn, delay) => { const id = ++sequence; f.timers.set(id, { fn, due: f.clock.now + delay }); return id; }, clearTimeout: id => f.timers.delete(id),
+      require: name => name === '@/app/components/native-draft-detail-amendment-panel' ? {NativeDraftDetailAmendmentPanel} : name === '@/app/preserved-product-request-reconnect' && options.reconnect ? {reconnectPreservedProductDraft:input=>options.reconnect(input,f)} : name === '@/app/components/member-registration-consents-panel' ? {MemberRegistrationConsentsPanel} : name === '@/app/components/supplier-hub-native-registration' ? {SupplierHubNativeRegistration:()=>null} : name === '@/app/components/supplier-hub-rejection-details' ? {SupplierHubRejectionDetails} : name === '@/app/supplier-hub-reserved-work.mjs' ? {runReservedSegments} : name === 'react' ? react : name === '@/app/supplier-hub-product-client' ? f.client : name.startsWith('@/') ? f.load(name.slice(2) + '.ts') : name.endsWith('product-document-source.mjs') ? {sourceReadError} : name.endsWith('product-document.mjs') ? {
         // Each fresh preview gets a different real UUID. Recovery must supply
         // its original UUID explicitly; a constant test seed cannot mask loss.
         createProductDocumentPacket: (review,value={}) => createProductDocumentPacket(review, { ...value,createdAt:value.createdAt??f.clock.now,now:f.clock.now }),
         PRODUCT_DOCUMENT_REQUEST_TTL,
-      } : native(name) });
+      } : native(name.startsWith('.')?fileURLToPath(new URL('../'+path.posix.join(path.posix.dirname(component),name),import.meta.url)):name) });
   props = { review: f.review, disabled: false, refresh: async signal => { refreshCalls.push(signal); return f.refresh(signal); }, onLockChange: (value,close=value) => {locks.push(value);lockPairs.push([value,close]);} };
+  if(options.panel){const session=await f.session(),signal=new AbortController().signal;await f.load('app/supplier-hub-product-pending.ts').claimProductDocumentPending(f.review,session,signal);f.amendmentDescriptor={format:'yoofam-native-draft-detail-amendment-descriptor-v1',amendmentId:'22222222-2222-4222-8222-222222222222',anchor:{origin:session.origin,ownerId:f.review.identity.ownerId,company:f.review.identity.company,productId:f.review.identity.productId,requestId:session.packet.requestId,docId:2362997,parentIdentityDigest:session.preview.identityDigest,parentPacketDigest:session.packetDigest,parentReviewDigest:f.review.reviewDigest,parentSourcePlanSha256:f.review.identity.fingerprint,parentOriginalBodySha256:f.review.originalBodySha256,parentPreparedBodySha256:f.review.preparedBodySha256,parentCheckpointSequence:12,parentCheckpointSha256:'a'.repeat(64)}};await f.load('app/native-draft-detail-amendment-pending.ts').claimNativeDraftDetailAmendmentPending(f.amendmentDescriptor,signal);props.pending=f.amendmentDescriptor;}
   f.refresh = async () => { if (f.actor.ownerId !== f.review.identity.ownerId || JSON.stringify(f.actor.company) !== JSON.stringify(f.review.identity.company)) throw Error('현재 회원 회사가 변경되었습니다.'); return plain(f.review); };
-  const render = (next = props) => { props = next; cursor = 0; return exports.SupplierHubProductTransport(props); };
+  const render = (next = props) => { props = next; cursor = 0; return options.panel?exports.NativeDraftDetailAmendmentPanel(props):exports.SupplierHubProductTransport(props); };
   const flush = () => { render(); effects.splice(0).forEach(fn => fn()); };
   const h = { f, stored,refreshCalls, locks, lockPairs, render, flush, props: () => props, text: () => text(render()), button: label => nodes(render()).find(node => node.type === 'button' && node.props.children === label),storageChanged(key){for(const fn of storageListeners)fn({key});flush();},
     async wait(predicate) { const deadline=Date.now()+10000;while(Date.now()<deadline){flush();if(predicate())return;await turn();}assert.fail('Product UI boundary timeout'); },

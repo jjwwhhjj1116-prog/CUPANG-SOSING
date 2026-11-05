@@ -360,6 +360,17 @@ async function verifyDraftState(value:unknown,session:ProductDocumentSession,exp
 /** Only an independently qualified, already-created native draft can enter
  * this lifecycle. The general unqualified start/resume release gate stays on. */
 export async function runPreparedProductDocument(session:ProductDocumentSession,action:PreparedDocumentAction,signal:AbortSignal,confirmation?:SingleConfirmation):Promise<ProductDocumentState>{
+  const expected=await preparedStateScope(session,action,signal);
+  const value=await productDocumentExchange(action,session.packet,signal,confirmation);
+  return verifyPreparedState(value,session,expected,action,signal);
+}
+
+/** Amendment replies use the same strict prepared lifecycle proof without
+ * dispatching an ordinary parent-document command. */
+export async function validatePreparedProductDocumentState(value:unknown,session:ProductDocumentSession,action:PreparedDocumentAction,signal:AbortSignal):Promise<ProductDocumentState>{
+  return verifyPreparedState(value,session,await preparedStateScope(session,action,signal),action,signal);
+}
+async function preparedStateScope(session:ProductDocumentSession,action:PreparedDocumentAction,signal:AbortSignal){
   if(!['reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(action)||session.preview.preparedLifecycleAvailable!==true)
     throw new ProductDocumentBridgeError('준비한 새 문서의 등록전송을 지원하는 통합 확장으로 자료를 다시 확인해주세요.',false,'PRODUCT_PREPARED_UNAVAILABLE');
   if(window.location.origin!==session.origin||!ORIGINS.includes(session.origin))throw new ProductDocumentBridgeError('원래 앱에서 준비한 새 문서를 확인해주세요.',false);
@@ -367,7 +378,11 @@ export async function runPreparedProductDocument(session:ProductDocumentSession,
   const fail=():never=>{throw new ProductDocumentBridgeError('준비한 새 문서의 검증 기록·현재 약관 또는 접수 연결값을 확인하지 못했습니다. 같은 문서의 저장 결과를 조회해주세요.',mutating,'PRODUCT_PREPARED_REPLY_IDENTITY');};
   try{if(session.preview.packetDigest!==expected.packetDigest||session.packetDigest!==expected.packetDigest||session.preview.requestId!==session.packet.requestId||!same(session.preview.members,session.packet.review.members))fail();await verifyIdentity(session.preview.identity,expected,session.preview.identityDigest);}catch{return fail();}
   if(signal.aborted)throw new ProductDocumentBridgeError('준비한 새 문서 확인을 취소했습니다.',false);
-  const value=await productDocumentExchange(action,session.packet,signal,confirmation);
+  return expected;
+}
+async function verifyPreparedState(value:unknown,session:ProductDocumentSession,expected:Awaited<ReturnType<typeof proof>>,action:PreparedDocumentAction,signal:AbortSignal):Promise<ProductDocumentState>{
+  const mutating=['reviewPreparedDraft','confirmPreparedDraft'].includes(action);
+  const fail=():never=>{throw new ProductDocumentBridgeError('준비한 새 문서의 검증 기록·현재 약관 또는 접수 연결값을 확인하지 못했습니다. 같은 문서의 저장 결과를 조회해주세요.',mutating,'PRODUCT_PREPARED_REPLY_IDENTITY');};
   if(object(value)&&value.preparedLifecycle===undefined&&action==='recoverPreparedDraft')return verifyDraftState(value,session,expected,signal,'recoverDraft');
   try{
     if(!exact(value,['format','requestId','identity','identityDigest','packetDigest','originalBodySha256','preparedBodySha256','state','docId','registered','success','needsRecovery','draftOnly','preparedLifecycle','lifecycleProof'],['challenge','error','receipt','duplicate','recovered']))return fail();

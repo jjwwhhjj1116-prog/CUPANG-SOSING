@@ -1,0 +1,22 @@
+import type {ProductDocumentPacket} from './product-document.mjs';
+import type {SupplierHubProductDocumentReview} from '../../app/supplier-hub-product-document';
+import type {SupplierHubCompany} from '../../app/supplier-hub-company';
+import type {SingleConfirmation} from '../../app/supplier-hub-single-client';
+import type {ProductDocumentState} from '../../app/supplier-hub-product-client';
+export type NativeDraftDetailAmendmentAnchor={origin:string;ownerId:string;company:SupplierHubCompany;productId:string;requestId:string;docId:string|number;parentIdentityDigest:string;parentPacketDigest:string;parentReviewDigest:string;parentSourcePlanSha256:string;parentOriginalBodySha256:string;parentPreparedBodySha256:string;parentCheckpointSequence:number;parentCheckpointSha256:string};
+export type NativeDraftDetailAmendmentLookup=Omit<NativeDraftDetailAmendmentAnchor,'parentCheckpointSequence'|'parentCheckpointSha256'>;
+export type NativeDraftDetailAmendmentDescriptor={format:'yoofam-native-draft-detail-amendment-descriptor-v1';amendmentId:string;anchor:NativeDraftDetailAmendmentAnchor};
+export type NativeDraftDetailAmendmentReservedBegin={format:'yoofam-native-draft-detail-amendment-begin-v1';amendmentId:string;lookup:NativeDraftDetailAmendmentLookup};
+export type NativeDraftDetailAmendmentRequest={action:'begin';amendmentId:string;packet:ProductDocumentPacket;docId:string|number}|{action:'inspect';amendmentId:string;lookup:NativeDraftDetailAmendmentLookup}|{action:'preview';amendmentId:string;anchor:NativeDraftDetailAmendmentAnchor;nextReview:SupplierHubProductDocumentReview}|{action:'apply';amendmentId:string;anchor:NativeDraftDetailAmendmentAnchor;nextReview:SupplierHubProductDocumentReview;previewDigest:string}|{action:'inspect'|'recover'|'review'|'observe';amendmentId:string;anchor:NativeDraftDetailAmendmentAnchor}|{action:'confirm';amendmentId:string;anchor:NativeDraftDetailAmendmentAnchor;confirmation:SingleConfirmation};
+type Observation={format:'yoofam-native-draft-detail-amendment-v1';amendmentId:string;state:'editing'|'previewed'|'upload-requested'|'files-saved'|'update-requested'|'updated'|'validation-requested'|'validated'|'submission'|'pending'|'accepted'|'rejected'|'registered'|'blocked';anchor:NativeDraftDetailAmendmentAnchor;sequence:number;observedAt:number;previewDigest:string|null;latest:null|{reviewDigest:string;sourcePlanSha256:string;originalBodySha256:string;preparedBodySha256:string;identityDigest:string;packetDigest:string};validatedSteps:number[];needsRecovery:boolean;capabilities:{appendDetail:boolean};execution:{create:0;upload:number;update:number;validate:number;submit:number};readOnly:boolean;registered:false;lifecycle?:ProductDocumentState;error?:{code:string;message:string}};
+export type NativeDraftDetailAmendmentObservation=Observation|(Omit<Observation,'state'|'anchor'|'latest'|'previewDigest'|'sequence'|'lifecycle'>&{state:'not-found';anchor:null;latest:null;previewDigest:null;sequence:0});
+export const NATIVE_DRAFT_DETAIL_AMENDMENT_FORMAT:'yoofam-native-draft-detail-amendment-v1';
+export class NativeDraftDetailAmendmentError extends Error{code:string;constructor(code:string,message?:string)}
+export function amendmentFail(code:string,message?:string):never;
+export function amendmentCanonical(value:unknown):string;
+export function amendmentCopy<T>(value:T):T;
+export function amendmentSame(left:unknown,right:unknown):boolean;
+export function amendmentDigest(value:unknown):Promise<string>;
+export function validateNativeDraftDetailAmendmentAnchor(value:unknown):NativeDraftDetailAmendmentAnchor;
+export function validateNativeDraftDetailAmendmentRequest(value:unknown):NativeDraftDetailAmendmentRequest;
+export function validateNativeDraftDetailAmendmentObservation(value:unknown,expectedRequest?:NativeDraftDetailAmendmentRequest):NativeDraftDetailAmendmentObservation;

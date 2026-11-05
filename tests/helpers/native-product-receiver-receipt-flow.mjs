@@ -37,6 +37,8 @@ export async function nativeReceiverReceiptFixture(company=companies[0],options=
    const absolute=new URL(url,origin),path=absolute.pathname;state.appReads.push({url:absolute.href,method:init.method??'GET'});assert.equal(init.method??'GET','GET');
    let response;
    if(path==='/api/supplier-hub/catalog-context')response=await source.h.load('app/api/supplier-hub/catalog-context/route.ts').GET();
+   else if(path==='/api/settings')response=await source.h.load('app/api/settings/route.ts').GET();
+   else if(path===source.base+'/quotation-fields')response=await source.h.route(path+absolute.search);
    else if(path==='/api/supplier-hub/registration-consents'&&options.configuredConsent)response=Response.json(state.registrationConsents);
    else if(path===source.base+'/native-assets')response=await native.GET(new Request(absolute,{...init}),source.context);
    else if(path===source.base+'/supplier-hub-product-receipt')response=await receipt.GET(new Request(absolute,{...init}),source.context);
