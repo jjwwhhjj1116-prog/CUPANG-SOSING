@@ -36,8 +36,8 @@ export async function workspaceRefreshFixture(company){
   await json(await f.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.revision,patch}}));return current(id);
  };
  const addSibling=async()=>{
-  const product=await current(),id=webcrypto.randomUUID();
-  await f.load('db/queries.ts').insertProduct({...product,id,title:'다른 합성 상품',source_url:'https://detail.1688.com/offer/640000000002.html'});
+  const product=await current(),id=webcrypto.randomUUID(),createdAt=new Date().toISOString();
+  await f.load('db/queries.ts').insertProduct({...product,id,title:'다른 합성 상품',source_url:'https://detail.1688.com/offer/640000000002.html',created_at:createdAt,updated_at:createdAt});
   return current(id);
  };
  return{...f,company,current,savePatch,productResponse,addSibling};

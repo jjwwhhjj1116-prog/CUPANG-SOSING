@@ -127,7 +127,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
   useEffect(() => {
     let active = true;
     void Promise.resolve().then(() => {
-      if (!active || !current()) return; setBusy(false); setError(''); setUncertain(pendingSave.current?.scope === scope);
+      if (!active || !current() || request.current) return; setBusy(false); setError(''); setUncertain(pendingSave.current?.scope === scope);
       if (pendingSave.current?.scope === scope || latestDraft.current.scope === scope && Object.keys(latestDraft.current.values).length && latestSaved.current?.scope === scope) return;
       // An image apply can publish the new version before its processing lock
       // clears. Resume that skipped read on unlock, without rereading a basis

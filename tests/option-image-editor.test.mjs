@@ -43,6 +43,37 @@ function fixture(){
  return{keys,view,reply(url,init){if(init?.method==='PUT'){const body=JSON.parse(init.body);if(body.expectedRevision!==view.revision)return Response.json({error:'동시 이미지 수정'},{status:409});for(const change of body.changes){const own=view.overrides.options[change.optionId]??={};if(change.value===null)delete own[change.fieldKey];else own[change.fieldKey]=change.value;if(!Object.keys(own).length)delete view.overrides.options[change.optionId];}view.revision++;view.productVersion=advance(view.productVersion);view.updatedAt=view.productVersion;view.resolved.rows=rows(view.overrides);}return Response.json(view);}};
 }
 
+test('a deferred unlock initializer cannot clear the busy state of an explicit in-flight image reload',async()=>{
+ const f=fixture(),wait=deferred();let held=false;
+ const h=imageUI((url,init)=>held&&!init?.method?wait.promise:f.reply(url,init));
+ try{
+  await h.idle();h.choose('선택 옵션 추가 이미지 후보 3');assert.equal(h.render().props['data-workspace-dirty'],true);
+  h.disabled(true);h.disabled(false);held=true;
+  const reload=h.button('입력 취소·저장 이미지 다시 조회');assert.ok(reload&&!reload.props.disabled);reload.props.onClick();
+  for(let index=0;index<3;index++){await new Promise(resolve=>setImmediate(resolve));h.render();}
+  assert.equal(h.render().props['data-workspace-saving'],true,'the explicit pending GET owns loading until it resolves');
+  assert.equal(h.control('선택 옵션 추가 이미지 후보 4').props.disabled,true);assert.equal(h.button('선택 옵션 이미지 저장').props.disabled,true);
+  assert.equal(h.calls.length,2,'the initializer must not start another GET');assert.equal(h.calls.some(call=>call.init?.method==='PUT'),false);
+  held=false;wait.resolve(f.reply('',{}));await h.idle();
+  assert.equal(h.render().props['data-workspace-saving'],false);assert.equal(h.render().props['data-workspace-dirty'],false);
+  h.choose('선택 옵션 추가 이미지 후보 3');await h.drag(f.keys[2],f.keys[1]);assert.deepEqual(h.ordered(),[f.keys[2],f.keys[1]]);
+ }finally{held=false;wait.resolve(f.reply('',{}));h.close();}
+});
+
+test('instant additional-image ACK recovery keeps its read lock through unlock and never repeats the committed PUT',async()=>{
+ const f=fixture(),wait=deferred();let hold=false,drop=true;
+ const h=imageUI(async(url,init)=>{if(hold&&!init?.method)return wait.promise;const response=f.reply(url,init);if(init?.method==='PUT'&&drop){drop=false;throw Error('committed instant image ACK lost');}return response;},{saveOnChange:true});
+ try{
+  await h.idle();await h.click('추가 이미지 후보 3 추가');assert.equal(h.saved,0);assert.equal(h.calls.filter(call=>call.init?.method==='PUT').length,1);
+  h.disabled(true);h.disabled(false);hold=true;const recover=h.button('선택 옵션 이미지 저장');assert.ok(recover&&!recover.props.disabled);recover.props.onClick();
+  for(let index=0;index<3;index++){await new Promise(resolve=>setImmediate(resolve));h.render();}
+  assert.equal(h.render().props['data-workspace-saving'],true,'the original instant-save recovery GET retains loading');
+  assert.equal(h.button('추가 이미지 후보 4 추가').props.disabled,true);assert.equal(h.calls.filter(call=>call.init?.method==='PUT').length,1);
+  hold=false;wait.resolve(f.reply('',{}));await h.idle();assert.equal(h.saved,1);assert.equal(h.render().props['data-workspace-dirty'],false);
+  assert.deepEqual(h.ordered(),[f.keys[1],f.keys[2]]);assert.equal(h.calls.filter(call=>call.init?.method==='PUT').length,1);
+ }finally{hold=false;wait.resolve(f.reply('',{}));h.close();}
+});
+
 test('banner-only detail can start a saved-photo body at the verified top/bottom boundary and save/reload without changing other roles or HTML',async()=>{
  for(const roles of [{top:[0],bottom:[]},{top:[],bottom:[0]},{top:[0],bottom:[1]}]){
   const f=fixture(),anchors=[...roles.top,...roles.bottom].map(index=>f.keys[index]);

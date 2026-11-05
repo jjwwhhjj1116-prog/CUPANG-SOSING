@@ -8,7 +8,15 @@ const optionRows=ui=>nodes(ui.render()).filter(node=>node.type==='tr'&&node.prop
 const search=(ui,value)=>element(ui,'상품 옵션 검색').props.onChange({target:{value}});
 const select=(ui,id)=>element(ui,'옵션 '+id+' 선택').props.onChange({target:{checked:true}});
 async function enterBoard(ui,f){ui.component('registration-board').onOptions(await f.current());await ui.settle();assert.equal(ui.componentVisible('product-option-board'),true);}
-async function enterStage(ui,id,label){element(ui,'옵션 '+id+' '+label+' 편집').props.onClick();await ui.settle();assert.equal(ui.componentVisible('product-option-board'),false);assert.equal(ui.component('product-options-editor').focusedOptionId,id);}
+function assertStageOption(ui,id,step){
+ const stage=Object.fromEntries(stages.map(([name,label])=>[label,name]))[step]??step;
+ if(stage==='SEO'){assert.equal(ui.component('seo-workspace-editor').focusedOptionId,id);return;}
+ if(stage==='가격'||stage==='대표 이미지'){assert.equal(ui.component('product-options-editor').focusedOptionId,id);return;}
+ if(stage==='추가 이미지'||stage==='상세 이미지'){assert.equal(ui.component('option-image-editor').optionId,id);assert.equal(ui.component('option-image-editor').stage,stage==='추가 이미지'?'additional':'detail');return;}
+ if(stage==='표시사항'){assert.equal(ui.component('product-label-editor').optionId,id);return;}
+ assert.equal(stage,'견적서');assert.equal(ui.component('quotation-panel').navigationTarget.optionId,id);
+}
+async function enterStage(ui,id,label){element(ui,'옵션 '+id+' '+label+' 편집').props.onClick();await ui.settle();assert.equal(ui.componentVisible('product-option-board'),false);assertStageOption(ui,id,label);}
 const capture=async f=>({raw:f.retained(),files:await f.fileSnapshot()});
 async function unchanged(f,before){assert.equal(f.retained(),before.raw);assert.equal(await f.fileSnapshot(),before.files);assert.deepEqual(f.network,[]);}
 async function options(f){return(await json(await f.route(f.base+'/options'))).options.rows;}
@@ -22,12 +30,12 @@ for(const company of companies)test(`all seven option stages close to the same s
    const former=ui.component('product-option-board'),formerClose=ui.button('×').props.onClick;
    await enterStage(ui,rows[0].id,label);assert.equal(ui.componentMount('product-option-board'),mount);
    const wrapper=nodes(ui.render()).find(node=>node.props?.className==='option-board-return-context');assert.equal(wrapper.props.hidden,true);assert.equal(wrapper.props.inert,true);
-   const reads=ui.requests.length;former.onStage(rows[1].id,step);formerClose();await ui.settle();assert.equal(ui.requests.length,reads);assert.equal(ui.component('product-options-editor').focusedOptionId,rows[0].id);
+   const reads=ui.requests.length;former.onStage(rows[1].id,step);formerClose();await ui.settle();assert.equal(ui.requests.length,reads);assertStageOption(ui,rows[0].id,step);
    await ui.click('×');assert.equal(ui.component('product-content-editor'),undefined);assert.equal(ui.componentVisible('product-option-board'),true);assert.equal(ui.componentMount('product-option-board'),mount);
    assert.equal(element(ui,'상품 옵션 검색').props.value,rows[0].originalName);assert.deepEqual(optionRows(ui).map(row=>row.props['data-option-id']),shown);assert.equal(element(ui,'옵션 '+rows[0].id+' 선택').props.checked,true);
    const returnedReads=ui.requests.length;former.onStage(rows[1].id,step);formerClose();await ui.settle();assert.equal(ui.requests.length,returnedReads);assert.equal(ui.componentVisible('product-option-board'),true);
    search(ui,'');await ui.settle();assert.equal(element(ui,'옵션 '+rows[1].id+' 선택').props.checked,true);
-   await enterStage(ui,rows[1].id,label);assert.equal(ui.component('product-options-editor').focusedOptionId,rows[1].id);await ui.click('×');assert.equal(ui.componentMount('product-option-board'),mount);
+   await enterStage(ui,rows[1].id,label);assertStageOption(ui,rows[1].id,step);await ui.click('×');assert.equal(ui.componentMount('product-option-board'),mount);
   }
   await unchanged(f,before);assert.ok(ui.requests.every(request=>request.method==='GET'));
  }finally{ui?.close();f.close();}
