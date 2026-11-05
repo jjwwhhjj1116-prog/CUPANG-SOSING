@@ -10,7 +10,7 @@ import {workbookArchive} from './quotation-workbook.mjs';
 import {prepareAttachments} from '../../extensions/supplier-hub/package.mjs';
 export const companies=schemaCompanies,plain=value=>JSON.parse(JSON.stringify(value));
 const sourceUrl=new URL('../dashboard-account-actions.test.mjs',import.meta.url),source=fs.readFileSync(sourceUrl,'utf8'),ast=ts.createSourceFile(sourceUrl.pathname,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS),parts=[];
-for(const statement of ast.statements){if(ts.isImportDeclaration(statement))continue;if(ts.isForOfStatement(statement)||ts.isExpressionStatement(statement)&&ts.isCallExpression(statement.expression)&&statement.expression.expression.getText(ast)==='test')break;parts.push(statement.getText(ast));}
+for(const statement of ast.statements)if(ts.isVariableStatement(statement)||ts.isFunctionDeclaration(statement)&&['harness','officialSubmissionFlow'].includes(statement.name?.text))parts.push(statement.getText(ast));
 const fixtureFns=vm.runInNewContext(parts.join('\n').replaceAll('import.meta.url',JSON.stringify(sourceUrl.href))+'\n({harness,officialSubmissionFlow,nodes,text,scope,settleUntil})',
  {assert,fs,path,vm,ts,createRequire,mobileIntakeHarness,hubSchemaSnapshot,schemaCompanies,schemaPath,workbookArchive,prepareAttachments,
   Response,Request,File,Blob,FormData,URL,URLSearchParams,TextEncoder,TextDecoder,Uint8Array,Buffer,Date,Intl,AbortController,AbortSignal,crypto,structuredClone,setImmediate,setTimeout,clearTimeout,atob,btoa});

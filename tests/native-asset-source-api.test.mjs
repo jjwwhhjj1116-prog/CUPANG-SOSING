@@ -189,6 +189,21 @@ function versionedStorage(f){
  return{reads,versions};
 }
 
+test('native readonly shares one initial HEAD per selected key while retaining a fresh final HEAD',async()=>{
+ const f=await fixture();try{
+  const storage=versionedStorage(f),loader=f.h.load('app/exports/single-package.ts'),load=loader.loadSinglePackage,head=f.h.bindings.FILES.head,get=f.h.bindings.FILES.get;
+  const initialHeads=new Map(),events=[];let phase='start';
+  loader.loadSinglePackage=(...args)=>{const options=args[8];args[8]={...options,trace:value=>{phase=value;options.trace?.(value);}};return load(...args);};
+  f.h.bindings.FILES.head=async key=>{if(phase==='review')initialHeads.set(key,(initialHeads.get(key)??0)+1);if(key===f.keys[0])events.push('HEAD:'+phase);return head(key);};
+  f.h.bindings.FILES.get=async key=>{if(key===f.keys[0])events.push('GET:'+phase);return get(key);};
+  const products=JSON.stringify(f.h.sqlite.prepare('SELECT * FROM products').all()),objects=f.objectState(),plan=await read(await f.send());
+  const selected=new Set(plan.images.map(file=>file.key));assert.equal(selected.size,7);
+  for(const key of selected){assert.equal(initialHeads.get(key),1,'one shared preflight/metadata HEAD: '+key);assert.equal(storage.reads.get(key),1,'format/digest verification still reads each exact body');}
+  assert.deepEqual(events,['HEAD:review','GET:review','HEAD:plans'],'the final HEAD is a separate current upload/metadata proof after GET');
+  assert.equal(JSON.stringify(f.h.sqlite.prepare('SELECT * FROM products').all()),products);assert.equal(f.objectState(),objects);assert.deepEqual(f.h.network,[]);
+ }finally{f.close();}
+});
+
 test('immutable R2 upload version revalidates exact request-local bytes without downloading the whole batch twice',async()=>{
  const f=await fixture();try{
   const storage=versionedStorage(f),plan=await read(await f.send());

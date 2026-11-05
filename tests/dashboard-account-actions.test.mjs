@@ -157,6 +157,28 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'�
  return{products,requests,render,settle,component,button,toggleDetails,async flushPassiveEffects(){passiveEffects=true;await settle();},componentVisible(name){render();const instance=componentMounts.get(name);return!!instance&&instance.ancestors.every(node=>!node.props.hidden&&(node.type!=='details'||(nativeDetails.get(node.fixturePath)??node.props.open)===true));},componentMount(name){render();return componentMounts.get(name);},instance(name){render();return [...instances].find(([key])=>key.includes('/'+name+':'))?.[1];},componentCount(name){render();return componentCounts.get(name)??0;},async click(label){const found=button(label);assert.ok(found,'Missing button '+label);found.props.onClick();await settle();},deferDelete(){return nextDelete=deferred();},deferSettings(){return nextSettings=deferred();},deferProfiles(){return nextProfiles=deferred();},setProfiles(value){currentProfiles=value;},deferProduct(id){return nextProduct={...deferred(),id};},setProductReply(fn){replyProduct=fn;},setWorkspaceEdits(value){Object.assign(workspaceEdits,value);},setSettingsBody(value){currentSettings=value;},switchOwner(value){workspaceOwnerId=value;return render();},setDeleteReply(fn){replyDelete=fn;},setSettingsPutReply(fn){replySettingsPut=fn;},setSeoConfigurationReply(fn){replySeoConfiguration=fn;},close(){closed=true;for(const instance of instances.values()){instance.mounted=false;instance.slots.forEach(slot=>slot?.cleanup?.());}},get lateWrites(){return lateWrites;}};
 }
 
+test('native submission headings reuse saved board titles without Excel reads or source changes',async()=>{
+ const flow=await officialSubmissionFlow(schemaCompanies[1]);
+ try{
+  for(const mode of ['selected','single'])for(const [seoTitle,want]of [['직접 저장한 한국어 상품명','직접 저장한 한국어 상품명'],['','상품명 미입력'],[null,'专业瑜伽袜原始商品名']]){
+   const first=flow.products[0];first.title='专业瑜伽袜原始商品名';first.content_summary={seo:true,seoTitle,mainImageKey:null,main:0,additional:0,detail:0,label:0,missingImages:false};
+   const h=harness({workspaceOwnerId:'owner',settingsBody:{settings:flow.api.settings,scope:scope('owner',schemaCompanies[1].code)},officialFlow:flow,realRegistrationBoard:true});
+   try{
+    await h.settle();const before=JSON.stringify(h.products),board=h.component('registration-board');
+    if(mode==='single'){board.onOpen(first,'견적서');await h.settle();}
+    else board.onSelected(new Set([first.id]));
+    const reads=h.requests.length;
+    if(mode==='single'){h.component('quotation-panel').onPrepareSubmission(flow.profile.id);await h.settle();}
+    else await h.click('등록 전송');
+    const modal=nodes(h.render()).find(node=>node.props?.['aria-label']==='Supplier Hub 등록 전송');assert.ok(modal);
+    assert.equal(text(nodes(modal).find(node=>node.type==='h3')),want,mode+' / '+String(seoTitle));
+    assert.equal(h.component('submission-review-panel').products[0].title,want);assert.equal(h.requests.length,reads);assert.equal(h.requests.filter(call=>call.url.includes('/submission-review')).length,0);
+    assert.equal(JSON.stringify(h.products),before);assert.equal(h.products[0].title,'专业瑜伽袜原始商品名');assert.ok(h.requests.every(call=>call.method==='GET'));
+   }finally{h.close();}
+  }
+ }finally{flow.close();}
+});
+
 test('real dashboard source trash uses the strict capture archive client and accepts only its current durable ACK without touching products',async()=>{
  for(const valid of [true,false]){
   const {before}=reviewSourceFixture('test-owner',{code:'A01526306',name:'유앤채'}),accepted=[],sourceState={items:[before],reload(){},acceptReviewed(){return false;},acceptArchived(item,receipt){accepted.push([item,receipt]);sourceState.items=[];return true;}};

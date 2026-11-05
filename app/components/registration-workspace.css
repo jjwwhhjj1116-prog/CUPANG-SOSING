@@ -187,6 +187,7 @@
 .registration-workspace .option-additional-instant .image-asset-preview{display:block;width:100%;height:100%;border-radius:0;background:#fff}
 .registration-workspace .option-additional-instant .image-asset-preview img{display:block;width:100%;height:100%;object-fit:contain}
 .registration-workspace .option-additional-instant .image-asset-preview>span{right:0;bottom:0;left:0;padding:3px;background:#000b;color:#fff;border-radius:0;font-size:10px;line-height:29px}
+.registration-workspace .option-additional-instant .image-asset-preview>.option-additional-image-number{top:7px;left:7px;right:auto;bottom:auto;display:flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border-radius:10px;background:#0009;font-size:11px;line-height:20px}
 .registration-workspace .option-additional-instant .image-asset-card>figcaption{position:absolute;inset:0;pointer-events:none}
 .registration-workspace .option-additional-instant .option-additional-add{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:auto;min-width:38px;min-height:38px;padding:6px 9px;border:0;border-radius:50%;font-size:15px;background:#32bdea;color:#fff;opacity:0;pointer-events:auto}
 .registration-workspace .option-additional-instant .image-asset-card:is(:hover,:focus-within) .option-additional-add{opacity:1}
@@ -216,6 +217,7 @@
 .registration-workspace .option-additional-instant .image-selected-item{position:relative;flex:0 0 100px;width:100px;height:100px;min-width:0;gap:0;margin:0;padding:0;border:1px solid transparent;border-radius:4px;background:#fff}
 .registration-workspace .option-additional-instant .image-selected-item>figcaption{display:none}
 .registration-workspace .option-additional-instant .image-selected-item>button{height:100%;width:100%;padding:0;border-radius:0}
+.registration-workspace .option-additional-instant .image-selected-item>button[aria-pressed=true]{outline:2px solid #3498db;outline-offset:-2px}
 .registration-workspace .option-additional-instant .image-selected-item img{display:block;width:100%;height:100%;object-fit:contain}
 .registration-workspace .option-additional-instant .image-selected-item>button>span{top:3px;left:3px;padding:0 4px;border-radius:10px;font-size:10px;line-height:15px;background:#555;color:#fff}
 .registration-workspace .option-additional-instant .image-selected-actions{position:absolute;left:0;right:0;top:5px;justify-content:flex-end;gap:2px;margin:0;opacity:0;pointer-events:none}

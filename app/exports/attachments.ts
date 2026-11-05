@@ -5,7 +5,7 @@ import { isOwnedImageKey, PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-files';
 export class AttachmentError extends Error {
   constructor(message: string, public status: number) { super(message); }
 }
-export async function loadAttachments(ownerId: string, productKeysJson: string, requestedKeys: string[], options: { concurrency?: 1 | 3; nativeReadOnly?: true; onVerifiedObject?:(key:string,object:Pick<R2Object,'version'|'size'>)=>void } = {}): Promise<BundleAsset[]> {
+export async function loadAttachments(ownerId: string, productKeysJson: string, requestedKeys: string[], options: { concurrency?: 1 | 3; nativeReadOnly?: true; initialMetadata?:Promise<ReadonlyMap<string,R2Object|null>>; onVerifiedObject?:(key:string,object:Pick<R2Object,'version'|'size'>)=>void } = {}): Promise<BundleAsset[]> {
   const productKeys: unknown = JSON.parse(productKeysJson);
   const keys = [...new Set(requestedKeys)];
   if (!Array.isArray(productKeys) || keys.length > PRODUCT_IMAGE_POOL_LIMIT || keys.some(key => !isOwnedImageKey(ownerId, key) || !productKeys.includes(key))) throw new AttachmentError('상품의 첨부 이미지 참조를 확인해주세요.', 409);
@@ -13,7 +13,8 @@ export async function loadAttachments(ownerId: string, productKeysJson: string, 
   const limit = (options.nativeReadOnly ? 64 : 20) * 1024 * 1024;
   const preflight = new Map<string,number>();
   if (options.nativeReadOnly) {
-    const heads = await Promise.all(keys.map(key => env.FILES.head(key)));let size=0;
+    const metadata=options.initialMetadata?await options.initialMetadata:null;
+    const heads = metadata ? keys.map(key=>metadata.get(key)) : await Promise.all(keys.map(key => env.FILES.head(key)));let size=0;
     for (const [index,head] of heads.entries()) {
       if (!head) throw new AttachmentError('첨부 이미지가 저장소에 없습니다.',409);
       if (!Number.isSafeInteger(head.size) || head.size < 1 || head.size > 10 * 1024 * 1024) throw new AttachmentError('원본 이미지 파일은 10MB 이하여야 합니다.',413);

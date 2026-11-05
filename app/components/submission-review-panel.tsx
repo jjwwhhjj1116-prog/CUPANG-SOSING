@@ -16,7 +16,7 @@ export function SubmissionReviewPanel({products,profiles,onEdit,onReceiptSaved,o
   const [profileId,setProfileId]=useState(initialProfileId??'');
   const [run,setRun]=useState(0);
   const [snapshot,setSnapshot]=useState<{key:string;results:Result[];finished:boolean}>({key:'',results:[],finished:false});
-  const [legacyOpen,setLegacyOpen]=useState<{key:string;ids:string[]}>({key:'',ids:[]});
+  const [legacyOpen,setLegacyOpen]=useState<{context:object|null;ids:string[]}>({context:null,ids:[]});
   const targetKey=JSON.stringify(products.map(product=>product.id));
   // A saved profile revision includes changes to the workbook and its column mappings.
   // Automatic category selection can resolve a different profile for each product.
@@ -25,6 +25,8 @@ export function SubmissionReviewPanel({products,profiles,onEdit,onReceiptSaved,o
   const productKey=JSON.stringify(products.map(product=>[product.id,product.updated_at]));
   const requestKey=JSON.stringify([targetKey,productKey,profileId,profileKey,run]);
   const context=useMemo(()=>({key:requestKey}),[requestKey]);
+  const [requestedContext,setRequestedContext]=useState<typeof context|null>(null);
+  const requested=requestedContext===context;
   const currentContext=useRef<typeof context|null>(context);
   const activeReview=useRef<AbortController|null>(null);
   const [lockSnapshot,setLockSnapshot]=useState<{context:typeof context;source:boolean;close:boolean}|null>(null),lockCallback=useRef(onLockChange);
@@ -47,8 +49,9 @@ export function SubmissionReviewPanel({products,profiles,onEdit,onReceiptSaved,o
     if(currentContext.current===context){setLockSnapshot(previous=>previous?.context===context&&previous.source===value.source&&previous.close===value.close?previous:{context,...value});lockCallback.current?.(value.source,value.close);}
   }
   const results=snapshot.key===requestKey?snapshot.results:[];
-  const busy=products.length>0&&(snapshot.key!==requestKey||!snapshot.finished);
+  const busy=requested&&products.length>0&&(snapshot.key!==requestKey||!snapshot.finished);
   useEffect(()=>{
+    if(!requested)return;
     const ids=JSON.parse(targetKey) as string[];
     const controller=new AbortController();activeReview.current=controller;let next=0;
     async function worker() {
@@ -65,7 +68,7 @@ export function SubmissionReviewPanel({products,profiles,onEdit,onReceiptSaved,o
     }
     void Promise.all(Array.from({length:Math.min(3,ids.length)},()=>worker())).finally(()=>{if(!controller.signal.aborted&&currentContext.current===context)setSnapshot(current=>({key:requestKey,results:current.key===requestKey?current.results:[],finished:true}));});
     return()=>{if(activeReview.current===controller)activeReview.current=null;if(!controller.signal.aborted)controller.abort();};
-  },[targetKey,profileId,requestKey,context]);
+  },[targetKey,profileId,requestKey,context,requested]);
   function editCurrent(id:string,selectedProfileId?:string,target?:QuotationNavigationTarget) {
     if(currentContext.current!==context||locks().source||!products.some(product=>product.id===id))return;
     onEdit(id,selectedProfileId,target);
@@ -88,10 +91,11 @@ export function SubmissionReviewPanel({products,profiles,onEdit,onReceiptSaved,o
           expectedCategoryId={profileId?profiles.find(profile=>profile.id===profileId)?.categoryId||undefined:undefined}
           onLockChange={(locked,close)=>productLock(product.id,locked,close)}
           onReceiptSaved={()=>{if(currentContext.current===context)onReceiptSaved?.();}}/>
-        <details aria-label="Excel 파일 전송 · 별도 방식" inert={sourceLocked} open={legacyOpen.key===requestKey&&legacyOpen.ids.includes(product.id)} onToggle={event=>{
+        <details aria-label="Excel 파일 전송 · 별도 방식" inert={sourceLocked} open={legacyOpen.context===context&&legacyOpen.ids.includes(product.id)} onToggle={event=>{
           if(currentContext.current!==context||locks().source)return;
           const open=event.currentTarget.open;
-          setLegacyOpen(current=>({key:requestKey,ids:open?[...new Set([...(current.key===requestKey?current.ids:[]),product.id])]:(current.key===requestKey?current.ids:[]).filter(id=>id!==product.id)}));
+          if(open&&!requested){setSnapshot({key:requestKey,results:[],finished:false});setRequestedContext(context);}
+          setLegacyOpen(current=>({context,ids:open?[...new Set([...(current.context===context?current.ids:[]),product.id])]:(current.context===context?current.ids:[]).filter(id=>id!==product.id)}));
         }}><summary>Excel 파일 전송 · 별도 방식</summary>
         <p>공식 Excel 파일과 첨부 이미지를 대량 등록 화면으로 전달하는 별도 방식입니다. 전체 상품 문서 확인에 실패해도 자동으로 실행하지 않습니다.</p>
         {result?.error&&<p role="alert">Excel 자료 검사: {result.error}</p>}
@@ -101,7 +105,7 @@ export function SubmissionReviewPanel({products,profiles,onEdit,onReceiptSaved,o
           <small>검사 시각: {new Date(report.checkedAt).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'})} (한국시간)</small>
           <details><summary>수정·확인할 항목 보기</summary><QuotationReviewIssues key={requestKey} issues={report.issues} omittedIssueCount={report.omittedIssueCount} disabled={sourceLocked} onInspect={target=>editCurrent(product.id,profileId||undefined,{...target,categoryId:report.categoryId})}/></details>
           <details><summary>검사 범위</summary><ul>{report.limits.map(limit=><li key={limit}>{limit}</li>)}</ul></details>
-          {legacyOpen.key===requestKey&&legacyOpen.ids.includes(product.id)&&<SubmissionPackage key={JSON.stringify([requestKey,report.fingerprint])} productId={product.id} profileId={profileId} categoryId={report.categoryId} onReceiptSaved={()=>{if(currentContext.current===context)onReceiptSaved?.();}} onInspect={(resolvedProfileId,target)=>editCurrent(product.id,resolvedProfileId,target)}/>}
+          {legacyOpen.context===context&&legacyOpen.ids.includes(product.id)&&<SubmissionPackage key={JSON.stringify([requestKey,report.fingerprint])} productId={product.id} profileId={profileId} categoryId={report.categoryId} onReceiptSaved={()=>{if(currentContext.current===context)onReceiptSaved?.();}} onInspect={(resolvedProfileId,target)=>editCurrent(product.id,resolvedProfileId,target)}/>}
         </>}
         </details>
         <button type="button" className="btn primary" disabled={sourceLocked} onClick={()=>editCurrent(product.id,profileId||undefined,report?{optionId:null,fieldId:'category',categoryId:report.categoryId}:undefined)}>견적서 수정하기</button>

@@ -19,30 +19,57 @@ function harness({beforeLayout}={}){
  const Component=load('app/components/submission-review-panel.tsx').SubmissionReviewPanel;
  function render(changes={}){props={...props,...changes};cursor=0;pending=[];const tree=Component(props);beforeLayout?.(tree);pending.forEach(fn=>fn());return tree;}
  function respond(index,categoryId='80719',title='상품'){const call=calls[index],url=new URL(call.url,'https://example.com');call.resolve(Response.json({productId:'p1',requestedProfileId:url.searchParams.get('profileId'),title,sourceUrl:product.source_url,categoryId,categoryPath:['주방'],checkedAt:'2026-09-28T00:00:00Z',fingerprint:'a'.repeat(64),submissionReady:false,transport:'not-connected',includedOptions:1,errorCount:0,reviewCount:0,omittedIssueCount:0,issues:[],limits:[]}));}
- function legacy(changes={}){const tree=render(changes);nodes(tree).filter(node=>node.type==='details'&&node.props['aria-label']==='Excel 파일 전송 · 별도 방식').forEach(node=>node.props.onToggle({currentTarget:{open:true}}));return render();}
+ function legacy(changes={},open=true){const tree=render(changes);nodes(tree).filter(node=>node.type==='details'&&node.props['aria-label']==='Excel 파일 전송 · 별도 방식').forEach(node=>node.props.onToggle({currentTarget:{open}}));return render();}
  return{render,legacy,respond,calls,unmount(){effects.forEach(effect=>effect?.cleanup?.());},select(id){nodes(render()).find(node=>node.type==='select').props.onChange({target:{value:id}});return render();}};
 }
 const packages=tree=>nodes(tree).filter(node=>node.type==='package');
 const heading=tree=>nodes(tree).find(node=>node.type==='h3').props.children;
 const json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
 
+test('native preparation makes no Excel review requests until explicit opening, then close and reopen retain the same request',async()=>{
+ const h=harness();
+ try{
+  const tree=h.render({products:[product,{...product,id:'p2'},{...product,id:'p3'}]});assert.equal(h.calls.length,0);assert.equal(tree.props['aria-busy'],false);assert.equal(nodes(tree).filter(node=>node.type==='native').length,3);
+  h.legacy();assert.equal(h.calls.length,3);const signals=h.calls.map(call=>call.signal);
+  h.legacy({},false);await settle();assert.ok(signals.every(signal=>!signal.aborted));assert.equal(h.calls.length,3);
+  h.legacy();await settle();assert.equal(h.calls.length,3);assert.ok(signals.every(signal=>!signal.aborted));
+ }finally{h.unmount();assert.ok(h.calls.every(call=>call.signal.aborted));}
+});
+
+for(const change of ['product','product revision','profile','profile revision','category','run','ABA'])test(`Excel review waits for explicit reopening after ${change} context changes`,async()=>{
+ const h=harness();
+ try{
+  h.legacy();h.respond(0);await settle();h.render();assert.equal(h.calls.length,1);
+  if(change==='product')h.render({products:[{...product,id:'p2'}]});
+  if(change==='product revision')h.render({products:[{...product,updated_at:'v2'}]});
+  if(change==='profile')h.select('b');
+  if(change==='profile revision')h.render({profiles:[profile('a',2),profile('b')]});
+  if(change==='category')h.render({profiles:[profile('a',2,'999'),profile('b')]});
+  if(change==='run')nodes(h.render()).find(node=>node.type==='button'&&node.props.children==='저장된 자료 다시 검사').props.onClick();
+  if(change==='ABA'){h.render({products:[{...product,updated_at:'v2'}]});h.render({products:[product]});}
+  const tree=h.render();await settle();assert.equal(h.calls.length,1);assert.equal(h.calls[0].signal.aborted,true);assert.equal(tree.props['aria-busy'],false);assert.equal(packages(tree).length,0);assert.equal(nodes(tree).find(node=>node.type==='details'&&node.props['aria-label']==='Excel 파일 전송 · 별도 방식').props.open,false);
+  h.legacy();assert.equal(h.calls.length,2);assert.equal(packages(h.render()).length,0,'a fresh explicit request cannot reuse an older snapshot');
+ }finally{h.unmount();}
+});
+
 test('native whole-product submission is primary even while legacy Excel review fails and Excel stays lazy',async()=>{
  const h=harness();let tree=h.render(),saved=0;
  tree=h.render({onReceiptSaved(){saved++;}});
  const native=nodes(tree).find(node=>node.type==='native');assert.ok(native);assert.equal(native.props.productId,'p1');assert.equal(native.props.profileId,undefined);assert.equal(packages(tree).length,0);
+ assert.equal(h.calls.length,0);h.legacy();h.legacy({},false);
  h.calls[0].resolve(Response.json({error:'Excel 양식이 없습니다.'},{status:409}));await settle();tree=h.render();
  assert.ok(nodes(tree).find(node=>node.type==='native'));assert.equal(packages(tree).length,0);assert.match(JSON.stringify(tree),/Excel 자료 검사/);
  native.props.onReceiptSaved();assert.equal(saved,1);
  h.select('b');native.props.onReceiptSaved();assert.equal(saved,1,'old native callback cannot refresh a different category scope');
  const current=nodes(h.render()).find(node=>node.type==='native');assert.equal(current.props.profileId,'b');assert.equal(current.props.expectedCategoryId,'80719');
- h.respond(1);await settle();tree=h.render();assert.equal(packages(tree).length,0);assert.equal(packages(h.legacy()).length,1,'Excel mounts only after the user explicitly opens its separate route');
+ assert.equal(h.calls.length,1);h.legacy();h.legacy({},false);h.respond(1);await settle();tree=h.render();assert.equal(packages(tree).length,0);assert.equal(packages(h.legacy()).length,1,'Excel mounts only after the user explicitly opens its separate route');
 });
 
 test('review heading uses only the current validated snapshot title, including an explicit blank',async()=>{
- const h=harness();h.render();h.respond(0,'80719','저장한 한국어 견적명');await settle();assert.equal(heading(h.render()),'저장한 한국어 견적명');
+ const h=harness();h.legacy();h.respond(0,'80719','저장한 한국어 견적명');await settle();assert.equal(heading(h.render()),'저장한 한국어 견적명');
  h.render({products:[{...product,updated_at:'v2'}]});assert.notEqual(heading(h.render()),'저장한 한국어 견적명');
- h.respond(1,'80719','');await settle();assert.equal(heading(h.render()),'상품명 미입력');
- h.render({products:[{...product,updated_at:'v3'}]});
+ h.legacy();h.respond(1,'80719','');await settle();assert.equal(heading(h.render()),'상품명 미입력');
+ h.legacy({products:[{...product,updated_at:'v3'}]});
  h.calls[2].resolve(Response.json({productId:'other',title:'다른 상품 이름'}));await settle();
  assert.equal(packages(h.legacy()).length,0);assert.notEqual(heading(h.render()),'다른 상품 이름');
 });
@@ -58,7 +85,7 @@ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name
    const response=await h.route(base+'/submission-review'),report=await json(response.clone());
    assert.equal(report.title,title);assert.equal(report.submissionReady,false);assert.equal(report.transport,'not-connected');
    const view=await json(await h.route(base+'/quotation-fields'));assert.equal(report.title,view.resolved.rows.find(row=>row.optionId===null).fields.title.value);
-   const ui=harness();ui.render({products:[h.sqlite.prepare('SELECT * FROM products').get()],profiles:[]});ui.calls[0].resolve(response);await settle();
+   const ui=harness();ui.legacy({products:[h.sqlite.prepare('SELECT * FROM products').get()],profiles:[]});ui.calls[0].resolve(response);await settle();
    assert.equal(heading(ui.render()),title||'상품명 미입력');assert.equal(packages(ui.legacy())[0].props.productId,original.id);
    return {report,view};
   };
@@ -84,7 +111,7 @@ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name
 
 test('single-product preparation keeps the exact requested profile even when it is no longer listed',async()=>{
  for(const initialProfileId of ['b','missing']){
-  const h=harness();h.render({initialProfileId});assert.equal(h.calls.length,1);
+  const h=harness();h.legacy({initialProfileId});assert.equal(h.calls.length,1);
   assert.equal(new URL(h.calls[0].url,'https://example.com').searchParams.get('profileId'),initialProfileId);
   assert.equal(nodes(h.render()).find(node=>node.type==='select').props.value,initialProfileId);
   h.respond(0);await settle();assert.equal(packages(h.legacy())[0].props.profileId,initialProfileId);
@@ -92,31 +119,31 @@ test('single-product preparation keeps the exact requested profile even when it 
 });
 
 test('automatic category review invalidates the prepared package when a saved workbook revision changes',async()=>{
- const h=harness();h.render();h.respond(0);await settle();const before=packages(h.legacy())[0];assert.ok(before);
- const tree=h.render({profiles:[profile('a',2),profile('b')]});assert.equal(packages(tree).length,0);assert.equal(h.calls.length,2);assert.equal(h.calls[0].signal.aborted,true);
- h.respond(1);await settle();assert.notEqual(packages(h.legacy())[0].key,before.key);
+ const h=harness();h.legacy();h.respond(0);await settle();const before=packages(h.legacy())[0];assert.ok(before);
+ const tree=h.render({profiles:[profile('a',2),profile('b')]});assert.equal(packages(tree).length,0);assert.equal(h.calls.length,1);assert.equal(h.calls[0].signal.aborted,true);
+ h.legacy();h.respond(1);await settle();assert.notEqual(packages(h.legacy())[0].key,before.key);
 });
 
 test('late old-category responses cannot restore a package after the category code changes',async()=>{
- const h=harness();h.render();h.render({profiles:[profile('a',2,'999'),profile('b')]});
+ const h=harness();h.legacy();h.render({profiles:[profile('a',2,'999'),profile('b')]});
  h.respond(0);await settle();assert.equal(packages(h.legacy()).length,0);
  h.respond(1,'999');await settle();assert.equal(packages(h.legacy())[0].props.categoryId,'999');
 });
 
 test('explicit category ignores unrelated profile changes but invalidates on its removal',async()=>{
- const h=harness();h.render();h.select('a');h.respond(1);await settle();assert.equal(packages(h.legacy()).length,1);
- h.render({profiles:[profile('b',2),profile()]});assert.equal(h.calls.length,2);
- assert.equal(packages(h.render({profiles:[profile('b',2)]})).length,0);assert.equal(h.calls.length,3);assert.match(h.calls[2].url,/profileId=a/);
+ const h=harness();h.legacy({initialProfileId:'a'});h.respond(0);await settle();assert.equal(packages(h.legacy()).length,1);
+ h.render({profiles:[profile('b',2),profile()]});assert.equal(h.calls.length,1);
+ assert.equal(packages(h.render({profiles:[profile('b',2)]})).length,0);assert.equal(h.calls.length,1);h.legacy();assert.equal(h.calls.length,2);assert.match(h.calls[1].url,/profileId=a/);
 });
 
 test('product save invalidates review; equivalent reordered profile lists do not restart requests',async()=>{
- const h=harness();h.render();h.respond(0);await settle();h.render({profiles:[profile('b'),profile()]});assert.equal(h.calls.length,1);
- assert.equal(packages(h.render({products:[{...product,updated_at:'v2'}]})).length,0);assert.equal(h.calls.length,2);
+ const h=harness();h.legacy();h.respond(0);await settle();h.render({profiles:[profile('b'),profile()]});assert.equal(h.calls.length,1);
+ assert.equal(packages(h.render({products:[{...product,updated_at:'v2'}]})).length,0);assert.equal(h.calls.length,1);h.legacy();assert.equal(h.calls.length,2);
 });
 
 for(const company of ['A01464742','A01526306'])test(`selecting another category immediately invalidates old inspection and edit callbacks (${company})`,async()=>{
  const h=harness(),edits=[];
- h.render({initialProfileId:'a',profiles:[{...profile(),name:company},{...profile('b',1,'77442'),name:company+' 다른 분류'}],onEdit:(...args)=>edits.push(args)});
+ h.legacy({initialProfileId:'a',profiles:[{...profile(),name:company},{...profile('b',1,'77442'),name:company+' 다른 분류'}],onEdit:(...args)=>edits.push(args)});
  h.respond(0);await settle();const tree=h.legacy();
  const inspect=nodes(tree).find(node=>node.type==='issues').props.onInspect;
  const packageInspect=packages(tree)[0].props.onInspect;
@@ -124,40 +151,40 @@ for(const company of ['A01464742','A01526306'])test(`selecting another category 
  nodes(tree).find(node=>node.type==='select').props.onChange({target:{value:'b'}});
  inspect({optionId:'old-option',fieldId:'material'});packageInspect('a',{optionId:'old-option',fieldId:'mainImage',categoryId:'80719'});edit();
  assert.equal(edits.length,0,'the old category must not reopen after a different category was selected');
- const pending=h.render();assert.equal(packages(pending).length,0);assert.equal(h.calls.length,2);
- h.respond(1,'77442');await settle();const next=h.legacy();assert.equal(packages(next).length,1);
+ const pending=h.render();assert.equal(packages(pending).length,0);assert.equal(h.calls.length,1);
+ h.legacy();h.respond(1,'77442');await settle();const next=h.legacy();assert.equal(packages(next).length,1);
  nodes(next).find(node=>node.type==='button'&&node.props.children==='견적서 수정하기').props.onClick();
  assert.equal(JSON.stringify(edits),JSON.stringify([['p1','b',{optionId:null,fieldId:'category',categoryId:'77442'}]]));
 });
 
 for(const company of ['A01464742','A01526306'])test(`rechecking, changing product version or returning to the old category never revives an old inspection (${company})`,async()=>{
- const h=harness(),edits=[];h.render({initialProfileId:'a',onEdit:(...args)=>edits.push(args)});h.respond(0);await settle();
+ const h=harness(),edits=[];h.legacy({initialProfileId:'a',onEdit:(...args)=>edits.push(args)});h.respond(0);await settle();
  const old=nodes(h.render()).find(node=>node.type==='issues').props.onInspect;
- h.select('b');h.respond(1);await settle();h.select('a');h.respond(2);await settle();
+ h.select('b');h.legacy();h.respond(1);await settle();h.select('a');h.legacy();h.respond(2);await settle();
  old({optionId:'old-option',fieldId:'salePrice'});assert.equal(edits.length,0,'A → B → A requires the newly checked A result');
  const checked=h.render(),oldEdit=nodes(checked).find(node=>node.type==='button'&&node.props.children==='견적서 수정하기').props.onClick;
  const currentInspect=nodes(checked).find(node=>node.type==='issues').props.onInspect;
  nodes(checked).find(node=>node.type==='button'&&node.props.children==='저장된 자료 다시 검사').props.onClick();
  currentInspect({optionId:'old-option',fieldId:'brand'});oldEdit();assert.equal(edits.length,0,'rechecking immediately invalidates earlier findings');
- h.render();h.respond(3);await settle();
+ h.legacy();h.respond(3);await settle();
  const latestEdit=nodes(h.render()).find(node=>node.type==='button'&&node.props.children==='견적서 수정하기').props.onClick;
  h.render({products:[{...product,updated_at:'saved-edit-'+company}]});latestEdit();assert.equal(edits.length,0);
- h.respond(4);await settle();nodes(h.render()).find(node=>node.type==='issues').props.onInspect({optionId:'current-option',fieldId:'material'});
+ h.legacy();h.respond(4);await settle();nodes(h.render()).find(node=>node.type==='issues').props.onInspect({optionId:'current-option',fieldId:'material'});
  assert.equal(JSON.stringify(edits),JSON.stringify([['p1','a',{optionId:'current-option',fieldId:'material',categoryId:'80719'}]]));
 });
 
 for(const company of ['A01464742','A01526306'])test(`a rapid A to B to A selection keeps the last choice and obtains a fresh review (${company})`,async()=>{
- const h=harness(),edits=[];h.render({initialProfileId:'a',onEdit:(...args)=>edits.push(args)});h.respond(0);await settle();
+ const h=harness(),edits=[];h.legacy({initialProfileId:'a',onEdit:(...args)=>edits.push(args)});h.respond(0);await settle();
  const tree=h.render(),change=nodes(tree).find(node=>node.type==='select').props.onChange,inspect=nodes(tree).find(node=>node.type==='issues').props.onInspect;
  change({target:{value:'b'}});change({target:{value:'a'}});inspect({optionId:'old-option',fieldId:'material'});
  const next=h.render();assert.equal(nodes(next).find(node=>node.type==='select').props.value,'a');assert.equal(packages(next).length,0);
- assert.equal(edits.length,0);assert.equal(new URL(h.calls.at(-1).url,'https://example.com').searchParams.get('profileId'),'a');
+ assert.equal(edits.length,0);assert.equal(h.calls.length,1);h.legacy();assert.equal(new URL(h.calls.at(-1).url,'https://example.com').searchParams.get('profileId'),'a');
  h.respond(h.calls.length-1);await settle();nodes(h.render()).find(node=>node.type==='button'&&node.props.children==='견적서 수정하기').props.onClick();
  assert.equal(JSON.stringify(edits),JSON.stringify([['p1','a',{optionId:null,fieldId:'category',categoryId:'80719'}]]));
 });
 
 for(const company of ['A01464742','A01526306'])test(`${company}: native source and close locks reach category, retained edit/recheck callbacks and the modal owner without disabling their own child`,async()=>{
- const h=harness(),edits=[],locks=[];h.render({onEdit:(...args)=>edits.push(args),onLockChange:(...args)=>locks.push(args)});h.respond(0);await settle();
+ const h=harness(),edits=[],locks=[];h.legacy({onEdit:(...args)=>edits.push(args),onLockChange:(...args)=>locks.push(args)});h.respond(0);await settle();
  const tree=h.legacy(),child=nodes(tree).find(node=>node.type==='native'),select=nodes(tree).find(node=>node.type==='select'),edit=nodes(tree).find(node=>node.type==='button'&&node.props.children==='견적서 수정하기'),recheck=nodes(tree).find(node=>node.type==='button'&&node.props.children==='저장된 자료 다시 검사'),inspect=nodes(tree).find(node=>node.type==='issues').props.onInspect;
  const reads=h.calls.length;child.props.onLockChange(true,true);
  // Captured callbacks must see the same-tick ref, before a React rerender.
@@ -177,7 +204,7 @@ test('multiple native product locks aggregate independently and old scope/unmoun
 
 test('new native child layout locks survive the parent context layout, and retired category callbacks cannot reopen a completed scope',async()=>{
  const locks=[],h=harness({beforeLayout(tree){const child=nodes(tree).find(node=>node.type==='native');if(child?.props.profileId==='b')child.props.onLockChange(true,true);}});
- h.render({onLockChange:(...args)=>locks.push(args)});h.respond(0);await settle();const old=nodes(h.render()).find(node=>node.type==='select').props.onChange;old({target:{value:'b'}});
+ h.legacy({onLockChange:(...args)=>locks.push(args)});h.respond(0);await settle();const old=nodes(h.render()).find(node=>node.type==='select').props.onChange;old({target:{value:'b'}});
  h.render();await settle();const tree=h.render();assert.deepEqual(locks.at(-1),[true,true]);assert.equal(nodes(tree).find(node=>node.type==='select').props.disabled,true);
  const reads=h.calls.length;old({target:{value:''}});h.render();assert.equal(h.calls.length,reads);assert.equal(nodes(h.render()).find(node=>node.type==='select').props.value,'b');
  const current=nodes(tree).find(node=>node.type==='select').props.onChange;h.unmount();const count=locks.length;current({target:{value:''}});old({target:{value:'a'}});assert.equal(locks.length,count);assert.equal(h.calls.length,reads);

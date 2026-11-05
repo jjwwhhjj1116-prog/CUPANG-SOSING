@@ -193,8 +193,9 @@ function renderPanel(products,results=[]) {
 
 test('review panel keeps successful but wrong-product responses out of its report state',async()=>{
  for(const valid of [true,false]){
-  const slots=[],effects=[];let cursor=0;
-  const hooks={useState(initial){const i=cursor++;slots[i]??=initial;return[slots[i],value=>slots[i]=typeof value==='function'?value(slots[i]):value];},useEffect(fn){effects.push(fn);},useMemo:fn=>fn(),useRef:initial=>({current:initial}),useLayoutEffect:fn=>fn()};
+  const slots=[],effects=[];let cursor=0,pending=[];
+  const effect=(fn,deps)=>{const i=cursor++;if(!effects[i]||deps.some((value,n)=>!Object.is(value,effects[i].deps[n])))pending.push(()=>{effects[i]?.cleanup?.();effects[i]={deps,cleanup:fn()};});};
+  const hooks={useState(initial){const i=cursor++;slots[i]??=initial;return[slots[i],value=>slots[i]=typeof value==='function'?value(slots[i]):value];},useEffect:effect,useMemo(fn,deps){const i=cursor++,old=slots[i];if(!old||deps.some((value,n)=>!Object.is(value,old.deps[n])))slots[i]={deps,value:fn()};return slots[i].value;},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useLayoutEffect:effect};
   const report={...inspectSubmission(resolved(),[]),productId:valid?'p':'other',requestedProfileId:null,title:'상품',sourceUrl:'https://example.com/item',checkedAt:'2026-09-25T00:00:00.000Z',fingerprint:'a'.repeat(64)};
   const {SubmissionReviewPanel}=load('app/components/submission-review-panel.tsx',{
    '@/app/components/submission-package':{SubmissionPackage:()=>null},
@@ -202,11 +203,13 @@ test('review panel keeps successful but wrong-product responses out of its repor
    react:hooks,fetch:async()=>Response.json(report),
    '@/app/components/quotation-review-issues':{QuotationReviewIssues:()=>null},
   });
-  SubmissionReviewPanel({products:[{id:'p',title:'상품',source_url:'https://example.com/item'}],profiles:[],onEdit(){}});
-  const cleanups=effects.map(fn=>fn());for(let i=0;i<8;i++)await new Promise(r=>setImmediate(r));
+  const render=()=>{cursor=0;pending=[];const tree=SubmissionReviewPanel({products:[{id:'p',title:'상품',source_url:'https://example.com/item'}],profiles:[],onEdit(){}});pending.forEach(fn=>fn());return tree;};
+  const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
+  nodes(render()).find(node=>node.type==='details'&&node.props['aria-label']==='Excel 파일 전송 · 별도 방식').props.onToggle({currentTarget:{open:true}});render();
+  for(let i=0;i<8;i++)await new Promise(r=>setImmediate(r));
   assert.equal(slots[2].finished,true);assert.equal(slots[2].results.length,1);
   assert.equal(Boolean(slots[2].results[0].report),valid);assert.equal(Boolean(slots[2].results[0].error),!valid);
-  cleanups.forEach(fn=>fn?.());
+  effects.forEach(effect=>effect?.cleanup?.());
  }
 });
 test('review UI shows actual issues and URL, escapes source text and has no misleading global send button',()=>{

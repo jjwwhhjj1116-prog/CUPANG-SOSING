@@ -89,8 +89,11 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
       // Both selectors already restrict keys to this owner's product. Leave an
       // oversized selection to loadAttachments before starting any extra I/O.
       if (nativeReadOnly && readKeys.length <= PRODUCT_IMAGE_POOL_LIMIT) {
+        // Share only this request's initial HEADs with the size preflight. The
+        // independent final upload/version and metadata HEADs stay fresh below.
+        const initialMetadata=readMetadata();
         const [bytes,heads] = await Promise.allSettled([
-          loadAttachments(owner,saved.product.image_keys,readKeys,{concurrency:3,nativeReadOnly:true,onVerifiedObject:(key,object)=>{if(versioned(object))verifiedVersions.set(key,{version:object.version,size:object.size});}}),readMetadata(),
+          loadAttachments(owner,saved.product.image_keys,readKeys,{concurrency:3,nativeReadOnly:true,initialMetadata,onVerifiedObject:(key,object)=>{if(versioned(object))verifiedVersions.set(key,{version:object.version,size:object.size});}}),initialMetadata,
         ]);
         if (bytes.status === 'rejected') throw bytes.reason;
         if (heads.status === 'rejected') throw heads.reason;

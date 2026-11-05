@@ -11,15 +11,16 @@ async function arrived(...signals){
 const nextTurn=()=>new Promise(resolve=>setImmediate(resolve));
 function request(f){return f.h.load('app/api/products/[id]/native-assets/route.ts').GET(new Request('https://app.test'+f.sourcePath),f.context);}
 
-test('initial native attachment bodies and metadata HEAD overlap without changing the exact source plan or read counts',async()=>{
+test('initial native metadata HEAD supplies the size preflight before attachment bodies open',async()=>{
  const f=await nativeReviewFixture(),getGate=deferred(),headGate=deferred(),getStarted=deferred(),headStarted=deferred();let pending;
  try{
   const get=f.h.bindings.FILES.get,head=f.h.bindings.FILES.head,key=f.keys[0],gets=new Map(),heads=new Map(),objects=f.objectState();let gated=false;
   f.h.bindings.FILES.get=async current=>{const count=(gets.get(current)??0)+1;gets.set(current,count);if(gated&&current===key&&count===1){getStarted.resolve();await getGate.promise;}return get(current);};
   f.h.bindings.FILES.head=async current=>{const count=(heads.get(current)??0)+1;heads.set(current,count);if(gated&&current===key&&count===1){headStarted.resolve();await headGate.promise;}return head(current);};
   await json(await request(f));const baselineHeads=new Map(heads);gets.clear();heads.clear();gated=true;
-  pending=request(f);await arrived(getStarted,headStarted);
-  getGate.resolve();headGate.resolve();const plan=await json(await pending);
+  pending=request(f);await arrived(headStarted);await nextTurn();assert.equal(gets.get(key)??0,0,'size preflight finishes before GET');
+  headGate.resolve();await arrived(getStarted);assert.equal(heads.get(key),1,'preflight and plan metadata share the initial HEAD');
+  getGate.resolve();const plan=await json(await pending);
   assert.deepEqual(plain(plan),plain(f.sourcePlan));
   for(const file of plan.images){assert.equal(gets.get(file.key),2);assert.equal(heads.get(file.key),baselineHeads.get(file.key),'overlap adds no HEAD, including existing generated-label proofs');}
   assert.equal(f.objectState(),objects);assert.deepEqual(f.h.network,[]);
@@ -44,18 +45,27 @@ test('current native file body and fresh HEAD overlap, but HEAD still starts aft
  }finally{bodyGate.resolve();headGate.resolve();await pending;f.close();}
 });
 
-for(const failed of ['get','head'])test(`an initial ${failed} failure waits for the other parallel read and returns no partial plan`,async()=>{
+test('an initial GET failure waits for its bounded body-read batch and returns no partial plan',async()=>{
  const f=await nativeReviewFixture(),gate=deferred(),blocked=deferred(),rejected=deferred();let pending;
  try{
-  const get=f.h.bindings.FILES.get,head=f.h.bindings.FILES.head,key=f.keys[0];let finished=false;
-  const wrap=(kind,original)=>async current=>{
-   if(current===key){if(kind===failed){rejected.resolve();throw Error('Synthetic '+kind+' failure');}blocked.resolve();await gate.promise;}
-   return original(current);
+  const get=f.h.bindings.FILES.get;let finished=false;
+  f.h.bindings.FILES.get=async key=>{
+   if(key===f.keys[0]){rejected.resolve();throw Error('Synthetic get failure');}
+   if(key===f.keys[1]){blocked.resolve();await gate.promise;}
+   return get(key);
   };
-  f.h.bindings.FILES.get=wrap('get',get);f.h.bindings.FILES.head=wrap('head',head);
   pending=request(f).then(response=>{finished=true;return response;});await arrived(blocked,rejected);await nextTurn();assert.equal(finished,false);
   gate.resolve();const response=await pending,body=await response.json();assert.equal(response.status,503);assert.ok(body.error);assert.equal(body.images,undefined);assert.deepEqual(f.h.network,[]);
  }finally{gate.resolve();await pending;f.close();}
+});
+
+test('a rejected shared initial HEAD stops before private GET and returns no partial plan',async()=>{
+ const f=await nativeReviewFixture();try{
+  const head=f.h.bindings.FILES.head,get=f.h.bindings.FILES.get;let privateReads=0;
+  f.h.bindings.FILES.head=async key=>{if(key===f.keys[0])throw Error('Synthetic head failure');return head(key);};
+  f.h.bindings.FILES.get=async key=>{if(f.keys.includes(key))privateReads++;return get(key);};
+  const response=await request(f),body=await response.json();assert.equal(response.status,503);assert.ok(body.error);assert.equal(body.images,undefined);assert.equal(privateReads,0);assert.deepEqual(f.h.network,[]);
+ }finally{f.close();}
 });
 
 test('a failed current body digest still waits for its parallel metadata proof and withholds the plan',async()=>{

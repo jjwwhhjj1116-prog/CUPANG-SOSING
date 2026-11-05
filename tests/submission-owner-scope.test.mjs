@@ -27,7 +27,7 @@ for(const company of companies)test(`owner change aborts one pending package req
 
 for(const company of companies)test(`owner transition cancels the review fetch in layout cleanup without exposing a late saved package (${company.code})`,async()=>{
  const f=await submissionScopeFixture(company);try{
-  await f.ready();const before=f.snapshot(),gate=f.defer(url=>url.includes('/submission-review'));const opening=f.h.click('저장한 견적 전송 준비');await gate.arrived;
+  await f.ready();const before=f.snapshot(),gate=f.defer(url=>url.includes('/submission-review'));await f.h.click('저장한 견적 전송 준비');const opening=f.h.toggleDetails('Excel 파일 전송 · 별도 방식');await gate.arrived;
   assert.equal(gate.signal.aborted,false);f.switchOwner();assert.equal(gate.signal.aborted,true);assert.equal(gate.aborts,1);gate.release();await opening;await f.h.settle();
   assert.equal(f.h.component('submission-review-panel'),undefined);assert.equal(f.h.instance('SubmissionPackage'),undefined);assert.equal(f.h.lateWrites,0);assert.equal(f.snapshot(),before);assert.equal(f.flow.events.filter(event=>event.type==='TRANSMIT').length,0);
  }finally{f.close();}

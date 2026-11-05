@@ -446,7 +446,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
   const renderCandidate = (key: string, index: number, role?: string) => <figure className={`image-asset-card ${key === activePreview ? 'previewing' : ''} ${selected.includes(key) ? 'chosen' : ''}`} key={`${role ?? 'saved'}:${key}`}>
     <button type="button" className="image-asset-preview" aria-label={`상품 저장 이미지 ${index + 1} 크게 보기`} disabled={locked} onClick={() => { if (interactive() && !request.current) setPreview({ scope, key }); }}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={imageUrl(key)} alt={`상품 저장 이미지 ${index + 1}`} width={200} height={180} loading="lazy" /><span>{role ?? `이미지 ${index + 1} · 확대`}</span>
+      <img src={imageUrl(key)} alt={`상품 저장 이미지 ${index + 1}`} width={200} height={180} loading="lazy" /><span>{role ?? `이미지 ${index + 1} · 확대`}</span>{instant && role === '추가 이미지' && selected.includes(key) && <span className="option-additional-image-number">{selected.indexOf(key) + 1}</span>}
     </button>
     <figcaption>{instant ? <button type="button" className="btn ghost option-additional-add" aria-label={`추가 이미지 후보 ${index + 1} 추가`} disabled={locked || selected.includes(key) || selected.length >= limit} onClick={() => addImage(key)}>{selected.includes(key) ? '추가됨' : '＋ 추가'}</button> : <label><input type="checkbox" aria-label={`선택 옵션 ${label} 후보 ${index + 1}`} checked={selected.includes(key)} disabled={locked || !mutableImage(key) || (!selected.includes(key) && selected.length >= limit)} onChange={() => toggle(key)} />이미지 {index + 1} 선택</label>}</figcaption>
   </figure>;
@@ -567,7 +567,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
         </> : <small>왼쪽의 ＋ 추가를 누르면 현재 추가 이미지에 저장됩니다.</small>}</div>}
         {instant&&<h4 className="option-additional-strip-heading">현재 추가 이미지</h4>}<div className="image-selected-strip option-additional-image-strip" aria-label={`선택 옵션 ${label} 순서`}>{selected.map((key, index) => <figure key={`${index}:${key}`} {...sortableProps(key, index, 'image-selected-item')}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      {view.imageKeys.includes(key) ? <button type="button" aria-label={`${label} ${index + 1} 크게 보기`} disabled={locked} onClick={() => { if (interactive() && !request.current) setPreview({ scope, key }); }}><img src={imageUrl(key)} alt={`${label} ${index + 1}`} width={64} height={64} /><span>{index + 1}</span></button> : <p>현재 상품에 없는 이미지</p>}
+      {view.imageKeys.includes(key) ? <button type="button" aria-label={`${label} ${index + 1} 크게 보기`} aria-pressed={instant ? key === activePreview : undefined} disabled={locked} onClick={() => { if (interactive() && !request.current) setPreview({ scope, key }); }}><img src={imageUrl(key)} alt={`${label} ${index + 1}`} width={64} height={64} /><span>{index + 1}</span></button> : <p>현재 상품에 없는 이미지</p>}
       <figcaption>{index + 1}{!instant && ` · ${key.split('/').at(-1)}`}</figcaption>
       {instant&&<span className="option-additional-drag-grip" title="드래그하여 순서 변경" aria-hidden="true">⠿</span>}
       {selectedActions(key, index)}
