@@ -2,6 +2,39 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {companies,submissionScopeFixture,nodes,text} from './helpers/submission-owner-scope.mjs';
 
+for(const company of companies)test(`retired product entry cannot bypass a fresh locked document after owner ABA (${company.code})`,async()=>{
+ const f=await submissionScopeFixture(company);try{
+  await f.ready();const oldProduct=f.h.component('registration-board').onOpen;f.switchOwner();await f.h.settle();f.switchOwner('owner');await f.h.settle();
+  const close=nodes(f.h.render()).find(node=>node.type==='button'&&node.props?.['aria-label']==='상품 작업 공간 닫기');if(close)close.props.onClick();await f.h.settle();
+  await f.h.click('최근 상품 전체 선택');await f.h.click('등록 전송');const native=f.h.component('supplier-hub-product-submission');assert.ok(native);const before=f.snapshot();
+  for(const [source,close]of [[true,false],[false,true],[true,true]]){
+   native.onLockChange(source,close);f.h.render();oldProduct(f.h.products[0],'견적서');await f.h.settle();
+   assert.equal(nodes(f.h.render()).some(node=>node.props?.['aria-label']==='상품 등록 작업 공간'),false,'the retired owner epoch cannot ignore the new document lock');assert.ok(f.h.component('submission-review-panel'));assert.equal(f.snapshot(),before);
+  }
+  assert.equal(f.flow.events.filter(event=>event.type==='TRANSMIT').length,0);
+ }finally{f.close();}
+});
+
+for(const company of companies)test(`active document source/close locks keep retained list and product actions in the original session (${company.code})`,async()=>{
+ const f=await submissionScopeFixture(company);try{
+  await f.ready();const oldList=f.h.button('등록 전송').props.onClick,oldProduct=f.h.component('registration-board').onOpen;
+  await f.open({prepare:false});const review=f.h.component('submission-review-panel'),native=f.h.component('supplier-hub-product-submission'),mount=f.h.instance('SubmissionPackage'),before=f.snapshot();assert.ok(native);
+  for(const [source,close] of [[true,false],[false,true],[true,true]]){
+   native.onLockChange(source,close);f.h.render();oldList();await f.h.settle();
+   assert.ok(f.h.instance('SubmissionPackage')===mount,'retained list entry cannot replace the active request owner');assert.equal(mount.mounted,true);
+   oldProduct(f.h.products[0],'견적서');await f.h.settle();
+   assert.equal(nodes(f.h.render()).some(node=>node.props?.['aria-label']==='상품 등록 작업 공간'),false,'a pending document cannot expose another source editor');
+   assert.ok(f.h.instance('SubmissionPackage')===mount);assert.equal(f.snapshot(),before);
+  }
+  native.onLockChange(true,false);f.h.render();const modal=nodes(f.h.render()).find(node=>node.props?.['aria-label']==='Supplier Hub 등록 전송'),closeButton=nodes(modal).find(node=>node.type==='button'&&node.props.className==='icon-close');
+  assert.ok(closeButton);closeButton.props.onClick();await f.h.settle();assert.equal(f.h.component('submission-review-panel'),undefined,'a positively saved pending view may still close explicitly');
+  oldList();await f.h.settle();assert.ok(f.h.component('submission-review-panel'),'a fresh explicit entry is allowed after closing');
+  review.onLockChange(true,true);f.h.render();const current=f.h.component('submission-review-panel');current.onEdit(f.originalProduct.id,f.flow.profile.id);await f.h.settle();
+  assert.equal(f.h.component('submission-review-panel'),undefined,'a retired lock callback cannot block the new session edit');
+  assert.equal(nodes(f.h.render()).some(node=>node.props?.['aria-label']==='상품 등록 작업 공간'),true);assert.equal(f.snapshot(),before);assert.equal(f.flow.events.filter(event=>event.type==='TRANSMIT').length,0);
+ }finally{f.close();}
+});
+
 for(const company of companies)test(`prepared company quotation disappears immediately on owner change and old callbacks never revive through ABA (${company.code})`,async()=>{
  const f=await submissionScopeFixture(company);try{
   await f.ready();await f.open();const before=f.snapshot(),review=f.h.component('submission-review-panel'),packageMount=f.h.instance('SubmissionPackage');

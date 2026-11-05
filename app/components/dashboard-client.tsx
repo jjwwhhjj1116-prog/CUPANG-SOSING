@@ -234,11 +234,12 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   },[submissionContext]);
   const currentSubmission=submissionSession?.context===submissionContext?submissionSession:null;
   const submissionTarget=currentSubmission?.target;
-  function openSubmission(target:SubmissionSession['target']) {
-    if(batchBusyRef.current||liveSubmissionContext.current!==submissionContext||target&&workspaceOwnerId&&target.product.owner_id!==workspaceOwnerId)return;
+  function openSubmission(target:SubmissionSession['target']):boolean {
+    if(batchBusyRef.current||liveSubmissionContext.current!==submissionContext||target&&workspaceOwnerId&&target.product.owner_id!==workspaceOwnerId)return false;
     const previous=submissionLock.current;
-    if(previous?.close&&submissionCurrent(previous.session)){setToast('현재 문서의 전송·저장 결과를 먼저 확인해주세요.');return;}
+    if(previous&&(previous.source||previous.close)&&submissionCurrent(previous.session)){setToast('현재 문서의 전송·저장 결과를 먼저 확인해주세요.');return false;}
     const session={context:submissionContext,target};submissionLock.current=null;setSubmissionLockState(null);liveSubmissionSession.current=session;setSubmissionSession(session);
+    return true;
   }
   function submissionCurrent(session:SubmissionSession|null) {
     return !!session&&liveSubmissionContext.current===submissionContext&&session.context===submissionContext&&liveSubmissionSession.current===session;
@@ -439,7 +440,9 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   }
   function openProduct(product: Product, initialTab = 'SEO', preferredProfileId?:string, target?:QuotationNavigationTarget, optionId?:string,returnToOptions=false,focusLabel?:string) {
     const operation=settingsOperationRef.current;
-    if(batchBusyRef.current||!operation.mounted||operation.ownerId!==workspaceOwnerId||(workspaceOwnerId&&product.owner_id!==workspaceOwnerId))return false;
+    if(batchBusyRef.current||liveSubmissionContext.current!==submissionContext||!operation.mounted||operation.ownerId!==workspaceOwnerId||(workspaceOwnerId&&product.owner_id!==workspaceOwnerId))return false;
+    const locked=submissionLock.current;
+    if(locked&&(locked.source||locked.close)&&submissionCurrent(locked.session)){setToast('현재 문서의 전송·저장 결과를 먼저 확인해주세요.');return false;}
     setBatchImageReview(undefined);
     setBatchImageReviewTarget(undefined);
     setCloseNotice('');
@@ -498,8 +501,10 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     const state=workspaceEditState(detailBody.current);
     if(state.busy){setCloseNotice('저장 중인 작업이 있습니다. 저장이 끝나면 전송을 준비해주세요.');return;}
     if(state.dirty){setCloseNotice('저장하지 않은 입력이 있습니다. 각 단계에서 저장한 뒤 전송을 준비해주세요.');return;}
+    if(!openSubmission({product:detail,profileId}))return;
+    productNavigation.current++;
     optionWorkspaceReturn.current=null;optionBoardScope.current=null;setOptionBoardProduct(null);setOptionReturnFocus(undefined);
-    setCloseNotice('');openSubmission({product:detail,profileId});setDetail(null);
+    setCloseNotice('');setDetail(null);
   }
   async function openCollectedProduct(productId:string,initialTab:CollectionEditorTab,signal:AbortSignal){
     const request=++productNavigation.current;
