@@ -4,6 +4,7 @@ import type { QuotationFieldsState, QuotationSourceGuard } from '@/db/quotation-
 import { productRegistrationCounterSchema, productRegistrationSchema, productRegistrationOptionsSchema, prepareProductRegistration, withRegistrationNumber } from '@/db/product-registration';
 import type { RemovedProductsQuery } from '@/app/product-removal-pagination';
 import { productLabelsSchema, prepareNewProductLabels } from '@/db/product-label-initialization';
+import { newProductContent } from '@/app/product-content';
 
 export type ProductRecord = {
   id: string; owner_id: string; source_url: string; title: string;
@@ -57,6 +58,10 @@ export async function ensureDatabase() {
     db.prepare(productRegistrationSchema),
     db.prepare(productRegistrationOptionsSchema),
     db.prepare(productLabelsSchema),
+    db.prepare(`CREATE TABLE IF NOT EXISTS product_content (
+      product_id TEXT PRIMARY KEY REFERENCES products(id), owner_id TEXT NOT NULL,
+      revision INTEGER NOT NULL CHECK(revision > 0), payload TEXT NOT NULL, updated_at TEXT NOT NULL
+    )`),
   ]);
   schemaReadyBindings.add(db);
 }
@@ -112,7 +117,11 @@ export async function insertProduct(product: ProductRecord, policy?: PricePolicy
   // Keep the policy with the initial price, including disabled minimum margin
   // and rounding. A later workspace change must not recalculate this draft.
   const db = database(), payload = policy ? JSON.stringify(policy) : undefined;
+  const content = { ...newProductContent(product.id), revision: 1, updatedAt: product.created_at };
   const result = await db.batch<{registration_number:string}>([insert,
+    db.prepare(`INSERT INTO product_content(product_id,owner_id,revision,payload,updated_at)
+      SELECT p.id,p.owner_id,1,?,? FROM products p WHERE p.id=? AND p.owner_id=? AND p.created_at=? AND p.updated_at=? AND changes()=1`)
+      .bind(JSON.stringify(content), product.created_at, product.id, product.owner_id, product.created_at, product.created_at),
     ...prepareNewProductLabels(db, product.owner_id, product.id, product.created_at),
     ...(payload === undefined ? [] : [db.prepare('INSERT INTO product_price_policy(product_id,payload) VALUES(?,?)').bind(product.id,payload)]),
     ...prepareProductRegistration(db, product.owner_id, product.id, product.created_at),

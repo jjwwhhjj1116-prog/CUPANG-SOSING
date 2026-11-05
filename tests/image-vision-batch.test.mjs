@@ -2,6 +2,39 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {imageVisionBatchFixture,batchRequestId,batchNextRequestId,providerRequestId,completedVisionBatch} from './fixtures/image-vision-batch-fixture.mjs';
 
+test('saved BODY style is immutable server-verified data and a changed style cannot borrow an old result or bypass its pending job',async()=>{
+ const h=imageVisionBatchFixture();try{
+  const contract=h.load('app/image-text-vision.ts');h.controls.settings={addCopyright:true,translationPrompt:'짧고 자연스러운 한국어'};
+  const textStyle=await contract.createImageTextStyle(h.controls.settings),created=await h.create({textStyle});
+  assert.equal(created.status,202,JSON.stringify(created.body));assert.deepEqual(created.body.attempt.textStyle,JSON.parse(JSON.stringify(textStyle)));
+  assert.deepEqual(JSON.parse(h.calls[0].input.requests[0].messages[1].content[0].text).textStyle,JSON.parse(JSON.stringify(textStyle)));
+  h.controls.settings.translationPrompt='다른 표현';const nextStyle=await contract.createImageTextStyle(h.controls.settings),before=JSON.stringify(h.sqlite.prepare('SELECT * FROM image_vision_requests').all());
+  const denied=await h.create({requestId:batchNextRequestId,textStyle:nextStyle});assert.equal(denied.status,409);assert.equal(h.calls.length,1);assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM image_vision_requests').all()),before);
+  const original=await h.read();assert.equal(original.body.attempt.textStyle.fingerprint,textStyle.fingerprint,'historical descriptor survives current setting changes');
+  h.controls.provider=()=>completedVisionBatch();await h.poll();const next=await h.create({requestId:batchNextRequestId,textStyle:nextStyle});assert.equal(next.status,202);assert.equal(next.body.execution.requests,1,'different style does not reuse old completed Korean');
+  assert.equal(h.calls.filter(call=>call.options?.queueRequest).length,2);
+ }finally{h.close();}
+});
+
+test('a forged, stale or cleanup text style stops before provider admission',async()=>{
+ for(const kind of ['hash','guidance','main']){const h=imageVisionBatchFixture();try{
+  const textStyle=await h.load('app/image-text-vision.ts').createImageTextStyle(h.controls.settings);
+  if(kind==='hash')textStyle.fingerprint='f'.repeat(64);if(kind==='guidance')textStyle.guidance='other';if(kind==='main')h.source.role='main';
+  const response=await h.create({textStyle});assert.equal(response.status,409,JSON.stringify(response.body));assert.equal(h.calls.length,0);assert.equal(h.sqlite.prepare("SELECT count(*) AS n FROM sqlite_master WHERE name='image_vision_requests'").get().n,0);
+ }finally{h.close();}}
+});
+
+test('a style change before admission is confirmed unsent instead of stranding the batch client behind a nonexistent UUID',async()=>{
+ const h=imageVisionBatchFixture();try{
+  const client=h.load('app/image-vision-batch-client.ts'),textStyle=await h.load('app/image-text-vision.ts').createImageTextStyle(h.controls.settings);
+  const image={source:h.source,visionConfiguration:h.configuration(),visionTextStyle:textStyle,visionTransport:'workers-ai-batch-v1',visionFetcher:async(url,init)=>{
+   if(init.method==='POST')h.controls.settings.translationPrompt='설정 변경';return h.fetcher(url,init);
+  }};
+  await assert.rejects(client.runImageVisionBatch(image,'zh',new AbortController().signal,()=>{}),cause=>cause.code==='IMAGE_VISION_NOT_ADMITTED'&&cause.uncertain===false);
+  assert.equal(image.visionRequestId,undefined);assert.equal(image.visionPending,undefined);assert.equal(h.calls.length,0);
+ }finally{h.close();}
+});
+
 test('batch submission stores exact original attempt and provider job before 202; reload GET and discovery are pure D1 reads',async()=>{
  const h=imageVisionBatchFixture();try{
   const before=JSON.stringify(h.sqlite.prepare('SELECT * FROM products').all()),created=await h.create();

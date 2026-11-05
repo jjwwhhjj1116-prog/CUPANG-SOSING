@@ -5,9 +5,11 @@
 .registration-workspace .option-detail-primary .detail-workspace-primary{gap:0}
 .registration-workspace .option-detail-primary-header{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:50px;padding:10px 15px;background:#fff}
 .registration-workspace .option-detail-primary-header[hidden]{display:none}
-.registration-workspace .option-detail-primary-header h3{margin:0;font-size:19.2px;line-height:28.8px;font-weight:700;color:#110a57}
+.registration-workspace .option-detail-primary-header h3{margin:0;font-size:19.2px;line-height:28.8px;font-weight:600;color:#110a57}
 .registration-workspace .option-detail-primary-actions{position:relative;display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px}
 .registration-workspace .option-detail-primary-actions .btn{min-height:29px;padding:4px 8px;border:1px solid #32bdea;border-radius:10px;font-size:12px;line-height:18px;color:#32bdea;background:#fff}
+.registration-workspace .option-detail-primary .option-detail-primary-actions>button[aria-label="상세 본문 영어를 한국어로 번역"]:not(:disabled){color:#ff9770;border-color:#ff9770}
+.registration-workspace .option-detail-primary .option-detail-primary-actions>button[aria-label="상세 본문 모든 이미지 AI 처리"]:not(:disabled){color:#78c091;border-color:#78c091}
 .registration-workspace .option-detail-primary-actions .product-image-upload-queue{margin:0;padding:0;border:0;box-shadow:none;background:transparent;position:relative;z-index:4}
 .registration-workspace .option-detail-primary-actions .product-image-upload-queue>.quote-actions{margin:0;gap:0}
 .registration-workspace .option-detail-primary-actions .upload-trigger-icon{display:flex;align-items:center;gap:5px;width:auto;color:#ff7e41;border-color:#ff7e41}

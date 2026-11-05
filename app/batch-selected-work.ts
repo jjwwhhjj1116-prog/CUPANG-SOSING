@@ -539,7 +539,7 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     const states=[...imageStates!.values()].filter(state=>state.productId===productId&&state.ownerId===controls.expectedOwnerId&&state.view&&state.content);
     const details=[...detailStates!.values()].filter(state=>state.productId===productId&&state.ownerId===controls.expectedOwnerId&&state.view&&state.content);
     if(!states.length&&!details.length)return null;
-    const profileId=(states[0]??details[0]).view!.categoryContext.profileId,suffix='/quotation-fields'+(profileId?'?profileId='+encodeURIComponent(profileId):'');
+    const context=(states[0]??details[0]).view!.categoryContext,profileId=context.source==='profile'?context.profileId:null,suffix='/quotation-fields'+(profileId?'?profileId='+encodeURIComponent(profileId):'');
     try{const view=await read<QuotationFieldsView>(suffix),{content}=await read<{content:ProductContent}>('/content');return{states,details,suffix,view,content};}catch{return null;}
   }
   async function advanceImageCheckpoints(before:Awaited<ReturnType<typeof imageCheckpointBefore>>,observation:ImageCheckpointObservation|null){

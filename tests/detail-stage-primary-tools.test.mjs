@@ -74,6 +74,7 @@ test('selected Stage4 opens its existing gallery and instant tools while unscope
 
 test('primary detail callbacks keep their exact slot and existing same-tick processing guards',()=>{
  const h=dashboard();try{
+  h.render({tab:'대표 이미지'});h.render({tab:'추가 이미지'});h.render({tab:'상세 이미지'});
   const image=h.child('OptionImageEditor','detail').node,batch=h.child('DetailImageBatchPanel','additional').node;
   const target={kind:'quotation',profileId:'cat',optionId:'red',input:'detailImages',fieldKey:'detailImages',slotIndex:0,revision:1,inputFingerprint:'a'.repeat(64),optionRevision:1,value:'owner/a.png'};
   const upload=h.child('ProductImageUploadQueue','main').node;upload.props.onBusyChange(true);

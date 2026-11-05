@@ -12,6 +12,7 @@ import type { Worker, WorkerOptions, LoggerMessage } from 'tesseract.js';
 import {IMAGE_TEXT_VISION_MODEL,IMAGE_TEXT_VISION_NOTICE,IMAGE_TEXT_PRESERVATION_POLICY,parseImageTextVisionConfiguration,parseImageTextVisionResult,type ImageTextVisionConfiguration,type ImageTextVisionResult} from '@/app/image-text-vision';
 import {initializeVisionRegions,isOnlyVisionStyleIssue,type VisionStyleIssue} from '@/app/free-image-vision-style';
 import {FreeImageVisionError} from '@/app/free-image-vision-error';
+import type {ImageTextStyle} from '@/app/image-text-vision';
 import {parseImageOriginalPreservationProof,type ImageOriginalPreservationProof} from '@/app/image-no-text-proof';
 import type {FreeImageVisionAttempt} from '@/app/free-image-vision-error';
 import {createFreeImageInpaintSession} from '@/app/free-image-inpaint-client';
@@ -29,7 +30,7 @@ export type FreeImageRegion = FreeImageTextStyle & {
   backgroundMode?: 'inpaint-telea-v1';
 };
 export type FreeImageLoaded = { source: FreeImageSource; blob: Blob; canvas: HTMLCanvasElement; width: number; height: number; editDocument?: FreeImageEditDocument;visionPaintOrder?:'backgrounds-first-v1';noTextProof?:ImageOriginalPreservationProof;
- visionConfiguration?:ImageTextVisionConfiguration;visionTransport?:'workers-ai-batch-v1';visionRequestId?:string;visionPending?:FreeImageVisionError;visionResult?:ImageTextVisionResult;visionExecution?:{requests:0|1;cached:boolean};visionStyleIssues?:VisionStyleIssue[];visionFetcher?:typeof fetch };
+ visionTextStyle?:ImageTextStyle;visionConfiguration?:ImageTextVisionConfiguration;visionTransport?:'workers-ai-batch-v1';visionRequestId?:string;visionPending?:FreeImageVisionError;visionResult?:ImageTextVisionResult;visionExecution?:{requests:0|1;cached:boolean};visionStyleIssues?:VisionStyleIssue[];visionFetcher?:typeof fetch };
 export type FreeImageRendered = { source: FreeImageSource; output: Blob; width: number; height: number; optionImageIds?: string[]; crop?: FreeImageCrop; editDocument?: FreeImageEditDocument };
 export type FreeImageQuotationRequest = Omit<NonNullable<FreeImageSource['quotationTarget']>, 'bindingSha256'>;
 export type FreeImageEditorReadOptions = { restoreEditor: true; anchorPolicy?: 'current-target-v1' };

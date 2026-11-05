@@ -12,6 +12,24 @@ export type ImageTextVisionResult={provider:'workers-ai-vision';model:typeof IMA
 export type ImageTextVisionFailure='BLOCKS'|'BLOCK_SHAPE'|'TEXT'|'BOX_SHAPE'|'COORDINATES'|'OVERLAP'|'TEXT_LIMIT'|'DECISION';
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
 const exact=(value:Record<string,unknown>,keys:string)=>Object.keys(value).sort().join(',')===keys;
+export type ImageTextStyle={format:'image-overlay-korean-style-v1';copywriting:boolean;guidance:string;fingerprint:string};
+export const IMAGE_TEXT_DEFAULT_STYLE_FINGERPRINT='61aabac4aebc61f0b7cab1dd5e8d0afe7fd050f18cbc9483fd4cca2918237eab';
+export function parseImageTextStyle(value:unknown):ImageTextStyle|null{
+ if(!object(value)||!exact(value,'copywriting,fingerprint,format,guidance')||value.format!=='image-overlay-korean-style-v1'||typeof value.copywriting!=='boolean'
+  ||typeof value.guidance!=='string'||value.guidance.length>10000||value.guidance!==value.guidance.trim()||/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(value.guidance)
+  ||typeof value.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(value.fingerprint))return null;
+ return{format:value.format,copywriting:value.copywriting,guidance:value.guidance,fingerprint:value.fingerprint};
+}
+export async function createImageTextStyle(settings:{addCopyright:boolean;translationPrompt:string}):Promise<ImageTextStyle>{
+ const value={format:'image-overlay-korean-style-v1' as const,copywriting:settings.addCopyright,guidance:settings.translationPrompt.trim()};
+ const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(value)));
+ const style={...value,fingerprint:Array.from(new Uint8Array(bytes),byte=>byte.toString(16).padStart(2,'0')).join('')};
+ if(!parseImageTextStyle(style))throw Error('저장된 이미지 번역 지침을 확인해주세요.');return style;
+}
+export function sameImageTextStyle(first:ImageTextStyle|undefined,second:ImageTextStyle|undefined){
+ const defaultStyle=(style:ImageTextStyle|undefined)=>!style||style.fingerprint===IMAGE_TEXT_DEFAULT_STYLE_FINGERPRINT&&!style.copywriting&&style.guidance==='';
+ return first&&second?first.fingerprint===second.fingerprint&&first.copywriting===second.copywriting&&first.guidance===second.guidance:defaultStyle(first)&&defaultStyle(second);
+}
 export function parseImageTextVisionConfiguration(value:unknown):ImageTextVisionConfiguration|null{
  if(!object(value)||!exact(value,'configured,model,notice,paidAllowed,provider')||value.provider!=='workers-ai-vision'||value.model!==IMAGE_TEXT_VISION_MODEL
   ||typeof value.configured!=='boolean'||typeof value.paidAllowed!=='boolean'||value.configured&&!value.paidAllowed||value.notice!==IMAGE_TEXT_VISION_NOTICE)return null;

@@ -8,7 +8,7 @@ import { emptyProductOptions, emptyOptionInput, optionFieldNames, validateOption
 import { workspaceBannerAssignments } from '@/app/workspace-banners';
 import { fillLabelDraft, labelDateNotice } from '@/app/label-autofill';
 import { collectionLabelAttributes } from '@/app/collection-label-attributes';
-import { emptyProductContent, type LabelField } from '@/app/product-content';
+import { newProductContent, type LabelField } from '@/app/product-content';
 import { initialStatuses } from '@/app/workflow';
 import { collectionKeywords, collectionSourceReference, type CollectionJob } from '@/app/sourcing';
 import type { ProductRecord } from '@/db/queries';
@@ -36,7 +36,7 @@ export function prepareCollectionProduct(owner:string,job:CollectionJob,receipt:
   validateOptionsInput({expectedRevision:0,expectedProductVersion:now,rows},owner,[]);
   for(const row of rows)calculatePrice(row.unitCostCny,policy,row.unitsPerPack);
   const options={...emptyProductOptions(id),revision:1,updatedAt:now,rows:rows.map((row,index)=>({...row,...(result.options[index].packaging?{packagingUnitsPerPack:1}:{}),updatedAt:now,provenance:Object.fromEntries(Object.keys(optionFieldNames).map(key=>[key,['originalName','unitCostCny'].includes(key)||key==='minimumOrderQuantity'&&row.minimumOrderQuantity!==null||key==='supplierSku'&&row.supplierSku!==''||key==='stock'&&row.stock!==null||key==='color'&&row.color||key==='size'&&row.size||['packagedWeightG','packagedWidthMm','packagedLengthMm','packagedHeightMm'].includes(key)&&row[key as keyof typeof row]!=null?'collected':['unitsPerPack','included'].includes(key)?'manual':'unverified']))} as ProductOption))};
-  const content=emptyProductContent(id);content.revision=1;content.updatedAt=now;
+  const content=newProductContent(id);content.revision=1;content.updatedAt=now;
   content.seo.title={value:result.title,provenance:'collected',updatedAt:now};content.seo.description={value:result.description,provenance:'collected',updatedAt:now};
   content.detailDescriptionLinked = true;
   const keywords=collectionKeywords(job.context.keywords);

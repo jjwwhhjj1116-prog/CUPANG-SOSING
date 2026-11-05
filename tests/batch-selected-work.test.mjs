@@ -116,6 +116,47 @@ for(const mode of [undefined,'full','selected'])test(`coordinator ${mode??'defau
  assert.deepEqual(plain(images.calls.filter(row=>row[0]==='read').map(row=>row[1])),['owner/source-b.png','owner/source-a.png']);assert.deepEqual(plain(images.calls.filter(row=>row[0]==='apply').map(row=>row[1])),[0,1]);
 });
 
+for(const source of ['profile','collection'])test(`actual intake ${source} context resumes only the remaining image after a confirmed own label save`,async()=>{
+ const h=fixture(),images=actualSelectedImageFixture(),intake=mobileIntakeHarness({companyCode:images.plan.scope.company.code,companyName:images.plan.scope.company.name});
+ try{
+  await intake.load('db/category-profiles.ts').createCategoryProfile('owner',intake.context.category,'cat');
+  await intake.load('db/queries.ts').saveSettings('owner',JSON.stringify(intake.settings));
+  intake.sqlite.prepare("UPDATE collection_jobs SET goal='work' WHERE id='job'").run();await intake.intake();
+  const product=intake.sqlite.prepare('SELECT * FROM products').get(),contexts={};
+  for(const kind of ['collection','profile']){
+   const response=await intake.route('/api/products/'+product.id+'/quotation-fields'+(kind==='profile'?'?profileId=cat':''));
+   assert.equal(response.status,200,await response.clone().text());contexts[kind]=(await response.json()).categoryContext;
+   assert.equal(contexts[kind].source,kind);assert.equal(contexts[kind].profileId,'cat');
+  }
+  const intakeReads=[...intake.network];
+  images.view.categoryContext=plain(contexts[source]);images.plan.tasks[0].categoryContext=plain(contexts[source]);images.plan.tasks[0].profileId=source==='profile'?'cat':null;
+  h.company(images.plan.scope.company);const recognize=images.deps.recognize,recognitions=[];
+  Object.assign(h.deps['@/app/batch-selected-image-work'],images.model,{processSelectedImageStage:(id,stage,options)=>images.model.processSelectedImageStage(id,stage,{...images.options,...options,fetcher:images.options.fetcher},images.deps)});
+  images.deps.recognize=async image=>{recognitions.push(image.source.sourceKey);if(image.source.sourceKey.endsWith('b.png'))throw Error('confirmed OCR failure');return recognize(image);};
+  h.intercept(call=>{
+   if(call.url==='/api/products/product')return Response.json({product:{id:'product',title:'검증 상품',updated_at:images.view.productVersion}});
+   if(call.url.endsWith('/work-draft'))return Response.json({productId:'product',productVersion:images.view.productVersion});
+   if(call.url.endsWith('/content'))return Response.json({content:images.content});
+   if(call.url.includes('/quotation-fields')){
+    if(call.method==='PUT'){images.view.revision++;images.view.productVersion=new Date(Date.parse(images.view.productVersion)+1).toISOString();images.view.updatedAt=images.view.productVersion;images.view.resolved.rows[0].fields.brand={value:'확인한 표시 저장',source:'manual-option',issues:[],needsReview:false};}
+    const view=plain(images.view);view.categoryContext=plain(contexts[call.url.includes('?profileId=')?'profile':source]);return Response.json(view);
+   }
+   return null;
+  });
+  h.deps['@/app/batch-selected-label-work'].runSelectedLabelWork=async(id,options)=>{
+   await options.fetcher('/api/products/'+id+'/quotation-fields'+(source==='profile'?'?profileId=cat':''));
+   await options.fetcher('/api/products/'+id+'/quotation-fields'+(source==='profile'?'?profileId=cat':''),{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:images.view.revision,changes:[{fieldKey:'brand',optionId:'option',value:'확인한 표시 저장'}]})});return{status:'draft',message:'확인한 표시 저장',uncertain:false};
+  };
+  assert.equal((await h.run(['additionalImages'])).stages[0].status,'blocked');assert.equal((await h.run(['koreanLabel'])).stages[0].status,'draft');
+  images.deps.recognize=async image=>{recognitions.push(image.source.sourceKey);return recognize(image);};
+  const resumed=await h.run(['additionalImages']);assert.equal(resumed.stages[0].status,'draft',JSON.stringify(resumed));
+  assert.deepEqual(plain(images.calls.filter(row=>row[0]==='apply').map(row=>row[1])),[0,1],'the acknowledged first slot is never reapplied');
+  assert.deepEqual(recognitions,['owner/source-a.png','owner/source-b.png','owner/source-b.png'],'only the confirmed failed slot needs another recognition');
+  if(source==='collection')assert.equal(h.calls.some(call=>call.url?.includes('/quotation-fields?profileId=')),false,'captured profile identity never selects a live profile');
+  assert.deepEqual(intake.network,intakeReads,'resuming uses only local source/provider fixtures');
+ }finally{intake.close();}
+});
+
 for(const external of [null,'before-stage','inside-helper','after-ack'])test(`a confirmed sibling label save ${external??'alone'} ${external?'cannot adopt an outside edit':'lets the partial image resume only its remaining slot'}`,async()=>{
  const h=fixture(),images=actualSelectedImageFixture(),recognize=images.deps.recognize;h.company({code:'A01464742',name:'와이홉'});
  Object.assign(h.deps['@/app/batch-selected-image-work'],images.model,{processSelectedImageStage:(id,stage,options)=>images.model.processSelectedImageStage(id,stage,{...images.options,...options,fetcher:images.options.fetcher},images.deps)});

@@ -16,7 +16,7 @@ import { DETAIL_SAVE_PUBLICATION_POLICY, type DetailSavePeers } from '@/app/deta
 import { FreeImageApplyError, recognizeFreeImage, renderFreeImageTranslation, observeFreeImageVisionStatus,isImageVisionObservation,initializeFreeImageVisionRegions,
   type FreeImageLoaded, type FreeImageRendered, type FreeImageVisionStatus, type FreeImageRegion } from '@/app/free-image-translation-client';
 import { FreeImageVisionError, type FreeImageVisionAttempt } from '@/app/free-image-vision-error';
-import { isVerifiedOriginalPreservation, parseImageTextVisionConfiguration, parseImageTextVisionResult } from '@/app/image-text-vision';
+import { isVerifiedOriginalPreservation, parseImageTextVisionConfiguration, parseImageTextVisionResult, createImageTextStyle, sameImageTextStyle } from '@/app/image-text-vision';
 import { parseImageOriginalPreservationProof } from '@/app/image-no-text-proof';
 import { hasForeignImageText } from '@/app/selected-image-purpose';
 import { validateFreeImageEditDocument } from '@/app/free-image-edit-document';
@@ -290,6 +290,7 @@ export async function processSelectedDetailWork(productId: string, options: Opti
             && (!region.translated.trim() || region.translationProvenance === 'empty'))) return finish('partial','보관한 본문 사진에 미완료 번역이 있습니다. 편집 문서를 유지하고 개별 검토가 필요합니다.');
           state.photos[photo.id] = { status: 'preserved', key: photo.key }; continue;
         }
+        if(image.visionTransport==='workers-ai-batch-v1')image.visionTextStyle=await createImageTextStyle(state.settings!);
         const configuration = parseImageTextVisionConfiguration(image.visionConfiguration);
         if (!configuration?.configured) throw Error('상세 작업공간의 설정된 Vision 원본 연결이 없어 중단했습니다. 브라우저 OCR이나 다른 제공자로 자동 전환하지 않았습니다.');
         // Loading pixels is asynchronous. Recheck the saved opt-in and exact
@@ -307,7 +308,7 @@ export async function processSelectedDetailWork(productId: string, options: Opti
         let regions: FreeImageRegion[];
         if (state.inference) {
           const pending = state.inference;
-          if (pending.photoId !== photo.id || !same(pending.attempt.source,image.source) || !same(pending.attempt.configuration,configuration)) throw changed();
+          if (pending.photoId !== photo.id || !same(pending.attempt.source,image.source) || !same(pending.attempt.configuration,configuration)||!sameImageTextStyle(pending.attempt.textStyle,image.visionTextStyle)) throw changed();
           const observed = parseImageTextVisionResult(pending.observation?.result,image.width,image.height); if (!observed) throw changed();
           image.visionResult = observed; image.visionRequestId = pending.attempt.requestId;
           const styled = initializeFreeImageVisionRegions(image,observed); regions = styled.regions;

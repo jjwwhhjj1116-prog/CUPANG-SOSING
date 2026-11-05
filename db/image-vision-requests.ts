@@ -1,5 +1,5 @@
 import {env} from 'cloudflare:workers';
-import type {ImageTextVisionResult} from '@/app/image-text-vision';
+import {IMAGE_TEXT_DEFAULT_STYLE_FINGERPRINT,type ImageTextStyle,type ImageTextVisionResult} from '@/app/image-text-vision';
 export const imageVisionRequestsSchema=`CREATE TABLE IF NOT EXISTS image_vision_requests (
  owner_id TEXT NOT NULL, product_id TEXT NOT NULL REFERENCES products(id), request_id TEXT NOT NULL,
  company_code TEXT NOT NULL, company_name TEXT NOT NULL, model TEXT NOT NULL,
@@ -9,7 +9,7 @@ export const imageVisionRequestsSchema=`CREATE TABLE IF NOT EXISTS image_vision_
  PRIMARY KEY(owner_id,product_id,request_id)
 )`;
 const activeIndex="CREATE UNIQUE INDEX IF NOT EXISTS image_vision_requests_active ON image_vision_requests(owner_id,product_id,source_scope) WHERE status IN ('running','uncertain')";
-type Scope={owner:string;productId:string;requestId:string;company:{code:string;name:string};member:{email:string;role:string};model:string;fingerprint:string;sourceScope:string;legacySourceScope?:string;sourceScopes?:readonly string[];completedSourceScopes?:readonly string[];productVersion:string;contentRevision:number;inspection?:import('@/db/image-no-text-receipts').NoTextReceiptScope['inspection']};
+type Scope={owner:string;productId:string;requestId:string;company:{code:string;name:string};member:{email:string;role:string};model:string;fingerprint:string;sourceScope:string;legacySourceScope?:string;sourceScopes?:readonly string[];completedSourceScopes?:readonly string[];textStyle?:ImageTextStyle;productVersion:string;contentRevision:number;inspection?:import('@/db/image-no-text-receipts').NoTextReceiptScope['inspection']};
 type Row={status:'running'|'completed'|'failed'|'uncertain';request_fingerprint:string;result:string|null;failure:string|null};
 const ready=new WeakSet<object>();
 async function database(){const db=env.DB;if(!db)throw Error('Image Vision store unavailable');if(!ready.has(db)){await db.batch([db.prepare(imageVisionRequestsSchema),db.prepare(activeIndex)]);ready.add(db);}return db;}
@@ -43,8 +43,20 @@ export async function claimImageVisionRequest(scope:Scope){
 export async function completedImageVisionResult(scope:Scope){
  const db=await database(),sourceScopes=[...new Set(scope.completedSourceScopes??[scope.sourceScope])],fenced=scope.sourceScopes??[scope.sourceScope,scope.legacySourceScope??scope.sourceScope];
  if(sourceScopes.length<1||sourceScopes.length>4||!sourceScopes.includes(scope.sourceScope)||sourceScopes.some(value=>!/^([a-f0-9]{64})$/.test(value)||!fenced.includes(value)))throw Error('Invalid Image Vision completed source scopes');
- return db.prepare(`SELECT request_id,request_fingerprint,result FROM image_vision_requests WHERE owner_id=? AND product_id=? AND company_code=? AND company_name=? AND model=? AND source_scope IN (${sourceScopes.map(()=>'?').join(',')}) AND status='completed' AND request_id<>? AND ${membership} ORDER BY finished_at DESC,created_at DESC,request_id DESC LIMIT 1`)
-  .bind(scope.owner,scope.productId,scope.company.code,scope.company.name,scope.model,...sourceScopes,scope.requestId,...memberArgs(scope)).first<{request_id:string;request_fingerprint:string;result:string|null}>();
+ const style=scope.textStyle?.fingerprint??IMAGE_TEXT_DEFAULT_STYLE_FINGERPRINT,legacy=style===IMAGE_TEXT_DEFAULT_STYLE_FINGERPRINT;
+ const select=`SELECT r.request_id,r.request_fingerprint,r.result FROM image_vision_requests r`,where=` WHERE r.owner_id=? AND r.product_id=? AND r.company_code=? AND r.company_name=? AND r.model=? AND r.source_scope IN (${sourceScopes.map(()=>'?').join(',')}) AND r.status='completed' AND r.request_id<>? AND ${membership}`;
+ const args=[scope.owner,scope.productId,scope.company.code,scope.company.name,scope.model,...sourceScopes,scope.requestId,...memberArgs(scope)];
+ const order=' ORDER BY r.finished_at DESC,r.created_at DESC,r.request_id DESC LIMIT 1';
+ try{return await db.prepare(select+' LEFT JOIN image_vision_batches b ON b.owner_id=r.owner_id AND b.product_id=r.product_id AND b.request_id=r.request_id'+where+
+  " AND (b.request_id IS NULL OR b.request_fingerprint=r.request_fingerprint AND b.source_scope=r.source_scope AND b.company_code=r.company_code AND b.company_name=r.company_name AND b.model=r.model)"+
+  " AND (json_extract(b.attempt,'$.textStyle.fingerprint')=? OR ?=1 AND json_type(b.attempt,'$.textStyle') IS NULL)"+order)
+  .bind(...args,style,legacy?1:0).first<{request_id:string;request_fingerprint:string;result:string|null}>();}
+ catch(error){
+  // Older synchronous ledgers have no batch descriptor table. Their results
+  // represent faithful default translation only, never a new saved style.
+  if(!(error instanceof Error)||!/no such table: image_vision_batches\b/i.test(error.message))throw error;
+  return legacy?db.prepare(select+where+order).bind(...args).first<{request_id:string;request_fingerprint:string;result:string|null}>():null;
+ }
 }
 export async function finishImageVisionRequest(scope:Scope,value:({status:'completed';result:ImageTextVisionResult}|{status:'failed'|'uncertain';failure:string})&{requests:0|1}){
  const db=await database(),result='result'in value?JSON.stringify(value.result):null;

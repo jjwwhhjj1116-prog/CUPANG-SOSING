@@ -94,6 +94,11 @@ export function emptyProductContent(productId: string): ProductContent {
   };
 }
 
+/** Creation-only owner default; legacy empty/read defaults stay unconfirmed. */
+export function newProductContent(productId: string): ProductContent {
+  return { ...emptyProductContent(productId), legalDocuments: { applicability: 'not-applicable', files: [] } };
+}
+
 /** Add only newly introduced fields to old saved documents without changing revisions or facts. */
 export function withCurrentLabelFields(content: ProductContent): ProductContent {
   const defaults = emptyProductContent(content.productId);

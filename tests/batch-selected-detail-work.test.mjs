@@ -50,6 +50,14 @@ async function setup({saved=false,excluded=false,account}={}){
  return{f,calls,deps,model,options,state,configuration,vision,base,settings,content,controller,run:()=>model.processSelectedDetailWork('product',options,deps),intercept(fn){intercept=fn;},company(value){company=value;}};
 }
 
+test('fresh automatic BODY recognition carries only the saved copywriting and translation guidance snapshot',async()=>{
+ const h=await setup(),recognize=h.deps.recognize,read=h.deps.readImage;h.settings.translationPrompt='짧은 한국어';h.settings.addCopyright=true;
+ h.deps.readImage=async(...args)=>({...await read(...args),visionTransport:'workers-ai-batch-v1'});
+ const expected=await h.vision.createImageTextStyle(h.settings);let calls=0;
+ h.deps.recognize=async(...args)=>{calls++;assert.deepEqual(plain(args[0].visionTextStyle),plain(expected));return recognize(...args);};
+ const result=await h.run();assert.equal(result.status,'completed',result.messages.join(' '));assert.equal(calls,2);
+});
+
 test('automatic detail translates raw BODY once and composites its ordered banners instead of the saved final quote',async()=>{
  const h=await setup(),result=await h.run();
  assert.equal(result.status,'completed',result.messages.join(' '));assert.equal(result.applied,2);

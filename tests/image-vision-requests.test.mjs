@@ -13,6 +13,24 @@ function fixture(){
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Date,TextEncoder,Uint8Array,DataView,Error,setTimeout,clearTimeout,require(name){if(name==='cloudflare:workers')return{env};if(name==='@/app/automation/image-edit')return{inspectImage:()=>({width:100,height:80,mime:'image/png'})};if(name==='@/app/image-files')return{isOwnedImageKey:(owner,key)=>typeof key==='string'&&key.startsWith(owner+'/'),MAX_IMAGE_BYTES:10*1024*1024};assert.ok(name.startsWith('@/'),name);return load(name.slice(2)+'.ts');}});return exports;}
  return{...load('db/image-vision-requests.ts'),sqlite,queries,load,env,close(){sqlite.close();}};
 }
+
+test('completed proposals bind text style without splitting the original unknown-source admission fence or changing old rows',async()=>{
+ const h=fixture(),textStyle={format:'image-overlay-korean-style-v1',copywriting:true,guidance:'간결한 존댓말',fingerprint:'c'.repeat(64)};
+ try{
+  await h.claimImageVisionRequest(scope);await h.finishImageVisionRequest(scope,{status:'completed',result:{legacy:true},requests:1});
+  const original=h.sqlite.prepare('SELECT * FROM image_vision_requests WHERE request_id=?').get(scope.requestId);
+  h.sqlite.exec('CREATE TABLE image_vision_batches(owner_id TEXT,product_id TEXT,request_id TEXT,request_fingerprint TEXT,source_scope TEXT,company_code TEXT,company_name TEXT,model TEXT,attempt TEXT)');
+  const styled={...scope,requestId:'style-1',fingerprint:'d'.repeat(64),textStyle};
+  assert.equal((await h.claimImageVisionRequest(styled)).claimed,true);assert.equal(await h.completedImageVisionResult(styled),null,'custom style cannot borrow legacy default text');
+  assert.equal((await h.claimImageVisionRequest({...styled,requestId:'style-2',textStyle:{...textStyle,fingerprint:'e'.repeat(64)}})).claimed,false,'style changes never bypass a running original');
+  h.sqlite.prepare('INSERT INTO image_vision_batches VALUES(?,?,?,?,?,?,?,?,?)').run(scope.owner,scope.productId,styled.requestId,styled.fingerprint,styled.sourceScope,styled.company.code,styled.company.name,styled.model,JSON.stringify({textStyle}));
+  await h.finishImageVisionRequest(styled,{status:'completed',result:{styled:true},requests:1});
+  assert.equal((await h.completedImageVisionResult({...styled,requestId:'style-reuse'})).request_id,styled.requestId);
+  assert.equal(await h.completedImageVisionResult({...styled,requestId:'other-style',textStyle:{...textStyle,fingerprint:'e'.repeat(64)}}),null);
+  assert.equal((await h.completedImageVisionResult({...scope,requestId:'default-reuse'})).request_id,scope.requestId,'legacy callers cannot borrow custom-style text');
+  assert.deepEqual(h.sqlite.prepare('SELECT * FROM image_vision_requests WHERE request_id=?').get(scope.requestId),original);
+ }finally{h.close();}
+});
 test('atomic Vision claim fences overlapping requests, uncertain survives and completed UUID replays bounded proposal only',async()=>{
  const h=fixture();try{
   assert.equal((await h.claimImageVisionRequest(scope)).claimed,true);

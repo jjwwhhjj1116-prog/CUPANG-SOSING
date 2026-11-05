@@ -20,6 +20,17 @@ function fixture(){
  return{client,batch:load('app/image-vision-batch-client.ts'),contract,source,configuration,attempt,result,reply,image,calls,plain};
 }
 
+test('BODY style travels in the original immutable attempt while different-style discovery retains that UUID without resubmission',async()=>{
+ for(const changed of [false,true,'forged']){const h=fixture();h.source.role='detail';h.attempt.source.role='detail';
+  h.image.visionTextStyle=await h.contract.createImageTextStyle({addCopyright:true,translationPrompt:'간결하게'});
+  const style=h.image.visionTextStyle;h.attempt.textStyle=changed==='forged'?{...style,guidance:'altered with the same hash'}:changed?await h.contract.createImageTextStyle({addCopyright:false,translationPrompt:''}):style;
+  h.image.visionFetcher=async(url,init={})=>{h.calls.push({url,init});return Response.json(h.reply('completed',true));};
+  if(changed){await assert.rejects(h.client.recognizeFreeImage(h.image,'zh',new AbortController().signal));assert.equal(h.image.visionPending.attempt.requestId,h.attempt.requestId);assert.equal(h.image.visionRequestId,h.attempt.requestId);assert.equal(h.image.visionResult,undefined);}
+  else await h.client.recognizeFreeImage(h.image,'zh',new AbortController().signal);
+  assert.equal(h.calls.length,1);assert.equal(h.calls[0].init.method,'GET');
+ }
+});
+
 test('advertised Batch submits once then polls only the original job before using Korean regions',async()=>{
  const h=fixture();let original,polls=0;
  h.image.visionFetcher=async(url,init={})=>{h.calls.push({url,init});if(init.method==='GET')return Response.json(h.reply('not-found',true));const body=JSON.parse(init.body);if(body.action==='vision-batch'){original={...body};delete original.action;return Response.json(h.reply('running',false,1,original),{status:202});}assert.deepEqual(Object.keys(body).sort(),['action','requestId']);assert.equal(body.action,'vision-batch-poll');assert.equal(body.requestId,original.requestId);return Response.json(h.reply(++polls===1?'running':'completed',false,0,original));};

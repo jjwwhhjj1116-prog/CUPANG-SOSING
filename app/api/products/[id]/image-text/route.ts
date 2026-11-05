@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
 import { env, waitUntil } from 'cloudflare:workers';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
-import { findProduct } from '@/db/queries';
+import { findProduct, getSettings } from '@/db/queries';
+import { savedRegistrationSettings } from '@/app/workspace-settings';
+import {createImageTextStyle,parseImageTextStyle} from '@/app/image-text-vision';
 import { readProductContent } from '@/db/product-content';
 import { readProductOptions } from '@/db/product-options';
 import { attachProductDocument } from '@/db/product-attachments';
@@ -36,6 +38,7 @@ type Context = { params: Promise<{ id: string }> };
 class ImageTextError extends Error {
   constructor(public status: 400 | 404 | 409 | 413 | 415 | 503, message: string) { super(message); }
 }
+class ImageTextStyleNotAdmitted extends ImageTextError {}
 const response = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
 const changed = () => new ImageTextError(409, '번역 중 원본 이미지나 저장 내용이 변경되었습니다. 최신 이미지를 다시 불러와주세요.');
 async function digest(bytes: Uint8Array) {
@@ -248,10 +251,11 @@ async function batchActor(owner:string,productId:string,request:Request){
  return{actor,configuration,assertActor};
 }
 async function batchScope(attempt:BatchAttempt,actor:ImageVisionBatchActor):Promise<ImageVisionBatchScope>{
- const {source,configuration,sourceLanguage,inspectionPolicy}=attempt;
+ const {source,configuration,sourceLanguage,inspectionPolicy,textStyle}=attempt;
+ if(textStyle&&JSON.stringify(await createImageTextStyle({addCopyright:textStyle.copywriting,translationPrompt:textStyle.guidance}))!==JSON.stringify(parseImageTextStyle(textStyle)))throw changed();
  return{...actor,requestId:attempt.requestId,productVersion:source.productVersion,contentRevision:source.contentRevision,
-  fingerprint:await digest(new TextEncoder().encode(JSON.stringify({source:freeImageSourceIdentity(source),company:actor.company,member:actor.member,configuration,language:sourceLanguage,...(inspectionPolicy?{inspectionPolicy}:{})}))),
-  sourceScope:await digest(new TextEncoder().encode(JSON.stringify([source.sourceKey,source.sourceSha256,actor.company,configuration.model,sourceLanguage,...(inspectionPolicy?[inspectionPolicy]:[])]))),
+  fingerprint:await digest(new TextEncoder().encode(JSON.stringify({source:freeImageSourceIdentity(source),company:actor.company,member:actor.member,configuration,language:sourceLanguage,...(inspectionPolicy?{inspectionPolicy}:{}),...(textStyle?{textStyle}:{})}))),
+  ...(textStyle?{textStyle}:{}),sourceScope:await digest(new TextEncoder().encode(JSON.stringify([source.sourceKey,source.sourceSha256,actor.company,configuration.model,sourceLanguage,...(inspectionPolicy?[inspectionPolicy]:[])]))),
   ...(inspectionPolicy?{inspection:{sourceKey:source.sourceKey,sourceSha256:source.sourceSha256,width:source.width,height:source.height,sourceLanguage,configuration}}:{})};
 }
 async function parsedBatch(row:ImageVisionBatchRow|null,actor:ImageVisionBatchActor,configuration:ReturnType<typeof imageVisionConfiguration>){
@@ -260,7 +264,8 @@ async function parsedBatch(row:ImageVisionBatchRow|null,actor:ImageVisionBatchAc
  let raw:unknown;try{raw=JSON.parse(row.attempt);}catch{throw changed();}
  if(!raw||typeof raw!=='object'||Array.isArray(raw))throw changed();
  const value=raw as Record<string,unknown>;
- if(!['configuration,requestId,source,sourceLanguage,transport','configuration,inspectionPolicy,requestId,source,sourceLanguage,transport'].includes(Object.keys(value).sort().join(','))
+ if(!['configuration,requestId,source,sourceLanguage,transport','configuration,inspectionPolicy,requestId,source,sourceLanguage,transport'].includes(Object.keys(value).filter(key=>key!=='textStyle').sort().join(','))
+  ||value.textStyle!==undefined&&(!parseImageTextStyle(value.textStyle)||((value.source as FreeImageSource)?.role!=='detail'))
   ||value.transport!=='workers-ai-batch-v1'||!visionRequestId(value.requestId)||value.requestId!==row.request_id||!['zh','en'].includes(String(value.sourceLanguage))
   ||value.inspectionPolicy!==undefined&&!isImageTextInspectionPolicy(value.inspectionPolicy))throw changed();
  const source=validateFreeImageSource(value.source),storedConfiguration=parseImageTextVisionConfiguration(value.configuration);
@@ -297,7 +302,7 @@ async function createVisionBatch(scope:ImageVisionBatchScope,attempt:BatchAttemp
    if(!attempt.inspectionPolicy||result.blocks.length||result.inspection){await assertCurrent();await ledger.finishImageVisionRequest(scope,{status:'completed',result,requests:0});await assertActor();return response(batchReply(await read(),0,false));}
   }
   await assertCurrent();invoked=true;
-  const job=await submitImageVisionBatch(image.bytes,attempt.source,attempt.sourceLanguage,env as ImageVisionEnvironment,request.signal,attempt.inspectionPolicy);
+  const job=await submitImageVisionBatch(image.bytes,attempt.source,attempt.sourceLanguage,env as ImageVisionEnvironment,request.signal,attempt.inspectionPolicy,attempt.textStyle);
   await batches.saveImageVisionBatchProvider(scope,job.providerRequestId);
   await assertActor();return response(batchReply(await read(),1,false),202);
  }catch(error){
@@ -330,6 +335,7 @@ async function pollVisionBatch(owner:string,productId:string,request:Request,req
  await assertActor();current=await read();await assertActor();return response(batchReply(current,0,false));
 }
 function fail(error: unknown) {
+  if(error instanceof ImageTextStyleNotAdmitted)return response({error:error.message,code:'IMAGE_VISION_NOT_ADMITTED',uncertain:false},409);
   if(error instanceof ImageVisionError)return response({error:error.message,code:`IMAGE_VISION_${error.reason}`,uncertain:error.uncertain},error.reason==='NOT_CONFIGURED'?503:error.reason==='CAPACITY'?429:409);
   if (error instanceof FreeImageEditRecordError) return response({ error: error.message, ...(error.code ? { code: error.code } : {}) }, error.status);
   if (error instanceof ImageTextError || error instanceof RequestBodyError) return response({ error: error.message }, error.status);
@@ -444,30 +450,35 @@ export async function POST(request: Request, context: Context) {
       if(input.action==='vision'||input.action==='vision-batch'){
         if(request.headers.get('origin')!==new URL(request.url).origin)throw new ImageTextError(400,'현재 서비스 화면에서 이미지 Vision을 실행해주세요.');
         const visionKeys=input.action==='vision-batch'?['action,configuration,requestId,source,sourceLanguage,transport','action,configuration,inspectionPolicy,requestId,source,sourceLanguage,transport']:['action,configuration,requestId,source,sourceLanguage','action,configuration,inspectionPolicy,requestId,source,sourceLanguage'];
-        if(!visionKeys.includes(Object.keys(input).sort().join(','))||input.action==='vision-batch'&&input.transport!=='workers-ai-batch-v1'
+        if(!visionKeys.includes(Object.keys(input).filter(key=>key!=='textStyle').sort().join(','))||input.textStyle!==undefined&&input.action!=='vision-batch'||input.action==='vision-batch'&&input.transport!=='workers-ai-batch-v1'
           ||input.inspectionPolicy!==undefined&&!isImageTextInspectionPolicy(input.inspectionPolicy)||typeof input.requestId!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.requestId)||!['zh','en'].includes(String(input.sourceLanguage)))throw new ImageTextError(400,'이미지 Vision 요청과 중복 방지 번호를 확인해주세요.');
         const inspectionPolicy=input.inspectionPolicy as ImageTextInspectionPolicy|undefined;
         const source=validateFreeImageSource(input.source),settings=env as ImageVisionEnvironment,configuration=imageVisionConfiguration(settings),expected=parseImageTextVisionConfiguration(input.configuration);
         if(!expected||JSON.stringify(expected)!==JSON.stringify(configuration))throw changed();
         if(!configuration.configured)throw new ImageVisionError('NOT_CONFIGURED');
         if(source.productId!==id||!isOwnedImageKey(owner,source.sourceKey))throw new ImageTextError(400,'이 상품의 본인 소유 원본만 Vision으로 읽을 수 있습니다.');
+        const textStyle=input.textStyle===undefined?undefined:parseImageTextStyle(input.textStyle);
+        const currentTextStyle=async()=>{const stored=await getSettings(owner);return createImageTextStyle(savedRegistrationSettings(stored?JSON.parse(stored.payload):null));};
+        const assertTextStyle=async()=>{if(input.textStyle!==undefined&&(!textStyle||source.role!=='detail'||JSON.stringify(await currentTextStyle())!==JSON.stringify(textStyle)))throw new ImageTextStyleNotAdmitted(409,'저장된 본문 이미지 번역 지침이 변경되었습니다. 현재 설정으로 다시 확인해주세요.');};
+        await assertTextStyle();
         const company=await editorCompany(owner);
         const currentMember=async()=>{const user=await getChatGPTUser(),member=user?.membership;if(!user?.verifiedAccess||user.userId!==owner||member?.id!==owner||member.status!=='approved'||member.email!==user.email||JSON.stringify(approvedSupplierHubCompany(member))!==JSON.stringify(company))throw changed();return{email:member.email.toLowerCase().trim(),role:member.role};};
         const member=await currentMember(),proofs=source.workspaceTarget?(await import('@/db/detail-workspaces')).createDetailWorkspaceImageProofs():undefined;
-        const assertCurrent=async()=>{request.signal.throwIfAborted();if(await ownerId()!==owner||JSON.stringify(await currentMember())!==JSON.stringify(member)||JSON.stringify(imageVisionConfiguration(settings))!==JSON.stringify(configuration))throw changed();await freshVisionSource(owner,id,source,company,member,request.signal,proofs);request.signal.throwIfAborted();if(await ownerId()!==owner||JSON.stringify(await currentMember())!==JSON.stringify(member)||JSON.stringify(imageVisionConfiguration(settings))!==JSON.stringify(configuration))throw changed();};
+        const assertCurrent=async()=>{request.signal.throwIfAborted();await assertTextStyle();if(await ownerId()!==owner||JSON.stringify(await currentMember())!==JSON.stringify(member)||JSON.stringify(imageVisionConfiguration(settings))!==JSON.stringify(configuration))throw changed();await freshVisionSource(owner,id,source,company,member,request.signal,proofs);request.signal.throwIfAborted();if(await ownerId()!==owner||JSON.stringify(await currentMember())!==JSON.stringify(member)||JSON.stringify(imageVisionConfiguration(settings))!==JSON.stringify(configuration))throw changed();};
         await assertCurrent();
         const image=await readImage(source.sourceKey);
         if(await digest(image.bytes)!==source.sourceSha256||image.dimensions.width!==source.width||image.dimensions.height!==source.height)throw changed();
         await assertCurrent();
         const sourceKeys=collectedVisionAliases(owner,source,image.dimensions.mime);
         const scope={owner,productId:id,requestId:input.requestId,company,member,model:configuration.model,productVersion:source.productVersion,contentRevision:source.contentRevision,
-          fingerprint:await digest(new TextEncoder().encode(JSON.stringify({source:freeImageSourceIdentity(source),company,member,configuration,language:input.sourceLanguage,...(inspectionPolicy?{inspectionPolicy}:{})}))),
+          fingerprint:await digest(new TextEncoder().encode(JSON.stringify({source:freeImageSourceIdentity(source),company,member,configuration,language:input.sourceLanguage,...(inspectionPolicy?{inspectionPolicy}:{}),...(textStyle?{textStyle}:{})}))),
+          ...(textStyle?{textStyle}:{}),
           sourceScope:await digest(new TextEncoder().encode(JSON.stringify([source.sourceKey,source.sourceSha256,company,configuration.model,input.sourceLanguage,...(inspectionPolicy?[inspectionPolicy]:[])]))),
           legacySourceScope:await digest(new TextEncoder().encode(JSON.stringify([source.sourceKey,source.sourceSha256,company,configuration.model,input.sourceLanguage,...(inspectionPolicy?[]:[IMAGE_TEXT_INSPECTION_POLICY])]))),
           sourceScopes:await Promise.all(sourceKeys.flatMap(key=>[undefined,IMAGE_TEXT_INSPECTION_POLICY,IMAGE_TEXT_PRESERVATION_POLICY].map(policy=>digest(new TextEncoder().encode(JSON.stringify([key,source.sourceSha256,company,configuration.model,input.sourceLanguage,...(policy?[policy]:[])])))))),
           completedSourceScopes:await Promise.all(sourceKeys.map(key=>digest(new TextEncoder().encode(JSON.stringify([key,source.sourceSha256,company,configuration.model,input.sourceLanguage,...(inspectionPolicy?[inspectionPolicy]:[])]))))),
           ...(inspectionPolicy?{inspection:{sourceKey:source.sourceKey,sourceSha256:source.sourceSha256,width:source.width,height:source.height,sourceLanguage:input.sourceLanguage as 'zh'|'en',configuration}}:{})};
-        if(input.action==='vision-batch')return await createVisionBatch(scope,{requestId:scope.requestId,source,sourceLanguage:input.sourceLanguage as 'zh'|'en',configuration,...(inspectionPolicy?{inspectionPolicy}:{}),transport:'workers-ai-batch-v1'},image,request,assertCurrent);
+        if(input.action==='vision-batch')return await createVisionBatch(scope,{requestId:scope.requestId,source,sourceLanguage:input.sourceLanguage as 'zh'|'en',configuration,...(inspectionPolicy?{inspectionPolicy}:{}),...(textStyle?{textStyle}:{}),transport:'workers-ai-batch-v1'},image,request,assertCurrent);
         const {claimImageVisionRequest,finishImageVisionRequest,completedImageVisionResult,finishLateImageVisionRequest}=await import('@/db/image-vision-requests');
         const claimed=await claimImageVisionRequest(scope);
         if(!claimed.claimed){
