@@ -539,6 +539,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   }, []);
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; aiRequestOwner.current = null; }; }, []);
   const submissionTools = useRef<HTMLDetailsElement | null>(null), submissionSummary = useRef<HTMLElement | null>(null);
+  const quotationRoot = useRef<HTMLElement | null>(null);
   const invalidateRequests = useCallback(() => { requests.current++; activeWrite.current?.abort(); activeWrite.current=null; }, []);
   const dirty = changes.length > 0;
   useEffect(() => { onDirtyChange?.(dirty || splitDrafting); }, [dirty, splitDrafting, onDirtyChange]);
@@ -662,8 +663,9 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   }
   function changeSubmissionLock(source: boolean, close = source) {
     const current = modelActionState.current;
-    if (!view || current.view !== view || current.submissionActive !== submissionActive) return;
+    if (!mounted.current || !view || current.view !== view || current.submissionActive !== submissionActive) return;
     submissionLockRef.current = { source, close };
+    quotationRoot.current?.setAttribute('data-workspace-source-locked', String(source));
     if (source) explicitRefreshAction.current = null;
     modelActionState.current = { ...current, busy: current.formBusy || source };
     setSubmissionLocks(previous => previous.source === source && previous.close === close ? previous : { source, close });
@@ -730,7 +732,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   let savePlan: ReturnType<typeof quotationSavePlan> = { changes: [], propagated: [] };
   if (view && changes.length) try { savePlan = quotationSavePlan(view, changes, selectedOption, applyAll); assertQuotationSeoTitleDraft(view.resolved.schema.fields, savePlan.changes); validateQuotationChanges(savePlan.changes, { schema: view.resolved.schema, optionIds: view.resolved.rows.flatMap(item => item.optionId === null ? [] : [item.optionId]), ownedImageKeys: view.imageKeys, overrides: view.overrides }); } catch (cause) { hasInvalidDraft = true; invalidDraftMessage = cause instanceof Error ? cause.message : '수정한 필드의 입력 오류를 확인해주세요.'; }
 
-  return <section className="quotation-fields" aria-busy={loading || operationBusy || splitBusy || submissionLocks.close} data-field-tools={fieldTools} data-workspace-dirty={dirty || splitDrafting} data-workspace-saving={operationBusy || splitBusy || submissionLocks.close}>
+  return <section ref={quotationRoot} className="quotation-fields" aria-busy={loading || operationBusy || splitBusy || submissionLocks.close} data-field-tools={fieldTools} data-workspace-dirty={dirty || splitDrafting} data-workspace-saving={operationBusy || splitBusy || submissionLocks.close} data-workspace-source-locked={submissionLocks.source}>
     {optionLimitIssue && <p className="quotation-fields-notice" role="alert">{optionLimitIssue}</p>}
     <div className="quotation-fields-heading"><h3>쿠팡 등록 정보</h3><button type="button" className="btn primary" aria-controls={`${prefix}-ai-tools`} title={applyAll ? '모든 포함 옵션의 AI 견적 초안 요청' : '선택 옵션의 AI 견적 초안 요청'} disabled={!view || dirty || busy || loading || conflicts.length > 0 || !aiRequestAction || aiRequestAction.disabled || aiRequestAction.scopeLocked || aiRequestAction.sourceKey !== aiRequestSource || aiRequestAction.applyToAllOptions !== applyAll} onClick={openAiTools}>AI 처리</button></div>
     {view && selectedOption === null && !applyAll && <small>AI 작성 범위: 선택 옵션 · <button type="button" className="quotation-field-text-button" disabled={busy || loading} onClick={() => { if (!titleActionCurrent()) return; if (contextTools.current) { contextTools.current.open = true; contextTools.current.scrollIntoView({ block: 'start' }); } optionSelector.current?.focus(); }}>AI 작성할 옵션 선택</button></small>}

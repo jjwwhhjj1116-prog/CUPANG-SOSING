@@ -141,7 +141,7 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'�
   const next={...value,props:{...value.props,children:expand(value.props?.children,path+'/children',seen,[...ancestors,value])}};
   if(next.props.ref&&typeof next.props.ref==='object'){
    const marker={getAttribute:name=>name==='data-quotation-source-step'?'SEO':name==='data-workspace-dirty'?'true':null,querySelector:()=>null};
-   next.props.ref.current={querySelector:selector=>(selector.includes('[data-workspace-dirty="true"]')&&(workspaceEdits.dirty||!selector.includes(':not(')&&workspaceEdits.freeDirty))||(selector.includes('[data-workspace-saving="true"]')&&(workspaceEdits.busy||!selector.includes(':not(')&&workspaceEdits.freeBusy))?marker:null,querySelectorAll:selector=>selector==='[data-quotation-source-step]'&&workspaceEdits.dirty?[marker]:[],scrollTo(){}};
+   next.props.ref.current={querySelector:selector=>(selector.includes('[data-workspace-dirty="true"]')&&(workspaceEdits.dirty||!selector.includes(':not(')&&workspaceEdits.freeDirty))||(selector.includes('[data-workspace-saving="true"]')&&(workspaceEdits.busy||!selector.includes(':not(')&&workspaceEdits.freeBusy))||(selector.includes('[data-workspace-source-locked="true"]')&&workspaceEdits.sourceLocked)?marker:null,querySelectorAll:selector=>selector==='[data-quotation-source-step]'&&workspaceEdits.dirty?[marker]:[],scrollTo(){}};
   }
   return next;
  }
@@ -891,6 +891,30 @@ for(const company of schemaCompanies)test(`reviewed source ACK resumes only its 
   const current=h.component('source-inbox-panel');assert.equal(current.initialItem.revision,2);current.onAdd(saved);await h.settle();
   const resumed=h.component('intake-queue-panel');assert.equal(resumed.rows[0].sourceCapture.revision,2);assert.equal(resumed.rows[0].profile,row.profile);assert.equal(resumed.rows[0].features,row.features);assert.equal(resumed.rows[0].keywords,row.keywords);assert.equal(resumed.rows[1],other);assert.equal(resumed.sourceItems[0],saved);assert.equal(accepted.length,1);
   assert.ok(h.requests.every(request=>request.method==='GET'));
+ }finally{h.close();}
+});
+
+for(const busy of [true,false])test(`native source reservation keeps the quotation controller mounted across step navigation (close busy ${busy})`,async()=>{
+ const h=harness();try{
+  await h.settle();h.component('registration-board').onOpen(h.products[0],'견적서');await h.settle();
+  const mount=h.componentMount('quotation-panel'),seo=nodes(h.render()).find(node=>node.type==='button'&&text(node)==='1SEO 설정').props.onClick;
+  const previous=nodes(h.render()).find(node=>node.type==='button'&&node.props['aria-label']==='이전 단계').props.onClick;
+  h.setWorkspaceEdits({sourceLocked:true,busy});
+  for(const navigate of [seo,previous,seo]){
+   navigate();await h.settle();assert.equal(h.component('quotation-panel').submissionActive,true,'native recovery must remain active');assert.equal(h.componentMount('quotation-panel'),mount);
+   assert.equal(h.component('seo-workspace-editor')?.active??false,false);assert.match(text(h.render()),/현재 문서의 전송.*결과/);
+  }
+  h.setWorkspaceEdits({sourceLocked:false,busy:false});seo();await h.settle();assert.equal(h.component('quotation-panel').submissionActive,false);assert.equal(h.component('seo-workspace-editor').active,true);
+  assert.ok(h.requests.every(row=>row.method==='GET'));
+ }finally{h.close();}
+});
+
+test('a pending SEO read still permits leaving the stage and a saved source reservation still permits explicitly closing',async()=>{
+ const h=harness();try{
+  await h.settle();h.component('registration-board').onOpen(h.products[0],'SEO');await h.settle();h.setWorkspaceEdits({busy:true,sourceLocked:false});
+  const pricing=nodes(h.render()).find(node=>node.type==='button'&&text(node)==='2가격 설정');pricing.props.onClick();await h.settle();assert.equal(h.component('seo-workspace-editor').active,false);
+  h.setWorkspaceEdits({busy:false,sourceLocked:false});h.component('registration-board').onOpen(h.products[0],'견적서');await h.settle();h.setWorkspaceEdits({busy:false,sourceLocked:true});
+  await h.click('완료');assert.equal(h.component('quotation-panel'),undefined,'close follows its separate positive-save guard');assert.ok(h.requests.every(row=>row.method==='GET'));
  }finally{h.close();}
 });
 

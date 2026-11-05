@@ -419,6 +419,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   const [editingCategory, setEditingCategory] = useState<CategoryProfile|null>(null);
   const [categorySeed,setCategorySeed]=useState<CategoryProfileInput|undefined>();
   function selectDetailTab(value: string) {
+    if(value!==tab&&detailBody.current?.querySelector('[data-workspace-source-locked="true"]')){setCloseNotice('현재 문서의 전송·저장 결과를 확인하는 동안 원래 견적서 화면을 유지합니다. 같은 문서의 결과를 확인한 뒤 계속해주세요.');return false;}
     if (!registrationLayoutReady && allRegistrationSteps.includes(value)) {setCloseNotice('카테고리의 등록 단계를 확인한 뒤 이동해주세요. 입력은 유지됩니다.');return false;}
     if (value === '견적서') {
       const pending=quotationSourceState(detailBody.current);

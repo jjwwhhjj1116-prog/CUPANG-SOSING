@@ -112,6 +112,32 @@ test('manual staged consent follows the same submitted document to a delayed rec
  }finally{h.close();}
 });
 
+for(const company of SINGLE_COMPANIES)test(`${company.code}: closing and reopening a submitted quotation resumes only its original document receipt`,async()=>{
+ const h=await fixture(company);let restored,confirmations=0;
+ try{
+  allowPrepared(h,payload=>{
+   if(payload.action==='reviewPreparedDraft')return preparedResult(h,payload,'awaiting-stage-consent',14,{challenge:h.f.challenge('productPage')});
+   assert.equal(payload.action,'confirmPreparedDraft');confirmations++;const stage=confirmations===1?'imagePage':confirmations===2?'logisticsPage':null;
+   return preparedResult(h,payload,stage==='logisticsPage'?'awaiting-consent':stage?'awaiting-stage-consent':'pending',14+confirmations,{...(stage?{challenge:h.f.challenge(stage)}:{receipt:h.f.observation().receipt})});
+  });
+  await h.idle();await h.click(open);await h.click(registerDraft);for(let stage=0;stage<3;stage++){checkTerms(h);await h.click(confirmPrepared);}
+  const parent=[...h.stored][0],requestId=h.f.sent[1].payload.packet.requestId,history=plain(h.f.history);
+  assert.deepEqual(h.lockPairs.at(-1),[true,false]);h.close();
+  restored=await fixture(company,{stored:h.stored});restored.f.history=history;
+  allowPrepared(restored,payload=>{
+   assert.equal(payload.packet.requestId,requestId);assert.ok(['recoverPreparedDraft','observePreparedDraft'].includes(payload.action));
+   return preparedResult(restored,payload,payload.action==='recoverPreparedDraft'?'pending':'accepted',payload.action==='recoverPreparedDraft'?18:19,{...(payload.action==='recoverPreparedDraft'?{recovered:true}:{}),receipt:restored.f.observation(payload.action==='recoverPreparedDraft'?'SUBMITTED':'FINISHED').receipt});
+  });
+  await restored.idle();assert.equal(restored.f.sent.length,0,'reopening alone never dispatches to Hub');await restored.click('이전 문서 전송 자료 확인');
+  assert.equal(restored.button(registerDraft),undefined);assert.equal(restored.button(prepareDraft),undefined);assert.equal(restored.button(confirmPrepared),undefined);
+  await restored.click(recoverDraft);assert.deepEqual(restored.lockPairs.at(-1),[true,false]);
+  restored.f.advance(3000);await restored.wait(()=>restored.f.history[0]?.receipt.sourceStatus==='FINISHED');await restored.idle();
+  assert.deepEqual(plain(restored.f.sent.map(row=>row.payload.action)),['preview','recoverPreparedDraft','observePreparedDraft']);
+  assert.equal(restored.stored.get(parent[0]),parent[1]);assert.equal(restored.stored.size,1);assert.equal(confirmations,3);
+  assert.equal(h.f.sent.filter(row=>row.payload.action==='prepareDraft').length,1);restored.f.advance(1_000_000);await restored.idle();assert.equal(restored.f.sent.length,3);
+ }finally{h.close();restored?.close();}
+});
+
 for(const boundary of ['disabled','review','unmount','budget','read-error','foreign-document','pending-save','receipt-save'])test(`manual receipt follow-up preserves the original submission at the ${boundary} boundary`,async()=>{
  let saves=0,confirmations=0,reads=0,closed=false;
  const h=await fixture(undefined,{beforeSaveReply:()=>{

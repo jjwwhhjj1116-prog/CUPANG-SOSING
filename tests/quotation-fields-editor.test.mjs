@@ -692,13 +692,14 @@ test('batch translated attributes target included option IDs only and preserve p
  assert.equal(editor.resolveQuotationEditorCell(view,draft,'blue','noticeDimensions').value,'38 cm');
  assert.equal(JSON.stringify(view),before);
 });
-test('batch translation preserves common overrides and rejects stale results, duplicate mappings and oversized batches',()=>{
+test('batch translation preserves common overrides, rejects stale or duplicate mappings and supports large valid option sets',()=>{
  const view=fixture({common:{noticeMaterial:''},options:{}}),job=attributeJob(view),mapping=[{sourceIndex:0,fieldId:'noticeMaterial'}];
  const plan=quotationTranslationBatch('p1',view,job,mapping);assert.equal(plan.changes.length,0);assert.equal(plan.skipped.length,2);
  assert.throws(()=>quotationTranslationBatch('p1',view,{...job,productVersion:'old'},mapping));
  assert.throws(()=>quotationTranslationBatch('p1',view,job,[...mapping,...mapping]));
  const large=fixture();const row=large.resolved.rows.find(row=>row.optionId==='red');large.resolved.rows=Array.from({length:1001},(_,i)=>({...row,optionId:`option-${i}`}));
- assert.throws(()=>quotationTranslationBatch('p1',large,attributeJob(large),mapping),/1,000/);
+ const expanded=quotationTranslationBatch('p1',large,attributeJob(large),mapping);assert.equal(expanded.changes.length,1001);
+ assert.deepEqual(clone(expanded.changes[1000]),{fieldKey:'noticeMaterial',optionId:'option-1000',value:'나일론'});
 });
 test('batch validation is atomic and never returns partial changes for an invalid attribute',()=>{
  const view=fixture(),job=attributeJob(view),before=JSON.stringify(view);
@@ -1188,6 +1189,20 @@ test('inline quotation transport locks source edits immediately without disablin
  assert(h.nodes(tree).filter(node=>node.type==='fieldset').every(node=>node.props.disabled));
  review.props.onLockChange(false,false);tree=h.render();assert(h.nodes(tree).filter(node=>node.type==='fieldset').every(node=>!node.props.disabled));
  assert.deepEqual(reports,[[true,true],[true,false],[false,false]]);assert.equal(h.calls.length,0);
+});
+
+test('native source locks reach the workspace DOM synchronously and a retired view cannot release the current lock',()=>{
+ const h=allOptionForm(fixture(),[],'red'),entry=submissionEntry(h),attrs=new Map();
+ assert.ok(entry.tree.props.ref,'the live form owns its workspace lock marker');
+ entry.tree.props.ref.current={setAttribute:(key,value)=>attrs.set(key,value)};
+ const original=h.nodes(entry.details).find(node=>node.props?.primaryProduct===true);
+ original.props.onLockChange(true,true);assert.equal(attrs.get('data-workspace-source-locked'),'true','navigation must see the lock before a React render');
+ original.props.onLockChange(true,false);assert.equal(attrs.get('data-workspace-source-locked'),'true');assert.equal(h.render().props['data-workspace-saving'],false);
+ original.props.onLockChange(false,false);assert.equal(attrs.get('data-workspace-source-locked'),'false');
+ h.states[0]=fixture();const current=submissionEntry(h),review=h.nodes(current.details).find(node=>node.props?.primaryProduct===true);
+ review.props.onLockChange(true,false);assert.equal(attrs.get('data-workspace-source-locked'),'true');
+ original.props.onLockChange(false,false);assert.equal(attrs.get('data-workspace-source-locked'),'true','old source cleanup cannot unlock a newer quotation');
+ assert.equal(h.render().props['data-workspace-source-locked'],true);assert.equal(h.calls.length,0);
 });
 
 for(const sourceOptionId of ['red','excluded'])test(`the primary all-options switch previews excluded targets and issues one save only after explicit confirmation (${sourceOptionId})`,async()=>{
