@@ -10,6 +10,10 @@ import {MemberRegistrationConsentsPanel} from '@/app/components/member-registrat
 import {SupplierHubRejectionDetails} from '@/app/components/supplier-hub-rejection-details';
 
 type Props={review:SupplierHubProductDocumentReview;pending:NativeDraftDetailAmendmentPending;initialObservation?:NativeDraftDetailAmendmentObservation;disabled:boolean;refresh:(signal:AbortSignal)=>Promise<SupplierHubProductDocumentReview>;onLockChange:(source:boolean,close?:boolean)=>void;onReceiptSaved?:()=>void};
+type Lifecycle={session:ProductDocumentSession;state:ProductDocumentState};
+function withSavedReceipt(lifecycle:Lifecycle,receipt:NonNullable<ProductDocumentState['receipt']>):Lifecycle{
+ const state={...lifecycle.state,state:receipt.state,receipt};verifySingleDocumentObservation(lifecycle.state,state);return{...lifecycle,state};
+}
 const matches=(value:NativeDraftDetailAmendmentObservation,review:SupplierHubProductDocumentReview)=>Boolean(value.latest&&value.latest.reviewDigest===review.reviewDigest&&value.latest.sourcePlanSha256===review.identity.fingerprint&&value.latest.originalBodySha256===review.originalBodySha256&&value.latest.preparedBodySha256===review.preparedBodySha256);
 const labels={productPage:'상품 정보',imagePage:'이미지',logisticsPage:'최종 제출'};
 /** The saved parent reservation remains immutable. Every write belongs to the
@@ -21,7 +25,8 @@ export function NativeDraftDetailAmendmentPanel(props:Props){
  const observation=savedObservation?.review===review?savedObservation.value:null;
  const setObservation=(value:NativeDraftDetailAmendmentObservation|null)=>setSavedObservation(value?{review,value}:null);
  const [busy,setBusy]=useState(true),[uncertain,setUncertain]=useState(false),[error,setError]=useState(''),[approved,setApproved]=useState<Record<string,boolean>>({});
- const [lifecycle,setLifecycle]=useState<{session:ProductDocumentSession;state:ProductDocumentState}|null>(null),[unsaved,setUnsaved]=useState<{packet:ProductDocumentSession['packet'];observation:ProductDocumentState}|null>(null);
+ const [lifecycle,setLifecycle]=useState<Lifecycle|null>(null),[unsaved,setUnsaved]=useState<{packet:ProductDocumentSession['packet'];observation:ProductDocumentState}|null>(null);
+ const receiptFollowup=useRef<{token:object;startedAt:number;reads:number}|null>(null),[pausedReceiptFollowup,setPausedReceiptFollowup]=useState<object|null>(null);
  const controller=useRef<AbortController|null>(null),epoch=useRef<object|null>(null),current=useRef({props,record,observation,lifecycle,unsaved,approved,uncertain}),operation=useRef(operate);
  useLayoutEffect(()=>{current.current={props,record,observation,lifecycle,unsaved,approved,uncertain};});
  useLayoutEffect(()=>{operation.current=operate;});
@@ -35,6 +40,18 @@ export function NativeDraftDetailAmendmentPanel(props:Props){
   // A new saved review must re-inspect the retained child; it cannot inherit a preview.
  },[viewToken,disabled,initialObservation]);
  useLayoutEffect(()=>()=>onLockChange(false,false),[onLockChange]);
+ const followReceipt=Boolean(lifecycle?.state.state==='pending'&&lifecycle.state.receipt?.evidence==='document-receipt'&&!lifecycle.state.error&&!lifecycle.state.needsRecovery&&observation&&matches(observation,review)&&!observation.error&&!observation.needsRecovery&&!uncertain&&!unsaved&&!error&&!disabled);
+ useEffect(()=>{
+  if(!followReceipt||pausedReceiptFollowup===viewToken||busy)return;
+  if(receiptFollowup.current?.token!==viewToken)receiptFollowup.current={token:viewToken,startedAt:Date.now(),reads:0};
+  const run=receiptFollowup.current;let alive=true;
+  const timer=setTimeout(()=>{
+   if(!alive||receiptFollowup.current!==run||epoch.current!==viewToken||current.current.observation!==observation||current.current.lifecycle!==lifecycle||current.current.props.disabled||controller.current)return;
+   if(run.reads>=300||Date.now()-run.startedAt>=2*60*60*1000){setPausedReceiptFollowup(viewToken);return;}
+   run.reads++;void operation.current('observe',viewToken);
+  },[3000,5000,10000,15000,30000][Math.min(run.reads,4)]);
+  return()=>{alive=false;clearTimeout(timer);};
+ },[followReceipt,pausedReceiptFollowup,busy,observation,lifecycle,viewToken]);
 
  async function operate(action:Exclude<NativeDraftDetailAmendmentRequest['action'],'begin'>,token=epoch.current,initial?:NativeDraftDetailAmendmentObservation){
   const before=current.current;
@@ -72,19 +89,20 @@ export function NativeDraftDetailAmendmentPanel(props:Props){
     nextLifecycle=await nativeDraftDetailAmendmentLifecycle(review,saved as NativeDraftDetailAmendmentDescriptor,result,action==='observe'?'observePreparedDraft':action==='confirm'?'confirmPreparedDraft':action==='recover'?'recoverPreparedDraft':'reviewPreparedDraft',active.signal);
     if(!alive())return;verifySingleDocumentObservation(before.lifecycle?.state??null,nextLifecycle.state);
    }
-   setObservation(result);current.current.observation=result;setLifecycle(nextLifecycle);current.current.lifecycle=nextLifecycle;setApproved({});setUncertain(false);current.current.uncertain=false;
-   if(result.error)setError(result.error.message);
-   if(nextLifecycle?.state.receipt){
+   const needsRecovery=result.needsRecovery||nextLifecycle?.state.needsRecovery===true,readError=result.error??nextLifecycle?.state.error;
+   setObservation(result);current.current.observation=result;setLifecycle(nextLifecycle);current.current.lifecycle=nextLifecycle;setApproved({});setUncertain(needsRecovery);current.current.uncertain=needsRecovery;
+   if(readError)setError(readError.message);
+   if(nextLifecycle?.state.receipt&&!needsRecovery&&!readError){
     const attempt={packet:nextLifecycle.session.packet,observation:preparedReceiptObservation(nextLifecycle.state)};
     setUnsaved(attempt);current.current.unsaved=attempt;
-    try{await saveProductReceiptObservation(attempt,active.signal);if(alive()){setUnsaved(null);current.current.unsaved=null;before.props.onReceiptSaved?.();}}
+    try{const receipt=await saveProductReceiptObservation(attempt,active.signal);if(alive()){const stored=withSavedReceipt(nextLifecycle,receipt.receipt);setLifecycle(stored);current.current.lifecycle=stored;setUnsaved(null);current.current.unsaved=null;before.props.onReceiptSaved?.();}}
     catch{if(alive())setError('접수 결과의 앱 저장을 확인하지 못했습니다. 같은 확인 결과만 다시 저장해주세요.');}
    }
   }catch(cause){if(alive()){const unknown=before.uncertain||dispatched&&!['inspect','preview','recover','observe'].includes(action)||cause instanceof ProductDocumentBridgeError&&cause.uncertain;setUncertain(unknown);current.current.uncertain=unknown;setError(cause instanceof Error?cause.message:'같은 문서의 수정 결과를 확인하지 못했습니다.');}}
   finally{if(controller.current===active){controller.current=null;if(epoch.current===token)setBusy(false);}}
  }
  function launch(action:Exclude<NativeDraftDetailAmendmentRequest['action'],'begin'>){if(epoch.current===viewToken&&current.current.observation===observation&&(!current.current.uncertain||['inspect','recover','observe'].includes(action)))void operate(action,viewToken);}
- async function retrySave(){const before=current.current,attempt=before.unsaved,token=epoch.current;if(!attempt||!token||controller.current||before.props.disabled)return;const active=new AbortController();controller.current=active;setBusy(true);try{const saved=readNativeDraftDetailAmendmentPending(review);if(!saved||!('anchor'in saved)||!before.observation)throw Error('수정 문서의 현재 기록을 확인해주세요.');assertNativeDraftDetailAmendmentCurrent(saved,before.observation,review);await saveProductReceiptObservation(attempt,active.signal);if(epoch.current===token&&!active.signal.aborted){setUnsaved(null);current.current.unsaved=null;setError('');before.props.onReceiptSaved?.();}}catch{if(epoch.current===token)setError('같은 접수 확인 결과의 앱 저장을 완료하지 못했습니다.');}finally{if(controller.current===active){controller.current=null;if(epoch.current===token)setBusy(false);}}}
+ async function retrySave(){const before=current.current,attempt=before.unsaved,token=epoch.current;if(!attempt||!token||controller.current||before.props.disabled)return;const active=new AbortController();controller.current=active;setBusy(true);try{const saved=readNativeDraftDetailAmendmentPending(review);if(!saved||!('anchor'in saved)||!before.observation||!before.lifecycle)throw Error('수정 문서의 현재 기록을 확인해주세요.');assertNativeDraftDetailAmendmentCurrent(saved,before.observation,review);const receipt=await saveProductReceiptObservation(attempt,active.signal);if(epoch.current===token&&!active.signal.aborted){const stored=withSavedReceipt(before.lifecycle,receipt.receipt);setLifecycle(stored);current.current.lifecycle=stored;setUnsaved(null);current.current.unsaved=null;setError('');before.props.onReceiptSaved?.();}}catch{if(epoch.current===token)setError('같은 접수 확인 결과의 앱 저장을 완료하지 못했습니다.');}finally{if(controller.current===active){controller.current=null;if(epoch.current===token)setBusy(false);}}}
  const challenge=lifecycle?.state.challenge,expired=Boolean(challenge&&Date.now()>=challenge.expiresAt),canPreview=editable&&!uncertain&&!unsaved;
  const canApply=observation&&['previewed','files-saved','updated'].includes(observation.state)&&Boolean(observation.previewDigest)&&matches(observation,review)&&observation.capabilities.appendDetail&&!observation.needsRecovery&&!observation.error&&!uncertain&&!unsaved;
  const canRegister=observation?.state==='validated'&&matches(observation,review)&&observation.validatedSteps.length===4&&!observation.needsRecovery&&!observation.error&&!uncertain&&!unsaved;
@@ -101,6 +119,7 @@ export function NativeDraftDetailAmendmentPanel(props:Props){
   {lifecycle?.state.state==='navigation-ready'&&!uncertain&&!error&&<button type="button" className="btn primary" disabled={props.disabled||busy} onClick={()=>launch('review')}>같은 수정 문서 다음 단계 계속</button>}
   {!unsaved&&<button type="button" className="btn ghost" disabled={props.disabled||busy} onClick={()=>launch(observation?.needsRecovery||uncertain||recoverLifecycle?'recover':'inspect')}>같은 수정 문서 결과 확인 · 읽기 전용</button>}
   {lifecycle&&['pending','accepted'].includes(lifecycle.state.state)&&!uncertain&&!unsaved&&<button type="button" className="btn ghost" disabled={props.disabled||busy} onClick={()=>launch('observe')}>접수 결과 조회</button>}
+  {followReceipt&&<p role="status">{pausedReceiptFollowup===viewToken?'자동 확인 시간이 끝났습니다. 접수 결과 조회로 이어서 확인해주세요.':'같은 수정 문서의 접수 처리 결과를 자동으로 확인하고 있습니다.'}</p>}
   {challenge&&!uncertain&&!unsaved&&<section aria-label="최신 수정 문서 단계별 동의"><h5>{challenge.stage?labels[challenge.stage]:'최종 제출'} 동의 확인</h5>
    {!expired&&<MemberRegistrationConsentsPanel ownerId={review.identity.ownerId} company={review.identity.company} challenge={challenge}/>}
    {challenge.items.map(item=><article key={item.key}>{item.title&&<h6>{item.title}</h6>}<p style={{whiteSpace:'pre-wrap'}}>{item.text}</p>{item.termsText&&<div style={{whiteSpace:'pre-wrap'}}>{item.termsText}</div>}{item.required&&<label><input type="checkbox" checked={Boolean(approved[item.key])} disabled={props.disabled||busy||expired} onChange={event=>{if(!controller.current&&epoch.current&&current.current.lifecycle?.state.challenge?.id===challenge.id)setApproved(value=>({...value,[item.key]:event.target.checked}));}}/>위 필수 동의 내용을 확인했습니다.</label>}</article>)}

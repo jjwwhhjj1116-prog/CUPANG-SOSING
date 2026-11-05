@@ -15,6 +15,7 @@ test('stage one shows one common SEO/name editor and keeps selected quotation SE
 
 test('hidden common content and unified SEO buffers retain their instances and close guards across stages',()=>{
   const h=detailStageUI({tab:'상세 이미지',onBeforeSeoGenerate:()=>true});try{
+    assert.equal(h.all('seo-workspace-editor').length,0,'SEO is loaded on its first visit');h.render({tab:'SEO'});
     const common=h.record('product-content-editor'),unified=h.record('seo-workspace-editor');
     h.edit('product-content-editor','other-stage unsaved content');h.edit('seo-workspace-editor','unified SEO unsaved name');
     for(const tab of ['SEO','견적서','추가 이미지','표시사항','상세 이미지']){

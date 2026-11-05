@@ -68,18 +68,135 @@ test('actual amendment panel confirms only latest child staged terms then saves 
  let sequence=1;const h=await fixture(undefined,{panel:true,amendment:async(message,f)=>{
   const action=message.payload.action,descriptor=f.amendmentDescriptor,view=f.review,preview=f.preview();
   let lifecycle;
-  if(action==='review'||action==='confirm'){
-   const stage=action==='review'?'productPage':message.payload.confirmation.stage==='productPage'?'imagePage':message.payload.confirmation.stage==='imagePage'?'logisticsPage':null;
-   const state=stage==='logisticsPage'?'awaiting-consent':stage?'awaiting-stage-consent':'pending',challenge=stage?{...f.challenge(stage),id:String(sequence%9+1).repeat(64),docId:2362997}:undefined;
-   const receipt=stage?undefined:{...f.observation().receipt,docId:2362997};
-   lifecycle=f.state(state,{docId:2362997,draftOnly:true,preparedLifecycle:true,lifecycleProof:{evidence:'native-prepared-draft-lifecycle',preparedCheckpointSequence:12,qualifiedCheckpointSequence:13,checkpointSequence:20+sequence,qualifiedAt:f.clock.now,observedAt:f.clock.now,validatedSteps:[2,3,4,5],consentRequested:action==='confirm',submitRequested:!stage},...(challenge?{challenge}:{}),...(receipt?{receipt}:{})});
+   if(action==='review'||action==='confirm'||action==='observe'){
+   const stage=action==='observe'?null:action==='review'?'productPage':message.payload.confirmation.stage==='productPage'?'imagePage':message.payload.confirmation.stage==='imagePage'?'logisticsPage':null;
+   const state=stage==='logisticsPage'?'awaiting-consent':stage?'awaiting-stage-consent':action==='observe'?'accepted':'pending',challenge=stage?{...f.challenge(stage),id:String(sequence%9+1).repeat(64),docId:2362997}:undefined;
+   const receipt=stage?undefined:{...f.observation(action==='observe'?'FINISHED':'SUBMITTED').receipt,docId:2362997};
+   lifecycle=f.state(state,{docId:2362997,draftOnly:true,preparedLifecycle:true,lifecycleProof:{evidence:'native-prepared-draft-lifecycle',preparedCheckpointSequence:12,qualifiedCheckpointSequence:13,checkpointSequence:20+sequence,qualifiedAt:f.clock.now,observedAt:f.clock.now,validatedSteps:[2,3,4,5],consentRequested:action!=='review',submitRequested:!stage},...(challenge?{challenge}:{}),...(receipt?{receipt}:{})});
   }
-  return{format:'yoofam-native-draft-detail-amendment-v1',amendmentId:descriptor.amendmentId,anchor:descriptor.anchor,state:lifecycle?lifecycle.receipt?'pending':'submission':action==='preview'?'previewed':action==='apply'?'validated':'editing',sequence:sequence++,observedAt:f.clock.now,previewDigest:action==='inspect'?null:'a'.repeat(64),latest:action==='inspect'?null:{reviewDigest:view.reviewDigest,sourcePlanSha256:view.identity.fingerprint,originalBodySha256:view.originalBodySha256,preparedBodySha256:view.preparedBodySha256,identityDigest:preview.identityDigest,packetDigest:preview.packetDigest},validatedSteps:action==='apply'||lifecycle?[2,3,4,5]:[],needsRecovery:false,capabilities:{appendDetail:true},execution:{create:0,upload:action==='apply'?1:0,update:action==='apply'?1:0,validate:action==='apply'?4:0,submit:lifecycle?.receipt?1:0},readOnly:['inspect','preview','observe','recover'].includes(action),registered:false,...(lifecycle?{lifecycle}:{})};
+  return{format:'yoofam-native-draft-detail-amendment-v1',amendmentId:descriptor.amendmentId,anchor:descriptor.anchor,state:lifecycle?lifecycle.receipt?lifecycle.state:'submission':action==='preview'?'previewed':action==='apply'?'validated':'editing',sequence:sequence++,observedAt:f.clock.now,previewDigest:action==='inspect'?null:'a'.repeat(64),latest:action==='inspect'?null:{reviewDigest:view.reviewDigest,sourcePlanSha256:view.identity.fingerprint,originalBodySha256:view.originalBodySha256,preparedBodySha256:view.preparedBodySha256,identityDigest:preview.identityDigest,packetDigest:preview.packetDigest},validatedSteps:action==='apply'||lifecycle?[2,3,4,5]:[],needsRecovery:false,capabilities:{appendDetail:true},execution:{create:0,upload:action==='apply'?1:0,update:action==='apply'?1:0,validate:action==='apply'?4:0,submit:action==='confirm'&&lifecycle?.receipt?1:0},readOnly:['inspect','preview','observe','recover'].includes(action),registered:false,...(lifecycle?{lifecycle}:{})};
  }});try{
   await h.idle();const parent=[...h.stored].find(([key])=>key.startsWith('yoofam-product-document-pending:'));await h.click('수정 자료 확인');await h.click('같은 문서에 수정 반영');await h.click('최신 수정 문서 등록전송');
   for(const stage of ['상품 정보','이미지','최종 제출']){assert.match(h.text(),new RegExp(stage));assert.equal(h.f.calls.filter(row=>row.method==='POST').length,0);checkTerms(h);await h.click('현재 수정 문서 동의 확인 · 계속');}
   assert.equal(h.f.history.length,1);assert.equal(h.f.history[0].docId,2362997);assert.equal(h.f.history[0].requestId,h.f.packet.requestId);assert.equal(h.stored.get(parent[0]),parent[1]);assert.equal(h.stored.size,2);assert.equal(h.f.sent.some(row=>row.payload.action!=='preview'),false);assert.equal(h.f.amendmentMessages.filter(row=>row.payload.action==='apply').length,1);assert.match(h.text(),/접수 처리 중/);assert.deepEqual(h.lockPairs.at(-1),[true,false]);
+  assert.ok([...h.f.timers.values()].some(timer=>timer.due===h.f.clock.now+3000),'the saved child receipt schedules a read-only follow-up');
+  h.f.advance(3000);await h.wait(()=>h.f.amendmentMessages.some(row=>row.payload.action==='observe'));await h.idle();
+  assert.equal(h.f.history[0].receipt.sourceStatus,'FINISHED');assert.match(h.text(),/파일 처리 완료/);assert.equal(h.stored.get(parent[0]),parent[1]);
+  h.f.advance(1_000_000);await h.idle();assert.equal(h.f.amendmentMessages.filter(row=>row.payload.action==='observe').length,1);
+  assert.equal(h.f.amendmentMessages.filter(row=>row.payload.action==='confirm').length,3);assert.equal(h.f.amendmentMessages.filter(row=>row.payload.action==='apply').length,1);
  }finally{h.close();}
+});
+
+test('manual staged consent follows the same submitted document to a delayed receipt without another prepare or confirm',async()=>{
+ const h=await fixture();let confirmations=0,reads=0;
+ try{
+  allowPrepared(h,payload=>{
+   if(payload.action==='reviewPreparedDraft')return preparedResult(h,payload,'awaiting-stage-consent',14,{challenge:h.f.challenge('productPage')});
+   if(payload.action==='confirmPreparedDraft'){
+    confirmations++;const stage=confirmations===1?'imagePage':confirmations===2?'logisticsPage':null;
+    return preparedResult(h,payload,stage==='logisticsPage'?'awaiting-consent':stage?'awaiting-stage-consent':'pending',14+confirmations,{...(stage?{challenge:h.f.challenge(stage)}:{receipt:h.f.observation().receipt})});
+   }
+   assert.equal(payload.action,'observePreparedDraft');reads++;
+   return preparedResult(h,payload,reads===1?'pending':'accepted',17+reads,{receipt:h.f.observation(reads===1?'SUBMITTED':'FINISHED').receipt});
+  });
+  await h.idle();await h.click(open);await h.click(registerDraft);
+  for(let stage=0;stage<3;stage++){checkTerms(h);await h.click(confirmPrepared);}
+  assert.equal(h.f.history[0].receipt.sourceStatus,'SUBMITTED');assert.equal(confirmations,3);assert.deepEqual(h.lockPairs.at(-1),[true,false],'a positively stored pending receipt may close without releasing its source reservation');
+  assert.ok([...h.f.timers.values()].some(timer=>timer.due===h.f.clock.now+3000),'manual consent must also continue receipt observation');
+  h.f.advance(3000);await h.wait(()=>reads===1&&!h.render().props['aria-busy']);h.flush();assert.deepEqual(h.lockPairs.at(-1),[true,false],'a saved pending follow-up also releases closing');
+  assert.ok([...h.f.timers.values()].some(timer=>timer.due===h.f.clock.now+5000));
+  h.f.advance(5000);await h.wait(()=>reads===2);await h.idle();
+  assert.equal(h.f.history[0].receipt.sourceStatus,'FINISHED');assert.equal(confirmations,3);assert.equal(h.f.sent.filter(row=>row.payload.action==='prepareDraft').length,1);
+  assert.equal(new Set(h.f.sent.map(row=>row.payload.packet.requestId)).size,1);assert.equal(h.stored.size,1);assert.deepEqual(h.lockPairs.at(-1),[true,false]);
+  h.f.advance(1_000_000);await h.idle();assert.equal(reads,2);
+ }finally{h.close();}
+});
+
+for(const boundary of ['disabled','review','unmount','budget','read-error','foreign-document','pending-save','receipt-save'])test(`manual receipt follow-up preserves the original submission at the ${boundary} boundary`,async()=>{
+ let saves=0,confirmations=0,reads=0,closed=false;
+ const h=await fixture(undefined,{beforeSaveReply:()=>{
+  if(++saves===(boundary==='pending-save'?1:2)&&['pending-save','receipt-save'].includes(boundary))throw Error('synthetic local receipt save failure');
+ }});
+ try{
+  allowPrepared(h,payload=>{
+   if(payload.action==='reviewPreparedDraft')return preparedResult(h,payload,'awaiting-stage-consent',14,{challenge:h.f.challenge('productPage')});
+   if(payload.action==='confirmPreparedDraft'){
+    confirmations++;const stage=confirmations===1?'imagePage':confirmations===2?'logisticsPage':null;
+    return preparedResult(h,payload,stage==='logisticsPage'?'awaiting-consent':stage?'awaiting-stage-consent':'pending',14+confirmations,{...(stage?{challenge:h.f.challenge(stage)}:{receipt:h.f.observation().receipt})});
+   }
+   assert.equal(payload.action,'observePreparedDraft');reads++;
+   if(boundary==='read-error')throw Error('synthetic receipt lookup unavailable');
+   return preparedResult(h,payload,'accepted',18,{receipt:h.f.observation('FINISHED').receipt,...(boundary==='foreign-document'?{docId:'foreign-document'}:{})});
+  });
+  await h.idle();await h.click(open);await h.click(registerDraft);
+  for(let stage=0;stage<3;stage++){checkTerms(h);await h.click(confirmPrepared);}
+  const original=[...h.stored];
+  if(boundary==='disabled'){h.render({...h.props(),disabled:true});h.flush();}
+  if(boundary==='review'){h.render({...h.props(),review:{...h.props().review,reviewDigest:'f'.repeat(64)}});h.flush();}
+  if(boundary==='unmount'){h.close();closed=true;}
+  h.f.advance(boundary==='budget'?2*60*60*1000+1:3000);
+  if(!closed){if(['read-error','foreign-document','receipt-save'].includes(boundary))await h.wait(()=>reads===1);await h.idle();}
+  else for(let turnIndex=0;turnIndex<5;turnIndex++)await turn();
+  assert.equal(reads,['read-error','foreign-document','receipt-save'].includes(boundary)?1:0);assert.equal(confirmations,3);
+  assert.equal(h.f.sent.filter(row=>row.payload.action==='prepareDraft').length,1);assert.deepEqual([...h.stored],original);
+  if(boundary==='pending-save')assert.equal(h.f.history.length,0);else assert.equal(h.f.history[0].receipt.sourceStatus,'SUBMITTED');
+  if(!closed){h.f.advance(2*60*60*1000+1);await h.idle();assert.equal(reads,['read-error','foreign-document','receipt-save'].includes(boundary)?1:0);}
+ }finally{if(!closed)h.close();}
+});
+
+function amendedPendingObservation(f,sequence,extra={}){
+ const descriptor=f.amendmentDescriptor,preview=f.preview(),view=f.review;f.amendmentQualifiedAt??=f.clock.now;
+ const lifecycle=f.state('pending',{docId:2362997,draftOnly:true,preparedLifecycle:true,receipt:{...f.observation().receipt,docId:2362997},lifecycleProof:{evidence:'native-prepared-draft-lifecycle',preparedCheckpointSequence:12,qualifiedCheckpointSequence:13,checkpointSequence:20+sequence,qualifiedAt:f.amendmentQualifiedAt,observedAt:f.clock.now,validatedSteps:[2,3,4,5],consentRequested:true,submitRequested:true},...extra});
+ return{format:'yoofam-native-draft-detail-amendment-v1',amendmentId:descriptor.amendmentId,anchor:descriptor.anchor,state:'pending',sequence,observedAt:f.clock.now,previewDigest:'a'.repeat(64),latest:{reviewDigest:view.reviewDigest,sourcePlanSha256:view.identity.fingerprint,originalBodySha256:view.originalBodySha256,preparedBodySha256:view.preparedBodySha256,identityDigest:preview.identityDigest,packetDigest:preview.packetDigest},validatedSteps:[2,3,4,5],needsRecovery:false,capabilities:{appendDetail:true},execution:{create:0,upload:0,update:0,validate:0,submit:0},readOnly:true,registered:false,lifecycle};
+}
+
+for(const status of ['FINISHED','REJECTED'])for(const retry of [false,true])test(`amended receipt adopts a newer saved ${status} result ${retry?'after local save retry':'from its initial acknowledgement'} and stops observing`,async()=>{
+ let sequence=1,saves=0;
+ const h=await fixture(undefined,{panel:true,amendment:(_message,f)=>amendedPendingObservation(f,sequence++),beforeSaveReply:(record,f)=>{
+  if(++saves===1&&retry)throw Error('synthetic receipt ACK unavailable');
+  record.receipt.state=status==='FINISHED'?'accepted':'rejected';record.receipt.sourceStatus=status;record.receipt.observedAt=f.clock.now+1;
+ }});
+ try{
+  await h.idle();if(retry){assert.ok(h.button('확인 결과 저장 다시 시도'));await h.click('확인 결과 저장 다시 시도');}
+  assert.equal(h.f.history[0].receipt.sourceStatus,status);assert.match(h.text(),status==='FINISHED'?/파일 처리 완료/:/반려/);
+  const original=[...h.stored];h.f.advance(3000);await h.idle();assert.deepEqual([...h.stored],original);
+  assert.ok(h.f.amendmentMessages.every(message=>message.payload.action==='inspect'),'a saved terminal receipt schedules no further bridge observation');
+ }finally{h.close();}
+});
+
+for(const boundary of ['error','recovery'])test(`amended receipt follow-up preserves its saved receipt and stops on a returned nested lifecycle ${boundary}`,async()=>{
+ let sequence=1,reads=0;
+ const h=await fixture(undefined,{panel:true,amendment:(message,f)=>{
+  if(message.payload.action==='observe')reads++;
+  return amendedPendingObservation(f,sequence++,reads?(boundary==='error'?{error:{code:'LOOKUP_FAILED',message:'합성 접수 조회 결과 미확정'}}:{needsRecovery:true}):{});
+ }});
+ try{
+  await h.idle();assert.equal(h.f.calls.filter(call=>call.method==='POST').length,1);
+  h.f.advance(3000);await h.wait(()=>reads===1);await h.idle();
+  if(boundary==='error')assert.match(h.text(),/합성 접수 조회 결과 미확정/);
+  assert.equal(h.f.calls.filter(call=>call.method==='POST').length,1,'a failed read must not be persisted as a fresh receipt');
+  h.f.advance(5000);await h.idle();assert.equal(reads,1);assert.equal(h.f.history[0].receipt.sourceStatus,'SUBMITTED');
+  assert.ok(h.f.amendmentMessages.every(message=>['inspect','observe'].includes(message.payload.action)));
+ }finally{h.close();}
+});
+
+for(const boundary of ['disabled','unmount','read-error'])test(`amended receipt follow-up stops at ${boundary} without any apply or confirmation replay`,async()=>{
+ let reads=0,closed=false,sequence=1;
+ const h=await fixture(undefined,{panel:true,amendment:(message,f)=>{
+  if(message.payload.action==='observe'){reads++;if(boundary==='read-error')throw Error('synthetic child receipt read unavailable');}
+  const descriptor=f.amendmentDescriptor,preview=f.preview(),view=f.review;
+  const lifecycle=f.state('pending',{docId:2362997,draftOnly:true,preparedLifecycle:true,receipt:{...f.observation().receipt,docId:2362997},lifecycleProof:{evidence:'native-prepared-draft-lifecycle',preparedCheckpointSequence:12,qualifiedCheckpointSequence:13,checkpointSequence:20+sequence,qualifiedAt:f.clock.now,observedAt:f.clock.now,validatedSteps:[2,3,4,5],consentRequested:true,submitRequested:true}});
+  return{format:'yoofam-native-draft-detail-amendment-v1',amendmentId:descriptor.amendmentId,anchor:descriptor.anchor,state:'pending',sequence:sequence++,observedAt:f.clock.now,previewDigest:'a'.repeat(64),latest:{reviewDigest:view.reviewDigest,sourcePlanSha256:view.identity.fingerprint,originalBodySha256:view.originalBodySha256,preparedBodySha256:view.preparedBodySha256,identityDigest:preview.identityDigest,packetDigest:preview.packetDigest},validatedSteps:[2,3,4,5],needsRecovery:false,capabilities:{appendDetail:true},execution:{create:0,upload:0,update:0,validate:0,submit:0},readOnly:true,registered:false,lifecycle};
+ }});
+ try{
+  await h.idle();assert.equal(h.f.history[0].receipt.sourceStatus,'SUBMITTED');const original=[...h.stored];
+  if(boundary==='disabled'){h.render({...h.props(),disabled:true});h.flush();}
+  if(boundary==='unmount'){h.close();closed=true;}
+  h.f.advance(3000);if(!closed){if(boundary==='read-error')await h.wait(()=>reads===1);await h.idle();}else for(let turnIndex=0;turnIndex<5;turnIndex++)await turn();
+  assert.equal(reads,boundary==='read-error'?1:0);assert.ok(h.f.amendmentMessages.every(row=>['inspect','observe'].includes(row.payload.action)));
+  assert.deepEqual([...h.stored],original);assert.equal(h.f.history[0].receipt.sourceStatus,'SUBMITTED');
+  if(!closed){h.f.advance(2*60*60*1000+1);await h.idle();assert.equal(reads,boundary==='read-error'?1:0);}
+ }finally{if(!closed)h.close();}
 });
 
 for(const company of SINGLE_COMPANIES)test(`${company.code}: explicit registration click prepares once and hands the exact validated document to consent without unlocking`,async()=>{
@@ -267,13 +384,14 @@ test('configured receipt follow-up never dismisses a failed pending save or an u
   }finally{gate.resolve();h.close();}}
 });
 
-for(const company of SINGLE_COMPANIES)test(`${company.code}: configured pending receipt reads are bounded and the durable original request may close after the budget`,async()=>{
+for(const company of SINGLE_COMPANIES)test(`${company.code}: configured pending receipt continues read-only tracking after its short run and stops at the common lookup budget`,async()=>{
  const h=await fixture(company,{configuredProbe:(message,f)=>configuredReply(message.expected.challenge,f.clock.now)});try{
   const flow=configuredPendingFlow(h,(payload,read)=>preparedResult(h,payload,'pending',23+read,{receipt:h.f.observation('SUBMITTED').receipt}));
   await h.idle();await h.click(open);h.button(registerDraft).props.onClick();await advanceConfiguredReceipt(h);
   assert.equal(flow.reads(),3);assert.equal(flow.confirmations(),3);assert.deepEqual(h.lockPairs.at(-1),[true,false]);assert.match(h.text(),/접수 처리 중인 결과를 보관했습니다/);
   assert.equal(h.f.history[0].receipt.sourceStatus,'SUBMITTED');assert.equal(h.stored.size,1);assert.equal(new Set(h.f.sent.map(row=>row.payload.packet.requestId)).size,1);
-  h.f.advance(1_000_000);await h.idle();assert.equal(flow.reads(),3);assert.equal(h.f.sent.filter(row=>row.payload.action==='prepareDraft').length,1);assert.equal(flow.confirmations(),3);
+  h.f.advance(3000);await h.wait(()=>flow.reads()===4);await h.idle();assert.equal(h.f.sent.filter(row=>row.payload.action==='prepareDraft').length,1);assert.equal(flow.confirmations(),3);
+  h.f.advance(2*60*60*1000+1);await h.idle();assert.equal(flow.reads(),4);assert.match(h.text(),/자동 확인 시간이 끝났습니다/);
   const[key,raw]=[...h.stored][0];h.stored.set(key,JSON.stringify({...JSON.parse(raw),requestId:'00000000-0000-4000-8000-000000000000'}));h.storageChanged(key);
   assert.deepEqual(h.lockPairs.at(-1),[true,true],'changed durable ownership revokes pending dismissal');
  }finally{h.close();}
@@ -387,7 +505,7 @@ for(const company of SINGLE_COMPANIES)test(`${company.code}: prepared UI explici
   assert.match(h.text(),/마지막 문단/);assert.equal(h.button(confirmPrepared).props.disabled,true);checkTerms(h);await h.click(confirmPrepared);
   assert.equal(h.button(confirmPrepared).props.disabled,true,'next stage never inherits previous checked keys');checkTerms(h);await h.click(confirmPrepared);
   assert.equal(h.button(confirmPrepared).props.disabled,false,'empty final challenge still requires explicit submit click');assert.equal(h.f.history.length,0);await h.click(confirmPrepared);
-  assert.equal(h.f.history[0].receipt.sourceStatus,'SUBMITTED');assert.deepEqual(h.lockPairs.at(-1),[true,true]);assert.equal(h.button(confirmPrepared),undefined);assert.doesNotMatch(h.text(),/약관 동의와 최종 제출은 진행하지 않습니다|현재 상품은 전송하지 않았습니다|아래 현재 약관/);
+  assert.equal(h.f.history[0].receipt.sourceStatus,'SUBMITTED');assert.deepEqual(h.lockPairs.at(-1),[true,false],'saved pending receipt keeps the source reserved while allowing the screen to close');assert.equal(h.button(confirmPrepared),undefined);assert.doesNotMatch(h.text(),/약관 동의와 최종 제출은 진행하지 않습니다|현재 상품은 전송하지 않았습니다|아래 현재 약관/);
   await h.click('접수 결과 조회');assert.equal(h.f.history[0].receipt.sourceStatus,'FINISHED');assert.deepEqual(h.lockPairs.at(-1),[true,false]);
   assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','reviewPreparedDraft','confirmPreparedDraft','confirmPreparedDraft','confirmPreparedDraft','observePreparedDraft']);assert.equal(confirmations,3);assert.equal(new Set(h.f.sent.map(row=>row.payload.packet.requestId)).size,1);assert.equal(h.f.calls.filter(row=>row.method==='POST').length,2);
  }finally{h.close();}
@@ -952,7 +1070,7 @@ async function fixture(company = SINGLE_COMPANIES[0], options = {}) {
   f.window.postMessage=(message,target)=>{
     if(message.type==='PING'||message.type==='PRODUCT_DOCUMENT_DETAIL_AMENDMENT'){
       f.amendmentMessages??=[];if(message.type!=='PING')f.amendmentMessages.push(plain(message));
-      void Promise.resolve().then(async()=>{const result=message.type==='PING'?{ok:true,version:'2.1.88',nativeDraftDetailAmendment:true}:{ok:true,result:await options.amendment?.(message,f)};for(const listener of [...f.listeners])listener({source:f.window,origin:target,data:{channel:'YOOFAM_HUB_HANDOFF_RESULT',requestId:message.requestId,result}});});return;
+      void Promise.resolve().then(async()=>{let result;try{result=message.type==='PING'?{ok:true,version:'2.1.88',nativeDraftDetailAmendment:true}:{ok:true,result:await options.amendment?.(message,f)};}catch(cause){result={ok:false,error:cause.message,code:'AMENDMENT_BRIDGE'};}for(const listener of [...f.listeners])listener({source:f.window,origin:target,data:{channel:'YOOFAM_HUB_HANDOFF_RESULT',requestId:message.requestId,result}});});return;
     }
     if(message.channel!=='YOOFAM_CONFIGURED_REGISTRATION_CONSENT')return originalPost(message,target);
     assert.equal(target,f.window.location.origin);f.configuredMessages.push(plain(message));

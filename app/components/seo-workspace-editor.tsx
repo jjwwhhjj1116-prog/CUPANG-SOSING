@@ -100,8 +100,10 @@ export function SeoWorkspaceEditor({ productId, version,workspaceOwnerId,generat
   useEffect(() => {
     let alive = true;
     void Promise.resolve().then(() => {
-      if (!alive || !current()) return;
-      setBusy(false); setBusyAction(null); setError(''); setMessage(''); setComparison(null); setConflict(false); setUncertain(attempt.current?.scope === scope);
+      if (!alive) return;
+      setBusy(false); setBusyAction(null);
+      if (!current()) return;
+      setError(''); setMessage(''); setComparison(null); setConflict(false); setUncertain(attempt.current?.scope === scope);
       if (hasSeoWorkspaceDraft(latestDraft()) && savedRef.current?.scope === scope) return;
       void load();
     });

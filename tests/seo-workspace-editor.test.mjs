@@ -305,6 +305,58 @@ for (const boundary of ['removed', 'originalName', 'supplierSku']) test(`an edit
   } finally { h.close(); api.close(); }
 });
 
+test('hiding an initial SEO read releases the workspace lock without waiting for its cancelled response', async () => {
+  const api = seoWorkspaceHarness(), waiting = deferred(); let held;
+  const h = seoWorkspaceEditor(api, { fetcher: (url, init, route) => { held = { url, init, route }; return waiting.promise; } });
+  try {
+    const before = api.stored(); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(h.render().props['data-workspace-saving'], true);
+    h.patch({ active: false }); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(held.init.signal.aborted, true);
+    assert.equal(h.render().props['data-workspace-saving'], false, 'a cancelled hidden GET must not block closing or quotation navigation');
+    assert.equal(h.render().props['data-workspace-dirty'], false);
+    assert.doesNotMatch(visibleText(h.render()), /저장본을 확인하고 있습니다/);
+    assert.equal(h.calls.length, 1); assert.equal(patches(h).length, 0); assert.deepEqual(api.stored(), before);
+    waiting.resolve(await held.route(held.url, held.init)); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(h.render().props['data-workspace-saving'], false); assert.equal(h.saved, 0);
+  } finally { waiting.resolve(Response.json({ error: 'fixture finished' }, { status: 503 })); h.close(); api.close(); }
+});
+
+test('a cancelled hidden SEO read cannot release the new read lock after reopening', async () => {
+  const api = seoWorkspaceHarness(), first = deferred(), second = deferred(), held = [];
+  const h = seoWorkspaceEditor(api, { fetcher: (url, init, route) => { held.push({ url, init, route }); return held.length === 1 ? first.promise : second.promise; } });
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    h.patch({ active: false }); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(h.render().props['data-workspace-saving'], false);
+    h.patch({ active: true }); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(held.length, 2); assert.equal(h.render().props['data-workspace-saving'], true);
+    first.resolve(await held[0].route(held[0].url, held[0].init)); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(h.render().props['data-workspace-saving'], true, 'the old finally must not unlock the current request');
+    second.resolve(await held[1].route(held[1].url, held[1].init)); await h.idle();
+    assert.equal(h.render().props['data-workspace-saving'], false); assert.equal(patches(h).length, 0); assert.equal(api.mutations.length, 0);
+  } finally { first.resolve(Response.json({})); second.resolve(Response.json({})); h.close(); api.close(); }
+});
+
+test('hiding an unconfirmed SEO save clears only progress and retains the draft until a read confirms it', async () => {
+  const api = seoWorkspaceHarness(), waiting = deferred(); let held;
+  const h = seoWorkspaceEditor(api, { fetcher: (url, init, route) => { if (init?.method === 'PATCH') { held = { url, init, route }; return waiting.promise; } return route(url, init); } });
+  try {
+    await h.idle(); h.edit('SEO 상품명', '결과를 확인할 초안'); h.button('SEO 설정 저장').props.onClick();
+    h.patch({ active: false }); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(held.init.signal.aborted, true); assert.equal(h.render().props['data-workspace-saving'], false);
+    assert.equal(h.render().props['data-workspace-dirty'], true); assert.equal(h.input('SEO 상품명').props.value, '결과를 확인할 초안');
+    waiting.resolve(await held.route(held.url, held.init)); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(h.saved, 0); assert.equal(patches(h).length, 1);
+    h.patch({ active: true }); await h.idle();
+    assert.match(visibleText(h.render()), /저장 결과를 아직 확인하지 못했습니다/);
+    assert.equal(h.button('SEO 설정 저장'), undefined); assert.equal(h.button('SEO 저장 결과 확인').props.disabled, false); assert.equal(patches(h).length, 1);
+    await h.click('SEO 저장 결과 확인');
+    assert.equal(h.render().props['data-workspace-dirty'], false); assert.equal(h.input('SEO 상품명').props.value, '결과를 확인할 초안');
+    assert.equal(patches(h).length, 1); assert.equal(h.saved, 1);
+  } finally { waiting.resolve(Response.json({ error: 'fixture finished' }, { status: 503 })); h.close(); api.close(); }
+});
+
 for (const change of ['version', 'scope', 'inactive']) test(`${change} layout changes reject captured callbacks and late PATCH before passive cleanup`, async () => {
   const api = seoWorkspaceHarness(), waiting = deferred(); let held;
   const h = seoWorkspaceEditor(api, { fetcher: (url, init, route) => { if (init?.method === 'PATCH') { held = { url, init, route }; return waiting.promise; } return route(url, init); } });

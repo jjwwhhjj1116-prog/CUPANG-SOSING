@@ -105,6 +105,8 @@ export function SupplierHubProductTransport(props:Props){
   const [finishedReadError,setFinishedReadError]=useState<{token:object;session:ProductDocumentSession;intent:ProductDocumentPending;docId:string|number;message:string;reviewDigest:string;identityDigest:string;packetDigest:string;originalBodySha256:string;preparedBodySha256:string}|null>(null);
   const [finishedPreviewReadError,setFinishedPreviewReadError]=useState<{token:object;intent:ProductDocumentPending;packet:ProductDocumentSession['packet'];message:string}|null>(null);
   const [finishedPendingRead,setFinishedPendingRead]=useState<{token:object;session:ProductDocumentSession;intent:ProductDocumentPending;observation:ProductDocumentState}|null>(null);
+  const receiptFollowup=useRef<{token:object;requestId:string;startedAt:number;reads:number}|null>(null);
+  const [pausedReceiptFollowup,setPausedReceiptFollowup]=useState<{token:object;requestId:string}|null>(null);
   useLayoutEffect(()=>{reviewEpoch.current=reviewToken;return()=>{if(reviewEpoch.current===reviewToken)reviewEpoch.current=null;};},[reviewToken]);
   const current=useRef({props,mounted:true,session,state,uncertain,expired,approved,unsaved,intent,intentReady,intentError,draftMode,error,closedTargetNeeded,closedTargetApproved,existingRepairNeeded,existingRepairApproved,existingRepairAttempted,existingRepairRetryAttempted,repairContinuationAttempted,repairContinuationResumed,draftReadHint}),pending=useRef<AbortController|null>(null),historyPending=useRef<AbortController|null>(null);
   useLayoutEffect(()=>{current.current={props,mounted:true,session,state,uncertain,expired,approved,unsaved,intent,intentReady,intentError,draftMode,error,closedTargetNeeded,closedTargetApproved,existingRepairNeeded,existingRepairApproved,existingRepairAttempted,existingRepairRetryAttempted,repairContinuationAttempted,repairContinuationResumed,draftReadHint};});
@@ -148,6 +150,8 @@ export function SupplierHubProductTransport(props:Props){
     try{assertProductDocumentPending(review,finishedPendingRead.intent,finishedPendingRead.session);pendingReadDismissible=true;}catch{/* Keep the original request reserved when ownership changed. */}
   }
   const closeLocked=!intentReady||busy||Boolean(unsaved)||Boolean(intentError)||!(finishedReadDismissible||finishedPreviewReadDismissible||pendingReadDismissible)&&(uncertain||Boolean((session||intent)&&!storedTerminal&&!validatedDraft));
+  const followReceipt=Boolean(storedReceipt&&state?.state==='pending'&&state.preparedLifecycle&&!state.error&&!state.needsRecovery&&!uncertain&&!unsaved&&!error&&!intentError&&!disabled&&!amendment);
+  const receiptFollowupPaused=pausedReceiptFollowup?.token===reviewToken&&pausedReceiptFollowup.requestId===session?.packet.requestId;
   useLayoutEffect(()=>{if(!amendment)onLockChange(sourceLocked,closeLocked);},[sourceLocked,closeLocked,onLockChange,amendment]);
   useLayoutEffect(()=>()=>{stopConfiguredRegistration();current.current.mounted=false;pending.current?.abort();historyPending.current?.abort();current.current.props.onLockChange(false,false);},[]);
   useLayoutEffect(()=>()=>stopConfiguredRegistration(),[reviewToken]);
@@ -341,7 +345,10 @@ export function SupplierHubProductTransport(props:Props){
       const saved=current.current.intent;if(saved&&result.receipt.sourceStatus==='REJECTED'){
         await clearRejectedProductDocumentPending(review,saved,result,task.controller.signal);if(!task.active())return;current.current.intent=null;setIntent(null);
       }
-      current.current.unsaved=null;setUnsaved(null);try{current.current.props.onReceiptSaved?.();}catch{/* Stored receipt remains confirmed. */}
+      current.current.unsaved=null;setUnsaved(null);
+      if(saved&&current.current.session&&storedObservation.state==='pending'&&storedObservation.preparedLifecycle&&!storedObservation.error&&!storedObservation.needsRecovery)
+        setFinishedPendingRead({token:reviewToken,session:current.current.session,intent:saved,observation:storedObservation});
+      try{current.current.props.onReceiptSaved?.();}catch{/* Stored receipt remains confirmed. */}
     }catch(cause){if(task.active())setError(cause instanceof Error?cause.message:'확인한 접수 결과를 보관하지 못했습니다. 결과는 화면에 유지했습니다.');}
   }
   async function retrySave(){if(!canEnter()||!current.current.unsaved)return;const task=begin();try{await persist(current.current.unsaved,task);}finally{task.finish();}}
@@ -574,7 +581,7 @@ export function SupplierHubProductTransport(props:Props){
     if(!active())return;
     // Three reads spaced two seconds apart share the existing request-envelope budget.
     // A slow read can end this follow-up, never replay a submit or clear its reservation.
-    const timer=setTimeout(()=>{if(!task.active())return;finishPending();stopConfiguredRegistration(expected);task.controller.abort();task.finish();},PRODUCT_DOCUMENT_REQUEST_TTL);
+    const timer=setTimeout(()=>{if(!task.active())return;finishPending();setPausedReceiptFollowup({token:reviewToken,requestId:expected.packet.requestId});stopConfiguredRegistration(expected);task.controller.abort();task.finish();},PRODUCT_DOCUMENT_REQUEST_TTL);
     try{
       for(let attempt=0;attempt<3&&active();attempt++){
         await waitForNextLookup(2000,task.controller.signal);if(!active())break;
@@ -653,6 +660,19 @@ export function SupplierHubProductTransport(props:Props){
       current.current.approved={};setApproved({});setError(cause instanceof Error?cause.message:'준비한 새 문서의 등록 확인 실패');
     }}finally{if(!handoff)task.finish();}
   }
+  useEffect(()=>{
+    if(!followReceipt||receiptFollowupPaused||busy||!session||!intent)return;
+    if(receiptFollowup.current?.token!==reviewToken||receiptFollowup.current.requestId!==session.packet.requestId)receiptFollowup.current={token:reviewToken,requestId:session.packet.requestId,startedAt:draftOperationTime(),reads:0};
+    const run=receiptFollowup.current;let alive=true;
+    const timer=setTimeout(()=>{
+      if(!alive||receiptFollowup.current!==run||reviewEpoch.current!==reviewToken||current.current.state!==state||current.current.session!==session||current.current.intent!==intent||!canEnter())return;
+      if(run.reads>=300||draftOperationTime()-run.startedAt>=2*60*60*1000){setPausedReceiptFollowup({token:reviewToken,requestId:session.packet.requestId});return;}
+      run.reads++;void operatePrepared('observePreparedDraft',session);
+    },[3000,5000,10000,15000,30000][Math.min(run.reads,4)]);
+    return()=>{alive=false;clearTimeout(timer);};
+    // Only the verified saved receipt schedules a read; the existing operation rechecks its source and reservation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[followReceipt,receiptFollowupPaused,busy,session,intent,state,reviewToken]);
   const challenge=state?.challenge,terminal=Boolean(state&&['pending','accepted','rejected','validation-rejected','scope-blocked'].includes(state.state));
   const preparedFlow=Boolean(session?.preview.preparedLifecycleAvailable&&draftMode&&state?.preparedLifecycle);
   const currentDraftHint=session&&draftHintCurrent(draftReadHint,session)?draftReadHint:null;
@@ -813,6 +833,7 @@ export function SupplierHubProductTransport(props:Props){
       {(!state?.receipt||uncertain)&&<button type="button" className="btn ghost" disabled={disabled||busy||Boolean(unsaved)} onClick={()=>void operatePrepared('recoverPreparedDraft',session)}>준비한 문서 단계 확인 · 읽기 전용</button>}
       {state&&['pending','accepted'].includes(state.state)&&!uncertain&&<button type="button" className="btn ghost" disabled={disabled||busy||Boolean(unsaved)} onClick={()=>void operatePrepared('observePreparedDraft',session)}>접수 결과 조회</button>}
       {pendingReadDismissible&&<p role="status">접수 처리 중인 결과를 보관했습니다. 이 창을 닫아도 원래 문서의 접수 기록은 유지됩니다.</p>}
+      {followReceipt&&<p role="status">{receiptFollowupPaused?'자동 확인 시간이 끝났습니다. 접수 결과 조회로 이어서 확인해주세요.':'같은 문서의 접수 처리 결과를 자동으로 확인하고 있습니다.'}</p>}
     </section>}
     {session?.preview.liveVerified&&!draftMode&&!state?.draftOnly&&<>
       {!state&&!uncertain&&!intent&&<button type="button" className="btn primary" disabled={disabled||busy||Boolean(intentError)} onClick={()=>void operate('start',session)}>전체 상품 견적 등록 시작</button>}
