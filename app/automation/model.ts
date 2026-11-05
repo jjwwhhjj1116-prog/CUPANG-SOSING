@@ -137,7 +137,8 @@ export function automationInputFingerprint(product: ProductRecord, settings: Wor
   if(options && options.productId!==product.id)throw new Error('옵션과 상품이 일치하지 않습니다.');
   if(quotation && quotation.productId!==product.id)throw new Error('견적과 상품이 일치하지 않습니다.');
   const current = currentTranslation(product, content, translation);
-  return fingerprint({ product: productFingerprintSource(product), settings: savedProductFingerprintSettings(settings), content, options, quotation, translation: current ? { id: current.id, responseId: current.result!.responseId, fingerprint: current.review.fingerprint } : null });
+  const inputQuotation=quotation?{...quotation}:null;if(inputQuotation)delete inputQuotation.savedValidation;
+  return fingerprint({ product: productFingerprintSource(product), settings: savedProductFingerprintSettings(settings), content, options, quotation:inputQuotation, translation: current ? { id: current.id, responseId: current.result!.responseId, fingerprint: current.review.fingerprint } : null });
 }
 
 export function policyForProduct(product: ProductRecord, settings: WorkspaceSettings): PricePolicy {

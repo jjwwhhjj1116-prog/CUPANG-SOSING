@@ -20,6 +20,7 @@ import { QuotationChoiceInput } from '@/app/components/quotation-choice-input';
 import { QuotationBrandInput } from '@/app/components/quotation-brand-input';
 import { usesRegistrationBrandChoices } from '@/app/quotation-brand-choices';
 import { quotationFieldGroup, quotationSectionDisplayFields } from '@/app/quotation-field-groups';
+import {currentSavedQuotationValidation,savedQuotationValidationStage} from '@/app/quotation-save-validation';
 import { quotationFieldDisplay } from '@/app/quotation-field-display';
 import { quotationValueLength } from '@/app/quotation-scalar-constraints';
 import { hasCouplusEmptyAttributeDefault } from '@/app/couplus-quotation-defaults';
@@ -725,6 +726,22 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
     } catch (cause) { if(!controller.signal.aborted)setError(cause instanceof Error ? cause.message : '견적 입력 저장 실패'); }
     finally { if(activeWrite.current===controller)activeWrite.current=null; if(!controller.signal.aborted)setBusy(false); }
   }
+  async function validateSaved(){
+    const current=modelActionState.current;
+    if(!view||view.revision<1||titleActionEpoch.current!==titleActionTicket||submissionLockRef.current.source||activeWrite.current||current.view!==view||current.changes.length||current.busy||current.loading||current.conflicts.length||!current.submissionActive||observedRefresh.current!==refreshToken)return;
+    const controller=new AbortController();activeWrite.current=controller;titleActionEpoch.current++;explicitRefreshAction.current=null;setBusy(true);setError('');setMessage('');
+    try{
+      const response=await fetch(endpoint,{method:'POST',signal:controller.signal,headers:{'content-type':'application/json'},body:JSON.stringify({action:'validate-saved',expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint})});
+      const body=await response.json().catch(()=>{throw Error('저장본 검사 응답을 확인하지 못했습니다. 입력은 다시 저장하지 말고 검사 결과만 다시 확인해주세요.');}) as QuotationFieldsView&{error?:string};
+      if(controller.signal.aborted)return;
+      if(!response.ok)throw Error(body.error||'저장본 입력 검사 결과를 확인하지 못했습니다.');
+      verifyQuotationRegistrationDisplay(body);
+      if(body.revision!==view.revision||body.inputFingerprint!==view.inputFingerprint||body.productVersion!==view.productVersion||body.contentRevision!==view.contentRevision||body.optionRevision!==view.optionRevision
+        ||JSON.stringify(body.overrides)!==JSON.stringify(view.overrides)||JSON.stringify(body.resolved)!==JSON.stringify(view.resolved)||JSON.stringify(body.automatic)!==JSON.stringify(view.automatic)||!currentSavedQuotationValidation(body,productId))throw Error('검사 중 저장본이나 입력 양식이 바뀌었습니다. 기본값 다시 반영으로 최신 저장본을 확인해주세요. 입력은 재저장하지 않았습니다.');
+      setView(body);setMessage('저장본 입력 검사 결과를 보관했습니다. 등록 전송과 최종 접수는 별도입니다.');onSaved?.();
+    }catch(cause){if(!controller.signal.aborted){setView(previous=>previous===view?{...previous,savedValidation:undefined}:previous);setError(cause instanceof Error?cause.message:'저장본 입력 검사 실패');}}
+    finally{if(activeWrite.current===controller)activeWrite.current=null;if(!controller.signal.aborted)setBusy(false);}
+  }
   const schema = view?.resolved.schema;
   const row = view?.resolved.rows.find(item => item.optionId === selectedOption);
   function openSection(section: (typeof sections)[number]['id'], fieldId?: string, deferFocus = false, optionId = selectedOption) {
@@ -742,6 +759,8 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   const optionCount = view?.resolved.rows.filter(item => item.optionId !== null).length ?? 0;
   const optionLimitIssue = view && schema ? quotationOptionLimitIssue(schema, view.resolved.rows.filter(item => item.optionId !== null && item.included).length) : null;
   const packagingReconfirmation=view?quotationPackagingReconfirmationChanges(view,selectedOption):[];
+  const savedValidation=view?currentSavedQuotationValidation(view,productId):null;
+  const savedValidationStage=savedValidation?savedQuotationValidationStage(savedValidation):null;
   let hasInvalidDraft = false; let invalidDraftMessage = '';
   let savePlan: ReturnType<typeof quotationSavePlan> = { changes: [], propagated: [] };
   if (view && changes.length) try { savePlan = quotationSavePlan(view, changes, selectedOption, applyAll); assertQuotationSeoTitleDraft(view.resolved.schema.fields, savePlan.changes); validateQuotationChanges(savePlan.changes, { schema: view.resolved.schema, optionIds: view.resolved.rows.flatMap(item => item.optionId === null ? [] : [item.optionId]), ownedImageKeys: view.imageKeys, overrides: view.overrides }); } catch (cause) { hasInvalidDraft = true; invalidDraftMessage = cause instanceof Error ? cause.message : '수정한 필드의 입력 오류를 확인해주세요.'; }
@@ -753,6 +772,11 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
     {loading && <p role="status">최신 견적 입력을 확인하는 중입니다.</p>}
     {error && <p role="alert" className="collection-error">{error}</p>}
     {message && <p role="status" className="quotation-fields-notice">{message}</p>}
+    {view&&view.revision>0&&!dirty&&<div role="status" aria-label="저장본 입력 검사 상태" className="quotation-fields-notice">
+      <p>{savedValidationStage?`${savedValidationStage.state==='complete'?'견적서 작성 완료':'견적서 작성 대기'} · ${savedValidationStage.detail}`:'작성 검사 대기 · 현재 저장본의 필수값·형식 검사를 확인해주세요.'}</p>
+      {savedValidation&&selectedOption!==null&&<small>{savedQuotationValidationStage(savedValidation,selectedOption).detail}</small>}
+      <button type="button" className="btn ghost" disabled={busy||loading||conflicts.length>0||!submissionActive} onClick={()=>void validateSaved()}>저장본 입력 검사</button>
+    </div>}
     {view && <>
       <QuotationExposedDuplicates resolved={view.resolved} numbers={view.optionRegistrationNumbers} disabled={busy || loading || conflicts.length > 0}
         readValue={(optionId, fieldId) => resolveQuotationEditorCell(view, changes, optionId, fieldId).value}

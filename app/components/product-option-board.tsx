@@ -4,7 +4,8 @@ import {useEffect,useState} from 'react';
 import type {ProductContent} from '@/app/product-content';
 import type {CollectionEditorTab} from '@/app/registration-navigation';
 import {quotationMainImageKeys,optionQuotationName,type ProductOption,type ProductOptionsResponse} from '@/app/product-options';
-import type {QuotationField} from '@/app/quotation-schema';
+import type {QuotationField,QuotationFieldsView} from '@/app/quotation-schema';
+import {currentSavedQuotationValidation,savedQuotationValidationStage} from '@/app/quotation-save-validation';
 import {validOptionRegistrationNumbers} from '@/app/product-registration';
 import {exactPrimaryQuotationTarget} from '@/app/quotation-seo-targets';
 import {quotationPriceTargets} from '@/app/quotation-price-targets';
@@ -126,7 +127,10 @@ export async function readOptionBoard(productId:string,signal:AbortSignal,fetche
       optionStages[row.id][role]=projection.stages[row.id][role];
     }
   }
-  return {...body,imageKeys:quote.imageKeys,quotationPrices,quotationContent,registrationStages:stages??undefined,optionStages,...(saved.optionImageStages?{optionImageStages:saved.optionImageStages}:{}),seoTitle:content.seo?.title.value??null,commonImageKeys:content.assets.main.value,commonAssets};
+  const checked=currentSavedQuotationValidation(quote as QuotationFieldsView,productId);
+  if(checked)for(const row of body.options.rows)optionStages[row.id].quotation=savedQuotationValidationStage(checked,row.id);
+  const registrationStages=checked?{...(stages??pendingRegistrationStages()),quotation:savedQuotationValidationStage(checked)}:stages?{...stages,quotation:{state:'pending' as const,detail:'현재 저장본의 입력 검사 결과를 확인해주세요.'}}:undefined;
+  return {...body,imageKeys:quote.imageKeys,quotationPrices,quotationContent,registrationStages,optionStages,...(saved.optionImageStages?{optionImageStages:saved.optionImageStages}:{}),seoTitle:content.seo?.title.value??null,commonImageKeys:content.assets.main.value,commonAssets};
 }
 export function ProductOptionBoard({productId,productRegistrationNumber,sourceUrl,refreshToken,returnFocus,onReturnFocusHandled,onQuotation,onEdit,onImage,onContent,onStage,onManage}:Props){
   const [loaded,setLoaded]=useState<{productId:string;attempt:number;refreshToken?:string;data:OptionBoardData|null;error:string}|null>(null);

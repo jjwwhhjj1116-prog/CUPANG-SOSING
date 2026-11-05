@@ -13,6 +13,7 @@ import { quotationPriceTargets } from '@/app/quotation-price-targets';
 import { resolveOptionPricePolicy } from '@/app/product-options';
 import { findProduct } from '@/db/queries';
 import {readQuotationFieldsForRequest,quotationFieldsProfileSelection as profileSelection} from '@/app/quotation-fields-read';
+import {saveQuotationValidation} from '@/db/quotation-save-validation';
 
 type Context = { params: Promise<{ id: string }> };
 const json = (value: unknown, status = 200) => NextResponse.json(value, { status, headers: { 'cache-control': 'no-store' } });
@@ -73,6 +74,26 @@ export async function PUT(request: Request, context: Context) {
     const source=actor&&(env as {YOOFAM_AUTH_ENABLED?:string}).YOOFAM_AUTH_ENABLED==='true'?{...saved.source,member:actor}:saved.source;
     const stored = await saveQuotationFields(owner, id, overrides, saved.view.revision, source, saved.view.categoryContext.categoryId,packagingBasis??null,stageTwoMsrp??null);
     if (!stored) throw changed();
-    return json((await stableView(owner, id, profileId)).view);
+    const confirmed=await stableView(owner,id,profileId);
+    if(confirmed.validationBinding&&confirmed.validationActor)try{await saveQuotationValidation(owner,id,confirmed.view,confirmed.state,confirmed.source,confirmed.validationBinding,confirmed.validationActor,profileId);}
+    catch{/* The input save already succeeded; absent optional evidence stays pending. */}
+    return json((await stableView(owner,id,profileId)).view);
   } catch (error) { return failure(error); }
+}
+
+/** Recheck saved input only; never replay a field save, export or Hub operation. */
+export async function POST(request:Request,context:Context){
+ try{
+  if(request.headers.get('origin')&&request.headers.get('origin')!==new URL(request.url).origin)throw new FieldsError('같은 사이트에서 검사해주세요.',400);
+  const body=await readBoundedJson(request,4096) as Record<string,unknown>;
+  if(!body||typeof body!=='object'||Array.isArray(body)||Object.keys(body).length!==3||!['action','expectedRevision','expectedInputFingerprint'].every(key=>Object.hasOwn(body,key))||body.action!=='validate-saved'
+   ||!Number.isSafeInteger(body.expectedRevision)||Number(body.expectedRevision)<1||typeof body.expectedInputFingerprint!=='string'||!/^[a-f0-9]{64}$/.test(body.expectedInputFingerprint))throw new FieldsError('저장된 입력의 검사 기준을 확인해주세요.',400);
+  const owner=await getWorkspaceOwnerId(),{id}=await context.params,profileId=profileSelection(request),saved=await stableView(owner,id,profileId);
+  if(!saved.validationActor)throw new FieldsError('현재 승인 회원 회사에서 저장본을 검사해주세요.',403);
+  if(saved.view.revision!==body.expectedRevision||saved.view.inputFingerprint!==body.expectedInputFingerprint)throw changed();
+  if(!await saveQuotationValidation(owner,id,saved.view,saved.state,saved.source,saved.validationBinding,saved.validationActor,profileId))throw changed();
+  const confirmed=await stableView(owner,id,profileId);
+  if(!confirmed.view.savedValidation||confirmed.view.revision!==saved.view.revision||confirmed.view.inputFingerprint!==saved.view.inputFingerprint||confirmed.view.productVersion!==saved.view.productVersion)throw changed();
+  return json(confirmed.view);
+ }catch(error){return failure(error);}
 }

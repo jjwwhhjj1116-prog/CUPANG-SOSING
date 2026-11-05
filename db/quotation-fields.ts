@@ -9,6 +9,7 @@ import type { DetailEditorInputs } from '@/app/detail-editor-inputs';
 import type { StageTwoMsrp } from '@/app/stage-two-msrp';
 import type { StageTwoPricingReview } from '@/app/stage-two-pricing-review';
 import type {DetailWorkspacePeerPublication} from '@/db/detail-workspaces';
+import type {SavedQuotationValidationProof} from '@/app/quotation-save-validation';
 
 export const quotationFieldsSchema = `CREATE TABLE IF NOT EXISTS product_quotation_fields (
   product_id TEXT PRIMARY KEY REFERENCES products(id), owner_id TEXT NOT NULL,
@@ -18,7 +19,7 @@ export type QuotationFieldsState = { schemaVersion: 1; productId: string; revisi
   packagingBasis?:QuotationPackagingBasis;categoryPackagingBasis?:Record<string,QuotationPackagingBasis>;updatedAt: string | null;
   detailSaveBackups?: Record<string, DetailSaveBackup[]>; detailEditorInputs?: Record<string, DetailEditorInputs>;
   stageTwoMsrp?: StageTwoMsrp; categoryStageTwoMsrp?: Record<string, StageTwoMsrp>;
-  stageTwoPricingReviews?: Record<string, StageTwoPricingReview> };
+  stageTwoPricingReviews?: Record<string, StageTwoPricingReview>;savedValidation?:SavedQuotationValidationProof };
 export type QuotationCollectionSource = { id: string; payload: string; updatedAt: string; linked?: boolean };
 export type QuotationSourceGuard = {
   productVersion: string; imageKeys: string; pricingPolicy: string | null;
@@ -153,6 +154,7 @@ async function commitQuotationFields(owner: string, productId: string, overrides
   const state: QuotationFieldsState = { ...previous,schemaVersion: 1, productId, revision: expectedRevision + 1,
     overrides: categoryId ? previous.overrides : overrides,
     categoryOverrides: categoryId ? { ...previous.categoryOverrides, [quotationScope(categoryId)]: overrides } : previous.categoryOverrides, updatedAt };
+  delete state.savedValidation;
   if(packagingBasis!==undefined){
     if(categoryId){
       const scopes={...previous.categoryPackagingBasis},key=quotationScope(categoryId);

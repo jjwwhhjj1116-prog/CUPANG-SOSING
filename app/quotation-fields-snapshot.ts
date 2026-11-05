@@ -28,6 +28,8 @@ import { detailEditorInputs } from '@/app/detail-editor-inputs';
 import { currentStageTwoMsrp, scopedStageTwoMsrp } from '@/app/stage-two-msrp';
 import { retainedQuotationWorkbook } from '@/app/quotation-workbook-retained';
 import { sizeChartRequiredFromSchemaString, type RegistrationLayout } from '@/app/registration-layout';
+import {quotationValidationSourceBinding,parseSavedQuotationValidation,currentSavedQuotationValidation,savedQuotationValidationResult} from '@/app/quotation-save-validation';
+import {readQuotationValidationActor} from '@/db/quotation-save-validation';
 
 
 export class QuotationFieldsSnapshotError extends Error { constructor(message: string, public status: number, public code?: string) { super(message); } }
@@ -94,6 +96,7 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
     profile: profile ? { id: profile.id, revision: profile.revision } : null, collection };
   const inputs = { categoryId: categoryContext.categoryId, categoryPath: categoryContext.categoryPath, product, content, options, settings,...(hubSchema?{hubSchema}:{}),...(template?{template}:{}) };
   const detailConfig = publicDetailConfig(env as Parameters<typeof publicDetailConfig>[0]);
+  const detailVersion=detailConfig?await publicDetailVersion(detailConfig):null;
   const overrides = scopedQuotationOverrides(state, categoryContext.categoryId);
   const packagingBasis=scopedQuotationPackagingBasis(state,categoryContext.categoryId),optionPackQuantities=quotationPackQuantities(options.rows);
   const pair = resolveQuotationFieldsPair({ ...inputs, overrides,...(packagingBasis?{packagingBasis}:{}) });
@@ -105,7 +108,7 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
     ...quotationNoticeBindingFingerprint(inputs, resolved),
     ...quotationPackagedWeightBindingFingerprint(overrides, resolved, () => automatic),
     ...optionPriceCalculationRevision(product, options.rows, settings),
-    ...(detailConfig ? { detailHtml: await publicDetailVersion(detailConfig) } : {}) });
+    ...(detailVersion ? { detailHtml: detailVersion } : {}) });
   // Response-only identifiers follow the saved option UUIDs. Read them after
   // calculating the operation fingerprint and before the source-clock check.
   const optionRegistrationNumbers = product.registration_number ? await readOptionRegistrationNumbers(owner, product, options) : undefined;
@@ -125,7 +128,12 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
   if (editorInputs) view.detailEditorInputs = editorInputs;
   const registrationLayout: RegistrationLayout = { format: 'yoofam-registration-layout-v1', productId: id, productVersion: view.productVersion,
     categoryContext: { ...view.categoryContext, categoryPath: [...view.categoryContext.categoryPath] }, sizeChartRequired: sizeChartRequiredFromSchemaString(hubSchema?.schemaString) };
-  return { view, source, options, registrationLayout };
+  let actor=await readQuotationValidationActor(owner),validationBinding:string|null=null;
+  if(!company||JSON.stringify(actor?.company)!==JSON.stringify(company)||actor?.email!==user?.membership?.email.trim().toLowerCase()||actor?.role!==user?.membership?.role)actor=null;
+  if(actor)try{validationBinding=await quotationValidationSourceBinding({actor,product,content,options,state,source,schema:resolved.schema,categoryContext,detailVersion,validation:savedQuotationValidationResult(view,id,profileId)});}catch{/* Unconfirmed metadata cannot complete a quotation. */}
+  const checked=parseSavedQuotationValidation(state.savedValidation);
+  if(checked&&validationBinding&&state.savedValidation?.sourceBinding===validationBinding){view.savedValidation=checked;if(!currentSavedQuotationValidation(view,id))delete view.savedValidation;}
+  return { view, source, options, registrationLayout,state,validationBinding,validationActor:actor };
 }
 export async function stableQuotationFieldsView(owner: string, id: string, profileId: string | null) {
   const saved = await snapshot(owner, id, profileId);

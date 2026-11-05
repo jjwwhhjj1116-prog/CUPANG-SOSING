@@ -192,7 +192,8 @@ export function quotationFieldFiles(saved: QuotationExportSource, resolved: Reso
     overrides: saved.state.overrides, assets: Object.fromEntries(fileByKey),
     uploadFilenames: Object.fromEntries(assets.map(asset => [asset.key, asset.name.split('/').at(-1)!])),
     warnings: [...new Set(warnings), 'Excel 이미지 셀은 압축 해제한 이미지 파일명과 일치시켰습니다. 실제 Hub 양식과 접수 조건은 별도 확인이 필요합니다.'] };
-  const scopeArchive = JSON.stringify({ format: 'sourceflow-quotation-scopes-v1', categoryId: saved.categoryContext.categoryId, saved: saved.savedScopes ?? saved.state });
+  const semanticScopes={...(saved.savedScopes??saved.state)};delete semanticScopes.savedValidation;
+  const scopeArchive = JSON.stringify({ format: 'sourceflow-quotation-scopes-v1', categoryId: saved.categoryContext.categoryId, saved: semanticScopes });
   const imageIndex = quotationImageIndex(resolved, assets);
   const detailDescription = currentDetailContent(saved.content).description.value;
   const detailPage = quotationDetailPage(resolved, assets, detailDescription);

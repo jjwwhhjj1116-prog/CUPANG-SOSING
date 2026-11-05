@@ -4,7 +4,9 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import {DatabaseSync} from 'node:sqlite';
-function load(file,db){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,TextEncoder,TextDecoder,structuredClone,require:name=>name==='cloudflare:workers'?{env:{DB:db}}:load(name.slice(2)+'.ts',db)});return exports;}
+import {createRequire} from 'node:module';
+const native=createRequire(import.meta.url);
+function load(file,db){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,TextEncoder,TextDecoder,structuredClone,crypto,require:name=>name==='cloudflare:workers'?{env:{DB:db}}:name==='@/app/chatgpt-auth'?{getChatGPTUser:async()=>null}:name.startsWith('@/')?load(name.slice(2)+'.ts',db):native(name)});return exports;}
 const {registrationContentSummary}=load('app/registration-content-summary.ts');
 const {emptyProductContent}=load('app/product-content.ts');
 test('listing counts saved owned roles, merges detail sections and distinguishes cleared SEO',()=>{

@@ -8,9 +8,11 @@ import {readRegistrationExecutionStages} from '@/db/registration-stage-status';
 import {mergeRegistrationStages,registrationStagesWithImageReviews,type RegistrationFinalImageKeys} from '@/app/registration-stage-status';
 import {readImageNoTextReceipts} from '@/db/image-no-text-receipts';
 import {isFreeImageEditOutputKey,readFreeImageEditReviews,type FreeImageEditReview} from '@/app/free-image-edit-review';
+import {quotationValidationEnvironment,savedQuotationValidationForListing,type QuotationValidationListingRow} from '@/db/quotation-save-validation';
+import {savedQuotationValidationStage} from '@/app/quotation-save-validation';
 
 type ContentRow = { payload: string; revision: number };
-type ListingLabelRow={product_id:string;image_keys:string;source_url:string;content_revision:number|null;option_payload:string|null;option_revision:number|null;quotation_payload:string|null;quotation_revision:number|null;linked_job:string|null;valid_job:string|null;job_offer:string|null;context_payload:string|null};
+type ListingLabelRow=QuotationValidationListingRow;
 function listingLabels(ownerId:string,product:{id:string;image_keys:string},row:ListingLabelRow,contentRevision:number):RegistrationQuotationLabels{
  if(row.product_id!==product.id||row.image_keys!==product.image_keys||(row.content_revision??0)!==contentRevision)throw Error('Listing source changed');
  const options=row.option_payload?JSON.parse(row.option_payload):{schemaVersion:1,productId:product.id,revision:0,rows:[]};
@@ -89,6 +91,7 @@ export async function readRegistrationSummaries(ownerId: string, products: {id:s
   const db = await database();
   const executionStages=await readRegistrationExecutionStages(ownerId,products);
   const noTextReceipts=await readImageNoTextReceipts(ownerId,products);
+  let validationEnvironment:ReturnType<typeof quotationValidationEnvironment>|undefined;
   for (let offset=0;offset<products.length;offset+=80) {
     const chunk=products.slice(offset,offset+80);
     const rows=await db.prepare(`SELECT product_id, payload, revision FROM product_content WHERE owner_id=? AND product_id IN (${chunk.map(()=>'?').join(',')})`).bind(ownerId,...chunk.map(product=>product.id)).all<{product_id:string;payload:string;revision:number}>();
@@ -97,15 +100,18 @@ export async function readRegistrationSummaries(ownerId: string, products: {id:s
     // the exact linked intake supplies category scope; equal URLs are never a
     // reason to borrow another job, company or product's quotation overrides.
     let labelRecords:Map<string,ListingLabelRow>|null=null;
-    try{const source=await db.prepare(`SELECT p.id AS product_id,p.image_keys,p.source_url,pc.revision AS content_revision,
+    try{const source=await db.prepare(`SELECT p.id AS product_id,p.updated_at AS product_version,p.image_keys,p.source_url,pc.revision AS content_revision,
       o.payload AS option_payload,o.revision AS option_revision,q.payload AS quotation_payload,q.revision AS quotation_revision,
-      cp.job_id AS linked_job,j.id AS valid_job,j.offer_id AS job_offer,c.payload AS context_payload
+      cp.job_id AS linked_job,j.id AS valid_job,j.offer_id AS job_offer,j.updated_at AS job_updated_at,c.payload AS context_payload,ws.payload AS settings_payload,
+      vp.id AS validation_profile_id,vp.revision AS validation_profile_revision,vp.payload AS validation_profile_payload
       FROM products p LEFT JOIN product_options o ON o.product_id=p.id AND o.owner_id=p.owner_id
       LEFT JOIN product_content pc ON pc.product_id=p.id AND pc.owner_id=p.owner_id
       LEFT JOIN product_quotation_fields q ON q.product_id=p.id AND q.owner_id=p.owner_id
       LEFT JOIN collection_products cp ON cp.product_id=p.id AND cp.owner_id=p.owner_id
       LEFT JOIN collection_jobs j ON j.id=cp.job_id AND j.owner_id=p.owner_id AND j.status='awaiting_connector'
       LEFT JOIN collection_context c ON c.job_id=j.id
+      LEFT JOIN workspace_settings ws ON ws.owner_id=p.owner_id
+      LEFT JOIN category_profiles vp ON vp.owner_id=p.owner_id AND vp.id=CASE WHEN json_valid(q.payload) THEN json_extract(q.payload,'$.savedValidation.requestedProfileId') ELSE NULL END
       WHERE p.owner_id=? AND p.id IN (${chunk.map(()=>'?').join(',')})`).bind(ownerId,...chunk.map(product=>product.id)).all<ListingLabelRow>();labelRecords=new Map(source.results.map(row=>[row.product_id,row]));}
     catch{/* Older partial databases retain content counts with a connection warning. */}
     for(const product of chunk) {
@@ -125,6 +131,12 @@ export async function readRegistrationSummaries(ownerId: string, products: {id:s
           summary.stages=registrationStagesWithImageReviews(product.id,summary.stages,selected,reviews);
         }
         if(summary.stages&&executionStages[product.id])summary.stages=mergeRegistrationStages(summary.stages,executionStages[product.id]);
+        const validationRow=labelRecords?.get(product.id);
+        if(summary.stages&&validationRow?.quotation_payload?.includes('"savedValidation"')){
+          validationEnvironment??=quotationValidationEnvironment(ownerId);
+          const checked=await savedQuotationValidationForListing(ownerId,product,content,validationRow,await validationEnvironment);
+          summary.stages.quotation=checked?savedQuotationValidationStage(checked):{state:'pending',detail:'저장본 검사 이후 상품·옵션·설정·양식 또는 회원 회사가 바뀌었습니다. 저장본 입력 검사를 다시 확인해주세요.'};
+        }
         summaries[product.id]=summary;
       } catch { summaries[product.id]=null; }
     }

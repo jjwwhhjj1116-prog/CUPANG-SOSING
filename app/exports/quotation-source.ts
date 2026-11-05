@@ -167,7 +167,9 @@ export async function quotationExportFingerprint(saved: QuotationExportSource, d
   // Raw source/state payloads matter: an override reset and an equal-valued manual
   // override have different provenance, even when the visible cell is unchanged.
   const resolved = resolveQuotationExport(saved);
-  return fingerprint({ format: 'sourceflow-quotation-fields-v1', saved: { ...saved, product: productFingerprintSource(saved.product), settings: savedProductFingerprintSettings(saved.settings) }, dataStartRow,
+  const state={...saved.state},savedScopes=saved.savedScopes?{...saved.savedScopes}:undefined;
+  delete state.savedValidation;if(savedScopes)delete savedScopes.savedValidation;
+  return fingerprint({ format: 'sourceflow-quotation-fields-v1', saved: { ...saved, state,...(savedScopes?{savedScopes}:{}),product: productFingerprintSource(saved.product), settings: savedProductFingerprintSettings(saved.settings) }, dataStartRow,
     schema: getQuotationSchema(saved.categoryContext.categoryId, saved.categoryContext.categoryPath,saved.hubSchema,saved.template),
     ...quotationNoticeBindingFingerprint(saved, resolved),
     ...quotationPackagedWeightBindingFingerprint(saved.state.overrides, resolved, () => resolveQuotationExport({ ...saved, state: { ...saved.state, overrides: { common: {}, options: {} } } })),
