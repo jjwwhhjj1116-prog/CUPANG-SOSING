@@ -8,10 +8,12 @@ const plain = value => JSON.parse(JSON.stringify(value));
 const now = '2026-10-22T01:00:00.000Z', title = '유앤채 부드러운 리본 뒤꿈치 보호 쿠션 패드';
 const quotation = module('app/quotation-schema.ts'), cm = module('app/product-content.ts');
 const policy = module('app/explicit-seo-quotation-defaults.ts'), workspace = module('app/seo-workspace.ts');
-function fixture(company = companies[0]) {
-  const snapshot = syntheticSnapshot(company); snapshot.categoryId = '68183';
-  snapshot.categoryPath = ['패션의류잡화', '유니섹스/남녀공용 패션', '공용화', '깔창/쿠션패드', '쿠션패드'];
+function fixture(company = companies[0], socks = false) {
+  const snapshot = syntheticSnapshot(company); snapshot.categoryId = socks ? '103689' : '68183';
+  snapshot.categoryPath = socks ? ['스포츠/레져', '헬스/요가', '요가/필라테스 잡화', '요가양말/필라테스양말']
+    : ['패션의류잡화', '유니섹스/남녀공용 패션', '공용화', '깔창/쿠션패드', '쿠션패드'];
   const raw = JSON.parse(snapshot.schemaString), product = raw.properties.productPage.properties;
+  if (socks) raw.properties.legalPage.properties.notices.allOf[0].contains.properties.noticeItemName.enum = ['종류'];
   product.searchTags = { type: 'string', title: '검색태그', maxLength: 150 };
   product.unexposedAttributes.allOf.push({ contains: { type: 'object', properties: {
     attributeName: { type: 'string', enum: ['모델명/품번'], requirement: '필수' }, attributeValue: { type: 'string' },
@@ -23,7 +25,7 @@ function fixture(company = companies[0]) {
   f.content.seo.title.provenance = 'collected';
   const keys = { model: schema.fields.find(field => field.hubInput === 'model').id,
     peer: schema.fields.find(field => field.label === '모델명/품번').id,
-    notice: schema.fields.find(field => field.label === '품명 및 모델명').id,
+    notice: schema.fields.find(field => field.label === (socks ? '종류' : '품명 및 모델명')).id,
     tags: schema.fields.find(field => field.hubInput === 'searchTags').id };
   const resolve = (content = f.content, overrides, schemaSnapshot = snapshot) => quotation.resolveQuotationFields({ ...f, content,
     categoryId: schemaSnapshot.categoryId, categoryPath: schemaSnapshot.categoryPath, hubSchema: schemaSnapshot, ...(overrides ? { overrides } : {}) });
@@ -46,6 +48,34 @@ test('only an explicit SEO save links the native model pair and initial name not
     assert.equal(JSON.stringify(saved), savedBeforeRead); assert.deepEqual(plain(saved.initialLegalNotices), plain(x.f.content.initialLegalNotices));
     assert.deepEqual(plain(saved.label), plain(x.f.content.label));
     assert.deepEqual(plain(saved.assets), plain(x.f.content.assets));
+  }
+});
+
+test('explicit SEO fills the model pair for socks without a name/model notice and preserves its independent notice and manual choices', () => {
+  for (const company of companies) {
+    const x = fixture(company, true), before = JSON.stringify(x.f), old = x.resolve().rows[0].fields;
+    assert.equal(x.schema.fields.some(field => field.label === '품명 및 모델명'), false);
+    assert.equal(old[x.keys.model].value, ''); assert.equal(old[x.keys.peer].value, '');
+    assert.equal(JSON.stringify(x.f), before); assert.equal(x.f.content.explicitSeoQuotationDefaults, undefined);
+    const saved = x.save(), fields = x.resolve(saved).rows[0].fields;
+    assert.equal(fields[x.keys.model].value, title); assert.equal(fields[x.keys.peer].value, title);
+    assert.equal(fields[x.keys.notice].value, '해당사항없음');
+    assert.deepEqual(plain(saved.initialLegalNotices), plain(x.f.content.initialLegalNotices));
+    assert.deepEqual(plain(saved.label), plain(x.f.content.label));
+    for (const layer of ['common', 'option']) {
+      const overrides = { common: {}, options: {} }, changes = { [x.keys.model]: '', [x.keys.peer]: '' };
+      if (layer === 'common') overrides.common = changes; else overrides.options[x.f.options.rows[0].id] = changes;
+      const row = x.resolve(saved, overrides).rows.find(row => row.optionId === (layer === 'common' ? null : x.f.options.rows[0].id));
+      for (const key of ['model', 'peer']) { assert.equal(row.fields[x.keys[key]].value, ''); assert.equal(row.fields[x.keys[key]].source, 'manual-' + layer); }
+    }
+    const manual = structuredClone(x.f.content); manual.label.model = { value: '', provenance: 'manual', updatedAt: now };
+    assert.equal(x.resolve(x.save(undefined, manual)).rows[0].fields[x.keys.model].value, '');
+    for (const mutate of [c => { c.initialLegalNotices.fields[0].signature += ' '; }, c => { c.initialLegalNotices.fields = []; },
+      c => { c.seo.title.updatedAt = now.replace('01:', '02:'); }, c => { c.explicitSeoQuotationDefaults.categoryId = '68183'; }]) {
+      const changed = structuredClone(saved); mutate(changed);
+      assert.equal(x.resolve(changed).rows[0].fields[x.keys.model].value, '');
+      assert.equal(x.resolve(changed).rows[0].fields[x.keys.peer].value, '');
+    }
   }
 });
 

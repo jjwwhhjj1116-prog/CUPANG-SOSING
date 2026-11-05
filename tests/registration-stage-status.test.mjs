@@ -45,6 +45,44 @@ test('exact saved final overrides work independently of legacy content, while du
  row.additional=['owner/a.png','owner/a.png'];assert.equal(read().additionalImages.state,'pending');row.main=['owner/missing.png'];assert.equal(read().mainImage.state,'pending');row.main=['owner/main.png'];row.manualImages.main=false;assert.equal(read().mainImage.state,'pending');
  assert.equal(status.registrationStagesFromSavedContent(product,null,null,keys,[]).mainImage.state,'pending');
 });
+function mixedImageFixture(role='main'){
+ const vision=load('app/image-text-vision.ts'),content=emptyProductContent('p');content.revision=1;content.updatedAt=now;
+ const keys=['owner/proved.png','owner/manual.png'],final=keys.map((key,index)=>({optionId:String(index),title:'상품',main:[],additional:[],detail:[],label:[],[role]:[key],manualImages:{[role]:index===1}}));
+ if(role==='detail')content.assets.detail.value=[keys[0]];
+ const proofs=[{policy:vision.IMAGE_TEXT_PRESERVATION_POLICY,reason:'product-markings-only',productId:'p',sourceKey:keys[0],sourceSha256:'a'.repeat(64),width:800,height:800,
+  requestId:'12345678-1234-4123-8123-123456789abc',verifiedAt:now,sourceLanguage:'zh',configuration:{provider:'workers-ai-vision',model:vision.IMAGE_TEXT_VISION_MODEL,configured:true,paidAllowed:true,notice:vision.IMAGE_TEXT_VISION_NOTICE}}];
+ const options={productId:'p',rows:final.map(row=>({id:row.optionId,included:true,imageKey:null,provenance:{},updatedAt:now}))};
+ const read=()=>status.registrationStagesFromSavedContent(product,content,options,keys,final,proofs);
+ return{content,keys,final,proofs,options,read};
+}
+for(const [role,id]of [['main','mainImage'],['additional','additionalImages'],['detail','detailImage']])test(`mixed current manual and preservation-receipt rows complete ${role} without changing inputs`,()=>{
+ const f=mixedImageFixture(role),before=JSON.stringify(f);assert.equal(f.read()[id].state,'complete');assert.equal(f.read()[id].sourceProofAt,now);assert.equal(JSON.stringify(f),before);
+});
+test('mixed main rows also accept the existing exact manual option assignment',()=>{
+ const f=mixedImageFixture();f.final[1].manualImages.main=false;Object.assign(f.options.rows[1],{imageKey:f.keys[1],provenance:{imageKey:'manual'}});
+ assert.equal(f.read().mainImage.state,'complete');f.final[1].main=[f.keys[0]];f.proofs.splice(0);
+ assert.equal(f.read().mainImage.state,'pending','a manual option key cannot prove a different final reference');
+});
+test('mixed image evidence preserves ownership, current links and strict receipt guards',()=>{
+ for(const change of [
+  f=>{f.final[1].main=['other/manual.png'];f.keys.push('other/manual.png');},
+  f=>{f.final[1].main=['owner/missing.png'];},
+  f=>{f.final[1].manualImages.main=false;},
+  f=>{f.final[1].imageIssues={main:true};},
+  f=>{f.proofs[0].sourceKey='owner/previous.png';},
+  f=>{f.proofs[0].productId='other';},
+  f=>{f.proofs[0].configuration.configured=false;},
+  f=>{f.final[0].imageIssues={main:true};},
+  f=>{f.final[0].main=[f.keys[1]];f.proofs.splice(0);},
+ ]){const f=mixedImageFixture();change(f);assert.notEqual(f.read().mainImage.state,'complete');}
+});
+test('mixed completion cannot approve an unreviewed or unresolved selected free-image edit',()=>{
+ const f=mixedImageFixture();f.keys[1]=f.final[1].main[0]='owner/free-image-edit.png';
+ const saved=f.read(),selected={main:[f.keys[1]],additional:[],detail:[]};assert.equal(saved.mainImage.state,'complete');
+ assert.equal(status.registrationStagesWithImageReviews('p',saved,selected,[]).mainImage.state,'pending');
+ assert.equal(status.registrationStagesWithImageReviews('p',saved,selected,[{format:'free-image-edit-review-v1',productId:'p',key:f.keys[1],status:'unresolved'}]).mainImage.state,'failed');
+ assert.equal(status.registrationStagesWithImageReviews('p',saved,selected,[{format:'free-image-edit-review-v1',productId:'p',key:f.keys[1],status:'clear'}]).mainImage.state,'complete');
+});
 test('adopted generated or translated SEO documents complete independently of quotation legal-notice defaults',()=>{
  for(const provenance of ['generated','translated']){
   const content=applyContentPatch(emptyProductContent('p'),{seo:{title:'저장한 상품',keywords:['상품']}},now);content.seo.title.provenance=provenance;

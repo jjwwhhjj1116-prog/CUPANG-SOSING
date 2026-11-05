@@ -62,6 +62,7 @@ const noTextMessage='읽을 수 있는 문구를 찾지 못했습니다. 필요�
 const incompleteRegionIssue='자동 번역 미완료: ';
 const savedEditKey=(key:string)=>key.split('/').at(-1)?.startsWith('free-image-')===true;
 class UnchangedOriginal extends Error{}
+class NonAdmittedOriginal extends Error{}
 function release(image:FreeImageLoaded|undefined){if(image?.canvas){image.canvas.width=0;image.canvas.height=0;}}
 function manualTarget(view:QuotationFieldsView,task:BatchImageTask){
  const selection=detailBatchSelection(view,task.optionId,task.profileId,task.stage),row=view.resolved.rows.find(row=>row.optionId===task.optionId)!;
@@ -75,6 +76,8 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
  const {signal,fetcher,ownerId}=options,state=options.state??createSelectedImageStageState(ownerId,productId,stage),result:SelectedImageStageResult={status:'partial',applied:0,failed:0,skipped:0,messages:[],state};
  const purpose=selectedImagePurpose(stage),action=purpose==='cleanup'?'문구 제거':'번역';
  let unverifiedOriginal=false;
+ const nonAdmittedSources=new Map<string,string>();let nonAdmitted=0;
+ const nonAdmittedKey=(image:FreeImageLoaded)=>JSON.stringify([image.source.sourceSha256,image.width,image.height,image.visionConfiguration]);
  const active=()=>{signal.throwIfAborted();if(options.isCurrent?.()===false)throw changed();};
  active();if(!/^[A-Za-z0-9_-]{1,100}$/.test(productId)||!['main','additional','detail'].includes(stage)||!isOwnedImageKey(ownerId,ownerId+'/scope.png'))throw changed();
  if(state.ownerId!==ownerId||state.productId!==productId||state.stage!==stage||!object(state.batches))throw changed();
@@ -271,6 +274,7 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
      }
      throw new UnchangedOriginal();}
     if(!detailBatchCapacity(batch.view))throw Error(`새 ${action} 이미지를 저장할 공간이 없습니다. 원본을 유지했습니다.`);
+    const blocked=stage!=='detail'?nonAdmittedSources.get(nonAdmittedKey(image)):undefined;if(blocked)throw new NonAdmittedOriginal(blocked);
     let regions:FreeImageRegion[];
     if(recoveredInference&&recoveredInference.optionId===task.optionId&&recoveredInference.slotIndex===slotIndex){
      const pending=recoveredInference,observation=pending.observation!;
@@ -347,6 +351,23 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
     if(partial?.status==='partial'){result.failed++;result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: ${partial.message} 저장된 이미지를 수동 편집에서 열어 확인해주세요.`);break;}
    }catch(cause){
     if(state.detailWorkspacePending){result.status=state.detailWorkspacePending.save?.attempt.pending?'uncertain':'partial';result.failed++;result.messages.push(note(cause)+' 확인된 상세 번역을 보존하고 사진 구성 연결을 확인하기 전에는 다음 이미지로 진행하지 않습니다.');return result;}
+    const unsent=cause instanceof FreeImageVisionError&&cause.code==='IMAGE_VISION_NOT_ADMITTED'&&!cause.uncertain&&image
+     &&same(cause.attempt.source,image.source)&&same(cause.attempt.configuration,image.visionConfiguration)&&cause.attempt.sourceLanguage==='zh'
+     &&cause.attempt.inspectionPolicy==='product-text-preservation-v2'&&cause.attempt.transport==='workers-ai-batch-v1';
+    if(stage!=='detail'&&image&&(unsent||cause instanceof NonAdmittedOriginal&&nonAdmittedSources.get(nonAdmittedKey(image))===cause.message)
+     &&!state.inferencePending&&!image.visionPending&&!image.visionRequestId&&!image.visionResult&&!image.editDocument
+     &&!Object.values(state.batches).some(value=>value.items.some(item=>item.status==='uncertain'||item.attempt||item.rendered))){
+     let current=false;
+     try{
+      check();const refreshed=await(deps.refresh??refreshBatchImageTask)(task,plan,controller.signal,fetcher);check();
+      if(!same(refreshed,batch.view)||!same(await content(refreshed,controller.signal),originalContent))throw changed();check();current=true;
+     }catch{cause=changed();}
+     if(current){
+      const message=note(cause);nonAdmittedSources.set(nonAdmittedKey(image),message);nonAdmitted++;result.failed++;
+      remember({...batch,items:batch.items.map(item=>item.slotIndex===slotIndex?{...item,status:'failed',message,rendered:undefined}:item)});
+      result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: ${message} 이 원본은 유지하고 접수되지 않은 요청을 재전송하지 않았습니다. 다른 원본만 이어 처리합니다.`);continue;
+     }
+    }
     if(cause instanceof FreeImageVisionError&&cause.code==='IMAGE_VISION_CAPACITY'&&!cause.uncertain){
      active();
      if(!image||!same(cause.attempt.source,image.source))throw changed();
@@ -377,7 +398,7 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
    if(result.review||result.reviewTarget)break;
   }
   latest=batch.view;result.productVersion=batch.view.productVersion;
-  if(result.failed)break;
+  if(result.failed>nonAdmitted)break;
  }
  active();result.status=result.failed||unverifiedOriginal?'partial':result.applied||result.verifiedUnchanged?'completed':'skipped';
  result.messages.push(result.applied?`${label[stage]} ${action} 초안 ${result.applied}개 저장 확인 · 최종 사용 전 결과를 검토해주세요.`:result.failed?`${label[stage]} ${action} 초안을 저장하지 못했습니다. 원본을 유지했습니다.`:unverifiedOriginal?`${label[stage]}의 원본 보존 서버 검증이 없어 검토가 필요합니다. 완료로 처리하지 않았습니다.`:`${label[stage]}의 원본·직접 저장한 선택·편집 결과를 유지했습니다.`);

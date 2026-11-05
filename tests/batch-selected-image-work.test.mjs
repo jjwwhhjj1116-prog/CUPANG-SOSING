@@ -551,6 +551,53 @@ for(const stage of ['main','additional','detail'])test(`${stage}: confirmed capa
  assert.deepEqual(plain([h.content,h.view]),before);assert.ok(h.canvases.every(canvas=>canvas.width===0));
 });
 
+function nonAdmittedFixture(stage='additional'){
+ const h=fixture(stage,stage==='main'?['owner/source-a.png']:['owner/source-a.png','owner/source-a-copy.png','owner/source-b.png']),read=h.deps.readSource,recognize=h.deps.recognize;
+ const configuration={provider:'workers-ai-vision',model:h.visionContract.IMAGE_TEXT_VISION_MODEL,configured:true,paidAllowed:true,notice:h.visionContract.IMAGE_TEXT_VISION_NOTICE},requestId='0fa1748b-fd6e-4b16-8120-754071c7a73f';
+ if(stage==='main'){
+  const first=plain(h.view.resolved.rows[0]);h.view.resolved.rows.push(...['source-a-copy','source-b'].map((name,index)=>{const row={...plain(first),optionId:'later-'+index,optionLabel:'후속 '+index};row.fields.mainImage.value=row.fields.wireMain.value='owner/'+name+'.png';h.view.imageKeys.push(row.fields.mainImage.value);return row;}));
+  h.plan.tasks=h.view.resolved.rows.map(row=>({...h.plan.tasks[0],optionId:row.optionId,optionLabel:row.optionLabel}));h.productOptions.rows=h.view.resolved.rows.map(row=>({id:row.optionId,provenance:{imageKey:'collected'}}));
+  h.deps.apply=async(batch,index,_signal,progress)=>{h.calls.push(['apply',index]);const next=plain(h.view),key='owner/free-image-product-result.png',row=next.resolved.rows.find(row=>row.optionId===batch.optionId);next.revision++;next.productVersion=new Date(Date.parse(next.productVersion)+1).toISOString();next.updatedAt=next.productVersion;next.imageKeys.push(key);for(const id of ['mainImage','wireMain'])row.fields[id]={...row.fields[id],value:key,source:'manual-option'};next.overrides.options[batch.optionId]={mainImage:key};h.view=next;const result={...batch,view:plain(next),items:batch.items.map(item=>item.slotIndex===index?{...item,status:'applied',appliedKey:key}:item)};progress(result);return result;};
+ }
+ h.deps.readSource=async(...args)=>{const image=await read(...args);image.source.quotationTarget.bindingSha256='c'.repeat(64);image.source.sourceSha256=(args[2].endsWith('source-b.png')?'d':'b').repeat(64);image.visionConfiguration=plain(configuration);image.visionTransport='workers-ai-batch-v1';return image;};
+ h.reject=image=>new h.vision.FreeImageVisionError('같은 원본 요청이 진행 중입니다.','IMAGE_VISION_NOT_ADMITTED',false,{requestId,source:image.source,sourceLanguage:'zh',configuration,inspectionPolicy:h.visionContract.IMAGE_TEXT_PRESERVATION_POLICY,transport:'workers-ai-batch-v1'});
+ h.deps.recognize=async image=>{h.calls.push(['vision',image.source.sourceKey]);if(image.source.sourceSha256==='b'.repeat(64))throw h.reject(image);return recognize(image);};
+ return h;
+}
+
+for(const stage of ['main','additional'])test(`${stage}: confirmed non-admission preserves blocked originals and processes only independent image bytes`,async()=>{
+ const h=nonAdmittedFixture(stage),before=plain(h.content),result=await h.run();
+ assert.equal(result.status,'partial');assert.equal(result.failed,2);assert.equal(result.applied,1);assert.equal(result.inferencePending,undefined);assert.equal(result.reviewTarget,undefined);
+ assert.deepEqual(h.calls.filter(row=>row[0]==='vision').map(row=>row[1]),['owner/source-a.png','owner/source-b.png'],'same-byte aliases never resubmit inside this invocation');
+ const items=Object.values(result.state.batches).flatMap(batch=>batch.items);assert.deepEqual(items.map(item=>item.status),['failed','failed','applied']);assert.equal(items[0].sourceKey,'owner/source-a.png');assert.equal(items[1].sourceKey,'owner/source-a-copy.png');assert.deepEqual(h.content,before);
+ assert.equal(h.calls.filter(row=>row[0]==='apply').length,1);assert.ok(h.canvases.every(canvas=>canvas.width===0));
+ const again=await h.run();assert.equal(again.status,'partial');assert.equal(h.calls.filter(row=>row[0]==='apply').length,1,'explicit retry never overwrites the acknowledged independent output');assert.equal(h.calls.filter(row=>row[0]==='vision'&&row[1]==='owner/source-a.png').length,2,'each explicit invocation rechecks non-admission');
+});
+
+for(const change of ['view','content','settings','owner','company','cancel'])test(`non-admission cannot continue after failed current ${change} proof`,async()=>{
+ const h=nonAdmittedFixture(),reject=h.reject,refresh=h.deps.refresh;
+ h.deps.recognize=async image=>{h.calls.push(['vision',image.source.sourceKey]);if(change==='view')h.view.revision++;if(change==='content')h.content.revision++;if(change==='cancel')h.controller.abort();throw reject(image);};
+ h.deps.refresh=async(...args)=>{if(h.calls.some(row=>row[0]==='vision')&&['settings','owner','company'].includes(change))throw Error(change+' changed');return refresh(...args);};
+ if(change==='cancel')await assert.rejects(h.run());else{const result=await h.run();assert.equal(result.sourceChanged,true);assert.equal(result.status,'partial');}
+ assert.equal(h.calls.filter(row=>row[0]==='read').length,1);assert.equal(h.calls.filter(row=>row[0]==='vision').length,1);assert.equal(h.calls.filter(row=>['render','apply'].includes(row[0])).length,0);assert.ok(h.canvases.every(canvas=>canvas.width===0));
+});
+
+for(const kind of ['source','configuration','language','policy','transport','request','recognized','held-png','unknown','detail'])test(`non-admission continuation rejects ${kind} instead of skipping an unresolved operation`,async()=>{
+ const h=nonAdmittedFixture(kind==='detail'?'detail':'additional'),held={output:new Blob(['retained png'])};
+ h.deps.recognize=async image=>{
+  h.calls.push(['vision',image.source.sourceKey]);const attempt=plain(h.reject(image).attempt);
+  if(kind==='source')attempt.source.productVersion='2026-10-24T00:00:00.000Z';if(kind==='configuration')attempt.configuration.configured=false;
+  if(kind==='language')attempt.sourceLanguage='en';if(kind==='policy')attempt.inspectionPolicy=h.visionContract.IMAGE_TEXT_INSPECTION_POLICY;if(kind==='transport')delete attempt.transport;
+  if(kind==='request'||kind==='unknown')image.visionRequestId=attempt.requestId;if(kind==='recognized')image.visionResult={};
+  if(kind==='held-png')h.options.state.batches.other={items:[{status:'ready',rendered:held}]};
+  throw new h.vision.FreeImageVisionError('same source blocked','IMAGE_VISION_NOT_ADMITTED',kind==='unknown',attempt);
+ };
+ const result=await h.run();assert.equal(result.status,'partial');assert.equal(result.applied,0);assert.equal(h.calls.filter(row=>row[0]==='vision').length,kind==='detail'?3:1,'detail retains its existing per-slot failure path without same-SHA suppression');
+ assert.equal(h.calls.filter(row=>['render','apply'].includes(row[0])).length,0);assert.equal(result.state.batches.option.items[1].status,kind==='detail'?'failed':'pending');
+ if(kind==='unknown'){assert.equal(result.inferencePending,true);assert.equal(result.state.inferencePending.attempt.requestId,'0fa1748b-fd6e-4b16-8120-754071c7a73f');}
+ if(kind==='held-png')assert.equal(result.state.batches.other.items[0].rendered,held);
+});
+
 function lateVisionFixture(stage='detail'){
  const h=fixture(stage,['owner/source-a.png']),requestId='0fa1748b-fd6e-4b16-8120-754071c7a73f',configuration={provider:'workers-ai-vision',model:h.visionContract.IMAGE_TEXT_VISION_MODEL,configured:true,paidAllowed:true,notice:h.visionContract.IMAGE_TEXT_VISION_NOTICE};
  const read=h.deps.readSource;h.deps.readSource=async(...args)=>{const image=await read(...args);image.source.quotationTarget.bindingSha256='c'.repeat(64);image.visionConfiguration=plain(configuration);return image;};

@@ -77,28 +77,31 @@ export function registrationStagesFromSavedContent(product:{id:string;owner_id?:
     &&content.seo.keywords.value.every(value=>! /\p{Script=Han}/u.test(value))&&(!finalRows||finalRows.every(row=>korean(row.title))))done('seo',saved(title)?'직접 저장한 현재 SEO 상품명과 한국어 옵션명 확인':'저장된 현재 SEO 상품명과 한국어 옵션명 확인');
   const exact=(left:readonly string[],right:readonly string[])=>JSON.stringify(left)===JSON.stringify(right);
   if(finalRows?.length){
+    const manualRowsByRole=new Map<string,Set<RegistrationFinalContent>>();
     for(const [id,role] of [['mainImage','main'],['additionalImages','additional'],['detailImage','detail'],['koreanLabel','label']] as const){
       const roles=role==='detail'?['detailTop','detail','detailBottom'] as const:[role];
       const fields=roles.map(name=>content.assets[name]),selected=fields.flatMap(field=>field.value);
       const assignment=selected.length>0&&selected.every(owned)&&fields.filter(field=>field.value.length).every(saved)&&(role!=='detail'||content.assets.detail.value.length>0);
-      const complete=finalRows.every(row=>{
+      const manualRows=new Set(finalRows.filter(row=>{
         const option=row.optionId===null?undefined:rows.find(option=>option.id===row.optionId);
         const individual=role==='main'&&!!option?.imageKey&&option.provenance?.imageKey==='manual'&&time(option.updatedAt)&&owned(option.imageKey);
         const expected=individual?[option!.imageKey!]:selected;
         const finalKeys=row[role],valid=finalKeys.length>0&&(role!=='main'||finalKeys.length===1)&&new Set(finalKeys).size===finalKeys.length&&!row.imageIssues?.[role]&&finalKeys.every(owned);
         return valid&&(row.manualImages?.[role]===true||(individual||assignment)&&exact(finalKeys,expected));
-      });
-      if(complete)done(id,`직접 저장한 현재 ${role==='main'?'대표 이미지':role==='additional'?'추가 이미지':role==='detail'?'상세 이미지':'한글표시사항 이미지'} 역할과 최종 연결 확인`);
+      }));
+      manualRowsByRole.set(role,manualRows);
+      if(manualRows.size===finalRows.length)done(id,`직접 저장한 현재 ${role==='main'?'대표 이미지':role==='additional'?'추가 이미지':role==='detail'?'상세 이미지':'한글표시사항 이미지'} 역할과 최종 연결 확인`);
       else if(finalRows.some(row=>row.imageIssues?.[role]&&(row.manualImages?.[role]||fields.some(saved))))result[id]={state:'failed',detail:'직접 저장한 이미지의 현재 연결을 확인해주세요.'};
     }
     for(const [id,role]of [['mainImage','main'],['additionalImages','additional'],['detailImage','detail']]as const){
       const roles=role==='detail'?['detailTop','detail','detailBottom']as const:[role];
       const manualKeys=new Set(roles.flatMap(name=>saved(content.assets[name])?content.assets[name].value:[]));
-      if(result[id].state==='pending'&&finalRows.every(row=>row[role].length>0&&(role!=='main'||row[role].length===1)&&new Set(row[role]).size===row[role].length&&!row.imageIssues?.[role]
+      const manualRows=manualRowsByRole.get(role)!;
+      if(result[id].state==='pending'&&finalRows.every(row=>manualRows.has(row)||row[role].length>0&&(role!=='main'||row[role].length===1)&&new Set(row[role]).size===row[role].length&&!row.imageIssues?.[role]
         &&row[role].every(key=>owned(key)&&(unchanged.has(key)||manualKeys.has(key))))
         &&(role!=='detail'||content.assets.detail.value.length>0||finalRows.every(row=>row.manualImages?.detail===true))){
-          const times=finalRows.flatMap(row=>row[role].filter(key=>!manualKeys.has(key)).map(key=>proofDates.get(key)!));
-          done(id,noTextProofs.some(proof=>proof.reason==='product-markings-only'&&finalRows.some(row=>row[role].includes(proof.sourceKey)))?'현재 최종 이미지의 서버 원본 보존 검증 확인 · 실물 인쇄 유지':'현재 최종 이미지의 서버 외국어 없음 검증 확인 · 원본 유지');
+          const times=finalRows.filter(row=>!manualRows.has(row)).flatMap(row=>row[role].filter(key=>!manualKeys.has(key)).map(key=>proofDates.get(key)!));
+          done(id,manualRows.size?'직접 저장한 최종 이미지와 서버 원본 보존 검증 확인':noTextProofs.some(proof=>proof.reason==='product-markings-only'&&finalRows.some(row=>row[role].includes(proof.sourceKey)))?'현재 최종 이미지의 서버 원본 보존 검증 확인 · 실물 인쇄 유지':'현재 최종 이미지의 서버 외국어 없음 검증 확인 · 원본 유지');
           if(times.length&&times.every(time))result[id].sourceProofAt=new Date(Math.min(...times.map(value=>Date.parse(value)))).toISOString();
         }
     }

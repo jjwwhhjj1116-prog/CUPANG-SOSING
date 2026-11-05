@@ -9,11 +9,13 @@ function nativeScope(content:ProductContent){
  const value=content.initialLegalNotices;
  if(!value||value.format!=='couplus-initial-legal-notices-v1'||!/^\d{1,20}$/u.test(value.categoryId)||!Array.isArray(value.categoryPath)||!value.categoryPath.length||value.categoryPath.length>10
   ||value.categoryPath.some(item=>typeof item!=='string'||!item.trim()||item.length>200)||!Array.isArray(value.fields))return null;
- const notices=value.fields.flatMap(item=>{try{const field=JSON.parse(item.signature) as QuotationField;
-  return item.fieldId===field.id&&JSON.stringify(field)===item.signature&&field.section==='legal'&&field.visibility==='common'&&field.label==='품명 및 모델명'
-   &&path(field,['legalPage','notices'])&&field.hubWire?.name==='품명 및 모델명'&&field.hubWire.nameKey==='noticeItemName'&&field.hubWire.valueKey==='noticeItemValue'?[item.signature]:[];
+ const fields=value.fields.flatMap(item=>{try{const field=JSON.parse(item.signature) as QuotationField;
+  return item.fieldId===field.id&&JSON.stringify(field)===item.signature&&field.section==='legal'&&field.visibility==='common'
+   &&path(field,['legalPage','notices'])&&field.hubWire?.name===field.label&&field.hubWire.nameKey==='noticeItemName'&&field.hubWire.valueKey==='noticeItemValue'?[{field,signature:item.signature}]:[];
  }catch{return[];}});
- return notices.length===1?{categoryId:value.categoryId,categoryPath:value.categoryPath,noticeSignature:notices[0]}:null;
+ if(!fields.length||fields.length!==value.fields.length)return null;
+ const notices=fields.filter(item=>item.field.label==='품명 및 모델명');
+ return {categoryId:value.categoryId,categoryPath:value.categoryPath,noticeSignature:notices.length===1?notices[0].signature:null};
 }
 /** Explicit SEO writers only. Reads, intake execution and option-only saves never call this. */
 export function applyExplicitSeoQuotationDefaults(content:ProductContent,seo:ContentPatch['seo']):boolean{
