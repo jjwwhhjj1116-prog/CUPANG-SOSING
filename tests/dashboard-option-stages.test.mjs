@@ -115,7 +115,7 @@ function harness(initial = {}, boundaries = {}) {
 test('separate selected image stages retain independent drafts while hidden across steps 4, 5 and 7', () => {
   const h = harness(); try {
     const byStage = stage => h.record('option-image-editor', received => received.stage === stage);
-    const additional = byStage('additional'), detail = byStage('detail'); assert.notEqual(additional.instance, detail.instance);
+    const additional = byStage('additional'); assert.equal(h.all('option-image-editor').length,1); h.render({tab:'상세 이미지'}); const detail = byStage('detail'); assert.notEqual(additional.instance, detail.instance);
     h.edit('option-image-editor', 'additional order', received => received.stage === 'additional');
     h.edit('option-image-editor', 'detail order and manual blank HTML', received => received.stage === 'detail');
     for (const tab of ['상세 이미지', '견적서', 'SEO', '표시사항', '추가 이미지']) {
@@ -134,7 +134,7 @@ test('separate selected image stages retain independent drafts while hidden acro
 test('selected image scope follows product, option, effective profile and the saved clock without leaking a previous draft', () => {
   const h = harness(); try {
     const byStage = stage => h.record('option-image-editor', received => received.stage === stage);
-    const first = byStage('additional'), retainedDetail = byStage('detail');
+    const first = byStage('additional'); h.render({tab:'상세 이미지'}); const retainedDetail = byStage('detail'); h.render({tab:'추가 이미지'});
     h.edit('option-image-editor', 'red-only', received => received.stage === 'additional'); h.edit('option-image-editor', 'unsaved detail', received => received.stage === 'detail');
     h.render({ product: { ...product('product-a'), updated_at: '2026-10-07T00:00:01.000Z' } });
     const clock = byStage('additional'); assert.equal(clock.instance, first.instance); assert.equal(clock.draft, 'red-only'); assert.equal(clock.props.version, '2026-10-07T00:00:01.000Z');
@@ -146,7 +146,9 @@ test('selected image scope follows product, option, effective profile and the sa
     h.edit('option-image-editor', 'profile-b-only', received => received.stage === 'additional'); h.render({ focusedOptionId: 'blue' });
     const blue = byStage('additional'); assert.notEqual(blue.instance, profile.instance); assert.equal(blue.props.optionId, 'blue'); assert.equal(blue.draft, ''); assert.equal(profile.instance.mounted, false);
     h.render({ product: product('product-b'), preferredProfileId: 'profile-c' });
+    assert.equal(h.all('option-image-editor').length,0); h.render({tab:'추가 이미지'});
     const next = byStage('additional'); assert.notEqual(next.instance, blue.instance); assert.equal(next.props.productId, 'product-b'); assert.equal(next.props.profileId, 'profile-c'); assert.equal(next.props.optionId, 'blue'); assert.equal(next.draft, '');
+    h.render({tab:'상세 이미지'});
     assert.equal(h.record('option-label-editor').props.profileId, 'profile-c'); assert.equal(h.calls.reads, 0);
   } finally { h.close(); }
 });
@@ -173,7 +175,7 @@ test('common content keeps its draft behind collapsed selected image and step 6 
 
 test('step 6 keeps common label tools separate from the selected Supplier Hub notices shown only in step 7', () => {
   const h = harness({ tab: '표시사항' }); try {
-    const commonLabel = h.record('document-image-panel', received => received.section === 'label'), notices = h.record('option-label-editor');
+    const commonLabel = h.record('document-image-panel', received => received.section === 'label'); assert.equal(h.all('option-label-editor').length,0); h.render({tab:'견적서'}); h.render({tab:'표시사항'}); const notices = h.record('option-label-editor');
     h.edit('document-image-panel', 'common PNG draft', received => received.section === 'label'); h.edit('option-label-editor', 'selected notice draft');
     assert.equal(h.visible(commonLabel), true); assert.equal(h.visible(notices), false); assert.equal(notices.props.productId, 'product-a'); assert.equal(notices.props.optionId, 'red'); assert.equal(notices.props.profileId, 'profile-a');
     const labelCollapse = commonLabel.ancestors.findLast(element => element.type === 'details'); assert.equal(labelCollapse.props.open, undefined); assert.ok(nodes(labelCollapse).some(node => node.type === 'summary' && text(node) === '이전 공통 표시사항 PNG·추가 항목 조판'));
@@ -189,7 +191,7 @@ test('step 6 keeps common label tools separate from the selected Supplier Hub no
 
 test('scoped stage editors retain their supported final-slot translation action while image processing excludes other edits', () => {
   const h = harness(); try {
-    const additional = h.record('option-image-editor', received => received.stage === 'additional'), detail = h.record('option-image-editor', received => received.stage === 'detail');
+    const additional = h.record('option-image-editor', received => received.stage === 'additional'); h.render({tab:'상세 이미지'}); const detail = h.record('option-image-editor', received => received.stage === 'detail'); h.render({tab:'추가 이미지'});
     assert.ok(h.all('option-image-editor').every(image => image.props.disabled === false)); assert.equal(h.record('product-content-editor').props.imageProcessingBusy, false);
     h.record('free-image-translation-panel').props.onBusyChange(true); assert.ok(h.all('option-image-editor').every(image => image.props.disabled === true)); assert.equal(h.record('product-content-editor').props.imageProcessingBusy, true);
     h.render({ tab: '상세 이미지' }); assert.equal(h.record('option-image-editor', received => received.stage === 'additional').instance, additional.instance); assert.equal(h.record('option-image-editor', received => received.stage === 'detail').instance, detail.instance); assert.ok(h.all('option-image-editor').every(image => image.props.disabled === true));

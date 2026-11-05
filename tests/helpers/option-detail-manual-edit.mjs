@@ -9,6 +9,7 @@ import {deflateSync} from 'node:zlib';
 import {mobileIntakeHarness} from './mobile-intake.mjs';
 import {hubSchemaSnapshot,schemaCompanies,schemaPath} from './hub-schema.mjs';
 import {quotationWorkbook} from './quotation-workbook.mjs';
+import {reviewFixture} from './selected-image-review.mjs';
 
 export const companies=schemaCompanies;
 export const plain=value=>JSON.parse(JSON.stringify(value));
@@ -27,7 +28,7 @@ function declarations(file,expose){
   parts.push(statement.getText(ast));
  }
  return vm.runInNewContext(parts.join('\n').replaceAll('import.meta.url',JSON.stringify(url.href))+'\n({'+expose+'})',
-  {assert,fs,path,vm,ts,createRequire,createHash,deflateSync,webcrypto,mobileIntakeHarness,hubSchemaSnapshot,schemaCompanies,schemaPath,quotationWorkbook,
+  {assert,fs,path,vm,ts,createRequire,createHash,deflateSync,webcrypto,mobileIntakeHarness,hubSchemaSnapshot,schemaCompanies,schemaPath,quotationWorkbook,reviewFixture,
    URL,URLSearchParams,Blob,File,FormData,Response,Request,Headers,AbortController,AbortSignal,TextEncoder,TextDecoder,Uint8Array,DataView,CompressionStream,DecompressionStream,Buffer,Date,JSON,structuredClone,
    crypto:webcrypto,console,setTimeout,clearTimeout,setImmediate});
 }

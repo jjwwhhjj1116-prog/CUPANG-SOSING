@@ -28,7 +28,7 @@ async function bannerMetadata(owner:string,product:ProductRecord,content:Product
   }catch{return;}
 }
 
-export async function GET(_: Request, context: Context) {
+export async function GET(request: Request, context: Context) {
   if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return unavailable();
   const owner = await getWorkspaceOwnerId();
   const { id } = await context.params;
@@ -37,7 +37,9 @@ export async function GET(_: Request, context: Context) {
     if(!product)return response({error:'상품을 찾을 수 없습니다.'},404);
     const content=await readProductContent(owner,id),banners=await bannerMetadata(owner,product,content);
     const summary=await readRegistrationSummaries(owner,[product]).catch(()=>null);
-    return response({content,registrationStages:summary?.[id]?.stages??null,...(banners?{capturedSettingsBanners:banners}:{})});
+    const optionImageStages=request.headers.get('x-yoofam-option-image-stages')==='v1'
+      ?await(await import('@/db/option-image-stage-projection')).readOptionImageStageProjection(owner,product,content):undefined;
+    return response({content,registrationStages:summary?.[id]?.stages??null,...(banners?{capturedSettingsBanners:banners}:{}),...(optionImageStages?{optionImageStages}:{})});
   } catch { return response({ error: '저장한 콘텐츠를 불러오지 못했습니다.' }, 503); }
 }
 

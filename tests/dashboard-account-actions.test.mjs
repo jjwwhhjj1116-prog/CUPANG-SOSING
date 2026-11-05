@@ -32,7 +32,7 @@ for(const company of schemaCompanies)test(`${company.code}: native source/close 
   oldClose();await h.settle();assert.equal(h.component('submission-review-panel'),undefined,'a positively saved terminal receipt may close while its source reservation stays intact');
   await h.click('등록 전송');const current=h.component('submission-review-panel'),replacement=h.componentMount('submission-review-panel');assert.notEqual(replacement,mount);current.onLockChange(true,true);
   first.onLockChange(false,false);oldClose();first.onEdit(h.products[0].id);await h.settle();assert.equal(h.componentMount('submission-review-panel'),replacement);assert.equal(nodes(backdrop()).find(node=>node.type==='button'&&node.props.className==='icon-close').props.disabled,true);
-  current.onLockChange(false,false);current.onEdit(h.products[0].id);await h.settle();assert.equal(h.component('submission-review-panel'),undefined);assert.equal(h.component('product-content-editor').product.id,h.products[0].id);
+  current.onLockChange(false,false);current.onEdit(h.products[0].id);await h.settle();assert.equal(h.component('submission-review-panel'),undefined);assert.equal(h.component('quotation-panel').productId,h.products[0].id);assert.equal(h.component('product-content-editor'),undefined);
   h.close();current.onLockChange(true,true);current.onLockChange(false,false);assert.equal(h.lateWrites,0);assert.ok(h.requests.every(request=>request.method==='GET'));
  }finally{h.close();}
 });
@@ -264,7 +264,7 @@ for(const company of schemaCompanies)for(const laterChange of [false,true])test(
  try{
   await h.settle();h.component('registration-board').onOpen(h.products[0],'견적서');await h.settle();
   const originalProduct=flow.api.sqlite.prepare('SELECT * FROM products').get(),frozen=flow.api.sqlite.prepare('SELECT payload FROM collection_context').get().payload;
-  const stale=h.deferProfiles();h.component('product-content-editor').onSaved();await h.settle();
+  const stale=h.deferProfiles();h.component('quotation-panel').onSaved();await h.settle();
   await h.click('공식 파일 기준으로 연결');for(let i=0;i<30&&h.button('공식 파일 기준으로 연결');i++)await h.settle();
   const saved=await flow.api.load('db/category-profiles.ts').getCategoryProfile('owner',flow.profile.id);assert.equal(saved.revision,2);assert.equal(saved.template.workbookEvidence.templateSha256,saved.template.sha256);assert.deepEqual(flow.api.objects.get(saved.template.storageKey),flow.bytes);
   stale.resolve([flow.profile]);await h.settle();await h.click('저장한 견적 전송 준비');await h.toggleDetails('Excel 파일 전송 · 별도 방식');await settleUntil(h,()=>Boolean(h.instance('SubmissionPackage')));
@@ -433,9 +433,10 @@ test('translation selection stays scoped to its product and an unmounted product
 test('step 6 label translation entry reveals one existing panel without replacing its instance or saving anything',async()=>{
  const h=harness();try{
   await h.settle();h.component('registration-board').onOpen(h.products[0],'표시사항');await h.settle();
-  const panel=()=>nodes(h.render()).find(node=>node.props?.id==='label-translation-'+h.products[0].id),mount=h.componentMount('translation-panel'),requestCount=h.requests.length;
+  const panel=()=>nodes(h.render()).find(node=>node.props?.id==='label-translation-'+h.products[0].id),requestCount=h.requests.length;
+  assert.equal(h.componentCount('translation-panel'),0);
   assert.equal(panel().props.hidden,true);assert.equal(h.button('한글 표시사항 번역').props['aria-expanded'],false);assert.equal(h.button('한글 표시사항 번역').props['aria-controls'],panel().props.id);assert.equal(h.component('product-content-editor').section,'표시사항');
-  await h.click('한글 표시사항 번역');assert.equal(panel().props.hidden,false);assert.equal(h.button('한글 표시사항 번역').props['aria-expanded'],true);assert.match(text(panel()),/수집 상품 속성의 원문과 완료된 번역 결과/);assert.match(text(panel()),/번역한 상품 속성을 한글 표시사항에 연결/);assert.equal(h.componentCount('translation-panel'),1);assert.equal(h.componentMount('translation-panel'),mount);assert.equal(h.component('translation-panel').productId,h.products[0].id);assert.equal(h.requests.length,requestCount);
+  await h.click('한글 표시사항 번역');const mount=h.componentMount('translation-panel');assert.equal(panel().props.hidden,false);assert.equal(h.button('한글 표시사항 번역').props['aria-expanded'],true);assert.match(text(panel()),/수집 상품 속성의 원문과 완료된 번역 결과/);assert.match(text(panel()),/번역한 상품 속성을 한글 표시사항에 연결/);assert.equal(h.componentCount('translation-panel'),1);assert.equal(h.component('translation-panel').productId,h.products[0].id);assert.equal(h.requests.length,requestCount);
   await h.click('한글 표시사항 번역');assert.equal(panel().props.hidden,true);assert.equal(h.componentMount('translation-panel'),mount);
   await h.click('번역·SEO 생성');assert.equal(panel().props.hidden,false);assert.equal(h.componentMount('translation-panel'),mount);assert.equal(h.componentCount('translation-panel'),1);assert.equal(h.requests.length,requestCount);assert.ok(h.requests.every(request=>request.method==='GET'));
  }finally{h.close();}
@@ -445,7 +446,7 @@ test('step 6 translation visibility resets for a different product while label e
  const h=harness();try{
   await h.settle();h.component('registration-board').onOpen(h.products[0],'표시사항');await h.settle();await h.click('한글 표시사항 번역');const oldMount=h.componentMount('translation-panel');
   h.component('registration-board').onOpen(h.products[1],'표시사항');await h.settle();const panel=nodes(h.render()).find(node=>node.props?.id==='label-translation-'+h.products[1].id);
-  assert.equal(panel.props.hidden,true);assert.equal(h.button('한글 표시사항 번역').props['aria-expanded'],false);assert.notEqual(h.componentMount('translation-panel'),oldMount);assert.equal(h.component('translation-panel').productId,h.products[1].id);assert.equal(h.componentCount('translation-panel'),1);assert.equal(h.component('product-content-editor').section,'표시사항');
+  assert.equal(panel.props.hidden,true);assert.equal(h.button('한글 표시사항 번역').props['aria-expanded'],false);assert.equal(h.componentCount('translation-panel'),0);await h.click('한글 표시사항 번역');assert.notEqual(h.componentMount('translation-panel'),oldMount);assert.equal(h.component('translation-panel').productId,h.products[1].id);assert.equal(h.componentCount('translation-panel'),1);assert.equal(h.component('product-content-editor').section,'표시사항');
   assert.ok(nodes(h.render()).some(node=>node.props?.['aria-label']==='상품 등록 작업 공간'));assert.ok(h.requests.every(request=>request.method==='GET'));
  }finally{h.close();}
 });
@@ -618,7 +619,12 @@ test('every typed option stage opens the intended product workspace and retains 
  for(const step of ['SEO','가격','대표 이미지','추가 이미지','상세 이미지','표시사항','견적서','옵션']){
   const h=harness();try{
    await h.settle();const selectedProduct=h.products[1],optionId='option-b-2';h.component('registration-board').onOptions(selectedProduct);await h.settle();const board=h.component('product-option-board');assert.equal(board.productId,selectedProduct.id);assert.equal(typeof board.onStage,'function');const initialReads=h.requests.length;
-   board.onStage(optionId,step);await h.settle();assert.equal(h.componentVisible('product-option-board'),false);assert.equal(h.component('product-content-editor').product.id,selectedProduct.id);assert.equal(h.component('product-options-editor').product.id,selectedProduct.id);assert.equal(h.component('product-options-editor').focusedOptionId,optionId);assert.equal(h.component('product-options-editor').initialBulkAction,undefined);
+   board.onStage(optionId,step);await h.settle();assert.equal(h.componentVisible('product-option-board'),false);
+   const content=h.component('product-content-editor'),options=h.component('product-options-editor');
+   if(['SEO','대표 이미지','추가 이미지','상세 이미지','표시사항'].includes(step))assert.equal(content.product.id,selectedProduct.id);else assert.equal(content,undefined);
+   if(['옵션','가격','대표 이미지'].includes(step)){assert.equal(options.product.id,selectedProduct.id);assert.equal(options.focusedOptionId,optionId);assert.equal(options.initialBulkAction,undefined);}else assert.equal(options,undefined);
+   if(['추가 이미지','상세 이미지'].includes(step)){assert.equal(h.component('option-image-editor').productId,selectedProduct.id);assert.equal(h.component('option-image-editor').optionId,optionId);}
+   if(step==='표시사항'){assert.equal(h.component('product-label-editor').productId,selectedProduct.id);assert.equal(h.component('product-label-editor').optionId,optionId);}
    if(step==='옵션')assert.equal(h.button('옵션 관리').props['aria-pressed'],true);else assert.ok(nodes(h.render()).some(node=>node.type==='button'&&node.props['aria-current']==='step'&&text(node)===(['SEO','가격','대표 이미지','추가 이미지','상세 이미지','표시사항','견적서'].indexOf(step)+1)+({'SEO':'SEO 설정','가격':'가격 설정','표시사항':'한글 표시사항','견적서':'견적서 작업'}[step]??step)));
    if(step==='가격')assert.equal(h.component('product-options-editor').pricingView,true);
    if(step==='대표 이미지')assert.equal(h.component('product-options-editor').imageView,true);
@@ -735,7 +741,7 @@ test('foreign or malformed fresh products retain the option board and permit a s
   const h=harness();try{
    await h.settle();h.component('registration-board').onOptions(h.products[0]);await h.settle();h.setProductReply(async()=>Response.json(reply));const initialReads=h.requests.length;h.component('product-option-board').onStage('option-a-2','가격');await h.settle();
    assert.equal(h.requests.length,initialReads+1);assert.equal(h.component('product-option-board').productId,first.id);assert.equal(h.component('product-content-editor'),undefined);assert.equal(h.component('product-options-editor'),undefined);assert.ok(nodes(h.render()).some(node=>node.props?.role==='alert'));
-   h.setProductReply(null);h.component('product-option-board').onStage('option-a-2','견적서');await h.settle();assert.equal(h.componentVisible('product-option-board'),false);assert.equal(h.component('product-options-editor').product.id,first.id);assert.deepEqual(plain(h.component('quotation-panel').navigationTarget),{optionId:'option-a-2',fieldId:'title'});assert.ok(h.requests.every(request=>request.method==='GET'));
+   h.setProductReply(null);h.component('product-option-board').onStage('option-a-2','견적서');await h.settle();assert.equal(h.componentVisible('product-option-board'),false);assert.equal(h.component('product-options-editor'),undefined);assert.equal(h.component('quotation-panel').productId,first.id);assert.deepEqual(plain(h.component('quotation-panel').navigationTarget),{optionId:'option-a-2',fieldId:'title'});assert.ok(h.requests.every(request=>request.method==='GET'));
   }finally{h.close();}
  }
 });
@@ -780,10 +786,10 @@ test('late failed option navigation cannot publish an alert into closed, replace
 test('dirty or busy workspace blocks a new option board, quotation entry and retained management navigation',async()=>{
  for(const mode of ['dirty','busy']){
   const h=harness();try{
-   await h.settle();const first=h.products[0],second=h.products[1];h.component('registration-board').onOptions(first);await h.settle();const old=h.component('product-option-board');h.component('registration-board').onOpen(first,'SEO');await h.settle();h.setWorkspaceEdits({dirty:mode==='dirty',busy:mode==='busy'});const initialReads=h.requests.length;
+   await h.settle();const first=h.products[0],second=h.products[1];h.component('registration-board').onOptions(first);await h.settle();const old=h.component('product-option-board');h.component('registration-board').onOpen(first,'가격');await h.settle();await h.click('1SEO 설정');const options=h.componentMount('product-options-editor');h.setWorkspaceEdits({dirty:mode==='dirty',busy:mode==='busy'});const initialReads=h.requests.length;
    h.component('registration-board').onOptions(second);await h.settle();assert.equal(h.component('product-option-board'),undefined);assert.equal(h.component('product-content-editor').product.id,first.id);assert.equal(h.component('product-content-editor').section,'SEO');
    const quoteStep=nodes(h.render()).find(node=>node.type==='button'&&text(node)==='7견적서 작업');assert.ok(quoteStep);quoteStep.props.onClick();old.onStage('option-a-2','견적서');old.onManage('option-a-2');await h.settle();
-   assert.equal(h.component('product-content-editor').product.id,first.id);assert.equal(h.component('product-content-editor').section,'SEO');assert.equal(h.component('product-options-editor').initialBulkAction,undefined);assert.equal(h.component('product-option-board'),undefined);assert.equal(h.requests.length,initialReads);assert.ok(h.requests.every(request=>request.method==='GET'));
+   assert.equal(h.component('product-content-editor').product.id,first.id);assert.equal(h.component('product-content-editor').section,'SEO');assert.equal(h.component('product-options-editor').initialBulkAction,undefined);assert.equal(h.componentMount('product-options-editor'),options);assert.equal(h.component('product-option-board'),undefined);assert.equal(h.requests.length,initialReads);assert.ok(h.requests.every(request=>request.method==='GET'));
   }finally{h.close();}
  }
 });
@@ -832,10 +838,11 @@ test('failed category layout is visible, blocks navigation and preparation, and 
  let reads=0;
  const h=harness({registrationLayoutRequest:async()=>++reads===1?Response.json({error:'합성 조회 실패'},{status:503}):Response.json({format:'yoofam-registration-layout-v1',productId:'product-a',productVersion:version,sizeChartRequired:true,categoryContext:{source:'collection',profileId:null,categoryId:'81452',categoryPath:['합성 카테고리']}})});
  try{
-  await h.settle();h.component('registration-board').onOpen(h.products[0],'SEO');await h.settle();
+  await h.settle();h.component('registration-board').onOpen(h.products[0],'견적서');await h.settle();
+  h.component('registration-board').onOpen(h.products[0],'SEO');await h.settle();
   assert.match(text(h.render()),/카테고리의 필수 단계를 다시 확인/);assert.equal(h.button('다음 →').props.disabled,true);
   const draft=nodes(h.render()).find(node=>node.props?.['data-test-editor']==='product-content-editor');draft.props.onChange({target:{value:'보존할 SEO 초안'}});
-  h.component('quotation-panel').onPrepareSubmission();await h.settle();assert.equal(h.component('submission-review-panel'),undefined);
+  h.component('quotation-panel').onPrepareSubmission();await h.settle();assert.equal(h.component('submission-review-panel'),undefined);assert.match(text(h.render()),/카테고리의 등록 단계를 다시 확인한 뒤 전송을 준비/);
   await h.click('등록 단계 다시 확인');assert.equal(reads,2);
   const nav=nodes(h.render()).find(node=>node.props?.['aria-label']==='상품 등록 8단계');assert.ok(nav);assert.match(text(nav),/6사이즈표7한글 표시사항8견적서 작업/);
   assert.equal(h.button('다음 →').props.disabled,false);assert.equal(nodes(h.render()).find(node=>node.props?.['data-test-editor']==='product-content-editor').props.value,'보존할 SEO 초안');

@@ -83,7 +83,7 @@ function harness() {
 
 test('the exact product-label editor belongs to step 6, retains its hidden draft and stays separate from step 7 legal notices', () => {
   const h = harness(); try {
-    const productLabel = h.record('product-label-editor'), legal = h.record('option-label-editor');
+    const productLabel = h.record('product-label-editor'); assert.equal(h.all('option-label-editor').length,0); h.render({tab:'견적서'}); h.render({tab:'표시사항'}); const legal = h.record('option-label-editor');
     assert.equal(productLabel.props.productId, 'p'); assert.equal(productLabel.props.optionId, 'red'); assert.equal(productLabel.props.profileId, 'profile-a');
     h.edit('product-label-editor', 'manual nine-row product label'); h.edit('option-label-editor', 'manual category legal notices');
     for (const tab of ['추가 이미지', '상세 이미지', '견적서', 'SEO', '표시사항']) {

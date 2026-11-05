@@ -10,6 +10,8 @@ import {exactPrimaryQuotationTarget} from '@/app/quotation-seo-targets';
 import {quotationPriceTargets} from '@/app/quotation-price-targets';
 import {readCategoryJsonResponse} from '@/app/load-category-profiles';
 import {pendingRegistrationStages,registrationStageLabel,registrationStepIds,registrationStagesFromSavedContent,type RegistrationStageSummary,type RegistrationStageStatus} from '@/app/registration-stage-status';
+import {parseWorkspaceSettingsScope} from '@/app/workspace-settings-scope';
+import type {OptionImageStageProjection} from '@/db/option-image-stage-projection';
 import './product-option-board.css';
 import './registration-board.css';
 
@@ -27,7 +29,7 @@ const columns=[
 ] as const;
 type ColumnId=typeof columns[number]['id'];
 export type OptionBoardQuotationContent={title:string;main:string[];additional:string[];detail:string[];label:string[];imageIssues:Partial<Record<'main'|'additional'|'detail'|'label',boolean>>};
-export type OptionBoardData=ProductOptionsResponse & {optionRegistrationNumbers?:Record<string,string>;imageKeys:string[];quotationPrices?:Record<string,{supplyPrice:string;salePrice:string}>;quotationContent?:Record<string,OptionBoardQuotationContent>;seoTitle?:string|null;commonImageKeys:string[];commonAssets?:Partial<Record<CommonRole,string[]>>;registrationStages?:RegistrationStageSummary;optionStages?:Record<string,RegistrationStageSummary>};
+export type OptionBoardData=ProductOptionsResponse & {optionRegistrationNumbers?:Record<string,string>;imageKeys:string[];quotationPrices?:Record<string,{supplyPrice:string;salePrice:string}>;quotationContent?:Record<string,OptionBoardQuotationContent>;seoTitle?:string|null;commonImageKeys:string[];commonAssets?:Partial<Record<CommonRole,string[]>>;registrationStages?:RegistrationStageSummary;optionStages?:Record<string,RegistrationStageSummary>;optionImageStages?:OptionImageStageProjection};
 function record(value:unknown):value is Record<string,unknown>{return !!value&&typeof value==='object'&&!Array.isArray(value);}
 function validOption(row:unknown):row is ProductOption {
   if(!record(row)||typeof row.id!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(row.id)
@@ -53,8 +55,8 @@ export async function readOptionBoard(productId:string,signal:AbortSignal,fetche
     ||body.pricing.rows.some(row=>!record(row)||typeof row.optionId!=='string'||!body.options.rows.some(option=>option.id===row.optionId)||!validCalculation(row.calculation)))throw Error('상품의 옵션 응답을 확인하지 못했습니다.');
   if(body.sourceImageKeys!==undefined&&(!body.sourceImageKeys||typeof body.sourceImageKeys!=='object'||Array.isArray(body.sourceImageKeys)||Object.entries(body.sourceImageKeys).some(([id,key])=>typeof key!=='string'||!key||!body.options.rows.some(row=>row.id===id))))throw Error('상품의 원본 이미지 응답을 확인하지 못했습니다.');
   if(!validOptionRegistrationNumbers(body.optionRegistrationNumbers,body.options.rows,productRegistrationNumber))throw Error('상품의 옵션 등록번호 응답을 확인하지 못했습니다.');
-  const contentResponse=await fetcher(`/api/products/${encodeURIComponent(productId)}/content`,{cache:'no-store',signal});
-  const saved=await readCategoryJsonResponse<{content?:ProductContent;registrationStages?:RegistrationStageSummary|null;error?:string}>(contentResponse,'공통 상품 자료 조회 [GET /api/products/:id/content]');
+  const contentResponse=await fetcher(`/api/products/${encodeURIComponent(productId)}/content`,{cache:'no-store',signal,headers:{'x-yoofam-option-image-stages':'v1'}});
+  const saved=await readCategoryJsonResponse<{content?:ProductContent;registrationStages?:RegistrationStageSummary|null;optionImageStages?:OptionImageStageProjection;error?:string}>(contentResponse,'공통 상품 자료 조회 [GET /api/products/:id/content]');
   if(!contentResponse.ok)throw Error(saved?.error||'공통 상품 자료를 불러오지 못했습니다.');
   const content=saved?.content;
   if(content?.productId!==productId||content.schemaVersion!==1||(content.revision!==undefined&&(!Number.isSafeInteger(content.revision)||content.revision<0))||!record(content.assets)||!Array.isArray(content.assets.main?.value)||content.assets.main.value.some((key:unknown)=>typeof key!=='string'))throw Error('상품의 공통 이미지 응답을 확인하지 못했습니다.');
@@ -65,7 +67,7 @@ export async function readOptionBoard(productId:string,signal:AbortSignal,fetche
     return keys;
   };
   const quoteResponse=await fetcher(`/api/products/${encodeURIComponent(productId)}/quotation-fields`,{cache:'no-store',signal});
-  const quote=await readCategoryJsonResponse<{error?:string;productVersion?:string;optionRevision?:number;contentRevision?:number;imageKeys?:string[];resolved?:{schema?:{fields:QuotationField[]};rows?:{optionId:string|null;fields:Record<string,{value:string;issues?:string[];validationIssues?:string[]}>}[]}}>(quoteResponse,'견적서 조회 [GET /api/products/:id/quotation-fields]');
+  const quote=await readCategoryJsonResponse<{error?:string;revision?:number;inputFingerprint?:string;productVersion?:string;optionRevision?:number;contentRevision?:number;imageKeys?:string[];resolved?:{schema?:{fields:QuotationField[]};rows?:{optionId:string|null;fields:Record<string,{value:string;issues?:string[];validationIssues?:string[]}>}[]}}>(quoteResponse,'견적서 조회 [GET /api/products/:id/quotation-fields]');
   if(!quoteResponse.ok)throw Error(quote?.error||'저장된 견적 가격을 불러오지 못했습니다.');
   if(!quote?.resolved||!Array.isArray(quote.resolved.rows)||quote.productVersion!==body.productVersion||quote.optionRevision!==body.options.revision||quote.contentRevision!==content.revision)throw Error('상품·옵션·견적서가 변경되었습니다. 새로고침해주세요.');
   if(!Array.isArray(quote.imageKeys)||quote.imageKeys.some(key=>typeof key!=='string'||!key))throw Error('상품의 이미지 목록 응답을 확인하지 못했습니다.');
@@ -108,7 +110,23 @@ export async function readOptionBoard(productId:string,signal:AbortSignal,fetche
     const manualPrices=supplyPrice!==undefined&&salePrice!==undefined?{supplyPrice,salePrice}:undefined;
     return [row.id,registrationStagesFromSavedContent({id:productId,updated_at:body.productVersion,categoryId:(quote.resolved!.schema as {categoryId?:string}).categoryId},content,body.options,quote.imageKeys!,[{optionId:row.id,...quotationContent[row.id],manualImages,manualPrices}])];
   }));
-  return {...body,imageKeys:quote.imageKeys,quotationPrices,quotationContent,registrationStages:stages??undefined,optionStages,seoTitle:content.seo?.title.value??null,commonImageKeys:content.assets.main.value,commonAssets};
+  if(saved.optionImageStages!==undefined){
+    const projection=saved.optionImageStages,scope=parseWorkspaceSettingsScope(projection?.scope),roles=['mainImage','additionalImages']as const;
+    if(!record(projection)||projection.format!=='option-image-stages-v1'||!scope?.company||projection.productId!==productId
+      ||!Number.isFinite(Date.parse(projection.productVersion))||projection.productVersion!==quote.productVersion||!Number.isSafeInteger(projection.contentRevision)||projection.contentRevision<0||projection.contentRevision!==content.revision||projection.optionRevision!==body.options.revision
+      ||!Number.isSafeInteger(projection.quotationRevision)||projection.quotationRevision!==quote.revision||!/^([a-f0-9]{64})$/.test(projection.inputFingerprint)||projection.inputFingerprint!==quote.inputFingerprint
+      ||!record(projection.stages)||Object.keys(projection.stages).length!==body.options.rows.length||body.options.rows.some(row=>!record(projection.stages[row.id])||Object.keys(projection.stages[row.id]).length!==roles.length
+        ||roles.some(role=>{const stage=projection.stages[row.id][role];return!record(stage)||!['pending','complete','failed','running','unused'].includes(stage.state)||typeof stage.detail!=='string'||!stage.detail.trim()
+          ||stage.sourceProofAt!==undefined&&(typeof stage.sourceProofAt!=='string'||!Number.isFinite(Date.parse(stage.sourceProofAt)));})))throw Error('옵션 이미지 완료 근거의 회원·저장 원본이 변경되었습니다. 목록을 다시 불러와주세요.');
+    for(const row of body.options.rows)for(const role of roles){
+      if(projection.stages[row.id][role].state==='complete'){
+        const imageRole=role==='mainImage'?'main':'additional',images=quotationContent[row.id][imageRole];
+        if(!images.length||role==='mainImage'&&images.length!==1||quotationContent[row.id].imageIssues[imageRole]||images.some(key=>!key.startsWith(scope.ownerId+'/')))throw Error('옵션 이미지 완료 근거와 현재 이미지가 다릅니다.');
+      }
+      optionStages[row.id][role]=projection.stages[row.id][role];
+    }
+  }
+  return {...body,imageKeys:quote.imageKeys,quotationPrices,quotationContent,registrationStages:stages??undefined,optionStages,...(saved.optionImageStages?{optionImageStages:saved.optionImageStages}:{}),seoTitle:content.seo?.title.value??null,commonImageKeys:content.assets.main.value,commonAssets};
 }
 export function ProductOptionBoard({productId,productRegistrationNumber,sourceUrl,refreshToken,returnFocus,onReturnFocusHandled,onQuotation,onEdit,onImage,onContent,onStage,onManage}:Props){
   const [loaded,setLoaded]=useState<{productId:string;attempt:number;refreshToken?:string;data:OptionBoardData|null;error:string}|null>(null);
@@ -166,7 +184,8 @@ export function ProductOptionBoard({productId,productRegistrationNumber,sourceUr
     const handler=stageHandler(optionId,step);
     const id=registrationStepIds[step],execution=data?.registrationStages?.[id],local=data?.optionStages?.[optionId]?.[id];
     const unusedSize=id==='sizeChart'&&!data?.commonAssets?.size?.length&&local?.state!=='complete'&&(!execution||execution.state==='unused');
-    const status=override??(unusedSize?pendingRegistrationStages().sizeChart:execution&&['failed','running'].includes(execution.state)?execution:local?.state==='complete'?local:execution??local??pendingRegistrationStages(!!data?.commonAssets?.size?.length)[id]);
+    const projectedImage=(id==='mainImage'||id==='additionalImages')&&!!data?.optionImageStages?.stages[optionId];
+    const status=override??(unusedSize?pendingRegistrationStages().sizeChart:execution&&['failed','running'].includes(execution.state)?execution:projectedImage&&local?local:local?.state==='complete'?local:execution??local??pendingRegistrationStages(!!data?.commonAssets?.size?.length)[id]);
     const text=registrationStageLabel(status.state),title=`${status.detail} · ${detail}`,className=`registration-cell-button registration-stage-badge registration-stage-${status.state}`;
     return handler?<button type="button" className={className} data-stage-state={status.state} title={title} aria-label={`옵션 ${optionId} ${label} 편집`} onClick={handler}>{text}</button>:<small className={className} data-stage-state={status.state} title={title}>{text}</small>;
   };
