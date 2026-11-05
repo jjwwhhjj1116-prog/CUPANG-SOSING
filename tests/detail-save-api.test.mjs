@@ -50,7 +50,7 @@ async function fixture(company, { wire = false, excluded = false } = {}) {
   ] } }));
   const endpoint = f.base + '/detail-save?profileId=' + profileId;
   const runtime = loadComposite(f), source = () => ({ productId: f.product.id, optionId: f.optionId, profileId, view: f.view });
-  const prepare = async () => runtime.helper.prepareDetailComposite(source(), signal(), f.request);
+  const prepare = async (view = f.view) => runtime.helper.prepareDetailComposite({ ...source(), view }, signal(), f.request);
   const upload = async prepared => {
     const form = new FormData(); form.set('file', new File([prepared.output], 'sourceflow-quotation-label.png', { type: 'image/png' })); form.set('labelUploadId', prepared.uploadId);
     const response = await f.request('/api/files', { method: 'POST', body: form }); assert.equal(response.status, 201, await response.clone().text());
@@ -78,7 +78,8 @@ for (const company of companies) test(`atomic detail save writes canonical and e
     const row = f.api.sqlite.prepare('SELECT payload FROM product_quotation_fields').get(), savedState = JSON.parse(row.payload);
     savedState.categoryOverrides['category:991234'] = { common: { detailHtml: '<p>다른 카테고리 원문</p>' }, options: {} };
     f.api.sqlite.prepare('UPDATE product_quotation_fields SET payload=?').run(JSON.stringify(savedState));
-    const prepared = await f.prepare(), body = await f.upload(prepared), files = f.originals();
+    const currentView = await json(await f.api.route(f.qurl));
+    const prepared = await f.prepare(currentView), body = await f.upload(prepared), files = f.originals();
     const result = await json(await f.post(body)), key = result.receipt.key;
     assert.equal(result.quotation.revision, beforeView.revision + 1); assert.equal(result.receipt.beforeRevision, beforeView.revision);
     assert.deepEqual(result.receipt.optionIds, beforeView.resolved.rows.flatMap(row => row.optionId ? [row.optionId] : []));
@@ -219,7 +220,8 @@ test('backup-count and full-payload limits reject without pruning any retained b
       current.detailSaveBackups = { [scope]: limit === 'count' ? Array.from({ length: 5 }, (_, index) => ({ ...backup, receipt: { ...backup.receipt, uploadId: String(index + 1).repeat(64) } }))
         : [{ ...backup, before: [{ optionId: null, fieldKey: 'detailHtml', value: 'x'.repeat(512 * 1024) }] }] };
       f.api.sqlite.prepare('UPDATE product_quotation_fields SET payload=?').run(JSON.stringify(current));
-      const prepared = await f.prepare(), body = await f.upload(prepared), before = f.full(), response = await f.post(body);
+      const currentView = await json(await f.api.route(f.qurl));
+      const prepared = await f.prepare(currentView), body = await f.upload(prepared), before = f.full(), response = await f.post(body);
       assert.equal(response.status, 413, await response.clone().text()); assert.equal(f.full(), before); assert.deepEqual(state(f).detailSaveBackups, current.detailSaveBackups);
     } finally { f.api.close(); }
   }

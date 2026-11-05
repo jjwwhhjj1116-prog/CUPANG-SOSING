@@ -34,8 +34,10 @@ for (const company of companies) test(`explicit result attachment appends only c
   const f = await edited(company);
   try {
     const before = f.tables(), original = plain(f.saved), key = f.applied.key;
+    assert.ok(f.api.load('app/quotation-save-validation.ts').currentSavedQuotationValidation(original.view,f.product.id));
     assert.ok(!f.saved.view.imageKeys.includes(key));
     const after = await json(await f.attach());
+    assert.equal(after.view.savedValidation,undefined,'appending to the pool invalidates the old input-check badge');
     assert.deepEqual(after.workspace, original.workspace); assert.deepEqual(after.roles, original.roles);
     assert.deepEqual(after.view.imageKeys, [...original.view.imageKeys, key]);
     assert.ok(Date.parse(after.view.productVersion) > Date.parse(original.view.productVersion));
@@ -51,6 +53,21 @@ for (const company of companies) test(`explicit result attachment appends only c
     for (const fieldKey of f.targets.detailHtml.linked) assert.equal(selected(final).fields[fieldKey].value, selected(original.view).fields[fieldKey].value);
     assert.deepEqual((await json(await f.read())).workspace, original.workspace);
   } finally { f.api.close(); }
+});
+
+test('attachment cannot retain stale validation or mint a replacement badge while accepting only pool changes',async()=>{
+ const f=await edited(companies[0]);try{
+  const before=plain(f.saved),validation=f.api.load('app/quotation-save-validation.ts'),verify=f.api.load('app/detail-workspace-attachment.ts').verifyDetailWorkspaceAttachment;
+  await f.attach();const after=await json(await f.read());assert.equal(after.view.savedValidation,undefined);assert.ok(after.view.imageKeys.includes(f.applied.key));
+  const stale=plain(after);stale.view.savedValidation=plain(before.view.savedValidation);
+  assert.equal(validation.currentSavedQuotationValidation(stale.view,f.product.id),null);
+  assert.throws(()=>verify(before,stale),/연결 기준/,'a stale badge cannot survive the new pool clock');
+  const replacement=plain(after);replacement.view.savedValidation={...plain(before.view.savedValidation),productVersion:after.view.productVersion,inputFingerprint:after.view.inputFingerprint};
+  assert.ok(validation.currentSavedQuotationValidation(replacement.view,f.product.id),'the replacement is structurally current but was not the reviewed evidence');
+  assert.throws(()=>verify(before,replacement),/연결 기준/);
+  const malformed=plain(after);malformed.view.savedValidation=null;assert.throws(()=>verify(before,malformed),/연결 기준/);
+  assert.doesNotThrow(()=>verify(before,after));
+ }finally{f.api.close();}
 });
 
 test('attachment rejects extra keys, foreign origin, stale workspace, membership change and actual result byte changes without appending anything', async () => {

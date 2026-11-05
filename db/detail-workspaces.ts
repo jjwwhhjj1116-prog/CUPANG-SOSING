@@ -23,6 +23,11 @@ export const detailWorkspacesSchema = `CREATE TABLE IF NOT EXISTS product_detail
  PRIMARY KEY(owner_id,product_id,category_scope,option_id), CHECK(length(CAST(payload AS BLOB))<=524288)
 )`;
 type Identity = { email: string; role: string };
+function verifyMember(members: readonly Record<string, unknown>[], company: SupplierHubCompany, identity: Identity) {
+  const member = members[0];
+  if (members.length !== 1 || member.status !== 'approved' || typeof member.email !== 'string' || member.email.trim().toLowerCase() !== identity.email.trim().toLowerCase()
+    || member.role !== identity.role || member.company_code !== company.code || member.company_name !== company.name) throw new DetailWorkspaceError('승인된 회사 회원 정보를 다시 확인해주세요.', 403);
+}
 type Row = { revision: number; request_id: string; payload: string; updated_at: string };
 export type DetailWorkspaceImageProofs = { files: Map<string, { metadata: string; file: DetailWorkspaceFile }> };
 /** One operation only: actual bytes establish trust; later checks still inspect every upload version. */
@@ -45,9 +50,8 @@ async function row(db: D1Database, owner: string, id: string, scope: string, opt
 }
 async function snapshot(db: D1Database, owner: string, company: SupplierHubCompany, identity: Identity, id: string, profileId: string | null, optionId: string) {
   const { view } = await stableQuotationFieldsView(owner, id, profileId), saved = await readOwnedSplitSnapshot(owner, id, view.categoryContext.profileId, db), raw = saved.raw,
-    member = raw.member[0], state = raw.quotation[0] ? JSON.parse(raw.quotation[0].payload as string) : { revision: 0, updatedAt: null, overrides: { common: {}, options: {} } };
-  if (raw.member.length !== 1 || member.status !== 'approved' || typeof member.email !== 'string' || member.email.trim().toLowerCase() !== identity.email.trim().toLowerCase()
-    || member.role !== identity.role || member.company_code !== company.code || member.company_name !== company.name) throw new DetailWorkspaceError('승인된 회사 회원 정보를 다시 확인해주세요.', 403);
+    state = raw.quotation[0] ? JSON.parse(raw.quotation[0].payload as string) : { revision: 0, updatedAt: null, overrides: { common: {}, options: {} } };
+  verifyMember(raw.member, company, identity);
   if (raw.products.length !== 1 || raw.removed || raw.products[0].updated_at !== view.productVersion || !view.categoryContext.categoryId
     || raw.content.length !== 1 || raw.content[0].revision !== view.contentRevision || raw.options.length !== 1 || raw.options[0].revision !== view.optionRevision
     || state.revision !== view.revision || view.resolved.rows.filter(value => value.optionId === optionId).length !== 1) throw conflict();
@@ -153,8 +157,12 @@ async function verifyRecord(record: DetailWorkspaceRecord, owner: string, imageK
   }
 }
 async function confirm(db: D1Database, owner: string, company: SupplierHubCompany, identity: Identity, id: string, profileId: string | null, optionId: string, before: Awaited<ReturnType<typeof snapshot>>) {
-  const after = await snapshot(db, owner, company, identity, id, profileId, optionId);
-  if (after.saved.payload !== before.saved.payload || !same(after.previous, before.previous) || !same(after.view, before.view) || !same(after.roles, before.roles)) throw conflict();
+  const previous = await row(db, owner, id, before.scope, optionId);
+  const { view } = await stableQuotationFieldsView(owner, id, profileId);
+  const saved = await readOwnedSplitSnapshot(owner, id, before.view.categoryContext.profileId, db);
+  verifyMember(saved.raw.member, company, identity);
+  // Exact raw content equality also retains the already-validated banner roles.
+  if (saved.payload !== before.saved.payload || !same(previous, before.previous) || !same(view, before.view)) throw conflict();
 }
 export async function readDetailWorkspace(owner: string, company: SupplierHubCompany, identity: Identity, id: string, profileId: string | null, optionId: string, signal: AbortSignal): Promise<DetailWorkspaceView> {
   const db = await database(owner, id, profileId), before = await snapshot(db, owner, company, identity, id, profileId, optionId), workspace = stored(before.previous, owner, id, optionId, before, company);

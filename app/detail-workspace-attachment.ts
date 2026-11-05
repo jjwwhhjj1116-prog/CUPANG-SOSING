@@ -1,6 +1,7 @@
 import type { DetailWorkspaceView } from '@/app/detail-workspace';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
+import { currentSavedQuotationValidation } from '@/app/quotation-save-validation';
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const changed = (): never => { throw Error('작업 사진의 상품 연결 기준이 바뀌었습니다. 견적서를 유지하고 최신 구성을 확인해주세요.'); };
@@ -11,7 +12,7 @@ export function detailWorkspaceAttachedKeys(saved: DetailWorkspaceView): string[
   return keys;
 }
 function unchangedQuotation(view: QuotationFieldsView) {
-  return Object.fromEntries(Object.entries(view).filter(([key]) => !['productVersion', 'imageKeys', 'inputFingerprint'].includes(key)));
+  return Object.fromEntries(Object.entries(view).filter(([key]) => !['productVersion', 'imageKeys', 'inputFingerprint', 'savedValidation'].includes(key)));
 }
 /** Attachment is an explicit pool-only action. It never substitutes a quote
  * write for the existing read-only local-draft adoption action. */
@@ -19,6 +20,9 @@ export function verifyDetailWorkspaceAttachment(before: DetailWorkspaceView, aft
   const keys = detailWorkspaceAttachedKeys(before);
   if (!same(before.workspace, after.workspace) || !same(before.roles, after.roles)
     || !same(unchangedQuotation(before.view), unchangedQuotation(after.view)) || !same(after.view.imageKeys, keys)
+    // A new image pool invalidates derived evidence; it never grants a new badge.
+    || after.view.savedValidation !== undefined && (!same(after.view.savedValidation, before.view.savedValidation)
+      || !currentSavedQuotationValidation(after.view, before.workspace!.productId))
     || !/^[a-f0-9]{64}$/u.test(after.view.inputFingerprint) || !Number.isFinite(Date.parse(after.view.productVersion))
     || Date.parse(after.view.productVersion) < Date.parse(before.view.productVersion)
     || keys.length !== before.view.imageKeys.length && Date.parse(after.view.productVersion) <= Date.parse(before.view.productVersion)) return changed();
