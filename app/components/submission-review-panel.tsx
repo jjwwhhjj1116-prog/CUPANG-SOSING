@@ -9,6 +9,7 @@ import { QuotationReviewIssues } from '@/app/components/quotation-review-issues'
 import { validateSubmissionReviewResponse } from '@/app/submission-review-response';
 import { SubmissionPackage } from '@/app/components/submission-package';
 import { SupplierHubProductSubmission } from '@/app/components/supplier-hub-product-submission';
+import { SupplierHubTransmissionQueue } from '@/app/components/supplier-hub-transmission-queue';
 
 type Target = {id:string;title:string;source_url:string;updated_at:string};
 type Result = {id:string;report?:SubmissionReview;error?:string};
@@ -25,12 +26,14 @@ export function SubmissionReviewPanel({products,profiles,onEdit,onReceiptSaved,o
   const productKey=JSON.stringify(products.map(product=>[product.id,product.updated_at]));
   const requestKey=JSON.stringify([targetKey,productKey,profileId,profileKey,run]);
   const context=useMemo(()=>({key:requestKey}),[requestKey]);
+  const [queueContext,setQueueContext]=useState<typeof context|null>(null),queueKey=useRef(Symbol('selected-transmission-queue')).current;
+  const queueOpen=queueContext===context;
   const [requestedContext,setRequestedContext]=useState<typeof context|null>(null);
   const requested=requestedContext===context;
   const currentContext=useRef<typeof context|null>(context);
   const activeReview=useRef<AbortController|null>(null);
   const [lockSnapshot,setLockSnapshot]=useState<{context:typeof context;source:boolean;close:boolean}|null>(null),lockCallback=useRef(onLockChange);
-  const lockRegistry=useRef(new WeakMap<typeof context,Map<string,{source:boolean;close:boolean}>>()),retiredContexts=useRef(new WeakSet<typeof context>());
+  const lockRegistry=useRef(new WeakMap<typeof context,Map<string|symbol,{source:boolean;close:boolean}>>()),retiredContexts=useRef(new WeakSet<typeof context>());
   useLayoutEffect(()=>{lockCallback.current=onLockChange;},[onLockChange]);
   const locks=()=>{const values=[...(lockRegistry.current.get(context)?.values()??[])];return{source:values.some(value=>value.source),close:values.some(value=>value.close)};};
   useLayoutEffect(()=>{const retired=retiredContexts.current;currentContext.current=context;retired.delete(context);const items=lockRegistry.current.get(context)??new Map();lockRegistry.current.set(context,items);
@@ -42,12 +45,13 @@ export function SubmissionReviewPanel({products,profiles,onEdit,onReceiptSaved,o
     const controller=activeReview.current;activeReview.current=null;if(controller&&!controller.signal.aborted)controller.abort();
   };},[context]);
   useLayoutEffect(()=>{if(currentContext.current!==context)return;const values=[...(lockRegistry.current.get(context)?.values()??[])];onLockChange?.(values.some(value=>value.source),values.some(value=>value.close));},[context,onLockChange]);
-  function productLock(id:string,source:boolean,close=source){
-    if(retiredContexts.current.has(context)||!products.some(product=>product.id===id))return;const registry=lockRegistry.current.get(context)??new Map();lockRegistry.current.set(context,registry);
+  function reviewLock(id:string|symbol,source:boolean,close=source){
+    if(retiredContexts.current.has(context)||id!==queueKey&&!products.some(product=>product.id===id))return;const registry=lockRegistry.current.get(context)??new Map();lockRegistry.current.set(context,registry);
     const before=registry.get(id);if(before?.source===source&&before.close===close)return;
     registry.set(id,{source,close});const value=locks();
     if(currentContext.current===context){setLockSnapshot(previous=>previous?.context===context&&previous.source===value.source&&previous.close===value.close?previous:{context,...value});lockCallback.current?.(value.source,value.close);}
   }
+  function productLock(id:string,source:boolean,close=source){reviewLock(id,source,close);}
   const results=snapshot.key===requestKey?snapshot.results:[];
   const busy=requested&&products.length>0&&(snapshot.key!==requestKey||!snapshot.finished);
   useEffect(()=>{
@@ -83,7 +87,10 @@ export function SubmissionReviewPanel({products,profiles,onEdit,onReceiptSaved,o
     <button type="button" className="btn ghost" disabled={busy||sourceLocked||!products.length} onClick={()=>{if(busy||locks().source||!products.length||currentContext.current!==context)return;currentContext.current=null;setRun(value=>value+1);}}>저장된 자료 다시 검사</button>
     {sourceLocked&&<p role="status">현재 문서의 전송·저장 결과를 확인하는 동안 카테고리와 견적 원본을 유지합니다. 미확정 결과는 같은 문서의 저장 결과 확인으로 이어가세요.</p>}
     {busy&&<p role="status">검사 중 · {results.length}/{products.length}건</p>}
-    {products.map(product=>{
+    {products.length>1&&<button type="button" className="btn primary" disabled={sourceLocked||busy} onClick={()=>{if(currentContext.current!==context||locks().source||busy)return;setQueueContext(queueOpen?null:context);}}>{queueOpen?'상품별 전송 화면':'선택 상품 순차 전송'}</button>}
+    {queueOpen?<SupplierHubTransmissionQueue key={requestKey} products={products} profileId={profileId||undefined} expectedCategoryId={profileId?profiles.find(profile=>profile.id===profileId)?.categoryId||undefined:undefined} onLockChange={(source,close)=>reviewLock(queueKey,source,close)}
+      onReceiptSaved={()=>{if(currentContext.current===context&&!retiredContexts.current.has(context))onReceiptSaved?.();}}
+      onInspect={id=>editCurrent(id,profileId||undefined)}/>:products.map(product=>{
       const result=results.find(item=>item.id===product.id); const report=result?.report;
       return <article key={product.id} className="panel-stack">
         <h3>{report ? report.title.trim() ? report.title : '상품명 미입력' : product.title}</h3><a href={safeUrl(product.source_url)} target="_blank" rel="noreferrer" style={{overflowWrap:'anywhere'}}>{product.source_url}</a>

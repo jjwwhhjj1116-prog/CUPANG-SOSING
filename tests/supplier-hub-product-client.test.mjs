@@ -58,6 +58,24 @@ async function fixture(company=SINGLE_COMPANIES[0],options={}){
   f.wait=async predicate=>{for(let i=0;i<300;i++){if(predicate())return;await new Promise(resolve=>setImmediate(resolve));}assert.fail('Client fixture did not reach requested boundary.');};
   f.session=()=>f.client.previewProductDocument(packet,new AbortController().signal);return f;
 }
+test('configured consent cancellation preserves its original request scope and legacy whole-tab cancellation',async()=>{
+ const f=await fixture(),messages=[];f.window.postMessage=(message,target)=>messages.push({message:plain(message),target});
+ f.client.cancelConfiguredProductConsent(f.packet.requestId);f.client.cancelConfiguredProductConsent();
+ assert.deepEqual(messages,[{message:{channel:'YOOFAM_CONFIGURED_REGISTRATION_CONSENT',type:'cancel',requestId:f.packet.requestId},target:origin},{message:{channel:'YOOFAM_CONFIGURED_REGISTRATION_CONSENT',type:'cancel'},target:origin}]);
+});
+
+for(const boundary of ['abort','timeout'])test(`configured consent probe ${boundary} cancels only the original product request`,async()=>{
+ const f=await fixture();f.bridge=async()=>({...f.preview(),configuredRegistrationConsentAvailable:true,draftPreparationAvailable:true,preparedLifecycleAvailable:true});const session=await f.session(),messages=[],post=f.window.postMessage;
+ f.window.postMessage=(message,target)=>{if(message.channel==='YOOFAM_CONFIGURED_REGISTRATION_CONSENT'){assert.equal(target,origin);messages.push(plain(message));}else post(message,target);};
+ const controller=new AbortController(),state=lifecycleState(f,'awaiting-stage-consent',{challenge:f.challenge('productPage')}),pending=f.client.configuredProductConsentConfirmation(session,state,controller.signal);
+ const result=boundary==='abort'?assert.rejects(pending,error=>error.code==='PRODUCT_CONFIGURED_CONSENT_CANCELLED'):pending;
+ await f.wait(()=>messages.some(message=>message.type==='probe'));
+ if(boundary==='abort')controller.abort();else f.advance(45000);
+ if(boundary==='abort')await result;else assert.equal(await result,null);
+ assert.deepEqual(messages.filter(message=>message.type==='cancel'),[{channel:'YOOFAM_CONFIGURED_REGISTRATION_CONSENT',type:'cancel',requestId:session.packet.requestId}]);
+ assert.notEqual(messages[0].requestId,session.packet.requestId,'probe correlation is distinct from product authorization');assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);
+});
+
 test('independent amended lifecycle verification reuses strict prepared parsing without dispatching a parent action',async()=>{
  const f=await fixture();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,preparedLifecycleAvailable:true});
  const session=await f.session(),value=f.state('navigation-ready',{draftOnly:true,preparedLifecycle:true,lifecycleProof:{evidence:'native-prepared-draft-lifecycle',preparedCheckpointSequence:12,qualifiedCheckpointSequence:13,checkpointSequence:14,qualifiedAt:f.clock.now,observedAt:f.clock.now,validatedSteps:[2,3,4,5],consentRequested:false,submitRequested:false}}),before=f.sent.length;

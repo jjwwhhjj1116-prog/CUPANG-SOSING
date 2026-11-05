@@ -44,6 +44,35 @@ function allowDraft(h,run){h.f.bridge=async payload=>payload.action==='preview'?
 
 const reviewPrepared='준비한 새 견적서 등록전송',confirmPrepared='현재 문서 동의 확인 · 계속',recoverPrepared='준비한 문서 단계 확인 · 읽기 전용';
 const registerDraft='견적서 등록전송 시작';
+
+for(const company of SINGLE_COMPANIES)test(`${company.code}: a queued reviewed session starts once and reports only exact stored receipts`,async()=>{
+ const h=await fixture(company),received=[];let confirmations=0;
+ try{
+  allowPrepared(h,payload=>{
+   if(payload.action==='reviewPreparedDraft')return preparedResult(h,payload,'awaiting-stage-consent',14,{challenge:h.f.challenge('productPage')});
+   confirmations++;const stage=confirmations===1?'imagePage':confirmations===2?'logisticsPage':null;
+   return preparedResult(h,payload,stage==='logisticsPage'?'awaiting-consent':stage?'awaiting-stage-consent':'pending',14+confirmations,{...(stage?{challenge:h.f.challenge(stage)}:{receipt:h.f.observation().receipt})});
+  });
+  await h.idle();const session=await h.f.session(),queuedStart={session,token:{}};
+  h.render({...h.props(),queuedStart,onReceiptSaved:record=>received.push(record)});h.flush();
+  await h.wait(()=>h.f.sent.some(row=>row.payload.action==='prepareDraft'));await h.idle();
+  assert.equal(h.f.sent.filter(row=>row.payload.action==='prepareDraft').length,1);assert.match(h.text(),/동의 확인/);
+  h.render({...h.props(),queuedStart});h.flush();await h.idle();assert.equal(h.f.sent.filter(row=>row.payload.action==='prepareDraft').length,1);
+  for(let stage=0;stage<3;stage++){checkTerms(h);await h.click(confirmPrepared);}
+  assert.equal(received.length,1);assert.equal(received[0]?.requestId,session.packet.requestId);assert.equal(received[0]?.receipt.sourceStatus,'SUBMITTED');assert.equal(h.stored.size,1);
+ }finally{h.close();}
+});
+
+test('queued start waits for the newly rendered review history instead of trusting a prior review read',async()=>{
+ const h=await fixture(),held=deferred();let waiting=false,reads=0;
+ try{
+  h.f.client.readNativeReceiptHistory=async()=>{if(++reads>1){waiting=true;await held.promise;}return[];};
+  allowPrepared(h,payload=>preparedResult(h,payload,'awaiting-stage-consent',14,{challenge:h.f.challenge('productPage')}));await h.idle();assert.equal(reads,1);const session=await h.f.session();
+  h.render({...h.props(),review:plain(h.f.review),queuedStart:{session,token:{}}});
+  await h.wait(()=>waiting);h.flush();assert.equal(h.render().props['aria-busy'],false,'new review history must settle before a mutating operation begins');assert.equal(h.f.sent.filter(row=>row.payload.action==='prepareDraft').length,0);
+  held.resolve();await h.wait(()=>h.f.sent.some(row=>row.payload.action==='prepareDraft'));await h.idle();assert.equal(h.f.sent.filter(row=>row.payload.action==='prepareDraft').length,1);
+ }finally{held.resolve();h.close();}
+});
 function preparedResult(h,payload,state,sequence,extra={}){
  const submitted=['pending','accepted','rejected','submit-requested'].includes(state);
  h.qualifiedAt??=h.f.clock.now;

@@ -25,12 +25,14 @@ class Bus{
 // The real isolated content code owns click, policy, sequencing and replay
 // behavior. Its separately tested current-source verifier is a fresh-read port
 // here so faults can be placed precisely before/after a policy read.
-async function contentFixture(){
+async function contentFixture(company=companies[0]){
   const origin='http://localhost:3000',window=new Bus(),document=new Bus(),replies=[],requests=[];document.visibilityState='visible';
   let now=1_800_000_000_000,handler,sourceReads=0,sourceCurrent=true,hook=()=>{};
-  const identity={origin,appTabId:17,windowId:29,ownerId:'owner',company:{code:'A01526306',name:'유앤채'},productId:'synthetic-product',profileId:null,requestedProfileId:null,
+  const identity={origin,appTabId:17,windowId:29,ownerId:'owner',company:clone(company),productId:'synthetic-product',profileId:null,requestedProfileId:null,
     inputFingerprint:'1'.repeat(64),fingerprint:'2'.repeat(64),schemaSha256:'3'.repeat(64),accountContext:'4'.repeat(64),members:[{optionId:'option-one',optionLabel:'합성 옵션',documentIndex:0}],source:{productVersion:'v1',contentRevision:1,optionRevision:1,quotationRevision:1,profileRevision:1}};
-  const identityDigest=await digest(identity),sourceExpected={identity,bodySha256:'a'.repeat(64),preparedBodySha256:'b'.repeat(64),packetDigest:'c'.repeat(64),requestId:'request-one',docId:'synthetic-doc'};
+  identity.accountContext=await digest(['sourceflow-managed-product-account-v1',identity.ownerId,identity.company.code,identity.company.name]);
+  const identityDigest=await digest(identity),sourceExpected={identity,bodySha256:'a'.repeat(64),preparedBodySha256:'b'.repeat(64),packetDigest:'c'.repeat(64),requestId:'11111111-2222-4333-8444-555555555555',docId:'synthetic-doc'};
+  const primary={identity,identityDigest,sourceExpected},subjects=[primary];
   const view={format:'yoofam-member-registration-consents-v1',ownerId:identity.ownerId,company:clone(identity.company),actor:clone(actor),
     connections:[{id:connectionId,service:'supplier-hub',alias:'내 서플라이어허브',loginId:'owner@example.test',hasPassword:true,enabled:true,revision:7,createdAt:new Date(now).toISOString(),updatedAt:new Date(now).toISOString()}],
     policies:await Promise.all(terms.map(async(term,index)=>({kind:['price-data','label-contact'][index],connectionId,connectionRevision:7,revision:index+1,enabled:true,termsVersion:'supplier-hub-displayed-terms-v1',termsSha256:await digest({format:'supplier-hub-displayed-terms-v1',terms:term}),terms:clone(term),acceptedAt:new Date(now).toISOString(),updatedAt:new Date(now).toISOString(),actor:clone(actor)})))};
@@ -40,21 +42,91 @@ async function contentFixture(){
     chrome:{runtime:{id:'extension',onMessage:{addListener:fn=>handler=fn}}},fetch:async(path,init)=>{requests.push({path,init});await hook('policy',requests.length);const response=Response.json(view);Object.defineProperty(response,'url',{value:origin+path});return response;}};
   vm.createContext(scope);vm.runInContext(fs.readFileSync(new URL('../extensions/supplier-hub/single-content.js',import.meta.url),'utf8'),scope);
   const sessionId=vm.runInContext('yoofamSingleSessionId',scope);
-  scope.verifySingleDocumentSource=async input=>{sourceReads++;await hook('source',sourceReads);assert.equal(canonical(input),canonical(sourceExpected));if(!sourceCurrent)throw Error('fresh source changed');return{ok:true,identity:clone(identity),sessionId};};
+  const currentSourceVerifier=scope.verifySingleDocumentSource;
+  scope.verifySingleDocumentSource=async input=>{sourceReads++;await hook('source',sourceReads);const subject=subjects.find(row=>row.sourceExpected.requestId===input.requestId);assert.ok(subject);assert.equal(canonical(input),canonical(subject.sourceExpected));if(!sourceCurrent)throw Error('fresh source changed');return{ok:true,identity:clone(subject.identity),sessionId};};
   vm.runInContext(`yoofamSingleVerifiedSourceModes.set('${sourceExpected.packetDigest}',{wholeProduct:true,nativeAssets:true})`,scope);
-  const input=(stage='productPage')=>{const term=terms.find(row=>row.stage===stage),items=term?[{...clone(term),required:true}]:[];for(const item of items)delete item.stage;
+  const input=(stage='productPage',subject=primary)=>{const {identity,identityDigest,sourceExpected}=subject,term=terms.find(row=>row.stage===stage),items=term?[{...clone(term),required:true}]:[];for(const item of items)delete item.stage;
     const challenge={id:(stage==='productPage'?'d':stage==='imagePage'?'e':'f').repeat(64),docId:sourceExpected.docId,packetDigest:sourceExpected.packetDigest,stage,issuedAt:now,expiresAt:now+120000,items};
     return{identity:clone(identity),identityDigest,sourceExpected:clone(sourceExpected),docId:sourceExpected.docId,challenge,sessionId,
       confirmation:{action:term?'confirm-and-continue':'confirm-and-submit',stage,userInitiated:true,mode:'configured-policy',challengeId:challenge.id,confirmedAt:now,approvedKeys:items.map(item=>item.key)}};};
   const attrs={'registration-start':'v1','owner-id':identity.ownerId,'product-id':identity.productId,'company-code':identity.company.code,'identity-digest':identityDigest,'packet-digest':sourceExpected.packetDigest,'request-id':sourceExpected.requestId,'body-sha256':sourceExpected.bodySha256,'prepared-body-sha256':sourceExpected.preparedBodySha256};
-  const arm=(trusted=true,patch={})=>{const values={...attrs,...patch},button={disabled:false,getAttribute:key=>values[key.replace('data-supplier-hub-','')]??null,closest:()=>values['registration-start']==='v1'?button:null};document.emit('click',{isTrusted:trusted,target:button});};
+  const click=(values,trusted=true,{disabled=false,ariaDisabled=false}={})=>{const marker=values['registration-batch']==='v1'?'batch':values['registration-start']==='v1'?'start':null,button={disabled,getAttribute:key=>key==='aria-disabled'?String(ariaDisabled):values[key.replace('data-supplier-hub-','')]??null,closest:selector=>marker&&selector===`button[data-supplier-hub-registration-${marker}="v1"]`?button:null};document.emit('click',{isTrusted:trusted,target:button});};
+  const arm=(trusted=true,patch={})=>click({...attrs,...patch},trusted);
+  const binding=({identity,identityDigest,sourceExpected})=>({ownerId:identity.ownerId,productId:identity.productId,companyCode:identity.company.code,packetDigest:sourceExpected.packetDigest,requestId:sourceExpected.requestId,identityDigest,bodySha256:sourceExpected.bodySha256,preparedBodySha256:sourceExpected.preparedBodySha256});
+  const armBatch=(items=subjects.map(binding),trusted=true,options={})=>click({'registration-batch':'v1','registration-items':typeof items==='string'?items:JSON.stringify(items)},trusted,options);
   let count=0;
-  return{scope,view,identity,identityDigest,sourceExpected,requests,input,arm,document,window,replies,get sourceReads(){return sourceReads;},
+  return{scope,view,identity,identityDigest,sourceExpected,currentSourceVerifier,requests,input,arm,armBatch,binding,subjects,document,window,replies,get sourceReads(){return sourceReads;},
+    async addRequest(){const next=clone(identity);next.productId='synthetic-product-'+(subjects.length+1);const source={...clone(sourceExpected),identity:next,packetDigest:await digest(['packet',next.productId]),requestId:webcrypto.randomUUID(),docId:'synthetic-doc-'+(subjects.length+1)},subject={identity:next,identityDigest:await digest(next),sourceExpected:source};subjects.push(subject);vm.runInContext(`yoofamSingleVerifiedSourceModes.set('${source.packetDigest}',{wholeProduct:true,nativeAssets:true})`,scope);return subject;},
     advance(ms){now+=ms;},setCurrent(value){sourceCurrent=value;},setHook(value){hook=value;},
     async confirm(value=input()){return new Promise(resolve=>handler({type:'YOOFAM_CONFIRM_NATIVE_PRODUCT_DOCUMENT_ACTION',expected:value},{id:'extension'},result=>resolve(plain(result))));},
     async probe(value=input()){const requestId='probe-'+(++count);window.emit('message',{source:window,origin,data:{channel:'YOOFAM_CONFIGURED_REGISTRATION_CONSENT',type:'probe',requestId,expected:value}});for(let n=0;n<200;n++){const result=replies.find(row=>row.requestId===requestId);if(result)return result.result;await new Promise(resolve=>setTimeout(resolve,2));}assert.fail('probe did not reply');},
-    cancel(){window.emit('message',{source:window,origin,data:{channel:'YOOFAM_CONFIGURED_REGISTRATION_CONSENT',type:'cancel'}});}};
+    cancel(requestId){window.emit('message',{source:window,origin,data:{channel:'YOOFAM_CONFIGURED_REGISTRATION_CONSENT',type:'cancel',...(requestId===undefined?{}:{requestId})}});}};
 }
+
+for(const company of companies)test(`${company.code}: one trusted batch click authorizes two independent staged requests and consumes only the terminal request`,async()=>{
+  const f=await contentFixture(company),second=await f.addRequest();f.armBatch();f.document.visibilityState='hidden';
+  const intentIds=[];
+  for(const subject of f.subjects){const stageProofs=[];
+    assert.equal((await f.probe(f.input('imagePage',subject))).confirmation,null,'each request must start at productPage');
+    for(const stage of ['productPage','imagePage','logisticsPage']){const input=f.input(stage,subject),probe=await f.probe(input);assert.equal(probe.confirmation?.mode,'configured-policy');input.confirmation=probe.confirmation;
+      const result=await f.confirm(input);assert.equal(result.ok,true,JSON.stringify(result));assert.equal(result.consentProof.requestId,subject.sourceExpected.requestId);
+      assert.equal(configuredConsentProofValid(result.consentProof,{identity:subject.identity,identityDigest:subject.identityDigest,packetDigest:subject.sourceExpected.packetDigest,requestId:subject.sourceExpected.requestId,docId:input.docId,challenge:input.challenge}),true);
+      if(stage==='productPage')intentIds.push(result.consentProof.intentId);if(stage!=='logisticsPage')stageProofs.push({consentProof:result.consentProof});else assert.equal(configuredFinalMatchesStages(result.consentProof,stageProofs),true);
+      assert.equal((await f.confirm(input)).ok,false,'a consumed stage cannot replay');
+    }
+    assert.equal((await f.probe(f.input('productPage',subject))).confirmation,null);
+    if(subject!==second)assert.equal((await f.probe(f.input('productPage',second))).confirmation?.mode,'configured-policy','terminal A must leave B armed');
+  }
+  assert.equal(new Set(intentIds).size,2);
+});
+
+test('scoped cancellation clears only its matching batch request and legacy cancellation clears the rest',async()=>{
+  const f=await contentFixture(),second=await f.addRequest();f.armBatch();f.cancel(f.sourceExpected.requestId);
+  assert.equal((await f.probe()).confirmation,null);assert.equal((await f.confirm()).ok,false);
+  assert.equal((await f.probe(f.input('productPage',second))).confirmation?.mode,'configured-policy');
+  f.cancel('99999999-9999-4999-8999-999999999999');assert.equal((await f.probe(f.input('productPage',second))).confirmation?.mode,'configured-policy');
+  f.cancel();assert.equal((await f.probe(f.input('productPage',second))).confirmation,null);
+});
+
+for(const count of [1,100])test(`trusted batch accepts its ${count}-request boundary without truncation`,async()=>{
+  const f=await contentFixture();while(f.subjects.length<count)await f.addRequest();f.armBatch();
+  for(const subject of [f.subjects[0],f.subjects.at(-1)])assert.equal((await f.probe(f.input('productPage',subject))).confirmation?.mode,'configured-policy');
+});
+
+test('scoped cancellation of an unrelated request preserves a single trusted registration',async()=>{
+  const f=await contentFixture();f.arm();f.cancel('99999999-9999-4999-8999-999999999999');assert.equal((await f.probe()).confirmation?.mode,'configured-policy');
+  f.cancel(f.sourceExpected.requestId);assert.equal((await f.probe()).confirmation,null);
+});
+
+for(const mode of ['expiry','pagehide','saved-policy-withdrawn','source-changed'])test(`batch ${mode} denies both requests`,async()=>{
+  const f=await contentFixture();await f.addRequest();f.armBatch();
+  if(mode==='expiry')f.advance(900000);if(mode==='pagehide')f.window.emit('pagehide');if(mode==='saved-policy-withdrawn')f.view.policies[0].enabled=false;if(mode==='source-changed')f.setCurrent(false);
+  for(const subject of f.subjects){const result=await f.probe(f.input('productPage',subject));assert.equal(result.confirmation??null,null);assert.equal((await f.confirm(f.input('productPage',subject))).ok,false);}
+});
+
+for(const boundary of ['first-read','after-read'])test(`an actual account change at ${boundary} retires every batch request even after the original account returns`,async()=>{
+  const f=await contentFixture();await f.addRequest();f.armBatch();const fetch=f.scope.fetch;let accountReads=0;
+  f.scope.fetch=async path=>{const changed=path.endsWith('/catalog-context')&&(boundary==='first-read'||++accountReads===2),value=path.endsWith('/catalog-context')?{ownerId:changed?'different-owner':f.identity.ownerId,company:f.identity.company}:{};
+    const response=Response.json(value);Object.defineProperty(response,'url',{value:'http://localhost:3000'+path});return response;};
+  await assert.rejects(f.currentSourceVerifier(f.sourceExpected,true,true));f.scope.fetch=fetch;
+  for(const subject of f.subjects)assert.equal((await f.probe(f.input('productPage',subject))).confirmation,null,'account ABA must require a new trusted batch start');
+});
+
+for(const mode of ['synthetic','hidden','disabled','aria-disabled','empty','too-many','malformed-json','object','missing-key','extra-key','non-string','mixed-owner','mixed-company','unsupported-company','duplicate-product','duplicate-request','bad-uuid','bad-hash','uppercase-hash'])test(`invalid batch ${mode} cannot arm any configured request`,async()=>{
+  const f=await contentFixture();await f.addRequest();let items=f.subjects.map(f.binding),trusted=true,options={};
+  if(mode==='synthetic')trusted=false;if(mode==='hidden')f.document.visibilityState='hidden';if(mode==='disabled')options.disabled=true;if(mode==='aria-disabled')options.ariaDisabled=true;
+  if(mode==='empty')items=[];if(mode==='too-many')items=Array.from({length:101},()=>items[0]);if(mode==='malformed-json')items='[{';if(mode==='object')items={items};
+  if(mode==='missing-key')delete items[1].bodySha256;if(mode==='extra-key')items[1].approved=true;if(mode==='non-string')items[1].ownerId=123;
+  if(mode==='mixed-owner')items[1].ownerId='another-owner';if(mode==='mixed-company')items[1].companyCode='A01464742';if(mode==='unsupported-company')for(const item of items)item.companyCode='unsupported';
+  if(mode==='duplicate-product')items[1].productId=items[0].productId;if(mode==='duplicate-request')items[1].requestId=items[0].requestId;if(mode==='bad-uuid')items[1].requestId='request-two';
+  if(mode==='bad-hash')items[1].packetDigest='a'.repeat(63);if(mode==='uppercase-hash')items[1].identityDigest='A'.repeat(64);
+  f.armBatch(items,trusted,options);for(const subject of f.subjects){assert.equal((await f.probe(f.input('productPage',subject))).confirmation,null);assert.equal((await f.confirm(f.input('productPage',subject))).ok,false);}assert.equal(f.requests.length,0);
+});
+
+test('a page message carrying reviewed batch bindings cannot arm registration',async()=>{
+  const f=await contentFixture();await f.addRequest();f.window.emit('message',{source:f.window,origin:'http://localhost:3000',data:{channel:'YOOFAM_CONFIGURED_REGISTRATION_CONSENT',type:'arm-batch',items:f.subjects.map(f.binding)}});
+  for(const subject of f.subjects)assert.equal((await f.probe(f.input('productPage',subject))).confirmation,null);
+});
 
 test('configured mode, saved policy, synthetic click and a preparation-only button cannot arm registration',async()=>{
   for(const mode of ['none','synthetic','prepare-only','hidden']){const f=await contentFixture();if(mode==='synthetic')f.arm(false);if(mode==='prepare-only')f.arm(true,{'registration-start':null});if(mode==='hidden'){f.document.visibilityState='hidden';f.arm();}

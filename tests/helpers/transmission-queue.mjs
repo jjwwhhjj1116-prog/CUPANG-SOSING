@@ -1,0 +1,17 @@
+import {createHash} from 'node:crypto';
+import {singlePacket,SINGLE_COMPANIES,SINGLE_SENDER} from './supplier-hub-single-document.mjs';
+import {createProductDocumentPacket} from '../../extensions/supplier-hub/product-document.mjs';
+import {productDocumentIdentity} from '../../extensions/supplier-hub/product-document-receiver.mjs';
+import {quotationTitleLoader} from './quotation-seo-title-ui.mjs';
+const plain=value=>JSON.parse(JSON.stringify(value));
+const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canonical).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}';
+const sha=value=>createHash('sha256').update(canonical(value)).digest('hex'),load=quotationTitleLoader();
+export async function queueCandidate(company=SINGLE_COMPANIES[0],productId='synthetic-queue-first'){
+ const single=singlePacket(company),body=plain(single.body),identity={ownerId:single.ownerId,company,productId,profileId:single.profileId,requestedProfileId:single.profileId,categoryId:single.categoryId,fingerprint:single.fingerprint,inputFingerprint:'d'.repeat(64),schemaSha256:single.schemaSha256,source:{...single.source,profileId:single.profileId}};
+ const members=[{optionId:'synthetic-first',optionLabel:'합성 옵션',documentIndex:0}],review={format:'yoofam-supplier-hub-product-document-v1',type:'YOOFAM_PRODUCT_DOCUMENT_REVIEW',identity,members,body,registered:false,remoteWrites:false,submissionReady:false};
+ const deferred=plain(body);for(const row of deferred.jsonDocument)for(const key of ['msrpAgree','labelContactAgreed'])row.imagePage[key]=false;
+ review.originalBodySha256=sha(body);review.preparedBodySha256=sha(deferred);review.reviewDigest=sha({format:review.format,type:review.type,identity,members,originalBodySha256:review.originalBodySha256,preparedBodySha256:review.preparedBodySha256});
+ const packet=await createProductDocumentPacket(review),context=await productDocumentIdentity(packet,SINGLE_SENDER),session={packet,packetDigest:context.packetDigest,origin:context.identity.origin,preview:{format:review.format,requestId:packet.requestId,productId,fingerprint:identity.fingerprint,members,reviewDigest:review.reviewDigest,identity:context.identity,identityDigest:context.identityDigest,packetDigest:context.packetDigest,originalBodySha256:review.originalBodySha256,preparedBodySha256:review.preparedBodySha256,liveVerified:false,remoteWrites:false,registered:false,draftPreparationAvailable:true,preparedLifecycleAvailable:true}};
+ const record=async status=>{const state={SUBMITTED:'pending',FINISHED:'accepted',REJECTED:'rejected'}[status],observation={format:review.format,requestId:packet.requestId,identity:context.identity,identityDigest:context.identityDigest,packetDigest:context.packetDigest,originalBodySha256:review.originalBodySha256,preparedBodySha256:review.preparedBodySha256,state,docId:'synthetic-queue-doc',registered:false,success:false,needsRecovery:false,receipt:{state,sourceStatus:status,docId:'synthetic-queue-doc',company,identityDigest:context.identityDigest,preparedBodySha256:review.preparedBodySha256,observedAt:Date.now(),receiptId:'synthetic-queue-qvt',qvtRequestId:'synthetic-queue-qvt',evidence:'document-receipt',registered:false}};return{...await load('app/supplier-hub-product-receipt.ts').validateProductReceiptObservation(observation,review,session.origin),recordedAt:new Date().toISOString()};};
+ return{productId,title:'합성 전송 '+productId,review,session,record};
+}

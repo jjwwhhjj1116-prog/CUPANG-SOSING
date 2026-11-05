@@ -15,7 +15,7 @@ function harness({beforeLayout}={}){
  let props={products:[product],profiles:[profile(),profile('b')],onEdit(){}};
  const effect=(fn,deps)=>{const i=cursor++;if(!effects[i]||deps.some((value,n)=>!Object.is(value,effects[i].deps[n])))pending.push(()=>{effects[i]?.cleanup?.();effects[i]={deps,cleanup:fn()};});};
  const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return[slots[i],value=>slots[i]=typeof value==='function'?value(slots[i]):value];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useMemo(fn,deps){const i=cursor++,old=slots[i];if(!old||deps.some((value,n)=>!Object.is(value,old.deps[n])))slots[i]={deps,value:fn()};return slots[i].value;},useEffect:effect,useLayoutEffect:effect};
- function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,URL,AbortController,fetch:(url,init)=>new Promise(resolve=>calls.push({url,signal:init.signal,resolve})),require(name){if(name==='react')return hooks;if(name==='@/app/components/submission-package')return{SubmissionPackage:'package'};if(name==='@/app/components/supplier-hub-product-submission')return{SupplierHubProductSubmission:'native'};if(name==='@/app/components/quotation-review-issues')return{QuotationReviewIssues:'issues'};return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;}
+ function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,URL,AbortController,fetch:(url,init)=>new Promise(resolve=>calls.push({url,signal:init.signal,resolve})),require(name){if(name==='react')return hooks;if(name==='@/app/components/submission-package')return{SubmissionPackage:'package'};if(name==='@/app/components/supplier-hub-product-submission')return{SupplierHubProductSubmission:'native'};if(name==='@/app/components/supplier-hub-transmission-queue')return{SupplierHubTransmissionQueue:'queue'};if(name==='@/app/components/quotation-review-issues')return{QuotationReviewIssues:'issues'};return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;}
  const Component=load('app/components/submission-review-panel.tsx').SubmissionReviewPanel;
  function render(changes={}){props={...props,...changes};cursor=0;pending=[];const tree=Component(props);beforeLayout?.(tree);pending.forEach(fn=>fn());return tree;}
  function respond(index,categoryId='80719',title='상품'){const call=calls[index],url=new URL(call.url,'https://example.com');call.resolve(Response.json({productId:'p1',requestedProfileId:url.searchParams.get('profileId'),title,sourceUrl:product.source_url,categoryId,categoryPath:['주방'],checkedAt:'2026-09-28T00:00:00Z',fingerprint:'a'.repeat(64),submissionReady:false,transport:'not-connected',includedOptions:1,errorCount:0,reviewCount:0,omittedIssueCount:0,issues:[],limits:[]}));}
@@ -24,6 +24,23 @@ function harness({beforeLayout}={}){
 }
 const packages=tree=>nodes(tree).filter(node=>node.type==='package');
 const heading=tree=>nodes(tree).find(node=>node.type==='h3').props.children;
+
+test('selected queue and individual native tools are separate modes with independent queue lock and exact profile callbacks',()=>{
+ const h=harness(),locks=[],edited=[],products=[product,{...product,id:'p2'}];try{
+  let tree=h.render({products,initialProfileId:'a',onLockChange:(...value)=>locks.push(value),onEdit:(...value)=>edited.push(value)});
+  const entry=nodes(tree).find(node=>node.type==='button'&&node.props.children==='선택 상품 순차 전송');assert.ok(entry);entry.props.onClick();tree=h.render();
+  assert.equal(nodes(tree).filter(node=>node.type==='native').length,0);const queue=nodes(tree).find(node=>node.type==='queue');assert.equal(queue.props.products.length,2);assert.equal(queue.props.profileId,'a');assert.equal(queue.props.expectedCategoryId,'80719');
+  const exit=nodes(tree).find(node=>node.type==='button'&&node.props.children==='상품별 전송 화면');queue.props.onLockChange(true,false);exit.props.onClick();tree=h.render();assert.ok(nodes(tree).some(node=>node.type==='queue'));assert.equal(nodes(tree).find(node=>node.type==='select').props.disabled,true);assert.deepEqual(locks.at(-1),[true,false]);
+  queue.props.onInspect('p2');assert.equal(edited.length,0);queue.props.onLockChange(false,false);queue.props.onInspect('p2');assert.deepEqual(edited,[['p2','a',undefined]]);
+  exit.props.onClick();tree=h.render();assert.equal(nodes(tree).filter(node=>node.type==='native').length,2);
+ }finally{h.unmount();}
+});
+test('retired queue callbacks cannot refresh or edit another review context after product ABA',()=>{
+ const h=harness(),edited=[],saved=[];try{
+  let tree=h.render({products:[product,{...product,id:'p2'}],onEdit:(...args)=>edited.push(args),onReceiptSaved:()=>saved.push(true)});nodes(tree).find(node=>node.type==='button'&&node.props.children==='선택 상품 순차 전송').props.onClick();const old=nodes(h.render()).find(node=>node.type==='queue');
+  h.render({products:[{...product,updated_at:'v2'},{...product,id:'p2'}]});h.render({products:[product,{...product,id:'p2'}]});old.props.onReceiptSaved();old.props.onInspect('p1');old.props.onLockChange(true,true);assert.equal(saved.length,0);assert.equal(edited.length,0);assert.equal(nodes(h.render()).some(node=>node.type==='queue'),false);
+ }finally{h.unmount();}
+});
 const json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
 
 test('native error editing forwards the selected scope and rejects source locks or an older profile context',()=>{

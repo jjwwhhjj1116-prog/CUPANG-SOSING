@@ -145,9 +145,9 @@ export async function previewProductDocument(packet:ProductDocumentPacket,signal
     if(signal.aborted)throw Error();return freeze({packet:copy(packet),preview:copy(result) as unknown as ProductDocumentPreview,packetDigest:expected.packetDigest,origin});
   }catch{throw new ProductDocumentBridgeError('확장에 전달한 전체 옵션·회사·본문 식별값이 다릅니다.',false,'PRODUCT_DOCUMENT_REPLY_IDENTITY');}
 }
-/** Cancels only the current tab's ephemeral configured-registration intent. */
-export function cancelConfiguredProductConsent(){
-  try{window.postMessage({channel:'YOOFAM_CONFIGURED_REGISTRATION_CONSENT',type:'cancel'},window.location.origin);}catch{/* No intent is adopted after an unavailable bridge. */}
+/** Cancels one request's ephemeral consent, or all tab intents for legacy callers. */
+export function cancelConfiguredProductConsent(requestId?:string){
+  try{window.postMessage({channel:'YOOFAM_CONFIGURED_REGISTRATION_CONSENT',type:'cancel',...(requestId===undefined?{}:{requestId})},window.location.origin);}catch{/* No intent is adopted after an unavailable bridge. */}
 }
 /** The app never fabricates configured approvals. The isolated extension must
  * independently verify the trusted click, source and current member policy;
@@ -165,7 +165,7 @@ export async function configuredProductConsentConfirmation(session:ProductDocume
   return new Promise((resolve,reject)=>{
     const requestId=crypto.randomUUID(),cleanup=()=>{clearTimeout(timer);window.removeEventListener('message',receive);signal.removeEventListener('abort',abort);};
     const fail=()=>{cleanup();reject(new ProductDocumentBridgeError('자동 적용 동의 응답을 확인하지 못했습니다. 현재 약관을 직접 확인해주세요.',false,'PRODUCT_CONFIGURED_CONSENT_REPLY'));};
-    const abort=()=>{cleanup();cancelConfiguredProductConsent();reject(new ProductDocumentBridgeError('자동 적용 동의 확인을 취소했습니다.',false,'PRODUCT_CONFIGURED_CONSENT_CANCELLED'));};
+    const abort=()=>{cleanup();cancelConfiguredProductConsent(session.packet.requestId);reject(new ProductDocumentBridgeError('자동 적용 동의 확인을 취소했습니다.',false,'PRODUCT_CONFIGURED_CONSENT_CANCELLED'));};
     const receive=(event:MessageEvent)=>{
       if(event.source!==window||event.origin!==session.origin||event.data?.channel!=='YOOFAM_CONFIGURED_REGISTRATION_CONSENT_RESULT'||event.data.requestId!==requestId)return;
       const result=event.data.result;if(!exact(result,['ok','confirmation'])||result.ok!==true){fail();return;}
@@ -179,7 +179,7 @@ export async function configuredProductConsentConfirmation(session:ProductDocume
       cleanup();resolve(freeze(copy(value)) as SingleConfirmation);
     };
     // A missing policy probe is only a manual fallback, never a submission ACK.
-    const timer=setTimeout(()=>{cleanup();cancelConfiguredProductConsent();resolve(null);},45000);
+    const timer=setTimeout(()=>{cleanup();cancelConfiguredProductConsent(session.packet.requestId);resolve(null);},45000);
     window.addEventListener('message',receive);signal.addEventListener('abort',abort,{once:true});
     try{window.postMessage({channel:'YOOFAM_CONFIGURED_REGISTRATION_CONSENT',requestId,type:'probe',expected:{identity:session.preview.identity,identityDigest:session.preview.identityDigest,
       sourceExpected:{identity:session.preview.identity,bodySha256:expected.originalBodySha256,preparedBodySha256:expected.preparedBodySha256,packetDigest:session.packetDigest,requestId:session.packet.requestId,docId:state.docId},docId:state.docId,challenge}},session.origin);}
