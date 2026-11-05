@@ -7,13 +7,13 @@ import {randomUUID} from 'node:crypto';
 import {APP_ORIGIN,createCliServer} from '../cli/server.mjs';
 
 const exports={};
-vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/cli-bridge-client.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,URL,URLSearchParams,Request,Response,Headers,TextEncoder,TextDecoder,Uint8Array,AbortController,Date,setTimeout,clearTimeout,setInterval,clearInterval,fetch(){throw Error('Unexpected external request');}});
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/cli-bridge-client.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,URL,URLSearchParams,Request,Response,Headers,TextEncoder,TextDecoder,Uint8Array,AbortController,AbortSignal,Date,setTimeout,clearTimeout,setInterval,clearInterval,fetch(){throw Error('Unexpected external request');}});
 const {createCliBridge,parseCliLink}=exports;
 const scopes=[{ownerId:'synthetic-789-a',company:{code:'A01526306',name:'유앤채'}},{ownerId:'synthetic-789-b',company:{code:'A01464742',name:'와이홉'}}];
 const sourceUrl='https://detail.1688.com/offer/700000000789.html';
 const plain=x=>JSON.parse(JSON.stringify(x));
 
-async function setup(t,initialScope){
+async function setup(t,initialScope,imageEditCommand){
   const server=createCliServer({port:0,jobTimeoutMs:3000});const connection=await server.listen();
   const calls=[],events=[];let scope=plain(initialScope),approved=false;
   const source={schemaVersion:1,sourceUrl,offerId:'700000000789',provider:'synthetic-integration-only',collectedAt:new Date().toISOString(),title:'합성 CLI 상품조회 검수',description:'외부 요청 없는 합성 원문',options:[{sku:'synthetic-789-sku',name:'합성 검정',unitPriceCny:5.3,minimumOrder:2,stock:0}],images:[{url:'https://cbu01.alicdn.com/synthetic-cli-789.jpg',role:'main'}]};
@@ -37,7 +37,7 @@ async function setup(t,initialScope){
     if(input.startsWith('/api/cli-read?resource=collection-job&jobId=')){assert.deepEqual(JSON.parse(decodeURIComponent(new Headers(init.headers).get('x-yoofam-cli-scope'))),scope);return Response.json({...scope,job:{id:new URL(input,APP_ORIGIN).searchParams.get('jobId'),owner_id:scope.ownerId,status:'awaiting_connector'}});}
     throw Error('No arbitrary API route may be requested: '+input);
   };
-  const bridge=createCliBridge({link:parseCliLink(new URL(connection.connectUrl).hash),scope,queryApproved:()=>approved,fetcher,onState:value=>events.push(plain(value)),contextIntervalMs:60000});
+  const bridge=createCliBridge({link:parseCliLink(new URL(connection.connectUrl).hash),scope,queryApproved:()=>approved,fetcher,imageEditCommand,onState:value=>events.push(plain(value)),contextIntervalMs:60000});
   t.after(async()=>{await bridge.disconnect();await server.close();});
   return{server,connection,bridge,calls,events,approve:value=>{approved=value;},scope:value=>{scope=plain(value);}};
 }
@@ -60,4 +60,16 @@ test('actual bridge tears down after account change and does not execute a sourc
   const pending=f.server.enqueue('status',{});await assert.rejects(pending);
   assert.equal(f.calls.filter(row=>row.app==='/api/product-query').length,0);
   assert.equal(f.events.at(-1).phase,'stopped');
+});
+test('actual localhost MCP queue claims a live editor request and returns only its one saved result',async t=>{
+ const module={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/codex-main-image-channel.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:module,BroadcastChannel,crypto,AbortSignal,setTimeout,clearTimeout,Date,Error,JSON});
+ const scope=scopes[0],channel='integration-'+randomUUID(),controller=new AbortController(),image={mimeType:'image/png',data:'iVBORw0KGgo='};let applied=0;
+ t.after(()=>controller.abort());
+ const f=await setup(t,scope,(command,payload,current,signal)=>module.dispatchCodexMainImageCommand(command,payload,current,{channel,signal}));await f.bridge.start();
+ const pending=module.requestCodexMainImageEdit({productId:'product',optionId:'red',profileId:null,sourceKey:scope.ownerId+'/original.png',prompt:'원본 형태 유지',image},scope,{channel,signal:controller.signal,onApply:async result=>{assert.deepEqual(plain(result),image);applied++;return{key:scope.ownerId+'/edited.png',productVersion:'2026-11-05T01:00:00Z'};}});
+ const pick=await f.server.enqueue('main-image/next');assert.equal(pick.ownerId,scope.ownerId);assert.equal(pick.job.optionId,'red');assert.equal(pick.image.data,image.data);
+ const saved=await f.server.enqueue('main-image/complete',{requestId:pick.job.requestId,image});assert.equal(saved.key,scope.ownerId+'/edited.png');assert.equal((await pending).key,saved.key);assert.equal(applied,1);
+ assert.ok(f.calls.filter(row=>row.app).every(row=>row.app==='/api/supplier-hub/catalog-context'),'image commands never select arbitrary app APIs');
+ for(let n=0;n<20&&!f.events.some(row=>row.lastResult?.command==='main-image/complete');n++)await new Promise(resolve=>setTimeout(resolve,5));
+ assert.equal(f.events.findLast(row=>row.lastResult?.command==='main-image/complete').lastResult.stored,true);
 });

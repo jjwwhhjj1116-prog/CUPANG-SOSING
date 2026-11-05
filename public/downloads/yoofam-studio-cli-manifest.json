@@ -1,13 +1,13 @@
 {
   "format": "yoofam-cli-distribution-v1",
   "name": "@yoofam/studio-cli",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "node": ">=22.13.0",
   "files": [
     {
       "name": "README.md",
-      "bytes": 8027,
-      "sha256": "b999980b5ec3083589de01e75545a76a133ebf65367a4b3fbf02738a86c25c7b",
+      "bytes": 10015,
+      "sha256": "cccf3bc91b4fc875328369bbf6717ef96ecc8469237e282454a9850dd401f16b",
       "mode": "0644"
     },
     {
@@ -18,32 +18,32 @@
     },
     {
       "name": "package.json",
-      "bytes": 318,
-      "sha256": "66a058082228993fb3feda62893b011b79f974249bf00581751ecb7216a1a86c",
+      "bytes": 340,
+      "sha256": "353ffa94e85b75f4f3638c3e914e034c3122b5cd716f5eb0ec6e23db93fe75fb",
       "mode": "0644"
     },
     {
       "name": "server.mjs",
-      "bytes": 21135,
-      "sha256": "5596e162e37ce6bece0fd4bd0169c5c76cca61c97eef0ce6d6e91dd021d1ca63",
+      "bytes": 21803,
+      "sha256": "2d6c8a03a097242535a011a06b1994fd8bdeb5b9e4aff899f7d1ca4cb75c5e35",
       "mode": "0644"
     },
     {
       "name": "yoofam-studio.mjs",
-      "bytes": 9849,
-      "sha256": "3fb0362efc84b99526e047979637960ddcb36b356225898ef5515b0ff6684040",
+      "bytes": 11867,
+      "sha256": "55c047c3501101b818d70c95c97d6157e11038fd0c666e02825de72aa77a4abd",
       "mode": "0644"
     }
   ],
   "zip": {
-    "name": "yoofam-studio-cli-0.1.2.zip",
-    "bytes": 42061,
-    "sha256": "62da232e53cb9f8f44138f0cafb208129c0b302326e1b64073431e05dc802438"
+    "name": "yoofam-studio-cli-0.1.3.zip",
+    "bytes": 46757,
+    "sha256": "78c083ae6e02c59282e22ae23b064ff2c34576b65e1e9b7d5f9199de22549c6e"
   },
   "tgz": {
-    "name": "yoofam-studio-cli-0.1.2.tgz",
-    "bytes": 13614,
-    "sha256": "58eec677508effbcbd4756f2dc52487283907c80c11a1ae23ec051ddfbf751df",
-    "integrity": "sha512-UUNQAxw8teCF9ZoAoe5pBXD5gwZ50om+xDbr5dGIFr8v8YOWWjRE38XFJhXYN8vllDDxGdrttFVkCgz1wnhy1w=="
+    "name": "yoofam-studio-cli-0.1.3.tgz",
+    "bytes": 15308,
+    "sha256": "b2c544cade2827976e385e61072668f212b5778d2d5c19fb3b792537accff459",
+    "integrity": "sha512-yovmze9fOuSyIAze001rVJj/fxhxztkTucxh6qMPBqcTJ1tyFPmL3Q4S2EJfyvEZ/snFxqQDyBGIoIAonqqMqw=="
   }
 }

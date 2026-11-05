@@ -131,7 +131,31 @@ export async function savedDraftCurrentReadPage(input){
   // collection. Only a literal empty array or empty plain object proves that
   // this document has no legal files of any type; envelopes are not unwrapped.
   phase='legal-lists';const legal=await read('/sr/draft/api/get-files-by-type/'+doc,{legal:true});
-  if(Array.isArray(legal)){if(legal.length>2000&&mode==='audit')fail('legal-list-size');if(legal.length!==0&&mode!=='audit'){
+  let legalCopies;
+  if(Array.isArray(legal)&&legal.length>0&&legal.length<=12&&mode!=='audit'){
+   const normalizedLegal=value=>{const result=copy(value);if(object(result)&&!Object.hasOwn(result,'adCert'))result.adCert='';return result;};
+   const noCertificates=member=>{const page=member.legalPage;return object(page)&&page.kcMarkType==='해당사항없음'&&page.adCert===''
+    &&Array.isArray(page.certificates)&&page.certificates.length>0&&page.certificates.every(row=>exact(row,['certificateName','certificateValue'])&&typeof row.certificateName==='string'&&!!row.certificateName.trim()&&row.certificateValue==='해당사항없음');};
+   const labelInEveryMember=name=>expected.jsonDocument.every(member=>{const rows=member.imagePage?.images?.labelImages;return Array.isArray(rows)&&rows.some(row=>object(row)&&row.labelImageType==='제품 한글 표시사항 라벨 또는 도안 이미지'&&row.labelImageFiles===name);});
+   const eligibleBody=expected.jsonDocument.every((member,index)=>noCertificates(member)&&same(normalizedLegal(body.jsonDocument[index].legalPage),member.legalPage));
+   const copies=[],seen=new Set();let eligible=eligibleBody;
+   for(const row of legal){
+    if(!object(row)||row.fileType!=='certificate'||typeof row.fileName!=='string'||seen.has(row.fileName)||typeof row.s3Link!=='string'
+     ||['docId','documentId'].some(key=>Object.hasOwn(row,key)&&!same(row[key],docId))){eligible=false;break;}
+    seen.add(row.fileName);const file=images.find(file=>file.transportName===row.fileName),source=files.find(file=>file.imageName===row.fileName);
+    const match=source?.s3Link.match(/^QVT\/vendor\/(A\d+)\/user\/\d+\/submission\/[a-f0-9-]{36}\/source\/image\//);
+    if(!file||file.contentType!=='image/png'||!row.fileName.startsWith('label-'+file.sha256+'-')||!/^label-[a-f0-9]{64}-[a-f0-9]{16}\.png$/.test(row.fileName)
+     ||!source||!match||match[1]!==binding.identity.company.code||source.s3Link!==match[0]+row.fileName||row.s3Link!==match[0].replace(/image\/$/,'certificate/')+row.fileName||!labelInEveryMember(row.fileName)){eligible=false;break;}
+    copies.push({row,file,source});
+   }
+   if(eligible){
+    legalCopies=[];phase='legal-copy-bytes';
+    for(const {row,file,source}of copies){await read('/sr/api/image/get-by-key?key='+encodeURIComponent(row.s3Link),{bytes:true,expectedFile:file});
+     legalCopies.push({fileName:row.fileName,fileType:'certificate',s3Link:row.s3Link,sourceS3Link:source.s3Link,descriptorSha256:await hash(row),contentType:file.contentType,byteLength:file.byteLength,sha256:file.sha256});}
+    phase='legal-lists';
+   }
+  }
+  if(Array.isArray(legal)){if(legal.length>2000&&mode==='audit')fail('legal-list-size');if(legal.length!==0&&mode!=='audit'&&!legalCopies){
    // Only known metadata identifiers may be observed. Unknown own-key names,
    // values, URL credentials and query strings never leave this page.
    const keyNames=new Set(['attachmentType','byteLength','categoryId','certificateType','code','contentType','createdAt','data','disabled','docId','documentId','errorCode','fileId','fileName','fileSize','fileType','host','id','imageData','imageName','imageUrl','mainImage','message','mimeType','modifiedAt','name','productId','s3Link','sha256','size','status','type','version']);
@@ -184,7 +208,7 @@ export async function savedDraftCurrentReadPage(input){
   phase='image-bytes';const observations=new Array(images.length);let next=0;
   await Promise.all(Array.from({length:Math.min(3,images.length)},async()=>{for(;;){const index=next++;if(index>=images.length)return;const file=images[index];observations[index]=await read(paths.get(file.transportName),{bytes:true,expectedFile:file});}}));
   observations.sort((a,b)=>a.transportName<b.transportName?-1:a.transportName>b.transportName?1:0);
-  phase='hashes';const fileSetSha256=await hash(files),byteSetSha256=await hash(observations),rawBodySha256=await hash(body);fence();
+  phase='hashes';const fileSetSha256=await hash(legalCopies?{images:files,legalCopies}:files),byteSetSha256=await hash(observations),rawBodySha256=await hash(body);fence();
   if(mode==='audit'){
    // Evidence only: this branch never binds the DOM record or reconstructs a
    // write acknowledgement. All image bytes were checked above even when an
@@ -289,7 +313,7 @@ export async function savedDraftCurrentReadPage(input){
    const report={format:'yoofam-unexpected-legal-audit-v1',requestId:binding.requestId,docId,identityDigest:binding.identityDigest,packetDigest:binding.packetDigest,originalBodySha256:binding.originalBodySha256,preparedBodySha256:binding.preparedBodySha256,sourcePlanSha256:binding.nativeAssetSourcePlanSha256,checkpointSequence:audit.checkpointSequence,target,observedAt:Date.now(),imageCount:files.length,legalCount:legalRows.length,bodyMatchesExpected,schemaBindingComplete,rawBodySha256,normalizedBodySha256,fileSetSha256,byteSetSha256,legalSetSha256:await hash(legal),legalEntries,legalEntriesTruncated:legalRows.length>12,differences,differenceCount,differencesTruncated:differenceCount>24,bodyLeafDifferences,readOnly:true,remoteWrites:false,checkpointWrites:false,canResume:false,canDelete:false,registered:false,historicalAckRecovered:false};
    fence();return serialized?JSON.stringify(report):report;
   }
-  const observation={body,files,fileSetSha256,byteSetSha256,rawBodySha256,filesCount:files.length,duplicateMatches:0,documentState:'UNFINISHED',readOnly:true,remoteWrites:false,historicalAckRecovered:false,observedAt:Date.now()};
+  const observation={body,files,...(legalCopies?{legalCopies}:{}),fileSetSha256,byteSetSha256,rawBodySha256,filesCount:files.length,duplicateMatches:0,documentState:'UNFINISHED',readOnly:true,remoteWrites:false,historicalAckRecovered:false,observedAt:Date.now()};
   if(existing){
    if(['fileSetSha256','byteSetSha256','filesCount'].some(key=>existing.currentReadRecovery[key]!==observation[key]))fail('record-observation');
    if(existing.currentReadRecovery.rawBodySha256!==rawBodySha256){

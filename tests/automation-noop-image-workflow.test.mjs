@@ -22,7 +22,7 @@ const detail=functions('./batch-selected-detail-work.test.mjs',['setup'],{fixtur
  * together. Server/proposed SEO, pricing, label and quotation boundaries are
  * local fixtures. This is neither a provider-quality test nor a Hub receipt. */
 function fixture(company,decision='verified'){
- const h=orchestrator.fixture(),runners=new Map(),imageResults=[],trace=[];let productVersion=version,contentRevision=3,optionRevision=1,rawDetail;
+ const h=orchestrator.fixture(),runners=new Map(),imageResults=[],trace=[];let productVersion=version,contentRevision=3,optionRevision=1,rawDetail,mainConnected=false;
  h.company(company);h.options.mode='full';
  const configuration={freeOnly:true,destination:'Cloudflare Workers AI',configured:true,issues:[],translationConfig:{configured:true,model:'@cf/qwen/qwen3-30b-a3b-fp8',maxOutputTokens:4096,freeOnly:false,issues:[]}};
  h.options.seoGenerationConsent=configuration;
@@ -33,11 +33,11 @@ function fixture(company,decision='verified'){
  });
  h.deps['@/app/option-translation'].optionTranslationBatch=()=>({attributes:[],remaining:0,total:1});
  h.intercept(call=>{
-  if(call.url==='/api/products/product')return Response.json({product:{id:'product',owner_id:'owner',title:'합성 상품',updated_at:productVersion,image_keys:'["owner/source-a.png"]'}});
+  if(call.url==='/api/products/product')return Response.json({product:{id:'product',owner_id:'owner',title:'합성 상품',updated_at:productVersion,image_keys:'["owner/source-a.png"]',content_summary:{seo:false,seoTitle:null,mainImageKey:'owner/source-a.png',main:1,additional:0,detail:0,label:0,missingImages:false,stages:Object.fromEntries(stageIds.map(id=>[id,{state:id==='mainImage'&&mainConnected?'complete':'pending',detail:'fixture'}]))}}});
   if(call.url.endsWith('/translation'))return Response.json({configuration:plain(configuration.translationConfig),jobs:[]});
   if(call.url.endsWith('/options'))return Response.json({productVersion,options:{productId:'product',revision:optionRevision,rows:[]}});
   if(call.url.endsWith('/content'))return Response.json({content:{productId:'product',schemaVersion:1,revision:contentRevision,assets:{size:{value:[]}}}});
-  if(call.url.endsWith('/work-draft'))return Response.json({productId:'product',productVersion});
+  if(call.url.endsWith('/work-draft')){if(call.body.roles[0]==='main')mainConnected=true;return Response.json({productId:'product',productVersion});}
   if(call.url.endsWith('/registration-layout'))return Response.json({productId:'product',productVersion,sizeChartRequired:false});
   if(call.url.endsWith('/translation-apply')){
    if(call.body.action==='preview')return Response.json({scope:'all',productId:'product',productVersion,contentRevision,optionRevision,fingerprint:hash,preview:[{source:'local-SEO-response'}]});
@@ -87,8 +87,8 @@ for(const company of [{code:'A01526306',name:'유앤채'},{code:'A01464742',name
  const f=fixture(company),result=await f.run();
  assert.deepEqual(plain(result.stages.map(row=>row.id)),stageIds);
  assert.deepEqual(plain(result.stages.map(row=>[row.id,row.status])),stageIds.map(id=>[id,id==='sizeChart'?'skipped':'draft']));
- assert.deepEqual(f.trace,['seo-provider','seo-save','main','additional','detail']);
- assert.deepEqual(f.imageResults.map(({stage,result})=>[stage,result.status,result.applied,result.verifiedUnchanged]),[['main','completed',0,1],['additional','completed',0,2],['detail','completed',0,2]]);
+ assert.deepEqual(f.trace,['seo-provider','seo-save','additional','detail']);
+ assert.deepEqual(f.imageResults.map(({stage,result})=>[stage,result.status,result.applied,result.verifiedUnchanged]),[['additional','completed',0,2],['detail','completed',0,2]]);
  assert.equal(f.h.calls.filter(call=>call.adapter==='label').length,1);assert.equal(f.h.calls.filter(call=>call.adapter==='packaging').length,1);
  assert.equal(f.h.calls.filter(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST').length,1);
  assert.ok(!f.h.calls.some(call=>/supplier\.coupang|supplier-hub.*receipt|single-package|submission/.test(call.url??'')));
@@ -97,13 +97,13 @@ for(const company of [{code:'A01526306',name:'유앤채'},{code:'A01464742',name
  assert.equal([...f.h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')||key.endsWith(':vision-inference-pending')),false);
  // A fresh toolbar request has no retained image-stage completion map. The
  // server proof must be verified again, not a client skipped->complete flag.
- f.h.options.keys=new Map();const second=await f.run();assert.equal(second.stages.filter(row=>['mainImage','additionalImages','detailImage'].includes(row.id)).every(row=>row.status==='draft'),true);
- assert.equal(f.imageResults.length,6);assert.equal(f.imageResults.slice(3).every(row=>row.result.status==='completed'&&row.result.verifiedUnchanged>0),true);
+ f.h.options.keys=new Map();const second=await f.run();assert.equal(second.stages.filter(row=>['mainImage','additionalImages','detailImage'].includes(row.id)).every(row=>row.id==='mainImage'?row.status==='skipped':row.status==='draft'),true);
+ assert.equal(f.imageResults.length,4);assert.equal(f.imageResults.slice(2).every(row=>row.result.status==='completed'&&row.result.verifiedUnchanged>0),true);
 });
 
 for(const decision of ['legacy-empty','unreadable'])test('fresh toolbar does not promote '+decision+' OCR into completed translation without server no-text proof',async()=>{
  const f=fixture({code:'A01526306',name:'유앤채'},decision),result=await f.run();
- assert.deepEqual(plain(result.stages.filter(row=>['mainImage','additionalImages','detailImage'].includes(row.id)).map(row=>row.status)),['blocked','blocked','blocked']);
+ assert.deepEqual(plain(result.stages.filter(row=>['mainImage','additionalImages','detailImage'].includes(row.id)).map(row=>row.status)),['draft','blocked','blocked']);
  assert.ok(f.imageResults.every(row=>row.result.status==='partial'&&!row.result.verifiedUnchanged&&row.result.applied===0));
  assert.equal(result.stages.find(row=>row.id==='koreanLabel').status,'draft');assert.equal(result.stages.find(row=>row.id==='quotation').status,'draft');
  for(const r of f.runners.values())assert.equal(r.calls.some(call=>['translate','render','apply'].includes(call[0])),false);
@@ -112,8 +112,8 @@ for(const decision of ['legacy-empty','unreadable'])test('fresh toolbar does not
 
 test('a server proof bound to different image bytes cannot complete a stage or run later stages',async()=>{
  const f=fixture({code:'A01526306',name:'유앤채'},'wrong-sha'),result=await f.run();
- assert.equal(result.stages.find(row=>row.id==='mainImage').status,'blocked');assert.equal(f.imageResults[0].result.sourceChanged,true);
- assert.ok(result.stages.filter(row=>['additionalImages','detailImage','koreanLabel','quotation'].includes(row.id)).every(row=>row.status==='blocked'));
+ assert.equal(result.stages.find(row=>row.id==='mainImage').status,'draft');assert.equal(result.stages.find(row=>row.id==='additionalImages').status,'blocked');assert.equal(f.imageResults[0].result.sourceChanged,true);
+ assert.ok(result.stages.filter(row=>['detailImage','koreanLabel','quotation'].includes(row.id)).every(row=>row.status==='blocked'));
  assert.equal(f.h.calls.some(call=>call.adapter==='label'||call.adapter==='packaging'||call.url?.endsWith('/quotation-ai')),false);
  assert.equal(f.imageResults[0].result.verifiedUnchanged,undefined);assert.equal(f.imageResults[0].result.applied,0);
 });

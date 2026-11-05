@@ -33,7 +33,7 @@ export function normalizeScope(value) {
 const scopeKey = (value) => JSON.stringify(normalizeScope(value));
 
 export function validateCommand(command, payload = {}) {
-  if (command === 'status' || command === 'category-profiles/list') {
+  if (command === 'status' || command === 'category-profiles/list' || command === 'main-image/next') {
     if (!ownKeys(payload, [])) throw failure('COMMAND_INVALID', '이 명령에는 추가 입력을 사용할 수 없습니다.');
     return {};
   }
@@ -49,6 +49,11 @@ export function validateCommand(command, payload = {}) {
   if (command === 'collection-job/status') {
     if (!ownKeys(payload, ['jobId']) || !uuid(payload.jobId)) throw failure('COMMAND_INVALID', '작업 번호를 확인해주세요.');
     return { jobId: payload.jobId };
+  }
+  if(command==='main-image/complete'){
+    if(!ownKeys(payload,['requestId','image'])||!uuid(payload.requestId)||!ownKeys(payload.image,['mimeType','data'])||!['image/png','image/jpeg'].includes(payload.image.mimeType)
+      ||typeof payload.image.data!=='string'||!payload.image.data.length||payload.image.data.length>5_592_408||payload.image.data.length%4!==0||!/^[A-Za-z0-9+/]+={0,2}$/.test(payload.image.data))throw failure('COMMAND_INVALID','이미지 요청 번호와 4MB 이하 PNG·JPEG 결과가 필요합니다.');
+    return {requestId:payload.requestId,image:{mimeType:payload.image.mimeType,data:payload.image.data}};
   }
   throw failure('COMMAND_NOT_ALLOWED', '허용된 읽기 명령만 사용할 수 있습니다.', 403);
 }

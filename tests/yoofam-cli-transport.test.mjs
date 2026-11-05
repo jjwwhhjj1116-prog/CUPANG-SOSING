@@ -238,8 +238,8 @@ test('chunked request cannot bypass the eight MiB body limit or settle the activ
   assert.equal(server.getState().activeJobId, pending.jobId); assert.equal((await result(pending.jobId)).status, 200); assert.equal((await answer).ok, true);
 });
 
-test('CLI publishes only four read tools and validates startup options', () => {
-  assert.deepEqual(CLI_TOOLS.map((tool) => tool.name), ['status', 'product-query', 'category-profiles/list', 'collection-job/status']);
+test('CLI publishes four read tools and two explicit main image tools and validates startup options', () => {
+  assert.deepEqual(CLI_TOOLS.map((tool) => tool.name), ['status', 'product-query', 'category-profiles/list', 'collection-job/status','main-image/next','main-image/complete']);
   assert.equal(parseArguments(['serve', '--stdio', '--port', '49832', '--allow-local-dev']).port, 49832);
   assert.equal(parseArguments([]).diagnostics, false); assert.equal(parseArguments(['serve', '--diagnostics']).diagnostics, true);
   for (const args of [['--port', '0'], ['--host', '0.0.0.0'], ['--token', 'secret'], ['exec', 'anything']]) assert.throws(() => parseArguments(args), { code: 'ARGUMENT_INVALID' });
@@ -332,7 +332,7 @@ test('actual stdio tool discovery and a paired status round trip use JSON Lines 
   const lines = () => text.trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
   assert.equal(lines()[0].method, 'notifications/connectionReady');
   input.write('{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n'); await delay(10);
-  assert.equal(lines().find((line) => line.id === 1).result.tools.length, 4);
+  assert.equal(lines().find((line) => line.id === 1).result.tools.length, 6);
   input.write('{"jsonrpc":"2.0","id":"package-version","method":"initialize"}\n'); await delay(10);
   assert.equal(lines().find((line) => line.id === 'package-version').result.serverInfo.version, CLI_VERSION);
   await send(cli.connection, '/pair', { sessionId: cli.connection.sessionId, scope: A });
@@ -362,7 +362,7 @@ test('--diagnostics emits only sanitized transport events to stderr without addi
   assert.equal(text.trim().split('\n').length, 1);
   input.write('{"jsonrpc":"2.0","id":"diag-not-remote","method":"diagnostics"}\n'); await delay(10);
   const result = text.trim().split('\n').map((line) => JSON.parse(line)).find((line) => line.id === 'diag-not-remote');
-  assert.equal(result.error.data.code, 'METHOD_NOT_ALLOWED'); assert.equal(CLI_TOOLS.length, 4);
+  assert.equal(result.error.data.code, 'METHOD_NOT_ALLOWED'); assert.equal(CLI_TOOLS.length, 6);
 });
 
 test('terminal diagnostics is local only, works before pairing and causes no HTTP requests', async (t) => {

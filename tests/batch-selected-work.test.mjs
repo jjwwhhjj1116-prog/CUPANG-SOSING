@@ -18,7 +18,7 @@ function fixture(){
  const quotationConfiguration={configured:true,provider:'Cloudflare Workers AI',model:quotationModel,executionPolicy:null,freeOnly:true,notice:'검토 후 저장'};
  const calls=[],events=[],keys=new Map(),controller=new AbortController();let owner='owner',company={code:'A01526306',name:'유앤채'},onFetch=null;
  let imageResult={status:'completed',messages:['번역 초안 저장']},labelResult={status:'draft',message:'표시사항 초안 저장',uncertain:false},sizeResult={status:'draft',message:'사이즈표 저장 확인'},sizePending=false;
- const exports={},deps={
+ const retainedImageMaps=[];const exports={},deps={
   '@/app/automation/model':{automationStages:stageIds},
   '@/app/supplier-hub-company':{supplierHubCompany:(code,name)=>['A01526306','A01464742'].includes(code)?{code,name}:null},
   '@/app/collected-translation-attributes':{},'@/app/option-translation':{},'@/app/sourcing':{},'@/app/seo-workspace-draft':{parseSeoGenerationConfiguration:raw=>raw?.freeOnly===true&&raw.destination==='Cloudflare Workers AI'?plain(raw):null},
@@ -38,7 +38,7 @@ function fixture(){
  };
  const boardFeedback={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/batch-board-feedback.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:boardFeedback,Date,Object,JSON});deps['@/app/batch-board-feedback']=boardFeedback;
  const code=ts.transpileModule(fs.readFileSync(new URL('../app/batch-selected-work.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
- vm.runInNewContext(code,{exports,Error,Date,AbortSignal,Map,Set,JSON,require:name=>{assert.ok(deps[name],name);return deps[name];}},{filename:'batch-selected-work.ts'});
+ vm.runInNewContext(code,{exports,Error,Date,AbortSignal,Map,Set,JSON,WeakMap:class extends WeakMap{constructor(){super();retainedImageMaps.push(this);}},require:name=>{assert.ok(deps[name],name);return deps[name];}},{filename:'batch-selected-work.ts'});
  const options={stages:['pricing'],expectedOwnerId:'owner',signal:controller.signal,keys,newKey:()=> '11111111-1111-4111-8111-111111111111',onStage:row=>events.push(plain(row)),
   fetcher:async(url,init={})=>{
    const call={url,method:init.method??'GET',body:init.body?JSON.parse(init.body):undefined};calls.push(call);
@@ -55,13 +55,21 @@ function fixture(){
     if(call.method==='POST')return Response.json({job:{id:'99999999-9999-4999-8999-999999999999',status:'completed',fingerprint:hash,quotationRevision:1,profileId:null,scope:{optionId:null,applyToAllOptions:true},model:quotationModel,result:{changes:[]}}});
     return Response.json({configuration:quotationConfiguration,fingerprint:hash,productId:'product',productVersion:version,contentRevision:3,optionRevision:1,quotationRevision:1,profileId:null,jobs:[]});
    }
-   return Response.json({product:{id:'product',title:'검증 상품',updated_at:version}});
+   return Response.json({product:{id:'product',owner_id:'owner',title:'검증 상품',updated_at:version,content_summary:{stages:{mainImage:{state:'complete',detail:'수집 원본 대표이미지 사용'}}}}});
   }};
- return{calls,events,keys,options,controller,deps,run:stages=>exports.runSelectedBatchProduct('product',{...options,stages}),
+ return{calls,events,keys,options,controller,deps,legacyMain:()=>retainedImageMaps[0].set(keys,new Map([['owner:product:mainImage',{ownerId:'owner',productId:'product',stage:'main',batches:{}}]])),run:stages=>exports.runSelectedBatchProduct('product',{...options,stages}),
   owner:value=>owner=value,company:value=>company=value,intercept:value=>onFetch=value,prependIntercept:value=>{const previous=onFetch;onFetch=async(...args)=>await value(...args)??await previous?.(...args);},image:value=>imageResult=value,label:value=>labelResult=value,size:(value,pending=sizePending)=>{sizeResult=value;sizePending=pending;}};
 }
 
 // Reuse the isolated actual raw BODY coordinator fixture without loading its tests.
+test('default main retains the saved original without inference and continues quotation work',async()=>{
+ const h=fixture();h.options.mode='selected';h.keys.set('owner:product:vision-inference-pending','owner:product:detailImage');
+ h.intercept(call=>call.url==='/api/products/product'?Response.json({product:{id:'product',owner_id:'owner',title:'상품',updated_at:version,content_summary:{stages:{mainImage:{state:'complete',detail:'수집 원본 대표이미지 사용'}}}}}):null);
+ const result=await h.run(['mainImage','koreanLabel','quotation']);
+ assert.equal(result.stages[0].status,'draft');assert.match(result.stages[0].message,/원본|그대로/);
+ assert.equal(result.stages[1].status,'draft');assert.equal(h.calls.some(call=>call.adapter==='image'),false);
+ assert.equal(h.calls.some(call=>call.url==='/api/files'),false);assert.equal(h.keys.get('owner:product:vision-inference-pending'),'owner:product:detailImage');
+});
 test('completed image review metadata reaches stage review but never bypasses an unknown inference',async()=>{
  for(const pending of [false,true]){const h=fixture(),review=reviewFixture().review;h.image({status:'partial',messages:['배경 검토'],review,...(pending?{inferencePending:true}:{})});h.options.stages=['additionalImages'];
  const result=await h.run(['additionalImages']);assert.equal(result.stages[0].status,'blocked');if(!pending)assert.ok(result.stages[0].review,JSON.stringify(result));assert.deepEqual(result.stages[0].review?plain(result.stages[0].review):undefined,pending?undefined:plain(review));}
@@ -69,7 +77,7 @@ test('completed image review metadata reaches stage review but never bypasses an
 test('confirmed image failure targets reach stage review only outside inference and save recovery fences',async()=>{
  for(const guard of ['none','inference','uncertain','recovery','changed']){const h=fixture(),r=reviewFixture(),reviewTarget={ownerId:r.scope.ownerId,company:r.scope.company,source:r.image.source};
  h.image({status:guard==='uncertain'?'uncertain':'partial',messages:['판독 실패'],reviewTarget,...(guard==='inference'?{inferencePending:true}:guard==='recovery'?{recoveryBatch:{}}:guard==='changed'?{sourceChanged:true}:{})});
- const result=await h.run(['mainImage']);assert.deepEqual(result.stages[0].reviewTarget?plain(result.stages[0].reviewTarget):undefined,guard==='none'?plain(reviewTarget):undefined,guard);
+ const result=await h.run(['additionalImages']);assert.deepEqual(result.stages[0].reviewTarget?plain(result.stages[0].reviewTarget):undefined,guard==='none'?plain(reviewTarget):undefined,guard);
  }
 });
 // OCR/provider/render/upload effects remain local dependency fakes.
@@ -233,13 +241,13 @@ test('quotation packaging batches publish progress through the existing Stage7 a
 test('an uncertain Vision inference stops later image calls while independent labels and quotation still run',async()=>{
  const h=fixture();h.image({status:'partial',inferencePending:true,messages:['원래 Vision 요청 결과 미확정']});
  const result=await h.run(['mainImage','additionalImages','detailImage','koreanLabel','quotation']);
- assert.deepEqual(h.calls.filter(call=>call.adapter==='image').map(call=>call.stage),['main']);
+ assert.deepEqual(h.calls.filter(call=>call.adapter==='image').map(call=>call.stage),['additional']);
  assert.equal(h.calls.filter(call=>call.url?.endsWith('/work-draft')).length,1);
  assert.equal(h.calls.some(call=>call.adapter==='label'),true);assert.equal(h.calls.some(call=>call.adapter==='packaging'),true);
- assert.deepEqual(result.stages.slice(0,3).map(row=>row.status),['blocked','blocked','blocked']);
- assert.match(result.stages[1].message,/독립된 단계는 계속/);
+ assert.deepEqual(result.stages.slice(0,3).map(row=>row.status),['draft','blocked','blocked']);
+ assert.match(result.stages[2].message,/독립된 단계는 계속/);
  const before=h.calls.filter(call=>call.adapter==='image').length;
- await h.run(['additionalImages']);assert.equal(h.calls.filter(call=>call.adapter==='image').length,before,'same queue cannot bypass its pending inference through another image role');
+ await h.run(['detailImage']);assert.equal(h.calls.filter(call=>call.adapter==='image').length,before,'same queue cannot bypass its pending inference through another image role');
 });
 
 for(const sourceChanged of[false,true])test(`display metadata across own later label save (${sourceChanged?'changed source discarded':'same source kept'}) is never a completion receipt`,async()=>{
@@ -247,7 +255,7 @@ for(const sourceChanged of[false,true])test(`display metadata across own later l
  h.intercept(call=>call.url==='/api/products/product'?Response.json({product:{id:'product',owner_id:'owner',title:'原文',source_url:'https://source.test/product',image_keys:imageKeys,updated_at:currentVersion}}):null);
  h.image({status:'partial',inferencePending:true,messages:['原래 추론 응답 미확정']});
  h.deps['@/app/batch-selected-label-work'].runSelectedLabelWork=async()=>{currentVersion=later;if(sourceChanged)imageKeys='["owner/source.png","owner/new-label.png"]';return{status:'draft',message:'own label save',uncertain:false};};
- const result=await h.run(['mainImage','koreanLabel']);assert.equal(result.stages[0].status,'blocked');assert.equal(result.stages[1].status,'draft');
+ const result=await h.run(['additionalImages','koreanLabel']);assert.equal(result.stages[0].status,'blocked');assert.equal(result.stages[1].status,'draft');
  if(sourceChanged)assert.equal(result.stages[0].boardSource,undefined);
  else{assert.equal(result.stages[0].boardSource.productVersion,later);assert.match(result.stages[0].boardSource.sourceFingerprint,/owner\/source\.png/);}
  assert.equal(h.calls.filter(call=>call.adapter==='image').length,1);assert.equal(h.calls.some(call=>call.url?.endsWith('/automation')),false);
@@ -257,7 +265,7 @@ test('an option source change inside the same product image pool cannot rebind a
  const h=fixture(),later='2026-10-30T01:00:00.000Z';let currentVersion=version;
  h.intercept(call=>call.url==='/api/products/product'?Response.json({product:{id:'product',owner_id:'owner',title:'原文',source_url:'https://source.test/product',image_keys:'["owner/source-a.png","owner/source-b.png"]',updated_at:currentVersion}}):null);
  h.deps['@/app/batch-selected-image-work'].processSelectedImageStage=async()=>{currentVersion=later;return{status:'partial',sourceChanged:true,messages:['선택 옵션의 대표 이미지가 변경되었습니다.']};};
- const result=await h.run(['mainImage','koreanLabel']);assert.equal(result.stages[0].status,'blocked');assert.equal(result.stages[0].boardSource,undefined);assert.equal(result.stages[1].boardSource,undefined);assert.equal(h.calls.some(call=>call.adapter==='label'),false);
+ const result=await h.run(['additionalImages','koreanLabel']);assert.equal(result.stages[0].status,'blocked');assert.equal(result.stages[0].boardSource,undefined);assert.equal(result.stages[1].boardSource,undefined);assert.equal(h.calls.some(call=>call.adapter==='label'),false);
 });
 
 const savedSummary=(completed=[])=>({seo:completed.includes('seo'),seoTitle:null,mainImageKey:null,main:0,additional:0,detail:0,label:0,missingImages:false,
@@ -326,6 +334,7 @@ test('full work with a complete detail badge keeps a sibling Vision request fenc
 
 async function pendingImagePublicationFixture(sibling='additionalImages'){
  const h=fixture(),detail=await actualDetailFixture();h.options.mode='full';h.company(detail.f.company);let pendingState;
+ if(sibling==='mainImage')h.legacyMain();
  const pending={optionId:'original-option',slotIndex:0,code:'IMAGE_VISION_ACK_MISSING',message:'원래 응답 확인 필요',attempt:{requestId:'0fa1748b-fd6e-4b16-8120-754071c7a73f',source:{sourceKey:'owner/pending-original.png'},sourceLanguage:'zh',configuration:{provider:'workers-ai-vision'}}};
  h.deps['@/app/batch-selected-image-work'].processSelectedImageStage=async(_id,_role,options)=>{pendingState=options.state;pendingState.inferencePending=pending;return{status:'partial',messages:['원래 응답 확인 필요'],inferencePending:true};};
  Object.assign(h.deps['@/app/batch-selected-detail-work'],detail.model,{processSelectedDetailWork:(id,options)=>detail.model.processSelectedDetailWork(id,{...detail.options,...options},detail.deps)});
@@ -420,7 +429,7 @@ test('HTML account and product responses identify the endpoint without exposing 
  assert.doesNotMatch(result.stages[0].message,/private-error|Unexpected token/);
 });
 test('partial image stages prepare only their selected role and bind the prepared version',async()=>{
- for(const [stage,role] of [['mainImage','main'],['additionalImages','additional'],['detailImage','detail']]){
+ for(const [stage,role] of [['additionalImages','additional'],['detailImage','detail']]){
   const h=fixture(),result=await h.run([stage]);assert.equal(result.stages[0].status,'draft');
   assert.deepEqual(h.calls.find(call=>call.url?.endsWith('/work-draft')).body.roles,[role]);
   assert.deepEqual(h.calls.find(call=>call.adapter==='image'),{adapter:'image',id:'product',stage:role,version,...(role==='detail'?{source:'workspace-body'}:{})});
@@ -436,8 +445,8 @@ test('execution follows canonical stage order, never dropdown click order and ne
 
 test('confirmed partial main, additional and detail image stages stay blocked while one action continues to label and quotation',async()=>{
  const h=fixture();h.image({status:'partial',messages:['확인된 일부 번역 초안 · 나머지 문구 확인 필요']});const result=await h.run(['quotation','detailImage','koreanLabel','additionalImages','mainImage']);
- assert.deepEqual(plain(result.stages.map(row=>[row.id,row.status])),[['mainImage','blocked'],['additionalImages','blocked'],['detailImage','blocked'],['koreanLabel','draft'],['quotation','draft']]);
- assert.deepEqual(h.calls.filter(call=>call.adapter==='image').map(call=>call.stage),['main','additional','detail']);assert.equal(h.calls.filter(call=>call.adapter==='label').length,1);assert.equal(h.calls.filter(call=>call.adapter==='packaging').length,1);
+ assert.deepEqual(plain(result.stages.map(row=>[row.id,row.status])),[['mainImage','draft'],['additionalImages','blocked'],['detailImage','blocked'],['koreanLabel','draft'],['quotation','draft']]);
+ assert.deepEqual(h.calls.filter(call=>call.adapter==='image').map(call=>call.stage),['additional','detail']);assert.equal(h.calls.filter(call=>call.adapter==='label').length,1);assert.equal(h.calls.filter(call=>call.adapter==='packaging').length,1);
  assert.equal(h.calls.filter(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST').length,1);assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
 });
 
@@ -478,7 +487,7 @@ test('typed source changes, saved product version changes and account/company ch
   h.image({status:'partial',messages:['확인 필요'],...(change==='typed-source'?{sourceChanged:true}:{})});
   h.deps['@/app/batch-selected-image-work'].processSelectedImageStage=async(...args)=>{const result=await image(...args);changed=true;if(change==='owner')h.owner('other');if(change==='company')h.company({code:'A01464742',name:'와이홉'});return result;};
   h.intercept(call=>change==='product-version'&&changed&&call.url==='/api/products/product'?Response.json({product:{id:'product',updated_at:'2026-10-23T00:00:02.000Z'}}):null);
-  const result=await h.run(['mainImage','additionalImages','detailImage','koreanLabel','quotation']);assert.ok(['blocked','failed'].includes(result.stages[0].status));assert.ok(result.stages.slice(1).every(row=>row.status==='blocked'&&row.message.includes('아직 시작하지 않았습니다')));
+  const result=await h.run(['additionalImages','detailImage','koreanLabel','quotation']);assert.ok(['blocked','failed'].includes(result.stages[0].status));assert.ok(result.stages.slice(1).every(row=>row.status==='blocked'&&row.message.includes('아직 시작하지 않았습니다')));
   assert.equal(h.calls.filter(call=>call.adapter==='image').length,1,change);assert.equal(h.calls.some(call=>call.adapter==='label'||call.adapter==='packaging'||call.url?.endsWith('/quotation-ai')),false,change);
  }
 });
@@ -516,12 +525,12 @@ for(const failure of ['company-change','account-read-error'])test(`an image prep
    else return Response.json({error:'temporary account read failure'},{status:503});
   }
  });
- const first=await h.run(['mainImage']);assert.equal(first.stages[0].status,'failed');
+ const first=await h.run(['additionalImages']);assert.equal(first.stages[0].status,'failed');
  assert.equal(h.calls.filter(call=>call.url?.endsWith('/work-draft')).length,0);
  assert.equal(h.calls.filter(call=>call.adapter==='image').length,0);
- assert.equal(h.keys.has('owner:product:pending:mainImage'),false,'a preflight rejection cannot reserve an unsent preparation');
+ assert.equal(h.keys.has('owner:product:pending:additionalImages'),false,'a preflight rejection cannot reserve an unsent preparation');
  h.company({code:'A01526306',name:'유앤채'});
- const second=await h.run(['mainImage']);assert.equal(second.stages[0].status,'draft');
+ const second=await h.run(['additionalImages']);assert.equal(second.stages[0].status,'draft');
  assert.equal(h.calls.filter(call=>call.url?.endsWith('/work-draft')).length,1);
  assert.equal(h.calls.filter(call=>call.adapter==='image').length,1);
 });
@@ -534,12 +543,12 @@ for(const failure of ['lost-ack','changed-company-after-dispatch','invalid-ack']
    else return Response.json({productId:'other',productVersion:version});
   }
  });
- const first=await h.run(['mainImage','additionalImages']);assert.equal(first.stages[0].status,'failed');
+ const first=await h.run(['additionalImages','detailImage']);assert.equal(first.stages[0].status,'failed');
  assert.equal(h.calls.filter(call=>call.url?.endsWith('/work-draft')).length,1);
  assert.equal(h.calls.filter(call=>call.adapter==='image').length,0);
- assert.equal(h.keys.has('owner:product:pending:mainImage'),true);
+ assert.equal(h.keys.has('owner:product:pending:additionalImages'),true);
  h.company({code:'A01526306',name:'유앤채'});
- const second=await h.run(['mainImage']);assert.equal(second.stages[0].status,'blocked');
+ const second=await h.run(['additionalImages']);assert.equal(second.stages[0].status,'blocked');
  assert.equal(h.calls.filter(call=>call.url?.endsWith('/work-draft')).length,1,'an uncertain committed preparation is never resent');
  assert.equal(h.calls.filter(call=>call.adapter==='image').length,0);
 });
@@ -645,8 +654,8 @@ for(const stages of [['koreanLabel','quotation'],['pricing','sizeChart','koreanL
 });
 
 test('a confirmed skipped image stage can be retried after settings change',async()=>{
- const h=fixture();h.image({status:'skipped',messages:['번역 꺼짐']});assert.equal((await h.run(['mainImage'])).stages[0].status,'skipped');
- h.image({status:'completed',messages:['번역 저장']});assert.equal((await h.run(['mainImage'])).stages[0].status,'draft');
+ const h=fixture();h.image({status:'skipped',messages:['번역 꺼짐']});assert.equal((await h.run(['additionalImages'])).stages[0].status,'skipped');
+ h.image({status:'completed',messages:['번역 저장']});assert.equal((await h.run(['additionalImages'])).stages[0].status,'draft');
  assert.equal(h.calls.filter(call=>call.adapter==='image').length,2);assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
 });
 
@@ -1169,7 +1178,7 @@ test('the final account preflight failing inside packaging fetch does not count 
 });
 
 test('a completed image recovery clears the cross-role inference fence before continuing selected image work',async()=>{
- const h=fixture();h.image({status:'partial',inferencePending:true,messages:['원래 요청 미확정']});await h.run(['mainImage','additionalImages']);
+ const h=fixture();h.legacyMain();h.image({status:'partial',inferencePending:true,messages:['원래 요청 미확정']});await h.run(['mainImage','additionalImages']);
  h.image({status:'completed',messages:['원래 번역 결과 저장 확인']});const resumed=await h.run(['mainImage','additionalImages','detailImage']);
  assert.deepEqual(resumed.stages.map(row=>row.status),['draft','draft','draft']);assert.equal(h.keys.has('owner:product:vision-inference-pending'),false);
  assert.deepEqual(h.calls.filter(call=>call.adapter==='image').map(call=>call.stage),['main','main','additional','detail']);
@@ -1184,9 +1193,9 @@ test('cancelling an unknown raw detail Vision request fences same-queue main and
  h.deps['@/app/batch-selected-detail-work'].processSelectedDetailWork=(id,options)=>detail.model.processSelectedDetailWork(id,{...detail.options,...options,fetcher:detail.options.fetcher},detail.deps);
  assert.equal(await h.run(['detailImage']),null);assert.equal(inferenceCalls,1);assert.equal(h.keys.get('owner:product:vision-inference-pending'),'owner:product:detailImage');
  h.options.signal=new AbortController().signal;const before=h.calls.length,blocked=await h.run(['mainImage','additionalImages']);
- assert.deepEqual(blocked.stages.map(row=>row.status),['blocked','blocked']);assert.equal(h.calls.slice(before).some(call=>call.adapter==='image'||call.url?.endsWith('/work-draft')),false);assert.equal(inferenceCalls,1);assert.equal(statusReads,0);
+ assert.deepEqual(blocked.stages.map(row=>row.status),['draft','blocked']);assert.equal(h.calls.slice(before).some(call=>call.adapter==='image'||call.url?.endsWith('/work-draft')),false);assert.equal(inferenceCalls,1);assert.equal(statusReads,0);
  const recovered=await h.run(['detailImage']);assert.equal(recovered.stages[0].status,'blocked');assert.equal(statusReads,1);assert.equal(inferenceCalls,1);assert.equal(h.keys.has('owner:product:vision-inference-pending'),false);
- await h.run(['mainImage','additionalImages']);assert.deepEqual(h.calls.filter(call=>call.adapter==='image').map(call=>call.stage),['main','additional']);
+ await h.run(['mainImage','additionalImages']);assert.deepEqual(h.calls.filter(call=>call.adapter==='image').map(call=>call.stage),['additional']);
 });
 
 test('a detail exception preserves another original inference fence and pending detail is restored after that fence clears',async()=>{
@@ -1530,7 +1539,7 @@ test('one full action runs Google options then generated SEO, pricing, all image
  });
  const result=await h.run(stageIds.slice().reverse());assert.deepEqual(plain(result.stages.map(row=>row.id)),stageIds);assert.deepEqual(plain(result.stages.map(row=>row.status)),['draft','draft','blocked','blocked','blocked','skipped','draft','draft']);
  const executed=h.calls.flatMap(call=>call.url?.endsWith('/translation-apply')&&call.body.action==='apply'?['google-options']:call.adapter==='seo-generation'?['generated-seo']:call.url?.endsWith('/stage-two-pricing')?['pricing']:call.adapter==='image'?[call.stage]:call.adapter==='label'?['koreanLabel']:call.url?.endsWith('/quotation-ai')&&call.method==='POST'?['quotation']:[]);
- assert.deepEqual(executed,['google-options','generated-seo','pricing','main','additional','detail','koreanLabel','quotation']);assert.equal(h.calls.find(call=>call.adapter==='seo-generation').confirmAi,true);assert.deepEqual(content,before);assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
+ assert.deepEqual(executed,['google-options','generated-seo','pricing','additional','detail','koreanLabel','quotation']);assert.equal(h.calls.find(call=>call.adapter==='seo-generation').confirmAi,true);assert.deepEqual(content,before);assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
 });
 
 test('changed notice/company, a known unavailable free service and failed generation cannot claim AI SEO completion',async()=>{

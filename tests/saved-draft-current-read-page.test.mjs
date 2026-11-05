@@ -61,6 +61,42 @@ function resealExpected(f){
  const identity=Object.fromEntries(Object.entries(binding.identity).filter(([key])=>!['appTabId','windowId'].includes(key)));
  binding.packetDigest=sha({identity,bodySha256:binding.preparedBodySha256,originalBodySha256:binding.originalBodySha256});f.input.previousTarget.packetDigest=binding.packetDigest;
 }
+function labelCopyFixture(){
+ const f=fixture(),image=f.input.expectedImages[0],old=image.transportName,name='label-'+image.sha256+'-6d3a1e2da648758f.png',prefix='QVT/vendor/A01526306/user/100945029/submission/842525a4-6f5d-4f38-91a2-9b89447c8b3c/source/';
+ image.transportName=name;f.binaries.set(name,f.binaries.get(old));f.binaries.delete(old);f.state.files[0]={...f.state.files[0],imageName:name,s3Link:prefix+'image/'+name,imageUrl:'/sr/api/image/get-by-key?key='+encodeURIComponent(prefix+'image/'+name)};
+ for(const member of f.input.expectedBody.jsonDocument){member.imagePage.images={labelImages:[{labelImageType:'제품 한글 표시사항 라벨 또는 도안 이미지',labelImageFiles:name}]};member.legalPage={kcMarkType:'해당사항없음',adCert:'',certificates:[{certificateName:'전기용품 및 생활용품, 어린이 (KC) 인증번호',certificateValue:'해당사항없음'}]};}
+ resealExpected(f);f.state.body.jsonDocument=copy(f.input.expectedBody.jsonDocument);for(const member of f.state.body.jsonDocument)delete member.legalPage.adCert;
+ f.state.legal=[{fileType:'certificate',fileName:name,s3Link:prefix+'certificate/'+name,unknownServerMetadata:{opaque:'PRIVATE_PRESERVED_BY_HASH'}}];return f;
+}
+
+test('verified same-scope unreferenced LABEL copies support read bind and check while preserving the exact artifact proof',async()=>{
+ const f=labelCopyFixture(),before=f.snapshot(),read=await f.run();assert.equal(read.currentReadFailure,undefined,JSON.stringify(read));
+ const image=f.input.expectedImages[0],raw=f.state.legal[0],descriptor=f.state.files[0],proof={fileName:image.transportName,fileType:'certificate',s3Link:raw.s3Link,sourceS3Link:descriptor.s3Link,descriptorSha256:sha(raw),contentType:image.contentType,byteLength:image.byteLength,sha256:image.sha256};
+ assert.deepEqual(read.legalCopies,[proof]);assert.equal(read.fileSetSha256,sha({images:read.files,legalCopies:[proof]}));assert.equal(read.byteSetSha256,sha(f.input.expectedImages));assert.equal(f.snapshot(),before);assert.equal(f.writes(),0);assert.equal(f.calls.length,15);assert.doesNotMatch(JSON.stringify(read),/PRIVATE_PRESERVED_BY_HASH|unknownServerMetadata/);
+ const bound=await f.run(f.bindInput(read));assert.equal(bound.currentReadFailure,undefined);assert.equal(bound.record.currentReadRecovery.fileBodyWritesAllowed,false);assert.equal(bound.record.currentReadRecovery.historicalAckRecovered,false);
+ const saved=f.snapshot(),checked=await f.run({...copy(f.input),mode:'check'});assert.equal(checked.currentReadFailure,undefined);assert.equal(f.snapshot(),saved);assert.deepEqual(f.state.legal,[raw]);assert.ok(f.calls.every(call=>call.method==='GET'||call.path==='/sr/draft/api/get-files-by-type/2347603'&&call.body==='{}'));
+});
+
+test('LABEL copy scope, referenced role, NA facts and byte identity are mandatory with no write or fallback',async()=>{
+ for(const mode of ['duplicate','type','name','cert-prefix','company','user','submission','path','docId','documentId','label-reference','label-type','kc','certificate-value','certificate-shape','legal-body','bytes','mime','size']){
+  const f=labelCopyFixture(),row=f.state.legal[0];
+  if(mode==='duplicate')f.state.legal.push(copy(row));if(mode==='type')row.fileType='additional';if(mode==='name')row.fileName=f.input.expectedImages[1].transportName;if(mode==='cert-prefix')row.fileName='cert0-'+row.fileName;
+  if(mode==='company')row.s3Link=row.s3Link.replace('A01526306','A01464742');if(mode==='user')row.s3Link=row.s3Link.replace('100945029','100945030');if(mode==='submission')row.s3Link=row.s3Link.replace('842525a4','842525a5');if(mode==='path')row.s3Link=row.s3Link.replace('/source/certificate/','/source/image/');if(mode==='docId')row.docId=999;if(mode==='documentId')row.documentId=999;
+  if(mode==='label-reference')f.input.expectedBody.jsonDocument[1].imagePage.images.labelImages=[];if(mode==='label-type')f.input.expectedBody.jsonDocument[1].imagePage.images.labelImages[0].labelImageType='다른 유형';if(mode==='kc')f.input.expectedBody.jsonDocument[1].legalPage.kcMarkType='KC';if(mode==='certificate-value')f.input.expectedBody.jsonDocument[1].legalPage.certificates[0].certificateValue='인증번호';if(mode==='certificate-shape')f.input.expectedBody.jsonDocument[1].legalPage.certificates[0].extra='unknown';
+  if(['label-reference','label-type','kc','certificate-value','certificate-shape'].includes(mode)){resealExpected(f);f.state.body.jsonDocument=copy(f.input.expectedBody.jsonDocument);}
+  if(mode==='legal-body')f.state.body.jsonDocument[1].legalPage.certificates[0].certificateValue='changed';
+  if(['bytes','mime','size'].includes(mode))f.override=path=>path.includes(encodeURIComponent('/source/certificate/'))?f.response(path,mode==='bytes'?new Uint8Array([0,0,0,0,0,0,0,0]):mode==='size'?new Uint8Array([0]):f.binaries.get(row.fileName),mode==='mime'?'image/jpeg':'image/png'):undefined;
+  const before=f.snapshot(),result=await f.run();assert.ok(result.currentReadFailure,mode);assert.equal(f.snapshot(),before,mode);assert.equal(f.writes(),0,mode);assert.ok(f.calls.every(call=>call.method==='GET'||call.path==='/sr/draft/api/get-files-by-type/2347603'&&call.body==='{}'),mode);
+ }
+});
+
+test('LABEL copy proof detects legal metadata, copied bytes and legal body changes across read bind and check',async()=>{
+ for(const stage of ['bind','check'])for(const change of ['metadata','bytes','body','removed']){const f=labelCopyFixture(),read=await f.run();assert.equal(read.currentReadFailure,undefined);if(stage==='check')await f.run(f.bindInput(read));const before=f.snapshot(),writes=f.writes();
+  if(change==='metadata')f.state.legal[0].unknownServerMetadata.opaque='changed';if(change==='body')f.state.body.jsonDocument[0].legalPage.certificates[0].certificateValue='changed';if(change==='removed')f.state.legal=[];
+  if(change==='bytes')f.override=path=>path.includes(encodeURIComponent('/source/certificate/'))?f.response(path,new Uint8Array([0,0,0,0,0,0,0,0]),'image/png'):undefined;
+  const result=await f.run(stage==='bind'?f.bindInput(read):{...copy(f.input),mode:'check'});assert.ok(result.currentReadFailure,stage+'/'+change);assert.equal(f.snapshot(),before);assert.equal(f.writes(),writes);
+ }
+});
 
 test('v3 legal metadata exposes only bounded printable identifiers and exact same-name image links without permitting recovery',async()=>{
  const f=fixture(),image=f.state.files[0],secret='SECRET_METADATA_CREDENTIAL';

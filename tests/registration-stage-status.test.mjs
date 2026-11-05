@@ -8,6 +8,20 @@ const status=load('app/registration-stage-status.ts'),{emptyProductContent,apply
 const now='2026-10-20T01:00:00.000Z',product={id:'p',owner_id:'owner',updated_at:now};
 const base=()=>({productId:'p',productVersion:now,contentRevision:0,revision:1,stages:status.registrationStageIds.map(id=>({id,status:'blocked',attempts:0,updatedAt:now,reason:null,evidence:[],artifacts:[]}))});
 const pricing=workflow=>Object.assign(workflow.stages.find(stage=>stage.id==='pricing'),{status:'complete',attempts:1,artifacts:[{id:'calculation',kind:'priceCalculation',data:{calculation:{supplyPrice:4000,salePrice:6000}},submissionReady:false}],evidence:[{kind:'storedProduct',reference:'p@'+now,observedAt:now},{kind:'localCalculation',reference:'calculatePrice',observedAt:now}]});
+test('owned collected original main completes without translation while other raw roles stay pending',()=>{
+ const content=emptyProductContent('p');Object.assign(content,{revision:1,updatedAt:now});
+ for(const role of ['main','additional','detail'])content.assets[role]={value:['owner/raw.png'],provenance:'collected',updatedAt:now};
+ const options={productId:'p',rows:[{id:'one',included:true,imageKey:'owner/option.png',provenance:{imageKey:'collected'},updatedAt:now}]};
+ const row={optionId:'one',title:'상품',main:['owner/option.png'],additional:['owner/raw.png'],detail:['owner/raw.png'],label:[]},keys=['owner/raw.png','owner/option.png'];
+ const read=()=>status.registrationStagesFromSavedContent(product,content,options,keys,[row]);
+ assert.equal(read().mainImage.state,'complete');assert.match(read().mainImage.detail,/원본/);assert.equal(read().additionalImages.state,'pending');assert.equal(read().detailImage.state,'pending');
+ for(const alter of [()=>row.main=['owner/raw.png'],()=>row.imageIssues={main:true},()=>options.rows[0].provenance.imageKey='generated',()=>options.rows[0].updatedAt='2099-01-01T00:00:00Z']){
+  const before=structuredClone({row,options});alter();assert.notEqual(read().mainImage.state,'complete');Object.assign(row,before.row);delete row.imageIssues;Object.assign(options,before.options);
+ }
+ row.optionId=null;row.main=['owner/raw.png'];assert.equal(read().mainImage.state,'complete');
+ const previous=status.pendingRegistrationStages();previous.mainImage={state:'failed',detail:'과거 AI 번역 실패',updatedAt:now};
+ assert.equal(status.mergeRegistrationStages(read(),previous).mainImage.state,'complete');
+});
 test('only one owned current generated canonical reference chart completes the size role',()=>{
  const chart=load('app/manual-size-chart.ts').createReferenceSizeChart(),content=applyContentPatch(emptyProductContent('p'),{manualSizeChart:chart},now);content.assets.size={value:['owner/reference.png'],provenance:'generated',updatedAt:now};
  const read=value=>status.registrationStagesFromSavedContent(product,value,null,['owner/reference.png'],null,[],true);

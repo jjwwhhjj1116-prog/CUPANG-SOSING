@@ -53,7 +53,29 @@ quit
 yoofam-studio.cmd start --stdio
 ```
 
-첫 줄은 `notifications/connectionReady` JSON-RPC 알림이며 로컬 호출자에게 연결 주소와 만료 시각을 제공합니다. 이후 JSON Lines 입력을 받습니다. MCP `initialize`, `ping`, `tools/list`, `tools/call`, `notifications/cancelled`를 지원합니다. 도구는 `status`, `product-query`, `category-profiles/list`, `collection-job/status` 네 가지 읽기 명령만 제공합니다.
+첫 줄은 `notifications/connectionReady` JSON-RPC 알림이며 로컬 호출자에게 연결 주소와 만료 시각을 제공합니다. 이후 JSON Lines 입력을 받습니다. MCP `initialize`, `ping`, `tools/list`, `tools/call`, `notifications/cancelled`를 지원합니다. `status`, `product-query`, `category-profiles/list`, `collection-job/status`는 읽기 도구입니다.
+
+## Codex 대표이미지 편집
+
+대표이미지는 수집한 원본으로 등록·제안할 수 있습니다. AI 편집은 필수가 아닙니다.
+회원이 웹의 대표이미지 단계에서 **Codex로 대표이미지 수정 → 수정 요청**을 누른 경우에만 다음 두 도구로 처리합니다.
+
+- `main-image/next`: 열린 편집기 요청 하나를 가져옵니다. JSON에는 상품·옵션·원본 키·수정 요청·requestId가, MCP 이미지 블록에는 참조 이미지가 반환됩니다. 요청이 없으면 `job:null`입니다.
+- `main-image/complete`: `{requestId,filePath}`로 4MB 이하 PNG/JPEG 로컬 절대경로를 전달합니다. 원래 브라우저 편집기가 보관한 상품 버전·카테고리·옵션·견적 지문이 모두 일치할 때만 기존 업로드 API로 해당 옵션의 대표이미지를 저장합니다. 다른 옵션·가격·상세·Supplier Hub는 수정하지 않습니다. 미확정 업로드는 자동 반복하지 않습니다.
+
+CLI는 사용자의 PC에서 실행됩니다. 다른 회원의 작업이나 컴퓨터를 사용하지 않습니다. 생성은 연결된 Codex의 이미지 도구가 수행하며 CLI에 이미지 모델·비밀번호·쿠키를 내장하지 않습니다. 웹 버튼은 요청을 대기시킵니다. Codex에서 이 MCP 작업을 처리하는 실행이 시작되어 있어야 하며, MCP 연결만으로 AI 대화를 자동 생성하지 않습니다.
+
+Windows:
+```powershell
+codex mcp add yoofam-studio -- cmd.exe /d /c yoofam-studio.cmd start --stdio
+```
+Mac:
+```sh
+codex mcp add yoofam-studio -- yoofam-studio start --stdio
+```
+기존 일반 CLI를 먼저 종료하세요. Codex를 다시 연결한 뒤 MCP가 제공한 YOOFAM 연결 주소에서 회사를 확인하고 연결합니다. 웹 편집 탭과 연결 탭을 유지하세요. 원본은 그대로 보관하며 편집을 취소해도 원본 등록을 막지 않습니다.
+
+MCP 등록 형식: [공식 Codex MCP 안내](https://developers.openai.com/codex/mcp/).
 
 ```json
 {"jsonrpc":"2.0","id":1,"method":"tools/list"}

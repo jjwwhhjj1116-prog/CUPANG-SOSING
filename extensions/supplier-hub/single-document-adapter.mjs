@@ -866,11 +866,26 @@ export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,n
     if(failure){const phase=typeof failure.phase==='string'&&/^[a-z0-9-]{1,40}$/.test(failure.phase)?failure.phase:'read',code=typeof failure.code==='string'&&/^[a-z0-9-]{1,40}$/.test(failure.code)?failure.code:'comparison';
       const advice=['http-redirect','http-401','http-403'].includes(code)?' Supplier Hub 개별 상품 등록의 로그인·접근 권한을 다시 확인해주세요. 회사명이 표시돼도 등록 서비스의 인증은 별도로 확인해야 합니다.':code==='http-type-other'?' Supplier Hub가 필요한 JSON·이미지와 다른 형식으로 응답했습니다. 공식 개별 상품 등록 화면의 로그인 상태를 확인해주세요.':'';
       fail('SAVED_DRAFT_TARGET_UNCONFIRMED','같은 저장 문서의 현재 읽기 확인이 중단됐습니다. 단계: '+phase+' / '+code+'.'+advice+savedLegalFailureSummary(value)+' 파일·본문은 다시 보내지 않았습니다.');}
-    const keys=['body','files','fileSetSha256','byteSetSha256','rawBodySha256','filesCount','duplicateMatches','documentState','readOnly','remoteWrites','historicalAckRecovered','observedAt',...(mode==='bind'?['record']:[])];
+    const legalCopies=value?.legalCopies;
+    if(legalCopies!==undefined){
+      const seen=new Set(),invalid=!Array.isArray(legalCopies)||legalCopies.length<1||legalCopies.length>12||legalCopies.some(row=>{
+        if(!row||Object.keys(row).sort().join(',')!==['fileName','fileType','s3Link','sourceS3Link','descriptorSha256','contentType','byteLength','sha256'].sort().join(',')||seen.has(row.fileName))return true;
+        seen.add(row.fileName);const file=expectedImages.find(file=>file.transportName===row.fileName),source=value.files?.find(file=>file.imageName===row.fileName);
+        const prefix=typeof row.sourceS3Link==='string'?row.sourceS3Link.match(/^QVT\/vendor\/(A\d+)\/user\/\d+\/submission\/[a-f0-9-]{36}\/source\/image\//):null;
+        return !file||row.fileType!=='certificate'||row.contentType!=='image/png'||file.contentType!==row.contentType||row.byteLength!==file.byteLength||row.sha256!==file.sha256||!HASH.test(row.descriptorSha256||'')
+          ||!row.fileName.startsWith('label-'+file.sha256+'-')||!/^label-[a-f0-9]{64}-[a-f0-9]{16}\.png$/.test(row.fileName)||!prefix||prefix[1]!==input.identity.company.code
+          ||row.sourceS3Link!==prefix[0]+row.fileName||source?.s3Link!==row.sourceS3Link||row.s3Link!==prefix[0].replace(/image\/$/,'certificate/')+row.fileName
+          ||expectedBody.jsonDocument.some(member=>member.legalPage?.kcMarkType!=='해당사항없음'||member.legalPage?.adCert!==''||!Array.isArray(member.legalPage?.certificates)||!member.legalPage.certificates.length
+            ||member.legalPage.certificates.some(row=>!row||Object.keys(row).sort().join(',')!=='certificateName,certificateValue'||row.certificateValue!=='해당사항없음')
+            ||!Array.isArray(member.imagePage?.images?.labelImages)||!member.imagePage.images.labelImages.some(label=>label?.labelImageType==='제품 한글 표시사항 라벨 또는 도안 이미지'&&label.labelImageFiles===row.fileName));
+      });
+      if(invalid)fail('SAVED_DRAFT_TARGET_UNCONFIRMED','같은 원본 라벨 복사본의 현재 파일·바이트 연결을 확인하지 못했습니다.');
+    }
+    const keys=['body','files',...(legalCopies?['legalCopies']:[]),'fileSetSha256','byteSetSha256','rawBodySha256','filesCount','duplicateMatches','documentState','readOnly','remoteWrites','historicalAckRecovered','observedAt',...(mode==='bind'?['record']:[])];
     if(!value||Object.keys(value).sort().join(',')!==keys.sort().join(',')||!Array.isArray(value.files)||value.filesCount!==expectedImages.length||value.files.length!==expectedImages.length
       ||value.duplicateMatches!==0||value.documentState!=='UNFINISHED'||value.readOnly!==true||value.remoteWrites!==false||value.historicalAckRecovered!==false
       ||!['fileSetSha256','byteSetSha256','rawBodySha256'].every(key=>HASH.test(value[key]||''))||!Number.isSafeInteger(value.observedAt)||Math.abs(now()-value.observedAt)>60000
-      ||value.fileSetSha256!==await digest(value.files)||value.rawBodySha256!==await digest(value.body)
+      ||value.fileSetSha256!==await digest(legalCopies?{images:value.files,legalCopies}:value.files)||value.rawBodySha256!==await digest(value.body)
       ||value.byteSetSha256!==await digest(expectedImages.sort((a,b)=>a.transportName<b.transportName?-1:a.transportName>b.transportName?1:0))
       ||!equal(savedReadBeforeConsents(normalizeNativeDocumentReadback(value.body,expectedBody),authorizedStages),expectedBody))fail('SAVED_DRAFT_TARGET_UNCONFIRMED','현재 저장 문서의 본문·전체 파일·실제 바이트가 원래 견적과 일치하지 않습니다. 파일·본문을 다시 보내지 않았습니다.');
     validateNativeAssetUploadDescriptors(value.files,{kind:'image',expectedFiles:sourcePlan.images});

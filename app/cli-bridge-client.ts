@@ -1,7 +1,7 @@
 /** First-party browser transport. The CLI never receives browser credentials. */
 export type CliScope={ownerId:string;company:{code:string;name:string}};
 export type CliLink={port:number;token:string;sessionId:string;host?:'127.0.0.1'|'localhost'};
-export type CliBridgeState={phase:'idle'|'connecting'|'connected'|'stopped';message:string;lastResult?:{command:string;title?:string;optionCount?:number;provider?:string;configured?:boolean;liveVerified?:false;stored:false}};
+export type CliBridgeState={phase:'idle'|'connecting'|'connected'|'stopped';message:string;lastResult?:{command:string;title?:string;optionCount?:number;provider?:string;configured?:boolean;liveVerified?:false;stored:boolean}};
 export type CliBridgeStage='scope'|'pair'|'verify'|'poll'|'command'|'result'|'abort'|'disconnect';
 export type CliBridgeDiagnostic={stage:CliBridgeStage;target:'app'|'localhost';outcome:'start'|'response'|'timeout'|'cancelled'|'failed';status?:number};
 type DiagnosticCallback=(event:CliBridgeDiagnostic)=>void;
@@ -44,12 +44,12 @@ export function parseCliScope(value:unknown):CliScope{
  return{ownerId:value.ownerId,company:{code:value.company.code,name:value.company.name}};
 }
 export function sameCliScope(left:CliScope,right:CliScope){return left.ownerId===right.ownerId&&left.company.code===right.company.code&&left.company.name===right.company.name;}
-async function boundedJson(response:Response):Promise<unknown>{
+async function boundedJson(response:Response,maxBytes=MAX_JSON):Promise<unknown>{
  if(response.redirected||response.type==='opaqueredirect'||!/^(application\/json|application\/[\w.+-]+\+json)(?:;|$)/i.test(response.headers.get('content-type')??''))throw new CliBridgeError('RESPONSE_UNCERTAIN','서버의 JSON 응답을 확인하지 못했습니다. 연결을 다시 확인해주세요.');
- const advertised=response.headers.get('content-length');if(advertised&&(!/^\d+$/.test(advertised)||Number(advertised)>MAX_JSON))throw new CliBridgeError('RESPONSE_TOO_LARGE','응답이 허용 크기를 초과했습니다.');
+ const advertised=response.headers.get('content-length');if(advertised&&(!/^\d+$/.test(advertised)||Number(advertised)>maxBytes))throw new CliBridgeError('RESPONSE_TOO_LARGE','응답이 허용 크기를 초과했습니다.');
  const reader=response.body?.getReader();if(!reader)throw new CliBridgeError('RESPONSE_UNCERTAIN','응답 본문을 확인하지 못했습니다.');
  let length=0;const parts:Uint8Array[]=[];
- try{for(;;){const next=await reader.read();if(next.done)break;length+=next.value.byteLength;if(length>MAX_JSON)throw new CliBridgeError('RESPONSE_TOO_LARGE','응답이 허용 크기를 초과했습니다.');parts.push(next.value);}}catch(error){await reader.cancel().catch(()=>{});throw error;}finally{reader.releaseLock();}
+ try{for(;;){const next=await reader.read();if(next.done)break;length+=next.value.byteLength;if(length>maxBytes)throw new CliBridgeError('RESPONSE_TOO_LARGE','응답이 허용 크기를 초과했습니다.');parts.push(next.value);}}catch(error){await reader.cancel().catch(()=>{});throw error;}finally{reader.releaseLock();}
  const bytes=new Uint8Array(length);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.byteLength;}
  try{return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));}catch{throw new CliBridgeError('RESPONSE_UNCERTAIN','JSON 응답을 해석하지 못했습니다.');}
 }
@@ -88,7 +88,7 @@ function parseJob(value:unknown,scope:CliScope,now:number):Job{
  if(!object(value)||typeof value.jobId!=='string'||!UUID.test(value.jobId)||typeof value.command!=='string'||!object(value.payload)||!sameCliScope(parseCliScope(value.scope),scope)||typeof value.createdAt!=='number'||!Number.isSafeInteger(value.createdAt)||value.createdAt>now+60000||typeof value.deadline!=='number'||!Number.isSafeInteger(value.deadline)||value.deadline<=now||value.deadline<=value.createdAt||value.deadline>now+TTL)throw new CliBridgeError('JOB_UNCERTAIN','CLI 요청의 회사 또는 유효 시간을 확인하지 못했습니다.');
  return{jobId:value.jobId,command:value.command,payload:value.payload,scope,deadline:value.deadline};
 }
-export function createCliBridge(options:{link:CliLink;scope:CliScope;queryApproved:()=>boolean;fetcher?:Fetcher;onState?:(state:CliBridgeState)=>void;onDiagnostic?:DiagnosticCallback;now?:()=>number;contextIntervalMs?:number}){
+export function createCliBridge(options:{link:CliLink;scope:CliScope;queryApproved:()=>boolean;fetcher?:Fetcher;onState?:(state:CliBridgeState)=>void;onDiagnostic?:DiagnosticCallback;now?:()=>number;contextIntervalMs?:number;imageEditCommand?:(command:string,payload:unknown,scope:CliScope,signal:AbortSignal)=>Promise<Record<string,unknown>>}){
  const fetcher=options.fetcher??fetch,now=options.now??Date.now,scope=parseCliScope(options.scope),controller=new AbortController();
  if(options.link.host!==undefined&&options.link.host!=='127.0.0.1'&&options.link.host!=='localhost')throw new CliBridgeError('LINK_INVALID','이 컴퓨터의 로컬 CLI 주소만 연결할 수 있습니다.');
  const local='http://'+(options.link.host??'127.0.0.1')+':'+options.link.port;let active=false,used=false,epoch=0,timer:ReturnType<typeof setInterval>|undefined,expiryTimer:ReturnType<typeof setTimeout>|undefined,expiresAt=0,checking=false,inflightQuery:AbortController|null=null;
@@ -105,7 +105,7 @@ export function createCliBridge(options:{link:CliLink;scope:CliScope;queryApprov
    const response=await fetcher((loopback?local:'')+path,request);
    if(guardedSignal.aborted)throw new CliBridgeError('REQUEST_CANCELLED','현재 연결 요청을 취소했습니다.');
    diagnose(options.onDiagnostic,{stage,target,outcome:'response',status:response.status});
-   const value=await boundedJson(response);if(!response.ok){if(!loopback&&object(value)&&typeof value.code==='string'&&Object.hasOwn(SERVER_ERRORS,value.code))throw new CliBridgeError(value.code,SERVER_ERRORS[value.code]);throw new CliBridgeError('REQUEST_FAILED',loopback?'로컬 CLI 응답을 확인하지 못했습니다.':'상품조회 서버가 요청을 완료하지 못했습니다.');}return value;
+   const value=await boundedJson(response,loopback&&path.startsWith('/next?')?8*1024*1024:MAX_JSON);if(!response.ok){if(!loopback&&object(value)&&typeof value.code==='string'&&Object.hasOwn(SERVER_ERRORS,value.code))throw new CliBridgeError(value.code,SERVER_ERRORS[value.code]);throw new CliBridgeError('REQUEST_FAILED',loopback?'로컬 CLI 응답을 확인하지 못했습니다.':'상품조회 서버가 요청을 완료하지 못했습니다.');}return value;
   },{timeoutMs,signals:[controller.signal,extraSignal],timeoutError:new CliBridgeError(loopback?'LOCAL_CLI_TIMEOUT':'APP_REQUEST_TIMEOUT',loopback?'내 컴퓨터 CLI의 응답 시간을 초과했습니다. 현재 컴퓨터에서 CLI가 실행 중인지 확인해주세요.':'YOOFAM 앱 서버의 응답 시간을 초과했습니다. 앱 연결 상태를 확인해주세요.'),onDiagnostic:options.onDiagnostic,stage,target});}
   catch(error){if(error instanceof CliBridgeError)throw error;throw new CliBridgeError(loopback?'LOCAL_CLI_NETWORK':'APP_REQUEST_NETWORK',loopback?'내 컴퓨터 CLI에 연결하지 못했습니다. CLI 실행 상태와 브라우저 연결 설정을 확인해주세요.':'YOOFAM 앱 서버에 연결하지 못했습니다. 앱 연결 상태를 확인해주세요.');}
  }
@@ -123,11 +123,16 @@ export function createCliBridge(options:{link:CliLink;scope:CliScope;queryApprov
  async function processJob(job:Job,generation:number){
   await checkScope(generation,'verify',true);let result:unknown;let reply:JsonRecord;const queryController=job.command==='product-query'?new AbortController():null;
   try{
-   const request=commandRequest(job.command,job.payload,options.queryApproved());current(generation);
    if(job.deadline<=now())throw new CliBridgeError('JOB_EXPIRED','CLI 요청의 유효 시간이 끝났습니다.');
+   if(['main-image/next','main-image/complete'].includes(job.command)){
+    if(!options.imageEditCommand)throw new CliBridgeError('IMAGE_EDIT_UNAVAILABLE','Codex 이미지 연결을 지원하는 스튜디오로 새로고침해주세요.');
+    const edited=await options.imageEditCommand(job.command,job.payload,scope,AbortSignal.any([controller.signal,AbortSignal.timeout(Math.max(1,job.deadline-now()))]));current(generation);result={...edited,...scope};
+   }else{
+   const request=commandRequest(job.command,job.payload,options.queryApproved());current(generation);
    const body=request.body?{...request.body as JsonRecord,expectedOwnerId:scope.ownerId,expectedCompany:scope.company}:undefined;
    inflightQuery=queryController;
    result=await json(request.path,{method:request.method,headers:{'x-yoofam-cli-scope':encodeURIComponent(JSON.stringify(scope))},...(body?{body:JSON.stringify(body)}:{})},false,Math.max(1,Math.min(55000,job.deadline-now(),expiresAt-now())),queryController?.signal);
+   }
    await checkScope(generation,'verify',true);if(job.deadline<=now())throw new CliBridgeError('JOB_EXPIRED','CLI 요청의 유효 시간이 끝났습니다.');
    if(queryController?.signal.aborted||job.command==='product-query'&&!options.queryApproved())throw new CliBridgeError('QUERY_CANCELLED','상품조회 허용을 해제해 진행 중인 조회를 취소했습니다.');
    if(!object(result)||!sameCliScope(parseCliScope(result),scope))throw new CliBridgeError('RESULT_SCOPE_UNCERTAIN','CLI 조회 결과의 회사를 확인하지 못했습니다.');
@@ -154,7 +159,7 @@ export function createCliBridge(options:{link:CliLink;scope:CliScope;queryApprov
   if(reply.ok!==true){emit({phase:'connected',message:object(reply.error)&&typeof reply.error.message==='string'?reply.error.message:'요청 결과를 확인하지 못했습니다.'});return;}
   const source=object(result)&&object(result.source)?result.source:null;
   const service=job.command==='status'&&object(result)&&object(result.service)?result.service:null;
-  emit({phase:'connected',message:job.command==='product-query'?'상품조회가 끝났습니다. 수집함 저장과 초안 생성은 아직 하지 않았습니다.':'CLI 읽기 요청을 처리했습니다.',lastResult:{command:job.command,...(source&&typeof source.title==='string'?{title:source.title.slice(0,200)}:{}),...(source&&Array.isArray(source.options)?{optionCount:source.options.length}:{}),...(service?{provider:String(service.provider),configured:service.configured===true,liveVerified:false as const}:{}),stored:false}});
+  emit({phase:'connected',message:job.command==='main-image/complete'?'요청한 옵션의 대표이미지를 저장했습니다.':job.command==='main-image/next'?'Codex 대표이미지 요청을 확인했습니다.':job.command==='product-query'?'상품조회가 끝났습니다. 수집함 저장과 초안 생성은 아직 하지 않았습니다.':'CLI 읽기 요청을 처리했습니다.',lastResult:{command:job.command,...(source&&typeof source.title==='string'?{title:source.title.slice(0,200)}:{}),...(source&&Array.isArray(source.options)?{optionCount:source.options.length}:{}),...(service?{provider:String(service.provider),configured:service.configured===true,liveVerified:false as const}:{}),stored:job.command==='main-image/complete'}});
  }
  async function poll(generation:number){
   // start() just verified the pair ACK. The first poll only reads the local

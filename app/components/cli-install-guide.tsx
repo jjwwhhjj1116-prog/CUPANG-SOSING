@@ -21,6 +21,7 @@ export function CliInstallGuide(){
    <li><strong>설치 버전 확인</strong><CopyCommand key={platform+'status'} label="설치 확인" command={commands.status}/><p>버전 {CLI_RELEASE_VERSION}이 표시되면 설치 확인 완료입니다. 이 명령은 웹 로그인 연결 여부를 확인하지 않습니다.</p></li>
    <li><strong>실행하고 스튜디오에 연결</strong><CopyCommand key={platform+'start'} label="실행" command={commands.start}/><p>출력된 연결 주소를 현재 로그인한 Chrome에서 여세요. 회사 정보를 확인한 뒤 연결 버튼을 누릅니다. 실행한 창은 사용 중에 열어두세요.</p><a className="btn ghost" href="/cli">로그인 회사로 CLI 연결</a></li>
   </ol>
+  <details><summary>Codex 대표이미지 편집 연결</summary><p>일반 CLI 실행을 종료한 뒤, 이 PC에서 아래 명령으로 MCP를 추가하고 Codex를 다시 연결하세요.</p><CopyCommand key={platform+'mcp'} label="Codex MCP 연결" command={platform==='windows'?'codex mcp add yoofam-studio -- cmd.exe /d /c yoofam-studio.cmd start --stdio':'codex mcp add yoofam-studio -- yoofam-studio start --stdio'}/><p>Codex에서 YOOFAM 대표이미지 요청 처리를 시작하고, MCP가 제공한 연결 주소를 같은 브라우저에서 연결하세요. 상품의 대표이미지 단계에서 ‘Codex로 대표이미지 수정’을 누르면 원본과 수정 요청을 전달하고, Codex가 돌려준 결과를 선택 옵션에 저장합니다. Codex 작업이 실행 중이어야 하며, 연결만으로 새 AI 대화가 자동 시작되지는 않습니다.</p></details>
   <h3>종료·업데이트</h3><p>실행한 터미널에서 <kbd>Ctrl</kbd> + <kbd>C</kbd>로 CLI를 종료하세요. 업데이트할 때는 종료 후 설치 명령을 다시 실행하고 새로 시작합니다. 다른 프로그램을 함께 종료하지 않습니다.</p>
   <details><summary>설치가 안 될 때</summary><p>Node.js 설치 후 터미널을 새로 열고 다시 확인하세요. ‘조직에서 차단함’이나 설치 제한이 표시되면 관리자에게 이 CLI 배포본의 허용을 요청하세요. 보안 정책·인증서 검사·실행 정책을 끄는 명령은 사용하지 않습니다.</p><p>사이트 로그인이 필요한 주소를 설치 명령에 넣거나 비밀번호·로그인 쿠키를 터미널에 붙여넣지 마세요.</p></details>
  </section>;

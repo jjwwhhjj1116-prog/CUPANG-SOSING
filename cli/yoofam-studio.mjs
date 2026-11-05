@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { pathToFileURL } from 'node:url';
-import { readFileSync } from 'node:fs';
+import { readFileSync, lstatSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 import { createCliServer, CliError } from './server.mjs';
 
 export const CLI_VERSION = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
@@ -10,6 +11,8 @@ export const CLI_TOOLS = [
   { name: 'product-query', description: '앱에서 명시적으로 허용한 1688 상품 정보 읽기. 상품 생성·수정·전송하지 않음.', inputSchema: { type: 'object', properties: { sourceUrl: { type: 'string', maxLength: 2048 } }, required: ['sourceUrl'], additionalProperties: false } },
   { name: 'category-profiles/list', description: '연결 계정에서 조회 가능한 카테고리 목록', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
   { name: 'collection-job/status', description: '연결 계정이 소유한 수집 작업 상태 조회', inputSchema: { type: 'object', properties: { jobId: { type: 'string', format: 'uuid' } }, required: ['jobId'], additionalProperties: false } },
+  {name:'main-image/next',description:'회원이 대표이미지의 Codex로 수정 버튼으로 요청한 작업 1건과 원본 이미지를 가져옵니다. 요청이 없으면 job:null. 상품 형태·색상·브랜드 표기를 보존해 편집하고 main-image/complete에 결과 파일을 전달하세요.',inputSchema:{type:'object',properties:{},additionalProperties:false}},
+  {name:'main-image/complete',description:'명시적으로 요청된 대표이미지의 편집 결과를 해당 상품·옵션 하나에 업로드합니다. 다른 가격·옵션·서플라이허브는 변경하지 않습니다. 로컬 PNG·JPEG 절대경로, 4MB 이하.',inputSchema:{type:'object',properties:{requestId:{type:'string',format:'uuid'},filePath:{type:'string',maxLength:4096}},required:['requestId','filePath'],additionalProperties:false}},
 ];
 
 export function parseArguments(args) {
@@ -66,11 +69,19 @@ export async function startCli(args = process.argv.slice(2), streams = {}) {
   const call = async (id, command, payload, rpc) => {
     const key = `${typeof id}:${String(id)}`;
     if (pendingCalls.has(key)) throw new CliError('REQUEST_DUPLICATE', '현재 실행 중인 요청 번호입니다.');
+    if(command==='main-image/complete'){
+      if(!payload||Object.keys(payload).length!==2||typeof payload.filePath!=='string'||payload.filePath.length>4096||!isAbsolute(payload.filePath))throw new CliError('IMAGE_PATH_INVALID','결과 이미지의 절대경로가 필요합니다.');
+      const stat=lstatSync(payload.filePath);if(!stat.isFile()||stat.isSymbolicLink()||stat.size<8||stat.size>4*1024*1024)throw new CliError('IMAGE_INVALID','4MB 이하 PNG·JPEG 파일이 필요합니다.');
+      const bytes=readFileSync(payload.filePath),mimeType=bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))?'image/png':bytes[0]===255&&bytes[1]===216&&bytes[2]===255?'image/jpeg':null;
+      if(!mimeType||bytes.length!==stat.size)throw new CliError('IMAGE_INVALID','이미지 파일 내용·크기를 확인해주세요.');
+      payload={requestId:payload.requestId,image:{mimeType,data:bytes.toString('base64')}};
+    }
     const job = server.enqueue(command, payload);
     pendingCalls.set(key, job);
     try {
       const result = await job;
-      write(rpc ? { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: result } } : { id, ok: true, command, result });
+      const {image,...metadata}=command==='main-image/next'&&result?.image?result:{image:null,...result};
+      write(rpc ? { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(metadata) },...(image?[{type:'image',data:image.data,mimeType:image.mimeType}]:[])], structuredContent: metadata } } : { id, ok: true, command, result:metadata });
     } catch (error) {
       write(rpc ? resultError(id, error) : { id, ok: false, error: { code: error instanceof CliError ? error.code : 'COMMAND_FAILED', message: error instanceof CliError ? error.message : '명령을 처리하지 못했습니다.' } });
     } finally { pendingCalls.delete(key); }

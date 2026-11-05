@@ -6,6 +6,7 @@ import type {QuotationFieldsView} from '@/app/quotation-schema';
 import type {FreeImageQuotationRequest} from '@/app/free-image-translation-client';
 import {readMainImageLibrary,mainImageLibraryCurrent,mainImageLibraryKeys,initialMainImageLibraryTab,type MainImageLibrary,type MainImageLibraryTab} from '@/app/main-image-library';
 import {ImageFullscreenPreview} from '@/app/components/image-fullscreen-preview';
+import {CodexMainImageButton} from '@/app/components/codex-main-image-button';
 type Props={productId:string;version?:string;profileId?:string;refreshToken?:string;focusedOptionId?:string;onSaved?:()=>void;translationEnabled?:boolean;disabled?:boolean;saveOnSelect?:boolean;processingConfigured?:boolean|null;uploadControl?:ReactNode;
  onTranslate?:(sourceKey:string,role:'main',sourceLanguage:'zh'|'en',quotationTarget:FreeImageQuotationRequest)=>void;
  onEdit?:(sourceKey:string,role:'main',quotationTarget:FreeImageQuotationRequest)=>void;
@@ -133,6 +134,7 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
       <button type="button" className="main-image-current-thumbnail" aria-label="현재 메인 이미지 크게 보기" aria-haspopup="dialog" disabled={!valid||!fresh||disabled} onClick={()=>openPreview(selected[0])}><img src={url(selected[0])} alt="현재 메인 이미지 작은 미리보기" width={160} height={160}/></button>
       :<small>{selected.length?'대표 이미지 연결을 확인해주세요.':'대표 이미지를 선택해주세요.'}</small>}</div>
      {selected.length===1&&pool.includes(selected[0])&&<>
+      <CodexMainImageButton key={JSON.stringify([productId,id,profileId,selected[0],base?.view.productVersion])} productId={productId} optionId={id} profileId={profileId} sourceKey={selected[0]} version={base!.view.productVersion} disabled={disabled||!valid||busy||uncertain||dirty||!fresh} onSaved={onSaved}/>
       {onTranslate&&<button type="button" className="btn primary" aria-label="최종 대표이미지 중국어 한국어 번역" title="중국어 → 한국어 번역" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh} onClick={()=>translateSelected(selected[0],'zh')}>AI 처리</button>}
       {(onProcess||onTranslate)&&<details className="main-image-translation-tools"><summary>추가 도구</summary><div role="group" className="main-image-current-translation" aria-label="최종 견적 대표이미지 추가 도구">
        {onProcess&&<button type="button" className="btn ghost" aria-label="최종 대표이미지 AI 처리" disabled={processingConfigured!==true||disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh} onClick={()=>translateSelected(selected[0],'zh',false,true)}>{processingConfigured===true?'AI 이미지 생성':processingConfigured===false?'이미지 생성 설정 필요':'이미지 생성 설정 확인 중'}</button>}

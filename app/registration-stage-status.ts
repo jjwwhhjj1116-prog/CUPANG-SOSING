@@ -7,7 +7,7 @@ import {isReferenceSizeChart} from '@/app/manual-size-chart';
 
 export const registrationStageIds = ['seo','pricing','mainImage','additionalImages','detailImage','sizeChart','koreanLabel','quotation'] as const;
 export type RegistrationStageState = 'pending' | 'complete' | 'failed' | 'running' | 'unused';
-export type RegistrationStageStatus = { state: RegistrationStageState; detail: string;updatedAt?:string;sourceProofAt?:string;imageReview?:'unresolved'|'unconfirmed' };
+export type RegistrationStageStatus = { state: RegistrationStageState; detail: string;updatedAt?:string;sourceProofAt?:string;imageReview?:'unresolved'|'unconfirmed';originalImage?:true };
 export type RegistrationStageSummary = Record<AutomationStageId, RegistrationStageStatus>;
 export type RegistrationFinalImageKeys=Record<'main'|'additional'|'detail',string[]>;
 export const registrationStepIds:Record<string,AutomationStageId> = { SEO:'seo',가격:'pricing','대표 이미지':'mainImage','추가 이미지':'additionalImages','상세 이미지':'detailImage',옵션:'sizeChart',사이즈표:'sizeChart',표시사항:'koreanLabel',견적서:'quotation' };
@@ -82,16 +82,22 @@ export function registrationStagesFromSavedContent(product:{id:string;owner_id?:
       const roles=role==='detail'?['detailTop','detail','detailBottom'] as const:[role];
       const fields=roles.map(name=>content.assets[name]),selected=fields.flatMap(field=>field.value);
       const assignment=selected.length>0&&selected.every(owned)&&fields.filter(field=>field.value.length).every(saved)&&(role!=='detail'||content.assets.detail.value.length>0);
+      let originalMain=false;
       const manualRows=new Set(finalRows.filter(row=>{
         const option=row.optionId===null?undefined:rows.find(option=>option.id===row.optionId);
-        const individual=role==='main'&&!!option?.imageKey&&option.provenance?.imageKey==='manual'&&time(option.updatedAt)&&owned(option.imageKey);
+        const collected=(field:{provenance?:string;updatedAt?:string|null}|undefined)=>field?.provenance==='collected'&&time(field.updatedAt)&&(!product.updated_at||Date.parse(field.updatedAt!)<=Date.parse(product.updated_at));
+        const individual=role==='main'&&!!option?.imageKey&&(option.provenance?.imageKey==='manual'||collected({provenance:option.provenance?.imageKey,updatedAt:option.updatedAt}))&&time(option.updatedAt)&&owned(option.imageKey);
+        const original=role==='main'&&(individual?option?.provenance?.imageKey==='collected':selected.length===1&&collected(content.assets.main));
         const expected=individual?[option!.imageKey!]:selected;
         const finalKeys=row[role],valid=finalKeys.length>0&&(role!=='main'||finalKeys.length===1)&&new Set(finalKeys).size===finalKeys.length&&!row.imageIssues?.[role]&&finalKeys.every(owned);
-        return valid&&(row.manualImages?.[role]===true||(individual||assignment)&&exact(finalKeys,expected));
+        const accepted=valid&&(row.manualImages?.[role]===true||(individual||assignment||original)&&exact(finalKeys,expected));
+        if(accepted&&original)originalMain=true;
+        return accepted;
       }));
       manualRowsByRole.set(role,manualRows);
-      if(manualRows.size===finalRows.length)done(id,`직접 저장한 현재 ${role==='main'?'대표 이미지':role==='additional'?'추가 이미지':role==='detail'?'상세 이미지':'한글표시사항 이미지'} 역할과 최종 연결 확인`);
+      if(manualRows.size===finalRows.length)done(id,originalMain?'수집 원본 대표이미지 사용 · 편집은 선택사항입니다.':`직접 저장한 현재 ${role==='main'?'대표 이미지':role==='additional'?'추가 이미지':role==='detail'?'상세 이미지':'한글표시사항 이미지'} 역할과 최종 연결 확인`);
       else if(finalRows.some(row=>row.imageIssues?.[role]&&(row.manualImages?.[role]||fields.some(saved))))result[id]={state:'failed',detail:'직접 저장한 이미지의 현재 연결을 확인해주세요.'};
+      if(role==='main'&&originalMain&&manualRows.size===finalRows.length)result.mainImage.originalImage=true;
     }
     for(const [id,role]of [['mainImage','main'],['additionalImages','additional'],['detailImage','detail']]as const){
       const roles=role==='detail'?['detailTop','detail','detailBottom']as const:[role];
@@ -132,6 +138,7 @@ export function mergeRegistrationStages(saved:RegistrationStageSummary,execution
     const latest=saved[id],previous=execution[id];
     if(['mainImage','additionalImages','detailImage'].includes(id)
       &&(latest.imageReview==='unresolved'&&latest.state==='failed'||latest.imageReview==='unconfirmed'&&latest.state==='pending'))return[id,latest];
+    if(id==='mainImage'&&latest.state==='complete'&&latest.originalImage===true&&previous.state==='failed')return[id,latest];
     const resolvedFailure=previous.state==='failed'&&latest.state==='complete'&&time(latest.sourceProofAt)&&time(previous.updatedAt)&&Date.parse(latest.sourceProofAt!)>Date.parse(previous.updatedAt!);
     return[id,resolvedFailure?latest:['failed','running','complete'].includes(previous.state)?previous:latest];
   })) as RegistrationStageSummary;

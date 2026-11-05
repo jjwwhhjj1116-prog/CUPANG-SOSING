@@ -321,6 +321,30 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     const role=({mainImage:'main',additionalImages:'additional',detailImage:'detail'} as const)[id];
     const stateKey=identity+':'+id;
     const inferenceLatch=identity+':vision-inference-pending',detailKey=identity+':detailImage';
+    // Main photos are adopted as collected. Only the explicit editor starts an
+    // image edit; retained old write/inference attempts still use recovery below.
+    if(role==='main'&&!imageStates!.has(stateKey)){
+      const current=await product();
+      const usable=(value:typeof current)=>value.owner_id===controls.expectedOwnerId&&object(value.content_summary)
+        &&object(value.content_summary.stages)&&object(value.content_summary.stages.mainImage)&&value.content_summary.stages.mainImage.state==='complete';
+      let clock=current.updated_at;
+      if(!usable(current)){
+        if(keys.has(inferenceLatch)||detailStates!.get(detailKey)?.inference)return{status:'blocked',message:'이전 이미지 작업 결과를 확인한 뒤 수집 대표이미지 연결을 확인해주세요.'};
+        keys.set(identity+':pending:'+id,'대표이미지 연결 결과 확인 필요');
+        const previousDispatch=onMutationDispatch;let dispatched=false;onMutationDispatch=()=>{dispatched=true;previousDispatch?.();};
+        try{
+          const prepared=await post<{productId:string;productVersion:string}>('/work-draft',{expectedVersion:clock,roles:['main']});
+          if(prepared.productId!==productId||!Number.isFinite(Date.parse(prepared.productVersion))||Date.parse(prepared.productVersion)<Date.parse(clock))throw Error('수집 대표이미지 연결 응답을 확인하지 못했습니다.');
+          clock=prepared.productVersion;
+        }catch(cause){if(!dispatched)keys.delete(identity+':pending:'+id);throw cause;}
+        finally{onMutationDispatch=previousDispatch;}
+      }
+      const latest=await product();await assertCurrent();
+      if(latest.updated_at!==clock)throw new ScopeChanged('대표이미지 확인 중 상품이 변경됐습니다. 저장된 사진을 유지했습니다.');
+      keys.delete(identity+':pending:'+id);
+      return usable(latest)?{status:'draft',message:'수집 원본 또는 저장한 대표이미지를 그대로 사용합니다. 이미지 수정은 대표이미지 편집에서 선택할 수 있습니다.'}
+        :{status:'blocked',message:'사용할 대표이미지를 확인해주세요. 원본 사진을 선택하면 번역·재생성 없이 사용할 수 있습니다.'};
+    }
     // A remount may enter another image role after a cancelled detail call.
     // Retained request state remains authoritative even if its queue key is absent.
     if(!keys.has(inferenceLatch)&&detailStates!.get(detailKey)?.inference)keys.set(inferenceLatch,detailKey);
