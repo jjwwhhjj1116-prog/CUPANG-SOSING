@@ -57,12 +57,16 @@ function packageSourceValueKey(value:unknown):string|null{
 export async function loadSinglePackage(owner:string,id:string,profileId:string|null,company:SupplierHubCompany,active:()=>Promise<void>,prepare=false,expectedFingerprint?:string,includeNativeAssets=false,options:{nativeReadOnly?:boolean;nativePlanMetadataOnly?:boolean;trace?:(phase:string)=>void}={}){
     const nativeReadOnly=options.nativeReadOnly===true;
     if(nativeReadOnly&&(!includeNativeAssets||prepare))throw new SingleAssetError('원본 조회 전용 준비 범위를 확인해주세요.','NATIVE_ASSET_READ_ONLY',400);
-    const saved = await readQuotationExportSource(owner, id, profileId);
+    // One server-owned quotation read per profile inside this phase only.
+    // The final source fence creates a new provider and never inherits it.
+    const quotationPhase=()=>{const reads=new Map<string|null,ReturnType<typeof stableQuotationFieldsView>>();return{readQuotation:(selected:string|null)=>{if(!reads.has(selected))reads.set(selected,stableQuotationFieldsView(owner,id,selected));return reads.get(selected)!;}};};
+    const initialQuotation=nativeReadOnly?quotationPhase():undefined;
+    const saved = await readQuotationExportSource(owner, id, profileId,initialQuotation);
     options.trace?.('source');
     // The visible editor also binds settings, profile interpretation and source
     // context. Pair its exact fingerprint with this export's full source guard;
     // product/content/option/quotation clocks alone do not identify that view.
-    const reviewed = await stableQuotationFieldsView(owner,id,profileId).catch(error => {
+    const reviewed = await (initialQuotation?initialQuotation.readQuotation(profileId):stableQuotationFieldsView(owner,id,profileId)).catch(error => {
       if(error instanceof QuotationFieldsSnapshotError)throw new QuotationExportError(error.message,error.status);
       throw error;
     });
@@ -196,7 +200,7 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
       // live-member fence still run before any byte or plan can leave this GET.
       const reads = await Promise.allSettled([
         quotationSourcesCurrent(owner,id,saved.source),readQuotationFields(owner,id),
-        readQuotationExportSource(owner,id,profileId),publicDetailVersion(publicDetailConfig(env as Parameters<typeof publicDetailConfig>[0])),
+        readQuotationExportSource(owner,id,profileId,nativeReadOnly?quotationPhase():undefined),publicDetailVersion(publicDetailConfig(env as Parameters<typeof publicDetailConfig>[0])),
       ] as const);
       const value=<T,>(result:PromiseSettledResult<T>):T=>{if(result.status==='rejected')throw result.reason;return result.value;};
       const sourceCurrent=value(reads[0]),fields=value(reads[1]);

@@ -34,7 +34,7 @@ const LEGAL_DIAGNOSTIC_KEYS=['attachmentType','byteLength','categoryId','certifi
 const LEGAL_DIAGNOSTIC_TYPES=['missing','null','array','object','string-empty','string','number','boolean'];
 const LEGAL_DIAGNOSTIC_FILE_TYPES=['import_type','certificate','additional','categoryCert','adCert','msds','MAIN','ADDITIONAL','SIZECHART','LABEL','DETAIL'];
 /** A failed legal collection read remains failed. Accept only bounded,
- * value-free page diagnostics; never serialize an unknown server field. */
+ * known metadata identifiers; never serialize an unknown server field. */
 function savedLegalFailureSummary(value){
  const object=item=>Boolean(item&&typeof item==='object'&&!Array.isArray(item));
  const exact=(item,keys)=>object(item)&&Object.keys(item).length===keys.length&&keys.every(key=>Object.hasOwn(item,key));
@@ -43,8 +43,8 @@ function savedLegalFailureSummary(value){
  const failure=value?.currentReadFailure;
  if(!exact(value,['currentReadFailure'])||!exact(failure,['format','phase','code','diagnostics'])||failure.format!=='yoofam-current-saved-draft-read-failure-v1'||failure.phase!=='legal-lists'||failure.code!=='legal-array-nonempty')return '';
  const diagnostic=failure.diagnostics;
- const richer=diagnostic?.format==='yoofam-saved-draft-legal-diagnostics-v2';
- if(!exact(diagnostic,['format','collection','count','truncated','rows',...(richer?['bodyRelations']:[])])||diagnostic.format!==(richer?'yoofam-saved-draft-legal-diagnostics-v2':'yoofam-saved-draft-legal-diagnostics-v1')||diagnostic.collection!=='array'||!bounded(diagnostic.count,1)
+ const metadata=diagnostic?.format==='yoofam-saved-draft-legal-diagnostics-v3',richer=metadata||diagnostic?.format==='yoofam-saved-draft-legal-diagnostics-v2';
+ if(!exact(diagnostic,['format','collection','count','truncated','rows',...(richer?['bodyRelations']:[])])||diagnostic.format!==(metadata?'yoofam-saved-draft-legal-diagnostics-v3':richer?'yoofam-saved-draft-legal-diagnostics-v2':'yoofam-saved-draft-legal-diagnostics-v1')||diagnostic.collection!=='array'||!bounded(diagnostic.count,1)
    ||!dense(diagnostic.rows,12)||diagnostic.rows.length!==Math.min(diagnostic.count,12)||diagnostic.truncated!==(diagnostic.count>diagnostic.rows.length))return '';
  let relations;
  if(richer){
@@ -68,7 +68,7 @@ function savedLegalFailureSummary(value){
   }
  }
  for(const [index,row]of diagnostic.rows.entries()){
-  if(!exact(row,['index','type','keys','keyCount','keysTruncated','fileType','fileName','imageName','s3Link','docId',...(richer?['certificateNamePrefix','pairedImageDescriptorMatch','expectedLabelReferences']:[])])||row.index!==index||!['null','array','object','string','number','boolean'].includes(row.type)
+  if(!exact(row,['index','type','keys','keyCount','keysTruncated','fileType','fileName','imageName','s3Link','docId',...(richer?['certificateNamePrefix','pairedImageDescriptorMatch','expectedLabelReferences']:[]),...(metadata?['metadata']:[])])||row.index!==index||!['null','array','object','string','number','boolean'].includes(row.type)
     ||!dense(row.keys,12)||row.keys.some((key,position)=>!LEGAL_DIAGNOSTIC_KEYS.includes(key)||position>0&&row.keys[position-1]>=key)||!bounded(row.keyCount)||row.keyCount<row.keys.length||row.keysTruncated!==(row.keyCount>row.keys.length)
     ||!exact(row.fileType,['type','knownType','identifier'])||!LEGAL_DIAGNOSTIC_TYPES.includes(row.fileType.type)||typeof row.fileType.identifier!=='boolean'
     ||!(row.fileType.knownType===null||LEGAL_DIAGNOSTIC_FILE_TYPES.includes(row.fileType.knownType))||row.fileType.identifier&&row.fileType.type!=='string'
@@ -78,6 +78,17 @@ function savedLegalFailureSummary(value){
   if(row.type!=='object'&&(row.keys.length||row.keyCount!==0||row.keysTruncated||['fileType','fileName','imageName','s3Link','docId'].some(key=>row[key].type!=='missing')||row.fileType.knownType!==null||row.fileType.identifier||row.docId.same
     ||['fileName','imageName','s3Link'].some(key=>row[key].expectedImageMatch)))return '';
   if(row.type==='object'&&['fileType','fileName','imageName','s3Link','docId'].some(key=>row.keys.includes(key)?row[key].type==='missing':row.keys.length<12&&row[key].type!=='missing'))return '';
+  if(metadata){
+   const validString=(field,limit,type)=>{if(!exact(field,['value','length','redacted'])||typeof field.redacted!=='boolean')return false;
+    if(type!==undefined&&!['string','string-empty'].includes(type))return field.value===null&&field.length===null&&!field.redacted;
+    if(!bounded(field.length))return false;if(field.value===null)return field.redacted;
+    if(typeof field.value!=='string'||field.value.length!==field.length||field.length>limit||field.redacted||row.fileType.knownType===null||/[\p{C}\p{Zl}\p{Zp}?#]/u.test(field.value))return false;
+    if(type!==undefined&&(field.value.trim()===''?'string-empty':'string')!==type)return false;
+    if(/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(field.value)){try{const url=new URL(field.value,SINGLE_DOCUMENT_ORIGIN);if(url.username||url.password||url.search||url.hash)return false;}catch{return false;}}return true;};
+   const data=row.metadata;
+   if(!exact(data,['fileName','s3Link','sameNameImageS3Link'])||!validString(data.fileName,512,row.fileName.type)||!validString(data.s3Link,4096,row.s3Link.type)
+     ||(data.sameNameImageS3Link===null)!==!row.fileName.expectedImageMatch||data.sameNameImageS3Link!==null&&!validString(data.sameNameImageS3Link,4096))return '';
+  }
   if(richer){const prefix=row.certificateNamePrefix;
    if(!exact(prefix,['type','matchedIndex','ambiguous','scanComplete','memberRowMatches'])||prefix.type!==row.fileName.type||typeof prefix.ambiguous!=='boolean'||typeof prefix.scanComplete!=='boolean'
     ||!bounded(prefix.memberRowMatches)||prefix.memberRowMatches>relations.memberCount||!(prefix.matchedIndex===null||bounded(prefix.matchedIndex)&&prefix.matchedIndex<=199)
@@ -94,10 +105,15 @@ function savedLegalFailureSummary(value){
  const association=relations?'; 연결: 동일 이미지명·S3 '+rows.filter(row=>row.pairedImageDescriptorMatch).length+'; LABEL 원래 본문 참조 '+(rows.some(row=>row.expectedLabelReferences===null)?'미확인':rows.reduce((sum,row)=>sum+row.expectedLabelReferences,0))
   +'; 인증 접두 행 '+([...new Set(rows.flatMap(row=>row.certificateNamePrefix.matchedIndex===null?[]:[row.certificateNamePrefix.matchedIndex]))].sort((a,b)=>a-b).join(',')||'없음')+' / 모호 '+rows.filter(row=>row.certificateNamePrefix.ambiguous).length+' / 범위 미확인 '+rows.filter(row=>!row.certificateNamePrefix.scanComplete).length
   +' / 본문 연결행 '+rows.reduce((sum,row)=>sum+row.certificateNamePrefix.memberRowMatches,0)+'; 법적 본문 '+(relations.remoteLegalMatchesExpected?'원래값 일치':'원래값과 다름')+' / 옵션 '+relations.memberCount+' / 인증목록 '+counts(relations.members.map(member=>member.remoteCertificatesType)):'';
- return ' 진단: 배열 '+diagnostic.count+'행·표본 '+rows.length+'행'+(diagnostic.truncated?'(일부)':'')+'; 행종류 '+counts(rows.map(row=>row.type))
+ let summary=' 진단: 배열 '+diagnostic.count+'행·표본 '+rows.length+'행'+(diagnostic.truncated?'(일부)':'')+'; 행종류 '+counts(rows.map(row=>row.type))
    +'; fileType '+counts(rows.map(row=>row.fileType.type))+' / 알려진종류 '+(counts(rows.filter(row=>row.fileType.knownType!==null).map(row=>row.fileType.knownType))||'없음')+' / 기타식별자 '+rows.filter(row=>row.fileType.identifier&&row.fileType.knownType===null).length
    +['fileName','imageName','s3Link'].map(key=>'; '+key+' '+counts(rows.map(row=>row[key].type))+' / 원본이미지연결 일치 '+rows.filter(row=>row[key].expectedImageMatch).length).join('')
    +'; docId '+counts(rows.map(row=>row.docId.type))+' / 동일문서 '+rows.filter(row=>row.docId.same).length+'; 허용키 '+(keys.join(',')||'없음')+' / 숨긴키가 있는 행 '+rows.filter(row=>row.keysTruncated).length+association+'.';
+ if(metadata)for(const row of rows){for(const [key,field]of Object.entries(row.metadata)){if(field===null)continue;
+   const label=' 행'+row.index+' '+key+' 길이 '+(field.length??'해당없음')+': ',shown=field.value===null?(field.redacted?'가림':'해당없음'):JSON.stringify(field.value);
+   const entry=label+shown+';';if(summary.length+entry.length<=1700)summary+=entry;else{const omitted=label+'표시한도;';if(summary.length+omitted.length<=1700)summary+=omitted;}
+  }}
+ return summary;
 }
 /** Project only the round-trip forms observed in native doc2347603. Preserve
  * every value and all other differences for the receiver's exact comparison.

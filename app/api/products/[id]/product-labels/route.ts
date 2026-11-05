@@ -1,3 +1,4 @@
+import {productLabelsSnapshotFromSource,ProductLabelsSnapshotError} from '@/app/product-labels-source-snapshot';
 import { NextResponse } from 'next/server';
 import { env } from 'cloudflare:workers';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
@@ -6,14 +7,11 @@ import { readProductContent } from '@/db/product-content';
 import { readProductOptions } from '@/db/product-options';
 import { getCategoryProfile } from '@/db/category-profiles';
 import { readQuotationCollectionSource } from '@/db/quotation-fields';
-import { readProductLabels, productLabelsSourcesCurrent, saveProductLabels, type ProductLabelSourceGuard } from '@/db/product-labels';
-import { applyProductLabelChanges, PRODUCT_LABEL_BODY_LIMIT, PRODUCT_LABEL_STORAGE_LIMIT, resolveProductLabels, validateProductLabelChanges, validateProductLabelStructure, verifyProductLabelsView, type ProductLabelsView } from '@/app/product-label';
-import { fingerprint } from '@/app/automation/model';
+import { readProductLabels, saveProductLabels, type ProductLabelSourceGuard } from '@/db/product-labels';
+import { applyProductLabelChanges, PRODUCT_LABEL_BODY_LIMIT, PRODUCT_LABEL_STORAGE_LIMIT, validateProductLabelChanges, validateProductLabelStructure } from '@/app/product-label';
 import { savedRegistrationSettings } from '@/app/workspace-settings';
 import { collectionRegistrationSettings } from '@/app/collection-registration-settings';
 import { parseCollectionRequest } from '@/app/sourcing';
-import { productImageKeys } from '@/app/product-content';
-import { isOwnedImageKey } from '@/app/image-files';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import {readQuotationFieldsForRequest} from '@/app/quotation-fields-read';
@@ -67,28 +65,10 @@ async function snapshot(owner: string, id: string, profileId: string | null, req
     if(error instanceof PublicDetailError)throw new LabelError(error.message,error.status);
     throw new LabelError('견적서 자동 입력 자료와 수정값을 읽거나 저장하지 못했습니다.',503);
   }
-  const imageKeys = productImageKeys(product.image_keys).filter(key => isOwnedImageKey(owner, key));
-  if (quotation.productVersion !== product.updated_at || quotation.contentRevision !== content.revision || quotation.optionRevision !== options.revision
-    || JSON.stringify(quotation.imageKeys) !== JSON.stringify(imageKeys)) throw conflict();
-  if (!quotation.categoryContext?.categoryId) throw new LabelError('상품에 맞는 카테고리를 선택한 뒤 표시사항을 작성해주세요.', 409, 'PRODUCT_LABELS_CATEGORY_REQUIRED');
-  const source: ProductLabelSourceGuard = { productVersion: product.updated_at, imageKeys: product.image_keys, pricingPolicy: product.pricing_policy ?? null,
-    contentRevision: content.revision, optionRevision: options.revision, quotationRevision: quotation.revision,
-    settingsPayload: savedSettings?.payload ?? null, profile: profile ? { id: profile.id, revision: profile.revision } : null, collection };
-  const rows = resolveProductLabels({ productId: id, state, content, options, quotation, settings });
-  const inputFingerprint = await fingerprint({ recipe: 'product-label-source-v1', productId: id, source,
-    quotationInputFingerprint: quotation.inputFingerprint, categoryContext: quotation.categoryContext, labelRevision: state.revision, overrides: state.overrides, rows,
-    ...(state.structure === undefined ? {} : { structure: state.structure }), ...(state.renderEpoch === undefined ? {} : { renderEpoch: state.renderEpoch }) });
-  const view: ProductLabelsView = { productId: id, revision: state.revision, inputFingerprint, productVersion: product.updated_at,
-    contentRevision: content.revision, optionRevision: options.revision, quotationRevision: quotation.revision,
-    quotationInputFingerprint: quotation.inputFingerprint, categoryContext: quotation.categoryContext, imageKeys,
-    overrides: state.overrides, rows, updatedAt: state.updatedAt, ...(state.structure === undefined ? {} : { structure: state.structure }),
-    ...(state.renderEpoch === undefined ? {} : { renderEpoch: state.renderEpoch }) };
-  verifyProductLabelsView(view, null, profileId ?? undefined);
-  if (!await productLabelsSourcesCurrent(owner, id, source, state.revision)) throw conflict();
-  return { view, source, options };
+  return productLabelsSnapshotFromSource({owner,id,profileId,product,content,options,settings,state,quotation,source:{productVersion:product.updated_at,imageKeys:product.image_keys,pricingPolicy:product.pricing_policy??null,contentRevision:content.revision,optionRevision:options.revision,settingsPayload:savedSettings?.payload??null,profile:profile?{id:profile.id,revision:profile.revision}:null,collection}});
 }
 function failure(error: unknown) {
-  if (error instanceof LabelError) return json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, error.status);
+  if (error instanceof LabelError || error instanceof ProductLabelsSnapshotError) return json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, error.status);
   if (error instanceof RequestBodyError) return json({ error: error.message }, error.status);
   return json({ error: '표시사항 저장본을 읽거나 저장하지 못했습니다. 기존 내용과 입력은 유지됩니다.' }, 503);
 }

@@ -27,13 +27,15 @@ import { inspectGeneratedProductLabels } from '@/app/product-label-proof';
 import { inspectGeneratedQuotationLabels } from '@/app/quotation-label-proof';
 import type { ProductLabelsView } from '@/app/product-label';
 import { env } from 'cloudflare:workers';
+import {productLabelsSnapshotFromSource} from '@/app/product-labels-source-snapshot';
+import type {stableQuotationFieldsView} from '@/app/quotation-fields-snapshot';
 
 export class QuotationExportError extends Error {
   constructor(message: string, public status: number) { super(message); }
 }
 
 /** A saved-source snapshot shared by both downloads. No automatic values are written back. */
-export async function readQuotationExportSource(owner: string, productId: string, profileId: string | null) {
+export async function readQuotationExportSource(owner: string, productId: string, profileId: string | null, internal?:{readQuotation:(profileId:string|null)=>ReturnType<typeof stableQuotationFieldsView>}) {
   const user = await getChatGPTUser();
   const currentCompany = user?.verifiedAccess && user.userId === owner ? approvedSupplierHubCompany(user.membership) : null;
   let company = currentCompany;
@@ -109,6 +111,14 @@ export async function readQuotationExportSource(owner: string, productId: string
     ...await inspectGeneratedQuotationLabels({ownerId:owner,productId,profileId:categoryContext.profileId,resolved,head:labelHead}),
     ...await inspectGeneratedProductLabels({ownerId:owner,productId,profileId:categoryContext.profileId,resolved,head:labelHead,
     readView:async selectedProfileId=>{
+      if(internal){
+        const quotation=await internal.readQuotation(selectedProfileId),withoutProfile=(value:QuotationSourceGuard)=>({...value,profile:null});
+        if(JSON.stringify(withoutProfile(quotation.source))!==JSON.stringify(withoutProfile(source))||quotation.view.revision!==state.revision
+          ||(selectedProfileId===null?quotation.source.profile!==null:quotation.source.profile?.id!==selectedProfileId)
+          ||quotation.view.categoryContext.categoryId!==categoryContext.categoryId||JSON.stringify(quotation.view.categoryContext.categoryPath)!==JSON.stringify(categoryContext.categoryPath))
+          throw new QuotationExportError('생성한 표시사항과 현재 저장값의 연결이 변경되었습니다. 다시 검사해주세요.',409);
+        return(await productLabelsSnapshotFromSource({owner,id:productId,profileId:selectedProfileId,product,content,options,settings,source:quotation.source,quotation:quotation.view})).view;
+      }
       const {GET:productLabelsGET}=await import('@/app/api/products/[id]/product-labels/route');
       const url=new URL(`/api/products/${encodeURIComponent(productId)}/product-labels`,'https://label.invalid');if(selectedProfileId)url.searchParams.set('profileId',selectedProfileId);
       const response=await productLabelsGET(new Request(url),{params:Promise.resolve({id:productId})});

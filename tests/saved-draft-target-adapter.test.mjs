@@ -179,6 +179,16 @@ for(const drift of ['company','source','session'])test('reserved-target final so
  }finally{q.close();}
 });
 
+test('v3 legal metadata reaches the protected adapter error with exact key comparison and no new writes or requests',async()=>{
+ const options={},q=await fixture(options);try{
+  const image=q.f.state.source.images[0],descriptor=q.f.state.registry.get(image.transportName),secret='SECRET_METADATA_VALUE';
+  options.legalResponse=[{fileType:'certificate',fileName:image.transportName,s3Link:'legal/exact-key.png',message:secret,[secret]:secret}];
+  const before=JSON.stringify({uploads:q.f.state.uploads,body:[...q.f.documents]}),writes=q.f.calls.filter(call=>call.name==='hub-fetch'&&call.init.method==='POST').length;
+  await assert.rejects(q.adapter.qualifySavedDraftTarget(q.input),error=>{assert.equal(error.code,'SAVED_DRAFT_TARGET_UNCONFIRMED');assert.match(error.message,/legal-array-nonempty/);for(const value of [image.transportName,'legal/exact-key.png',descriptor.s3Link])assert.ok(error.message.includes(JSON.stringify(value)),value);assert.match(error.message,/길이/);assert.equal(error.message.includes(secret),false);assert.ok(error.message.length<=2000);return true;});
+  assert.equal(JSON.stringify({uploads:q.f.state.uploads,body:[...q.f.documents]}),before);assert.equal(q.f.calls.filter(call=>call.name==='hub-fetch'&&call.init.method==='POST').length,writes);assert.equal(q.requests.length,5);assert.equal(q.requests.some(call=>new URL(call.url).pathname==='/sr/api/image/get-by-key'),false);assert.equal(q.f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords,undefined);
+ }finally{q.close();}
+});
+
 test('nonempty legal collection remains blocked while only bounded classification reaches the existing adapter error',async()=>{
  const options={},q=await fixture(options);try{
   const image=q.f.state.source.images[0],descriptor=q.f.state.registry.get(image.transportName),secrets=['unreviewed-private.pdf','private-link-not-in-images','Bearer-credential-value','unknownSecretFieldName','UnknownPrivateType'];
@@ -189,7 +199,7 @@ test('nonempty legal collection remains blocked while only bounded classificatio
    assert.equal(error.code,'SAVED_DRAFT_TARGET_UNCONFIRMED');assert.match(error.message,/legal-lists \/ legal-array-nonempty/);assert.match(error.message,/진단: 배열 4행·표본 4행/);assert.match(error.message,/행종류 null:1,object:3/);
    assert.match(error.message,/알려진종류 MAIN:1,certificate:1/);assert.match(error.message,/기타식별자 1/);assert.match(error.message,/동일문서 1/);assert.match(error.message,/숨긴키가 있는 행 1/);assert.ok(error.message.length<=2000);
    assert.match(error.message,/동일 이미지명·S3 1/);assert.match(error.message,/인증 접두 행 없음/);assert.match(error.message,/법적 본문 원래값 일치/);
-   for(const secret of [...secrets,image.transportName,descriptor.s3Link])assert.equal(error.message.includes(secret),false,secret);return true;
+   for(const secret of secrets.slice(2))assert.equal(error.message.includes(secret),false,secret);for(const identifier of secrets.slice(0,2))assert.ok(error.message.includes(identifier));return true;
   });
   assert.equal(q.f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords,undefined);assert.deepEqual(q.f.state.uploads,before.uploads);assert.deepEqual([...q.f.documents],before.body);assert.equal(q.f.calls.filter(call=>call.name==='hub-fetch'&&call.init.method==='POST').length,before.writes);
   assert.equal(q.requests.some(call=>new URL(call.url).pathname==='/sr/api/image/get-by-key'),false);
@@ -215,6 +225,16 @@ test('v2 association diagnostics remain failure-only and reject malformed relati
    d=>{d.bodyRelations.members[0].remoteCount=13;d.bodyRelations.members[0].rows=Array.from({length:13},(_,index)=>({...copy(certificate),index}));},
   ];
   for(const change of mutate){const invalid=copy(reply);change(invalid.currentReadFailure.diagnostics);options.currentReadReply=invalid;await assert.rejects(q.adapter.qualifySavedDraftTarget(q.input),error=>{assert.equal(error.code,'SAVED_DRAFT_TARGET_UNCONFIRMED');assert.equal(error.message.includes('진단:'),false);assert.equal(error.message.includes(secret),false);return true;});}
+  const v3=copy(reply);v3.currentReadFailure.diagnostics.format='yoofam-saved-draft-legal-diagnostics-v3';
+  const observed=value=>({value,length:value.length,redacted:false});v3.currentReadFailure.diagnostics.rows[0].metadata={fileName:observed('safe.png'),s3Link:observed('legal/key'),sameNameImageS3Link:observed('image/key')};
+  options.currentReadReply=v3;await assert.rejects(q.adapter.qualifySavedDraftTarget(q.input),error=>error.message.includes('"legal/key"')&&error.message.includes('"image/key"'));
+  const invalidMetadata=[
+   data=>{data.extra=secret;},data=>{data.s3Link.extra=secret;},data=>{data.s3Link=observed('https://user:'+secret+'@private.example/image');},data=>{data.s3Link=observed('https://private.example/image?token='+secret);},data=>{data.s3Link=observed('https://private.example/image#'+secret);},
+   data=>{data.s3Link=observed('bad\n'+secret);},data=>{data.fileName=observed('n'.repeat(513));},data=>{data.s3Link=observed('k'.repeat(4097));},data=>{data.s3Link.length++;},data=>{data.s3Link.redacted=true;},data=>{data.sameNameImageS3Link=null;},data=>{data.s3Link={value:null,length:-1,redacted:true};}
+  ];
+  for(const change of invalidMetadata){const invalid=copy(v3);change(invalid.currentReadFailure.diagnostics.rows[0].metadata);options.currentReadReply=invalid;await assert.rejects(q.adapter.qualifySavedDraftTarget(q.input),error=>{assert.equal(error.code,'SAVED_DRAFT_TARGET_UNCONFIRMED');assert.equal(error.message.includes('진단:'),false);assert.equal(error.message.includes(secret),false);assert.ok(error.message.length<=2000);return true;});}
+  const long=copy(v3);long.currentReadFailure.diagnostics.rows[0].metadata.s3Link=observed('k'.repeat(4096));options.currentReadReply=long;
+  await assert.rejects(q.adapter.qualifySavedDraftTarget(q.input),error=>{assert.match(error.message,/s3Link 길이 4096: 표시한도/);assert.ok(error.message.length<=2000);assert.equal(error.message.includes('k'.repeat(100)),false);return true;});
   assert.equal(q.f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords,undefined);assert.equal(q.requests.length,0);
  }finally{q.close();}
 });

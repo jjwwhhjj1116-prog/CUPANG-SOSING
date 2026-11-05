@@ -52,13 +52,40 @@ function fixture(){
  f.bindInput=observation=>({...copy(input),mode:'bind',proof:f.proof(observation),expectedObservation:Object.fromEntries(['fileSetSha256','byteSetSha256','rawBodySha256','filesCount'].map(key=>[key,observation[key]]))});
  return f;
 }
-function expectFailure(result){assert.deepEqual(Object.keys(result),['currentReadFailure']);assert.equal(result.currentReadFailure.format,'yoofam-current-saved-draft-read-failure-v1');assert.match(result.currentReadFailure.phase,/^[a-z-]+$/);assert.match(result.currentReadFailure.code,/^[a-z][a-z0-9-]+$/);assert.doesNotMatch(JSON.stringify(result),/https:|2347603|stored-image|current-owner|원래 저장/);}
+// v3 permits identifiers only inside its explicitly tested metadata projection.
+const withoutMetadata=value=>JSON.stringify(value,(key,item)=>key==='metadata'?undefined:item);
+function expectFailure(result){assert.deepEqual(Object.keys(result),['currentReadFailure']);assert.equal(result.currentReadFailure.format,'yoofam-current-saved-draft-read-failure-v1');assert.match(result.currentReadFailure.phase,/^[a-z-]+$/);assert.match(result.currentReadFailure.code,/^[a-z][a-z0-9-]+$/);assert.doesNotMatch(withoutMetadata(result),/https:|2347603|stored-image|current-owner|원래 저장/);}
 function resealExpected(f){
  const binding=f.input.binding,prepared=copy(f.input.expectedBody);prepared.docId=null;
  binding.identityDigest=sha(binding.identity);binding.preparedBodySha256=sha(prepared);binding.originalBodySha256=binding.preparedBodySha256;
  const identity=Object.fromEntries(Object.entries(binding.identity).filter(([key])=>!['appTabId','windowId'].includes(key)));
  binding.packetDigest=sha({identity,bodySha256:binding.preparedBodySha256,originalBodySha256:binding.originalBodySha256});f.input.previousTarget.packetDigest=binding.packetDigest;
 }
+
+test('v3 legal metadata exposes only bounded printable identifiers and exact same-name image links without permitting recovery',async()=>{
+ const f=fixture(),image=f.state.files[0],secret='SECRET_METADATA_CREDENTIAL';
+ f.state.legal=[{fileName:image.imageName,fileType:'certificate',s3Link:'legal/storage/original.png',message:secret,[secret]:secret},
+  ...['https://user:'+secret+'@private.example/file','https://private.example/file?token='+secret,'https://private.example/file#'+secret,'bad\n'+secret,'x'.repeat(4097)].map(s3Link=>({fileName:'safe.pdf',fileType:'certificate',s3Link})),
+  {fileName:'x'.repeat(513),s3Link:'safe/key',fileType:secret},...Array.from({length:6},()=>({fileName:'bounded.pdf',s3Link:'bounded/key',fileType:'certificate'}))];
+ const before=f.snapshot(),reply=await f.run(),failure=reply.currentReadFailure,d=failure.diagnostics;
+ assert.equal(failure.code,'legal-array-nonempty');assert.equal(d.format,'yoofam-saved-draft-legal-diagnostics-v3');assert.equal(d.rows.length,12);assert.equal(d.count,13);assert.equal(d.truncated,true);
+ assert.deepEqual(d.rows[0].metadata,{fileName:{value:image.imageName,length:image.imageName.length,redacted:false},s3Link:{value:'legal/storage/original.png',length:26,redacted:false},sameNameImageS3Link:{value:image.s3Link,length:image.s3Link.length,redacted:false}});
+ for(const row of d.rows.slice(1,6)){assert.equal(row.metadata.s3Link.value,null);assert.equal(row.metadata.s3Link.redacted,true);assert.ok(row.metadata.s3Link.length>0);assert.equal(row.metadata.sameNameImageS3Link,null);}
+ assert.deepEqual(d.rows[6].metadata.fileName,{value:null,length:513,redacted:true});assert.equal(d.rows[6].fileType.knownType,null);
+ assert.equal(JSON.stringify(reply).includes(secret),false);assert.equal(f.snapshot(),before);assert.equal(f.writes(),0);assert.equal(f.calls.length,5);assert.equal(f.calls.some(call=>call.path.startsWith('/sr/api/image/')),false);
+});
+
+test('v3 identifier limits accept exact boundaries and redact unsafe expected image links too',async()=>{
+ const f=fixture(),name='n'.repeat(512),key='k'.repeat(4096),image=f.state.files[0];
+ image.s3Link='https://user:PRIVATE_PASSWORD@private.example/image';image.imageUrl='/sr/api/image/get-by-key?key='+encodeURIComponent(image.s3Link);
+ f.state.legal=[{fileName:name,fileType:'certificate',s3Link:key},{fileName:image.imageName,fileType:'certificate',s3Link:'plain/storage/key'},
+  {fileName:'https://private.example/file?token=PRIVATE_TOKEN',fileType:'certificate',s3Link:'https://private.example/plain'},
+  {fileName:'bad\u2028line',fileType:'certificate',s3Link:'bad\u2029line'}];
+ const result=await f.run(),d=result.currentReadFailure.diagnostics;assert.equal(result.currentReadFailure.code,'legal-array-nonempty');
+ assert.deepEqual(d.rows[0].metadata.fileName,{value:name,length:512,redacted:false});assert.deepEqual(d.rows[0].metadata.s3Link,{value:key,length:4096,redacted:false});
+ assert.equal(d.rows[1].metadata.sameNameImageS3Link.value,null);assert.equal(d.rows[1].metadata.sameNameImageS3Link.redacted,true);assert.equal(d.rows[2].metadata.fileName.redacted,true);assert.equal(d.rows[2].metadata.s3Link.value,'https://private.example/plain');
+ assert.equal(d.rows[3].metadata.fileName.redacted,true);assert.equal(d.rows[3].metadata.s3Link.redacted,true);assert.doesNotMatch(JSON.stringify(result),/PRIVATE_PASSWORD|PRIVATE_TOKEN/);assert.equal(f.calls.length,5);assert.equal(f.writes(),0);
+});
 
 test('fresh owned tab reads the exact original body and nine actual image bytes with at most three parallel downloads',async()=>{
  const f=fixture(),before=f.snapshot(),result=await f.run();assert.equal(result.currentReadFailure,undefined);assert.equal(result.filesCount,9);assert.equal(result.duplicateMatches,0);assert.equal(result.documentState,'UNFINISHED');assert.equal(result.readOnly,true);assert.equal(result.remoteWrites,false);assert.equal(result.historicalAckRecovered,false);assert.equal(result.record,undefined);
@@ -93,17 +120,17 @@ test('all-legal scalar shapes and every nonempty collection fail with fixed dist
  }
 });
 
-test('nonempty legal arrays report bounded field kinds and manifest matches while retaining the failure and hiding all raw file identities',async()=>{
+test('nonempty legal arrays preserve bounded field kinds and manifest matches outside the v3 identifier projection',async()=>{
  const f=fixture(),name=f.input.expectedImages[0].transportName,link=f.state.files[0].s3Link;
  f.state.legal=[{fileType:'certificate',fileName:'PRIVATE_UNKNOWN_FILE.pdf',s3Link:'PRIVATE_S3_KEY',docId:f.input.docId},
   {fileType:'MAIN',imageName:name,s3Link:link,docId:f.input.docId},
   {fileType:'additional',fileName:'',s3Link:' \t',docId:String(f.input.docId)}];
  const before=f.snapshot(),result=await f.run();expectFailure(result);assert.equal(result.currentReadFailure.code,'legal-array-nonempty');
- const diagnostics=result.currentReadFailure.diagnostics;assert.deepEqual(Object.keys(diagnostics).sort(),['bodyRelations','collection','count','format','rows','truncated']);assert.equal(diagnostics.format,'yoofam-saved-draft-legal-diagnostics-v2');assert.equal(diagnostics.collection,'array');assert.equal(diagnostics.count,3);assert.equal(diagnostics.truncated,false);
+ const diagnostics=result.currentReadFailure.diagnostics;assert.deepEqual(Object.keys(diagnostics).sort(),['bodyRelations','collection','count','format','rows','truncated']);assert.equal(diagnostics.format,'yoofam-saved-draft-legal-diagnostics-v3');assert.equal(diagnostics.collection,'array');assert.equal(diagnostics.count,3);assert.equal(diagnostics.truncated,false);
  const [legal,image,empty]=diagnostics.rows;assert.deepEqual(legal.keys,['docId','fileName','fileType','s3Link']);assert.equal(legal.keyCount,4);assert.equal(legal.keysTruncated,false);assert.equal(legal.type,'object');assert.equal(legal.index,0);
  assert.deepEqual(legal.fileType,{type:'string',knownType:'certificate',identifier:true});assert.deepEqual(legal.fileName,{type:'string',expectedImageMatch:false});assert.deepEqual(legal.imageName,{type:'missing',expectedImageMatch:false});assert.deepEqual(legal.s3Link,{type:'string',expectedImageMatch:false});assert.deepEqual(legal.docId,{type:'number',same:true});
  assert.deepEqual(image.fileType,{type:'string',knownType:'MAIN',identifier:true});assert.deepEqual(image.imageName,{type:'string',expectedImageMatch:true});assert.deepEqual(image.s3Link,{type:'string',expectedImageMatch:true});assert.deepEqual(empty.fileName,{type:'string-empty',expectedImageMatch:false});assert.deepEqual(empty.s3Link,{type:'string-empty',expectedImageMatch:false});assert.deepEqual(empty.docId,{type:'string',same:false});
- assert.doesNotMatch(JSON.stringify(result),/PRIVATE_UNKNOWN_FILE|PRIVATE_S3_KEY|stored\/native|stored-image/);assert.equal(f.snapshot(),before);assert.equal(f.writes(),0);assert.equal(f.calls.some(call=>call.path.startsWith('/sr/api/image/')),false);
+ assert.doesNotMatch(withoutMetadata(result),/PRIVATE_UNKNOWN_FILE|PRIVATE_S3_KEY|stored\/native|stored-image/);assert.equal(legal.metadata.fileName.value,'PRIVATE_UNKNOWN_FILE.pdf');assert.equal(legal.metadata.s3Link.value,'PRIVATE_S3_KEY');assert.equal(f.snapshot(),before);assert.equal(f.writes(),0);assert.equal(f.calls.some(call=>call.path.startsWith('/sr/api/image/')),false);
 });
 
 test('malformed legal rows and nested credential values reveal only fixed types with no raw strings or property values',async()=>{
@@ -124,7 +151,7 @@ test('legal diagnostic samples cap both rows and own keys and never expose unkno
  const row=Object.fromEntries([...knownKeys.map(key=>[key,'PRIVATE_VALUE_80129']),['SECRET_CREDENTIAL_80129','PRIVATE_VALUE_80129'],['https://private.example/','PRIVATE_VALUE_80129'],['X'.repeat(81),'PRIVATE_VALUE_80129'],['__proto__',{token:'PRIVATE_VALUE_80129'}]]);
  f.state.legal=Array.from({length:100},()=>copy(row));const result=await f.run();expectFailure(result);const diagnostics=result.currentReadFailure.diagnostics;assert.equal(diagnostics.count,100);assert.equal(diagnostics.rows.length,12);assert.equal(diagnostics.truncated,true);
  for(const [index,sample] of diagnostics.rows.entries()){assert.equal(sample.index,index);assert.equal(sample.keyCount,37);assert.equal(sample.keys.length,12);assert.deepEqual(sample.keys,knownKeys.slice().sort().slice(0,12));assert.equal(sample.keysTruncated,true);assert.ok(sample.keys.every(key=>/^[A-Za-z_][A-Za-z0-9_]{0,39}$/.test(key)));}
- const encoded=JSON.stringify(result);assert.ok(encoded.length<10000);assert.doesNotMatch(encoded,/PRIVATE_VALUE|SECRET_CREDENTIAL|private\.example|__proto__|XXXXXXXXXXXXXXXX/);assert.equal(f.writes(),0);
+ const encoded=JSON.stringify(result);assert.ok(encoded.length<15000);assert.doesNotMatch(encoded,/PRIVATE_VALUE|SECRET_CREDENTIAL|private\.example|__proto__|XXXXXXXXXXXXXXXX/);assert.equal(f.writes(),0);
 });
 
 test('legal diagnostic failure also blocks bind and check without altering an existing current-read record or fabricating acknowledgements',async()=>{
@@ -146,7 +173,7 @@ test('legal relation diagnostics require paired image identity and preserve sepa
  assert.deepEqual(d.rows[2].certificateNamePrefix,{type:'string',matchedIndex:1,ambiguous:false,scanComplete:true,memberRowMatches:3});
  assert.equal(d.bodyRelations.remoteLegalMatchesExpected,true);assert.equal(d.bodyRelations.memberCount,3);assert.equal(d.bodyRelations.truncated,false);
  for(const member of d.bodyRelations.members){assert.equal(member.remoteCertificatesType,'array');assert.equal(member.remoteCount,2);assert.equal(member.expectedCount,2);assert.equal(member.matchesExpected,true);assert.equal(member.rows[1].expectedRowMatch,true);assert.deepEqual(member.rows[1].fieldKinds,{null:0,array:0,object:0,'string-empty':0,string:2,number:0,boolean:0});}
- assert.equal(f.snapshot(),before);assert.equal(f.writes(),0);assert.equal(f.calls.some(call=>call.path.startsWith('/sr/api/image/')),false);assert.doesNotMatch(JSON.stringify(d),/PRIVATE_|private-prefix|"certificateValue"|"certificateName"|certificateFile|stored-image|stored\/native/);
+ assert.equal(f.snapshot(),before);assert.equal(f.writes(),0);assert.equal(f.calls.some(call=>call.path.startsWith('/sr/api/image/')),false);assert.doesNotMatch(withoutMetadata(d),/PRIVATE_|private-prefix|"certificateValue"|"certificateName"|certificateFile|stored-image|stored\/native/);
 });
 
 test('certificate prefixes use canonical includes semantics without claiming an ambiguous or out-of-range row',async()=>{
@@ -159,7 +186,7 @@ test('certificate prefixes use canonical includes semantics without claiming an 
  assert.deepEqual(rows[2].certificateNamePrefix,{type:'string',matchedIndex:null,ambiguous:true,scanComplete:true,memberRowMatches:0});
  for(const index of [3,4,5])assert.deepEqual(rows[index].certificateNamePrefix,{type:'string',matchedIndex:null,ambiguous:false,scanComplete:false,memberRowMatches:0});
  assert.deepEqual(rows[6].certificateNamePrefix,{type:'object',matchedIndex:null,ambiguous:false,scanComplete:true,memberRowMatches:0});
- assert.doesNotMatch(JSON.stringify(result),/PRIVATE_PREFIX_VALUE|privateCredential|private|xxxxxxxxxxxx/);assert.equal(f.writes(),0);
+ assert.doesNotMatch(withoutMetadata(result),/PRIVATE_PREFIX_VALUE|privateCredential|private|xxxxxxxxxxxx/);assert.equal(f.writes(),0);
 });
 
 test('legal body equality permits only missing empty adCert projection and detects every other changed schema value',async()=>{
@@ -179,7 +206,7 @@ test('certificate body samples share a twelve-row budget and never expose schema
  const result=await f.run();expectFailure(result);const d=result.currentReadFailure.diagnostics,b=d.bodyRelations;
  assert.equal(b.memberCount,13);assert.equal(b.members.length,12);assert.equal(b.truncated,true);assert.equal(b.members.flatMap(member=>member.rows).length,12);assert.equal(b.members[0].rows.length,12);assert.ok(b.members.every(member=>member.truncated));
  assert.deepEqual(b.members[0].rows[0].fieldKinds,{null:1,array:1,object:1,'string-empty':1,string:1,number:1,boolean:1});assert.equal(d.rows[0].expectedLabelReferences,null);
- assert.doesNotMatch(JSON.stringify(result),/PRIVATE_|unknownNested|secret|certificateFile|private-/);assert.equal(f.writes(),0);assert.equal(f.calls.length,5);
+ assert.doesNotMatch(withoutMetadata(result),/PRIVATE_|unknownNested|secret|certificateFile|private-/);assert.equal(f.writes(),0);assert.equal(f.calls.length,5);
 });
 
 test('bind independently rereads current hashes, records no historical ACK and can idempotently refresh only its current-read proof',async()=>{

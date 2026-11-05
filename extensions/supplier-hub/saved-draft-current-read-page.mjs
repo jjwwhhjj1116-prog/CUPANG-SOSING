@@ -132,11 +132,13 @@ export async function savedDraftCurrentReadPage(input){
   // this document has no legal files of any type; envelopes are not unwrapped.
   phase='legal-lists';const legal=await read('/sr/draft/api/get-files-by-type/'+doc,{legal:true});
   if(Array.isArray(legal)){if(legal.length>2000&&mode==='audit')fail('legal-list-size');if(legal.length!==0&&mode!=='audit'){
-   // Classify a bounded sample without returning any filename, URL, S3 key,
-   // unknown enum, body or byte value. Even unknown own-key names are hidden:
-   // a credential can itself have been used as a property name.
+   // Only known metadata identifiers may be observed. Unknown own-key names,
+   // values, URL credentials and query strings never leave this page.
    const keyNames=new Set(['attachmentType','byteLength','categoryId','certificateType','code','contentType','createdAt','data','disabled','docId','documentId','errorCode','fileId','fileName','fileSize','fileType','host','id','imageData','imageName','imageUrl','mainImage','message','mimeType','modifiedAt','name','productId','s3Link','sha256','size','status','type','version']);
    const knownTypes=new Set(['import_type','certificate','additional','categoryCert','adCert','msds','MAIN','ADDITIONAL','SIZECHART','LABEL','DETAIL']);
+   const metadataString=(value,limit,known=true)=>{if(typeof value!=='string')return{value:null,length:null,redacted:false};let safe=known&&value.length<=limit&&!/[\p{C}\p{Zl}\p{Zp}]/u.test(value)&&!/[?#]/.test(value);
+    if(safe&&/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(value)){try{const url=new URL(value,origin);safe=!url.username&&!url.password&&!url.search&&!url.hash;}catch{safe=false;}}
+    return{value:safe?value:null,length:value.length,redacted:!safe};};
    const expectedLinks=new Set(files.map(file=>file.s3Link));
    const fieldType=(row,key)=>{if(!object(row)||!Object.hasOwn(row,key))return'missing';const value=row[key];return value===null?'null':Array.isArray(value)?'array':typeof value==='string'?(value.trim()===''?'string-empty':'string'):typeof value;};
    const matchProbe=(row,key,expected)=>({type:fieldType(row,key),expectedImageMatch:object(row)&&Object.hasOwn(row,key)&&typeof row[key]==='string'&&row[key].trim()!==''&&expected.has(row[key])});
@@ -163,14 +165,16 @@ export async function savedDraftCurrentReadPage(input){
       rows:samples.map((row,rowIndex)=>{const values=object(row)?Object.values(row):[],kinds={null:0,array:0,object:0,'string-empty':0,string:0,number:0,boolean:0};for(const value of values){const type=valueType(value);if(Object.hasOwn(kinds,type))kinds[type]++;}
        return{index:rowIndex,type:valueType(row),fieldCount:values.length,fieldKinds:kinds,expectedRowMatch:Array.isArray(wanted)&&rowIndex<wanted.length&&same(row,wanted[rowIndex])};})};
     })};
-   safeDiagnostics={format:'yoofam-saved-draft-legal-diagnostics-v2',collection:'array',count:legal.length,truncated:legal.length>12,bodyRelations,rows:legal.slice(0,12).map((row,index)=>{
+   safeDiagnostics={format:'yoofam-saved-draft-legal-diagnostics-v3',collection:'array',count:legal.length,truncated:legal.length>12,bodyRelations,rows:legal.slice(0,12).map((row,index)=>{
     const ownKeys=object(row)?Object.keys(row):[],keys=ownKeys.filter(key=>keyNames.has(key)).sort().slice(0,12),type=row===null?'null':Array.isArray(row)?'array':typeof row;
     const fileType=object(row)&&Object.hasOwn(row,'fileType')?row.fileType:undefined;
+    const known=knownTypes.has(fileType),sameNameImage=object(row)&&typeof row.fileName==='string'?files.find(file=>file.imageName===row.fileName):undefined;
     return{index,type,keys,keyCount:ownKeys.length,keysTruncated:ownKeys.length>keys.length,
      fileType:{type:fieldType(row,'fileType'),knownType:typeof fileType==='string'&&knownTypes.has(fileType)?fileType:null,identifier:typeof fileType==='string'&&/^[A-Za-z][A-Za-z0-9_-]{0,39}$/.test(fileType)},
      fileName:matchProbe(row,'fileName',names),imageName:matchProbe(row,'imageName',names),s3Link:matchProbe(row,'s3Link',expectedLinks),
      docId:{type:fieldType(row,'docId'),same:object(row)&&Object.hasOwn(row,'docId')&&(typeof row.docId==='string'||typeof row.docId==='number')&&row.docId===docId},
      certificateNamePrefix:prefixProbe(row),pairedImageDescriptorMatch:object(row)&&typeof row.fileName==='string'&&typeof row.s3Link==='string'&&files.some(file=>file.imageName===row.fileName&&file.s3Link===row.s3Link),
+     metadata:{fileName:metadataString(object(row)?row.fileName:undefined,512,known),s3Link:metadataString(object(row)?row.s3Link:undefined,4096,known),sameNameImageS3Link:sameNameImage?metadataString(sameNameImage.s3Link,4096,known):null},
      expectedLabelReferences:object(row)&&typeof row.fileName==='string'&&row.fileName.trim()!==''?labelReferences(expected.jsonDocument,row.fileName):null};
    })};
    fail('legal-array-nonempty');
