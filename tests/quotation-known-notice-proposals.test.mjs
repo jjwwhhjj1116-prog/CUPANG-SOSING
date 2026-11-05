@@ -86,6 +86,64 @@ function extendedFixture(){
  for(const[key,value]of Object.entries({components:'1쌍',material:'스펀지',dimensions:'직접 확인한 치수'}))f.content.label[key]={value,provenance:'manual',updatedAt:'2026-10-24T00:00:00Z'};
  return {...f,options,run:(scope=all)=>propose('product',f.view,f.content,scope,options)};
 }
+function freshSockKindFixture(){
+ const f=fixture(),field={id:'live_103689_35a23f2fe5a8c149',label:'종류',section:'legal',visibility:'common',type:'text',required:true,
+  hubWire:{path:['legalPage','notices'],name:'종류',nameKey:'noticeItemName',valueKey:'noticeItemValue'}};
+ const categoryPath=['스포츠/레져','헬스/요가','요가/필라테스 잡화','요가양말/필라테스양말'];
+ Object.assign(f.view.resolved.schema,{categoryId:'103689',categoryPath,fields:[field]});f.view.categoryContext={categoryId:'103689',categoryPath};f.view.optionRevision=4;
+ f.content.label.productType={value:'일반양말',provenance:'manual',updatedAt:'2026-11-05T00:00:00Z'};
+ f.content.initialLegalNotices=load('app/initial-legal-notices.ts').createInitialLegalNotices(f.view.resolved.schema,{},'2026-11-05T00:00:00Z');
+ const initial=f.content.initialLegalNotices.fields[0];assert.equal(initial.value,'해당사항없음');assert.equal(initial.source,'couplus-default');
+ f.view.resolved.rows=Array.from({length:8},(_,index)=>({optionId:'collected-'+(index+1),included:true,fields:{[field.id]:{value:initial.value,source:initial.source}}}));
+ const options={schemaVersion:1,productId:'product',revision:4,rows:f.view.resolved.rows.map(row=>({id:row.optionId,included:true,unitsPerPack:1,provenance:{unitsPerPack:'manual'}}))};
+ return {...f,field,options,run:labels=>propose('product',f.view,f.content,all,options,labels)};
+}
+test('explicit saved product type replaces only fresh 103689 kind notice placeholders across eight options',()=>{
+ const f=freshSockKindFixture(),before=JSON.stringify([f.view,f.content,f.options]),changes=plain(f.run());
+ assert.deepEqual(changes,f.options.rows.map(row=>({optionId:row.id,fieldKey:f.field.id,value:'일반양말'})));
+ assert.equal(JSON.stringify([f.view,f.content,f.options]),before);
+});
+test('saved manual kind values and blanks remain protected when a known product type is available',()=>{
+ for(const value of ['', '해당사항없음','직접 확인한 다른 종류'])for(const layer of ['common','options']){
+  const f=freshSockKindFixture();if(layer==='common')f.view.overrides.common[f.field.id]=value;else f.view.overrides.options['collected-1']={[f.field.id]:value};
+  const before=JSON.stringify([f.view,f.content]),changes=plain(f.run());
+  assert.ok(changes.every(change=>change.optionId!=='collected-1'));if(layer==='common')assert.equal(changes.length,0);
+  assert.equal(JSON.stringify([f.view,f.content]),before);
+ }
+});
+test('kind copies require verified product type and never promote generated, unverified or deliberately empty values',()=>{
+ for(const provenance of ['manual','collected','generated','translated','unverified']){
+  const f=freshSockKindFixture();f.content.label.productType.provenance=provenance;
+  assert.equal(f.run().length,['manual','collected'].includes(provenance)?8:0,provenance);
+ }
+ for(const value of ['', '  ','해당사항없음','해당 없음']){
+  const f=freshSockKindFixture();f.content.label.productType.value=value;assert.deepEqual(plain(f.run()),[]);
+ }
+});
+test('active stage-six product type overrides are exact per option and explicit blanks suppress content fallback',()=>{
+ const f=freshSockKindFixture(),structure=load('app/product-label.ts').productLabelStructure(),labels={schemaVersion:1,productId:'product',revision:2,updatedAt:'2026-11-05T01:00:00Z',structure,
+  overrides:{common:{productType:'필라테스 양말'},options:{'collected-1':{productType:'옵션별 양말'},'collected-2':{productType:''},'collected-3':{productType:'해당사항없음'}}}};
+ assert.deepEqual(plain(f.run(labels)),['collected-1','collected-4','collected-5','collected-6','collected-7','collected-8'].map(optionId=>({optionId,fieldKey:f.field.id,value:optionId==='collected-1'?'옵션별 양말':'필라테스 양말'})));
+ labels.structure=structure.filter(field=>field.id!=='productType');assert.deepEqual(plain(f.run(labels)),[],'inactive Stage6 field cannot copy its stale override or lower content');
+});
+test('a saved stage-six kind edit replaces only its exact untouched content baseline under current source clocks',()=>{
+ const f=freshSockKindFixture(),labels={schemaVersion:1,productId:'product',revision:2,updatedAt:'2026-11-05T01:00:00Z',overrides:{common:{productType:'검토한 양말 종류'},options:{}}};
+ Object.assign(f.view,{revision:9,inputFingerprint:'a'.repeat(64),productVersion:'2026-11-05T01:00:00Z'});f.view.categoryContext.profileId='profile';
+ for(const row of f.view.resolved.rows)row.fields[f.field.id]={value:'일반양말',source:'content'};
+ const changes=plain(f.run(labels));assert.equal(changes.length,8);assert.ok(changes.every(change=>change.value==='검토한 양말 종류'&&change.savedLabel.revision===2&&change.savedLabel.previousValue==='일반양말'));
+ const state={productId:'product',productVersion:f.view.productVersion,contentRevision:3,optionRevision:4,quotationRevision:9,profileId:'profile',fingerprint:'b'.repeat(64),knownChanges:changes},client=load('app/quotation-ai-client.ts');
+ assert.equal(client.quotationSavedSourceChanges(state,f.view,'product',null,true).length,8);
+ for(const key of ['productVersion','contentRevision','optionRevision','quotationRevision','profileId'])assert.throws(()=>client.quotationSavedSourceChanges({...state,[key]:typeof state[key]==='number'?state[key]+1:'changed'},f.view,'product',null,true),/범위/);
+ f.view.resolved.rows[0].fields[f.field.id].value='다른 보관 값';assert.ok(f.run(labels).every(change=>change.optionId!=='collected-1'));
+});
+test('kind copies preserve exact notice wires and product, category and option revisions',()=>{
+ for(const mutate of [field=>{field.label='종류 설명';field.hubWire.name=field.label;},field=>{field.hubWire.path=['legalPage','certificates'];},field=>{field.hubWire.valueKey='value';},field=>{field.hubWire.nameKey='name';},field=>{field.section='product';},field=>{field.readOnly=true;}]){
+  const f=freshSockKindFixture();mutate(f.field);assert.deepEqual(plain(f.run()),[]);
+ }
+ for(const mutate of [f=>f.content.revision++,f=>f.options.revision++,f=>{f.content.productId='other';},f=>{f.view.categoryContext.categoryId='other';},f=>{f.view.categoryContext.categoryPath=['other'];}]){
+  const f=freshSockKindFixture();mutate(f);assert.throws(()=>f.run(),/범위/);
+ }
+});
 test('explicit saved-source preview fills verified label/option values while preserving physical pair unit and common defaults',()=>{
  const f=extendedFixture(),before=JSON.stringify(f),changes=plain(f.run());
  const value=(id,label)=>changes.find(change=>change.optionId===id&&change.fieldKey===f.fields.find(field=>field.label===label).id)?.value;

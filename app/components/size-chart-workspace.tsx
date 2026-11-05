@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { DocumentImagePanel } from '@/app/components/document-image-panel';
 import { SizeChartExtractionPanel } from '@/app/components/size-chart-extraction-panel';
-import { MANUAL_SIZE_CHART_COLUMNS, MANUAL_SIZE_CHART_ROWS, manualSizeUnits, validateManualSizeChart, type ManualSizeChart } from '@/app/manual-size-chart';
+import { MANUAL_SIZE_CHART_COLUMNS, MANUAL_SIZE_CHART_ROWS, manualSizeUnits, createReferenceSizeChart, validateManualSizeChart, type ManualSizeChart } from '@/app/manual-size-chart';
 import type { ProductContent } from '@/app/product-content';
 import { isOwnedImageKey } from '@/app/image-files';
 import {prepareSizeChartSaveAttempt,readSizeChartSaveSnapshot,recoverSizeChartSaveAttempt,sendSizeChartSaveAttempt,type SizeChartSaveAttempt} from '@/app/size-chart-save-client';
@@ -233,6 +233,7 @@ function Editor({ productId, version, profileId=null, active=true, disabled=fals
     }}/>}
     {!saved && !error && <p role="status">저장한 사이즈표를 불러오는 중…</p>}
     {dirty && !fresh && <p role="status">상품 저장 상태가 변경되었습니다. 입력은 유지했습니다. 최신 저장본을 조회한 뒤 저장해주세요.</p>}
+    {!working && !dirty && <button type="button" className="btn ghost" disabled={!saved || inputLocked || !fresh} onClick={() => { if (canEdit(true) && pending.current === undefined && !saved?.content.manualSizeChart) edit(draftOf(createReferenceSizeChart())); }}>Free Size · 상세페이지 참조로 작성</button>}
     {!working ? <button type="button" className="btn blue" disabled={!saved || locked} onClick={() => { if(canEdit()&&!pending.current)edit(draftOf(seed())); }}>사이즈표 직접 작성</button> : <>
       <div className="modal-form"><label>사이즈 유형<input aria-label="사이즈 유형" maxLength={80} value={working.chart.sizeType} disabled={inputLocked} onChange={event => change(value => ({ ...value, chart: { ...value.chart, sizeType: event.target.value } }))}/></label>
         <label>단위<select aria-label="사이즈표 단위" value={working.chart.sizeUnits} disabled={inputLocked} onChange={event => change(value => ({ ...value, chart: { ...value.chart, sizeUnits: event.target.value as ManualSizeChart['sizeUnits'] } }))}>{manualSizeUnits.map(unit => <option key={unit} value={unit}>{unit === 'none' ? '단위 없음 (설명형)' : unit}</option>)}</select></label>

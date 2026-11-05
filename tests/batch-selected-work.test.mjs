@@ -17,7 +17,7 @@ function fixture(){
  const quotationModel='@cf/meta/llama-3.3-70b-instruct-fp8-fast';
  const quotationConfiguration={configured:true,provider:'Cloudflare Workers AI',model:quotationModel,executionPolicy:null,freeOnly:true,notice:'검토 후 저장'};
  const calls=[],events=[],keys=new Map(),controller=new AbortController();let owner='owner',company={code:'A01526306',name:'유앤채'},onFetch=null;
- let imageResult={status:'completed',messages:['번역 초안 저장']},labelResult={status:'draft',message:'표시사항 초안 저장',uncertain:false};
+ let imageResult={status:'completed',messages:['번역 초안 저장']},labelResult={status:'draft',message:'표시사항 초안 저장',uncertain:false},sizeResult={status:'draft',message:'사이즈표 저장 확인'},sizePending=false;
  const exports={},deps={
   '@/app/automation/model':{automationStages:stageIds},
   '@/app/supplier-hub-company':{supplierHubCompany:(code,name)=>['A01526306','A01464742'].includes(code)?{code,name}:null},
@@ -28,6 +28,7 @@ function fixture(){
   '@/app/quotation-text-execution':providedOptionModule('app/quotation-text-execution.ts'),
   '@/app/quotation-choice-state':providedOptionModule('app/quotation-choice-state.ts'),
   '@/app/detail-workspace-composite-client':providedOptionModule('app/detail-workspace-composite-client.ts'),
+  '@/app/batch-selected-size-chart-work':{SelectedSizeChartSourceChanged:class extends Error{},hasSelectedSizeChartAttempt:()=>sizePending,async runSelectedSizeChartWork(id,options){await options.assertCurrent();calls.push({adapter:'size',id,source:options.source});sizePending=!!sizeResult.uncertain;if(sizePending)keys.set('owner:product:pending:sizeChart','사이즈표 저장 결과 확인 필요');else keys.delete('owner:product:pending:sizeChart');return sizeResult;}},
   '@/app/batch-selected-packaging-work':{async runSelectedPackagingWork(id,options){await options.assertCurrent();calls.push({adapter:'packaging',id,revision:options.view.revision,fingerprint:options.view.inputFingerprint});return {view:options.view,status:'unchanged',changed:0,estimated:0,fallback:0,remaining:0,recovered:false,message:'저장한 포장값을 유지했습니다.'};}},
   '@/app/registration-layout':{readRegistrationLayout:(raw,id,clock)=>{assert.equal(raw.productId,id);assert.equal(raw.productVersion,clock);return raw;}},
   '@/app/batch-selected-image-work':{createSelectedImageStageState:(ownerId,productId,stage)=>({ownerId,productId,stage,batches:{}}),async processSelectedImageStage(id,stage,options){calls.push({adapter:'image',id,stage,version:options.expectedProductVersion});return imageResult;}},
@@ -57,7 +58,7 @@ function fixture(){
    return Response.json({product:{id:'product',title:'검증 상품',updated_at:version}});
   }};
  return{calls,events,keys,options,controller,deps,run:stages=>exports.runSelectedBatchProduct('product',{...options,stages}),
-  owner:value=>owner=value,company:value=>company=value,intercept:value=>onFetch=value,prependIntercept:value=>{const previous=onFetch;onFetch=async(...args)=>await value(...args)??await previous?.(...args);},image:value=>imageResult=value,label:value=>labelResult=value};
+  owner:value=>owner=value,company:value=>company=value,intercept:value=>onFetch=value,prependIntercept:value=>{const previous=onFetch;onFetch=async(...args)=>await value(...args)??await previous?.(...args);},image:value=>imageResult=value,label:value=>labelResult=value,size:(value,pending=sizePending)=>{sizeResult=value;sizePending=pending;}};
 }
 
 // Reuse the isolated actual raw BODY coordinator fixture without loading its tests.
@@ -579,9 +580,27 @@ for(const failure of ['timeout','provider','transport'])test('real label '+failu
  assert.equal(f.renders(),0);assert.deepEqual(f.view,f.before);
 });
 
-test('required chart without an original blocks instead of pretending the category is optional',async()=>{
+test('required chart without an original saves the reference through the atomic size adapter',async()=>{
  const h=fixture();h.intercept(call=>call.url.endsWith('/registration-layout')?Response.json({productId:'product',productVersion:version,sizeChartRequired:true}):null);
- const result=await h.run(['sizeChart']);assert.equal(result.stages[0].status,'blocked');assert.match(result.stages[0].message,/필수/);
+ const result=await h.run(['sizeChart','koreanLabel']);assert.equal(result.stages[0].status,'draft');assert.equal(h.calls.filter(call=>call.adapter==='size').length,1);assert.equal(h.calls.find(call=>call.adapter==='size').source.layout.sizeChartRequired,true);assert.equal(result.stages[1].status,'draft');
+});
+
+test('a typed initial size snapshot conflict stops later labels and quotation without writes',async()=>{
+ const h=fixture();h.intercept(call=>call.url.endsWith('/registration-layout')?Response.json({productId:'product',productVersion:version,sizeChartRequired:true}):null);
+ h.deps['@/app/batch-selected-size-chart-work'].runSelectedSizeChartWork=async()=>{throw new h.deps['@/app/batch-selected-size-chart-work'].SelectedSizeChartSourceChanged('사이즈표 원본 변경');};
+ const result=await h.run(['sizeChart','koreanLabel','quotation']);assert.deepEqual(result.stages.map(stage=>stage.status),['failed','blocked','blocked']);assert.ok(!h.calls.some(call=>call.adapter||call.method==='POST'||call.method==='PUT'));assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')),false);
+});
+
+test('unknown size save holds later stages and GET-only recovery precedes a full-mode completion badge',async()=>{
+ const h=fixture();h.size({status:'blocked',message:'원래 PNG 결과 확인 필요',uncertain:true});h.intercept(call=>call.url.endsWith('/registration-layout')?Response.json({productId:'product',productVersion:version,sizeChartRequired:true}):null);
+ const first=await h.run(['sizeChart','koreanLabel','quotation']);assert.deepEqual(first.stages.map(stage=>stage.status),['blocked','blocked','blocked']);assert.ok(!h.calls.some(call=>call.adapter==='label'));
+ h.options.mode='full';h.size({status:'draft',message:'원래 저장 결과 조회 확인',stop:true},true);h.prependIntercept(call=>call.url==='/api/products/product'?Response.json({product:{id:'product',owner_id:'owner',updated_at:version,content_summary:savedSummary(['sizeChart'])}}):null);
+ const second=await h.run(['sizeChart','koreanLabel']);assert.deepEqual(second.stages.map(stage=>stage.status),['draft','blocked']);assert.equal(h.calls.filter(call=>call.adapter==='size').length,2);assert.equal(h.calls.at(-1).method,'GET');assert.equal(h.calls.filter(call=>call.adapter==='size').at(-1).source,undefined);
+});
+
+for(const stages of [['koreanLabel','quotation'],['pricing','sizeChart','koreanLabel']])test(`retained size recovery precedes every source write in ${stages.join('/')}`,async()=>{
+ const h=fixture();h.size({status:'draft',message:'원래 사이즈표 저장 조회 확인',stop:true},true);h.keys.set('owner:product:pending:sizeChart','사이즈표 저장 결과 확인 필요');
+ const result=await h.run(stages);assert.ok(result.stages.every(stage=>stage.status===(stage.id==='sizeChart'?'draft':'blocked')));assert.equal(h.calls.filter(call=>call.adapter==='size').length,1);assert.equal(h.calls.find(call=>call.adapter==='size').source,undefined);assert.ok(!h.calls.some(call=>call.adapter==='label'||call.adapter==='packaging'||call.url?.endsWith('/stage-two-pricing')||call.method==='POST'||call.method==='PUT'));
 });
 
 test('a confirmed skipped image stage can be retried after settings change',async()=>{

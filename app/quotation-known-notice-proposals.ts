@@ -21,7 +21,7 @@ function knownText(field: ContentField<string> | undefined): string | undefined 
     || isCouplusNotApplicableValue(field.value)) return;
   return field.value;
 }
-type Target = 'manufacturer' | 'contact' | 'countryOfOrigin' | 'material' | 'components' | 'dimensions' | 'precautions' | 'specifications' | 'color' | 'quantity';
+type Target = 'manufacturer' | 'contact' | 'countryOfOrigin' | 'material' | 'components' | 'dimensions' | 'precautions' | 'specifications' | 'productType' | 'color' | 'quantity';
 export function quotationSavedQuantityText(value: string, count: number): boolean {
   const parsed = /^([1-9]\d*)\s*(?:쌍|개|세트|박스|팩|매|장)$/u.exec(value.trim());
   return Boolean(parsed && Number.isSafeInteger(count) && count > 0 && Number(parsed[1]) === count);
@@ -48,7 +48,7 @@ export function quotationKnownNoticeTarget(field: QuotationField, extended = fal
   if (wire.name === '소비자상담 관련 전화번호' || wire.name === 'A/S 책임자와 전화번호') return 'contact';
   const savedBindings: Readonly<Record<string, Target>> = { '제조국(원산지)': 'countryOfOrigin', '제조국': 'countryOfOrigin', '소재': 'material', '재질': 'material',
     '제품 구성': 'components', '구성품': 'components', '치수': 'dimensions', '크기': 'dimensions',
-    '취급시 주의사항': 'precautions', '상품별 세부 사양': 'specifications', '색상': 'color' };
+    '취급시 주의사항': 'precautions', '상품별 세부 사양': 'specifications', '종류': 'productType', '색상': 'color' };
   if (extended && Object.hasOwn(savedBindings, wire.name)) return savedBindings[wire.name];
 }
 
@@ -106,7 +106,7 @@ export function quotationKnownNoticeProposals(productId: string, view: View, con
       manufacturer: [manufacturer && `제조자: ${manufacturer}`, importer && `수입자: ${importer}`].filter(Boolean).join(' / '),
       contact: labelValue('contact', row.optionId),
     };
-    if (savedOptions) for (const key of ['countryOfOrigin', 'material', 'components', 'dimensions', 'precautions', 'specifications'] as const) values[key] = labelValue(key, row.optionId);
+    if (savedOptions) for (const key of ['countryOfOrigin', 'material', 'components', 'dimensions', 'precautions', 'specifications', 'productType'] as const) values[key] = labelValue(key, row.optionId);
     // A cost-model quantity has no physical unit. Preserve a saved "1쌍"
     // composition verbatim; never turn unitsPerPack=1 into "1개".
     const explicitNet = labelOverrides && (row.optionId !== null && Object.hasOwn(labelOverrides.options[row.optionId] ?? {}, 'netContents') || Object.hasOwn(labelOverrides.common, 'netContents'));

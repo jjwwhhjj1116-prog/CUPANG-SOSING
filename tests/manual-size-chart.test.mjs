@@ -5,6 +5,16 @@ const model=module('app/manual-size-chart.ts'),contentModel=module('app/product-
 const chart=()=>({sizeType:'직접 작성한 상의',sizeUnits:'cm',sizes:[' S ','M','L'],measurements:[{name:'총장',values:['61','63','']},{name:' ',values:[' ','0','—']},{name:'',values:['','','']}]});
 const now='2026-10-18T00:00:00.000Z';
 
+test('reference Free Size factory creates an isolated nonnumeric guide and recognizes only its exact reference content',()=>{
+ const expected={sizeType:'사이즈 정보',sizeUnits:'none',sizes:['Free Size'],measurements:[{name:'사이즈',values:['Free Size (옵션명 또는 상세페이지 참조)']},{name:'상세 규격',values:['상세페이지 참조']}]};
+ const first=model.createReferenceSizeChart();assert.deepEqual(plain(first),expected);assert.deepEqual(plain(model.validateManualSizeChart(first)),expected);assert.equal(model.isReferenceSizeChart(first),true);
+ first.measurements[0].values[0]='수동 규격';assert.equal(model.isReferenceSizeChart(first),false);assert.deepEqual(plain(model.createReferenceSizeChart()),expected);assert.equal(model.isReferenceSizeChart(null),false);
+ const sizeSave=module('app/size-chart-save.ts'),saved=sizeSave.sizeChartSavedContent(contentModel.emptyProductContent('manual'),model.createReferenceSizeChart(),'owner/reference.png',now);
+ assert.equal(saved.assets.size.provenance,'generated');assert.equal(saved.label.dimensions.value,'');assert.deepEqual(plain(saved.manualSizeChart),expected);
+ const plan=documents.documentImagePlan('size',saved,optionsModel.emptyProductOptions('manual'));
+ assert.equal(plan.width,1200);assert.deepEqual(plain(plan.columnWidths),[280,840]);assert.deepEqual(plain(plan.headers),['측정 부위','Free Size']);assert.equal(plan.footer,'옵션명 또는 상세페이지의 사이즈 정보를 확인해주세요.');
+});
+
 test('explicit descriptive charts preserve source text without claiming a physical unit or measured values',()=>{
  const input={sizeType:'공급자 표시 규격',sizeUnits:'none',sizes:['FREE'],measurements:[{name:'착용 기준',values:['원문 상세페이지 참조']}]},before=JSON.stringify(input);
  const value=model.validateManualSizeChart(input),current=contentModel.emptyProductContent('manual'),options=optionsModel.emptyProductOptions('manual');

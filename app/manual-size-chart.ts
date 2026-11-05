@@ -6,6 +6,14 @@ export type ManualSizeChart = {
   sizeType: string; sizeUnits: typeof manualSizeUnits[number]; sizes: string[];
   measurements: { name: string; values: string[] }[];
 };
+export function createReferenceSizeChart(): ManualSizeChart {
+  return { sizeType: '사이즈 정보', sizeUnits: 'none', sizes: ['Free Size'], measurements: [
+    { name: '사이즈', values: ['Free Size (옵션명 또는 상세페이지 참조)'] }, { name: '상세 규격', values: ['상세페이지 참조'] },
+  ] };
+}
+export function isReferenceSizeChart(value: unknown): boolean {
+  try { return JSON.stringify(validateManualSizeChart(value)) === JSON.stringify(createReferenceSizeChart()); } catch { return false; }
+}
 function object(value: unknown, keys: readonly string[]) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !keys.includes(key))) throw new Error('사이즈표 형식을 확인해주세요.');
   return value as Record<string, unknown>;

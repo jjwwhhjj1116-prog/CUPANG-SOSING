@@ -3,6 +3,7 @@ import type { ProductContent } from '@/app/product-content';
 import type { ProductOptions } from '@/app/product-options';
 import {parseImageOriginalPreservationProof,type ImageOriginalPreservationProof} from '@/app/image-no-text-proof';
 import type {FreeImageEditReview} from '@/app/free-image-edit-review';
+import {isReferenceSizeChart} from '@/app/manual-size-chart';
 
 export const registrationStageIds = ['seo','pricing','mainImage','additionalImages','detailImage','sizeChart','koreanLabel','quotation'] as const;
 export type RegistrationStageState = 'pending' | 'complete' | 'failed' | 'running' | 'unused';
@@ -104,6 +105,8 @@ export function registrationStagesFromSavedContent(product:{id:string;owner_id?:
   }
   if(size?.value?.length&&saved(size)&&size.value.every(owned))done('sizeChart','직접 저장한 현재 사이즈표 연결 확인');
   else if(size?.value?.length&&saved(size))result.sizeChart={state:'failed',detail:'저장한 사이즈표 이미지의 현재 연결을 확인해주세요.'};
+  else if(size?.provenance==='generated'&&size.value.length===1&&size.value.every(owned)&&time(size.updatedAt)
+    &&(!product.updated_at||Date.parse(size.updatedAt!)<=Date.parse(product.updated_at))&&isReferenceSizeChart(content.manualSizeChart))done('sizeChart','저장된 참고용 Free Size 안내표 연결 확인');
   return result;
 }
 

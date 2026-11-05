@@ -1,5 +1,5 @@
 import {applyContentPatch,type ProductContent} from '@/app/product-content';
-import {validateManualSizeChart,type ManualSizeChart} from '@/app/manual-size-chart';
+import {isReferenceSizeChart,validateManualSizeChart,type ManualSizeChart} from '@/app/manual-size-chart';
 import {documentImagePlan,type DocumentImagePlan} from '@/app/document-image';
 import type {ProductOptions} from '@/app/product-options';
 
@@ -23,7 +23,7 @@ export function validateSizeChartSaveInput(value:unknown):SizeChartSaveInput{
  * generic content PATCH intentionally still requires separate operations. */
 export function sizeChartSavedContent(before:ProductContent,chart:ManualSizeChart|null,key:string,now:string):ProductContent{
  const next=applyContentPatch(before,{manualSizeChart:chart},now);
- next.assets.size={value:[key],provenance:'manual',updatedAt:now};return next;
+ next.assets.size={value:[key],provenance:isReferenceSizeChart(chart)?'generated':'manual',updatedAt:now};return next;
 }
 export function sizeChartSavePlan(before:ProductContent,options:ProductOptions,chart:ManualSizeChart|null):DocumentImagePlan{
  const candidate=structuredClone(before);if(chart===null)delete candidate.manualSizeChart;else candidate.manualSizeChart=validateManualSizeChart(chart);

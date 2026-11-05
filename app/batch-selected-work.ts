@@ -22,6 +22,7 @@ import { runSelectedLabelWork } from '@/app/batch-selected-label-work';
 import { readRegistrationLayout } from '@/app/registration-layout';
 import { runSelectedPricingWork } from '@/app/batch-selected-pricing-work';
 import { runSelectedPackagingWork } from '@/app/batch-selected-packaging-work';
+import { runSelectedSizeChartWork, hasSelectedSizeChartAttempt, SelectedSizeChartSourceChanged } from '@/app/batch-selected-size-chart-work';
 import type {SelectedImageReview,SelectedImageReviewTarget} from '@/app/selected-image-review';
 
 export type SelectedBatchStageResult = { id: AutomationStageId; status: 'waiting'|'running'|'draft'|'complete'|'blocked'|'failed'|'skipped'; message: string;boardSource?:BatchBoardSource;review?:SelectedImageReview;reviewTarget?:SelectedImageReviewTarget };
@@ -396,14 +397,20 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     return{status:result.status==='completed'?'draft':result.status==='skipped'?'skipped':'blocked',message:result.messages.join(' '),...('review'in result&&result.review&&canReview?{review:result.review}:{}),...('reviewTarget'in result&&result.reviewTarget&&canReview?{reviewTarget:result.reviewTarget}:{}),uncertain:result.status==='uncertain',stop:result.recovered||result.sourceChanged||!!state.detailWorkspacePending||!!detailState?.seed||!!detailState?.image||!!detailState?.composite};
   }
   async function sizeChart():Promise<Outcome>{
+    const run=async(source?:Parameters<typeof runSelectedSizeChartWork>[1]['source'])=>{
+      try{return await runSelectedSizeChartWork(productId,{signal,fetcher,keys,expectedOwnerId:controls.expectedOwnerId,company:expected.company,assertCurrent,source,
+        trackMutationDispatch:mark=>{const previous=onMutationDispatch;onMutationDispatch=()=>{mark();previous?.();};return()=>{onMutationDispatch=previous;};}});}
+      catch(cause){if(cause instanceof SelectedSizeChartSourceChanged)throw new ScopeChanged(cause.message);throw cause;}
+    };
+    if(hasSelectedSizeChartAttempt(keys,controls.expectedOwnerId,productId))return run();
     const current=await product();
     const [{content},rawLayout]=await Promise.all([read<{content:ProductContent}>('/content'),read<unknown>('/registration-layout')]);
     const layout=readRegistrationLayout(rawLayout,productId,current.updated_at);
     if(content?.productId!==productId)throw Error('사이즈표 상품이 다릅니다.');
-    return content.assets.size.value.length||content.manualSizeChart
-      ?{status:'draft',message:'저장된 사이즈표를 유지했습니다. 사이즈표 편집에서 검토할 수 있습니다.'}
-      :layout.sizeChartRequired?{status:'blocked',message:'이 카테고리는 사이즈표가 필수입니다. 사이즈표 편집에서 원본을 선택하거나 표를 작성해주세요.'}
-      :{status:'skipped',message:'저장된 사이즈표 원본이 없어 생략했습니다. 필요하면 사이즈표 편집에서 원본을 선택해주세요.'};
+    if(content.assets.size.value.length)return{status:'draft',message:'저장된 사이즈표를 유지했습니다. 사이즈표 편집에서 검토할 수 있습니다.'};
+    if(!content.manualSizeChart&&content.assets.size.provenance==='manual')return{status:'blocked',message:'직접 비운 사이즈표 선택을 유지했습니다. 사이즈표 편집에서 확인해주세요.'};
+    if(!content.manualSizeChart&&!layout.sizeChartRequired)return{status:'skipped',message:'저장된 사이즈표 원본이 없어 생략했습니다. 필요하면 사이즈표 편집에서 원본을 선택해주세요.'};
+    return run({content,layout});
   }
   const quotationRecoveryKey=identity+':quotation-generation-readback-v1';
   const quotationConfiguration=(state:QuotationAiView)=>state.configuration as QuotationAiView['configuration']&{executionPolicy?:QuotationTextExecution|null};
@@ -545,13 +552,21 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
       for(const state of before.details)await advanceSelectedDetailWorkCheckpoint(state,before,{view,content},signal,fetcher);
     }catch{/* Preserve the old checkpoint when this transition cannot be proved. */}
   }
+  if(hasSelectedSizeChartAttempt(keys,controls.expectedOwnerId,productId)&&result[0]?.id!=='sizeChart'){
+    try{
+      const recovered=await sizeChart();await assertCurrent();
+      for(let index=0;index<result.length;index++)publish(index,result[index].id==='sizeChart'?recovered:{status:'blocked',message:recovered.message+' 이전 사이즈표 저장 결과만 확인했으며 선택한 새 작업은 시작하지 않았습니다.'});
+    }catch(cause){if(signal.aborted)return null;publish(0,{status:'failed',message:cause instanceof Error?cause.message:'이전 사이즈표 저장 결과를 확인하지 못했습니다.'});holdRemaining(0);}
+    return{productId,stages:result};
+  }
   for(let index=0;index<result.length;index++){
     if(signal.aborted)return null;
     const id=result[index].id;activeStage=id;
     stageWrites.clear();
     const failedQwenRead=controls.retryFailedQwen===true&&id==='seo'&&keys.get(identity+':pending:seo')==='Qwen 번역 결과 확인 필요'&&!!parseSeoGenerationConfiguration(controls.seoGenerationConsent)?.translationConfig;
     const pendingQuotationRead=id==='quotation'&&keys.get(identity+':pending:quotation')===quotationGenerationPending&&retainedQuotationGeneration()!==null;
-    if(keys.has(identity+':pending:'+id)&&!imageStates.has(identity+':'+id)&&!failedQwenRead&&!pendingQuotationRead){
+    const pendingSizeChartRead=id==='sizeChart'&&hasSelectedSizeChartAttempt(keys,controls.expectedOwnerId,productId);
+    if(keys.has(identity+':pending:'+id)&&!imageStates.has(identity+':'+id)&&!failedQwenRead&&!pendingQuotationRead&&!pendingSizeChartRead){
       publish(index,{status:'blocked',message:'이전 저장 결과를 단계 편집에서 먼저 확인해주세요. 뒤의 작업은 시작하지 않았습니다.'});holdRemaining(index);break;
     }
     publish(index,{status:'running',message:'선택한 단계 작업 중…'});
@@ -576,7 +591,7 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
             ||!['pending','complete','failed','running','unused'].includes(String(value.state))||typeof value.detail!=='string'||!value.detail.trim();}))))
           throw new ScopeChanged('전체 작업의 저장 단계 확인값이 현재 회원·상품과 다릅니다. 목록을 다시 확인해주세요.');
         // Saved detail references do not prove BODY translation; its runner verifies the current publication.
-        if(id!=='detailImage'&&!pendingQuotationRead&&object(summary)&&object(summary.stages)&&object(summary.stages[id])&&summary.stages[id].state==='complete'&&!(id==='pricing'&&keys.has(identity+':pricing-save-v1'))){
+        if(id!=='detailImage'&&!pendingQuotationRead&&!pendingSizeChartRead&&object(summary)&&object(summary.stages)&&object(summary.stages[id])&&summary.stages[id].state==='complete'&&!(id==='pricing'&&keys.has(identity+':pricing-save-v1'))){
           publish(index,{status:'skipped',message:'현재 저장본에서 완료된 단계라 전체 작업에서 건너뛰었습니다. 다시 작업하려면 이 단계만 선택해주세요.'});continue;
         }
       }

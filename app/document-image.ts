@@ -1,6 +1,6 @@
 import { labelDocumentRows, withCurrentLabelFields, type ProductContent } from '@/app/product-content';
 import type { ProductOptions } from '@/app/product-options';
-import { validateManualSizeChart } from '@/app/manual-size-chart';
+import { isReferenceSizeChart, validateManualSizeChart } from '@/app/manual-size-chart';
 
 export type DocumentImageSection = 'label' | 'size';
 export type DocumentImagePlan = { title: string; subtitle: string; width: number; columnWidths: number[]; headers: string[]; rows: string[][]; footer: string; format?: 'product-label' | 'manual-size-chart' };
@@ -18,6 +18,8 @@ export function documentImagePlan(section: DocumentImageSection, content: Produc
       footer: '카테고리별 법정 표시사항의 완결성과 상품 일치 여부를 검토해주세요. AI 생성·번역을 실행하지 않았습니다.' };
   }
   if (content.manualSizeChart !== undefined) {
+    if (isReferenceSizeChart(content.manualSizeChart)) return { format: 'manual-size-chart', title: '사이즈 정보', subtitle: '', width: 1200, columnWidths: [280, 840], headers: ['측정 부위', 'Free Size'],
+      rows: content.manualSizeChart.measurements.map(row => [row.name, ...row.values]), footer: '옵션명 또는 상세페이지의 사이즈 정보를 확인해주세요.' };
     const chart = validateManualSizeChart(content.manualSizeChart), columnWidths = [280, ...chart.sizes.map(() => 160)], descriptive = chart.sizeUnits === 'none';
     return { format: 'manual-size-chart', title: chart.sizeType || '일반 사이즈', subtitle: descriptive ? '' : `단위: ${chart.sizeUnits}`,
       width: 80 + columnWidths.reduce((sum, width) => sum + width, 0), columnWidths, headers: [descriptive ? '항목' : '측정 부위', ...chart.sizes],

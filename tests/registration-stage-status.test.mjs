@@ -3,11 +3,17 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
-function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Date,structuredClone,require:name=>load(name.slice(2)+'.ts')});return exports;}
+function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Date,TextEncoder,structuredClone,require:name=>load(name.slice(2)+'.ts')});return exports;}
 const status=load('app/registration-stage-status.ts'),{emptyProductContent,applyContentPatch}=load('app/product-content.ts');
 const now='2026-10-20T01:00:00.000Z',product={id:'p',owner_id:'owner',updated_at:now};
 const base=()=>({productId:'p',productVersion:now,contentRevision:0,revision:1,stages:status.registrationStageIds.map(id=>({id,status:'blocked',attempts:0,updatedAt:now,reason:null,evidence:[],artifacts:[]}))});
 const pricing=workflow=>Object.assign(workflow.stages.find(stage=>stage.id==='pricing'),{status:'complete',attempts:1,artifacts:[{id:'calculation',kind:'priceCalculation',data:{calculation:{supplyPrice:4000,salePrice:6000}},submissionReady:false}],evidence:[{kind:'storedProduct',reference:'p@'+now,observedAt:now},{kind:'localCalculation',reference:'calculatePrice',observedAt:now}]});
+test('only one owned current generated canonical reference chart completes the size role',()=>{
+ const chart=load('app/manual-size-chart.ts').createReferenceSizeChart(),content=applyContentPatch(emptyProductContent('p'),{manualSizeChart:chart},now);content.assets.size={value:['owner/reference.png'],provenance:'generated',updatedAt:now};
+ const read=value=>status.registrationStagesFromSavedContent(product,value,null,['owner/reference.png'],null,[],true);
+ assert.equal(read(content).sizeChart.state,'complete');assert.match(read(content).sizeChart.detail,/참고용/);assert.equal(read(content).detailImage.state,'pending');
+ for(const alter of [value=>{value.manualSizeChart.measurements[0].values[0]='42';},value=>{value.assets.size.value.push('owner/reference.png');},value=>{value.assets.size.value=['other/reference.png'];},value=>{value.assets.size.updatedAt='2099-01-01T00:00:00Z';},value=>{value.assets.size.provenance='collected';}]){const value=structuredClone(content);alter(value);assert.equal(read(value).sizeChart.state,'pending');}
+});
 test('a fresh source, unverified SEO and raw photo counts cannot complete any stage',()=>{
  const content=emptyProductContent('p');content.revision=1;content.updatedAt=now;content.seo.title.value='수집한 상품';
  for(const role of ['main','additional','detail','label'])content.assets[role].value=['owner/raw.png'];
