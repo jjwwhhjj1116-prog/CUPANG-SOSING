@@ -40,6 +40,18 @@ test('advertised Batch submits once then polls only the original job before usin
  assert.equal(polls,2);assert.match(h.calls[0].url,/visionBatchSource=/);
 });
 
+test('only this invocation newly admitted batch may refine source ink; discovered old jobs and unknown ACK recovery do not',async()=>{
+ for(const mode of ['new','discovered','unknown-ack']){
+  const h=fixture();h.image.canvas={width:100,height:80,getContext:()=>({font:'',measureText:()=>({width:3}),getImageData(x,y,w,h){const data=new Uint8ClampedArray(w*h*4).fill(255);for(let yy=0;yy<h;yy++)for(let xx=0;xx<w;xx++)if(x+xx>=12&&x+xx<14&&y+yy>=7&&y+yy<15)data.set([35,35,35,255],(yy*w+xx)*4);return{data};}})};
+  let submitted;
+  h.image.visionFetcher=async(url,init={})=>{h.calls.push({url,init});if(init.method==='GET')return Response.json(mode==='new'?h.reply('not-found',true):h.reply('completed',true));
+   const body=JSON.parse(init.body);submitted={...body};delete submitted.action;return Response.json(h.reply('completed',false,1,submitted));};
+  if(mode==='unknown-ack'){h.image.visionPending=new h.client.FreeImageVisionError('ACK unknown','IMAGE_VISION_ACK_MISSING',true,h.attempt);h.image.visionRequestId=h.attempt.requestId;}
+  const before=JSON.stringify(h.result),regions=await h.client.recognizeFreeImage(h.image,'zh',new AbortController().signal);
+  assert.equal(regions[0].box.y,mode==='new'?6:10,mode);assert.equal(JSON.stringify(h.result),before);assert.equal(h.calls.filter(row=>row.init.method==='POST').length,mode==='new'?1:0);
+ }
+});
+
 test('reload discovers persisted original job and keeps current-source CAS identity without resubmission',async()=>{
  const h=fixture();h.attempt.source={...h.source,productVersion:'2026-11-03T00:00:00.000Z',contentRevision:1};
  h.image.visionFetcher=async(url,init={})=>{h.calls.push({url,init});if(init.method==='GET')return Response.json(h.reply('running',true));assert.deepEqual(JSON.parse(init.body),{action:'vision-batch-poll',requestId:h.attempt.requestId});return Response.json(h.reply('completed'));};

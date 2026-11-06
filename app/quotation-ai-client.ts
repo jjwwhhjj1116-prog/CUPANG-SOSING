@@ -5,15 +5,16 @@ import { isCouplusNotApplicableValue } from '@/app/couplus-quotation-defaults';
 import {quotationTextModel,validQuotationTextExecution,type QuotationTextExecution} from '@/app/quotation-text-execution';
 
 import { unsupportedProductMaterial } from '@/app/product-material-evidence';
-import { productFactKey, productFactPriorityIssue, productFactQuantityTokens } from '@/app/product-fact-priority';
+import { productFactKey, productFactPriorityIssue, productFactQuantityTokens, canonicalProductMaterialLiteral } from '@/app/product-fact-priority';
 import { currentLabelNoticeNames } from '@/app/current-label-attribute-literals';
 import { seoCurrentLiterals } from '@/app/seo-current-literals';
 import type { QuotationAiPlan } from '@/app/quotation-ai';
 
 export const LEGACY_QUOTATION_GENERATION_POLICY = 'option-notice-material-evidence-v1' as const;
-export const QUOTATION_GENERATION_POLICY = 'option-notice-material-evidence-v2' as const;
-export type QuotationGenerationPolicy=typeof QUOTATION_GENERATION_POLICY|typeof LEGACY_QUOTATION_GENERATION_POLICY;
-export const validQuotationGenerationPolicy=(value:unknown):value is QuotationGenerationPolicy=>value===QUOTATION_GENERATION_POLICY||value===LEGACY_QUOTATION_GENERATION_POLICY;
+export const RECEIPT_QUOTATION_GENERATION_POLICY = 'option-notice-material-evidence-v2' as const;
+export const QUOTATION_GENERATION_POLICY = 'option-notice-material-evidence-v3' as const;
+export type QuotationGenerationPolicy=typeof QUOTATION_GENERATION_POLICY|typeof RECEIPT_QUOTATION_GENERATION_POLICY|typeof LEGACY_QUOTATION_GENERATION_POLICY;
+export const validQuotationGenerationPolicy=(value:unknown):value is QuotationGenerationPolicy=>value===QUOTATION_GENERATION_POLICY||value===RECEIPT_QUOTATION_GENERATION_POLICY||value===LEGACY_QUOTATION_GENERATION_POLICY;
 export type QuotationGenerationFacts = {
   material: { name: string; value: string; provenance?: string }[];
   options: { optionId: string | null; color: string; translatedName: string; originalName?:string }[];
@@ -51,15 +52,23 @@ export function quotationAiColorReference(option: QuotationGenerationFacts['opti
 export function quotationAiOptionColorNotice(field: QuotationField): boolean {
   return quotationKnownNoticeTarget(field, true) === 'color';
 }
-function materialField(field: QuotationField): boolean {
+export function quotationAiMaterialField(field: QuotationField): boolean {
   const wire = field.hubWire;
   return Boolean(writableAiField(field) && (productFactKey(wire!.name!) === 'material'
     || field.section === 'legal' && field.visibility === 'common' && wire!.path.join('.') === 'legalPage.notices'
       && wire!.name === field.label && currentLabelNoticeNames.material.includes(field.label as typeof currentLabelNoticeNames.material[number])));
 }
+/** Source normalization is available only for whole, agreeing independent material evidence. */
+export function quotationAiCanonicalMaterial(field:QuotationField,facts:QuotationGenerationFacts):string|undefined{
+  if(!quotationAiMaterialField(field)||!facts.material.length)return;
+  const values=facts.material.map(pair=>canonicalProductMaterialLiteral(pair.value));
+  if(values.some(value=>value===null)||new Set(values).size!==1)return;
+  const value=values[0]!;return quotationValueIssues(field,value).length?undefined:value;
+}
 /** Negative evidence checks do not certify translated names as actual product facts. */
-export function quotationAiGenerationIssue(field: QuotationField, optionId: string | null, value: string, facts: QuotationGenerationFacts): string | null {
-  if (materialField(field)) {
+export function quotationAiGenerationIssue(field: QuotationField, optionId: string | null, value: string, facts: QuotationGenerationFacts, generationPolicy?:string): string | null {
+  if (quotationAiMaterialField(field)) {
+    if(generationPolicy===QUOTATION_GENERATION_POLICY){const expected=quotationAiCanonicalMaterial(field,facts);if(expected!==undefined&&value!==expected)return '원문 재질의 정규화 값과 제안값이 다릅니다.';}
     const priority = productFactPriorityIssue(value, 'material', '', facts.material);
     if (priority || unsupportedProductMaterial(value, facts.material.map(pair => pair.value).join('\n'), true)) return priority ?? '상품 원문의 명시된 재질 근거를 확인해주세요.';
     if(facts.material.some(pair=>pair.provenance==='collection-source')){
@@ -202,7 +211,7 @@ export function quotationAiProposalChanges(view: QuotationFieldsView, job: Quota
       || !job.scope.applyToAllOptions && change.optionId !== job.scope.optionId
       || quotationValueIssues(field, change.value).length)
       throw Error('AI 초안의 카테고리·옵션·수동 입력 또는 허용값을 다시 확인해주세요.');
-    if(job.generationPolicy){const issue=quotationAiGenerationIssue(field,change.optionId,change.value,job.generationFacts!);if(issue)throw Error(issue);}
+    if(job.generationPolicy){const issue=quotationAiGenerationIssue(field,change.optionId,change.value,job.generationFacts!,job.generationPolicy);if(issue)throw Error(issue);}
     seen.add(key); return { optionId: change.optionId, fieldKey: change.fieldKey, value: change.value };
   });
 }

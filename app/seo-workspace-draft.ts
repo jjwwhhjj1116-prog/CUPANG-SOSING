@@ -157,7 +157,7 @@ async function advance(state: SeoWorkspaceDraftState, controls: SeoWorkspaceDraf
       if (!job.result || job.result.model !== job.review.model || job.result.appliedToContent !== false || job.result.provenance !== 'generated')
         throw Error('SEO 결과의 서비스·저장 범위를 확인하지 못했습니다.');
       if(job.review.seoCompositionContext){if(job.result.seoOptions===undefined)throw Error('새 SEO 옵션 응답이 누락되었습니다.');validateSeoOptionResults(job.result.seoOptions,job.review.seoCompositionContext.selectedOptions,job.review);}
-      if(job.review.model===WORKERS_QWEN_MODEL&&!Object.hasOwn(job.review,'workersRecovery'))validateQwenTranslationDraft(job.result.draft,state.source,job.review.qwenTranslationPolicy,job.review.seoKeywordPolicy,job.review.seoComposition,job.review.seoCompositionContext);
+      if(job.review.model===WORKERS_QWEN_MODEL&&!Object.hasOwn(job.review,'workersRecovery'))validateQwenTranslationDraft(job.result.draft,state.source,job.review.qwenTranslationPolicy,job.review.seoKeywordPolicy,job.review.seoComposition,job.review.seoCompositionContext,'all',job.review.typedSeoPromptRevision);
       else validateTranslationDraft(job.result.draft, state.source, job.review.instructionsVersion);
     } else if (job.result !== null || ['prepared', 'approved', 'running'].includes(job.status) && job.error !== null)
       throw Error('SEO 작업의 결과 상태를 확인하지 못했습니다.');
@@ -183,7 +183,7 @@ async function advance(state: SeoWorkspaceDraftState, controls: SeoWorkspaceDraf
     // Historical legal-name exceptions stay in the stored record, while only
     // usable returned fields count toward translation coverage.
     const draft = rawDraft&&job?.review.model===WORKERS_QWEN_MODEL&&!Object.hasOwn(job.review,'workersRecovery')
-      ?validateQwenTranslationDraft(rawDraft,state.source,job.review.qwenTranslationPolicy,job.review.seoKeywordPolicy,job.review.seoComposition,job.review.seoCompositionContext):rawDraft;
+      ?validateQwenTranslationDraft(rawDraft,state.source,job.review.qwenTranslationPolicy,job.review.seoKeywordPolicy,job.review.seoComposition,job.review.seoCompositionContext,'all',job.review.typedSeoPromptRevision):rawDraft;
     const missing = draft ? state.source.attributes.filter((pair, index) => !(job?.review.seoCompositionContext&&/^option(?:-(?:color|size))?:/u.test(pair.name))&&!draft.attributes.some(item => item.sourceIndex === index)).length : 0;
     const typedMissing=Boolean(job?.review.seoCompositionContext&&job.result&&validateSeoOptionResults(job.result.seoOptions,job.review.seoCompositionContext.selectedOptions,job.review).warnings.some(value=>value.includes('누락')));
     const stopped = provider.kind === 'google' ? job?.result?.googleStoppedHttpStatus : undefined;

@@ -4,29 +4,12 @@ import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import { aiModule } from './helpers/quotation-ai.mjs';
 import { curtain, provider } from './helpers/quotation-generation-semantics.mjs';
-import { quotationAiApiFixture } from './helpers/quotation-ai-api.mjs';
-import { mockProvider } from './helpers/quotation-ai.mjs';
 const attributes = JSON.parse(fs.readFileSync(new URL('./fixtures/quotation-receipt-material-attributes.json', import.meta.url), 'utf8'));
 const policy = 'option-notice-material-evidence-v2';
 const plain = value => JSON.parse(JSON.stringify(value));
 const stable = plan => plain({ ...plan, createdAt: null });
 const json = async (response, status = 200) => { assert.equal(response.status, status, await response.clone().text()); return response.json(); };
-async function fixture(pairs = attributes) {
-  const f = await quotationAiApiFixture(), { h } = f;
-  h.context.category = { ...f.profile }; h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(h.context), 'job');
-  h.sqlite.prepare('UPDATE products SET source_url=? WHERE id=?').run(h.sourceUrl, f.id);
-  h.sqlite.exec(h.load('db/collection-jobs.ts').collectionProductSchema);
-  h.sqlite.prepare('INSERT INTO collection_products(job_id,owner_id,product_id,created_at) VALUES(?,?,?,?)').run('job', 'owner', f.id, new Date().toISOString());
-  const receipt = h.load('app/collection-result.ts').validateCollectionResult({ schemaVersion: 1, sourceUrl: h.sourceUrl, provider: 'chrome-public-mobile-v1', collectedAt: new Date().toISOString(),
-    title: '商品原文', description: '', options: [{ sku: 'raw-one', name: '黑色', unitPriceCny: 7.1, minimumOrder: 1, stock: null }], images: [{ url: 'https://cbu01.alicdn.com/synthetic-material.png', role: 'main' }], attributes: pairs }, '813724060928');
-  assert.equal((await h.load('db/collection-results.ts').storeCollectionResult('owner', 'job', receipt)).status, 'stored');
-  const reader = h.load('app/exports/quotation-source.ts'), model = h.load('app/quotation-ai.ts');
-  return { f, h, reader, model, receipt, read: () => reader.readMappedQuotationSource('owner', f.id, f.profile.id) };
-}
-const materialProvider = value => mockProvider({ mutate(result, request) { if (request.task !== 'ANALYZE_SCHEMA_ATTRIBUTES') {
-  const change = result.changes?.find(change => request.fields.find(field => field.id === change.fieldKey)?.label === '소재'); if (change) change.value = value;
-} return { response: JSON.stringify(result) }; } });
-
+import { fixture, materialProvider } from './helpers/quotation-receipt-source.mjs';
 test('R6 actual linked receipt material reaches v2 with original value/provenance while untranslated content stays empty', async () => {
   const { f, h, read, model } = await fixture(); try {
     const saved = await read(); assert.equal(saved.content.categoryAttributes, undefined); assert.equal(saved.content.label.material.value, '');
@@ -67,7 +50,7 @@ test('R6 same-clock effective receipt changes alter new sealed plan and old owne
   const { f, h, read, model } = await fixture(); try {
     f.setProvider(materialProvider('폴리에스테르'));
     const state = await json(await f.request(undefined, 'GET')), out = await json(await f.request(f.requestBody(state))), job = out.job;
-    assert.equal(job.generationPolicy, policy);
+    assert.equal(job.generationPolicy, 'option-notice-material-evidence-v3');
     const before = await read(), original = h.sqlite.prepare('SELECT payload FROM collection_results WHERE job_id=?').get('job'), changed = JSON.parse(original.payload);
     changed.attributes.find(pair => pair.name === '材质').value = '硅胶'; h.sqlite.prepare('UPDATE collection_results SET payload=? WHERE job_id=?').run(JSON.stringify(changed), 'job');
     const after = await read(); assert.equal(after.product.updated_at, before.product.updated_at);
@@ -96,7 +79,7 @@ test('R6 stored R5 v1 plan/provider request bytes and exact retry remain unchang
     assert.equal(retry.reused, true); assert.equal(retry.job.generationPolicy, 'option-notice-material-evidence-v1'); assert.deepEqual(retry.job.generationFacts.material, []);
     assert.equal(f.jobs()[0].review, before.review); assert.equal(f.jobs()[0].result, before.result); assert.equal(f.jobs()[0].request_fingerprint, before.request_fingerprint); assert.equal(f.provider.calls.length, count);
     const currentState = await json(await f.request(undefined, 'GET')); assert.equal(currentState.fingerprint, state.fingerprint);
-    const fresh = await json(await f.request(f.requestBody(currentState))); assert.equal(fresh.job.generationPolicy, policy); assert.notEqual(fresh.job.id, retry.job.id);
+    const fresh = await json(await f.request(f.requestBody(currentState))); assert.equal(fresh.job.generationPolicy, 'option-notice-material-evidence-v3'); assert.notEqual(fresh.job.id, retry.job.id);
     const oldStored = f.jobs().find(row => row.id === retry.job.id); assert.equal(oldStored.review, before.review); assert.equal(oldStored.result, before.result); assert.equal(oldStored.request_fingerprint, before.request_fingerprint);
     assert.ok(f.provider.calls.length > count); assert.equal(f.jobs().length, 2);
   } finally { f.close(); }

@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import {webcrypto} from 'node:crypto';
 const plain=value=>JSON.parse(JSON.stringify(value));
+function flatInkCanvas(width=100,height=80){const context={font:'',measureText:()=>({width:3}),getImageData(x,y,w,h){const data=new Uint8ClampedArray(w*h*4).fill(255);for(let py=0;py<h;py++)for(let px=0;px<w;px++)if(px+x>=12&&px+x<14&&py+y>=7&&py+y<15)data.set([35,35,35,255],(py*w+px)*4);return{data};}};return{width,height,getContext:()=>context};}
 function fixture(){const cache=new Map();function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,Date,URL,URLSearchParams,Blob,File,FormData,Response,Request,Headers,AbortController,AbortSignal,TextEncoder,TextDecoder,Uint8Array,DataView,structuredClone,crypto:webcrypto,setTimeout,clearTimeout,fetch:()=>{throw Error('No live network');},require:name=>load(name.slice(2)+'.ts')});return exports;}const client=load('app/free-image-translation-client.ts'),contract=load('app/image-text-vision.ts'),calls=[];
  const config={provider:'workers-ai-vision',model:contract.IMAGE_TEXT_VISION_MODEL,configured:true,paidAllowed:true,notice:contract.IMAGE_TEXT_VISION_NOTICE};
  const source={productId:'product',productVersion:'2026-10-29T00:00:00.000Z',contentRevision:2,sourceKey:'owner/source.png',sourceSha256:'a'.repeat(64),role:'detail',width:100,height:80};
@@ -20,6 +21,29 @@ test('Vision client accepts an exact saved workspace BODY while preserving its o
  const rows=await h.client.recognizeFreeImage(h.image,'zh',new AbortController().signal);assert.equal(h.calls.length,1);assert.equal(rows[0].translated,'검정');assert.deepEqual(plain(h.calls[0].body.source.workspaceTarget),h.image.source.workspaceTarget);
  const rotated=fixture();rotated.image.source.workspaceTarget=plain(h.image.source.workspaceTarget);rotated.image.width=80;rotated.image.height=100;
  await assert.rejects(rotated.client.recognizeFreeImage(rotated.image,'zh',new AbortController().signal),/원본 방향/);assert.equal(rotated.calls.length,0);
+});
+
+test('only admitted fresh execution refines flat source ink; cached/read/restore paths retain raw geometry',async()=>{
+ for(const cached of [false,true]){const h=fixture();h.image.canvas=flatInkCanvas();h.image.visionFetcher=async(_url,init)=>{h.calls.push(init);return Response.json({source:h.image.source,configuration:h.config,requestId:JSON.parse(init.body).requestId,result:h.result,replayed:cached,execution:{requests:cached?0:1,cached}});};
+  const before=JSON.stringify(h.result),rows=await h.client.recognizeFreeImage(h.image,'zh',new AbortController().signal);
+  assert.equal(JSON.stringify(h.result),before);assert.deepEqual(plain(h.image.visionResult.blocks[0].box),h.result.blocks[0].box);
+  assert.deepEqual(plain(h.client.initializedVisionRegionBox(h.image,0)),plain(rows[0].box));assert.equal(rows[0].box.y,cached?10:6);
+ }
+ const h=fixture();h.image.canvas=flatInkCanvas();h.image.visionResult=h.result;h.image.visionExecution={requests:1,cached:false};
+ assert.deepEqual(plain(h.client.initializeFreeImageVisionRegions(h.image,h.result).regions[0].box),h.result.blocks[0].box,'read initializer must not infer freshness from state alone');
+ h.image.editDocument={format:'free-image-edit-v1'};
+ assert.deepEqual(plain(h.client.initializeFreeImageVisionRegions(h.image,h.result,{freshExecution:true}).regions[0].box),h.result.blocks[0].box);
+});
+
+test('losing or changing ephemeral refinement proof cannot certify expanded boxes or replay an unknown ACK',async()=>{
+ const h=fixture();h.image.canvas=flatInkCanvas();const rows=await h.client.recognizeFreeImage(h.image,'zh',new AbortController().signal);
+ assert.notDeepEqual(plain(rows[0].box),h.result.blocks[0].box);const reloaded={...h.image};
+ assert.deepEqual(plain(h.client.initializedVisionRegionBox(reloaded,0)),h.result.blocks[0].box,'reload has no WeakMap proof');
+ h.image.source={...h.image.source,productVersion:'2026-10-30T00:00:00.000Z'};assert.throws(()=>h.client.initializedVisionRegionBox(h.image,0),/초기화|영역|원본/);
+ const lost=fixture();lost.image.canvas=flatInkCanvas();lost.image.visionFetcher=async()=>{lost.calls.push('admitted-unknown');throw Error('ACK missing');};
+ await assert.rejects(lost.client.recognizeFreeImage(lost.image,'zh',new AbortController().signal));assert.equal(lost.calls.length,1);
+ lost.image.visionResult=lost.result;const restored=lost.client.initializeFreeImageVisionRegions(lost.image,lost.result);
+ assert.deepEqual(plain(restored.regions[0].box),lost.result.blocks[0].box);assert.equal(lost.calls.length,1);
 });
 test('unknown/off configuration, changed source/model or out-of-bounds Vision rows never fall back to Google/local OCR',async()=>{
  const off=fixture();off.image.visionConfiguration.configured=false;await assert.rejects(off.client.recognizeFreeImage(off.image,'zh',new AbortController().signal),/설정/);assert.equal(off.calls.length,0);

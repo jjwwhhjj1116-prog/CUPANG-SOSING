@@ -71,15 +71,35 @@ test('automatic detail translates raw BODY once and composites its ordered banne
 const fitIssue='VISION_TEXT_FIT: 한국어를 읽을 수 있는 크기로 넣기 어렵습니다. 문구와 영역을 직접 조정한 뒤 선택해주세요.';
 const safeBlock={id:'vision-1',text:'舒适袜子',translated:'편안한 양말',issue:null,kind:'overlay',box:{x:10,y:10,width:100,height:30}};
 const tinyBlock={id:'vision-2',text:'柔软面料',translated:'부드러운 소재',issue:null,kind:'overlay',box:{x:140,y:70,width:5,height:5}};
-async function bodyVision(h,blocks,mutate=()=>{}){
+async function bodyVision(h,blocks,mutate=()=>{},initializeImage=()=>{}){
  for(const key of h.f.objects.keys())h.f.objects.set(key,await sharp({create:{width:160,height:100,channels:4,background:'#ffffff'}}).png().toBuffer());
  const seen={},render=h.deps.render,initialize=h.base.load('app/free-image-translation-client.ts').initializeFreeImageVisionRegions;
  h.deps.recognize=async image=>{h.calls.push({operation:'vision',key:image.source.sourceKey});image.visionResult={provider:'workers-ai-vision',model:h.vision.IMAGE_TEXT_VISION_MODEL,requests:1,notice:h.vision.IMAGE_TEXT_VISION_NOTICE,
   blocks:plain(blocks),inspection:{policy:h.vision.IMAGE_TEXT_PRESERVATION_POLICY,decision:'foreign-text'}};
-  const regions=initialize(image,image.visionResult).regions;mutate(image,regions);seen.source=plain(image.source);seen.original=plain(regions);return regions;};
+  const initialization=initializeImage(image),regions=initialize(image,image.visionResult,initialization).regions;mutate(image,regions);seen.source=plain(image.source);seen.original=plain(regions);return regions;};
  h.deps.render=async(image,regions,...args)=>{seen.rendered=plain(regions);seen.renderedSource=plain(image.source);return render(image,regions,...args);};
  return seen;
 }
+
+test('automatic BODY accepts only exact fresh raw-result-bound refined boxes and rejects lost/stale/unbound proof',async()=>{
+ const source={...safeBlock,box:{x:30,y:25,width:60,height:20}};
+ for(const mode of ['fresh','lost','stale','unbound']){
+  const h=await setup(),initialize=h.base.load('app/free-image-translation-client.ts').initializeFreeImageVisionRegions;
+  const seen=await bodyVision(h,[source],(image,regions)=>{
+   if(mode==='lost')initialize(image,image.visionResult);
+   if(mode==='stale')image.visionResult=plain(image.visionResult);
+   if(mode==='unbound')regions[0].box.y=18;
+  },image=>{
+   if(mode==='unbound')return;
+   image.visionExecution={requests:1,cached:false};
+   const context={font:'',measureText:()=>({width:4}),getImageData(x,y,w,h){const data=new Uint8ClampedArray(w*h*4).fill(255);for(let yy=0;yy<h;yy++)for(let xx=0;xx<w;xx++)if(x+xx>=38&&x+xx<41&&y+yy>=19&&y+yy<36)data.set([35,35,35,255],(yy*w+xx)*4);return{data};}};
+   image.canvas={width:image.width,height:image.height,getContext:()=>context};return{freshExecution:true};
+  });
+  const result=await h.run();
+  if(mode==='fresh'){assert.equal(result.status,'completed',result.messages.join(' '));assert.equal(seen.rendered[0].box.y,18);assert.equal(seen.rendered[0].backgroundMode,'inpaint-telea-v1');}
+  else{assert.notEqual(result.status,'completed',mode);assert.ok(!h.calls.some(row=>row.operation==='image-apply'),mode);assert.equal(seen.rendered,undefined,mode);}
+ }
+});
 
 test('one unsafe unselected BODY block does not discard safe translations or publish an incomplete composite',async()=>{
  const h=await setup(),seen=await bodyVision(h,[safeBlock,tinyBlock]),before=plain(h.f.view),result=await h.run();

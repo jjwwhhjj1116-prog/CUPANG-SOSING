@@ -10,6 +10,12 @@ function fixture(color=()=>[240,202,172,255]){
  return{...load('app/free-image-vision-style.ts'),textStyle:load('app/free-image-text-style.ts'),context,canvas:{getContext:()=>context}};
 }
 const block=(id,box,translated='신발 사이즈 조절 뒤꿈치 패드')=>({id:`vision-${id}`,text:'调鞋码后跟贴',translated,issue:null,box});
+test('flat connected-ink refinement is explicit and styles/checks use the derived box without changing raw OCR',()=>{
+ const h=fixture((x,y)=>x>=38&&x<41&&y>=19&&y<36?[35,35,35,255]:[255,255,255,255]),rows=[{...block(1,{x:30,y:25,width:30,height:20},'번역'),kind:'overlay'}],before=JSON.stringify(rows);
+ assert.deepEqual(plain(h.initializeVisionRegions(rows,h.canvas,100,80).regions[0].box),rows[0].box);
+ const result=h.initializeVisionRegions(rows,h.canvas,100,80,{refineFlatOverlayBounds:true});
+ assert.deepEqual(plain(result.regions[0].box),{x:30,y:18,width:30,height:27});assert.equal(JSON.stringify(rows),before);
+});
 test('Vision font fitting uses rendered Korean wrapping and explicit newline heights',()=>{
  for(const [text,fontSize]of [['한국어'.repeat(10),12],['한국어\n번역',14],['한국어\n\n번역',9]]){
   const h=fixture(()=>[255,255,255,255]),blocks=[block(1,{x:20,y:20,width:200,height:40},text)],before=JSON.stringify(blocks);

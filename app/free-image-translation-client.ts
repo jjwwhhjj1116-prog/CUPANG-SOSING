@@ -248,8 +248,25 @@ export async function recognizeLocalFreeImage(image: FreeImageLoaded, sourceLang
 
 /** A configured Vision operation sends only the server-bound original, once.
  * The legacy local OCR remains an explicit choice, never an error fallback. */
-export function initializeFreeImageVisionRegions(image:FreeImageLoaded,result:ImageTextVisionResult){
- const styled=initializeVisionRegions(result.blocks,image.canvas,image.width,image.height,{allowSafeOverlayOverlap:result.inspection?.policy===IMAGE_TEXT_PRESERVATION_POLICY});
+const initializedVisionBoxes=new WeakMap<FreeImageLoaded,{result:ImageTextVisionResult;snapshot:string;source:string;canvas:HTMLCanvasElement;width:number;height:number;boxes:readonly OcrBox[]}>();
+/** Only this exact fresh initialization may differ from provider geometry.
+ * A clone/reload has no proof; old jobs and saved documents use their own boxes. */
+export function initializedVisionRegionBox(image:FreeImageLoaded,index:number):OcrBox{
+ const block=image.visionResult?.blocks[index],proof=initializedVisionBoxes.get(image);
+ if(!block)throw Error('원본 Vision 영역을 확인하지 못했습니다.');
+ if(!proof)return{...block.box};
+ if(proof.result!==image.visionResult||proof.snapshot!==JSON.stringify(image.visionResult)||proof.source!==freeImageSourceIdentity(image.source)
+  ||proof.canvas!==image.canvas||proof.width!==image.width||proof.height!==image.height||image.editDocument||image.visionExecution?.requests!==1||image.visionExecution.cached!==false)
+  throw Error('원본 Vision 영역 초기화 증명이 변경됐습니다.');
+ return{...proof.boxes[index]};
+}
+export function initializeFreeImageVisionRegions(image:FreeImageLoaded,result:ImageTextVisionResult,options:{freshExecution?:boolean}={}){
+ initializedVisionBoxes.delete(image);
+ const fresh=options.freshExecution===true&&image.visionResult===result&&!image.editDocument&&image.visionExecution?.requests===1&&image.visionExecution.cached===false
+  &&result.inspection?.policy===IMAGE_TEXT_PRESERVATION_POLICY;
+ const styled=initializeVisionRegions(result.blocks,image.canvas,image.width,image.height,{allowSafeOverlayOverlap:result.inspection?.policy===IMAGE_TEXT_PRESERVATION_POLICY,refineFlatOverlayBounds:fresh});
+ if(fresh&&styled.regions.some((row,index)=>['x','y','width','height'].some(key=>row.box[key as keyof OcrBox]!==result.blocks[index].box[key as keyof OcrBox])))
+  initializedVisionBoxes.set(image,{result,snapshot:JSON.stringify(result),source:freeImageSourceIdentity(image.source),canvas:image.canvas,width:image.width,height:image.height,boxes:styled.regions.map(row=>Object.freeze({...row.box}))});
  image.visionStyleIssues=styled.issues;image.visionPaintOrder=styled.paintOrder;return styled;
 }
 export async function recognizeFreeImage(image:FreeImageLoaded,sourceLanguage:'zh'|'en',signal:AbortSignal,onProgress:(message:string)=>void=()=>{},factory?:OcrWorkerFactory):Promise<FreeImageRegion[]>{
@@ -263,7 +280,7 @@ export async function recognizeFreeImage(image:FreeImageLoaded,sourceLanguage:'z
   if(observed.cached)onProgress('같은 원본의 검증된 Vision 번역을 재사용했습니다. 추가 AI 요청은 0회입니다.');
   if(observed.result.inspection?.decision==='unreadable')throw Error('원본의 외국어 문구를 끝까지 판독하지 못했습니다. 이미지 편집에서 원문을 확인해주세요. 완료로 처리하지 않았습니다.');
   if(!observed.result.blocks.length)throw Error('읽을 수 있는 문구를 찾지 못했습니다. 필요한 영역과 원문을 직접 추가해주세요.');
-  return initializeFreeImageVisionRegions(image,observed.result).regions;
+  return initializeFreeImageVisionRegions(image,observed.result,{freshExecution:observed.requests===1&&!observed.cached}).regions;
  }
  if(image.visionPending?.uncertain)throw image.visionPending;
  signal.throwIfAborted();onProgress('Cloudflare Qwen3.8 Vision으로 문구와 한국어 번역을 한 번 읽고 있습니다.');
@@ -293,7 +310,7 @@ export async function recognizeFreeImage(image:FreeImageLoaded,sourceLanguage:'z
  if(execution.cached)onProgress('같은 원본의 검증된 Vision 번역을 재사용했습니다. 추가 AI 요청은 0회입니다.');
  if(result.inspection?.decision==='unreadable')throw Error('원본의 외국어 문구를 끝까지 판독하지 못했습니다. 이미지 편집에서 원문을 확인해주세요. 완료로 처리하지 않았습니다.');
  if(!result.blocks.length)throw Error('읽을 수 있는 문구를 찾지 못했습니다. 필요한 영역과 원문을 직접 추가해주세요.');
- const styled=initializeFreeImageVisionRegions(image,result);
+ const styled=initializeFreeImageVisionRegions(image,result,{freshExecution:execution.requests===1&&!execution.cached&&!body.replayed});
  return styled.regions;
 }
 

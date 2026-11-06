@@ -32,7 +32,7 @@ const approvedTypedV1={request:'cf09f027bb269b885cedcd259f6ad1c05f4ee9fa7a324e53
 
 test('new typed SEO approval seals the prompt revision while ordinary and context-free reviews keep their legacy identity',async()=>{
  const f=fixture(),review=await api.prepareTranslationReview(plain(source),f.config,new Date('2026-11-06T00:00:00.000Z'),plain(composition),plain(context));
- assert.equal(review.typedSeoPromptRevision,'couplus-typed-seo-v2');
+ assert.equal(review.typedSeoPromptRevision,'couplus-typed-seo-v3');
  const {fingerprint,...signed}=review;assert.equal(await model.fingerprint(signed),fingerprint);
  delete signed.typedSeoPromptRevision;assert.notEqual(await model.fingerprint(signed),fingerprint,'A prompt change requires a different approval fingerprint');
  for(const [policy,targets]of [[undefined,undefined],[plain(composition),undefined]]){
@@ -100,9 +100,18 @@ test('new typed SEO keeps the source-supported item noun and asks for additional
 });
 
 test('unknown or context-free typed prompt revisions are rejected before any provider request',async()=>{
- for(const patch of [{typedSeoPromptRevision:'unreviewed-revision'},...['couplus-typed-seo-v1','couplus-typed-seo-v2'].flatMap(typedSeoPromptRevision=>[{typedSeoPromptRevision,seoCompositionContext:undefined},{typedSeoPromptRevision,seoComposition:undefined}])]){
+ for(const patch of [{typedSeoPromptRevision:'unreviewed-revision'},...['couplus-typed-seo-v1','couplus-typed-seo-v2','couplus-typed-seo-v3'].flatMap(typedSeoPromptRevision=>[{typedSeoPromptRevision,seoCompositionContext:undefined},{typedSeoPromptRevision,seoComposition:undefined}])]){
   const f=fixture(),review={...historicalReview(),...patch};
   await assert.rejects(api.executeTranslation(review,f.config,noNetwork),error=>error.code==='UNSUPPORTED_INSTRUCTIONS'&&!error.mayHaveBeenCharged);
   assert.equal(f.calls.length,0);
  }
+});
+
+
+test('typed v2 request, whole pipeline and fingerprint remain exact while v3 keeps its request bytes',async()=>{
+ const f=fixture(),review={...historicalReview(),typedSeoPromptRevision:'couplus-typed-seo-v2'},before=JSON.stringify(review);
+ assert.equal(digest(api.buildTranslationRequest(review)),'23f3d01c42e2104f6a3b8d99274d60ab740fe7c670db3e7ea6eaae70183619a8');
+ const {fingerprint,...signed}=review;void fingerprint;assert.equal(await model.fingerprint(signed),'690270f67cde94c05d3691e1214cf26babb94fc3563e0abd95cfe14a24805204');
+ await api.executeTranslation(review,f.config,noNetwork);assert.equal(digest(f.calls),'2b07121da13b93a7b55c2a2fff2d0cf046f1b333808343835c7a7718daf99d42');assert.equal(JSON.stringify(review),before);
+ const v3={...review,typedSeoPromptRevision:'couplus-typed-seo-v3'};assert.equal(digest(api.buildTranslationRequest(v3)),digest(api.buildTranslationRequest(review)));
 });

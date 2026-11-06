@@ -11,6 +11,8 @@ import {WORKERS_QWEN_MODEL,parseWorkersQwenJson,parseWorkersQwenTranslationJson,
 export {WORKERS_QWEN_MODEL} from '@/app/automation/workers-qwen-contract';
 import {assertWorkersRecoveryDraftQuality,TranslationQualityError,workersRecoveryOptionMetadataLabel,canonicalizeWorkersRecoveryOptionMetadata,unsupportedTranslatedProductClaim} from '@/app/product-translation-quality';
 import type {SeoGenerationProof} from '@/app/seo-generation';
+import {canonicalProductMaterialLiteral,productFactKey} from '@/app/product-fact-priority';
+import {collectionLabelField} from '@/app/collection-label-attributes';
 
 export type TranslationSource = { title: string; description: string; attributes: { name: string; value: string }[]; provenance: 'manual'; reference: string; category?: { id: string; path: string[] }; guidance?: { features: string; keywords: string } };
 export type TranslationDraft = { title: string; keywords: string[]; description: string; attributes: { sourceIndex: number; name: string; value: string }[]; warnings: string[] };
@@ -22,7 +24,7 @@ export type TranslationReview = {
   seoKeywordPolicy?: 'couplus-generated-v1';
   seoComposition?: SeoCompositionPolicy;
   seoCompositionContext?:SeoCompositionContext;
-  typedSeoPromptRevision?:'couplus-typed-seo-v1'|'couplus-typed-seo-v2'; // New approvals only; older revisions retain their approved prompt.
+  typedSeoPromptRevision?:'couplus-typed-seo-v1'|'couplus-typed-seo-v2'|'couplus-typed-seo-v3'; // New approvals only; older revisions retain their approved prompt.
   qwenTranslationPolicy?: 'commerce-literal-v2' | 'commerce-json-schema-v3' | 'commerce-literal-schema-v4' | 'commerce-partial-attributes-v5' | 'commerce-exact-option-colors-v6'; // Preserve historical approved prompts and transport.
   optionsRetry?: { retryKey: string; optionRevision: number; scope: 'options' }; // Server-created, option-only free retry proof.
   intakeOptions?: { initialJobId: string; optionRevision: number; scope: 'options' }; // Server-created automatic continuation, distinct from an explicit retry.
@@ -121,7 +123,7 @@ export async function prepareTranslationReview(source: TranslationSource, config
   const details = { ...(composition?{seoComposition:validateSeoCompositionPolicy(composition),...(compositionContext?{seoCompositionContext:structuredClone(compositionContext)}:{})}:{}),reviewId:crypto.randomUUID(),model: config.model, maxOutputTokens: config.maxOutputTokens, source,
     instructionsVersion: 'sourceflow-translation-v6' as const, destination: translationDestination(config),
     ...(config.provider==='workers-ai'&&config.model===WORKERS_QWEN_MODEL?{qwenTranslationPolicy:'commerce-exact-option-colors-v6' as const,seoKeywordPolicy:'couplus-generated-v1' as const}:{}),
-    ...(composition&&compositionContext&&config.provider==='workers-ai'&&config.model===WORKERS_QWEN_MODEL?{typedSeoPromptRevision:'couplus-typed-seo-v2' as const}:{}),
+    ...(composition&&compositionContext&&config.provider==='workers-ai'&&config.model===WORKERS_QWEN_MODEL?{typedSeoPromptRevision:'couplus-typed-seo-v3' as const}:{}),
     inputCharacters: JSON.stringify(source).length,
     paidNotice: '승인 후 실행 버튼을 누르면 이 원문을 OpenAI에 보내는 유료 API 요청 1회가 발생합니다. 입력 및 출력 토큰 사용량에 따라 청구되며 정확한 금액은 현재 확정하지 않았습니다. 실패·시간초과도 비용이 발생했을 수 있으며 자동 재시도하지 않습니다.',
     pricingUrl: 'https://developers.openai.com/api/docs/pricing', expiresAt: new Date(now.getTime() + 15 * 60 * 1000).toISOString() };
@@ -157,7 +159,7 @@ const typedSeoItemInstructions='\n주품목 명사는 effectiveTargetKeyword와 
 
 function currentTypedSeoPrompt(review:TranslationReview):boolean{
   if(review.typedSeoPromptRevision===undefined)return false;
-  if((review.typedSeoPromptRevision!=='couplus-typed-seo-v1'&&review.typedSeoPromptRevision!=='couplus-typed-seo-v2')||review.model!==WORKERS_QWEN_MODEL||review.destination!=='Cloudflare Workers AI'||review.instructionsVersion!=='sourceflow-translation-v6'||!review.seoComposition||!review.seoCompositionContext||Object.hasOwn(review,'workersRecovery'))throw new TranslationError('UNSUPPORTED_INSTRUCTIONS','지원하지 않는 SEO 검토 지시입니다. 새 요청을 검토해주세요.');
+  if((review.typedSeoPromptRevision!=='couplus-typed-seo-v1'&&review.typedSeoPromptRevision!=='couplus-typed-seo-v2'&&review.typedSeoPromptRevision!=='couplus-typed-seo-v3')||review.model!==WORKERS_QWEN_MODEL||review.destination!=='Cloudflare Workers AI'||review.instructionsVersion!=='sourceflow-translation-v6'||!review.seoComposition||!review.seoCompositionContext||Object.hasOwn(review,'workersRecovery'))throw new TranslationError('UNSUPPORTED_INSTRUCTIONS','지원하지 않는 SEO 검토 지시입니다. 새 요청을 검토해주세요.');
   return true;
 }
 
@@ -213,7 +215,7 @@ export function buildTranslationRequest(review: TranslationReview,continuation?:
   const seoTargets=continuation?.targets??review.seoCompositionContext?.selectedOptions.slice(0,20);
   const seoSchema=seoTargets?{...schema,properties:{...schema.properties,...(!review.source.attributes.some(value=>!workersRecoveryOptionMetadataLabel(value.name))?{attributes:{type:'array',maxItems:0,items:{type:'object'}}}:{}),seoOptions:{type:'array',maxItems:seoTargets.length,items:{type:'object',additionalProperties:false,properties:{optionId:{type:'string',enum:seoTargets.map(target=>target.id)},name:{type:'string',maxLength:500},color:{type:'string',maxLength:200},size:{type:'string',maxLength:200}},required:['optionId']}}},required:[...schema.required,'seoOptions']}:schema;
   const finalSchema=continuation?.optionOnly?{...seoSchema,properties:{...seoSchema.properties,title:{type:'string',maxLength:0},description:{type:'string',maxLength:0},keywords:{type:'array',maxItems:0,items:{type:'string'}},attributes:{type:'array',maxItems:0,items:{type:'object'}}}}:seoSchema;
-  const compositionInstructions=(review.seoComposition?currentSeoInstructions:'')+(seoTargets?'\nseoOptionTargets는 서버에 저장된 선택 옵션입니다. 응답 seoOptions에 optionId 그대로와 한국어 name/color/size를 반환하세요. 순서는 바꿔도 되지만 ID를 새로 만들거나 합치지 마세요. manualName/manualColor/manualSize 값은 직접 수정한 입력이므로 그대로 유지하세요. 일반 attributes는 sourceIndex를 유지하며 옵션을 attributes로 반환하지 마세요.':'')+(continuation?.optionOnly?'\n후속 옵션 전용 요청입니다. 첫 번역 예시의 용어를 유지하고 이번 attributes만 번역하세요. 상품명·설명은 빈 문자열, keywords는 빈 배열입니다. SEO를 다시 생성하지 마세요.':'')+(review.typedSeoPromptRevision==='couplus-typed-seo-v2'&&!continuation?.optionOnly?typedSeoItemInstructions:'');
+  const compositionInstructions=(review.seoComposition?currentSeoInstructions:'')+(seoTargets?'\nseoOptionTargets는 서버에 저장된 선택 옵션입니다. 응답 seoOptions에 optionId 그대로와 한국어 name/color/size를 반환하세요. 순서는 바꿔도 되지만 ID를 새로 만들거나 합치지 마세요. manualName/manualColor/manualSize 값은 직접 수정한 입력이므로 그대로 유지하세요. 일반 attributes는 sourceIndex를 유지하며 옵션을 attributes로 반환하지 마세요.':'')+(continuation?.optionOnly?'\n후속 옵션 전용 요청입니다. 첫 번역 예시의 용어를 유지하고 이번 attributes만 번역하세요. 상품명·설명은 빈 문자열, keywords는 빈 배열입니다. SEO를 다시 생성하지 마세요.':'')+((review.typedSeoPromptRevision==='couplus-typed-seo-v2'||review.typedSeoPromptRevision==='couplus-typed-seo-v3')&&!continuation?.optionOnly?typedSeoItemInstructions:'');
   let cohortQwenInstructions=review.seoComposition?qwenKoreanInstructions.replace('상품명 100자 이내','상품명 최대70자 목표'):qwenKoreanInstructions;
   if(typedSeoPrompt)cohortQwenInstructions=cohortQwenInstructions.slice(0,cohortQwenInstructions.indexOf('\n형식 예시(다른 상품):')).replace('title,keywords,description,attributes,warnings 키의 JSON 객체','title,keywords,description,attributes,warnings,seoOptions 여섯 키의 JSON 객체')+'\nJSON 객체 예: {"title":"","keywords":[],"description":"","attributes":[],"warnings":[],"seoOptions":[]}\n이 예시는 구조만 보여줍니다. 실제 상품의 SEO와 선택 옵션 번역을 채우고 seoOptions의 optionId는 입력 ID 그대로 반환하세요.';
   return { model: review.model, store: false, max_output_tokens: review.maxOutputTokens,
@@ -280,7 +282,40 @@ function assertQwenKoreanText(draft:TranslationDraft,source:TranslationSource,ge
 }
 /** New generic Qwen completions and their later apply boundary share one check.
  * Legacy Google/Llama/recovery contracts continue using validateTranslationDraft. */
-export function validateQwenTranslationDraft(value:unknown,source:TranslationSource,policy?:TranslationReview['qwenTranslationPolicy'],keywordPolicy?:TranslationReview['seoKeywordPolicy'],composition?:SeoCompositionPolicy,compositionContext?:SeoCompositionContext,scope:'all'|'options'='all'):TranslationDraft{
+const materialHeading=(name:string)=>{const raw=name.replace(/^상품속성:\s*/u,'');return productFactKey(raw)==='material'||collectionLabelField(raw)==='material';};
+function materialDraftAttributes(value:unknown,source:TranslationSource):TranslationDraft['attributes']{
+ const raw=object(value,['title','keywords','description','attributes','warnings']);
+ if(!Array.isArray(raw.attributes)||raw.attributes.length>source.attributes.length)throw new TranslationError('INVALID_MODEL_OUTPUT','응답 속성 범위를 확인해주세요.',true);
+ const seen=new Set<number>();return raw.attributes.map(value=>{const row=object(value,['sourceIndex','name','value']),index=row.sourceIndex;
+  if(!Number.isInteger(index)||Number(index)<0||Number(index)>=source.attributes.length||seen.has(Number(index)))throw new TranslationError('INVALID_MODEL_OUTPUT','원문에 없는 속성이 응답에 포함되었습니다.',true);
+  seen.add(Number(index));text(row.name,200);text(row.value,2000,true);return{sourceIndex:Number(index),name:row.name as string,value:row.value as string};
+ });
+}
+/** Only execution can recover a material from its whole, indexed source literal. */
+function normalizeTypedMaterialDraft(draft:TranslationDraft,source:TranslationSource):TranslationDraft{
+ const rows=materialDraftAttributes(draft,source),seen=new Set(rows.map(row=>row.sourceIndex)),warnings:string[]=[],attributes:TranslationDraft['attributes']=[];
+ const sourceValue=(index:number)=>materialHeading(source.attributes[index].name)?canonicalProductMaterialLiteral(source.attributes[index].value):null;
+ for(const row of rows){const original=source.attributes[row.sourceIndex],canonical=sourceValue(row.sourceIndex);
+  if(materialHeading(original.name)){
+   if(canonical!==null){attributes.push({sourceIndex:row.sourceIndex,name:'재질',value:canonical});if(row.name!=='재질'||row.value!==canonical)warnings.push(`sourceIndex ${row.sourceIndex}: 전체 원문에서 확인한 재질 표기로 정리했습니다.`);}
+   else warnings.push(`sourceIndex ${row.sourceIndex}: 전체 원문 재질을 확인하지 못해 모델의 재질 제안을 보류했습니다. 원문을 유지합니다.`);
+  }else if(materialHeading(row.name))warnings.push(`sourceIndex ${row.sourceIndex}: 재질 항목이 아닌 원문에 붙인 재질 제안을 보류했습니다. 원문을 유지합니다.`);
+  else attributes.push(row);
+ }
+ for(let index=0;index<source.attributes.length;index++)if(!seen.has(index)&&materialHeading(source.attributes[index].name)){
+  const canonical=sourceValue(index);if(canonical!==null)attributes.push({sourceIndex:index,name:'재질',value:canonical});
+ }
+ return {...draft,attributes,warnings:[...new Set([...warnings,...draft.warnings])].slice(0,50)};
+}
+function assertTypedMaterialDraft(value:unknown,source:TranslationSource){
+ const rows=materialDraftAttributes(value,source),byIndex=new Map(rows.map(row=>[row.sourceIndex,row]));
+ const fail=(index:number):never=>{throw new TranslationError('QWEN_UNSUPPORTED_MATERIAL',`원문에 연결된 재질 번역을 확인하지 못했습니다. 위치 sourceIndex ${index}. 결과를 고쳐서 적용하지 않고 원문과 기존 수정값을 유지합니다.`,true);};
+ for(const row of rows){const original=source.attributes[row.sourceIndex];if(materialHeading(original.name)){const expected=canonicalProductMaterialLiteral(original.value);if(expected===null||row.name!=='재질'||row.value!==expected)fail(row.sourceIndex);}else if(materialHeading(row.name))fail(row.sourceIndex);}
+ for(let index=0;index<source.attributes.length;index++)if(materialHeading(source.attributes[index].name)&&canonicalProductMaterialLiteral(source.attributes[index].value)!==null&&!byIndex.has(index))fail(index);
+}
+export function validateQwenTranslationDraft(value:unknown,source:TranslationSource,policy?:TranslationReview['qwenTranslationPolicy'],keywordPolicy?:TranslationReview['seoKeywordPolicy'],composition?:SeoCompositionPolicy,compositionContext?:SeoCompositionContext,scope:'all'|'options'='all',revision?:TranslationReview['typedSeoPromptRevision']):TranslationDraft{
+  if(revision!==undefined&&!['couplus-typed-seo-v1','couplus-typed-seo-v2','couplus-typed-seo-v3'].includes(revision)||revision==='couplus-typed-seo-v3'&&(!composition||!compositionContext))throw new TranslationError('UNSUPPORTED_INSTRUCTIONS','SEO 재질 검토 범위를 확인해주세요.');
+  if(revision==='couplus-typed-seo-v3')assertTypedMaterialDraft(value,source);
   const draft=validateTranslationDraft(value,source,'sourceflow-translation-v6',scope,WORKERS_QWEN_MODEL,keywordPolicy,composition,compositionContext);
   if(policy==='commerce-exact-option-colors-v6')for(const attribute of draft.attributes){
     const expected=qwenExactOptionColor(source.attributes[attribute.sourceIndex]);
@@ -291,12 +326,12 @@ export function validateQwenTranslationDraft(value:unknown,source:TranslationSou
 /** A new execution may isolate a nonessential ordinary attribute only after
  * the unchanged strict validator has checked all syntax and source identities.
  * Required options, legal names and every SEO field remain hard failures. */
-function validatePartialQwenTranslationDraft(value:unknown,source:TranslationSource,policy?:TranslationReview['qwenTranslationPolicy'],keywordPolicy?:TranslationReview['seoKeywordPolicy'],composition?:SeoCompositionPolicy,compositionContext?:SeoCompositionContext):TranslationDraft{
+function validatePartialQwenTranslationDraft(value:unknown,source:TranslationSource,policy?:TranslationReview['qwenTranslationPolicy'],keywordPolicy?:TranslationReview['seoKeywordPolicy'],composition?:SeoCompositionPolicy,compositionContext?:SeoCompositionContext,revision?:TranslationReview['typedSeoPromptRevision']):TranslationDraft{
   const reasons:Record<string,string>={QWEN_UNTRANSLATED_TEXT:'한국어 번역 미확인',QWEN_UNSUPPORTED_FACT:'숫자·단위·모델 코드 불일치',QWEN_UNSUPPORTED_CLAIM:'원문에 없는 성능 표현'};
   let candidate=value;const omitted=new Map<number,string>();
   while(true){
     try{
-      const draft=validateQwenTranslationDraft(candidate,source,policy,keywordPolicy,composition,compositionContext);
+      const draft=validateQwenTranslationDraft(candidate,source,policy,keywordPolicy,composition,compositionContext,'all',revision);
       const details=Object.entries(reasons).flatMap(([code,label])=>{const indices=[...omitted].filter(([,reason])=>reason===code).map(([index])=>index);return indices.length?[`sourceIndex ${indices.join(', ')} (${label})`]:[];});
       const warnings=details.length?[`일반 상품속성 ${omitted.size}개의 번역값을 보류했습니다. ${details.join(' · ')}. 해당 원문은 보존했으며 이 값들을 적용하거나 번역 완료로 처리하지 않았습니다.`,...draft.warnings]:draft.warnings;
       return {...draft,warnings:warnings.length>50?[...warnings.slice(0,49),`추가 검토 안내 ${warnings.length-49}개는 표시 한도로 생략했습니다. 원문과 미번역 속성을 확인해주세요.`]:warnings};
@@ -475,7 +510,7 @@ export async function executeTranslation(review: TranslationReview, config: Tran
     return validateKnownSeoResponse(review,original,async draft=>{
       if(!config.ai)throw Error('validation binding');const response=await config.ai.run(config.model,{messages:[{role:'system',content:currentSeoValidationInstructions()},{role:'user',content:'Translate the Chinese product data below into Korean.\n\nPRODUCT_SOURCE_JSON:\n'+JSON.stringify({...validationSource,validationDraft:draft})+'\n/no_think'}],max_tokens:review.maxOutputTokens,stream:false,temperature:0,response_format:{type:'json_schema',json_schema:validationRequest.text.format.schema}});
       return parseWorkersQwenTranslationJson(response).value;
-    },raw=>{const checked=validateSeoOptionResults(raw.seoOptions,targets,review),{seoOptions:ignored,...legacy}=raw;void ignored;const draft=validatePartialQwenTranslationDraft(legacy,review.source,review.qwenTranslationPolicy,review.seoKeywordPolicy,review.seoComposition,review.seoCompositionContext);draft.warnings=[...new Set([...draft.warnings,...checked.warnings])].slice(0,50);return {...original,seoOptions:checked.values,draft};});
+    },raw=>{const checked=validateSeoOptionResults(raw.seoOptions,targets,review),{seoOptions:ignored,...legacy}=raw;void ignored;const prepared=review.typedSeoPromptRevision==='couplus-typed-seo-v3'?normalizeTypedMaterialDraft(validateCurrentSeoDraftShape(legacy,review),review.source):legacy;const draft=validatePartialQwenTranslationDraft(prepared,review.source,review.qwenTranslationPolicy,review.seoKeywordPolicy,review.seoComposition,review.seoCompositionContext,review.typedSeoPromptRevision);draft.warnings=[...new Set([...draft.warnings,...checked.warnings])].slice(0,50);return {...original,seoOptions:checked.values,draft};});
   }
   const request = buildTranslationRequest(review,continuation);
   if (config.provider === 'workers-ai') {
@@ -512,7 +547,7 @@ export async function executeTranslation(review: TranslationReview, config: Tran
       if(continuation){const raw=completeOutput as Record<string,unknown>;if(!raw||typeof raw!=='object'||Array.isArray(raw)||Object.keys(raw).sort().join(',')!=='attributes,description,keywords,seoOptions,title,warnings')throw new TranslationError('INVALID_MODEL_OUTPUT','SEO 옵션 응답의 항목을 확인해주세요.',true);seoOptions=parseSeoOptionResultShape(raw.seoOptions,continuation.targets);const {seoOptions:ignored,...rest}=raw;void ignored;legacyOutput=rest;}
       const output = canonicalizeWorkersRecoveryOptionMetadata(review,legacyOutput);
       if(review.seoCompositionContext&&output&&typeof output==='object'&&Array.isArray((output as TranslationDraft).attributes)&&(output as TranslationDraft).attributes.some(value=>workersRecoveryOptionMetadataLabel(review.source.attributes[value.sourceIndex]?.name??'')))throw new TranslationError('INVALID_MODEL_OUTPUT','새 SEO 옵션은 정확한 optionId로 반환해야 합니다.',true);
-      const draft = genericQwen&&continuation?.optionOnly?validateSeoOptionContinuationDraft(output):genericQwen&&continuation?validateCurrentSeoDraftShape(output,review):genericQwen?(review.qwenTranslationPolicy==='commerce-partial-attributes-v5'||review.qwenTranslationPolicy==='commerce-exact-option-colors-v6'?validatePartialQwenTranslationDraft(output,review.source,review.qwenTranslationPolicy,review.seoKeywordPolicy,review.seoComposition,review.seoCompositionContext):validateQwenTranslationDraft(output,review.source,review.qwenTranslationPolicy,review.seoKeywordPolicy,review.seoComposition,review.seoCompositionContext)):validateTranslationDraft(output, review.source, review.instructionsVersion);
+      const draft = genericQwen&&continuation?.optionOnly?validateSeoOptionContinuationDraft(output):genericQwen&&continuation?review.typedSeoPromptRevision==='couplus-typed-seo-v3'?normalizeTypedMaterialDraft(validateCurrentSeoDraftShape(output,review),review.source):validateCurrentSeoDraftShape(output,review):genericQwen?(review.qwenTranslationPolicy==='commerce-partial-attributes-v5'||review.qwenTranslationPolicy==='commerce-exact-option-colors-v6'?validatePartialQwenTranslationDraft(output,review.source,review.qwenTranslationPolicy,review.seoKeywordPolicy,review.seoComposition,review.seoCompositionContext):validateQwenTranslationDraft(output,review.source,review.qwenTranslationPolicy,review.seoKeywordPolicy,review.seoComposition,review.seoCompositionContext)):validateTranslationDraft(output, review.source, review.instructionsVersion);
       // Inspect the complete, shape-validated raw response before the generic
       // v6 adapter can omit an unusable original-language attribute.
       if(recoveryProof)assertWorkersRecoveryDraftQuality(review,output as TranslationDraft);

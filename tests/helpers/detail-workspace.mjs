@@ -19,8 +19,9 @@ export function runtime(fetcher, modules = {}, storage = new Map()) {
     vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../../' + file, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
       { exports, Error, Date, URL, URLSearchParams, Response, Request, Headers, Blob, File, FormData, AbortController, AbortSignal, DOMException, TextEncoder, TextDecoder, Uint8Array, DataView,
         structuredClone, crypto: webcrypto, fetch: fetcher, sessionStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
-        require(name) { if (Object.hasOwn(modules, name)) return modules[name]; if (name.startsWith('@/')) return load(name.slice(2) + (name.includes('/components/') ? '.tsx' : '.ts'));
-          if (name.startsWith('.')) return load(path.posix.join(path.posix.dirname(file), name) + '.ts'); return native(name); } });
+        require(name) { if (Object.hasOwn(modules, name)) return modules[name]; const extension=/\.(?:mjs|js|tsx?)$/u.test(name)?'':name.includes('/components/')?'.tsx':'.ts';
+          if (name.startsWith('@/')) return load(name.slice(2) + extension);
+          if (name.startsWith('.')) return load(path.posix.join(path.posix.dirname(file), name) + extension); return native(name); } });
     return exports;
   }
   return { load, client: load('app/detail-workspace-client.ts'), model: load('app/detail-workspace.ts') };

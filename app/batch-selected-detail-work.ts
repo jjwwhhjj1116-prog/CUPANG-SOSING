@@ -13,7 +13,7 @@ import { prepareDetailWorkspaceComposite, applyDetailWorkspaceComposite, recover
   readCurrentDetailPublication, type DetailWorkspaceComposite } from '@/app/detail-workspace-composite-client';
 import type { DetailSaveAttempt } from '@/app/detail-save-client';
 import { DETAIL_SAVE_PUBLICATION_POLICY, type DetailSavePeers } from '@/app/detail-save-plan';
-import { FreeImageApplyError, recognizeFreeImage, renderFreeImageTranslation, observeFreeImageVisionStatus,isImageVisionObservation,initializeFreeImageVisionRegions,
+import { FreeImageApplyError, recognizeFreeImage, renderFreeImageTranslation, observeFreeImageVisionStatus,isImageVisionObservation,initializeFreeImageVisionRegions,initializedVisionRegionBox,
   type FreeImageLoaded, type FreeImageRendered, type FreeImageVisionStatus, type FreeImageRegion } from '@/app/free-image-translation-client';
 import { FreeImageVisionError, type FreeImageVisionAttempt } from '@/app/free-image-vision-error';
 import { isVerifiedOriginalPreservation, parseImageTextVisionConfiguration, parseImageTextVisionResult, createImageTextStyle, sameImageTextStyle } from '@/app/image-text-vision';
@@ -61,8 +61,8 @@ function prepareDetailBodyTranslation(image:FreeImageLoaded,recognized:readonly 
   const reported=image.visionStyleIssues??[],tracked=new Set<string>();
   if(!Array.isArray(reported)||new Set(reported).size!==reported.length||reported.some(code=>!allowed.has(code))||regions.length!==vision.blocks.length)throw invalid();
   for(const [index,region]of regions.entries()){
-    const block=vision.blocks[index];
-    if(region.id!==block.id||region.text!==block.text||!(['x','y','width','height']as const).every(key=>region.box[key]===block.box[key])
+    const block=vision.blocks[index],box=initializedVisionRegionBox(image,index);
+    if(region.id!==block.id||region.text!==block.text||!(['x','y','width','height']as const).every(key=>region.box[key]===box[key])
       ||region.translated!==(block.translated??'')||region.translationProvenance!==(block.translated===null?'empty':'generated')
       ||block.kind==='product-marking'&&region.selected||region.erase!==undefined||region.brush!==undefined||region.backgroundMode!==undefined)throw invalid();
     let issue=region.issue;

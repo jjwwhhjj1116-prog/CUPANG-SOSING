@@ -1,6 +1,7 @@
 import {resolveFreeImageTextStyle,wrappedLines} from '@/app/free-image-text-style';
 import type {ImageTextVisionBlock} from '@/app/image-text-vision';
 import type {FreeImageRegion} from '@/app/free-image-translation-client';
+import {refineFlatOverlayBounds} from '@/app/free-image-overlay-bounds';
 
 export type VisionStyleIssue='VISION_REGION_OVERLAP'|'VISION_BACKGROUND_COMPLEX'|'VISION_BACKGROUND_UNAVAILABLE'|'VISION_TEXT_FIT'|'VISION_TEXT_CLASSIFICATION';
 const messages:Record<VisionStyleIssue,string>={
@@ -64,8 +65,10 @@ function fittedFont(context:PixelContext|undefined,text:string,box:Box):{fontSiz
 /** Initial styles for newly received Vision blocks only. Existing regions and
  * saved documents never enter this function. A sampled flat fill is not image
  * reconstruction; uncertain geometry/background stays available for review. */
-export function initializeVisionRegions(blocks:readonly ImageTextVisionBlock[],canvas:Pick<HTMLCanvasElement,'getContext'>,width:number,height:number,options:{allowSafeOverlayOverlap?:boolean}={}):{regions:FreeImageRegion[];issues:VisionStyleIssue[];paintOrder?:'backgrounds-first-v1'}{
+export function initializeVisionRegions(rawBlocks:readonly ImageTextVisionBlock[],canvas:Pick<HTMLCanvasElement,'getContext'>,width:number,height:number,options:{allowSafeOverlayOverlap?:boolean;refineFlatOverlayBounds?:boolean}={}):{regions:FreeImageRegion[];issues:VisionStyleIssue[];paintOrder?:'backgrounds-first-v1'}{
  let context:PixelContext|undefined;try{context=canvas.getContext('2d')??undefined;}catch{/* Keep all blocks available for manual correction. */}
+ const boxes=options.refineFlatOverlayBounds===true?refineFlatOverlayBounds(rawBlocks,context,width,height):null;
+ const blocks=boxes?rawBlocks.map((row,index)=>({...row,box:boxes[index]})):rawBlocks;
  const issues=new Set<VisionStyleIssue>();
  const regions=blocks.map((row,index):FreeImageRegion=>{
   // Product inscriptions are source facts, not a background for inpainting.

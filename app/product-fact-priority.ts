@@ -44,6 +44,19 @@ function composition(value:string):string[]|null{
  });
  return parts.length&&!rest.replace(/[\s,，、/·()（）:：;；.。]/gu,'')?parts.sort():null;
 }
+/** Translate only whole literal fiber evidence; never fill an absent ratio. */
+export function canonicalProductMaterialLiteral(raw:string):string|null{
+ const names:Record<string,string>={cotton:'면',spandex:'스판덱스',nylon:'나일론',polyester:'폴리에스테르'};
+ const key=(fiber:string)=>composition('100% '+fiber)?.[0].split(':')[0];
+ if(composition(raw)){
+  const atom=new RegExp(`(?:(\\d+(?:\\.\\d+)?)\\s*([%％])\\s*(${fibers})|(${fibers})\\s*(\\d+(?:\\.\\d+)?)\\s*([%％]))`,'giu');
+  const parts=[...raw.matchAll(atom)].map(match=>({fiber:key(match[3]??match[4])!,number:match[1]??match[5],percent:match[2]??match[6]}));
+  if(new Set(parts.map(part=>part.fiber)).size!==parts.length||parts.some(part=>Number(part.number)<=0||Number(part.number)>100)||parts.reduce((total,part)=>total+Number(part.number),0)>100.000001)return null;
+  return parts.map(part=>`${names[part.fiber]} ${part.number}${part.percent}`).join(', ');
+ }
+ const pattern=new RegExp(fibers,'giu'),matches=[...raw.matchAll(pattern)],keys=new Set(matches.map(match=>key(match[0])));
+ return matches.length&&keys.size===1&&!raw.replace(pattern,'').replace(/[\s,，、/·()（）:：;；.。]/gu,'')?names[[...keys][0]!]:null;
+}
 /** A fixed main-material choice is separate from the complete composition text. */
 export function productMaterialChoice(value:string,choices:readonly{value:string;label:string}[]):string|null{
  const exact=new Set(choices.filter(choice=>choice.value===value||choice.label===value).map(choice=>choice.value));
