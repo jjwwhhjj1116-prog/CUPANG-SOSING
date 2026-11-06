@@ -63,7 +63,7 @@ test('first SEO → price → main reuses the same full content/options/queryles
   const proofCalls=calls.filter(call=>call.phase.startsWith('proof:')||!measured.includes(call.resource)).map(({phase,url,method,cache,status})=>({phase,url,method,cache,status}));
   const evidence={head:'fd3e4c6af45f6c0ffe2d6398b8b54ec2ecd65ff7',scenario:'same editor, same owner/company/productVersion, no user edits, first SEO→price→main',productVersion:product.updated_at,counts:counts(),quoteStartedBeforeOptionsReleased:quoteBeforeOptionsRelease,realAPIResponseHashes:Object.fromEntries([...resourceBodies].map(([key,value])=>[key,value.hash])),readCalls:calls,freshProofCounts:{size:sizeProof,labelReference:labelProof},otherContractAndProofCalls:proofCalls,unrunContracts:['label PNG receipt (no canonical generated PNG fixture)','submit preflight','unknown recovery (no write attempted)'],freshPolicy:'All actual requests retain cache:no-store; fresh proof calls are separately asserted, not counted as eliminated UI duplicates. Unrun contracts are not asserted as zero.'};
   if(process.env.COLD_PRICE_MAIN_EVIDENCE)fs.writeFileSync(process.env.COLD_PRICE_MAIN_EVIDENCE,JSON.stringify(evidence,null,2)+'\n');
-  assert.deepEqual(counts(),{content:2,options:2,'quotation-fields':1},'first-stage UI read sharing is absent; identical full DTOs are fetched again');
+  assert.deepEqual(counts(),{content:1,options:1,'quotation-fields':1},'unchanged first stages share genuine full DTOs');
  }finally{
   for(const item of gates)item.gate.resolve();if(h)await h.close();api.close();
  }

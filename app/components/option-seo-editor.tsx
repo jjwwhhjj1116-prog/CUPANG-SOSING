@@ -1,9 +1,10 @@
 'use client';
+import type {RegistrationUiReads,UiMutation} from '@/app/registration-ui-reads';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { applyQuotationChanges, type QuotationChange, type QuotationFieldsView } from '@/app/quotation-schema';
 import { optionSeoChanges, optionSeoDraftIssues, optionSeoValue, quotationSeoTargets, verifyOptionSeoRefresh, type OptionSeoDraft, type OptionSeoInput } from '@/app/quotation-seo-targets';
 
-type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; active?: boolean; disabled?: boolean; onSaved?: () => void; onCommonDescription?: () => void };
+type Props = { uiReads?:RegistrationUiReads;onBeginSourceWrite?:()=>UiMutation|undefined;productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; active?: boolean; disabled?: boolean; onSaved?: () => void; onCommonDescription?: () => void };
 const fields = [['title', '상품명', 100], ['searchTags', '검색태그', 150]] as const;
 function seoInputs(view: QuotationFieldsView, optionId: string, draft: OptionSeoDraft) {
   const targets = quotationSeoTargets(view.resolved.schema.fields);
@@ -13,7 +14,8 @@ function seoInputs(view: QuotationFieldsView, optionId: string, draft: OptionSeo
 function seoLengthIssues(inputs: ReturnType<typeof seoInputs>) {
   return inputs.flatMap(({ label, value, maxLength }) => value.length > maxLength ? [`${label}: ${maxLength}자 제한을 초과했습니다. 입력을 검토해주세요.`] : []);
 }
-export function OptionSeoEditor({ productId, optionId, version, profileId, refreshToken, active = true, disabled = false, onSaved, onCommonDescription }: Props) {
+export function OptionSeoEditor({ uiReads,onBeginSourceWrite,productId, optionId, version, profileId, refreshToken, active = true, disabled = false, onSaved, onCommonDescription }: Props) {
+  const uiMutation=useRef<UiMutation|null>(null);
   const endpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId ? `?profileId=${encodeURIComponent(profileId)}` : ''}`;
   const scope = JSON.stringify([endpoint, optionId]), sourceKey = JSON.stringify([scope, version, refreshToken]);
   const currentScope = useRef(scope);
@@ -75,14 +77,14 @@ export function OptionSeoEditor({ productId, optionId, version, profileId, refre
       ||attempt.acknowledged&&(JSON.stringify(body.overrides)!==JSON.stringify(attempt.acknowledged.overrides)||JSON.stringify(body.resolved)!==JSON.stringify(attempt.acknowledged.resolved)
         ||body.productVersion!==attempt.acknowledged.productVersion||body.inputFingerprint!==attempt.acknowledged.inputFingerprint))throw Error('SEO 저장 후 원문·양식 또는 다른 저장값이 변경되었습니다. 입력은 유지했습니다.');
   }
-  async function load(keepDraft = false) {
+  async function load(keepDraft = false, initial = false) {
     if (request.current || !current()) return;
     const controller = new AbortController(); request.current = controller; setBusy(true); setError('');
     try {
-      const response = await fetch(endpoint, { cache: 'no-store', signal: controller.signal }), body = await response.json() as QuotationFieldsView & { error?: string };
+      const response = initial&&uiReads?null:await fetch(endpoint, { cache: 'no-store', signal: controller.signal }), body = response?await response.json() as QuotationFieldsView & { error?: string }:await uiReads!.quotation(endpoint,controller.signal);
       if (controller.signal.aborted || !current()) return;
       const attempt=pendingSave.current?.scope===scope?pendingSave.current:null;
-      if (!response.ok) throw Error(body.error || '옵션 SEO를 불러오지 못했습니다.'); verify(body,undefined,keepDraft||!!attempt);
+      if (response&&!response.ok) throw Error(('error' in body&&typeof body.error==='string'?body.error:'') || '옵션 SEO를 불러오지 못했습니다.'); verify(body,undefined,keepDraft||!!attempt);
       const editing = latestDraft.current.scope === scope ? latestDraft.current.values : {};
       let recovered=false;
       if (keepDraft) { const before = attempt?.before??(latestSaved.current?.scope === scope ? latestSaved.current.view : null); if (!before) throw Error('이전 SEO 입력 기준을 확인하지 못했습니다.');
@@ -92,19 +94,19 @@ export function OptionSeoEditor({ productId, optionId, version, profileId, refre
       latestSaved.current = { scope, sourceKey, view: body }; setSaved(latestSaved.current);
       pendingSave.current=null;setUncertain(false);
       if (!keepDraft||recovered) { latestDraft.current = { scope, values: {} }; setPending(latestDraft.current); }
-      setMessage(recovered?'저장된 선택 옵션 SEO를 확인했습니다. 견적서에 반영됩니다.':keepDraft ? '입력을 유지하고 최신 자료를 읽었습니다. 확인 후 선택 옵션 SEO를 저장해주세요.' : '');if(recovered)onSaved?.();
-    } catch (cause) { if (!controller.signal.aborted && current()) setError(cause instanceof Error ? cause.message : '옵션 SEO 조회 실패'); }
+      setMessage(recovered?'저장된 선택 옵션 SEO를 확인했습니다. 견적서에 반영됩니다.':keepDraft ? '입력을 유지하고 최신 자료를 읽었습니다. 확인 후 선택 옵션 SEO를 저장해주세요.' : '');if(recovered){uiMutation.current?.confirm();uiMutation.current=null;onSaved?.();}
+    } catch (cause) { if (!controller.signal.aborted && current()) {if(initial)uiReads?.forget();setError(cause instanceof Error ? cause.message : '옵션 SEO 조회 실패');} }
     finally { if (request.current === controller) { request.current = null; if (!controller.signal.aborted && current()) setBusy(false); } }
   }
   useEffect(() => {
     let alive = true, automaticRead: AbortController | null = null;
     void Promise.resolve().then(() => { if (!alive || !current() || request.current) return; setBusy(false); if (!active) return; setError('');setUncertain(pendingSave.current?.scope===scope); if (pendingSave.current?.scope===scope || dirty && view) return;
-      if (latestSaved.current?.scope===scope && latestSaved.current.sourceKey===sourceKey) return; void load(); automaticRead = request.current; });
+      if (latestSaved.current?.scope===scope && latestSaved.current.sourceKey===sourceKey) return; void load(false,true); automaticRead = request.current; });
     return () => { alive = false; if (automaticRead && request.current === automaticRead) { automaticRead.abort(); request.current = null; } };
     // The endpoint/option identity and parent source version govern refreshes;
     // local edits are deliberately retained until explicit save or cancellation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope, sourceKey, active]);
+  }, [scope, sourceKey, active,uiReads]);
   function edit(input: OptionSeoInput, value: string | null) {
     if (liveDisabled.current || !view || latestSaved.current?.view!==view || pendingSave.current?.scope===scope || request.current || !current()) return;
     latestDraft.current = { scope, values: { ...(latestDraft.current.scope === scope ? latestDraft.current.values : {}), [input]: value } };
@@ -122,6 +124,7 @@ export function OptionSeoEditor({ productId, optionId, version, profileId, refre
     const controller = new AbortController(); request.current = controller; setBusy(true); setError(''); setMessage('');
     let response:Response|undefined;
     try {
+      uiMutation.current??=onBeginSourceWrite?.()??null;
       response = await fetch(endpoint, { method: 'PUT', signal: controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: base.view.revision, expectedInputFingerprint: base.view.inputFingerprint, changes }) });
       let body = await response.json() as QuotationFieldsView & { error?: string };
       if (controller.signal.aborted || !current()) return;
@@ -129,7 +132,7 @@ export function OptionSeoEditor({ productId, optionId, version, profileId, refre
       if(changes.some(change=>change.value===null)){const confirmation=await fetch(endpoint,{cache:'no-store',signal:controller.signal}),latest=await confirmation.json() as QuotationFieldsView & {error?:string};if(controller.signal.aborted||!current())return;if(!confirmation.ok)throw Error(latest.error||'SEO 복원 저장본을 확인하지 못했습니다. 입력은 유지됩니다.');verifyRecovery(attempt,latest);body=latest;}
       latestSaved.current = { scope, sourceKey, view: body }; latestDraft.current = { scope, values: {} };
       pendingSave.current=null;setUncertain(false);
-      setSaved(latestSaved.current); setPending(latestDraft.current); setMessage('선택 옵션 SEO 저장 완료 · 견적서와 옵션별 표시사항에 반영됩니다.'); onSaved?.();
+      uiMutation.current?.confirm();uiMutation.current=null;setSaved(latestSaved.current); setPending(latestDraft.current); setMessage('선택 옵션 SEO 저장 완료 · 견적서와 옵션별 표시사항에 반영됩니다.'); onSaved?.();
     } catch (cause) { if (!controller.signal.aborted && current()){if(response&&!response.ok&&response.status<500){pendingSave.current=null;setUncertain(false);}setError(cause instanceof Error ? cause.message : 'SEO 저장 실패');} }
     finally { if (request.current === controller) { request.current = null; if (!controller.signal.aborted && current()) setBusy(false); } }
   }

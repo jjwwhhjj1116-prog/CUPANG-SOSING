@@ -8,7 +8,7 @@ import {pathToFileURL,fileURLToPath} from 'node:url';
 export const repo=path.resolve(fileURLToPath(new URL('../../',import.meta.url)));
 const native=createRequire(path.join(repo,'package.json'));
 const ts=native('typescript'),React=native('react'),{Window}=native('happy-dom');
-export async function stageDOM(fetcher,{components={}}={}){
+export async function stageDOM(fetcher,{components={},sourceOverrides}={}){
  const window=new Window({url:'https://app.test/'}),previous=new Map();
  for(const[key,value]of Object.entries({window,document:window.document,HTMLElement:window.HTMLElement,HTMLInputElement:window.HTMLInputElement,HTMLDetailsElement:window.HTMLDetailsElement,MutationObserver:window.MutationObserver,IS_REACT_ACT_ENVIRONMENT:true})){
   previous.set(key,Object.getOwnPropertyDescriptor(globalThis,key));Object.defineProperty(globalThis,key,{configurable:true,writable:true,value});
@@ -16,7 +16,7 @@ export async function stageDOM(fetcher,{components={}}={}){
  const {createRoot}=await import(pathToFileURL(native.resolve('react-dom/client')).href),cache=new Map(),records=new Map();
  function load(file){
   if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
-  let source=fs.readFileSync(path.join(repo,file),'utf8');if(file.endsWith('dashboard-client.tsx'))source+='\nexport { DetailPanel };';
+  let source=sourceOverrides?.get(file)??fs.readFileSync(path.join(repo,file),'utf8');if(file.endsWith('dashboard-client.tsx'))source+='\nexport { DetailPanel };';
   vm.runInNewContext(ts.transpileModule(source,{fileName:file.endsWith('.mjs')?file+'.ts':file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
    {exports,fetch:fetcher,window,location:window.location,sessionStorage:window.sessionStorage,localStorage:window.localStorage,document:window.document,HTMLElement:window.HTMLElement,HTMLInputElement:window.HTMLInputElement,AbortController,AbortSignal,URL,URLSearchParams,TextEncoder,TextDecoder,Date,Intl,crypto,structuredClone,console,setTimeout,clearTimeout,setInterval,clearInterval,Request,Response,Headers,Blob,File,FormData,Buffer,
     require(name){

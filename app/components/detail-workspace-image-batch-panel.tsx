@@ -1,4 +1,5 @@
 'use client';
+import type {UiMutation} from '@/app/registration-ui-reads';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { applyDetailWorkspaceBatchResult, prepareDetailWorkspaceImageBatch, recoverDetailWorkspaceBatchResult, deferDetailWorkspaceBatchInference, type DetailWorkspaceImageBatch } from '@/app/detail-workspace-image-batch';
 import type { DetailWorkspaceSelection } from '@/app/detail-workspace-client';
@@ -6,7 +7,7 @@ import type { DetailWorkspaceView } from '@/app/detail-workspace';
 import type { DetailWorkspaceImageReply } from '@/app/detail-workspace-image-client';
 
 export type WorkspaceImageBatchToolbarActions = { prepare: (sourceLanguage?: 'zh' | 'en') => void; disabled: boolean };
-type Props = { selection: DetailWorkspaceSelection; saved: DetailWorkspaceView; active: boolean; disabled?: boolean; beforeApply?: () => boolean;
+type Props = { onBeginSourceWrite?:()=>UiMutation|undefined;selection: DetailWorkspaceSelection; saved: DetailWorkspaceView; active: boolean; disabled?: boolean; beforeApply?: () => boolean;
   onReviewPhoto?: (photoId: string, language: 'zh' | 'en') => void;
   onSaved?: (reply: DetailWorkspaceImageReply) => void; onBusyChange?: (busy: boolean) => void; onPendingChange?: (pending: boolean) => void;
   onToolbarActionsChange?: (next: WorkspaceImageBatchToolbarActions | null, retired?: WorkspaceImageBatchToolbarActions) => void };
@@ -21,6 +22,8 @@ function Preview({ output }: { output: Blob }) {
 }
 
 export function DetailWorkspaceImageBatchPanel(props: Props) {
+  const uiMutation=useRef<UiMutation|null>(null);
+  const sourceFetch:typeof fetch=(url,init)=>{if((init?.method??'GET')!=='GET')uiMutation.current??=controls.current.onBeginSourceWrite?.()??null;return fetch(url,init);};
   const { selection, saved, active, disabled = false, onToolbarActionsChange } = props;
   const controls = useRef(props), mounted = useRef(true), operation = useRef<{ controller: AbortController; kind: 'prepare' | 'apply' | 'recover' | 'defer'; token: object } | null>(null);
   const [accepted, setAccepted] = useState<{ saved: DetailWorkspaceView; basis: string } | null>(null);
@@ -58,7 +61,7 @@ export function DetailWorkspaceImageBatchPanel(props: Props) {
   function deliver(value: DetailWorkspaceImageBatch) {
     if (!value.lastReply) return;
     setAccepted({ saved: value.saved, basis: savedBasis });
-    controls.current.onSaved?.(value.lastReply);
+    if(!value.items.some(item=>item.status==='uncertain')){uiMutation.current?.confirm();uiMutation.current=null;}controls.current.onSaved?.(value.lastReply);
   }
   async function prepare(sourceLanguage: 'zh' | 'en' = language, show = false) {
     const token = generation;
@@ -82,7 +85,7 @@ export function DetailWorkspaceImageBatchPanel(props: Props) {
         if (!valid(controller, token) || !permission()) break;
         next = await applyDetailWorkspaceBatchResult(next, entry.photoId, controller.signal, updated => {
           if (mounted.current && operation.current?.controller === controller && (valid(controller, token) || updated.items.some(item => item.status === 'uncertain'))) store(updated);
-        });
+        },{fetcher:sourceFetch});
         if (!valid(controller, token)) return; store(next); deliver(next); count++; select(liveReviewed.current.filter(id => id !== entry.photoId));
       }
       if (valid(controller, token)) setMessage(`${count}개 본문 사진 적용 완료`);

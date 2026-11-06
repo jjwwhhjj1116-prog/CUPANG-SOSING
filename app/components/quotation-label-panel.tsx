@@ -1,4 +1,5 @@
 'use client';
+import type {UiMutation} from '@/app/registration-ui-reads';
 
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { quotationLabelPlan } from '@/app/quotation-label-plan';
@@ -7,7 +8,9 @@ import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { attachQuotationLabel, type QuotationLabelUploadCache } from '@/app/quotation-label-attachment';
 import { attachQuotationLabels, type LabelBatchCache, type LabelBatchProgress, type LabelBatchResult } from '@/app/quotation-label-batch';
 
-export function QuotationLabelPanel({ view, productId, endpoint, optionId, disabled, batchCache, uploadCache, onBusyChange, onAttached, onFailed }: { view: QuotationFieldsView; productId: string; endpoint: string; optionId: string | null; disabled: boolean; batchCache?: RefObject<LabelBatchCache>; uploadCache?: RefObject<QuotationLabelUploadCache>; onBusyChange: (busy: boolean) => void; onAttached: (view: QuotationFieldsView, batch?: Omit<LabelBatchResult, 'view'>) => void; onFailed?: (message: string) => Promise<void> }) {
+export function QuotationLabelPanel({ onBeginSourceWrite,view, productId, endpoint, optionId, disabled, batchCache, uploadCache, onBusyChange, onAttached, onFailed }: { onBeginSourceWrite?:()=>UiMutation|undefined;view: QuotationFieldsView; productId: string; endpoint: string; optionId: string | null; disabled: boolean; batchCache?: RefObject<LabelBatchCache>; uploadCache?: RefObject<QuotationLabelUploadCache>; onBusyChange: (busy: boolean) => void; onAttached: (view: QuotationFieldsView, batch?: Omit<LabelBatchResult, 'view'>) => void; onFailed?: (message: string) => Promise<void> }) {
+  const uiMutation=useRef<UiMutation|null>(null);
+  const sourceFetch:typeof fetch=(url,init)=>{if((init?.method??'GET')!=='GET')uiMutation.current??=onBeginSourceWrite?.()??null;return fetch(url,init);};
   const resolved = view.resolved;
   const [preview, setPreview] = useState<{ url: string; width: number; height: number; blob: Blob; view: QuotationFieldsView; signature: string } | null>(null);
   const [busy, setBusy] = useState(false); const [error, setError] = useState('');
@@ -62,8 +65,8 @@ export function QuotationLabelPanel({ view, productId, endpoint, optionId, disab
             batch.optionSignatures ??= new Map();
             batch.optionSignatures.set(optionId, preview.signature); batch.uploaded.set(optionId, key);
           }
-        } });
-      if (alive.current) onAttached(saved);
+        } },sourceFetch);
+      if (alive.current) {uiMutation.current?.confirm();uiMutation.current=null;onAttached(saved);}
     } catch (cause) {
       if (alive.current) {
         const cache = uploadCacheRef.current;
@@ -102,12 +105,12 @@ export function QuotationLabelPanel({ view, productId, endpoint, optionId, disab
       const result = await attachQuotationLabels({ productId, endpoint, view, uploaded: cache.uploaded,
         shouldStop: () => stopRequested.current || !alive.current,
         render: (plan, id) => reviewedSignature === optionSignatures.get(id) && reviewedRendered ? Promise.resolve(reviewedRendered) : renderDocument(plan),
-        onProgress: value => { if (alive.current) setProgress(value); } });
+        onProgress: value => { if (alive.current) setProgress(value); } },sourceFetch);
       if (alive.current) {
         if (result.stopped) setStopped(true);
         // A stop still saved completed options. Publish their revision before
         // allowing edits, retaining upload keys outside the remounted panel.
-        if (!result.stopped || result.completed > 0) onAttached(result.view, { completed: result.completed, total: result.total, stopped: result.stopped });
+        if (!result.stopped || result.completed > 0) {uiMutation.current?.confirm();uiMutation.current=null;onAttached(result.view, { completed: result.completed, total: result.total, stopped: result.stopped });}
       }
     } catch (cause) {
       if (alive.current) {

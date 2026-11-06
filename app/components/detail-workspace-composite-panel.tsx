@@ -1,4 +1,5 @@
 'use client';
+import type {UiMutation} from '@/app/registration-ui-reads';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import type { DetailWorkspaceView } from '@/app/detail-workspace';
@@ -14,7 +15,7 @@ import { detailCompositeDownload } from '@/app/detail-image-composite';
 export type DetailWorkspaceCompositeToolbarActions = {
   prepareSave: () => void; saveDisabled: boolean; download: () => void; downloadDisabled: boolean;
 };
-type Props = { selection: DetailWorkspaceSelection; saved: DetailWorkspaceView; disabled?: boolean; stageActive?: boolean; sourceCurrent?: boolean;
+type Props = { onBeginSourceWrite?:()=>UiMutation|undefined;selection: DetailWorkspaceSelection; saved: DetailWorkspaceView; disabled?: boolean; stageActive?: boolean; sourceCurrent?: boolean;
   beforeApply?: () => boolean; onSaved?: (view: QuotationFieldsView) => void; onLatestRead?: (reply: DetailWorkspaceView) => void; onBusyChange?: (busy: boolean) => void;
   onToolbarActionsChange?: (next: DetailWorkspaceCompositeToolbarActions | null, retired?: DetailWorkspaceCompositeToolbarActions) => void };
 type Review = { prepared: DetailWorkspaceComposite; generation: object };
@@ -23,7 +24,9 @@ const issue = (cause: unknown) => cause instanceof Error ? cause.message : '보�
 
 /** Composes the exact saved workspace. Preview/download are read-only; the only
  * save operation is the explicitly reviewed atomic common/all-option save. */
-export function DetailWorkspaceCompositePanel({ selection, saved, disabled = false, stageActive = true, sourceCurrent = true, beforeApply, onSaved, onLatestRead, onBusyChange, onToolbarActionsChange }: Props) {
+export function DetailWorkspaceCompositePanel({ onBeginSourceWrite,selection, saved, disabled = false, stageActive = true, sourceCurrent = true, beforeApply, onSaved, onLatestRead, onBusyChange, onToolbarActionsChange }: Props) {
+  const uiMutation=useRef<UiMutation|null>(null);
+  const sourceFetch:typeof fetch=(url,init)=>{if((init?.method??'GET')!=='GET')uiMutation.current??=onBeginSourceWrite?.()??null;return fetch(url,init);};
   const identity = JSON.stringify([selection.productId, selection.optionId, selection.profileId ?? null]);
   const scope = JSON.stringify([identity, selection.view, saved, disabled, stageActive, sourceCurrent]);
   const [clock, setClock] = useState({ scope, view: selection.view, token: {} });
@@ -101,9 +104,9 @@ export function DetailWorkspaceCompositePanel({ selection, saved, disabled = fal
     if (!prepared || waiting() || delivered.current || !preparedCurrent(prepared) || confirmation?.prepared !== prepared || confirmation.generation !== token) return;
     const controller = begin('save', true); if (!controller) return;
     try {
-      const view = await applyDetailWorkspaceComposite(prepared, attempt.current, controller.signal);
+      const view = await applyDetailWorkspaceComposite(prepared, attempt.current, controller.signal,sourceFetch);
       if (!valid(token) || controller.signal.aborted) return;
-      delivered.current = true; liveReview.current = null; setReview(null); setDone(true); setMessage('보관한 작업 구성으로 공통·전체 옵션의 상세 이미지와 대체 텍스트를 저장했습니다. 기존 수동값·개별 사진·저장 전 HTML을 보관하고 견적서 HTML은 비웠습니다.'); current.current.onSaved?.(view);
+      uiMutation.current?.confirm();uiMutation.current=null;delivered.current = true; liveReview.current = null; setReview(null); setDone(true); setMessage('보관한 작업 구성으로 공통·전체 옵션의 상세 이미지와 대체 텍스트를 저장했습니다. 기존 수동값·개별 사진·저장 전 HTML을 보관하고 견적서 HTML은 비웠습니다.'); current.current.onSaved?.(view);
     } catch (cause) { if (mounted.current && !controller.signal.aborted) setError(issue(cause)); }
     finally { finish(controller); }
   }
@@ -115,7 +118,7 @@ export function DetailWorkspaceCompositePanel({ selection, saved, disabled = fal
       if (!valid(token) || controller.signal.aborted) return;
       if (status === 'ready') { liveReview.current = null; setReview(null); setMessage('저장이 아직 완료되지 않았습니다. 현재 구성과 저장 범위를 다시 확인한 뒤 명시적으로 상세 저장을 눌러주세요.'); return; }
       if (!attempt.current.completed) throw Error('상세 저장 결과의 견적서 연결을 확인하지 못했습니다.');
-      delivered.current = true; liveReview.current = null; setReview(null); setDone(true); setMessage('상세 저장 결과를 조회로 확인했습니다. 저장 요청을 반복하지 않았습니다.'); current.current.onSaved?.(attempt.current.completed);
+      uiMutation.current?.confirm();uiMutation.current=null;delivered.current = true; liveReview.current = null; setReview(null); setDone(true); setMessage('상세 저장 결과를 조회로 확인했습니다. 저장 요청을 반복하지 않았습니다.'); current.current.onSaved?.(attempt.current.completed);
     } catch (cause) { if (mounted.current && !controller.signal.aborted) setError(issue(cause)); }
     finally { finish(controller); }
   }

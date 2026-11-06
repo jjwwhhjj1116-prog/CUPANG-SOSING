@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type {UiMutation} from '@/app/registration-ui-reads';
 import type { SeoWorkspaceInput, SeoWorkspaceView } from '@/app/seo-workspace';
 import { sameSeoAppliedSource, seoAppliedReceiptKey, seoAppliedViewReady, type SeoAppliedReceipt } from '@/app/seo-apply-focus';
 import { prepareSeoKeywordText, quotationSeoKeywordText,seoKeywordDocumentText } from '@/app/seo-keyword-text';
@@ -9,14 +10,15 @@ import { emptySeoWorkspaceDraft, hasSeoWorkspaceDraft, readSeoWorkspace, saveSeo
 import {mergeSeoGeneratedDraft,seoGeneratedDraftKey,type SeoGeneratedDraft} from '@/app/seo-generated-draft';
 import './seo-workspace.css';
 
-type Props = { productId: string; version: string;workspaceOwnerId?:string;generatedDraft?:SeoGeneratedDraft|null; focusedOptionId?: string; active?: boolean; disabled?: boolean; onSaved?: () => void; focusAfterApply?: SeoAppliedReceipt };
+type Props = { onBeginSourceWrite?:()=>UiMutation|undefined;productId: string; version: string;workspaceOwnerId?:string;generatedDraft?:SeoGeneratedDraft|null; focusedOptionId?: string; active?: boolean; disabled?: boolean; onSaved?: () => void; focusAfterApply?: SeoAppliedReceipt };
 type Saved = { scope: string; sourceKey: string; view: SeoWorkspaceView };
 type Attempt = { scope: string; before: SeoWorkspaceView; input: SeoWorkspaceInput };
 type Comparison = { scope: string; sourceKey: string; before: SeoWorkspaceView; latest: SeoWorkspaceView; fields: string[] };
 const provenance = { unverified: '미작성', collected: '수집 원문', translated: '번역 결과', generated: '자동 생성 결과', manual: '직접 수정' };
 
-export function SeoWorkspaceEditor({ productId, version,workspaceOwnerId,generatedDraft, focusedOptionId, active = true, disabled = false, onSaved, focusAfterApply }: Props) {
+export function SeoWorkspaceEditor({ onBeginSourceWrite,productId, version,workspaceOwnerId,generatedDraft, focusedOptionId, active = true, disabled = false, onSaved, focusAfterApply }: Props) {
   const scope = JSON.stringify([workspaceOwnerId??null,productId]), sourceKey = JSON.stringify([scope, version]);
+  const uiMutation=useRef<UiMutation|null>(null);
   const live = useRef({ scope, sourceKey, active, disabled, mounted: true, onSaved }), request = useRef<AbortController | null>(null);
   const [saved, setSaved] = useState<Saved | null>(null), savedRef = useRef<Saved | null>(null);
   const [pending, setPending] = useState({ scope, values: emptySeoWorkspaceDraft() }), draftRef = useRef(pending);
@@ -82,7 +84,7 @@ export function SeoWorkspaceEditor({ productId, version,workspaceOwnerId,generat
       if (keepDraft && attempted) {
         const result = seoWorkspaceSaveState(attempted.before, attempted.input, latest);
         store(latest); attempt.current = null; setUncertain(false); setConflict(false); setComparison(null);
-        if (result === 'saved') { clearDraft(); setMessage('저장된 SEO 설정을 확인했습니다. 상품명·검색태그·옵션명이 함께 반영되었습니다.'); live.current.onSaved?.(); }
+        if (result === 'saved') { uiMutation.current?.confirm();uiMutation.current=null;clearDraft(); setMessage('저장된 SEO 설정을 확인했습니다. 상품명·검색태그·옵션명이 함께 반영되었습니다.'); live.current.onSaved?.(); }
         else setMessage('아직 저장되지 않은 입력입니다. 최신 저장본을 확인했습니다. SEO 설정 저장을 누르면 다시 요청합니다.');
         return;
       }
@@ -131,9 +133,10 @@ export function SeoWorkspaceEditor({ productId, version,workspaceOwnerId,generat
     const controller = new AbortController(); request.current = controller; attempt.current = { scope, before: previous.view, input };
     setBusyAction('save'); setBusy(true); setUncertain(true); setError(''); setMessage(''); setComparison(null);
     try {
+      uiMutation.current??=onBeginSourceWrite?.()??null;
       const value = await saveSeoWorkspace(previous.view, input, fetch, controller.signal);
       if (controller.signal.aborted || !current()) return;
-      store(value); clearDraft(); attempt.current = null; setUncertain(false); setConflict(false);
+      uiMutation.current?.confirm();uiMutation.current=null;store(value); clearDraft(); attempt.current = null; setUncertain(false); setConflict(false);
       setMessage('SEO 설정 저장 완료 · 수정한 상품명·검색태그·옵션명을 함께 반영했습니다.'); live.current.onSaved?.();
     } catch (cause) {
       if (!controller.signal.aborted && current()) {

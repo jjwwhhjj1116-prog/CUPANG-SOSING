@@ -1,4 +1,5 @@
 'use client';
+import type {RegistrationUiReads,UiMutation} from '@/app/registration-ui-reads';
 import { loadCategoryProfiles } from '@/app/load-category-profiles';
 
 import { QuotationMappingReview, type QuotationMappingFinding } from '@/app/components/quotation-mapping-review';
@@ -18,11 +19,12 @@ type Preview = {
   submissionReview?: QuotationPreviewReviewData;
   report:{dataStartRow:number;mappingCoverage?:QuotationMappingFinding[];rowCount:number;missingRequired:{row:number;column:number;header:string}[];warnings:string[];contentRevision:number;optionRevision:number;profileRevision:number};
 };
-type QuotationPanelProps = {submissionActive?:boolean;onPrepareSubmission?:(profileId?:string)=>void;onProfilePrepared?:(profile:CategoryProfile,source:CategoryProfile)=>void;onProfileChange?:(profileId:string|undefined)=>void;onSaved?:()=>void;onReceiptSaved?:()=>void;onEditSeo?:()=>void;navigationTarget?:QuotationNavigationTarget;navigationSequence?:number;productId:string;onManageCategories:()=>void;refreshToken?:string;preferredProfileId?:string};
+type QuotationPanelProps = {uiReads?:RegistrationUiReads;onBeginSourceWrite?:()=>UiMutation|undefined;submissionActive?:boolean;onPrepareSubmission?:(profileId?:string)=>void;onProfilePrepared?:(profile:CategoryProfile,source:CategoryProfile)=>void;onProfileChange?:(profileId:string|undefined)=>void;onSaved?:()=>void;onReceiptSaved?:()=>void;onEditSeo?:()=>void;navigationTarget?:QuotationNavigationTarget;navigationSequence?:number;productId:string;onManageCategories:()=>void;refreshToken?:string;preferredProfileId?:string};
 export function QuotationPanel(props: QuotationPanelProps) {
   return <QuotationPanelContent key={JSON.stringify([props.productId,props.preferredProfileId ?? '',props.navigationTarget?.categoryId])} {...props}/>;
 }
-function QuotationPanelContent({submissionActive=true,onPrepareSubmission,onProfilePrepared,onProfileChange,onSaved,onReceiptSaved,onEditSeo,productId,onManageCategories,refreshToken,preferredProfileId,navigationTarget,navigationSequence=0}: QuotationPanelProps) {
+function QuotationPanelContent({uiReads,onBeginSourceWrite,submissionActive=true,onPrepareSubmission,onProfilePrepared,onProfileChange,onSaved,onReceiptSaved,onEditSeo,productId,onManageCategories,refreshToken,preferredProfileId,navigationTarget,navigationSequence=0}: QuotationPanelProps) {
+  const uiReadRef=useRef(uiReads);useLayoutEffect(()=>{uiReadRef.current=uiReads;},[uiReads]);
   const [profiles,setProfiles]=useState<CategoryProfile[]>([]);
   const [profileId,setProfileId]=useState('');const [startRow,setStartRow]=useState(2);
   const [useSavedRow,setUseSavedRow]=useState(true);
@@ -87,11 +89,11 @@ function QuotationPanelContent({submissionActive=true,onPrepareSubmission,onProf
   useEffect(()=>()=>{profileRequest.current?.abort();},[]);
   useEffect(()=>()=>{activeRequest.current?.abort();},[refreshToken]);
   useEffect(()=>{
-    const controller=new AbortController();
+    const controller=new AbortController(),initialReads=loadAttempt===0?uiReadRef.current:undefined;
 
     Promise.all([
       loadCategoryProfiles(controller.signal),
-      fetch(`/api/products/${encodeURIComponent(productId)}/quotation-fields`,{cache:'no-store',signal:controller.signal}).then(async response=>{const body=await response.json() as QuotationFieldsView & {error?:string};if(!response.ok)throw new Error(body.error||'수집 당시 카테고리를 읽지 못했습니다.');return body;}),
+      initialReads?initialReads.quotation(`/api/products/${encodeURIComponent(productId)}/quotation-fields`,controller.signal):fetch(`/api/products/${encodeURIComponent(productId)}/quotation-fields`,{cache:'no-store',signal:controller.signal}).then(async response=>{const body=await response.json() as QuotationFieldsView & {error?:string};if(!response.ok)throw new Error(body.error||'수집 당시 카테고리를 읽지 못했습니다.');return body;}),
     ]).then(([savedProfiles,data])=>{
       if(controller.signal.aborted)return;
       const selection=selectQuotationProfile(savedProfiles,data.categoryContext,preferredProfileId,navigationTarget?.categoryId);
@@ -174,7 +176,7 @@ function QuotationPanelContent({submissionActive=true,onPrepareSubmission,onProf
   return <section className="panel-stack couplus-quotation-stage" aria-busy={busy||closeLocked} data-workspace-saving={busy||closeLocked}>
     <h2 className="couplus-quotation-heading">등록 세부정보</h2>
     {connectionWarning && <p role="status" className="panel-note">{connectionWarning}</p>}
-    <div ref={editorRef}>{contextLoaded?<QuotationFieldsEditor key={`${navigationSequence}:${currentReviewTarget?.sequence??0}`} submissionActive={submissionActive} navigationTarget={currentReviewTarget?.target??navigationTarget} productId={productId} profileId={overrideProfileId} refreshToken={JSON.stringify([refreshToken,profileVersion])} onSubmissionLockChange={reportSubmissionLock} onEditSeo={onEditSeo?()=>{if(sourceActionCurrent())onEditSeo();}:undefined} onDirtyChange={value=>{
+    <div ref={editorRef}>{contextLoaded?<QuotationFieldsEditor uiReads={uiReads} onBeginSourceWrite={onBeginSourceWrite} key={`${navigationSequence}:${currentReviewTarget?.sequence??0}`} submissionActive={submissionActive} navigationTarget={currentReviewTarget?.target??navigationTarget} productId={productId} profileId={overrideProfileId} refreshToken={JSON.stringify([refreshToken,profileVersion])} onSubmissionLockChange={reportSubmissionLock} onEditSeo={onEditSeo?()=>{if(sourceActionCurrent())onEditSeo();}:undefined} onDirtyChange={value=>{
       if(!submissionCurrent.current.mounted||lockScope.current!==submissionScope)return;
       dirtyRef.current=value;
       if(value){profileRequest.current?.abort();activeRequest.current?.abort();setPreview(null);setMessage('');}

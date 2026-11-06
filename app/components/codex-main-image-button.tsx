@@ -5,7 +5,7 @@ import {requestCodexMainImageEdit,type CodexMainImage} from '@/app/codex-main-im
 import {readProductImageUploadBasis,prepareProductImageFiles,uploadProductImageQueueItem,recoverProductImageQueueItem,type ProductImageUploadItem} from '@/app/product-image-upload-queue';
 import {mainImageValue} from '@/app/quotation-main-image';
 import type {RegistrationUiReads,UiMutation} from '@/app/registration-ui-reads';
-type Props={uiReads?:RegistrationUiReads;productId:string;optionId:string;profileId?:string;sourceKey:string;version:string;disabled:boolean;onSaved?:()=>void};
+type Props={uiReads?:RegistrationUiReads;onBeginSourceWrite?:()=>UiMutation|undefined;productId:string;optionId:string;profileId?:string;sourceKey:string;version:string;disabled:boolean;onSaved?:()=>void};
 async function referenceImage(key:string,signal:AbortSignal):Promise<CodexMainImage>{
  const response=await fetch('/api/files/'+key.split('/').map(encodeURIComponent).join('/'),{signal,cache:'no-store',credentials:'same-origin',redirect:'error'});
  if(!response.ok)throw Error('현재 대표이미지를 읽지 못했습니다.');const blob=await response.blob();if(!blob.size||blob.size>10*1024*1024)throw Error('원본 대표이미지 크기를 확인해주세요.');
@@ -15,7 +15,7 @@ async function referenceImage(key:string,signal:AbortSignal):Promise<CodexMainIm
   const data=canvas.toDataURL('image/png').split(',')[1];if(!data||data.length>5_592_408)throw Error('Codex 참조 이미지는 4MB 이하여야 합니다.');return{mimeType:'image/png',data};
  }finally{bitmap.close();canvas.width=canvas.height=0;}
 }
-export function CodexMainImageButton({uiReads,productId,optionId,profileId,sourceKey,version,disabled,onSaved}:Props){
+export function CodexMainImageButton({uiReads,onBeginSourceWrite,productId,optionId,profileId,sourceKey,version,disabled,onSaved}:Props){
  const uiMutation=useRef<UiMutation|null>(null);
  const [open,setOpen]=useState(false),[prompt,setPrompt]=useState('실제 제품의 형태·색상·구성은 유지하고, 쿠팡 대표이미지에 적합하게 흰 배경과 깔끔한 구도로 편집해주세요.'),[message,setMessage]=useState(''),[busy,setBusy]=useState(false),[uncertain,setUncertain]=useState(false);
  const active=useRef<AbortController|null>(null),retained=useRef<ProductImageUploadItem|null>(null);
@@ -26,7 +26,6 @@ export function CodexMainImageButton({uiReads,productId,optionId,profileId,sourc
  async function start(){
   if(disabled||busy||retained.current||!prompt.trim())return;const controller=new AbortController();active.current=controller;setBusy(true);setMessage('선택한 대표이미지를 준비하고 있습니다.');
   const current=()=>!controller.signal.aborted&&live.current===scope&&active.current===controller,controls={signal:controller.signal,current};
-  uiMutation.current=uiReads?.beginMutation()??null;
   try{
    const owner=await readCliScope(fetch,controller.signal),target={optionId,...(profileId?{profileId}:{})},basis=await readProductImageUploadBasis(productId,owner.ownerId,controls,{target,stage:'main'});
    if(basis.productVersion!==version||!basis.quotation||mainImageValue(basis.quotation,optionId)!==sourceKey)throw Error('대표이미지 선택이 변경됐습니다. 최신 저장본을 확인해주세요.');
@@ -35,6 +34,7 @@ export function CodexMainImageButton({uiReads,productId,optionId,profileId,sourc
     if(!current()||!sameCliScope(owner,await readCliScope(fetch,controller.signal)))throw Error('이미지 요청의 회원·회사가 변경됐습니다.');
     const bytes=Uint8Array.from(atob(result.data),char=>char.charCodeAt(0)),file=new File([bytes],'codex-main.'+(result.mimeType==='image/png'?'png':'jpg'),{type:result.mimeType});
     const [item]=await prepareProductImageFiles([file],[],basis.imageKeys.length);retain(item);
+    uiMutation.current??=onBeginSourceWrite?.()??uiReads?.beginMutation()??null;
     const saved=await uploadProductImageQueueItem(basis,item,{...controls,onItem:value=>{retain(value);if(['uncertain-upload','uncertain-attachment'].includes(value.phase))setUncertain(true);}});
     retain(saved.item);
     if(saved.item.phase!=='done'||!saved.item.key){setUncertain(['uncertain-upload','uncertain-attachment'].includes(saved.item.phase));throw Error(saved.item.error||'Codex 이미지 저장 결과를 확인해주세요.');}
@@ -42,7 +42,7 @@ export function CodexMainImageButton({uiReads,productId,optionId,profileId,sourc
    }});
    if(current()){setMessage('이 옵션의 대표이미지를 저장했습니다.');retain(null);setUncertain(false);uiMutation.current?.confirm();uiMutation.current=null;onSaved?.();}
   }catch(cause){if(current())setMessage(cause instanceof Error?cause.message:'Codex 대표이미지 요청을 확인해주세요.');}
-  finally{if(!retained.current){uiMutation.current?.confirm();uiMutation.current=null;}if(active.current===controller){active.current=null;setBusy(false);}}
+  finally{if(active.current===controller){active.current=null;setBusy(false);}}
  }
  async function recover(){if(!retained.current||busy)return;const controller=new AbortController();active.current=controller;setBusy(true);
   try{const result=await recoverProductImageQueueItem(retained.current,{signal:controller.signal,current:()=>live.current===scope&&!controller.signal.aborted});retain(result.item);setMessage(result.item.phase==='done'?'이미 저장된 대표이미지를 확인했습니다.':result.item.error||'저장 연결을 확인해주세요.');if(result.item.phase==='done'){retain(null);setUncertain(false);uiMutation.current?.confirm();uiMutation.current=null;onSaved?.();}}

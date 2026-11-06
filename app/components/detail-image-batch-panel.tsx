@@ -1,9 +1,10 @@
 'use client';
+import type {RegistrationUiReads,UiMutation} from '@/app/registration-ui-reads';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { applyDetailBatchResult, detailBatchCapacity, detailBatchTranslationSlots, prepareDetailImageBatch, readDetailBatchView, recoverDetailBatchResult, type DetailImageBatch } from '@/app/detail-image-batch';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 
-type Props = { productId: string; optionId: string; profileId?: string; version: string; refreshToken?: string;
+type Props = { uiReads?:RegistrationUiReads;onBeginSourceWrite?:()=>UiMutation|undefined;productId: string; optionId: string; profileId?: string; version: string; refreshToken?: string;
   stage?: 'main' | 'detail' | 'additional'; active: boolean; disabled?: boolean; beforeApply?: () => boolean; onSaved?: () => void;
   onSavedView?: (view: QuotationFieldsView) => void; onPendingChange?: (pending: boolean) => void;
   autoPrepare?: boolean; compactToolbar?: boolean; onBusyChange?: (busy: boolean) => void };
@@ -20,6 +21,8 @@ function Preview({ blob, alt }: { blob: Blob; alt: string }) {
   return url ? <img src={url} alt={alt} style={{ maxWidth: '100%', maxHeight: 360, objectFit: 'contain' }} /> : null;
 }
 export function DetailImageBatchPanel(props: Props) {
+  const uiMutation=useRef<UiMutation|null>(null);
+  const sourceFetch:typeof fetch=(url,init)=>{if((init?.method??'GET')!=='GET')uiMutation.current??=controls.current.onBeginSourceWrite?.()??null;return fetch(url,init);};
   const { productId, optionId, profileId, version, refreshToken, stage = 'detail', active, disabled = false, onBusyChange } = props;
   const label = stage === 'main' ? '대표 이미지' : stage === 'additional' ? '추가 이미지' : '상세 이미지';
   const scope = JSON.stringify([productId, optionId, profileId ?? null, stage]);
@@ -71,7 +74,9 @@ export function DetailImageBatchPanel(props: Props) {
     const currentRead = () => valid(controller) && idleRead.current === attempt && readBasis === JSON.stringify([
       controls.current.productId, controls.current.optionId, controls.current.profileId ?? null, controls.current.stage ?? 'detail', controls.current.version, controls.current.refreshToken ?? null]);
     try {
-      const value = await readDetailBatchView(basis, controller.signal);
+      const shared=!explicit?controls.current.uiReads:undefined;
+      const value=shared?await shared.quotation(`/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId?`?profileId=${encodeURIComponent(profileId)}`:''}`,controller.signal):await readDetailBatchView(basis, controller.signal);
+      detailBatchTranslationSlots(value,optionId,profileId??null,stage);
       if (!currentRead()) return;
       if (value.productVersion !== controls.current.version) throw Error('상품 저장 상태가 변경됐습니다. 상품을 다시 열어주세요.');
       latestSaved.current = value; setSaved(value);
@@ -126,12 +131,12 @@ export function DetailImageBatchPanel(props: Props) {
       for (const index of chosen.sort((a, b) => a - b)) {
         if (!valid(controller) || controls.current.disabled || !permission()) break;
         setMessage(`${label} ${index + 1} 적용 중…`);
-        next = await applyDetailBatchResult(next, index, controller.signal, updated => { if (valid(controller)) store(updated); });
+        next = await applyDetailBatchResult(next, index, controller.signal, updated => { if (valid(controller)) store(updated); },{fetcher:sourceFetch});
         if (!valid(controller)) return; savedCount++; select(liveReviewed.current.filter(item => item !== index));
       }
       if (valid(controller)) setMessage(`${savedCount}개 적용 완료 · 실패·미선택 이미지와 다른 옵션은 유지합니다.`);
     } catch (cause) { if (valid(controller)) setError(`${savedCount}개 적용을 확인했습니다. 나머지는 중단했습니다. ${cause instanceof Error ? cause.message : '저장 결과 확인 필요'}`); }
-    finally { finish(controller); if (mounted.current && savedCount) { if (latestBatch.current) controls.current.onSavedView?.(latestBatch.current.view); controls.current.onSaved?.(); } }
+    finally { finish(controller); if (mounted.current && savedCount) { if(!latestBatch.current?.items.some(item=>item.status==='uncertain')){uiMutation.current?.confirm();uiMutation.current=null;}if (latestBatch.current) controls.current.onSavedView?.(latestBatch.current.view); controls.current.onSaved?.(); } }
   }
   async function recover() {
     if (!latestBatch.current || !unlocked() || !permission()) return;
@@ -140,7 +145,7 @@ export function DetailImageBatchPanel(props: Props) {
       const value = await recoverDetailBatchResult(latestBatch.current, controller.signal);
       if (!valid(controller)) return; store(value); select([]);
       setMessage('해당 이미지의 저장 상태를 확인했습니다. 다음 이미지에는 적용하지 않았습니다.');
-      if (!value.items.some(item => item.status === 'uncertain') && value.items.some(item => item.status === 'applied')) { controls.current.onSavedView?.(value.view); controls.current.onSaved?.(); }
+      if (!value.items.some(item => item.status === 'uncertain') && value.items.some(item => item.status === 'applied')) { uiMutation.current?.confirm();uiMutation.current=null; controls.current.onSavedView?.(value.view); controls.current.onSaved?.(); }
     } catch (cause) { if (valid(controller)) setError(cause instanceof Error ? cause.message : '저장 상태 확인 실패'); }
     finally { finish(controller); }
   }

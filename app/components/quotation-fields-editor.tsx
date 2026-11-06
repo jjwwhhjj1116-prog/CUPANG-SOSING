@@ -1,4 +1,5 @@
 'use client';
+import type {RegistrationUiReads,UiMutation} from '@/app/registration-ui-reads';
 import { quotationGeneratedSave, type QuotationGeneratedDraft } from '@/app/quotation-ai-client';
 import { validOptionRegistrationNumbers, optionRegistrationLabel } from '@/app/product-registration';
 import { QuotationTranslatedAttributes } from '@/app/components/quotation-translated-attributes';
@@ -44,7 +45,7 @@ type Row = QuotationFieldsView['resolved']['rows'][number];
 type Cell = Row['fields'][string];
 type Conflict = { key: string; change: QuotationEditorChange; before: string | null; saved: string | null; unavailable: boolean; schemaChanged?: boolean; packagingChanged?:boolean;linked?: string[] };
 type BulkPreview = { mode?: 'restore'; sourceOptionId?:string|null;base: string; changes: QuotationEditorChange[]; skipped?: string[]; rows: { optionId: string; optionLabel: string; fieldKey: string; label: string; before: string; after: string; beforeDisplay: string; afterDisplay: string; manualBefore: boolean }[] };
-type Props = { navigationTarget?: QuotationNavigationTarget; productId: string; profileId?: string; refreshToken?: string; onSaved?: () => void; onReceiptSaved?:()=>void; onDirtyChange?: (dirty: boolean) => void; onSubmissionLockChange?: (sourceLocked: boolean, closeLocked?: boolean) => void; submissionActive?: boolean; onEditSeo?: () => void };
+type Props = { uiReads?:RegistrationUiReads;onBeginSourceWrite?:()=>UiMutation|undefined;navigationTarget?: QuotationNavigationTarget; productId: string; profileId?: string; refreshToken?: string; onSaved?: () => void; onReceiptSaved?:()=>void; onDirtyChange?: (dirty: boolean) => void; onSubmissionLockChange?: (sourceLocked: boolean, closeLocked?: boolean) => void; submissionActive?: boolean; onEditSeo?: () => void };
 const sections = [
   { id: 'start', title: '시작 정보', english: 'Start', description: '상품명과 선택한 카테고리를 확인합니다.' },
   { id: 'product', title: '상품 정보', english: 'Product', description: '기본 정보, 판매 가격과 카테고리 속성을 편집합니다.' },
@@ -486,7 +487,8 @@ function verifyQuotationRegistrationDisplay(view: QuotationFieldsView) {
 }
 
 export function QuotationFieldsEditor(props: Props) { return <QuotationFieldsForm key={`${props.productId}:${props.profileId ?? ''}`} {...props} />; }
-function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshToken, onSaved, onReceiptSaved, onDirtyChange, onSubmissionLockChange, submissionActive = true, onEditSeo }: Props) {
+function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, productId, profileId, refreshToken, onSaved, onReceiptSaved, onDirtyChange, onSubmissionLockChange, submissionActive = true, onEditSeo }: Props) {
+  const uiMutation=useRef<UiMutation|null>(null),splitUiMutation=useRef<UiMutation|null>(null);
   const endpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId ? `?profileId=${encodeURIComponent(profileId)}` : ''}`;
   const [view, setView] = useState<QuotationFieldsView | null>(null);
   const [changes, commitChanges] = useState<QuotationEditorChange[]>([]);
@@ -551,7 +553,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   useEffect(() => {
     if (!submissionActive || view) return;
     const controller = new AbortController(); const id = ++requests.current;
-    fetchView(endpoint, controller.signal).then(saved => { if (!controller.signal.aborted && id === requests.current) {
+    (uiReads?uiReads.quotation(endpoint,controller.signal).then(saved=>{verifyQuotationRegistrationDisplay(saved);return saved;}):fetchView(endpoint, controller.signal)).then(saved => { if (!controller.signal.aborted && id === requests.current) {
         observedRefresh.current = refreshToken; setView(saved);
         if (initialTarget.current) {
           const destination = resolveQuotationEditorNavigation(saved.resolved, initialTarget.current);
@@ -564,7 +566,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
     return () => { controller.abort(); };
     // The keyed endpoint owns the view; hiding only pauses automatic reads.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [endpoint, submissionActive]);
+  }, [endpoint, submissionActive,uiReads]);
   useEffect(() => () => invalidateRequests(), [endpoint, invalidateRequests]);
   useEffect(() => {
     if (loading || !pendingFocus.current) return;
@@ -723,6 +725,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
       const requested = validateQuotationChanges(plan.changes, { schema: view.resolved.schema, optionIds: view.resolved.rows.flatMap(item => item.optionId === null ? [] : [item.optionId]), ownedImageKeys: view.imageKeys, overrides: view.overrides });
       const drafted=validateQuotationPackagingDraftInputs(quotationPackagingDraftInputsForChanges(packagingDrafts.current,view.resolved.schema.fields,requested),view.resolved.schema.fields,view.optionPackQuantities??{},requested);
       const generatedSave = quotationGeneratedSave(requested, generatedDraft.current);
+      uiMutation.current??=onBeginSourceWrite?.()??null;
       const response = await fetch(endpoint, { method: 'PUT', signal: controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: view.revision, expectedInputFingerprint: view.inputFingerprint, ...generatedSave,...(drafted.length?{packagingDrafts:drafted}:{}) }) });
       const body = await response.json().catch(() => { throw new Error('저장 완료 여부를 확인하지 못했습니다. 중복 저장 전에 ‘입력 버리고 저장본 불러오기’로 저장본을 확인해주세요. 현재 입력은 유지했습니다.'); }) as QuotationFieldsView & { error?: string };
       if (controller.signal.aborted) return;
@@ -735,7 +738,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
       if (controller.signal.aborted) return;
       const untouched = generatedDraft.current?.proposals.filter(proposal=>generatedSave.generatedAdoption?.targets.some(target=>target.optionId===proposal.optionId&&target.fieldKey===proposal.fieldKey)) ?? [];
       const confirmed = generatedSave.generatedAdoption ? confirmGeneratedQuotationSave(view,body,generatedSave.changes,untouched,generatedSave.generatedAdoption.jobId,readback,drafted) : confirmQuotationFieldsSave(view, body, requested, readback,drafted);
-      setView(confirmed); setChanges([]); setConflicts([]); setApplyAll(false); setMessage(`견적 입력 저장 완료${plan.propagated.length ? ` · 다른 옵션 ${new Set(plan.propagated.map(item => item.optionId)).size}개에도 적용했습니다.` : ' · 출력 미리보기에 반영됩니다.'}`); onSaved?.();
+      uiMutation.current?.confirm();uiMutation.current=null;setView(confirmed); setChanges([]); setConflicts([]); setApplyAll(false); setMessage(`견적 입력 저장 완료${plan.propagated.length ? ` · 다른 옵션 ${new Set(plan.propagated.map(item => item.optionId)).size}개에도 적용했습니다.` : ' · 출력 미리보기에 반영됩니다.'}`); onSaved?.();
     } catch (cause) { if(!controller.signal.aborted)setError(cause instanceof Error ? cause.message : '견적 입력 저장 실패'); }
     finally { if(activeWrite.current===controller)activeWrite.current=null; if(!controller.signal.aborted)setBusy(false); }
   }
@@ -938,7 +941,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
           packagingDrafts.current=provenance;modelActionState.current={...current,changes:nextDraft,applyAll:false};setChanges(nextDraft);setApplyAll(false);setBulk(null);setMessage('확인한 포장 초안을 입력란에 반영했습니다. 추정·기본 초안은 저장 후에도 실측 아님으로 표시됩니다. 실물·원문과 비교하고 견적 입력 저장을 눌러주세요.');return true;}} />}
       <QuotationOptionOverview view={view} changes={changes} disabled={busy || loading} onOpen={(optionId, section, fieldId) => { explicitRefreshAction.current = null; setSelectedOption(optionId); setApplyAll(false); openSection(section, fieldId, optionId !== selectedOption); setBulk(null); }}/>
       <ProductOptionSplitPanel productId={productId} profileId={profileId} view={view} disabled={dirty || operationBusy || Boolean(labelRecovery) || loading || conflicts.length > 0 || submissionLocks.source}
-        onBusyChange={next => { if (next) { explicitRefreshAction.current = null; titleActionEpoch.current++; } setSplitBusy(next); }} onDraftChange={next => { if (next) { explicitRefreshAction.current = null; titleActionEpoch.current++; } setSplitDrafting(next); }} onCommitted={() => { onSaved?.(); void refresh(); }} />
+        onBusyChange={next => { if (next) { explicitRefreshAction.current = null; titleActionEpoch.current++; } setSplitBusy(next); }} onDraftChange={next => { if (next) { uiReads?.retire();splitUiMutation.current??=onBeginSourceWrite?.()??null;explicitRefreshAction.current = null; titleActionEpoch.current++; } setSplitDrafting(next); }} onCommitted={() => { splitUiMutation.current?.confirm();splitUiMutation.current=null;onSaved?.(); void refresh(); }} />
       <div id={`${prefix}-ai-tools`} ref={aiTools} className="quotation-ai-tools"><p>필요한 항목을 선택해 AI 초안을 요청하고, 검토 후 입력에 적용하세요.</p>
       <QuotationAiPanel productId={productId} profileId={profileId} view={view} optionId={selectedOption} applyToAllOptions={applyAll} onApplyToAllOptionsChange={changeAllOptions} disabled={dirty || busy || loading || conflicts.length > 0} onRequestActionChange={receiveAiRequest}
         onBusyChange={next=>{if(next)explicitRefreshAction.current=null;modelActionState.current={...modelActionState.current,busy:next||Boolean(labelRecovery)};setBusy(next);}}
@@ -971,7 +974,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
         catch (cause) { setError(cause instanceof Error ? cause.message : '이전 입력을 확인해주세요.'); }
       }}/>
       {row && <QuotationTranslatedAttributes key={`translation:${view.inputFingerprint}:${view.revision}:${selectedOption??'common'}`} productId={productId} view={view} optionId={selectedOption} disabled={dirty || loading || busy || conflicts.length > 0} onApply={items=>items.forEach(item=>edit(item.fieldKey,item.value,item.optionId))} />}
-      {row && <QuotationLabelPanel key={`${view.inputFingerprint}:${view.revision}:${selectedOption??'common'}`} view={view} productId={productId} endpoint={endpoint} optionId={selectedOption} disabled={dirty || loading || busy || conflicts.length > 0} batchCache={labelBatchCache} uploadCache={labelUploadCache} onBusyChange={next=>{if(next){explicitRefreshAction.current=null;titleActionEpoch.current++;}setBusy(next);}} onFailed={async message=>{setLabelRecovery(message);setMessage('');onSaved?.();await refresh(false,false,message);}} onAttached={(saved,batch)=>{setView(saved);setMessage(batch?.stopped ? `라벨 ${batch.completed}/${batch.total}건을 저장하고 중지했습니다. 저장 결과를 반영했으며 전체 생성·연결을 다시 누르면 이어서 진행합니다.` : '표시사항 PNG를 처리한 옵션의 라벨 이미지에 추가했습니다. 기존 첨부는 유지했습니다.');onSaved?.();}} />}
+      {row && <QuotationLabelPanel onBeginSourceWrite={onBeginSourceWrite} key={`${view.inputFingerprint}:${view.revision}:${selectedOption??'common'}`} view={view} productId={productId} endpoint={endpoint} optionId={selectedOption} disabled={dirty || loading || busy || conflicts.length > 0} batchCache={labelBatchCache} uploadCache={labelUploadCache} onBusyChange={next=>{if(next){explicitRefreshAction.current=null;titleActionEpoch.current++;}setBusy(next);}} onFailed={async message=>{setLabelRecovery(message);setMessage('');onSaved?.();await refresh(false,false,message);}} onAttached={(saved,batch)=>{setView(saved);setMessage(batch?.stopped ? `라벨 ${batch.completed}/${batch.total}건을 저장하고 중지했습니다. 저장 결과를 반영했으며 전체 생성·연결을 다시 누르면 이어서 진행합니다.` : '표시사항 PNG를 처리한 옵션의 라벨 이미지에 추가했습니다. 기존 첨부는 유지했습니다.');onSaved?.();}} />}
       </details>
       {schema && <details className="quotation-source-evidence"><summary>견적 양식 확인 정보</summary><p>{schema.evidence}</p></details>}
       <div className="quotation-submission-entry"><button type="button" className="btn ghost" aria-controls={`${prefix}-submission-tools`} disabled={!submissionActive || dirty || busy || loading || conflicts.length > 0} title={dirty ? '견적 입력을 먼저 저장해주세요.' : '저장한 상품의 견적서와 첨부 파일을 검토합니다.'} onClick={openSubmissionReview}>견적 검토·전송</button></div>

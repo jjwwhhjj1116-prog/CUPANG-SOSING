@@ -20,7 +20,7 @@ export type OptionPriceController = {
   replaceEdits:(edits:readonly QuotationChange[],coordinated?:boolean)=>boolean;
   acceptAtomicSaved:(view:QuotationFieldsView,expectedBase:QuotationFieldsView|null)=>boolean;
 };
-export function OptionQuotationPrices({uiReads,productId,version,profileId,onSaved,refreshToken,disabled=false,active=true,beforeEdit,beforeSave,renderGrid,onLockChange,stageTwoPricingPolicy,onDraftStateChange}: {uiReads?:RegistrationUiReads;productId:string;version:string;profileId?:string;onSaved?:()=>void;refreshToken?:string;stageTwoPricingPolicy?:PricePolicy;active?:boolean;
+export function OptionQuotationPrices({uiReads,onBeginSourceWrite,productId,version,profileId,onSaved,refreshToken,disabled=false,active=true,beforeEdit,beforeSave,renderGrid,onLockChange,stageTwoPricingPolicy,onDraftStateChange}: {uiReads?:RegistrationUiReads;onBeginSourceWrite?:()=>UiMutation|undefined;productId:string;version:string;profileId?:string;onSaved?:()=>void;refreshToken?:string;stageTwoPricingPolicy?:PricePolicy;active?:boolean;
   onDraftStateChange?:(dirty:boolean)=>void;disabled?:boolean;beforeEdit?:()=>boolean;beforeSave?:()=>boolean;onLockChange?:(locked:boolean)=>void;renderGrid?:(controller:OptionPriceController)=>ReactNode}) {
   const endpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId?`?profileId=${encodeURIComponent(profileId)}`:''}`;
   const uiMutation=useRef<UiMutation|null>(null);
@@ -122,7 +122,7 @@ export function OptionQuotationPrices({uiReads,productId,version,profileId,onSav
     const controller=new AbortController();request.current=controller;onLockChange?.(true);setBusy(true);setError('');setMessage('');
     let rejected=false;
     try{
-      uiMutation.current=uiReads?.beginMutation()??null;
+      uiMutation.current??=onBeginSourceWrite?.()??uiReads?.beginMutation()??null;
       const response=await fetch(endpoint,{method:'PUT',signal:controller.signal,headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:base.view.revision,expectedInputFingerprint:base.view.inputFingerprint,changes,...(derivedOptionIds.length?{stageTwoMsrp:derivedOptionIds}:{})})}),body=await response.json() as QuotationFieldsView & {error?:string};
       if(controller.signal.aborted||!current())return null;
       if(!response.ok){rejected=response.status<500;throw Error(body.error||'가격을 저장하지 못했습니다. 입력은 유지됩니다.');}verifyOptionPriceView(body,profileId);verifyOptionPriceSave(base.view,body,changes);

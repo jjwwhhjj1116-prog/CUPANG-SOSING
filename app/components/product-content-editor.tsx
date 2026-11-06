@@ -25,7 +25,7 @@ type Props = {
   imageProcessingBusy?: boolean;
   seoLayout?: boolean;
   autoFillLabel?: boolean;
-  active?: boolean;uiReads?:RegistrationUiReads;
+  active?: boolean;uiReads?:RegistrationUiReads;onBeginSourceWrite?:()=>UiMutation|undefined;
 };
 type Draft = {
   seo: { title: string; keywords: string; description: string };
@@ -63,7 +63,7 @@ async function fetchContent(endpoint: string, signal?: AbortSignal): Promise<{co
 
 export function ProductContentEditor(props: Props) { return <ContentEditor key={props.product.id} {...props} />; }
 
-function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslateImage, imageProcessingBusy = false, seoLayout = false, autoFillLabel = true, active = true,uiReads }: Props) {
+function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslateImage, imageProcessingBusy = false, seoLayout = false, autoFillLabel = true, active = true,uiReads,onBeginSourceWrite }: Props) {
   const uiMutation=useRef<UiMutation|null>(null);
   const [content, setContent] = useState<ProductContent>(() => emptyProductContent(product.id));
   const [settingsBanners,setSettingsBanners]=useState<CapturedSettingsBanners|undefined>();
@@ -227,7 +227,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
   async function applyResize() {
     if(!resizePreview||bannerLocked(resizePreview.key))return;
     await resizeAction(async signal=>{
-      uiMutation.current=uiReads?.beginMutation()??null;
+      uiMutation.current??=onBeginSourceWrite?.()??uiReads?.beginMutation()??null;
       const saved=await attachResizedImage(product.id,resizePreview,resizeUpload.current,signal);
       if(signal.aborted)return;
       const sourceKey=resizePreview.key,roles=imageStageRoles(focusedAssetRole);
@@ -278,7 +278,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
     const patch = section === 'SEO' ? { seo: { ...draft.seo, keywords: draft.seo.keywords.split(/[\n,]/).map(value => value.trim()).filter(Boolean) } }
       : section === '표시사항' ? { label: draft.label, labelClears: draft.labelClears, labelProductNameLinked: draft.labelProductNameLinked, labelLayout: draft.labelLayout, customLabels: draft.customLabels } : { assets: imageStagePatch(initial.assets,draft.assets,focusedAssetRole), ...(Object.keys(detailPatch).length ? { detail: detailPatch } : {}) };
     try {
-      uiMutation.current=uiReads?.beginMutation()??null;
+      uiMutation.current??=onBeginSourceWrite?.()??uiReads?.beginMutation()??null;
       const response = await fetch(endpoint, { method: 'PATCH', signal:controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: content.revision, patch }) });
       const body = await response.json() as { content?: ProductContent;capturedSettingsBanners?:unknown; error?: string };
       if(controller.signal.aborted)return;

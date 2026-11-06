@@ -1,4 +1,5 @@
 'use client';
+import type {RegistrationUiReads,UiMutation} from '@/app/registration-ui-reads';
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
@@ -7,10 +8,11 @@ import { quotationLabelPlan } from '@/app/quotation-label-plan';
 import { renderDocument } from '@/app/document-image-render';
 import { attachQuotationLabel, type QuotationLabelUploadCache } from '@/app/quotation-label-attachment';
 
-type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; active?: boolean; onSaved?: () => void; onCommonLabels?: () => void };
+type Props = { uiReads?:RegistrationUiReads;onBeginSourceWrite?:()=>UiMutation|undefined;productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; active?: boolean; onSaved?: () => void; onCommonLabels?: () => void };
 type Preview = { scope: string; sourceKey: string; signature: string; view: QuotationFieldsView; url: string; rendered: { blob: Blob; width: number; height: number } };
 
-export function OptionLabelEditor({ productId, optionId, version, profileId, refreshToken, active = true, onSaved, onCommonLabels }: Props) {
+export function OptionLabelEditor({ uiReads,onBeginSourceWrite,productId, optionId, version, profileId, refreshToken, active = true, onSaved, onCommonLabels }: Props) {
+  const uiMutation=useRef<UiMutation|null>(null);
   const endpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId ? `?profileId=${encodeURIComponent(profileId)}` : ''}`;
   const scope = JSON.stringify([endpoint, optionId]), sourceKey = JSON.stringify([scope, version, refreshToken]);
   const currentScope = useRef(scope), currentSource = useRef(sourceKey), mounted = useRef(true);
@@ -37,13 +39,13 @@ export function OptionLabelEditor({ productId, optionId, version, profileId, ref
   function finish(controller: AbortController) {
     if (request.current === controller) { request.current = null; if (!controller.signal.aborted && current()) setBusy(false); }
   }
-  async function load(keepDraft = false) {
+  async function load(keepDraft = false, initial = false) {
     if (request.current || !current()) return;
     const controller = new AbortController(); request.current = controller; setBusy(true); setError(''); clearPreview();
     try {
-      const response = await fetch(endpoint, { cache: 'no-store', signal: controller.signal }), body = await response.json() as QuotationFieldsView & { error?: string };
+      const response = initial&&uiReads?null:await fetch(endpoint, { cache: 'no-store', signal: controller.signal }), body = response?await response.json() as QuotationFieldsView & { error?: string }:await uiReads!.quotation(endpoint,controller.signal);
       if (controller.signal.aborted || !current()) return;
-      if (!response.ok) throw Error(body.error || '옵션 상품고시를 불러오지 못했습니다.');
+      if (response&&!response.ok) throw Error(('error' in body&&typeof body.error==='string'?body.error:'') || '옵션 상품고시를 불러오지 못했습니다.');
       verifyOptionLabelView(body, optionId, profileId);
       const editing = latestDraft.current.scope === scope ? latestDraft.current.values : {};
       let recovered = false;
@@ -56,8 +58,8 @@ export function OptionLabelEditor({ productId, optionId, version, profileId, ref
       storeView(body);
       if (!keepDraft || recovered) clearDraft();
       setMessage(recovered ? '저장된 선택 옵션 상품고시를 확인했습니다.' : keepDraft ? '입력을 유지하고 최신 자료를 읽었습니다. 확인 후 선택 옵션 상품고시를 저장해주세요.' : '');
-      if (recovered) onSaved?.();
-    } catch (cause) { if (!controller.signal.aborted && current()) setError(cause instanceof Error ? cause.message : '옵션 상품고시 조회 실패'); }
+      if(recovered){uiMutation.current?.confirm();uiMutation.current=null;onSaved?.();}
+    } catch (cause) { if (!controller.signal.aborted && current()) {if(initial)uiReads?.forget();setError(cause instanceof Error ? cause.message : '옵션 상품고시 조회 실패');} }
     finally { finish(controller); }
   }
   useEffect(() => {
@@ -67,13 +69,13 @@ export function OptionLabelEditor({ productId, optionId, version, profileId, ref
       setBusy(false); if (!active) return; setError(''); clearPreview();
       if (latestDraft.current.scope === scope && Object.keys(latestDraft.current.values).length && latestSaved.current?.scope === scope) return;
       if (latestSaved.current?.scope===scope && latestSaved.current.sourceKey===sourceKey) return;
-      void load(); automaticRead = request.current;
+      void load(false,true); automaticRead = request.current;
     });
     return () => { alive = false; if (automaticRead && request.current === automaticRead) { automaticRead.abort(); request.current = null; } };
     // Parent source changes invalidate the preview, while edits await explicit
     // refresh/save/discard instead of disappearing on a workspace refresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope, sourceKey, active]);
+  }, [scope, sourceKey, active,uiReads]);
   function edit(fieldId: string, value: string | null) {
     if (!view || request.current || !current() || !optionLabelFields(view).some(field => field.id === fieldId && !field.readOnly)) return;
     latestDraft.current = { scope, values: { ...(latestDraft.current.scope === scope ? latestDraft.current.values : {}), [fieldId]: value } };
@@ -88,12 +90,13 @@ export function OptionLabelEditor({ productId, optionId, version, profileId, ref
     let changes; try { changes = optionLabelChanges(base.view, optionId, editing); } catch (cause) { setError(cause instanceof Error ? cause.message : '상품고시 입력을 확인해주세요.'); return; }
     const controller = new AbortController(); request.current = controller; setBusy(true); setError(''); setMessage(''); clearPreview();
     try {
+      uiMutation.current??=onBeginSourceWrite?.()??null;
       const response = await fetch(endpoint, { method: 'PUT', signal: controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: base.view.revision, expectedInputFingerprint: base.view.inputFingerprint, changes }) });
       const body = await response.json() as QuotationFieldsView & { error?: string };
       if (controller.signal.aborted || !current()) return;
       if (!response.ok) throw Error(body.error || '상품고시를 저장하지 못했습니다. 입력은 유지됩니다.');
       verifyOptionLabelView(body, optionId, profileId); verifyOptionLabelSave(base.view, body, optionId, editing);
-      storeView(body); clearDraft(); setMessage('선택 옵션 상품고시 저장 완료 · 해당 옵션 견적서와 라벨에 반영됩니다.'); onSaved?.();
+      uiMutation.current?.confirm();uiMutation.current=null;storeView(body); clearDraft(); setMessage('선택 옵션 상품고시 저장 완료 · 해당 옵션 견적서와 라벨에 반영됩니다.'); onSaved?.();
     } catch (cause) { if (!controller.signal.aborted && current()) setError(cause instanceof Error ? cause.message : '상품고시 저장 실패'); }
     finally { finish(controller); }
   }
@@ -128,6 +131,7 @@ export function OptionLabelEditor({ productId, optionId, version, profileId, ref
     try {
       const scopedFetch: typeof fetch = async (url, init) => {
         if (controller.signal.aborted || !current()) throw Error('선택 옵션 또는 상품 저장 상태가 변경되었습니다.');
+        if((init?.method??'GET')!=='GET')uiMutation.current??=onBeginSourceWrite?.()??null;
         const response = await fetch(url, { ...init, signal: controller.signal });
         if (controller.signal.aborted || !current()) throw Error('선택 옵션 또는 상품 저장 상태가 변경되었습니다.');
         return response;
@@ -135,7 +139,7 @@ export function OptionLabelEditor({ productId, optionId, version, profileId, ref
       const body = await attachQuotationLabel({ productId, endpoint, renderedView: chosen.view, optionId, blob: chosen.rendered.blob, uploadedKey: cache.uploadedKey, onUploaded: key => { cache.uploadedKey = key; } }, scopedFetch);
       if (controller.signal.aborted || !current()) return;
       verifyOptionLabelView(body, optionId, profileId); verifyOptionLabelAttachment(chosen.view, body, optionId, cache.uploadedKey);
-      storeView(body); clearPreview(); setMessage('상품고시 PNG를 선택 옵션 견적에 연결했습니다.'); onSaved?.();
+      uiMutation.current?.confirm();uiMutation.current=null;storeView(body); clearPreview(); setMessage('상품고시 PNG를 선택 옵션 견적에 연결했습니다.'); onSaved?.();
     } catch (cause) {
       if (!controller.signal.aborted && current()) setError(`${cause instanceof Error ? cause.message : '선택 옵션 라벨 연결 실패'}${cache.uploadedKey ? ' 업로드한 파일은 보존됩니다. 같은 미리보기로 다시 연결하면 기존 파일을 확인해 사용합니다.' : ''}`);
     } finally { finish(controller); }

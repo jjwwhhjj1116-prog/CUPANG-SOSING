@@ -1,4 +1,5 @@
 'use client';
+import type {RegistrationUiReads,UiMutation} from '@/app/registration-ui-reads';
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { TranslationJob, TranslationSource, TranslationView } from '@/app/automation/translation';
@@ -22,7 +23,7 @@ import { commitSeoGuidanceSession, initialSeoGuidanceMemo, openSeoGuidanceSessio
   seoGuidanceSessionSourceKey, type SeoGuidanceSession } from '@/app/seo-guidance-session';
 import './seo-workspace.css';
 
-type Props = { productId: string; workspaceOwnerId?: string; version: string; brand: string; active: boolean; beforeGenerate: () => boolean; onSaved: () => void;
+type Props = { uiReads?:RegistrationUiReads;onBeginSourceWrite?:()=>UiMutation|undefined;productId: string; workspaceOwnerId?: string; version: string; brand: string; active: boolean; beforeGenerate: () => boolean; onSaved: () => void;
   onBusyChange?: (busy: boolean) => void; onPendingChange?: (pending: boolean) => void; onApplyUncertainChange?: (uncertain: boolean) => void;
   onProcessingChange?: (busy: boolean, operation: object) => void; onApplied?: (receipt: SeoAppliedReceipt) => void;onDraft?:(draft:SeoGeneratedDraft)=>void };
 type ProcessingLease = { operation: object; callback: Props['onProcessingChange'] };
@@ -37,13 +38,14 @@ export function SeoWorkspaceGenerator(props: Props) {
   return <SeoWorkspaceGeneratorContent key={JSON.stringify([props.workspaceOwnerId??null,props.productId])} {...props}/>;
 }
 
-type GenerationPanelProps={productId:string;workspaceOwnerId?:string;version:string;memo:SeoWorkspaceDraftMemo;active:boolean;disabled:boolean;beforeGenerate:()=>boolean;onBusyChange:(value:boolean)=>void;onPendingChange:(value:boolean)=>void;onSaved:()=>void;onApplied?:Props['onApplied'];onRestoreMemo:(memo:SeoWorkspaceDraftMemo)=>void};
+type GenerationPanelProps={onBeginSourceWrite?:()=>UiMutation|undefined;productId:string;workspaceOwnerId?:string;version:string;memo:SeoWorkspaceDraftMemo;active:boolean;disabled:boolean;beforeGenerate:()=>boolean;onBusyChange:(value:boolean)=>void;onPendingChange:(value:boolean)=>void;onSaved:()=>void;onApplied?:Props['onApplied'];onRestoreMemo:(memo:SeoWorkspaceDraftMemo)=>void};
 /** The generation request has its own purpose, saved key and review. Mounting
  * this panel only reads configuration; it cannot authorize an AI execution. */
 export function SeoGenerationPanel(props:GenerationPanelProps){
  return <SeoGenerationPanelContent key={JSON.stringify([props.workspaceOwnerId??null,props.productId,props.version])} {...props}/>;
 }
 function SeoGenerationPanelContent(props:GenerationPanelProps){
+ const uiMutation=useRef<UiMutation|null>(null);
  const [view,setView]=useState<SeoGenerationContext|null>(null),[state,setState]=useState<SeoGenerationDraftState|null>(null),[job,setJob]=useState<TranslationJob|null>(null);
  const [busy,setBusy]=useState(true),[message,setMessage]=useState(''),[error,setError]=useState(''),[confirmedToken,setConfirmedToken]=useState<object|null>(null),[closed,setClosed]=useState(false),[uncertain,setUncertain]=useState(false),[invalid,setInvalid]=useState(false);
  const pending=useRef<AbortController|null>(null),mounted=useRef(true),live=useRef(props),saved=useRef<SeoGenerationDraftState|null>(null);
@@ -91,12 +93,13 @@ function SeoGenerationPanelContent(props:GenerationPanelProps){
   {state&&<button type="button" className="btn ghost" disabled={busy||props.disabled||!props.active||uncertain} onClick={()=>void run(true)}>AI SEO 상태 조회 · 새 호출 안 함</button>}
   {state&&closed&&<button type="button" className="btn ghost" disabled={busy||props.disabled||uncertain} onClick={()=>{if(!current()||pending.current)return;saved.current=null;setState(null);setJob(null);setClosed(false);setConfirmedToken(null);sessionStorage.removeItem(storageKey);}}>새 AI SEO 입력 준비</button>}
   {currentJob&&<><dl><dt>상품명</dt><dd>{job!.result!.draft.title}</dd><dt>검색태그</dt><dd>{job!.result!.draft.keywords.join(', ')}</dd><dt>설명</dt><dd>{job!.result!.draft.description}</dd></dl>
-   <TranslationIntegratedPreview purpose="seo-generation" productId={props.productId} version={props.version} jobId={job!.id} disabled={busy||props.disabled||!props.active||uncertain} beforeApply={()=>current()&&!uncertain&&live.current.beforeGenerate()}
-    onBusyChange={setBusy} onUncertainChange={setUncertain} onApplied={props.onApplied} onSaved={()=>{if(!current())return;saved.current=null;sessionStorage.removeItem(storageKey);setState(null);live.current.onSaved();}}/>
+   <TranslationIntegratedPreview purpose="seo-generation" productId={props.productId} version={props.version} jobId={job!.id} disabled={busy||props.disabled||!props.active||uncertain} beforeApply={()=>{if(!current()||uncertain||!live.current.beforeGenerate())return false;uiMutation.current??=live.current.onBeginSourceWrite?.()??null;return true;}}
+    onBusyChange={setBusy} onUncertainChange={setUncertain} onApplied={props.onApplied} onSaved={()=>{if(!current())return;uiMutation.current?.confirm();uiMutation.current=null;saved.current=null;sessionStorage.removeItem(storageKey);setState(null);live.current.onSaved();}}/>
   </>}
  </section>;
 }
-function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, brand, active, beforeGenerate, onSaved, onProcessingChange, onBusyChange, onPendingChange, onApplyUncertainChange, onApplied,onDraft }: Props) {
+function SeoWorkspaceGeneratorContent({ uiReads,onBeginSourceWrite,productId, workspaceOwnerId, version, brand, active, beforeGenerate, onSaved, onProcessingChange, onBusyChange, onPendingChange, onApplyUncertainChange, onApplied,onDraft }: Props) {
+ const uiMutation=useRef<UiMutation|null>(null);
   const [basis,setBasis]=useState<Basis|null>(null),[memo,setMemo]=useState<SeoWorkspaceDraftMemo>({brand,features:'',keywords:''});
   const [busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('');
   const [job,setJob]=useState<TranslationJob|null>(null),[hasRequest,setHasRequest]=useState(false),[closed,setClosed]=useState(false);
@@ -164,7 +167,7 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
     void Promise.resolve().then(async()=>{
       if(controller.signal.aborted)return;setBusy(true);setError('');
       try{
-        const [view,content,source,options,registration]=await Promise.all([read('/translation'),read('/content'),read('/translation-source'),read('/options'),read('/registration-settings')]) as [TranslationView,{content:ProductContent},Source,ProductOptionsResponse,{productId:string;settings:{brand:string}}];
+        const [view,content,source,options,registration]=await Promise.all([read('/translation'),uiReads?uiReads.content(controller.signal):read('/content'),read('/translation-source'),uiReads?uiReads.options(controller.signal):read('/options'),read('/registration-settings')]) as [TranslationView,{content:ProductContent},Source,ProductOptionsResponse,{productId:string;settings:{brand:string}}];
         if(controller.signal.aborted||!mounted.current)return;
         if(!view.configuration||!Array.isArray(view.jobs)||content.content?.productId!==productId||!Number.isSafeInteger(content.content.revision)
           ||source.productId!==productId||source.productVersion!==version||options.productVersion!==version||options.options?.productId!==productId
@@ -202,7 +205,7 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
       finally{if(request.current===controller){request.current=null;if(!controller.signal.aborted&&mounted.current){settledLoad.current=loadScope;setBusy(false);}}}
     });
     return()=>{controller.abort();if(request.current===controller){request.current=null;void Promise.resolve().then(()=>{if(mounted.current&&!request.current)setBusy(false);});}};
-  },[active,productId,workspaceOwnerId,version,brand,storageKey,attempt,loadScope,onDraft]);
+  },[active,productId,workspaceOwnerId,version,brand,storageKey,attempt,loadScope,onDraft,uiReads]);
   function edit(key:keyof SeoWorkspaceDraftMemo,value:string){if(generationLocked.current||!mounted.current||current.current.version!==version||current.current.workspaceOwnerId!==workspaceOwnerId||!current.current.active||request.current||draftState.current)return;setMemo(previous=>{const next={...previous,[key]:value};current.current.memo=next;return next;});setConfirmAi(false);setGuidanceError('');}
   function blur(key:keyof SeoWorkspaceDraftMemo,value:string,session:SeoGuidanceSession|null){
     if(!basis||!mounted.current||current.current.workspaceOwnerId!==workspaceOwnerId||current.current.version!==version||!current.current.active
@@ -284,7 +287,7 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
     try{
       const saved=await prepareWorkersSeoRecovery(input,{signal:controller.signal,contentRevision:basis.contentRevision,expectedMaxCalls:workersLimit,fetcher:fetch});
       if(controller.signal.aborted||!same())return;
-      setWorkersReview({productVersion:version,jobId:saved.id,fingerprint:saved.review.fingerprint,ownerId:workspaceOwnerId});
+      uiReads?.retire();uiReads?.beginMutation();setWorkersReview({productVersion:version,jobId:saved.id,fingerprint:saved.review.fingerprint,ownerId:workspaceOwnerId});
       setMessage('Cloudflare Workers AI의 중국어→한국어 번역 요청을 준비했습니다. 아래 전송 원문과 호출 횟수를 확인하고 승인·실행해주세요. Google 이력과 작성 중인 입력은 유지했습니다.');
     }catch(cause){if(!controller.signal.aborted&&same())setError(cause instanceof Error?cause.message:'서버 AI 요청 상태를 확인하지 못했습니다. 같은 요청을 다시 확인해주세요.');}
     finally{if(request.current===controller){request.current=null;if(mounted.current)setBusy(false);}}
@@ -351,7 +354,7 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
         {hasRequest&&<button className="btn ghost" type="button" disabled={busy||compositionBusy} onClick={()=>void generate(true)}>초안 상태 조회</button>}
         {hasRequest&&closed&&<button className="btn ghost" type="button" disabled={busy||compositionBusy||applyUncertain} onClick={()=>{if(!mounted.current||current.current.version!==version||!current.current.active||request.current||compositionBusyRef.current||applyUncertain)return;if(basis&&draftState.current&&supplierSourceIdentity(draftState.current.source)!==basis.sourceIdentity)setMemo(basis.initialMemo);draftState.current=null;setHasRequest(false);setClosed(false);setJob(null);setConfirmAi(false);setCompositionTitle(null);setCompositionKeywords(null);setCompositionEnabled(true);setReplaceTitle(false);setReplaceKeywords(false);setMessage('새 요청의 입력을 준비했습니다. 작성 버튼을 누르면 새 초안을 요청합니다.');try{sessionStorage.removeItem(storageKey);}catch{}}}>새 초안 입력</button>}
       </div>
-      {!onDraft&&<details className="seo-generation-provider seo-generation-provider-tools"><summary>생성 방식·이전 AI 요청 확인</summary><SeoGenerationPanel productId={productId} workspaceOwnerId={workspaceOwnerId} version={version} memo={memo} active={active} disabled={busy||hasRequest||compositionBusy||!basis}
+      {!onDraft&&<details className="seo-generation-provider seo-generation-provider-tools"><summary>생성 방식·이전 AI 요청 확인</summary><SeoGenerationPanel onBeginSourceWrite={onBeginSourceWrite} productId={productId} workspaceOwnerId={workspaceOwnerId} version={version} memo={memo} active={active} disabled={busy||hasRequest||compositionBusy||!basis}
         beforeGenerate={beforeGenerate} onBusyChange={setGenerationBusy} onPendingChange={setGenerationPending} onSaved={onSaved} onApplied={onApplied}
         onRestoreMemo={value=>{setMemo(value);current.current.memo=value;}}/></details>}
       {google&&<details className="seo-generation-provider"><summary>초안 작성 방법</summary><small>무료 Google 번역으로 원문을 한국어로 옮긴 뒤 브랜드·짧은 특징·타겟을 반영한 상품명과 검색태그 구성안을 확인하고 수정합니다.</small></details>}
@@ -370,9 +373,9 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
           {!!omittedTags.length&&<small>타겟을 우선 반영하여 전체 한도에 들어가지 않는 번역 상품명 검색어는 제외합니다: {omittedTags.join(', ')}</small>}
         </fieldset>}
         {!!job.result!.draft.warnings.length&&<ul>{job.result!.draft.warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul>}
-        <TranslationIntegratedPreview productId={productId} version={version} jobId={job.id} disabled={busy||!active||applyUncertain||(compositionEnabled&&!!compositionError)} seoComposition={compositionEnabled?composition:undefined} onBusyChange={compositionPublisher} beforeApply={()=>currentComposition()&&!applyUncertainRef.current&&beforeGenerate()}
+        <TranslationIntegratedPreview productId={productId} version={version} jobId={job.id} disabled={busy||!active||applyUncertain||(compositionEnabled&&!!compositionError)} seoComposition={compositionEnabled?composition:undefined} onBusyChange={compositionPublisher} beforeApply={()=>{if(!currentComposition()||applyUncertainRef.current||!beforeGenerate())return false;uiMutation.current??=onBeginSourceWrite?.()??null;return true;}}
           onApplied={receipt=>{if(currentComposition()&&sameSeoAppliedSource(receipt,productId,version)&&receipt.jobId===job.id)statusCallbacks.current.onApplied?.(receipt);}}
-          onUncertainChange={value=>{if(currentComposition()){applyUncertainRef.current=value;setApplyUncertain(value);}}} onSaved={()=>{if(currentComposition()){applyUncertainRef.current=false;setApplyUncertain(false);statusCallbacks.current.onSaved();}}}/>
+          onUncertainChange={value=>{if(currentComposition()){applyUncertainRef.current=value;setApplyUncertain(value);}}} onSaved={()=>{if(currentComposition()){uiMutation.current?.confirm();uiMutation.current=null;applyUncertainRef.current=false;setApplyUncertain(false);statusCallbacks.current.onSaved();}}}/>
       </div>}
     </div>
   </section>;

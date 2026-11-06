@@ -1,4 +1,5 @@
 'use client';
+import type {UiMutation} from '@/app/registration-ui-reads';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { DetailWorkspaceView } from '@/app/detail-workspace';
 import type { DetailWorkspaceSelection } from '@/app/detail-workspace-client';
@@ -6,7 +7,7 @@ import type { DetailWorkspaceBannerRebasePreview } from '@/app/detail-workspace-
 import { applyDetailWorkspaceBannerRebase, readDetailWorkspaceBannerRebase, readLatestDetailWorkspaceBannerRebase, recoverDetailWorkspaceBannerRebase,
   type DetailWorkspaceBannerRebaseAttempt } from '@/app/detail-workspace-banner-rebase-client';
 
-type Props = { selection: DetailWorkspaceSelection; disabled?: boolean; stageActive?: boolean; beforeApply?: () => boolean;
+type Props = { onBeginSourceWrite?:()=>UiMutation|undefined;selection: DetailWorkspaceSelection; disabled?: boolean; stageActive?: boolean; beforeApply?: () => boolean;
   onSaved?: (reply: DetailWorkspaceView) => void; onLatestRead?: (preview: DetailWorkspaceBannerRebasePreview) => void; onBusyChange?: (busy: boolean) => void };
 type Review = { preview: DetailWorkspaceBannerRebasePreview; token: object };
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -16,7 +17,9 @@ const roleKeys = (preview: DetailWorkspaceBannerRebasePreview, role: 'top' | 'bo
 const changed = (preview: DetailWorkspaceBannerRebasePreview) => !same(roleKeys(preview, 'top'), preview.roles.top) || !same(roleKeys(preview, 'bottom'), preview.roles.bottom);
 
 /** Explicitly replaces protected banners in the independent workspace only. */
-export function DetailWorkspaceRebasePanel({ selection, disabled = false, stageActive = true, beforeApply, onSaved, onLatestRead, onBusyChange }: Props) {
+export function DetailWorkspaceRebasePanel({ onBeginSourceWrite,selection, disabled = false, stageActive = true, beforeApply, onSaved, onLatestRead, onBusyChange }: Props) {
+  const uiMutation=useRef<UiMutation|null>(null);
+  const sourceFetch:typeof fetch=(url,init)=>{if((init?.method??'GET')!=='GET')uiMutation.current??=onBeginSourceWrite?.()??null;return fetch(url,init);};
   const identity = JSON.stringify([selection.productId, selection.optionId, selection.profileId ?? null]);
   const source = JSON.stringify([identity, selection.view, disabled, stageActive]);
   const [clock, setClock] = useState({ source, token: {} }); if (clock.source !== source) setClock({ source, token: {} });
@@ -63,9 +66,9 @@ export function DetailWorkspaceRebasePanel({ selection, disabled = false, stageA
     if (!value || waiting() || delivered.current || !preparedCurrent(value) || confirmation.current?.preview !== value || confirmation.current.token !== token) return;
     const controller = begin(token, true); if (!controller) return;
     try {
-      const reply = await applyDetailWorkspaceBannerRebase(selection, value, attempt.current, controller.signal);
+      const reply = await applyDetailWorkspaceBannerRebase(selection, value, attempt.current, controller.signal,sourceFetch);
       if (!valid(token) || controller.signal.aborted) return;
-      delivered.current = true; confirmation.current = null; setReview(null); setDone(true); setMessage('상단·하단 배너를 현재 설정으로 보관했습니다. 본문 사진과 간격, 상품·견적서는 유지했습니다.'); controls.current.onSaved?.(reply);
+      uiMutation.current?.confirm();uiMutation.current=null;delivered.current = true; confirmation.current = null; setReview(null); setDone(true); setMessage('상단·하단 배너를 현재 설정으로 보관했습니다. 본문 사진과 간격, 상품·견적서는 유지했습니다.'); controls.current.onSaved?.(reply);
     } catch (cause) { if (mounted.current && !controller.signal.aborted) setError(issue(cause)); }
     finally { finish(controller); }
   }
@@ -77,7 +80,7 @@ export function DetailWorkspaceRebasePanel({ selection, disabled = false, stageA
       confirmation.current = null; setReview(null);
       if (status === 'ready') { setMessage('아직 배너 변경이 보관되지 않았습니다. 현재 기준과 변경 내용을 다시 확인한 뒤 명시적으로 보관해주세요.'); return; }
       if (!attempt.current.completed) throw Error('배너 변경 보관 결과를 확인하지 못했습니다.');
-      delivered.current = true; setDone(true); setMessage('배너 변경 결과를 조회로 확인했습니다. 보관 요청은 반복하지 않았습니다.'); controls.current.onSaved?.(attempt.current.completed);
+      uiMutation.current?.confirm();uiMutation.current=null;delivered.current = true; setDone(true); setMessage('배너 변경 결과를 조회로 확인했습니다. 보관 요청은 반복하지 않았습니다.'); controls.current.onSaved?.(attempt.current.completed);
     } catch (cause) { if (mounted.current && !controller.signal.aborted) setError(issue(cause)); }
     finally { finish(controller); }
   }

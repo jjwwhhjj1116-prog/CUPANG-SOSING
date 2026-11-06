@@ -1,4 +1,5 @@
 'use client';
+import type {UiMutation} from '@/app/registration-ui-reads';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { applyDetailComposite, prepareDetailComposite, prepareDetailImageDownload, recoverDetailComposite, type DetailComposite, type DetailCompositeAttempt } from '@/app/detail-image-composite';
@@ -9,9 +10,11 @@ import { detailSaveEditorHtml } from '@/app/detail-editor-composition';
 
 const editorSaveOptions = { editorPolicy: DETAIL_SAVE_EDITOR_POLICY } as const;
 
-type Props = { productId: string; optionId: string; profileId?: string; view: QuotationFieldsView; disabled?: boolean; stageActive?: boolean; compactToolbar?: boolean;
+type Props = { onBeginSourceWrite?:()=>UiMutation|undefined;productId: string; optionId: string; profileId?: string; view: QuotationFieldsView; disabled?: boolean; stageActive?: boolean; compactToolbar?: boolean;
   beforeApply?: () => boolean; onSaved?: (view: QuotationFieldsView) => void; onBusyChange?: (busy: boolean) => void };
-export function DetailImageCompositePanel({ productId, optionId, profileId, view, disabled = false, stageActive = true, compactToolbar = false, beforeApply, onSaved, onBusyChange }: Props) {
+export function DetailImageCompositePanel({ onBeginSourceWrite,productId, optionId, profileId, view, disabled = false, stageActive = true, compactToolbar = false, beforeApply, onSaved, onBusyChange }: Props) {
+  const uiMutation=useRef<UiMutation|null>(null);
+  const sourceFetch:typeof fetch=(url,init)=>{if((init?.method??'GET')!=='GET')uiMutation.current??=onBeginSourceWrite?.()??null;return fetch(url,init);};
   const identity = JSON.stringify([productId, optionId, profileId ?? null]), current = useRef({ identity, view, disabled, stageActive, beforeApply, onSaved, onBusyChange });
   const active = useRef(true), request = useRef<AbortController | null>(null), attempt = useRef<DetailCompositeAttempt>({});
   const detailAttempt = useRef<DetailSaveAttempt>({}), mutationMode = useRef<'selected' | 'all' | null>(null), savedResult = useRef(false);
@@ -63,11 +66,11 @@ export function DetailImageCompositePanel({ productId, optionId, profileId, view
     const controller = start(); if (!controller) return;
     mutationMode.current = 'selected'; setMode('selected'); liveReview.current = null; setReview(null);
     try {
-      const confirmed = attempt.current.pending ? await recoverDetailComposite(prepared, attempt.current, controller.signal) : await applyDetailComposite(prepared, attempt.current, controller.signal);
+      const confirmed = attempt.current.pending ? await recoverDetailComposite(prepared, attempt.current, controller.signal) : await applyDetailComposite(prepared, attempt.current, controller.signal,sourceFetch);
       if (!active.current || current.current.identity !== identity || controller.signal.aborted) return;
       if (confirmed === 'ready') { setMessage('현재 저장 결과를 확인했습니다. 적용 버튼을 눌러 이어서 저장해주세요.'); return; }
       const saved = confirmed === 'completed' ? attempt.current.completed! : confirmed;
-      savedResult.current = true; setDone(true); setMessage('합친 상세 이미지를 선택 옵션 견적서에 저장했습니다.'); current.current.onSaved?.(saved);
+      uiMutation.current?.confirm();uiMutation.current=null;savedResult.current = true; setDone(true); setMessage('합친 상세 이미지를 선택 옵션 견적서에 저장했습니다.'); current.current.onSaved?.(saved);
     } catch (cause) { if (active.current && !controller.signal.aborted) setError(cause instanceof Error ? cause.message : '상세 이미지 적용 실패'); }
     finally { finish(controller); }
   }
@@ -81,11 +84,11 @@ export function DetailImageCompositePanel({ productId, optionId, profileId, view
     mutationMode.current = 'all'; setMode('all');
     try {
       const confirmed = recovery ? await recoverDetailSave(prepared, detailAttempt.current, controller.signal, undefined, editorSaveOptions)
-        : await applyDetailSave(prepared, detailAttempt.current, controller.signal, undefined, editorSaveOptions);
+        : await applyDetailSave(prepared, detailAttempt.current, controller.signal, sourceFetch, editorSaveOptions);
       if (!valid() || controller.signal.aborted) return;
       if (confirmed === 'ready') { setMessage('상세 저장이 아직 완료되지 않았습니다. 범위를 다시 확인한 뒤 상세 저장을 눌러주세요.'); liveReview.current = null; setReview(null); return; }
       const saved = confirmed === 'completed' ? detailAttempt.current.completed! : confirmed;
-      savedResult.current = true; liveReview.current = null; setReview(null); setDone(true); setMessage('공통 항목과 모든 저장 옵션에 상세 이미지·대체 텍스트를 저장했습니다. 개별 사진 순서와 선택 옵션의 저장 전 HTML을 보관했고, 견적서 HTML 입력은 비웠습니다.'); current.current.onSaved?.(saved);
+      uiMutation.current?.confirm();uiMutation.current=null;savedResult.current = true; liveReview.current = null; setReview(null); setDone(true); setMessage('공통 항목과 모든 저장 옵션에 상세 이미지·대체 텍스트를 저장했습니다. 개별 사진 순서와 선택 옵션의 저장 전 HTML을 보관했고, 견적서 HTML 입력은 비웠습니다.'); current.current.onSaved?.(saved);
     } catch (cause) { if (valid() && !controller.signal.aborted) setError(cause instanceof Error ? cause.message : '상세 저장 결과를 확인해주세요.'); }
     finally { finish(controller); }
   }

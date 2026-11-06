@@ -1,4 +1,5 @@
 'use client';
+import type {UiMutation} from '@/app/registration-ui-reads';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { generateDetailWorkspaceHtml, type DetailWorkspaceDocument, type DetailWorkspacePhoto, type DetailWorkspaceView } from '@/app/detail-workspace';
@@ -14,7 +15,7 @@ import { DetailWorkspaceRebasePanel } from '@/app/components/detail-workspace-re
 import { DetailImageEditDialog } from '@/app/components/detail-image-edit-dialog';
 import { DetailWorkspaceImageBatchPanel, type WorkspaceImageBatchToolbarActions } from '@/app/components/detail-workspace-image-batch-panel';
 
-type Props = { productId: string; optionId: string; profileId?: string; view: QuotationFieldsView; disabled?: boolean; stageActive?: boolean; primaryDetailTools?: boolean; onCompositeToolbarActionsChange?: (next: DetailWorkspaceCompositeToolbarActions | null, retired?: DetailWorkspaceCompositeToolbarActions) => void;
+type Props = { onBeginSourceWrite?:()=>UiMutation|undefined;productId: string; optionId: string; profileId?: string; view: QuotationFieldsView; disabled?: boolean; stageActive?: boolean; primaryDetailTools?: boolean; onCompositeToolbarActionsChange?: (next: DetailWorkspaceCompositeToolbarActions | null, retired?: DetailWorkspaceCompositeToolbarActions) => void;
   onImageBatchToolbarActionsChange?: (next: WorkspaceImageBatchToolbarActions | null, retired?: WorkspaceImageBatchToolbarActions) => void;
   beforeAdopt?: () => boolean; onAdopt: (keys: string[]) => void; onBusyChange?: (busy: boolean) => void; onFilesAttached?: (view: QuotationFieldsView) => void; onRefreshRequested?: () => void; onCompositeSaved?: (view: QuotationFieldsView) => void };
 type Work = { selection: DetailWorkspaceSelection; reply: DetailWorkspaceView; document: DetailWorkspaceDocument; seedDocument?: DetailWorkspaceDocument; marginText?: string };
@@ -31,7 +32,9 @@ const marginIssue = '사진 간격은 0~200 사이의 정수로 입력해주세�
 /** Independent editable composition. Its generated HTML never replaces the
  * selected option's literal quotation HTML. */
 export function DetailWorkspacePanel(props: Props) { return <DetailWorkspaceForm key={JSON.stringify([props.productId, props.optionId, props.profileId ?? null])} {...props} />; }
-export function DetailWorkspaceForm({ productId, optionId, profileId, view, disabled = false, stageActive = true, primaryDetailTools = false, beforeAdopt, onAdopt, onBusyChange, onFilesAttached, onRefreshRequested, onCompositeSaved, onCompositeToolbarActionsChange, onImageBatchToolbarActionsChange }: Props) {
+export function DetailWorkspaceForm({ onBeginSourceWrite,productId, optionId, profileId, view, disabled = false, stageActive = true, primaryDetailTools = false, beforeAdopt, onAdopt, onBusyChange, onFilesAttached, onRefreshRequested, onCompositeSaved, onCompositeToolbarActionsChange, onImageBatchToolbarActionsChange }: Props) {
+  const uiMutation=useRef<UiMutation|null>(null);
+  const sourceFetch:typeof fetch=(url,init)=>{if((init?.method??'GET')!=='GET')uiMutation.current??=onBeginSourceWrite?.()??null;return fetch(url,init);};
   const [work, setWork] = useState<Work | null>(null), [busy, setBusy] = useState(false), [uncertain, setUncertain] = useState(false);
   const [ready, setReady] = useState(false);
   const [canRecover, setCanRecover] = useState(false);
@@ -204,10 +207,10 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
       const input = await createDetailWorkspaceSave(current.selection, current.reply, current.document); controller.signal.throwIfAborted();
       if (!valid(token) || liveWork.current !== current) return;
       const attempt: DetailWorkspaceAttempt = {}; sessionStorage.setItem(storage, JSON.stringify(input)); pending.current = { input, attempt }; setUncertain(true); setCanRecover(true);
-      const reply = await saveDetailWorkspace(input, attempt, controller.signal);
+      const reply = await saveDetailWorkspace(input, attempt, controller.signal,sourceFetch);
       if (!mounted.current || controller.signal.aborted) return;
       if (!valid(token) || liveWork.current !== current) return;
-      const next = { ...current, reply, document: reply.workspace!.document }; adoptWork(next); setMessage('편집 구성을 보관했습니다. 견적서는 유지됩니다.');
+      uiMutation.current?.confirm();uiMutation.current=null;const next = { ...current, reply, document: reply.workspace!.document }; adoptWork(next); setMessage('편집 구성을 보관했습니다. 견적서는 유지됩니다.');
       sessionStorage.removeItem(storage); pending.current = null; setUncertain(false); setCanRecover(false);
       return next;
     } catch (cause) {
@@ -223,7 +226,7 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
       if (!valid(token)) return;
       if (value.attempt.retryReady) { setRetryReady(true); setMessage('같은 요청의 보관 기록이 아직 없습니다. 현재 작업을 유지하며 같은 구성을 명시적으로 다시 보관할 수 있습니다.'); return; }
       if (value.attempt.notApplied) { setRetryReady(false); setNotApplied(true); setMessage('보관 구성은 바뀌지 않았지만 상품 저장 기준이 바뀌었습니다. 현재 작업을 유지하며 최신 기준을 먼저 확인해주세요.'); return; }
-      adoptWork({ selection: current, reply, document: reply.workspace!.document });
+      uiMutation.current?.confirm();uiMutation.current=null;adoptWork({ selection: current, reply, document: reply.workspace!.document });
       sessionStorage.removeItem(storage); pending.current = null; setUncertain(false); setCanRecover(false); setRetryReady(false); setNotApplied(false); setMessage('보관 결과를 확인했습니다. 저장 요청을 반복하지 않았습니다.');
     } catch (cause) { if (mounted.current && !controller.signal.aborted) setError(issue(cause)); }
     finally { finish(controller); }
@@ -232,10 +235,10 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
     const value = pending.current, token = generation; if (!value?.attempt.retryReady) return; const controller = begin(token, true); if (!controller) return;
     setRetryReady(false);
     try {
-      const reply = await saveDetailWorkspace(value.input, value.attempt, controller.signal);
+      const reply = await saveDetailWorkspace(value.input, value.attempt, controller.signal,sourceFetch);
       if (!mounted.current || controller.signal.aborted) return;
       if (!valid(token)) return;
-      adoptWork({ selection: value.input.selection, reply, document: reply.workspace!.document });
+      uiMutation.current?.confirm();uiMutation.current=null;adoptWork({ selection: value.input.selection, reply, document: reply.workspace!.document });
       sessionStorage.removeItem(storage); pending.current = null; setUncertain(false); setCanRecover(false); setMessage('같은 요청의 편집 구성 보관을 확인했습니다.');
     } catch (cause) {
       if (!value.attempt.pending && !value.attempt.completed) { pending.current = null; try { sessionStorage.removeItem(storage); } catch { /* An explicit rejection already confirms this retry did not write. */ } if (mounted.current) { setUncertain(false); setCanRecover(false); } }
@@ -296,11 +299,12 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
     try {
       const checked = await validateDetailWorkspaceReply(opened.context.selection, reply);
       if (!mounted.current || liveEditor.current !== opened || liveWork.current !== current || !valid(token)) return;
-      adoptWork({ selection: current.selection, reply: checked, document: checked.workspace!.document }); liveEditor.current = null; editorStatus.current = { busy: false, dirty: false };
+      uiMutation.current?.confirm();uiMutation.current=null;adoptWork({ selection: current.selection, reply: checked, document: checked.workspace!.document }); liveEditor.current = null; editorStatus.current = { busy: false, dirty: false };
       setEditor(null); setEditorBusy(false); setEditorDirty(false); setMessage('이 작업 사진과 편집 문서를 상세 구성에 보관했습니다. 상품 이미지에 추가하거나 옵션 초안으로 옮기는 동작은 별도입니다.'); controls.current.onBusyChange?.(false);
     } catch (cause) { if (mounted.current && liveEditor.current === opened) setError(issue(cause)); }
   }
   function attached(current: Attachment, reply: DetailWorkspaceView) {
+    uiMutation.current?.confirm();uiMutation.current=null;
     adoptWork({ selection: { ...current.selection, view: reply.view }, reply, document: reply.workspace!.document }); attachment.current = null; setAttaching(false); setAttachmentRetry(false);
     setMessage('편집 결과를 상품 이미지 목록에 추가했습니다. 견적서와 기존 HTML은 유지되며 옵션 초안 이동과 저장은 별도입니다.'); controls.current.onFilesAttached?.(reply.view);
   }
@@ -311,7 +315,7 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
     const controller = begin(token, retry); if (!controller) return;
     const target = old ?? { selection: current.selection, saved: current.reply, attempt: {} }; attachment.current = target; setAttaching(true); setAttachmentRetry(false);
     try {
-      const reply = await attachDetailWorkspaceFiles(target.selection, target.saved, target.attempt, controller.signal);
+      const reply = await attachDetailWorkspaceFiles(target.selection, target.saved, target.attempt, controller.signal,sourceFetch);
       if (valid(token) && !controller.signal.aborted && liveWork.current === current) attached(target, reply);
     } catch (cause) {
       if (!target.attempt.pending && !target.attempt.completed && !target.attempt.retryReady) { attachment.current = null; if (mounted.current) setAttaching(false); }
@@ -380,7 +384,7 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
         {outside && <button type="button" className="btn ghost" disabled={locked || dirty || !work.reply.workspace} onClick={() => void attachFiles()}>편집 결과를 상품 이미지에 추가</button>}
         <button type="button" className="btn ghost" disabled={locked || dirty || outside || !work.reply.workspace} onClick={() => void adoptPhotos()}>작업 사진을 선택 옵션 초안으로</button>
         <button type="button" className="btn ghost" disabled={busy || uncertain || attaching || editor !== null || compositeBusy || bannerBusy || batchBusy || disabled || !stageActive} onClick={() => { if (operation.current || compositeIO.current || bannerIO.current || batchIO.current || pending.current || attachment.current || liveEditor.current) return; liveWork.current = null; setWork(null); setMessage('현재 작업 구성을 닫았습니다. 보관한 구성과 견적서는 유지됩니다.'); setError(''); }}>현재 구성 닫기</button></div></details>
-      {work.reply.workspace && <DetailWorkspaceImageBatchPanel selection={work.selection} saved={work.reply} active={stageActive} disabled={disabled || busy || uncertain || attaching || editor !== null || bannerBusy || compositeBusy || dirty || stale}
+      {work.reply.workspace && <DetailWorkspaceImageBatchPanel onBeginSourceWrite={onBeginSourceWrite} selection={work.selection} saved={work.reply} active={stageActive} disabled={disabled || busy || uncertain || attaching || editor !== null || bannerBusy || compositeBusy || dirty || stale}
         onReviewPhoto={editPhoto}
         onToolbarActionsChange={receiveBatchToolbar}
         beforeApply={() => valid(generation) && !operation.current && !compositeIO.current && !bannerIO.current && !pending.current && !attachment.current && !liveEditor.current && !!liveWork.current && validMargin(liveWork.current) && same(liveWork.current.document, liveWork.current.reply.workspace?.document) && same(liveWork.current.selection.view, view) && controls.current.beforeAdopt?.() !== false}
@@ -389,7 +393,7 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
           if (!valid(generation) || !latest || !target || latest.reply.workspace?.revision !== target.revision || latest.reply.workspace.digest !== target.digest || !same(latest.document, latest.reply.workspace.document)) return;
           adoptWork({ ...latest, reply: { view: reply.view, workspace: reply.workspace, roles: reply.roles }, document: reply.workspace!.document });
         }} />}
-      {work.reply.workspace && <DetailWorkspaceCompositePanel key={`workspace-composite:${productId}:${optionId}:${profileId ?? ''}`} selection={{ ...work.selection, view }} saved={work.reply} onToolbarActionsChange={primaryDetailTools ? receiveCompositeToolbar : onCompositeToolbarActionsChange}
+      {work.reply.workspace && <DetailWorkspaceCompositePanel onBeginSourceWrite={onBeginSourceWrite} key={`workspace-composite:${productId}:${optionId}:${profileId ?? ''}`} selection={{ ...work.selection, view }} saved={work.reply} onToolbarActionsChange={primaryDetailTools ? receiveCompositeToolbar : onCompositeToolbarActionsChange}
         disabled={disabled || busy || uncertain || attaching || editor !== null || bannerBusy || batchBusy} stageActive={stageActive} sourceCurrent={!dirty && !stale}
         beforeApply={() => !operation.current && !bannerIO.current && !batchIO.current && !pending.current && !attachment.current && !liveEditor.current && !!liveWork.current && validMargin(liveWork.current) && same(liveWork.current.document, work.reply.workspace?.document) && same(liveWork.current.selection.view, view)}
         onBusyChange={value => { if (compositeIO.current === value) return; compositeIO.current = value; setCompositeBusy(value); controls.current.onBusyChange?.(value || bannerIO.current || batchIO.current || !!pending.current || !!attachment.current || !!liveEditor.current); }}
@@ -399,7 +403,7 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
         }}
         onLatestRead={reply => { if (!valid(generation)) return; openWork({ productId, optionId, profileId, view: reply.view }, reply); controls.current.onRefreshRequested?.(); }} />}
     </>}
-    <details className={primaryDetailTools ? 'detail-workspace-banner-settings' : undefined} open={!primaryDetailTools ? true : undefined}><summary hidden={!primaryDetailTools}>상단·하단 배너 설정</summary><DetailWorkspaceRebasePanel key={`workspace-banners:${productId}:${optionId}:${profileId ?? ''}`} selection={{ productId, optionId, profileId, view }} stageActive={stageActive}
+    <details className={primaryDetailTools ? 'detail-workspace-banner-settings' : undefined} open={!primaryDetailTools ? true : undefined}><summary hidden={!primaryDetailTools}>상단·하단 배너 설정</summary><DetailWorkspaceRebasePanel onBeginSourceWrite={onBeginSourceWrite} key={`workspace-banners:${productId}:${optionId}:${profileId ?? ''}`} selection={{ productId, optionId, profileId, view }} stageActive={stageActive}
       disabled={!ready || disabled || busy || uncertain || attaching || editor !== null || compositeBusy || batchBusy || dirty}
       beforeApply={() => !operation.current && !compositeIO.current && !batchIO.current && !pending.current && !attachment.current && !liveEditor.current
         && (!liveWork.current || validMargin(liveWork.current) && !!liveWork.current.reply.workspace && same(liveWork.current.document, liveWork.current.reply.workspace.document)) && controls.current.beforeAdopt?.() !== false}
@@ -416,7 +420,7 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
       canClose={()=>liveEditor.current===editor&&!editorStatus.current.busy&&!editorStatus.current.dirty&&!operation.current&&!pending.current&&!attachment.current&&editorCloseGuard.current?.()===true}
       onClose={()=>closePhotoEditor(editor)}><section aria-label="선택한 작업 사진 편집"><FreeImageTranslationPanel productId={productId} version={editor.context.selection.view.productVersion} imageKeys={editor.imageKeys}
       translationTarget={editor.target} workspaceContext={editor.context} active={stageActive} disabled={disabled || stale || busy}
-      beforeApply={() => liveEditor.current === editor && valid(generation) && !operation.current && !pending.current && !attachment.current && same(liveWork.current?.document, editor.context.saved.workspace?.document)}
+      beforeApply={() => {if(!(liveEditor.current === editor && valid(generation) && !operation.current && !pending.current && !attachment.current && same(liveWork.current?.document, editor.context.saved.workspace?.document)))return false;uiMutation.current??=onBeginSourceWrite?.()??null;return true;}}
       onBusyChange={value => { if (liveEditor.current !== editor || editorStatus.current.busy === value) return; editorStatus.current = { ...editorStatus.current, busy: value }; setEditorBusy(value); }}
       onEditingChange={value => { if (liveEditor.current !== editor || editorStatus.current.dirty === value) return; editorStatus.current = { ...editorStatus.current, dirty: value }; setEditorDirty(value); }}
       onCloseGuard={guard => { if (liveEditor.current === editor) editorCloseGuard.current = guard; }}
