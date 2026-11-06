@@ -3,13 +3,15 @@ import { translationBatchAdoption } from '@/app/translation-batch-adoption';
 import { adoptOptionTranslations } from '@/app/option-translation';
 import { applyOptionRows, optionFieldNames, type ProductOptions } from '@/app/product-options';
 import type { ProductContent } from '@/app/product-content';
-import { translationAttributeCoverage,type TranslationJob } from '@/app/automation/translation';
+import { translationAttributeCoverage,validateQwenTranslationDraft,type TranslationJob } from '@/app/automation/translation';
 import { translationAttributeIssue } from '@/app/translation-attribute-evidence';
 import {assertWorkersRecoveryJobQuality} from '@/app/product-translation-quality';
 import {seoGenerationReviewProof} from '@/app/seo-generation';
 
 export function integratedTranslationPlan(content: ProductContent, options: ProductOptions, job: TranslationJob, version: string, scope: 'all' | 'options' = 'all', hiddenAttributes?: boolean, intakeBrand?: string, preserveCategoryAttributes = false, optionRecoveryJobs:readonly TranslationJob[] = []) {
   assertWorkersRecoveryJobQuality(job);
+  const seoOnly=job.review.typedSeoPromptRevision==='couplus-typed-seo-v4';
+  if(seoOnly&&job.result)validateQwenTranslationDraft(job.result.draft,job.review.source,job.review.qwenTranslationPolicy,job.review.seoKeywordPolicy,job.review.seoComposition,job.review.seoCompositionContext,'all',job.review.typedSeoPromptRevision);
   const seoGeneration=seoGenerationReviewProof(job.review);
   if (options.productId !== content.productId || job.contentRevision !== content.revision) throw Error('상품 또는 번역 원문의 콘텐츠 버전이 변경되었습니다. 최신 자료를 확인해주세요.');
   let rejected=0,invalidOptions=0;
@@ -25,14 +27,14 @@ export function integratedTranslationPlan(content: ProductContent, options: Prod
   if(invalidOptions)text.skipped.push(`옵션명 500자·색상/사이즈 200자 이내의 한 줄 입력 규격과 맞지 않는 번역 ${invalidOptions}개는 적용하지 않고 원문과 기존 값을 유지했습니다. 해당 옵션은 확인·수정해주세요.`);
   const translated = job.review.seoCompositionContext&&job.result?.seoOptions!==undefined?adoptSeoOptionResults(options,job.review,job.result):adoptOptionTranslations(options, job, version, true, optionRecoveryJobs);
   const preview = [...text.preview];
-  if(!seoGeneration && content.categoryAttributes && job.review.instructionsVersion==='sourceflow-translation-v6' && job.result &&
+  if(!seoOnly && !seoGeneration && content.categoryAttributes && job.review.instructionsVersion==='sourceflow-translation-v6' && job.result &&
     translationAttributeCoverage(job.review.source,job.result.draft).missingSourceIndexes.some(index=>job.review.source.attributes[index].name.startsWith('상품속성: '))){
     // A partial refresh is not a replacement for the previously reviewed
     // category snapshot or its explicit field bindings.
     preserveCategoryAttributes=true;
     text.skipped.push('일부 상품 속성 번역이 누락되어 기존 카테고리 속성과 연결값을 유지했습니다. 생성 이력의 반환된 속성을 확인해주세요.');
   }
-  const attributes = !preserveCategoryAttributes && scope === 'all' && job.review.source.category && job.result
+  const attributes = !seoOnly && !preserveCategoryAttributes && scope === 'all' && job.review.source.category && job.result
     ? job.result.draft.attributes.filter(item => job.review.source.attributes[item.sourceIndex]?.name.startsWith('상품속성: '))
       .map(item => ({ name: item.name.trim(), value: item.value.trim(), sourceName: job.review.source.attributes[item.sourceIndex].name })).filter(item => item.name && item.value) : [];
   const categoryAttributes: ProductContent['categoryAttributes'] = attributes.length ? { categoryId: job.review.source.category!.id, jobId: job.id, values: attributes, ...(hiddenAttributes === undefined ? {} : { hiddenAttributes }) } : undefined;

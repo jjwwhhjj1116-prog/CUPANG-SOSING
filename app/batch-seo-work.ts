@@ -2,7 +2,7 @@ import { readSeoWorkspace } from '@/app/seo-workspace-client';
 import type { SeoWorkspaceView } from '@/app/seo-workspace';
 import { supplierHubCompany, type SupplierHubCompany } from '@/app/supplier-hub-company';
 import { optionTranslationBatch } from '@/app/option-translation';
-import type { TranslationJob } from '@/app/automation/translation';
+import {WORKERS_QWEN_MODEL,type TranslationJob} from '@/app/automation/translation';
 
 export type BatchSeoProduct = { id: string; title: string; updated_at?: string };
 export type BatchSeoTask = { productId: string; productTitle: string; productVersion: string; contentRevision: number; optionRevision: number;
@@ -31,13 +31,16 @@ async function snapshot(productId: string, signal: AbortSignal, fetcher: typeof 
     || !object(registration) || registration.productId !== productId || !object(registration.settings) || typeof registration.settings.brand !== 'string'
     || !object(history)||!Array.isArray(history.jobs)||history.jobs.length>20||history.jobs.some(job=>!object(job)||job.productId!==productId||!object(job.review))) throw changed();
   const fresh = await readSeoWorkspace(productId, fetcher, signal); if (!same(view, fresh)) throw changed();
-  const sourceIdentity = canonical({ title: source.title, description: source.description, attributes: source.attributes, jobId: source.jobId, sourceUrl: source.sourceUrl, requestContext: source.requestContext, brand: registration.settings.brand });
+  const configuration=history.configuration,seoOnly=object(configuration)&&configuration.model===WORKERS_QWEN_MODEL;
+  if(seoOnly&&(Object.keys(configuration).sort().join(',')!=='configured,issues,maxOutputTokens,model'||typeof configuration.configured!=='boolean'||!Number.isSafeInteger(configuration.maxOutputTokens)||Number(configuration.maxOutputTokens)<256||Number(configuration.maxOutputTokens)>8000||!Array.isArray(configuration.issues)||configuration.issues.some(value=>typeof value!=='string')))throw changed();
+  const sourceIdentity = canonical({ title: source.title, description: source.description, attributes: source.attributes, jobId: source.jobId, sourceUrl: source.sourceUrl, requestContext: source.requestContext, brand: registration.settings.brand,...(seoOnly?{seoScope:configuration}:{}) });
   const pendingOptionAttributes=optionTranslationBatch(view.options,0,history.jobs as TranslationJob[]).total;
-  return { view, brand: registration.settings.brand, sourceIdentity, source,pendingOptionAttributes };
+  return { view, brand: registration.settings.brand, sourceIdentity, source,pendingOptionAttributes,seoOnly };
 }
-function missing(view: SeoWorkspaceView, source: { title?: unknown; description?: unknown }) {
+function missing(view: SeoWorkspaceView, source: { title?: unknown; description?: unknown },seoOnly=false) {
   const result: string[] = [];
   for (const key of ['title', 'keywords', 'description'] as const) {
+    if(seoOnly&&key==='description')continue;
     const field = view.content.seo[key];
     // Explicit manual blanks are reviewed decisions, never regeneration targets.
     if (field.provenance === 'manual') continue;
@@ -48,7 +51,7 @@ function missing(view: SeoWorkspaceView, source: { title?: unknown; description?
   return result;
 }
 function taskFor(product:BatchSeoProduct,value:Awaited<ReturnType<typeof snapshot>>):BatchSeoTask|null{
-  const seoMissingFields=missing(value.view,value.source),pendingOptionAttributes=value.pendingOptionAttributes;
+  const seoMissingFields=missing(value.view,value.source,value.seoOnly),pendingOptionAttributes=value.pendingOptionAttributes;
   const missingFields=[...seoMissingFields,...(pendingOptionAttributes?[`옵션명·색상·사이즈 ${pendingOptionAttributes}개`]:[])];
   return missingFields.length?{productId:product.id,productTitle:product.title,productVersion:value.view.productVersion,contentRevision:value.view.content.revision,
     optionRevision:value.view.options.revision,brand:value.brand,sourceIdentity:value.sourceIdentity,missingFields,seoMissingFields,pendingOptionAttributes}:null;

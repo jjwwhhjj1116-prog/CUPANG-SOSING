@@ -2,7 +2,7 @@ import { productFactKey } from '@/app/product-fact-priority';
 import { quotationGeneratedSourceBasis, quotationGeneratedResultPolicy, scopedGeneratedQuotation } from '@/app/quotation-generated-adoption';
 import { readProductLabels } from '@/db/product-labels';
 import { collectionRegistrationSettings } from '@/app/collection-registration-settings';
-import { scopedQuotationOverrides, hasLegacyQuotationOverrides } from '@/app/quotation-scopes';
+import { scopedQuotationOverrides, hasLegacyQuotationOverrides, quotationScope } from '@/app/quotation-scopes';
 import { findProduct, getSettings } from '@/db/queries';
 import { readProductContent } from '@/db/product-content';
 import { readProductOptions } from '@/db/product-options';
@@ -122,7 +122,14 @@ export async function readQuotationExportSource(owner: string, productId: string
     profile: profile ? { id: profile.id, revision: profile.revision } : null, collection };
   // This also detects changes during the independent source reads before any R2 work starts.
   if (!await quotationSourcesCurrent(owner, productId, source)) throw new QuotationExportError('자료를 읽는 동안 변경이 발생했습니다. 저장 완료 후 다시 검토해주세요.', 409);
-  const generatedAdoption = scopedGeneratedQuotation(state, categoryContext.categoryId, await quotationGeneratedSourceBasis({product, content, options, settings, labelsState, hubSchema, template, categoryContext, source},quotationGeneratedResultPolicy(state,categoryContext.categoryId)));
+  let generatedAdoption = scopedGeneratedQuotation(state, categoryContext.categoryId, await quotationGeneratedSourceBasis({product, content, options, settings, labelsState, hubSchema, template, categoryContext, source},quotationGeneratedResultPolicy(state,categoryContext.categoryId)));
+  let mappedGeneratedFence:QuotationSourceGuard|null=null;
+  if(!generatedAdoption&&!profileId&&collection?.snapshot?.linked&&categoryContext.categoryId
+    &&state.categoryGenerated?.[quotationScope(categoryContext.categoryId)]?.entries.length){
+    const quotation=await (internal?internal.readQuotation(null):stableQuotationFieldsView(owner,productId,null));
+    if(JSON.stringify(quotation.source)!==JSON.stringify(source)||JSON.stringify(quotation.state)!==JSON.stringify(state))throw new QuotationExportError('생성 초안의 저장 근거가 변경되었습니다. 다시 검토해주세요.',409);
+    if(quotation.mappedGenerated){generatedAdoption=quotation.mappedGenerated.adoption;mappedGeneratedFence=quotation.mappedGenerated.source;}
+  }
   const resolved = resolveQuotationFields({categoryId:categoryContext.categoryId,categoryPath:categoryContext.categoryPath,product,content,options,settings,labelsState,labelSettingsPayload:source.settingsPayload,generatedAdoption,
     overrides:scopedQuotationOverrides(state,categoryContext.categoryId),packagingBasis:scopedQuotationPackagingBasis(state,categoryContext.categoryId),...(hubSchema?{hubSchema}:{}),...(template?{template}:{})});
   const labelObjects = new Map<string,Promise<{customMetadata?:Record<string,string>}|null>>();
@@ -142,6 +149,7 @@ export async function readQuotationExportSource(owner: string, productId: string
         throw new QuotationExportError('생성한 표시사항과 현재 저장값의 연결이 변경되었습니다. 다시 검사해주세요.',409);
       return(await productLabelsSnapshotFromSource({owner,id:productId,profileId:selectedProfileId,product,content,options,settings,state:labelsState,source:quotation.source,quotation:quotation.view})).view;
     }})];
+  if(mappedGeneratedFence&&!await quotationSourcesCurrent(owner,productId,mappedGeneratedFence))throw new QuotationExportError('생성 초안의 프로필이 변경되었습니다. 다시 검토해주세요.',409);
   if(!await quotationSourcesCurrent(owner,productId,source))throw new QuotationExportError('표시사항 파일을 확인하는 동안 저장값이 변경되었습니다. 다시 검토해주세요.',409);
   if(collectionSourceFacts){
     const current=await readCollectionResult(owner,collectionSourceFacts.jobId);

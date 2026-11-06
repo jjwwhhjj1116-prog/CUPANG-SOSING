@@ -13,7 +13,7 @@ async function fixture(raw='涤纶（聚酯纤维）',reply=output('테리폼（
   const result=data.validationDraft?{...data.validationDraft,attributes:reply.attributes}:{...plain(reply),seoOptions:[{optionId:'owned-1',name:'흰색'}]};
   return {choices:[{finish_reason:'stop',message:{role:'assistant',content:JSON.stringify(result)}}]};
  }}};
- const review=await api.prepareTranslationReview(source(raw),config,new Date(),plain(composition),plain(context));
+ const review={...await api.prepareTranslationReview(source(raw),config,new Date(),plain(composition),plain(context)),typedSeoPromptRevision:'couplus-typed-seo-v3'};const {fingerprint,...signed}=review;void fingerprint;review.fingerprint=await providedOptionModule('app/automation/model.ts').fingerprint(signed);
  return{calls,config,review,reply,result:()=>api.executeTranslation(review,config,()=>assert.fail('No network'))};
 }
 const strict=(draft,original,revision='couplus-typed-seo-v3')=>api.validateQwenTranslationDraft(draft,original,'commerce-exact-option-colors-v6','couplus-generated-v1',composition,context,'all',revision);
@@ -56,6 +56,7 @@ test('actual API rejects tampered v3 stored material while normal manual content
  const json=async(response,status)=>{assert.equal(response.status,status,await response.clone().text());return response.json();};
  try{
   const receipt=JSON.parse(h.sqlite.prepare('SELECT payload FROM collection_results').get().payload);receipt.attributes.push({name:'材质',value:'涤纶（聚酯纤维）'});h.sqlite.prepare('UPDATE collection_results SET payload=?').run(JSON.stringify(receipt));
+  const translator=h.load('app/automation/translation.ts'),prepare=translator.prepareTranslationReview;translator.prepareTranslationReview=async(...args)=>{const review=await prepare(...args);if(review.typedSeoPromptRevision){review.typedSeoPromptRevision='couplus-typed-seo-v3';const {fingerprint,...signed}=review;void fingerprint;review.fingerprint=await h.load('app/automation/model.ts').fingerprint(signed);}return review;};
   let calls=0;h.bindings.AI={run:async(_model,input)=>{calls++;const encoded=input.messages[1].content;const part=encoded.split('\n\nPRODUCT_SOURCE_JSON:\n')[1];if(!part)throw Error('fixture missing source delimiter');const data=JSON.parse(part.slice(0,-'\n/no_think'.length));const material=data.attributes.find(value=>value.name==='상품속성: 材质');return {choices:[{finish_reason:'stop',message:{role:'assistant',content:JSON.stringify(data.validationDraft??{title:f.good.title,description:'',keywords:['선글라스'],warnings:[],attributes:material?[{sourceIndex:material.sourceIndex,name:'재질',value:'테리폼（폴리에스테르）'}]:[],seoOptions:data.seoOptionTargets.map(value=>({optionId:value.id,name:translated(value.name)}))})}}]};}};
   const route=h.route;h.route=async(path,options={})=>{const body=typeof options.body==='string'?JSON.parse(options.body):options.body;return path.endsWith('/translation-apply')&&body?.action==='apply'?Response.json({error:'fixture leaves completed job unapplied'},{status:409}):route(path,options);};
   const batch=await f.run();h.route=route;

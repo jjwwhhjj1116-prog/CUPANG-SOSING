@@ -1,3 +1,4 @@
+import { getCategoryProfile } from '@/db/category-profiles';
 import { findQuotationAiJob } from '@/db/quotation-ai-jobs';
 import { readMappedQuotationSource, quotationExportFingerprint } from '@/app/exports/quotation-source';
 import { buildQuotationAiPlan, validateCurrentQuotationResult } from '@/app/quotation-ai';
@@ -52,6 +53,7 @@ export async function PUT(request: Request, context: Context) {
     const saved = await stableView(owner, id, profileId);
     if (saved.view.revision !== body.expectedRevision || saved.view.inputFingerprint !== body.expectedInputFingerprint) throw changed();
     let generatedAdoption;
+    let generatedProfile:typeof saved.source.profile|undefined;
     if (body.generatedAdoption !== undefined) {
       const proof = body.generatedAdoption as { jobId: string; targets: { optionId: string | null; fieldKey: string }[] };
       if (!proof || typeof proof !== 'object' || Array.isArray(proof) || Object.keys(proof).some(key => !['jobId', 'targets'].includes(key))
@@ -59,6 +61,11 @@ export async function PUT(request: Request, context: Context) {
         throw new FieldsError('AI 생성 초안의 실행·적용 범위를 확인해주세요.', 400);
       const job = await findQuotationAiJob(owner, id, proof.jobId, true), user = await getChatGPTUser();
       const exportSource = await readMappedQuotationSource(owner, id, profileId), selected = quotationTextConfiguration(env as QuotationTextEnvironment);
+      if(!profileId){
+        const mappedProfile=exportSource.source.profile?await getCategoryProfile(owner,exportSource.source.profile.id):null;
+        const contract=(schema:typeof exportSource.hubSchema)=>schema?JSON.stringify({...schema,observedAt:null}):null;
+        if(!mappedProfile||mappedProfile.revision!==exportSource.source.profile?.revision||contract(mappedProfile.hubSchema)!==contract(exportSource.hubSchema))throw changed();
+      }
       const sourceFingerprint = await quotationExportFingerprint(exportSource, null);
       const executionFingerprint = selected.executionPolicy ? await fingerprint({purpose:'quotation-ai-execution-v1', source:sourceFingerprint, executionPolicy:selected.executionPolicy}) : sourceFingerprint;
       const expectedFingerprint=job?.review.plan.resultPolicy?await fingerprint({purpose:'quotation-ai-result-policy-v1',source:executionFingerprint,resultPolicy:job.review.plan.resultPolicy}):executionFingerprint;
@@ -67,7 +74,10 @@ export async function PUT(request: Request, context: Context) {
         || JSON.stringify(job.review.company) !== JSON.stringify(exportSource.company)
         || job.review.member.id !== owner || job.review.member.email !== user?.membership?.email || job.review.member.role !== actor.role
         || !sameQuotationTextExecution(job.review.executionPolicy ?? null, selected.executionPolicy)
-        || JSON.stringify(job.review.source) !== JSON.stringify(saved.source) || exportSource.state.revision !== saved.view.revision)
+        || JSON.stringify(job.review.source) !== JSON.stringify(exportSource.source)
+        // The default editor keeps its collection context; the mapped AI plan also seals the recorded profile revision.
+        || JSON.stringify(exportSource.source) !== JSON.stringify({...saved.source,profile:profileId?saved.source.profile:exportSource.source.profile})
+        || exportSource.state.revision !== saved.view.revision)
         throw changed();
       let currentPlan;try{currentPlan = buildQuotationAiPlan(exportSource, job.review.scope,job.review.plan.resultPolicy??null,job.review.plan.generationPolicy??null);}catch{throw changed();}
       if (JSON.stringify({...currentPlan, createdAt:null}) !== JSON.stringify({...job.review.plan, createdAt:null})) throw changed();
@@ -84,6 +94,7 @@ export async function PUT(request: Request, context: Context) {
         if(seen.has(key)||!proposal||!job.review.plan.targets.some(row=>row.optionId===target.optionId&&row.writableFieldIds.includes(target.fieldKey)))throw new FieldsError('AI 생성 항목 범위를 확인해주세요.',400);
         seen.add(key);return {...proposal,jobId:job.id};
       });
+      generatedProfile=exportSource.source.profile;
       const basis = await quotationGeneratedSourceBasis(exportSource,job.review.plan.resultPolicy);
       const previous=scopedGeneratedQuotation(saved.state,saved.view.categoryContext.categoryId,basis)??(job.review.plan.resultPolicy?scopedGeneratedQuotation(saved.state,saved.view.categoryContext.categoryId,await quotationGeneratedSourceBasis(exportSource)):undefined);
       // Carry validated historical literals unchanged when the source binding gains its new policy.
@@ -116,7 +127,8 @@ export async function PUT(request: Request, context: Context) {
     const stageTwoMsrp=applyStageTwoMsrp(saved.view,changes,derivedIds);
     if (new TextEncoder().encode(JSON.stringify(overrides)).length > 500 * 1024) throw new FieldsError('수동 수정 자료가 저장 한도를 초과했습니다. 긴 내용을 줄여주세요.', 413);
     if(actor&&JSON.stringify(await packagingDraftActor(owner))!==JSON.stringify(actor))throw changed();
-    const source=actor&&(generatedAdoption||(env as {YOOFAM_AUTH_ENABLED?:string}).YOOFAM_AUTH_ENABLED==='true')?{...saved.source,member:actor}:saved.source;
+    const guardedSource=generatedProfile===undefined?saved.source:{...saved.source,profile:generatedProfile};
+    const source=actor&&(generatedAdoption||(env as {YOOFAM_AUTH_ENABLED?:string}).YOOFAM_AUTH_ENABLED==='true')?{...guardedSource,member:actor}:guardedSource;
     const stored = await saveQuotationFields(owner, id, overrides, saved.view.revision, source, saved.view.categoryContext.categoryId,packagingBasis??null,stageTwoMsrp??null,generatedAdoption);
     if (!stored) throw changed();
     const confirmed=await stableView(owner,id,profileId);

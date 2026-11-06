@@ -184,10 +184,11 @@ async function advance(state: SeoWorkspaceDraftState, controls: SeoWorkspaceDraf
     // usable returned fields count toward translation coverage.
     const draft = rawDraft&&job?.review.model===WORKERS_QWEN_MODEL&&!Object.hasOwn(job.review,'workersRecovery')
       ?validateQwenTranslationDraft(rawDraft,state.source,job.review.qwenTranslationPolicy,job.review.seoKeywordPolicy,job.review.seoComposition,job.review.seoCompositionContext,'all',job.review.typedSeoPromptRevision):rawDraft;
-    const missing = draft ? state.source.attributes.filter((pair, index) => !(job?.review.seoCompositionContext&&/^option(?:-(?:color|size))?:/u.test(pair.name))&&!draft.attributes.some(item => item.sourceIndex === index)).length : 0;
+    const seoOnly=job?.review.typedSeoPromptRevision==='couplus-typed-seo-v4';
+    const missing = draft&&!seoOnly ? state.source.attributes.filter((pair, index) => !(job?.review.seoCompositionContext&&/^option(?:-(?:color|size))?:/u.test(pair.name))&&!draft.attributes.some(item => item.sourceIndex === index)).length : 0;
     const typedMissing=Boolean(job?.review.seoCompositionContext&&job.result&&validateSeoOptionResults(job.result.seoOptions,job.review.seoCompositionContext.selectedOptions,job.review).warnings.some(value=>value.includes('누락')));
     const stopped = provider.kind === 'google' ? job?.result?.googleStoppedHttpStatus : undefined;
-    const partial = typedMissing||Boolean(draft && (missing || state.source.title && !draft.title.trim() || state.source.description && !draft.description.trim()
+    const partial = typedMissing||Boolean(draft && (missing || state.source.title && !draft.title.trim() || !seoOnly && state.source.description && !draft.description.trim()
       || stopped === 429 || typeof stopped === 'number' && stopped >= 500 && stopped <= 599));
     const closed = Boolean(job && ['completed', 'failed'].includes(job.status));
     return { job, closed, needsReview: true, partial, label: provider.label,

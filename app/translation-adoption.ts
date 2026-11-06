@@ -1,5 +1,5 @@
 import { validateContentInput, type ProductContent } from '@/app/product-content';
-import type { TranslationJob } from '@/app/automation/translation';
+import {validateQwenTranslationDraft,type TranslationJob} from '@/app/automation/translation';
 import {assertWorkersRecoveryJobQuality} from '@/app/product-translation-quality';
 
 export const translationSeoFields = ['title', 'keywords', 'description'] as const;
@@ -17,6 +17,10 @@ export function translationAdoptionInput(content: ProductContent, job: Translati
   assertContentTranslationScope(job);
   if (job.productId !== content.productId || job.productVersion !== productVersion || job.status !== 'completed' || !job.result) {
     throw new Error('현재 상품의 완료된 번역 결과가 아닙니다. 최신 상품과 번역 결과를 확인해주세요.');
+  }
+  if(job.review.typedSeoPromptRevision==='couplus-typed-seo-v4'){
+    validateQwenTranslationDraft(job.result.draft,job.review.source,job.review.qwenTranslationPolicy,job.review.seoKeywordPolicy,job.review.seoComposition,job.review.seoCompositionContext,'all',job.review.typedSeoPromptRevision);
+    if(fields.includes('description'))throw Error('SEO 전용 초안은 상품명과 검색어만 적용할 수 있습니다.');
   }
   if (!fields.length || new Set(fields).size !== fields.length || fields.some(field => !translationSeoFields.includes(field))) {
     throw new Error('적용할 상품명·검색어·설명을 선택해주세요.');

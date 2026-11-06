@@ -46,7 +46,8 @@ export function translationBatchAdoption(content: ProductContent, job: Translati
   const patch: ContentPatch = {};
   const preview: { name: string; before: string; after: string }[] = [];
   const skipped: string[] = [];
-  for (const field of translationSeoFields) {
+  const seoOnly=job.review.typedSeoPromptRevision==='couplus-typed-seo-v4';
+  for (const field of seoOnly?translationSeoFields.filter(field=>field!=='description'):translationSeoFields) {
     const current = content.seo[field];
     if (current.provenance === 'manual' && !(field === 'keywords' && untouchedIntakeKeywords(content, job))) { skipped.push(`${names[field]}: 직접 수정한 값을 유지합니다.`); continue; }
     const next = field === 'title' ? brandedIntakeTitle(job.result.draft.title, job.review.seoComposition?.memo.brand.split(',')[0].trim()??intakeBrand,job.review.model===WORKERS_QWEN_MODEL&&job.review.instructionsVersion==='sourceflow-translation-v6'&&!Object.hasOwn(job.review,'workersRecovery')) : job.result.draft[field];
@@ -55,7 +56,7 @@ export function translationBatchAdoption(content: ProductContent, job: Translati
     patch.seo = { ...patch.seo, ...validated.patch.seo };
     preview.push({ name: names[field], before: display(current.value), after: display(next) });
   }
-  const labels = suggestTranslationLabels(content, job, version);
+  const labels = seoOnly?{mappings:[],skipped:[]}:suggestTranslationLabels(content, job, version);
   skipped.push(...labels.skipped);
   if (labels.mappings.length) {
     const effectiveTitle = patch.seo?.title ?? content.seo.title.value;
@@ -86,7 +87,7 @@ export function translationBatchAdoption(content: ProductContent, job: Translati
     !Object.hasOwn(patch.label ?? {}, 'productName') && labelName.value !== effectiveTitle) {
     preview.push({ name: '품명 · SEO 상품명 연동', before: labelName.value, after: effectiveTitle });
   }
-  if (!hasSourceName && !labelName.value.trim() && labelName.provenance !== 'manual'
+  if (!seoOnly && !hasSourceName && !labelName.value.trim() && labelName.provenance !== 'manual'
     && !content.labelProductNameLinked && !patch.label?.productName && effectiveTitle.trim()) {
     patch.label = { ...patch.label, productName: effectiveTitle };
     // A first automatic title copy should keep following future SEO edits.

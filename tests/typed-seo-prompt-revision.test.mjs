@@ -32,7 +32,7 @@ const approvedTypedV1={request:'cf09f027bb269b885cedcd259f6ad1c05f4ee9fa7a324e53
 
 test('new typed SEO approval seals the prompt revision while ordinary and context-free reviews keep their legacy identity',async()=>{
  const f=fixture(),review=await api.prepareTranslationReview(plain(source),f.config,new Date('2026-11-06T00:00:00.000Z'),plain(composition),plain(context));
- assert.equal(review.typedSeoPromptRevision,'couplus-typed-seo-v3');
+ assert.equal(review.typedSeoPromptRevision,'couplus-typed-seo-v4');
  const {fingerprint,...signed}=review;assert.equal(await model.fingerprint(signed),fingerprint);
  delete signed.typedSeoPromptRevision;assert.notEqual(await model.fingerprint(signed),fingerprint,'A prompt change requires a different approval fingerprint');
  for(const [policy,targets]of [[undefined,undefined],[plain(composition),undefined]]){
@@ -45,8 +45,8 @@ test('new typed SEO approval seals the prompt revision while ordinary and contex
  }
 });
 
-test('actual typed Qwen transport consistently requests six keys and gives selected facts final priority',async()=>{
- const f=fixture(),review=await api.prepareTranslationReview(plain(source),f.config,new Date(),plain(composition),plain(context));
+test('approved typed v3 Qwen transport consistently requests six keys and gives selected facts final priority',async()=>{
+ const f=fixture(),review={...await api.prepareTranslationReview(plain(source),f.config,new Date(),plain(composition),plain(context)),typedSeoPromptRevision:'couplus-typed-seo-v3'};
  const result=await api.executeTranslation(review,f.config,noNetwork),request=f.calls[0];
  assert.deepEqual(Array.from(request.response_format.json_schema.required),keys);
  const directive=request.messages[1].content.match(/these (five|six) keys: ([^.]+)\./u);
@@ -84,8 +84,8 @@ test('already approved typed v1 reviews preserve the whole provider pipeline and
  assert.equal(JSON.stringify(review),before);
 });
 
-test('new typed SEO keeps the source-supported item noun and asks for additional relevant search candidates without changing validation',async()=>{
- const f=fixture(),review=await api.prepareTranslationReview(plain(source),f.config,new Date(),plain(composition),plain(context));
+test('approved typed v3 SEO keeps the source-supported item noun and asks for additional relevant search candidates without changing validation',async()=>{
+ const f=fixture(),review={...await api.prepareTranslationReview(plain(source),f.config,new Date(),plain(composition),plain(context)),typedSeoPromptRevision:'couplus-typed-seo-v3'};
  const result=await api.executeTranslation(review,f.config,noNetwork),system=f.calls[0].messages[0].content;
  assert.match(system,/주품목 명사는 effectiveTargetKeyword와 categoryLabel이 가리키는 실제 상품/u);
  assert.match(system,/원제목이나 관련어의 다른 품목으로 바꾸지 마세요/u);
@@ -100,7 +100,7 @@ test('new typed SEO keeps the source-supported item noun and asks for additional
 });
 
 test('unknown or context-free typed prompt revisions are rejected before any provider request',async()=>{
- for(const patch of [{typedSeoPromptRevision:'unreviewed-revision'},...['couplus-typed-seo-v1','couplus-typed-seo-v2','couplus-typed-seo-v3'].flatMap(typedSeoPromptRevision=>[{typedSeoPromptRevision,seoCompositionContext:undefined},{typedSeoPromptRevision,seoComposition:undefined}])]){
+ for(const patch of [{typedSeoPromptRevision:'unreviewed-revision'},...['couplus-typed-seo-v1','couplus-typed-seo-v2','couplus-typed-seo-v3','couplus-typed-seo-v4'].flatMap(typedSeoPromptRevision=>[{typedSeoPromptRevision,seoCompositionContext:undefined},{typedSeoPromptRevision,seoComposition:undefined}])]){
   const f=fixture(),review={...historicalReview(),...patch};
   await assert.rejects(api.executeTranslation(review,f.config,noNetwork),error=>error.code==='UNSUPPORTED_INSTRUCTIONS'&&!error.mayHaveBeenCharged);
   assert.equal(f.calls.length,0);

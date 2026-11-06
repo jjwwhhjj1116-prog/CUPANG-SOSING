@@ -2,7 +2,7 @@ import { quotationGeneratedSourceBasis, quotationGeneratedResultPolicy, scopedGe
 import { readProductLabels } from '@/db/product-labels';
 import { collectionRegistrationSettings } from '@/app/collection-registration-settings';
 import { registrationBrandChoices } from '@/app/quotation-brand-choices';
-import { scopedQuotationOverrides, hasLegacyQuotationOverrides } from '@/app/quotation-scopes';
+import { scopedQuotationOverrides, hasLegacyQuotationOverrides, quotationScope } from '@/app/quotation-scopes';
 import { getChatGPTUser } from '@/app/chatgpt-auth';
 import { findProduct, getSettings } from '@/db/queries';
 import { readProductContent } from '@/db/product-content';
@@ -97,7 +97,21 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
     contentRevision: content.revision, optionRevision: options.revision, labelRevision: labelsState.revision, settingsPayload: savedSettings?.payload ?? null,
     profile: profile ? { id: profile.id, revision: profile.revision } : null, collection };
   const inputs = { categoryId: categoryContext.categoryId, categoryPath: categoryContext.categoryPath, product, content, options, settings, labelsState,labelSettingsPayload:source.settingsPayload,...(hubSchema?{hubSchema}:{}),...(template?{template}:{}) };
-  const generatedAdoption = scopedGeneratedQuotation(state, categoryContext.categoryId, await quotationGeneratedSourceBasis({ ...inputs, categoryContext, source },quotationGeneratedResultPolicy(state,categoryContext.categoryId)));
+  let generatedProfileFence:QuotationSourceGuard|null=null;
+  let generatedAdoption = scopedGeneratedQuotation(state, categoryContext.categoryId, await quotationGeneratedSourceBasis({ ...inputs, categoryContext, source },quotationGeneratedResultPolicy(state,categoryContext.categoryId)));
+  // Older collection-context layers remain first; mapped jobs seal the exact recorded profile instead.
+  const storedGenerated=categoryContext.categoryId?state.categoryGenerated?.[quotationScope(categoryContext.categoryId)]:undefined;
+  if(!generatedAdoption&&!profileId&&collection?.snapshot?.linked&&categoryContext.profileId&&storedGenerated?.entries.length){
+    const mapped=await getCategoryProfile(owner,categoryContext.profileId);
+    const contract=(schema:typeof hubSchema)=>schema?JSON.stringify({...schema,observedAt:null}):null;
+    if(mapped&&mapped.id===categoryContext.profileId&&mapped.categoryId===categoryContext.categoryId
+      &&JSON.stringify(mapped.categoryPath)===JSON.stringify(categoryContext.categoryPath)
+      &&contract(mapped.hubSchema)===contract(hubSchema)){
+      const mappedSource={...source,profile:{id:mapped.id,revision:mapped.revision}};
+      generatedProfileFence=mappedSource;
+      generatedAdoption=scopedGeneratedQuotation(state,categoryContext.categoryId,await quotationGeneratedSourceBasis({...inputs,categoryContext:{...categoryContext,source:'profile'},source:mappedSource},quotationGeneratedResultPolicy(state,categoryContext.categoryId)));
+    }
+  }
   const detailConfig = publicDetailConfig(env as Parameters<typeof publicDetailConfig>[0]);
   const detailVersion=detailConfig?await publicDetailVersion(detailConfig):null;
   const overrides = scopedQuotationOverrides(state, categoryContext.categoryId);
@@ -137,7 +151,8 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
   if(actor)try{validationBinding=await quotationValidationSourceBinding({actor,product,content,options,state,source,schema:resolved.schema,categoryContext,detailVersion,validation:savedQuotationValidationResult(view,id,profileId)});}catch{/* Unconfirmed metadata cannot complete a quotation. */}
   const checked=parseSavedQuotationValidation(state.savedValidation);
   if(checked&&validationBinding&&state.savedValidation?.sourceBinding===validationBinding){view.savedValidation=checked;if(!currentSavedQuotationValidation(view,id))delete view.savedValidation;}
-  return { view, source, options, labelsState, registrationLayout,state,validationBinding,validationActor:actor };
+  if(generatedProfileFence&&!await quotationSourcesCurrent(owner,id,generatedProfileFence))throw changed();
+  return { view, source, options, labelsState, registrationLayout,state,validationBinding,validationActor:actor,...(generatedAdoption&&generatedProfileFence?{mappedGenerated:{adoption:generatedAdoption,source:generatedProfileFence}}:{}) };
 }
 export async function stableQuotationFieldsView(owner: string, id: string, profileId: string | null) {
   const saved = await snapshot(owner, id, profileId);
