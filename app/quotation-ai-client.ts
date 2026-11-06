@@ -5,12 +5,15 @@ import { isCouplusNotApplicableValue } from '@/app/couplus-quotation-defaults';
 import {quotationTextModel,validQuotationTextExecution,type QuotationTextExecution} from '@/app/quotation-text-execution';
 
 import { unsupportedProductMaterial } from '@/app/product-material-evidence';
-import { productFactKey, productFactPriorityIssue } from '@/app/product-fact-priority';
+import { productFactKey, productFactPriorityIssue, productFactQuantityTokens } from '@/app/product-fact-priority';
 import { currentLabelNoticeNames } from '@/app/current-label-attribute-literals';
 import { seoCurrentLiterals } from '@/app/seo-current-literals';
 import type { QuotationAiPlan } from '@/app/quotation-ai';
 
-export const QUOTATION_GENERATION_POLICY = 'option-notice-material-evidence-v1' as const;
+export const LEGACY_QUOTATION_GENERATION_POLICY = 'option-notice-material-evidence-v1' as const;
+export const QUOTATION_GENERATION_POLICY = 'option-notice-material-evidence-v2' as const;
+export type QuotationGenerationPolicy=typeof QUOTATION_GENERATION_POLICY|typeof LEGACY_QUOTATION_GENERATION_POLICY;
+export const validQuotationGenerationPolicy=(value:unknown):value is QuotationGenerationPolicy=>value===QUOTATION_GENERATION_POLICY||value===LEGACY_QUOTATION_GENERATION_POLICY;
 export type QuotationGenerationFacts = {
   material: { name: string; value: string; provenance?: string }[];
   options: { optionId: string | null; color: string; translatedName: string; originalName?:string }[];
@@ -59,6 +62,14 @@ export function quotationAiGenerationIssue(field: QuotationField, optionId: stri
   if (materialField(field)) {
     const priority = productFactPriorityIssue(value, 'material', '', facts.material);
     if (priority || unsupportedProductMaterial(value, facts.material.map(pair => pair.value).join('\n'), true)) return priority ?? '상품 원문의 명시된 재질 근거를 확인해주세요.';
+    if(facts.material.some(pair=>pair.provenance==='collection-source')){
+      const source=facts.material.map(pair=>pair.value).join('\n');
+      // Reuse explicit-field checks without relabeling seller receipt provenance as detail evidence.
+      const issue=productFactPriorityIssue(value,'material',facts.material.map(pair=>`material: ${pair.value}`).join('\n'));
+      const percents=(text:string)=>Array.from(text.matchAll(/(\d+(?:[.,]\d+)*)\s*[%％]/gu),match=>'%:'+match[1]);
+      const units=new Set([...productFactQuantityTokens(source),...percents(source)]);
+      if(issue||[...productFactQuantityTokens(value),...percents(value)].some(token=>!units.has(token)))return issue??'원문 재질의 수치·단위 근거를 확인해주세요.';
+    }
   }
   if (quotationAiOptionColorNotice(field)) {
     const own = facts.options.find(option => option.optionId === optionId);
@@ -169,7 +180,7 @@ function writableAiField(field: QuotationField) {
 }
 /** Recheck every proposed target before placing anything in an unsaved editor. */
 export function quotationAiProposalChanges(view: QuotationFieldsView, job: QuotationAiJobView, fingerprint: string) {
-  if(job.generationPolicy!==undefined&&(job.generationPolicy!==QUOTATION_GENERATION_POLICY||!job.generationFacts))throw Error('견적 생성 정책과 근거를 확인해주세요.');
+  if(job.generationPolicy!==undefined&&(!validQuotationGenerationPolicy(job.generationPolicy)||!job.generationFacts))throw Error('견적 생성 정책과 근거를 확인해주세요.');
   if(job.resultPolicy!==undefined&&(job.resultPolicy!==CURRENT_QUOTATION_RESULT_POLICY||job.result?.resultPolicy!==job.resultPolicy))throw Error('견적 결과 규칙이 다릅니다.');
   if(job.executionPolicy!==undefined&&!validQuotationTextExecution(job.executionPolicy))throw Error('견적 AI 실행 정책을 확인해주세요.');
   if(job.result&&job.result.model!==quotationTextModel(job.executionPolicy)||job.model!==undefined&&job.model!==quotationTextModel(job.executionPolicy))throw Error('견적 AI의 검토 모델과 결과 모델이 다릅니다.');

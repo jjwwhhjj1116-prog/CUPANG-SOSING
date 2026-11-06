@@ -1,3 +1,4 @@
+import { productFactKey } from '@/app/product-fact-priority';
 import { quotationGeneratedSourceBasis, quotationGeneratedResultPolicy, scopedGeneratedQuotation } from '@/app/quotation-generated-adoption';
 import { readProductLabels } from '@/db/product-labels';
 import { collectionRegistrationSettings } from '@/app/collection-registration-settings';
@@ -35,6 +36,18 @@ export class QuotationExportError extends Error {
   constructor(message: string, public status: number) { super(message); }
 }
 
+type CollectionSourceFacts={jobId:string;offerId:string;fingerprint:string;attributes:{name:string;value:string;sourceName:string}[]};
+function receiptMaterialAttributes(attributes:unknown):CollectionSourceFacts['attributes']{
+  if(attributes===undefined)return[];
+  if(!Array.isArray(attributes)||attributes.length>50)throw new QuotationExportError('수집 원문의 속성 범위를 확인해주세요.',409);
+  return attributes.flatMap(pair=>{
+    if(!pair||typeof pair.name!=='string')return[];
+    const name=pair.name.replace(/^(?:(?:상품속성|商品属性)\s*[:：]\s*)+/u,'').trim();
+    if(productFactKey(name)!=='material')return[];
+    if(pair.name.length>200||typeof pair.value!=='string'||!pair.value.trim()||pair.value.length>2000||/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(pair.name+pair.value))throw new QuotationExportError('수집 원문의 재질 속성을 확인해주세요.',409);
+    return[{name:'material',value:pair.value,sourceName:pair.name}];
+  });
+}
 /** A saved-source snapshot shared by both downloads. No automatic values are written back. */
 export async function readQuotationExportSource(owner: string, productId: string, profileId: string | null, internal?:{readQuotation:(profileId:string|null)=>ReturnType<typeof stableQuotationFieldsView>}) {
   const user = await getChatGPTUser();
@@ -50,6 +63,7 @@ export async function readQuotationExportSource(owner: string, productId: string
   let settings = savedRegistrationSettings(savedSettings ? JSON.parse(savedSettings.payload) : null);
   let categoryContext: QuotationFieldsView['categoryContext'] = { source: 'unknown', profileId: null, categoryId: null, categoryPath: [] };
   let collection: QuotationSourceGuard['collection'] = null;
+  let collectionSourceFacts:CollectionSourceFacts|undefined;
   let hubSchema=profile?.hubSchema;
   let template=profile?.template;
   let sourceGaps: CollectionSourceGap[] = [];
@@ -68,6 +82,13 @@ export async function readQuotationExportSource(owner: string, productId: string
         const receipt = await readCollectionResult(owner, captured.id);
         if (receipt && receipt.result.offerId !== offerId) throw new QuotationExportError('상품에 연결된 수집 원문의 상품번호가 다릅니다. 수집 기록을 확인해주세요.', 409);
         if (receipt) sourceGaps = collectionSourceGaps(receipt.result);
+        if(receipt&&company){
+          const attributes=receiptMaterialAttributes(receipt.result.attributes);
+          if(attributes.length){
+            if(receipt.result.sourceUrl!==product.source_url)throw new QuotationExportError('상품과 수집 원문의 URL 연결이 다릅니다.',409);
+            collectionSourceFacts={jobId:captured.id,offerId,fingerprint:await fingerprint(receipt.result),attributes};
+          }
+        }
       }
       if (captured?.linked) settings = collectionRegistrationSettings(settings, payload?.settings);
       if (captured?.linked && profile) {
@@ -122,7 +143,11 @@ export async function readQuotationExportSource(owner: string, productId: string
       return(await productLabelsSnapshotFromSource({owner,id:productId,profileId:selectedProfileId,product,content,options,settings,state:labelsState,source:quotation.source,quotation:quotation.view})).view;
     }})];
   if(!await quotationSourcesCurrent(owner,productId,source))throw new QuotationExportError('표시사항 파일을 확인하는 동안 저장값이 변경되었습니다. 다시 검토해주세요.',409);
-  return { product, content, options, settings, labelsState, ...(generatedAdoption?{generatedAdoption}:{}), state: { ...state, overrides: scopedQuotationOverrides(state, categoryContext.categoryId) }, savedScopes: state, profile, categoryContext, source, company,
+  if(collectionSourceFacts){
+    const current=await readCollectionResult(owner,collectionSourceFacts.jobId);
+    if(!current||await fingerprint(current.result)!==collectionSourceFacts.fingerprint)throw new QuotationExportError('수집 원문을 읽는 동안 재질 근거가 변경되었습니다. 다시 확인해주세요.',409);
+  }
+  return { product, content, options, settings, labelsState, ...(collectionSourceFacts?{collectionSourceFacts}:{}), ...(generatedAdoption?{generatedAdoption}:{}), state: { ...state, overrides: scopedQuotationOverrides(state, categoryContext.categoryId) }, savedScopes: state, profile, categoryContext, source, company,
     ...(sourceGaps.length ? { sourceGaps } : {}),...(hubSchema?{hubSchema}:{}),...(template?{template}:{}),...(generatedProductLabelIssues.length?{generatedProductLabelIssues}:{}) };
 }
 export type QuotationExportSource = Awaited<ReturnType<typeof readQuotationExportSource>>;
@@ -138,7 +163,7 @@ export async function readMappedQuotationSource(owner: string, productId: string
     throw new QuotationExportError('상품 추가 시 선택한 카테고리와 견적서 양식이 다릅니다. 선택한 카테고리 양식을 사용해주세요.', 409);
   }
   const saved = await readQuotationExportSource(owner, productId, selectedProfileId);
-  if (JSON.stringify(saved.source.collection) !== JSON.stringify(captured.source.collection)
+  if (JSON.stringify(saved.collectionSourceFacts)!==JSON.stringify(captured.collectionSourceFacts) || JSON.stringify(saved.source.collection) !== JSON.stringify(captured.source.collection)
     || (linked && (saved.profile?.id !== context.profileId || saved.profile.categoryId !== context.categoryId
       || JSON.stringify(saved.profile.categoryPath) !== JSON.stringify(context.categoryPath)))) {
     throw new QuotationExportError('수집 당시 카테고리와 현재 양식이 달라졌습니다. 카테고리를 확인하고 다시 검사해주세요.', 409);
@@ -164,6 +189,8 @@ export async function quotationExportFingerprint(saved: QuotationExportSource, d
   const state={...saved.state},savedScopes=saved.savedScopes?{...saved.savedScopes}:undefined;
   delete state.savedValidation;if(savedScopes)delete savedScopes.savedValidation;
   const fingerprintSaved={...saved,...(saved.source?{source:{...saved.source}}:{})};
+  // Receipt evidence belongs only to v2 generation plans, never historical export identities.
+  delete fingerprintSaved.collectionSourceFacts;
   if(!quotationLabelsHaveBindings(saved.labelsState))delete (fingerprintSaved as Partial<typeof saved>).labelsState;
   if(!quotationLabelsHaveBindings(saved.labelsState)&&fingerprintSaved.source)delete fingerprintSaved.source.labelRevision;
   return fingerprint({ format: 'sourceflow-quotation-fields-v1', saved: { ...fingerprintSaved, state,...(savedScopes?{savedScopes}:{}),product: productFingerprintSource(saved.product), settings: savedProductFingerprintSettings(saved.settings) }, dataStartRow,

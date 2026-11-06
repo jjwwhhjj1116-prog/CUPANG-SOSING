@@ -22,7 +22,7 @@ export type TranslationReview = {
   seoKeywordPolicy?: 'couplus-generated-v1';
   seoComposition?: SeoCompositionPolicy;
   seoCompositionContext?:SeoCompositionContext;
-  typedSeoPromptRevision?:'couplus-typed-seo-v1'; // New approvals only; absent revisions retain their approved prompt.
+  typedSeoPromptRevision?:'couplus-typed-seo-v1'|'couplus-typed-seo-v2'; // New approvals only; older revisions retain their approved prompt.
   qwenTranslationPolicy?: 'commerce-literal-v2' | 'commerce-json-schema-v3' | 'commerce-literal-schema-v4' | 'commerce-partial-attributes-v5' | 'commerce-exact-option-colors-v6'; // Preserve historical approved prompts and transport.
   optionsRetry?: { retryKey: string; optionRevision: number; scope: 'options' }; // Server-created, option-only free retry proof.
   intakeOptions?: { initialJobId: string; optionRevision: number; scope: 'options' }; // Server-created automatic continuation, distinct from an explicit retry.
@@ -121,7 +121,7 @@ export async function prepareTranslationReview(source: TranslationSource, config
   const details = { ...(composition?{seoComposition:validateSeoCompositionPolicy(composition),...(compositionContext?{seoCompositionContext:structuredClone(compositionContext)}:{})}:{}),reviewId:crypto.randomUUID(),model: config.model, maxOutputTokens: config.maxOutputTokens, source,
     instructionsVersion: 'sourceflow-translation-v6' as const, destination: translationDestination(config),
     ...(config.provider==='workers-ai'&&config.model===WORKERS_QWEN_MODEL?{qwenTranslationPolicy:'commerce-exact-option-colors-v6' as const,seoKeywordPolicy:'couplus-generated-v1' as const}:{}),
-    ...(composition&&compositionContext&&config.provider==='workers-ai'&&config.model===WORKERS_QWEN_MODEL?{typedSeoPromptRevision:'couplus-typed-seo-v1' as const}:{}),
+    ...(composition&&compositionContext&&config.provider==='workers-ai'&&config.model===WORKERS_QWEN_MODEL?{typedSeoPromptRevision:'couplus-typed-seo-v2' as const}:{}),
     inputCharacters: JSON.stringify(source).length,
     paidNotice: '승인 후 실행 버튼을 누르면 이 원문을 OpenAI에 보내는 유료 API 요청 1회가 발생합니다. 입력 및 출력 토큰 사용량에 따라 청구되며 정확한 금액은 현재 확정하지 않았습니다. 실패·시간초과도 비용이 발생했을 수 있으며 자동 재시도하지 않습니다.',
     pricingUrl: 'https://developers.openai.com/api/docs/pricing', expiresAt: new Date(now.getTime() + 15 * 60 * 1000).toISOString() };
@@ -153,10 +153,11 @@ title은 자연스러운 한국어 상품명 100자 이내로 작성하세요. �
 제조사·수입자의 법정 상호만은 value의 원문을 정확히 보존하고 name은 한국어로 쓰며 warnings에 원문 보존을 알리세요. 이 예외를 상품명·검색어·옵션에 적용하지 마세요. HTML·Markdown·추론·설명 없이 title,keywords,description,attributes,warnings 키의 JSON 객체 하나만 반환하세요. warnings도 한국어입니다.
 형식 예시(다른 상품): 입력 title="棉袜 A1", 옵션 {sourceIndex:0,outputName:"옵션명",value:"红色 2 pcs"} → {"title":"면 양말 A1","keywords":["면 양말"],"description":"","attributes":[{"sourceIndex":0,"name":"옵션명","value":"빨강 2 pcs"}],"warnings":[]}`;
 const qwenTerminologyInstructions='\n防 계열은 구분하세요: 防滑=미끄럼 방지, 防磨=마찰 방지, 防掉跟=뒤꿈치 벗겨짐 방지입니다. 防水만 방수, 防潮만 방습이며 앞의 세 기능과 바꾸거나 함께 추정하지 마세요.';
+const typedSeoItemInstructions='\n주품목 명사는 effectiveTargetKeyword와 categoryLabel이 가리키는 실제 상품 종류에 맞춰 유지하세요. 원제목이나 관련어의 다른 품목으로 바꾸지 마세요. effectiveTargetKeyword가 비어 있거나 none으로 표시되면 선택 옵션·특징·분류에서 확인되는 실제 품목을 쓰세요. 타겟과 분류가 실제 상품 근거와 충돌하면 사실을 지어내거나 타겟을 뒤에 덧붙이지 말고 warnings에 알리세요. 제공된 관련어 중 실제 상품에 맞는 것을 활용하고, 추가로 상품에 맞는 관련 검색어도 생성하세요. 관련어를 새 품목·규격·효능·재질의 사실 근거로 사용하지 마세요.';
 
 function currentTypedSeoPrompt(review:TranslationReview):boolean{
   if(review.typedSeoPromptRevision===undefined)return false;
-  if(review.typedSeoPromptRevision!=='couplus-typed-seo-v1'||review.model!==WORKERS_QWEN_MODEL||review.destination!=='Cloudflare Workers AI'||review.instructionsVersion!=='sourceflow-translation-v6'||!review.seoComposition||!review.seoCompositionContext||Object.hasOwn(review,'workersRecovery'))throw new TranslationError('UNSUPPORTED_INSTRUCTIONS','지원하지 않는 SEO 검토 지시입니다. 새 요청을 검토해주세요.');
+  if((review.typedSeoPromptRevision!=='couplus-typed-seo-v1'&&review.typedSeoPromptRevision!=='couplus-typed-seo-v2')||review.model!==WORKERS_QWEN_MODEL||review.destination!=='Cloudflare Workers AI'||review.instructionsVersion!=='sourceflow-translation-v6'||!review.seoComposition||!review.seoCompositionContext||Object.hasOwn(review,'workersRecovery'))throw new TranslationError('UNSUPPORTED_INSTRUCTIONS','지원하지 않는 SEO 검토 지시입니다. 새 요청을 검토해주세요.');
   return true;
 }
 
@@ -212,7 +213,7 @@ export function buildTranslationRequest(review: TranslationReview,continuation?:
   const seoTargets=continuation?.targets??review.seoCompositionContext?.selectedOptions.slice(0,20);
   const seoSchema=seoTargets?{...schema,properties:{...schema.properties,...(!review.source.attributes.some(value=>!workersRecoveryOptionMetadataLabel(value.name))?{attributes:{type:'array',maxItems:0,items:{type:'object'}}}:{}),seoOptions:{type:'array',maxItems:seoTargets.length,items:{type:'object',additionalProperties:false,properties:{optionId:{type:'string',enum:seoTargets.map(target=>target.id)},name:{type:'string',maxLength:500},color:{type:'string',maxLength:200},size:{type:'string',maxLength:200}},required:['optionId']}}},required:[...schema.required,'seoOptions']}:schema;
   const finalSchema=continuation?.optionOnly?{...seoSchema,properties:{...seoSchema.properties,title:{type:'string',maxLength:0},description:{type:'string',maxLength:0},keywords:{type:'array',maxItems:0,items:{type:'string'}},attributes:{type:'array',maxItems:0,items:{type:'object'}}}}:seoSchema;
-  const compositionInstructions=(review.seoComposition?currentSeoInstructions:'')+(seoTargets?'\nseoOptionTargets는 서버에 저장된 선택 옵션입니다. 응답 seoOptions에 optionId 그대로와 한국어 name/color/size를 반환하세요. 순서는 바꿔도 되지만 ID를 새로 만들거나 합치지 마세요. manualName/manualColor/manualSize 값은 직접 수정한 입력이므로 그대로 유지하세요. 일반 attributes는 sourceIndex를 유지하며 옵션을 attributes로 반환하지 마세요.':'')+(continuation?.optionOnly?'\n후속 옵션 전용 요청입니다. 첫 번역 예시의 용어를 유지하고 이번 attributes만 번역하세요. 상품명·설명은 빈 문자열, keywords는 빈 배열입니다. SEO를 다시 생성하지 마세요.':'');
+  const compositionInstructions=(review.seoComposition?currentSeoInstructions:'')+(seoTargets?'\nseoOptionTargets는 서버에 저장된 선택 옵션입니다. 응답 seoOptions에 optionId 그대로와 한국어 name/color/size를 반환하세요. 순서는 바꿔도 되지만 ID를 새로 만들거나 합치지 마세요. manualName/manualColor/manualSize 값은 직접 수정한 입력이므로 그대로 유지하세요. 일반 attributes는 sourceIndex를 유지하며 옵션을 attributes로 반환하지 마세요.':'')+(continuation?.optionOnly?'\n후속 옵션 전용 요청입니다. 첫 번역 예시의 용어를 유지하고 이번 attributes만 번역하세요. 상품명·설명은 빈 문자열, keywords는 빈 배열입니다. SEO를 다시 생성하지 마세요.':'')+(review.typedSeoPromptRevision==='couplus-typed-seo-v2'&&!continuation?.optionOnly?typedSeoItemInstructions:'');
   let cohortQwenInstructions=review.seoComposition?qwenKoreanInstructions.replace('상품명 100자 이내','상품명 최대70자 목표'):qwenKoreanInstructions;
   if(typedSeoPrompt)cohortQwenInstructions=cohortQwenInstructions.slice(0,cohortQwenInstructions.indexOf('\n형식 예시(다른 상품):')).replace('title,keywords,description,attributes,warnings 키의 JSON 객체','title,keywords,description,attributes,warnings,seoOptions 여섯 키의 JSON 객체')+'\nJSON 객체 예: {"title":"","keywords":[],"description":"","attributes":[],"warnings":[],"seoOptions":[]}\n이 예시는 구조만 보여줍니다. 실제 상품의 SEO와 선택 옵션 번역을 채우고 seoOptions의 optionId는 입력 ID 그대로 반환하세요.';
   return { model: review.model, store: false, max_output_tokens: review.maxOutputTokens,

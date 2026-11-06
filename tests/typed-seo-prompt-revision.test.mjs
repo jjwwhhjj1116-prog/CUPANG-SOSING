@@ -28,10 +28,11 @@ function historicalReview(){
 }
 const noNetwork=()=>assert.fail('No external model, app or database request is allowed');
 const approvedHistorical={request:'1c64c61bbc8708de4b2504eebdbb7315b7a6bed824ca41002f08a9c79d13be1f',transport:'e9276642b226b815c7374fc14deaa3628d3fe60b580ec2d370e8c64bcc0d6042',fingerprint:'cd95fc00bb2a5584f92b2d3a9f0bc4737f5e07e65817359cdd260f36081954dd'};
+const approvedTypedV1={request:'cf09f027bb269b885cedcd259f6ad1c05f4ee9fa7a324e53cb9edc956199fc42',transport:'af0f94261dfcd0908af9f6ac08988fc885bbdf38b129806c1fae8e659537c053',fingerprint:'3b43e6dbc138e87330df047dd135f354c47a49d74c956c8f7de17f55b4fe4a20',pipeline:'0cfd5f5b67e4f6fcd2596f7cfc756cc504a0ee1de625d1b70b8db67b92bdb4fb',validation:'d3c2192b1076bdbfaf7c2d61094b2d82d8c40d201df6c7c8907bf40001a5cc23'};
 
 test('new typed SEO approval seals the prompt revision while ordinary and context-free reviews keep their legacy identity',async()=>{
  const f=fixture(),review=await api.prepareTranslationReview(plain(source),f.config,new Date('2026-11-06T00:00:00.000Z'),plain(composition),plain(context));
- assert.equal(review.typedSeoPromptRevision,'couplus-typed-seo-v1');
+ assert.equal(review.typedSeoPromptRevision,'couplus-typed-seo-v2');
  const {fingerprint,...signed}=review;assert.equal(await model.fingerprint(signed),fingerprint);
  delete signed.typedSeoPromptRevision;assert.notEqual(await model.fingerprint(signed),fingerprint,'A prompt change requires a different approval fingerprint');
  for(const [policy,targets]of [[undefined,undefined],[plain(composition),undefined]]){
@@ -70,11 +71,36 @@ test('already approved typed reviews without a revision preserve their exact req
  const {fingerprint,...signed}=review;void fingerprint;assert.equal(await model.fingerprint(signed),approvedHistorical.fingerprint);
  await api.executeTranslation(review,f.config,noNetwork);
  assert.equal(digest(f.calls[0]),approvedHistorical.transport);
+ assert.equal(digest(f.calls),'155bd3db409292935db50e51a6aae6b52a9f266530b7d60d6d6bb4b60b86c7b7');
  assert.equal(JSON.stringify(review),before);
 });
 
+test('already approved typed v1 reviews preserve the whole provider pipeline and approval identity',async()=>{
+ const f=fixture(),review={...historicalReview(),typedSeoPromptRevision:'couplus-typed-seo-v1'},before=JSON.stringify(review);
+ assert.equal(digest(api.buildTranslationRequest(review)),approvedTypedV1.request);
+ const {fingerprint,...signed}=review;void fingerprint;assert.equal(await model.fingerprint(signed),approvedTypedV1.fingerprint);
+ await api.executeTranslation(review,f.config,noNetwork);
+ assert.equal(digest(f.calls[0]),approvedTypedV1.transport);assert.equal(digest(f.calls),approvedTypedV1.pipeline);
+ assert.equal(JSON.stringify(review),before);
+});
+
+test('new typed SEO keeps the source-supported item noun and asks for additional relevant search candidates without changing validation',async()=>{
+ const f=fixture(),review=await api.prepareTranslationReview(plain(source),f.config,new Date(),plain(composition),plain(context));
+ const result=await api.executeTranslation(review,f.config,noNetwork),system=f.calls[0].messages[0].content;
+ assert.match(system,/주품목 명사는 effectiveTargetKeyword와 categoryLabel이 가리키는 실제 상품/u);
+ assert.match(system,/원제목이나 관련어의 다른 품목으로 바꾸지 마세요/u);
+ assert.match(system,/제공된 관련어 중 실제 상품에 맞는 것을 활용하고, 추가로 상품에 맞는 관련 검색어도 생성하세요/u);
+ const body=JSON.parse(f.calls[0].messages[1].content.split('\n\nPRODUCT_SOURCE_JSON:\n')[1].slice(0,-'\n/no_think'.length));
+ assert.equal(body.effectiveTargetKeyword,'손목패드');assert.equal(body.categoryLabel,'손목 패드');assert.deepEqual(body.seoOptionTargets.map(value=>value.size),['10cm','10cm']);
+ assert.equal(result.draft.title,'면 손목 패드 10cm','The instruction change must not append or replace the target keyword in model output');
+ assert.equal(f.calls.length,2);assert.equal(digest(f.calls[1]),approvedTypedV1.validation,'Existing Korean-preserving validation is unchanged');
+ const follow=fixture(),continued=await api.executeTranslation(review,follow.config,noNetwork,{examples:[],targets:context.selectedOptions.slice(0,1),optionOnly:true});
+ assert.doesNotMatch(follow.calls[0].messages[0].content,/주품목 명사는 effectiveTargetKeyword/u,'Option-only continuations must not request SEO generation again');
+ assert.equal(continued.draft.title,'');assert.deepEqual(Array.from(continued.draft.keywords),[]);assert.equal(follow.calls.length,1);
+});
+
 test('unknown or context-free typed prompt revisions are rejected before any provider request',async()=>{
- for(const patch of [{typedSeoPromptRevision:'unreviewed-revision'},{typedSeoPromptRevision:'couplus-typed-seo-v1',seoCompositionContext:undefined},{typedSeoPromptRevision:'couplus-typed-seo-v1',seoComposition:undefined}]){
+ for(const patch of [{typedSeoPromptRevision:'unreviewed-revision'},...['couplus-typed-seo-v1','couplus-typed-seo-v2'].flatMap(typedSeoPromptRevision=>[{typedSeoPromptRevision,seoCompositionContext:undefined},{typedSeoPromptRevision,seoComposition:undefined}])]){
   const f=fixture(),review={...historicalReview(),...patch};
   await assert.rejects(api.executeTranslation(review,f.config,noNetwork),error=>error.code==='UNSUPPORTED_INSTRUCTIONS'&&!error.mayHaveBeenCharged);
   assert.equal(f.calls.length,0);

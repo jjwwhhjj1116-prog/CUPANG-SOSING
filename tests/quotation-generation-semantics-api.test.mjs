@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { quotationAiApiFixture } from './helpers/quotation-ai-api.mjs';
 import { curtain, provider, colors } from './helpers/quotation-generation-semantics.mjs';
-const policy = 'option-notice-material-evidence-v1';
+const policy = 'option-notice-material-evidence-v2';
 const json = async (response, status = 200) => { assert.equal(response.status, status, await response.clone().text()); return response.json(); };
 async function sixOptions(source = curtain(), p = provider()) {
   const f = await quotationAiApiFixture();
