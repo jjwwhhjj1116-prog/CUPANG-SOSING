@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { createRequire } from 'node:module';
 import { fixture, panel, nodes, plain } from './helpers/detail-workspace.mjs';
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 const native = createRequire(import.meta.url);
 function dashboard() {
   const slots = [], layouts = [], cache = new Map(), stubs = new Map(); let cursor = 0, changed = false, requests = 0;
@@ -16,7 +17,7 @@ function dashboard() {
     if (cache.has(file)) return cache.get(file); const exports = {}; cache.set(file, exports); let source = fs.readFileSync(new URL('../' + file, import.meta.url), 'utf8');
     if (file.endsWith('dashboard-client.tsx')) source += '\nexport {DetailPanel};';
     vm.runInNewContext(ts.transpileModule(source, { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
-      { exports, AbortController, TextEncoder, crypto, fetch() { requests++; throw Error('External request forbidden'); }, require(name) { if (name === 'react') return hooks; if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
+      { exports, AbortController, TextEncoder, crypto, fetch() { requests++; throw Error('External request forbidden'); }, require(name) { if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;if(name==='@/app/registration-ui-reads')return load('app/registration-ui-reads.tsx'); if (name === 'react') return hooks; if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
         if (name.startsWith('@/app/components/')) return new Proxy({}, { get: (_, key) => component(name + ':' + String(key)) }); return name.startsWith('@/') ? load(name.slice(2) + '.ts') : native(name); } }); return exports;
   }
   const Detail = load('app/components/dashboard-client.tsx').DetailPanel;

@@ -6,9 +6,10 @@ import { quotationPriceTargets, type QuotationPriceInput, type QuotationPriceTar
 import { optionPriceChanges, optionPriceDraftIssues, optionPriceValue, verifyOptionPriceRefresh, verifyOptionPriceSave, verifyOptionPriceView } from '@/app/option-price-save';
 import type { PricePolicy } from '@/app/pricing';
 import { stageTwoMsrpEdits } from '@/app/stage-two-msrp';
+import type {RegistrationUiReads,UiMutation} from '@/app/registration-ui-reads';
 
 const prices = [['supplyPrice','공급가'],['salePrice','판매가'],['msrp','권장소비자가']] as const;
-type Operation = { notify?:boolean; coordinated?:boolean; expectedProductVersion?:string; expectedOptionRevision?:number };
+type Operation = { notify?:boolean; coordinated?:boolean; expectedProductVersion?:string; expectedOptionRevision?:number; initial?:boolean };
 export type OptionPriceController = {
   view:QuotationFieldsView|null; edits:readonly QuotationChange[]; targets:QuotationPriceTargets|undefined;
   busy:boolean; dirty:boolean; fresh:boolean; uncertain:boolean; issues:string[];
@@ -19,9 +20,10 @@ export type OptionPriceController = {
   replaceEdits:(edits:readonly QuotationChange[],coordinated?:boolean)=>boolean;
   acceptAtomicSaved:(view:QuotationFieldsView,expectedBase:QuotationFieldsView|null)=>boolean;
 };
-export function OptionQuotationPrices({productId,version,profileId,onSaved,refreshToken,disabled=false,active=true,beforeEdit,beforeSave,renderGrid,onLockChange,stageTwoPricingPolicy,onDraftStateChange}:{productId:string;version:string;profileId?:string;onSaved?:()=>void;refreshToken?:string;stageTwoPricingPolicy?:PricePolicy;active?:boolean;
+export function OptionQuotationPrices({uiReads,productId,version,profileId,onSaved,refreshToken,disabled=false,active=true,beforeEdit,beforeSave,renderGrid,onLockChange,stageTwoPricingPolicy,onDraftStateChange}: {uiReads?:RegistrationUiReads;productId:string;version:string;profileId?:string;onSaved?:()=>void;refreshToken?:string;stageTwoPricingPolicy?:PricePolicy;active?:boolean;
   onDraftStateChange?:(dirty:boolean)=>void;disabled?:boolean;beforeEdit?:()=>boolean;beforeSave?:()=>boolean;onLockChange?:(locked:boolean)=>void;renderGrid?:(controller:OptionPriceController)=>ReactNode}) {
   const endpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId?`?profileId=${encodeURIComponent(profileId)}`:''}`;
+  const uiMutation=useRef<UiMutation|null>(null);
   const sourceKey = JSON.stringify([endpoint,version,refreshToken]);
   const currentEndpoint = useRef(endpoint), currentSource = useRef(sourceKey), mounted = useRef(true), request = useRef<AbortController|null>(null);
   const generation=useMemo(()=>({sourceKey}),[sourceKey]),epoch=useRef(generation);
@@ -51,9 +53,9 @@ export function OptionQuotationPrices({productId,version,profileId,onSaved,refre
     if(request.current||!current()||!operation.coordinated&&disabled)return null;
     const controller=new AbortController();request.current=controller;setBusy(true);setError('');
     try{
-      const response=await fetch(endpoint,{cache:'no-store',signal:controller.signal}),body=await response.json() as QuotationFieldsView & {error?:string};
+      const response=operation.initial&&uiReads?null:await fetch(endpoint,{cache:'no-store',signal:controller.signal}),body=response?await response.json() as QuotationFieldsView & {error?:string}:await uiReads!.quotation(endpoint,controller.signal);
       if(controller.signal.aborted||!current())return null;
-      if(!response.ok)throw Error(body.error||'저장된 옵션 가격을 읽지 못했습니다.');verifyOptionPriceView(body,profileId);
+      if(response&&!response.ok)throw Error('error' in body&&typeof body.error==='string'?body.error:'저장된 옵션 가격을 읽지 못했습니다.');verifyOptionPriceView(body,profileId);
       if(operation.expectedProductVersion&&body.productVersion!==operation.expectedProductVersion
         ||operation.expectedOptionRevision!==undefined&&body.optionRevision!==operation.expectedOptionRevision)throw Error('옵션 저장 후의 정확한 견적서 버전을 확인하지 못했습니다. 가격 입력은 유지했습니다.');
       const base=latestSaved.current?.scope===endpointScope?latestSaved.current.view:null,editing=latestDraft.current.scope===endpointScope?latestDraft.current.edits:[];
@@ -65,10 +67,10 @@ export function OptionQuotationPrices({productId,version,profileId,onSaved,refre
         if(!base||Date.parse(body.productVersion)<Date.parse(version))throw Error('최신 상품 가격 저장 상태를 확인하지 못했습니다. 입력은 유지했습니다.');verifyOptionPriceRefresh(base,body,keepEdits?recoveryChanges:[]);
         if(keepEdits&&editing.length){try{verifyOptionPriceSave(base,body,recoveryChanges);recovered=true;}catch{/* Keep a disjoint refresh or an unresolved save outcome editable. */}}
       }else if(body.productVersion!==version&&!verifiedReceiptRead)throw Error('상품 저장 상태가 변경됐습니다. 최신 가격을 다시 확인해주세요.');
-      store(body);if(!keepEdits||recovered)clearDraft();else{lastPriceWrite.current=null;uncertainRef.current=false;setUncertain(false);}
+      store(body);if(!operation.initial){uiMutation.current?.confirm();uiMutation.current=null;}if(!keepEdits||recovered)clearDraft();else{lastPriceWrite.current=null;uncertainRef.current=false;setUncertain(false);}
       setMessage(recovered?'저장된 옵션 가격을 확인했습니다.':keepEdits?'입력을 유지하고 최신 가격을 불러왔습니다. 확인 후 옵션 가격을 저장해주세요.':'');
       if(recovered&&operation.notify!==false)onSaved?.();return body;
-    }catch(cause){if(!controller.signal.aborted&&current())setError(cause instanceof Error?cause.message:'가격 조회 실패');return null;}
+    }catch(cause){if(!controller.signal.aborted&&current()){if(operation.initial)uiReads?.forget();setError(cause instanceof Error?cause.message:'가격 조회 실패');}return null;}
     finally{finish(controller);}
   }
   useEffect(()=>{
@@ -76,7 +78,7 @@ export function OptionQuotationPrices({productId,version,profileId,onSaved,refre
     void Promise.resolve().then(()=>{
       if(!active||!current()||request.current)return;setBusy(false);if(!stageActive.current)return;setError('');setMessage('');
       if(latestDraft.current.scope===endpointScope&&latestDraft.current.edits.length&&latestSaved.current?.scope===endpointScope)return;
-      void load();
+      void load(false,false,{initial:true});
     });
     return()=>{active=false;request.current?.abort();request.current=null;};
     // Source commits retain manual prices. Only explicit refresh/discard rebases
@@ -86,7 +88,7 @@ export function OptionQuotationPrices({productId,version,profileId,onSaved,refre
   useEffect(()=>{
     let active=true;void Promise.resolve().then(()=>{
       if(!active||!stageActive.current||disabled||!current()||request.current||latestSaved.current?.scope===endpointScope&&latestSaved.current?.sourceKey===sourceKey||latestDraft.current.scope===endpointScope&&latestDraft.current.edits.length)return;
-      void load();
+      void load(false,false,{initial:true});
     });return()=>{active=false;};
     // A parent source-save lock must not abort the coordinated price request.
     // Retry only an unprepared clean read when that lock is released.
@@ -120,10 +122,11 @@ export function OptionQuotationPrices({productId,version,profileId,onSaved,refre
     const controller=new AbortController();request.current=controller;onLockChange?.(true);setBusy(true);setError('');setMessage('');
     let rejected=false;
     try{
+      uiMutation.current=uiReads?.beginMutation()??null;
       const response=await fetch(endpoint,{method:'PUT',signal:controller.signal,headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:base.view.revision,expectedInputFingerprint:base.view.inputFingerprint,changes,...(derivedOptionIds.length?{stageTwoMsrp:derivedOptionIds}:{})})}),body=await response.json() as QuotationFieldsView & {error?:string};
       if(controller.signal.aborted||!current())return null;
       if(!response.ok){rejected=response.status<500;throw Error(body.error||'가격을 저장하지 못했습니다. 입력은 유지됩니다.');}verifyOptionPriceView(body,profileId);verifyOptionPriceSave(base.view,body,changes);
-      store(body);clearDraft();setMessage('옵션 가격 저장 완료 · 견적서에 반영됩니다.');if(operation.notify!==false)onSaved?.();return body;
+      store(body);clearDraft();uiMutation.current?.confirm();uiMutation.current=null;setMessage('옵션 가격 저장 완료 · 견적서에 반영됩니다.');if(operation.notify!==false)onSaved?.();return body;
     }catch(cause){if(rejected)lastPriceWrite.current=null;if(!controller.signal.aborted&&current()){setError(cause instanceof Error?cause.message:'가격 저장 실패');if(renderGrid&&!rejected){uncertainRef.current=true;setUncertain(true);}}return null;}
     finally{finish(controller);}
   }

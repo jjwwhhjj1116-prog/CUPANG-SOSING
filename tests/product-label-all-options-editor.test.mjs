@@ -19,10 +19,12 @@ for(const statement of editorAst.statements){if(ts.isImportDeclaration(statement
 let helpers=declarations.join('\n').replaceAll('import.meta.url',JSON.stringify(editorFile.href));
 for(const[before,after]of[
  ['renderer,attach}={}','renderer,attach,disabled=false,active=true}={}'],
+ ['closed=false,lateWrites=0,lastVersion=version','closed=false,lateWrites=0,lastVersion=version,activity=false'],
+ ["if(!tree.props['data-workspace-saving']&&","if(!activity&&!tree.props['data-workspace-saving']&&"],
  ['JSON.stringify(slots[i].deps)!==JSON.stringify(deps)','deps===undefined||slots[i].deps===undefined||slots[i].deps.length!==deps.length||deps.some((dep,index)=>!Object.is(dep,slots[i].deps[index]))'],
  ['{exports,Error,AbortController','{exports,crypto:webcrypto,JSON,Date,setTimeout,clearTimeout,Error,AbortController'],
  ['URL:localURL','URL:class extends URL{static createObjectURL=localURL.createObjectURL;static revokeObjectURL=localURL.revokeObjectURL;}'],
- ['version,profileId,refreshToken,onSaved()','version,profileId,refreshToken,disabled,active,onSaved()'],
+ ['version,profileId,refreshToken,onSaved()','version,profileId,refreshToken,disabled,active,onBusyChange(value){activity=value;},onSaved()'],
  ['get saved(){return saved;}','setDisabled(value){disabled=value;render();},setActive(value){active=value;render();},profile(value){profileId=value;render();},get saved(){return saved;}'],
 ]){assert.ok(helpers.includes(before),'found fixture adaptation '+before);helpers=helpers.replace(before,after);}
 const{editor,nodes,text,deferred}=vm.runInNewContext(helpers+'\n({editor,nodes,text,deferred})',{assert,fs,vm,path,ts,createRequire,webcrypto,Response,Blob,JSON,URL,Date,AbortController,structuredClone,TextEncoder,setImmediate,setTimeout,clearTimeout});

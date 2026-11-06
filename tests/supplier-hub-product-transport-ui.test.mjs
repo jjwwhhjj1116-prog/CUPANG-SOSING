@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import ts from 'typescript';
+import React from 'react';
+import {stageRefreshDOM} from './helpers/stage-refresh-dom.mjs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { createHash, webcrypto } from 'node:crypto';
@@ -1143,7 +1145,7 @@ async function fixture(company = SINGLE_COMPANIES[0], options = {}) {
   const exports = {}, component = options.panel?'app/components/native-draft-detail-amendment-panel.tsx':'app/components/supplier-hub-product-transport.tsx';
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../' + component, import.meta.url), 'utf8'), { fileName: component, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
     { exports, Error, Date: LocalDate, crypto:webcrypto, window:f.window, AbortController, fetch: f.fetch, setTimeout: (fn, delay) => { const id = ++sequence; f.timers.set(id, { fn, due: f.clock.now + delay }); return id; }, clearTimeout: id => f.timers.delete(id),
-      require: name => name === '@/app/components/native-draft-detail-amendment-panel' ? {NativeDraftDetailAmendmentPanel} : name === '@/app/preserved-product-request-reconnect' && options.reconnect ? {reconnectPreservedProductDraft:input=>options.reconnect(input,f)} : name === '@/app/components/member-registration-consents-panel' ? {MemberRegistrationConsentsPanel} : name === '@/app/components/supplier-hub-native-registration' ? {SupplierHubNativeRegistration:()=>null} : name === '@/app/components/supplier-hub-rejection-details' ? {SupplierHubRejectionDetails} : name === '@/app/supplier-hub-reserved-work.mjs' ? {runReservedSegments} : name === 'react' ? react : name === '@/app/supplier-hub-product-client' ? f.client : name.startsWith('@/') ? f.load(name.slice(2) + '.ts') : name.endsWith('product-document-source.mjs') ? {sourceReadError} : name.endsWith('product-document.mjs') ? {
+      require: name => name === '@/app/components/native-draft-detail-amendment-panel' ? {NativeDraftDetailAmendmentPanel} : name === '@/app/preserved-product-request-reconnect' && options.reconnect ? {reconnectPreservedProductDraft:input=>options.reconnect(input,f)} : name === '@/app/components/member-registration-consents-panel' ? {MemberRegistrationConsentsPanel} : name === '@/app/components/supplier-hub-native-registration' ? {SupplierHubNativeRegistration:()=>null} : name === '@/app/components/supplier-hub-rejection-details' ? {SupplierHubRejectionDetails} : name === '@/app/supplier-hub-reserved-work.mjs' ? {runReservedSegments} : name === 'react' ? (options.react??react) : name === '@/app/supplier-hub-product-client' ? f.client : name.startsWith('@/') ? f.load(name.slice(2) + '.ts') : name.endsWith('product-document-source.mjs') ? {sourceReadError} : name.endsWith('product-document.mjs') ? {
         // Each fresh preview gets a different real UUID. Recovery must supply
         // its original UUID explicitly; a constant test seed cannot mask loss.
         createProductDocumentPacket: (review,value={}) => createProductDocumentPacket(review, { ...value,createdAt:value.createdAt??f.clock.now,now:f.clock.now }),
@@ -1152,6 +1154,7 @@ async function fixture(company = SINGLE_COMPANIES[0], options = {}) {
   props = { review: f.review, disabled: false, refresh: async signal => { refreshCalls.push(signal); return f.refresh(signal); }, onLockChange: (value,close=value) => {locks.push(value);lockPairs.push([value,close]);} };
   if(options.panel){const session=await f.session(),signal=new AbortController().signal;await f.load('app/supplier-hub-product-pending.ts').claimProductDocumentPending(f.review,session,signal);f.amendmentDescriptor={format:'yoofam-native-draft-detail-amendment-descriptor-v1',amendmentId:'22222222-2222-4222-8222-222222222222',anchor:{origin:session.origin,ownerId:f.review.identity.ownerId,company:f.review.identity.company,productId:f.review.identity.productId,requestId:session.packet.requestId,docId:2362997,parentIdentityDigest:session.preview.identityDigest,parentPacketDigest:session.packetDigest,parentReviewDigest:f.review.reviewDigest,parentSourcePlanSha256:f.review.identity.fingerprint,parentOriginalBodySha256:f.review.originalBodySha256,parentPreparedBodySha256:f.review.preparedBodySha256,parentCheckpointSequence:12,parentCheckpointSha256:'a'.repeat(64)}};await f.load('app/native-draft-detail-amendment-pending.ts').claimNativeDraftDetailAmendmentPending(f.amendmentDescriptor,signal);props.pending=f.amendmentDescriptor;}
   f.refresh = async () => { if (f.actor.ownerId !== f.review.identity.ownerId || JSON.stringify(f.actor.company) !== JSON.stringify(f.review.identity.company)) throw Error('현재 회원 회사가 변경되었습니다.'); return plain(f.review); };
+  if(options.react)return{f,Component:exports.SupplierHubProductTransport,props,stored,refreshCalls,locks,lockPairs,storageChanged(key){for(const fn of storageListeners)fn({key});}};
   const render = (next = props) => { props = next; cursor = 0; return options.panel?exports.NativeDraftDetailAmendmentPanel(props):exports.SupplierHubProductTransport(props); };
   const flush = () => { render(); effects.splice(0).forEach(fn => fn()); };
   const h = { f, stored,refreshCalls, locks, lockPairs, render, flush, props: () => props, text: () => text(render()), button: label => nodes(render()).find(node => node.type === 'button' && node.props.children === label),storageChanged(key){for(const fn of storageListeners)fn({key});flush();},
@@ -1829,4 +1832,137 @@ test('strict valid native REJECTED receipt with later observedAt can finish ledg
   assert.ok(h.f.history[0].receipt.observedAt>JSON.parse(before)[0].receiptRejection.observedAt);
  }finally{h.close();}
  cases.push({name:'native rejected refreshed timestamp retry',actualStrictNativeRecord:true,localReceiptSaveAttempts:2,nativeStartDispatches:1,originalLedgerPreserved:true});
+});
+
+
+async function realTransport(options={}){
+ const basis=await fixture(SINGLE_COMPANIES[0],{...options,react:React}),dom=await stageRefreshDOM(basis.f.fetch);
+ const h={...basis,...dom,props:basis.props,text:()=>dom.container.textContent,button:label=>[...dom.container.querySelectorAll('button')].find(node=>node.textContent===label),async until(check){for(let i=0;i<90&&!check();i++)await dom.settle();assert.ok(check(),'real product transport reached expected boundary: '+dom.container.textContent.slice(-900));},async idle(){await h.until(()=>dom.container.querySelector('[aria-label="전체 상품 견적 전송"]')?.getAttribute('aria-busy')==='false');},async click(label,wait=true){const button=h.button(label);assert.ok(button&&!button.disabled,label);await React.act(async()=>button.click());if(wait)await h.idle();},async emit(message,result){await React.act(async()=>basis.f.emit(message,result));for(let i=0;i<12;i++)await dom.settle();}};
+ await dom.render(basis.Component,basis.props);await h.idle();return h;
+}
+
+test('actual React late prepare reserves one original recovery READ after timeout and never adopts the raw prepare ACK',async()=>{
+ const h=await realTransport();try{
+  h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true}:undefined;
+  await h.click(open);await h.click(prepareDraft,false);await h.until(()=>h.f.sent.length===2);const original=h.f.sent[1],reservation=[...h.stored];await React.act(async()=>h.f.advance(120001));await h.idle();assert.match(h.text(),/전체 상품 문서 응답이 없습니다/);
+  await h.emit(original,draftResult(h.f,original.payload.packet.requestId));assert.equal(h.f.sent.filter(row=>row.payload.action==='recoverPreparedDraft').length,1,'late validated prepare must reserve the existing original read once');assert.equal(h.button(reviewPrepared),undefined,'raw late prepare never becomes current document state');assert.deepEqual([...h.stored],reservation);assert.equal(new Set(h.f.sent.map(row=>row.payload.packet.requestId)).size,1);assert.ok(h.f.calls.every(row=>row.method==='GET'));
+  await React.act(async()=>h.f.advance(180001));await h.idle();const read=h.f.sent[2],freshBefore=h.refreshCalls.length;await React.act(async()=>h.f.advance(133382));await h.emit(read,draftResult(h.f,original.payload.packet.requestId,'validated',{recovered:true}));await h.idle();assert.equal(h.refreshCalls.length,freshBefore+1);assert.ok(h.button(reviewPrepared));await h.emit(original,draftResult(h.f,original.payload.packet.requestId));await h.emit(read,draftResult(h.f,original.payload.packet.requestId,'validated',{recovered:true}));assert.equal(h.f.sent.length,3);assert.deepEqual([...h.stored],reservation);assert.equal(h.f.history.length,0);
+ }finally{await h.close();}
+});
+
+test('actual React late qualified recovery reply crosses a new current-source fence and adopts without repeating the 313-second READ',async()=>{
+ const h=await realTransport();try{
+  h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true}:payload.action==='prepareDraft'?draftResult(h.f,payload.packet.requestId):undefined;
+  await h.click(open);await h.click(prepareDraft);await h.click(recoverDraft,false);await h.until(()=>h.f.sent.length===3);const original=h.f.sent[2],reservation=[...h.stored];await React.act(async()=>h.f.advance(180001));await h.idle();assert.match(h.text(),/전체 상품 문서 응답이 없습니다/);const freshBefore=h.refreshCalls.length;await React.act(async()=>h.f.advance(133382));await h.emit(original,draftResult(h.f,original.payload.packet.requestId,'validated',{recovered:true}));
+  assert.equal(h.refreshCalls.length,freshBefore+1,'a late qualified read requires exactly one newly current source fence before adoption');assert.doesNotMatch(h.text(),/전체 상품 문서 응답이 없습니다/);assert.ok(h.button(reviewPrepared));assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','recoverPreparedDraft']);assert.deepEqual([...h.stored],reservation);assert.equal(h.f.history.length,0);assert.ok(h.f.calls.every(row=>row.method==='GET'));
+ }finally{await h.close();}
+});
+
+
+async function timedOutPreparedRead(){
+ const h=await realTransport();h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true}:payload.action==='prepareDraft'?draftResult(h.f,payload.packet.requestId):undefined;
+ await h.click(open);await h.click(prepareDraft);await h.click(recoverDraft,false);await h.until(()=>h.f.sent.length===3);const original=h.f.sent[2];await React.act(async()=>h.f.advance(180001));await h.idle();return{h,original};
+}
+
+test('actual React late prepare coalesces with the in-flight original manual recovery and never inherits registration consent intent',async()=>{
+ const h=await realTransport();try{
+  h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true}:undefined;
+  await h.click(open);await h.click(registerDraft,false);await h.until(()=>h.f.sent.length===2);const prepare=h.f.sent[1];await React.act(async()=>h.f.advance(120001));await h.idle();await h.click(recoverDraft,false);await h.until(()=>h.f.sent.length===3);const read=h.f.sent[2];await h.emit(prepare,draftResult(h.f,prepare.payload.packet.requestId));assert.equal(h.f.sent.length,3);await h.emit(read,draftResult(h.f,read.payload.packet.requestId,'validated',{recovered:true}));await h.idle();assert.ok(h.button(reviewPrepared));assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','recoverPreparedDraft']);assert.equal(h.f.configuredMessages.filter(row=>row.type==='probe').length,0);assert.equal(h.f.history.length,0);
+ }finally{await h.close();}
+});
+
+for(const mode of ['disabled-ABA','review-ABA','owner','company','product','profile','source','pending-delete','pending-replace','pending-ABA','unmount'])test(`actual React late original READ is retired by ${mode}`,async()=>{
+ const{h,original}=await timedOutPreparedRead();let closed=false;try{
+  const props=h.props,freshBefore=h.refreshCalls.length;
+  if(mode==='disabled-ABA'){await h.render(h.Component,{...props,disabled:true});await h.render(h.Component,props);}
+  if(mode==='review-ABA'){await h.render(h.Component,{...props,review:plain(props.review)});await h.render(h.Component,props);}
+  if(['owner','company','product','profile','source'].includes(mode)){const review=plain(props.review);if(mode==='owner')review.identity.ownerId='foreign-owner';if(mode==='company')review.identity.company=SINGLE_COMPANIES[1];if(mode==='product')review.identity.productId='foreign-product';if(mode==='profile')review.identity.profileId='foreign-profile';if(mode==='source')review.identity.fingerprint='f'.repeat(64);await h.render(h.Component,{...props,review});await h.render(h.Component,props);}
+  if(mode.startsWith('pending-')){const[key,raw]=[...h.stored][0];if(mode==='pending-replace')h.stored.set(key,JSON.stringify({...JSON.parse(raw),requestId:'00000000-0000-4000-8000-000000000000'}));else h.stored.delete(key);await React.act(async()=>h.storageChanged(key));if(mode==='pending-ABA'){h.stored.set(key,raw);await React.act(async()=>h.storageChanged(key));}}
+  if(mode==='unmount'){await h.close();closed=true;}
+  if(!closed)await h.emit(original,draftResult(h.f,original.payload.packet.requestId,'validated',{recovered:true}));else{h.f.emit(original,draftResult(h.f,original.payload.packet.requestId,'validated',{recovered:true}));await turn();}
+  assert.equal(h.refreshCalls.length,freshBefore,mode+' does not start a stale source fence');assert.equal(h.f.sent.length,3);assert.equal(h.f.history.length,0);assert.equal(h.f.listeners.size,0);
+ }finally{if(!closed)await h.close();}
+});
+
+for(const mode of ['actor','company','source409','lower-sequence'])test(`actual React late original READ cannot adopt after ${mode}`,async()=>{
+ const{h,original}=await timedOutPreparedRead();try{
+  const freshBefore=h.refreshCalls.length;if(mode==='actor')h.f.actor.ownerId='another-owner';if(mode==='company')h.f.actor.company=SINGLE_COMPANIES[1];if(mode==='source409')h.f.refresh=async()=>{throw Error('current source HTTP 409');};const value=draftResult(h.f,original.payload.packet.requestId,'validated',{recovered:true});if(mode==='lower-sequence')value.draftProof.checkpointSequence=11;
+  await h.emit(original,value);await h.idle();assert.equal(h.refreshCalls.length,freshBefore+1);assert.ok(h.container.querySelector('[role="alert"]'));assert.equal(h.f.sent.length,3);assert.equal(h.f.history.length,0);const reads=h.refreshCalls.length;await h.emit(original,value);assert.equal(h.refreshCalls.length,reads,'failure consumes the late candidate before dispatch and never retries');
+ }finally{await h.close();}
+});
+
+test('actual React newer source failure cannot be cleared by an older late result',async()=>{
+ const{h,original}=await timedOutPreparedRead();try{
+  h.f.refresh=async()=>{throw Error('newer source HTTP 409');};await h.click(recoverDraft);assert.match(h.text(),/newer source HTTP 409/);const fresh=h.refreshCalls.length;await h.emit(original,draftResult(h.f,original.payload.packet.requestId,'validated',{recovered:true}));assert.equal(h.refreshCalls.length,fresh);assert.match(h.text(),/newer source HTTP 409/);assert.equal(h.f.sent.length,3);assert.equal(h.f.history.length,0);
+ }finally{await h.close();}
+});
+
+
+for(const action of ['reviewPreparedDraft','confirmPreparedDraft'])test(`actual React late write hint ${action} reserves one original recovery and never replays qualification or consent`,async()=>{
+ const h=await realTransport();try{
+  h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true}:payload.action==='prepareDraft'?draftResult(h.f,payload.packet.requestId):payload.action==='reviewPreparedDraft'&&action==='confirmPreparedDraft'?preparedResult(h,payload,'awaiting-stage-consent',14,{challenge:h.f.challenge('productPage')}):undefined;
+  await h.click(open);await h.click(prepareDraft);if(action==='reviewPreparedDraft')await h.click(reviewPrepared,false);else{await h.click(reviewPrepared);for(const input of h.container.querySelectorAll('input[type="checkbox"]'))if(!input.disabled)await React.act(async()=>input.click());await h.click(confirmPrepared,false);}
+  await h.until(()=>h.f.sent.some(row=>row.payload.action===action));const original=h.f.sent.find(row=>row.payload.action===action),reservation=[...h.stored];await React.act(async()=>h.f.advance(120001));await h.idle();const priorError=h.container.querySelector('[role="alert"]')?.textContent;const result=preparedResult(h,original.payload,action==='reviewPreparedDraft'?'navigation-ready':'pending',action==='reviewPreparedDraft'?14:15,action==='confirmPreparedDraft'?{receipt:h.f.observation().receipt}:{});await h.emit(original,result);
+  assert.equal(h.f.sent.filter(row=>row.payload.action==='recoverPreparedDraft').length,1,'late completed write is hint only; use the existing unknown-write recovery');assert.equal(h.f.sent.filter(row=>row.payload.action===action).length,1);assert.equal(h.container.querySelector('[role="alert"]')?.textContent,priorError,'raw hint cannot clear the current timeout or consent-expiry error before authoritative read success');assert.equal(h.f.history.length,0,'the raw late write receipt is never directly adopted or persisted');assert.deepEqual([...h.stored],reservation);assert.equal(h.f.configuredMessages.filter(row=>row.type==='probe').length,0);
+ }finally{await h.close();}
+});
+
+
+test('actual React consent expiry before confirm dispatch retires authority and sends no confirmation or passive receiver',async()=>{
+ const h=await realTransport();try{
+  h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true}:payload.action==='prepareDraft'?draftResult(h.f,payload.packet.requestId):preparedResult(h,payload,'awaiting-stage-consent',14,{challenge:h.f.challenge('productPage')});await h.click(open);await h.click(prepareDraft);await h.click(reviewPrepared);for(const input of h.container.querySelectorAll('input[type="checkbox"]'))if(!input.disabled)await React.act(async()=>input.click());const button=h.button(confirmPrepared),retained=button[Object.keys(button).find(key=>key.startsWith('__reactProps'))].onClick;await React.act(async()=>h.f.advance(120001));await h.idle();await React.act(async()=>retained());await h.settle();assert.equal(h.f.sent.filter(row=>row.payload.action==='confirmPreparedDraft').length,0);assert.equal(h.f.listeners.size,0);assert.match(h.text(),/동의 확인 시간이 만료/);assert.equal(h.f.history.length,0);
+ }finally{await h.close();}
+});
+
+for(const mode of ['busy','target-mismatch'])test(`actual React automatic original recovery consumes its reservation on ${mode} and never retries`,async()=>{
+ const h=await realTransport();try{
+  h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true}:payload.action==='recoverPreparedDraft'?mode==='busy'?{format:h.f.review.format,requestId:payload.packet.requestId,state:'busy',registered:false,success:false}:draftResult(h.f,payload.packet.requestId,'validated',{docId:'another-original-document',recovered:true}):undefined;
+  await h.click(open);await h.click(prepareDraft,false);await h.until(()=>h.f.sent.length===2);const original=h.f.sent[1];await React.act(async()=>h.f.advance(120001));await h.idle();await h.emit(original,draftResult(h.f,original.payload.packet.requestId));await h.idle();assert.equal(h.f.sent.filter(row=>row.payload.action==='recoverPreparedDraft').length,1);assert.ok(h.container.querySelector('[role="alert"]'));assert.equal(h.button(reviewPrepared),undefined);await h.emit(original,draftResult(h.f,original.payload.packet.requestId));await React.act(async()=>h.f.advance(600000));await h.idle();assert.equal(h.f.sent.length,3);assert.equal(h.f.history.length,0);
+ }finally{await h.close();}
+});
+
+test('actual React late READ keeps the original error while its new source fence is held and rejects changed source afterward',async()=>{
+ const{h,original}=await timedOutPreparedRead(),gate=deferred();let started=false;try{
+  h.f.refresh=async()=>{started=true;await gate.promise;return{...h.f.review,reviewDigest:'f'.repeat(64)};};await h.emit(original,draftResult(h.f,original.payload.packet.requestId,'validated',{recovered:true}));await h.until(()=>started);assert.match(h.text(),/전체 상품 문서 응답이 없습니다/,'candidate does not become successful current state before its new fence');await React.act(async()=>gate.resolve());await h.idle();assert.match(h.text(),/바뀌었습니다/);assert.equal(h.f.sent.length,3);assert.equal(h.f.history.length,0);
+ }finally{gate.resolve();await h.close();}
+});
+
+test('actual React ordinary early success adds no background exchanges and a newer successful recovery supersedes the old passive READ',async()=>{
+ const h=await realTransport();try{
+  h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true}:draftResult(h.f,payload.packet.requestId,'validated',{...(payload.action==='recoverPreparedDraft'?{recovered:true}:{})});await h.click(open);await h.click(prepareDraft);assert.equal(h.f.sent.length,2);assert.equal(h.f.listeners.size,0);await h.click(recoverDraft);assert.equal(h.f.sent.length,3);assert.equal(h.f.listeners.size,0);await React.act(async()=>h.f.advance(600000));await h.idle();assert.equal(h.f.sent.length,3);
+  h.f.bridge=async()=>undefined;await h.click(recoverDraft,false);await h.until(()=>h.f.sent.length===4);const old=h.f.sent[3];await React.act(async()=>h.f.advance(180001));await h.idle();h.f.bridge=async payload=>draftResult(h.f,payload.packet.requestId,'validated',{recovered:true,draftProof:{evidence:'document-draft-preparation',validatedSteps:[2,3,4,5],checkpointSequence:13,observedAt:h.f.clock.now,submitted:false,consented:false}});await h.click(recoverDraft);const fresh=h.refreshCalls.length;await h.emit(old,draftResult(h.f,old.payload.packet.requestId,'validated',{recovered:true}));assert.equal(h.refreshCalls.length,fresh);assert.ok(h.button(reviewPrepared));assert.equal(h.f.sent.length,5);assert.equal(h.f.history.length,0);
+ }finally{await h.close();}
+});
+
+
+test('actual React late receipt observation persists only the fresh-qualified normal receipt once without another observe or consent',async()=>{
+ const h=await realTransport();let confirmations=0;try{
+  h.f.bridge=async payload=>{
+   if(payload.action==='preview')return{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true};if(payload.action==='prepareDraft')return draftResult(h.f,payload.packet.requestId);if(payload.action==='reviewPreparedDraft')return preparedResult(h,payload,'awaiting-stage-consent',14,{challenge:h.f.challenge('productPage')});if(payload.action==='observePreparedDraft')return undefined;
+   assert.equal(payload.action,'confirmPreparedDraft');confirmations++;const stage=confirmations===1?'imagePage':confirmations===2?'logisticsPage':null;return preparedResult(h,payload,stage==='logisticsPage'?'awaiting-consent':stage?'awaiting-stage-consent':'pending',14+confirmations,stage?{challenge:h.f.challenge(stage)}:{receipt:h.f.observation().receipt});
+  };
+  await h.click(open);await h.click(prepareDraft);await h.click(reviewPrepared);for(let i=0;i<3;i++){for(const input of h.container.querySelectorAll('input[type="checkbox"]'))if(!input.disabled&&!input.checked)await React.act(async()=>input.click());await h.click(confirmPrepared);}assert.equal(h.f.history[0].receipt.sourceStatus,'SUBMITTED');await h.click('접수 결과 조회',false);await h.until(()=>h.f.sent.some(row=>row.payload.action==='observePreparedDraft'));const original=h.f.sent.find(row=>row.payload.action==='observePreparedDraft');await React.act(async()=>h.f.advance(180001));await h.idle();const fresh=h.refreshCalls.length,posts=h.f.calls.filter(row=>row.method==='POST').length;const value=preparedResult(h,original.payload,'accepted',18,{receipt:h.f.observation('FINISHED').receipt});await h.emit(original,value);await h.idle();assert.equal(h.refreshCalls.length,fresh+1);assert.equal(h.f.history[0].receipt.sourceStatus,'FINISHED');assert.equal(h.f.calls.filter(row=>row.method==='POST').length,posts+1,'only the existing strict app receipt-save path is used');await h.emit(original,value);assert.equal(h.f.calls.filter(row=>row.method==='POST').length,posts+1);assert.equal(h.f.sent.filter(row=>row.payload.action==='observePreparedDraft').length,1);assert.equal(confirmations,3);assert.equal(h.f.sent.filter(row=>row.payload.action==='reviewPreparedDraft').length,1);
+ }finally{await h.close();}
+});
+
+
+test('actual React a timed-out configured confirmation keeps only its own passive hint after outer handoff tasks unwind',async()=>{
+ const h=await realTransport({configuredProbe:(message,f)=>configuredReply(message.expected.challenge,f.clock.now)});try{
+  h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId,draftPreparationAvailable:true,preparedLifecycleAvailable:true,configuredRegistrationConsentAvailable:true}:payload.action==='prepareDraft'?draftResult(h.f,payload.packet.requestId):payload.action==='reviewPreparedDraft'?preparedResult(h,payload,'awaiting-stage-consent',14,{challenge:configuredChallenge(h,'productPage')}):undefined;
+  await h.click(open);await h.click(registerDraft,false);await h.until(()=>h.f.sent.some(row=>row.payload.action==='confirmPreparedDraft'));const original=h.f.sent.find(row=>row.payload.action==='confirmPreparedDraft');await React.act(async()=>h.f.advance(120001));await h.idle();await h.emit(original,preparedResult(h,original.payload,'pending',15,{receipt:h.f.observation().receipt}));assert.equal(h.f.sent.filter(row=>row.payload.action==='recoverPreparedDraft').length,1,'outer successful handoff cleanup cannot retire a newer timed-out confirmation observer');assert.equal(h.f.sent.filter(row=>row.payload.action==='confirmPreparedDraft').length,1);assert.equal(h.f.configuredMessages.filter(row=>row.type==='probe').length,1);assert.equal(h.f.history.length,0);
+ }finally{await h.close();}
+});
+
+
+test('actual React a same-original busy or timed-out recheck preserves the first qualified late READ and adopts it once',async()=>{
+ const evidence=[];
+ for(const mode of ['busy','timeout']){
+  const{h,original}=await timedOutPreparedRead();try{
+   h.f.bridge=async payload=>mode==='busy'?{format:h.f.review.format,requestId:payload.packet.requestId,state:'busy',registered:false,success:false}:undefined;
+   const reservation=[...h.stored];await h.click(recoverDraft,mode==='busy');await h.until(()=>h.f.sent.length===4);const second=h.f.sent[3];if(mode==='timeout'){await React.act(async()=>h.f.advance(180001));await h.idle();}else assert.match(h.text(),/다른 작업에서 확인 중/);
+   const fresh=h.refreshCalls.length;if(mode==='busy')await React.act(async()=>h.f.advance(133382));await h.emit(original,draftResult(h.f,original.payload.packet.requestId,'validated',{recovered:true}));await h.idle();evidence.push({mode,freshBefore:fresh,freshAfter:h.refreshCalls.length,actions:plain(h.f.sent.map(row=>row.payload.action)),listeners:h.f.listeners.size});
+   assert.equal(h.refreshCalls.length,fresh+1,mode+' is not a superseding current proof');assert.ok(h.button(reviewPrepared));assert.doesNotMatch(h.text(),/다른 작업에서 확인 중|전체 상품 문서 응답이 없습니다/);assert.equal(h.f.listeners.size,0,'the adopted shared read lifetime disposes every original nonce receiver');const adoptedFresh=h.refreshCalls.length;await h.emit(original,draftResult(h.f,original.payload.packet.requestId,'validated',{recovered:true}));await h.emit(second,draftResult(h.f,second.payload.packet.requestId,'validated',{recovered:true}));assert.equal(h.refreshCalls.length,adoptedFresh,'duplicate or sibling late replies cannot repeat the source fence or adoption');assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','prepareDraft','recoverPreparedDraft','recoverPreparedDraft']);assert.deepEqual([...h.stored],reservation);assert.equal(h.f.history.length,0);assert.ok(h.f.calls.every(row=>row.method==='GET'));
+  }finally{await h.close();}
+ }
+ if(process.env.TASK11_FIX1_EVIDENCE)fs.writeFileSync(process.env.TASK11_FIX1_EVIDENCE,JSON.stringify(evidence,null,2)+'\n');
 });

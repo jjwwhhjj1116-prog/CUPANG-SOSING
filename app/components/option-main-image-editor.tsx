@@ -7,11 +7,14 @@ import type {FreeImageQuotationRequest} from '@/app/free-image-translation-clien
 import {readMainImageLibrary,mainImageLibraryCurrent,mainImageLibraryKeys,initialMainImageLibraryTab,type MainImageLibrary,type MainImageLibraryTab} from '@/app/main-image-library';
 import {ImageFullscreenPreview} from '@/app/components/image-fullscreen-preview';
 import {CodexMainImageButton} from '@/app/components/codex-main-image-button';
-type Props={productId:string;version?:string;profileId?:string;refreshToken?:string;focusedOptionId?:string;onSaved?:()=>void;translationEnabled?:boolean;disabled?:boolean;active?:boolean;saveOnSelect?:boolean;processingConfigured?:boolean|null;uploadControl?:ReactNode;
- onTranslate?:(sourceKey:string,role:'main',sourceLanguage:'zh'|'en',quotationTarget:FreeImageQuotationRequest)=>void;
- onEdit?:(sourceKey:string,role:'main',quotationTarget:FreeImageQuotationRequest)=>void;
+import type {RegistrationUiReads,UiContentResponse,UiOptionsResponse,UiMutation} from '@/app/registration-ui-reads';
+import {classifyMainImageLibrary} from '@/app/main-image-library';
+type Props={uiReads?:RegistrationUiReads;productId:string;version?:string;profileId?:string;refreshToken?:string;focusedOptionId?:string;onSaved?:()=>void;translationEnabled?:boolean;disabled?:boolean;active?:boolean;saveOnSelect?:boolean;processingConfigured?:boolean|null;uploadControl?:ReactNode;
+ onTranslate?:(sourceKey:string,role:'main',sourceLanguage:'zh'|'en',quotationTarget:FreeImageQuotationRequest,quotationView?:QuotationFieldsView)=>void;
+ onEdit?:(sourceKey:string,role:'main',quotationTarget:FreeImageQuotationRequest,quotationView?:QuotationFieldsView)=>void;
  onProcess?:(sourceKey:string,role:'main',quotationTarget:FreeImageQuotationRequest,quotationView?:QuotationFieldsView)=>void};
-export function OptionMainImageEditor({productId,version,profileId,refreshToken,focusedOptionId,onSaved,translationEnabled=true,disabled=false,active=true,saveOnSelect=false,processingConfigured=null,uploadControl,onTranslate,onEdit,onProcess}:Props){
+export function OptionMainImageEditor({uiReads,productId,version,profileId,refreshToken,focusedOptionId,onSaved,translationEnabled=true,disabled=false,active=true,saveOnSelect=false,processingConfigured=null,uploadControl,onTranslate,onEdit,onProcess}:Props){
+ const uiMutation=useRef<UiMutation|null>(null);
  const endpoint=`/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId?`?profileId=${encodeURIComponent(profileId)}`:''}`,scope=JSON.stringify([endpoint,focusedOptionId??'']),sourceKey=JSON.stringify([scope,version,refreshToken]);
  const liveScope=useRef(scope),liveSource=useRef(sourceKey),mounted=useRef(true),request=useRef<AbortController|null>(null);
  const stageActive=useRef(active);useLayoutEffect(()=>{stageActive.current=active;},[active]);
@@ -39,12 +42,14 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
  function begin(){if(!currentOption()||liveDisabled.current||request.current)return null;const c=new AbortController();request.current=c;setBusy(true);setError('');setMessage('');return c;}
  function finish(c:AbortController){if(request.current===c){request.current=null;if(current()&&!c.signal.aborted)setBusy(false);}}
  function scoped(c:AbortController):typeof fetch{return async(url,init)=>{if(!current()||c.signal.aborted)throw Error('대표이미지 편집 대상이 변경되었습니다.');const response=await fetch(url,{...init,signal:c.signal});if(!current()||c.signal.aborted)throw Error('대표이미지 편집 대상이 변경되었습니다.');return response;};}
- async function groupLibrary(view:QuotationFieldsView){
+ async function groupLibrary(view:QuotationFieldsView,initial?:Promise<[UiContentResponse,UiOptionsResponse]>){
   libraryRequest.current?.abort();const c=new AbortController();libraryRequest.current=c;
   const valid=()=>current()&&libraryRequest.current===c&&!c.signal.aborted&&liveSaved.current?.view===view;
   const canRefresh=()=>valid()&&!liveDisabled.current&&!request.current&&!liveUncertain.current&&(liveDraft.current.scope!==scope||liveDraft.current.value===undefined);
-  try{const value=await readMainImageLibrary(productId,view,scoped(c));if(valid())setLibrary({scope,sourceKey,value,error:''});}
+  try{const value=initial?await initial.then(([content,options])=>classifyMainImageLibrary(productId,view,content,options)):await readMainImageLibrary(productId,view,scoped(c));if(valid())setLibrary({scope,sourceKey,value,error:''});}
   catch{
+   if(initial&&!stageActive.current)return;
+   if(initial&&valid())uiReads?.forget();
    // A label/option save can finish between the quotation and gallery reads.
    try{if(canRefresh()){
     const latest=await readMainImageView(endpoint,scoped(c));
@@ -59,16 +64,16 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
   }
   finally{if(libraryRequest.current===c)libraryRequest.current=null;}
  }
- async function load(keep=false){const c=begin();if(!c)return;try{const view=await readMainImageView(endpoint,scoped(c));if(!current()||c.signal.aborted)return;const previous=liveSaved.current?.scope===scope?liveSaved.current.view:null,draft=liveDraft.current;let recovered=false;
+ async function load(keep=false,initial=false){const c=begin();if(!c)return;const library=initial&&uiReads?Promise.all([uiReads.content(c.signal),uiReads.options(c.signal)]):undefined;void library?.catch(()=>{});try{const view=initial&&uiReads?await uiReads.quotation(endpoint,c.signal):await readMainImageView(endpoint,scoped(c));verifyMainImageView(view);if(!current()||c.signal.aborted)return;const previous=liveSaved.current?.scope===scope?liveSaved.current.view:null,draft=liveDraft.current;let recovered=false;
    if(keep&&previous&&draft.scope===scope&&draft.value!==undefined){try{verifyMainImageSave(previous,view,draft.optionId,draft.value);recovered=true;}catch{if(uncertain)throw Error('이전 대표이미지 저장 결과를 확인하지 못했습니다. 선택은 유지했습니다.');verifyMainImageRefresh(previous,view,draft.optionId);}}
    else if(version&&view.productVersion!==version)throw Error('상품 저장 상태가 바뀌었습니다. 최신 상품으로 다시 확인해주세요.');
-   store(view);if(!keep||recovered)clear();void groupLibrary(view);if(recovered){setMessage('저장된 최종 대표이미지를 확인했습니다.');onSaved?.();}
-  }catch(cause){if(current()&&!c.signal.aborted)setError(cause instanceof Error?cause.message:'대표이미지 조회 실패');}finally{finish(c);}}
- useEffect(()=>{let active=true;void Promise.resolve().then(()=>{if(!active||!current()||request.current)return;setBusy(false);if(!stageActive.current||liveDraft.current.scope===scope&&liveDraft.current.value!==undefined||disabled||liveSaved.current?.scope===scope&&liveSaved.current.sourceKey===sourceKey)return;void load();});return()=>{active=false;request.current?.abort();request.current=null;};
+   store(view);if(!initial){uiMutation.current?.confirm();uiMutation.current=null;}if(!keep||recovered)clear();void groupLibrary(view,library);if(recovered){setMessage('저장된 최종 대표이미지를 확인했습니다.');onSaved?.();}
+  }catch(cause){if(current()&&!c.signal.aborted){if(initial)uiReads?.forget();setError(cause instanceof Error?cause.message:'대표이미지 조회 실패');}}finally{finish(c);}}
+ useEffect(()=>{let active=true;void Promise.resolve().then(()=>{if(!active||!current()||request.current)return;setBusy(false);if(!stageActive.current||liveDraft.current.scope===scope&&liveDraft.current.value!==undefined||disabled||liveSaved.current?.scope===scope&&liveSaved.current.sourceKey===sourceKey)return;void load(false,true);});return()=>{active=false;request.current?.abort();request.current=null;};
   // Keep the final-image draft mounted across price/source-image stage changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
  },[scope,sourceKey,disabled]);
- useEffect(()=>{let pending=true;void Promise.resolve().then(()=>{if(!pending||!stageActive.current||!current()||request.current||disabled||liveDraft.current.scope===scope&&liveDraft.current.value!==undefined||liveSaved.current?.scope===scope&&liveSaved.current.sourceKey===sourceKey)return;void load();});return()=>{pending=false;};
+ useEffect(()=>{let pending=true;void Promise.resolve().then(()=>{if(!pending||!stageActive.current||!current()||request.current||disabled||liveDraft.current.scope===scope&&liveDraft.current.value!==undefined||liveSaved.current?.scope===scope&&liveSaved.current.sourceKey===sourceKey)return;void load(false,true);});return()=>{pending=false;};
   // Visibility owns automatic reads, never an already dispatched save/readback.
   // eslint-disable-next-line react-hooks/exhaustive-deps
  },[active,scope,sourceKey,disabled]);
@@ -80,8 +85,8 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
  async function save(){const before=liveSaved.current,draft=liveDraft.current;if(!currentOption()||liveDisabled.current||liveSaveOnSelect.current!==saveOnSelect||busy||request.current||!before||before.scope!==scope||draft.scope!==scope||draft.optionId!==id||draft.value===undefined)return;
   if(before.sourceKey!==sourceKey&&!liveUncertain.current){setError('이미지 선택은 유지했습니다. 최신 자료를 조회한 뒤 저장해주세요.');return;}const c=begin();if(!c)return;
  let dispatched=false;
- const guarded:typeof fetch=async(url,init)=>{const read=(init?.method??'GET')==='GET';if(!currentOption()||(!dispatched||!read)&&(!stageActive.current||liveDisabled.current||liveSaveOnSelect.current!==saveOnSelect))throw Error('대표이미지 편집 상태가 변경되었습니다. 선택은 유지했습니다.');if(init?.method==='PUT')dispatched=true;return scoped(c)(url,init);};
-  try{const view=await saveMainImageView(endpoint,before.view,draft.optionId,draft.value,guarded);if(!current()||c.signal.aborted)return;store(view);clear();void groupLibrary(view);setMessage('선택 옵션의 최종 견적 대표이미지를 저장했습니다.');onSaved?.();}
+ const guarded:typeof fetch=async(url,init)=>{const read=(init?.method??'GET')==='GET';if(!currentOption()||(!dispatched||!read)&&(!stageActive.current||liveDisabled.current||liveSaveOnSelect.current!==saveOnSelect))throw Error('대표이미지 편집 상태가 변경되었습니다. 선택은 유지했습니다.');if(init?.method==='PUT'){dispatched=true;uiMutation.current=uiReads?.beginMutation()??null;}return scoped(c)(url,init);};
+  try{const view=await saveMainImageView(endpoint,before.view,draft.optionId,draft.value,guarded);if(!current()||c.signal.aborted)return;store(view);clear();uiMutation.current?.confirm();uiMutation.current=null;void groupLibrary(view);setMessage('선택 옵션의 최종 견적 대표이미지를 저장했습니다.');onSaved?.();}
   catch(cause){if(current()&&!c.signal.aborted){markUncertain(cause instanceof MainImageSaveError&&cause.uncertain);setError(cause instanceof Error?cause.message:'대표이미지 저장 실패');}}finally{finish(c);}}
  const pool=base?.view.imageKeys??[],url=(key:string)=>`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`,valid=!!id&&rows.some(row=>row.optionId===id);
  const previewScope=JSON.stringify([scope,sourceKey,id,selected,selected.map(key=>pool.includes(key)),translationEnabled,disabled,processingConfigured]);
@@ -108,14 +113,14 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
  const libraryTabs=[['work','작업 이미지'],['main','메인 이미지'],['options','옵션 이미지'],['detail','상세 이미지']] as const;
  function translateSelected(key:string,sourceLanguage:'zh'|'en',manual=false,process=false){
   const before=liveSaved.current,draft=liveDraft.current;
-  if(!(process?onProcess:manual?onEdit:onTranslate)||process&&(processingConfigured!==true||liveProcessingConfigured.current!==true||!previewGeneration||previewEpoch.current!==previewGeneration)||!translationEnabled||!liveTranslationEnabled.current||liveDisabled.current||!current()||liveOption.current!==id||focusedOptionId&&focusedOptionId!==id
+  if(!(process?onProcess:manual?onEdit:onTranslate)||!previewGeneration||previewEpoch.current!==previewGeneration||process&&(processingConfigured!==true||liveProcessingConfigured.current!==true)||!translationEnabled||!liveTranslationEnabled.current||liveDisabled.current||!current()||liveOption.current!==id||focusedOptionId&&focusedOptionId!==id
    ||request.current||busy||liveUncertain.current||!before||before.view!==base?.view||before.scope!==scope||before.sourceKey!==sourceKey
    ||version&&before.view.productVersion!==version||draft.scope===scope&&draft.value!==undefined||!before.view.imageKeys.includes(key))return;
   try{const target=verifyMainImageView(before.view),row=before.view.resolved.rows.find(row=>row.optionId===id),value=mainImageValue(before.view,id);
    if(value.split('\n').map(item=>item.trim()).filter(Boolean).length!==1||value.trim()!==key||target.linked.some(field=>row?.fields[field]?.value!==value))return;
    const quotationTarget:FreeImageQuotationRequest={kind:'quotation',profileId:profileId??null,optionId:id,input:'mainImage',fieldKey:target.primary,slotIndex:0,
     revision:before.view.revision,inputFingerprint:before.view.inputFingerprint,optionRevision:before.view.optionRevision,value};
-   if(process)onProcess?.(key,'main',quotationTarget,before.view);else if(manual)onEdit?.(key,'main',quotationTarget);else onTranslate?.(key,'main',sourceLanguage,quotationTarget);
+   if(process)onProcess?.(key,'main',quotationTarget,before.view);else if(manual)onEdit?.(key,'main',quotationTarget,before.view);else onTranslate?.(key,'main',sourceLanguage,quotationTarget,before.view);
   }catch(cause){setError(cause instanceof Error?cause.message:'번역할 최종 대표이미지 연결을 확인해주세요.');}
  }
  function candidate(key:string,kind?:MainImageLibraryTab){const index=pool.indexOf(key),label=kind?{work:'작업됨',main:'메인',options:'옵션',detail:'상세'}[kind]:`이미지 ${index+1}`;return <button type="button" key={key} aria-label={`최종 대표이미지 ${index+1} 선택`} aria-pressed={selected.length===1&&selected[0]===key} disabled={disabled||!valid||busy||uncertain||saveOnSelect&&dirty} onClick={()=>edit(key)}><img src={url(key)} alt={`저장 이미지 ${index+1}`} width={100} height={100} loading="lazy"/><span>{label}</span></button>;}
@@ -140,7 +145,7 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
       <button type="button" className="main-image-current-thumbnail" aria-label="현재 메인 이미지 크게 보기" aria-haspopup="dialog" disabled={!valid||!fresh||disabled} onClick={()=>openPreview(selected[0])}><img src={url(selected[0])} alt="현재 메인 이미지 작은 미리보기" width={160} height={160}/></button>
       :<small>{selected.length?'대표 이미지 연결을 확인해주세요.':'대표 이미지를 선택해주세요.'}</small>}</div>
      {selected.length===1&&pool.includes(selected[0])&&<>
-      <CodexMainImageButton key={JSON.stringify([productId,id,profileId,selected[0],base?.view.productVersion])} productId={productId} optionId={id} profileId={profileId} sourceKey={selected[0]} version={base!.view.productVersion} disabled={disabled||!valid||busy||uncertain||dirty||!fresh} onSaved={onSaved}/>
+      <CodexMainImageButton uiReads={uiReads} key={JSON.stringify([productId,id,profileId,selected[0],base?.view.productVersion])} productId={productId} optionId={id} profileId={profileId} sourceKey={selected[0]} version={base!.view.productVersion} disabled={disabled||!valid||busy||uncertain||dirty||!fresh} onSaved={onSaved}/>
       {onTranslate&&<button type="button" className="btn primary" aria-label="최종 대표이미지 중국어 한국어 번역" title="중국어 → 한국어 번역" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh} onClick={()=>translateSelected(selected[0],'zh')}>AI 처리</button>}
       {(onProcess||onTranslate)&&<details className="main-image-translation-tools"><summary>추가 도구</summary><div role="group" className="main-image-current-translation" aria-label="최종 견적 대표이미지 추가 도구">
        {onProcess&&<button type="button" className="btn ghost" aria-label="최종 대표이미지 AI 처리" disabled={processingConfigured!==true||disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh} onClick={()=>translateSelected(selected[0],'zh',false,true)}>{processingConfigured===true?'AI 이미지 생성':processingConfigured===false?'이미지 생성 설정 필요':'이미지 생성 설정 확인 중'}</button>}

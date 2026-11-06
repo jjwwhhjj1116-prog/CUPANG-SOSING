@@ -144,6 +144,7 @@ test('pending final-label selection blocks stale primary edits, PNG and drag whi
     await h.idle(); await h.click('저장한 표시사항 PNG 미리보기');
     const oldAttach = h.button('PNG 업로드·견적에 연결').props.onClick, oldEdit = h.input('선택 옵션 제조원').props.onChange, oldGenerate = h.button('저장한 표시사항 PNG 미리보기').props.onClick;
     const original = order(h), gesture = start(h, 'productName'), oldDrop = row(h, 'countryOfOrigin').props.onDrop;
+    child(h).props.onBusyChange(true);h.render();assert.equal(h.render().props['data-workspace-saving'],false,'reference read activity is not saving');assert.equal(h.input('선택 옵션 제조원').props.disabled,false,'reference read alone leaves primary text editable');child(h).props.onBusyChange(false);h.render();
     child(h).props.onEditingChange(true); await h.idle();
     assert.equal(h.render().props['data-workspace-dirty'], true); assert.equal(child(h).props.disabled, false); assert.equal(child(h).props.beforeSave(), true);
     assert.equal(h.button('전체 공통·자동값 복원').props.disabled, true); assert.equal(h.button('PNG 업로드·견적에 연결').props.disabled, true);
@@ -163,7 +164,7 @@ test('old reference scope callbacks and unmounted drag handlers cannot mutate th
   try {
     await h.idle(); const oldChild = child(h).props, gesture = start(h, 'productName'), destination = row(h, 'manufacturer');
     h.select('blue'); await h.idle(); child(h).props.onEditingChange(true); await h.idle();
-    oldChild.onEditingChange(false); oldChild.onBusyChange(true); await h.idle();
+    oldChild.onEditingChange(false); oldChild.onBusyChange(true);oldChild.onSavingChange(true); await h.idle();
     assert.equal(h.render().props['data-workspace-dirty'], true); assert.equal(h.render().props['data-workspace-saving'], false);
     child(h).props.onEditingChange(false); await h.idle(); const before = h.epoch;
     h.close(); destination.props.onDrop(event(gesture.data)); gesture.grip.props.onDragStart(event(gesture.data)); gesture.grip.props.onDragEnd();

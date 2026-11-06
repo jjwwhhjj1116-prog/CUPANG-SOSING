@@ -567,3 +567,57 @@ test('audit keeps its original 180-second deadline and cancellation remains a si
   f.advance(1000000);assert.deepEqual(f.sent.map(row=>row.payload.action),['preview','auditUnexpectedLegal']);assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);assert.equal(f.calls.length,0);assert.deepEqual(plain(session),before);
  }
 });
+
+
+test('late opt-in prepare keeps its timeout rejection and emits one strictly validated hint from the original nonce',async()=>{
+ const f=await fixture(),observer=new AbortController(),late=[];f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,preparedLifecycleAvailable:true});const session=await f.session();f.bridge=async()=>undefined;
+ const pending=f.client.runProductDocumentDraft(session,'prepareDraft',new AbortController().signal,{signal:observer.signal,onResult:value=>late.push(value)});await f.wait(()=>f.sent.length===2);const original=f.sent[1];f.advance(120001);await assert.rejects(pending,error=>error.code==='PRODUCT_DOCUMENT_ACK_MISSING'&&error.uncertain===true);
+ f.advance(90000);f.emit(original,draftState(f));for(let i=0;i<12;i++)await new Promise(done=>setImmediate(done));assert.equal(late.length,1,'late prepare is a validated hint, without resolving or replaying the timed-out action');assert.equal(late[0].state,'validated');assert.equal(late[0].docId,'new-document-728');f.emit(original,draftState(f));await new Promise(done=>setImmediate(done));assert.equal(late.length,1);assert.deepEqual(f.sent.map(message=>message.payload.action),['preview','prepareDraft']);assert.equal(f.calls.length,0);assert.equal(f.listeners.size,0);observer.abort();
+});
+
+for(const action of ['recoverPreparedDraft','observePreparedDraft'])test(`late opt-in ${action} consumes the completed qualified READ without a new exchange`,async()=>{
+ const f=await fixture(),observer=new AbortController(),late=[];f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,preparedLifecycleAvailable:true});const session=await f.session();f.bridge=async()=>undefined;
+ const pending=f.client.runPreparedProductDocument(session,action,new AbortController().signal,undefined,{signal:observer.signal,onResult:value=>late.push(value)});await f.wait(()=>f.sent.length===2);const original=f.sent[1];f.advance(180001);await assert.rejects(pending,error=>error.code==='PRODUCT_DOCUMENT_ACK_MISSING'&&error.uncertain===false);
+ f.advance(133382);const value=action==='recoverPreparedDraft'?draftState(f,'validated',{recovered:true}):lifecycleState(f,'pending',{receipt:f.observation().receipt,recovered:true});await f.client.validatePreparedProductDocumentState(value,session,action,observer.signal);f.emit(original,value);await f.wait(()=>late.length===1);assert.equal(late.length,1,'a qualified delayed READ is parsed once without repeating the heavy native read');assert.equal(late[0].docId,value.docId);assert.deepEqual(f.sent.map(message=>message.payload.action),['preview',action]);assert.equal(f.calls.length,0);assert.equal(f.listeners.size,0);observer.abort();
+});
+
+
+test('late opt-in ignores wrong envelope sources/nonces and rejects terminal malformed, partial, busy or altered proof replies',async()=>{
+ const cases=[['nonce',null,{data:{channel:'YOOFAM_HUB_HANDOFF_RESULT',requestId:'another-outer-nonce',result:{ok:true,result:{}}}}],['origin',null,{origin:'https://foreign.test'}],['source',null,{source:{}}],['request',v=>v.requestId='00000000-0000-4000-8000-000000000000'],['body',v=>v.preparedBodySha256='f'.repeat(64)],['identity',v=>v.identity.company=SINGLE_COMPANIES[1]],['doc',v=>v.docId=null],['partial',v=>v.draftProof.validatedSteps=[2,3,4]],['error',v=>v.error={code:'SOURCE_CHANGED',message:'saved source changed'}],['needsRecovery',v=>v.needsRecovery=true],['receipt',v=>v.receipt={}],['busy',v=>{for(const key of Object.keys(v))if(!['format','requestId','state','registered','success'].includes(key))delete v[key];v.state='busy';}]];
+ for(const[name,change,overrides]of cases){const f=await fixture(),late=[],observer=new AbortController();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,preparedLifecycleAvailable:true});const session=await f.session();f.bridge=async()=>undefined;const pending=f.client.runProductDocumentDraft(session,'prepareDraft',new AbortController().signal,{signal:observer.signal,onResult:value=>late.push(value)});await f.wait(()=>f.sent.length===2);f.advance(120001);await assert.rejects(pending,error=>error.code==='PRODUCT_DOCUMENT_ACK_MISSING');const original=f.sent[1],value=draftState(f);change?.(value);f.emit(original,value,undefined,overrides);for(let i=0;i<80;i++)await new Promise(done=>setImmediate(done));assert.equal(late.length,0,name);observer.abort();assert.equal(f.listeners.size,0,name+' observer disposed');}
+});
+
+for(const action of ['prepareDraft','recoverPreparedDraft','observePreparedDraft'])test(`late opt-in ${action} separate lifetime abort retires its passive receiver without another action`,async()=>{
+ const f=await fixture(),observer=new AbortController(),operation=new AbortController(),late=[];f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,preparedLifecycleAvailable:true});const session=await f.session();f.bridge=async()=>undefined;
+ const pending=action==='prepareDraft'?f.client.runProductDocumentDraft(session,action,operation.signal,{signal:observer.signal,onResult:value=>late.push(value)}):f.client.runPreparedProductDocument(session,action,operation.signal,undefined,{signal:observer.signal,onResult:value=>late.push(value)});await f.wait(()=>f.sent.length===2);f.advance(action==='prepareDraft'?120001:180001);await assert.rejects(pending,error=>error.code==='PRODUCT_DOCUMENT_ACK_MISSING');assert.equal(f.listeners.size,1);observer.abort();assert.equal(f.listeners.size,0);f.emit(f.sent[1],draftState(f,'validated',{recovered:true}));await new Promise(done=>setImmediate(done));assert.equal(late.length,0);assert.equal(f.sent.length,2);assert.equal(f.timers.size,0);
+});
+
+test('late opt-in is unavailable for preview, unqualified start, validation and other original read contracts',async()=>{
+ for(const action of ['preview','start','validateSavedDocumentSteps','recoverDraft']){const f=await fixture(),observer=new AbortController(),late=[];f.bridge=async()=>undefined;const pending=f.client.productDocumentExchange(action,f.packet,new AbortController().signal,action==='confirmPreparedDraft'?{}:undefined,{signal:observer.signal,onResult:value=>late.push(value)});await f.wait(()=>f.sent.length===1);f.advance(300001);await assert.rejects(pending,error=>error.code==='PRODUCT_DOCUMENT_ACK_MISSING');assert.equal(f.listeners.size,0,action);f.emit(f.sent[0],draftState(f));await new Promise(done=>setImmediate(done));assert.equal(late.length,0);assert.equal(f.sent.length,1);observer.abort();}
+});
+
+
+test('retiring only the optional observer before ACK preserves the original request timeout and settles its promise',async()=>{
+ const f=await fixture(),observer=new AbortController();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,preparedLifecycleAvailable:true});const session=await f.session();f.bridge=async()=>undefined;const pending=f.client.runProductDocumentDraft(session,'prepareDraft',new AbortController().signal,{signal:observer.signal,onResult:()=>assert.fail('retired late receiver')});await f.wait(()=>f.sent.length===2);observer.abort();assert.equal(f.timers.size,1,'retiring the separate passive lifetime must not strand the live request by clearing its ACK deadline');f.advance(120001);await assert.rejects(pending,error=>error.code==='PRODUCT_DOCUMENT_ACK_MISSING');assert.equal(f.listeners.size,0);
+});
+
+
+for(const action of ['reviewPreparedDraft','confirmPreparedDraft'])test(`late write hint ${action} uses the original pre-dispatch proof after its envelope expires and never directly settles the write`,async()=>{
+ const f=await fixture(),observer=new AbortController(),late=[];f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,preparedLifecycleAvailable:true});const session=await f.session();f.bridge=async()=>undefined;
+ const confirmation=action==='confirmPreparedDraft'?{action:'confirm-and-submit',userInitiated:true,mode:'explicit-each-run',challengeId:'1'.repeat(64),confirmedAt:f.clock.now,approvedKeys:[]}:undefined;
+ const pending=f.client.runPreparedProductDocument(session,action,new AbortController().signal,confirmation,{signal:observer.signal,onResult:value=>late.push(value)});await f.wait(()=>f.sent.length===2);f.advance(120001);await assert.rejects(pending,error=>error.code==='PRODUCT_DOCUMENT_ACK_MISSING'&&error.uncertain===true);f.advance(600000);const value=lifecycleState(f,action==='reviewPreparedDraft'?'navigation-ready':'pending',action==='confirmPreparedDraft'?{receipt:f.observation().receipt}:{});f.emit(f.sent[1],value);for(let i=0;i<80;i++)await new Promise(done=>setImmediate(done));assert.equal(late.length,1,'a validated late write may only hint one read; it cannot renew the expired write envelope');assert.equal(late[0].docId,value.docId);assert.equal(f.sent.length,2);assert.equal(f.calls.length,0);observer.abort();
+});
+
+
+for(const mode of ['before-dispatch','automatic-expiry','explicit-cancel'])test(`confirmation late hint distinguishes ${mode} without reviving consent authority`,async()=>{
+ const f=await fixture(),observer=new AbortController(),operation=new AbortController(),late=[];f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,preparedLifecycleAvailable:true});const session=await f.session();f.bridge=async()=>undefined;let dispatched=0;
+ if(mode==='before-dispatch')operation.abort(f.client.PRODUCT_DOCUMENT_CONSENT_EXPIRED);const pending=f.client.runPreparedProductDocument(session,'confirmPreparedDraft',operation.signal,{}, {signal:observer.signal,onDispatch:()=>dispatched++,onResult:value=>late.push(value)});
+ if(mode==='before-dispatch'){await assert.rejects(pending);assert.equal(dispatched,0);assert.equal(f.sent.length,1);assert.equal(f.listeners.size,0);}
+ else{await f.wait(()=>f.sent.length===2);assert.equal(dispatched,1);operation.abort(mode==='automatic-expiry'?f.client.PRODUCT_DOCUMENT_CONSENT_EXPIRED:undefined);await assert.rejects(pending,error=>error.uncertain===true);assert.equal(f.listeners.size,mode==='automatic-expiry'?1:0);const value=lifecycleState(f,'pending',{receipt:f.observation().receipt});f.emit(f.sent[1],value);if(mode==='automatic-expiry')await f.wait(()=>late.length===1);else for(let i=0;i<40;i++)await new Promise(done=>setImmediate(done));assert.equal(late.length,mode==='automatic-expiry'?1:0);assert.equal(f.sent.length,2);assert.equal(f.calls.length,0);assert.equal(f.timers.size,0);}
+ observer.abort();assert.equal(f.listeners.size,0);
+});
+
+
+test('a retired scope observer before dispatch cannot send a prepared write after its asynchronous proof completes',async()=>{
+ const f=await fixture(),scope=new AbortController();f.bridge=async()=>({...f.preview(),draftPreparationAvailable:true,preparedLifecycleAvailable:true});const session=await f.session();f.bridge=async()=>undefined;scope.abort();const pending=f.client.runPreparedProductDocument(session,'reviewPreparedDraft',new AbortController().signal,undefined,{signal:scope.signal,onResult:()=>assert.fail('retired scope')});pending.catch(()=>{});for(let i=0;i<80;i++)await new Promise(done=>setImmediate(done));assert.equal(f.sent.length,1,'scope retirement during proof cannot start a new write');await assert.rejects(pending);assert.equal(f.listeners.size,0);
+});

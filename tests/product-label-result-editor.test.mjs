@@ -175,11 +175,11 @@ test('child dirty and busy callbacks cancel old completion without disabling the
   const { h, reads, posts } = setup({ assess: (call, count) => count === 1 ? pending.promise : call.captured });
   try {
     await waitFor(() => reads.length === 1, h); await h.idle();
-    const initialType = child(h).type; child(h).props.onEditingChange(true); child(h).props.onBusyChange(true); h.render();
+    const initialType = child(h).type;child(h).props.onBusyChange(true);h.render();assert.equal(h.render().props['data-workspace-saving'],false,'read activity retires result assessment without claiming saving'); child(h).props.onEditingChange(true); child(h).props.onSavingChange(true); h.render();
     assert.equal(h.render().props['data-workspace-saving'], true); assert.equal(child(h).props.disabled, false);
     // The harness waits for workspace busy, so settle the current child before
     // examining its enabled controls, retaining its pending reference edits.
-    child(h).props.onBusyChange(false); await h.idle();
+    child(h).props.onSavingChange(false);child(h).props.onBusyChange(false); await h.idle();
     pending.resolve(reads[0].captured); await h.idle();
     assert.equal(resultImage(h), undefined); assert.equal(h.render().props['data-workspace-dirty'], true);
     assert.equal(child(h).type, initialType); assert.equal(child(h).props.disabled, false); assert.equal(child(h).props.beforeSave(), true);

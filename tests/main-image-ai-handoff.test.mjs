@@ -9,6 +9,7 @@ import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
 import {hubSchemaSnapshot,schemaCompanies,schemaPath} from './helpers/hub-schema.mjs';
 import {quotationWorkbook} from './helpers/quotation-workbook.mjs';
 import {readPackageZip} from '../extensions/supplier-hub/package.mjs';
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value==='object'?[value,...nodes(value.props?.children)]:[];
 
 // Reuse actual component/API harness declarations without importing their test
@@ -23,7 +24,7 @@ function declarations(file,expose){
   parts.push(statement.getText(ast));
  }
  return vm.runInNewContext(parts.join('\n').replaceAll('import.meta.url',JSON.stringify(url.href))+'\n({'+expose+'})',
-  {assert,fs,vm,ts,createRequire,deflateSync,mobileIntakeHarness,hubSchemaSnapshot,schemaCompanies,schemaPath,quotationWorkbook,readPackageZip,nodes,
+   {assert,fs,vm,ts,createRequire,deflateSync,mobileIntakeHarness,hubSchemaSnapshot,schemaCompanies,schemaPath,quotationWorkbook,readPackageZip,pageSourcePriceBasis,nodes,
    URL,URLSearchParams,Blob,File,FormData,Response,Request,Headers,AbortController,DOMException,TextEncoder,TextDecoder,Uint8Array,DataView,Buffer,Date,JSON,structuredClone,crypto,console,setTimeout,clearTimeout,setImmediate});
 }
 const main=declarations('option-main-image-editor.test.mjs','fixture,editor,plain,text');

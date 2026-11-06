@@ -60,6 +60,18 @@ test('main-only entry does not mount and load a hidden price editor',async()=>{
  }finally{h.close();f.close();}
 });
 
+test('general main option A-B-A never revives retained manual or translation button callbacks',async()=>{
+ const f=await fixture(),targets=[],h=editor(f,{wrapper:true,onEdit:(...args)=>targets.push(args),onTranslate:(...args)=>targets.push(args)});
+ try{
+  h.props.focusedOptionId=undefined;await h.settled();const option=()=>h.input('최종 대표이미지 옵션'),first=option().props.value,other=(await f.read()).resolved.rows.find(row=>row.optionId&&row.optionId!==first).optionId;
+  const manual=h.button('최종 대표이미지 편집하기').props.onClick,translate=h.button('최종 대표이미지 중국어 한국어 번역').props.onClick;
+  option().props.onChange({target:{value:other}});await h.settled();option().props.onChange({target:{value:first}});await h.settled();
+  manual();translate();await h.idle();assert.equal(targets.length,0,'prior A action generations stay retired');
+  await h.click('최종 대표이미지 편집하기');assert.equal(targets.length,1);assert.equal(targets[0][2].optionId,first);assert.equal(targets[0][3].productVersion,f.product.updated_at);
+  assert.equal(f.calls.some(call=>call.method!=='GET'),false);
+ }finally{h.close();f.close();}
+});
+
 test('inactive main images defer initialization and refresh one clean stale view on return',async()=>{
  const f=await fixture(),h=editor(f);
  try{
@@ -162,7 +174,7 @@ test('main translation toolbar uses final quotation A with exact saved binding a
   h=editor(f,{wrapper:true,onTranslate(...args){targets.push(args);}});await h.idle();
   assert.equal(targets.length,0);assert.equal(f.calls.filter(call=>call.method!=='GET').length,0);
   await h.click('최종 대표이미지 중국어 한국어 번역');await h.click('최종 대표이미지 영어 한국어 번역');
-  assert.deepEqual(plain(targets[0]),[f.key,'main','zh',{kind:'quotation',profileId:f.profile.id,optionId:f.id,input:'mainImage',fieldKey:binding.primary,slotIndex:0,revision:view.revision,inputFingerprint:view.inputFingerprint,optionRevision:view.optionRevision,value:f.key}]);
+  assert.deepEqual(plain(targets[0]),[f.key,'main','zh',{kind:'quotation',profileId:f.profile.id,optionId:f.id,input:'mainImage',fieldKey:binding.primary,slotIndex:0,revision:view.revision,inputFingerprint:view.inputFingerprint,optionRevision:view.optionRevision,value:f.key},plain(view)]);
   assert.notEqual(targets[0][0],f.source,'translation must use final A rather than source option B');assert.equal(targets[1][2],'en');
   const old=h.button('최종 대표이미지 중국어 한국어 번역').props.onClick,index=view.imageKeys.indexOf(f.nextKey)+1;
   await h.click(`최종 대표이미지 ${index} 선택`);old();await h.idle();assert.equal(targets.length,2);assert.equal(h.button('최종 대표이미지 영어 한국어 번역').props.disabled,false);
@@ -179,7 +191,7 @@ test('main translation toolbar uses final quotation A with exact saved binding a
 test('main manual editing uses its exact final slot and live lock blocks retained edit/blank/candidate/translation callbacks',async()=>{
  const f=await fixture(),targets=[];let h;
  try{const view=await f.read(),binding=f.backend.load('app/quotation-main-image.ts').verifyMainImageView(view);h=editor(f,{wrapper:true,onEdit(...args){targets.push(args);},onTranslate(...args){targets.push(args);}});await h.idle();
-  await h.click('최종 대표이미지 편집하기');assert.deepEqual(plain(targets[0]),[f.key,'main',{kind:'quotation',profileId:f.profile.id,optionId:f.id,input:'mainImage',fieldKey:binding.primary,slotIndex:0,revision:view.revision,inputFingerprint:view.inputFingerprint,optionRevision:view.optionRevision,value:f.key}]);
+  await h.click('최종 대표이미지 편집하기');assert.deepEqual(plain(targets[0]),[f.key,'main',{kind:'quotation',profileId:f.profile.id,optionId:f.id,input:'mainImage',fieldKey:binding.primary,slotIndex:0,revision:view.revision,inputFingerprint:view.inputFingerprint,optionRevision:view.optionRevision,value:f.key},plain(view)]);
   const manual=h.button('최종 대표이미지 편집하기').props.onClick,translate=h.button('최종 대표이미지 중국어 한국어 번역').props.onClick,blank=h.button('최종 대표이미지 비우기').props.onClick,candidate=h.button(`최종 대표이미지 ${view.imageKeys.indexOf(f.nextKey)+1} 선택`).props.onClick;
   h.props.imageProcessingBusy=true;await h.idle();manual();translate();blank();candidate();await h.idle();assert.equal(targets.length,1);assert.equal(h.button('최종 대표이미지 편집하기').props.disabled,true);assert.equal(h.button('최종 견적 대표이미지 저장'),undefined);assert.equal(f.calls.filter(call=>call.method!=='GET').length,0);
   h.props.imageProcessingBusy=false;await h.idle();candidate();await h.settled();manual();assert.equal(targets.length,1);

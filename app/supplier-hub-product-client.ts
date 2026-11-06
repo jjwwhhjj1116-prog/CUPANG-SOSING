@@ -74,20 +74,28 @@ async function verifyIdentity(identity:unknown,expected:Awaited<ReturnType<typeo
     ||!same(Object.fromEntries(Object.entries(identity).filter(([key])=>!['appTabId','windowId'].includes(key))),expected.logical)||await digest(identity)!==identityDigest)throw Error('전체 옵션·회원 회사·본문의 연결값이 다릅니다.');
 }
 
+export const PRODUCT_DOCUMENT_CONSENT_EXPIRED=Symbol('product-document-consent-expired');
+export type ProductDocumentLateReplyObserver={signal:AbortSignal;onResult:(value:ProductDocumentState)=>void;onDispatch?:()=>void};
+type LateExchangeObserver={signal:AbortSignal;onResult:(value:unknown)=>void;onDispatch?:()=>void};
+
 /** One app click, one extension call. A missing ACK is never retried here. */
-export function productDocumentExchange(action:'preview'|'auditUnexpectedLegal'|'validateSavedDocumentSteps'|'retrySavedDocumentStep'|SingleDocumentAction|ProductDraftAction|PreparedDocumentAction,packet:ProductDocumentPacket,signal:AbortSignal,confirmation?:SingleConfirmation|SavedDocumentStepRetryRequest):Promise<unknown>{
+export function productDocumentExchange(action:'preview'|'auditUnexpectedLegal'|'validateSavedDocumentSteps'|'retrySavedDocumentStep'|SingleDocumentAction|ProductDraftAction|PreparedDocumentAction,packet:ProductDocumentPacket,signal:AbortSignal,confirmation?:SingleConfirmation|SavedDocumentStepRetryRequest,late?:LateExchangeObserver):Promise<unknown>{
   return new Promise((resolve,reject)=>{
-    if(signal.aborted){reject(new ProductDocumentBridgeError('전체 상품 견적 작업을 취소했습니다.',false));return;}
+    const candidateLate=late&&['prepareDraft','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(action)?late:undefined;
+    if(signal.aborted||candidateLate?.signal.aborted){reject(new ProductDocumentBridgeError('전체 상품 견적 작업을 취소했습니다.',false));return;}
     productReceiptCanonical(packet);
     const confirming=action==='confirm'||action==='confirmPreparedDraft'||action==='retrySavedDocumentStep';
     if(!['preview','start','resume','recover','confirm','observe','prepareDraft','recoverDraft','recoverSavedDraftTarget','auditUnexpectedLegal','validateSavedDocumentSteps','retrySavedDocumentStep','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','repairExistingDraft','retryExistingDraftRepair','continueApprovedRepair','resumeReservedRepair','reviewPreparedDraft','confirmPreparedDraft','recoverPreparedDraft','observePreparedDraft'].includes(action)||confirming&&!confirmation||!confirming&&confirmation){reject(new ProductDocumentBridgeError('현재 전체 상품 문서의 동의 동작을 확인해주세요.',false));return;}
     if(confirmation)productReceiptCanonical(confirmation);
     const requestId=crypto.randomUUID(),mutating=!['preview','observe','recover','recoverDraft','recoverSavedDraftTarget','auditUnexpectedLegal','recoverPreparedDraft','observePreparedDraft'].includes(action);
-    const cleanup=()=>{clearTimeout(timer);window.removeEventListener('message',receive);signal.removeEventListener('abort',abort);};
-    const abort=()=>{cleanup();reject(new ProductDocumentBridgeError('응답 확인을 취소했습니다. 같은 요청을 다시 보내지 말고 저장 결과를 조회해주세요.',mutating));};
+    const observeLate=candidateLate;let timedOut=false,dispatched=false;
+    const cleanup=()=>{clearTimeout(timer);window.removeEventListener('message',receive);signal.removeEventListener('abort',abort);observeLate?.signal.removeEventListener('abort',retire);};
+    const retire=()=>{if(timedOut)cleanup();};
+    const abort=()=>{if(action==='confirmPreparedDraft'&&observeLate&&!observeLate.signal.aborted&&dispatched&&signal.reason===PRODUCT_DOCUMENT_CONSENT_EXPIRED){timedOut=true;clearTimeout(timer);signal.removeEventListener('abort',abort);}else cleanup();reject(new ProductDocumentBridgeError('응답 확인을 취소했습니다. 같은 요청을 다시 보내지 말고 저장 결과를 조회해주세요.',mutating));};
     const receive=(event:MessageEvent)=>{
       if(event.source!==window||event.origin!==window.location.origin||event.data?.channel!=='YOOFAM_HUB_HANDOFF_RESULT'||event.data.requestId!==requestId)return;
       cleanup();const envelope=event.data.result;
+      if(timedOut){if(observeLate&&!observeLate.signal.aborted&&object(envelope)&&envelope.ok===true&&Object.hasOwn(envelope,'result')){try{observeLate.onResult(copy(envelope.result));}catch{/* A late reply cannot settle the rejected operation. */}}return;}
       if(!object(envelope)||envelope.ok!==true||!Object.hasOwn(envelope,'result')){
         const coded=typeof envelope?.code==='string';
         reject(new ProductDocumentBridgeError(coded&&typeof envelope.error==='string'?envelope.error:'확장이 문서 요청을 완료하지 못했습니다. 원래 요청의 결과를 확인해주세요.',mutating,coded?envelope.code as string:'PRODUCT_DOCUMENT_DISPATCH_FAILED'));
@@ -113,9 +121,9 @@ export function productDocumentExchange(action:'preview'|'auditUnexpectedLegal'|
     // Continue the already-approved bounded work without timing out its UI
     // before the source/duplicate/file checks finish. This does not extend a
     // packet/consent TTL and never retries a message or remote request.
-    const timer=setTimeout(()=>{cleanup();reject(new ProductDocumentBridgeError(['validateSavedDocumentSteps','retrySavedDocumentStep'].includes(action)?'저장 문서 단계 검사 응답을 확인하지 못했습니다. 자동으로 다시 요청하지 않았습니다.':'전체 상품 문서 응답이 없습니다. 같은 요청을 다시 전송하지 말고 저장 결과를 조회해주세요.',mutating,'PRODUCT_DOCUMENT_ACK_MISSING'));},['validateSavedDocumentSteps','retrySavedDocumentStep'].includes(action)?300000:action==='resumeReservedRepair'?480000:action==='continueApprovedRepair'?240000:nativeReadback?180000:confirming||action==='prepareDraft'||action==='reviewPreparedDraft'?120000:action==='preview'?PRODUCT_DOCUMENT_PREVIEW_ACK_TIMEOUT:60000);
-    window.addEventListener('message',receive);signal.addEventListener('abort',abort,{once:true});
-    try{window.postMessage({channel:'YOOFAM_HUB_HANDOFF',requestId,type:'PRODUCT_DOCUMENT',payload:{action,packet,...(confirmation?{confirmation}:{})}},window.location.origin);}
+    const timer=setTimeout(()=>{if(observeLate&&!observeLate.signal.aborted)timedOut=true;else cleanup();reject(new ProductDocumentBridgeError(['validateSavedDocumentSteps','retrySavedDocumentStep'].includes(action)?'저장 문서 단계 검사 응답을 확인하지 못했습니다. 자동으로 다시 요청하지 않았습니다.':'전체 상품 문서 응답이 없습니다. 같은 요청을 다시 전송하지 말고 저장 결과를 조회해주세요.',mutating,'PRODUCT_DOCUMENT_ACK_MISSING'));},['validateSavedDocumentSteps','retrySavedDocumentStep'].includes(action)?300000:action==='resumeReservedRepair'?480000:action==='continueApprovedRepair'?240000:nativeReadback?180000:confirming||action==='prepareDraft'||action==='reviewPreparedDraft'?120000:action==='preview'?PRODUCT_DOCUMENT_PREVIEW_ACK_TIMEOUT:60000);
+    window.addEventListener('message',receive);signal.addEventListener('abort',abort,{once:true});observeLate?.signal.addEventListener('abort',retire,{once:true});
+    try{window.postMessage({channel:'YOOFAM_HUB_HANDOFF',requestId,type:'PRODUCT_DOCUMENT',payload:{action,packet,...(confirmation?{confirmation}:{})}},window.location.origin);dispatched=true;observeLate?.onDispatch?.();}
     catch{cleanup();reject(new ProductDocumentBridgeError('확장 전달 응답을 확인하지 못했습니다. 원래 저장 결과를 조회해주세요.',mutating));}
   });
 }
@@ -290,7 +298,7 @@ async function inspectSavedDocumentSteps(session:ProductDocumentSession,audit:Un
 
 /** Explicitly prepare only the new draft. This capability never enables the
  * general start/resume/terms/submit transport or manufactures a receipt. */
-export async function runProductDocumentDraft(session:ProductDocumentSession,action:ProductDraftAction,signal:AbortSignal):Promise<ProductDocumentState>{
+export async function runProductDocumentDraft(session:ProductDocumentSession,action:ProductDraftAction,signal:AbortSignal,late?:ProductDocumentLateReplyObserver):Promise<ProductDocumentState>{
   if(!['prepareDraft','recoverDraft','recoverSavedDraftTarget','retryCreateDraft','resumeCreateRetryDraft','recoverClosedTarget','repairExistingDraft','retryExistingDraftRepair','continueApprovedRepair','resumeReservedRepair'].includes(action)||session.preview.draftPreparationAvailable!==true)throw new ProductDocumentBridgeError('새 견적 초안 준비를 지원하는 통합 확장으로 자료를 다시 확인해주세요.',false,'PRODUCT_DOCUMENT_DRAFT_UNAVAILABLE');
   if(action==='recoverSavedDraftTarget'&&session.preview.savedDraftTargetRecoveryAvailable!==true)throw new ProductDocumentBridgeError('원래 저장 문서의 검증 탭 복구를 지원하는 통합 확장으로 연결해주세요.',false,'PRODUCT_DOCUMENT_SAVED_TARGET_RECOVERY_UNAVAILABLE');
   if(action==='retryCreateDraft'&&session.preview.createRetryAvailable!==true)throw new ProductDocumentBridgeError('1회 재시도를 지원하는 최신 통합 확장으로 연결해주세요.',false,'PRODUCT_DOCUMENT_RETRY_UNAVAILABLE');
@@ -304,7 +312,8 @@ export async function runProductDocumentDraft(session:ProductDocumentSession,act
   const fail=():never=>{throw new ProductDocumentBridgeError('새 초안 응답의 원래 회원·문서·본문 또는 제출 전 검증 기록을 확인하지 못했습니다. 같은 초안의 저장 결과를 조회해주세요.',mutating,'PRODUCT_DOCUMENT_DRAFT_REPLY_IDENTITY');};
   try{if(session.preview.packetDigest!==expected.packetDigest||session.packetDigest!==expected.packetDigest||session.preview.requestId!==session.packet.requestId||!same(session.preview.members,session.packet.review.members))fail();await verifyIdentity(session.preview.identity,expected,session.preview.identityDigest);}catch{fail();}
   if(signal.aborted)throw new ProductDocumentBridgeError('새 견적 초안 작업을 취소했습니다.',false);
-  const value=await productDocumentExchange(action,session.packet,signal);
+  const observer=action==='prepareDraft'&&late?{signal:late.signal,onDispatch:late.onDispatch,onResult:(value:unknown)=>{void verifyDraftState(value,session,expected,late.signal,action).then(result=>{if(!late.signal.aborted&&result.state==='validated'&&!result.needsRecovery&&!result.error)late.onResult(result);}).catch(()=>{});}}:undefined;
+  const value=await productDocumentExchange(action,session.packet,signal,undefined,observer);
   return verifyDraftState(value,session,expected,signal,action);
 }
 async function verifyDraftState(value:unknown,session:ProductDocumentSession,expected:Awaited<ReturnType<typeof proof>>,signal:AbortSignal,action:ProductDraftAction){
@@ -360,9 +369,10 @@ async function verifyDraftState(value:unknown,session:ProductDocumentSession,exp
 
 /** Only an independently qualified, already-created native draft can enter
  * this lifecycle. The general unqualified start/resume release gate stays on. */
-export async function runPreparedProductDocument(session:ProductDocumentSession,action:PreparedDocumentAction,signal:AbortSignal,confirmation?:SingleConfirmation):Promise<ProductDocumentState>{
+export async function runPreparedProductDocument(session:ProductDocumentSession,action:PreparedDocumentAction,signal:AbortSignal,confirmation?:SingleConfirmation,late?:ProductDocumentLateReplyObserver):Promise<ProductDocumentState>{
   const expected=await preparedStateScope(session,action,signal);
-  const value=await productDocumentExchange(action,session.packet,signal,confirmation);
+  const observer=late?{signal:late.signal,onDispatch:late.onDispatch,onResult:(value:unknown)=>{const parsed=action==='reviewPreparedDraft'||action==='confirmPreparedDraft'?verifyPreparedState(value,session,expected,action,late.signal):validatePreparedProductDocumentState(value,session,action,late.signal);void parsed.then(result=>{if(!late.signal.aborted&&!result.needsRecovery&&!result.error&&result.docId!==null)late.onResult(result);}).catch(()=>{});}}:undefined;
+  const value=await productDocumentExchange(action,session.packet,signal,confirmation,observer);
   return verifyPreparedState(value,session,expected,action,signal);
 }
 

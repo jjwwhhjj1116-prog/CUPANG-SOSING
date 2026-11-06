@@ -14,6 +14,7 @@ import { attachResizedImage, imageTransformPlan, readResizeSource, renderResized
 import { downloadImageSelection } from '@/app/image-selection-download';
 import {capturedSettingsBannerChangeAllowed,capturedSettingsBannerKeys,parseCapturedSettingsBanners,type CapturedSettingsBanners} from '@/app/captured-settings-banners';
 import './step-image-visual.css';
+import type {RegistrationUiReads,UiMutation} from '@/app/registration-ui-reads';
 
 type Props = {
   product: { id: string; title: string; image_keys: string; updated_at?: string };
@@ -24,7 +25,7 @@ type Props = {
   imageProcessingBusy?: boolean;
   seoLayout?: boolean;
   autoFillLabel?: boolean;
-  active?: boolean;
+  active?: boolean;uiReads?:RegistrationUiReads;
 };
 type Draft = {
   seo: { title: string; keywords: string; description: string };
@@ -62,7 +63,8 @@ async function fetchContent(endpoint: string, signal?: AbortSignal): Promise<{co
 
 export function ProductContentEditor(props: Props) { return <ContentEditor key={props.product.id} {...props} />; }
 
-function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslateImage, imageProcessingBusy = false, seoLayout = false, autoFillLabel = true, active = true }: Props) {
+function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslateImage, imageProcessingBusy = false, seoLayout = false, autoFillLabel = true, active = true,uiReads }: Props) {
+  const uiMutation=useRef<UiMutation|null>(null);
   const [content, setContent] = useState<ProductContent>(() => emptyProductContent(product.id));
   const [settingsBanners,setSettingsBanners]=useState<CapturedSettingsBanners|undefined>();
   const bannerSnapshot=useRef<{content:ProductContent;descriptor?:CapturedSettingsBanners;imageKeys:string[];mounted:boolean}>({content:emptyProductContent(product.id),imageKeys:[],mounted:true});
@@ -115,7 +117,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
     setLoading(true);
     try {
       const saved = await fetchContent(endpoint, signal);
-      if (!signal?.aborted) { applyLoaded(saved); setSnapshotVersion(product.updated_at); setRefreshNotice(''); }
+      if (!signal?.aborted) { applyLoaded(saved); setSnapshotVersion(product.updated_at); setRefreshNotice('');uiMutation.current?.confirm();uiMutation.current=null; }
     } catch (cause) {
       if (!signal?.aborted) setError(cause instanceof Error ? cause.message : '저장본을 불러오지 못했습니다.');
     } finally { if(activeRequest.current===controller)activeRequest.current=null;if (!signal.aborted) setLoading(false); }
@@ -123,11 +125,12 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
   useEffect(() => {
     if(!active||loadedRef.current||activeRequest.current)return;
     const controller = new AbortController();activeRequest.current=controller;setLoading(true);
-    fetchContent(endpoint, controller.signal).then(saved => { if (!controller.signal.aborted&&activeRequest.current===controller) {setLoading(false);applyLoaded(saved);setSnapshotVersion(product.updated_at);} })
-      .catch(cause => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '저장본을 불러오지 못했습니다.'); })
+    const initial=uiReads?uiReads.content(controller.signal).then(body=>({content:body.content,banners:parseCapturedSettingsBanners(body.capturedSettingsBanners,body.content)})):fetchContent(endpoint,controller.signal);
+    initial.then(saved => { if (!controller.signal.aborted&&activeRequest.current===controller) {setLoading(false);applyLoaded(saved);setSnapshotVersion(product.updated_at);} })
+      .catch(cause => { if (!controller.signal.aborted){uiReads?.forget();setError(cause instanceof Error ? cause.message : '저장본을 불러오지 못했습니다.');} })
       .finally(() => { if(activeRequest.current===controller){activeRequest.current=null;if (!controller.signal.aborted) setLoading(false);} });
     return () => {controller.abort();if(activeRequest.current===controller)activeRequest.current=null;};
-  }, [endpoint, applyLoaded, active, product.updated_at]);
+  }, [endpoint, applyLoaded, active, product.updated_at,uiReads]);
   const draftKey = section === 'SEO' ? 'seo' : section === '표시사항' ? 'label' : 'assets';
   const editingDetail = section === '이미지' && focusedAssetRole === 'detail';
   const detailDirty = JSON.stringify(draft.detail) !== JSON.stringify(initial.detail);
@@ -224,13 +227,14 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
   async function applyResize() {
     if(!resizePreview||bannerLocked(resizePreview.key))return;
     await resizeAction(async signal=>{
+      uiMutation.current=uiReads?.beginMutation()??null;
       const saved=await attachResizedImage(product.id,resizePreview,resizeUpload.current,signal);
       if(signal.aborted)return;
       const sourceKey=resizePreview.key,roles=imageStageRoles(focusedAssetRole);
       setResizeAdded(previous=>({version:saved.productVersion,keys:[...new Set([...previous.keys,saved.key])]}));
       imageDraft(previous=>({...previous,assets:Object.fromEntries(Object.entries(previous.assets).map(([role,keys])=>[role,roles.includes(role as AssetRole)?keys.map(key=>key===sourceKey?saved.key:key):keys])) as Draft['assets']}));
       setPreviewKey(saved.key);setResizePreview(null);setResizeSource(null);resizeUpload.current={};
-      setMessage('새 이미지를 자료함에 보관하고 현재 단계에서 선택된 원본 위치에 반영했습니다. 이미지 역할·순서를 저장하면 견적에 반영됩니다. 원본과 다른 단계·옵션별 선택은 유지했습니다.');onSaved?.();
+      setMessage('새 이미지를 자료함에 보관하고 현재 단계에서 선택된 원본 위치에 반영했습니다. 이미지 역할·순서를 저장하면 견적에 반영됩니다. 원본과 다른 단계·옵션별 선택은 유지했습니다.');uiMutation.current?.confirm();uiMutation.current=null;onSaved?.();
     });
   }
 
@@ -274,6 +278,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
     const patch = section === 'SEO' ? { seo: { ...draft.seo, keywords: draft.seo.keywords.split(/[\n,]/).map(value => value.trim()).filter(Boolean) } }
       : section === '표시사항' ? { label: draft.label, labelClears: draft.labelClears, labelProductNameLinked: draft.labelProductNameLinked, labelLayout: draft.labelLayout, customLabels: draft.customLabels } : { assets: imageStagePatch(initial.assets,draft.assets,focusedAssetRole), ...(Object.keys(detailPatch).length ? { detail: detailPatch } : {}) };
     try {
+      uiMutation.current=uiReads?.beginMutation()??null;
       const response = await fetch(endpoint, { method: 'PATCH', signal:controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: content.revision, patch }) });
       const body = await response.json() as { content?: ProductContent;capturedSettingsBanners?:unknown; error?: string };
       if(controller.signal.aborted)return;
@@ -296,7 +301,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
         ...(section==='SEO' && (previous.labelProductNameLinked || (previous.labelProductNameLinked === initial.labelProductNameLinked && previous.label.productName === initial.label.productName)) ? {label:{...previous.label,productName:previous.labelProductNameLinked?saved.seo.title.value:saved.label.productName.value}}:{}),
         ...(section==='표시사항'?{labelClears:savedDraft.labelClears,labelProductNameLinked:savedDraft.labelProductNameLinked,labelLayout:savedDraft.labelLayout,customLabels:savedDraft.customLabels}:{}),
       }));
-      setMessage(`${section} 저장 완료 · 검토용 자료에 반영됩니다.`); onSaved?.();
+      uiMutation.current?.confirm();uiMutation.current=null;setMessage(`${section} 저장 완료 · 검토용 자료에 반영됩니다.`); onSaved?.();
     } catch (cause) { if(!controller.signal.aborted)setError(cause instanceof Error ? cause.message : '저장하지 못했습니다.'); }
     finally { if(activeRequest.current===controller)activeRequest.current=null;if(!controller.signal.aborted)setBusy(false); }
   }

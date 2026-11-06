@@ -64,7 +64,7 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
       target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText,
     { exports, Error, RangeError, Date, URL, URLSearchParams, Response, Request, Headers, Blob, TextEncoder, TextDecoder,
       Uint8Array, DataView, AbortController, structuredClone, crypto: webcrypto, process: { env: { NODE_ENV: 'production' } },...(fileStorage?{File,FormData,CompressionStream,DecompressionStream}:{}),
-      window:{innerWidth:1280,innerHeight:900,...(prompt?{prompt}:{})},fetch: request, require(name) {
+      window:{innerWidth:1280,innerHeight:900,...(prompt?{prompt}:{})},fetch: request, require(name) { if(name==='@/app/registration-ui-reads')return load('app/registration-ui-reads.tsx');
         if(name==='../extensions/supplier-hub/rejection-details.mjs'||name==='@/extensions/supplier-hub/rejection-details.mjs')return rejectionDetails;
         if (name in deps) return deps[name]; if (name === 'react') return hooks;
         if (name === 'react/jsx-runtime') return { jsx: (type, props, key) => ({ type, props, key }), jsxs: (type, props, key) => ({ type, props, key }) };

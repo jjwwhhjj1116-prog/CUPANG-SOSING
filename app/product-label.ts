@@ -242,12 +242,24 @@ export function verifyProductLabelSave(before: ProductLabelsView, saved: Product
   verifyProductLabelsView(saved, optionId);
   const changes = productLabelChanges(before, optionId, draft, structure);
   const expectedStructure = structure === undefined ? before.structure : validateProductLabelStructure(structure);
+  const suggestions = validateLabelSuggestions(before.automaticSuggestions);
+  const removedSuggestions = suggestions?.entries.filter(entry => expectedStructure !== undefined && !expectedStructure.some(field => field.id === entry.fieldKey)
+    || changes.some(change => change.fieldKey === entry.fieldKey && (change.optionId === null || change.optionId === entry.optionId))) ?? [];
+  if (suggestions) suggestions.entries = suggestions.entries.filter(entry => !removedSuggestions.includes(entry));
   if (saved.productId !== before.productId || saved.revision !== before.revision + 1 || saved.updatedAt !== saved.productVersion
     || Date.parse(saved.productVersion) <= Date.parse(before.productVersion) || saved.contentRevision !== before.contentRevision
     || saved.optionRevision !== before.optionRevision || saved.quotationRevision !== before.quotationRevision
     || !same(saved.imageKeys, before.imageKeys) || !same(saved.categoryContext, before.categoryContext) || !same(saved.structure, expectedStructure) || saved.renderEpoch !== before.renderEpoch
     || !same(saved.rows.map(row => [row.optionId, row.optionLabel, row.included]), before.rows.map(row => [row.optionId, row.optionLabel, row.included]))
-    || saved.rows.some((row, index) => productLabelDefinitions(saved).some(({ key }) => Object.hasOwn(before.rows[index].automatic, key) && row.automatic[key] !== before.rows[index].automatic[key]))
+    || !same(saved.automaticSuggestions, suggestions?.entries.length ? suggestions : undefined)
+    || saved.rows.some((row, index) => productLabelDefinitions(saved).some(({ key }) => {
+      if (!Object.hasOwn(before.rows[index].automatic, key)) return false;
+      const removed = ['label-default', 'label-suggestion'].includes(before.rows[index].sources[key])
+        && removedSuggestions.some(entry => entry.optionId === row.optionId && entry.fieldKey === key);
+      return row.automatic[key] !== before.rows[index].automatic[key] && !removed
+        || removed && (!['manual-option', 'manual-common', 'content', 'empty'].includes(row.sources[key]) || row.sources[key] === 'empty' && row.automatic[key] !== '')
+        || row.sources[key] !== before.rows[index].sources[key] && !removed && !changes.some(change => change.fieldKey === key && (change.optionId === null || change.optionId === row.optionId));
+    }))
     || !same(saved.overrides, applyProductLabelChanges(before.overrides, changes, expectedStructure))) throw Error('표시사항 저장 버전과 선택 옵션 저장값을 확인하지 못했습니다. 입력은 유지했습니다.');
   const row = saved.rows.find(row => row.optionId === optionId)!;
   if (changes.some(change => row.values[change.fieldKey] !== (change.value === null ? productLabelValue(saved, optionId, change.fieldKey, { [change.fieldKey]: null }) : change.value))) throw Error('저장 응답의 표시사항이 요청한 값과 다릅니다.');
