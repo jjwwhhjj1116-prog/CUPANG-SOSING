@@ -647,7 +647,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
   }
   async function save(retry = false) {
     const image = retry ? pendingSave.current : rendered;
-    if (!image || liveBrushDrawingRef.current || liveCropDrawing.current || !focusedTarget() || !editorCurrent() || image.source.productId !== productId || (image.source.quotationTarget || image.source.workspaceTarget) && retry && (!liveReadyRetry.current || recoveredScope.current !== editorKey)
+    if (!image || liveBrushDrawingRef.current || liveCropDrawing.current || !focusedTarget() || !editorCurrent() || image.source.productId !== productId || (image.source.quotationTarget || image.source.workspaceTarget || image.editDocument) && retry && (!liveReadyRetry.current || recoveredScope.current !== editorKey)
       || !retry && (pendingSave.current !== null || liveUncertain.current || liveReadyRetry.current)
       || !retry && (image !== liveRenderedRef.current || image.source.productVersion !== version || selectedSourceKey(image.source) !== sourceKey || image.source.role !== role
         || !sameFreeImageQuotationRequest(image.source.quotationTarget, liveQuotationTarget.current) || !sameFreeImageWorkspaceRequest(image.source.workspaceTarget, workspaceTarget) || !imageKeys.includes(sourceKey))) return;
@@ -685,7 +685,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
   }
   async function recover() {
     const image = pendingSave.current;
-    if (!image || !image.source.quotationTarget && !image.source.workspaceTarget || !focusedTarget() || !editorCurrent() || !liveUncertain.current) return;
+    if (!image || !image.source.quotationTarget && !image.source.workspaceTarget && !image.editDocument || !focusedTarget() || !editorCurrent() || !liveUncertain.current) return;
     const work = begin('recover'); if (!work) return;
     try {
       const reply = workspaceContext ? await recoverDetailWorkspaceImage(image, workspaceContext, work.controller.signal) : await recoverFreeImageTranslation(image, work.controller.signal);
@@ -838,7 +838,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       download={`yoofam-plus-${productId}-${role}-${rendered.width}x${rendered.height}.png`} onClick={event => { if (!canDownload(rendered)) event.preventDefault(); }}>편집 결과 PNG 다운로드</a>
       <span> {rendered.width}×{rendered.height}px</span></p>}
     {rendered && !uncertain && !readyRetry && <><p>적용 범위: {rendered.source.workspaceTarget ? '상세 구성의 선택한 작업 사진과 편집 문서만 보관 · 상품 이미지 목록과 견적서 유지' : rendered.source.quotationTarget ? `선택 옵션 ${rendered.source.quotationTarget.optionId} · ${roleNames[rendered.source.role]} ${rendered.source.quotationTarget.slotIndex + 1}` : <>{roleNames[rendered.source.role]}{rendered.source.role === 'main' ? rendered.source.optionImages?.commonAssigned === false ? ' · 공통 대표 이미지 유지' : ' · 공통 대표 이미지 사용 옵션 포함' : ''}{rendered.optionImageIds?.length ? ` + 선택 옵션 ${rendered.optionImageIds.length}개 개별 대표 이미지` : ' · 개별 옵션 이미지 유지'} · 견적서의 직접 수정값은 유지됩니다.</>}</p><button type="button" className="btn green" disabled={locked || !currentImage} onClick={() => void save()}>{workspaceTarget ? '검토한 작업 사진 보관' : '검토한 번역 이미지 적용'}</button></>}
-    {uncertain && <button type="button" className="btn blue" disabled={busy || !matchingQuotationContext} onClick={() => { if (pendingSave.current?.source.quotationTarget || pendingSave.current?.source.workspaceTarget) void recover(); else void save(true); }}>{workspaceTarget ? '작업 사진 보관 결과 확인' : '같은 결과의 저장 상태 다시 확인'}</button>}
+    {uncertain && <button type="button" className="btn blue" disabled={busy || !matchingQuotationContext} onClick={() => { if (pendingSave.current?.source.quotationTarget || pendingSave.current?.source.workspaceTarget || pendingSave.current?.editDocument) void recover(); else void save(true); }}>{workspaceTarget ? '작업 사진 보관 결과 확인' : '같은 결과의 저장 상태 다시 확인'}</button>}
     {readyRetry && <button type="button" className="btn green" disabled={busy || !matchingQuotationContext} onClick={() => void save(true)}>{workspaceTarget ? '같은 작업 사진 다시 보관' : '같은 미리보기 다시 적용'}</button>}
     {(dirty || loaded || discoveredQuotationContext.current) && <button type="button" className="btn" disabled={busy} onClick={() => { cancel(false); discardDraft(); if (discoveredQuotationContext.current) { discoveredQuotationContext.current = null; setQuotationTarget(null); } setNotice('편집 초안을 지웠습니다. 서버에 보관된 원본과 이미지 역할은 변경하지 않았습니다.'); }}>이미지 번역 편집 초안 지우기</button>}
     {!imageKeys.length && <p>상품에 저장된 원본 이미지를 먼저 선택해주세요.</p>}

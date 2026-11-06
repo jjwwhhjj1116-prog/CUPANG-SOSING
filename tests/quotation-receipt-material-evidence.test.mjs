@@ -50,7 +50,7 @@ test('R6 same-clock effective receipt changes alter new sealed plan and old owne
   const { f, h, read, model } = await fixture(); try {
     f.setProvider(materialProvider('폴리에스테르'));
     const state = await json(await f.request(undefined, 'GET')), out = await json(await f.request(f.requestBody(state))), job = out.job;
-    assert.equal(job.generationPolicy, 'option-notice-material-evidence-v3');
+    assert.equal(job.generationPolicy, 'couplus-common-legal-material-evidence-v4');
     const before = await read(), original = h.sqlite.prepare('SELECT payload FROM collection_results WHERE job_id=?').get('job'), changed = JSON.parse(original.payload);
     changed.attributes.find(pair => pair.name === '材质').value = '硅胶'; h.sqlite.prepare('UPDATE collection_results SET payload=? WHERE job_id=?').run(JSON.stringify(changed), 'job');
     const after = await read(); assert.equal(after.product.updated_at, before.product.updated_at);
@@ -79,7 +79,7 @@ test('R6 stored R5 v1 plan/provider request bytes and exact retry remain unchang
     assert.equal(retry.reused, true); assert.equal(retry.job.generationPolicy, 'option-notice-material-evidence-v1'); assert.deepEqual(retry.job.generationFacts.material, []);
     assert.equal(f.jobs()[0].review, before.review); assert.equal(f.jobs()[0].result, before.result); assert.equal(f.jobs()[0].request_fingerprint, before.request_fingerprint); assert.equal(f.provider.calls.length, count);
     const currentState = await json(await f.request(undefined, 'GET')); assert.equal(currentState.fingerprint, state.fingerprint);
-    const fresh = await json(await f.request(f.requestBody(currentState))); assert.equal(fresh.job.generationPolicy, 'option-notice-material-evidence-v3'); assert.notEqual(fresh.job.id, retry.job.id);
+    const fresh = await json(await f.request(f.requestBody(currentState))); assert.equal(fresh.job.generationPolicy, 'couplus-common-legal-material-evidence-v4'); assert.notEqual(fresh.job.id, retry.job.id);
     const oldStored = f.jobs().find(row => row.id === retry.job.id); assert.equal(oldStored.review, before.review); assert.equal(oldStored.result, before.result); assert.equal(oldStored.request_fingerprint, before.request_fingerprint);
     assert.ok(f.provider.calls.length > count); assert.equal(f.jobs().length, 2);
   } finally { f.close(); }

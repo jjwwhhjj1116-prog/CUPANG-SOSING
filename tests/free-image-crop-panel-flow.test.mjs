@@ -13,6 +13,17 @@ const clickDownload=node=>{const event={prevented:false,preventDefault(){this.pr
 const native=createRequire(import.meta.url);
 async function prepare(h){await h.settle();if(!h.field('이미지 잘라내기'))await h.click('원본 불러오기 · 수동 편집');await h.change('이미지 잘라내기','',true);}
 async function crop(h,rect={x:2,y:1,width:15,height:10}){for(const[field,value]of Object.entries(rect))await h.change('잘라내기 '+field,String(value));}
+test('an uncertain generic document save checks the same outcome read-only before permitting an explicit retry',async()=>{
+ class UnknownRoleSave extends Error{constructor(){super('synthetic role ACK lost');this.uncertain=true;}}
+ const h=fixture({}, {FreeImageApplyError:UnknownRoleSave});try{
+  await prepare(h);await crop(h);h.setRender(async(image,regions)=>({source:image.source,output:new Blob(['same reviewed pixels'],{type:'image/png'}),width:15,height:10,
+   editDocument:{format:'free-image-edit-v1',width:20,height:12,sourceLanguage:'zh',regions}}));
+  await h.click('번역 이미지 미리보기');h.setApply(async()=>{throw new UnknownRoleSave();});await h.click('검토한 번역 이미지 적용');
+  const sent=h.calls.find(call=>call.action==='apply').image;h.setRecover(async image=>{assert.equal(image,sent);return{applied:false};});
+  await h.click('같은 결과의 저장 상태 다시 확인');
+  assert.deepEqual(plain(h.calls.map(call=>call.action)),['source','preview','apply','recover']);assert.equal(h.saved,0);assert.ok(h.button('같은 미리보기 다시 적용'));
+ }finally{h.close();}
+});
 function pointerFixture(){
  const slots=[],effects=[],layouts=[],starts=[],completed=[],canceled=[],held=new Set();let cursor=0,closed=false,late=0,serial=0,rect={left:10,top:20,width:100,height:50};
  const surface={getBoundingClientRect:()=>({...rect}),setPointerCapture:id=>held.add(id),hasPointerCapture:id=>held.has(id),releasePointerCapture:id=>held.delete(id)};

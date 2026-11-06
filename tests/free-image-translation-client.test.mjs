@@ -458,7 +458,7 @@ test('brush selection and layer order preserve other text, while false erase, wr
   const maximum = Array.from({ length: 4 }, (_, index) => ({ ...brush, id: 'large-' + index, brush: { size: 4, points: Array.from({ length: 2048 }, () => ({ x: 3, y: 3 })) } }));
   await render(maximum); const capacity = h.canvases.length;
   await assert.rejects(render([...maximum, { ...brush, id: 'overflow' }])); assert.equal(h.canvases.length, capacity);
-  await render([...maximum, { ...brush, id: 'ignored-overflow', selected: false }]);
+  await assert.rejects(render([...maximum, { ...brush, id: 'ignored-overflow', selected: false }]), 'retained unselected brush layers also fit the complete saved document budget');
   assert.deepEqual(original.canvas.pixels, pixels(20, 12));
 });
 
@@ -478,7 +478,7 @@ test('unset text style keeps the original pixels, font string, left anchor and 1
   assert.deepEqual(outputs[0], outputs[1]);
 });
 
-test('text style validation rejects malformed selected styles before creating any output canvas and erase leaves unused styles intact', async () => {
+test('text style validation rejects malformed saved styles before creating any output canvas and erase leaves valid unused styles intact', async () => {
   const h = fixture(), original = image(h), chosen = region('valid', { x: 3, y: 2, width: 8, height: 6 });
   for (const bad of [{ fontFamily: null }, { fontFamily: 'Sans' }, { fontFamily: '__proto__' }, { fontFamily: 'url(https://foreign.test/font)' },
     { bold: 1 }, { bold: 'true' }, { italic: null }, { italic: 'false' }, { textAlign: null }, { textAlign: 'start' },
@@ -488,11 +488,13 @@ test('text style validation rejects malformed selected styles before creating an
     assert.equal(h.operations.length, 0);
   }
   await assert.rejects(h.client.renderFreeImageTranslation(original, [{ ...chosen, translated: '', bold: true }], new AbortController().signal));
-  const erased = { ...chosen, erase: true, translated: '보존한 번역', fontFamily: 'retained-unrecognized', bold: 'retained', italic: null, textAlign: 'start', lineHeight: NaN };
+  const malformed = { ...chosen, erase: true, translated: '보존한 번역', fontFamily: 'retained-unrecognized', bold: 'retained', italic: null, textAlign: 'start', lineHeight: NaN };
+  await assert.rejects(h.client.renderFreeImageTranslation(original, [malformed], new AbortController().signal), 'a retained editable layer must have serializable valid styles even when its text is erased');
+  const erased = { ...chosen, erase: true, translated: '보존한 번역', fontFamily: 'serif', bold: true, italic: false, textAlign: 'center', lineHeight: 1.7 };
   await h.client.renderFreeImageTranslation(original, [erased], new AbortController().signal);
   assert.equal(h.measurements.length, 0); assert.equal(h.operations.filter(value => value[0] === 'text').length, 0);
-  assert.equal(erased.translated, '보존한 번역'); assert.equal(erased.fontFamily, 'retained-unrecognized'); assert.ok(Number.isNaN(erased.lineHeight));
-  await assert.rejects(h.client.renderFreeImageTranslation(original, [{ ...erased, erase: false }], new AbortController().signal));
+  assert.equal(erased.translated, '보존한 번역'); assert.equal(erased.fontFamily, 'serif'); assert.equal(erased.lineHeight, 1.7);
+  await assert.rejects(h.client.renderFreeImageTranslation(original, [{ ...malformed, erase: false }], new AbortController().signal));
   let fontLoads = 0;
   const fontFixture = fixture({ fonts: { load: async () => { fontLoads++; return [{}]; }, check: () => true } }), fontImage = image(fontFixture);
   await assert.rejects(fontFixture.client.renderFreeImageTranslation(fontImage,
@@ -759,14 +761,15 @@ test('individual-only representative translation requires selected options and e
   assert.equal(h.client.sameFreeImageSource(commonSource, loaded.source), false);
   assert.notEqual(await h.client.expectedFreeImageOutputKey({ ...rendered, source: commonSource }), key,
     'the same bytes/option subset cannot be mistaken for a source assigned to common main');
+  const editDocumentSha256 = await hash(new TextEncoder().encode(JSON.stringify(rendered.editDocument)));
   const good = { source: loaded.source, key, productVersion: '2026-10-06T00:00:01Z', contentRevision: source.contentRevision,
-    optionImageIds: ['sku-b'], optionRevision: 8, applied: true };
-  assert.equal(h.client.readFreeImageApplyReply(good, rendered, key).contentRevision, 2);
+    optionImageIds: ['sku-b'], optionRevision: 8, applied: true, editDocumentSha256 };
+  assert.equal(h.client.readFreeImageApplyReply(good, rendered, key, editDocumentSha256).contentRevision, 2);
   for (const change of [{ contentRevision: 3 }, { contentRevision: 1 }, { contentRevision: '2' }, { source: commonSource },
     { optionImageIds: ['sku-a'] }, { optionRevision: 7 }, { optionRevision: 9 }, { replayed: true, contentRevision: 1 }]) {
-    assert.throws(() => h.client.readFreeImageApplyReply({ ...good, ...change }, rendered, key), error => error.uncertain === true);
+    assert.throws(() => h.client.readFreeImageApplyReply({ ...good, ...change }, rendered, key, editDocumentSha256), error => error.uncertain === true);
   }
-  assert.equal(h.client.readFreeImageApplyReply({ ...good, replayed: true, contentRevision: 5, optionRevision: 10 }, rendered, key).replayed, true,
+  assert.equal(h.client.readFreeImageApplyReply({ ...good, replayed: true, contentRevision: 5, optionRevision: 10 }, rendered, key, editDocumentSha256).replayed, true,
     'proven replay can acknowledge unrelated later content edits without inventing a new common-image apply');
   let attempts = 0; const sent = [];
   const request = async (url, init) => {

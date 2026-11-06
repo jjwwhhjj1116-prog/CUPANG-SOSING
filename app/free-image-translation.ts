@@ -7,7 +7,7 @@ export type FreeImageWorkspaceTarget={kind:'detail-workspace';profileId:string|n
 export type FreeImageSource={productId:string;productVersion:string;contentRevision:number;sourceKey:string;sourceSha256:string;role:FreeImageRole;width:number;height:number;
  optionImages?:{revision:number;optionIds:string[];commonAssigned?:false};quotationTarget?:FreeImageQuotationTarget;
  workspaceTarget?:FreeImageWorkspaceTarget;
- editorSource?:{resultKey:string;resultSha256:string;documentSha256:string;anchorPolicy?:'current-target-v1'}};
+ editorSource?:{resultKey:string;resultSha256:string;documentSha256:string;anchorPolicy?:'current-target-v1'|'current-role-v1'}};
 export type ImageTextRegion={id:string;text:string};
 export type ImageTextTranslation={id:string;original:string;translated:string|null;issue:string|null};
 export const MAX_OCR_PIXELS=12000000;
@@ -35,9 +35,10 @@ export function validateFreeImageSource(value:unknown):FreeImageSource{
  }
  if(source.editorSource!==undefined){
   const editor=source.editorSource as Record<string,unknown>;
-  if(source.quotationTarget===undefined&&source.workspaceTarget===undefined||!editor||typeof editor!=='object'||Array.isArray(editor)||![3,4].includes(Object.keys(editor).length)
+  const roleEditor=editor&&typeof editor==='object'&&editor.anchorPolicy==='current-role-v1'&&source.quotationTarget===undefined&&source.workspaceTarget===undefined&&['main','additional','detail'].includes(String(source.role));
+  if(source.quotationTarget===undefined&&source.workspaceTarget===undefined&&!roleEditor||!editor||typeof editor!=='object'||Array.isArray(editor)||![3,4].includes(Object.keys(editor).length)
    ||Object.keys(editor).some(key=>!['resultKey','resultSha256','documentSha256','anchorPolicy'].includes(key))
-   ||Object.hasOwn(editor,'anchorPolicy')&&(editor.anchorPolicy!=='current-target-v1'||source.workspaceTarget!==undefined)
+   ||Object.hasOwn(editor,'anchorPolicy')&&!roleEditor&&(editor.anchorPolicy!=='current-target-v1'||source.workspaceTarget!==undefined)
    ||typeof editor.resultKey!=='string'||!editor.resultKey||editor.resultKey.length>512||editor.resultKey===source.sourceKey
    ||![editor.resultSha256,editor.documentSha256].every(value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value)))throw Error('저장한 이미지 편집 결과와 문서 증거를 확인해주세요.');
  }
@@ -91,6 +92,17 @@ export function freeImageApplyIdentity(source:FreeImageSource,optionImageIds:rea
  const identity=crop!==undefined?JSON.stringify({source:freeImageSourceIdentity(source),...(ids.length?{optionImageIds:ids}:{}),crop:validateFreeImageCrop(crop,source)})
   :ids.length?JSON.stringify({source:freeImageSourceIdentity(source),optionImageIds:ids}):freeImageSourceIdentity(source);
  return editDocumentSha256===undefined?identity:JSON.stringify({identity,editDocumentSha256});
+}
+/** Generic role documents use a separate identity; historical quote/workspace bytes stay unchanged. */
+export function freeImageRoleEditApplyIdentity(source:FreeImageSource,optionImageIds:readonly string[],crop:FreeImageCrop|undefined,editDocumentSha256:string){
+ validateFreeImageSource(source);
+ if(source.quotationTarget||source.workspaceTarget||source.editorSource&&source.editorSource.anchorPolicy!=='current-role-v1'||!['main','additional','detail'].includes(source.role)
+  ||!/^[a-f0-9]{64}$/.test(editDocumentSha256))throw Error('이미지 역할 편집 문서의 저장 범위를 확인해주세요.');
+ const ids=validateFreeImageOptionIds(source,[...optionImageIds]);
+ if(source.optionImages?.commonAssigned===false&&!ids.length)throw Error('이 개별 사진을 반영할 옵션을 한 개 이상 선택해주세요. 공통 대표 이미지는 변경하지 않습니다.');
+ const identity=crop!==undefined?JSON.stringify({source:freeImageSourceIdentity(source),...(ids.length?{optionImageIds:ids}:{}),crop:validateFreeImageCrop(crop,source)})
+  :ids.length?JSON.stringify({source:freeImageSourceIdentity(source),optionImageIds:ids}):freeImageSourceIdentity(source);
+ return JSON.stringify({format:'free-image-role-edit-record-v1',identity,editDocumentSha256});
 }
 export function validateImageTextRegions(value:unknown):ImageTextRegion[]{
  if(!Array.isArray(value)||!value.length||value.length>MAX_OCR_REGIONS)throw Error('번역할 문구는 1~100개 영역으로 선택해주세요.');

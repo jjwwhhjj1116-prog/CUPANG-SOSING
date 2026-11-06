@@ -12,9 +12,10 @@ import type { QuotationAiPlan } from '@/app/quotation-ai';
 
 export const LEGACY_QUOTATION_GENERATION_POLICY = 'option-notice-material-evidence-v1' as const;
 export const RECEIPT_QUOTATION_GENERATION_POLICY = 'option-notice-material-evidence-v2' as const;
-export const QUOTATION_GENERATION_POLICY = 'option-notice-material-evidence-v3' as const;
-export type QuotationGenerationPolicy=typeof QUOTATION_GENERATION_POLICY|typeof RECEIPT_QUOTATION_GENERATION_POLICY|typeof LEGACY_QUOTATION_GENERATION_POLICY;
-export const validQuotationGenerationPolicy=(value:unknown):value is QuotationGenerationPolicy=>value===QUOTATION_GENERATION_POLICY||value===RECEIPT_QUOTATION_GENERATION_POLICY||value===LEGACY_QUOTATION_GENERATION_POLICY;
+export const CANONICAL_QUOTATION_GENERATION_POLICY = 'option-notice-material-evidence-v3' as const;
+export const QUOTATION_GENERATION_POLICY = 'couplus-common-legal-material-evidence-v4' as const;
+export type QuotationGenerationPolicy=typeof QUOTATION_GENERATION_POLICY|typeof CANONICAL_QUOTATION_GENERATION_POLICY|typeof RECEIPT_QUOTATION_GENERATION_POLICY|typeof LEGACY_QUOTATION_GENERATION_POLICY;
+export const validQuotationGenerationPolicy=(value:unknown):value is QuotationGenerationPolicy=>value===QUOTATION_GENERATION_POLICY||value===CANONICAL_QUOTATION_GENERATION_POLICY||value===RECEIPT_QUOTATION_GENERATION_POLICY||value===LEGACY_QUOTATION_GENERATION_POLICY;
 export type QuotationGenerationFacts = {
   material: { name: string; value: string; provenance?: string }[];
   options: { optionId: string | null; color: string; translatedName: string; originalName?:string }[];
@@ -65,10 +66,52 @@ export function quotationAiCanonicalMaterial(field:QuotationField,facts:Quotatio
   if(values.some(value=>value===null)||new Set(values).size!==1)return;
   const value=values[0]!;return quotationValueIssues(field,value).length?undefined:value;
 }
+/** Only the captured legal notice wire is common across selected options. */
+export function quotationAiCommonLegalField(field:QuotationField):boolean{
+  const wire=field.hubWire;
+  return field.section==='legal'&&field.visibility==='common'&&wire?.path.join('.')==='legalPage.notices'
+    &&wire.nameKey==='noticeItemName'&&['noticeItemValue','noticeContent'].includes(wire.valueKey??'')&&wire.name===field.label;
+}
+// Existing shipped color translations provide negative evidence even when that color is not selected.
+const legalColorTranslations=Object.entries(seoCurrentLiterals.removeChineseDictionary).flatMap(([raw,word])=>{
+  const reference=quotationAiColorReference({optionId:null,color:raw,translatedName:''});
+  return reference?.aliases.length?[{key:reference.key,word}]:[];
+});
+const legalColorWords=[...new Set([...seoCurrentLiterals.modules['7d6a'].oe.flatMap(rule=>[...rule.words]),...Object.values(seoCurrentLiterals.modules['7d6a'].Ke),...legalColorTranslations.map(item=>item.word)])];
+function commonLegalColorSupported(field:QuotationField,value:string,facts:QuotationGenerationFacts):boolean{
+  const normalize=(text:string)=>text.trim().replace(/\s+/gu,' ').toLowerCase();
+  const candidate=normalize(value);
+  if(!candidate||/[\d,，、;/／|｜>＞+&㐀-䶿一-鿿豈-﫿]/u.test(candidate))return false;
+  const axes=(text:string)=>text.replace(/&amp;/giu,'&').replace(/&(?:gt|#0*62|#x0*3e);/giu,'>').split(/[>＞|｜/／;；]/u).map(part=>part.trim());
+  return facts.options.some(option=>{
+    const reference=quotationAiColorReference(option);if(!reference)return false;
+    if(reference.aliases.some(alias=>normalize(alias)===candidate)||normalize(option.color)===candidate)return true;
+    // A saved translated axis may supply a synonym, but an entire option name may not.
+    const raw=axes(option.originalName??''),translated=axes(option.translatedName);
+    if(raw.length<2||raw.length!==translated.length)return false;
+    return raw.some((part,index)=>{
+      const color=option.color.trim();
+      const axis=quotationAiColorReference({optionId:option.optionId,color:'',translatedName:'',originalName:part});
+      if(!(color&&normalize(part)===normalize(color))&&(!axis||axis.key!==reference.key))return false;
+      if(normalize(translated[index])!==candidate)return false;
+      const phrase=(alias:string)=>new RegExp(`(?<![가-힣A-Za-z])${normalize(alias).split(/\s+/u).map(word=>word.replace(/[.*+?^${}()|[\]\\]/gu,'\\$&')).join('\\s+')}(?![가-힣A-Za-z])`,'gu');
+      const ownAliases=[...reference.aliases,...legalColorTranslations.filter(item=>item.key===reference.key).map(item=>item.word)];
+      let remaining=candidate;for(const alias of ownAliases.sort((a,b)=>b.length-a.length))remaining=remaining.replace(phrase(alias),' ');
+      if(legalColorWords.some(alias=>phrase(alias).test(remaining)))return false;
+      return !quotationAiGenerationIssue(field,option.optionId,value,facts,CANONICAL_QUOTATION_GENERATION_POLICY);
+    });
+  });
+}
+export function quotationAiCommonLegalIssue(fields:readonly QuotationField[],changes:readonly QuotationAiProposal[]):string|null{
+  for(const field of fields.filter(quotationAiCommonLegalField)){
+    if(new Set(changes.filter(change=>change.fieldKey===field.id).map(change=>change.value)).size>1)return '공통 상품정보고시의 값이 옵션마다 다릅니다.';
+  }
+  return null;
+}
 /** Negative evidence checks do not certify translated names as actual product facts. */
 export function quotationAiGenerationIssue(field: QuotationField, optionId: string | null, value: string, facts: QuotationGenerationFacts, generationPolicy?:string): string | null {
   if (quotationAiMaterialField(field)) {
-    if(generationPolicy===QUOTATION_GENERATION_POLICY){const expected=quotationAiCanonicalMaterial(field,facts);if(expected!==undefined&&value!==expected)return '원문 재질의 정규화 값과 제안값이 다릅니다.';}
+    if(generationPolicy===QUOTATION_GENERATION_POLICY||generationPolicy===CANONICAL_QUOTATION_GENERATION_POLICY){const expected=quotationAiCanonicalMaterial(field,facts);if(expected!==undefined&&value!==expected)return '원문 재질의 정규화 값과 제안값이 다릅니다.';}
     const priority = productFactPriorityIssue(value, 'material', '', facts.material);
     if (priority || unsupportedProductMaterial(value, facts.material.map(pair => pair.value).join('\n'), true)) return priority ?? '상품 원문의 명시된 재질 근거를 확인해주세요.';
     if(facts.material.some(pair=>pair.provenance==='collection-source')){
@@ -81,6 +124,7 @@ export function quotationAiGenerationIssue(field: QuotationField, optionId: stri
     }
   }
   if (quotationAiOptionColorNotice(field)) {
+    if(generationPolicy===QUOTATION_GENERATION_POLICY&&quotationAiCommonLegalField(field))return commonLegalColorSupported(field,value,facts)?null:'공통 색상은 선택 원문 옵션에 연결된 대표값 하나만 사용할 수 있습니다.';
     const own = facts.options.find(option => option.optionId === optionId);
     if (!own) return '선택 옵션의 색상 연결을 확인해주세요.';
     const words = (text: string) => text.match(/[가-힣A-Za-z]{2,}/gu) ?? [];
@@ -201,6 +245,7 @@ export function quotationAiProposalChanges(view: QuotationFieldsView, job: Quota
   const rows = new Set(view.resolved.rows.filter(row => row.included && (job.scope.applyToAllOptions || row.optionId === job.scope.optionId)).map(row => row.optionId));
   if (job.result.changes.length > Math.min(fields.size, 300) * rows.size || new TextEncoder().encode(JSON.stringify(job.result)).length > 256 * 1024)
     throw Error('AI 초안의 항목 수 또는 응답 크기가 현재 양식·옵션 처리 범위를 초과했습니다.');
+  if(job.generationPolicy===QUOTATION_GENERATION_POLICY){const issue=quotationAiCommonLegalIssue(view.resolved.schema.fields,job.result.changes);if(issue)throw Error(issue);}
   const seen = new Set<string>(), proposedFields = new Set<string>();
   return job.result.changes.map(change => {
     if (!change || typeof change.fieldKey !== 'string' || typeof change.value !== 'string') throw Error('AI 초안의 입력 자료형을 확인해주세요.');

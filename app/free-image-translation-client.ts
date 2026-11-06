@@ -1,6 +1,6 @@
 import {
   MAX_OCR_PIXELS, MAX_OCR_REGIONS, MAX_OCR_TEXT, validateFreeImageSource, validateImageTextRegions,
-  freeImageApplyIdentity, freeImageSourceIdentity, validateFreeImageOptionIds,
+  freeImageApplyIdentity, freeImageRoleEditApplyIdentity, freeImageSourceIdentity, validateFreeImageOptionIds,
   type FreeImageRole, type FreeImageSource, type ImageTextRegion, type ImageTextTranslation,
 } from '@/app/free-image-translation';
 import { isOwnedImageKey, MAX_IMAGE_BYTES, PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-files';
@@ -33,7 +33,7 @@ export type FreeImageLoaded = { source: FreeImageSource; blob: Blob; canvas: HTM
  visionTextStyle?:ImageTextStyle;visionConfiguration?:ImageTextVisionConfiguration;visionTransport?:'workers-ai-batch-v1';visionRequestId?:string;visionPending?:FreeImageVisionError;visionResult?:ImageTextVisionResult;visionExecution?:{requests:0|1;cached:boolean};visionStyleIssues?:VisionStyleIssue[];visionFetcher?:typeof fetch };
 export type FreeImageRendered = { source: FreeImageSource; output: Blob; width: number; height: number; optionImageIds?: string[]; crop?: FreeImageCrop; editDocument?: FreeImageEditDocument };
 export type FreeImageQuotationRequest = Omit<NonNullable<FreeImageSource['quotationTarget']>, 'bindingSha256'>;
-export type FreeImageEditorReadOptions = { restoreEditor: true; anchorPolicy?: 'current-target-v1' };
+export type FreeImageEditorReadOptions = { restoreEditor: true; anchorPolicy?: 'current-target-v1' | 'current-role-v1' };
 /** Metadata only: choosing a stage must not load pixels, run OCR or mutate roles. */
 export async function readFreeImageRoleSources(productId: string, productVersion: string, role: FreeImageRole, signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<string[]> {
   const response = await fetcher(`/api/products/${encodeURIComponent(productId)}/image-text?${new URLSearchParams({ list: 'sources', role })}`, { signal, cache: 'no-store' });
@@ -111,14 +111,15 @@ function canvas(width: number, height: number) {
 export async function readFreeImageSourceProof(productId: string, version: string, sourceKey: string, role: FreeImageRole,
   signal: AbortSignal, fetcher: typeof fetch = fetch, quotationTarget?: FreeImageQuotationRequest, options?: FreeImageEditorReadOptions): Promise<Pick<FreeImageLoaded, 'source' | 'editDocument' | 'noTextProof' | 'visionConfiguration' | 'visionTransport' | 'visionFetcher'>> {
   signal.throwIfAborted();
-  if (options?.anchorPolicy !== undefined && (options.anchorPolicy !== 'current-target-v1' || options.restoreEditor !== true || !quotationTarget)) throw Error('다시 편집할 현재 견적 이미지 연결을 확인해주세요.');
+  if (options?.anchorPolicy !== undefined && (options.restoreEditor !== true || (quotationTarget ? options.anchorPolicy !== 'current-target-v1'
+    : options.anchorPolicy !== 'current-role-v1' || !['main', 'additional', 'detail'].includes(role)))) throw Error('다시 편집할 현재 이미지 연결을 확인해주세요.');
   if (role === 'label' && !quotationTarget) throw Error('선택 옵션에 저장된 최종 라벨 이미지를 선택해주세요.');
   const params = { sourceKey, role, ...(quotationTarget ? quotationSourceQuery(quotationTarget, role, sourceKey) : {}) };
   // Only our deterministic edited results can carry a saved document. Legacy
   // images still use their existing source request; a missing document is the
   // only response that permits falling back to opening the flattened picture.
-  const savedEditor = !!options?.restoreEditor && !!quotationTarget && sourceKey.split('/').at(-1)?.startsWith(`free-image-${productId}-`) === true;
-  const editorMode = options?.anchorPolicy === 'current-target-v1' ? 'saved-current-target-v1' : 'saved';
+  const savedEditor = !!options?.restoreEditor && (quotationTarget !== undefined || ['main', 'additional', 'detail'].includes(role)) && sourceKey.split('/').at(-1)?.startsWith(`free-image-${productId}-`) === true;
+  const editorMode = !quotationTarget ? 'saved-current-role-v1' : options?.anchorPolicy === 'current-target-v1' ? 'saved-current-target-v1' : 'saved';
   let restoring = savedEditor;
   let response = await fetcher(`/api/products/${encodeURIComponent(productId)}/image-text?${new URLSearchParams({ ...params, ...(savedEditor ? { editor: editorMode } : {}) })}`, { signal, cache: 'no-store' });
   let body = await response.json() as { source?: unknown; error?: string; code?: string; editDocument?: unknown;visionConfiguration?:unknown;visionTransport?:unknown;noTextProof?:unknown;preservationProof?:unknown }; signal.throwIfAborted();
@@ -132,7 +133,7 @@ export async function readFreeImageSourceProof(productId: string, version: strin
   if (source.workspaceTarget || source.productId !== productId || source.productVersion !== version || (source.editorSource?.resultKey ?? source.sourceKey) !== sourceKey || source.role !== role
     || restoring && (source.editorSource === undefined || body.editDocument === undefined)
     || source.editorSource !== undefined && (!restoring || body.editDocument === undefined)
-    || restoring && source.editorSource?.anchorPolicy !== options?.anchorPolicy
+    || restoring && source.editorSource?.anchorPolicy !== (quotationTarget ? options?.anchorPolicy : 'current-role-v1')
     || body.editDocument !== undefined && (!restoring || !source.editorSource)
     || !sameFreeImageQuotationRequest(source.quotationTarget, quotationTarget)) throw Error('상품·이미지·역할 또는 저장 버전이 변경됐습니다. 최신 저장본에서 다시 선택해주세요.');
   const editDocument = body.editDocument === undefined ? undefined : validateFreeImageEditDocument(body.editDocument, source);
@@ -402,7 +403,7 @@ export async function renderFreeImageTranslation(image: FreeImageLoaded, regions
   if(paintOrder!==undefined&&paintOrder!=='backgrounds-first-v1'||image.visionPaintOrder!==undefined&&image.visionPaintOrder!=='backgrounds-first-v1')throw Error('이미지 배경·글자 처리 순서 정책을 확인해주세요.');
   const crop = cropRect === undefined ? undefined : validateFreeImageCrop({ ...validateFreeImageCropRect(cropRect, image.width, image.height), sourceWidth: image.width, sourceHeight: image.height }, image.source);
   const selectedOptions = validateFreeImageOptionIds(image.source, [...optionImageIds]);
-  const editDocument = image.source.quotationTarget || image.source.workspaceTarget ? validateFreeImageEditDocument({ format: 'free-image-edit-v1', width: image.width, height: image.height,
+  const editDocument = image.source.quotationTarget || image.source.workspaceTarget || ['main', 'additional', 'detail'].includes(image.source.role) ? validateFreeImageEditDocument({ format: 'free-image-edit-v1', width: image.width, height: image.height,
     sourceLanguage, regions: [...regions], ...(crop ? { crop } : {}),...(paintOrder?{paintOrder}:{}) }, image.source) : undefined;
   if (image.source.optionImages?.commonAssigned === false && !selectedOptions.length) throw Error('이 개별 사진을 반영할 옵션을 한 개 이상 선택해주세요. 공통 대표 이미지는 변경하지 않습니다.');
   const chosen = regions.filter(row => row.selected).map(row => ({ ...row, box: { ...row.box } }));
@@ -551,7 +552,7 @@ export async function renderFreeImageTranslation(image: FreeImageLoaded, regions
   if (!blob.size || blob.size > MAX_IMAGE_BYTES) throw Error('번역 이미지가 10MB를 초과합니다. 원본 크기를 줄여주세요.');
   // A completed, explicitly selected erase has handled its initial style warning.
   // Keep the caller/history, untouched rows and translation failures unchanged.
-  const reviewedDocument=editDocument&&image.source.quotationTarget&&['main','additional'].includes(image.source.role)
+  const reviewedDocument=editDocument&&['main','additional'].includes(image.source.role)
     ?{...editDocument,regions:editDocument.regions.map(region=>region.selected&&region.erase===true&&isOnlyVisionStyleIssue(region.issue)?{...region,issue:null}:region)}:editDocument;
   return { source: image.source, output: blob, width: final.canvas.width, height: final.canvas.height, ...(selectedOptions.length ? { optionImageIds: selectedOptions } : {}), ...(crop ? { crop } : {}), ...(reviewedDocument ? { editDocument:reviewedDocument } : {}) };
 }
@@ -566,7 +567,8 @@ function renderedEditDocument(image: FreeImageRendered) {
     if (image.source.editorSource) throw new FreeImageApplyError('다시 연 편집 내용과 같은 미리보기를 만들어주세요.', false);
     return undefined;
   }
-  if (!image.source.quotationTarget && !image.source.workspaceTarget || image.optionImageIds?.length) throw new FreeImageApplyError('편집 내용의 저장 대상을 확인해주세요.', false);
+  if (!image.source.quotationTarget && !image.source.workspaceTarget && !['main', 'additional', 'detail'].includes(image.source.role)
+    || (image.source.quotationTarget || image.source.workspaceTarget) && image.optionImageIds?.length) throw new FreeImageApplyError('편집 내용의 저장 대상을 확인해주세요.', false);
   const document = validateFreeImageEditDocument(image.editDocument, image.source);
   if (!sameCrop(document.crop, renderedCrop(image), image.source)
     || image.width !== (document.crop?.width ?? document.width) || image.height !== (document.crop?.height ?? document.height)) throw new FreeImageApplyError('편집 내용과 PNG 미리보기의 크기가 다릅니다.', false);
@@ -586,7 +588,9 @@ export async function expectedFreeImageOutputKey(image: FreeImageRendered): Prom
   const source = validateFreeImageSource(image.source), owner = source.sourceKey.split('/')[0];
   if (!isOwnedImageKey(owner, source.sourceKey)) throw new FreeImageApplyError('원본 이미지 저장 범위를 확인해주세요.', false);
   const editDocument = renderedEditDocument(image), editDocumentSha256 = editDocument ? await editDocumentDigest(editDocument) : undefined;
-  const identity = freeImageApplyIdentity(source, image.optionImageIds ?? [], renderedCrop(image), editDocumentSha256);
+  const identity = !source.quotationTarget && !source.workspaceTarget && editDocumentSha256
+    ? freeImageRoleEditApplyIdentity(source, image.optionImageIds ?? [], renderedCrop(image), editDocumentSha256)
+    : freeImageApplyIdentity(source, image.optionImageIds ?? [], renderedCrop(image), editDocumentSha256);
   const digest = async (bytes: ArrayBuffer | Uint8Array) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as BufferSource)), byte => byte.toString(16).padStart(2, '0')).join('');
   const [fingerprint, outputSha256] = await Promise.all([digest(new TextEncoder().encode(identity)), digest(await image.output.arrayBuffer())]);
   return `${owner}/free-image-${source.workspaceTarget ? 'workspace-' : ''}${source.productId}-${fingerprint}-${outputSha256}.png`;
@@ -614,11 +618,11 @@ export function readFreeImageApplyReply(input: unknown, image: FreeImageRendered
   return body;
 }
 export type FreeImageRecoveryReply = FreeImageApplyReply | { source: FreeImageSource; key: string; applied: false; crop?: FreeImageCrop; editDocumentSha256?: string };
-/** A quotation retry first checks the exact PNG digest without uploading it.
+/** An editable image retry first checks the exact PNG digest without uploading it.
  * Only a verified fresh, unapplied response permits a separate explicit save. */
 export async function recoverFreeImageTranslation(image: FreeImageRendered, signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<FreeImageRecoveryReply> {
   validateFreeImageSource(image.source); signal.throwIfAborted();
-  if (!image.source.quotationTarget || image.output.type !== 'image/png' || !image.output.size || image.output.size > MAX_IMAGE_BYTES) throw new FreeImageApplyError('저장 상태를 확인할 옵션 이미지 미리보기를 확인해주세요.', true);
+  if (image.source.workspaceTarget || !image.source.quotationTarget && image.editDocument === undefined || image.output.type !== 'image/png' || !image.output.size || image.output.size > MAX_IMAGE_BYTES) throw new FreeImageApplyError('저장 상태를 확인할 편집 이미지 미리보기를 확인해주세요.', true);
   const expectedKey = await expectedFreeImageOutputKey(image);
   const crop = renderedCrop(image);
   const editDocument = renderedEditDocument(image), editDocumentSha256 = editDocument ? await editDocumentDigest(editDocument) : undefined;
@@ -627,7 +631,8 @@ export async function recoverFreeImageTranslation(image: FreeImageRendered, sign
   let response: Response, body: unknown;
   try {
     response = await fetcher(`/api/products/${encodeURIComponent(image.source.productId)}/image-text`, { method: 'POST', signal,
-      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'recover', source: image.source, outputSha256, outputBytes: image.output.size, ...(crop ? { crop } : {}), ...(editDocument ? { editDocument } : {}) }) });
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'recover', source: image.source, outputSha256, outputBytes: image.output.size,
+        ...(!image.source.quotationTarget && image.optionImageIds?.length ? { optionImageIds: validateFreeImageOptionIds(image.source, image.optionImageIds) } : {}), ...(crop ? { crop } : {}), ...(editDocument ? { editDocument } : {}) }) });
     body = await response.json();
   } catch { throw new FreeImageApplyError('같은 미리보기의 저장 상태를 확인하지 못했습니다. 다시 확인해주세요.', true); }
   signal.throwIfAborted();

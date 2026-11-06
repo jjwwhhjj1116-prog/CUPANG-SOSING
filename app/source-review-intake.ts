@@ -1,10 +1,12 @@
-import type {IntakeRow} from '@/app/intake-queue';
+import {intakeSourceReviewInputKey,type IntakeRow,type IntakeSourceReviewContinuation} from '@/app/intake-queue';
 import type {SourceInboxItem} from '@/app/source-inbox';
 import {sourceCaptureSelection,sameSourceCaptureSelection,validateSourceCaptureSelection,type SourceCaptureSelection} from '@/app/source-capture-selection';
 import {supplierHubCompany} from '@/app/supplier-hub-company';
 import {validatePageSource,pageSourceIssues} from '../extensions/supplier-hub/page-source.mjs';
+import {reviewPagePriceBasis} from '../extensions/supplier-hub/page-source-price-basis.mjs';
+import type {WorkspaceSettings} from '@/app/workspace-settings';
 
-export type ReviewedSourceTarget={rowId:string;sourceCapture:Readonly<SourceCaptureSelection>};
+export type ReviewedSourceTarget={rowId:string;sourceCapture:Readonly<SourceCaptureSelection>;continuation?:IntakeSourceReviewContinuation};
 
 function sameData(left:unknown,right:unknown):boolean{
   if(Object.is(left,right))return true;
@@ -26,7 +28,7 @@ export function validateReviewedSourceTransition(before:SourceInboxItem,saved:So
       ||before.captureOriginId!==saved.captureOriginId||before.captureVersion!==saved.captureVersion||!sameData(before.snapshot,saved.snapshot)||!saved.reviewed)return false;
     const snapshot=validatePageSource(saved.snapshot),reviewed=validatePageSource(saved.reviewed);
     if(!sameData(snapshot,saved.snapshot)||!sameData(reviewed,saved.reviewed)||!reviewed.options.length
-      ||!sameData({...snapshot,title:reviewed.title,options:reviewed.options},reviewed))return false;
+      ||!sameData({...snapshot,title:reviewed.title,options:reviewed.options,...(snapshot.pagePriceBasis?{pagePriceBasis:reviewPagePriceBasis(snapshot.pagePriceBasis,reviewed.options)}:{})},reviewed))return false;
     for(const option of reviewed.options){
       const original=snapshot.options.find(row=>row.key===option.key);
       if(!original||original.stock!==option.stock||original.imageUrl!==option.imageUrl||!sameData(original.axisValues,option.axisValues))return false;
@@ -38,17 +40,23 @@ export function validateReviewedSourceTransition(before:SourceInboxItem,saved:So
 
 /** Apply only to selections explicitly captured when this review was opened.
  * Preserve guidance, category, order and all existing work links. */
-export function applyReviewedSourceToIntakeRows(rows:IntakeRow[],targets:readonly ReviewedSourceTarget[],before:SourceInboxItem,saved:SourceInboxItem):IntakeRow[]{
+export function applyReviewedSourceToIntakeRows(rows:IntakeRow[],targets:readonly ReviewedSourceTarget[],before:SourceInboxItem,saved:SourceInboxItem,input?:{goal:string;settings:WorkspaceSettings;scope:object}):IntakeRow[]{
   if(!validateReviewedSourceTransition(before,saved))return rows;
   const previous=sourceCaptureSelection(before),next=sourceCaptureSelection(saved);let changed=false;
-  const updated=rows.map(row=>{
+  const updated=rows.map<IntakeRow>(row=>{
     if(row.status==='saved'||row.productId||row.forkJobId||row.pendingJobId)return row;
-    const target=targets.find(value=>value.rowId===row.id&&sameSourceCaptureSelection(value.sourceCapture,row.sourceCapture));
+    const target=targets.find(value=>value.rowId===row.id&&(value.continuation?row.sourceReviewContinuation===value.continuation:sameSourceCaptureSelection(value.sourceCapture,row.sourceCapture)));
     if(!target)return row;
     try{
       const selected=validateSourceCaptureSelection(target.sourceCapture,row.url);
       if(selected.captureId!==previous.captureId||selected.fingerprint!==previous.fingerprint||selected.sourceUrl!==previous.sourceUrl||selected.revision>previous.revision)return row;
-      changed=true;return {...row,sourceCapture:next};
+      if(target.continuation){
+        const continuation=target.continuation,item=continuation.reference.item;
+        if(continuation.state==='ready'||!item||!input||continuation.scope!==input.scope||continuation.inputKey!==intakeSourceReviewInputKey(row,input.goal,input.settings)||continuation.ownerId!==before.ownerId||continuation.company?.code!==before.company.code||continuation.company.name!==before.company.name
+          ||!sameSourceCaptureSelection(sourceCaptureSelection(item),previous))return row;
+        changed=true;return {...row,sourceCapture:next,sourceReviewContinuation:{...continuation,state:'ready',reference:{...continuation.reference,item:saved}}};
+      }
+      changed=true;return {...row,sourceCapture:next,...(row.sourceReviewContinuation?.state==='ready'?{sourceReviewContinuation:{...row.sourceReviewContinuation,reference:{...row.sourceReviewContinuation.reference,item:saved}}}:{})};
     }catch{return row;}
   });
   return changed?updated:rows;

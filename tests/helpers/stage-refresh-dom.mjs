@@ -18,7 +18,7 @@ export async function stageRefreshDOM(fetcher,{components={},exposeDetail=true}=
   let source=fs.readFileSync(new URL('../../'+file,import.meta.url),'utf8');
   if(exposeDetail&&file.endsWith('dashboard-client.tsx'))source+='\nexport { DetailPanel };';
   vm.runInNewContext(ts.transpileModule(source,{fileName:file.endsWith('.mjs')?file+'.ts':file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
-   {exports,fetch:fetcher,window,document:window.document,HTMLElement:window.HTMLElement,HTMLInputElement:window.HTMLInputElement,AbortController,AbortSignal,URL,URLSearchParams,TextEncoder,TextDecoder,Date,Intl,crypto,structuredClone,console,setTimeout,clearTimeout,Request,Response,Headers,Blob,File,FormData,Buffer,
+   {exports,fetch:fetcher,window,location:window.location,document:window.document,HTMLElement:window.HTMLElement,HTMLInputElement:window.HTMLInputElement,AbortController,AbortSignal,URL,URLSearchParams,TextEncoder,TextDecoder,Date,Intl,crypto,structuredClone,console,setTimeout,clearTimeout,setInterval,clearInterval,Request,Response,Headers,Blob,File,FormData,Buffer,
     require(name){
      if(name.endsWith('.css'))return {};
      if(name.startsWith('@/app/components/')){

@@ -5,6 +5,7 @@ import ts from 'typescript';
 import {createRequire} from 'node:module';
 import {webcrypto} from 'node:crypto';
 import * as pageSource from '../../extensions/supplier-hub/page-source.mjs';
+import * as pagePriceBasis from '../../extensions/supplier-hub/page-source-price-basis.mjs';
 const native=createRequire(import.meta.url);
 export function sourceReviewModule(file,scope={},cache=new Map()){
  if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
@@ -12,6 +13,7 @@ export function sourceReviewModule(file,scope={},cache=new Map()){
   {exports,Error,URL,URLSearchParams,Date,Response,Request,Headers,structuredClone,AbortController,crypto:webcrypto,setTimeout,clearTimeout,setInterval,clearInterval,...scope,require(name){
    if(name==='react'&&scope.hooks)return scope.hooks;
    if(name.endsWith('/extensions/supplier-hub/page-source.mjs')||name==='../extensions/supplier-hub/page-source.mjs')return pageSource;
+   if(name.endsWith('/extensions/supplier-hub/page-source-price-basis.mjs'))return pagePriceBasis;
    if(name.startsWith('@/app/'))return sourceReviewModule(name.slice(2)+'.ts',scope,cache);
    if(name.startsWith('.'))return sourceReviewModule(path.posix.join(path.posix.dirname(file),name)+'.ts',scope,cache);
    return native(name);

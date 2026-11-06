@@ -7,11 +7,11 @@ import { fixture, materialProvider } from './helpers/quotation-receipt-source.mj
 const policy = 'option-notice-material-evidence-v3';
 const json = async (response, status = 200) => { assert.equal(response.status, status, await response.clone().text()); return response.json(); };
 
-test('v3 actual API canonicalizes supported raw Chinese material instead of failing after a reference fallback', async () => {
+test('current actual API retains v3 canonicalization of supported raw Chinese material instead of failing after a reference fallback', async () => {
   const { f, h } = await fixture(); try {
     f.setProvider(materialProvider('涤纶（聚酯纤维）'));
     const state = await json(await f.request(undefined, 'GET')), before = f.state(), out = await json(await f.request(f.requestBody(state)));
-    assert.equal(out.job.status, 'completed'); assert.equal(out.job.generationPolicy, policy);
+    assert.equal(out.job.status, 'completed'); assert.equal(out.job.generationPolicy, 'couplus-common-legal-material-evidence-v4');
     assert.ok(out.job.result.changes.some(change => change.value === '폴리에스테르'));
     assert.ok(out.job.result.warnings.some(warning => /원문|출처/.test(warning) && /정규화/.test(warning)));
     assert.equal(f.state(), before); assert.equal(h.network.length, 0);
@@ -90,7 +90,7 @@ test('v3 contradictory source pairs abstain and client/server validators reject 
   } finally { f.close(); }
 });
 
-test('terminal failed v2 request is recovered without replay and a fresh same-basis UUID creates v3', async () => {
+test('terminal failed v2 request is recovered without replay and a fresh same-basis UUID creates current v4', async () => {
   const { f, h, read, model } = await fixture(); try {
     f.setProvider(materialProvider('涤纶（聚酯纤维）')); const state = await json(await f.request(undefined, 'GET')), body = f.requestBody(state), saved = await read(), selected = h.load('app/quotation-text-execution.ts').quotationTextConfiguration(h.bindings), user = await f.user();
     const scope = { optionId: null, applyToAllOptions: true }, plan = model.buildQuotationAiPlan(saved, scope, undefined, 'option-notice-material-evidence-v2');
@@ -100,7 +100,7 @@ test('terminal failed v2 request is recovered without replay and a fresh same-ba
     const failed = await json(await f.request(body), 409); assert.equal(failed.code, 'AI_RESPONSE_EVIDENCE'); const count = f.provider.calls.length, old = f.jobs()[0]; assert.equal(old.status, 'failed'); assert.equal(old.result, null);
     const retry = await json(await f.request(body)); assert.equal(retry.reused, true); assert.equal(retry.job.status, 'failed'); assert.equal(retry.job.generationPolicy, 'option-notice-material-evidence-v2'); assert.equal(f.provider.calls.length, count); assert.equal(f.jobs()[0].review, old.review); assert.equal(f.jobs()[0].error, old.error);
     const current = await json(await f.request(undefined, 'GET')); assert.equal(current.fingerprint, state.fingerprint); const fresh = await json(await f.request(f.requestBody(current)));
-    assert.equal(fresh.job.status, 'completed'); assert.equal(fresh.job.generationPolicy, policy); assert.notEqual(fresh.job.id, old.id); assert.ok(f.provider.calls.length > count);
+    assert.equal(fresh.job.status, 'completed'); assert.equal(fresh.job.generationPolicy, 'couplus-common-legal-material-evidence-v4'); assert.notEqual(fresh.job.id, old.id); assert.ok(f.provider.calls.length > count);
     assert.equal(f.jobs().find(row => row.id === old.id).error, old.error); assert.equal(h.network.length, 0);
   } finally { f.close(); }
 });

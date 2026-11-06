@@ -1,4 +1,4 @@
-import { freeImageEditDigest, MAX_FREE_IMAGE_EDIT_RECORD_BYTES, prepareFreeImageEditRecord, type FreeImageEditRecord } from '@/app/free-image-edit-record';
+import { freeImageEditDigest, MAX_FREE_IMAGE_EDIT_RECORD_BYTES, prepareFreeImageEditRecord, prepareFreeImageRoleEditRecord, type FreeImageEditRecord } from '@/app/free-image-edit-record';
 import { freeImageSourceIdentity, validateFreeImageSource } from '@/app/free-image-translation';
 import { isOwnedImageKey, MAX_IMAGE_BYTES } from '@/app/image-files';
 import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
@@ -48,19 +48,23 @@ export async function readFreeImageEditReview(bucket: Bucket, owner: string, pro
     const bytes = await readBoundedStream(sidecar.body, MAX_FREE_IMAGE_EDIT_RECORD_BYTES);
     if (bytes.length !== sidecar.size || await freeImageEditDigest(bytes) !== markers.freeImageEditRecordSha256) return unknown;
     const value: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
-    if (!exact(value, ['format', 'source', 'document', 'context', 'company', 'result']) || value.format !== 'free-image-edit-record-v1'
+    const roleRecord = !!value && typeof value === 'object' && 'format' in value && value.format === 'free-image-role-edit-record-v1';
+    if (!exact(value, roleRecord ? ['format', 'source', 'document', 'optionImageIds', 'context', 'company', 'result'] : ['format', 'source', 'document', 'context', 'company', 'result'])
+      || value.format !== (roleRecord ? 'free-image-role-edit-record-v1' : 'free-image-edit-record-v1')
       || !exact(value.result, ['key', 'sha256', 'bytes', 'width', 'height']) || !validContext(value.context)
       || !exact(value.company, ['code', 'name'])) return unknown;
     const company = supplierHubCompany(value.company.code, value.company.name);
     if (!company || company.code !== value.company.code || company.name !== value.company.name) return unknown;
     const source = validateFreeImageSource(value.source);
     if (source.productId !== productId || !isOwnedImageKey(owner, source.sourceKey) || source.editorSource && !isOwnedImageKey(owner, source.editorSource.resultKey)) return unknown;
-    const prepared = await prepareFreeImageEditRecord(source, value.document, value.context, value.company as FreeImageEditRecord['company'], value.result as FreeImageEditRecord['result']);
+    const prepared = roleRecord ? await prepareFreeImageRoleEditRecord(source, value.document, value.optionImageIds as string[], value.context, value.company as FreeImageEditRecord['company'], value.result as FreeImageEditRecord['result'])
+      : await prepareFreeImageEditRecord(source, value.document, value.context, value.company as FreeImageEditRecord['company'], value.result as FreeImageEditRecord['result']);
     const record = prepared.record;
     if (record.result.key !== key || record.result.sha256 !== markers.freeImageOutputSha256 || record.result.bytes !== metadata.size
       || String(record.result.width) !== markers.imageWidth || String(record.result.height) !== markers.imageHeight
       || prepared.recordSha256 !== markers.freeImageEditRecordSha256 || prepared.documentSha256 !== markers.freeImageEditDocumentSha256
-      || prepared.bytes.length !== bytes.length || await freeImageEditDigest(new TextEncoder().encode(freeImageSourceIdentity(record.source))) !== markers.freeImageSourceSha256) return unknown;
+      || prepared.bytes.length !== bytes.length || await freeImageEditDigest(new TextEncoder().encode(freeImageSourceIdentity(record.source))) !== markers.freeImageSourceSha256
+      || record.format === 'free-image-role-edit-record-v1' && await freeImageEditDigest(new TextEncoder().encode(JSON.stringify(record.optionImageIds))) !== markers.freeImageOptionIdsSha256) return unknown;
     const unresolvedRegions = record.document.regions.filter(region => Boolean(region.issue?.trim())).length;
     return { ...unknown, status: unresolvedRegions ? 'unresolved' : 'clear', unresolvedRegions };
   } catch { return unknown; }

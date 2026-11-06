@@ -1,6 +1,32 @@
 import {exchange} from '@/app/supplier-hub-handoff';
+import type {SourceInboxItem} from '@/app/source-inbox';
+import {sourceCaptureSelection} from '@/app/source-capture-selection';
+import {supplierHubCompany} from '@/app/supplier-hub-company';
 
 export type BrowserProductCapture={sourceUrl:string;format:'yoofam-context-preference-v1'}|{sourceUrl:string;scripts:string[]}|{sourceUrl:string;format:'1688-public-mobile-capture-v1';mobileHtml:string;skuPayload:object;detailSource:string}|{sourceUrl:string;format:'1688-public-mobile-partial-capture-v1';mobileHtml:string;skuPayload:object;detailSource:string;detailUnavailable:{status:502|503|504}}|{sourceUrl:string;format:'1688-public-sku-capture-v1';skuPayload:object}|{sourceUrl:string;format:'yoofam-saved-page-capture-v1';captureId:string;fingerprint:string;revision:number}|{sourceUrl:string;format:'yoofam-saved-query-capture-v1';captureId:string;fingerprint:string;revision:number};
+
+export type PrimaryCaptureReference={sourceUrl:string;requestId:string;captureId:string;fingerprint?:string;item?:SourceInboxItem};
+export class PrimaryCapturePending extends Error{
+ constructor(readonly reference:PrimaryCaptureReference,readonly code:'PAGE_SOURCE_REVIEW_REQUIRED'|'PAGE_SOURCE_LOOKUP_UNCERTAIN',message:string){super(message);}
+}
+/** Read only this fresh request/ACK. Never substitute another capture of its URL. */
+export async function readPrimaryCapture(reference:PrimaryCaptureReference,signal:AbortSignal,fetcher:typeof fetch=fetch){
+ const controller=new AbortController(),abort=()=>controller.abort(),timer=setTimeout(abort,5000);signal.addEventListener('abort',abort,{once:true});
+ try{
+  if(signal.aborted)throw Error('작업을 취소했습니다.');
+  if(!/^[a-f0-9-]{36}$/.test(reference.requestId)||!/^[a-f0-9-]{36}$/.test(reference.captureId))throw Error('원래 URL 수집 요청을 확인해주세요.');
+  const response=await fetcher('/api/source-inbox',{cache:'no-store',credentials:'same-origin',redirect:'error',signal:controller.signal}),body=await response.json() as {ownerId?:string;company?:{code?:unknown;name?:unknown};items?:SourceInboxItem[]};
+  const company=supplierHubCompany(body.company?.code,body.company?.name),matches=body.items?.filter(item=>item.id===reference.captureId),item=matches?.length===1?matches[0]:undefined;
+  if(signal.aborted||controller.signal.aborted)throw Error('원래 수집본 조회가 중단되었습니다.');
+  if(!response.ok||!company||typeof body.ownerId!=='string'||!body.ownerId.trim()||!item||item.ownerId!==body.ownerId||item.company.code!==company.code||item.company.name!==company.name||item.archivedAt!==null
+   ||item.snapshot.sourceUrl!==reference.sourceUrl||item.snapshot.offerId!==reference.sourceUrl.match(/\/([1-9]\d*)\.html$/)?.[1]
+   ||reference.fingerprint!==undefined&&item.fingerprint!==reference.fingerprint||reference.item&&item.revision!==reference.item.revision||!Array.isArray(item.issues)||item.issues.some(issue=>typeof issue!=='string'))throw Error('원래 수집본의 회원·회사·버전을 확인하지 못했습니다.');
+  const capture=sourceCaptureSelection(item),confirmed={...reference,fingerprint:item.fingerprint,item};
+  if(item.issues.length)throw new PrimaryCapturePending(confirmed,'PAGE_SOURCE_REVIEW_REQUIRED','원문은 저장됐습니다. 수집정보 확인·수정에서 사용할 옵션을 선택하고 저장한 뒤 이어가세요.');
+  return {capture,reference:confirmed};
+ }catch(cause){if(cause instanceof PrimaryCapturePending)throw cause;throw new PrimaryCapturePending(reference,'PAGE_SOURCE_LOOKUP_UNCERTAIN','원래 수집본의 저장 결과를 확인하지 못했습니다. 다시 시작하면 같은 수집 요청의 저장본만 조회합니다.');}
+ finally{clearTimeout(timer);signal.removeEventListener('abort',abort);controller.abort();}
+}
 
 /** Prefer an explicitly collected, durable inbox source. This reads our own
  * server only, and never opens the 1688 URL. Account checks run again on import. */
@@ -83,14 +109,21 @@ export async function capture1688FromChrome(sourceUrl:string,signal:AbortSignal)
   const cleanup=()=>{clearTimeout(timer);window.removeEventListener('message',receive);signal.removeEventListener('abort',abort);};
   const cancel=()=>window.postMessage({channel:'YOOFAM_1688_CAPTURE',requestId,type:'CANCEL',sourceUrl},location.origin);
   const abort=()=>{cancel();cleanup();reject(Error('작업을 취소했습니다.'));};
+  const recoverPrimary=async(reference:PrimaryCaptureReference,reviewRequired=false)=>{
+   try{const saved=await readPrimaryCapture(reference,signal);if(signal.aborted)throw Error('작업을 취소했습니다.');
+    if(reviewRequired)throw new PrimaryCapturePending(saved.reference,'PAGE_SOURCE_REVIEW_REQUIRED','저장된 수집정보를 이 행에서 확인·수정하고 저장한 뒤 이어가세요.');
+    resolve(saved.capture);
+   }catch(cause){reject(cause);}
+  };
   const receive=async(event:MessageEvent)=>{
    if(event.source!==window||event.origin!==location.origin||event.data?.channel!=='YOOFAM_1688_CAPTURE_RESULT'||event.data.requestId!==requestId)return;
    cleanup();const result=event.data.result;
-   if(result?.ok!==true){reject(Error(typeof result?.error==='string'?result.error:'1688 상품 페이지를 읽지 못했습니다.'));return;}
-   if(result.sourceUrl!==sourceUrl){reject(Error('1688 상품 페이지의 응답이 요청 URL과 일치하지 않습니다.'));return;}
+   if(result?.ok!==true){if(capability.primaryContextCapture===true){await recoverPrimary({sourceUrl,requestId,captureId:requestId});return;}reject(Error(typeof result?.error==='string'?result.error:'1688 상품 페이지를 읽지 못했습니다.'));return;}
+   if(result.sourceUrl!==sourceUrl){if(capability.primaryContextCapture===true){await recoverPrimary({sourceUrl,requestId,captureId:requestId});return;}reject(Error('1688 상품 페이지의 응답이 요청 URL과 일치하지 않습니다.'));return;}
    if(capability.primaryContextCapture===true){
-    if(result.format!=='yoofam-context-saved-v1'||Object.keys(result).some(key=>!['ok','sourceUrl','format','captureId','fingerprint'].includes(key))||typeof result.captureId!=='string'||!/^[a-f0-9-]{36}$/.test(result.captureId)||typeof result.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(result.fingerprint)){reject(Error('1688 기본 원문의 저장 확인을 받지 못했습니다. 수집함을 확인해주세요.'));return;}
-    try{const saved=await savedPageCapture(sourceUrl,signal);if(signal.aborted)throw Error('작업을 취소했습니다.');if(saved?.format!=='yoofam-saved-page-capture-v1'||saved.captureId!==result.captureId||saved.fingerprint!==result.fingerprint)throw Error('저장된 원문이 변경되었습니다. 수집함에서 해당 수집본을 선택해주세요.');resolve(saved);}catch(error){reject(error);}return;
+    if(result.format!=='yoofam-context-saved-v1'||Object.keys(result).some(key=>!['ok','sourceUrl','format','captureId','fingerprint'].includes(key))||typeof result.captureId!=='string'||!/^[a-f0-9-]{36}$/.test(result.captureId)||typeof result.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(result.fingerprint)){await recoverPrimary({sourceUrl,requestId,captureId:requestId});return;}
+    try{const saved=await savedPageCapture(sourceUrl,signal);if(signal.aborted)throw Error('작업을 취소했습니다.');if(saved?.format!=='yoofam-saved-page-capture-v1'||saved.captureId!==result.captureId||saved.fingerprint!==result.fingerprint)throw Error('저장된 원문이 변경되었습니다. 수집함에서 해당 수집본을 선택해주세요.');resolve(saved);}
+    catch(error){if(signal.aborted){reject(error);return;}await recoverPrimary({sourceUrl,requestId,captureId:result.captureId,fingerprint:result.fingerprint},(error as {code?:unknown})?.code==='PAGE_SOURCE_REVIEW_REQUIRED');}return;
    }
    if(result.format==='1688-public-sku-capture-v1'){
     let skuText:string|undefined;try{skuText=JSON.stringify(result.skuPayload);}catch{reject(Error('1688 옵션 원문이 올바른 JSON이 아닙니다.'));return;}
@@ -116,7 +149,7 @@ export async function capture1688FromChrome(sourceUrl:string,signal:AbortSignal)
       ||result.scripts.reduce((sum:number,value:string)=>sum+new TextEncoder().encode(value).byteLength,0)>1500000){reject(Error('1688 상품 페이지의 응답이 요청 URL과 일치하지 않습니다.'));return;}
    resolve({sourceUrl,scripts:result.scripts});
   };
-  const timer=setTimeout(()=>{cancel();cleanup();reject(Error('1688 원문 수집 응답을 확인하지 못했습니다. 현재 상품 페이지를 확인한 뒤 다시 시도해주세요.'));},45000);
+  const timer=setTimeout(()=>{cancel();cleanup();if(capability.primaryContextCapture===true){void recoverPrimary({sourceUrl,requestId,captureId:requestId});return;}reject(Error('1688 원문 수집 응답을 확인하지 못했습니다. 현재 상품 페이지를 확인한 뒤 다시 시도해주세요.'));},45000);
   window.addEventListener('message',receive);signal.addEventListener('abort',abort,{once:true});
   window.postMessage({channel:'YOOFAM_1688_CAPTURE',requestId,type:capability.primaryContextCapture===true?'CAPTURE_CONTEXT':'CAPTURE',sourceUrl},location.origin);
  });

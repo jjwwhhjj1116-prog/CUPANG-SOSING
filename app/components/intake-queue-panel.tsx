@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CategoryPicker } from '@/app/components/category-picker';
-import { intakeProductId, intakeRow, intakeRowsForCollection, submitIntakeQueue, visibleIntakeRows, type IntakeRow } from '@/app/intake-queue';
+import { intakeProductId, intakeRow, intakeRowsForCollection, submitIntakeQueue, visibleIntakeRows, intakeSourceReviewInputKey, type IntakeRow } from '@/app/intake-queue';
 import { collectionBlock, parseCollectionRequest, type CollectionJob } from '@/app/sourcing';
 import { savedRegistrationSettings, type WorkspaceSettings } from '@/app/workspace-settings';
 import { parseWorkspaceSettingsScope, type WorkspaceSettingsScope } from '@/app/workspace-settings-scope';
@@ -32,7 +32,8 @@ export type IntakeCategoryEntry=Readonly<{id:string;ownerId:string|undefined}>;
 const freshCaptureFork=(row:IntakeRow)=>Boolean(row.forkJobId&&row.sourceCapture);
 const freshCaptureMessage='선택한 새 수집본을 별도 상품으로 작성합니다. 기존 작업 상품은 유지됩니다. 새 초안을 확인해주세요.';
 type IntakeCategorySelection={target:string;ownerId:string|undefined;epoch:number;completed:boolean;seed?:IntakeSourceSeed};
-export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced, onJobs, onBusy, goal, onGoal, settings, workspaceOwnerId, onSettingsReloadStarted, onSettingsReloaded, jobs = [], onOpenProduct,sourceSeed,onSourceConsumed,onSourceCancelled,initialCategorySelection,onInitialCategorySelectionConsumed,sourceItems=[],onReviewSource,autoStartSource=false }: {
+export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced, onJobs, onBusy, goal, onGoal, settings, workspaceOwnerId, onSettingsReloadStarted, onSettingsReloaded, jobs = [], onOpenProduct,sourceSeed,onSourceConsumed,onSourceCancelled,initialCategorySelection,onInitialCategorySelectionConsumed,sourceReviewScope,sourceCompany,sourceItems=[],onReviewSource,autoStartSource=false }: {
+  sourceReviewScope?:object;sourceCompany?:{code:string;name:string}|null;
   autoStartSource?:boolean;
   sourceItems?:import('@/app/source-inbox').SourceInboxItem[];onReviewSource?:(item:import('@/app/source-inbox').SourceInboxItem,rowId:string)=>void;
   sourceSeed?:IntakeSourceSeed;onSourceConsumed?:(id:string)=>void;onSourceCancelled?:()=>void;
@@ -102,8 +103,8 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   function setSourceUrlsCandidate(value:typeof sourceUrlsCandidate){sourceUrlsCandidateRef.current=value;setSourceUrlsCandidateState(value);}
   const previewRow = rows.find(row => row.id === previewId);
   const forkRunning=useRef<AbortController|null>(null),forkOwner=useRef(workspaceOwnerId);
-  const navigation = useRef({rows,jobs,onOpenProduct,workspaceOwnerId,goal,settings,sourceItems});
-  useLayoutEffect(()=>{navigation.current={rows,jobs,onOpenProduct,workspaceOwnerId,goal,settings,sourceItems};},[rows,jobs,onOpenProduct,workspaceOwnerId,goal,settings,sourceItems]);
+  const navigation = useRef({rows,jobs,onOpenProduct,workspaceOwnerId,goal,settings,sourceItems,sourceReviewScope,sourceCompany});
+  useLayoutEffect(()=>{navigation.current={rows,jobs,onOpenProduct,workspaceOwnerId,goal,settings,sourceItems,sourceReviewScope,sourceCompany};},[rows,jobs,onOpenProduct,workspaceOwnerId,goal,settings,sourceItems,sourceReviewScope,sourceCompany]);
   useLayoutEffect(()=>{if(forkOwner.current===workspaceOwnerId)return;forkOwner.current=workspaceOwnerId;ownerEpoch.current++;setOwnerGeneration(ownerEpoch.current);forkPreviewRef.current=null;pendingPreviewRef.current=null;sourceUrlsCandidateRef.current=null;setForkPreviewState(null);setPendingPreviewState(null);setSourceUrlsCandidateState(null);const controller=running.current;forkRunning.current=null;if(!controller)return;running.current=null;controller.abort();setBusy(false);onBusy(false);},[workspaceOwnerId,onBusy]);
   const sameOwner=()=>forkOwner.current===workspaceOwnerId&&navigation.current.workspaceOwnerId===workspaceOwnerId&&ownerEpoch.current===ownerGeneration;
   const ownerCurrent=()=>sourceMounted.current&&sameOwner();
@@ -147,8 +148,14 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   const selected = pendingRows.filter(row => !excluded.includes(row.id));
   const pending = selected.length;
   const visiblePending = intakeRowsForCollection(visible).filter(row=>!freshCaptureFork(row)),unfilledRows=rows.filter(row=>row.status!=='saved'&&!freshCaptureFork(row)&&!pendingRowIds.has(row.id));
+  function reviewContinuationCurrent(row:IntakeRow){
+    const value=row.sourceReviewContinuation;
+    return !value||!!sourceReviewScope&&value.scope===sourceReviewScope&&value.ownerId===workspaceOwnerId&&!!sourceCompany&&value.company?.code===sourceCompany.code&&value.company.name===sourceCompany.name
+      &&value.inputKey===intakeSourceReviewInputKey(row,goal,settings);
+  }
   function sourceItemForRow(row:IntakeRow|undefined){
     if(!row)return undefined;
+    if(row.sourceReviewContinuation)return reviewContinuationCurrent(row)?row.sourceReviewContinuation.reference.item:undefined;
     if(row.sourceCapture){try{return selectedSourceInboxItem(sourceItems,row.sourceCapture);}catch{return undefined;}}
     return sourceItems.find(item=>sameSourceUrl(item.snapshot.sourceUrl,row.url));
   }
@@ -191,6 +198,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     const update=(previous:IntakeRow[])=>sameOwner()?previous.map(row => {
       if(row.id!==id)return row;
       const next:IntakeRow={ ...row, ...patch, status: 'draft', message: '', productId: undefined,forkJobId:undefined,pendingJobId:undefined,pendingSourceMode:undefined,pendingSourceHash:undefined };
+      delete next.sourceReviewContinuation;
       if(Object.hasOwn(patch,'url')){const selected=sourceCaptureAfterUrlEdit(row.sourceCapture,next.url);if(selected)next.sourceCapture=selected;else delete next.sourceCapture;}
       if(freshCaptureFork(row)&&next.sourceCapture){next.forkJobId=row.forkJobId;next.status='error';next.message=freshCaptureMessage;}
       return next;
@@ -239,7 +247,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     if (!ownerCurrent()||current.rows!==rows||current.settings!==settings||current.goal!==goal||running.current || settingsChanged) return;
     // A collected item's explicit start does not inherit the batch selection.
     // Retained callbacks must still refer to the current, unlinked input row.
-    if(target&&(!target.sourceCapture||current.rows.find(row=>row.id===target.id)!==target||!pendingRowIds.has(target.id)||intakeProductId(target,current.jobs)||target.forkJobId||target.pendingJobId))return;
+    if(target&&(!target.sourceCapture&&!target.sourceReviewContinuation||current.rows.find(row=>row.id===target.id)!==target||!pendingRowIds.has(target.id)||intakeProductId(target,current.jobs)||target.forkJobId||target.pendingJobId))return;
     const processing=(target?[target]:selected).filter(row=>!freshCaptureFork(row));
     if(!processing.length)return;
     const controller = new AbortController(); running.current = controller; setBusy(true); onBusy(true); setError('');
@@ -250,6 +258,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     const publishJobs=(values:CollectionJob[])=>{if(active())onJobs(values);};
     try {
       const incomplete=processing.map(row=>{
+        if(row.sourceReviewContinuation){if(!reviewContinuationCurrent(row))throw Error('원래 URL 수집의 회원·회사·입력 범위가 변경되었습니다. 수집본을 명시적으로 다시 선택해주세요.');return undefined;}
         if(!row.sourceCapture)return sourceItems.find(item=>sameSourceUrl(item.snapshot.sourceUrl,row.url));
         // Server-query captures have their own immutable full-source store.
         // Their exact owner/company/version is resolved on the server; the
@@ -262,7 +271,14 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
       if(incomplete)throw Error('수집정보 확인·수정에서 '+incomplete.issues.join(' · ')+'을 확인한 뒤 초안을 작성해주세요.');
       await submitIntakeQueue(rows, goal, { signal: controller.signal, fetcher: fetch, expectedSettings:settings, onSettingsChanged:()=>{if(active()){setSettingsChanged(true);setSettingsMessage('');}}, selectedIds: new Set(processing.map(row => row.id)),
         collect: (job,onProgress,onProduct,selectedCapture) => {if(job.product_id)reusedProductIds.add(job.product_id);return collectIntakeProduct(job,{signal:controller.signal,fetcher:fetch,...(selectedCapture?{selectedCapture}:{}),captureFromBrowser:capture1688FromChrome,probeExistingFromBrowser:probe1688FromChrome,onProductReused:id=>{if(active())reusedProductIds.add(id);},onJob:updated=>{if(!active())return;publishJobs([updated]);if(updated.product_id)onProduct(updated.product_id);},onProgress});},
-        onRow: (id, patch) => {if(!active())return;if(patch.productId)productIds.set(id,patch.productId);if(patch.status==='saved')completed.add(id);onRows(previous => sameOwner()?previous.map(row => row.id === id ? { ...row, ...patch } : row):previous);}, onJobs:publishJobs });
+        onRow: (id, patch) => {if(!active())return;if(patch.productId)productIds.set(id,patch.productId);if(patch.status==='saved')completed.add(id);onRows(previous => sameOwner()?previous.map(row => {
+          if(row.id!==id)return row;
+          const continuation=patch.sourceReviewContinuation,started=processing.find(value=>value.id===id);
+          if(!continuation)return {...row,...patch};
+          if(!started||navigation.current.sourceReviewScope!==sourceReviewScope||intakeSourceReviewInputKey(row,goal,settings)!==intakeSourceReviewInputKey(started,goal,settings))return row;
+          const item=continuation.reference.item,verified=!!workspaceOwnerId&&!!sourceCompany&&item?.ownerId===workspaceOwnerId&&item.company.code===sourceCompany.code&&item.company.name===sourceCompany.name;
+          return {...row,...patch,sourceReviewContinuation:{...continuation,ownerId:workspaceOwnerId,company:sourceCompany,scope:sourceReviewScope,...(!verified?{state:'uncertain' as const,reference:{...continuation.reference,item:undefined}}:{})}};
+        }):previous);}, onJobs:publishJobs });
       // Open a confirmed single source draft after import and draft processing.
       // A saved Google failure may require manual translation; failed imports
       // and uncertain saves remain in the editable queue.
@@ -424,7 +440,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     const update=(previous:IntakeRow[])=>{
       if(!categoryCurrent(selection,true))return previous;
       if(target==='new')return previous.length<50&&!previous.some(row=>row.id===id)?[...previous,{...intakeRow(profile,id),url:sourceUrl,...(sourceCapture?{sourceCapture}:{}),...(forkJobId?{forkJobId,status:'error' as const,message:freshCaptureMessage}:{})}]:previous;
-      return previous.map(row=>row.id===target&&row.status!=='saved'?{...row,profile,status:freshCaptureFork(row)?'error' as const:'draft' as const,message:freshCaptureFork(row)?freshCaptureMessage:'',productId:undefined,forkJobId:freshCaptureFork(row)?row.forkJobId:undefined,pendingJobId:undefined,pendingSourceMode:undefined,pendingSourceHash:undefined}:row);
+      return previous.map(row=>row.id===target&&row.status!=='saved'?{...row,profile,status:freshCaptureFork(row)?'error' as const:'draft' as const,message:freshCaptureFork(row)?freshCaptureMessage:'',productId:undefined,forkJobId:freshCaptureFork(row)?row.forkJobId:undefined,pendingJobId:undefined,pendingSourceMode:undefined,pendingSourceHash:undefined,sourceReviewContinuation:undefined}:row);
     };
     if(forkPreviewRef.current?.rowId===target)setForkPreview(null);
     if(pendingPreviewRef.current?.rowId===target)setPendingPreview(null);
@@ -482,7 +498,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
       ['price', 'SEO·가격 초안 작성', '상품정보를 가져와 초안을 작성합니다. 저장 후 각 단계에서 확인·수정하세요.'],
       ['work', 'SEO·가격 + 이미지 초안', '원본을 대표·추가·상세·옵션 이미지에 배치합니다. 번역·편집 후 확인하세요.'],
       ['collect', '상품정보만 가져오기', '원문·옵션·가격을 가져오고 SEO 작성은 나중에 진행합니다.'],
-    ].map(([id, title, description]) => <label className="goal-card" key={id}><input type="radio" name="queue-goal" checked={(goal==='collect'?'collect':goal==='work'?'work':'price') === id} onChange={() => onGoal(id)} /><span><strong>{title}</strong><small>{description}</small></span></label>)}</fieldset>
+    ].map(([id, title, description]) => <label className="goal-card" key={id}><input type="radio" name="queue-goal" checked={(goal==='collect'?'collect':goal==='work'?'work':'price') === id} onChange={() => {if(!ownerCurrent()||running.current)return;onRows(previous=>previous.map(row=>row.sourceReviewContinuation?{...row,sourceReviewContinuation:undefined}:row));onGoal(id);}} /><span><strong>{title}</strong><small>{description}</small></span></label>)}</fieldset>
     <p className="collection-notice">{collectionBlock} <a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.93.zip" download>상품 수집·전송 확장 2.1.93 다운로드</a></p><small>복제는 카테고리·특징·키워드를 복사하며 새 URL을 입력해야 합니다. 행 삭제는 이 입력 목록만 지우며 서버에 저장한 요청을 취소하지 않습니다.</small>
     {selected.some(row => !visible.some(item => item.id === row.id)) && <p className="collection-notice">검색으로 숨겨진 선택 상품도 함께 처리합니다. 선택 {pending}건 중 숨겨진 상품 {selected.filter(row => !visible.some(item => item.id === row.id)).length}건</p>}
     {!!unfilledRows.length&&<p className="collection-notice">URL을 입력하지 않은 {unfilledRows.length}개 행은 시작 대상에서 제외됩니다.</p>}

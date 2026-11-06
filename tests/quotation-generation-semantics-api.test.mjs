@@ -1,3 +1,4 @@
+import {historicalGeneration} from './helpers/quotation-historical-generation.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { quotationAiApiFixture } from './helpers/quotation-ai-api.mjs';
@@ -12,10 +13,10 @@ async function sixOptions(source = curtain(), p = provider()) {
   const options = model.applyOptionRows(before, source.options.rows, new Date().toISOString());
   options.rows.forEach(row => { row.provenance.color = 'collected'; }); // Match intake facts, not a manual option edit.
   assert.ok(await store.saveProductOptions('owner', options, before.revision, f.h.sqlite.prepare('SELECT updated_at FROM products WHERE id=?').get(f.id).updated_at));
-  f.setProvider(p); return { f, p };
+  f.setProvider(p); historicalGeneration(f,policy); return { f, p };
 }
 
-test('actual new-job route differentiates all six legal colors and client/server reject forged aggregate and unsupported material', async () => {
+test('actual saved-v3 route differentiates all six legal colors and client/server reject forged aggregate and unsupported material', async () => {
   const { f, p } = await sixOptions(); try {
     const state = await json(await f.request(undefined, 'GET')), body = f.requestBody(state), before = f.state();
     const out = await json(await f.request(body)), job = out.job;
@@ -66,7 +67,7 @@ test('legacy saved generation plan retains request fingerprint, public shape, ex
   } finally { f.close(); }
 });
 
-test('P2 actual new-job API accepts own raw black synonym and still rejects a foreign white component at adoption', async () => {
+test('P2 actual saved-v3 API accepts own raw black synonym and still rejects a foreign white component at adoption', async () => {
   const source = curtain(); source.options.rows = source.options.rows.slice(0, 2);
   Object.assign(source.options.rows[0], { color: '黑色', translatedName: '검정 커튼' });
   Object.assign(source.options.rows[1], { color: '黑白', translatedName: '블랙 화이트 커튼' });

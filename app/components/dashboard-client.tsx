@@ -48,8 +48,9 @@ import type {SourceInboxItem} from '@/app/source-inbox';
 import {sourceInboxDisplayTitle} from '@/app/source-inbox-title';
 import {archiveSourceInboxItem,sourceArchiveReference,sameSourceArchiveReference} from '@/app/source-inbox-archive-client';
 import {sameSourceUrl,querySourceRegistrationReference,isQuerySourceReference,sameRegistrationSourceReference} from '@/app/source-registration';
-import {sourceCaptureSelection,querySourceCaptureSelection,sameSourceCaptureSelection,type SourceCaptureSelection} from '@/app/source-capture-selection';
-import {applyReviewedSourceToIntakeRows,validateReviewedSourceTransition} from '@/app/source-review-intake';
+import {sourceCaptureSelection,querySourceCaptureSelection,sameSourceCaptureSelection} from '@/app/source-capture-selection';
+import {applyReviewedSourceToIntakeRows,validateReviewedSourceTransition,type ReviewedSourceTarget} from '@/app/source-review-intake';
+import {intakeSourceReviewInputKey} from '@/app/intake-queue';
 import { CollectionBatchPanel } from '@/app/components/collection-batch-panel';
 import { ProductOptionBoard } from '@/app/components/product-option-board';
 import { RegistrationBoard, registrationTitle } from '@/app/components/registration-board';
@@ -127,7 +128,7 @@ async function readJson<T = unknown>(url: string, init?: RequestInit): Promise<T
 const imageSteps = ['대표 이미지','추가 이미지','상세 이미지'];
 const batchStages:{id:AutomationStageId;label:string}[]=[{id:'seo',label:'SEO'},{id:'pricing',label:'가격'},{id:'mainImage',label:'대표 이미지'},{id:'additionalImages',label:'추가 이미지'},{id:'detailImage',label:'상세 이미지'},{id:'sizeChart',label:'사이즈표'},{id:'koreanLabel',label:'한글 표시사항'},{id:'quotation',label:'견적서'}];
 const supportingTabs = [{value:'작업',label:'작업 이력'},{value:'번역',label:'번역·SEO 생성'},{value:'옵션',label:'옵션 관리'},{value:'사이즈표',label:'사이즈표'}];
-type SourceReviewSession={scope:object;item:SourceInboxItem;returnToIntake:boolean;targets:{rowId:string;sourceCapture:Readonly<SourceCaptureSelection>}[]};
+type SourceReviewSession={scope:object;item:SourceInboxItem;returnToIntake:boolean;targets:ReviewedSourceTarget[];continuationScope?:object;settingsEpoch?:number};
 function sourceLink(value: string) {
   try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) ? url.href : undefined; } catch { return undefined; }
 }
@@ -923,21 +924,29 @@ useEffect(()=>{
   function reviewSource(item:SourceInboxItem,returnToIntake=false,rowId?:string){
     if(item.ownerId!==workspaceOwnerId||busy||batchBusyRef.current)return;
     const selected=sourceCaptureSelection(item);
-    const targets=returnToIntake?intakeRows.flatMap(row=>{
+    const targets=returnToIntake?intakeRows.flatMap<ReviewedSourceTarget>(row=>{
+      const continuation=row.sourceReviewContinuation;
+      if(continuation&&continuation.state!=='ready'){
+        if(rowId===undefined||row.id!==rowId||row.status==='saved'||row.productId||row.forkJobId||row.pendingJobId||continuation.scope!==querySourceCompany||continuation.ownerId!==workspaceOwnerId
+          ||continuation.company?.code!==sourceWorkspace.current?.company?.code||continuation.company?.name!==sourceWorkspace.current?.company?.name||continuation.inputKey!==intakeSourceReviewInputKey(row,intakeGoal,settings)
+          ||!continuation.reference.item||!sameSourceCaptureSelection(sourceCaptureSelection(continuation.reference.item),selected))return [];
+        return [{rowId:row.id,sourceCapture:selected,continuation}];
+      }
       const capture=row.sourceCapture;
       if(rowId!==undefined&&row.id!==rowId||row.status==='saved'||row.productId||row.forkJobId||row.pendingJobId||!capture)return [];
       return capture.captureId===selected.captureId&&capture.fingerprint===selected.fingerprint&&capture.sourceUrl===selected.sourceUrl&&capture.revision<=selected.revision?[{rowId:row.id,sourceCapture:capture}]:[];
     }):[];
-    const session={scope:sourceReviewScope,item,returnToIntake,targets};sourceReviewSession.current=session;setSourceReview(session);if(returnToIntake)setAddOpen(false);
+    const session={scope:sourceReviewScope,item,returnToIntake,targets,...(targets.some(target=>target.continuation)?{continuationScope:sourceWorkspace.current??undefined,settingsEpoch:settingsOperationRef.current.epoch}:{})};sourceReviewSession.current=session;setSourceReview(session);if(returnToIntake)setAddOpen(false);
   }
   function acceptSourceReview(session:SourceReviewSession,saved:SourceInboxItem,before:SourceInboxItem){
     const operation=settingsOperationRef.current;
     if(sourceReviewSession.current!==session||!operation.mounted||operation.ownerId!==workspaceOwnerId||before.ownerId!==workspaceOwnerId
-      ||!sameSourceCaptureSelection(sourceCaptureSelection(session.item),sourceCaptureSelection(before))||!validateReviewedSourceTransition(before,saved,workspaceOwnerId))return;
+      ||!sameSourceCaptureSelection(sourceCaptureSelection(session.item),sourceCaptureSelection(before))||!validateReviewedSourceTransition(before,saved,workspaceOwnerId)
+      ||session.continuationScope&&(session.continuationScope!==sourceWorkspace.current||session.settingsEpoch!==operation.epoch))return;
     if(!sourceRegistrations.acceptReviewed(before,saved))return;
     let targets:SourceReviewSession['targets']=[];
     if(session.returnToIntake)setIntakeRows(rows=>{
-      const updatedRows=applyReviewedSourceToIntakeRows(rows,session.targets,before,saved);
+      const updatedRows=applyReviewedSourceToIntakeRows(rows,session.targets,before,saved,{goal:intakeGoal,settings,scope:querySourceCompany});
       // useIntakeDraft invokes this updater synchronously with its current rows.
       // Only rows that adopted this ACK stay attached to later review saves.
       targets=session.targets.flatMap(target=>{
@@ -1016,7 +1025,7 @@ useEffect(()=>{
       {sourceReview&&sourceReview.item.ownerId===workspaceOwnerId&&<Modal wide title="수집 상품정보 확인·수정" subtitle="현재 수집한 상품만 검토합니다." onClose={()=>{closeSourceReview(sourceReview);}}><SourceInboxPanel key={sourceReview.item.id} ownerId={workspaceOwnerId} disabled={false} initialItem={sourceReview.item} onChanged={sourceRegistrations.reload} onReviewed={(saved,before)=>acceptSourceReview(sourceReview,saved,before)} onAdd={item=>{if(!closeSourceReview(sourceReview))return;if(!sourceReview.returnToIntake)prepareSource(item);}}/></Modal>}
       {addOpen&&<Modal wide title="상품 대기열" subtitle={intakeSourceSeed?'선택한 수집본 → 추천 카테고리 확인 → 상품 대기열. 시작 버튼에서 고른 작업을 진행합니다.':'카테고리 선택 → 1688 URL 입력 → 상품 대기열. 시작 버튼에서 고른 작업을 진행합니다.'} onClose={()=>{if(!busy&&!intakeDraft.loading){setSourceWork(null);setIntakeSourceSeed(undefined);setIntakeCategoryEntry(undefined);setAddOpen(false);}}}>
         <div className="intake-draft-actions"><p role="status">{intakeDraft.message}{intakeDraft.dirty?' · 저장하지 않은 변경 있음':''}</p><button type="button" className="btn ghost" disabled={busy||intakeDraft.saving||!intakeDraft.ready} onClick={()=>void intakeDraft.save()}>{intakeDraft.autoPaused?'저장 다시 시도':intakeDraft.saving?'저장 중…':'지금 저장'}</button><button type="button" className="btn ghost" disabled={busy||intakeDraft.saving} onClick={()=>{if(!intakeDraft.dirty||window.confirm('현재 미저장 입력을 서버 초안으로 교체할까요?'))void intakeDraft.load();}}>{intakeDraft.ready?'서버 초안으로 교체':'초안 다시 불러오기'}</button></div>
-        {intakeDraft.ready&&!intakeDraft.loading&&<IntakeQueuePanel onSourceCancelled={()=>setSourceWork(null)} autoStartSource={!!sourceWork&&sourceWork.ownerId===workspaceOwnerId} workspaceOwnerId={workspaceOwnerId} sourceSeed={intakeSourceSeed} initialCategorySelection={intakeCategoryEntry} onInitialCategorySelectionConsumed={id=>setIntakeCategoryEntry(current=>current?.id===id&&current.ownerId===workspaceOwnerId?undefined:current)} sourceItems={sourceRegistrations.items} onReviewSource={(item,rowId)=>reviewSource(item,true,rowId)} onSourceConsumed={id=>setIntakeSourceSeed(current=>current?.id===id?undefined:current)} jobs={collectionJobs} onOpenProduct={async(id,signal)=>{if(await continueSourceWork(id,signal))return;await openCollectedProduct(id,'SEO',signal);if(!signal.aborted)setAddOpen(false);}} settings={settings} onSettingsReloadStarted={startSettingsReload} onSettingsReloaded={applyReloadedSettings} goal={intakeGoal} onGoal={setIntakeGoal} rows={intakeRows} onRows={setIntakeRows} profiles={categoryProfiles} onBusy={setBusy}
+        {intakeDraft.ready&&!intakeDraft.loading&&<IntakeQueuePanel onSourceCancelled={()=>setSourceWork(null)} autoStartSource={!!sourceWork&&sourceWork.ownerId===workspaceOwnerId} workspaceOwnerId={workspaceOwnerId} sourceReviewScope={querySourceCompany.scope===sourceReviewScope?querySourceCompany:undefined} sourceCompany={querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null} sourceSeed={intakeSourceSeed} initialCategorySelection={intakeCategoryEntry} onInitialCategorySelectionConsumed={id=>setIntakeCategoryEntry(current=>current?.id===id&&current.ownerId===workspaceOwnerId?undefined:current)} sourceItems={sourceRegistrations.items} onReviewSource={(item,rowId)=>reviewSource(item,true,rowId)} onSourceConsumed={id=>setIntakeSourceSeed(current=>current?.id===id?undefined:current)} jobs={collectionJobs} onOpenProduct={async(id,signal)=>{if(await continueSourceWork(id,signal))return;await openCollectedProduct(id,'SEO',signal);if(!signal.aborted)setAddOpen(false);}} settings={settings} onSettingsReloadStarted={startSettingsReload} onSettingsReloaded={applyReloadedSettings} goal={intakeGoal} onGoal={setIntakeGoal} rows={intakeRows} onRows={setIntakeRows} profiles={categoryProfiles} onBusy={setBusy}
           onProfile={profile=>setCategoryProfiles(current=>[profile,...current.filter(item=>item.id!==profile.id)])}
           onJobs={jobs=>{setCollectionJobs(current=>[...jobs,...current.filter(job=>!jobs.some(saved=>saved.id===job.id))]);if(jobs.some(job=>job.product_id))void loadWorkspace();}}
           onAdvanced={seed=>{setEditingCategory(seed?.profileId?categoryProfiles.find(profile=>profile.id===seed.profileId)??null:null);setCategorySeed(seed?{name:seed.categoryPath.at(-1)??'',categoryId:seed.categoryId,categoryPath:seed.categoryPath,template:null,mappings:[]}:undefined);setAddOpen(false);setCategoryOpen(true);}}/>}
