@@ -67,7 +67,8 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
   const [settingsBanners,setSettingsBanners]=useState<CapturedSettingsBanners|undefined>();
   const bannerSnapshot=useRef<{content:ProductContent;descriptor?:CapturedSettingsBanners;imageKeys:string[];mounted:boolean}>({content:emptyProductContent(product.id),imageKeys:[],mounted:true});
   useLayoutEffect(()=>{let keys:string[]=[];try{keys=productImageKeys(product.image_keys);}catch{/* uncertain metadata leaves the banner editable */}bannerSnapshot.current.imageKeys=keys;bannerSnapshot.current.mounted=true;return()=>{bannerSnapshot.current.mounted=false;};},[product.image_keys]);
-  const [draft, setDraft] = useState<Draft>(() => draftFrom(emptyProductContent(product.id)));
+  const [draft, setDraft] = useState<Draft>(() => draftFrom(content, product.title));
+  const [initial,setInitial]=useState<Draft>(()=>draftFrom(content,product.title));
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -104,7 +105,8 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
   const applyLoaded = useCallback(({content:saved,banners}:{content:ProductContent;banners?:CapturedSettingsBanners}) => {
     loadedRef.current=true;
     bannerSnapshot.current={...bannerSnapshot.current,content:saved,descriptor:banners};setSettingsBanners(banners);
-    setContent(saved); setDraft(draftFrom(saved, currentProductTitle.current)); setLoaded(true); setConflict(false); setError(''); setMessage('');
+    const nextDraft=draftFrom(saved,currentProductTitle.current);
+    setContent(saved);setInitial(nextDraft);setDraft(nextDraft);setLoaded(true); setConflict(false); setError(''); setMessage('');
     setResizeSource(null);setResizePreview(null);resizeUpload.current={};
   }, []);
   const load = useCallback(async () => {
@@ -126,7 +128,6 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
       .finally(() => { if(activeRequest.current===controller){activeRequest.current=null;if (!controller.signal.aborted) setLoading(false);} });
     return () => {controller.abort();if(activeRequest.current===controller)activeRequest.current=null;};
   }, [endpoint, applyLoaded, active, product.updated_at]);
-  const initial = draftFrom(content, product.title);
   const draftKey = section === 'SEO' ? 'seo' : section === '표시사항' ? 'label' : 'assets';
   const editingDetail = section === '이미지' && focusedAssetRole === 'detail';
   const detailDirty = JSON.stringify(draft.detail) !== JSON.stringify(initial.detail);
@@ -281,14 +282,15 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
       const banners=parseCapturedSettingsBanners(body.capturedSettingsBanners,saved);bannerSnapshot.current={...bannerSnapshot.current,content:saved,descriptor:banners};setSettingsBanners(banners);
       setContent(saved);
       const savedDraft = draftFrom(saved, product.title);
+      setInitial(savedDraft);
       // Preserve unsaved work in other tabs when this section is saved.
       setDraft(previous => ({
         ...previous,
         [draftKey]: section==='이미지' ? mergeSavedImageStage(initial.assets,previous.assets,savedDraft.assets,focusedAssetRole) : savedDraft[draftKey],
-        ...(editingDetail ? { detail: savedDraft.detail } : section==='SEO' ? { detail: {
+        ...(editingDetail ? { detail: savedDraft.detail } : { detail: {
           description: previous.detail.description === initial.detail.description ? savedDraft.detail.description : previous.detail.description,
           altText: previous.detail.altText === initial.detail.altText ? savedDraft.detail.altText : previous.detail.altText,
-        } } : {}),
+        } }),
         // A first-entry label can already follow SEO before that label is saved.
         // Manual name edits (including clears) disable this draft linkage.
         ...(section==='SEO' && (previous.labelProductNameLinked || (previous.labelProductNameLinked === initial.labelProductNameLinked && previous.label.productName === initial.label.productName)) ? {label:{...previous.label,productName:previous.labelProductNameLinked?saved.seo.title.value:saved.label.productName.value}}:{}),

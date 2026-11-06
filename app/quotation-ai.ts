@@ -1,3 +1,4 @@
+import { QUOTATION_GENERATION_POLICY, quotationAiGenerationFacts, quotationAiGenerationIssue, quotationAiOptionColorNotice, quotationAiColorReference } from '@/app/quotation-ai-client';
 import {CURRENT_QUOTATION_RESULT_POLICY,currentAttributeRules,normalizeCurrentAttributeNumber,mandatoryHiddenProblems,type AttributeRule} from '@/app/current-quotation-attribute-rules';
 import type { QuotationExportSource } from '@/app/exports/quotation-source';
 import { getQuotationSchema, resolveQuotationFields, quotationGeneratedSourceWritable, type QuotationField } from '@/app/quotation-schema';
@@ -30,7 +31,7 @@ export type QuotationAiTarget = { optionId: string | null; optionLabel: string; 
   protectedValues: { fieldKey: string; value: string; source: string }[]; currentValues?:{fieldKey:string;value:string;source:string}[] };
 export type QuotationAiPlan = {
   format: typeof QUOTATION_AI_FORMAT; productId: string; company: SupplierHubCompany; snapshot: HubSchemaSnapshot;
-  category: { id: string; path: string[] }; hiddenEnabled: boolean; resultPolicy?:typeof CURRENT_QUOTATION_RESULT_POLICY; attributeRules?:AttributeRule[];
+  category: { id: string; path: string[] }; hiddenEnabled: boolean; generationPolicy?:typeof QUOTATION_GENERATION_POLICY; resultPolicy?:typeof CURRENT_QUOTATION_RESULT_POLICY; attributeRules?:AttributeRule[];
   scope: { optionId: string | null; applyToAllOptions: boolean };
   clocks: { ownerId: string; productVersion: string; contentRevision: number; optionRevision: number; quotationRevision: number; profileId: string; profileRevision: number };
   facts: { title: string; seoTitle: string; description: string; attributes: { name: string; value: string; provenance: string; sourceName?: string }[];
@@ -108,7 +109,8 @@ function protectedSource(saved: QuotationExportSource, field: QuotationField, op
   return Boolean(key && option.provenance[key] === 'manual');
 }
 
-export function buildQuotationAiPlan(saved: QuotationExportSource, scope: { optionId: string | null; applyToAllOptions: boolean }, resultPolicy:typeof CURRENT_QUOTATION_RESULT_POLICY|null=CURRENT_QUOTATION_RESULT_POLICY): QuotationAiPlan {
+export function buildQuotationAiPlan(saved: QuotationExportSource, scope: { optionId: string | null; applyToAllOptions: boolean }, resultPolicy:typeof CURRENT_QUOTATION_RESULT_POLICY|null=CURRENT_QUOTATION_RESULT_POLICY, generationPolicy:typeof QUOTATION_GENERATION_POLICY|null=null): QuotationAiPlan {
+  if(generationPolicy!==null&&generationPolicy!==QUOTATION_GENERATION_POLICY)fail('AI_POLICY','견적 생성 정책을 확인해주세요.');
   if (!saved.company || !saved.categoryContext.categoryId || !saved.profile || saved.categoryContext.profileId !== saved.profile.id
     || !same(saved.categoryContext.categoryPath, saved.profile.categoryPath) || saved.profile.categoryId !== saved.categoryContext.categoryId)
     fail('AI_SOURCE', '상품에 연결된 회사와 카테고리 양식을 확인해주세요.');
@@ -176,7 +178,7 @@ export function buildQuotationAiPlan(saved: QuotationExportSource, scope: { opti
   const preferred=prioritizedProductAttributes(['generated','unverified'].includes(detail.provenance)?'':detail.value,facts.attributes);
   if(preferred.some(pair=>pair.provenance?.startsWith('detail-')))facts.preferredAttributes=preferred;
   const plan: QuotationAiPlan = { format: QUOTATION_AI_FORMAT, productId: saved.product.id, company: { ...saved.company }, snapshot,
-    category: { id: snapshot.categoryId, path: [...snapshot.categoryPath] }, hiddenEnabled,...(resultPolicy?{resultPolicy,attributeRules:currentAttributeRules(snapshot,allFields)}:{}), scope: { ...scope },
+    category: { id: snapshot.categoryId, path: [...snapshot.categoryPath] }, hiddenEnabled,...(generationPolicy?{generationPolicy}:{}),...(resultPolicy?{resultPolicy,attributeRules:currentAttributeRules(snapshot,allFields)}:{}), scope: { ...scope },
     clocks: { ownerId: saved.product.owner_id, productVersion: saved.product.updated_at, contentRevision: saved.content.revision, optionRevision: saved.options.revision,
       quotationRevision: saved.state.revision, profileId: saved.profile.id, profileRevision: saved.profile.revision }, facts, fields,
     targets: targets.map(row => { const protectedValues: QuotationAiTarget['protectedValues'] = [], writableFieldIds: string[] = [];
@@ -231,6 +233,7 @@ function validatePlan(plan: QuotationAiPlan) {
   let snapshot: HubSchemaSnapshot;
   try { snapshot = validateHubSchemaSnapshot(plan.snapshot, plan.category.id, plan.category.path); } catch { return fail('AI_SCHEMA_IDENTITY', 'AI 요청의 상세 양식 연결이 다릅니다.'); }
   snapshotIdentity(snapshot, plan.company);
+  if(plan.generationPolicy!==undefined&&plan.generationPolicy!==QUOTATION_GENERATION_POLICY)fail('AI_POLICY','견적 생성 정책을 확인해주세요.');
   if(plan.resultPolicy!==undefined&&plan.resultPolicy!==CURRENT_QUOTATION_RESULT_POLICY)fail('AI_POLICY','견적 생성 규칙을 확인해주세요.');
   if(plan.resultPolicy&& !same(plan.attributeRules,currentAttributeRules(snapshot,getQuotationSchema(snapshot.categoryId,snapshot.categoryPath,snapshot).fields)))fail('AI_POLICY','견적 속성 규칙의 원문 연결이 다릅니다.');
   if (!same(plan.fields, supportedFields(snapshot, plan.hiddenEnabled,plan.resultPolicy===CURRENT_QUOTATION_RESULT_POLICY))) fail('AI_SCHEMA_IDENTITY', 'AI 요청의 항목·선택값과 원문 상세 양식이 다릅니다.');
@@ -281,6 +284,9 @@ export async function executeQuotationAi(plan: QuotationAiPlan, ai: QuotationAiP
       || new Set(parsed.differentiatedFieldIds).size !== parsed.differentiatedFieldIds.length) fail('AI_RESPONSE_SCOPE', 'AI가 확인되지 않거나 중복된 차별화 항목을 반환했습니다.');
     differentiated = new Set(parsed.differentiatedFieldIds as string[]);
   }
+  const generationFacts=plan.generationPolicy?quotationAiGenerationFacts(plan.facts):undefined;
+  if(generationFacts&&new Set(generationFacts.options.map(option=>quotationAiColorReference(option)?.key).filter(Boolean)).size>1)
+    for(const field of active)if(quotationAiOptionColorNotice(field))differentiated.add(field.id);
   const commonValues = new Map<string, string>();
   const rawSchema=JSON.parse(plan.snapshot.schemaString);
   const hiddenAllowsNull=(field:QuotationAiField):boolean=>{
@@ -318,6 +324,12 @@ export async function executeQuotationAi(plan: QuotationAiPlan, ai: QuotationAiP
       if(typeof value === 'string' && plan.facts.preferredAttributes){
         const notice=quotationNoticeInput(field),key=field.contentField??(notice?noticeLabels[notice]:undefined)??productFactKey(field.hubWire?.name??field.label);
         evidence=productFactPriorityIssue(value,key,plan.facts.description,plan.facts.preferredAttributes);
+      }
+      if(typeof value==='string'&&generationFacts){
+        const proposed=value;
+        const targets=optionId===undefined?plan.targets.filter(target=>target.writableFieldIds.includes(field.id)).map(target=>target.optionId):[optionId];
+        const issue=targets.map(target=>quotationAiGenerationIssue(field,target,proposed,generationFacts)).find(Boolean);
+        if(issue){warnings.push(`${field.label}: ${issue} 확인되지 않은 AI 값은 적용하지 않았습니다.`);continue;}
       }
       if(untranslated || invalid(value) || evidence){
         warnings.push(`${field.label}: 확인되지 않은 AI 값은 적용하지 않았습니다.`);
@@ -368,6 +380,13 @@ export async function executeQuotationAi(plan: QuotationAiPlan, ai: QuotationAiP
 
 /** Reused on owned-job adoption: response flags never authorize normalized values. */
 export function validateCurrentQuotationResult(plan:QuotationAiPlan,changes:QuotationAiResult['changes'],warnings:string[]=[]):void{
+ if(plan.generationPolicy!==undefined){
+  if(plan.generationPolicy!==QUOTATION_GENERATION_POLICY)fail('AI_POLICY','견적 생성 정책을 확인해주세요.');
+  const facts=quotationAiGenerationFacts(plan.facts);
+  for(const change of changes){const field=plan.fields.find(field=>field.id===change.fieldKey);if(!field)fail('AI_RESPONSE_SCOPE','AI 제안 항목의 연결을 확인해주세요.');
+   const issue=quotationAiGenerationIssue(field,change.optionId,change.value,facts);if(issue)fail('AI_RESPONSE_EVIDENCE',`${field.label}: ${issue}`);
+  }
+ }
  if(!plan.resultPolicy)return;
  if(plan.resultPolicy!==CURRENT_QUOTATION_RESULT_POLICY)fail('AI_POLICY','견적 생성 규칙을 확인해주세요.');
  const rules=plan.attributeRules??[],fields=getQuotationSchema(plan.snapshot.categoryId,plan.snapshot.categoryPath,plan.snapshot).fields;

@@ -17,7 +17,9 @@ function ui(handle,options={}){
  const states=[],effects=[],dependencies=[],cleanups=[],cache=new Map(),calls=[],navigation=[];let index=0,effectIndex=0;
  const hooks={useState(initial){const i=index++;if(!(i in states))states[i]=typeof initial==='function'?initial():initial;return[states[i],value=>{states[i]=typeof value==='function'?value(states[i]):value;}];},
   useRef(initial){const i=index++;return states[i]??(states[i]={current:initial});},
+  useMemo(fn,deps){const i=index++,before=states[i];if(!before||deps.some((value,j)=>!Object.is(value,before.deps[j])))states[i]={value:fn(),deps};return states[i].value;},
   useEffect(fn,deps){const i=effectIndex++;if(!dependencies[i]||deps.some((value,j)=>!Object.is(value,dependencies[i][j]))){dependencies[i]=deps;effects.push(()=>{cleanups[i]?.();cleanups[i]=fn();});}}};
+ hooks.useLayoutEffect=hooks.useEffect;
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
    {exports,URL,AbortController,Error,fetch:async(url,init)=>{calls.push({url,init});return handle(url,init);},require(name){if(name==='react')return hooks;if(name==='react/jsx-runtime')return native(name);if(name==='@/app/collection-supplement-client')return{completeCollectionSupplement:options.supplement??(()=>assert.fail('explicit click required'))};if(name.endsWith('.css'))return {};if(name.startsWith('@/'))return load(name.slice(2)+'.ts');throw Error(name);}});return exports;}

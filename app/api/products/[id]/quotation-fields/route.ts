@@ -1,7 +1,7 @@
 import { findQuotationAiJob } from '@/db/quotation-ai-jobs';
 import { readMappedQuotationSource, quotationExportFingerprint } from '@/app/exports/quotation-source';
 import { buildQuotationAiPlan, validateCurrentQuotationResult } from '@/app/quotation-ai';
-import { quotationAiProposalChanges } from '@/app/quotation-ai-client';
+import { quotationAiGenerationFacts, quotationAiProposalChanges } from '@/app/quotation-ai-client';
 import { quotationGeneratedSourceBasis, scopedGeneratedQuotation, mergeGeneratedQuotation } from '@/app/quotation-generated-adoption';
 import { fingerprint } from '@/app/automation/model';
 import { quotationTextConfiguration, sameQuotationTextExecution, type QuotationTextEnvironment } from '@/app/quotation-text-execution';
@@ -69,11 +69,12 @@ export async function PUT(request: Request, context: Context) {
         || !sameQuotationTextExecution(job.review.executionPolicy ?? null, selected.executionPolicy)
         || JSON.stringify(job.review.source) !== JSON.stringify(saved.source) || exportSource.state.revision !== saved.view.revision)
         throw changed();
-      let currentPlan;try{currentPlan = buildQuotationAiPlan(exportSource, job.review.scope,job.review.plan.resultPolicy??null);}catch{throw changed();}
+      let currentPlan;try{currentPlan = buildQuotationAiPlan(exportSource, job.review.scope,job.review.plan.resultPolicy??null,job.review.plan.generationPolicy??null);}catch{throw changed();}
       if (JSON.stringify({...currentPlan, createdAt:null}) !== JSON.stringify({...job.review.plan, createdAt:null})) throw changed();
       let proposals;
       try { proposals = quotationAiProposalChanges(saved.view, { ...job, fingerprint: job.review.fingerprint, quotationRevision: job.review.quotationRevision, profileId: job.review.profileId,
-        scope:job.review.scope, resultPolicy:job.review.plan.resultPolicy, executionPolicy:job.review.executionPolicy }, expectedFingerprint); }
+        scope:job.review.scope, resultPolicy:job.review.plan.resultPolicy, executionPolicy:job.review.executionPolicy,
+        ...(job.review.plan.generationPolicy?{generationPolicy:job.review.plan.generationPolicy,generationFacts:quotationAiGenerationFacts(job.review.plan.facts)}:{}) }, expectedFingerprint); }
       catch (error) { throw new FieldsError(error instanceof Error ? error.message : 'AI 생성 초안을 확인해주세요.', 400); }
       try{validateCurrentQuotationResult(job.review.plan,proposals);}catch(error){throw new FieldsError(error instanceof Error?error.message:'필수 속성 값을 확인해주세요.',400);}
       const seen = new Set<string>();

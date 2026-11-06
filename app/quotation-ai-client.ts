@@ -4,10 +4,91 @@ import { quotationKnownNoticeTarget, quotationSavedQuantityText, type QuotationS
 import { isCouplusNotApplicableValue } from '@/app/couplus-quotation-defaults';
 import {quotationTextModel,validQuotationTextExecution,type QuotationTextExecution} from '@/app/quotation-text-execution';
 
+import { unsupportedProductMaterial } from '@/app/product-material-evidence';
+import { productFactKey, productFactPriorityIssue } from '@/app/product-fact-priority';
+import { currentLabelNoticeNames } from '@/app/current-label-attribute-literals';
+import { seoCurrentLiterals } from '@/app/seo-current-literals';
+import type { QuotationAiPlan } from '@/app/quotation-ai';
+
+export const QUOTATION_GENERATION_POLICY = 'option-notice-material-evidence-v1' as const;
+export type QuotationGenerationFacts = {
+  material: { name: string; value: string; provenance?: string }[];
+  options: { optionId: string | null; color: string; translatedName: string; originalName?:string }[];
+};
+/** Project only independent material evidence and option distinctions, never SEO copy. */
+export function quotationAiGenerationFacts(facts: QuotationAiPlan['facts']): QuotationGenerationFacts {
+  const material = (facts.preferredAttributes ?? facts.attributes)
+    .filter(pair => (productFactKey(pair.name) === 'material' || currentLabelNoticeNames.material.includes(pair.name as typeof currentLabelNoticeNames.material[number])) && !['generated', 'unverified'].includes(pair.provenance ?? '')
+      && (pair.value.trim() || pair.provenance === 'detail-conflict') && !isCouplusNotApplicableValue(pair.value) && !/상세.*(?:참조|확인)|확인\s*필요|알\s*수\s*없음|정보\s*없음/u.test(pair.value));
+  const manual = material.filter(pair => pair.provenance === 'manual');
+  return { material: (manual.length ? manual : material).map(({value, provenance}) => ({name:'material', value, provenance})),
+    options: facts.options.map(({optionId, color, translatedName, originalName}) => ({optionId, color, translatedName, originalName})) };
+}
+/** Complete color-axis parts are dispatch references, never saved option-color facts. */
+export function quotationAiColorReference(option: QuotationGenerationFacts['options'][number]): { key:string; aliases:string[] } | undefined {
+  const rules=seoCurrentLiterals.modules['7d6a'];
+  const parse=(part:string):{key:string;aliases:string[]}|undefined=>{
+    let rest=part.trim();const keys:string[]=[],aliases:string[]=[];
+    while(rest){
+      const choices=[...rules.oe.flatMap(rule=>{const match=new RegExp(`^(?:${rule.zh.pattern})`,rule.zh.flags).exec(rest);return match&&rule.words.length?[{source:match[0],aliases:[...rule.words]}]:[];}),
+        ...Object.entries(rules.Ke).filter(([source])=>rest.startsWith(source)).map(([source,value])=>({source,aliases:[value]}))].sort((left,right)=>right.source.length-left.source.length);
+      const match=choices[0];if(!match)return;
+      keys.push(match.aliases[0]);aliases.push(...match.aliases);rest=rest.slice(match.source.length).replace(/^色/u,'').trim();
+    }
+    return keys.length?{key:[...new Set(keys)].sort().join('|'),aliases:[...new Set(aliases)]}:undefined;
+  };
+  if(option.color.trim()){
+    const parsed=parse(option.color);
+    return {key:parsed?.key??option.color.trim(),aliases:[...new Set([...(parsed?.aliases??[]),...rules.oe.filter(rule=>new RegExp(rule.zh.pattern,rule.zh.flags).test(option.color)).flatMap(rule=>[...rule.words])])]};
+  }
+  const name=(option.originalName??'').replace(/&amp;/giu,'&').replace(/&(?:gt|#0*62|#x0*3e);/giu,'>');
+  const parts=name.split(/[>＞|｜\/／;；]/u).flatMap(part=>{const parsed=parse(part);return parsed?[parsed]:[];});
+  return parts.length?{key:[...new Set(parts.map(part=>part.key))].sort().join('|'),aliases:[...new Set(parts.flatMap(part=>part.aliases))]}:undefined;
+}
+export function quotationAiOptionColorNotice(field: QuotationField): boolean {
+  return quotationKnownNoticeTarget(field, true) === 'color';
+}
+function materialField(field: QuotationField): boolean {
+  const wire = field.hubWire;
+  return Boolean(writableAiField(field) && (productFactKey(wire!.name!) === 'material'
+    || field.section === 'legal' && field.visibility === 'common' && wire!.path.join('.') === 'legalPage.notices'
+      && wire!.name === field.label && currentLabelNoticeNames.material.includes(field.label as typeof currentLabelNoticeNames.material[number])));
+}
+/** Negative evidence checks do not certify translated names as actual product facts. */
+export function quotationAiGenerationIssue(field: QuotationField, optionId: string | null, value: string, facts: QuotationGenerationFacts): string | null {
+  if (materialField(field)) {
+    const priority = productFactPriorityIssue(value, 'material', '', facts.material);
+    if (priority || unsupportedProductMaterial(value, facts.material.map(pair => pair.value).join('\n'), true)) return priority ?? '상품 원문의 명시된 재질 근거를 확인해주세요.';
+  }
+  if (quotationAiOptionColorNotice(field)) {
+    const own = facts.options.find(option => option.optionId === optionId);
+    if (!own) return '선택 옵션의 색상 연결을 확인해주세요.';
+    const words = (text: string) => text.match(/[가-힣A-Za-z]{2,}/gu) ?? [];
+    const ownReference=quotationAiColorReference(own);if(!ownReference)return null;
+    let ownText = (own.color + ' ' + own.translatedName).toLowerCase();
+    // Existing source-color aliases exempt only bounded full phrases from this negative check.
+    const ownAliases = new Set(ownReference.aliases.map(word => word.toLowerCase()));
+    let foreignText = value.toLowerCase();
+    for (const alias of [...ownAliases].sort((left, right) => right.length - left.length)) {
+      const phrase = alias.trim().split(/\s+/u).map(word => word.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')).join('\\s+');
+      foreignText = foreignText.replace(new RegExp(`(?<![가-힣A-Za-z])${phrase}(?![가-힣A-Za-z])`, 'gu'), ' ');
+      ownText = ownText.replace(new RegExp(`(?<![가-힣A-Za-z])${phrase}(?![가-힣A-Za-z])`, 'gu'), ' ');
+    }
+    const ownWords = new Set(words(ownText)), proposed = new Set(words(foreignText));
+    for (const other of facts.options) {
+      const otherReference=quotationAiColorReference(other);
+      if (other.optionId === optionId || !otherReference || otherReference.key === ownReference.key) continue;
+      if (words((other.color + ' ' + other.translatedName + ' ' + otherReference.aliases.join(' ')).toLowerCase()).some(word => !ownWords.has(word) && proposed.has(word)))
+        return '다른 옵션의 색상을 선택 옵션에 합치지 마세요.';
+    }
+  }
+  return null;
+}
+
 export type QuotationAiProposal = { optionId: string | null; fieldKey: string; value: string };
 export type QuotationAiJobView = { id: string; status: 'prepared' | 'running' | 'completed' | 'failed' | 'uncertain'; startedAt?: string | null; canClose?: boolean;
   fingerprint: string; quotationRevision: number; profileId: string | null;
-  resultPolicy?:string;model?:string;executionPolicy?:QuotationTextExecution;
+  resultPolicy?:string;model?:string;executionPolicy?:QuotationTextExecution; generationPolicy?:string; generationFacts?:QuotationGenerationFacts;
   scope: { optionId: string | null; applyToAllOptions: boolean };
   result: { changes: QuotationAiProposal[]; warnings: string[]; model: string; generatedAt: string;resultPolicy?:string } | null;
   error: { code: string; message: string; uncertain: boolean } | null };
@@ -88,6 +169,7 @@ function writableAiField(field: QuotationField) {
 }
 /** Recheck every proposed target before placing anything in an unsaved editor. */
 export function quotationAiProposalChanges(view: QuotationFieldsView, job: QuotationAiJobView, fingerprint: string) {
+  if(job.generationPolicy!==undefined&&(job.generationPolicy!==QUOTATION_GENERATION_POLICY||!job.generationFacts))throw Error('견적 생성 정책과 근거를 확인해주세요.');
   if(job.resultPolicy!==undefined&&(job.resultPolicy!==CURRENT_QUOTATION_RESULT_POLICY||job.result?.resultPolicy!==job.resultPolicy))throw Error('견적 결과 규칙이 다릅니다.');
   if(job.executionPolicy!==undefined&&!validQuotationTextExecution(job.executionPolicy))throw Error('견적 AI 실행 정책을 확인해주세요.');
   if(job.result&&job.result.model!==quotationTextModel(job.executionPolicy)||job.model!==undefined&&job.model!==quotationTextModel(job.executionPolicy))throw Error('견적 AI의 검토 모델과 결과 모델이 다릅니다.');
@@ -109,6 +191,7 @@ export function quotationAiProposalChanges(view: QuotationFieldsView, job: Quota
       || !job.scope.applyToAllOptions && change.optionId !== job.scope.optionId
       || quotationValueIssues(field, change.value).length)
       throw Error('AI 초안의 카테고리·옵션·수동 입력 또는 허용값을 다시 확인해주세요.');
+    if(job.generationPolicy){const issue=quotationAiGenerationIssue(field,change.optionId,change.value,job.generationFacts!);if(issue)throw Error(issue);}
     seen.add(key); return { optionId: change.optionId, fieldKey: change.fieldKey, value: change.value };
   });
 }

@@ -1,0 +1,82 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
+import {providedOptionModule} from './helpers/provided-option-quotation.mjs';
+
+const api=providedOptionModule('app/automation/translation.ts');
+const model=providedOptionModule('app/automation/model.ts');
+const plain=value=>JSON.parse(JSON.stringify(value));
+const digest=value=>createHash('sha256').update(typeof value==='string'?value:JSON.stringify(value)).digest('hex');
+const keys=['title','keywords','description','attributes','warnings','seoOptions'];
+const source={title:'旧标题 99cm 手腕垫',description:'',attributes:[{name:'材质',value:'棉'}],provenance:'manual',reference:'inert local prompt contract',category:{id:'synthetic-pad',path:['손목 패드']}};
+const composition={version:'couplus-current-composition-v1',memo:{brand:'검토 브랜드',features:'10cm 손목 패드',keywords:'손목패드'},related:{source:'provided',query:'손목패드',keywords:['손목 패드','사무용 패드'],warnings:[]}};
+const context={optionRevision:2,bundleQuantity:null,selectedOptions:[
+ {id:'owned-black-1',name:'黑色 / 10cm',nameTrans:'',color:'黑色',size:'10cm',bundleQuantity:1,manualName:false,manualColor:false,manualSize:false},
+ {id:'owned-white-2',name:'白色 / 10cm',nameTrans:'',color:'白色',size:'10cm',bundleQuantity:1,manualName:false,manualColor:false,manualSize:false},
+]};
+function fixture(){
+ const calls=[],config={provider:'workers-ai',apiKey:'',model:api.WORKERS_QWEN_MODEL,maxOutputTokens:4096,ai:{run:async(actual,input)=>{
+  assert.equal(actual,api.WORKERS_QWEN_MODEL);calls.push(plain(input));
+  const body=JSON.parse(input.messages[1].content.split('\n\nPRODUCT_SOURCE_JSON:\n')[1].slice(0,-'\n/no_think'.length));
+  const result=body.validationDraft??{title:body.optionExamples?'':'면 손목 패드 10cm',description:'',keywords:body.optionExamples?[]:['손목 패드','사무용 패드'],attributes:body.attributes.map(value=>({sourceIndex:value.sourceIndex,name:'재질',value:'면'})),warnings:[],seoOptions:body.seoOptionTargets.map(value=>({optionId:value.id,name:value.color==='黑色'?'검정 10cm':'흰색 10cm',color:value.color==='黑色'?'검정':'흰색',size:'10cm'}))};
+  return {choices:[{finish_reason:'stop',message:{role:'assistant',content:JSON.stringify(result)}}]};
+ }}};
+ return {calls,config};
+}
+function historicalReview(){
+ return {model:api.WORKERS_QWEN_MODEL,maxOutputTokens:4096,source:plain(source),inputCharacters:JSON.stringify(source).length,instructionsVersion:'sourceflow-translation-v6',destination:'Cloudflare Workers AI',paidNotice:'Inert local approved review',pricingUrl:'',expiresAt:'2026-11-06T00:15:00.000Z',fingerprint:'historical-placeholder',reviewId:'00000000-0000-4000-8000-000000000041',seoKeywordPolicy:'couplus-generated-v1',qwenTranslationPolicy:'commerce-exact-option-colors-v6',seoComposition:plain(composition),seoCompositionContext:plain(context)};
+}
+const noNetwork=()=>assert.fail('No external model, app or database request is allowed');
+const approvedHistorical={request:'1c64c61bbc8708de4b2504eebdbb7315b7a6bed824ca41002f08a9c79d13be1f',transport:'e9276642b226b815c7374fc14deaa3628d3fe60b580ec2d370e8c64bcc0d6042',fingerprint:'cd95fc00bb2a5584f92b2d3a9f0bc4737f5e07e65817359cdd260f36081954dd'};
+
+test('new typed SEO approval seals the prompt revision while ordinary and context-free reviews keep their legacy identity',async()=>{
+ const f=fixture(),review=await api.prepareTranslationReview(plain(source),f.config,new Date('2026-11-06T00:00:00.000Z'),plain(composition),plain(context));
+ assert.equal(review.typedSeoPromptRevision,'couplus-typed-seo-v1');
+ const {fingerprint,...signed}=review;assert.equal(await model.fingerprint(signed),fingerprint);
+ delete signed.typedSeoPromptRevision;assert.notEqual(await model.fingerprint(signed),fingerprint,'A prompt change requires a different approval fingerprint');
+ for(const [policy,targets]of [[undefined,undefined],[plain(composition),undefined]]){
+  const legacy=await api.prepareTranslationReview(plain(source),f.config,new Date(),policy,targets);
+  assert.equal(Object.hasOwn(legacy,'typedSeoPromptRevision'),false);
+ }
+ for(const config of [{...f.config,provider:'openai',model:'synthetic-model'},{...f.config,model:api.WORKERS_TEXT_MODEL}]){
+  const legacy=await api.prepareTranslationReview(plain(source),config,new Date(),plain(composition),plain(context));
+  assert.equal(Object.hasOwn(legacy,'typedSeoPromptRevision'),false);
+ }
+});
+
+test('actual typed Qwen transport consistently requests six keys and gives selected facts final priority',async()=>{
+ const f=fixture(),review=await api.prepareTranslationReview(plain(source),f.config,new Date(),plain(composition),plain(context));
+ const result=await api.executeTranslation(review,f.config,noNetwork),request=f.calls[0];
+ assert.deepEqual(Array.from(request.response_format.json_schema.required),keys);
+ const directive=request.messages[1].content.match(/these (five|six) keys: ([^.]+)\./u);
+ assert.ok(directive,'The provider user message must state its output contract');
+ assert.equal(directive[1],'six');assert.deepEqual(directive[2].split(',').map(value=>value.trim()),keys);
+ const system=request.messages[0].content;
+ assert.doesNotMatch(system,/title,keywords,description,attributes,warnings 키의 JSON/u);
+ const example=system.match(/JSON 객체 예: (\{[^\n]+\})/u);assert.ok(example,'Typed SEO supplies a matching structural example');
+ assert.deepEqual(Object.keys(JSON.parse(example[1])),keys);
+ assert.ok(system.lastIndexOf('현재 SEO 구성 정책:')>system.indexOf('title, description, attributes의 명시된 사실만 번역하세요.'),'Current selection rules must follow the generic translation rules');
+ const body=JSON.parse(request.messages[1].content.split('\n\nPRODUCT_SOURCE_JSON:\n')[1].slice(0,-'\n/no_think'.length));
+ assert.equal(body.currentMemo.features,'10cm 손목 패드');assert.equal(body.sourceTitleAuthority,'reference');
+ assert.deepEqual(body.seoOptionTargets.map(value=>value.id),['owned-black-1','owned-white-2']);
+ assert.equal(result.draft.title,'면 손목 패드 10cm','Normal provider spacing is not rewritten');
+ assert.deepEqual(Array.from(result.draft.keywords),['손목 패드','사무용 패드']);
+ assert.equal(f.calls.length,2,'One generation plus the existing bounded response-validation request');
+});
+
+test('already approved typed reviews without a revision preserve their exact request, transport and fingerprint bytes',async()=>{
+ const f=fixture(),review=historicalReview(),before=JSON.stringify(review),request=api.buildTranslationRequest(review);
+ assert.equal(digest(request),approvedHistorical.request);
+ const {fingerprint,...signed}=review;void fingerprint;assert.equal(await model.fingerprint(signed),approvedHistorical.fingerprint);
+ await api.executeTranslation(review,f.config,noNetwork);
+ assert.equal(digest(f.calls[0]),approvedHistorical.transport);
+ assert.equal(JSON.stringify(review),before);
+});
+
+test('unknown or context-free typed prompt revisions are rejected before any provider request',async()=>{
+ for(const patch of [{typedSeoPromptRevision:'unreviewed-revision'},{typedSeoPromptRevision:'couplus-typed-seo-v1',seoCompositionContext:undefined},{typedSeoPromptRevision:'couplus-typed-seo-v1',seoComposition:undefined}]){
+  const f=fixture(),review={...historicalReview(),...patch};
+  await assert.rejects(api.executeTranslation(review,f.config,noNetwork),error=>error.code==='UNSUPPORTED_INSTRUCTIONS'&&!error.mayHaveBeenCharged);
+  assert.equal(f.calls.length,0);
+ }
+});

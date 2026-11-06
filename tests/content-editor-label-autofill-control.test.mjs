@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -16,11 +17,11 @@ for (const statement of ast.statements) {
 let helper = parts.join('\n').replaceAll('import.meta.url', JSON.stringify(url.href));
 for (const [before, after] of [
   ['function harness(handle, focusedAssetRole, lifecycle=false, initialize=()=>{})', 'function harness(handle, focusedAssetRole, lifecycle=false, initialize=()=>{},autoFillLabel=true)'],
-  ["section,focusedAssetRole,onSaved()", "section,autoFillLabel,focusedAssetRole,onSaved()"],
+  ["section,focusedAssetRole,active:stageActive,onSaved()", "section,autoFillLabel,focusedAssetRole,active:stageActive,onSaved()"],
   ['return{render,button,model,load,', "return{render,button,model,load,setAutoFillLabel(value){autoFillLabel=value;return render('표시사항');},"],
 ]) { assert.ok(helper.includes(before), before); helper = helper.replace(before, after); }
 const { harness, nodes, settle } = vm.runInNewContext(helper + '\n({harness,nodes,settle})',
-  { assert, fs, vm, ts, createRequire, URL, AbortController, Response, structuredClone, TextEncoder, crypto, setImmediate });
+  { assert, fs, vm, ts, createRequire, pageSourcePriceBasis, URL, AbortController, Response, structuredClone, TextEncoder, crypto, setImmediate });
 const text = tree => Array.isArray(tree) ? tree.map(text).join('') : tree && typeof tree === 'object' ? text(tree.props?.children) : tree == null ? '' : String(tree);
 const inputs = h => nodes(h.render('표시사항')).filter(node => node.type === 'textarea' && node.props.maxLength === 2000);
 const field = (h, label) => {
