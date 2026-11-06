@@ -1,4 +1,4 @@
-import { pricePolicy } from '@/app/pricing';
+import { pricePolicy, sourcingMarginGate, type SourcingMarginGate } from '@/app/pricing';
 
 export const defaultSettings = {
   brand: '', manufacturer: '', importer: '',
@@ -16,7 +16,7 @@ export const defaultSettings = {
   translateImages: true, removeBackground: true, addCopyright: true,
   topImageEnabled: false, bottomImageEnabled: false, topImageKey: '', bottomImageKey: '', translationPrompt: '', hiddenAttributes: false,
 };
-export type WorkspaceSettings = typeof defaultSettings;
+export type WorkspaceSettings = typeof defaultSettings & { rocketMarginGate?: SourcingMarginGate | null };
 // Initial values for this deployment, matched to the user's observed Couplus
 // account (2026-09-27). Existing saved payloads retain legacy missing-field rules.
 export const newWorkspaceSettings: WorkspaceSettings = {
@@ -38,6 +38,10 @@ export function validateSettings(input: unknown): WorkspaceSettings {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('설정 객체가 필요합니다.');
   const p = { ...defaultSettings, ...input } as WorkspaceSettings;
   pricePolicy(p);
+  if (p.rocketMarginGate !== undefined && p.rocketMarginGate !== null) {
+    const gate = sourcingMarginGate(p.rocketMarginGate);
+    p.rocketMarginGate = { mode: gate.mode, minRate: gate.minRate, minAmount: gate.minAmount };
+  }
   if (!Number.isInteger(p.boxSkuQuantity) || p.boxSkuQuantity < 1 || p.boxSkuQuantity > 100000) throw new Error('박스 내 SKU 수량은 1~100,000 사이 정수여야 합니다.');
   if (p.shelfLifeDays !== null && (!Number.isInteger(p.shelfLifeDays) || p.shelfLifeDays < 0 || p.shelfLifeDays > 100000)) throw new Error('유통기간은 0~100,000 사이 정수로 입력해주세요.');
   if (p.bundleCriterion !== null && !['supplyMargin','coupangMargin'].includes(p.bundleCriterion)) throw new Error('번들 수량의 마진 기준을 선택해주세요.');
@@ -55,5 +59,6 @@ export function validateSettings(input: unknown): WorkspaceSettings {
   for (const key of ['minimumMarginEnabled','useIntegratedRate','bundleEnabled','translateImages','removeBackground','addCopyright','topImageEnabled','bottomImageEnabled','hiddenAttributes','manufactureDatePreviousMonth'] as const) {
     if (typeof p[key] !== 'boolean') throw new Error('작업 설정은 켜짐/꺼짐 값이어야 합니다.');
   }
-  return Object.fromEntries(Object.keys(defaultSettings).map(key=>[key,p[key as keyof WorkspaceSettings]])) as WorkspaceSettings;
+  return { ...Object.fromEntries(Object.keys(defaultSettings).map(key=>[key,p[key as keyof WorkspaceSettings]])),
+    ...(Object.hasOwn(input, 'rocketMarginGate') && p.rocketMarginGate !== undefined ? { rocketMarginGate: p.rocketMarginGate } : {}) } as WorkspaceSettings;
 }

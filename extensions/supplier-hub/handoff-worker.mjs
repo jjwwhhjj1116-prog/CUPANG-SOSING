@@ -1,10 +1,11 @@
+import {dispatchSeoKeywords,cancelSeoKeywords} from './seo-keywords.mjs';
 import './sales-worker.mjs';
 import {readAppSupplierHubCategoryRecommendations} from './category-predict.mjs';
 import {dispatchSupplierHubValidation} from './validation-dispatch.mjs';
 import {observeSupplierHubResult} from './observe.mjs';
 import {validateHandoff,pendingPackage,resultKey,transferRecord} from './handoff-store.mjs';
 import {dispatchPendingPackage} from './dispatch.mjs';
-import {capture1688Product,probe1688Product,cancel1688Capture} from './capture-1688.mjs';
+import {capture1688Product,probe1688Product,cancel1688Capture,authenticateUrlPage,saveUrlPage} from './capture-1688.mjs';
 import {transmitSupplierHubPackage} from './transmit.mjs';
 import {resumeSupplierHubValidation} from './validation-resume.mjs';
 import {validateAppHubRequest} from './app-request.mjs';
@@ -24,11 +25,20 @@ import {readProductSourceSession} from './product-source-session.mjs';
 import {inspectPreservedProductDocument} from './preserved-product-checkpoint.mjs';
 import {dispatchHistoricalProductReceipt} from './preserved-product-receipt-runtime.mjs';
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
+  if(message?.type==='YOOFAM_SEO_KEYWORD_CAPABILITY'){respond({ok:true,capability:'couplus-consumer-keywords-v1'});return;}
+  if(message?.type==='YOOFAM_SEO_KEYWORDS_CANCEL'){try{respond(cancelSeoKeywords(message,sender));}catch{respond({ok:false});}return;}
+  if(message?.type==='YOOFAM_SEO_KEYWORDS'){dispatchSeoKeywords(message,sender).then(respond,()=>respond({ok:false,error:'연관어를 확인하지 못해 기존 선호로 계속합니다.'}));return true;}
   if(message?.type==='YOOFAM_PRODUCT_DOCUMENT_DETAIL_AMENDMENT_REQUEST'){
     withProductDocumentReadLifetime(message.action==='apply'?'validateSavedDocumentSteps':'recoverSavedDraftTarget',()=>dispatchNativeDraftDetailAmendment(message,sender),chrome.runtime).then(result=>respond({ok:true,result}),error=>respond({ok:false,error:error?.code?error.message:'같은 문서의 상세 수정 결과를 먼저 확인해주세요.',code:error?.code??'DRAFT_DETAIL_AMENDMENT_FAILED'}));return true;
   }
   if(['YOOFAM_LISTING_BATCH_START','YOOFAM_LISTING_BATCH_STATUS','YOOFAM_LISTING_BATCH_CANCEL','YOOFAM_LISTING_BATCH_RESUME'].includes(message?.type)){
     dispatchListingBatch(message,sender).then(respond,error=>respond({ok:false,error:error.message,code:error.code??'LISTING_BATCH_FAILED'}));return true;
+  }
+  if(message?.type==='YOOFAM_VALIDATE_URL_PAGE'){
+    authenticateUrlPage(message,sender).then(respond,error=>respond({ok:false,error:error.message}));return true;
+  }
+  if(message?.type==='YOOFAM_SAVE_PAGE_SOURCE'&&message.urlCapture!==undefined){
+    saveUrlPage(message,sender).then(respond,error=>respond({ok:false,error:error.message}));return true;
   }
   if(message?.type==='YOOFAM_VALIDATE_BULK_PAGE'){
     authenticateListingBulkPage(message,sender).then(respond,error=>respond({ok:false,error:error.message,code:error.code??'LISTING_BULK_REJECTED'}));return true;

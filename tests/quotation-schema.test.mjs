@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import * as parse5 from 'parse5';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,7 +12,7 @@ function load(file) {
   if (cache.has(file)) return cache.get(file);
   const exports = {};
   const compiled = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-  vm.runInNewContext(compiled, { exports, structuredClone, TextEncoder, require(name) {
+  vm.runInNewContext(compiled, { exports, structuredClone, TextEncoder, require(name) {if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
     if (name === 'parse5') return parse5;
     if (name.startsWith('./')) return load(path.posix.join(path.posix.dirname(file), name) + '.ts');
     if (!name.startsWith('@/app/')) throw Error(name);

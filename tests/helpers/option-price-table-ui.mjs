@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../../extensions/supplier-hub/page-source-price-basis.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -19,7 +20,7 @@ const version = '2026-10-14T02:00:00.000Z';
 
 /** Actual OptionsEditor + price table and options API/SQLite. The source URL is
  * inert synthetic data; all external requests and unrelated components fail shut. */
-export async function optionPriceTableUI(company = priceTableCompanies[0], { count = 73, focusedOptionId, integrated=false,detail=false,fileStorage,imageKeys=[],sourceImageKeys={},rowImages={},prompt } = {}) {
+export async function optionPriceTableUI(company = priceTableCompanies[0], { count = 73, focusedOptionId, integrated=false,detail=false,fileStorage,imageKeys=[],sourceImageKeys={},rowImages={},prompt,initialSettings } = {}) {
   const sqlite = memoryDatabase(); for (const statement of runtimeDDL()) sqlite.exec(statement.sql);
   const owner = 'price-owner-' + company.code, productId = 'price-product-' + company.code;
   const apiCalls = [], writes = [], cache = new Map(), instances = new Map(), effects = [], layouts=[], focused = [],scrollEvents=[],controls={};
@@ -32,7 +33,7 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
   const objects = new Map(), bindings = { DB: db, FILES: fileStorage ?? { head: async key => objects.has(key) ? { size: objects.get(key).length, httpMetadata: { contentType: 'image/png' } } : null } };
   const deps = { 'cloudflare:workers': { env: bindings }, 'next/server': { NextResponse: Response },
     '@/app/components/registration-filter-popover': { RegistrationFilterPopover: props => ({ type: 'price-filter-popup', props }) },
-    '@/extensions/supplier-hub/page-source.mjs':pageSource,'../extensions/supplier-hub/page-source.mjs':pageSource,
+    '@/extensions/supplier-hub/page-source-price-basis.mjs':pageSourcePriceBasis,'@/extensions/supplier-hub/page-source.mjs':pageSource,'../extensions/supplier-hub/page-source.mjs':pageSource,
     '@/app/chatgpt-auth': { getWorkspaceOwnerId: async () => owner, getChatGPTUser: async () => ({ verifiedAccess: true, userId: owner,
       membership: { status: 'approved', companyCode: company.code, companyName: company.name } }) },
     '@/db/collection-images': { readOptionSourceImages: async () => sourceImageKeys,readRegistrationSourceImages:async()=>({}) } };
@@ -81,6 +82,7 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
     options_count: count, seo_status: '대기', image_status: '대기', quote_status: '대기', registration_status: '미전송', supplier_hub_status: '미전송',
     image_keys: JSON.stringify(imageKeys), goal_stage: 'collect', created_at: version, updated_at: version };
   await load('db/queries.ts').insertProduct(product, policy);
+  if(initialSettings!==undefined)await load('db/queries.ts').saveSettings(owner,JSON.stringify(initialSettings));
   const rowInputs = Array.from({ length: count }, (_, index) => ({ ...model.emptyOptionInput('price-' + String(index + 1).padStart(3, '0')),
     originalName: '合成选项 ' + (index + 1), translatedName: '합성 옵션 ' + (index + 1), supplierSku: 'fixture-sku-' + (index + 1),
     unitCostCny: index % 2 ? 3.99 : 2.99, stock: index === 0 ? 0 : index === 1 ? null : 100 + index, included: true,imageKey:rowImages['price-'+String(index+1).padStart(3,'0')]??null }));

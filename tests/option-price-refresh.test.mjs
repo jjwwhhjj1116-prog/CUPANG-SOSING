@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -6,7 +7,7 @@ import ts from 'typescript';
 function load(file) {
   const exports={};
   const code=ts.transpileModule(fs.readFileSync(new URL(`../${file}`,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-  vm.runInNewContext(code,{exports,require(name){if(name.startsWith('@/'))return load(`${name.slice(2)}.ts`);throw Error(name);}});return exports;
+  vm.runInNewContext(code,{exports,require(name){if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;if(name.startsWith('@/'))return load(`${name.slice(2)}.ts`);throw Error(name);}});return exports;
 }
 const model=load('app/product-options.ts');
 const {refreshOptionPriceBase}=load('app/option-price-refresh.ts');

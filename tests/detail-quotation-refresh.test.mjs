@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -33,7 +34,7 @@ function harness(props={}){
   vm.runInNewContext(ts.transpileModule(source,{fileName:path,compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,target:ts.ScriptTarget.ES2022}}).outputText,{
    exports,AbortController,URL,URLSearchParams,TextEncoder,TextDecoder,Date,Intl,crypto,structuredClone,
    fetch:async()=>{throw Error('DetailPanel refresh/navigation must not send a request.');},
-   require(name){
+   require(name){if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
     if(name==='react')return hooks;
     if(childModules.has(name))return childModules.get(name);
     return name.startsWith('@/')?load(name.slice(2)+'.ts'):require(name);

@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -11,7 +12,7 @@ const text=value=>Array.isArray(value)?value.map(text).join(''):value&&typeof va
 const version='2026-10-10T00:00:00.000Z';
 const compositionModules=new Map();
 function compositionModule(file){if(compositionModules.has(file))return compositionModules.get(file);const exports={};compositionModules.set(file,exports);
- vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,structuredClone,TextEncoder,crypto:globalThis.crypto,require:name=>compositionModule(name.slice(2)+'.ts')});return exports;}
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,structuredClone,TextEncoder,crypto:globalThis.crypto,require:name=>name==='@/extensions/supplier-hub/page-source-price-basis.mjs'?pageSourcePriceBasis:(compositionModule(name.slice(2)+'.ts'))});return exports;}
 function ui({allowed=true,storageValue=null,pending=null,registrationError=false,preparedAi=false,productId='p',productVersion=version,fetcher=null,draftHelper=null,sourceHelpers=null,savedSeo=null,workspaceOwnerId,brand='와이홉',onApplied,onDraft,registrationBrand=brand,workersRecovery,failedJob,recoveryResponder}={}){
  const slots=[],effects=[],layouts=[],calls=[],runs=[],creates=[],storage=new Map(storageValue?[[`yoofam-seo-workspace:${productId}`,storageValue]]:[]);let cursor=0,closed=false,lateWrites=0,lastKey,active=true;
  const schedule=(queue,fn,deps)=>{const i=cursor++;if(!slots[i]||!deps||!slots[i].deps||slots[i].deps.length!==deps.length||!deps.every((value,index)=>Object.is(value,slots[i].deps[index]))){const before=slots[i];slots[i]={deps,cleanup:before?.cleanup};queue.push(()=>{before?.cleanup?.();slots[i].cleanup=fn();});}};

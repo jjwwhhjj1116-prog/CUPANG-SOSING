@@ -123,6 +123,7 @@ export function planProductOptionSplit(source: SplitSource, groups: readonly Pro
     }
     const quotation = { ...structuredClone(source.quotation), productId: group.productId, revision: retainsSource ? source.quotation.revision + 1 : 1, updatedAt: now,
       overrides: subsetOverrides<QuotationOverrides>(source.quotation.overrides, ids, mapping) };
+    delete quotation.categoryGenerated;
     if (source.quotation.categoryOverrides !== undefined) quotation.categoryOverrides = mapScopes(source.quotation.categoryOverrides, value => subsetOverrides(value, ids, mapping));
     if (source.quotation.packagingBasis !== undefined) quotation.packagingBasis = subsetBasis(source.quotation.packagingBasis, ids, mapping);
     if (source.quotation.categoryPackagingBasis !== undefined) quotation.categoryPackagingBasis = mapScopes(source.quotation.categoryPackagingBasis, value => subsetBasis(value, ids, mapping));
@@ -130,6 +131,7 @@ export function planProductOptionSplit(source: SplitSource, groups: readonly Pro
     const sourceLabels = source.labels as LabelScopes;
     const labels: LabelScopes = { ...structuredClone(sourceLabels), productId: group.productId, revision: retainsSource ? source.labels.revision + 1 : 1, updatedAt: now,
       overrides: subsetOverrides(source.labels.overrides, ids, mapping) };
+    delete labels.automaticSuggestions;
     if (sourceLabels.categoryOverrides !== undefined) labels.categoryOverrides = mapScopes(sourceLabels.categoryOverrides, value => subsetOverrides(value, ids, mapping));
     return { label: group.label, retainsSource, product, content: splitContent(source.content, group.productId, group.label, retainsSource, now), options, quotation, labels,
       optionIdMap: mapping, sourceOptionIds: ids };

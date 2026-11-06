@@ -19,7 +19,7 @@ export type OptionPriceController = {
   replaceEdits:(edits:readonly QuotationChange[],coordinated?:boolean)=>boolean;
   acceptAtomicSaved:(view:QuotationFieldsView,expectedBase:QuotationFieldsView|null)=>boolean;
 };
-export function OptionQuotationPrices({productId,version,profileId,onSaved,refreshToken,disabled=false,beforeEdit,beforeSave,renderGrid,onLockChange,stageTwoPricingPolicy,onDraftStateChange}:{productId:string;version:string;profileId?:string;onSaved?:()=>void;refreshToken?:string;stageTwoPricingPolicy?:PricePolicy;
+export function OptionQuotationPrices({productId,version,profileId,onSaved,refreshToken,disabled=false,active=true,beforeEdit,beforeSave,renderGrid,onLockChange,stageTwoPricingPolicy,onDraftStateChange}:{productId:string;version:string;profileId?:string;onSaved?:()=>void;refreshToken?:string;stageTwoPricingPolicy?:PricePolicy;active?:boolean;
   onDraftStateChange?:(dirty:boolean)=>void;disabled?:boolean;beforeEdit?:()=>boolean;beforeSave?:()=>boolean;onLockChange?:(locked:boolean)=>void;renderGrid?:(controller:OptionPriceController)=>ReactNode}) {
   const endpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId?`?profileId=${encodeURIComponent(profileId)}`:''}`;
   const sourceKey = JSON.stringify([endpoint,version,refreshToken]);
@@ -28,6 +28,7 @@ export function OptionQuotationPrices({productId,version,profileId,onSaved,refre
   const endpointScope=useMemo(()=>({endpoint}),[endpoint]);
   const uncertainRef=useRef(false),[uncertain,setUncertain]=useState(false);
   const blocked=useRef(disabled);useLayoutEffect(()=>{blocked.current=disabled;},[disabled]);
+  const stageActive=useRef(active);useLayoutEffect(()=>{stageActive.current=active;},[active]);
   const [saved,setSaved] = useState<{endpoint:string;scope:object;sourceKey:string;view:QuotationFieldsView}|null>(null), latestSaved = useRef<typeof saved>(null);
   const [pending,setPending] = useState<{endpoint:string;scope:object;edits:QuotationChange[]}>({endpoint,scope:endpointScope,edits:[]}), latestDraft = useRef({endpoint,scope:endpointScope,edits:[] as QuotationChange[]});
   // Keep the exact augmented write separate from the user's raw price edits.
@@ -73,7 +74,7 @@ export function OptionQuotationPrices({productId,version,profileId,onSaved,refre
   useEffect(()=>{
     let active=true;
     void Promise.resolve().then(()=>{
-      if(!active||!current())return;setBusy(false);setError('');setMessage('');
+      if(!active||!current()||request.current)return;setBusy(false);if(!stageActive.current)return;setError('');setMessage('');
       if(latestDraft.current.scope===endpointScope&&latestDraft.current.edits.length&&latestSaved.current?.scope===endpointScope)return;
       void load();
     });
@@ -84,13 +85,13 @@ export function OptionQuotationPrices({productId,version,profileId,onSaved,refre
   },[endpoint,sourceKey]);
   useEffect(()=>{
     let active=true;void Promise.resolve().then(()=>{
-      if(!active||disabled||!current()||request.current||latestSaved.current?.scope===endpointScope&&latestSaved.current?.sourceKey===sourceKey||latestDraft.current.scope===endpointScope&&latestDraft.current.edits.length)return;
+      if(!active||!stageActive.current||disabled||!current()||request.current||latestSaved.current?.scope===endpointScope&&latestSaved.current?.sourceKey===sourceKey||latestDraft.current.scope===endpointScope&&latestDraft.current.edits.length)return;
       void load();
     });return()=>{active=false;};
     // A parent source-save lock must not abort the coordinated price request.
     // Retry only an unprepared clean read when that lock is released.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[disabled,endpoint,sourceKey]);
+  },[active,disabled,endpoint,sourceKey]);
   const rows=view?.resolved.rows.filter(row=>row.included)??[];
   let targets:QuotationPriceTargets|undefined,targetError='';
   if(view)try{targets=quotationPriceTargets(view.resolved.schema.fields);}catch(cause){targetError=cause instanceof Error?cause.message:'가격 연결을 확인해주세요.';}

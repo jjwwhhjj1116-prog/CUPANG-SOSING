@@ -174,13 +174,29 @@ function measurement(value,column){
  const result=Number(match[1])*column.multiplier;
  if(!numeric(result,column.kind==='weightG'?1e9:1e6))fail();return result;
 }
-function packagingRows(root,observedRows=null){
+function packagingRows(root,observedRows=null,commonPackaging){
  const all=observedRows??rows(root);if(!all.length)return[];
  const readCells=observedRows?row=>Array.from(row.children??[]):cells;
  const first=readCells(all[0]),columns=first.map(cell=>header(cell.textContent));
  if(first.length>20||columns.filter(column=>column?.kind==='name').length>1||columns.filter(column=>column?.kind==='supplierSku').length>1)return fail();
  const kinds=columns.filter(Boolean).map(column=>column.kind);
- if(!kinds.some(kind=>kind==='name'||kind==='supplierSku')||!kinds.some(kind=>!['name','supplierSku'].includes(kind)))return fail();
+ if(!kinds.some(kind=>kind==='name'||kind==='supplierSku')){
+  // A separately offer-bound context is required before a table without SKU identity can agree with common facts.
+  if(commonPackaging===undefined||all.length!==2||first.length!==5||kinds.length!==4||new Set(kinds).size!==4||!['weightG','lengthMm','widthMm','heightMm'].every(kind=>kinds.includes(kind))||first.filter((cell,index)=>!columns[index]&&text(cell.textContent)==='体积(cm³)').length!==1)fail();
+  if(commonPackaging!==null)validatePagePackaging(commonPackaging);
+  const row=all[1],values=readCells(row);if(values.length!==first.length||['data-sku-id','data-skuid'].some(key=>row.getAttribute?.(key)!=null))fail();
+  const measured={source:'package-table'};
+  columns.forEach((column,index)=>{
+   const raw=text(values[index].textContent);
+   if(!column){if(!/^\d+(?:\.\d+)?$/u.test(raw)||!Number.isFinite(Number(raw)))fail();return;}
+   if(raw==='0'||/^0\.0+$/u.test(raw))return;
+   const amount=measurement(raw,column);if(amount!==undefined)measured[column.kind]=amount;
+  });
+  const expected=commonPackaging??{source:'package-table'};
+  if(Object.keys(measured).length!==Object.keys(expected).length||Object.entries(measured).some(([key,value])=>expected[key]!==value))fail();
+  return [];
+ }
+ if(!kinds.some(kind=>!['name','supplierSku'].includes(kind)))return fail();
  if(new Set(kinds).size!==kinds.length)return fail();
  return all.slice(1).map(row=>{
   const values=readCells(row);if(values.length!==first.length)return fail();
@@ -200,7 +216,7 @@ function packagingRows(root,observedRows=null){
  }).filter(Boolean);
 }
 
-export function readPageDomFacts(document){
+export function readPageDomFacts(document,commonPackaging){
  const elements=Array.from(document.querySelectorAll(HEADINGS));if(elements.length>20000)fail();
  const headings=labelledHeadings(elements);
  if(headings.length>30)fail();
@@ -222,7 +238,7 @@ export function readPageDomFacts(document){
   for(const root of section.tables){
    if(seenRoots.has(root))continue;seenRoots.add(root);
    for(const link of root.querySelectorAll('a[href]'))if(/\/offer\/\d+\.html/u.test(link.getAttribute('href')??''))fail();
-   if(kind==='packaging'){packaging.push(...packagingRows(root));if(packaging.length>200)fail();}
+   if(kind==='packaging'){packaging.push(...packagingRows(root,null,commonPackaging));if(packaging.length>200)fail();}
    else for(const row of rows(root)){
     const values=cells(row);if(!values.length)continue;if(values.length%2||values.length>20)fail();
     for(let index=0;index<values.length;index+=2)add(values[index].textContent,values[index+1].textContent);
@@ -231,7 +247,7 @@ export function readPageDomFacts(document){
   if(kind==='attributes')for(const pair of section.pairs??[])add(pair.children[0].textContent,pair.children[1].textContent);
   if(kind==='packaging')for(const table of section.divTables??[]){
    if(seenRoots.has(table.root))continue;seenRoots.add(table.root);
-   packaging.push(...packagingRows(table.root,table.rows));if(packaging.length>200)fail();
+   packaging.push(...packagingRows(table.root,table.rows,commonPackaging));if(packaging.length>200)fail();
   }
  }
  return attributes.length||packaging.length?{attributes,packaging}:null;

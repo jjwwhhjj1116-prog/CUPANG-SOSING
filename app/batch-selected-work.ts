@@ -1,3 +1,4 @@
+import { confirmGeneratedQuotationSave } from '@/app/quotation-fields-confirmation';
 import { automationStages, type AutomationStageId } from '@/app/automation/model';
 import {batchBoardSource,type BatchBoardSource} from '@/app/batch-board-feedback';
 import { supplierHubCompany } from '@/app/supplier-hub-company';
@@ -11,9 +12,8 @@ import { GOOGLE_TEXT_MODEL, WORKERS_QWEN_MODEL, type TranslationSource, type Tra
 import type { ProductContent } from '@/app/product-content';
 import type { ProductOptionsResponse } from '@/app/product-options';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
-import { quotationAiJobForScope, quotationReviewedProposalChanges, quotationSavedSourceChanges, quotationAiViewCurrent, type QuotationAiView, type QuotationAiJobView } from '@/app/quotation-ai-client';
+import { quotationAiJobForScope, quotationReviewedProposalChanges, quotationAiViewCurrent, type QuotationAiView, type QuotationAiJobView } from '@/app/quotation-ai-client';
 import { quotationTextModel, validQuotationTextExecution, type QuotationTextExecution } from '@/app/quotation-text-execution';
-import { confirmQuotationFieldsSave } from '@/app/quotation-fields-confirmation';
 import { hasSelectedEmptyQuotationChoice } from '@/app/quotation-choice-state';
 import { processSelectedImageStage, createSelectedImageStageState, advanceSelectedImageStageCheckpoint, type SelectedImageStageState } from '@/app/batch-selected-image-work';
 import { processSelectedDetailWork, createSelectedDetailWorkState, advanceSelectedDetailWorkCheckpoint, type SelectedDetailWorkState } from '@/app/batch-selected-detail-work';
@@ -224,7 +224,7 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     const stateKey=identity+':seo-qwen:'+current.updated_at+':'+view.contentRevision+':'+view.optionRevision,pointerKey=identity+':seo-qwen-current';
     const previousKey=controls.retryFailedQwen===true?keys.get(pointerKey)??stateKey:stateKey,stored=keys.get(previousKey);
     let state=stored?parseSeoWorkspaceDraftState(stored,productId):null;
-    const currentInput=()=>({productId,productVersion:current.updated_at,contentRevision:view.contentRevision,source:input,configuration:history.configuration,memo:view.memo});
+    const currentInput=()=>({productId,productVersion:current.updated_at,contentRevision:view.contentRevision,optionRevision:view.optionRevision,sourceFingerprint:view.sourceFingerprint,source:input,configuration:history.configuration,memo:view.memo});
     const create=()=>createSeoWorkspaceDraftState(currentInput());
     let completedReadback:Awaited<ReturnType<typeof refreshSeoWorkspaceDraft>>|null=null;
     if(controls.retryFailedQwen===true){
@@ -277,12 +277,12 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
       // or application request is retried in the current run.
       return{status:'failed',message:(cause instanceof Error?cause.message:'Qwen 적용 미리보기를 확인하지 못했습니다.')+' 완료된 Qwen 요청을 유지했습니다. 저장 없이 멈췄으며 다시 작업하면 같은 결과부터 확인합니다.',stop:true};
     }
-    const partial=generated.partial||batch.remaining>0;
+    const partial=generated.partial||!generated.job.review.seoCompositionContext&&batch.remaining>0;
     if(!plan.preview.length)return{status:partial?'blocked':'skipped',message:'Qwen 초안을 확인했으며 새로 적용할 값이 없어 직접 수정한 값과 공란을 유지했습니다.'+(partial?' 일부 원문·남은 옵션은 해당 단계에서 확인해주세요.':'')};
     const saved=await once('seo-qwen:'+plan.fingerprint,()=>post<{scope:string;productId:string;productVersion:string;contentRevision:number;optionRevision:number;applied:number}>('/translation-apply',{...request,action:'apply',fingerprint:plan.fingerprint}));
     if(saved.scope!=='all'||saved.productId!==productId||!(Date.parse(saved.productVersion)>Date.parse(current.updated_at))||saved.contentRevision!==plan.contentRevision+1||saved.optionRevision!==plan.optionRevision+1||saved.applied!==plan.preview.length)
       throw Error('Qwen 저장 결과를 확인하지 못했습니다. 같은 요청을 다시 적용하지 말고 저장본을 확인해주세요.');
-    return{status:partial?'blocked':'draft',message:'Cloudflare Workers AI Qwen SEO·옵션·표시 속성 '+saved.applied+'개 항목의 저장을 확인했습니다. 직접 수정한 값과 공란은 유지했습니다.'+(generated.partial?' 일부 원문 번역을 확인해주세요.':'')+(batch.remaining?' 남은 옵션 '+batch.remaining+'개는 추가 작업이 필요합니다.':'')};
+    return{status:partial?'blocked':'draft',message:'Cloudflare Workers AI Qwen SEO·옵션·표시 속성 '+saved.applied+'개 항목의 저장을 확인했습니다. 직접 수정한 값과 공란은 유지했습니다.'+(generated.partial?' 일부 원문 번역을 확인해주세요.':'')+(!generated.job.review.seoCompositionContext&&batch.remaining?' 남은 옵션 '+batch.remaining+'개는 추가 작업이 필요합니다.':'')};
   }
   async function seo():Promise<Outcome>{
     const consent=parseSeoGenerationConfiguration(controls.seoGenerationConsent);
@@ -526,7 +526,7 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     // Use the same reviewed merge as the interactive editor. The server's
     // knownChanges includes exact saved option/label sources; recomputing from
     // product content alone silently drops material, country, quantity, etc.
-    const knownChanges=quotationSavedSourceChanges(state,view,productId,null,true);
+    const knownChanges: never[]=[];
     const changes=quotationReviewedProposalChanges(state,view,productId,job?.status==='completed'?job:null,null,true);
     const aiCount=changes.length-knownChanges.length;
     const {content}=await read<{content:ProductContent}>('/content');
@@ -534,8 +534,8 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
       throw new ScopeChanged('견적 작성 중 저장된 표시사항 원본이 변경되어 작업을 멈췄습니다.');
     if(changes.length){
       const previous=view;
-      view=await once('quotation:'+(job?.id??'saved-notice:'+view.inputFingerprint),()=>post<QuotationFieldsView>('/quotation-fields',{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes},'PUT'),true);
-      confirmQuotationFieldsSave(previous,view,changes);
+      view=await once('quotation:'+(job?.id??'saved-notice:'+view.inputFingerprint),()=>post<QuotationFieldsView>('/quotation-fields',{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[],generatedAdoption:{jobId:job!.id,targets:changes.map(({optionId,fieldKey})=>({optionId,fieldKey}))}},'PUT'),true);
+      confirmGeneratedQuotationSave(previous,view,[],changes,job!.id);
     }
     const packaging=await once('packaging:'+view.inputFingerprint,()=>runSelectedPackagingWork(productId,{view,signal,fetcher,assertCurrent,
       onProgress:message=>controls.onStage({id:'quotation',status:'running',message})}),true);

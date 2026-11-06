@@ -2,7 +2,7 @@ import { usableCategoryCode } from '@/app/category-profiles';
 import { validateCategoryIdentity } from '@/app/category-identity';
 import { validateCollectionResult, type CollectionResult } from '@/app/collection-result';
 import { validateSettings } from '@/app/workspace-settings';
-import { calculatePrice, pricePolicy } from '@/app/pricing';
+import { calculatePrice, calculateRepresentativePrice, pricePolicy } from '@/app/pricing';
 import { initialBundleQuantity } from '@/app/bundle-policy';
 import { emptyProductOptions, emptyOptionInput, optionFieldNames, validateOptionsInput, type ProductOption } from '@/app/product-options';
 import { workspaceBannerAssignments } from '@/app/workspace-banners';
@@ -27,10 +27,11 @@ export function prepareCollectionProduct(owner:string,job:CollectionJob,receipt:
   validateCategoryIdentity(category);
   const {offerId,...raw}=receipt;const result=validateCollectionResult(raw,job.offer_id);
   if(offerId!==job.offer_id)throw new Error('원문의 상품번호가 다릅니다.');
-  const settings=validateSettings(job.context.settings);
+  const capturedSettings={...job.context.settings};delete capturedSettings.rocketMarginGate;
+  const settings=validateSettings(capturedSettings);
   const policy=pricePolicy({...settings,...(settings.roundingMode==='nearest'?{arithmeticMode:'couplus-number-v1'}:{}),minimumMargin:settings.minimumMarginEnabled?settings.minimumMargin:0,recalculationMinimumEnabled:settings.minimumMarginEnabled});
   // Use observed SKU prices, or the separately proved product-level default.
-  const cost=Math.min(...result.options.map(row=>row.unitPriceCny));const price=calculatePrice(cost,policy);
+  const cost=Math.min(...result.options.map(row=>row.unitPriceCny));const price=calculateRepresentativePrice(cost,policy);
   const rows=result.options.map((row,index)=>({...emptyOptionInput(`collected-${index+1}`),originalName:row.name,supplierSku:row.sku,stock:row.stock,color:row.color??'',size:row.size??'',unitCostCny:row.unitPriceCny,unitsPerPack:initialBundleQuantity(row.unitPriceCny,policy,settings),minimumOrderQuantity:row.minimumOrder,included:true,
     ...(row.packaging?{packagedWeightG:row.packaging.weightG??null,packagedWidthMm:row.packaging.widthMm??null,packagedLengthMm:row.packaging.lengthMm??null,packagedHeightMm:row.packaging.heightMm??null}:{})}));
   validateOptionsInput({expectedRevision:0,expectedProductVersion:now,rows},owner,[]);

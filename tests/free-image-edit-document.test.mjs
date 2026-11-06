@@ -227,3 +227,15 @@ test('the exact 512KiB UTF-8 limit includes full unselected issue strings and re
   assert.equal(bytes(input), byteLimit + 1); assert.throws(() => validate(input, source), /512KB/u);
   assert.equal(bytes(accepted), byteLimit, 'rejected future edits cannot mutate the prior accepted document');
 });
+test('optional effects survive canonicalization and own their nested values',()=>{
+ const effects={textFill:{kind:'linear-gradient',startColor:'#ff0000',endColor:'#0000ff',angle:0},textStroke:{width:2,color:'#ffffff'},textShadow:{blur:4,color:'#111111'},rotation:90};
+ const input=document({regions:[region('effects',effects)]}),result=validate(input,source);
+ assert.deepEqual(plain(result),input);effects.textFill.angle=45;assert.equal(result.regions[0].textFill.angle,0);
+ assert.equal(JSON.stringify(validate(document(),source)),JSON.stringify(document()));
+ rejected({regions:[region('bad',{textShadow:{blur:1,color:'#000000',extra:true}})]});
+});
+test('nested effect property order is canonical and unrecognized nested keys never survive',()=>{
+ const effects={textFill:{kind:'linear-gradient',startColor:'#ff0000',endColor:'#0000ff',angle:45},textStroke:{width:2,color:'#ffffff'},textShadow:{blur:4,color:'#111111'},rotation:90};
+ const first=validate(document({regions:[region('effect',effects)]}),source),reversed=Object.fromEntries(Object.entries(effects).map(([key,value])=>[key,typeof value==='object'?Object.fromEntries(Object.entries(value).reverse()):value]));
+ assert.equal(JSON.stringify(validate(document({regions:[region('effect',reversed)]}),source)),JSON.stringify(first));
+});

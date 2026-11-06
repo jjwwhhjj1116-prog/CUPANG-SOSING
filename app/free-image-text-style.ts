@@ -7,6 +7,10 @@ export const freeImageFontFamilies = {
 } as const;
 
 export type FreeImageTextStyle = {
+  textFill?: { kind: 'linear-gradient'; startColor: string; endColor: string; angle: number };
+  textStroke?: { width: number; color: string };
+  textShadow?: { blur: number; color: string };
+  rotation?: number;
   fontFamily?: keyof typeof freeImageFontFamilies;
   bold?: boolean;
   italic?: boolean;
@@ -25,7 +29,19 @@ export function resolveFreeImageTextStyle(style: FreeImageTextStyle) {
     || style.italic !== undefined && typeof style.italic !== 'boolean'
     || style.textAlign !== undefined && !['left', 'center', 'right'].includes(style.textAlign)
     || style.lineHeight !== undefined && (typeof style.lineHeight !== 'number' || !Number.isFinite(style.lineHeight) || style.lineHeight < 0.8 || style.lineHeight > 3)) return invalid();
-  return { fontFamily: freeImageFontFamilies[family].css, bold: style.bold ?? false, italic: style.italic ?? false, textAlign: align, lineHeight };
+  const color = (value: unknown) => typeof value === 'string' && /^#[a-f0-9]{6}$/iu.test(value);
+  const range = (value: unknown, min: number, max: number) => typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max;
+  const exact = (value: unknown, keys: string[]): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
+    && Reflect.ownKeys(value).length === keys.length && Reflect.ownKeys(value).every(key => typeof key === 'string' && keys.includes(key));
+  if (style.textFill !== undefined && (!exact(style.textFill, ['kind', 'startColor', 'endColor', 'angle']) || style.textFill.kind !== 'linear-gradient'
+    || !color(style.textFill.startColor) || !color(style.textFill.endColor) || !range(style.textFill.angle, -180, 180))
+    || style.textStroke !== undefined && (!exact(style.textStroke, ['width', 'color']) || !range(style.textStroke.width, 0, 20) || !color(style.textStroke.color))
+    || style.textShadow !== undefined && (!exact(style.textShadow, ['blur', 'color']) || !range(style.textShadow.blur, 0, 100) || !color(style.textShadow.color))
+    || style.rotation !== undefined && !range(style.rotation, -180, 180)) return invalid();
+  return { ...(style.textFill !== undefined ? { textFill: { ...style.textFill } } : {}),
+    ...(style.textStroke !== undefined ? { textStroke: { ...style.textStroke } } : {}),
+    ...(style.textShadow !== undefined ? { textShadow: { ...style.textShadow } } : {}),
+    ...(style.rotation !== undefined ? { rotation: style.rotation } : {}), fontFamily: freeImageFontFamilies[family].css, bold: style.bold ?? false, italic: style.italic ?? false, textAlign: align, lineHeight };
 }
 
 export function wrappedLines(context: Pick<CanvasRenderingContext2D, 'measureText'>, value: string, maximumWidth: number) {

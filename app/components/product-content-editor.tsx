@@ -24,6 +24,7 @@ type Props = {
   imageProcessingBusy?: boolean;
   seoLayout?: boolean;
   autoFillLabel?: boolean;
+  active?: boolean;
 };
 type Draft = {
   seo: { title: string; keywords: string; description: string };
@@ -61,7 +62,7 @@ async function fetchContent(endpoint: string, signal?: AbortSignal): Promise<{co
 
 export function ProductContentEditor(props: Props) { return <ContentEditor key={props.product.id} {...props} />; }
 
-function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslateImage, imageProcessingBusy = false, seoLayout = false, autoFillLabel = true }: Props) {
+function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslateImage, imageProcessingBusy = false, seoLayout = false, autoFillLabel = true, active = true }: Props) {
   const [content, setContent] = useState<ProductContent>(() => emptyProductContent(product.id));
   const [settingsBanners,setSettingsBanners]=useState<CapturedSettingsBanners|undefined>();
   const bannerSnapshot=useRef<{content:ProductContent;descriptor?:CapturedSettingsBanners;imageKeys:string[];mounted:boolean}>({content:emptyProductContent(product.id),imageKeys:[],mounted:true});
@@ -70,6 +71,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const loadedRef = useRef(false);
   const [conflict, setConflict] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
@@ -100,6 +102,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
   useEffect(() => { currentProductTitle.current = product.title; }, [product.title]);
   const endpoint = `/api/products/${encodeURIComponent(product.id)}/content`;
   const applyLoaded = useCallback(({content:saved,banners}:{content:ProductContent;banners?:CapturedSettingsBanners}) => {
+    loadedRef.current=true;
     bannerSnapshot.current={...bannerSnapshot.current,content:saved,descriptor:banners};setSettingsBanners(banners);
     setContent(saved); setDraft(draftFrom(saved, currentProductTitle.current)); setLoaded(true); setConflict(false); setError(''); setMessage('');
     setResizeSource(null);setResizePreview(null);resizeUpload.current={};
@@ -116,12 +119,13 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
     } finally { if(activeRequest.current===controller)activeRequest.current=null;if (!signal.aborted) setLoading(false); }
   }, [endpoint, applyLoaded, product.updated_at]);
   useEffect(() => {
-    const controller = new AbortController();
-    fetchContent(endpoint, controller.signal).then(saved => { if (!controller.signal.aborted) applyLoaded(saved); })
+    if(!active||loadedRef.current||activeRequest.current)return;
+    const controller = new AbortController();activeRequest.current=controller;setLoading(true);
+    fetchContent(endpoint, controller.signal).then(saved => { if (!controller.signal.aborted&&activeRequest.current===controller) {setLoading(false);applyLoaded(saved);setSnapshotVersion(product.updated_at);} })
       .catch(cause => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '저장본을 불러오지 못했습니다.'); })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
-    return () => controller.abort();
-  }, [endpoint, applyLoaded]);
+      .finally(() => { if(activeRequest.current===controller){activeRequest.current=null;if (!controller.signal.aborted) setLoading(false);} });
+    return () => {controller.abort();if(activeRequest.current===controller)activeRequest.current=null;};
+  }, [endpoint, applyLoaded, active, product.updated_at]);
   const initial = draftFrom(content, product.title);
   const draftKey = section === 'SEO' ? 'seo' : section === '표시사항' ? 'label' : 'assets';
   const editingDetail = section === '이미지' && focusedAssetRole === 'detail';
@@ -133,7 +137,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
   const anyDirty = JSON.stringify({ ...draft, labelClears: [] }) !== JSON.stringify(initial) || labelClearDirty || resizeDirty;
   const changedElsewhere = Boolean(product.updated_at && product.updated_at !== snapshotVersion && product.updated_at !== resizeAdded.version);
   useEffect(() => {
-    if (!changedElsewhere || busy || loading || activeRequest.current) return;
+    if (!active || !loaded || !changedElsewhere || busy || loading || activeRequest.current) return;
     const controller = new AbortController();
     if (anyDirty) {
       Promise.resolve().then(() => { if (!controller.signal.aborted) setRefreshNotice('다른 탭에서 상품이 변경되었습니다. 현재 입력은 유지했습니다. 입력 내용을 보관한 뒤 최신 저장본을 확인해주세요.'); });
@@ -143,7 +147,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
       }).catch(cause => { if (!controller.signal.aborted) setRefreshNotice(cause instanceof Error ? cause.message : '최신 저장본을 불러오지 못했습니다.'); });
     }
     return () => controller.abort();
-  }, [changedElsewhere, anyDirty, endpoint, applyLoaded, product.updated_at, busy, loading]);
+  }, [active, loaded, changedElsewhere, anyDirty, endpoint, applyLoaded, product.updated_at, busy, loading]);
   let imageKeys: string[] = [];
   try { imageKeys = productImageKeys(product.image_keys); } catch { /* API reports invalid stored references on save. */ }
   // Keep a confirmed new attachment visible until the parent refresh arrives;

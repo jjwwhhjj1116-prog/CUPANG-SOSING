@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { SeoWorkspaceInput, SeoWorkspaceView } from '@/app/seo-workspace';
 import { sameSeoAppliedSource, seoAppliedReceiptKey, seoAppliedViewReady, type SeoAppliedReceipt } from '@/app/seo-apply-focus';
-import { cleanSeoKeywordCandidates, prepareSeoKeywordText, quotationSeoKeywordText,seoKeywordDocumentText } from '@/app/seo-keyword-text';
+import { prepareSeoKeywordText, quotationSeoKeywordText,seoKeywordDocumentText } from '@/app/seo-keyword-text';
 import { emptySeoWorkspaceDraft, hasSeoWorkspaceDraft, readSeoWorkspace, saveSeoWorkspace, seoWorkspaceInput, seoWorkspaceRefreshConflicts, seoWorkspaceSaveState,
   SeoWorkspaceSaveError, type SeoWorkspaceDraft } from '@/app/seo-workspace-client';
 import {mergeSeoGeneratedDraft,seoGeneratedDraftKey,type SeoGeneratedDraft} from '@/app/seo-generated-draft';
@@ -20,7 +20,7 @@ export function SeoWorkspaceEditor({ productId, version,workspaceOwnerId,generat
   const live = useRef({ scope, sourceKey, active, disabled, mounted: true, onSaved }), request = useRef<AbortController | null>(null);
   const [saved, setSaved] = useState<Saved | null>(null), savedRef = useRef<Saved | null>(null);
   const [pending, setPending] = useState({ scope, values: emptySeoWorkspaceDraft() }), draftRef = useRef(pending);
-  const attempt = useRef<Attempt | null>(null);
+  const attempt = useRef<Attempt | null>(null), readFailed = useRef(false);
   const titleInput=useRef<HTMLInputElement|null>(null),consumedFocus=useRef<string|null>(null);
   const [busy, setBusy] = useState(false), [uncertain, setUncertain] = useState(false), [conflict, setConflict] = useState(false);
   const [busyAction, setBusyAction] = useState<'read' | 'save' | null>(null);
@@ -49,7 +49,7 @@ export function SeoWorkspaceEditor({ productId, version,workspaceOwnerId,generat
     // The latest draft/request refs are checked at the actual focus boundary.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[focusAfterApply,active,productId,version,disabled,busy,uncertain,conflict,fresh,view,dirty]);
-  const store = (value: SeoWorkspaceView) => { savedRef.current = { scope, sourceKey, view: value }; setSaved(savedRef.current); };
+  const store = (value: SeoWorkspaceView) => { readFailed.current = false; savedRef.current = { scope, sourceKey, view: value }; setSaved(savedRef.current); };
   const clearDraft = () => { draftRef.current = { scope, values: emptySeoWorkspaceDraft() }; setPending(draftRef.current);setGeneratedOrigin(null); };
   useEffect(()=>{
     if(!generatedDraft)return;
@@ -94,7 +94,7 @@ export function SeoWorkspaceEditor({ productId, version,workspaceOwnerId,generat
       store(latest); setComparison(null); setConflict(false); setUncertain(false); attempt.current = null;
       if (!keepDraft) clearDraft();
       setMessage(keepDraft ? '입력을 유지하고 최신 SEO·옵션 저장본을 읽었습니다. 확인 후 SEO 설정을 저장해주세요.' : '');
-    } catch (cause) { if (!controller.signal.aborted && current()) setError(cause instanceof Error ? cause.message : 'SEO 저장본 조회 실패'); }
+    } catch (cause) { if (!controller.signal.aborted && current()) { readFailed.current = true; setError(cause instanceof Error ? cause.message : 'SEO 저장본 조회 실패'); } }
     finally { finish(controller); }
   }
   useEffect(() => {
@@ -105,6 +105,7 @@ export function SeoWorkspaceEditor({ productId, version,workspaceOwnerId,generat
       if (!current()) return;
       setError(''); setMessage(''); setComparison(null); setConflict(false); setUncertain(attempt.current?.scope === scope);
       if (hasSeoWorkspaceDraft(latestDraft()) && savedRef.current?.scope === scope) return;
+      if (attempt.current?.scope === scope || !readFailed.current && savedRef.current?.scope === scope && savedRef.current.sourceKey === sourceKey) return;
       void load();
     });
     return () => { alive = false; request.current?.abort(); request.current = null; };
@@ -147,13 +148,13 @@ export function SeoWorkspaceEditor({ productId, version,workspaceOwnerId,generat
     store(shownComparison.latest); setComparison(null); setConflict(false); setError(''); setMessage('입력을 유지하고 비교한 최신 저장본을 기준으로 준비했습니다. 저장 버튼을 눌러야 반영됩니다.');
   }
   function reload(keepDraft:boolean){if(!current()||live.current.disabled||request.current)return;void load(keepDraft,true);}
-  let issues: string[] = [];
-  if (view && dirty) try { seoWorkspaceInput(view, draft); } catch (cause) { issues = [cause instanceof Error ? cause.message : 'SEO 입력을 확인해주세요.']; }
+  let issues: string[] = [], previewInput: SeoWorkspaceInput | undefined;
+  if (view && dirty) try { previewInput = seoWorkspaceInput(view, draft); } catch (cause) { issues = [cause instanceof Error ? cause.message : 'SEO 입력을 확인해주세요.']; }
   const seoValue = (key: 'title' | 'keywords' | 'description') => Object.hasOwn(draft.seo, key) ? draft.seo[key]! : key === 'keywords' ? view?.content.seo.keywords.value.join(', ') ?? '' : view?.content.seo[key].value ?? '';
   const keywordText = seoValue('keywords'), keywordEdited = Object.hasOwn(draft.seo, 'keywords');
   let keywordPlan: ReturnType<typeof prepareSeoKeywordText> | undefined;
-  if (keywordEdited) try { keywordPlan = prepareSeoKeywordText(keywordText); } catch { /* Input validation below retains the exact draft. */ }
-  const savedKeywords = keywordPlan ? cleanSeoKeywordCandidates(keywordPlan.keywords) : null;
+  if (keywordEdited && previewInput && previewInput.seo?.keywordPolicy !== 'couplus-generated-v1') try { keywordPlan = prepareSeoKeywordText(keywordText); } catch { /* Input validation below retains the exact draft. */ }
+  const savedKeywords = previewInput?.seo?.keywords ?? null;
   const savedDocumentKeywords=view?quotationSeoKeywordText(view.content):'';
   const nextDocumentKeywords=draft.clearDocumentKeywords?'':savedKeywords?.length?seoKeywordDocumentText(savedKeywords):savedDocumentKeywords;
   const keywordReviewRequired=Boolean(draft.clearDocumentKeywords||keywordPlan?.shortened||keywordEdited&&savedKeywords&&!savedKeywords.length&&savedDocumentKeywords);

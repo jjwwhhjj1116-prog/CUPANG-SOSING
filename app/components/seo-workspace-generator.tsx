@@ -86,6 +86,7 @@ function SeoGenerationPanelContent(props:GenerationPanelProps){
   {view&&!view.configuration.configured&&<p role="alert">{view.configuration.issues.join(' ')} Google 번역을 AI 최적화 완료로 표시하지 않습니다.</p>}
   {view?.configuration.configured&&<label className="seo-ai-consent"><input type="checkbox" aria-label="무료 AI SEO 생성 확인" checked={confirmed} disabled={busy||props.disabled||Boolean(state?.executeSubmitted)} onChange={event=>{if(current()&&!pending.current){setConfirmedToken(event.target.checked?memoScope:null);}}}/>위 전송 대상과 공유 무료 한도를 확인했습니다.</label>}
   {error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}
+  {job?.review.seoComposition&&<details><summary>SEO 관련어·현재 입력 확인</summary><pre>{JSON.stringify({composition:job.review.seoComposition,selectedOptions:job.review.seoCompositionContext},null,2)}</pre></details>}
   <button type="button" className="btn blue" disabled={busy||props.disabled||!props.active||invalid||uncertain||!view?.configuration.configured} onClick={()=>void run()}>{state?'같은 AI SEO 생성 계속':'무료 AI SEO 초안 생성'}</button>
   {state&&<button type="button" className="btn ghost" disabled={busy||props.disabled||!props.active||uncertain} onClick={()=>void run(true)}>AI SEO 상태 조회 · 새 호출 안 함</button>}
   {state&&closed&&<button type="button" className="btn ghost" disabled={busy||props.disabled||uncertain} onClick={()=>{if(!current()||pending.current)return;saved.current=null;setState(null);setJob(null);setClosed(false);setConfirmedToken(null);sessionStorage.removeItem(storageKey);}}>새 AI SEO 입력 준비</button>}
@@ -226,7 +227,7 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
     const input=structuredClone(current.current.memo),inputKey=JSON.stringify(input);
     const same=()=>mounted.current&&current.current.active&&operationContext.current===context&&current.current.version===version&&current.current.workspaceOwnerId===workspaceOwnerId&&JSON.stringify(current.current.memo)===inputKey;
     try{
-      let state=draftState.current??createSeoWorkspaceDraftState({productId,productVersion:version,contentRevision:basis.contentRevision,
+      let state=draftState.current??createSeoWorkspaceDraftState({productId,productVersion:version,contentRevision:basis.contentRevision,optionRevision:basis.options.revision,
         source:basis.source,memo:input,configuration:basis.configuration});
       const sourceIdentity=(source:TranslationSource)=>JSON.stringify([source.title,source.description,source.attributes,source.reference,source.category]);
       if(!readOnly&&(state.productVersion!==version||state.contentRevision!==basis.contentRevision||sourceIdentity(state.source)!==sourceIdentity(basis.source)))
@@ -251,7 +252,7 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
           ||latestConfiguration?.configured!==true||latestConfiguration.model!==basis.configuration.model||latestConfiguration.maxOutputTokens!==basis.configuration.maxOutputTokens){
           setMessage('원래 Qwen 작업의 실패 상태를 확인하지 못했습니다. 기존 요청을 유지했습니다. 초안 상태를 다시 조회해주세요.');return;
         }
-        state=createSeoWorkspaceDraftState({productId,productVersion:version,contentRevision:basis.contentRevision,source:basis.source,memo:input,configuration:basis.configuration});
+        state=createSeoWorkspaceDraftState({productId,productVersion:version,contentRevision:basis.contentRevision,optionRevision:basis.options.revision,source:basis.source,memo:input,configuration:basis.configuration});
         setClosed(false);
       }
       persist(state);

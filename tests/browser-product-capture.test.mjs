@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import {parseProductJsonLd} from '../extensions/supplier-hub/product-jsonld.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,7 +10,7 @@ import {capture1688Product,cancel1688Capture,validateCaptureRequest,readProductJ
 
 const url='https://detail.1688.com/offer/813724060928.html';
 const source={'@type':'ProductGroup',url,name:'1688 상품',image:['https://cbu01.alicdn.com/a.jpg'],hasVariant:[{'@type':'Product',name:'검정',sku:'seller-sku',offers:{'@type':'Offer',price:'25.6',priceCurrency:'CNY',eligibleQuantity:{minValue:1}}}]};
-function load(file,deps={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,Response,TextEncoder,TextDecoder,Uint8Array,AbortController,setTimeout,clearTimeout,process:{env:{NODE_ENV:'development'}},require:name=>deps[name]??(name==='@/extensions/supplier-hub/product-jsonld.mjs'?{parseProductJsonLd}:name==='parse5'?parse5:name==='next/server'?{NextResponse:Response}:load(name.slice(2)+'.ts',deps))});return exports;}
+function load(file,deps={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,Response,TextEncoder,TextDecoder,Uint8Array,AbortController,setTimeout,clearTimeout,process:{env:{NODE_ENV:'development'}},require:name=>deps[name]??(name==='@/extensions/supplier-hub/page-source-price-basis.mjs'?pageSourcePriceBasis:name==='@/extensions/supplier-hub/product-jsonld.mjs'?{parseProductJsonLd}:name==='parse5'?parse5:name==='next/server'?{NextResponse:Response}:load(name.slice(2)+'.ts',deps))});return exports;}
 const requestId='00000000-0000-4000-8000-000000000001';
 const sender={tab:{id:7,windowId:17},frameId:0,url:'https://sourceflow.jjwwhhjj1116.workers.dev/products'};
 

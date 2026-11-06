@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -13,7 +14,7 @@ function modules(env = {}) {
     const code = ts.transpileModule(fs.readFileSync(new URL('../' + file, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
     const exports = {}; cache.set(file, exports);
     vm.runInNewContext(code, { exports, Error, URL, Headers, Response, Request, TextEncoder, TextDecoder, Uint8Array, ArrayBuffer, DataView, structuredClone, crypto: webcrypto,
-      require(name) {
+      require(name) {if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
         if (name === 'parse5') return parse5;
         if (name === 'cloudflare:workers') return { env };
         if (name.startsWith('@/')) return load(name.slice(2) + '.ts');

@@ -10,7 +10,7 @@ export type SeoOptionOriginalReference = { originalName: string; axes: { field: 
 export type SeoWorkspaceView = { productId: string; productVersion: string; content: ProductContent; options: ProductOptions; imageKeys: string[]; sourceImageKeys?: Record<string, string>; optionOriginalReferences?: Record<string, SeoOptionOriginalReference> };
 export type SeoWorkspaceInput = {
   expectedProductVersion: string; expectedContentRevision: number; expectedOptionRevision: number;
-  seo?: { title?: string; keywords?: string[]; description?: string; keywordText?: string };
+  seo?: { title?: string; keywords?: string[]; description?: string; keywordText?: string; keywordPolicy?: 'couplus-generated-v1' };
   optionNames?: OptionNameChange[];
 };
 export class SeoWorkspaceConflict extends Error {}
@@ -28,7 +28,7 @@ export function validateSeoWorkspaceInput(value: unknown): SeoWorkspaceInput {
   if (Object.hasOwn(body, 'seo')) {
     const rawSeo = body.seo;
     if (!rawSeo || typeof rawSeo !== 'object' || Array.isArray(rawSeo)
-      || Object.keys(rawSeo).some(key => !['title', 'keywords', 'description', 'keywordText'].includes(key))) throw Error('SEO 저장 항목을 확인해주세요.');
+      || Object.keys(rawSeo).some(key => !['title', 'keywords', 'description', 'keywordText', 'keywordPolicy'].includes(key))) throw Error('SEO 저장 항목을 확인해주세요.');
     const value = rawSeo as Record<string, unknown>, hasKeywordText = Object.hasOwn(value, 'keywordText');
     const { keywordText, keywords, ...other } = value;
     const contentSeo = hasKeywordText ? other : { ...other, ...(Object.hasOwn(value, 'keywords') ? { keywords } : {}) };
@@ -44,7 +44,8 @@ export function validateSeoWorkspaceInput(value: unknown): SeoWorkspaceInput {
     }
     if (!Object.keys(seo).length) throw Error('저장할 SEO 항목을 선택해주세요.');
     if (seo.title !== undefined && seo.title.length > 100) throw Error('SEO 상품명은 100자 이내로 입력해주세요.');
-    if (!hasKeywordText && seo.keywords !== undefined && seo.keywords.join(', ').length > 150) throw Error('검색태그는 쉼표 구분을 포함해 150자 이내로 입력해주세요.');
+    if (hasKeywordText && value.keywordPolicy !== undefined) throw Error('검색태그 입력 방식을 확인해주세요.');
+    if (!hasKeywordText && seo.keywordPolicy === undefined && seo.keywords !== undefined && seo.keywords.join(', ').length > 150) throw Error('검색태그는 쉼표 구분을 포함해 150자 이내로 입력해주세요.');
     input.seo = seo;
   }
   if (Object.hasOwn(body, 'optionNames')) input.optionNames = validateOptionNamesInput({

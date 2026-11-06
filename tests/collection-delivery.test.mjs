@@ -1,9 +1,10 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
-function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,TextEncoder,require:name=>load(name.slice(2)+'.ts')});return exports;}
+function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,TextEncoder,require:name=>name==='@/extensions/supplier-hub/page-source-price-basis.mjs'?pageSourcePriceBasis:(load(name.slice(2)+'.ts'))});return exports;}
 const {deliverCollectionResult:actualDeliver}=load('app/collection-delivery.ts');
 const deliver=(job,offer,input,options={})=>actualDeliver(job,offer,input,{retryAttempts:1,...options,fetcher:async(url,init)=>url.endsWith('/capacity')?reply({capacity:{usedSlots:0,totalImages:input.images.length,reusableIndices:[]}}):options.fetcher(url,init)});
 const input={schemaVersion:1,sourceUrl:'https://detail.1688.com/offer/123456789.html',provider:'synthetic-test',collectedAt:'2026-01-01T00:00:00Z',title:'합성 검증',description:'',options:[{sku:'a',name:'옵션',unitPriceCny:2,minimumOrder:1,stock:null}],images:[{url:'https://cbu01.alicdn.com/a.png',role:'main'}]};

@@ -16,7 +16,7 @@ export function preparePolicyQuotationPrices(view: QuotationFieldsView, state: Q
   const next=structuredClone(state),overrides:QuotationOverrides=structuredClone(view.overrides),targets=quotationPriceTargets(view.resolved.schema.fields);
   const scope=categoryId?quotationScope(categoryId):null;
   const storeOverrides=()=>{if(scope)next.categoryOverrides={...next.categoryOverrides,[scope]:overrides};else next.overrides=overrides;};
-  if(recalculate){
+  if(recalculate&&!policy.fixedSourcing){
     const priceFields=new Set(quotationPriceInputs.flatMap(key=>targets[key].linked));
     for(const key of priceFields)delete overrides.common[key];
     for(const row of view.resolved.rows){

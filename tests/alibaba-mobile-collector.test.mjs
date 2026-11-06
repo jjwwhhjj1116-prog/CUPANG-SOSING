@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -11,7 +12,7 @@ function load(file) {
   const exports = {};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../' + file, import.meta.url), 'utf8'), {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022}}).outputText,
     {exports, URL, URLSearchParams, Response, TextEncoder, TextDecoder, AbortController, structuredClone, setTimeout, clearTimeout,
-      require: name => name === 'parse5' ? parse5 : name === 'node:crypto' ? nodeCrypto : name === '@/extensions/supplier-hub/product-jsonld.mjs' ? {parseProductJsonLd} : load(name.slice(2) + '.ts')});
+      require: name => name==='@/extensions/supplier-hub/page-source-price-basis.mjs'?pageSourcePriceBasis:(name === 'parse5' ? parse5 : name === 'node:crypto' ? nodeCrypto : name === '@/extensions/supplier-hub/product-jsonld.mjs' ? {parseProductJsonLd} : load(name.slice(2) + '.ts'))});
   return exports;
 }
 const read = name => fs.readFileSync(new URL('fixtures/' + name, import.meta.url), 'utf8');

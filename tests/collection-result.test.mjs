@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -6,7 +7,7 @@ import ts from 'typescript';
 import {DatabaseSync} from 'node:sqlite';
 function load(file,deps={},mode='development'){
  const exports={};const code=ts.transpileModule(fs.readFileSync(new URL(`../${file}`,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
- vm.runInNewContext(code,{exports,Error,URL,Response,TextEncoder,TextDecoder,Uint8Array,Date,process:{env:{NODE_ENV:mode}},require(name){if(name in deps)return deps[name];if(name==='next/server')return {NextResponse:Response};if(name.startsWith('@/'))return load(`${name.slice(2)}.ts`,deps,mode);throw Error(name);}});return exports;
+ vm.runInNewContext(code,{exports,Error,URL,Response,TextEncoder,TextDecoder,Uint8Array,Date,process:{env:{NODE_ENV:mode}},require(name){if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;if(name in deps)return deps[name];if(name==='next/server')return {NextResponse:Response};if(name.startsWith('@/'))return load(`${name.slice(2)}.ts`,deps,mode);throw Error(name);}});return exports;
 }
 const {validateCollectionResult:validate}=load('app/collection-result.ts');
 const sample=()=>({schemaVersion:1,sourceUrl:'https://detail.1688.com/offer/123.html?tracking=x',provider:'fixture-provider',collectedAt:'2026-01-01T00:00:00Z',title:'原文商品',description:'原文',options:[{sku:'sku-1',name:'黑色',unitPriceCny:3.25,minimumOrder:2,stock:null}],images:[{url:'https://cbu01.alicdn.com/img/test.jpg',role:'main'}]});

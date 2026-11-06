@@ -1,6 +1,6 @@
 'use client';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { calculatePrice, priceMinimumMarginEnabled, type PricePolicy } from '@/app/pricing';
+import { calculateRepresentativePrice, priceMinimumMarginEnabled, type PricePolicy } from '@/app/pricing';
 import { OptionQuotationPrices } from '@/app/components/option-quotation-prices';
 import { OptionPricePreview } from '@/app/components/option-price-preview';
 
@@ -13,7 +13,8 @@ function samePolicy(a: PricePolicy, b: PricePolicy) {
     && (!a.useIntegratedRate || Object.is(a.integratedRate, b.integratedRate))
     && a.recalculationMode === b.recalculationMode
     && a.arithmeticMode === b.arithmeticMode
-    && a.recalculationMinimumEnabled === b.recalculationMinimumEnabled;
+    && a.recalculationMinimumEnabled === b.recalculationMinimumEnabled
+    && JSON.stringify(a.fixedSourcing) === JSON.stringify(b.fixedSourcing);
 }
 
 export function PriceEditor({ sourcePrice, initial, onSave, productId, version, profileId, onQuotationSaved, refreshToken,showQuotationPrices=true,onDraftStateChange,disabled=false,beforeSave }: { sourcePrice: number; initial: PricePolicy; onSave: (policy: PricePolicy, options?: PriceSaveOptions) => Promise<void>; productId?:string; version?:string; profileId?:string; onQuotationSaved?:()=>void; refreshToken?:string;
@@ -49,8 +50,8 @@ export function PriceEditor({ sourcePrice, initial, onSave, productId, version, 
   const changedElsewhere = !samePolicy(initial, savedPolicy);
   // Refresh clean forms while retaining an unsaved policy on background updates.
   if (changedElsewhere && !dirty && !busy) { setPolicyState(initial); setSavedPolicy(initial); }
-  let preview: ReturnType<typeof calculatePrice> | undefined; let error = '';
-  try { preview = calculatePrice(sourcePrice, policy); } catch (e) { error = e instanceof Error ? e.message : '입력값 확인'; }
+  let preview: ReturnType<typeof calculateRepresentativePrice> | undefined; let error = '';
+  try { preview = calculateRepresentativePrice(sourcePrice, policy); } catch (e) { error = e instanceof Error ? e.message : '입력값 확인'; }
   const fields: ['exchangeRate'|'supplyMargin'|'coupangMargin'|'minimumMargin'|'msrpMultiple', string][] = [['exchangeRate','환율 (원/CNY)'],['supplyMargin','목표 공급 마진 (%)'],['coupangMargin','쿠팡 마진 (%)'],['minimumMargin','최소 공급 마진 (원)'],['msrpMultiple','시장가격 배수']];
   const won = (value: number) => value.toLocaleString('ko-KR', {maximumFractionDigits: 6}) + '원';
   return <form className="panel-stack" data-quotation-source-step="가격" data-workspace-dirty={dirty} data-workspace-saving={busy} onSubmit={async event=>{event.preventDefault();if (saving.current || busy || error||liveDisabled.current||!current()||beforeSave?.()===false) return;const submitted=livePolicy.current,replacePrices=pendingRecalculation.current===scope;saving.current=true;onDraftStateChange?.({dirty:replacePrices||!samePolicy(submitted,liveSavedPolicy.current),busy:true});setBusy(true);setMessage('');try {await onSave(submitted,{...(profileId?{profileId}:{}),...(replacePrices?{recalculate:true}:{})});if(!current())return;pendingRecalculation.current=null;setRecalculationScope(null);liveSavedPolicy.current=submitted;setSavedPolicy(submitted);setMessage('가격을 저장했습니다. 견적서에 반영됩니다.');} catch(e) {if(current())setMessage(e instanceof Error ? e.message : '저장 실패');}finally{saving.current=false;setBusy(false);onDraftStateChange?.({dirty:pendingRecalculation.current===currentScope.current||!samePolicy(livePolicy.current,liveSavedPolicy.current),busy:false});}}}><fieldset disabled={disabled||busy} style={{border:0,padding:0,margin:0,minWidth:0}}>

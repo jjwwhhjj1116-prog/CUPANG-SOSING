@@ -20,7 +20,7 @@ export function validateQueryRegistrationSummary(value:unknown,ownerId:string,co
  const item=value as QuerySourceCaptureSummary;
  if(!item||typeof item!=='object'||Array.isArray(item)||!querySourceRegistrationReference(item,ownerId,company)
   ||!Number.isSafeInteger(item.captureVersion)||item.captureVersion<1||typeof item.receivedAt!=='string'||!Number.isFinite(Date.parse(item.receivedAt))
-  ||typeof item.title!=='string'||!item.title.trim()||item.title.length>500||!Number.isSafeInteger(item.optionCount)||item.optionCount<1||item.optionCount>200
+  ||typeof item.title!=='string'||!item.title.trim()||item.title.length>500||!Number.isSafeInteger(item.optionCount)||item.optionCount<1||item.optionCount>500
   ||typeof item.offerId!=='string'||new URL(item.sourceUrl).pathname!==`/offer/${item.offerId}.html`
   ||item.thumbnailUrl!==null&&(typeof item.thumbnailUrl!=='string'||!/^https:\/\/(?:[A-Za-z0-9-]+\.)*alicdn\.com\//u.test(item.thumbnailUrl)))throw Error('현재 회원·회사의 서버 수집본 정보를 확인하지 못했습니다.');
  return{id:item.id,ownerId,company:{...company},fingerprint:item.fingerprint,revision:item.revision,captureVersion:item.captureVersion,receivedAt:item.receivedAt,archivedAt:null,

@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from 
 import type { FreeImageCropRect } from '@/app/free-image-crop';
 
 type Props = {
+  displayScale?: number;
   sourceUrl: string; width: number; height: number; scopeKey: string; enabled: boolean; disabled: boolean;
   crop: FreeImageCropRect | null; onBegin: () => string | null;
   onComplete: (id: string, crop: FreeImageCropRect) => void; onCancel: (id: string) => void;
@@ -90,7 +91,7 @@ export function FreeImageCropCanvas(props: Props) {
   function pointerCanceled(event: PointerEvent<SVGSVGElement>) { if (current(event)) cancel(); }
   const selected = validBox(draft, props.width, props.height) ? draft : validBox(props.crop, props.width, props.height) ? props.crop : { x: 0, y: 0, width: props.width, height: props.height };
   const enabled = props.enabled && !props.disabled;
-  return <><div style={{ position: 'relative', width: '100%', maxWidth: Math.min(props.width, 420 * props.width / props.height), aspectRatio: `${props.width}/${props.height}`, overflow: 'hidden' }}>
+  return <><div style={{ position: 'relative', width: props.displayScale === undefined ? '100%' : props.width * props.displayScale, maxWidth: props.displayScale === undefined ? Math.min(props.width, 420 * props.width / props.height) : undefined, flexShrink: 0, aspectRatio: `${props.width}/${props.height}`, overflow: 'hidden' }}>
     <img src={props.sourceUrl} alt="잘라내기 원본" width={props.width} height={props.height} style={{ display: 'block', width: '100%', height: '100%' }} />
     <svg role="img" aria-label="이미지 잘라내기 선택" data-testid="free-image-crop-surface" viewBox={`0 0 ${props.width} ${props.height}`} preserveAspectRatio="none"
       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: enabled ? 'none' : 'auto', cursor: enabled ? 'crosshair' : 'default' }}

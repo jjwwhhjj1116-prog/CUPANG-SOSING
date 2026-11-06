@@ -6,7 +6,7 @@ type Received = { kind: 'received'; source: NonNullable<ReturnType<typeof valida
 type SourceUnavailable = { kind: 'source-unavailable'; error: string };
 export const COLLECTION_ACK_TIMEOUT_MS = 40_000;
 export const COLLECTION_RECEIPT_READ_TIMEOUT_MS = 10_000;
-type RequestOptions = { signal: AbortSignal; fetcher: typeof fetch; capture?: BrowserProductCapture; timeoutMs?: number; recoveryTimeoutMs?: number };
+type RequestOptions = { signal: AbortSignal; fetcher: typeof fetch; capture?: BrowserProductCapture; preferContextCapture?:boolean; timeoutMs?: number; recoveryTimeoutMs?: number };
 const uncertain = '수집 저장 응답을 확인하지 못했습니다.';
 const recoveryFailed = '저장된 원문도 확인하지 못했습니다. 입력은 유지됩니다. 다시 조회해주세요.';
 
@@ -90,8 +90,8 @@ export async function requestIntakeCollectionReceipt(job: CollectionJob, action:
  const recoveryTimeoutMs = deadline(options.recoveryTimeoutMs, COLLECTION_RECEIPT_READ_TIMEOUT_MS, 30_000);
  const requestOptions = {...options, recoveryTimeoutMs};
  const init: RequestInit = {method: 'POST',
-  ...(action === 'browser-capture' || options.capture !== undefined ? {headers: {'content-type': 'application/json'},
-   body: JSON.stringify(action === 'collect' ? {browserCapture: options.capture} : options.capture)} : {})};
+  ...(action === 'browser-capture' || options.capture !== undefined || options.preferContextCapture===true ? {headers: {'content-type': 'application/json'},
+   body: JSON.stringify(action === 'collect' ? {...(options.capture!==undefined?{browserCapture:options.capture}:{}),...(options.preferContextCapture===true?{preferContextCapture:true}:{})} : options.capture)} : {})};
  const result = await readJson(`/api/collection-jobs/${encodeURIComponent(job.id)}/${action}`, init, requestOptions, timeoutMs, true);
  if (options.signal.aborted) return;
  if (!result.ok) {
@@ -102,7 +102,7 @@ export async function requestIntakeCollectionReceipt(job: CollectionJob, action:
  if (!response.ok) {
   const code = body && typeof body === 'object' && !Array.isArray(body) ? (body as Record<string, unknown>).code : undefined;
   const message = responseError(body, '상품 정보를 가져오지 못했습니다.');
-  if (response.status === 422 && code === 'SOURCE_NOT_COLLECTED' && action === 'collect') return {kind: 'source-unavailable', error: message};
+  if (response.status === 422 && (code === 'SOURCE_NOT_COLLECTED'||code==='SOURCE_CONTEXT_CAPTURE_REQUIRED') && action === 'collect') return {kind: 'source-unavailable', error: message};
   if (code === 'SOURCE_CONFIGURATION_REQUIRED' || response.status < 500) throw Error(message);
   return recover(job, requestOptions, responseError(body, uncertain));
  }

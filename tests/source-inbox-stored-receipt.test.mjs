@@ -132,3 +132,15 @@ for(const legacy of ['server','app'])test('a matching legacy '+legacy+' ACK rema
   const result=await x.save(source());assert.equal(result.delivered,true);assert.equal(Object.hasOwn(result,'storedReceipt'),false);assert.equal(x.records.size,0);assert.equal(x.count(),1);assert.equal(x.sends.length,1);
  }finally{x.h.close();}
 });
+
+test('324-option capture with typed common/MOQ evidence survives extension→POST→SQLite→receipt without creating a draft',async()=>{
+ const x=harness();try{
+  const snapshot=source();snapshot.options=Array.from({length:324},(_,i)=>({...snapshot.options[0],key:'key'+i,name:'选项'+i,supplierSku:'sku'+i}));
+  snapshot.sourceEvidence={format:'yoofam-page-source-evidence-v1',orderMinimums:[{path:'result.global.globalData.model.tradeModel.beginAmount',value:2},{path:'result.global.globalData.model.tradeModel.tradeWithoutPromotion.offerBeginAmount',value:1}],priceTierStarts:[{path:'result.global.globalData.model.tradeModel.offerPriceModel.currentPrices',values:[2,2]}],commonPackaging:{scope:'offer-common',packaging:{source:'package-table',weightG:400}}};
+  for(const row of snapshot.options)row.minimumOrder=null;
+  const result=await x.save(snapshot);assert.equal(result.delivered,true);assert.ok(result.storedReceipt);assert.equal(x.records.size,0);
+  const stored=await x.h.load('db/source-inbox.ts').readSourceInbox('owner',result.storedReceipt.storedId);
+  assert.equal(stored.snapshot.options.length,324);assert.equal(JSON.stringify(stored.snapshot.sourceEvidence),JSON.stringify(snapshot.sourceEvidence));assert.match(stored.issues.join(' '),/200.*선택/);
+  assert.equal(x.h.sqlite.prepare('SELECT count(*) n FROM products').get().n,0);assert.equal(x.h.network.length,0);
+ }finally{x.h.close();}
+});

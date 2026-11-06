@@ -32,7 +32,7 @@ export async function saveQuotationValidation(owner:string,productId:string,view
  return stored?.revision===view.revision&&JSON.stringify(await readQuotationValidationActor(owner))===JSON.stringify(actor);
 }
 
-export type QuotationValidationListingRow={product_id:string;product_version:string;image_keys:string;source_url:string;content_revision:number|null;option_payload:string|null;option_revision:number|null;quotation_payload:string|null;quotation_revision:number|null;
+export type QuotationValidationListingRow={product_id:string;product_version:string;image_keys:string;source_url:string;content_revision:number|null;label_revision?:number|null;option_payload:string|null;option_revision:number|null;quotation_payload:string|null;quotation_revision:number|null;
  linked_job:string|null;valid_job:string|null;job_offer:string|null;job_updated_at:string|null;context_payload:string|null;settings_payload:string|null;validation_profile_id:string|null;validation_profile_revision:number|null;validation_profile_payload:string|null};
 /** Reconstruct the same source selection from the existing owner-scoped batch. */
 export async function savedQuotationValidationForListing(owner:string,product:{id:string;image_keys:string;source_url?:string;updated_at?:string;pricing_policy?:string|null},content:ProductContent|null,row:QuotationValidationListingRow,environment:Awaited<ReturnType<typeof quotationValidationEnvironment>>):Promise<SavedQuotationValidation|null>{
@@ -56,7 +56,7 @@ export async function savedQuotationValidationForListing(owner:string,product:{i
   }
   if([hubSchema,profile?.hubSchema].some(schema=>schema&&(schema.company.code!==actor.company.code||schema.company.name!==actor.company.name)))return null;
   if(categoryContext.categoryId)validateCategoryIdentity({categoryId:categoryContext.categoryId,categoryPath:categoryContext.categoryPath});
-  const source:QuotationSourceGuard={productVersion:row.product_version,imageKeys:row.image_keys,pricingPolicy:product.pricing_policy??null,contentRevision:normalizedContent.revision,optionRevision:options.revision,settingsPayload:row.settings_payload,profile:profile?{id:profile.id,revision:profile.revision!}:null,collection};
+  const source:QuotationSourceGuard={productVersion:row.product_version,imageKeys:row.image_keys,pricingPolicy:product.pricing_policy??null,contentRevision:normalizedContent.revision,optionRevision:options.revision,...(row.label_revision?{labelRevision:row.label_revision}:{}),settingsPayload:row.settings_payload,profile:profile?{id:profile.id,revision:profile.revision!}:null,collection};
   const binding=await quotationValidationSourceBinding({actor,product,content:normalizedContent,options,state,source,schema:getQuotationSchema(categoryContext.categoryId,categoryContext.categoryPath,hubSchema,template),categoryContext,detailVersion:environment.detailVersion,validation:value});
   return proof.sourceBinding===binding?value:null;
  }catch{return null;}

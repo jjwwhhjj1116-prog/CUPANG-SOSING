@@ -24,24 +24,10 @@ function sameBrushValue(a: unknown, b: unknown): boolean {
     && sameBrushValue((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]));
 }
 function snapshot(rows: readonly FreeImageRegion[]): FreeImageRegion[] {
-  return rows.map(row => ({ ...row, box: { ...row.box }, ...(Object.prototype.hasOwnProperty.call(row, 'brush')
-    ? { brush: copyBrushValue(row.brush) as FreeImageRegion['brush'] } : {}) }));
-}
-function sameObject(a: object, b: object): boolean {
-  const keys = Object.keys(a);
-  return keys.length === Object.keys(b).length && keys.every(key =>
-    Object.prototype.hasOwnProperty.call(b, key)
-    && Object.is((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]));
+  return rows.map(row => copyBrushValue(row) as FreeImageRegion);
 }
 function sameRows(a: readonly FreeImageRegion[], b: readonly FreeImageRegion[]): boolean {
-  return a.length === b.length && a.every((row, index) => {
-    const other = b[index];
-    const { box: firstBox, brush: firstBrush, ...first } = row;
-    const { box: secondBox, brush: secondBrush, ...second } = other;
-    return sameObject(first, second) && sameObject(firstBox, secondBox)
-      && Object.prototype.hasOwnProperty.call(row, 'brush') === Object.prototype.hasOwnProperty.call(other, 'brush')
-      && sameBrushValue(firstBrush, secondBrush);
-  });
+  return sameBrushValue(a, b);
 }
 
 export function createFreeImageEditHistory(): FreeImageEditHistory {

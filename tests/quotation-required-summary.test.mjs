@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -13,7 +14,7 @@ function load(file,replacements={}){
  if(cached&&cache.has(file))return cache.get(file);
  const exports={};
  const source=ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
- vm.runInNewContext(source,{exports,Error,TextEncoder,URLSearchParams,structuredClone,AbortController,fetch:replacements.fetch,document:replacements.document,window:replacements.window,require(name){
+ vm.runInNewContext(source,{exports,Error,TextEncoder,URLSearchParams,structuredClone,AbortController,fetch:replacements.fetch,document:replacements.document,window:replacements.window,require(name){if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
   if(name==='parse5')return parse5;
   if(Object.hasOwn(replacements,name))return name==='react'&&!replacements[name].useLayoutEffect?{...replacements[name],useLayoutEffect:replacements[name].useEffect}:replacements[name];
   if(name.endsWith('.css'))return{};

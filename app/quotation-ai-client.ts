@@ -1,4 +1,5 @@
-import { quotationValueIssues, type QuotationField, type QuotationFieldsView } from '@/app/quotation-schema';
+import {CURRENT_QUOTATION_RESULT_POLICY} from '@/app/current-quotation-attribute-rules';
+import { quotationValueIssues, quotationGeneratedSourceWritable, type QuotationField, type QuotationFieldsView } from '@/app/quotation-schema';
 import { quotationKnownNoticeTarget, quotationSavedQuantityText, type QuotationSavedNoticeChange } from '@/app/quotation-known-notice-proposals';
 import { isCouplusNotApplicableValue } from '@/app/couplus-quotation-defaults';
 import {quotationTextModel,validQuotationTextExecution,type QuotationTextExecution} from '@/app/quotation-text-execution';
@@ -6,9 +7,9 @@ import {quotationTextModel,validQuotationTextExecution,type QuotationTextExecuti
 export type QuotationAiProposal = { optionId: string | null; fieldKey: string; value: string };
 export type QuotationAiJobView = { id: string; status: 'prepared' | 'running' | 'completed' | 'failed' | 'uncertain'; startedAt?: string | null; canClose?: boolean;
   fingerprint: string; quotationRevision: number; profileId: string | null;
-  model?:string;executionPolicy?:QuotationTextExecution;
+  resultPolicy?:string;model?:string;executionPolicy?:QuotationTextExecution;
   scope: { optionId: string | null; applyToAllOptions: boolean };
-  result: { changes: QuotationAiProposal[]; warnings: string[]; model: string; generatedAt: string } | null;
+  result: { changes: QuotationAiProposal[]; warnings: string[]; model: string; generatedAt: string;resultPolicy?:string } | null;
   error: { code: string; message: string; uncertain: boolean } | null };
 export type QuotationAiView = { configuration: { configured: boolean; provider: string; model: string; freeOnly: boolean; notice: string };
   fingerprint: string; productId: string; productVersion: string; contentRevision: number; optionRevision: number;
@@ -47,10 +48,8 @@ export function quotationSavedSourceChanges(state: QuotationAiView, view: Quotat
   return changes.filter(change => all || change.optionId === optionId).map(change => ({ optionId: change.optionId, fieldKey: change.fieldKey, value: change.value }));
 }
 export function quotationReviewedProposalChanges(state: QuotationAiView, view: QuotationFieldsView, productId: string, job: QuotationAiJobView | null, optionId: string | null, all: boolean) {
-  const known = quotationSavedSourceChanges(state, view, productId, optionId, all);
-  const ai = job ? quotationAiScopedProposalChanges(view, job, state.fingerprint, optionId, all) : [];
-  const sourceKeys = new Set(known.map(change => JSON.stringify([change.optionId, change.fieldKey])));
-  return [...ai.filter(change => !sourceKeys.has(JSON.stringify([change.optionId, change.fieldKey]))), ...known];
+  if (!quotationAiViewCurrent(state, view, productId)) throw Error('현재 견적 자료를 다시 확인해주세요.');
+  return job ? quotationAiScopedProposalChanges(view, job, state.fingerprint, optionId, all) : [];
 }
 export function quotationAiViewCurrent(value: QuotationAiView, view: QuotationFieldsView, productId: string) {
   return value.productId === productId && /^[a-f0-9]{64}$/.test(value.fingerprint)
@@ -89,6 +88,7 @@ function writableAiField(field: QuotationField) {
 }
 /** Recheck every proposed target before placing anything in an unsaved editor. */
 export function quotationAiProposalChanges(view: QuotationFieldsView, job: QuotationAiJobView, fingerprint: string) {
+  if(job.resultPolicy!==undefined&&(job.resultPolicy!==CURRENT_QUOTATION_RESULT_POLICY||job.result?.resultPolicy!==job.resultPolicy))throw Error('견적 결과 규칙이 다릅니다.');
   if(job.executionPolicy!==undefined&&!validQuotationTextExecution(job.executionPolicy))throw Error('견적 AI 실행 정책을 확인해주세요.');
   if(job.result&&job.result.model!==quotationTextModel(job.executionPolicy)||job.model!==undefined&&job.model!==quotationTextModel(job.executionPolicy))throw Error('견적 AI의 검토 모델과 결과 모델이 다릅니다.');
   if (job.status !== 'completed' || job.fingerprint !== fingerprint || job.quotationRevision !== view.revision
@@ -105,10 +105,18 @@ export function quotationAiProposalChanges(view: QuotationFieldsView, job: Quota
     const field = view.resolved.schema.fields.find(item => item.id === change.fieldKey), row = view.resolved.rows.find(item => item.optionId === change.optionId);
     const key = JSON.stringify([change.optionId, change.fieldKey]);
     proposedFields.add(change.fieldKey);
-    if (seen.has(key) || proposedFields.size > 300 || !field || !writableAiField(field) || !row || !row.included || row.fields[field.id]?.source.startsWith('manual-')
+    if (seen.has(key) || proposedFields.size > 300 || !field || !writableAiField(field) || !row || !row.included || !quotationGeneratedSourceWritable(row.fields[field.id]?.source)
       || !job.scope.applyToAllOptions && change.optionId !== job.scope.optionId
       || quotationValueIssues(field, change.value).length)
       throw Error('AI 초안의 카테고리·옵션·수동 입력 또는 허용값을 다시 확인해주세요.');
     seen.add(key); return { optionId: change.optionId, fieldKey: change.fieldKey, value: change.value };
   });
+}
+
+export type QuotationGeneratedDraft = { jobId: string; proposals: QuotationAiProposal[] };
+/** Only untouched proposals retain the owned-job proof; edits are manual deltas. */
+export function quotationGeneratedSave(changes: readonly {optionId:string|null;fieldKey:string;value:string|null}[], draft?: QuotationGeneratedDraft | null) {
+  const untouched = draft ? changes.filter(change => draft.proposals.some(proposal => proposal.optionId === change.optionId && proposal.fieldKey === change.fieldKey && proposal.value === change.value)) : [];
+  return { changes: changes.filter(change => !untouched.includes(change)), ...(draft && untouched.length ? { generatedAdoption: { jobId: draft.jobId,
+    targets: untouched.map(({optionId,fieldKey})=>({optionId,fieldKey})) } } : {}) };
 }

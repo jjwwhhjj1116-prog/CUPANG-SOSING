@@ -49,7 +49,7 @@ test('mixed colors, descriptions, model codes, sizes and ordinary attributes nev
 test('historical v5 and earlier completion/apply contracts retain their original color behavior and request bytes',async()=>{
  const output=draft();output.attributes[0].value='크림색';output.attributes[2].value='크림색';
  for(const previous of [undefined,'commerce-literal-v2','commerce-json-schema-v3','commerce-literal-schema-v4','commerce-partial-attributes-v5']){
-  const f=fixture(output),review=await api.prepareTranslationReview(plain(source),f.config);if(previous===undefined)delete review.qwenTranslationPolicy;else review.qwenTranslationPolicy=previous;
+  const f=fixture(output),review=await api.prepareTranslationReview(plain(source),f.config);delete review.seoKeywordPolicy;if(previous===undefined)delete review.qwenTranslationPolicy;else review.qwenTranslationPolicy=previous;
   const result=await api.executeTranslation(review,f.config,noNetwork);assert.equal(result.draft.attributes[0].value,'크림색');assert.equal(f.calls,1);
   assert.doesNotThrow(()=>api.validateQwenTranslationDraft(output,source,previous));
   if(previous==='commerce-partial-attributes-v5')assert.equal(createHash('sha256').update(JSON.stringify(f.wire)).digest('hex'),'70a45562d1694031ca57d179c459c4a315b6300744a3ec9ef4a800f58fc34bb0');

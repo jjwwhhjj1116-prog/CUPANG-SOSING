@@ -1,4 +1,4 @@
-import {calculatePrice,pricePolicy} from '@/app/pricing';
+import {calculateRepresentativePrice,pricePolicy,effectivePricePolicy} from '@/app/pricing';
 import {calculateOptionPrices,type ProductOptions} from '@/app/product-options';
 import {quotationPriceTargets} from '@/app/quotation-price-targets';
 import {quotationNumericValue,quotationScalarValueIssues} from '@/app/quotation-scalar-constraints';
@@ -16,7 +16,7 @@ const timestamp=(value:unknown):value is string=>typeof value==='string'&&Number
  * Its saved arithmetic policy records explicit intent; completion additionally
  * requires coherent current product, included-option and exact bound prices.
  * This is saved configuration, never an external price/registration assertion. */
-export function savedRecalculatedRegistrationPricing(product:RegistrationPricingProduct,options:ProductOptions,state:QuotationFieldsState,schema:QuotationSchema,context?:{ownerId?:string;profileId?:string|null}):boolean {
+export function savedRecalculatedRegistrationPricing(product:RegistrationPricingProduct,options:ProductOptions,state:QuotationFieldsState,schema:QuotationSchema,context?:{ownerId?:string;profileId?:string|null;settings?:unknown}):boolean {
  try{
   if(!product.pricing_policy||!timestamp(product.updated_at)||schema.status!=='observed'||schema.unsupportedFields?.length
     ||options.schemaVersion!==1||options.productId!==product.id||!Number.isSafeInteger(options.revision)||options.revision<1
@@ -25,9 +25,10 @@ export function savedRecalculatedRegistrationPricing(product:RegistrationPricing
     ||!timestamp(state.updatedAt)||Date.parse(state.updatedAt)>Date.parse(product.updated_at))return false;
   const raw:unknown=JSON.parse(product.pricing_policy);
   if(!raw||typeof raw!=='object'||Array.isArray(raw))return false;
-  const policy=pricePolicy(raw);
+  const policy=effectivePricePolicy(raw,context?.settings);
+  if(policy.fixedSourcing&&JSON.stringify(pricePolicy(raw).fixedSourcing?.marginGate??null)!==JSON.stringify(policy.fixedSourcing.marginGate??null))return false;
   if(!positive(product.source_price_cny)||product.exchange_rate!==policy.exchangeRate||product.supply_margin!==policy.supplyMargin||product.coupang_margin!==policy.coupangMargin)return false;
-  const representative=calculatePrice(product.source_price_cny,policy);
+  const representative=calculateRepresentativePrice(product.source_price_cny,policy);
   if(product.supply_price!==representative.supplyPrice||product.sale_price!==representative.salePrice||product.msrp!==representative.msrp)return false;
   const included=options.rows.filter(row=>row.included);
   if(!included.length||included.length!==product.options_count||new Set(options.rows.map(row=>row.id)).size!==options.rows.length)return false;
@@ -52,7 +53,7 @@ export function savedRecalculatedRegistrationPricing(product:RegistrationPricing
    }
    if(schema.salePriceMustCoverSupply&&effective.salePrice<effective.supplyPrice)return false;
   }
-  if(policy.recalculationMode==='couplus-stage-two-v1')return true;
+  if(policy.recalculationMode==='couplus-stage-two-v1'&&!policy.fixedSourcing)return true;
   const review=state.stageTwoPricingReviews?.[schema.categoryId?quotationScope(schema.categoryId):'common'];
   return matchesStageTwoPricingReview(review,{ownerId:context?.ownerId??product.owner_id??'',product:{id:product.id,source_price_cny:product.source_price_cny,updated_at:product.updated_at},policy,options,state,schema,
     ...(context&&Object.hasOwn(context,'profileId')?{profileId:context.profileId}:{})});

@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -13,7 +14,7 @@ function ui({badAck=false,bundle=false}={}){
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
  {exports,Error,AbortController,structuredClone,fetch:async(url,init)=>{calls.push({url,init});if(!init?.method)return Response.json(base);
   assert.ok(url.endsWith('/option-names'));const value=JSON.parse(init.body);const changed=names.applyOptionNameChanges(base.options,value.changes,next),body={...base,options:changed,productVersion:next};
-  if(badAck)body.options.rows[1].unitCostCny=999;return Response.json(body);},require(name){if(name==='react')return react;if(name==='react/jsx-runtime')return{jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})};
+  if(badAck)body.options.rows[1].unitCostCny=999;return Response.json(body);},require(name){if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;if(name==='react')return react;if(name==='react/jsx-runtime')return{jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})};
   if(name.startsWith('@/app/components/'))return new Proxy({},{get:()=>()=>null});if(name.startsWith('@/'))return load(name.slice(2)+'.ts');throw Error(name);}});return exports;}
  const options=load('app/product-options.ts'),names=load('app/option-seo-names.ts'),policy={exchangeRate:350,supplyMargin:50,coupangMargin:40,minimumMargin:3000,msrpMultiple:1.3,roundingUnit:10};
  const rows=['a','b'].map(id=>({...options.emptyOptionInput(id),originalName:'黑色',translatedName:id==='b'?'다른 이름':'',unitCostCny:null,imageKey:id==='a'?null:'owner/photo.png',provenance:Object.fromEntries(Object.keys(options.optionFieldNames).map(key=>[key,key==='translatedName'?'unverified':'collected'])),updatedAt:version}));

@@ -6,20 +6,20 @@ import ts from 'typescript';
 const url='https://detail.1688.com/offer/813724060928.html';
 const requestId='00000000-0000-4000-8000-000000000001';
 function fixture({respond=true,capability={ok:true,publicMobileCapture:true},inbox={capture:null},inboxStatus=200}={}){
- const events=new Map(),sent=[],timers=new Map(),cache=new Map();let id=0,requests=0;
+ const events=new Map(),sent=[],timers=new Map(),cache=new Map();let id=0,requests=0,inboxReads=0;
  const location={origin:'https://sourceflow.jjwwhhjj1116.workers.dev'};
  const window={location,addEventListener:(type,handler)=>events.set(type,handler),removeEventListener:(type,handler)=>{if(events.get(type)===handler)events.delete(type);},postMessage(value,origin){sent.push({value,origin});if(respond&&value.type==='PING')queueMicrotask(()=>events.get('message')?.({source:window,origin,data:{channel:'YOOFAM_HUB_HANDOFF_RESULT',requestId:value.requestId,result:capability}}));}};
  function load(file){const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
-  exports,window,TextEncoder,URLSearchParams,AbortController,fetch:async path=>{assert.ok(path.startsWith('/api/source-inbox/ready?'));return Response.json(inbox,{status:inboxStatus});},crypto:{randomUUID:()=>requests++===0?'00000000-0000-4000-8000-000000000002':requestId},location,queueMicrotask,setTimeout:(callback,delay)=>{timers.set(++id,{callback,delay});return id;},clearTimeout:id=>timers.delete(id),Error,require:name=>cache.get(name.slice(2)+'.ts')??load(name.slice(2)+'.ts'),
+  exports,window,TextEncoder,URLSearchParams,AbortController,fetch:async path=>{inboxReads++;assert.ok(path.startsWith('/api/source-inbox/ready?'));return Response.json(inbox,{status:inboxStatus});},crypto:{randomUUID:()=>requests++===0?'00000000-0000-4000-8000-000000000002':requestId},location,queueMicrotask,setTimeout:(callback,delay)=>{timers.set(++id,{callback,delay});return id;},clearTimeout:id=>timers.delete(id),Error,require:name=>cache.get(name.slice(2)+'.ts')??load(name.slice(2)+'.ts'),
  });return exports;}
  const exports=load('app/browser-product-bridge.ts');
- return {exports,sent,timers,events,async begin(signal=new AbortController().signal){const pending=exports.capture1688FromChrome(url,signal);void pending.catch(()=>{});for(let i=0;i<16;i++)await Promise.resolve();return{pending};},receive(data,origin=location.origin,source=window){events.get('message')?.({source,origin,data});}};
+ return {exports,sent,timers,events,get inboxReads(){return inboxReads;},setInbox(value){inbox=value;},async begin(signal=new AbortController().signal){const pending=exports.capture1688FromChrome(url,signal);void pending.catch(()=>{});for(let i=0;i<16;i++)await Promise.resolve();return{pending};},receive(data,origin=location.origin,source=window){events.get('message')?.({source,origin,data});}};
 }
 
-test('durable user-collected source bypasses all extension/source reads and pending review stops before any new capture',async()=>{
+test('old-extension stored source and pending review require no source-page capture',async()=>{
  const capture={format:'yoofam-saved-page-capture-v1',sourceUrl:url,captureId:requestId,fingerprint:'7'.repeat(64),revision:1};
- const h=fixture({inbox:{capture}}),{pending}=await h.begin();assert.equal((await pending).captureId,requestId);assert.equal(h.sent.length,0);assert.equal(h.timers.size,0);
- const review=fixture({inbox:{code:'PAGE_SOURCE_REVIEW_REQUIRED',error:'SKU 확인 필요'},inboxStatus:409});await assert.rejects(review.exports.capture1688FromChrome(url,new AbortController().signal),error=>error.code==='PAGE_SOURCE_REVIEW_REQUIRED');assert.equal(review.sent.length,0);
+ const h=fixture({inbox:{capture}}),{pending}=await h.begin();assert.equal((await pending).captureId,requestId);assert.deepEqual(h.sent.map(row=>row.value.type),['PING']);assert.equal(h.timers.size,0);
+ const review=fixture({inbox:{code:'PAGE_SOURCE_REVIEW_REQUIRED',error:'SKU 확인 필요'},inboxStatus:409});await assert.rejects(review.exports.capture1688FromChrome(url,new AbortController().signal),error=>error.code==='PAGE_SOURCE_REVIEW_REQUIRED');assert.deepEqual(review.sent.map(row=>row.value.type),['PING']);
 });
 test('bridge accepts bounded SKU-only raw evidence and rejects malformed, oversized or invented receipt fields',async()=>{
  const source={ok:true,sourceUrl:url,format:'1688-public-sku-capture-v1',skuPayload:JSON.parse(fs.readFileSync(new URL('fixtures/1688-public-sku-813724060928.json',import.meta.url),'utf8'))};
@@ -110,17 +110,17 @@ test('actual content script answers bridge presence and forwards one source capt
   sent.push({data,origin});queueMicrotask(()=>{for(const handler of [...handlers])void handler({source:window,origin,data});});
  }};
  const chrome={runtime:{getManifest:()=>manifest,onMessage:{addListener(){}},sendMessage:async command=>{
-  commands.push(command);assert.equal(command.type,'YOOFAM_CAPTURE_1688');assert.equal(command.sourceUrl,url);
-  return {ok:true,sourceUrl:url,format:'1688-public-sku-capture-v1',skuPayload:{ret:['SUCCESS'],data:{offerId:'813724060928'}}};
+  if(command.type==='YOOFAM_SEO_KEYWORD_CAPABILITY')return {ok:true,capability:'couplus-consumer-keywords-v1'};commands.push(command);assert.equal(command.type,'YOOFAM_CAPTURE_1688');assert.equal(command.sourceUrl,url);
+  assert.equal(command.pageContext,true);return {ok:true,sourceUrl:url,format:'yoofam-context-saved-v1',captureId:requestId,fingerprint:'a'.repeat(64)};
  }}};
  vm.runInNewContext(fs.readFileSync(new URL('../extensions/supplier-hub/handoff-content.js',import.meta.url),'utf8'),{window,location,chrome});
  let requests=0;
  function load(file){const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
-  exports,window,location,TextEncoder,AbortController,URLSearchParams,fetch:async()=>Response.json({capture:null}),setTimeout,clearTimeout,Error,crypto:{randomUUID:()=>requests++===0?'00000000-0000-4000-8000-000000000002':requestId},require:name=>cache.get(name.slice(2)+'.ts')??load(name.slice(2)+'.ts'),
+  exports,window,location,TextEncoder,AbortController,URLSearchParams,fetch:async()=>Response.json({capture:commands.length?{format:'yoofam-saved-page-capture-v1',sourceUrl:url,captureId:requestId,fingerprint:'a'.repeat(64),revision:1}:null}),setTimeout,clearTimeout,Error,crypto:{randomUUID:()=>requests++===0?'00000000-0000-4000-8000-000000000002':requestId},require:name=>cache.get(name.slice(2)+'.ts')??load(name.slice(2)+'.ts'),
  });return exports;}
  const result=await load('app/browser-product-bridge.ts').capture1688FromChrome(url,new AbortController().signal);
- assert.equal(result.sourceUrl,url);assert.equal(result.format,'1688-public-sku-capture-v1');assert.equal(commands.length,1);
- assert.deepEqual(sent.map(item=>item.data.type||item.data.channel),['PING','YOOFAM_HUB_HANDOFF_RESULT','CAPTURE','YOOFAM_1688_CAPTURE_RESULT']);
+ assert.equal(result.sourceUrl,url);assert.equal(result.format,'yoofam-saved-page-capture-v1');assert.equal(commands.length,1);
+ assert.deepEqual(sent.map(item=>item.data.type||item.data.channel),['PING','YOOFAM_HUB_HANDOFF_RESULT','CAPTURE_CONTEXT','YOOFAM_1688_CAPTURE_RESULT']);
  assert.equal(sent[1].data.result.version,manifest.version);assert.notEqual(sent[0].data.requestId,sent[2].data.requestId);
  assert.equal(sent[2].data.requestId,commands[0].requestId);assert.equal(handlers.size,3);assert.ok(sent.every(item=>item.origin===location.origin));
 });
@@ -147,3 +147,7 @@ test('actual product content bridge classifies fixed Chrome connection failures 
   assert.doesNotMatch(JSON.stringify(responses),/PRIVATE|private\.test|listener indicated|port closed|context invalidated/);
  }
 });
+
+ test('primary context capability requests owned capture and resolves only the acknowledged saved reference',async()=>{const h=fixture({capability:{ok:true,publicMobileCapture:true,primaryContextCapture:true}}),{pending}=await h.begin();assert.equal(h.sent[1].value.type,'CAPTURE_CONTEXT');const capture={format:'yoofam-saved-page-capture-v1',sourceUrl:url,captureId:requestId,fingerprint:'a'.repeat(64),revision:1};h.setInbox({capture});h.receive({channel:'YOOFAM_1688_CAPTURE_RESULT',requestId,result:{ok:true,sourceUrl:url,format:'yoofam-context-saved-v1',captureId:requestId,fingerprint:'a'.repeat(64)}});assert.equal((await pending).captureId,requestId);});
+
+test('new default context capture bypasses incidental same-URL legacy source while probe stays read-only',async()=>{const legacy={format:'yoofam-saved-page-capture-v1',sourceUrl:url,captureId:'20000000-0000-4000-8000-000000000001',fingerprint:'b'.repeat(64),revision:1},h=fixture({capability:{ok:true,primaryContextCapture:true,publicMobileCapture:true},inbox:{capture:legacy}});const probe=await h.exports.probe1688FromChrome(url,new AbortController().signal);assert.equal(probe.format,'yoofam-context-preference-v1');assert.equal(h.inboxReads,0);assert.ok(h.sent.every(row=>row.value.type==='PING'));const {pending}=await h.begin();assert.equal(h.sent.at(-1).value.type,'CAPTURE_CONTEXT');assert.equal(h.inboxReads,0);h.setInbox({capture:{...legacy,captureId:requestId,fingerprint:'a'.repeat(64)}});h.receive({channel:'YOOFAM_1688_CAPTURE_RESULT',requestId,result:{ok:true,sourceUrl:url,format:'yoofam-context-saved-v1',captureId:requestId,fingerprint:'a'.repeat(64)}});assert.equal((await pending).captureId,requestId);assert.equal(h.inboxReads,1);});

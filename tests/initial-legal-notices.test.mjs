@@ -21,8 +21,9 @@ function liveSchema(names=['품명 및 모델명','재질','제조자(수입자)
 
 test('new recorded basket notices start separately from supplier facts, stage-six drafts and product manufacturer settings',()=>{
  const f=fixture(),row=f.resolve().rows[1];
- for(const id of ['noticeNameModel','noticeMaterial','noticeComponents','noticeDimensions','noticeManufacturerImporter','noticeCountryOfOrigin','noticeImportDeclaration','noticeQualityAssurance'])assert.equal(row.fields[id].value,'해당사항없음',id);
- assert.equal(row.fields.noticeServiceContact.value,'캡처 연락처');assert.equal(row.fields.noticeServiceContact.source,'settings');
+ for(const id of ['noticeNameModel','noticeMaterial','noticeComponents','noticeCountryOfOrigin','noticeImportDeclaration','noticeQualityAssurance'])assert.equal(row.fields[id].value,'해당사항없음',id);
+ assert.equal(row.fields.noticeDimensions.value,'31 × 19 × 7 cm');assert.equal(row.fields.noticeManufacturerImporter.value,'제조자: 캡처 제조사 / 수입자: 캡처 수입사');
+ assert.equal(row.fields.noticeServiceContact.value,'캡처 연락처');assert.equal(row.fields.noticeServiceContact.source,'content');
  assert.equal(row.fields.noticeReleaseDate.value,'2026.09');assert.equal(row.fields.manufacturer.value,'캡처 제조사');
  assert.equal(f.prepared.content.label.manufacturer.value,'캡처 제조사');assert.equal(f.prepared.content.label.importer.value,'캡처 수입사');assert.equal(f.prepared.content.label.material.value,'尼龙');
  assert.equal(f.prepared.product.title,'原文商品名');assert.equal(f.receipt.attributes[0].value,'尼龙');assert.equal(f.prepared.content.label.productName.value,'原文商品名');
@@ -30,18 +31,18 @@ test('new recorded basket notices start separately from supplier facts, stage-si
 
 test('recorded sports notice identity excludes certification scalars while its initial colour, specifications and dimensions remain N/A',()=>{
  const f=fixture('81452'),row=f.resolve().rows[1],ids=f.prepared.content.initialLegalNotices.fields.map(field=>field.fieldId);
- for(const id of ['noticeNameModel','brace_noticeKc','brace_noticeColor','brace_noticeSizeWeight','brace_noticeSpecifications','noticeMaterial','noticeManufacturerImporter'])assert.equal(row.fields[id].value,'해당사항없음',id);
+ for(const id of ['noticeNameModel','brace_noticeKc','brace_noticeColor','brace_noticeSizeWeight','brace_noticeSpecifications','noticeMaterial'])assert.equal(row.fields[id].value,'해당사항없음',id);
  for(const id of ['kcMarkType','kcCertificationNumber','emcCertificationNumber','safetyDeclarationNumber','kcsCertificationNumber'])assert.ok(!ids.includes(id));
- assert.equal(row.fields.color.value,'黑色');assert.equal(f.prepared.options.rows[0].size,'M');
+ assert.equal(row.fields.color.value,'해당사항없음');assert.equal(f.prepared.options.rows[0].size,'M');
 });
 
 test('exact named legal array alone receives the initial policy, including only the first date and captured A/S and washing exceptions',()=>{
  const snapshot=liveSchema(),f=fixture('81452',snapshot),resolved=f.resolve(),row=resolved.rows[1];
  const notice=name=>resolved.schema.fields.find(field=>JSON.stringify(field.hubWire?.path)==='["legalPage","notices"]'&&field.hubWire.name===name);
- for(const name of ['품명 및 모델명','재질','제조자(수입자)'])assert.equal(row.fields[notice(name).id].value,'해당사항없음');
+ for(const name of ['품명 및 모델명','재질'])assert.equal(row.fields[notice(name).id].value,'해당사항없음');
  assert.equal(row.fields[notice('A/S 책임자와 전화번호').id].value,'캡처 연락처');
  assert.equal(row.fields[notice('세탁방법 및 취급시 주의사항').id].value,'세탁방법: 손세탁, 취급시 주의사항: 화기 주의');
- assert.equal(row.fields[notice('제조년월').id].value,'2026.09');assert.equal(row.fields[notice('출시년월').id].value,'해당사항없음');
+ assert.equal(row.fields[notice('제조년월').id].value,'2026.09');assert.equal(row.fields[notice('출시년월').id].value,'2026.09');
  assert.ok(f.prepared.content.initialLegalNotices.fields.every(entry=>{const field=resolved.schema.fields.find(field=>field.id===entry.fieldId);return JSON.stringify(field.hubWire.path)==='["legalPage","notices"]';}));
  const controls=plain(resolved.schema),actual=notice('재질');
  controls.fields.push({...actual,id:'same-label-other-array',hubWire:{...actual.hubWire,path:['legalPage','otherNotices']}},{...actual,id:'same-label-scalar',hubWire:{path:['legalPage','material']}});
@@ -78,7 +79,7 @@ test('SEO and stage-six saves, including unchanged labels and blanks, preserve t
  for(const patch of [{seo:{title:'한국어 SEO 상품'}},{label:{material:f.prepared.content.label.material.value}},{label:{productName:'',material:'',manufacturer:'',importer:'',contact:'',releaseDate:''}}]){
   const content=contentModel.applyContentPatch(f.prepared.content,patch,'2026-10-18T02:00:00.000Z');
   assert.deepEqual(plain(content.initialLegalNotices),original);
-  const row=f.resolve(content).rows[1];assert.equal(row.fields.noticeNameModel.value,'해당사항없음');assert.equal(row.fields.noticeMaterial.value,'해당사항없음');assert.equal(row.fields.noticeManufacturerImporter.value,'해당사항없음');assert.equal(row.fields.noticeServiceContact.value,'캡처 연락처');
+  const row=f.resolve(content).rows[1];assert.equal(row.fields.noticeNameModel.value,'해당사항없음');assert.equal(row.fields.noticeMaterial.value,patch.label?.material===''?'':'해당사항없음');assert.equal(row.fields.noticeManufacturerImporter.value,patch.label?.manufacturer===''?'':'제조자: 캡처 제조사 / 수입자: 캡처 수입사');assert.equal(row.fields.noticeServiceContact.value,patch.label?.contact===''?'':'캡처 연락처');
  }
 });
 
@@ -89,7 +90,7 @@ test('stage-seven common and option overrides, including deliberate blanks, keep
 
 test('legacy products without a snapshot retain prior label linkage rather than receiving a new initial policy on read',()=>{
  const f=fixture(),content=structuredClone(f.prepared.content);delete content.initialLegalNotices;
- const before=JSON.stringify(content),row=f.resolve(content).rows[1];assert.equal(row.fields.noticeMaterial.value,'尼龙');assert.equal(row.fields.noticeNameModel.value,'原文商品名 / RAW-700');assert.match(row.fields.noticeManufacturerImporter.value,/캡처 제조사/);assert.equal(JSON.stringify(content),before);
+ const before=JSON.stringify(content),row=f.resolve(content).rows[1];assert.equal(row.fields.noticeMaterial.value,'해당사항없음');assert.equal(row.fields.noticeNameModel.value,'原文商品名 / RAW-700');assert.match(row.fields.noticeManufacturerImporter.value,/캡처 제조사/);assert.equal(JSON.stringify(content),before);
 });
 
 test('category, named-field identity, ordering and malformed marker changes never grant initial-notice authority',()=>{

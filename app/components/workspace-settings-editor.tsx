@@ -1,4 +1,5 @@
 'use client';
+import type { SourcingMarginGate } from '@/app/pricing';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { validateSettings, type WorkspaceSettings } from '@/app/workspace-settings';
 import { SettingsPricePreview, SettingsPriceRatio } from '@/app/components/settings-price-preview';
@@ -27,6 +28,8 @@ export function WorkspaceSettingsEditor({ value, onSave, onClose, onBusy, worksp
   const current=()=>mounted.current&&owner.current===workspaceOwnerId;
   const changeBusy=(value:boolean)=>{busyRef.current=value;setBusy(value);onBusy?.(value);};
   const update=(key:keyof WorkspaceSettings,value:string|number|boolean|null)=>{if(!current()||busyRef.current)return;setDraft(current=>({...current,[key]:value}));setError('');};
+  const gate=draft.rocketMarginGate??{mode:'rate' as const,minRate:25,minAmount:null};
+  const configureGate=(change:Partial<SourcingMarginGate>)=>{if(!current()||busyRef.current)return;setDraft(value=>({...value,rocketMarginGate:{...gate,...change}}));setError('');};
   const configureBundling=(change:Partial<WorkspaceSettings>)=>{if(!current()||busyRef.current)return;setDraft(current=>({...current,bundleCriterion:current.bundleCriterion??'supplyMargin',bundleMinimumSupplyMargin:current.bundleMinimumSupplyMargin??3000,bundleMinimumCoupangMargin:current.bundleMinimumCoupangMargin??3000,...change}));setError('');};
   const field=(key:keyof WorkspaceSettings,label:string,type='text')=><label className="field" key={key}><span>{label}</span><input type={type} step={type==='number'?'any':undefined} value={draft[key]===null||typeof draft[key]==='number'&&!Number.isFinite(draft[key])?'':String(draft[key])} disabled={busy} onChange={event=>update(key,type==='number'?(event.target.value===''?(['shelfLifeDays','integratedRate'].includes(key)?null:NaN):Number(event.target.value)):event.target.value)}/></label>;
   const toggle=(key:keyof WorkspaceSettings,label:string)=><label className="switch-row" key={key}><span>{label}</span><input type="checkbox" checked={Boolean(draft[key])} disabled={busy} onChange={event=>update(key,event.target.checked)}/><i/></label>;
@@ -125,6 +128,13 @@ export function WorkspaceSettingsEditor({ value, onSave, onClose, onBusy, worksp
       {draft.translateImages && <div className="settings-image-option">{toggle('addCopyright','카피라이트 추가')}<small>번역된 이미지의 원문 의미를 보존하여 한국어 마케팅 문구를 다듬습니다.</small></div>}
       <div className="settings-image-option">{toggle('removeBackground','누끼이미지 자동적용')}<small>대표 이미지의 배경·텍스트 제거</small></div>
       <small>공통 이미지는 10MB 이하로 업로드하세요. 설정 저장 후 새 상품 초안에 적용됩니다. 이미지 사용을 꺼도 선택한 파일은 보관됩니다.</small>
+    </section>
+    <section className="settings-pricing"><h3>로켓 소싱 마진 기준</h3>
+      <p>소싱 후보를 거르는 공급마진 기준입니다. 미설정 시 판매가의 25% 이상이며, 위 가격설정의 마진율과 별개입니다. 현재 계정의 고정 소싱가격 계산에 적용됩니다.</p>
+      <label className="field"><span>판단 방식</span><select aria-label="로켓 소싱 마진 판단 방식" disabled={busy} value={gate.mode} onChange={event=>{const mode=event.target.value as SourcingMarginGate['mode'];configureGate({mode,minRate:mode==='amount'?null:gate.minRate??25,minAmount:mode==='rate'?null:gate.minAmount??0});}}><option value="rate">마진율만</option><option value="amount">마진액만</option><option value="both">둘 다 넘어야 통과</option><option value="either">둘 중 하나만 넘어도 통과</option></select></label>
+      {gate.mode!=='amount'&&<label className="field"><span>최소 공급마진율 (%)</span><input aria-label="로켓 최소 공급마진율 (%)" type="number" min="0" max="99" step="1" disabled={busy} value={typeof gate.minRate==='number'&&Number.isFinite(gate.minRate)?gate.minRate:''} onChange={event=>configureGate({minRate:event.target.value===''?NaN:Number(event.target.value)})}/></label>}
+      {gate.mode!=='rate'&&<label className="field"><span>최소 공급마진액 (원)</span><input aria-label="로켓 최소 공급마진액 (원)" type="number" min="0" step="100" disabled={busy} value={typeof gate.minAmount==='number'&&Number.isFinite(gate.minAmount)?gate.minAmount:''} onChange={event=>configureGate({minAmount:event.target.value===''?NaN:Number(event.target.value)})}/></label>}
+      <button type="button" className="btn ghost" disabled={busy} onClick={()=>{if(!current()||busyRef.current)return;setDraft(value=>{const next={...value};delete next.rocketMarginGate;return next;});setError('');}}>기본 25%로 되돌리기</button>
     </section>
     <section className="settings-ai"><h3>AI 설정</h3>
       <div className="settings-ai-info"><strong>AI 상품 초안 작성</strong><p>수집한 상품정보와 선택한 카테고리를 바탕으로 상품명·검색어·속성 초안을 준비합니다. 각 단계에서 확인하고 수정해주세요.</p><small>이미지 번역·가공 결과는 검토한 뒤 적용합니다.</small></div>

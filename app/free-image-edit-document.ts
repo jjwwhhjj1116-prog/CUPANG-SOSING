@@ -17,7 +17,7 @@ export const MAX_FREE_IMAGE_EDIT_BYTES = 512 * 1024;
 
 const documentKeys = ['format', 'width', 'height', 'sourceLanguage', 'regions', 'crop', 'paintOrder'];
 const regionKeys = ['id', 'text', 'box', 'confidence', 'selected', 'translated', 'issue', 'translationProvenance',
-  'background', 'foreground', 'fontSize', 'erase', 'brush', 'fontFamily', 'bold', 'italic', 'textAlign', 'lineHeight', 'backgroundMode'];
+  'background', 'foreground', 'fontSize', 'erase', 'brush', 'fontFamily', 'bold', 'italic', 'textAlign', 'lineHeight', 'backgroundMode', 'textFill', 'textStroke', 'textShadow', 'rotation'];
 const boxKeys = ['x', 'y', 'width', 'height'];
 // Line breaks and tabs are editable text; other control characters have no
 // corresponding image-editor action and cannot enter a saved document.
@@ -91,6 +91,10 @@ export function validateFreeImageEditDocument(value: unknown, source: Pick<FreeI
     if (item.italic !== undefined) region.italic = item.italic as boolean;
     if (item.textAlign !== undefined) region.textAlign = item.textAlign as FreeImageRegion['textAlign'];
     if (item.lineHeight !== undefined) region.lineHeight = item.lineHeight as number;
+    if (item.textFill !== undefined) { const fill = item.textFill as NonNullable<FreeImageRegion['textFill']>; region.textFill = { kind: fill.kind, startColor: fill.startColor, endColor: fill.endColor, angle: fill.angle }; }
+    if (item.textStroke !== undefined) { const stroke = item.textStroke as NonNullable<FreeImageRegion['textStroke']>; region.textStroke = { width: stroke.width, color: stroke.color }; }
+    if (item.textShadow !== undefined) { const shadow = item.textShadow as NonNullable<FreeImageRegion['textShadow']>; region.textShadow = { blur: shadow.blur, color: shadow.color }; }
+    if (item.rotation !== undefined) region.rotation = item.rotation as number;
     // Optional absence preserves byte-for-byte canonical legacy documents.
     if (item.backgroundMode !== undefined) region.backgroundMode = item.backgroundMode as FreeImageRegion['backgroundMode'];
     return region;

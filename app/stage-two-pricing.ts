@@ -1,4 +1,4 @@
-import { pricePolicy, calculatePrice, type PricePolicy } from '@/app/pricing';
+import { pricePolicy, effectivePricePolicy, calculateRepresentativePrice, sourcingMarginGate, type SourcingMarginGate, type PricePolicy } from '@/app/pricing';
 import { suggestBundleQuantity } from '@/app/bundle-policy';
 import { applyOptionRows, calculateOptionPrices, optionInputs, type OptionInput, type ProductOptions, type ProductOptionsResponse } from '@/app/product-options';
 import { applyQuotationChanges, validateQuotationChanges, type QuotationChange, type QuotationFieldsView } from '@/app/quotation-schema';
@@ -13,8 +13,14 @@ import type { QuotationFieldsState } from '@/db/quotation-fields';
 import {matchesStageTwoPricingReview,type StageTwoPricingReview} from '@/app/stage-two-pricing-review';
 
 export type StageTwoPricingRequest = { expectedProductVersion: string; expectedOptionRevision: number; expectedQuotationRevision: number;
-  expectedInputFingerprint: string; policy: PricePolicy; rows: OptionInput[]; changes: QuotationChange[]; recalculate: boolean };
+  expectedInputFingerprint: string; expectedRocketMarginGate?: SourcingMarginGate | null; policy: PricePolicy; rows: OptionInput[]; changes: QuotationChange[]; recalculate: boolean };
 export type StageTwoPricingReceipt = { product: ProductRecord; options: ProductOptionsResponse; quotation: QuotationFieldsView;pricingReview?:StageTwoPricingReview|null };
+/** Preserve absent/null/configured root identity, excluding derived parser metadata. */
+export function stageTwoRocketMarginGate(input: unknown) {
+  if(input===undefined||input===null)return input;
+  const {mode,minRate,minAmount}=sourcingMarginGate(input);
+  return {mode,minRate,minAmount};
+}
 const sorted = (value: unknown): unknown => Array.isArray(value) ? value.map(sorted) : value && typeof value === 'object'
   ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, sorted(item)])) : value;
 const equal = (a: unknown, b: unknown): boolean => JSON.stringify(sorted(a)) === JSON.stringify(sorted(b));
@@ -27,7 +33,7 @@ const bad = () => Error('가격·옵션·견적서의 한 번 저장 결과를 �
 export function recalculateStageTwoRows(rows: readonly OptionInput[], input: PricePolicy): OptionInput[] {
   const policy = pricePolicy(input);
   return rows.map(row => {
-    if (!row.included || policy.bundleEnabled !== true || row.unitCostCny === null || row.unitCostCny <= 0) return { ...row };
+    if (policy.fixedSourcing || !row.included || policy.bundleEnabled !== true || row.unitCostCny === null || row.unitCostCny <= 0) return { ...row };
     const unitsPerPack = suggestBundleQuantity(row.unitCostCny, policy, {
       bundleCriterion: policy.bundleCriterion!, bundleMinimumSupplyMargin: policy.bundleMinimumSupplyMargin!,
       bundleMinimumCoupangMargin: policy.bundleMinimumCoupangMargin!,
@@ -81,7 +87,7 @@ export function stageTwoQuotationDraft(view: QuotationFieldsView, input: PricePo
  * exact expected commit, never an automatic second write. */
 export function verifyStageTwoPricingReceipt(base: ProductOptionsResponse, quotation: QuotationFieldsView,
   request: StageTwoPricingRequest, receipt: StageTwoPricingReceipt): StageTwoPricingReceipt {
-  const value = receipt?.options, quote = receipt?.quotation, product = receipt?.product, policy = pricePolicy(request.policy);
+  const value = receipt?.options, quote = receipt?.quotation, product = receipt?.product, policy = effectivePricePolicy(request.policy, { rocketMarginGate: base.pricing.rocketMarginGate });
   if (!value || !quote || !product || base.options.productId !== product.id || product.id !== value.options?.productId
     || request.expectedProductVersion !== base.productVersion || request.expectedProductVersion !== quotation.productVersion
     || request.expectedOptionRevision !== base.options.revision || request.expectedQuotationRevision !== quotation.revision
@@ -89,7 +95,8 @@ export function verifyStageTwoPricingReceipt(base: ProductOptionsResponse, quota
     || Date.parse(value.productVersion) <= Date.parse(base.productVersion) || product.updated_at !== value.productVersion) throw bad();
   const expected = applyStageTwoRows(base.options, request.rows, value.productVersion);
   const plan = stageTwoQuotationDraft(quotation, policy, request.recalculate, request.changes);
-  if (!equal(value.options, expected) || !equal(value.pricing.policy, policy) || value.pricing.policySource !== 'saved-product'
+  if (!equal(stageTwoRocketMarginGate(request.expectedRocketMarginGate),stageTwoRocketMarginGate(base.pricing.rocketMarginGate))
+    || !equal(value.pricing.rocketMarginGate, base.pricing.rocketMarginGate) || !equal(value.options, expected) || !equal(value.pricing.policy, policy) || value.pricing.policySource !== 'saved-product'
     || !equal(value.pricing.rows, calculateOptionPrices(expected.rows, policy)) || !validOptionRegistrationNumbers(value.optionRegistrationNumbers, expected.rows)
     || (base.optionRegistrationNumbers !== undefined && expected.rows.some(row => Object.hasOwn(base.optionRegistrationNumbers!, row.id)
       && value.optionRegistrationNumbers?.[row.id] !== base.optionRegistrationNumbers![row.id]))
@@ -103,7 +110,7 @@ export function verifyStageTwoPricingReceipt(base: ProductOptionsResponse, quota
     || product.quote_status !== '대기' || product.options_count !== expected.rows.filter(row => row.included).length
     || !equal(JSON.parse(product.pricing_policy ?? 'null'), policy) || product.exchange_rate !== policy.exchangeRate
     || product.supply_margin !== policy.supplyMargin || product.coupang_margin !== policy.coupangMargin) throw bad();
-  const calculated = calculatePrice(product.source_price_cny, policy);
+  const calculated = calculateRepresentativePrice(product.source_price_cny, policy);
   if (product.supply_price !== calculated.supplyPrice || product.sale_price !== calculated.salePrice || product.msrp !== calculated.msrp) throw bad();
   if(expected.rows.some(row=>row.included)&&(!receipt.pricingReview||receipt.pricingReview.productVersion!==product.updated_at
     ||!matchesStageTwoPricingReview(receipt.pricingReview,{ownerId:product.owner_id,product,policy,options:expected,state:{...plan.state,productId:product.id},

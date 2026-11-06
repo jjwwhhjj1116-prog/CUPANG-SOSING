@@ -16,7 +16,7 @@ import type {OptionImageStageProjection} from '@/db/option-image-stage-projectio
 import './product-option-board.css';
 import './registration-board.css';
 
-type Props={productId:string;productRegistrationNumber?:string;sourceUrl:string;imageKeys:string;refreshToken?:string;returnFocus?:string;onReturnFocusHandled?:()=>void;onQuotation:(optionId:string)=>void;onEdit:(optionId?:string)=>void;onImage?:(optionId:string)=>void;onContent?:(step:CommonContentStep)=>void;onStage?:(optionId:string,step:CollectionEditorTab)=>void;onManage?:(optionId:string)=>void};
+type Props={active?:boolean;productId:string;productRegistrationNumber?:string;sourceUrl:string;imageKeys:string;refreshToken?:string;returnFocus?:string;onReturnFocusHandled?:()=>void;onQuotation:(optionId:string)=>void;onEdit:(optionId?:string)=>void;onImage?:(optionId:string)=>void;onContent?:(step:CommonContentStep)=>void;onStage?:(optionId:string,step:CollectionEditorTab)=>void;onManage?:(optionId:string)=>void};
 type CommonContentStep='추가 이미지'|'상세 이미지'|'표시사항';
 type CommonRole='additional'|'detail'|'size'|'label';
 const commonStages=[['additional','추가이미지','추가 이미지'],['detail','상세이미지','상세 이미지'],['size','사이즈표','사이즈표'],['label','한글표시사항','표시사항']] as const;
@@ -132,8 +132,8 @@ export async function readOptionBoard(productId:string,signal:AbortSignal,fetche
   const registrationStages=checked?{...(stages??pendingRegistrationStages()),quotation:savedQuotationValidationStage(checked)}:stages?{...stages,quotation:{state:'pending' as const,detail:'현재 저장본의 입력 검사 결과를 확인해주세요.'}}:undefined;
   return {...body,imageKeys:quote.imageKeys,quotationPrices,quotationContent,registrationStages,optionStages,...(saved.optionImageStages?{optionImageStages:saved.optionImageStages}:{}),seoTitle:content.seo?.title.value??null,commonImageKeys:content.assets.main.value,commonAssets};
 }
-export function ProductOptionBoard({productId,productRegistrationNumber,sourceUrl,refreshToken,returnFocus,onReturnFocusHandled,onQuotation,onEdit,onImage,onContent,onStage,onManage}:Props){
-  const [loaded,setLoaded]=useState<{productId:string;attempt:number;refreshToken?:string;data:OptionBoardData|null;error:string}|null>(null);
+export function ProductOptionBoard({active=true,productId,productRegistrationNumber,sourceUrl,refreshToken,returnFocus,onReturnFocusHandled,onQuotation,onEdit,onImage,onContent,onStage,onManage}:Props){
+  const [loaded,setLoaded]=useState<{productId:string;productRegistrationNumber?:string;attempt:number;refreshToken?:string;data:OptionBoardData|null;error:string}|null>(null);
   const [attempt,setAttempt]=useState(0);const [query,setQuery]=useState('');
   const [selection,setSelection]=useState({productId,ids:new Set<string>()});
   const [pageSize,setPageSize]=useState(50);
@@ -141,12 +141,12 @@ export function ProductOptionBoard({productId,productRegistrationNumber,sourceUr
   const [visibleColumns,setVisibleColumns]=useState<ColumnId[]>(()=>columns.map(column=>column.id));
   const [pinnedColumn,setPinnedColumn]=useState<ColumnId|''>('');
   const [fixedHeight,setFixedHeight]=useState(true);
-  const current=loaded?.productId===productId&&loaded.attempt===attempt&&loaded.refreshToken===refreshToken?loaded:null;
+  const current=loaded?.productId===productId&&loaded.productRegistrationNumber===productRegistrationNumber&&loaded.attempt===attempt&&loaded.refreshToken===refreshToken?loaded:null;
   const data=current?.data??null,error=current?.error??'';
-  useEffect(()=>{const controller=new AbortController();
-    readOptionBoard(productId,controller.signal,fetch,productRegistrationNumber).then(value=>{if(!controller.signal.aborted)setLoaded({productId,attempt,refreshToken,data:value,error:''});}).catch(cause=>{if(!controller.signal.aborted)setLoaded({productId,attempt,refreshToken,data:null,error:cause instanceof Error?cause.message:'옵션 조회 실패'});});
+  useEffect(()=>{if(!active||data)return;const controller=new AbortController();
+    readOptionBoard(productId,controller.signal,fetch,productRegistrationNumber).then(value=>{if(!controller.signal.aborted)setLoaded({productId,productRegistrationNumber,attempt,refreshToken,data:value,error:''});}).catch(cause=>{if(!controller.signal.aborted)setLoaded({productId,productRegistrationNumber,attempt,refreshToken,data:null,error:cause instanceof Error?cause.message:'옵션 조회 실패'});});
     return()=>controller.abort();
-  },[productId,productRegistrationNumber,attempt,refreshToken]);
+  },[productId,productRegistrationNumber,attempt,refreshToken,active,data]);
   const keys=data?.imageKeys??[];
   const optionNumbers=new Map(data?.options.rows.map(row=>[row.id,data.optionRegistrationNumbers&&Object.hasOwn(data.optionRegistrationNumbers,row.id)?data.optionRegistrationNumbers[row.id]:row.id])??[]);
   const rows=data?.options.rows.filter(row=>[optionNumbers.get(row.id),row.id,row.supplierSku,row.originalName,row.translatedName,row.color,row.size,data.quotationContent?.[row.id]?.title].join(' ').toLowerCase().includes(query.trim().toLowerCase()))??[];

@@ -1,3 +1,5 @@
+import { quotationGeneratedSourceBasis, quotationGeneratedResultPolicy, scopedGeneratedQuotation } from '@/app/quotation-generated-adoption';
+import { readProductLabels } from '@/db/product-labels';
 import { collectionRegistrationSettings } from '@/app/collection-registration-settings';
 import { scopedQuotationOverrides, hasLegacyQuotationOverrides } from '@/app/quotation-scopes';
 import { findProduct, getSettings } from '@/db/queries';
@@ -20,15 +22,14 @@ import { readCollectionResult } from '@/db/collection-results';
 import { collectionSourceGaps, type CollectionSourceGap } from '@/app/collection-source-gaps';
 import { translateHubRuleVersionMappings } from '@/app/hub-rule-version-mappings';
 import { savedProductFingerprintSettings } from '@/app/settings-fingerprint';
-import { quotationNoticeBindingFingerprint } from '@/app/quotation-notice-inputs';
+import { quotationNoticeBindingFingerprint, quotationLabelsHaveBindings } from '@/app/quotation-notice-inputs';
 import { quotationPackagedWeightBindingFingerprint } from '@/app/quotation-packaged-weight';
 import { scopedQuotationPackagingBasis } from '@/app/quotation-packaging-basis';
 import { inspectGeneratedProductLabels } from '@/app/product-label-proof';
 import { inspectGeneratedQuotationLabels } from '@/app/quotation-label-proof';
-import type { ProductLabelsView } from '@/app/product-label';
 import { env } from 'cloudflare:workers';
 import {productLabelsSnapshotFromSource} from '@/app/product-labels-source-snapshot';
-import type {stableQuotationFieldsView} from '@/app/quotation-fields-snapshot';
+import {stableQuotationFieldsView} from '@/app/quotation-fields-snapshot';
 
 export class QuotationExportError extends Error {
   constructor(message: string, public status: number) { super(message); }
@@ -41,9 +42,9 @@ export async function readQuotationExportSource(owner: string, productId: string
   let company = currentCompany;
   const product = await findProduct(owner, productId);
   if (!product) throw new QuotationExportError('상품을 찾을 수 없습니다.', 404);
-  const [content, options, savedSettings, state, profile] = await Promise.all([
+  const [content, options, savedSettings, state, profile, labelsState] = await Promise.all([
     readProductContent(owner, productId), readProductOptions(owner, productId), getSettings(owner), readQuotationFields(owner, productId),
-    profileId ? getCategoryProfile(owner, profileId) : Promise.resolve(null),
+    profileId ? getCategoryProfile(owner, profileId) : Promise.resolve(null), readProductLabels(owner, productId),
   ]);
   if (profileId && !profile) throw new QuotationExportError('카테고리 연결을 찾을 수 없습니다.', 404);
   let settings = savedRegistrationSettings(savedSettings ? JSON.parse(savedSettings.payload) : null);
@@ -96,11 +97,12 @@ export async function readQuotationExportSource(owner: string, productId: string
     catch (error) { throw new QuotationExportError(error instanceof Error ? error.message : '카테고리 연결을 확인해주세요.', 409); }
   }
   const source: QuotationSourceGuard = { productVersion: product.updated_at, imageKeys: product.image_keys, pricingPolicy: product.pricing_policy ?? null,
-    contentRevision: content.revision, optionRevision: options.revision, settingsPayload: savedSettings?.payload ?? null,
+    contentRevision: content.revision, optionRevision: options.revision, labelRevision: labelsState.revision, settingsPayload: savedSettings?.payload ?? null,
     profile: profile ? { id: profile.id, revision: profile.revision } : null, collection };
   // This also detects changes during the independent source reads before any R2 work starts.
   if (!await quotationSourcesCurrent(owner, productId, source)) throw new QuotationExportError('자료를 읽는 동안 변경이 발생했습니다. 저장 완료 후 다시 검토해주세요.', 409);
-  const resolved = resolveQuotationFields({categoryId:categoryContext.categoryId,categoryPath:categoryContext.categoryPath,product,content,options,settings,
+  const generatedAdoption = scopedGeneratedQuotation(state, categoryContext.categoryId, await quotationGeneratedSourceBasis({product, content, options, settings, labelsState, hubSchema, template, categoryContext, source},quotationGeneratedResultPolicy(state,categoryContext.categoryId)));
+  const resolved = resolveQuotationFields({categoryId:categoryContext.categoryId,categoryPath:categoryContext.categoryPath,product,content,options,settings,labelsState,labelSettingsPayload:source.settingsPayload,generatedAdoption,
     overrides:scopedQuotationOverrides(state,categoryContext.categoryId),packagingBasis:scopedQuotationPackagingBasis(state,categoryContext.categoryId),...(hubSchema?{hubSchema}:{}),...(template?{template}:{})});
   const labelObjects = new Map<string,Promise<{customMetadata?:Record<string,string>}|null>>();
   const labelHead = (key:string) => {
@@ -111,24 +113,16 @@ export async function readQuotationExportSource(owner: string, productId: string
     ...await inspectGeneratedQuotationLabels({ownerId:owner,productId,profileId:categoryContext.profileId,resolved,head:labelHead}),
     ...await inspectGeneratedProductLabels({ownerId:owner,productId,profileId:categoryContext.profileId,resolved,head:labelHead,
     readView:async selectedProfileId=>{
-      if(internal){
-        const quotation=await internal.readQuotation(selectedProfileId),withoutProfile=(value:QuotationSourceGuard)=>({...value,profile:null});
-        if(JSON.stringify(withoutProfile(quotation.source))!==JSON.stringify(withoutProfile(source))||quotation.view.revision!==state.revision
-          ||(selectedProfileId===null?quotation.source.profile!==null:quotation.source.profile?.id!==selectedProfileId)
-          ||quotation.view.categoryContext.categoryId!==categoryContext.categoryId||JSON.stringify(quotation.view.categoryContext.categoryPath)!==JSON.stringify(categoryContext.categoryPath))
-          throw new QuotationExportError('생성한 표시사항과 현재 저장값의 연결이 변경되었습니다. 다시 검사해주세요.',409);
-        return(await productLabelsSnapshotFromSource({owner,id:productId,profileId:selectedProfileId,product,content,options,settings,source:quotation.source,quotation:quotation.view})).view;
-      }
-      const {GET:productLabelsGET}=await import('@/app/api/products/[id]/product-labels/route');
-      const url=new URL(`/api/products/${encodeURIComponent(productId)}/product-labels`,'https://label.invalid');if(selectedProfileId)url.searchParams.set('profileId',selectedProfileId);
-      const response=await productLabelsGET(new Request(url),{params:Promise.resolve({id:productId})});
-      const view=await response.json() as ProductLabelsView & {error?:string};
-      if(!response.ok||view.productVersion!==product.updated_at||view.contentRevision!==content.revision||view.optionRevision!==options.revision||view.quotationRevision!==state.revision)
-        throw new QuotationExportError(view.error||'생성한 표시사항과 현재 저장값의 연결이 변경되었습니다. 다시 검사해주세요.',409);
-      return view;
+      const quotation=await (internal ? internal.readQuotation(selectedProfileId) : stableQuotationFieldsView(owner,productId,selectedProfileId));
+      const withoutProfile=(value:QuotationSourceGuard)=>({...value,profile:null});
+      if(JSON.stringify(withoutProfile(quotation.source))!==JSON.stringify(withoutProfile(source))||quotation.view.revision!==state.revision
+        ||(selectedProfileId===null?quotation.source.profile!==null:quotation.source.profile?.id!==selectedProfileId)
+        ||quotation.view.categoryContext.categoryId!==categoryContext.categoryId||JSON.stringify(quotation.view.categoryContext.categoryPath)!==JSON.stringify(categoryContext.categoryPath))
+        throw new QuotationExportError('생성한 표시사항과 현재 저장값의 연결이 변경되었습니다. 다시 검사해주세요.',409);
+      return(await productLabelsSnapshotFromSource({owner,id:productId,profileId:selectedProfileId,product,content,options,settings,state:labelsState,source:quotation.source,quotation:quotation.view})).view;
     }})];
   if(!await quotationSourcesCurrent(owner,productId,source))throw new QuotationExportError('표시사항 파일을 확인하는 동안 저장값이 변경되었습니다. 다시 검토해주세요.',409);
-  return { product, content, options, settings, state: { ...state, overrides: scopedQuotationOverrides(state, categoryContext.categoryId) }, savedScopes: state, profile, categoryContext, source, company,
+  return { product, content, options, settings, labelsState, ...(generatedAdoption?{generatedAdoption}:{}), state: { ...state, overrides: scopedQuotationOverrides(state, categoryContext.categoryId) }, savedScopes: state, profile, categoryContext, source, company,
     ...(sourceGaps.length ? { sourceGaps } : {}),...(hubSchema?{hubSchema}:{}),...(template?{template}:{}),...(generatedProductLabelIssues.length?{generatedProductLabelIssues}:{}) };
 }
 export type QuotationExportSource = Awaited<ReturnType<typeof readQuotationExportSource>>;
@@ -158,7 +152,7 @@ export async function readMappedQuotationSource(owner: string, productId: string
 }
 export function resolveQuotationExport(saved: QuotationExportSource) {
   const resolved = resolveQuotationFields({ categoryId: saved.categoryContext.categoryId, categoryPath: saved.categoryContext.categoryPath,
-    product: saved.product, content: saved.content, settings: saved.settings, options: saved.options, overrides: saved.state.overrides,
+    product: saved.product, content: saved.content, labelsState: saved.labelsState,labelSettingsPayload:saved.source?.settingsPayload, generatedAdoption: saved.generatedAdoption, settings: saved.settings, options: saved.options, overrides: saved.state.overrides,
     packagingBasis:scopedQuotationPackagingBasis(saved.savedScopes??saved.state,saved.categoryContext.categoryId),...(saved.hubSchema?{hubSchema:saved.hubSchema}:{}),...(saved.template?{template:saved.template}:{}) });
   if (saved.categoryContext.categoryId && saved.savedScopes && hasLegacyQuotationOverrides(saved.savedScopes)) resolved.issues.push('분류가 기록되지 않은 이전 수정값은 자동 적용하지 않았습니다. 자료 다운로드의 quotation-saved-scopes.json에 보존됩니다.');
   return resolved;
@@ -169,7 +163,10 @@ export async function quotationExportFingerprint(saved: QuotationExportSource, d
   const resolved = resolveQuotationExport(saved);
   const state={...saved.state},savedScopes=saved.savedScopes?{...saved.savedScopes}:undefined;
   delete state.savedValidation;if(savedScopes)delete savedScopes.savedValidation;
-  return fingerprint({ format: 'sourceflow-quotation-fields-v1', saved: { ...saved, state,...(savedScopes?{savedScopes}:{}),product: productFingerprintSource(saved.product), settings: savedProductFingerprintSettings(saved.settings) }, dataStartRow,
+  const fingerprintSaved={...saved,...(saved.source?{source:{...saved.source}}:{})};
+  if(!quotationLabelsHaveBindings(saved.labelsState))delete (fingerprintSaved as Partial<typeof saved>).labelsState;
+  if(!quotationLabelsHaveBindings(saved.labelsState)&&fingerprintSaved.source)delete fingerprintSaved.source.labelRevision;
+  return fingerprint({ format: 'sourceflow-quotation-fields-v1', saved: { ...fingerprintSaved, state,...(savedScopes?{savedScopes}:{}),product: productFingerprintSource(saved.product), settings: savedProductFingerprintSettings(saved.settings) }, dataStartRow,
     schema: getQuotationSchema(saved.categoryContext.categoryId, saved.categoryContext.categoryPath,saved.hubSchema,saved.template),
     ...quotationNoticeBindingFingerprint(saved, resolved),
     ...quotationPackagedWeightBindingFingerprint(saved.state.overrides, resolved, () => resolveQuotationExport({ ...saved, state: { ...saved.state, overrides: { common: {}, options: {} } } })),

@@ -1,3 +1,4 @@
+import {cleanSeoKeywordCandidates,quotationSeoKeywordText,seoKeywordDocumentText} from '@/app/seo-keyword-text';
 import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 import { validateManualSizeChart, type ManualSizeChart } from '@/app/manual-size-chart';
 export const CONTENT_BODY_LIMIT = 96 * 1024;
@@ -74,7 +75,7 @@ export type ContentPatch = {
   labelProductNameLinked?: boolean;
   /** Explicit removals of a draft default, even when the stored field was empty. */
   labelClears?: LabelField[];
-  seo?: { title?: string; keywords?: string[]; description?: string };
+  seo?: { title?: string; keywords?: string[]; description?: string; keywordPolicy?: 'couplus-generated-v1' };
   detail?: { description?: string; altText?: string };
   label?: Partial<Record<LabelField, string>>;
   labelLayout?: LabelLayout;
@@ -167,11 +168,17 @@ export function validateContentInput(input: unknown, ownedKeys: readonly string[
     patch.labelLayout=currentLabelLayout({order:read('order'),hidden:read('hidden')});
   }
   if ('seo' in raw) {
-    const seo = object(raw.seo, ['title', 'keywords', 'description'], 'SEO');
+    const seo = object(raw.seo, ['title', 'keywords', 'description', 'keywordPolicy'], 'SEO');
     patch.seo = {};
     if ('title' in seo) patch.seo.title = plainText(seo.title, 500, '상품명');
     if ('description' in seo) patch.seo.description = plainText(seo.description, 20000, '상품 설명');
-    if ('keywords' in seo) {
+    // Generated arrays keep all cleaned metadata; only their document is clipped.
+    if ('keywordPolicy' in seo && (seo.keywordPolicy !== 'couplus-generated-v1' || !('keywords' in seo))) throw new Error('검색어 처리 규칙을 확인해주세요.');
+    if ('keywords' in seo && seo.keywordPolicy === 'couplus-generated-v1') {
+      if (!Array.isArray(seo.keywords) || seo.keywords.some(value => typeof value !== 'string') || new TextEncoder().encode(JSON.stringify(seo.keywords)).length > CONTENT_BODY_LIMIT) throw new Error('생성 검색어의 길이와 형식을 확인해주세요.');
+      patch.seo.keywords = cleanSeoKeywordCandidates(seo.keywords);
+      patch.seo.keywordPolicy = 'couplus-generated-v1';
+    } else if ('keywords' in seo) {
       if (!Array.isArray(seo.keywords) || seo.keywords.length > 50) throw new Error('검색어는 최대 50개입니다.');
       patch.seo.keywords = [...new Set(seo.keywords.map(value => plainText(value, 100, '검색어')).filter(Boolean))];
     }
@@ -242,6 +249,7 @@ export function applyContentPatch(current: ProductContent, patch: ContentPatch, 
     if (patch.seo.description !== undefined) next.seo.description = { value: patch.seo.description, provenance: 'manual', updatedAt: now };
     if (patch.seo.keywords !== undefined) {
       next.seo.keywords = { value: patch.seo.keywords, provenance: 'manual', updatedAt: now };
+      if (patch.seo.keywordPolicy === 'couplus-generated-v1') next.seoKeywordDocument = {policy:'couplus-service-v1',sourceKeywords:[...patch.seo.keywords],sourceUpdatedAt:now,value:patch.seo.keywords.length?seoKeywordDocumentText(patch.seo.keywords):quotationSeoKeywordText(current)};
       // Saving the same text or an empty list still confirms a user's choice.
       delete next.intakeKeywordSeed;
     }

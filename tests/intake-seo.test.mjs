@@ -1,9 +1,10 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
-function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,Date,setTimeout:callback=>setTimeout(callback,0),clearTimeout,require:name=>load(name.slice(2)+'.ts')});return exports;}
+function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,Date,setTimeout:callback=>setTimeout(callback,0),clearTimeout,require:name=>name==='@/extensions/supplier-hub/page-source-price-basis.mjs'?pageSourcePriceBasis:(load(name.slice(2)+'.ts'))});return exports;}
 const {prepareIntakeSeo:run}=load('app/intake-seo.ts');
 const job={id:'j',productId:'p',productVersion:'v',contentRevision:1,status:'prepared',review:{fingerprint:'f',expiresAt:'2099-01-01T00:00:00Z',destination:'Cloudflare Workers AI'}};
 

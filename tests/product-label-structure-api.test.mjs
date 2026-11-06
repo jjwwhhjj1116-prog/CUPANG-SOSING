@@ -59,6 +59,9 @@ for(const company of companies)test(`shared label structure reaches selected PNG
   view=await json(await save(view,[{optionId:null,fieldKey:'manufacturer',value:'보관할 제조원'},
    {optionId:null,fieldKey:'material',value:'공통 확인 재질'},{optionId:'synthetic-one',fieldKey:'material',value:'옵션 확인 재질'},
    {optionId:'synthetic-two',fieldKey:'material',value:''},{optionId:'synthetic-excluded',fieldKey:'material',value:'제외 옵션 보존 재질'}]));
+  // A true quotation override protects this native required field while the label remains explicitly blank.
+  const materialNotice=f.view.resolved.schema.fields.find(field=>field.section==='legal'&&field.label==='소재');
+  await f.edit([{fieldKey:materialNotice.id,optionId:'synthetic-two',value:'검토한 견적 전용 재질'}]);view=await read();
   const legacyPlan=plain(model.productLabelPlan(view,'synthetic-one')),sourceBefore=retained(f),quoteBefore=await json(await f.route(quotationEndpoint));
   const fileBefore=new Map([...h.objects].map(([key,bytes])=>[key,sha(bytes)])),imagesBefore=plain(view.imageKeys),stale=plain(view);
   view=await json(await save(view,[{optionId:null,fieldKey:'custom_storage',value:'건조한 곳 보관'},

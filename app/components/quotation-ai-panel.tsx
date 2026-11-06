@@ -13,7 +13,7 @@ function matchingReceipt(job: QuotationAiJobView | undefined, proof: RequestProo
 }
 type Props = { productId: string; profileId?: string; view: QuotationFieldsView; optionId: string | null; disabled: boolean;
   applyToAllOptions?: boolean; onApplyToAllOptionsChange?: (next: boolean) => void;
-  onBusyChange?: (busy: boolean) => void; onApply: (changes: QuotationAiProposal[], fingerprint: string) => void;
+  onBusyChange?: (busy: boolean) => void; onApply: (changes: QuotationAiProposal[], fingerprint: string, jobId: string) => void;
   onRequestActionChange?: (next: QuotationAiRequestAction | null, retired?: QuotationAiRequestAction) => void };
 export function QuotationAiPanel(props:Props){
   const {productId,profileId,view,optionId}=props;
@@ -163,7 +163,7 @@ function QuotationAiPanelContent({ productId, profileId, view, optionId, disable
       })}</tbody></table></div><button type="button" className="btn primary" disabled={disabled || busy || !proposals.length || Boolean(invalid)} onClick={() => {
         if (pending.current || requestProofRef.current || currentJob.current?.status === 'running' || currentJob.current?.status === 'uncertain' || currentJob.current !== job || source.current.disabled || !state || source.current.sourceKey !== sourceKey
           || source.current.view !== view || source.current.all !== all || liveScopeToken.current !== scopeToken || scopeBasis.current !== scopeTicket) return;
-        try { source.current.onApply(quotationReviewedProposalChanges(state, source.current.view, productId, job?.status === 'completed' ? job : null, optionId, all), state.fingerprint); }
+        try { source.current.onApply(quotationReviewedProposalChanges(state, source.current.view, productId, job?.status === 'completed' ? job : null, optionId, all), state.fingerprint, job!.id); }
         catch (cause) { setError(cause instanceof Error ? cause.message : '초안을 다시 확인해주세요.'); }
       }}>검토한 초안 입력란에 적용</button></>}
   </section>;

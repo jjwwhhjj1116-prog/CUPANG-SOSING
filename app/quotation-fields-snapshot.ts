@@ -1,3 +1,5 @@
+import { quotationGeneratedSourceBasis, quotationGeneratedResultPolicy, scopedGeneratedQuotation } from '@/app/quotation-generated-adoption';
+import { readProductLabels } from '@/db/product-labels';
 import { collectionRegistrationSettings } from '@/app/collection-registration-settings';
 import { registrationBrandChoices } from '@/app/quotation-brand-choices';
 import { scopedQuotationOverrides, hasLegacyQuotationOverrides } from '@/app/quotation-scopes';
@@ -19,7 +21,7 @@ import { env } from 'cloudflare:workers';
 import { publicDetailConfig, publicDetailVersion, resolvePublicDetail } from '@/app/quotation-public-detail';
 import { optionPriceCalculationRevision } from '@/app/product-options';
 import { savedProductFingerprintSettings } from '@/app/settings-fingerprint';
-import { quotationNoticeBindingFingerprint } from '@/app/quotation-notice-inputs';
+import { quotationNoticeBindingFingerprint, quotationLabelsHaveBindings } from '@/app/quotation-notice-inputs';
 import { quotationPackagedWeightBindingFingerprint } from '@/app/quotation-packaged-weight';
 import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
 import { verifyCapturedCollectionCompany } from '@/app/collection-company';
@@ -40,9 +42,9 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
   const company = user?.verifiedAccess && user.userId === owner ? approvedSupplierHubCompany(user.membership) : null;
   const product = await findProduct(owner, id);
   if (!product) throw new FieldsError('상품을 찾을 수 없습니다.', 404);
-  const [content, options, savedSettings, state, profile] = await Promise.all([
+  const [content, options, savedSettings, state, profile, labelsState] = await Promise.all([
     readProductContent(owner, id), readProductOptions(owner, id), getSettings(owner), readQuotationFields(owner, id),
-    profileId ? getCategoryProfile(owner, profileId) : Promise.resolve(null),
+    profileId ? getCategoryProfile(owner, profileId) : Promise.resolve(null), readProductLabels(owner, id),
   ]);
   if (profileId && !profile) throw new FieldsError('카테고리 프로필을 찾을 수 없습니다.', 404);
   let settings = savedRegistrationSettings(savedSettings ? JSON.parse(savedSettings.payload) : null);
@@ -92,18 +94,20 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
     catch (error) { throw new FieldsError(error instanceof Error ? error.message : '카테고리를 다시 선택해주세요.', 409, 'QUOTATION_CATEGORY_MISMATCH'); }
   }
   const source: QuotationSourceGuard = { productVersion: product.updated_at, imageKeys: product.image_keys, pricingPolicy: product.pricing_policy ?? null,
-    contentRevision: content.revision, optionRevision: options.revision, settingsPayload: savedSettings?.payload ?? null,
+    contentRevision: content.revision, optionRevision: options.revision, labelRevision: labelsState.revision, settingsPayload: savedSettings?.payload ?? null,
     profile: profile ? { id: profile.id, revision: profile.revision } : null, collection };
-  const inputs = { categoryId: categoryContext.categoryId, categoryPath: categoryContext.categoryPath, product, content, options, settings,...(hubSchema?{hubSchema}:{}),...(template?{template}:{}) };
+  const inputs = { categoryId: categoryContext.categoryId, categoryPath: categoryContext.categoryPath, product, content, options, settings, labelsState,labelSettingsPayload:source.settingsPayload,...(hubSchema?{hubSchema}:{}),...(template?{template}:{}) };
+  const generatedAdoption = scopedGeneratedQuotation(state, categoryContext.categoryId, await quotationGeneratedSourceBasis({ ...inputs, categoryContext, source },quotationGeneratedResultPolicy(state,categoryContext.categoryId)));
   const detailConfig = publicDetailConfig(env as Parameters<typeof publicDetailConfig>[0]);
   const detailVersion=detailConfig?await publicDetailVersion(detailConfig):null;
   const overrides = scopedQuotationOverrides(state, categoryContext.categoryId);
   const packagingBasis=scopedQuotationPackagingBasis(state,categoryContext.categoryId),optionPackQuantities=quotationPackQuantities(options.rows);
-  const pair = resolveQuotationFieldsPair({ ...inputs, overrides,...(packagingBasis?{packagingBasis}:{}) });
+  const pair = resolveQuotationFieldsPair({ ...inputs, overrides, generatedAdoption,...(packagingBasis?{packagingBasis}:{}) });
   const automatic = (await resolvePublicDetail(pair.automatic,content,owner,imageKeys,detailConfig)).resolved;
   const resolved = (await resolvePublicDetail(pair.resolved,content,owner,imageKeys,detailConfig)).resolved;
   if (categoryContext.categoryId && hasLegacyQuotationOverrides(state)) resolved.issues.push('분류가 기록되지 않은 이전 수정값은 자동 적용하지 않았습니다. 자료 다운로드의 quotation-saved-scopes.json에 보존됩니다.');
-  const inputFingerprint = await fingerprint({ inputs: { ...inputs, product: productFingerprintSource(inputs.product), settings: savedProductFingerprintSettings(inputs.settings) }, schema: automatic.schema, categoryContext, profileRevision: profile?.revision ?? null, settingsPayload: source.settingsPayload, collection,
+  const fingerprintInputs = { ...inputs }; delete (fingerprintInputs as Partial<typeof inputs>).labelSettingsPayload; if (!quotationLabelsHaveBindings(labelsState)) delete (fingerprintInputs as Partial<typeof inputs>).labelsState;
+  const inputFingerprint = await fingerprint({ inputs: { ...fingerprintInputs, product: productFingerprintSource(inputs.product), settings: savedProductFingerprintSettings(inputs.settings) }, schema: automatic.schema, categoryContext, profileRevision: profile?.revision ?? null, settingsPayload: source.settingsPayload, collection,
     ...(packagingBasis?{packagingBasis}:{}),
     ...quotationNoticeBindingFingerprint(inputs, resolved),
     ...quotationPackagedWeightBindingFingerprint(overrides, resolved, () => automatic),
@@ -112,7 +116,7 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
   // Response-only identifiers follow the saved option UUIDs. Read them after
   // calculating the operation fingerprint and before the source-clock check.
   const optionRegistrationNumbers = product.registration_number ? await readOptionRegistrationNumbers(owner, product, options) : undefined;
-  const view: QuotationFieldsView = { revision: state.revision, inputFingerprint, overrides, legacyOverrides: categoryContext.categoryId ? state.overrides : undefined, resolved, automatic, categoryContext,
+  const view: QuotationFieldsView = { revision: state.revision, inputFingerprint, ...(generatedAdoption ? { generatedAdoption } : {}), overrides, legacyOverrides: categoryContext.categoryId ? state.overrides : undefined, resolved, automatic, categoryContext,
     ...(optionRegistrationNumbers === undefined ? {} : { optionRegistrationNumbers }),
     protectedDetailImageKeys: [...new Set([...content.assets.detailTop.value, ...content.assets.detailBottom.value])].filter(key => imageKeys.includes(key)),
     registrationBrandChoices: registrationBrandChoices(settings.brand),
@@ -133,7 +137,7 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
   if(actor)try{validationBinding=await quotationValidationSourceBinding({actor,product,content,options,state,source,schema:resolved.schema,categoryContext,detailVersion,validation:savedQuotationValidationResult(view,id,profileId)});}catch{/* Unconfirmed metadata cannot complete a quotation. */}
   const checked=parseSavedQuotationValidation(state.savedValidation);
   if(checked&&validationBinding&&state.savedValidation?.sourceBinding===validationBinding){view.savedValidation=checked;if(!currentSavedQuotationValidation(view,id))delete view.savedValidation;}
-  return { view, source, options, registrationLayout,state,validationBinding,validationActor:actor };
+  return { view, source, options, labelsState, registrationLayout,state,validationBinding,validationActor:actor };
 }
 export async function stableQuotationFieldsView(owner: string, id: string, profileId: string | null) {
   const saved = await snapshot(owner, id, profileId);

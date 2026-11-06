@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -186,7 +187,7 @@ for(const company of schemaCompanies)test(`saved category belonging to the other
 
 function scopedRoutes(h,state){
  const auth={getWorkspaceOwnerId:async()=>state.owner,getChatGPTUser:async()=>{const email=state.company.code==='A01526306'?'jwhj1116@kakao.com':'unari8484@gmail.com';return{userId:state.owner,email,verifiedAccess:true,membership:{id:state.owner,email,status:'approved',role:state.company.code==='A01526306'?'admin':'member',companyCode:state.company.code,companyName:state.company.name}};}};
- function route(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,URLSearchParams,Response,Request,Date,TextEncoder,TextDecoder,Uint8Array,crypto,process:{env:{NODE_ENV:'production'}},require(name){if(name==='@/app/chatgpt-auth')return auth;if(name==='next/server')return{NextResponse:Response};if(name==='cloudflare:workers')return{env:h.bindings};assert.ok(name.startsWith('@/'),name);return h.load(name.slice(2)+'.ts');}});return exports;}
+ function route(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,URLSearchParams,Response,Request,Date,TextEncoder,TextDecoder,Uint8Array,crypto,process:{env:{NODE_ENV:'production'}},require(name){if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;if(name==='@/app/chatgpt-auth')return auth;if(name==='next/server')return{NextResponse:Response};if(name==='cloudflare:workers')return{env:h.bindings};assert.ok(name.startsWith('@/'),name);return h.load(name.slice(2)+'.ts');}});return exports;}
  return{profiles:route('app/api/category-profiles/route.ts'),settings:route('app/api/settings/route.ts'),fork:route('app/api/category-profiles/[id]/refresh-definition/route.ts')};
 }
 const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];

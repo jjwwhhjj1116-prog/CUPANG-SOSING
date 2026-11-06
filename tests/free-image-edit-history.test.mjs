@@ -150,3 +150,9 @@ test('empty history cannot restore regions and explicit group ending does not mu
   const grouped = record(history, [], [region('a')], 'focus'); const ended = end(grouped);
   assert.equal(grouped.group, 'focus'); assert.equal(ended.group, null); assert.equal(ended.past, grouped.past);
 });
+test('nested glyph effects are independently snapshotted and equal replacements are no-ops',()=>{
+ const before=[region('a',{textFill:{kind:'linear-gradient',startColor:'#ff0000',endColor:'#0000ff',angle:0},textStroke:{width:2,color:'#ffffff'},textShadow:{blur:3,color:'#000000'}})],next=[region('a')];
+ const empty=create();assert.equal(record(empty,before,plain(before)),empty);
+ const history=record(empty,before,next);before[0].textFill.angle=90;before[0].textStroke.width=9;before[0].textShadow.blur=8;
+ const restored=undo(history,next);assert.equal(restored.regions[0].textFill.angle,0);assert.equal(restored.regions[0].textStroke.width,2);assert.equal(restored.regions[0].textShadow.blur,3);
+});

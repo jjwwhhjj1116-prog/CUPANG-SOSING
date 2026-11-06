@@ -44,7 +44,9 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
   }
   // The server selects the configured provider before considering this optional
   // inert capture. One POST/receipt also preserves the one-GET ACK recovery path.
-  let acknowledgement=await requestIntakeCollectionReceipt(job,'collect',{fetcher,signal:options.signal,...(selectedCapture?{capture:selectedCapture}:existing?{capture:existing}:{})});
+  const preferContextCapture=existing&&'format' in existing&&existing.format==='yoofam-context-preference-v1';
+  if(preferContextCapture)existing=null;
+  let acknowledgement=await requestIntakeCollectionReceipt(job,'collect',{fetcher,signal:options.signal,...(preferContextCapture?{preferContextCapture:true}:{}),...(selectedCapture?{capture:selectedCapture}:existing?{capture:existing}:{})});
   if(!selectedCapture&&acknowledgement?.kind==='source-unavailable'&&options.captureFromBrowser&&!options.signal.aborted){
    reportProgress('현재 Chrome에서 1688 상품 원문 확인 중');
    const captured=await options.captureFromBrowser(job.source_url,options.signal);

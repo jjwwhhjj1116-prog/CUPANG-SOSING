@@ -103,7 +103,8 @@ function fixture() {
         fetch: async () => { throw Error('fixture route must not make an unstubbed external request'); },
         require(name) { if (name in deps) return deps[name];
           assert.ok(name.startsWith('@/') || name.startsWith('./') || name.startsWith('../'), 'Unregistered fixture dependency: ' + name);
-          return load(name.startsWith('@/') ? name.slice(2) + '.ts' : path.posix.join(path.posix.dirname(file), name) + '.ts'); } });
+          const resolved = name.startsWith('@/') ? name.slice(2) : path.posix.join(path.posix.dirname(file), name);
+          return load(resolved.endsWith('.mjs') ? resolved : resolved + '.ts'); } });
     return exports;
   };
   const key = 'owner/source.png', keys = [key, 'owner/first.png', 'owner/last.png', 'owner/main.png', 'owner/label.png'];
@@ -114,9 +115,11 @@ function fixture() {
       title: '기존 작업 상품', source_price_cny: 5, exchange_rate: 350, supply_margin: 50, coupang_margin: 40, supply_price: 3500, sale_price: 5840, msrp: 7590,
       options_count: 1, seo_status: '완료', image_status: '완료', quote_status: '완료', registration_status: '등록대기', supplier_hub_status: '미전송',
       image_keys: JSON.stringify(keys), goal_stage: 'price', created_at: before, updated_at: before });
-    const content = load('app/product-content.ts').applyContentPatch(load('app/product-content.ts').emptyProductContent('product'),
+    const current = await load('db/product-content.ts').readProductContent('owner', 'product');
+    const content = load('app/product-content.ts').applyContentPatch(current,
       { seo: { title: '수정한 SEO' }, label: { material: '확인한 재질' }, assets: { main: ['owner/main.png'], detail: ['owner/first.png', key, 'owner/last.png'], label: ['owner/label.png'] } }, before);
-    await load('db/product-content.ts').saveProductContent('owner', content, 0);
+    const saved = await load('db/product-content.ts').saveProductContent('owner', content, current.revision);
+    assert.ok(saved, 'fixture content must commit against the current seeded revision');
   };
   const request = async (method = 'GET', body, options = {}) => {
     const url = 'https://app.test/api/products/' + (options.id ?? 'product') + '/image-text' + (method === 'GET' ? options.query ?? '?sourceKey=' + encodeURIComponent(options.key ?? key) + '&role=' + (options.role ?? 'detail') + (options.extra ?? '') : '');
@@ -136,7 +139,7 @@ const assertStatus = async (res, status) => assert.equal(res.status, status, awa
 test('GET returns the exact owned role and validated bytes, not another product or role', async () => {
   const h = await ready(); try {
     const source = await h.source(); assert.equal(source.sourceSha256, sha(png())); assert.equal(source.width, 3); assert.equal(source.height, 2);
-    assert.equal(source.productVersion, h.product().updated_at); assert.equal(source.contentRevision, 1); assert.equal(source.role, 'detail');
+    assert.equal(source.productVersion, h.product().updated_at); assert.equal(source.contentRevision, (await h.content()).revision); assert.equal(source.role, 'detail');
     await assertStatus(await h.request('GET', undefined, { role: 'main' }), 409);
     await assertStatus(await h.request('GET', undefined, { key: 'other/source.png' }), 404);
     await assertStatus(await h.request('GET', undefined, { key: 'owner/unattached.png' }), 404);

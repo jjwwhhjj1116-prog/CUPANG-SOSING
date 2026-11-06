@@ -5,7 +5,7 @@ import { quotationPriceInputs, quotationPriceTargets } from '@/app/quotation-pri
 
 const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
-const sources = new Set(['manual-option', 'manual-common', 'schema', 'content', 'settings', 'option', 'pricing', 'product', 'empty', 'couplus-default']);
+const sources = new Set(['label-draft','generated','manual-option', 'manual-common', 'schema', 'content', 'settings', 'option', 'pricing', 'product', 'empty', 'couplus-default']);
 const labels = { supplyPrice: '공급가', salePrice: '판매가', msrp: '권장소비자가' };
 const changed = () => Error('가격 저장 버전과 상품·카테고리 원천을 확인하지 못했습니다. 입력은 유지했습니다.');
 function specific(view: QuotationFieldsView, optionId: string | null) { return optionId !== null && Object.hasOwn(view.overrides.options, optionId) ? view.overrides.options[optionId] : undefined; }

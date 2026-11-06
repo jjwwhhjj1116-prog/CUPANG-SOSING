@@ -1,3 +1,5 @@
+import type {QuotationFieldsView} from '@/app/quotation-schema';
+import {savedProductLabelDraftSource} from '@/app/product-label-draft-source';
 import { env } from 'cloudflare:workers';
 import { NextResponse } from 'next/server';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
@@ -67,10 +69,7 @@ async function snapshot(auth: Awaited<ReturnType<typeof authorization>>, id: str
   const resolved = resolveQuotationExport(saved), titleTarget = exactPrimaryQuotationTarget(resolved.schema.fields, 'title');
   const productName = resolved.rows.find(row => row.optionId === optionId)?.fields[titleTarget.primary]?.value;
   if (typeof productName !== 'string') throw changed();
-  const manualKeys = (['netContents', 'material', 'productType'] as const).filter(key => saved.content.label[key].provenance === 'manual');
-  const facts: ProductLabelDraftSource = { originalTitle: original.title, productName,
-    description: original.description, attributes: original.attributes, manualKeys,
-    option: selected ? { optionId: selected.id, originalName: selected.originalName, translatedName: selected.translatedName, unitsPerPack: selected.unitsPerPack } : null };
+  const facts: ProductLabelDraftSource = {...await savedProductLabelDraftSource(auth.owner,{...saved,quotation:{...view,overrides:saved.state.overrides,resolved} as unknown as QuotationFieldsView},optionId),productName};
   const source = { ...saved.source, quotationRevision: saved.state.revision };
   const signature = await fingerprint({ view, source, original, facts });
   if (!await productLabelsSourcesCurrent(auth.owner, id, source, view.revision)) throw changed();

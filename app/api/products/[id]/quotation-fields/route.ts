@@ -1,3 +1,10 @@
+import { findQuotationAiJob } from '@/db/quotation-ai-jobs';
+import { readMappedQuotationSource, quotationExportFingerprint } from '@/app/exports/quotation-source';
+import { buildQuotationAiPlan, validateCurrentQuotationResult } from '@/app/quotation-ai';
+import { quotationAiProposalChanges } from '@/app/quotation-ai-client';
+import { quotationGeneratedSourceBasis, scopedGeneratedQuotation, mergeGeneratedQuotation } from '@/app/quotation-generated-adoption';
+import { fingerprint } from '@/app/automation/model';
+import { quotationTextConfiguration, sameQuotationTextExecution, type QuotationTextEnvironment } from '@/app/quotation-text-execution';
 import { NextResponse } from 'next/server';
 import {env} from 'cloudflare:workers';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
@@ -38,14 +45,51 @@ export async function PUT(request: Request, context: Context) {
   try {
     if (request.headers.get('origin') && request.headers.get('origin') !== new URL(request.url).origin) throw new FieldsError('같은 사이트에서 저장해주세요.', 400);
     const body = await readBoundedJson(request, 512 * 1024) as Record<string, unknown>;
-    if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => !['expectedRevision', 'expectedInputFingerprint', 'changes', 'stageTwoMsrp','packagingDrafts'].includes(key)) ||
+    if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => !['expectedRevision', 'expectedInputFingerprint', 'changes', 'generatedAdoption', 'stageTwoMsrp','packagingDrafts'].includes(key)) ||
       !Number.isSafeInteger(body.expectedRevision) || (body.expectedRevision as number) < 0 || typeof body.expectedInputFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(body.expectedInputFingerprint)) throw new FieldsError('저장 버전과 변경 내용을 확인해주세요.', 400);
     const owner = await getWorkspaceOwnerId(); const { id } = await context.params; const profileId = profileSelection(request);
-    const actor=body.packagingDrafts===undefined&&(env as {YOOFAM_AUTH_ENABLED?:string}).YOOFAM_AUTH_ENABLED!=='true'?null:await packagingDraftActor(owner);
+    const actor=body.generatedAdoption===undefined&&body.packagingDrafts===undefined&&(env as {YOOFAM_AUTH_ENABLED?:string}).YOOFAM_AUTH_ENABLED!=='true'?null:await packagingDraftActor(owner);
     const saved = await stableView(owner, id, profileId);
     if (saved.view.revision !== body.expectedRevision || saved.view.inputFingerprint !== body.expectedInputFingerprint) throw changed();
+    let generatedAdoption;
+    if (body.generatedAdoption !== undefined) {
+      const proof = body.generatedAdoption as { jobId: string; targets: { optionId: string | null; fieldKey: string }[] };
+      if (!proof || typeof proof !== 'object' || Array.isArray(proof) || Object.keys(proof).some(key => !['jobId', 'targets'].includes(key))
+        || typeof proof.jobId !== 'string' || !/^[a-f0-9-]{36}$/i.test(proof.jobId) || !Array.isArray(proof.targets) || !proof.targets.length || proof.targets.length > 60000)
+        throw new FieldsError('AI 생성 초안의 실행·적용 범위를 확인해주세요.', 400);
+      const job = await findQuotationAiJob(owner, id, proof.jobId, true), user = await getChatGPTUser();
+      const exportSource = await readMappedQuotationSource(owner, id, profileId), selected = quotationTextConfiguration(env as QuotationTextEnvironment);
+      const sourceFingerprint = await quotationExportFingerprint(exportSource, null);
+      const executionFingerprint = selected.executionPolicy ? await fingerprint({purpose:'quotation-ai-execution-v1', source:sourceFingerprint, executionPolicy:selected.executionPolicy}) : sourceFingerprint;
+      const expectedFingerprint=job?.review.plan.resultPolicy?await fingerprint({purpose:'quotation-ai-result-policy-v1',source:executionFingerprint,resultPolicy:job.review.plan.resultPolicy}):executionFingerprint;
+      if (!job || !actor || job.status !== 'completed' || !job.result || job.review.quotationRevision !== saved.view.revision
+        || job.review.fingerprint !== expectedFingerprint || job.review.profileId !== saved.view.categoryContext.profileId
+        || JSON.stringify(job.review.company) !== JSON.stringify(exportSource.company)
+        || job.review.member.id !== owner || job.review.member.email !== user?.membership?.email || job.review.member.role !== actor.role
+        || !sameQuotationTextExecution(job.review.executionPolicy ?? null, selected.executionPolicy)
+        || JSON.stringify(job.review.source) !== JSON.stringify(saved.source) || exportSource.state.revision !== saved.view.revision)
+        throw changed();
+      let currentPlan;try{currentPlan = buildQuotationAiPlan(exportSource, job.review.scope,job.review.plan.resultPolicy??null);}catch{throw changed();}
+      if (JSON.stringify({...currentPlan, createdAt:null}) !== JSON.stringify({...job.review.plan, createdAt:null})) throw changed();
+      let proposals;
+      try { proposals = quotationAiProposalChanges(saved.view, { ...job, fingerprint: job.review.fingerprint, quotationRevision: job.review.quotationRevision, profileId: job.review.profileId,
+        scope:job.review.scope, resultPolicy:job.review.plan.resultPolicy, executionPolicy:job.review.executionPolicy }, expectedFingerprint); }
+      catch (error) { throw new FieldsError(error instanceof Error ? error.message : 'AI 생성 초안을 확인해주세요.', 400); }
+      try{validateCurrentQuotationResult(job.review.plan,proposals);}catch(error){throw new FieldsError(error instanceof Error?error.message:'필수 속성 값을 확인해주세요.',400);}
+      const seen = new Set<string>();
+      const entries = proof.targets.map(target => {
+        if (!target || typeof target !== 'object' || Object.keys(target).length !== 2 || !Object.hasOwn(target,'optionId') || !Object.hasOwn(target,'fieldKey')) throw new FieldsError('AI 생성 항목 범위를 확인해주세요.',400);
+        const key=JSON.stringify([target.optionId,target.fieldKey]), proposal=proposals.find(value=>value.optionId===target.optionId&&value.fieldKey===target.fieldKey);
+        if(seen.has(key)||!proposal||!job.review.plan.targets.some(row=>row.optionId===target.optionId&&row.writableFieldIds.includes(target.fieldKey)))throw new FieldsError('AI 생성 항목 범위를 확인해주세요.',400);
+        seen.add(key);return {...proposal,jobId:job.id};
+      });
+      const basis = await quotationGeneratedSourceBasis(exportSource,job.review.plan.resultPolicy);
+      const previous=scopedGeneratedQuotation(saved.state,saved.view.categoryContext.categoryId,basis)??(job.review.plan.resultPolicy?scopedGeneratedQuotation(saved.state,saved.view.categoryContext.categoryId,await quotationGeneratedSourceBasis(exportSource)):undefined);
+      // Carry validated historical literals unchanged when the source binding gains its new policy.
+      generatedAdoption = mergeGeneratedQuotation(previous?{...previous,sourceBasis:basis}:undefined, basis, entries,job.review.plan.resultPolicy);
+    }
     let changes;
-    try { changes = validateQuotationChanges(body.changes, { schema: saved.view.resolved.schema, optionIds: saved.options.rows.map(option => option.id), ownedImageKeys: saved.view.imageKeys, overrides: saved.view.overrides }); }
+    try { changes = generatedAdoption && Array.isArray(body.changes) && body.changes.length === 0 ? [] : validateQuotationChanges(body.changes, { schema: saved.view.resolved.schema, optionIds: saved.options.rows.map(option => option.id), ownedImageKeys: saved.view.imageKeys, overrides: saved.view.overrides }); }
     catch (error) { throw new FieldsError(error instanceof Error ? error.message : '변경한 견적서 필드를 확인해주세요.', 400); }
     let packagingDrafts;try{packagingDrafts=validateQuotationPackagingDraftInputs(body.packagingDrafts,saved.view.resolved.schema.fields,quotationPackQuantities(saved.options.rows),changes);}
     catch(error){throw new FieldsError(error instanceof Error?error.message:'포장 초안의 출처 연결을 확인해주세요.',400);}
@@ -71,8 +115,8 @@ export async function PUT(request: Request, context: Context) {
     const stageTwoMsrp=applyStageTwoMsrp(saved.view,changes,derivedIds);
     if (new TextEncoder().encode(JSON.stringify(overrides)).length > 500 * 1024) throw new FieldsError('수동 수정 자료가 저장 한도를 초과했습니다. 긴 내용을 줄여주세요.', 413);
     if(actor&&JSON.stringify(await packagingDraftActor(owner))!==JSON.stringify(actor))throw changed();
-    const source=actor&&(env as {YOOFAM_AUTH_ENABLED?:string}).YOOFAM_AUTH_ENABLED==='true'?{...saved.source,member:actor}:saved.source;
-    const stored = await saveQuotationFields(owner, id, overrides, saved.view.revision, source, saved.view.categoryContext.categoryId,packagingBasis??null,stageTwoMsrp??null);
+    const source=actor&&(generatedAdoption||(env as {YOOFAM_AUTH_ENABLED?:string}).YOOFAM_AUTH_ENABLED==='true')?{...saved.source,member:actor}:saved.source;
+    const stored = await saveQuotationFields(owner, id, overrides, saved.view.revision, source, saved.view.categoryContext.categoryId,packagingBasis??null,stageTwoMsrp??null,generatedAdoption);
     if (!stored) throw changed();
     const confirmed=await stableView(owner,id,profileId);
     if(confirmed.validationBinding&&confirmed.validationActor)try{await saveQuotationValidation(owner,id,confirmed.view,confirmed.state,confirmed.source,confirmed.validationBinding,confirmed.validationActor,profileId);}

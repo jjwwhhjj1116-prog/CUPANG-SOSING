@@ -19,6 +19,8 @@ const helpers=parts.join('\n').replaceAll('import.meta.url',JSON.stringify(fixtu
 const {editor,fixture,nodes,text,deferred}=vm.runInNewContext(helpers+'\n({editor,fixture,nodes,text,deferred})',
   {assert,fs,vm,path,ts,createRequire,webcrypto,Response,Blob,JSON,URL,Date,AbortController,structuredClone,TextEncoder,TextDecoder,setImmediate,setTimeout,clearTimeout});
 const plain=value=>JSON.parse(JSON.stringify(value));
+const draftRuntime=(await import(new URL('./helpers/provided-option-quotation.mjs',import.meta.url))).providedOptionModule('app/product-label-draft.ts');
+const sourceFacts=optionId=>({originalTitle:'硅胶保护带',productName:'검토 제품',description:'',attributes:[{name:'材质',value:'硅胶'},{name:'包装数量',value:'1个'}],manualKeys:[],option:optionId===null?null:{optionId,originalName:'1个',translatedName:'검토 옵션',unitsPerPack:1}});
 const aiButton='한글 표시사항 생성 시작',pngButton='저장한 표시사항 PNG 미리보기';
 const cases=[],files=['app/components/product-label-editor.tsx','app/product-label-draft.ts','app/product-label.ts','app/quotation-ai.ts','tests/product-label-draft-editor.test.mjs','tests/product-label-editor.test.mjs'];
 const hashes=()=>Object.fromEntries(files.map(file=>[file,createHash('sha256').update(fs.readFileSync(new URL('../'+file,import.meta.url))).digest('hex')]));
@@ -35,12 +37,38 @@ function fresh(){
   restoreCollectedFacts();
   // The older fixture reconstructs its fixed automatic facts after every PUT.
   // Retain this test's additional collected material fact across the same save.
-  const reply=f.reply;f.reply=(url,init)=>{reply(url,init);restoreCollectedFacts();return Response.json(f.view);};
+  f.serverReceipts=[];
+  const reply=f.reply;f.reply=(url,init)=>{
+    const body=init?.method==='PUT'?JSON.parse(init.body):null,processing=body?.automaticProcessing;
+    let processed;
+    if(processing){
+      const plan=draftRuntime.buildProductLabelDraftPlan(f.view,processing.optionId,sourceFacts(processing.optionId)),keys=Object.keys(processing.values);
+      assert.ok(keys.every(key=>plan.fields.some(field=>field.key===key)),'fake API retains manual/deleted protection');
+      const raw=processing.candidates??processing.values;assert.deepEqual(Object.keys(raw).sort(),keys.sort());
+      processed=draftRuntime.processCurrentLabelCandidates({...plan,fields:plan.fields.filter(field=>keys.includes(field.key))},Object.fromEntries(Object.entries(raw).map(([key,value])=>[key==='netContents'?'content':key==='productType'?'type':key,value])));
+      assert.deepEqual(plain(processed.values),processing.values,'fake API independently processes raw candidates before commit');
+    }
+    reply(url,init);restoreCollectedFacts();
+    if(body){
+      const retained=(f.view.automaticSuggestions?.entries??[]).filter(entry=>!body.changes.some(change=>entry.fieldKey===change.fieldKey&&(change.optionId===null||entry.optionId===change.optionId)));
+      if(processing){
+        const entries=Object.entries(processed.values).map(([fieldKey,value])=>({optionId:processing.optionId,fieldKey,value,classification:processed.classifications[fieldKey]}));
+        f.view.automaticSuggestions={policy:'couplus-current-label-suggestion-v1',basis:'synthetic API current facts',entries:[...retained.filter(entry=>!entries.some(next=>next.optionId===entry.optionId&&next.fieldKey===entry.fieldKey)),...entries]};
+        f.serverReceipts.push(plain({values:processed.values,classifications:processed.classifications}));
+      }else if(f.view.automaticSuggestions)f.view.automaticSuggestions.entries=retained;
+    }
+    for(const row of f.view.rows)for(const entry of f.view.automaticSuggestions?.entries??[]){
+      const own=row.optionId===null?undefined:f.view.overrides.options[row.optionId];
+      if(entry.optionId!==row.optionId||Object.hasOwn(own??{},entry.fieldKey)||Object.hasOwn(f.view.overrides.common,entry.fieldKey))continue;
+      row.automatic[entry.fieldKey]=entry.value;row.values[entry.fieldKey]=entry.value;row.sources[entry.fieldKey]=entry.classification==='default'?'label-default':'label-suggestion';
+    }
+    return Response.json(f.view);
+  };
   return f;
 }
 function result(view,optionId='red',values={netContents:'1개',material:'실리콘',productType:'보호 밴드'}){
   return {productId:view.productId,optionId,profileId:view.categoryContext.profileId,productVersion:view.productVersion,labelRevision:view.revision,inputFingerprint:view.inputFingerprint,
-    values,warnings:['AI 초안이므로 상품과 대조해주세요.'],provider:'Cloudflare Workers AI',model:'@cf/meta/llama-3.3-70b-instruct-fp8-fast',generatedAt:'2026-10-18T00:00:00.000Z'};
+    values,candidates:{...values},resultPolicy:'couplus-current-label-suggestion-v1',warnings:['AI 초안이므로 상품과 대조해주세요.'],provider:'Cloudflare Workers AI',model:'@cf/meta/llama-3.3-70b-instruct-fp8-fast',generatedAt:'2026-10-18T00:00:00.000Z'};
 }
 const draftCalls=h=>h.calls.filter(call=>call.url.includes('/product-label-draft'));
 const puts=h=>h.calls.filter(call=>call.init?.method==='PUT');
@@ -56,11 +84,17 @@ test('label generation requests the three-field draft once, stages an actual bef
     assert.equal(h.input('선택 옵션 제품명').props.value,'검정 수정 제품명');assert.match(text(h.render()),/硅胶.*실리콘/u);
     assert.ok(nodes(h.render()).some(node=>node.props?.['aria-label']==='생성한 표시사항 초안 검토'));assert.equal(h.button(pngButton).props.disabled,true);
     h.edit('선택 옵션 내용량','검수한 2개');await h.click('정보 저장하기');assert.equal(puts(h).length,1);assert.equal(h.saved,1);
-    const changes=JSON.parse(puts(h)[0].init.body).changes;assert.deepEqual(changes.map(change=>change.fieldKey).sort(),['material','netContents','productType']);
+    const savedBody=JSON.parse(puts(h)[0].init.body),changes=savedBody.changes;assert.deepEqual(changes.map(change=>change.fieldKey),['netContents']);
+    assert.deepEqual(savedBody.automaticProcessing,{optionId:'red',values:{material:'실리콘',productType:'보호 밴드'},candidates:{material:'실리콘',productType:'보호 밴드'}});
+    assert.equal(f.serverReceipts.length,1);assert.deepEqual(f.serverReceipts[0].values,savedBody.automaticProcessing.values);
+    assert.ok(!Object.hasOwn(f.view.overrides.options.red,'material'));assert.ok(!Object.hasOwn(f.view.overrides.options.red,'productType'));
+    const savedRow=f.view.rows.find(row=>row.optionId==='red');assert.equal(savedRow.sources.netContents,'manual-option');assert.equal(savedRow.sources.material,'label-suggestion');assert.equal(savedRow.sources.productType,'label-suggestion');
+    assert.deepEqual(f.view.automaticSuggestions.entries.map(entry=>entry.fieldKey).sort(),['material','productType']);assert.equal(h.render().props['data-workspace-dirty'],false);
     assert.ok(changes.every(change=>change.optionId==='red'));assert.equal(f.view.overrides.options.red.netContents,'검수한 2개');
     assert.deepEqual(plain(f.view.overrides.options.blue),before.overrides.options.blue);assert.deepEqual(plain(f.view.overrides.common),before.overrides.common);
     assert.equal(h.plans.length,0);assert.equal(h.attachments.length,0);
-    cases.push({name:'review and explicit save',requests:1,writes:1,sourceAndOtherOptionPreserved:true,editedBeforeSave:true,completionBoundary:'mocked; full chain covered separately',renderedPlans:0,attachmentFixtureCalls:0});
+    assert.equal(h.button(pngButton).props.disabled,false);await h.click(pngButton);assert.equal(h.plans.length,1);assert.equal(puts(h).length,1);assert.ok(h.plans[0].rows.some(row=>row[1]==='실리콘'));assert.ok(h.plans[0].rows.some(row=>row[1]==='검수한 2개'));
+    cases.push({name:'review and explicit save',requests:1,writes:1,sourceAndOtherOptionPreserved:true,editedBeforeSave:true,completionBoundary:'mocked; full chain covered separately',manualFields:['netContents'],automaticFields:['material','productType'],serverProcessingChecked:true,renderedPlans:1,attachmentFixtureCalls:0});
   }finally{h.close();}
 });
 
@@ -71,7 +105,7 @@ test('common-scope draft can be cancelled without a write, preserves explicit op
     await h.click('입력 취소·저장 표시사항 다시 조회');assert.deepEqual(plain(f.view),before);assert.equal(h.input('상품 공통 원료명 및 성분명(재질)').props.value,'硅胶');
     assert.equal(h.render().props['data-workspace-dirty'],false);assert.equal(puts(h).length,0);assert.equal(draftCalls(h).length,1);
     await h.click(aiButton);await h.click('정보 저장하기');assert.equal(puts(h).length,1);assert.equal(draftCalls(h).length,2);
-    assert.ok(JSON.parse(puts(h)[0].init.body).changes.every(change=>change.optionId===null));assert.deepEqual(plain(f.view.overrides.options),before.overrides.options);
+    const body=JSON.parse(puts(h)[0].init.body);assert.deepEqual(body.changes,[]);assert.equal(body.automaticProcessing.optionId,null);assert.deepEqual(plain(f.view.overrides.common),before.overrides.common);assert.equal(f.serverReceipts.length,1);assert.equal(h.saved,1);assert.equal(h.render().props['data-workspace-dirty'],false);assert.deepEqual(f.view.automaticSuggestions.entries.map(entry=>[entry.optionId,entry.fieldKey]),[[null,'netContents'],[null,'material'],[null,'productType']]);assert.deepEqual(plain(f.view.overrides.options),before.overrides.options);
     cases.push({name:'common and cancellation',requests:2,cancellationWrites:0,explicitSaveWrites:1,optionOverridesPreserved:true});
   }finally{h.close();}
 });

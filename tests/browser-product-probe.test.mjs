@@ -134,13 +134,13 @@ test('caller cancellation throws during presence or probe without falling throug
 
 test('content capability follows installed manifest, and PROBE has its own strict worker mapping',async()=>{
  for(const version of ['0.2.72','0.2.80','0.2.81','0.3.0','1.0.0']){
-  const handlers=[],responses=[],messages=[],location={origin:'http://localhost:3000'},window={addEventListener:(_type,fn)=>handlers.push(fn),postMessage:value=>responses.push(value)};
+  const handlers=[],responses=[],responseOrigins=[],messages=[],location={origin:'http://localhost:3000'},window={addEventListener:(_type,fn)=>handlers.push(fn),postMessage:(value,origin)=>{responses.push(value);responseOrigins.push(origin);}};
   const chrome={runtime:{getManifest:()=>({version}),onMessage:{addListener(){}},sendMessage:async message=>{messages.push(message);return{ok:true,sourceUrl,available:false};}}};
   vm.runInNewContext(fs.readFileSync(new URL('../extensions/supplier-hub/handoff-content.js',import.meta.url),'utf8'),{window,location,chrome});
   const event={source:window,origin:location.origin,data:{channel:'YOOFAM_HUB_HANDOFF',requestId:request.requestId,type:'PING'}};await handlers[0](event);
   assert.equal(responses[0].result.existingProductProbe,!['0.2.72','0.2.80'].includes(version));
   await handlers[1]({...event,data:{channel:'YOOFAM_1688_CAPTURE',requestId:request.requestId,type:'PROBE',sourceUrl}});
-  assert.deepEqual(plain(messages),[{type:'YOOFAM_PROBE_1688',requestId:request.requestId,sourceUrl}]);assert.equal(responses.length,2);
+  assert.deepEqual(plain(messages),[{type:'YOOFAM_SEO_KEYWORD_CAPABILITY'},{type:'YOOFAM_PROBE_1688',requestId:request.requestId,sourceUrl}]);assert.equal(responses.length,2);assert.deepEqual(responseOrigins,[location.origin,location.origin]);assert.ok(responses.every(row=>row.requestId===request.requestId));assert.deepEqual(responses.map(row=>row.channel),['YOOFAM_HUB_HANDOFF_RESULT','YOOFAM_1688_CAPTURE_RESULT']);
  }
 });
 

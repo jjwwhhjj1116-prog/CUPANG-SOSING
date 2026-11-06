@@ -46,8 +46,8 @@ export function quotationKnownNoticeTarget(field: QuotationField, extended = fal
     || wire.nameKey !== 'noticeItemName' || !['noticeItemValue', 'noticeContent'].includes(wire.valueKey ?? '')) return;
   if (wire.name === '제조자(수입자)') return 'manufacturer';
   if (wire.name === '소비자상담 관련 전화번호' || wire.name === 'A/S 책임자와 전화번호') return 'contact';
-  const savedBindings: Readonly<Record<string, Target>> = { '제조국(원산지)': 'countryOfOrigin', '제조국': 'countryOfOrigin', '소재': 'material', '재질': 'material',
-    '제품 구성': 'components', '구성품': 'components', '치수': 'dimensions', '크기': 'dimensions',
+  const savedBindings: Readonly<Record<string, Target>> = { '제조국(원산지)': 'countryOfOrigin', '제조국': 'countryOfOrigin', '소재': 'material', '재질': 'material', '제품 소재': 'material',
+    '제품 구성': 'components', '제품구성': 'components', '구성품': 'components', '치수': 'dimensions', '크기': 'dimensions',
     '취급시 주의사항': 'precautions', '상품별 세부 사양': 'specifications', '종류': 'productType', '색상': 'color' };
   if (extended && Object.hasOwn(savedBindings, wire.name)) return savedBindings[wire.name];
 }

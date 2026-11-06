@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -26,7 +27,7 @@ function fixture(detailResponse, {changeSku, changeMobile} = {}) {
     }).outputText, {exports, Error, URL, URLSearchParams, TextEncoder, TextDecoder, AbortController, structuredClone,
       setTimeout(fn, delay) { const id = ++nextTimer; timers.set(id, fn); timerDelays.push(delay); return id; },
       clearTimeout(id) { timers.delete(id); },
-      require(name) { if (name === 'parse5') return parse5; if (name.startsWith('@/')) return load(name.slice(2) + '.ts'); throw Error('Unexpected inert module ' + name); },
+      require(name) {if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis; if (name === 'parse5') return parse5; if (name.startsWith('@/')) return load(name.slice(2) + '.ts'); throw Error('Unexpected inert module ' + name); },
     });
     return exports;
   }

@@ -54,3 +54,8 @@ test('invalid styles and arbitrary font CSS fail before image drawing',()=>{
   ...['true',1,{}].flatMap(value=>[{bold:value},{italic:value}]),
  ])assert.throws(()=>resolve(input),/행간/);
 });
+test('optional glyph effects validate without changing legacy defaults',()=>{
+ const effects={textFill:{kind:'linear-gradient',startColor:'#ff0000',endColor:'#0000ff',angle:90},textStroke:{width:2,color:'#ffffff'},textShadow:{blur:4,color:'#111111'},rotation:-90};
+ assert.deepEqual(plain(resolve(effects)),{...plain(resolve({})),...effects});
+ for(const patch of [{rotation:Infinity},{rotation:181},{textStroke:{width:21,color:'#ffffff'}},{textShadow:{blur:NaN,color:'#ffffff'}},{textFill:{...effects.textFill,url:'bad'}},{textStroke:{width:2,color:'red'}}])assert.throws(()=>resolve(patch));
+});

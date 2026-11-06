@@ -1,3 +1,6 @@
+import {validateSeoOptionResults} from '@/app/seo-option-results';
+import {acquireSeoComposition} from '@/app/seo-related-keywords-client';
+import {validateSeoCompositionPolicy,type SeoCompositionPolicy} from '@/app/seo-current-policy';
 import { GOOGLE_TEXT_MODEL, WORKERS_TEXT_MODEL, WORKERS_QWEN_MODEL, validateQwenTranslationDraft, validateTranslationDraft, validateTranslationSource,
   type TranslationConfiguration, type TranslationJob, type TranslationSource } from '@/app/automation/translation';
 import { translationReviewExpired } from '@/app/reviewed-translation';
@@ -5,7 +8,7 @@ import { translationReviewExpired } from '@/app/reviewed-translation';
 export type SeoWorkspaceDraftMemo = { brand: string; features: string; keywords: string };
 type DraftConfiguration = Pick<TranslationConfiguration, 'configured' | 'model' | 'maxOutputTokens'>;
 export type SeoWorkspaceDraftState = {
-  schemaVersion: 1; productId: string; productVersion: string; contentRevision: number;
+  seoComposition?:SeoCompositionPolicy;optionRevision?:number;sourceFingerprint?:string; schemaVersion: 1; productId: string; productVersion: string; contentRevision: number;
   source: TranslationSource; memo: SeoWorkspaceDraftMemo; configuration: DraftConfiguration;
   idempotencyKey: string; jobId: string | null; reviewFingerprint: string | null;
   prepareSubmitted: boolean; approvalSubmitted: boolean; executeSubmitted: boolean;
@@ -52,7 +55,7 @@ export function seoWorkspaceDraftProvider(configuration: DraftConfiguration) {
 
 type SeoWorkspaceDraftInput={
   productId: string; productVersion: string; contentRevision: number; source: TranslationSource;
-  memo: SeoWorkspaceDraftMemo; configuration: DraftConfiguration;
+  memo: SeoWorkspaceDraftMemo; configuration: DraftConfiguration;optionRevision?:number;sourceFingerprint?:string;
 };
 /** Keep the canonical request basis separate from allocating a new UUID. */
 function workspaceDraftInput(input:SeoWorkspaceDraftInput){
@@ -65,14 +68,14 @@ function workspaceDraftInput(input:SeoWorkspaceDraftInput){
   // Display headings and newly edited memo must not impersonate that list.
   const keywords = source.guidance?.keywords ?? '';
   return{productId:input.productId,productVersion:input.productVersion,contentRevision:input.contentRevision,
-    source:validateTranslationSource({...source,guidance:{features,keywords}}),memo,configuration:configurationInput(input.configuration)};
+    source:validateTranslationSource({...source,guidance:{features,keywords}}),memo,...(input.optionRevision!==undefined?{optionRevision:input.optionRevision}:{}),...(input.sourceFingerprint?{sourceFingerprint:input.sourceFingerprint}:{}),configuration:configurationInput(input.configuration)};
 }
 /** Read-only comparison for adopting an independently confirmed old result.
  * This never allocates a request or changes its submitted/recovery flags. */
 export function seoWorkspaceDraftMatches(state:SeoWorkspaceDraftState,input:SeoWorkspaceDraftInput):boolean{
-  try{return parseSeoWorkspaceDraftState(state,input.productId)!==null&&same(workspaceDraftInput(input),{
+  try{const current=workspaceDraftInput(input);if(state.optionRevision===undefined)delete current.optionRevision;delete current.sourceFingerprint;return parseSeoWorkspaceDraftState(state,input.productId)!==null&&same(current,{
     productId:state.productId,productVersion:state.productVersion,contentRevision:state.contentRevision,
-    source:state.source,memo:state.memo,configuration:state.configuration});}catch{return false;}
+    source:state.source,memo:state.memo,configuration:state.configuration,...(state.optionRevision!==undefined?{optionRevision:state.optionRevision}:{})});}catch{return false;}
 }
 /** Memo stays separate from supplier facts. Google translates saved text only;
  * brand/features/keywords do not replace the title, attributes or option names. */
@@ -93,8 +96,11 @@ export function parseSeoWorkspaceDraftState(raw: unknown, productId: string): Se
       if (raw.length > maximumStateBytes || new TextEncoder().encode(raw).length > maximumStateBytes) return null;
       raw = JSON.parse(raw);
     }
-    if (!exact(raw, stateKeys)) return null;
+    if(!exact(Object.fromEntries(Object.entries(raw as Record<string,unknown>).filter(([key])=>!['seoComposition','optionRevision','sourceFingerprint'].includes(key))),stateKeys))return null;
     const state = raw as unknown as SeoWorkspaceDraftState;
+    if(state.sourceFingerprint!==undefined&&!hash.test(state.sourceFingerprint))return null;
+    if(state.optionRevision!==undefined&&(!Number.isSafeInteger(state.optionRevision)||state.optionRevision<0))return null;
+    if(state.seoComposition&&(!same(validateSeoCompositionPolicy(state.seoComposition),state.seoComposition)||!same(state.seoComposition.memo,state.memo)))return null;
     if (state.schemaVersion !== 1 || state.productId !== productId || !/^[a-zA-Z0-9_-]{1,80}$/u.test(productId)
       || typeof state.productVersion !== 'string' || state.productVersion.length > 100 || !Number.isFinite(Date.parse(state.productVersion))
       || !Number.isSafeInteger(state.contentRevision) || state.contentRevision < 0
@@ -143,12 +149,15 @@ async function advance(state: SeoWorkspaceDraftState, controls: SeoWorkspaceDraf
       || job.review.destination !== provider.destination || job.review.instructionsVersion !== 'sourceflow-translation-v6'
       || ['optionsRetry', 'seoRetry', 'intakeOptions'].some(key => Object.hasOwn(job.review, key))
       || !same(validateTranslationSource(job.review.source), state.source)
+      ||!same(job.review.seoComposition,state.seoComposition)
+      ||state.seoComposition&&(job.review.seoCompositionContext?.optionRevision!==state.optionRevision||job.review.seoCompositionContext?.sourceFingerprint!==state.sourceFingerprint)
       || typeof job.review.paidNotice !== 'string' || !job.review.paidNotice || job.review.paidNotice.length > 4000)
       throw Error('다른 상품·원문·서비스의 SEO 응답입니다. 실행·적용하지 않았습니다.');
     if (job.status === 'completed') {
       if (!job.result || job.result.model !== job.review.model || job.result.appliedToContent !== false || job.result.provenance !== 'generated')
         throw Error('SEO 결과의 서비스·저장 범위를 확인하지 못했습니다.');
-      if(job.review.model===WORKERS_QWEN_MODEL&&!Object.hasOwn(job.review,'workersRecovery'))validateQwenTranslationDraft(job.result.draft,state.source,job.review.qwenTranslationPolicy);
+      if(job.review.seoCompositionContext){if(job.result.seoOptions===undefined)throw Error('새 SEO 옵션 응답이 누락되었습니다.');validateSeoOptionResults(job.result.seoOptions,job.review.seoCompositionContext.selectedOptions,job.review);}
+      if(job.review.model===WORKERS_QWEN_MODEL&&!Object.hasOwn(job.review,'workersRecovery'))validateQwenTranslationDraft(job.result.draft,state.source,job.review.qwenTranslationPolicy,job.review.seoKeywordPolicy,job.review.seoComposition,job.review.seoCompositionContext);
       else validateTranslationDraft(job.result.draft, state.source, job.review.instructionsVersion);
     } else if (job.result !== null || ['prepared', 'approved', 'running'].includes(job.status) && job.error !== null)
       throw Error('SEO 작업의 결과 상태를 확인하지 못했습니다.');
@@ -174,10 +183,11 @@ async function advance(state: SeoWorkspaceDraftState, controls: SeoWorkspaceDraf
     // Historical legal-name exceptions stay in the stored record, while only
     // usable returned fields count toward translation coverage.
     const draft = rawDraft&&job?.review.model===WORKERS_QWEN_MODEL&&!Object.hasOwn(job.review,'workersRecovery')
-      ?validateQwenTranslationDraft(rawDraft,state.source,job.review.qwenTranslationPolicy):rawDraft;
-    const missing = draft ? state.source.attributes.filter((_, index) => !draft.attributes.some(item => item.sourceIndex === index)).length : 0;
+      ?validateQwenTranslationDraft(rawDraft,state.source,job.review.qwenTranslationPolicy,job.review.seoKeywordPolicy,job.review.seoComposition,job.review.seoCompositionContext):rawDraft;
+    const missing = draft ? state.source.attributes.filter((pair, index) => !(job?.review.seoCompositionContext&&/^option(?:-(?:color|size))?:/u.test(pair.name))&&!draft.attributes.some(item => item.sourceIndex === index)).length : 0;
+    const typedMissing=Boolean(job?.review.seoCompositionContext&&job.result&&validateSeoOptionResults(job.result.seoOptions,job.review.seoCompositionContext.selectedOptions,job.review).warnings.some(value=>value.includes('누락')));
     const stopped = provider.kind === 'google' ? job?.result?.googleStoppedHttpStatus : undefined;
-    const partial = Boolean(draft && (missing || state.source.title && !draft.title.trim() || state.source.description && !draft.description.trim()
+    const partial = typedMissing||Boolean(draft && (missing || state.source.title && !draft.title.trim() || state.source.description && !draft.description.trim()
       || stopped === 429 || typeof stopped === 'number' && stopped >= 500 && stopped <= 599));
     const closed = Boolean(job && ['completed', 'failed'].includes(job.status));
     return { job, closed, needsReview: true, partial, label: provider.label,
@@ -201,8 +211,9 @@ async function advance(state: SeoWorkspaceDraftState, controls: SeoWorkspaceDraf
       : '이전 SEO 실행 요청의 결과를 확인해야 합니다. 조회만 했으며 실행을 다시 보내지 않았습니다.');
     if (!job) {
       if (state.jobId !== null || state.approvalSubmitted) return outcome(null, '저장한 SEO 작업이 현재 조회 목록에 없습니다. 새 실행은 만들지 않았습니다.');
+      if(state.configuration.model===WORKERS_QWEN_MODEL&&!state.prepareSubmitted&&!state.seoComposition){if(state.optionRevision===undefined||!state.sourceFingerprint){const response=await fetcher(base+'/seo-generation',{signal,cache:'no-store'}),value=await response.json() as {productId?:unknown;productVersion?:unknown;contentRevision?:unknown;optionRevision?:unknown;sourceFingerprint?:unknown};check();if(!response.ok||value.productId!==state.productId||value.productVersion!==state.productVersion||value.contentRevision!==state.contentRevision||!Number.isSafeInteger(value.optionRevision)||Number(value.optionRevision)<0||typeof value.sourceFingerprint!=='string'||!hash.test(value.sourceFingerprint)||state.optionRevision!==undefined&&value.optionRevision!==state.optionRevision)throw Error('SEO 원문·선택 옵션 버전을 확인하지 못했습니다.');keep({optionRevision:Number(value.optionRevision),sourceFingerprint:value.sourceFingerprint});}const composition=await acquireSeoComposition(state.memo,signal,()=>!controls.isContextCurrent||controls.isContextCurrent());check();keep({seoComposition:composition});}
       keep({ prepareSubmitted: true });
-      try { job = validate((await request({ action: 'prepare', source: state.source, expectedVersion: state.productVersion, idempotencyKey: state.idempotencyKey })).job); }
+      try { job = validate((await request({ action: 'prepare', source: state.source, expectedVersion: state.productVersion, idempotencyKey: state.idempotencyKey,...(state.seoComposition?{seoComposition:state.seoComposition,expectedOptionRevision:state.optionRevision,expectedSourceFingerprint:state.sourceFingerprint}:{}) })).job); }
       catch (cause) { return await recover(cause); }
     }
     if (['completed', 'failed', 'running', 'uncertain'].includes(job.status)) return outcome(job);

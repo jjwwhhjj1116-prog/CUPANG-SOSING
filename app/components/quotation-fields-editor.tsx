@@ -1,4 +1,5 @@
 'use client';
+import { quotationGeneratedSave, type QuotationGeneratedDraft } from '@/app/quotation-ai-client';
 import { validOptionRegistrationNumbers, optionRegistrationLabel } from '@/app/product-registration';
 import { QuotationTranslatedAttributes } from '@/app/components/quotation-translated-attributes';
 import { QuotationAiPanel, type QuotationAiRequestAction } from '@/app/components/quotation-ai-panel';
@@ -31,7 +32,7 @@ import { quotationPackagingReconfirmationChanges, quotationPackagingChangeStored
 import { quotationPriceDisplayField, quotationPriceEditChanges, quotationPriceEditFields, quotationPriceEditInput, quotationPriceStagedEdit, quotationPriceVisibleFields } from '@/app/quotation-price-edits';
 import { quotationPriceTargets } from '@/app/quotation-price-targets';
 import { quotationRequiredSummary } from '@/app/quotation-required-summary';
-import { confirmQuotationFieldsSave, quotationFieldsSaveNeedsReadback } from '@/app/quotation-fields-confirmation';
+import { confirmQuotationFieldsSave, confirmGeneratedQuotationSave, quotationFieldsSaveNeedsReadback } from '@/app/quotation-fields-confirmation';
 import { quotationManualModelLinkState, quotationModelSuggestionState } from '@/app/quotation-model-suggestion';
 import { QuotationExposedDuplicates } from '@/app/components/quotation-exposed-duplicates';
 import { ProductOptionSplitPanel } from '@/app/components/product-option-split-panel';
@@ -51,7 +52,7 @@ const sections = [
   { id: 'legal', title: '법적 정보', english: 'Legal', description: '인증과 상품정보 제공 고시를 실제 자료와 대조합니다.' },
   { id: 'logistics', title: '물류 정보', english: 'Logistics', description: '입고 수량과 포장 상태의 규격을 입력합니다.' },
 ] as const;
-const sourceLabels: Record<string, string> = { 'couplus-default': '쿠플러스 양식 기본값', 'manual-option': '옵션 직접 수정', 'manual-common': '공통 직접 수정', content: '저장 콘텐츠', settings: '기본 설정', option: '저장 옵션', pricing: '가격 계산', product: '저장 상품', schema: '선택 카테고리', empty: '미입력' };
+const sourceLabels: Record<string, string> = { 'couplus-default': '쿠플러스 양식 기본값', 'label-draft':'표시사항 초안', 'generated': 'AI 생성', 'manual-option': '옵션 직접 수정', 'manual-common': '공통 직접 수정', content: '저장 콘텐츠', settings: '기본 설정', option: '저장 옵션', pricing: '가격 계산', product: '저장 상품', schema: '선택 카테고리', empty: '미입력' };
 const has = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);
 /** These limits describe the two observed controls, not every same-label or
  * workbook field. Keep stored values intact; schema/server validation remains
@@ -507,8 +508,11 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   const initialTarget = useRef(navigationTarget); const pendingFocus = useRef<string | null>(null);
   const requests = useRef(0); const observedRefresh = useRef(refreshToken); const prefix = useId();
   const activeWrite = useRef<AbortController | null>(null);
+  const refreshActivation = useRef(0), attemptedRefresh = useRef<{token?:string;activation:number}|null>(null);
+  useLayoutEffect(() => { if (submissionActive) refreshActivation.current++; }, [submissionActive]);
   const explicitRefreshAction = useRef<{ endpoint: string; view: QuotationFieldsView | null; optionId: string | null; changes: QuotationEditorChange[]; conflicts: Conflict[]; recovery: string; run: () => Promise<void> } | null>(null);
   const aiDraftApplied = useRef(false);
+  const generatedDraft = useRef<QuotationGeneratedDraft | null>(null);
   const packagingDrafts=useRef<QuotationPackagingDraftInput[]>([]);
   const titleActionEpoch = useRef(0), titleActionTicket = titleActionEpoch.current;
   function setChanges(next: QuotationEditorChange[] | ((previous: QuotationEditorChange[]) => QuotationEditorChange[])) {
@@ -516,7 +520,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
     titleActionEpoch.current++;
     explicitRefreshAction.current = null;
     aiDraftApplied.current = typeof next === 'function' || next.length > 0;
-    if(typeof next!=='function'&&!next.length)packagingDrafts.current=[];
+    if(typeof next!=='function'&&!next.length){packagingDrafts.current=[];generatedDraft.current=null;}
     commitChanges(next);
   }
   useEffect(() => { aiDraftApplied.current = changes.length > 0; }, [changes]);
@@ -545,9 +549,10 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   const dirty = changes.length > 0;
   useEffect(() => { onDirtyChange?.(dirty || splitDrafting); }, [dirty, splitDrafting, onDirtyChange]);
   useEffect(() => {
+    if (!submissionActive || view) return;
     const controller = new AbortController(); const id = ++requests.current;
     fetchView(endpoint, controller.signal).then(saved => { if (!controller.signal.aborted && id === requests.current) {
-        setView(saved);
+        observedRefresh.current = refreshToken; setView(saved);
         if (initialTarget.current) {
           const destination = resolveQuotationEditorNavigation(saved.resolved, initialTarget.current);
           if (destination.ok) { setSelectedOption(destination.optionId); setActive(destination.section); pendingFocus.current = destination.fieldId; }
@@ -556,8 +561,11 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
       } })
       .catch(cause => { if (!controller.signal.aborted && id === requests.current) setError(cause instanceof Error ? cause.message : '견적 입력 자료 확인 실패'); })
       .finally(() => { if (!controller.signal.aborted && id === requests.current) setLoading(false); });
-    return () => { controller.abort(); invalidateRequests(); };
-  }, [endpoint, invalidateRequests]);
+    return () => { controller.abort(); };
+    // The keyed endpoint owns the view; hiding only pauses automatic reads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [endpoint, submissionActive]);
+  useEffect(() => () => invalidateRequests(), [endpoint, invalidateRequests]);
   useEffect(() => {
     if (loading || !pendingFocus.current) return;
     const element = document.getElementById(`${prefix}-${pendingFocus.current}`);
@@ -576,7 +584,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
       const saved = await fetchView(endpoint);
       if (id !== requests.current) return;
       const reconciled = view && !discard ? reconcileQuotationEditorDraft(view, saved, changes, conflicts,quotationPackagingDraftInputsForChanges(packagingDrafts.current,view.resolved.schema.fields,changes)) : { changes: [], conflicts: [] };
-      setView(saved); setChanges(reconciled.changes); setConflicts(reconciled.conflicts); setLabelRecovery('');
+      observedRefresh.current = refreshToken; setView(saved); setChanges(reconciled.changes); setConflicts(reconciled.conflicts); setLabelRecovery('');
       if (labelFailure) setError(labelFailure);
       if (!saved.resolved.rows.some(row => row.optionId === selectedOption)) setApplyAll(false);
       setMessage(labelFailure ? '현재 저장된 견적을 다시 불러왔습니다. 오류를 확인한 뒤 라벨 연결을 다시 실행해주세요.' : discard ? '현재 입력을 버리고 저장본을 불러왔습니다.' : reconciled.conflicts.length ? '저장값 또는 카테고리·항목 규격이 바뀌었습니다. 입력을 검토하고 사용할 값을 선택해주세요.' : '최신 상품·옵션·기본값을 반영했습니다. 직접 입력한 내용은 유지했습니다.');
@@ -587,7 +595,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
       }
     }
     finally { if (id === requests.current) setLoading(false); }
-  }, [endpoint, view, changes, conflicts, selectedOption, labelRecovery]);
+  }, [endpoint, view, changes, conflicts, selectedOption, labelRecovery, refreshToken]);
   const explicitRefreshBlocked = loading || operationBusy || splitBusy || splitDrafting || submissionLocks.source || Boolean(labelRecovery) && (dirty || conflicts.length > 0);
   useEffect(() => {
     explicitRefreshAction.current = explicitRefreshBlocked ? null : { endpoint, view, optionId: selectedOption, changes, conflicts, recovery: labelRecovery, run: () => refresh() };
@@ -601,15 +609,17 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
     void current.run();
   }
   useEffect(() => {
-    if (observedRefresh.current === refreshToken || busy || loading) return;
-    observedRefresh.current = refreshToken;
-    void Promise.resolve().then(() => refresh());
-  }, [refreshToken, refresh, busy, loading]);
+    if (!submissionActive || observedRefresh.current === refreshToken || busy || loading) return;
+    if (attemptedRefresh.current?.token === refreshToken && attemptedRefresh.current?.activation === refreshActivation.current) return;
+    let alive = true;
+    void Promise.resolve().then(() => { if (alive) { attemptedRefresh.current = {token:refreshToken,activation:refreshActivation.current}; void refresh(); } });
+    return () => { alive = false; };
+  }, [refreshToken, refresh, busy, loading, submissionActive]);
   useEffect(() => {
-    const focus = () => { if (view && !busy && !loading) void refresh(); };
+    const focus = () => { if (submissionActive && view && !busy && !loading) void refresh(); };
     window.addEventListener('focus', focus);
     return () => window.removeEventListener('focus', focus);
-  }, [view, busy, loading, refresh]);
+  }, [view, busy, loading, refresh, submissionActive]);
 
   function edit(fieldKey: string, value: string | null, optionId: string | null = selectedOption) {
     if (!view || busy || loading || !view.resolved.rows.some(row => row.optionId === optionId)) return;
@@ -621,6 +631,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
     let fieldKeys: string[];
     try { fieldKeys = [...new Set(quotationPackagedWeightEditFields(view.resolved.schema.fields, fieldKey, value).flatMap(key => quotationPriceEditFields(view.resolved.schema.fields, key)))]; }
     catch (cause) { setError(cause instanceof Error ? cause.message : '가격 항목 연결을 확인해주세요.'); return; }
+    if(generatedDraft.current)generatedDraft.current={...generatedDraft.current,proposals:generatedDraft.current.proposals.filter(proposal=>proposal.optionId!==optionId||!fieldKeys.includes(proposal.fieldKey))};
     setChanges(previous => fieldKeys.reduce((draft, id) => updateQuotationEditorDraft(view.overrides, draft, { fieldKey: id, optionId, value }), previous));
     setConflicts(previous => previous.filter(conflict => !fieldKeys.some(id => conflict.key === quotationEditorKey(optionId, id))));
     setBulk(null); setMessage('');
@@ -711,7 +722,8 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
       assertQuotationSeoTitleDraft(view.resolved.schema.fields, plan.changes);
       const requested = validateQuotationChanges(plan.changes, { schema: view.resolved.schema, optionIds: view.resolved.rows.flatMap(item => item.optionId === null ? [] : [item.optionId]), ownedImageKeys: view.imageKeys, overrides: view.overrides });
       const drafted=validateQuotationPackagingDraftInputs(quotationPackagingDraftInputsForChanges(packagingDrafts.current,view.resolved.schema.fields,requested),view.resolved.schema.fields,view.optionPackQuantities??{},requested);
-      const response = await fetch(endpoint, { method: 'PUT', signal: controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: view.revision, expectedInputFingerprint: view.inputFingerprint, changes: requested,...(drafted.length?{packagingDrafts:drafted}:{}) }) });
+      const generatedSave = quotationGeneratedSave(requested, generatedDraft.current);
+      const response = await fetch(endpoint, { method: 'PUT', signal: controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: view.revision, expectedInputFingerprint: view.inputFingerprint, ...generatedSave,...(drafted.length?{packagingDrafts:drafted}:{}) }) });
       const body = await response.json().catch(() => { throw new Error('저장 완료 여부를 확인하지 못했습니다. 중복 저장 전에 ‘입력 버리고 저장본 불러오기’로 저장본을 확인해주세요. 현재 입력은 유지했습니다.'); }) as QuotationFieldsView & { error?: string };
       if (controller.signal.aborted) return;
       if (!response.ok || !body.resolved || !body.automatic) {
@@ -721,7 +733,8 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
       verifyQuotationRegistrationDisplay(body);
       const readback = quotationFieldsSaveNeedsReadback(view, requested) ? await fetchView(endpoint, controller.signal) : undefined;
       if (controller.signal.aborted) return;
-      const confirmed = confirmQuotationFieldsSave(view, body, requested, readback,drafted);
+      const untouched = generatedDraft.current?.proposals.filter(proposal=>generatedSave.generatedAdoption?.targets.some(target=>target.optionId===proposal.optionId&&target.fieldKey===proposal.fieldKey)) ?? [];
+      const confirmed = generatedSave.generatedAdoption ? confirmGeneratedQuotationSave(view,body,generatedSave.changes,untouched,generatedSave.generatedAdoption.jobId,readback,drafted) : confirmQuotationFieldsSave(view, body, requested, readback,drafted);
       setView(confirmed); setChanges([]); setConflicts([]); setApplyAll(false); setMessage(`견적 입력 저장 완료${plan.propagated.length ? ` · 다른 옵션 ${new Set(plan.propagated.map(item => item.optionId)).size}개에도 적용했습니다.` : ' · 출력 미리보기에 반영됩니다.'}`); onSaved?.();
     } catch (cause) { if(!controller.signal.aborted)setError(cause instanceof Error ? cause.message : '견적 입력 저장 실패'); }
     finally { if(activeWrite.current===controller)activeWrite.current=null; if(!controller.signal.aborted)setBusy(false); }
@@ -929,7 +942,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
       <div id={`${prefix}-ai-tools`} ref={aiTools} className="quotation-ai-tools"><p>필요한 항목을 선택해 AI 초안을 요청하고, 검토 후 입력에 적용하세요.</p>
       <QuotationAiPanel productId={productId} profileId={profileId} view={view} optionId={selectedOption} applyToAllOptions={applyAll} onApplyToAllOptionsChange={changeAllOptions} disabled={dirty || busy || loading || conflicts.length > 0} onRequestActionChange={receiveAiRequest}
         onBusyChange={next=>{if(next)explicitRefreshAction.current=null;modelActionState.current={...modelActionState.current,busy:next||Boolean(labelRecovery)};setBusy(next);}}
-        onApply={proposals=>{
+        onApply={(proposals,_fingerprint,jobId)=>{
           const current=modelActionState.current;
           if(current.view!==view||current.selectedOption!==selectedOption||current.applyAll!==applyAll||titleActionEpoch.current!==titleActionTicket||current.busy||current.loading||current.conflicts.length||current.changes.length||changes.length||aiDraftApplied.current||activeWrite.current)return;
           const requested=validateQuotationChanges(proposals,{schema:view.resolved.schema,optionIds:view.resolved.rows.flatMap(item=>item.optionId===null?[]:[item.optionId]),ownedImageKeys:view.imageKeys,overrides:view.overrides});
@@ -937,6 +950,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
           const nextDraft=requested.reduce((draft,change)=>updateQuotationEditorDraft(view.overrides,draft,change),[] as QuotationEditorChange[]);
           aiDraftApplied.current=nextDraft.length>0;
           setChanges(nextDraft);
+          generatedDraft.current={jobId,proposals};
           setApplyAll(false);setBulk(null);setMessage('검토한 AI 초안을 입력란에 반영했습니다. 확인·수정한 뒤 견적 입력 저장을 눌러주세요.');
         }}/>
       </div>

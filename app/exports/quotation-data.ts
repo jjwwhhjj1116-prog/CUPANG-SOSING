@@ -2,7 +2,7 @@ import type { QuotationRowValues } from '@/app/category-profiles';
 import { contentDetailImageKeys, savedTextOrFallback, type ProductContent } from '@/app/product-content';
 import type { WorkspaceSettings } from '@/app/workspace-settings';
 import type { ProductRecord } from '@/db/queries';
-import { calculatePrice } from '@/app/pricing';
+import { calculatePrice, calculateRepresentativePrice } from '@/app/pricing';
 import { optionSourceCostCny, optionQuotationName, quotationMainImageKeys, resolveOptionPricePolicy, type ProductOption } from '@/app/product-options';
 import type { BundleAsset } from '@/app/exports/review-bundle';
 import { quotationOptionTitle } from '@/app/quotation-option-title';
@@ -33,7 +33,11 @@ export function quotationData(product: ProductRecord, content: ProductContent, s
     detailImage: contentDetailImageKeys(content).map(filename).join('\n'),
     label: content.assets.label.value.map(filename).join('\n'),
   };
-  if (!options.length) return [{ ...base, sourcePriceCny: product.source_price_cny, supplyPrice: product.supply_price, salePrice: product.sale_price, msrp: product.msrp }];
+  if (!options.length) {
+    const policy = product.pricing_policy ? resolveOptionPricePolicy(product, settings).policy : null;
+    const price = policy?.fixedSourcing ? calculateRepresentativePrice(product.source_price_cny, policy) : null;
+    return [{ ...base, sourcePriceCny: product.source_price_cny, supplyPrice: price?.supplyPrice ?? product.supply_price, salePrice: price?.salePrice ?? product.sale_price, msrp: price?.msrp ?? product.msrp }];
+  }
   const included = options.filter(option => option.included);
   if (!included.length) throw new Error('견적서에 포함할 옵션을 한 개 이상 선택해주세요.');
   const { policy } = resolveOptionPricePolicy(product, settings);

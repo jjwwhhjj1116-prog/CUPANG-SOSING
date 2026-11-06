@@ -1681,3 +1681,14 @@ test('generic saved-target discovery and restore reject late replies after scope
     } finally { h.close(); }
   }
 });
+test('glyph controls share history and zoom alone keeps the reviewed PNG and document state',async()=>{
+ const h=fixture();try{
+ await h.click('원본 불러오기 · 수동 편집');assert.equal(h.render().props['data-workspace-dirty'],undefined);
+ await h.click('확대');assert.equal(h.render().props['data-workspace-dirty'],undefined);
+ await h.click('문구 영역 직접 추가');await h.change('문구 1 한국어','검토');
+ await h.change('문구 1 채우기','gradient');await h.change('문구 1 테두리 크기','2');await h.change('문구 1 그림자 범위','4');await h.change('문구 1 각도','90');
+ await h.click('번역 이미지 미리보기');const preview=h.calls.findLast(row=>row.action==='preview');assert.equal(preview.rows[0].rotation,90);assert.equal(preview.rows[0].textStroke.width,2);assert.equal(preview.rows[0].textShadow.blur,4);assert.equal(preview.rows[0].textFill.kind,'linear-gradient');
+ const link=h.field('편집 결과 PNG 다운로드');assert.ok(link);await h.click('확대');assert.equal(h.field('편집 결과 PNG 다운로드').props.href,link.props.href);assert.equal(h.calls.filter(row=>row.action==='preview').length,1);
+ await h.click('되돌리기');assert.equal(h.field('문구 1 각도').props.value,0);assert.equal(h.field('편집 결과 PNG 다운로드'),undefined);await h.click('다시 실행');assert.equal(h.field('문구 1 각도').props.value,90);
+ }finally{h.close();}
+});

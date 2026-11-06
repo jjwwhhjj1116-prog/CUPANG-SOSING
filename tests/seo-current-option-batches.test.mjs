@@ -1,0 +1,16 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
+const plain=value=>JSON.parse(JSON.stringify(value));
+test('45 keyed targets use 20/20/5, preserve general source50 and route shuffled nonleading ids without positional indices',async()=>{
+ const h=mobileIntakeHarness();try{const t=h.load('app/automation/translation.ts'),p=h.load('app/seo-current-policy.ts'),o=h.load('app/product-options.ts'),ctx=h.load('app/seo-composition-context.ts'),typed=h.load('app/seo-option-results.ts'),calls=[];
+ const options={schemaVersion:1,productId:'p',revision:4,updatedAt:null,rows:Array.from({length:45},(_,i)=>({...o.emptyOptionInput('different-'+(900-i*7)),originalName:'흰색 양말',translatedName:i===7?'':'기존 양말',included:true,provenance:{translatedName:i===7?'manual':'collected',color:'collected',size:'collected'}}))};
+ const context=ctx.seoCompositionContext(options),source={title:'양말',description:'',attributes:Array.from({length:50},(_,i)=>({name:'상품속성: 속성'+i,value:'일반'})),provenance:'manual',reference:'inert',category:{id:'1',path:['양말']}};
+ const composition=p.validateSeoCompositionPolicy({version:'couplus-current-composition-v1',memo:{brand:'',features:'',keywords:''},related:{source:'none',query:'',keywords:[],warnings:[]}});
+ const config={provider:'workers-ai',model:t.WORKERS_QWEN_MODEL,maxOutputTokens:4096,apiKey:'',ai:{run:async(model,input)=>{const data=JSON.parse(input.messages[1].content.split('PRODUCT_SOURCE_JSON:\n')[1].slice(0,-'\n/no_think'.length));if(data.validationDraft)return {choices:[{finish_reason:'stop',message:{role:'assistant',content:JSON.stringify(data.validationDraft)}}]};calls.push(data);const follow=Boolean(data.optionExamples);return {choices:[{finish_reason:'stop',message:{role:'assistant',content:JSON.stringify({title:follow?'':'양말',description:'',keywords:follow?[]:['양말'],attributes:data.attributes.map(pair=>({sourceIndex:pair.sourceIndex,name:pair.name,value:pair.value})),seoOptions:[...data.seoOptionTargets].reverse().map(target=>({optionId:target.id,name:'흰색 양말'})),warnings:[]})}}]};}}};
+ const review=await t.prepareTranslationReview(source,config,new Date(),composition,context),result=await t.executeTranslation(review,config);assert.deepEqual(calls.map(call=>call.seoOptionTargets.length),[20,20,5]);assert.deepEqual(calls.map(call=>call.attributes.length),[50,0,0]);assert.equal(calls[0].optionExamples,undefined);assert.equal(calls[1].optionExamples.length,3);assert.equal(review.source.attributes.length,50);assert.equal(result.draft.attributes.length,50);assert.equal(result.seoOptions.length,45);assert.equal(result.draft.title,'양말');
+ const adopted=typed.adoptSeoOptionResults(options,review,result);assert.equal(adopted.rows[7].translatedName,'');assert.ok(adopted.rows.every((row,i)=>i===7||row.translatedName==='흰색 양말'));assert.throws(()=>typed.adoptSeoOptionResults({...options,revision:5},review,result),/REVISION/);
+ assert.throws(()=>typed.validateSeoOptionResults([{optionId:'foreign',name:'양말'}],context.selectedOptions,review),/FOREIGN/);assert.throws(()=>typed.validateSeoOptionResults([{optionId:context.selectedOptions[0].id},{optionId:context.selectedOptions[0].id}],context.selectedOptions,review),/DUPLICATE/);
+ assert.deepEqual(plain(review.source),source);
+ }finally{h.close();}
+});

@@ -46,6 +46,7 @@ async function setup(company, actualNotices = false) {
 // only omitted identity is the notice correction under test. Registration
 // numbers are display metadata in both versions, never quotation identity.
 async function legacyExportFingerprint(h, source = h.source) {
+  source={...source,source:{...source.source}};delete source.labelsState;delete source.generatedAdoption;delete source.source.labelRevision;
   return h.load('app/automation/model.ts').fingerprint({ format: 'sourceflow-quotation-fields-v1',
     saved: { ...source, product: h.load('app/automation/model.ts').productFingerprintSource(source.product), settings: h.load('app/settings-fingerprint.ts').savedProductFingerprintSettings(source.settings) }, dataStartRow: 2,
     schema: h.load('app/quotation-schema.ts').getQuotationSchema(source.categoryContext.categoryId, source.categoryContext.categoryPath, source.hubSchema),

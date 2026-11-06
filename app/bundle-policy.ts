@@ -37,6 +37,7 @@ export function configuredBundlePolicy(input: unknown): BundlePolicy | null {
 export function suggestBundleQuantity(unitCostCny: number, pricing: PricePolicy, input: BundlePolicy, roundingUnit = pricing.roundingUnit): number {
   const policy = pricePolicy(pricing), bundle = bundlePolicy(input);
   if (!Number.isFinite(unitCostCny) || unitCostCny <= 0 || ![1, 10, 100, 1000].includes(roundingUnit)) throw new Error('번들 원가와 가격 처리 단위를 확인해주세요.');
+  if (policy.fixedSourcing) return policy.fixedSourcing.sourceUnitsPerPack ?? 1;
   const cost = unitCostCny * policy.exchangeRate;
   const supply = Math.round(cost / (1 - policy.supplyMargin / 100) / roundingUnit) * roundingUnit;
   const sale = Math.round(supply / (1 - policy.coupangMargin / 100) / roundingUnit) * roundingUnit;
@@ -49,6 +50,7 @@ export function suggestBundleQuantity(unitCostCny: number, pricing: PricePolicy,
 }
 
 export function initialBundleQuantity(unitCostCny: number, pricing: PricePolicy, settings: unknown): number {
+  if (pricing.fixedSourcing) return pricePolicy(pricing).fixedSourcing!.sourceUnitsPerPack ?? 1;
   if (!settings || typeof settings !== 'object' || (settings as Record<string, unknown>).bundleEnabled !== true) return 1;
   const bundle = configuredBundlePolicy(settings);
   return bundle ? suggestBundleQuantity(unitCostCny, pricing, bundle, 100) : 1;

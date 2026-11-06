@@ -1,3 +1,6 @@
+import {labelSuggestionBasis,labelSuggestionApplies} from '@/app/product-label-current-rules';
+import {CURRENT_QUOTATION_RESULT_POLICY,currentAttributeRules,mandatoryHiddenProblems} from '@/app/current-quotation-attribute-rules';
+import type { GeneratedQuotationAdoption } from '@/app/quotation-generated-adoption';
 import { couplus81221Fields, couplus81221Path } from '@/app/couplus-glove-schema';
 import { QUOTATION_TAG_TOTAL_LIMIT, QUOTATION_TAG_ITEM_LIMIT } from '@/app/quotation-keywords';
 import { quotationSeoKeywordText } from '@/app/seo-keyword-text';
@@ -18,7 +21,7 @@ import { previousRegistrationMonth, washingPrecautionsText,couplusSettingDraftVa
 import {compileHubQuotationSchema,validateHubSchemaSnapshot,type HubSchemaSnapshot,type HubWireField} from '@/app/supplier-hub-schema';
 import { quotationScalarValueIssues, quotationValueLength } from '@/app/quotation-scalar-constraints';
 import type {CouplusQuotationInput} from '@/app/couplus-quotation-inputs';
-import { isQuotationLegalNotice, quotationNoticeInput } from '@/app/quotation-notice-inputs';
+import { isQuotationAutomaticLegalNotice, quotationNoticeInput } from '@/app/quotation-notice-inputs';
 import { quotationPackagedWeightManual, quotationPackagedWeightSourceIssues } from '@/app/quotation-packaged-weight';
 import { isPackagedDimensionsMmField, isCanonicalPackagedDimensionsMm, normalizePackagedDimensionsMm } from '@/app/quotation-packaged-dimensions';
 import type {TemplateDefinition} from '@/app/category-profiles';
@@ -28,6 +31,7 @@ import {validateOfficialWorkbookEvidence} from '@/app/official-workbook-evidence
 import { quotationPriceInputs, quotationPriceTargets } from '@/app/quotation-price-targets';
 import { quotationSeoDocumentTitle } from '@/app/seo-title-document';
 import type { DetailEditorInputs } from '@/app/detail-editor-inputs';
+import { productLabelFields, validateProductLabelOverrides, validateProductLabelStructure, type ProductLabelsState, type ProductLabelFixedKey } from '@/app/product-label';
 import type { StageTwoMsrp } from '@/app/stage-two-msrp';
 import { readInitialLegalNotices } from '@/app/initial-legal-notices';
 import {prioritizedContentLabelFields,prioritizedProductAttributes,productFactDetailDescription,productFactKey,productMaterialChoice} from '@/app/product-fact-priority';
@@ -72,13 +76,17 @@ export type QuotationSchema = {
 };
 export type QuotationOverrides = { common: Record<string, string>; options: Record<string, Record<string, string>> };
 export type QuotationChange = { fieldKey: string; optionId: string | null; value: string | null };
-export type QuotationSource = 'manual-option' | 'manual-common' | 'schema' | 'content' | 'settings' | 'option' | 'pricing' | 'product' | 'empty' | 'couplus-default';
+export type QuotationSource = 'manual-option' | 'manual-common' | 'schema' | 'content' | 'settings' | 'option' | 'pricing' | 'product' | 'empty' | 'couplus-default' | 'generated' | 'label-draft';
+/** Generated proposals can replace only the resolver's automatic proposal layer. */
+export function quotationGeneratedSourceWritable(source: string | undefined): boolean {
+  return source !== undefined && ['empty', 'schema', 'couplus-default', 'generated','label-draft'].includes(source);
+}
 export type ResolvedQuotationField = { value: string; source: QuotationSource; needsReview: boolean; issues: string[]; validationIssues?: string[]; reviewMessages?: string[] };
 export type ResolvedQuotationRow = { optionId: string | null; optionLabel: string; included: boolean; fields: Record<string, ResolvedQuotationField> };
 export type ResolvedQuotation = { schema: QuotationSchema; rows: ResolvedQuotationRow[]; issues: string[]; validationIssues?: string[]; reviewMessages?: string[]; customLabels?: CustomLabel[] };
 export type QuotationFieldsView = {
   savedValidation?:import('@/app/quotation-save-validation').SavedQuotationValidation;
-  revision: number; inputFingerprint: string; overrides: QuotationOverrides; legacyOverrides?: QuotationOverrides; resolved: ResolvedQuotation; automatic: ResolvedQuotation;
+  revision: number; inputFingerprint: string; generatedAdoption?: GeneratedQuotationAdoption; overrides: QuotationOverrides; legacyOverrides?: QuotationOverrides; resolved: ResolvedQuotation; automatic: ResolvedQuotation;
   categoryContext: { source: 'profile' | 'collection' | 'unknown'; profileId: string | null; categoryId: string | null; categoryPath: string[] };
   productVersion: string; contentRevision: number; optionRevision: number; updatedAt: string | null;
   imageKeys: string[]; submissionReady: false;
@@ -392,7 +400,7 @@ export function applyQuotationChanges(current: QuotationOverrides, changes: read
 }
 
 export type QuotationResolverInput = { categoryId: string | null; categoryPath?: readonly string[]; product: ProductRecord;
-  content: ProductContent; settings: WorkspaceSettings; options: ProductOptions | readonly ProductOption[]; overrides?: QuotationOverrides; packagingBasis?:QuotationPackagingBasis;hubSchema?:HubSchemaSnapshot; template?:TemplateDefinition|null };
+  content: ProductContent; settings: WorkspaceSettings; options: ProductOptions | readonly ProductOption[]; overrides?: QuotationOverrides; labelsState?: ProductLabelsState;labelSettingsPayload?:string|null;labelManualQuotationOverrides?:QuotationOverrides; generatedAdoption?: GeneratedQuotationAdoption; packagingBasis?:QuotationPackagingBasis;hubSchema?:HubSchemaSnapshot; template?:TemplateDefinition|null };
 type Automatic = { value: string; source: QuotationSource; issues?: string[] };
 const literal = (value: unknown, source: QuotationSource): Automatic => ({ value: value === null || value === undefined ? '' : String(value), source: value === '' || value === null || value === undefined ? 'empty' : source });
 const htmlEscape = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -406,7 +414,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
 export function resolveQuotationFieldsPair(input: QuotationResolverInput): { automatic: ResolvedQuotation; resolved: ResolvedQuotation } {
   if(input.packagingBasis!==undefined)validateQuotationPackagingBasis(input.packagingBasis);
   const schema = getQuotationSchema(input.categoryId, input.categoryPath,input.hubSchema,input.template);
-  const automaticInput = { ...input };
+  const automaticInput = { ...input,labelManualQuotationOverrides:input.overrides };
   delete automaticInput.overrides;
   delete automaticInput.packagingBasis;
   return {
@@ -464,18 +472,16 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
     return option && option.widthCm && option.lengthCm && option.heightCm
       ? literal(`${option.widthCm} × ${option.lengthCm} × ${option.heightCm} cm`, 'option') : contentValue(content.label.dimensions);
   }
-  function auto(definition: QuotationField, option: ProductOption | null): Automatic {
-    const initialNotice = initialNotices.get(definition.id);
-    if (initialNotice) return initialNotice;
+  function currentAuto(definition: QuotationField, option: ProductOption | null): Automatic {
     // A live field keeps its category/wire identity. Shared source meanings are
     // restricted to complete, observed labels and their section/group.
-    const noticeBinding=definition.hubWire&&isQuotationLegalNotice(definition)
+    const noticeBinding=definition.hubWire&&isQuotationAutomaticLegalNotice(definition)
       ? notice80719.find(([,label])=>label===definition.label)?.[0]:undefined;
     // Some earlier captures reuse a recorded notice ID for a same-labelled
     // control in another legal array. Keep that ID for saved overrides, but
     // automatic sources require the exact notice wire or an explicit Hub input.
     const id = definition.hubInput ?? (definition.hubWire && definition.section === 'legal'
-      && definition.visibility === 'common' && !isQuotationLegalNotice(definition)
+      && definition.visibility === 'common' && !isQuotationAutomaticLegalNotice(definition)
       ? '' : quotationNoticeInput(definition) ?? noticeBinding ?? definition.id);
     const settingValue=(stored:string):Automatic=>{
       if(!definition.couplusSetting)return literal(stored,'settings');
@@ -484,17 +490,18 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
       // keep that explicit wire value instead of applying another default.
       return value===undefined?literal('','empty'):{value,source:'settings'};
     };
-    if(definition.hubWire&&definition.section==='product'&&definition.visibility==='exposed'){
+    if(definition.hubWire?.path.join('.')==='productPage.commonAttributes.exposedAttributes'&&definition.hubWire.name===definition.label
+      &&definition.hubWire.nameKey==='attributeName'&&definition.hubWire.valueKey==='attributeValue'&&definition.section==='product'&&definition.visibility==='exposed'){
       if(definition.label==='색상')return option?.provenance.color==='manual'?{value:option.color??'',source:'option'}:literal(option?.color,'option');
       if(definition.label==='수량')return literal(option?.unitsPerPack,'option');
       if(definition.label==='사이즈')return option?.provenance.size==='manual'?{value:option.size??'',source:'option'}:literal(option?.size,'option');
     }
     // Match the complete observed notice name, never a hidden attribute or a
     // similarly named notice. Manual content (including blanks) keeps priority.
-    if (isQuotationLegalNotice(definition) && definition.label === '세탁방법 및 취급시 주의사항') {
+    if (isQuotationAutomaticLegalNotice(definition) && definition.label === '세탁방법 및 취급시 주의사항') {
       return contentValue(content.label.washingPrecautions ?? { value: '', provenance: 'unverified', updatedAt: null }, washingPrecautionsText(settings));
     }
-    if (isQuotationLegalNotice(definition) && ['출시년월', '제조년월'].includes(definition.label)) {
+    if (isQuotationAutomaticLegalNotice(definition) && ['출시년월', '제조년월'].includes(definition.label)) {
       return contentValue(content.label.releaseDate ?? { value: '', provenance: 'unverified', updatedAt: null },
         settings.manufactureDatePreviousMonth ? previousRegistrationMonth(product.created_at) : '');
     }
@@ -611,6 +618,60 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
       default: return literal('', 'empty');
     }
   }
+  const labels = input.labelsState;
+  if (labels && (labels.productId !== product.id || labels.schemaVersion !== 1)) throw Error('Quotation label source mismatch');
+  const labelOverrides = labels && validateProductLabelOverrides(labels.overrides);
+  const fixedLabelKeys = new Set<string>(productLabelFields.map(field => field.key));
+  const activeLabelKeys = labels?.structure && new Set(validateProductLabelStructure(labels.structure).map(field => field.id));
+  const labelBasis=labelSuggestionBasis({content:input.content,options:Array.isArray(input.options)?{schemaVersion:1,productId:product.id,revision:0,updatedAt:null,rows:[...options]}:input.options as ProductOptions,settings,categoryId:schema.categoryId,categoryPath:schema.categoryPath,overrides:input.labelManualQuotationOverrides??overrides,schema,settingsPayload:input.labelSettingsPayload});
+  function labelSource(key: keyof ProductContent['label'], option: ProductOption | null, fallback?: string,allowDraft=true): Automatic {
+    if (labelOverrides && fixedLabelKeys.has(key)) {
+      if (activeLabelKeys && !activeLabelKeys.has(key as ProductLabelFixedKey)) return { value: '', source: 'content' };
+      const specific = option && labelOverrides.options[option.id];
+      if (specific && Object.hasOwn(specific, key)) return { value: specific[key as ProductLabelFixedKey]!, source: 'content' };
+      if (Object.hasOwn(labelOverrides.common, key)) return { value: labelOverrides.common[key as ProductLabelFixedKey]!, source: 'content' };
+    }
+    const field=content.label[key];
+    const suggestion=allowDraft&&labels?.automaticSuggestions&&labelSuggestionApplies(labels.automaticSuggestions,option?.id??null,labelBasis)?labels.automaticSuggestions.entries.find(entry=>entry.optionId===(option?.id??null)&&entry.fieldKey===key):undefined;
+    if(suggestion&&(!field?.value||['generated','unverified'].includes(field.provenance)||/[㐀-䶿一-鿿]/u.test(field.value))&&field?.provenance!=='manual')return{value:suggestion.value,source:'label-draft'};
+    if(field && field.provenance!=='manual' && (['generated','unverified'].includes(field.provenance)||isCouplusNotApplicableValue(field.value)||/\p{Script=Han}/u.test(field.value)))return literal(fallback,'settings');
+    return contentValue(field ?? { value: '', provenance: 'unverified', updatedAt: null }, fallback);
+  }
+  function auto(definition: QuotationField, option: ProductOption | null): Automatic {
+    let current: Automatic;
+    const notice = isQuotationAutomaticLegalNotice(definition) ? quotationNoticeInput(definition) ?? notice80719.find(([, name]) => name === definition.label)?.[0] ?? definition.id : undefined;
+    const keys: Readonly<Record<string, keyof ProductContent['label']>> = {
+      noticeMaterial: 'material', noticeComponents: 'components', noticeCountryOfOrigin: 'countryOfOrigin', noticeServiceContact: 'contact',
+      noticeQualityAssurance: 'qualityAssurance', noticeReleaseDate: 'releaseDate', noticeCaution: 'precautions', noticeKind: 'productType',
+      noticeSpecifications: 'specifications', noticeSizeWeight: 'dimensions',
+    };
+    if (notice === 'noticeManufacturerImporter') {
+      const manufacturer = labelSource('manufacturer', option, settings.manufacturer), importer = labelSource('importer', option, settings.importer);
+      current = { value: [manufacturer.value && `제조자: ${manufacturer.value}`, importer.value && `수입자: ${importer.value}`].filter(Boolean).join(' / '),
+        source: manufacturer.source === 'content' || importer.source === 'content' ? 'content' : manufacturer.value || importer.value ? 'settings' : 'empty' };
+    } else if (notice && keys[notice]) current = labelSource(keys[notice], option, notice === 'noticeServiceContact' ? settings.serviceContact : notice === 'noticeReleaseDate' && settings.manufactureDatePreviousMonth ? previousRegistrationMonth(product.created_at) : undefined);
+    else if (isQuotationAutomaticLegalNotice(definition) && definition.label === '세탁방법 및 취급시 주의사항') current = labelSource('washingPrecautions', option, washingPrecautionsText(settings));
+    else {
+      const live = notice === 'color' || notice === 'noticeDimensions' || isQuotationAutomaticLegalNotice(definition) && ['출시년월', '제조년월'].includes(definition.label);
+      current = !live && initialNotices.has(definition.id) ? initialNotices.get(definition.id)! : currentAuto(definition, option);
+    }
+    const wire = definition.hubWire;
+    if (option && !definition.readOnly && !definition.hubInput && definition.section === 'product' && definition.visibility === 'exposed'
+      && definition.type === 'text' && !definition.numericValue && !definition.numericText && wire?.path.join('.') === 'productPage.commonAttributes.exposedAttributes'
+      && wire.name === '수량' && definition.label === wire.name && wire.nameKey === 'attributeName' && wire.valueKey === 'attributeValue') {
+      const net = labelSource('netContents', option,undefined,false), components = labelSource('components', option);
+      const explicitNet = labelOverrides && (Object.hasOwn(labelOverrides.options[option.id] ?? {}, 'netContents') || Object.hasOwn(labelOverrides.common, 'netContents'));
+      const value = explicitNet || net.source === 'content' ? net.value : net.value || components.value;
+      const match = /^(?:[가-힣A-Za-z\s·-]{1,80}?)?([1-9]\d*)\s*(쌍|개|세트|박스|팩|매|장)$/u.exec(value.trim());
+      if (net.source === 'content' && (!value.trim() || isCouplusNotApplicableValue(value))) current = { value, source: 'content' };
+      else if (match && ['manual', 'collected'].includes(option.provenance.unitsPerPack) && Number(match[1]) === option.unitsPerPack) current = { value: `${match[1]}${match[2]}`, source: 'content' };
+    }
+    if(current.source==='option' && option && ['색상','사이즈'].includes(definition.label)){
+      const key=definition.label==='색상'?'color':'size';
+      if(option.provenance[key]!=='manual' && (/\p{Script=Han}/u.test(current.value)||quotationValueIssues(definition,current.value,ownedKeys).length))current={value:'',source:'empty'};
+    }
+    return current.source === 'empty' && !current.issues?.length ? initialNotices.get(definition.id) ?? current : current;
+  }
   const rows = [null, ...options].map((option): ResolvedQuotationRow => {
     const optionId = option?.id ?? null;
     const specific = optionId !== null && Object.hasOwn(overrides.options, optionId) ? overrides.options[optionId] : undefined;
@@ -654,6 +715,9 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
           if (value !== undefined && !quotationValueIssues(definition, value, ownedKeys).length) automatic = { value, source: 'content' };
         }
       }
+      const generated = input.generatedAdoption?.entries.find(entry => entry.optionId === optionId && entry.fieldKey === definition.id);
+      if (generated && quotationGeneratedSourceWritable(automatic.source) && !automatic.issues?.length
+        && !quotationValueIssues(definition, generated.value, ownedKeys).length) automatic = { value: generated.value, source: 'generated' };
       const preset = couplusQuotationDefault(schema.categoryId, definition);
       if (automatic.source === 'empty' && !automatic.issues?.length && preset !== undefined) automatic = {
         value: preset, source: 'couplus-default',
@@ -681,6 +745,7 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
         if (description.provenance === 'collected' && /\p{Script=Han}/u.test(description.value))
           reviewMessages.push('수집 원문의 중국어 상세 설명이 남아 있습니다. 1단계 또는 5단계에서 설명을 확인하고 번역·수정해주세요.');
       }
+      if (source === 'generated') reviewMessages.push('AI 생성 초안입니다. 실제 상품 자료와 비교해 확인해주세요.');
       if (source === 'couplus-default') reviewMessages.push('쿠플러스 참조 화면의 양식 기본값입니다. 실제 상품의 해당 여부를 확인해주세요.');
       if (definition.workbookWire?.requirement === 'conditional') reviewMessages.push(['해당 상품에 조건이 적용되는지 확인해주세요.', definition.help].filter(Boolean).join('\n'));
       else if (definition.reviewRequired && (value.trim() || hasSelectedEmptyQuotationChoice(definition, { value, source }))) reviewMessages.push('실제 상품·증빙과 일치하는지 확인해주세요.');
@@ -739,5 +804,12 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
     if (imageIssues.length && fields.detailImages) { fields.detailImages.needsReview = true; fields.detailImages.issues.push(...imageIssues); }
     return { optionId, optionLabel: option ? option.translatedName || option.originalName || option.supplierSku || option.id : '상품 공통값', included: option ? option.included : includeCommonRow, fields };
   });
+  if(input.generatedAdoption?.resultPolicy===CURRENT_QUOTATION_RESULT_POLICY&&input.hubSchema){
+    const rules=currentAttributeRules(input.hubSchema,schema.fields);
+    for(const row of rows.filter(row=>row.included))for(const name of mandatoryHiddenProblems(rules,key=>row.fields[key]?.value,schema.fields,'application')){
+      const rule=rules.find(rule=>rule.name===name&&rule.hidden)!,message=`필수 비노출 속성: ${name}`;validationIssues.push(message);issues.push(message);
+      const cell=row.fields[rule.fieldKey];if(cell){cell.validationIssues!.push(message);cell.issues.push(message);cell.needsReview=true;}
+    }
+  }
   return { schema, rows, issues, validationIssues, reviewMessages, customLabels: (content.customLabels ?? []).map(label => ({ ...label })) };
 }

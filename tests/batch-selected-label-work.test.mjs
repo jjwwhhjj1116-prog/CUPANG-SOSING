@@ -18,7 +18,7 @@ function initial(){
 }
 function fixture({intercept,complete,prepare,afterWrite,currentCheck,renderImage,beforeMutation}={}){
  let view=initial();prepare?.(view);const calls=[],plans=[],attachments=[],controller=new AbortController();let scope=true,checks=0,onDispatch;
- const refresh=()=>{for(const row of view.rows){const own=row.optionId?view.overrides.options[row.optionId]??{}:{};row.values={...row.automatic,...view.overrides.common,...own};row.sources=Object.fromEntries(Object.keys(row.values).map(key=>[key,Object.hasOwn(own,key)?'manual-option':Object.hasOwn(view.overrides.common,key)?'manual-common':row.automatic[key]?'content':'empty']));}};
+ const refresh=()=>{for(const row of view.rows){const own=row.optionId?view.overrides.options[row.optionId]??{}:{};row.values={...row.automatic,...view.overrides.common,...own};row.sources=Object.fromEntries(Object.keys(row.values).map(key=>[key,Object.hasOwn(own,key)?'manual-option':Object.hasOwn(view.overrides.common,key)?'manual-common':row.automatic[key]?'content':'empty']));for(const entry of view.automaticSuggestions?.entries??[])if(entry.optionId===row.optionId&&!Object.hasOwn(own,entry.fieldKey)&&!Object.hasOwn(view.overrides.common,entry.fieldKey)){row.automatic[entry.fieldKey]=entry.value;row.values[entry.fieldKey]=entry.value;row.sources[entry.fieldKey]='label-suggestion';}}};
  refresh();const exports={};
  const render=async plan=>{plans.push(clone(plan));if(renderImage)return renderImage(plan);return{blob:new Blob([png],{type:'image/png'}),width:800,height:500};};
  const dependencies={
@@ -42,7 +42,7 @@ function fixture({intercept,complete,prepare,afterWrite,currentCheck,renderImage
   assert.ok(url.endsWith('/product-labels'));
   if(init.method==='PUT'){
    const body=JSON.parse(init.body);assert.equal(body.expectedRevision,view.revision);assert.equal(body.expectedInputFingerprint,view.inputFingerprint);
-   view.overrides=clone(labels.applyProductLabelChanges(view.overrides,body.changes));view.revision++;view.inputFingerprint=(view.revision+1).toString(16).padStart(64,'0');
+   view.overrides=clone(labels.applyProductLabelChanges(view.overrides,body.changes));if(body.automaticProcessing){const processing=body.automaticProcessing;view.automaticSuggestions={policy:'couplus-current-label-suggestion-v1',basis:'synthetic server basis',entries:[...(view.automaticSuggestions?.entries??[]).filter(entry=>entry.optionId!==processing.optionId),...Object.entries(processing.values).map(([fieldKey,value])=>({optionId:processing.optionId,fieldKey,value,classification:'suggestion'}))]};}view.revision++;view.inputFingerprint=(view.revision+1).toString(16).padStart(64,'0');
    view.productVersion=new Date(Date.parse(view.productVersion)+1).toISOString();view.updatedAt=view.productVersion;refresh();
    await afterWrite?.(view);
   }
@@ -55,10 +55,10 @@ function fixture({intercept,complete,prepare,afterWrite,currentCheck,renderImage
 
 test('selected label work generates once per included option, preserves common/manual blanks, saves only proposals and renders draft PNGs',async()=>{
  const f=fixture({prepare(view){view.overrides.common.netContents='검토한 1쌍';view.overrides.options.one={material:''};}}),before=clone(f.view),result=await f.run();
- assert.equal(result.status,'draft');assert.equal(result.completedOptions,2);assert.equal(result.uncertain,false);assert.deepEqual(f.attachments,['one','two']);assert.equal(f.plans.length,2);
+ assert.equal(result.status,'draft',result.message);assert.equal(result.completedOptions,2);assert.equal(result.uncertain,false);assert.deepEqual(f.attachments,['one','two']);assert.equal(f.plans.length,2);
  assert.deepEqual(f.view.overrides.common,before.overrides.common);assert.equal(f.view.rows[1].values.material,'');assert.deepEqual(f.view.rows[3],before.rows[3]);
  const writes=f.calls.filter(call=>call.init.method==='PUT').map(call=>JSON.parse(call.init.body));
- assert.deepEqual(writes.map(write=>write.changes.map(change=>change.fieldKey)),[['productType'],['material','productType']]);
+ assert.deepEqual(writes.map(write=>{assert.deepEqual(write.changes,[]);return Object.keys(write.automaticProcessing.values);}),[['productType'],['material','productType']]);
  assert.equal(f.calls.filter(call=>call.url.endsWith('/product-label-draft')).length,2);assert.ok(f.checks>f.calls.length);
  assert.match(result.message,/내용.*PNG.*검토/u);
 });
@@ -152,7 +152,7 @@ test('lost or invalid AI draft acknowledgments retain uncertainty before any lab
 
 test('a committed text save with a lost acknowledgement is proven by one read and is never PUT twice',async()=>{
  let lost=true;const f=fixture({afterWrite(){if(lost){lost=false;throw Error('committed text ACK lost');}}}),result=await f.run();
- assert.equal(result.status,'draft');assert.equal(result.uncertain,false);assert.equal(result.completedOptions,2);
+ assert.equal(result.status,'draft',result.message);assert.equal(result.uncertain,false);assert.equal(result.completedOptions,2);
  assert.equal(f.calls.filter(call=>call.init.method==='PUT').length,2,'Exactly one text PUT per included option');
  assert.equal(f.calls.filter(call=>call.url.endsWith('/product-label-draft')).length,2,'No regenerated proposal on lost ACK');
  assert.equal(f.view.rows[1].values.material,'스펀지');assert.deepEqual(f.attachments,['one','two']);
@@ -180,4 +180,13 @@ test('real label draft/save/upload/reference handlers persist the proposed value
   for(const row of included){const next=saved.rows.find(item=>item.optionId===row.optionId),key=quote.resolved.rows.find(item=>item.optionId===row.optionId).fields.labelImages.value;assert.equal(next.values.material,'실리콘');assert.match(key,/owner\/quotation-label-[a-f0-9]{64}\.png/u);assert.deepEqual(h.objects.get(key),png);}
   assert.equal(calls.filter(call=>call.url==='/api/files'&&call.method==='POST').length,included.length);assert.equal(h.network.length,beforeNetwork,'No live source/provider requests');
  }finally{h.close();}
+});
+
+test('field-local references verify, save and render both included options without stopping the PNG queue',async()=>{
+ const f=fixture({intercept(url,init,state){if(!url.endsWith('/product-label-draft'))return;
+  const request=JSON.parse(init.body),view=state.view,values=request.optionId==='one'?{netContents:'상세정보참조',material:'스펀지',productType:'상세정보참조'}:{netContents:'상세정보참조',material:'상세정보참조',productType:'상세정보참조'};
+  return Response.json({productId:view.productId,optionId:request.optionId,profileId:null,productVersion:view.productVersion,labelRevision:view.revision,inputFingerprint:view.inputFingerprint,values,warnings:['근거 부족: 상세정보참조'],provider:draftModule.PRODUCT_LABEL_DRAFT_PROVIDER,model:draftModule.PRODUCT_LABEL_DRAFT_MODEL,generatedAt:'2026-10-23T00:00:01.000Z'});
+ }}),result=await f.run();
+ assert.equal(result.status,'draft',result.message);assert.equal(result.completedOptions,2);assert.equal(f.plans.length,2);assert.deepEqual(f.attachments,['one','two']);
+ assert.ok(f.plans[0].rows.some(row=>row[1]==='스펀지'));assert.ok(f.plans[1].rows.filter(row=>row[1]==='상세정보참조').length===3);
 });

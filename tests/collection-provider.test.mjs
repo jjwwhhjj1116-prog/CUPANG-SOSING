@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -10,7 +11,7 @@ import {parseProductJsonLd} from '../extensions/supplier-hub/product-jsonld.mjs'
 function load(file,deps={}) {
  const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
  {exports,Error,URL,URLSearchParams,Date,TextEncoder,TextDecoder,Uint8Array,AbortController,setTimeout,clearTimeout,crypto:webcrypto,fetch:deps.fetch,process:{env:{NODE_ENV:'production'}},
- require(name){if(name in deps)return deps[name];if(name==='parse5')return parse5;if(name==='next/server')return {NextResponse:Response};if(name==='@/extensions/supplier-hub/product-jsonld.mjs')return{parseProductJsonLd};return load(name.slice(2)+'.ts',deps);}});return exports;
+ require(name){if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;if(name in deps)return deps[name];if(name==='parse5')return parse5;if(name==='next/server')return {NextResponse:Response};if(name==='@/extensions/supplier-hub/product-jsonld.mjs')return{parseProductJsonLd};return load(name.slice(2)+'.ts',deps);}});return exports;
 }
 const bindings={ALIBABA_PRODUCT_API_ENABLED:'true',ALIBABA_APP_KEY:'12345',ALIBABA_APP_SECRET:'test-secret',ALIBABA_ACCESS_TOKEN:'test-token'};
 const url='https://detail.1688.com/offer/813724060928.html';

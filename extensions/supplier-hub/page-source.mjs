@@ -1,3 +1,4 @@
+import {readPagePriceBasis,pagePriceDefault,validatePagePriceBasis} from './page-source-price-basis.mjs';
 // Independent, inert interpretation of the current product document. No vendor
 // code, requests, cookies, globals, eval or executable script injection.
 import {readPageDomFacts,validatePageDomFacts,mergePageDomFacts,validatePagePackaging} from './page-dom-facts.mjs';
@@ -5,6 +6,7 @@ import {isUnrelatedProductElement} from './page-dom-sections.mjs';
 import {parseAlibabaDescription} from './alibaba-description.mjs';
 import {readPageContextLiteral} from './page-context-literal.mjs';
 export const PAGE_SOURCE_LIMIT=512*1024;
+export const PAGE_SOURCE_OPTION_LIMIT=500;
 const object=value=>!!value&&typeof value==='object'&&!Array.isArray(value);
 const plain=(value,max)=>typeof value==='string'?value.replace(/[\u0000-\u001f]/g,' ').trim().slice(0,max):'';
 const price=value=>typeof value==='number'&&Number.isFinite(value)&&value>0&&value<=1e8?value:typeof value==='string'&&/^\d+(?:\.\d+)?$/.test(value.trim())?price(Number(value)):null;
@@ -344,7 +346,7 @@ function sourceContextProduct(scripts,offerId){
  }
  for(const key of ['offerId','productId']){const optionalId=literalChild(model,key);if(optionalId&&!sameId(optionalId.value))fail();}
  const title=literalChild(detail,'subject',true).value;if(!plain(title,500)||plain(title,500)!==title||literalChild(path(json,'tempModel'),'offerTitle',true).value!==title)fail();
- const map=literalChild(model,'skuInfoMap',true);if(!object(map.value)||!Object.keys(map.value).length||Object.keys(map.value).length>200)fail();
+ const map=literalChild(model,'skuInfoMap',true);if(!object(map.value)||!Object.keys(map.value).length||Object.keys(map.value).length>PAGE_SOURCE_OPTION_LIMIT)fail();
  const skus=new Map(),stocks=new Map();for(const [name,rows] of ownLiteralFields(map)){
   if(rows.length!==1)fail();const row=rows[0],sku=literalChild(row,'skuId',true).value,label=literalChild(row,'specAttrs',true).value;
   const id=typeof sku==='number'&&Number.isSafeInteger(sku)&&sku>0?String(sku):typeof sku==='string'&&/^\d{1,30}$/u.test(sku)?sku:null;
@@ -354,36 +356,51 @@ function sourceContextProduct(scripts,offerId){
  }
  // Supplier order minima are not the number of pieces in a retail pack.
  const trade=literalChild(path(global,'model'),'tradeModel'),main=literalChild(data,'mainPrice'),minima=[];
- const addMinimum=value=>{if(value==null)return;if(!Number.isSafeInteger(value)||value<1)fail();minima.push(value);};
- const addTiers=value=>{if(value==null)return;if(!Array.isArray(value)||value.length>200)fail();for(const row of value)if(!object(row)||!Number.isSafeInteger(row.beginAmount)||row.beginAmount<1)fail();if(value.length)addMinimum(Math.min(...value.map(row=>row.beginAmount)));};
- if(trade){identity(trade);addMinimum(trade.value.beginAmount);addTiers(trade.value.offerPriceModel?.currentPrices);}
- if(main){const fields=literalChild(main,'fields',true);if(fields.value.uiType!=='od_main_price')fail();addMinimum(fields.value.finalPriceModel?.tradeWithoutPromotion?.offerBeginAmount);addTiers(fields.value.priceModel?.currentPrices);}
- for(const value of [model.value.beginAmount,model.value.minOrderQuantity])addMinimum(value);
- if(new Set(minima).size>1)fail();const minimumOrder=minima[0]??null;
+ const sourceEvidence={format:'yoofam-page-source-evidence-v1',orderMinimums:[],priceTierStarts:[]};
+ const addMinimum=(path,value)=>{if(value==null)return;if(!Number.isSafeInteger(value)||value<1)fail();minima.push(value);sourceEvidence.orderMinimums.push({path,value});};
+ const addTiers=(path,value)=>{if(value==null)return;if(!Array.isArray(value)||value.length>200)fail();for(const row of value)if(!object(row)||!Number.isSafeInteger(row.beginAmount)||row.beginAmount<1)fail();sourceEvidence.priceTierStarts.push({path,values:value.map(row=>row.beginAmount)});};
+ if(trade){identity(trade);addMinimum('result.global.globalData.model.tradeModel.beginAmount',trade.value.beginAmount);addMinimum('result.global.globalData.model.tradeModel.tradeWithoutPromotion.offerBeginAmount',trade.value.tradeWithoutPromotion?.offerBeginAmount);addTiers('result.global.globalData.model.tradeModel.offerPriceModel.currentPrices',trade.value.offerPriceModel?.currentPrices);}
+ if(main){const fields=literalChild(main,'fields',true);if(fields.value.uiType!=='od_main_price')fail();addMinimum('result.data.mainPrice.fields.finalPriceModel.tradeWithoutPromotion.offerBeginAmount',fields.value.finalPriceModel?.tradeWithoutPromotion?.offerBeginAmount);addTiers('result.data.mainPrice.fields.priceModel.currentPrices',fields.value.priceModel?.currentPrices);}
+ for(const key of ['beginAmount','minOrderQuantity'])addMinimum('result.data.Root.fields.dataJson.skuModel.'+key,model.value[key]);
+ // Tier thresholds are price ranges, not independent declarations of the order minimum.
+ const minimumOrder=new Set(minima).size>1?null:minima[0]??null;
  const attributes=[],known=new Map();for(const pair of literalArrayItems(path(detail,'featureAttributes'))){
   const field=(key,max)=>{const value=literalChild(pair,key,true).value;if(typeof value!=='string'||!value.trim()||value.length>max||/[\u0000-\u001f]/u.test(value))fail();return value.trim();};
   const name=field('name',190),value=field('value',1000),key=name.toLowerCase();if(known.has(key)){if(known.get(key)!==value)fail();continue;}known.set(key,value);attributes.push({name,value});
  }
  const packaging=new Map(),pack=path(data,'productPackInfo','fields');
  if(literalChild(pack,'uiType',true).value!=='od_product_pack_info'||literalChild(pack,'label',true).value!=='商品件重尺')fail();
- const scale=path(pack,'pieceWeightScale');if(literalChild(scale,'skuDimensionCount',true).value!==1)fail();
- const expected={sku1:'颜色',length:'长(cm)',width:'宽(cm)',height:'高(cm)',volume:'体积(cm³)',weight:'重量(g)'},columns=new Set();
- // The live Korean page localizes sku1's display header; measurement units remain exact.
- for(const column of literalArrayItems(path(scale,'columnList'))){const name=literalChild(column,'name',true).value,label=literalChild(column,'label',true).value;if(!Object.hasOwn(expected,name)||columns.has(name)||!(label===expected[name]||name==='sku1'&&label==='색상'))fail();columns.add(name);}
- if(columns.size!==Object.keys(expected).length)fail();
- const rows=literalArrayItems(path(scale,'pieceWeightScaleInfo'),200);if(rows.length!==skus.size)fail();
+ const scale=path(pack,'pieceWeightScale'),dimensions=literalChild(scale,'skuDimensionCount',true).value;if(![0,1,2].includes(dimensions))fail();
+ const expected={length:'长(cm)',width:'宽(cm)',height:'高(cm)',volume:'体积(cm³)',weight:'重量(g)'},columns=new Set();
+ const props=dimensions?literalArrayItems(path(model,'skuProps'),2):[];if(dimensions&&props.length!==dimensions)fail();
+ for(const column of literalArrayItems(path(scale,'columnList'))){
+  const name=literalChild(column,'name',true).value,label=literalChild(column,'label',true).value;
+  if(columns.has(name))fail();columns.add(name);
+  if(Object.hasOwn(expected,name)){if(label!==expected[name])fail();continue;}
+  const index=name==='sku1'?0:name==='sku2'?1:-1;if(index<0||index>=dimensions)fail();
+  const prop=literalChild(props[index],'prop',true).value,fid=literalChild(props[index],'fid',true).value;
+  if(!plain(prop,190)||prop!==plain(prop,190)||!Number.isSafeInteger(fid)||fid<1||literalChild(column,'fid',true).value!==fid||!(label===prop||prop==='颜色'&&label==='색상'))fail();
+ }
+ if(columns.size!==Object.keys(expected).length+dimensions)fail();
+ const rows=literalArrayItems(path(scale,'pieceWeightScaleInfo'),PAGE_SOURCE_OPTION_LIMIT);if(rows.length!==(dimensions?skus.size:1))fail();
  for(const row of rows){
-  const raw=literalChild(row,'skuId',true).value,sku=typeof raw==='number'&&Number.isSafeInteger(raw)&&raw>0?String(raw):raw;
-  if(typeof sku!=='string'||!skus.has(sku)||packaging.has(sku)||literalChild(row,'sku1',true).value!==skus.get(sku))fail();
+  let sku;
+  if(dimensions){
+   const raw=literalChild(row,'skuId',true).value;sku=typeof raw==='number'&&Number.isSafeInteger(raw)&&raw>0?String(raw):raw;
+   const parts=Array.from({length:dimensions},(_,index)=>literalChild(row,'sku'+(index+1),true).value);
+   if(parts.some(value=>typeof value!=='string'||!value||dimensions===2&&value.includes('&gt;')))fail();
+   if(typeof sku!=='string'||!skus.has(sku)||packaging.has(sku)||parts.join('&gt;')!==skus.get(sku))fail();
+  }else if([...ownLiteralFields(row).keys()].some(key=>!['weight','length','width','height','volume'].includes(key)))fail();
   const value={source:'package-table'};
   for(const [from,to,multiplier] of [['weight','weightG',1],['length','lengthMm',10],['width','widthMm',10],['height','heightMm',10]]){
    const amount=literalChild(row,from,true).value;if(typeof amount!=='number'||!Number.isFinite(amount)||amount<0)fail();if(amount!==0)value[to]=amount*multiplier;
   }
-  packaging.set(sku,Object.keys(value).length>1?validatePagePackaging(value):null);
+  const measured=Object.keys(value).length>1?validatePagePackaging(value):null;
+  if(dimensions)packaging.set(sku,measured);else if(measured)sourceEvidence.commonPackaging={scope:'offer-common',packaging:measured};
  }
  const description=path(data,'description','fields'),detailUrl=literalChild(description,'detailUrl',true).value;
  if(literalChild(description,'uiType',true).value!=='od_product_description'||typeof detailUrl!=='string'||detailUrl!==literalChild(detail,'detailUrl',true).value||!detailUrl||detailUrl.length>2048||/[\u0000-\u0020\u007f]/u.test(detailUrl))fail();
- return {attributes,packaging,detailUrl,title,model:model.value,stocks,minimumOrder};
+ return {attributes,packaging,detailUrl,title,model:model.value,stocks,minimumOrder,sourceEvidence,priceRoot:root.value,commonTable:dimensions===0};
 }
 const DOM_OPTION_LABELS=['规格','颜色','尺寸','颜色分类','类型','款式','型号','套餐','配置','版本','容量','尺码','花色','口味','颜色规格','材质','风格','图案'];
 const DOM_OPTION_ROOT='[class*="sku" i],[class*="prop" i],[class*="spec" i]';
@@ -428,7 +445,8 @@ function domFactsIdentity(scripts,offerId){
 export function readPageSourceDomFacts(document,sourceUrl,scripts){
  const identity=pageSourceUrl(sourceUrl);
  if(!Array.isArray(scripts)||scripts.length>100||scripts.some(value=>typeof value!=='string')||scripts.reduce((sum,value)=>sum+value.length,0)>4*1024*1024)throw domOptionsError();
- const observed=readPageDomFacts(document);if(!observed)return null;
+ const context=sourceContextProduct(scripts,identity.offerId);
+ const observed=readPageDomFacts(document,context?.commonTable?context.sourceEvidence.commonPackaging?.packaging??null:undefined);if(!observed)return null;
  domFactsIdentity(scripts,identity.offerId);
  return validatePageDomFacts({format:'yoofam-page-dom-facts-v1',...identity,...observed});
 }
@@ -642,12 +660,12 @@ export function extractPageSource(input,now=Date.now()){
  if(object(sm)&&Array.isArray(sm.skuProps))for(const prop of sm.skuProps)for(const value of Array.isArray(prop.value)?prop.value:[]){const url=firstImage(value.imageUrl,value.image,value.picUrl,value.imageURI);if(url)valueImages.set(plain(value.name,500),url);}
  const currency=/(?:CNY|人民币|[¥￥])/.test(plain(input.priceText,2000))?'CNY':null;
  const order=plain(input.minimumOrderText,1000).match(/(?:^|\s)(\d+)\s*(?:件|顶|个|双|套)?\s*起批/u);
- const minimumOrder=context?.minimumOrder??(object(sm)?integer(sm.beginAmount??sm.minOrderQuantity)??(order?integer(order[1]):null):order?integer(order[1]):null);
+ const minimumOrder=context?context.minimumOrder:(object(sm)?integer(sm.beginAmount??sm.minOrderQuantity)??(order?integer(order[1]):null):order?integer(order[1]):null);
  const map=object(sm)?sm.skuInfoMap??sm.skuInfoMapOriginal:null;
  const options=[];
- if(object(map)&&Object.keys(map).length>200)throw Error('옵션이 200개를 초과했습니다. 원문을 일부만 담지 않았습니다.');
+ if(object(map)&&Object.keys(map).length>PAGE_SOURCE_OPTION_LIMIT)throw Error('옵션이 500개를 초과했습니다. 원문을 일부만 담지 않았습니다.');
  if(object(map))for(const [key,row] of Object.entries(map)){
-  if(!object(row)||options.length>=200)continue;
+  if(!object(row))throw Error('수집한 옵션 원문을 확인해주세요.');
   const rawSku=row.skuId??row.specId;
   const name=plain(row.specAttrs??row.name??key,500),supplierSku=plain(typeof rawSku==='number'&&Number.isSafeInteger(rawSku)?String(rawSku):rawSku,200)||null;
   const unitPriceCny=price(row.discountPrice??row.price??row.skuPrice??row.consignPrice);
@@ -693,7 +711,9 @@ export function extractPageSource(input,now=Date.now()){
   if(facts.sourceUrl!==identity.sourceUrl||facts.offerId!==identity.offerId)throw domOptionsError();
   domFactsIdentity(scripts,identity.offerId);observed=mergePageDomFacts(observed.attributes,options,{...facts,packaging:[...contextPackaging,...facts.packaging]});
  }else if(contextPackaging.length)observed=mergePageDomFacts(observed.attributes,options,{attributes:[],packaging:contextPackaging});
- return validatePageSourceForDelivery({format:'yoofam-page-source-v1',...identity,collectedAt:new Date(now).toISOString(),title,description:structured?.text||plain(input.description,20000),options:observed.options,images,attributes:observed.attributes,sourceGallery},now);
+ const pagePriceBasis=context?readPagePriceBasis(context.priceRoot,observed.options):null;
+ if(pagePriceBasis)for(const option of observed.options)option.unitPriceCny=pagePriceDefault(pagePriceBasis,option.key);
+ return validatePageSourceForDelivery({format:'yoofam-page-source-v1',...identity,collectedAt:new Date(now).toISOString(),title,description:structured?.text||plain(input.description,20000),options:observed.options,images,attributes:observed.attributes,sourceGallery,...(context?{sourceEvidence:context.sourceEvidence,pagePriceBasis}:{})},now);
 }
 /** Inert capture evidence only. Counts never authorize reading more of the
  * page or claim that missing product facts were collected. */
@@ -721,13 +741,30 @@ export function validatePageSourceCaptureDiagnostics(input){
  }
  return JSON.parse(JSON.stringify(input));
 }
+const ORDER_MINIMUM_PATHS=['result.global.globalData.model.tradeModel.beginAmount','result.global.globalData.model.tradeModel.tradeWithoutPromotion.offerBeginAmount','result.data.mainPrice.fields.finalPriceModel.tradeWithoutPromotion.offerBeginAmount','result.data.Root.fields.dataJson.skuModel.beginAmount','result.data.Root.fields.dataJson.skuModel.minOrderQuantity'];
+const TIER_START_PATHS=['result.global.globalData.model.tradeModel.offerPriceModel.currentPrices','result.data.mainPrice.fields.priceModel.currentPrices'];
+export function validatePageSourceEvidence(value){
+ const fail=()=>{throw Error('수집 원문의 공통 포장·주문 수량 선언을 확인해주세요.');};
+ const exact=(row,keys)=>object(row)&&Object.keys(row).length===keys.length&&keys.every(key=>Object.hasOwn(row,key));
+ const positive=value=>Number.isSafeInteger(value)&&value>0;
+ if(!object(value)||Object.keys(value).some(key=>!['format','orderMinimums','priceTierStarts','commonPackaging'].includes(key))||value.format!=='yoofam-page-source-evidence-v1')fail();
+ for(const [key,paths] of [['orderMinimums',ORDER_MINIMUM_PATHS],['priceTierStarts',TIER_START_PATHS]]){
+  const rows=value[key];if(!Array.isArray(rows)||rows.length>paths.length)fail();const seen=new Set();
+  for(const row of rows){if(!exact(row,['path',key==='orderMinimums'?'value':'values'])||!paths.includes(row.path)||seen.has(row.path))fail();seen.add(row.path);
+   if(key==='orderMinimums'){if(!positive(row.value))fail();}else if(!Array.isArray(row.values)||row.values.length>200||!Array.from(row.values).every(positive))fail();
+  }
+ }
+ if(Object.hasOwn(value,'commonPackaging')){if(!exact(value.commonPackaging,['scope','packaging'])||value.commonPackaging.scope!=='offer-common')fail();validatePagePackaging(value.commonPackaging.packaging);}
+ return value;
+}
 export function validatePageSource(input,now=Date.now()){
- const keys=['format','sourceUrl','offerId','collectedAt','title','description','options','images','attributes','captureDiagnostics','sourceGallery'];
+ const keys=['format','sourceUrl','offerId','collectedAt','title','description','options','images','attributes','captureDiagnostics','sourceGallery','sourceEvidence','pagePriceBasis'];
  if(!object(input)||Object.keys(input).some(key=>!keys.includes(key))||input.format!=='yoofam-page-source-v1'||JSON.stringify(input).length>PAGE_SOURCE_LIMIT)throw Error('상품 수집 내용의 형식·크기를 확인해주세요.');
  if(Object.hasOwn(input,'captureDiagnostics'))validatePageSourceCaptureDiagnostics(input.captureDiagnostics);
+ if(Object.hasOwn(input,'sourceEvidence'))validatePageSourceEvidence(input.sourceEvidence);
  const identity=pageSourceUrl(input.sourceUrl);
  if(input.sourceUrl!==identity.sourceUrl||input.offerId!==identity.offerId||typeof input.collectedAt!=='string'||!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(input.collectedAt)||!Number.isFinite(Date.parse(input.collectedAt))||Date.parse(input.collectedAt)>now+60000||!plain(input.title,500)||input.title!==plain(input.title,500)||typeof input.description!=='string'||input.description.length>20000)throw Error('상품 번호·상품명·수집 시각을 확인해주세요.');
- if(!Array.isArray(input.options)||input.options.length>200||!Array.isArray(input.images)||!input.images.length||input.images.length>200||!Array.isArray(input.attributes)||input.attributes.length>50)throw Error('현재 상품의 옵션·이미지를 확인해주세요.');
+ if(!Array.isArray(input.options)||input.options.length>PAGE_SOURCE_OPTION_LIMIT||!Array.isArray(input.images)||!input.images.length||input.images.length>200||!Array.isArray(input.attributes)||input.attributes.length>50)throw Error('현재 상품의 옵션·이미지를 확인해주세요.');
  const seen=new Set();
  for(const row of input.options){
   if(!object(row)||Object.keys(row).some(key=>!['key','name','supplierSku','unitPriceCny','currency','minimumOrder','stock','imageUrl','axisValues','packaging'].includes(key))||!plain(row.key,200)||row.key!==plain(row.key,200)||seen.has(row.key)||!plain(row.name,500)||row.name!==plain(row.name,500)
@@ -756,6 +793,7 @@ export function validatePageSource(input,now=Date.now()){
    ||!Object.keys(indices).every((key,index)=>key===String(index))||Object.values(Object.getOwnPropertyDescriptors(indices)).some(field=>!Object.hasOwn(field,'value'))
    ||!indices.length&&mains>0||!indices.every((index,position)=>Number.isInteger(index)&&index===position&&input.images[index]?.role===(position===0?'main':'additional')))fail();
  }
+ if(Object.hasOwn(input,'pagePriceBasis'))validatePagePriceBasis(input.pagePriceBasis,input.options,{reviewed:!!input.pagePriceBasis?.review,offerId:identity.offerId});
  for(const row of input.attributes)if(!object(row)||Object.keys(row).some(key=>!['name','value'].includes(key))||!plain(row.name,190)||row.name!==plain(row.name,190)||!plain(row.value,1000)||row.value!==plain(row.value,1000))throw Error('상품 속성을 확인해주세요.');
  return JSON.parse(JSON.stringify(input));
 }
@@ -769,6 +807,7 @@ export function validatePageSourceForDelivery(input,now=Date.now()){
 }
 export function pageSourceIssues(source){
  const issues=[];if(!source.options.length)issues.push('옵션 원문');
+ if(source.options.length>200)issues.push('사용할 옵션 200개 이하 선택');
  if(source.options.some(row=>!row.supplierSku))issues.push('공급자 SKU');
  if(new Set(source.options.filter(row=>row.supplierSku).map(row=>row.supplierSku)).size!==source.options.filter(row=>row.supplierSku).length)issues.push('중복 공급자 SKU');
  if(source.options.some(row=>row.unitPriceCny===null))issues.push('옵션 원가');

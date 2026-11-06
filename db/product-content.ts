@@ -25,7 +25,7 @@ function listingLabels(ownerId:string,product:{id:string;image_keys:string},row:
   const captured=JSON.parse(row.context_payload);
   if(captured?.category){const category=validateCategoryProfile(captured.category);validateCategoryIdentity(category);profileId=typeof captured.category.id==='string'?captured.category.id:null;categoryId=category.categoryId||null;categoryPath=category.categoryPath;hubSchema=category.hubSchema;template=category.template;}
  }
- return {ownerId,profileId,categoryId,categoryPath,...(hubSchema?{hubSchema}:{}),...(template?{template}:{}),options,state};
+ return {ownerId,settings:row.settings_payload?JSON.parse(row.settings_payload):null,profileId,categoryId,categoryPath,...(hubSchema?{hubSchema}:{}),...(template?{template}:{}),options,state};
 }
 const schemaReadyBindings = new WeakSet<D1Database>();
 async function database() {
@@ -101,11 +101,12 @@ export async function readRegistrationSummaries(ownerId: string, products: {id:s
     // reason to borrow another job, company or product's quotation overrides.
     let labelRecords:Map<string,ListingLabelRow>|null=null;
     try{const source=await db.prepare(`SELECT p.id AS product_id,p.updated_at AS product_version,p.image_keys,p.source_url,pc.revision AS content_revision,
-      o.payload AS option_payload,o.revision AS option_revision,q.payload AS quotation_payload,q.revision AS quotation_revision,
+      o.payload AS option_payload,o.revision AS option_revision,q.payload AS quotation_payload,q.revision AS quotation_revision,pl.revision AS label_revision,
       cp.job_id AS linked_job,j.id AS valid_job,j.offer_id AS job_offer,j.updated_at AS job_updated_at,c.payload AS context_payload,ws.payload AS settings_payload,
       vp.id AS validation_profile_id,vp.revision AS validation_profile_revision,vp.payload AS validation_profile_payload
       FROM products p LEFT JOIN product_options o ON o.product_id=p.id AND o.owner_id=p.owner_id
       LEFT JOIN product_content pc ON pc.product_id=p.id AND pc.owner_id=p.owner_id
+      LEFT JOIN product_labels pl ON pl.product_id=p.id AND pl.owner_id=p.owner_id
       LEFT JOIN product_quotation_fields q ON q.product_id=p.id AND q.owner_id=p.owner_id
       LEFT JOIN collection_products cp ON cp.product_id=p.id AND cp.owner_id=p.owner_id
       LEFT JOIN collection_jobs j ON j.id=cp.job_id AND j.owner_id=p.owner_id AND j.status='awaiting_connector'

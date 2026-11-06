@@ -1,3 +1,4 @@
+import {validatePagePriceBasis,type PagePriceBasis} from '@/extensions/supplier-hub/page-source-price-basis.mjs';
 import { parseCollectionRequest } from '@/app/sourcing';
 import { collectionSourceGaps } from '@/app/collection-source-gaps';
 import { validateAlibabaSourcePriceBasis, type AlibabaSourcePriceBasis } from '@/app/alibaba-source-pricing';
@@ -18,6 +19,7 @@ export type CollectionResult = {
   title: string; description: string;
   attributes?: { name: string; value: string }[];
   priceBasis?: AlibabaSourcePriceBasis;
+  pagePriceBasis?: PagePriceBasis;
   offerDefault?: AlibabaOfferDefault;
   sourceGallery?: CollectionSourceGallery;
   pageOptionIdentity?: PageOptionIdentity;
@@ -41,7 +43,7 @@ function optionPackaging(value:unknown):NonNullable<CollectionResult['options'][
  return {...row} as NonNullable<CollectionResult['options'][number]['packaging']>;
 }
 export function validateCollectionResult(input: unknown, expectedOfferId: string, now=Date.now()): CollectionResult {
-  const body=record(input,['schemaVersion','sourceUrl','provider','collectedAt','title','description','options','images','attributes','priceBasis','offerDefault','sourceGallery','pageOptionIdentity']);
+  const body=record(input,['schemaVersion','sourceUrl','provider','collectedAt','title','description','options','images','attributes','priceBasis','offerDefault','sourceGallery','pageOptionIdentity','pagePriceBasis']);
   if(body.schemaVersion!==1)throw new Error('지원하지 않는 수집 결과 버전입니다.');
   const source=parseCollectionRequest({urls:[body.sourceUrl]})[0];
   if(source.offerId!==expectedOfferId)throw new Error('요청한 상품번호와 수집 결과가 다릅니다.');
@@ -82,6 +84,8 @@ export function validateCollectionResult(input: unknown, expectedOfferId: string
   const title=text(body.title,500);
   const offerDefault=hasOfferDefault?validateAlibabaOfferDefault(body.offerDefault,provider,source.offerId,title,options,images,Object.hasOwn(body,'priceBasis')):undefined;
   const priceBasis=body.priceBasis!==undefined?validateAlibabaSourcePriceBasis(body.priceBasis,provider,options):undefined;
+  let pagePriceBasis:PagePriceBasis|undefined;
+  if(Object.hasOwn(body,'pagePriceBasis')){if(!['chrome-current-page-v1','chrome-reviewed-page-v1'].includes(provider)||hasOfferDefault||body.priceBasis!==undefined)throw Error('페이지 원가 근거의 수집 출처를 확인해주세요.');pagePriceBasis=validatePagePriceBasis(body.pagePriceBasis,options,{reviewed:provider==='chrome-reviewed-page-v1',receipt:true,offerId:source.offerId});}
   const sourceGallery=Object.hasOwn(body,'sourceGallery')?validateCollectionSourceGallery(body.sourceGallery,provider,images):undefined;
-  return {schemaVersion:1,sourceUrl:source.sourceUrl,offerId:source.offerId,provider,collectedAt:new Date(timestamp).toISOString(),title,description:text(body.description,20000,false),options,images,...(attributes !== undefined ? { attributes } : {}),...(priceBasis!==undefined?{priceBasis}:{}),...(offerDefault?{offerDefault}:{}),...(sourceGallery?{sourceGallery}:{}),...(pageOptionIdentity?{pageOptionIdentity}:{})};
+  return {schemaVersion:1,sourceUrl:source.sourceUrl,offerId:source.offerId,provider,collectedAt:new Date(timestamp).toISOString(),title,description:text(body.description,20000,false),options,images,...(attributes !== undefined ? { attributes } : {}),...(priceBasis!==undefined?{priceBasis}:{}),...(offerDefault?{offerDefault}:{}),...(sourceGallery?{sourceGallery}:{}),...(pageOptionIdentity?{pageOptionIdentity}:{}),...(pagePriceBasis?{pagePriceBasis}:{})};
 }

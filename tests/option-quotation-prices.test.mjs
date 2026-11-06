@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -24,17 +25,43 @@ function fixture(){const current=view();return{current,reply(url,init={}){
  const output=plain(current);if(url.includes('profileId=other'))output.categoryContext.profileId='other';return Response.json(output);
 }};}
 function harness(fetcher,initial={}){
- const slots=[],effects=[],layouts=[],calls=[],cache=new Map();let cursor=0,saved=0,closed=false,lateWrites=0,currentVersion=initial.version??version,refreshToken='0',productId=initial.productId??'p',profileId=Object.hasOwn(initial,'profileId')?initial.profileId:'profile';
+ const slots=[],effects=[],layouts=[],calls=[],cache=new Map();let cursor=0,saved=0,closed=false,lateWrites=0,currentVersion=initial.version??version,refreshToken='0',productId=initial.productId??'p',profileId=Object.hasOwn(initial,'profileId')?initial.profileId:'profile',stageActive=initial.active??true;
  const effect=(queue,fn,deps)=>{const i=cursor++,old=slots[i];if(!old||JSON.stringify(old.deps)!==JSON.stringify(deps)){const entry={deps,cleanup:old?.cleanup};slots[i]=entry;queue.push(()=>{entry.cleanup?.();entry.cleanup=fn();});}};
  const react={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],v=>{if(closed){lateWrites++;return;}slots[i]=typeof v==='function'?v(slots[i]):v;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useMemo(fn,deps){const i=cursor++,old=slots[i];if(!old||deps.some((value,index)=>!Object.is(value,old.deps[index])))slots[i]={deps,value:fn()};return slots[i].value;},useEffect(fn,deps){effect(effects,fn,deps);},useLayoutEffect(fn,deps){effect(layouts,fn,deps);}};
- function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,structuredClone,TextEncoder,fetch:async(url,init)=>{calls.push({url,init});return fetcher(url,init);},require(name){if(name==='react')return react;return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;}
+ function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,structuredClone,TextEncoder,fetch:async(url,init)=>{calls.push({url,init});return fetcher(url,init);},require(name){if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;if(name==='react')return react;return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;}
  const Component=load('app/components/option-quotation-prices.tsx').OptionQuotationPrices;
- const render=(flush=true)=>{cursor=0;const tree=Component({productId,version:currentVersion,refreshToken,profileId,onSaved(){saved++;}});layouts.splice(0).forEach(fn=>fn());if(flush)effects.splice(0).forEach(fn=>fn());return tree;};
+ const render=(flush=true)=>{cursor=0;const tree=Component({productId,version:currentVersion,refreshToken,profileId,active:stageActive,onSaved(){saved++;}});layouts.splice(0).forEach(fn=>fn());if(flush)effects.splice(0).forEach(fn=>fn());return tree;};
  const button=text=>nodes(render()).find(n=>n.type==='button'&&n.props.children===text);
  const input=label=>nodes(render()).find(n=>n.props?.['aria-label']===label);
  const idle=async()=>{const deadline=Date.now()+10000;let stable=0,last='';for(;;){render();await new Promise(resolve=>setImmediate(resolve));const tree=render(),identity=JSON.stringify([currentVersion,refreshToken,productId,profileId,calls.length]);stable=!tree.props['data-workspace-saving']&&!effects.length&&!layouts.length&&identity===last?stable+1:0;if(stable>=3)return;last=identity;assert.ok(Date.now()<deadline,'price UI request timed out');await new Promise(resolve=>setTimeout(resolve,1));}};
- render();return {render,button,input,calls,idle,load,get saved(){return saved;},get lateWrites(){return lateWrites;},refresh(v,flush=true){refreshToken=v;render(flush);},setVersion(v,flush=true){currentVersion=v;render(flush);},select(p,c,flush=true){productId=p;profileId=c;render(flush);},close(){closed=true;slots.forEach(s=>s?.cleanup?.());}};
+ render();return {render,button,input,calls,idle,load,get saved(){return saved;},get lateWrites(){return lateWrites;},refresh(v,flush=true){refreshToken=v;render(flush);},setVersion(v,flush=true){currentVersion=v;render(flush);},setActive(value,flush=true){stageActive=value;render(flush);},select(p,c,flush=true){productId=p;profileId=c;render(flush);},close(){closed=true;slots.forEach(s=>s?.cleanup?.());}};
 }
+
+test('inactive prices defer their first read and clean stale prices refresh once on return',async()=>{
+ const f=fixture(),h=harness((url,init)=>f.reply(url,init),{active:false});
+ try{
+  await h.idle();assert.equal(h.calls.length,0,'hidden price editor must not read');
+  h.setActive(true);await h.idle();assert.equal(h.calls.length,1);assert.equal(h.input('빨강 공급가').props.value,'100');
+  h.setActive(false);f.current.productVersion=advance(f.current.productVersion);f.current.updatedAt=f.current.productVersion;f.current.inputFingerprint='b'.repeat(64);h.setVersion(f.current.productVersion);await h.idle();
+  assert.equal(h.calls.length,1,'source saves in another stage do not refresh hidden prices');
+  h.setActive(true);await h.idle();assert.equal(h.calls.length,2);assert.equal(h.input('빨강 공급가').props.value,'100');
+  h.setActive(false);h.setActive(true);await h.idle();assert.equal(h.calls.length,2,'current price view is retained');
+  assert.equal(h.calls.some(call=>call.init?.method==='PUT'),false);
+ }finally{h.close();}
+});
+
+test('inactive prices retain dirty values and an admitted save without aborting or replaying it',async()=>{
+ const f=fixture();let finish,writeSignal;const held=new Promise(resolve=>{finish=resolve;});
+ const h=harness((url,init)=>{if(init?.method==='PUT'){writeSignal=init.signal;return held.then(()=>f.reply(url,init));}return f.reply(url,init);});
+ try{
+  await h.idle();h.input('빨강 공급가').props.onChange({target:{value:'150'}});h.setActive(false);await h.idle();
+  assert.equal(h.input('빨강 공급가').props.value,'150');assert.equal(h.render().props['data-workspace-dirty'],true);assert.equal(h.calls.length,1);
+  h.setActive(true);await h.idle();assert.equal(h.input('빨강 공급가').props.value,'150');assert.equal(h.calls.length,1);
+  h.button('옵션 가격 저장').props.onClick();h.setActive(false);await settle();h.render();
+  assert.equal(writeSignal.aborted,false,'visibility must not cancel a dispatched write');assert.equal(h.render().props['data-workspace-saving'],true);
+  finish();await h.idle();assert.equal(h.saved,1);assert.equal(h.calls.filter(call=>call.init?.method==='PUT').length,1);assert.equal(h.render().props['data-workspace-dirty'],false);
+ }finally{finish?.();h.close();}
+});
 
 test('stage-two direct price saves only the changed option field using the same quotation version',async()=>{
  const f=fixture(),h=harness((url,init)=>f.reply(url,init));await settle();

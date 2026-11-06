@@ -1,3 +1,5 @@
+import {resolveSourceInboxReceiver,recheckSourceInboxReceiver,savePageSource,sourceInboxStore,sourceFingerprint} from './source-inbox.mjs';
+import {validatePageSourceForDelivery} from './page-source.mjs';
 import {HANDOFF_ORIGINS} from './handoff-store.mjs';
 import {parseProductJsonLd} from './product-jsonld.mjs';
 import {collectAlibabaMobileCapture} from './mobile-public.mjs';
@@ -179,6 +181,47 @@ export async function probe1688Product(message,sender,api=chrome,options={}){
   }
 }
 
+function contextWait(promise,active){
+ stopped(active.controller.signal);const remaining=active.payload.deadlineAt-Date.now();if(remaining<=0)throw Error('URL 원문 수집 연결 시간이 초과되었습니다.');
+ return new Promise((resolve,reject)=>{const clean=()=>{clearTimeout(timer);active.controller.signal.removeEventListener('abort',abort);};const abort=()=>{clean();reject(Error('상품 수집을 취소했습니다.'));};const timer=setTimeout(()=>{clean();reject(Error('URL 원문 수집 시간이 초과되었습니다. 수집함 저장 상태를 확인해주세요.'));},remaining);active.controller.signal.addEventListener('abort',abort,{once:true});Promise.resolve(promise).then(value=>{clean();if(active.controller.signal.aborted)reject(Error('상품 수집을 취소했습니다.'));else resolve(value);},error=>{clean();reject(error);});});
+}
+async function urlScope(active,api){
+ if(captures.get(active.windowId)!==active||Date.now()>=active.payload.deadlineAt)throw Error('원래 URL 수집 연결이 종료되었습니다.');
+ await checkApp(api,active,active.controller.signal);await recheckSourceInboxReceiver(active.receiver,api);stopped(active.controller.signal);
+ const tab=await api.tabs.get(active.detailTabId);checkTab(tab,active);if(tab.active!==false||tab.status!=='complete'||tab.pendingUrl)throw Error('URL 수집 탭의 위치·활성 상태가 변경되었습니다.');
+}
+export async function authenticateUrlPage(message,sender,api=chrome){
+ const active=captures.get(sender?.tab?.windowId),payload=message?.payload;
+ if(!active?.payload||!api.runtime?.id||sender.id!==api.runtime.id||sender.frameId!==0||sender.tab.id!==active.detailTabId||!sameProductUrl(sender.url,active.sourceUrl)||!payload||typeof payload!=='object'||Array.isArray(payload)||Object.keys(payload).length!==4||!['requestId','leaseNonce','sourceUrl','deadlineAt'].every(key=>payload[key]===active.payload[key]))throw Error('원래 URL 수집 요청·상품 탭을 확인하지 못했습니다.');
+ await contextWait(urlScope(active,api),active);
+ return {ok:true,lease:{...active.payload,ownerId:active.receiver.scope.ownerId,company:{...active.receiver.scope.company},origin:active.origin,appTabId:active.tabId,windowId:active.windowId,tabId:active.detailTabId}};
+}
+export async function saveUrlPage(message,sender,api=chrome,store=sourceInboxStore){
+ await authenticateUrlPage({payload:message.urlCapture},sender,api);const active=captures.get(sender.tab.windowId),snapshot=validatePageSourceForDelivery(message.snapshot);
+ if(snapshot.sourceUrl!==active.sourceUrl||!snapshot.pagePriceBasis||snapshot.pagePriceBasis.review)throw Error('URL 수집의 기본 원문·가격 근거를 확인하지 못했습니다.');
+ const fingerprint=await sourceFingerprint(snapshot);await contextWait(urlScope(active,api),active);
+ if(active.saveFingerprint&&active.saveFingerprint!==fingerprint)throw Error('URL 수집 중 원문이 변경되었습니다. 다시 전송하지 않았습니다.');
+ if(!active.savePromise){active.saveFingerprint=fingerprint;active.savePromise=savePageSource({snapshot},sender,api,store,{captureId:active.requestId,expectedReceiver:active.receiver,activate:false,requireStoredReceipt:true,manualRetryOnly:true}).then(async result=>{await urlScope(active,api);if(result.delivered!==true||!result.storedReceipt)throw Error(result.message||'원문의 실제 저장 확인을 받지 못했습니다. 수집함을 확인해주세요.');active.saved=result;return result;});}
+ return contextWait(active.savePromise,active);
+}
+async function captureContextProduct(active,api,wait){
+ const resolved=await contextWait(resolveSourceInboxReceiver(active.windowId,api),active);active.receiver={...resolved,tab:{id:active.tabId,windowId:active.windowId,url:(await api.tabs.get(active.tabId)).url}};
+ await contextWait(recheckSourceInboxReceiver(active.receiver,api),active);await contextWait(checkApp(api,active,active.controller.signal),active);
+ const tab=await contextWait(api.tabs.create({windowId:active.windowId,url:active.sourceUrl,active:false}),active);active.detailTabId=tab.id;checkTab(tab,active,{loading:true});
+ await contextWait(waitForComplete(api,tab.id,active,active.controller.signal,wait),active);await contextWait(urlScope(active,api),active);
+ let ready=false;
+ for(let read=0;read<20&&!ready;read++){
+  await contextWait(urlScope(active,api),active);
+  try{const answer=await contextWait(api.tabs.sendMessage(tab.id,{type:'YOOFAM_URL_PAGE_READY'},{frameId:0}),active);ready=answer?.ok===true&&answer.result?.sourceUrl===active.sourceUrl&&answer.result?.offerId===active.sourceUrl.match(/\/([1-9]\d*)\.html$/)?.[1]&&answer.result?.primaryContextCapture===true;}catch{stopped(active.controller.signal);}
+  if(!ready)await contextWait(wait(250,active.controller.signal),active);
+ }
+ if(!ready)throw Error('이 상품 탭의 기본 원문 수집기가 준비되지 않았습니다. 최신 확장과 상품 페이지를 확인해주세요.');
+ const reply=await contextWait(api.tabs.sendMessage(tab.id,{type:'YOOFAM_URL_COLLECT_PAGE',payload:active.payload},{frameId:0}),active);await contextWait(urlScope(active,api),active);
+ const result=active.saved;if(reply?.ok!==true||!result||reply.fingerprint!==result.fingerprint||reply.id!==result.id)throw Error(reply?.error||'기본 원문의 정확한 저장 확인을 받지 못했습니다. 수집함을 확인해주세요.');
+ try{await urlScope(active,api);await api.tabs.remove(tab.id);}catch{/* Preserve changed or user-activated tabs. */}
+ return {ok:true,sourceUrl:active.sourceUrl,format:'yoofam-context-saved-v1',captureId:result.storedReceipt.storedId,fingerprint:result.fingerprint};
+}
+
 export async function capture1688Product(message,sender,api=chrome,options={}){
   const identity=validateCaptureRequest(message,sender);
   if(message.type!=='YOOFAM_CAPTURE_1688')throw Error('상품 수집 요청을 확인해주세요.');
@@ -186,6 +229,7 @@ export async function capture1688Product(message,sender,api=chrome,options={}){
   const controller=new AbortController(),signal=controller.signal;
   const active={...identity,controller};captures.set(identity.windowId,active);
   const wait=options.wait??pause;
+  if(message.pageContext===true){active.payload={requestId:identity.requestId,leaseNonce:crypto.randomUUID().replaceAll('-',''),sourceUrl:identity.sourceUrl,deadlineAt:Date.now()+35000};try{return await captureContextProduct(active,api,wait);}finally{controller.abort();if(captures.get(identity.windowId)===active)captures.delete(identity.windowId);}}
   let existing,tab,captured=false;
   try{
     await checkApp(api,identity,signal);

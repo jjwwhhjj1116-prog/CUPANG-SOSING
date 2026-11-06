@@ -1,3 +1,4 @@
+import {reviewPagePriceBasis} from '@/extensions/supplier-hub/page-source-price-basis.mjs';
 import {validatePageSource,validatePageSourceForDelivery,validatePageSourceCaptureDiagnostics,pageSourceIssues,type PageSource,type PageSourceCaptureDiagnostics} from '@/extensions/supplier-hub/page-source.mjs';
 import {validateCollectionResult,type CollectionResult} from '@/app/collection-result';
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
@@ -21,7 +22,10 @@ export function sourceInboxStatus(snapshot:PageSource,reviewed:PageSource|null){
  * reparses/stringifies every image and option on every foreground refresh. */
 export function sourceInboxValidatedStatus(source:PageSource){return pageSourceIssues(source).filter(issue=>!['최소 주문 수량','공급자 SKU'].includes(issue));}
 export function sourceInboxWarnings(snapshot:PageSource,reviewed:PageSource|null){const source=reviewed??snapshot;return [
+ ...(source.pagePriceBasis?['브라우저 페이지의 공개 가격 기준입니다. 공급자별 배급가·위탁가와의 일치는 확인하지 않았습니다.']:[]),
  ...(source.options.some(row=>row.minimumOrder===null)?['공급자 최소 주문 수량 미확인 · 초안 작성 후 가격 설정에서 확인하세요.']:[]),
+ ...(source.sourceEvidence?.commonPackaging?['상품 공통 포장 선언입니다. 개별 옵션의 포장 측정값으로 확인되지 않았습니다.']:[]),
+ ...(source.sourceEvidence&&new Set(source.sourceEvidence.orderMinimums.map(row=>row.value)).size>1?['원문 주문 수량 선언이 서로 다릅니다. 최소 주문 수량은 미확인으로 보관합니다.']:[]),
  ...(source.options.some(row=>row.supplierSku===null)?['공급자 SKU 미확인 · 옵션 원문 키로 구분하며 공급자 코드는 공란으로 보관합니다.']:[])];}
 /** Only explicit observed axes supply canonical option facts. Similar words in
  * a combined option name and ambiguous duplicate semantic axes stay unknown. */
@@ -32,7 +36,8 @@ function sourceOptionAxes(option:PageSource['options'][number]){
 }
 export function pageSourceCollectionResult(snapshot:PageSource,reviewed=false):CollectionResult{
  const source=validatePageSource(snapshot),issues=sourceInboxValidatedStatus(source);if(issues.length)throw Error(`수집함에서 ${issues.join('·')}을 확인해주세요.`);
- const result=validateCollectionResult({schemaVersion:1,sourceUrl:source.sourceUrl,provider:reviewed?'chrome-reviewed-page-v1':'chrome-current-page-v1',collectedAt:source.collectedAt,title:source.title,description:source.description,attributes:source.attributes,images:source.images,...(source.sourceGallery?{sourceGallery:source.sourceGallery}:{}),
+ if(source.pagePriceBasis?.review&&!reviewed)throw Error('검토 원가는 검토 영수증에서만 사용할 수 있습니다.');
+ const result=validateCollectionResult({schemaVersion:1,sourceUrl:source.sourceUrl,provider:reviewed?'chrome-reviewed-page-v1':'chrome-current-page-v1',collectedAt:source.collectedAt,title:source.title,description:source.description,attributes:source.attributes,images:source.images,...(source.sourceGallery?{sourceGallery:source.sourceGallery}:{}),...(source.pagePriceBasis?{pagePriceBasis:source.pagePriceBasis}:{}),
   options:source.options.map(row=>({sku:row.supplierSku??'',name:row.name,unitPriceCny:row.unitPriceCny,minimumOrder:row.minimumOrder,stock:row.stock,...sourceOptionAxes(row),...(row.packaging?{packaging:{...row.packaging}}:{}),...(row.imageUrl&&source.images.some(item=>item.url===row.imageUrl)?{imageIndex:source.images.findIndex(item=>item.url===row.imageUrl)}:{})})),
   ...(source.options.some(row=>row.supplierSku===null)?{pageOptionIdentity:{format:'yoofam-page-option-identity-v1',offerId:source.offerId,sourceKeys:source.options.map(row=>row.key)}}:{})},source.offerId);
  return result;
@@ -41,13 +46,14 @@ export async function pageSourceFingerprint(snapshot:PageSource){return [...new 
 /** Review is separate from the immutable observed snapshot. Never manufacture
  * a supplier SKU from a display-name/map key or silently assume CNY / MOQ=1. */
 export function reviewPageSource(snapshot:PageSource,input:unknown):PageSource{
+ snapshot=validatePageSource(snapshot);
  if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(key=>!['title','options'].includes(key)))throw Error('검토할 상품명·옵션을 확인해주세요.');
  const value=input as {title:unknown;options:unknown};
- if(!Array.isArray(value.options)||!value.options.length||value.options.length>snapshot.options.length)throw Error('검토할 옵션을 선택해주세요.');
+ if(!Array.isArray(value.options)||!value.options.length||value.options.length>200||value.options.length>snapshot.options.length)throw Error('검토할 옵션을 선택해주세요.');
  const options=value.options.map(row=>{
   if(!row||typeof row!=='object'||Array.isArray(row)||Object.keys(row).some(key=>!['key','name','supplierSku','unitPriceCny','currency','minimumOrder'].includes(key)))throw Error('옵션 검토 항목을 확인해주세요.');
   const body=row as PageSource['options'][number],original=snapshot.options.find(item=>item.key===body.key);if(!original)throw Error('수집 원문에 없는 옵션입니다.');
   return {...original,...body};
  });
- const reviewed=validatePageSourceForDelivery({...snapshot,title:value.title,options});pageSourceCollectionResult(reviewed,true);return reviewed;
+ const reviewed=validatePageSourceForDelivery({...snapshot,title:value.title,options,...(snapshot.pagePriceBasis?{pagePriceBasis:reviewPagePriceBasis(snapshot.pagePriceBasis,options)}:{})});pageSourceCollectionResult(reviewed,true);return reviewed;
 }

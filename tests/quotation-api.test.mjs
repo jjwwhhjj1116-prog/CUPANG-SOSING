@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import * as parse5 from 'parse5';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,7 +16,7 @@ function load(file, overrides = {}, mode = 'development', cache = new Map()) {
   const output = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {}; cache.set(file, exports);
   vm.runInNewContext(output, { exports, Error, Response, URL, Headers, TextEncoder, TextDecoder, Uint8Array, ArrayBuffer, DataView, structuredClone, Blob, CompressionStream, DecompressionStream, crypto: webcrypto,
-    process: { env: { NODE_ENV: mode } }, require(name) {
+    process: { env: { NODE_ENV: mode } }, require(name) {if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
     if (name === 'parse5') return parse5;
       if (name in overrides) return overrides[name];
       if (name === 'next/server') return { NextResponse: Response };

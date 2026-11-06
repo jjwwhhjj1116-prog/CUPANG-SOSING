@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -13,7 +14,7 @@ const requests=h=>h.load('app/sourcing.ts').parseCollectionRequest({urls:[h.sour
 // Actual handlers/transactions and private SQLite/R2 fixtures only. The fixture
 // category is synthetic; no real company product or Supplier Hub is modified.
 function currentCompanyRoutes(h,company){
- function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,Request,Response,TextEncoder,Uint8Array,Date,process:{env:{NODE_ENV:'production'}},require(name){
+ function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,Request,Response,TextEncoder,Uint8Array,Date,process:{env:{NODE_ENV:'production'}},require(name){if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
   if(name==='@/app/chatgpt-auth')return {getWorkspaceOwnerId:async()=>'owner',getChatGPTUser:async()=>({verifiedAccess:true,userId:'owner',membership:{id:'owner',email:'private-company-fixture@example.test',role:'admin',status:'approved',companyCode:company.code,companyName:company.name}})};
   if(name==='cloudflare:workers')return {env:h.bindings};if(name==='next/server')return {NextResponse:Response};if(name==='@/app/quotation-fields-snapshot')return load('app/quotation-fields-snapshot.ts');assert.ok(name.startsWith('@/'),name);return h.load(name.slice(2)+'.ts');
  }});return exports;}

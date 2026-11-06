@@ -18,13 +18,14 @@ export async function POST(request:Request,context:{params:Promise<{id:string}>}
   const job=await findCollectionJob(owner,id);if(!job)return reply({error:'수집 요청을 찾을 수 없습니다.'},404);
   if(job.status==='cancelled')return reply({error:'취소된 수집 요청입니다.'},409);
   const existing=await readCollectionResult(owner,id);
-  let browserCapture:unknown;
+  let browserCapture:unknown,preferContextCapture=false;
   if(request.body){
    try{
     const input=await readBoundedJson(request,8*1024*1024);
-    if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).length!==1||!Object.hasOwn(input,'browserCapture'))throw new RequestBodyError(400,'상품 수집 요청 형식을 확인해주세요.');
-    browserCapture=(input as {browserCapture:unknown}).browserCapture;
-    if(!browserCapture||typeof browserCapture!=='object'||Array.isArray(browserCapture))throw new RequestBodyError(400,'상품 수집 원문 형식을 확인해주세요.');
+    if(!input||typeof input!=='object'||Array.isArray(input)||!Object.keys(input).length||Object.keys(input).some(key=>!['browserCapture','preferContextCapture'].includes(key))||Object.hasOwn(input,'preferContextCapture')&&(input as {preferContextCapture?:unknown}).preferContextCapture!==true)throw new RequestBodyError(400,'상품 수집 요청 형식을 확인해주세요.');
+    preferContextCapture=(input as {preferContextCapture?:unknown}).preferContextCapture===true;
+    browserCapture=(input as {browserCapture?:unknown}).browserCapture;
+    if(Object.hasOwn(input,'browserCapture')&&(!browserCapture||typeof browserCapture!=='object'||Array.isArray(browserCapture)))throw new RequestBodyError(400,'상품 수집 원문 형식을 확인해주세요.');
    }catch(error){return reply({error:error instanceof RequestBodyError?error.message:'수집 원문을 읽지 못했습니다.'},error instanceof RequestBodyError?error.status:400);}
   }
   if(request.signal.aborted)return reply({error:'취소된 수집 작업입니다.'},409);
@@ -47,6 +48,7 @@ export async function POST(request:Request,context:{params:Promise<{id:string}>}
   let provider;
   try{provider=savedPage?{kind:'public-page' as const}:collectionProvider(env as unknown as Record<string,unknown>);}
   catch{return reply({error:'1688 상품조회 API의 서버 설정을 확인해야 합니다.',code:'SOURCE_CONFIGURATION_REQUIRED'},503);}
+  if(provider.kind==='public-page'&&preferContextCapture&&!savedPage&&browserCapture===undefined)return reply({code:'SOURCE_CONTEXT_CAPTURE_REQUIRED',error:'현재 Chrome에서 기본 상품 원문을 확인해주세요.'},422);
   if(provider.kind==='public-page'&&browserCapture!==undefined&&!savedPage){
    try{captured=parseBrowserProductCapture(browserCapture,job.source_url);}
    catch(error){return reply({error:error instanceof Error?error.message:'상품 원문을 확인하지 못했습니다.',code:'SOURCE_CANDIDATE_INVALID'},422);}

@@ -1,4 +1,4 @@
-import { calculatePrice, pricePolicy, type PricePolicy } from '@/app/pricing';
+import { calculatePrice, pricePolicy, effectivePricePolicy, sourcingMarginGate, type SourcingMarginGate, type PricePolicy } from '@/app/pricing';
 import { defaultSettings, newWorkspaceSettings } from '@/app/workspace-settings';
 import { retainedCollectedPageOptionBindings, type CollectedPageOptionBindings } from '@/app/collected-page-option-binding';
 
@@ -29,7 +29,7 @@ export type ProductOption = OptionInput & {
 export type BundleSource = { sourceOptionId: string; quantity: number };
 export type ProductOptions = { schemaVersion: 1; productId: string; revision: number; updatedAt: string | null; rows: ProductOption[]; bundleSources?: Record<string, BundleSource>; collectedPageOptionBindings?: CollectedPageOptionBindings };
 export type OptionCalculation = { optionId: string; included: boolean; sourceCostCny: number | null; calculation: ReturnType<typeof calculatePrice> | null; error: string | null };
-export type OptionPricing = { policy: PricePolicy; policySource: 'saved-product' | 'product-and-workspace'; rows: OptionCalculation[] };
+export type OptionPricing = { rocketMarginGate?: SourcingMarginGate | null; policy: PricePolicy; policySource: 'saved-product' | 'product-and-workspace'; rows: OptionCalculation[] };
 export type ProductOptionsResponse = { options: ProductOptions; pricing: OptionPricing; productVersion: string; sourceImageKeys?:Record<string,string>; optionRegistrationNumbers?:Record<string,string> };
 
 /** Export values preserve deliberately cleared names; display labels may use IDs. */
@@ -157,15 +157,18 @@ export function calculateOptionPrices(rows: readonly OptionInput[], policy: Pric
     } catch (error) { return { optionId: row.id, included: true, sourceCostCny: null, calculation: null, error: error instanceof Error ? error.message : '옵션 가격을 계산하지 못했습니다.' }; }
   });
 }
-export function resolveOptionPricePolicy(product: { pricing_policy?: string | null; exchange_rate: number; supply_margin: number; coupang_margin: number }, workspaceInput: unknown = newWorkspaceSettings): Pick<OptionPricing, 'policy' | 'policySource'> {
-  if (product.pricing_policy) return { policy: pricePolicy(JSON.parse(product.pricing_policy)), policySource: 'saved-product' };
+export function resolveOptionPricePolicy(product: { pricing_policy?: string | null; exchange_rate: number; supply_margin: number; coupang_margin: number }, workspaceInput: unknown = newWorkspaceSettings): Pick<OptionPricing, 'policy' | 'policySource' | 'rocketMarginGate'> {
+  const rawGate = workspaceInput && typeof workspaceInput === 'object' && !Array.isArray(workspaceInput) ? (workspaceInput as Record<string, unknown>).rocketMarginGate : undefined;
+  const normalizedGate = rawGate == null ? rawGate : sourcingMarginGate(rawGate);
+  const gateContext = normalizedGate === undefined ? {} : { rocketMarginGate: normalizedGate === null ? null : { mode: normalizedGate.mode, minRate: normalizedGate.minRate, minAmount: normalizedGate.minAmount } };
+  if (product.pricing_policy) return { policy: effectivePricePolicy(JSON.parse(product.pricing_policy), workspaceInput), policySource: 'saved-product', ...gateContext };
   if (!workspaceInput || typeof workspaceInput !== 'object' || Array.isArray(workspaceInput)) throw new Error('가격 설정 객체가 필요합니다.');
   const settings = { ...defaultSettings, ...workspaceInput };
   // Registration facts can be intentionally absent; only price inputs affect this calculation.
   pricePolicy(settings);
   if (typeof settings.minimumMarginEnabled !== 'boolean') throw new Error('최소 마진 적용 여부를 확인해주세요.');
   return { policy: pricePolicy({ ...settings, exchangeRate: product.exchange_rate, supplyMargin: product.supply_margin, coupangMargin: product.coupang_margin,
-    minimumMargin: settings.minimumMarginEnabled ? settings.minimumMargin : 0, useIntegratedRate: false, integratedRate: null }), policySource: 'product-and-workspace' };
+    minimumMargin: settings.minimumMarginEnabled ? settings.minimumMargin : 0, useIntegratedRate: false, integratedRate: null }), policySource: 'product-and-workspace', ...gateContext };
 }
 
 /** Preserve existing review/receipt identities unless this upgrade changes a cell. */

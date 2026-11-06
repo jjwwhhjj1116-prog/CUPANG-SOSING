@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { applyQuotationChanges, type QuotationChange, type QuotationFieldsView } from '@/app/quotation-schema';
 import { optionSeoChanges, optionSeoDraftIssues, optionSeoValue, quotationSeoTargets, verifyOptionSeoRefresh, type OptionSeoDraft, type OptionSeoInput } from '@/app/quotation-seo-targets';
 
-type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; disabled?: boolean; onSaved?: () => void; onCommonDescription?: () => void };
+type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; active?: boolean; disabled?: boolean; onSaved?: () => void; onCommonDescription?: () => void };
 const fields = [['title', '상품명', 100], ['searchTags', '검색태그', 150]] as const;
 function seoInputs(view: QuotationFieldsView, optionId: string, draft: OptionSeoDraft) {
   const targets = quotationSeoTargets(view.resolved.schema.fields);
@@ -13,7 +13,7 @@ function seoInputs(view: QuotationFieldsView, optionId: string, draft: OptionSeo
 function seoLengthIssues(inputs: ReturnType<typeof seoInputs>) {
   return inputs.flatMap(({ label, value, maxLength }) => value.length > maxLength ? [`${label}: ${maxLength}자 제한을 초과했습니다. 입력을 검토해주세요.`] : []);
 }
-export function OptionSeoEditor({ productId, optionId, version, profileId, refreshToken, disabled = false, onSaved, onCommonDescription }: Props) {
+export function OptionSeoEditor({ productId, optionId, version, profileId, refreshToken, active = true, disabled = false, onSaved, onCommonDescription }: Props) {
   const endpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId ? `?profileId=${encodeURIComponent(profileId)}` : ''}`;
   const scope = JSON.stringify([endpoint, optionId]), sourceKey = JSON.stringify([scope, version, refreshToken]);
   const currentScope = useRef(scope);
@@ -97,13 +97,14 @@ export function OptionSeoEditor({ productId, optionId, version, profileId, refre
     finally { if (request.current === controller) { request.current = null; if (!controller.signal.aborted && current()) setBusy(false); } }
   }
   useEffect(() => {
-    let active = true;
-    void Promise.resolve().then(() => { if (!active || !current()) return; setBusy(false); setError('');setUncertain(pendingSave.current?.scope===scope); if (dirty && view) return; void load(); });
-    return () => { active = false; request.current?.abort(); request.current = null; };
+    let alive = true, automaticRead: AbortController | null = null;
+    void Promise.resolve().then(() => { if (!alive || !current() || request.current) return; setBusy(false); if (!active) return; setError('');setUncertain(pendingSave.current?.scope===scope); if (pendingSave.current?.scope===scope || dirty && view) return;
+      if (latestSaved.current?.scope===scope && latestSaved.current.sourceKey===sourceKey) return; void load(); automaticRead = request.current; });
+    return () => { alive = false; if (automaticRead && request.current === automaticRead) { automaticRead.abort(); request.current = null; } };
     // The endpoint/option identity and parent source version govern refreshes;
     // local edits are deliberately retained until explicit save or cancellation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope, sourceKey]);
+  }, [scope, sourceKey, active]);
   function edit(input: OptionSeoInput, value: string | null) {
     if (liveDisabled.current || !view || latestSaved.current?.view!==view || pendingSave.current?.scope===scope || request.current || !current()) return;
     latestDraft.current = { scope, values: { ...(latestDraft.current.scope === scope ? latestDraft.current.values : {}), [input]: value } };

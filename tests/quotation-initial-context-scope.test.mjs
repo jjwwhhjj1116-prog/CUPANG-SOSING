@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -32,7 +33,7 @@ function scopeUI({product,fetcher,preferredProfileId,panelOnly=false,contextProp
   vm.runInNewContext(ts.transpileModule(source,{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
    {exports,Error,URL,URLSearchParams,Date,Intl,TextEncoder,TextDecoder,AbortController,structuredClone,crypto:webcrypto,setTimeout,clearTimeout,
     window:{addEventListener(){},removeEventListener(){}},document:{getElementById(){return null;}},
-    fetch:async(url,init={})=>{calls.push({url,init});return fetcher(url,init);},require(name){
+    fetch:async(url,init={})=>{calls.push({url,init});return fetcher(url,init);},require(name){if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
      if(name==='react')return hooks;if(name==='react/jsx-runtime')return {jsx:(type,props,key)=>({type,props,key}),jsxs:(type,props,key)=>({type,props,key})};
      if(name.endsWith('.css'))return {};
      if(name==='@/app/components/product-options-editor')return {ProductOptionsEditor:PriceStage};

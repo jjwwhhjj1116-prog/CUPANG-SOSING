@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -47,7 +48,7 @@ function harness() {
     if (modules.has(file)) return modules.get(file);
     const exports = {}; modules.set(file, exports); const source = fs.readFileSync(new URL('../' + file, import.meta.url), 'utf8') + (file.endsWith('dashboard-client.tsx') ? '\nexport { DetailPanel };' : '');
     vm.runInNewContext(ts.transpileModule(source, { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
-      { exports, URL, URLSearchParams, Date, Intl, TextEncoder, TextDecoder, crypto, AbortController, structuredClone, window: { print() {}, setTimeout() {} }, fetch: async () => { calls++; throw Error('Unexpected dashboard request.'); }, require(name) {
+      { exports, URL, URLSearchParams, Date, Intl, TextEncoder, TextDecoder, crypto, AbortController, structuredClone, window: { print() {}, setTimeout() {} }, fetch: async () => { calls++; throw Error('Unexpected dashboard request.'); }, require(name) {if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
         if (name === 'react') return hooks;
         if (name === 'react/jsx-runtime') return { jsx: (type, received, key) => ({ type, props: received, key }), jsxs: (type, received, key) => ({ type, props: received, key }), Fragment: 'fragment' };
         if (name.endsWith('.css')) return {};

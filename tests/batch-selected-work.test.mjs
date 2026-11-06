@@ -701,6 +701,15 @@ function knownQuotationFixture({configured=true,generateFirst=false}={}){
    writes.push(plain(call.body));if(saveResponse)return saveResponse(call);
    const saved=plain(view);saved.overrides=providedOptionModule('app/quotation-schema.ts').applyQuotationChanges(saved.overrides,call.body.changes);
    for(const change of call.body.changes)saved.resolved.rows.find(row=>row.optionId===change.optionId).fields[change.fieldKey]={value:change.value,source:'manual-option'};
+   if(call.body.generatedAdoption){
+    assert.equal(call.body.generatedAdoption.jobId,job.id);
+    const entries=call.body.generatedAdoption.targets.map(target=>({...job.result.changes.find(change=>change.optionId===target.optionId&&change.fieldKey===target.fieldKey),jobId:job.id}));
+    saved.generatedAdoption={policy:'owned-job-facts-v1',sourceBasis:hash,entries};
+    for(const entry of entries)for(const resolved of [saved.automatic,saved.resolved]){
+     const cell=resolved.rows.find(row=>row.optionId===entry.optionId).fields[entry.fieldKey];
+     if(['empty','schema','couplus-default','generated'].includes(cell.source)){cell.value=entry.value;cell.source='generated';}
+    }
+   }
    Object.assign(saved,{revision:2,inputFingerprint:'b'.repeat(64),productVersion:nextVersion,updatedAt:nextVersion});return Response.json(saved);
   }
  });
@@ -727,9 +736,9 @@ test('an actual raw BODY partial draft continues to label and verified quotation
 });
 test('explicit quotation work saves verified AI plus saved notice sources in one CAS request and confirms their exact receipt',async()=>{
  const h=knownQuotationFixture(),before=JSON.stringify({view:h.view,content:h.content}),result=await h.run(['quotation']);
- assert.equal(result.stages[0].status,'draft',result.stages[0].message);assert.match(result.stages[0].message,/AI 항목 1개 · 저장된 표시·옵션 정보 3개/);
+ assert.equal(result.stages[0].status,'draft',result.stages[0].message);assert.match(result.stages[0].message,/AI 항목 1개/);
  assert.equal(h.writes.length,1);assert.equal(h.writes[0].expectedRevision,1);assert.equal(h.writes[0].expectedInputFingerprint,hash);
- assert.deepEqual(h.writes[0].changes,[{optionId:'a',fieldKey:'notice3',value:'검토 재질'},{optionId:'a',fieldKey:'notice0',value:'제조자: 저장 제조사 / 수입자: 저장 수입사'},{optionId:'a',fieldKey:'notice1',value:'02-1234-5678'},{optionId:'b',fieldKey:'notice1',value:'02-1234-5678'}]);
+ assert.deepEqual(h.writes[0].changes,[]);assert.deepEqual(h.writes[0].generatedAdoption,{jobId:h.job.id,targets:[{optionId:'a',fieldKey:'notice3'}]});
  assert.equal(JSON.stringify({view:h.view,content:h.content}),before);assert.equal(h.calls.some(call=>call.method==='POST'),false);
  assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
  assert.deepEqual(h.calls.find(call=>call.adapter==='packaging'),{adapter:'packaging',id:'product',revision:2,fingerprint:'b'.repeat(64)});
@@ -820,15 +829,11 @@ test('a dispatched quotation PUT with a lost or invalid receipt keeps its fence 
  }
 });
 
-test('unconfigured quotation AI preserves manual values while applying known notices and checking packaging',async()=>{
+test('unconfigured quotation AI keeps live sources and manual values without a source-copy PUT',async()=>{
  const h=knownQuotationFixture({configured:false}),before=JSON.stringify({view:h.view,content:h.content}),result=await h.run(['quotation']);
- assert.equal(result.stages[0].status,'blocked');assert.match(result.stages[0].message,/AI가 설정되지 않아 AI 작성은 실행하지 않았습니다/);
- assert.match(result.stages[0].message,/저장된 표시·옵션 정보 3개/);assert.match(result.stages[0].message,/포장값/);
- assert.equal(h.calls.some(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST'),false);
- assert.equal(h.writes.length,1);assert.equal(h.writes[0].expectedRevision,1);assert.equal(h.writes[0].expectedInputFingerprint,hash);
- assert.deepEqual(h.writes[0].changes,[{optionId:'a',fieldKey:'notice0',value:'제조자: 저장 제조사 / 수입자: 저장 수입사'},{optionId:'a',fieldKey:'notice1',value:'02-1234-5678'},{optionId:'b',fieldKey:'notice1',value:'02-1234-5678'}]);
- assert.equal(JSON.stringify({view:h.view,content:h.content}),before);
- assert.deepEqual(h.calls.find(call=>call.adapter==='packaging'),{adapter:'packaging',id:'product',revision:2,fingerprint:'b'.repeat(64)});
+ assert.equal(result.stages[0].status,'blocked');assert.match(result.stages[0].message,/AI가 설정되지 않아/);assert.equal(h.writes.length,0);
+ assert.equal(h.calls.some(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST'),false);assert.equal(JSON.stringify({view:h.view,content:h.content}),before);
+ assert.deepEqual(h.calls.find(call=>call.adapter==='packaging'),{adapter:'packaging',id:'product',revision:1,fingerprint:hash});
 });
 
 function extendedKnownQuotationFixture(){
@@ -847,30 +852,24 @@ function extendedKnownQuotationFixture(){
  return h;
 }
 
-test('batch quotation consumes server saved options and label overrides, wins AI duplicate and preserves pair quantity and manual blank',async()=>{
+test('batch quotation submits only exact AI adoption identities, never live known source copies',async()=>{
  const h=extendedKnownQuotationFixture(),before=JSON.stringify({view:h.view,content:h.content,options:h.savedOptions,labels:h.savedLabels});
  const result=await h.run(['quotation']);assert.equal(result.stages[0].status,'draft',result.stages[0].message);assert.equal(h.writes.length,1);
- const changes=h.writes[0].changes,value=(id,label)=>changes.find(change=>change.optionId===id&&change.fieldKey===h.fields.find(field=>field.label===label).id)?.value;
- assert.equal(value('a','재질'),'표시사항에서 저장한 재질');assert.equal(value('b','재질'),'표시사항에서 저장한 재질');
- assert.equal(value('a','제조국(원산지)'),'중국');assert.equal(value('a','제품 구성'),'1쌍');assert.equal(value('a','수량'),'1쌍');
- assert.equal(value('a','치수'),'120×40mm');assert.equal(value('a','취급시 주의사항'),'화기 주의');assert.equal(value('a','색상'),'베이지');assert.equal(value('b','색상'),undefined);
- assert.ok(changes.every(change=>change.optionId!=='excluded'));assert.equal(changes.some(change=>change.value==='검토 재질'),false);
- assert.equal(new Set(changes.map(change=>JSON.stringify([change.optionId,change.fieldKey]))).size,changes.length);
- assert.match(result.stages[0].message,/AI 항목 0개/);assert.equal(JSON.stringify({view:h.view,content:h.content,options:h.savedOptions,labels:h.savedLabels}),before);
- assert.equal(h.calls.some(call=>call.method==='POST'),false);assert.equal(h.calls.filter(call=>call.adapter==='packaging').length,1);
+ assert.deepEqual(h.writes[0].changes,[]);assert.deepEqual(h.writes[0].generatedAdoption,{jobId:h.job.id,targets:[{optionId:'a',fieldKey:'notice3'}]});
+ assert.equal(JSON.stringify({view:h.view,content:h.content,options:h.savedOptions,labels:h.savedLabels}),before);assert.equal(h.calls.filter(call=>call.adapter==='packaging').length,1);
 });
 
 test('malformed, excluded or manual-blank server source targets cannot enter combined quotation save or packaging',async()=>{
  for(const mutate of [changes=>changes.push(plain(changes[0])),changes=>{changes[0].optionId='excluded';},changes=>{changes[0].optionId='b';changes[0].fieldKey='notice0';},changes=>{changes[0].fieldKey='unknown';},changes=>{changes[0].value='해당사항없음';}]){
   const h=extendedKnownQuotationFixture(),changes=plain(providedOptionModule('app/quotation-known-notice-proposals.ts').quotationKnownNoticeProposals('product',h.view,h.content,{optionId:null,applyToAllOptions:true},h.savedOptions,h.savedLabels));
-  mutate(changes);h.overrideKnownChanges(changes);const result=await h.run(['quotation']);assert.equal(result.stages[0].status,'failed');assert.equal(h.writes.length,0);assert.equal(h.calls.some(call=>call.adapter==='packaging'),false);
+  mutate(changes);h.overrideKnownChanges(changes);const result=await h.run(['quotation']);assert.equal(result.stages[0].status,'draft');assert.deepEqual(h.writes[0].changes,[]);assert.deepEqual(h.writes[0].generatedAdoption.targets,[{optionId:'a',fieldKey:'notice3'}]);
  }
 });
 
 test('confirmed failed quotation AI still copies verified saved sources and checks packaging without rerunning AI or claiming completion',async()=>{
  const h=extendedKnownQuotationFixture();h.job.status='failed';h.job.result=null;h.job.error={code:'PROVIDER_FAILED',message:'확인된 모델 오류',uncertain:false};
  const result=await h.run(['quotation']);assert.equal(result.stages[0].status,'blocked');assert.match(result.stages[0].message,/AI 실패: 확인된 모델 오류/);assert.match(result.stages[0].message,/저장된 표시·옵션 정보/);
- assert.equal(h.writes.length,1);assert.equal(h.calls.filter(call=>call.adapter==='packaging').length,1);assert.equal(h.calls.some(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST'),false);
+ assert.equal(h.writes.length,0);assert.equal(h.calls.filter(call=>call.adapter==='packaging').length,1);assert.equal(h.calls.some(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST'),false);
  assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
 });
 
@@ -883,7 +882,7 @@ test('only explicit quotation retry replaces an exact confirmed failure and save
  h.overrideKnownChanges(undefined);h.options.retryFailedQuotation=true;h.prependIntercept(call=>{if(call.url.endsWith('/quotation-ai')&&call.method==='POST'){Object.assign(h.job,completed);return Response.json({job:completed,sourceCurrent:true});}});
  const retry=await h.run(['quotation']);assert.equal(retry.stages[0].status,'draft',retry.stages[0].message);assert.equal(allocated,1);
  const generated=h.calls.filter(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST');assert.equal(generated.length,1);assert.equal(generated[0].body.idempotencyKey,freshKey);assert.equal(generated[0].body.expectedFingerprint,hash);assert.equal(generated[0].body.expectedQuotationRevision,1);assert.equal(generated[0].body.optionId,null);assert.equal(generated[0].body.applyToAllOptions,true);
- assert.equal(h.writes.length,1);assert.deepEqual(h.writes[0].changes,[{optionId:'a',fieldKey:'notice3',value:'검토 재질'},{optionId:'a',fieldKey:'notice0',value:'제조자: 저장 제조사 / 수입자: 저장 수입사'},{optionId:'a',fieldKey:'notice1',value:'02-1234-5678'},{optionId:'b',fieldKey:'notice1',value:'02-1234-5678'}]);
+ assert.equal(h.writes.length,1);assert.deepEqual(h.writes[0].changes,[]);assert.deepEqual(h.writes[0].generatedAdoption,{jobId:h.job.id,targets:[{optionId:'a',fieldKey:'notice3'}]});
  assert.deepEqual(h.view,before);assert.equal(h.writes[0].changes.some(change=>change.optionId==='excluded'||change.optionId==='b'&&change.fieldKey==='notice0'||change.fieldKey==='notice2'),false);
  assert.equal(h.calls.filter(call=>call.adapter==='packaging').length,2);assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
 });
@@ -940,11 +939,10 @@ test('unresolved quotation AI and uncertain failed proof never copy sources or s
  }
 });
 
-test('without quotation AI, an unknown notice save cannot be repeated or start packaging',async()=>{
- const h=knownQuotationFixture({configured:false});h.saveResponse(()=>{throw Error('lost ACK');});
- assert.equal((await h.run(['quotation'])).stages[0].status,'failed');assert.equal(h.writes.length,1);
- assert.equal((await h.run(['quotation'])).stages[0].status,'blocked');assert.equal(h.writes.length,1);
- assert.equal(h.calls.some(call=>call.adapter==='packaging'),false);
+test('without quotation AI, no source-copy request can create an ambiguous mutation ACK',async()=>{
+ const h=knownQuotationFixture({configured:false});h.saveResponse(()=>{throw Error('must not dispatch');});
+ for(let attempt=0;attempt<2;attempt++)assert.equal((await h.run(['quotation'])).stages[0].status,'blocked');
+ assert.equal(h.writes.length,0);assert.equal(h.calls.filter(call=>call.adapter==='packaging').length,2);
 });
 
 test('without quotation AI, company change or a different content revision blocks all quotation changes',async()=>{
@@ -1004,7 +1002,7 @@ test('quotation generation rejected before dispatch keeps its original UUID and 
  assert.equal(h.keys.has('owner:product:pending:quotation'),false);assert.ok(h.keys.get('owner:product:quotation-generation-readback-v1'),'retain original proof even when preflight sends nothing');assert.equal(JSON.parse(h.keys.get('owner:product:quotation-generation-readback-v1')).jobId,null);
  const result=await h.run(['quotation']);assert.equal(result.stages[0].status,'draft',result.stages[0].message);
  const generated=h.calls.filter(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST');assert.equal(generated.length,1);assert.equal(generated[0].body.idempotencyKey,requestKey);assert.equal(allocated,1);
- assert.equal(h.writes.length,1);assert.ok(h.writes[0].changes.some(change=>change.optionId==='a'&&change.fieldKey==='notice3'&&change.value==='검토 재질'));
+ assert.equal(h.writes.length,1);assert.deepEqual(h.writes[0].generatedAdoption,{jobId:h.job.id,targets:[{optionId:'a',fieldKey:'notice3'}]});
  assert.equal(h.writes[0].changes.some(change=>change.optionId==='b'&&change.fieldKey==='notice0'),false);assert.equal(h.view.resolved.rows[1].fields.notice0.value,'');
  assert.equal(h.calls.filter(call=>call.adapter==='packaging').length,1);assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
 });
@@ -1039,8 +1037,7 @@ test('lost, malformed or non-2xx quotation generation ACK recovers only the orig
   const result=await h.run(['quotation']),retry=h.calls.slice(before);assert.equal(result.stages[0].status,'draft',mode+': '+result.stages[0].message);
   assert.deepEqual(retry.filter(call=>call.url?.includes('/quotation-ai')).map(call=>[call.method,call.url]),[['GET','/api/products/product/quotation-ai?idempotencyKey='+proof.requestKey]],mode);
   assert.equal(h.calls.filter(call=>call.url?.endsWith('/quotation-ai')&&call.method==='POST').length,1,mode);assert.equal(h.writes.length,1,mode);
-  assert.deepEqual(h.writes[0],{expectedRevision:1,expectedInputFingerprint:hash,changes:[{optionId:'a',fieldKey:'notice3',value:'검토 재질'},
-   {optionId:'a',fieldKey:'notice0',value:'제조자: 저장 제조사 / 수입자: 저장 수입사'},{optionId:'a',fieldKey:'notice1',value:'02-1234-5678'},{optionId:'b',fieldKey:'notice1',value:'02-1234-5678'}]},mode);
+  assert.deepEqual(h.writes[0],{expectedRevision:1,expectedInputFingerprint:hash,changes:[],generatedAdoption:{jobId:h.job.id,targets:[{optionId:'a',fieldKey:'notice3'}]}},mode);
   assert.equal(h.view.resolved.rows[1].fields.notice0.value,'',mode);assert.equal(h.calls.filter(call=>call.adapter==='packaging').length,1,mode);
   assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false,mode);
  }
@@ -1107,8 +1104,7 @@ test('a delayed original quotation result uses the real proposal guards and save
  assert.equal((await h.run(['quotation'])).stages[0].status,'blocked');assert.equal(h.writes.length,0);
  Object.assign(h.job,{status:'completed',result:completed});const before=h.calls.length,result=await h.run(['quotation']),retry=h.calls.slice(before);
  assert.equal(result.stages[0].status,'draft',result.stages[0].message);assert.equal(h.writes.length,1);
- assert.deepEqual(h.writes[0].changes,[{optionId:'a',fieldKey:'notice3',value:'검토 재질'},{optionId:'a',fieldKey:'notice0',value:'제조자: 저장 제조사 / 수입자: 저장 수입사'},
-  {optionId:'a',fieldKey:'notice1',value:'02-1234-5678'},{optionId:'b',fieldKey:'notice1',value:'02-1234-5678'}]);
+ assert.deepEqual(h.writes[0].changes,[]);assert.deepEqual(h.writes[0].generatedAdoption,{jobId:h.job.id,targets:[{optionId:'a',fieldKey:'notice3'}]});
  assert.equal(h.writes[0].expectedRevision,1);assert.equal(h.writes[0].expectedInputFingerprint,hash);assert.equal(h.view.resolved.rows[1].fields.notice0.value,'');
  assert.equal(retry.some(call=>call.method==='POST'),false);assert.equal(retry.filter(call=>call.method==='PUT').length,1);
  assert.equal(retry.filter(call=>call.url?.includes('/quotation-ai')).length,1);assert.equal(h.calls.filter(call=>call.adapter==='packaging').length,1);
@@ -1568,4 +1564,13 @@ for(const role of ['main','additional','detail'])test('partial image preparation
   if(role!=='main')assert.deepEqual(options(),before.options);
   assert.deepEqual(content().seo,before.content.seo);assert.deepEqual(content().label,before.content.label);
  }finally{h.close();}
+});
+
+test('batch confirms a new exact job replacing an already generated value without marking the successful PUT uncertain',async()=>{
+ const h=knownQuotationFixture(),fieldKey='notice3',old='이전 생성 재질';
+ for(const resolved of [h.view.automatic,h.view.resolved])resolved.rows.find(row=>row.optionId==='a').fields[fieldKey]={value:old,source:'generated'};
+ h.view.generatedAdoption={policy:'owned-job-facts-v1',sourceBasis:hash,entries:[{optionId:'a',fieldKey,value:old,jobId:'88888888-8888-4888-8888-888888888888'}]};
+ h.job.id='77777777-7777-4777-8777-777777777777';const result=await h.run(['quotation']);
+ assert.equal(result.stages[0].status,'draft',result.stages[0].message);assert.equal(h.writes.length,1);assert.deepEqual(h.writes[0].changes,[]);assert.equal(h.writes[0].generatedAdoption.jobId,h.job.id);
+ assert.equal(h.calls.filter(call=>call.adapter==='packaging').length,1);assert.equal([...h.keys.keys()].some(key=>key.includes(':pending:')||key.includes(':write:')),false);
 });

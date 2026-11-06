@@ -7,10 +7,10 @@ import { quotationLabelPlan } from '@/app/quotation-label-plan';
 import { renderDocument } from '@/app/document-image-render';
 import { attachQuotationLabel, type QuotationLabelUploadCache } from '@/app/quotation-label-attachment';
 
-type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; onSaved?: () => void; onCommonLabels?: () => void };
+type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; active?: boolean; onSaved?: () => void; onCommonLabels?: () => void };
 type Preview = { scope: string; sourceKey: string; signature: string; view: QuotationFieldsView; url: string; rendered: { blob: Blob; width: number; height: number } };
 
-export function OptionLabelEditor({ productId, optionId, version, profileId, refreshToken, onSaved, onCommonLabels }: Props) {
+export function OptionLabelEditor({ productId, optionId, version, profileId, refreshToken, active = true, onSaved, onCommonLabels }: Props) {
   const endpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId ? `?profileId=${encodeURIComponent(profileId)}` : ''}`;
   const scope = JSON.stringify([endpoint, optionId]), sourceKey = JSON.stringify([scope, version, refreshToken]);
   const currentScope = useRef(scope), currentSource = useRef(sourceKey), mounted = useRef(true);
@@ -61,18 +61,19 @@ export function OptionLabelEditor({ productId, optionId, version, profileId, ref
     finally { finish(controller); }
   }
   useEffect(() => {
-    let active = true;
+    let alive = true, automaticRead: AbortController | null = null;
     void Promise.resolve().then(() => {
-      if (!active || !current()) return;
-      setBusy(false); setError(''); clearPreview();
+      if (!alive || !current() || request.current) return;
+      setBusy(false); if (!active) return; setError(''); clearPreview();
       if (latestDraft.current.scope === scope && Object.keys(latestDraft.current.values).length && latestSaved.current?.scope === scope) return;
-      void load();
+      if (latestSaved.current?.scope===scope && latestSaved.current.sourceKey===sourceKey) return;
+      void load(); automaticRead = request.current;
     });
-    return () => { active = false; request.current?.abort(); request.current = null; };
+    return () => { alive = false; if (automaticRead && request.current === automaticRead) { automaticRead.abort(); request.current = null; } };
     // Parent source changes invalidate the preview, while edits await explicit
     // refresh/save/discard instead of disappearing on a workspace refresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope, sourceKey]);
+  }, [scope, sourceKey, active]);
   function edit(fieldId: string, value: string | null) {
     if (!view || request.current || !current() || !optionLabelFields(view).some(field => field.id === fieldId && !field.readOnly)) return;
     latestDraft.current = { scope, values: { ...(latestDraft.current.scope === scope ? latestDraft.current.values : {}), [fieldId]: value } };

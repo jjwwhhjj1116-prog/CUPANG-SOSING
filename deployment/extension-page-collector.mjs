@@ -23,18 +23,21 @@ function bulkPayload(value){
   ||pageSourceUrl(value.sourceUrl).sourceUrl!==value.sourceUrl||pageSourceUrl(location.href).sourceUrl!==value.sourceUrl)throw Error('현재 상품의 일괄 수집 연결을 확인하지 못했습니다.');
  return Object.freeze({...value});
 }
+function urlPayload(value){
+ if(!bulkExact(value,['requestId','leaseNonce','sourceUrl','deadlineAt'])||!BULK_UUID.test(value.requestId)||typeof value.leaseNonce!=='string'||!/^[A-Za-z0-9_-]{16,128}$/u.test(value.leaseNonce)||!Number.isSafeInteger(value.deadlineAt)||value.deadlineAt<=Date.now()||value.deadlineAt>Date.now()+CAPTURE_LEASE_MS||pageSourceUrl(value.sourceUrl).sourceUrl!==value.sourceUrl||pageSourceUrl(location.href).sourceUrl!==value.sourceUrl)throw Error('URL 수집의 원래 연결을 확인하지 못했습니다.');return Object.freeze({...value});
+}
 async function verifyBulkLease(payload){
- const answer=await chrome.runtime.sendMessage({type:'YOOFAM_VALIDATE_BULK_PAGE',payload});
+ const answer=await chrome.runtime.sendMessage({type:payload.requestId?'YOOFAM_VALIDATE_URL_PAGE':'YOOFAM_VALIDATE_BULK_PAGE',payload});
  const lease=answer?.lease;
- if(!bulkExact(answer,['ok','lease'])||answer.ok!==true||!bulkExact(lease,['batchId','itemId','leaseNonce','sourceUrl','deadlineAt','ownerId','company','origin','appTabId','windowId','tabId'])
-  ||!['batchId','itemId','leaseNonce','sourceUrl','deadlineAt'].every(key=>lease[key]===payload[key])||!Number.isSafeInteger(lease.deadlineAt)||lease.deadlineAt<=Date.now()
+ if(!bulkExact(answer,['ok','lease'])||answer.ok!==true||!bulkExact(lease,[...(payload.requestId?['requestId']:['batchId','itemId']),'leaseNonce','sourceUrl','deadlineAt','ownerId','company','origin','appTabId','windowId','tabId'])
+  ||![...(payload.requestId?['requestId']:['batchId','itemId']),'leaseNonce','sourceUrl','deadlineAt'].every(key=>lease[key]===payload[key])||!Number.isSafeInteger(lease.deadlineAt)||lease.deadlineAt<=Date.now()
   ||typeof lease.ownerId!=='string'||!/^\w[\w-]{0,99}$/u.test(lease.ownerId)||!bulkExact(lease.company,['code','name'])||({A01526306:'유앤채',A01464742:'와이홉'})[lease.company.code]!==lease.company.name
   ||!BULK_ORIGINS.includes(lease.origin)||!['appTabId','windowId','tabId'].every(key=>Number.isSafeInteger(lease[key])&&lease[key]>=0)
   ||pageSourceUrl(location.href).sourceUrl!==payload.sourceUrl||document.visibilityState!=='hidden')throw Error('현재 회원·회사와 일괄 수집 탭의 연결을 확인하지 못했습니다.');
  return Object.freeze({...lease,company:Object.freeze({...lease.company})});
 }
 function sameBulkLease(left,right){
- return ['batchId','itemId','leaseNonce','sourceUrl','deadlineAt','ownerId','origin','appTabId','windowId','tabId'].every(key=>left[key]===right[key])&&left.company.code===right.company.code&&left.company.name===right.company.name;
+ return ['requestId','batchId','itemId','leaseNonce','sourceUrl','deadlineAt','ownerId','origin','appTabId','windowId','tabId'].every(key=>left[key]===right[key])&&left.company.code===right.company.code&&left.company.name===right.company.name;
 }
 function collectorVersion(value){
  if(typeof value!=='string'||!/^\d{1,6}\.\d{1,6}\.\d{1,6}$/u.test(value))return null;
@@ -196,8 +199,9 @@ function installPageCollector(){
    }
    assertActive();
    if(pageSourceUrl(location.href).sourceUrl!==before)throw Error('상품 페이지가 변경되었습니다. 다시 수집해주세요.');
+   if(bulk?.payload.requestId&&!snapshot.pagePriceBasis)throw Error('현재 페이지의 기본 상품 원문을 확인하지 못했습니다. 공개 모바일 가격을 원가 근거로 바꾸지 않았습니다.');
    if(bulk){const currentLease=await verifyBulkLease(bulk.payload);assertActive();if(!sameBulkLease(currentLease,bulk.lease))throw Error('일괄 수집 중 회원·회사 연결이 변경됐습니다. 원문을 전송하지 않았습니다.');}
-   const result=await chrome.runtime.sendMessage({type:'YOOFAM_SAVE_PAGE_SOURCE',snapshot,...(bulk?{bulk:{batchId:bulk.payload.batchId,itemId:bulk.payload.itemId,leaseNonce:bulk.payload.leaseNonce}}:{})});
+   const result=await chrome.runtime.sendMessage({type:'YOOFAM_SAVE_PAGE_SOURCE',snapshot,...(bulk?.payload.requestId?{urlCapture:bulk.payload}:bulk?{bulk:{batchId:bulk.payload.batchId,itemId:bulk.payload.itemId,leaseNonce:bulk.payload.leaseNonce}}:{})});
    assertActive();
    if(result?.ok!==true)throw Error(result?.error||'수집 결과를 확인하지 못했습니다. 다시 누르면 저장 결과를 확인합니다.');
    const deliveryMessage=typeof result.message==='string'&&result.message.trim()?result.message:'앱의 저장 확인 응답을 받지 못했습니다.';
@@ -225,15 +229,15 @@ function installPageCollector(){
   await collect();
  });
  if(typeof chrome.runtime.onMessage?.addListener==='function')chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
-  if(!['YOOFAM_BULK_PAGE_READY','YOOFAM_BULK_COLLECT_PAGE'].includes(message?.type)||!isCurrent())return;
+  if(!['YOOFAM_BULK_PAGE_READY','YOOFAM_BULK_COLLECT_PAGE','YOOFAM_URL_COLLECT_PAGE','YOOFAM_URL_PAGE_READY'].includes(message?.type)||!isCurrent())return;
   if(typeof chrome.runtime.id!=='string'||!chrome.runtime.id||sender?.id!==chrome.runtime.id||sender.tab!==undefined||sender.frameId!==undefined)return;
-  if(message.type==='YOOFAM_BULK_PAGE_READY'){
+  if(message.type==='YOOFAM_BULK_PAGE_READY'||message.type==='YOOFAM_URL_PAGE_READY'){
    if(!bulkExact(message,['type'])){sendResponse({ok:false,error:'일괄 수집 준비 요청을 확인하지 못했습니다.'});return;}
-   try{const source=pageSourceUrl(location.href);sendResponse({ok:true,result:{sourceUrl:source.sourceUrl,offerId:source.offerId,version:COLLECTOR_SCRIPT_VERSION}});}catch(error){sendResponse({ok:false,error:error?.message||'상품 페이지가 아닙니다.'});}return;
+   try{const source=pageSourceUrl(location.href);sendResponse({ok:true,result:{sourceUrl:source.sourceUrl,offerId:source.offerId,version:COLLECTOR_SCRIPT_VERSION,...(message.type==='YOOFAM_URL_PAGE_READY'?{primaryContextCapture:true}:{})}});}catch(error){sendResponse({ok:false,error:error?.message||'상품 페이지가 아닙니다.'});}return;
   }
   let payload;
-  try{if(!bulkExact(message,['type','payload']))throw Error('일괄 수집 요청 형식을 확인하지 못했습니다.');payload=bulkPayload(message.payload);}catch(error){sendResponse({ok:false,error:error?.message||'일괄 수집 요청을 확인하지 못했습니다.'});return;}
-  const key=JSON.stringify(['batchId','itemId','leaseNonce','sourceUrl','deadlineAt'].map(name=>payload[name]));
+  try{if(!bulkExact(message,['type','payload']))throw Error('일괄 수집 요청 형식을 확인하지 못했습니다.');payload=message.type==='YOOFAM_URL_COLLECT_PAGE'?urlPayload(message.payload):bulkPayload(message.payload);}catch(error){sendResponse({ok:false,error:error?.message||'일괄 수집 요청을 확인하지 못했습니다.'});return;}
+  const key=JSON.stringify(['requestId','batchId','itemId','leaseNonce','sourceUrl','deadlineAt'].map(name=>payload[name]));
   if(bulkAttempt&&bulkAttempt.key!==key){sendResponse({ok:false,error:'이 탭에서 원래 일괄 수집 요청을 이미 처리했습니다. 다시 수집하지 않았습니다.'});return;}
   if(!bulkAttempt){
    const promise=(async()=>{const lease=await verifyBulkLease(payload);if(!isCurrent())throw Error('일괄 수집기가 교체됐습니다.');return collect({payload,lease});})();

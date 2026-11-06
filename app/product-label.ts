@@ -1,3 +1,4 @@
+import {labelSuggestionBasis,labelSuggestionApplies,validateLabelSuggestions,currentSavedLabelNotices,normalizeCurrentLabelContent,currentLabelBundleQuantity,type LabelAutomaticSuggestions} from '@/app/product-label-current-rules';
 import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 import type { ProductContent } from '@/app/product-content';
 import type { ProductOptions } from '@/app/product-options';
@@ -18,16 +19,16 @@ export type ProductLabelKey = ProductLabelFixedKey | `custom_${string}`;
 export type ProductLabelStructure = { id: ProductLabelKey; label: string; required: boolean }[];
 export type ProductLabelValues = Record<ProductLabelKey, string>;
 export type ProductLabelDraft = Partial<Record<ProductLabelKey, string | null>>;
-export type ProductLabelSource = 'manual-option' | 'manual-common' | 'content' | 'quotation' | 'settings' | 'empty';
+export type ProductLabelSource = 'manual-option' | 'manual-common' | 'content' | 'quotation' | 'settings' | 'empty' | 'label-suggestion' | 'label-default';
 export type ProductLabelOverrides = { common: Partial<ProductLabelValues>; options: Record<string, Partial<ProductLabelValues>> };
 export type ProductLabelChange = { optionId: string | null; fieldKey: ProductLabelKey; value: string | null };
-export type ProductLabelsState = { schemaVersion: 1; productId: string; revision: number; overrides: ProductLabelOverrides; updatedAt: string | null; structure?: ProductLabelStructure; renderEpoch?: number };
+export type ProductLabelsState = { schemaVersion: 1; productId: string; revision: number; overrides: ProductLabelOverrides; updatedAt: string | null; structure?: ProductLabelStructure; renderEpoch?: number; automaticSuggestions?:LabelAutomaticSuggestions };
 export type ProductLabelRow = { optionId: string | null; optionLabel: string; included: boolean; values: ProductLabelValues; automatic: ProductLabelValues; sources: Record<ProductLabelKey, ProductLabelSource> };
 export type ProductLabelsView = {
   productId: string; revision: number; inputFingerprint: string; productVersion: string;
   contentRevision: number; optionRevision: number; quotationRevision: number; quotationInputFingerprint: string;
   categoryContext: QuotationFieldsView['categoryContext']; imageKeys: string[];
-  overrides: ProductLabelOverrides; rows: ProductLabelRow[]; updatedAt: string | null; structure?: ProductLabelStructure; renderEpoch?: number;
+  overrides: ProductLabelOverrides; automaticSuggestions?:LabelAutomaticSuggestions; rows: ProductLabelRow[]; updatedAt: string | null; structure?: ProductLabelStructure; renderEpoch?: number;
 };
 export const PRODUCT_LABEL_BODY_LIMIT = 96 * 1024;
 export const PRODUCT_LABEL_STORAGE_LIMIT = 512 * 1024;
@@ -124,12 +125,14 @@ export function applyProductLabelChanges(current: ProductLabelOverrides, changes
 /** Product-label sources stay separate from category legal notice wires.
  * Explicit saved blanks are facts about the draft, not a request to invent a
  * country, material, count, product type or age standard. */
-export function resolveProductLabels(input: { productId: string; state: ProductLabelsState; content: ProductContent; options: ProductOptions; quotation: QuotationFieldsView; settings: { manufacturer?: string; importer?: string; handlingPrecautions?: string } }): ProductLabelRow[] {
+export function resolveProductLabels(input: { productId: string; state: ProductLabelsState; content: ProductContent; options: ProductOptions; quotation: QuotationFieldsView; settings: { manufacturer?: string; importer?: string; handlingPrecautions?: string };settingsPayload?:string|null }): ProductLabelRow[] {
   const target = exactPrimaryQuotationTarget(input.quotation.resolved.schema.fields, 'title');
   if (input.content.productId !== input.productId || input.options.productId !== input.productId || input.state.productId !== input.productId) throw Error('표시사항의 상품 자료가 일치하지 않습니다.');
   if (Object.hasOwn(input.state, 'renderEpoch') && validateProductLabelRenderEpoch(input.state.renderEpoch) === undefined) throw Error('표시사항 재작성 버전을 확인해주세요.');
   const definitions = productLabelDefinitions({ structure: input.state.structure === undefined ? undefined : validateProductLabelStructure(input.state.structure) });
   const label=prioritizedContentLabelFields(input.content);
+  const suggestions=validateLabelSuggestions(input.state.automaticSuggestions);
+  const basis=labelSuggestionBasis({content:input.content,options:input.options,settings:input.settings as import('@/app/workspace-settings').WorkspaceSettings,categoryId:input.quotation.categoryContext.categoryId,categoryPath:input.quotation.categoryContext.categoryPath,overrides:input.quotation.overrides,schema:input.quotation.resolved.schema,settingsPayload:input.settingsPayload});
   return input.quotation.resolved.rows.map(row => {
     if (row.optionId !== null && !input.options.rows.some(option => option.id === row.optionId)) throw Error('표시사항에 연결된 옵션이 삭제되었습니다.');
     const automatic = {} as ProductLabelValues, sources = {} as Record<ProductLabelKey, ProductLabelSource>;
@@ -145,6 +148,14 @@ export function resolveProductLabels(input: { productId: string; state: ProductL
         const setting = key === 'manufacturer' ? input.settings.manufacturer : key === 'importer' ? input.settings.importer : key === 'precautions' ? input.settings.handlingPrecautions : undefined;
         automatic[key] = typeof setting === 'string' ? setting : ''; sources[key] = automatic[key] ? 'settings' : 'empty';
       }
+    }
+    if(suggestions)for(const entry of suggestions.entries){
+      if(!labelSuggestionApplies(suggestions,entry.optionId,basis))continue;
+      if(entry.optionId!==row.optionId||!definitions.some(field=>field.key===entry.fieldKey))continue;
+      const fact=label[entry.fieldKey],notice=currentSavedLabelNotices(input.quotation.resolved.schema,input.quotation.overrides,row.optionId,input.content,false);
+      const humanNotice=entry.fieldKey==='material'?notice.material:entry.fieldKey==='netContents'&&notice.netContents?normalizeCurrentLabelContent(notice.netContents,currentLabelBundleQuantity(input.options,row.optionId)):undefined;
+      if(entry.value!==humanNotice&&(fact?.provenance==='manual'||fact?.value&&['collected','translated'].includes(fact.provenance)&&!/[㐀-䶿一-鿿]/u.test(fact.value)))continue;
+      automatic[entry.fieldKey]=entry.value;sources[entry.fieldKey]=entry.classification==='default'?'label-default':'label-suggestion';
     }
     const values = { ...automatic };
     for (const { key } of definitions) {
@@ -183,6 +194,7 @@ export function verifyProductLabelsView(view: ProductLabelsView, optionId: strin
     || view.rows.filter(row => row.optionId === optionId).length !== 1 || new Set(view.rows.map(row => row.optionId)).size !== view.rows.length)
     throw Error('선택한 상품·옵션의 표시사항 저장본을 확인하지 못했습니다.');
   validateProductLabelOverrides(view.overrides);
+  validateLabelSuggestions(view.automaticSuggestions);
   if (Object.hasOwn(view, 'renderEpoch') && validateProductLabelRenderEpoch(view.renderEpoch) === undefined) throw Error('표시사항 재작성 버전을 확인해주세요.');
   const structure = view.structure === undefined ? undefined : validateProductLabelStructure(view.structure);
   if (!same(structure, view.structure)) throw Error('표시사항 항목 구성이 정규화된 저장본과 다릅니다.');
@@ -193,7 +205,7 @@ export function verifyProductLabelsView(view: ProductLabelsView, optionId: strin
       || [row.values, row.automatic, row.sources].some(values => Object.keys(values).length !== active.size || Object.keys(values).some(key => !active.has(key as ProductLabelKey)))
       || definitions.some(({ key }) => textIssues(row.values[key]).length || textIssues(row.automatic[key]).length
         || !keySet.has(key) && row.automatic[key] !== ''
-        || !['manual-option', 'manual-common', 'content', 'quotation', 'settings', 'empty'].includes(row.sources[key]))) throw Error('저장된 표시사항 값과 원천을 확인하지 못했습니다.');
+        || !['manual-option', 'manual-common', 'content', 'quotation', 'settings', 'empty','label-suggestion','label-default'].includes(row.sources[key]))) throw Error('저장된 표시사항 값과 원천을 확인하지 못했습니다.');
     for (const { key } of definitions) {
       const specific = row.optionId === null || !Object.hasOwn(view.overrides.options, row.optionId) ? undefined : view.overrides.options[row.optionId];
       const own = specific && Object.hasOwn(specific, key), common = Object.hasOwn(view.overrides.common, key);
@@ -252,4 +264,13 @@ export function verifyProductLabelRefresh(before: ProductLabelsView, latest: Pro
     if (old !== current && current !== draft[key]) throw Error('선택 옵션 표시사항에 다른 저장값이 있습니다. 입력을 보관한 뒤 저장본과 비교해주세요.');
   }
   if (Object.keys(draft).length || structure !== undefined) productLabelChanges(latest, optionId, draft, structure);
+}
+
+/** Review-only automatic processing never asserts provider origin or factual verification. */
+export function verifyProcessedProductLabelSave(before:ProductLabelsView,saved:ProductLabelsView,optionId:string|null,automatic:ProductLabelDraft,manual:ProductLabelDraft={},structure?:ProductLabelStructure){
+ verifyProductLabelsView(saved,optionId);
+ const expected=applyProductLabelChanges(before.overrides,(Object.keys(manual).length||structure!==undefined?productLabelChanges(before,optionId,manual,structure):[]),structure??before.structure);
+ if(saved.productId!==before.productId||saved.revision!==before.revision+1||Date.parse(saved.productVersion)<=Date.parse(before.productVersion)||saved.updatedAt!==saved.productVersion||saved.contentRevision!==before.contentRevision||saved.optionRevision!==before.optionRevision||saved.quotationRevision!==before.quotationRevision||!same(saved.overrides,expected)||!same(saved.imageKeys,before.imageKeys)||!same(saved.categoryContext,before.categoryContext)||!same(saved.structure,structure===undefined?before.structure:validateProductLabelStructure(structure))||saved.renderEpoch!==before.renderEpoch||!same(saved.rows.map(row=>[row.optionId,row.optionLabel,row.included]),before.rows.map(row=>[row.optionId,row.optionLabel,row.included])))throw Error('표시사항 초안 저장 응답을 확인하지 못했습니다.');
+ const row=saved.rows.find(row=>row.optionId===optionId)!;
+ for(const [key,value]of Object.entries(automatic))if(!saved.automaticSuggestions?.entries.some(entry=>entry.optionId===optionId&&entry.fieldKey===key&&entry.value===value)||row.values[key as ProductLabelKey]!==value||!['label-default','label-suggestion','content'].includes(row.sources[key as ProductLabelKey]))throw Error('표시사항 초안 항목의 저장 응답을 확인하지 못했습니다.');
 }

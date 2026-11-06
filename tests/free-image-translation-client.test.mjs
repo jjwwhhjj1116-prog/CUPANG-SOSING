@@ -12,7 +12,7 @@ const deferred = () => { let resolve, reject; const promise = new Promise((yes, 
 const hash = async bytes => Buffer.from(await webcrypto.subtle.digest('SHA-256', bytes)).toString('hex');
 const pixels = (width, height) => Uint8Array.from({ length: width * height * 4 }, (_, index) => index % 4 === 3 ? 255 : (index * 13) % 200);
 function fixture({ imageWidth = 20, imageHeight = 12, decodeWait, fonts, inpaint, widthPerEm = 0.5 } = {}) {
-  const objects = new Map(), revoked = [], canvases = [], operations = [], measurements = []; let sequence = 0;
+  const objects = new Map(), revoked = [], canvases = [], operations = [], measurements = [], glyphStates = []; let sequence = 0;
   class ObjectURL extends URL { static createObjectURL(blob) { const url = 'blob:fixture-' + ++sequence; objects.set(url, blob); return url; } static revokeObjectURL(url) { revoked.push(url); objects.delete(url); } }
   class Image { set src(url) { if (!url) return; Promise.resolve(decodeWait).then(() => { if (!objects.has(url)) return; this.naturalWidth = imageWidth; this.naturalHeight = imageHeight; this.pixels = pixels(imageWidth, imageHeight); this.onload?.(); }); } }
   const document = { createElement(tag) {
@@ -53,14 +53,17 @@ function fixture({ imageWidth = 20, imageHeight = 12, decodeWait, fonts, inpaint
       },
       getImageData(x,y,width,height){const data=new Uint8Array(width*height*4);for(let row=0;row<height;row++)for(let col=0;col<width;col++)data.set(output.pixels?.slice(((y+row)*output.width+x+col)*4,((y+row)*output.width+x+col+1)*4)??[0,0,0,0],(row*width+col)*4);return{data,width,height};},
       putImageData(image,x,y,dirtyX=0,dirtyY=0,dirtyWidth=image.width,dirtyHeight=image.height){for(let row=dirtyY;row<dirtyY+dirtyHeight;row++)for(let col=dirtyX;col<dirtyX+dirtyWidth;col++)paint(x+col,y+row,1,1,image.data.slice((row*image.width+col)*4,(row*image.width+col+1)*4));},
+      createLinearGradient(...args) { const stops=[]; operations.push(['gradient',...args,stops]); return { addColorStop(offset,color){stops.push([offset,color]);},slice(){return '#ff0000';} }; },
+      translate(...args){operations.push(['translate',...args]);},rotate(angle){operations.push(['rotate',angle]);},
+      strokeText(text,x,y){operations.push(['glyph-stroke',text,x,y,this.lineWidth,this.strokeStyle,this.shadowBlur??0]);},
       measureText(text) { const width = textWidth(this.font, text); measurements.push({ text, font: this.font, width }); return { width }; },
-      save() { clips.push(clip); }, restore() { clip = clips.pop(); }, beginPath() { path = []; dot = null; }, rect(x, y, width, height) { clip = { x, y, width, height }; }, clip() {},
+      save() { clips.push({clip,state:Object.fromEntries(['font','fillStyle','strokeStyle','lineWidth','textBaseline','textAlign','shadowBlur','shadowColor','shadowOffsetX','shadowOffsetY'].map(key=>[key,this[key]]))}); }, restore() { const previous=clips.pop();clip=previous.clip;Object.assign(this,previous.state); }, beginPath() { path = []; dot = null; }, rect(x, y, width, height) { clip = { x, y, width, height }; }, clip() {},
       moveTo(x, y) { path.push({ x, y }); }, lineTo(x, y) { path.push({ x, y }); },
       stroke() { operations.push(['stroke', plain(path), this.lineWidth, this.lineCap, this.lineJoin]); paintPath(path, this.lineWidth / 2, rgba(this.strokeStyle)); },
       arc(x, y, radius, start, end) { assert.equal(start, 0); assert.equal(end, Math.PI * 2); dot = { x, y, radius }; },
       fill() { assert.ok(dot); operations.push(['dot', dot.x, dot.y, dot.radius]); paintPath([dot], dot.radius, rgba(this.fillStyle)); },
       fillRect(x, y, width, height) { operations.push(['fill', x, y, width, height]); paint(x, y, width, height, rgba(this.fillStyle)); },
-      fillText(text, x, y) { operations.push(['text', text, x, y, this.font, this.textAlign]);
+      fillText(text, x, y) { glyphStates.push({text,shadowBlur:this.shadowBlur??0,shadowColor:this.shadowColor,fillStyle:this.fillStyle}); operations.push(['text', text, x, y, this.font, this.textAlign]);
         const width = textWidth(this.font, text), left = x - (this.textAlign === 'center' ? width / 2 : this.textAlign === 'right' ? width : 0);
         paint(left, y, 1, 1, rgba(this.fillStyle)); },
     };
@@ -80,7 +83,7 @@ function fixture({ imageWidth = 20, imageHeight = 12, decodeWait, fonts, inpaint
     return exports;
   }
   const client = load('app/free-image-translation-client.ts');
-  return { client, vision:load('app/free-image-vision-style.ts'), brush: load('app/free-image-brush.ts'), canvases, operations, measurements, revoked, objects, document };
+  return { client, vision:load('app/free-image-vision-style.ts'), brush: load('app/free-image-brush.ts'), canvases, operations, measurements, glyphStates, revoked, objects, document };
 }
 function image(h) { const value = h.document.createElement('canvas'); value.width = source.width; value.height = source.height; value.pixels = pixels(source.width, source.height); return { source, canvas: value, blob: new Blob(['original']), width: source.width, height: source.height }; }
 const region = (id, box, translated = '한국어') => ({ id, text: '中文', box, confidence: 90, selected: true, translated, issue: null, translationProvenance: 'generated', background: '#ffffff', foreground: '#000000', fontSize: 3 });
@@ -779,4 +782,23 @@ test('individual-only representative translation requires selected options and e
   const noOptions = { ...rendered, optionImageIds: [] }; let network = 0;
   await assert.rejects(h.client.applyFreeImageTranslation(noOptions, new AbortController().signal, async () => { network++; return Response.json(good); }));
   assert.equal(network, 0, 'a removed option-only preview scope is rejected before transmission');
+});
+
+test('glyph effects use local gradient, stroke before fill, and centered text-only rotation',async()=>{
+ const h=fixture(),original=image(h),row={...region('effects',{x:2,y:2,width:14,height:8},'A'),textFill:{kind:'linear-gradient',startColor:'#ff0000',endColor:'#0000ff',angle:0},textStroke:{width:2,color:'#ffffff'},textShadow:{blur:4,color:'#111111'},rotation:90};
+ await h.client.renderFreeImageTranslation(original,[row],new AbortController().signal);
+ const gradient=h.operations.find(op=>op[0]==='gradient');assert.ok(gradient);assert.deepEqual(gradient.slice(1,5),[2,6,16,6]);assert.deepEqual(gradient[5],[[0,'#ff0000'],[1,'#0000ff']]);
+ assert.deepEqual(h.operations.filter(op=>op[0]==='translate'),[['translate',9,6],['translate',-9,-6]]);
+ assert.equal(h.operations.find(op=>op[0]==='rotate')[1],Math.PI/2);
+ const stroke=h.operations.findIndex(op=>op[0]==='glyph-stroke'),fill=h.operations.findIndex(op=>op[0]==='text');assert.ok(stroke>=0&&stroke<fill);assert.deepEqual(h.operations[stroke].slice(4),[2,'#ffffff',0]);
+});
+
+test('shadow is confined to glyph fill and explicit zero effects keep legacy pixels and operations',async()=>{
+ const row=region('text',{x:1,y:1,width:12,height:8},'A');
+ const render=async patch=>{const h=fixture(),output=await h.client.renderFreeImageTranslation(image(h),[{...row,...patch}],new AbortController().signal);return{h,bytes:new Uint8Array(await output.output.arrayBuffer())};};
+ const legacy=await render({}),zero=await render({rotation:0,textStroke:{width:0,color:'#ffffff'},textShadow:{blur:0,color:'#111111'}});
+ assert.deepEqual(zero.bytes,legacy.bytes);assert.deepEqual(zero.h.operations,legacy.h.operations);
+ const h=fixture(),original=image(h);await h.client.renderFreeImageTranslation(original,[{...row,textShadow:{blur:4,color:'#111111'}},region('next',{x:14,y:1,width:5,height:8},'B')],new AbortController().signal);
+ assert.deepEqual(h.glyphStates.map(item=>[item.text,item.shadowBlur]),[['A',4],['B',0]]);
+ assert.equal(h.glyphStates[0].shadowColor,'#111111');assert.equal(h.operations.filter(op=>op[0]==='fill').length,2);
 });

@@ -23,16 +23,16 @@ export async function productLabelsSnapshotFromSource(input:Source){
     || JSON.stringify(quotation.imageKeys) !== JSON.stringify(imageKeys)) throw conflict();
   if (!quotation.categoryContext?.categoryId) throw new LabelError('상품에 맞는 카테고리를 선택한 뒤 표시사항을 작성해주세요.', 409, 'PRODUCT_LABELS_CATEGORY_REQUIRED');
   const source: ProductLabelSourceGuard = { ...input.source, quotationRevision: quotation.revision };
-  const rows = resolveProductLabels({ productId: id, state, content, options, quotation, settings });
+  const rows = resolveProductLabels({ productId: id, state, content, options, quotation, settings,settingsPayload:input.source.settingsPayload });
   const inputFingerprint = await fingerprint({ recipe: 'product-label-source-v1', productId: id, source,
     quotationInputFingerprint: quotation.inputFingerprint, categoryContext: quotation.categoryContext, labelRevision: state.revision, overrides: state.overrides, rows,
     ...(state.structure === undefined ? {} : { structure: state.structure }), ...(state.renderEpoch === undefined ? {} : { renderEpoch: state.renderEpoch }) });
   const view: ProductLabelsView = { productId: id, revision: state.revision, inputFingerprint, productVersion: product.updated_at,
     contentRevision: content.revision, optionRevision: options.revision, quotationRevision: quotation.revision,
     quotationInputFingerprint: quotation.inputFingerprint, categoryContext: quotation.categoryContext, imageKeys,
-    overrides: state.overrides, rows, updatedAt: state.updatedAt, ...(state.structure === undefined ? {} : { structure: state.structure }),
+    overrides: state.overrides,...(state.automaticSuggestions?{automaticSuggestions:state.automaticSuggestions}:{}), rows, updatedAt: state.updatedAt, ...(state.structure === undefined ? {} : { structure: state.structure }),
     ...(state.renderEpoch === undefined ? {} : { renderEpoch: state.renderEpoch }) };
   verifyProductLabelsView(view, null, profileId ?? undefined);
   if (!await productLabelsSourcesCurrent(owner, id, source, state.revision)) throw conflict();
-  return { view, source, options };
+  return { view, source, options,content,settings,state,product,quotation };
 }

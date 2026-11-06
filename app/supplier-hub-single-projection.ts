@@ -170,7 +170,7 @@ export async function projectSupplierHubSingleDocument(input: SingleProjectionIn
       // scalar; preserve that distinction only for the exact free-text wire.
       const hiddenDefaultNull = field.section === 'product' && field.visibility === 'hidden' && ['text', 'textarea'].includes(field.type)
         && wire.path.length === 2 && wire.path[0] === 'productPage' && wire.path[1] === 'unexposedAttributes'
-        && wire.name !== undefined && Boolean(wire.nameKey && wire.valueKey) && cell.source === 'couplus-default' && cell.value === ''
+        && wire.name !== undefined && Boolean(wire.nameKey && wire.valueKey) && ['couplus-default', 'generated'].includes(cell.source) && cell.value === ''
         && Array.isArray(node.type) && node.type.length === 2 && node.type.includes('string') && node.type.includes('null')
         && !Object.hasOwn(node, 'enum') && !Object.hasOwn(node, 'dropdown');
       // A raw null schema default has separate provenance from an explicitly

@@ -1,3 +1,4 @@
+import {adoptSeoOptionResults} from '@/app/seo-option-results';
 import { translationBatchAdoption } from '@/app/translation-batch-adoption';
 import { adoptOptionTranslations } from '@/app/option-translation';
 import { applyOptionRows, optionFieldNames, type ProductOptions } from '@/app/product-options';
@@ -22,7 +23,7 @@ export function integratedTranslationPlan(content: ProductContent, options: Prod
   const text = scope === 'options' ? { input: null, preview: [], skipped: [] } : translationBatchAdoption(content, job, version, intakeBrand);
   if(rejected-invalidOptions)text.skipped.push(`원문 연결·중국어 원문 복사·같은 항목 원문에 없는 숫자를 확인해야 하는 상품 속성·옵션 ${rejected-invalidOptions}개는 번역 완료로 처리하지 않고 기존 값을 유지했습니다.`);
   if(invalidOptions)text.skipped.push(`옵션명 500자·색상/사이즈 200자 이내의 한 줄 입력 규격과 맞지 않는 번역 ${invalidOptions}개는 적용하지 않고 원문과 기존 값을 유지했습니다. 해당 옵션은 확인·수정해주세요.`);
-  const translated = adoptOptionTranslations(options, job, version, true, optionRecoveryJobs);
+  const translated = job.review.seoCompositionContext&&job.result?.seoOptions!==undefined?adoptSeoOptionResults(options,job.review,job.result):adoptOptionTranslations(options, job, version, true, optionRecoveryJobs);
   const preview = [...text.preview];
   if(!seoGeneration && content.categoryAttributes && job.review.instructionsVersion==='sourceflow-translation-v6' && job.result &&
     translationAttributeCoverage(job.review.source,job.result.draft).missingSourceIndexes.some(index=>job.review.source.attributes[index].name.startsWith('상품속성: '))){

@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -17,7 +18,7 @@ const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);re
 const png=new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2RkcAAAAASUVORK5CYII=','base64'));
 const json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
 const contractModules=new Map();
-function contract(file){if(contractModules.has(file))return contractModules.get(file);const exports={};contractModules.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,TextEncoder,Uint8Array,crypto:webcrypto,require:name=>name.startsWith('@/')?contract(name.slice(2)+'.ts'):native(name)});return exports;}
+function contract(file){if(contractModules.has(file))return contractModules.get(file);const exports={};contractModules.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,TextEncoder,Uint8Array,crypto:webcrypto,require:name=>name==='@/extensions/supplier-hub/page-source-price-basis.mjs'?pageSourcePriceBasis:(name.startsWith('@/')?contract(name.slice(2)+'.ts'):native(name))});return exports;}
 
 function labelUI(fetcher,{productId='p',optionId='red',version=initialVersion,profileId,refreshToken='0',renderDocument}={}){
  const slots=[],effects=[],layouts=[],cache=new Map(),calls=[],plans=[],created=[],revoked=[];
@@ -27,7 +28,7 @@ function labelUI(fetcher,{productId='p',optionId='red',version=initialVersion,pr
  class ObjectURL extends URL{static createObjectURL(){const value='blob:test-'+created.length;created.push(value);return value;}static revokeObjectURL(value){revoked.push(value);}}
  const request=async(url,init)=>{calls.push({url,init});const result=await fetcher(url,init);if(result.ok&&url.includes('/quotation-fields')){const body=await result.clone().json();if(body.productVersion)lastReplyVersion=body.productVersion;}return result;};
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
-  {exports,Error,AbortController,URL:ObjectURL,TextEncoder,Uint8Array,File,Blob,FormData,structuredClone,crypto:webcrypto,fetch:request,require(name){if(name==='react')return react;if(name==='react/jsx-runtime')return{jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})};if(name==='@/app/document-image-render')return{renderDocument:async plan=>{plans.push(plain(plan));return renderDocument?renderDocument(plan):{blob:new Blob([png],{type:'image/png'}),width:1,height:1};}};if(name.startsWith('./')||name.startsWith('../'))return load(path.posix.join(path.posix.dirname(file),name)+'.ts');return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;
+  {exports,Error,AbortController,URL:ObjectURL,TextEncoder,Uint8Array,File,Blob,FormData,structuredClone,crypto:webcrypto,fetch:request,require(name){if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;if(name==='react')return react;if(name==='react/jsx-runtime')return{jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})};if(name==='@/app/document-image-render')return{renderDocument:async plan=>{plans.push(plain(plan));return renderDocument?renderDocument(plan):{blob:new Blob([png],{type:'image/png'}),width:1,height:1};}};if(name.startsWith('./')||name.startsWith('../'))return load(path.posix.join(path.posix.dirname(file),name)+'.ts');return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;
  }
  const Component=load('app/components/option-label-editor.tsx').OptionLabelEditor;
  const render=(flush=true)=>{cursor=0;const tree=Component({productId,optionId,version,profileId,refreshToken,onSaved(){saved++;version=lastReplyVersion;}});layouts.splice(0).forEach(fn=>fn());if(flush)effects.splice(0).forEach(fn=>fn());return tree;};

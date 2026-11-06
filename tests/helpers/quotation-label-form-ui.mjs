@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../../extensions/supplier-hub/page-source-price-basis.mjs';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
@@ -23,7 +24,7 @@ export function quotationLabelFormUI({productId,load,request,renderDocument}){
  function component(file){
   if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
-   {exports,Error,AbortController,URL,window:{addEventListener(){},removeEventListener(){}},document:{getElementById:()=>null},fetch:request,require(name){
+   {exports,Error,AbortController,URL,window:{addEventListener(){},removeEventListener(){}},document:{getElementById:()=>null},fetch:request,require(name){if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
     if(name==='react')return hooks;if(name.endsWith('.css'))return{};
     if(name==='@/app/document-image-render')return{renderDocument};
     if(name==='@/app/quotation-label-attachment')return{...load('app/quotation-label-attachment.ts'),attachQuotationLabel:input=>load('app/quotation-label-attachment.ts').attachQuotationLabel(input,request)};

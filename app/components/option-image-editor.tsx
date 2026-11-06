@@ -125,21 +125,21 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     finally { if (request.current === controller) { request.current = null; if (!controller.signal.aborted && current()) setBusy(false); } }
   }
   useEffect(() => {
-    let active = true;
+    let alive = true, automaticRead: AbortController | null = null;
     void Promise.resolve().then(() => {
-      if (!active || !current() || request.current) return; setBusy(false); setError(''); setUncertain(pendingSave.current?.scope === scope);
+      if (!alive || !current() || request.current) return; setBusy(false); if (!active) return; setError(''); setUncertain(pendingSave.current?.scope === scope);
       if (pendingSave.current?.scope === scope || latestDraft.current.scope === scope && Object.keys(latestDraft.current.values).length && latestSaved.current?.scope === scope) return;
       // An image apply can publish the new version before its processing lock
       // clears. Resume that skipped read on unlock, without rereading a basis
       // already loaded or replacing any local/unacknowledged option draft.
       if (disabled || latestSaved.current?.scope === scope && latestSaved.current.sourceKey === sourceKey) return;
-      void load();
+      void load(); automaticRead = request.current;
     });
-    return () => { active = false; request.current?.abort(); request.current = null; };
+    return () => { alive = false; if (automaticRead && request.current === automaticRead) { automaticRead.abort(); request.current = null; } };
     // Source identity governs reads. Stage changes retain the same option's
     // pending image/HTML edits; reads never start an automatic write.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope, sourceKey, disabled, workspaceWorking]);
+  }, [scope, sourceKey, active, disabled, workspaceWorking]);
   function edit(field: OptionImageInput, value: string | null) {
     if (!view || latestSaved.current?.view !== view || !interactive() || pendingSave.current?.scope === scope || request.current
       || instant && Object.keys(latestDraft.current.values).length) return;

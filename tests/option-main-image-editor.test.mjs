@@ -47,8 +47,86 @@ function editor(f,{wrapper=false,focusedOptionId=f.id,imageView=true,onTranslate
  const settled=async()=>{await idle();const deadline=Date.now()+5000;let quiet=0;for(;;){const tree=render(),busy=visible(tree).some(node=>node.props['data-workspace-saving']===true||node.props['aria-busy']===true);
    quiet=!pendingQuotes&&!busy?quiet+1:0;if(quiet>=2)return tree;if(Date.now()>deadline)throw Error('Main image editor did not finish its local quotation requests and ACK/readback');await new Promise(resolve=>setImmediate(resolve));}};
  const button=label=>visible(render()).find(node=>node.type==='button'&&(node.props['aria-label']===label||text(node)===label)),input=label=>visible(render()).find(node=>node.props?.['aria-label']===label);
- return {props,saved,render,idle,button,input,async click(label){const node=button(label);assert.ok(node,label);assert.equal(node.props.disabled,false,label);node.props.onClick();await settled();},close(){for(const ctx of contexts.values())for(const slot of ctx.slots)slot?.cleanup?.();}};
+ return {props,saved,render,idle,settled,button,input,async click(label){const node=button(label);assert.ok(node,label);assert.equal(node.props.disabled,false,label);node.props.onClick();await settled();},close(){for(const ctx of contexts.values())for(const slot of ctx.slots)slot?.cleanup?.();}};
 }
+
+test('main-only entry does not mount and load a hidden price editor',async()=>{
+ const f=await fixture(),h=editor(f,{wrapper:true});
+ try{
+  h.props.editableQuotationPrices=true;
+  await h.settled();assert.equal(f.calls.filter(call=>call.url.includes('/quotation-fields')).length,1,'one final-image view, no hidden price view');
+  assert.equal(f.calls.filter(call=>call.url.endsWith('/options')).length,1,'only the final-image library needs option sources');
+  assert.ok(h.input('최종 대표이미지 옵션'));assert.equal(f.calls.some(call=>call.method!=='GET'),false);
+ }finally{h.close();f.close();}
+});
+
+test('inactive main images defer initialization and refresh one clean stale view on return',async()=>{
+ const f=await fixture(),h=editor(f);
+ try{
+  h.props.active=false;await h.settled();assert.equal(f.calls.length,0);
+  h.props.active=true;await h.settled();const before=f.calls.length,quotes=f.calls.filter(call=>call.url.includes('/quotation-fields')).length;assert.equal(quotes,1);
+  h.props.active=false;const next=new Date(Date.parse(f.product.updated_at)+1).toISOString();f.backend.sqlite.prepare('UPDATE products SET updated_at=? WHERE id=?').run(next,f.product.id);f.product.updated_at=next;h.props.version=next;
+  await h.settled();assert.equal(f.calls.length,before,'no main/gallery refresh in another stage');
+  h.props.active=true;await h.settled();assert.equal(f.calls.filter(call=>call.url.includes('/quotation-fields')).length,quotes+1);
+  assert.ok(h.button('최종 대표이미지 크게 보기'));assert.equal(f.calls.some(call=>call.method!=='GET'),false);
+ }finally{h.close();f.close();}
+});
+
+test('inactive options defer a changed focused option until their own stage returns',async()=>{
+ const f=await fixture(),h=editor(f,{wrapper:true,imageView:false});
+ try{
+  h.props.editableQuotationPrices=true;h.props.pricingView=true;await h.settled();h.props.active=false;await h.settled();
+  const count=f.calls.length,view=await f.read();h.props.focusedOptionId=view.resolved.rows.filter(row=>row.optionId)[1].optionId;await h.settled();
+  assert.equal(f.calls.length,count,'hidden focus changes cannot restart option initialization');
+  h.props.active=true;await h.settled();assert.equal(f.calls.length,count+1,'one focused options read on return');
+  assert.equal(h.input('가격 옵션 2 선택').props.checked,true);assert.equal(f.calls.some(call=>call.method!=='GET'),false);
+ }finally{h.close();f.close();}
+});
+
+test('explicit option recovery initializes the retained draft before hiding and returning',async()=>{
+ const f=await fixture(),h=editor(f,{wrapper:true,imageView:false}),original=f.request;let reads=0;
+ try{
+  h.props.seoView=true;f.request=async(url,init={})=>{if(url.endsWith('/options')&&(init.method??'GET')==='GET'&&++reads===1)return Response.json({error:'initial options unavailable'},{status:503});return original(url,init);};
+  await h.settled();await h.click('저장본 다시 조회');h.input('1번째 한국어 옵션명').props.onChange({target:{value:'복구 후 검토 중인 옵션명'}});await h.idle();
+  h.props.active=false;await h.settled();h.props.active=true;await h.settled();
+  assert.equal(h.input('1번째 한국어 옵션명').props.value,'복구 후 검토 중인 옵션명');assert.equal(reads,2);assert.equal(f.calls.some(call=>call.method!=='GET'),false);
+ }finally{h.close();f.close();}
+});
+
+test('hiding a main image stage retains its pending original PUT and GET-only receipt recovery',async()=>{
+ const f=await fixture(),h=editor(f,{wrapper:true});let release;const held=new Promise(resolve=>{release=resolve;}),original=f.request;let signal;
+ try{
+  await h.settled();f.lost();f.request=async(url,init={})=>{if(init.method==='PUT'){signal=init.signal;await held;}return original(url,init);};
+  const view=await f.read(),candidate=h.button(`최종 대표이미지 ${view.imageKeys.indexOf(f.nextKey)+1} 선택`);assert.ok(candidate);candidate.props.onClick();await h.idle();assert.ok(signal,'original PUT admitted before hiding');
+  h.props.active=false;h.props.imageView=false;h.render();await h.idle();assert.equal(signal.aborted,false);release();await h.settled();
+  assert.equal(f.calls.filter(call=>call.method==='PUT').length,1);assert.equal(h.saved.length,0,'uncertain storage must not claim completion');
+  f.recover();h.props.imageView=true;h.props.active=true;await h.settled();assert.equal(f.calls.filter(call=>call.method==='PUT').length,1,'reactivation cannot replay the write');
+  await h.click('선택 유지·최신 대표이미지 조회');assert.equal(h.saved.length,1);assert.equal(f.calls.filter(call=>call.method==='PUT').length,1);
+  assert.equal((await f.read()).resolved.rows.find(row=>row.optionId===f.id).fields.mainImage.value,f.nextKey);
+ }finally{release?.();h.close();f.close();}
+});
+
+for(const lost of [false,true])test(`actual main stage exit keeps the admitted PUT and its exact receipt read (${lost?'lost ACK':'normal ACK'})`,async()=>{
+ const f=await fixture(),h=editor(f,{wrapper:true});let release;const held=new Promise(resolve=>{release=resolve;}),original=f.request;let writeSignal;
+ try{
+  await h.settled();f.request=async(url,init={})=>{if(init.method==='PUT'){writeSignal=init.signal;await held;const response=await original(url,init);if(lost)throw Error('injected committed ACK loss');return response;}return original(url,init);};
+  const before=await f.read(),candidate=h.button(`최종 대표이미지 ${before.imageKeys.indexOf(f.nextKey)+1} 선택`);candidate.props.onClick();await h.idle();assert.ok(writeSignal,'original PUT admitted');
+  h.props.active=false;h.props.imageView=false;await h.idle();assert.equal(writeSignal.aborted,false);release();await h.settled();
+  assert.equal(h.saved.length,1,'original receipt is confirmed after the real stage exit');assert.equal(f.calls.filter(call=>call.method==='PUT').length,1);
+  assert.equal((await f.read()).resolved.rows.find(row=>row.optionId===f.id).fields.mainImage.value,f.nextKey);
+  h.props.imageView=true;h.props.active=true;await h.settled();assert.equal(f.calls.filter(call=>call.method==='PUT').length,1);
+ }finally{release?.();h.close();f.close();}
+});
+
+test('leaving the main stage before its held preflight completes cannot dispatch a PUT',async()=>{
+ const f=await fixture(),h=editor(f,{wrapper:true});let release;const held=new Promise(resolve=>{release=resolve;}),original=f.request;let intercepted=false;
+ try{
+  await h.settled();f.request=async(url,init={})=>{if(!intercepted&&url.includes('/quotation-fields')&&(init.method??'GET')==='GET'){intercepted=true;await held;}return original(url,init);};
+  const before=await f.read();h.button(`최종 대표이미지 ${before.imageKeys.indexOf(f.nextKey)+1} 선택`).props.onClick();h.props.active=false;h.props.imageView=false;await h.idle();release();await h.settled();
+  assert.equal(intercepted,true);assert.equal(h.saved.length,0);assert.equal(f.calls.filter(call=>call.method==='PUT').length,0);
+  assert.equal((await f.read()).resolved.rows.find(row=>row.optionId===f.id).fields.mainImage.value,before.resolved.rows.find(row=>row.optionId===f.id).fields.mainImage.value);
+ }finally{release?.();h.close();f.close();}
+});
 
 test('unknown or absent image provider gates only AI processing, keeps exact free/manual targets and rejects retained availability ABA callbacks',async()=>{
  const f=await fixture(),processed=[],translated=[],edited=[],h=editor(f,{wrapper:true,processingConfigured:null,
@@ -104,7 +182,7 @@ test('main manual editing uses its exact final slot and live lock blocks retaine
   await h.click('최종 대표이미지 편집하기');assert.deepEqual(plain(targets[0]),[f.key,'main',{kind:'quotation',profileId:f.profile.id,optionId:f.id,input:'mainImage',fieldKey:binding.primary,slotIndex:0,revision:view.revision,inputFingerprint:view.inputFingerprint,optionRevision:view.optionRevision,value:f.key}]);
   const manual=h.button('최종 대표이미지 편집하기').props.onClick,translate=h.button('최종 대표이미지 중국어 한국어 번역').props.onClick,blank=h.button('최종 대표이미지 비우기').props.onClick,candidate=h.button(`최종 대표이미지 ${view.imageKeys.indexOf(f.nextKey)+1} 선택`).props.onClick;
   h.props.imageProcessingBusy=true;await h.idle();manual();translate();blank();candidate();await h.idle();assert.equal(targets.length,1);assert.equal(h.button('최종 대표이미지 편집하기').props.disabled,true);assert.equal(h.button('최종 견적 대표이미지 저장'),undefined);assert.equal(f.calls.filter(call=>call.method!=='GET').length,0);
-  h.props.imageProcessingBusy=false;await h.idle();candidate();await h.idle();manual();assert.equal(targets.length,1);
+  h.props.imageProcessingBusy=false;await h.idle();candidate();await h.settled();manual();assert.equal(targets.length,1);
   h.props.imageProcessingBusy=true;await h.idle();blank();await h.idle();assert.equal(f.calls.filter(call=>call.method==='PUT').length,1);assert.equal(h.button('최종 견적 대표이미지 저장'),undefined);
   h.props.imageProcessingBusy=false;await h.idle();await h.click('최종 대표이미지 저장본 조회');h.props.imageView=false;await h.idle();manual();assert.equal(targets.length,1);
  }finally{h?.close();f.close();}

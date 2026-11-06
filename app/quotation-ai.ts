@@ -1,5 +1,6 @@
+import {CURRENT_QUOTATION_RESULT_POLICY,currentAttributeRules,normalizeCurrentAttributeNumber,mandatoryHiddenProblems,type AttributeRule} from '@/app/current-quotation-attribute-rules';
 import type { QuotationExportSource } from '@/app/exports/quotation-source';
-import { getQuotationSchema, resolveQuotationFields, type QuotationField } from '@/app/quotation-schema';
+import { getQuotationSchema, resolveQuotationFields, quotationGeneratedSourceWritable, type QuotationField } from '@/app/quotation-schema';
 import { validateHubSchemaSnapshot, type HubSchemaSnapshot } from '@/app/supplier-hub-schema';
 import { SUPPLIER_HUB_COMPANIES, type SupplierHubCompany } from '@/app/supplier-hub-company';
 import { quotationScalarValueIssues } from '@/app/quotation-scalar-constraints';
@@ -26,10 +27,10 @@ function fail(code: string, message: string): never { throw new QuotationAiError
 type Group = 'exposed' | 'hidden' | 'notice';
 export type QuotationAiField = QuotationField & { group: Group };
 export type QuotationAiTarget = { optionId: string | null; optionLabel: string; writableFieldIds: string[];
-  protectedValues: { fieldKey: string; value: string; source: string }[] };
+  protectedValues: { fieldKey: string; value: string; source: string }[]; currentValues?:{fieldKey:string;value:string;source:string}[] };
 export type QuotationAiPlan = {
   format: typeof QUOTATION_AI_FORMAT; productId: string; company: SupplierHubCompany; snapshot: HubSchemaSnapshot;
-  category: { id: string; path: string[] }; hiddenEnabled: boolean;
+  category: { id: string; path: string[] }; hiddenEnabled: boolean; resultPolicy?:typeof CURRENT_QUOTATION_RESULT_POLICY; attributeRules?:AttributeRule[];
   scope: { optionId: string | null; applyToAllOptions: boolean };
   clocks: { ownerId: string; productVersion: string; contentRevision: number; optionRevision: number; quotationRevision: number; profileId: string; profileRevision: number };
   facts: { title: string; seoTitle: string; description: string; attributes: { name: string; value: string; provenance: string; sourceName?: string }[];
@@ -38,7 +39,7 @@ export type QuotationAiPlan = {
   fields: QuotationAiField[]; targets: QuotationAiTarget[]; warnings: string[]; createdAt: string;
 };
 export type QuotationAiResult = { changes: { optionId: string | null; fieldKey: string; value: string }[];
-  warnings: string[]; steps: { task: string }[]; model: string; generatedAt: string };
+  warnings: string[]; steps: { task: string }[]; model: string; generatedAt: string; resultPolicy?:typeof CURRENT_QUOTATION_RESULT_POLICY };
 export type QuotationAiProvider = { run(model: string, input: { messages: { role: 'system' | 'user'; content: string }[]; max_tokens: number; temperature: number }): Promise<unknown> };
 const noticeLabels:Readonly<Record<string,keyof QuotationExportSource['content']['label']>>={
   noticeMaterial:'material',noticeComponents:'components',noticeDimensions:'dimensions',noticeSizeWeight:'dimensions',noticeKind:'productType',
@@ -82,7 +83,7 @@ function fieldGroup(field: QuotationField): Group | null {
   if (path === 'legalPage.notices' && wire.nameKey === 'noticeItemName' && ['noticeItemValue', 'noticeContent'].includes(wire.valueKey)) return 'notice';
   return null;
 }
-function supportedFields(snapshot: HubSchemaSnapshot, hiddenEnabled: boolean): QuotationAiField[] {
+function supportedFields(snapshot: HubSchemaSnapshot, hiddenEnabled: boolean, current=false): QuotationAiField[] {
   const schema = getQuotationSchema(snapshot.categoryId, snapshot.categoryPath, snapshot);
   if (schema.status !== 'observed' || schema.unsupportedFields?.length) fail('AI_SCHEMA_UNSUPPORTED', '복원되지 않은 양식 규칙이 있어 AI 제안을 시작할 수 없습니다.');
   const ids = new Set<string>(), wires = new Set<string>();
@@ -90,13 +91,14 @@ function supportedFields(snapshot: HubSchemaSnapshot, hiddenEnabled: boolean): Q
     if (ids.has(field.id)) fail('AI_SCHEMA_AMBIGUOUS', '양식 항목의 고유 연결이 중복되어 있습니다.'); ids.add(field.id);
     if (field.hubWire) { const wire = JSON.stringify(field.hubWire); if (wires.has(wire)) fail('AI_SCHEMA_AMBIGUOUS', '양식 원문 항목 연결이 중복되어 있습니다.'); wires.add(wire); }
   }
-  const fields = schema.fields.flatMap(field => { const group = fieldGroup(field); return group && (group !== 'hidden' || hiddenEnabled) ? [{ ...structuredClone(field), group }] : []; });
+  const rules=current?currentAttributeRules(snapshot,schema.fields):[];
+  const fields = schema.fields.flatMap(field => { const group = fieldGroup(field); return group && (group !== 'hidden' || hiddenEnabled || rules.some(rule=>rule.fieldKey===field.id&&rule.generationMandatory)) ? [{ ...structuredClone(field), group }] : []; });
   if (fields.length > 300) fail('AI_LIMIT', 'AI로 검토할 양식 항목이 300개를 초과합니다.');
   return fields;
 }
 
 function protectedSource(saved: QuotationExportSource, field: QuotationField, optionId: string | null, source: string): boolean {
-  if (source === 'manual-common' || source === 'manual-option') return true;
+  if (!quotationGeneratedSourceWritable(source)) return true;
   const notice = quotationNoticeInput(field), name = field.hubWire?.name;
   const label = field.contentField ?? (notice ? noticeLabels[notice] : undefined);
   if (label && saved.content.label[label]?.provenance === 'manual') return true;
@@ -106,7 +108,7 @@ function protectedSource(saved: QuotationExportSource, field: QuotationField, op
   return Boolean(key && option.provenance[key] === 'manual');
 }
 
-export function buildQuotationAiPlan(saved: QuotationExportSource, scope: { optionId: string | null; applyToAllOptions: boolean }): QuotationAiPlan {
+export function buildQuotationAiPlan(saved: QuotationExportSource, scope: { optionId: string | null; applyToAllOptions: boolean }, resultPolicy:typeof CURRENT_QUOTATION_RESULT_POLICY|null=CURRENT_QUOTATION_RESULT_POLICY): QuotationAiPlan {
   if (!saved.company || !saved.categoryContext.categoryId || !saved.profile || saved.categoryContext.profileId !== saved.profile.id
     || !same(saved.categoryContext.categoryPath, saved.profile.categoryPath) || saved.profile.categoryId !== saved.categoryContext.categoryId)
     fail('AI_SOURCE', '상품에 연결된 회사와 카테고리 양식을 확인해주세요.');
@@ -144,9 +146,10 @@ export function buildQuotationAiPlan(saved: QuotationExportSource, scope: { opti
         ...(pair.sourceName !== undefined ? { sourceName: pair.sourceName } : {}) });
     }
   }
-  const hiddenEnabled = saved.settings.hiddenAttributes === true, fields = supportedFields(snapshot, hiddenEnabled);
+  const allFields=getQuotationSchema(snapshot.categoryId,snapshot.categoryPath,snapshot).fields;
+  const hiddenEnabled = resultPolicy?saved.settings.hiddenAttributes !== false:saved.settings.hiddenAttributes === true, fields = supportedFields(snapshot, hiddenEnabled,Boolean(resultPolicy));
   const resolved = resolveQuotationFields({ categoryId: snapshot.categoryId, categoryPath: snapshot.categoryPath, product: saved.product, content: saved.content,
-    options: saved.options, settings: saved.settings, overrides: saved.state.overrides, hubSchema: snapshot,
+    options: saved.options, settings: saved.settings, labelsState: saved.labelsState,labelSettingsPayload:saved.source.settingsPayload, generatedAdoption: saved.generatedAdoption, overrides: saved.state.overrides, hubSchema: snapshot,
     packagingBasis: scopedQuotationPackagingBasis(saved.savedScopes ?? saved.state, snapshot.categoryId) });
   const included = resolved.rows.filter(row => row.included);
   if (!scope.applyToAllOptions && scope.optionId === null && !included.some(row => row.optionId === null))
@@ -173,13 +176,13 @@ export function buildQuotationAiPlan(saved: QuotationExportSource, scope: { opti
   const preferred=prioritizedProductAttributes(['generated','unverified'].includes(detail.provenance)?'':detail.value,facts.attributes);
   if(preferred.some(pair=>pair.provenance?.startsWith('detail-')))facts.preferredAttributes=preferred;
   const plan: QuotationAiPlan = { format: QUOTATION_AI_FORMAT, productId: saved.product.id, company: { ...saved.company }, snapshot,
-    category: { id: snapshot.categoryId, path: [...snapshot.categoryPath] }, hiddenEnabled, scope: { ...scope },
+    category: { id: snapshot.categoryId, path: [...snapshot.categoryPath] }, hiddenEnabled,...(resultPolicy?{resultPolicy,attributeRules:currentAttributeRules(snapshot,allFields)}:{}), scope: { ...scope },
     clocks: { ownerId: saved.product.owner_id, productVersion: saved.product.updated_at, contentRevision: saved.content.revision, optionRevision: saved.options.revision,
       quotationRevision: saved.state.revision, profileId: saved.profile.id, profileRevision: saved.profile.revision }, facts, fields,
     targets: targets.map(row => { const protectedValues: QuotationAiTarget['protectedValues'] = [], writableFieldIds: string[] = [];
       for (const field of fields) { const cell = row.fields[field.id]; if (!cell || !textSafe(cell.value)) fail('AI_SOURCE', '양식 항목의 저장값을 확인해주세요.');
         if (protectedSource(saved, field, row.optionId, cell.source)) protectedValues.push({ fieldKey: field.id, value: cell.value, source: cell.source }); else writableFieldIds.push(field.id); }
-      return { optionId: row.optionId, optionLabel: row.optionLabel, writableFieldIds, protectedValues }; }), warnings, createdAt: new Date().toISOString() };
+      return { optionId: row.optionId, optionLabel: row.optionLabel, writableFieldIds, protectedValues,...(resultPolicy?{currentValues:allFields.filter(field=>field.section==='product'&&field.visibility!=='common').map(field=>({fieldKey:field.id,value:row.fields[field.id]?.value??'',source:row.fields[field.id]?.source??'empty'}))}:{}) }; }), warnings, createdAt: new Date().toISOString() };
   if (size(plan) > PLAN_LIMIT) fail('AI_LIMIT', 'AI 참고자료의 크기가 처리 한도를 초과했습니다.');
   return plan;
 }
@@ -228,7 +231,9 @@ function validatePlan(plan: QuotationAiPlan) {
   let snapshot: HubSchemaSnapshot;
   try { snapshot = validateHubSchemaSnapshot(plan.snapshot, plan.category.id, plan.category.path); } catch { return fail('AI_SCHEMA_IDENTITY', 'AI 요청의 상세 양식 연결이 다릅니다.'); }
   snapshotIdentity(snapshot, plan.company);
-  if (!same(plan.fields, supportedFields(snapshot, plan.hiddenEnabled))) fail('AI_SCHEMA_IDENTITY', 'AI 요청의 항목·선택값과 원문 상세 양식이 다릅니다.');
+  if(plan.resultPolicy!==undefined&&plan.resultPolicy!==CURRENT_QUOTATION_RESULT_POLICY)fail('AI_POLICY','견적 생성 규칙을 확인해주세요.');
+  if(plan.resultPolicy&& !same(plan.attributeRules,currentAttributeRules(snapshot,getQuotationSchema(snapshot.categoryId,snapshot.categoryPath,snapshot).fields)))fail('AI_POLICY','견적 속성 규칙의 원문 연결이 다릅니다.');
+  if (!same(plan.fields, supportedFields(snapshot, plan.hiddenEnabled,plan.resultPolicy===CURRENT_QUOTATION_RESULT_POLICY))) fail('AI_SCHEMA_IDENTITY', 'AI 요청의 항목·선택값과 원문 상세 양식이 다릅니다.');
   const fieldIds = new Set(plan.fields.map(field => field.id)), targets = new Set<string | null>();
   for (const target of plan.targets) {
     if (!target || target.optionId !== null && !/^[A-Za-z0-9_-]{1,80}$/u.test(target.optionId) || targets.has(target.optionId)
@@ -277,21 +282,51 @@ export async function executeQuotationAi(plan: QuotationAiPlan, ai: QuotationAiP
     differentiated = new Set(parsed.differentiatedFieldIds as string[]);
   }
   const commonValues = new Map<string, string>();
-  const parseChanges = (parsed: Record<string, unknown>, allowed: readonly QuotationAiField[], writableIds?: readonly string[]) => {
+  const rawSchema=JSON.parse(plan.snapshot.schemaString);
+  const hiddenAllowsNull=(field:QuotationAiField):boolean=>{
+    const wire=field.hubWire;if(field.group!=='hidden'||!wire?.nameKey||!wire.valueKey)return false;
+    let node=rawSchema;for(const key of wire.path)node=node?.properties?.[key];
+    const match=node?.allOf?.find((item:{contains?:{properties?:Record<string,{enum?:unknown[]}>}})=>item.contains?.properties?.[wire.nameKey!]?.enum?.includes(wire.name));
+    const value=match?.contains?.properties?.[wire.valueKey];
+    return Boolean(value&&Array.isArray(value.type)&&value.type.includes('null')&&!value.enum&&!value.dropdown&&['text','textarea'].includes(field.type));
+  };
+  const extras=new Map<string,string>();
+  const parseChanges = (parsed: Record<string, unknown>, allowed: readonly QuotationAiField[], writableIds?: readonly string[],optionId?:string|null) => {
     exactKeys(parsed, ['changes']); if (!Array.isArray(parsed.changes) || parsed.changes.length > allowed.length) fail('AI_RESPONSE_SCOPE', 'AI 응답 항목의 개수를 확인해주세요.');
-    const result = new Map<string, string>();
+    const result = new Map<string, string>(), seen = new Set<string>();
     for (const change of parsed.changes) {
       if (!object(change)) fail('AI_RESPONSE', 'AI 제안 항목의 형식이 올바르지 않습니다.'); exactKeys(change, ['fieldKey', 'value']);
       const field = allowed.find(field => field.id === change.fieldKey);
-      if (!field || result.has(field.id) || writableIds && !writableIds.includes(field.id)) fail('AI_RESPONSE_SCOPE', 'AI가 확인되지 않은 항목 또는 보호된 수정값을 반환했습니다.');
-      if (!textSafe(change.value) || /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/u.test(change.value)) fail('AI_RESPONSE_VALUE', 'AI 제안값의 문자를 확인해주세요.');
-      if (field.choices && !field.choices.some(choice => choice.value === change.value) || quotationScalarValueIssues(field, change.value).length
-        || field.required && !change.value.trim() && !field.choices?.some(choice => choice.value === '')) fail('AI_RESPONSE_VALUE', 'AI 제안값이 원문 양식의 선택값·자료형·길이 규칙과 다릅니다.');
-      if(plan.facts.preferredAttributes){
-        const notice=quotationNoticeInput(field),key=field.contentField??(notice?noticeLabels[notice]:undefined)??productFactKey(field.hubWire?.name??field.label);
-        const issue=productFactPriorityIssue(change.value,key,plan.facts.description,plan.facts.preferredAttributes);if(issue)fail('AI_RESPONSE_EVIDENCE',`${field.label}: ${issue}. 기존 값은 유지했습니다.`);
+      if (!field || seen.has(field.id) || writableIds && !writableIds.includes(field.id)) fail('AI_RESPONSE_SCOPE', 'AI가 확인되지 않은 항목 또는 보호된 수정값을 반환했습니다.');
+      seen.add(field.id);
+      if (typeof change.value === 'string' && !textSafe(change.value)) fail('AI_RESPONSE_VALUE', 'AI 제안값의 제어문자를 확인해주세요.');
+      const invalid = (value: unknown): boolean => typeof value !== 'string' || Boolean(field.choices && !field.choices.some(choice => choice.value === value))
+        || quotationScalarValueIssues(field, value as string).length > 0 || Boolean(field.required && !(value as string).trim() && !field.choices?.some(choice => choice.value === ''));
+      let value = change.value;
+      const rule=plan.attributeRules?.find(rule=>rule.fieldKey===field.id);
+      if(plan.resultPolicy){
+        if(value===null&&field.group==='hidden')value='';
+        if(typeof value==='string'&&rule?.group){const normalized=normalizeCurrentAttributeNumber(value,rule);if(normalized.error)fail('AI_ATTRIBUTE_UNIT',`${field.label}: ${normalized.error}`);value=normalized.value??'';if(normalized.extra)extras.set(JSON.stringify([optionId??'common',field.id]),normalized.extra);if(normalized.note)warnings.push(`${field.label}: ${normalized.note}`);}
+        if(field.choices&&typeof value==='string'&&!field.choices.some(choice=>choice.value===value)){
+          value=field.group==='hidden'&&(rule?.generationMandatory||rule?.applyRequired)?'':field.choices[0]?.value??'';
+          warnings.push(`${field.label}: 양식의 선택 기본값을 적용했습니다.`);
+        }
+        if(field.group==='hidden'&&(rule?.generationMandatory||rule?.applyRequired)&&typeof value==='string'&&(!value.trim()||/[㐀-䶿一-鿿豈-﫿]/u.test(value)))fail('AI_MANDATORY_UNEXPOSED',`${field.label}: 필수 비노출 속성을 확인해주세요.`);
       }
-      result.set(field.id, change.value);
+      const untranslated = typeof value === 'string' && /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/u.test(value);
+      let evidence: string | null = null;
+      if(typeof value === 'string' && plan.facts.preferredAttributes){
+        const notice=quotationNoticeInput(field),key=field.contentField??(notice?noticeLabels[notice]:undefined)??productFactKey(field.hubWire?.name??field.label);
+        evidence=productFactPriorityIssue(value,key,plan.facts.description,plan.facts.preferredAttributes);
+      }
+      if(untranslated || invalid(value) || evidence){
+        warnings.push(`${field.label}: 확인되지 않은 AI 값은 적용하지 않았습니다.`);
+        // The empty string is the existing nullable hidden-wire representation.
+        const fallback = field.group === 'hidden' ? hiddenAllowsNull(field) ? '' : undefined : untranslated && !field.choices && ['text','textarea'].includes(field.type) ? '상세설명 참조' : undefined;
+        if(fallback === undefined || invalid(fallback))continue;
+        value=fallback;
+      }
+      result.set(field.id, value as string);
     }
     return result;
   };
@@ -315,17 +350,48 @@ export async function executeQuotationAi(plan: QuotationAiPlan, ai: QuotationAiP
       if (!object(item)) fail('AI_RESPONSE_SCOPE', 'AI 옵션 응답의 형식이 올바르지 않습니다.'); exactKeys(item, ['optionId', 'changes']);
       const target = targets.find(target => target.optionId === item.optionId);
       if (!target || seen.has(target.optionId)) fail('AI_RESPONSE_SCOPE', 'AI 응답의 옵션 번호가 중복되거나 다른 요청의 번호입니다.'); seen.add(target.optionId);
-      byOption.set(target.optionId, parseChanges({ changes: item.changes }, differentFields, target.writableFieldIds));
+      byOption.set(target.optionId, parseChanges({ changes: item.changes }, differentFields, target.writableFieldIds,target.optionId));
     }
   }
   const changes: QuotationAiResult['changes'] = [];
   for (const target of plan.targets) for (const field of plan.fields) {
     if (!target.writableFieldIds.includes(field.id)) continue;
     const specific = byOption.get(target.optionId), value = specific?.has(field.id) ? specific.get(field.id) : commonValues.get(field.id);
-    if (value !== undefined) changes.push({ optionId: target.optionId, fieldKey: field.id, value });
+    if (value !== undefined){const extra=extras.get(JSON.stringify([specific?.has(field.id)?target.optionId:'common',field.id]));changes.push({ optionId: target.optionId, fieldKey: field.id, value:extra?`${value} + ${extra}`:value });}
   }
+  if(plan.resultPolicy)validateCurrentQuotationResult(plan,changes,warnings);
   const omitted = plan.targets.reduce((sum, target) => sum + target.writableFieldIds.length, 0) - changes.length;
   if (omitted > 0) warnings.push(`근거가 부족하거나 생성되지 않은 ${omitted}개 항목은 기존 값을 유지했습니다.`);
   if (!active.length) warnings.push('직접 저장한 값과 보호 항목을 제외한 AI 제안 대상이 없습니다.');
-  return { changes, warnings: [...new Set(warnings)], steps, model, generatedAt: new Date().toISOString() };
+  return { changes, warnings: [...new Set(warnings)], steps, model, generatedAt: new Date().toISOString(),...(plan.resultPolicy?{resultPolicy:plan.resultPolicy}:{}) };
+}
+
+/** Reused on owned-job adoption: response flags never authorize normalized values. */
+export function validateCurrentQuotationResult(plan:QuotationAiPlan,changes:QuotationAiResult['changes'],warnings:string[]=[]):void{
+ if(!plan.resultPolicy)return;
+ if(plan.resultPolicy!==CURRENT_QUOTATION_RESULT_POLICY)fail('AI_POLICY','견적 생성 규칙을 확인해주세요.');
+ const rules=plan.attributeRules??[],fields=getQuotationSchema(plan.snapshot.categoryId,plan.snapshot.categoryPath,plan.snapshot).fields;
+ for(const target of plan.targets){
+  const current=new Map((target.currentValues??target.protectedValues).map(value=>[value.fieldKey,value.value]));
+  const read=(key:string)=>changes.find(value=>value.optionId===target.optionId&&value.fieldKey===key)?.value??current.get(key);
+  for(const change of [...changes].filter(value=>value.optionId===target.optionId)){
+   const rule=rules.find(rule=>rule.fieldKey===change.fieldKey);if(!rule?.group)continue;
+   const normalized=normalizeCurrentAttributeNumber(change.value,rule);if(normalized.error)fail('AI_ATTRIBUTE_UNIT',`${rule.name}: ${normalized.error}`);
+   change.value=normalized.value??'';
+   if(normalized.extra){
+    const candidates=rules.filter(item=>item.name==='구성품'&&(!item.hidden||plan.hiddenEnabled)).sort((a,b)=>Number(a.hidden)-Number(b.hidden));
+    const destination=candidates[0];
+    const destinationField=fields.find(field=>field.id===destination?.fieldKey);
+    if(destination&&destinationField&&target.writableFieldIds.includes(destination.fieldKey)&&!read(destination.fieldKey)?.trim()&&!quotationScalarValueIssues(destinationField,normalized.extra).length&&(!destinationField.choices||destinationField.choices.some(choice=>choice.value===normalized.extra))){
+      const existing=changes.find(value=>value.optionId===target.optionId&&value.fieldKey===destination.fieldKey);
+      if(existing)existing.value=normalized.extra;else changes.push({optionId:target.optionId,fieldKey:destination.fieldKey,value:normalized.extra});
+    }else warnings.push('구성품 추가 설명은 기존 값·설정 또는 양식 보호로 적용하지 않았습니다.');
+   }
+  }
+  const missing=mandatoryHiddenProblems(rules,read,fields,'generation');if(missing.length)fail('AI_MANDATORY_UNEXPOSED',`필수 비노출 속성: ${missing.join(', ')}`);
+  if(!plan.hiddenEnabled){
+   for(let i=changes.length-1;i>=0;i--){const rule=rules.find(rule=>rule.fieldKey===changes[i].fieldKey);if(changes[i].optionId===target.optionId&&rule?.hidden&&!rule.applyRequired)changes.splice(i,1);}
+  }
+  const required=mandatoryHiddenProblems(rules,read,fields,'application');if(required.length)fail('AI_MANDATORY_UNEXPOSED',`필수 비노출 속성: ${required.join(', ')}`);
+ }
 }

@@ -1,4 +1,4 @@
-import { productLabelChanges, productLabelDefinitions, verifyProductLabelsView, verifyProductLabelSave, type ProductLabelDraft, type ProductLabelsView } from '@/app/product-label';
+import { productLabelDefinitions, verifyProductLabelsView, verifyProcessedProductLabelSave, type ProductLabelDraft, type ProductLabelsView } from '@/app/product-label';
 import { verifyProductLabelDraftResult } from '@/app/product-label-draft';
 import { completeProductLabelSave } from '@/app/product-label-save';
 import { renderDocument } from '@/app/document-image-render';
@@ -15,7 +15,7 @@ const changed = () => new LabelWorkError('표시사항 작업 중 상품·옵션
 /** The explicit selected-product run may save AI proposals and their PNGs.
  * It never edits manual values, blanks, excluded options, or common labels.
  * A saved PNG proves delivery, not a person's factual/legal review: the
- * existing label override schema has no durable review/AI distinction. */
+ * automatic suggestion layer remains separate from human overrides. */
 export async function runSelectedLabelWork(productId: string, controls: Controls): Promise<SelectedLabelWorkResult> {
  let completedOptions = 0, totalOptions = 0, savedTexts = 0, reusedOptions = 0, pendingSave = false, pendingDraft = false;
  const result = (status: SelectedLabelWorkResult['status'], message: string): SelectedLabelWorkResult => ({ status, message, completedOptions, totalOptions, uncertain: pendingSave || pendingDraft });
@@ -80,13 +80,13 @@ export async function runSelectedLabelWork(productId: string, controls: Controls
     if (!same(existing.references.view, view)) throw changed();
     if (existing.result) { completedOptions++; reusedOptions++; continue; }
    }
-   const eligible = productLabelDefinitions(view).some(field => draftKeys.has(field.key) && !['manual-common', 'manual-option'].includes(row.sources[field.key]));
-   let draft: ProductLabelDraft = {};
+   const eligible = productLabelDefinitions(view).some(field => draftKeys.has(field.key) && !['manual-common', 'manual-option','label-default','label-suggestion'].includes(row.sources[field.key]));
+   let draft: ProductLabelDraft = {}, candidates:ProductLabelDraft|undefined;
    if (eligible) {
     try {
      const value = await json<unknown>(base + '/product-label-draft', { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ optionId, expectedRevision: view.revision, expectedInputFingerprint: view.inputFingerprint }) });
-     draft = { ...verifyProductLabelDraftResult(view, optionId, value).values };
+     const verified=verifyProductLabelDraftResult(view,optionId,value);draft={...verified.values};candidates=verified.candidates;
      pendingDraft = false;
     } catch (cause) {
      // Content-level manual provenance is known only to the server. Its exact
@@ -96,17 +96,17 @@ export async function runSelectedLabelWork(productId: string, controls: Controls
     const after = await read(); if (!same(after, view)) throw changed();
    }
    if (Object.keys(draft).length) {
-    const before = view, changes = productLabelChanges(before, optionId, draft);
+    const before = view;
     try {
      const saved = await json<ProductLabelsView>(endpoint, { method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ expectedRevision: before.revision, expectedInputFingerprint: before.inputFingerprint, changes }) });
-     verifyProductLabelSave(before, saved, optionId, draft); view = saved;
+      body: JSON.stringify({ expectedRevision: before.revision, expectedInputFingerprint: before.inputFingerprint, changes:[],automaticProcessing:{optionId,values:draft,...(candidates?{candidates}:{})} }) });
+     verifyProcessedProductLabelSave(before, saved, optionId, draft); view = saved;
     } catch (cause) {
      await current();
      // A lost ACK may follow a committed text save. One exact read can prove
      // it; never resend the PUT or request another AI proposal automatically.
      const recovered = await read();
-     try { verifyProductLabelSave(before, recovered, optionId, draft); } catch { throw cause; }
+     try { verifyProcessedProductLabelSave(before, recovered, optionId, draft); } catch { throw cause; }
      view = recovered;
     }
     savedTexts++; pendingSave = false;

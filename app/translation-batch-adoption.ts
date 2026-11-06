@@ -42,16 +42,16 @@ export function translationBatchAdoption(content: ProductContent, job: Translati
   if (job.productId !== content.productId || job.productVersion !== version || job.status !== 'completed' || !job.result) {
     throw Error('현재 상품의 완료된 번역 결과를 선택해주세요.');
   }
-  if(job.review.model===WORKERS_QWEN_MODEL&&job.review.instructionsVersion==='sourceflow-translation-v6'&&!Object.hasOwn(job.review,'workersRecovery'))validateQwenTranslationDraft(job.result.draft,job.review.source,job.review.qwenTranslationPolicy);
+  if(job.review.model===WORKERS_QWEN_MODEL&&job.review.instructionsVersion==='sourceflow-translation-v6'&&!Object.hasOwn(job.review,'workersRecovery'))validateQwenTranslationDraft(job.result.draft,job.review.source,job.review.qwenTranslationPolicy,job.review.seoKeywordPolicy,job.review.seoComposition,job.review.seoCompositionContext);
   const patch: ContentPatch = {};
   const preview: { name: string; before: string; after: string }[] = [];
   const skipped: string[] = [];
   for (const field of translationSeoFields) {
     const current = content.seo[field];
     if (current.provenance === 'manual' && !(field === 'keywords' && untouchedIntakeKeywords(content, job))) { skipped.push(`${names[field]}: 직접 수정한 값을 유지합니다.`); continue; }
-    const next = field === 'title' ? brandedIntakeTitle(job.result.draft.title, intakeBrand,job.review.model===WORKERS_QWEN_MODEL&&job.review.instructionsVersion==='sourceflow-translation-v6'&&!Object.hasOwn(job.review,'workersRecovery')) : job.result.draft[field];
-    if (!display(next).trim() || JSON.stringify(current.value) === JSON.stringify(next)) continue;
-    const validated = validateContentInput({ expectedRevision: content.revision, patch: { seo: { [field]: next } } }, [], '');
+    const next = field === 'title' ? brandedIntakeTitle(job.result.draft.title, job.review.seoComposition?.memo.brand.split(',')[0].trim()??intakeBrand,job.review.model===WORKERS_QWEN_MODEL&&job.review.instructionsVersion==='sourceflow-translation-v6'&&!Object.hasOwn(job.review,'workersRecovery')) : job.result.draft[field];
+    if ((!display(next).trim() && !(field==='keywords'&&job.review.seoKeywordPolicy==='couplus-generated-v1')) || JSON.stringify(current.value) === JSON.stringify(next)) continue;
+    const validated = validateContentInput({ expectedRevision: content.revision, patch: { seo: { [field]: next, ...(field==='keywords'&&job.review.seoKeywordPolicy==='couplus-generated-v1'?{keywordPolicy:'couplus-generated-v1'}:{}) } } }, [], '');
     patch.seo = { ...patch.seo, ...validated.patch.seo };
     preview.push({ name: names[field], before: display(current.value), after: display(next) });
   }

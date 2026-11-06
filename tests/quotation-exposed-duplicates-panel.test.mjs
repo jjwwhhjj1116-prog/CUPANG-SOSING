@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -18,7 +19,7 @@ function harness() {
     const exports = {}; cache.set(file, exports);
     const output = ts.transpileModule(fs.readFileSync(new URL('../' + file, import.meta.url), 'utf8'), { fileName: file,
       compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
-    vm.runInNewContext(output, { exports, Error, structuredClone, TextEncoder, URLSearchParams, AbortController, fetch() { requests++; throw Error('Unexpected request'); }, require(name) {
+    vm.runInNewContext(output, { exports, Error, structuredClone, TextEncoder, URLSearchParams, AbortController, fetch() { requests++; throw Error('Unexpected request'); }, require(name) {if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
       if (name === 'react') return hooks;
       if (name.endsWith('.css')) return {};
       if (name.startsWith('@/')) { const path = name.slice(2); return load(path + (fs.existsSync(new URL('../' + path + '.ts', import.meta.url)) ? '.ts' : '.tsx')); }

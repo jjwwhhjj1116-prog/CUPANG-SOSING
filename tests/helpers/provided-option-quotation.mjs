@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../../extensions/supplier-hub/page-source-price-basis.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -43,6 +44,7 @@ export function providedOptionModule(file) {
       structuredClone, crypto: webcrypto, AbortController, setTimeout, clearTimeout,
       fetch() { throw Error('External requests are forbidden for user-provided facts.'); },
       require(name) {
+        if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
         if(name==='../extensions/supplier-hub/rejection-details.mjs')return rejectionDetails;
         if (name === 'parse5') return parse5;
         if (name.startsWith('@/app/')) return providedOptionModule(name.slice(2) + '.ts');

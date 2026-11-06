@@ -437,8 +437,21 @@ export async function renderFreeImageTranslation(image: FreeImageLoaded, regions
     context.save();context.beginPath();context.rect(x,y,width,height);context.clip();
     if(fillBackground){context.fillStyle=region.background;context.fillRect(x,y,width,height);}
     context.fillStyle=region.foreground;context.textBaseline='top';context.textAlign=style.textAlign;
+    // The restoration rectangle and clip stay in source pixels; only glyphs rotate.
+    if (style.rotation) { context.translate(x+width/2,y+height/2); context.rotate(style.rotation*Math.PI/180); context.translate(-x-width/2,-y-height/2); }
+    if (style.textFill) {
+      const angle=style.textFill.angle*Math.PI/180,dx=Math.cos(angle),dy=Math.sin(angle),span=Math.abs(width*dx)+Math.abs(height*dy);
+      const gradient=context.createLinearGradient(x+width/2-dx*span/2,y+height/2-dy*span/2,x+width/2+dx*span/2,y+height/2+dy*span/2);
+      gradient.addColorStop(0,style.textFill.startColor);gradient.addColorStop(1,style.textFill.endColor);context.fillStyle=gradient;
+    }
     const textX=x+padding+(style.textAlign==='center'?maximumWidth/2:style.textAlign==='right'?maximumWidth:0);
-    lines.forEach((line,index)=>context.fillText(line,textX,y+padding+index*lineHeight));context.restore();
+    lines.forEach((line,index)=>{
+      const textY=y+padding+index*lineHeight;
+      if(style.textStroke?.width){context.lineWidth=style.textStroke.width;context.strokeStyle=style.textStroke.color;context.strokeText(line,textX,textY);}
+      if(style.textShadow?.blur){context.shadowBlur=style.textShadow.blur;context.shadowColor=style.textShadow.color;context.shadowOffsetX=0;context.shadowOffsetY=0;}
+      context.fillText(line,textX,textY);
+      if(style.textShadow?.blur){context.shadowBlur=0;context.shadowColor='rgba(0,0,0,0)';}
+    });context.restore();
   };
   const textLayers:{region:FreeImageRegion;canvas:HTMLCanvasElement;context:CanvasRenderingContext2D}[]=[];
   if(paintOrder){

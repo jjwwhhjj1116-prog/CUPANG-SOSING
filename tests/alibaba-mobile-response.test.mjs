@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -15,7 +16,7 @@ function load(file) {
   }).outputText;
   vm.runInNewContext(code, { exports, URL, URLSearchParams, Date, Headers, Response, TextEncoder, TextDecoder,
     AbortController, structuredClone, setTimeout, clearTimeout,
-    require: name => name === 'parse5' ? parse5 : load(name.slice(2) + '.ts'),
+    require: name => name==='@/extensions/supplier-hub/page-source-price-basis.mjs'?pageSourcePriceBasis:(name === 'parse5' ? parse5 : load(name.slice(2) + '.ts')),
   });
   return exports;
 }

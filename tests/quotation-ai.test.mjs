@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { aiModule, aiFixture, companies, mockProvider, plain } from './helpers/quotation-ai.mjs';
+import { aiModule as currentAiModule, aiFixture, companies, mockProvider, plain } from './helpers/quotation-ai.mjs';
+// Stored plans without resultPolicy retain their exact historical parser and scope guards.
+// Current-policy mandatory/unit behavior is covered by task3-current API/rules tests.
+const aiModule=()=>{const m=currentAiModule();return{...m,buildQuotationAiPlan:(saved,scope)=>m.buildQuotationAiPlan(saved,scope,null)};};
 const code = expected => error => error.code === expected && error.uncertain === false;
 
 for (const company of companies) test(`${company.name}: exact owned schema/wires/choices and proposals never write the saved source`, async () => {
@@ -80,8 +83,8 @@ for (const mutation of ['unknown-id', 'duplicate-id', 'protected-id', 'invalid-c
     if (mutation === 'chinese') result.changes[0].value = '材质';
     return { response: JSON.stringify(result) };
   } });
-  await assert.rejects(m.executeQuotationAi(plan, provider), error => error.name === 'QuotationAiError' && error.uncertain === false);
-  assert.equal(provider.calls.length, 2);
+  if(['invalid-choice','bad-type','chinese'].includes(mutation)){const result=await m.executeQuotationAi(plan,provider);assert.ok(result.changes.length);assert.ok(result.warnings.some(warning=>warning.includes('적용하지 않았습니다')));}
+  else {await assert.rejects(m.executeQuotationAi(plan, provider), error => error.name === 'QuotationAiError' && error.uncertain === false);assert.equal(provider.calls.length,2);}
 });
 for (const mutation of ['foreign-option', 'duplicate-option', 'missing-option']) test(`differentiated result scope strictly rejects ${mutation}`, async () => {
   const m = aiModule(), f = aiFixture(), plan = m.buildQuotationAiPlan(f.saved, f.scope), provider = mockProvider({ mutate(result, request) {
@@ -152,4 +155,15 @@ test('timeout is uncertain, no retry, no writes, and timer is owned by this oper
   const m = aiModule({ instantTimeout: true }), f = aiFixture(), plan = m.buildQuotationAiPlan(f.saved, f.scope), before = JSON.stringify(f.saved); let runs = 0;
   await assert.rejects(m.executeQuotationAi(plan, { async run() { runs++; return await new Promise(() => {}); } }), error => error.code === 'AI_TIMEOUT' && error.uncertain === true);
   assert.equal(runs, 1); assert.equal(m.timerCount(), 1); assert.equal(JSON.stringify(f.saved), before);
+});
+
+test('untranslated nullable hidden text becomes generated null on its exact native wire while valid siblings survive',async()=>{
+ const m=aiModule(),f=aiFixture(),plan=m.buildQuotationAiPlan(f.saved,f.scope),field=plan.fields.find(field=>field.hubWire.name==='수동 공란');assert.ok(field);
+ const provider=mockProvider({mutate(result,request){if(request.task==='GET_COMMON_UNEXPOSED_ATTRIBUTES'){const target=result.changes.find(change=>change.fieldKey===field.id);assert.ok(target);target.value='未知';}return{response:JSON.stringify(result)};}});
+ const result=await m.executeQuotationAi(plan,provider),change=result.changes.find(change=>change.fieldKey===field.id);assert.equal(change.value,'');assert.ok(result.changes.some(change=>change.fieldKey!==field.id&&change.value));
+ const load=(await import('./helpers/provided-option-quotation.mjs')).providedOptionModule;
+ const resolved=load('app/quotation-schema.ts').resolveQuotationFields({...f.saved,categoryId:f.snapshot.categoryId,categoryPath:f.snapshot.categoryPath,hubSchema:f.snapshot,generatedAdoption:{policy:'owned-job-facts-v1',sourceBasis:'a'.repeat(64),entries:result.changes.map(change=>({...change,jobId:'test-owned-job'}))}});
+ assert.equal(resolved.rows[1].fields[field.id].source,'generated');
+ const native=await load('app/supplier-hub-single-projection.ts').projectSupplierHubSingleDocument({snapshot:f.snapshot,company:f.snapshot.company,categoryId:f.snapshot.categoryId,categoryPath:f.snapshot.categoryPath,resolved});
+ assert.equal(native.payload.jsonDocument[0].productPage.unexposedAttributes.find(item=>item.attributeName==='수동 공란').attributeValue,null);
 });

@@ -9,9 +9,9 @@ import { commitStageTwoPricing, readStageTwoPricingFence } from '@/db/stage-two-
 import { stableQuotationFieldsView as stableView, QuotationFieldsSnapshotError as FieldsError } from '@/app/quotation-fields-snapshot';
 import { PublicDetailError } from '@/app/quotation-public-detail';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
-import { calculatePrice, pricePolicy } from '@/app/pricing';
+import { calculateRepresentativePrice, pricePolicy, effectivePricePolicy } from '@/app/pricing';
 import { calculateOptionPrices, resolveOptionPricePolicy, validateOptionsInput, type ProductOptionsResponse } from '@/app/product-options';
-import { applyStageTwoRows, stageTwoQuotationDraft, type StageTwoPricingReceipt, type StageTwoPricingRequest } from '@/app/stage-two-pricing';
+import { applyStageTwoRows, stageTwoQuotationDraft, stageTwoRocketMarginGate, type StageTwoPricingReceipt, type StageTwoPricingRequest } from '@/app/stage-two-pricing';
 import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
 import {createStageTwoPricingReview} from '@/app/stage-two-pricing-review';
 import {quotationScope} from '@/app/quotation-scopes';
@@ -29,14 +29,14 @@ function validateBody(value: unknown): StageTwoPricingRequest {
   const fields = ['expectedProductVersion', 'expectedOptionRevision', 'expectedQuotationRevision', 'expectedInputFingerprint', 'policy', 'rows', 'changes', 'recalculate'];
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new FieldsError('가격 설정 객체가 필요합니다.', 400);
   const body = value as StageTwoPricingRequest;
-  if (Object.keys(body).length !== fields.length || Object.keys(body).some(key => !fields.includes(key))
+  if (Object.keys(body).length !== fields.length + (Object.hasOwn(body,'expectedRocketMarginGate')?1:0) || Object.keys(body).some(key => !fields.includes(key)&&key!=='expectedRocketMarginGate')
     || typeof body.expectedProductVersion !== 'string' || !Number.isFinite(Date.parse(body.expectedProductVersion))
     || !Number.isSafeInteger(body.expectedOptionRevision) || body.expectedOptionRevision < 0
     || !Number.isSafeInteger(body.expectedQuotationRevision) || body.expectedQuotationRevision < 0
     || typeof body.expectedInputFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(body.expectedInputFingerprint)
     || typeof body.recalculate !== 'boolean' || !Array.isArray(body.rows) || !Array.isArray(body.changes))
     throw new FieldsError('가격 저장 버전과 옵션·견적서 수정 내용을 확인해주세요.', 400);
-  try { return { ...body, policy: pricePolicy(body.policy) }; }
+  try { return { ...body, policy: pricePolicy(body.policy), ...(Object.hasOwn(body,'expectedRocketMarginGate')?{expectedRocketMarginGate:stageTwoRocketMarginGate(body.expectedRocketMarginGate)}:{}) }; }
   catch (error) { throw new FieldsError(error instanceof Error ? error.message : '가격 설정을 확인해주세요.', 400); }
 }
 function failure(error: unknown) {
@@ -74,6 +74,10 @@ export async function POST(request: Request, context: Context) {
     if (saved.view.productVersion !== body.expectedProductVersion || saved.options.revision !== body.expectedOptionRevision
       || saved.view.revision !== body.expectedQuotationRevision || saved.view.inputFingerprint !== body.expectedInputFingerprint) throw changed();
     const product = await findProduct(owner, id); if (!product || product.updated_at !== saved.view.productVersion) throw changed();
+    const currentSettings = saved.source.settingsPayload ? JSON.parse(saved.source.settingsPayload) : undefined;
+    if(JSON.stringify(stageTwoRocketMarginGate(body.expectedRocketMarginGate))!==JSON.stringify(stageTwoRocketMarginGate(currentSettings?.rocketMarginGate)))
+      throw new FieldsError('계정 로켓 소싱 마진 기준이 변경되었습니다. 입력을 유지하고 최신 가격 기준을 확인해주세요.',409,'STAGE_TWO_PRICE_GATE_CONFLICT');
+    body.policy = effectivePricePolicy(body.policy, currentSettings);
     const previousQuotation = await readQuotationFields(owner, id), fence = await readStageTwoPricingFence(owner, id, profileId);
     const actor = await getChatGPTUser(), company = approvedSupplierHubCompany(actor?.membership);
     if ((env as { YOOFAM_AUTH_ENABLED?: string }).YOOFAM_AUTH_ENABLED === 'true') {
@@ -94,7 +98,7 @@ export async function POST(request: Request, context: Context) {
         throw Error('포함한 옵션의 원가·구성 수량과 가격 설정을 확인해주세요.');
       quotation = { ...stageTwoQuotationDraft(saved.view, body.policy, body.recalculate, body.changes, previousQuotation).state,
         revision: previousQuotation.revision + 1, updatedAt: version };
-      calculation = calculatePrice(product.source_price_cny, body.policy);
+      calculation = calculateRepresentativePrice(product.source_price_cny, body.policy);
       const scope=saved.view.categoryContext.categoryId?quotationScope(saved.view.categoryContext.categoryId):'common';
       if(options.rows.some(row=>row.included)){
         const review=createStageTwoPricingReview({ownerId:owner,product:{...product,updated_at:version},policy:body.policy,options,state:quotation,

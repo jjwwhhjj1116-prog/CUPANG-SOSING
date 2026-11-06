@@ -15,7 +15,8 @@ export function optionBulkPriceBase(policy: PricePolicy): string {
     policy.msrpMultiple, policy.roundingUnit, policy.roundingMode ?? 'up', policy.useIntegratedRate === true,
     policy.useIntegratedRate === true ? policy.integratedRate ?? null : null, policy.recalculationMode ?? null,
     ...(policy.recalculationMinimumEnabled === undefined ? [] : [policy.recalculationMinimumEnabled]),
-    ...(policy.arithmeticMode === undefined ? [] : [policy.arithmeticMode])]);
+    ...(policy.arithmeticMode === undefined ? [] : [policy.arithmeticMode]),
+    ...(policy.fixedSourcing === undefined ? [] : [policy.fixedSourcing])]);
 }
 export function parseCouplusBundleQuantity(input: string, minimum = 1): number {
   // The recorded prompt uses parseInt, including its decimal-prefix behavior.
@@ -50,6 +51,7 @@ export function previewOptionBulk(rows: readonly OptionInput[], selectedIds: rea
       originalName: row.originalName || row.supplierSku, unitsPerPack: action.value,
       supplierSku: '', stock: null, packagingConfirmed: false, minimumOrderQuantity: null, widthCm: null, lengthCm: null, heightCm: null, weightKg: null, packagedWeightG: null, packagedWidthMm: null, packagedLengthMm: null, packagedHeightMm: null }];
     if (action.type === 'autoBundle') {
+      if (policy.fixedSourcing) return [{ ...row }];
       if (row.unitCostCny === null) throw new Error('선택한 옵션의 개당 원가를 먼저 입력해주세요.');
       const unitsPerPack = suggestBundleQuantity(row.unitCostCny, policy, action.value);
       return [{ ...row, unitsPerPack, ...(unitsPerPack !== row.unitsPerPack ? { packagingConfirmed: false } : {}) }];

@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -11,7 +12,7 @@ const modules=new Map();
 function load(file){
  if(modules.has(file))return modules.get(file);
  const exports={};modules.set(file,exports);
- vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,URL,Date,Error,TextEncoder,TextDecoder,Uint8Array,DataView,structuredClone,require:name=>load(name.slice(2)+'.ts')});
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,URL,Date,Error,TextEncoder,TextDecoder,Uint8Array,DataView,structuredClone,require:name=>name==='@/extensions/supplier-hub/page-source-price-basis.mjs'?pageSourcePriceBasis:(load(name.slice(2)+'.ts'))});
  return exports;
 }
 const model=load('app/product-content.ts'),adopt=load('app/translation-batch-adoption.ts').translationBatchAdoption;

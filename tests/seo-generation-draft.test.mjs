@@ -9,6 +9,7 @@ async function fixture(description='구두 뒤꿈치에 부착하는 스펀지 �
  const proof={purpose:'seo-generation',version:1,sourceFingerprint:'a'.repeat(64),optionRevision:1,company:{code:'A01526306',name:'유앤채'},memo:{brand:'',features:'',keywords:''}};
  const configuration=seo.seoGenerationConfiguration({SOURCEFLOW_QUOTATION_AI_PROVIDER:'workers-ai',SOURCEFLOW_QUOTATION_AI_FREE_ONLY:'true',AI:{run:async()=>({})}});
  const review=await seo.prepareSeoGenerationReview(source,proof,configuration);
+ delete review.seoKeywordPolicy; // Historical reviewed contract, intentionally unchanged.
  const good={title:'스펀지 뒤꿈치 패드 4D',description:description?'구두 뒤꿈치에 부착하는 스펀지 패드':'',keywords:['뒤꿈치 패드','구두 패드'],attributes:[],warnings:[]};
  return {h,seo,review,good,normalize:raw=>seo.validateSeoGenerationDraft(raw,review,true)};
 }

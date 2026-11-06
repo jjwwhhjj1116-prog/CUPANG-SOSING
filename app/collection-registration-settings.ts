@@ -6,7 +6,8 @@ import { savedRegistrationSettings, type WorkspaceSettings } from '@/app/workspa
  * registration facts added to workspace settings after this product was created. */
 export function collectionRegistrationSettings(current: WorkspaceSettings, captured: unknown): WorkspaceSettings {
   if (!captured || typeof captured !== 'object' || Array.isArray(captured)) return current;
-  const stored = captured as Record<string, unknown>;
+  const stored = { ...captured } as Record<string, unknown>;
+  delete stored.rocketMarginGate;
   const validated = savedRegistrationSettings(stored);
   const result = { ...current };
   for (const key of ['brand','manufacturer','importer','serviceContact','tradeType','importType','taxType','boxSkuQuantity',

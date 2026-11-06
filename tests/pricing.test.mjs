@@ -1,24 +1,30 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { DatabaseSync } from 'node:sqlite';
+import { createRequire } from 'node:module';
+const native=createRequire(import.meta.url);
 
-function load(file, overrides = {}, mode = 'development') {
+function load(file, overrides = {}, mode = 'development', cache = new Map()) {
+  if (cache.has(file)) return cache.get(file);
   const output = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {};
-  vm.runInNewContext(output, { exports, Response, Error, TextEncoder, TextDecoder, Uint8Array, process: { env: { NODE_ENV: mode } }, require: name => {
+  cache.set(file, exports);
+  vm.runInNewContext(output, { exports, Response, Request, Headers, URL, URLSearchParams, Error, TextEncoder, TextDecoder, Uint8Array, structuredClone, crypto, process: { env: { NODE_ENV: mode } }, require: name => {if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
     if (name in overrides) return overrides[name];
     if (name === 'next/server') return { NextResponse: Response };
-    if (name === '@/app/pricing') return load('app/pricing.ts');
-    if (name === '@/app/request-body') return load('app/request-body.ts');
-    if (name === '@/app/workspace-settings') return load('app/workspace-settings.ts');
-    if (name === '@/app/product-options') return load('app/product-options.ts');
+    if (name === '@/app/pricing') return load('app/pricing.ts',overrides,mode,cache);
+    if (name === '@/app/request-body') return load('app/request-body.ts',overrides,mode,cache);
+    if (name === '@/app/workspace-settings') return load('app/workspace-settings.ts',overrides,mode,cache);
+    if (name === '@/app/product-options') return load('app/product-options.ts',overrides,mode,cache);
     if (name === '@/db/product-options') return { readProductOptions:async(_owner,id)=>({productId:id,rows:[],revision:0}) };
-    if (name === '@/db/product-registration') return load('db/product-registration.ts');
+    if (name === '@/db/product-registration') return load('db/product-registration.ts',overrides,mode,cache);
     if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ userId: 'owner' }), getWorkspaceOwnerId: async () => 'owner' };
-    throw Error(name);
+    if (name.startsWith('@/')) return load(name.slice(2)+'.ts',overrides,mode,cache);
+    return native(name);
   } });
   return exports;
 }

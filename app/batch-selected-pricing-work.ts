@@ -38,7 +38,7 @@ function verify(productId: string, receipt: StageTwoPricingReceipt) {
  const policy = pricePolicy(value.pricing?.policy);
  if (!same(policy, value.pricing.policy)) throw bad();
  if (product.pricing_policy) {
-  const saved = resolveOptionPricePolicy(product);
+  const saved = resolveOptionPricePolicy(product, { rocketMarginGate: value.pricing.rocketMarginGate });
   if (value.pricing.policySource !== saved.policySource || !same(policy, saved.policy)) throw bad();
  } else if (value.pricing.policySource !== 'product-and-workspace' || policy.exchangeRate !== product.exchange_rate
   || policy.supplyMargin !== product.supply_margin || policy.coupangMargin !== product.coupang_margin) throw bad();
@@ -97,7 +97,7 @@ export async function runSelectedPricingWork(productId: string, controls: Contro
   };
   const bound=(receipt:StageTwoPricingReceipt)=>{if(receipt?.product?.owner_id!==controls.expectedOwnerId)throw bad();return verify(productId,receipt);};
   const saveRequest=(before:StageTwoPricingReceipt):StageTwoPricingRequest=>({expectedProductVersion:before.product.updated_at,expectedOptionRevision:before.options.options.revision,
-   expectedQuotationRevision:before.quotation.revision,expectedInputFingerprint:before.quotation.inputFingerprint,policy:before.options.pricing.policy,rows:optionInputs(before.options.options),changes:[],recalculate:false});
+   expectedQuotationRevision:before.quotation.revision,expectedInputFingerprint:before.quotation.inputFingerprint,...(before.options.pricing.rocketMarginGate===undefined?{}:{expectedRocketMarginGate:structuredClone(before.options.pricing.rocketMarginGate)}),policy:before.options.pricing.policy,rows:optionInputs(before.options.options),changes:[],recalculate:false});
   const key=controls.expectedOwnerId+':'+productId+':pricing-save-v1',retained=controls.keys.get(key);
   const confirmed=(attempt:PricingSaveAttempt,saved:StageTwoPricingReceipt)=>{
    bound(saved);verifyStageTwoPricingReceipt(attempt.before.options,attempt.before.quotation,attempt.request,saved);

@@ -9,9 +9,12 @@ for(const company of intakeScopeCompanies)test(company.code+': newer review of t
  const {before,saved}=reviewSourceFixture(company.owner,company),selection=selectionModel.sourceCaptureSelection(before);
  // Inject only fixture inputs and the parent boundary. The production row
  // lookup, stale-handler guard and exact-source start guard run unchanged.
- const componentSource=fs.readFileSync(new URL('../app/components/intake-queue-panel.tsx',import.meta.url),'utf8')
+ const signature=',onReviewSource,autoStartSource=false }: {';
+ const original=fs.readFileSync(new URL('../app/components/intake-queue-panel.tsx',import.meta.url),'utf8');
+ assert.equal(original.split(signature).length,2,'inject the current source-review callback exactly once');
+ const componentSource=original
   .replace('sourceItems=[]','sourceItems='+JSON.stringify([saved]))
-  .replace(',onReviewSource }: {',",onReviewSource=(item,rowId)=>onRows(previous=>previous.map(row=>row.id===rowId?{...row,message:'explicit-review-'+item.revision}:row)) }: {");
+  .replace(signature,",onReviewSource=(item,rowId)=>onRows(previous=>previous.map(row=>row.id===rowId?{...row,message:'explicit-review-'+item.revision}:row)),autoStartSource=false }: {");
  const h=intakeOwnerScopeHarness(company,{componentSource});
  try{
   h.setRows([{...h.rows[0],url:reviewSourceUrl,sourceCapture:selection}]);

@@ -158,3 +158,16 @@ for(const [label,patch]of [['overlong title',{title:'한'.repeat(101)}],['overlo
   const repeated=await json(await f.post({action:'execute',jobId:prepared.job.id}));assert.equal(repeated.job.status,'failed');assert.equal(f.generated.length,1);
  }finally{h.close();}
 });
+
+
+test('new separately signed dedicated policy accepts bounded provided preferences above16KB and applies45 keyed options through real handlers',async()=>{
+ const f=await fixture(companies[0],'work'),{h}=f;try{
+  const options=payload(h,'product_options'),template=plain(options.rows[3]);for(let i=options.rows.length;i<46;i++)options.rows.push({...plain(template),id:'dedicated-nonleading-'+(7000-i*31)});options.rows[2].included=false;options.rows[1].translatedName='';options.rows[1].provenance.translatedName='manual';options.revision++;h.sqlite.prepare('UPDATE product_options SET revision=?,payload=? WHERE product_id=?').run(options.revision,JSON.stringify(options),f.id);
+  const calls=[];h.bindings.AI={run:async(model,input)=>{const data=JSON.parse(input.messages[1].content);calls.push(data);if(data.validationDraft)return {response:JSON.stringify(data.validationDraft)};const korean=value=>value.replace(/\p{Script=Han}+/gu,'한국어');return {response:JSON.stringify({...f.good,...(data.optionExamples?{title:'',keywords:[],description:''}:{}),seoOptions:[...data.seoOptionTargets].reverse().map(target=>({optionId:target.id,name:korean(target.name),...(target.color?{color:korean(target.color)}:{}),...(target.size?{size:korean(target.size)}:{})}))})};}};
+  const api=h.load('app/seo-generation-client.ts'),policy=h.load('app/seo-current-policy.ts'),context=await json(await f.get()),state=api.createSeoGenerationDraftState(context),related=Array.from({length:100},(_,i)=>'키'+i+'가'.repeat(95));
+  state.seoComposition=policy.validateSeoCompositionPolicy({version:'couplus-current-composition-v1',memo:context.memo,related:{source:'provided',query:context.memo.keywords.trim(),keywords:related,warnings:[]}});
+  const sent=[],fetcher=(target,init={})=>{if(init.body)sent.push(JSON.parse(init.body));return h.route(String(target),{method:init.method??'GET',body:init.body});},result=await api.runSeoGenerationDraft(state,{signal:new AbortController().signal,fetcher,confirmAi:true,onState:()=>{}});
+  assert.equal(result.job.status,'completed');assert.equal(calls.filter(value=>value.validationDraft).length,1);assert.deepEqual(calls.filter(value=>!value.validationDraft).map(value=>value.seoOptionTargets.length),[20,20,5]);const prepare=sent.find(value=>value.action==='prepare');assert.ok(new TextEncoder().encode(JSON.stringify(prepare)).length>16*1024);assert.deepEqual(prepare.seoComposition.related.keywords,related);assert.equal(result.job.review.source.attributes.length,context.source.attributes.length);
+  const request={jobId:result.job.id,expectedVersion:context.productVersion,action:'preview',linkQuotationSeoDefaults:true},plan=await json(await f.post(request));assert.ok(plan.preview.length);await json(await f.post({...request,action:'apply',fingerprint:plan.fingerprint}));const after=payload(h,'product_options');assert.equal(after.rows[1].translatedName,'');assert.deepEqual(after.rows[2],options.rows[2]);assert.ok(after.rows.slice(3).every(row=>row.provenance.translatedName==='translated'));
+ }finally{h.close();}
+});

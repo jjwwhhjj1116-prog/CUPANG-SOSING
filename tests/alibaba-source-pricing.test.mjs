@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -12,7 +13,7 @@ const cache=new Map(),plain=value=>JSON.parse(JSON.stringify(value));
 function load(file){
  if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
-  {exports,Error,URL,Date,TextEncoder,structuredClone,crypto:webcrypto,fetch(){throw Error('static pricing fixtures must not access a provider');},require(name){if(name==='parse5')return parse5;if(name==='@/extensions/supplier-hub/product-jsonld.mjs')return {parseProductJsonLd};if(name.startsWith('.'))return load(path.posix.join(path.posix.dirname(file),name)+'.ts');if(name.startsWith('@/'))return load(name.slice(2)+'.ts');throw Error(name);}});return exports;
+  {exports,Error,URL,Date,TextEncoder,structuredClone,crypto:webcrypto,fetch(){throw Error('static pricing fixtures must not access a provider');},require(name){if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;if(name==='parse5')return parse5;if(name==='@/extensions/supplier-hub/product-jsonld.mjs')return {parseProductJsonLd};if(name.startsWith('.'))return load(path.posix.join(path.posix.dirname(file),name)+'.ts');if(name.startsWith('@/'))return load(name.slice(2)+'.ts');throw Error(name);}});return exports;
 }
 const parse=load('app/alibaba-product-result.ts').parseAlibabaProduct;
 const validate=load('app/collection-result.ts').validateCollectionResult;

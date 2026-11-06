@@ -13,7 +13,7 @@ test('GET exposes deterministic saved-source proposals alongside unchanged initi
   content.initialLegalNotices=f.h.load('app/initial-legal-notices.ts').createInitialLegalNotices(schema,{},new Date().toISOString());
   assert.ok(await store.saveProductContent('owner',content,before.revision));
   const original=f.state(),out=await view(f),field=schema.fields.find(field=>field.label==='소재'&&field.section==='legal');
-  assert.deepEqual(out.knownChanges,[{optionId:'synthetic-one',fieldKey:field.id,value:'직접 확인한 스펀지'}]);
+  assert.deepEqual(out.knownChanges,[]);assert.equal((await json(await f.h.route(f.base+'/quotation-fields'+f.query))).resolved.rows.find(row=>row.optionId==='synthetic-one').fields[field.id].value,'직접 확인한 스펀지');
   assert.equal(f.provider.calls.length,0);assert.equal(f.jobs().length,0);unchanged(f,original);
   assert.equal((await store.readProductContent('owner',f.id)).initialLegalNotices.fields.find(item=>item.fieldId===field.id).value,'해당사항없음');
  }finally{f.close();}
@@ -29,7 +29,7 @@ test('actual separate stage-six label storage is used over generated/empty conte
   const previousLabels=await labels.readProductLabels('owner',f.id);
   assert.ok(await labels.saveProductLabels('owner',f.id,{common:{material:'별도 저장한 스펀지'},options:{}},previousLabels.revision,{...source.source,quotationRevision:source.state.revision}));
   const original=f.state(),out=await view(f),field=schema.fields.find(field=>field.label==='소재'&&field.section==='legal');
-  assert.deepEqual(out.knownChanges,[{optionId:'synthetic-one',fieldKey:field.id,value:'별도 저장한 스펀지'}]);
+  assert.deepEqual(out.knownChanges,[]);assert.equal((await json(await f.h.route(f.base+'/quotation-fields'+f.query))).resolved.rows.find(row=>row.optionId==='synthetic-one').fields[field.id].value,'별도 저장한 스펀지');
   assert.equal((await contentStore.readProductContent('owner',f.id)).label.material.value,'');
   unchanged(f,original);assert.equal(f.provider.calls.length,0);
  }finally{f.close();}
@@ -45,20 +45,16 @@ for(const stale of [false,true])test(`actual stage-six GET source proof reaches 
   assert.ok(await labels.saveProductLabels('owner',f.id,{common:{},options:{'synthetic-one':{material:'면'}}},previous.revision,{...saved.source,quotationRevision:saved.state.revision}));
   const original=f.state(),out=await view(f),quote=await json(await f.h.route(f.base+'/quotation-fields'+f.query));
   const field=quote.resolved.schema.fields.find(field=>field.label==='소재'&&field.section==='legal');assert.ok(field);
-  const proposal=out.knownChanges.find(change=>change.fieldKey===field.id);assert.deepEqual(proposal,{optionId:'synthetic-one',fieldKey:field.id,value:'면',savedLabel:{revision:previous.revision+1,previousValue:'실리콘'}});
-  assert.equal(quote.resolved.rows.find(row=>row.optionId==='synthetic-one').fields[field.id].value,'실리콘');unchanged(f,original);
-  const changes=f.h.load('app/quotation-ai-client.ts').quotationSavedSourceChanges(out,quote,f.id,null,true);
-  assert.deepEqual(plain(changes),[{optionId:'synthetic-one',fieldKey:field.id,value:'면'}]);
+  assert.deepEqual(out.knownChanges,[]);assert.equal(quote.resolved.rows.find(row=>row.optionId==='synthetic-one').fields[field.id].value,'면');unchanged(f,original);
+  const changes=[{optionId:'synthetic-one',fieldKey:field.id,value:'수동 견적 전용 재질'}];
   const body={expectedRevision:quote.revision,expectedInputFingerprint:quote.inputFingerprint,changes};
-  await json(await f.h.route(f.base+'/quotation-fields'+f.query,{method:'PUT',body:{...body,changes:out.knownChanges}}),400);
-  unchanged(f,original);
   if(stale){
    saved=await source();previous=await labels.readProductLabels('owner',f.id);
    assert.ok(await labels.saveProductLabels('owner',f.id,{common:{},options:{'synthetic-one':{material:'다른 저장 소재'}}},previous.revision,{...saved.source,quotationRevision:saved.state.revision}));
    const changed=f.state();await json(await f.h.route(f.base+'/quotation-fields'+f.query,{method:'PUT',body}),409);unchanged(f,changed);
   }else{
    const applied=await json(await f.h.route(f.base+'/quotation-fields'+f.query,{method:'PUT',body}));
-   assert.equal(applied.resolved.rows.find(row=>row.optionId==='synthetic-one').fields[field.id].value,'면');
+   assert.equal(applied.resolved.rows.find(row=>row.optionId==='synthetic-one').fields[field.id].value,'수동 견적 전용 재질');
    assert.equal((await contentStore.readProductContent('owner',f.id)).label.material.value,'실리콘');
    const changed=f.state();await json(await f.h.route(f.base+'/quotation-fields'+f.query,{method:'PUT',body}),409);unchanged(f,changed);
   }

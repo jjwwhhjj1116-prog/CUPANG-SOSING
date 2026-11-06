@@ -1,4 +1,4 @@
-import {calculatePrice,pricePolicy,type PricePolicy} from '@/app/pricing';
+import {calculateRepresentativePrice,pricePolicy,type PricePolicy} from '@/app/pricing';
 import {calculateOptionPrices,type ProductOptions} from '@/app/product-options';
 import {quotationPriceInputs,quotationPriceTargets} from '@/app/quotation-price-targets';
 import {quotationNumericValue,quotationScalarValueIssues} from '@/app/quotation-scalar-constraints';
@@ -41,7 +41,7 @@ function configuration(input:StageTwoPricingReviewInput):string{
   const policy=pricePolicy(input.policy);
   // Representative source arithmetic must also be valid; it is not substituted
   // for the distinct saved per-option costs and reviewed pack quantities.
-  calculatePrice(product.source_price_cny,policy);
+  calculateRepresentativePrice(product.source_price_cny,policy);
   const ids=new Set<string>();
   const tuples=options.rows.map(row=>{
     if(!row||!text(row.id,80)||!/^[A-Za-z0-9_-]+$/u.test(row.id)||ids.has(row.id)||typeof row.included!=='boolean'

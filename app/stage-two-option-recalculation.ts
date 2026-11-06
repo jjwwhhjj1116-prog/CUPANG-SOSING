@@ -16,6 +16,7 @@ export function recalculateStageTwoOptionCost(row:OptionInput,cost:OptionInput['
   const checked=pricePolicy({...policy,recalculationMode:'couplus-stage-two-v1',arithmeticMode:policy.roundingMode==='nearest'?'couplus-number-v1':undefined});
   const next=recalculateStageTwoRows([{...row,unitCostCny:cost}],checked)[0],result=calculateOptionPrices([next],checked)[0];
   if(result.error||!result.calculation)throw Error(result.error||'현재 옵션의 원가와 구성 수량을 확인해주세요.');
+  if(checked.fixedSourcing)return{row:next,changes:edits.map(edit=>({...edit}))};
   const targets=quotationPriceTargets(view.resolved.schema.fields),prices=result.calculation;
   const values=(['supplyPrice','salePrice'] as const).flatMap(input=>{
     if(!Number.isSafeInteger(prices[input])||prices[input]<=0)throw Error('현재 옵션의 계산 금액을 확인해주세요. 기존 가격 입력은 유지했습니다.');

@@ -1,10 +1,12 @@
+import {CURRENT_QUOTATION_RESULT_POLICY} from '@/app/current-quotation-attribute-rules';
+import { quotationScope } from '@/app/quotation-scopes';
+import type { GeneratedQuotationAdoption } from '@/app/quotation-generated-adoption';
 import { env } from 'cloudflare:workers';
 import { NextResponse } from 'next/server';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
-import { readMappedQuotationSource, quotationExportFingerprint, resolveQuotationExport, QuotationExportError } from '@/app/exports/quotation-source';
-import { quotationKnownNoticeProposals } from '@/app/quotation-known-notice-proposals';
+import { readMappedQuotationSource, quotationExportFingerprint, QuotationExportError } from '@/app/exports/quotation-source';
 import { readProductLabels, productLabelsSourcesCurrent } from '@/db/product-labels';
 import { quotationSourcesCurrent, readQuotationFields } from '@/db/quotation-fields';
 import { fingerprint } from '@/app/automation/model';
@@ -28,12 +30,14 @@ function configuration() {
       +(selected.executionPolicy?' 설정된 Qwen 텍스트 모델을 사용하며 기존 UTC 일일 공유 40회 호출 제한을 유지합니다. 기존 활성화 플래그는 무료 과금 보장이 아니며 Cloudflare 사용량 과금이 발생할 수 있습니다.':'') };
 }
 async function executionFingerprint(saved:Awaited<ReturnType<typeof readSource>>,policy:QuotationTextExecution|null){
-  const source=await quotationExportFingerprint(saved,null);return policy?fingerprint({purpose:'quotation-ai-execution-v1',source,executionPolicy:policy}):source;
+  const source=await quotationExportFingerprint(saved,null),execution=policy?await fingerprint({purpose:'quotation-ai-execution-v1',source,executionPolicy:policy}):source;return fingerprint({purpose:'quotation-ai-result-policy-v1',source:execution,resultPolicy:CURRENT_QUOTATION_RESULT_POLICY});
 }
-const publicJob = (job: QuotationAiJob) => ({ id: job.id, status: job.status, fingerprint: job.review.fingerprint,
+const publicJob = (job: QuotationAiJob, adoption?:GeneratedQuotationAdoption, active=false) => ({ id: job.id, status: job.status, fingerprint: job.review.fingerprint,
   quotationRevision: job.review.quotationRevision, profileId: job.review.profileId, scope: job.review.scope, model: quotationTextModel(job.review.executionPolicy),
+  ...(job.review.plan.resultPolicy?{resultPolicy:job.review.plan.resultPolicy}:{}),
   ...(job.review.executionPolicy?{executionPolicy:job.review.executionPolicy}:{}),
-  result: job.result, error: job.error, createdAt: job.createdAt, startedAt: job.startedAt, finishedAt: job.finishedAt, applied: false,
+  result: job.result, error: job.error, createdAt: job.createdAt, startedAt: job.startedAt, finishedAt: job.finishedAt, applied: Boolean(adoption?.entries.some(entry=>entry.jobId===job.id)),
+  ...(adoption?.entries.some(entry=>entry.jobId===job.id)?{appliedTargets:adoption.entries.filter(entry=>entry.jobId===job.id).map(({optionId,fieldKey})=>({optionId,fieldKey})),generatedSourceCurrent:active}:{}),
   canClose:job.status==='uncertain'||job.status==='running'&&Boolean(job.startedAt)&&Date.now()-Date.parse(job.startedAt!)>5*60_000 });
 async function authorization() {
   const user = await getChatGPTUser(), owner = await getWorkspaceOwnerId(), company = approvedSupplierHubCompany(user?.membership);
@@ -76,18 +80,14 @@ export async function GET(request: Request, context: Context) {
     if (!await quotationSourcesCurrent(auth.owner, id, saved.source) || (await readQuotationFields(auth.owner, id)).revision !== saved.state.revision
       || !await productLabelsSourcesCurrent(auth.owner, id, { ...saved.source, quotationRevision: saved.state.revision }, labels.revision)
       || !await currentAuthorization(auth)) return sourceChanged();
-    const resolved = resolveQuotationExport(saved);
-    const knownChanges = resolved.rows.some(row => row.included) ? quotationKnownNoticeProposals(id, {
-      contentRevision: saved.content.revision, optionRevision: saved.options.revision,
-      categoryContext: saved.categoryContext, overrides: saved.state.overrides, resolved,
-    }, saved.content, { optionId: null, applyToAllOptions: true }, saved.options, labels) : [];
+    const knownChanges: never[] = [];
     if(!sameQuotationTextExecution(configuration().executionPolicy,selected.executionPolicy))return sourceChanged();
     return json({ configuration: selected, fingerprint: currentFingerprint, productId: id, productVersion: saved.product.updated_at,
       contentRevision: saved.content.revision, optionRevision: saved.options.revision, quotationRevision: saved.state.revision,
       profileId: saved.categoryContext.profileId,
       ...(query.has('idempotencyKey') ? { idempotencyKey: query.get('idempotencyKey')! } : {}),
       knownChanges,
-      jobs: jobs.filter(job => JSON.stringify(job.review.company) === JSON.stringify(auth.company) && job.review.profileId === saved.categoryContext.profileId).map(publicJob) });
+      jobs: jobs.filter(job => JSON.stringify(job.review.company) === JSON.stringify(auth.company) && job.review.profileId === saved.categoryContext.profileId).map(job=>publicJob(job,saved.savedScopes.categoryGenerated?.[quotationScope(saved.categoryContext.categoryId!)],Boolean(saved.generatedAdoption))) });
   } catch (error) { return errorResponse(error); }
 }
 export async function POST(request: Request, context: Context) {

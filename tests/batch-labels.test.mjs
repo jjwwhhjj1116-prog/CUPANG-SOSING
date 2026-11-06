@@ -1,9 +1,10 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
-function load(file,overrides={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,structuredClone,TextEncoder,require:name=>overrides[name]??load(name.slice(2)+'.ts',overrides)});return exports;}
+function load(file,overrides={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,structuredClone,TextEncoder,require:name=>name==='@/extensions/supplier-hub/page-source-price-basis.mjs'?pageSourcePriceBasis:(overrides[name]??load(name.slice(2)+'.ts',overrides))});return exports;}
 function view(){return {imageKeys:[],categoryContext:{categoryId:'80719'},resolved:{schema:{categoryId:'80719',categoryPath:['주방'],fields:[{id:'title',label:'상품명',section:'start'},{id:'model',label:'모델명',section:'product'}]},rows:[{optionId:'a',optionLabel:'옵션',included:true,fields:{title:{value:'상품'},model:{value:'모델'}}}]}};}
 test('multi-product label retries reuse files only for identical category and rendered content',async()=>{
  let current=view(),fail=true;const observed=[];

@@ -1,9 +1,10 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
-function load(file,deps={},mode='development') {const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,TextDecoder,Uint8Array,DataView,Response,process:{env:{NODE_ENV:mode}},require(name){if(name in deps)return deps[name];if(name==='next/server')return {NextResponse:Response};if(name.startsWith('@/app/'))return load(name.slice(2)+'.ts',deps,mode);throw Error(name);}});return exports;}
+function load(file,deps={},mode='development') {const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,TextDecoder,Uint8Array,DataView,Response,process:{env:{NODE_ENV:mode}},require(name){if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;if(name in deps)return deps[name];if(name==='next/server')return {NextResponse:Response};if(name.startsWith('@/app/'))return load(name.slice(2)+'.ts',deps,mode);throw Error(name);}});return exports;}
 const context={params:Promise.resolve({id:'job'})};
 function route({linked=false,cancelled=false,missing=false,mode='development'}={}){
  const reads=[];const track=(name,value)=>async(...args)=>{reads.push([name,...args]);return value;};

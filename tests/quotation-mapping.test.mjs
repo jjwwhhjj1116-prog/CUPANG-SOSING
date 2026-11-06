@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -10,14 +11,15 @@ const cache = new Map();
 function load(file) {
   if (cache.has(file)) return cache.get(file);
   const exports = {};
+  cache.set(file, exports);
   const compiled = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-  vm.runInNewContext(compiled, { exports, structuredClone, require(name) {
+  vm.runInNewContext(compiled, { exports, structuredClone, require(name) {if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
     if (name === 'parse5') return parse5;
     if (name.startsWith('@/')) return load(name.slice(2) + '.ts');
     if (name.startsWith('./')) return load(path.posix.join(path.posix.dirname(file), name) + '.ts');
     throw Error(name);
   } });
-  cache.set(file, exports); return exports;
+  return exports;
 }
 const { suggestQuotationMappings: suggest } = load('app/quotation-mapping.ts');
 const plain = value => JSON.parse(JSON.stringify(value));

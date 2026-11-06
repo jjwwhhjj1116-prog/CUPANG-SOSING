@@ -1,3 +1,4 @@
+import type { GeneratedQuotationAdoption } from '@/app/quotation-generated-adoption';
 import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 import { quotationScope } from '@/app/quotation-scopes';
 import { env } from 'cloudflare:workers';
@@ -16,14 +17,14 @@ export const quotationFieldsSchema = `CREATE TABLE IF NOT EXISTS product_quotati
   revision INTEGER NOT NULL CHECK(revision > 0), payload TEXT NOT NULL, updated_at TEXT NOT NULL
 )`;
 export type QuotationFieldsState = { schemaVersion: 1; productId: string; revision: number; overrides: QuotationOverrides; categoryOverrides?: Record<string, QuotationOverrides>;
-  packagingBasis?:QuotationPackagingBasis;categoryPackagingBasis?:Record<string,QuotationPackagingBasis>;updatedAt: string | null;
+  categoryGenerated?: Record<string, GeneratedQuotationAdoption>;packagingBasis?:QuotationPackagingBasis;categoryPackagingBasis?:Record<string,QuotationPackagingBasis>;updatedAt: string | null;
   detailSaveBackups?: Record<string, DetailSaveBackup[]>; detailEditorInputs?: Record<string, DetailEditorInputs>;
   stageTwoMsrp?: StageTwoMsrp; categoryStageTwoMsrp?: Record<string, StageTwoMsrp>;
   stageTwoPricingReviews?: Record<string, StageTwoPricingReview>;savedValidation?:SavedQuotationValidationProof };
 export type QuotationCollectionSource = { id: string; payload: string; updatedAt: string; linked?: boolean };
 export type QuotationSourceGuard = {
   productVersion: string; imageKeys: string; pricingPolicy: string | null;
-  contentRevision: number; optionRevision: number; settingsPayload: string | null;
+  contentRevision: number; optionRevision: number; labelRevision?: number; settingsPayload: string | null;
   profile: { id: string; revision: number } | null;
   collection: { offerId: string; snapshot: QuotationCollectionSource | null } | null;
   /** Optional server-created membership seal for accepting a non-measured draft. */
@@ -73,6 +74,10 @@ export function sourceGuard(owner: string, productId: string, source: QuotationS
     '(SELECT payload FROM workspace_settings WHERE owner_id=p.owner_id) IS ?',
   ];
   const args: (string | number | null)[] = [productId, owner, source.productVersion, source.imageKeys, source.pricingPolicy, source.contentRevision, source.optionRevision, source.settingsPayload];
+  if (source.labelRevision !== undefined) {
+    conditions.push('((?=0 AND NOT EXISTS(SELECT 1 FROM product_labels WHERE product_id=p.id)) OR EXISTS(SELECT 1 FROM product_labels WHERE product_id=p.id AND owner_id=p.owner_id AND revision=?))');
+    args.push(source.labelRevision, source.labelRevision);
+  }
   if(source.member){conditions.push("EXISTS(SELECT 1 FROM members m WHERE m.id=p.owner_id AND m.status='approved' AND lower(trim(m.email))=? AND m.role=? AND m.company_code=? AND m.company_name=?)");args.push(source.member.email,source.member.role,source.member.companyCode,source.member.companyName);}
   if (source.profile) {
     conditions.push('EXISTS(SELECT 1 FROM category_profiles WHERE owner_id=p.owner_id AND id=? AND revision=?)');
@@ -100,8 +105,8 @@ export async function quotationSourcesCurrent(owner: string, productId: string, 
 }
 
 /** All option/common overrides are committed together; automatic values never overwrite them. */
-export async function saveQuotationFields(owner: string, productId: string, overrides: QuotationOverrides, expectedRevision: number, source: QuotationSourceGuard, categoryId: string | null = null, packagingBasis?:QuotationPackagingBasis|null, stageTwoMsrp?:StageTwoMsrp|null): Promise<QuotationFieldsState | null> {
-  return commitQuotationFields(owner, productId, overrides, expectedRevision, source, categoryId,undefined,packagingBasis,undefined,undefined,stageTwoMsrp);
+export async function saveQuotationFields(owner: string, productId: string, overrides: QuotationOverrides, expectedRevision: number, source: QuotationSourceGuard, categoryId: string | null = null, packagingBasis?:QuotationPackagingBasis|null, stageTwoMsrp?:StageTwoMsrp|null, generatedAdoption?:GeneratedQuotationAdoption): Promise<QuotationFieldsState | null> {
+  return commitQuotationFields(owner, productId, overrides, expectedRevision, source, categoryId,undefined,packagingBasis,undefined,undefined,stageTwoMsrp,generatedAdoption);
 }
 /** The translated PNG is appended and the selected final quotation overrides
  * advance in the same batch. Common content and source SKU facts are untouched. */
@@ -141,7 +146,7 @@ export async function attachQuotationDetailSave(owner: string, productId: string
     throw Error('Invalid detail save attachment.');
   return commitQuotationFields(owner, productId, overrides, expectedRevision, source, categoryId, imageKeys, undefined, detail);
 }
-async function commitQuotationFields(owner: string, productId: string, overrides: QuotationOverrides, expectedRevision: number, source: QuotationSourceGuard, categoryId: string | null, imageKeys?: string[], packagingBasis?:QuotationPackagingBasis|null, detail?: DetailSaveCommit, sealedImage?: SealedQuotationImageCommit, stageTwoMsrp?:StageTwoMsrp|null): Promise<QuotationFieldsState | null> {
+async function commitQuotationFields(owner: string, productId: string, overrides: QuotationOverrides, expectedRevision: number, source: QuotationSourceGuard, categoryId: string | null, imageKeys?: string[], packagingBasis?:QuotationPackagingBasis|null, detail?: DetailSaveCommit, sealedImage?: SealedQuotationImageCommit, stageTwoMsrp?:StageTwoMsrp|null, generatedAdoption?:GeneratedQuotationAdoption): Promise<QuotationFieldsState | null> {
   const db = await database(); const guard = sourceGuard(owner, productId, source);
   if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error('Invalid quotation revision');
   const updatedAt = new Date(Math.max(Date.now(), Date.parse(source.productVersion) + 1)).toISOString();
@@ -155,6 +160,7 @@ async function commitQuotationFields(owner: string, productId: string, overrides
     overrides: categoryId ? previous.overrides : overrides,
     categoryOverrides: categoryId ? { ...previous.categoryOverrides, [quotationScope(categoryId)]: overrides } : previous.categoryOverrides, updatedAt };
   delete state.savedValidation;
+  if (generatedAdoption && categoryId) state.categoryGenerated = { ...previous.categoryGenerated, [quotationScope(categoryId)]: generatedAdoption };
   if(packagingBasis!==undefined){
     if(categoryId){
       const scopes={...previous.categoryPackagingBasis},key=quotationScope(categoryId);

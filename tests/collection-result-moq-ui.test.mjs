@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -16,7 +17,7 @@ function fixture(anonymous=false){
  if(anonymous){result.provider='chrome-current-page-v1';result.options.forEach(row=>row.sku='');result.pageOptionIdentity={format:'yoofam-page-option-identity-v1',offerId:result.offerId,sourceKeys:['black:small','white:large']};}
  const fetcher=async(path,init)=>{calls.push({path,init});return Response.json(path.endsWith('/result')?{jobId:'job',offerId:'754123',receipt:{result},message:'수신됨'}:{capacity:{usedSlots:0,totalImages:0,reusableIndices:[]}});};
  function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
-  {exports,Error,URL,AbortController,setTimeout,clearTimeout,fetch:fetcher,require(name){if(name==='react')return react;if(name==='react/jsx-runtime')return nativeRequire(name);
+  {exports,Error,URL,AbortController,setTimeout,clearTimeout,fetch:fetcher,require(name){if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;if(name==='react')return react;if(name==='react/jsx-runtime')return nativeRequire(name);
    if(name==='@/app/collection-import')return{runCollectionImport:()=>assert.fail('reading source facts never imports a product')};return load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts'));}});return exports;}
  const component=load('app/components/collection-result-panel.tsx');
  const render=()=>{stateIndex=0;refIndex=0;const root=component.CollectionResultPanel({jobId:'job',offerId:'754123',onSaved:()=>assert.fail('reading source facts never saves a product')});const tree=root.type(root.props);first=false;return tree;};

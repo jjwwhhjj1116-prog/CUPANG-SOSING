@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -69,7 +70,7 @@ function harness(initial = {}, boundaries = {}) {
     vm.runInNewContext(ts.transpileModule(source, { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
       { exports, AbortController, URL, URLSearchParams, TextEncoder, TextDecoder, Date, Intl, crypto, structuredClone,
         fetch: async (...args) => { calls.reads++; if(boundaries.fetch)return boundaries.fetch(...args);throw Error('Stage navigation must not send a request through DetailPanel.'); },
-        window: { print() {}, setTimeout() {} }, require(name) {
+        window: { print() {}, setTimeout() {} }, require(name) {if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
           if (name === 'react') return hooks;
           if (name === 'react/jsx-runtime') return { jsx: (type, received, key) => ({ type, props: received, key }), jsxs: (type, received, key) => ({ type, props: received, key }), Fragment: 'fragment' };
           if (name.endsWith('.css')) return {};

@@ -1,10 +1,10 @@
 import {exchange} from '@/app/supplier-hub-handoff';
 
-export type BrowserProductCapture={sourceUrl:string;scripts:string[]}|{sourceUrl:string;format:'1688-public-mobile-capture-v1';mobileHtml:string;skuPayload:object;detailSource:string}|{sourceUrl:string;format:'1688-public-mobile-partial-capture-v1';mobileHtml:string;skuPayload:object;detailSource:string;detailUnavailable:{status:502|503|504}}|{sourceUrl:string;format:'1688-public-sku-capture-v1';skuPayload:object}|{sourceUrl:string;format:'yoofam-saved-page-capture-v1';captureId:string;fingerprint:string;revision:number}|{sourceUrl:string;format:'yoofam-saved-query-capture-v1';captureId:string;fingerprint:string;revision:number};
+export type BrowserProductCapture={sourceUrl:string;format:'yoofam-context-preference-v1'}|{sourceUrl:string;scripts:string[]}|{sourceUrl:string;format:'1688-public-mobile-capture-v1';mobileHtml:string;skuPayload:object;detailSource:string}|{sourceUrl:string;format:'1688-public-mobile-partial-capture-v1';mobileHtml:string;skuPayload:object;detailSource:string;detailUnavailable:{status:502|503|504}}|{sourceUrl:string;format:'1688-public-sku-capture-v1';skuPayload:object}|{sourceUrl:string;format:'yoofam-saved-page-capture-v1';captureId:string;fingerprint:string;revision:number}|{sourceUrl:string;format:'yoofam-saved-query-capture-v1';captureId:string;fingerprint:string;revision:number};
 
 /** Prefer an explicitly collected, durable inbox source. This reads our own
  * server only, and never opens the 1688 URL. Account checks run again on import. */
-async function savedPageCapture(sourceUrl:string,signal:AbortSignal):Promise<BrowserProductCapture|null>{
+async function savedPageCapture(sourceUrl:string,signal:AbortSignal):Promise<Extract<BrowserProductCapture,{format:'yoofam-saved-page-capture-v1'}>|null>{
  const controller=new AbortController();let interrupt:(error:Error)=>void=()=>{};
  const stopped=new Promise<never>((_resolve,reject)=>{interrupt=reject;});
  const abort=()=>{controller.abort();interrupt(Error(signal.aborted?'작업을 취소했습니다.':'수집함 확인 시간이 초과됐습니다. 저장 상태를 확인한 뒤 다시 시도해주세요.'));};
@@ -31,16 +31,19 @@ export async function probe1688FromChrome(sourceUrl:string,signal:AbortSignal):P
  if(signal.aborted)throw Error('작업을 취소했습니다.');
  if(typeof window==='undefined'||typeof location==='undefined')return null;
  if(!/^https:\/\/detail\.1688\.com\/offer\/[1-9]\d{0,29}\.html$/.test(sourceUrl))return null;
- const saved=await savedPageCapture(sourceUrl,signal);if(saved)return saved;
+ let existingProductProbe=false;
  const presence=new AbortController(),abortPresence=()=>presence.abort();
  signal.addEventListener('abort',abortPresence,{once:true});
  const presenceTimer=setTimeout(abortPresence,750);
  try{
   const capability=await exchange('PING',null,presence.signal);
   if(signal.aborted)throw Error('작업을 취소했습니다.');
-  if(capability.existingProductProbe!==true)return null;
- }catch(cause){if(signal.aborted)throw cause;return null;}
+  if(capability.primaryContextCapture===true)return {sourceUrl,format:'yoofam-context-preference-v1'};
+  existingProductProbe=capability.existingProductProbe===true;
+ }catch(cause){if(signal.aborted)throw cause;return await savedPageCapture(sourceUrl,signal);}
  finally{clearTimeout(presenceTimer);signal.removeEventListener('abort',abortPresence);presence.abort();}
+ const saved=await savedPageCapture(sourceUrl,signal);if(saved)return saved;
+ if(!existingProductProbe)return null;
  if(signal.aborted)throw Error('작업을 취소했습니다.');
  return new Promise((resolve,reject)=>{
   if(signal.aborted){reject(Error('작업을 취소했습니다.'));return;}
@@ -68,23 +71,27 @@ export async function probe1688FromChrome(sourceUrl:string,signal:AbortSignal):P
  * in that same Chrome window; it never reads cookies or another profile. */
 export async function capture1688FromChrome(sourceUrl:string,signal:AbortSignal):Promise<BrowserProductCapture>{
  if(signal.aborted)throw Error('작업을 취소했습니다.');
- const saved=await savedPageCapture(sourceUrl,signal);if(saved)return saved;
  let capability:Record<string,unknown>;
  try{capability=await exchange('PING',null,signal);}
- catch(cause){if(signal.aborted)throw cause;throw Error('현재 Chrome의 상품 수집 확장 응답을 확인하지 못했습니다. 확장과 앱 페이지를 새로고침한 뒤 다시 시도해주세요.');}
+ catch(cause){if(signal.aborted)throw cause;const saved=await savedPageCapture(sourceUrl,signal);if(saved)return saved;throw Error('현재 Chrome의 상품 수집 확장 응답을 확인하지 못했습니다. 확장과 앱 페이지를 새로고침한 뒤 다시 시도해주세요.');}
  if(signal.aborted)throw Error('작업을 취소했습니다.');
- if(capability.publicMobileCapture!==true)throw Error('현재 Chrome 확장이 1688 원문 수집을 지원하지 않습니다. 최신 상품 수집 확장을 적용하고 앱 페이지를 새로고침해주세요.');
+ if(capability.primaryContextCapture!==true){const saved=await savedPageCapture(sourceUrl,signal);if(saved)return saved;}
+ if(capability.primaryContextCapture!==true&&capability.publicMobileCapture!==true)throw Error('현재 Chrome 확장이 1688 원문 수집을 지원하지 않습니다. 최신 상품 수집 확장을 적용하고 앱 페이지를 새로고침해주세요.');
  return new Promise((resolve,reject)=>{
   if(signal.aborted){reject(Error('작업을 취소했습니다.'));return;}
   const requestId=crypto.randomUUID();
   const cleanup=()=>{clearTimeout(timer);window.removeEventListener('message',receive);signal.removeEventListener('abort',abort);};
   const cancel=()=>window.postMessage({channel:'YOOFAM_1688_CAPTURE',requestId,type:'CANCEL',sourceUrl},location.origin);
   const abort=()=>{cancel();cleanup();reject(Error('작업을 취소했습니다.'));};
-  const receive=(event:MessageEvent)=>{
+  const receive=async(event:MessageEvent)=>{
    if(event.source!==window||event.origin!==location.origin||event.data?.channel!=='YOOFAM_1688_CAPTURE_RESULT'||event.data.requestId!==requestId)return;
    cleanup();const result=event.data.result;
    if(result?.ok!==true){reject(Error(typeof result?.error==='string'?result.error:'1688 상품 페이지를 읽지 못했습니다.'));return;}
    if(result.sourceUrl!==sourceUrl){reject(Error('1688 상품 페이지의 응답이 요청 URL과 일치하지 않습니다.'));return;}
+   if(capability.primaryContextCapture===true){
+    if(result.format!=='yoofam-context-saved-v1'||Object.keys(result).some(key=>!['ok','sourceUrl','format','captureId','fingerprint'].includes(key))||typeof result.captureId!=='string'||!/^[a-f0-9-]{36}$/.test(result.captureId)||typeof result.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(result.fingerprint)){reject(Error('1688 기본 원문의 저장 확인을 받지 못했습니다. 수집함을 확인해주세요.'));return;}
+    try{const saved=await savedPageCapture(sourceUrl,signal);if(signal.aborted)throw Error('작업을 취소했습니다.');if(saved?.format!=='yoofam-saved-page-capture-v1'||saved.captureId!==result.captureId||saved.fingerprint!==result.fingerprint)throw Error('저장된 원문이 변경되었습니다. 수집함에서 해당 수집본을 선택해주세요.');resolve(saved);}catch(error){reject(error);}return;
+   }
    if(result.format==='1688-public-sku-capture-v1'){
     let skuText:string|undefined;try{skuText=JSON.stringify(result.skuPayload);}catch{reject(Error('1688 옵션 원문이 올바른 JSON이 아닙니다.'));return;}
     if(!result.skuPayload||typeof result.skuPayload!=='object'||Array.isArray(result.skuPayload)||typeof skuText!=='string'||new TextEncoder().encode(skuText).byteLength>2*1024*1024
@@ -111,6 +118,6 @@ export async function capture1688FromChrome(sourceUrl:string,signal:AbortSignal)
   };
   const timer=setTimeout(()=>{cancel();cleanup();reject(Error('1688 원문 수집 응답을 확인하지 못했습니다. 현재 상품 페이지를 확인한 뒤 다시 시도해주세요.'));},45000);
   window.addEventListener('message',receive);signal.addEventListener('abort',abort,{once:true});
-  window.postMessage({channel:'YOOFAM_1688_CAPTURE',requestId,type:'CAPTURE',sourceUrl},location.origin);
+  window.postMessage({channel:'YOOFAM_1688_CAPTURE',requestId,type:capability.primaryContextCapture===true?'CAPTURE_CONTEXT':'CAPTURE',sourceUrl},location.origin);
  });
 }

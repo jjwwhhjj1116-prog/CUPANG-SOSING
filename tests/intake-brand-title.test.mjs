@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -12,7 +13,7 @@ function loader(overrides={}){
  function load(file){
   if(cache.has(file))return cache.get(file);
   const exports={};cache.set(file,exports);
-  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Date,Error,URL,Response,TextEncoder,TextDecoder,Uint8Array,DataView,structuredClone,crypto:webcrypto,process:{env:{NODE_ENV:'development'}},require:name=>name in overrides?overrides[name]:name==='next/server'?{NextResponse:Response}:load(name.slice(2)+'.ts')});
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Date,Error,URL,Response,TextEncoder,TextDecoder,Uint8Array,DataView,structuredClone,crypto:webcrypto,process:{env:{NODE_ENV:'development'}},require:name=>name==='@/extensions/supplier-hub/page-source-price-basis.mjs'?pageSourcePriceBasis:(name in overrides?overrides[name]:name==='next/server'?{NextResponse:Response}:load(name.slice(2)+'.ts'))});
   return exports;
  }
  return load;

@@ -5,6 +5,7 @@ import { MAX_FREE_IMAGE_BRUSH_POINTS, type FreeImageBrush, type FreeImageBrushPo
 
 export type FreeImageBrushStroke = { id: string; background: string; brush: FreeImageBrush };
 type Props = {
+  displayScale?: number;
   sourceUrl: string; width: number; height: number; scopeKey: string;
   enabled: boolean; disabled: boolean; size: number; color: string; maxPoints: number;
   strokes: readonly FreeImageBrushStroke[];
@@ -117,7 +118,7 @@ export function FreeImageBrushCanvas(props: Props) {
     setDraft(null); setGeneration(generationRef.current); completed.onComplete(completed.id, copyPoints(completed.points));
   }
   function pointerCanceled(event: PointerEvent<SVGSVGElement>) { if (currentGesture(event)) cancelGesture(); }
-  return <><div style={{ position: 'relative', width: '100%', maxWidth: Math.min(props.width, 420 * props.width / props.height), aspectRatio: `${props.width}/${props.height}`, overflow: 'hidden' }}>
+  return <><div style={{ position: 'relative', width: props.displayScale === undefined ? '100%' : props.width * props.displayScale, maxWidth: props.displayScale === undefined ? Math.min(props.width, 420 * props.width / props.height) : undefined, flexShrink: 0, aspectRatio: `${props.width}/${props.height}`, overflow: 'hidden' }}>
     <img src={props.sourceUrl} alt="문구 번역 원본" width={props.width} height={props.height} style={{ display: 'block', width: '100%', height: '100%' }} />
     <svg role="img" aria-label="브러시 편집 원본" data-testid="free-image-brush-surface" viewBox={`0 0 ${props.width} ${props.height}`} preserveAspectRatio="none"
       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: props.enabled && !props.disabled ? 'none' : 'auto', cursor: props.enabled && !props.disabled ? 'crosshair' : 'default' }}

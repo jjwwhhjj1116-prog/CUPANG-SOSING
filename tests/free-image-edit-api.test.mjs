@@ -190,3 +190,14 @@ test('legacy JSON remains bounded to 96 KiB while an explicitly sealed document 
     assert.equal(recovered.applied, true); assert.equal(recovered.key, saved.key); assert.equal(recovered.editDocumentSha256, saved.editDocumentSha256); assert.equal(f.snapshot(), after);
   } finally { f.close(); }
 });
+test('glyph effects are sealed in document digest and survive apply recovery and saved-source reopening',async()=>{
+ const f=await freeImageEditFixture(schemaCompanies[0]);try{
+ const source=(await json(await f.source())).source,doc=f.doc();Object.assign(doc.regions[0],{textFill:{kind:'linear-gradient',startColor:'#ff0000',endColor:'#0000ff',angle:45},textStroke:{width:2,color:'#ffffff'},textShadow:{blur:4,color:'#111111'},rotation:90});
+ const before=f.sourceRows(),saved=await json(await f.applyEdit(source,doc));assert.equal(f.sourceRows(),before);
+ const canonical=f.h.load('app/free-image-edit-document.ts').validateFreeImageEditDocument(doc,source);assert.equal(saved.editDocumentSha256,sha(new TextEncoder().encode(JSON.stringify(canonical))));
+ const recovered=await json(await f.recoverEdit(source,doc));assert.equal(recovered.applied,true);assert.equal(recovered.key,saved.key);
+ const opened=await json(await f.reopen(saved.key));assert.deepEqual(opened.editDocument,plain(canonical));assert.equal(opened.source.quotationTarget.slotIndex,1);
+ const legacy=f.doc();assert.notEqual(sha(new TextEncoder().encode(JSON.stringify(legacy))),saved.editDocumentSha256);
+ const invalid=plain(doc);invalid.regions[0].textShadow.extra=true;assert.equal((await f.applyEdit(opened.source,invalid)).status,400);
+ }finally{f.close();}
+});

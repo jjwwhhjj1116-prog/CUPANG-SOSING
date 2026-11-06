@@ -46,11 +46,11 @@ export function seoGuidanceTitle(draft: Pick<TranslationDraft,'title'>, memo: Pi
   for (const target of quotationKeywordPlan(memo.keywords).kept) if (!result.includes(target)) result += (result ? ' ' : '') + target;
   return result;
 }
-export function seoGuidanceTags(draft: Pick<TranslationDraft,'keywords'>, input: SeoGuidanceComposition) {
+export function seoGuidanceTags(draft: Pick<TranslationDraft,'keywords'>, input: SeoGuidanceComposition, generatedCandidates=false) {
   const tags = targetKeywords(input.keywords), omitted: string[] = [];
   for (const value of draft.keywords) {
     if (tags.includes(value)) continue;
-    if (!value || value.length > QUOTATION_TAG_ITEM_LIMIT || /[\r\n]/u.test(value) || [...tags,value].join(', ').length > QUOTATION_TAG_TOTAL_LIMIT) {
+    if (!value || value.length > QUOTATION_TAG_ITEM_LIMIT || /[\r\n]/u.test(value) || !generatedCandidates && [...tags,value].join(', ').length > QUOTATION_TAG_TOTAL_LIMIT) {
       omitted.push(value); continue;
     }
     tags.push(value);

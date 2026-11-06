@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -6,7 +7,7 @@ import ts from 'typescript';
 const plain=value=>JSON.parse(JSON.stringify(value));
 function load(file,overrides={},mode='development'){
  const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
-  {exports,Response,TextDecoder,Uint8Array,process:{env:{NODE_ENV:mode}},require(name){if(name in overrides)return overrides[name];if(name==='next/server')return{NextResponse:Response};if(name.startsWith('@/'))return load(name.slice(2)+'.ts',overrides,mode);throw Error(name);}});return exports;
+  {exports,Response,TextDecoder,Uint8Array,process:{env:{NODE_ENV:mode}},require(name){if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;if(name in overrides)return overrides[name];if(name==='next/server')return{NextResponse:Response};if(name.startsWith('@/'))return load(name.slice(2)+'.ts',overrides,mode);throw Error(name);}});return exports;
 }
 const version='2026-10-10T00:00:00.000Z',next='2026-10-10T00:00:00.001Z';
 const options=load('app/product-options.ts'),names=load('app/option-seo-names.ts');

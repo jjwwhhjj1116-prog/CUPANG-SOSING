@@ -1,9 +1,10 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
-function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,TextEncoder,require:name=>load(name.slice(2)+'.ts')});return exports;}
+function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,TextEncoder,require:name=>name==='@/extensions/supplier-hub/page-source-price-basis.mjs'?pageSourcePriceBasis:(load(name.slice(2)+'.ts'))});return exports;}
 const {collectedSeoSource}=load('app/collected-seo-source.ts');
 const receipt={offerId:'123',sourceUrl:'https://detail.1688.com/offer/123.html',title:'원문 상품',description:'원문 설명',attributes:[{name:'option:other',value:'seller value'}]};
 const job={id:'j',offer_id:'123',context:{category:{categoryId:'80719',categoryPath:['주방용품','바스켓']},features:'기능',keywords:'검색어'}};

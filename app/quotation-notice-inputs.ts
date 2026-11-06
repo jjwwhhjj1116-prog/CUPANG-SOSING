@@ -1,3 +1,5 @@
+import { productLabelFields, type ProductLabelsState } from '@/app/product-label';
+import {readInitialLegalNotices} from '@/app/initial-legal-notices';
 import type { QuotationField, QuotationResolverInput, ResolvedQuotation } from '@/app/quotation-schema';
 import { savedTextOrFallback } from '@/app/product-content';
 import { previousRegistrationMonth, washingPrecautionsText } from '@/app/couplus-registration-defaults';
@@ -5,7 +7,7 @@ import { previousRegistrationMonth, washingPrecautionsText } from '@/app/couplus
 // Complete notice names recorded in the sports quotation forms. These are
 // source bindings, never inferred product facts or category-specific defaults.
 const inputs: Readonly<Record<string,string>> = {
-  '제품 구성': 'noticeComponents',
+  '제품 구성': 'noticeComponents', '제품구성': 'noticeComponents', '제품 소재': 'noticeMaterial',
   '색상': 'color',
   '크기, 중량': 'noticeSizeWeight',
   '상품별 세부 사양': 'noticeSpecifications',
@@ -32,19 +34,28 @@ const basketInputs: Readonly<Record<string, string>> = {
 };
 const recordedNoticeSources = new Set([...Object.values(inputs), ...Object.values(basketInputs)]);
 type NoticeBindingIdentity = {
+  liveNoticeBindingRevision?: 'current-legal-sources-v1';
   noticeBindingRevision?: 'exact-legal-notices-v1';
   noticeSourceBindingRevision?: 'exact-legal-notice-sources-v1';
   noticeOtherGoodsSourceBindingRevision?: 'exact-other-goods-notice-sources-v1';
 };
 
-/** Recorded static notices retain their meanings. A captured form must carry
- * the exact named legalPage.notices wire; a matching control title is not proof. */
+/** Human editing accepts every unambiguous named pair retained by the compiler. */
 export function isQuotationLegalNotice(field: QuotationField): boolean {
   if (field.section !== 'legal' || field.visibility !== 'common') return false;
   if (!field.hubWire) return true;
   const wire = field.hubWire;
   return wire.path.length === 2 && wire.path[0] === 'legalPage' && wire.path[1] === 'notices'
-    && wire.name === field.label && Boolean(wire.nameKey) && Boolean(wire.valueKey);
+    && wire.name === field.label && Boolean(wire.nameKey && wire.valueKey && wire.nameKey !== wire.valueKey);
+}
+
+/** Automatic source bindings require an observed wire pair, beyond manual identity. */
+export function isQuotationAutomaticLegalNotice(field: QuotationField): boolean {
+  if (!isQuotationLegalNotice(field)) return false;
+  if (!field.hubWire) return true;
+  const wire = field.hubWire;
+  return wire.nameKey === 'noticeItemName' && ['noticeItemValue','noticeContent'].includes(wire.valueKey ?? '')
+    || wire.nameKey === 'name' && wire.valueKey === 'value';
 }
 
 /** Date/washing corrections change identity only for a changed automatic value.
@@ -54,8 +65,13 @@ export function isQuotationLegalNotice(field: QuotationField): boolean {
  * refresh only changed automatic cells; earlier receipts are not rewritten. */
 export function quotationNoticeBindingFingerprint(input: Pick<QuotationResolverInput, 'content' | 'settings' | 'product'>, resolved: ResolvedQuotation): NoticeBindingIdentity {
   const identity: NoticeBindingIdentity = {};
+  const initial=readInitialLegalNotices(input.content.initialLegalNotices,resolved.schema);
+  if(resolved.rows.some(row=>row.included&&resolved.schema.fields.some(field=>{
+    const previous=initial.get(field.id),cell=row.fields[field.id];
+    return previous&&cell&&!cell.source.startsWith('manual-')&&(cell.value!==previous.value||cell.source!==previous.source);
+  })))identity.liveNoticeBindingRevision='current-legal-sources-v1';
   for (const field of resolved.schema.fields) {
-    if (!field.hubWire || field.section !== 'legal' || isQuotationLegalNotice(field)) continue;
+    if (!field.hubWire || field.section !== 'legal' || isQuotationAutomaticLegalNotice(field)) continue;
     const date = ['출시년월', '제조년월'].includes(field.label), washing = field.label === '세탁방법 및 취급시 주의사항';
     if (!date && !washing) continue;
     const stored = input.content.label[date ? 'releaseDate' : 'washingPrecautions'];
@@ -77,7 +93,7 @@ export function quotationNoticeBindingFingerprint(input: Pick<QuotationResolverI
   }
   for (const field of resolved.schema.fields) {
     if (!field.hubWire || field.section !== 'legal' || field.visibility !== 'common'
-      || field.hubInput || isQuotationLegalNotice(field)
+      || field.hubInput || isQuotationAutomaticLegalNotice(field)
       || ['출시년월', '제조년월', '세탁방법 및 취급시 주의사항'].includes(field.label)) continue;
     const previousSports = field.hubWire.path[0] === 'legalPage' && field.hubWire.name === field.label
       ? inputs[field.label] : undefined;
@@ -92,7 +108,7 @@ export function quotationNoticeBindingFingerprint(input: Pick<QuotationResolverI
     }
   }
   for (const field of resolved.schema.fields) {
-    if (!field.hubWire || !isQuotationLegalNotice(field) || field.hubInput
+    if (!field.hubWire || !isQuotationAutomaticLegalNotice(field) || field.hubInput
       || !Object.hasOwn(otherGoodsInputs, field.label) || field.id === otherGoodsInputs[field.label]) continue;
     // The former unresolved live ID fell through to the captured form default.
     // Existing canonical IDs already used the correct source and stay stable.
@@ -111,6 +127,12 @@ export function quotationNoticeBindingFingerprint(input: Pick<QuotationResolverI
 export function quotationNoticeInput(field: QuotationField): string | undefined {
   // Only the named legal notice array has this meaning. Same-labelled product
   // attributes, scalar controls and similar notice names keep their own rules.
-  if (!field.hubWire || !isQuotationLegalNotice(field)) return undefined;
+  if (!field.hubWire || !isQuotationAutomaticLegalNotice(field)) return undefined;
   return inputs[field.label] ?? fashionInputs[field.label] ?? (Object.hasOwn(otherGoodsInputs, field.label) ? otherGoodsInputs[field.label] : undefined);
+}
+
+/** Default empty label initialization changes no quotation value recipe. */
+export function quotationLabelsHaveBindings(state:ProductLabelsState|undefined):boolean {
+  return Boolean(state && (state.automaticSuggestions?.entries.length || Object.keys(state.overrides.common).length || Object.values(state.overrides.options).some(values=>Object.keys(values).length)
+    || state.structure && productLabelFields.some(field=>!state.structure!.some(item=>item.id===field.key))));
 }

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
-import { findProduct, applyProductPrice, readProductPriceQuotationSnapshot, type ProductPriceQuotationCommit } from '@/db/queries';
-import { pricePolicy, calculatePrice } from '@/app/pricing';
+import { findProduct, getSettings, applyProductPrice, readProductPriceQuotationSnapshot, type ProductPriceQuotationCommit } from '@/db/queries';
+import { pricePolicy, effectivePricePolicy, calculateRepresentativePrice } from '@/app/pricing';
 import { readProductOptions } from '@/db/product-options';
 import { calculateOptionPrices } from '@/app/product-options';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
@@ -29,6 +29,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const product = await findProduct(owner, id);
     if (!product) return NextResponse.json({ error: '상품을 찾을 수 없습니다.' }, { status: 404 });
     if (product.updated_at !== expectedVersion) return NextResponse.json({ error: '다른 변경이 저장되었습니다. 목록을 새로고침하고 다시 적용해주세요.' }, { status: 409 });
+    let settingsPayload: string | null = null;
+    if (policy.fixedSourcing) {
+      const settings = await getSettings(owner); settingsPayload = settings?.payload ?? null;
+      policy = effectivePricePolicy(policy, settingsPayload ? JSON.parse(settingsPayload) : undefined);
+    }
     const options = await readProductOptions(owner, id);
     if (options.productId !== id) throw new Error('Invalid option product');
     const invalidOptions = calculateOptionPrices(options.rows, policy).filter(row => row.included && (row.error || !row.calculation));
@@ -38,7 +43,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       options: invalidOptions.map(row => ({ optionId: row.optionId, error: row.error || '옵션 가격 계산 실패' })),
     }, { status: 400 });
     let calculation;
-    try { calculation = calculatePrice(product.source_price_cny, policy); }
+    try { calculation = calculateRepresentativePrice(product.source_price_cny, policy); }
     catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : '가격 계산 실패' }, { status: 400 }); }
     let quotation:ProductPriceQuotationCommit|undefined;
     // Older API test doubles and documents without a quotation sidecar retain
@@ -46,11 +51,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const raw=typeof readProductPriceQuotationSnapshot==='function'?await readProductPriceQuotationSnapshot(owner,id):null;
     const nonempty=(value:unknown)=>!!value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).length>0;
     const hasMarkers=!!raw&&(nonempty(raw.state.stageTwoMsrp)||raw.state.categoryStageTwoMsrp&&Object.values(raw.state.categoryStageTwoMsrp).some(nonempty));
-    if(recalculate||hasMarkers){
+    if(recalculate||hasMarkers||policy.fixedSourcing){
       const {stableQuotationFieldsView,QuotationFieldsSnapshotError}=await import('@/app/quotation-fields-snapshot');
       let snapshot;
       try{snapshot=await stableQuotationFieldsView(owner,id,profileId??null);}
       catch(error){if(error instanceof QuotationFieldsSnapshotError)return NextResponse.json({error:error.message},{status:error.status});throw error;}
+      if(policy.fixedSourcing&&snapshot.source.settingsPayload!==settingsPayload)return NextResponse.json({error:'계정 소싱 마진 기준이 변경되었습니다. 다시 불러와주세요.'},{status:409});
       const before=await readProductPriceQuotationSnapshot(owner,id);
       if(!before||before.state.revision!==snapshot.view.revision||snapshot.source.productVersion!==expectedVersion)
         return NextResponse.json({error:'견적서 저장 기준이 변경되었습니다. 다시 불러와주세요.'},{status:409});

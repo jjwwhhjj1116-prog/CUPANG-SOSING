@@ -21,7 +21,7 @@ export async function quotationValidationSourceBinding(input:{actor:QuotationVal
  if(productKeys.some(key=>key!=='pricing_policy'&&!Object.hasOwn(product,key)))throw Error('견적 입력 검사의 상품 원본을 확인하지 못했습니다.');
  const state={...input.state};delete state.savedValidation;
  return fingerprint({policy:'couplus-quotation-schema-save-v1',actor:input.actor,product:Object.fromEntries(productKeys.map(key=>[key,product[key]??null])),content:input.content,options:input.options,state,
-  source:{productVersion:input.source.productVersion,imageKeys:input.source.imageKeys,pricingPolicy:input.source.pricingPolicy,contentRevision:input.source.contentRevision,optionRevision:input.source.optionRevision,settingsPayload:input.source.settingsPayload,profile:input.source.profile,collection:input.source.collection},schema:input.schema,categoryContext:input.categoryContext,detailVersion:input.detailVersion,
+  source:{productVersion:input.source.productVersion,imageKeys:input.source.imageKeys,pricingPolicy:input.source.pricingPolicy,contentRevision:input.source.contentRevision,optionRevision:input.source.optionRevision,...(!input.source.labelRevision?{}:{labelRevision:input.source.labelRevision}),settingsPayload:input.source.settingsPayload,profile:input.source.profile,collection:input.source.collection},schema:input.schema,categoryContext:input.categoryContext,detailVersion:input.detailVersion,
   validation:Object.fromEntries(keys.filter(key=>key!=='checkedAt').map(key=>[key,(input.validation as Record<string,unknown>)[key]]))});
 }
 function validationRows(view:QuotationFieldsView){

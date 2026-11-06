@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -9,7 +10,7 @@ function load(file) {
   if (cache.has(file)) return cache.get(file);
   const exports = {}; cache.set(file, exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../' + file, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
-    { exports, Error, structuredClone, TextEncoder, require(name) { return name.startsWith('@/') ? load(name.slice(2) + '.ts') : native(name); } });
+    { exports, Error, structuredClone, TextEncoder, require(name) {if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis; return name.startsWith('@/') ? load(name.slice(2) + '.ts') : native(name); } });
   return exports;
 }
 const { pricePolicy, calculatePrice } = load('app/pricing.ts'), options = load('app/product-options.ts');

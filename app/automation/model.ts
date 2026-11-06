@@ -1,4 +1,4 @@
-import { calculatePrice, pricePolicy, type PricePolicy } from '@/app/pricing';
+import { calculateRepresentativePrice, type PricePolicy } from '@/app/pricing';
 import { defaultSettings, type WorkspaceSettings } from '@/app/workspace-settings';
 import { savedProductFingerprintSettings } from '@/app/settings-fingerprint';
 import type { ProductRecord } from '@/db/queries';
@@ -142,9 +142,7 @@ export function automationInputFingerprint(product: ProductRecord, settings: Wor
 }
 
 export function policyForProduct(product: ProductRecord, settings: WorkspaceSettings): PricePolicy {
-  if (product.pricing_policy) return pricePolicy(JSON.parse(product.pricing_policy));
-  return pricePolicy({ ...settings, exchangeRate: product.exchange_rate, supplyMargin: product.supply_margin,
-    coupangMargin: product.coupang_margin, minimumMargin: settings.minimumMarginEnabled ? settings.minimumMargin : 0, useIntegratedRate: false, integratedRate: null });
+  return resolveOptionPricePolicy(product, settings).policy;
 }
 
 export function deriveWorkflowStatus(stages: AutomationStage[]): AutomationStatus {
@@ -306,7 +304,7 @@ export function executeLocalAutomation(workflow: AutomationWorkflow, product: Pr
           continue;
         }
       } else {
-        const calculation = calculatePrice(product.source_price_cny, policy);
+        const calculation = calculateRepresentativePrice(product.source_price_cny, policy);
         stage.artifacts = [{ id: `pricing-${stage.revision}`, kind: 'priceCalculation', label: '저장 원가 기준 가격 계산',
           data: { sourcePriceCny: product.source_price_cny, policy, calculation, appliedToProduct: false }, submissionReady: false }];
       }

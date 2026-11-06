@@ -5,9 +5,9 @@ import { calculateOptionPrices, emptyOptionInput, optionInputs, optionFieldNames
 import { optionImageSaveRows, mergeSavedOptionImages } from '@/app/option-image-save';
 import { productImageKeys } from '@/app/product-content';
 import { applyOptionBulk, duplicateOption, moveOption, optionBulkPriceBase, parseCouplusBundleQuantity, previewOptionBulk, type BulkOptionAction, type BulkOptionPreview } from '@/app/option-editor-tools';
-import { pricePolicy, type PricePolicy } from '@/app/pricing';
+import { pricePolicy, effectivePricePolicy, type PricePolicy } from '@/app/pricing';
 import { StageTwoPricePolicyFields } from '@/app/components/stage-two-price-policy-fields';
-import { recalculateStageTwoRows, stageTwoQuotationDraft, verifyStageTwoPricingReceipt, unchangedStageTwoPricingReceipt, type StageTwoPricingRequest, type StageTwoPricingReceipt } from '@/app/stage-two-pricing';
+import { recalculateStageTwoRows, stageTwoQuotationDraft, stageTwoRocketMarginGate, verifyStageTwoPricingReceipt, unchangedStageTwoPricingReceipt, type StageTwoPricingRequest, type StageTwoPricingReceipt } from '@/app/stage-two-pricing';
 import { mergeOptionDraft, refreshOptionPriceBase } from '@/app/option-price-refresh';
 import { configuredBundlePolicy, type BundlePolicy } from '@/app/bundle-policy';
 import {OptionMainImageEditor} from '@/app/components/option-main-image-editor';
@@ -25,7 +25,7 @@ import { applyOptionNameChanges } from '@/app/option-seo-names';
 import {recalculateStageTwoOptionCost} from '@/app/stage-two-option-recalculation';
 import {readCategoryJsonResponse} from '@/app/load-category-profiles';
 
-type Props = { product: { id: string; title: string; image_keys: string; updated_at?: string; registration_number?: string }; profileId?:string;refreshToken?:string;onSaved?: () => void; onReviewPackaging?: (optionId: string | null) => void; imageView?: boolean; imageProcessingBusy?: boolean; processingConfigured?:boolean|null;pricingView?: boolean; seoView?: boolean; focusedOptionId?: string; initialBulkAction?: 'remove';
+type Props = { product: { id: string; title: string; image_keys: string; updated_at?: string; registration_number?: string }; profileId?:string;refreshToken?:string;onSaved?: () => void; onReviewPackaging?: (optionId: string | null) => void; imageView?: boolean; imageProcessingBusy?: boolean; processingConfigured?:boolean|null;pricingView?: boolean; seoView?: boolean; active?:boolean; focusedOptionId?: string; initialBulkAction?: 'remove';
   mainImageUploadControl?:ReactNode;editableQuotationPrices?:boolean;pricePolicyLocked?:boolean;beforePriceCommit?:()=>boolean;onPriceBusyChange?:(busy:boolean,operation:object)=>void;
   onTranslate?: (sourceKey:string,role:'main',sourceLanguage:'zh'|'en',quotationTarget:FreeImageQuotationRequest)=>void;
   onEdit?: (sourceKey:string,role:'main',quotationTarget:FreeImageQuotationRequest)=>void;
@@ -43,12 +43,13 @@ function verifyOptionsRegistrationDisplay(body: ProductOptionsResponse, productI
   if(body.options?.productId!==productId || !Array.isArray(body.options.rows) || body.options.rows.some(row=>typeof row?.id!=='string') || !validOptionRegistrationNumbers(body.optionRegistrationNumbers,body.options.rows,parent)) throw Error('상품의 옵션 등록번호 응답을 확인하지 못했습니다. 입력은 유지했습니다.');
 }
 export function ProductOptionsEditor(props: Props) {
-  const [mainOpened,setMainOpened]=useState(props.imageView===true);
-  useEffect(()=>{if(!props.imageView)return;let active=true;void Promise.resolve().then(()=>{if(active)setMainOpened(true);});return()=>{active=false;};},[props.imageView]);
-  return <><div hidden={props.imageView}><OptionsEditor key={props.product.id} {...props} imageView={false}/></div><div hidden={!props.imageView}>{(mainOpened||props.imageView)&&<OptionMainImageEditor key={`${props.product.id}:${props.profileId??''}`} productId={props.product.id} version={props.product.updated_at} profileId={props.profileId} refreshToken={props.refreshToken} focusedOptionId={props.focusedOptionId} onSaved={props.onSaved} disabled={props.imageProcessingBusy} translationEnabled={props.imageView===true} saveOnSelect={props.imageView===true} processingConfigured={props.processingConfigured} uploadControl={props.mainImageUploadControl} onTranslate={props.onTranslate} onEdit={props.onEdit} onProcess={props.onProcess}/>}</div></>;
+  const mainActive=props.active!==false&&props.imageView===true,optionsActive=props.active!==false&&!props.imageView;
+  const [mainOpened,setMainOpened]=useState(mainActive),[optionsOpened,setOptionsOpened]=useState(optionsActive);
+  useEffect(()=>{let current=true;void Promise.resolve().then(()=>{if(!current)return;if(mainActive)setMainOpened(true);if(optionsActive)setOptionsOpened(true);});return()=>{current=false;};},[mainActive,optionsActive]);
+  return <><div hidden={props.imageView}>{(optionsOpened||optionsActive)&&<OptionsEditor key={props.product.id} {...props} imageView={false} active={optionsActive}/>}</div><div hidden={!props.imageView}>{(mainOpened||mainActive)&&<OptionMainImageEditor key={`${props.product.id}:${props.profileId??''}`} productId={props.product.id} version={props.product.updated_at} profileId={props.profileId} refreshToken={props.refreshToken} focusedOptionId={props.focusedOptionId} onSaved={props.onSaved} disabled={props.imageProcessingBusy} active={mainActive} translationEnabled={props.imageView===true} saveOnSelect={props.imageView===true} processingConfigured={props.processingConfigured} uploadControl={props.mainImageUploadControl} onTranslate={props.onTranslate} onEdit={props.onEdit} onProcess={props.onProcess}/>}</div></>;
 }
 function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = false, imageView = false, seoView = false, focusedOptionId, initialBulkAction,
-  profileId,refreshToken,editableQuotationPrices=false,pricePolicyLocked=false,imageProcessingBusy=false,beforePriceCommit,onPriceBusyChange }: Props) {
+  profileId,refreshToken,editableQuotationPrices=false,pricePolicyLocked=false,imageProcessingBusy=false,beforePriceCommit,onPriceBusyChange,active=true }: Props) {
   const registrationParent=useRef(product.registration_number);
   useEffect(()=>{registrationParent.current=product.registration_number;},[product.registration_number]);
   const [saved, setSaved] = useState<ProductOptionsResponse | null>(null);
@@ -92,14 +93,16 @@ function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = fals
   const quotationEndpoint=endpoint.replace(/\/options$/u,'/quotation-fields')+(profileId?`?profileId=${encodeURIComponent(profileId)}`:'');
   const stageTwoEndpoint=endpoint.replace(/\/options$/u,'/stage-two-pricing')+(profileId?`?profileId=${encodeURIComponent(profileId)}`:'');
   const bundleEndpoint=endpoint.replace(/\/options$/u,'/option-bundles')+(profileId?`?profileId=${encodeURIComponent(profileId)}`:'');
-  const applyLoaded = useCallback((body: ProductOptionsResponse) => { policyDraftRef.current=body.pricing.policy;setPolicyDraft(body.pricing.policy);recalculateRef.current=false;setRecalculate(false);setPolicyError('');verifyOptionsRegistrationDisplay(body,product.id,registrationParent.current);savedRef.current=body;setSaved(body); setRows(optionInputs(body.options)); setEditedNames(new Set()); setSnapshotVersion(body.productVersion); setSelected(new Set(focusedOptionId && body.options.rows.some(row=>row.id===focusedOptionId) ? [focusedOptionId] : [])); setError(''); setMessage(''); setConflict(false); }, [focusedOptionId,setRows,product.id]);
+  const initializationKey=JSON.stringify([endpoint,focusedOptionId??null]),initialized=useRef<string|null>(null);
+  const applyLoaded = useCallback((body: ProductOptionsResponse) => { policyDraftRef.current=body.pricing.policy;setPolicyDraft(body.pricing.policy);recalculateRef.current=false;setRecalculate(false);setPolicyError('');verifyOptionsRegistrationDisplay(body,product.id,registrationParent.current);initialized.current=initializationKey;savedRef.current=body;setSaved(body); setRows(optionInputs(body.options)); setEditedNames(new Set()); setSnapshotVersion(body.productVersion); setSelected(new Set(focusedOptionId && body.options.rows.some(row=>row.id===focusedOptionId) ? [focusedOptionId] : [])); setError(''); setMessage(''); setConflict(false); }, [focusedOptionId,setRows,product.id,initializationKey]);
   useEffect(() => {
-    const controller = new AbortController();
-    fetchOptions(endpoint, controller.signal,registrationParent.current).then(body => { if (!controller.signal.aborted) applyLoaded(body); })
+    if(!active||activeRequest.current||initialized.current===initializationKey)return;
+    const controller = new AbortController();activeRequest.current=controller;setLoading(true);
+    fetchOptions(endpoint, controller.signal,registrationParent.current).then(body => { if (!controller.signal.aborted&&activeRequest.current===controller) {setLoading(false);applyLoaded(body);} })
       .catch(cause => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '옵션을 불러오지 못했습니다.'); })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
-    return () => controller.abort();
-  }, [endpoint, applyLoaded]);
+      .finally(() => { if(activeRequest.current===controller){activeRequest.current=null;if (!controller.signal.aborted) setLoading(false);} });
+    return () => {controller.abort();if(activeRequest.current===controller)activeRequest.current=null;};
+  }, [active, endpoint, applyLoaded, initializationKey, product.updated_at]);
   useEffect(()=>{
     if(loading || !focusedOptionId)return;
     const target=editorRoot.current?.querySelector<HTMLElement>('[data-option-target="true"]');
@@ -115,7 +118,7 @@ function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = fals
   const sourceMarkers = <><span hidden data-quotation-source-step={seoView?'SEO':'가격'} data-workspace-dirty={otherDirty||policyDirty||recalculate||manualPriceDirty||seoView&&editedNames.size>0}/><span hidden data-quotation-source-step="대표 이미지" data-workspace-dirty={imageDirty}/></>;
   const changedElsewhere = Boolean(product.updated_at && (!snapshotVersion || Date.parse(product.updated_at) > Date.parse(snapshotVersion)));
   useEffect(() => {
-    if (!changedElsewhere || busy || loading || activeRequest.current) return;
+    if (!active || !changedElsewhere || busy || loading || activeRequest.current) return;
     const controller = new AbortController();
     if (dirty) {
       Promise.resolve().then(() => { if (!controller.signal.aborted) setRefreshNotice('다른 탭에서 상품 또는 가격이 변경되었습니다. 옵션 입력은 유지했습니다. 입력 내용을 보관한 뒤 최신 가격·저장본을 확인해주세요.'); });
@@ -125,7 +128,7 @@ function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = fals
       }).catch(cause => { if (!controller.signal.aborted) setRefreshNotice(cause instanceof Error ? cause.message : '최신 옵션을 불러오지 못했습니다.'); });
     }
     return () => controller.abort();
-  }, [changedElsewhere, dirty, endpoint, applyLoaded, product.updated_at, busy, loading]);
+  }, [active, changedElsewhere, dirty, endpoint, applyLoaded, product.updated_at, busy, loading]);
   let images: string[] = []; try { images = productImageKeys(product.image_keys); } catch { /* Server checks invalid references on save. */ }
   const included = rows.filter(row => row.included).length;
   const packagingTarget = saved?.options.rows.find(row => selected.has(row.id))?.id
@@ -143,11 +146,18 @@ function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = fals
     try {
       const latest = await fetchOptions(endpoint,controller.signal,registrationParent.current);
       if(controller.signal.aborted)return;
+      const rootOnly=saved.productVersion===latest.productVersion&&sameBundleSnapshot(saved.options,latest.options)&&!sameBundleSnapshot(saved.pricing.rocketMarginGate,latest.pricing.rocketMarginGate);
       const refreshed = merge ? mergeOptionDraft(saved, latest, rows) : refreshOptionPriceBase(saved, latest, rows);
+      const draftPolicy=policyDraftRef.current;
+      if(draftPolicy?.fixedSourcing){
+        const fixedSourcing={...draftPolicy.fixedSourcing},gate=stageTwoRocketMarginGate(latest.pricing.rocketMarginGate);
+        if(gate==null)delete fixedSourcing.marginGate;else fixedSourcing.marginGate={...gate,source:'customer'};
+        storePolicy({...draftPolicy,fixedSourcing});
+      }
       savedRef.current=refreshed.saved;setSaved(refreshed.saved); setRows(refreshed.rows); setSnapshotVersion(latest.productVersion);
       setConflict(false); setRefreshNotice('');
       setMessage(merge ? '서로 다른 항목의 변경을 합쳤습니다. 옵션과 가격을 확인한 뒤 저장하세요. 아직 서버에 저장하지 않았습니다.' : '옵션 입력을 유지하고 최신 가격 정책을 적용했습니다. 계산 결과를 확인한 뒤 옵션을 저장하세요.');
-      onSaved?.();
+      if(!rootOnly)onSaved?.();
     } catch (cause) { if(!controller.signal.aborted)setError(cause instanceof Error ? cause.message : '최신 가격 확인 실패'); }
     finally { if(activeRequest.current===controller)activeRequest.current=null;if(!controller.signal.aborted)setBusy(false); }
   }
@@ -177,9 +187,9 @@ function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = fals
     if(!gridAllowed(controller)||loading||atomicAttempt.current)return;
     storePolicy(next);setError('');setPolicyError('');setMessage('');
     try{
-      const normalized=pricePolicy({...next,recalculationMode:'couplus-stage-two-v1',arithmeticMode:next.roundingMode==='nearest'?'couplus-number-v1':undefined});
+      const normalized=effectivePricePolicy({...next,recalculationMode:'couplus-stage-two-v1',arithmeticMode:next.roundingMode==='nearest'?'couplus-number-v1':undefined},{rocketMarginGate:savedRef.current?.pricing.rocketMarginGate});
       const nextRows=recalculateStageTwoRows(rowsRef.current,normalized);
-      if(!controller.replaceEdits([]))return;
+      if(!normalized.fixedSourcing&&!controller.replaceEdits([]))return;
       storePolicy(normalized);setRows(nextRows);recalculateRef.current=true;setRecalculate(true);
     }catch(cause){setPolicyError(cause instanceof Error?cause.message:'가격 설정을 확인해주세요.');}
   }
@@ -209,7 +219,7 @@ function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = fals
       const checked=pricePolicy(policy),display=stageTwoDisplayController({...controller,view:snapshot.view,edits:snapshot.edits},checked,recalculateRef.current),prices=effectiveGridPrices(draft,calculateOptionPrices(draft,checked),display.view,display.edits);
       if(draft.some(row=>row.included&&!prices.get(row.id)?.calculation))throw Error('포함한 옵션의 원가·공급가·판매가를 확인해주세요. 입력은 유지했습니다.');
       for(const edit of snapshot.edits)if(edit.value!==null){const field=snapshot.view.resolved.schema.fields.find(value=>value.id===edit.fieldKey);if(!field)throw Error('수정한 가격 항목을 다시 확인해주세요.');const issues=quotationValueIssues(field,edit.value,snapshot.view.imageKeys);if(issues.length)throw Error(`${field.label}: ${issues.join(' ')}`);}
-      request={expectedProductVersion:base.productVersion,expectedOptionRevision:base.options.revision,expectedQuotationRevision:snapshot.view.revision,expectedInputFingerprint:snapshot.view.inputFingerprint,policy:checked,rows:draft,changes:structuredClone(snapshot.edits),recalculate:recalculateRef.current};
+      request={expectedProductVersion:base.productVersion,expectedOptionRevision:base.options.revision,expectedQuotationRevision:snapshot.view.revision,expectedInputFingerprint:snapshot.view.inputFingerprint,...(base.pricing.rocketMarginGate===undefined?{}:{expectedRocketMarginGate:structuredClone(base.pricing.rocketMarginGate)}),policy:checked,rows:draft,changes:structuredClone(snapshot.edits),recalculate:recalculateRef.current};
     }catch(cause){setError(cause instanceof Error?cause.message:'가격 입력 확인 실패');return false;}
     const attempt:AtomicAttempt={scope:gridScope,generation,base,quotation:snapshot.view,request};atomicAttempt.current=attempt;
     const requestController=new AbortController();activeRequest.current=requestController;combined.current=requestController;onPriceBusyChange?.(true,generation);setBusy(true);setError('');setMessage('');
@@ -424,9 +434,9 @@ function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = fals
       <fieldset disabled={busy || loading||editableQuotationPrices&&(pricePolicyLocked||imageProcessingBusy)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
         {!rows.length && <div className="empty"><strong>저장한 옵션이 없습니다.</strong><small>수집된 옵션이 연결되면 여기에 표시됩니다. 확인한 옵션을 추가해 수정할 수도 있습니다.</small></div>}
         {pricingView && !editableQuotationPrices&&<OptionPriceTable imageKeys={images} sourceImageKeys={saved.sourceImageKeys} layout="registration" rows={rows} calculations={calculations} exchangeRate={saved.pricing.policy.exchangeRate} selected={selected} focusedOptionId={focusedOptionId} optionRegistrationNumbers={saved?.optionRegistrationNumbers} onSelect={ids => setSelected(new Set(ids))} onChange={update} />}
-        {editableQuotationPrices&&product.updated_at&&<div><OptionQuotationPrices productId={product.id} version={product.updated_at} profileId={profileId} refreshToken={refreshToken} stageTwoPricingPolicy={currentPolicy} onDraftStateChange={changeManualPriceDirty} onSaved={onSaved} onLockChange={locked=>{quotationLocked.current=locked;onPriceBusyChange?.(locked||!!combined.current||!!atomicAttempt.current||!!bundleAttempt.current,generation);}}
+        {editableQuotationPrices&&product.updated_at&&<div><OptionQuotationPrices productId={product.id} version={product.updated_at} profileId={profileId} refreshToken={refreshToken} active={active} stageTwoPricingPolicy={currentPolicy} onDraftStateChange={changeManualPriceDirty} onSaved={onSaved} onLockChange={locked=>{quotationLocked.current=locked;onPriceBusyChange?.(locked||!!combined.current||!!atomicAttempt.current||!!bundleAttempt.current,generation);}}
           disabled={busy||loading||pricePolicyLocked||imageProcessingBusy||atomicUncertain||bundleUncertain||bundleRetry} beforeEdit={()=>!activeRequest.current&&!combined.current&&!atomicAttempt.current&&!bundleAttempt.current&&!pricePolicyLocked&&!imageProcessingBusy&&beforePriceCommit?.()!==false} beforeSave={()=>!bundleAttempt.current&&!pricePolicyLocked&&!imageProcessingBusy&&beforePriceCommit?.()!==false}
-          renderGrid={controller=><><div hidden={!pricingView}><div className="stage-two-pricing-workspace"><StageTwoPricePolicyFields allowUnchangedSave={pricingView} policy={currentPolicy!} dirty={dirty||controller.dirty} sourceDirty={otherDirty||policyDirty||recalculate||manualPriceDirty||controller.dirty} busy={busy||controller.busy} disabled={loading||conflict||changedElsewhere||pricePolicyLocked||imageProcessingBusy||atomicUncertain||bundleUncertain||bundleRetry||!controller.fresh} error={policyError} onChange={next=>changeStageTwoPolicy(controller,next)} onRecalculate={()=>recalculateStageTwo(controller)} onSave={()=>void saveGrid(controller)}/><section className="pricing-options-panel"><header className="step-visual-price-header"><h3>옵션별 가격 정보</h3><div style={{display:'flex',gap:8,marginBottom:12}}>{(['remove','addBundle','bundle'] as const).map(kind=><button type="button" key={kind} className={`btn couplus-price-selection-action couplus-price-selection-action--${kind}`} disabled={!selected.size||busy||loading||conflict||changedElsewhere||pricePolicyLocked||imageProcessingBusy||atomicUncertain||bundleUncertain||bundleRetry||selectionBusy||controller.busy||controller.uncertain||!controller.fresh} onClick={()=>openSelection(kind,controller)}>{kind==='remove'?`선택 삭제 (${selected.size})`:kind==='addBundle'?'번들 추가':'번들 적용'}</button>)}</div></header>
+          renderGrid={controller=><><div hidden={!pricingView}><div className="stage-two-pricing-workspace"><StageTwoPricePolicyFields referenceCny={Math.min(...rows.filter(row=>row.included&&row.unitCostCny!==null&&row.unitCostCny>0).map(row=>row.unitCostCny!))} allowUnchangedSave={pricingView} policy={currentPolicy!} dirty={dirty||controller.dirty} sourceDirty={otherDirty||policyDirty||recalculate||manualPriceDirty||controller.dirty} busy={busy||controller.busy} disabled={loading||conflict||changedElsewhere||pricePolicyLocked||imageProcessingBusy||atomicUncertain||bundleUncertain||bundleRetry||!controller.fresh} error={policyError} onChange={next=>changeStageTwoPolicy(controller,next)} onRecalculate={()=>recalculateStageTwo(controller)} onSave={()=>void saveGrid(controller)}/><section className="pricing-options-panel"><header className="step-visual-price-header"><h3>옵션별 가격 정보</h3><div style={{display:'flex',gap:8,marginBottom:12}}>{(['remove','addBundle','bundle'] as const).map(kind=><button type="button" key={kind} className={`btn couplus-price-selection-action couplus-price-selection-action--${kind}`} disabled={!selected.size||busy||loading||conflict||changedElsewhere||pricePolicyLocked||imageProcessingBusy||atomicUncertain||bundleUncertain||bundleRetry||selectionBusy||controller.busy||controller.uncertain||!controller.fresh} onClick={()=>openSelection(kind,controller)}>{kind==='remove'?`선택 삭제 (${selected.size})`:kind==='addBundle'?'번들 추가':'번들 적용'}</button>)}</div></header>
             {selectionDialog&&selectionDialog.generation===generation&&<PriceSelectionDialog kind={selectionDialog.kind} count={selectionDialog.ids.length} value={selectionDialog.value} hideWhileBusy={selectionDialog.nativePrompt} busy={selectionBusy||busy||controller.busy} error={selectionError} quantityLocked={selectionDialog.kind==='addBundle'&&(bundleUncertain||bundleRetry)} confirmationBlocked={selectionDialog.kind==='addBundle'&&bundleUncertain} onRecover={selectionDialog.kind==='addBundle'&&bundleUncertain?()=>void recoverBundleAdd(controller):undefined} onChange={value=>{if(dialogRef.current!==selectionDialog||selectionRequest.current||gridEpoch.current!==generation||selectionDialog.kind==='addBundle'&&bundleAttempt.current)return;storeSelectionDialog({...selectionDialog,value});setSelectionError('');}} onConfirm={()=>void confirmSelection(selectionDialog,controller)} onCancel={()=>{if(selectionRequest.current||dialogRef.current!==selectionDialog||gridEpoch.current!==generation)return;if(selectionDialog.kind==='addBundle'&&bundleAttempt.current?.state==='retry'){bundleAttempt.current=null;setBundleRetry(false);setBundleUncertain(false);onPriceBusyChange?.(quotationLocked.current,generation);}storeSelectionDialog(null);setSelectionError('');}}/>}
             {bundleUncertain&&selectionDialog?.kind!=='addBundle'&&<button type="button" className="btn ghost" disabled={busy||loading||pricePolicyLocked||imageProcessingBusy||controller.busy} onClick={()=>void recoverBundleAdd(controller)}>입력 유지 · 번들 저장 결과 확인</button>}
             <OptionPriceTable imageKeys={images} sourceImageKeys={saved.sourceImageKeys} layout={pricingView?'registration':'standard'} rows={rows} calculations={calculations} exchangeRate={currentPolicy!.exchangeRate} selected={selected} focusedOptionId={focusedOptionId} optionRegistrationNumbers={saved?.optionRegistrationNumbers} onSelect={ids=>setSelected(new Set(ids))} onChange={(id,key,value)=>updateStageTwoRow(controller,id,key,value)} priceController={stageTwoDisplayController(controller)} priceBlocked={busy||loading||pricePolicyLocked||imageProcessingBusy||atomicUncertain||bundleUncertain||bundleRetry} showSummary={false}/>

@@ -18,7 +18,7 @@ export async function PATCH(request:Request,context:{params:Promise<{id:string}>
     if(current.revision!==input.expectedRevision||product.updated_at!==input.expectedProductVersion)return reply({error:'상품 또는 옵션이 변경되었습니다. 입력을 유지하고 저장본을 확인해주세요.'},409);
     const version=new Date(Math.max(Date.now(),Date.parse(product.updated_at)+1)).toISOString();
     let next;try{next=applyOptionNameChanges(current,input.changes,version);}catch(cause){return reply({error:cause instanceof Error?cause.message:'옵션명 연결을 확인해주세요.'},400);}
-    const settings=product.pricing_policy?null:await getSettings(owner),resolved=resolveOptionPricePolicy(product,settings?JSON.parse(settings.payload):undefined);
+    const settings=await getSettings(owner),resolved=resolveOptionPricePolicy(product,settings?JSON.parse(settings.payload):undefined);
     const pricing={...resolved,rows:calculateOptionPrices(next.rows,resolved.policy)};
     // Unconfirmed prices and missing files remain quotation errors; a name-only
     // edit does not authorize replacing those facts or reopening their files.

@@ -32,7 +32,7 @@ test('new Qwen approval binds a structured transport policy and sends its exact 
 test('historical v6, commerce-v2 and structured-v3 approvals retain byte-identical provider requests',async()=>{
  const hashes={absent:'2c35d314c54207be06a7995e2ffb797ffebf952dea0cefe7c995b66ff3a4f304','commerce-literal-v2':'59808beb9ae3ccb46e844a898a72198aba311f085a9bb4361130ced446ded451','commerce-json-schema-v3':'ca63cbded323a56d2436d5a8cf83cc8646c4fdef5390a263ed578bee8f229537'};
  for(const [policy,expected]of Object.entries(hashes)){
-  const f=fixture(),review=await api.prepareTranslationReview(plain(source),f.config);if(policy==='absent')delete review.qwenTranslationPolicy;else review.qwenTranslationPolicy=policy;
+  const f=fixture(),review=await api.prepareTranslationReview(plain(source),f.config);delete review.seoKeywordPolicy;if(policy==='absent')delete review.qwenTranslationPolicy;else review.qwenTranslationPolicy=policy;
   await api.executeTranslation(review,f.config,noNetwork);assert.equal(f.calls.length,1);assert.equal(Object.hasOwn(f.calls[0],'response_format'),policy==='commerce-json-schema-v3');
   assert.equal(createHash('sha256').update(JSON.stringify(f.calls[0])).digest('hex'),expected);
  }

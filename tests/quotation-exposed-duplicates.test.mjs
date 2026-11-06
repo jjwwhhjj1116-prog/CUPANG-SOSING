@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -15,7 +16,7 @@ function load(file) {
   const exports = {}; modules.set(file, exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../' + file, import.meta.url), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-  }).outputText, { exports, structuredClone, TextEncoder, fetch() { providerRequests++; throw Error('No provider request is permitted'); }, require(name) {
+  }).outputText, { exports, structuredClone, TextEncoder, fetch() { providerRequests++; throw Error('No provider request is permitted'); }, require(name) {if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
     if (name.startsWith('@/')) return load(name.slice(2) + '.ts');
     if (name.startsWith('./')) return load(path.posix.join(path.posix.dirname(file), name) + '.ts');
     return native(name);

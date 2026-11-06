@@ -22,5 +22,6 @@ export function translationAdoptionInput(content: ProductContent, job: Translati
     throw new Error('적용할 상품명·검색어·설명을 선택해주세요.');
   }
   const seo = Object.fromEntries(fields.map(field => [field, job.result!.draft[field]]));
+  if(fields.includes('keywords')&&job.review.seoKeywordPolicy==='couplus-generated-v1')seo.keywordPolicy='couplus-generated-v1';
   return validateContentInput({ expectedRevision: content.revision, patch: { seo } }, [], '');
 }

@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -10,7 +11,7 @@ function load(file) {
   const exports = {};
   modules.set(file,exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
-    { exports, URL, File, Blob, FormData, Error, TextEncoder, Uint8Array,structuredClone, crypto:webcrypto, require(name) { return load(`${name.slice(2)}.ts`); } });
+    { exports, URL, File, Blob, FormData, Error, TextEncoder, Uint8Array,structuredClone, crypto:webcrypto, require(name) {if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis; return load(`${name.slice(2)}.ts`); } });
   return exports;
 }
 const { attachQuotationLabel: attach } = load('app/quotation-label-attachment.ts');

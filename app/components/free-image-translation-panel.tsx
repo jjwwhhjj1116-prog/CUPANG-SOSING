@@ -95,6 +95,21 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
   const [rendered, setRendered, liveRenderedRef] = useLiveDraft<FreeImageRendered | null>(null);
   const originalUrl = useScopedBlobUrl(loaded?.blob ?? null);
   const previewUrl = useScopedBlobUrl(rendered?.output ?? null);
+  const viewport = useRef<HTMLDivElement | null>(null);
+  const [viewportWidth, setViewportWidth] = useState(0);
+  const [zoom, setZoom] = useState<{ source: string; scale: number | null }>({ source: '', scale: null });
+  const fitScale = loaded ? Math.min(1, (viewportWidth || loaded.width) / loaded.width, 420 / loaded.height) : 1;
+  const displayScale = zoom.source === originalUrl && zoom.scale !== null ? zoom.scale : fitScale;
+  useLayoutEffect(() => {
+    const element = viewport.current; if (!element) return;
+    const measure = () => setViewportWidth(element.clientWidth);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure); observer.observe(element); return () => observer.disconnect();
+  }, [originalUrl, cropMode]);
+  function changeZoom(scale: number | null) {
+    setZoom({ source: originalUrl, scale: scale === null ? null : Math.max(0.25, Math.min(4, scale)) });
+  }
   const [busy, setBusy] = useState(false);
   const [uncertain, setUncertain, liveUncertain] = useLiveDraft(false);
   const [readyRetry, setReadyRetry, liveReadyRetry] = useLiveDraft(false);
@@ -333,7 +348,12 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
   function editRegion(id: string, patch: Partial<FreeImageRegion>, group: string | null = null) {
     const region = liveRegions.current.find(row => row.id === id);
     if (!canEditRegions() || !region || region.brush && Object.keys(patch).some(key => key !== 'background' && key !== 'selected')) return;
-    recordRegions(liveRegions.current.map(row => row.id === id ? { ...row, ...patch } : row), group);
+    recordRegions(liveRegions.current.map(row => {
+      if (row.id !== id) return row;
+      const next = { ...row, ...patch };
+      for (const key of Object.keys(patch) as (keyof FreeImageRegion)[]) if (patch[key] === undefined) delete next[key];
+      return next;
+    }), group);
   }
   function editBackgroundMode(id:string,restore:boolean){
     if(!canEditRegions()||liveRegions.current.find(row=>row.id===id)?.brush)return;
@@ -393,7 +413,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     try { editCrop(validateFreeImageCropRect(next, currentImage.width, currentImage.height)); }
     catch (cause) { setError(cause instanceof Error ? cause.message : '잘라내기 영역을 확인해주세요.'); }
   }
-  function editTextStyle(id: string, patch: Partial<Pick<FreeImageRegion, 'fontFamily' | 'bold' | 'italic' | 'textAlign' | 'lineHeight'>>) {
+  function editTextStyle(id: string, patch: Partial<Pick<FreeImageRegion, 'fontFamily' | 'bold' | 'italic' | 'textAlign' | 'lineHeight' | 'textFill' | 'textStroke' | 'textShadow' | 'rotation'>>) {
     if (!mounted.current || liveUncertain.current || liveReadyRetry.current || liveRegions.current.find(row => row.id === id)?.erase === true) return;
     editRegion(id, patch);
   }
@@ -730,19 +750,26 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
         onChange={event => { if (!canEditRegions()) return; setCropMode(event.target.checked); if (event.target.checked) setBrushMode(false); }} />이미지 잘라내기</label>
         {crop && <span>선택 영역 {crop.width}×{crop.height}px</span>}
         <button type="button" className="btn" disabled={locked || !currentImage || !crop} onClick={() => editCrop(null)}>잘라내기 초기화</button></div>
+      <div className="actions" aria-label="이미지 화면 배율">
+        <button type="button" className="btn" disabled={locked || displayScale <= 0.25} onClick={() => changeZoom(displayScale / 1.25)}>축소</button>
+        <output aria-label="현재 화면 배율">{Math.round(displayScale * 100)}%</output>
+        <button type="button" className="btn" disabled={locked || displayScale >= 4} onClick={() => changeZoom(displayScale * 1.25)}>확대</button>
+        <button type="button" className="btn" disabled={locked} onClick={() => changeZoom(1)}>100%</button>
+        <button type="button" className="btn" disabled={locked} onClick={() => changeZoom(null)}>화면맞춤</button>
+      </div>
       {cropMode && <><div className="form-row">{(['x', 'y', 'width', 'height'] as const).map(field => <label key={field}>{({ x: '왼쪽', y: '위쪽', width: '가로', height: '세로' })[field]} · 원본 px
         <input type="number" aria-label={`잘라내기 ${field}`} min={field === 'x' || field === 'y' ? 0 : 1} max={field === 'x' || field === 'width' ? loaded.width : loaded.height} step={1} disabled={locked || !currentImage}
           value={(crop ?? { x: 0, y: 0, width: loaded.width, height: loaded.height })[field]} onChange={event => {
             const previous = liveCrop.current ?? { x: 0, y: 0, width: loaded.width, height: loaded.height };
             editCrop({ ...previous, [field]: Number(event.target.value) });
           }} /></label>)}</div>
-        <FreeImageCropCanvas sourceUrl={originalUrl} width={loaded.width} height={loaded.height} scopeKey={cropScopeKey} crop={crop} enabled={cropMode}
-          disabled={busy || brushDrawing || uncertain || readyRetry || !currentImage} onBegin={beginCrop} onComplete={completeCrop} onCancel={cancelCrop} /></>}
-      {!cropMode && <FreeImageBrushCanvas sourceUrl={originalUrl} width={loaded.width} height={loaded.height} scopeKey={brushScopeKey} enabled={brushMode}
+        <div ref={viewport} style={{ overflow: 'auto', maxHeight: 420 }}><FreeImageCropCanvas displayScale={displayScale} sourceUrl={originalUrl} width={loaded.width} height={loaded.height} scopeKey={cropScopeKey} crop={crop} enabled={cropMode}
+          disabled={busy || brushDrawing || uncertain || readyRetry || !currentImage} onBegin={beginCrop} onComplete={completeCrop} onCancel={cancelCrop} /></div></>}
+      {!cropMode && <div ref={viewport} style={{ overflow: 'auto', maxHeight: 420 }}><FreeImageBrushCanvas displayScale={displayScale} sourceUrl={originalUrl} width={loaded.width} height={loaded.height} scopeKey={brushScopeKey} enabled={brushMode}
         disabled={busy || cropDrawing || uncertain || readyRetry || !currentImage || regions.length >= MAX_OCR_REGIONS || !remainingBrushPoints}
         size={brushSize} color={brushColor} maxPoints={Math.min(MAX_FREE_IMAGE_BRUSH_POINTS, remainingBrushPoints)}
         strokes={regions.flatMap(region => region.brush && region.selected ? [{ id: region.id, background: region.background, brush: region.brush }] : [])}
-        onBegin={beginBrush} onComplete={completeBrush} onCancel={cancelBrush} />}
+        onBegin={beginBrush} onComplete={completeBrush} onCancel={cancelBrush} /></div>}
     </div>}
     {loaded && <div className="actions">
       <button type="button" className="btn" disabled={locked || !currentImage || !regionHistory.past.length} onClick={() => moveRegionHistory('undo')}>되돌리기</button>
@@ -785,6 +812,17 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
             <option value="left">왼쪽</option><option value="center">가운데</option><option value="right">오른쪽</option>
           </select></label>
           <label>행간<input aria-label={`문구 ${index + 1} 행간`} type="number" disabled={region.erase === true} min={0.8} max={3} step={0.1} value={region.lineHeight ?? 1.2} onChange={event => editTextStyle(region.id, { lineHeight: Number(event.target.value) })} /></label>
+          <label>채우기<select aria-label={`문구 ${index + 1} 채우기`} disabled={region.erase === true} value={region.textFill ? 'gradient' : 'solid'} onChange={event => editTextStyle(region.id, { textFill: event.target.value === 'gradient' ? { kind: 'linear-gradient', startColor: region.foreground, endColor: '#ffffff', angle: 0 } : undefined })}><option value="solid">단색</option><option value="gradient">그라데이션</option></select></label>
+          {region.textFill && <>
+            <label>시작색<input type="color" aria-label={`문구 ${index + 1} 그라데이션 시작색`} disabled={region.erase === true} value={region.textFill.startColor} onChange={event => editTextStyle(region.id, { textFill: { ...region.textFill!, startColor: event.target.value } })} /></label>
+            <label>끝색<input type="color" aria-label={`문구 ${index + 1} 그라데이션 끝색`} disabled={region.erase === true} value={region.textFill.endColor} onChange={event => editTextStyle(region.id, { textFill: { ...region.textFill!, endColor: event.target.value } })} /></label>
+            <label>색상 각도<input type="number" min={-180} max={180} aria-label={`문구 ${index + 1} 그라데이션 각도`} disabled={region.erase === true} value={region.textFill.angle} onChange={event => editTextStyle(region.id, { textFill: { ...region.textFill!, angle: Number(event.target.value) } })} /></label>
+          </>}
+          <label>테두리 크기 · px<input type="number" min={0} max={20} aria-label={`문구 ${index + 1} 테두리 크기`} disabled={region.erase === true} value={region.textStroke?.width ?? 0} onChange={event => editTextStyle(region.id, { textStroke: { width: Number(event.target.value), color: region.textStroke?.color ?? '#000000' } })} /></label>
+          <label>테두리 색상<input type="color" aria-label={`문구 ${index + 1} 테두리 색상`} disabled={region.erase === true} value={region.textStroke?.color ?? '#000000'} onChange={event => editTextStyle(region.id, { textStroke: { width: region.textStroke?.width ?? 0, color: event.target.value } })} /></label>
+          <label>그림자 범위 · px<input type="number" min={0} max={100} aria-label={`문구 ${index + 1} 그림자 범위`} disabled={region.erase === true} value={region.textShadow?.blur ?? 0} onChange={event => editTextStyle(region.id, { textShadow: { blur: Number(event.target.value), color: region.textShadow?.color ?? '#000000' } })} /></label>
+          <label>그림자 색상<input type="color" aria-label={`문구 ${index + 1} 그림자 색상`} disabled={region.erase === true} value={region.textShadow?.color ?? '#000000'} onChange={event => editTextStyle(region.id, { textShadow: { blur: region.textShadow?.blur ?? 0, color: event.target.value } })} /></label>
+          <label>각도 · 도<input type="number" min={-180} max={180} aria-label={`문구 ${index + 1} 각도`} disabled={region.erase === true} value={region.rotation ?? 0} onChange={event => editTextStyle(region.id, { rotation: Number(event.target.value) })} /></label>
         </div>
         <div className="actions">
           <button type="button" className="btn" aria-label={`문구 ${index + 1} 뒤로`} disabled={locked || !currentImage || index === 0} onClick={() => reorderRegion(region.id, -1)}>뒤로</button>

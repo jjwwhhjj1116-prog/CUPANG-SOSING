@@ -195,14 +195,13 @@ async function knownFixture(){
  x.state.knownChanges=x.view.resolved.rows.filter(row=>row.included).map(row=>({optionId:row.optionId,fieldKey:field.id,value:'02-1234-5678'}));
  return {...x,field};
 }
-test('explicit editor previews known saved facts without calling AI and applies only after the existing review button',async()=>{
+test('known saved facts never enter the AI mutation ingress or require a source-copy save',async()=>{
  const x=await knownFixture(),applied=[],before=JSON.stringify(x.view),ui=quotationAiUI({productId:x.f.product.id,view:x.view,optionId:null,disabled:false,onApply:v=>applied.push(v)},async()=>Response.json(x.state));
- await ui.idle();assert.deepEqual(applied,[]);assert.ok(nodes(ui.render()).some(node=>node.props.children==='저장 정보'));
- await ui.click('검토한 초안 입력란에 적용');assert.equal(applied[0].length,2);assert.ok(applied[0].every(change=>change.fieldKey===x.field.id));
+ await ui.idle();assert.deepEqual(applied,[]);assert.equal(ui.button('검토한 초안 입력란에 적용'),undefined);
  assert.deepEqual(ui.calls.map(call=>call.method),['GET']);assert.equal(JSON.stringify(x.view),before);ui.unmount();
- // The model itself remains prohibited from manufacturing contact/origin facts.
  x.job.result.changes=x.state.knownChanges;assert.throws(()=>client.quotationAiProposalChanges(x.view,x.job,x.state.fingerprint));
 });
+
 test('known sources keep exact scope, stale revisions and manual N/A/blank protected',async()=>{
  for(const mutate of [x=>{x.state.optionRevision++;},x=>{x.state.productId='foreign';},x=>{x.view.overrides.common[x.field.id]='';},
   x=>{x.view.overrides.options[x.state.knownChanges[0].optionId]={[x.field.id]:'해당사항없음'};},x=>{x.state.knownChanges.push({...x.state.knownChanges[0]});},x=>{x.field.hubWire.path=['legalPage','certificates'];}]){
@@ -217,7 +216,8 @@ test('saved-source values win a conflicting model proposal without widening mode
  for(const row of x.view.resolved.rows)row.fields[field.id]={value:'해당사항없음',source:'couplus-default',issues:[]};
  x.state.knownChanges=x.view.resolved.rows.filter(row=>row.included).map(row=>({optionId:row.optionId,fieldKey:field.id,value:'직접 저장한 소재'}));
  const changes=client.quotationReviewedProposalChanges(x.state,x.view,x.f.product.id,x.job,null,true);
- assert.ok(changes.filter(change=>change.fieldKey===field.id).every(change=>change.value==='직접 저장한 소재'));
+ assert.ok(!changes.some(change=>change.fieldKey===field.id&&change.value==='직접 저장한 소재'));
+ assert.deepEqual(JSON.parse(JSON.stringify(changes)),JSON.parse(JSON.stringify(client.quotationAiScopedProposalChanges(x.view,x.job,x.state.fingerprint,null,true))));
  assert.equal(new Set(changes.map(change=>JSON.stringify([change.optionId,change.fieldKey]))).size,changes.length);
 });
 test('physical quantity proposal copies an exact saved unit only to an unedited text quantity with matching count',async()=>{
@@ -243,9 +243,8 @@ for(const company of companies)test(company.name+': saved stage-six option mater
  assert.equal(x.view.resolved.rows.find(row=>row.optionId===x.optionId).fields[x.field.id].value,'실리콘');
  const proposal=x.state.knownChanges.find(change=>change.fieldKey===x.field.id);assert.deepEqual(JSON.parse(JSON.stringify(proposal)),{optionId:x.optionId,fieldKey:x.field.id,value:'면',savedLabel:{revision:1,previousValue:'실리콘'}});
  const changes=client.quotationReviewedProposalChanges(x.state,x.view,x.f.product.id,null,null,true);
- assert.deepEqual(JSON.parse(JSON.stringify(changes)),[{optionId:x.optionId,fieldKey:x.field.id,value:'면'}],'source proof never enters the ordinary quotation save payload');
- const checked=schema.validateQuotationChanges(changes,{schema:x.view.resolved.schema,optionIds:x.f.options.rows.map(row=>row.id),overrides:x.view.overrides});
- const overrides=schema.applyQuotationChanges(x.view.overrides,checked),resolved=schema.resolveQuotationFields({...x.f.saved,categoryId:x.f.snapshot.categoryId,categoryPath:x.f.snapshot.categoryPath,hubSchema:x.f.snapshot,overrides});
+ assert.deepEqual(JSON.parse(JSON.stringify(changes)),[],'live saved sources are never ordinary manual deltas');
+ const resolved=schema.resolveQuotationFields({...x.f.saved,categoryId:x.f.snapshot.categoryId,categoryPath:x.f.snapshot.categoryPath,hubSchema:x.f.snapshot,labelsState:x.labels});
  assert.equal(resolved.rows.find(row=>row.optionId===x.optionId).fields[x.field.id].value,'면');
  assert.equal(resolved.rows.find(row=>row.optionId!==x.optionId).fields[x.field.id].value,'실리콘');
  assert.equal(JSON.stringify([x.f.content,x.f.options,x.labels,x.view]),before,'review and proposal reads never alter their sources');

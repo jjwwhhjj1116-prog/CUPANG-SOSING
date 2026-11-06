@@ -13,7 +13,7 @@ type Context = { params: Promise<{ id: string }> };
 const response = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
 const closed = () => response({ error: '운영 인증 연결 후 옵션 편집을 사용할 수 있습니다.' }, 503);
 async function pricing(owner: string, product: ProductRecord, options: ProductOptions) {
-  const settings = product.pricing_policy ? null : await getSettings(owner);
+  const settings = await getSettings(owner);
   const resolved = resolveOptionPricePolicy(product, settings ? JSON.parse(settings.payload) : undefined);
   return { ...resolved, rows: calculateOptionPrices(options.rows, resolved.policy) };
 }

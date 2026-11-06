@@ -1,3 +1,7 @@
+import {seoCurrentRequestNotice} from '@/app/seo-current-validation';
+import {validateSeoOptionResults} from '@/app/seo-option-results';
+import {acquireSeoComposition} from '@/app/seo-related-keywords-client';
+import {validateSeoCompositionPolicy,type SeoCompositionPolicy} from '@/app/seo-current-policy';
 import {WORKERS_TEXT_MODEL,WORKERS_QWEN_MODEL,validateTranslationSource,type TranslationJob,type TranslationSource} from '@/app/automation/translation';
 import {seoGenerationReviewProof,validateSeoGenerationMemo,validateSeoGenerationDraft,type SeoGenerationMemo,type SeoGenerationConfiguration} from '@/app/seo-generation';
 import {supplierHubCompany,type SupplierHubCompany} from '@/app/supplier-hub-company';
@@ -5,7 +9,7 @@ import {translationReviewExpired} from '@/app/reviewed-translation';
 
 export type {SeoGenerationConfiguration};
 export type SeoGenerationContext={purpose:'seo-generation';productId:string;productVersion:string;contentRevision:number;optionRevision:number;sourceFingerprint:string;company:SupplierHubCompany;source:TranslationSource;memo:SeoGenerationMemo;configuration:SeoGenerationConfiguration;jobs:TranslationJob[];sourceCurrent?:boolean|null;idempotencyKey?:string};
-export type SeoGenerationDraftState={schemaVersion:2;purpose:'seo-generation';productId:string;productVersion:string;contentRevision:number;optionRevision:number;sourceFingerprint:string;company:SupplierHubCompany;source:TranslationSource;memo:SeoGenerationMemo;configuration:SeoGenerationConfiguration;idempotencyKey:string;jobId:string|null;reviewFingerprint:string|null;prepareSubmitted:boolean;approvalSubmitted:boolean;executeSubmitted:boolean};
+export type SeoGenerationDraftState={seoComposition?:SeoCompositionPolicy;schemaVersion:2;purpose:'seo-generation';productId:string;productVersion:string;contentRevision:number;optionRevision:number;sourceFingerprint:string;company:SupplierHubCompany;source:TranslationSource;memo:SeoGenerationMemo;configuration:SeoGenerationConfiguration;idempotencyKey:string;jobId:string|null;reviewFingerprint:string|null;prepareSubmitted:boolean;approvalSubmitted:boolean;executeSubmitted:boolean};
 export type SeoGenerationDraftControls={signal:AbortSignal;fetcher:typeof fetch;onState:(state:SeoGenerationDraftState)=>void;onJob?:(job:TranslationJob)=>void;isContextCurrent?:()=>boolean;confirmAi?:boolean};
 export type SeoGenerationDraftOutcome={job:TranslationJob|null;closed:boolean;needsReview:true;partial:boolean;label:'Workers AI SEO 생성 초안';message:string};
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u,HASH=/^[a-f0-9]{64}$/u;
@@ -48,11 +52,12 @@ const stateKeys='approvalSubmitted,company,configuration,contentRevision,execute
 export function parseSeoGenerationDraftState(raw:unknown,productId:string):SeoGenerationDraftState|null{
  try{
   if(typeof raw==='string'){if(raw.length>96*1024||new TextEncoder().encode(raw).length>96*1024)return null;raw=JSON.parse(raw);}
-  if(!exact(raw,stateKeys)||raw.schemaVersion!==2||raw.purpose!=='seo-generation'||raw.productId!==productId||!/^[A-Za-z0-9_-]{1,100}$/u.test(productId)||!validVersion(raw.productVersion)||!revision(raw.contentRevision)||!revision(raw.optionRevision)||!HASH.test(String(raw.sourceFingerprint))
+  if((!exact(raw,stateKeys)&&!exact(raw,(stateKeys+',seoComposition').split(',').sort().join(',')))||raw.schemaVersion!==2||raw.purpose!=='seo-generation'||raw.productId!==productId||!/^[A-Za-z0-9_-]{1,100}$/u.test(productId)||!validVersion(raw.productVersion)||!revision(raw.contentRevision)||!revision(raw.optionRevision)||!HASH.test(String(raw.sourceFingerprint))
    ||!exact(raw.company,'code,name')||!supplierHubCompany(raw.company.code,raw.company.name)||!parseSeoGenerationConfiguration(raw.configuration)||!same(validateSeoGenerationMemo(raw.memo),raw.memo)||!same(validateTranslationSource(raw.source),raw.source)
    ||!(raw.source as TranslationSource).category||!UUID.test(String(raw.idempotencyKey))||!(raw.jobId===null||UUID.test(String(raw.jobId)))||!(raw.reviewFingerprint===null||HASH.test(String(raw.reviewFingerprint)))
    ||(raw.jobId===null)!==(raw.reviewFingerprint===null)||![raw.prepareSubmitted,raw.approvalSubmitted,raw.executeSubmitted].every(value=>typeof value==='boolean')||raw.jobId!==null&&!raw.prepareSubmitted||raw.approvalSubmitted&&raw.jobId===null||raw.executeSubmitted&&!raw.approvalSubmitted
    ||new TextEncoder().encode(JSON.stringify(raw)).length>96*1024)return null;
+  if(raw.seoComposition&&(!same(validateSeoCompositionPolicy(raw.seoComposition),raw.seoComposition)||!same((raw.seoComposition as SeoCompositionPolicy).memo,raw.memo)))return null;
   return structuredClone(raw) as SeoGenerationDraftState;
  }catch{return null;}
 }
@@ -70,8 +75,8 @@ async function advance(state:SeoGenerationDraftState,controls:SeoGenerationDraft
  const validate=(job:unknown):TranslationJob=>{
   if(!object(job)||!UUID.test(String(job.id))||job.productId!==state.productId||job.productVersion!==state.productVersion||job.contentRevision!==state.contentRevision||state.jobId!==null&&job.id!==state.jobId||!['prepared','approved','running','completed','failed','uncertain'].includes(String(job.status))||!object(job.review))throw Error('원래 상품의 SEO 생성 작업을 확인하지 못했습니다.');
   const value=job as unknown as TranslationJob,proof=seoGenerationReviewProof(value.review);
-  if(!proof||proof.sourceFingerprint!==state.sourceFingerprint||proof.optionRevision!==state.optionRevision||!same(proof.company,state.company)||!same(proof.memo,state.memo)||!same(value.review.source,state.source)||!HASH.test(value.review.fingerprint)||state.reviewFingerprint!==null&&value.review.fingerprint!==state.reviewFingerprint||value.review.paidNotice!==state.configuration.notice)throw Error('SEO 생성 원문·브랜드·참고 입력 또는 무료 서비스의 연결이 다릅니다.');
-  if(value.status==='completed'){if(!value.result||value.result.model!==WORKERS_TEXT_MODEL||value.result.provenance!=='generated'||value.result.appliedToContent!==false)throw Error('SEO 생성 결과의 모델·저장 범위가 다릅니다.');validateSeoGenerationDraft(value.result.draft,value.review);}
+  if(!same(value.review.seoComposition,state.seoComposition)||!proof||proof.sourceFingerprint!==state.sourceFingerprint||proof.optionRevision!==state.optionRevision||!same(proof.company,state.company)||!same(proof.memo,state.memo)||!same(value.review.source,state.source)||!HASH.test(value.review.fingerprint)||state.reviewFingerprint!==null&&value.review.fingerprint!==state.reviewFingerprint||value.review.paidNotice!==(value.review.seoComposition?seoCurrentRequestNotice(state.configuration.notice,value.review.seoCompositionContext):state.configuration.notice))throw Error('SEO 생성 원문·브랜드·참고 입력 또는 무료 서비스의 연결이 다릅니다.');
+  if(value.status==='completed'){if(!value.result||value.result.model!==WORKERS_TEXT_MODEL||value.result.provenance!=='generated'||value.result.appliedToContent!==false)throw Error('SEO 생성 결과의 모델·저장 범위가 다릅니다.');validateSeoGenerationDraft(value.result.draft,value.review);if(value.review.seoCompositionContext){if(value.result.seoOptions===undefined)throw Error('SEO 옵션 응답이 누락되었습니다.');validateSeoOptionResults(value.result.seoOptions,value.review.seoCompositionContext.selectedOptions,value.review);}}
   else if(value.result!==null||['prepared','approved','running'].includes(value.status)&&value.error!==null)throw Error('SEO 생성 작업 상태를 확인하지 못했습니다.');
   keep({jobId:value.id,reviewFingerprint:value.review.fingerprint,...(['approved','running','completed','failed','uncertain'].includes(value.status)?{approvalSubmitted:true}:{}),...(['running','completed','failed','uncertain'].includes(value.status)?{executeSubmitted:true}:{})});controls.onJob?.(value);return value;
  };
@@ -94,7 +99,8 @@ async function advance(state:SeoGenerationDraftState,controls:SeoGenerationDraft
   if(state.executeSubmitted)return outcome(job);
   if(!job){if(state.prepareSubmitted)return outcome(null,'이전 SEO 준비 요청의 결과를 확인하지 못했습니다. 같은 키로 상태만 조회했으며 새 실행은 만들지 않았습니다.');
    if(!state.configuration.configured)return outcome(null,'무료 SEO 생성 서비스가 준비되지 않았습니다. Google 옵션 번역과 AI SEO 생성은 구분하여 표시합니다.');
-   keep({prepareSubmitted:true});try{job=await request({action:'prepare',expectedVersion:state.productVersion,expectedContentRevision:state.contentRevision,expectedOptionRevision:state.optionRevision,expectedSourceFingerprint:state.sourceFingerprint,memo:state.memo,idempotencyKey:state.idempotencyKey});}catch(cause){return await recover(cause);}}
+   if(!state.seoComposition){const composition=await acquireSeoComposition(state.memo,controls.signal,()=>controls.isContextCurrent?.()!==false);check();keep({seoComposition:composition});}
+   keep({prepareSubmitted:true});try{job=await request({...(state.seoComposition?{seoComposition:state.seoComposition}:{}),action:'prepare',expectedVersion:state.productVersion,expectedContentRevision:state.contentRevision,expectedOptionRevision:state.optionRevision,expectedSourceFingerprint:state.sourceFingerprint,memo:state.memo,idempotencyKey:state.idempotencyKey});}catch(cause){return await recover(cause);}}
   if(['completed','failed','running','uncertain'].includes(job.status))return outcome(job);
   if(!sourceCurrent)return outcome(job,'상품·회사·원문 또는 무료 서비스 설정이 변경되어 SEO 생성을 실행하지 않았습니다.');
   if(translationReviewExpired(job))return outcome(job,'SEO 생성 요청의 검토 기한이 지났습니다. 새 실행은 하지 않았습니다.');

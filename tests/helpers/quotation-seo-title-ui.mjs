@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../../extensions/supplier-hub/page-source-price-basis.mjs';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
@@ -16,7 +17,7 @@ export function quotationTitleLoader(overrides={}){
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
    {exports,Error,TextEncoder,TextDecoder,Uint8Array,Response,Request,URLSearchParams,URL,structuredClone,AbortController,AbortSignal,setTimeout,clearTimeout,crypto:globalThis.crypto,fetch:overrides.fetch??fetch,
     window:overrides.window??{addEventListener(){},removeEventListener(){}},document:{getElementById:()=>null},
-    require(name){
+    require(name){if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
      if(name in overrides)return name==='react'&&!overrides[name].useLayoutEffect?{...overrides[name],useLayoutEffect:overrides[name].useEffect}:overrides[name];
      if(name.endsWith('.css'))return{};
      if(name.startsWith('@/app/')&&name.endsWith('.mjs'))return native('../../'+name.slice(2));

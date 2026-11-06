@@ -1,3 +1,5 @@
+import {seoCompositionContext} from '@/app/seo-composition-context';
+import {validateSeoOptionResults} from '@/app/seo-option-results';
 import type {TranslationJob} from '@/app/automation/translation';
 import type {ProductContent} from '@/app/product-content';
 import type {ProductOptions} from '@/app/product-options';
@@ -33,13 +35,14 @@ export function createSeoGeneratedDraft(input:{ownerId?:string;productVersion:st
  if(content.productId!==options.productId||job.productId!==content.productId||job.productVersion!==productVersion||job.contentRevision!==content.revision
   ||job.status!=='completed'||!job.result||job.error||job.result.model!==job.review.model||!/^[a-f0-9]{64}$/u.test(job.review.fingerprint)
   ||!Number.isSafeInteger(content.revision)||!Number.isSafeInteger(options.revision))throw Error('현재 상품·원문·옵션에 연결된 완료 SEO 초안을 확인해주세요.');
+ if(job.review.seoCompositionContext&&(job.review.seoCompositionContext.optionRevision!==options.revision||JSON.stringify(job.review.seoCompositionContext.selectedOptions)!==JSON.stringify(seoCompositionContext(options).selectedOptions)))throw Error('SEO 생성 이후 선택 옵션·사용자 입력이 변경되었습니다.');
  const values:SeoWorkspaceDraft={seo:{},optionNames:{}},draft=job.result.draft,warnings=[...draft.warnings];
  const eligible=(field:'title'|'keywords'|'description')=>input.replaceSaved||content.seo[field].provenance!=='manual'||field==='keywords'&&untouchedIntakeKeywords(content,job);
  const memo=input.memo?{...input.memo,brand:input.memo.brand.split(',')[0].trim()}:null;
  const composed:Partial<Pick<typeof draft,'title'|'keywords'>>={};
- if(memo){
+ if(memo&&!job.review.seoComposition){
   let targetsValid=true;
-  try{const tags=seoGuidanceTags(draft,{...memo,title:''});if(eligible('keywords')){composed.keywords=tags.tags;if(tags.omitted.length)warnings.push('검색태그 한도에 맞지 않는 추가 번역 태그는 넣지 않았습니다. 타겟과 원문을 확인해주세요.');}}
+  try{const tags=seoGuidanceTags(draft,{...memo,title:''},job.review.seoKeywordPolicy==='couplus-generated-v1');if(eligible('keywords')){composed.keywords=tags.tags;if(tags.omitted.length)warnings.push('검색태그 한도에 맞지 않는 추가 번역 태그는 넣지 않았습니다. 타겟과 원문을 확인해주세요.');}}
   catch{targetsValid=false;if(eligible('title')||eligible('keywords'))warnings.push('타겟 검색태그가 20자·전체 150자 기준에 맞지 않아 원래 번역 검색태그를 유지했습니다.');}
   if(eligible('title'))try{
    // Target nouns append to the provider base; its product wording is not rewritten.
@@ -50,7 +53,10 @@ export function createSeoGeneratedDraft(input:{ownerId?:string;productVersion:st
  for(const field of ['title','keywords','description'] as const){
   if(!eligible(field))continue;
   const value=field==='description'?draft[field]:composed[field]??draft[field];if(field==='keywords'){
-   if(value.length&&(input.replaceSaved||!same(value,content.seo.keywords.value)))values.seo.keywords=(value as string[]).join(', ');
+   if((value.length||job.review.seoKeywordPolicy==='couplus-generated-v1')&&(input.replaceSaved||!same(value,content.seo.keywords.value))){
+    values.seo.keywords=(value as string[]).join(', ');
+    if(job.review.seoKeywordPolicy==='couplus-generated-v1')values.generatedKeywords={text:values.seo.keywords,values:[...value as string[]]};
+   }
   }else if(typeof value==='string'&&value.trim()){
    const prefix=(memo?.brand??input.brand).split(',')[0].trim();let name=field==='title'&&composed.title===undefined&&prefix&&value!==prefix&&!value.startsWith(prefix)?prefix+' '+value:value;
    if(memo&&field==='title'&&(name.length>100||/[\r\n]/u.test(name))){name=draft.title;if(name.length>100||/[\r\n]/u.test(name))continue;}
@@ -65,6 +71,7 @@ export function createSeoGeneratedDraft(input:{ownerId?:string;productVersion:st
   seen.add(id);if(!row.included||!input.replaceSaved&&(row.provenance.translatedName==='manual'||row.translatedName.trim()))continue;
   if(translated.value.trim())values.optionNames[id]=translated.value.trim();
  }
+ if(job.review.seoCompositionContext&&job.result.seoOptions){const checked=validateSeoOptionResults(job.result.seoOptions,job.review.seoCompositionContext.selectedOptions,job.review);for(const value of checked.values){const row=options.rows.find(row=>row.id===value.optionId);if(row?.included&&row.provenance.translatedName!=='manual'&&value.name&&(input.replaceSaved||!row.translatedName.trim()))values.optionNames[row.id]=value.name;}warnings.push(...checked.warnings);}
  return {format:'yoofam-seo-generated-draft-v1',ownerId:input.ownerId??null,productId:content.productId,productVersion,contentRevision:content.revision,optionRevision:options.revision,
   jobId:job.id,model:job.review.model,reviewFingerprint:job.review.fingerprint,sourceReference:job.review.source.reference,intent:input.replaceSaved?'explicit-regeneration':'preserve-reviewed',
   source:{seo:structuredClone(content.seo),options:nameSources(options)},values,warnings};
@@ -76,5 +83,5 @@ export function mergeSeoGeneratedDraft(seed:SeoGeneratedDraft,view:SeoWorkspaceV
  if(seed.format!=='yoofam-seo-generated-draft-v1'||seed.ownerId!==(ownerId??null)||seed.productId!==view.productId||seed.productVersion!==view.productVersion
   ||seed.contentRevision!==view.content.revision||seed.optionRevision!==view.options.revision||!same(seed.source.seo,view.content.seo)||!same(seed.source.options,nameSources(view.options)))
   throw Error('AI 초안 이후 상품·원문·옵션 저장 상태가 변경되었습니다. 현재 입력은 유지했습니다. 최신 상품에서 다시 생성해주세요.');
- return {...editing,seo:{...seed.values.seo,...editing.seo},optionNames:{...seed.values.optionNames,...editing.optionNames}};
+ return {...editing,...(!Object.hasOwn(editing.seo,'keywords')&&seed.values.generatedKeywords?{generatedKeywords:seed.values.generatedKeywords}:{}),seo:{...seed.values.seo,...editing.seo},optionNames:{...seed.values.optionNames,...editing.optionNames}};
 }

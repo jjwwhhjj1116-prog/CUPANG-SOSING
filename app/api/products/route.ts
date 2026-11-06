@@ -9,7 +9,7 @@ import { NextResponse } from 'next/server';
 import { initialStatuses, is1688ProductUrl } from '@/app/workflow';
 
 import { savedRegistrationSettings } from '@/app/workspace-settings';
-import { calculatePrice, pricePolicy, type PricePolicy } from '@/app/pricing';
+import { calculateRepresentativePrice, pricePolicy, type PricePolicy } from '@/app/pricing';
 async function ownerId() { return await getWorkspaceOwnerId(); }
 
 export async function GET(request?: Request) {
@@ -49,7 +49,7 @@ export async function POST(request: Request) {
   let owner:string,settings:ReturnType<typeof savedRegistrationSettings>;
   try { owner=await ownerId();const stored=await getSettings(owner);settings=savedRegistrationSettings(stored?JSON.parse(stored.payload):null); }
   catch { return NextResponse.json({error:'저장된 기본설정을 읽지 못했습니다. 다시 시도해주세요.'},{status:503}); }
-  let policy:PricePolicy,calculation:ReturnType<typeof calculatePrice>;
+  let policy:PricePolicy,calculation:ReturnType<typeof calculateRepresentativePrice>;
   try {
     const input:Record<string,unknown>={...settings};
     for(const key of ['exchangeRate','supplyMargin','coupangMargin','minimumMargin','msrpMultiple','roundingUnit','roundingMode','useIntegratedRate','integratedRate'] as const){
@@ -60,7 +60,7 @@ export async function POST(request: Request) {
     policy=pricePolicy({...input,...(input.roundingMode==='nearest'?{arithmeticMode:'couplus-number-v1'}:{})});
     if(!enabled)policy.minimumMargin=0;
     policy.recalculationMinimumEnabled=enabled;
-    calculation=calculatePrice(sourcePriceCny,policy);
+    calculation=calculateRepresentativePrice(sourcePriceCny,policy);
   }catch(error){return NextResponse.json({error:error instanceof Error?error.message:'가격 설정을 확인해주세요.'},{status:400});}
   const {exchangeRate,supplyMargin,coupangMargin}=policy;
   const {supplyPrice,salePrice,msrp}=calculation;

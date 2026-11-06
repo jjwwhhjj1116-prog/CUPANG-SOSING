@@ -1,3 +1,4 @@
+import {seoCompositionContext} from '@/app/seo-composition-context';
 import {env} from 'cloudflare:workers';
 import {getChatGPTUser,getWorkspaceOwnerId} from '@/app/chatgpt-auth';
 import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
@@ -33,6 +34,7 @@ export async function seoGenerationSource(auth:Awaited<ReturnType<typeof seoGene
 }
 export function currentSeoGenerationJob(job:TranslationJob,saved:Awaited<ReturnType<typeof seoGenerationSource>>,auth:Awaited<ReturnType<typeof seoGenerationAuthorization>>):SeoRetrySourceGuard{
  const proof=seoGenerationReviewProof(job.review);
+ if(job.review.seoCompositionContext&&JSON.stringify(job.review.seoCompositionContext)!==JSON.stringify(seoCompositionContext(saved.options)))throw new SeoGenerationError('SEO_GENERATION_CHANGED','SEO 선택 옵션과 직접 수정한 입력이 변경되었습니다.');
  if(!proof||job.productId!==saved.product.id||job.productVersion!==saved.product.updated_at||job.contentRevision!==saved.content.revision||proof.optionRevision!==saved.options.revision
   ||proof.sourceFingerprint!==saved.captured.sourceFingerprint||JSON.stringify(proof.company)!==JSON.stringify(auth.company)||JSON.stringify(job.review.source)!==JSON.stringify(saved.captured.source))
   throw new SeoGenerationError('SEO_GENERATION_CHANGED','SEO 생성 이후 상품·옵션·원문·회사가 변경되었습니다. 기존 이력을 유지하고 현재 저장본을 확인해주세요.');

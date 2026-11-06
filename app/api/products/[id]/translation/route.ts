@@ -1,3 +1,5 @@
+import {readSeoCompositionSnapshot} from '@/app/seo-composition-server';
+import {validateSeoCompositionPolicy} from '@/app/seo-current-policy';
 import { env } from 'cloudflare:workers';
 import { NextResponse } from 'next/server';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
@@ -280,14 +282,18 @@ export async function POST(request: Request, context: Context) {
       return json({ job: saved.job, replayed: saved.replayed, remainingOptions, autoDraft, optionsOnly, configuration: configuration() }, saved.replayed ? 200 : 201);
     }
     if (body.action === 'prepare') {
-      if (Object.keys(body).some(key => !['action', 'source', 'expectedVersion', 'idempotencyKey'].includes(key)) || typeof body.idempotencyKey !== 'string' || !/^[a-zA-Z0-9_-]{8,100}$/.test(body.idempotencyKey)) throw new TranslationError('INVALID_REQUEST', '번역 검토 요청 항목과 중복 방지 키를 확인해주세요.');
+      if (Object.keys(body).some(key => !['action', 'source', 'expectedVersion', 'idempotencyKey','seoComposition','expectedOptionRevision','expectedSourceFingerprint'].includes(key)) || typeof body.idempotencyKey !== 'string' || !/^[a-zA-Z0-9_-]{8,100}$/.test(body.idempotencyKey)) throw new TranslationError('INVALID_REQUEST', '번역 검토 요청 항목과 중복 방지 키를 확인해주세요.');
       if (body.expectedVersion !== product.updated_at) return conflict();
       const source = validateTranslationSource(body.source);
       const content = await readProductContent(owner, id);
-      const review = await prepareTranslationReview(source, config);
+      const composition=body.seoComposition===undefined?undefined:validateSeoCompositionPolicy(body.seoComposition);
+      if(composition&&config.model!=='@cf/qwen/qwen3-30b-a3b-fp8')throw new TranslationError('INVALID_REQUEST','SEO 구성 모델을 확인해주세요.');
+      const compositionSnapshot=composition?await readSeoCompositionSnapshot(owner,id,source):undefined;
+      if(compositionSnapshot&&(body.expectedOptionRevision!==compositionSnapshot.context.optionRevision||body.expectedSourceFingerprint!==compositionSnapshot.context.sourceFingerprint))return conflict();if(!compositionSnapshot&&(body.expectedOptionRevision!==undefined||body.expectedSourceFingerprint!==undefined))throw new TranslationError('INVALID_REQUEST','SEO 옵션 버전 범위를 확인해주세요.');
+      const review = await prepareTranslationReview(source, config,new Date(),composition,compositionSnapshot?.context);
       const job: TranslationJob = { id: crypto.randomUUID(), productId: id, productVersion: product.updated_at, contentRevision: content.revision,
         status: 'prepared', review, result: null, error: null, createdAt: new Date().toISOString(), approvedAt: null, startedAt: null, finishedAt: null };
-      const requestFingerprint = await fingerprint({ source, productVersion: job.productVersion, contentRevision: job.contentRevision, destination: translationDestination(config), model: config.model, maxOutputTokens: config.maxOutputTokens });
+      const requestFingerprint = await fingerprint({ source,...(composition?{seoComposition:composition}:{}), productVersion: job.productVersion, contentRevision: job.contentRevision, destination: translationDestination(config), model: config.model, maxOutputTokens: config.maxOutputTokens });
       const saved = await createTranslationJob(owner, job, body.idempotencyKey, requestFingerprint);
       if (!saved || saved.conflict) return conflict();
       return json({ job: saved.job, replayed: saved.replayed, configuration: configuration() }, saved.replayed ? 200 : 201);
@@ -297,6 +303,8 @@ export async function POST(request: Request, context: Context) {
     if (Object.keys(body).some(key => !allowed.includes(key))) throw new TranslationError('INVALID_REQUEST', '클라이언트가 모델이나 결과를 지정할 수 없습니다.');
     const existing = requestedJob??await getTranslationJob(owner, id, body.jobId);
     if (!existing) return json({ error: '번역 요청을 찾을 수 없습니다.' }, 404);
+    const compositionSnapshot=existing.review.seoCompositionContext?await readSeoCompositionSnapshot(owner,id,existing.review.source):null;
+    if(compositionSnapshot&&(JSON.stringify(existing.review.seoCompositionContext)!==JSON.stringify(compositionSnapshot.context)||compositionSnapshot.productVersion!==existing.productVersion||compositionSnapshot.contentRevision!==existing.contentRevision))return conflict();
     if(Object.hasOwn(existing.review,'seoGeneration'))return json({error:'SEO 생성 요청은 SEO 생성 전용 화면에서 확인해주세요.'},409);
     const workersProof=workersRecoveryReviewProof(existing.review);
     if(workersProof)config=requireWorkersRecoveryConfig(env as TranslationSecrets,workersProof);
@@ -330,7 +338,7 @@ export async function POST(request: Request, context: Context) {
       if (JSON.stringify(current) !== JSON.stringify(existing.review.source)) return conflict();
     }
     const seoProof=seoRetryReviewProof(existing.review);
-    let seoSource;
+    let seoSource=compositionSnapshot?.guard;
     if(workersProof){
       const company=await seoCompany(owner);if(!company||company.code!==workersProof.company.code||company.name!==workersProof.company.name)return conflict();
       const [captured,failed,content]=await Promise.all([readWorkersRecoverySource(owner,id,product.source_url,company),getTranslationJob(owner,id,workersProof.failedJobId),readProductContent(owner,id)]);
@@ -350,14 +358,14 @@ export async function POST(request: Request, context: Context) {
     if (body.action === 'approve') {
       if (body.confirmPaid !== true || body.reviewFingerprint !== existing.review.fingerprint) return json({ error: '검토한 원문과 모델의 생성 요청 승인이 필요합니다.', code: 'PAID_APPROVAL_REQUIRED' }, 400);
       if (existing.status === 'approved') return json({ job: existing, replayed: true });
-      const approved = await approveTranslationJob(owner, id, existing.id, existing.review.fingerprint, new Date().toISOString(),workersProof?.optionRevision??seoProof?.optionRevision??optionsRetryProof(existing)?.optionRevision??intakeProof?.optionRevision,seoSource);
+      const approved = await approveTranslationJob(owner, id, existing.id, existing.review.fingerprint, new Date().toISOString(),workersProof?.optionRevision??seoProof?.optionRevision??optionsRetryProof(existing)?.optionRevision??intakeProof?.optionRevision??compositionSnapshot?.context.optionRevision,seoSource);
       return approved ? json({ job: approved }) : conflict();
     }
     if (['completed', 'failed', 'uncertain'].includes(existing.status)) return json({ job: existing, replayed: true });
     if (existing.status === 'running') return json({ job: existing, replayed: true, message: '이미 실행 중이거나 결과 확인이 필요합니다. 중복 호출하지 않았습니다.' }, 202);
     if (existing.status !== 'approved') return json({ error: '먼저 검토한 생성 요청을 승인해주세요.', code: 'PAID_APPROVAL_REQUIRED' }, 409);
     const claim = crypto.randomUUID();
-    const claimed = await claimTranslationJob(owner, id, existing.id, existing.review.fingerprint, claim, new Date().toISOString(),workersProof?.optionRevision??seoProof?.optionRevision??optionsRetryProof(existing)?.optionRevision??intakeProof?.optionRevision,seoSource);
+    const claimed = await claimTranslationJob(owner, id, existing.id, existing.review.fingerprint, claim, new Date().toISOString(),workersProof?.optionRevision??seoProof?.optionRevision??optionsRetryProof(existing)?.optionRevision??intakeProof?.optionRevision??compositionSnapshot?.context.optionRevision,seoSource);
     if (!claimed) {
       const current = await getTranslationJob(owner, id, existing.id);
       if (current && current.status !== 'approved') return json({ job: current, replayed: true }, current.status === 'running' ? 202 : 200);
@@ -413,7 +421,8 @@ export async function POST(request: Request, context: Context) {
         }
         return binding!.run(model,providerInput);
       }}} : config;
-      result = await executeTranslation(claimed.review, executionConfig);
+      const protectedConfig=compositionSnapshot?{...executionConfig,ai:{run:async(model:string,input:Record<string,unknown>)=>{const current=await readSeoCompositionSnapshot(owner,id,claimed.review.source);if(JSON.stringify(current.context)!==JSON.stringify(compositionSnapshot.context)||current.productVersion!==claimed.productVersion||current.contentRevision!==claimed.contentRevision||!executionConfig.ai)throw new TranslationError('SEO_SOURCE_CHANGED','SEO 원문·선택 옵션·회사가 변경되어 전송하지 않았습니다.');return executionConfig.ai.run(model,input);}}}:executionConfig;
+      result = await executeTranslation(claimed.review, protectedConfig);
     }
     catch (error) { executionError = error instanceof TranslationError ? { code: error.code, message: error.message, mayHaveBeenCharged: error.mayHaveBeenCharged } : { code: 'PROVIDER_OUTCOME_UNCERTAIN', message: '실행 결과를 확인할 수 없습니다. 자동 재시도하지 않습니다.', mayHaveBeenCharged: true }; }
     try {

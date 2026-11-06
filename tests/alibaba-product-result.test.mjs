@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -8,7 +9,7 @@ import * as parse5 from 'parse5';
 import {webcrypto} from 'node:crypto';
 function load(file) {
  const exports={}; vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
- {exports,URL,URLSearchParams,Date,TextEncoder,TextDecoder,Uint8Array,AbortController,setTimeout,clearTimeout,crypto:webcrypto,structuredClone,require(name){if(name==='parse5')return parse5;if(name.startsWith('./'))return load(path.posix.join(path.posix.dirname(file),name)+'.ts');return load(name.slice(2)+'.ts');}});return exports;
+ {exports,URL,URLSearchParams,Date,TextEncoder,TextDecoder,Uint8Array,AbortController,setTimeout,clearTimeout,crypto:webcrypto,structuredClone,require(name){if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;if(name==='parse5')return parse5;if(name.startsWith('./'))return load(path.posix.join(path.posix.dirname(file),name)+'.ts');return load(name.slice(2)+'.ts');}});return exports;
 }
 const {parseAlibabaProduct:parse}=load('app/alibaba-product-result.ts');
 const url='https://detail.1688.com/offer/813724060928.html';

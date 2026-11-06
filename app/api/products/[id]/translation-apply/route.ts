@@ -1,3 +1,4 @@
+import {readSeoCompositionSnapshot} from '@/app/seo-composition-server';
 import { NextResponse } from 'next/server';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { findProduct } from '@/db/queries';
@@ -58,10 +59,12 @@ export async function POST(request: Request, context: Context) {
     if (product.updated_at !== body.expectedVersion) return json({ error: '상품이 변경되었습니다. 최신 상품에서 다시 검토해주세요.' }, 409);
     const [content, options, job] = await Promise.all([readProductContent(owner, id), readProductOptions(owner, id), getTranslationJob(owner, id, body.jobId as string)]);
     if (!job) return json({ error: '번역 결과를 찾을 수 없습니다.' }, 404);
+    const compositionSnapshot=job.review.seoCompositionContext?await readSeoCompositionSnapshot(owner,id,job.review.source):null;
+    if(compositionSnapshot&&(JSON.stringify(compositionSnapshot.context)!==JSON.stringify(job.review.seoCompositionContext)||compositionSnapshot.productVersion!==job.productVersion||compositionSnapshot.contentRevision!==job.contentRevision))return json({error:'SEO 생성 이후 원문·선택 옵션·회사가 변경되었습니다.'},409);
     if(Object.hasOwn(job.review,'seoGeneration'))return json({error:'SEO 생성 결과는 SEO 생성 전용 검토에서 적용해주세요.'},409);
     try{assertWorkersRecoveryJobQuality(job);}catch(error){return json({error:error instanceof Error?error.message:'별도 초안 품질을 확인하지 못했습니다.'},409);}
     if(job.status==='completed'&&job.result&&job.review.model===WORKERS_QWEN_MODEL&&job.review.instructionsVersion==='sourceflow-translation-v6'&&!Object.hasOwn(job.review,'workersRecovery')){
-      try{if(job.result.model!==job.review.model)throw Error('검토한 Qwen 모델과 저장 결과의 모델이 다릅니다.');validateQwenTranslationDraft(job.result.draft,job.review.source,job.review.qwenTranslationPolicy);}
+      try{if(job.result.model!==job.review.model)throw Error('검토한 Qwen 모델과 저장 결과의 모델이 다릅니다.');validateQwenTranslationDraft(job.result.draft,job.review.source,job.review.qwenTranslationPolicy,job.review.seoKeywordPolicy,job.review.seoComposition,job.review.seoCompositionContext);}
       catch(error){return json({error:error instanceof Error?error.message:'Qwen 한국어 번역 결과를 확인하지 못했습니다.'},409);}
     }
     const scope = body.scope === 'options' ? 'options' : 'all';
@@ -70,8 +73,8 @@ export async function POST(request: Request, context: Context) {
       if (intakeProof && (scope !== 'options' || job.productVersion === product.updated_at && intakeProof.optionRevision !== options.revision))
         return json({ error: '자동 옵션 번역은 검토한 미번역 옵션에만 적용할 수 있습니다. 현재 옵션을 다시 확인해주세요.' },409);
     } catch { return json({ error: '자동 옵션 번역 원문 연결을 확인하지 못했습니다.' },409); }
-    let seoSource;
-    let recoveryMember;
+    let seoSource=compositionSnapshot?.guard;
+    let recoveryMember=compositionSnapshot?.member;
     try{
       const workersProof=workersRecoveryReviewProof(job.review);
       if(workersProof){

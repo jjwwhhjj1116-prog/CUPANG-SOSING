@@ -201,3 +201,15 @@ test('review saves only editable source facts and retains immutable capture diag
   h.button('상품정보 확인').props.onClick();assert.match(text(diagnosticsNode(h)),/수집기 2\.1\.59/);assert.equal(h.calls.length,1);assert.equal(JSON.stringify(before),original);
  }finally{h.close();}
 });
+
+test('oversized capture offers clear selection, bounded save and source-scoped declarations without ready status',()=>{
+ const huge=structuredClone(item);huge.reviewed=null;huge.snapshot.options=Array.from({length:324},(_,i)=>({...huge.snapshot.options[0],key:'k'+i,name:'选项'+i,supplierSku:'sku'+i}));
+ huge.snapshot.sourceEvidence={format:'yoofam-page-source-evidence-v1',orderMinimums:[{path:'result.global.globalData.model.tradeModel.beginAmount',value:2},{path:'result.global.globalData.model.tradeModel.tradeWithoutPromotion.offerBeginAmount',value:1}],priceTierStarts:[],commonPackaging:{scope:'offer-common',packaging:{source:'package-table',weightG:400}}};
+ const h=fixture(()=>assert.fail('reviewing does not fetch'),{initialItem:huge});try{
+  assert.equal(h.button('검토한 상품정보 저장').props.disabled,true);assert.match(text(h.render()),/324.*200/);
+  assert.match(text(h.render()),/상품 공통.*400/);assert.match(text(h.render()),/주문 수량 선언/);
+  h.button('선택 모두 해제').props.onClick();assert.equal(h.button('검토한 상품정보 저장').props.disabled,true);
+  const checkbox=nodes(h.render()).find(n=>n.type==='input'&&n.props['aria-label']==='1번째 수집 옵션 사용');checkbox.props.onChange({target:{checked:true}});
+  assert.equal(h.button('검토한 상품정보 저장').props.disabled,false);
+ }finally{h.close();}
+});

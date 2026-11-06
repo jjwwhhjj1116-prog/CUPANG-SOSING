@@ -15,7 +15,7 @@ import type {ImageOriginalPreservationProof} from '@/app/image-no-text-proof';
 import {sizeChartRequiredFromSchemaString} from '@/app/registration-layout';
 export type RegistrationContentSummary = { seo: boolean; seoTitle: string | null; mainImageKey: string | null; main: number; additional: number; detail: number; label: number; missingImages: boolean; stages?:RegistrationStageSummary };
 type RegistrationContentObservation={summary:RegistrationContentSummary;finalImageKeys:RegistrationFinalImageKeys};
-export type RegistrationQuotationLabels = { ownerId:string;profileId?:string|null;categoryId:string|null;categoryPath:string[];hubSchema?:HubSchemaSnapshot;template?:TemplateDefinition|null;
+export type RegistrationQuotationLabels = { ownerId:string;settings?:unknown;profileId?:string|null;categoryId:string|null;categoryPath:string[];hubSchema?:HubSchemaSnapshot;template?:TemplateDefinition|null;
   options:{revision:number;rows:{id:string;included:boolean;imageKey?:string|null}[]};state:{overrides:QuotationOverrides;categoryOverrides?:Record<string,QuotationOverrides>} };
 function finalContentSummary(product:RegistrationPricingProduct&{image_keys:string},content:ProductContent|null,input:RegistrationQuotationLabels,summary:RegistrationContentSummary,noTextProofs:readonly ImageOriginalPreservationProof[]){
  const keys=JSON.parse(product.image_keys) as string[],schema=getQuotationSchema(input.categoryId,input.categoryPath,input.hubSchema,input.template);
@@ -49,7 +49,7 @@ function finalContentSummary(product:RegistrationPricingProduct&{image_keys:stri
   finalRows.push(finalRow);
  }
  const stages=registrationStagesFromSavedContent({...product,owner_id:input.ownerId,categoryId:input.categoryId},content,{...input.options,productId:product.id} as ProductOptions,keys,schema.status==='observed'&&!schema.unsupportedFields?.length?finalRows:null,noTextProofs,sizeChartRequiredFromSchemaString(input.hubSchema?.schemaString));
- if(savedRecalculatedRegistrationPricing(product,input.options as ProductOptions,input.state as QuotationFieldsState,schema,{ownerId:input.ownerId,...(Object.hasOwn(input,'profileId')?{profileId:input.profileId}:{})}))stages.pricing={state:'complete',detail:'직접 저장한 가격 설정과 현재 상품·포함 옵션·견적 가격의 연결 확인'};
+ if(savedRecalculatedRegistrationPricing(product,input.options as ProductOptions,input.state as QuotationFieldsState,schema,{ownerId:input.ownerId,settings:input.settings,...(Object.hasOwn(input,'profileId')?{profileId:input.profileId}:{})}))stages.pricing={state:'complete',detail:'직접 저장한 가격 설정과 현재 상품·포함 옵션·견적 가격의 연결 확인'};
  // These are the effective included references resolved above, not the raw
  // upload pool or superseded global assignments. Keep this internal evidence
  // out of the listing DTO; the store uses it for bounded sidecar review reads.

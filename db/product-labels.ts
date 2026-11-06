@@ -1,3 +1,4 @@
+import {validateLabelSuggestions,type LabelAutomaticSuggestions} from '@/app/product-label-current-rules';
 import { env } from 'cloudflare:workers';
 import { emptyProductLabelOverrides, PRODUCT_LABEL_STORAGE_LIMIT, validateProductLabelOverrides, validateProductLabelRenderEpoch, validateProductLabelStructure, type ProductLabelOverrides, type ProductLabelsState, type ProductLabelStructure } from '@/app/product-label';
 import { sourceGuard, type QuotationSourceGuard } from '@/db/quotation-fields';
@@ -24,6 +25,7 @@ export async function readProductLabels(owner: string, productId: string): Promi
   const state = JSON.parse(row.payload) as ProductLabelsState;
   if (state.schemaVersion !== 1 || state.productId !== productId || state.revision !== row.revision || state.updatedAt !== row.updated_at || !Number.isSafeInteger(state.revision) || state.revision < 1 || !Number.isFinite(Date.parse(state.updatedAt!))) throw Error('Invalid product labels');
   const renderEpoch = validateProductLabelRenderEpoch(state.renderEpoch);
+  validateLabelSuggestions(state.automaticSuggestions);
   return { ...state, overrides: validateProductLabelOverrides(state.overrides), ...(state.structure === undefined ? {} : { structure: validateProductLabelStructure(state.structure) }),
     ...(renderEpoch === undefined ? {} : { renderEpoch }) };
 }
@@ -47,24 +49,30 @@ export async function productLabelsSourcesCurrent(owner: string, productId: stri
 
 /** The source proof and both clocks are checked inside one D1 transaction.
  * Label storage never writes product content, options, category wires or quotes. */
-export async function saveProductLabels(owner: string, productId: string, overrides: ProductLabelOverrides, expectedRevision: number, source: ProductLabelSourceGuard, structure?: ProductLabelStructure, renderEpoch?: number): Promise<ProductLabelsState | null> {
+export async function saveProductLabels(owner: string, productId: string, overrides: ProductLabelOverrides, expectedRevision: number, source: ProductLabelSourceGuard, structure?: ProductLabelStructure, renderEpoch?: number,automaticSuggestions?:LabelAutomaticSuggestions|null): Promise<ProductLabelsState | null> {
   if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || expectedRevision >= Number.MAX_SAFE_INTEGER || !Number.isSafeInteger(source.quotationRevision) || source.quotationRevision < 0 || !Number.isFinite(Date.parse(source.productVersion))) throw Error('Invalid product label revision');
-  const db = await database(), guard = guardedSource(owner, productId, source);
+  if (source.labelRevision !== undefined && source.labelRevision !== expectedRevision) return null;
+  const db = await database();
+  const writeSource = { ...source }; delete writeSource.labelRevision;
+  const guard = guardedSource(owner, productId, writeSource);
   const updatedAt = new Date(Math.max(Date.now(), Date.parse(source.productVersion) + 1)).toISOString();
   // Older value-only callers preserve both shared structure and render epoch.
   // The revision/source proof still fences the eventual transaction.
   let previousEpoch: number | undefined;
+  let previousAutomatic:LabelAutomaticSuggestions|undefined;
   if (expectedRevision > 0) {
     const current = await readProductLabels(owner, productId);
     if (current.revision !== expectedRevision) return null;
     if (structure === undefined) structure = current.structure;
-    previousEpoch = current.renderEpoch;
+    previousEpoch = current.renderEpoch;previousAutomatic=validateLabelSuggestions(current.automaticSuggestions);
   }
   renderEpoch = validateProductLabelRenderEpoch(renderEpoch);
   if (renderEpoch === undefined) renderEpoch = previousEpoch;
   else if (renderEpoch !== (previousEpoch ?? 0) && (previousEpoch === Number.MAX_SAFE_INTEGER || renderEpoch !== (previousEpoch ?? 0) + 1)) throw Error('Invalid product label render epoch');
   const state: ProductLabelsState = { schemaVersion: 1, productId, revision: expectedRevision + 1, overrides: validateProductLabelOverrides(overrides), updatedAt,
     ...(structure === undefined ? {} : { structure: validateProductLabelStructure(structure) }), ...(renderEpoch === undefined ? {} : { renderEpoch }) };
+  const suggestions=automaticSuggestions===undefined?previousAutomatic:automaticSuggestions??undefined;
+  if(suggestions){const checked=validateLabelSuggestions(suggestions)!;checked.entries=checked.entries.filter(entry=>!Object.hasOwn(overrides.common,entry.fieldKey)&&!(entry.optionId!==null&&Object.hasOwn(overrides.options[entry.optionId]??{},entry.fieldKey)));if(checked.entries.length)state.automaticSuggestions=checked;}
   const payload = JSON.stringify(state);
   if (new TextEncoder().encode(payload).length > PRODUCT_LABEL_STORAGE_LIMIT) throw Error('Product labels exceed storage limit');
   const result = await db.batch<{ payload: string; revision: number; id: string }>([

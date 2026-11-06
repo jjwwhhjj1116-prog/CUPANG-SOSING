@@ -1,3 +1,5 @@
+import {seoCompositionContext} from '@/app/seo-composition-context';
+import {validateSeoCompositionPolicy} from '@/app/seo-current-policy';
 import {env} from 'cloudflare:workers';
 import {fingerprint} from '@/app/automation/model';
 import type {TranslationJob} from '@/app/automation/translation';
@@ -6,7 +8,7 @@ import {seoGenerationSettings,seoGenerationAuthorization,seoGenerationAuthorized
 import {prepareSeoGenerationReview,seoGenerationReviewProof,verifySeoGenerationReview,validateSeoGenerationMemo,validateSeoGenerationDraft,executeSeoGeneration,SeoGenerationError,type SeoGenerationSecrets} from '@/app/seo-generation';
 import {listTranslationJobs,getTranslationJob,findSeoGenerationTranslation,createSeoGenerationTranslation,approveTranslationJob,claimTranslationJob,finishTranslationJob} from '@/db/translation-jobs';
 import {reserveQuotationAiRequest} from '@/db/quotation-ai-jobs';
-import {integratedTranslationPlan} from '@/app/translation-integrated-adoption';
+import {integratedTranslationPlan,applyIntegratedOptions} from '@/app/translation-integrated-adoption';
 import {applyContentPatch} from '@/app/product-content';
 import {applySeoDocumentTitlePolicy} from '@/app/seo-title-document';
 import {applyExplicitSeoQuotationDefaults} from '@/app/explicit-seo-quotation-defaults';
@@ -41,20 +43,22 @@ export async function POST(request:Request,context:Context){
  let active:{id:string;auth:Awaited<ReturnType<typeof seoGenerationAuthorization>>;job:TranslationJob;claim:string}|null=null;
  try{
   if(request.headers.get('origin')&&request.headers.get('origin')!==new URL(request.url).origin)throw new SeoGenerationError('SEO_GENERATION_ORIGIN','같은 사이트에서 요청해주세요.',403);
-  const body=await readBoundedJson(request,16*1024) as Record<string,unknown>;
+  const body=await readBoundedJson(request.clone() as unknown as Request,96*1024) as Record<string,unknown>;
+  if(!body||typeof body!=='object'||!Object.hasOwn(body,'seoComposition'))await readBoundedJson(request,16*1024);
   if(!body||typeof body!=='object'||Array.isArray(body)||!['prepare','approve','execute','preview','apply'].includes(String(body.action)))throw changed();
   const {id,auth,saved}=await readContext(context),configuration=seoGenerationSettings();
   const reply=async(job:TranslationJob,status=200)=>json({purpose:'seo-generation',productId:id,company:auth.company,productVersion:saved.product.updated_at,sourceCurrent:await sourceCurrent(auth,id,job),job},status);
   if(body.action==='prepare'){
-   if(!exact(body,'action,expectedContentRevision,expectedOptionRevision,expectedSourceFingerprint,expectedVersion,idempotencyKey,memo')||!uuid(body.idempotencyKey)||!hash(body.expectedSourceFingerprint))throw changed();
-   const memo=validateSeoGenerationMemo(body.memo);
+   if((!exact(body,'action,expectedContentRevision,expectedOptionRevision,expectedSourceFingerprint,expectedVersion,idempotencyKey,memo')&&!exact(body,'action,expectedContentRevision,expectedOptionRevision,expectedSourceFingerprint,expectedVersion,idempotencyKey,memo,seoComposition'))||!uuid(body.idempotencyKey)||!hash(body.expectedSourceFingerprint))throw changed();
+   const memo=validateSeoGenerationMemo(body.memo),composition=body.seoComposition===undefined?undefined:validateSeoCompositionPolicy(body.seoComposition);
+   if(composition&&JSON.stringify(composition.memo)!==JSON.stringify(memo))throw changed();
    if(body.expectedVersion!==saved.product.updated_at||body.expectedContentRevision!==saved.content.revision||body.expectedOptionRevision!==saved.options.revision||body.expectedSourceFingerprint!==saved.captured.sourceFingerprint)throw changed();
    if(!configuration.configured)throw new SeoGenerationError('SEO_GENERATION_NOT_CONFIGURED',configuration.issues.join(' '),503);
    const previous=await findSeoGenerationTranslation(auth.owner,id,body.idempotencyKey);
-   if(previous){if(!validJob(previous,auth.company)||JSON.stringify(previous.review.seoGeneration?.memo)!==JSON.stringify(memo))throw changed();currentSeoGenerationJob(previous,saved,auth);return reply(previous);}
-   const review=await prepareSeoGenerationReview(saved.captured.source,{purpose:'seo-generation',version:1,sourceFingerprint:saved.captured.sourceFingerprint,optionRevision:saved.options.revision,company:auth.company,memo},configuration);
+   if(previous){if(JSON.stringify(previous.review.seoComposition)!==JSON.stringify(composition)||!validJob(previous,auth.company)||JSON.stringify(previous.review.seoGeneration?.memo)!==JSON.stringify(memo))throw changed();currentSeoGenerationJob(previous,saved,auth);return reply(previous);}
+   const review=await prepareSeoGenerationReview(saved.captured.source,{purpose:'seo-generation',version:1,sourceFingerprint:saved.captured.sourceFingerprint,optionRevision:saved.options.revision,company:auth.company,memo},configuration,composition,composition?seoCompositionContext(saved.options):undefined);
    const job:TranslationJob={id:crypto.randomUUID(),productId:id,productVersion:saved.product.updated_at,contentRevision:saved.content.revision,status:'prepared',review,result:null,error:null,createdAt:new Date().toISOString(),approvedAt:null,startedAt:null,finishedAt:null};
-   const requestFingerprint=await fingerprint({purpose:'seo-generation',productId:id,productVersion:job.productVersion,contentRevision:job.contentRevision,source:review.source,proof:review.seoGeneration,model:review.model,maxOutputTokens:review.maxOutputTokens});
+   const requestFingerprint=await fingerprint({purpose:'seo-generation',productId:id,productVersion:job.productVersion,contentRevision:job.contentRevision,source:review.source,proof:review.seoGeneration,...(composition?{seoComposition:composition}:{}),model:review.model,maxOutputTokens:review.maxOutputTokens});
    const result=await createSeoGenerationTranslation(auth.owner,job,body.idempotencyKey,requestFingerprint,saved.options.revision,saved.captured.guard);
    if(!result||result.conflict||!validJob(result.job,auth.company)||!await seoGenerationAuthorized(auth))throw changed();return reply(result.job,result.replayed?200:201);
   }
@@ -66,7 +70,7 @@ export async function POST(request:Request,context:Context){
     ||job.status!=='completed'||!job.result||job.result.model!==job.review.model)throw changed();
    validateSeoGenerationDraft(job.result.draft,job.review);
    const plan=integratedTranslationPlan(saved.content,saved.options,job,saved.product.updated_at,'all',undefined,undefined,true);
-   if(plan.reviewedOptions.length||plan.categoryAttributes||job.result.draft.attributes.length)throw changed();
+   if(plan.reviewedOptions.length&&!job.review.seoCompositionContext||plan.categoryAttributes||job.result.draft.attributes.length)throw changed();
    const digest=await fingerprint({purpose:'seo-generation',product:saved.product,content:saved.content,options:saved.options,job,plan,source,member:auth.member});
    const preview={purpose:'seo-generation',scope:'all',productId:id,productVersion:saved.product.updated_at,contentRevision:saved.content.revision,optionRevision:saved.options.revision,fingerprint:digest,preview:plan.preview,skipped:plan.skipped};
    if(body.action==='preview')return json(preview);
@@ -74,7 +78,7 @@ export async function POST(request:Request,context:Context){
    const now=new Date(Math.max(Date.now(),Date.parse(saved.product.updated_at)+1)).toISOString(),content=applyContentPatch(saved.content,plan.patch??{},now);
    for(const key of ['title','keywords','description'] as const)if(plan.patch?.seo?.[key]!==undefined)content.seo[key].provenance='generated';
    applySeoDocumentTitlePolicy(content,plan.patch?.seo);applyExplicitSeoQuotationDefaults(content,plan.patch?.seo);
-   const options={...structuredClone(saved.options),revision:saved.options.revision+1,updatedAt:now};
+   const options=job.review.seoCompositionContext?applyIntegratedOptions(saved.options,plan,now):{...structuredClone(saved.options),revision:saved.options.revision+1,updatedAt:now};
    if(!await seoGenerationAuthorized(auth)||!await saveIntegratedTranslation(auth.owner,content,options,{productVersion:saved.product.updated_at,imageKeys:saved.product.image_keys,contentRevision:saved.content.revision,optionRevision:saved.options.revision,jobId:job.id,jobProductVersion:job.productVersion,jobContentRevision:job.contentRevision,seoSource:source,member:auth.member}))throw changed();
    return json({purpose:'seo-generation',scope:'all',productId:id,productVersion:now,contentRevision:content.revision,optionRevision:options.revision,applied:plan.preview.length});
   }

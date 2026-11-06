@@ -1,4 +1,4 @@
-import { applyQuotationChanges, type QuotationChange, type QuotationFieldsView, type QuotationOverrides } from '@/app/quotation-schema';
+import { applyQuotationChanges, quotationGeneratedSourceWritable, type QuotationChange, type QuotationFieldsView, type QuotationOverrides } from '@/app/quotation-schema';
 import { quotationPackagedWeightManual } from '@/app/quotation-packaged-weight';
 import { applyQuotationPackagingBasis, quotationPackagingBasisIssues, isQuotationPackagingBasisIssue, validatePackQuantities, validateQuotationPackagingBasis,type QuotationPackagingDraftInput } from '@/app/quotation-packaging-basis';
 
@@ -100,4 +100,17 @@ export function confirmQuotationFieldsSave(previous: QuotationFieldsView, saved:
     }
     return saved;
   } catch { throw unconfirmed(); }
+}
+
+/** Seed only exact reviewed AI targets; all unrelated source/manual checks remain. */
+export function confirmGeneratedQuotationSave(previous: QuotationFieldsView, saved: QuotationFieldsView, manual: readonly QuotationChange[], proposals: readonly {optionId:string|null;fieldKey:string;value:string}[], jobId:string, readback?: QuotationFieldsView, drafts:readonly QuotationPackagingDraftInput[]=[]):QuotationFieldsView {
+  const expected = structuredClone(previous);
+  for(const proposal of proposals){
+    if(!saved.generatedAdoption?.entries.some(entry=>entry.jobId===jobId&&entry.optionId===proposal.optionId&&entry.fieldKey===proposal.fieldKey&&entry.value===proposal.value))throw unconfirmed();
+    const cell=expected.automatic.rows.find(row=>row.optionId===proposal.optionId)?.fields[proposal.fieldKey];
+    const current=previous.resolved.rows.find(row=>row.optionId===proposal.optionId)?.fields[proposal.fieldKey];
+    if(!cell||!quotationGeneratedSourceWritable(cell.source)||!quotationGeneratedSourceWritable(current?.source))throw unconfirmed();
+    cell.value=proposal.value;cell.source='generated';
+  }
+  return confirmQuotationFieldsSave(expected,saved,manual,readback,drafts);
 }

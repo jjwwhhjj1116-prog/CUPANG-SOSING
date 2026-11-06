@@ -1,0 +1,32 @@
+import {CURRENT_QUOTATION_RESULT_POLICY} from '@/app/current-quotation-attribute-rules';
+import {productFactDetailDescription} from '@/app/product-fact-priority';
+import { fingerprint } from '@/app/automation/model';
+import type { QuotationExportSource } from '@/app/exports/quotation-source';
+import type { QuotationFieldsState } from '@/db/quotation-fields';
+import { quotationScope } from '@/app/quotation-scopes';
+export type GeneratedQuotationEntry = { optionId: string | null; fieldKey: string; value: string; jobId: string };
+export type GeneratedQuotationAdoption = { policy: 'owned-job-facts-v1'; sourceBasis: string; resultPolicy?:typeof CURRENT_QUOTATION_RESULT_POLICY; entries: GeneratedQuotationEntry[] };
+/** Bind saved facts; image edits and save clocks do not stale independent attributes. */
+export async function quotationGeneratedSourceBasis(saved: Pick<QuotationExportSource, 'product' | 'content' | 'options' | 'settings' | 'labelsState' | 'hubSchema' | 'categoryContext'> & { template?: QuotationExportSource['template'] | null; source?: Pick<QuotationExportSource['source'], 'profile'> & Partial<Pick<QuotationExportSource['source'],'settingsPayload'>> },resultPolicy?:typeof CURRENT_QUOTATION_RESULT_POLICY) {
+  const fact = (field: {value:unknown;provenance:string}|undefined) => field ? {value:field.value,provenance:field.provenance} : null;
+  const label = Object.fromEntries(Object.entries(saved.content.label).map(([key,value])=>[key,fact(value)]));
+  const labels = saved.labelsState ? {overrides:saved.labelsState.overrides,structure:saved.labelsState.structure} : null;
+  const optionKeys=['id','included','originalName','translatedName','color','size','unitsPerPack','widthCm','lengthCm','heightCm','weightKg'] as const;
+  const options=saved.options.rows.map(option=>({...Object.fromEntries(optionKeys.map(key=>[key,option[key]])),
+    provenance:Object.fromEntries(optionKeys.filter(key=>key in option.provenance).map(key=>[key,option.provenance[key as keyof typeof option.provenance]]))}));
+  const settingKeys=['hiddenAttributes','brand','manufacturer','importer','serviceContact','manufactureDatePreviousMonth','washingMethod','handlingPrecautions'] as const;
+  const legacyBasis=await fingerprint({policy:'owned-job-facts-v1',product:{id:saved.product.id,ownerId:saved.product.owner_id,sourceUrl:saved.product.source_url,title:saved.product.title},
+    facts:{label,seoTitle:fact(saved.content.seo.title),detail:fact(productFactDetailDescription(saved.content)),categoryAttributes:saved.content.categoryAttributes},options,labels,
+    settings:Object.fromEntries(settingKeys.map(key=>[key,saved.settings[key]])),hubSchema:saved.hubSchema,profile:saved.source?.profile??null,categoryContext:saved.categoryContext});
+  return resultPolicy?fingerprint({policy:'owned-job-facts-current-v1',resultPolicy,legacyBasis,settings:Object.fromEntries(Object.entries(saved.source?.settingsPayload?JSON.parse(saved.source.settingsPayload):saved.settings).filter(([key])=>!/image|banner|logo|font/iu.test(key)))}):legacyBasis;
+}
+export function quotationGeneratedResultPolicy(state:QuotationFieldsState,categoryId:string|null){return categoryId&&state.categoryGenerated?.[quotationScope(categoryId)]?.resultPolicy===CURRENT_QUOTATION_RESULT_POLICY?CURRENT_QUOTATION_RESULT_POLICY:undefined;}
+
+export function scopedGeneratedQuotation(state: QuotationFieldsState, categoryId: string | null, sourceBasis: string): GeneratedQuotationAdoption | undefined {
+  const layer = categoryId ? state.categoryGenerated?.[quotationScope(categoryId)] : undefined;
+  return layer?.policy === 'owned-job-facts-v1' && layer.sourceBasis === sourceBasis ? layer : undefined;
+}
+export function mergeGeneratedQuotation(previous: GeneratedQuotationAdoption | undefined, sourceBasis: string, entries: GeneratedQuotationEntry[],resultPolicy?:typeof CURRENT_QUOTATION_RESULT_POLICY): GeneratedQuotationAdoption {
+  const keys = new Set(entries.map(entry => JSON.stringify([entry.optionId, entry.fieldKey])));
+  return { policy: 'owned-job-facts-v1', sourceBasis,...(resultPolicy?{resultPolicy}:{}), entries: [...(previous?.sourceBasis === sourceBasis ? previous.entries.filter(entry => !keys.has(JSON.stringify([entry.optionId, entry.fieldKey]))) : []), ...entries] };
+}

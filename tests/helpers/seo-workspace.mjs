@@ -40,13 +40,13 @@ export function seoWorkspaceHarness({ companyCode = 'A01464742', owner = 'owner'
   function load(file) {
     if (cache.has(file)) return cache.get(file);
     const exports = {}; cache.set(file, exports);
-    vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../../' + file, import.meta.url), 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText,
+    vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../../' + file, import.meta.url), 'utf8'), { fileName:file.endsWith('.mjs')?file+'.ts':file, compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText,
       { exports, Response, Request, Headers, TextDecoder, TextEncoder, Uint8Array, Date, Error, RangeError, URL, structuredClone, AbortController, AbortSignal, crypto: webcrypto, process: { env: { NODE_ENV: 'production' } },
         fetch() { throw Error('External requests are forbidden.'); }, require(name) {
           if (name in deps) return deps[name];
           if (name === 'parse5') return nativeRequire(name);
-          if (name.startsWith('@/')) return load(name.slice(2) + '.ts');
-          if (name.startsWith('.')) return load(path.posix.join(path.posix.dirname(file), name) + '.ts');
+          if (name.startsWith('@/')) return load(name.slice(2) + (name.endsWith('.mjs') ? '' : '.ts'));
+          if (name.startsWith('.')) return load(path.posix.join(path.posix.dirname(file), name) + (name.endsWith('.mjs') ? '' : '.ts'));
           throw Error(name);
         } }, { filename: file });
     return exports;

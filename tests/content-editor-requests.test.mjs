@@ -8,17 +8,60 @@ const native=createRequire(import.meta.url);
 const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
 const settle=async()=>{for(let i=0;i<12;i++)await new Promise(resolve=>setImmediate(resolve));};
 function harness(handle, focusedAssetRole, lifecycle=false, initialize=()=>{}){
- const slots=[],effects=[],cleanups=[],cache=new Map(), dependencies=[],callbacks=[];let ei=0,ci=0;let index=0,first=true,notices=0,content;
+ const slots=[],effects=[],cleanups=[],cache=new Map(), dependencies=[],callbacks=[];let ei=0,ci=0;let index=0,first=true,notices=0,content,stageActive=true,productVersion;
  const hooks={useState(initial){const i=index++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],v=>{slots[i]=typeof v==='function'?v(slots[i]):v;}];},useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useCallback(fn,deps){if(!lifecycle)return fn;const i=ci++;if(!callbacks[i]||deps.some((v,j)=>!Object.is(v,callbacks[i].deps[j])))callbacks[i]={fn,deps};return callbacks[i].fn;},useEffect(fn,deps){const i=ei++;if(lifecycle){if(!dependencies[i]||deps.some((v,j)=>!Object.is(v,dependencies[i][j]))){dependencies[i]=deps;effects.push(()=>{cleanups[i]?.();cleanups[i]=fn();});}}else if(first)effects.push(fn);}};
  hooks.useLayoutEffect=hooks.useEffect;
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,structuredClone,TextEncoder,crypto,fetch:async(url,init)=>handle(url,init,content)??Response.json({content}),require(name){if(name.endsWith('.css'))return{};if(name==='react')return hooks;if(name.startsWith('@/'))return load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts'));return native(name);}});return exports;}
  const model=load('app/product-content.ts');content=model.emptyProductContent('p');
  initialize(content);
  const component=load('app/components/product-content-editor.tsx').ProductContentEditor;
- const render=(section='이미지')=>{index=0;ei=0;ci=0;const root=component({product:{id:'p',title:'상품',image_keys:'["owner/a.png","owner/b.png","owner/c.png"]'},section,focusedAssetRole,onSaved(){notices++;}});const tree=root.type(root.props);first=false;return tree;};
+ const render=(section='이미지')=>{index=0;ei=0;ci=0;const root=component({product:{id:'p',title:'상품',image_keys:'["owner/a.png","owner/b.png","owner/c.png"]',updated_at:productVersion},section,focusedAssetRole,active:stageActive,onSaved(){notices++;}});const tree=root.type(root.props);first=false;return tree;};
  const button=(name,section)=>nodes(render(section)).find(n=>n.type==='button'&&n.props.children===name);
- return{render,button,model,load,setStage(stage){focusedAssetRole=stage;},async flush(){effects.splice(0).forEach(fn=>fn());await settle();},get notices(){return notices;},async start(){render();if(lifecycle)effects.splice(0).forEach(fn=>fn());else effects.forEach(fn=>cleanups.push(fn()));await settle();},unmount(){cleanups.forEach(fn=>fn?.());}};
+ return{render,button,model,load,setStage(stage){focusedAssetRole=stage;},setActive(value){stageActive=value;},setVersion(value){productVersion=value;},async flush(){effects.splice(0).forEach(fn=>fn());await settle();},get notices(){return notices;},async start(){render();if(lifecycle)effects.splice(0).forEach(fn=>fn());else effects.forEach(fn=>cleanups.push(fn()));await settle();},unmount(){cleanups.forEach(fn=>fn?.());}};
 }
+
+test('inactive content defers initialization and refreshes a clean stale draft once when opened',async()=>{
+ let reads=0;const h=harness((_url,init)=>{if(!init?.method)reads++;},'detail',true);
+ try{
+  h.setActive(false);await h.start();assert.equal(reads,0);
+  h.setActive(true);h.render();await h.flush();h.render();await h.flush();assert.equal(reads,1);
+  h.setActive(false);h.setVersion('2026-11-06T01:00:00.000Z');h.render();await h.flush();assert.equal(reads,1);
+  h.setActive(true);h.render();await h.flush();h.render();await h.flush();assert.equal(reads,2);
+  h.setActive(false);h.setActive(true);h.render();await h.flush();assert.equal(reads,2);
+ }finally{h.unmount();}
+});
+
+test('inactive content preserves dirty detail and completes an admitted save exactly once',async()=>{
+ let reads=0,writes=0,finish,writeSignal;const held=new Promise(resolve=>{finish=resolve;});let h;
+ h=harness((_url,init,content)=>{if(init?.method==='PATCH'){writes++;writeSignal=init.signal;return held.then(()=>Response.json({content:h.model.applyContentPatch(content,JSON.parse(init.body).patch,'2026-11-06T01:00:00.000Z')}));}reads++;},'detail',true);
+ try{
+  await h.start();const field=()=>nodes(h.render()).find(node=>node.props?.['aria-label']==='상세페이지 설명');field().props.onChange({target:{value:'검토 중인 상세 설명'}});
+  h.setActive(false);h.setVersion('2026-11-06T00:00:00.000Z');h.render();await h.flush();assert.equal(reads,1);assert.equal(field().props.value,'검토 중인 상세 설명');
+  h.setActive(true);h.render();await h.flush();assert.equal(field().props.value,'검토 중인 상세 설명');assert.equal(reads,1);
+  h.button('상세 설명·이미지 저장').props.onClick();h.setActive(false);h.render();await h.flush();assert.equal(writeSignal.aborted,false);assert.equal(writes,1);
+  finish();await settle();assert.equal(h.notices,1);assert.equal(field().props.value,'검토 중인 상세 설명');assert.equal(writes,1);
+ }finally{finish?.();h.unmount();}
+});
+
+test('returning during explicit content recovery cannot start a second read or erase the recovered draft',async()=>{
+ let reads=0,releaseManual,releaseAutomatic;const manual=new Promise(resolve=>{releaseManual=resolve;}),automatic=new Promise(resolve=>{releaseAutomatic=resolve;});
+ const h=harness((_url,init,content)=>{assert.equal(init?.method,undefined);reads++;if(reads===1)return Response.json({error:'read unavailable'},{status:503});return(reads===2?manual:automatic).then(()=>Response.json({content}));},'detail',true);
+ try{
+  await h.start();h.button('다시 불러오기').props.onClick();h.setActive(false);h.render();await h.flush();h.setActive(true);h.render();await h.flush();
+  releaseManual();await settle();h.render();await h.flush();const field=()=>nodes(h.render()).find(node=>node.props?.['aria-label']==='상세페이지 설명');field().props.onChange({target:{value:'복구 후 작성 중인 상세 설명'}});
+  releaseAutomatic();await settle();h.render();await h.flush();assert.equal(field().props.value,'복구 후 작성 중인 상세 설명');assert.equal(reads,2,'one initial failure and one explicit recovery');
+ }finally{releaseManual();releaseAutomatic();h.unmount();}
+});
+
+test('automatic content initialization on return owns loading and blocks a retained retry callback',async()=>{
+ let reads=0,release;const held=new Promise(resolve=>{release=resolve;});
+ const h=harness((_url,_init,content)=>{reads++;return reads===1?Response.json({error:'read unavailable'},{status:503}):held.then(()=>Response.json({content}));},'detail',true);
+ try{
+  await h.start();const retry=h.button('다시 불러오기').props.onClick;h.setActive(false);h.render();await h.flush();h.setActive(true);h.render();await h.flush();
+  assert.equal(h.button('다시 불러오기').props.disabled,true,'automatic retry visibly owns loading');retry();assert.equal(reads,2,'retained manual retry cannot compete with initializer');
+  release();await settle();h.render();await h.flush();assert.equal(reads,2);
+ }finally{release();h.unmount();}
+});
 
 test('stage visual scopes retain the image library and selection handlers without affecting SEO or issuing writes',async()=>{
  const writes=[],h=harness((_url,init)=>{if(init?.method)writes.push(init.method);},'main',true);

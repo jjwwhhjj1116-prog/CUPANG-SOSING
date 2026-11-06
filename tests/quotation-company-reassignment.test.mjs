@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -27,7 +28,7 @@ function companyRoutes(h, initialCompany) {
     vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../' + file, import.meta.url), 'utf8'), {
       compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
     }).outputText, { exports, Error, URL, TextEncoder, Uint8Array, Response, process: { env: { NODE_ENV: 'production' } },
-      require(name) {
+      require(name) {if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
         if (name === '@/app/chatgpt-auth') return auth;
         if (name === 'cloudflare:workers') return { env: h.bindings };
         if (name === 'next/server') return { NextResponse: Response };

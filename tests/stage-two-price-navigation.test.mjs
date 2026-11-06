@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -78,7 +79,7 @@ function navigationUI(f){
    {exports,Error,URL,URLSearchParams,Date,Intl,TextEncoder,TextDecoder,AbortController,structuredClone,crypto:webcrypto,Response,Blob,queueMicrotask,setTimeout:fn=>{fn();return 0;},clearTimeout(){},
     window:{addEventListener(){},removeEventListener(){},confirm(){confirmations++;return discard;},setTimeout:fn=>{fn();return 0;}},
     document:{activeElement:null,getElementById(){return null;},createElement(){return{click(){},set href(value){},set download(value){}};}},fetch:request,
-    require(name){if(name==='react')return hooks;if(name==='react/jsx-runtime')return{jsx:(type,props,key)=>({type,props,key}),jsxs:(type,props,key)=>({type,props,key})};if(name.endsWith('.css'))return{};
+    require(name){if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;if(name==='react')return hooks;if(name==='react/jsx-runtime')return{jsx:(type,props,key)=>({type,props,key}),jsxs:(type,props,key)=>({type,props,key})};if(name.endsWith('.css'))return{};
      if(name==='@/app/components/use-intake-draft')return{useIntakeDraft:()=>({rows:[],setRows(){},goal:'work',setGoal(){},ready:true,loading:false})};
      if(name==='@/app/components/use-source-registrations')return{useSourceRegistrations:()=>({items:[],error:'',reload(){}})};
     if(name==='@/app/components/registration-board')return{...load('app/components/registration-board.tsx'),RegistrationBoard:props=>{board=props;return null;}};
