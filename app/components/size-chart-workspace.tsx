@@ -59,10 +59,12 @@ function Editor({ productId, version, profileId=null, active=true, disabled=fals
   const alive = useRef(true), operation = useRef(false), sequence = useRef(0);
   const currentVersion = useRef(version), pending = useRef<Draft | undefined>(undefined);
   const latestSaved = useRef<Saved | null>(null), liveImageBusy = useRef(false), liveExtractionBusy = useRef(false), liveReading = useRef(false);
+  const verifiedRead=useRef<Saved|null>(null);
   const liveSourceAvailable = useRef(false), liveExtractionOpen = useRef(false);
   const [saveAttempt,setSaveAttempt]=useState<SizeChartSaveAttempt|null>(null),attemptRef=useRef<SizeChartSaveAttempt|null>(null),atomicRequest=useRef<AbortController|null>(null);
   const contextRef=useRef({profileId,active,disabled}),callbacks=useRef({beforeSave,onBusyChange,onSaved});
   useLayoutEffect(()=>{callbacks.current={beforeSave,onBusyChange,onSaved};},[beforeSave,onBusyChange,onSaved]);
+  useLayoutEffect(()=>{verifiedRead.current=null;},[productId,version,profileId,readClock]);
   useLayoutEffect(() => {const previous=contextRef.current;if(currentVersion.current!==version||previous.profileId!==profileId||previous.active!==active||previous.disabled!==disabled){sequence.current++;atomicRequest.current?.abort();}currentVersion.current = version;contextRef.current={profileId,active,disabled}; }, [version,profileId,active,disabled]);
   useLayoutEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const imageBusyChanged = useCallback((value: boolean) => { if (!alive.current || currentVersion.current !== version) return; liveImageBusy.current = value; setImageBusy(value); }, [version]);
@@ -101,13 +103,14 @@ function Editor({ productId, version, profileId=null, active=true, disabled=fals
   useEffect(() => {
     const ticket = ++sequence.current, requestedVersion = version;
     if(!active||disabled){liveReading.current=false;void Promise.resolve().then(()=>{if(alive.current&&ticket===sequence.current)setReading(false);});return;}
+    if(verifiedRead.current&&verifiedRead.current===latestSaved.current&&liveSourceAvailable.current&&verifiedRead.current.version===version)return;
     liveReading.current = true;
     void Promise.resolve().then(() => {
       if (!alive.current || ticket !== sequence.current || currentVersion.current !== requestedVersion) return null;
       setReading(true); return snapshot(requestedVersion);
     }).then(value => {
       if (!value) return;
-      if (alive.current && ticket === sequence.current && currentVersion.current === requestedVersion && pending.current === undefined) { store(value); setError(''); }
+      if (alive.current && ticket === sequence.current && currentVersion.current === requestedVersion && pending.current === undefined) { store(value);verifiedRead.current=value;setError(''); }
     }).catch(cause => { if (alive.current && ticket === sequence.current && currentVersion.current === requestedVersion) { liveSourceAvailable.current = false; setSourceAvailable(false); setError(cause instanceof Error ? cause.message : '사이즈표 조회 실패'); } })
       .finally(() => { if (alive.current && ticket === sequence.current && currentVersion.current === requestedVersion) { liveReading.current = false; setReading(false); } });
     // Only product identity/version starts an automatic read. Explicit refresh

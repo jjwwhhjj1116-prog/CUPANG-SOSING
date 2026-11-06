@@ -18,7 +18,7 @@ import {newSeoRetryState,parseSeoRetryState,prepareSeoTranslationRetry,executeSe
 import {google429RecoveryCandidate} from '@/app/workers-translation-recovery';
 import {newWorkersSeoRecoveryRequest,prepareWorkersSeoRecovery,workersSeoRecoveryM2mBudget,workersSeoRecoveryM2mLimit,type WorkersSeoRecoveryRequest} from '@/app/workers-seo-recovery-client';
 
-type Props = { productId: string; version: string; title: string; profileId?: string; onContentSaved?: () => void; initialJobId?:string; initialReviewFingerprint?:string; reviewOnly?:boolean };
+type Props = { productId: string; version: string; title: string; profileId?: string; active?:boolean; onContentSaved?: () => void; initialJobId?:string; initialReviewFingerprint?:string; reviewOnly?:boolean };
 type RequestContext = { categoryId: string; categoryPath: string[]; features: string; keywords: string; capturedAt: string };
 type CollectedSource = { error?:string; title:string; description:string; attributes?:{name:string;value:string}[]; jobId:string; sourceUrl:string; productVersion:string; message:string; requestContext?:RequestContext|null };
 function validateCollectedSource(value: CollectedSource, version: string) {
@@ -52,7 +52,7 @@ async function readTranslationState(productId:string,signal:AbortSignal){
 }
 
 export default function TranslationPanel(props: Props) { return <TranslationContent key={`${props.productId}:${props.version}:${props.initialJobId??''}:${props.initialReviewFingerprint??''}`} {...props} />; }
-function TranslationContent({ productId, version, title, profileId, onContentSaved,initialJobId,reviewOnly=false }: Props) {
+function TranslationContent({ productId, version, title, profileId, active=true, onContentSaved,initialJobId,reviewOnly=false }: Props) {
   const [view, setView] = useState<TranslationView | null>(null);
   const [content, setContent] = useState<ProductContent | null>(null);
   const [sourceTitle, setSourceTitle] = useState(title);
@@ -66,7 +66,7 @@ function TranslationContent({ productId, version, title, profileId, onContentSav
   const [includeCollectedAttributes, setIncludeCollectedAttributes] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(initialJobId??null);
   const [confirmed, setConfirmed] = useState(false);
-  const [busy, setBusy] = useState(true);
+  const [busy, setBusy] = useState(active);
   const [labelBusy, setLabelBusy] = useState(false), labelRequestBusy = useRef(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -76,6 +76,7 @@ function TranslationContent({ productId, version, title, profileId, onContentSav
   const seoRetryState=useRef<SeoRetryState|null>(null);
   const [hasSeoRetry,setHasSeoRetry]=useState(false);
   const activeRequest=useRef<AbortController|null>(null);
+  const initialReadComplete=useRef(false);
   const mounted=useRef(true);
   const workersRequest=useRef<WorkersSeoRecoveryRequest|null>(null);
   const labelBusyChanged = useCallback((value: boolean) => { labelRequestBusy.current = value; if (mounted.current) setLabelBusy(value); }, []);
@@ -127,11 +128,13 @@ function TranslationContent({ productId, version, title, profileId, onContentSav
     setSourceReference(`수집 요청 ${value.jobId} (${value.sourceUrl})에서 가져와 사용자가 검토·편집한 원문`);
   }, []);
   useEffect(() => {
+    if(!active||initialReadComplete.current||activeRequest.current)return;
     const controller=new AbortController();activeRequest.current=controller;
+    let readSucceeded=false;setBusy(true);setError('');
     readTranslationState(productId,controller.signal)
       .then(async next=>{
         if(controller.signal.aborted)return;
-        setView(next.view);setContent(next.content);
+        setView(next.view);setContent(next.content);readSucceeded=true;
         if(reviewOnly)return;
         // Saving a batch changes the product/content version. Historical jobs
         // must not disable source prefill for the next batch of pending options.
@@ -155,16 +158,16 @@ function TranslationContent({ productId, version, title, profileId, onContentSav
         }catch(reason){if(!controller.signal.aborted)setNotice(`${reason instanceof Error?reason.message:'수집 원문 조회 실패'} 원문 불러오기로 다시 시도하거나 직접 입력할 수 있습니다.`);}
       })
       .catch(reason=>{if(!controller.signal.aborted)setError(reason instanceof Error?reason.message:'조회 실패');})
-      .finally(()=>finishRequest(controller));
-    return () => controller.abort();
-  }, [productId, version, reviewOnly, applyCollectedSource]);
+      .finally(()=>{if(readSucceeded&&!controller.signal.aborted)initialReadComplete.current=true;finishRequest(controller);});
+    return () => {controller.abort();if(activeRequest.current===controller){activeRequest.current=null;if(mounted.current)setBusy(false);}};
+  }, [productId, version, reviewOnly, applyCollectedSource, active]);
 
   async function refreshState(){
     const controller=beginRequest(true);if(!controller)return;
-    setBusy(true);setError('');setNotice('');
+    initialReadComplete.current=false;setBusy(true);setError('');setNotice('');
     try{
       const next=await readTranslationState(productId,controller.signal);if(controller.signal.aborted)return;
-      setView(next.view);setContent(next.content);
+      setView(next.view);setContent(next.content);initialReadComplete.current=true;
       setSelectedId(previous=>next.view.jobs.some(item=>item.id===previous)?previous:initialJobId??next.view.jobs[0]?.id??null);
       setConfirmed(false);setSelectedFields([]);
       setNotice('서버에 저장된 작업 상태와 콘텐츠를 다시 읽었습니다. 작성 중인 원문·참고 메모는 유지했으며 AI 호출이나 상품 저장은 하지 않았습니다.');

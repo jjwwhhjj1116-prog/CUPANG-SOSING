@@ -1,3 +1,4 @@
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -6,7 +7,7 @@ import ts from 'typescript';
 import {createRequire} from 'node:module';
 const native=createRequire(import.meta.url);
 const recoveryModules=new Map();
-function recoveryModule(file){if(recoveryModules.has(file))return recoveryModules.get(file);const exports={};recoveryModules.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,TextEncoder,crypto,require:name=>recoveryModule(name.slice(2)+'.ts')});return exports;}
+function recoveryModule(file){if(recoveryModules.has(file))return recoveryModules.get(file);const exports={};recoveryModules.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,TextEncoder,crypto,require:name=>name==='@/extensions/supplier-hub/page-source-price-basis.mjs'?pageSourcePriceBasis:recoveryModule(name.slice(2)+'.ts')});return exports;}
 
 const nodes=t=>Array.isArray(t)?t.flatMap(nodes):t&&typeof t==='object'?[t,...nodes(t.props?.children)]:[];
 const label=t=>Array.isArray(t)?t.map(label).join(''):typeof t==='string'||typeof t==='number'?String(t):'';

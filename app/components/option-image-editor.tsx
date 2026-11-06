@@ -1,7 +1,7 @@
 'use client';
 import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 import { isOwnedImageKey } from '@/app/image-files';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react';
 import type { QuotationChange, QuotationFieldsView } from '@/app/quotation-schema';
 import type { FreeImageQuotationRequest } from '@/app/free-image-translation-client';
 import { optionImageChanges, optionImageDraftIssues, optionImageTargets, optionImageValue, quotationImageKeys, reorderOptionImageKeys, verifyOptionImageRefresh, verifyOptionImageRestored, verifyOptionImageSave, verifyOptionImageRecovery, verifyQuotationImagePoolChange, type OptionImageDraft, type OptionImageInput, type OptionImageStage } from '@/app/quotation-image-targets';
@@ -54,7 +54,8 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
   const workspaceBusy = useRef({ key: sourceKey, busy: false }), [workspaceWork, setWorkspaceWork] = useState({ key: sourceKey, busy: false });
   const workspaceWorking = workspaceWork.key === sourceKey && workspaceWork.busy;
   const view = saved?.scope === scope ? saved.view : null, draft = pending.scope === scope ? pending.values : {};
-  const [library, setLibrary] = useState<{ sourceKey: string; view: QuotationFieldsView; value: MainImageLibrary } | null>(null);
+  const libraryBasis=useMemo(()=>({sourceKey}),[sourceKey]);
+  const [library, setLibrary] = useState<{ sourceKey: string; basis:object; view: QuotationFieldsView; value: MainImageLibrary } | null>(null);
   const [compositeToolbar, setCompositeToolbar] = useState<DetailWorkspaceCompositeToolbarActions | null>(null), liveCompositeToolbar = useRef<DetailWorkspaceCompositeToolbarActions | null>(null);
   const receiveCompositeToolbar = useCallback((next: DetailWorkspaceCompositeToolbarActions | null, retired?: DetailWorkspaceCompositeToolbarActions) => {
     if (!mounted.current || next === null && liveCompositeToolbar.current !== retired) return;
@@ -68,14 +69,15 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
   useEffect(() => () => onDetailWorkBusyChange?.(false), [sourceKey, onDetailWorkBusyChange]);
   useEffect(() => {
     if (!instant || !active || disabled || !view || saved?.sourceKey !== sourceKey) return;
+    if (library?.basis === libraryBasis && library.sourceKey === sourceKey && library.view === view && mainImageLibraryCurrent(library.value, productId, view)) return;
     try { verifyMainImageView(view); } catch { return; }
     const controller = new AbortController(), basis = view;
     void readMainImageLibrary(productId, basis, (url, init) => fetch(url, { ...init, signal: controller.signal })).then(value => {
       if (!controller.signal.aborted && currentSource.current === sourceKey && latestSaved.current?.view === basis)
-        setLibrary({ sourceKey, view: basis, value });
+        setLibrary({ sourceKey, basis:libraryBasis, view: basis, value });
     }).catch(() => { /* Unclassified owned files remain available without invented source labels. */ });
     return () => controller.abort();
-  }, [productId, sourceKey, view, saved?.sourceKey, instant, active, disabled]);
+  }, [productId, sourceKey, view, saved?.sourceKey, instant, active, disabled, library, libraryBasis]);
   const dirty = Object.keys(draft).length > 0, input = stage === 'additional' ? 'additionalImages' : 'detailImages', label = stage === 'additional' ? '추가 이미지' : '상세 이미지';
   const current = () => mounted.current && currentScope.current === scope && currentSource.current === sourceKey;
   const readable = () => current() && currentStage.current === stage && !liveDisabled.current && !compositeBusy.current
@@ -437,7 +439,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     } catch (cause) { if (!controller.signal.aborted && current() && keyboardEpoch.current === generation) setError(cause instanceof Error ? cause.message : '개별 상세 사진 확인 실패'); }
     finally { if (request.current === controller) { request.current = null; if (!controller.signal.aborted && current()) setBusy(false); } }
   }
-  const sourceLibrary = view && library?.sourceKey === sourceKey && library.view === view && mainImageLibraryCurrent(library.value, productId, view) ? library.value : null;
+  const sourceLibrary = view && library?.basis === libraryBasis && library.sourceKey === sourceKey && library.view === view && mainImageLibraryCurrent(library.value, productId, view) ? library.value : null;
   let firstMain = '';
   if (view && sourceLibrary) try { firstMain = view.resolved.rows.find(row=>row.optionId!==null)?.fields[verifyMainImageView(view).primary]?.value ?? ''; } catch { /* Keep raw candidates when main binding is unavailable. */ }
   const sourceKeys = sourceLibrary ? sourceLibrary.main.filter(key=>key!==firstMain) : view?.imageKeys ?? [];
