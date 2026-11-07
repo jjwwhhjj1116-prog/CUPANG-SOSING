@@ -291,6 +291,17 @@ export function getQuotationSchema(categoryId: string | null, categoryPath: read
 }
 export function emptyQuotationOverrides(): QuotationOverrides { return { common: {}, options: {} }; }
 
+export const quotationBarcodeModeMessages = {
+  missing: '실제 바코드 번호를 입력해주세요.',
+  conflicting: '바코드 생성 요청 방식과 입력된 번호가 충돌합니다.',
+} as const;
+
+export function quotationBarcodeModeIssue(mode: string, value: string): string | undefined {
+  const barcode = value.trim();
+  if (mode === 'existing' && !barcode) return quotationBarcodeModeMessages.missing;
+  if (mode === 'request-coupang' && barcode && barcode !== requestCoupangBarcodeLabel) return quotationBarcodeModeMessages.conflicting;
+}
+
 export function quotationBarcodeIssues(categoryId: string | null, mode: string, value: string): string[] {
   if (((!categoryId || !Object.hasOwn(hubProductSchemas, categoryId)) && categoryId !== '80719' && categoryId !== '81452' && categoryId !== '64497' && categoryId !== '103495' && categoryId !== '77442' && categoryId !== '81221') || mode !== 'existing' || !value.trim()) return [];
   const issues: string[] = [];
@@ -855,15 +866,13 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
       const fieldIssues = [...validationIssues, ...reviewMessages];
       return [definition.id, { value, source, needsReview: Boolean(definition.reviewRequired) || fieldIssues.length > 0, issues: fieldIssues, validationIssues, reviewMessages } satisfies ResolvedQuotationField];
     }));
-    if (fields.barcodeMode.value === 'existing' && !fields.barcode.value.trim()) { fields.barcode.needsReview = true; fields.barcode.issues.push('실제 바코드 번호를 입력해주세요.'); fields.barcode.validationIssues!.push('실제 바코드 번호를 입력해주세요.'); }
+    const barcodeModeIssue = quotationBarcodeModeIssue(fields.barcodeMode.value, fields.barcode.value);
     const barcodeIssues = quotationBarcodeIssues(schema.categoryId, fields.barcodeMode.value, fields.barcode.value);
-    if (barcodeIssues.length) { fields.barcode.needsReview = true; fields.barcode.issues.push(...barcodeIssues); fields.barcode.validationIssues!.push(...barcodeIssues); }
-    const enteredBarcode = fields.barcode.value.trim();
-    if (fields.barcodeMode.value === 'request-coupang' && enteredBarcode && enteredBarcode !== requestCoupangBarcodeLabel) {
-      const issue = '바코드 생성 요청 방식과 입력된 번호가 충돌합니다.';
+    if (barcodeModeIssue) barcodeIssues.push(barcodeModeIssue);
+    if (barcodeIssues.length) {
       fields.barcode.needsReview = true;
-      fields.barcode.issues.push(issue);
-      fields.barcode.validationIssues!.push(issue);
+      fields.barcode.issues.push(...barcodeIssues);
+      fields.barcode.validationIssues!.push(...barcodeIssues);
     }
     const priceIssues = quotationPriceIssues(schema, fields.supplyPrice.value, fields.salePrice.value);
     if (priceIssues.length) { fields.salePrice.needsReview = true; fields.salePrice.issues.push(...priceIssues); fields.salePrice.validationIssues!.push(...priceIssues); }

@@ -20,6 +20,7 @@ const cache = new Map();
 function load(file, overrides = {}) {
   if (!Object.keys(overrides).length && cache.has(file)) return cache.get(file);
   const exports = {};
+  if (!Object.keys(overrides).length) cache.set(file, exports);
   const compiled = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   vm.runInNewContext(compiled, { exports, Error, TextEncoder, URLSearchParams, structuredClone, AbortController, document: overrides.document, fetch: overrides.fetch ?? fetch, require(name) {if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
     if (name === 'parse5') return parse5;
@@ -34,7 +35,6 @@ function load(file, overrides = {}) {
     if (name === 'react' || name === 'react/jsx-runtime') return requireNative(name);
     throw Error(`Unexpected dependency ${name}`);
   } });
-  if (!Object.keys(overrides).length) cache.set(file, exports);
   return exports;
 }
 const editor = load('app/components/quotation-fields-editor.tsx');
@@ -587,6 +587,11 @@ test('changing barcode mode and supply price recomputes dependent draft validati
  const barcode=changes=>editor.resolveQuotationEditorCell(view,changes,'red','barcode');
  assert.ok(barcode([]).validationIssues.some(m=>m.includes('실제 바코드')));
  assert.equal(barcode([change('barcodeMode','request-coupang')]).validationIssues.some(m=>m.includes('실제 바코드')),false);
+ const requestMode=change('barcodeMode','request-coupang');
+ const noBarcode='바코드 없음(쿠팡 바코드 생성 요청)';
+ const conflict='바코드 생성 요청 방식과 입력된 번호가 충돌합니다.';
+ assert.equal(barcode([requestMode,change('barcode',noBarcode)]).validationIssues.includes(conflict),false);
+ assert.equal(barcode([requestMode,change('barcode','ABC123')]).validationIssues.includes(conflict),true);
  const price=editor.resolveQuotationEditorCell(view,[change('supplyPrice','2000')],'red','salePrice');
  assert.equal(price.validationIssues.some(m=>m.includes('공급가보다')),false);
  const manual=editor.resolveQuotationEditorCell(view,[change('brand','직접 브랜드','red')],'red','brand');

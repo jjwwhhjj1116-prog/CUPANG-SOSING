@@ -12,7 +12,7 @@ import { SupplierHubSingleReview } from '@/app/components/supplier-hub-single-re
 import { resolveQuotationNavigation, type QuotationNavigationTarget } from '@/app/quotation-navigation';
 
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
-import { duplicateQuotationImageIssue, quotationImageRoleIssues, quotationBarcodeIssues, quotationOptionLimitIssue, quotationPriceIssues, quotationValueIssues, validateQuotationChanges, type QuotationField, type QuotationFieldsView, type QuotationOverrides } from '@/app/quotation-schema';
+import { duplicateQuotationImageIssue, quotationImageRoleIssues, quotationBarcodeIssues, quotationBarcodeModeIssue, quotationBarcodeModeMessages, quotationOptionLimitIssue, quotationPriceIssues, quotationValueIssues, validateQuotationChanges, type QuotationField, type QuotationFieldsView, type QuotationOverrides } from '@/app/quotation-schema';
 import './quotation-fields-editor.css';
 import './couplus-form-stages.css';
 import { QuotationLabelPanel } from '@/app/components/quotation-label-panel';
@@ -148,7 +148,7 @@ export function resolveQuotationEditorCell(view: QuotationFieldsView, changes: r
   const inherited = value === null ? fallback : saved?.value === value && saved.source === source ? saved : undefined;
   const dynamicIssues = new Set([
     '판매가는 공급가보다 작을 수 없습니다.', duplicateQuotationImageIssue,
-    '실제 바코드 번호를 입력해주세요.', '바코드 생성 요청 방식과 입력된 번호가 충돌합니다.',
+    ...Object.values(quotationBarcodeModeMessages),
     ...quotationBarcodeIssues(view.resolved.schema.categoryId, 'existing', resolvedValue),
   ]);
   const priceIssues: string[] = [];
@@ -167,8 +167,8 @@ export function resolveQuotationEditorCell(view: QuotationFieldsView, changes: r
   if (fieldKey === 'barcode') {
     const mode = resolveQuotationEditorCell(view, changes, optionId, 'barcodeMode').value;
     validationIssues.push(...quotationBarcodeIssues(view.resolved.schema.categoryId, mode, resolvedValue));
-    if (mode === 'existing' && !resolvedValue.trim()) validationIssues.push('실제 바코드 번호를 입력해주세요.');
-    if (mode === 'request-coupang' && resolvedValue.trim()) validationIssues.push('바코드 생성 요청 방식과 입력된 번호가 충돌합니다.');
+    const modeIssue = quotationBarcodeModeIssue(mode, resolvedValue);
+    if (modeIssue) validationIssues.push(modeIssue);
   }
   // Keep server source reviews for an unchanged saved cell. A pending quantity
   // edit invalidates the saved pack-price review; saving refreshes that evidence.
