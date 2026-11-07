@@ -15,6 +15,7 @@ test('PowerShell and Mac commands install the same package without lifecycle, el
   const commands=installation.cliInstallCommands(platform);
   assert.equal(commands.install,`${platform==='windows'?'npm.cmd':'npm'} install --global --ignore-scripts --no-audit --no-fund '${installation.CLI_PACKAGE_URL}'`);
   assert.equal(commands.start,`${platform==='windows'?'yoofam-studio.cmd':'yoofam-studio'} start`);
+  assert.equal(commands.startDetail,`${commands.start} --auto-detail`);
   assert.equal(commands.status,`${platform==='windows'?'yoofam-studio.cmd':'yoofam-studio'} status`);
   assert.doesNotMatch(Object.values(commands).join('\n'),/ExecutionPolicy|Bypass|Invoke-Expression|\biex\b|taskkill|sudo|cookie|Bearer|password|--force|--unsafe|\|\s*(sh|bash)/i);
  }

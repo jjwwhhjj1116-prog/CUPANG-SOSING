@@ -1,33 +1,35 @@
+import type { FreeImageCropRect } from '@/app/free-image-crop';
 import type { FreeImageRegion } from '@/app/free-image-translation-client';
 
 export const FREE_IMAGE_EDIT_HISTORY_LIMIT = 20;
+type FreeImageEditState = { regions: readonly FreeImageRegion[]; crop: FreeImageCropRect | null };
 export type FreeImageEditHistory = {
-  past: readonly (readonly FreeImageRegion[])[];
-  future: readonly (readonly FreeImageRegion[])[];
+  past: readonly FreeImageEditState[];
+  future: readonly FreeImageEditState[];
   group: string | null;
 };
-export type FreeImageEditMovement = { history: FreeImageEditHistory; regions: FreeImageRegion[] };
+export type FreeImageEditMovement = { history: FreeImageEditHistory; regions: FreeImageRegion[]; crop: FreeImageCropRect | null };
 
 // Copy mutable geometry and brush paths while sharing immutable text. Neither image blobs
-// nor source/save proofs belong to the region editing history.
-function copyBrushValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(copyBrushValue);
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, copyBrushValue(item)]));
+// nor source/save proofs belong to the editing history.
+function copyEditValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(copyEditValue);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, copyEditValue(item)]));
   return value;
 }
-function sameBrushValue(a: unknown, b: unknown): boolean {
+function sameEditValue(a: unknown, b: unknown): boolean {
   if (Object.is(a, b)) return true;
   if (!a || !b || typeof a !== 'object' || typeof b !== 'object' || Array.isArray(a) !== Array.isArray(b)) return false;
   if (Array.isArray(a) && Array.isArray(b) && a.length !== b.length) return false;
   const keys = Object.keys(a);
   return keys.length === Object.keys(b).length && keys.every(key => Object.prototype.hasOwnProperty.call(b, key)
-    && sameBrushValue((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]));
+    && sameEditValue((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]));
 }
-function snapshot(rows: readonly FreeImageRegion[]): FreeImageRegion[] {
-  return rows.map(row => copyBrushValue(row) as FreeImageRegion);
+function snapshot({ regions, crop }: FreeImageEditState) {
+  return { regions: regions.map(row => copyEditValue(row) as FreeImageRegion), crop: crop ? { ...crop } : null };
 }
-function sameRows(a: readonly FreeImageRegion[], b: readonly FreeImageRegion[]): boolean {
-  return sameBrushValue(a, b);
+export function sameFreeImageEditCrop(a: FreeImageCropRect | null, b: FreeImageCropRect | null): boolean {
+  return sameEditValue(a, b);
 }
 
 export function createFreeImageEditHistory(): FreeImageEditHistory {
@@ -37,28 +39,29 @@ export function endFreeImageEditGroup(history: FreeImageEditHistory): FreeImageE
   return history.group === null ? history : { ...history, group: null };
 }
 export function recordFreeImageEdit(history: FreeImageEditHistory, before: readonly FreeImageRegion[],
-  next: readonly FreeImageRegion[], group: string | null = null): FreeImageEditHistory {
-  if (sameRows(before, next)) return history;
+  next: readonly FreeImageRegion[], group: string | null = null, beforeCrop: FreeImageCropRect | null = null,
+  nextCrop = beforeCrop): FreeImageEditHistory {
+  if (sameFreeImageEditCrop(beforeCrop, nextCrop) && sameEditValue(before, next)) return history;
   const coalesced = group !== null && group === history.group && history.past.length > 0 && history.future.length === 0;
   return {
-    past: coalesced ? history.past : [...history.past, snapshot(before)].slice(-FREE_IMAGE_EDIT_HISTORY_LIMIT),
+    past: coalesced ? history.past : [...history.past, snapshot({ regions: before, crop: beforeCrop })].slice(-FREE_IMAGE_EDIT_HISTORY_LIMIT),
     future: [], group,
   };
 }
-export function undoFreeImageEdit(history: FreeImageEditHistory, current: readonly FreeImageRegion[]): FreeImageEditMovement | null {
+export function undoFreeImageEdit(history: FreeImageEditHistory, regions: readonly FreeImageRegion[], crop: FreeImageCropRect | null = null): FreeImageEditMovement | null {
   const previous = history.past.at(-1);
   if (!previous) return null;
   return {
-    regions: snapshot(previous),
-    history: { past: history.past.slice(0, -1), future: [...history.future, snapshot(current)], group: null },
+    ...snapshot(previous),
+    history: { past: history.past.slice(0, -1), future: [...history.future, snapshot({ regions, crop })], group: null },
   };
 }
-export function redoFreeImageEdit(history: FreeImageEditHistory, current: readonly FreeImageRegion[]): FreeImageEditMovement | null {
+export function redoFreeImageEdit(history: FreeImageEditHistory, regions: readonly FreeImageRegion[], crop: FreeImageCropRect | null = null): FreeImageEditMovement | null {
   const next = history.future.at(-1);
   if (!next) return null;
   return {
-    regions: snapshot(next),
-    history: { past: [...history.past, snapshot(current)], future: history.future.slice(0, -1), group: null },
+    ...snapshot(next),
+    history: { past: [...history.past, snapshot({ regions, crop })], future: history.future.slice(0, -1), group: null },
   };
 }
 

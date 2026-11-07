@@ -5,6 +5,7 @@ export const PROTOCOL_VERSION = '1.0';
 export const APP_ORIGIN = 'https://sourceflow.jjwwhhjj1116.workers.dev';
 export const DEFAULT_PORT = 49831;
 export const MAX_BODY_BYTES = 8 * 1024 * 1024;
+export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 export const MAX_DIAGNOSTIC_EVENTS = 64;
 const COMPANIES = new Map([['A01526306', '유앤채'], ['A01464742', '와이홉']]);
 const CLIENT_ERRORS = new Set(['code', 'message']);
@@ -32,8 +33,51 @@ export function normalizeScope(value) {
 }
 const scopeKey = (value) => JSON.stringify(normalizeScope(value));
 
+export function imageMimeType(bytes) {
+  if (bytes.length > MAX_IMAGE_BYTES) return null;
+  if (bytes.length >= 45 && bytes.subarray(0, 16).equals(Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex'))
+    && bytes.readUInt32BE(16) > 0 && bytes.readUInt32BE(20) > 0
+    && bytes.subarray(-12).equals(Buffer.from('0000000049454e44ae426082', 'hex'))) return 'image/png';
+  if (bytes.length >= 16 && bytes.subarray(0, 3).equals(Buffer.from('ffd8ff', 'hex'))
+    && bytes.subarray(-2).equals(Buffer.from('ffd9', 'hex'))) return 'image/jpeg';
+  return null;
+}
+
+function detailImage(value) {
+  if (!ownKeys(value, ['mimeType', 'data']) || !['image/png', 'image/jpeg'].includes(value.mimeType)
+    || typeof value.data !== 'string' || !value.data.length || value.data.length > 5_592_408 || value.data.length % 4 !== 0
+    || !/^[A-Za-z0-9+/]+={0,2}$/.test(value.data)) return null;
+  const bytes = Buffer.from(value.data, 'base64');
+  if (imageMimeType(bytes) !== value.mimeType || bytes.toString('base64') !== value.data) return null;
+  return { mimeType: value.mimeType, data: value.data };
+}
+
+function detailResult(command, value, scope) {
+  const invalid = () => failure('RESULT_INVALID', '상세 이미지 작업의 응답을 확인해주세요.');
+  const key = (candidate) => typeof candidate === 'string' && candidate.length <= 4096 && candidate.startsWith(`${scope.ownerId}/`);
+  if (command === 'detail-image/next') {
+    if (value?.job === null) return { job: null };
+    const job = value?.job;
+    const image = detailImage(value?.image);
+    const id = (candidate) => typeof candidate === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(candidate);
+    if (!record(job) || !id(job.productId) || !id(job.optionId) || !(job.profileId === null || id(job.profileId))
+      || !key(job.sourceKey) || typeof job.prompt !== 'string' || !job.prompt.trim() || job.prompt.length > 2000 || !uuid(job.requestId) || !image) throw invalid();
+    const { productId, optionId, profileId, sourceKey, prompt, requestId } = job;
+    return { job: { productId, optionId, profileId, sourceKey, prompt, requestId }, image };
+  }
+  if (command === 'detail-image/complete') {
+    if (!key(value?.key) || typeof value.productVersion !== 'string' || !Number.isFinite(Date.parse(value.productVersion))) throw invalid();
+    return { key: value.key, productVersion: value.productVersion };
+  }
+  if (command === 'detail-image/fail') {
+    if (value?.failed !== true) throw invalid();
+    return { failed: true };
+  }
+  return copy(value);
+}
+
 export function validateCommand(command, payload = {}) {
-  if (command === 'status' || command === 'category-profiles/list' || command === 'main-image/next') {
+  if (command === 'status' || command === 'category-profiles/list' || command === 'main-image/next' || command === 'detail-image/next') {
     if (!ownKeys(payload, [])) throw failure('COMMAND_INVALID', '이 명령에는 추가 입력을 사용할 수 없습니다.');
     return {};
   }
@@ -54,6 +98,16 @@ export function validateCommand(command, payload = {}) {
     if(!ownKeys(payload,['requestId','image'])||!uuid(payload.requestId)||!ownKeys(payload.image,['mimeType','data'])||!['image/png','image/jpeg'].includes(payload.image.mimeType)
       ||typeof payload.image.data!=='string'||!payload.image.data.length||payload.image.data.length>5_592_408||payload.image.data.length%4!==0||!/^[A-Za-z0-9+/]+={0,2}$/.test(payload.image.data))throw failure('COMMAND_INVALID','이미지 요청 번호와 4MB 이하 PNG·JPEG 결과가 필요합니다.');
     return {requestId:payload.requestId,image:{mimeType:payload.image.mimeType,data:payload.image.data}};
+  }
+  if (command === 'detail-image/complete') {
+    if (!ownKeys(payload, ['requestId', 'image']) || !uuid(payload.requestId)) throw failure('COMMAND_INVALID', '상세 이미지 작업 번호를 확인해주세요.');
+    const image = detailImage(payload.image);
+    if (!image) throw failure('COMMAND_INVALID', '4MB 이하 PNG·JPEG 상세 이미지가 필요합니다.');
+    return { requestId: payload.requestId, image };
+  }
+  if (command === 'detail-image/fail') {
+    if (!ownKeys(payload, ['requestId', 'reason']) || !uuid(payload.requestId) || !['processing-failed', 'timed-out'].includes(payload.reason)) throw failure('COMMAND_INVALID', '상세 이미지 작업 오류를 확인해주세요.');
+    return { requestId: payload.requestId, reason: payload.reason };
   }
   throw failure('COMMAND_NOT_ALLOWED', '허용된 읽기 명령만 사용할 수 있습니다.', 403);
 }
@@ -76,6 +130,7 @@ export function createCliServer(options = {}) {
   const expiresAt = Date.now() + ttlMs;
   const jobs = new Map();
   const completed = new Set();
+  const session = new AbortController();
   let ownerScope = null;
   let activeJobId = null;
   let waiter = null;
@@ -144,6 +199,7 @@ export function createCliServer(options = {}) {
   };
   const clearSession = (code, message) => {
     ownerScope = null;
+    session.abort();
     const current = takeWaiter();
     if (current) respond(current.res, 409, { ok: false, error: { code, message } });
     for (const id of [...jobs.keys()]) finishJob(id, failure(code, message, 409));
@@ -252,7 +308,12 @@ export function createCliServer(options = {}) {
         finishJob(body.jobId, failure('JOB_ABORTED', '앱에서 작업을 취소했습니다.', 409));
       } else {
         if (!ownKeys(body, ['sessionId', 'scope', 'jobId', 'ok', 'result', 'error']) || typeof body.ok !== 'boolean' || (body.ok ? (!Object.hasOwn(body, 'result') || Object.hasOwn(body, 'error')) : (Object.hasOwn(body, 'result') || !ownKeys(body.error, [...CLIENT_ERRORS]) || typeof body.error.code !== 'string' || typeof body.error.message !== 'string' || body.error.code.length > 80 || body.error.message.length > 500))) throw failure('RESULT_INVALID', '작업 결과 형식을 확인해주세요.');
-        if (body.ok) finishJob(body.jobId, null, copy(body.result));
+        if (body.ok) {
+          let result;
+          try { result = detailResult(job.command, body.result, job.scope); }
+          catch (error) { finishJob(body.jobId, error); throw error; }
+          finishJob(body.jobId, null, result);
+        }
         else finishJob(body.jobId, failure(body.error.code, body.error.message, 422));
       }
       respond(res, 200, { ok: true });
@@ -264,6 +325,7 @@ export function createCliServer(options = {}) {
   server.headersTimeout = 10_000;
   server.keepAliveTimeout = 1_000;
   return {
+    signal: session.signal,
     async listen() {
       if (listeningPort !== null) return this.connection();
       await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', () => { server.off('error', reject); listeningPort = server.address().port; resolve(); }); });

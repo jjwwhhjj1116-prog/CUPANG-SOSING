@@ -1649,7 +1649,11 @@ test('a generic saved-document review releases busy and can close untouched; sam
     h.field('이미지 원문 언어').props.onChange({ target: { value: 'zh' } }); assert.equal(retainedGuard(), false); await h.settle();
     await h.change('이미지 원문 언어', 'en'); assert.equal(retainedGuard(), true);
     await h.change('이미지 잘라내기', '', true); h.field('잘라내기 x').props.onChange({ target: { value: '1' } });
-    assert.equal(retainedGuard(), false); await h.settle(); await h.change('잘라내기 x', '2'); assert.equal(retainedGuard(), true);
+    assert.equal(retainedGuard(), false); await h.settle();
+    assert.equal(h.button('다시 실행').props.disabled, true, 'a crop edit clears the previous redo branch');
+    await h.click('되돌리기'); assert.equal(h.field('잘라내기 x').props.value, 2); assert.equal(retainedGuard(), true);
+    await h.click('다시 실행'); assert.equal(h.field('잘라내기 x').props.value, 1); assert.equal(retainedGuard(), false);
+    await h.click('되돌리기'); assert.equal(retainedGuard(), true);
     await h.change('이미지 잘라내기', '', false); await h.click('번역 이미지 미리보기'); assert.equal(retainedGuard(), false);
     h.setApply(async () => { throw new ApplyError('저장 응답 확인 필요', true); }); await h.click('검토한 번역 이미지 적용'); assert.equal(retainedGuard(), false);
     assert.equal(h.saved, 0); await h.click('이미지 번역 편집 초안 지우기'); assert.equal(retainedGuard(), true);

@@ -20,6 +20,31 @@ async function fixture(company=priceTableCompanies[0],excluded=false){
  const before={content:plain(await f.api.load('db/product-content.ts').readProductContent(f.owner,f.id)),quote:await(await f.fetcher(`/api/products/${f.id}/quotation-fields`)).json(),pool:JSON.parse(f.product().image_keys),protected:protectedSnapshot()};f.calls.length=0;
  return{...f,keys,first,second,before,protectedSnapshot,allSnapshot,quote:async()=>await(await f.fetcher(`/api/products/${f.id}/quotation-fields`)).json(),content:()=>f.api.load('db/product-content.ts').readProductContent(f.owner,f.id)};
 }
+test('a Codex detail result replaces the exact selected option slot and retains the original and banners',async()=>{
+ const f=await fixture();try{
+  const content=await f.content(),model=f.api.load('app/product-content.ts');
+  const withBanners=model.applyContentPatch(content,{assets:{detailTop:[f.keys.top],detailBottom:[f.keys.bottom]}},new Date().toISOString());
+  assert.ok(await f.api.load('db/product-content.ts').saveProductContent(f.owner,withBanners,content.revision));
+  const queue=f.api.load('app/product-image-upload-queue.ts'),controls={fetcher:f.fetcher,current:()=>true};
+  const scope={stage:'detail',target:{optionId:f.first},replaceSourceKey:f.keys.own1};
+  const base=await queue.readProductImageUploadBasis(f.id,f.owner,controls,scope);
+  assert.ok(base.quotation.protectedDetailImageKeys.includes(f.keys.top));
+  const [item]=await queue.prepareProductImageFiles([imageFile('codex-detail.png')],[],base.imageKeys.length);
+  f.controls.response=(call,response)=>call.url.endsWith('/image-upload-link')?Response.json({error:'lost ACK'},{status:503}):response;
+  const saved=await queue.uploadProductImageQueueItem(base,item,controls);
+  assert.equal(saved.item.phase,'uncertain-attachment',saved.item.error);
+  const recovered=await queue.recoverProductImageQueueItem(saved.item,controls);
+  assert.equal(recovered.item.phase,'done');
+  const key=saved.item.key,quote=await f.quote();
+  assert.deepEqual(writes(f).map(call=>call.name??call.url.split('/').at(-1)),['codex-detail.png','image-upload-link']);
+  assert.equal(quote.overrides.options[f.first].detailImages,[f.keys.top,key,f.keys.bottom].join('\n'));
+  assert.equal(quote.overrides.options[f.first].detailHtml,f.before.quote.overrides.options[f.first].detailHtml);
+  assert.deepEqual(quote.overrides.options[f.second],f.before.quote.overrides.options[f.second]);
+  assert.deepEqual(JSON.parse(f.product().image_keys),[...f.before.pool,key]);
+  assert.deepEqual(plain(await f.content()),plain(base.content));
+  await assert.rejects(queue.readProductImageUploadBasis(f.id,f.owner,controls,{...scope,replaceSourceKey:f.keys.top}),/변경|상세/);
+ }finally{f.close();}
+});
 for(const company of priceTableCompanies){
  test(`Stage4 common uploads append all included manual lists and inherited content atomically (${company.code})`,async()=>{
   const f=await fixture(company),ui=f.ui({target:{optionId:null}});try{

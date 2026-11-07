@@ -6,7 +6,7 @@ import { gzipSync, gunzipSync } from 'node:zlib';
 import { pathToFileURL } from 'node:url';
 import { readPackageZip } from '../extensions/supplier-hub/package.mjs';
 
-export const CLI_PACKAGE_FILES = ['README.md', 'bin.mjs', 'package.json', 'server.mjs', 'yoofam-studio.mjs'];
+export const CLI_PACKAGE_FILES = ['README.md', 'bin.mjs', 'detail-worker.mjs', 'package.json', 'server.mjs', 'yoofam-studio.mjs'];
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 const same = (a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)) === 0;
 const octal = (target, offset, length, value) => target.write(value.toString(8).padStart(length - 1, '0') + '\0', offset, length, 'ascii');

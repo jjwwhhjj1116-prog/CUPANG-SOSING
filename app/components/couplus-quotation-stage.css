@@ -1,4 +1,4 @@
-/* Stage 7: one continuous five-page form, measured from the reference. */
+/* Stage 7: the five pages of the quotation. */
 .registration-workspace .detail-body[data-registration-stage="견적서"]{display:flex;flex-direction:column;padding:0 20px 20px;font-family:Lato,sans-serif;font-size:16px;line-height:29px}
 .registration-workspace .registration-quotation-primary{order:0}
 .registration-workspace .registration-quotation-notices{order:2}

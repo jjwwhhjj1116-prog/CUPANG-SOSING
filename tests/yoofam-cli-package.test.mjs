@@ -49,14 +49,14 @@ function npmCommand(shim, args) {
 }
 
 test('npm package exposes one versioned executable with no dependencies or install lifecycle', () => {
-  assert.equal(pkg.name, '@yoofam/studio-cli'); assert.equal(pkg.version, '0.1.3');
+  assert.equal(pkg.name, '@yoofam/studio-cli'); assert.equal(pkg.version, '0.1.4');
   assert.equal(pkg.engines.node, '>=22.13.0');
   assert.deepEqual(pkg.bin, { 'yoofam-studio': './bin.mjs' });
   assert.deepEqual([...pkg.files].sort(), CLI_PACKAGE_FILES.filter((name) => name !== 'package.json').sort());
   for (const key of ['private', 'scripts', 'dependencies', 'optionalDependencies', 'peerDependencies', 'bundledDependencies']) assert.equal(pkg[key], undefined);
 });
 
-test('reproducible npm TGZ and legacy ZIP preserve the exact five-file allowlist and executable mode', (t) => {
+test('reproducible npm TGZ and legacy ZIP preserve the exact file allowlist and executable mode', (t) => {
   const { root, downloads } = fixture(t);
   const first = buildCliPackages({ root }), second = buildCliPackages({ root });
   assert.deepEqual(first, second);
@@ -102,7 +102,7 @@ test('packaging rejects extra credential files and npm install scripts instead o
   fs.writeFileSync(packageFile, JSON.stringify({ ...pkg, scripts: { postinstall: 'do-not-run' } }));
   assert.throws(() => buildCliPackages({ root }), /배포 정보/);
   fs.writeFileSync(packageFile, clean);
-  assert.equal(buildCliPackages({ root }).files, 5);
+  assert.equal(buildCliPackages({ root }).files, CLI_PACKAGE_FILES.length);
 });
 
 test('local --version/status/help do not start a server or request a browser/account connection', () => {

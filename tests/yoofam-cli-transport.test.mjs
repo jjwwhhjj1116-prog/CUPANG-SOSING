@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
 import { randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import { APP_ORIGIN, MAX_BODY_BYTES, MAX_DIAGNOSTIC_EVENTS, createCliServer, validateCommand } from '../cli/server.mjs';
@@ -238,10 +242,11 @@ test('chunked request cannot bypass the eight MiB body limit or settle the activ
   assert.equal(server.getState().activeJobId, pending.jobId); assert.equal((await result(pending.jobId)).status, 200); assert.equal((await answer).ok, true);
 });
 
-test('CLI publishes four read tools and two explicit main image tools and validates startup options', () => {
-  assert.deepEqual(CLI_TOOLS.map((tool) => tool.name), ['status', 'product-query', 'category-profiles/list', 'collection-job/status','main-image/next','main-image/complete']);
+test('CLI publishes separate tools for explicit main and detail image edits', () => {
+  assert.deepEqual(CLI_TOOLS.map((tool) => tool.name), ['status', 'product-query', 'category-profiles/list', 'collection-job/status','main-image/next','main-image/complete', 'detail_image_next', 'detail_image_complete']);
   assert.equal(parseArguments(['serve', '--stdio', '--port', '49832', '--allow-local-dev']).port, 49832);
   assert.equal(parseArguments([]).diagnostics, false); assert.equal(parseArguments(['serve', '--diagnostics']).diagnostics, true);
+  assert.equal(parseArguments([]).autoDetail, false); assert.equal(parseArguments(['serve', '--auto-detail']).autoDetail, true);
   for (const args of [['--port', '0'], ['--host', '0.0.0.0'], ['--token', 'secret'], ['exec', 'anything']]) assert.throws(() => parseArguments(args), { code: 'ARGUMENT_INVALID' });
   assert.deepEqual(validateCommand('category-profiles/list'), {});
 });
@@ -332,7 +337,7 @@ test('actual stdio tool discovery and a paired status round trip use JSON Lines 
   const lines = () => text.trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
   assert.equal(lines()[0].method, 'notifications/connectionReady');
   input.write('{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n'); await delay(10);
-  assert.equal(lines().find((line) => line.id === 1).result.tools.length, 6);
+  assert.equal(lines().find((line) => line.id === 1).result.tools.length, 8);
   input.write('{"jsonrpc":"2.0","id":"package-version","method":"initialize"}\n'); await delay(10);
   assert.equal(lines().find((line) => line.id === 'package-version').result.serverInfo.version, CLI_VERSION);
   await send(cli.connection, '/pair', { sessionId: cli.connection.sessionId, scope: A });
@@ -344,6 +349,139 @@ test('actual stdio tool discovery and a paired status round trip use JSON Lines 
   input.write('x'.repeat(33_000)); input.write('\n'); await delay(10);
   assert.ok(lines().some((line) => line.error?.code === 'INPUT_TOO_LARGE'));
   assert.equal(diagnosticText, '');
+});
+
+const detailImage = { mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/nZkAAAAASUVORK5CYII=' };
+
+test('detail MCP sends only the explicit job metadata and relays result files to the detail command', async (t) => {
+  const folder = await mkdtemp(join(tmpdir(), 'yoofam-detail-test-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const resultFile = join(folder, 'result.png');
+  await writeFile(resultFile, Buffer.from(detailImage.data, 'base64'));
+  const input = new PassThrough(); const output = new PassThrough(); let text = '';
+  output.setEncoding('utf8'); output.on('data', (chunk) => { text += chunk; });
+  const reservation = createCliServer({ port: 0 }); const reserved = await reservation.listen(); await reservation.close();
+  const cli = await startCli(['serve', '--stdio', '--port', String(reserved.port)], { input, output }); t.after(() => cli.close());
+  const { connection } = cli;
+  const requestId = randomUUID();
+  const job = { productId: 'product', optionId: 'red', profileId: null, sourceKey: `${A.ownerId}/source.png`, prompt: '상세 사진의 중국어를 번역하세요.', requestId };
+  const call = (id, name, args) => input.write(`${JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } })}\n`);
+  const next = () => send(connection, `/next?sessionId=${connection.sessionId}&waitMs=150`);
+  const reply = (jobId, result) => send(connection, '/result', { sessionId: connection.sessionId, scope: A, jobId, ok: true, result });
+  const read = (id) => text.trim().split('\n').map((line) => JSON.parse(line)).find((line) => line.id === id);
+  await send(connection, '/pair', { sessionId: connection.sessionId, scope: A });
+  call('claim', 'detail_image_next', {});
+  const claim = (await next()).body.job;
+  assert.equal(claim?.command, 'detail-image/next');
+  await reply(claim.jobId, { job: { ...job, authorization: connection.token }, image: detailImage, ...A, sessionToken: connection.token });
+  assert.deepEqual(read('claim').result, { content: [{ type: 'text', text: JSON.stringify({ job }) }, { type: 'image', ...detailImage }], structuredContent: { job } });
+  call('save', 'detail_image_complete', { requestId, filePath: resultFile });
+  const save = (await next()).body.job;
+  assert.equal(save?.command, 'detail-image/complete');
+  assert.deepEqual(save.payload, { requestId, image: detailImage });
+  const receipt = { key: `${A.ownerId}/edited.png`, productVersion: '2026-11-07T00:00:00Z' };
+  await reply(save.jobId, { ...receipt, ...A, sessionToken: connection.token });
+  assert.deepEqual(read('save').result.structuredContent, receipt);
+  call('empty', 'detail_image_next', {});
+  const empty = (await next()).body.job;
+  await reply(empty.jobId, { job: null, ...A });
+  assert.deepEqual(read('empty').result.structuredContent, { job: null });
+});
+
+test('detail upload rejects unsupported and oversized files before queuing their bytes', async (t) => {
+  const folder = await mkdtemp(join(tmpdir(), 'yoofam-detail-test-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const wrong = join(folder, 'wrong.png'); const oversized = join(folder, 'large.png');
+  await writeFile(wrong, Buffer.from('not an image'));
+  await writeFile(oversized, Buffer.alloc(4 * 1024 * 1024 + 1));
+  const input = new PassThrough(); const output = new PassThrough(); const lines = [];
+  output.setEncoding('utf8'); output.on('data', (chunk) => lines.push(JSON.parse(chunk)));
+  const reservation = createCliServer({ port: 0 }); const reserved = await reservation.listen(); await reservation.close();
+  const cli = await startCli(['serve', '--stdio', '--port', String(reserved.port)], { input, output }); t.after(() => cli.close());
+  const { connection } = cli;
+  await send(connection, '/pair', { sessionId: connection.sessionId, scope: A });
+  for (const [id, filePath, code] of [['wrong', wrong, 'IMAGE_INVALID'], ['large', oversized, 'IMAGE_INVALID'], ['relative', 'out.png', 'IMAGE_PATH_INVALID']]) {
+    input.write(`${JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'detail_image_complete', arguments: { requestId: randomUUID(), filePath } } })}\n`);
+    await new Promise(setImmediate);
+    assert.equal(lines.find((line) => line.id === id)?.error.data.code, code);
+  }
+  assert.equal(cli.server.getState().pendingCount, 0);
+});
+
+test('opt-in detail worker launches a bounded local process only after an explicit paired job', async (t) => {
+  const input = new PassThrough(); const output = new PassThrough(); const diagnostic = new PassThrough();
+  const launches = [];
+  const resultImage = { mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' };
+  const reservation = createCliServer({ port: 0 }); const reserved = await reservation.listen(); await reservation.close();
+  const cli = await startCli(['serve', '--stdio', '--auto-detail', '--port', String(reserved.port)], {
+    input, output, diagnostic,
+    detailWorker: {
+      pollMs: 20,
+      spawnProcess(command, args, options) {
+        launches.push({ command, args, options });
+        const stub = 'const fs=require("node:fs");const assert=require("node:assert/strict");let prompt="";process.stdin.setEncoding("utf8");process.stdin.on("data",x=>prompt+=x);process.stdin.on("end",()=>{assert.match(prompt,/translate only this image/);assert.equal(fs.readFileSync("source.png").toString("base64"),process.argv[1]);fs.writeFileSync("result.png",Buffer.from(process.argv[2],"base64"));});';
+        return spawn(process.execPath, ['-e', stub, detailImage.data, resultImage.data], options);
+      },
+    },
+  });
+  t.after(() => cli.close());
+  const { connection, server } = cli;
+  const next = () => send(connection, `/next?sessionId=${connection.sessionId}&waitMs=1000`);
+  const reply = (jobId, result) => send(connection, '/result', { sessionId: connection.sessionId, scope: A, jobId, ok: true, result });
+  await delay(40);
+  assert.equal(server.getState().pendingCount, 0);
+  assert.equal(launches.length, 0);
+  await send(connection, '/pair', { sessionId: connection.sessionId, scope: A });
+  const empty = (await next()).body.job;
+  assert.equal(empty?.command, 'detail-image/next');
+  await reply(empty.jobId, { job: null, ...A });
+  assert.equal(launches.length, 0);
+  const claim = (await next()).body.job;
+  const requestId = randomUUID();
+  await reply(claim.jobId, { job: { productId: 'product', optionId: 'red', profileId: null, sourceKey: `${A.ownerId}/source.png`, prompt: 'translate only this image', requestId }, image: detailImage, ...A });
+  const upload = (await next()).body.job;
+  assert.equal(upload?.command, 'detail-image/complete');
+  assert.deepEqual(upload.payload, { requestId, image: resultImage });
+  await reply(upload.jobId, { key: `${A.ownerId}/edited.png`, productVersion: '2026-11-07T00:00:00Z', ...A });
+  assert.equal(launches.length, 1);
+  assert.equal(launches[0].command, 'codex');
+  assert.deepEqual(launches[0].args.slice(-3), ['--image', 'source.png', '-']);
+  assert.equal(launches[0].options.shell, false);
+  assert.ok(launches[0].options.cwd.includes('yoofam-detail-'));
+  assert.equal(JSON.stringify(launches[0].args).includes(connection.token), false);
+});
+
+test('a timed-out detail edit terminates its process and reports the claimed request once', async (t) => {
+  const input = new PassThrough(); const output = new PassThrough(); const diagnostic = new PassThrough();
+  const launches = [];
+  const reservation = createCliServer({ port: 0 }); const reserved = await reservation.listen(); await reservation.close();
+  const cli = await startCli(['serve', '--stdio', '--auto-detail', '--port', String(reserved.port)], {
+    input, output, diagnostic,
+    detailWorker: { pollMs: 20, timeoutMs: 100, spawnProcess(_command, _args, options) {
+      const child = spawn(process.execPath, ['-e', 'process.stdin.resume();setInterval(()=>{},1000)'], options);
+      launches.push(child);
+      return child;
+    } },
+  });
+  t.after(() => cli.close());
+  const { connection } = cli;
+  const next = () => send(connection, `/next?sessionId=${connection.sessionId}&waitMs=1000`);
+  const reply = (jobId, result) => send(connection, '/result', { sessionId: connection.sessionId, scope: A, jobId, ok: true, result });
+  await send(connection, '/pair', { sessionId: connection.sessionId, scope: A });
+  const claim = (await next()).body.job;
+  assert.equal(claim?.command, 'detail-image/next');
+  const requestId = randomUUID();
+  await reply(claim.jobId, { job: { productId: 'product', optionId: 'red', profileId: null, sourceKey: `${A.ownerId}/source.png`, prompt: 'translate', requestId }, image: detailImage, ...A });
+  const failure = (await next()).body.job;
+  assert.equal(failure?.command, 'detail-image/fail');
+  assert.deepEqual(failure.payload, { requestId, reason: 'timed-out' });
+  await reply(failure.jobId, { failed: true, ...A });
+  assert.equal(launches.length, 1);
+  assert.equal(launches[0].killed, true);
+  const waiting = (await next()).body.job;
+  assert.equal(waiting?.command, 'detail-image/next');
+  await reply(waiting.jobId, { job: null, ...A });
+  assert.equal(launches.length, 1);
 });
 
 test('--diagnostics emits only sanitized transport events to stderr without adding a remote MCP method', async (t) => {
@@ -362,7 +500,7 @@ test('--diagnostics emits only sanitized transport events to stderr without addi
   assert.equal(text.trim().split('\n').length, 1);
   input.write('{"jsonrpc":"2.0","id":"diag-not-remote","method":"diagnostics"}\n'); await delay(10);
   const result = text.trim().split('\n').map((line) => JSON.parse(line)).find((line) => line.id === 'diag-not-remote');
-  assert.equal(result.error.data.code, 'METHOD_NOT_ALLOWED'); assert.equal(CLI_TOOLS.length, 6);
+  assert.equal(result.error.data.code, 'METHOD_NOT_ALLOWED'); assert.equal(CLI_TOOLS.length, 8);
 });
 
 test('terminal diagnostics is local only, works before pairing and causes no HTTP requests', async (t) => {

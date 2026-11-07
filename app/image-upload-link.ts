@@ -6,8 +6,8 @@ import {exactPrimaryQuotationTarget} from '@/app/quotation-seo-targets';
 
 export type ImageUploadTarget={optionId:string|null;profileId?:string};
 export type ImageUploadRole='main'|'additional'|'detail';
-export type ImageUploadLinkBasis={productId:string;ownerId:string;productVersion:string;imageKeys:string[];content:ProductContent;quotation:QuotationFieldsView;target:ImageUploadTarget;stage:ImageUploadRole};
-export type ImageUploadLinkRequest={key:string;stage:ImageUploadRole;optionId:string|null;expectedProductVersion:string;expectedContentRevision:number;expectedOptionRevision:number;expectedQuotationRevision:number;expectedInputFingerprint:string};
+export type ImageUploadLinkBasis={productId:string;ownerId:string;productVersion:string;imageKeys:string[];content:ProductContent;quotation:QuotationFieldsView;target:ImageUploadTarget;stage:ImageUploadRole;replaceSourceKey?:string};
+export type ImageUploadLinkRequest={key:string;stage:ImageUploadRole;optionId:string|null;expectedProductVersion:string;expectedContentRevision:number;expectedOptionRevision:number;expectedQuotationRevision:number;expectedInputFingerprint:string;replaceSourceKey?:string};
 export type ImageUploadLinkReceipt={productVersion:string;imageKeys:string[];content:ProductContent;quotation:QuotationFieldsView};
 const same=(a:unknown,b:unknown)=>JSON.stringify(a)===JSON.stringify(b);
 const id=(value:unknown)=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,100}$/u.test(value);
@@ -28,6 +28,14 @@ export function validateImageUploadLinkBasis(base:ImageUploadLinkBasis){
   ||base.target.optionId!==null&&view.resolved.rows.filter(row=>row.optionId===base.target.optionId).length!==1)throw imageUploadLinkChanged();
  const field=uploadRoleTarget(view,base.stage);
  if(field.fields.some(value=>value.readOnly))throw Error('현재 카테고리의 이미지 연결을 수정할 수 없습니다.');
+ if(base.replaceSourceKey!==undefined){
+  const row=view.resolved.rows.find(row=>row.optionId===base.target.optionId),source=base.replaceSourceKey;
+  if(base.stage!=='detail'||!base.target.optionId||!row?.included||!isOwnedImageKey(base.ownerId,source)||!base.imageKeys.includes(source)
+   ||!Array.isArray(view.protectedDetailImageKeys)||view.protectedDetailImageKeys.includes(source)
+   ||base.content.assets.detailTop.value.includes(source)||base.content.assets.detailBottom.value.includes(source)
+   ||field.linked.some(id=>quotationImageKeys(row.fields[id]?.value??'').filter(key=>key===source).length!==1))
+   throw Error('선택한 옵션의 저장된 상세 본문 이미지가 변경됐거나 보호된 이미지입니다.');
+ }
 }
 function uploadRoleTarget(view:QuotationFieldsView,stage:ImageUploadRole){return stage==='main'?exactPrimaryQuotationTarget(view.resolved.schema.fields,'mainImage'):optionImageTargets(view.resolved.schema.fields)[stage==='additional'?'additionalImages':'detailImages'];}
 /** Keep existing order and pinned bottom banners; new body photos precede them. */
@@ -38,7 +46,8 @@ export function appendUploadRoleKey(keys:readonly string[],key:string,bottom:rea
 }
 export function imageUploadLinkRequest(base:ImageUploadLinkBasis,key:string):ImageUploadLinkRequest{
  validateImageUploadLinkBasis(base);return{key,stage:base.stage,optionId:base.target.optionId,expectedProductVersion:base.productVersion,expectedContentRevision:base.content.revision,
-  expectedOptionRevision:base.quotation.optionRevision,expectedQuotationRevision:base.quotation.revision,expectedInputFingerprint:base.quotation.inputFingerprint};
+  expectedOptionRevision:base.quotation.optionRevision,expectedQuotationRevision:base.quotation.revision,expectedInputFingerprint:base.quotation.inputFingerprint,
+  ...(base.replaceSourceKey===undefined?{}:{replaceSourceKey:base.replaceSourceKey})};
 }
 /** Common additional uploads extend inherited content and existing included
  * option lists; common detail imports add body photos only. Optional selected
@@ -69,7 +78,10 @@ export function prepareImageUploadLink(base:ImageUploadLinkBasis,key:string,now:
   }
  }else{
   const row=view.resolved.rows.find(value=>value.optionId===base.target.optionId)!;
-  for(const fieldKey of target.linked){if(typeof row.fields[fieldKey]?.value!=='string')throw imageUploadLinkChanged();changes.push({optionId:base.target.optionId,fieldKey,value:append(row.fields[fieldKey].value)});}
+  for(const fieldKey of target.linked){
+   const value=row.fields[fieldKey]?.value;if(typeof value!=='string')throw imageUploadLinkChanged();
+   changes.push({optionId:base.target.optionId,fieldKey,value:base.replaceSourceKey===undefined?append(value):quotationImageKeys(value).map(original=>original===base.replaceSourceKey?key:original).join('\n')});
+  }
  }
  const checked=changes.length?validateQuotationChanges(changes,{schema:view.resolved.schema,optionIds:view.resolved.rows.flatMap(row=>row.optionId?[row.optionId]:[]),ownedImageKeys:imageKeys,overrides:view.overrides}):[],overrides=checked.length?applyQuotationChanges(view.overrides,checked):view.overrides;
  // Validate inherited lists too, even when no manual override needs a write.

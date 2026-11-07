@@ -49,6 +49,48 @@ test('crop-only editing keeps the original source and enables only a reviewed lo
  }finally{h.close();}
 });
 
+test('crop gestures and reset undo and redo in order with region edits', async () => {
+  const h = fixture();
+  try {
+    await prepare(h);
+    const canvas = cropCanvas(h).props;
+    const rectangle = { x: 2, y: 1, width: 15, height: 10 };
+    const selection = () => plain(cropCanvas(h).props.crop);
+    canvas.onComplete(canvas.onBegin(), rectangle);
+    await h.settle();
+    assert.deepEqual(selection(), rectangle);
+    assert.equal(h.button('되돌리기').props.disabled, false);
+
+    await h.click('문구 영역 직접 추가');
+    await h.click('잘라내기 초기화');
+    assert.equal(selection(), null);
+
+    await h.click('되돌리기');
+    assert.deepEqual(selection(), rectangle);
+    assert.ok(h.field('문구 1 한국어'));
+    await h.click('되돌리기');
+    assert.deepEqual(selection(), rectangle);
+    assert.equal(h.field('문구 1 한국어'), undefined);
+    await h.click('되돌리기');
+    assert.equal(selection(), null);
+    assert.equal(h.render().props['data-workspace-dirty'], undefined);
+
+    await h.click('다시 실행');
+    assert.deepEqual(selection(), rectangle);
+    await h.click('다시 실행');
+    assert.deepEqual(selection(), rectangle);
+    assert.ok(h.field('문구 1 한국어'));
+    await h.click('번역 이미지 미리보기');
+    assert.deepEqual(plain(h.calls.at(-1).crop), rectangle);
+    const link = download(h);
+    await h.click('다시 실행');
+    assert.equal(selection(), null);
+    assert.ok(h.field('문구 1 한국어'));
+    assert.equal(clickDownload(link).prevented, true);
+    assert.equal(h.button('다시 실행').props.disabled, true);
+  } finally { h.close(); }
+});
+
 test('same-tick crop edits invalidate retained preview/apply/download controls; invalid bounds stay dirty and reset remains explicit',async()=>{
  const h=fixture();try{
   await prepare(h);await crop(h);await h.click('번역 이미지 미리보기');const link=download(h),apply=h.button('검토한 번역 이미지 적용').props.onClick,preview=h.button('번역 이미지 미리보기').props.onClick;

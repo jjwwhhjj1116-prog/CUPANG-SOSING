@@ -46,6 +46,8 @@ export type ProductContent = {
   seoTitleDocument?: { policy: 'couplus-seo-save-v1'; sourceTitle: string; sourceUpdatedAt: string | null; value: string };
   /** Created only by an explicit SEO save/apply; legacy packets have no projection. */
   explicitSeoQuotationDefaults?:import('@/app/explicit-seo-quotation-defaults').ExplicitSeoQuotationDefaults;
+  /** Written at 1688 intake for the current native quotation workflow. */
+  quotationWorkflow?: 'collected-native-v1';
   /** Server-created intake guidance, consumed by any explicit keyword save.
    * Absence (including legacy documents) means manual keywords stay protected. */
   intakeKeywordSeed?: { value: string[]; updatedAt: string; sourceReference: string };

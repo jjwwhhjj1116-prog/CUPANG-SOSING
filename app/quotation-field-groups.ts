@@ -1,6 +1,6 @@
 import type { QuotationField } from '@/app/quotation-schema';
 import { quotationPriceEditInput, quotationPriceVisibleFields } from '@/app/quotation-price-edits';
-const basicOrder = ['brand','manufacturer','tradeType','taxType','importType','searchTags','model'];
+const basicOrder = ['model','brand','manufacturer','tradeType','taxType','importType','searchTags'];
 function imageRole(field: QuotationField): string {
   const wire=field.hubWire;
   if(['mainImage','additionalImages','labelImages','detailImages','detailHtml','altText'].includes(field.id))return field.id;
@@ -40,7 +40,7 @@ export function quotationFieldGroup(field: QuotationField, fields?: readonly Quo
   return '';
 }
 
-/** Match the observed continuous form without mutating the source schema.
+/** Arrange the controls within each page without mutating the source schema.
  * Unknown fields retain their relative order after the known inputs. */
 export function quotationSectionDisplayFields(fields:readonly QuotationField[],section:QuotationField['section']):QuotationField[]{
   const visible=quotationPriceVisibleFields(fields).filter(field=>field.section===section);

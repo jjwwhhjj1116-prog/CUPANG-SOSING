@@ -1,10 +1,10 @@
 {
   "name": "@yoofam/studio-cli",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "YOOFAM Studio local connection and requested Codex image edits",
   "type": "module",
   "engines": { "node": ">=22.13.0" },
   "bin": { "yoofam-studio": "./bin.mjs" },
-  "files": ["README.md", "bin.mjs", "server.mjs", "yoofam-studio.mjs"],
+  "files": ["README.md", "bin.mjs", "detail-worker.mjs", "server.mjs", "yoofam-studio.mjs"],
   "license": "UNLICENSED"
 }

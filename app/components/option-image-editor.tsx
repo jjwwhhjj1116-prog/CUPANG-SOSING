@@ -1,4 +1,5 @@
 'use client';
+import {CodexMainImageButton} from '@/app/components/codex-main-image-button';
 import type { AdditionalImageDraftCapture, AdditionalImageDraftTools } from '@/app/quotation-image-targets';
 import type {RegistrationUiReads,UiMutation} from '@/app/registration-ui-reads';
 import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
@@ -516,6 +517,10 @@ export function OptionImageEditor({ uiReads,onBeginSourceWrite,productId, option
     <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 선택 제거`} disabled={locked || !mutableImage(key)} onClick={() => removeImages(keys => keys[index] === key ? keys.filter((_, position) => position !== index) : keys, false, key, index)}>삭제</button></>;
   const selectedActions = (key: string, index: number) => <div className={stage === 'detail' ? 'option-detail-image-toolbar' : 'image-selected-actions'} role="group" aria-label={`${label} ${index + 1} 편집`}>
     {stage === 'detail' && knownProtection?.includes(key) && <small>상단·하단 설정 이미지 · 원본과 위치 유지</small>}
+    {stage==='detail'&&primaryDetailTools&&view&&row?.included&&mutableImage(key)&&view.imageKeys.includes(key)&&
+      <CodexMainImageButton stage="detail" uiReads={uiReads} onBeginSourceWrite={onBeginSourceWrite}
+        productId={productId} optionId={optionId} profileId={profileId} sourceKey={key} version={view.productVersion}
+        disabled={!active||locked||dirty||saved?.sourceKey!==sourceKey} onSaved={()=>{onSaved?.();void load();}}/>}
     {stage==='detail'?<><div className="option-detail-image-edit-actions" role="group" aria-label={`상세 이미지 ${index+1} 번역·수정`}>{imageEditActions(key,index)}</div><div className="option-detail-image-order-actions" role="group" aria-label={`상세 이미지 ${index+1} 순서·삭제`}>{imageOrderActions(key,index)}</div></>:<>{imageEditActions(key,index)}{imageOrderActions(key,index)}</>}
   </div>;
   const editGuidance=<><p>{instant ? buffered ? '＋ 추가로 이미지를 넣고 드래그 또는 ↑↓로 순서를 조정한 뒤 저장하세요.' : '＋ 추가로 이미지를 넣고 드래그 또는 ↑↓로 순서를 조정하세요. 추가·삭제·순서 변경은 바로 저장됩니다.' : '드래그 또는 ↑↓로 순서를 조정한 뒤 저장하세요.'} 선택한 이미지와 순서는 이 옵션의 견적서에만 저장합니다. 상품 공통 이미지와 다른 옵션은 유지됩니다.</p>

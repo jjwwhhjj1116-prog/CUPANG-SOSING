@@ -21,3 +21,25 @@ test('a different company cannot claim or complete the pending request; cancella
  const none=await m.dispatchCodexMainImageCommand('main-image/next',{},other,{channel,signal:controller.signal});assert.equal(none.job,null);
  controller.abort();await assert.rejects(pending);assert.equal(writes,0);
 });
+test('detail jobs use a separate channel and apply exactly one result to the claimed request',async()=>{
+ const m=load(),controller=new AbortController(),channel='test-'+crypto.randomUUID(),applied=[];
+ const pending=m.requestCodexMainImageEdit(job,scope,{stage:'detail',signal:controller.signal,channel,onApply:async file=>{applied.push(file);return{key:'owner/detail-result.png',productVersion:'2026-11-05T00:00:00Z'};}});
+ void pending.catch(()=>{});
+ try{
+  assert.equal((await m.dispatchCodexMainImageCommand('main-image/next',{},scope,{channel,signal:controller.signal})).job,null);
+  const picked=await m.dispatchCodexMainImageCommand('detail-image/next',{},scope,{channel,signal:controller.signal});
+  assert.equal(picked.job.sourceKey,job.sourceKey);
+  await m.dispatchCodexMainImageCommand('detail-image/complete',{requestId:picked.job.requestId,image},scope,{channel,signal:controller.signal});
+  assert.equal((await pending).key,'owner/detail-result.png');assert.equal(applied.length,1);
+ }finally{controller.abort();}
+});
+test('a claimed detail job can report worker failure without applying an upload',async()=>{
+ const m=load(),controller=new AbortController(),channel='test-'+crypto.randomUUID();
+ const pending=m.requestCodexMainImageEdit(job,scope,{stage:'detail',signal:controller.signal,channel,onApply:async()=>assert.fail('worker failure cannot upload')});
+ const failed=assert.rejects(pending,/Codex/);
+ try{
+  const picked=await m.dispatchCodexMainImageCommand('detail-image/next',{},scope,{channel,signal:controller.signal});
+  const ack=await m.dispatchCodexMainImageCommand('detail-image/fail',{requestId:picked.job.requestId,reason:'processing-failed'},scope,{channel,signal:controller.signal});
+  assert.equal(ack.failed,true);await failed;
+ }finally{controller.abort();}
+});

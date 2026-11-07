@@ -95,6 +95,55 @@ async function setup(local,snap){
  return {profile,input,api,product,base:'/api/products/'+product.id};
 }
 const json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
+test('new native intake maps product fields from saved SEO, member defaults and the selected option schema',async()=>{
+ const local=mobileIntakeHarness();
+ try{
+  const captured=snapshot(schemaCompanies[0],raw=>{
+   const product=raw.properties.productPage.properties;
+   const attribute=(name,value)=>({contains:{type:'object',required:['attributeName','attributeValue'],properties:{attributeName:{type:'string',enum:[name]},attributeValue:value}}});
+   const named=(...allOf)=>({type:'array',items:{},allOf});
+   product.commonAttributes.properties.exposedAttributes=named(attribute('색상',text('색상')),attribute('수량',text('수량')),attribute('패션의류/잡화 사이즈',text('사이즈',{enum:['Free','M']})));
+   product.unexposedAttributes=named(attribute('모델명/품번',text('모델명/품번')));
+  });
+  captured.nativeSerializationPolicy='supplier-hub-native-required-form-v1';
+  const f=await setup(local,captured);
+  const {content}=await json(await local.route(f.base+'/content'));
+  assert.equal(content.quotationWorkflow,'collected-native-v1');
+  const updated=local.load('app/product-content.ts').applyContentPatch(content,{seo:{title:'유앤채 필라테스 양말',keywords:['필라테스 양말','요가 양말']}},'2026-11-07T10:00:00.000Z');
+  const settings={...local.settings,brand:'유앤채, 보조 브랜드',tradeType:'공식총판사',taxType:'면세',importType:'수입대상아님'};
+  const {options}=await json(await local.route(f.base+'/options'));
+  options.rows[0].color='그린';options.rows[0].size='均码';options.rows[0].unitsPerPack=1;
+  const input={product:f.product,content:updated,settings,options,hubSchema:captured,categoryId:captured.categoryId,categoryPath:schemaPath};
+  const resolved=local.load('app/quotation-schema.ts').resolveQuotationFields(input);
+  assert.equal(resolved.schema.status,'observed',JSON.stringify(resolved.schema.unsupportedFields));
+  const row=resolved.rows[1],value=id=>row.fields[id].value,attribute=name=>resolved.schema.fields.find(field=>field.hubWire?.name===name);
+  assert.equal(value('title'),'유앤채 필라테스 양말');
+  assert.equal(value('model'),value('title'));assert.equal(value('brand'),'유앤채');assert.equal(value('manufacturer'),'유앤채 협력사');
+  assert.equal(value('tradeType'),'제조사');assert.equal(value('taxType'),'과세');assert.equal(value('importType'),'수입상품');
+  assert.equal(value('searchTags'),'필라테스 양말, 요가 양말');
+  assert.equal(value('barcodeMode'),'request-coupang');assert.equal(value('barcode'),'');
+  assert.deepEqual(['색상','수량','패션의류/잡화 사이즈'].map(name=>value(attribute(name).id)),['그린','1개','Free']);
+  assert.equal(row.fields[attribute('모델명/품번').id].source,'couplus-default');
+  assert.equal(value(attribute('모델명/품번').id),'');
+  assert.equal(row.productNameProposal.value,'유앤채 필라테스 양말 그린 1개 Free');
+  const missing=structuredClone(options);missing.rows[0].size='해당사항없음';
+  const invalid=local.load('app/quotation-schema.ts').resolveQuotationFields({...input,options:missing}).rows[1];
+  assert.equal(invalid.fields[attribute('패션의류/잡화 사이즈').id].value,'');
+  assert.ok(invalid.productNameProposal.missing.includes('패션의류/잡화 사이즈'));
+  const otherCategory = structuredClone(captured);
+  const otherSchema = JSON.parse(otherCategory.schemaString);
+  otherSchema.properties.productPage.properties.commonAttributes.properties.exposedAttributes.allOf.pop();
+  otherCategory.categoryId = '991235';
+  otherCategory.metadata.displayCategoryCode = otherCategory.categoryId;
+  otherCategory.categoryPath = [...schemaPath.slice(0,-1),'수량 전용'];
+  otherCategory.schemaString = JSON.stringify(otherSchema);
+  const other = local.load('app/quotation-schema.ts').resolveQuotationFields({...input,options:missing,
+    categoryId:otherCategory.categoryId,categoryPath:otherCategory.categoryPath,hubSchema:otherCategory});
+  assert.equal(other.schema.status,'observed');
+  assert.deepEqual(Array.from(other.schema.fields.filter(field=>field.visibility==='exposed'),field=>field.label),['색상','수량']);
+  assert.equal(other.rows[1].productNameProposal.value,'유앤채 필라테스 양말 그린 1개');
+ }finally{local.close();}
+});
 for(const company of schemaCompanies)test(`stage content and final wire cells reach the same reviewed CSV for ${company.code}`,async()=>{
  const local=mobileIntakeHarness({companyCode:company.code,companyName:company.name});try{
   const f=await setup(local,snapshot(company)),read=()=>local.route(f.base+'/quotation-fields').then(json);

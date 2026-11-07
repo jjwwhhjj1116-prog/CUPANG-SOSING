@@ -6,16 +6,26 @@ const load=quotationTitleLoader(),policy=load('app/quotation-field-notes.ts');
 const reminder='실제 상품·증빙과 일치하는지 확인해주세요.';
 const mutations=ui=>ui.calls.filter(call=>call.init?.method&&call.init.method!=='GET');
 
-test('quotation opens as five continuous input sections with advanced context collapsed, without unmounting inputs or drafts',async()=>{
+test('quotation shows exactly one of five steps and preserves drafts without a write when navigating',async()=>{
  const view=quotationPresentationFixture(),ui=quotationTitleUI({view});
- try{await ui.idle();const tree=ui.render(),visible=visibleNodes(tree),context=ui.nodes().find(node=>node.type==='details'&&node.props.className==='quotation-fields-context');
-  assert.ok(context);assert.ok(!context.props.open);assert.equal(visible.some(node=>node.type==='nav'),false);assert.equal(titleNodes(context).some(node=>node.type==='nav'),true);
-  assert.deepEqual(visible.filter(node=>node.type==='fieldset').map(node=>node.props['data-section']),['start','product','image','legal','logistics']);
-  assert.match(visibleText(tree),/쿠팡 등록 정보/);assert.doesNotMatch(visibleText(tree),/현재 옵션 필수 미입력|미저장 수정|공통 수정은 별도로/);
-  assert.equal(visible.some(node=>node.type==='select'&&titleText(node).includes('상품 공통값')),false);assert.ok(titleNodes(context).some(node=>node.type==='select'&&titleText(node).includes('상품 공통값')));
+ try{await ui.idle();
+  const stages=()=>ui.nodes().filter(node=>node.type==='fieldset'&&node.props['data-section']);
+  const assertStep=(id,index)=>{
+   assert.deepEqual(stages().filter(node=>!node.props.hidden).map(node=>node.props['data-section']),[id]);
+   assert.ok(stages().filter(node=>node.props.hidden).every(node=>node.props.disabled));
+   const nav=visibleNodes(ui.render()).find(node=>node.type==='nav'&&node.props['aria-label']==='견적서 단계');
+   const steps=titleNodes(nav).filter(node=>node.type==='button');
+   assert.equal(steps.length,5);assert.deepEqual(steps.flatMap((node,i)=>node.props['aria-current']==='step'?[i]:[]),[index]);
+   assert.equal(ui.button('이전').props.disabled,index===0);
+   assert.equal(ui.button('다음').props.disabled,index===4);
+  };
+  const move=label=>{ui.button(label).props.onClick();ui.render();};
+  assertStep('start',0);move('다음');assertStep('product',1);
   ui.field('model').props.onChange({target:{value:'작성 중 모델'}});ui.render();
-  const drafted=plain(ui.changes),expandedContext=ui.nodes().find(node=>node.type==='details'&&node.props.className==='quotation-fields-context');
-  assert.match(visibleText(expandedContext,new Set([expandedContext])),/미저장 수정/);assert.deepEqual(plain(ui.changes),drafted);assert.equal(ui.field('model').props.value,'작성 중 모델');assert.equal(mutations(ui).length,0);
+  const drafted=plain(ui.changes);
+  move('다음');assertStep('image',2);move('다음');assertStep('legal',3);move('다음');assertStep('logistics',4);
+  move('이전');assertStep('legal',3);move('이전');move('이전');assertStep('product',1);
+  assert.deepEqual(plain(ui.changes),drafted);assert.equal(ui.field('model').props.value,'작성 중 모델');assert.equal(mutations(ui).length,0);
  }finally{ui.close();}
 });
 
@@ -166,10 +176,11 @@ test('prominent AI action requests the mounted tool once and reveals review; sta
  }finally{busyUI.close();}
 });
 
-test('quotation primary actions show only apply-all and accessible Save; option selector and submission entry remain mounted supplementary tools',async()=>{
+test('quotation primary actions include step navigation and accessible Save, with a separate submission entry',async()=>{
  const ui=quotationTitleUI({view:quotationPresentationFixture()});try{await ui.idle();const tree=ui.render(),heading=ui.nodes().find(node=>node.props?.className==='quotation-fields-heading'),context=ui.nodes().find(node=>node.props?.className==='quotation-fields-context');
   assert.equal(titleNodes(heading).some(node=>node.type==='select'),false);assert.equal(titleNodes(context).filter(node=>node.type==='select').length,1);
-  const actions=ui.nodes().find(node=>node.props?.className==='quotation-fields-actions'),buttons=titleNodes(actions).filter(node=>node.type==='button');assert.equal(buttons.length,1);assert.equal(titleText(buttons[0]),'저장');assert.equal(buttons[0].props['aria-label'],'견적 입력 저장');
+  const actions=ui.nodes().find(node=>node.props?.className==='quotation-fields-actions'),buttons=titleNodes(actions).filter(node=>node.type==='button');
+  assert.deepEqual(buttons.map(titleText),['이전','다음','저장']);assert.equal(buttons[2].props['aria-label'],'견적 입력 저장');
   const review=ui.button('견적 검토·전송'),submission=ui.nodes().find(node=>node.props?.className==='quotation-submission-tools');assert.ok(review);assert.ok(submission);assert.equal(titleNodes(actions).includes(review),false);assert.equal(ui.nodes().filter(node=>node.type?.name==='SupplierHubSingleReview').length,1);assert.equal(mutations(ui).length,0);
   assert.ok(visibleNodes(tree).some(node=>node===review));
  }finally{ui.close();}

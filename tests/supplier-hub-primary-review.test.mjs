@@ -97,9 +97,46 @@ for (const company of companies) test(`${company.code}: actual primary route rea
     assert.deepEqual(plain(transport.props.review.members), f.sourcePlan.identity.members);
     assert.equal(transport.props.review.members.length, 2); assert.equal(transport.props.review.registered, false);
     const fresh = await transport.props.refresh(new AbortController().signal); assert.equal(fresh.reviewDigest, transport.props.review.reviewDigest);
-    assert.equal(ui.calls.filter(call => call.url === f.sourcePath).length, 5); assertReadOnlyPrimary(ui);
+    assert.equal(ui.calls.filter(call => call.url === f.sourcePath).length, 3); assertReadOnlyPrimary(ui);
     assert.equal(f.state(), before); assert.equal(f.objectState(), images); assert.deepEqual(f.h.network, []);
     assert.equal([...f.h.objects.keys()].some(key => key.startsWith('quotation-public-detail/')), false);
+  } finally { ui?.close(); f.close(); }
+});
+
+test('registration review reuses the latest saved quotation values and selected image without copying or submitting', async () => {
+  const f = await nativeReviewFixture(); let ui;
+  try {
+    const before = await f.fields();
+    const fields = before.resolved.schema.fields;
+    const target = (path, name) => fields.find(field => field.hubWire?.path.join('.') === path && field.hubWire.name === name).id;
+    const edits = [
+      [target('productPage.modelNumber'), null, '저장한 모델명'],
+      [target('productPage.commonAttributes.exposedAttributes', '색상'), 'synthetic-one', '흰색'],
+      [target('productPage.commonAttributes.purchasePrice'), 'synthetic-one', '12960'],
+      [target('imagePage.images.mainImage'), 'synthetic-one', f.keys[7]],
+      [target('legalPage.notices', '소재'), null, '저장한 소재'],
+      [target('logisticsPage.totalSKUsInBox'), null, '50'],
+    ].map(([fieldKey, optionId, value]) => ({ fieldKey, optionId, value }));
+    const changes = f.h.load('app/quotation-price-edits.ts').quotationPriceEditChanges(fields, edits);
+    const view = await json(await f.h.route(f.fieldsPath, { method: 'PUT', body: {
+      expectedRevision: before.revision, expectedInputFingerprint: before.inputFingerprint, changes,
+    } }));
+    assert.equal(view.revision, before.revision + 1);
+    const latest = await f.source();
+    assert.equal(latest.metadataValid, true, JSON.stringify(latest.issues));
+    ui = primaryUi({ ...primaryProps(f), view }, f.request);
+    await ui.idle(); await ui.click(openLabel);
+    const review = ui.transport().props.review, [edited, other] = review.body.jsonDocument;
+    assert.equal(review.identity.source.quotationRevision, view.revision);
+    assert.equal(edited.productPage.modelNumber, '저장한 모델명');
+    assert.equal(edited.productPage.commonAttributes.exposedAttributes[0].attributeValue, '흰색');
+    assert.equal(other.productPage.commonAttributes.exposedAttributes[0].attributeValue, '검정');
+    assert.equal(edited.productPage.commonAttributes.purchasePrice, '12960');
+    assert.equal(other.productPage.commonAttributes.purchasePrice, '11960');
+    assert.equal(edited.imagePage.images.mainImage, latest.images.find(image => image.key === f.keys[7]).transportName);
+    assert.ok(edited.legalPage.notices.some(notice => notice.noticeItemName === '소재' && notice.noticeItemValue === '저장한 소재'));
+    assert.equal(String(edited.logisticsPage.totalSKUsInBox), '50');
+    assertReadOnlyPrimary(ui); assert.deepEqual(f.h.network, []);
   } finally { ui?.close(); f.close(); }
 });
 

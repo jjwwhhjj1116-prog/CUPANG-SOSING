@@ -11,14 +11,15 @@
 .quotation-fields-category small { margin-top: 5px; }
 .quotation-fields-section-nav { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
 .quotation-fields-section-nav button { min-width: 0; padding: 11px 5px; display: grid; gap: 5px; justify-items: center; border: 1px solid #e1e6ef; border-radius: 10px; color: #526079; background: #fff; font-size: 12px; }
-.quotation-fields-section-nav button[aria-pressed=true] { background: #edf3ff; border-color: #82a8f6; color: #2457b5; }
+.quotation-fields-section-nav button[aria-current=step] { background: #edf3ff; border-color: #82a8f6; color: #2457b5; }
 .quotation-fields-section-nav button b { display: grid; place-items: center; width: 23px; height: 23px; border-radius: 50%; background: #f0f3f8; font-size: 12px; }
-.quotation-fields-section-nav button[aria-pressed=true] b { color: #fff; background: #3778ff; }
+.quotation-fields-section-nav button[aria-current=step] b { color: #fff; background: #3778ff; }
 .quotation-fields-section-nav button small { font-size: 10px; color: inherit; }
 .quotation-fields-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
 .quotation-fields-toolbar .field { flex: 1; min-width: 160px; }
 .quotation-fields-toolbar small { flex-basis: 100%; }
 .quotation-fields-section { border: 1px solid #e0e6ef; border-radius: 12px; background: #fff; overflow: hidden; }
+.quotation-fields-section[hidden] { display: none; }
 .quotation-fields-section>header { padding: 14px 16px; border-bottom: 1px solid #e9edf4; background: #f1f6ff; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .quotation-fields-section>header h4 { font-size: 14px; color: #2857a4; flex: 1; }
 .quotation-fields-section>header small { font-size: 12px; }

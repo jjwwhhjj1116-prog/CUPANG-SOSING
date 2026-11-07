@@ -35,8 +35,8 @@ test('recorded and returned snapshots never share mutable arrays or region geome
   const replay = redo(restored.history, restored.regions);
   assert.equal(replay.regions[0].translated, '다음');
   replay.regions[0].box.x = 999;
-  assert.equal(restored.history.future[0][0].box.x, 1);
-  assert.equal(history.past[0][0].box.x, 1);
+  assert.equal(restored.history.future[0].regions[0].box.x, 1);
+  assert.equal(history.past[0].regions[0].box.x, 1);
 });
 
 test('typing in one focus session is one undo action and blur starts a separate action', () => {
@@ -62,7 +62,7 @@ test('brush history owns every point array/object and undo/redo never share muta
   const replay = redo(restored.history, restored.regions);
   assert.deepEqual(plain(replay.regions[0].brush), { size: 8, points: [{ x: 4, y: 5 }, { x: 10, y: 11 }] });
   replay.regions[0].brush.points[1].x = 555;
-  assert.equal(restored.history.future[0][0].brush.points[1].x, 10); assert.equal(history.past[0][0].brush.points[0].y, 3);
+  assert.equal(restored.history.future[0].regions[0].brush.points[1].x, 10); assert.equal(history.past[0].regions[0].brush.points[0].y, 3);
 });
 
 test('brush structural no-ops preserve redo while point order/diameter changes and invalid drafts remain distinct', () => {

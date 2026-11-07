@@ -13,7 +13,7 @@ yoofam-studio.cmd status
 yoofam-studio.cmd start
 ```
 
-현재 패키지 버전은 **0.1.2**입니다. `status`는 설치된 패키지와 Node.js 버전만 확인합니다. 서버 실행 여부나 YOOFAM 로그인 상태를 조회하지 않습니다. 앱 연결을 확인하려면 `start`로 실행한 뒤 출력되는 연결 주소를 현재 Chrome에서 여세요. **실행한 PowerShell을 열어 두어야 하며 Ctrl+C로 종료합니다.** 백그라운드 서비스나 자동 시작 항목을 설치하지 않습니다.
+현재 패키지 버전은 **0.1.4**입니다. `status`는 설치된 패키지와 Node.js 버전만 확인합니다. 서버 실행 여부나 YOOFAM 로그인 상태를 조회하지 않습니다. 앱 연결을 확인하려면 `start`로 실행한 뒤 출력되는 연결 주소를 현재 Chrome에서 여세요. **실행한 PowerShell을 열어 두어야 하며 Ctrl+C로 종료합니다.** 백그라운드 서비스나 자동 시작 항목을 설치하지 않습니다.
 
 `npm.cmd`와 `yoofam-studio.cmd`는 Windows용 명령입니다. macOS에서는 각각 `npm`, `yoofam-studio`를 사용합니다. `start`와 `serve`는 같은 명령입니다. `yoofam-studio --help`로 명령을 확인할 수 있습니다.
 
@@ -89,6 +89,14 @@ MCP 등록 형식: [공식 Codex MCP 안내](https://developers.openai.com/codex
 ```
 
 HTTP에는 작업 추가 경로가 없습니다. 작업 추가는 같은 프로세스의 표준 입력 또는 `createCliServer().enqueue()`만 허용합니다. 임의 URL, 앱 경로, JavaScript, 셸 명령, 상품 수정·전송 명령은 거절합니다.
+
+## Codex 상세 이미지 자동 번역
+
+이 PC에서 로그인된 Codex CLI의 이미지 편집 도구를 사용할 수 있어야 합니다. 기존 YOOFAM CLI를 종료하고 `yoofam-studio start --auto-detail`로 실행한 뒤 브라우저에서 같은 계정과 회사로 연결하세요. Windows에서는 `yoofam-studio.cmd`를 사용합니다.
+
+상세 단계의 저장된 본문 이미지에서 **코덱스 상세페이지 중국어 번역해서 다시 업로드하기**를 누르면 선택한 이미지 한 장만 처리합니다. Codex가 4MB 이하 PNG 또는 JPEG 결과를 만들면 원래 옵션의 같은 위치에 업로드하고 원본 파일을 보관합니다. 저장 대상이나 양식 버전이 바뀌면 연결을 중단합니다. 편집기가 닫히거나 취소된 요청에는 결과를 적용할 수 없습니다.
+
+수동 MCP 실행에서는 `detail_image_next`로 참조 이미지를 받고 `detail_image_complete`에 원래 `requestId`와 결과의 절대 `filePath`를 전달합니다.
 
 ## 브라우저 연결 프로토콜 1.0
 

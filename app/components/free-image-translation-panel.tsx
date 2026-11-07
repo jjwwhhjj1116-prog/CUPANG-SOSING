@@ -5,7 +5,7 @@ import type {UiMutation} from '@/app/registration-ui-reads';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { FREE_IMAGE_ROLES, MAX_OCR_REGIONS, type FreeImageRole } from '@/app/free-image-translation';
 import { freeImageFontFamilies } from '@/app/free-image-text-style';
-import { createFreeImageEditHistory, endFreeImageEditGroup, moveFreeImageEditRegion, recordFreeImageEdit, redoFreeImageEdit, undoFreeImageEdit } from '@/app/free-image-edit-history';
+import { createFreeImageEditHistory, endFreeImageEditGroup, moveFreeImageEditRegion, recordFreeImageEdit, redoFreeImageEdit, sameFreeImageEditCrop, undoFreeImageEdit } from '@/app/free-image-edit-history';
 import { createFreeImageBrush, MAX_FREE_IMAGE_BRUSH_POINTS, MAX_FREE_IMAGE_BRUSH_TOTAL_POINTS, type FreeImageBrushPoint } from '@/app/free-image-brush';
 import { FreeImageBrushCanvas } from '@/app/components/free-image-brush-canvas';
 import { FreeImageCropCanvas } from '@/app/components/free-image-crop-canvas';
@@ -82,7 +82,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
   const [cropMode, setCropMode, liveCropMode] = useLiveDraft(false);
   const [cropDrawing, setCropDrawing, liveCropDrawing] = useLiveDraft(false);
   const [cropGeneration, setCropGeneration, liveCropGeneration] = useLiveDraft(0);
-  const [regionHistory, setRegionHistory, liveRegionHistory] = useLiveDraft(createFreeImageEditHistory());
+  const [editHistory, setEditHistory, liveEditHistory] = useLiveDraft(createFreeImageEditHistory());
   const [brushMode, setBrushMode, liveBrushModeRef] = useLiveDraft(false);
   const [brushSize, setBrushSize, liveBrushSizeRef] = useLiveDraft(20);
   const [brushColor, setBrushColor, liveBrushColorRef] = useLiveDraft('#ffffff');
@@ -257,7 +257,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     if (work?.kind === 'save' && pendingSave.current) { setUncertain(true); setNotice('저장 응답을 기다리던 작업을 취소했습니다. 같은 미리보기로 저장 상태를 다시 확인해주세요.'); }
     else if (showNotice) setNotice('이미지 작업을 취소했습니다. 원본과 저장된 이미지 역할은 유지됩니다.');
   }
-  function resetRegions(rows: FreeImageRegion[]) { setRegionGeneration(value => value + 1); setRegionHistory(createFreeImageEditHistory()); setRegions(rows); }
+  function resetRegions(rows: FreeImageRegion[]) { setRegionGeneration(value => value + 1); setEditHistory(createFreeImageEditHistory()); setRegions(rows); }
   function cancelBrush(id = pendingBrushRef.current?.id) {
     if (!id || pendingBrushRef.current?.id !== id) return;
     pendingBrushRef.current = null;
@@ -365,7 +365,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       && regionGenerationRef.current === renderedRegionGeneration && liveCropGeneration.current === cropGeneration && focusedTarget() && editorCurrent() && Boolean(currentImage);
   }
   function recordRegions(next: FreeImageRegion[], group: string | null = null) {
-    setRegionHistory(recordFreeImageEdit(liveRegionHistory.current, liveRegions.current, next, group));
+    setEditHistory(recordFreeImageEdit(liveEditHistory.current, liveRegions.current, next, group, liveCrop.current));
     setRegions(next); setRendered(null);
   }
   function editRegion(id: string, patch: Partial<FreeImageRegion>, group: string | null = null) {
@@ -386,13 +386,19 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     }));
   }
   function endRegionEditGroup() {
-    if (canEditRegions()) setRegionHistory(endFreeImageEditGroup(liveRegionHistory.current));
+    if (canEditRegions()) setEditHistory(endFreeImageEditGroup(liveEditHistory.current));
   }
-  function moveRegionHistory(direction: 'undo' | 'redo') {
+  function moveEditHistory(direction: 'undo' | 'redo') {
     if (!canEditRegions()) return;
-    const result = direction === 'undo' ? undoFreeImageEdit(liveRegionHistory.current, liveRegions.current) : redoFreeImageEdit(liveRegionHistory.current, liveRegions.current);
+    const currentCrop = liveCrop.current;
+    const move = direction === 'undo' ? undoFreeImageEdit : redoFreeImageEdit;
+    const result = move(liveEditHistory.current, liveRegions.current, currentCrop);
     if (!result) return;
-    setRegionGeneration(value => value + 1); setRegionHistory(result.history); setRegions(result.regions); setRendered(null);
+    setRegionGeneration(value => value + 1);
+    setEditHistory(result.history);
+    setRegions(result.regions);
+    if (!sameFreeImageEditCrop(currentCrop, result.crop)) setCropDraft(result.crop);
+    setRendered(null);
   }
   function reorderRegion(id: string, direction: -1 | 1) {
     if (!canEditRegions()) return;
@@ -403,8 +409,18 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     recordRegions(liveRegions.current.filter(row => row.id !== id));
   }
   function editCrop(next: FreeImageCropRect | null) {
-    if (!canEditRegions() || JSON.stringify(liveCrop.current) === JSON.stringify(next)) return;
-    setCrop(next ? { ...next } : null); setCropGeneration(value => value + 1); setRendered(null); setError('');
+    if (!canEditRegions()) return;
+    const rows = liveRegions.current;
+    const history = recordFreeImageEdit(liveEditHistory.current, rows, rows, null, liveCrop.current, next);
+    if (history === liveEditHistory.current) return;
+    setEditHistory(history);
+    setCropDraft(next);
+    setRendered(null);
+  }
+  function setCropDraft(next: FreeImageCropRect | null) {
+    setCrop(next ? { ...next } : null);
+    setCropGeneration(value => value + 1);
+    setError('');
     if (next && currentImage) {
       try { validateFreeImageCropRect(next, currentImage.width, currentImage.height); }
       catch (cause) { setError(cause instanceof Error ? cause.message : '잘라내기 영역을 확인해주세요.'); }
@@ -808,8 +824,8 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
         onBegin={beginBrush} onComplete={completeBrush} onCancel={cancelBrush} /></div>}
     </div>}
     {loaded && <div className="actions">
-      <button type="button" className="btn" disabled={locked || !currentImage || !regionHistory.past.length} onClick={() => moveRegionHistory('undo')}>되돌리기</button>
-      <button type="button" className="btn" disabled={locked || !currentImage || !regionHistory.future.length} onClick={() => moveRegionHistory('redo')}>다시 실행</button>
+      <button type="button" className="btn" disabled={locked || !currentImage || !editHistory.past.length} onClick={() => moveEditHistory('undo')}>되돌리기</button>
+      <button type="button" className="btn" disabled={locked || !currentImage || !editHistory.future.length} onClick={() => moveEditHistory('redo')}>다시 실행</button>
     </div>}
     {loaded?.source.optionImages && <fieldset disabled={locked} aria-label="번역 대표 이미지의 옵션 적용 범위">
       <legend>옵션 대표 이미지에 함께 적용</legend>

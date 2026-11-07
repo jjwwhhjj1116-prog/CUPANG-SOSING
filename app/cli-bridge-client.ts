@@ -124,7 +124,7 @@ export function createCliBridge(options:{link:CliLink;scope:CliScope;queryApprov
   await checkScope(generation,'verify',true);let result:unknown;let reply:JsonRecord;const queryController=job.command==='product-query'?new AbortController():null;
   try{
    if(job.deadline<=now())throw new CliBridgeError('JOB_EXPIRED','CLI 요청의 유효 시간이 끝났습니다.');
-   if(['main-image/next','main-image/complete'].includes(job.command)){
+   if(['main-image/next','main-image/complete','detail-image/next','detail-image/complete','detail-image/fail'].includes(job.command)){
     if(!options.imageEditCommand)throw new CliBridgeError('IMAGE_EDIT_UNAVAILABLE','Codex 이미지 연결을 지원하는 스튜디오로 새로고침해주세요.');
     const edited=await options.imageEditCommand(job.command,job.payload,scope,AbortSignal.any([controller.signal,AbortSignal.timeout(Math.max(1,job.deadline-now()))]));current(generation);result={...edited,...scope};
    }else{
@@ -157,9 +157,13 @@ export function createCliBridge(options:{link:CliLink;scope:CliScope;queryApprov
   // An uncertain /result response stops the session; it is never replayed as a second result.
   await deliver(job,generation,reply);
   if(reply.ok!==true){emit({phase:'connected',message:object(reply.error)&&typeof reply.error.message==='string'?reply.error.message:'요청 결과를 확인하지 못했습니다.'});return;}
+  if(job.command==='detail-image/next'&&object(result)&&result.job===null)return;
   const source=object(result)&&object(result.source)?result.source:null;
   const service=job.command==='status'&&object(result)&&object(result.service)?result.service:null;
-  emit({phase:'connected',message:job.command==='main-image/complete'?'요청한 옵션의 대표이미지를 저장했습니다.':job.command==='main-image/next'?'Codex 대표이미지 요청을 확인했습니다.':job.command==='product-query'?'상품조회가 끝났습니다. 수집함 저장과 초안 생성은 아직 하지 않았습니다.':'CLI 읽기 요청을 처리했습니다.',lastResult:{command:job.command,...(source&&typeof source.title==='string'?{title:source.title.slice(0,200)}:{}),...(source&&Array.isArray(source.options)?{optionCount:source.options.length}:{}),...(service?{provider:String(service.provider),configured:service.configured===true,liveVerified:false as const}:{}),stored:job.command==='main-image/complete'}});
+  const detailMessage=job.command==='detail-image/complete'?'요청한 옵션의 상세 번역 이미지를 저장했습니다.'
+    :job.command==='detail-image/next'?'Codex 상세 이미지 요청을 확인했습니다.'
+    :job.command==='detail-image/fail'?'Codex 상세 이미지 작업이 종료됐습니다.':'';
+  emit({phase:'connected',message:detailMessage||(job.command==='main-image/complete'?'요청한 옵션의 대표이미지를 저장했습니다.':job.command==='main-image/next'?'Codex 대표이미지 요청을 확인했습니다.':job.command==='product-query'?'상품조회가 끝났습니다. 수집함 저장과 초안 생성은 아직 하지 않았습니다.':'CLI 읽기 요청을 처리했습니다.'),lastResult:{command:job.command,...(source&&typeof source.title==='string'?{title:source.title.slice(0,200)}:{}),...(source&&Array.isArray(source.options)?{optionCount:source.options.length}:{}),...(service?{provider:String(service.provider),configured:service.configured===true,liveVerified:false as const}:{}),stored:job.command==='main-image/complete'||job.command==='detail-image/complete'}});
  }
  async function poll(generation:number){
   // start() just verified the pair ACK. The first poll only reads the local

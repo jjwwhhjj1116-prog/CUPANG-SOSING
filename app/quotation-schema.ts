@@ -30,7 +30,8 @@ import {validateOfficialWorkbookFields} from '@/app/official-workbook-field-desc
 import {validateOfficialWorkbookEvidence} from '@/app/official-workbook-evidence';
 import { quotationPriceInputs, quotationPriceTargets, quotationIndependentOptionalOsrp } from '@/app/quotation-price-targets';
 import { quotationSeoDocumentTitle } from '@/app/seo-title-document';
-import { isProductSizeAttribute, productSizeValue, proposeProductName, type ProductNameProposal } from '@/app/product-name-proposal';
+import { isProductSizeAttribute, matchingSellingQuantity, productSizeValue, proposeProductName, supplierHubDisplayedProductName, supplierHubProductNameIssue, type ProductNameProposal } from '@/app/product-name-proposal';
+import { registrationBrandChoices } from '@/app/quotation-brand-choices';
 import type { DetailEditorInputs } from '@/app/detail-editor-inputs';
 import { productLabelFields, validateProductLabelOverrides, validateProductLabelStructure, type ProductLabelsState, type ProductLabelFixedKey } from '@/app/product-label';
 import type { StageTwoMsrp } from '@/app/stage-two-msrp';
@@ -459,6 +460,9 @@ export function resolveQuotationFieldsPair(input: QuotationResolverInput): { aut
 function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema: QuotationSchema, nativeColorId: string | undefined): ResolvedQuotation {
   const { product, settings } = input;
   const content={...input.content,label:prioritizedContentLabelFields(input.content)};
+  const nativeWorkflow = content.quotationWorkflow === 'collected-native-v1' && schema.status === 'observed'
+    && input.hubSchema?.nativeSerializationPolicy === 'supplier-hub-native-required-form-v1';
+  const memberBrand = nativeWorkflow ? registrationBrandChoices(settings.brand)[0] ?? '' : '';
   const detail=productFactDetailDescription(content);
   const detailAttributes=prioritizedProductAttributes(['generated','unverified'].includes(detail.provenance)?'':detail.value,
     schema.fields.filter(field=>field.section==='product'&&field.visibility!=='common').map(field=>({name:field.label,value:''})));
@@ -597,16 +601,17 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
     const titleSource = content.seo.title.provenance === 'manual' || content.seo.title.value ? 'content' as const : 'product' as const;
     const pricing = option ? prices.find(row => row.optionId === option.id) : null;
     switch (id) {
-      case 'title': return { value: quotationSeoDocumentTitle(content, title, option), source: titleSource };
+      case 'title': return { value: nativeWorkflow ? title : quotationSeoDocumentTitle(content, title, option), source: titleSource };
       case 'category': return literal(schema.categoryId ? `${schema.categoryPath.join(' > ')}${schema.categoryPath.length ? ' ' : ''}(${schema.categoryId})` : '', 'schema');
       // A fresh Couplus 80719 draft leaves this blank even after SEO completes.
       // The form's instruction to enter a name is not an automatic default.
-      case 'model': return contentValue(content.label.model);
-      case 'brand': return settingValue(settings.brand);
-      case 'manufacturer': return contentValue(content.label.manufacturer, settings.manufacturer);
-      case 'tradeType': return settingValue(settings.tradeType);
-      case 'taxType': return literal(settings.taxType, 'settings');
-      case 'importType': return settingValue(settings.importType);
+      case 'model': return nativeWorkflow ? { value: title, source: titleSource } : contentValue(content.label.model);
+      case 'brand': return nativeWorkflow ? literal(memberBrand, 'settings') : settingValue(settings.brand);
+      case 'manufacturer': return nativeWorkflow ? literal(memberBrand && `${memberBrand} 협력사`, 'settings') : contentValue(content.label.manufacturer, settings.manufacturer);
+      case 'tradeType': return nativeWorkflow ? literal('제조사', 'settings') : settingValue(settings.tradeType);
+      case 'taxType': return literal(nativeWorkflow ? '과세' : settings.taxType, 'settings');
+      case 'importType': return nativeWorkflow ? literal('수입상품', 'settings') : settingValue(settings.importType);
+      case 'barcodeMode': return nativeWorkflow ? literal('request-coupang', 'settings') : literal('', 'empty');
       case 'searchTags': return literal(quotationSeoKeywordText(content), 'content');
       case 'supplyPrice': case 'salePrice': case 'msrp': {
         if (!option) return literal(id === 'supplyPrice' ? product.supply_price : id === 'salePrice' ? product.sale_price : product.msrp, 'product');
@@ -683,8 +688,8 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
         return { value: '', source: entered || cleared ? 'option' : 'empty', issues: entered ? ['포장 가로·세로·높이를 모두 입력해주세요(mm).'] : [] };
       }
       case 'boxSkuQuantity': return literal(settings.boxSkuQuantity, 'settings');
-      case 'shelfLifeDays': return literal(settings.shelfLifeDays, 'settings');
-      case 'handlingReason': return settingValue(settings.handlingReason);
+      case 'shelfLifeDays': return literal(nativeWorkflow ? 0 : settings.shelfLifeDays, 'settings');
+      case 'handlingReason': return nativeWorkflow ? literal(settings.handlingReason === '유리' ? '유리' : '해당사항없음', 'couplus-default') : settingValue(settings.handlingReason);
       // Product facts never come from category names. The subsequent draft
       // initializer can supply recorded form defaults with separate provenance.
       default: return literal('', 'empty');
@@ -718,7 +723,11 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
       noticeQualityAssurance: 'qualityAssurance', noticeReleaseDate: 'releaseDate', noticeCaution: 'precautions', noticeKind: 'productType',
       noticeSpecifications: 'specifications', noticeSizeWeight: 'dimensions',
     };
-    if (notice === 'noticeManufacturerImporter') {
+    if (nativeWorkflow && notice === 'noticeManufacturerImporter') {
+      current = literal(memberBrand && `${memberBrand} 협력사`, 'settings');
+    } else if (nativeWorkflow && notice === 'noticeServiceContact') {
+      current = literal('1577-7011', 'settings');
+    } else if (notice === 'noticeManufacturerImporter') {
       const manufacturer = labelSource('manufacturer', option, settings.manufacturer), importer = labelSource('importer', option, settings.importer);
       current = { value: [manufacturer.value && `제조자: ${manufacturer.value}`, importer.value && `수입자: ${importer.value}`].filter(Boolean).join(' / '),
         source: manufacturer.source === 'content' || importer.source === 'content' ? 'content' : manufacturer.value || importer.value ? 'settings' : 'empty' };
@@ -800,6 +809,25 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
       if(automatic.source==='couplus-default')automatic={...automatic,value:couplusNotApplicableWireValue(definition,automatic.value)};
       const explicitSeoDefault=explicitSeoDefaultFor(definition,automatic);
       if(explicitSeoDefault!==null&&!quotationValueIssues(definition,explicitSeoDefault,ownedKeys,'content').length)automatic={value:explicitSeoDefault,source:'content'};
+      if (nativeWorkflow && isNamedExposedOption(definition)) {
+        const raw = definition.label === '색상' ? option?.color
+          : isProductSizeAttribute(definition.label) ? option && productSizeValue(option.size ?? '')
+            : definition.label === '수량' && option ? String(option.unitsPerPack) : undefined;
+        const candidates = option && raw && definition.label === '수량' ? [matchingSellingQuantity(automatic.value, option.unitsPerPack), `${raw}개`, raw] : [raw];
+        const mapped = candidates.flatMap(value => value ? [
+          value, ...(definition.choices ?? []).filter(choice => choice.label === value).map(choice => choice.value),
+        ] : []).find(value => !/\p{Script=Han}/u.test(value) && !quotationValueIssues(definition, value, ownedKeys).length);
+        if (mapped) automatic = literal(mapped, 'option');
+        else if (isCouplusNotApplicableValue(automatic.value) || isProductSizeAttribute(definition.label) && !productSizeValue(automatic.value)) automatic = literal('', 'empty');
+      }
+      if (nativeWorkflow && definition.visibility === 'hidden' && definition.section === 'product' && definition.hubWire?.name
+        && ['productPage.unexposedAttributes', 'productPage.commonAttributes.unexposedAttributes'].includes(definition.hubWire.path.join('.'))) {
+        const value = couplusNotApplicableWireValue(definition, '해당사항없음');
+        if (definition.choices?.some(choice => choice.value === value)) automatic = { value, source: 'couplus-default' };
+        else if (!definition.required || definition.choices?.some(choice => choice.value === '')) automatic = { value: '', source: 'couplus-default' };
+        else if (!quotationValueIssues(definition, value, ownedKeys).length) automatic = { value, source: 'couplus-default' };
+        else automatic = literal('', 'empty');
+      }
       const manualOption = !definition.readOnly && specific && Object.hasOwn(specific, definition.id);
       const manualCommon = !definition.readOnly && Object.hasOwn(overrides.common, definition.id);
       const weightManual = quotationPackagedWeightManual(schema.fields, definition.id, optionId, (layer, id) => {
@@ -880,7 +908,19 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
       return cell && ['option', 'manual-option', 'manual-common', 'content'].includes(cell.source) ? cell.value : saved;
     };
     const savedColor = exposedColor && fields[exposedColor.id];
-    const productNameProposal = option ? proposeProductName({
+    const nativeName = nativeWorkflow && option ? {
+      startPage: { productName: fields.title.value },
+      productPage: { exposedAttributes: exposedOptions.map(field => ({
+        attributeName: field.label, attributeValue: fields[field.id].validationIssues?.length ? '' : fields[field.id].value,
+      })) },
+    } : null;
+    const productNameProposal = nativeName ? {
+      value: supplierHubDisplayedProductName(nativeName),
+      missing: [
+        ...(!fields.title.value.trim() || supplierHubProductNameIssue([{ startPage: nativeName.startPage }]) ? ['상품명'] : []),
+        ...nativeName.productPage.exposedAttributes.filter(attribute => supplierHubProductNameIssue([{ productPage: { exposedAttributes: [attribute] } }])).map(attribute => attribute.attributeName),
+      ],
+    } : option ? proposeProductName({
       brand: fields.brand.value,
       productName: fields.title.source.startsWith('manual-') ? fields.title.value : savedTextOrFallback(content.seo.title, product.title),
       color: savedColor?.source === 'generated' && !savedColor.validationIssues?.length

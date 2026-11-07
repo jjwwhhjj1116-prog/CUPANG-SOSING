@@ -1,5 +1,7 @@
 const notApplicable = /해당\s*(?:사항\s*)?없음/u;
 const sizePlaceholder = /^(?:상세\s*(?:페이지|설명|정보)\s*참조|미확인|미입력|확인\s*필요)$/u;
+const missingValue = /^(?:n\s*\/\s*a|not\s+applicable|미확인|미입력|확인\s*필요)[.!]?$/iu;
+const detailReference = /^(?:(?:상품|제품)?\s*상세\s*(?:페이지|설명|정보)?(?:를|을)?\s*(?:참조|참고)|(?:see|refer\s+to)\s+(?:the\s+)?(?:product\s+)?details?(?:\s+page)?)[.!]?$/iu;
 const sizeNames = new Set(['사이즈', '패션의류/잡화 사이즈', '스포츠 의류/잡화 사이즈']);
 
 export function isProductSizeAttribute(name: string) {
@@ -58,7 +60,9 @@ function supplierHubNameParts(document: unknown) {
     .flatMap(value => Array.isArray(value) ? value : [])
     .map(value => {
       const entry = record(value), name = entry.attributeName ?? entry.name, attributeValue = Object.hasOwn(entry, 'attributeValue') ? entry.attributeValue : entry.value;
-      return { name: typeof name === 'string' ? name : '', value: typeof attributeValue === 'string' || typeof attributeValue === 'number' ? String(attributeValue).trim() : '' };
+      const scalar = typeof attributeValue === 'string' || typeof attributeValue === 'boolean'
+        || typeof attributeValue === 'number' && Number.isFinite(attributeValue);
+      return { name: typeof name === 'string' ? name : '', value: scalar ? String(attributeValue).trim() : '' };
     });
   return { base: typeof base === 'string' ? base.trim() : '', attributes };
 }
@@ -66,9 +70,12 @@ function supplierHubNameParts(document: unknown) {
 export function supplierHubProductNameIssue(documents: readonly unknown[]): string {
   for (const document of documents) {
     const { base, attributes } = supplierHubNameParts(document);
-    if (attributes.some(({ name, value }) => isProductSizeAttribute(name) && !productSizeValue(value)))
+    const invalid = attributes.find(({ value }) => !value || notApplicable.test(value) || missingValue.test(value) || detailReference.test(value));
+    if (invalid && isProductSizeAttribute(invalid.name))
       return '견적서의 노출 사이즈에 실제 사이즈를 입력해주세요. 단일 사이즈로 확인된 경우 Free를 입력할 수 있습니다.';
-    if (notApplicable.test(base) || attributes.some(({ value }) => notApplicable.test(value)))
+    if (invalid)
+      return `견적서의 노출 속성${invalid.name ? `(${invalid.name})` : ''}에 실제 옵션값을 입력해주세요.`;
+    if (notApplicable.test(base))
       return '상품명에 붙는 노출 옵션에서 해당사항없음 값을 확인하고 실제 옵션값으로 수정해주세요.';
   }
   return '';
@@ -78,5 +85,5 @@ export function supplierHubProductNameIssue(documents: readonly unknown[]): stri
  * and legal notices do not take part in this preview. */
 export function supplierHubDisplayedProductName(document: unknown) {
   const { base, attributes } = supplierHubNameParts(document);
-  return base && !supplierHubProductNameIssue([document]) ? [base, ...attributes.map(({ value }) => value).filter(Boolean)].join(' ') : '';
+  return base && !supplierHubProductNameIssue([document]) ? [base, ...attributes.map(({ value }) => value)].join(' ') : '';
 }

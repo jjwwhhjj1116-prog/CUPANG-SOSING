@@ -74,3 +74,35 @@ test('new Hub submissions reject placeholder title values without touching archi
   document.productPage.commonAttributes.exposedAttributes.push(option('수량', '1개'));
   assert.equal(supplierHubDisplayedProductName(document), base + ' 그린 Free 1개');
 });
+
+test('the preview follows the exposed order and preserves legitimate zero and false choices', () => {
+  const document = { startPage: { productName: base }, productPage: {
+    commonAttributes: { exposedAttributes: [option('형태', '원형'), option('수량', 0)] },
+    exposedAttributes: [{ name: '특성', value: false }],
+  } };
+  assert.equal(supplierHubProductNameIssue([document]), '');
+  assert.equal(supplierHubDisplayedProductName(document), base + ' 원형 0 false');
+});
+
+test('every present exposed entry requires a real value regardless of hidden attributes or legal notices', () => {
+  const common = [option('형태', '원형')], exposed = [];
+  const document = { startPage: { productName: base }, productPage: {
+    commonAttributes: { exposedAttributes: common }, exposedAttributes: exposed,
+    unexposedAttributes: [option('사이즈', '상세페이지 참조'), option('재질', null)],
+  }, legalPage: { notices: [{ noticeItemName: '품명', noticeItemValue: '해당사항없음' }] } };
+  assert.equal(supplierHubProductNameIssue([document]), '');
+  assert.equal(supplierHubDisplayedProductName(document), base + ' 원형');
+
+  for (const value of [undefined, null, '', ' \t', 'N/A', 'Not applicable', '해당 사항 없음',
+    '상세참조', '상세 페이지 참조', '상품 상세정보 참고', 'See product details', '미입력']) {
+    const missing = value === undefined ? { attributeName: '색상' } : option('색상', value);
+    for (const attributes of [common, exposed]) {
+      attributes.push(missing);
+      const saved = JSON.stringify(document);
+      assert.match(supplierHubProductNameIssue([document]), /노출 속성.*색상.*실제 옵션값/, String(value));
+      assert.equal(supplierHubDisplayedProductName(document), '');
+      assert.equal(JSON.stringify(document), saved);
+      attributes.pop();
+    }
+  }
+});
