@@ -1,6 +1,7 @@
 'use client';
 import {useEffect,useRef,useState,type FormEvent} from 'react';
 import {readLoginPreferences,saveLoginPreferences} from '@/app/login-preferences';
+import {supplierHubExtensionDownload, supplierHubExtensionVersion} from '@/app/supplier-hub-extension-download';
 import styles from './page.module.css';
 
 export default function LoginPage(){
@@ -60,6 +61,6 @@ export default function LoginPage(){
    </form>}
    {!requested&&<><div className={styles.switch}><span>{signup?'이미 계정이 있나요?':'계정이 없나요?'}</span><button type="button" disabled={busy} onClick={()=>switchMode(signup?'login':'signup')}>{signup?'로그인':'회원가입'}</button></div>{!signup&&<nav className={styles.recovery} aria-label="계정 찾기"><a href="/recover?purpose=find-id">아이디 찾기</a><span aria-hidden="true">·</span><a href="/recover?purpose=reset-password">비밀번호 재설정</a></nav>}</>}
   </section>
-  <footer className={styles.footer}>YOOFAM 스튜디오 <span aria-hidden="true">·</span> 상품등록 워크스페이스</footer>
+  <footer className={styles.footer}><span>YOOFAM 스튜디오 <span aria-hidden="true">·</span> 상품등록 워크스페이스</span><a href={supplierHubExtensionDownload} download>Chrome 확장프로그램 {supplierHubExtensionVersion} 다운로드</a></footer>
  </main>;
 }

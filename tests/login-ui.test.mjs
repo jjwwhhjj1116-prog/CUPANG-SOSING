@@ -134,3 +134,13 @@ test('account preference failures preserve choices and stored data, and an expir
   }finally{h.close();}
  }
 });
+
+test('login offers the current Chrome extension without authentication',()=>{
+ const h=ui();try{
+  const {version}=JSON.parse(fs.readFileSync(new URL('../extensions/supplier-hub/manifest.json',import.meta.url),'utf8'));
+  const link=nodes(h.render()).find(node=>node.type==='a'&&node.props.href==='/downloads/yoofam-plus-supplier-hub-extension-'+version+'.zip');
+  assert.ok(link,'login download link');assert.equal(link.props.download,true);assert.ok(text(link).includes(version));
+  h.click('회원가입');assert.ok(nodes(h.render()).some(node=>node.type==='a'&&node.props.href===link.props.href));
+  assert.deepEqual(h.calls,[]);
+ }finally{h.close();}
+});

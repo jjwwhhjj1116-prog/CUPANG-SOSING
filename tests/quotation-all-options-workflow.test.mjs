@@ -57,9 +57,11 @@ async function fixture(company){
  const other=companies.find(item=>item.code!==company.code),otherId='synthetic-other-company-714';
  const product=h.sqlite.prepare('SELECT * FROM products WHERE id=?').get(f.id);
  const policy=h.load('app/pricing.ts').pricePolicy(h.settings);
- await h.load('db/queries.ts').insertProduct({...product,id:otherId,source_url:'synthetic://step714-other-company',title:'다른 회사 원문'},policy);
- const content=h.load('app/product-content.ts').applyContentPatch(h.load('app/product-content.ts').emptyProductContent(otherId),{seo:{title:'다른 회사 콘텐츠'}},new Date().toISOString());
- await h.load('db/product-content.ts').saveProductContent('owner',content,0);
+ const now=new Date().toISOString();
+ await h.load('db/queries.ts').insertProduct({...product,id:otherId,source_url:'synthetic://step714-other-company',title:'다른 회사 원문',created_at:now,updated_at:now},policy);
+ const contentStore=h.load('db/product-content.ts'),initialContent=await contentStore.readProductContent('owner',otherId);
+ const content=h.load('app/product-content.ts').applyContentPatch(initialContent,{seo:{title:'다른 회사 콘텐츠'}},now);
+ assert.ok(await contentStore.saveProductContent('owner',content,initialContent.revision));
  const otherSchema=weightSnapshot(other),otherProfile=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{
   name:'SYNTHETIC 714 other approved company',categoryId:otherSchema.categoryId,categoryPath:otherSchema.categoryPath,hubSchema:otherSchema,template:null,mappings:[],
  },'synthetic-other-company-profile-714');

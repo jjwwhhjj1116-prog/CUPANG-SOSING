@@ -1,4 +1,5 @@
 'use client';
+import {supplierHubExtensionDownload, supplierHubExtensionVersion} from '@/app/supplier-hub-extension-download';
 import type {AdditionalImageDraftTools,AdditionalImageDraftCapture} from '@/app/quotation-image-targets';
 import type {AdditionalDraftProcessingTarget} from '@/app/components/image-generation-panel';
 import '@/app/components/registration-workspace.css';
@@ -158,11 +159,12 @@ const goalOptions = [
 ];
 
 const won = (value: number) => `${Math.round(value).toLocaleString('ko-KR')}원`;
-type UtilityIconKind='integrations'|'history'|'cli'|'operations'|'sources'|'account'|'multi';
+type UtilityIconKind='integrations'|'history'|'cli'|'operations'|'sources'|'account'|'multi'|'download';
 function UtilityIcon({kind}:{kind:UtilityIconKind}){
  const paths:Record<UtilityIconKind,React.ReactNode>={
   integrations:<><path d="m9 3 1 3h4l1-3m-5 15 1 3h2l1-3M3 9l3 1v4l-3 1m15-5 3 1v2l-3 1"/><rect x="6" y="6" width="12" height="12" rx="3"/><circle cx="12" cy="12" r="3"/></>,
   history:<><path d="M3 11a9 9 0 1 1 2.6 7.3M3 5v6h6m3-4v5l3 2"/></>,
+  download:<path d="M12 3v12m-4-4 4 4 4-4M4 17v4h16v-4"/>,
   cli:<><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3m6 0h4"/></>,
   operations:<><path d="M4 20V10h4v10m4 0V4h4v16m4 0V8h1v12M2 20h20"/></>,
   sources:<><path d="M4 8h16l1 12H3L4 8Zm3 0V4h10v4m-8 5h6m-3-3v6"/></>,
@@ -984,6 +986,7 @@ useEffect(()=>{
       <section className="content">
         <header className="topbar"><div><button type="button" className="studio-mobile-menu" aria-label="메뉴 열기" aria-expanded={mobileNavigationOpen} aria-controls="studio-navigation" onClick={()=>setMobileNavigationOpen(value=>!value)}>☰</button><h1>{view==='work'?'로켓배송 AI상품등록':'로켓배송 상품관리(신규)'}</h1><p>{view==='work'?'상품별 등록 현황 및 관리':'등록 상품 · SKU · 가격 · 구매정보'}</p></div>
           <div className="topbar-tools"><nav className="workspace-utilities" aria-label="계정 및 연결 도구">
+            <a className="workspace-utility" href={supplierHubExtensionDownload} download aria-label={'Chrome 확장프로그램 '+supplierHubExtensionVersion+' 다운로드'}><UtilityIcon kind="download"/><span className="utility-label">확장 다운로드</span></a>
             <button type="button" className="workspace-utility utility-integrations" data-state={utilityConnectionState} aria-label={'연동 설정 · '+utilityConnectionLabel} title={utilityConnectionLabel} aria-haspopup="dialog" aria-expanded={connectionsOpen} disabled={checkingConnections} onClick={()=>void checkConnections()}><UtilityIcon kind="integrations"/><span className="utility-label">연동 설정</span><span className="utility-status-dot" aria-hidden="true"/></button>
             <button type="button" className="workspace-utility utility-history" aria-label="작업 이력" aria-haspopup="dialog" aria-expanded={historyOpen} onClick={()=>{setHistoryProductId(detail?.id??products[0]?.id??'');setHistoryOpen(true);}}><UtilityIcon kind="history"/><span className="utility-label">작업 이력</span></button>
             <button type="button" className="workspace-utility utility-cli" aria-label="CLI 설치·연결" aria-haspopup="dialog" aria-expanded={cliInstallOpen} onClick={()=>setCliInstallOpen(true)}><UtilityIcon kind="cli"/><span className="utility-label">CLI</span></button>

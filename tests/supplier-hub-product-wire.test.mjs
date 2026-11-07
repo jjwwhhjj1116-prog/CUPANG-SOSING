@@ -43,7 +43,9 @@ test('foreign sources, origins, channels and malformed correlations never reach 
 
 test('read-only PING advertises group preview only after the supporting installed manifest version', async () => {
   for (const [version, expected] of [['0.2.72', false], ['0.2.78', false], ['0.2.79', true], ['0.3.0', true], ['1.0.0', true]]) {
-    const f = bridge(version); await f.emit('PING', null); assert.equal(f.messages.length, 0); assert.equal(f.replies[0].message.result.version, version);
+    const f = bridge(version); await f.emit('PING', null);
+    assert.deepEqual(plain(f.messages), [{ type: 'YOOFAM_SEO_KEYWORD_CAPABILITY' }]);
+    assert.equal(f.replies[0].message.result.version, version);
     assert.equal(f.replies[0].message.result.productDocumentPreview, expected); assert.equal(Object.hasOwn(f.replies[0].message.result, 'productDocumentLiveVerified'), false);
   }
   cases.push({ name: 'installed release capability', versionsChecked: 5, remoteRequests: 0, nativeGateAdvertisement: false });

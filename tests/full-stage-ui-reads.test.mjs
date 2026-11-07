@@ -118,3 +118,23 @@ test('R10 actual focused SEO→price→main→quotation first views share one ge
   assert.deepEqual(ordinary,{content:1,options:1,quotationByExactUrl:Object.fromEntries(Object.keys(quoteCounts).map(url=>[url,1]))},'same-episode first views still duplicate genuine full content/options/quote');
  }finally{for(const item of gates)item.wait.resolve();if(h)await h.close();api.close();}
 });
+
+test('workspace header offers the current Chrome extension without opening an editor',async()=>{
+ const h=await stageDOM(async(url,init={})=>{
+  assert.equal(init.method??'GET','GET');
+  if(url==='/api/products')return Response.json({products:[]});
+  if(url==='/api/settings')return Response.json({settings:null,scope:{ownerId:'owner',company:null}});
+  if(url==='/api/category-profiles')return Response.json({profiles:[]});
+  if(url==='/api/collection-jobs')return Response.json({jobs:[]});
+  return Response.json({error:'unexpected synthetic request'},{status:404});
+ });
+ try{
+  const Dashboard=h.load('app/components/dashboard-client.tsx').default;
+  await h.render(Dashboard,{userName:'합성 테스트',workspaceOwnerId:'owner'});
+  const {version}=JSON.parse(fs.readFileSync(new URL('../extensions/supplier-hub/manifest.json',import.meta.url),'utf8'));
+  const expected='/downloads/yoofam-plus-supplier-hub-extension-'+version+'.zip';
+  const link=h.container.querySelector('[aria-label="계정 및 연결 도구"] a[href="'+expected+'"]');
+  assert.ok(link,'workspace download link');assert.ok(link.hasAttribute('download'));
+  assert.match(link.textContent,/확장 다운로드/);assert.ok(link.getAttribute('aria-label').includes(version));
+ }finally{await h.close();}
+});

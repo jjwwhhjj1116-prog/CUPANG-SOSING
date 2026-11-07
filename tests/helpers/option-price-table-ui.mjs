@@ -33,7 +33,8 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
   const objects = new Map(), bindings = { DB: db, FILES: fileStorage ?? { head: async key => objects.has(key) ? { size: objects.get(key).length, httpMetadata: { contentType: 'image/png' } } : null } };
   const deps = { 'cloudflare:workers': { env: bindings }, 'next/server': { NextResponse: Response },
     '@/app/components/registration-filter-popover': { RegistrationFilterPopover: props => ({ type: 'price-filter-popup', props }) },
-    '@/extensions/supplier-hub/page-source-price-basis.mjs':pageSourcePriceBasis,'@/extensions/supplier-hub/page-source.mjs':pageSource,'../extensions/supplier-hub/page-source.mjs':pageSource,
+    '@/extensions/supplier-hub/page-source-price-basis.mjs':pageSourcePriceBasis,
+    '../extensions/supplier-hub/page-source-price-basis.mjs':pageSourcePriceBasis,'@/extensions/supplier-hub/page-source.mjs':pageSource,'../extensions/supplier-hub/page-source.mjs':pageSource,
     '@/app/chatgpt-auth': { getWorkspaceOwnerId: async () => owner, getChatGPTUser: async () => ({ verifiedAccess: true, userId: owner,
       membership: { status: 'approved', companyCode: company.code, companyName: company.name } }) },
     '@/db/collection-images': { readOptionSourceImages: async () => sourceImageKeys,readRegistrationSourceImages:async()=>({}) } };
